@@ -10,7 +10,10 @@ use crate::{
         math::Math,
         small_value::{svo_helpers, NUM_SVO_ROUNDS},
     },
-    zkvm::r1cs::constraints::ConstraintConst,
+    zkvm::r1cs::{
+        constraints::ConstraintConst,
+        inputs::WitnessRowAccessor,
+    },
 };
 use rayon::prelude::*;
 
@@ -402,6 +405,236 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
         }
 
         // Return final SVO accumulators and Self struct.
+        (
+            final_svo_accums_zero,
+            final_svo_accums_infty,
+            Self {
+                ab_unbound_coeffs_shards: final_ab_unbound_coeffs_shards,
+                bound_coeffs: vec![],
+                binding_scratch_space: vec![],
+            },
+        )
+    }
+
+    #[tracing::instrument(
+        skip_all,
+        name = "NewSpartanInterleavedPolynomial::new_with_precompute_streaming"
+    )]
+    pub fn new_with_precompute_streaming(
+        padded_num_constraints: usize,
+        const_rows: &'static [ConstraintConst],
+        accessor: &dyn WitnessRowAccessor<F>,
+        tau: &[F],
+    ) -> ([F; NUM_ACCUMS_EVAL_ZERO], [F; NUM_ACCUMS_EVAL_INFTY], Self) {
+        let num_steps = accessor.num_steps();
+        let num_step_vars = if num_steps > 0 { num_steps.log_2() } else { 0 };
+        let num_constraint_vars = if padded_num_constraints > 0 {
+            padded_num_constraints.log_2()
+        } else {
+            0
+        };
+        let total_num_vars = num_step_vars + num_constraint_vars;
+
+        assert_eq!(
+            tau.len(),
+            total_num_vars,
+            "tau length ({}) mismatch with R1CS variable count (step_vars {} + constraint_vars {})",
+            tau.len(),
+            num_step_vars,
+            num_constraint_vars
+        );
+        assert!(
+            NUM_SVO_ROUNDS <= num_constraint_vars,
+            "NUM_SVO_ROUNDS ({NUM_SVO_ROUNDS}) cannot exceed total constraint variables ({num_constraint_vars})"
+        );
+
+        let num_non_svo_constraint_vars = num_constraint_vars.saturating_sub(NUM_SVO_ROUNDS);
+        let num_non_svo_z_vars = num_step_vars + num_non_svo_constraint_vars;
+        assert_eq!(
+            num_non_svo_z_vars,
+            total_num_vars - NUM_SVO_ROUNDS,
+            "num_non_svo_z_vars ({num_non_svo_z_vars}) + NUM_SVO_ROUNDS ({NUM_SVO_ROUNDS}) must be == total_num_vars ({total_num_vars})"
+        );
+
+        let potential_x_out_vars = total_num_vars / 2 - NUM_SVO_ROUNDS;
+        let iter_num_x_out_vars = std::cmp::min(potential_x_out_vars, num_step_vars);
+        let iter_num_x_in_vars = num_non_svo_z_vars - iter_num_x_out_vars;
+        let iter_num_x_in_step_vars = num_step_vars - iter_num_x_out_vars;
+        let iter_num_x_in_constraint_vars = num_non_svo_constraint_vars;
+        assert_eq!(
+            iter_num_x_in_vars,
+            iter_num_x_in_step_vars + iter_num_x_in_constraint_vars
+        );
+        assert_eq!(num_non_svo_z_vars, iter_num_x_out_vars + iter_num_x_in_vars);
+
+        let num_uniform_r1cs_constraints = const_rows.len();
+        let rem_num_uniform_r1cs_constraints = num_uniform_r1cs_constraints % Y_SVO_SPACE_SIZE;
+
+        let eq_poly = GruenSplitEqPolynomial::new_for_small_value(
+            tau,
+            iter_num_x_out_vars,
+            iter_num_x_in_vars,
+            NUM_SVO_ROUNDS,
+        );
+        let E_in_evals = eq_poly.E_in_current();
+        let E_out_vec = &eq_poly.E_out_vec;
+
+        assert_eq!(E_out_vec.len(), NUM_SVO_ROUNDS);
+
+        let num_x_out_vals = 1usize << iter_num_x_out_vars;
+        let num_x_in_step_vals = 1usize << iter_num_x_in_step_vars;
+
+        struct PrecomputeTaskOutput<F: JoltField> {
+            ab_coeffs_local: Vec<SparseCoefficient<F>>,
+            svo_accums_zero_local: [F; NUM_ACCUMS_EVAL_ZERO],
+            svo_accums_infty_local: [F; NUM_ACCUMS_EVAL_INFTY],
+        }
+
+        let num_parallel_chunks = if num_x_out_vals > 0 {
+            std::cmp::min(
+                num_x_out_vals,
+                rayon::current_num_threads().next_power_of_two() * 8,
+            )
+        } else {
+            1
+        };
+        assert!(
+            num_parallel_chunks > 0 || num_x_out_vals == 0,
+            "num_parallel_chunks must be positive if there are x_out_vals to process"
+        );
+
+        let x_out_chunk_size = if num_x_out_vals > 0 {
+            std::cmp::max(1, num_x_out_vals.div_ceil(num_parallel_chunks))
+        } else {
+            0
+        };
+
+        let collected_chunk_outputs: Vec<PrecomputeTaskOutput<F>> = (0..num_parallel_chunks)
+            .into_par_iter()
+            .map(|chunk_idx| {
+                let x_out_start = chunk_idx * x_out_chunk_size;
+                let x_out_end = std::cmp::min((chunk_idx + 1) * x_out_chunk_size, num_x_out_vals);
+                let cycles_per_chunk = (x_out_end - x_out_start) * num_x_in_step_vals;
+
+                let max_ab_coeffs_capacity = 2 * cycles_per_chunk * num_uniform_r1cs_constraints;
+                let mut chunk_ab_coeffs: Vec<SparseCoefficient<F>> =
+                    Vec::with_capacity(max_ab_coeffs_capacity);
+
+                let mut chunk_svo_accums_zero = [F::zero(); NUM_ACCUMS_EVAL_ZERO];
+                let mut chunk_svo_accums_infty = [F::zero(); NUM_ACCUMS_EVAL_INFTY];
+
+                for x_out_val in x_out_start..x_out_end {
+                    let mut tA_sum_for_current_x_out = [F::zero(); NUM_NONTRIVIAL_TERNARY_POINTS];
+                    let mut current_x_out_svo_zero = [F::zero(); NUM_ACCUMS_EVAL_ZERO];
+                    let mut current_x_out_svo_infty = [F::zero(); NUM_ACCUMS_EVAL_INFTY];
+
+                    for x_in_step_val in 0..num_x_in_step_vals {
+                        let current_step_idx = (x_out_val << iter_num_x_in_step_vars) | x_in_step_val;
+                        let mut current_x_in_constraint_val = 0;
+
+                        let mut binary_az_block = [F::zero(); Y_SVO_SPACE_SIZE];
+                        let mut binary_bz_block = [F::zero(); Y_SVO_SPACE_SIZE];
+
+                        for (uniform_chunk_iter_idx, uniform_svo_chunk) in const_rows
+                            .chunks(Y_SVO_SPACE_SIZE)
+                            .enumerate()
+                        {
+                            for (idx_in_svo_block, const_row) in uniform_svo_chunk.iter().enumerate() {
+                                let constraint_idx_in_step =
+                                    (uniform_chunk_iter_idx << NUM_SVO_ROUNDS) + idx_in_svo_block;
+
+                                let global_r1cs_idx = 2
+                                    * (current_step_idx * padded_num_constraints
+                                        + constraint_idx_in_step);
+
+                                let az = const_row
+                                    .a
+                                    .evaluate_row_with(accessor, current_step_idx);
+                                if !az.is_zero() {
+                                    binary_az_block[idx_in_svo_block] = az;
+                                    chunk_ab_coeffs.push((global_r1cs_idx, az).into());
+                                }
+
+                                let bz = const_row
+                                    .b
+                                    .evaluate_row_with(accessor, current_step_idx);
+                                if !bz.is_zero() {
+                                    binary_bz_block[idx_in_svo_block] = bz;
+                                    chunk_ab_coeffs.push((global_r1cs_idx + 1, bz).into());
+                                }
+                            }
+
+                            if uniform_svo_chunk.len() == Y_SVO_SPACE_SIZE {
+                                let x_in_val =
+                                    (x_in_step_val << iter_num_x_in_constraint_vars) | current_x_in_constraint_val;
+                                let E_in_val = &E_in_evals[x_in_val];
+
+                                svo_helpers::compute_and_update_tA_inplace_generic::<
+                                    NUM_SVO_ROUNDS,
+                                    F,
+                                >(&binary_az_block, &binary_bz_block, E_in_val, &mut tA_sum_for_current_x_out);
+
+                                current_x_in_constraint_val += 1;
+                                binary_az_block = [F::zero(); Y_SVO_SPACE_SIZE];
+                                binary_bz_block = [F::zero(); Y_SVO_SPACE_SIZE];
+                            }
+                        }
+
+                        if rem_num_uniform_r1cs_constraints > 0 {
+                            let x_in_val_last =
+                                (x_in_step_val << iter_num_x_in_constraint_vars) | current_x_in_constraint_val;
+                            let E_in_val_last = &E_in_evals[x_in_val_last];
+
+                            svo_helpers::compute_and_update_tA_inplace_generic::<
+                                NUM_SVO_ROUNDS,
+                                F,
+                            >(&binary_az_block, &binary_bz_block, E_in_val_last, &mut tA_sum_for_current_x_out);
+                        }
+                    }
+
+                    svo_helpers::distribute_tA_to_svo_accumulators_generic::<NUM_SVO_ROUNDS, F>(
+                        &tA_sum_for_current_x_out,
+                        x_out_val,
+                        E_out_vec,
+                        &mut current_x_out_svo_zero,
+                        &mut current_x_out_svo_infty,
+                    );
+
+                    for i in 0..NUM_ACCUMS_EVAL_ZERO {
+                        chunk_svo_accums_zero[i] += current_x_out_svo_zero[i];
+                    }
+                    for i in 0..NUM_ACCUMS_EVAL_INFTY {
+                        chunk_svo_accums_infty[i] += current_x_out_svo_infty[i];
+                    }
+                }
+
+                PrecomputeTaskOutput {
+                    ab_coeffs_local: chunk_ab_coeffs,
+                    svo_accums_zero_local: chunk_svo_accums_zero,
+                    svo_accums_infty_local: chunk_svo_accums_infty,
+                }
+            })
+            .collect();
+
+        let mut final_svo_accums_zero = [F::zero(); NUM_ACCUMS_EVAL_ZERO];
+        let mut final_svo_accums_infty = [F::zero(); NUM_ACCUMS_EVAL_INFTY];
+        let mut final_ab_unbound_coeffs_shards: Vec<Vec<SparseCoefficient<F>>> =
+            Vec::with_capacity(collected_chunk_outputs.len());
+
+        for task_output in collected_chunk_outputs {
+            final_ab_unbound_coeffs_shards.push(task_output.ab_coeffs_local);
+            if NUM_ACCUMS_EVAL_ZERO > 0 {
+                for idx in 0..NUM_ACCUMS_EVAL_ZERO {
+                    final_svo_accums_zero[idx] += task_output.svo_accums_zero_local[idx];
+                }
+            }
+            if NUM_ACCUMS_EVAL_INFTY > 0 {
+                for idx in 0..NUM_ACCUMS_EVAL_INFTY {
+                    final_svo_accums_infty[idx] += task_output.svo_accums_infty_local[idx];
+                }
+            }
+        }
+
         (
             final_svo_accums_zero,
             final_svo_accums_infty,

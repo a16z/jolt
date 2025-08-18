@@ -17,7 +17,10 @@ use crate::zkvm::dag::stage::SumcheckStages;
 use crate::zkvm::dag::state_manager::{ProofData, ProofKeys, StateManager};
 use crate::zkvm::instruction::CircuitFlags;
 use crate::zkvm::r1cs::constraints::UNIFORM_R1CS;
-use crate::zkvm::r1cs::inputs::{JoltR1CSInputs, ALL_R1CS_INPUTS, COMMITTED_R1CS_INPUTS};
+use crate::zkvm::r1cs::inputs::{
+    compute_claimed_witness_evals_streaming, JoltR1CSInputs, WitnessRowAccessor,
+    ALL_R1CS_INPUTS, COMMITTED_R1CS_INPUTS, TraceWitnessAccessor,
+};
 use crate::zkvm::r1cs::key::UniformSpartanKey;
 use crate::zkvm::witness::VirtualPolynomial;
 
@@ -630,11 +633,8 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
 
         let key = self.key.clone();
 
-        // Create input polynomials from trace
-        let input_polys: Vec<MultilinearPolynomial<F>> = ALL_R1CS_INPUTS
-            .par_iter()
-            .map(|var| var.generate_witness(trace, preprocessing))
-            .collect();
+        // Streaming accessor (no materialization of all input_polys)
+        let accessor = TraceWitnessAccessor::<F, PCS>::new(preprocessing, trace);
 
         let num_rounds_x = key.num_rows_bits();
 
@@ -648,10 +648,12 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
 
         let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) = {
             let mut transcript = state_manager.transcript.borrow_mut();
-            UniformSpartanProof::<F, ProofTranscript>::prove_outer_sumcheck(
+            SumcheckInstanceProof::<F, ProofTranscript>::prove_spartan_small_value_streaming::<
+                NUM_SVO_ROUNDS,
+            >(
                 num_rounds_x,
                 uniform_constraints_only_padded,
-                &input_polys,
+                &accessor,
                 &tau,
                 &mut transcript,
             )
@@ -696,11 +698,8 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
 
         let (r_cycle, _rx_var) = outer_sumcheck_r.split_at(num_cycles_bits);
 
-        // Evaluate all witness polynomials P_i at r_cycle for the verifier
-        // Verifier computes: z(r_inner, r_cycle) = Σ_i eq(r_inner, i) * P_i(r_cycle)
-        let flattened_polys_ref: Vec<_> = input_polys.iter().collect();
-        let claimed_witness_evals =
-            MultilinearPolynomial::batch_evaluate(&flattened_polys_ref, r_cycle);
+        // Compute claimed witness evals at r_cycle via streaming
+        let claimed_witness_evals = compute_claimed_witness_evals_streaming::<F>(r_cycle, &accessor);
 
         // Only non-virtual (i.e. committed) polynomials' openings are
         // proven using the PCS opening proof, which we add for future opening proof here

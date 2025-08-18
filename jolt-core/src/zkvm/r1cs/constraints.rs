@@ -3,7 +3,7 @@
 //! This module provides a static, compile-time representation of R1CS constraints
 //! to replace the dynamic constraint building in the prover's hot path.
 
-use super::inputs::JoltR1CSInputs;
+use super::inputs::{JoltR1CSInputs, WitnessRowAccessor};
 use crate::field::JoltField;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::zkvm::instruction::CircuitFlags;
@@ -99,6 +99,27 @@ pub const fn constraint_eq_conditional_lc(
         },
         ConstLC::zero(),
     )
+}
+
+// =============================================================================
+// Streaming accessor evaluation for ConstLC
+// =============================================================================
+impl ConstLC {
+    #[inline]
+    pub fn evaluate_row_with<F: JoltField>(
+        &self,
+        accessor: &dyn WitnessRowAccessor<F>,
+        row: usize,
+    ) -> F {
+        let mut result = F::zero();
+        self.for_each_term(|input_index, coeff| {
+            result += accessor.value_at(input_index, row).mul_i128(coeff);
+        });
+        if let Some(c) = self.const_term() {
+            result += F::from_i128(c);
+        }
+        result
+    }
 }
 
 /// Creates: left * right == result
@@ -221,7 +242,7 @@ pub static UNIFORM_R1CS: [ConstraintConst; NUM_R1CS_CONSTRAINTS] = [
     // Converts from unsigned to twos-complement representation
     r1cs_eq_conditional!(
         if { { JoltR1CSInputs::OpFlags(CircuitFlags::SubtractOperands) } }
-        => ( { JoltR1CSInputs::RightLookupOperand } ) == ( { JoltR1CSInputs::LeftInstructionInput } - { JoltR1CSInputs::RightInstructionInput } + { 0x10000000000000000i128 } )
+        => ( { JoltR1CSInputs::RightLookupOperand } ) == ( { JoltR1CSInputs::LeftInstructionInput } - { JoltR1CSInputs::RightInstructionInput } + { 0xffffffffffffffffi128 + 1 } )
     ),
     // if MultiplyOperands {
     //     assert!(RightLookupOperand == Rs1Value * Rs2Value)
