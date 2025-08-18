@@ -413,7 +413,7 @@ impl_r1cs_input_lc_conversions!(JoltR1CSInputs);
 // Streaming witness accessor (avoids materializing input_polys)
 // ============================================================================
 
-pub trait WitnessRowAccessor<F: JoltField> {
+pub trait WitnessRowAccessor<F: JoltField>: Send + Sync {
     fn value_at(&self, input_index: usize, t: usize) -> F;
     fn num_steps(&self) -> usize;
 }

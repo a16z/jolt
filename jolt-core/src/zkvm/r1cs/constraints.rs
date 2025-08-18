@@ -242,7 +242,7 @@ pub static UNIFORM_R1CS: [ConstraintConst; NUM_R1CS_CONSTRAINTS] = [
     // Converts from unsigned to twos-complement representation
     r1cs_eq_conditional!(
         if { { JoltR1CSInputs::OpFlags(CircuitFlags::SubtractOperands) } }
-        => ( { JoltR1CSInputs::RightLookupOperand } ) == ( { JoltR1CSInputs::LeftInstructionInput } - { JoltR1CSInputs::RightInstructionInput } + { 0xffffffffffffffffi128 + 1 } )
+        => ( { JoltR1CSInputs::RightLookupOperand } ) == ( { JoltR1CSInputs::LeftInstructionInput } - { JoltR1CSInputs::RightInstructionInput } + { 0x10000000000000000i128 } )
     ),
     // if MultiplyOperands {
     //     assert!(RightLookupOperand == Rs1Value * Rs2Value)

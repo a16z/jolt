@@ -7,7 +7,6 @@ use tracing::{span, Level};
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::eq_poly::EqPolynomial;
-use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
 use crate::poly::opening_proof::{
     OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
@@ -18,8 +17,8 @@ use crate::zkvm::dag::state_manager::{ProofData, ProofKeys, StateManager};
 use crate::zkvm::instruction::CircuitFlags;
 use crate::zkvm::r1cs::constraints::UNIFORM_R1CS;
 use crate::zkvm::r1cs::inputs::{
-    compute_claimed_witness_evals_streaming, JoltR1CSInputs, WitnessRowAccessor,
-    ALL_R1CS_INPUTS, COMMITTED_R1CS_INPUTS, TraceWitnessAccessor,
+    compute_claimed_witness_evals_streaming, JoltR1CSInputs, ALL_R1CS_INPUTS,
+    COMMITTED_R1CS_INPUTS, TraceWitnessAccessor,
 };
 use crate::zkvm::r1cs::key::UniformSpartanKey;
 use crate::zkvm::witness::VirtualPolynomial;
