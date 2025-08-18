@@ -17,15 +17,20 @@ use crate::{
     zkvm::dag::state_manager::StateManager,
     zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
 };
+use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::FlameGraphBuilder;
 use common::constants::REGISTER_COUNT;
 use rayon::prelude::*;
 
+#[derive(Allocative)]
 pub struct ValEvaluationProverState<F: JoltField> {
     pub inc: MultilinearPolynomial<F>,
     pub wa: MultilinearPolynomial<F>,
     pub lt: MultilinearPolynomial<F>,
 }
 
+#[derive(Allocative)]
 pub(crate) struct ValEvaluationSumcheck<F: JoltField> {
     pub r_address: Vec<F>,
     pub input_claim: F,
@@ -266,5 +271,10 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
             SumcheckId::RegistersValEvaluation,
             OpeningPoint::new(r),
         );
+    }
+
+    #[cfg(feature = "allocative")]
+    fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
+        flamegraph.visit_root(self);
     }
 }

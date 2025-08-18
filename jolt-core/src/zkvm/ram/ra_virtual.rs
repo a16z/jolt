@@ -21,6 +21,9 @@ use crate::{
     transcripts::Transcript,
     utils::math::Math,
 };
+use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::FlameGraphBuilder;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
 
@@ -30,6 +33,7 @@ pub struct RAProof<F: JoltField, ProofTranscript: Transcript> {
     pub sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
 }
 
+#[derive(Allocative)]
 pub struct RAProverState<F: JoltField> {
     /// `ra` polys to be constructed based addresses
     ra_i_polys: Vec<MultilinearPolynomial<F>>,
@@ -37,6 +41,7 @@ pub struct RAProverState<F: JoltField> {
     eq_poly: MultilinearPolynomial<F>,
 }
 
+#[derive(Allocative)]
 pub struct RASumcheck<F: JoltField> {
     rlc_coeffs: [F; 3],
     /// Random challenge r_cycle
@@ -403,6 +408,11 @@ impl<F: JoltField> SumcheckInstance<F> for RASumcheck<F> {
                 opening_point,
             );
         }
+    }
+
+    #[cfg(feature = "allocative")]
+    fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
+        flamegraph.visit_root(self);
     }
 }
 

@@ -112,4 +112,4 @@ ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/tw
 ignored = ["jolt-sdk"]
 
 [workspace.dependencies]
-spinners = { version= "4.1.1", default-features = false }
+spinners = { version = "4.1.1", default-features = false }

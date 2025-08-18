@@ -77,7 +77,6 @@ where
         _hints: Vec<Self::OpeningProofHint>,
         _coeffs: &[Self::Field],
     ) -> Self::OpeningProofHint {
-        ()
     }
 
     fn prove<ProofTranscript: Transcript>(

@@ -1,3 +1,6 @@
+use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::FlameGraphBuilder;
 use rayon::prelude::*;
 use std::{cell::RefCell, rc::Rc};
 
@@ -26,6 +29,7 @@ use crate::{
     },
 };
 
+#[derive(Allocative)]
 struct BooleanityProverState<F: JoltField> {
     /// B polynomial (GruenSplitEqPolynomial)
     B: GruenSplitEqPolynomial<F>,
@@ -41,6 +45,7 @@ struct BooleanityProverState<F: JoltField> {
     eq_r_r: F,
 }
 
+#[derive(Allocative)]
 pub struct BooleanitySumcheck<F: JoltField> {
     T: usize,
     d: usize,
@@ -375,6 +380,11 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
             SumcheckId::RamBooleanity,
             opening_point.r,
         );
+    }
+
+    #[cfg(feature = "allocative")]
+    fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
+        flamegraph.visit_root(self);
     }
 }
 

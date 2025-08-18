@@ -18,8 +18,8 @@ use crate::{
     subprotocols::sumcheck::SumcheckInstance,
     transcripts::Transcript,
     utils::{expanding_table::ExpandingTable, math::Math, thread::unsafe_allocate_zero_vec},
-    zkvm::dag::state_manager::StateManager,
     zkvm::{
+        dag::state_manager::StateManager,
         instruction::{
             CircuitFlags, InstructionFlags, InstructionLookup, InterleavedBitsMarker,
             NUM_CIRCUIT_FLAGS,
@@ -29,6 +29,9 @@ use crate::{
         witness::{CommittedPolynomial, VirtualPolynomial},
     },
 };
+use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::FlameGraphBuilder;
 use common::constants::REGISTER_COUNT;
 use rayon::prelude::*;
 use strum::{EnumCount, IntoEnumIterator};
@@ -37,6 +40,7 @@ use tracer::instruction::NormalizedInstruction;
 /// Number of batched read-checking sumchecks bespokely
 const STAGES: usize = 3;
 
+#[derive(Allocative)]
 struct ReadCheckingProverState<F: JoltField> {
     F: [MultilinearPolynomial<F>; STAGES],
     ra: Vec<MultilinearPolynomial<F>>,
@@ -46,6 +50,7 @@ struct ReadCheckingProverState<F: JoltField> {
     pc: Vec<usize>,
 }
 
+#[derive(Allocative)]
 pub struct ReadRafSumcheck<F: JoltField> {
     gamma: [F; STAGES],
     gamma_cub: F,
@@ -780,6 +785,11 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
                 [r_address, &r_cycle.r].concat(),
             );
         });
+    }
+
+    #[cfg(feature = "allocative")]
+    fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
+        flamegraph.visit_root(self);
     }
 }
 

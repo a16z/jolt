@@ -42,9 +42,6 @@ where
     F: JoltField,
     ProofTranscript: Transcript,
 {
-    let small_value_lookup_tables = F::compute_lookup_tables();
-    F::initialize_lookup_tables(small_value_lookup_tables);
-
     let mut tasks = Vec::new();
 
     const K: usize = 1 << 10;
@@ -159,7 +156,7 @@ fn prove_example(
     };
 
     tasks.push((
-        tracing::info_span!("Example_E2E"),
+        tracing::info_span!("e2e benchmark"),
         Box::new(task) as Box<dyn FnOnce()>,
     ));
 
