@@ -7,6 +7,5 @@ edition = "2021"
 guest = []
 
 [dependencies]
-jolt = { package = "jolt-sdk", path = "../../../jolt-sdk", features = ["guest-std"] }
-jolt-verifier = { path = "../../../jolt-verifier" }
+jolt = { package = "jolt-sdk", path = "../../../jolt-sdk", features = ["guest-verifier"] }
 ark-bn254 = "0.5.0"
