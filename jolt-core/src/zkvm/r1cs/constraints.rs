@@ -9,7 +9,7 @@ use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::zkvm::instruction::CircuitFlags;
 
 // Re-export key types from ops module for convenience
-pub use super::ops::{ConstLC, ConstTerm};
+pub use super::ops::{LC, Term};
 
 /// r1cs_eq_conditional!: verbose, condition-first equality constraint
 /// Usage: r1cs_eq_conditional!(if { COND } => { LEFT } == { RIGHT });
@@ -53,14 +53,14 @@ macro_rules! r1cs_prod {
 
 /// A single R1CS constraint row
 #[derive(Clone, Copy, Debug)]
-pub struct ConstraintConst {
-    pub a: ConstLC,
-    pub b: ConstLC,
-    pub c: ConstLC,
+pub struct Constraint {
+    pub a: LC,
+    pub b: LC,
+    pub c: LC,
 }
 
-impl ConstraintConst {
-    pub const fn new(a: ConstLC, b: ConstLC, c: ConstLC) -> Self {
+impl Constraint {
+    pub const fn new(a: LC, b: LC, c: LC) -> Self {
         Self { a, b, c }
     }
 
@@ -83,28 +83,9 @@ impl ConstraintConst {
 pub const NUM_R1CS_CONSTRAINTS: usize = 28;
 
 // =============================================================================
-// CONSTRAINT BUILDER FUNCTIONS
+// Streaming accessor evaluation for LC
 // =============================================================================
-/// Creates: condition * (left - right) == 0
-pub const fn constraint_eq_conditional_lc(
-    condition: ConstLC,
-    left: ConstLC,
-    right: ConstLC,
-) -> ConstraintConst {
-    ConstraintConst::new(
-        condition,
-        match left.add_const_lc(right.mul_by_const(-1)) {
-            Some(b) => b,
-            None => ConstLC::zero(),
-        },
-        ConstLC::zero(),
-    )
-}
-
-// =============================================================================
-// Streaming accessor evaluation for ConstLC
-// =============================================================================
-impl ConstLC {
+impl LC {
     #[inline]
     pub fn evaluate_row_with<F: JoltField>(
         &self,
@@ -122,33 +103,39 @@ impl ConstLC {
     }
 }
 
+// =============================================================================
+// CONSTRAINT BUILDER FUNCTIONS
+// =============================================================================
+/// Creates: condition * (left - right) == 0
+pub const fn constraint_eq_conditional_lc(
+    condition: LC,
+    left: LC,
+    right: LC,
+) -> Constraint {
+    Constraint::new(condition, left.sub_or_zero(right), LC::zero())
+}
+
 /// Creates: left * right == result
-pub const fn constraint_prod_lc(left: ConstLC, right: ConstLC, result: ConstLC) -> ConstraintConst {
-    ConstraintConst::new(left, right, result)
+pub const fn constraint_prod_lc(left: LC, right: LC, result: LC) -> Constraint {
+    Constraint::new(left, right, result)
 }
 
 /// Creates: condition * (true_val - false_val) == (result - false_val)
 pub const fn constraint_if_else_lc(
-    condition: ConstLC,
-    true_val: ConstLC,
-    false_val: ConstLC,
-    result: ConstLC,
-) -> ConstraintConst {
-    ConstraintConst::new(
+    condition: LC,
+    true_val: LC,
+    false_val: LC,
+    result: LC,
+) -> Constraint {
+    Constraint::new(
         condition,
-        match true_val.add_const_lc(false_val.mul_by_const(-1)) {
-            Some(b) => b,
-            None => ConstLC::zero(),
-        },
-        match result.add_const_lc(false_val.mul_by_const(-1)) {
-            Some(c) => c,
-            None => ConstLC::zero(),
-        },
+        true_val.sub_or_zero(false_val),
+        result.sub_or_zero(false_val),
     )
 }
 
 /// Static table of all 28 R1CS uniform constraints.
-pub static UNIFORM_R1CS: [ConstraintConst; NUM_R1CS_CONSTRAINTS] = [
+pub static UNIFORM_R1CS: [Constraint; NUM_R1CS_CONSTRAINTS] = [
     // if LeftOperandIsRs1Value { assert!(LeftInstructionInput == Rs1Value) }
     r1cs_eq_conditional!(
         if { { JoltR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsRs1Value) } }

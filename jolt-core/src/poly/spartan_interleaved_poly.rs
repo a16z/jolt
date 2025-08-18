@@ -9,7 +9,7 @@ use crate::{
         math::Math,
         small_value::{svo_helpers, NUM_SVO_ROUNDS},
     },
-    zkvm::r1cs::{constraints::ConstraintConst, inputs::WitnessRowAccessor},
+    zkvm::r1cs::{constraints::Constraint, inputs::WitnessRowAccessor},
 };
 use rayon::prelude::*;
 
@@ -102,7 +102,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
         name = "NewSpartanInterleavedPolynomial::new_with_precompute"
     )]
     pub fn new_with_precompute(
-        const_rows: &'static [ConstraintConst],
+        const_rows: &'static [Constraint],
         accessor: &dyn WitnessRowAccessor<F>,
         tau: &[F],
     ) -> ([F; NUM_ACCUMS_EVAL_ZERO], [F; NUM_ACCUMS_EVAL_INFTY], Self) {

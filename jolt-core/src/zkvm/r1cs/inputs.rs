@@ -4,8 +4,6 @@
     clippy::too_many_arguments
 )]
 
-#[cfg(test)]
-use crate::impl_r1cs_input_lc_conversions;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
@@ -242,10 +240,6 @@ impl JoltR1CSInputs {
         }
     }
 }
-
-// Legacy conversions for old_ops, only used in test code
-#[cfg(test)]
-impl_r1cs_input_lc_conversions!(JoltR1CSInputs);
 
 // ============================================================================
 // Streaming witness accessor (avoids materializing input_polys)
