@@ -4,8 +4,8 @@ set -euo pipefail
 echo "Generating fixtures files..."
 cargo run --release -p fibonacci -- --save
 
-FIXTURE_DIR=./jolt-verifier/tests/fixtures
-BYTE_RS_DIR=./jolt-verifier/tests
+FIXTURE_DIR=./tests/fixtures
+BYTE_RS_DIR=./tests
 
 # input/output name pairs: ("input_filename" "output_filename.rs")
 FILES=(
