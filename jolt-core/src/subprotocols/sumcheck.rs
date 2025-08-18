@@ -15,7 +15,7 @@ use crate::utils::errors::ProofVerifyError;
 use crate::utils::mul_0_optimized;
 use crate::utils::small_value::svo_helpers::process_svo_sumcheck_rounds;
 use crate::utils::thread::drop_in_background_thread;
-use crate::zkvm::r1cs::builder::Constraint;
+use crate::zkvm::r1cs::constraints::UNIFORM_R1CS;
 use ark_serialize::*;
 use rayon::prelude::*;
 use std::cell::RefCell;
@@ -377,7 +377,6 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
     pub fn prove_spartan_small_value<const NUM_SVO_ROUNDS: usize>(
         num_rounds: usize,
         padded_num_constraints: usize,
-        uniform_constraints: &[Constraint],
         flattened_polys: &[MultilinearPolynomial<F>],
         tau: &[F],
         transcript: &mut ProofTranscript,
@@ -390,7 +389,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
         let (accums_zero, accums_infty, mut az_bz_cz_poly) =
             SpartanInterleavedPolynomial::<NUM_SVO_ROUNDS, F>::new_with_precompute(
                 padded_num_constraints,
-                uniform_constraints,
+                &UNIFORM_R1CS,
                 flattened_polys,
                 tau,
             );

@@ -1,4 +1,4 @@
-use super::ops::{Term, Variable, LC};
+use super::old_ops::{Term, Variable, LC};
 use crate::zkvm::r1cs::inputs::JoltR1CSInputs;
 use crate::{
     field::JoltField,
@@ -206,7 +206,7 @@ impl R1CSBuilder {
         self.constraints.push(constraint);
     }
 
-    fn materialize<F: JoltField>(&self) -> UniformR1CS<F> {
+    pub(super) fn materialize<F: JoltField>(&self) -> UniformR1CS<F> {
         let a_len: usize = self.constraints.iter().map(|c| c.a.num_vars()).sum();
         let b_len: usize = self.constraints.iter().map(|c| c.b.num_vars()).sum();
         let c_len: usize = self.constraints.iter().map(|c| c.c.num_vars()).sum();
@@ -288,5 +288,9 @@ impl<F: JoltField> CombinedUniformBuilder<F> {
     /// Materializes the uniform constraints into sparse (value != 0) A, B, C matrices represented in (row, col, value) format.
     pub fn materialize_uniform(&self) -> UniformR1CS<F> {
         self.uniform_builder.materialize()
+    }
+    /// Get constraints as Vec<Constraint> for compatibility
+    pub fn get_constraints(&self) -> Vec<Constraint> {
+        self.uniform_builder.get_constraints()
     }
 }

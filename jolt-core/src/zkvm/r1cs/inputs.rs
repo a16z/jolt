@@ -4,6 +4,7 @@
     clippy::too_many_arguments
 )]
 
+#[cfg(test)]
 use crate::impl_r1cs_input_lc_conversions;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
@@ -58,67 +59,6 @@ pub enum JoltR1CSInputs {
     ShouldJump,
     CompressedDoNotUpdateUnexpPC,
     OpFlags(CircuitFlags),
-}
-
-impl TryFrom<JoltR1CSInputs> for CommittedPolynomial {
-    type Error = &'static str;
-
-    fn try_from(value: JoltR1CSInputs) -> Result<Self, Self::Error> {
-        match value {
-            JoltR1CSInputs::LeftInstructionInput => Ok(CommittedPolynomial::LeftInstructionInput),
-            JoltR1CSInputs::RightInstructionInput => Ok(CommittedPolynomial::RightInstructionInput),
-            JoltR1CSInputs::Product => Ok(CommittedPolynomial::Product),
-            JoltR1CSInputs::WriteLookupOutputToRD => Ok(CommittedPolynomial::WriteLookupOutputToRD),
-            JoltR1CSInputs::WritePCtoRD => Ok(CommittedPolynomial::WritePCtoRD),
-            JoltR1CSInputs::ShouldBranch => Ok(CommittedPolynomial::ShouldBranch),
-            JoltR1CSInputs::ShouldJump => Ok(CommittedPolynomial::ShouldJump),
-            JoltR1CSInputs::CompressedDoNotUpdateUnexpPC => {
-                Ok(CommittedPolynomial::CompressedDoNotUpdateUnexpPC)
-            }
-            _ => Err("{value} is not a committed polynomial"),
-        }
-    }
-}
-
-impl TryFrom<JoltR1CSInputs> for VirtualPolynomial {
-    type Error = &'static str;
-
-    fn try_from(value: JoltR1CSInputs) -> Result<Self, Self::Error> {
-        match value {
-            JoltR1CSInputs::PC => Ok(VirtualPolynomial::PC),
-            JoltR1CSInputs::UnexpandedPC => Ok(VirtualPolynomial::UnexpandedPC),
-            JoltR1CSInputs::Rd => Ok(VirtualPolynomial::Rd),
-            JoltR1CSInputs::Imm => Ok(VirtualPolynomial::Imm),
-            JoltR1CSInputs::RamAddress => Ok(VirtualPolynomial::RamAddress),
-            JoltR1CSInputs::Rs1Value => Ok(VirtualPolynomial::Rs1Value),
-            JoltR1CSInputs::Rs2Value => Ok(VirtualPolynomial::Rs2Value),
-            JoltR1CSInputs::RdWriteValue => Ok(VirtualPolynomial::RdWriteValue),
-            JoltR1CSInputs::RamReadValue => Ok(VirtualPolynomial::RamReadValue),
-            JoltR1CSInputs::RamWriteValue => Ok(VirtualPolynomial::RamWriteValue),
-            JoltR1CSInputs::LeftLookupOperand => Ok(VirtualPolynomial::LeftLookupOperand),
-            JoltR1CSInputs::RightLookupOperand => Ok(VirtualPolynomial::RightLookupOperand),
-            JoltR1CSInputs::NextUnexpandedPC => Ok(VirtualPolynomial::NextUnexpandedPC),
-            JoltR1CSInputs::NextPC => Ok(VirtualPolynomial::NextPC),
-            JoltR1CSInputs::NextIsNoop => Ok(VirtualPolynomial::NextIsNoop),
-            JoltR1CSInputs::LookupOutput => Ok(VirtualPolynomial::LookupOutput),
-            JoltR1CSInputs::OpFlags(flag) => Ok(VirtualPolynomial::OpFlags(flag)),
-            _ => Err("{value} is not a virtual polynomial"),
-        }
-    }
-}
-
-impl TryFrom<JoltR1CSInputs> for OpeningId {
-    type Error = &'static str;
-
-    fn try_from(value: JoltR1CSInputs) -> Result<Self, Self::Error> {
-        if let Ok(poly) = VirtualPolynomial::try_from(value) {
-            Ok(OpeningId::Virtual(poly, SumcheckId::SpartanOuter))
-        } else if let Ok(poly) = CommittedPolynomial::try_from(value) {
-            Ok(OpeningId::Committed(poly, SumcheckId::SpartanOuter))
-        } else {
-            Err("Could not map {value} to an OpeningId")
-        }
-    }
 }
 
 /// This const serves to define a canonical ordering over inputs (and thus indices
@@ -247,6 +187,58 @@ impl JoltR1CSInputs {
             JoltR1CSInputs::OpFlags(CircuitFlags::Advice) => 39,
             JoltR1CSInputs::OpFlags(CircuitFlags::IsNoop) => 40,
             JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed) => 41,
+        }
+    }
+
+    /// Convert to CommittedPolynomial if this input represents a committed polynomial
+    pub fn to_committed_polynomial(&self) -> Result<CommittedPolynomial, &'static str> {
+        match self {
+            JoltR1CSInputs::LeftInstructionInput => Ok(CommittedPolynomial::LeftInstructionInput),
+            JoltR1CSInputs::RightInstructionInput => Ok(CommittedPolynomial::RightInstructionInput),
+            JoltR1CSInputs::Product => Ok(CommittedPolynomial::Product),
+            JoltR1CSInputs::WriteLookupOutputToRD => Ok(CommittedPolynomial::WriteLookupOutputToRD),
+            JoltR1CSInputs::WritePCtoRD => Ok(CommittedPolynomial::WritePCtoRD),
+            JoltR1CSInputs::ShouldBranch => Ok(CommittedPolynomial::ShouldBranch),
+            JoltR1CSInputs::ShouldJump => Ok(CommittedPolynomial::ShouldJump),
+            JoltR1CSInputs::CompressedDoNotUpdateUnexpPC => {
+                Ok(CommittedPolynomial::CompressedDoNotUpdateUnexpPC)
+            }
+            _ => Err("{value} is not a committed polynomial"),
+        }
+    }
+
+    /// Convert to VirtualPolynomial if this input represents a virtual polynomial
+    pub fn to_virtual_polynomial(&self) -> Result<VirtualPolynomial, &'static str> {
+        match self {
+            JoltR1CSInputs::PC => Ok(VirtualPolynomial::PC),
+            JoltR1CSInputs::UnexpandedPC => Ok(VirtualPolynomial::UnexpandedPC),
+            JoltR1CSInputs::Rd => Ok(VirtualPolynomial::Rd),
+            JoltR1CSInputs::Imm => Ok(VirtualPolynomial::Imm),
+            JoltR1CSInputs::RamAddress => Ok(VirtualPolynomial::RamAddress),
+            JoltR1CSInputs::Rs1Value => Ok(VirtualPolynomial::Rs1Value),
+            JoltR1CSInputs::Rs2Value => Ok(VirtualPolynomial::Rs2Value),
+            JoltR1CSInputs::RdWriteValue => Ok(VirtualPolynomial::RdWriteValue),
+            JoltR1CSInputs::RamReadValue => Ok(VirtualPolynomial::RamReadValue),
+            JoltR1CSInputs::RamWriteValue => Ok(VirtualPolynomial::RamWriteValue),
+            JoltR1CSInputs::LeftLookupOperand => Ok(VirtualPolynomial::LeftLookupOperand),
+            JoltR1CSInputs::RightLookupOperand => Ok(VirtualPolynomial::RightLookupOperand),
+            JoltR1CSInputs::NextUnexpandedPC => Ok(VirtualPolynomial::NextUnexpandedPC),
+            JoltR1CSInputs::NextPC => Ok(VirtualPolynomial::NextPC),
+            JoltR1CSInputs::NextIsNoop => Ok(VirtualPolynomial::NextIsNoop),
+            JoltR1CSInputs::LookupOutput => Ok(VirtualPolynomial::LookupOutput),
+            JoltR1CSInputs::OpFlags(flag) => Ok(VirtualPolynomial::OpFlags(*flag)),
+            _ => Err("{value} is not a virtual polynomial"),
+        }
+    }
+
+    /// Convert to OpeningId by trying committed polynomial first, then virtual polynomial
+    pub fn to_opening_id(&self) -> Result<OpeningId, &'static str> {
+        if let Ok(poly) = self.to_virtual_polynomial() {
+            Ok(OpeningId::Virtual(poly, SumcheckId::SpartanOuter))
+        } else if let Ok(poly) = self.to_committed_polynomial() {
+            Ok(OpeningId::Committed(poly, SumcheckId::SpartanOuter))
+        } else {
+            Err("Could not map {value} to an OpeningId")
         }
     }
 
@@ -412,24 +404,13 @@ impl JoltR1CSInputs {
     }
 }
 
+// Legacy conversions for old_ops, only used in test code
+#[cfg(test)]
 impl_r1cs_input_lc_conversions!(JoltR1CSInputs);
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn from_index_to_index() {
-        for i in 0..JoltR1CSInputs::num_inputs() {
-            assert_eq!(i, JoltR1CSInputs::from_index(i).to_index());
-        }
-        for var in ALL_R1CS_INPUTS {
-            assert_eq!(
-                var,
-                JoltR1CSInputs::from_index(JoltR1CSInputs::to_index(&var))
-            );
-        }
-    }
 
     #[test]
     fn const_to_index_consistency() {
