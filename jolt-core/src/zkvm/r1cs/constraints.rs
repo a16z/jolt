@@ -9,7 +9,7 @@ use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::zkvm::instruction::CircuitFlags;
 
 // Re-export key types from ops module for convenience
-pub use super::ops::{LC, Term};
+pub use super::ops::{Term, LC};
 
 /// r1cs_eq_conditional!: verbose, condition-first equality constraint
 /// Usage: r1cs_eq_conditional!(if { COND } => { LEFT } == { RIGHT });
@@ -107,11 +107,7 @@ impl LC {
 // CONSTRAINT BUILDER FUNCTIONS
 // =============================================================================
 /// Creates: condition * (left - right) == 0
-pub const fn constraint_eq_conditional_lc(
-    condition: LC,
-    left: LC,
-    right: LC,
-) -> Constraint {
+pub const fn constraint_eq_conditional_lc(condition: LC, left: LC, right: LC) -> Constraint {
     Constraint::new(condition, left.sub_or_zero(right), LC::zero())
 }
 

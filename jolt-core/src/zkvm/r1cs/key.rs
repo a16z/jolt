@@ -9,7 +9,7 @@ use crate::{
 
 use sha3::Digest;
 
-use super::constraints::{LC, Constraint, UNIFORM_R1CS};
+use super::constraints::{Constraint, LC, UNIFORM_R1CS};
 use crate::utils::math::Math;
 use crate::zkvm::r1cs::inputs::JoltR1CSInputs;
 

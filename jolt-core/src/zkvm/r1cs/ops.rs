@@ -82,7 +82,9 @@ impl LC {
     }
 
     /// Create a constant LC.
-    pub const fn from_const(k: i128) -> LC { LC::constant(k) }
+    pub const fn from_const(k: i128) -> LC {
+        LC::constant(k)
+    }
 
     // =========================
     // Fallible ops (capacity-checked)
@@ -131,34 +133,49 @@ impl LC {
     }
 
     /// Capacity-checked subtraction. Returns None if term capacity would be exceeded.
-    pub const fn checked_sub(self, other: LC) -> Option<LC> { self.checked_add(other.mul_by_const(-1)) }
+    pub const fn checked_sub(self, other: LC) -> Option<LC> {
+        self.checked_add(other.mul_by_const(-1))
+    }
 
     /// Capacity-checked add-constant. Returns None if term capacity would be exceeded.
-    pub const fn checked_add_const(self, k: i128) -> Option<LC> { self.checked_add(LC::Const(k)) }
+    pub const fn checked_add_const(self, k: i128) -> Option<LC> {
+        self.checked_add(LC::Const(k))
+    }
 
     // =========================
     // Fallback ops (None => Zero)
     // =========================
     /// Addition that falls back to zero LC if capacity would be exceeded.
     pub const fn add_or_zero(self, other: LC) -> LC {
-        match self.checked_add(other) { Some(lc) => lc, None => LC::zero() }
+        match self.checked_add(other) {
+            Some(lc) => lc,
+            None => LC::zero(),
+        }
     }
 
     /// Subtraction that falls back to zero LC if capacity would be exceeded.
     pub const fn sub_or_zero(self, other: LC) -> LC {
-        match self.checked_sub(other) { Some(lc) => lc, None => LC::zero() }
+        match self.checked_sub(other) {
+            Some(lc) => lc,
+            None => LC::zero(),
+        }
     }
 
     /// Add constant that falls back to zero LC if capacity would be exceeded.
     pub const fn add_const_or_zero(self, k: i128) -> LC {
-        match self.checked_add_const(k) { Some(lc) => lc, None => LC::zero() }
+        match self.checked_add_const(k) {
+            Some(lc) => lc,
+            None => LC::zero(),
+        }
     }
 
     // =========================
     // Scalar ops
     // =========================
     /// Negate this LC (multiply by -1).
-    pub const fn neg(self) -> LC { self.mul_by_const(-1) }
+    pub const fn neg(self) -> LC {
+        self.mul_by_const(-1)
+    }
 
     /// Create a zero linear combination.
     pub const fn zero() -> Self {
@@ -204,11 +221,7 @@ impl LC {
         match self {
             LC::Zero => None,
             LC::Const(c) => Some(*c),
-            LC::Terms1(_)
-            | LC::Terms2(_)
-            | LC::Terms3(_)
-            | LC::Terms4(_)
-            | LC::Terms5(_) => None,
+            LC::Terms1(_) | LC::Terms2(_) | LC::Terms3(_) | LC::Terms4(_) | LC::Terms5(_) => None,
             LC::Terms1Const(_, c)
             | LC::Terms2Const(_, c)
             | LC::Terms3Const(_, c)
@@ -216,7 +229,6 @@ impl LC {
             | LC::Terms5Const(_, c) => Some(*c),
         }
     }
-
 
     /// Break a LC into (terms, len, const) for internal operations.
     const fn decompose(lc: LC) -> ([Term; 5], usize, i128) {
@@ -324,9 +336,7 @@ impl LC {
         match self {
             LC::Zero => LC::Zero,
             LC::Const(c) => LC::Const(c * multiplier),
-            LC::Terms1([t1]) => {
-                LC::Terms1([Term::new(t1.input_index, t1.coeff * multiplier)])
-            }
+            LC::Terms1([t1]) => LC::Terms1([Term::new(t1.input_index, t1.coeff * multiplier)]),
             LC::Terms2([t1, t2]) => LC::Terms2([
                 Term::new(t1.input_index, t1.coeff * multiplier),
                 Term::new(t2.input_index, t2.coeff * multiplier),
@@ -516,8 +526,7 @@ impl LC {
                 f(t3.input_index, t3.coeff);
                 f(t4.input_index, t4.coeff);
             }
-            LC::Terms5([t1, t2, t3, t4, t5])
-            | LC::Terms5Const([t1, t2, t3, t4, t5], _) => {
+            LC::Terms5([t1, t2, t3, t4, t5]) | LC::Terms5Const([t1, t2, t3, t4, t5], _) => {
                 f(t1.input_index, t1.coeff);
                 f(t2.input_index, t2.coeff);
                 f(t3.input_index, t3.coeff);
@@ -601,10 +610,7 @@ impl LC {
         for i in 0..self.num_terms() {
             if let Some(term) = self.term(i) {
                 if input_indices.contains(&term.input_index) {
-                    panic!(
-                        "Duplicate input index found in LC: {}",
-                        term.input_index
-                    );
+                    panic!("Duplicate input index found in LC: {}", term.input_index);
                 } else {
                     input_indices.push(term.input_index);
                 }
