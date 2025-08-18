@@ -11,11 +11,8 @@ use jolt_core::{
         },
         toom::FieldMulSmall,
     },
-    utils::{
-        math::Math,
-        thread::unsafe_allocate_zero_vec,
-        transcript::{KeccakTranscript, Transcript},
-    },
+    transcripts::{KeccakTranscript, Transcript},
+    utils::{math::Math, thread::unsafe_allocate_zero_vec},
 };
 use rand_core::RngCore;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
@@ -38,7 +35,7 @@ fn test_func_data<F: JoltField>(d: usize, t: usize) -> Vec<MultilinearPolynomial
     val_mle
 }
 
-fn benchmark_large_d_sumcheck<const D1: usize>(c: &mut Criterion, d: usize, t: usize) {
+fn benchmark_appendix_c_sumcheck<const D1: usize>(c: &mut Criterion, d: usize, t: usize) {
     let ra = test_func_data(d, t);
 
     let mut transcript = KeccakTranscript::new(b"test_transcript");
@@ -47,11 +44,7 @@ fn benchmark_large_d_sumcheck<const D1: usize>(c: &mut Criterion, d: usize, t: u
         compute_initial_eval_claim(&ra.iter().map(|x| &*x).collect::<Vec<_>>(), &r_cycle);
 
     c.bench_function(
-        &format!(
-            "large_d_optimization_ra_virtualization_{}_{}",
-            ra.len(),
-            r_cycle.len().pow2()
-        ),
+        &format!("appendix_c_sumcheck_{}_{}", ra.len(), r_cycle.len().pow2()),
         |b| {
             b.iter_with_setup(
                 || (ra.clone(), transcript.clone(), previous_claim.clone()),

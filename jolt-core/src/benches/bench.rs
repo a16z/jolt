@@ -185,10 +185,10 @@ where
     let T = 1 << 20;
 
     let task = move || {
-        benchmark_proof::<F, ProofTranscript, 31>(32, T);
-        benchmark_proof::<F, ProofTranscript, 15>(16, T);
-        benchmark_proof::<F, ProofTranscript, 7>(8, T);
-        benchmark_proof::<F, ProofTranscript, 3>(4, T);
+        compare_sumcheck_implementations::<F, ProofTranscript, 31>(32, T);
+        compare_sumcheck_implementations::<F, ProofTranscript, 15>(16, T);
+        compare_sumcheck_implementations::<F, ProofTranscript, 7>(8, T);
+        compare_sumcheck_implementations::<F, ProofTranscript, 3>(4, T);
     };
 
     tasks.push((
@@ -199,8 +199,10 @@ where
     tasks
 }
 
-fn benchmark_proof<F, ProofTranscript, const D_MINUS_ONE: usize>(D: usize, T: usize)
-where
+fn compare_sumcheck_implementations<F, ProofTranscript, const D_MINUS_ONE: usize>(
+    D: usize,
+    T: usize,
+) where
     F: FieldMulSmall,
     ProofTranscript: Transcript,
 {

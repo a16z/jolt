@@ -50,7 +50,6 @@ pub fn naive_eval<F: JoltField>(polys: &[(F, F)]) -> Vec<F> {
 /// {0, 1, -1, 2, -2, …, ⌊n/2⌋, -(n/2) (if n odd), ∞}  (total n+1 points).
 /// Each input polynomial is given as (p(0), p(1)).
 /// Infinity point means the forward difference p(1)-p(0).
-// ---- balanced-grid helpers ---------------------------------------------------
 fn balanced_grid<F>(n: usize) -> Vec<Option<F>>
 where
     F: From<u64> + core::ops::Neg<Output = F> + JoltField,

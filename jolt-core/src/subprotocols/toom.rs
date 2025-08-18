@@ -128,7 +128,7 @@ pub fn eval_toom3_2<F: FieldMulSmall>(polys: [[F; 4]; 3]) -> [F; 16] {
     let a = eval_toom2_2(polys[0], polys[1]);
     let idx3 = |x: usize, y: usize| -> usize { y * 3 + x };
     // Build 4×4 grid for A
-    let mut a_grid = [[F::from_u64(0); 4]; 4];
+    let mut a_grid = [[F::zero(); 4]; 4];
     // helper closure for x-extension
     #[inline]
     fn quad_x_m1<F: FieldMulSmall>(a0: F, a1: F, a_inf: F) -> F {
@@ -159,6 +159,8 @@ pub fn eval_toom3_2<F: FieldMulSmall>(polys: [[F; 4]; 3]) -> [F; 16] {
     let xs = [Some(F::zero()), Some(F::one()), Some(-F::one()), None];
     let ys = xs;
     let mut b_grid = [[F::zero(); 4]; 4];
+
+    // Not unrolling for optimization as the function is only used in a test currently.
     for (i_y, y_opt) in ys.iter().enumerate() {
         for (i_x, x_opt) in xs.iter().enumerate() {
             b_grid[i_y][i_x] = match (x_opt, y_opt) {
@@ -171,7 +173,7 @@ pub fn eval_toom3_2<F: FieldMulSmall>(polys: [[F; 4]; 3]) -> [F; 16] {
     }
 
     // Step 3: point-wise product
-    let mut out = [F::from_u64(0); 16];
+    let mut out = [F::zero(); 16];
     let mut k = 0usize;
     for y in 0..4 {
         for x in 0..4 {
@@ -215,7 +217,7 @@ pub fn eval_toom2_n<F: FieldMulSmall>(p_vals: &[F], q_vals: &[F]) -> Vec<F> {
     let len3 = pow3[n];
 
     // ---- embed the {0,1}^n table into a {0,1,∞}^n table -------------------
-    let mut embed = vec![F::from_u64(0); len3];
+    let mut embed = vec![F::zero(); len3];
     for (idx_bin, &val) in p_vals.iter().enumerate() {
         // convert binary index to base-3 index where bit → trit (0/1)
         let mut idx3 = 0usize;
@@ -230,7 +232,7 @@ pub fn eval_toom2_n<F: FieldMulSmall>(p_vals: &[F], q_vals: &[F]) -> Vec<F> {
     }
 
     // same for q
-    let mut embed_q = vec![F::from_u64(0); len3];
+    let mut embed_q = vec![F::zero(); len3];
     for (idx_bin, &val) in q_vals.iter().enumerate() {
         let mut idx3 = 0usize;
         let mut t = idx_bin;

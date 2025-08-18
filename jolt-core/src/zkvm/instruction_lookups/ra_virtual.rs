@@ -65,11 +65,6 @@ impl<F: JoltField> RASumCheck<F> {
         );
         let (r_address, _r_cycle) = r.split_at_r(LOG_K);
 
-        // Recreate the ExpandingTables from ReadRafSumcheck.
-        let mut v: [ExpandingTable<_>; RA_PER_LOG_M] =
-            std::array::from_fn(|_| ExpandingTable::<F>::new(K_CHUNK));
-        v.iter_mut().for_each(|v| v.reset(F::one()));
-
         assert!(r_address.len().is_multiple_of(LOG_M));
 
         r_address
@@ -127,9 +122,15 @@ impl<F: JoltField> RASumCheck<F> {
         debug_assert_eq!(r_address_chunks.len(), d);
 
         let ra_i_polys = Self::compute_ra_i_polys(trace, state_manager);
-        let E_table = (1..=T.log_2() - 1)
-            .map(|i| EqPolynomial::evals(&r_cycle[i..]))
+
+        // E_table[i] stores the evaluation of eq(r_cycle[i..], x), where i starts at 1.
+        let E_table = EqPolynomial::evals_cached_rev(&r_cycle)
+            .into_iter()
+            .skip(1)
+            .rev()
+            .skip(1)
             .collect::<Vec<_>>();
+
         let prover_state = RAProverState {
             ra_i_polys,
             E_table,
