@@ -15,6 +15,10 @@ pub struct ExpandingTable<F: JoltField> {
 }
 
 impl<F: JoltField> ExpandingTable<F> {
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
     /// Initializes an `ExpandingTable` with the given `capacity`.
     #[tracing::instrument(skip_all, name = "ExpandingTable::new")]
     pub fn new(capacity: usize) -> Self {

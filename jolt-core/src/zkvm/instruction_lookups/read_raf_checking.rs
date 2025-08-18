@@ -3,7 +3,7 @@ use std::{cell::RefCell, rc::Rc};
 use strum::{EnumCount, IntoEnumIterator};
 use tracer::instruction::RV32IMCycle;
 
-use super::{K_CHUNK, LOG_K, LOG_K_CHUNK, LOG_M, M, PHASES, RA_PER_LOG_M, WORD_SIZE};
+use super::{K_CHUNK, LOG_K, LOG_M, M, PHASES, RA_PER_LOG_M, WORD_SIZE};
 
 use crate::{
     field::JoltField,
@@ -66,7 +66,7 @@ struct ReadRafProverState<F: JoltField> {
 
     prefix_checkpoints: Vec<PrefixCheckpoint<F>>,
     suffix_polys: Vec<Vec<DensePolynomial<F>>>,
-    v: [ExpandingTable<F>; RA_PER_LOG_M],
+    v: ExpandingTable<F>,
     u_evals: Vec<F>,
     eq_r_cycle: MultilinearPolynomial<F>,
 
@@ -257,7 +257,7 @@ impl<'a, F: JoltField> ReadRafProverState<F> {
             is_interleaved_operands,
             prefix_checkpoints: vec![None.into(); Prefixes::COUNT],
             suffix_polys,
-            v: std::array::from_fn(|_| ExpandingTable::new(K_CHUNK)),
+            v: ExpandingTable::new(K_CHUNK.pow(RA_PER_LOG_M as u32)),
             u_evals: eq_r_cycle.clone(),
             eq_r_cycle: MultilinearPolynomial::from(eq_r_cycle),
             prefix_registry: PrefixRegistry::new(),
@@ -342,7 +342,9 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
                 s.spawn(|_| ps.identity_ps.bind(r_j));
                 s.spawn(|_| ps.right_operand_ps.bind(r_j));
                 s.spawn(|_| ps.left_operand_ps.bind(r_j));
-                s.spawn(|_| ps.v[(round % LOG_M) / LOG_K_CHUNK].update(r_j));
+                println!("ps new v len = {}", ps.v.len());
+
+                s.spawn(|_| ps.v.update(r_j));
             });
             {
                 if ps.r.len().is_multiple_of(2) {
@@ -536,13 +538,7 @@ impl<F: JoltField> ReadRafProverState<F> {
                 .for_each(|(k, u)| {
                     let (prefix, _) = k.split((PHASES - phase) * LOG_M);
                     let k_bound: usize = prefix % M;
-
-                    *u *= (0..RA_PER_LOG_M)
-                        .rev()
-                        .map(|i| (k_bound >> (LOG_K_CHUNK * i)) % K_CHUNK)
-                        .enumerate()
-                        .map(|(i, idx)| self.v[i][idx])
-                        .product();
+                    *u *= self.v[k_bound];
                 });
         }
 
@@ -595,40 +591,33 @@ impl<F: JoltField> ReadRafProverState<F> {
         self.right_operand_ps.init_P(&mut self.prefix_registry);
         self.left_operand_ps.init_P(&mut self.prefix_registry);
 
-        self.v.par_iter_mut().for_each(|v| v.reset(F::one()));
+        self.v.reset(F::one());
     }
 
     /// To be called at the end of each phase, after binding is done
     fn cache_phase(&mut self, phase: usize) {
         // By this time we have bounded the address variables for two more ra_i arrays, which we now use to update ra.
         // TODO: we can change the v table struct to store only one table and then speed up this part.
-        self.v
+        let ra = self
+            .lookup_indices
             .par_iter()
-            .enumerate()
-            .map(|(i, v)| {
-                self.lookup_indices
-                    .par_iter()
-                    .map(|k| {
-                        let (prefix, _) = k.split((PHASES - 1 - phase) * LOG_M);
-                        let k_bound: usize =
-                            ((prefix % M) >> (LOG_K_CHUNK * (RA_PER_LOG_M - 1 - i))) % K_CHUNK;
-                        v[k_bound]
-                    })
-                    .collect::<Vec<F>>()
+            .map(|k| {
+                let (prefix, _) = k.split((PHASES - 1 - phase) * LOG_M);
+                let k_bound: usize = prefix % M;
+                self.v[k_bound]
             })
-            .collect::<Vec<_>>()
-            .into_iter()
-            .for_each(|ra| {
-                if let Some(ra_acc) = self.ra_acc.as_mut() {
-                    assert_eq!(ra_acc.len(), ra.len());
-                    ra_acc
-                        .par_iter_mut()
-                        .zip(ra.into_par_iter())
-                        .for_each(|(ra, ra_i)| *ra *= ra_i);
-                } else {
-                    self.ra_acc = Some(ra);
-                }
-            });
+            .collect::<Vec<F>>();
+
+        if let Some(ra_acc) = self.ra_acc.as_mut() {
+            assert_eq!(ra_acc.len(), ra.len());
+            ra_acc
+                .par_iter_mut()
+                .zip(ra.into_par_iter())
+                .for_each(|(ra, ra_i)| *ra *= ra_i);
+        } else {
+            self.ra_acc = Some(ra);
+        }
+
         self.prefix_registry.update_checkpoints();
     }
 
