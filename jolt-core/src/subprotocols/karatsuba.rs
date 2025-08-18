@@ -301,11 +301,11 @@ pub fn kara_toom_16<F: JoltField>(ps: &[F; 32]) -> [[F; 5]; 5] {
 pub fn toom_3_inter<F: JoltField>(p: &[F; 5]) -> [F; 5] {
     let c0 = p[0];
     let c1 = -p[0] / F::from_u16(2) + p[1] - p[2] / F::from_u16(3) - p[3] / F::from_u16(6)
-        + p[4] * F::from_u16(2);
+        + double(&p[4]);
     let c2 = -p[0] + p[1] / F::from_u16(2) + p[2] / F::from_u16(2) - p[4];
     let c3 = p[0] / F::from_u16(2) - p[1] / F::from_u16(2) - p[2] / F::from_u16(6)
         + p[3] / F::from_u16(6)
-        - p[4] * F::from_u16(2);
+        - double(&p[2]);
     let c4 = p[4];
     [c0, c1, c2, c3, c4]
 }

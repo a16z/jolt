@@ -16,7 +16,9 @@ use crate::{
         opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN},
     },
     subprotocols::{
-        optimization::{compute_eq_mle_product_univariate, compute_mle_product_coeffs_katatsuba},
+        large_degree_sumcheck::{
+            compute_eq_mle_product_univariate, compute_mle_product_coeffs_katatsuba,
+        },
         sumcheck::SumcheckInstance,
     },
     transcripts::Transcript,

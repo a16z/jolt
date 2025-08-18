@@ -1,7 +1,7 @@
 use crate::field::JoltField;
 use crate::host;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
-use crate::subprotocols::optimization::{
+use crate::subprotocols::large_degree_sumcheck::{
     compute_initial_eval_claim, AppendixCSumCheckProof, LargeDMulSumCheckProof, NaiveSumCheckProof,
 };
 use crate::subprotocols::toom::FieldMulSmall;

@@ -264,7 +264,7 @@ pub fn compute_initial_eval_claim<F: JoltField>(
                 .product::<F>()
                 * eq.get_bound_coeff(j)
         })
-        .reduce(|| F::zero(), |running, new| running + new)
+        .sum()
 }
 
 pub struct LargeDMulSumCheckProof<F: JoltField, ProofTranscript: Transcript> {
@@ -291,13 +291,16 @@ impl<F: FieldMulSmall, ProofTranscript: Transcript> LargeDMulSumCheckProof<F, Pr
 
         let span = tracing::span!(tracing::Level::INFO, "Initialize E table");
         let _guard = span.enter();
-        let E_table = (1..=log_T - 1)
-            .map(|i| EqPolynomial::evals(&r_cycle[i..]))
+        let E_table = EqPolynomial::evals_cached_rev(r_cycle)
+            .into_iter()
+            .skip(1)
+            .rev()
+            .skip(1)
             .collect::<Vec<_>>();
         drop(_guard);
         drop(span);
 
-        let mut factor = F::one();
+        let mut eq_factor = F::one();
 
         let span = tracing::span!(tracing::Level::INFO, "Loop over rounds");
         let _guard = span.enter();
@@ -308,16 +311,16 @@ impl<F: FieldMulSmall, ProofTranscript: Transcript> LargeDMulSumCheckProof<F, Pr
 
             let mle_product_coeffs = match mle_vec.len() {
                 32 => compute_mle_product_coeffs_katatsuba::<F, 32, 33>(
-                    mle_vec, round, log_T, &factor, &E_table,
+                    mle_vec, round, log_T, &eq_factor, &E_table,
                 ),
                 16 => compute_mle_product_coeffs_katatsuba::<F, 16, 17>(
-                    mle_vec, round, log_T, &factor, &E_table,
+                    mle_vec, round, log_T, &eq_factor, &E_table,
                 ),
                 8 => compute_mle_product_coeffs_toom::<F, 8, 9>(
-                    mle_vec, round, log_T, &factor, &E_table,
+                    mle_vec, round, log_T, &eq_factor, &E_table,
                 ),
                 4 => compute_mle_product_coeffs_toom::<F, 4, 5>(
-                    mle_vec, round, log_T, &factor, &E_table,
+                    mle_vec, round, log_T, &eq_factor, &E_table,
                 ),
                 _ => panic!(
                     "Unsupported number of polynomials, got {} and expected 32, 16, or 8",
@@ -352,7 +355,7 @@ impl<F: FieldMulSmall, ProofTranscript: Transcript> LargeDMulSumCheckProof<F, Pr
             r.push(r_j);
 
             // Update factor by the multiplicative factor of wr_j + (1 - r_j)(1 - w) = (2w - 1)r_j + (1 - w), where w is the current bit of r_cycle
-            factor = factor.mul_1_optimized(
+            eq_factor = eq_factor.mul_1_optimized(
                 (r_cycle[round] + r_cycle[round] - F::one()) * r_j + (F::one() - r_cycle[round]),
             );
 
@@ -376,7 +379,7 @@ impl<F: FieldMulSmall, ProofTranscript: Transcript> LargeDMulSumCheckProof<F, Pr
         (
             Self {
                 sumcheck_proof: SumcheckInstanceProof::new(compressed_polys),
-                eq_claim: factor,
+                eq_claim: eq_factor,
                 mle_claims: mle_vec
                     .iter()
                     .map(|func| func.final_sumcheck_claim())
@@ -583,9 +586,11 @@ impl<F: JoltField, ProofTranscript: Transcript> AppendixCSumCheckProof<F, ProofT
         let _guard = span.enter();
         // Each table E_i stores the evaluations of eq(j_{>i}, r_cycle_{>i}) for each j_{>i}.
         // As we're binding from high to low, for each E_i we store eq(j_{<LogT - i}, r_cycle_{<+LogT - i}) instead.
-        // TODO: not sure how much saving we get from batch computing this, maybe too small?.
-        let E_table = (1..=T.log_2() - 1)
-            .map(|i| EqPolynomial::evals(&r_cycle[i..]))
+        let E_table = EqPolynomial::evals_cached_rev(r_cycle)
+            .into_iter()
+            .skip(1)
+            .rev()
+            .skip(1)
             .collect::<Vec<_>>();
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(D * T.log_2());
         let mut w: Vec<F> = Vec::with_capacity(D * T.log_2());
