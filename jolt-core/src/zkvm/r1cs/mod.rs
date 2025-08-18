@@ -3,3 +3,4 @@ pub mod inputs;
 pub mod key;
 pub mod ops;
 pub mod spartan;
+pub mod types;

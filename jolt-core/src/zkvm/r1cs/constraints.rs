@@ -75,6 +75,44 @@ pub const fn constraint_eq_conditional_lc(condition: LC, left: LC, right: LC) ->
     )
 }
 
+// =============================================================================
+// Typed constraints (for SVO domains)
+// =============================================================================
+
+#[derive(Clone, Copy, Debug)]
+pub enum AzType {
+    U5,
+    U64AndSign,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum BzType {
+    U64,
+    U64AndSign,
+    U128AndSign,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum CzType {
+    Zero,
+    U64,
+    U64AndSign,
+    U128AndSign,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct ConstraintTypeInfo {
+    pub a: AzType,
+    pub b: BzType,
+    pub c: CzType,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct TypedConstraint {
+    pub cons: Constraint,
+    pub ty: ConstraintTypeInfo,
+}
+
 /// Creates: left * right == result
 pub const fn constraint_prod_lc(left: LC, right: LC, result: LC) -> Constraint {
     Constraint::new(left, right, result)
@@ -143,10 +181,293 @@ macro_rules! r1cs_prod {
     }};
 }
 
+// ==========================
+// Typed macro variants
+// ==========================
+
+#[macro_export]
+macro_rules! r1cs_eq_conditional_typed {
+    (if { $($cond:tt)* } => ( $($left:tt)* ) == ( $($right:tt)* ) [with_types { a: $a_ty:expr, b: $b_ty:expr, c: $c_ty:expr }] ) => {{
+        $crate::zkvm::r1cs::constraints::TypedConstraint {
+            cons: $crate::zkvm::r1cs::constraints::constraint_eq_conditional_lc(
+                $crate::lc!($($cond)*),
+                $crate::lc!($($left)*),
+                $crate::lc!($($right)*),
+            ),
+            ty: $crate::zkvm::r1cs::constraints::ConstraintTypeInfo { a: $a_ty, b: $b_ty, c: $c_ty },
+        }
+    }};
+    (if { $($cond:tt)* } => ( $($left:tt)* ) == ( $($right:tt)* ) ) => {{
+        $crate::zkvm::r1cs::constraints::TypedConstraint {
+            cons: $crate::zkvm::r1cs::constraints::constraint_eq_conditional_lc(
+                $crate::lc!($($cond)*),
+                $crate::lc!($($left)*),
+                $crate::lc!($($right)*),
+            ),
+            ty: $crate::zkvm::r1cs::constraints::ConstraintTypeInfo { a: $crate::zkvm::r1cs::constraints::AzType::U5, b: $crate::zkvm::r1cs::constraints::BzType::U64, c: $crate::zkvm::r1cs::constraints::CzType::Zero },
+        }
+    }};
+}
+
+#[macro_export]
+macro_rules! r1cs_if_else_typed {
+    (if { $($cond:tt)* } => ( $($tval:tt)* ) else ( $($fval:tt)* ) => ( $($result:tt)* ) [with_types { a: $a_ty:expr, b: $b_ty:expr, c: $c_ty:expr }] ) => {{
+        $crate::zkvm::r1cs::constraints::TypedConstraint {
+            cons: $crate::zkvm::r1cs::constraints::constraint_if_else_lc(
+                $crate::lc!($($cond)*),
+                $crate::lc!($($tval)*),
+                $crate::lc!($($fval)*),
+                $crate::lc!($($result)*),
+            ),
+            ty: $crate::zkvm::r1cs::constraints::ConstraintTypeInfo { a: $a_ty, b: $b_ty, c: $c_ty },
+        }
+    }};
+    (if { $($cond:tt)* } => ( $($tval:tt)* ) else ( $($fval:tt)* ) => ( $($result:tt)* ) ) => {{
+        $crate::zkvm::r1cs::constraints::TypedConstraint {
+            cons: $crate::zkvm::r1cs::constraints::constraint_if_else_lc(
+                $crate::lc!($($cond)*),
+                $crate::lc!($($tval)*),
+                $crate::lc!($($fval)*),
+                $crate::lc!($($result)*),
+            ),
+            ty: $crate::zkvm::r1cs::constraints::ConstraintTypeInfo { a: $crate::zkvm::r1cs::constraints::AzType::U5, b: $crate::zkvm::r1cs::constraints::BzType::U64, c: $crate::zkvm::r1cs::constraints::CzType::U64 },
+        }
+    }};
+}
+
+#[macro_export]
+macro_rules! r1cs_prod_typed {
+    ( ( $($left:tt)* ) * ( $($right:tt)* ) == ( $($result:tt)* ) [with_types { a: $a_ty:expr, b: $b_ty:expr, c: $c_ty:expr }] ) => {{
+        $crate::zkvm::r1cs::constraints::TypedConstraint {
+            cons: $crate::zkvm::r1cs::constraints::constraint_prod_lc(
+                $crate::lc!($($left)*),
+                $crate::lc!($($right)*),
+                $crate::lc!($($result)*),
+            ),
+            ty: $crate::zkvm::r1cs::constraints::ConstraintTypeInfo { a: $a_ty, b: $b_ty, c: $c_ty },
+        }
+    }};
+    ( ( $($left:tt)* ) * ( $($right:tt)* ) == ( $($result:tt)* ) ) => {{
+        $crate::zkvm::r1cs::constraints::TypedConstraint {
+            cons: $crate::zkvm::r1cs::constraints::constraint_prod_lc(
+                $crate::lc!($($left)*),
+                $crate::lc!($($right)*),
+                $crate::lc!($($result)*),
+            ),
+            ty: $crate::zkvm::r1cs::constraints::ConstraintTypeInfo { a: $crate::zkvm::r1cs::constraints::AzType::U5, b: $crate::zkvm::r1cs::constraints::BzType::U64, c: $crate::zkvm::r1cs::constraints::CzType::U64 },
+        }
+    }};
+}
+
 /// Number of uniform R1CS constraints
 pub const NUM_R1CS_CONSTRAINTS: usize = 28;
 
-/// Static table of all 28 R1CS uniform constraints.
+/// Static table of all 28 R1CS uniform constraints (typed).
+pub static UNIFORM_R1CS_TYPED: [TypedConstraint; NUM_R1CS_CONSTRAINTS] = [
+    // if LeftOperandIsRs1Value { assert!(LeftInstructionInput == Rs1Value) }
+    r1cs_eq_conditional_typed!(
+        if { { JoltR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsRs1Value) } }
+        => ( { JoltR1CSInputs::LeftInstructionInput } ) == ( { JoltR1CSInputs::Rs1Value } )
+    ),
+    // if LeftOperandIsPC { assert!(LeftInstructionInput == UnexpandedPC) }
+    r1cs_eq_conditional_typed!(
+        if { { JoltR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsPC) } }
+        => ( { JoltR1CSInputs::LeftInstructionInput } ) == ( { JoltR1CSInputs::UnexpandedPC } )
+    ),
+    // if !(LeftOperandIsRs1Value || LeftOperandIsPC)  {
+    //     assert!(LeftInstructionInput == 0)
+    // }
+    // Note that LeftOperandIsRs1Value and LeftOperandIsPC are mutually exclusive flags
+    r1cs_eq_conditional_typed!(
+        if { { 1i128 } - { JoltR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsRs1Value) } - { JoltR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsPC) } }
+        => ( { JoltR1CSInputs::LeftInstructionInput } ) == ( { 0i128 } )
+    ),
+    // if RightOperandIsRs2Value { assert!(RightInstructionInput == Rs2Value) }
+    r1cs_eq_conditional_typed!(
+        if { { JoltR1CSInputs::OpFlags(CircuitFlags::RightOperandIsRs2Value) } }
+        => ( { JoltR1CSInputs::RightInstructionInput } ) == ( { JoltR1CSInputs::Rs2Value } )
+    ),
+    // if RightOperandIsImm { assert!(RightInstructionInput == Imm) }
+    r1cs_eq_conditional_typed!(
+        if { { JoltR1CSInputs::OpFlags(CircuitFlags::RightOperandIsImm) } }
+        => ( { JoltR1CSInputs::RightInstructionInput } ) == ( { JoltR1CSInputs::Imm } )
+    ),
+    // if !(RightOperandIsRs2Value || RightOperandIsImm)  {
+    //     assert!(RightInstructionInput == 0)
+    // }
+    // Note that RightOperandIsRs2Value and RightOperandIsImm are mutually exclusive flags
+    r1cs_eq_conditional_typed!(
+        if { { 1i128 } - { JoltR1CSInputs::OpFlags(CircuitFlags::RightOperandIsRs2Value) } - { JoltR1CSInputs::OpFlags(CircuitFlags::RightOperandIsImm) } }
+        => ( { JoltR1CSInputs::RightInstructionInput } ) == ( { 0i128 } )
+    ),
+    // if Load || Store {
+    //     assert!(RamAddress == Rs1Value + Imm)
+    // } else {
+    //     assert!(RamAddress == 0)
+    // }
+    r1cs_if_else_typed!(
+        if { { JoltR1CSInputs::OpFlags(CircuitFlags::Load) } + { JoltR1CSInputs::OpFlags(CircuitFlags::Store) } }
+        => ( { JoltR1CSInputs::Rs1Value } + { JoltR1CSInputs::Imm } )
+        else ( { 0i128 } )
+        => ( { JoltR1CSInputs::RamAddress } )
+    ),
+    // if Load {
+    //     assert!(RamReadValue == RamWriteValue)
+    // }
+    r1cs_eq_conditional_typed!(
+        if { { JoltR1CSInputs::OpFlags(CircuitFlags::Load) } }
+        => ( { JoltR1CSInputs::RamReadValue } ) == ( { JoltR1CSInputs::RamWriteValue } )
+    ),
+    // if Load {
+    //     assert!(RamReadValue == RdWriteValue)
+    // }
+    r1cs_eq_conditional_typed!(
+        if { { JoltR1CSInputs::OpFlags(CircuitFlags::Load) } }
+        => ( { JoltR1CSInputs::RamReadValue } ) == ( { JoltR1CSInputs::RdWriteValue } )
+    ),
+    // if Store {
+    //     assert!(Rs2Value == RamWriteValue)
+    // }
+    r1cs_eq_conditional_typed!(
+        if { { JoltR1CSInputs::OpFlags(CircuitFlags::Store) } }
+        => ( { JoltR1CSInputs::Rs2Value } ) == ( { JoltR1CSInputs::RamWriteValue } )
+    ),
+    // if AddOperands || SubtractOperands || MultiplyOperands {
+    //     // Lookup query is just RightLookupOperand
+    //     assert!(LeftLookupOperand == 0)
+    // } else {
+    //     assert!(LeftLookupOperand == LeftInstructionInput)
+    // }
+    r1cs_if_else_typed!(
+        if { { JoltR1CSInputs::OpFlags(CircuitFlags::AddOperands) } + { JoltR1CSInputs::OpFlags(CircuitFlags::SubtractOperands) } + { JoltR1CSInputs::OpFlags(CircuitFlags::MultiplyOperands) } }
+        => ( { 0i128 } )
+        else ( { JoltR1CSInputs::LeftInstructionInput } )
+        => ( { JoltR1CSInputs::LeftLookupOperand } )
+    ),
+    // If AddOperands {
+    //     assert!(RightLookupOperand == LeftInstructionInput + RightInstructionInput)
+    // }
+    r1cs_eq_conditional_typed!(
+        if { { JoltR1CSInputs::OpFlags(CircuitFlags::AddOperands) } }
+        => ( { JoltR1CSInputs::RightLookupOperand } ) == ( { JoltR1CSInputs::LeftInstructionInput } + { JoltR1CSInputs::RightInstructionInput } )
+    ),
+    // If SubtractOperands {
+    //     assert!(RightLookupOperand == LeftInstructionInput - RightInstructionInput)
+    // }
+    // Converts from unsigned to twos-complement representation
+    r1cs_eq_conditional_typed!(
+        if { { JoltR1CSInputs::OpFlags(CircuitFlags::SubtractOperands) } }
+        => ( { JoltR1CSInputs::RightLookupOperand } ) == ( { JoltR1CSInputs::LeftInstructionInput } - { JoltR1CSInputs::RightInstructionInput } + { 0x10000000000000000i128 } )
+    ),
+    // if MultiplyOperands {
+    //     assert!(RightLookupOperand == Rs1Value * Rs2Value)
+    // }
+    r1cs_prod_typed!(
+        ({ JoltR1CSInputs::RightInstructionInput }) * ({ JoltR1CSInputs::LeftInstructionInput })
+            == ({ JoltR1CSInputs::Product })
+    ),
+    r1cs_eq_conditional_typed!(
+        if { { JoltR1CSInputs::OpFlags(CircuitFlags::MultiplyOperands) } }
+        => ( { JoltR1CSInputs::RightLookupOperand } ) == ( { JoltR1CSInputs::Product } )
+    ),
+    // if !(AddOperands || SubtractOperands || MultiplyOperands || Advice) {
+    //     assert!(RightLookupOperand == RightInstructionInput)
+    // }
+    // Arbitrary untrusted advice goes in right lookup operand
+    r1cs_eq_conditional_typed!(
+        if { { 1i128 } - { JoltR1CSInputs::OpFlags(CircuitFlags::AddOperands) } - { JoltR1CSInputs::OpFlags(CircuitFlags::SubtractOperands) } - { JoltR1CSInputs::OpFlags(CircuitFlags::MultiplyOperands) } - { JoltR1CSInputs::OpFlags(CircuitFlags::Advice) } }
+        => ( { JoltR1CSInputs::RightLookupOperand } ) == ( { JoltR1CSInputs::RightInstructionInput } )
+    ),
+    // if Assert {
+    //     assert!(LookupOutput == 1)
+    // }
+    r1cs_eq_conditional_typed!(
+        if { { JoltR1CSInputs::OpFlags(CircuitFlags::Assert) } }
+        => ( { JoltR1CSInputs::LookupOutput } ) == ( { 1i128 } )
+    ),
+    // if Rd != 0 && WriteLookupOutputToRD {
+    //     assert!(RdWriteValue == LookupOutput)
+    // }
+    r1cs_prod_typed!(
+        ({ JoltR1CSInputs::Rd })
+            * ({ JoltR1CSInputs::OpFlags(CircuitFlags::WriteLookupOutputToRD) })
+            == ({ JoltR1CSInputs::WriteLookupOutputToRD })
+    ),
+    r1cs_eq_conditional_typed!(
+        if { { JoltR1CSInputs::WriteLookupOutputToRD } }
+        => ( { JoltR1CSInputs::RdWriteValue } ) == ( { JoltR1CSInputs::LookupOutput } )
+    ),
+    // if Rd != 0 && Jump {
+    //     if !isCompressed {
+    //          assert!(RdWriteValue == UnexpandedPC + 4)
+    //     } else {
+    //          assert!(RdWriteValue == UnexpandedPC + 2)
+    //     }
+    // }
+    r1cs_prod_typed!(
+        ({ JoltR1CSInputs::Rd }) * ({ JoltR1CSInputs::OpFlags(CircuitFlags::Jump) })
+            == ({ JoltR1CSInputs::WritePCtoRD })
+    ),
+    r1cs_eq_conditional_typed!(
+        if { { JoltR1CSInputs::WritePCtoRD } }
+        => ( { JoltR1CSInputs::RdWriteValue } ) == ( { JoltR1CSInputs::UnexpandedPC } + { 4i128 } - { 2 * JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed) } )
+    ),
+    // if Jump && !NextIsNoop {
+    //     assert!(NextUnexpandedPC == LookupOutput)
+    // }
+    r1cs_prod_typed!(
+        ({ JoltR1CSInputs::OpFlags(CircuitFlags::Jump) })
+            * ({ 1i128 } - { JoltR1CSInputs::NextIsNoop })
+            == ({ JoltR1CSInputs::ShouldJump })
+    ),
+    r1cs_eq_conditional_typed!(
+        if { { JoltR1CSInputs::ShouldJump } }
+        => ( { JoltR1CSInputs::NextUnexpandedPC } ) == ( { JoltR1CSInputs::LookupOutput } )
+    ),
+    // if Branch && LookupOutput {
+    //     assert!(NextUnexpandedPC == UnexpandedPC + Imm)
+    // }
+    r1cs_prod_typed!(
+        ({ JoltR1CSInputs::OpFlags(CircuitFlags::Branch) }) * ({ JoltR1CSInputs::LookupOutput })
+            == ({ JoltR1CSInputs::ShouldBranch })
+    ),
+    r1cs_eq_conditional_typed!(
+        if { { JoltR1CSInputs::ShouldBranch } }
+        => ( { JoltR1CSInputs::NextUnexpandedPC } ) == ( { JoltR1CSInputs::UnexpandedPC } + { JoltR1CSInputs::Imm } )
+    ),
+    // if !(ShouldBranch || Jump) {
+    //     if DoNotUpdatePC {
+    //         assert!(NextUnexpandedPC == UnexpandedPC)
+    //     } else if isCompressed {
+    //         assert!(NextUnexpandedPC == UnexpandedPC + 2)
+    //     } else {
+    //         assert!(NextUnexpandedPC == UnexpandedPC + 4)
+    //     }
+    // }
+    // Note that ShouldBranch and Jump instructions are mutually exclusive
+    r1cs_prod_typed!(
+        ({ JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed) })
+            * ({ JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC) })
+            == ({ JoltR1CSInputs::CompressedDoNotUpdateUnexpPC })
+    ),
+    r1cs_eq_conditional_typed!(
+        if { { 1i128 } - { JoltR1CSInputs::ShouldBranch } - { JoltR1CSInputs::OpFlags(CircuitFlags::Jump) } }
+        => ( { JoltR1CSInputs::NextUnexpandedPC } )
+           == ( { JoltR1CSInputs::UnexpandedPC } + { 4i128 }
+                - { 4 * JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC) }
+                - { 2 * JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed) }
+                + { 2 * JoltR1CSInputs::CompressedDoNotUpdateUnexpPC } )
+    ),
+    // if Inline {
+    //     assert!(NextPC == PC + 1)
+    // }
+    r1cs_eq_conditional_typed!(
+        if { { JoltR1CSInputs::OpFlags(CircuitFlags::InlineSequenceInstruction) } }
+        => ( { JoltR1CSInputs::NextPC } ) == ( { JoltR1CSInputs::PC } + { 1i128 } )
+    ),
+];
+
+/// Legacy untyped table kept for compatibility while callers migrate.
 pub static UNIFORM_R1CS: [Constraint; NUM_R1CS_CONSTRAINTS] = [
     // if LeftOperandIsRs1Value { assert!(LeftInstructionInput == Rs1Value) }
     r1cs_eq_conditional!(

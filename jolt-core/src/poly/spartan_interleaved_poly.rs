@@ -9,7 +9,7 @@ use crate::{
         math::Math,
         small_value::{svo_helpers, NUM_SVO_ROUNDS},
     },
-    zkvm::r1cs::{constraints::Constraint, inputs::WitnessRowAccessor},
+    zkvm::r1cs::{constraints::{Constraint, TypedConstraint, UNIFORM_R1CS_TYPED}, inputs::WitnessRowAccessor, types::{AzExtendedEval, BzExtendedEval, SVOProductValue, UnreducedProduct}},
 };
 use rayon::prelude::*;
 

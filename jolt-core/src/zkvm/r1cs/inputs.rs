@@ -15,6 +15,8 @@ use crate::zkvm::JoltProverPreprocessing;
 
 use super::key::UniformSpartanKey;
 use super::spartan::UniformSpartanProof;
+use super::constraints::{TypedConstraint, ConstraintTypeInfo, AzType, BzType, CzType};
+use super::types::{AzValue, BzValue, CzValue, AzExtendedEval, BzExtendedEval};
 
 use crate::field::JoltField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -426,6 +428,53 @@ pub fn compute_claimed_witness_evals<F: JoltField>(
         }
     }
     claims
+}
+
+// =====================================================================================
+// Streaming typed evaluation helpers (SVO types) co-located with witness accessor
+// =====================================================================================
+
+#[allow(unused_variables)]
+pub fn lc_eval_row_to_typed<F: JoltField>(
+    typed: &TypedConstraint,
+    accessor: &dyn WitnessRowAccessor<F>,
+    row: usize,
+) -> (AzValue, BzValue, CzValue) {
+    let _a = typed.cons.a.evaluate_row_with(accessor, row);
+    let _b = typed.cons.b.evaluate_row_with(accessor, row);
+    let _c = typed.cons.c.evaluate_row_with(accessor, row);
+    // TODO: implement conversions based on typed.ty.{a,b,c}
+    (AzValue::U5(0), BzValue::U64(0), CzValue::Zero)
+}
+
+#[allow(unused_variables)]
+pub fn accum_az_ext(acc: &mut AzExtendedEval, row: AzValue, is_positive: bool) {
+    match acc {
+        AzExtendedEval::I8(v) => {
+            *v = v.saturating_add(if is_positive { 1 } else { -1 });
+        }
+        AzExtendedEval::I128(v) => {
+            *v = v.saturating_add(if is_positive { 1 } else { -1 });
+        }
+    }
+}
+
+#[allow(unused_variables)]
+pub fn accum_bz_ext(acc: &mut BzExtendedEval, row: BzValue, is_positive: bool) {
+    match acc {
+        BzExtendedEval::L1 { val, is_positive: s } => {
+            *val = val.saturating_add(1);
+            *s = *s && is_positive;
+        }
+        BzExtendedEval::L2 { val, is_positive: s } => {
+            val[0] = val[0].saturating_add(1);
+            *s = *s && is_positive;
+        }
+        BzExtendedEval::L3 { val, is_positive: s } => {
+            val[0] = val[0].saturating_add(1);
+            *s = *s && is_positive;
+        }
+    }
 }
 
 /// Single-pass generation of UnexpandedPC(t), PC(t), and IsNoop(t) witnesses.
