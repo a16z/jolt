@@ -28,10 +28,10 @@ fn eval_linear<F: JoltField>(poly: &(F, F), n: usize) -> Vec<F> {
     res
 }
 
-// given a vector of n linear polynomials
-// [(p_1(0), p_1(1)), ..., (p_n(0), p_n(1))],
-// return a vector containing n + 1 elements corresponding to the evaluation of
-// prod_i p_i(x) at x = 0, 1, ..., n
+/// Given a vector of n linear polynomials
+/// [(p_1(0), p_1(1)), ..., (p_n(0), p_n(1))],
+/// return a vector containing n + 1 elements corresponding to the evaluation of
+/// prod_i p_i(x) at x = 0, 1, ..., n
 pub fn naive_eval<F: JoltField>(polys: &[(F, F)]) -> Vec<F> {
     // legacy version on points 0..n
     // kept for reference
