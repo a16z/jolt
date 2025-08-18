@@ -8,14 +8,6 @@ use super::inputs::JoltR1CSInputs;
 use crate::field::JoltField;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 
-/// Helper for JoltR1CSInputs to get indices
-impl JoltR1CSInputs {
-    /// Convert this input to a usable index
-    pub const fn idx(self) -> usize {
-        self.to_index_const()
-    }
-}
-
 /// A single term in a linear combination: (input_index, coefficient)
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ConstTerm {
@@ -625,11 +617,11 @@ pub const fn lc_mul_const(a: ConstLC, k: i128) -> ConstLC {
 }
 
 pub const fn lc_from_input(inp: JoltR1CSInputs) -> ConstLC {
-    ConstLC::single_term(inp.idx(), 1)
+    ConstLC::single_term(inp.to_index(), 1)
 }
 
 pub const fn lc_from_input_with_coeff(inp: JoltR1CSInputs, coeff: i128) -> ConstLC {
-    ConstLC::single_term(inp.idx(), coeff)
+    ConstLC::single_term(inp.to_index(), coeff)
 }
 
 pub const fn lc_const(k: i128) -> ConstLC {

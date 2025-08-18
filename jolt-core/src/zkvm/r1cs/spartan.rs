@@ -10,7 +10,8 @@ use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
 use crate::poly::opening_proof::{
-    OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
+    OpeningId, OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator,
+    BIG_ENDIAN,
 };
 use crate::utils::math::Math;
 use crate::zkvm::dag::stage::SumcheckStages;
@@ -19,7 +20,7 @@ use crate::zkvm::instruction::CircuitFlags;
 use crate::zkvm::r1cs::constraints::UNIFORM_R1CS;
 use crate::zkvm::r1cs::inputs::{JoltR1CSInputs, ALL_R1CS_INPUTS, COMMITTED_R1CS_INPUTS};
 use crate::zkvm::r1cs::key::UniformSpartanKey;
-use crate::zkvm::witness::VirtualPolynomial;
+use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 
 use crate::transcripts::Transcript;
 use crate::utils::small_value::NUM_SVO_ROUNDS;
@@ -154,7 +155,7 @@ impl<F: JoltField> InnerSumcheck<F> {
             .for_each(|(r1cs_input, dest)| {
                 let accumulator = state_manager.get_prover_accumulator();
                 let accumulator = accumulator.borrow();
-                let key = r1cs_input.to_opening_id().expect(
+                let key = OpeningId::try_from(&r1cs_input).expect(
                     "Failed to map R1CS input to OpeningId (neither virtual nor committed)",
                 );
                 let (_, claim) = accumulator
@@ -706,7 +707,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         // proven using the PCS opening proof, which we add for future opening proof here
         let committed_polys: Vec<_> = COMMITTED_R1CS_INPUTS
             .iter()
-            .map(|input| input.to_committed_polynomial().ok().unwrap())
+            .map(|input| CommittedPolynomial::try_from(input).ok().unwrap())
             .collect();
         let committed_poly_claims: Vec<_> = COMMITTED_R1CS_INPUTS
             .iter()
@@ -727,7 +728,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
             // Skip if it's a committed input (already added above)
             if !COMMITTED_R1CS_INPUTS.contains(input) {
                 accumulator.borrow_mut().append_virtual(
-                    input.to_virtual_polynomial().ok().unwrap(),
+                    VirtualPolynomial::try_from(input).ok().unwrap(),
                     SumcheckId::SpartanOuter,
                     OpeningPoint::new(r_cycle.to_vec()),
                     *eval,
@@ -831,7 +832,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         // proven using the PCS opening proof, which we add for future opening proof here
         let committed_polys: Vec<_> = COMMITTED_R1CS_INPUTS
             .iter()
-            .map(|input| input.to_committed_polynomial().ok().unwrap())
+            .map(|input| CommittedPolynomial::try_from(input).ok().unwrap())
             .collect();
         accumulator.borrow_mut().append_dense(
             committed_polys,
@@ -843,7 +844,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
             // Skip if it's a committed input (already added above)
             if !COMMITTED_R1CS_INPUTS.contains(input) {
                 accumulator.borrow_mut().append_virtual(
-                    input.to_virtual_polynomial().ok().unwrap(),
+                    VirtualPolynomial::try_from(input).ok().unwrap(),
                     SumcheckId::SpartanOuter,
                     OpeningPoint::new(r_cycle.to_vec()),
                 );
@@ -932,7 +933,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
                 let accumulator = accumulator.borrow();
                 let (_, claim) = accumulator
                     .openings
-                    .get(&r1cs_input.to_opening_id().ok().unwrap())
+                    .get(&OpeningId::try_from(&r1cs_input).ok().unwrap())
                     .unwrap();
                 *claim
             })
