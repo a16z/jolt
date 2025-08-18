@@ -4,8 +4,9 @@ set -euo pipefail
 echo "Generating fixtures files..."
 cargo run --release -p fibonacci -- --save
 
-FIXTURE_DIR=./tests/fixtures
-BYTE_RS_DIR=./tests
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+FIXTURE_DIR=$SCRIPT_DIR/tests/fixtures
+BYTE_RS_DIR=$SCRIPT_DIR/tests
 
 # input/output name pairs: ("input_filename" "output_filename.rs")
 FILES=(
