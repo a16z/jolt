@@ -20,7 +20,7 @@ use crate::{
         sumcheck::SumcheckInstance,
     },
     transcripts::Transcript,
-    utils::{expanding_table::ExpandingTable, lookup_bits::LookupBits, math::Math},
+    utils::{lookup_bits::LookupBits, math::Math},
     zkvm::{
         dag::state_manager::StateManager,
         instruction::LookupQuery,
@@ -124,7 +124,7 @@ impl<F: JoltField> RASumCheck<F> {
         let ra_i_polys = Self::compute_ra_i_polys(trace, state_manager);
 
         // E_table[i] stores the evaluation of eq(r_cycle[i..], x), where i starts at 1.
-        let E_table = EqPolynomial::evals_cached_rev(&r_cycle)
+        let E_table = EqPolynomial::evals_cached_rev(r_cycle)
             .into_iter()
             .skip(1)
             .rev()
