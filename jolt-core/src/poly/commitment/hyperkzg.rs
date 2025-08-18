@@ -158,7 +158,9 @@ where
     let scalars = v.iter().flatten().collect::<Vec<&P::ScalarField>>();
     transcript.append_scalars::<P::ScalarField>(&scalars);
     let q_powers: Vec<P::ScalarField> = transcript.challenge_scalar_powers(f.len());
-    let B = MultilinearPolynomial::linear_combination(&f.iter().collect::<Vec<_>>(), &q_powers);
+    let f_arc: Vec<Arc<MultilinearPolynomial<P::ScalarField>>> =
+        f.iter().map(|poly| Arc::new(poly.clone())).collect();
+    let B = MultilinearPolynomial::linear_combination(f_arc, &q_powers);
 
     // Now open B at u0, ..., u_{t-1}
     let w = kzg_batch_open_no_rem(&B, u, pk);

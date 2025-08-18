@@ -416,7 +416,7 @@ impl CommittedPolynomial {
                         let indices = std::mem::take(&mut batch.instruction_ra[*i]);
                         let one_hot =
                             OneHotPolynomial::from_indices(indices, instruction_lookups::K_CHUNK);
-                        results.insert(*poly, MultilinearPolynomial::OneHot(Arc::new(one_hot)));
+                        results.insert(*poly, MultilinearPolynomial::OneHot(one_hot));
                     }
                 }
                 CommittedPolynomial::BytecodeRa(i) => {
@@ -427,14 +427,14 @@ impl CommittedPolynomial {
                         let log_K_chunk = log_K.div_ceil(d);
                         let K_chunk = 1 << log_K_chunk;
                         let one_hot = OneHotPolynomial::from_indices(indices, K_chunk);
-                        results.insert(*poly, MultilinearPolynomial::OneHot(Arc::new(one_hot)));
+                        results.insert(*poly, MultilinearPolynomial::OneHot(one_hot));
                     }
                 }
                 CommittedPolynomial::RamRa(i) => {
                     if *i < ram_d {
                         let indices = std::mem::take(&mut batch.ram_ra[*i]);
                         let one_hot = OneHotPolynomial::from_indices(indices, DTH_ROOT_OF_K);
-                        results.insert(*poly, MultilinearPolynomial::OneHot(Arc::new(one_hot)));
+                        results.insert(*poly, MultilinearPolynomial::OneHot(one_hot));
                     }
                 }
             }
@@ -543,9 +543,7 @@ impl CommittedPolynomial {
                         Some((pc >> (log_K_chunk * (d - 1 - i))) % K_chunk)
                     })
                     .collect();
-                MultilinearPolynomial::OneHot(Arc::new(OneHotPolynomial::from_indices(
-                    addresses, K_chunk,
-                )))
+                MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(addresses, K_chunk))
             }
             CommittedPolynomial::RamRa(i) => {
                 let d = self.ram_d();
@@ -563,10 +561,10 @@ impl CommittedPolynomial {
                         })
                     })
                     .collect();
-                MultilinearPolynomial::OneHot(Arc::new(OneHotPolynomial::from_indices(
+                MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(
                     addresses,
                     DTH_ROOT_OF_K,
-                )))
+                ))
             }
             CommittedPolynomial::RdInc => {
                 let coeffs: Vec<i64> = trace
@@ -608,10 +606,10 @@ impl CommittedPolynomial {
                         Some(k as usize)
                     })
                     .collect();
-                MultilinearPolynomial::OneHot(Arc::new(OneHotPolynomial::from_indices(
+                MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(
                     addresses,
                     instruction_lookups::K_CHUNK,
-                )))
+                ))
             }
         }
     }

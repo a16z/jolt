@@ -106,7 +106,7 @@ where
 }
 
 fn fibonacci() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
-    prove_example("fibonacci-guest", postcard::to_stdvec(&400000u32).unwrap())
+    prove_example("fibonacci-guest", postcard::to_stdvec(&80000u32).unwrap())
 }
 
 fn sha2() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {

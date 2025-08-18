@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::multilinear_polynomial::PolynomialEvaluation;
@@ -124,10 +125,10 @@ impl<F: JoltField> RASumcheck<F> {
         let rlc_coeffs = [F::one(), gamma, gamma.square()];
 
         let eq_poly = MultilinearPolynomial::linear_combination(
-            &[
-                &EqPolynomial::evals(r_cycle_val).into(),
-                &EqPolynomial::evals(r_cycle_rw).into(),
-                &EqPolynomial::evals(r_cycle_raf).into(),
+            vec![
+                Arc::new(EqPolynomial::evals(r_cycle_val).into()),
+                Arc::new(EqPolynomial::evals(r_cycle_rw).into()),
+                Arc::new(EqPolynomial::evals(r_cycle_raf).into()),
             ],
             &rlc_coeffs,
         );

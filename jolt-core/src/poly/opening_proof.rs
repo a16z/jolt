@@ -388,14 +388,14 @@ where
 
             if let Some(prover_state) = self.prover_state.as_mut() {
                 let polynomials_map = polynomials_map.unwrap();
-                let polynomials: Vec<_> = self
+                let polynomials: Vec<Arc<MultilinearPolynomial<F>>> = self
                     .polynomials
                     .par_iter()
-                    .map(|label| polynomials_map.get(label).unwrap())
+                    .map(|label| Arc::new(polynomials_map.get(label).unwrap().clone()))
                     .collect();
 
                 let rlc_poly =
-                    MultilinearPolynomial::linear_combination(&polynomials, &self.rlc_coeffs);
+                    MultilinearPolynomial::linear_combination(polynomials, &self.rlc_coeffs);
                 debug_assert_eq!(rlc_poly.evaluate(&self.opening_point), reduced_claim);
                 let num_vars = rlc_poly.get_num_vars();
 
@@ -431,8 +431,8 @@ where
             match prover_state {
                 ProverOpening::Dense(opening) => opening.polynomial = Some(poly.clone()),
                 ProverOpening::OneHot(opening) => {
-                    if let MultilinearPolynomial::OneHot(poly_arc) = poly {
-                        opening.initialize(poly_arc.as_ref().clone());
+                    if let MultilinearPolynomial::OneHot(one_hot) = poly {
+                        opening.initialize(one_hot.clone());
                     } else {
                         panic!("Unexpected non-one-hot polynomial")
                     }
@@ -797,10 +797,10 @@ where
                 .map(|(k, v)| (v, polynomials.remove(k).unwrap()))
                 .unzip();
 
-            MultilinearPolynomial::linear_combination(
-                &polynomials.iter().collect::<Vec<_>>(),
-                &coeffs,
-            )
+            let polynomials_arc: Vec<Arc<MultilinearPolynomial<F>>> =
+                polynomials.into_iter().map(Arc::new).collect();
+
+            MultilinearPolynomial::linear_combination(polynomials_arc, &coeffs)
         };
 
         #[cfg(test)]

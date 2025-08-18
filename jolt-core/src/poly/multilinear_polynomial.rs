@@ -25,7 +25,7 @@ pub enum MultilinearPolynomial<F: JoltField> {
     U64Scalars(CompactPolynomial<u64, F>),
     I64Scalars(CompactPolynomial<i64, F>),
     RLC(RLCPolynomial<F>),
-    OneHot(Arc<OneHotPolynomial<F>>),
+    OneHot(OneHotPolynomial<F>),
 }
 
 impl<F: JoltField> Valid for MultilinearPolynomial<F> {
@@ -112,7 +112,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
     }
 
     #[tracing::instrument(skip_all)]
-    pub fn linear_combination(polynomials: &[&Self], coefficients: &[F]) -> Self {
+    pub fn linear_combination(polynomials: Vec<Arc<Self>>, coefficients: &[F]) -> Self {
         debug_assert_eq!(polynomials.len(), coefficients.len());
 
         // If there's at least one sparse polynomial in `polynomials`, the linear
@@ -120,13 +120,13 @@ impl<F: JoltField> MultilinearPolynomial<F> {
         // be represented by a `DensePolynomial`.
         if polynomials
             .iter()
-            .any(|poly| matches!(poly, MultilinearPolynomial::OneHot(_)))
+            .any(|poly| matches!(poly.as_ref(), MultilinearPolynomial::OneHot(_)))
         {
             let mut result = RLCPolynomial::<F>::new();
             let dense_indices: Vec<usize> = polynomials
                 .iter()
                 .enumerate()
-                .filter(|(_, p)| !matches!(p, MultilinearPolynomial::OneHot(_)))
+                .filter(|(_, p)| !matches!(p.as_ref(), MultilinearPolynomial::OneHot(_)))
                 .map(|(i, _)| i)
                 .collect();
 
@@ -138,7 +138,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
                     .map(|i| {
                         let mut acc = F::zero();
                         for &poly_idx in &dense_indices {
-                            let poly = polynomials[poly_idx];
+                            let poly = polynomials[poly_idx].as_ref();
                             let coeff = coefficients[poly_idx];
 
                             if i < poly.original_len() {
@@ -169,9 +169,9 @@ impl<F: JoltField> MultilinearPolynomial<F> {
                     })
                     .collect();
             }
-            for (i, poly) in polynomials.iter().enumerate() {
-                if let MultilinearPolynomial::OneHot(one_hot) = poly {
-                    result.one_hot_rlc.push((coefficients[i], one_hot.clone()));
+            for (i, poly) in polynomials.into_iter().enumerate() {
+                if matches!(poly.as_ref(), MultilinearPolynomial::OneHot(_)) {
+                    result.one_hot_rlc.push((coefficients[i], poly));
                 }
             }
             let result = MultilinearPolynomial::RLC(result);
@@ -180,7 +180,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
         }
         let max_length = polynomials
             .iter()
-            .map(|poly| poly.original_len())
+            .map(|poly| poly.as_ref().original_len())
             .max()
             .unwrap();
 
@@ -189,8 +189,8 @@ impl<F: JoltField> MultilinearPolynomial<F> {
             .map(|i| {
                 let mut acc = F::zero();
                 for (coeff, poly) in coefficients.iter().zip(polynomials.iter()) {
-                    if i < poly.original_len() {
-                        match poly {
+                    if i < poly.as_ref().original_len() {
+                        match poly.as_ref() {
                             MultilinearPolynomial::LargeScalars(p) => {
                                 acc += p.evals_ref()[i].mul_01_optimized(*coeff);
                             }
