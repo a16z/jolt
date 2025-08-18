@@ -19,7 +19,7 @@ fn verify_proof() {
     println!("Verification took: {} ms", duration.as_millis());
     assert!(
         verifier.is_ok(),
-        "Verifier failed: {:?}. (If the prover/verifier implementation changed, you may need to update the test fixtures by running `./update_test_fixtures.sh`.)",
+        "Verifier failed: {:?}. (If the prover/verifier implementation changed, you may need to update the test fixtures by running `./get-fixtures.sh`.)",
         verifier.err()
     );
 }
