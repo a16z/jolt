@@ -2,9 +2,10 @@
 //! Allows printing strings from within the emulated environment
 
 // Constants to signal the emulator
-pub const JOLT_PRINT_ECALL_NUM: i32 = 0x5052494E; // "P R I N" in hex (ASCII)
-pub const JOLT_PRINT_STRING: i32 = 1;
-pub const JOLT_PRINT_LINE: i32 = 2; // with newline
+// PRI in hex (ASCII)
+pub const JOLT_PRINT_ECALL_NUM: u32 = 0x505249;
+pub const JOLT_PRINT_STRING: u32 = 1;
+pub const JOLT_PRINT_LINE: u32 = 2; // with newline
 
 #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
 mod riscv_specific {
@@ -13,18 +14,18 @@ mod riscv_specific {
     pub fn print(text: &str) {
         let text_ptr = text.as_ptr() as usize;
         let text_len = text.len();
-        emit_jolt_print_ecall(text_ptr as i32, text_len as i32, JOLT_PRINT_STRING);
+        emit_jolt_print_ecall(text_ptr as u32, text_len as u32, JOLT_PRINT_STRING);
     }
 
     pub fn println(text: &str) {
         let text_ptr = text.as_ptr() as usize;
         let text_len = text.len();
-        emit_jolt_print_ecall(text_ptr as i32, text_len as i32, JOLT_PRINT_LINE);
+        emit_jolt_print_ecall(text_ptr as u32, text_len as u32, JOLT_PRINT_LINE);
     }
 
     // inserts an ECALL directly into the compiled code
     #[inline(always)]
-    fn emit_jolt_print_ecall(text_ptr: i32, text_len: i32, print_type: i32) {
+    fn emit_jolt_print_ecall(text_ptr: u32, text_len: u32, print_type: u32) {
         #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
         unsafe {
             core::arch::asm!(
