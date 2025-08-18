@@ -14,7 +14,8 @@ use crate::{
     field::JoltField,
     poly::{commitment::commitment_scheme::CommitmentScheme, eq_poly::EqPolynomial},
     subprotocols::sumcheck::SumcheckInstance,
-    utils::{thread::unsafe_allocate_zero_vec, transcript::Transcript},
+    transcripts::Transcript,
+    utils::thread::unsafe_allocate_zero_vec,
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS};

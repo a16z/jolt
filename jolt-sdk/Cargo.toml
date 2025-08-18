@@ -14,6 +14,7 @@ edition = "2021"
 
 [features]
 host = [
+    "jolt-platform/std",
     "dep:tracer",
     "dep:common",
     "dep:jolt-core",
@@ -23,10 +24,12 @@ host = [
 ]
 guest-std = [
     "postcard/use-std",
+    "jolt-platform/std",
     "jolt-sdk-macros/guest-std",
 ]
 
 [dependencies]
+jolt-platform = { path = "../jolt-platform" }
 postcard = { version = "1.0.8", default-features = false }
 ark-ec = { version = "0.5.0", default-features = false, optional = true }
 ark-bn254 = { version = "0.5.0", default-features = false, optional = true }

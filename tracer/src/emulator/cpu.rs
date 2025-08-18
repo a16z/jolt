@@ -16,6 +16,10 @@ use super::terminal::Terminal;
 
 #[cfg(not(feature = "std"))]
 use alloc::{boxed::Box, format, rc::Rc, string::String, vec::Vec};
+use jolt_platform::{
+    JOLT_CYCLE_MARKER_END, JOLT_CYCLE_MARKER_START, JOLT_CYCLE_TRACK_ECALL_NUM,
+    JOLT_PRINT_ECALL_NUM, JOLT_PRINT_LINE, JOLT_PRINT_STRING,
+};
 
 const CSR_CAPACITY: usize = 4096;
 
@@ -68,9 +72,6 @@ pub const MIP_SEIP: u64 = 0x200;
 const MIP_STIP: u64 = 0x020;
 const MIP_SSIP: u64 = 0x002;
 
-pub const JOLT_CYCLE_TRACK_ECALL_NUM: u32 = 0xC7C1E;
-pub const JOLT_CYCLE_MARKER_START: u32 = 1;
-pub const JOLT_CYCLE_MARKER_END: u32 = 2;
 #[derive(Clone)]
 struct ActiveMarker {
     label: String,
@@ -528,6 +529,17 @@ impl Cpu {
                 let _ = self.handle_jolt_cycle_marker(marker_ptr, marker_len, event_type);
 
                 return false; // we don't take the trap
+            } else if call_id == JOLT_PRINT_ECALL_NUM {
+                let string_ptr = self.x[11] as u32; // a0
+                let string_len = self.x[12] as u32; // a1
+                let event_type = self.x[13] as u32; // a2
+
+                // Any fault raised while touching guest memory (e.g. a bad
+                // string pointer) is swallowed here and will manifest as the
+                // usual access-fault on the *next* instruction fetch.
+                let _ = self.handle_jolt_print(string_ptr, string_len, event_type as u8);
+
+                return false;
             }
         }
 
@@ -1528,7 +1540,7 @@ impl Cpu {
     fn handle_jolt_cycle_marker(&mut self, ptr: u32, len: u32, event: u32) -> Result<(), Trap> {
         match event {
             JOLT_CYCLE_MARKER_START => {
-                let label = self.read_c_string(ptr, len)?; // guest NUL-string
+                let label = self.read_string(ptr, len)?; // guest NUL-string
 
                 // Check if there's already an active marker with the same label
                 let duplicate = self
@@ -1570,18 +1582,25 @@ impl Cpu {
         Ok(())
     }
 
+    fn handle_jolt_print(&mut self, ptr: u32, len: u32, event_type: u8) -> Result<(), Trap> {
+        let message = self.read_string(ptr, len)?;
+        if event_type == JOLT_PRINT_STRING as u8 {
+            print!("{message}");
+        } else if event_type == JOLT_PRINT_LINE as u8 {
+            println!("{message}");
+        } else {
+            panic!("Unexpected event type: {event_type}");
+        }
+        Ok(())
+    }
+
     /// Read a NUL-terminated guest string from memory.
-    fn read_c_string(&mut self, mut addr: u32, len: u32) -> Result<String, Trap> {
+    fn read_string(&mut self, mut addr: u32, len: u32) -> Result<String, Trap> {
         let mut bytes = Vec::with_capacity(len as usize);
-        let mut remaining_len = len as usize;
-        loop {
+        for _ in 0..len {
             let (b, _) = self.mmu.load(addr.into())?;
-            if b == 0 || remaining_len == 0 {
-                break;
-            }
             bytes.push(b);
             addr += 1;
-            remaining_len -= 1;
         }
         Ok(String::from_utf8_lossy(&bytes).into_owned())
     }

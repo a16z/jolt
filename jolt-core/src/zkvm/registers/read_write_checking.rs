@@ -11,7 +11,8 @@ use crate::{
         opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator},
     },
     subprotocols::sumcheck::{SumcheckInstance, SumcheckInstanceProof},
-    utils::{math::Math, thread::unsafe_allocate_zero_vec, transcript::Transcript},
+    transcripts::Transcript,
+    utils::{math::Math, thread::unsafe_allocate_zero_vec},
     zkvm::{witness::CommittedPolynomial, JoltProverPreprocessing},
 };
 use allocative::Allocative;

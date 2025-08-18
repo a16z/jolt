@@ -18,11 +18,9 @@ use crate::{
         },
     },
     subprotocols::sumcheck::SumcheckInstance,
-    utils::transcript::Transcript,
-    zkvm::{
-        dag::state_manager::StateManager,
-        witness::{CommittedPolynomial, VirtualPolynomial},
-    },
+    transcripts::Transcript,
+    zkvm::dag::state_manager::StateManager,
+    zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
 };
 
 const DEGREE: usize = 1;

@@ -30,3 +30,10 @@ temp_file
 
 # Spike tarballs
 /prebuilt-files/
+
+# riscof files
+/riscof_work/
+*.pyc
+
+# act executable
+bin/act

@@ -11,11 +11,10 @@ use crate::{
         },
     },
     subprotocols::sumcheck::SumcheckInstance,
-    utils::{math::Math, transcript::Transcript},
-    zkvm::{
-        dag::state_manager::StateManager,
-        witness::{CommittedPolynomial, VirtualPolynomial},
-    },
+    transcripts::Transcript,
+    utils::math::Math,
+    zkvm::dag::state_manager::StateManager,
+    zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
 };
 use allocative::Allocative;
 #[cfg(feature = "allocative")]

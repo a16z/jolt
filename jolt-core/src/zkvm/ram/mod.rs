@@ -8,19 +8,17 @@ use crate::{
     field::JoltField,
     poly::commitment::commitment_scheme::CommitmentScheme,
     subprotocols::sumcheck::SumcheckInstance,
-    utils::transcript::Transcript,
-    zkvm::{
-        dag::{stage::SumcheckStages, state_manager::StateManager},
-        ram::{
-            booleanity::BooleanitySumcheck,
-            hamming_booleanity::HammingBooleanitySumcheck,
-            hamming_weight::HammingWeightSumcheck,
-            output_check::{OutputSumcheck, ValFinalSumcheck},
-            ra_virtual::RASumcheck,
-            raf_evaluation::RafEvaluationSumcheck,
-            read_write_checking::RamReadWriteChecking,
-            val_evaluation::ValEvaluationSumcheck,
-        },
+    transcripts::Transcript,
+    zkvm::dag::{stage::SumcheckStages, state_manager::StateManager},
+    zkvm::ram::{
+        booleanity::BooleanitySumcheck,
+        hamming_booleanity::HammingBooleanitySumcheck,
+        hamming_weight::HammingWeightSumcheck,
+        output_check::{OutputSumcheck, ValFinalSumcheck},
+        ra_virtual::RASumcheck,
+        raf_evaluation::RafEvaluationSumcheck,
+        read_write_checking::RamReadWriteChecking,
+        val_evaluation::ValEvaluationSumcheck,
     },
 };
 

@@ -4,6 +4,7 @@ use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::dory::DoryGlobals;
 use crate::subprotocols::sumcheck::{BatchedSumcheck, SumcheckInstance};
+use crate::transcripts::Transcript;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::utils::profiling::print_current_memory_usage;
 #[cfg(feature = "allocative")]
@@ -11,7 +12,6 @@ use crate::utils::profiling::print_data_structure_heap_usage;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::write_flamegraph_svg;
 use crate::utils::thread::drop_in_background_thread;
-use crate::utils::transcript::Transcript;
 use crate::zkvm::bytecode::BytecodeDag;
 use crate::zkvm::dag::proof_serialization::JoltProof;
 use crate::zkvm::dag::stage::SumcheckStages;
