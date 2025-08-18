@@ -12,7 +12,8 @@ use crate::zkvm::instruction::CircuitFlags;
 pub use super::ops::{Term, LC};
 
 /// r1cs_eq_conditional!: verbose, condition-first equality constraint
-/// Usage: r1cs_eq_conditional!(if { COND } => { LEFT } == { RIGHT });
+///
+/// Usage: `r1cs_eq_conditional!(if { COND } => { LEFT } == { RIGHT });`
 #[macro_export]
 macro_rules! r1cs_eq_conditional {
     (if { $($cond:tt)* } => ( $($left:tt)* ) == ( $($right:tt)* ) ) => {{
@@ -25,7 +26,8 @@ macro_rules! r1cs_eq_conditional {
 }
 
 /// r1cs_if_else!: verbose if-then-else with explicit result
-/// Usage: r1cs_if_else!(if { COND } => { TRUE } else { FALSE } => { RESULT });
+///
+/// Usage: `r1cs_if_else!(if { COND } => { TRUE } else { FALSE } => { RESULT });`
 #[macro_export]
 macro_rules! r1cs_if_else {
     (if { $($cond:tt)* } => ( $($tval:tt)* ) else ( $($fval:tt)* ) => ( $($result:tt)* ) ) => {{
@@ -39,7 +41,8 @@ macro_rules! r1cs_if_else {
 }
 
 /// r1cs_prod!: product constraint
-/// Usage: r1cs_prod!({ LEFT } * { RIGHT } == { RESULT });
+///
+/// Usage: `r1cs_prod!({ LEFT } * { RIGHT } == { RESULT });`
 #[macro_export]
 macro_rules! r1cs_prod {
     ( ( $($left:tt)* ) * ( $($right:tt)* ) == ( $($result:tt)* ) ) => {{
@@ -89,7 +92,7 @@ pub const NUM_R1CS_CONSTRAINTS: usize = 28;
 pub const fn constraint_eq_conditional_lc(condition: LC, left: LC, right: LC) -> Constraint {
     Constraint::new(
         condition,
-        match left.add_const_lc(right.mul_by_const(-1)) {
+        match left.checked_sub(right) {
             Some(b) => b,
             None => LC::zero(),
         },
@@ -111,11 +114,11 @@ pub const fn constraint_if_else_lc(
 ) -> Constraint {
     Constraint::new(
         condition,
-        match true_val.add_const_lc(false_val.mul_by_const(-1)) {
+        match true_val.checked_sub(false_val) {
             Some(b) => b,
             None => LC::zero(),
         },
-        match result.add_const_lc(false_val.mul_by_const(-1)) {
+        match result.checked_sub(false_val) {
             Some(c) => c,
             None => LC::zero(),
         },

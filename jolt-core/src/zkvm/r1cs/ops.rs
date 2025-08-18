@@ -8,6 +8,14 @@ use super::inputs::JoltR1CSInputs;
 use crate::field::JoltField;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 
+/// Helper for JoltR1CSInputs to get indices
+impl JoltR1CSInputs {
+    /// Convert this input to a usable index
+    pub const fn idx(self) -> usize {
+        self.to_index()
+    }
+}
+
 /// A single term in a linear combination: (input_index, coefficient)
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Term {
@@ -58,6 +66,9 @@ pub enum LC {
 }
 
 impl LC {
+    // =========================
+    // Basic constructors (const)
+    // =========================
     pub const fn zero() -> Self {
         LC::Zero
     }
@@ -68,6 +79,24 @@ impl LC {
 
     pub const fn single_term(input_index: usize, coeff: i128) -> Self {
         LC::Terms1([Term::new(input_index, coeff)])
+    }
+
+    // =========================
+    // Enhanced constructors (const)
+    // =========================
+    /// Create an LC from a single input with unit coefficient.
+    pub const fn from_input(inp: JoltR1CSInputs) -> LC {
+        LC::single_term(inp.idx(), 1)
+    }
+
+    /// Create an LC from a single input with explicit coefficient.
+    pub const fn from_input_with_coeff(inp: JoltR1CSInputs, coeff: i128) -> LC {
+        LC::single_term(inp.idx(), coeff)
+    }
+
+    /// Create a constant LC.
+    pub const fn from_const(k: i128) -> LC {
+        LC::constant(k)
     }
 
     pub const fn num_terms(&self) -> usize {
@@ -105,9 +134,11 @@ impl LC {
         }
     }
 
-    /// Combine this LC with another by addition
-    /// Returns None if the result would exceed our term capacity (5 variable terms)
-    pub const fn add_const_lc(self, other: LC) -> Option<LC> {
+    // =========================
+    // Capacity-checked operations (fallible)
+    // =========================
+    /// Capacity-checked addition. Returns None if term capacity would be exceeded.
+    pub const fn checked_add(self, other: LC) -> Option<LC> {
         let (mut out_terms, mut out_len, mut out_const) = Self::decompose(self);
         let (rhs_terms, rhs_len, rhs_const) = Self::decompose(other);
 
@@ -147,6 +178,51 @@ impl LC {
         }
 
         Some(Self::compose(&out_terms, out_len, out_const))
+    }
+
+    /// Capacity-checked subtraction. Returns None if term capacity would be exceeded.
+    pub const fn checked_sub(self, other: LC) -> Option<LC> {
+        self.checked_add(other.mul_by_const(-1))
+    }
+
+    /// Capacity-checked add-constant. Returns None if term capacity would be exceeded.
+    pub const fn checked_add_const(self, k: i128) -> Option<LC> {
+        self.checked_add(LC::Const(k))
+    }
+
+    // =========================
+    // Fallback operations (None => Zero)
+    // =========================
+    /// Addition that falls back to zero LC if capacity would be exceeded.
+    pub const fn add_or_zero(self, other: LC) -> LC {
+        match self.checked_add(other) {
+            Some(lc) => lc,
+            None => LC::zero(),
+        }
+    }
+
+    /// Subtraction that falls back to zero LC if capacity would be exceeded.
+    pub const fn sub_or_zero(self, other: LC) -> LC {
+        match self.checked_sub(other) {
+            Some(lc) => lc,
+            None => LC::zero(),
+        }
+    }
+
+    /// Add constant that falls back to zero LC if capacity would be exceeded.
+    pub const fn add_const_or_zero(self, k: i128) -> LC {
+        match self.checked_add_const(k) {
+            Some(lc) => lc,
+            None => LC::zero(),
+        }
+    }
+
+    // =========================
+    // Scalar operations
+    // =========================
+    /// Negate this LC (multiply by -1).
+    pub const fn neg(self) -> LC {
+        self.mul_by_const(-1)
     }
 
     /// Break a LC into (terms, len, const)
@@ -583,41 +659,6 @@ impl LC {
     }
 }
 
-// =============================================================================
-// CONST LC HELPERS AND MACROS
-// =============================================================================
-
-/// Public const helpers used by macros
-pub const fn lc_add(a: LC, b: LC) -> LC {
-    match a.add_const_lc(b) {
-        Some(lc) => lc,
-        None => LC::zero(),
-    }
-}
-
-pub const fn lc_sub(a: LC, b: LC) -> LC {
-    match a.add_const_lc(b.mul_by_const(-1)) {
-        Some(lc) => lc,
-        None => LC::zero(),
-    }
-}
-
-pub const fn lc_mul_const(a: LC, k: i128) -> LC {
-    a.mul_by_const(k)
-}
-
-pub const fn lc_from_input(inp: JoltR1CSInputs) -> LC {
-    LC::single_term(inp.to_index(), 1)
-}
-
-pub const fn lc_from_input_with_coeff(inp: JoltR1CSInputs, coeff: i128) -> LC {
-    LC::single_term(inp.to_index(), coeff)
-}
-
-pub const fn lc_const(k: i128) -> LC {
-    LC::constant(k)
-}
-
 /// lc!: parse a linear combination with +, -, and literal * expr
 /// Examples:
 /// - lc!({ JoltR1CSInputs::UnexpandedPC } + { 4i128 } - { 2 * JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed) })
@@ -626,33 +667,33 @@ pub const fn lc_const(k: i128) -> LC {
 macro_rules! lc {
     // Entry points: normalize to accumulator form
     ( { $k:literal * $e:expr } $( $rest:tt )* ) => {
-        $crate::lc!(@acc $crate::zkvm::r1cs::ops::lc_from_input_with_coeff($e, $k) ; $( $rest )* )
+        $crate::lc!(@acc $crate::zkvm::r1cs::ops::LC::from_input_with_coeff($e, $k) ; $( $rest )* )
     };
     ( { $k:literal } $( $rest:tt )* ) => {
-        $crate::lc!(@acc $crate::zkvm::r1cs::ops::lc_const($k) ; $( $rest )* )
+        $crate::lc!(@acc $crate::zkvm::r1cs::ops::LC::from_const($k) ; $( $rest )* )
     };
     ( { $e:expr } $( $rest:tt )* ) => {
-        $crate::lc!(@acc $crate::zkvm::r1cs::ops::lc_from_input($e) ; $( $rest )* )
+        $crate::lc!(@acc $crate::zkvm::r1cs::ops::LC::from_input($e) ; $( $rest )* )
     };
 
     // Accumulator folding rules
     (@acc $acc:expr ; + { $k:literal * $e:expr } $( $rest:tt )* ) => {
-        $crate::lc!(@acc $crate::zkvm::r1cs::ops::lc_add($acc, $crate::zkvm::r1cs::ops::lc_from_input_with_coeff($e, $k)) ; $( $rest )* )
+        $crate::lc!(@acc $acc.add_or_zero($crate::zkvm::r1cs::ops::LC::from_input_with_coeff($e, $k)) ; $( $rest )* )
     };
     (@acc $acc:expr ; - { $k:literal * $e:expr } $( $rest:tt )* ) => {
-        $crate::lc!(@acc $crate::zkvm::r1cs::ops::lc_sub($acc, $crate::zkvm::r1cs::ops::lc_from_input_with_coeff($e, $k)) ; $( $rest )* )
+        $crate::lc!(@acc $acc.sub_or_zero($crate::zkvm::r1cs::ops::LC::from_input_with_coeff($e, $k)) ; $( $rest )* )
     };
     (@acc $acc:expr ; + { $k:literal } $( $rest:tt )* ) => {
-        $crate::lc!(@acc $crate::zkvm::r1cs::ops::lc_add($acc, $crate::zkvm::r1cs::ops::lc_const($k)) ; $( $rest )* )
+        $crate::lc!(@acc $acc.add_const_or_zero($k) ; $( $rest )* )
     };
     (@acc $acc:expr ; - { $k:literal } $( $rest:tt )* ) => {
-        $crate::lc!(@acc $crate::zkvm::r1cs::ops::lc_sub($acc, $crate::zkvm::r1cs::ops::lc_const($k)) ; $( $rest )* )
+        $crate::lc!(@acc $acc.add_const_or_zero(-$k) ; $( $rest )* )
     };
     (@acc $acc:expr ; + { $e:expr } $( $rest:tt )* ) => {
-        $crate::lc!(@acc $crate::zkvm::r1cs::ops::lc_add($acc, $crate::zkvm::r1cs::ops::lc_from_input($e)) ; $( $rest )* )
+        $crate::lc!(@acc $acc.add_or_zero($crate::zkvm::r1cs::ops::LC::from_input($e)) ; $( $rest )* )
     };
     (@acc $acc:expr ; - { $e:expr } $( $rest:tt )* ) => {
-        $crate::lc!(@acc $crate::zkvm::r1cs::ops::lc_sub($acc, $crate::zkvm::r1cs::ops::lc_from_input($e)) ; $( $rest )* )
+        $crate::lc!(@acc $acc.sub_or_zero($crate::zkvm::r1cs::ops::LC::from_input($e)) ; $( $rest )* )
     };
 
     // End of input
