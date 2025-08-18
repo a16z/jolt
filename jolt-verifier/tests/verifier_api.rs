@@ -27,7 +27,7 @@ fn verify_proof() {
 #[test]
 fn verify_proof_from_mod_files() {
     let preprocessing = JoltVerifierPreprocessing::deserialize_from_bytes(
-        jolt_verifier_preprocessing_bytes::VERIFIER_PREPROCESSING_BYTES,
+        jolt_verifier_preprocessing_bytes::JOLT_VERIFIER_PREPROCESSING_BYTES,
     )
     .unwrap();
     let proof = RV32IMJoltProof::deserialize_from_bytes(fib_proof_bytes::FIB_PROOF_BYTES).unwrap();
