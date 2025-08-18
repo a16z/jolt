@@ -217,7 +217,6 @@ impl<F: JoltField> CombinedUniformBuilder<F> {
         }
     }
 
-
     /// Materializes the uniform constraints into sparse (value != 0) A, B, C matrices represented in (row, col, value) format.
     pub fn materialize_uniform(&self) -> UniformR1CS<F> {
         self.uniform_builder.materialize()
