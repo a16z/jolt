@@ -10,12 +10,12 @@ use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 
 /// A single term in a linear combination: (input_index, coefficient)
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ConstTerm {
+pub struct Term {
     pub input_index: usize,
     pub coeff: i128,
 }
 
-impl ConstTerm {
+impl Term {
     pub const fn new(input_index: usize, coeff: i128) -> Self {
         Self { input_index, coeff }
     }
@@ -42,76 +42,72 @@ impl ConstTerm {
 
 /// Const-friendly linear combination enum that can hold 0-5 terms
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ConstLC {
+pub enum LC {
     Zero,
     Const(i128),
-    Terms1([ConstTerm; 1]),
-    Terms2([ConstTerm; 2]),
-    Terms3([ConstTerm; 3]),
-    Terms4([ConstTerm; 4]),
-    Terms5([ConstTerm; 5]),
-    Terms1Const([ConstTerm; 1], i128),
-    Terms2Const([ConstTerm; 2], i128),
-    Terms3Const([ConstTerm; 3], i128),
-    Terms4Const([ConstTerm; 4], i128),
-    Terms5Const([ConstTerm; 5], i128),
+    Terms1([Term; 1]),
+    Terms2([Term; 2]),
+    Terms3([Term; 3]),
+    Terms4([Term; 4]),
+    Terms5([Term; 5]),
+    Terms1Const([Term; 1], i128),
+    Terms2Const([Term; 2], i128),
+    Terms3Const([Term; 3], i128),
+    Terms4Const([Term; 4], i128),
+    Terms5Const([Term; 5], i128),
 }
 
-impl ConstLC {
+impl LC {
     pub const fn zero() -> Self {
-        ConstLC::Zero
+        LC::Zero
     }
 
     pub const fn constant(value: i128) -> Self {
-        ConstLC::Const(value)
+        LC::Const(value)
     }
 
     pub const fn single_term(input_index: usize, coeff: i128) -> Self {
-        ConstLC::Terms1([ConstTerm::new(input_index, coeff)])
+        LC::Terms1([Term::new(input_index, coeff)])
     }
 
     pub const fn num_terms(&self) -> usize {
         match self {
-            ConstLC::Zero | ConstLC::Const(_) => 0,
-            ConstLC::Terms1(_) | ConstLC::Terms1Const(_, _) => 1,
-            ConstLC::Terms2(_) | ConstLC::Terms2Const(_, _) => 2,
-            ConstLC::Terms3(_) | ConstLC::Terms3Const(_, _) => 3,
-            ConstLC::Terms4(_) | ConstLC::Terms4Const(_, _) => 4,
-            ConstLC::Terms5(_) | ConstLC::Terms5Const(_, _) => 5,
+            LC::Zero | LC::Const(_) => 0,
+            LC::Terms1(_) | LC::Terms1Const(_, _) => 1,
+            LC::Terms2(_) | LC::Terms2Const(_, _) => 2,
+            LC::Terms3(_) | LC::Terms3Const(_, _) => 3,
+            LC::Terms4(_) | LC::Terms4Const(_, _) => 4,
+            LC::Terms5(_) | LC::Terms5Const(_, _) => 5,
         }
     }
 
-    pub fn term(&self, i: usize) -> Option<ConstTerm> {
+    pub fn term(&self, i: usize) -> Option<Term> {
         match self {
-            ConstLC::Zero | ConstLC::Const(_) => None,
-            ConstLC::Terms1(terms) | ConstLC::Terms1Const(terms, _) => terms.get(i).copied(),
-            ConstLC::Terms2(terms) | ConstLC::Terms2Const(terms, _) => terms.get(i).copied(),
-            ConstLC::Terms3(terms) | ConstLC::Terms3Const(terms, _) => terms.get(i).copied(),
-            ConstLC::Terms4(terms) | ConstLC::Terms4Const(terms, _) => terms.get(i).copied(),
-            ConstLC::Terms5(terms) | ConstLC::Terms5Const(terms, _) => terms.get(i).copied(),
+            LC::Zero | LC::Const(_) => None,
+            LC::Terms1(terms) | LC::Terms1Const(terms, _) => terms.get(i).copied(),
+            LC::Terms2(terms) | LC::Terms2Const(terms, _) => terms.get(i).copied(),
+            LC::Terms3(terms) | LC::Terms3Const(terms, _) => terms.get(i).copied(),
+            LC::Terms4(terms) | LC::Terms4Const(terms, _) => terms.get(i).copied(),
+            LC::Terms5(terms) | LC::Terms5Const(terms, _) => terms.get(i).copied(),
         }
     }
 
     pub const fn const_term(&self) -> Option<i128> {
         match self {
-            ConstLC::Zero => None,
-            ConstLC::Const(c) => Some(*c),
-            ConstLC::Terms1(_)
-            | ConstLC::Terms2(_)
-            | ConstLC::Terms3(_)
-            | ConstLC::Terms4(_)
-            | ConstLC::Terms5(_) => None,
-            ConstLC::Terms1Const(_, c)
-            | ConstLC::Terms2Const(_, c)
-            | ConstLC::Terms3Const(_, c)
-            | ConstLC::Terms4Const(_, c)
-            | ConstLC::Terms5Const(_, c) => Some(*c),
+            LC::Zero => None,
+            LC::Const(c) => Some(*c),
+            LC::Terms1(_) | LC::Terms2(_) | LC::Terms3(_) | LC::Terms4(_) | LC::Terms5(_) => None,
+            LC::Terms1Const(_, c)
+            | LC::Terms2Const(_, c)
+            | LC::Terms3Const(_, c)
+            | LC::Terms4Const(_, c)
+            | LC::Terms5Const(_, c) => Some(*c),
         }
     }
 
-    /// Combine this ConstLC with another by addition
+    /// Combine this LC with another by addition
     /// Returns None if the result would exceed our term capacity (5 variable terms)
-    pub const fn add_const_lc(self, other: ConstLC) -> Option<ConstLC> {
+    pub const fn add_const_lc(self, other: LC) -> Option<LC> {
         let (mut out_terms, mut out_len, mut out_const) = Self::decompose(self);
         let (rhs_terms, rhs_len, rhs_const) = Self::decompose(other);
 
@@ -132,7 +128,7 @@ impl ConstLC {
                             out_terms[j] = out_terms[out_len];
                         }
                     } else {
-                        out_terms[j] = ConstTerm::new(term.input_index, new_coeff);
+                        out_terms[j] = Term::new(term.input_index, new_coeff);
                     }
                     found = true;
                     break;
@@ -153,42 +149,42 @@ impl ConstLC {
         Some(Self::compose(&out_terms, out_len, out_const))
     }
 
-    /// Break a ConstLC into (terms, len, const)
-    const fn decompose(lc: ConstLC) -> ([ConstTerm; 5], usize, i128) {
-        let mut terms = [ConstTerm {
+    /// Break a LC into (terms, len, const)
+    const fn decompose(lc: LC) -> ([Term; 5], usize, i128) {
+        let mut terms = [Term {
             input_index: 0,
             coeff: 0,
         }; 5];
         let mut len = 0usize;
         let mut c = 0i128;
         match lc {
-            ConstLC::Zero => {}
-            ConstLC::Const(k) => {
+            LC::Zero => {}
+            LC::Const(k) => {
                 c = k;
             }
-            ConstLC::Terms1([t1]) => {
+            LC::Terms1([t1]) => {
                 terms[0] = t1;
                 len = 1;
             }
-            ConstLC::Terms2([t1, t2]) => {
+            LC::Terms2([t1, t2]) => {
                 terms[0] = t1;
                 terms[1] = t2;
                 len = 2;
             }
-            ConstLC::Terms3([t1, t2, t3]) => {
+            LC::Terms3([t1, t2, t3]) => {
                 terms[0] = t1;
                 terms[1] = t2;
                 terms[2] = t3;
                 len = 3;
             }
-            ConstLC::Terms4([t1, t2, t3, t4]) => {
+            LC::Terms4([t1, t2, t3, t4]) => {
                 terms[0] = t1;
                 terms[1] = t2;
                 terms[2] = t3;
                 terms[3] = t4;
                 len = 4;
             }
-            ConstLC::Terms5([t1, t2, t3, t4, t5]) => {
+            LC::Terms5([t1, t2, t3, t4, t5]) => {
                 terms[0] = t1;
                 terms[1] = t2;
                 terms[2] = t3;
@@ -196,25 +192,25 @@ impl ConstLC {
                 terms[4] = t5;
                 len = 5;
             }
-            ConstLC::Terms1Const([t1], k) => {
+            LC::Terms1Const([t1], k) => {
                 terms[0] = t1;
                 len = 1;
                 c = k;
             }
-            ConstLC::Terms2Const([t1, t2], k) => {
+            LC::Terms2Const([t1, t2], k) => {
                 terms[0] = t1;
                 terms[1] = t2;
                 len = 2;
                 c = k;
             }
-            ConstLC::Terms3Const([t1, t2, t3], k) => {
+            LC::Terms3Const([t1, t2, t3], k) => {
                 terms[0] = t1;
                 terms[1] = t2;
                 terms[2] = t3;
                 len = 3;
                 c = k;
             }
-            ConstLC::Terms4Const([t1, t2, t3, t4], k) => {
+            LC::Terms4Const([t1, t2, t3, t4], k) => {
                 terms[0] = t1;
                 terms[1] = t2;
                 terms[2] = t3;
@@ -222,7 +218,7 @@ impl ConstLC {
                 len = 4;
                 c = k;
             }
-            ConstLC::Terms5Const([t1, t2, t3, t4, t5], k) => {
+            LC::Terms5Const([t1, t2, t3, t4, t5], k) => {
                 terms[0] = t1;
                 terms[1] = t2;
                 terms[2] = t3;
@@ -235,90 +231,88 @@ impl ConstLC {
         (terms, len, c)
     }
 
-    /// Compose a ConstLC from (terms, len, const)
-    const fn compose(terms: &[ConstTerm; 5], len: usize, c: i128) -> ConstLC {
+    /// Compose a LC from (terms, len, const)
+    const fn compose(terms: &[Term; 5], len: usize, c: i128) -> LC {
         match (len, c) {
-            (0, 0) => ConstLC::Zero,
-            (0, k) => ConstLC::Const(k),
-            (1, 0) => ConstLC::Terms1([terms[0]]),
-            (2, 0) => ConstLC::Terms2([terms[0], terms[1]]),
-            (3, 0) => ConstLC::Terms3([terms[0], terms[1], terms[2]]),
-            (4, 0) => ConstLC::Terms4([terms[0], terms[1], terms[2], terms[3]]),
-            (5, 0) => ConstLC::Terms5([terms[0], terms[1], terms[2], terms[3], terms[4]]),
-            (1, k) => ConstLC::Terms1Const([terms[0]], k),
-            (2, k) => ConstLC::Terms2Const([terms[0], terms[1]], k),
-            (3, k) => ConstLC::Terms3Const([terms[0], terms[1], terms[2]], k),
-            (4, k) => ConstLC::Terms4Const([terms[0], terms[1], terms[2], terms[3]], k),
-            (5, k) => ConstLC::Terms5Const([terms[0], terms[1], terms[2], terms[3], terms[4]], k),
-            _ => ConstLC::Zero,
+            (0, 0) => LC::Zero,
+            (0, k) => LC::Const(k),
+            (1, 0) => LC::Terms1([terms[0]]),
+            (2, 0) => LC::Terms2([terms[0], terms[1]]),
+            (3, 0) => LC::Terms3([terms[0], terms[1], terms[2]]),
+            (4, 0) => LC::Terms4([terms[0], terms[1], terms[2], terms[3]]),
+            (5, 0) => LC::Terms5([terms[0], terms[1], terms[2], terms[3], terms[4]]),
+            (1, k) => LC::Terms1Const([terms[0]], k),
+            (2, k) => LC::Terms2Const([terms[0], terms[1]], k),
+            (3, k) => LC::Terms3Const([terms[0], terms[1], terms[2]], k),
+            (4, k) => LC::Terms4Const([terms[0], terms[1], terms[2], terms[3]], k),
+            (5, k) => LC::Terms5Const([terms[0], terms[1], terms[2], terms[3], terms[4]], k),
+            _ => LC::Zero,
         }
     }
 
-    /// Multiply this ConstLC by a constant
-    pub const fn mul_by_const(self, multiplier: i128) -> ConstLC {
+    /// Multiply this LC by a constant
+    pub const fn mul_by_const(self, multiplier: i128) -> LC {
         match self {
-            ConstLC::Zero => ConstLC::Zero,
-            ConstLC::Const(c) => ConstLC::Const(c * multiplier),
-            ConstLC::Terms1([t1]) => {
-                ConstLC::Terms1([ConstTerm::new(t1.input_index, t1.coeff * multiplier)])
-            }
-            ConstLC::Terms2([t1, t2]) => ConstLC::Terms2([
-                ConstTerm::new(t1.input_index, t1.coeff * multiplier),
-                ConstTerm::new(t2.input_index, t2.coeff * multiplier),
+            LC::Zero => LC::Zero,
+            LC::Const(c) => LC::Const(c * multiplier),
+            LC::Terms1([t1]) => LC::Terms1([Term::new(t1.input_index, t1.coeff * multiplier)]),
+            LC::Terms2([t1, t2]) => LC::Terms2([
+                Term::new(t1.input_index, t1.coeff * multiplier),
+                Term::new(t2.input_index, t2.coeff * multiplier),
             ]),
-            ConstLC::Terms3([t1, t2, t3]) => ConstLC::Terms3([
-                ConstTerm::new(t1.input_index, t1.coeff * multiplier),
-                ConstTerm::new(t2.input_index, t2.coeff * multiplier),
-                ConstTerm::new(t3.input_index, t3.coeff * multiplier),
+            LC::Terms3([t1, t2, t3]) => LC::Terms3([
+                Term::new(t1.input_index, t1.coeff * multiplier),
+                Term::new(t2.input_index, t2.coeff * multiplier),
+                Term::new(t3.input_index, t3.coeff * multiplier),
             ]),
-            ConstLC::Terms4([t1, t2, t3, t4]) => ConstLC::Terms4([
-                ConstTerm::new(t1.input_index, t1.coeff * multiplier),
-                ConstTerm::new(t2.input_index, t2.coeff * multiplier),
-                ConstTerm::new(t3.input_index, t3.coeff * multiplier),
-                ConstTerm::new(t4.input_index, t4.coeff * multiplier),
+            LC::Terms4([t1, t2, t3, t4]) => LC::Terms4([
+                Term::new(t1.input_index, t1.coeff * multiplier),
+                Term::new(t2.input_index, t2.coeff * multiplier),
+                Term::new(t3.input_index, t3.coeff * multiplier),
+                Term::new(t4.input_index, t4.coeff * multiplier),
             ]),
-            ConstLC::Terms5([t1, t2, t3, t4, t5]) => ConstLC::Terms5([
-                ConstTerm::new(t1.input_index, t1.coeff * multiplier),
-                ConstTerm::new(t2.input_index, t2.coeff * multiplier),
-                ConstTerm::new(t3.input_index, t3.coeff * multiplier),
-                ConstTerm::new(t4.input_index, t4.coeff * multiplier),
-                ConstTerm::new(t5.input_index, t5.coeff * multiplier),
+            LC::Terms5([t1, t2, t3, t4, t5]) => LC::Terms5([
+                Term::new(t1.input_index, t1.coeff * multiplier),
+                Term::new(t2.input_index, t2.coeff * multiplier),
+                Term::new(t3.input_index, t3.coeff * multiplier),
+                Term::new(t4.input_index, t4.coeff * multiplier),
+                Term::new(t5.input_index, t5.coeff * multiplier),
             ]),
-            ConstLC::Terms1Const([t1], c) => ConstLC::Terms1Const(
-                [ConstTerm::new(t1.input_index, t1.coeff * multiplier)],
+            LC::Terms1Const([t1], c) => LC::Terms1Const(
+                [Term::new(t1.input_index, t1.coeff * multiplier)],
                 c * multiplier,
             ),
-            ConstLC::Terms2Const([t1, t2], c) => ConstLC::Terms2Const(
+            LC::Terms2Const([t1, t2], c) => LC::Terms2Const(
                 [
-                    ConstTerm::new(t1.input_index, t1.coeff * multiplier),
-                    ConstTerm::new(t2.input_index, t2.coeff * multiplier),
+                    Term::new(t1.input_index, t1.coeff * multiplier),
+                    Term::new(t2.input_index, t2.coeff * multiplier),
                 ],
                 c * multiplier,
             ),
-            ConstLC::Terms3Const([t1, t2, t3], c) => ConstLC::Terms3Const(
+            LC::Terms3Const([t1, t2, t3], c) => LC::Terms3Const(
                 [
-                    ConstTerm::new(t1.input_index, t1.coeff * multiplier),
-                    ConstTerm::new(t2.input_index, t2.coeff * multiplier),
-                    ConstTerm::new(t3.input_index, t3.coeff * multiplier),
+                    Term::new(t1.input_index, t1.coeff * multiplier),
+                    Term::new(t2.input_index, t2.coeff * multiplier),
+                    Term::new(t3.input_index, t3.coeff * multiplier),
                 ],
                 c * multiplier,
             ),
-            ConstLC::Terms4Const([t1, t2, t3, t4], c) => ConstLC::Terms4Const(
+            LC::Terms4Const([t1, t2, t3, t4], c) => LC::Terms4Const(
                 [
-                    ConstTerm::new(t1.input_index, t1.coeff * multiplier),
-                    ConstTerm::new(t2.input_index, t2.coeff * multiplier),
-                    ConstTerm::new(t3.input_index, t3.coeff * multiplier),
-                    ConstTerm::new(t4.input_index, t4.coeff * multiplier),
+                    Term::new(t1.input_index, t1.coeff * multiplier),
+                    Term::new(t2.input_index, t2.coeff * multiplier),
+                    Term::new(t3.input_index, t3.coeff * multiplier),
+                    Term::new(t4.input_index, t4.coeff * multiplier),
                 ],
                 c * multiplier,
             ),
-            ConstLC::Terms5Const([t1, t2, t3, t4, t5], c) => ConstLC::Terms5Const(
+            LC::Terms5Const([t1, t2, t3, t4, t5], c) => LC::Terms5Const(
                 [
-                    ConstTerm::new(t1.input_index, t1.coeff * multiplier),
-                    ConstTerm::new(t2.input_index, t2.coeff * multiplier),
-                    ConstTerm::new(t3.input_index, t3.coeff * multiplier),
-                    ConstTerm::new(t4.input_index, t4.coeff * multiplier),
-                    ConstTerm::new(t5.input_index, t5.coeff * multiplier),
+                    Term::new(t1.input_index, t1.coeff * multiplier),
+                    Term::new(t2.input_index, t2.coeff * multiplier),
+                    Term::new(t3.input_index, t3.coeff * multiplier),
+                    Term::new(t4.input_index, t4.coeff * multiplier),
+                    Term::new(t5.input_index, t5.coeff * multiplier),
                 ],
                 c * multiplier,
             ),
@@ -357,52 +351,52 @@ impl ConstLC {
     #[inline(always)]
     pub fn dot_eq_ry<F: JoltField>(&self, eq_ry: &[F], const_col: usize) -> F {
         match self {
-            ConstLC::Zero => F::zero(),
-            ConstLC::Const(c) => eq_ry[const_col].mul_i128(*c),
-            ConstLC::Terms1([t1]) => eq_ry[t1.input_index].mul_i128(t1.coeff),
-            ConstLC::Terms2([t1, t2]) => {
+            LC::Zero => F::zero(),
+            LC::Const(c) => eq_ry[const_col].mul_i128(*c),
+            LC::Terms1([t1]) => eq_ry[t1.input_index].mul_i128(t1.coeff),
+            LC::Terms2([t1, t2]) => {
                 eq_ry[t1.input_index].mul_i128(t1.coeff) + eq_ry[t2.input_index].mul_i128(t2.coeff)
             }
-            ConstLC::Terms3([t1, t2, t3]) => {
+            LC::Terms3([t1, t2, t3]) => {
                 eq_ry[t1.input_index].mul_i128(t1.coeff)
                     + eq_ry[t2.input_index].mul_i128(t2.coeff)
                     + eq_ry[t3.input_index].mul_i128(t3.coeff)
             }
-            ConstLC::Terms4([t1, t2, t3, t4]) => {
+            LC::Terms4([t1, t2, t3, t4]) => {
                 eq_ry[t1.input_index].mul_i128(t1.coeff)
                     + eq_ry[t2.input_index].mul_i128(t2.coeff)
                     + eq_ry[t3.input_index].mul_i128(t3.coeff)
                     + eq_ry[t4.input_index].mul_i128(t4.coeff)
             }
-            ConstLC::Terms5([t1, t2, t3, t4, t5]) => {
+            LC::Terms5([t1, t2, t3, t4, t5]) => {
                 eq_ry[t1.input_index].mul_i128(t1.coeff)
                     + eq_ry[t2.input_index].mul_i128(t2.coeff)
                     + eq_ry[t3.input_index].mul_i128(t3.coeff)
                     + eq_ry[t4.input_index].mul_i128(t4.coeff)
                     + eq_ry[t5.input_index].mul_i128(t5.coeff)
             }
-            ConstLC::Terms1Const([t1], c) => {
+            LC::Terms1Const([t1], c) => {
                 eq_ry[t1.input_index].mul_i128(t1.coeff) + eq_ry[const_col].mul_i128(*c)
             }
-            ConstLC::Terms2Const([t1, t2], c) => {
+            LC::Terms2Const([t1, t2], c) => {
                 eq_ry[t1.input_index].mul_i128(t1.coeff)
                     + eq_ry[t2.input_index].mul_i128(t2.coeff)
                     + eq_ry[const_col].mul_i128(*c)
             }
-            ConstLC::Terms3Const([t1, t2, t3], c) => {
+            LC::Terms3Const([t1, t2, t3], c) => {
                 eq_ry[t1.input_index].mul_i128(t1.coeff)
                     + eq_ry[t2.input_index].mul_i128(t2.coeff)
                     + eq_ry[t3.input_index].mul_i128(t3.coeff)
                     + eq_ry[const_col].mul_i128(*c)
             }
-            ConstLC::Terms4Const([t1, t2, t3, t4], c) => {
+            LC::Terms4Const([t1, t2, t3, t4], c) => {
                 eq_ry[t1.input_index].mul_i128(t1.coeff)
                     + eq_ry[t2.input_index].mul_i128(t2.coeff)
                     + eq_ry[t3.input_index].mul_i128(t3.coeff)
                     + eq_ry[t4.input_index].mul_i128(t4.coeff)
                     + eq_ry[const_col].mul_i128(*c)
             }
-            ConstLC::Terms5Const([t1, t2, t3, t4, t5], c) => {
+            LC::Terms5Const([t1, t2, t3, t4, t5], c) => {
                 eq_ry[t1.input_index].mul_i128(t1.coeff)
                     + eq_ry[t2.input_index].mul_i128(t2.coeff)
                     + eq_ry[t3.input_index].mul_i128(t3.coeff)
@@ -413,7 +407,7 @@ impl ConstLC {
         }
     }
 
-    /// Serialize this ConstLC in canonical order to a byte vector
+    /// Serialize this LC in canonical order to a byte vector
     /// Used for digest computation in key generation
     ///
     /// Format:
@@ -459,7 +453,7 @@ impl ConstLC {
         }
     }
 
-    /// Accumulate evaluations of this ConstLC into the evals vector
+    /// Accumulate evaluations of this LC into the evals vector
     /// Used for efficiently computing matrix-vector products
     #[inline]
     pub fn accumulate_evaluations<F: JoltField>(
@@ -481,25 +475,24 @@ impl ConstLC {
     #[inline(always)]
     pub fn for_each_term(&self, mut f: impl FnMut(usize, i128)) {
         match self {
-            ConstLC::Zero | ConstLC::Const(_) => {}
-            ConstLC::Terms1([t1]) | ConstLC::Terms1Const([t1], _) => f(t1.input_index, t1.coeff),
-            ConstLC::Terms2([t1, t2]) | ConstLC::Terms2Const([t1, t2], _) => {
+            LC::Zero | LC::Const(_) => {}
+            LC::Terms1([t1]) | LC::Terms1Const([t1], _) => f(t1.input_index, t1.coeff),
+            LC::Terms2([t1, t2]) | LC::Terms2Const([t1, t2], _) => {
                 f(t1.input_index, t1.coeff);
                 f(t2.input_index, t2.coeff);
             }
-            ConstLC::Terms3([t1, t2, t3]) | ConstLC::Terms3Const([t1, t2, t3], _) => {
+            LC::Terms3([t1, t2, t3]) | LC::Terms3Const([t1, t2, t3], _) => {
                 f(t1.input_index, t1.coeff);
                 f(t2.input_index, t2.coeff);
                 f(t3.input_index, t3.coeff);
             }
-            ConstLC::Terms4([t1, t2, t3, t4]) | ConstLC::Terms4Const([t1, t2, t3, t4], _) => {
+            LC::Terms4([t1, t2, t3, t4]) | LC::Terms4Const([t1, t2, t3, t4], _) => {
                 f(t1.input_index, t1.coeff);
                 f(t2.input_index, t2.coeff);
                 f(t3.input_index, t3.coeff);
                 f(t4.input_index, t4.coeff);
             }
-            ConstLC::Terms5([t1, t2, t3, t4, t5])
-            | ConstLC::Terms5Const([t1, t2, t3, t4, t5], _) => {
+            LC::Terms5([t1, t2, t3, t4, t5]) | LC::Terms5Const([t1, t2, t3, t4, t5], _) => {
                 f(t1.input_index, t1.coeff);
                 f(t2.input_index, t2.coeff);
                 f(t3.input_index, t3.coeff);
@@ -514,8 +507,8 @@ impl ConstLC {
         use std::fmt::Write;
 
         match self {
-            ConstLC::Zero => write!(f, "0"),
-            ConstLC::Const(c) => write!(f, "{c}"),
+            LC::Zero => write!(f, "0"),
+            LC::Const(c) => write!(f, "{c}"),
             _ => {
                 let num_terms = self.num_terms();
                 let has_const = self.const_term().is_some();
@@ -538,7 +531,7 @@ impl ConstLC {
                             if term.coeff < 0 {
                                 write!(f, " - ")?;
                                 // Create a term with positive coefficient for display
-                                let display_term = ConstTerm::new(term.input_index, -term.coeff);
+                                let display_term = Term::new(term.input_index, -term.coeff);
                                 display_term.pretty_fmt(f)?;
                             } else {
                                 write!(f, " + ")?;
@@ -581,10 +574,7 @@ impl ConstLC {
         for i in 0..self.num_terms() {
             if let Some(term) = self.term(i) {
                 if input_indices.contains(&term.input_index) {
-                    panic!(
-                        "Duplicate input index found in ConstLC: {}",
-                        term.input_index
-                    );
+                    panic!("Duplicate input index found in LC: {}", term.input_index);
                 } else {
                     input_indices.push(term.input_index);
                 }
@@ -598,34 +588,34 @@ impl ConstLC {
 // =============================================================================
 
 /// Public const helpers used by macros
-pub const fn lc_add(a: ConstLC, b: ConstLC) -> ConstLC {
+pub const fn lc_add(a: LC, b: LC) -> LC {
     match a.add_const_lc(b) {
         Some(lc) => lc,
-        None => ConstLC::zero(),
+        None => LC::zero(),
     }
 }
 
-pub const fn lc_sub(a: ConstLC, b: ConstLC) -> ConstLC {
+pub const fn lc_sub(a: LC, b: LC) -> LC {
     match a.add_const_lc(b.mul_by_const(-1)) {
         Some(lc) => lc,
-        None => ConstLC::zero(),
+        None => LC::zero(),
     }
 }
 
-pub const fn lc_mul_const(a: ConstLC, k: i128) -> ConstLC {
+pub const fn lc_mul_const(a: LC, k: i128) -> LC {
     a.mul_by_const(k)
 }
 
-pub const fn lc_from_input(inp: JoltR1CSInputs) -> ConstLC {
-    ConstLC::single_term(inp.to_index(), 1)
+pub const fn lc_from_input(inp: JoltR1CSInputs) -> LC {
+    LC::single_term(inp.to_index(), 1)
 }
 
-pub const fn lc_from_input_with_coeff(inp: JoltR1CSInputs, coeff: i128) -> ConstLC {
-    ConstLC::single_term(inp.to_index(), coeff)
+pub const fn lc_from_input_with_coeff(inp: JoltR1CSInputs, coeff: i128) -> LC {
+    LC::single_term(inp.to_index(), coeff)
 }
 
-pub const fn lc_const(k: i128) -> ConstLC {
-    ConstLC::constant(k)
+pub const fn lc_const(k: i128) -> LC {
+    LC::constant(k)
 }
 
 /// lc!: parse a linear combination with +, -, and literal * expr

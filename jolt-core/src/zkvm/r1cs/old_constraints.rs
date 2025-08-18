@@ -302,32 +302,32 @@ impl JoltRV32IMConstraints {
         CombinedUniformBuilder::construct(uniform_builder, padded_trace_length)
     }
 
-    /// Convert a single ConstraintConst to dynamic Constraint
+    /// Convert a single Constraint to dynamic Constraint
     fn convert_const_constraint_to_dynamic(
-        const_constraint: &super::constraints::ConstraintConst,
-    ) -> super::old_builder::Constraint {
-        use super::old_builder::Constraint;
-        use super::old_ops::{Term, Variable, LC};
+        const_constraint: &super::constraints::Constraint,
+    ) -> super::old_builder::OldConstraint {
+        use super::old_builder::OldConstraint;
+        use super::old_ops::{OldLC, OldTerm, Variable};
 
-        let convert_const_lc_to_lc = |const_lc: &super::constraints::ConstLC| -> LC {
+        let convert_const_lc_to_lc = |const_lc: &super::constraints::LC| -> OldLC {
             let mut terms = Vec::new();
 
             // Add variable terms
             for i in 0..const_lc.num_terms() {
                 if let Some(term) = const_lc.term(i) {
-                    terms.push(Term(Variable::Input(term.input_index), term.coeff));
+                    terms.push(OldTerm(Variable::Input(term.input_index), term.coeff));
                 }
             }
 
             // Add constant term if present
             if let Some(const_val) = const_lc.const_term() {
-                terms.push(Term(Variable::Constant, const_val));
+                terms.push(OldTerm(Variable::Constant, const_val));
             }
 
-            LC::new(terms)
+            OldLC::new(terms)
         };
 
-        Constraint {
+        OldConstraint {
             a: convert_const_lc_to_lc(&const_constraint.a),
             b: convert_const_lc_to_lc(&const_constraint.b),
             c: convert_const_lc_to_lc(&const_constraint.c),
@@ -337,8 +337,8 @@ impl JoltRV32IMConstraints {
 
 #[cfg(test)]
 mod tests {
-    use super::super::constraints::{ConstLC, ConstraintConst, NUM_R1CS_CONSTRAINTS, UNIFORM_R1CS};
-    use super::super::old_ops::{Term, Variable, LC};
+    use super::super::constraints::{Constraint, LC, NUM_R1CS_CONSTRAINTS, UNIFORM_R1CS};
+    use super::super::old_ops::{OldLC, OldTerm, Variable};
     use super::*;
 
     #[test]
@@ -374,29 +374,29 @@ mod tests {
 
     /// Test-specific conversion function that always works regardless of feature flags
     fn const_constraint_to_dynamic_for_test(
-        const_constraint: &ConstraintConst,
-    ) -> super::super::old_builder::Constraint {
-        use super::super::old_builder::Constraint;
+        const_constraint: &Constraint,
+    ) -> super::super::old_builder::OldConstraint {
+        use super::super::old_builder::OldConstraint;
 
-        fn const_lc_to_dynamic_lc_for_test(const_lc: &ConstLC) -> LC {
+        fn const_lc_to_dynamic_lc_for_test(const_lc: &LC) -> OldLC {
             let mut terms = Vec::new();
 
             // Add variable terms
             for i in 0..const_lc.num_terms() {
                 if let Some(term) = const_lc.term(i) {
-                    terms.push(Term(Variable::Input(term.input_index), term.coeff));
+                    terms.push(OldTerm(Variable::Input(term.input_index), term.coeff));
                 }
             }
 
             // Add constant term if present
             if let Some(const_val) = const_lc.const_term() {
-                terms.push(Term(Variable::Constant, const_val));
+                terms.push(OldTerm(Variable::Constant, const_val));
             }
 
-            LC::new(terms)
+            OldLC::new(terms)
         }
 
-        Constraint {
+        OldConstraint {
             a: const_lc_to_dynamic_lc_for_test(&const_constraint.a),
             b: const_lc_to_dynamic_lc_for_test(&const_constraint.b),
             c: const_lc_to_dynamic_lc_for_test(&const_constraint.c),
@@ -405,14 +405,14 @@ mod tests {
 
     // Helper function to compare two constraints for equality
     fn compare_constraints(
-        converted: &super::super::old_builder::Constraint,
-        ground_truth: &super::super::old_builder::Constraint,
+        converted: &super::super::old_builder::OldConstraint,
+        ground_truth: &super::super::old_builder::OldConstraint,
         constraint_index: usize,
     ) {
         // Helper to sort terms for comparison (ground truth might have different ordering)
         // Also filter out zero coefficient terms since they don't affect the constraint
-        fn sort_and_filter_terms(terms: &[Term]) -> Vec<Term> {
-            let mut sorted: Vec<Term> = terms.iter()
+        fn sort_and_filter_terms(terms: &[OldTerm]) -> Vec<OldTerm> {
+            let mut sorted: Vec<OldTerm> = terms.iter()
                 .filter(|term| term.1 != 0)  // Filter out zero coefficients
                 .copied()
                 .collect();

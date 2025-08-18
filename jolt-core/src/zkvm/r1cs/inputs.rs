@@ -425,7 +425,7 @@ mod tests {
         /// Alternative const implementation that searches through ALL_R1CS_INPUTS array.
         /// This is used for testing to ensure the simple pattern matching to_index()
         /// returns the same results as searching through the array.
-        const fn to_index_via_array_search(&self) -> usize {
+        const fn find_index_via_array_search(&self) -> usize {
             let mut i = 0;
             while i < ALL_R1CS_INPUTS.len() {
                 if self.const_eq(&ALL_R1CS_INPUTS[i]) {
@@ -528,18 +528,18 @@ mod tests {
     }
 
     #[test]
-    fn const_to_index_consistency() {
-        // Ensure to_index() and to_index_via_array_search() return the same values.
+    fn to_index_consistency() {
+        // Ensure to_index() and find_index_via_array_search() return the same values.
         // This validates that the simple pattern matching in to_index() correctly
         // aligns with the ordering in ALL_R1CS_INPUTS.
         for var in ALL_R1CS_INPUTS {
             assert_eq!(
                 var.to_index(),
-                var.to_index_via_array_search(),
+                var.find_index_via_array_search(),
                 "Index mismatch for variant {:?}: pattern_match={}, array_search={}",
                 var,
                 var.to_index(),
-                var.to_index_via_array_search()
+                var.find_index_via_array_search()
             );
         }
     }

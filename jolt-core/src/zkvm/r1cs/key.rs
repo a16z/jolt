@@ -9,7 +9,7 @@ use crate::{
 
 use sha3::Digest;
 
-use super::constraints::{ConstLC, ConstraintConst, UNIFORM_R1CS};
+use super::constraints::{Constraint, LC, UNIFORM_R1CS};
 use crate::utils::math::Math;
 use crate::zkvm::r1cs::inputs::JoltR1CSInputs;
 
@@ -216,7 +216,7 @@ impl<F: JoltField> UniformSpartanKey<F> {
     /// Helper function to evaluate a uniform matrix at a specific point
     fn evaluate_uniform_matrix_at_point(
         &self,
-        select: impl Fn(&ConstraintConst) -> &ConstLC,
+        select: impl Fn(&Constraint) -> &LC,
         rx_constr: &[F],
         ry_var: &[F],
     ) -> F {

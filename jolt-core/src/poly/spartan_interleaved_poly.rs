@@ -10,7 +10,7 @@ use crate::{
         math::Math,
         small_value::{svo_helpers, NUM_SVO_ROUNDS},
     },
-    zkvm::r1cs::constraints::ConstraintConst,
+    zkvm::r1cs::constraints::Constraint,
 };
 use rayon::prelude::*;
 
@@ -104,7 +104,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
     )]
     pub fn new_with_precompute(
         padded_num_constraints: usize,
-        const_rows: &'static [ConstraintConst],
+        const_rows: &'static [Constraint],
         flattened_polynomials: &[MultilinearPolynomial<F>],
         tau: &[F],
     ) -> ([F; NUM_ACCUMS_EVAL_ZERO], [F; NUM_ACCUMS_EVAL_INFTY], Self) {

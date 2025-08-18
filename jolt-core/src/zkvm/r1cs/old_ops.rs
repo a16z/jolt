@@ -1,5 +1,5 @@
 //! Defines the Linear Combination (LC) object and associated operations.
-//! A LinearCombination is a vector of Terms, where each Term is a pair of a Variable and a coefficient.
+//! A LinearCombination is a vector of OldTerms, where each OldTerm is a pair of a Variable and a coefficient.
 
 use crate::{field::JoltField, poly::multilinear_polynomial::MultilinearPolynomial};
 use std::fmt::Debug;
@@ -14,8 +14,8 @@ pub enum Variable {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Term(pub Variable, pub i128);
-impl Term {
+pub struct OldTerm(pub Variable, pub i128);
+impl OldTerm {
     #[cfg(test)]
     fn pretty_fmt(&self, f: &mut String) -> std::fmt::Result {
         use super::inputs::JoltR1CSInputs;
@@ -30,29 +30,29 @@ impl Term {
     }
 }
 
-/// Linear Combination of terms.
+/// Linear Combination of OldTerms.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct LC(Vec<Term>);
+pub struct OldLC(Vec<OldTerm>);
 
-impl LC {
-    pub fn new(terms: Vec<Term>) -> Self {
+impl OldLC {
+    pub fn new(terms: Vec<OldTerm>) -> Self {
         #[cfg(test)]
         Self::assert_no_duplicate_terms(&terms);
 
         let mut sorted_terms = terms;
         sorted_terms.sort_by(|a, b| a.0.cmp(&b.0));
-        LC(sorted_terms)
+        OldLC(sorted_terms)
     }
 
     pub fn zero() -> Self {
-        LC::new(vec![])
+        OldLC::new(vec![])
     }
 
-    pub fn terms(&self) -> &[Term] {
+    pub fn terms(&self) -> &[OldTerm] {
         &self.0
     }
 
-    pub fn constant_term(&self) -> Option<&Term> {
+    pub fn constant_term(&self) -> Option<&OldTerm> {
         self.0
             .last()
             .filter(|term| matches!(term.0, Variable::Constant))
@@ -129,7 +129,7 @@ impl LC {
     }
 
     #[cfg(test)]
-    fn assert_no_duplicate_terms(terms: &[Term]) {
+    fn assert_no_duplicate_terms(terms: &[OldTerm]) {
         let mut term_vec = Vec::new();
         for term in terms {
             if term_vec.contains(&term.0) {
@@ -141,16 +141,16 @@ impl LC {
     }
 }
 
-// Arithmetic for LC
+// Arithmetic for OldLC
 
-impl<T> std::ops::Add<T> for LC
+impl<T> std::ops::Add<T> for OldLC
 where
-    T: Into<LC>,
+    T: Into<OldLC>,
 {
     type Output = Self;
 
     fn add(self, other: T) -> Self::Output {
-        let other_lc: LC = other.into();
+        let other_lc: OldLC = other.into();
         let mut combined_terms = self.0;
         // TODO(sragss): Can be made more efficient by assuming sorted
         for other_term in other_lc.terms() {
@@ -163,140 +163,140 @@ where
                 combined_terms.push(*other_term);
             }
         }
-        LC::new(combined_terms)
+        OldLC::new(combined_terms)
     }
 }
 
-impl<T> std::ops::Add<T> for Term
+impl<T> std::ops::Add<T> for OldTerm
 where
-    T: Into<LC>,
+    T: Into<OldLC>,
 {
-    type Output = LC;
+    type Output = OldLC;
 
     fn add(self, other: T) -> Self::Output {
-        let lc: LC = self.into();
-        let other_lc: LC = other.into();
+        let lc: OldLC = self.into();
+        let other_lc: OldLC = other.into();
         lc + other_lc
     }
 }
 
 impl<T> std::ops::Add<T> for Variable
 where
-    T: Into<LC>,
+    T: Into<OldLC>,
 {
-    type Output = LC;
+    type Output = OldLC;
 
     fn add(self, other: T) -> Self::Output {
-        let lc: LC = self.into();
-        let other_lc: LC = other.into();
+        let lc: OldLC = self.into();
+        let other_lc: OldLC = other.into();
         lc + other_lc
     }
 }
 
-impl std::ops::Neg for LC {
+impl std::ops::Neg for OldLC {
     type Output = Self;
 
     fn neg(self) -> Self::Output {
-        let negated_terms: Vec<Term> = self.0.into_iter().map(|term| -term).collect();
-        LC::new(negated_terms)
+        let negated_terms: Vec<OldTerm> = self.0.into_iter().map(|term| -term).collect();
+        OldLC::new(negated_terms)
     }
 }
 
-impl<T: Into<LC>> std::ops::Sub<T> for LC {
+impl<T: Into<OldLC>> std::ops::Sub<T> for OldLC {
     type Output = Self;
 
     fn sub(self, other: T) -> Self::Output {
-        let other: LC = other.into();
+        let other: OldLC = other.into();
         let negated_other = -other;
         self + negated_other
     }
 }
 
-// Arithmetic for Term
+// Arithmetic for OldTerm
 
-impl std::ops::Neg for Term {
+impl std::ops::Neg for OldTerm {
     type Output = Self;
 
     fn neg(self) -> Self::Output {
-        Term(self.0, -self.1)
+        OldTerm(self.0, -self.1)
     }
 }
 
-impl From<i64> for Term {
+impl From<i64> for OldTerm {
     fn from(val: i64) -> Self {
-        Term(Variable::Constant, val as i128)
+        OldTerm(Variable::Constant, val as i128)
     }
 }
 
-impl From<i128> for Term {
+impl From<i128> for OldTerm {
     fn from(val: i128) -> Self {
-        Term(Variable::Constant, val)
+        OldTerm(Variable::Constant, val)
     }
 }
 
-impl From<Variable> for Term {
+impl From<Variable> for OldTerm {
     fn from(val: Variable) -> Self {
-        Term(val, 1)
+        OldTerm(val, 1)
     }
 }
 
 impl std::ops::Sub for Variable {
-    type Output = LC;
+    type Output = OldLC;
 
     fn sub(self, other: Self) -> Self::Output {
-        let lhs: LC = self.into();
-        let rhs: LC = other.into();
+        let lhs: OldLC = self.into();
+        let rhs: OldLC = other.into();
         lhs - rhs
     }
 }
 
-// Into<LC>
+// Into<OldLC>
 
-impl From<i64> for LC {
+impl From<i64> for OldLC {
     fn from(val: i64) -> Self {
-        LC::new(vec![Term(Variable::Constant, val as i128)])
+        OldLC::new(vec![OldTerm(Variable::Constant, val as i128)])
     }
 }
 
-impl From<i128> for LC {
+impl From<i128> for OldLC {
     fn from(val: i128) -> Self {
-        LC::new(vec![Term(Variable::Constant, val)])
+        OldLC::new(vec![OldTerm(Variable::Constant, val)])
     }
 }
 
-impl From<Variable> for LC {
+impl From<Variable> for OldLC {
     fn from(val: Variable) -> Self {
-        LC::new(vec![Term(val, 1)])
+        OldLC::new(vec![OldTerm(val, 1)])
     }
 }
 
-impl From<Term> for LC {
-    fn from(val: Term) -> Self {
-        LC::new(vec![val])
+impl From<OldTerm> for OldLC {
+    fn from(val: OldTerm) -> Self {
+        OldLC::new(vec![val])
     }
 }
 
-impl From<Vec<Term>> for LC {
-    fn from(val: Vec<Term>) -> Self {
-        LC::new(val)
+impl From<Vec<OldTerm>> for OldLC {
+    fn from(val: Vec<OldTerm>) -> Self {
+        OldLC::new(val)
     }
 }
 
 // Generic arithmetic for Variable
 
 impl std::ops::Mul<i64> for Variable {
-    type Output = Term;
+    type Output = OldTerm;
 
     fn mul(self, other: i64) -> Self::Output {
-        Term(self, other as i128)
+        OldTerm(self, other as i128)
     }
 }
 
 impl std::ops::Mul<Variable> for i64 {
-    type Output = Term;
+    type Output = OldTerm;
 
     fn mul(self, other: Variable) -> Self::Output {
-        Term(other, self as i128)
+        OldTerm(other, self as i128)
     }
 }
 
@@ -310,18 +310,18 @@ macro_rules! impl_r1cs_input_lc_conversions {
             }
         }
 
-        impl Into<$crate::zkvm::r1cs::old_ops::Term> for $ConcreteInput {
-            fn into(self) -> $crate::zkvm::r1cs::old_ops::Term {
-                $crate::zkvm::r1cs::old_ops::Term(
+        impl Into<$crate::zkvm::r1cs::old_ops::OldTerm> for $ConcreteInput {
+            fn into(self) -> $crate::zkvm::r1cs::old_ops::OldTerm {
+                $crate::zkvm::r1cs::old_ops::OldTerm(
                     $crate::zkvm::r1cs::old_ops::Variable::Input(self.to_index()),
                     1,
                 )
             }
         }
 
-        impl Into<$crate::zkvm::r1cs::old_ops::LC> for $ConcreteInput {
-            fn into(self) -> $crate::zkvm::r1cs::old_ops::LC {
-                $crate::zkvm::r1cs::old_ops::Term(
+        impl Into<$crate::zkvm::r1cs::old_ops::OldLC> for $ConcreteInput {
+            fn into(self) -> $crate::zkvm::r1cs::old_ops::OldLC {
+                $crate::zkvm::r1cs::old_ops::OldTerm(
                     $crate::zkvm::r1cs::old_ops::Variable::Input(self.to_index()),
                     1,
                 )
@@ -329,39 +329,39 @@ macro_rules! impl_r1cs_input_lc_conversions {
             }
         }
 
-        impl Into<$crate::zkvm::r1cs::old_ops::LC> for Vec<$ConcreteInput> {
-            fn into(self) -> $crate::zkvm::r1cs::old_ops::LC {
-                let terms: Vec<$crate::zkvm::r1cs::old_ops::Term> =
+        impl Into<$crate::zkvm::r1cs::old_ops::OldLC> for Vec<$ConcreteInput> {
+            fn into(self) -> $crate::zkvm::r1cs::old_ops::OldLC {
+                let OldTerms: Vec<$crate::zkvm::r1cs::old_ops::OldTerm> =
                     self.into_iter().map(Into::into).collect();
-                $crate::zkvm::r1cs::old_ops::LC::new(terms)
+                $crate::zkvm::r1cs::old_ops::OldLC::new(OldTerms)
             }
         }
 
-        impl<T: Into<$crate::zkvm::r1cs::old_ops::LC>> std::ops::Add<T> for $ConcreteInput {
-            type Output = $crate::zkvm::r1cs::old_ops::LC;
+        impl<T: Into<$crate::zkvm::r1cs::old_ops::OldLC>> std::ops::Add<T> for $ConcreteInput {
+            type Output = $crate::zkvm::r1cs::old_ops::OldLC;
 
             fn add(self, rhs: T) -> Self::Output {
-                let lhs_lc: $crate::zkvm::r1cs::old_ops::LC = self.into();
-                let rhs_lc: $crate::zkvm::r1cs::old_ops::LC = rhs.into();
-                lhs_lc + rhs_lc
+                let lhs_OldLC: $crate::zkvm::r1cs::old_ops::OldLC = self.into();
+                let rhs_OldLC: $crate::zkvm::r1cs::old_ops::OldLC = rhs.into();
+                lhs_OldLC + rhs_OldLC
             }
         }
 
-        impl<T: Into<$crate::zkvm::r1cs::old_ops::LC>> std::ops::Sub<T> for $ConcreteInput {
-            type Output = $crate::zkvm::r1cs::old_ops::LC;
+        impl<T: Into<$crate::zkvm::r1cs::old_ops::OldLC>> std::ops::Sub<T> for $ConcreteInput {
+            type Output = $crate::zkvm::r1cs::old_ops::OldLC;
 
             fn sub(self, rhs: T) -> Self::Output {
-                let lhs_lc: $crate::zkvm::r1cs::old_ops::LC = self.into();
-                let rhs_lc: $crate::zkvm::r1cs::old_ops::LC = rhs.into();
-                lhs_lc - rhs_lc
+                let lhs_OldLC: $crate::zkvm::r1cs::old_ops::OldLC = self.into();
+                let rhs_OldLC: $crate::zkvm::r1cs::old_ops::OldLC = rhs.into();
+                lhs_OldLC - rhs_OldLC
             }
         }
 
         impl std::ops::Mul<i64> for $ConcreteInput {
-            type Output = $crate::zkvm::r1cs::old_ops::Term;
+            type Output = $crate::zkvm::r1cs::old_ops::OldTerm;
 
             fn mul(self, rhs: i64) -> Self::Output {
-                $crate::zkvm::r1cs::old_ops::Term(
+                $crate::zkvm::r1cs::old_ops::OldTerm(
                     $crate::zkvm::r1cs::old_ops::Variable::Input(self.to_index()),
                     rhs as i128,
                 )
@@ -369,10 +369,10 @@ macro_rules! impl_r1cs_input_lc_conversions {
         }
 
         impl std::ops::Mul<$ConcreteInput> for i64 {
-            type Output = $crate::zkvm::r1cs::old_ops::Term;
+            type Output = $crate::zkvm::r1cs::old_ops::OldTerm;
 
             fn mul(self, rhs: $ConcreteInput) -> Self::Output {
-                $crate::zkvm::r1cs::old_ops::Term(
+                $crate::zkvm::r1cs::old_ops::OldTerm(
                     $crate::zkvm::r1cs::old_ops::Variable::Input(rhs.to_index()),
                     self as i128,
                 )
@@ -380,34 +380,34 @@ macro_rules! impl_r1cs_input_lc_conversions {
         }
 
         impl std::ops::Add<$ConcreteInput> for i64 {
-            type Output = $crate::zkvm::r1cs::old_ops::LC;
+            type Output = $crate::zkvm::r1cs::old_ops::OldLC;
 
             fn add(self, rhs: $ConcreteInput) -> Self::Output {
-                let term1 = $crate::zkvm::r1cs::old_ops::Term(
+                let OldTerm1 = $crate::zkvm::r1cs::old_ops::OldTerm(
                     $crate::zkvm::r1cs::old_ops::Variable::Input(rhs.to_index()),
                     1,
                 );
-                let term2 = $crate::zkvm::r1cs::old_ops::Term(
+                let OldTerm2 = $crate::zkvm::r1cs::old_ops::OldTerm(
                     $crate::zkvm::r1cs::old_ops::Variable::Constant,
                     self as i128,
                 );
-                $crate::zkvm::r1cs::old_ops::LC::new(vec![term1, term2])
+                $crate::zkvm::r1cs::old_ops::OldLC::new(vec![OldTerm1, OldTerm2])
             }
         }
 
         impl std::ops::Sub<$ConcreteInput> for i64 {
-            type Output = $crate::zkvm::r1cs::old_ops::LC;
+            type Output = $crate::zkvm::r1cs::old_ops::OldLC;
 
             fn sub(self, rhs: $ConcreteInput) -> Self::Output {
-                let term1 = $crate::zkvm::r1cs::old_ops::Term(
+                let OldTerm1 = $crate::zkvm::r1cs::old_ops::OldTerm(
                     $crate::zkvm::r1cs::old_ops::Variable::Input(rhs.to_index()),
                     -1,
                 );
-                let term2 = $crate::zkvm::r1cs::old_ops::Term(
+                let OldTerm2 = $crate::zkvm::r1cs::old_ops::OldTerm(
                     $crate::zkvm::r1cs::old_ops::Variable::Constant,
                     self as i128,
                 );
-                $crate::zkvm::r1cs::old_ops::LC::new(vec![term1, term2])
+                $crate::zkvm::r1cs::old_ops::OldLC::new(vec![OldTerm1, OldTerm2])
             }
         }
     };
@@ -415,27 +415,27 @@ macro_rules! impl_r1cs_input_lc_conversions {
 
 #[cfg(test)]
 mod pretty_fmt_tests {
-    use super::super::ops::{ConstLC, ConstTerm};
+    use super::super::ops::{Term, LC};
 
     #[test]
-    fn test_const_term_pretty_fmt() {
+    fn test_const_OldTerm_pretty_fmt() {
         let mut output = String::new();
 
         // Test coefficient 1
-        let term1 = ConstTerm::new(0, 1);
-        term1.pretty_fmt(&mut output).unwrap();
+        let OldTerm1 = Term::new(0, 1);
+        OldTerm1.pretty_fmt(&mut output).unwrap();
         assert!(output.contains("LeftInstructionInput"));
 
         // Test coefficient -1
         output.clear();
-        let term2 = ConstTerm::new(1, -1);
-        term2.pretty_fmt(&mut output).unwrap();
+        let OldTerm2 = Term::new(1, -1);
+        OldTerm2.pretty_fmt(&mut output).unwrap();
         assert!(output.contains("-RightInstructionInput"));
 
         // Test other coefficient
         output.clear();
-        let term3 = ConstTerm::new(2, 5);
-        term3.pretty_fmt(&mut output).unwrap();
+        let OldTerm3 = Term::new(2, 5);
+        OldTerm3.pretty_fmt(&mut output).unwrap();
         assert!(output.contains("5⋅Product"));
     }
 
@@ -444,54 +444,54 @@ mod pretty_fmt_tests {
         let mut output = String::new();
 
         // Test zero
-        let zero = ConstLC::Zero;
+        let zero = LC::Zero;
         zero.pretty_fmt(&mut output).unwrap();
         assert_eq!(output, "0");
 
         // Test constant
         output.clear();
-        let const_lc = ConstLC::Const(42);
+        let const_lc = LC::Const(42);
         const_lc.pretty_fmt(&mut output).unwrap();
         assert_eq!(output, "42");
 
-        // Test single term
+        // Test single OldTerm
         output.clear();
-        let single = ConstLC::Terms1([ConstTerm::new(0, 1)]);
+        let single = LC::Terms1([Term::new(0, 1)]);
         single.pretty_fmt(&mut output).unwrap();
         assert!(output.contains("LeftInstructionInput"));
 
-        // Test multiple terms with parentheses
+        // Test multiple Terms with parentheses
         output.clear();
-        let multi = ConstLC::Terms2([ConstTerm::new(0, 1), ConstTerm::new(1, -2)]);
+        let multi = LC::Terms2([Term::new(0, 1), Term::new(1, -2)]);
         multi.pretty_fmt(&mut output).unwrap();
         assert!(output.starts_with("("));
         assert!(output.ends_with(")"));
         assert!(output.contains("LeftInstructionInput"));
         assert!(output.contains("- 2⋅RightInstructionInput"));
 
-        // Test terms with constant
+        // Test Terms with constant
         output.clear();
-        let with_const = ConstLC::Terms1Const([ConstTerm::new(0, 1)], 10);
+        let with_const = LC::Terms1Const([Term::new(0, 1)], 10);
         with_const.pretty_fmt(&mut output).unwrap();
         assert!(output.contains("LeftInstructionInput"));
         assert!(output.contains("+ 10"));
     }
 
     #[test]
-    fn test_const_lc_assert_no_duplicate_terms() {
+    fn test_const_lc_assert_no_duplicate_Terms() {
         // This should pass - no duplicates
-        let valid = ConstLC::Terms2([ConstTerm::new(0, 1), ConstTerm::new(1, 2)]);
+        let valid = LC::Terms2([Term::new(0, 1), Term::new(1, 2)]);
         valid.assert_no_duplicate_terms(); // Should not panic
 
         // This should panic - has duplicates
-        let invalid = ConstLC::Terms2([
-            ConstTerm::new(0, 1),
-            ConstTerm::new(0, 2), // Duplicate index 0
+        let invalid = LC::Terms2([
+            Term::new(0, 1),
+            Term::new(0, 2), // Duplicate index 0
         ]);
 
         std::panic::catch_unwind(|| {
             invalid.assert_no_duplicate_terms();
         })
-        .expect_err("Should have panicked due to duplicate terms");
+        .expect_err("Should have panicked due to duplicate Terms");
     }
 }
