@@ -128,25 +128,76 @@ fn unpack_toolchain(channel: &str) -> Result<()> {
 
 #[cfg(not(target_arch = "wasm32"))]
 async fn download_toolchain(client: &Client, url: &str) -> Result<()> {
+    use tracing::info;
+
     let jolt_dir = jolt_dir();
     let output_path = jolt_dir.join("rust-toolchain.tar.gz");
+    info!("Downloading toolchain to {output_path:?}");
     if !jolt_dir.exists() {
         fs::create_dir(&jolt_dir)?;
     }
 
+    // Check for partial download
+    let (mut file, resume_from) = if output_path.exists() {
+        let file_size = fs::metadata(&output_path)?.len();
+        if let Ok(head_response) = client.head(url).send().await {
+            // Manually parse content-length from headers
+            let content_length = head_response
+                .headers()
+                .get("content-length")
+                .and_then(|h| h.to_str().ok())
+                .and_then(|s| s.parse::<u64>().ok());
+
+            if let Some(content_length) = content_length {
+                if file_size >= content_length {
+                    fs::remove_file(&output_path)?;
+                    (File::create(&output_path)?, 0)
+                } else {
+                    (File::options().append(true).open(&output_path)?, file_size)
+                }
+            } else {
+                fs::remove_file(&output_path)?;
+                (File::create(&output_path)?, 0)
+            }
+        } else {
+            fs::remove_file(&output_path)?;
+            (File::create(&output_path)?, 0)
+        }
+    } else {
+        (File::create(&output_path)?, 0)
+    };
+
     let mut response = client.get(url).send().await?;
-    if response.status().is_success() {
-        let mut file = File::create(output_path)?;
-        let total_size = response.content_length().unwrap_or(0);
+    if resume_from > 0 {
+        response = client
+            .get(url)
+            .header("Range", format!("bytes={resume_from}-"))
+            .send()
+            .await?;
+    }
+
+    if response.status().is_success() || response.status().as_u16() == 206 {
+        let total_size = if resume_from > 0 {
+            response
+                .headers()
+                .get("content-range")
+                .and_then(|h| h.to_str().ok())
+                .and_then(|s| s.split('/').nth(1))
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or(response.content_length().unwrap_or(0) + resume_from)
+        } else {
+            response.content_length().unwrap_or(0)
+        };
 
         let pb = ProgressBar::new(total_size);
+        pb.set_position(resume_from);
         pb.set_style(
             ProgressStyle::default_bar()
                 .template("[{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})")?
                 .progress_chars("#>-"),
         );
 
-        let mut downloaded: u64 = 0;
+        let mut downloaded = resume_from;
         while let Some(chunk) = response.chunk().await.unwrap() {
             file.write_all(&chunk)?;
             let new = downloaded + (chunk.len() as u64);

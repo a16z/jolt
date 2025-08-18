@@ -27,6 +27,7 @@ members = [
     "jolt-inlines/keccak256",
     "tracer",
     "common",
+    "jolt-platform",
     "jolt-sdk",
     "jolt-sdk/macros",
     "jolt-verifier",
@@ -56,6 +57,8 @@ members = [
     "examples/overflow/guest",
     "examples/memory-ops",
     "examples/memory-ops/guest",
+    "examples/verifier",
+    "examples/verifier/guest",
 ]
 
 [features]

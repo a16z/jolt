@@ -1,0 +1,24 @@
+[package]
+name = "jolt-platform"
+version = "0.1.0"
+authors = [
+    "Michael Zhu <mzhu@a16z.com>",
+    "Sam Ragsdale <sragsdale@a16z.com>",
+    "Noah Citron <ncitron@a16z.com>",
+    "Sagar Dhawan <sdhawan@a16z.com>",
+]
+description = "Jolt platform SDK provides the necessary tools and libraries to build applications on the Jolt platform. Supports std and no_std."
+license = "MIT"
+homepage = "https://github.com/a16z/jolt/README.md"
+repository = "https://github.com/a16z/jolt"
+edition = "2021"
+
+[features]
+std = [
+    "dep:getrandom",
+    "dep:rand",
+]
+
+[dependencies]
+getrandom = { version = "0.2.16", features = ["custom"], optional = true }
+rand = { version = "0.8.5", optional = true }
