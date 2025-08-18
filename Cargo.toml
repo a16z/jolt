@@ -57,6 +57,8 @@ members = [
     "examples/memory-ops/guest",
     "examples/verifier",
     "examples/verifier/guest",
+    "examples/recursion",
+    "examples/recursion/guest",
 ]
 
 [features]
