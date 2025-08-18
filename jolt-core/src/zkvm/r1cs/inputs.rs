@@ -423,7 +423,12 @@ pub fn compute_claimed_witness_evals<F: JoltField>(
         .map(|i| {
             let mut acc = F::zero();
             for t in 0..num_steps {
-                acc += eq_rx[t] * accessor.value_at(i, t);
+                if let Some(&eq_rx_t) = eq_rx.get(t) {
+                    acc += eq_rx_t * accessor.value_at(i, t);
+                } else {
+                    break; // Stop processing if we've reached the end of eq_rx
+                }
+
             }
             acc
         })
