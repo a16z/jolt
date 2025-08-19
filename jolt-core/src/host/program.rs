@@ -111,6 +111,20 @@ impl Program {
                 self.func.as_ref().unwrap_or(&"".to_string())
             );
 
+            let cc_env_var = format!("CC_{target_triple}");
+            let cc_value = std::env::var(&cc_env_var).unwrap_or_else(|_| {
+                #[cfg(target_os = "linux")]
+                {
+                    "riscv64-unknown-elf-gcc".to_string()
+                }
+                #[cfg(not(target_os = "linux"))]
+                {
+                    // Default fallback for other platforms
+                    "".to_string()
+                }
+            });
+            envs.push((&cc_env_var, cc_value));
+
             let output = Command::new("cargo")
                 .envs(envs)
                 .args([
@@ -197,7 +211,7 @@ impl Program {
             max_output_size: self.max_output_size,
             program_size: Some(program_size),
         };
-        tracer::trace(elf_contents, inputs, &memory_config)
+        tracer::trace(&elf_contents, inputs, &memory_config)
     }
 
     #[tracing::instrument(skip_all, name = "Program::trace_to_file")]
@@ -217,7 +231,7 @@ impl Program {
             max_output_size: self.max_output_size,
             program_size: Some(program_size),
         };
-        tracer::trace_to_file(elf_contents, inputs, &memory_config, trace_file)
+        tracer::trace_to_file(&elf_contents, inputs, &memory_config, trace_file)
     }
 
     pub fn trace_analyze<F: JoltField>(mut self, inputs: &[u8]) -> ProgramSummary {

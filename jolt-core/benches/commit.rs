@@ -1,16 +1,13 @@
-use ark_bn254::{Bn254, Fr};
+use ark_bn254::Fr;
 use criterion::Criterion;
 use jolt_core::field::JoltField;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::commitment::dory::{DoryCommitmentScheme, DoryGlobals};
-use jolt_core::poly::commitment::hyperkzg::HyperKZG;
-use jolt_core::poly::commitment::zeromorph::Zeromorph;
 use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
 use jolt_core::transcripts::{Blake2bTranscript, Transcript};
 use jolt_core::utils::math::Math;
 use rand_chacha::ChaCha20Rng;
 use rand_core::{RngCore, SeedableRng};
-use rayon::iter::IntoParallelIterator;
 
 const NUM_VARS: usize = 10;
 const SRS_SIZE: usize = 1 << NUM_VARS;

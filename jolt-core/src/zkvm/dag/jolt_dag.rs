@@ -5,6 +5,12 @@ use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::dory::DoryGlobals;
 use crate::subprotocols::sumcheck::{BatchedSumcheck, SumcheckInstance};
 use crate::transcripts::Transcript;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::utils::profiling::print_current_memory_usage;
+#[cfg(feature = "allocative")]
+use crate::utils::profiling::print_data_structure_heap_usage;
+#[cfg(feature = "allocative")]
+use crate::utils::profiling::write_flamegraph_svg;
 use crate::utils::thread::drop_in_background_thread;
 use crate::zkvm::bytecode::BytecodeDag;
 use crate::zkvm::dag::proof_serialization::JoltProof;
@@ -18,6 +24,8 @@ use crate::zkvm::witness::{
     compute_d_parameter, AllCommittedPolynomials, CommittedPolynomial, DTH_ROOT_OF_K,
 };
 use crate::zkvm::ProverDebugInfo;
+#[cfg(feature = "allocative")]
+use allocative::FlameGraphBuilder;
 use anyhow::Context;
 use rayon::prelude::*;
 
@@ -67,6 +75,8 @@ impl JoltDAG {
         drop(commitments);
 
         // Stage 1:
+        #[cfg(not(target_arch = "wasm32"))]
+        print_current_memory_usage("Stage 1 baseline");
         let span = tracing::span!(tracing::Level::INFO, "Stage 1 sumchecks");
         let _guard = span.enter();
 
@@ -85,6 +95,8 @@ impl JoltDAG {
         drop(span);
 
         // Stage 2:
+        #[cfg(not(target_arch = "wasm32"))]
+        print_current_memory_usage("Stage 2 baseline");
         let span = tracing::span!(tracing::Level::INFO, "Stage 2 sumchecks");
         let _guard = span.enter();
 
@@ -93,6 +105,16 @@ impl JoltDAG {
             .chain(registers_dag.stage2_prover_instances(&mut state_manager))
             .chain(ram_dag.stage2_prover_instances(&mut state_manager))
             .collect();
+
+        #[cfg(feature = "allocative")]
+        {
+            let mut flamegraph = FlameGraphBuilder::default();
+            for sumcheck in stage2_instances.iter() {
+                sumcheck.update_flamegraph(&mut flamegraph);
+            }
+            write_flamegraph_svg(flamegraph, "stage2_start_flamechart.svg");
+        }
+
         let stage2_instances_mut: Vec<&mut dyn SumcheckInstance<F>> = stage2_instances
             .iter_mut()
             .map(|instance| &mut **instance as &mut dyn SumcheckInstance<F>)
@@ -111,12 +133,23 @@ impl JoltDAG {
             ProofData::SumcheckProof(stage2_proof),
         );
 
+        #[cfg(feature = "allocative")]
+        {
+            let mut flamegraph = FlameGraphBuilder::default();
+            for sumcheck in stage2_instances.iter() {
+                sumcheck.update_flamegraph(&mut flamegraph);
+            }
+            write_flamegraph_svg(flamegraph, "stage2_end_flamechart.svg");
+        }
+
         drop_in_background_thread(stage2_instances);
 
         drop(_guard);
         drop(span);
 
         // Stage 3:
+        #[cfg(not(target_arch = "wasm32"))]
+        print_current_memory_usage("Stage 3 baseline");
         let span = tracing::span!(tracing::Level::INFO, "Stage 3 sumchecks");
         let _guard = span.enter();
 
@@ -126,6 +159,16 @@ impl JoltDAG {
             .chain(lookups_dag.stage3_prover_instances(&mut state_manager))
             .chain(ram_dag.stage3_prover_instances(&mut state_manager))
             .collect();
+
+        #[cfg(feature = "allocative")]
+        {
+            let mut flamegraph = FlameGraphBuilder::default();
+            for sumcheck in stage3_instances.iter() {
+                sumcheck.update_flamegraph(&mut flamegraph);
+            }
+            write_flamegraph_svg(flamegraph, "stage3_start_flamechart.svg");
+        }
+
         let stage3_instances_mut: Vec<&mut dyn SumcheckInstance<F>> = stage3_instances
             .iter_mut()
             .map(|instance| &mut **instance as &mut dyn SumcheckInstance<F>)
@@ -142,12 +185,23 @@ impl JoltDAG {
             ProofData::SumcheckProof(stage3_proof),
         );
 
+        #[cfg(feature = "allocative")]
+        {
+            let mut flamegraph = FlameGraphBuilder::default();
+            for sumcheck in stage3_instances.iter() {
+                sumcheck.update_flamegraph(&mut flamegraph);
+            }
+            write_flamegraph_svg(flamegraph, "stage3_end_flamechart.svg");
+        }
+
         drop_in_background_thread(stage3_instances);
 
         drop(_guard);
         drop(span);
 
         // Stage 4:
+        #[cfg(not(target_arch = "wasm32"))]
+        print_current_memory_usage("Stage 4 baseline");
         let span = tracing::span!(tracing::Level::INFO, "Stage 4 sumchecks");
         let _guard = span.enter();
 
@@ -156,6 +210,16 @@ impl JoltDAG {
             .chain(bytecode_dag.stage4_prover_instances(&mut state_manager))
             .chain(lookups_dag.stage4_prover_instances(&mut state_manager))
             .collect();
+
+        #[cfg(feature = "allocative")]
+        {
+            let mut flamegraph = FlameGraphBuilder::default();
+            for sumcheck in stage4_instances.iter() {
+                sumcheck.update_flamegraph(&mut flamegraph);
+            }
+            write_flamegraph_svg(flamegraph, "stage4_start_flamechart.svg");
+        }
+
         let stage4_instances_mut: Vec<&mut dyn SumcheckInstance<F>> = stage4_instances
             .iter_mut()
             .map(|instance| &mut **instance as &mut dyn SumcheckInstance<F>)
@@ -172,6 +236,15 @@ impl JoltDAG {
             ProofData::SumcheckProof(stage4_proof),
         );
 
+        #[cfg(feature = "allocative")]
+        {
+            let mut flamegraph = FlameGraphBuilder::default();
+            for sumcheck in stage4_instances.iter() {
+                sumcheck.update_flamegraph(&mut flamegraph);
+            }
+            write_flamegraph_svg(flamegraph, "stage4_end_flamechart.svg");
+        }
+
         drop_in_background_thread(stage4_instances);
 
         drop(_guard);
@@ -186,6 +259,12 @@ impl JoltDAG {
                 polynomial.generate_witness(preprocessing, trace),
             );
         }
+
+        #[cfg(feature = "allocative")]
+        print_data_structure_heap_usage("Committed polynomials map", &polynomials_map);
+
+        #[cfg(not(target_arch = "wasm32"))]
+        print_current_memory_usage("Stage 5 baseline");
         let opening_proof = accumulator.borrow_mut().reduce_and_prove(
             polynomials_map,
             opening_proof_hints,
@@ -241,24 +320,6 @@ impl JoltDAG {
         mut state_manager: StateManager<'a, F, ProofTranscript, PCS>,
     ) -> Result<(), anyhow::Error> {
         state_manager.fiat_shamir_preamble();
-        // #[cfg(test)]
-        // {
-        //     let prover_transcript = prover_state_manager.get_transcript().take();
-        //     state_manager
-        //         .transcript
-        //         .borrow_mut()
-        //         .compare_to(prover_transcript);
-
-        //     let prover_opening_accumulator = self
-        //         .prover_state_manager
-        //         .get_prover_accumulator()
-        //         .borrow()
-        //         .clone();
-        //     state_manager
-        //         .get_verifier_accumulator()
-        //         .borrow_mut()
-        //         .compare_to(prover_opening_accumulator);
-        // }
 
         let ram_K = state_manager.ram_K;
         let bytecode_d = state_manager.get_verifier_data().0.shared.bytecode.d;
@@ -270,9 +331,6 @@ impl JoltDAG {
         for commitment in commitments.borrow().iter() {
             transcript.borrow_mut().append_serializable(commitment);
         }
-
-        // // Receive opening claims from prover's accumulator
-        // self.receive_claims().context("Receive claims")?;
 
         // Stage 1:
         let (preprocessing, _, trace_length) = state_manager.get_verifier_data();

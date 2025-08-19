@@ -2,6 +2,7 @@
 
 use std::sync::LazyLock;
 
+use allocative::Allocative;
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
 use rayon::prelude::*;
@@ -36,7 +37,7 @@ pub fn compute_d_parameter(K: usize) -> usize {
     log_K.div_ceil(DTH_ROOT_OF_K.log_2())
 }
 
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord)]
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Allocative)]
 pub enum CommittedPolynomial {
     /* R1CS aux variables */
     /// The "left" input to the current instruction. Typically either the
@@ -359,7 +360,7 @@ impl CommittedPolynomial {
     }
 }
 
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord)]
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Allocative)]
 pub enum VirtualPolynomial {
     SpartanAz,
     SpartanBz,

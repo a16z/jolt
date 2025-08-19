@@ -1,5 +1,8 @@
 use std::{cell::RefCell, rc::Rc};
 
+use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::FlameGraphBuilder;
 use rayon::prelude::*;
 
 use super::{D, LOG_K_CHUNK};
@@ -22,11 +25,13 @@ use crate::{
 
 const DEGREE: usize = 1;
 
+#[derive(Allocative)]
 struct HammingProverState<F: JoltField> {
     /// ra_i polynomials
     ra: [MultilinearPolynomial<F>; D],
 }
 
+#[derive(Allocative)]
 pub struct HammingWeightSumcheck<F: JoltField> {
     gamma: [F; D],
     prover_state: Option<HammingProverState<F>>,
@@ -190,5 +195,10 @@ impl<F: JoltField> SumcheckInstance<F> for HammingWeightSumcheck<F> {
             SumcheckId::InstructionHammingWeight,
             r,
         );
+    }
+
+    #[cfg(feature = "allocative")]
+    fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
+        flamegraph.visit_root(self);
     }
 }
