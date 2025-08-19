@@ -14,10 +14,10 @@ edition = "2021"
 
 [features]
 host = [
+    "jolt-core/default",
     "jolt-platform/std",
     "dep:tracer",
     "dep:common",
-    "dep:jolt-core",
     "dep:ark-ec",
     "dep:ark-bn254",
     "postcard/use-std",
@@ -27,6 +27,11 @@ guest-std = [
     "jolt-platform/std",
     "jolt-sdk-macros/guest-std",
 ]
+guest-verifier = [
+    "guest-std",
+    "dep:common",
+    "jolt-core/parallel"
+]
 
 [dependencies]
 jolt-platform = { path = "../jolt-platform" }
@@ -35,6 +40,6 @@ ark-ec = { version = "0.5.0", default-features = false, optional = true }
 ark-bn254 = { version = "0.5.0", default-features = false, optional = true }
 
 jolt-sdk-macros = { path = "./macros" }
-jolt-core = { path = "../jolt-core", optional = true }
+jolt-core = { path = "../jolt-core", default-features = false, optional = true }
 tracer = { path = "../tracer", optional = true }
 common = { path = "../common", optional = true }

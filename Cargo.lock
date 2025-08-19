@@ -1714,14 +1714,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "jolt-verifier"
-version = "0.1.0"
-dependencies = [
- "common",
- "jolt-core",
-]
-
-[[package]]
 name = "js-sys"
 version = "0.3.77"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3473,7 +3465,6 @@ version = "0.1.0"
 dependencies = [
  "ark-bn254",
  "jolt-sdk",
- "jolt-verifier",
 ]
 
 [[package]]
