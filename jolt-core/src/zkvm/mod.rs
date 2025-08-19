@@ -92,7 +92,6 @@ where
 {
     pub generators: PCS::ProverSetup,
     pub shared: JoltSharedPreprocessing,
-    field: F::SmallValueLookupTables,
 }
 
 impl<F, PCS> Serializable for JoltProverPreprocessing<F, PCS>
@@ -151,9 +150,8 @@ where
     pub(crate) prover_setup: PCS::ProverSetup,
 }
 
-pub trait Jolt<F, PCS, FS: Transcript>
+pub trait Jolt<F: JoltField, PCS, FS: Transcript>
 where
-    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
     fn shared_preprocess(
@@ -178,24 +176,18 @@ where
         memory_init: Vec<(u64, u8)>,
         max_trace_length: usize,
     ) -> JoltProverPreprocessing<F, PCS> {
-        let small_value_lookup_tables = F::compute_lookup_tables();
-        F::initialize_lookup_tables(small_value_lookup_tables.clone());
-
         let shared = Self::shared_preprocess(bytecode, memory_layout, memory_init);
 
         let max_T: usize = max_trace_length.next_power_of_two();
 
         let generators = PCS::setup_prover(DTH_ROOT_OF_K.log_2() + max_T.log_2());
 
-        JoltProverPreprocessing {
-            generators,
-            shared,
-            field: small_value_lookup_tables,
-        }
+        JoltProverPreprocessing { generators, shared }
     }
 
     #[allow(clippy::type_complexity)]
     #[cfg(feature = "prover")]
+    #[tracing::instrument(skip_all, name = "Jolt::prove")]
     fn prove(
         preprocessing: &JoltProverPreprocessing<F, PCS>,
         program: &mut Program,
@@ -252,6 +244,7 @@ where
         (proof, program_io, debug_info)
     }
 
+    #[tracing::instrument(skip_all, name = "Jolt::verify")]
     fn verify(
         preprocessing: &JoltVerifierPreprocessing<F, PCS>,
         proof: JoltProof<F, PCS, FS>,
@@ -427,7 +420,7 @@ mod tests {
     fn sha3_e2e_dory() {
         // Ensure SHA3 inline library is linked and auto-registered
         #[cfg(feature = "host")]
-        extern crate sha3_inline;
+        use sha3_inline as _;
         // SHA3 inlines are automatically registered via #[ctor::ctor]
         // when the sha3_inline crate is linked (see lib.rs)
 
@@ -460,7 +453,7 @@ mod tests {
     fn sha2_e2e_dory() {
         // Ensure SHA2 inline library is linked and auto-registered
         #[cfg(feature = "host")]
-        extern crate sha2_inline;
+        use sha2_inline as _;
         // SHA2 inlines are automatically registered via #[ctor::ctor]
         // when the sha2_inline crate is linked (see lib.rs)
         let mut program = host::Program::new("sha2-guest");

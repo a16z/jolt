@@ -8,7 +8,7 @@
 *.txt
 .DS_Store
 
-# flamegraphs, probably
+# flamegraphs
 **/*.svg
 
 # tracing-flame output

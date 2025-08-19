@@ -42,9 +42,6 @@ where
     F: JoltField,
     ProofTranscript: Transcript,
 {
-    let small_value_lookup_tables = F::compute_lookup_tables();
-    F::initialize_lookup_tables(small_value_lookup_tables);
-
     let mut tasks = Vec::new();
 
     const K: usize = 1 << 10;
@@ -111,13 +108,13 @@ fn fibonacci() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
 
 fn sha2() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     #[cfg(feature = "host")]
-    extern crate sha2_inline;
+    use sha2_inline as _;
     prove_example("sha2-guest", postcard::to_stdvec(&vec![5u8; 2048]).unwrap())
 }
 
 fn sha3() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     #[cfg(feature = "host")]
-    extern crate sha3_inline;
+    use sha3_inline as _;
     prove_example("sha3-guest", postcard::to_stdvec(&vec![5u8; 2048]).unwrap())
 }
 
@@ -127,7 +124,7 @@ fn btreemap() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
 
 fn sha2_chain() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     #[cfg(feature = "host")]
-    extern crate sha2_inline;
+    use sha2_inline as _;
     let mut inputs = vec![];
     inputs.append(&mut postcard::to_stdvec(&[5u8; 32]).unwrap());
     inputs.append(&mut postcard::to_stdvec(&1000u32).unwrap());
@@ -165,7 +162,7 @@ fn prove_example(
     };
 
     tasks.push((
-        tracing::info_span!("Example_E2E"),
+        tracing::info_span!("e2e benchmark"),
         Box::new(task) as Box<dyn FnOnce()>,
     ));
 

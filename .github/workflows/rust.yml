@@ -122,8 +122,8 @@ jobs:
             cargo nextest run --features host -p "$pkg"
           done
 
-  test-verifier:
-    name: Jolt Verifier Tests
+  test-sdk-verifier:
+    name: Jolt SDK Verifier Tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -137,8 +137,8 @@ jobs:
         run: cargo run install-toolchain
       - name: Install nextest
         uses: taiki-e/install-action@nextest
-      - name: Run verifier tests
-        run: cargo nextest run --release -p jolt-verifier
+      - name: Run SDK verifier tests
+        run: cargo nextest run --release -p jolt-sdk --features host
 
 
   test-tracer:

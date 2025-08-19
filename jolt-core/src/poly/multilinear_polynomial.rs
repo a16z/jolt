@@ -2,6 +2,7 @@ use crate::{
     poly::{one_hot_polynomial::OneHotPolynomial, rlc_polynomial::RLCPolynomial},
     utils::compute_dotproduct,
 };
+use allocative::Allocative;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Valid};
 use num_traits::MulAdd;
 use rayon::prelude::*;
@@ -19,7 +20,7 @@ use crate::{
 
 /// Wrapper enum for the various multilinear polynomial types used in Jolt
 #[repr(u8)]
-#[derive(Clone, Debug, EnumIter, PartialEq)]
+#[derive(Clone, Debug, EnumIter, PartialEq, Allocative)]
 pub enum MultilinearPolynomial<F: JoltField> {
     LargeScalars(DensePolynomial<F>),
     U8Scalars(CompactPolynomial<u8, F>),
@@ -64,7 +65,7 @@ impl<F: JoltField> CanonicalSerialize for MultilinearPolynomial<F> {
 }
 
 /// The order in which polynomial variables are bound in sumcheck
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Allocative)]
 pub enum BindingOrder {
     LowToHigh,
     HighToLow,
@@ -943,9 +944,6 @@ mod tests {
 
     #[test]
     fn test_poly_to_field_elements() {
-        let small_value_lookup_tables = <Fr as JoltField>::compute_lookup_tables();
-        <Fr as JoltField>::initialize_lookup_tables(small_value_lookup_tables);
-
         let max_num_bits = [
             vec![8; 100],
             vec![16; 100],

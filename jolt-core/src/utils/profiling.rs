@@ -1,9 +1,15 @@
+#[cfg(feature = "allocative")]
+use allocative::{Allocative, FlameGraphBuilder};
 #[cfg(not(target_arch = "wasm32"))]
 use memory_stats::memory_stats;
+#[cfg(feature = "allocative")]
+use std::path::Path;
 use std::{
     collections::HashMap,
     sync::{LazyLock, Mutex},
 };
+#[cfg(not(target_arch = "wasm32"))]
+use tracing::debug;
 
 static MEMORY_USAGE_MAP: LazyLock<Mutex<HashMap<&'static str, f64>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
@@ -56,15 +62,47 @@ pub fn print_current_memory_usage(label: &str) {
     if let Some(usage) = memory_stats() {
         let memory_usage_gb = usage.physical_mem as f64 / 1_000_000_000.0;
         if memory_usage_gb >= 1.0 {
-            println!("\"{label}\" current memory usage: {memory_usage_gb} GB");
+            debug!("\"{label}\" current memory usage: {memory_usage_gb:.2} GB");
         } else {
-            println!(
-                "\"{}\" current memory usage: {} MB",
+            debug!(
+                "\"{}\" current memory usage: {:.2} MB",
                 label,
                 memory_usage_gb * 1000.0
             );
         }
     } else {
-        println!("Failed to get current memory usage (\"{label}\")");
+        debug!("Failed to get current memory usage (\"{label}\")");
     }
+}
+
+#[cfg(feature = "allocative")]
+pub fn print_data_structure_heap_usage<T: Allocative>(label: &str, data: &T) {
+    let memory_usage_gb = allocative::size_of_unique_allocated_data(data) as f64 / 1_000_000_000.0;
+    if memory_usage_gb >= 1.0 {
+        debug!("\"{label}\" memory usage: {memory_usage_gb:.2} GB");
+    } else {
+        debug!(
+            "\"{}\" memory usage: {:.2} MB",
+            label,
+            memory_usage_gb * 1000.0
+        );
+    }
+}
+
+#[cfg(feature = "allocative")]
+pub fn write_flamegraph_svg<P: AsRef<Path>>(flamegraph: FlameGraphBuilder, path: P) {
+    use std::{fs::File, io::Cursor};
+
+    use inferno::flamegraph::Options;
+
+    let mut opts = Options::default();
+    opts.color_diffusion = true;
+    opts.count_name = String::from("MB");
+    opts.factor = 0.000001;
+    opts.flame_chart = true;
+
+    let flamegraph_src = flamegraph.finish_and_write_flame_graph();
+    let input = Cursor::new(flamegraph_src);
+    let output = File::create(path).unwrap();
+    inferno::flamegraph::from_reader(&mut opts, input, output).unwrap();
 }

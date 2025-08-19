@@ -2,9 +2,9 @@
 
 extern crate jolt_sdk_macros;
 
-#[cfg(feature = "host")]
+#[cfg(any(feature = "host", feature = "guest-verifier"))]
 pub mod host_utils;
-#[cfg(feature = "host")]
+#[cfg(any(feature = "host", feature = "guest-verifier"))]
 pub use host_utils::*;
 
 pub use jolt_platform::*;
