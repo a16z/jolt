@@ -21,6 +21,7 @@ use super::types::{AzExtendedEval, AzValue, BzExtendedEval, BzValue, CzValue, Sm
 use crate::field::JoltField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::XLEN;
+use rayon::prelude::*;
 use std::fmt::Debug;
 use std::marker::PhantomData;
 use tracer::instruction::RV32IMCycle;
@@ -260,16 +261,20 @@ impl TryFrom<&JoltR1CSInputs> for OpeningId {
 /// materializing full `MultilinearPolynomial`s. Implementations should be
 /// zero-copy and cheap per call.
 pub trait WitnessRowAccessor<F: JoltField>: Send + Sync {
-    fn value_at(&self, input_index: usize, t: usize) -> F;
+    /// Primary method: returns small scalar values directly for efficient evaluation
+    fn value_at(&self, input_index: usize, t: usize) -> SmallScalar;
     fn num_steps(&self) -> usize;
-    fn small_scalar_at(&self, input_index: usize, t: usize) -> SmallScalar {
-        // Default implementation: round-trip via field if concrete implementor doesn't override.
-        // Prefer overriding for zero-copy extraction.
-        let f = self.value_at(input_index, t);
-        if let Some(u) = f.to_u64() {
-            SmallScalar::U64(u)
-        } else {
-            SmallScalar::I128(0)
+    
+    /// Convenience method: converts small scalar to field element
+    fn value_at_field(&self, input_index: usize, t: usize) -> F {
+        let scalar = self.value_at(input_index, t);
+        match scalar {
+            SmallScalar::Bool(v) => F::from_u8(v as u8),
+            SmallScalar::U8(v) => F::from_u8(v),
+            SmallScalar::U64(v) => F::from_u64(v),
+            SmallScalar::I64(v) => F::from_i64(v),
+            SmallScalar::U128(v) => F::from_u128(v),
+            SmallScalar::I128(v) => F::from_i128(v),
         }
     }
 }
@@ -298,133 +303,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> WitnessRowAccessor<F>
     for TraceWitnessAccessor<'a, F, PCS>
 {
     #[inline]
-    fn value_at(&self, input_index: usize, t: usize) -> F {
-        let len = self.trace.len();
-        let get = |idx: usize| -> &RV32IMCycle { &self.trace[idx] };
-        match JoltR1CSInputs::from_index(input_index) {
-            JoltR1CSInputs::PC => {
-                F::from_u64(self.preprocessing.shared.bytecode.get_pc(get(t)) as u64)
-            }
-            JoltR1CSInputs::NextPC => {
-                if t + 1 < len {
-                    F::from_u64(self.preprocessing.shared.bytecode.get_pc(get(t + 1)) as u64)
-                } else {
-                    F::zero()
-                }
-            }
-            JoltR1CSInputs::UnexpandedPC => {
-                F::from_u64(get(t).instruction().normalize().address as u64)
-            }
-            JoltR1CSInputs::NextUnexpandedPC => {
-                if t + 1 < len {
-                    F::from_u64(get(t + 1).instruction().normalize().address as u64)
-                } else {
-                    F::zero()
-                }
-            }
-            JoltR1CSInputs::Rd => F::from_u8(get(t).rd_write().0),
-            JoltR1CSInputs::Imm => F::from_i128(get(t).instruction().normalize().operands.imm),
-            JoltR1CSInputs::RamAddress => F::from_u64(get(t).ram_access().address() as u64),
-            JoltR1CSInputs::Rs1Value => F::from_u64(get(t).rs1_read().1),
-            JoltR1CSInputs::Rs2Value => F::from_u64(get(t).rs2_read().1),
-            JoltR1CSInputs::RdWriteValue => F::from_u64(get(t).rd_write().2),
-            JoltR1CSInputs::RamReadValue => {
-                let v = match get(t).ram_access() {
-                    tracer::instruction::RAMAccess::Read(read) => read.value,
-                    tracer::instruction::RAMAccess::Write(write) => write.pre_value,
-                    tracer::instruction::RAMAccess::NoOp => 0,
-                };
-                F::from_u64(v)
-            }
-            JoltR1CSInputs::RamWriteValue => {
-                let v = match get(t).ram_access() {
-                    tracer::instruction::RAMAccess::Read(read) => read.value,
-                    tracer::instruction::RAMAccess::Write(write) => write.post_value,
-                    tracer::instruction::RAMAccess::NoOp => 0,
-                };
-                F::from_u64(v)
-            }
-            JoltR1CSInputs::LeftInstructionInput => {
-                let (left, _right) = LookupQuery::<XLEN>::to_instruction_inputs(get(t));
-                F::from_u64(left)
-            }
-            JoltR1CSInputs::RightInstructionInput => {
-                let (_left, right) = LookupQuery::<XLEN>::to_instruction_inputs(get(t));
-                let r64: i64 = right.try_into().unwrap_or_else(|_| {
-                    if right.is_negative() {
-                        i64::MIN
-                    } else {
-                        i64::MAX
-                    }
-                });
-                F::from_i64(r64)
-            }
-            JoltR1CSInputs::LeftLookupOperand => {
-                let (l, _r) = LookupQuery::<XLEN>::to_lookup_operands(get(t));
-                F::from_u64(l)
-            }
-            JoltR1CSInputs::RightLookupOperand => {
-                let (_l, r) = LookupQuery::<XLEN>::to_lookup_operands(get(t));
-                F::from_u128(r)
-            }
-            JoltR1CSInputs::Product => {
-                let (left, right) = LookupQuery::<XLEN>::to_instruction_inputs(get(t));
-                let right_u64 = right as u64;
-                let prod = (left as u128) * (right_u64 as u128);
-                F::from_u128(prod)
-            }
-            JoltR1CSInputs::WriteLookupOutputToRD => {
-                let flag = get(t).instruction().circuit_flags()
-                    [CircuitFlags::WriteLookupOutputToRD as usize];
-                F::from_u8(get(t).rd_write().0 * (flag as u8))
-            }
-            JoltR1CSInputs::WritePCtoRD => {
-                let flag = get(t).instruction().circuit_flags()[CircuitFlags::Jump as usize];
-                F::from_u8(get(t).rd_write().0 * (flag as u8))
-            }
-            JoltR1CSInputs::LookupOutput => {
-                F::from_u64(LookupQuery::<XLEN>::to_lookup_output(get(t)))
-            }
-            JoltR1CSInputs::NextIsNoop => {
-                if t + 1 < len {
-                    let no = get(t + 1).instruction().circuit_flags()[CircuitFlags::IsNoop];
-                    F::from_u8(no as u8)
-                } else {
-                    F::zero()
-                }
-            }
-            JoltR1CSInputs::ShouldBranch => {
-                let is_branch = get(t).instruction().circuit_flags()[CircuitFlags::Branch as usize];
-                let out = LookupQuery::<XLEN>::to_lookup_output(get(t)) as u8;
-                F::from_u8(out * (is_branch as u8))
-            }
-            JoltR1CSInputs::ShouldJump => {
-                let is_jump = get(t).instruction().circuit_flags()[CircuitFlags::Jump];
-                let next_noop = if t + 1 < len {
-                    get(t + 1).instruction().circuit_flags()[CircuitFlags::IsNoop]
-                } else {
-                    true
-                };
-                F::from_u8((is_jump && !next_noop) as u8)
-            }
-            JoltR1CSInputs::CompressedDoNotUpdateUnexpPC => {
-                let flags = get(t).instruction().circuit_flags();
-                let v = (flags[CircuitFlags::DoNotUpdateUnexpandedPC as usize] as u8)
-                    * (flags[CircuitFlags::IsCompressed as usize] as u8);
-                F::from_u8(v)
-            }
-            JoltR1CSInputs::OpFlags(flag) => {
-                F::from_u8(get(t).instruction().circuit_flags()[flag as usize] as u8)
-            }
-        }
-    }
-
-    #[inline]
-    fn num_steps(&self) -> usize {
-        self.trace.len()
-    }
-
-    fn small_scalar_at(&self, input_index: usize, t: usize) -> SmallScalar {
+    fn value_at(&self, input_index: usize, t: usize) -> SmallScalar {
         let len = self.trace.len();
         let get = |idx: usize| -> &RV32IMCycle { &self.trace[idx] };
         match JoltR1CSInputs::from_index(input_index) {
@@ -495,28 +374,28 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> WitnessRowAccessor<F>
             }
             JoltR1CSInputs::Product => {
                 let (left, right) = LookupQuery::<XLEN>::to_instruction_inputs(get(t));
-                let prod = (left as u128) * (right as i128 as u128);
+                let right_u64 = right as u64;
+                let prod = (left as u128) * (right_u64 as u128);
                 SmallScalar::U128(prod)
             }
             JoltR1CSInputs::WriteLookupOutputToRD => {
                 let flag = get(t).instruction().circuit_flags()
-                    [CircuitFlags::WriteLookupOutputToRD as usize] as u8;
-                SmallScalar::U8(get(t).rd_write().0 * flag)
+                    [CircuitFlags::WriteLookupOutputToRD as usize];
+                SmallScalar::U8(get(t).rd_write().0 * (flag as u8))
             }
             JoltR1CSInputs::WritePCtoRD => {
-                let flag = get(t).instruction().circuit_flags()[CircuitFlags::Jump as usize] as u8;
-                SmallScalar::U8(get(t).rd_write().0 * flag)
+                let flag = get(t).instruction().circuit_flags()[CircuitFlags::Jump as usize];
+                SmallScalar::U8(get(t).rd_write().0 * (flag as u8))
             }
             JoltR1CSInputs::LookupOutput => {
                 SmallScalar::U64(LookupQuery::<XLEN>::to_lookup_output(get(t)))
             }
             JoltR1CSInputs::NextIsNoop => {
                 if t + 1 < len {
-                    SmallScalar::U8(
-                        get(t + 1).instruction().circuit_flags()[CircuitFlags::IsNoop] as u8,
-                    )
+                    let no = get(t + 1).instruction().circuit_flags()[CircuitFlags::IsNoop];
+                    SmallScalar::Bool(no)
                 } else {
-                    SmallScalar::U8(0)
+                    SmallScalar::Bool(false)
                 }
             }
             JoltR1CSInputs::ShouldBranch => {
@@ -540,10 +419,16 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> WitnessRowAccessor<F>
                 SmallScalar::U8(v)
             }
             JoltR1CSInputs::OpFlags(flag) => {
-                SmallScalar::U8(get(t).instruction().circuit_flags()[flag as usize] as u8)
+                SmallScalar::Bool(get(t).instruction().circuit_flags()[flag as usize])
             }
         }
     }
+
+    #[inline]
+    fn num_steps(&self) -> usize {
+        self.trace.len()
+    }
+
 }
 
 /// Compute `z(r_cycle) = Σ_t eq(r_cycle, t) * P_i(t)` for all inputs i, without
@@ -553,19 +438,24 @@ pub fn compute_claimed_witness_evals<F: JoltField>(
     accessor: &dyn WitnessRowAccessor<F>,
 ) -> Vec<F> {
     let num_inputs = JoltR1CSInputs::num_inputs();
-    let mut claims = vec![F::zero(); num_inputs];
     let num_steps = accessor.num_steps();
     let eq_rx = EqPolynomial::evals(r_cycle);
-    for t in 0..num_steps {
-        let wt = eq_rx[t];
-        if wt.is_zero() {
-            continue;
-        }
-        for i in 0..num_inputs {
-            claims[i] += wt * accessor.value_at(i, t);
-        }
-    }
-    claims
+
+    // Parallelize across inputs i; each computes Σ_t eq(r_cycle, t) * P_i(t)
+    (0..num_inputs)
+        .into_par_iter()
+        .map(|i| {
+            let mut acc = F::zero();
+            for t in 0..num_steps {
+                if let Some(&eq_rx_t) = eq_rx.get(t) {
+                    acc += accessor.value_at(i, t).mul_field(eq_rx_t);
+                } else {
+                    break; // Stop processing if we've reached the end of eq_rx
+                }
+            }
+            acc
+        })
+        .collect()
 }
 
 // =====================================================================================
@@ -582,7 +472,7 @@ pub fn eval_az_typed<F: JoltField>(
     let mut acc_i8: i8 = 0;
     let mut need_big = false;
     a_lc.for_each_term(|input_index, coeff| {
-        let sc = accessor.small_scalar_at(input_index, row);
+        let sc = accessor.value_at(input_index, row);
         let v_i8 = sc.to_i8();
         let coeff_i8 = if coeff > i8::MAX as i128 || coeff < i8::MIN as i128 {
             need_big = true;
@@ -611,7 +501,7 @@ pub fn eval_az_typed<F: JoltField>(
     let mut mag: u64 = 0;
     let mut sign: bool = true;
     a_lc.for_each_term(|input_index, coeff| {
-        let sc = accessor.small_scalar_at(input_index, row);
+        let sc = accessor.value_at(input_index, row);
         let v = sc.as_u64_clamped();
         let term_mag = v.saturating_mul(coeff.unsigned_abs() as u64);
         let term_pos = coeff >= 0;
@@ -705,15 +595,21 @@ where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
-    let mut unexpanded_pc: Vec<u64> = Vec::with_capacity(trace.len());
-    let mut pc: Vec<u64> = Vec::with_capacity(trace.len());
-    let mut is_noop: Vec<u8> = Vec::with_capacity(trace.len());
+    let len = trace.len();
+    let mut unexpanded_pc: Vec<u64> = vec![0; len];
+    let mut pc: Vec<u64> = vec![0; len];
+    let mut is_noop: Vec<u8> = vec![0; len];
 
-    for cycle in trace.iter() {
-        unexpanded_pc.push(cycle.instruction().normalize().address as u64);
-        pc.push(preprocessing.shared.bytecode.get_pc(cycle) as u64);
-        is_noop.push(cycle.instruction().circuit_flags()[CircuitFlags::IsNoop] as u8);
-    }
+    unexpanded_pc
+        .par_iter_mut()
+        .zip(pc.par_iter_mut())
+        .zip(is_noop.par_iter_mut())
+        .zip(trace.par_iter())
+        .for_each(|(((u, p), n), cycle)| {
+            *u = cycle.instruction().normalize().address as u64;
+            *p = preprocessing.shared.bytecode.get_pc(cycle) as u64;
+            *n = cycle.instruction().circuit_flags()[CircuitFlags::IsNoop] as u8;
+        });
 
     (unexpanded_pc.into(), pc.into(), is_noop.into())
 }

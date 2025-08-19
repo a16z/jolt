@@ -9,7 +9,11 @@ use crate::{
         math::Math,
         small_value::{svo_helpers, NUM_SVO_ROUNDS},
     },
-    zkvm::r1cs::{constraints::NamedConstraint, inputs::WitnessRowAccessor},
+    zkvm::r1cs::{
+        constraints::{eval_az_bz_by_name, NamedConstraint},
+        inputs::WitnessRowAccessor,
+        types::{AzValue, BzValue},
+    },
 };
 use rayon::prelude::*;
 
@@ -57,6 +61,28 @@ pub struct SpartanInterleavedPolynomial<const NUM_SVO_ROUNDS: usize, F: JoltFiel
 }
 
 impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM_SVO_ROUNDS, F> {
+    #[inline]
+    fn az_to_field_local(az: AzValue) -> F {
+        match az {
+            AzValue::I8(v) => F::from_i128(v as i128),
+            AzValue::U64AndSign { magnitude, is_positive } => {
+                if is_positive { F::from_u64(magnitude) } else { -F::from_u64(magnitude) }
+            }
+        }
+    }
+
+    #[inline]
+    fn bz_to_field_local(bz: BzValue) -> F {
+        match bz {
+            BzValue::U64(v) => F::from_u64(v),
+            BzValue::U64AndSign { magnitude, is_positive } => {
+                if is_positive { F::from_u64(magnitude) } else { -F::from_u64(magnitude) }
+            }
+            BzValue::U128AndSign { magnitude, is_positive } => {
+                if is_positive { F::from_u128(magnitude) } else { -F::from_u128(magnitude) }
+            }
+        }
+    }
     /// Compute the unbound coefficients for the Az and Bz polynomials (no Cz coefficients are
     /// needed), along with the accumulators for the small value optimization (SVO) rounds.
     ///
@@ -242,7 +268,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                         for (uniform_chunk_iter_idx, uniform_svo_chunk) in
                             const_rows.chunks(Y_SVO_SPACE_SIZE).enumerate()
                         {
-                            for (idx_in_svo_block, const_row_named) in
+                            for (idx_in_svo_block, const_row) in
                                 uniform_svo_chunk.iter().enumerate()
                             {
                                 let constraint_idx_in_step =
@@ -252,25 +278,46 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                                     * (current_step_idx * padded_num_constraints
                                         + constraint_idx_in_step);
 
-                                let const_row = &const_row_named.cons;
-                                let az = const_row.a.evaluate_row_with(accessor, current_step_idx);
-                                if !az.is_zero() {
-                                    binary_az_block[idx_in_svo_block] = az;
-                                    chunk_ab_coeffs.push((global_r1cs_idx, az).into());
-                                }
-
-                                let bz = const_row.b.evaluate_row_with(accessor, current_step_idx);
-                                if !bz.is_zero() {
-                                    binary_bz_block[idx_in_svo_block] = bz;
-                                    chunk_ab_coeffs.push((global_r1cs_idx + 1, bz).into());
+                                // Custom evaluation path: use named-evaluator to build Az/Bz as
+                                // small integer domains, then convert locally to field elements.
+                                // TODO(svo): Replace with UnreducedProduct accumulation; this
+                                // conversion is a temporary bridge to existing SVO helpers.
+                                let azbz_opt = eval_az_bz_by_name(const_row, accessor, current_step_idx);
+                                if let Some((az_typed, bz_typed)) = azbz_opt {
+                                    let az_f = Self::az_to_field_local(az_typed);
+                                    let bz_f = Self::bz_to_field_local(bz_typed);
+                                    if !az_f.is_zero() {
+                                        binary_az_block[idx_in_svo_block] = az_f;
+                                        chunk_ab_coeffs.push((global_r1cs_idx, az_f).into());
+                                    }
+                                    if !bz_f.is_zero() {
+                                        binary_bz_block[idx_in_svo_block] = bz_f;
+                                        chunk_ab_coeffs.push((global_r1cs_idx + 1, bz_f).into());
+                                    }
+                                } else {
+                                    // Fallback: legacy LC evaluation for constraints without a custom evaluator
+                                    let const_row = &const_row.cons;
+                                    let az = const_row.a.evaluate_row_with(accessor, current_step_idx);
+                                    if !az.is_zero() {
+                                        binary_az_block[idx_in_svo_block] = az;
+                                        chunk_ab_coeffs.push((global_r1cs_idx, az).into());
+                                    }
+                                    let bz = const_row.b.evaluate_row_with(accessor, current_step_idx);
+                                    if !bz.is_zero() {
+                                        binary_bz_block[idx_in_svo_block] = bz;
+                                        chunk_ab_coeffs.push((global_r1cs_idx + 1, bz).into());
+                                    }
                                 }
 
                                 #[cfg(test)]
                                 {
-                                    let cz =
-                                        const_row.c.evaluate_row_with(accessor, current_step_idx);
-                                    if az * bz != cz {
-                                        panic!("Constraint violated at step {current_step_idx}",);
+                                    // Check constraint using field-mapped Az/Bz
+                                    let const_row = &const_row.cons;
+                                    let cz = const_row.c.evaluate_row_with(accessor, current_step_idx);
+                                    let az_f = binary_az_block[idx_in_svo_block];
+                                    let bz_f = binary_bz_block[idx_in_svo_block];
+                                    if az_f * bz_f != cz {
+                                        panic!("Constraint violated at step {current_step_idx}");
                                     }
                                 }
                             }

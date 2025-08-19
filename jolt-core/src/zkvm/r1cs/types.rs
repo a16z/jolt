@@ -7,6 +7,7 @@ use ark_ff::BigInt;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SmallScalar {
+    Bool(bool),
     U8(u8),
     U64(u64),
     I64(i64),
@@ -17,6 +18,7 @@ pub enum SmallScalar {
 impl SmallScalar {
     pub fn as_i128(self) -> i128 {
         match self {
+            SmallScalar::Bool(v) => v as i128,
             SmallScalar::U8(v) => v as i128,
             SmallScalar::U64(v) => v as i128,
             SmallScalar::I64(v) => v as i128,
@@ -27,6 +29,7 @@ impl SmallScalar {
 
     pub fn as_u64_clamped(self) -> u64 {
         match self {
+            SmallScalar::Bool(v) => v as u64,
             SmallScalar::U8(v) => v as u64,
             SmallScalar::U64(v) => v,
             SmallScalar::I64(v) => v.max(0) as u64,
@@ -43,11 +46,43 @@ impl SmallScalar {
 
     pub fn to_i8(self) -> i8 {
         match self {
+            SmallScalar::Bool(v) => v as i8,
             SmallScalar::U8(v) => v as i8,
             SmallScalar::U64(v) => (v as i128).clamp(i8::MIN as i128, i8::MAX as i128) as i8,
             SmallScalar::I64(v) => v.clamp(i8::MIN as i64, i8::MAX as i64) as i8,
             SmallScalar::U128(v) => (v as i128).clamp(i8::MIN as i128, i8::MAX as i128) as i8,
             SmallScalar::I128(v) => v.clamp(i8::MIN as i128, i8::MAX as i128) as i8,
+        }
+    }
+
+    pub fn as_bool(self) -> bool {
+        match self {
+            SmallScalar::Bool(v) => v,
+            SmallScalar::U8(v) => v != 0,
+            SmallScalar::U64(v) => v != 0,
+            SmallScalar::I64(v) => v != 0,
+            SmallScalar::U128(v) => v != 0,
+            SmallScalar::I128(v) => v != 0,
+        }
+    }
+
+    /// Optimized multiplication with a field element, avoiding conversions when possible
+    pub fn mul_field<F: JoltField>(self, field: F) -> F {
+        match self {
+            // Most efficient: Bool multiplication
+            SmallScalar::Bool(v) => {
+                if v {
+                    field
+                } else {
+                    F::zero()
+                }
+            }
+            // Use specialized field multiplication methods for different sizes
+            SmallScalar::U8(v) => field.mul_u64(v as u64),
+            SmallScalar::U64(v) => field.mul_u64(v),
+            SmallScalar::I64(v) => field.mul_i128(v as i128),
+            SmallScalar::U128(v) => field.mul_u128(v),
+            SmallScalar::I128(v) => field.mul_i128(v),
         }
     }
 }
@@ -187,3 +222,4 @@ pub fn field_mul_product<F: JoltField, const K: usize>(
 pub fn reduce_unreduced_to_field<F>(x: &UnreducedProduct) -> F {
     unimplemented!("reduce_unreduced_to_field needs field modulus and conversion")
 }
+

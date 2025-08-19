@@ -75,7 +75,8 @@ impl LC {
     ) -> F {
         let mut result = F::zero();
         self.for_each_term(|input_index, coeff| {
-            result += accessor.value_at(input_index, row).mul_i128(coeff);
+            let field_coeff = F::from_i128(coeff);
+            result += accessor.value_at(input_index, row).mul_field(field_coeff);
         });
         if let Some(c) = self.const_term() {
             result += F::from_i128(c);
@@ -549,18 +550,18 @@ pub fn eval_az_bz_by_name<F: JoltField>(
         ConstraintName::LeftInputEqRs1 => {
             // Az: single flag (0 or 1) -> I8
             let az = flag_to_az(matches!(
-                accessor.small_scalar_at(
+                accessor.value_at(
                     Inp::OpFlags(CircuitFlags::LeftOperandIsRs1Value).to_index(),
                     row
                 ),
-                SmallScalar::U8(1)
+                SmallScalar::Bool(true)
             ));
             // Bz: u64 - u64 difference -> U64AndSign (avoids i128 for simple subtraction)
             let left = accessor
-                .small_scalar_at(Inp::LeftInstructionInput.to_index(), row)
+                .value_at(Inp::LeftInstructionInput.to_index(), row)
                 .as_u64_clamped();
             let rs1 = accessor
-                .small_scalar_at(Inp::Rs1Value.to_index(), row)
+                .value_at(Inp::Rs1Value.to_index(), row)
                 .as_u64_clamped();
             let bz = BzValue::U64AndSign {
                 magnitude: if left >= rs1 { left - rs1 } else { rs1 - left },
@@ -572,15 +573,15 @@ pub fn eval_az_bz_by_name<F: JoltField>(
             // Az: single flag (0 or 1) -> I8
             let az = flag_to_az(matches!(
                 accessor
-                    .small_scalar_at(Inp::OpFlags(CircuitFlags::LeftOperandIsPC).to_index(), row),
-                SmallScalar::U8(1)
+                    .value_at(Inp::OpFlags(CircuitFlags::LeftOperandIsPC).to_index(), row),
+                SmallScalar::Bool(true)
             ));
             // Bz: u64 - u64 difference -> U64AndSign
             let left = accessor
-                .small_scalar_at(Inp::LeftInstructionInput.to_index(), row)
+                .value_at(Inp::LeftInstructionInput.to_index(), row)
                 .as_u64_clamped();
             let pc = accessor
-                .small_scalar_at(Inp::UnexpandedPC.to_index(), row)
+                .value_at(Inp::UnexpandedPC.to_index(), row)
                 .as_u64_clamped();
             let bz = BzValue::U64AndSign {
                 magnitude: if left >= pc { left - pc } else { pc - left },
@@ -591,18 +592,18 @@ pub fn eval_az_bz_by_name<F: JoltField>(
         ConstraintName::RightInputEqRs2 => {
             // Az: single flag (0 or 1) -> I8
             let az = flag_to_az(matches!(
-                accessor.small_scalar_at(
+                accessor.value_at(
                     Inp::OpFlags(CircuitFlags::RightOperandIsRs2Value).to_index(),
                     row
                 ),
-                SmallScalar::U8(1)
+                SmallScalar::Bool(true)
             ));
             // Bz: i64 - u64 difference -> use i128 since RightInstructionInput can be negative
             let right = accessor
-                .small_scalar_at(Inp::RightInstructionInput.to_index(), row)
+                .value_at(Inp::RightInstructionInput.to_index(), row)
                 .as_i128();
             let rs2 = accessor
-                .small_scalar_at(Inp::Rs2Value.to_index(), row)
+                .value_at(Inp::Rs2Value.to_index(), row)
                 .as_i128();
             let bz = diff_to_bz(right - rs2);
             Some((az, bz))
@@ -610,32 +611,32 @@ pub fn eval_az_bz_by_name<F: JoltField>(
         ConstraintName::RightInputEqImm => {
             // Az: single flag (0 or 1) -> I8
             let az = flag_to_az(matches!(
-                accessor.small_scalar_at(
+                accessor.value_at(
                     Inp::OpFlags(CircuitFlags::RightOperandIsImm).to_index(),
                     row
                 ),
-                SmallScalar::U8(1)
+                SmallScalar::Bool(true)
             ));
             // Bz: i64 - i128 difference -> use i128 since both can be negative
             let right = accessor
-                .small_scalar_at(Inp::RightInstructionInput.to_index(), row)
+                .value_at(Inp::RightInstructionInput.to_index(), row)
                 .as_i128();
-            let imm = accessor.small_scalar_at(Inp::Imm.to_index(), row).as_i128();
+            let imm = accessor.value_at(Inp::Imm.to_index(), row).as_i128();
             let bz = diff_to_bz(right - imm);
             Some((az, bz))
         }
         ConstraintName::RamReadEqRamWriteIfLoad => {
             // Az: single flag (0 or 1) -> I8
             let az = flag_to_az(matches!(
-                accessor.small_scalar_at(Inp::OpFlags(CircuitFlags::Load).to_index(), row),
-                SmallScalar::U8(1)
+                accessor.value_at(Inp::OpFlags(CircuitFlags::Load).to_index(), row),
+                SmallScalar::Bool(true)
             ));
             // Bz: u64 - u64 difference -> U64AndSign (both RAM values are u64)
             let rd = accessor
-                .small_scalar_at(Inp::RamReadValue.to_index(), row)
+                .value_at(Inp::RamReadValue.to_index(), row)
                 .as_u64_clamped();
             let wr = accessor
-                .small_scalar_at(Inp::RamWriteValue.to_index(), row)
+                .value_at(Inp::RamWriteValue.to_index(), row)
                 .as_u64_clamped();
             let bz = BzValue::U64AndSign {
                 magnitude: if rd >= wr { rd - wr } else { wr - rd },
@@ -646,15 +647,15 @@ pub fn eval_az_bz_by_name<F: JoltField>(
         ConstraintName::RamReadEqRdWriteIfLoad => {
             // Az: single flag (0 or 1) -> I8
             let az = flag_to_az(matches!(
-                accessor.small_scalar_at(Inp::OpFlags(CircuitFlags::Load).to_index(), row),
-                SmallScalar::U8(1)
+                accessor.value_at(Inp::OpFlags(CircuitFlags::Load).to_index(), row),
+                SmallScalar::Bool(true)
             ));
             // Bz: u64 - u64 difference -> U64AndSign (both register values are u64)
             let rd = accessor
-                .small_scalar_at(Inp::RamReadValue.to_index(), row)
+                .value_at(Inp::RamReadValue.to_index(), row)
                 .as_u64_clamped();
             let rdw = accessor
-                .small_scalar_at(Inp::RdWriteValue.to_index(), row)
+                .value_at(Inp::RdWriteValue.to_index(), row)
                 .as_u64_clamped();
             let bz = BzValue::U64AndSign {
                 magnitude: if rd >= rdw { rd - rdw } else { rdw - rd },
@@ -665,21 +666,21 @@ pub fn eval_az_bz_by_name<F: JoltField>(
         ConstraintName::LeftInputZeroOtherwise => {
             // Az: 1 - flag1 - flag2 -> I8 (mutually exclusive flags, so result is 0 or 1)
             let f1 = matches!(
-                accessor.small_scalar_at(
+                accessor.value_at(
                     Inp::OpFlags(CircuitFlags::LeftOperandIsRs1Value).to_index(),
                     row
                 ),
-                SmallScalar::U8(1)
+                SmallScalar::Bool(true)
             );
             let f2 = matches!(
                 accessor
-                    .small_scalar_at(Inp::OpFlags(CircuitFlags::LeftOperandIsPC).to_index(), row),
-                SmallScalar::U8(1)
+                    .value_at(Inp::OpFlags(CircuitFlags::LeftOperandIsPC).to_index(), row),
+                SmallScalar::Bool(true)
             );
             let az = AzValue::I8(1 - (f1 as i8) - (f2 as i8));
             // Bz: LeftInstructionInput (u64) -> U64 (no subtraction, just the value)
             let left = accessor
-                .small_scalar_at(Inp::LeftInstructionInput.to_index(), row)
+                .value_at(Inp::LeftInstructionInput.to_index(), row)
                 .as_u64_clamped();
             let bz = BzValue::U64(left);
             Some((az, bz))
@@ -687,43 +688,43 @@ pub fn eval_az_bz_by_name<F: JoltField>(
         ConstraintName::RamAddrEqRs1PlusImmIfLoadStore => {
             // Az: Load OR Store flag -> I8 (0 or 1)
             let load = matches!(
-                accessor.small_scalar_at(Inp::OpFlags(CircuitFlags::Load).to_index(), row),
-                SmallScalar::U8(1)
+                accessor.value_at(Inp::OpFlags(CircuitFlags::Load).to_index(), row),
+                SmallScalar::Bool(true)
             );
             let store = matches!(
-                accessor.small_scalar_at(Inp::OpFlags(CircuitFlags::Store).to_index(), row),
-                SmallScalar::U8(1)
+                accessor.value_at(Inp::OpFlags(CircuitFlags::Store).to_index(), row),
+                SmallScalar::Bool(true)
             );
             let az = flag_to_az(load || store);
             // Bz: Rs1Value + Imm -> use i128 since Imm can be negative
             let rs1 = accessor
-                .small_scalar_at(Inp::Rs1Value.to_index(), row)
+                .value_at(Inp::Rs1Value.to_index(), row)
                 .as_i128();
-            let imm = accessor.small_scalar_at(Inp::Imm.to_index(), row).as_i128();
+            let imm = accessor.value_at(Inp::Imm.to_index(), row).as_i128();
             let bz = diff_to_bz(rs1 + imm);
             Some((az, bz))
         }
         ConstraintName::LeftLookupZeroUnlessAddSubMul => {
             // Az: sum of flags (clamped to 0 or 1) -> I8
             let add = matches!(
-                accessor.small_scalar_at(Inp::OpFlags(CircuitFlags::AddOperands).to_index(), row),
-                SmallScalar::U8(1)
+                accessor.value_at(Inp::OpFlags(CircuitFlags::AddOperands).to_index(), row),
+                SmallScalar::Bool(true)
             );
             let sub = matches!(
                 accessor
-                    .small_scalar_at(Inp::OpFlags(CircuitFlags::SubtractOperands).to_index(), row),
-                SmallScalar::U8(1)
+                    .value_at(Inp::OpFlags(CircuitFlags::SubtractOperands).to_index(), row),
+                SmallScalar::Bool(true)
             );
             let mul = matches!(
                 accessor
-                    .small_scalar_at(Inp::OpFlags(CircuitFlags::MultiplyOperands).to_index(), row),
-                SmallScalar::U8(1)
+                    .value_at(Inp::OpFlags(CircuitFlags::MultiplyOperands).to_index(), row),
+                SmallScalar::Bool(true)
             );
             let cond = ((add as i8) + (sub as i8) + (mul as i8)).clamp(0, 1);
             let az = AzValue::I8(cond);
             // Bz: 0 - LeftInstructionInput -> negate u64 value
             let left = accessor
-                .small_scalar_at(Inp::LeftInstructionInput.to_index(), row)
+                .value_at(Inp::LeftInstructionInput.to_index(), row)
                 .as_i128();
             let bz = diff_to_bz(0 - left);
             Some((az, bz))
@@ -731,18 +732,18 @@ pub fn eval_az_bz_by_name<F: JoltField>(
         ConstraintName::RightLookupAdd => {
             // Az: single flag (0 or 1) -> I8
             let az = flag_to_az(matches!(
-                accessor.small_scalar_at(Inp::OpFlags(CircuitFlags::AddOperands).to_index(), row),
-                SmallScalar::U8(1)
+                accessor.value_at(Inp::OpFlags(CircuitFlags::AddOperands).to_index(), row),
+                SmallScalar::Bool(true)
             ));
             // Bz: u128 - (u64 + i64) difference -> use i128 for mixed arithmetic
             let rlookup = accessor
-                .small_scalar_at(Inp::RightLookupOperand.to_index(), row)
+                .value_at(Inp::RightLookupOperand.to_index(), row)
                 .as_i128();
             let left = accessor
-                .small_scalar_at(Inp::LeftInstructionInput.to_index(), row)
+                .value_at(Inp::LeftInstructionInput.to_index(), row)
                 .as_i128();
             let right = accessor
-                .small_scalar_at(Inp::RightInstructionInput.to_index(), row)
+                .value_at(Inp::RightInstructionInput.to_index(), row)
                 .as_i128();
             let bz = diff_to_bz(rlookup - (left + right));
             Some((az, bz))
@@ -751,18 +752,18 @@ pub fn eval_az_bz_by_name<F: JoltField>(
             // Az: single flag (0 or 1) -> I8
             let az = flag_to_az(matches!(
                 accessor
-                    .small_scalar_at(Inp::OpFlags(CircuitFlags::SubtractOperands).to_index(), row),
-                SmallScalar::U8(1)
+                    .value_at(Inp::OpFlags(CircuitFlags::SubtractOperands).to_index(), row),
+                SmallScalar::Bool(true)
             ));
             // Bz: u128 - (u64 - i64 + 2^64) -> use i128 for twos-complement conversion
             let rlookup = accessor
-                .small_scalar_at(Inp::RightLookupOperand.to_index(), row)
+                .value_at(Inp::RightLookupOperand.to_index(), row)
                 .as_i128();
             let left = accessor
-                .small_scalar_at(Inp::LeftInstructionInput.to_index(), row)
+                .value_at(Inp::LeftInstructionInput.to_index(), row)
                 .as_i128();
             let right = accessor
-                .small_scalar_at(Inp::RightInstructionInput.to_index(), row)
+                .value_at(Inp::RightInstructionInput.to_index(), row)
                 .as_i128();
             let two64 = (u64::MAX as u128 + 1) as i128;
             let target = left - right + two64;
@@ -772,10 +773,10 @@ pub fn eval_az_bz_by_name<F: JoltField>(
         ConstraintName::ProductDef => {
             // Az: LeftInstructionInput (u64) -> U64AndSign (no sign conversion needed)
             let left = accessor
-                .small_scalar_at(Inp::LeftInstructionInput.to_index(), row)
+                .value_at(Inp::LeftInstructionInput.to_index(), row)
                 .as_u64_clamped();
             let right_i128 = accessor
-                .small_scalar_at(Inp::RightInstructionInput.to_index(), row)
+                .value_at(Inp::RightInstructionInput.to_index(), row)
                 .as_i128();
             let az = AzValue::U64AndSign {
                 magnitude: left,
@@ -799,15 +800,15 @@ pub fn eval_az_bz_by_name<F: JoltField>(
             // Az: single flag (0 or 1) -> I8
             let az = flag_to_az(matches!(
                 accessor
-                    .small_scalar_at(Inp::OpFlags(CircuitFlags::MultiplyOperands).to_index(), row),
-                SmallScalar::U8(1)
+                    .value_at(Inp::OpFlags(CircuitFlags::MultiplyOperands).to_index(), row),
+                SmallScalar::Bool(true)
             ));
             // Bz: u128 - u128 difference -> use i128 for 128-bit arithmetic
             let rlookup = accessor
-                .small_scalar_at(Inp::RightLookupOperand.to_index(), row)
+                .value_at(Inp::RightLookupOperand.to_index(), row)
                 .as_i128();
             let prod = accessor
-                .small_scalar_at(Inp::Product.to_index(), row)
+                .value_at(Inp::Product.to_index(), row)
                 .as_i128();
             let bz = diff_to_bz(rlookup - prod);
             Some((az, bz))
@@ -816,30 +817,30 @@ pub fn eval_az_bz_by_name<F: JoltField>(
             // Az: 1 - sum of 4 flags -> I8 (negated sum of mutually exclusive flags)
             let one = 1i8;
             let add = matches!(
-                accessor.small_scalar_at(Inp::OpFlags(CircuitFlags::AddOperands).to_index(), row),
-                SmallScalar::U8(1)
+                accessor.value_at(Inp::OpFlags(CircuitFlags::AddOperands).to_index(), row),
+                SmallScalar::Bool(true)
             ) as i8;
             let sub = matches!(
                 accessor
-                    .small_scalar_at(Inp::OpFlags(CircuitFlags::SubtractOperands).to_index(), row),
-                SmallScalar::U8(1)
+                    .value_at(Inp::OpFlags(CircuitFlags::SubtractOperands).to_index(), row),
+                SmallScalar::Bool(true)
             ) as i8;
             let mul = matches!(
                 accessor
-                    .small_scalar_at(Inp::OpFlags(CircuitFlags::MultiplyOperands).to_index(), row),
-                SmallScalar::U8(1)
+                    .value_at(Inp::OpFlags(CircuitFlags::MultiplyOperands).to_index(), row),
+                SmallScalar::Bool(true)
             ) as i8;
             let adv = matches!(
-                accessor.small_scalar_at(Inp::OpFlags(CircuitFlags::Advice).to_index(), row),
-                SmallScalar::U8(1)
+                accessor.value_at(Inp::OpFlags(CircuitFlags::Advice).to_index(), row),
+                SmallScalar::Bool(true)
             ) as i8;
             let az = AzValue::I8(one - add - sub - mul - adv);
             // Bz: u128 - i64 difference -> use i128 for mixed arithmetic
             let rlookup = accessor
-                .small_scalar_at(Inp::RightLookupOperand.to_index(), row)
+                .value_at(Inp::RightLookupOperand.to_index(), row)
                 .as_i128();
             let right = accessor
-                .small_scalar_at(Inp::RightInstructionInput.to_index(), row)
+                .value_at(Inp::RightInstructionInput.to_index(), row)
                 .as_i128();
             let bz = diff_to_bz(rlookup - right);
             Some((az, bz))
@@ -847,30 +848,30 @@ pub fn eval_az_bz_by_name<F: JoltField>(
         ConstraintName::AssertLookupOne => {
             // Az: single flag (0 or 1) -> I8
             let az = flag_to_az(matches!(
-                accessor.small_scalar_at(Inp::OpFlags(CircuitFlags::Assert).to_index(), row),
-                SmallScalar::U8(1)
+                accessor.value_at(Inp::OpFlags(CircuitFlags::Assert).to_index(), row),
+                SmallScalar::Bool(true)
             ));
             // Bz: u64 - 1 difference -> use i128 to handle potential negative result
             let lookup = accessor
-                .small_scalar_at(Inp::LookupOutput.to_index(), row)
+                .value_at(Inp::LookupOutput.to_index(), row)
                 .as_i128();
             let bz = diff_to_bz(lookup - 1);
             Some((az, bz))
         }
         ConstraintName::WriteLookupOutputToRDDef => {
             // Az: Rd register index (u8) -> I8 (register indices are small)
-            let rd = accessor.small_scalar_at(Inp::Rd.to_index(), row);
+            let rd = accessor.value_at(Inp::Rd.to_index(), row);
             let az = match rd {
                 SmallScalar::U8(v) => AzValue::I8(v as i8),
                 _ => AzValue::I8(0),
             };
             // Bz: flag (0 or 1) -> U64 (simple flag value)
             let flag = matches!(
-                accessor.small_scalar_at(
+                accessor.value_at(
                     Inp::OpFlags(CircuitFlags::WriteLookupOutputToRD).to_index(),
                     row
                 ),
-                SmallScalar::U8(1)
+                SmallScalar::Bool(true)
             );
             let bz = BzValue::U64(if flag { 1 } else { 0 });
             Some((az, bz))
@@ -878,15 +879,15 @@ pub fn eval_az_bz_by_name<F: JoltField>(
         ConstraintName::RdWriteEqLookupIfWriteLookupToRd => {
             // Az: single flag (0 or 1) -> I8
             let az = flag_to_az(matches!(
-                accessor.small_scalar_at(Inp::WriteLookupOutputToRD.to_index(), row),
+                accessor.value_at(Inp::WriteLookupOutputToRD.to_index(), row),
                 SmallScalar::U8(1)
             ));
             // Bz: u64 - u64 difference -> U64AndSign (both register and lookup are u64)
             let rdw = accessor
-                .small_scalar_at(Inp::RdWriteValue.to_index(), row)
+                .value_at(Inp::RdWriteValue.to_index(), row)
                 .as_u64_clamped();
             let lookup = accessor
-                .small_scalar_at(Inp::LookupOutput.to_index(), row)
+                .value_at(Inp::LookupOutput.to_index(), row)
                 .as_u64_clamped();
             let bz = BzValue::U64AndSign {
                 magnitude: if rdw >= lookup {
@@ -900,33 +901,33 @@ pub fn eval_az_bz_by_name<F: JoltField>(
         }
         ConstraintName::WritePCtoRDDef => {
             // Az: Rd register index (u8) -> I8 (register indices are small)
-            let rd = accessor.small_scalar_at(Inp::Rd.to_index(), row);
+            let rd = accessor.value_at(Inp::Rd.to_index(), row);
             let az = match rd {
                 SmallScalar::U8(v) => AzValue::I8(v as i8),
                 _ => AzValue::I8(0),
             };
             // Bz: flag (0 or 1) -> U64 (simple flag value)
             let jump = matches!(
-                accessor.small_scalar_at(Inp::OpFlags(CircuitFlags::Jump).to_index(), row),
-                SmallScalar::U8(1)
+                accessor.value_at(Inp::OpFlags(CircuitFlags::Jump).to_index(), row),
+                SmallScalar::Bool(true)
             );
             let bz = BzValue::U64(if jump { 1 } else { 0 });
             Some((az, bz))
         }
         ConstraintName::RdWriteEqPCPlusConstIfWritePCtoRD => {
             let az = flag_to_az(matches!(
-                accessor.small_scalar_at(Inp::WritePCtoRD.to_index(), row),
-                SmallScalar::U8(1)
+                accessor.value_at(Inp::WritePCtoRD.to_index(), row),
+                SmallScalar::Bool(true)
             ));
             let rdw = accessor
-                .small_scalar_at(Inp::RdWriteValue.to_index(), row)
+                .value_at(Inp::RdWriteValue.to_index(), row)
                 .as_i128();
             let pc = accessor
-                .small_scalar_at(Inp::UnexpandedPC.to_index(), row)
+                .value_at(Inp::UnexpandedPC.to_index(), row)
                 .as_i128();
             let is_compr = matches!(
-                accessor.small_scalar_at(Inp::OpFlags(CircuitFlags::IsCompressed).to_index(), row),
-                SmallScalar::U8(1)
+                accessor.value_at(Inp::OpFlags(CircuitFlags::IsCompressed).to_index(), row),
+                SmallScalar::Bool(true)
             );
             let const_term = 4 - if is_compr { 2 } else { 0 };
             let bz = diff_to_bz(rdw - (pc + const_term as i128));
@@ -934,68 +935,68 @@ pub fn eval_az_bz_by_name<F: JoltField>(
         }
         ConstraintName::ShouldJumpDef => {
             let jump = matches!(
-                accessor.small_scalar_at(Inp::OpFlags(CircuitFlags::Jump).to_index(), row),
-                SmallScalar::U8(1)
+                accessor.value_at(Inp::OpFlags(CircuitFlags::Jump).to_index(), row),
+                SmallScalar::Bool(true)
             );
             let az = flag_to_az(jump);
             let next_noop = matches!(
-                accessor.small_scalar_at(Inp::NextIsNoop.to_index(), row),
-                SmallScalar::U8(1)
+                accessor.value_at(Inp::NextIsNoop.to_index(), row),
+                SmallScalar::Bool(true)
             );
             let bz = BzValue::U64(if next_noop { 0 } else { 1 });
             Some((az, bz))
         }
         ConstraintName::NextUnexpPCEqLookupIfShouldJump => {
             let az = flag_to_az(matches!(
-                accessor.small_scalar_at(Inp::ShouldJump.to_index(), row),
+                accessor.value_at(Inp::ShouldJump.to_index(), row),
                 SmallScalar::U8(1)
             ));
             let nextpc = accessor
-                .small_scalar_at(Inp::NextUnexpandedPC.to_index(), row)
+                .value_at(Inp::NextUnexpandedPC.to_index(), row)
                 .as_i128();
             let lookup = accessor
-                .small_scalar_at(Inp::LookupOutput.to_index(), row)
+                .value_at(Inp::LookupOutput.to_index(), row)
                 .as_i128();
             let bz = diff_to_bz(nextpc - lookup);
             Some((az, bz))
         }
         ConstraintName::ShouldBranchDef => {
             let az = flag_to_az(matches!(
-                accessor.small_scalar_at(Inp::OpFlags(CircuitFlags::Branch).to_index(), row),
-                SmallScalar::U8(1)
+                accessor.value_at(Inp::OpFlags(CircuitFlags::Branch).to_index(), row),
+                SmallScalar::Bool(true)
             ));
             let lookup = accessor
-                .small_scalar_at(Inp::LookupOutput.to_index(), row)
+                .value_at(Inp::LookupOutput.to_index(), row)
                 .as_u64_clamped();
             let bz = BzValue::U64(lookup);
             Some((az, bz))
         }
         ConstraintName::NextUnexpPCEqPCPlusImmIfShouldBranch => {
             let az = flag_to_az(matches!(
-                accessor.small_scalar_at(Inp::ShouldBranch.to_index(), row),
+                accessor.value_at(Inp::ShouldBranch.to_index(), row),
                 SmallScalar::U8(1)
             ));
             let next = accessor
-                .small_scalar_at(Inp::NextUnexpandedPC.to_index(), row)
+                .value_at(Inp::NextUnexpandedPC.to_index(), row)
                 .as_i128();
             let pc = accessor
-                .small_scalar_at(Inp::UnexpandedPC.to_index(), row)
+                .value_at(Inp::UnexpandedPC.to_index(), row)
                 .as_i128();
-            let imm = accessor.small_scalar_at(Inp::Imm.to_index(), row).as_i128();
+            let imm = accessor.value_at(Inp::Imm.to_index(), row).as_i128();
             let bz = diff_to_bz(next - (pc + imm));
             Some((az, bz))
         }
         ConstraintName::CompressedNoUpdateDef => {
             let az = flag_to_az(matches!(
-                accessor.small_scalar_at(Inp::OpFlags(CircuitFlags::IsCompressed).to_index(), row),
-                SmallScalar::U8(1)
+                accessor.value_at(Inp::OpFlags(CircuitFlags::IsCompressed).to_index(), row),
+                SmallScalar::Bool(true)
             ));
             let flag2 = matches!(
-                accessor.small_scalar_at(
+                accessor.value_at(
                     Inp::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC).to_index(),
                     row
                 ),
-                SmallScalar::U8(1)
+                SmallScalar::Bool(true)
             );
             let bz = BzValue::U64(if flag2 { 1 } else { 0 });
             Some((az, bz))
@@ -1003,33 +1004,33 @@ pub fn eval_az_bz_by_name<F: JoltField>(
         ConstraintName::NextUnexpPCUpdateOtherwise => {
             let cond_i8 = 1
                 - (matches!(
-                    accessor.small_scalar_at(Inp::ShouldBranch.to_index(), row),
+                    accessor.value_at(Inp::ShouldBranch.to_index(), row),
                     SmallScalar::U8(1)
                 ) as i8)
                 - (matches!(
-                    accessor.small_scalar_at(Inp::OpFlags(CircuitFlags::Jump).to_index(), row),
-                    SmallScalar::U8(1)
+                    accessor.value_at(Inp::OpFlags(CircuitFlags::Jump).to_index(), row),
+                    SmallScalar::Bool(true)
                 ) as i8);
             let az = AzValue::I8(cond_i8);
             let next = accessor
-                .small_scalar_at(Inp::NextUnexpandedPC.to_index(), row)
+                .value_at(Inp::NextUnexpandedPC.to_index(), row)
                 .as_i128();
             let pc = accessor
-                .small_scalar_at(Inp::UnexpandedPC.to_index(), row)
+                .value_at(Inp::UnexpandedPC.to_index(), row)
                 .as_i128();
             let dnoupd = matches!(
-                accessor.small_scalar_at(
+                accessor.value_at(
                     Inp::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC).to_index(),
                     row
                 ),
-                SmallScalar::U8(1)
+                SmallScalar::Bool(true)
             ) as i128;
             let iscompr = matches!(
-                accessor.small_scalar_at(Inp::OpFlags(CircuitFlags::IsCompressed).to_index(), row),
-                SmallScalar::U8(1)
+                accessor.value_at(Inp::OpFlags(CircuitFlags::IsCompressed).to_index(), row),
+                SmallScalar::Bool(true)
             ) as i128;
             let comp_no_upd = matches!(
-                accessor.small_scalar_at(Inp::CompressedDoNotUpdateUnexpPC.to_index(), row),
+                accessor.value_at(Inp::CompressedDoNotUpdateUnexpPC.to_index(), row),
                 SmallScalar::U8(1)
             ) as i128;
             let target = pc + 4 - 4 * dnoupd - 2 * iscompr + 2 * comp_no_upd;
@@ -1038,16 +1039,16 @@ pub fn eval_az_bz_by_name<F: JoltField>(
         }
         ConstraintName::NextPCEqPCPlusOneIfInline => {
             let az = flag_to_az(matches!(
-                accessor.small_scalar_at(
+                accessor.value_at(
                     Inp::OpFlags(CircuitFlags::InlineSequenceInstruction).to_index(),
                     row
                 ),
-                SmallScalar::U8(1)
+                SmallScalar::Bool(true)
             ));
             let next = accessor
-                .small_scalar_at(Inp::NextPC.to_index(), row)
+                .value_at(Inp::NextPC.to_index(), row)
                 .as_i128();
-            let pc = accessor.small_scalar_at(Inp::PC.to_index(), row).as_i128();
+            let pc = accessor.value_at(Inp::PC.to_index(), row).as_i128();
             let bz = diff_to_bz(next - (pc + 1));
             Some((az, bz))
         }

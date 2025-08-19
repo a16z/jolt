@@ -1,4 +1,6 @@
 // Small Value Optimization (SVO) helpers for Spartan first sum-check
+// TODO(svo-typed): Introduce typed accumulation interfaces that accept
+// UnreducedProduct positive/negative accumulators and combine at the end.
 
 use crate::field::JoltField;
 
