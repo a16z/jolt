@@ -319,7 +319,7 @@ mod tests {
     fn test_inline_parsing() {
         // Test instruction word parsing
         // funct7=0x7f, rs2=0x1f, rs1=0x1f, funct3=0x7, rd=0x1f, opcode=0x2b
-        let word: u32 = 0xff_ff_f_f_ab;
+        let word: u32 = 0xffffffab;
         let inline = INLINE::new(word, 0x1000, false);
 
         assert_eq!(inline.opcode, 0x2b);
