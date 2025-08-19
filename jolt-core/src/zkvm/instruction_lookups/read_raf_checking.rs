@@ -263,7 +263,7 @@ impl<'a, F: JoltField> ReadRafProverState<F> {
             is_interleaved_operands,
             prefix_checkpoints: vec![None.into(); Prefixes::COUNT],
             suffix_polys,
-            v: ExpandingTable::new(K_CHUNK.pow(RA_PER_LOG_M as u32)),
+            v: ExpandingTable::new(M),
             u_evals: eq_r_cycle.clone(),
             eq_r_cycle: MultilinearPolynomial::from(eq_r_cycle),
             prefix_registry: PrefixRegistry::new(),
@@ -607,8 +607,6 @@ impl<F: JoltField> ReadRafProverState<F> {
 
     /// To be called at the end of each phase, after binding is done
     fn cache_phase(&mut self, phase: usize) {
-        // By this time we have bounded the address variables for two more ra_i arrays, which we now use to update ra.
-        // TODO: we can change the v table struct to store only one table and then speed up this part.
         let ra = self
             .lookup_indices
             .par_iter()

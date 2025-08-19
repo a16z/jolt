@@ -1,3 +1,5 @@
+use std::{cell::RefCell, rc::Rc};
+
 use rayon::{
     iter::{
         IndexedParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator,
@@ -13,7 +15,7 @@ use crate::{
         commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
-        opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN},
+        opening_proof::{OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN},
     },
     subprotocols::{
         large_degree_sumcheck::{
@@ -261,11 +263,7 @@ impl<F: JoltField> SumcheckInstance<F> for RASumCheck<F> {
 
     fn expected_output_claim(
         &self,
-        opening_accumulator: Option<
-            std::rc::Rc<
-                std::cell::RefCell<crate::poly::opening_proof::VerifierOpeningAccumulator<F>>,
-            >,
-        >,
+        opening_accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
         r: &[F],
     ) -> F {
         let eq_eval = EqPolynomial::mle(&self.r_cycle, r);
@@ -292,10 +290,8 @@ impl<F: JoltField> SumcheckInstance<F> for RASumCheck<F> {
 
     fn cache_openings_prover(
         &self,
-        accumulator: std::rc::Rc<
-            std::cell::RefCell<crate::poly::opening_proof::ProverOpeningAccumulator<F>>,
-        >,
-        r_cycle: crate::poly::opening_proof::OpeningPoint<BIG_ENDIAN, F>,
+        accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
+        r_cycle: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         let prover_state = self
             .prover_state
@@ -316,10 +312,8 @@ impl<F: JoltField> SumcheckInstance<F> for RASumCheck<F> {
 
     fn cache_openings_verifier(
         &self,
-        accumulator: std::rc::Rc<
-            std::cell::RefCell<crate::poly::opening_proof::VerifierOpeningAccumulator<F>>,
-        >,
-        r_cycle: crate::poly::opening_proof::OpeningPoint<BIG_ENDIAN, F>,
+        accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
+        r_cycle: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         for i in 0..self.d {
             let opening_point =
