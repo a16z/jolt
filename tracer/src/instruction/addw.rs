@@ -1,3 +1,4 @@
+use crate::utils::inline_helpers::InstrAssembler;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -9,10 +10,7 @@ use super::add::ADD;
 use super::virtual_sign_extend::VirtualSignExtend;
 use super::RV32IMInstruction;
 
-use super::{
-    format::{format_i::FormatI, format_r::FormatR, InstructionFormat},
-    RISCVInstruction, RISCVTrace, RV32IMCycle,
-};
+use super::{format::format_r::FormatR, RISCVInstruction, RISCVTrace, RV32IMCycle};
 
 declare_riscv_instr!(
     name   = ADDW,
@@ -44,32 +42,10 @@ impl RISCVTrace for ADDW {
         }
     }
 
-    fn inline_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
-        let mut sequence = vec![];
-        let add = ADD {
-            address: self.address,
-            operands: FormatR {
-                rd: self.operands.rd,
-                rs1: self.operands.rs1,
-                rs2: self.operands.rs2,
-            },
-            inline_sequence_remaining: Some(1),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(add.into());
-
-        let signext = VirtualSignExtend {
-            address: self.address,
-            operands: FormatI {
-                rd: self.operands.rd,
-                rs1: self.operands.rd,
-                imm: 0,
-            },
-            inline_sequence_remaining: Some(0),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(signext.into());
-
-        sequence
+    fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
+        asm.emit_r::<ADD>(self.operands.rd, self.operands.rs1, self.operands.rs2);
+        asm.emit_i::<VirtualSignExtend>(self.operands.rd, self.operands.rd, 0);
+        asm.finalize()
     }
 }

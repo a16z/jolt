@@ -101,7 +101,7 @@ impl InstrAssembler {
     }
 
     #[inline]
-    pub fn add_to_sequence<I: RISCVInstruction + RISCVTrace>(&mut self, inst: I)
+    fn add_to_sequence<I: RISCVInstruction + RISCVTrace>(&mut self, inst: I)
     where
         RISCVCycle<I>: Into<RV32IMCycle>,
     {
