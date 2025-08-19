@@ -57,31 +57,10 @@ dependencies = [
 [[package]]
 name = "allocative"
 version = "0.3.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8fac2ce611db8b8cee9b2aa886ca03c924e9da5e5295d0dbd0526e5d0b0710f7"
-dependencies = [
- "allocative_derive 0.3.3 (registry+https://github.com/rust-lang/crates.io-index)",
- "ctor 0.1.26",
-]
-
-[[package]]
-name = "allocative"
-version = "0.3.4"
 source = "git+https://github.com/0xAndoroid/allocative?branch=fix%2Fimpl-for-u128#2353207248b2719951c628af6240f07d6958ec2d"
 dependencies = [
- "allocative_derive 0.3.3 (git+https://github.com/0xAndoroid/allocative?branch=fix%2Fimpl-for-u128)",
+ "allocative_derive",
  "ctor 0.1.26",
-]
-
-[[package]]
-name = "allocative_derive"
-version = "0.3.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fe233a377643e0fc1a56421d7c90acdec45c291b30345eb9f08e8d0ddce5a4ab"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.106",
 ]
 
 [[package]]
@@ -199,7 +178,7 @@ name = "ark-ff"
 version = "0.5.0"
 source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#44143c847c8657196a5b9b23d165958f8fe51224"
 dependencies = [
- "allocative 0.3.4 (registry+https://github.com/rust-lang/crates.io-index)",
+ "allocative",
  "ark-ff-asm",
  "ark-ff-macros",
  "ark-serialize",
@@ -1626,7 +1605,7 @@ dependencies = [
 name = "jolt-core"
 version = "0.1.0"
 dependencies = [
- "allocative 0.3.4 (git+https://github.com/0xAndoroid/allocative?branch=fix%2Fimpl-for-u128)",
+ "allocative",
  "anyhow",
  "ark-bn254",
  "ark-ec",
