@@ -6,7 +6,7 @@ use std::{cell::RefCell, rc::Rc};
 use strum::{EnumCount, IntoEnumIterator};
 use tracer::instruction::RV32IMCycle;
 
-use super::{K_CHUNK, LOG_K, LOG_M, M, PHASES, RA_PER_LOG_M, WORD_SIZE};
+use super::{LOG_K, LOG_M, M, PHASES, WORD_SIZE};
 
 use crate::{
     field::JoltField,
