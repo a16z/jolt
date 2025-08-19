@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1755297604456,
+  "lastUpdate": 1755629766755,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -12634,6 +12634,162 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 584228,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "juliuszh@stanford.edu",
+            "name": "Jules",
+            "username": "JuI3s"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c87fbc8d1c70b7cd827c5df884d9e123fddf862c",
+          "message": "feat: Large d multiplication optimization (#832)\n\n* Large d optimization basic eq sanity check\n\n* Temp first round sumcheck pass\n\n* Large d optimization correctness\n\n* Sumcheck test and cleanup\n\n* Multiple tests for large d optimization\n\n* Clean up unused test\n\n* Remove unused eq\n\n* Renamed to MLE\n\n* temp, added naive sumcheck benchmark\n\n* Remove previous_claim from argument\n\n* Benchmarking\n\n* Bug fix\n\n* Optimization caching stuff\n\n* Naive sumcheck bug fix\n\n* Test case for very large d\n\n* Turn vec into array\n\n* Large d opimization bench\n\n* temp\n\n* temp1\n\n* optimize 2\n\n* temp\n\n* temp\n\n* Turn vec into arr\n\n* Temp remove mle+\n\n* debug temp\n\n* Debug temp\n\n* Appendix C Optimization correctness\n\n* Code cleanup\n\n* Minor cleanup\n\n* Generic cleanup\n\n* Optimization outer sum over b\n\n* Zach's optimization\n\n* Vec to array\n\n* Before fix+\n\n* Fix round bug\n\n* Commented out test validation\n\n* Karatsuba d=16 bench\n\n* refactor in progress\n\n* Generic compute mle product (in progress\n\n* Generic mle product evaluation\n\n* Minor changes\n\n* Karatsuba bench\n\n* Quang's optimization\n\n* cargo fmt\n\n* cargo clippy\n\n* Large d bench\n\n* clippy\n\n* Removed debugging trace and added bench for d=4\n\n* Fix benchmark fresh data issue\n\n* d=4 benchmark\n\n* Update karatsuba\n\n* Toom multiplication benchmark\n\n* Delete unused files\n\n* Rename benchmarks\n\n* Rename sumcheck proof structs\n\n* Toom multiplication interpolation\n\n* Toom multiplication integration in large d sumcheck\n\n* fmt and clippy\n\n* Update typos.toml\n\n* Remove unnecessary benchmarks\n\n* Make typo bot happy\n\n* Make graphite bot happy\n\n* Instruction ra virtualization in progress\n\n* clippy\n\n* read raf ra virtualization\n\n* Adapt ra virtual to not use small field mul trait\n\n* Read Raf ra virtualization integration\n\n* clippy\n\n* Fix large d sumcheck benchmark\n\n* temp\n\n* Make sure stand-alone optimization correctness\n\n* Ra i poly checkpoint\n\n* Draft virtual ra claim working+\n\n* temp\n\n* Temp stage 3 verification passed\n\n* fib_e2e_dory passed\n\n* Remove debub prints\n\n* clippy\n\n* Remove debug comment\n\n* Remove debug check\n\n* Change type issues\n\n* Fix typo\n\n* Add new virtual poly\n\n* minor\n\n* Update test fixture\n\n* updated test fixtures\n\n* Minor changes\n\n* Code cleanup\n\n* temp resolving PR issues\n\n* minor\n\n* Move to only one expanding table\n\n* Update jolt-core/src/subprotocols/karatsuba.rs\n\nCo-authored-by: Michael Zhu <mchl.zhu.96@gmail.com>\n\n* Update jolt-core/src/subprotocols/karatsuba.rs\n\nCo-authored-by: Michael Zhu <mchl.zhu.96@gmail.com>\n\n* rename large d sumcheck optimization\n\n* Resolve PR issues\n\n* remove verifier files\n\n* Generate test fixtures\n\n* minor\n\n* clippy\n\n* delete print\n\n* Resolve merge conflicts\n\n---------\n\nCo-authored-by: julius <jzhang@a16z.com>\nCo-authored-by: Michael Zhu <mchl.zhu.96@gmail.com>",
+          "timestamp": "2025-08-19T14:16:54-04:00",
+          "tree_id": "5be34d3f6887856281c0807549aa33bc4166f14d",
+          "url": "https://github.com/a16z/jolt/commit/c87fbc8d1c70b7cd827c5df884d9e123fddf862c"
+        },
+        "date": 1755629765923,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "alloc-time",
+            "value": 3.405,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 453464,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 3678340,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 3.6011,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 468328,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 2.6604,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 455300,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 3.3118,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 461932,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 3.0893,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 584948,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 114.4131,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 9334512,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 4.1143,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 471092,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 10.0371,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 478772,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 5.0277,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 564708,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "verifier-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "verifier-mem",
+            "value": 10721416,
             "unit": "KB",
             "extra": ""
           }
