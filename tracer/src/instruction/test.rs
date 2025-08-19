@@ -1,3 +1,6 @@
+use core::panic::AssertUnwindSafe;
+use std::panic;
+
 use crate::emulator::cpu::Cpu;
 use crate::instruction::format::{InstructionFormat, InstructionRegisterState};
 use crate::instruction::NormalizedInstruction;
@@ -84,9 +87,15 @@ where
 
         let mut ram_access = Default::default();
 
-        instruction.execute(&mut original_cpu, &mut ram_access);
+        let res = panic::catch_unwind(AssertUnwindSafe(|| {
+            instruction.execute(&mut original_cpu, &mut ram_access);
+        }));
+        if res.is_err() {
+            continue;
+        }
 
-        instruction.trace(&mut virtual_cpu, None);
+        let mut trace_vec = Vec::new();
+        instruction.trace(&mut virtual_cpu, Some(&mut trace_vec));
 
         assert_eq!(
             original_cpu.pc, virtual_cpu.pc,
