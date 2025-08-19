@@ -1,4 +1,3 @@
-use crate::field::JoltField;
 use crate::host;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::subprotocols::large_degree_sumcheck::{
@@ -24,8 +23,6 @@ pub enum BenchType {
     Sha2,
     Sha3,
     Sha2Chain,
-    Shout,
-    Twist,
     LargeDSumCheck,
 }
 
@@ -36,9 +33,7 @@ pub fn benchmarks(bench_type: BenchType) -> Vec<(tracing::Span, Box<dyn FnOnce()
         BenchType::Sha3 => sha3(),
         BenchType::Sha2Chain => sha2_chain(),
         BenchType::Fibonacci => fibonacci(),
-        BenchType::Shout => shout(),
-        BenchType::Twist => twist::<Fr, KeccakTranscript>(),
-        BenchType::LargeDSumCheck => large_d_sumcheck::<Fr, KeccakTranscript>(),
+        BenchType::LargeD => large_d_sumcheck::<Fr, Blake2bTranscript>(),
     }
 }
 

@@ -34,10 +34,10 @@ fn benchmark_dense<F: JoltField>(c: &mut Criterion, num_vars: usize) {
                     (poly, r)
                 },
                 |(mut poly, r)| {
-                    for i in 0..num_vars {
+                    (0..num_vars).for_each(|i| {
                         poly.bound_poly_var_top(&r[i]);
                         criterion::black_box(());
-                    }
+                    });
                 },
             );
         },
@@ -62,11 +62,11 @@ fn benchmark_dense_batch<F: JoltField>(c: &mut Criterion, num_vars: usize, batch
                     (polys, r)
                 },
                 |(mut polys, r)| {
-                    for i in 0..num_vars {
+                    (0..num_vars).for_each(|i| {
                         polys
                             .par_iter_mut()
                             .for_each(|poly| poly.bound_poly_var_bot(&r[i]))
-                    }
+                    });
                 },
             );
         },
@@ -121,10 +121,10 @@ fn benchmark_dense_parallel<F: JoltField>(
                     (poly, r)
                 },
                 |(mut poly, r)| {
-                    for i in 0..num_vars {
+                    (0..num_vars).for_each(|i| {
                         poly.bind_parallel(r[i], binding_order);
                         criterion::black_box(());
-                    }
+                    });
                 },
             );
         },
