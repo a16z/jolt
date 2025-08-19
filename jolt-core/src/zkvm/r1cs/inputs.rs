@@ -251,10 +251,6 @@ impl TryFrom<&JoltR1CSInputs> for OpeningId {
     }
 }
 
-// ============================================================================
-// Streaming witness accessor (avoids materializing input_polys)
-// ============================================================================
-
 /// Read-only, thread-safe accessor for witness values at a given step without
 /// materializing full `MultilinearPolynomial`s. Implementations should be
 /// zero-copy and cheap per call.
@@ -428,7 +424,6 @@ pub fn compute_claimed_witness_evals<F: JoltField>(
                 } else {
                     break; // Stop processing if we've reached the end of eq_rx
                 }
-
             }
             acc
         })

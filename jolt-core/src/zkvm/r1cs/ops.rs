@@ -68,9 +68,6 @@ pub enum LC {
 }
 
 impl LC {
-    // =========================
-    // Basic constructors (const)
-    // =========================
     pub const fn zero() -> Self {
         LC::Zero
     }
@@ -83,9 +80,6 @@ impl LC {
         LC::Terms1([Term::new(input_index, coeff)])
     }
 
-    // =========================
-    // Enhanced constructors (const)
-    // =========================
     /// Create an LC from a single input with unit coefficient.
     pub const fn from_input(inp: JoltR1CSInputs) -> LC {
         LC::single_term(inp.idx(), 1)
@@ -101,9 +95,6 @@ impl LC {
         LC::constant(k)
     }
 
-    // =========================
-    // Introspection
-    // =========================
     pub const fn num_terms(&self) -> usize {
         match self {
             LC::Zero | LC::Const(_) => 0,
@@ -139,9 +130,6 @@ impl LC {
         }
     }
 
-    // =========================
-    // Capacity-checked operations (fallible)
-    // =========================
     /// Capacity-checked addition. Returns None if term capacity would be exceeded.
     pub const fn checked_add(self, other: LC) -> Option<LC> {
         let (mut out_terms, mut out_len, mut out_const) = Self::decompose(self);
@@ -195,9 +183,6 @@ impl LC {
         self.checked_add(LC::Const(k))
     }
 
-    // =========================
-    // Fallback operations (None => Zero)
-    // =========================
     /// Addition that falls back to zero LC if capacity would be exceeded.
     pub const fn add_or_zero(self, other: LC) -> LC {
         match self.checked_add(other) {
@@ -222,9 +207,6 @@ impl LC {
         }
     }
 
-    // =========================
-    // Scalar operations
-    // =========================
     /// Negate this LC (multiply by -1).
     pub const fn neg(self) -> LC {
         self.mul_by_const(-1)
@@ -666,9 +648,6 @@ impl LC {
     }
 }
 
-// =============================================================================
-// LC MACRO
-// =============================================================================
 /// lc!: parse a linear combination with +, -, and literal * expr
 /// Examples:
 /// - lc!({ JoltR1CSInputs::UnexpandedPC } + { 4i128 } - { 2 * JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed) })

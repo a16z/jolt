@@ -39,9 +39,6 @@ impl Constraint {
     }
 }
 
-// =============================================================================
-// Streaming accessor evaluation for LC
-// =============================================================================
 impl LC {
     #[inline]
     pub fn evaluate_row_with<F: JoltField>(
@@ -60,9 +57,6 @@ impl LC {
     }
 }
 
-// =============================================================================
-// CONSTRAINT BUILDER FUNCTIONS
-// =============================================================================
 /// Creates: condition * (left - right) == 0
 pub const fn constraint_eq_conditional_lc(condition: LC, left: LC, right: LC) -> Constraint {
     Constraint::new(
