@@ -375,8 +375,9 @@ impl BatchedSumcheck {
                         sumcheck.normalize_opening_point(r_slice),
                     );
                 }
+                let claim = sumcheck.expected_output_claim(opening_accumulator.clone(), r_slice);
 
-                sumcheck.expected_output_claim(opening_accumulator.clone(), r_slice) * coeff
+                claim * coeff
             })
             .sum();
 

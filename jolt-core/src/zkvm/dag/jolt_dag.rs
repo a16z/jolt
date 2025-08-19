@@ -208,6 +208,7 @@ impl JoltDAG {
         let mut stage4_instances: Vec<_> = std::iter::empty()
             .chain(ram_dag.stage4_prover_instances(&mut state_manager))
             .chain(bytecode_dag.stage4_prover_instances(&mut state_manager))
+            .chain(lookups_dag.stage4_prover_instances(&mut state_manager))
             .collect();
 
         #[cfg(feature = "allocative")]
@@ -410,6 +411,7 @@ impl JoltDAG {
         let stage4_instances: Vec<_> = std::iter::empty()
             .chain(ram_dag.stage4_verifier_instances(&mut state_manager))
             .chain(bytecode_dag.stage4_verifier_instances(&mut state_manager))
+            .chain(lookups_dag.stage4_verifier_instances(&mut state_manager))
             .collect();
         let stage4_instances_ref: Vec<&dyn SumcheckInstance<F>> = stage4_instances
             .iter()

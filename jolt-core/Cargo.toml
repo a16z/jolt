@@ -121,6 +121,14 @@ name = "binding"
 harness = false
 
 [[bench]]
+name = "large_d_sumcheck"
+harness = false
+
+[[bench]]
+name = "large_d_mul"
+harness = false
+
+[[bench]]
 name = "poly_bench"
 harness = false
 
