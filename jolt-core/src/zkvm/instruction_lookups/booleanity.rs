@@ -1,3 +1,6 @@
+use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::FlameGraphBuilder;
 use common::constants::XLEN;
 use rayon::prelude::*;
 use std::{cell::RefCell, rc::Rc};
@@ -32,9 +35,10 @@ use crate::{
 
 const DEGREE: usize = 3;
 
+#[derive(Allocative)]
 struct BooleanityProverState<F: JoltField> {
-    B: GruenSplitEqPolynomial<F>,
-    D: GruenSplitEqPolynomial<F>,
+    eq_r_address: GruenSplitEqPolynomial<F>,
+    eq_r_cycle: GruenSplitEqPolynomial<F>,
     G: [Vec<F>; D],
     H_indices: [Vec<usize>; D],
     H: [MultilinearPolynomial<F>; D],
@@ -42,6 +46,7 @@ struct BooleanityProverState<F: JoltField> {
     eq_r_r: F,
 }
 
+#[derive(Allocative)]
 pub struct BooleanitySumcheck<F: JoltField> {
     /// Precomputed powers of gamma - batching chgallenge
     gamma: [F; D],
@@ -128,8 +133,8 @@ impl<F: JoltField> BooleanityProverState<F> {
         });
 
         BooleanityProverState {
-            B,
-            D: GruenSplitEqPolynomial::new(r_cycle, BindingOrder::LowToHigh),
+            eq_r_address: B,
+            eq_r_cycle: GruenSplitEqPolynomial::new(r_cycle, BindingOrder::LowToHigh),
             G,
             H_indices,
             H: std::array::from_fn(|_| MultilinearPolynomial::from(vec![F::zero()])),
@@ -172,7 +177,7 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
 
         if round < LOG_K_CHUNK {
             // Phase 1: Bind B and update F
-            ps.B.bind(r_j);
+            ps.eq_r_address.bind(r_j);
             // Update F for this round (see Equation 55)
             let (F_left, F_right) = ps.F.split_at_mut(1 << round);
             F_left
@@ -192,7 +197,7 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
                         .collect();
                     MultilinearPolynomial::from(coeffs)
                 });
-                ps.eq_r_r = ps.B.current_scalar;
+                ps.eq_r_r = ps.eq_r_address.current_scalar;
 
                 // Drop G arrays, F array, and remaining H_indices as they're no longer needed in phase 2
                 // Replace G with empty vectors
@@ -206,7 +211,7 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
             }
         } else {
             // Phase 2: Bind D and H
-            ps.D.bind(r_j);
+            ps.eq_r_cycle.bind(r_j);
             ps.H.par_iter_mut()
                 .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh));
         }
@@ -283,13 +288,18 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
             r_sumcheck.r,
         );
     }
+
+    #[cfg(feature = "allocative")]
+    fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
+        flamegraph.visit_root(self);
+    }
 }
 
 impl<F: JoltField> BooleanitySumcheck<F> {
     fn compute_phase1_message(&self, round: usize, previous_claim: F) -> Vec<F> {
         let p = self.prover_state.as_ref().unwrap();
         let m = round + 1;
-        let B = &p.B;
+        let B = &p.eq_r_address;
 
         let inner_span = tracing::span!(tracing::Level::INFO, "Compute univariate poly");
         let _inner_guard = inner_span.enter();
@@ -405,7 +415,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
 
     fn compute_phase2_message(&self, _round: usize, previous_claim: F) -> Vec<F> {
         let p = self.prover_state.as_ref().unwrap();
-        let D_poly = &p.D;
+        let D_poly = &p.eq_r_cycle;
         let H = &p.H;
 
         let quadratic_coeffs: [F; DEGREE - 1] = if D_poly.E_in_current_len() == 1 {

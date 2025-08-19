@@ -13,15 +13,20 @@ use crate::transcripts::Transcript;
 use crate::utils::math::Math;
 use crate::zkvm::dag::state_manager::StateManager;
 use crate::zkvm::witness::VirtualPolynomial;
+use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::FlameGraphBuilder;
 use rayon::prelude::*;
 
 const DEGREE: usize = 3;
 
+#[derive(Allocative)]
 struct HammingBooleanityProverState<F: JoltField> {
     eq_r_cycle: MultilinearPolynomial<F>,
     H: MultilinearPolynomial<F>,
 }
 
+#[derive(Allocative)]
 pub struct HammingBooleanitySumcheck<F: JoltField> {
     prover_state: Option<HammingBooleanityProverState<F>>,
     log_T: usize,
@@ -189,5 +194,10 @@ impl<F: JoltField> SumcheckInstance<F> for HammingBooleanitySumcheck<F> {
             SumcheckId::RamHammingBooleanity,
             opening_point,
         );
+    }
+
+    #[cfg(feature = "allocative")]
+    fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
+        flamegraph.visit_root(self);
     }
 }

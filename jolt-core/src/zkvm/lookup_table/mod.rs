@@ -1,6 +1,5 @@
 use and::AndTable;
 use andn::AndnTable;
-use enum_dispatch::enum_dispatch;
 use equal::EqualTable;
 use halfword_alignment::HalfwordAlignmentTable;
 use lower_half_word::LowerHalfWordTable;
@@ -40,7 +39,6 @@ use crate::field::JoltField;
 use derive_more::From;
 use std::fmt::Debug;
 
-#[enum_dispatch]
 pub trait JoltLookupTable: Clone + Debug + Send + Sync + Serialize {
     /// Materializes the entire lookup table for this instruction (assuming an 8-bit word size).
     #[cfg(test)]

@@ -12,6 +12,7 @@ use crate::{
     },
     zkvm::r1cs::constraints::Constraint,
 };
+use allocative::Allocative;
 use rayon::prelude::*;
 
 pub const TOTAL_NUM_ACCUMS: usize = svo_helpers::total_num_accums(NUM_SVO_ROUNDS);
@@ -33,6 +34,10 @@ pub struct SparseCoefficient<T> {
     pub(crate) value: T,
 }
 
+impl<T> Allocative for SparseCoefficient<T> {
+    fn visit<'a, 'b: 'a>(&self, _visitor: &'a mut allocative::Visitor<'b>) {}
+}
+
 impl<T> From<(usize, T)> for SparseCoefficient<T> {
     fn from(x: (usize, T)) -> Self {
         Self {
@@ -42,7 +47,7 @@ impl<T> From<(usize, T)> for SparseCoefficient<T> {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Allocative)]
 pub struct SpartanInterleavedPolynomial<const NUM_SVO_ROUNDS: usize, F: JoltField> {
     /// A list of sparse vectors representing the (interleaved) coefficients for the Az, Bz polynomials
     /// Generated from binary evaluations. Each inner Vec is sorted by index.

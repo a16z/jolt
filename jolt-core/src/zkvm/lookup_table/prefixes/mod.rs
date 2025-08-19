@@ -1,4 +1,5 @@
 use crate::{field::JoltField, utils::lookup_bits::LookupBits};
+use allocative::Allocative;
 use lsb::LsbPrefix;
 use negative_divisor_equals_remainder::NegativeDivisorEqualsRemainderPrefix;
 use negative_divisor_greater_than_remainder::NegativeDivisorGreaterThanRemainderPrefix;
@@ -159,7 +160,7 @@ pub enum Prefixes {
     LeftShiftW,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Allocative)]
 pub struct PrefixEval<F>(F);
 pub type PrefixCheckpoint<F: JoltField> = PrefixEval<Option<F>>;
 

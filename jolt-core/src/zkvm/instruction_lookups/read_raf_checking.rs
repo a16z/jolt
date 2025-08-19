@@ -1,3 +1,6 @@
+use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::FlameGraphBuilder;
 use common::constants::XLEN;
 use rayon::prelude::*;
 use std::{cell::RefCell, rc::Rc};
@@ -30,8 +33,8 @@ use crate::{
         math::Math,
         thread::{unsafe_allocate_zero_vec, unsafe_zero_slice},
     },
-    zkvm::dag::state_manager::StateManager,
     zkvm::{
+        dag::state_manager::StateManager,
         instruction::{InstructionFlags, InstructionLookup, InterleavedBitsMarker, LookupQuery},
         lookup_table::{
             prefixes::{PrefixCheckpoint, PrefixEval, Prefixes},
@@ -43,6 +46,7 @@ use crate::{
 
 const DEGREE: usize = D + 2;
 
+#[derive(Allocative)]
 struct ReadRafProverState<F: JoltField> {
     ra: Vec<MultilinearPolynomial<F>>,
     r: Vec<F>,
@@ -52,6 +56,7 @@ struct ReadRafProverState<F: JoltField> {
     lookup_indices_uninterleave: Vec<(usize, LookupBits)>,
     lookup_indices_identity: Vec<(usize, LookupBits)>,
     is_interleaved_operands: Vec<bool>,
+    #[allocative(skip)]
     lookup_tables: Vec<Option<LookupTables<XLEN>>>,
 
     prefix_checkpoints: Vec<PrefixCheckpoint<F>>,
@@ -68,6 +73,7 @@ struct ReadRafProverState<F: JoltField> {
     combined_val_polynomial: Option<MultilinearPolynomial<F>>,
 }
 
+#[derive(Allocative)]
 pub struct ReadRafSumcheck<F: JoltField> {
     gamma: F,
     gamma_squared: F,
@@ -513,6 +519,11 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
             r_cycle.clone(),
         );
     }
+
+    #[cfg(feature = "allocative")]
+    fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
+        flamegraph.visit_root(self);
+    }
 }
 
 impl<F: JoltField> ReadRafProverState<F> {
@@ -867,7 +878,6 @@ mod tests {
             JoltProverPreprocessing {
                 generators: (),
                 shared: shared_preprocessing.clone(),
-                field: Default::default(),
             };
 
         let verifier_preprocessing: JoltVerifierPreprocessing<Fr, MockCommitScheme<Fr>> =

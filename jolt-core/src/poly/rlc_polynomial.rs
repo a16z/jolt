@@ -5,6 +5,7 @@ use crate::poly::compact_polynomial::{CompactPolynomial, SmallScalar};
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::one_hot_polynomial::OneHotPolynomial;
 use crate::utils::thread::unsafe_allocate_zero_vec;
+use allocative::Allocative;
 use ark_bn254::{Fr, G1Projective};
 use ark_ec::CurveGroup;
 use num_traits::MulAdd;
@@ -14,7 +15,7 @@ use tracing::trace_span;
 /// `RLCPolynomial` represents a multilinear polynomial comprised of a
 /// random linear combination of multiple polynomials, potentially with
 /// different sizes.
-#[derive(Default, Clone, Debug, PartialEq)]
+#[derive(Default, Clone, Debug, PartialEq, Allocative)]
 pub struct RLCPolynomial<F: JoltField> {
     /// Random linear combination of dense (i.e. length T) polynomials.
     pub dense_rlc: Vec<F>,

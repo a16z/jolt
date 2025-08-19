@@ -18,17 +18,21 @@ use crate::{
     subprotocols::sumcheck::{SumcheckInstance, SumcheckInstanceProof},
     transcripts::Transcript,
     utils::{expanding_table::ExpandingTable, math::Math},
-    zkvm::dag::state_manager::StateManager,
     zkvm::{
+        dag::state_manager::StateManager,
         ram::remap_address,
         witness::{CommittedPolynomial, VirtualPolynomial},
     },
 };
+use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::FlameGraphBuilder;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::RAM_START_ADDRESS;
 use rayon::prelude::*;
 use tracer::JoltDevice;
 
+#[derive(Allocative)]
 struct OutputSumcheckProverState<F: JoltField> {
     /// Val(k, 0)
     val_init: MultilinearPolynomial<F>,
@@ -121,8 +125,10 @@ pub struct OutputProof<F: JoltField, ProofTranscript: Transcript> {
 /// In plain English: the final memory state (Val_final) should be consistent with
 /// the expected program outputs (Val_io) at the indices where the program
 /// inputs/outputs are stored (io_range).
+#[derive(Allocative)]
 pub struct OutputSumcheck<F: JoltField> {
     K: usize,
+    #[allocative(skip)]
     verifier_state: Option<OutputSumcheckVerifierState<F>>,
     prover_state: Option<OutputSumcheckProverState<F>>,
 }
@@ -344,8 +350,14 @@ impl<F: JoltField> SumcheckInstance<F> for OutputSumcheck<F> {
             opening_point,
         );
     }
+
+    #[cfg(feature = "allocative")]
+    fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
+        flamegraph.visit_root(self);
+    }
 }
 
+#[derive(Allocative)]
 struct ValFinalSumcheckProverState<F: JoltField> {
     inc: MultilinearPolynomial<F>,
     wa: MultilinearPolynomial<F>,
@@ -359,6 +371,7 @@ struct ValFinalSumcheckProverState<F: JoltField> {
 /// into this sumcheck, which reduces it to claims about `Inc` and `wa`.
 /// Note that the verifier is assumed to be able to evaluate Val_init
 /// on its own.
+#[derive(Allocative)]
 pub struct ValFinalSumcheck<F: JoltField> {
     T: usize,
     prover_state: Option<ValFinalSumcheckProverState<F>>,
@@ -606,5 +619,10 @@ impl<F: JoltField> SumcheckInstance<F> for ValFinalSumcheck<F> {
             SumcheckId::RamValFinalEvaluation,
             wa_opening_point,
         );
+    }
+
+    #[cfg(feature = "allocative")]
+    fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
+        flamegraph.visit_root(self);
     }
 }
