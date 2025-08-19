@@ -98,10 +98,9 @@ impl<F: JoltField> RASumCheck<F> {
     }
 
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
-        log_K: usize,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
-        let d = compute_d_parameter_from_log_K(log_K);
+        let d = compute_d_parameter_from_log_K(LOG_K);
 
         let (_preprocessing, trace, _, _) = state_manager.get_prover_data();
         let T = trace.len();
@@ -111,7 +110,7 @@ impl<F: JoltField> RASumCheck<F> {
             SumcheckId::InstructionReadRaf,
         );
 
-        let (r_address, r_cycle) = r.split_at_r(log_K);
+        let (r_address, r_cycle) = r.split_at_r(LOG_K);
         let r_address = if r_address.len().is_multiple_of(DTH_ROOT_OF_K.log_2()) {
             r_address.to_vec()
         } else {
@@ -157,10 +156,9 @@ impl<F: JoltField> RASumCheck<F> {
     }
 
     pub fn new_verifier<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
-        log_K: usize,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
-        let d = compute_d_parameter_from_log_K(log_K);
+        let d = compute_d_parameter_from_log_K(LOG_K);
 
         let (_, _, T) = state_manager.get_verifier_data();
 
@@ -169,7 +167,7 @@ impl<F: JoltField> RASumCheck<F> {
             SumcheckId::InstructionReadRaf,
         );
 
-        let (r_address, r_cycle) = r.split_at_r(log_K);
+        let (r_address, r_cycle) = r.split_at_r(LOG_K);
         assert!(r_address.len().is_multiple_of(DTH_ROOT_OF_K.log_2()));
 
         // Split r_address into d chunks of variable sizes

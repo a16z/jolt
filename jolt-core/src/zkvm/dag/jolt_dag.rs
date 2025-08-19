@@ -104,6 +104,7 @@ impl JoltDAG {
             .chain(spartan_dag.stage2_prover_instances(&mut state_manager))
             .chain(registers_dag.stage2_prover_instances(&mut state_manager))
             .chain(ram_dag.stage2_prover_instances(&mut state_manager))
+            .chain(lookups_dag.stage2_prover_instances(&mut state_manager))
             .collect();
 
         #[cfg(feature = "allocative")]
@@ -349,6 +350,7 @@ impl JoltDAG {
             .chain(spartan_dag.stage2_verifier_instances(&mut state_manager))
             .chain(registers_dag.stage2_verifier_instances(&mut state_manager))
             .chain(ram_dag.stage2_verifier_instances(&mut state_manager))
+            .chain(lookups_dag.stage2_verifier_instances(&mut state_manager))
             .collect();
         let stage2_instances_ref: Vec<&dyn SumcheckInstance<F>> = stage2_instances
             .iter()
