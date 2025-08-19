@@ -427,7 +427,7 @@ mod tests {
     fn sha3_e2e_dory() {
         // Ensure SHA3 inline library is linked and auto-registered
         #[cfg(feature = "host")]
-        extern crate sha3_inline;
+        use sha3_inline as _;
         // SHA3 inlines are automatically registered via #[ctor::ctor]
         // when the sha3_inline crate is linked (see lib.rs)
 
@@ -460,7 +460,7 @@ mod tests {
     fn sha2_e2e_dory() {
         // Ensure SHA2 inline library is linked and auto-registered
         #[cfg(feature = "host")]
-        extern crate sha2_inline;
+        use sha2_inline as _;
         // SHA2 inlines are automatically registered via #[ctor::ctor]
         // when the sha2_inline crate is linked (see lib.rs)
         let mut program = host::Program::new("sha2-guest");
