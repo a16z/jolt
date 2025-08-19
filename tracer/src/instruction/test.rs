@@ -20,9 +20,8 @@ use super::{
 use crate::emulator::terminal::DummyTerminal;
 
 use common::constants::RISCV_REGISTER_COUNT;
-use rand::rngs::OsRng;
 
-use rand::{rngs::StdRng, RngCore, SeedableRng};
+use rand::{rngs::StdRng, SeedableRng};
 
 use super::{RISCVCycle, RV32IMCycle};
 
@@ -47,10 +46,7 @@ test_virtual_sequences!(
 );
 
 fn test_rng() -> StdRng {
-    let mut seed = [0u8; 32];
-
-    OsRng.fill_bytes(&mut seed);
-
+    let seed = [0u8; 32];
     StdRng::from_seed(seed)
 }
 
@@ -62,7 +58,7 @@ where
 {
     let mut rng = test_rng();
 
-    for _ in 0..100 {
+    for _ in 0..1000 {
         let instruction = I::random(&mut rng);
         let instr: NormalizedInstruction = instruction.into();
         let register_state =
