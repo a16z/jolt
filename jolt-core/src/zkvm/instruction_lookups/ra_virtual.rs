@@ -1,5 +1,6 @@
 use std::{cell::RefCell, rc::Rc};
 
+use allocative::Allocative;
 use rayon::{
     iter::{
         IndexedParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator,
@@ -40,6 +41,7 @@ use crate::{
     },
 };
 
+#[derive(Allocative)]
 pub struct RASumCheck<F: JoltField> {
     r_cycle: Vec<F>,
     r_address_chunks: Vec<Vec<F>>,
@@ -49,6 +51,7 @@ pub struct RASumCheck<F: JoltField> {
     prover_state: Option<RAProverState<F>>,
 }
 
+#[derive(Allocative)]
 pub struct RAProverState<F: JoltField> {
     ra_i_polys: Vec<MultilinearPolynomial<F>>,
     E_table: Vec<Vec<F>>,
@@ -328,5 +331,10 @@ impl<F: JoltField> SumcheckInstance<F> for RASumCheck<F> {
                 opening_point,
             );
         }
+    }
+
+    #[cfg(feature = "allocative")]
+    fn update_flamegraph(&self, flamegraph: &mut allocative::FlameGraphBuilder) {
+        flamegraph.visit_root(self);
     }
 }
