@@ -1,0 +1,312 @@
+diff --git a/riscv-test-suite/rv32e_m/privilege/src/misalign-beq-01.S b/riscv-test-suite/rv32e_m/privilege/src/misalign-beq-01.S
+index d632ce01..f8971072 100644
+--- a/riscv-test-suite/rv32e_m/privilege/src/misalign-beq-01.S
++++ b/riscv-test-suite/rv32e_m/privilege/src/misalign-beq-01.S
+@@ -29,8 +29,6 @@ RVTEST_CODE_BEGIN
+ 
+ #ifdef TEST_CASE_1
+ 
+-RVTEST_CASE(0,"//check ISA:=regex(.*E.*C.*) ;def RVTEST_E = True;def TEST_CASE_1=True;",misalign-beq)
+-
+ RVTEST_CASE(1,"//check ISA:=regex(.*E.*Zicsr.*); check ISA:=regex(^[^C]+$); def rvtest_mtrap_routine=True ;def RVTEST_E = True;def TEST_CASE_1=True;",misalign-beq)
+ 
+ RVTEST_SIGBASE(x1,signature_x1_1)
+diff --git a/riscv-test-suite/rv32e_m/privilege/src/misalign-bge-01.S b/riscv-test-suite/rv32e_m/privilege/src/misalign-bge-01.S
+index d443fcb3..0b65e24b 100644
+--- a/riscv-test-suite/rv32e_m/privilege/src/misalign-bge-01.S
++++ b/riscv-test-suite/rv32e_m/privilege/src/misalign-bge-01.S
+@@ -29,8 +29,6 @@ RVTEST_CODE_BEGIN
+ 
+ #ifdef TEST_CASE_1
+ 
+-RVTEST_CASE(0,"//check ISA:=regex(.*E.*C.*) ;def RVTEST_E = True;def TEST_CASE_1=True;",misalign-bge)
+-
+ RVTEST_CASE(1,"//check ISA:=regex(.*E.*Zicsr.*); check ISA:=regex(^[^C]+$); def rvtest_mtrap_routine=True ;def RVTEST_E = True;def TEST_CASE_1=True;",misalign-bge)
+ 
+ RVTEST_SIGBASE(x1,signature_x1_1)
+diff --git a/riscv-test-suite/rv32e_m/privilege/src/misalign-bgeu-01.S b/riscv-test-suite/rv32e_m/privilege/src/misalign-bgeu-01.S
+index 55419f8c..66c6de0d 100644
+--- a/riscv-test-suite/rv32e_m/privilege/src/misalign-bgeu-01.S
++++ b/riscv-test-suite/rv32e_m/privilege/src/misalign-bgeu-01.S
+@@ -29,8 +29,6 @@ RVTEST_CODE_BEGIN
+ 
+ #ifdef TEST_CASE_1
+ 
+-RVTEST_CASE(0,"//check ISA:=regex(.*E.*C.*) ;def RVTEST_E = True;def TEST_CASE_1=True;",misalign-bgeu)
+-
+ RVTEST_CASE(1,"//check ISA:=regex(.*E.*Zicsr.*); check ISA:=regex(^[^C]+$); def rvtest_mtrap_routine=True ;def RVTEST_E = True;def TEST_CASE_1=True;",misalign-bgeu)
+ 
+ RVTEST_SIGBASE(x1,signature_x1_1)
+diff --git a/riscv-test-suite/rv32e_m/privilege/src/misalign-blt-01.S b/riscv-test-suite/rv32e_m/privilege/src/misalign-blt-01.S
+index 87644456..eb03efe7 100644
+--- a/riscv-test-suite/rv32e_m/privilege/src/misalign-blt-01.S
++++ b/riscv-test-suite/rv32e_m/privilege/src/misalign-blt-01.S
+@@ -29,8 +29,6 @@ RVTEST_CODE_BEGIN
+ 
+ #ifdef TEST_CASE_1
+ 
+-RVTEST_CASE(0,"//check ISA:=regex(.*E.*C.*) ;def RVTEST_E = True;def TEST_CASE_1=True;",misalign-blt)
+-
+ RVTEST_CASE(1,"//check ISA:=regex(.*E.*Zicsr.*); check ISA:=regex(^[^C]+$); def rvtest_mtrap_routine=True ;def RVTEST_E = True;def TEST_CASE_1=True;",misalign-blt)
+ 
+ RVTEST_SIGBASE(x1,signature_x1_1)
+diff --git a/riscv-test-suite/rv32e_m/privilege/src/misalign-bltu-01.S b/riscv-test-suite/rv32e_m/privilege/src/misalign-bltu-01.S
+index bfe9d655..4d88da6c 100644
+--- a/riscv-test-suite/rv32e_m/privilege/src/misalign-bltu-01.S
++++ b/riscv-test-suite/rv32e_m/privilege/src/misalign-bltu-01.S
+@@ -29,8 +29,6 @@ RVTEST_CODE_BEGIN
+ 
+ #ifdef TEST_CASE_1
+ 
+-RVTEST_CASE(0,"//check ISA:=regex(.*E.*C.*) ;def RVTEST_E = True;def TEST_CASE_1=True;",misalign-bltu)
+-
+ RVTEST_CASE(1,"//check ISA:=regex(.*E.*Zicsr.*); check ISA:=regex(^[^C]+$); def rvtest_mtrap_routine=True ;def RVTEST_E = True;def TEST_CASE_1=True;",misalign-bltu)
+ 
+ RVTEST_SIGBASE(x1,signature_x1_1)
+diff --git a/riscv-test-suite/rv32e_m/privilege/src/misalign-bne-01.S b/riscv-test-suite/rv32e_m/privilege/src/misalign-bne-01.S
+index 7f23282f..fd5592dd 100644
+--- a/riscv-test-suite/rv32e_m/privilege/src/misalign-bne-01.S
++++ b/riscv-test-suite/rv32e_m/privilege/src/misalign-bne-01.S
+@@ -29,8 +29,6 @@ RVTEST_CODE_BEGIN
+ 
+ #ifdef TEST_CASE_1
+ 
+-RVTEST_CASE(0,"//check ISA:=regex(.*E.*C.*) ;def RVTEST_E = True;def TEST_CASE_1=True;",misalign-bne)
+-
+ RVTEST_CASE(1,"//check ISA:=regex(.*E.*Zicsr.*); check ISA:=regex(^[^C]+$); def rvtest_mtrap_routine=True ;def RVTEST_E = True;def TEST_CASE_1=True;",misalign-bne)
+ 
+ RVTEST_SIGBASE(x1,signature_x1_1)
+diff --git a/riscv-test-suite/rv32e_m/privilege/src/misalign-jal-01.S b/riscv-test-suite/rv32e_m/privilege/src/misalign-jal-01.S
+index 47cf6307..1ced1c31 100644
+--- a/riscv-test-suite/rv32e_m/privilege/src/misalign-jal-01.S
++++ b/riscv-test-suite/rv32e_m/privilege/src/misalign-jal-01.S
+@@ -29,8 +29,6 @@ RVTEST_CODE_BEGIN
+ 
+ #ifdef TEST_CASE_1
+ 
+-RVTEST_CASE(0,"//check ISA:=regex(.*E.*C.*) ;def RVTEST_E = True;def TEST_CASE_1=True;",misalign-jal)
+-
+ RVTEST_CASE(1,"//check ISA:=regex(.*E.*Zicsr.*); check ISA:=regex(^[^C]+$); def rvtest_mtrap_routine=True ;def RVTEST_E = True;def TEST_CASE_1=True;",misalign-jal)
+ 
+ RVTEST_SIGBASE(x1,signature_x1_1)
+diff --git a/riscv-test-suite/rv32e_m/privilege/src/misalign2-jalr-01.S b/riscv-test-suite/rv32e_m/privilege/src/misalign2-jalr-01.S
+index 5e6ca5f8..dd0a9585 100644
+--- a/riscv-test-suite/rv32e_m/privilege/src/misalign2-jalr-01.S
++++ b/riscv-test-suite/rv32e_m/privilege/src/misalign2-jalr-01.S
+@@ -30,8 +30,6 @@ RVTEST_CODE_BEGIN
+ 
+ #ifdef TEST_CASE_1
+ 
+-RVTEST_CASE(0,"//check ISA:=regex(.*E.*C.*) ;def RVTEST_E = True;def TEST_CASE_1=True;",misalign2-jalr)
+-
+ RVTEST_CASE(1,"//check ISA:=regex(.*E.*Zicsr.*); check ISA:=regex(^[^C]+$); def rvtest_mtrap_routine=True ;def RVTEST_E = True;def TEST_CASE_1=True;",misalign2-jalr)
+ 
+ RVTEST_SIGBASE(x1,signature_x1_1)
+diff --git a/riscv-test-suite/rv32i_m/privilege/src/misalign-beq-01.S b/riscv-test-suite/rv32i_m/privilege/src/misalign-beq-01.S
+index cf54ecd1..789174a4 100644
+--- a/riscv-test-suite/rv32i_m/privilege/src/misalign-beq-01.S
++++ b/riscv-test-suite/rv32i_m/privilege/src/misalign-beq-01.S
+@@ -27,8 +27,6 @@ RVTEST_CODE_BEGIN
+ 
+ #ifdef TEST_CASE_1
+ 
+-RVTEST_CASE(0,"//check ISA:=regex(.*32.*);check ISA:=regex(.*I.*C.*); def rvtest_mtrap_routine=True;def TEST_CASE_1=True;",misalign-beq)
+-
+ RVTEST_CASE(1,"//check ISA:=regex(.*32.*);check ISA:=regex(.*I.*Zicsr.*); check ISA:=regex(^[^C]+$); def rvtest_mtrap_routine=True;def TEST_CASE_1=True;",misalign-beq)
+ 
+ RVTEST_SIGBASE( x1,signature_x1_1)
+diff --git a/riscv-test-suite/rv32i_m/privilege/src/misalign-bge-01.S b/riscv-test-suite/rv32i_m/privilege/src/misalign-bge-01.S
+index 8e638457..03558c73 100644
+--- a/riscv-test-suite/rv32i_m/privilege/src/misalign-bge-01.S
++++ b/riscv-test-suite/rv32i_m/privilege/src/misalign-bge-01.S
+@@ -27,8 +27,6 @@ RVTEST_CODE_BEGIN
+ 
+ #ifdef TEST_CASE_1
+ 
+-RVTEST_CASE(0,"//check ISA:=regex(.*32.*);check ISA:=regex(.*I.*C.*); def rvtest_mtrap_routine=True;def TEST_CASE_1=True;",misalign-bge)
+-
+ RVTEST_CASE(1,"//check ISA:=regex(.*32.*);check ISA:=regex(.*I.*Zicsr.*); check ISA:=regex(^[^C]+$); def rvtest_mtrap_routine=True;def TEST_CASE_1=True;",misalign-bge)
+ 
+ RVTEST_SIGBASE( x1,signature_x1_1)
+diff --git a/riscv-test-suite/rv32i_m/privilege/src/misalign-bgeu-01.S b/riscv-test-suite/rv32i_m/privilege/src/misalign-bgeu-01.S
+index 609514a2..99ff3d05 100644
+--- a/riscv-test-suite/rv32i_m/privilege/src/misalign-bgeu-01.S
++++ b/riscv-test-suite/rv32i_m/privilege/src/misalign-bgeu-01.S
+@@ -27,8 +27,6 @@ RVTEST_CODE_BEGIN
+ 
+ #ifdef TEST_CASE_1
+ 
+-RVTEST_CASE(0,"//check ISA:=regex(.*32.*);check ISA:=regex(.*I.*C.*); def rvtest_mtrap_routine=True;def TEST_CASE_1=True;",misalign-bgeu)
+-
+ RVTEST_CASE(1,"//check ISA:=regex(.*32.*);check ISA:=regex(.*I.*Zicsr.*); check ISA:=regex(^[^C]+$); def rvtest_mtrap_routine=True;def TEST_CASE_1=True;",misalign-bgeu)
+ 
+ RVTEST_SIGBASE( x1,signature_x1_1)
+diff --git a/riscv-test-suite/rv32i_m/privilege/src/misalign-blt-01.S b/riscv-test-suite/rv32i_m/privilege/src/misalign-blt-01.S
+index fe90fcf8..42256d04 100644
+--- a/riscv-test-suite/rv32i_m/privilege/src/misalign-blt-01.S
++++ b/riscv-test-suite/rv32i_m/privilege/src/misalign-blt-01.S
+@@ -27,8 +27,6 @@ RVTEST_CODE_BEGIN
+ 
+ #ifdef TEST_CASE_1
+ 
+-RVTEST_CASE(0,"//check ISA:=regex(.*32.*);check ISA:=regex(.*I.*C.*); def rvtest_mtrap_routine=True;def TEST_CASE_1=True;",misalign-blt)
+-
+ RVTEST_CASE(1,"//check ISA:=regex(.*32.*);check ISA:=regex(.*I.*Zicsr.*); check ISA:=regex(^[^C]+$); def rvtest_mtrap_routine=True;def TEST_CASE_1=True;",misalign-blt)
+ 
+ RVTEST_SIGBASE( x1,signature_x1_1)
+diff --git a/riscv-test-suite/rv32i_m/privilege/src/misalign-bltu-01.S b/riscv-test-suite/rv32i_m/privilege/src/misalign-bltu-01.S
+index e94e2924..1ee01a7b 100644
+--- a/riscv-test-suite/rv32i_m/privilege/src/misalign-bltu-01.S
++++ b/riscv-test-suite/rv32i_m/privilege/src/misalign-bltu-01.S
+@@ -27,8 +27,6 @@ RVTEST_CODE_BEGIN
+ 
+ #ifdef TEST_CASE_1
+ 
+-RVTEST_CASE(0,"//check ISA:=regex(.*32.*);check ISA:=regex(.*I.*C.*); def rvtest_mtrap_routine=True;def TEST_CASE_1=True;",misalign-bltu)
+-
+ RVTEST_CASE(1,"//check ISA:=regex(.*32.*);check ISA:=regex(.*I.*Zicsr.*); check ISA:=regex(^[^C]+$); def rvtest_mtrap_routine=True;def TEST_CASE_1=True;",misalign-bltu)
+ 
+ RVTEST_SIGBASE( x1,signature_x1_1)
+diff --git a/riscv-test-suite/rv32i_m/privilege/src/misalign-bne-01.S b/riscv-test-suite/rv32i_m/privilege/src/misalign-bne-01.S
+index a566ebc8..75f63d1c 100644
+--- a/riscv-test-suite/rv32i_m/privilege/src/misalign-bne-01.S
++++ b/riscv-test-suite/rv32i_m/privilege/src/misalign-bne-01.S
+@@ -27,8 +27,6 @@ RVTEST_CODE_BEGIN
+ 
+ #ifdef TEST_CASE_1
+ 
+-RVTEST_CASE(0,"//check ISA:=regex(.*32.*);check ISA:=regex(.*I.*C.*); def rvtest_mtrap_routine=True;def TEST_CASE_1=True;",misalign-bne)
+-
+ RVTEST_CASE(1,"//check ISA:=regex(.*32.*);check ISA:=regex(.*I.*Zicsr.*); check ISA:=regex(^[^C]+$); def rvtest_mtrap_routine=True;def TEST_CASE_1=True;",misalign-bne)
+ 
+ RVTEST_SIGBASE( x1,signature_x1_1)
+diff --git a/riscv-test-suite/rv32i_m/privilege/src/misalign-jal-01.S b/riscv-test-suite/rv32i_m/privilege/src/misalign-jal-01.S
+index 92f86825..445cf8f4 100644
+--- a/riscv-test-suite/rv32i_m/privilege/src/misalign-jal-01.S
++++ b/riscv-test-suite/rv32i_m/privilege/src/misalign-jal-01.S
+@@ -27,8 +27,6 @@ RVTEST_CODE_BEGIN
+ 
+ #ifdef TEST_CASE_1
+ 
+-RVTEST_CASE(0,"//check ISA:=regex(.*32.*);check ISA:=regex(.*I.*C.*); def rvtest_mtrap_routine=True;def TEST_CASE_1=True;",misalign-jal)
+-
+ RVTEST_CASE(1,"//check ISA:=regex(.*32.*);check ISA:=regex(.*I.*Zicsr.*); check ISA:=regex(^[^C]+$); def rvtest_mtrap_routine=True;def TEST_CASE_1=True;",misalign-jal)
+ 
+ RVTEST_SIGBASE( x1,signature_x1_1)
+diff --git a/riscv-test-suite/rv32i_m/privilege/src/misalign2-jalr-01.S b/riscv-test-suite/rv32i_m/privilege/src/misalign2-jalr-01.S
+index 4b3efd0b..ed371a72 100644
+--- a/riscv-test-suite/rv32i_m/privilege/src/misalign2-jalr-01.S
++++ b/riscv-test-suite/rv32i_m/privilege/src/misalign2-jalr-01.S
+@@ -27,8 +27,6 @@ RVTEST_CODE_BEGIN
+ 
+ #ifdef TEST_CASE_1
+ 
+-RVTEST_CASE(0,"//check ISA:=regex(.*32.*);check ISA:=regex(.*I.*C.*); def rvtest_mtrap_routine=True;def TEST_CASE_1=True;",misalign2-jalr)
+-
+ RVTEST_CASE(1,"//check ISA:=regex(.*32.*);check ISA:=regex(.*I.*Zicsr.*); check ISA:=regex(^[^C]+$); def rvtest_mtrap_routine=True;def TEST_CASE_1=True;",misalign2-jalr)
+ 
+ RVTEST_SIGBASE( x1,signature_x1_1)
+diff --git a/riscv-test-suite/rv64i_m/privilege/src/misalign-beq-01.S b/riscv-test-suite/rv64i_m/privilege/src/misalign-beq-01.S
+index 77a926f3..fbb0ec1c 100644
+--- a/riscv-test-suite/rv64i_m/privilege/src/misalign-beq-01.S
++++ b/riscv-test-suite/rv64i_m/privilege/src/misalign-beq-01.S
+@@ -27,8 +27,6 @@ RVTEST_CODE_BEGIN
+ 
+ #ifdef TEST_CASE_1
+ 
+-RVTEST_CASE(0,"//check ISA:=regex(.*64.*);check ISA:=regex(.*I.*C.*); def rvtest_mtrap_routine=True;def TEST_CASE_1=True;",misalign-beq)
+-
+ RVTEST_CASE(1,"//check ISA:=regex(.*64.*);check ISA:=regex(.*I.*Zicsr.*); check ISA:=regex(^[^C]+$); def rvtest_mtrap_routine=True;def TEST_CASE_1=True;",misalign-beq)
+ 
+ RVTEST_SIGBASE( x1,signature_x1_1)
+diff --git a/riscv-test-suite/rv64i_m/privilege/src/misalign-bge-01.S b/riscv-test-suite/rv64i_m/privilege/src/misalign-bge-01.S
+index 85c83ccb..ef2ccfbc 100644
+--- a/riscv-test-suite/rv64i_m/privilege/src/misalign-bge-01.S
++++ b/riscv-test-suite/rv64i_m/privilege/src/misalign-bge-01.S
+@@ -27,8 +27,6 @@ RVTEST_CODE_BEGIN
+ 
+ #ifdef TEST_CASE_1
+ 
+-RVTEST_CASE(0,"//check ISA:=regex(.*64.*);check ISA:=regex(.*I.*C.*); def rvtest_mtrap_routine=True;def TEST_CASE_1=True;",misalign-bge)
+-
+ RVTEST_CASE(1,"//check ISA:=regex(.*64.*);check ISA:=regex(.*I.*Zicsr.*); check ISA:=regex(^[^C]+$); def rvtest_mtrap_routine=True;def TEST_CASE_1=True;",misalign-bge)
+ 
+ RVTEST_SIGBASE( x1,signature_x1_1)
+diff --git a/riscv-test-suite/rv64i_m/privilege/src/misalign-bgeu-01.S b/riscv-test-suite/rv64i_m/privilege/src/misalign-bgeu-01.S
+index 05200f45..8cd3254c 100644
+--- a/riscv-test-suite/rv64i_m/privilege/src/misalign-bgeu-01.S
++++ b/riscv-test-suite/rv64i_m/privilege/src/misalign-bgeu-01.S
+@@ -27,8 +27,6 @@ RVTEST_CODE_BEGIN
+ 
+ #ifdef TEST_CASE_1
+ 
+-RVTEST_CASE(0,"//check ISA:=regex(.*64.*);check ISA:=regex(.*I.*C.*); def rvtest_mtrap_routine=True;def TEST_CASE_1=True;",misalign-bgeu)
+-
+ RVTEST_CASE(1,"//check ISA:=regex(.*64.*);check ISA:=regex(.*I.*Zicsr.*); check ISA:=regex(^[^C]+$); def rvtest_mtrap_routine=True;def TEST_CASE_1=True;",misalign-bgeu)
+ 
+ RVTEST_SIGBASE( x1,signature_x1_1)
+diff --git a/riscv-test-suite/rv64i_m/privilege/src/misalign-blt-01.S b/riscv-test-suite/rv64i_m/privilege/src/misalign-blt-01.S
+index 6dcb2ffe..f20afe7a 100644
+--- a/riscv-test-suite/rv64i_m/privilege/src/misalign-blt-01.S
++++ b/riscv-test-suite/rv64i_m/privilege/src/misalign-blt-01.S
+@@ -27,8 +27,6 @@ RVTEST_CODE_BEGIN
+ 
+ #ifdef TEST_CASE_1
+ 
+-RVTEST_CASE(0,"//check ISA:=regex(.*64.*);check ISA:=regex(.*I.*C.*); def rvtest_mtrap_routine=True;def TEST_CASE_1=True;",misalign-blt)
+-
+ RVTEST_CASE(1,"//check ISA:=regex(.*64.*);check ISA:=regex(.*I.*Zicsr.*); check ISA:=regex(^[^C]+$); def rvtest_mtrap_routine=True;def TEST_CASE_1=True;",misalign-blt)
+ 
+ RVTEST_SIGBASE( x1,signature_x1_1)
+diff --git a/riscv-test-suite/rv64i_m/privilege/src/misalign-bltu-01.S b/riscv-test-suite/rv64i_m/privilege/src/misalign-bltu-01.S
+index 2b70a4aa..d8e1c719 100644
+--- a/riscv-test-suite/rv64i_m/privilege/src/misalign-bltu-01.S
++++ b/riscv-test-suite/rv64i_m/privilege/src/misalign-bltu-01.S
+@@ -27,8 +27,6 @@ RVTEST_CODE_BEGIN
+ 
+ #ifdef TEST_CASE_1
+ 
+-RVTEST_CASE(0,"//check ISA:=regex(.*64.*);check ISA:=regex(.*I.*C.*); def rvtest_mtrap_routine=True;def TEST_CASE_1=True;",misalign-bltu)
+-
+ RVTEST_CASE(1,"//check ISA:=regex(.*64.*);check ISA:=regex(.*I.*Zicsr.*); check ISA:=regex(^[^C]+$); def rvtest_mtrap_routine=True;def TEST_CASE_1=True;",misalign-bltu)
+ 
+ RVTEST_SIGBASE( x1,signature_x1_1)
+diff --git a/riscv-test-suite/rv64i_m/privilege/src/misalign-bne-01.S b/riscv-test-suite/rv64i_m/privilege/src/misalign-bne-01.S
+index 1cf97524..c11c01bb 100644
+--- a/riscv-test-suite/rv64i_m/privilege/src/misalign-bne-01.S
++++ b/riscv-test-suite/rv64i_m/privilege/src/misalign-bne-01.S
+@@ -27,8 +27,6 @@ RVTEST_CODE_BEGIN
+ 
+ #ifdef TEST_CASE_1
+ 
+-RVTEST_CASE(0,"//check ISA:=regex(.*64.*);check ISA:=regex(.*I.*C.*); def rvtest_mtrap_routine=True;def TEST_CASE_1=True;",misalign-bne)
+-
+ RVTEST_CASE(1,"//check ISA:=regex(.*64.*);check ISA:=regex(.*I.*Zicsr.*); check ISA:=regex(^[^C]+$); def rvtest_mtrap_routine=True;def TEST_CASE_1=True;",misalign-bne)
+ 
+ RVTEST_SIGBASE( x1,signature_x1_1)
+diff --git a/riscv-test-suite/rv64i_m/privilege/src/misalign-jal-01.S b/riscv-test-suite/rv64i_m/privilege/src/misalign-jal-01.S
+index 321014be..4bed9061 100644
+--- a/riscv-test-suite/rv64i_m/privilege/src/misalign-jal-01.S
++++ b/riscv-test-suite/rv64i_m/privilege/src/misalign-jal-01.S
+@@ -27,8 +27,6 @@ RVTEST_CODE_BEGIN
+ 
+ #ifdef TEST_CASE_1
+ 
+-RVTEST_CASE(0,"//check ISA:=regex(.*64.*);check ISA:=regex(.*I.*C.*); def rvtest_mtrap_routine=True;def TEST_CASE_1=True;",misalign-jal)
+-
+ RVTEST_CASE(1,"//check ISA:=regex(.*64.*);check ISA:=regex(.*I.*Zicsr.*); check ISA:=regex(^[^C]+$); def rvtest_mtrap_routine=True;def TEST_CASE_1=True;",misalign-jal)
+ 
+ RVTEST_SIGBASE( x1,signature_x1_1)
+diff --git a/riscv-test-suite/rv64i_m/privilege/src/misalign2-jalr-01.S b/riscv-test-suite/rv64i_m/privilege/src/misalign2-jalr-01.S
+index 5d60913b..c8bd20de 100644
+--- a/riscv-test-suite/rv64i_m/privilege/src/misalign2-jalr-01.S
++++ b/riscv-test-suite/rv64i_m/privilege/src/misalign2-jalr-01.S
+@@ -27,8 +27,6 @@ RVTEST_CODE_BEGIN
+ 
+ #ifdef TEST_CASE_1
+ 
+-RVTEST_CASE(0,"//check ISA:=regex(.*64.*);check ISA:=regex(.*I.*C.*); def rvtest_mtrap_routine=True;def TEST_CASE_1=True;",misalign2-jalr)
+-
+ RVTEST_CASE(1,"//check ISA:=regex(.*64.*);check ISA:=regex(.*I.*Zicsr.*); check ISA:=regex(^[^C]+$); def rvtest_mtrap_routine=True;def TEST_CASE_1=True;",misalign2-jalr)
+ 
+ RVTEST_SIGBASE( x1,signature_x1_1)

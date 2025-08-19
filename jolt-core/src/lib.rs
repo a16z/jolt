@@ -1,4 +1,3 @@
-#![feature(associated_type_defaults)]
 #![allow(non_snake_case)]
 #![allow(incomplete_features)]
 #![allow(long_running_const_eval)]
@@ -16,9 +15,9 @@ pub mod benches;
 pub mod host;
 
 pub mod field;
-pub mod jolt;
 pub mod msm;
 pub mod poly;
-pub mod r1cs;
 pub mod subprotocols;
+pub mod transcripts;
 pub mod utils;
+pub mod zkvm;

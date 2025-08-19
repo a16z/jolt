@@ -1,11 +1,11 @@
-#![allow(dead_code)]
 use crate::field::JoltField;
 use std::cmp::Ordering;
 use std::ops::{AddAssign, Index, IndexMut, Mul, MulAssign, Sub};
 
+use crate::transcripts::{AppendToTranscript, Transcript};
 use crate::utils::gaussian_elimination::gaussian_elimination;
-use crate::utils::transcript::{AppendToTranscript, Transcript};
 use ark_serialize::*;
+use num::Integer;
 use rand_core::{CryptoRng, RngCore};
 use rayon::prelude::*;
 
@@ -27,20 +27,69 @@ pub struct CompressedUniPoly<F: JoltField> {
 }
 
 impl<F: JoltField> UniPoly<F> {
-    #[allow(dead_code)]
     pub fn from_coeff(coeffs: Vec<F>) -> Self {
         UniPoly { coeffs }
     }
 
+    /// Interpolate a polynomial from its evaluations at the points 0, 1, 2, ..., n-1.
     pub fn from_evals(evals: &[F]) -> Self {
         UniPoly {
             coeffs: Self::vandermonde_interpolation(evals),
         }
     }
 
+    fn toom_eval_xs(deg: usize) -> Vec<F> {
+        let mut xs = Vec::with_capacity(deg);
+        let mut cur_val = F::zero();
+
+        for i in 0..deg {
+            if i.is_odd() {
+                xs.push(cur_val);
+            } else {
+                xs.push(F::zero() - cur_val);
+            }
+
+            if i < deg - 1 && i.is_even() {
+                cur_val += F::one();
+            }
+        }
+
+        xs
+    }
+
+    pub fn from_evals_toom(evals: &[F]) -> Self {
+        let n = evals.len();
+        let xs = Self::toom_eval_xs(n - 1);
+
+        let mut interpol_mat: Vec<Vec<F>> = Vec::with_capacity(n);
+        for i in 0..n - 1 {
+            let mut row = Vec::with_capacity(n);
+            let x = xs[i];
+            row.push(F::one());
+            row.push(x);
+            for j in 2..n {
+                row.push(row[j - 1] * x);
+            }
+            row.push(evals[i]);
+            interpol_mat.push(row);
+        }
+
+        let mut row = Vec::with_capacity(n);
+        for _ in 0..n - 1 {
+            row.push(F::zero());
+        }
+        row.push(F::one());
+        row.push(evals[n - 1]);
+        interpol_mat.push(row);
+
+        UniPoly {
+            coeffs: gaussian_elimination(&mut interpol_mat),
+        }
+    }
+
     fn vandermonde_interpolation(evals: &[F]) -> Vec<F> {
         let n = evals.len();
-        let xs: Vec<F> = (0..n).map(|x| F::from_u64(x as u64)).collect();
+        let xs: Vec<F> = (0..evals.len()).map(|x| F::from_u64(x as u64)).collect();
 
         let mut vandermonde: Vec<Vec<F>> = Vec::with_capacity(n);
         for i in 0..n {
@@ -192,6 +241,7 @@ impl<F: JoltField> UniPoly<F> {
                 }
                 eval
             }
+            _ => unimplemented!("Unsupported MultilinearPolynomial variant"),
         }
     }
 
@@ -213,6 +263,41 @@ impl<F: JoltField> UniPoly<F> {
 
     pub fn shift_coefficients(&mut self, rhs: &F) {
         self.coeffs.par_iter_mut().for_each(|c| *c += *rhs);
+    }
+
+    /// This function computes a cubic polynomial s(X), given the following conditions:
+    /// - s(X) = l(X) * t(X), where l(X) is linear and t(X) is quadratic,
+    /// - l(X) = a + bX is given by l(0) = a and l(\infty) = b,
+    /// - t(X) = c + dX + eX^2 is given by t(0) = c and t(\infty) = e (but d is missing),
+    /// - s(0) + s(1) = hint,
+    ///
+    /// This is used in the optimized sum-check evaluation with split eq polynomial.
+    pub fn from_linear_times_quadratic_with_hint(
+        linear_coeffs: [F; 2],
+        quadratic_coeff_0: F,
+        quadratic_coeff_2: F,
+        hint: F,
+    ) -> Self {
+        let linear_eval_one = linear_coeffs[0] + linear_coeffs[1];
+
+        let cubic_coeff_0 = linear_coeffs[0] * quadratic_coeff_0;
+
+        // Compute the linear coefficient of the quadratic polynomial from the hint
+        // Given that s(0) + s(1) = hint, we can rewrite this as:
+        // a * c + (a + b) * (c + d + e) = hint, which means we can solve for d as:
+        // d = (hint - a * c) / (a + b) - c - e
+        let quadratic_coeff_1 =
+            (hint - cubic_coeff_0) / linear_eval_one - quadratic_coeff_0 - quadratic_coeff_2;
+
+        // Now derive the coefficients of the cubic polynomial from the evaluations
+        // We have s(X) = (a + bX) * (c + dX + eX^2) = ac + (ad + bc)X + (ae + bd)X^2 + beX^3
+        let coeffs = [
+            cubic_coeff_0,
+            linear_coeffs[0] * quadratic_coeff_1 + linear_coeffs[1] * quadratic_coeff_0,
+            linear_coeffs[0] * quadratic_coeff_2 + linear_coeffs[1] * quadratic_coeff_1,
+            linear_coeffs[1] * quadratic_coeff_2,
+        ];
+        Self::from_coeff(coeffs.to_vec())
     }
 }
 
@@ -262,6 +347,14 @@ impl<F: JoltField> Mul<&F> for UniPoly<F> {
     fn mul(self, rhs: &F) -> Self {
         let iter = self.coeffs.into_par_iter();
         Self::from_coeff(iter.map(|c| c * *rhs).collect::<Vec<_>>())
+    }
+}
+
+impl<F: JoltField> Mul<&F> for &UniPoly<F> {
+    type Output = UniPoly<F>;
+
+    fn mul(self, rhs: &F) -> UniPoly<F> {
+        UniPoly::from_coeff(self.coeffs.iter().map(|c| *c * *rhs).collect::<Vec<_>>())
     }
 }
 
@@ -338,8 +431,34 @@ impl<F: JoltField> AppendToTranscript for CompressedUniPoly<F> {
 mod tests {
     use super::*;
     use ark_bn254::Fr;
+    use ark_std::test_rng;
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
+
+    #[test]
+    fn test_from_evals_toom() {
+        test_from_evals_toom_helper::<Fr>(4);
+        test_from_evals_toom_helper::<Fr>(8);
+        test_from_evals_toom_helper::<Fr>(16);
+    }
+
+    fn test_from_evals_toom_helper<F: JoltField>(deg: usize) {
+        let mut rng = test_rng();
+        let coeffs = (0..=deg).map(|_| F::random(&mut rng)).collect::<Vec<_>>();
+        let univariate_poly = UniPoly {
+            coeffs: coeffs.clone(),
+        };
+
+        let xs = UniPoly::toom_eval_xs(deg);
+        let mut evals = xs
+            .iter()
+            .map(|x| univariate_poly.evaluate(x))
+            .collect::<Vec<_>>();
+        evals.push(*coeffs.last().unwrap());
+
+        let univariate_poly_from_evals_toom = UniPoly::from_evals_toom(&evals);
+        assert_eq!(univariate_poly, univariate_poly_from_evals_toom);
+    }
 
     #[test]
     fn test_from_evals_quad() {
@@ -436,5 +555,28 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn test_from_linear_times_quadratic_with_hint() {
+        // polynomial is s(x) = (x + 1) * (x^2 + 2x + 3) = x^3 + 3x^2 + 5x + 3
+        // hint = s(0) + s(1) = 3 + (1 + 3 + 5 + 3) = 15
+        let linear_coeffs = [Fr::from_u64(1u64), Fr::from_u64(1u64)];
+        let quadratic_coeff_0 = Fr::from_u64(3u64);
+        let quadratic_coeff_2 = Fr::from_u64(1u64);
+        let true_poly = UniPoly::from_coeff(vec![
+            Fr::from_u64(3u64),
+            Fr::from_u64(5u64),
+            Fr::from_u64(3u64),
+            Fr::from_u64(1u64),
+        ]);
+        let hint = Fr::from_u64(15u64);
+        let poly = UniPoly::from_linear_times_quadratic_with_hint(
+            linear_coeffs,
+            quadratic_coeff_0,
+            quadratic_coeff_2,
+            hint,
+        );
+        assert_eq!(poly.coeffs, true_poly.coeffs);
     }
 }

@@ -7,21 +7,21 @@ For RV32, the M extension includes 8 instructions: `MUL`, `MULH`, `MULHSU`, `MUL
 The [Jolt paper](https://eprint.iacr.org/2023/1217.pdf) describes how to handle the M extension instructions in Section 6,
 but our implementation deviates from the paper in a couple ways (described below).
 
-## Virtual sequences
+## Inline sequences
 
 Section 6.1 of the Jolt paper introduces virtual instructions and registers –– some of the M extension
 instructions cannot be implemented as a single subtable decomposition, but rather must be split into
 a sequence of instructions which together compute the output and places it in the destination register.
-In our implementation, these sequences are captured by the `VirtualInstructionSequence` trait.
+In our implementation, these sequences are captured when `inline_sequence(...) is overridden in the `RISCVTrace` trait.
 
 The instructions that comprise such a sequence can be a combination of "real" RISC-V instructions and "virtual"
-instructions which only appear in the context of virtual sequences.
-We also introduce 32 virtual registers as "scratch space" where instructions in a virtual sequence
+instructions which only appear in the context of inline sequences.
+We also introduce 32 virtual registers as "scratch space" where instructions in a inline sequence
 can write intermediate values.
 
 ## Deviations from the Jolt paper
 
-There are three inconsistencies between the virtual sequences provided in Section 6.3
+There are three inconsistencies between the inline sequences provided in Section 6.3
 of the Jolt paper, and the RISC-V specification. Namely:
 
 1. The Jolt prover (as described in the paper) would fail to produce a valid proof
@@ -33,19 +33,19 @@ always fail (for `DIVU` and `DIV`, respectively).
 To address these issues, our implementation of `DIVU`, `DIV`, `REMU`, and `REM` deviate from the
 Jolt paper in the following ways.
 
-### `DIVU` virtual sequence
+### `DIVU` inline sequence
 
 1. `ADVICE` --, --, --, $v_q$   `// store non-deterministic advice` $q$ `into `$v_q$
 1. `ADVICE` --, --, --, $v_r$   `// store non-deterministic advice` $r$ `into `$v_r$
 1. `MUL` $v_q$, $r_y$, --, $v_{qy}$   `// compute q * y`
 1. `ASSERT_VALID_UNSIGNED_REMAINDER` $v_r$, $r_y$, --, --   `// assert that y == 0 || r < y`
 1. `ASSERT_LTE` $v_{qy}$, $r_x$, --, --   `// assert q * y <= x`
-1. `ASSERT_VALID_DIV0` $r_y$, $v_q$, --, --   `// assert that y != 0 || q == 2 ** WORD_SIZE - 1`
+1. `ASSERT_VALID_DIV0` $r_y$, $v_q$, --, --   `// assert that y != 0 || q == 2 ** XLEN - 1`
 1. `ADD` $v_{qy}$, $v_r$, --, $v_0$   `// compute q * y + r`
 1. `ASSERT_EQ` $v_0$, $x$, --, --
 1. `MOVE` $v_q$, --, --, `rd`
 
-### `REMU` virtual sequence
+### `REMU` inline sequence
 
 1. `ADVICE` --, --, --, $v_q$   `// store non-deterministic advice` $q$ `into `$v_q$
 1. `ADVICE` --, --, --, $v_r$   `// store non-deterministic advice` $r$ `into `$v_r$
@@ -56,18 +56,18 @@ Jolt paper in the following ways.
 1. `ASSERT_EQ` $v_0$, $x$, --, --
 1. `MOVE` $v_r$, --, --, `rd`
 
-### `DIV` virtual sequence
+### `DIV` inline sequence
 
 1. `ADVICE` --, --, --, $v_q$   `// store non-deterministic advice` $q$ `into `$v_q$
 1. `ADVICE` --, --, --, $v_r$   `// store non-deterministic advice` $r$ `into `$v_r$
 1. `ASSERT_VALID_SIGNED_REMAINDER` $v_r$, $r_y$, --, --   `// assert that r == 0 || y == 0 || (|r| < |y| && sign(r) == sign(y))`
-1. `ASSERT_VALID_DIV0` $r_y$, $v_q$, --, --   `// assert that y != 0 || q == 2 ** WORD_SIZE - 1`
+1. `ASSERT_VALID_DIV0` $r_y$, $v_q$, --, --   `// assert that y != 0 || q == 2 ** XLEN - 1`
 1. `MUL` $v_q$, $r_y$, --, $v_{qy}$   `// compute q * y`
 1. `ADD` $v_{qy}$, $v_r$, --, $v_0$   `// compute q * y + r`
 1. `ASSERT_EQ` $v_0$, $x$, --, --
 1. `MOVE` $v_q$, --, --, `rd`
 
-### `REM` virtual sequence
+### `REM` inline sequence
 
 1. `ADVICE` --, --, --, $v_q$   `// store non-deterministic advice` $q$ `into `$v_q$
 1. `ADVICE` --, --, --, $v_r$   `// store non-deterministic advice` $r$ `into `$v_r$
@@ -79,15 +79,15 @@ Jolt paper in the following ways.
 
 ## R1CS constraints
 
-### Ciruict flags
+### Circuit flags
 
 With the M extension we introduce the following circuit flags:
 
-1. `is_virtual`: Is this instruction part of a virtual sequence?
+1. `is_virtual`: Is this instruction part of a inline sequence?
 1. `is_assert`: Is this instruction an `ASSERT_*` instruction?
 1. `do_not_update_pc`: If this instruction is virtual and *not the last one in its sequence*,
 then we should *not* update the PC.
-This is because all instructions in virtual sequences are mapped to the same ELF address.
+This is because all instructions in inline sequences are mapped to the same ELF address.
 
 ### Uniform constraints
 
@@ -106,12 +106,12 @@ memory address as given by the ELF file.
 This is used to compute the expected program counter for each step in the program trace.
 
 If the `do_not_update_pc` flag is set, we constrain the next PC value to be equal to the current one.
-This handles the fact that all instructions in virtual sequences are mapped to the same ELF address.
+This handles the fact that all instructions in inline sequences are mapped to the same ELF address.
 
-This also means we need some other mechanism to ensure that virtual sequences are executed in *order* and in *full*.
+This also means we need some other mechanism to ensure that inline sequences are executed in *order* and in *full*.
 If the current instruction is virtual, we can constrain the next instruction in the trace to be the
 next instruction in the bytecode.
-We observe that the virtual sequences used in the M extension don't involve jumps or branches,
+We observe that the inline sequences used in the M extension don't involve jumps or branches,
 so this should always hold, *except* if we encounter a virtual instruction followed by a padding instruction.
 But that should never happen because an execution trace should always end with some return handling,
-which shouldn't involve a virtual sequence.
+which shouldn't involve a inline sequence.

@@ -1,12 +1,15 @@
 pub mod commitment;
 pub mod compact_polynomial;
-pub mod dense_interleaved_poly;
 pub mod dense_mlpoly;
 pub mod eq_poly;
 pub mod identity_poly;
 pub mod multilinear_polynomial;
+pub mod one_hot_polynomial;
 pub mod opening_proof;
-pub mod sparse_interleaved_poly;
+pub mod prefix_suffix;
+pub mod program_io_polynomial;
+pub mod range_mask_polynomial;
+pub mod rlc_polynomial;
 pub mod spartan_interleaved_poly;
 pub mod split_eq_poly;
 pub mod unipoly;

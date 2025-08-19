@@ -1,18 +1,13 @@
 use super::terminal::Terminal;
 
+#[cfg(not(feature = "std"))]
+use alloc::{vec, vec::Vec};
+
 /// Standard `Terminal`.
+#[derive(Default)]
 pub struct DefaultTerminal {
     input_data: Vec<u8>,
     output_data: Vec<u8>,
-}
-
-impl DefaultTerminal {
-    pub fn new() -> Self {
-        DefaultTerminal {
-            input_data: vec![],
-            output_data: vec![],
-        }
-    }
 }
 
 impl Terminal for DefaultTerminal {
@@ -20,9 +15,9 @@ impl Terminal for DefaultTerminal {
         self.output_data.push(value);
     }
 
-    fn get_input(&mut self) -> u8 {
-        match !self.input_data.is_empty() {
-            true => self.input_data.remove(0),
+    fn get_output(&mut self) -> u8 {
+        match !self.output_data.is_empty() {
+            true => self.output_data.remove(0),
             false => 0,
         }
     }
@@ -31,9 +26,9 @@ impl Terminal for DefaultTerminal {
         self.input_data.push(value);
     }
 
-    fn get_output(&mut self) -> u8 {
-        match !self.output_data.is_empty() {
-            true => self.output_data.remove(0),
+    fn get_input(&mut self) -> u8 {
+        match !self.input_data.is_empty() {
+            true => self.input_data.remove(0),
             false => 0,
         }
     }

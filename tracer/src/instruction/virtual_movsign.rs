@@ -1,24 +1,11 @@
-use rand::{rngs::StdRng, RngCore};
 use serde::{Deserialize, Serialize};
 
-use crate::emulator::cpu::{Cpu, Xlen};
-
-use super::{
-    format::{format_i::FormatI, InstructionFormat},
-    RISCVInstruction, RISCVTrace,
+use crate::{
+    declare_riscv_instr,
+    emulator::cpu::{Cpu, Xlen},
 };
 
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
-pub struct VirtualMovsign {
-    pub address: u64,
-    pub operands: FormatI,
-    /// If this instruction is part of a "virtual sequence" (see Section 6.2 of the
-    /// Jolt paper), then this contains the number of virtual instructions after this
-    /// one in the sequence. I.e. if this is the last instruction in the sequence,
-    /// `virtual_sequence_remaining` will be Some(0); if this is the penultimate instruction
-    /// in the sequence, `virtual_sequence_remaining` will be Some(1); etc.
-    pub virtual_sequence_remaining: Option<usize>,
-}
+use super::{format::format_i::FormatI, RISCVInstruction, RISCVTrace};
 
 // Constants for 32-bit and 64-bit word sizes
 const ALL_ONES_32: u64 = 0xFFFF_FFFF;
@@ -26,32 +13,19 @@ const ALL_ONES_64: u64 = 0xFFFF_FFFF_FFFF_FFFF;
 const SIGN_BIT_32: u64 = 0x8000_0000;
 const SIGN_BIT_64: u64 = 0x8000_0000_0000_0000;
 
-impl RISCVInstruction for VirtualMovsign {
-    const MASK: u32 = 0; // Virtual
-    const MATCH: u32 = 0; // Virtual
+declare_riscv_instr!(
+    name = VirtualMovsign,
+    mask = 0,
+    match = 0,
+    format = FormatI,
+    ram = (),
+    is_virtual = true
+);
 
-    type Format = FormatI;
-    type RAMAccess = ();
-
-    fn operands(&self) -> &Self::Format {
-        &self.operands
-    }
-
-    fn new(_: u32, _: u64, _: bool) -> Self {
-        unimplemented!("virtual instruction")
-    }
-
-    fn random(rng: &mut StdRng) -> Self {
-        Self {
-            address: rng.next_u64(),
-            operands: FormatI::random(rng),
-            virtual_sequence_remaining: None,
-        }
-    }
-
-    fn execute(&self, cpu: &mut Cpu, _: &mut Self::RAMAccess) {
-        let val = cpu.x[self.operands.rs1] as u64;
-        cpu.x[self.operands.rd] = match cpu.xlen {
+impl VirtualMovsign {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualMovsign as RISCVInstruction>::RAMAccess) {
+        let val = cpu.x[self.operands.rs1 as usize] as u64;
+        cpu.x[self.operands.rd as usize] = match cpu.xlen {
             Xlen::Bit32 => {
                 if val & SIGN_BIT_32 != 0 {
                     // Should this be ALL_ONES_64?
@@ -68,7 +42,6 @@ impl RISCVInstruction for VirtualMovsign {
                 }
             }
         };
-        cpu.x[self.operands.rd] = cpu.x[self.operands.rs1];
     }
 }
 

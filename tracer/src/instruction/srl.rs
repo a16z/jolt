@@ -1,105 +1,54 @@
-use common::constants::virtual_register_index;
+use crate::utils::inline_helpers::InstrAssembler;
+use crate::utils::virtual_registers::allocate_virtual_register;
 use serde::{Deserialize, Serialize};
 
-use crate::emulator::cpu::{Cpu, Xlen};
-
-use super::{
-    format::{
-        format_i::FormatI, format_r::FormatR,
-        format_virtual_right_shift_r::FormatVirtualRightShiftR, InstructionFormat,
-    },
-    virtual_shift_right_bitmask::VirtualShiftRightBitmask,
-    virtual_srl::VirtualSRL,
-    RISCVInstruction, RISCVTrace, RV32IMInstruction, VirtualInstructionSequence,
+use crate::{
+    declare_riscv_instr,
+    emulator::cpu::{Cpu, Xlen},
 };
 
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
-pub struct SRL {
-    pub address: u64,
-    pub operands: FormatR,
-    /// If this instruction is part of a "virtual sequence" (see Section 6.2 of the
-    /// Jolt paper), then this contains the number of virtual instructions after this
-    /// one in the sequence. I.e. if this is the last instruction in the sequence,
-    /// `virtual_sequence_remaining` will be Some(0); if this is the penultimate instruction
-    /// in the sequence, `virtual_sequence_remaining` will be Some(1); etc.
-    pub virtual_sequence_remaining: Option<usize>,
-}
+use super::{
+    format::format_r::FormatR, virtual_shift_right_bitmask::VirtualShiftRightBitmask,
+    virtual_srl::VirtualSRL, RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
+};
 
-impl RISCVInstruction for SRL {
-    const MASK: u32 = 0xfe00707f;
-    const MATCH: u32 = 0x00005033;
+declare_riscv_instr!(
+    name   = SRL,
+    mask   = 0xfe00707f,
+    match  = 0x00005033,
+    format = FormatR,
+    ram    = ()
+);
 
-    type Format = FormatR;
-    type RAMAccess = ();
-
-    fn operands(&self) -> &Self::Format {
-        &self.operands
-    }
-
-    fn new(word: u32, address: u64, validate: bool) -> Self {
-        if validate {
-            debug_assert_eq!(word & Self::MASK, Self::MATCH);
-        }
-
-        Self {
-            address,
-            operands: FormatR::parse(word),
-            virtual_sequence_remaining: None,
-        }
-    }
-
-    fn execute(&self, cpu: &mut Cpu, _: &mut Self::RAMAccess) {
+impl SRL {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <SRL as RISCVInstruction>::RAMAccess) {
         let mask = match cpu.xlen {
             Xlen::Bit32 => 0x1f,
             Xlen::Bit64 => 0x3f,
         };
-        cpu.x[self.operands.rd] = cpu.sign_extend(
-            cpu.unsigned_data(cpu.x[self.operands.rs1])
-                .wrapping_shr(cpu.x[self.operands.rs2] as u32 & mask) as i64,
+        cpu.x[self.operands.rd as usize] = cpu.sign_extend(
+            cpu.unsigned_data(cpu.x[self.operands.rs1 as usize])
+                .wrapping_shr(cpu.x[self.operands.rs2 as usize] as u32 & mask) as i64,
         );
     }
 }
 
 impl RISCVTrace for SRL {
-    fn trace(&self, cpu: &mut Cpu) {
-        let virtual_sequence = self.virtual_sequence();
-        for instr in virtual_sequence {
-            instr.trace(cpu);
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
+        let inline_sequence = self.inline_sequence(cpu.xlen);
+        let mut trace = trace;
+        for instr in inline_sequence {
+            // In each iteration, create a new Option containing a re-borrowed reference
+            instr.trace(cpu, trace.as_deref_mut());
         }
     }
-}
 
-impl VirtualInstructionSequence for SRL {
-    fn virtual_sequence(&self) -> Vec<RV32IMInstruction> {
-        // Virtual registers used in sequence
-        let v_bitmask = virtual_register_index(6) as usize;
+    fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
+        let v_bitmask = allocate_virtual_register();
 
-        let mut virtual_sequence_remaining = self.virtual_sequence_remaining.unwrap_or(1);
-        let mut sequence = vec![];
-
-        let bitmask = VirtualShiftRightBitmask {
-            address: self.address,
-            operands: FormatI {
-                rd: v_bitmask,
-                rs1: self.operands.rs2,
-                imm: 0,
-            },
-            virtual_sequence_remaining: Some(virtual_sequence_remaining),
-        };
-        sequence.push(bitmask.into());
-        virtual_sequence_remaining -= 1;
-
-        let srl = VirtualSRL {
-            address: self.address,
-            operands: FormatVirtualRightShiftR {
-                rd: self.operands.rd,
-                rs1: self.operands.rs1,
-                rs2: v_bitmask,
-            },
-            virtual_sequence_remaining: Some(virtual_sequence_remaining),
-        };
-        sequence.push(srl.into());
-
-        sequence
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
+        asm.emit_i::<VirtualShiftRightBitmask>(*v_bitmask, self.operands.rs2, 0);
+        asm.emit_vshift_r::<VirtualSRL>(self.operands.rd, self.operands.rs1, *v_bitmask);
+        asm.finalize()
     }
 }

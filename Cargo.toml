@@ -23,10 +23,15 @@ keywords = ["SNARK", "cryptography", "proofs"]
 [workspace]
 members = [
     "jolt-core",
+    "jolt-inlines/sha2",
+    "jolt-inlines/keccak256",
     "tracer",
     "common",
+    "jolt-platform",
     "jolt-sdk",
     "jolt-sdk/macros",
+    "examples/btreemap/host",
+    "examples/btreemap/guest",
     "examples/collatz",
     "examples/collatz/guest",
     "examples/fibonacci",
@@ -51,11 +56,12 @@ members = [
     "examples/overflow/guest",
     "examples/memory-ops",
     "examples/memory-ops/guest",
+    "examples/verifier",
+    "examples/verifier/guest",
 ]
 
 [features]
 host = ["jolt-sdk/host"]
-icicle = ["jolt-core/icicle"]
 
 [lib]
 path = "./src/lib.rs"
@@ -85,22 +91,27 @@ lto = "off"
 
 [profile.release]
 debug = 1
-codegen-units = 1
 lto = "fat"
 
 [profile.build-fast]
 inherits = "release"
 incremental = true
 lto = "off"
+overflow-checks = true
 
 [profile.guest]
 inherits = "release"
 debug = false
 
 [patch.crates-io]
-ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "v0.5.0-optimize-mul-u64" }
-ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "v0.5.0-optimize-mul-u64" }
-ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "v0.5.0-optimize-mul-u64" }
+ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+allocative = { git = "https://github.com/0xAndoroid/allocative", branch = "fix/impl-for-u128" }
 
 [workspace.metadata.cargo-machete]
 ignored = ["jolt-sdk"]
+
+[workspace.dependencies]
+spinners = { version = "4.1.1", default-features = false }

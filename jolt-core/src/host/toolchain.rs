@@ -1,3 +1,4 @@
+use crate::host::TOOLCHAIN_VERSION;
 use std::{
     fs::{self, read_to_string, File},
     future::Future,
@@ -21,20 +22,22 @@ const DELAY_BASE_MS: u64 = 500;
 pub fn install_toolchain() -> Result<()> {
     if !has_toolchain() {
         let client = Client::builder().user_agent("Mozilla/5.0").build()?;
-        let toolchain_url = toolchain_url();
+        let rt = Runtime::new()?;
 
-        let rt = Runtime::new().unwrap();
-        rt.block_on(retry_times(DOWNLOAD_RETRIES, DELAY_BASE_MS, || {
-            download_toolchain(&client, &toolchain_url)
-        }))?;
-        unpack_toolchain()?;
-        remove_archive()?;
-        link_toolchain()?;
-        write_tag_file()?;
-        println!(
-            "\"riscv32im-jolt-zkvm-elf\" toolchain installed successfully at {:?}",
-            jolt_dir()
-        );
+        for channel in ["stable", "nightly"] {
+            let toolchain_url = toolchain_url(channel);
+            rt.block_on(retry_times(DOWNLOAD_RETRIES, DELAY_BASE_MS, || {
+                download_toolchain(&client, &toolchain_url)
+            }))?;
+            unpack_toolchain(channel)?;
+            remove_archive()?;
+            link_toolchain(channel)?;
+            write_tag_file()?;
+            println!(
+                "\"{channel}-jolt-{TOOLCHAIN_VERSION}\" toolchain installed successfully at {:?}",
+                jolt_dir()
+            );
+        }
     }
     Ok(())
 }
@@ -42,7 +45,10 @@ pub fn install_toolchain() -> Result<()> {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn install_no_std_toolchain() -> Result<()> {
     std::process::Command::new("rustup")
-        .args(["target", "add", "riscv32im-unknown-none-elf"])
+        .args(["target", "add", "riscv64imac-unknown-none-elf"])
+        .output()?;
+    std::process::Command::new("rustup")
+        .args(["target", "add", "riscv64imac-unknown-none-elf"])
         .output()?;
     Ok(())
 }
@@ -79,13 +85,14 @@ fn write_tag_file() -> Result<()> {
     Ok(())
 }
 
-fn link_toolchain() -> Result<()> {
-    let link_path = jolt_dir().join("rust/build/host/stage2");
+fn link_toolchain(channel: &str) -> Result<()> {
+    let link_path = jolt_dir().join(format!("{channel}/rust/build/host/stage2"));
+    let toolchain_name = format!("{channel}-jolt-{TOOLCHAIN_VERSION}");
     let output = std::process::Command::new("rustup")
         .args([
             "toolchain",
             "link",
-            "riscv32im-jolt-zkvm-elf",
+            &toolchain_name,
             link_path.to_str().unwrap(),
         ])
         .output()?;
@@ -97,9 +104,18 @@ fn link_toolchain() -> Result<()> {
     Ok(())
 }
 
-fn unpack_toolchain() -> Result<()> {
+fn unpack_toolchain(channel: &str) -> Result<()> {
+    let channel_dir = jolt_dir().join(channel);
+    if !channel_dir.exists() {
+        fs::create_dir(&channel_dir)?;
+    }
     let output = std::process::Command::new("tar")
-        .args(["-xzf", "rust-toolchain.tar.gz"])
+        .args([
+            "-xzf",
+            "rust-toolchain.tar.gz",
+            "-C",
+            channel_dir.to_str().unwrap(),
+        ])
         .current_dir(jolt_dir())
         .output()?;
 
@@ -112,25 +128,76 @@ fn unpack_toolchain() -> Result<()> {
 
 #[cfg(not(target_arch = "wasm32"))]
 async fn download_toolchain(client: &Client, url: &str) -> Result<()> {
+    use tracing::info;
+
     let jolt_dir = jolt_dir();
     let output_path = jolt_dir.join("rust-toolchain.tar.gz");
+    info!("Downloading toolchain to {output_path:?}");
     if !jolt_dir.exists() {
         fs::create_dir(&jolt_dir)?;
     }
 
+    // Check for partial download
+    let (mut file, resume_from) = if output_path.exists() {
+        let file_size = fs::metadata(&output_path)?.len();
+        if let Ok(head_response) = client.head(url).send().await {
+            // Manually parse content-length from headers
+            let content_length = head_response
+                .headers()
+                .get("content-length")
+                .and_then(|h| h.to_str().ok())
+                .and_then(|s| s.parse::<u64>().ok());
+
+            if let Some(content_length) = content_length {
+                if file_size >= content_length {
+                    fs::remove_file(&output_path)?;
+                    (File::create(&output_path)?, 0)
+                } else {
+                    (File::options().append(true).open(&output_path)?, file_size)
+                }
+            } else {
+                fs::remove_file(&output_path)?;
+                (File::create(&output_path)?, 0)
+            }
+        } else {
+            fs::remove_file(&output_path)?;
+            (File::create(&output_path)?, 0)
+        }
+    } else {
+        (File::create(&output_path)?, 0)
+    };
+
     let mut response = client.get(url).send().await?;
-    if response.status().is_success() {
-        let mut file = File::create(output_path)?;
-        let total_size = response.content_length().unwrap_or(0);
+    if resume_from > 0 {
+        response = client
+            .get(url)
+            .header("Range", format!("bytes={resume_from}-"))
+            .send()
+            .await?;
+    }
+
+    if response.status().is_success() || response.status().as_u16() == 206 {
+        let total_size = if resume_from > 0 {
+            response
+                .headers()
+                .get("content-range")
+                .and_then(|h| h.to_str().ok())
+                .and_then(|s| s.split('/').nth(1))
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or(response.content_length().unwrap_or(0) + resume_from)
+        } else {
+            response.content_length().unwrap_or(0)
+        };
 
         let pb = ProgressBar::new(total_size);
+        pb.set_position(resume_from);
         pb.set_style(
             ProgressStyle::default_bar()
                 .template("[{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})")?
                 .progress_chars("#>-"),
         );
 
-        let mut downloaded: u64 = 0;
+        let mut downloaded = resume_from;
         while let Some(chunk) = response.chunk().await.unwrap() {
             file.write_all(&chunk)?;
             let new = downloaded + (chunk.len() as u64);
@@ -157,20 +224,23 @@ fn remove_archive() -> Result<()> {
     Ok(())
 }
 
-fn toolchain_url() -> String {
+fn toolchain_url(channel: &str) -> String {
     let target = target_lexicon::HOST;
     format!(
-        "https://github.com/a16z/rust/releases/download/{TOOLCHAIN_TAG}/rust-toolchain-{target}.tar.gz",
+        "https://github.com/a16z/rust/releases/download/{channel}-{TOOLCHAIN_TAG}/rust-toolchain-{channel}-{target}.tar.gz",
     )
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn uninstall_no_std_toolchain() -> Result<()> {
     std::process::Command::new("rustup")
-        .args(["target", "remove", "riscv32im-unknown-none-elf"])
+        .args(["target", "remove", "riscv64imac-unknown-none-elf"])
+        .output()?;
+    std::process::Command::new("rustup")
+        .args(["target", "remove", "riscv64imac-unknown-none-elf"])
         .output()?;
 
-    println!("\"riscv32im-unknown-none-elf\" toolchain uninstalled successfully");
+    println!("\"riscv\" toolchains uninstalled successfully");
     Ok(())
 }
 
@@ -182,26 +252,29 @@ pub fn uninstall_toolchain() -> Result<()> {
         return Ok(());
     }
 
-    // Remove the linked toolchain from rustup
-    let output = std::process::Command::new("rustup")
-        .args(["toolchain", "remove", "riscv32im-jolt-zkvm-elf"])
-        .output()?;
+    for channel in ["stable", "nightly"] {
+        let toolchain_name = &format!("{channel}-jolt-{TOOLCHAIN_VERSION}");
+        // Remove the linked toolchain from rustup
+        let output = std::process::Command::new("rustup")
+            .args(["toolchain", "remove", toolchain_name])
+            .output()?;
 
-    if !output.status.success() {
-        bail!(
-            "Failed to remove toolchain: {}",
-            String::from_utf8(output.stderr)?
-        );
+        if !output.status.success() {
+            bail!(
+                "Failed to remove toolchain: {}",
+                String::from_utf8(output.stderr)?
+            );
+        }
+
+        // Remove the unpacked toolchain directory
+        let link_path = jolt_dir().join(format!("{channel}/rust/build/host/stage2"));
+        if link_path.exists() {
+            fs::remove_dir_all(&link_path)?;
+        }
+
+        // Remove the downloaded toolchain archive
+        remove_archive()?;
     }
-
-    // Remove the unpacked toolchain directory
-    let link_path = jolt_dir().join("rust/build/host/stage2");
-    if link_path.exists() {
-        fs::remove_dir_all(&link_path)?;
-    }
-
-    // Remove the downloaded toolchain archive
-    remove_archive()?;
 
     // Remove the toolchain tag file
     let tag_file = toolchain_tag_file();
@@ -209,7 +282,7 @@ pub fn uninstall_toolchain() -> Result<()> {
         fs::remove_file(&tag_file)?;
     }
 
-    println!("\"riscv32im-jolt-zkvm-elf\" toolchain uninstalled successfully");
+    println!("\"Jolt\" toolchain uninstalled successfully");
     Ok(())
 }
 

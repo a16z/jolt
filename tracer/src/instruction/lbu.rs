@@ -1,63 +1,38 @@
+use crate::utils::inline_helpers::InstrAssembler;
 use serde::{Deserialize, Serialize};
 
-use crate::emulator::cpu::Cpu;
+use crate::{
+    declare_riscv_instr,
+    emulator::cpu::{Cpu, Xlen},
+};
 
+use super::addi::ADDI;
 use super::andi::ANDI;
 use super::format::format_load::FormatLoad;
-use super::format::format_r::FormatR;
-use super::lw::LW;
+use super::ld::LD;
 use super::sll::SLL;
 use super::slli::SLLI;
 use super::srli::SRLI;
+use super::virtual_lw::VirtualLW;
 use super::xori::XORI;
-use super::{addi::ADDI, VirtualInstructionSequence};
 use super::{RAMRead, RV32IMInstruction};
-use common::constants::virtual_register_index;
+use crate::utils::virtual_registers::allocate_virtual_register;
 
-use super::{
-    format::{format_i::FormatI, InstructionFormat},
-    RISCVInstruction, RISCVTrace,
-};
+use super::{RISCVInstruction, RISCVTrace, RV32IMCycle};
 
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
-pub struct LBU {
-    pub address: u64,
-    pub operands: FormatLoad,
-    /// If this instruction is part of a "virtual sequence" (see Section 6.2 of the
-    /// Jolt paper), then this contains the number of virtual instructions after this
-    /// one in the sequence. I.e. if this is the last instruction in the sequence,
-    /// `virtual_sequence_remaining` will be Some(0); if this is the penultimate instruction
-    /// in the sequence, `virtual_sequence_remaining` will be Some(1); etc.
-    pub virtual_sequence_remaining: Option<usize>,
-}
+declare_riscv_instr!(
+    name   = LBU,
+    mask   = 0x0000707f,
+    match  = 0x00004003,
+    format = FormatLoad,
+    ram    = RAMRead
+);
 
-impl RISCVInstruction for LBU {
-    const MASK: u32 = 0x0000707f;
-    const MATCH: u32 = 0x00004003;
-
-    type Format = FormatLoad;
-    type RAMAccess = RAMRead;
-
-    fn operands(&self) -> &Self::Format {
-        &self.operands
-    }
-
-    fn new(word: u32, address: u64, validate: bool) -> Self {
-        if validate {
-            assert_eq!(word & Self::MASK, Self::MATCH);
-        }
-
-        Self {
-            address,
-            operands: FormatLoad::parse(word),
-            virtual_sequence_remaining: None,
-        }
-    }
-
-    fn execute(&self, cpu: &mut Cpu, ram_access: &mut Self::RAMAccess) {
-        cpu.x[self.operands.rd] = match cpu
+impl LBU {
+    fn exec(&self, cpu: &mut Cpu, ram_access: &mut <LBU as RISCVInstruction>::RAMAccess) {
+        cpu.x[self.operands.rd as usize] = match cpu
             .mmu
-            .load(cpu.x[self.operands.rs1].wrapping_add(self.operands.imm) as u64)
+            .load(cpu.x[self.operands.rs1 as usize].wrapping_add(self.operands.imm) as u64)
         {
             Ok((byte, memory_read)) => {
                 *ram_access = memory_read;
@@ -69,101 +44,54 @@ impl RISCVInstruction for LBU {
 }
 
 impl RISCVTrace for LBU {
-    fn trace(&self, cpu: &mut Cpu) {
-        let virtual_sequence = self.virtual_sequence();
-        for instr in virtual_sequence {
-            instr.trace(cpu);
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
+        let inline_sequence = self.inline_sequence(cpu.xlen);
+        let mut trace = trace;
+        for instr in inline_sequence {
+            instr.trace(cpu, trace.as_deref_mut());
+        }
+    }
+
+    fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
+        match xlen {
+            Xlen::Bit32 => self.inline_sequence_32(),
+            Xlen::Bit64 => self.inline_sequence_64(),
         }
     }
 }
 
-impl VirtualInstructionSequence for LBU {
-    fn virtual_sequence(&self) -> Vec<RV32IMInstruction> {
-        // Virtual registers used in sequence
-        let v_address = virtual_register_index(0) as usize;
-        let v_word_address = virtual_register_index(1) as usize;
-        let v_word = virtual_register_index(2) as usize;
-        let v_shift = virtual_register_index(3) as usize;
+impl LBU {
+    fn inline_sequence_32(&self) -> Vec<RV32IMInstruction> {
+        let v_address = allocate_virtual_register();
+        let v_word_address = allocate_virtual_register();
+        let v_word = allocate_virtual_register();
+        let v_shift = allocate_virtual_register();
 
-        let mut sequence = vec![];
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit32);
+        asm.emit_i::<ADDI>(*v_address, self.operands.rs1, self.operands.imm as u64);
+        asm.emit_i::<ANDI>(*v_word_address, *v_address, -4i64 as u64);
+        asm.emit_i::<VirtualLW>(*v_word, *v_word_address, 0);
+        asm.emit_i::<XORI>(*v_shift, *v_address, 3);
+        asm.emit_i::<SLLI>(*v_shift, *v_shift, 3);
+        asm.emit_r::<SLL>(self.operands.rd, *v_word, *v_shift);
+        asm.emit_i::<SRLI>(self.operands.rd, self.operands.rd, 24);
+        asm.finalize()
+    }
 
-        let add = ADDI {
-            address: self.address,
-            operands: FormatI {
-                rd: v_address,
-                rs1: self.operands.rs1,
-                imm: self.operands.imm as u32 as u64, // TODO(moodlezoup): this only works for Xlen = 32
-            },
-            virtual_sequence_remaining: Some(7),
-        };
-        sequence.push(add.into());
+    fn inline_sequence_64(&self) -> Vec<RV32IMInstruction> {
+        let v_address = allocate_virtual_register();
+        let v_dword_address = allocate_virtual_register();
+        let v_dword = allocate_virtual_register();
+        let v_shift = allocate_virtual_register();
 
-        let andi = ANDI {
-            address: self.address,
-            operands: FormatI {
-                rd: v_word_address,
-                rs1: v_address,
-                imm: -4i64 as u32 as u64, // TODO(moodlezoup): this only works for Xlen = 32
-            },
-            virtual_sequence_remaining: Some(6),
-        };
-        sequence.push(andi.into());
-
-        let lw = LW {
-            address: self.address,
-            operands: FormatLoad {
-                rd: v_word,
-                rs1: v_word_address,
-                imm: 0,
-            },
-            virtual_sequence_remaining: Some(5),
-        };
-        sequence.push(lw.into());
-
-        let xori = XORI {
-            address: self.address,
-            operands: FormatI {
-                rd: v_shift,
-                rs1: v_address,
-                imm: 3,
-            },
-            virtual_sequence_remaining: Some(4),
-        };
-        sequence.push(xori.into());
-
-        let slli = SLLI {
-            address: self.address,
-            operands: FormatI {
-                rd: v_shift,
-                rs1: v_shift,
-                imm: 3,
-            },
-            virtual_sequence_remaining: Some(3),
-        };
-        sequence.extend(slli.virtual_sequence().into_iter());
-
-        let sll = SLL {
-            address: self.address,
-            operands: FormatR {
-                rd: self.operands.rd,
-                rs1: v_word,
-                rs2: v_shift,
-            },
-            virtual_sequence_remaining: Some(2),
-        };
-        sequence.extend(sll.virtual_sequence().into_iter());
-
-        let srli = SRLI {
-            address: self.address,
-            operands: FormatI {
-                rd: self.operands.rd,
-                rs1: self.operands.rd,
-                imm: 24,
-            },
-            virtual_sequence_remaining: Some(0),
-        };
-        sequence.extend(srli.virtual_sequence().into_iter());
-
-        sequence
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit64);
+        asm.emit_i::<ADDI>(*v_address, self.operands.rs1, self.operands.imm as u64);
+        asm.emit_i::<ANDI>(*v_dword_address, *v_address, -8i64 as u64);
+        asm.emit_ld::<LD>(*v_dword, *v_dword_address, 0);
+        asm.emit_i::<XORI>(*v_shift, *v_address, 7);
+        asm.emit_i::<SLLI>(*v_shift, *v_shift, 3);
+        asm.emit_r::<SLL>(self.operands.rd, *v_dword, *v_shift);
+        asm.emit_i::<SRLI>(self.operands.rd, self.operands.rd, 56);
+        asm.finalize()
     }
 }

@@ -1,59 +1,96 @@
 use serde::{Deserialize, Serialize};
 
-use crate::emulator::cpu::Cpu;
-
-use super::RAMWrite;
-
-use super::{
-    format::{format_s::FormatS, InstructionFormat},
-    RISCVInstruction, RISCVTrace,
+use crate::{
+    declare_riscv_instr,
+    emulator::cpu::{Cpu, Xlen},
+    instruction::{ori::ORI, srli::SRLI},
+    utils::inline_helpers::InstrAssembler,
 };
 
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
-pub struct SW {
-    pub address: u64,
-    pub operands: FormatS,
-    /// If this instruction is part of a "virtual sequence" (see Section 6.2 of the
-    /// Jolt paper), then this contains the number of virtual instructions after this
-    /// one in the sequence. I.e. if this is the last instruction in the sequence,
-    /// `virtual_sequence_remaining` will be Some(0); if this is the penultimate instruction
-    /// in the sequence, `virtual_sequence_remaining` will be Some(1); etc.
-    pub virtual_sequence_remaining: Option<usize>,
-}
+use super::addi::ADDI;
+use super::and::AND;
+use super::andi::ANDI;
+use super::ld::LD;
+use super::sd::SD;
+use super::sll::SLL;
+use super::slli::SLLI;
+use super::virtual_assert_word_alignment::VirtualAssertWordAlignment;
+use super::virtual_sw::VirtualSW;
+use super::xor::XOR;
+use super::RAMWrite;
+use super::RV32IMInstruction;
+use crate::utils::virtual_registers::allocate_virtual_register;
 
-impl RISCVInstruction for SW {
-    const MASK: u32 = 0x0000707f;
-    const MATCH: u32 = 0x00002023;
+use super::{format::format_s::FormatS, RISCVInstruction, RISCVTrace, RV32IMCycle};
 
-    type Format = FormatS;
-    type RAMAccess = RAMWrite;
+declare_riscv_instr!(
+    name   = SW,
+    mask   = 0x0000707f,
+    match  = 0x00002023,
+    format = FormatS,
+    ram    = RAMWrite
+);
 
-    fn operands(&self) -> &Self::Format {
-        &self.operands
-    }
-
-    fn new(word: u32, address: u64, validate: bool) -> Self {
-        if validate {
-            assert_eq!(word & Self::MASK, Self::MATCH);
-        }
-
-        Self {
-            address,
-            operands: FormatS::parse(word),
-            virtual_sequence_remaining: None,
-        }
-    }
-
-    fn execute(&self, cpu: &mut Cpu, ram_access: &mut Self::RAMAccess) {
+impl SW {
+    fn exec(&self, cpu: &mut Cpu, ram_access: &mut <SW as RISCVInstruction>::RAMAccess) {
         *ram_access = cpu
             .mmu
             .store_word(
-                cpu.x[self.operands.rs1].wrapping_add(self.operands.imm) as u64,
-                cpu.x[self.operands.rs2] as u32,
+                cpu.x[self.operands.rs1 as usize].wrapping_add(self.operands.imm) as u64,
+                cpu.x[self.operands.rs2 as usize] as u32,
             )
             .ok()
             .unwrap();
     }
 }
 
-impl RISCVTrace for SW {}
+impl RISCVTrace for SW {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
+        let inline_sequence = self.inline_sequence(cpu.xlen);
+        let mut trace = trace;
+        for instr in inline_sequence {
+            // In each iteration, create a new Option containing a re-borrowed reference
+            instr.trace(cpu, trace.as_deref_mut());
+        }
+    }
+
+    fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
+        match xlen {
+            Xlen::Bit32 => self.inline_sequence_32(),
+            Xlen::Bit64 => self.inline_sequence_64(),
+        }
+    }
+}
+
+impl SW {
+    fn inline_sequence_32(&self) -> Vec<RV32IMInstruction> {
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit32);
+        asm.emit_s::<VirtualSW>(self.operands.rs1, self.operands.rs2, self.operands.imm);
+        asm.finalize()
+    }
+
+    fn inline_sequence_64(&self) -> Vec<RV32IMInstruction> {
+        let v_address = allocate_virtual_register();
+        let v_dword_address = allocate_virtual_register();
+        let v_dword = allocate_virtual_register();
+        let v_shift = allocate_virtual_register();
+        let v_mask = allocate_virtual_register();
+        let v_word = allocate_virtual_register();
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit64);
+
+        asm.emit_halign::<VirtualAssertWordAlignment>(self.operands.rs1, self.operands.imm);
+        asm.emit_i::<ADDI>(*v_address, self.operands.rs1, self.operands.imm as u64);
+        asm.emit_i::<ANDI>(*v_dword_address, *v_address, -8i64 as u64);
+        asm.emit_ld::<LD>(*v_dword, *v_dword_address, 0);
+        asm.emit_i::<SLLI>(*v_shift, *v_address, 3);
+        asm.emit_i::<ORI>(*v_mask, 0, -1i64 as u64);
+        asm.emit_i::<SRLI>(*v_mask, *v_mask, 32);
+        asm.emit_r::<SLL>(*v_mask, *v_mask, *v_shift);
+        asm.emit_r::<SLL>(*v_word, self.operands.rs2, *v_shift);
+        asm.emit_r::<XOR>(*v_word, *v_dword, *v_word);
+        asm.emit_r::<AND>(*v_word, *v_word, *v_mask);
+        asm.emit_r::<XOR>(*v_dword, *v_dword, *v_word);
+        asm.emit_s::<SD>(*v_dword_address, *v_dword, 0);
+        asm.finalize()
+    }
+}

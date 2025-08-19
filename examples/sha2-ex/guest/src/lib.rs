@@ -1,11 +1,7 @@
 #![cfg_attr(feature = "guest", no_std)]
 
-use sha2::{Digest, Sha256};
-
-#[jolt::provable]
+#[jolt::provable(memory_size = 10240, max_trace_length = 65536)]
 fn sha2(input: &[u8]) -> [u8; 32] {
-    let mut hasher = Sha256::new();
-    hasher.update(input);
-    let result = hasher.finalize();
-    Into::<[u8; 32]>::into(result)
+    // Use Jolt's optimized SHA256 implementation
+    jolt_inlines_sha2::Sha256::digest(input)
 }

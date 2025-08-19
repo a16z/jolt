@@ -1,94 +1,57 @@
+use crate::utils::inline_helpers::InstrAssembler;
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    declare_riscv_instr,
     emulator::cpu::{Cpu, Xlen},
-    instruction::{
-        format::format_virtual_right_shift_i::FormatVirtualRightShiftI, virtual_srli::VirtualSRLI,
-    },
+    instruction::virtual_srli::VirtualSRLI,
 };
 
 use super::{
-    format::{format_i::FormatI, InstructionFormat},
-    RISCVInstruction, RISCVTrace, RV32IMInstruction, VirtualInstructionSequence,
+    format::format_i::FormatI, RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
 };
 
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
-pub struct SRLI {
-    pub address: u64,
-    pub operands: FormatI,
-    /// If this instruction is part of a "virtual sequence" (see Section 6.2 of the
-    /// Jolt paper), then this contains the number of virtual instructions after this
-    /// one in the sequence. I.e. if this is the last instruction in the sequence,
-    /// `virtual_sequence_remaining` will be Some(0); if this is the penultimate instruction
-    /// in the sequence, `virtual_sequence_remaining` will be Some(1); etc.
-    pub virtual_sequence_remaining: Option<usize>,
-}
+declare_riscv_instr!(
+    name   = SRLI,
+    mask   = 0xfc00707f,
+    match  = 0x00005013,
+    format = FormatI,
+    ram    = ()
+);
 
-impl RISCVInstruction for SRLI {
-    const MASK: u32 = 0xfc00707f;
-    const MATCH: u32 = 0x00005013;
-
-    type Format = FormatI;
-    type RAMAccess = ();
-
-    fn operands(&self) -> &Self::Format {
-        &self.operands
-    }
-
-    fn new(word: u32, address: u64, validate: bool) -> Self {
-        if validate {
-            debug_assert_eq!(word & Self::MASK, Self::MATCH);
-        }
-
-        Self {
-            address,
-            operands: FormatI::parse(word),
-            virtual_sequence_remaining: None,
-        }
-    }
-
-    fn execute(&self, cpu: &mut Cpu, _: &mut Self::RAMAccess) {
+impl SRLI {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <SRLI as RISCVInstruction>::RAMAccess) {
         let mask = match cpu.xlen {
             Xlen::Bit32 => 0x1f,
             Xlen::Bit64 => 0x3f,
         };
-        cpu.x[self.operands.rd] = cpu.sign_extend(
-            cpu.unsigned_data(cpu.x[self.operands.rs1])
+        cpu.x[self.operands.rd as usize] = cpu.sign_extend(
+            cpu.unsigned_data(cpu.x[self.operands.rs1 as usize])
                 .wrapping_shr(self.operands.imm as u32 & mask) as i64,
         );
     }
 }
 
 impl RISCVTrace for SRLI {
-    fn trace(&self, cpu: &mut Cpu) {
-        let virtual_sequence = self.virtual_sequence();
-        for instr in virtual_sequence {
-            instr.trace(cpu);
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
+        let inline_sequence = self.inline_sequence(cpu.xlen);
+        let mut trace = trace;
+        for instr in inline_sequence {
+            // In each iteration, create a new Option containing a re-borrowed reference
+            instr.trace(cpu, trace.as_deref_mut());
         }
     }
-}
 
-impl VirtualInstructionSequence for SRLI {
-    fn virtual_sequence(&self) -> Vec<RV32IMInstruction> {
-        let virtual_sequence_remaining = self.virtual_sequence_remaining.unwrap_or(0);
-        let mut sequence = vec![];
-
-        // TODO: this only works for Xlen = 32
-        let shift = self.operands.imm % 32;
-        let ones = (1u64 << (32 - shift)) - 1;
-        let bitmask = ones << shift;
-
-        let srl = VirtualSRLI {
-            address: self.address,
-            operands: FormatVirtualRightShiftI {
-                rd: self.operands.rd,
-                rs1: self.operands.rs1,
-                imm: bitmask,
-            },
-            virtual_sequence_remaining: Some(virtual_sequence_remaining),
+    fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
+        let (shift, len) = match xlen {
+            Xlen::Bit32 => (self.operands.imm & 0x1f, 32),
+            Xlen::Bit64 => (self.operands.imm & 0x3f, 64),
         };
-        sequence.push(srl.into());
+        let ones = (1u128 << (len - shift)) - 1;
+        let bitmask = (ones << shift) as u64;
 
-        sequence
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
+        asm.emit_vshift_i::<VirtualSRLI>(self.operands.rd, self.operands.rs1, bitmask);
+        asm.finalize()
     }
 }

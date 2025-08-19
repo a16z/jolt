@@ -4,13 +4,15 @@ There are many tasks described in the various files in the "roadmap/future" sect
 Let's use this file as the primary means of tracking what is done or in progress. Anything
 not mentioned in this file is presumably not yet started (or barely started). 
 
-## Functionality improvements
+## Functionality / overall improvements
 
 * Support for stdlib
 
-* Support for M-extension.
+* Support for M-extension
 
-* In progress: on-chain verifier (Solidity). 
+* On-chain verifier (Solidity)
+
+* Improved BN254-by-u64 (or i64/u128/i128) multiplication
 
 ## Verifier cost improvements
 
@@ -26,7 +28,7 @@ will reduce proof size by up to 200KB.
 
 * Reduce the number of polynomial evaluation proofs from 7-10 down to 1 (achieved in [this PR](https://github.com/a16z/jolt/pull/453)) 
 
-## Prover cost improvements (all in progress)
+## Prover cost improvements
 
 * Eliminate cost of pre-computed tables of eq evaluations for each sum-check,
 as per [Dao-Thaler](https://eprint.iacr.org/2024/1210).
@@ -34,6 +36,7 @@ as per [Dao-Thaler](https://eprint.iacr.org/2024/1210).
 * (Nearly) [eliminate](https://github.com/a16z/jolt/issues/347) second sum-check instance in Spartan.
 
 * Implement the sum-check prover optimization from Section 3 of Angus Gruen's [paper](https://eprint.iacr.org/2024/108).
+  (ONGOING, done for first sum-check in Spartan)
 
 * Implement the sum-check prover optimizations from [Bagad-Domb-Thaler](https://eprint.iacr.org/2024/1046), which actually apply whenever small values are being summed, even if those values reside in a big (e.g., 256-bit) field. This captures Spartan as applied in Jolt. Thanks to Lev Soukhanov for this observation.
 

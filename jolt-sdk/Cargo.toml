@@ -14,25 +14,38 @@ edition = "2021"
 
 [features]
 host = [
+    "jolt-core/default",
+    "jolt-platform/std",
     "dep:tracer",
     "dep:common",
-    "dep:jolt-core",
     "dep:ark-ec",
     "dep:ark-bn254",
     "postcard/use-std",
 ]
 guest-std = [
     "postcard/use-std",
+    "jolt-platform/std",
     "jolt-sdk-macros/guest-std",
 ]
-icicle = ["host", "jolt-core?/icicle"]
+guest-verifier = [
+    "guest-std",
+    "dep:common",
+    "jolt-core/parallel"
+]
 
 [dependencies]
+jolt-platform = { path = "../jolt-platform" }
 postcard = { version = "1.0.8", default-features = false }
 ark-ec = { version = "0.5.0", default-features = false, optional = true }
 ark-bn254 = { version = "0.5.0", default-features = false, optional = true }
 
 jolt-sdk-macros = { path = "./macros" }
-jolt-core = { path = "../jolt-core", optional = true }
-tracer = { path = "../tracer", optional = true }
+# Host-only dependencies
 common = { path = "../common", optional = true }
+jolt-core = { path = "../jolt-core", default-features = false, optional = true }
+tracer = { path = "../tracer", optional = true }
+getrandom = { version = "0.2.16", features = ["custom"], optional = true }
+rand = { version = "0.8.5", optional = true }
+
+[dev-dependencies]
+hex-literal = "0.4.1"

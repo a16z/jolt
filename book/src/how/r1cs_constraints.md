@@ -30,7 +30,7 @@ The inputs required for the constraint system for a single CPU step are:
 
 ### Circuit and instruction flags:
 * There are twelve circuit flags (`opflags` in the Jolt paper) used in Jolt's R1CS constraints.
-They are enumatered in `CircuitFlags` and computed in `to_circuit_flags` (see [`rv_trace.rs`](https://github.com/a16z/jolt/blob/main/common/src/rv_trace.rs))
+They are enumerated in `CircuitFlags` and computed in `to_circuit_flags` (see [`rv_trace.rs`](https://github.com/a16z/jolt/blob/main/common/src/rv_trace.rs))
 Circuit flags depend only on the instruction as it appears in the bytecode, so they are computed as part of
 the preprocessed bytecode in Jolt.
     1. `LeftOperandIsPC`: 1 if the first lookup operand is the program counter; 0 otherwise (first lookup operand is RS1 value).
@@ -44,7 +44,7 @@ the preprocessed bytecode in Jolt.
     1. `ConcatLookupQueryChunks`: Indicates whether the instruction performs a concat-type lookup.
     1. `Virtual`: 1 if the instruction is "virtual", as defined in Section 6.1 of the Jolt paper.
     1. `Assert`: 1 if the instruction is an assert, as defined in Section 6.1.1 of the Jolt paper.
-    1. `DoNotUpdatePC`: Used in virtual sequences; the program counter should be the same for the full sequence.
+    1. `DoNotUpdatePC`: Used in inline sequences; the program counter should be the same for the full sequence.
 * Instruction flags: these are the unary bits used to indicate instruction is executed at a given step.
 There are as many per step as the number of unique instruction lookup tables in Jolt.
 

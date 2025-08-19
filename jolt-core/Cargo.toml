@@ -18,37 +18,42 @@ description = "The lookup singularity. Based on Spartan; built on Arkworks."
 documentation = "https://github.com/a16z/jolt/README.md"
 repository = "https://github.com/a16z/jolt"
 license-file = "LICENSE"
-keywords = ["SNARK", "cryptography", "proofs"]
+keywords = ["SNARK", "cryptography", "proofs", "zkVM"]
 
 [features]
-default = [
+default = ["host"]
+host = [
+    "dep:reqwest",
+    "dep:tokio",
+    "dep:indicatif",
+    "dep:dirs",
+    "dep:target-lexicon",
+    "prover",
+    "dep:sha2_inline",
+    "dep:sha3_inline",
+]
+prover = ["parallel"]
+parallel = [
     "ark-ec/parallel",
     "ark-ff/parallel",
     "ark-std/parallel",
     "ark-ff/asm",
-    "host",
     "rayon",
 ]
-host = ["dep:reqwest", "dep:tokio"]
-icicle = [
-    "default",
-    "dep:icicle-runtime",
-    "dep:icicle-core",
-    "dep:icicle-bn254",
-]
+allocative = ["dep:inferno", "ark-ff/allocative"]
+test_incremental = []
 
 [dependencies]
 ark-bn254 = "0.5.0"
+jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 ark-ec = { version = "0.5.0", default-features = false }
 ark-ff = { version = "0.5.0", default-features = false }
 ark-serialize = { version = "0.5.0", default-features = false, features = [
     "derive",
 ] }
 ark-serialize-derive = { version = "0.5.0", default-features = false }
-
 ark-std = { version = "0.5.0" }
 clap = { version = "4.3.10", features = ["derive"] }
-enum_dispatch = "0.3.12"
 fixedbitset = "0.5.0"
 itertools = "0.10.0"
 num-integer = "0.1.45"
@@ -58,51 +63,58 @@ num-traits = "0.2.19"
 postcard = { version = "1.0.8", default-features = false, features = [
     "use-std",
 ] }
-rand = "0.7.3"
+rand = "0.8.5"
 rand_chacha = { version = "0.3.0", default-features = false }
 rand_core = { version = "0.6.4", default-features = false }
 rayon = { version = "^1.8.0", optional = true }
 serde = { version = "1.0.*", default-features = false }
 sha3 = "0.10.8"
+blake2 = "0.10"
 strum = "0.26.3"
 strum_macros = "0.26.4"
 thiserror = "1.0.58"
 tracing = "0.1.37"
 tracing-chrome = "0.7.1"
-tracing-subscriber = "0.3.18"
-target-lexicon = "0.12.14"
+tracing-subscriber = { version = "0.3.18", features = ["fmt", "env-filter"] }
+target-lexicon = { version = "0.12.14", optional = true }
 reqwest = { version = "0.12.3", features = [
     "json",
     "blocking",
 ], optional = true }
-dirs = "5.0.1"
+dirs = { version = "5.0.1", optional = true }
 eyre = "0.6.12"
-indicatif = "0.17.8"
+indicatif = { version = "0.17.8", optional = true }
 common = { path = "../common" }
-tracer = { path = "../tracer" }
+tracer = { path = "../tracer", default-features = false, features = ["std"] }
 bincode = "1.3.3"
-bytemuck = "1.19.0"
 tokio = { version = "1.38.0", optional = true }
-alloy-primitives = "0.7.6"
-alloy-sol-types = "0.7.6"
 once_cell = "1.19.0"
 rand_distr = "0.4.3"
 anyhow = "1.0.97"
 derive_more = { version = "2.0.1", features = ["from"] }
+paste = "1.0.15"
+dory = { git = "https://github.com/spaceandtimefdn/sxt-dory", branch = "feat/return_row_commitments" }
+lazy_static = "1.5.0"
+allocative = { git = "https://github.com/0xAndoroid/allocative", branch = "fix/impl-for-u128" }
+inferno = { version = "0.12.3", optional = true }
+jolt-platform = { path = "../jolt-platform", features = ["std"] }
+sha2_inline = { package = "jolt-inlines-sha2", path = "../jolt-inlines/sha2", features = [
+    "host",
+], optional = true }
+sha3_inline = { package = "jolt-inlines-keccak256", path = "../jolt-inlines/keccak256", features = [
+    "host",
+], optional = true }
 
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["html_reports"] }
 iai-callgrind = "0.10.2"
+serial_test = "3.2.0"
 
 [build-dependencies]
 common = { path = "../common" }
 
 [[bench]]
 name = "iai"
-harness = false
-
-[[bench]]
-name = "grand_product"
 harness = false
 
 [[bench]]
@@ -114,43 +126,25 @@ name = "binding"
 harness = false
 
 [[bench]]
-name = "compute_cubic"
+name = "poly_bench"
 harness = false
 
 [[bench]]
-name = "msm"
-harness = false
-
-[[bench]]
-name = "msm_batch"
-harness = false
-
-[[bench]]
-name = "msm_adapter_batch"
+name = "compact_poly_bench"
 harness = false
 
 [lib]
 name = "jolt_core"
 path = "src/lib.rs"
 
+[[bin]]
+name = "jolt-core"
+path = "src/bin/jolt_core.rs"
+required-features = ["host"]
+
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 memory-stats = "1.0.0"
-sys-info = "0.9.1"
 tokio = { version = "1.38.0", optional = true, features = ["rt-multi-thread"] }
 
-[target.'cfg(all(not(target_arch = "wasm32"), target_os = "macos"))'.dependencies]
-icicle-core = { git = "https://github.com/ingonyama-zk/icicle-jolt.git", rev = "2441eba", optional = true }
-icicle-runtime = { git = "https://github.com/ingonyama-zk/icicle-jolt.git", rev = "2441eba", optional = true }
-icicle-bn254 = { git = "https://github.com/ingonyama-zk/icicle-jolt.git", rev = "2441eba", optional = true }
-
-[target.'cfg(all(not(target_arch = "wasm32"), not(target_os = "macos")))'.dependencies]
-icicle-core = { git = "https://github.com/ingonyama-zk/icicle-jolt.git", rev = "2441eba", optional = true }
-icicle-runtime = { git = "https://github.com/ingonyama-zk/icicle-jolt.git", features = [
-    "cuda_backend",
-], rev = "2441eba", optional = true }
-icicle-bn254 = { git = "https://github.com/ingonyama-zk/icicle-jolt.git", features = [
-    "cuda_backend",
-], rev = "2441eba", optional = true }
-
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-getrandom = { version = "0.2", features = ["js"] }
+getrandom = { version = "0.2.16", features = ["js"] }

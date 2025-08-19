@@ -1,3 +1,6 @@
+[files]
+extend-exclude = ["patches/*.patch"]
+
 [default.extend-words]
 "groth" = "groth"
 "fle" = "fle"
@@ -6,3 +9,4 @@
 "thr" = "thr"
 "thre" = "thre"
 "numer" = "numer"
+"Toom" = "Toom"

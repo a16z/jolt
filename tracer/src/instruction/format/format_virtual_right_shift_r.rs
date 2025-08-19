@@ -11,12 +11,12 @@ use super::{
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct FormatVirtualRightShiftR {
-    pub rd: usize,
-    pub rs1: usize,
-    pub rs2: usize,
+    pub rd: u8,
+    pub rs1: u8,
+    pub rs2: u8,
 }
 
-#[derive(Default, Debug, Copy, Clone, Serialize, Deserialize)]
+#[derive(Default, Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RegisterStateVirtualRightShift {
     pub rd: (u64, u64), // (old_value, new_value)
     pub rs1: u64,
@@ -56,28 +56,40 @@ impl InstructionFormat for FormatVirtualRightShiftR {
     }
 
     fn capture_pre_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu) {
-        state.rs1 = normalize_register_value(cpu.x[self.rs1], &cpu.xlen);
-        state.rs2 = normalize_register_value(cpu.x[self.rs2], &cpu.xlen);
-        state.rd.0 = normalize_register_value(cpu.x[self.rd], &cpu.xlen);
+        state.rs1 = normalize_register_value(cpu.x[self.rs1 as usize], &cpu.xlen);
+        state.rs2 = normalize_register_value(cpu.x[self.rs2 as usize], &cpu.xlen);
+        state.rd.0 = normalize_register_value(cpu.x[self.rd as usize], &cpu.xlen);
     }
 
     fn capture_post_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu) {
-        state.rd.1 = normalize_register_value(cpu.x[self.rd], &cpu.xlen);
+        state.rd.1 = normalize_register_value(cpu.x[self.rd as usize], &cpu.xlen);
     }
 
     fn random(rng: &mut StdRng) -> Self {
         Self {
-            rd: (rng.next_u64() % REGISTER_COUNT) as usize,
-            rs1: (rng.next_u64() % REGISTER_COUNT) as usize,
-            rs2: (rng.next_u64() % REGISTER_COUNT) as usize,
+            rd: (rng.next_u64() as u8 % REGISTER_COUNT),
+            rs1: (rng.next_u64() as u8 % REGISTER_COUNT),
+            rs2: (rng.next_u64() as u8 % REGISTER_COUNT),
         }
     }
+}
 
-    fn normalize(&self) -> NormalizedOperands {
-        NormalizedOperands {
-            rs1: self.rs1,
-            rs2: self.rs2,
-            rd: self.rd,
+impl From<NormalizedOperands> for FormatVirtualRightShiftR {
+    fn from(operands: NormalizedOperands) -> Self {
+        Self {
+            rd: operands.rd,
+            rs1: operands.rs1,
+            rs2: operands.rs2,
+        }
+    }
+}
+
+impl From<FormatVirtualRightShiftR> for NormalizedOperands {
+    fn from(format: FormatVirtualRightShiftR) -> Self {
+        Self {
+            rd: format.rd,
+            rs1: format.rs1,
+            rs2: format.rs2,
             imm: 0,
         }
     }

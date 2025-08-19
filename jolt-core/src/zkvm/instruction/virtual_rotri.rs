@@ -1,0 +1,59 @@
+use tracer::instruction::{virtual_rotri::VirtualROTRI, RISCVCycle};
+
+use crate::zkvm::lookup_table::{virtual_rotr::VirtualRotrTable, LookupTables};
+
+use super::{CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS};
+
+impl<const XLEN: usize> InstructionLookup<XLEN> for VirtualROTRI {
+    fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
+        Some(VirtualRotrTable.into())
+    }
+}
+
+impl InstructionFlags for VirtualROTRI {
+    fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
+        let mut flags = [false; NUM_CIRCUIT_FLAGS];
+        flags[CircuitFlags::LeftOperandIsRs1Value as usize] = true;
+        flags[CircuitFlags::RightOperandIsImm as usize] = true;
+        flags[CircuitFlags::WriteLookupOutputToRD as usize] = true;
+        flags[CircuitFlags::InlineSequenceInstruction as usize] =
+            self.inline_sequence_remaining.is_some();
+        flags[CircuitFlags::DoNotUpdateUnexpandedPC as usize] =
+            self.inline_sequence_remaining.unwrap_or(0) != 0;
+        flags[CircuitFlags::IsCompressed as usize] = self.is_compressed;
+        flags
+    }
+}
+
+impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualROTRI> {
+    fn to_instruction_inputs(&self) -> (u64, i128) {
+        (
+            self.register_state.rs1,
+            self.instruction.operands.imm as i128,
+        )
+    }
+
+    fn to_lookup_output(&self) -> u64 {
+        let (x, y) = LookupQuery::<XLEN>::to_instruction_inputs(self);
+        match XLEN {
+            #[cfg(test)]
+            8 => (x as u8).rotate_right((y as u8).trailing_zeros()) as u64,
+            32 => (x as u32).rotate_right((y as u32).trailing_zeros()) as u64,
+            64 => x.rotate_right((y as u64).trailing_zeros()),
+            _ => panic!("{XLEN}-bit word size is unsupported"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::zkvm::instruction::test::materialize_entry_test;
+
+    use super::*;
+    use ark_bn254::Fr;
+
+    #[test]
+    fn materialize_entry() {
+        materialize_entry_test::<Fr, VirtualROTRI>();
+    }
+}

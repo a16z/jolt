@@ -1,7 +1,7 @@
 use crate::emulator::cpu::Cpu;
 use common::constants::REGISTER_COUNT;
 use rand::rngs::StdRng;
-use rand::RngCore;
+use rand::{Rng, RngCore};
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
@@ -11,12 +11,12 @@ use super::{
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct FormatB {
-    pub rs1: usize,
-    pub rs2: usize,
-    pub imm: i64,
+    pub rs1: u8,
+    pub rs2: u8,
+    pub imm: i128,
 }
 
-#[derive(Default, Debug, Copy, Clone, Serialize, Deserialize)]
+#[derive(Default, Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RegisterStateFormatB {
     pub rs1: u64,
     pub rs2: u64,
@@ -44,8 +44,8 @@ impl InstructionFormat for FormatB {
 
     fn parse(word: u32) -> Self {
         FormatB {
-            rs1: ((word >> 15) & 0x1f) as usize, // [19:15]
-            rs2: ((word >> 20) & 0x1f) as usize, // [24:20]
+            rs1: ((word >> 15) & 0x1f) as u8, // [19:15]
+            rs2: ((word >> 20) & 0x1f) as u8, // [24:20]
             imm: (
                 match word & 0x80000000 { // imm[31:12] = [31]
 				0x80000000 => 0xfffff000,
@@ -55,13 +55,13 @@ impl InstructionFormat for FormatB {
 			((word >> 20) & 0x000007e0) | // imm[10:5] = [30:25]
 			((word >> 7) & 0x0000001e)
                 // imm[4:1] = [11:8]
-            ) as i32 as i64,
+            ) as i32 as i128,
         }
     }
 
     fn capture_pre_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu) {
-        state.rs1 = normalize_register_value(cpu.x[self.rs1], &cpu.xlen);
-        state.rs2 = normalize_register_value(cpu.x[self.rs2], &cpu.xlen);
+        state.rs1 = normalize_register_value(cpu.x[self.rs1 as usize], &cpu.xlen);
+        state.rs2 = normalize_register_value(cpu.x[self.rs2 as usize], &cpu.xlen);
     }
 
     fn capture_post_execution_state(&self, _: &mut Self::RegisterState, _: &mut Cpu) {
@@ -70,18 +70,30 @@ impl InstructionFormat for FormatB {
 
     fn random(rng: &mut StdRng) -> Self {
         Self {
-            imm: rng.next_u64() as i64,
-            rs1: (rng.next_u64() % REGISTER_COUNT) as usize,
-            rs2: (rng.next_u64() % REGISTER_COUNT) as usize,
+            imm: rng.gen(),
+            rs1: (rng.next_u64() as u8 % REGISTER_COUNT),
+            rs2: (rng.next_u64() as u8 % REGISTER_COUNT),
         }
     }
+}
 
-    fn normalize(&self) -> NormalizedOperands {
-        NormalizedOperands {
-            rs1: self.rs1,
-            rs2: self.rs2,
+impl From<NormalizedOperands> for FormatB {
+    fn from(operands: NormalizedOperands) -> Self {
+        Self {
+            rs1: operands.rs1,
+            rs2: operands.rs2,
+            imm: operands.imm,
+        }
+    }
+}
+
+impl From<FormatB> for NormalizedOperands {
+    fn from(format: FormatB) -> Self {
+        Self {
+            rs1: format.rs1,
+            rs2: format.rs2,
             rd: 0,
-            imm: self.imm,
+            imm: format.imm,
         }
     }
 }

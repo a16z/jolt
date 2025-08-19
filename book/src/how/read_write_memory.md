@@ -73,52 +73,52 @@ In more detail, Jolt
 1. constrains all `LW` and `SW` instructions to only allow word-aligned accesses, and
 constrains all `LH`, `LHU`, and `SH` instructions to only allow halfword-aligned accesses.
 This is accomplished using virtual `ASSERT` instructions (see Section 6.1.1 of the Jolt paper).
-2. replaces all `LH`, `LHU`, `SH`, `LB`, `LBU`, and `SB` instructions with [virtual sequences](./m-extension.md)
+2. replaces all `LH`, `LHU`, `SH`, `LB`, `LBU`, and `SB` instructions with [inline sequences](./m-extension.md)
 that only perform word-aligned accesses.
 
-### `LB` virtual sequence
+### `LB` inline sequence
 
 1. `ADDI` `rs1`, --, `imm`, $v_0$   `// Compute the memory address being accessed`
 1. `ANDI` $v_0$, --, `(1 << 32) - 4`, $v_1$   `// Mask out the lower bits to obtain the word-aligned address`
 1. `LW` $v_1$, --, 0, $v_2$   `// Load the full word`
-1. `XORI` $v_2$, --, `0b11`, $v_3$   `// Compute the number of bytes to shift the word (in the lower 2 bits)`
+1. `XORI` $v_0$, --, `0b11`, $v_3$   `// Compute the number of bytes to shift the word (in the lower 2 bits)`
 1. `SLLI` $v_3$, --, 3, $v_3$   `// Compute the number of bits to shift the word (in the lower 5 bits)`
 1. `SLL` $v_2$, $v_3$, --, `rd`   `// Shift the word so that the desired byte is left-aligned`
 1. `SRAI` `rd`, --, 24, `rd`   `// Right arithmetic shift to sign-extend and right-align the byte`
 
-### `LBU` virtual sequence
+### `LBU` inline sequence
 
 1. `ADDI` `rs1`, --, `imm`, $v_0$   `// Compute the memory address being accessed`
 1. `ANDI` $v_0$, --, `(1 << 32) - 4`, $v_1$   `// Mask out the lower bits to obtain the word-aligned address`
 1. `LW` $v_1$, --, 0, $v_2$   `// Load the full word`
-1. `XORI` $v_2$, --, `0b11`, $v_3$   `// Compute the number of bytes to shift the word (in the lower 2 bits)`
+1. `XORI` $v_0$, --, `0b11`, $v_3$   `// Compute the number of bytes to shift the word (in the lower 2 bits)`
 1. `SLLI` $v_3$, --, 3, $v_3$   `// Compute the number of bits to shift the word (in the lower 5 bits)`
 1. `SLL` $v_2$, $v_3$, --, `rd`   `// Shift the word so that the desired byte is left-aligned`
 1. `SRLI` `rd`, --, 24, `rd`   `// Right logical shift to zero-extend and right-align the byte`
 
-### `LH` virtual sequence
+### `LH` inline sequence
 
 1. `ASSERT_HALFWORD_ALIGNMENT` `rs1`, --, `imm`, -- `// Virtual instruction to enforce aligned memory access`
 1. `ADDI` `rs1`, --, `imm`, $v_0$   `// Compute the memory address being accessed`
 1. `ANDI` $v_0$, --, `(1 << 32) - 4`, $v_1$   `// Mask out the lower bits to obtain the word-aligned address`
 1. `LW` $v_1$, --, 0, $v_2$   `// Load the full word`
-1. `XORI` $v_2$, --, `0b10`, $v_3$   `// Compute the number of bytes to shift the word (in the lower 2 bits)`
+1. `XORI` $v_0$, --, `0b10`, $v_3$   `// Compute the number of bytes to shift the word (in the lower 2 bits)`
 1. `SLLI` $v_3$, --, 3, $v_3$   `// Compute the number of bits to shift the word (in the lower 5 bits)`
 1. `SLL` $v_2$, $v_3$, --, `rd`   `// Shift the word so that the desired halfword is left-aligned`
 1. `SRAI` `rd`, --, 16, `rd`   `// Right arithmetic shift to sign-extend and right-align the halfword`
 
-### `LHU` virtual sequence
+### `LHU` inline sequence
 
 1. `ASSERT_HALFWORD_ALIGNMENT` `rs1`, --, `imm`, -- `// Virtual instruction to enforce aligned memory access`
 1. `ADDI` `rs1`, --, `imm`, $v_0$   `// Compute the memory address being accessed`
 1. `ANDI` $v_0$, --, `(1 << 32) - 4`, $v_1$   `// Mask out the lower bits to obtain the word-aligned address`
 1. `LW` $v_1$, --, 0, $v_2$   `// Load the full word`
-1. `XORI` $v_2$, --, `0b10`, $v_3$   `// Compute the number of bytes to shift the word (in the lower 2 bits)`
+1. `XORI` $v_0$, --, `0b10`, $v_3$   `// Compute the number of bytes to shift the word (in the lower 2 bits)`
 1. `SLLI` $v_3$, --, 3, $v_3$   `// Compute the number of bits to shift the word (in the lower 5 bits)`
 1. `SLL` $v_2$, $v_3$, --, `rd`   `// Shift the word so that the desired halfword is left-aligned`
 1. `SRLI` `rd`, --, 16, `rd`   `// Right logical shift to zero-extend and right-align the halfword`
 
-### `SB` virtual sequence
+### `SB` inline sequence
 
 1. `ADDI` `rs1`, --, `imm`, $v_0$   `// Compute the memory address being accessed`
 1. `ANDI` $v_0$, --, `(1 << 32) - 4`, $v_1$   `// Mask out the lower bits to obtain the word-aligned address`
@@ -134,7 +134,7 @@ that only perform word-aligned accesses.
 
 Instructions 8-10 use a [bit-twiddling hack](https://graphics.stanford.edu/~seander/bithacks.html#MaskedMerge) to mask the stored byte into the word.
 
-### `SH` virtual sequence
+### `SH` inline sequence
 
 1. `ASSERT_HALFWORD_ALIGNMENT` `rs1`, --, `imm`, -- `// Virtual instruction to enforce aligned memory access`
 1. `ADDI` `rs1`, --, `imm`, $v_0$   `// Compute the memory address being accessed`

@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: ['**', main]
+    branches: ["**", main]
 
 env:
   RUSTFLAGS: -D warnings
@@ -18,7 +18,7 @@ jobs:
   fmt:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v5
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           components: rustfmt
@@ -28,12 +28,12 @@ jobs:
   clippy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v5
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           components: clippy
       - name: cargo clippy
-        run: cargo clippy --all
+        run: cargo clippy --all --all-targets --features allocative
 
   machete:
     runs-on: ubuntu-latest
@@ -46,7 +46,7 @@ jobs:
     name: Build Wasm
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v5
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       - name: Install wasm32 target
         run: rustup target add wasm32-unknown-unknown
@@ -54,10 +54,11 @@ jobs:
         working-directory: ./jolt-core
         run: cargo build --release --target wasm32-unknown-unknown
 
-  test:
+  test-core:
     runs-on: ubuntu-latest
+    name: Test jolt-core
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v5
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       - name: Cache Jolt RISC-V Rust toolchain
         uses: actions/cache@v4
@@ -71,38 +72,10 @@ jobs:
       - name: Run jolt-core tests
         run: cargo nextest run --release -p jolt-core
 
-  on-chain:
-    name: Onchain Verifier Tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-        with:
-          submodules: recursive
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
-      - uses: foundry-rs/foundry-toolchain@v1
-        with:
-          version: nightly
-
-      - name: Build the rust integration testing scripts
-        working-directory: ./jolt-evm-verifier
-        run: cargo build --manifest-path script/Cargo.toml --release
-
-      - name: Check build and deny warnings
-        working-directory: ./jolt-evm-verifier
-        run: forge build --deny-warnings
-
-      - name: Run tests
-        working-directory: ./jolt-evm-verifier
-        run: forge test -vvv --via-ir --ffi
-
-      - name: Check format
-        working-directory: ./jolt-evm-verifier
-        run: forge fmt --check
-
   typos:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v5
       - uses: crate-ci/typos@v1.30.0
         with:
           files: .
@@ -111,7 +84,7 @@ jobs:
     name: jolt binary check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       - name: Build the `jolt` binary
         run: cargo build --release --bin jolt
@@ -122,3 +95,90 @@ jobs:
       - name: Make sure the generated code runs
         working-directory: ./sample_project
         run: cargo run --release
+
+  test-inlines:
+    name: Test inlines
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+      - name: Discover inline crates
+        id: discover_inlines
+        shell: bash
+        run: |
+          set -euo pipefail
+          pkgs=$(cargo metadata --format-version=1 --no-deps \
+                   | jq -r '.packages[].name' \
+                   | grep '^jolt-inlines-' | tr '\n' ' ')
+          echo "Found inline crates: $pkgs"
+          echo "pkgs=$pkgs" >> "$GITHUB_OUTPUT"
+      - name: Test each inline crate (host)
+        shell: bash
+        run: |
+          set -euo pipefail
+          for pkg in ${{ steps.discover_inlines.outputs.pkgs }}; do
+            cargo nextest run --features host -p "$pkg"
+          done
+
+  test-sdk-verifier:
+    name: Jolt SDK Verifier Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Cache Jolt RISC-V Rust toolchain
+        uses: actions/cache@v4
+        with:
+          key: jolt-rust-toolchain-${{hashFiles('guest-toolchain-tag')}}
+          path: ~/.jolt
+      - name: Install Jolt RISC-V Rust toolchain
+        run: cargo run install-toolchain
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+      - name: Run SDK verifier tests
+        run: cargo nextest run --release -p jolt-sdk --features host
+
+
+  test-tracer:
+    runs-on: ubuntu-latest
+    name: Test tracer
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Cache Jolt RISC-V Rust toolchain
+        uses: actions/cache@v4
+        with:
+          key: jolt-rust-toolchain-${{hashFiles('guest-toolchain-tag')}}
+          path: ~/.jolt
+      - name: Install Jolt RISC-V Rust toolchain
+        run: cargo run install-toolchain
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+      - name: Run tracer tests
+        run: cargo nextest run --release -p tracer
+
+  # zklean-extractor-tests:
+  #   name: ZkLean extractor tests
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v5
+  #     - name: Run extractor tests
+  #       working-directory: ./zklean-extractor
+  #       run: cargo test
+
+  # compile-extracted-lean:
+  #   name: Compile extracted Lean
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v5
+  #     - name: Extract Jolt ZkLean package
+  #       working-directory: ./zklean-extractor
+  #       run: cargo run --release -- -o -p jolt-zklean
+  #
+  #     - name: Run lake build on the extracted model
+  #       uses: leanprover/lean-action@v1
+  #       with:
+  #         lake-package-directory: ./zklean-extractor/jolt-zklean/src
+  #         build: true

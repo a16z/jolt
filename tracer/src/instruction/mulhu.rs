@@ -1,57 +1,31 @@
 use serde::{Deserialize, Serialize};
 
-use crate::emulator::cpu::{Cpu, Xlen};
-
-use super::{
-    format::{format_r::FormatR, InstructionFormat},
-    RISCVInstruction, RISCVTrace,
+use crate::{
+    declare_riscv_instr,
+    emulator::cpu::{Cpu, Xlen},
 };
 
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
-pub struct MULHU {
-    pub address: u64,
-    pub operands: FormatR,
-    /// If this instruction is part of a "virtual sequence" (see Section 6.2 of the
-    /// Jolt paper), then this contains the number of virtual instructions after this
-    /// one in the sequence. I.e. if this is the last instruction in the sequence,
-    /// `virtual_sequence_remaining` will be Some(0); if this is the penultimate instruction
-    /// in the sequence, `virtual_sequence_remaining` will be Some(1); etc.
-    pub virtual_sequence_remaining: Option<usize>,
-}
+use super::{format::format_r::FormatR, RISCVInstruction, RISCVTrace};
 
-impl RISCVInstruction for MULHU {
-    const MASK: u32 = 0xfe00707f;
-    const MATCH: u32 = 0x02003033;
+declare_riscv_instr!(
+    name   = MULHU,
+    mask   = 0xfe00707f,
+    match  = 0x02003033,
+    format = FormatR,
+    ram    = ()
+);
 
-    type Format = FormatR;
-    type RAMAccess = ();
-
-    fn operands(&self) -> &Self::Format {
-        &self.operands
-    }
-
-    fn new(word: u32, address: u64, validate: bool) -> Self {
-        if validate {
-            debug_assert_eq!(word & Self::MASK, Self::MATCH);
-        }
-
-        Self {
-            address,
-            operands: FormatR::parse(word),
-            virtual_sequence_remaining: None,
-        }
-    }
-
-    fn execute(&self, cpu: &mut Cpu, _: &mut Self::RAMAccess) {
-        cpu.x[self.operands.rd] = match cpu.xlen {
+impl MULHU {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <MULHU as RISCVInstruction>::RAMAccess) {
+        cpu.x[self.operands.rd as usize] = match cpu.xlen {
             Xlen::Bit32 => cpu.sign_extend(
-                (((cpu.x[self.operands.rs1] as u32 as u64)
-                    * (cpu.x[self.operands.rs2] as u32 as u64))
+                (((cpu.x[self.operands.rs1 as usize] as u32 as u64)
+                    * (cpu.x[self.operands.rs2 as usize] as u32 as u64))
                     >> 32) as i64,
             ),
             Xlen::Bit64 => {
-                ((cpu.x[self.operands.rs1] as u64 as u128)
-                    .wrapping_mul(cpu.x[self.operands.rs2] as u64 as u128)
+                ((cpu.x[self.operands.rs1 as usize] as u64 as u128)
+                    .wrapping_mul(cpu.x[self.operands.rs2 as usize] as u64 as u128)
                     >> 64) as i64
             }
         };

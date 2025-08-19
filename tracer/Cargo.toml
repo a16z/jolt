@@ -15,17 +15,38 @@ homepage = "https://github.com/a16z/jolt/README.md"
 repository = "https://github.com/a16z/jolt"
 edition = "2021"
 
+[[bin]]
+name = "jolt-emu"
+path = "src/main.rs"
+
+[features]
+default = ["std"]
+std = ["jolt-platform/std", "common/std", "fnv/std", "object/std", "tracing/std", "postcard/use-std"]
+
 [dependencies]
-fnv = "1.0.7"
-object = "0.32.1"
-tracing = "0.1.37"
+jolt-platform = { path = "../jolt-platform" }
+fnv = { version = "1.0.7", default-features = false }
+object = { version = "0.36.7", features = [
+    "build_core",
+    "elf",
+], default-features = false }
+tracing = { version = "0.1.41", features = [
+    "attributes",
+], default-features = false }
 ark-serialize = { version = "0.5.0", features = ["derive"] }
 derive_more = { version = "2.0.1", features = ["from"] }
 serde = { version = "1.0.193", features = ["derive"] }
 serde_json = "1.0.108"
 strum_macros = "0.26.4"
 strum = "0.26.3"
-rand = "0.7.3"
-
-common = { path = "../common" }
+rand = "0.8.5"
 paste = "1.0.15"
+itertools = "0.10.0"
+tracing-subscriber = "0.3"
+clap = { version = "4.4", features = ["derive"] }
+common = { path = "../common", default-features = false }
+postcard = { version = "1.0.8", default-features = false }
+lazy_static = "1.4"
+
+[dev-dependencies]
+hex-literal = "0.4.1"

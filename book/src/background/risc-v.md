@@ -9,7 +9,7 @@ Jolt implements the base RISC-V instruction set, making it a RISC-V-compliant vi
 
 ### Base Sets
 #### __RV32I__
-The RV32I is the base 32-bit integer instruction set. It's designed to be sufficient for a complete software toolchain while being simple and minimal. Everything else in RISC-V (multiplication, floating point, atomic operations)q is built as extensions on top of this base ISA.
+The RV32I is the base 32-bit integer instruction set. It's designed to be sufficient for a complete software toolchain while being simple and minimal. Everything else in RISC-V (multiplication, floating point, atomic operations) is built as extensions on top of this base ISA.
 ##### Key properties:
 - 32-bit fixed-width instructions
 

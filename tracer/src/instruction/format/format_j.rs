@@ -11,11 +11,11 @@ use super::{
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct FormatJ {
-    pub rd: usize,
+    pub rd: u8,
     pub imm: u64,
 }
 
-#[derive(Default, Debug, Copy, Clone, Serialize, Deserialize)]
+#[derive(Default, Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RegisterStateFormatJ {
     pub rd: (u64, u64), // (old_value, new_value)
 }
@@ -37,7 +37,7 @@ impl InstructionFormat for FormatJ {
 
     fn parse(word: u32) -> Self {
         FormatJ {
-            rd: ((word >> 7) & 0x1f) as usize, // [11:7]
+            rd: ((word >> 7) & 0x1f) as u8, // [11:7]
             imm: (
                 match word & 0x80000000 { // imm[31:20] = [31]
 				0x80000000 => 0xfff00000,
@@ -47,31 +47,42 @@ impl InstructionFormat for FormatJ {
 			((word & 0x00100000) >> 9) | // imm[11] = [20]
 			((word & 0x7fe00000) >> 20)
                 // imm[10:1] = [30:21]
-            ) as i32 as u32 as u64,
+            ) as i32 as i64 as u64,
         }
     }
 
     fn capture_pre_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu) {
-        state.rd.0 = normalize_register_value(cpu.x[self.rd], &cpu.xlen);
+        state.rd.0 = normalize_register_value(cpu.x[self.rd as usize], &cpu.xlen);
     }
 
     fn capture_post_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu) {
-        state.rd.1 = normalize_register_value(cpu.x[self.rd], &cpu.xlen);
+        state.rd.1 = normalize_register_value(cpu.x[self.rd as usize], &cpu.xlen);
     }
 
     fn random(rng: &mut StdRng) -> Self {
         Self {
-            rd: (rng.next_u64() % REGISTER_COUNT) as usize,
+            rd: (rng.next_u64() as u8 % REGISTER_COUNT),
             imm: rng.next_u64(),
         }
     }
+}
 
-    fn normalize(&self) -> NormalizedOperands {
-        NormalizedOperands {
+impl From<NormalizedOperands> for FormatJ {
+    fn from(operands: NormalizedOperands) -> Self {
+        Self {
+            rd: operands.rd,
+            imm: operands.imm as u64,
+        }
+    }
+}
+
+impl From<FormatJ> for NormalizedOperands {
+    fn from(format: FormatJ) -> Self {
+        Self {
             rs1: 0,
             rs2: 0,
-            rd: self.rd,
-            imm: self.imm as i64,
+            rd: format.rd,
+            imm: format.imm as i128,
         }
     }
 }

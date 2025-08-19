@@ -9,7 +9,9 @@ impl FieldOps for ark_bn254::Fr {}
 impl FieldOps<&ark_bn254::Fr, ark_bn254::Fr> for &ark_bn254::Fr {}
 impl FieldOps<&ark_bn254::Fr, ark_bn254::Fr> for ark_bn254::Fr {}
 
-static mut SMALL_VALUE_LOOKUP_TABLES: [Vec<ark_bn254::Fr>; 2] = [vec![], vec![]];
+lazy_static::lazy_static! {
+    static ref SMALL_VALUE_LOOKUP_TABLES: [Vec<ark_bn254::Fr>; 2] = ark_bn254::Fr::compute_lookup_tables();
+}
 
 impl JoltField for ark_bn254::Fr {
     const NUM_BYTES: usize = 32;
@@ -38,53 +40,19 @@ impl JoltField for ark_bn254::Fr {
         lookup_tables
     }
 
-    fn initialize_lookup_tables(init: Self::SmallValueLookupTables) {
-        unsafe {
-            SMALL_VALUE_LOOKUP_TABLES = init;
-        }
-    }
-
     #[inline]
     fn from_u8(n: u8) -> Self {
-        // TODO(moodlezoup): Using the lookup tables seems to break our tests
-        #[cfg(test)]
-        {
-            <Self as ark_ff::PrimeField>::from_u64(n as u64).unwrap()
-        }
-        #[cfg(not(test))]
-        {
-            unsafe { SMALL_VALUE_LOOKUP_TABLES[0][n as usize] }
-        }
+        <Self as ark_ff::PrimeField>::from_u64(n as u64).unwrap()
     }
 
     #[inline]
     fn from_u16(n: u16) -> Self {
-        // TODO(moodlezoup): Using the lookup tables seems to break our tests
-        #[cfg(test)]
-        {
-            <Self as ark_ff::PrimeField>::from_u64(n as u64).unwrap()
-        }
-        #[cfg(not(test))]
-        {
-            unsafe { SMALL_VALUE_LOOKUP_TABLES[0][n as usize] }
-        }
+        <Self as ark_ff::PrimeField>::from_u64(n as u64).unwrap()
     }
 
     #[inline]
     fn from_u32(n: u32) -> Self {
-        // TODO(moodlezoup): Using the lookup tables seems to break our tests
-        #[cfg(test)]
-        {
-            <Self as ark_ff::PrimeField>::from_u64(n as u64).unwrap()
-        }
-        #[cfg(not(test))]
-        {
-            const BITMASK: u32 = (1 << 16) - 1;
-            unsafe {
-                SMALL_VALUE_LOOKUP_TABLES[0][(n & BITMASK) as usize]
-                    + SMALL_VALUE_LOOKUP_TABLES[1][((n >> 16) & BITMASK) as usize]
-            }
-        }
+        <Self as ark_ff::PrimeField>::from_u64(n as u64).unwrap()
     }
 
     #[inline]
@@ -150,6 +118,19 @@ impl JoltField for ark_bn254::Fr {
         }
     }
 
+    fn from_u128(val: u128) -> Self {
+        if val <= u16::MAX as u128 {
+            <Self as JoltField>::from_u16(val as u16)
+        } else if val <= u32::MAX as u128 {
+            <Self as JoltField>::from_u32(val as u32)
+        } else if val <= u64::MAX as u128 {
+            <Self as JoltField>::from_u64(val as u64)
+        } else {
+            let bigint = BigInt::new([val as u64, (val >> 64) as u64, 0, 0]);
+            <Self as ark_ff::PrimeField>::from_bigint(bigint).unwrap()
+        }
+    }
+
     fn to_u64(&self) -> Option<u64> {
         let bigint = self.into_bigint();
         let limbs: &[u64] = bigint.as_ref();
@@ -171,7 +152,6 @@ impl JoltField for ark_bn254::Fr {
     }
 
     fn from_bytes(bytes: &[u8]) -> Self {
-        assert_eq!(bytes.len(), Self::NUM_BYTES);
         ark_bn254::Fr::from_le_bytes_mod_order(bytes)
     }
 
@@ -181,12 +161,33 @@ impl JoltField for ark_bn254::Fr {
 
     #[inline(always)]
     fn mul_u64(&self, n: u64) -> Self {
-        ark_ff::Fp::mul_u64(*self, n)
+        if n == 0 || self.is_zero() {
+            Self::zero()
+        } else if n == 1 {
+            *self
+        } else if self.is_one() {
+            <Self as JoltField>::from_u64(n)
+        } else {
+            ark_ff::Fp::mul_u64(*self, n)
+        }
     }
 
     #[inline(always)]
     fn mul_i128(&self, n: i128) -> Self {
-        ark_ff::Fp::mul_i128(*self, n)
+        if n == 0 || self.is_zero() {
+            Self::zero()
+        } else if n == 1 {
+            *self
+        } else if self.is_one() {
+            <Self as JoltField>::from_i128(n)
+        } else {
+            ark_ff::Fp::mul_i128(*self, n)
+        }
+    }
+
+    #[inline(always)]
+    fn mul_u128(&self, n: u128) -> Self {
+        ark_ff::Fp::mul_u128(*self, n)
     }
 }
 

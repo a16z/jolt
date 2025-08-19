@@ -1,86 +1,57 @@
+use crate::utils::inline_helpers::InstrAssembler;
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    declare_riscv_instr,
     emulator::cpu::{Cpu, Xlen},
     instruction::virtual_muli::VirtualMULI,
 };
 
 use super::{
-    format::{format_i::FormatI, InstructionFormat},
-    RISCVInstruction, RISCVTrace, RV32IMInstruction, VirtualInstructionSequence,
+    format::format_i::FormatI, RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
 };
 
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
-pub struct SLLI {
-    pub address: u64,
-    pub operands: FormatI,
-    /// If this instruction is part of a "virtual sequence" (see Section 6.2 of the
-    /// Jolt paper), then this contains the number of virtual instructions after this
-    /// one in the sequence. I.e. if this is the last instruction in the sequence,
-    /// `virtual_sequence_remaining` will be Some(0); if this is the penultimate instruction
-    /// in the sequence, `virtual_sequence_remaining` will be Some(1); etc.
-    pub virtual_sequence_remaining: Option<usize>,
-}
+declare_riscv_instr!(
+    name   = SLLI,
+    mask   = 0xfc00707f,
+    match  = 0x00001013,
+    format = FormatI,
+    ram    = ()
+);
 
-impl RISCVInstruction for SLLI {
-    const MASK: u32 = 0xfc00707f;
-    const MATCH: u32 = 0x00001013;
-
-    type Format = FormatI;
-    type RAMAccess = ();
-
-    fn operands(&self) -> &Self::Format {
-        &self.operands
-    }
-
-    fn new(word: u32, address: u64, validate: bool) -> Self {
-        if validate {
-            debug_assert_eq!(word & Self::MASK, Self::MATCH);
-        }
-
-        Self {
-            address,
-            operands: FormatI::parse(word),
-            virtual_sequence_remaining: None,
-        }
-    }
-
-    fn execute(&self, cpu: &mut Cpu, _: &mut Self::RAMAccess) {
+impl SLLI {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <SLLI as RISCVInstruction>::RAMAccess) {
         let mask = match cpu.xlen {
             Xlen::Bit32 => 0x1f,
             Xlen::Bit64 => 0x3f,
         };
-        cpu.x[self.operands.rd] =
-            cpu.sign_extend(cpu.x[self.operands.rs1].wrapping_shl(self.operands.imm as u32 & mask));
+        cpu.x[self.operands.rd as usize] = cpu.sign_extend(
+            cpu.x[self.operands.rs1 as usize].wrapping_shl(self.operands.imm as u32 & mask),
+        );
     }
 }
 
 impl RISCVTrace for SLLI {
-    fn trace(&self, cpu: &mut Cpu) {
-        let virtual_sequence = self.virtual_sequence();
-        for instr in virtual_sequence {
-            instr.trace(cpu);
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
+        let inline_sequence = self.inline_sequence(cpu.xlen);
+        let mut trace = trace;
+        for instr in inline_sequence {
+            // In each iteration, create a new Option containing a re-borrowed reference
+            instr.trace(cpu, trace.as_deref_mut());
         }
     }
-}
 
-impl VirtualInstructionSequence for SLLI {
-    fn virtual_sequence(&self) -> Vec<RV32IMInstruction> {
-        let virtual_sequence_remaining = self.virtual_sequence_remaining.unwrap_or(0);
-        let mut sequence = vec![];
+    fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
+        // Determine word size based on immediate value and instruction encoding
+        // For SLLI: RV32 uses 5-bit immediates (0-31), RV64 uses 6-bit immediates (0-63)
+        let mask = match xlen {
+            Xlen::Bit32 => 0x1f, //low 5bits
+            Xlen::Bit64 => 0x3f, //low 6bits
+        };
+        let shift = self.operands.imm & mask;
 
-        let mul = RV32IMInstruction::MULI(VirtualMULI {
-            address: self.address,
-            operands: FormatI {
-                rd: self.operands.rd,
-                rs1: self.operands.rs1,
-                // TODO: this only works for Xlen = 32
-                imm: (1 << ((self.operands.imm as u64) % 32)),
-            },
-            virtual_sequence_remaining: Some(virtual_sequence_remaining),
-        });
-        sequence.push(mul);
-
-        sequence
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
+        asm.emit_i::<VirtualMULI>(self.operands.rd, self.operands.rs1, 1 << shift);
+        asm.finalize()
     }
 }
