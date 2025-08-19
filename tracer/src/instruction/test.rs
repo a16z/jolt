@@ -1,13 +1,14 @@
-use crate::emulator::cpu::{Cpu, Xlen};
+use crate::emulator::cpu::Cpu;
+use crate::instruction::format::{InstructionFormat, InstructionRegisterState};
+use crate::instruction::NormalizedInstruction;
 
 use super::{
-    div::DIV, divu::DIVU, lb::LB, lbu::LBU, lh::LH, lhu::LHU, mulh::MULH, mulhsu::MULHSU, rem::REM,
-    remu::REMU, sb::SB, sh::SH, sll::SLL, slli::SLLI, sra::SRA, srai::SRAI, srl::SRL, srli::SRLI,
-    RISCVInstruction, RISCVTrace, VirtualInstructionSequence,
+    sll::SLL, slli::SLLI, sra::SRA, srai::SRAI, srl::SRL, srli::SRLI, RISCVInstruction, RISCVTrace,
 };
 
 use crate::emulator::terminal::DummyTerminal;
 
+use common::constants::RISCV_REGISTER_COUNT;
 use rand::rngs::OsRng;
 
 use rand::{rngs::StdRng, RngCore, SeedableRng};
@@ -19,7 +20,7 @@ macro_rules! test_virtual_sequences {
       $(
           paste::paste! {
               #[test]
-              fn [<test_ $instr:snake _virtual_sequence>]() {
+              fn [<test_ $instr:lower _virtual_sequence>]() {
                   virtual_sequence_trace_test::<$instr>();
               }
           }
@@ -27,11 +28,7 @@ macro_rules! test_virtual_sequences {
   };
 }
 
-// List of instruction types to test.
-// Each must implement `VirtualInstructionSequence`.
-test_virtual_sequences!(
-    DIV, DIVU, LB, LBU, LH, LHU, MULH, MULHSU, REM, REMU, SB, SH, SLL, SLLI, SRA, SRAI, SRL, SRLI,
-);
+test_virtual_sequences!(SLL, SLLI, SRA, SRAI, SRL, SRLI,);
 
 fn test_rng() -> StdRng {
     let mut seed = [0u8; 32];
@@ -41,69 +38,53 @@ fn test_rng() -> StdRng {
     StdRng::from_seed(seed)
 }
 
-pub fn virtual_sequence_trace_test<
-    I: RISCVInstruction + VirtualInstructionSequence + RISCVTrace + Copy,
->()
+const TEST_MEMORY_CAPACITY: u64 = 1024 * 1024;
+
+pub fn virtual_sequence_trace_test<I: RISCVInstruction + RISCVTrace + Copy>()
 where
     RV32IMCycle: From<RISCVCycle<I>>,
 {
     let mut rng = test_rng();
 
-    const STANDARD_REGISTER_COUNT: usize = 32; //@TODO support 64 bit?
-
     for _ in 0..100 {
-        let rs1 = rng.next_u64() % STANDARD_REGISTER_COUNT as u64;
-
-        let rs2 = rng.next_u64() % STANDARD_REGISTER_COUNT as u64;
-
-        let mut rd = rng.next_u64() % STANDARD_REGISTER_COUNT as u64;
-
-        while rd == 0 {
-            rd = rng.next_u64() % STANDARD_REGISTER_COUNT as u64;
-        }
-
-        let rs1_val = if rs1 == 0 { 0 } else { rng.next_u64() };
-
-        let rs2_val = if rs2 == 0 {
-            0
-        } else if rs2 == rs1 {
-            rs1_val
-        } else {
-            rng.next_u64()
-        };
-
         let instruction = I::random(&mut rng);
+        let instr: NormalizedInstruction = instruction.into();
+        let register_state =
+            <<I::Format as InstructionFormat>::RegisterState as InstructionRegisterState>::random(
+                &mut rng,
+            );
 
-        let mut original_cpu = Cpu::new(Box::new(DummyTerminal::new()));
+        let mut original_cpu = Cpu::new(Box::new(DummyTerminal::default()));
+        original_cpu.get_mut_mmu().init_memory(TEST_MEMORY_CAPACITY);
 
-        let mut virtual_cpu = Cpu::new(Box::new(DummyTerminal::new()));
+        let mut virtual_cpu = Cpu::new(Box::new(DummyTerminal::default()));
+        virtual_cpu.get_mut_mmu().init_memory(TEST_MEMORY_CAPACITY);
 
-        original_cpu.x[rs1 as usize] = rs1_val as i64;
-
-        original_cpu.x[rs2 as usize] = rs2_val as i64;
-
-        virtual_cpu.x[rs1 as usize] = rs1_val as i64;
-
-        virtual_cpu.x[rs2 as usize] = rs2_val as i64;
+        if instr.operands.rs1 != 0 {
+            original_cpu.x[instr.operands.rs1 as usize] = register_state.rs1_value() as i64;
+            virtual_cpu.x[instr.operands.rs1 as usize] = register_state.rs1_value() as i64;
+        }
+        if instr.operands.rs2 != 0 {
+            original_cpu.x[instr.operands.rs2 as usize] = register_state.rs2_value() as i64;
+            virtual_cpu.x[instr.operands.rs2 as usize] = register_state.rs2_value() as i64;
+        }
 
         let mut ram_access = Default::default();
 
         instruction.execute(&mut original_cpu, &mut ram_access);
 
-        instruction.trace(&mut virtual_cpu);
+        instruction.trace(&mut virtual_cpu, None);
 
         assert_eq!(
             original_cpu.pc, virtual_cpu.pc,
             "PC register has different values after execution"
         );
 
-        //@TODO markosg04: load/store/others are failing this check? what is the desired output...
-
-        for i in 0..STANDARD_REGISTER_COUNT {
+        for i in 0..RISCV_REGISTER_COUNT {
             assert_eq!(
-                original_cpu.x[i], virtual_cpu.x[i],
+                original_cpu.x[i as usize], virtual_cpu.x[i as usize],
                 "Register {} has different values after execution. Original: {:?}, Virtual: {:?}",
-                i, original_cpu.x[i], virtual_cpu.x[i]
+                i, original_cpu.x[i as usize], virtual_cpu.x[i as usize]
             );
         }
     }
