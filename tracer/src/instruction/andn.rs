@@ -2,10 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
-use super::{
-    format::{format_r::FormatR, InstructionFormat},
-    RISCVInstruction, RISCVTrace,
-};
+use super::{format::format_r::FormatR, RISCVInstruction, RISCVTrace};
 
 // rd = rs1 & !rs2
 declare_riscv_instr!(

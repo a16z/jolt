@@ -1,16 +1,14 @@
-use serde::{Deserialize, Serialize};
-
+use crate::utils::inline_helpers::InstrAssembler;
 use crate::utils::virtual_registers::allocate_virtual_register;
 use crate::{
     declare_riscv_instr,
     emulator::cpu::{Cpu, Xlen},
 };
+use serde::{Deserialize, Serialize};
 
 use super::{
-    format::{format_i::FormatI, format_r::FormatR, InstructionFormat},
-    mul::MUL,
-    virtual_pow2::VirtualPow2,
-    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
+    format::format_r::FormatR, mul::MUL, virtual_pow2::VirtualPow2, RISCVInstruction, RISCVTrace,
+    RV32IMCycle, RV32IMInstruction,
 };
 
 declare_riscv_instr!(
@@ -44,38 +42,12 @@ impl RISCVTrace for SLL {
         }
     }
 
-    fn inline_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
-        // Virtual registers used in sequence
+    fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
         let v_pow2 = allocate_virtual_register();
 
-        let mut sequence = vec![];
-        let mut inline_sequence_remaining = self.inline_sequence_remaining.unwrap_or(1);
-
-        let pow2 = RV32IMInstruction::VirtualPow2(VirtualPow2 {
-            address: self.address,
-            operands: FormatI {
-                rd: *v_pow2,
-                rs1: self.operands.rs2,
-                imm: 0,
-            },
-            inline_sequence_remaining: Some(inline_sequence_remaining),
-            is_compressed: self.is_compressed,
-        });
-        sequence.push(pow2);
-        inline_sequence_remaining -= 1;
-
-        let mul = RV32IMInstruction::MUL(MUL {
-            address: self.address,
-            operands: FormatR {
-                rd: self.operands.rd,
-                rs1: self.operands.rs1,
-                rs2: *v_pow2,
-            },
-            inline_sequence_remaining: Some(inline_sequence_remaining),
-            is_compressed: self.is_compressed,
-        });
-        sequence.push(mul);
-
-        sequence
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
+        asm.emit_i::<VirtualPow2>(*v_pow2, self.operands.rs2, 0);
+        asm.emit_r::<MUL>(self.operands.rd, self.operands.rs1, *v_pow2);
+        asm.finalize()
     }
 }

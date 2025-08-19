@@ -3,8 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
 use super::{
-    format::{format_virtual_right_shift_r::FormatVirtualRightShiftR, InstructionFormat},
-    RISCVInstruction, RISCVTrace,
+    format::format_virtual_right_shift_r::FormatVirtualRightShiftR, RISCVInstruction, RISCVTrace,
 };
 
 declare_riscv_instr!(

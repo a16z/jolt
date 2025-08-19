@@ -5,10 +5,7 @@ use crate::{
     emulator::cpu::{Cpu, Xlen},
 };
 
-use super::{
-    format::{format_j::FormatJ, InstructionFormat},
-    RISCVInstruction, RISCVTrace,
-};
+use super::{format::format_j::FormatJ, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name = VirtualPow2IW,

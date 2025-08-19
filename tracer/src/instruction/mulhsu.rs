@@ -1,3 +1,4 @@
+use crate::utils::inline_helpers::InstrAssembler;
 use crate::utils::virtual_registers::allocate_virtual_register;
 use serde::{Deserialize, Serialize};
 
@@ -7,15 +8,9 @@ use crate::{
 };
 
 use super::{
-    add::ADD,
-    andi::ANDI,
-    format::{format_i::FormatI, format_r::FormatR, InstructionFormat},
-    mul::MUL,
-    mulhu::MULHU,
-    sltu::SLTU,
-    virtual_movsign::VirtualMovsign,
-    xor::XOR,
-    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
+    add::ADD, andi::ANDI, format::format_r::FormatR, mul::MUL, mulhu::MULHU, sltu::SLTU,
+    virtual_movsign::VirtualMovsign, xor::XOR, RISCVInstruction, RISCVTrace, RV32IMCycle,
+    RV32IMInstruction,
 };
 
 declare_riscv_instr!(
@@ -53,7 +48,7 @@ impl RISCVTrace for MULHSU {
         }
     }
 
-    fn inline_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
+    fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
         // MULHSU implements signed-unsigned multiplication: rs1 (signed) × rs2 (unsigned)
         //
         // For negative rs1, two's complement encoding means:
@@ -76,140 +71,18 @@ impl RISCVTrace for MULHSU {
         let v_tmp = allocate_virtual_register();
         let v_carry = allocate_virtual_register();
 
-        let mut sequence = vec![];
-
-        let movsign = VirtualMovsign {
-            address: self.address,
-            operands: FormatI {
-                rd: *v_sx,
-                rs1: self.operands.rs1,
-                imm: 0,
-            },
-            inline_sequence_remaining: Some(10),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(movsign.into());
-
-        let take_lsb = ANDI {
-            address: self.address,
-            operands: FormatI {
-                rd: *v_sx_0,
-                rs1: *v_sx,
-                imm: 1,
-            },
-            inline_sequence_remaining: Some(9),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(take_lsb.into());
-
-        let xor_0 = XOR {
-            address: self.address,
-            operands: FormatR {
-                rd: *v_rs1,
-                rs1: self.operands.rs1,
-                rs2: *v_sx,
-            },
-            inline_sequence_remaining: Some(8),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(xor_0.into());
-
-        let add_0 = ADD {
-            address: self.address,
-            operands: FormatR {
-                rd: *v_rs1,
-                rs1: *v_rs1,
-                rs2: *v_sx_0,
-            },
-            inline_sequence_remaining: Some(7),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(add_0.into());
-
-        let mulhu = MULHU {
-            address: self.address,
-            operands: FormatR {
-                rd: *v_hi,
-                rs1: *v_rs1,
-                rs2: self.operands.rs2,
-            },
-            inline_sequence_remaining: Some(6),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(mulhu.into());
-
-        let mul = MUL {
-            address: self.address,
-            operands: FormatR {
-                rd: *v_lo,
-                rs1: *v_rs1,
-                rs2: self.operands.rs2,
-            },
-            inline_sequence_remaining: Some(5),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(mul.into());
-
-        let xor_1 = XOR {
-            address: self.address,
-            operands: FormatR {
-                rd: *v_hi,
-                rs1: *v_hi,
-                rs2: *v_sx,
-            },
-            inline_sequence_remaining: Some(4),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(xor_1.into());
-
-        let xor_2 = XOR {
-            address: self.address,
-            operands: FormatR {
-                rd: *v_lo,
-                rs1: *v_lo,
-                rs2: *v_sx,
-            },
-            inline_sequence_remaining: Some(3),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(xor_2.into());
-
-        let add_1 = ADD {
-            address: self.address,
-            operands: FormatR {
-                rd: *v_tmp,
-                rs1: *v_lo,
-                rs2: *v_sx_0,
-            },
-            inline_sequence_remaining: Some(2),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(add_1.into());
-
-        let sltu_0 = SLTU {
-            address: self.address,
-            operands: FormatR {
-                rd: *v_carry,
-                rs1: *v_tmp,
-                rs2: *v_lo,
-            },
-            inline_sequence_remaining: Some(1),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(sltu_0.into());
-
-        let add_2 = ADD {
-            address: self.address,
-            operands: FormatR {
-                rd: self.operands.rd,
-                rs1: *v_hi,
-                rs2: *v_carry,
-            },
-            inline_sequence_remaining: Some(0),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(add_2.into());
-
-        sequence
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
+        asm.emit_i::<VirtualMovsign>(*v_sx, self.operands.rs1, 0);
+        asm.emit_i::<ANDI>(*v_sx_0, *v_sx, 1);
+        asm.emit_r::<XOR>(*v_rs1, self.operands.rs1, *v_sx);
+        asm.emit_r::<ADD>(*v_rs1, *v_rs1, *v_sx_0);
+        asm.emit_r::<MULHU>(*v_hi, *v_rs1, self.operands.rs2);
+        asm.emit_r::<MUL>(*v_lo, *v_rs1, self.operands.rs2);
+        asm.emit_r::<XOR>(*v_hi, *v_hi, *v_sx);
+        asm.emit_r::<XOR>(*v_lo, *v_lo, *v_sx);
+        asm.emit_r::<ADD>(*v_tmp, *v_lo, *v_sx_0);
+        asm.emit_r::<SLTU>(*v_carry, *v_tmp, *v_lo);
+        asm.emit_r::<ADD>(self.operands.rd, *v_hi, *v_carry);
+        asm.finalize()
     }
 }

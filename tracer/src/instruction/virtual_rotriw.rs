@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use crate::instruction::format::format_virtual_right_shift_i::FormatVirtualRightShiftI;
 use crate::{declare_riscv_instr, emulator::cpu::Cpu, emulator::cpu::Xlen};
 
-use super::{format::InstructionFormat, RISCVInstruction, RISCVTrace};
+use super::{RISCVInstruction, RISCVTrace};
 
 // Note, unlike ROTIW from Zbb extension of RiscV, ROTRIW does not sign extend the result
 declare_riscv_instr!(
