@@ -33,7 +33,7 @@ jobs:
         with:
           components: clippy
       - name: cargo clippy
-        run: cargo clippy --all --all-targets
+        run: cargo clippy --all --all-targets --features allocative
 
   machete:
     runs-on: ubuntu-latest

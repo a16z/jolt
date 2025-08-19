@@ -18,7 +18,7 @@ use crate::{
         instruction::LookupQuery,
         instruction_lookups::{
             booleanity::BooleanitySumcheck, hamming_weight::HammingWeightSumcheck,
-            read_raf_checking::ReadRafSumcheck,
+            ra_virtual::RASumCheck, read_raf_checking::ReadRafSumcheck,
         },
         witness::VirtualPolynomial,
     },
@@ -26,6 +26,7 @@ use crate::{
 
 pub mod booleanity;
 pub mod hamming_weight;
+pub mod ra_virtual;
 pub mod read_raf_checking;
 
 const LOG_K: usize = XLEN * 2;
@@ -96,6 +97,24 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
             Box::new(booleanity),
             Box::new(hamming_weight),
         ]
+    }
+
+    fn stage4_prover_instances(
+        &mut self,
+        sm: &mut StateManager<'_, F, T, PCS>,
+    ) -> Vec<Box<dyn SumcheckInstance<F>>> {
+        let ra_virtual = RASumCheck::new_prover(LOG_K, sm);
+
+        vec![Box::new(ra_virtual)]
+    }
+
+    fn stage4_verifier_instances(
+        &mut self,
+        sm: &mut StateManager<'_, F, T, PCS>,
+    ) -> Vec<Box<dyn SumcheckInstance<F>>> {
+        let ra_virtual = RASumCheck::new_verifier(LOG_K, sm);
+
+        vec![Box::new(ra_virtual)]
     }
 }
 
