@@ -348,8 +348,6 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
                 s.spawn(|_| ps.identity_ps.bind(r_j));
                 s.spawn(|_| ps.right_operand_ps.bind(r_j));
                 s.spawn(|_| ps.left_operand_ps.bind(r_j));
-                println!("ps new v len = {}", ps.v.len());
-
                 s.spawn(|_| ps.v.update(r_j));
             });
             {
