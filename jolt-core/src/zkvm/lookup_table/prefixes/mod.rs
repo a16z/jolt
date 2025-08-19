@@ -206,7 +206,7 @@ impl Prefixes {
     /// The remaining variables of the prefix are captured by `b`. We sum
     /// over these variables as they range over the Boolean hypercube, so
     /// they can be represented by a single bitvector.
-    pub fn prefix_mle<const WORD_SIZE: usize, F: JoltField>(
+    pub fn prefix_mle<const XLEN: usize, F: JoltField>(
         &self,
         checkpoints: &[PrefixCheckpoint<F>],
         r_x: Option<F>,
@@ -215,19 +215,15 @@ impl Prefixes {
         j: usize,
     ) -> PrefixEval<F> {
         let eval = match self {
-            Prefixes::LowerWord => {
-                LowerWordPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j)
-            }
+            Prefixes::LowerWord => LowerWordPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::LowerHalfWord => {
-                LowerHalfWordPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j)
+                LowerHalfWordPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j)
             }
-            Prefixes::UpperWord => {
-                UpperWordPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j)
-            }
-            Prefixes::And => AndPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j),
-            Prefixes::Andn => AndnPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j),
-            Prefixes::Or => OrPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j),
-            Prefixes::Xor => XorPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j),
+            Prefixes::UpperWord => UpperWordPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j),
+            Prefixes::And => AndPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j),
+            Prefixes::Andn => AndnPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j),
+            Prefixes::Or => OrPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j),
+            Prefixes::Xor => XorPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::Eq => EqPrefix::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::LessThan => LessThanPrefix::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::LeftOperandIsZero => {
@@ -254,47 +250,43 @@ impl Prefixes {
             Prefixes::NegativeDivisorGreaterThanRemainder => {
                 NegativeDivisorGreaterThanRemainderPrefix::prefix_mle(checkpoints, r_x, c, b, j)
             }
-            Prefixes::Lsb => LsbPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j),
-            Prefixes::Pow2 => Pow2Prefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j),
-            Prefixes::Pow2W => Pow2WPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j),
+            Prefixes::Lsb => LsbPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j),
+            Prefixes::Pow2 => Pow2Prefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j),
+            Prefixes::Pow2W => Pow2WPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::RightShift => RightShiftPrefix::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::SignExtension => {
-                SignExtensionPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j)
+                SignExtensionPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j)
             }
-            Prefixes::LeftShift => {
-                LeftShiftPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j)
-            }
+            Prefixes::LeftShift => LeftShiftPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::LeftShiftHelper => {
                 LeftShiftHelperPrefix::prefix_mle(checkpoints, r_x, c, b, j)
             }
-            Prefixes::TwoLsb => TwoLsbPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j),
+            Prefixes::TwoLsb => TwoLsbPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::SignExtensionUpperHalf => {
-                SignExtensionUpperHalfPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j)
+                SignExtensionUpperHalfPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j)
             }
             Prefixes::ChangeDivisor => {
-                ChangeDivisorPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j)
+                ChangeDivisorPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j)
             }
             Prefixes::RightOperand => {
-                RightOperandPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j)
+                RightOperandPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j)
             }
             Prefixes::ChangeDivisorW => {
-                ChangeDivisorWPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j)
+                ChangeDivisorWPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j)
             }
             Prefixes::RightOperandW => {
-                RightOperandWPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j)
+                RightOperandWPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j)
             }
             Prefixes::SignExtensionRightOperand => {
-                SignExtensionRightOperandPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j)
+                SignExtensionRightOperandPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j)
             }
             Prefixes::RightShiftW => {
-                RightShiftWPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j)
+                RightShiftWPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j)
             }
             Prefixes::LeftShiftWHelper => {
-                LeftShiftWHelperPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j)
+                LeftShiftWHelperPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j)
             }
-            Prefixes::LeftShiftW => {
-                LeftShiftWPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j)
-            }
+            Prefixes::LeftShiftW => LeftShiftWPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j),
         };
         PrefixEval(eval)
     }
@@ -304,7 +296,7 @@ impl Prefixes {
     /// since the last update.
     /// This function updates all the prefix checkpoints.
     #[tracing::instrument(skip_all)]
-    pub fn update_checkpoints<const WORD_SIZE: usize, F: JoltField>(
+    pub fn update_checkpoints<const XLEN: usize, F: JoltField>(
         checkpoints: &mut [PrefixCheckpoint<F>],
         r_x: F,
         r_y: F,
@@ -317,12 +309,8 @@ impl Prefixes {
             .enumerate()
             .for_each(|(index, new_checkpoint)| {
                 let prefix: Self = FromPrimitive::from_u8(index as u8).unwrap();
-                *new_checkpoint = prefix.update_prefix_checkpoint::<WORD_SIZE, F>(
-                    &previous_checkpoints,
-                    r_x,
-                    r_y,
-                    j,
-                );
+                *new_checkpoint =
+                    prefix.update_prefix_checkpoint::<XLEN, F>(&previous_checkpoints, r_x, r_y, j);
             });
     }
 
@@ -332,7 +320,7 @@ impl Prefixes {
     /// `j` is the sumcheck round index.
     /// A checkpoint update may depend on the values of the other prefix checkpoints,
     /// so we pass in all such `checkpoints` to this function.
-    fn update_prefix_checkpoint<const WORD_SIZE: usize, F: JoltField>(
+    fn update_prefix_checkpoint<const XLEN: usize, F: JoltField>(
         &self,
         checkpoints: &[PrefixCheckpoint<F>],
         r_x: F,
@@ -341,26 +329,20 @@ impl Prefixes {
     ) -> PrefixCheckpoint<F> {
         match self {
             Prefixes::LowerWord => {
-                LowerWordPrefix::<WORD_SIZE>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+                LowerWordPrefix::<XLEN>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
             }
             Prefixes::LowerHalfWord => {
-                LowerHalfWordPrefix::<WORD_SIZE>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+                LowerHalfWordPrefix::<XLEN>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
             }
             Prefixes::UpperWord => {
-                UpperWordPrefix::<WORD_SIZE>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+                UpperWordPrefix::<XLEN>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
             }
-            Prefixes::And => {
-                AndPrefix::<WORD_SIZE>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
-            }
+            Prefixes::And => AndPrefix::<XLEN>::update_prefix_checkpoint(checkpoints, r_x, r_y, j),
             Prefixes::Andn => {
-                AndnPrefix::<WORD_SIZE>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+                AndnPrefix::<XLEN>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
             }
-            Prefixes::Or => {
-                OrPrefix::<WORD_SIZE>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
-            }
-            Prefixes::Xor => {
-                XorPrefix::<WORD_SIZE>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
-            }
+            Prefixes::Or => OrPrefix::<XLEN>::update_prefix_checkpoint(checkpoints, r_x, r_y, j),
+            Prefixes::Xor => XorPrefix::<XLEN>::update_prefix_checkpoint(checkpoints, r_x, r_y, j),
             Prefixes::Eq => EqPrefix::update_prefix_checkpoint(checkpoints, r_x, r_y, j),
             Prefixes::LessThan => {
                 LessThanPrefix::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
@@ -420,32 +402,30 @@ impl Prefixes {
                     j,
                 )
             }
-            Prefixes::Lsb => {
-                LsbPrefix::<WORD_SIZE>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
-            }
+            Prefixes::Lsb => LsbPrefix::<XLEN>::update_prefix_checkpoint(checkpoints, r_x, r_y, j),
             Prefixes::Pow2 => {
-                Pow2Prefix::<WORD_SIZE>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+                Pow2Prefix::<XLEN>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
             }
             Prefixes::Pow2W => {
-                Pow2WPrefix::<WORD_SIZE>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+                Pow2WPrefix::<XLEN>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
             }
             Prefixes::RightShift => {
                 RightShiftPrefix::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
             }
             Prefixes::SignExtension => {
-                SignExtensionPrefix::<WORD_SIZE>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+                SignExtensionPrefix::<XLEN>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
             }
             Prefixes::LeftShift => {
-                LeftShiftPrefix::<WORD_SIZE>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+                LeftShiftPrefix::<XLEN>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
             }
             Prefixes::LeftShiftHelper => {
                 LeftShiftHelperPrefix::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
             }
             Prefixes::TwoLsb => {
-                TwoLsbPrefix::<WORD_SIZE>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+                TwoLsbPrefix::<XLEN>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
             }
             Prefixes::SignExtensionUpperHalf => {
-                SignExtensionUpperHalfPrefix::<WORD_SIZE>::update_prefix_checkpoint(
+                SignExtensionUpperHalfPrefix::<XLEN>::update_prefix_checkpoint(
                     checkpoints,
                     r_x,
                     r_y,
@@ -453,24 +433,19 @@ impl Prefixes {
                 )
             }
             Prefixes::ChangeDivisor => {
-                ChangeDivisorPrefix::<WORD_SIZE>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+                ChangeDivisorPrefix::<XLEN>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
             }
             Prefixes::RightOperand => {
-                RightOperandPrefix::<WORD_SIZE>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+                RightOperandPrefix::<XLEN>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
             }
             Prefixes::ChangeDivisorW => {
-                ChangeDivisorWPrefix::<WORD_SIZE>::update_prefix_checkpoint(
-                    checkpoints,
-                    r_x,
-                    r_y,
-                    j,
-                )
+                ChangeDivisorWPrefix::<XLEN>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
             }
             Prefixes::RightOperandW => {
-                RightOperandWPrefix::<WORD_SIZE>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+                RightOperandWPrefix::<XLEN>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
             }
             Prefixes::SignExtensionRightOperand => {
-                SignExtensionRightOperandPrefix::<WORD_SIZE>::update_prefix_checkpoint(
+                SignExtensionRightOperandPrefix::<XLEN>::update_prefix_checkpoint(
                     checkpoints,
                     r_x,
                     r_y,
@@ -478,18 +453,13 @@ impl Prefixes {
                 )
             }
             Prefixes::RightShiftW => {
-                RightShiftWPrefix::<WORD_SIZE>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+                RightShiftWPrefix::<XLEN>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
             }
             Prefixes::LeftShiftWHelper => {
-                LeftShiftWHelperPrefix::<WORD_SIZE>::update_prefix_checkpoint(
-                    checkpoints,
-                    r_x,
-                    r_y,
-                    j,
-                )
+                LeftShiftWHelperPrefix::<XLEN>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
             }
             Prefixes::LeftShiftW => {
-                LeftShiftWPrefix::<WORD_SIZE>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+                LeftShiftWPrefix::<XLEN>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
             }
         }
     }

@@ -7,13 +7,13 @@ use super::suffixes::{SuffixEval, Suffixes};
 use super::JoltLookupTable;
 
 /// SignExtendHalfWord table - sign-extends the lower half of a word to full word
-/// For WORD_SIZE=64, this sign-extends a 32-bit value to 64-bit
+/// For XLEN=64, this sign-extends a 32-bit value to 64-bit
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct SignExtendHalfWordTable<const WORD_SIZE: usize>;
+pub struct SignExtendHalfWordTable<const XLEN: usize>;
 
-impl<const WORD_SIZE: usize> JoltLookupTable for SignExtendHalfWordTable<WORD_SIZE> {
+impl<const XLEN: usize> JoltLookupTable for SignExtendHalfWordTable<XLEN> {
     fn materialize_entry(&self, index: u128) -> u64 {
-        let half_word_size = WORD_SIZE / 2;
+        let half_word_size = XLEN / 2;
         let lower_half = (index % (1u128 << half_word_size)) as u64;
 
         // Check sign bit (bit at position half_word_size - 1)
@@ -29,17 +29,16 @@ impl<const WORD_SIZE: usize> JoltLookupTable for SignExtendHalfWordTable<WORD_SI
     }
 
     fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
-        debug_assert_eq!(r.len(), 2 * WORD_SIZE);
-        let half_word_size = WORD_SIZE / 2;
+        debug_assert_eq!(r.len(), 2 * XLEN);
+        let half_word_size = XLEN / 2;
 
-        // Sum for lower half bits (from the second operand, starting at WORD_SIZE)
+        // Sum for lower half bits (from the second operand, starting at XLEN)
         let mut lower_half = F::zero();
         for i in 0..half_word_size {
-            lower_half +=
-                F::from_u64(1 << (half_word_size - 1 - i)) * r[WORD_SIZE + half_word_size + i];
+            lower_half += F::from_u64(1 << (half_word_size - 1 - i)) * r[XLEN + half_word_size + i];
         }
 
-        let sign_bit = r[WORD_SIZE + half_word_size];
+        let sign_bit = r[XLEN + half_word_size];
 
         // Upper half: all sign bits
         let mut upper_half = F::zero();
@@ -51,9 +50,7 @@ impl<const WORD_SIZE: usize> JoltLookupTable for SignExtendHalfWordTable<WORD_SI
     }
 }
 
-impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE>
-    for SignExtendHalfWordTable<WORD_SIZE>
-{
+impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for SignExtendHalfWordTable<XLEN> {
     fn suffixes(&self) -> Vec<Suffixes> {
         vec![
             Suffixes::One,

@@ -7,34 +7,31 @@ use super::suffixes::{SuffixEval, Suffixes};
 use super::JoltLookupTable;
 
 /// LowerHalfWord table - extracts the lower half of a word
-/// For WORD_SIZE=64, this extracts the lower 32 bits
-/// For WORD_SIZE=32, this extracts the lower 16 bits
+/// For XLEN=64, this extracts the lower 32 bits
+/// For XLEN=32, this extracts the lower 16 bits
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct LowerHalfWordTable<const WORD_SIZE: usize>;
+pub struct LowerHalfWordTable<const XLEN: usize>;
 
-impl<const WORD_SIZE: usize> JoltLookupTable for LowerHalfWordTable<WORD_SIZE> {
+impl<const XLEN: usize> JoltLookupTable for LowerHalfWordTable<XLEN> {
     fn materialize_entry(&self, index: u128) -> u64 {
         // Extract the lower half of the word
-        let half_word_size = WORD_SIZE / 2;
+        let half_word_size = XLEN / 2;
         (index % (1u128 << half_word_size)) as u64
     }
 
     fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
-        debug_assert_eq!(r.len(), 2 * WORD_SIZE);
-        let half_word_size = WORD_SIZE / 2;
+        debug_assert_eq!(r.len(), 2 * XLEN);
+        let half_word_size = XLEN / 2;
         let mut result = F::zero();
         // Sum the lower half_word_size bits
         for i in 0..half_word_size {
-            result +=
-                F::from_u64(1 << (half_word_size - 1 - i)) * r[WORD_SIZE + half_word_size + i];
+            result += F::from_u64(1 << (half_word_size - 1 - i)) * r[XLEN + half_word_size + i];
         }
         result
     }
 }
 
-impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE>
-    for LowerHalfWordTable<WORD_SIZE>
-{
+impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for LowerHalfWordTable<XLEN> {
     fn suffixes(&self) -> Vec<Suffixes> {
         vec![Suffixes::One, Suffixes::LowerHalfWord]
     }

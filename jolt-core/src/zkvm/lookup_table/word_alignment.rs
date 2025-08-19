@@ -9,9 +9,9 @@ use crate::zkvm::lookup_table::prefixes::Prefixes;
 
 /// (address, offset)
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct WordAlignmentTable<const WORD_SIZE: usize>;
+pub struct WordAlignmentTable<const XLEN: usize>;
 
-impl<const WORD_SIZE: usize> JoltLookupTable for WordAlignmentTable<WORD_SIZE> {
+impl<const XLEN: usize> JoltLookupTable for WordAlignmentTable<XLEN> {
     fn materialize_entry(&self, index: u128) -> u64 {
         index.is_multiple_of(4).into()
     }
@@ -24,9 +24,7 @@ impl<const WORD_SIZE: usize> JoltLookupTable for WordAlignmentTable<WORD_SIZE> {
     }
 }
 
-impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE>
-    for WordAlignmentTable<WORD_SIZE>
-{
+impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for WordAlignmentTable<XLEN> {
     fn suffixes(&self) -> Vec<Suffixes> {
         vec![Suffixes::TwoLsb]
     }

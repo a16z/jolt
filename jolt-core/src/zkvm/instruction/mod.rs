@@ -10,11 +10,11 @@ use crate::utils::interleave_bits;
 
 use super::lookup_table::LookupTables;
 
-pub trait InstructionLookup<const WORD_SIZE: usize> {
-    fn lookup_table(&self) -> Option<LookupTables<WORD_SIZE>>;
+pub trait InstructionLookup<const XLEN: usize> {
+    fn lookup_table(&self) -> Option<LookupTables<XLEN>>;
 }
 
-pub trait LookupQuery<const WORD_SIZE: usize> {
+pub trait LookupQuery<const XLEN: usize> {
     /// Returns a tuple of the instruction's inputs. If the instruction has only one input,
     /// one of the tuple values will be 0.
     fn to_instruction_inputs(&self) -> (u64, i128);
@@ -30,7 +30,7 @@ pub trait LookupQuery<const WORD_SIZE: usize> {
     /// Converts this instruction's operands into a lookup index (as used in sparse-dense Shout).
     /// By default, interleaves the two bits of the two operands together.
     fn to_lookup_index(&self) -> u128 {
-        let (x, y) = LookupQuery::<WORD_SIZE>::to_lookup_operands(self);
+        let (x, y) = LookupQuery::<XLEN>::to_lookup_operands(self);
         interleave_bits(x, y as u64)
     }
 
@@ -150,8 +150,8 @@ macro_rules! define_rv32im_trait_impls {
             }
         }
 
-        impl<const WORD_SIZE: usize> InstructionLookup<WORD_SIZE> for RV32IMCycle {
-            fn lookup_table(&self) -> Option<LookupTables<WORD_SIZE>> {
+        impl<const XLEN: usize> InstructionLookup<XLEN> for RV32IMCycle {
+            fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
                 match self {
                     RV32IMCycle::NoOp => None,
                     $(
@@ -162,12 +162,12 @@ macro_rules! define_rv32im_trait_impls {
             }
         }
 
-        impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RV32IMCycle {
+        impl<const XLEN: usize> LookupQuery<XLEN> for RV32IMCycle {
             fn to_instruction_inputs(&self) -> (u64, i128) {
                 match self {
                     RV32IMCycle::NoOp => (0, 0),
                     $(
-                        RV32IMCycle::$instr(cycle) => LookupQuery::<WORD_SIZE>::to_instruction_inputs(cycle),
+                        RV32IMCycle::$instr(cycle) => LookupQuery::<XLEN>::to_instruction_inputs(cycle),
                     )*
                     _ => panic!("Unexpected instruction: {:?}", self),
                 }
@@ -177,7 +177,7 @@ macro_rules! define_rv32im_trait_impls {
                 match self {
                     RV32IMCycle::NoOp => 0,
                     $(
-                        RV32IMCycle::$instr(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_index(cycle),
+                        RV32IMCycle::$instr(cycle) => LookupQuery::<XLEN>::to_lookup_index(cycle),
                     )*
                     _ => panic!("Unexpected instruction: {:?}", self),
                 }
@@ -187,7 +187,7 @@ macro_rules! define_rv32im_trait_impls {
                 match self {
                     RV32IMCycle::NoOp => (0, 0),
                     $(
-                        RV32IMCycle::$instr(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_operands(cycle),
+                        RV32IMCycle::$instr(cycle) => LookupQuery::<XLEN>::to_lookup_operands(cycle),
                     )*
                     _ => panic!("Unexpected instruction: {:?}", self),
                 }
@@ -197,7 +197,7 @@ macro_rules! define_rv32im_trait_impls {
                 match self {
                     RV32IMCycle::NoOp => 0,
                     $(
-                        RV32IMCycle::$instr(cycle) => LookupQuery::<WORD_SIZE>::to_lookup_output(cycle),
+                        RV32IMCycle::$instr(cycle) => LookupQuery::<XLEN>::to_lookup_output(cycle),
                     )*
                     _ => panic!("Unexpected instruction: {:?}", self),
                 }

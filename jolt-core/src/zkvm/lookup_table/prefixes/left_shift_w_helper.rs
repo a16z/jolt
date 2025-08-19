@@ -1,12 +1,10 @@
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 use crate::{field::JoltField, utils::lookup_bits::LookupBits};
 
-/// Computes 2^(y.leading_ones()) for j >= WORD_SIZE
-pub enum LeftShiftWHelperPrefix<const WORD_SIZE: usize> {}
+/// Computes 2^(y.leading_ones()) for j >= XLEN
+pub enum LeftShiftWHelperPrefix<const XLEN: usize> {}
 
-impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F>
-    for LeftShiftWHelperPrefix<WORD_SIZE>
-{
+impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for LeftShiftWHelperPrefix<XLEN> {
     fn prefix_mle(
         checkpoints: &[PrefixCheckpoint<F>],
         r_x: Option<F>,
@@ -14,8 +12,8 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F>
         mut b: LookupBits,
         j: usize,
     ) -> F {
-        // Only process when j >= WORD_SIZE
-        if j < WORD_SIZE {
+        // Only process when j >= XLEN
+        if j < XLEN {
             return F::one();
         }
 
@@ -40,7 +38,7 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F>
         r_y: F,
         j: usize,
     ) -> PrefixCheckpoint<F> {
-        if j >= WORD_SIZE {
+        if j >= XLEN {
             let mut updated = checkpoints[Prefixes::LeftShiftWHelper].unwrap_or(F::one());
             updated *= F::one() + r_y;
             Some(updated).into()

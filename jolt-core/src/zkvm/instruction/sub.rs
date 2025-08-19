@@ -4,8 +4,8 @@ use crate::zkvm::lookup_table::{range_check::RangeCheckTable, LookupTables};
 
 use super::{CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS};
 
-impl<const WORD_SIZE: usize> InstructionLookup<WORD_SIZE> for SUB {
-    fn lookup_table(&self) -> Option<LookupTables<WORD_SIZE>> {
+impl<const XLEN: usize> InstructionLookup<XLEN> for SUB {
+    fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
         Some(RangeCheckTable.into())
     }
 }
@@ -26,20 +26,20 @@ impl InstructionFlags for SUB {
     }
 }
 
-impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<SUB> {
+impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<SUB> {
     fn to_lookup_operands(&self) -> (u64, u128) {
-        let (x, y) = LookupQuery::<WORD_SIZE>::to_instruction_inputs(self);
+        let (x, y) = LookupQuery::<XLEN>::to_instruction_inputs(self);
         let x = x as u128;
-        let y = (1u128 << WORD_SIZE) - y as u128;
+        let y = (1u128 << XLEN) - y as u128;
         (0, x + y)
     }
 
     fn to_lookup_index(&self) -> u128 {
-        LookupQuery::<WORD_SIZE>::to_lookup_operands(self).1
+        LookupQuery::<XLEN>::to_lookup_operands(self).1
     }
 
     fn to_instruction_inputs(&self) -> (u64, i128) {
-        match WORD_SIZE {
+        match XLEN {
             #[cfg(test)]
             8 => (
                 self.register_state.rs1 as u8 as u64,
@@ -50,18 +50,18 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<SUB> {
                 self.register_state.rs2 as u32 as i128,
             ),
             64 => (self.register_state.rs1, self.register_state.rs2 as i128),
-            _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
+            _ => panic!("{XLEN}-bit word size is unsupported"),
         }
     }
 
     fn to_lookup_output(&self) -> u64 {
-        let (x, y) = LookupQuery::<WORD_SIZE>::to_instruction_inputs(self);
-        match WORD_SIZE {
+        let (x, y) = LookupQuery::<XLEN>::to_instruction_inputs(self);
+        match XLEN {
             #[cfg(test)]
             8 => (x as u8).overflowing_sub(y as u8).0.into(),
             32 => (x as u32).overflowing_sub(y as u32).0.into(),
             64 => x.overflowing_sub(y as u64).0,
-            _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
+            _ => panic!("{XLEN}-bit word size is unsupported"),
         }
     }
 }

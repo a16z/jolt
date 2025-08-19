@@ -3,10 +3,10 @@ use crate::{field::JoltField, utils::lookup_bits::LookupBits};
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 
 /// Right-shifts the left operand according to the bitmask given by
-/// the right operand, processing the second half of bits (j > WORD_SIZE).
-pub enum RightShiftWPrefix<const WORD_SIZE: usize> {}
+/// the right operand, processing the second half of bits (j > XLEN).
+pub enum RightShiftWPrefix<const XLEN: usize> {}
 
-impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F> for RightShiftWPrefix<WORD_SIZE> {
+impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for RightShiftWPrefix<XLEN> {
     fn prefix_mle(
         checkpoints: &[PrefixCheckpoint<F>],
         r_x: Option<F>,
@@ -14,8 +14,8 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F> for RightShiftWP
         mut b: LookupBits,
         j: usize,
     ) -> F {
-        // Only process when j >= WORD_SIZE
-        if j < WORD_SIZE {
+        // Only process when j >= XLEN
+        if j < XLEN {
             return F::zero();
         }
 
@@ -41,7 +41,7 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F> for RightShiftWP
         r_y: F,
         j: usize,
     ) -> PrefixCheckpoint<F> {
-        if j >= WORD_SIZE {
+        if j >= XLEN {
             let mut updated = checkpoints[Prefixes::RightShiftW].unwrap_or(F::zero());
             updated *= F::one() + r_y;
             updated += r_x * r_y;

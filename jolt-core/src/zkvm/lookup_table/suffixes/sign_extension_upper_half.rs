@@ -3,13 +3,13 @@ use crate::utils::lookup_bits::LookupBits;
 use super::SparseDenseSuffix;
 
 /// Sign extension suffix that handles the upper half of the word
-/// If suffix length >= WORD_SIZE/2, it computes sign extension based on bit 31
+/// If suffix length >= XLEN/2, it computes sign extension based on bit 31
 /// Otherwise returns 1
-pub enum SignExtensionUpperHalfSuffix<const WORD_SIZE: usize> {}
+pub enum SignExtensionUpperHalfSuffix<const XLEN: usize> {}
 
-impl<const WORD_SIZE: usize> SparseDenseSuffix for SignExtensionUpperHalfSuffix<WORD_SIZE> {
+impl<const XLEN: usize> SparseDenseSuffix for SignExtensionUpperHalfSuffix<XLEN> {
     fn suffix_mle(b: LookupBits) -> u64 {
-        let half_word_size = WORD_SIZE / 2;
+        let half_word_size = XLEN / 2;
 
         if b.len() >= half_word_size {
             // Extract bit at position (half_word_size - 1), which is the sign bit
