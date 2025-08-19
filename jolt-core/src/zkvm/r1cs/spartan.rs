@@ -10,7 +10,6 @@ use tracing::{span, Level};
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::eq_poly::EqPolynomial;
-use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
 use crate::poly::opening_proof::{
     OpeningId, OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator,
@@ -22,8 +21,10 @@ use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::zkvm::dag::stage::SumcheckStages;
 use crate::zkvm::dag::state_manager::{ProofData, ProofKeys, StateManager};
 use crate::zkvm::instruction::CircuitFlags;
-use crate::zkvm::r1cs::constraints::UNIFORM_R1CS;
-use crate::zkvm::r1cs::inputs::{JoltR1CSInputs, ALL_R1CS_INPUTS, COMMITTED_R1CS_INPUTS};
+use crate::zkvm::r1cs::inputs::{
+    compute_claimed_witness_evals, generate_pc_noop_witnesses, JoltR1CSInputs,
+    TraceWitnessAccessor, WitnessRowAccessor, ALL_R1CS_INPUTS, COMMITTED_R1CS_INPUTS,
+};
 use crate::zkvm::r1cs::key::UniformSpartanKey;
 use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 
@@ -98,15 +99,13 @@ where
     #[tracing::instrument(skip_all)]
     fn prove_outer_sumcheck(
         num_rounds_x: usize,
-        uniform_constraints_only_padded: usize,
-        input_polys: &[MultilinearPolynomial<F>],
+        accessor: &dyn WitnessRowAccessor<F>,
         tau: &[F],
         transcript: &mut ProofTranscript,
     ) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, [F; 3]) {
         SumcheckInstanceProof::prove_spartan_small_value::<NUM_SVO_ROUNDS>(
             num_rounds_x,
-            uniform_constraints_only_padded,
-            input_polys,
+            accessor,
             tau,
             transcript,
         )
@@ -654,11 +653,8 @@ where
 
         let key = self.key.clone();
 
-        // Create input polynomials from trace
-        let input_polys: Vec<MultilinearPolynomial<F>> = ALL_R1CS_INPUTS
-            .par_iter()
-            .map(|var| var.generate_witness(trace, preprocessing))
-            .collect();
+        // Streaming accessor (no materialization of all input_polys)
+        let accessor = TraceWitnessAccessor::<F, PCS>::new(preprocessing, trace);
 
         let num_rounds_x = key.num_rows_bits();
 
@@ -667,15 +663,11 @@ where
             .borrow_mut()
             .challenge_vector(num_rounds_x);
 
-        // Uniform constraints per-step (padded to power-of-two) from constants
-        let uniform_constraints_only_padded = UNIFORM_R1CS.len().next_power_of_two();
-
         let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) = {
             let mut transcript = state_manager.transcript.borrow_mut();
             UniformSpartanProof::<F, ProofTranscript>::prove_outer_sumcheck(
                 num_rounds_x,
-                uniform_constraints_only_padded,
-                &input_polys,
+                &accessor,
                 &tau,
                 &mut transcript,
             )
@@ -720,11 +712,8 @@ where
 
         let (r_cycle, _rx_var) = outer_sumcheck_r.split_at(num_cycles_bits);
 
-        // Evaluate all witness polynomials P_i at r_cycle for the verifier
-        // Verifier computes: z(r_inner, r_cycle) = Σ_i eq(r_inner, i) * P_i(r_cycle)
-        let flattened_polys_ref: Vec<_> = input_polys.iter().collect();
-        let claimed_witness_evals =
-            MultilinearPolynomial::batch_evaluate(&flattened_polys_ref, r_cycle);
+        // Compute claimed witness evals at r_cycle via streaming
+        let claimed_witness_evals = compute_claimed_witness_evals::<F>(r_cycle, &accessor);
 
         // Only non-virtual (i.e. committed) polynomials' openings are
         // proven using the PCS opening proof, which we add for future opening proof here
@@ -993,12 +982,9 @@ where
 
         let key = self.key.clone();
 
-        // We need only pc and unexpanded pc for the next sumcheck
-        let pc_poly = JoltR1CSInputs::PC.generate_witness(trace, preprocessing);
-        let unexpanded_pc_poly =
-            JoltR1CSInputs::UnexpandedPC.generate_witness(trace, preprocessing);
-        let is_noop_poly =
-            JoltR1CSInputs::OpFlags(CircuitFlags::IsNoop).generate_witness(trace, preprocessing);
+        // Stream once to generate PC, UnexpandedPC and IsNoop witnesses
+        let (unexpanded_pc_poly, pc_poly, is_noop_poly) =
+            generate_pc_noop_witnesses(preprocessing, trace);
 
         let num_cycles = key.num_steps;
         let num_cycles_bits = num_cycles.ilog2() as usize;

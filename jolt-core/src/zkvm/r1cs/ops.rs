@@ -24,10 +24,12 @@ pub struct Term {
 }
 
 impl Term {
+    /// Create a new term with given input index and coefficient.
     pub const fn new(input_index: usize, coeff: i128) -> Self {
         Self { input_index, coeff }
     }
 
+    /// Format term for pretty printing (test only).
     #[cfg(test)]
     pub fn pretty_fmt(&self, f: &mut String) -> std::fmt::Result {
         use super::inputs::JoltR1CSInputs;
@@ -48,7 +50,7 @@ impl Term {
     }
 }
 
-/// Const-friendly linear combination enum that can hold 0-5 terms
+/// Const-friendly linear combination enum that can hold 0-5 terms with an optional constant
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LC {
     Zero,
@@ -99,6 +101,9 @@ impl LC {
         LC::constant(k)
     }
 
+    // =========================
+    // Introspection
+    // =========================
     pub const fn num_terms(&self) -> usize {
         match self {
             LC::Zero | LC::Const(_) => 0,
@@ -578,6 +583,7 @@ impl LC {
         }
     }
 
+    /// Format LC for pretty printing (test only).
     #[cfg(test)]
     pub fn pretty_fmt(&self, f: &mut String) -> std::fmt::Result {
         use std::fmt::Write;
@@ -643,6 +649,7 @@ impl LC {
         }
     }
 
+    /// Assert this LC has no duplicate terms (test only).
     #[cfg(test)]
     pub fn assert_no_duplicate_terms(&self) {
         let mut input_indices = Vec::new();
@@ -659,43 +666,46 @@ impl LC {
     }
 }
 
+// =============================================================================
+// LC MACRO
+// =============================================================================
 /// lc!: parse a linear combination with +, -, and literal * expr
 /// Examples:
 /// - lc!({ JoltR1CSInputs::UnexpandedPC } + { 4i128 } - { 2 * JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed) })
 /// - lc!({ JoltR1CSInputs::LeftInstructionInput })
 #[macro_export]
 macro_rules! lc {
-    // Entry points: normalize to accumulator form
-    ( { $k:literal * $e:expr } $( $rest:tt )* ) => {
-        $crate::lc!(@acc $crate::zkvm::r1cs::ops::LC::from_input_with_coeff($e, $k) ; $( $rest )* )
-    };
-    ( { $k:literal } $( $rest:tt )* ) => {
-        $crate::lc!(@acc $crate::zkvm::r1cs::ops::LC::from_const($k) ; $( $rest )* )
-    };
-    ( { $e:expr } $( $rest:tt )* ) => {
-        $crate::lc!(@acc $crate::zkvm::r1cs::ops::LC::from_input($e) ; $( $rest )* )
-    };
+	// Entry points: normalize to accumulator form
+	( { $k:literal * $e:expr } $( $rest:tt )* ) => {
+		$crate::lc!(@acc $crate::zkvm::r1cs::ops::LC::from_input_with_coeff($e, $k) ; $( $rest )* )
+	};
+	( { $k:literal } $( $rest:tt )* ) => {
+		$crate::lc!(@acc $crate::zkvm::r1cs::ops::LC::from_const($k) ; $( $rest )* )
+	};
+	( { $e:expr } $( $rest:tt )* ) => {
+		$crate::lc!(@acc $crate::zkvm::r1cs::ops::LC::from_input($e) ; $( $rest )* )
+	};
 
-    // Accumulator folding rules
-    (@acc $acc:expr ; + { $k:literal * $e:expr } $( $rest:tt )* ) => {
-        $crate::lc!(@acc $acc.add_or_zero($crate::zkvm::r1cs::ops::LC::from_input_with_coeff($e, $k)) ; $( $rest )* )
-    };
-    (@acc $acc:expr ; - { $k:literal * $e:expr } $( $rest:tt )* ) => {
-        $crate::lc!(@acc $acc.sub_or_zero($crate::zkvm::r1cs::ops::LC::from_input_with_coeff($e, $k)) ; $( $rest )* )
-    };
-    (@acc $acc:expr ; + { $k:literal } $( $rest:tt )* ) => {
-        $crate::lc!(@acc $acc.add_const_or_zero($k) ; $( $rest )* )
-    };
-    (@acc $acc:expr ; - { $k:literal } $( $rest:tt )* ) => {
-        $crate::lc!(@acc $acc.add_const_or_zero(-$k) ; $( $rest )* )
-    };
-    (@acc $acc:expr ; + { $e:expr } $( $rest:tt )* ) => {
-        $crate::lc!(@acc $acc.add_or_zero($crate::zkvm::r1cs::ops::LC::from_input($e)) ; $( $rest )* )
-    };
-    (@acc $acc:expr ; - { $e:expr } $( $rest:tt )* ) => {
-        $crate::lc!(@acc $acc.sub_or_zero($crate::zkvm::r1cs::ops::LC::from_input($e)) ; $( $rest )* )
-    };
+	// Accumulator folding rules
+	(@acc $acc:expr ; + { $k:literal * $e:expr } $( $rest:tt )* ) => {
+		$crate::lc!(@acc $acc.add_or_zero($crate::zkvm::r1cs::ops::LC::from_input_with_coeff($e, $k)) ; $( $rest )* )
+	};
+	(@acc $acc:expr ; - { $k:literal * $e:expr } $( $rest:tt )* ) => {
+		$crate::lc!(@acc $acc.sub_or_zero($crate::zkvm::r1cs::ops::LC::from_input_with_coeff($e, $k)) ; $( $rest )* )
+	};
+	(@acc $acc:expr ; + { $k:literal } $( $rest:tt )* ) => {
+		$crate::lc!(@acc $acc.add_const_or_zero($k) ; $( $rest )* )
+	};
+	(@acc $acc:expr ; - { $k:literal } $( $rest:tt )* ) => {
+		$crate::lc!(@acc $acc.add_const_or_zero(-$k) ; $( $rest )* )
+	};
+	(@acc $acc:expr ; + { $e:expr } $( $rest:tt )* ) => {
+		$crate::lc!(@acc $acc.add_or_zero($crate::zkvm::r1cs::ops::LC::from_input($e)) ; $( $rest )* )
+	};
+	(@acc $acc:expr ; - { $e:expr } $( $rest:tt )* ) => {
+		$crate::lc!(@acc $acc.sub_or_zero($crate::zkvm::r1cs::ops::LC::from_input($e)) ; $( $rest )* )
+	};
 
-    // End of input
-    (@acc $acc:expr ; ) => { $acc };
+	// End of input
+	(@acc $acc:expr ; ) => { $acc };
 }
