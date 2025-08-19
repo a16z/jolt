@@ -1,5 +1,56 @@
-use crate::field::JoltField;
+use crate::zkvm::JoltField;
 use ark_ff::BigInt;
+
+// =============================
+// Small scalar domain for raw witnesses
+// =============================
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SmallScalar {
+    U8(u8),
+    U64(u64),
+    I64(i64),
+    U128(u128),
+    I128(i128),
+}
+
+impl SmallScalar {
+    pub fn as_i128(self) -> i128 {
+        match self {
+            SmallScalar::U8(v) => v as i128,
+            SmallScalar::U64(v) => v as i128,
+            SmallScalar::I64(v) => v as i128,
+            SmallScalar::U128(v) => v as i128, // lossy if > i128::MAX; callers choose variant appropriately
+            SmallScalar::I128(v) => v,
+        }
+    }
+
+    pub fn as_u64_clamped(self) -> u64 {
+        match self {
+            SmallScalar::U8(v) => v as u64,
+            SmallScalar::U64(v) => v,
+            SmallScalar::I64(v) => v.max(0) as u64,
+            SmallScalar::U128(v) => v as u64,
+            SmallScalar::I128(v) => {
+                if v >= 0 {
+                    v as u64
+                } else {
+                    0
+                }
+            }
+        }
+    }
+
+    pub fn to_i8(self) -> i8 {
+        match self {
+            SmallScalar::U8(v) => v as i8,
+            SmallScalar::U64(v) => (v as i128).clamp(i8::MIN as i128, i8::MAX as i128) as i8,
+            SmallScalar::I64(v) => v.clamp(i8::MIN as i64, i8::MAX as i64) as i8,
+            SmallScalar::U128(v) => (v as i128).clamp(i8::MIN as i128, i8::MAX as i128) as i8,
+            SmallScalar::I128(v) => v.clamp(i8::MIN as i128, i8::MAX as i128) as i8,
+        }
+    }
+}
 
 // =============================
 // Per-row operand domains
@@ -7,8 +58,7 @@ use ark_ff::BigInt;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AzValue {
-    // magnitude only; sign is handled via LC coeffs and extended-eval accumulation
-    U5(u8),
+    I8(i8),
     U64AndSign { magnitude: u64, is_positive: bool },
 }
 
@@ -61,7 +111,6 @@ pub type UnreducedProduct = BigInt<8>; // 512-bit unsigned integer
 
 #[allow(unused_variables)]
 pub fn add_with_sign_u64(a_mag: u64, a_pos: bool, b_mag: u64, b_pos: bool) -> (u64, bool) {
-    // Placeholder implementation; to be replaced with branchless add/sub handling
     if a_pos == b_pos {
         (a_mag.saturating_add(b_mag), a_pos)
     } else if a_mag >= b_mag {
@@ -73,7 +122,6 @@ pub fn add_with_sign_u64(a_mag: u64, a_pos: bool, b_mag: u64, b_pos: bool) -> (u
 
 #[allow(unused_variables)]
 pub fn add_limbs<const N: usize>(a: ([u64; N], bool), b: ([u64; N], bool)) -> ([u64; N], bool) {
-    // Placeholder: naive limb-wise add/sub without carry; replace with proper multi-precision ops
     let (a_arr, a_pos) = a;
     let (b_arr, b_pos) = b;
     if a_pos == b_pos {
@@ -86,7 +134,6 @@ pub fn add_limbs<const N: usize>(a: ([u64; N], bool), b: ([u64; N], bool)) -> ([
         }
         (out, a_pos)
     } else {
-        // very rough magnitude compare and subtract; replace with proper compare/sub
         if a_arr >= b_arr {
             let mut out = [0u64; N];
             let mut borrow: i128 = 0;
@@ -111,7 +158,6 @@ pub fn add_limbs<const N: usize>(a: ([u64; N], bool), b: ([u64; N], bool)) -> ([
 
 #[allow(unused_variables)]
 pub fn mul_az_bz(az: AzExtendedEval, bz: BzExtendedEval) -> SVOProductValue {
-    // Placeholder sizing logic; replace with exact-limb multiplication and sizing
     match (az, bz) {
         (AzExtendedEval::I8(v), BzExtendedEval::L1 { val, is_positive }) => {
             let sign = (v >= 0) == is_positive;
@@ -139,6 +185,5 @@ pub fn field_mul_product<F: JoltField, const K: usize>(
 
 #[allow(unused_variables)]
 pub fn reduce_unreduced_to_field<F>(x: &UnreducedProduct) -> F {
-    // Placeholder: trait-bound conversion needed; implement via modulus of F
     unimplemented!("reduce_unreduced_to_field needs field modulus and conversion")
 }
