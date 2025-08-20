@@ -1,5 +1,5 @@
 use crate::emulator::cpu::Cpu;
-use common::constants::REGISTER_COUNT;
+use common::constants::RISCV_REGISTER_COUNT;
 use rand::rngs::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -61,7 +61,7 @@ impl InstructionFormat for FormatJ {
 
     fn random(rng: &mut StdRng) -> Self {
         Self {
-            rd: (rng.next_u64() as u8 % REGISTER_COUNT),
+            rd: (rng.next_u64() as u8 % RISCV_REGISTER_COUNT),
             imm: rng.next_u64(),
         }
     }

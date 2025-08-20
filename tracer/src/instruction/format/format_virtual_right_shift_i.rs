@@ -1,5 +1,5 @@
 use crate::emulator::cpu::Cpu;
-use common::constants::REGISTER_COUNT;
+use common::constants::RISCV_REGISTER_COUNT;
 use rand::rngs::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -61,8 +61,8 @@ impl InstructionFormat for FormatVirtualRightShiftI {
         let imm = ones.wrapping_shl(64 - shift);
         Self {
             imm,
-            rd: (rng.next_u64() as u8 % REGISTER_COUNT),
-            rs1: (rng.next_u64() as u8 % REGISTER_COUNT),
+            rd: (rng.next_u64() as u8 % RISCV_REGISTER_COUNT),
+            rs1: (rng.next_u64() as u8 % RISCV_REGISTER_COUNT),
         }
     }
 }
