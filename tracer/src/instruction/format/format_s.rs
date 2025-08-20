@@ -1,7 +1,4 @@
 use crate::emulator::cpu::Cpu;
-use common::constants::RISCV_REGISTER_COUNT;
-use rand::rngs::StdRng;
-use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
@@ -23,7 +20,9 @@ pub struct RegisterStateFormatS {
 }
 
 impl InstructionRegisterState for RegisterStateFormatS {
-    fn random(rng: &mut StdRng) -> Self {
+    #[cfg(any(feature = "random", test))]
+    fn random(rng: &mut rand::rngs::StdRng) -> Self {
+        use rand::RngCore;
         Self {
             rs1: rng.next_u64(),
             rs2: rng.next_u64(),
@@ -67,7 +66,10 @@ impl InstructionFormat for FormatS {
         // No register write
     }
 
-    fn random(rng: &mut StdRng) -> Self {
+    #[cfg(any(feature = "random", test))]
+    fn random(rng: &mut rand::rngs::StdRng) -> Self {
+        use common::constants::RISCV_REGISTER_COUNT;
+        use rand::RngCore;
         Self {
             rs1: (rng.next_u64() as u8 % RISCV_REGISTER_COUNT),
             rs2: (rng.next_u64() as u8 % RISCV_REGISTER_COUNT),

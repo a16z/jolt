@@ -57,6 +57,7 @@ where
     RV32IMCycle: From<RISCVCycle<I>>,
 {
     let mut rng = test_rng();
+    let mut _non_panic = 0;
 
     for _ in 0..1000 {
         let instruction = I::random(&mut rng);
@@ -89,6 +90,7 @@ where
         if res.is_err() {
             continue;
         }
+        _non_panic += 1;
 
         let mut trace_vec = Vec::new();
         instruction.trace(&mut virtual_cpu, Some(&mut trace_vec));
@@ -106,4 +108,7 @@ where
             );
         }
     }
+    // if non_panic == 0 {
+    //     panic!("All of instructions panic at the execute function");
+    // }
 }

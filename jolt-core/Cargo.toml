@@ -109,6 +109,7 @@ sha3_inline = { package = "jolt-inlines-keccak256", path = "../jolt-inlines/kecc
 criterion = { version = "0.5.1", features = ["html_reports"] }
 iai-callgrind = "0.10.2"
 serial_test = "3.2.0"
+tracer = { path = "../tracer", default-features = false, features = ["std", "random"] }
 
 [build-dependencies]
 common = { path = "../common" }

@@ -1,5 +1,4 @@
 use crate::emulator::cpu::{Cpu, Xlen};
-use rand::rngs::StdRng;
 use serde::{de::DeserializeOwned, Serialize};
 use std::fmt::Debug;
 
@@ -30,13 +29,15 @@ pub trait InstructionFormat:
     fn parse(word: u32) -> Self;
     fn capture_pre_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu);
     fn capture_post_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu);
-    fn random(rng: &mut StdRng) -> Self;
+    #[cfg(any(feature = "random", test))]
+    fn random(rng: &mut rand::rngs::StdRng) -> Self;
 }
 
 pub trait InstructionRegisterState:
     Default + Copy + Clone + Serialize + DeserializeOwned + Debug
 {
-    fn random(rng: &mut StdRng) -> Self;
+    #[cfg(any(feature = "random", test))]
+    fn random(rng: &mut rand::rngs::StdRng) -> Self;
     fn rs1_value(&self) -> u64 {
         0
     }

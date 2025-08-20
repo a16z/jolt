@@ -1,12 +1,8 @@
-use rand::{rngs::StdRng, RngCore};
 use serde::{Deserialize, Serialize};
 
 use crate::{emulator::cpu::Cpu, instruction::NormalizedInstruction};
 
-use super::{
-    format::{format_j::FormatJ, InstructionFormat},
-    RISCVInstruction, RISCVTrace,
-};
+use super::{format::format_j::FormatJ, RISCVInstruction, RISCVTrace};
 
 // Special case for VirtualAdvice as it has an extra 'advice' field
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
@@ -38,7 +34,10 @@ impl RISCVInstruction for VirtualAdvice {
         panic!("virtual instruction `VirtualAdvice` cannot be built from a machine word");
     }
 
-    fn random(rng: &mut StdRng) -> Self {
+    #[cfg(any(feature = "random", test))]
+    fn random(rng: &mut rand::rngs::StdRng) -> Self {
+        use crate::instruction::format::InstructionFormat;
+        use rand::RngCore;
         Self {
             address: rng.next_u64(),
             operands: FormatJ::random(rng),

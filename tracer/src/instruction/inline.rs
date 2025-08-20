@@ -18,7 +18,6 @@ use crate::{
     instruction::NormalizedInstruction,
 };
 use lazy_static::lazy_static;
-use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::RwLock;
@@ -162,7 +161,10 @@ impl RISCVInstruction for INLINE {
         }
     }
 
+    #[cfg(any(feature = "random", test))]
     fn random(rng: &mut rand::rngs::StdRng) -> Self {
+        use crate::instruction::format::InstructionFormat;
+        use rand::RngCore;
         Self {
             opcode: rng.next_u32() & 0x7f,
             funct3: rng.next_u32() & 0x7,
