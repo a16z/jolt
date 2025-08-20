@@ -1,9 +1,10 @@
 # Eq Extension
+
 The $\widetilde{\text{eq}}$ multilinear extension (MLE) is useful throughout the protocol. It is the MLE of the
 function $\text{eq} \colon \{0, 1\}^m \times \{0, 1\}^m \to \mathbb{F}$ defined as follows:
 
 $$
-\text{eq}(r,x) = \begin{cases} 
+\text{eq}(r,x) = \begin{cases}
 1 & \text{if } r = x \\
 0 & \text{otherwise}
 \end{cases}

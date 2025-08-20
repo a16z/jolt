@@ -76,7 +76,7 @@ For detailed instruction formats and encoding, refer to __chapter 7__ of [specif
 One of the key features of LLVM is its __Intermediate Representation (IR)__. IR serves as a bridge between high-level languages and machine code.
 This means any language that compiles to LLVM IR (like C, C++, Rust, etc.) can be compiled to RISC-V and subsequently proven by jolt:
 
-![Compilation to RISC-V target](../imgs/compilation_to_riscv.png)
+![Compilation to RISC-V target](../../imgs/compilation_to_riscv.png)
 
 ## References
 - [RISC-V Specifications](https://riscv.org/technical/specifications/)
