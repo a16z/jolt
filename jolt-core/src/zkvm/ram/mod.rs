@@ -2,11 +2,13 @@
 
 use std::vec;
 
+#[cfg(feature = "allocative")]
+use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::{
     field::JoltField,
     poly::commitment::commitment_scheme::CommitmentScheme,
     subprotocols::sumcheck::SumcheckInstance,
-    utils::transcript::Transcript,
+    transcripts::Transcript,
     zkvm::dag::{stage::SumcheckStages, state_manager::StateManager},
     zkvm::ram::{
         booleanity::BooleanitySumcheck,
@@ -19,6 +21,7 @@ use crate::{
         val_evaluation::ValEvaluationSumcheck,
     },
 };
+
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::{
     constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS},
@@ -270,8 +273,11 @@ impl RamDag {
     }
 }
 
-impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>
-    SumcheckStages<F, ProofTranscript, PCS> for RamDag
+impl<F, ProofTranscript, PCS> SumcheckStages<F, ProofTranscript, PCS> for RamDag
+where
+    F: JoltField,
+    ProofTranscript: Transcript,
+    PCS: CommitmentScheme<Field = F>,
 {
     fn stage2_prover_instances(
         &mut self,
@@ -291,6 +297,13 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
             self.final_memory_state.as_ref().unwrap().clone(),
             state_manager,
         );
+
+        #[cfg(feature = "allocative")]
+        {
+            print_data_structure_heap_usage("RAM RafEvaluationSumcheck", &raf_evaluation);
+            print_data_structure_heap_usage("RAM RamReadWriteChecking", &read_write_checking);
+            print_data_structure_heap_usage("RAM OutputSumcheck", &output_check);
+        }
 
         vec![
             Box::new(raf_evaluation),
@@ -325,6 +338,13 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         );
         let val_final_evaluation = ValFinalSumcheck::new_prover(state_manager);
         let hamming_booleanity = HammingBooleanitySumcheck::new_prover(state_manager);
+
+        #[cfg(feature = "allocative")]
+        {
+            print_data_structure_heap_usage("RAM ValEvaluationSumcheck", &val_evaluation);
+            print_data_structure_heap_usage("RAM ValFinalSumcheck", &val_final_evaluation);
+            print_data_structure_heap_usage("RAM HammingBooleanitySumcheck", &hamming_booleanity);
+        }
 
         vec![
             Box::new(val_evaluation),
@@ -362,6 +382,13 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         let hamming_weight = HammingWeightSumcheck::new_prover(self.K, state_manager);
         let booleanity = BooleanitySumcheck::new_prover(self.K, state_manager);
         let ra_virtual = RASumcheck::new_prover(self.K, state_manager);
+
+        #[cfg(feature = "allocative")]
+        {
+            print_data_structure_heap_usage("RAM HammingWeightSumcheck", &hamming_weight);
+            print_data_structure_heap_usage("RAM BooleanitySumcheck", &booleanity);
+            print_data_structure_heap_usage("RAM RASumcheck", &ra_virtual);
+        }
 
         vec![
             Box::new(hamming_weight),

@@ -2,6 +2,7 @@ use crate::field::JoltField;
 use crate::host::analyze::ProgramSummary;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::host::toolchain::{install_no_std_toolchain, install_toolchain};
+use crate::host::TOOLCHAIN_VERSION;
 use crate::host::{Program, DEFAULT_TARGET_DIR, LINKER_SCRIPT_TEMPLATE};
 use common::constants::{
     DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE, DEFAULT_MEMORY_SIZE, DEFAULT_STACK_SIZE,
@@ -57,8 +58,12 @@ impl Program {
         self.max_output_size = size;
     }
 
-    #[tracing::instrument(skip_all, name = "Program::build")]
     pub fn build(&mut self, target_dir: &str) {
+        self.build_with_channel(target_dir, "stable");
+    }
+
+    #[tracing::instrument(skip_all, name = "Program::build")]
+    pub fn build_with_channel(&mut self, target_dir: &str, channel: &str) {
         if self.elf.is_none() {
             #[cfg(not(target_arch = "wasm32"))]
             install_toolchain().unwrap();
@@ -80,7 +85,7 @@ impl Program {
                 "opt-level=z",
             ];
 
-            let toolchain = if self.std {
+            let target_triple = if self.std {
                 "riscv32im-jolt-zkvm-elf"
             } else {
                 "riscv32im-unknown-none-elf"
@@ -89,7 +94,10 @@ impl Program {
             let mut envs = vec![("CARGO_ENCODED_RUSTFLAGS", rust_flags.join("\x1f"))];
 
             if self.std {
-                envs.push(("RUSTUP_TOOLCHAIN", toolchain.to_string()));
+                envs.push((
+                    "RUSTUP_TOOLCHAIN",
+                    format!("{channel}-jolt-{TOOLCHAIN_VERSION}"),
+                ));
             }
 
             if let Some(func) = &self.func {
@@ -103,6 +111,20 @@ impl Program {
                 self.func.as_ref().unwrap_or(&"".to_string())
             );
 
+            let cc_env_var = format!("CC_{target_triple}");
+            let cc_value = std::env::var(&cc_env_var).unwrap_or_else(|_| {
+                #[cfg(target_os = "linux")]
+                {
+                    "riscv64-unknown-elf-gcc".to_string()
+                }
+                #[cfg(not(target_os = "linux"))]
+                {
+                    // Default fallback for other platforms
+                    "".to_string()
+                }
+            });
+            envs.push((&cc_env_var, cc_value));
+
             let output = Command::new("cargo")
                 .envs(envs)
                 .args([
@@ -115,7 +137,7 @@ impl Program {
                     "--target-dir",
                     &target,
                     "--target",
-                    toolchain,
+                    target_triple,
                 ])
                 .output()
                 .expect("failed to build guest");
@@ -125,7 +147,7 @@ impl Program {
                 panic!("failed to compile guest");
             }
 
-            let elf = format!("{}/{}/release/{}", target, toolchain, self.guest);
+            let elf = format!("{}/{}/release/{}", target, target_triple, self.guest);
             self.elf = Some(PathBuf::from_str(&elf).unwrap());
         }
     }
@@ -189,7 +211,7 @@ impl Program {
             max_output_size: self.max_output_size,
             program_size: Some(program_size),
         };
-        tracer::trace(elf_contents, inputs, &memory_config)
+        tracer::trace(&elf_contents, inputs, &memory_config)
     }
 
     #[tracing::instrument(skip_all, name = "Program::trace_to_file")]
@@ -209,7 +231,7 @@ impl Program {
             max_output_size: self.max_output_size,
             program_size: Some(program_size),
         };
-        tracer::trace_to_file(elf_contents, inputs, &memory_config, trace_file)
+        tracer::trace_to_file(&elf_contents, inputs, &memory_config, trace_file)
     }
 
     pub fn trace_analyze<F: JoltField>(mut self, inputs: &[u8]) -> ProgramSummary {

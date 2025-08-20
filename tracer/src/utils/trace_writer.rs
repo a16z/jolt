@@ -33,7 +33,7 @@ impl Default for TraceWriterConfig {
             batch_size: BATCH_SIZE,
             channel_depth: CHANNEL_DEPTH,
             write_buffer_size: 1 << 26,
-            slow_batch_threshold_ms: 150,
+            slow_batch_threshold_ms: 200,
         }
     }
 }

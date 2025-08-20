@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::LazyLock;
 
+use allocative::Allocative;
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
 use rayon::prelude::*;
@@ -19,8 +20,8 @@ use crate::{
     },
     utils::math::Math,
     zkvm::{
-        lookup_table::LookupTables,
-        {instruction_lookups, ram::remap_address, JoltProverPreprocessing},
+        instruction_lookups, lookup_table::LookupTables, ram::remap_address,
+        JoltProverPreprocessing,
     },
 };
 
@@ -31,13 +32,18 @@ unsafe impl Sync for SharedWitnessData {}
 
 /// K^{1/d}
 pub const DTH_ROOT_OF_K: usize = 1 << 8;
+
+pub fn compute_d_parameter_from_log_K(log_K: usize) -> usize {
+    log_K.div_ceil(DTH_ROOT_OF_K.log_2())
+}
+
 pub fn compute_d_parameter(K: usize) -> usize {
     // Calculate D dynamically such that 2^8 = K^(1/D)
     let log_K = K.log_2();
     log_K.div_ceil(DTH_ROOT_OF_K.log_2())
 }
 
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord)]
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Allocative)]
 pub enum CommittedPolynomial {
     /* R1CS aux variables */
     /// The "left" input to the current instruction. Typically either the
@@ -615,7 +621,7 @@ impl CommittedPolynomial {
     }
 }
 
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord)]
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Allocative)]
 pub enum VirtualPolynomial {
     SpartanAz,
     SpartanBz,
@@ -638,6 +644,7 @@ pub enum VirtualPolynomial {
     LookupOutput,
     InstructionRaf,
     InstructionRafFlag,
+    InstructionRa,
     RegistersVal,
     RamAddress,
     RamRa,
@@ -674,6 +681,7 @@ pub static ALL_VIRTUAL_POLYNOMIALS: LazyLock<Vec<VirtualPolynomial>> = LazyLock:
         VirtualPolynomial::LookupOutput,
         VirtualPolynomial::InstructionRaf,
         VirtualPolynomial::InstructionRafFlag,
+        VirtualPolynomial::InstructionRa,
         VirtualPolynomial::RegistersVal,
         VirtualPolynomial::RamAddress,
         VirtualPolynomial::RamRa,

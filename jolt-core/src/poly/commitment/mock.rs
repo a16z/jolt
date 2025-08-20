@@ -6,10 +6,8 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use crate::{
     field::JoltField,
     poly::multilinear_polynomial::MultilinearPolynomial,
-    utils::{
-        errors::ProofVerifyError,
-        transcript::{AppendToTranscript, Transcript},
-    },
+    transcripts::{AppendToTranscript, Transcript},
+    utils::errors::ProofVerifyError,
 };
 
 use super::commitment_scheme::CommitmentScheme;
@@ -79,7 +77,6 @@ where
         _hints: Vec<Self::OpeningProofHint>,
         _coeffs: &[Self::Field],
     ) -> Self::OpeningProofHint {
-        ()
     }
 
     fn prove<ProofTranscript: Transcript>(

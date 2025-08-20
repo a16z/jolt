@@ -41,7 +41,7 @@ fn main() {
 
     // Create and run the emulator
     let mut emulator = Emulator::new(Box::new(DefaultTerminal::default()));
-    emulator.setup_program(elf_content);
+    emulator.setup_program(&elf_content);
     emulator.run_test(args.trace.unwrap_or(false));
 
     // If signature file is specified, write the signature with specified granularity

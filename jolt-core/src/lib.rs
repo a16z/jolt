@@ -18,5 +18,6 @@ pub mod field;
 pub mod msm;
 pub mod poly;
 pub mod subprotocols;
+pub mod transcripts;
 pub mod utils;
 pub mod zkvm;

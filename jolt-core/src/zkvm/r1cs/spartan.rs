@@ -1,3 +1,6 @@
+use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::FlameGraphBuilder;
 use std::cell::RefCell;
 use std::marker::PhantomData;
 use std::rc::Rc;
@@ -13,6 +16,8 @@ use crate::poly::opening_proof::{
     OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
 };
 use crate::utils::math::Math;
+#[cfg(feature = "allocative")]
+use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::zkvm::dag::stage::SumcheckStages;
 use crate::zkvm::dag::state_manager::{ProofData, ProofKeys, StateManager};
 use crate::zkvm::instruction::CircuitFlags;
@@ -24,8 +29,8 @@ use crate::zkvm::r1cs::inputs::COMMITTED_R1CS_INPUTS;
 use crate::zkvm::r1cs::key::UniformSpartanKey;
 use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 
+use crate::transcripts::Transcript;
 use crate::utils::small_value::NUM_SVO_ROUNDS;
-use crate::utils::transcript::Transcript;
 use ark_serialize::CanonicalDeserialize;
 use ark_serialize::CanonicalSerialize;
 
@@ -85,9 +90,8 @@ pub struct UniformSpartanProof<F: JoltField, ProofTranscript: Transcript> {
     _marker: PhantomData<ProofTranscript>,
 }
 
-impl<F, ProofTranscript> UniformSpartanProof<F, ProofTranscript>
+impl<F: JoltField, ProofTranscript> UniformSpartanProof<F, ProofTranscript>
 where
-    F: JoltField,
     ProofTranscript: Transcript,
 {
     #[tracing::instrument(skip_all, name = "Spartan::setup")]
@@ -122,6 +126,7 @@ where
     }
 }
 
+#[derive(Allocative)]
 struct InnerSumcheckProverState<F: JoltField> {
     poly_abc_small: MultilinearPolynomial<F>,
     poly_z: MultilinearPolynomial<F>,
@@ -134,9 +139,11 @@ struct InnerSumcheckVerifierState<F: JoltField> {
     inner_sumcheck_RLC: F,
 }
 
+#[derive(Allocative)]
 pub struct InnerSumcheck<F: JoltField> {
     input_claim: F,
     prover_state: Option<InnerSumcheckProverState<F>>,
+    #[allocative(skip)]
     verifier_state: Option<InnerSumcheckVerifierState<F>>,
 }
 
@@ -350,8 +357,14 @@ impl<F: JoltField> SumcheckInstance<F> for InnerSumcheck<F> {
     ) {
         // Nothing to cache
     }
+
+    #[cfg(feature = "allocative")]
+    fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
+        flamegraph.visit_root(self);
+    }
 }
 
+#[derive(Allocative)]
 struct PCSumcheckProverState<F: JoltField> {
     unexpanded_pc_poly: MultilinearPolynomial<F>,
     pc_poly: MultilinearPolynomial<F>,
@@ -366,12 +379,14 @@ struct PCSumcheckVerifierState<F: JoltField> {
     is_noop_eval_at_shift_r: F,
 }
 
+#[derive(Allocative)]
 pub struct PCSumcheck<F: JoltField> {
     input_claim: F,
     gamma: F,
     gamma_squared: F,
     log_T: usize,
     prover_state: Option<PCSumcheckProverState<F>>,
+    #[allocative(skip)]
     verifier_state: Option<PCSumcheckVerifierState<F>>,
 }
 
@@ -606,6 +621,11 @@ impl<F: JoltField> SumcheckInstance<F> for PCSumcheck<F> {
             opening_point,
         );
     }
+
+    #[cfg(feature = "allocative")]
+    fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
+        flamegraph.visit_root(self);
+    }
 }
 
 pub struct SpartanDag<F: JoltField> {
@@ -624,8 +644,11 @@ impl<F: JoltField> SpartanDag<F> {
     }
 }
 
-impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>
-    SumcheckStages<F, ProofTranscript, PCS> for SpartanDag<F>
+impl<F, ProofTranscript, PCS> SumcheckStages<F, ProofTranscript, PCS> for SpartanDag<F>
+where
+    F: JoltField,
+    ProofTranscript: Transcript,
+    PCS: CommitmentScheme<Field = F>,
 {
     fn stage1_prove(
         &mut self,
@@ -914,6 +937,8 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
 
         let inner_sumcheck =
             InnerSumcheck::new_prover(state_manager, key, &claims, &params, inner_sumcheck_RLC);
+        #[cfg(feature = "allocative")]
+        print_data_structure_heap_usage("Spartan InnerSumcheck", &inner_sumcheck);
 
         vec![Box::new(inner_sumcheck)]
     }
@@ -1034,6 +1059,9 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
             gamma_squared,
             verifier_state: None,
         };
+
+        #[cfg(feature = "allocative")]
+        print_data_structure_heap_usage("Spartan PCSumcheck", &pc_sumcheck);
 
         vec![Box::new(pc_sumcheck)]
     }

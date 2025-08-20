@@ -8,6 +8,7 @@ use crate::utils::{compute_dotproduct, compute_dotproduct_low_optimized};
 use crate::field::{JoltField, OptimizedMul};
 use crate::poly::compact_polynomial::SmallScalar;
 use crate::utils::math::Math;
+use allocative::Allocative;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use core::ops::Index;
 use rand_core::{CryptoRng, RngCore};
@@ -15,7 +16,7 @@ use rayon::prelude::*;
 
 use super::multilinear_polynomial::{BindingOrder, MultilinearPolynomial};
 
-#[derive(Default, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Default, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize, Allocative)]
 pub struct DensePolynomial<F: JoltField> {
     pub num_vars: usize, // the number of variables in the multilinear polynomial
     pub len: usize,

@@ -5,6 +5,11 @@
 //! can use a sumcheck to reduce multiple opening proofs (multiple polynomials, not
 //! necessarily of the same size, each opened at a different point) into a single opening.
 
+#[cfg(feature = "allocative")]
+use crate::utils::profiling::write_flamegraph_svg;
+use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::FlameGraphBuilder;
 use num_derive::FromPrimitive;
 use rayon::prelude::*;
 use std::{
@@ -22,6 +27,8 @@ use super::{
     rlc_polynomial::RLCPolynomial,
     split_eq_poly::GruenSplitEqPolynomial,
 };
+#[cfg(feature = "allocative")]
+use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::{
     field::JoltField,
     poly::{
@@ -29,7 +36,8 @@ use crate::{
         one_hot_polynomial::{OneHotPolynomialProverOpening, OneHotSumcheckState},
     },
     subprotocols::sumcheck::{BatchedSumcheck, SumcheckInstance, SumcheckInstanceProof},
-    utils::{errors::ProofVerifyError, math::Math, transcript::Transcript},
+    transcripts::Transcript,
+    utils::{errors::ProofVerifyError, math::Math},
     zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
 };
 
@@ -37,7 +45,7 @@ pub type Endianness = bool;
 pub const BIG_ENDIAN: Endianness = false;
 pub const LITTLE_ENDIAN: Endianness = true;
 
-#[derive(Clone, Debug, PartialEq, Default)]
+#[derive(Clone, Debug, PartialEq, Default, Allocative)]
 pub struct OpeningPoint<const E: Endianness, F: JoltField> {
     pub r: Vec<F>,
 }
@@ -127,7 +135,7 @@ where
     }
 }
 
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, FromPrimitive)]
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, FromPrimitive, Allocative)]
 #[repr(u8)]
 pub enum SumcheckId {
     SpartanOuter,
@@ -136,6 +144,7 @@ pub enum SumcheckId {
     InstructionBooleanity,
     InstructionHammingWeight,
     InstructionReadRaf,
+    InstructionRaVirtualization,
     RamReadWriteChecking,
     RamRafEvaluation,
     RamHammingWeight,
@@ -153,7 +162,7 @@ pub enum SumcheckId {
     OpeningReduction,
 }
 
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord)]
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Allocative)]
 pub enum OpeningId {
     Committed(CommittedPolynomial, SumcheckId),
     Virtual(VirtualPolynomial, SumcheckId),
@@ -161,6 +170,7 @@ pub enum OpeningId {
 
 pub type Openings<F> = BTreeMap<OpeningId, (OpeningPoint<BIG_ENDIAN, F>, F)>;
 
+#[derive(Allocative)]
 pub struct SharedEqPolynomial<F: JoltField> {
     num_variables_bound: usize,
     eq_poly: GruenSplitEqPolynomial<F>,
@@ -182,7 +192,7 @@ impl<F: JoltField> SharedEqPolynomial<F> {
 /// at the (same) point.
 /// Multiple openings can be accumulated and further
 /// batched/reduced using a `ProverOpeningAccumulator`.
-#[derive(Clone)]
+#[derive(Clone, Allocative)]
 pub struct DensePolynomialProverOpening<F: JoltField> {
     /// The polynomial being opened. May be a random linear combination
     /// of multiple polynomials all being opened at the same point.
@@ -261,13 +271,13 @@ impl<F: JoltField> DensePolynomialProverOpening<F> {
     }
 }
 
-#[derive(derive_more::From, Clone)]
+#[derive(derive_more::From, Clone, Allocative)]
 pub enum ProverOpening<F: JoltField> {
     Dense(DensePolynomialProverOpening<F>),
     OneHot(OneHotPolynomialProverOpening<F>),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Allocative)]
 pub struct OpeningProofReductionSumcheck<F>
 where
     F: JoltField,
@@ -355,7 +365,7 @@ where
     fn prepare_sumcheck(
         &mut self,
         polynomials_map: Option<&HashMap<CommittedPolynomial, MultilinearPolynomial<F>>>,
-        gamma: F,
+        gammas: &[F],
     ) {
         #[cfg(test)]
         {
@@ -374,12 +384,21 @@ where
             }
         }
 
-        self.rlc_coeffs = vec![F::one()];
         if self.polynomials.len() > 1 {
-            for i in 1..self.polynomials.len() {
-                self.rlc_coeffs.push(self.rlc_coeffs[i - 1] * gamma);
-            }
+            assert_eq!(
+                gammas.len(),
+                self.polynomials.len(),
+                "Expected {} gammas but got {}",
+                self.polynomials.len(),
+                gammas.len()
+            );
+            self.rlc_coeffs = gammas.to_vec();
+        } else {
+            assert_eq!(gammas.len(), 1, "Expected 1 gamma but got {}", gammas.len());
+            self.rlc_coeffs = vec![F::one()];
+        }
 
+        if self.polynomials.len() > 1 {
             let reduced_claim = self
                 .rlc_coeffs
                 .par_iter()
@@ -530,11 +549,16 @@ where
     ) {
         unimplemented!("Unused")
     }
+
+    #[cfg(feature = "allocative")]
+    fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
+        flamegraph.visit_root(self);
+    }
 }
 
 /// Accumulates openings computed by the prover over the course of Jolt,
 /// so that they can all be reduced to a single opening proof using sumcheck.
-#[derive(Clone)]
+#[derive(Clone, Allocative)]
 pub struct ProverOpeningAccumulator<F>
 where
     F: JoltField,
@@ -543,8 +567,6 @@ where
     pub openings: Openings<F>,
     #[cfg(test)]
     pub appended_virtual_openings: std::rc::Rc<std::cell::RefCell<Vec<OpeningId>>>,
-    // #[cfg(test)]
-    // joint_commitment: Option<PCS::Commitment>,
 }
 
 /// Accumulates openings encountered by the verifier over the course of Jolt,
@@ -559,8 +581,6 @@ where
     /// can detect any places where the openings don't match up.
     #[cfg(test)]
     prover_opening_accumulator: Option<ProverOpeningAccumulator<F>>,
-    // #[cfg(test)]
-    // pcs_setup: Option<PCS::ProverSetup>,
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Clone, Debug)]
@@ -753,8 +773,19 @@ where
             self.sumchecks.len()
         );
 
-        // We pre-extract gamma values deterministically to prepare sumchecks in parallel
-        let gammas: Vec<F> = transcript.challenge_vector(self.sumchecks.len());
+        let total_challenges_needed: usize = self
+            .sumchecks
+            .iter()
+            .map(|sumcheck| {
+                if sumcheck.polynomials.len() > 1 {
+                    sumcheck.polynomials.len()
+                } else {
+                    1
+                }
+            })
+            .sum();
+
+        let all_gammas: Vec<F> = transcript.challenge_vector(total_challenges_needed);
 
         let prepare_span = tracing::span!(
             tracing::Level::INFO,
@@ -763,10 +794,28 @@ where
         );
         let _enter = prepare_span.enter();
 
+        let mut gamma_offsets = vec![0];
+        for sumcheck in self.sumchecks.iter() {
+            let num_gammas = if sumcheck.polynomials.len() > 1 {
+                sumcheck.polynomials.len()
+            } else {
+                1
+            };
+            gamma_offsets.push(gamma_offsets.last().unwrap() + num_gammas);
+        }
+
         self.sumchecks
             .par_iter_mut()
-            .zip(gammas.par_iter())
-            .for_each(|(sumcheck, gamma)| sumcheck.prepare_sumcheck(Some(&polynomials), *gamma));
+            .zip(gamma_offsets.par_iter())
+            .for_each(|(sumcheck, &offset)| {
+                let num_gammas = if sumcheck.polynomials.len() > 1 {
+                    sumcheck.polynomials.len()
+                } else {
+                    1
+                };
+                let gammas_slice = &all_gammas[offset..offset + num_gammas];
+                sumcheck.prepare_sumcheck(Some(&polynomials), gammas_slice);
+            });
 
         drop(_enter);
 
@@ -867,6 +916,14 @@ where
         &mut self,
         transcript: &mut ProofTranscript,
     ) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, Vec<F>) {
+        #[cfg(feature = "allocative")]
+        {
+            print_data_structure_heap_usage("Opening accumulator", &(*self));
+            let mut flamegraph = FlameGraphBuilder::default();
+            flamegraph.visit_root(&(*self));
+            write_flamegraph_svg(flamegraph, "stage5_start_flamechart.svg");
+        }
+
         let instances: Vec<&mut dyn SumcheckInstance<F>> = self
             .sumchecks
             .iter_mut()
@@ -877,6 +934,13 @@ where
             .collect();
 
         let (sumcheck_proof, r_sumcheck) = BatchedSumcheck::prove(instances, None, transcript);
+
+        #[cfg(feature = "allocative")]
+        {
+            let mut flamegraph = FlameGraphBuilder::default();
+            flamegraph.visit_root(&(*self));
+            write_flamegraph_svg(flamegraph, "stage5_end_flamechart.svg");
+        }
 
         let claims: Vec<_> = self
             .sumchecks
@@ -1083,12 +1147,42 @@ where
             assert_eq!(prover_openings.len(), self.len());
         }
 
-        let gammas: Vec<F> = transcript.challenge_vector(self.sumchecks.len());
+        let total_challenges_needed: usize = self
+            .sumchecks
+            .iter()
+            .map(|sumcheck| {
+                if sumcheck.polynomials.len() > 1 {
+                    sumcheck.polynomials.len()
+                } else {
+                    1
+                }
+            })
+            .sum();
+
+        let all_gammas: Vec<F> = transcript.challenge_vector(total_challenges_needed);
+
+        let mut gamma_offsets = vec![0];
+        for sumcheck in self.sumchecks.iter() {
+            let num_gammas = if sumcheck.polynomials.len() > 1 {
+                sumcheck.polynomials.len()
+            } else {
+                1
+            };
+            gamma_offsets.push(gamma_offsets.last().unwrap() + num_gammas);
+        }
 
         self.sumchecks
             .par_iter_mut()
-            .zip(gammas.par_iter())
-            .for_each(|(sumcheck, gamma)| sumcheck.prepare_sumcheck(None, *gamma));
+            .zip(gamma_offsets.par_iter())
+            .for_each(|(sumcheck, &offset)| {
+                let num_gammas = if sumcheck.polynomials.len() > 1 {
+                    sumcheck.polynomials.len()
+                } else {
+                    1
+                };
+                let gammas_slice = &all_gammas[offset..offset + num_gammas];
+                sumcheck.prepare_sumcheck(None, gammas_slice);
+            });
 
         let num_sumcheck_rounds = self
             .sumchecks

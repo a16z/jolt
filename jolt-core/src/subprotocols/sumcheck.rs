@@ -2,6 +2,7 @@
 #![allow(clippy::type_complexity)]
 
 use crate::field::JoltField;
+use crate::field::MaybeAllocative;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial};
 use crate::poly::opening_proof::{
@@ -10,12 +11,18 @@ use crate::poly::opening_proof::{
 use crate::poly::spartan_interleaved_poly::SpartanInterleavedPolynomial;
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
+use crate::transcripts::{AppendToTranscript, Transcript};
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::mul_0_optimized;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::utils::profiling::print_current_memory_usage;
+#[cfg(feature = "allocative")]
+use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::utils::small_value::svo_helpers::process_svo_sumcheck_rounds;
 use crate::utils::thread::drop_in_background_thread;
-use crate::utils::transcript::{AppendToTranscript, Transcript};
 use crate::zkvm::r1cs::builder::Constraint;
+#[cfg(feature = "allocative")]
+use allocative::FlameGraphBuilder;
 use ark_serialize::*;
 use rayon::prelude::*;
 use std::cell::RefCell;
@@ -26,7 +33,7 @@ use std::rc::Rc;
 ///
 /// This trait defines the interface needed to participate in the `BatchedSumcheck` protocol,
 /// which reduces verifier cost and proof size by batching multiple sumcheck protocols.
-pub trait SumcheckInstance<F: JoltField>: Send + Sync {
+pub trait SumcheckInstance<F: JoltField>: Send + Sync + MaybeAllocative {
     /// Returns the maximum degree of the sumcheck polynomial.
     fn degree(&self) -> usize;
 
@@ -69,6 +76,9 @@ pub trait SumcheckInstance<F: JoltField>: Send + Sync {
         accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     );
+
+    #[cfg(feature = "allocative")]
+    fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder);
 }
 
 pub enum SingleSumcheck {}
@@ -194,6 +204,12 @@ impl BatchedSumcheck {
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(max_num_rounds);
 
         for round in 0..max_num_rounds {
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let label = format!("Sumcheck round {round}");
+                print_current_memory_usage(label.as_str());
+            }
+
             let remaining_rounds = max_num_rounds - round;
 
             let univariate_polys: Vec<UniPoly<F>> = sumcheck_instances
@@ -359,8 +375,9 @@ impl BatchedSumcheck {
                         sumcheck.normalize_opening_point(r_slice),
                     );
                 }
+                let claim = sumcheck.expected_output_claim(opening_accumulator.clone(), r_slice);
 
-                sumcheck.expected_output_claim(opening_accumulator.clone(), r_slice) * coeff
+                claim * coeff
             })
             .sum();
 
@@ -394,6 +411,8 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
                 flattened_polys,
                 tau,
             );
+        #[cfg(feature = "allocative")]
+        print_data_structure_heap_usage("SpartanInterleavedPolynomial", &az_bz_cz_poly);
 
         let mut eq_poly = GruenSplitEqPolynomial::new(tau, BindingOrder::LowToHigh);
 
@@ -530,7 +549,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
                 let W_iter = (0..len).into_par_iter().map(witness_value);
                 let Z_iter = W_iter
                     .chain(one.into_par_iter())
-                    .chain(rayon::iter::repeatn(zero, len));
+                    .chain(rayon::iter::repeat_n(zero, len));
                 let left_iter = Z_iter.clone().take(len);
                 let right_iter = Z_iter.skip(len).take(len);
                 let B = left_iter

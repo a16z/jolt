@@ -13,7 +13,8 @@ use crate::{
     poly::{
         commitment::commitment_scheme::CommitmentScheme, opening_proof::ProverOpeningAccumulator,
     },
-    utils::{errors::ProofVerifyError, math::Math, transcript::Transcript},
+    transcripts::Transcript,
+    utils::{errors::ProofVerifyError, math::Math},
     zkvm::{
         bytecode::BytecodePreprocessing,
         dag::{jolt_dag::JoltDAG, proof_serialization::JoltProof},
@@ -91,7 +92,6 @@ where
 {
     pub generators: PCS::ProverSetup,
     pub shared: JoltSharedPreprocessing,
-    field: F::SmallValueLookupTables,
 }
 
 impl<F, PCS> Serializable for JoltProverPreprocessing<F, PCS>
@@ -150,9 +150,8 @@ where
     pub(crate) prover_setup: PCS::ProverSetup,
 }
 
-pub trait Jolt<F, PCS, FS: Transcript>
+pub trait Jolt<F: JoltField, PCS, FS: Transcript>
 where
-    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
     fn shared_preprocess(
@@ -177,24 +176,18 @@ where
         memory_init: Vec<(u64, u8)>,
         max_trace_length: usize,
     ) -> JoltProverPreprocessing<F, PCS> {
-        let small_value_lookup_tables = F::compute_lookup_tables();
-        F::initialize_lookup_tables(small_value_lookup_tables.clone());
-
         let shared = Self::shared_preprocess(bytecode, memory_layout, memory_init);
 
         let max_T: usize = max_trace_length.next_power_of_two();
 
         let generators = PCS::setup_prover(DTH_ROOT_OF_K.log_2() + max_T.log_2());
 
-        JoltProverPreprocessing {
-            generators,
-            shared,
-            field: small_value_lookup_tables,
-        }
+        JoltProverPreprocessing { generators, shared }
     }
 
     #[allow(clippy::type_complexity)]
     #[cfg(feature = "prover")]
+    #[tracing::instrument(skip_all, name = "Jolt::prove")]
     fn prove(
         preprocessing: &JoltProverPreprocessing<F, PCS>,
         program: &mut Program,
@@ -251,6 +244,7 @@ where
         (proof, program_io, debug_info)
     }
 
+    #[tracing::instrument(skip_all, name = "Jolt::verify")]
     fn verify(
         preprocessing: &JoltVerifierPreprocessing<F, PCS>,
         proof: JoltProof<F, PCS, FS>,
@@ -305,11 +299,11 @@ where
 }
 
 pub struct JoltRV32IM;
-impl Jolt<Fr, DoryCommitmentScheme, KeccakTranscript> for JoltRV32IM {}
-pub type RV32IMJoltProof = JoltProof<Fr, DoryCommitmentScheme, KeccakTranscript>;
+impl Jolt<Fr, DoryCommitmentScheme, Blake2bTranscript> for JoltRV32IM {}
+pub type RV32IMJoltProof = JoltProof<Fr, DoryCommitmentScheme, Blake2bTranscript>;
 
 use crate::poly::commitment::dory::DoryCommitmentScheme;
-use crate::utils::transcript::KeccakTranscript;
+use crate::transcripts::Blake2bTranscript;
 use eyre::Result;
 use std::io::Cursor;
 use std::path::PathBuf;
@@ -364,10 +358,10 @@ mod tests {
     use crate::zkvm::{Jolt, JoltRV32IM};
     use serial_test::serial;
 
-    use crate::utils::transcript::KeccakTranscript;
+    use crate::transcripts::Blake2bTranscript;
 
     pub struct JoltRV32IMMockPCS;
-    impl Jolt<Fr, MockCommitScheme<Fr>, KeccakTranscript> for JoltRV32IMMockPCS {}
+    impl Jolt<Fr, MockCommitScheme<Fr>, Blake2bTranscript> for JoltRV32IMMockPCS {}
 
     #[test]
     #[serial]
