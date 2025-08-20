@@ -1,3 +1,9 @@
 # Optimizations
 
-🚜👷 These docs are under construction. Thank you for your patience 🚧🏗️
+This section describes notable optimizations implemented in the Jolt codebase.
+
+- [Batched sumcheck](./batched-sumcheck.md)
+- [Inlines](./inlines.md)
+- [Leveraging uniformity in Spartan](./uniform-spartan.md)
+- [Small value optimizations](./small-value.md)
+- [EQ optimizations](./eq.md)
