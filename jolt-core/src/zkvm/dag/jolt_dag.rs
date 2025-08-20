@@ -253,16 +253,17 @@ impl JoltDAG {
         // Batch-prove all openings
         let (_, trace, _, _) = state_manager.get_prover_data();
 
+        let all_polys: Vec<CommittedPolynomial> =
+            AllCommittedPolynomials::iter().copied().collect();
+        let polynomials_map =
+            CommittedPolynomial::generate_witness_batch(&all_polys, preprocessing, trace);
+
         #[cfg(feature = "allocative")]
         print_data_structure_heap_usage("Committed polynomials map", &polynomials_map);
 
         #[cfg(not(target_arch = "wasm32"))]
         print_current_memory_usage("Stage 5 baseline");
 
-        let all_polys: Vec<CommittedPolynomial> =
-            AllCommittedPolynomials::iter().copied().collect();
-        let polynomials_map =
-            CommittedPolynomial::generate_witness_batch(&all_polys, preprocessing, trace);
         let opening_proof = accumulator.borrow_mut().reduce_and_prove(
             polynomials_map,
             opening_proof_hints,
