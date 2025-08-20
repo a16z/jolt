@@ -2,9 +2,9 @@ use core::panic::AssertUnwindSafe;
 use std::panic;
 
 use crate::emulator::cpu::Cpu;
-use crate::emulator::TEST_MEMORY_CAPACITY;
 use crate::instruction::format::{InstructionFormat, InstructionRegisterState};
 use crate::instruction::NormalizedInstruction;
+use crate::utils::test_harness::TEST_MEMORY_CAPACITY;
 
 use super::{
     // amoaddd::AMOADDD, amoaddw::AMOADDW, amoandd::AMOANDD,

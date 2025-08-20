@@ -6,9 +6,10 @@
 use crate::emulator::{
     cpu::{Cpu, Xlen},
     default_terminal::DefaultTerminal,
-    TEST_MEMORY_CAPACITY,
 };
 use crate::instruction::{RISCVInstruction, RV32IMInstruction};
+
+pub const TEST_MEMORY_CAPACITY: u64 = 1024 * 1024;
 
 /// A test harness for the RISC-V CPU emulator.
 ///
