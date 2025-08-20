@@ -14,7 +14,7 @@ fn verifier() {
     start_cycle_tracking("preprocessing");
     let preprocessing: JoltVerifierPreprocessing<ark_bn254::Fr, PCS> =
         JoltVerifierPreprocessing::deserialize_from_bytes(
-            jolt_verifier_preprocessing_bytes::VERIFIER_PREPROCESSING_BYTES,
+            jolt_verifier_preprocessing_bytes::JOLT_VERIFIER_PREPROCESSING_BYTES,
         )
         .unwrap();
     end_cycle_tracking("preprocessing");
