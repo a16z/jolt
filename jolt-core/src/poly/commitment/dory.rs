@@ -1453,7 +1453,16 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
 
     fn finalize<'a>(state: Self::State<'a>) -> (Self::Commitment, Self::OpeningProofHint) {
         if let Some(K) = state.K {
+            let row_len = DoryGlobals::get_num_columns();
+            let T = DoryGlobals::get_T();
+            let rows_per_k = T / row_len;
+            dbg!(K);
+            dbg!(row_len);
+            dbg!(T);
+            dbg!(rows_per_k);
+
             // Reshuffle OneHot polynomial's row commitments
+            // We do this in finalize since `process_chunk` will eventually run in parallel so we can reshuffle its results once each chunk/row has completed.
             // TODO: Parallelize
             let l= state.row_commitments.len();
             println!("K={K}, state.row_commitments.len()={l}");

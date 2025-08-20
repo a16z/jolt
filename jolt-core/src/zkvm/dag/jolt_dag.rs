@@ -497,9 +497,10 @@ impl JoltDAG {
 
 
         let polys : Vec<_> = AllCommittedPolynomials::iter().collect();
+        dbg!(&polys);
         let init_pcss: Vec<_> = polys
             .iter()
-            .map(|poly| PCS::initialize(poly.to_polynomial_type(&preprocessing), size, &preprocessing.generators))//AZ: Add ram_d here
+            .map(|poly| PCS::initialize(dbg!(dbg!(poly).to_polynomial_type(&preprocessing)), size, &preprocessing.generators))//AZ: Add ram_d here
             .collect();
         let row_len = DoryGlobals::get_num_columns();
         let chunks = lazy_trace.clone() // TODO(JP): More efficient way to zip_with_self_next and chunkify in parallel
