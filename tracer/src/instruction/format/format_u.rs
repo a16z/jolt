@@ -18,7 +18,7 @@ pub struct RegisterStateFormatU {
 }
 
 impl InstructionRegisterState for RegisterStateFormatU {
-    #[cfg(any(feature = "random", test))]
+    #[cfg(any(feature = "test-utils", test))]
     fn random(rng: &mut rand::rngs::StdRng) -> Self {
         use rand::RngCore;
         Self {
@@ -56,7 +56,7 @@ impl InstructionFormat for FormatU {
         state.rd.1 = normalize_register_value(cpu.x[self.rd as usize], &cpu.xlen);
     }
 
-    #[cfg(any(feature = "random", test))]
+    #[cfg(any(feature = "test-utils", test))]
     fn random(rng: &mut rand::rngs::StdRng) -> Self {
         use common::constants::RISCV_REGISTER_COUNT;
         use rand::RngCore;

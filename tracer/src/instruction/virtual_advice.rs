@@ -34,7 +34,7 @@ impl RISCVInstruction for VirtualAdvice {
         panic!("virtual instruction `VirtualAdvice` cannot be built from a machine word");
     }
 
-    #[cfg(any(feature = "random", test))]
+    #[cfg(any(feature = "test-utils", test))]
     fn random(rng: &mut rand::rngs::StdRng) -> Self {
         use crate::instruction::format::InstructionFormat;
         use rand::RngCore;

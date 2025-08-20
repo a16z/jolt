@@ -327,7 +327,7 @@ pub trait RISCVInstruction:
 
     fn operands(&self) -> &Self::Format;
     fn new(word: u32, address: u64, validate: bool, compressed: bool) -> Self;
-    #[cfg(any(feature = "random", test))]
+    #[cfg(any(feature = "test-utils", test))]
     fn random(rng: &mut rand::rngs::StdRng) -> Self {
         use rand::RngCore;
         Self::new(rng.next_u32(), rng.next_u64(), false, false)
@@ -1454,7 +1454,7 @@ pub struct RISCVCycle<T: RISCVInstruction> {
 }
 
 impl<T: RISCVInstruction> RISCVCycle<T> {
-    #[cfg(any(feature = "random", test))]
+    #[cfg(any(feature = "test-utils", test))]
     pub fn random(&self, rng: &mut rand::rngs::StdRng) -> Self {
         let instruction = T::random(rng);
         let register_state =

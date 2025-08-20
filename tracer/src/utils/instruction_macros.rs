@@ -47,7 +47,7 @@ macro_rules! declare_riscv_instr {
                 }
             }
 
-            #[cfg(any(feature = "random", test))]
+            #[cfg(any(feature = "test-utils", test))]
             fn random(rng: &mut rand::rngs::StdRng) -> Self {
                 Self {
                     address: rand::RngCore::next_u64(rng),

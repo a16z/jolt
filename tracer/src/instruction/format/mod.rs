@@ -29,14 +29,14 @@ pub trait InstructionFormat:
     fn parse(word: u32) -> Self;
     fn capture_pre_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu);
     fn capture_post_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu);
-    #[cfg(any(feature = "random", test))]
+    #[cfg(any(feature = "test-utils", test))]
     fn random(rng: &mut rand::rngs::StdRng) -> Self;
 }
 
 pub trait InstructionRegisterState:
     Default + Copy + Clone + Serialize + DeserializeOwned + Debug
 {
-    #[cfg(any(feature = "random", test))]
+    #[cfg(any(feature = "test-utils", test))]
     fn random(rng: &mut rand::rngs::StdRng) -> Self;
     fn rs1_value(&self) -> u64 {
         0

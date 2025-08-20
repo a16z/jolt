@@ -29,7 +29,7 @@ std = [
     "tracing/std",
     "postcard/use-std",
 ]
-random = ["dep:rand"]
+test-utils = ["dep:rand"]
 
 [dependencies]
 jolt-platform = { path = "../jolt-platform" }

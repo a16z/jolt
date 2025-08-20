@@ -20,7 +20,7 @@ pub struct RegisterStateFormatS {
 }
 
 impl InstructionRegisterState for RegisterStateFormatS {
-    #[cfg(any(feature = "random", test))]
+    #[cfg(any(feature = "test-utils", test))]
     fn random(rng: &mut rand::rngs::StdRng) -> Self {
         use crate::emulator::TEST_MEMORY_CAPACITY;
         use rand::RngCore;
@@ -67,7 +67,7 @@ impl InstructionFormat for FormatS {
         // No register write
     }
 
-    #[cfg(any(feature = "random", test))]
+    #[cfg(any(feature = "test-utils", test))]
     fn random(rng: &mut rand::rngs::StdRng) -> Self {
         use crate::emulator::TEST_MEMORY_CAPACITY;
         use common::constants::RISCV_REGISTER_COUNT;
