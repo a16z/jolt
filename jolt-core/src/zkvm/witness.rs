@@ -986,7 +986,7 @@ impl CommittedPolynomial {
         where
             PCS::State<'a>: StreamingProcessChunk<T::WitnessType>,
         {
-            println!("|||||||||||||||||||||||> generate_witness_and_commit_row");
+            // println!("|||||||||||||||||||||||> generate_witness_and_commit_row");
             let row: Vec<_> = row_cycles
                 .iter()
                 .map(|(cycle, next_cycle)| witness_type.generate_streaming_witness(preprocessing, &cycle, &next_cycle, ram_d))

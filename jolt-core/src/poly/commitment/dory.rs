@@ -1455,8 +1455,11 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
         if let Some(K) = state.K {
             // Reshuffle OneHot polynomial's row commitments
             // TODO: Parallelize
+            let l= state.row_commitments.len();
+            println!("K={K}, state.row_commitments.len()={l}");
             let row_commitments: Vec<_> = (0..state.row_commitments.len()).map(|i| {
                 let j = (i % K) * K + i / K;
+                println!("j = {j}, i = {i}");
                 state.row_commitments[j]
             }).collect();
 
