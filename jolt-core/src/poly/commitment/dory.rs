@@ -1466,10 +1466,12 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
             // TODO: Parallelize
             let l= state.row_commitments.len();
             println!("K={K}, state.row_commitments.len()={l}");
-            let row_commitments: Vec<_> = (0..state.row_commitments.len()).map(|i| {
+            let num_rows = DoryGlobals::get_max_num_rows();
+            let row_commitments: Vec<_> = (0..num_rows).map(|i| {
                 let j = (i % K) * K + i / K;
-                println!("j = {j}, i = {i}");
-                state.row_commitments[j]
+                // println!("j = {j}, i = {i}");
+                // Default required since we don't pad streamed trace.
+                state.row_commitments.get(j).cloned().unwrap_or(JoltG1Wrapper::identity())
             }).collect();
 
             let commitment = JoltBn254::multi_pair(&row_commitments, &state.setup.g2_vec()[..row_commitments.len()]);
