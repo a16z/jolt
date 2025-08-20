@@ -21,7 +21,7 @@ use crate::{
 };
 
 // Enum to identify the type of the polynomial.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum Multilinear {
     LargeScalars,
     U8Scalars,
