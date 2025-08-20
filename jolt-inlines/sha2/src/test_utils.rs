@@ -6,10 +6,10 @@
 use crate::trace_generator::NEEDED_REGISTERS;
 use tracer::emulator::cpu::Xlen;
 use tracer::emulator::mmu::DRAM_BASE;
-use tracer::emulator::test_harness::CpuTestHarness;
 use tracer::instruction::format::format_r::FormatR;
 use tracer::instruction::inline::INLINE;
 use tracer::instruction::{RISCVInstruction, RISCVTrace};
+use tracer::utils::test_harness::CpuTestHarness;
 
 /// Canonical type alias for a 16-word SHA-256 input block.
 pub type Sha256Block = [u32; 16];

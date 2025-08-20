@@ -1,5 +1,5 @@
-// @TODO: temporal
 const TEST_MEMORY_CAPACITY: u64 = 1024 * 512 * 100;
+
 const PROGRAM_MEMORY_CAPACITY: u64 = EMULATOR_MEMORY_CAPACITY; // big enough to run Linux and xv6
 
 extern crate fnv;
@@ -26,7 +26,6 @@ pub mod elf_analyzer;
 pub mod memory;
 pub mod mmu;
 pub mod terminal;
-pub mod test_harness;
 
 use self::cpu::{Cpu, Xlen};
 use self::elf_analyzer::ElfAnalyzer;

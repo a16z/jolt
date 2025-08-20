@@ -3318,7 +3318,6 @@ dependencies = [
  "common",
  "derive_more",
  "fnv",
- "hex-literal",
  "itertools 0.10.5",
  "jolt-platform",
  "lazy_static",
