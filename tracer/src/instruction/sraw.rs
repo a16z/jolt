@@ -9,7 +9,7 @@ use crate::{
 
 use super::virtual_sign_extend::VirtualSignExtend;
 use super::{
-    format::format_r::FormatR, virtual_shift_right_bitmask::VirtualShiftRightBitmask,
+    andi::ANDI, format::format_r::FormatR, virtual_shift_right_bitmask::VirtualShiftRightBitmask,
     virtual_sra::VirtualSRA, RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
 };
 
@@ -48,7 +48,8 @@ impl RISCVTrace for SRAW {
 
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
         asm.emit_i::<VirtualSignExtend>(*v_rs1, self.operands.rs1, 0);
-        asm.emit_i::<VirtualShiftRightBitmask>(*v_bitmask, self.operands.rs2, 0);
+        asm.emit_i::<ANDI>(*v_bitmask, self.operands.rs2, 0x1f);
+        asm.emit_i::<VirtualShiftRightBitmask>(*v_bitmask, *v_bitmask, 0);
         asm.emit_vshift_r::<VirtualSRA>(self.operands.rd, *v_rs1, *v_bitmask);
         asm.emit_i::<VirtualSignExtend>(self.operands.rd, self.operands.rd, 0);
         asm.finalize()
