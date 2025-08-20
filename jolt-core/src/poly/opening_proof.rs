@@ -803,11 +803,10 @@ where
                 .map(|(k, v)| (v, polynomials.remove(k).unwrap()))
                 .unzip();
 
-            let rlc_result = RLCPolynomial::linear_combination(
+            MultilinearPolynomial::RLC(RLCPolynomial::linear_combination(
                 polynomials.into_iter().map(Arc::new).collect(),
                 &coeffs,
-            );
-            MultilinearPolynomial::RLC(rlc_result)
+            ))
         };
 
         #[cfg(test)]
