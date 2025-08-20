@@ -4,7 +4,6 @@ use crate::{
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Valid};
 use rayon::prelude::*;
-use std::sync::Arc;
 use strum_macros::EnumIter;
 
 use super::{
@@ -109,114 +108,6 @@ impl<F: JoltField> MultilinearPolynomial<F> {
             MultilinearPolynomial::OneHot(poly) => poly.get_num_vars(),
             _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
         }
-    }
-
-    #[tracing::instrument(skip_all)]
-    pub fn linear_combination(polynomials: Vec<Arc<Self>>, coefficients: &[F]) -> Self {
-        debug_assert_eq!(polynomials.len(), coefficients.len());
-
-        // If there's at least one sparse polynomial in `polynomials`, the linear
-        // combination will be represented by an `RLCPolynomial`. Otherwise, it will
-        // be represented by a `DensePolynomial`.
-        if polynomials
-            .iter()
-            .any(|poly| matches!(poly.as_ref(), MultilinearPolynomial::OneHot(_)))
-        {
-            let mut result = RLCPolynomial::<F>::new();
-            let dense_indices: Vec<usize> = polynomials
-                .iter()
-                .enumerate()
-                .filter(|(_, p)| !matches!(p.as_ref(), MultilinearPolynomial::OneHot(_)))
-                .map(|(i, _)| i)
-                .collect();
-
-            if !dense_indices.is_empty() {
-                let dense_len = result.dense_rlc.len();
-
-                result.dense_rlc = (0..dense_len)
-                    .into_par_iter()
-                    .map(|i| {
-                        let mut acc = F::zero();
-                        for &poly_idx in &dense_indices {
-                            let poly = polynomials[poly_idx].as_ref();
-                            let coeff = coefficients[poly_idx];
-
-                            if i < poly.original_len() {
-                                match poly {
-                                    MultilinearPolynomial::LargeScalars(p) => {
-                                        acc += p.evals_ref()[i].mul_01_optimized(coeff);
-                                    }
-                                    MultilinearPolynomial::U8Scalars(p) => {
-                                        acc += p.coeffs[i].field_mul(coeff);
-                                    }
-                                    MultilinearPolynomial::U16Scalars(p) => {
-                                        acc += p.coeffs[i].field_mul(coeff);
-                                    }
-                                    MultilinearPolynomial::U32Scalars(p) => {
-                                        acc += p.coeffs[i].field_mul(coeff);
-                                    }
-                                    MultilinearPolynomial::U64Scalars(p) => {
-                                        acc += p.coeffs[i].field_mul(coeff);
-                                    }
-                                    MultilinearPolynomial::I64Scalars(p) => {
-                                        acc += p.coeffs[i].field_mul(coeff);
-                                    }
-                                    _ => unreachable!(),
-                                }
-                            }
-                        }
-                        acc
-                    })
-                    .collect();
-            }
-            for (i, poly) in polynomials.into_iter().enumerate() {
-                if matches!(poly.as_ref(), MultilinearPolynomial::OneHot(_)) {
-                    result.one_hot_rlc.push((coefficients[i], poly));
-                }
-            }
-            let result = MultilinearPolynomial::RLC(result);
-
-            return result;
-        }
-        let max_length = polynomials
-            .iter()
-            .map(|poly| poly.as_ref().original_len())
-            .max()
-            .unwrap();
-
-        let result: Vec<F> = (0..max_length)
-            .into_par_iter()
-            .map(|i| {
-                let mut acc = F::zero();
-                for (coeff, poly) in coefficients.iter().zip(polynomials.iter()) {
-                    if i < poly.as_ref().original_len() {
-                        match poly.as_ref() {
-                            MultilinearPolynomial::LargeScalars(p) => {
-                                acc += p.evals_ref()[i].mul_01_optimized(*coeff);
-                            }
-                            MultilinearPolynomial::U8Scalars(p) => {
-                                acc += p.coeffs[i].field_mul(*coeff);
-                            }
-                            MultilinearPolynomial::U16Scalars(p) => {
-                                acc += p.coeffs[i].field_mul(*coeff);
-                            }
-                            MultilinearPolynomial::U32Scalars(p) => {
-                                acc += p.coeffs[i].field_mul(*coeff);
-                            }
-                            MultilinearPolynomial::U64Scalars(p) => {
-                                acc += p.coeffs[i].field_mul(*coeff);
-                            }
-                            MultilinearPolynomial::I64Scalars(p) => {
-                                acc += p.coeffs[i].field_mul(*coeff);
-                            }
-                            _ => unreachable!(),
-                        }
-                    }
-                }
-                acc
-            })
-            .collect();
-        MultilinearPolynomial::from(result)
     }
 
     /// Gets the polynomial coefficient at the given `index`

@@ -1,6 +1,5 @@
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::Arc;
 
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::multilinear_polynomial::PolynomialEvaluation;
@@ -15,6 +14,7 @@ use crate::zkvm::witness::{
 use crate::{
     field::JoltField,
     poly::{
+        dense_mlpoly::DensePolynomial,
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
     },
@@ -124,13 +124,14 @@ impl<F: JoltField> RASumcheck<F> {
             .challenge_scalar();
         let rlc_coeffs = [F::one(), gamma, gamma.square()];
 
-        let eq_poly = MultilinearPolynomial::linear_combination(
-            vec![
-                Arc::new(EqPolynomial::evals(r_cycle_val).into()),
-                Arc::new(EqPolynomial::evals(r_cycle_rw).into()),
-                Arc::new(EqPolynomial::evals(r_cycle_raf).into()),
-            ],
-            &rlc_coeffs,
+        let eq_polys = [
+            &MultilinearPolynomial::from(EqPolynomial::evals(r_cycle_val)),
+            &MultilinearPolynomial::from(EqPolynomial::evals(r_cycle_rw)),
+            &MultilinearPolynomial::from(EqPolynomial::evals(r_cycle_raf)),
+        ];
+
+        let eq_poly = MultilinearPolynomial::from(
+            DensePolynomial::linear_combination(&eq_polys, &rlc_coeffs).Z,
         );
         let combined_ra_claim = rlc_coeffs[0] * ra_claim_val
             + rlc_coeffs[1] * ra_claim_rw

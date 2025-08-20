@@ -1,6 +1,7 @@
 use crate::field::JoltField;
 use crate::msm::VariableBaseMSM;
 use crate::poly::commitment::dory::{DoryGlobals, JoltFieldWrapper, JoltGroupWrapper};
+use crate::poly::compact_polynomial::SmallScalar;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use ark_bn254::{Fr, G1Projective};
@@ -30,6 +31,66 @@ impl<F: JoltField> RLCPolynomial<F> {
             dense_rlc: unsafe_allocate_zero_vec(DoryGlobals::get_T()),
             one_hot_rlc: vec![],
         }
+    }
+
+    #[tracing::instrument(skip_all)]
+    pub fn linear_combination(
+        polynomials: Vec<Arc<MultilinearPolynomial<F>>>,
+        coefficients: &[F],
+    ) -> Self {
+        debug_assert_eq!(polynomials.len(), coefficients.len());
+
+        let mut result = RLCPolynomial::<F>::new();
+        let dense_indices: Vec<usize> = polynomials
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| !matches!(p.as_ref(), MultilinearPolynomial::OneHot(_)))
+            .map(|(i, _)| i)
+            .collect();
+
+        if !dense_indices.is_empty() {
+            let dense_len = result.dense_rlc.len();
+
+            result.dense_rlc = (0..dense_len)
+                .into_par_iter()
+                .map(|i| {
+                    let mut acc = F::zero();
+                    for &poly_idx in &dense_indices {
+                        let poly = polynomials[poly_idx].as_ref();
+                        let coeff = coefficients[poly_idx];
+
+                        if i < poly.original_len() {
+                            match poly {
+                                MultilinearPolynomial::U8Scalars(p) => {
+                                    acc += p.coeffs[i].field_mul(coeff);
+                                }
+                                MultilinearPolynomial::U16Scalars(p) => {
+                                    acc += p.coeffs[i].field_mul(coeff);
+                                }
+                                MultilinearPolynomial::U32Scalars(p) => {
+                                    acc += p.coeffs[i].field_mul(coeff);
+                                }
+                                MultilinearPolynomial::U64Scalars(p) => {
+                                    acc += p.coeffs[i].field_mul(coeff);
+                                }
+                                MultilinearPolynomial::I64Scalars(p) => {
+                                    acc += p.coeffs[i].field_mul(coeff);
+                                }
+                                _ => unreachable!(),
+                            }
+                        }
+                    }
+                    acc
+                })
+                .collect();
+        }
+        for (i, poly) in polynomials.into_iter().enumerate() {
+            if matches!(poly.as_ref(), MultilinearPolynomial::OneHot(_)) {
+                result.one_hot_rlc.push((coefficients[i], poly));
+            }
+        }
+
+        result
     }
 
     /// Commits to the rows of `RLCPolynomial`, viewing its coefficients

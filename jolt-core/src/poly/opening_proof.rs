@@ -16,8 +16,10 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 use super::{
     commitment::commitment_scheme::CommitmentScheme,
+    dense_mlpoly::DensePolynomial,
     eq_poly::EqPolynomial,
     multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
+    rlc_polynomial::RLCPolynomial,
     split_eq_poly::GruenSplitEqPolynomial,
 };
 use crate::{
@@ -352,14 +354,14 @@ where
     #[tracing::instrument(skip_all, name = "OpeningProofReductionSumcheck::prepare_sumcheck")]
     fn prepare_sumcheck(
         &mut self,
-        polynomials_map: Option<&HashMap<CommittedPolynomial, MultilinearPolynomial<F>>>,
+        polynomials_map: Option<&mut HashMap<CommittedPolynomial, MultilinearPolynomial<F>>>,
         gamma: F,
     ) {
         #[cfg(test)]
         {
             use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 
-            if let Some(polynomials_map) = polynomials_map {
+            if let Some(polynomials_map) = polynomials_map.as_ref() {
                 for (label, claim) in self.polynomials.iter().zip(self.input_claims.iter()) {
                     let poly = polynomials_map.get(label).unwrap();
                     debug_assert_eq!(
@@ -388,14 +390,18 @@ where
 
             if let Some(prover_state) = self.prover_state.as_mut() {
                 let polynomials_map = polynomials_map.unwrap();
-                let polynomials: Vec<Arc<MultilinearPolynomial<F>>> = self
+
+                let polynomials: Vec<&MultilinearPolynomial<F>> = self
                     .polynomials
                     .par_iter()
-                    .map(|label| Arc::new(polynomials_map.get(label).unwrap().clone()))
+                    .map(|label| polynomials_map.get(label).unwrap())
                     .collect();
 
-                let rlc_poly =
-                    MultilinearPolynomial::linear_combination(polynomials, &self.rlc_coeffs);
+                let result =
+                    DensePolynomial::linear_combination(polynomials.as_ref(), &self.rlc_coeffs);
+
+                let rlc_poly = MultilinearPolynomial::from(result.Z);
+
                 debug_assert_eq!(rlc_poly.evaluate(&self.opening_point), reduced_claim);
                 let num_vars = rlc_poly.get_num_vars();
 
@@ -757,10 +763,9 @@ where
         );
         let _enter = prepare_span.enter();
 
-        self.sumchecks
-            .par_iter_mut()
-            .zip(gammas.par_iter())
-            .for_each(|(sumcheck, gamma)| sumcheck.prepare_sumcheck(Some(&polynomials), *gamma));
+        for (sumcheck, gamma) in self.sumchecks.iter_mut().zip(gammas.iter()) {
+            sumcheck.prepare_sumcheck(Some(&mut polynomials), *gamma);
+        }
 
         drop(_enter);
 
@@ -800,7 +805,8 @@ where
             let polynomials_arc: Vec<Arc<MultilinearPolynomial<F>>> =
                 polynomials.into_iter().map(Arc::new).collect();
 
-            MultilinearPolynomial::linear_combination(polynomials_arc, &coeffs)
+            let rlc_result = RLCPolynomial::linear_combination(polynomials_arc, &coeffs);
+            MultilinearPolynomial::RLC(rlc_result)
         };
 
         #[cfg(test)]
