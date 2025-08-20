@@ -28,4 +28,5 @@ via a procedure of the following form:
 ## Credits
 [Lasso](https://eprint.iacr.org/2023/1216.pdf) was written by Srinath Setty, Justin Thaler and Riad Wahby. [Jolt](https://eprint.iacr.org/2023/1217.pdf) was written by Arasu Arun, Srinath Setty, and Justin Thaler.
 
-Jolt was initially forked from Srinath Setty's work on [microsoft/Spartan](https://github.com/microsoft/spartan), specifically the [arkworks-rs/Spartan](https://github.com/arkworks-rs/spartan) fork in order to use the excellent Arkworks-rs prime field arithmetic library. Jolt's R1CS is also proven using a version of Spartan (forked from the [microsoft/Spartan2](https://github.com/microsoft/Spartan2) codebase) optimized for the case of uniform R1CS constraints.
+Jolt was initially forked from Srinath Setty's work on [microsoft/Spartan](https://github.com/microsoft/spartan), specifically the [arkworks-rs/Spartan](https://github.com/arkworks-rs/spartan) fork in order to use the excellent arkworks-rs field and curve implementations.
+Jolt's R1CS is also proven using a version of Spartan (forked from the [microsoft/Spartan2](https://github.com/microsoft/Spartan2) codebase) optimized for the case of uniform R1CS constraints.

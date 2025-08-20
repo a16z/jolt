@@ -1,4 +1,5 @@
 # Quickstart
+
 ## Installing
 Start by installing the `jolt` command line tool.
 ```

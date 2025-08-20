@@ -73,15 +73,15 @@ Examples in the [`examples`](./examples/) directory can be run using e.g.
 
 ### Execution profiling
 
-Jolt uses [tracing_chrome](https://crates.io/crates/tracing-chrome) for execution profiling.
+Jolt is instrumented using [tokio-rs/tracing](https://github.com/tokio-rs/tracing) for execution profiling.
 
-To generate a trace, run:
+To generate a trace, run e.g.
 
 ```cargo run --release -p jolt-core profile --name sha3 --format chrome```
 
 Where `--name` can be `sha2`, `sha3`, `sha2-chain`, `fibonacci`, or `btreemap`. The corresponding guest programs can be found in the [`examples`](./examples/) directory. The benchmark inputs are provided in [`bench.rs`](./jolt-core/src/benches/bench.rs).
 
-The above command will output a JSON file, e.g. `trace-1712455107389520.json`, which can be viewed in [Perfetto](https://ui.perfetto.dev/).
+The above command will output a JSON file in the workspace rootwith a name `trace-<timestamp>.json`, which can be viewed in [Perfetto](https://ui.perfetto.dev/).
 
 ### Memory profiling
 
