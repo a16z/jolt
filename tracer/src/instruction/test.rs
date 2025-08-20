@@ -2,19 +2,45 @@ use core::panic::AssertUnwindSafe;
 use std::panic;
 
 use crate::emulator::cpu::Cpu;
+use crate::emulator::TEST_MEMORY_CAPACITY;
 use crate::instruction::format::{InstructionFormat, InstructionRegisterState};
 use crate::instruction::NormalizedInstruction;
 
 use super::{
-    addiw::ADDIW, addw::ADDW, amoaddd::AMOADDD, amoaddw::AMOADDW, amoandd::AMOANDD,
-    amoandw::AMOANDW, amomaxd::AMOMAXD, amomaxud::AMOMAXUD, amomaxuw::AMOMAXUW, amomaxw::AMOMAXW,
-    amomind::AMOMIND, amominud::AMOMINUD, amominuw::AMOMINUW, amominw::AMOMINW, amoord::AMOORD,
-    amoorw::AMOORW, amoswapd::AMOSWAPD, amoswapw::AMOSWAPW, amoxord::AMOXORD, amoxorw::AMOXORW,
-    div::DIV, divu::DIVU, divuw::DIVUW, divw::DIVW, lb::LB, lbu::LBU, lh::LH, lhu::LHU, lw::LW,
-    lwu::LWU, mulh::MULH, mulhsu::MULHSU, mulw::MULW, rem::REM, remu::REMU, remuw::REMUW,
-    remw::REMW, sb::SB, sh::SH, sll::SLL, slli::SLLI, slliw::SLLIW, sllw::SLLW, sra::SRA,
-    srai::SRAI, sraiw::SRAIW, sraw::SRAW, srl::SRL, srli::SRLI, srliw::SRLIW, srlw::SRLW,
-    subw::SUBW, sw::SW, RISCVInstruction, RISCVTrace,
+    // amoaddd::AMOADDD, amoaddw::AMOADDW, amoandd::AMOANDD,
+    // amoandw::AMOANDW, amomaxd::AMOMAXD, amomaxud::AMOMAXUD, amomaxuw::AMOMAXUW, amomaxw::AMOMAXW,
+    // amomind::AMOMIND, amominud::AMOMINUD, amominuw::AMOMINUW, amominw::AMOMINW, amoord::AMOORD,
+    // amoorw::AMOORW, amoswapd::AMOSWAPD, amoswapw::AMOSWAPW, amoxord::AMOXORD, amoxorw::AMOXORW,
+    // lb::LB, lbu::LBU, lh::LH, lhu::LHU, lw::LW, lwu::LWU,
+    // sb::SB, sh::SH, sw::SW,
+    addiw::ADDIW,
+    addw::ADDW,
+    div::DIV,
+    divu::DIVU,
+    divuw::DIVUW,
+    divw::DIVW,
+    mulh::MULH,
+    mulhsu::MULHSU,
+    mulw::MULW,
+    rem::REM,
+    remu::REMU,
+    remuw::REMUW,
+    remw::REMW,
+    sll::SLL,
+    slli::SLLI,
+    slliw::SLLIW,
+    sllw::SLLW,
+    sra::SRA,
+    srai::SRAI,
+    sraiw::SRAIW,
+    sraw::SRAW,
+    srl::SRL,
+    srli::SRLI,
+    srliw::SRLIW,
+    srlw::SRLW,
+    subw::SUBW,
+    RISCVInstruction,
+    RISCVTrace,
 };
 
 use crate::emulator::terminal::DummyTerminal;
@@ -39,10 +65,14 @@ macro_rules! test_virtual_sequences {
 }
 
 test_virtual_sequences!(
-    ADDIW, ADDW, AMOADDD, AMOADDW, AMOANDD, AMOANDW, AMOMAXD, AMOMAXUD, AMOMAXUW, AMOMAXW, AMOMIND,
-    AMOMINUD, AMOMINUW, AMOMINW, AMOORD, AMOORW, AMOSWAPD, AMOSWAPW, AMOXORD, AMOXORW, DIV, DIVU,
-    DIVUW, DIVW, LB, LBU, LH, LHU, LW, LWU, MULH, MULHSU, MULW, REM, REMU, REMUW, REMW, SB, SH,
-    SLL, SLLI, SLLIW, SLLW, SRA, SRAI, SRAIW, SRAW, SRL, SRLI, SRLIW, SRLW, SUBW, SW,
+    // NOTE: AMO instructinos panic on all cases, because `random` generates invalid
+    // memory accessses. Same with store and load instructions.
+    //
+    // AMOADDD, AMOADDW, AMOANDD, AMOANDW, AMOMAXD, AMOMAXUD, AMOMAXUW, AMOMAXW, AMOMIND,
+    // AMOMINUD, AMOMINUW, AMOMINW, AMOORD, AMOORW, AMOSWAPD, AMOSWAPW, AMOXORD, AMOXORW,
+    // LB, LBU, LH, LHU, LW, LWU, SB, SH, SW
+    ADDIW, ADDW, DIV, DIVU, DIVUW, DIVW, MULH, MULHSU, MULW, REM, REMU, REMUW, REMW, SLL, SLLI,
+    SLLIW, SLLW, SRA, SRAI, SRAIW, SRAW, SRL, SRLI, SRLIW, SRLW, SUBW,
 );
 
 fn test_rng() -> StdRng {
@@ -50,14 +80,12 @@ fn test_rng() -> StdRng {
     StdRng::from_seed(seed)
 }
 
-const TEST_MEMORY_CAPACITY: u64 = 1024 * 1024;
-
 pub fn virtual_sequence_trace_test<I: RISCVInstruction + RISCVTrace + Copy>()
 where
     RV32IMCycle: From<RISCVCycle<I>>,
 {
     let mut rng = test_rng();
-    let mut _non_panic = 0;
+    let mut non_panic = 0;
 
     for _ in 0..1000 {
         let instruction = I::random(&mut rng);
@@ -90,7 +118,7 @@ where
         if res.is_err() {
             continue;
         }
-        _non_panic += 1;
+        non_panic += 1;
 
         let mut trace_vec = Vec::new();
         instruction.trace(&mut virtual_cpu, Some(&mut trace_vec));
@@ -108,7 +136,7 @@ where
             );
         }
     }
-    // if non_panic == 0 {
-    //     panic!("All of instructions panic at the execute function");
-    // }
+    if non_panic == 0 {
+        panic!("All of instructions panic at the execute function");
+    }
 }

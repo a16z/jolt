@@ -22,9 +22,10 @@ pub struct RegisterStateFormatS {
 impl InstructionRegisterState for RegisterStateFormatS {
     #[cfg(any(feature = "random", test))]
     fn random(rng: &mut rand::rngs::StdRng) -> Self {
+        use crate::emulator::TEST_MEMORY_CAPACITY;
         use rand::RngCore;
         Self {
-            rs1: rng.next_u64(),
+            rs1: rng.next_u64() % TEST_MEMORY_CAPACITY,
             rs2: rng.next_u64(),
         }
     }
@@ -68,12 +69,13 @@ impl InstructionFormat for FormatS {
 
     #[cfg(any(feature = "random", test))]
     fn random(rng: &mut rand::rngs::StdRng) -> Self {
+        use crate::emulator::TEST_MEMORY_CAPACITY;
         use common::constants::RISCV_REGISTER_COUNT;
         use rand::RngCore;
         Self {
             rs1: (rng.next_u64() as u8 % RISCV_REGISTER_COUNT),
             rs2: (rng.next_u64() as u8 % RISCV_REGISTER_COUNT),
-            imm: rng.next_u64() as i64,
+            imm: rng.next_u64() as i64 % TEST_MEMORY_CAPACITY as i64,
         }
     }
 }

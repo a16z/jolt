@@ -1,5 +1,5 @@
-// @TODO: temporal
-const TEST_MEMORY_CAPACITY: u64 = 1024 * 512 * 100;
+pub const TEST_MEMORY_CAPACITY: u64 = 1024 * 1024;
+
 const PROGRAM_MEMORY_CAPACITY: u64 = EMULATOR_MEMORY_CAPACITY; // big enough to run Linux and xv6
 
 extern crate fnv;
