@@ -6,7 +6,6 @@
     - [Guests and hosts](./usage/guests_hosts/guests_hosts.md)
         - [Guests](./usage/guests_hosts/guests.md)
         - [Hosts](./usage/guests_hosts/hosts.md)
-    - [Standard Library](./usage/stdlib.md)
     - [Profiling](./usage/profiling/profiling.md)
         - [zkVM profiling](./usage/profiling/zkvm_profiling.md)
         - [Guest profiling](./usage/profiling/guest_profiling.md)
