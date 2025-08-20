@@ -1,18 +1,20 @@
-use crate::utils::inline_helpers::InstrAssembler;
 use crate::utils::virtual_registers::allocate_virtual_register;
+use crate::{instruction::srai::SRAI, utils::inline_helpers::InstrAssembler};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     declare_riscv_instr,
     emulator::cpu::{Cpu, Xlen},
+    instruction::{
+        sub::SUB, virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder,
+        xor::XOR,
+    },
 };
 
 use super::{
     add::ADD, format::format_r::FormatR, mul::MUL, virtual_advice::VirtualAdvice,
-    virtual_assert_eq::VirtualAssertEQ,
-    virtual_assert_valid_signed_remainder::VirtualAssertValidSignedRemainder,
-    virtual_change_divisor::VirtualChangeDivisor, virtual_move::VirtualMove, RISCVInstruction,
-    RISCVTrace, RV32IMCycle, RV32IMInstruction,
+    virtual_assert_eq::VirtualAssertEQ, virtual_change_divisor::VirtualChangeDivisor,
+    virtual_move::VirtualMove, RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
 };
 
 declare_riscv_instr!(
@@ -96,12 +98,25 @@ impl RISCVTrace for REM {
         let v_r = allocate_virtual_register();
         let v_qy = allocate_virtual_register();
         let v_rs2 = allocate_virtual_register();
+        let v_sign_bitmask_r = allocate_virtual_register();
+        let v_sign_bitmask_rs2 = allocate_virtual_register();
+        let v_sign_bitmask_rs1 = allocate_virtual_register();
+        let v_abs_r = allocate_virtual_register();
+        let v_abs_rs2 = allocate_virtual_register();
 
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
         asm.emit_j::<VirtualAdvice>(*v_q, 0);
         asm.emit_j::<VirtualAdvice>(*v_r, 0);
         asm.emit_r::<VirtualChangeDivisor>(*v_rs2, self.operands.rs1, self.operands.rs2);
-        asm.emit_b::<VirtualAssertValidSignedRemainder>(*v_r, self.operands.rs2, 0);
+        asm.emit_i::<SRAI>(*v_sign_bitmask_r, *v_r, 31);
+        asm.emit_i::<SRAI>(*v_sign_bitmask_rs1, self.operands.rs1, 31);
+        asm.emit_i::<SRAI>(*v_sign_bitmask_rs2, self.operands.rs2, 31);
+        asm.emit_r::<XOR>(*v_abs_r, *v_r, *v_sign_bitmask_r);
+        asm.emit_r::<XOR>(*v_abs_rs2, self.operands.rs2, *v_sign_bitmask_rs2);
+        asm.emit_r::<SUB>(*v_abs_rs2, *v_abs_rs2, *v_sign_bitmask_rs2);
+        asm.emit_r::<SUB>(*v_abs_r, *v_abs_r, *v_sign_bitmask_r);
+        asm.emit_b::<VirtualAssertValidUnsignedRemainder>(*v_abs_r, *v_abs_rs2, 0);
+        asm.emit_b::<VirtualAssertEQ>(*v_sign_bitmask_r, *v_sign_bitmask_rs1, 0);
         asm.emit_r::<MUL>(*v_qy, *v_q, *v_rs2);
         asm.emit_r::<ADD>(*v_0, *v_qy, *v_r);
         asm.emit_b::<VirtualAssertEQ>(*v_0, self.operands.rs1, 0);
