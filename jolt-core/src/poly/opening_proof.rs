@@ -354,14 +354,14 @@ where
     #[tracing::instrument(skip_all, name = "OpeningProofReductionSumcheck::prepare_sumcheck")]
     fn prepare_sumcheck(
         &mut self,
-        polynomials_map: Option<&mut HashMap<CommittedPolynomial, MultilinearPolynomial<F>>>,
+        polynomials_map: Option<&HashMap<CommittedPolynomial, MultilinearPolynomial<F>>>,
         gamma: F,
     ) {
         #[cfg(test)]
         {
             use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 
-            if let Some(polynomials_map) = polynomials_map.as_ref() {
+            if let Some(polynomials_map) = polynomials_map {
                 for (label, claim) in self.polynomials.iter().zip(self.input_claims.iter()) {
                     let poly = polynomials_map.get(label).unwrap();
                     debug_assert_eq!(
@@ -763,9 +763,10 @@ where
         );
         let _enter = prepare_span.enter();
 
-        for (sumcheck, gamma) in self.sumchecks.iter_mut().zip(gammas.iter()) {
-            sumcheck.prepare_sumcheck(Some(&mut polynomials), *gamma);
-        }
+        self.sumchecks
+            .par_iter_mut()
+            .zip(gammas.par_iter())
+            .for_each(|(sumcheck, gamma)| sumcheck.prepare_sumcheck(Some(&polynomials), *gamma));
 
         drop(_enter);
 
@@ -802,10 +803,10 @@ where
                 .map(|(k, v)| (v, polynomials.remove(k).unwrap()))
                 .unzip();
 
-            let polynomials_arc: Vec<Arc<MultilinearPolynomial<F>>> =
-                polynomials.into_iter().map(Arc::new).collect();
-
-            let rlc_result = RLCPolynomial::linear_combination(polynomials_arc, &coeffs);
+            let rlc_result = RLCPolynomial::linear_combination(
+                polynomials.into_iter().map(Arc::new).collect(),
+                &coeffs,
+            );
             MultilinearPolynomial::RLC(rlc_result)
         };
 
