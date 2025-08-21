@@ -4,7 +4,6 @@ use crate::{
 };
 use allocative::Allocative;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Valid};
-use num_traits::MulAdd;
 use rayon::prelude::*;
 use strum_macros::EnumIter;
 
@@ -13,10 +12,7 @@ use super::{
     dense_mlpoly::DensePolynomial,
     eq_poly::EqPolynomial,
 };
-use crate::{
-    field::{JoltField, OptimizedMul},
-    utils::thread::unsafe_allocate_zero_vec,
-};
+use crate::field::{JoltField, OptimizedMul};
 
 /// Wrapper enum for the various multilinear polynomial types used in Jolt
 #[repr(u8)]
@@ -113,103 +109,6 @@ impl<F: JoltField> MultilinearPolynomial<F> {
             MultilinearPolynomial::OneHot(poly) => poly.get_num_vars(),
             _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
         }
-    }
-
-    #[tracing::instrument(skip_all)]
-    pub fn linear_combination(polynomials: &[&Self], coefficients: &[F]) -> Self {
-        debug_assert_eq!(polynomials.len(), coefficients.len());
-
-        // If there's at least one sparse polynomial in `polynomials`, the linear
-        // combination will be represented by an `RLCPolynomial`. Otherwise, it will
-        // be represented by a `DensePolynomial`.
-        if polynomials
-            .iter()
-            .any(|poly| matches!(poly, MultilinearPolynomial::OneHot(_)))
-        {
-            let mut result = RLCPolynomial::<F>::new();
-            for (coeff, polynomial) in coefficients.iter().zip(polynomials.iter()) {
-                result = match polynomial {
-                    MultilinearPolynomial::LargeScalars(poly) => poly.mul_add(*coeff, result),
-                    MultilinearPolynomial::U8Scalars(poly) => poly.mul_add(*coeff, result),
-                    MultilinearPolynomial::U16Scalars(poly) => poly.mul_add(*coeff, result),
-                    MultilinearPolynomial::U32Scalars(poly) => poly.mul_add(*coeff, result),
-                    MultilinearPolynomial::U64Scalars(poly) => poly.mul_add(*coeff, result),
-                    MultilinearPolynomial::I64Scalars(poly) => poly.mul_add(*coeff, result),
-                    MultilinearPolynomial::OneHot(poly) => poly.mul_add(*coeff, result),
-                    _ => unimplemented!("Unexpected polynomial type"),
-                };
-            }
-            return MultilinearPolynomial::RLC(result);
-        }
-
-        let max_length = polynomials
-            .iter()
-            .map(|poly| poly.original_len())
-            .max()
-            .unwrap();
-        let num_chunks = rayon::current_num_threads()
-            .next_power_of_two()
-            .min(max_length);
-        let chunk_size = (max_length / num_chunks).max(1);
-
-        let lc_coeffs: Vec<F> = (0..num_chunks)
-            .into_par_iter()
-            .flat_map_iter(|chunk_index| {
-                let index = chunk_index * chunk_size;
-                let mut chunk = unsafe_allocate_zero_vec::<F>(chunk_size);
-
-                for (coeff, poly) in coefficients.iter().zip(polynomials.iter()) {
-                    let poly_len = poly.original_len();
-                    if index >= poly_len {
-                        continue;
-                    }
-
-                    match poly {
-                        MultilinearPolynomial::LargeScalars(poly) => {
-                            debug_assert!(!poly.is_bound());
-                            let poly_evals = &poly.evals_ref()[index..];
-                            for (rlc, poly_eval) in chunk.iter_mut().zip(poly_evals.iter()) {
-                                *rlc += poly_eval.mul_01_optimized(*coeff);
-                            }
-                        }
-                        MultilinearPolynomial::U8Scalars(poly) => {
-                            let poly_evals = &poly.coeffs[index..];
-                            for (rlc, poly_eval) in chunk.iter_mut().zip(poly_evals.iter()) {
-                                *rlc += poly_eval.field_mul(*coeff);
-                            }
-                        }
-                        MultilinearPolynomial::U16Scalars(poly) => {
-                            let poly_evals = &poly.coeffs[index..];
-                            for (rlc, poly_eval) in chunk.iter_mut().zip(poly_evals.iter()) {
-                                *rlc += poly_eval.field_mul(*coeff);
-                            }
-                        }
-                        MultilinearPolynomial::U32Scalars(poly) => {
-                            let poly_evals = &poly.coeffs[index..];
-                            for (rlc, poly_eval) in chunk.iter_mut().zip(poly_evals.iter()) {
-                                *rlc += poly_eval.field_mul(*coeff);
-                            }
-                        }
-                        MultilinearPolynomial::U64Scalars(poly) => {
-                            let poly_evals = &poly.coeffs[index..];
-                            for (rlc, poly_eval) in chunk.iter_mut().zip(poly_evals.iter()) {
-                                *rlc += poly_eval.field_mul(*coeff);
-                            }
-                        }
-                        MultilinearPolynomial::I64Scalars(poly) => {
-                            let poly_evals = &poly.coeffs[index..];
-                            for (rlc, poly_eval) in chunk.iter_mut().zip(poly_evals.iter()) {
-                                *rlc += poly_eval.field_mul(*coeff);
-                            }
-                        }
-                        _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
-                    }
-                }
-                chunk
-            })
-            .collect();
-
-        MultilinearPolynomial::from(lc_coeffs)
     }
 
     /// Gets the polynomial coefficient at the given `index`
