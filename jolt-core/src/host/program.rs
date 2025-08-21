@@ -1,4 +1,5 @@
 use crate::field::JoltField;
+use crate::guest;
 use crate::host::analyze::ProgramSummary;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::host::toolchain::{install_no_std_toolchain, install_toolchain};
@@ -9,7 +10,6 @@ use common::constants::{
     EMULATOR_MEMORY_CAPACITY, RAM_START_ADDRESS, STACK_CANARY_SIZE,
 };
 use common::jolt_device::{JoltDevice, MemoryConfig};
-use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::PathBuf;
@@ -39,6 +39,13 @@ impl Program {
 
     pub fn set_func(&mut self, func: &str) {
         self.func = Some(func.to_string())
+    }
+
+    pub fn set_memory_config(&mut self, memory_config: MemoryConfig) {
+        self.set_memory_size(memory_config.memory_size);
+        self.set_stack_size(memory_config.stack_size);
+        self.set_max_input_size(memory_config.max_input_size);
+        self.set_max_output_size(memory_config.max_output_size);
     }
 
     pub fn set_memory_size(&mut self, len: u64) {
@@ -151,6 +158,18 @@ impl Program {
         }
     }
 
+    pub fn get_elf_contents(&self) -> Option<Vec<u8>> {
+        if let Some(elf) = &self.elf {
+            let mut elf_file =
+                File::open(elf).unwrap_or_else(|_| panic!("could not open elf file: {elf:?}"));
+            let mut elf_contents = Vec::new();
+            elf_file.read_to_end(&mut elf_contents).unwrap();
+            Some(elf_contents)
+        } else {
+            None
+        }
+    }
+
     pub fn decode(&mut self) -> (Vec<RV32IMInstruction>, Vec<(u64, u8)>, u64) {
         self.build(DEFAULT_TARGET_DIR);
         let elf = self.elf.as_ref().unwrap();
@@ -158,16 +177,7 @@ impl Program {
             File::open(elf).unwrap_or_else(|_| panic!("could not open elf file: {elf:?}"));
         let mut elf_contents = Vec::new();
         elf_file.read_to_end(&mut elf_contents).unwrap();
-        let (mut instructions, raw_bytes, program_end, xlen) = tracer::decode(&elf_contents);
-        let bytecode_size = program_end - RAM_START_ADDRESS;
-
-        // Expand inline sequences
-        instructions = instructions
-            .into_par_iter()
-            .flat_map_iter(|instr| instr.inline_sequence(xlen))
-            .collect();
-
-        (instructions, raw_bytes, bytecode_size)
+        guest::program::decode(&elf_contents)
     }
 
     // TODO(moodlezoup): Make this generic over InstructionSet
@@ -189,7 +199,7 @@ impl Program {
             max_output_size: self.max_output_size,
             program_size: Some(program_size),
         };
-        tracer::trace(&elf_contents, inputs, &memory_config)
+        guest::program::trace(&elf_contents, inputs, &memory_config)
     }
 
     #[tracing::instrument(skip_all, name = "Program::trace_to_file")]

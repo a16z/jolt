@@ -4,8 +4,6 @@ use std::{
     path::Path,
 };
 
-#[cfg(feature = "prover")]
-use crate::host::Program;
 #[cfg(test)]
 use crate::poly::commitment::dory::DoryGlobals;
 use crate::{
@@ -190,18 +188,28 @@ where
     #[tracing::instrument(skip_all, name = "Jolt::prove")]
     fn prove(
         preprocessing: &JoltProverPreprocessing<F, PCS>,
-        program: &mut Program,
+        elf_contents: &[u8],
         inputs: &[u8],
     ) -> (
         JoltProof<F, PCS, FS>,
         JoltDevice,
         Option<ProverDebugInfo<F, FS, PCS>>,
     ) {
-        use crate::zkvm::dag::state_manager::StateManager;
+        use crate::{guest, zkvm::dag::state_manager::StateManager};
+        use common::jolt_device::MemoryConfig;
         use rayon::prelude::*;
         use tracer::instruction::RV32IMCycle;
 
-        let (mut trace, final_memory_state, mut program_io) = program.trace(inputs);
+        let memory_config = MemoryConfig {
+            max_input_size: preprocessing.shared.memory_layout.max_input_size,
+            max_output_size: preprocessing.shared.memory_layout.max_output_size,
+            stack_size: preprocessing.shared.memory_layout.stack_size,
+            memory_size: preprocessing.shared.memory_layout.memory_size,
+            program_size: Some(preprocessing.shared.memory_layout.program_size),
+        };
+
+        let (mut trace, final_memory_state, mut program_io) =
+            guest::program::trace(elf_contents, inputs, &memory_config);
         let num_riscv_cycles: usize = trace
             .par_iter()
             .map(|cycle| {
@@ -341,6 +349,16 @@ pub trait Serializable: CanonicalSerialize + CanonicalDeserialize + Sized {
         let cursor = Cursor::new(bytes);
         Ok(Self::deserialize_compressed(cursor)?)
     }
+
+    /// Deserializes data from bytes but skips checks for performance
+    fn deserialize_from_bytes_unchecked(bytes: &[u8]) -> Result<Self> {
+        let cursor = Cursor::new(bytes);
+        Ok(Self::deserialize_with_mode(
+            cursor,
+            ark_serialize::Compress::Yes,
+            ark_serialize::Validate::No,
+        )?)
+    }
 }
 
 impl Serializable for RV32IMJoltProof {}
@@ -375,8 +393,10 @@ mod tests {
             init_memory_state,
             1 << 16,
         );
+        let elf_contents_opt = program.get_elf_contents();
+        let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let (jolt_proof, io_device, debug_info) =
-            JoltRV32IMMockPCS::prove(&preprocessing, &mut program, &inputs);
+            JoltRV32IMMockPCS::prove(&preprocessing, elf_contents, &inputs);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let verification_result =
@@ -402,8 +422,10 @@ mod tests {
             init_memory_state,
             1 << 16,
         );
+        let elf_contents_opt = program.get_elf_contents();
+        let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let (jolt_proof, io_device, debug_info) =
-            JoltRV32IM::prove(&preprocessing, &mut program, &inputs);
+            JoltRV32IM::prove(&preprocessing, elf_contents, &inputs);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let verification_result =
@@ -435,8 +457,10 @@ mod tests {
             init_memory_state,
             1 << 16,
         );
+        let elf_contents_opt = program.get_elf_contents();
+        let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let (jolt_proof, io_device, debug_info) =
-            JoltRV32IM::prove(&preprocessing, &mut program, &inputs);
+            JoltRV32IM::prove(&preprocessing, elf_contents, &inputs);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let verification_result =
@@ -467,8 +491,10 @@ mod tests {
             init_memory_state,
             1 << 16,
         );
+        let elf_contents_opt = program.get_elf_contents();
+        let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let (jolt_proof, io_device, debug_info) =
-            JoltRV32IM::prove(&preprocessing, &mut program, &inputs);
+            JoltRV32IM::prove(&preprocessing, elf_contents, &inputs);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let verification_result =
@@ -493,8 +519,10 @@ mod tests {
             init_memory_state,
             1 << 16,
         );
+        let elf_contents_opt = program.get_elf_contents();
+        let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let (jolt_proof, io_device, debug_info) =
-            JoltRV32IM::prove(&preprocessing, &mut program, &[]);
+            JoltRV32IM::prove(&preprocessing, elf_contents, &[]);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let verification_result =
@@ -520,8 +548,10 @@ mod tests {
             init_memory_state,
             1 << 16,
         );
+        let elf_contents_opt = program.get_elf_contents();
+        let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let (jolt_proof, io_device, debug_info) =
-            JoltRV32IM::prove(&preprocessing, &mut program, &inputs);
+            JoltRV32IM::prove(&preprocessing, elf_contents, &inputs);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let verification_result =
@@ -547,8 +577,10 @@ mod tests {
             init_memory_state,
             1 << 16,
         );
+        let elf_contents_opt = program.get_elf_contents();
+        let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let (jolt_proof, io_device, debug_info) =
-            JoltRV32IM::prove(&preprocessing, &mut program, &inputs);
+            JoltRV32IM::prove(&preprocessing, elf_contents, &[50]);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let verification_result =

@@ -67,8 +67,10 @@ fn prove_example(
             1 << 24,
         );
 
+        let elf_contents_opt = program.get_elf_contents();
+        let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let (jolt_proof, program_io, _) =
-            JoltRV32IM::prove(&preprocessing, &mut program, &serialized_input);
+            JoltRV32IM::prove(&preprocessing, elf_contents, &serialized_input);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let verification_result =
