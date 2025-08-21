@@ -1,7 +1,4 @@
 use crate::emulator::cpu::Cpu;
-use common::constants::REGISTER_COUNT;
-use rand::rngs::StdRng;
-use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
@@ -21,7 +18,9 @@ pub struct RegisterStateFormatJ {
 }
 
 impl InstructionRegisterState for RegisterStateFormatJ {
-    fn random(rng: &mut StdRng) -> Self {
+    #[cfg(any(feature = "test-utils", test))]
+    fn random(rng: &mut rand::rngs::StdRng) -> Self {
+        use rand::RngCore;
         Self {
             rd: (rng.next_u64(), rng.next_u64()),
         }
@@ -59,9 +58,12 @@ impl InstructionFormat for FormatJ {
         state.rd.1 = normalize_register_value(cpu.x[self.rd as usize], &cpu.xlen);
     }
 
-    fn random(rng: &mut StdRng) -> Self {
+    #[cfg(any(feature = "test-utils", test))]
+    fn random(rng: &mut rand::rngs::StdRng) -> Self {
+        use common::constants::RISCV_REGISTER_COUNT;
+        use rand::RngCore;
         Self {
-            rd: (rng.next_u64() as u8 % REGISTER_COUNT),
+            rd: (rng.next_u64() as u8 % RISCV_REGISTER_COUNT),
             imm: rng.next_u64(),
         }
     }

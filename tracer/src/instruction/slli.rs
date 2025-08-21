@@ -1,3 +1,4 @@
+use crate::utils::inline_helpers::InstrAssembler;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -7,8 +8,7 @@ use crate::{
 };
 
 use super::{
-    format::{format_i::FormatI, InstructionFormat},
-    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
+    format::format_i::FormatI, RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
 };
 
 declare_riscv_instr!(
@@ -42,9 +42,6 @@ impl RISCVTrace for SLLI {
     }
 
     fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
-        let mut sequence = vec![];
-        let inline_sequence_remaining = self.inline_sequence_remaining.unwrap_or(0);
-
         // Determine word size based on immediate value and instruction encoding
         // For SLLI: RV32 uses 5-bit immediates (0-31), RV64 uses 6-bit immediates (0-63)
         let mask = match xlen {
@@ -52,18 +49,9 @@ impl RISCVTrace for SLLI {
             Xlen::Bit64 => 0x3f, //low 6bits
         };
         let shift = self.operands.imm & mask;
-        let mul = RV32IMInstruction::VirtualMULI(VirtualMULI {
-            address: self.address,
-            operands: FormatI {
-                rd: self.operands.rd,
-                rs1: self.operands.rs1,
-                imm: 1 << shift,
-            },
-            inline_sequence_remaining: Some(inline_sequence_remaining),
-            is_compressed: self.is_compressed,
-        });
-        sequence.push(mul);
 
-        sequence
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
+        asm.emit_i::<VirtualMULI>(self.operands.rd, self.operands.rs1, 1 << shift);
+        asm.finalize()
     }
 }

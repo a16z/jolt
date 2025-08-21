@@ -14,12 +14,17 @@ use crate::zkvm::witness::{
 use crate::{
     field::JoltField,
     poly::{
+        dense_mlpoly::DensePolynomial,
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
     },
     subprotocols::sumcheck::{SumcheckInstance, SumcheckInstanceProof},
-    utils::{math::Math, transcript::Transcript},
+    transcripts::Transcript,
+    utils::math::Math,
 };
+use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::FlameGraphBuilder;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
 
@@ -29,6 +34,7 @@ pub struct RAProof<F: JoltField, ProofTranscript: Transcript> {
     pub sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
 }
 
+#[derive(Allocative)]
 pub struct RAProverState<F: JoltField> {
     /// `ra` polys to be constructed based addresses
     ra_i_polys: Vec<MultilinearPolynomial<F>>,
@@ -36,6 +42,7 @@ pub struct RAProverState<F: JoltField> {
     eq_poly: MultilinearPolynomial<F>,
 }
 
+#[derive(Allocative)]
 pub struct RASumcheck<F: JoltField> {
     rlc_coeffs: [F; 3],
     /// Random challenge r_cycle
@@ -123,14 +130,16 @@ impl<F: JoltField> RASumcheck<F> {
             .challenge_scalar();
         let rlc_coeffs = [F::one(), gamma, gamma.square()];
 
-        let eq_poly = MultilinearPolynomial::linear_combination(
-            &[
-                &EqPolynomial::evals(r_cycle_val).into(),
-                &EqPolynomial::evals(r_cycle_rw).into(),
-                &EqPolynomial::evals(r_cycle_raf).into(),
-            ],
-            &rlc_coeffs,
+        let eq_polys = [
+            &EqPolynomial::evals(r_cycle_val).into(),
+            &EqPolynomial::evals(r_cycle_rw).into(),
+            &EqPolynomial::evals(r_cycle_raf).into(),
+        ];
+
+        let eq_poly = MultilinearPolynomial::from(
+            DensePolynomial::linear_combination(&eq_polys, &rlc_coeffs).Z,
         );
+
         let combined_ra_claim = rlc_coeffs[0] * ra_claim_val
             + rlc_coeffs[1] * ra_claim_rw
             + rlc_coeffs[2] * ra_claim_raf;
@@ -403,12 +412,17 @@ impl<F: JoltField> SumcheckInstance<F> for RASumcheck<F> {
             );
         }
     }
+
+    #[cfg(feature = "allocative")]
+    fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
+        flamegraph.visit_root(self);
+    }
 }
 
 // #[cfg(test)]
 // mod tests {
 //     use super::*;
-//     use crate::utils::transcript::KeccakTranscript;
+//     use crate::transcripts::Blake2bTranscript;
 //     use ark_bn254::Fr;
 //     use ark_std::{One, Zero};
 //     use rand::thread_rng;
@@ -446,10 +460,10 @@ impl<F: JoltField> SumcheckInstance<F> for RASumcheck<F> {
 //             d,
 //         );
 
-//         let mut prover_transcript = KeccakTranscript::new(b"test_one_cycle");
+//         let mut prover_transcript = Blake2bTranscript::new(b"test_one_cycle");
 //         let (proof, r_cycle_bound) = prover_sumcheck.prove(&mut prover_transcript);
 
-//         let mut verifier_transcript = KeccakTranscript::new(b"test_one_cycle");
+//         let mut verifier_transcript = Blake2bTranscript::new(b"test_one_cycle");
 
 //         let verify_result = RASumcheck::<Fr>::verify(
 //             ra_claim,
@@ -512,10 +526,10 @@ impl<F: JoltField> SumcheckInstance<F> for RASumcheck<F> {
 //             d,
 //         );
 
-//         let mut prover_transcript = KeccakTranscript::new(b"test_t_large");
+//         let mut prover_transcript = Blake2bTranscript::new(b"test_t_large");
 //         let (proof, r_cycle_bound) = prover_sumcheck.prove(&mut prover_transcript);
 
-//         let mut verifier_transcript = KeccakTranscript::new(b"test_t_large");
+//         let mut verifier_transcript = Blake2bTranscript::new(b"test_t_large");
 //         verifier_transcript.compare_to(prover_transcript);
 
 //         let verify_result = RASumcheck::<Fr>::verify(

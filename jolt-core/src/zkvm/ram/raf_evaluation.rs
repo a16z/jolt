@@ -1,5 +1,8 @@
 use std::{cell::RefCell, rc::Rc};
 
+use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::FlameGraphBuilder;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
 
@@ -18,7 +21,8 @@ use crate::{
         },
     },
     subprotocols::sumcheck::{SumcheckInstance, SumcheckInstanceProof},
-    utils::{math::Math, thread::unsafe_allocate_zero_vec, transcript::Transcript},
+    transcripts::Transcript,
+    utils::{math::Math, thread::unsafe_allocate_zero_vec},
     zkvm::dag::state_manager::StateManager,
     zkvm::{ram::remap_address, witness::VirtualPolynomial},
 };
@@ -30,6 +34,7 @@ pub struct RafEvaluationProof<F: JoltField, ProofTranscript: Transcript> {
     raf_claim: F,
 }
 
+#[derive(Allocative)]
 pub struct RafEvaluationProverState<F: JoltField> {
     /// The ra polynomial
     ra: MultilinearPolynomial<F>,
@@ -37,6 +42,7 @@ pub struct RafEvaluationProverState<F: JoltField> {
     unmap: UnmapRamAddressPolynomial<F>,
 }
 
+#[derive(Allocative)]
 pub struct RafEvaluationSumcheck<F: JoltField> {
     /// The initial claim (raf_claim)
     input_claim: F,
@@ -244,12 +250,17 @@ impl<F: JoltField> SumcheckInstance<F> for RafEvaluationSumcheck<F> {
             ra_opening_point,
         );
     }
+
+    #[cfg(feature = "allocative")]
+    fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
+        flamegraph.visit_root(self);
+    }
 }
 
 // #[cfg(test)]
 // mod tests {
 //     use super::*;
-//     use crate::utils::transcript::KeccakTranscript;
+//     use crate::transcripts::Blake2bTranscript;
 //     use ark_bn254::Fr;
 
 //     #[test]
@@ -279,7 +290,7 @@ impl<F: JoltField> SumcheckInstance<F> for RafEvaluationSumcheck<F> {
 //             trace.push(RV32IMCycle::NoOp(i));
 //         }
 
-//         let mut prover_transcript = KeccakTranscript::new(b"test_no_ops");
+//         let mut prover_transcript = Blake2bTranscript::new(b"test_no_ops");
 //         let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(T.log_2());
 
 //         // Prove
@@ -287,7 +298,7 @@ impl<F: JoltField> SumcheckInstance<F> for RafEvaluationSumcheck<F> {
 //             RafEvaluationProof::prove(&trace, &memory_layout, r_cycle, K, &mut prover_transcript);
 
 //         // Verify
-//         let mut verifier_transcript = KeccakTranscript::new(b"test_no_ops");
+//         let mut verifier_transcript = Blake2bTranscript::new(b"test_no_ops");
 //         let _r_cycle: Vec<Fr> = verifier_transcript.challenge_vector(T.log_2());
 
 //         let r_address_result = proof.verify(K, &mut verifier_transcript, &memory_layout);

@@ -4,8 +4,8 @@ use crate::zkvm::lookup_table::{pow2_w::Pow2WTable, LookupTables};
 
 use super::{CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS};
 
-impl<const WORD_SIZE: usize> InstructionLookup<WORD_SIZE> for VirtualPow2IW {
-    fn lookup_table(&self) -> Option<LookupTables<WORD_SIZE>> {
+impl<const XLEN: usize> InstructionLookup<XLEN> for VirtualPow2IW {
+    fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
         Some(Pow2WTable.into())
     }
 }
@@ -25,23 +25,23 @@ impl InstructionFlags for VirtualPow2IW {
     }
 }
 
-impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<VirtualPow2IW> {
+impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualPow2IW> {
     fn to_instruction_inputs(&self) -> (u64, i128) {
         // Only use immediate value
         (0, self.instruction.operands.imm as i128)
     }
 
     fn to_lookup_operands(&self) -> (u64, u128) {
-        let (x, y) = LookupQuery::<WORD_SIZE>::to_instruction_inputs(self);
+        let (x, y) = LookupQuery::<XLEN>::to_instruction_inputs(self);
         (0, x as u128 + y as u64 as u128)
     }
 
     fn to_lookup_index(&self) -> u128 {
-        LookupQuery::<WORD_SIZE>::to_lookup_operands(self).1
+        LookupQuery::<XLEN>::to_lookup_operands(self).1
     }
 
     fn to_lookup_output(&self) -> u64 {
-        let y = LookupQuery::<WORD_SIZE>::to_lookup_index(self);
+        let y = LookupQuery::<XLEN>::to_lookup_index(self);
         // Always use modulo 32 for VirtualPow2IW
         1u64 << ((y % 32) as u64)
     }

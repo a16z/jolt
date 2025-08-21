@@ -3,9 +3,9 @@ use crate::{field::JoltField, utils::lookup_bits::LookupBits};
 
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 
-pub enum Pow2WPrefix<const WORD_SIZE: usize> {}
+pub enum Pow2WPrefix<const XLEN: usize> {}
 
-impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F> for Pow2WPrefix<WORD_SIZE> {
+impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for Pow2WPrefix<XLEN> {
     fn prefix_mle(
         checkpoints: &[PrefixCheckpoint<F>],
         r_x: Option<F>,
@@ -56,17 +56,17 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F> for Pow2WPrefix<
         }
 
         // r_y is the highest bit of the shift amount
-        if j == 2 * WORD_SIZE - 5 {
+        if j == 2 * XLEN - 5 {
             let shift = 1 << 16; // 2^(32/2)
             return Some(F::one() + F::from_u64(shift - 1) * r_y).into();
         }
 
         // r_x and r_y are bits in the shift amount
-        if 2 * WORD_SIZE - j < 5 {
+        if 2 * XLEN - j < 5 {
             let mut checkpoint = checkpoints[Prefixes::Pow2W].unwrap();
-            let shift = 1 << (1 << (2 * WORD_SIZE - j));
+            let shift = 1 << (1 << (2 * XLEN - j));
             checkpoint *= F::one() + F::from_u64(shift - 1) * r_x;
-            let shift = 1 << (1 << (2 * WORD_SIZE - j - 1));
+            let shift = 1 << (1 << (2 * XLEN - j - 1));
             checkpoint *= F::one() + F::from_u64(shift - 1) * r_y;
             return Some(checkpoint).into();
         }

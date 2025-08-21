@@ -14,7 +14,7 @@
 set -e # Exit on error
 
 # Define the exclude list
-exclusion_list=("collatz" "overflow" "sha3-chain")
+exclusion_list=("collatz" "overflow" "sha3-chain" "verifier" "recursion")
 # JSON file to store results
 output_file="benchmark_results.json"
 

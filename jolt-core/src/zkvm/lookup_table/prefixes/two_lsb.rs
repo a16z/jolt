@@ -4,16 +4,16 @@ use crate::{field::JoltField, utils::lookup_bits::LookupBits};
 
 use super::{PrefixCheckpoint, SparseDensePrefix};
 
-pub enum TwoLsbPrefix<const WORD_SIZE: usize> {}
+pub enum TwoLsbPrefix<const XLEN: usize> {}
 
-impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F> for TwoLsbPrefix<WORD_SIZE> {
+impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for TwoLsbPrefix<XLEN> {
     fn prefix_mle(_: &[PrefixCheckpoint<F>], r_x: Option<F>, c: u32, b: LookupBits, j: usize) -> F {
-        if j == 2 * WORD_SIZE - 1 {
+        if j == 2 * XLEN - 1 {
             // in the log(K)th round, `c` corresponds to bit 0
             // and `r_x` corresponds to bit 1
             debug_assert_eq!(b.len(), 0);
             (F::one() - F::from_u32(c)) * (F::one() - r_x.unwrap())
-        } else if j == 2 * WORD_SIZE - 2 {
+        } else if j == 2 * XLEN - 2 {
             // in the (log(K)-1)th round, `c` corresponds to bit 1
             debug_assert_eq!(b.len(), 1);
             let bit0 = u32::from(b) & 1;
@@ -36,7 +36,7 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F> for TwoLsbPrefix
         r_y: F,
         j: usize,
     ) -> PrefixCheckpoint<F> {
-        if j == 2 * WORD_SIZE - 1 {
+        if j == 2 * XLEN - 1 {
             Some((F::one() - r_x) * (F::one() - r_y)).into()
         } else {
             checkpoints[Prefixes::TwoLsb].into()

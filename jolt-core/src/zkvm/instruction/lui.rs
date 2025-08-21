@@ -4,8 +4,8 @@ use crate::zkvm::lookup_table::{range_check::RangeCheckTable, LookupTables};
 
 use super::{CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS};
 
-impl<const WORD_SIZE: usize> InstructionLookup<WORD_SIZE> for LUI {
-    fn lookup_table(&self) -> Option<LookupTables<WORD_SIZE>> {
+impl<const XLEN: usize> InstructionLookup<XLEN> for LUI {
+    fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
         Some(RangeCheckTable.into())
     }
 }
@@ -25,28 +25,28 @@ impl InstructionFlags for LUI {
     }
 }
 
-impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<LUI> {
+impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<LUI> {
     fn to_instruction_inputs(&self) -> (u64, i128) {
-        match WORD_SIZE {
+        match XLEN {
             #[cfg(test)]
             8 => (0, self.instruction.operands.imm as u8 as i128),
             32 => (0, self.instruction.operands.imm as u32 as i128),
             64 => (0, self.instruction.operands.imm as i128),
-            _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
+            _ => panic!("{XLEN}-bit word size is unsupported"),
         }
     }
 
     fn to_lookup_index(&self) -> u128 {
-        LookupQuery::<WORD_SIZE>::to_lookup_operands(self).1
+        LookupQuery::<XLEN>::to_lookup_operands(self).1
     }
 
     fn to_lookup_output(&self) -> u64 {
-        match WORD_SIZE {
+        match XLEN {
             #[cfg(test)]
             8 => (self.instruction.operands.imm as u8).into(),
             32 => (self.instruction.operands.imm as u32).into(),
             64 => self.instruction.operands.imm,
-            _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
+            _ => panic!("{XLEN}-bit word size is unsupported"),
         }
     }
 }

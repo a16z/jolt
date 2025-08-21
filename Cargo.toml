@@ -23,13 +23,13 @@ keywords = ["SNARK", "cryptography", "proofs"]
 [workspace]
 members = [
     "jolt-core",
+    "jolt-inlines/sha2",
+    "jolt-inlines/keccak256",
     "tracer",
     "common",
+    "jolt-platform",
     "jolt-sdk",
     "jolt-sdk/macros",
-    "jolt-verifier",
-    "jolt-inlines/sha2",
-    "jolt-inlines/bigint",
     "examples/btreemap/host",
     "examples/btreemap/guest",
     "examples/collatz",
@@ -56,6 +56,10 @@ members = [
     "examples/overflow/guest",
     "examples/memory-ops",
     "examples/memory-ops/guest",
+    "examples/verifier",
+    "examples/verifier/guest",
+    "examples/recursion",
+    "examples/recursion/guest",
     "examples/big-int",
     "examples/big-int/guest",
 ]
@@ -108,9 +112,10 @@ ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist
 ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+allocative = { git = "https://github.com/0xAndoroid/allocative", branch = "fix/impl-for-u128" }
 
 [workspace.metadata.cargo-machete]
 ignored = ["jolt-sdk"]
 
 [workspace.dependencies]
-spinners = { version= "4.1.1", default-features = false }
+spinners = { version = "4.1.1", default-features = false }

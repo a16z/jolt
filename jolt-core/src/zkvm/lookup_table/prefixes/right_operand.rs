@@ -3,9 +3,9 @@ use crate::{field::JoltField, utils::lookup_bits::LookupBits};
 
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 
-pub enum RightOperandPrefix<const WORD_SIZE: usize> {}
+pub enum RightOperandPrefix<const XLEN: usize> {}
 
-impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F> for RightOperandPrefix<WORD_SIZE> {
+impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for RightOperandPrefix<XLEN> {
     fn prefix_mle(
         checkpoints: &[PrefixCheckpoint<F>],
         _r_x: Option<F>,
@@ -17,7 +17,7 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F> for RightOperand
 
         if j % 2 == 1 {
             // c is of the right operand
-            let shift = WORD_SIZE - 1 - j / 2;
+            let shift = XLEN - 1 - j / 2;
             result += F::from_u128((c as u128) << shift);
         }
 
@@ -34,7 +34,7 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F> for RightOperand
         r_y: F,
         j: usize,
     ) -> PrefixCheckpoint<F> {
-        let shift = WORD_SIZE - 1 - j / 2;
+        let shift = XLEN - 1 - j / 2;
         let updated = checkpoints[Prefixes::RightOperand].unwrap_or(F::zero())
             + (F::from_u64(1 << shift) * r_y);
         Some(updated).into()

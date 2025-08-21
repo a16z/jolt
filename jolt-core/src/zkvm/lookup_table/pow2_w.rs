@@ -8,17 +8,17 @@ use crate::field::JoltField;
 use crate::zkvm::lookup_table::prefixes::Prefixes;
 
 /// Pow2W table - computes 2^(x % 32) for VirtualPow2W and VirtualPow2IW instructions
-/// Always uses modulo 32 regardless of WORD_SIZE
+/// Always uses modulo 32 regardless of XLEN
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct Pow2WTable<const WORD_SIZE: usize>;
+pub struct Pow2WTable<const XLEN: usize>;
 
-impl<const WORD_SIZE: usize> JoltLookupTable for Pow2WTable<WORD_SIZE> {
+impl<const XLEN: usize> JoltLookupTable for Pow2WTable<XLEN> {
     fn materialize_entry(&self, index: u128) -> u64 {
         1 << (index % 32) as u64
     }
 
     fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
-        debug_assert_eq!(r.len(), 2 * WORD_SIZE);
+        debug_assert_eq!(r.len(), 2 * XLEN);
         // We only care about the last 5 bits of the second operand (for modulo 32)
         let mut result = F::one();
         for i in 0..5 {
@@ -29,7 +29,7 @@ impl<const WORD_SIZE: usize> JoltLookupTable for Pow2WTable<WORD_SIZE> {
     }
 }
 
-impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE> for Pow2WTable<WORD_SIZE> {
+impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for Pow2WTable<XLEN> {
     fn suffixes(&self) -> Vec<Suffixes> {
         vec![Suffixes::Pow2W]
     }

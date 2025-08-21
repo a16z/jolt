@@ -1,9 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::{
-    format::{format_s::FormatS, InstructionFormat},
-    RISCVInstruction, RISCVTrace,
-};
+use super::{format::format_s::FormatS, RISCVInstruction, RISCVTrace};
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
 declare_riscv_instr!(

@@ -5,9 +5,9 @@ use crate::{
 
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 
-pub enum AndPrefix<const WORD_SIZE: usize> {}
+pub enum AndPrefix<const XLEN: usize> {}
 
-impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F> for AndPrefix<WORD_SIZE> {
+impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for AndPrefix<XLEN> {
     fn prefix_mle(
         checkpoints: &[PrefixCheckpoint<F>],
         r_x: Option<F>,
@@ -20,11 +20,11 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F> for AndPrefix<WO
         // AND high-order variables of x and y
         if let Some(r_x) = r_x {
             let y = F::from_u8(c as u8);
-            let shift = WORD_SIZE - 1 - j / 2;
+            let shift = XLEN - 1 - j / 2;
             result += F::from_u64(1 << shift) * r_x * y;
         } else {
             let y_msb = b.pop_msb() as u32;
-            let shift = WORD_SIZE - 1 - j / 2;
+            let shift = XLEN - 1 - j / 2;
             result += F::from_u32(c * y_msb) * F::from_u64(1 << shift);
         }
         // AND remaining x and y bits
@@ -41,7 +41,7 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F> for AndPrefix<WO
         r_y: F,
         j: usize,
     ) -> PrefixCheckpoint<F> {
-        let shift = WORD_SIZE - 1 - j / 2;
+        let shift = XLEN - 1 - j / 2;
         // checkpoint += 2^shift * r_x * r_y
         let updated =
             checkpoints[Prefixes::And].unwrap_or(F::zero()) + F::from_u64(1 << shift) * r_x * r_y;

@@ -1,3 +1,4 @@
+use crate::utils::inline_helpers::InstrAssembler;
 use crate::{
     declare_riscv_instr,
     emulator::cpu::{Cpu, Xlen},
@@ -7,8 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use super::virtual_sign_extend::VirtualSignExtend;
 use super::{
-    format::{format_i::FormatI, InstructionFormat},
-    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
+    format::format_i::FormatI, RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
 };
 
 declare_riscv_instr!(
@@ -41,39 +41,15 @@ impl RISCVTrace for SLLIW {
     }
 
     fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
-        let mut sequence = vec![];
-        let mut inline_sequence_remaining = self.inline_sequence_remaining.unwrap_or(1);
-
         let mask = match xlen {
             Xlen::Bit32 => panic!("SLLIW is invalid in 32b mode"),
             Xlen::Bit64 => 0x1f, //low 5bits
         };
         let shift = self.operands.imm & mask;
-        let mul = VirtualMULI {
-            address: self.address,
-            operands: FormatI {
-                rd: self.operands.rd,
-                rs1: self.operands.rs1,
-                imm: 1 << shift,
-            },
-            inline_sequence_remaining: Some(inline_sequence_remaining),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(mul.into());
-        inline_sequence_remaining -= 1;
 
-        let signext = VirtualSignExtend {
-            address: self.address,
-            operands: FormatI {
-                rd: self.operands.rd,
-                rs1: self.operands.rd,
-                imm: 0,
-            },
-            inline_sequence_remaining: Some(inline_sequence_remaining),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(signext.into());
-
-        sequence
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
+        asm.emit_i::<VirtualMULI>(self.operands.rd, self.operands.rs1, 1 << shift);
+        asm.emit_i::<VirtualSignExtend>(self.operands.rd, self.operands.rd, 0);
+        asm.finalize()
     }
 }

@@ -1,20 +1,18 @@
+use crate::utils::inline_helpers::InstrAssembler;
+use crate::utils::virtual_registers::allocate_virtual_register;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     declare_riscv_instr,
     emulator::cpu::{Cpu, Xlen},
-    instruction::{
-        format::format_virtual_right_shift_i::FormatVirtualRightShiftI, virtual_srli::VirtualSRLI,
-    },
+    instruction::virtual_srli::VirtualSRLI,
 };
 
 use super::slli::SLLI;
 use super::virtual_sign_extend::VirtualSignExtend;
 use super::{
-    format::{format_i::FormatI, InstructionFormat},
-    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
+    format::format_i::FormatI, RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
 };
-use common::constants::virtual_register_index;
 
 declare_riscv_instr!(
     name   = SRLIW,
@@ -46,51 +44,18 @@ impl RISCVTrace for SRLIW {
     }
 
     fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
-        let v_rs1 = virtual_register_index(0);
-        let mut sequence = vec![];
+        let v_rs1 = allocate_virtual_register();
 
-        let slli = SLLI {
-            address: self.address,
-            operands: FormatI {
-                rd: v_rs1,
-                rs1: self.operands.rs1,
-                imm: 32,
-            },
-            inline_sequence_remaining: Some(2),
-            is_compressed: self.is_compressed,
-        };
-        sequence.extend(slli.inline_sequence(xlen));
-
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
+        asm.emit_i::<SLLI>(*v_rs1, self.operands.rs1, 32);
         let (shift, len) = match xlen {
             Xlen::Bit32 => panic!("SRLIW is invalid in 32b mode"),
             Xlen::Bit64 => ((self.operands.imm & 0x1f) + 32, 64),
         };
         let ones = (1u128 << (len - shift)) - 1;
         let bitmask = (ones << shift) as u64;
-
-        let srl = VirtualSRLI {
-            address: self.address,
-            operands: FormatVirtualRightShiftI {
-                rd: self.operands.rd,
-                rs1: v_rs1,
-                imm: bitmask,
-            },
-            inline_sequence_remaining: Some(1),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(srl.into());
-
-        let signext = VirtualSignExtend {
-            address: self.address,
-            operands: FormatI {
-                rd: self.operands.rd,
-                rs1: self.operands.rd,
-                imm: 0,
-            },
-            inline_sequence_remaining: Some(0),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(signext.into());
-        sequence
+        asm.emit_vshift_i::<VirtualSRLI>(self.operands.rd, *v_rs1, bitmask);
+        asm.emit_i::<VirtualSignExtend>(self.operands.rd, self.operands.rd, 0);
+        asm.finalize()
     }
 }

@@ -60,7 +60,6 @@ use mulhu::MULHU;
 use mulw::MULW;
 use or::OR;
 use ori::ORI;
-use rand::{rngs::StdRng, RngCore};
 use rem::REM;
 use remu::REMU;
 use remuw::REMUW;
@@ -132,7 +131,7 @@ use format::{InstructionFormat, InstructionRegisterState, NormalizedOperands};
 
 pub mod format;
 
-pub mod instruction_macros;
+pub use crate::utils::instruction_macros;
 
 pub(super) mod amo;
 
@@ -328,7 +327,9 @@ pub trait RISCVInstruction:
 
     fn operands(&self) -> &Self::Format;
     fn new(word: u32, address: u64, validate: bool, compressed: bool) -> Self;
-    fn random(rng: &mut StdRng) -> Self {
+    #[cfg(any(feature = "test-utils", test))]
+    fn random(rng: &mut rand::rngs::StdRng) -> Self {
+        use rand::RngCore;
         Self::new(rng.next_u32(), rng.next_u64(), false, false)
     }
 
@@ -862,6 +863,7 @@ impl RV32IMInstruction {
             // while funct3 should hold all necessary instructions for that operation.
             // funct7:
             // - 0x00: SHA256
+            // - 0x01: Keccak256
             0b0001011 => Ok(INLINE::new(instr, address, false, compressed).into()),
             // 0x2B is reserved for external inlines
             0b0101011 => Ok(INLINE::new(instr, address, false, compressed).into()),
@@ -1452,7 +1454,8 @@ pub struct RISCVCycle<T: RISCVInstruction> {
 }
 
 impl<T: RISCVInstruction> RISCVCycle<T> {
-    pub fn random(&self, rng: &mut StdRng) -> Self {
+    #[cfg(any(feature = "test-utils", test))]
+    pub fn random(&self, rng: &mut rand::rngs::StdRng) -> Self {
         let instruction = T::random(rng);
         let register_state =
             <<T::Format as InstructionFormat>::RegisterState as InstructionRegisterState>::random(

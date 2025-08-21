@@ -1,8 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-use super::amo::{amo_post32, amo_post64, amo_pre32, amo_pre64};
-use super::RV32IMInstruction;
-use common::constants::virtual_register_index;
+use crate::utils::inline_helpers::InstrAssembler;
+use crate::utils::virtual_registers::allocate_virtual_register;
 
 use crate::{
     declare_riscv_instr,
@@ -10,8 +9,7 @@ use crate::{
 };
 
 use super::{
-    format::{format_r::FormatR, InstructionFormat},
-    RISCVInstruction, RISCVTrace, RV32IMCycle,
+    format::format_r::FormatR, RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
 };
 
 declare_riscv_instr!(
@@ -56,78 +54,43 @@ impl RISCVTrace for AMOSWAPW {
 
     fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
         match xlen {
-            Xlen::Bit32 => self.inline_sequence_32(xlen),
-            Xlen::Bit64 => self.inline_sequence_64(xlen),
+            Xlen::Bit32 => {
+                let v_rd = allocate_virtual_register();
+                let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
+                asm.emit_halign::<super::virtual_assert_word_alignment::VirtualAssertWordAlignment>(self.operands.rs1, 0);
+                asm.emit_i::<super::virtual_lw::VirtualLW>(*v_rd, self.operands.rs1, 0);
+                asm.emit_s::<super::virtual_sw::VirtualSW>(self.operands.rs1, self.operands.rs2, 0);
+                asm.emit_i::<super::virtual_move::VirtualMove>(self.operands.rd, *v_rd, 0);
+                asm.finalize()
+            }
+            Xlen::Bit64 => {
+                let v_mask = allocate_virtual_register();
+                let v_dword_address = allocate_virtual_register();
+                let v_dword = allocate_virtual_register();
+                let v_word = allocate_virtual_register();
+                let v_shift = allocate_virtual_register();
+                let v_rd = allocate_virtual_register();
+                let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
+                asm.emit_halign::<super::virtual_assert_word_alignment::VirtualAssertWordAlignment>(self.operands.rs1, 0);
+                asm.emit_i::<super::andi::ANDI>(*v_dword_address, self.operands.rs1, -8i64 as u64);
+                asm.emit_ld::<super::ld::LD>(*v_dword, *v_dword_address, 0);
+                asm.emit_i::<super::slli::SLLI>(*v_shift, self.operands.rs1, 3);
+                asm.emit_r::<super::srl::SRL>(*v_rd, *v_dword, *v_shift);
+                asm.emit_i::<super::ori::ORI>(*v_mask, 0, -1i64 as u64);
+                asm.emit_i::<super::srli::SRLI>(*v_mask, *v_mask, 32);
+                asm.emit_r::<super::sll::SLL>(*v_mask, *v_mask, *v_shift);
+                asm.emit_r::<super::sll::SLL>(*v_word, self.operands.rs2, *v_shift);
+                asm.emit_r::<super::xor::XOR>(*v_word, *v_dword, *v_word);
+                asm.emit_r::<super::and::AND>(*v_word, *v_word, *v_mask);
+                asm.emit_r::<super::xor::XOR>(*v_dword, *v_dword, *v_word);
+                asm.emit_s::<super::sd::SD>(*v_dword_address, *v_dword, 0);
+                asm.emit_i::<super::virtual_sign_extend::VirtualSignExtend>(
+                    self.operands.rd,
+                    *v_rd,
+                    0,
+                );
+                asm.finalize()
+            }
         }
-    }
-}
-
-impl AMOSWAPW {
-    fn inline_sequence_32(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
-        let v_rd = virtual_register_index(7);
-
-        let mut sequence = vec![];
-        let mut remaining = 3;
-        remaining = amo_pre32(
-            &mut sequence,
-            self.address,
-            self.is_compressed,
-            self.operands.rs1,
-            v_rd,
-            remaining,
-        );
-
-        amo_post32(
-            &mut sequence,
-            self.address,
-            self.is_compressed,
-            self.operands.rs2,
-            self.operands.rs1,
-            self.operands.rd,
-            v_rd,
-            remaining,
-        );
-
-        sequence
-    }
-
-    fn inline_sequence_64(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
-        // Virtual registers used in sequence
-        let v_mask = virtual_register_index(10);
-        let v_dword_address = virtual_register_index(11);
-        let v_dword = virtual_register_index(12);
-        let v_word = virtual_register_index(13);
-        let v_shift = virtual_register_index(14);
-        let v_rd = virtual_register_index(15);
-
-        let mut sequence = vec![];
-        let mut remaining = 16;
-        remaining = amo_pre64(
-            &mut sequence,
-            self.address,
-            self.is_compressed,
-            self.operands.rs1,
-            v_rd,
-            v_dword_address,
-            v_dword,
-            v_shift,
-            remaining,
-        );
-        amo_post64(
-            &mut sequence,
-            self.address,
-            self.is_compressed,
-            self.operands.rs2,
-            v_dword_address,
-            v_dword,
-            v_shift,
-            v_mask,
-            v_word,
-            self.operands.rd,
-            v_rd,
-            remaining,
-        );
-
-        sequence
     }
 }

@@ -4,8 +4,6 @@ use std::{
     path::Path,
 };
 
-#[cfg(feature = "prover")]
-use crate::host::Program;
 #[cfg(test)]
 use crate::poly::commitment::dory::DoryGlobals;
 use crate::{
@@ -13,7 +11,8 @@ use crate::{
     poly::{
         commitment::commitment_scheme::CommitmentScheme, opening_proof::ProverOpeningAccumulator,
     },
-    utils::{errors::ProofVerifyError, math::Math, transcript::Transcript},
+    transcripts::Transcript,
+    utils::{errors::ProofVerifyError, math::Math},
     zkvm::{
         bytecode::BytecodePreprocessing,
         dag::{jolt_dag::JoltDAG, proof_serialization::JoltProof},
@@ -91,7 +90,6 @@ where
 {
     pub generators: PCS::ProverSetup,
     pub shared: JoltSharedPreprocessing,
-    field: F::SmallValueLookupTables,
 }
 
 impl<F, PCS> Serializable for JoltProverPreprocessing<F, PCS>
@@ -150,9 +148,8 @@ where
     pub(crate) prover_setup: PCS::ProverSetup,
 }
 
-pub trait Jolt<F, PCS, FS: Transcript>
+pub trait Jolt<F: JoltField, PCS, FS: Transcript>
 where
-    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
     fn shared_preprocess(
@@ -177,38 +174,42 @@ where
         memory_init: Vec<(u64, u8)>,
         max_trace_length: usize,
     ) -> JoltProverPreprocessing<F, PCS> {
-        let small_value_lookup_tables = F::compute_lookup_tables();
-        F::initialize_lookup_tables(small_value_lookup_tables.clone());
-
         let shared = Self::shared_preprocess(bytecode, memory_layout, memory_init);
 
         let max_T: usize = max_trace_length.next_power_of_two();
 
         let generators = PCS::setup_prover(DTH_ROOT_OF_K.log_2() + max_T.log_2());
 
-        JoltProverPreprocessing {
-            generators,
-            shared,
-            field: small_value_lookup_tables,
-        }
+        JoltProverPreprocessing { generators, shared }
     }
 
     #[allow(clippy::type_complexity)]
     #[cfg(feature = "prover")]
+    #[tracing::instrument(skip_all, name = "Jolt::prove")]
     fn prove(
         preprocessing: &JoltProverPreprocessing<F, PCS>,
-        program: &mut Program,
+        elf_contents: &[u8],
         inputs: &[u8],
     ) -> (
         JoltProof<F, PCS, FS>,
         JoltDevice,
         Option<ProverDebugInfo<F, FS, PCS>>,
     ) {
-        use crate::zkvm::dag::state_manager::StateManager;
+        use crate::{guest, zkvm::dag::state_manager::StateManager};
+        use common::jolt_device::MemoryConfig;
         use rayon::prelude::*;
         use tracer::instruction::RV32IMCycle;
 
-        let (mut trace, final_memory_state, mut program_io) = program.trace(inputs);
+        let memory_config = MemoryConfig {
+            max_input_size: preprocessing.shared.memory_layout.max_input_size,
+            max_output_size: preprocessing.shared.memory_layout.max_output_size,
+            stack_size: preprocessing.shared.memory_layout.stack_size,
+            memory_size: preprocessing.shared.memory_layout.memory_size,
+            program_size: Some(preprocessing.shared.memory_layout.program_size),
+        };
+
+        let (mut trace, final_memory_state, mut program_io) =
+            guest::program::trace(elf_contents, inputs, &memory_config);
         let num_riscv_cycles: usize = trace
             .par_iter()
             .map(|cycle| {
@@ -251,6 +252,7 @@ where
         (proof, program_io, debug_info)
     }
 
+    #[tracing::instrument(skip_all, name = "Jolt::verify")]
     fn verify(
         preprocessing: &JoltVerifierPreprocessing<F, PCS>,
         proof: JoltProof<F, PCS, FS>,
@@ -305,11 +307,11 @@ where
 }
 
 pub struct JoltRV32IM;
-impl Jolt<Fr, DoryCommitmentScheme, KeccakTranscript> for JoltRV32IM {}
-pub type RV32IMJoltProof = JoltProof<Fr, DoryCommitmentScheme, KeccakTranscript>;
+impl Jolt<Fr, DoryCommitmentScheme, Blake2bTranscript> for JoltRV32IM {}
+pub type RV32IMJoltProof = JoltProof<Fr, DoryCommitmentScheme, Blake2bTranscript>;
 
 use crate::poly::commitment::dory::DoryCommitmentScheme;
-use crate::utils::transcript::KeccakTranscript;
+use crate::transcripts::Blake2bTranscript;
 use eyre::Result;
 use std::io::Cursor;
 use std::path::PathBuf;
@@ -347,6 +349,16 @@ pub trait Serializable: CanonicalSerialize + CanonicalDeserialize + Sized {
         let cursor = Cursor::new(bytes);
         Ok(Self::deserialize_compressed(cursor)?)
     }
+
+    /// Deserializes data from bytes but skips checks for performance
+    fn deserialize_from_bytes_unchecked(bytes: &[u8]) -> Result<Self> {
+        let cursor = Cursor::new(bytes);
+        Ok(Self::deserialize_with_mode(
+            cursor,
+            ark_serialize::Compress::Yes,
+            ark_serialize::Validate::No,
+        )?)
+    }
 }
 
 impl Serializable for RV32IMJoltProof {}
@@ -362,10 +374,10 @@ mod tests {
     use crate::zkvm::{Jolt, JoltRV32IM};
     use serial_test::serial;
 
-    use crate::utils::transcript::KeccakTranscript;
+    use crate::transcripts::Blake2bTranscript;
 
     pub struct JoltRV32IMMockPCS;
-    impl Jolt<Fr, MockCommitScheme<Fr>, KeccakTranscript> for JoltRV32IMMockPCS {}
+    impl Jolt<Fr, MockCommitScheme<Fr>, Blake2bTranscript> for JoltRV32IMMockPCS {}
 
     #[test]
     #[serial]
@@ -381,8 +393,10 @@ mod tests {
             init_memory_state,
             1 << 16,
         );
+        let elf_contents_opt = program.get_elf_contents();
+        let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let (jolt_proof, io_device, debug_info) =
-            JoltRV32IMMockPCS::prove(&preprocessing, &mut program, &inputs);
+            JoltRV32IMMockPCS::prove(&preprocessing, elf_contents, &inputs);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let verification_result =
@@ -408,8 +422,10 @@ mod tests {
             init_memory_state,
             1 << 16,
         );
+        let elf_contents_opt = program.get_elf_contents();
+        let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let (jolt_proof, io_device, debug_info) =
-            JoltRV32IM::prove(&preprocessing, &mut program, &inputs);
+            JoltRV32IM::prove(&preprocessing, elf_contents, &inputs);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let verification_result =
@@ -424,6 +440,12 @@ mod tests {
     #[test]
     #[serial]
     fn sha3_e2e_dory() {
+        // Ensure SHA3 inline library is linked and auto-registered
+        #[cfg(feature = "host")]
+        use sha3_inline as _;
+        // SHA3 inlines are automatically registered via #[ctor::ctor]
+        // when the sha3_inline crate is linked (see lib.rs)
+
         let mut program = host::Program::new("sha3-guest");
         let (bytecode, init_memory_state, _) = program.decode();
         let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
@@ -435,8 +457,10 @@ mod tests {
             init_memory_state,
             1 << 16,
         );
+        let elf_contents_opt = program.get_elf_contents();
+        let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let (jolt_proof, io_device, debug_info) =
-            JoltRV32IM::prove(&preprocessing, &mut program, &inputs);
+            JoltRV32IM::prove(&preprocessing, elf_contents, &inputs);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let verification_result =
@@ -449,12 +473,11 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     #[serial]
     fn sha2_e2e_dory() {
         // Ensure SHA2 inline library is linked and auto-registered
         #[cfg(feature = "host")]
-        extern crate sha2_inline;
+        use sha2_inline as _;
         // SHA2 inlines are automatically registered via #[ctor::ctor]
         // when the sha2_inline crate is linked (see lib.rs)
         let mut program = host::Program::new("sha2-guest");
@@ -468,8 +491,10 @@ mod tests {
             init_memory_state,
             1 << 16,
         );
+        let elf_contents_opt = program.get_elf_contents();
+        let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let (jolt_proof, io_device, debug_info) =
-            JoltRV32IM::prove(&preprocessing, &mut program, &inputs);
+            JoltRV32IM::prove(&preprocessing, elf_contents, &inputs);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let verification_result =
@@ -494,8 +519,10 @@ mod tests {
             init_memory_state,
             1 << 16,
         );
+        let elf_contents_opt = program.get_elf_contents();
+        let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let (jolt_proof, io_device, debug_info) =
-            JoltRV32IM::prove(&preprocessing, &mut program, &[]);
+            JoltRV32IM::prove(&preprocessing, elf_contents, &[]);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let verification_result =
@@ -521,8 +548,10 @@ mod tests {
             init_memory_state,
             1 << 16,
         );
+        let elf_contents_opt = program.get_elf_contents();
+        let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let (jolt_proof, io_device, debug_info) =
-            JoltRV32IM::prove(&preprocessing, &mut program, &inputs);
+            JoltRV32IM::prove(&preprocessing, elf_contents, &inputs);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let verification_result =
@@ -548,8 +577,10 @@ mod tests {
             init_memory_state,
             1 << 16,
         );
+        let elf_contents_opt = program.get_elf_contents();
+        let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let (jolt_proof, io_device, debug_info) =
-            JoltRV32IM::prove(&preprocessing, &mut program, &inputs);
+            JoltRV32IM::prove(&preprocessing, elf_contents, &[50]);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let verification_result =

@@ -22,7 +22,7 @@ use crate::{
         },
     },
     subprotocols::sumcheck::SumcheckInstanceProof,
-    utils::transcript::Transcript,
+    transcripts::Transcript,
     zkvm::{
         dag::state_manager::{ProofData, ProofKeys, Proofs, StateManager, VerifierState},
         witness::{CommittedPolynomial, VirtualPolynomial},
@@ -455,7 +455,6 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
     }
 }
 
-#[allow(dead_code)]
 pub fn serialize_and_print_size(
     item_name: &str,
     file_name: &str,

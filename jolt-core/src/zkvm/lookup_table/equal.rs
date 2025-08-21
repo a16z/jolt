@@ -8,9 +8,9 @@ use super::{
 use crate::{field::JoltField, utils::uninterleave_bits};
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct EqualTable<const WORD_SIZE: usize>;
+pub struct EqualTable<const XLEN: usize>;
 
-impl<const WORD_SIZE: usize> JoltLookupTable for EqualTable<WORD_SIZE> {
+impl<const XLEN: usize> JoltLookupTable for EqualTable<XLEN> {
     fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
         debug_assert!(r.len().is_multiple_of(2));
 
@@ -27,7 +27,7 @@ impl<const WORD_SIZE: usize> JoltLookupTable for EqualTable<WORD_SIZE> {
     }
 }
 
-impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE> for EqualTable<WORD_SIZE> {
+impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for EqualTable<XLEN> {
     fn suffixes(&self) -> Vec<Suffixes> {
         vec![Suffixes::Eq]
     }

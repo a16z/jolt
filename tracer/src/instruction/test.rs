@@ -1,295 +1,145 @@
-// /// Tests the consistency and correctness of a virtual instruction sequence.
-// /// In detail:
-// /// 1. Sets the registers to given values for rs1 and rs2.
-// /// 2. Constructs an RVTraceRow with the provided instruction and register values.
-// /// 3. Generates the virtual instruction sequence using the RISCVTrace trait.
-// /// 4. Iterates over each row in the inline sequence and validates the state changes.
-// /// 5. Verifies that rs1 and rs2 have not been clobbered.
-// /// 6. Ensures that the result is correctly written to the rd register.
-// /// 7. Checks that no unintended modifications have been made to other registers.
-// pub fn inline_sequence_trace_test<I: RISCVInstruction + RISCVTrace + Copy>() {
-//     let mut rng = StdRng::seed_from_u64(12345);
+use core::panic::AssertUnwindSafe;
+use std::panic;
 
-//     for _ in 0..1000 {
-//         let rs1 = rng.next_u64() % 32;
-//         let rs2 = rng.next_u64() % 32;
-//         let mut rd = rng.next_u64() % 32;
-//         while rd == 0 {
-//             rd = rng.next_u64() % 32;
-//         }
-//         let rs1_val = if rs1 == 0 { 0 } else { rng.next_u32() as u64 };
-//         let rs2_val = if rs2 == rs1 {
-//             rs1_val
-//         } else if rs2 == 0 {
-//             0
-//         } else {
-//             rng.next_u32() as u64
-//         };
+use crate::emulator::cpu::Cpu;
+use crate::instruction::format::{InstructionFormat, InstructionRegisterState};
+use crate::instruction::NormalizedInstruction;
+use crate::utils::test_harness::TEST_MEMORY_CAPACITY;
 
-//         let mut registers = vec![0u64; REGISTER_COUNT as usize];
-//         registers[rs1 as usize] = rs1_val;
-//         registers[rs2 as usize] = rs2_val;
+use super::{
+    // amoaddd::AMOADDD, amoaddw::AMOADDW, amoandd::AMOANDD,
+    // amoandw::AMOANDW, amomaxd::AMOMAXD, amomaxud::AMOMAXUD, amomaxuw::AMOMAXUW, amomaxw::AMOMAXW,
+    // amomind::AMOMIND, amominud::AMOMINUD, amominuw::AMOMINUW, amominw::AMOMINW, amoord::AMOORD,
+    // amoorw::AMOORW, amoswapd::AMOSWAPD, amoswapw::AMOSWAPW, amoxord::AMOXORD, amoxorw::AMOXORW,
+    // lb::LB, lbu::LBU, lh::LH, lhu::LHU, lw::LW, lwu::LWU,
+    // sb::SB, sh::SH, sw::SW,
+    addiw::ADDIW,
+    addw::ADDW,
+    div::DIV,
+    divu::DIVU,
+    divuw::DIVUW,
+    divw::DIVW,
+    mulh::MULH,
+    mulhsu::MULHSU,
+    mulw::MULW,
+    rem::REM,
+    remu::REMU,
+    remuw::REMUW,
+    remw::REMW,
+    sll::SLL,
+    slli::SLLI,
+    slliw::SLLIW,
+    sllw::SLLW,
+    sra::SRA,
+    srai::SRAI,
+    sraiw::SRAIW,
+    sraw::SRAW,
+    srl::SRL,
+    srli::SRLI,
+    srliw::SRLIW,
+    srlw::SRLW,
+    subw::SUBW,
+    RISCVInstruction,
+    RISCVTrace,
+};
 
-//         let instruction = I::new(rng.next_u32(), rng.next_u64());
+use crate::emulator::terminal::DummyTerminal;
 
-//         let mut cpu = Cpu::new(Xlen::Bit32);
-//         cpu.x[rs1 as usize] = rs1_val;
-//         cpu.x[rs2 as usize] = rs2_val;
+use common::constants::RISCV_REGISTER_COUNT;
 
-//         instruction.trace(&mut cpu);
+use rand::{rngs::StdRng, SeedableRng};
 
-//         // for cycle in cpu.trace {
-//         //     let ram_access = cycle.ram_access();
-//         //     match ram_access {
-//         //         RAMAccess::Read(read) => {
-//         //             assert_eq!(
-//         //                 registers[read.address as usize], read.value,
-//         //                 "RAM read value mismatch"
-//         //             );
-//         //         }
-//         //         RAMAccess::Write(write) => {
-//         //             assert_eq!(
-//         //                 registers[write.address as usize], write.pre_value,
-//         //                 "RAM write pre-value mismatch"
-//         //             );
-//         //             registers[write.address as usize] = write.post_value;
-//         //         }
-//         //         RAMAccess::NoOp => {}
-//         //     }
-//         // }
+use super::{RISCVCycle, RV32IMCycle};
 
-//         // Verify state
-//         let rd_post_val = cpu.x[rd as usize];
+macro_rules! test_inline_sequences {
+  ($( $instr:ty ),* $(,)?) => {
+      $(
+          paste::paste! {
+              #[test]
+              fn [<test_ $instr:lower _inline_sequence>]() {
+                  inline_sequence_trace_test::<$instr>();
+              }
+          }
+      )*
+  };
+}
 
-//         // Check registers not clobbered
-//         if rs1 != rd {
-//             assert_eq!(registers[rs1 as usize], rs1_val, "rs1 was clobbered");
-//         }
-//         if rs2 != rd {
-//             assert_eq!(registers[rs2 as usize], rs2_val, "rs2 was clobbered");
-//         }
+test_inline_sequences!(
+    // NOTE: AMO instructinos panic on all cases, because `random` generates invalid
+    // memory accessses. Same with store and load instructions.
+    //
+    // AMOADDD, AMOADDW, AMOANDD, AMOANDW, AMOMAXD, AMOMAXUD, AMOMAXUW, AMOMAXW, AMOMIND,
+    // AMOMINUD, AMOMINUW, AMOMINW, AMOORD, AMOORW, AMOSWAPD, AMOSWAPW, AMOXORD, AMOXORW,
+    // LB, LBU, LH, LHU, LW, LWU, SB, SH, SW
+    ADDIW, ADDW, DIV, DIVU, DIVUW, DIVW, MULH, MULHSU, MULW, REM, REMU, REMUW, REMW, SLL, SLLI,
+    SLLIW, SLLW, SRA, SRAI, SRAIW, SRAW, SRL, SRLI, SRLIW, SRLW, SUBW,
+);
 
-//         // Verify other registers untouched
-//         for i in 0..32 {
-//             if i != rs1 as usize && i != rs2 as usize && i != rd as usize {
-//                 assert_eq!(
-//                     registers[i], 0,
-//                     "Register {} was modified when it shouldn't have been",
-//                     i
-//                 );
-//             }
-//         }
-//     }
-// }
+fn test_rng() -> StdRng {
+    let seed = [0u8; 32];
+    StdRng::from_seed(seed)
+}
 
-#[cfg(test)]
-mod tests {
-    use crate::{
-        emulator::cpu::Xlen,
-        instruction::{
-            RISCVCycle, RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction, ADDIW, ADDW,
-            AMOADDD, AMOADDW, AMOANDD, AMOANDW, AMOMAXD, AMOMAXUD, AMOMAXUW, AMOMAXW, AMOMIND,
-            AMOMINUD, AMOMINUW, AMOMINW, AMOORD, AMOORW, AMOSWAPD, AMOSWAPW, AMOXORD, AMOXORW, DIV,
-            DIVU, DIVUW, DIVW, LB, LBU, LH, LHU, LW, LWU, MULH, MULHSU, MULW, REM, REMU, REMUW,
-            REMW, SB, SH, SLL, SLLI, SLLIW, SLLW, SRA, SRAI, SRAIW, SRAW, SRL, SRLI, SRLIW, SRLW,
-            SUBW, SW,
-        },
-    };
-    use std::any::type_name;
+pub fn inline_sequence_trace_test<I: RISCVInstruction + RISCVTrace + Copy>()
+where
+    RV32IMCycle: From<RISCVCycle<I>>,
+{
+    let mut rng = test_rng();
+    let mut non_panic = 0;
 
-    fn validate_sequence_ordering(sequence: &[RV32IMInstruction]) -> Result<(), String> {
-        let expected_remaining = sequence.len();
+    for _ in 0..1000 {
+        let instruction = I::random(&mut rng);
+        let instr: NormalizedInstruction = instruction.into();
+        let register_state =
+            <<I::Format as InstructionFormat>::RegisterState as InstructionRegisterState>::random(
+                &mut rng,
+            );
 
-        for (index, instr) in sequence.iter().enumerate() {
-            let normalized = instr.normalize();
-            let current_remaining = normalized.inline_sequence_remaining;
+        let mut original_cpu = Cpu::new(Box::new(DummyTerminal::default()));
+        original_cpu.get_mut_mmu().init_memory(TEST_MEMORY_CAPACITY);
 
-            if current_remaining.is_none() {
-                return Err(format!("Instruction {index} has no remaining"));
-            }
+        let mut virtual_cpu = Cpu::new(Box::new(DummyTerminal::default()));
+        virtual_cpu.get_mut_mmu().init_memory(TEST_MEMORY_CAPACITY);
 
-            let current = current_remaining.unwrap();
-
-            if (current as usize + index + 1) != expected_remaining {
-                return Err(format!(
-                    "Invalid remaining at index {}: expected {}, got {}",
-                    index,
-                    expected_remaining - index - 1,
-                    current
-                ));
-            }
+        if instr.operands.rs1 != 0 {
+            original_cpu.x[instr.operands.rs1 as usize] = register_state.rs1_value() as i64;
+            virtual_cpu.x[instr.operands.rs1 as usize] = register_state.rs1_value() as i64;
+        }
+        if instr.operands.rs2 != 0 {
+            original_cpu.x[instr.operands.rs2 as usize] = register_state.rs2_value() as i64;
+            virtual_cpu.x[instr.operands.rs2 as usize] = register_state.rs2_value() as i64;
         }
 
-        Ok(())
-    }
+        println!("Dividend: {}", original_cpu.x[instr.operands.rs1 as usize]);
+        println!("Divisor: {}", original_cpu.x[instr.operands.rs2 as usize]);
 
-    // Get the type name at runtime
-    fn get_instruction_name<T: RISCVInstruction>(_instance: &T) -> &'static str {
-        type_name::<T>().split("::").last().unwrap_or("Unknown")
-    }
+        let mut ram_access = Default::default();
 
-    trait VirtualInstructionSequenceWrapper {
-        fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction>;
-        fn get_type_name(&self) -> &'static str;
-    }
-
-    impl<T> VirtualInstructionSequenceWrapper for T
-    where
-        T: RISCVTrace + RISCVInstruction,
-        RISCVCycle<T>: Into<RV32IMCycle>,
-    {
-        fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
-            self.inline_sequence(xlen)
+        let res = panic::catch_unwind(AssertUnwindSafe(|| {
+            instruction.execute(&mut original_cpu, &mut ram_access);
+        }));
+        if res.is_err() {
+            continue;
         }
+        non_panic += 1;
 
-        fn get_type_name(&self) -> &'static str {
-            get_instruction_name(self)
-        }
-    }
+        let mut trace_vec = Vec::new();
+        instruction.trace(&mut virtual_cpu, Some(&mut trace_vec));
 
-    #[test]
-    fn test_remaining() {
-        println!("{}", get_instruction_name(&DIV::new(0, 0, false, false)));
-
-        let xlen_32 = Xlen::Bit32;
-        let instruction_pairs_32: Vec<Box<dyn VirtualInstructionSequenceWrapper>> = vec![
-            Box::new(DIV::new(0, 0, false, false)),
-            Box::new(DIVU::new(0, 0, false, false)),
-            Box::new(LB::new(0, 0, false, false)),
-            Box::new(LBU::new(0, 0, false, false)),
-            Box::new(LH::new(0, 0, false, false)),
-            Box::new(LHU::new(0, 0, false, false)),
-            Box::new(MULH::new(0, 0, false, false)),
-            Box::new(MULHSU::new(0, 0, false, false)),
-            Box::new(REM::new(0, 0, false, false)),
-            Box::new(REMU::new(0, 0, false, false)),
-            Box::new(SB::new(0, 0, false, false)),
-            Box::new(SH::new(0, 0, false, false)),
-            Box::new(SLL::new(0, 0, false, false)),
-            Box::new(SLLI::new(0, 0, false, false)),
-            Box::new(SRA::new(0, 0, false, false)),
-            Box::new(SRAI::new(0, 0, false, false)),
-            Box::new(SRL::new(0, 0, false, false)),
-            Box::new(SRLI::new(0, 0, false, false)),
-        ];
-
-        let xlen_64 = Xlen::Bit64;
-        let instruction_sequence_pairs_64: Vec<Box<dyn VirtualInstructionSequenceWrapper>> = vec![
-            Box::new(ADDIW::new(0, 0, false, false)),
-            Box::new(ADDW::new(0, 0, false, false)),
-            Box::new(AMOADDD::new(0, 0, false, false)),
-            Box::new(AMOADDW::new(0, 0, false, false)),
-            Box::new(AMOANDD::new(0, 0, false, false)),
-            Box::new(AMOANDW::new(0, 0, false, false)),
-            Box::new(AMOMAXD::new(0, 0, false, false)),
-            Box::new(AMOMAXUD::new(0, 0, false, false)),
-            Box::new(AMOMAXUW::new(0, 0, false, false)),
-            Box::new(AMOMAXW::new(0, 0, false, false)),
-            Box::new(AMOMIND::new(0, 0, false, false)),
-            Box::new(AMOMINUD::new(0, 0, false, false)),
-            Box::new(AMOMINUW::new(0, 0, false, false)),
-            Box::new(AMOMINW::new(0, 0, false, false)),
-            Box::new(AMOORD::new(0, 0, false, false)),
-            Box::new(AMOORW::new(0, 0, false, false)),
-            Box::new(AMOSWAPD::new(0, 0, false, false)),
-            Box::new(AMOSWAPW::new(0, 0, false, false)),
-            Box::new(AMOXORD::new(0, 0, false, false)),
-            Box::new(AMOXORW::new(0, 0, false, false)),
-            Box::new(DIV::new(0, 0, false, false)),
-            Box::new(DIVU::new(0, 0, false, false)),
-            Box::new(DIVUW::new(0, 0, false, false)),
-            Box::new(DIVW::new(0, 0, false, false)),
-            Box::new(LB::new(0, 0, false, false)),
-            Box::new(LBU::new(0, 0, false, false)),
-            Box::new(LH::new(0, 0, false, false)),
-            Box::new(LHU::new(0, 0, false, false)),
-            Box::new(LW::new(0, 0, false, false)),
-            Box::new(LWU::new(0, 0, false, false)),
-            Box::new(MULH::new(0, 0, false, false)),
-            Box::new(MULHSU::new(0, 0, false, false)),
-            Box::new(MULW::new(0, 0, false, false)),
-            Box::new(REM::new(0, 0, false, false)),
-            Box::new(REMU::new(0, 0, false, false)),
-            Box::new(REMUW::new(0, 0, false, false)),
-            Box::new(REMW::new(0, 0, false, false)),
-            Box::new(SB::new(0, 0, false, false)),
-            Box::new(SH::new(0, 0, false, false)),
-            Box::new(SLLI::new(0, 0, false, false)),
-            Box::new(SLLIW::new(0, 0, false, false)),
-            Box::new(SLL::new(0, 0, false, false)),
-            Box::new(SLLW::new(0, 0, false, false)),
-            Box::new(SRAI::new(0, 0, false, false)),
-            Box::new(SRAIW::new(0, 0, false, false)),
-            Box::new(SRA::new(0, 0, false, false)),
-            Box::new(SRAW::new(0, 0, false, false)),
-            Box::new(SRLI::new(0, 0, false, false)),
-            Box::new(SRLIW::new(0, 0, false, false)),
-            Box::new(SRL::new(0, 0, false, false)),
-            Box::new(SRLW::new(0, 0, false, false)),
-            Box::new(SUBW::new(0, 0, false, false)),
-            Box::new(SW::new(0, 0, false, false)),
-        ];
-
-        let mut failures_32 = Vec::new();
-        for instruction in instruction_pairs_32 {
-            let sequence = instruction.inline_sequence(xlen_32);
-            if sequence.is_empty() {
-                continue;
-            }
-
-            if let Err(e) = validate_sequence_ordering(&sequence) {
-                failures_32.push(format!(
-                    "32-bit instruction {}: {}",
-                    instruction.get_type_name(),
-                    e
-                ));
-            }
-        }
-
-        let mut failures_64 = Vec::new();
-        for instruction in instruction_sequence_pairs_64 {
-            let sequence = instruction.inline_sequence(xlen_64);
-            if sequence.is_empty() {
-                continue;
-            }
-
-            if let Err(e) = validate_sequence_ordering(&sequence) {
-                failures_64.push(format!(
-                    "64-bit instruction {}: {}",
-                    instruction.get_type_name(),
-                    e
-                ));
-            }
-        }
-
-        // Report all failures
-        let total_failures = failures_32.len() + failures_64.len();
-        assert!(
-            total_failures == 0,
-            "Found {} inline sequence validation failures:\n{}{}",
-            total_failures,
-            if !failures_32.is_empty() {
-                format!(
-                    "\n32-bit instruction failures:\n{}",
-                    failures_32
-                        .iter()
-                        .map(|f| format!("  - {f}\n"))
-                        .collect::<String>()
-                )
-            } else {
-                String::new()
-            },
-            if !failures_64.is_empty() {
-                format!(
-                    "\n64-bit instruction failures:\n{}",
-                    failures_64
-                        .iter()
-                        .map(|f| format!("  - {f}\n"))
-                        .collect::<String>()
-                )
-            } else {
-                String::new()
-            }
+        assert_eq!(
+            original_cpu.pc, virtual_cpu.pc,
+            "PC register has different values after execution"
         );
+
+        for i in 0..RISCV_REGISTER_COUNT {
+            assert_eq!(
+                original_cpu.x[i as usize], virtual_cpu.x[i as usize],
+                "Register {} has different values after execution. Original: {:?}, Virtual: {:?}",
+                i, original_cpu.x[i as usize], virtual_cpu.x[i as usize]
+            );
+        }
+    }
+    if non_panic == 0 {
+        panic!("All of instructions panic at the execute function");
     }
 }

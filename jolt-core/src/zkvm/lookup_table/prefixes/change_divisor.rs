@@ -2,9 +2,9 @@ use crate::{field::JoltField, utils::lookup_bits::LookupBits};
 
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 
-pub enum ChangeDivisorPrefix<const WORD_SIZE: usize> {}
+pub enum ChangeDivisorPrefix<const XLEN: usize> {}
 
-impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F> for ChangeDivisorPrefix<WORD_SIZE> {
+impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for ChangeDivisorPrefix<XLEN> {
     fn prefix_mle(
         checkpoints: &[PrefixCheckpoint<F>],
         r_x: Option<F>,
@@ -13,7 +13,7 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F> for ChangeDiviso
         j: usize,
     ) -> F {
         let mut result = checkpoints[Prefixes::ChangeDivisor]
-            .unwrap_or(F::from_u64(2) - F::from_u128(1u128 << WORD_SIZE));
+            .unwrap_or(F::from_u64(2) - F::from_u128(1u128 << XLEN));
         if j == 0 {
             let x_msb = b.pop_msb() as u32;
             if x_msb == 0 {
@@ -47,7 +47,7 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F> for ChangeDiviso
         j: usize,
     ) -> PrefixCheckpoint<F> {
         let updated = checkpoints[Prefixes::ChangeDivisor]
-            .unwrap_or(F::from_u64(2) - F::from_u128(1u128 << WORD_SIZE))
+            .unwrap_or(F::from_u64(2) - F::from_u128(1u128 << XLEN))
             * if j == 1 {
                 r_x * r_y
             } else {

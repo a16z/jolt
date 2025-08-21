@@ -1,4 +1,4 @@
-use super::{format::InstructionFormat, RISCVInstruction, RISCVTrace};
+use super::{RISCVInstruction, RISCVTrace};
 use crate::{
     declare_riscv_instr, emulator::cpu::Cpu, instruction::format::format_load::FormatLoad,
 };

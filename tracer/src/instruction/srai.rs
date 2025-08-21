@@ -1,16 +1,14 @@
+use crate::utils::inline_helpers::InstrAssembler;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     declare_riscv_instr,
     emulator::cpu::{Cpu, Xlen},
-    instruction::{
-        format::format_virtual_right_shift_i::FormatVirtualRightShiftI, virtual_srai::VirtualSRAI,
-    },
+    instruction::virtual_srai::VirtualSRAI,
 };
 
 use super::{
-    format::{format_i::FormatI, InstructionFormat},
-    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
+    format::format_i::FormatI, RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
 };
 
 declare_riscv_instr!(
@@ -44,9 +42,6 @@ impl RISCVTrace for SRAI {
     }
 
     fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
-        let mut sequence = vec![];
-        let inline_sequence_remaining = self.inline_sequence_remaining.unwrap_or(0);
-
         let (shift, len) = match xlen {
             Xlen::Bit32 => (self.operands.imm & 0x1f, 32),
             Xlen::Bit64 => (self.operands.imm & 0x3f, 64),
@@ -54,18 +49,8 @@ impl RISCVTrace for SRAI {
         let ones = (1u128 << (len - shift)) - 1;
         let bitmask = (ones << shift) as u64;
 
-        let sra = VirtualSRAI {
-            address: self.address,
-            operands: FormatVirtualRightShiftI {
-                rd: self.operands.rd,
-                rs1: self.operands.rs1,
-                imm: bitmask,
-            },
-            inline_sequence_remaining: Some(inline_sequence_remaining),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(sra.into());
-
-        sequence
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
+        asm.emit_vshift_i::<VirtualSRAI>(self.operands.rd, self.operands.rs1, bitmask);
+        asm.finalize()
     }
 }

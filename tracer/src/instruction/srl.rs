@@ -1,4 +1,5 @@
-use common::constants::virtual_register_index;
+use crate::utils::inline_helpers::InstrAssembler;
+use crate::utils::virtual_registers::allocate_virtual_register;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -7,13 +8,8 @@ use crate::{
 };
 
 use super::{
-    format::{
-        format_i::FormatI, format_r::FormatR,
-        format_virtual_right_shift_r::FormatVirtualRightShiftR, InstructionFormat,
-    },
-    virtual_shift_right_bitmask::VirtualShiftRightBitmask,
-    virtual_srl::VirtualSRL,
-    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
+    format::format_r::FormatR, virtual_shift_right_bitmask::VirtualShiftRightBitmask,
+    virtual_srl::VirtualSRL, RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
 };
 
 declare_riscv_instr!(
@@ -47,38 +43,12 @@ impl RISCVTrace for SRL {
         }
     }
 
-    fn inline_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
-        // Virtual registers used in sequence
-        let v_bitmask = virtual_register_index(6);
+    fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
+        let v_bitmask = allocate_virtual_register();
 
-        let mut sequence = vec![];
-        let mut inline_sequence_remaining = self.inline_sequence_remaining.unwrap_or(1);
-
-        let bitmask = VirtualShiftRightBitmask {
-            address: self.address,
-            operands: FormatI {
-                rd: v_bitmask,
-                rs1: self.operands.rs2,
-                imm: 0,
-            },
-            inline_sequence_remaining: Some(inline_sequence_remaining),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(bitmask.into());
-        inline_sequence_remaining -= 1;
-
-        let srl = VirtualSRL {
-            address: self.address,
-            operands: FormatVirtualRightShiftR {
-                rd: self.operands.rd,
-                rs1: self.operands.rs1,
-                rs2: v_bitmask,
-            },
-            inline_sequence_remaining: Some(inline_sequence_remaining),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(srl.into());
-
-        sequence
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
+        asm.emit_i::<VirtualShiftRightBitmask>(*v_bitmask, self.operands.rs2, 0);
+        asm.emit_vshift_r::<VirtualSRL>(self.operands.rd, self.operands.rs1, *v_bitmask);
+        asm.finalize()
     }
 }

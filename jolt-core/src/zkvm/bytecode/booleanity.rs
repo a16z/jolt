@@ -18,15 +18,19 @@ use crate::{
         opening_proof::ProverOpeningAccumulator,
     },
     subprotocols::sumcheck::SumcheckInstance,
+    transcripts::Transcript,
     utils::{
         math::Math,
         thread::{drop_in_background_thread, unsafe_allocate_zero_vec},
-        transcript::Transcript,
     },
 };
+use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::FlameGraphBuilder;
 use rayon::prelude::*;
 use tracer::instruction::RV32IMCycle;
 
+#[derive(Allocative)]
 struct BooleanityProverState<F: JoltField> {
     B: MultilinearPolynomial<F>,
     D: MultilinearPolynomial<F>,
@@ -37,6 +41,7 @@ struct BooleanityProverState<F: JoltField> {
     eq_r_r: F,
 }
 
+#[derive(Allocative)]
 pub struct BooleanitySumcheck<F: JoltField> {
     gamma: Vec<F>,
     d: usize,
@@ -305,6 +310,11 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
             SumcheckId::BytecodeBooleanity,
             opening_point.r,
         );
+    }
+
+    #[cfg(feature = "allocative")]
+    fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
+        flamegraph.visit_root(self);
     }
 }
 

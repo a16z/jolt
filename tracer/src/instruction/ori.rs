@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
 use super::{
-    format::{format_i::FormatI, normalize_imm, InstructionFormat},
+    format::{format_i::FormatI, normalize_imm},
     RISCVInstruction, RISCVTrace,
 };
 

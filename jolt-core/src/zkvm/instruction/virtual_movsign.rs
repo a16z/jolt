@@ -4,8 +4,8 @@ use crate::zkvm::lookup_table::{movsign::MovsignTable, LookupTables};
 
 use super::{CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS};
 
-impl<const WORD_SIZE: usize> InstructionLookup<WORD_SIZE> for VirtualMovsign {
-    fn lookup_table(&self) -> Option<LookupTables<WORD_SIZE>> {
+impl<const XLEN: usize> InstructionLookup<XLEN> for VirtualMovsign {
+    fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
         Some(MovsignTable.into())
     }
 }
@@ -25,9 +25,9 @@ impl InstructionFlags for VirtualMovsign {
     }
 }
 
-impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<VirtualMovsign> {
+impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualMovsign> {
     fn to_instruction_inputs(&self) -> (u64, i128) {
-        match WORD_SIZE {
+        match XLEN {
             #[cfg(test)]
             8 => (
                 self.register_state.rs1 as u8 as u64,
@@ -41,13 +41,13 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<VirtualMovsig
                 self.register_state.rs1,
                 self.instruction.operands.imm as i128, // Unused
             ),
-            _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
+            _ => panic!("{XLEN}-bit word size is unsupported"),
         }
     }
 
     fn to_lookup_output(&self) -> u64 {
-        let (x, _) = LookupQuery::<WORD_SIZE>::to_instruction_inputs(self);
-        match WORD_SIZE {
+        let (x, _) = LookupQuery::<XLEN>::to_instruction_inputs(self);
+        match XLEN {
             #[cfg(test)]
             8 => {
                 if x & (1 << 7) != 0 {
@@ -70,7 +70,7 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<VirtualMovsig
                     0
                 }
             }
-            _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
+            _ => panic!("{XLEN}-bit word size is unsupported"),
         }
     }
 }

@@ -8,7 +8,7 @@
 *.txt
 .DS_Store
 
-# flamegraphs, probably
+# flamegraphs
 **/*.svg
 
 # tracing-flame output
@@ -34,3 +34,11 @@ riscof_work/
 
 # Spike tarballs
 /prebuilt-files/
+
+# riscof files
+/riscof_work/
+*.pyc
+
+# act executable
+bin/act
+.notes/

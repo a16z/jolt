@@ -1,6 +1,5 @@
 use and::AndTable;
 use andn::AndnTable;
-use enum_dispatch::enum_dispatch;
 use equal::EqualTable;
 use halfword_alignment::HalfwordAlignmentTable;
 use lower_half_word::LowerHalfWordTable;
@@ -30,6 +29,7 @@ use valid_unsigned_remainder::ValidUnsignedRemainderTable;
 use virtual_change_divisor::VirtualChangeDivisorTable;
 use virtual_change_divisor_w::VirtualChangeDivisorWTable;
 use virtual_rotr::VirtualRotrTable;
+use virtual_rotrw::VirtualRotrWTable;
 use virtual_sra::VirtualSRATable;
 use virtual_srl::VirtualSRLTable;
 use word_alignment::WordAlignmentTable;
@@ -39,7 +39,6 @@ use crate::field::JoltField;
 use derive_more::From;
 use std::fmt::Debug;
 
-#[enum_dispatch]
 pub trait JoltLookupTable: Clone + Debug + Send + Sync + Serialize {
     /// Materializes the entire lookup table for this instruction (assuming an 8-bit word size).
     #[cfg(test)]
@@ -56,7 +55,7 @@ pub trait JoltLookupTable: Clone + Debug + Send + Sync + Serialize {
     fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F;
 }
 
-pub trait PrefixSuffixDecomposition<const WORD_SIZE: usize>: JoltLookupTable + Default {
+pub trait PrefixSuffixDecomposition<const XLEN: usize>: JoltLookupTable + Default {
     fn suffixes(&self) -> Vec<Suffixes>;
     fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F;
     #[cfg(test)]
@@ -107,39 +106,40 @@ pub const NUM_LOOKUP_TABLES: usize = LookupTables::<32>::COUNT;
 
 #[derive(Copy, Clone, Debug, From, Serialize, Deserialize, EnumIter, EnumCountMacro)]
 #[repr(u8)]
-pub enum LookupTables<const WORD_SIZE: usize> {
-    RangeCheck(RangeCheckTable<WORD_SIZE>),
-    And(AndTable<WORD_SIZE>),
-    Andn(AndnTable<WORD_SIZE>),
-    Or(OrTable<WORD_SIZE>),
-    Xor(XorTable<WORD_SIZE>),
-    Equal(EqualTable<WORD_SIZE>),
-    SignedGreaterThanEqual(SignedGreaterThanEqualTable<WORD_SIZE>),
-    UnsignedGreaterThanEqual(UnsignedGreaterThanEqualTable<WORD_SIZE>),
-    NotEqual(NotEqualTable<WORD_SIZE>),
-    SignedLessThan(SignedLessThanTable<WORD_SIZE>),
-    UnsignedLessThan(UnsignedLessThanTable<WORD_SIZE>),
-    Movsign(MovsignTable<WORD_SIZE>),
-    UpperWord(UpperWordTable<WORD_SIZE>),
-    LessThanEqual(UnsignedLessThanEqualTable<WORD_SIZE>),
-    ValidSignedRemainder(ValidSignedRemainderTable<WORD_SIZE>),
-    ValidUnsignedRemainder(ValidUnsignedRemainderTable<WORD_SIZE>),
-    ValidDiv0(ValidDiv0Table<WORD_SIZE>),
-    HalfwordAlignment(HalfwordAlignmentTable<WORD_SIZE>),
-    WordAlignment(WordAlignmentTable<WORD_SIZE>),
-    LowerHalfWord(LowerHalfWordTable<WORD_SIZE>),
-    SignExtendHalfWord(SignExtendHalfWordTable<WORD_SIZE>),
-    Pow2(Pow2Table<WORD_SIZE>),
-    Pow2W(Pow2WTable<WORD_SIZE>),
-    ShiftRightBitmask(ShiftRightBitmaskTable<WORD_SIZE>),
-    VirtualSRL(VirtualSRLTable<WORD_SIZE>),
-    VirtualSRA(VirtualSRATable<WORD_SIZE>),
-    VirtualROTRI(VirtualRotrTable<WORD_SIZE>),
-    VirtualChangeDivisor(VirtualChangeDivisorTable<WORD_SIZE>),
-    VirtualChangeDivisorW(VirtualChangeDivisorWTable<WORD_SIZE>),
+pub enum LookupTables<const XLEN: usize> {
+    RangeCheck(RangeCheckTable<XLEN>),
+    And(AndTable<XLEN>),
+    Andn(AndnTable<XLEN>),
+    Or(OrTable<XLEN>),
+    Xor(XorTable<XLEN>),
+    Equal(EqualTable<XLEN>),
+    SignedGreaterThanEqual(SignedGreaterThanEqualTable<XLEN>),
+    UnsignedGreaterThanEqual(UnsignedGreaterThanEqualTable<XLEN>),
+    NotEqual(NotEqualTable<XLEN>),
+    SignedLessThan(SignedLessThanTable<XLEN>),
+    UnsignedLessThan(UnsignedLessThanTable<XLEN>),
+    Movsign(MovsignTable<XLEN>),
+    UpperWord(UpperWordTable<XLEN>),
+    LessThanEqual(UnsignedLessThanEqualTable<XLEN>),
+    ValidSignedRemainder(ValidSignedRemainderTable<XLEN>),
+    ValidUnsignedRemainder(ValidUnsignedRemainderTable<XLEN>),
+    ValidDiv0(ValidDiv0Table<XLEN>),
+    HalfwordAlignment(HalfwordAlignmentTable<XLEN>),
+    WordAlignment(WordAlignmentTable<XLEN>),
+    LowerHalfWord(LowerHalfWordTable<XLEN>),
+    SignExtendHalfWord(SignExtendHalfWordTable<XLEN>),
+    Pow2(Pow2Table<XLEN>),
+    Pow2W(Pow2WTable<XLEN>),
+    ShiftRightBitmask(ShiftRightBitmaskTable<XLEN>),
+    VirtualSRL(VirtualSRLTable<XLEN>),
+    VirtualSRA(VirtualSRATable<XLEN>),
+    VirtualROTR(VirtualRotrTable<XLEN>),
+    VirtualROTRW(VirtualRotrWTable<XLEN>),
+    VirtualChangeDivisor(VirtualChangeDivisorTable<XLEN>),
+    VirtualChangeDivisorW(VirtualChangeDivisorWTable<XLEN>),
 }
 
-impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {
+impl<const XLEN: usize> LookupTables<XLEN> {
     pub fn enum_index(table: &Self) -> usize {
         // Discriminant: https://doc.rust-lang.org/reference/items/enumerations.html#pointer-casting
         let byte = unsafe { *(table as *const Self as *const u8) };
@@ -175,7 +175,8 @@ impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {
             LookupTables::ShiftRightBitmask(table) => table.materialize(),
             LookupTables::VirtualSRL(table) => table.materialize(),
             LookupTables::VirtualSRA(table) => table.materialize(),
-            LookupTables::VirtualROTRI(table) => table.materialize(),
+            LookupTables::VirtualROTR(table) => table.materialize(),
+            LookupTables::VirtualROTRW(table) => table.materialize(),
             LookupTables::VirtualChangeDivisor(table) => table.materialize(),
             LookupTables::VirtualChangeDivisorW(table) => table.materialize(),
         }
@@ -209,7 +210,8 @@ impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {
             LookupTables::ShiftRightBitmask(table) => table.materialize_entry(index),
             LookupTables::VirtualSRL(table) => table.materialize_entry(index),
             LookupTables::VirtualSRA(table) => table.materialize_entry(index),
-            LookupTables::VirtualROTRI(table) => table.materialize_entry(index),
+            LookupTables::VirtualROTR(table) => table.materialize_entry(index),
+            LookupTables::VirtualROTRW(table) => table.materialize_entry(index),
             LookupTables::VirtualChangeDivisor(table) => table.materialize_entry(index),
             LookupTables::VirtualChangeDivisorW(table) => table.materialize_entry(index),
         }
@@ -243,7 +245,8 @@ impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {
             LookupTables::ShiftRightBitmask(table) => table.evaluate_mle(r),
             LookupTables::VirtualSRL(table) => table.evaluate_mle(r),
             LookupTables::VirtualSRA(table) => table.evaluate_mle(r),
-            LookupTables::VirtualROTRI(table) => table.evaluate_mle(r),
+            LookupTables::VirtualROTR(table) => table.evaluate_mle(r),
+            LookupTables::VirtualROTRW(table) => table.evaluate_mle(r),
             LookupTables::VirtualChangeDivisor(table) => table.evaluate_mle(r),
             LookupTables::VirtualChangeDivisorW(table) => table.evaluate_mle(r),
         }
@@ -277,7 +280,8 @@ impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {
             LookupTables::ShiftRightBitmask(table) => table.suffixes(),
             LookupTables::VirtualSRL(table) => table.suffixes(),
             LookupTables::VirtualSRA(table) => table.suffixes(),
-            LookupTables::VirtualROTRI(table) => table.suffixes(),
+            LookupTables::VirtualROTR(table) => table.suffixes(),
+            LookupTables::VirtualROTRW(table) => table.suffixes(),
             LookupTables::VirtualChangeDivisor(table) => table.suffixes(),
             LookupTables::VirtualChangeDivisorW(table) => table.suffixes(),
         }
@@ -315,7 +319,8 @@ impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {
             LookupTables::ShiftRightBitmask(table) => table.combine(prefixes, suffixes),
             LookupTables::VirtualSRL(table) => table.combine(prefixes, suffixes),
             LookupTables::VirtualSRA(table) => table.combine(prefixes, suffixes),
-            LookupTables::VirtualROTRI(table) => table.combine(prefixes, suffixes),
+            LookupTables::VirtualROTR(table) => table.combine(prefixes, suffixes),
+            LookupTables::VirtualROTRW(table) => table.combine(prefixes, suffixes),
             LookupTables::VirtualChangeDivisor(table) => table.combine(prefixes, suffixes),
             LookupTables::VirtualChangeDivisorW(table) => table.combine(prefixes, suffixes),
         }

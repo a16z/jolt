@@ -39,29 +39,16 @@ pub fn lookup_table_mle_full_hypercube_test<F: JoltField, T: JoltLookupTable + D
 }
 
 /// Generates a lookup index where right operand is 111..000
-pub fn gen_bitmask_lookup_index(rng: &mut rand::rngs::StdRng) -> u128 {
+pub fn gen_bitmask_lookup_index(rng: &mut StdRng) -> u128 {
     let x = rng.next_u64();
-    let zeros = rng.gen_range(0, XLEN + 1);
+    let zeros = rng.gen_range(0..=XLEN);
     let y = (!0u64).wrapping_shl(zeros as u32);
     interleave_bits(x, y)
 }
 
-/// Generates a lookup index where right operand is 111..000
-/// And number of zeros is at most XLEN / 2
-pub fn gen_bitmask_lookup_index_half(rng: &mut rand::rngs::StdRng) -> u128 {
-    let x = rng.next_u64();
-    let zeros = rng.gen_range(0, XLEN / 2 + 1);
-    let y = (!0u64).wrapping_shl(zeros as u32);
-    interleave_bits(x, y)
-}
-
-pub fn prefix_suffix_test<
-    const WORD_SIZE: usize,
-    F: JoltField,
-    T: PrefixSuffixDecomposition<WORD_SIZE>,
->() {
+pub fn prefix_suffix_test<const XLEN: usize, F: JoltField, T: PrefixSuffixDecomposition<XLEN>>() {
     const ROUNDS_PER_PHASE: usize = 16;
-    let total_phases: usize = WORD_SIZE * 2 / ROUNDS_PER_PHASE;
+    let total_phases: usize = XLEN * 2 / ROUNDS_PER_PHASE;
     let mut rng = StdRng::seed_from_u64(12345);
 
     for _ in 0..300 {
@@ -72,15 +59,13 @@ pub fn prefix_suffix_test<
         for phase in 0..total_phases {
             let suffix_len = (total_phases - 1 - phase) * ROUNDS_PER_PHASE;
             let (mut prefix_bits, suffix_bits) =
-                LookupBits::new(lookup_index, WORD_SIZE * 2 - phase * ROUNDS_PER_PHASE)
+                LookupBits::new(lookup_index, XLEN * 2 - phase * ROUNDS_PER_PHASE)
                     .split(suffix_len);
 
             let suffix_evals: Vec<_> = T::default()
                 .suffixes()
                 .iter()
-                .map(|suffix| {
-                    SuffixEval::from(F::from_u64(suffix.suffix_mle::<WORD_SIZE>(suffix_bits)))
-                })
+                .map(|suffix| SuffixEval::from(F::from_u64(suffix.suffix_mle::<XLEN>(suffix_bits))))
                 .collect();
 
             for _ in 0..ROUNDS_PER_PHASE {
@@ -104,13 +89,7 @@ pub fn prefix_suffix_test<
 
                 let prefix_evals: Vec<_> = Prefixes::iter()
                     .map(|prefix| {
-                        prefix.prefix_mle::<WORD_SIZE, F>(
-                            &prefix_checkpoints,
-                            r_x,
-                            c,
-                            prefix_bits,
-                            j,
-                        )
+                        prefix.prefix_mle::<XLEN, F>(&prefix_checkpoints, r_x, c, prefix_bits, j)
                     })
                     .collect();
 
@@ -130,7 +109,7 @@ pub fn prefix_suffix_test<
                 r.push(F::from_u64(rng.next_u64()));
 
                 if r.len() % 2 == 0 {
-                    Prefixes::update_checkpoints::<WORD_SIZE, F>(
+                    Prefixes::update_checkpoints::<XLEN, F>(
                         &mut prefix_checkpoints,
                         r[r.len() - 2],
                         r[r.len() - 1],

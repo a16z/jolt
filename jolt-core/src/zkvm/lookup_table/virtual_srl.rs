@@ -10,16 +10,16 @@ use crate::utils::uninterleave_bits;
 use crate::zkvm::lookup_table::prefixes::Prefixes;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct VirtualSRLTable<const WORD_SIZE: usize>;
+pub struct VirtualSRLTable<const XLEN: usize>;
 
-impl<const WORD_SIZE: usize> JoltLookupTable for VirtualSRLTable<WORD_SIZE> {
+impl<const XLEN: usize> JoltLookupTable for VirtualSRLTable<XLEN> {
     fn materialize_entry(&self, index: u128) -> u64 {
         let (x, y) = uninterleave_bits(index);
-        let mut x = LookupBits::new(x as u128, WORD_SIZE);
-        let mut y = LookupBits::new(y as u128, WORD_SIZE);
+        let mut x = LookupBits::new(x as u128, XLEN);
+        let mut y = LookupBits::new(y as u128, XLEN);
 
         let mut entry = 0;
-        for _ in 0..WORD_SIZE {
+        for _ in 0..XLEN {
             let x_i = x.pop_msb();
             let y_i = y.pop_msb();
             entry *= 1 + y_i as u64;
@@ -29,9 +29,9 @@ impl<const WORD_SIZE: usize> JoltLookupTable for VirtualSRLTable<WORD_SIZE> {
     }
 
     fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
-        debug_assert_eq!(r.len(), 2 * WORD_SIZE);
+        debug_assert_eq!(r.len(), 2 * XLEN);
         let mut result = F::zero();
-        for i in 0..WORD_SIZE {
+        for i in 0..XLEN {
             let x_i = r[2 * i];
             let y_i = r[2 * i + 1];
             result *= F::one() + y_i;
@@ -41,7 +41,7 @@ impl<const WORD_SIZE: usize> JoltLookupTable for VirtualSRLTable<WORD_SIZE> {
     }
 }
 
-impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE> for VirtualSRLTable<WORD_SIZE> {
+impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for VirtualSRLTable<XLEN> {
     fn suffixes(&self) -> Vec<Suffixes> {
         vec![Suffixes::RightShift, Suffixes::RightShiftHelper]
     }

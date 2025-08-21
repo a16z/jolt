@@ -6,8 +6,8 @@ use crate::zkvm::lookup_table::{valid_signed_remainder::ValidSignedRemainderTabl
 
 use super::{CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS};
 
-impl<const WORD_SIZE: usize> InstructionLookup<WORD_SIZE> for VirtualAssertValidSignedRemainder {
-    fn lookup_table(&self) -> Option<LookupTables<WORD_SIZE>> {
+impl<const XLEN: usize> InstructionLookup<XLEN> for VirtualAssertValidSignedRemainder {
+    fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
         Some(ValidSignedRemainderTable.into())
     }
 }
@@ -27,11 +27,9 @@ impl InstructionFlags for VirtualAssertValidSignedRemainder {
     }
 }
 
-impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE>
-    for RISCVCycle<VirtualAssertValidSignedRemainder>
-{
+impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualAssertValidSignedRemainder> {
     fn to_instruction_inputs(&self) -> (u64, i128) {
-        match WORD_SIZE {
+        match XLEN {
             #[cfg(test)]
             8 => (
                 self.register_state.rs1 as u8 as u64,
@@ -42,14 +40,14 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE>
                 self.register_state.rs2 as u32 as i128,
             ),
             64 => (self.register_state.rs1, self.register_state.rs2 as i128),
-            _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
+            _ => panic!("{XLEN}-bit word size is unsupported"),
         }
     }
 
     fn to_lookup_output(&self) -> u64 {
-        match WORD_SIZE {
+        match XLEN {
             32 => {
-                let (remainder, divisor) = LookupQuery::<WORD_SIZE>::to_instruction_inputs(self);
+                let (remainder, divisor) = LookupQuery::<XLEN>::to_instruction_inputs(self);
                 let remainder = remainder as u32 as i32;
                 let divisor = divisor as u32 as i32;
                 let is_remainder_zero = remainder == 0;
@@ -66,7 +64,7 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE>
                 }
             }
             64 => {
-                let (remainder, divisor) = LookupQuery::<WORD_SIZE>::to_instruction_inputs(self);
+                let (remainder, divisor) = LookupQuery::<XLEN>::to_instruction_inputs(self);
                 let remainder = remainder as i64;
                 let divisor = divisor as i64;
                 let is_remainder_zero = remainder == 0;
@@ -82,7 +80,7 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE>
                         .into()
                 }
             }
-            _ => panic!("Unsupported WORD_SIZE: {WORD_SIZE}"),
+            _ => panic!("Unsupported XLEN: {XLEN}"),
         }
     }
 }

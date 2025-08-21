@@ -1,4 +1,5 @@
-use common::constants::virtual_register_index;
+use crate::utils::inline_helpers::InstrAssembler;
+use crate::utils::virtual_registers::allocate_virtual_register;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -8,10 +9,8 @@ use crate::{
 
 use super::virtual_sign_extend::VirtualSignExtend;
 use super::{
-    format::{format_i::FormatI, format_r::FormatR, InstructionFormat},
-    mul::MUL,
-    virtual_pow2_w::VirtualPow2W,
-    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
+    format::format_r::FormatR, mul::MUL, virtual_pow2_w::VirtualPow2W, RISCVInstruction,
+    RISCVTrace, RV32IMCycle, RV32IMInstruction,
 };
 
 declare_riscv_instr!(
@@ -43,48 +42,13 @@ impl RISCVTrace for SLLW {
         }
     }
 
-    fn inline_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
-        // Virtual registers used in sequence
-        let v_pow2 = virtual_register_index(6);
+    fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
+        let v_pow2 = allocate_virtual_register();
 
-        let mut sequence = vec![];
-
-        let pow2w = VirtualPow2W {
-            address: self.address,
-            operands: FormatI {
-                rd: v_pow2,
-                rs1: self.operands.rs2,
-                imm: 0,
-            },
-            inline_sequence_remaining: Some(2),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(pow2w.into());
-
-        let mul = MUL {
-            address: self.address,
-            operands: FormatR {
-                rd: self.operands.rd,
-                rs1: self.operands.rs1,
-                rs2: v_pow2,
-            },
-            inline_sequence_remaining: Some(1),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(mul.into());
-
-        let signext = VirtualSignExtend {
-            address: self.address,
-            operands: FormatI {
-                rd: self.operands.rd,
-                rs1: self.operands.rd,
-                imm: 0,
-            },
-            inline_sequence_remaining: Some(0),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(signext.into());
-
-        sequence
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
+        asm.emit_i::<VirtualPow2W>(*v_pow2, self.operands.rs2, 0);
+        asm.emit_r::<MUL>(self.operands.rd, self.operands.rs1, *v_pow2);
+        asm.emit_i::<VirtualSignExtend>(self.operands.rd, self.operands.rd, 0);
+        asm.finalize()
     }
 }

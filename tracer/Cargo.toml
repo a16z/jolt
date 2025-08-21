@@ -21,9 +21,18 @@ path = "src/main.rs"
 
 [features]
 default = ["std"]
-std = ["common/std", "fnv/std", "object/std", "tracing/std", "postcard/use-std"]
+std = [
+    "jolt-platform/std",
+    "common/std",
+    "fnv/std",
+    "object/std",
+    "tracing/std",
+    "postcard/use-std",
+]
+test-utils = ["dep:rand"]
 
 [dependencies]
+jolt-platform = { path = "../jolt-platform" }
 fnv = { version = "1.0.7", default-features = false }
 object = { version = "0.36.7", features = [
     "build_core",
@@ -38,7 +47,7 @@ serde = { version = "1.0.193", features = ["derive"] }
 serde_json = "1.0.108"
 strum_macros = "0.26.4"
 strum = "0.26.3"
-rand = "0.7.3"
+rand = { version = "0.8.5", optional = true }
 paste = "1.0.15"
 itertools = "0.10.0"
 tracing-subscriber = "0.3"
@@ -48,4 +57,4 @@ postcard = { version = "1.0.8", default-features = false }
 lazy_static = "1.4"
 
 [dev-dependencies]
-hex-literal = "0.4.1"
+rand = { version = "0.8.5" }
