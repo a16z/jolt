@@ -21,8 +21,10 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 use super::{
     commitment::commitment_scheme::CommitmentScheme,
+    dense_mlpoly::DensePolynomial,
     eq_poly::EqPolynomial,
     multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
+    rlc_polynomial::RLCPolynomial,
     split_eq_poly::GruenSplitEqPolynomial,
 };
 #[cfg(feature = "allocative")]
@@ -407,14 +409,18 @@ where
 
             if let Some(prover_state) = self.prover_state.as_mut() {
                 let polynomials_map = polynomials_map.unwrap();
-                let polynomials: Vec<_> = self
+
+                let polynomials: Vec<&MultilinearPolynomial<F>> = self
                     .polynomials
                     .par_iter()
                     .map(|label| polynomials_map.get(label).unwrap())
                     .collect();
 
-                let rlc_poly =
-                    MultilinearPolynomial::linear_combination(&polynomials, &self.rlc_coeffs);
+                let result =
+                    DensePolynomial::linear_combination(polynomials.as_ref(), &self.rlc_coeffs);
+
+                let rlc_poly = MultilinearPolynomial::from(result.Z);
+
                 debug_assert_eq!(rlc_poly.evaluate(&self.opening_point), reduced_claim);
                 let num_vars = rlc_poly.get_num_vars();
 
@@ -450,8 +456,8 @@ where
             match prover_state {
                 ProverOpening::Dense(opening) => opening.polynomial = Some(poly.clone()),
                 ProverOpening::OneHot(opening) => {
-                    if let MultilinearPolynomial::OneHot(poly) = poly {
-                        opening.initialize(poly.clone());
+                    if let MultilinearPolynomial::OneHot(one_hot) = poly {
+                        opening.initialize(one_hot.clone());
                     } else {
                         panic!("Unexpected non-one-hot polynomial")
                     }
@@ -846,10 +852,10 @@ where
                 .map(|(k, v)| (v, polynomials.remove(k).unwrap()))
                 .unzip();
 
-            MultilinearPolynomial::linear_combination(
-                &polynomials.iter().collect::<Vec<_>>(),
+            MultilinearPolynomial::RLC(RLCPolynomial::linear_combination(
+                polynomials.into_iter().map(Arc::new).collect(),
                 &coeffs,
-            )
+            ))
         };
 
         #[cfg(test)]
