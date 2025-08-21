@@ -4,11 +4,6 @@ use serde::{Deserialize, Serialize};
 use crate::{
     declare_riscv_instr,
     emulator::cpu::{Cpu, Xlen},
-    instruction::{
-        format::format_virtual_right_shift_i::FormatVirtualRightShiftI, sub::SUB,
-        virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder,
-        virtual_srai::VirtualSRAI, xor::XOR,
-    },
 };
 
 use super::{
@@ -21,6 +16,7 @@ use super::{
     virtual_advice::VirtualAdvice,
     virtual_assert_eq::VirtualAssertEQ,
     virtual_assert_valid_div0::VirtualAssertValidDiv0,
+    virtual_assert_valid_signed_remainder::VirtualAssertValidSignedRemainder,
     virtual_move::VirtualMove,
     RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction, VirtualInstructionSequence,
 };
@@ -107,18 +103,12 @@ impl VirtualInstructionSequence for DIV {
         let v_r = virtual_register_index(2);
         let v_qy = virtual_register_index(3);
 
-        let v_sign_bitmask_r = virtual_register_index(4);
-        let v_sign_bitmask_rs2 = virtual_register_index(5);
-        let v_sign_bitmask_rs1 = virtual_register_index(6);
-        let v_abs_r = virtual_register_index(7);
-        let v_abs_rs2 = virtual_register_index(8);
-
         let mut sequence = vec![];
 
         let advice = VirtualAdvice {
             address: self.address,
             operands: FormatJ { rd: v_q, imm: 0 },
-            virtual_sequence_remaining: Some(15),
+            virtual_sequence_remaining: Some(7),
             advice: 0,
         };
         sequence.push(advice.into());
@@ -126,104 +116,16 @@ impl VirtualInstructionSequence for DIV {
         let advice = VirtualAdvice {
             address: self.address,
             operands: FormatJ { rd: v_r, imm: 0 },
-            virtual_sequence_remaining: Some(14),
+            virtual_sequence_remaining: Some(6),
             advice: 0,
         };
         sequence.push(advice.into());
 
-        let sign_bitmask = VirtualSRAI {
-            address: self.address,
-            operands: FormatVirtualRightShiftI {
-                rd: v_sign_bitmask_r,
-                rs1: v_r,
-                imm: 1 << 31,
-            },
-            virtual_sequence_remaining: Some(13),
-        };
-        sequence.push(sign_bitmask.into());
-
-        let sign_bitmask = VirtualSRAI {
-            address: self.address,
-            operands: FormatVirtualRightShiftI {
-                rd: v_sign_bitmask_rs1,
-                rs1: self.operands.rs1,
-                imm: 1 << 31,
-            },
-            virtual_sequence_remaining: Some(12),
-        };
-        sequence.push(sign_bitmask.into());
-
-        let sign_bitmask = VirtualSRAI {
-            address: self.address,
-            operands: FormatVirtualRightShiftI {
-                rd: v_sign_bitmask_rs2,
-                rs1: self.operands.rs2,
-                imm: 1 << 31,
-            },
-            virtual_sequence_remaining: Some(11),
-        };
-        sequence.push(sign_bitmask.into());
-
-        let xor = XOR {
-            address: self.address,
-            operands: FormatR {
-                rd: v_abs_r,
-                rs1: v_r,
-                rs2: v_sign_bitmask_r,
-            },
-            virtual_sequence_remaining: Some(10),
-        };
-        sequence.push(xor.into());
-
-        let xor = XOR {
-            address: self.address,
-            operands: FormatR {
-                rd: v_abs_rs2,
-                rs1: self.operands.rs2,
-                rs2: v_sign_bitmask_rs2,
-            },
-            virtual_sequence_remaining: Some(9),
-        };
-        sequence.push(xor.into());
-
-        let sub = SUB {
-            address: self.address,
-            operands: FormatR {
-                rd: v_abs_r,
-                rs1: v_abs_r,
-                rs2: v_sign_bitmask_r,
-            },
-            virtual_sequence_remaining: Some(8),
-        };
-        sequence.push(sub.into());
-
-        let sub = SUB {
-            address: self.address,
-            operands: FormatR {
-                rd: v_abs_rs2,
-                rs1: v_abs_rs2,
-                rs2: v_sign_bitmask_rs2,
-            },
-            virtual_sequence_remaining: Some(7),
-        };
-        sequence.push(sub.into());
-
-        let is_valid = VirtualAssertValidUnsignedRemainder {
+        let is_valid = VirtualAssertValidSignedRemainder {
             address: self.address,
             operands: FormatB {
-                rs1: v_abs_r,
-                rs2: v_abs_rs2,
-                imm: 0,
-            },
-            virtual_sequence_remaining: Some(6),
-        };
-        sequence.push(is_valid.into());
-
-        let is_valid = VirtualAssertEQ {
-            address: self.address,
-            operands: FormatB {
-                rs1: v_sign_bitmask_r,
-                rs2: v_sign_bitmask_rs1,
+                rs1: v_r,
+                rs2: self.operands.rs2,
                 imm: 0,
             },
             virtual_sequence_remaining: Some(5),
