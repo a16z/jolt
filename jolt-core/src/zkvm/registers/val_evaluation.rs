@@ -56,7 +56,6 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
         let (r_address_slice, r_cycle_slice) = opening_point.split_at(r_address_len);
         let r_address: Vec<F> = r_address_slice.into();
         let r_cycle: Vec<F> = r_cycle_slice.into();
-        todo!("implement ram_d");
         let inc = CommittedPolynomial::RdInc.generate_witness(preprocessing, trace, ram_d);
 
         let eq_r_address = EqPolynomial::evals(&r_address);

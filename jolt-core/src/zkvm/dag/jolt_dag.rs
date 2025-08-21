@@ -533,7 +533,7 @@ impl JoltDAG {
             hint_map.insert(*poly, hint);
         }
 
-        #[cfg(test)]
+        // #[cfg(test)]
         {
             let committed_polys: Vec<_> = AllCommittedPolynomials::par_iter()
                 .map(|poly| poly.generate_witness(preprocessing, trace, ram_d))
@@ -554,7 +554,7 @@ impl JoltDAG {
             {
                 assert_eq!(
                     commitment, commitment_non_streaming,
-                    "Commitment mismatch at {:?} ({}): {:?} != {:?}",
+                    "Commitment mismatch at {:?}\n ({}):\n {:?}\n != \n{:?}",
                     AllCommittedPolynomials::iter().collect::<Vec<_>>()[i], i, commitment, commitment_non_streaming
                 );
             }
