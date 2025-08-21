@@ -2432,6 +2432,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "recursion"
+version = "0.1.0"
+dependencies = [
+ "ark-serialize",
+ "clap",
+ "jolt-sdk",
+ "postcard",
+]
+
+[[package]]
+name = "recursion-guest"
+version = "0.1.0"
+dependencies = [
+ "ark-serialize",
+ "jolt-sdk",
+ "postcard",
+]
+
+[[package]]
 name = "redox_syscall"
 version = "0.5.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
