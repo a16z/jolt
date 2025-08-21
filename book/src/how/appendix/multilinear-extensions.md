@@ -18,8 +18,8 @@ Assuming your MLE is represented as a 1-D vector of $2^v$ evaluations $E$ over t
 
 Then we can transform the vector $E \to E'$ representing the transformation from $\tilde{f}(x_1, ... x_v) \to \tilde{f'}(r, x_1, ... x_{v-1})$ by "binding" the evaluations vector to a point $r$.
 
-```python
-let n = 2^v;
+```rust
+let n = 2 ** v;
 let half = n / 2;
 for i in 0..half {
     let low = E[i];
