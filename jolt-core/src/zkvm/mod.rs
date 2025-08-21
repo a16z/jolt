@@ -345,7 +345,11 @@ pub trait Serializable: CanonicalSerialize + CanonicalDeserialize + Sized {
     /// Deserializes data from bytes but skips checks for performance
     fn deserialize_from_bytes_unchecked(bytes: &[u8]) -> Result<Self> {
         let cursor = Cursor::new(bytes);
-        Ok(Self::deserialize_with_mode(cursor, ark_serialize::Compress::Yes, ark_serialize::Validate::No)?)
+        Ok(Self::deserialize_with_mode(
+            cursor,
+            ark_serialize::Compress::Yes,
+            ark_serialize::Validate::No,
+        )?)
     }
 }
 
