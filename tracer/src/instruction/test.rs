@@ -110,9 +110,6 @@ where
             virtual_cpu.x[instr.operands.rs2 as usize] = register_state.rs2_value() as i64;
         }
 
-        println!("Dividend: {}", original_cpu.x[instr.operands.rs1 as usize]);
-        println!("Divisor: {}", original_cpu.x[instr.operands.rs2 as usize]);
-
         let mut ram_access = Default::default();
 
         let res = panic::catch_unwind(AssertUnwindSafe(|| {

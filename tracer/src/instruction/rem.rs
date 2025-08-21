@@ -1,8 +1,10 @@
+use crate::instruction::srai::SRAI;
+use crate::instruction::sub::SUB;
+use crate::instruction::virtual_assert_valid_div0::VirtualAssertValidDiv0;
+use crate::instruction::virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder;
+use crate::instruction::xor::XOR;
+use crate::utils::inline_helpers::InstrAssembler;
 use crate::utils::virtual_registers::allocate_virtual_register;
-use crate::{
-    instruction::virtual_assert_valid_signed_remainder::VirtualAssertValidSignedRemainder,
-    utils::inline_helpers::InstrAssembler,
-};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -50,24 +52,24 @@ impl RISCVTrace for REM {
         let (quotient, remainder) = match cpu.xlen {
             Xlen::Bit32 => {
                 if y == 0 {
-                    (u32::MAX as u64, x as u32 as u64)
+                    (u32::MAX as u64, (x as i32).unsigned_abs() as u64)
                 } else if x == cpu.most_negative() && y == -1 {
                     (x as u32 as u64, 0)
                 } else {
                     let quotient = x as i32 / y as i32;
-                    let remainder = x as i32 % y as i32;
-                    (quotient as u32 as u64, remainder as u32 as u64)
+                    let remainder = (x as i32 % y as i32).unsigned_abs();
+                    (quotient as u32 as u64, remainder as u64)
                 }
             }
             Xlen::Bit64 => {
                 if y == 0 {
-                    (u64::MAX, x as u64)
+                    (u64::MAX, x.unsigned_abs())
                 } else if x == cpu.most_negative() && y == -1 {
                     (x as u64, 0)
                 } else {
                     let quotient = x / y;
                     let remainder = x % y;
-                    (quotient as u64, remainder as u64)
+                    (quotient as u64, remainder.unsigned_abs())
                 }
             }
         };
@@ -92,21 +94,48 @@ impl RISCVTrace for REM {
     }
 
     fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
-        let v_0 = allocate_virtual_register();
-        let v_q = allocate_virtual_register();
-        let v_r = allocate_virtual_register();
-        let v_qy = allocate_virtual_register();
-        let v_rs2 = allocate_virtual_register();
-
+        let a0 = self.operands.rs1; // dividend
+        let a1 = self.operands.rs2; // divisor
+        let a2 = allocate_virtual_register(); // quotient from oracle (untrusted)
+        let a3 = allocate_virtual_register(); // |remainder| from oracle (unsigned)
+        let t0 = allocate_virtual_register();
+        let t1 = allocate_virtual_register();
+        let t2 = allocate_virtual_register();
+        let t3 = allocate_virtual_register();
+        let shmat = match xlen {
+            Xlen::Bit32 => 31,
+            Xlen::Bit64 => 63,
+        };
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
-        asm.emit_j::<VirtualAdvice>(*v_q, 0);
-        asm.emit_j::<VirtualAdvice>(*v_r, 0);
-        asm.emit_r::<VirtualChangeDivisor>(*v_rs2, self.operands.rs1, self.operands.rs2);
-        asm.emit_b::<VirtualAssertValidSignedRemainder>(*v_r, *v_rs2, 0);
-        asm.emit_r::<MUL>(*v_qy, *v_q, *v_rs2);
-        asm.emit_r::<ADD>(*v_0, *v_qy, *v_r);
-        asm.emit_b::<VirtualAssertEQ>(*v_0, self.operands.rs1, 0);
-        asm.emit_i::<VirtualMove>(self.operands.rd, *v_r, 0);
+
+        // get advice
+        asm.emit_j::<VirtualAdvice>(*a2, 0);
+        asm.emit_j::<VirtualAdvice>(*a3, 0);
+
+        // handle special cases
+        asm.emit_b::<VirtualAssertValidDiv0>(a1, *a2, 0);
+        asm.emit_r::<VirtualChangeDivisor>(*t0, a0, a1);
+
+        // compute quotient * divisor (no overflow check needed!)
+        asm.emit_r::<MUL>(*t1, *a2, *t0);
+
+        // construct signed remainder (apply dividend's sign to |remainder|)
+        asm.emit_i::<SRAI>(*t2, a0, shmat);
+        asm.emit_r::<XOR>(*t3, *a3, *t2);
+        asm.emit_r::<SUB>(*t3, *t3, *t2);
+
+        // verify quotient * divisor + remainder == dividend (mod 2^n)
+        asm.emit_r::<ADD>(*t1, *t1, *t3);
+        asm.emit_b::<VirtualAssertEQ>(*t1, a0, 0);
+
+        // check |remainder| < |divisor|
+        asm.emit_i::<SRAI>(*t2, *t0, shmat);
+        asm.emit_r::<XOR>(*t1, *t0, *t2);
+        asm.emit_r::<SUB>(*t1, *t1, *t2);
+        asm.emit_b::<VirtualAssertValidUnsignedRemainder>(*a3, *t1, 0);
+
+        // move signed remainder to result
+        asm.emit_i::<VirtualMove>(self.operands.rd, *t3, 0);
         asm.finalize()
     }
 }
