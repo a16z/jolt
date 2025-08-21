@@ -9,4 +9,4 @@ guest = { package = "big-int-guest", path = "./guest" }
 ark-bn254 = "0.5.0"
 ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 ruint = "1.12"
-
+rand = "0.8"

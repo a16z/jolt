@@ -8,6 +8,6 @@ guest = []
 
 [dependencies]
 jolt = { package = "jolt-sdk", path = "../../../jolt-sdk" }
-ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-ark-bn254 = "0.5.0"
+ark-ff = { path = "/Users/omid.bodaghi/Desktop/LZ/arkworks-algebra/ff", default-features = false}
+ark-bn254 = { path = "/Users/omid.bodaghi/Desktop/LZ/arkworks-algebra/curves/bn254", default-features = false, features = ["curve", "asm"] }
 ruint = { version = "1.12", default-features = false }

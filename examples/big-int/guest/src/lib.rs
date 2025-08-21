@@ -40,20 +40,26 @@ fn benchmark_mul_assign(
     
     // Perform mul_assign with cycle tracking
     start_cycle_tracking("mul_assign");
-    a = black_box(a) * black_box(b);  // This calls mul_assign internally
-    // b = black_box(a) * black_box(b);  // This calls mul_assign internally
-    // a = black_box(a) * black_box(b);  // This calls mul_assign internally
-    // b = black_box(a) * black_box(b);  // This calls mul_assign internally
-    // a = black_box(a) * black_box(b);  // This calls mul_assign internally
-    // b = black_box(a) * black_box(b);  // This calls mul_assign internally
-    // a = black_box(a) * black_box(b);  // This calls mul_assign internally
-    // b = black_box(a) * black_box(b);  // This calls mul_assign internally
-    // a = black_box(a) * black_box(b);  // This calls mul_assign internally
-    // a = black_box(a) * black_box(b);  // This calls mul_assign internally
+    a *= black_box(b);  // This calls mul_assign internally
+    // b *= black_box(a);  // This calls mul_assign internally
+    // a *= black_box(b);  // This calls mul_assign internally
+    // b *= black_box(a);  // This calls mul_assign internally
+    // a *= black_box(b);  // This calls mul_assign internally
+    // b *= black_box(a);  // This calls mul_assign internally
+    // a *= black_box(b);  // This calls mul_assign internally
+    // b *= black_box(a);  // This calls mul_assign internally
+    // a *= black_box(a);  // This calls mul_assign internally
+    // a *= black_box(b);  // This calls mul_assign internally
+    let result = black_box(a);
     end_cycle_tracking("mul_assign");
+    // 3117
+    // 3517 RV32IM cycles
+    // inline default: 3487
+    // inline assembly: 2580
     
     // Black box the result
-    let result = black_box(a);
+    
+    
     
     // Convert result back to u64 limbs
     // Use the Into trait to get BigInt from Fr
