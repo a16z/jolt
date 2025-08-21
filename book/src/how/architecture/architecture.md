@@ -1,7 +1,7 @@
 # Architecture overview
 
-This section gives a overview of the architecture of the Jolt codebase. As a starting point, we will present two useful mental models of Jolt: Jolt as a CPU, and Jolt as a DAG.
-
+This section gives a overview of the architecture of the Jolt codebase.
+As a starting point, we will present two useful mental models of Jolt: Jolt as a CPU, and Jolt as a DAG.
 
 ## Jolt as a CPU
 
@@ -16,11 +16,14 @@ A VM does two things:
 
 The Jolt paper depicts these two tasks mapped to three components in the Jolt proof system:
 
-![Jolt Alpha](../imgs/figure2.png)
+![Fig 2](../../imgs/figure2.png)
+
 
 The Jolt codebase is similarly organized, but instead distinguishes read-write memory (comprising registers and RAM) from program code (aka bytecode, which is read-only), for a total of five components:
 
-![fetch-decode-execute](../imgs/fetch_decode_execute.png)
+![Jolt as CPU](../../imgs/jolt_as_cpu.png)
+
+Note that in Jolt as described in the paper, as well as in the first version of the Jolt implementation ([v0.1.0](../appendix/jolt-classic.md)), the memory checking and lookup argument used are [Spice](https://eprint.iacr.org/2018/907) and [Lasso](https://eprint.iacr.org/2023/1216), respectively. As of v0.2.0, Jolt replaces Spice and Lasso with [Twist and Shout](../twist-shout.md), respectively.
 
 #### R1CS constraints
 
@@ -53,56 +56,58 @@ To handle the "decode" part of the fetch-decode-execute loop, Jolt uses another 
 
 *For more details: [Bytecode](./bytecode.md)*
 
-
 ## Jolt as a DAG
 
 One useful way to understand Jolt is to view it as a directed acyclic graph (DAG). That might sound surprising -- how can a zkVM be represented as a DAG? The key lies in the structure of its sumchecks, and in particular, the role of virtual polynomials.
 
 ### Virtual vs. Committed Polynomials
 
-Virtual polynomials, introduced in the Binius paper (Diamond and Posen, 2023), are used heavily in Jolt.
+**Virtual polynomials**, introduced in the [Binius paper](https://eprint.iacr.org/2023/1784), are used heavily in Jolt.
 
 A virtual polynomial is a part of the witness that is never committed directly. Instead, any claimed evaluation of a virtual polynomial is proven by a subsequent sumcheck.
 In contrast, committed polynomials are committed to explicitly and their evaluaions are proven using the opening proof of the PCS.
 
-Virtual polynomials form the conceptual backbone of the nodes in Jolt’s DAG: each sumcheck operates over polynomials -- some committed, some virtual -- and outputs claimed evaluations for those polynomials.
-
 ### Sumchecks as Nodes
 
-Each sumcheck in Jolt corresponds to a node in the DAG. You can think of a sumcheck expression as:
+Each sumcheck in Jolt corresponds to a node in the DAG. Consider the following hypothetical sumcheck expression:
 
 $$
-\textsf{InputClaim} = \sum_{x \in \{0,1\}^n} f(x)
+\textsf{InputClaim} \stackrel{?}{=} \sum_{x \in \{0,1\}^n} f(x) \cdot g(x) + h(x)
 $$
 
-Here, the left-hand side is the input claim, and the right-hand side is a sum over the Boolean hypercube of a multivariate polynomial $f$.
-The sumcheck protocol reduces this to a set of new claims about the constituent multilinear polynomials of f.
-These new claims are the output claims of the node.
-Input claims can be viewed as in-edges, and output claims as out-edges, thus defining the graph structure.
-
-This DAG isn't just conceptual -- it's manifested in code by the `JoltDag` and the `OpeningsMap` abstractions.
-
-### Managing State and Batching Sumchecks
-
-The `StateManager` is responsible for tracking and managing all the sumcheck stages throughout the Jolt proof. While it’s common to batch multiple sumchecks together by taking random linear combinations, the DAG structure imposes constraints on batching. In particular, if sumcheck B depends on the outputs of sumcheck A (i.e., there's an edge from A to B), they cannot be batched together: A must be proven first.
-We’ve found that Jolt’s sumchecks can be grouped into five minimal batches, respecting the DAG’s dependencies. The stages are made explicit by the StateManager and represented in the documentation via a diagram.
-
-### Conceptual Components and Staging
-
-Jolt has six major conceptual components:
-
-- R1CS constraints
-- RAM
-- Instruction execution
-- Registers
-- Bytecode
-- Opening proof
+Here, the left-hand side is the input claim, and the right-hand side is a sum over the Boolean hypercube of a multivariate polynomial of degree 2, involving three multilinear terms $f$, $g$, and $h$.
+The sumcheck protocol reduces this _input_ claim to three _output_ claims about $f$, $g$, and $h$:
 
 
-Each component contains multiple sumchecks, and these sumchecks may fall into different batches depending on their dependencies. Each component registers its sumchecks with the StateManager, indicating which stage each one belongs to. The StateManager then collates all the sumchecks in a given stage and executes a batched sumcheck for that stage.
+$$
+  \textsf{OutputClaim}_f \stackrel{?}{=} f(r) \\
+  \textsf{OutputClaim}_g \stackrel{?}{=} g(r) \\
+  \textsf{OutputClaim}_h \stackrel{?}{=} h(r)
+$$
 
-### Openings Map
+where $r \in \mathbb{F}^n$ consists of the random challenges obtained over the course of the sumcheck.
 
-Within the `StateManager`, the `OpeningsMap` manages the flow of claimed evaluations –– essentially, the edges of the DAG. It's a mapping from an opening ID to a claimed polynomial evaluation. As sumchecks are proven, their output claims (both for virtual and committed polynomials) are inserted into the map. Later sumchecks can then consume the virtual polynomial openings as input claims.
+An output claim of one sumcheck might be the input claim of another sumcheck.
+Recall that [by definition](#virtual-vs-committed-polynomials), the output claim for a virtual polynomial is necessarily the input claim of another sumcheck.
 
-While virtual polynomial claims are used internally and passed between sumchecks, committed polynomial claims are tracked because they must ultimately be verified via a batched Dory opening proof at the end of the protocol.
+It follows that input claims can be viewed as in-edges and output claims as out-edges, thus defining the graph structure. This is what the Jolt sumcheck dag looks like:
+
+![dag](../../imgs/jolt_dag.png)
+
+Note the white boxes corresponding to the five components of Jolt under the CPU paradigm –– plus an extra component for the [opening proof](./opening-proof.md), which doesn't have a CPU analogue.
+
+In the diagaram above, sumchecks are color-coded based on "batch"; sumchecks in the same batch are "run in parallel" (see [Batched sumcheck](../optimizations/batched-sumcheck.md)).
+Note that a given component may include sumchecks in different batches. For example, the three sumchecks in Spartan span stages 1, 2, and 3.
+
+This is codified by the `SumcheckStages` trait, which defines methods `stage1_prove`, `stage1_verify`, `stage2_prove`, `stage2_verify`, etc.
+Each component implements `SumcheckStages`, declaring each sumcheck in its subgraph and which stage it belongs to. Observe that the DAG defines a partial ordering over the nodes (sumchecks), which consequently defines the minimum number of batches -- two sumchecks cannot be batched together if one "depends" on the other.
+
+The batched opening proof subprotocol involves a batched sumcheck which is necessarily last (i.e. stage 5), because its input claims are obtained from all the committed polynomial evaluations from the previous stages.
+For more details on the batched opening proof subprotocol, see [Opening proof](./opening-proof.md).
+
+### Managing state and data flow
+
+The `StateManager` is responsible for tracking and managing the state persisted across all the sumcheck stages in Jolt.
+In particular, it contains an `Openings` map to manage the flow of claimed evaluations –– the edges of the DAG. It's a mapping from an `OpeningId` to a claimed polynomial evaluation. As sumchecks are proven, their output claims (for both virtual and committed polynomials) are inserted into the map. Later sumchecks can then consume the virtual polynomial openings as input claims.
+
+While virtual polynomial claims are used internally and passed between sumchecks, committed polynomial claims are tracked because they must ultimately be verified via a batched [Dory](../dory.md) opening proof at the end of the protocol.

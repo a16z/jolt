@@ -18,7 +18,7 @@
         - [RAM](./how/architecture/ram.md)
         - [Instruction execution](./how/architecture/instruction_execution.md)
         - [Bytecode](./how/architecture/bytecode.md)
-        - [Batched opening proof](./how/architecture/batched-opening-proof.md)
+        - [Batched opening proof](./how/architecture/opening-proof.md)
     - [Twist and Shout](./how/twist-shout.md)
     - [Dory](./how/dory.md)
     - [Optimizations](./how/optimizations/optimizations.md)
