@@ -51,20 +51,20 @@ use rand::{rngs::StdRng, SeedableRng};
 
 use super::{RISCVCycle, RV32IMCycle};
 
-macro_rules! test_virtual_sequences {
+macro_rules! test_inline_sequences {
   ($( $instr:ty ),* $(,)?) => {
       $(
           paste::paste! {
               #[test]
-              fn [<test_ $instr:lower _virtual_sequence>]() {
-                  virtual_sequence_trace_test::<$instr>();
+              fn [<test_ $instr:lower _inline_sequence>]() {
+                  inline_sequence_trace_test::<$instr>();
               }
           }
       )*
   };
 }
 
-test_virtual_sequences!(
+test_inline_sequences!(
     // NOTE: AMO instructinos panic on all cases, because `random` generates invalid
     // memory accessses. Same with store and load instructions.
     //
@@ -80,7 +80,7 @@ fn test_rng() -> StdRng {
     StdRng::from_seed(seed)
 }
 
-pub fn virtual_sequence_trace_test<I: RISCVInstruction + RISCVTrace + Copy>()
+pub fn inline_sequence_trace_test<I: RISCVInstruction + RISCVTrace + Copy>()
 where
     RV32IMCycle: From<RISCVCycle<I>>,
 {
@@ -109,6 +109,9 @@ where
             original_cpu.x[instr.operands.rs2 as usize] = register_state.rs2_value() as i64;
             virtual_cpu.x[instr.operands.rs2 as usize] = register_state.rs2_value() as i64;
         }
+
+        println!("Dividend: {}", original_cpu.x[instr.operands.rs1 as usize]);
+        println!("Divisor: {}", original_cpu.x[instr.operands.rs2 as usize]);
 
         let mut ram_access = Default::default();
 
