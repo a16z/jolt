@@ -14,6 +14,7 @@ use super::{
 };
 use crate::field::JoltField;
 use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
+use crate::poly::rlc_polynomial::RLCPolynomial;
 use crate::{
     msm::VariableBaseMSM,
     poly::{commitment::kzg::SRS, dense_mlpoly::DensePolynomial, unipoly::UniPoly},
@@ -158,7 +159,23 @@ where
     let scalars = v.iter().flatten().collect::<Vec<&P::ScalarField>>();
     transcript.append_scalars::<P::ScalarField>(&scalars);
     let q_powers: Vec<P::ScalarField> = transcript.challenge_scalar_powers(f.len());
-    let B = MultilinearPolynomial::linear_combination(&f.iter().collect::<Vec<_>>(), &q_powers);
+    let f_arc: Vec<Arc<MultilinearPolynomial<P::ScalarField>>> =
+        f.iter().map(|poly| Arc::new(poly.clone())).collect();
+
+    // @TODO(markosg04) right now we don't use HyperKZG so we just handle both cases
+    let has_one_hot = f_arc
+        .iter()
+        .any(|poly| matches!(poly.as_ref(), MultilinearPolynomial::OneHot(_)));
+
+    let B = if has_one_hot {
+        let rlc_result = RLCPolynomial::linear_combination(f_arc, &q_powers);
+        MultilinearPolynomial::RLC(rlc_result)
+    } else {
+        let poly_refs: Vec<&MultilinearPolynomial<P::ScalarField>> =
+            f_arc.iter().map(|arc| arc.as_ref()).collect();
+        let dense_result = DensePolynomial::linear_combination(&poly_refs, &q_powers);
+        MultilinearPolynomial::from(dense_result.Z)
+    };
 
     // Now open B at u0, ..., u_{t-1}
     let w = kzg_batch_open_no_rem(&B, u, pk);

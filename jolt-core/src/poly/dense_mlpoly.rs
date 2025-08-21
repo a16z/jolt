@@ -6,6 +6,7 @@ use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::utils::{compute_dotproduct, compute_dotproduct_low_optimized};
 
 use crate::field::{JoltField, OptimizedMul};
+use crate::poly::compact_polynomial::SmallScalar;
 use crate::utils::math::Math;
 use allocative::Allocative;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -13,7 +14,7 @@ use core::ops::Index;
 use rand_core::{CryptoRng, RngCore};
 use rayon::prelude::*;
 
-use super::multilinear_polynomial::BindingOrder;
+use super::multilinear_polynomial::{BindingOrder, MultilinearPolynomial};
 
 #[derive(Default, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize, Allocative)]
 pub struct DensePolynomial<F: JoltField> {
@@ -407,6 +408,60 @@ impl<F: JoltField> DensePolynomial<F> {
                 .take(1 << num_vars)
                 .collect(),
         )
+    }
+
+    #[tracing::instrument(skip_all)]
+    pub fn linear_combination(
+        polynomials: &[&MultilinearPolynomial<F>],
+        coefficients: &[F],
+    ) -> Self {
+        debug_assert_eq!(polynomials.len(), coefficients.len());
+
+        let max_length = polynomials
+            .iter()
+            .map(|poly| poly.original_len())
+            .max()
+            .unwrap();
+
+        let result: Vec<F> = (0..max_length)
+            .into_par_iter()
+            .map(|i| {
+                let mut acc = F::zero();
+                for (coeff, poly) in coefficients.iter().zip(polynomials.iter()) {
+                    if i < poly.original_len() {
+                        match poly {
+                            MultilinearPolynomial::LargeScalars(p) => {
+                                acc += p.evals_ref()[i].mul_01_optimized(*coeff);
+                            }
+                            MultilinearPolynomial::U8Scalars(p) => {
+                                acc += p.coeffs[i].field_mul(*coeff);
+                            }
+                            MultilinearPolynomial::U16Scalars(p) => {
+                                acc += p.coeffs[i].field_mul(*coeff);
+                            }
+                            MultilinearPolynomial::U32Scalars(p) => {
+                                acc += p.coeffs[i].field_mul(*coeff);
+                            }
+                            MultilinearPolynomial::U64Scalars(p) => {
+                                acc += p.coeffs[i].field_mul(*coeff);
+                            }
+                            MultilinearPolynomial::I64Scalars(p) => {
+                                acc += p.coeffs[i].field_mul(*coeff);
+                            }
+                            MultilinearPolynomial::U128Scalars(p) => {
+                                acc += p.coeffs[i].field_mul(*coeff);
+                            }
+                            MultilinearPolynomial::I128Scalars(p) => {
+                                acc += p.coeffs[i].field_mul(*coeff);
+                            }
+                            _ => unreachable!(),
+                        }
+                    }
+                }
+                acc
+            })
+            .collect();
+        DensePolynomial::new(result)
     }
 }
 
