@@ -13,17 +13,20 @@ mod jolt_verifier_preprocessing_bytes;
 fn verifier() {
     start_cycle_tracking("preprocessing");
     let preprocessing: JoltVerifierPreprocessing<ark_bn254::Fr, PCS> =
-        JoltVerifierPreprocessing::deserialize_from_bytes(
+        JoltVerifierPreprocessing::deserialize_from_bytes_unchecked(
             jolt_verifier_preprocessing_bytes::JOLT_VERIFIER_PREPROCESSING_BYTES,
         )
         .unwrap();
     end_cycle_tracking("preprocessing");
     start_cycle_tracking("proof");
-    let proof = RV32IMJoltProof::deserialize_from_bytes(fib_proof_bytes::FIB_PROOF_BYTES).unwrap();
+    let proof = RV32IMJoltProof::deserialize_from_bytes_unchecked(fib_proof_bytes::FIB_PROOF_BYTES)
+        .unwrap();
     end_cycle_tracking("proof");
     start_cycle_tracking("device");
-    let device =
-        jolt::JoltDevice::deserialize_from_bytes(fib_io_device_bytes::FIB_IO_DEVICE_BYTES).unwrap();
+    let device = jolt::JoltDevice::deserialize_from_bytes_unchecked(
+        fib_io_device_bytes::FIB_IO_DEVICE_BYTES,
+    )
+    .unwrap();
     end_cycle_tracking("device");
     // assert!(device.memory_layout.stack_size > 1024);
     // assert!(proof.trace_length > 0);
