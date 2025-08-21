@@ -528,11 +528,6 @@ impl JoltDAG {
             .map(|s| PCS::finalize(s))
             .unzip();
 
-        let mut hint_map = HashMap::with_capacity(AllCommittedPolynomials::len());
-        for (poly, hint) in AllCommittedPolynomials::iter().zip(hints) {
-            hint_map.insert(*poly, hint);
-        }
-
         // #[cfg(test)]
         {
             let committed_polys: Vec<_> = AllCommittedPolynomials::par_iter()
@@ -541,23 +536,32 @@ impl JoltDAG {
 
             let commitments_non_streaming: Vec<_> = committed_polys
                 .iter()
-                .map(|poly| PCS::commit(poly, &preprocessing.generators).0)
+                .map(|poly| PCS::commit(poly, &preprocessing.generators))
                 .collect();
 
             // assert_eq!(commitments, commitments_non_streaming);
             // compare commitments and commitments_non_streaming iteratively and print indices that do not match
             // if an index does not match, print the index and the two commitments and panic.
-            for (i, (commitment, commitment_non_streaming)) in commitments
+            for (i, ((commitment, hint), (commitment_non_streaming, hint_non_streaming))) in commitments
                 .iter()
+                .zip(hints.iter())
                 .zip(commitments_non_streaming.iter())
                 .enumerate()
             {
+                assert_eq!(hint, hint_non_streaming, "PCS hint mismatch at {:?}", AllCommittedPolynomials::iter().collect::<Vec<_>>()[i]);
+                println!("PCS hints matched for: {:?}", AllCommittedPolynomials::iter().collect::<Vec<_>>()[i]);
                 assert_eq!(
                     commitment, commitment_non_streaming,
                     "Commitment mismatch at {:?}\n ({}):\n {:?}\n != \n{:?}",
                     AllCommittedPolynomials::iter().collect::<Vec<_>>()[i], i, commitment, commitment_non_streaming
                 );
+                println!("PCS matched for: {:?}", AllCommittedPolynomials::iter().collect::<Vec<_>>()[i]);
             }
+        }
+
+        let mut hint_map = HashMap::with_capacity(AllCommittedPolynomials::len());
+        for (poly, hint) in AllCommittedPolynomials::iter().zip(hints) {
+            hint_map.insert(*poly, hint);
         }
 
         prover_state_manager.set_commitments(commitments);
