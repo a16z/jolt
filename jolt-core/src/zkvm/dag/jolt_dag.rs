@@ -548,6 +548,7 @@ impl JoltDAG {
                 .zip(commitments_non_streaming.iter())
                 .enumerate()
             {
+                println!("i = {i}");
                 assert_eq!(hint, hint_non_streaming, "PCS hint mismatch at {:?}", AllCommittedPolynomials::iter().collect::<Vec<_>>()[i]);
                 println!("PCS hints matched for: {:?}", AllCommittedPolynomials::iter().collect::<Vec<_>>()[i]);
                 assert_eq!(

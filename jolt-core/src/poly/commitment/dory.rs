@@ -1451,10 +1451,11 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
         state.process_chunk(chunk)
     }
 
-    fn finalize<'a>(state: Self::State<'a>) -> (Self::Commitment, Self::OpeningProofHint) {
+    fn finalize<'a>(mut state: Self::State<'a>) -> (Self::Commitment, Self::OpeningProofHint) {
+        
         if let Some(K) = state.K {
-            let row_len = DoryGlobals::get_num_columns();
             let T = DoryGlobals::get_T();
+            let row_len = DoryGlobals::get_num_columns();
             let rows_per_k = T / row_len;
             dbg!(K);
             dbg!(row_len);
@@ -1466,17 +1467,27 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
             // TODO: Parallelize
             let l= state.row_commitments.len();
             println!("K={K}, state.row_commitments.len()={l}");
-            let num_rows = DoryGlobals::get_max_num_rows();
+            let num_rows = K * T/dbg!(DoryGlobals::get_num_columns());
+            let row_pad_count = num_rows - l;
+            state.row_commitments.extend(vec![JoltG1Wrapper::identity(); row_pad_count]);
             let row_commitments: Vec<_> = (0..num_rows).map(|i| {
-                let j = (i % K) * K + i / K;
+                // let j = (i % K) * K + i / K;
+                let j = (i % rows_per_k) * rows_per_k + i / rows_per_k;
+                //i_max = num_rows = K * T/get_num_columns % 
+                
                 // println!("j = {j}, i = {i}");
                 // Default required since we don't pad streamed trace.
-                state.row_commitments.get(j).cloned().unwrap_or(JoltG1Wrapper::identity())
+                //state.row_commitments.get(j).cloned().unwrap_or(JoltG1Wrapper::identity())
+                state.row_commitments[j]
             }).collect();
 
             let commitment = JoltBn254::multi_pair(&row_commitments, &state.setup.g2_vec()[..row_commitments.len()]);
             (DoryCommitment(commitment), row_commitments)
         } else {
+            let T = DoryGlobals::get_T();
+            // pad row commitments
+            let row_pad_count = T/dbg!(DoryGlobals::get_num_columns()) - dbg!(state.row_commitments.len());//4;////4;//8192
+            state.row_commitments.extend(vec![JoltG1Wrapper::identity(); row_pad_count]);
             let commitment = JoltBn254::multi_pair(&state.row_commitments, &state.setup.g2_vec()[..state.row_commitments.len()]);
             (DoryCommitment(commitment), state.row_commitments)
         }
