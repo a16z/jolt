@@ -1,4 +1,4 @@
-use jolt::{end_cycle_tracking, jolt_println, start_cycle_tracking, Jolt, PCS};
+use jolt::{end_cycle_tracking, start_cycle_tracking, Jolt, PCS};
 use jolt::{JoltRV32IM, JoltVerifierPreprocessing, RV32IMJoltProof, Serializable};
 
 mod fib_io_device_bytes;
