@@ -5,8 +5,6 @@ use jolt_sdk::{JoltDevice, MemoryConfig, RV32IMJoltProof, Serializable};
 use std::path::PathBuf;
 use std::time::Instant;
 
-const MAGIC_NUMBER: u32 = 557799;
-
 fn get_guest_src_dir() -> PathBuf {
     let current_file = file!();
     let current_dir = std::path::Path::new(current_file).parent().unwrap();
@@ -170,13 +168,10 @@ fn generate_provable_macro(guest: GuestProgram, use_embed: bool, output_dir: &Pa
     );
 }
 
-fn check_data_integrity(all_groups_data: &[u8]) -> (u32, u32, u32) {
+fn check_data_integrity(all_groups_data: &[u8]) -> (u32, u32) {
     println!("Checking data integrity...");
 
     let mut cursor = std::io::Cursor::new(all_groups_data);
-
-    let m = u32::deserialize_compressed(&mut cursor).unwrap();
-    println!("✓ Magic number deserialized: {m}");
 
     let verifier_preprocessing =
         jolt_sdk::JoltVerifierPreprocessing::<jolt_sdk::F, jolt_sdk::PCS>::deserialize_compressed(
@@ -214,7 +209,7 @@ fn check_data_integrity(all_groups_data: &[u8]) -> (u32, u32, u32) {
         "Not all data was consumed during deserialization"
     );
 
-    (m, n, remaining_data.len() as u32)
+    (n, remaining_data.len() as u32)
 }
 
 fn collect_guest_proofs(guest: GuestProgram, target_dir: &str, use_embed: bool) -> Vec<u8> {
@@ -246,7 +241,7 @@ fn collect_guest_proofs(guest: GuestProgram, target_dir: &str, use_embed: bool) 
         jolt_sdk::guest::prover::preprocess(&guest_prog, max_trace_length);
     println!("Preprocessing guest verifier...");
     let guest_verifier_preprocessing =
-        jolt_sdk::guest::verifier::preprocess(&guest_prog, max_trace_length);
+        jolt_sdk::JoltVerifierPreprocessing::from(&guest_prover_preprocessing);
 
     let inputs = guest.inputs();
     println!("Got inputs: {inputs:?}");
@@ -254,9 +249,6 @@ fn collect_guest_proofs(guest: GuestProgram, target_dir: &str, use_embed: bool) 
     let mut all_groups_data = Vec::new();
     let mut cursor = std::io::Cursor::new(&mut all_groups_data);
     let mut total_prove_time = 0.0;
-
-    let m = MAGIC_NUMBER;
-    u32::serialize_compressed(&m, &mut cursor).unwrap();
 
     guest_verifier_preprocessing
         .serialize_compressed(&mut cursor)
@@ -313,7 +305,7 @@ fn generate_embedded_bytes(guest: GuestProgram, all_groups_data: &[u8], output_d
         guest.name()
     );
 
-    let (m, n, remaining_data_size) = check_data_integrity(all_groups_data);
+    let (n, remaining_data_size) = check_data_integrity(all_groups_data);
 
     if remaining_data_size > 0 {
         println!("Warning: Remaining data is not empty ({remaining_data_size} bytes). This might indicate proofs are included.");
@@ -339,7 +331,6 @@ fn generate_embedded_bytes(guest: GuestProgram, all_groups_data: &[u8], output_d
         "// Total embedded bytes: {}\n",
         all_groups_data.len()
     ));
-    output.push_str(&format!("// Magic number: {m}\n"));
     output.push_str(&format!("// Number of proofs: {n}\n"));
 
     std::fs::create_dir_all(output_dir).unwrap();
@@ -368,7 +359,7 @@ fn run_recursion_proof(
     let recursion_prover_preprocessing =
         jolt_sdk::guest::prover::preprocess(&recursion, max_trace_length);
     let recursion_verifier_preprocessing =
-        jolt_sdk::guest::verifier::preprocess(&recursion, max_trace_length);
+        jolt_sdk::JoltVerifierPreprocessing::from(&recursion_prover_preprocessing);
 
     let mut output_bytes = vec![
         0;
