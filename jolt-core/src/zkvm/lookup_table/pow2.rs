@@ -9,24 +9,24 @@ use crate::utils::math::Math;
 use crate::zkvm::lookup_table::prefixes::Prefixes;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct Pow2Table<const WORD_SIZE: usize>;
+pub struct Pow2Table<const XLEN: usize>;
 
-impl<const WORD_SIZE: usize> JoltLookupTable for Pow2Table<WORD_SIZE> {
+impl<const XLEN: usize> JoltLookupTable for Pow2Table<XLEN> {
     fn materialize_entry(&self, index: u128) -> u64 {
-        1 << (index % WORD_SIZE as u128) as u64
+        1 << (index % XLEN as u128) as u64
     }
 
     fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
-        debug_assert_eq!(r.len(), 2 * WORD_SIZE);
+        debug_assert_eq!(r.len(), 2 * XLEN);
         let mut result = F::one();
-        for i in 0..WORD_SIZE.log_2() {
+        for i in 0..XLEN.log_2() {
             result *= F::one() + (F::from_u64((1 << (1 << i)) - 1)) * r[r.len() - i - 1];
         }
         result
     }
 }
 
-impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE> for Pow2Table<WORD_SIZE> {
+impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for Pow2Table<XLEN> {
     fn suffixes(&self) -> Vec<Suffixes> {
         vec![Suffixes::Pow2]
     }

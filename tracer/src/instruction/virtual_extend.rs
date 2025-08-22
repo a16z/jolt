@@ -5,10 +5,7 @@ use crate::{
     emulator::cpu::{Cpu, Xlen},
 };
 
-use super::{
-    format::{format_i::FormatI, InstructionFormat},
-    RISCVInstruction, RISCVTrace,
-};
+use super::{format::format_i::FormatI, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name = VirtualExtend,

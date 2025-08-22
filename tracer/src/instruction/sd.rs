@@ -4,10 +4,7 @@ use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
 use super::RAMWrite;
 
-use super::{
-    format::{format_s::FormatS, InstructionFormat},
-    RISCVInstruction, RISCVTrace,
-};
+use super::{format::format_s::FormatS, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name   = SD,

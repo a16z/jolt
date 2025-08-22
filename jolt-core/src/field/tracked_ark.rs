@@ -1,5 +1,6 @@
 use super::{FieldOps, JoltField};
 use crate::utils::counters::{INVERSE_COUNT, MULT_COUNT};
+use allocative::Allocative;
 use ark_bn254::Fr;
 use ark_ff::UniformRand;
 use ark_ff::{One, Zero};
@@ -16,6 +17,11 @@ use std::sync::atomic::Ordering;
     Clone, Default, Copy, PartialEq, Eq, Hash, Debug, CanonicalSerialize, CanonicalDeserialize,
 )]
 pub struct TrackedFr(pub ark_bn254::Fr);
+
+impl Allocative for TrackedFr {
+    fn visit<'a, 'b: 'a>(&self, _visitor: &'a mut allocative::Visitor<'b>) {}
+}
+
 impl Deref for TrackedFr {
     type Target = Fr;
     fn deref(&self) -> &Self::Target {
@@ -273,10 +279,6 @@ impl JoltField for TrackedFr {
 
     fn compute_lookup_tables() -> Self::SmallValueLookupTables {
         <ark_bn254::Fr as JoltField>::compute_lookup_tables()
-    }
-
-    fn initialize_lookup_tables(init: Self::SmallValueLookupTables) {
-        <ark_bn254::Fr as JoltField>::initialize_lookup_tables(init)
     }
 
     fn from_u8(n: u8) -> Self {

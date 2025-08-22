@@ -1,3 +1,6 @@
+use crate::instruction::add::ADD;
+use crate::instruction::mul::MUL;
+use crate::utils::inline_helpers::InstrAssembler;
 use crate::utils::virtual_registers::allocate_virtual_register;
 use serde::{Deserialize, Serialize};
 
@@ -7,20 +10,10 @@ use crate::{
 };
 
 use super::{
-    add::ADD,
-    format::{
-        format_b::FormatB, format_i::FormatI, format_j::FormatJ, format_r::FormatR,
-        InstructionFormat,
-    },
-    mul::MUL,
-    virtual_advice::VirtualAdvice,
-    virtual_assert_eq::VirtualAssertEQ,
-    virtual_assert_valid_div0::VirtualAssertValidDiv0,
+    format::format_r::FormatR, virtual_advice::VirtualAdvice, virtual_assert_eq::VirtualAssertEQ,
     virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder,
-    virtual_change_divisor_w::VirtualChangeDivisorW,
-    virtual_extend::VirtualExtend,
-    virtual_sign_extend::VirtualSignExtend,
-    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
+    virtual_extend::VirtualExtend, virtual_sign_extend::VirtualSignExtend, RISCVInstruction,
+    RISCVTrace, RV32IMCycle, RV32IMInstruction,
 };
 
 declare_riscv_instr!(
@@ -86,179 +79,40 @@ impl RISCVTrace for REMUW {
         }
     }
 
-    fn inline_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
-        // Virtual registers used in sequence
-        let v_0 = allocate_virtual_register();
-        let v_q = allocate_virtual_register();
-        let v_r = allocate_virtual_register();
-        let v_qy = allocate_virtual_register();
-        let v_rs1 = allocate_virtual_register();
-        let v_rs2 = allocate_virtual_register();
+    fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
+        let a0 = self.operands.rs1; // dividend
+        let a1 = self.operands.rs2; // divisor
+        let a2 = allocate_virtual_register(); // quotient from oracle
+        let a3 = allocate_virtual_register(); // remainder from oracle
+        let t0 = allocate_virtual_register();
+        let t1 = allocate_virtual_register();
+        let t2 = allocate_virtual_register();
+        let t3 = allocate_virtual_register();
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
 
-        let mut sequence = vec![];
+        // get advice
+        asm.emit_j::<VirtualAdvice>(*a2, 0);
+        asm.emit_j::<VirtualAdvice>(*a3, 0);
 
-        let advice = VirtualAdvice {
-            address: self.address,
-            operands: FormatJ { rd: *v_q, imm: 0 },
-            inline_sequence_remaining: Some(13),
-            advice: 0,
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(advice.into());
+        // zero-extend inputs to 32-bit values
+        asm.emit_i::<VirtualExtend>(*t1, a0, 0); // zero-extended dividend
+        asm.emit_i::<VirtualExtend>(*t2, a1, 0); // zero-extended divisor
 
-        let advice = VirtualAdvice {
-            address: self.address,
-            operands: FormatJ { rd: *v_r, imm: 0 },
-            inline_sequence_remaining: Some(12),
-            advice: 0,
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(advice.into());
+        // zero-extend quotient for unsigned multiplication
+        asm.emit_i::<VirtualExtend>(*t3, *a2, 0); // zero-extended quotient
 
-        let ext = VirtualExtend {
-            address: self.address,
-            operands: FormatI {
-                rd: *v_rs1,
-                rs1: self.operands.rs1,
-                imm: 0,
-            },
-            inline_sequence_remaining: Some(11),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(ext.into());
+        // compute quotient * divisor (no overflow check needed for remainder!)
+        asm.emit_r::<MUL>(*t0, *t3, *t2); // multiply zero-extended values
 
-        let ext = VirtualExtend {
-            address: self.address,
-            operands: FormatI {
-                rd: *v_rs2,
-                rs1: self.operands.rs2,
-                imm: 0,
-            },
-            inline_sequence_remaining: Some(10),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(ext.into());
+        // verify quotient * divisor + remainder == dividend (mod 2^32)
+        asm.emit_r::<ADD>(*t0, *t0, *a3);
+        asm.emit_b::<VirtualAssertEQ>(*t0, *t1, 0);
 
-        let ext = VirtualExtend {
-            address: self.address,
-            operands: FormatI {
-                rd: *v_r,
-                rs1: *v_r,
-                imm: 0,
-            },
-            inline_sequence_remaining: Some(9),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(ext.into());
+        // check remainder < divisor (unsigned)
+        asm.emit_b::<VirtualAssertValidUnsignedRemainder>(*a3, *t2, 0);
 
-        let change_divisor = VirtualChangeDivisorW {
-            address: self.address,
-            operands: FormatR {
-                rd: *v_rs2,
-                rs1: *v_rs1,
-                rs2: *v_rs2,
-            },
-            inline_sequence_remaining: Some(8),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(change_divisor.into());
-
-        let is_valid = VirtualAssertValidUnsignedRemainder {
-            address: self.address,
-            operands: FormatB {
-                rs1: *v_r,
-                rs2: *v_rs2,
-                imm: 0,
-            },
-            inline_sequence_remaining: Some(7),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(is_valid.into());
-
-        let is_valid = VirtualAssertValidDiv0 {
-            address: self.address,
-            operands: FormatB {
-                rs1: *v_rs2,
-                rs2: *v_q,
-                imm: 0,
-            },
-            inline_sequence_remaining: Some(6),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(is_valid.into());
-
-        let ext = VirtualExtend {
-            address: self.address,
-            operands: FormatI {
-                rd: *v_q,
-                rs1: *v_q,
-                imm: 0,
-            },
-            inline_sequence_remaining: Some(5),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(ext.into());
-
-        let mul = MUL {
-            address: self.address,
-            operands: FormatR {
-                rd: *v_qy,
-                rs1: *v_q,
-                rs2: *v_rs2,
-            },
-            inline_sequence_remaining: Some(4),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(mul.into());
-
-        let add = ADD {
-            address: self.address,
-            operands: FormatR {
-                rd: *v_0,
-                rs1: *v_qy,
-                rs2: *v_r,
-            },
-            inline_sequence_remaining: Some(3),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(add.into());
-
-        let ext = VirtualExtend {
-            address: self.address,
-            operands: FormatI {
-                rd: *v_0,
-                rs1: *v_0,
-                imm: 0,
-            },
-            inline_sequence_remaining: Some(2),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(ext.into());
-
-        let assert_eq = VirtualAssertEQ {
-            address: self.address,
-            operands: FormatB {
-                rs1: *v_0,
-                rs2: *v_rs1,
-                imm: 0,
-            },
-            inline_sequence_remaining: Some(1),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(assert_eq.into());
-
-        let ext = VirtualSignExtend {
-            address: self.address,
-            operands: FormatI {
-                rd: self.operands.rd,
-                rs1: *v_r,
-                imm: 0,
-            },
-            inline_sequence_remaining: Some(0),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(ext.into());
-
-        sequence
+        // sign-extend result (per RISC-V spec for REMUW)
+        asm.emit_i::<VirtualSignExtend>(self.operands.rd, *a3, 0);
+        asm.finalize()
     }
 }

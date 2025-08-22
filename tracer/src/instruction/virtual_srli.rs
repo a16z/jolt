@@ -5,7 +5,7 @@ use crate::{
     instruction::format::format_virtual_right_shift_i::FormatVirtualRightShiftI,
 };
 
-use super::{format::InstructionFormat, RISCVInstruction, RISCVTrace};
+use super::{RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name = VirtualSRLI,

@@ -10,11 +10,11 @@ use crate::trace_generator::{
 };
 use crate::Keccak256State;
 use tracer::emulator::mmu::DRAM_BASE;
-use tracer::emulator::test_harness::{CpuTestHarness, InstructionTestCase};
 use tracer::instruction::format::format_r::FormatR;
 use tracer::instruction::{
     inline::INLINE, RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
 };
+use tracer::utils::test_harness::{CpuTestHarness, InstructionTestCase};
 
 pub type KeccakTestCase = InstructionTestCase<Keccak256State, Keccak256State>;
 

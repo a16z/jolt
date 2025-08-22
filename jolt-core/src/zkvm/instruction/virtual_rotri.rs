@@ -4,8 +4,8 @@ use crate::zkvm::lookup_table::{virtual_rotr::VirtualRotrTable, LookupTables};
 
 use super::{CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS};
 
-impl<const WORD_SIZE: usize> InstructionLookup<WORD_SIZE> for VirtualROTRI {
-    fn lookup_table(&self) -> Option<LookupTables<WORD_SIZE>> {
+impl<const XLEN: usize> InstructionLookup<XLEN> for VirtualROTRI {
+    fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
         Some(VirtualRotrTable.into())
     }
 }
@@ -25,7 +25,7 @@ impl InstructionFlags for VirtualROTRI {
     }
 }
 
-impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<VirtualROTRI> {
+impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualROTRI> {
     fn to_instruction_inputs(&self) -> (u64, i128) {
         (
             self.register_state.rs1,
@@ -34,13 +34,13 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<VirtualROTRI>
     }
 
     fn to_lookup_output(&self) -> u64 {
-        let (x, y) = LookupQuery::<WORD_SIZE>::to_instruction_inputs(self);
-        match WORD_SIZE {
+        let (x, y) = LookupQuery::<XLEN>::to_instruction_inputs(self);
+        match XLEN {
             #[cfg(test)]
             8 => (x as u8).rotate_right((y as u8).trailing_zeros()) as u64,
             32 => (x as u32).rotate_right((y as u32).trailing_zeros()) as u64,
             64 => x.rotate_right((y as u64).trailing_zeros()),
-            _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
+            _ => panic!("{XLEN}-bit word size is unsupported"),
         }
     }
 }

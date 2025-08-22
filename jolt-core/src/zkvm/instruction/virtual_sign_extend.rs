@@ -4,8 +4,8 @@ use crate::zkvm::lookup_table::{sign_extend_half_word::SignExtendHalfWordTable, 
 
 use super::{CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS};
 
-impl<const WORD_SIZE: usize> InstructionLookup<WORD_SIZE> for VirtualSignExtend {
-    fn lookup_table(&self) -> Option<LookupTables<WORD_SIZE>> {
+impl<const XLEN: usize> InstructionLookup<XLEN> for VirtualSignExtend {
+    fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
         Some(SignExtendHalfWordTable.into())
     }
 }
@@ -25,9 +25,9 @@ impl InstructionFlags for VirtualSignExtend {
     }
 }
 
-impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<VirtualSignExtend> {
+impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualSignExtend> {
     fn to_lookup_operands(&self) -> (u64, u128) {
-        let (x, y) = LookupQuery::<WORD_SIZE>::to_instruction_inputs(self);
+        let (x, y) = LookupQuery::<XLEN>::to_instruction_inputs(self);
         (0, x as u128 + y as u64 as u128)
     }
 
@@ -36,13 +36,13 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<VirtualSignEx
     }
 
     fn to_lookup_index(&self) -> u128 {
-        LookupQuery::<WORD_SIZE>::to_lookup_operands(self).1
+        LookupQuery::<XLEN>::to_lookup_operands(self).1
     }
 
     fn to_lookup_output(&self) -> u64 {
-        let (_, y) = LookupQuery::<WORD_SIZE>::to_lookup_operands(self);
+        let (_, y) = LookupQuery::<XLEN>::to_lookup_operands(self);
         // Sign-extend: keep lower half and sign-extend upper half
-        let half_word_size = WORD_SIZE / 2;
+        let half_word_size = XLEN / 2;
         let lower_half = y as u64 & ((1u64 << half_word_size) - 1);
         let sign_bit = (lower_half >> (half_word_size - 1)) & 1;
 

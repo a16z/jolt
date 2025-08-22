@@ -9,28 +9,26 @@ use super::{
 use crate::{field::JoltField, utils::uninterleave_bits, zkvm::lookup_table::suffixes::Suffixes};
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct UnsignedGreaterThanEqualTable<const WORD_SIZE: usize>;
+pub struct UnsignedGreaterThanEqualTable<const XLEN: usize>;
 
-impl<const WORD_SIZE: usize> JoltLookupTable for UnsignedGreaterThanEqualTable<WORD_SIZE> {
+impl<const XLEN: usize> JoltLookupTable for UnsignedGreaterThanEqualTable<XLEN> {
     fn materialize_entry(&self, index: u128) -> u64 {
         let (x, y) = uninterleave_bits(index);
-        match WORD_SIZE {
+        match XLEN {
             #[cfg(test)]
             8 => (x >= y).into(),
             32 => (x >= y).into(),
             64 => (x >= y).into(),
-            _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
+            _ => panic!("{XLEN}-bit word size is unsupported"),
         }
     }
 
     fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
-        F::one() - UnsignedLessThanTable::<WORD_SIZE>.evaluate_mle::<F>(r)
+        F::one() - UnsignedLessThanTable::<XLEN>.evaluate_mle::<F>(r)
     }
 }
 
-impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE>
-    for UnsignedGreaterThanEqualTable<WORD_SIZE>
-{
+impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for UnsignedGreaterThanEqualTable<XLEN> {
     fn suffixes(&self) -> Vec<Suffixes> {
         vec![Suffixes::One, Suffixes::LessThan]
     }

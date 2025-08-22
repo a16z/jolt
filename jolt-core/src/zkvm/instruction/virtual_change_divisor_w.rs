@@ -5,8 +5,8 @@ use crate::zkvm::lookup_table::LookupTables;
 
 use super::{CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS};
 
-impl<const WORD_SIZE: usize> InstructionLookup<WORD_SIZE> for VirtualChangeDivisorW {
-    fn lookup_table(&self) -> Option<LookupTables<WORD_SIZE>> {
+impl<const XLEN: usize> InstructionLookup<XLEN> for VirtualChangeDivisorW {
+    fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
         Some(VirtualChangeDivisorWTable.into())
     }
 }
@@ -26,7 +26,7 @@ impl InstructionFlags for VirtualChangeDivisorW {
     }
 }
 
-impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<VirtualChangeDivisorW> {
+impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualChangeDivisorW> {
     fn to_instruction_inputs(&self) -> (u64, i128) {
         // Always treat as 32-bit values for W instructions
         (
@@ -36,7 +36,7 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<VirtualChange
     }
 
     fn to_lookup_output(&self) -> u64 {
-        let (remainder, divisor) = LookupQuery::<WORD_SIZE>::to_instruction_inputs(self);
+        let (remainder, divisor) = LookupQuery::<XLEN>::to_instruction_inputs(self);
         let remainder = remainder as i32;
         let divisor = divisor as i32;
 

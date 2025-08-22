@@ -15,6 +15,7 @@ use crate::{
         types::{AzValue, BzValue},
     },
 };
+use allocative::Allocative;
 use rayon::prelude::*;
 
 pub const TOTAL_NUM_ACCUMS: usize = svo_helpers::total_num_accums(NUM_SVO_ROUNDS);
@@ -36,6 +37,10 @@ pub struct SparseCoefficient<T> {
     pub(crate) value: T,
 }
 
+impl<T> Allocative for SparseCoefficient<T> {
+    fn visit<'a, 'b: 'a>(&self, _visitor: &'a mut allocative::Visitor<'b>) {}
+}
+
 impl<T> From<(usize, T)> for SparseCoefficient<T> {
     fn from(x: (usize, T)) -> Self {
         Self {
@@ -45,7 +50,7 @@ impl<T> From<(usize, T)> for SparseCoefficient<T> {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Allocative)]
 pub struct SpartanInterleavedPolynomial<const NUM_SVO_ROUNDS: usize, F: JoltField> {
     /// A list of sparse vectors representing the (interleaved) coefficients for the Az, Bz polynomials
     /// Generated from binary evaluations. Each inner Vec is sorted by index.
@@ -266,6 +271,8 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                 let max_ab_coeffs_capacity = 2 * cycles_per_chunk * num_uniform_r1cs_constraints;
                 let mut chunk_ab_coeffs: Vec<SparseCoefficient<F>> =
                     Vec::with_capacity(max_ab_coeffs_capacity);
+                let mut chunk_ab_coeffs: Vec<SparseCoefficient<F>> =
+                    Vec::with_capacity(max_ab_coeffs_capacity);
 
                 let mut chunk_svo_accums_zero = [F::zero(); NUM_ACCUMS_EVAL_ZERO];
                 let mut chunk_svo_accums_infty = [F::zero(); NUM_ACCUMS_EVAL_INFTY];
@@ -283,6 +290,16 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                         let mut binary_az_block = [F::zero(); Y_SVO_SPACE_SIZE];
                         let mut binary_bz_block = [F::zero(); Y_SVO_SPACE_SIZE];
 
+                        // Iterate constraints in Y_SVO_SPACE_SIZE blocks so we can call the
+                        // small-value kernels on full Az/Bz blocks when available.
+                        for (uniform_chunk_iter_idx, uniform_svo_chunk) in
+                            const_rows.chunks(Y_SVO_SPACE_SIZE).enumerate()
+                        {
+                            for (idx_in_svo_block, const_row) in
+                                uniform_svo_chunk.iter().enumerate()
+                            {
+                                let constraint_idx_in_step =
+                                    (uniform_chunk_iter_idx << NUM_SVO_ROUNDS) + idx_in_svo_block;
                         // Iterate constraints in Y_SVO_SPACE_SIZE blocks so we can call the
                         // small-value kernels on full Az/Bz blocks when available.
                         for (uniform_chunk_iter_idx, uniform_svo_chunk) in

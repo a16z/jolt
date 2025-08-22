@@ -60,7 +60,6 @@ use mulhu::MULHU;
 use mulw::MULW;
 use or::OR;
 use ori::ORI;
-use rand::{rngs::StdRng, RngCore};
 use rem::REM;
 use remu::REMU;
 use remuw::REMUW;
@@ -99,7 +98,6 @@ use virtual_assert_eq::VirtualAssertEQ;
 use virtual_assert_halfword_alignment::VirtualAssertHalfwordAlignment;
 use virtual_assert_lte::VirtualAssertLTE;
 use virtual_assert_valid_div0::VirtualAssertValidDiv0;
-use virtual_assert_valid_signed_remainder::VirtualAssertValidSignedRemainder;
 use virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder;
 use virtual_assert_word_alignment::VirtualAssertWordAlignment;
 use virtual_change_divisor::VirtualChangeDivisor;
@@ -227,7 +225,6 @@ pub mod virtual_assert_eq;
 pub mod virtual_assert_halfword_alignment;
 pub mod virtual_assert_lte;
 pub mod virtual_assert_valid_div0;
-pub mod virtual_assert_valid_signed_remainder;
 pub mod virtual_assert_valid_unsigned_remainder;
 pub mod virtual_assert_word_alignment;
 pub mod virtual_change_divisor;
@@ -328,7 +325,9 @@ pub trait RISCVInstruction:
 
     fn operands(&self) -> &Self::Format;
     fn new(word: u32, address: u64, validate: bool, compressed: bool) -> Self;
-    fn random(rng: &mut StdRng) -> Self {
+    #[cfg(any(feature = "test-utils", test))]
+    fn random(rng: &mut rand::rngs::StdRng) -> Self {
+        use rand::RngCore;
         Self::new(rng.next_u32(), rng.next_u64(), false, false)
     }
 
@@ -569,7 +568,7 @@ define_rv32im_enums! {
         LRD, SCD, AMOSWAPD, AMOADDD, AMOANDD, AMOORD, AMOXORD, AMOMIND, AMOMAXD, AMOMINUD, AMOMAXUD,
         // Virtual
         VirtualAdvice, VirtualAssertEQ, VirtualAssertHalfwordAlignment, VirtualAssertWordAlignment, VirtualAssertLTE,
-        VirtualAssertValidDiv0, VirtualAssertValidSignedRemainder, VirtualAssertValidUnsignedRemainder,
+        VirtualAssertValidDiv0, VirtualAssertValidUnsignedRemainder,
         VirtualChangeDivisor, VirtualChangeDivisorW, VirtualLW,VirtualSW,VirtualExtend,
         VirtualSignExtend,VirtualPow2W, VirtualPow2IW,
         VirtualMove, VirtualMovsign, VirtualMULI, VirtualPow2, VirtualPow2I, VirtualROTRI,
@@ -1453,7 +1452,8 @@ pub struct RISCVCycle<T: RISCVInstruction> {
 }
 
 impl<T: RISCVInstruction> RISCVCycle<T> {
-    pub fn random(&self, rng: &mut StdRng) -> Self {
+    #[cfg(any(feature = "test-utils", test))]
+    pub fn random(&self, rng: &mut rand::rngs::StdRng) -> Self {
         let instruction = T::random(rng);
         let register_state =
             <<T::Format as InstructionFormat>::RegisterState as InstructionRegisterState>::random(

@@ -1,9 +1,11 @@
 use std::fmt::Display;
 
+use allocative::Allocative;
+
 use crate::utils::uninterleave_bits;
 
 /// A bitvector type used to represent a (substring of a) lookup index.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Allocative)]
 pub struct LookupBits {
     bits: u128,
     len: usize,

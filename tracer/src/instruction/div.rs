@@ -1,3 +1,9 @@
+use crate::instruction::mulh::MULH;
+use crate::instruction::srai::SRAI;
+use crate::instruction::sub::SUB;
+use crate::instruction::virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder;
+use crate::instruction::xor::XOR;
+use crate::utils::inline_helpers::InstrAssembler;
 use crate::utils::virtual_registers::allocate_virtual_register;
 use serde::{Deserialize, Serialize};
 
@@ -7,19 +13,10 @@ use crate::{
 };
 
 use super::{
-    add::ADD,
-    format::{
-        format_b::FormatB, format_i::FormatI, format_j::FormatJ, format_r::FormatR,
-        InstructionFormat,
-    },
-    mul::MUL,
-    virtual_advice::VirtualAdvice,
-    virtual_assert_eq::VirtualAssertEQ,
-    virtual_assert_valid_div0::VirtualAssertValidDiv0,
-    virtual_assert_valid_signed_remainder::VirtualAssertValidSignedRemainder,
-    virtual_change_divisor::VirtualChangeDivisor,
-    virtual_move::VirtualMove,
-    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
+    add::ADD, format::format_r::FormatR, mul::MUL, virtual_advice::VirtualAdvice,
+    virtual_assert_eq::VirtualAssertEQ, virtual_assert_valid_div0::VirtualAssertValidDiv0,
+    virtual_change_divisor::VirtualChangeDivisor, virtual_move::VirtualMove, RISCVInstruction,
+    RISCVTrace, RV32IMCycle, RV32IMInstruction,
 };
 
 declare_riscv_instr!(
@@ -54,24 +51,24 @@ impl RISCVTrace for DIV {
         let (quotient, remainder) = match cpu.xlen {
             Xlen::Bit32 => {
                 if y == 0 {
-                    (u32::MAX as u64, x as u32 as u64)
+                    (u32::MAX as u64, (x as i32).unsigned_abs() as u64)
                 } else if x == cpu.most_negative() && y == -1 {
                     (x as u32 as u64, 0)
                 } else {
                     let quotient = x as i32 / y as i32;
-                    let remainder = x as i32 % y as i32;
-                    (quotient as u32 as u64, remainder as u32 as u64)
+                    let remainder = (x as i32 % y as i32).unsigned_abs();
+                    (quotient as u32 as u64, remainder as u64)
                 }
             }
             Xlen::Bit64 => {
                 if y == 0 {
-                    (u64::MAX, x as u64)
+                    (u64::MAX, x.unsigned_abs())
                 } else if x == cpu.most_negative() && y == -1 {
                     (x as u64, 0)
                 } else {
                     let quotient = x / y;
-                    let remainder = x % y;
-                    (quotient as u64, remainder as u64)
+                    let remainder = (x % y).unsigned_abs();
+                    (quotient as u64, remainder)
                 }
             }
         };
@@ -95,127 +92,47 @@ impl RISCVTrace for DIV {
         }
     }
 
-    fn inline_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
-        // Virtual registers used in sequence
-        let v_0 = allocate_virtual_register();
-        let v_q = allocate_virtual_register();
-        let v_r = allocate_virtual_register();
-        let v_qy = allocate_virtual_register();
-        let v_rs2 = allocate_virtual_register();
+    fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
+        let a0 = self.operands.rs1;
+        let a1 = self.operands.rs2;
+        let a2 = allocate_virtual_register();
+        let a3 = allocate_virtual_register();
+        let t0 = allocate_virtual_register();
+        let t1 = allocate_virtual_register();
+        let t2 = allocate_virtual_register();
+        let t3 = allocate_virtual_register();
 
-        let mut sequence = vec![];
-        let mut inline_sequence_remaining = self.inline_sequence_remaining.unwrap_or(8);
-
-        let advice = VirtualAdvice {
-            address: self.address,
-            operands: FormatJ { rd: *v_q, imm: 0 },
-            inline_sequence_remaining: Some(inline_sequence_remaining),
-            advice: 0,
-            is_compressed: self.is_compressed,
+        let shmat = match xlen {
+            Xlen::Bit32 => 31,
+            Xlen::Bit64 => 63,
         };
-        sequence.push(advice.into());
-        inline_sequence_remaining -= 1;
 
-        let advice = VirtualAdvice {
-            address: self.address,
-            operands: FormatJ { rd: *v_r, imm: 0 },
-            inline_sequence_remaining: Some(inline_sequence_remaining),
-            advice: 0,
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(advice.into());
-        inline_sequence_remaining -= 1;
-
-        let change_divisor = VirtualChangeDivisor {
-            address: self.address,
-            operands: FormatR {
-                rd: *v_rs2,
-                rs1: self.operands.rs1,
-                rs2: self.operands.rs2,
-            },
-            inline_sequence_remaining: Some(inline_sequence_remaining),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(change_divisor.into());
-        inline_sequence_remaining -= 1;
-
-        let is_valid = VirtualAssertValidSignedRemainder {
-            address: self.address,
-            operands: FormatB {
-                rs1: *v_r,
-                rs2: self.operands.rs2,
-                imm: 0,
-            },
-            inline_sequence_remaining: Some(inline_sequence_remaining),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(is_valid.into());
-        inline_sequence_remaining -= 1;
-
-        let is_valid = VirtualAssertValidDiv0 {
-            address: self.address,
-            operands: FormatB {
-                rs1: self.operands.rs2,
-                rs2: *v_q,
-                imm: 0,
-            },
-            inline_sequence_remaining: Some(inline_sequence_remaining),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(is_valid.into());
-        inline_sequence_remaining -= 1;
-
-        let mul = MUL {
-            address: self.address,
-            operands: FormatR {
-                rd: *v_qy,
-                rs1: *v_q,
-                rs2: *v_rs2,
-            },
-            inline_sequence_remaining: Some(inline_sequence_remaining),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(mul.into());
-        inline_sequence_remaining -= 1;
-
-        let add = ADD {
-            address: self.address,
-            operands: FormatR {
-                rd: *v_0,
-                rs1: *v_qy,
-                rs2: *v_r,
-            },
-            inline_sequence_remaining: Some(inline_sequence_remaining),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(add.into());
-        inline_sequence_remaining -= 1;
-
-        let assert_eq = VirtualAssertEQ {
-            address: self.address,
-            operands: FormatB {
-                rs1: *v_0,
-                rs2: self.operands.rs1,
-                imm: 0,
-            },
-            inline_sequence_remaining: Some(inline_sequence_remaining),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(assert_eq.into());
-        inline_sequence_remaining -= 1;
-
-        let virtual_move = VirtualMove {
-            address: self.address,
-            operands: FormatI {
-                rd: self.operands.rd,
-                rs1: *v_q,
-                imm: 0,
-            },
-            inline_sequence_remaining: Some(inline_sequence_remaining),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(virtual_move.into());
-
-        sequence
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
+        // get advice
+        asm.emit_j::<VirtualAdvice>(*a2, 0);
+        asm.emit_j::<VirtualAdvice>(*a3, 0);
+        // handle special cases
+        asm.emit_b::<VirtualAssertValidDiv0>(a1, *a2, 0);
+        asm.emit_r::<VirtualChangeDivisor>(*t0, a0, a1);
+        // check that quotient * divisor don't overflow
+        asm.emit_r::<MUL>(*t1, *a2, *t0);
+        asm.emit_r::<MULH>(*t2, *a2, *t0);
+        asm.emit_i::<SRAI>(*t3, *t1, shmat);
+        asm.emit_b::<VirtualAssertEQ>(*t2, *t3, 0);
+        // construct signed reminder (apply dividend's sign to reminder)
+        asm.emit_i::<SRAI>(*t2, a0, shmat);
+        asm.emit_r::<XOR>(*t3, *a3, *t2);
+        asm.emit_r::<SUB>(*t3, *t3, *t2);
+        // verify quotient * divisor + reminder == dividend
+        asm.emit_r::<ADD>(*t1, *t1, *t3);
+        asm.emit_b::<VirtualAssertEQ>(*t1, a0, 0);
+        // check |remainder| < |divisor|
+        asm.emit_i::<SRAI>(*t2, *t0, shmat);
+        asm.emit_r::<XOR>(*t3, *t0, *t2);
+        asm.emit_r::<SUB>(*t3, *t3, *t2);
+        asm.emit_b::<VirtualAssertValidUnsignedRemainder>(*a3, *t3, 0);
+        // move result
+        asm.emit_i::<VirtualMove>(self.operands.rd, *a2, 0);
+        asm.finalize()
     }
 }

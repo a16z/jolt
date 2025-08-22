@@ -4,8 +4,8 @@ use crate::zkvm::lookup_table::LookupTables;
 
 use super::{CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS};
 
-impl<const WORD_SIZE: usize> InstructionLookup<WORD_SIZE> for LD {
-    fn lookup_table(&self) -> Option<LookupTables<WORD_SIZE>> {
+impl<const XLEN: usize> InstructionLookup<XLEN> for LD {
+    fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
         None
     }
 }
@@ -23,7 +23,7 @@ impl InstructionFlags for LD {
     }
 }
 
-impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<LD> {
+impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<LD> {
     fn to_instruction_inputs(&self) -> (u64, i128) {
         (0, 0)
     }

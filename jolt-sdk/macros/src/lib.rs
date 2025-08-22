@@ -60,6 +60,7 @@ impl MacroBuilder {
     }
 
     fn build(&mut self) -> TokenStream {
+        let memory_config_fn = self.make_memory_config_fn();
         let build_prover_fn = self.make_build_prover_fn();
         let build_verifier_fn = self.make_build_verifier_fn();
         let analyze_fn = self.make_analyze_function();
@@ -87,6 +88,7 @@ impl MacroBuilder {
         };
 
         quote! {
+            #memory_config_fn
             #build_prover_fn
             #build_verifier_fn
             #execute_fn
@@ -100,6 +102,32 @@ impl MacroBuilder {
             #main_fn
         }
         .into()
+    }
+
+    fn make_memory_config_fn(&self) -> TokenStream2 {
+        let fn_name = self.get_func_name();
+        let attributes = parse_attributes(&self.attr);
+        let max_input_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_input_size);
+        let max_output_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_output_size);
+        let stack_size = proc_macro2::Literal::u64_unsuffixed(attributes.stack_size);
+        let memory_size = proc_macro2::Literal::u64_unsuffixed(attributes.memory_size);
+
+        let memory_config_fn_name = Ident::new(&format!("memory_config_{fn_name}"), fn_name.span());
+        let imports = self.make_imports();
+
+        quote! {
+            #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
+            pub fn #memory_config_fn_name() -> jolt::MemoryConfig {
+                #imports
+                MemoryConfig {
+                    max_input_size: #max_input_size,
+                    max_output_size: #max_output_size,
+                    stack_size: #stack_size,
+                    memory_size: #memory_size,
+                    program_size: None,
+                }
+            }
+        }
     }
 
     fn make_build_prover_fn(&self) -> TokenStream2 {
@@ -442,9 +470,11 @@ impl MacroBuilder {
                 let mut input_bytes = vec![];
                 #(#set_program_args;)*
 
+                let elf_contents_opt = program.get_elf_contents();
+                let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
                 let (jolt_proof, io_device, _) = JoltRV32IM::prove(
                     &preprocessing,
-                    &mut program,
+                    &elf_contents,
                     &input_bytes,
                 );
 
@@ -517,7 +547,7 @@ impl MacroBuilder {
                 .extern _STACK_PTR\n\
                 .section .text.boot\n\
                 _start:	la sp, _STACK_PTR\n\
-                    jal main\n\
+                    call main\n\
                     j .\n\
             ");
 

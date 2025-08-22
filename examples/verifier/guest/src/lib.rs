@@ -1,6 +1,5 @@
-use jolt::{end_cycle_tracking, start_cycle_tracking};
-use jolt_verifier::zkvm::{JoltRV32IM, JoltVerifierPreprocessing, RV32IMJoltProof, Serializable};
-use jolt_verifier::{common, DoryCommitmentScheme, Jolt};
+use jolt::{end_cycle_tracking, start_cycle_tracking, Jolt, PCS};
+use jolt::{JoltRV32IM, JoltVerifierPreprocessing, RV32IMJoltProof, Serializable};
 
 mod fib_io_device_bytes;
 mod fib_proof_bytes;
@@ -13,17 +12,18 @@ mod jolt_verifier_preprocessing_bytes;
 )]
 fn verifier() {
     start_cycle_tracking("preprocessing");
-    let preprocessing: JoltVerifierPreprocessing<ark_bn254::Fr, DoryCommitmentScheme> =
-        JoltVerifierPreprocessing::deserialize_from_bytes(
-            jolt_verifier_preprocessing_bytes::VERIFIER_PREPROCESSING_BYTES,
+    let preprocessing: JoltVerifierPreprocessing<ark_bn254::Fr, PCS> =
+        JoltVerifierPreprocessing::deserialize_from_bytes_unchecked(
+            jolt_verifier_preprocessing_bytes::JOLT_VERIFIER_PREPROCESSING_BYTES,
         )
         .unwrap();
     end_cycle_tracking("preprocessing");
     start_cycle_tracking("proof");
-    let proof = RV32IMJoltProof::deserialize_from_bytes(fib_proof_bytes::FIB_PROOF_BYTES).unwrap();
+    let proof = RV32IMJoltProof::deserialize_from_bytes_unchecked(fib_proof_bytes::FIB_PROOF_BYTES)
+        .unwrap();
     end_cycle_tracking("proof");
     start_cycle_tracking("device");
-    let device = common::jolt_device::JoltDevice::deserialize_from_bytes(
+    let device = jolt::JoltDevice::deserialize_from_bytes_unchecked(
         fib_io_device_bytes::FIB_IO_DEVICE_BYTES,
     )
     .unwrap();

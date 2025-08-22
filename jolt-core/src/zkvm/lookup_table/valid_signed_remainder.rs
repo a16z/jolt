@@ -8,12 +8,12 @@ use crate::{field::JoltField, utils::uninterleave_bits};
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 /// (remainder, divisor)
-pub struct ValidSignedRemainderTable<const WORD_SIZE: usize>;
+pub struct ValidSignedRemainderTable<const XLEN: usize>;
 
-impl<const WORD_SIZE: usize> JoltLookupTable for ValidSignedRemainderTable<WORD_SIZE> {
+impl<const XLEN: usize> JoltLookupTable for ValidSignedRemainderTable<XLEN> {
     fn materialize_entry(&self, index: u128) -> u64 {
         let (x, y) = uninterleave_bits(index);
-        match WORD_SIZE {
+        match XLEN {
             8 => {
                 let (remainder, divisor) = (x as u8 as i8, y as u8 as i8);
                 let is_remainder_zero = remainder == 0;
@@ -22,8 +22,8 @@ impl<const WORD_SIZE: usize> JoltLookupTable for ValidSignedRemainderTable<WORD_
                 if is_remainder_zero || is_divisor_zero {
                     1
                 } else {
-                    let remainder_sign = remainder >> (WORD_SIZE - 1);
-                    let divisor_sign = divisor >> (WORD_SIZE - 1);
+                    let remainder_sign = remainder >> (XLEN - 1);
+                    let divisor_sign = divisor >> (XLEN - 1);
                     (remainder.unsigned_abs() < divisor.unsigned_abs()
                         && remainder_sign == divisor_sign)
                         .into()
@@ -37,8 +37,8 @@ impl<const WORD_SIZE: usize> JoltLookupTable for ValidSignedRemainderTable<WORD_
                 if is_remainder_zero || is_divisor_zero {
                     1
                 } else {
-                    let remainder_sign = remainder >> (WORD_SIZE - 1);
-                    let divisor_sign = divisor >> (WORD_SIZE - 1);
+                    let remainder_sign = remainder >> (XLEN - 1);
+                    let divisor_sign = divisor >> (XLEN - 1);
                     (remainder.unsigned_abs() < divisor.unsigned_abs()
                         && remainder_sign == divisor_sign)
                         .into()
@@ -52,14 +52,14 @@ impl<const WORD_SIZE: usize> JoltLookupTable for ValidSignedRemainderTable<WORD_
                 if is_remainder_zero || is_divisor_zero {
                     1
                 } else {
-                    let remainder_sign = remainder >> (WORD_SIZE - 1);
-                    let divisor_sign = divisor >> (WORD_SIZE - 1);
+                    let remainder_sign = remainder >> (XLEN - 1);
+                    let divisor_sign = divisor >> (XLEN - 1);
                     (remainder.unsigned_abs() < divisor.unsigned_abs()
                         && remainder_sign == divisor_sign)
                         .into()
                 }
             }
-            _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
+            _ => panic!("{XLEN}-bit word size is unsupported"),
         }
     }
 
@@ -74,7 +74,7 @@ impl<const WORD_SIZE: usize> JoltLookupTable for ValidSignedRemainderTable<WORD_
         let mut negative_divisor_equals_remainder = x_sign * y_sign;
         let mut negative_divisor_greater_than_remainder = x_sign * y_sign;
 
-        for i in 1..WORD_SIZE {
+        for i in 1..XLEN {
             let x_i = r[2 * i];
             let y_i = r[2 * i + 1];
             if i == 1 {
@@ -99,9 +99,7 @@ impl<const WORD_SIZE: usize> JoltLookupTable for ValidSignedRemainderTable<WORD_
     }
 }
 
-impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE>
-    for ValidSignedRemainderTable<WORD_SIZE>
-{
+impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for ValidSignedRemainderTable<XLEN> {
     fn suffixes(&self) -> Vec<Suffixes> {
         vec![
             Suffixes::One,

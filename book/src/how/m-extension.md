@@ -40,7 +40,7 @@ Jolt paper in the following ways.
 1. `MUL` $v_q$, $r_y$, --, $v_{qy}$   `// compute q * y`
 1. `ASSERT_VALID_UNSIGNED_REMAINDER` $v_r$, $r_y$, --, --   `// assert that y == 0 || r < y`
 1. `ASSERT_LTE` $v_{qy}$, $r_x$, --, --   `// assert q * y <= x`
-1. `ASSERT_VALID_DIV0` $r_y$, $v_q$, --, --   `// assert that y != 0 || q == 2 ** WORD_SIZE - 1`
+1. `ASSERT_VALID_DIV0` $r_y$, $v_q$, --, --   `// assert that y != 0 || q == 2 ** XLEN - 1`
 1. `ADD` $v_{qy}$, $v_r$, --, $v_0$   `// compute q * y + r`
 1. `ASSERT_EQ` $v_0$, $x$, --, --
 1. `MOVE` $v_q$, --, --, `rd`
@@ -61,7 +61,7 @@ Jolt paper in the following ways.
 1. `ADVICE` --, --, --, $v_q$   `// store non-deterministic advice` $q$ `into `$v_q$
 1. `ADVICE` --, --, --, $v_r$   `// store non-deterministic advice` $r$ `into `$v_r$
 1. `ASSERT_VALID_SIGNED_REMAINDER` $v_r$, $r_y$, --, --   `// assert that r == 0 || y == 0 || (|r| < |y| && sign(r) == sign(y))`
-1. `ASSERT_VALID_DIV0` $r_y$, $v_q$, --, --   `// assert that y != 0 || q == 2 ** WORD_SIZE - 1`
+1. `ASSERT_VALID_DIV0` $r_y$, $v_q$, --, --   `// assert that y != 0 || q == 2 ** XLEN - 1`
 1. `MUL` $v_q$, $r_y$, --, $v_{qy}$   `// compute q * y`
 1. `ADD` $v_{qy}$, $v_r$, --, $v_0$   `// compute q * y + r`
 1. `ASSERT_EQ` $v_0$, $x$, --, --

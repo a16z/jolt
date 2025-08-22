@@ -2,10 +2,10 @@ use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 use crate::{field::JoltField, utils::lookup_bits::LookupBits};
 
 /// Left-shifts the left operand according to the bitmask given by
-/// the right operand, processing the second half of bits (j >= WORD_SIZE).
-pub enum LeftShiftWPrefix<const WORD_SIZE: usize> {}
+/// the right operand, processing the second half of bits (j >= XLEN).
+pub enum LeftShiftWPrefix<const XLEN: usize> {}
 
-impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F> for LeftShiftWPrefix<WORD_SIZE> {
+impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for LeftShiftWPrefix<XLEN> {
     fn prefix_mle(
         checkpoints: &[PrefixCheckpoint<F>],
         r_x: Option<F>,
@@ -13,17 +13,17 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F> for LeftShiftWPr
         mut b: LookupBits,
         j: usize,
     ) -> F {
-        // Only process when j >= WORD_SIZE
-        if j < WORD_SIZE {
+        // Only process when j >= XLEN
+        if j < XLEN {
             return F::zero();
         }
 
         let mut result = checkpoints[Prefixes::LeftShiftW].unwrap_or(F::zero());
         let mut prod_one_plus_y = checkpoints[Prefixes::LeftShiftWHelper].unwrap_or(F::one());
 
-        // Calculate shift for the second half: when j >= WORD_SIZE, we're processing
-        // bits from WORD_SIZE/2-1 down to 0
-        let bit_index = WORD_SIZE - 1 - j / 2;
+        // Calculate shift for the second half: when j >= XLEN, we're processing
+        // bits from XLEN/2-1 down to 0
+        let bit_index = XLEN - 1 - j / 2;
 
         if let Some(r_x) = r_x {
             result += r_x
@@ -54,10 +54,10 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F> for LeftShiftWPr
         r_y: F,
         j: usize,
     ) -> PrefixCheckpoint<F> {
-        if j >= WORD_SIZE {
+        if j >= XLEN {
             let mut updated = checkpoints[Prefixes::LeftShiftW].unwrap_or(F::zero());
             let prod_one_plus_y = checkpoints[Prefixes::LeftShiftWHelper].unwrap_or(F::one());
-            let bit_index = WORD_SIZE - 1 - j / 2;
+            let bit_index = XLEN - 1 - j / 2;
             updated += r_x
                 * (F::one() - r_y)
                 * prod_one_plus_y

@@ -1,3 +1,4 @@
+use crate::utils::inline_helpers::InstrAssembler;
 use crate::utils::virtual_registers::allocate_virtual_register;
 use serde::{Deserialize, Serialize};
 
@@ -8,13 +9,8 @@ use crate::{
 
 use super::virtual_sign_extend::VirtualSignExtend;
 use super::{
-    format::{
-        format_i::FormatI, format_r::FormatR,
-        format_virtual_right_shift_r::FormatVirtualRightShiftR, InstructionFormat,
-    },
-    virtual_shift_right_bitmask::VirtualShiftRightBitmask,
-    virtual_sra::VirtualSRA,
-    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
+    andi::ANDI, format::format_r::FormatR, virtual_shift_right_bitmask::VirtualShiftRightBitmask,
+    virtual_sra::VirtualSRA, RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
 };
 
 declare_riscv_instr!(
@@ -46,60 +42,16 @@ impl RISCVTrace for SRAW {
         }
     }
 
-    fn inline_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
+    fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
         let v_rs1 = allocate_virtual_register();
         let v_bitmask = allocate_virtual_register();
 
-        let mut sequence = vec![];
-
-        let signext = VirtualSignExtend {
-            address: self.address,
-            operands: FormatI {
-                rd: *v_rs1,
-                rs1: self.operands.rs1,
-                imm: 0,
-            },
-            inline_sequence_remaining: Some(3),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(signext.into());
-
-        let bitmask = VirtualShiftRightBitmask {
-            address: self.address,
-            operands: FormatI {
-                rd: *v_bitmask,
-                rs1: self.operands.rs2,
-                imm: 0,
-            },
-            inline_sequence_remaining: Some(2),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(bitmask.into());
-
-        let sra = VirtualSRA {
-            address: self.address,
-            operands: FormatVirtualRightShiftR {
-                rd: self.operands.rd,
-                rs1: *v_rs1,
-                rs2: *v_bitmask,
-            },
-            inline_sequence_remaining: Some(1),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(sra.into());
-
-        let signext = VirtualSignExtend {
-            address: self.address,
-            operands: FormatI {
-                rd: self.operands.rd,
-                rs1: self.operands.rd,
-                imm: 0,
-            },
-            inline_sequence_remaining: Some(0),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(signext.into());
-
-        sequence
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
+        asm.emit_i::<VirtualSignExtend>(*v_rs1, self.operands.rs1, 0);
+        asm.emit_i::<ANDI>(*v_bitmask, self.operands.rs2, 0x1f);
+        asm.emit_i::<VirtualShiftRightBitmask>(*v_bitmask, *v_bitmask, 0);
+        asm.emit_vshift_r::<VirtualSRA>(self.operands.rd, *v_rs1, *v_bitmask);
+        asm.emit_i::<VirtualSignExtend>(self.operands.rd, self.operands.rd, 0);
+        asm.finalize()
     }
 }

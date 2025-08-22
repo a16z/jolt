@@ -1,5 +1,8 @@
 use std::{cell::RefCell, rc::Rc};
 
+use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::FlameGraphBuilder;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
 
@@ -31,6 +34,7 @@ pub struct RafEvaluationProof<F: JoltField, ProofTranscript: Transcript> {
     raf_claim: F,
 }
 
+#[derive(Allocative)]
 pub struct RafEvaluationProverState<F: JoltField> {
     /// The ra polynomial
     ra: MultilinearPolynomial<F>,
@@ -38,6 +42,7 @@ pub struct RafEvaluationProverState<F: JoltField> {
     unmap: UnmapRamAddressPolynomial<F>,
 }
 
+#[derive(Allocative)]
 pub struct RafEvaluationSumcheck<F: JoltField> {
     /// The initial claim (raf_claim)
     input_claim: F,
@@ -244,6 +249,11 @@ impl<F: JoltField> SumcheckInstance<F> for RafEvaluationSumcheck<F> {
             SumcheckId::RamRafEvaluation,
             ra_opening_point,
         );
+    }
+
+    #[cfg(feature = "allocative")]
+    fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
+        flamegraph.visit_root(self);
     }
 }
 

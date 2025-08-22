@@ -40,10 +40,6 @@ impl JoltField for ark_bn254::Fr {
         lookup_tables
     }
 
-    fn initialize_lookup_tables(_init: Self::SmallValueLookupTables) {
-        // no-op
-    }
-
     #[inline]
     fn from_u8(n: u8) -> Self {
         <Self as ark_ff::PrimeField>::from_u64(n as u64).unwrap()
@@ -74,7 +70,7 @@ impl JoltField for ark_bn254::Fr {
 
     fn from_i64(val: i64) -> Self {
         if val.is_negative() {
-            let val = (-val) as u64;
+            let val = val.unsigned_abs();
             if val <= u16::MAX as u64 {
                 -<Self as JoltField>::from_u16(val as u16)
             } else if val <= u32::MAX as u64 {
@@ -96,7 +92,7 @@ impl JoltField for ark_bn254::Fr {
 
     fn from_i128(val: i128) -> Self {
         if val.is_negative() {
-            let val = (-val) as u128;
+            let val = val.unsigned_abs();
             if val <= u16::MAX as u128 {
                 -<Self as JoltField>::from_u16(val as u16)
             } else if val <= u32::MAX as u128 {

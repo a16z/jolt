@@ -4,8 +4,8 @@ use crate::zkvm::lookup_table::{valid_div0::ValidDiv0Table, LookupTables};
 
 use super::{CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS};
 
-impl<const WORD_SIZE: usize> InstructionLookup<WORD_SIZE> for VirtualAssertValidDiv0 {
-    fn lookup_table(&self) -> Option<LookupTables<WORD_SIZE>> {
+impl<const XLEN: usize> InstructionLookup<XLEN> for VirtualAssertValidDiv0 {
+    fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
         Some(ValidDiv0Table.into())
     }
 }
@@ -25,9 +25,9 @@ impl InstructionFlags for VirtualAssertValidDiv0 {
     }
 }
 
-impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<VirtualAssertValidDiv0> {
+impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualAssertValidDiv0> {
     fn to_instruction_inputs(&self) -> (u64, i128) {
-        match WORD_SIZE {
+        match XLEN {
             #[cfg(test)]
             8 => (
                 self.register_state.rs1 as u8 as u64,
@@ -38,17 +38,17 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<VirtualAssert
                 self.register_state.rs2 as u32 as i128,
             ),
             64 => (self.register_state.rs1, self.register_state.rs2 as i128),
-            _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
+            _ => panic!("{XLEN}-bit word size is unsupported"),
         }
     }
 
     fn to_lookup_output(&self) -> u64 {
-        let (divisor, quotient) = LookupQuery::<WORD_SIZE>::to_instruction_inputs(self);
+        let (divisor, quotient) = LookupQuery::<XLEN>::to_instruction_inputs(self);
         if divisor == 0 {
-            match WORD_SIZE {
+            match XLEN {
                 32 => (quotient as u64 == u32::MAX as u64).into(),
                 64 => (quotient as u64 == u64::MAX).into(),
-                _ => panic!("Unsupported WORD_SIZE: {WORD_SIZE}"),
+                _ => panic!("Unsupported XLEN: {XLEN}"),
             }
         } else {
             1

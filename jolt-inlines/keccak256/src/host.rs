@@ -16,6 +16,7 @@ pub fn init_inlines() -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[ctor::ctor]
 fn auto_register() {
     if let Err(e) = init_inlines() {

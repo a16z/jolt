@@ -9,12 +9,12 @@ use super::suffixes::{SuffixEval, Suffixes};
 use super::JoltLookupTable;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct VirtualChangeDivisorWTable<const WORD_SIZE: usize>;
+pub struct VirtualChangeDivisorWTable<const XLEN: usize>;
 
-impl<const WORD_SIZE: usize> JoltLookupTable for VirtualChangeDivisorWTable<WORD_SIZE> {
+impl<const XLEN: usize> JoltLookupTable for VirtualChangeDivisorWTable<XLEN> {
     fn materialize_entry(&self, index: u128) -> u64 {
         let (remainder, divisor) = uninterleave_bits(index);
-        match WORD_SIZE {
+        match XLEN {
             8 => {
                 let remainder = ((remainder & 0xF) as i8) << 4 >> 4;
                 let divisor = ((divisor & 0xF) as i8) << 4 >> 4;
@@ -35,19 +35,19 @@ impl<const WORD_SIZE: usize> JoltLookupTable for VirtualChangeDivisorWTable<WORD
                     divisor as i64 as u64
                 }
             }
-            _ => panic!("Unsupported {WORD_SIZE} word size"),
+            _ => panic!("Unsupported {XLEN} word size"),
         }
     }
 
     fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
-        debug_assert_eq!(r.len(), 2 * WORD_SIZE);
+        debug_assert_eq!(r.len(), 2 * XLEN);
 
-        let sign_bit = r[WORD_SIZE + 1];
+        let sign_bit = r[XLEN + 1];
 
         let mut divisor_value = F::zero();
-        for i in WORD_SIZE / 2..WORD_SIZE {
+        for i in XLEN / 2..XLEN {
             let bit_value = r[2 * i + 1];
-            let shift = WORD_SIZE - 1 - i;
+            let shift = XLEN - 1 - i;
             if shift >= 64 {
                 divisor_value += F::from_u128(1u128 << shift) * bit_value;
             } else {
@@ -55,28 +55,25 @@ impl<const WORD_SIZE: usize> JoltLookupTable for VirtualChangeDivisorWTable<WORD
             }
         }
 
-        let mut x_product = r[WORD_SIZE];
-        for i in WORD_SIZE / 2 + 1..WORD_SIZE {
+        let mut x_product = r[XLEN];
+        for i in XLEN / 2 + 1..XLEN {
             x_product *= F::one() - r[2 * i];
         }
 
         let mut y_product = F::one();
-        for i in WORD_SIZE / 2..WORD_SIZE {
+        for i in XLEN / 2..XLEN {
             y_product *= r[2 * i + 1];
         }
 
-        let sign_extension =
-            F::from_u128((1u128 << WORD_SIZE) - (1u128 << (WORD_SIZE / 2))) * sign_bit;
+        let sign_extension = F::from_u128((1u128 << XLEN) - (1u128 << (XLEN / 2))) * sign_bit;
 
-        let adjustment = F::from_u64(2) - F::from_u128(1u128 << WORD_SIZE);
+        let adjustment = F::from_u64(2) - F::from_u128(1u128 << XLEN);
 
         divisor_value + adjustment * x_product * y_product + sign_extension
     }
 }
 
-impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE>
-    for VirtualChangeDivisorWTable<WORD_SIZE>
-{
+impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for VirtualChangeDivisorWTable<XLEN> {
     fn suffixes(&self) -> Vec<Suffixes> {
         vec![
             Suffixes::One,

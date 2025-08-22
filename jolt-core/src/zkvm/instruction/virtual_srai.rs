@@ -4,8 +4,8 @@ use crate::zkvm::lookup_table::{virtual_sra::VirtualSRATable, LookupTables};
 
 use super::{CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS};
 
-impl<const WORD_SIZE: usize> InstructionLookup<WORD_SIZE> for VirtualSRAI {
-    fn lookup_table(&self) -> Option<LookupTables<WORD_SIZE>> {
+impl<const XLEN: usize> InstructionLookup<XLEN> for VirtualSRAI {
+    fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
         Some(VirtualSRATable.into())
     }
 }
@@ -25,9 +25,9 @@ impl InstructionFlags for VirtualSRAI {
     }
 }
 
-impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<VirtualSRAI> {
+impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualSRAI> {
     fn to_instruction_inputs(&self) -> (u64, i128) {
-        match WORD_SIZE {
+        match XLEN {
             #[cfg(test)]
             8 => (
                 self.register_state.rs1 as u8 as u64,
@@ -41,20 +41,20 @@ impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<VirtualSRAI> 
                 self.register_state.rs1,
                 self.instruction.operands.imm as i128,
             ),
-            _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
+            _ => panic!("{XLEN}-bit word size is unsupported"),
         }
     }
 
     fn to_lookup_output(&self) -> u64 {
         use crate::utils::lookup_bits::LookupBits;
-        let (x, y) = LookupQuery::<WORD_SIZE>::to_instruction_inputs(self);
-        let mut x = LookupBits::new(x as u128, WORD_SIZE);
-        let mut y = LookupBits::new(y as u128, WORD_SIZE);
+        let (x, y) = LookupQuery::<XLEN>::to_instruction_inputs(self);
+        let mut x = LookupBits::new(x as u128, XLEN);
+        let mut y = LookupBits::new(y as u128, XLEN);
 
         let sign_bit = if x.leading_ones() == 0 { 0 } else { 1 };
         let mut entry = 0;
         let mut sign_extension = 0;
-        for i in 0..WORD_SIZE {
+        for i in 0..XLEN {
             let x_i = x.pop_msb() as u64;
             let y_i = y.pop_msb() as u64;
             entry *= 1 + y_i;

@@ -1,6 +1,5 @@
 use and::AndTable;
 use andn::AndnTable;
-use enum_dispatch::enum_dispatch;
 use equal::EqualTable;
 use halfword_alignment::HalfwordAlignmentTable;
 use lower_half_word::LowerHalfWordTable;
@@ -40,7 +39,6 @@ use crate::field::JoltField;
 use derive_more::From;
 use std::fmt::Debug;
 
-#[enum_dispatch]
 pub trait JoltLookupTable: Clone + Debug + Send + Sync + Serialize {
     /// Materializes the entire lookup table for this instruction (assuming an 8-bit word size).
     #[cfg(test)]
@@ -57,7 +55,7 @@ pub trait JoltLookupTable: Clone + Debug + Send + Sync + Serialize {
     fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F;
 }
 
-pub trait PrefixSuffixDecomposition<const WORD_SIZE: usize>: JoltLookupTable + Default {
+pub trait PrefixSuffixDecomposition<const XLEN: usize>: JoltLookupTable + Default {
     fn suffixes(&self) -> Vec<Suffixes>;
     fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F;
     #[cfg(test)]
@@ -108,40 +106,40 @@ pub const NUM_LOOKUP_TABLES: usize = LookupTables::<32>::COUNT;
 
 #[derive(Copy, Clone, Debug, From, Serialize, Deserialize, EnumIter, EnumCountMacro)]
 #[repr(u8)]
-pub enum LookupTables<const WORD_SIZE: usize> {
-    RangeCheck(RangeCheckTable<WORD_SIZE>),
-    And(AndTable<WORD_SIZE>),
-    Andn(AndnTable<WORD_SIZE>),
-    Or(OrTable<WORD_SIZE>),
-    Xor(XorTable<WORD_SIZE>),
-    Equal(EqualTable<WORD_SIZE>),
-    SignedGreaterThanEqual(SignedGreaterThanEqualTable<WORD_SIZE>),
-    UnsignedGreaterThanEqual(UnsignedGreaterThanEqualTable<WORD_SIZE>),
-    NotEqual(NotEqualTable<WORD_SIZE>),
-    SignedLessThan(SignedLessThanTable<WORD_SIZE>),
-    UnsignedLessThan(UnsignedLessThanTable<WORD_SIZE>),
-    Movsign(MovsignTable<WORD_SIZE>),
-    UpperWord(UpperWordTable<WORD_SIZE>),
-    LessThanEqual(UnsignedLessThanEqualTable<WORD_SIZE>),
-    ValidSignedRemainder(ValidSignedRemainderTable<WORD_SIZE>),
-    ValidUnsignedRemainder(ValidUnsignedRemainderTable<WORD_SIZE>),
-    ValidDiv0(ValidDiv0Table<WORD_SIZE>),
-    HalfwordAlignment(HalfwordAlignmentTable<WORD_SIZE>),
-    WordAlignment(WordAlignmentTable<WORD_SIZE>),
-    LowerHalfWord(LowerHalfWordTable<WORD_SIZE>),
-    SignExtendHalfWord(SignExtendHalfWordTable<WORD_SIZE>),
-    Pow2(Pow2Table<WORD_SIZE>),
-    Pow2W(Pow2WTable<WORD_SIZE>),
-    ShiftRightBitmask(ShiftRightBitmaskTable<WORD_SIZE>),
-    VirtualSRL(VirtualSRLTable<WORD_SIZE>),
-    VirtualSRA(VirtualSRATable<WORD_SIZE>),
-    VirtualROTR(VirtualRotrTable<WORD_SIZE>),
-    VirtualROTRW(VirtualRotrWTable<WORD_SIZE>),
-    VirtualChangeDivisor(VirtualChangeDivisorTable<WORD_SIZE>),
-    VirtualChangeDivisorW(VirtualChangeDivisorWTable<WORD_SIZE>),
+pub enum LookupTables<const XLEN: usize> {
+    RangeCheck(RangeCheckTable<XLEN>),
+    And(AndTable<XLEN>),
+    Andn(AndnTable<XLEN>),
+    Or(OrTable<XLEN>),
+    Xor(XorTable<XLEN>),
+    Equal(EqualTable<XLEN>),
+    SignedGreaterThanEqual(SignedGreaterThanEqualTable<XLEN>),
+    UnsignedGreaterThanEqual(UnsignedGreaterThanEqualTable<XLEN>),
+    NotEqual(NotEqualTable<XLEN>),
+    SignedLessThan(SignedLessThanTable<XLEN>),
+    UnsignedLessThan(UnsignedLessThanTable<XLEN>),
+    Movsign(MovsignTable<XLEN>),
+    UpperWord(UpperWordTable<XLEN>),
+    LessThanEqual(UnsignedLessThanEqualTable<XLEN>),
+    ValidSignedRemainder(ValidSignedRemainderTable<XLEN>),
+    ValidUnsignedRemainder(ValidUnsignedRemainderTable<XLEN>),
+    ValidDiv0(ValidDiv0Table<XLEN>),
+    HalfwordAlignment(HalfwordAlignmentTable<XLEN>),
+    WordAlignment(WordAlignmentTable<XLEN>),
+    LowerHalfWord(LowerHalfWordTable<XLEN>),
+    SignExtendHalfWord(SignExtendHalfWordTable<XLEN>),
+    Pow2(Pow2Table<XLEN>),
+    Pow2W(Pow2WTable<XLEN>),
+    ShiftRightBitmask(ShiftRightBitmaskTable<XLEN>),
+    VirtualSRL(VirtualSRLTable<XLEN>),
+    VirtualSRA(VirtualSRATable<XLEN>),
+    VirtualROTR(VirtualRotrTable<XLEN>),
+    VirtualROTRW(VirtualRotrWTable<XLEN>),
+    VirtualChangeDivisor(VirtualChangeDivisorTable<XLEN>),
+    VirtualChangeDivisorW(VirtualChangeDivisorWTable<XLEN>),
 }
 
-impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {
+impl<const XLEN: usize> LookupTables<XLEN> {
     pub fn enum_index(table: &Self) -> usize {
         // Discriminant: https://doc.rust-lang.org/reference/items/enumerations.html#pointer-casting
         let byte = unsafe { *(table as *const Self as *const u8) };

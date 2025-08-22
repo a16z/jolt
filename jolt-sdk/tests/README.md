@@ -5,5 +5,5 @@ If you encounter failing tests due to fixture mismatches, you can regenerate the
 
 Run the update script from the jolt-verifier directory:
 ```bash
-./update-test-fixtures.sh
+./gen-fixtures.sh
 ```

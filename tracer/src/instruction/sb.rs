@@ -1,16 +1,15 @@
+use crate::utils::inline_helpers::InstrAssembler;
 use crate::utils::virtual_registers::allocate_virtual_register;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     declare_riscv_instr,
     emulator::cpu::{Cpu, Xlen},
-    instruction::format::format_load::FormatLoad,
 };
 
 use super::addi::ADDI;
 use super::and::AND;
 use super::andi::ANDI;
-use super::format::{format_i::FormatI, format_r::FormatR, format_u::FormatU};
 use super::ld::LD;
 use super::lui::LUI;
 use super::sd::SD;
@@ -21,10 +20,7 @@ use super::virtual_sw::VirtualSW;
 use super::xor::XOR;
 use super::{RAMWrite, RV32IMInstruction};
 
-use super::{
-    format::{format_s::FormatS, InstructionFormat},
-    RISCVInstruction, RISCVTrace, RV32IMCycle,
-};
+use super::{format::format_s::FormatS, RISCVInstruction, RISCVTrace, RV32IMCycle};
 
 declare_riscv_instr!(
     name   = SB,
@@ -67,7 +63,6 @@ impl RISCVTrace for SB {
 
 impl SB {
     fn inline_sequence_32(&self) -> Vec<RV32IMInstruction> {
-        // Virtual registers used in sequence
         let v_address = allocate_virtual_register();
         let v_word_address = allocate_virtual_register();
         let v_word = allocate_virtual_register();
@@ -75,144 +70,22 @@ impl SB {
         let v_mask = allocate_virtual_register();
         let v_byte = allocate_virtual_register();
 
-        let mut sequence = vec![];
-
-        let add = ADDI {
-            address: self.address,
-            operands: FormatI {
-                rd: *v_address,
-                rs1: self.operands.rs1,
-                imm: self.operands.imm as u64,
-            },
-            inline_sequence_remaining: Some(12),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(add.into());
-
-        let andi = ANDI {
-            address: self.address,
-            operands: FormatI {
-                rd: *v_word_address,
-                rs1: *v_address,
-                imm: -4i64 as u64,
-            },
-            inline_sequence_remaining: Some(11),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(andi.into());
-
-        let lw = VirtualLW {
-            address: self.address,
-            operands: FormatI {
-                rd: *v_word,
-                rs1: *v_word_address,
-                imm: 0,
-            },
-            inline_sequence_remaining: Some(10),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(lw.into());
-
-        let slli = SLLI {
-            address: self.address,
-            operands: FormatI {
-                rd: *v_shift,
-                rs1: *v_address,
-                imm: 3,
-            },
-            inline_sequence_remaining: Some(9),
-            is_compressed: self.is_compressed,
-        };
-        sequence.extend(slli.inline_sequence(Xlen::Bit32));
-
-        let lui = LUI {
-            address: self.address,
-            operands: FormatU {
-                rd: *v_mask,
-                imm: 0xff,
-            },
-            inline_sequence_remaining: Some(8),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(lui.into());
-
-        let sll = SLL {
-            address: self.address,
-            operands: FormatR {
-                rd: *v_mask,
-                rs1: *v_mask,
-                rs2: *v_shift,
-            },
-            inline_sequence_remaining: Some(7),
-            is_compressed: self.is_compressed,
-        };
-        sequence.extend(sll.inline_sequence(Xlen::Bit32));
-
-        let sll = SLL {
-            address: self.address,
-            operands: FormatR {
-                rd: *v_byte,
-                rs1: self.operands.rs2,
-                rs2: *v_shift,
-            },
-            inline_sequence_remaining: Some(5),
-            is_compressed: self.is_compressed,
-        };
-        sequence.extend(sll.inline_sequence(Xlen::Bit32));
-
-        let xor = XOR {
-            address: self.address,
-            operands: FormatR {
-                rd: *v_byte,
-                rs1: *v_word,
-                rs2: *v_byte,
-            },
-            inline_sequence_remaining: Some(3),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(xor.into());
-
-        let and = AND {
-            address: self.address,
-            operands: FormatR {
-                rd: *v_byte,
-                rs1: *v_byte,
-                rs2: *v_mask,
-            },
-            inline_sequence_remaining: Some(2),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(and.into());
-
-        let xor = XOR {
-            address: self.address,
-            operands: FormatR {
-                rd: *v_word,
-                rs1: *v_word,
-                rs2: *v_byte,
-            },
-            inline_sequence_remaining: Some(1),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(xor.into());
-
-        let sw = VirtualSW {
-            address: self.address,
-            operands: FormatS {
-                rs1: *v_word_address,
-                rs2: *v_word,
-                imm: 0,
-            },
-            inline_sequence_remaining: Some(0),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(sw.into());
-
-        sequence
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit32);
+        asm.emit_i::<ADDI>(*v_address, self.operands.rs1, self.operands.imm as u64);
+        asm.emit_i::<ANDI>(*v_word_address, *v_address, -4i64 as u64);
+        asm.emit_i::<VirtualLW>(*v_word, *v_word_address, 0);
+        asm.emit_i::<SLLI>(*v_shift, *v_address, 3);
+        asm.emit_u::<LUI>(*v_mask, 0xff);
+        asm.emit_r::<SLL>(*v_mask, *v_mask, *v_shift);
+        asm.emit_r::<SLL>(*v_byte, self.operands.rs2, *v_shift);
+        asm.emit_r::<XOR>(*v_byte, *v_word, *v_byte);
+        asm.emit_r::<AND>(*v_byte, *v_byte, *v_mask);
+        asm.emit_r::<XOR>(*v_word, *v_word, *v_byte);
+        asm.emit_s::<VirtualSW>(*v_word_address, *v_word, 0);
+        asm.finalize()
     }
 
     fn inline_sequence_64(&self) -> Vec<RV32IMInstruction> {
-        // Virtual registers used in sequence
         let v_address = allocate_virtual_register();
         let v_dword_address = allocate_virtual_register();
         let v_dword = allocate_virtual_register();
@@ -220,139 +93,18 @@ impl SB {
         let v_mask = allocate_virtual_register();
         let v_byte = allocate_virtual_register();
 
-        let mut sequence = vec![];
-
-        let add = ADDI {
-            address: self.address,
-            operands: FormatI {
-                rd: *v_address,
-                rs1: self.operands.rs1,
-                imm: self.operands.imm as u64,
-            },
-            inline_sequence_remaining: Some(12),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(add.into());
-
-        let andi = ANDI {
-            address: self.address,
-            operands: FormatI {
-                rd: *v_dword_address,
-                rs1: *v_address,
-                imm: -8i64 as u64,
-            },
-            inline_sequence_remaining: Some(11),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(andi.into());
-
-        let ld = LD {
-            address: self.address,
-            operands: FormatLoad {
-                rd: *v_dword,
-                rs1: *v_dword_address,
-                imm: 0,
-            },
-            inline_sequence_remaining: Some(10),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(ld.into());
-
-        let slli = SLLI {
-            address: self.address,
-            operands: FormatI {
-                rd: *v_shift,
-                rs1: *v_address,
-                imm: 3,
-            },
-            inline_sequence_remaining: Some(9),
-            is_compressed: self.is_compressed,
-        };
-        sequence.extend(slli.inline_sequence(Xlen::Bit64));
-
-        let lui = LUI {
-            address: self.address,
-            operands: FormatU {
-                rd: *v_mask,
-                imm: 0xff,
-            },
-            inline_sequence_remaining: Some(8),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(lui.into());
-
-        let sll = SLL {
-            address: self.address,
-            operands: FormatR {
-                rd: *v_mask,
-                rs1: *v_mask,
-                rs2: *v_shift,
-            },
-            inline_sequence_remaining: Some(7),
-            is_compressed: self.is_compressed,
-        };
-        sequence.extend(sll.inline_sequence(Xlen::Bit64));
-
-        let sll = SLL {
-            address: self.address,
-            operands: FormatR {
-                rd: *v_byte,
-                rs1: self.operands.rs2,
-                rs2: *v_shift,
-            },
-            inline_sequence_remaining: Some(5),
-            is_compressed: self.is_compressed,
-        };
-        sequence.extend(sll.inline_sequence(Xlen::Bit64));
-
-        let xor = XOR {
-            address: self.address,
-            operands: FormatR {
-                rd: *v_byte,
-                rs1: *v_dword,
-                rs2: *v_byte,
-            },
-            inline_sequence_remaining: Some(3),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(xor.into());
-
-        let and = AND {
-            address: self.address,
-            operands: FormatR {
-                rd: *v_byte,
-                rs1: *v_byte,
-                rs2: *v_mask,
-            },
-            inline_sequence_remaining: Some(2),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(and.into());
-
-        let xor = XOR {
-            address: self.address,
-            operands: FormatR {
-                rd: *v_dword,
-                rs1: *v_dword,
-                rs2: *v_byte,
-            },
-            inline_sequence_remaining: Some(1),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(xor.into());
-
-        let sd = SD {
-            address: self.address,
-            operands: FormatS {
-                rs1: *v_dword_address,
-                rs2: *v_dword,
-                imm: 0,
-            },
-            inline_sequence_remaining: Some(0),
-            is_compressed: self.is_compressed,
-        };
-        sequence.push(sd.into());
-
-        sequence
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit64);
+        asm.emit_i::<ADDI>(*v_address, self.operands.rs1, self.operands.imm as u64);
+        asm.emit_i::<ANDI>(*v_dword_address, *v_address, -8i64 as u64);
+        asm.emit_ld::<LD>(*v_dword, *v_dword_address, 0);
+        asm.emit_i::<SLLI>(*v_shift, *v_address, 3);
+        asm.emit_u::<LUI>(*v_mask, 0xff);
+        asm.emit_r::<SLL>(*v_mask, *v_mask, *v_shift);
+        asm.emit_r::<SLL>(*v_byte, self.operands.rs2, *v_shift);
+        asm.emit_r::<XOR>(*v_byte, *v_dword, *v_byte);
+        asm.emit_r::<AND>(*v_byte, *v_byte, *v_mask);
+        asm.emit_r::<XOR>(*v_dword, *v_dword, *v_byte);
+        asm.emit_s::<SD>(*v_dword_address, *v_dword, 0);
+        asm.finalize()
     }
 }

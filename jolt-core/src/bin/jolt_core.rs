@@ -5,7 +5,7 @@ use jolt_core::benches::bench::{benchmarks, BenchType};
 use std::any::Any;
 
 use tracing_chrome::ChromeLayerBuilder;
-use tracing_subscriber::{self, fmt::format::FmtSpan, prelude::*};
+use tracing_subscriber::{self, fmt::format::FmtSpan, prelude::*, EnvFilter};
 
 /// Search for a pattern in a file and display the lines that contain it.
 #[derive(Parser, Debug)]
@@ -46,6 +46,12 @@ fn main() {
 fn trace(args: ProfileArgs) {
     let mut layers = Vec::new();
 
+    let log_layer = tracing_subscriber::fmt::layer()
+        .pretty()
+        .with_filter(EnvFilter::from_default_env()) // reads RUST_LOG
+        .boxed();
+    layers.push(log_layer);
+
     let mut guards: Vec<Box<dyn Any>> = vec![];
 
     if let Some(format) = &args.format {
@@ -59,7 +65,7 @@ fn trace(args: ProfileArgs) {
             let (chrome_layer, guard) = ChromeLayerBuilder::new().build();
             layers.push(chrome_layer.boxed());
             guards.push(Box::new(guard));
-            println!("Running tracing-chrome. Files will be saved as trace-<some timestamp>.json and can be viewed in chrome://tracing.");
+            println!("Running tracing-chrome. Files will be saved as trace-<some timestamp>.json and can be viewed in https://ui.perfetto.dev/");
         }
     }
 

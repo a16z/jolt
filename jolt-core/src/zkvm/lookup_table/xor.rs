@@ -8,29 +8,29 @@ use super::suffixes::{SuffixEval, Suffixes};
 use super::JoltLookupTable;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct XorTable<const WORD_SIZE: usize>;
+pub struct XorTable<const XLEN: usize>;
 
-impl<const WORD_SIZE: usize> JoltLookupTable for XorTable<WORD_SIZE> {
+impl<const XLEN: usize> JoltLookupTable for XorTable<XLEN> {
     fn materialize_entry(&self, index: u128) -> u64 {
         let (x, y) = uninterleave_bits(index);
         x ^ y
     }
 
     fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
-        debug_assert_eq!(r.len(), 2 * WORD_SIZE);
+        debug_assert_eq!(r.len(), 2 * XLEN);
 
         let mut result = F::zero();
-        for i in 0..WORD_SIZE {
+        for i in 0..XLEN {
             let x_i = r[2 * i];
             let y_i = r[2 * i + 1];
-            result += F::from_u64(1u64 << (WORD_SIZE - 1 - i))
+            result += F::from_u64(1u64 << (XLEN - 1 - i))
                 * ((F::one() - x_i) * y_i + x_i * (F::one() - y_i));
         }
         result
     }
 }
 
-impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE> for XorTable<WORD_SIZE> {
+impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for XorTable<XLEN> {
     fn suffixes(&self) -> Vec<Suffixes> {
         vec![Suffixes::One, Suffixes::Xor]
     }
