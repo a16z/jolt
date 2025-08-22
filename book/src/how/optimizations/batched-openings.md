@@ -9,12 +9,13 @@ $$f(x), g(x), \dots$$
 
 See Section 16.1 of [Proof, Arguments, and Zero-Knowledge](https://people.cs.georgetown.edu/jthaler/ProofsArgsAndZK.pdf) for details of this subprotocol.
 
-
 ## Multiple polynomials, multiple points
 
 $$f(x), g(y), \dots$$
 
 The most generic case.
+
+TODO(moodlezoup)
 
 ## One polynomial, multiple points
 
