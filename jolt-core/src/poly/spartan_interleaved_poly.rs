@@ -99,7 +99,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                     -F::from_u128(magnitude) 
                 }
             }
-            BzValue::S192(signed_bigint) => {
+            BzValue::S192(_signed_bigint) => {
                 unimplemented!()
                 // if signed_bigint.is_positive { 
                 //     signed_bigint.magnitude.try_into().unwrap() 
@@ -271,8 +271,6 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                 let max_ab_coeffs_capacity = 2 * cycles_per_chunk * num_uniform_r1cs_constraints;
                 let mut chunk_ab_coeffs: Vec<SparseCoefficient<F>> =
                     Vec::with_capacity(max_ab_coeffs_capacity);
-                let mut chunk_ab_coeffs: Vec<SparseCoefficient<F>> =
-                    Vec::with_capacity(max_ab_coeffs_capacity);
 
                 let mut chunk_svo_accums_zero = [F::zero(); NUM_ACCUMS_EVAL_ZERO];
                 let mut chunk_svo_accums_infty = [F::zero(); NUM_ACCUMS_EVAL_INFTY];
@@ -290,16 +288,6 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                         let mut binary_az_block = [F::zero(); Y_SVO_SPACE_SIZE];
                         let mut binary_bz_block = [F::zero(); Y_SVO_SPACE_SIZE];
 
-                        // Iterate constraints in Y_SVO_SPACE_SIZE blocks so we can call the
-                        // small-value kernels on full Az/Bz blocks when available.
-                        for (uniform_chunk_iter_idx, uniform_svo_chunk) in
-                            const_rows.chunks(Y_SVO_SPACE_SIZE).enumerate()
-                        {
-                            for (idx_in_svo_block, const_row) in
-                                uniform_svo_chunk.iter().enumerate()
-                            {
-                                let constraint_idx_in_step =
-                                    (uniform_chunk_iter_idx << NUM_SVO_ROUNDS) + idx_in_svo_block;
                         // Iterate constraints in Y_SVO_SPACE_SIZE blocks so we can call the
                         // small-value kernels on full Az/Bz blocks when available.
                         for (uniform_chunk_iter_idx, uniform_svo_chunk) in

@@ -520,20 +520,15 @@ pub static UNIFORM_R1CS: [NamedConstraint; NUM_R1CS_CONSTRAINTS] = [
 // =============================================================================
 use super::types::{AzValue, BzValue};
 use crate::utils::small_scalar::SmallScalar;
-use crate::utils::signed_bigint::SignedBigInt;
+use ark_ff::SignedBigInt;
 
 #[inline]
 fn diff_to_bz(diff: i128) -> BzValue {
-    if (diff as i128).unsigned_abs() as u128 <= u64::MAX as u128 {
-        BzValue::S64(SignedBigInt::from_u64(
-            (diff as i128).unsigned_abs() as u64,
-            diff >= 0,
-        ))
+    let abs = (diff as i128).unsigned_abs();
+    if abs as u128 <= u64::MAX as u128 {
+        BzValue::S64(SignedBigInt::from_u64_with_sign(abs as u64, diff >= 0))
     } else {
-        BzValue::S128(SignedBigInt::from_u128(
-            (diff as i128).unsigned_abs() as u128,
-            diff >= 0,
-        ))
+        BzValue::S128(SignedBigInt::<2>::from_i128(diff))
     }
 }
 
@@ -565,7 +560,7 @@ pub fn eval_az_bz_by_name<F: JoltField>(
             let rs1 = accessor
                 .value_at(Inp::Rs1Value.to_index(), row)
                 .as_u64_clamped();
-            let bz = BzValue::S64(SignedBigInt::from_u64(
+            let bz = BzValue::S64(SignedBigInt::from_u64_with_sign(
                 if left >= rs1 { left - rs1 } else { rs1 - left },
                 left >= rs1,
             ));
@@ -585,7 +580,7 @@ pub fn eval_az_bz_by_name<F: JoltField>(
             let pc = accessor
                 .value_at(Inp::UnexpandedPC.to_index(), row)
                 .as_u64_clamped();
-            let bz = BzValue::S64(SignedBigInt::from_u64(
+            let bz = BzValue::S64(SignedBigInt::from_u64_with_sign(
                 if left >= pc { left - pc } else { pc - left },
                 left >= pc,
             ));
@@ -640,7 +635,7 @@ pub fn eval_az_bz_by_name<F: JoltField>(
             let wr = accessor
                 .value_at(Inp::RamWriteValue.to_index(), row)
                 .as_u64_clamped();
-            let bz = BzValue::S64(SignedBigInt::from_u64(
+            let bz = BzValue::S64(SignedBigInt::from_u64_with_sign(
                 if rd >= wr { rd - wr } else { wr - rd },
                 rd >= wr,
             ));
@@ -659,7 +654,7 @@ pub fn eval_az_bz_by_name<F: JoltField>(
             let rdw = accessor
                 .value_at(Inp::RdWriteValue.to_index(), row)
                 .as_u64_clamped();
-            let bz = BzValue::S64(SignedBigInt::from_u64(
+            let bz = BzValue::S64(SignedBigInt::from_u64_with_sign(
                 if rd >= rdw { rd - rdw } else { rdw - rd },
                 rd >= rdw,
             ));
@@ -780,12 +775,12 @@ pub fn eval_az_bz_by_name<F: JoltField>(
             let right_i128 = accessor
                 .value_at(Inp::RightInstructionInput.to_index(), row)
                 .as_i128();
-            let az = AzValue::S64(SignedBigInt::from_u64(left, true));
+            let az = AzValue::S64(SignedBigInt::from_u64_with_sign(left, true));
             // Bz: RightInstructionInput (i64) -> U64AndSign with explicit sign handling
             let bz = if right_i128 >= 0 {
-                BzValue::S64(SignedBigInt::from_u64(right_i128 as u64, true))
+                BzValue::S64(SignedBigInt::from_u64_with_sign(right_i128 as u64, true))
             } else {
-                BzValue::S64(SignedBigInt::from_u64((-right_i128) as u64, false))
+                BzValue::S64(SignedBigInt::from_u64_with_sign((-right_i128) as u64, false))
             };
             Some((az, bz))
         }
@@ -882,7 +877,7 @@ pub fn eval_az_bz_by_name<F: JoltField>(
             let lookup = accessor
                 .value_at(Inp::LookupOutput.to_index(), row)
                 .as_u64_clamped();
-            let bz = BzValue::S64(SignedBigInt::from_u64(
+            let bz = BzValue::S64(SignedBigInt::from_u64_with_sign(
                 if rdw >= lookup {
                     rdw - lookup
                 } else {

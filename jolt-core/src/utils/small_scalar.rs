@@ -104,6 +104,7 @@ impl SmallScalar {
 // ===============================================
 
 impl From<SmallScalar> for bool {
+    /// Returns true if the scalar is non-zero, false otherwise
     fn from(scalar: SmallScalar) -> bool {
         match scalar {
             SmallScalar::Bool(v) => v,
@@ -116,16 +117,18 @@ impl From<SmallScalar> for bool {
     }
 }
 
-impl From<SmallScalar> for i8 {
+impl TryFrom<SmallScalar> for i8 {
+    type Error = SmallScalarConversionError;
+
     /// Clamped conversion to i8 - values outside i8 range are clamped to i8::MIN or i8::MAX
-    fn from(scalar: SmallScalar) -> i8 {
+    fn try_from(scalar: SmallScalar) -> Result<i8, Self::Error> {
         match scalar {
-            SmallScalar::Bool(v) => v as i8,
-            SmallScalar::U8(v) => v as i8,
-            SmallScalar::U64(v) => (v as i128).clamp(i8::MIN as i128, i8::MAX as i128) as i8,
-            SmallScalar::I64(v) => v.clamp(i8::MIN as i64, i8::MAX as i64) as i8,
-            SmallScalar::U128(v) => (v as i128).clamp(i8::MIN as i128, i8::MAX as i128) as i8,
-            SmallScalar::I128(v) => v.clamp(i8::MIN as i128, i8::MAX as i128) as i8,
+            SmallScalar::Bool(v) => Ok(v as i8),
+            SmallScalar::U8(v) => Ok(v as i8),
+            SmallScalar::U64(v) => Ok((v as i128).clamp(i8::MIN as i128, i8::MAX as i128) as i8),
+            SmallScalar::I64(v) => Ok(v.clamp(i8::MIN as i64, i8::MAX as i64) as i8),
+            SmallScalar::U128(v) => Ok((v as i128).clamp(i8::MIN as i128, i8::MAX as i128) as i8),
+            SmallScalar::I128(v) => Ok(v.clamp(i8::MIN as i128, i8::MAX as i128) as i8),
         }
     }
 }

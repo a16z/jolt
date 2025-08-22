@@ -41,13 +41,13 @@ impl FieldMulSmall for ark_bn254::Fr {
     #[inline(always)]
     fn mul_u64(self, n: u64) -> Self {
         // `Fp` impl is in ark-ff; call through via inherent method.
-        ark_ff::Fp::mul_u64(self, n)
+        ark_ff::Fp::mul_u64::<5>(self, n)
     }
 
     #[inline(always)]
     fn mul_u128(self, n: u128) -> Self {
         // `Fp` impl is in ark-ff; call through via inherent method.
-        ark_ff::Fp::mul_u128(self, n)
+        ark_ff::Fp::mul_u128::<5, 6>(self, n)
     }
 }
 

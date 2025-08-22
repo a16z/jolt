@@ -6,7 +6,6 @@
 
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::eq_poly::EqPolynomial;
-use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::opening_proof::{OpeningId, SumcheckId};
 use crate::transcripts::Transcript;
@@ -19,7 +18,8 @@ use super::key::UniformSpartanKey;
 use super::spartan::UniformSpartanProof;
 use super::types::{AzExtendedEval, AzValue, BzExtendedEval, BzValue, CzValue};
 use crate::utils::small_scalar::SmallScalar;
-use crate::utils::signed_bigint::{add_with_sign_u64, SignedBigInt};
+use ark_ff::SignedBigInt;
+use ark_ff::biginteger::signed::add_with_sign_u64;
 
 use crate::field::JoltField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -255,10 +255,6 @@ impl TryFrom<&JoltR1CSInputs> for OpeningId {
         }
     }
 }
-
-// ============================================================================
-// Streaming witness accessor (avoids materializing input_polys)
-// ============================================================================
 
 /// Read-only, thread-safe accessor for witness values at a given step without
 /// materializing full `MultilinearPolynomial`s. Implementations should be
@@ -521,7 +517,7 @@ pub fn eval_az_typed<F: JoltField>(
         mag = new_mag;
         sign = new_pos;
     }
-    AzValue::S64(SignedBigInt::from_u64(mag, sign))
+    AzValue::S64(SignedBigInt::from_u64_with_sign(mag, sign))
 }
 
 #[allow(unused_variables)]

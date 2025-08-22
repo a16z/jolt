@@ -1,5 +1,5 @@
 use crate::zkvm::JoltField;
-use crate::utils::signed_bigint::SignedBigInt;
+use ark_ff::SignedBigInt;
 use ark_ff::BigInt;
 
 // =============================
@@ -69,7 +69,7 @@ pub fn mul_az_bz(az: AzExtendedEval, bz: BzExtendedEval) -> SVOProductValue {
         (AzExtendedEval::I8(v), BzExtendedEval::L1(signed_bigint)) => {
             let sign = (v >= 0) == signed_bigint.is_positive;
             let mag = (v as i128).unsigned_abs() as u64;
-            SVOProductValue::L1(SignedBigInt::from_u64(
+            SVOProductValue::L1(SignedBigInt::from_u64_with_sign(
                 mag.saturating_mul(signed_bigint.magnitude.0[0]),
                 sign,
             ))
