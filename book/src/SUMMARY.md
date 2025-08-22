@@ -30,7 +30,7 @@
         - [EQ optimizations](./how/optimizations/eq.md)
     - [Appendix](./how/appendix/appendix.md)
         - [Terminology and nomenclature](./how/appendix/terminology.md)
-        - [Multilinear extension](./how/appendix/multilinear-extensions.md)
+        - [Multilinear extensions](./how/appendix/multilinear-extensions.md)
         - [Sumcheck](./how/appendix/sumcheck.md)
         - [Polynomial commitment schemes](./how/appendix/pcs.md)
         - [Memory checking and lookup arguments](./how/appendix/memory-checking.md)
