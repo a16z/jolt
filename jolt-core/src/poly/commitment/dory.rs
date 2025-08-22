@@ -22,7 +22,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{rand::RngCore, Zero};
 use once_cell::sync::OnceCell;
 use rayon::prelude::*;
-use std::{borrow::Borrow, marker::PhantomData};
+use std::{borrow::Borrow, iter::repeat, marker::PhantomData};
 use tracing::trace_span;
 
 use dory::{
@@ -1392,16 +1392,25 @@ impl<'a> StreamingProcessChunk<StreamingOneHotWitness<Fr>> for StreamingDoryComm
             panic!("K must be provided for OneHot polynomials.");
         };
 
+        dbg!(chunk.len());
+
+        // dbg!(&self.setup.g1_vec()[0..10]);
+
         // TODO: Parallelize and optimize.
         let mut row_commitments = vec![JoltGroupWrapper(<Bn254 as ArkPairing>::G1::zero()); K];
 
-        for (col_index, k) in chunk.iter().enumerate() {
+        // Pad out last chunk if necessary.
+        let renaming_c = DoryGlobals::get_num_columns() - chunk.len();
+        let zeros = StreamingOneHotWitness::new(Some(0));
+        let remaining = repeat(&zeros).take(renaming_c);
+        for (col_index, k) in chunk.iter().chain(remaining).enumerate() {
             // All the nonzero coefficients are 1, so we simply add
             // the associated base to the result.
             if let Some(k) = k.value {
                 row_commitments[k].0 += self.setup.g1_vec()[col_index].0;
             }
         }
+
 
         self.row_commitments.extend(row_commitments);
         self
@@ -1445,8 +1454,8 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
     where
         Self::State<'a>: StreamingProcessChunk<T>,
     {
-        // We require that a chunk is a full row.
-        debug_assert_eq!(chunk.len(), DoryGlobals::get_num_columns());
+        // // We require that a chunk is a full row.
+        // debug_assert_eq!(chunk.len(), DoryGlobals::get_num_columns());
 
         state.process_chunk(chunk)
     }
@@ -1470,10 +1479,12 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
             let num_rows = K * T / row_len;
             let row_pad_count = dbg!(num_rows) - l;
             state.row_commitments.extend(vec![JoltG1Wrapper::identity(); row_pad_count]);
+            dbg!(&state.row_commitments);
             let row_commitments: Vec<_> = (0..num_rows).map(|i| {
                 // let j = (i % K) * K + i / K;
                 // let j = (i % rows_per_k) * rows_per_k + i / rows_per_k;
-                let j = (i % K) * rows_per_k + i / K;
+                // let j = (i % K) * rows_per_k + i / K;
+                let j = (i % rows_per_k) * K + i / rows_per_k;
                 //i_max = num_rows = K * T/get_num_columns % 
                 
                 // println!("j = {j}, i = {i}");
