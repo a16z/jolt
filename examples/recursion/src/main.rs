@@ -2,7 +2,7 @@ use ark_serialize::CanonicalDeserialize;
 use ark_serialize::CanonicalSerialize;
 use clap::{Parser, Subcommand};
 use jolt_sdk::{JoltDevice, MemoryConfig, RV32IMJoltProof, Serializable};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 fn get_guest_src_dir() -> PathBuf {
@@ -23,15 +23,24 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Run fibonacci recursion with optional embedded bytes
-    Fibonacci {
-        /// Use embedded bytes instead of input data
-        #[arg(long, value_name = "DIRECTORY", num_args = 0..=1)]
-        embed: Option<Option<PathBuf>>,
+    /// Generate proofs for guest programs
+    Generate {
+        /// Example to run (fibonacci or muldiv)
+        #[arg(long, value_name = "EXAMPLE")]
+        example: String,
+        /// Working directory for output files
+        #[arg(long, value_name = "DIRECTORY", default_value = "output")]
+        workdir: PathBuf,
     },
-    /// Run muldiv recursion with optional embedded bytes
-    Muldiv {
-        /// Use embedded bytes instead of input data
+    /// Verify proofs and optionally embed them
+    Verify {
+        /// Example to verify (fibonacci or muldiv)
+        #[arg(long, value_name = "EXAMPLE")]
+        example: String,
+        /// Working directory containing proof files
+        #[arg(long, value_name = "DIRECTORY", default_value = "output")]
+        workdir: PathBuf,
+        /// Embed proof data to specified directory
         #[arg(long, value_name = "DIRECTORY", num_args = 0..=1)]
         embed: Option<Option<PathBuf>>,
     },
@@ -44,6 +53,14 @@ enum GuestProgram {
 }
 
 impl GuestProgram {
+    fn from_str(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "fibonacci" => Some(GuestProgram::Fibonacci),
+            "muldiv" => Some(GuestProgram::Muldiv),
+            _ => None,
+        }
+    }
+
     fn name(&self) -> &'static str {
         match self {
             GuestProgram::Fibonacci => "fibonacci-guest",
@@ -128,7 +145,7 @@ impl GuestProgram {
     }
 }
 
-fn generate_provable_macro(guest: GuestProgram, use_embed: bool, output_dir: &PathBuf) {
+fn generate_provable_macro(guest: GuestProgram, use_embed: bool, output_dir: &Path) {
     let memory_config = guest.get_memory_config(use_embed);
     let max_trace_length = guest.get_max_trace_length(use_embed);
 
@@ -299,7 +316,7 @@ fn collect_guest_proofs(guest: GuestProgram, target_dir: &str, use_embed: bool) 
     all_groups_data
 }
 
-fn generate_embedded_bytes(guest: GuestProgram, all_groups_data: &[u8], output_dir: &PathBuf) {
+fn generate_embedded_bytes(guest: GuestProgram, all_groups_data: &[u8], output_dir: &Path) {
     println!(
         "Generating embedded bytes for {} guest program...",
         guest.name()
@@ -338,6 +355,59 @@ fn generate_embedded_bytes(guest: GuestProgram, all_groups_data: &[u8], output_d
     let filename = output_dir.join("embedded_bytes.rs");
     std::fs::write(&filename, output).unwrap();
     println!("Embedded bytes written to {}", filename.display());
+}
+
+fn save_proof_data(guest: GuestProgram, all_groups_data: &[u8], workdir: &Path) {
+    println!(
+        "Saving proof data for {} to {}",
+        guest.name(),
+        workdir.display()
+    );
+
+    std::fs::create_dir_all(workdir).unwrap();
+
+    let proof_file = workdir.join(format!("{}_proofs.bin", guest.name()));
+    std::fs::write(&proof_file, all_groups_data).unwrap();
+
+    println!("Proof data saved to {}", proof_file.display());
+    println!("Total proof data size: {} bytes", all_groups_data.len());
+}
+
+fn load_proof_data(guest: GuestProgram, workdir: &Path) -> Vec<u8> {
+    println!(
+        "Loading proof data for {} from {}",
+        guest.name(),
+        workdir.display()
+    );
+
+    let proof_file = workdir.join(format!("{}_proofs.bin", guest.name()));
+
+    if !proof_file.exists() {
+        panic!("Proof file not found: {}", proof_file.display());
+    }
+
+    let proof_data = std::fs::read(&proof_file).unwrap();
+    println!(
+        "Loaded proof data from {} ({} bytes)",
+        proof_file.display(),
+        proof_data.len()
+    );
+
+    proof_data
+}
+
+fn generate_proofs(guest: GuestProgram, workdir: &Path) {
+    println!("Generating proofs for {} guest program...", guest.name());
+
+    let target_dir = "/tmp/jolt-guest-targets";
+
+    // Collect guest proofs
+    let all_groups_data = collect_guest_proofs(guest, target_dir, false);
+
+    // Save proof data
+    save_proof_data(guest, &all_groups_data, workdir);
+
+    println!("Proof generation completed for {}", guest.name());
 }
 
 fn run_recursion_proof(
@@ -386,14 +456,15 @@ fn run_recursion_proof(
     println!("  Recursion verification result: {is_valid}");
 }
 
-fn run_recursion(guest: GuestProgram, use_embed: bool, output_dir: &PathBuf) {
-    let target_dir = "/tmp/jolt-guest-targets";
-
-    println!("Using embed: {use_embed}");
+fn verify_proofs(guest: GuestProgram, use_embed: bool, workdir: &Path, output_dir: &Path) {
+    println!("Verifying proofs for {} guest program...", guest.name());
+    println!("Using embed mode: {use_embed}");
 
     generate_provable_macro(guest, use_embed, output_dir);
 
-    let all_groups_data = collect_guest_proofs(guest, target_dir, use_embed);
+    let all_groups_data = load_proof_data(guest, workdir);
+
+    check_data_integrity(&all_groups_data);
 
     if use_embed {
         println!("Running {} recursion with embedded bytes...", guest.name());
@@ -451,25 +522,46 @@ fn main() {
     let cli = Cli::parse();
 
     match &cli.command {
-        Some(Commands::Fibonacci { embed }) => {
-            let output_dir = embed
-                .as_ref()
-                .and_then(|inner| inner.as_ref())
-                .cloned()
-                .unwrap_or_else(get_guest_src_dir);
-            run_recursion(GuestProgram::Fibonacci, embed.is_some(), &output_dir);
+        Some(Commands::Generate { example, workdir }) => {
+            let guest = match GuestProgram::from_str(example) {
+                Some(guest) => guest,
+                None => {
+                    println!("Unknown example: {example}. Supported examples: fibonacci, muldiv");
+                    return;
+                }
+            };
+            generate_proofs(guest, workdir);
         }
-        Some(Commands::Muldiv { embed }) => {
+        Some(Commands::Verify {
+            example,
+            workdir,
+            embed,
+        }) => {
+            let guest = match GuestProgram::from_str(example) {
+                Some(guest) => guest,
+                None => {
+                    println!("Unknown example: {example}. Supported examples: fibonacci, muldiv");
+                    return;
+                }
+            };
             let output_dir = embed
                 .as_ref()
                 .and_then(|inner| inner.as_ref())
                 .cloned()
                 .unwrap_or_else(get_guest_src_dir);
-            run_recursion(GuestProgram::Muldiv, embed.is_some(), &output_dir);
+            verify_proofs(guest, embed.is_some(), workdir, &output_dir);
         }
         None => {
-            println!("No subcommand specified. Running fibonacci by default.");
-            run_recursion(GuestProgram::Fibonacci, false, &get_guest_src_dir());
+            println!("No subcommand specified. Available commands:");
+            println!();
+            println!("  generate --example <fibonacci|muldiv> [--workdir <DIR>]");
+            println!("  verify --example <fibonacci|muldiv> [--workdir <DIR>] [--embed <DIR>]");
+            println!();
+            println!("Examples:");
+            println!("  cargo run -- generate --example fibonacci");
+            println!("  cargo run -- generate --example fibonacci --workdir ./output");
+            println!("  cargo run -- verify --example fibonacci");
+            println!("  cargo run -- verify --example fibonacci --workdir ./output --embed");
         }
     }
 }
