@@ -119,6 +119,26 @@ macro_rules! define_rv32im_trait_impls {
     (
         instructions: [$($instr:ident),* $(,)?]
     ) => {
+        #[derive(Clone, Copy, Debug, EnumIter)]
+        pub enum JoltInstruction {
+            $( $instr, )*
+        }
+
+        impl JoltInstruction {
+            pub fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
+                match self {
+                    $(
+                        JoltInstruction::$instr => {
+                            // Construct the corresponding enum variant with a default inner value
+                            // and delegate to the existing InstructionFlags impl for RV32IMInstruction
+                            let e = RV32IMInstruction::$instr(Default::default());
+                            InstructionFlags::circuit_flags(&e)
+                        }
+                    ),*
+                }
+            }
+        }
+
         impl InstructionLookup<XLEN> for RV32IMInstruction {
             fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
                 match self {
