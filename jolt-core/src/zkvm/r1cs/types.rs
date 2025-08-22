@@ -1,91 +1,6 @@
 use crate::zkvm::JoltField;
+use crate::utils::signed_bigint::SignedBigInt;
 use ark_ff::BigInt;
-
-// =============================
-// Small scalar domain for raw witnesses
-// =============================
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SmallScalar {
-    Bool(bool),
-    U8(u8),
-    U64(u64),
-    I64(i64),
-    U128(u128),
-    I128(i128),
-}
-
-impl SmallScalar {
-    pub fn as_i128(self) -> i128 {
-        match self {
-            SmallScalar::Bool(v) => v as i128,
-            SmallScalar::U8(v) => v as i128,
-            SmallScalar::U64(v) => v as i128,
-            SmallScalar::I64(v) => v as i128,
-            SmallScalar::U128(v) => v as i128, // lossy if > i128::MAX; callers choose variant appropriately
-            SmallScalar::I128(v) => v,
-        }
-    }
-
-    pub fn as_u64_clamped(self) -> u64 {
-        match self {
-            SmallScalar::Bool(v) => v as u64,
-            SmallScalar::U8(v) => v as u64,
-            SmallScalar::U64(v) => v,
-            SmallScalar::I64(v) => v.max(0) as u64,
-            SmallScalar::U128(v) => v as u64,
-            SmallScalar::I128(v) => {
-                if v >= 0 {
-                    v as u64
-                } else {
-                    0
-                }
-            }
-        }
-    }
-
-    pub fn to_i8(self) -> i8 {
-        match self {
-            SmallScalar::Bool(v) => v as i8,
-            SmallScalar::U8(v) => v as i8,
-            SmallScalar::U64(v) => (v as i128).clamp(i8::MIN as i128, i8::MAX as i128) as i8,
-            SmallScalar::I64(v) => v.clamp(i8::MIN as i64, i8::MAX as i64) as i8,
-            SmallScalar::U128(v) => (v as i128).clamp(i8::MIN as i128, i8::MAX as i128) as i8,
-            SmallScalar::I128(v) => v.clamp(i8::MIN as i128, i8::MAX as i128) as i8,
-        }
-    }
-
-    pub fn as_bool(self) -> bool {
-        match self {
-            SmallScalar::Bool(v) => v,
-            SmallScalar::U8(v) => v != 0,
-            SmallScalar::U64(v) => v != 0,
-            SmallScalar::I64(v) => v != 0,
-            SmallScalar::U128(v) => v != 0,
-            SmallScalar::I128(v) => v != 0,
-        }
-    }
-
-    /// Optimized multiplication with a field element, avoiding conversions when possible
-    pub fn mul_field<F: JoltField>(self, field: F) -> F {
-        match self {
-            // Most efficient: Bool multiplication
-            SmallScalar::Bool(v) => {
-                if v {
-                    field
-                } else {
-                    F::zero()
-                }
-            }
-            // Use specialized field multiplication methods for different sizes
-            SmallScalar::U8(v) => field.mul_u64(v as u64),
-            SmallScalar::U64(v) => field.mul_u64(v),
-            SmallScalar::I64(v) => field.mul_i128(v as i128),
-            SmallScalar::U128(v) => field.mul_u128(v),
-            SmallScalar::I128(v) => field.mul_i128(v),
-        }
-    }
-}
 
 // =============================
 // Per-row operand domains
@@ -94,22 +9,24 @@ impl SmallScalar {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AzValue {
     I8(i8),
-    U64AndSign { magnitude: u64, is_positive: bool },
+    S64(SignedBigInt<1>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BzValue {
     U64(u64),
-    U64AndSign { magnitude: u64, is_positive: bool },
-    U128AndSign { magnitude: u128, is_positive: bool },
+    S64(SignedBigInt<1>),
+    S128(SignedBigInt<2>),
+    S192(SignedBigInt<3>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CzValue {
     Zero,
     U64(u64),
-    U64AndSign { magnitude: u64, is_positive: bool },
-    U128AndSign { magnitude: u128, is_positive: bool },
+    S64(SignedBigInt<1>),
+    S128(SignedBigInt<2>),
+    S192(SignedBigInt<3>),
 }
 
 // =============================
@@ -124,17 +41,17 @@ pub enum AzExtendedEval {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BzExtendedEval {
-    L1 { val: u64, is_positive: bool },
-    L2 { val: [u64; 2], is_positive: bool },
-    L3 { val: [u64; 3], is_positive: bool },
+    L1(SignedBigInt<1>),
+    L2(SignedBigInt<2>),
+    L3(SignedBigInt<3>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SVOProductValue {
-    L1 { val: u64, is_positive: bool },
-    L2 { val: [u64; 2], is_positive: bool },
-    L3 { val: [u64; 3], is_positive: bool },
-    L4 { val: [u64; 4], is_positive: bool },
+    L1(SignedBigInt<1>),
+    L2(SignedBigInt<2>),
+    L3(SignedBigInt<3>),
+    L4(SignedBigInt<4>),
 }
 
 /// Final unreduced product after multiplying by a 256-bit field element
@@ -144,68 +61,20 @@ pub type UnreducedProduct = BigInt<8>; // 512-bit unsigned integer
 // Limb/product helpers (sign-aware)
 // =============================
 
-#[allow(unused_variables)]
-pub fn add_with_sign_u64(a_mag: u64, a_pos: bool, b_mag: u64, b_pos: bool) -> (u64, bool) {
-    if a_pos == b_pos {
-        (a_mag.saturating_add(b_mag), a_pos)
-    } else if a_mag >= b_mag {
-        (a_mag - b_mag, a_pos)
-    } else {
-        (b_mag - a_mag, b_pos)
-    }
-}
 
-#[allow(unused_variables)]
-pub fn add_limbs<const N: usize>(a: ([u64; N], bool), b: ([u64; N], bool)) -> ([u64; N], bool) {
-    let (a_arr, a_pos) = a;
-    let (b_arr, b_pos) = b;
-    if a_pos == b_pos {
-        let mut out = [0u64; N];
-        let mut carry: u128 = 0;
-        for i in 0..N {
-            let s = (a_arr[i] as u128) + (b_arr[i] as u128) + carry;
-            out[i] = s as u64;
-            carry = s >> 64;
-        }
-        (out, a_pos)
-    } else {
-        if a_arr >= b_arr {
-            let mut out = [0u64; N];
-            let mut borrow: i128 = 0;
-            for i in 0..N {
-                let d = (a_arr[i] as i128) - (b_arr[i] as i128) - borrow;
-                out[i] = d as u64;
-                borrow = if d < 0 { 1 } else { 0 };
-            }
-            (out, a_pos)
-        } else {
-            let mut out = [0u64; N];
-            let mut borrow: i128 = 0;
-            for i in 0..N {
-                let d = (b_arr[i] as i128) - (a_arr[i] as i128) - borrow;
-                out[i] = d as u64;
-                borrow = if d < 0 { 1 } else { 0 };
-            }
-            (out, b_pos)
-        }
-    }
-}
 
 #[allow(unused_variables)]
 pub fn mul_az_bz(az: AzExtendedEval, bz: BzExtendedEval) -> SVOProductValue {
     match (az, bz) {
-        (AzExtendedEval::I8(v), BzExtendedEval::L1 { val, is_positive }) => {
-            let sign = (v >= 0) == is_positive;
+        (AzExtendedEval::I8(v), BzExtendedEval::L1(signed_bigint)) => {
+            let sign = (v >= 0) == signed_bigint.is_positive;
             let mag = (v as i128).unsigned_abs() as u64;
-            SVOProductValue::L1 {
-                val: mag.saturating_mul(val),
-                is_positive: sign,
-            }
+            SVOProductValue::L1(SignedBigInt::from_u64(
+                mag.saturating_mul(signed_bigint.magnitude.0[0]),
+                sign,
+            ))
         }
-        _ => SVOProductValue::L2 {
-            val: [0, 0],
-            is_positive: true,
-        },
+        _ => SVOProductValue::L2(SignedBigInt::new([0, 0], true)),
     }
 }
 

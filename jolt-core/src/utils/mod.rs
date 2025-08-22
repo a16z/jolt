@@ -9,6 +9,8 @@ pub mod gaussian_elimination;
 pub mod lookup_bits;
 pub mod math;
 pub mod profiling;
+pub mod signed_bigint;
+pub mod small_scalar;
 pub mod small_value;
 pub mod thread;
 /// Macros that determine the optimal iterator type based on the feature flags.

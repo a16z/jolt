@@ -65,8 +65,12 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
     fn az_to_field_local(az: AzValue) -> F {
         match az {
             AzValue::I8(v) => F::from_i128(v as i128),
-            AzValue::U64AndSign { magnitude, is_positive } => {
-                if is_positive { F::from_u64(magnitude) } else { -F::from_u64(magnitude) }
+            AzValue::S64(signed_bigint) => {
+                if signed_bigint.is_positive { 
+                    F::from_u64(signed_bigint.magnitude.0[0]) 
+                } else { 
+                    -F::from_u64(signed_bigint.magnitude.0[0]) 
+                }
             }
         }
     }
@@ -75,11 +79,27 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
     fn bz_to_field_local(bz: BzValue) -> F {
         match bz {
             BzValue::U64(v) => F::from_u64(v),
-            BzValue::U64AndSign { magnitude, is_positive } => {
-                if is_positive { F::from_u64(magnitude) } else { -F::from_u64(magnitude) }
+            BzValue::S64(signed_bigint) => {
+                if signed_bigint.is_positive { 
+                    F::from_u64(signed_bigint.magnitude.0[0]) 
+                } else { 
+                    -F::from_u64(signed_bigint.magnitude.0[0]) 
+                }
             }
-            BzValue::U128AndSign { magnitude, is_positive } => {
-                if is_positive { F::from_u128(magnitude) } else { -F::from_u128(magnitude) }
+            BzValue::S128(signed_bigint) => {
+                let magnitude = signed_bigint.magnitude_as_u128();
+                if signed_bigint.is_positive { 
+                    F::from_u128(magnitude) 
+                } else { 
+                    -F::from_u128(magnitude) 
+                }
+            }
+            BzValue::S192(signed_bigint) => {
+                unimplemented!()
+                // if signed_bigint.is_positive { 
+                //     signed_bigint.magnitude.try_into().unwrap() 
+                // } else { 
+                //     -signed_bigint.magnitude.try_into().unwrap() 
             }
         }
     }
