@@ -1,7 +1,23 @@
 # Architecture overview
 
 This section gives a overview of the architecture of the Jolt codebase.
-As a starting point, we will present two useful mental models of Jolt: Jolt as a CPU, and Jolt as a DAG.
+
+The following diagram depicts the end-to-end Jolt pipeline, which is typical of RISC-V zkVMs.
+
+![e2e](../../imgs/end_to_end.png)
+
+The green steps correspond to **preprocessing** steps, which can be computed ahead of time from the guest program's bytecode.
+Note that they do not depend on the program inputs, so the preprocessing data can be reused across multiple invocations of the Jolt prover/verifier.
+
+The red steps correspond to the **prover's** workflow: it runs the guest program on some inputs inside of a [RISC-V emulator](./emulation.md), producing the output of the program as well as an execution trace.
+This execution trace, along with the inputs, outputs, and preprocessing, are then passed to the Jolt prover, which uses them to generate a succinct proof that the outputs are the result of correctly executing the given guest program on the inputs.
+
+The blue steps correspond to the **verifier's** workflow. The verifier does _not_ emulate the guest program, not does it receive the execution trace (which may be billions of cycles long) from the prover. Instead, it receives the proof from the prover, and uses it to check that the guest program produces claimed  outputs when run on the given inputs.
+
+For the sake of readability, the diagram above abstracts away all of Jolt's proof system machinery.
+The rest of this section aims to disassemble the underlying machinery in useful-but-not-overwhelming detail.
+
+As a starting point, we will present two useful mental models of the Jolt proof system: Jolt as a CPU, and Jolt as a DAG (a different DAG than the one above; we love DAGs).
 
 ## Jolt as a CPU
 
