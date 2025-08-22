@@ -495,8 +495,9 @@ impl JoltDAG {
         let size = trace.len(); // Remove this from the trait??? Or get from preprocessing?
         // let lazy_trace_clone = lazy_trace.clone();
 
+        let T = DoryGlobals::get_T();
 
-        let polys : Vec<_> = AllCommittedPolynomials::iter().collect();
+        let polys : Vec<_> = AllCommittedPolynomials::iter().collect(); // .skip(9).take(1).collect();
         dbg!(&polys);
         let init_pcss: Vec<_> = polys
             .iter()
@@ -509,6 +510,7 @@ impl JoltDAG {
                     .skip(1)
                     .chain(std::iter::once(RV32IMCycle::NoOp)),
             )
+            .pad_using(T, |_| (RV32IMCycle::NoOp, RV32IMCycle::NoOp))
             .chunks(row_len);
         let pcs_state = chunks
             .into_iter()
@@ -530,7 +532,8 @@ impl JoltDAG {
 
         // #[cfg(test)]
         {
-            let committed_polys: Vec<_> = AllCommittedPolynomials::par_iter()
+            let committed_polys: Vec<_> = polys
+                .iter()
                 .map(|poly| poly.generate_witness(preprocessing, trace, ram_d))
                 .collect();
 
@@ -549,14 +552,14 @@ impl JoltDAG {
                 .enumerate()
             {
                 println!("i = {i}");
-                assert_eq!(hint, hint_non_streaming, "PCS hint mismatch at {:?}", AllCommittedPolynomials::iter().collect::<Vec<_>>()[i]);
-                println!("PCS hints matched for: {:?}", AllCommittedPolynomials::iter().collect::<Vec<_>>()[i]);
+                assert_eq!(hint, hint_non_streaming, "PCS hint mismatch at {:?}", polys.iter().collect::<Vec<_>>()[i]);
+                println!("PCS hints matched for: {:?}", polys.iter().collect::<Vec<_>>()[i]);
                 assert_eq!(
                     commitment, commitment_non_streaming,
                     "Commitment mismatch at {:?}\n ({}):\n {:?}\n != \n{:?}",
-                    AllCommittedPolynomials::iter().collect::<Vec<_>>()[i], i, commitment, commitment_non_streaming
+                    polys.iter().collect::<Vec<_>>()[i], i, commitment, commitment_non_streaming
                 );
-                println!("PCS matched for: {:?}", AllCommittedPolynomials::iter().collect::<Vec<_>>()[i]);
+                println!("PCS matched for: {:?}", polys.iter().collect::<Vec<_>>()[i]);
             }
         }
 

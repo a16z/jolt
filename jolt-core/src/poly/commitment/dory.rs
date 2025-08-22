@@ -1399,11 +1399,11 @@ impl<'a> StreamingProcessChunk<StreamingOneHotWitness<Fr>> for StreamingDoryComm
         // TODO: Parallelize and optimize.
         let mut row_commitments = vec![JoltGroupWrapper(<Bn254 as ArkPairing>::G1::zero()); K];
 
-        // Pad out last chunk if necessary.
-        let renaming_c = DoryGlobals::get_num_columns() - chunk.len();
-        let zeros = StreamingOneHotWitness::new(Some(0));
-        let remaining = repeat(&zeros).take(renaming_c);
-        for (col_index, k) in chunk.iter().chain(remaining).enumerate() {
+        // // Pad out last chunk if necessary.
+        // let renaming_c = DoryGlobals::get_num_columns() - chunk.len();
+        // let zeros = StreamingOneHotWitness::new(Some(0));
+        // let remaining = repeat(&zeros).take(renaming_c);
+        for (col_index, k) in chunk.iter().enumerate() {
             // All the nonzero coefficients are 1, so we simply add
             // the associated base to the result.
             if let Some(k) = k.value {
@@ -1454,8 +1454,8 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
     where
         Self::State<'a>: StreamingProcessChunk<T>,
     {
-        // // We require that a chunk is a full row.
-        // debug_assert_eq!(chunk.len(), DoryGlobals::get_num_columns());
+        // We require that a chunk is a full row.
+        debug_assert_eq!(chunk.len(), DoryGlobals::get_num_columns());
 
         state.process_chunk(chunk)
     }
