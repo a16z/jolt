@@ -13,7 +13,7 @@ Jolt is currently configured so that $K^{1/d} = 2^8$.
 ## Address remapping
 
 We treat each 4-byte-aligned word in the guest memory as one "cell" for the purposes of memory checking.
-Our RISC-V [emulator](./emulation.md) is configured to use `0x80000000` as the DRAM start addresss -- the stack and heap occupy addresses above the start address, while Jolt reserves some memory below the start address for program inputs and outputs.
+Our RISC-V [emulator](./emulation.md) is configured to use `0x80000000` as the DRAM start address -- the stack and heap occupy addresses above the start address, while Jolt reserves some memory below the start address for program inputs and outputs.
 
 ![memory layout](../../imgs/memory_layout.png)
 
