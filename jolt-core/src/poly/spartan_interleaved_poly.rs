@@ -12,7 +12,7 @@ use crate::{
     zkvm::r1cs::{
         constraints::{eval_az_by_name, eval_bz_by_name, NamedConstraint},
         inputs::WitnessRowAccessor,
-        types::{AzValue, BzValue, UnreducedProduct},
+        types::{reduce_unreduced_to_field, AzValue, BzValue, UnreducedProduct},
     },
 };
 use allocative::Allocative;
@@ -70,7 +70,7 @@ pub struct SpartanInterleavedPolynomial<const NUM_SVO_ROUNDS: usize, F: JoltFiel
 }
 
 impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM_SVO_ROUNDS, F> {
-    #[cfg(test)]
+    // #[cfg(test)]
     fn az_to_field_local(az: AzValue) -> F {
         match az {
             AzValue::I8(v) => F::from_i128(v as i128),
@@ -84,7 +84,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
         }
     }
 
-    #[cfg(test)]
+    // #[cfg(test)]
     fn bz_to_field_local(bz: BzValue) -> F {
         match bz {
             BzValue::S64(signed_bigint) => {
@@ -109,6 +109,45 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                 // } else { 
                 //     -signed_bigint.magnitude.try_into().unwrap() 
             }
+        }
+    }
+
+    #[inline]
+    fn mul_field_by_signed_limbs(val: F, limbs: &[u64], is_positive: bool) -> F {
+        // Compute val * (± sum(limbs[i] * 2^(64*i))) without BigInt
+        if limbs.is_empty() {
+            return F::zero();
+        }
+        let mut acc = F::zero();
+        let mut base = val;
+        let r64 = F::from_u128(1u128 << 64);
+        for (i, limb) in limbs.iter().enumerate() {
+            if *limb != 0 {
+                acc += base * F::from_u64(*limb);
+            }
+            if i + 1 < limbs.len() {
+                base = base * r64;
+            }
+        }
+        if is_positive { acc } else { -acc }
+    }
+
+    #[inline]
+    fn mul_field_by_az(val: F, az: AzValue) -> F {
+        match az {
+            AzValue::I8(v) => {
+                if v == 0 { F::zero() } else { val * F::from_i128(v as i128) }
+            }
+            AzValue::S64(s1) => Self::mul_field_by_signed_limbs(val, &s1.magnitude.0[..1], s1.is_positive),
+        }
+    }
+
+    #[inline]
+    fn mul_field_by_bz(val: F, bz: BzValue) -> F {
+        match bz {
+            BzValue::S64(s1) => Self::mul_field_by_signed_limbs(val, &s1.magnitude.0[..1], s1.is_positive),
+            BzValue::S128(s2) => Self::mul_field_by_signed_limbs(val, &s2.magnitude.0[..2], s2.is_positive),
+            BzValue::S192(s3) => Self::mul_field_by_signed_limbs(val, &s3.magnitude.0[..3], s3.is_positive),
         }
     }
     /// Compute the unbound coefficients for the Az and Bz polynomials (no Cz coefficients are
@@ -380,9 +419,13 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                         }
                     }
 
-                    // finalize. subtract pos_acc from neg_acc, then convert to field elements
-                    // placeholder for now
-                    let tA_sum_for_current_x_out = [F::zero(); NUM_NONTRIVIAL_TERNARY_POINTS];
+                    // finalize: reduce unreduced accumulators and combine pos/neg into field
+                    let mut tA_sum_for_current_x_out = [F::zero(); NUM_NONTRIVIAL_TERNARY_POINTS];
+                    for i in 0..NUM_NONTRIVIAL_TERNARY_POINTS {
+                        let pos_f = reduce_unreduced_to_field::<F>(&tA_pos_acc_for_current_x_out[i]);
+                        let neg_f = reduce_unreduced_to_field::<F>(&tA_neg_acc_for_current_x_out[i]);
+                        tA_sum_for_current_x_out[i] = pos_f - neg_f;
+                    }
 
                     // Distribute accumulated tA for this x_out into the SVO accumulators
                     // (both zero and infty evaluations) using precomputed E_out tables.
@@ -508,36 +551,27 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
         // These are needed to derive x_out_val_stream and x_in_val_stream from a block_id
         let num_streaming_x_in_vars = eq_poly.E_in_current_len().log_2();
 
-        // Take ownership
+        // Take ownership of shards and merge per pair
         let az_shards_to_process = std::mem::take(&mut self.az_unbound_coeffs_shards);
         let bz_shards_to_process = std::mem::take(&mut self.bz_unbound_coeffs_shards);
 
-        // placeholder for now. will need to modify streaming logic to have two iterators
-        // going through az_shards_to_process and bz_shards_to_process in parallel
-        let shards_to_process : Vec<Vec<SparseCoefficient<F>>> = vec![];
-
-        let collected_chunk_outputs: Vec<StreamingTaskOutput<F>> = shards_to_process.into_par_iter() // Use the taken vec
-            .into_par_iter() // Consumes and gives ownership to closures
-            .map(|shard_data: Vec<SparseCoefficient<F>>| { // shard_data is now owned Vec
-                // Estimate the number of bound coefficients to preallocate
-                // TODO: have a precise estimate. This is a (somewhat conservative) guess based on real workload (i.e. SHA-2 chain)
-                // Quick math: the shard data has Az + Bz unbound coeffs. Worst case is that each such coeff
-                // is in its own `Y_SVO_SPACE_SIZE`-sized block, thus giving a 1-1 correspondence between
-                // unbound and bound coeffs for Az and Bz. We also need to account for the same number of Cz coeffs.
-                // So the most conservative estimate is `3 * shard_data.len() / 2`, but in practice we see fewer bound coeffs.
-                let estimated_num_bound_coeffs = shard_data.len();
+        let collected_chunk_outputs: Vec<StreamingTaskOutput<F>> = az_shards_to_process
+            .into_par_iter()
+            .zip_eq(bz_shards_to_process.into_par_iter())
+            .map(|(az_shard_data, bz_shard_data)| {
+                let estimated_num_bound_coeffs = az_shard_data.len() + bz_shard_data.len();
                 let mut task_bound_coeffs = Vec::with_capacity(estimated_num_bound_coeffs);
                 let mut task_sum_contrib_0 = F::zero();
                 let mut task_sum_contrib_infty = F::zero();
 
-                for logical_block_coeffs in shard_data.chunk_by(|c1, c2| { // Use owned shard_data directly
-                    c1.index / Y_SVO_RELATED_COEFF_BLOCK_SIZE == c2.index / Y_SVO_RELATED_COEFF_BLOCK_SIZE
-                }) {
-                    if logical_block_coeffs.is_empty() {
-                        continue;
-                    }
+                let mut az_iter = az_shard_data.iter().peekable();
+                let mut bz_iter = bz_shard_data.iter().peekable();
 
-                    let current_block_id = logical_block_coeffs[0].index / Y_SVO_RELATED_COEFF_BLOCK_SIZE;
+                while az_iter.peek().is_some() || bz_iter.peek().is_some() {
+                    let next_az_index = az_iter.peek().map_or(usize::MAX, |c| c.index);
+                    let next_bz_index = bz_iter.peek().map_or(usize::MAX, |c| c.index);
+                    let current_block_id = core::cmp::min(next_az_index, next_bz_index)
+                        / Y_SVO_RELATED_COEFF_BLOCK_SIZE;
 
                     let x_out_val_stream = current_block_id >> num_streaming_x_in_vars;
                     let x_in_val_stream = current_block_id & ((1 << num_streaming_x_in_vars) - 1);
@@ -550,6 +584,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                     } else { // E_in_current_len() == 0, meaning no x_in variables for eq_poly
                         F::one() // Effective contribution of E_in is 1
                     };
+                    let e_block = e_out_val * e_in_val;
 
                     let mut az0_at_r = F::zero();
                     let mut az1_at_r = F::zero();
@@ -558,66 +593,71 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                     let mut cz0_at_r = F::zero();
                     let mut cz1_at_r = F::zero();
 
-                    let mut coeff_idx_in_block = 0;
-                    while coeff_idx_in_block < logical_block_coeffs.len() {
-                        let current_coeff = &logical_block_coeffs[coeff_idx_in_block];
-                        let local_offset =
-                            current_coeff.index % Y_SVO_RELATED_COEFF_BLOCK_SIZE;
-                        let current_is_B = (local_offset % 2) == 1;
-                        let y_val_idx = (local_offset / 2) % Y_SVO_SPACE_SIZE;
-                        let x_next_val = (local_offset / 2) / Y_SVO_SPACE_SIZE; // 0 or 1
-                        let eq_r_y = eq_r_evals[y_val_idx];
+                    loop {
+                        let az_in_block = az_iter.peek().is_some_and(|c| {
+                            c.index / Y_SVO_RELATED_COEFF_BLOCK_SIZE == current_block_id
+                        });
+                        let bz_in_block = bz_iter.peek().is_some_and(|c| {
+                            c.index / Y_SVO_RELATED_COEFF_BLOCK_SIZE == current_block_id
+                        });
 
-                        if current_is_B { // Current coefficient is Bz
-                            let bz_orig_val = current_coeff.value;
+                        if !az_in_block && !bz_in_block {
+                            break;
+                        }
+
+                        let next_az_index = az_iter.peek().map_or(usize::MAX, |c| c.index);
+                        let next_bz_index = bz_iter.peek().map_or(usize::MAX, |c| c.index);
+
+                        if az_in_block && next_az_index <= next_bz_index {
+                            let az_coeff = az_iter.next().unwrap();
+                            let az_orig_val = az_coeff.value;
+                            let mut paired_bz_opt: Option<BzValue> = None;
+
+                            let local_offset = az_coeff.index % Y_SVO_RELATED_COEFF_BLOCK_SIZE;
+                            let y_val_idx = (local_offset / 2) % Y_SVO_SPACE_SIZE;
+                            let x_next_val = (local_offset / 2) / Y_SVO_SPACE_SIZE; // 0 or 1
+                            let eq_r_y = eq_r_evals[y_val_idx];
+
+                            let az_contrib = Self::mul_field_by_az(eq_r_y, az_orig_val);
                             match x_next_val {
-                                0 => bz0_at_r += eq_r_y.mul_1_optimized(bz_orig_val),
-                                1 => bz1_at_r += eq_r_y.mul_1_optimized(bz_orig_val),
+                                0 => az0_at_r += az_contrib,
+                                1 => az1_at_r += az_contrib,
                                 _ => unreachable!(),
                             }
-                            coeff_idx_in_block += 1;
-                        } else { // Current coefficient is Az
-                            let az_orig_val = current_coeff.value;
-                            let mut bz_orig_for_this_az = F::zero();
 
-                            match x_next_val {
-                                0 => az0_at_r += eq_r_y.mul_1_optimized(az_orig_val),
-                                1 => az1_at_r += eq_r_y.mul_1_optimized(az_orig_val),
-                                _ => unreachable!(),
-                            }
-
-                            if coeff_idx_in_block + 1 < logical_block_coeffs.len() {
-                                let next_coeff = &logical_block_coeffs[coeff_idx_in_block + 1];
-                                if next_coeff.index == current_coeff.index + 1 {
-                                    bz_orig_for_this_az = next_coeff.value;
-                                    let next_local_offset = next_coeff.index % Y_SVO_RELATED_COEFF_BLOCK_SIZE;
-                                    let next_x_next_val = (next_local_offset / 2) / Y_SVO_SPACE_SIZE;
-                                    debug_assert_eq!(x_next_val, next_x_next_val,
-                                        "Paired Az/Bz should share x_next_val. Current idx {}, next idx {}, current x_next {}, next x_next {}",
-                                        current_coeff.index,
-                                        next_coeff.index,
-                                        x_next_val,
-                                        next_x_next_val,
-                                    );
-
-                                    match x_next_val { // x_next_val of the current Az
-                                        0 => bz0_at_r += eq_r_y.mul_1_optimized(bz_orig_for_this_az),
-                                        1 => bz1_at_r += eq_r_y.mul_1_optimized(bz_orig_for_this_az),
+                            if let Some(bz_peek) = bz_iter.peek() {
+                                if bz_peek.index == az_coeff.index + 1 {
+                                    let bz_coeff = bz_iter.next().unwrap();
+                                    paired_bz_opt = Some(bz_coeff.value);
+                                    let bz_contrib = Self::mul_field_by_bz(eq_r_y, bz_coeff.value);
+                                    match x_next_val {
+                                        0 => bz0_at_r += bz_contrib,
+                                        1 => bz1_at_r += bz_contrib,
                                         _ => unreachable!(),
                                     }
-                                    coeff_idx_in_block += 1; // Consumed the Bz coefficient as well
                                 }
                             }
-                            coeff_idx_in_block += 1; // Consumed the Az coefficient
 
-                            if !az_orig_val.is_zero() && !bz_orig_for_this_az.is_zero() {
-                                let cz_orig_val =
-                                    az_orig_val * bz_orig_for_this_az;
-                                match x_next_val { // x_next_val of the current Az
-                                    0 => cz0_at_r += eq_r_y * cz_orig_val,
-                                    1 => cz1_at_r += eq_r_y *cz_orig_val,
+                            if let Some(bz_for_az) = paired_bz_opt {
+                                let cz_term = eq_r_y * (Self::az_to_field_local(az_orig_val) * Self::bz_to_field_local(bz_for_az));
+                                match x_next_val {
+                                    0 => cz0_at_r += cz_term,
+                                    1 => cz1_at_r += cz_term,
                                     _ => unreachable!(),
                                 }
+                            }
+                        } else if bz_in_block {
+                            let bz_coeff = bz_iter.next().unwrap();
+                            let local_offset = bz_coeff.index % Y_SVO_RELATED_COEFF_BLOCK_SIZE;
+                            let y_val_idx = (local_offset / 2) % Y_SVO_SPACE_SIZE;
+                            let x_next_val = (local_offset / 2) / Y_SVO_SPACE_SIZE; // 0 or 1
+                            let eq_r_y = eq_r_evals[y_val_idx];
+
+                            let bz_contrib = Self::mul_field_by_bz(eq_r_y, bz_coeff.value);
+                            match x_next_val {
+                                0 => bz0_at_r += bz_contrib,
+                                1 => bz1_at_r += bz_contrib,
+                                _ => unreachable!(),
                             }
                         }
                     }
@@ -646,8 +686,8 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                     let bz_eval_infty = bz1_at_r - bz0_at_r;
                     let p_slope_term = az_eval_infty * bz_eval_infty;
 
-                    task_sum_contrib_0 += e_out_val * e_in_val * p_at_xk0;
-                    task_sum_contrib_infty += e_out_val * e_in_val * p_slope_term;
+                    task_sum_contrib_0 += e_block * p_at_xk0;
+                    task_sum_contrib_infty += e_block * p_slope_term;
                 }
 
                 StreamingTaskOutput {

@@ -15,7 +15,10 @@ pub mod svo_helpers {
     use crate::poly::unipoly::CompressedUniPoly;
     use crate::subprotocols::sumcheck::process_eq_sumcheck_round;
     use crate::transcripts::Transcript;
-    use crate::zkvm::r1cs::types::{AzValue, BzValue, UnreducedProduct};
+    use crate::zkvm::r1cs::types::{
+        AzExtendedEval, AzValue, BzExtendedEval, BzValue, UnreducedProduct, fmadd_unreduced,
+        mul_az_bz,
+    };
 
     // SVOEvalPoint enum definition
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -245,14 +248,159 @@ pub mod svo_helpers {
         v_config.contains(&2)
     }
 
-    pub fn compute_and_update_tA_inplace_small_value<const NUM_SVO_ROUNDS: usize, F: JoltField>(
+    pub fn compute_and_update_tA_inplace_small_value<
+        const NUM_SVO_ROUNDS: usize,
+        F: JoltField,
+    >(
         binary_az_evals: &[AzValue],
         binary_bz_evals: &[BzValue],
         e_in_val: &F,
         tA_pos_acc: &mut [UnreducedProduct],
         tA_neg_acc: &mut [UnreducedProduct],
     ) {
-        unimplemented!()
+        if NUM_SVO_ROUNDS == 0 {
+            debug_assert!(binary_az_evals.is_empty());
+            debug_assert!(binary_bz_evals.is_empty());
+            debug_assert!(tA_pos_acc.is_empty());
+            debug_assert!(tA_neg_acc.is_empty());
+            return;
+        }
+
+        let num_binary_points = 1usize << NUM_SVO_ROUNDS;
+        debug_assert_eq!(binary_az_evals.len(), num_binary_points);
+        debug_assert_eq!(binary_bz_evals.len(), num_binary_points);
+        debug_assert_eq!(tA_pos_acc.len(), num_non_binary_points(NUM_SVO_ROUNDS));
+        debug_assert_eq!(tA_neg_acc.len(), num_non_binary_points(NUM_SVO_ROUNDS));
+
+        // Build ternary point info table at runtime to avoid const generic arithmetic limits
+        let num_ternary_points = pow(3, NUM_SVO_ROUNDS);
+        let mut ternary_point_info_table: Vec<TernaryPointInfo<NUM_SVO_ROUNDS>> =
+            vec![TernaryPointInfo::default_val(); num_ternary_points];
+        for k in 0..num_ternary_points {
+            let digits = get_msb_ternary_digits::<NUM_SVO_ROUNDS>(k);
+            let mut is_binary_point = true;
+            let mut first_inf_dim_msb_idx: Option<usize> = None;
+            let mut d = 0;
+            while d < NUM_SVO_ROUNDS {
+                if digits[d] == 2 { // Infinity
+                    is_binary_point = false;
+                    first_inf_dim_msb_idx = Some(d);
+                    break;
+                }
+                d += 1;
+            }
+            if is_binary_point {
+                let mut binary_idx = 0;
+                let mut dim = 0;
+                while dim < NUM_SVO_ROUNDS {
+                    binary_idx <<= 1;
+                    if digits[dim] == 1 { binary_idx |= 1; }
+                    dim += 1;
+                }
+                ternary_point_info_table[k] = TernaryPointInfo {
+                    is_binary: true,
+                    binary_eval_idx: binary_idx,
+                    k_val_at_one: 0,
+                    k_val_at_zero: 0,
+                };
+            } else {
+                let j = first_inf_dim_msb_idx.unwrap();
+                let power = pow(3, NUM_SVO_ROUNDS - 1 - j);
+                ternary_point_info_table[k] = TernaryPointInfo {
+                    is_binary: false,
+                    binary_eval_idx: 0,
+                    k_val_at_one: k - power,
+                    k_val_at_zero: k - 2 * power,
+                };
+            }
+        }
+
+        // Memoization tables for extended evaluations (size 3^N)
+        let mut memo_az: Vec<Option<AzExtendedEval>> = vec![None; num_ternary_points];
+        let mut memo_bz: Vec<Option<BzExtendedEval>> = vec![None; num_ternary_points];
+
+        // Recursively compute Az extended eval at ternary index k
+        fn get_az_ext<const N: usize>(
+            k: usize,
+            bin: &[AzValue],
+            memo: &mut [Option<AzExtendedEval>],
+            info: &[TernaryPointInfo<N>],
+        ) -> AzExtendedEval {
+            if let Some(v) = memo[k] {
+                return v;
+            }
+            let out = if info[k].is_binary {
+                let idx = info[k].binary_eval_idx;
+                match bin[idx] {
+                    AzValue::I8(v) => AzExtendedEval::I8(v),
+                    AzValue::S64(s) => AzExtendedEval::I128(s.to_i128()),
+                }
+            } else {
+                let e1 = get_az_ext::<N>(info[k].k_val_at_one, bin, memo, info);
+                let e0 = get_az_ext::<N>(info[k].k_val_at_zero, bin, memo, info);
+                e1 - e0
+            };
+            memo[k] = Some(out);
+            out
+        }
+
+        // Recursively compute Bz extended eval at ternary index k
+        fn get_bz_ext<const N: usize>(
+            k: usize,
+            bin: &[BzValue],
+            memo: &mut [Option<BzExtendedEval>],
+            info: &[TernaryPointInfo<N>],
+        ) -> BzExtendedEval {
+            if let Some(v) = memo[k] {
+                return v;
+            }
+            let out = if info[k].is_binary {
+                let idx = info[k].binary_eval_idx;
+                match bin[idx] {
+                    BzValue::S64(s1) => BzExtendedEval::L1(s1),
+                    BzValue::S128(s2) => BzExtendedEval::L2(s2),
+                    BzValue::S192(s3) => BzExtendedEval::L3(s3),
+                }
+            } else {
+                let e1 = get_bz_ext::<N>(info[k].k_val_at_one, bin, memo, info);
+                let e0 = get_bz_ext::<N>(info[k].k_val_at_zero, bin, memo, info);
+                e1 - e0
+            };
+            memo[k] = Some(out);
+            out
+        }
+
+        // Map of non-binary points in MSB order; defines tA indexing
+        // Build list of non-binary k indices in lexicographic MSB-first order by scanning info
+        let mut non_binary_k_list: Vec<usize> = Vec::with_capacity(num_non_binary_points(NUM_SVO_ROUNDS));
+        for k in 0..num_ternary_points {
+            if !ternary_point_info_table[k].is_binary {
+                non_binary_k_list.push(k);
+            }
+        }
+
+        for (i_temp, &k) in non_binary_k_list.iter().enumerate() {
+            let az_ext = get_az_ext::<NUM_SVO_ROUNDS>(
+                k,
+                binary_az_evals,
+                &mut memo_az,
+                &ternary_point_info_table,
+            );
+
+            if az_ext.is_zero() {
+                continue;
+            }
+
+            let bz_ext = get_bz_ext::<NUM_SVO_ROUNDS>(
+                k,
+                binary_bz_evals,
+                &mut memo_bz,
+                &ternary_point_info_table,
+            );
+
+            let prod = mul_az_bz(az_ext, bz_ext);
+            fmadd_unreduced::<F>(&mut tA_pos_acc[i_temp], &mut tA_neg_acc[i_temp], e_in_val, prod);
+        }
     }
 
     pub fn compute_and_update_tA_inplace_generic<const NUM_SVO_ROUNDS: usize, F: JoltField>(

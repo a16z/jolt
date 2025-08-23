@@ -24,6 +24,7 @@ use crate::zkvm::r1cs::{constraints::UNIFORM_R1CS, inputs::WitnessRowAccessor};
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 use ark_serialize::*;
+use ark_ff::{BigInt, PrimeField};
 use rayon::prelude::*;
 use std::cell::RefCell;
 use std::marker::PhantomData;

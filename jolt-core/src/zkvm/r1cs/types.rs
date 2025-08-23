@@ -1,7 +1,6 @@
 use crate::zkvm::JoltField;
 use ark_ff::SignedBigInt;
 use ark_ff::BigInt;
-use ark_ff::BigInteger as _;
 use core::ops::{Mul, Sub};
 
 // =============================
@@ -160,8 +159,23 @@ pub fn field_mul_product<F: JoltField, const K: usize>(
 }
 
 #[allow(unused_variables)]
-pub fn reduce_unreduced_to_field<F>(x: &UnreducedProduct) -> F {
-    unimplemented!("reduce_unreduced_to_field needs field modulus and conversion")
+pub fn reduce_unreduced_to_field<F: JoltField>(x: &UnreducedProduct) -> F {
+    // Fold 8 u64 limbs into the field: sum_{i=0..7} limb[i] * (2^64)^i
+    let limbs: &[u64; 8] = &x.0;
+    let mut acc = F::zero();
+    let mut factor = F::one();
+    let mut i = 0;
+    while i < 8 {
+        let limb = limbs[i];
+        if limb != 0 {
+            acc += factor.mul_u64(limb);
+        }
+        if i < 7 {
+            factor = factor.mul_pow_2(64);
+        }
+        i += 1;
+    }
+    acc
 }
 
 impl Mul<BzExtendedEval> for AzExtendedEval {
@@ -176,47 +190,28 @@ impl Mul<BzExtendedEval> for AzExtendedEval {
 /// - Multiplies `field` (as BigInt<4>) by the magnitude of `product` (1..=4 limbs),
 ///   truncated into 8 limbs.
 /// - Accumulates into `pos_acc` if the product is non-negative, otherwise into `neg_acc`.
-pub fn fmadd_unreduced<F: JoltField + ark_ff::PrimeField<BigInt = BigInt<4>>>(
+pub fn fmadd_unreduced<F: JoltField>(
     pos_acc: &mut UnreducedProduct,
     neg_acc: &mut UnreducedProduct,
     field: &F,
     product: SVOProductValue,
 ) {
-    let field_bi: BigInt<4> = field.into_bigint();
-
     match product {
         SVOProductValue::L1(v) => {
-            // Use fused multiply-accumulate primitive for 1-limb multiplier
-            if v.is_positive {
-                field_bi.fmu64a_into_nplus4::<8>(v.magnitude.0[0], pos_acc);
-            } else {
-                field_bi.fmu64a_into_nplus4::<8>(v.magnitude.0[0], neg_acc);
-            }
+            let limbs = &v.magnitude.0[..1];
+            field.fmadd_small_into_unreduced(limbs, v.is_positive, pos_acc, neg_acc);
         }
         SVOProductValue::L2(v) => {
-            // Use fused multiply-accumulate primitive for 2-limb multiplier
-            if v.is_positive {
-                field_bi.fm2x64a_into_nplus4::<8>(v.magnitude.0, pos_acc);
-            } else {
-                field_bi.fm2x64a_into_nplus4::<8>(v.magnitude.0, neg_acc);
-            }
+            let limbs = &v.magnitude.0[..2];
+            field.fmadd_small_into_unreduced(limbs, v.is_positive, pos_acc, neg_acc);
         }
         SVOProductValue::L3(v) => {
-            // Use fused multiply-accumulate primitive for 3-limb multiplier
-            if v.is_positive {
-                field_bi.fm3x64a_into_nplus4::<8>(v.magnitude.0, pos_acc);
-            } else {
-                field_bi.fm3x64a_into_nplus4::<8>(v.magnitude.0, neg_acc);
-            }
+            let limbs = &v.magnitude.0[..3];
+            field.fmadd_small_into_unreduced(limbs, v.is_positive, pos_acc, neg_acc);
         }
         SVOProductValue::L4(v) => {
-            // Fallback: general multiply then add (no fused primitive for 4-limb multiplier)
-            let prod: BigInt<8> = field_bi.mul_trunc::<4, 8>(&v.magnitude);
-            if v.is_positive {
-                let _ = pos_acc.add_with_carry(&prod);
-            } else {
-                let _ = neg_acc.add_with_carry(&prod);
-            }
+            let limbs = &v.magnitude.0[..4];
+            field.fmadd_small_into_unreduced(limbs, v.is_positive, pos_acc, neg_acc);
         }
     }
 }

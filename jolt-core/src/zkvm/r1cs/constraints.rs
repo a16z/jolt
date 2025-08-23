@@ -940,6 +940,8 @@ pub fn eval_bz_by_name<F: JoltField>(
 mod tests {
     use super::*;
     use std::collections::HashSet;
+    use ark_ff::{SignedBigInt, BigInt};
+    use crate::zkvm::r1cs::types::BzValue;
 
     #[test]
     fn constraint_names_bijection() {
@@ -1115,6 +1117,43 @@ mod tests {
                 assert_eq!(
                     gen_s, named_s,
                     "Az mismatch for {:?} at row {}: generic={:?}, named={:?}",
+                    c.name, row, gen, named
+                );
+            }
+        }
+    }
+
+    /// Normalize BzValue to L3 (SignedBigInt<3>) for equality up to widening.
+    fn bz_to_l3(v: BzValue) -> SignedBigInt<3> {
+        match v {
+            BzValue::S64(s) => {
+                let mut mag = BigInt::<3>::zero();
+                mag.0[0] = s.magnitude.0[0];
+                SignedBigInt::from_bigint(mag, s.is_positive)
+            }
+            BzValue::S128(s) => {
+                let mut mag = BigInt::<3>::zero();
+                mag.0[0] = s.magnitude.0[0];
+                mag.0[1] = s.magnitude.0[1];
+                SignedBigInt::from_bigint(mag, s.is_positive)
+            }
+            BzValue::S192(s) => s,
+        }
+    }
+
+    #[test]
+    fn bz_named_matches_generic_b_up_to_widening() {
+        let acc = build_test_accessor(3);
+        let acc_ref: &dyn WitnessRowAccessor<crate::field::tracked_ark::TrackedFr> = &acc;
+        for c in UNIFORM_R1CS.iter() {
+            for row in 0..acc.num_steps() {
+                let gen = crate::zkvm::r1cs::inputs::eval_bz_typed_generic::<crate::field::tracked_ark::TrackedFr>(&c.cons.b, acc_ref, row);
+                let named = eval_bz_by_name::<crate::field::tracked_ark::TrackedFr>(c, acc_ref, row);
+                let gen_l3 = bz_to_l3(gen);
+                let named_l3 = bz_to_l3(named);
+                assert_eq!(
+                    gen_l3, named_l3,
+                    "Bz mismatch for {:?} at row {}: generic={:?}, named={:?}",
                     c.name, row, gen, named
                 );
             }

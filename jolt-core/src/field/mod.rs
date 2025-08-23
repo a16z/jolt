@@ -99,6 +99,18 @@ pub trait JoltField:
         }
         res.mul_u64(1 << pow)
     }
+
+    /// Fused multiply-add into an unreduced 512-bit accumulator with a small integer (1..=4 limbs).
+    /// Accumulates into `pos` if `is_positive`, otherwise into `neg`.
+    fn fmadd_small_into_unreduced(
+        &self,
+        _small_limbs: &[u64],
+        _is_positive: bool,
+        _pos: &mut ark_ff::BigInt<8>,
+        _neg: &mut ark_ff::BigInt<8>,
+    ) {
+        unimplemented!("fmadd_small_into_unreduced not implemented for this field");
+    }
 }
 
 #[cfg(feature = "allocative")]
