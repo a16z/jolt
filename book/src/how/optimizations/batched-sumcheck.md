@@ -13,3 +13,9 @@ If we instead prove them in parallel (i.e. as a batched sumcheck), we would inst
 For details, refer to Jim Posen's ["Perspectives on Sumcheck batching"](https://hackmd.io/s/HyxaupAAA).
 
 Our implementation of batched sumcheck is uses the `SumcheckInstance` trait to represent individual instances, and the `BatchedSumcheck` enum to house the batch `prove`/`verify` functions.
+
+## "Bespoke" batching
+
+🚧 These docs are under construction 🚧
+
+👷If you are urgently interested in this specific page, open a Github issue and we'll try to expedite it.👷
