@@ -4,7 +4,7 @@ Jolt proves the correctness of RAM operations using the [Twist](../twist-shout.m
 
 ## Dynamic parameters
 
-In Twist, the parameter $K$ determines the size of the memory. For RAM, unlike registers, $K$ is dynamic and depends on the memory usage of the guest program.
+In Twist, the parameter $K$ determines the size of the memory. For RAM, unlike registers, $K$ is not known a priori and depends on the memory usage of the guest program.
 Consequently, the parameter $d$, dictating how the memory address space is partitioned into chunks, must also be dynamically tuned.
 This ensures that no committed polynomial exceeds a maximum size defined by $T \times K^{1/d}$.
 
