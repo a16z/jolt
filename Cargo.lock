@@ -155,7 +155,7 @@ dependencies = [
 [[package]]
 name = "ark-ec"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#1756d8b5f32e03f889ea26a87f2e49c88ac09b34"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#433529b5ddeb93f0fda36d8d2094d3ef51e8aa2e"
 dependencies = [
  "ahash",
  "ark-ff",
@@ -176,7 +176,7 @@ dependencies = [
 [[package]]
 name = "ark-ff"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#1756d8b5f32e03f889ea26a87f2e49c88ac09b34"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#433529b5ddeb93f0fda36d8d2094d3ef51e8aa2e"
 dependencies = [
  "allocative",
  "ark-ff-asm",
@@ -197,7 +197,7 @@ dependencies = [
 [[package]]
 name = "ark-ff-asm"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#1756d8b5f32e03f889ea26a87f2e49c88ac09b34"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#433529b5ddeb93f0fda36d8d2094d3ef51e8aa2e"
 dependencies = [
  "quote",
  "syn 2.0.106",
@@ -206,7 +206,7 @@ dependencies = [
 [[package]]
 name = "ark-ff-macros"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#1756d8b5f32e03f889ea26a87f2e49c88ac09b34"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#433529b5ddeb93f0fda36d8d2094d3ef51e8aa2e"
 dependencies = [
  "num-bigint",
  "num-traits",
@@ -218,7 +218,7 @@ dependencies = [
 [[package]]
 name = "ark-poly"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#1756d8b5f32e03f889ea26a87f2e49c88ac09b34"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#433529b5ddeb93f0fda36d8d2094d3ef51e8aa2e"
 dependencies = [
  "ahash",
  "ark-ff",
@@ -232,7 +232,7 @@ dependencies = [
 [[package]]
 name = "ark-serialize"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#1756d8b5f32e03f889ea26a87f2e49c88ac09b34"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#433529b5ddeb93f0fda36d8d2094d3ef51e8aa2e"
 dependencies = [
  "ark-serialize-derive 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions)",
  "ark-std",
@@ -256,7 +256,7 @@ dependencies = [
 [[package]]
 name = "ark-serialize-derive"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#1756d8b5f32e03f889ea26a87f2e49c88ac09b34"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#433529b5ddeb93f0fda36d8d2094d3ef51e8aa2e"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1682,7 +1682,7 @@ dependencies = [
 [[package]]
 name = "jolt-optimizations"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#1756d8b5f32e03f889ea26a87f2e49c88ac09b34"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#433529b5ddeb93f0fda36d8d2094d3ef51e8aa2e"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -4101,4 +4101,4 @@ dependencies = [
 [[patch.unused]]
 name = "ark-bn254"
 version = "0.5.0-alpha.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#1756d8b5f32e03f889ea26a87f2e49c88ac09b34"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#433529b5ddeb93f0fda36d8d2094d3ef51e8aa2e"

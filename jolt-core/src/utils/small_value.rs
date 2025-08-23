@@ -15,6 +15,7 @@ pub mod svo_helpers {
     use crate::poly::unipoly::CompressedUniPoly;
     use crate::subprotocols::sumcheck::process_eq_sumcheck_round;
     use crate::transcripts::Transcript;
+    use crate::zkvm::r1cs::types::{AzValue, BzValue, UnreducedProduct};
 
     // SVOEvalPoint enum definition
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -242,6 +243,16 @@ pub mod svo_helpers {
     #[inline]
     fn is_v_config_non_binary(v_config: &[usize]) -> bool {
         v_config.contains(&2)
+    }
+
+    pub fn compute_and_update_tA_inplace_small_value<const NUM_SVO_ROUNDS: usize, F: JoltField>(
+        binary_az_evals: &[AzValue],
+        binary_bz_evals: &[BzValue],
+        e_in_val: &F,
+        tA_pos_acc: &mut [UnreducedProduct],
+        tA_neg_acc: &mut [UnreducedProduct],
+    ) {
+        unimplemented!()
     }
 
     pub fn compute_and_update_tA_inplace_generic<const NUM_SVO_ROUNDS: usize, F: JoltField>(

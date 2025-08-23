@@ -16,7 +16,7 @@ use crate::zkvm::JoltProverPreprocessing;
 use super::constraints::NamedConstraint;
 use super::key::UniformSpartanKey;
 use super::spartan::UniformSpartanProof;
-use super::types::{AzExtendedEval, AzValue, BzExtendedEval, BzValue, CzValue};
+use super::types::{AzExtendedEval, AzValue, BzExtendedEval, BzValue};
 use crate::utils::small_scalar::SmallScalar;
 use ark_ff::SignedBigInt;
 use ark_ff::biginteger::signed::add_with_sign_u64;
@@ -461,8 +461,10 @@ pub fn compute_claimed_witness_evals<F: JoltField>(
 // Streaming typed evaluation helpers (SVO types) co-located with witness accessor
 // =====================================================================================
 
+/// Generic evaluator: evaluates an LC over witness row into an AzValue.
+/// Uses small signed fast-path and falls back to sign/magnitude accumulation.
 #[inline]
-pub fn eval_az_typed<F: JoltField>(
+pub fn eval_az_typed_generic<F: JoltField>(
     a_lc: &crate::zkvm::r1cs::ops::LC,
     accessor: &dyn WitnessRowAccessor<F>,
     row: usize,
@@ -520,22 +522,42 @@ pub fn eval_az_typed<F: JoltField>(
     AzValue::S64(SignedBigInt::from_u64_with_sign(mag, sign))
 }
 
+/// Generic evaluator: evaluates an LC over witness row into a BzValue.
+/// Always accumulates into 192-bit signed magnitude (SignedBigInt<3>).
+#[inline]
+pub fn eval_bz_typed_generic<F: JoltField>(
+    b_lc: &crate::zkvm::r1cs::ops::LC,
+    accessor: &dyn WitnessRowAccessor<F>,
+    row: usize,
+) -> BzValue {
+    let mut acc = SignedBigInt::<3>::zero();
+    b_lc.for_each_term(|input_index, coeff| {
+        let sc = accessor.value_at(input_index, row);
+        let v_i128 = sc.as_i128();
+        let v = SignedBigInt::<3>::from_i128(v_i128);
+        let c = SignedBigInt::<3>::from_i128(coeff);
+        let term = v.mul(c);
+        acc = acc.add(term);
+    });
+    if let Some(cst) = b_lc.const_term() {
+        let c = SignedBigInt::<3>::from_i128(cst);
+        acc = acc.add(c);
+    }
+    BzValue::S192(acc)
+}
+
 #[allow(unused_variables)]
-pub fn lc_eval_row_to_typed<F: JoltField>(
+pub fn lc_az_bz_eval_row_to_typed<F: JoltField>(
     named: &NamedConstraint,
     accessor: &dyn WitnessRowAccessor<F>,
     row: usize,
-) -> (AzValue, BzValue, CzValue) {
+) -> (AzValue, BzValue) {
     let a = &named.cons.a;
     let b = &named.cons.b;
-    let c = &named.cons.c;
 
-    let az_typed = eval_az_typed(a, accessor, row);
-
-    // TODO: implement Bz & Cz typed subsequently; CzKind will inform skip rules elsewhere
-    let bz_typed = BzValue::U64(0);
-    let cz_typed = CzValue::Zero;
-    (az_typed, bz_typed, cz_typed)
+    let az_typed = eval_az_typed_generic(a, accessor, row);
+    let bz_typed = eval_bz_typed_generic(b, accessor, row);
+    (az_typed, bz_typed)
 }
 
 #[allow(unused_variables)]
