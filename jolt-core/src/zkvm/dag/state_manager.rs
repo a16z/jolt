@@ -9,8 +9,8 @@ use crate::poly::opening_proof::{
     VerifierOpeningAccumulator, BIG_ENDIAN,
 };
 use crate::subprotocols::sumcheck::SumcheckInstanceProof;
+use crate::transcripts::Transcript;
 use crate::utils::math::Math;
-use crate::utils::transcript::Transcript;
 use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 use crate::zkvm::{JoltProverPreprocessing, JoltVerifierPreprocessing};
 use num_derive::FromPrimitive;
@@ -71,8 +71,11 @@ pub struct StateManager<
     pub verifier_state: Option<VerifierState<'a, F, PCS>>,
 }
 
-impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>
-    StateManager<'a, F, ProofTranscript, PCS>
+impl<'a, F, ProofTranscript, PCS> StateManager<'a, F, ProofTranscript, PCS>
+where
+    F: JoltField,
+    ProofTranscript: Transcript,
+    PCS: CommitmentScheme<Field = F>,
 {
     pub fn new_prover(
         preprocessing: &'a JoltProverPreprocessing<F, PCS>,

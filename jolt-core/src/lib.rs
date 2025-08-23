@@ -15,8 +15,10 @@ pub mod benches;
 pub mod host;
 
 pub mod field;
+pub mod guest;
 pub mod msm;
 pub mod poly;
 pub mod subprotocols;
+pub mod transcripts;
 pub mod utils;
 pub mod zkvm;

@@ -14,15 +14,20 @@ use crate::{
         },
     },
     subprotocols::sumcheck::SumcheckInstance,
-    utils::{math::Math, thread::unsafe_allocate_zero_vec, transcript::Transcript},
-    zkvm::dag::state_manager::StateManager,
+    transcripts::Transcript,
+    utils::{math::Math, thread::unsafe_allocate_zero_vec},
     zkvm::{
+        dag::state_manager::StateManager,
         ram::remap_address,
         witness::{CommittedPolynomial, VirtualPolynomial},
     },
 };
+use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::FlameGraphBuilder;
 use rayon::prelude::*;
 
+#[derive(Allocative)]
 pub struct ValEvaluationProverState<F: JoltField> {
     inc: MultilinearPolynomial<F>,
     wa: MultilinearPolynomial<F>,
@@ -30,6 +35,7 @@ pub struct ValEvaluationProverState<F: JoltField> {
 }
 
 /// Val-evaluation sumcheck for RAM
+#[derive(Allocative)]
 pub struct ValEvaluationSumcheck<F: JoltField> {
     /// Initial claim value
     claimed_evaluation: F,
@@ -297,5 +303,10 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
             SumcheckId::RamValEvaluation,
             r_cycle_prime.r,
         );
+    }
+
+    #[cfg(feature = "allocative")]
+    fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
+        flamegraph.visit_root(self);
     }
 }

@@ -5,13 +5,14 @@ use super::{
 use crate::subprotocols::sumcheck::process_eq_sumcheck_round;
 use crate::{
     field::{JoltField, OptimizedMul, OptimizedMulI128},
+    transcripts::Transcript,
     utils::{
         math::Math,
         small_value::{svo_helpers, NUM_SVO_ROUNDS},
-        transcript::Transcript,
     },
     zkvm::r1cs::builder::Constraint,
 };
+use allocative::Allocative;
 use ark_ff::Zero;
 use rayon::prelude::*;
 
@@ -34,6 +35,10 @@ pub struct SparseCoefficient<T> {
     pub(crate) value: T,
 }
 
+impl<T> Allocative for SparseCoefficient<T> {
+    fn visit<'a, 'b: 'a>(&self, _visitor: &'a mut allocative::Visitor<'b>) {}
+}
+
 impl<T> From<(usize, T)> for SparseCoefficient<T> {
     fn from(x: (usize, T)) -> Self {
         Self {
@@ -43,7 +48,7 @@ impl<T> From<(usize, T)> for SparseCoefficient<T> {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Allocative)]
 pub struct SpartanInterleavedPolynomial<const NUM_SVO_ROUNDS: usize, F: JoltField> {
     /// A list of sparse vectors representing the (interleaved) coefficients for the Az, Bz polynomials
     /// Generated from binary evaluations. Each inner Vec is sorted by index.

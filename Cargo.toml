@@ -26,9 +26,9 @@ members = [
     "jolt-inlines/sha2",
     "tracer",
     "common",
+    "jolt-platform",
     "jolt-sdk",
     "jolt-sdk/macros",
-    "jolt-verifier",
     "examples/btreemap/host",
     "examples/btreemap/guest",
     "examples/collatz",
@@ -55,6 +55,10 @@ members = [
     "examples/overflow/guest",
     "examples/memory-ops",
     "examples/memory-ops/guest",
+    "examples/verifier",
+    "examples/verifier/guest",
+    "examples/recursion",
+    "examples/recursion/guest",
 ]
 
 [features]
@@ -109,4 +113,4 @@ ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/tw
 ignored = ["jolt-sdk"]
 
 [workspace.dependencies]
-spinners = { version= "4.1.1", default-features = false }
+spinners = { version = "4.1.1", default-features = false }

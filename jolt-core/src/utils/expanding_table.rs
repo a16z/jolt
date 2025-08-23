@@ -1,3 +1,4 @@
+use allocative::Allocative;
 use rayon::prelude::*;
 use std::ops::Index;
 
@@ -7,7 +8,7 @@ use crate::utils::thread::unsafe_allocate_zero_vec;
 /// Table containing the evaluations `EQ(x_1, ..., x_j, r_1, ..., r_j)`,
 /// built up incrementally as we receive random challenges `r_j` over the
 /// course of sumcheck.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Allocative)]
 pub struct ExpandingTable<F: JoltField> {
     len: usize,
     values: Vec<F>,
@@ -15,6 +16,10 @@ pub struct ExpandingTable<F: JoltField> {
 }
 
 impl<F: JoltField> ExpandingTable<F> {
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
     /// Initializes an `ExpandingTable` with the given `capacity`.
     #[tracing::instrument(skip_all, name = "ExpandingTable::new")]
     pub fn new(capacity: usize) -> Self {
@@ -56,7 +61,7 @@ impl<F: JoltField> Index<usize> for ExpandingTable<F> {
     type Output = F;
 
     fn index(&self, index: usize) -> &F {
-        assert!(index < self.len);
+        assert!(index < self.len, "index: {}, len: {}", index, self.len);
         &self.values[index]
     }
 }
