@@ -226,8 +226,9 @@ fn remove_archive() -> Result<()> {
 
 fn toolchain_url(channel: &str) -> String {
     let target = target_lexicon::HOST;
+    let tag = TOOLCHAIN_TAG.trim();
     format!(
-        "https://github.com/a16z/rust/releases/download/{channel}-{TOOLCHAIN_TAG}/rust-toolchain-{channel}-{target}.tar.gz",
+        "https://github.com/a16z/rust/releases/download/{channel}-{tag}/rust-toolchain-{channel}-{target}.tar.gz",
     )
 }
 
