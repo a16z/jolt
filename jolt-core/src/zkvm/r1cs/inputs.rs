@@ -16,7 +16,8 @@ use crate::zkvm::JoltProverPreprocessing;
 use super::constraints::NamedConstraint;
 use super::key::UniformSpartanKey;
 use super::spartan::UniformSpartanProof;
-use super::types::{AzExtendedEval, AzValue, BzExtendedEval, BzValue};
+use super::types::{AzExtendedEval, AzValue, BzExtendedEval, BzValue, ConstantValue};
+use super::ops::LC;
 use crate::utils::small_scalar::SmallScalar;
 use ark_ff::SignedBigInt;
 use ark_ff::biginteger::signed::add_with_sign_u64;
@@ -465,57 +466,72 @@ pub fn compute_claimed_witness_evals<F: JoltField>(
 /// Uses small signed fast-path and falls back to sign/magnitude accumulation.
 #[inline]
 pub fn eval_az_typed_generic<F: JoltField>(
-    a_lc: &crate::zkvm::r1cs::ops::LC,
+    a_lc: &LC,
     accessor: &dyn WitnessRowAccessor<F>,
     row: usize,
 ) -> AzValue {
-    // Try small signed fast path (i8). If overflow would occur, promote to U64AndSign aggregate.
+    // Pass 1: small i8 fast path is only valid if ALL terms are Bool/U8,
+    // all coeffs fit in i8, and no i8 overflow occurs.
     let mut acc_i8: i8 = 0;
-    let mut need_big = false;
+    let mut small_ok = true;
     a_lc.for_each_term(|input_index, coeff| {
-        let sc = accessor.value_at(input_index, row);
-        let v_i8 = sc.to_i8();
-        let coeff_i8 = if coeff > i8::MAX as i128 || coeff < i8::MIN as i128 {
-            need_big = true;
-            0
-        } else {
-            coeff as i8
+        if !small_ok { return; }
+        // Fast-path requires coeff to be I8; otherwise bail out to generic path.
+        let coeff_i8: i8 = match coeff {
+            ConstantValue::I8(v) => v,
+            ConstantValue::I128(_) => { small_ok = false; return; }
         };
-        let (res, of) = acc_i8.overflowing_add(v_i8.saturating_mul(coeff_i8));
-        acc_i8 = res;
-        if of {
-            need_big = true;
-        }
+        // Only Bool/U8 are allowed to keep the i8 path
+        let sc = accessor.value_at(input_index, row);
+        let v_i8 = match sc {
+            SmallScalar::Bool(b) => if b { 1 } else { 0 },
+            SmallScalar::U8(v) => v as i8,
+            _ => { small_ok = false; return; }
+        };
+        let (prod, of1) = v_i8.overflowing_mul(coeff_i8);
+        let (sum, of2) = acc_i8.overflowing_add(prod);
+        acc_i8 = sum;
+        if of1 || of2 { small_ok = false; }
     });
-    if let Some(cst) = a_lc.const_term() {
-        let (res, of) = acc_i8.overflowing_add(cst as i8);
-        acc_i8 = res;
-        if of {
-            need_big = true;
+    if small_ok {
+        if let Some(cst) = a_lc.const_term() {
+            // For Az constraints, constants are expected to be I8; if not, bail to generic.
+            match cst {
+                ConstantValue::I8(c8) => {
+                    let (sum, of) = acc_i8.overflowing_add(c8);
+                    acc_i8 = sum;
+                    if of { small_ok = false; }
+                }
+                ConstantValue::I128(_) => { small_ok = false; }
+            }
         }
     }
-    if !need_big {
+    if small_ok {
         return AzValue::I8(acc_i8);
     }
 
-    // Fallback: accumulate sign/magnitude in u64
+    // Pass 2: sign-aware u64 magnitude accumulation.
     let mut mag: u64 = 0;
-    let mut sign: bool = true;
+    let mut sign: bool = true; // true => positive
     a_lc.for_each_term(|input_index, coeff| {
         let sc = accessor.value_at(input_index, row);
-        let v = sc.as_u64_clamped();
-        let term_mag = v.saturating_mul(coeff.unsigned_abs() as u64);
-        let term_pos = coeff >= 0;
-        let (new_mag, new_pos) =
-            add_with_sign_u64(mag, sign, term_mag, term_pos);
+        let v_i128 = sc.as_i128();
+        let v_mag_u128 = v_i128.unsigned_abs();
+        let v_mag_u64 = if v_mag_u128 > u64::MAX as u128 { u64::MAX } else { v_mag_u128 as u64 };
+        let c_i128 = coeff.to_i128();
+        let term_mag = v_mag_u64.saturating_mul(c_i128.unsigned_abs() as u64);
+        let val_pos = v_i128 >= 0;
+        let coeff_pos = c_i128 >= 0;
+        let term_pos = val_pos == coeff_pos; // sign(product) positive if signs equal
+        let (new_mag, new_pos) = add_with_sign_u64(mag, sign, term_mag, term_pos);
         mag = new_mag;
         sign = new_pos;
     });
     if let Some(cst) = a_lc.const_term() {
-        let term_mag = (cst.unsigned_abs()) as u64;
-        let term_pos = cst >= 0;
-        let (new_mag, new_pos) =
-            add_with_sign_u64(mag, sign, term_mag, term_pos);
+        let cst_i128 = cst.to_i128();
+        let c_mag = if cst_i128.unsigned_abs() > u64::MAX as u128 { u64::MAX } else { cst_i128.unsigned_abs() as u64 };
+        let c_pos = cst_i128 >= 0;
+        let (new_mag, new_pos) = add_with_sign_u64(mag, sign, c_mag, c_pos);
         mag = new_mag;
         sign = new_pos;
     }
@@ -526,24 +542,92 @@ pub fn eval_az_typed_generic<F: JoltField>(
 /// Always accumulates into 192-bit signed magnitude (SignedBigInt<3>).
 #[inline]
 pub fn eval_bz_typed_generic<F: JoltField>(
-    b_lc: &crate::zkvm::r1cs::ops::LC,
+    b_lc: &LC,
     accessor: &dyn WitnessRowAccessor<F>,
     row: usize,
 ) -> BzValue {
-    let mut acc = SignedBigInt::<3>::zero();
+    // Try S64 fast path: accumulate using u64 magnitude with sign if all term products fit in u64
+    let mut s64_mag: u64 = 0;
+    let mut s64_pos: bool = true;
+    let mut fits_s64 = true;
+    b_lc.for_each_term(|input_index, coeff| {
+        if !fits_s64 { return; }
+        let sc = accessor.value_at(input_index, row);
+        // Extract magnitude and sign of witness with minimal conversions.
+        let (v_mag_u64, v_nonneg) = match sc {
+            SmallScalar::Bool(b) => (if b { 1u64 } else { 0u64 }, true),
+            SmallScalar::U8(v) => (v as u64, true),
+            SmallScalar::U64(v) => (v, true),
+            SmallScalar::I64(v) => (v.unsigned_abs() as u64, v >= 0),
+            SmallScalar::I128(v) => {
+                let mag = v.unsigned_abs();
+                if mag > u64::MAX as u128 { fits_s64 = false; return; }
+                (mag as u64, v >= 0)
+            }
+            SmallScalar::U128(v) => {
+                if v > u64::MAX as u128 { fits_s64 = false; return; }
+                (v as u64, true)
+            }
+        };
+        let (c_mag_u64, c_nonneg) = match coeff {
+            ConstantValue::I8(cv) => (cv.unsigned_abs() as u64, cv >= 0),
+            ConstantValue::I128(cv) => {
+                let c_mag = cv.unsigned_abs();
+                if c_mag > u64::MAX as u128 { fits_s64 = false; return; }
+                (c_mag as u64, cv >= 0)
+            }
+        };
+        let prod_mag_u128 = (v_mag_u64 as u128) * (c_mag_u64 as u128);
+        if prod_mag_u128 > u64::MAX as u128 {
+            fits_s64 = false; return;
+        }
+        let prod_mag_u64 = prod_mag_u128 as u64;
+        let term_pos = v_nonneg == c_nonneg;
+        let (new_mag, new_pos) = add_with_sign_u64(s64_mag, s64_pos, prod_mag_u64, term_pos);
+        s64_mag = new_mag;
+        s64_pos = new_pos;
+    });
+    if fits_s64 {
+        if let Some(cst) = b_lc.const_term() {
+            match cst {
+                ConstantValue::I8(cv) => {
+                    let c_mag_u64 = cv.unsigned_abs() as u64;
+                    let (new_mag, new_pos) = add_with_sign_u64(s64_mag, s64_pos, c_mag_u64, cv >= 0);
+                    s64_mag = new_mag;
+                    s64_pos = new_pos;
+                }
+                ConstantValue::I128(cv) => {
+                    let c_mag = cv.unsigned_abs();
+                    if c_mag > u64::MAX as u128 {
+                        fits_s64 = false;
+                    } else {
+                        let (new_mag, new_pos) = add_with_sign_u64(s64_mag, s64_pos, c_mag as u64, cv >= 0);
+                        s64_mag = new_mag;
+                        s64_pos = new_pos;
+                    }
+                }
+            }
+        }
+    }
+    if fits_s64 {
+        return BzValue::S64(SignedBigInt::from_u64_with_sign(s64_mag, s64_pos));
+    }
+
+    // Fallback: S128 accumulation
+    let mut acc = SignedBigInt::<2>::zero();
     b_lc.for_each_term(|input_index, coeff| {
         let sc = accessor.value_at(input_index, row);
         let v_i128 = sc.as_i128();
-        let v = SignedBigInt::<3>::from_i128(v_i128);
-        let c = SignedBigInt::<3>::from_i128(coeff);
-        let term = v.mul(c);
+        let v = SignedBigInt::<2>::from_i128(v_i128);
+        let c = SignedBigInt::<2>::from_i128(coeff.to_i128());
+        let term = v.mul_trunc::<2, 2>(&c);
         acc = acc.add(term);
     });
     if let Some(cst) = b_lc.const_term() {
-        let c = SignedBigInt::<3>::from_i128(cst);
+        let c = SignedBigInt::<2>::from_i128(cst.to_i128());
         acc = acc.add(c);
     }
-    BzValue::S192(acc)
+    BzValue::S128(acc)
 }
 
 #[allow(unused_variables)]

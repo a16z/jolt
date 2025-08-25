@@ -102,13 +102,6 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                     -F::from_u128(magnitude) 
                 }
             }
-            BzValue::S192(_signed_bigint) => {
-                unimplemented!()
-                // if signed_bigint.is_positive { 
-                //     signed_bigint.magnitude.try_into().unwrap() 
-                // } else { 
-                //     -signed_bigint.magnitude.try_into().unwrap() 
-            }
         }
     }
 
@@ -147,7 +140,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
         match bz {
             BzValue::S64(s1) => Self::mul_field_by_signed_limbs(val, &s1.magnitude.0[..1], s1.is_positive),
             BzValue::S128(s2) => Self::mul_field_by_signed_limbs(val, &s2.magnitude.0[..2], s2.is_positive),
-            BzValue::S192(s3) => Self::mul_field_by_signed_limbs(val, &s3.magnitude.0[..3], s3.is_positive),
+            // No S192 variant; S128 is the max BzValue magnitude supported
         }
     }
     /// Compute the unbound coefficients for the Az and Bz polynomials (no Cz coefficients are

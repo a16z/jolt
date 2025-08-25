@@ -79,6 +79,12 @@ pub trait JoltField:
     fn mul_u64(&self, n: u64) -> Self {
         *self * Self::from_u64(n)
     }
+    /// Does a field multiplication with a `i64`.
+    /// The result will be in Montgomery form (if BN254)
+    #[inline(always)]
+    fn mul_i64(&self, n: i64) -> Self {
+        *self * Self::from_i64(n)
+    }
     #[inline(always)]
     fn mul_i128(&self, n: i128) -> Self {
         *self * Self::from_i128(n)
@@ -86,6 +92,24 @@ pub trait JoltField:
     #[inline(always)]
     fn mul_u128(&self, n: u128) -> Self {
         *self * Self::from_u128(n)
+    }
+
+    /// Multiply by a ConstantValue, using optimized path for small constants
+    #[inline(always)]
+    fn mul_constant_value(&self, val: crate::zkvm::r1cs::types::ConstantValue) -> Self {
+        match val {
+            crate::zkvm::r1cs::types::ConstantValue::I8(v) => self.mul_i64(v as i64),
+            crate::zkvm::r1cs::types::ConstantValue::I128(v) => self.mul_i128(v),
+        }
+    }
+
+    /// Create field element from ConstantValue
+    #[inline(always)]
+    fn from_constant_value(val: crate::zkvm::r1cs::types::ConstantValue) -> Self {
+        match val {
+            crate::zkvm::r1cs::types::ConstantValue::I8(v) => Self::from_i64(v as i64),
+            crate::zkvm::r1cs::types::ConstantValue::I128(v) => Self::from_i128(v),
+        }
     }
 
     fn mul_pow_2(&self, mut pow: usize) -> Self {

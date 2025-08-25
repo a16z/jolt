@@ -7,6 +7,140 @@ use core::ops::{Mul, Sub};
 // Per-row operand domains
 // =============================
 
+/// Represents the value of constants in R1CS constraints.
+///
+/// Design goals:
+/// - Encode the vast majority of coefficients as `I8` for space/time locality.
+/// - Keep all operations `const fn` so macros and static tables can fold at compile-time.
+/// - After every operation, results are canonicalized to the smallest fitting variant:
+///   if a result fits in `i8`, it is stored as `I8`, otherwise as `I128`.
+///
+/// Notes:
+/// - Arithmetic uses exact `i128` semantics (no modular reduction, no saturation).
+/// - The `neg` implementation avoids `i8` overflow by widening `i8::MIN` to `I128`.
+/// - Conversions are total: `to_i128()` always returns the exact value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConstantValue {
+    /// Small constants that fit in i8 (-128 to 127)
+    I8(i8),
+    /// Large constants requiring full i128
+    I128(i128),
+}
+
+impl ConstantValue {
+    /// Returns zero encoded as `I8(0)`.
+    pub const fn zero() -> Self {
+        ConstantValue::I8(0)
+    }
+
+    /// Returns one encoded as `I8(1)`.
+    pub const fn one() -> Self {
+        ConstantValue::I8(1)
+    }
+
+    /// Construct from `i8` without widening.
+    pub const fn from_i8(value: i8) -> Self {
+        ConstantValue::I8(value)
+    }
+
+    /// Construct from `i128`, canonicalizing to `I8` if it fits.
+    pub const fn from_i128(value: i128) -> Self {
+        if value >= i8::MIN as i128 && value <= i8::MAX as i128 {
+            ConstantValue::I8(value as i8)
+        } else {
+            ConstantValue::I128(value)
+        }
+    }
+
+    /// Exact conversion to `i128`.
+    pub const fn to_i128(&self) -> i128 {
+        match self {
+            ConstantValue::I8(v) => *v as i128,
+            ConstantValue::I128(v) => *v,
+        }
+    }
+
+    /// Absolute value as unsigned magnitude.
+    pub const fn unsigned_abs(&self) -> u128 {
+        let v = self.to_i128();
+        v.unsigned_abs()
+    }
+
+    /// Returns true if the value equals zero.
+    pub const fn is_zero(&self) -> bool {
+        match self {
+            ConstantValue::I8(v) => *v == 0,
+            ConstantValue::I128(v) => *v == 0,
+        }
+    }
+
+    /// Returns true if the value is encoded as `I8`.
+    pub const fn is_small(&self) -> bool {
+        matches!(self, ConstantValue::I8(_))
+    }
+
+    /// Returns true if the value is encoded as `I128`.
+    pub const fn is_large(&self) -> bool {
+        matches!(self, ConstantValue::I128(_))
+    }
+
+    /// Add two constants, returning a canonicalized result.
+    ///
+    /// Fast-path: if both operands are `I8`, accumulate in `i16` to avoid
+    /// unnecessary `i128` conversions, then downcast to `I8` when possible.
+    pub const fn add(self, other: ConstantValue) -> ConstantValue {
+        match (self, other) {
+            (ConstantValue::I8(a), ConstantValue::I8(b)) => {
+                let sum = (a as i16) + (b as i16);
+                if sum >= i8::MIN as i16 && sum <= i8::MAX as i16 {
+                    ConstantValue::I8(sum as i8)
+                } else {
+                    ConstantValue::I128((a as i128) + (b as i128))
+                }
+            }
+            (lhs, rhs) => {
+                ConstantValue::from_i128(lhs.to_i128() + rhs.to_i128())
+            }
+        }
+    }
+
+    /// Multiply two constants, returning a canonicalized result.
+    ///
+    /// Fast-path: if both operands are `I8`, accumulate in `i16` to avoid
+    /// unnecessary `i128` conversions, then downcast to `I8` when possible.
+    pub const fn mul(self, other: ConstantValue) -> ConstantValue {
+        match (self, other) {
+            (ConstantValue::I8(a), ConstantValue::I8(b)) => {
+                let prod = (a as i16) * (b as i16);
+                if prod >= i8::MIN as i16 && prod <= i8::MAX as i16 {
+                    ConstantValue::I8(prod as i8)
+                } else {
+                    ConstantValue::I128((a as i128) * (b as i128))
+                }
+            }
+            (lhs, rhs) => {
+                ConstantValue::from_i128(lhs.to_i128() * rhs.to_i128())
+            }
+        }
+    }
+
+    /// Arithmetic negation with canonicalization.
+    ///
+    /// Special-cases `I8(i8::MIN)` to avoid overflow by widening to `I128`.
+    pub const fn neg(self) -> ConstantValue {
+        match self {
+            ConstantValue::I8(v) => {
+                if v == i8::MIN {
+                    ConstantValue::I128(-(v as i128))
+                } else {
+                    ConstantValue::I8(-v)
+                }
+            }
+            ConstantValue::I128(v) => ConstantValue::I128(-v),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AzValue {
     I8(i8),
@@ -30,7 +164,6 @@ impl AzValue {
 pub enum BzValue {
     S64(SignedBigInt<1>),
     S128(SignedBigInt<2>),
-    S192(SignedBigInt<3>),
 }
 
 impl BzValue {
@@ -42,7 +175,6 @@ impl BzValue {
         match self {
             BzValue::S64(v) => v.is_zero(),
             BzValue::S128(v) => v.is_zero(),
-            BzValue::S192(v) => v.is_zero(),
         }
     }
 }
@@ -289,10 +421,6 @@ impl Sub for BzValue {
                 let r = a.sub_trunc::<2>(&b);
                 BzExtendedEval::L2(r)
             }
-            (BzValue::S192(a), BzValue::S192(b)) => {
-                let r = a.sub_trunc::<3>(&b);
-                BzExtendedEval::L3(r)
-            }
             (BzValue::S64(a), BzValue::S128(b)) => {
                 let a2 = widen_signed::<1, 2>(&a);
                 let r = a2.sub_trunc::<2>(&b);
@@ -302,26 +430,6 @@ impl Sub for BzValue {
                 let b2 = widen_signed::<1, 2>(&b);
                 let r = a.sub_trunc::<2>(&b2);
                 BzExtendedEval::L2(r)
-            }
-            (BzValue::S64(a), BzValue::S192(b)) => {
-                let a3 = widen_signed::<1, 3>(&a);
-                let r = a3.sub_trunc::<3>(&b);
-                BzExtendedEval::L3(r)
-            }
-            (BzValue::S192(a), BzValue::S64(b)) => {
-                let b3 = widen_signed::<1, 3>(&b);
-                let r = a.sub_trunc::<3>(&b3);
-                BzExtendedEval::L3(r)
-            }
-            (BzValue::S128(a), BzValue::S192(b)) => {
-                let a3 = widen_signed::<2, 3>(&a);
-                let r = a3.sub_trunc::<3>(&b);
-                BzExtendedEval::L3(r)
-            }
-            (BzValue::S192(a), BzValue::S128(b)) => {
-                let b3 = widen_signed::<2, 3>(&b);
-                let r = a.sub_trunc::<3>(&b3);
-                BzExtendedEval::L3(r)
             }
         }
     }

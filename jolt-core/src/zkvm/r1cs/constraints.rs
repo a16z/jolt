@@ -23,7 +23,7 @@
 //!
 //! Custom evaluators in `eval_az_by_name`/`eval_bz_by_name` provide optimized Az/Bz evaluation
 //! using `SmallScalar` types to avoid field conversions. They should:
-//! - Use appropriate `AzValue` variants (prefer `I8` for flags/small sums)
+//! - Use appropriate `AzValue` variants (prefer `Bool` or `I8` for flags/small sums)
 //! - Use appropriate `BzValue` variants (prefer `U64AndSign` for u64-u64 diffs)
 //! - Only use `U128AndSign` when 128-bit arithmetic is inherently required
 
@@ -75,11 +75,11 @@ impl LC {
     ) -> F {
         let mut result = F::zero();
         self.for_each_term(|input_index, coeff| {
-            let field_coeff = F::from_i128(coeff);
+            let field_coeff = F::from_constant_value(coeff);
             result += accessor.value_at(input_index, row).mul_field(field_coeff);
         });
         if let Some(c) = self.const_term() {
-            result += F::from_i128(c);
+            result += F::from_constant_value(c);
         }
         result
     }
@@ -1123,21 +1123,11 @@ mod tests {
         }
     }
 
-    /// Normalize BzValue to L3 (SignedBigInt<3>) for equality up to widening.
-    fn bz_to_l3(v: BzValue) -> SignedBigInt<3> {
+    /// Normalize BzValue to L2 (SignedBigInt<2>) for equality up to widening.
+    fn bz_to_l2(v: BzValue) -> SignedBigInt<2> {
         match v {
-            BzValue::S64(s) => {
-                let mut mag = BigInt::<3>::zero();
-                mag.0[0] = s.magnitude.0[0];
-                SignedBigInt::from_bigint(mag, s.is_positive)
-            }
-            BzValue::S128(s) => {
-                let mut mag = BigInt::<3>::zero();
-                mag.0[0] = s.magnitude.0[0];
-                mag.0[1] = s.magnitude.0[1];
-                SignedBigInt::from_bigint(mag, s.is_positive)
-            }
-            BzValue::S192(s) => s,
+            BzValue::S64(s) => SignedBigInt::from_bigint({ let mut m = BigInt::<2>::zero(); m.0[0]=s.magnitude.0[0]; m }, s.is_positive),
+            BzValue::S128(s) => s,
         }
     }
 
@@ -1149,10 +1139,10 @@ mod tests {
             for row in 0..acc.num_steps() {
                 let gen = crate::zkvm::r1cs::inputs::eval_bz_typed_generic::<crate::field::tracked_ark::TrackedFr>(&c.cons.b, acc_ref, row);
                 let named = eval_bz_by_name::<crate::field::tracked_ark::TrackedFr>(c, acc_ref, row);
-                let gen_l3 = bz_to_l3(gen);
-                let named_l3 = bz_to_l3(named);
+                let gen_l2 = bz_to_l2(gen);
+                let named_l2 = bz_to_l2(named);
                 assert_eq!(
-                    gen_l3, named_l3,
+                    gen_l2, named_l2,
                     "Bz mismatch for {:?} at row {}: generic={:?}, named={:?}",
                     c.name, row, gen, named
                 );

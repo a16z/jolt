@@ -359,7 +359,6 @@ pub mod svo_helpers {
                 match bin[idx] {
                     BzValue::S64(s1) => BzExtendedEval::L1(s1),
                     BzValue::S128(s2) => BzExtendedEval::L2(s2),
-                    BzValue::S192(s3) => BzExtendedEval::L3(s3),
                 }
             } else {
                 let e1 = get_bz_ext::<N>(info[k].k_val_at_one, bin, memo, info);
