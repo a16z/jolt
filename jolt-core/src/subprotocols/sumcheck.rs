@@ -402,12 +402,8 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
         let mut polys = Vec::new();
         let mut claim = F::zero();
 
-        let (accums_zero, accums_infty, mut az_bz_cz_poly) = SpartanInterleavedPolynomial::<
-            NUM_SVO_ROUNDS,
-            F,
-        >::new_with_precompute(
-            accessor, tau
-        );
+        let (accums_zero, accums_infty, mut az_bz_cz_poly) =
+            SpartanInterleavedPolynomial::<NUM_SVO_ROUNDS, F>::new_with_precompute(accessor, tau);
         #[cfg(feature = "allocative")]
         print_data_structure_heap_usage("SpartanInterleavedPolynomial", &az_bz_cz_poly);
 

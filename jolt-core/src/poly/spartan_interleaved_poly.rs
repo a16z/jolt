@@ -255,7 +255,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
     ) {
         debug_assert_eq!(constraints.len(), az_output.len());
         debug_assert_eq!(constraints.len(), bz_output.len());
-        
+
         // Batch process all constraints for this step
         // This reduces virtual function call overhead compared to individual evaluations
         // Future optimization: could potentially share computations between constraints
@@ -461,7 +461,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                             UNIFORM_R1CS.chunks(Y_SVO_SPACE_SIZE).enumerate()
                         {
                             let chunk_size = uniform_svo_chunk.len();
-                            
+
                             // Batch evaluate Az/Bz directly into the binary blocks to avoid allocations
                             Self::eval_az_bz_batch(
                                 uniform_svo_chunk,
@@ -778,15 +778,14 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                                 let constraint_idx_in_step =
                                     (az_coeff.index >> 1) % self.padded_num_constraints;
                                 // If this constraint is within the concrete set, gate by CzKind; else (padded) treat as Zero
-                                let cz_is_nonzero =
-                                    if constraint_idx_in_step < UNIFORM_R1CS.len() {
-                                        matches!(
-                                            UNIFORM_R1CS[constraint_idx_in_step].cz,
-                                            CzKind::NonZero
-                                        )
-                                    } else {
-                                        false
-                                    };
+                                let cz_is_nonzero = if constraint_idx_in_step < UNIFORM_R1CS.len() {
+                                    matches!(
+                                        UNIFORM_R1CS[constraint_idx_in_step].cz,
+                                        CzKind::NonZero
+                                    )
+                                } else {
+                                    false
+                                };
                                 if cz_is_nonzero {
                                     // Accumulate cz at r using typed product with delayed reduction.
                                     let prod = mul_az_bz(az_orig_val, bz_for_az);
