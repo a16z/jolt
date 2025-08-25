@@ -107,7 +107,7 @@ pub trait JoltField:
     }
 
     /// Get reference to the underlying BigInt<4> representation without copying
-    fn into_bigint_ref(&self) -> &ark_ff::BigInt<4>;
+    fn as_bigint_ref(&self) -> &ark_ff::BigInt<4>;
 
     /// Montgomery reduction from 8-limb unreduced product to field element
     /// Note: Result is in Montgomery form with extra R factor

@@ -347,9 +347,9 @@ impl JoltField for TrackedFr {
     }
 
     #[inline(always)]
-    fn into_bigint_ref(&self) -> &ark_ff::BigInt<4> {
+    fn as_bigint_ref(&self) -> &ark_ff::BigInt<4> {
         // Get reference to the underlying arkworks field's BigInt
-        self.0.into_bigint_ref()
+        self.0.as_bigint_ref()
     }
 
     #[inline(always)]

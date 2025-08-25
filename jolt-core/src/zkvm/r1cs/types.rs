@@ -310,7 +310,7 @@ pub fn fmadd_unreduced<F: JoltField>(
     product: AzBzProductValue,
 ) {
     // Get reference to field element's BigInt<4> without copying
-    let field_bigint = field.into_bigint_ref(); // &BigInt<4> for 256-bit field
+    let field_bigint = field.as_bigint_ref(); // &BigInt<4> for 256-bit field
 
     match product {
         AzBzProductValue::L1(v) => {

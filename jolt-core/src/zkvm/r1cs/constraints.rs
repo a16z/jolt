@@ -76,7 +76,9 @@ impl LC {
     ) -> F {
         let mut result = F::zero();
         self.for_each_term(|input_index, coeff| {
-            result += accessor.value_at(input_index, row).mul_field(coeff.to_field::<F>());
+            result += accessor
+                .value_at(input_index, row)
+                .mul_field(coeff.to_field::<F>());
         });
         if let Some(c) = self.const_term() {
             result += c.to_field::<F>();

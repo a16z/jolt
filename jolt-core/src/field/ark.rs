@@ -160,7 +160,7 @@ impl JoltField for ark_bn254::Fr {
     }
 
     #[inline(always)]
-    fn into_bigint_ref(&self) -> &ark_ff::BigInt<4> {
+    fn as_bigint_ref(&self) -> &ark_ff::BigInt<4> {
         // arkworks field elements are just wrappers around BigInt, so we can get a direct reference
         &self.0
     }
