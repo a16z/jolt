@@ -546,7 +546,10 @@ pub fn eval_az_by_name<F: JoltField>(
     use JoltR1CSInputs as Inp;
     match c.name {
         ConstraintName::LeftInputEqRs1 => flag_to_az(matches!(
-            accessor.value_at(Inp::OpFlags(CircuitFlags::LeftOperandIsRs1Value).to_index(), row),
+            accessor.value_at(
+                Inp::OpFlags(CircuitFlags::LeftOperandIsRs1Value).to_index(),
+                row
+            ),
             SmallScalar::Bool(true)
         )),
         ConstraintName::LeftInputEqPC => flag_to_az(matches!(
@@ -554,11 +557,17 @@ pub fn eval_az_by_name<F: JoltField>(
             SmallScalar::Bool(true)
         )),
         ConstraintName::RightInputEqRs2 => flag_to_az(matches!(
-            accessor.value_at(Inp::OpFlags(CircuitFlags::RightOperandIsRs2Value).to_index(), row),
+            accessor.value_at(
+                Inp::OpFlags(CircuitFlags::RightOperandIsRs2Value).to_index(),
+                row
+            ),
             SmallScalar::Bool(true)
         )),
         ConstraintName::RightInputEqImm => flag_to_az(matches!(
-            accessor.value_at(Inp::OpFlags(CircuitFlags::RightOperandIsImm).to_index(), row),
+            accessor.value_at(
+                Inp::OpFlags(CircuitFlags::RightOperandIsImm).to_index(),
+                row
+            ),
             SmallScalar::Bool(true)
         )),
         ConstraintName::RamReadEqRamWriteIfLoad => flag_to_az(matches!(
@@ -571,7 +580,10 @@ pub fn eval_az_by_name<F: JoltField>(
         )),
         ConstraintName::LeftInputZeroOtherwise => {
             let f1 = matches!(
-                accessor.value_at(Inp::OpFlags(CircuitFlags::LeftOperandIsRs1Value).to_index(), row),
+                accessor.value_at(
+                    Inp::OpFlags(CircuitFlags::LeftOperandIsRs1Value).to_index(),
+                    row
+                ),
                 SmallScalar::Bool(true)
             );
             let f2 = matches!(
@@ -618,7 +630,9 @@ pub fn eval_az_by_name<F: JoltField>(
             SmallScalar::Bool(true)
         )),
         ConstraintName::ProductDef => {
-            let left = accessor.value_at(Inp::LeftInstructionInput.to_index(), row).as_u64_clamped();
+            let left = accessor
+                .value_at(Inp::LeftInstructionInput.to_index(), row)
+                .as_u64_clamped();
             AzValue::S64(SignedBigInt::from_u64_with_sign(left, true))
         }
         ConstraintName::RightLookupEqProductIfMul => flag_to_az(matches!(
@@ -660,12 +674,10 @@ pub fn eval_az_by_name<F: JoltField>(
             accessor.value_at(Inp::WriteLookupOutputToRD.to_index(), row),
             SmallScalar::U8(1)
         )),
-        ConstraintName::WritePCtoRDDef => {
-            match accessor.value_at(Inp::Rd.to_index(), row) {
-                SmallScalar::U8(v) => AzValue::I8(v as i8),
-                _ => AzValue::I8(0),
-            }
-        }
+        ConstraintName::WritePCtoRDDef => match accessor.value_at(Inp::Rd.to_index(), row) {
+            SmallScalar::U8(v) => AzValue::I8(v as i8),
+            _ => AzValue::I8(0),
+        },
         ConstraintName::RdWriteEqPCPlusConstIfWritePCtoRD => flag_to_az(matches!(
             accessor.value_at(Inp::WritePCtoRD.to_index(), row),
             SmallScalar::Bool(true)
@@ -711,16 +723,25 @@ pub fn eval_az_by_name<F: JoltField>(
             AzValue::S64(SignedBigInt::from_u64_with_sign(mag, is_positive))
         }
         ConstraintName::NextPCEqPCPlusOneIfInline => flag_to_az(matches!(
-            accessor.value_at(Inp::OpFlags(CircuitFlags::InlineSequenceInstruction).to_index(), row),
+            accessor.value_at(
+                Inp::OpFlags(CircuitFlags::InlineSequenceInstruction).to_index(),
+                row
+            ),
             SmallScalar::Bool(true)
         )),
         ConstraintName::RightInputZeroOtherwise => {
             let f1 = matches!(
-                accessor.value_at(Inp::OpFlags(CircuitFlags::RightOperandIsRs2Value).to_index(), row),
+                accessor.value_at(
+                    Inp::OpFlags(CircuitFlags::RightOperandIsRs2Value).to_index(),
+                    row
+                ),
                 SmallScalar::Bool(true)
             );
             let f2 = matches!(
-                accessor.value_at(Inp::OpFlags(CircuitFlags::RightOperandIsImm).to_index(), row),
+                accessor.value_at(
+                    Inp::OpFlags(CircuitFlags::RightOperandIsImm).to_index(),
+                    row
+                ),
                 SmallScalar::Bool(true)
             );
             // NOTE: relies on exclusivity of these circuit flags (validated in tests):
@@ -745,49 +766,68 @@ pub fn eval_bz_by_name<F: JoltField>(
     use JoltR1CSInputs as Inp;
     match c.name {
         ConstraintName::LeftInputEqRs1 => {
-            let left = accessor.value_at(Inp::LeftInstructionInput.to_index(), row).as_u64_clamped();
-            let rs1 = accessor.value_at(Inp::Rs1Value.to_index(), row).as_u64_clamped();
+            let left = accessor
+                .value_at(Inp::LeftInstructionInput.to_index(), row)
+                .as_u64_clamped();
+            let rs1 = accessor
+                .value_at(Inp::Rs1Value.to_index(), row)
+                .as_u64_clamped();
             BzValue::S64(SignedBigInt::from_u64_with_sign(
                 rs1.abs_diff(left),
                 left >= rs1,
             ))
         }
         ConstraintName::LeftInputEqPC => {
-            let left = accessor.value_at(Inp::LeftInstructionInput.to_index(), row).as_u64_clamped();
-            let pc = accessor.value_at(Inp::UnexpandedPC.to_index(), row).as_u64_clamped();
+            let left = accessor
+                .value_at(Inp::LeftInstructionInput.to_index(), row)
+                .as_u64_clamped();
+            let pc = accessor
+                .value_at(Inp::UnexpandedPC.to_index(), row)
+                .as_u64_clamped();
             BzValue::S64(SignedBigInt::from_u64_with_sign(
                 left.abs_diff(pc),
                 left >= pc,
             ))
         }
         ConstraintName::RightInputEqRs2 => {
-            let right = accessor.value_at(Inp::RightInstructionInput.to_index(), row).as_i128();
+            let right = accessor
+                .value_at(Inp::RightInstructionInput.to_index(), row)
+                .as_i128();
             let rs2 = accessor.value_at(Inp::Rs2Value.to_index(), row).as_i128();
             diff_to_bz(right - rs2)
         }
         ConstraintName::RightInputEqImm => {
-            let right = accessor.value_at(Inp::RightInstructionInput.to_index(), row).as_i128();
+            let right = accessor
+                .value_at(Inp::RightInstructionInput.to_index(), row)
+                .as_i128();
             let imm = accessor.value_at(Inp::Imm.to_index(), row).as_i128();
             diff_to_bz(right - imm)
         }
         ConstraintName::RamReadEqRamWriteIfLoad => {
-            let rd = accessor.value_at(Inp::RamReadValue.to_index(), row).as_u64_clamped();
-            let wr = accessor.value_at(Inp::RamWriteValue.to_index(), row).as_u64_clamped();
-            BzValue::S64(SignedBigInt::from_u64_with_sign(
-                if rd >= wr { rd - wr } else { wr - rd },
-                rd >= wr,
-            ))
+            let rd = accessor
+                .value_at(Inp::RamReadValue.to_index(), row)
+                .as_u64_clamped();
+            let wr = accessor
+                .value_at(Inp::RamWriteValue.to_index(), row)
+                .as_u64_clamped();
+            BzValue::S64(SignedBigInt::from_u64_with_sign(rd.abs_diff(wr), rd >= wr))
         }
         ConstraintName::RamReadEqRdWriteIfLoad => {
-            let rd = accessor.value_at(Inp::RamReadValue.to_index(), row).as_u64_clamped();
-            let rdw = accessor.value_at(Inp::RdWriteValue.to_index(), row).as_u64_clamped();
+            let rd = accessor
+                .value_at(Inp::RamReadValue.to_index(), row)
+                .as_u64_clamped();
+            let rdw = accessor
+                .value_at(Inp::RdWriteValue.to_index(), row)
+                .as_u64_clamped();
             BzValue::S64(SignedBigInt::from_u64_with_sign(
-                if rd >= rdw { rd - rdw } else { rdw - rd },
+                rd.abs_diff(rdw),
                 rd >= rdw,
             ))
         }
         ConstraintName::LeftInputZeroOtherwise => {
-            let left = accessor.value_at(Inp::LeftInstructionInput.to_index(), row).as_u64_clamped();
+            let left = accessor
+                .value_at(Inp::LeftInstructionInput.to_index(), row)
+                .as_u64_clamped();
             BzValue::S64(SignedBigInt::from_u64_with_sign(left, true))
         }
         ConstraintName::RamAddrEqRs1PlusImmIfLoadStore => {
@@ -796,57 +836,94 @@ pub fn eval_bz_by_name<F: JoltField>(
             diff_to_bz(rs1 + imm)
         }
         ConstraintName::LeftLookupZeroUnlessAddSubMul => {
-            let left = accessor.value_at(Inp::LeftInstructionInput.to_index(), row).as_i128();
+            let left = accessor
+                .value_at(Inp::LeftInstructionInput.to_index(), row)
+                .as_i128();
             diff_to_bz(0 - left)
         }
         ConstraintName::RightLookupAdd => {
-            let rlookup = accessor.value_at(Inp::RightLookupOperand.to_index(), row).as_i128();
-            let left = accessor.value_at(Inp::LeftInstructionInput.to_index(), row).as_i128();
-            let right = accessor.value_at(Inp::RightInstructionInput.to_index(), row).as_i128();
+            let rlookup = accessor
+                .value_at(Inp::RightLookupOperand.to_index(), row)
+                .as_i128();
+            let left = accessor
+                .value_at(Inp::LeftInstructionInput.to_index(), row)
+                .as_i128();
+            let right = accessor
+                .value_at(Inp::RightInstructionInput.to_index(), row)
+                .as_i128();
             diff_to_bz(rlookup - (left + right))
         }
         ConstraintName::RightLookupSub => {
-            let rlookup = accessor.value_at(Inp::RightLookupOperand.to_index(), row).as_i128();
-            let left = accessor.value_at(Inp::LeftInstructionInput.to_index(), row).as_i128();
-            let right = accessor.value_at(Inp::RightInstructionInput.to_index(), row).as_i128();
+            let rlookup = accessor
+                .value_at(Inp::RightLookupOperand.to_index(), row)
+                .as_i128();
+            let left = accessor
+                .value_at(Inp::LeftInstructionInput.to_index(), row)
+                .as_i128();
+            let right = accessor
+                .value_at(Inp::RightInstructionInput.to_index(), row)
+                .as_i128();
             let two64 = (u64::MAX as u128 + 1) as i128;
             let target = left - right + two64;
             diff_to_bz(rlookup - target)
         }
         ConstraintName::ProductDef => {
-            let right_i128 = accessor.value_at(Inp::RightInstructionInput.to_index(), row).as_i128();
+            let right_i128 = accessor
+                .value_at(Inp::RightInstructionInput.to_index(), row)
+                .as_i128();
             if right_i128 >= 0 {
                 BzValue::S64(SignedBigInt::from_u64_with_sign(right_i128 as u64, true))
             } else {
-                BzValue::S64(SignedBigInt::from_u64_with_sign((-right_i128) as u64, false))
+                BzValue::S64(SignedBigInt::from_u64_with_sign(
+                    (-right_i128) as u64,
+                    false,
+                ))
             }
         }
         ConstraintName::RightLookupEqProductIfMul => {
-            let rlookup = accessor.value_at(Inp::RightLookupOperand.to_index(), row).as_i128();
+            let rlookup = accessor
+                .value_at(Inp::RightLookupOperand.to_index(), row)
+                .as_i128();
             let prod = accessor.value_at(Inp::Product.to_index(), row).as_i128();
             diff_to_bz(rlookup - prod)
         }
         ConstraintName::RightLookupEqRightInputOtherwise => {
-            let rlookup = accessor.value_at(Inp::RightLookupOperand.to_index(), row).as_i128();
-            let right = accessor.value_at(Inp::RightInstructionInput.to_index(), row).as_i128();
+            let rlookup = accessor
+                .value_at(Inp::RightLookupOperand.to_index(), row)
+                .as_i128();
+            let right = accessor
+                .value_at(Inp::RightInstructionInput.to_index(), row)
+                .as_i128();
             diff_to_bz(rlookup - right)
         }
         ConstraintName::AssertLookupOne => {
-            let lookup = accessor.value_at(Inp::LookupOutput.to_index(), row).as_i128();
+            let lookup = accessor
+                .value_at(Inp::LookupOutput.to_index(), row)
+                .as_i128();
             diff_to_bz(lookup - 1)
         }
         ConstraintName::WriteLookupOutputToRDDef => {
             let flag = matches!(
-                accessor.value_at(Inp::OpFlags(CircuitFlags::WriteLookupOutputToRD).to_index(), row),
+                accessor.value_at(
+                    Inp::OpFlags(CircuitFlags::WriteLookupOutputToRD).to_index(),
+                    row
+                ),
                 SmallScalar::Bool(true)
             );
-            BzValue::S64(SignedBigInt::from_u64_with_sign(if flag { 1 } else { 0 }, true))
+            BzValue::S64(SignedBigInt::from_u64_with_sign(
+                if flag { 1 } else { 0 },
+                true,
+            ))
         }
         ConstraintName::RdWriteEqLookupIfWriteLookupToRd => {
-            let rdw = accessor.value_at(Inp::RdWriteValue.to_index(), row).as_u64_clamped();
-            let lookup = accessor.value_at(Inp::LookupOutput.to_index(), row).as_u64_clamped();
+            let rdw = accessor
+                .value_at(Inp::RdWriteValue.to_index(), row)
+                .as_u64_clamped();
+            let lookup = accessor
+                .value_at(Inp::LookupOutput.to_index(), row)
+                .as_u64_clamped();
             BzValue::S64(SignedBigInt::from_u64_with_sign(
-                if rdw >= lookup { rdw - lookup } else { lookup - rdw },
+                rdw.abs_diff(lookup),
                 rdw >= lookup,
             ))
         }
@@ -855,11 +932,18 @@ pub fn eval_bz_by_name<F: JoltField>(
                 accessor.value_at(Inp::OpFlags(CircuitFlags::Jump).to_index(), row),
                 SmallScalar::Bool(true)
             );
-            BzValue::S64(SignedBigInt::from_u64_with_sign(if jump { 1 } else { 0 }, true))
+            BzValue::S64(SignedBigInt::from_u64_with_sign(
+                if jump { 1 } else { 0 },
+                true,
+            ))
         }
         ConstraintName::RdWriteEqPCPlusConstIfWritePCtoRD => {
-            let rdw = accessor.value_at(Inp::RdWriteValue.to_index(), row).as_i128();
-            let pc = accessor.value_at(Inp::UnexpandedPC.to_index(), row).as_i128();
+            let rdw = accessor
+                .value_at(Inp::RdWriteValue.to_index(), row)
+                .as_i128();
+            let pc = accessor
+                .value_at(Inp::UnexpandedPC.to_index(), row)
+                .as_i128();
             let is_compr = matches!(
                 accessor.value_at(Inp::OpFlags(CircuitFlags::IsCompressed).to_index(), row),
                 SmallScalar::Bool(true)
@@ -872,35 +956,61 @@ pub fn eval_bz_by_name<F: JoltField>(
                 accessor.value_at(Inp::NextIsNoop.to_index(), row),
                 SmallScalar::Bool(true)
             );
-            BzValue::S64(SignedBigInt::from_u64_with_sign(if next_noop { 0 } else { 1 }, true))
+            BzValue::S64(SignedBigInt::from_u64_with_sign(
+                if next_noop { 0 } else { 1 },
+                true,
+            ))
         }
         ConstraintName::NextUnexpPCEqLookupIfShouldJump => {
-            let nextpc = accessor.value_at(Inp::NextUnexpandedPC.to_index(), row).as_i128();
-            let lookup = accessor.value_at(Inp::LookupOutput.to_index(), row).as_i128();
+            let nextpc = accessor
+                .value_at(Inp::NextUnexpandedPC.to_index(), row)
+                .as_i128();
+            let lookup = accessor
+                .value_at(Inp::LookupOutput.to_index(), row)
+                .as_i128();
             diff_to_bz(nextpc - lookup)
         }
         ConstraintName::ShouldBranchDef => {
-            let lookup = accessor.value_at(Inp::LookupOutput.to_index(), row).as_u64_clamped();
+            let lookup = accessor
+                .value_at(Inp::LookupOutput.to_index(), row)
+                .as_u64_clamped();
             BzValue::S64(SignedBigInt::from_u64_with_sign(lookup, true))
         }
         ConstraintName::NextUnexpPCEqPCPlusImmIfShouldBranch => {
-            let next = accessor.value_at(Inp::NextUnexpandedPC.to_index(), row).as_i128();
-            let pc = accessor.value_at(Inp::UnexpandedPC.to_index(), row).as_i128();
+            let next = accessor
+                .value_at(Inp::NextUnexpandedPC.to_index(), row)
+                .as_i128();
+            let pc = accessor
+                .value_at(Inp::UnexpandedPC.to_index(), row)
+                .as_i128();
             let imm = accessor.value_at(Inp::Imm.to_index(), row).as_i128();
             diff_to_bz(next - (pc + imm))
         }
         ConstraintName::CompressedNoUpdateDef => {
             let flag2 = matches!(
-                accessor.value_at(Inp::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC).to_index(), row),
+                accessor.value_at(
+                    Inp::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC).to_index(),
+                    row
+                ),
                 SmallScalar::Bool(true)
             );
-            BzValue::S64(SignedBigInt::from_u64_with_sign(if flag2 { 1 } else { 0 }, true))
+            BzValue::S64(SignedBigInt::from_u64_with_sign(
+                if flag2 { 1 } else { 0 },
+                true,
+            ))
         }
         ConstraintName::NextUnexpPCUpdateOtherwise => {
-            let next = accessor.value_at(Inp::NextUnexpandedPC.to_index(), row).as_i128();
-            let pc = accessor.value_at(Inp::UnexpandedPC.to_index(), row).as_i128();
+            let next = accessor
+                .value_at(Inp::NextUnexpandedPC.to_index(), row)
+                .as_i128();
+            let pc = accessor
+                .value_at(Inp::UnexpandedPC.to_index(), row)
+                .as_i128();
             let dnoupd = matches!(
-                accessor.value_at(Inp::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC).to_index(), row),
+                accessor.value_at(
+                    Inp::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC).to_index(),
+                    row
+                ),
                 SmallScalar::Bool(true)
             ) as i128;
             let iscompr = matches!(
@@ -920,12 +1030,18 @@ pub fn eval_bz_by_name<F: JoltField>(
             diff_to_bz(next - (pc + 1))
         }
         ConstraintName::RightInputZeroOtherwise => {
-            let right = accessor.value_at(Inp::RightInstructionInput.to_index(), row).as_i128();
+            let right = accessor
+                .value_at(Inp::RightInstructionInput.to_index(), row)
+                .as_i128();
             diff_to_bz(right)
         }
         ConstraintName::Rs2EqRamWriteIfStore => {
-            let rs2 = accessor.value_at(Inp::Rs2Value.to_index(), row).as_u64_clamped();
-            let wr = accessor.value_at(Inp::RamWriteValue.to_index(), row).as_u64_clamped();
+            let rs2 = accessor
+                .value_at(Inp::Rs2Value.to_index(), row)
+                .as_u64_clamped();
+            let wr = accessor
+                .value_at(Inp::RamWriteValue.to_index(), row)
+                .as_u64_clamped();
             BzValue::S64(SignedBigInt::from_u64_with_sign(
                 rs2.abs_diff(wr),
                 rs2 >= wr,
@@ -939,10 +1055,10 @@ pub fn eval_bz_by_name<F: JoltField>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashSet;
-    use ark_ff::{SignedBigInt, BigInt};
-    use crate::zkvm::r1cs::types::BzValue;
     use crate::zkvm::r1cs::inputs::{eval_az_typed_generic, eval_bz_typed_generic};
+    use crate::zkvm::r1cs::types::BzValue;
+    use ark_ff::{BigInt, SignedBigInt};
+    use std::collections::HashSet;
 
     #[test]
     fn constraint_names_bijection() {
@@ -986,13 +1102,19 @@ mod tests {
 
     impl WitnessRowAccessor<crate::field::tracked_ark::TrackedFr> for TestAccessor {
         #[inline]
-        fn value_at(&self, input_index: usize, t: usize) -> crate::utils::small_scalar::SmallScalar {
+        fn value_at(
+            &self,
+            input_index: usize,
+            t: usize,
+        ) -> crate::utils::small_scalar::SmallScalar {
             let num_inputs = JoltR1CSInputs::num_inputs();
             self.values[t * num_inputs + input_index]
         }
 
         #[inline]
-        fn num_steps(&self) -> usize { self.rows }
+        fn num_steps(&self) -> usize {
+            self.rows
+        }
     }
 
     /// Normalize AzValue to SignedBigInt<1> for equality up to widening.
@@ -1017,14 +1139,14 @@ mod tests {
         let mut values = vec![SS::U64(0); rows * num_inputs];
 
         for row in 0..rows {
-            let left = 2u64 + row as u64;   // 2,3,4
-            let right = left as i64;        // match left to align ProductDef
-            let rd = 1u8;                   // ensure Rd==1 for conditional products
+            let left = 2u64 + row as u64; // 2,3,4
+            let right = left as i64; // match left to align ProductDef
+            let rd = 1u8; // ensure Rd==1 for conditional products
             let imm = (5i128 - row as i128) * if row == 1 { -1 } else { 1 }; // mix signs
 
             // Control flags per row
             let flag_left_is_rs1 = row == 0;
-            let flag_left_is_pc  = row == 1;
+            let flag_left_is_pc = row == 1;
             let flag_right_is_rs2 = row == 0;
             let flag_right_is_imm = row == 1;
             let flag_add = row == 0;
@@ -1045,7 +1167,8 @@ mod tests {
             let should_jump = if flag_jump && !flag_is_noop { 1u8 } else { 0u8 };
             let lookup_output = if flag_branch { 1u64 } else { 0u64 };
             let should_branch = (flag_branch as u8 as u64 * lookup_output) as u8;
-            let compressed_dnoupd = (flag_is_compressed as u8) * (flag_do_not_update_unexp_pc as u8);
+            let compressed_dnoupd =
+                (flag_is_compressed as u8) * (flag_do_not_update_unexp_pc as u8);
 
             for i in 0..num_inputs {
                 let inp = JoltR1CSInputs::from_index(i);
@@ -1065,7 +1188,9 @@ mod tests {
                     JoltR1CSInputs::LeftLookupOperand => SS::U64(4 + row as u64),
                     JoltR1CSInputs::RightLookupOperand => SS::U128(20 + row as u128),
                     JoltR1CSInputs::Product => SS::U128((left as u128) * (right as u128)),
-                    JoltR1CSInputs::WriteLookupOutputToRD => SS::U8(if row % 2 == 0 { 1 } else { 0 }),
+                    JoltR1CSInputs::WriteLookupOutputToRD => {
+                        SS::U8(if row % 2 == 0 { 1 } else { 0 })
+                    }
                     JoltR1CSInputs::WritePCtoRD => SS::U8(if flag_jump { 1 } else { 0 }),
                     JoltR1CSInputs::ShouldBranch => SS::U8(should_branch),
                     JoltR1CSInputs::NextUnexpandedPC => SS::U64(200 + row as u64),
@@ -1112,8 +1237,11 @@ mod tests {
         let acc_ref: &dyn WitnessRowAccessor<crate::field::tracked_ark::TrackedFr> = &acc;
         for c in UNIFORM_R1CS.iter() {
             for row in 0..acc.num_steps() {
-                let gen = eval_az_typed_generic::<crate::field::tracked_ark::TrackedFr>(&c.cons.a, acc_ref, row);
-                let named = eval_az_by_name::<crate::field::tracked_ark::TrackedFr>(c, acc_ref, row);
+                let gen = eval_az_typed_generic::<crate::field::tracked_ark::TrackedFr>(
+                    &c.cons.a, acc_ref, row,
+                );
+                let named =
+                    eval_az_by_name::<crate::field::tracked_ark::TrackedFr>(c, acc_ref, row);
                 let gen_s = az_to_s64(gen);
                 let named_s = az_to_s64(named);
                 assert_eq!(
@@ -1128,8 +1256,23 @@ mod tests {
     /// Normalize BzValue to S192 (SignedBigInt<3>) for equality up to widening.
     fn bz_to_l3(v: BzValue) -> SignedBigInt<3> {
         match v {
-            BzValue::S64(s) => SignedBigInt::from_bigint({ let mut m = BigInt::<3>::zero(); m.0[0]=s.magnitude.0[0]; m }, s.is_positive),
-            BzValue::S128(s) => SignedBigInt::from_bigint({ let mut m = BigInt::<3>::zero(); m.0[0]=s.magnitude.0[0]; m.0[1]=s.magnitude.0[1]; m }, s.is_positive),
+            BzValue::S64(s) => SignedBigInt::from_bigint(
+                {
+                    let mut m = BigInt::<3>::zero();
+                    m.0[0] = s.magnitude.0[0];
+                    m
+                },
+                s.is_positive,
+            ),
+            BzValue::S128(s) => SignedBigInt::from_bigint(
+                {
+                    let mut m = BigInt::<3>::zero();
+                    m.0[0] = s.magnitude.0[0];
+                    m.0[1] = s.magnitude.0[1];
+                    m
+                },
+                s.is_positive,
+            ),
             BzValue::S192(s) => s,
         }
     }
@@ -1140,8 +1283,11 @@ mod tests {
         let acc_ref: &dyn WitnessRowAccessor<crate::field::tracked_ark::TrackedFr> = &acc;
         for c in UNIFORM_R1CS.iter() {
             for row in 0..acc.num_steps() {
-                let gen = eval_bz_typed_generic::<crate::field::tracked_ark::TrackedFr>(&c.cons.b, acc_ref, row);
-                let named = eval_bz_by_name::<crate::field::tracked_ark::TrackedFr>(c, acc_ref, row);
+                let gen = eval_bz_typed_generic::<crate::field::tracked_ark::TrackedFr>(
+                    &c.cons.b, acc_ref, row,
+                );
+                let named =
+                    eval_bz_by_name::<crate::field::tracked_ark::TrackedFr>(c, acc_ref, row);
                 let gen_l3 = bz_to_l3(gen);
                 let named_l3 = bz_to_l3(named);
                 assert_eq!(

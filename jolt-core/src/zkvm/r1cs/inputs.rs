@@ -15,12 +15,12 @@ use crate::zkvm::JoltProverPreprocessing;
 
 use super::constraints::NamedConstraint;
 use super::key::UniformSpartanKey;
+use super::ops::LC;
 use super::spartan::UniformSpartanProof;
 use super::types::{AzValue, BzValue, ConstantValue};
-use super::ops::LC;
 use crate::utils::small_scalar::SmallScalar;
-use ark_ff::SignedBigInt;
 use ark_ff::biginteger::signed::add_with_sign_u64;
+use ark_ff::SignedBigInt;
 
 use crate::field::JoltField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -264,7 +264,7 @@ pub trait WitnessRowAccessor<F: JoltField>: Send + Sync {
     /// Primary method: returns small scalar values directly for efficient evaluation
     fn value_at(&self, input_index: usize, t: usize) -> SmallScalar;
     fn num_steps(&self) -> usize;
-    
+
     /// Convenience method: converts small scalar to field element
     fn value_at_field(&self, input_index: usize, t: usize) -> F {
         let scalar = self.value_at(input_index, t);
@@ -428,7 +428,6 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> WitnessRowAccessor<F>
     fn num_steps(&self) -> usize {
         self.trace.len()
     }
-
 }
 
 /// Compute `z(r_cycle) = Σ_t eq(r_cycle, t) * P_i(t)` for all inputs i, without
@@ -475,23 +474,39 @@ pub fn eval_az_typed_generic<F: JoltField>(
     let mut acc_i8: i8 = 0;
     let mut small_ok = true;
     a_lc.for_each_term(|input_index, coeff| {
-        if !small_ok { return; }
+        if !small_ok {
+            return;
+        }
         // Fast-path requires coeff to be I8; otherwise bail out to generic path.
         let coeff_i8: i8 = match coeff {
             ConstantValue::I8(v) => v,
-            ConstantValue::I128(_) => { small_ok = false; return; }
+            ConstantValue::I128(_) => {
+                small_ok = false;
+                return;
+            }
         };
         // Only Bool/U8 are allowed to keep the i8 path
         let sc = accessor.value_at(input_index, row);
         let v_i8 = match sc {
-            SmallScalar::Bool(b) => if b { 1 } else { 0 },
+            SmallScalar::Bool(b) => {
+                if b {
+                    1
+                } else {
+                    0
+                }
+            }
             SmallScalar::U8(v) => v as i8,
-            _ => { small_ok = false; return; }
+            _ => {
+                small_ok = false;
+                return;
+            }
         };
         let (prod, of1) = v_i8.overflowing_mul(coeff_i8);
         let (sum, of2) = acc_i8.overflowing_add(prod);
         acc_i8 = sum;
-        if of1 || of2 { small_ok = false; }
+        if of1 || of2 {
+            small_ok = false;
+        }
     });
     if small_ok {
         if let Some(cst) = a_lc.const_term() {
@@ -500,9 +515,13 @@ pub fn eval_az_typed_generic<F: JoltField>(
                 ConstantValue::I8(c8) => {
                     let (sum, of) = acc_i8.overflowing_add(c8);
                     acc_i8 = sum;
-                    if of { small_ok = false; }
+                    if of {
+                        small_ok = false;
+                    }
                 }
-                ConstantValue::I128(_) => { small_ok = false; }
+                ConstantValue::I128(_) => {
+                    small_ok = false;
+                }
             }
         }
     }
@@ -517,7 +536,11 @@ pub fn eval_az_typed_generic<F: JoltField>(
         let sc = accessor.value_at(input_index, row);
         let v_i128 = sc.as_i128();
         let v_mag_u128 = v_i128.unsigned_abs();
-        let v_mag_u64 = if v_mag_u128 > u64::MAX as u128 { u64::MAX } else { v_mag_u128 as u64 };
+        let v_mag_u64 = if v_mag_u128 > u64::MAX as u128 {
+            u64::MAX
+        } else {
+            v_mag_u128 as u64
+        };
         let c_i128 = coeff.to_i128();
         let term_mag = v_mag_u64.saturating_mul(c_i128.unsigned_abs() as u64);
         let val_pos = v_i128 >= 0;
@@ -529,7 +552,11 @@ pub fn eval_az_typed_generic<F: JoltField>(
     });
     if let Some(cst) = a_lc.const_term() {
         let cst_i128 = cst.to_i128();
-        let c_mag = if cst_i128.unsigned_abs() > u64::MAX as u128 { u64::MAX } else { cst_i128.unsigned_abs() as u64 };
+        let c_mag = if cst_i128.unsigned_abs() > u64::MAX as u128 {
+            u64::MAX
+        } else {
+            cst_i128.unsigned_abs() as u64
+        };
         let c_pos = cst_i128 >= 0;
         let (new_mag, new_pos) = add_with_sign_u64(mag, sign, c_mag, c_pos);
         mag = new_mag;
@@ -551,21 +578,29 @@ pub fn eval_bz_typed_generic<F: JoltField>(
     let mut s64_pos: bool = true;
     let mut fits_s64 = true;
     b_lc.for_each_term(|input_index, coeff| {
-        if !fits_s64 { return; }
+        if !fits_s64 {
+            return;
+        }
         let sc = accessor.value_at(input_index, row);
         // Extract magnitude and sign of witness with minimal conversions.
         let (v_mag_u64, v_nonneg) = match sc {
             SmallScalar::Bool(b) => (if b { 1u64 } else { 0u64 }, true),
             SmallScalar::U8(v) => (v as u64, true),
             SmallScalar::U64(v) => (v, true),
-            SmallScalar::I64(v) => (v.unsigned_abs() as u64, v >= 0),
+            SmallScalar::I64(v) => (v.unsigned_abs(), v >= 0),
             SmallScalar::I128(v) => {
                 let mag = v.unsigned_abs();
-                if mag > u64::MAX as u128 { fits_s64 = false; return; }
+                if mag > u64::MAX as u128 {
+                    fits_s64 = false;
+                    return;
+                }
                 (mag as u64, v >= 0)
             }
             SmallScalar::U128(v) => {
-                if v > u64::MAX as u128 { fits_s64 = false; return; }
+                if v > u64::MAX as u128 {
+                    fits_s64 = false;
+                    return;
+                }
                 (v as u64, true)
             }
         };
@@ -573,13 +608,17 @@ pub fn eval_bz_typed_generic<F: JoltField>(
             ConstantValue::I8(cv) => (cv.unsigned_abs() as u64, cv >= 0),
             ConstantValue::I128(cv) => {
                 let c_mag = cv.unsigned_abs();
-                if c_mag > u64::MAX as u128 { fits_s64 = false; return; }
+                if c_mag > u64::MAX as u128 {
+                    fits_s64 = false;
+                    return;
+                }
                 (c_mag as u64, cv >= 0)
             }
         };
         let prod_mag_u128 = (v_mag_u64 as u128) * (c_mag_u64 as u128);
         if prod_mag_u128 > u64::MAX as u128 {
-            fits_s64 = false; return;
+            fits_s64 = false;
+            return;
         }
         let prod_mag_u64 = prod_mag_u128 as u64;
         let term_pos = v_nonneg == c_nonneg;
@@ -592,7 +631,8 @@ pub fn eval_bz_typed_generic<F: JoltField>(
             match cst {
                 ConstantValue::I8(cv) => {
                     let c_mag_u64 = cv.unsigned_abs() as u64;
-                    let (new_mag, new_pos) = add_with_sign_u64(s64_mag, s64_pos, c_mag_u64, cv >= 0);
+                    let (new_mag, new_pos) =
+                        add_with_sign_u64(s64_mag, s64_pos, c_mag_u64, cv >= 0);
                     s64_mag = new_mag;
                     s64_pos = new_pos;
                 }
@@ -601,7 +641,8 @@ pub fn eval_bz_typed_generic<F: JoltField>(
                     if c_mag > u64::MAX as u128 {
                         fits_s64 = false;
                     } else {
-                        let (new_mag, new_pos) = add_with_sign_u64(s64_mag, s64_pos, c_mag as u64, cv >= 0);
+                        let (new_mag, new_pos) =
+                            add_with_sign_u64(s64_mag, s64_pos, c_mag as u64, cv >= 0);
                         s64_mag = new_mag;
                         s64_pos = new_pos;
                     }
@@ -648,13 +689,17 @@ pub fn lc_az_bz_eval_row_to_typed<F: JoltField>(
 pub fn accum_az_ext(acc: &mut AzValue, row: AzValue, is_positive: bool) {
     // Simple counter accumulation; adjust if needed for real semantics
     match acc {
-        AzValue::I8(v) => { *v = v.saturating_add(if is_positive { 1 } else { -1 }); }
+        AzValue::I8(v) => {
+            *v = v.saturating_add(if is_positive { 1 } else { -1 });
+        }
         AzValue::S64(s) => {
             let delta = if is_positive { 1i64 } else { -1i64 };
             let add = SignedBigInt::<1>::from_i64(delta);
             *s = s.add_trunc::<1>(&add);
         }
-        AzValue::I128(v) => { *v = v.saturating_add(if is_positive { 1 } else { -1 }); }
+        AzValue::I128(v) => {
+            *v = v.saturating_add(if is_positive { 1 } else { -1 });
+        }
     }
 }
 

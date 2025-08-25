@@ -32,9 +32,9 @@ impl Term {
 
     /// Create a new term with given input index and i128 coefficient.
     pub const fn new_i128(input_index: usize, coeff: i128) -> Self {
-        Self { 
-            input_index, 
-            coeff: ConstantValue::from_i128(coeff)
+        Self {
+            input_index,
+            coeff: ConstantValue::from_i128(coeff),
         }
     }
 
@@ -467,7 +467,8 @@ impl LC {
             LC::Const(c) => eq_ry[const_col].mul_constant_value(*c),
             LC::Terms1([t1]) => eq_ry[t1.input_index].mul_constant_value(t1.coeff),
             LC::Terms2([t1, t2]) => {
-                eq_ry[t1.input_index].mul_constant_value(t1.coeff) + eq_ry[t2.input_index].mul_constant_value(t2.coeff)
+                eq_ry[t1.input_index].mul_constant_value(t1.coeff)
+                    + eq_ry[t2.input_index].mul_constant_value(t2.coeff)
             }
             LC::Terms3([t1, t2, t3]) => {
                 eq_ry[t1.input_index].mul_constant_value(t1.coeff)
@@ -488,7 +489,8 @@ impl LC {
                     + eq_ry[t5.input_index].mul_constant_value(t5.coeff)
             }
             LC::Terms1Const([t1], c) => {
-                eq_ry[t1.input_index].mul_constant_value(t1.coeff) + eq_ry[const_col].mul_constant_value(*c)
+                eq_ry[t1.input_index].mul_constant_value(t1.coeff)
+                    + eq_ry[const_col].mul_constant_value(*c)
             }
             LC::Terms2Const([t1, t2], c) => {
                 eq_ry[t1.input_index].mul_constant_value(t1.coeff)

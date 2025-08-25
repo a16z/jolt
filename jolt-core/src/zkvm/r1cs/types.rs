@@ -1,6 +1,6 @@
 use crate::zkvm::JoltField;
-use ark_ff::SignedBigInt;
 use ark_ff::BigInt;
+use ark_ff::SignedBigInt;
 use core::ops::{Mul, Sub};
 
 // =============================
@@ -98,9 +98,7 @@ impl ConstantValue {
                     ConstantValue::I128((a as i128) + (b as i128))
                 }
             }
-            (lhs, rhs) => {
-                ConstantValue::from_i128(lhs.to_i128() + rhs.to_i128())
-            }
+            (lhs, rhs) => ConstantValue::from_i128(lhs.to_i128() + rhs.to_i128()),
         }
     }
 
@@ -118,9 +116,7 @@ impl ConstantValue {
                     ConstantValue::I128((a as i128) * (b as i128))
                 }
             }
-            (lhs, rhs) => {
-                ConstantValue::from_i128(lhs.to_i128() * rhs.to_i128())
-            }
+            (lhs, rhs) => ConstantValue::from_i128(lhs.to_i128() * rhs.to_i128()),
         }
     }
 
@@ -152,7 +148,9 @@ pub enum AzValue {
 }
 
 impl AzValue {
-    pub fn zero() -> Self { AzValue::I8(0) }
+    pub fn zero() -> Self {
+        AzValue::I8(0)
+    }
     pub fn is_zero(&self) -> bool {
         match self {
             AzValue::I8(v) => *v == 0,
@@ -173,7 +171,9 @@ pub enum BzValue {
 }
 
 impl BzValue {
-    pub fn zero() -> Self { BzValue::S64(SignedBigInt::zero()) }
+    pub fn zero() -> Self {
+        BzValue::S64(SignedBigInt::zero())
+    }
     pub fn is_zero(&self) -> bool {
         match self {
             BzValue::S64(v) => v.is_zero(),
@@ -299,7 +299,9 @@ pub fn reduce_unreduced_to_field<F: JoltField>(x: &UnreducedProduct) -> F {
 impl Mul<BzValue> for AzValue {
     type Output = AzBzProductValue;
 
-    fn mul(self, rhs: BzValue) -> Self::Output { mul_az_bz(self, rhs) }
+    fn mul(self, rhs: BzValue) -> Self::Output {
+        mul_az_bz(self, rhs)
+    }
 }
 
 /// Fused multiply-add into unreduced accumulators.

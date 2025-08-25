@@ -2,14 +2,17 @@ use crate::field::JoltField;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SmallScalarConversionError {
-    OutOfRange { value: String, target_type: &'static str },
+    OutOfRange {
+        value: String,
+        target_type: &'static str,
+    },
 }
 
 impl std::fmt::Display for SmallScalarConversionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             SmallScalarConversionError::OutOfRange { value, target_type } => {
-                write!(f, "Value {} is out of range for type {}", value, target_type)
+                write!(f, "Value {value} is out of range for type {target_type}")
             }
         }
     }
@@ -133,7 +136,6 @@ impl TryFrom<SmallScalar> for i8 {
     }
 }
 
-
 impl From<SmallScalar> for u64 {
     /// Clamped conversion to u64 - negative values become 0, larger values are truncated
     fn from(scalar: SmallScalar) -> u64 {
@@ -153,7 +155,6 @@ impl From<SmallScalar> for u64 {
         }
     }
 }
-
 
 impl TryFrom<SmallScalar> for i128 {
     type Error = SmallScalarConversionError;

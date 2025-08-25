@@ -10,11 +10,11 @@ use crate::{
         small_value::{svo_helpers, NUM_SVO_ROUNDS},
     },
     zkvm::r1cs::{
-        constraints::{eval_az_by_name, eval_bz_by_name, NamedConstraint, CzKind},
+        constraints::{eval_az_by_name, eval_bz_by_name, CzKind, NamedConstraint},
         inputs::WitnessRowAccessor,
         types::{
-            reduce_unreduced_to_field, AzValue, BzValue, UnreducedProduct, fmadd_unreduced,
-            mul_az_bz,
+            fmadd_unreduced, mul_az_bz, reduce_unreduced_to_field, AzValue, BzValue,
+            UnreducedProduct,
         },
     },
 };
@@ -62,7 +62,6 @@ pub struct SpartanInterleavedPolynomial<const NUM_SVO_ROUNDS: usize, F: JoltFiel
     /// (note: **no** Cz coefficients are stored here, since they are not needed for small value
     /// precomputation, and can be computed on the fly in streaming round)
     // pub(crate) ab_unbound_coeffs_shards: Vec<Vec<SparseCoefficient<F>>>,
-
     pub(crate) az_unbound_coeffs_shards: Vec<Vec<SparseCoefficient<AzValue>>>,
     pub(crate) bz_unbound_coeffs_shards: Vec<Vec<SparseCoefficient<BzValue>>>,
 
@@ -83,14 +82,18 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
         match az {
             AzValue::I8(v) => F::from_i128(v as i128),
             AzValue::S64(signed_bigint) => {
-                if signed_bigint.is_positive { 
-                    F::from_u64(signed_bigint.magnitude.0[0]) 
-                } else { 
-                    -F::from_u64(signed_bigint.magnitude.0[0]) 
+                if signed_bigint.is_positive {
+                    F::from_u64(signed_bigint.magnitude.0[0])
+                } else {
+                    -F::from_u64(signed_bigint.magnitude.0[0])
                 }
             }
             AzValue::I128(x) => {
-                if x == 0 { F::zero() } else { F::from_i128(x) }
+                if x == 0 {
+                    F::zero()
+                } else {
+                    F::from_i128(x)
+                }
             }
         }
     }
@@ -99,53 +102,128 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
     fn bz_to_field_local(bz: BzValue) -> F {
         match bz {
             BzValue::S64(signed_bigint) => {
-                if signed_bigint.is_positive { 
-                    F::from_u64(signed_bigint.magnitude.0[0]) 
-                } else { 
-                    -F::from_u64(signed_bigint.magnitude.0[0]) 
+                if signed_bigint.is_positive {
+                    F::from_u64(signed_bigint.magnitude.0[0])
+                } else {
+                    -F::from_u64(signed_bigint.magnitude.0[0])
                 }
             }
             BzValue::S128(signed_bigint) => {
                 let magnitude = signed_bigint.magnitude_as_u128();
-                if signed_bigint.is_positive { 
-                    F::from_u128(magnitude) 
-                } else { 
-                    -F::from_u128(magnitude) 
+                if signed_bigint.is_positive {
+                    F::from_u128(magnitude)
+                } else {
+                    -F::from_u128(magnitude)
                 }
             }
             BzValue::S192(_s3) => unimplemented!(),
         }
     }
 
-    #[inline]
+    #[inline(always)]
     fn mul_field_by_signed_limbs(val: F, limbs: &[u64], is_positive: bool) -> F {
         // Compute val * (± sum(limbs[i] * 2^(64*i))) without BigInt
-        if limbs.is_empty() {
-            return F::zero();
-        }
-        let mut acc = F::zero();
-        let mut base = val;
-        let r64 = F::from_u128(1u128 << 64);
-        for (i, limb) in limbs.iter().enumerate() {
-            if *limb != 0 {
-                acc += base * F::from_u64(*limb);
+        match limbs.len() {
+            0 => F::zero(),
+            1 => {
+                let c0 = if limbs[0] == 0 {
+                    F::zero()
+                } else {
+                    val * F::from_u64(limbs[0])
+                };
+                if is_positive {
+                    c0
+                } else {
+                    -c0
+                }
             }
-            if i + 1 < limbs.len() {
-                base = base * r64;
+            2 => {
+                let r64 = F::from_u128(1u128 << 64);
+                let c0 = if limbs[0] == 0 {
+                    F::zero()
+                } else {
+                    val * F::from_u64(limbs[0])
+                };
+                let c1 = if limbs[1] == 0 {
+                    F::zero()
+                } else {
+                    (val * r64) * F::from_u64(limbs[1])
+                };
+                let acc = c0 + c1;
+                if is_positive {
+                    acc
+                } else {
+                    -acc
+                }
+            }
+            3 => {
+                let r64 = F::from_u128(1u128 << 64);
+                let val_r64 = val * r64;
+                let val_r128 = val_r64 * r64;
+                let c0 = if limbs[0] == 0 {
+                    F::zero()
+                } else {
+                    val * F::from_u64(limbs[0])
+                };
+                let c1 = if limbs[1] == 0 {
+                    F::zero()
+                } else {
+                    val_r64 * F::from_u64(limbs[1])
+                };
+                let c2 = if limbs[2] == 0 {
+                    F::zero()
+                } else {
+                    val_r128 * F::from_u64(limbs[2])
+                };
+                let acc = c0 + c1 + c2;
+                if is_positive {
+                    acc
+                } else {
+                    -acc
+                }
+            }
+            _ => {
+                // Fallback for rare wider magnitudes
+                let mut acc = F::zero();
+                let mut base = val;
+                let r64 = F::from_u128(1u128 << 64);
+                for i in 0..limbs.len() {
+                    let limb = limbs[i];
+                    if limb != 0 {
+                        acc += base * F::from_u64(limb);
+                    }
+                    if i + 1 < limbs.len() {
+                        base *= r64;
+                    }
+                }
+                if is_positive {
+                    acc
+                } else {
+                    -acc
+                }
             }
         }
-        if is_positive { acc } else { -acc }
     }
 
     #[inline]
     fn mul_field_by_az(val: F, az: AzValue) -> F {
         match az {
             AzValue::I8(v) => {
-                if v == 0 { F::zero() } else { val.mul_i64(v as i64) }
+                if v == 0 {
+                    F::zero()
+                } else {
+                    val.mul_i64(v as i64)
+                }
             }
-            AzValue::S64(s1) => Self::mul_field_by_signed_limbs(val, &s1.magnitude.0[..1], s1.is_positive),
+            AzValue::S64(s1) => {
+                Self::mul_field_by_signed_limbs(val, &s1.magnitude.0[..1], s1.is_positive)
+            }
             AzValue::I128(x) => {
-                if x == 0 { F::zero() } else { val.mul_i128(x) }
+                if x == 0 {
+                    F::zero()
+                } else {
+                    val.mul_i128(x)
+                }
             }
         }
     }
@@ -153,9 +231,15 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
     #[inline]
     fn mul_field_by_bz(val: F, bz: BzValue) -> F {
         match bz {
-            BzValue::S64(s1) => Self::mul_field_by_signed_limbs(val, &s1.magnitude.0[..1], s1.is_positive),
-            BzValue::S128(s2) => Self::mul_field_by_signed_limbs(val, &s2.magnitude.0[..2], s2.is_positive),
-            BzValue::S192(s3) => Self::mul_field_by_signed_limbs(val, &s3.magnitude.0[..3], s3.is_positive),
+            BzValue::S64(s1) => {
+                Self::mul_field_by_signed_limbs(val, &s1.magnitude.0[..1], s1.is_positive)
+            }
+            BzValue::S128(s2) => {
+                Self::mul_field_by_signed_limbs(val, &s2.magnitude.0[..2], s2.is_positive)
+            }
+            BzValue::S192(s3) => {
+                Self::mul_field_by_signed_limbs(val, &s3.magnitude.0[..3], s3.is_positive)
+            }
         }
     }
     /// Compute the unbound coefficients for the Az and Bz polynomials (no Cz coefficients are
@@ -332,8 +416,10 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                 let mut chunk_svo_accums_infty = [F::zero(); NUM_ACCUMS_EVAL_INFTY];
 
                 for x_out_val in x_out_start..x_out_end {
-                    let mut tA_pos_acc_for_current_x_out = [UnreducedProduct::zero(); NUM_NONTRIVIAL_TERNARY_POINTS];
-                    let mut tA_neg_acc_for_current_x_out = [UnreducedProduct::zero(); NUM_NONTRIVIAL_TERNARY_POINTS];
+                    let mut tA_pos_acc_for_current_x_out =
+                        [UnreducedProduct::zero(); NUM_NONTRIVIAL_TERNARY_POINTS];
+                    let mut tA_neg_acc_for_current_x_out =
+                        [UnreducedProduct::zero(); NUM_NONTRIVIAL_TERNARY_POINTS];
                     let mut current_x_out_svo_zero = [F::zero(); NUM_ACCUMS_EVAL_ZERO];
                     let mut current_x_out_svo_infty = [F::zero(); NUM_ACCUMS_EVAL_INFTY];
 
@@ -343,7 +429,8 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                         let mut current_x_in_constraint_val = 0;
 
                         let mut binary_az_block = [AzValue::I8(0); Y_SVO_SPACE_SIZE];
-                        let mut binary_bz_block = [BzValue::S64(SignedBigInt::zero()); Y_SVO_SPACE_SIZE];
+                        let mut binary_bz_block =
+                            [BzValue::S64(SignedBigInt::zero()); Y_SVO_SPACE_SIZE];
 
                         // Iterate constraints in Y_SVO_SPACE_SIZE blocks so we can call the
                         // small-value kernels on full Az/Bz blocks when available.
@@ -379,10 +466,13 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                                 {
                                     // Check constraint using field-mapped Az/Bz
                                     let const_row = &const_row.cons;
-                                    let cz = const_row.c.evaluate_row_with(accessor, current_step_idx);
+                                    let cz =
+                                        const_row.c.evaluate_row_with(accessor, current_step_idx);
                                     let az = binary_az_block[idx_in_svo_block];
                                     let bz = binary_bz_block[idx_in_svo_block];
-                                    if Self::az_to_field_local(az) * Self::bz_to_field_local(bz) != cz {
+                                    if Self::az_to_field_local(az) * Self::bz_to_field_local(bz)
+                                        != cz
+                                    {
                                         panic!("Constraint violated at step {current_step_idx}");
                                     }
                                 }
@@ -409,7 +499,8 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
 
                                 current_x_in_constraint_val += 1;
                                 binary_az_block = [AzValue::I8(0); Y_SVO_SPACE_SIZE];
-                                binary_bz_block = [BzValue::S64(SignedBigInt::zero()); Y_SVO_SPACE_SIZE];
+                                binary_bz_block =
+                                    [BzValue::S64(SignedBigInt::zero()); Y_SVO_SPACE_SIZE];
                             }
                         }
 
@@ -419,7 +510,10 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                                 | current_x_in_constraint_val;
                             let E_in_val_last = &E_in_evals[x_in_val_last];
 
-                            svo_helpers::compute_and_update_tA_inplace_small_value::<NUM_SVO_ROUNDS, F>(
+                            svo_helpers::compute_and_update_tA_inplace_small_value::<
+                                NUM_SVO_ROUNDS,
+                                F,
+                            >(
                                 &binary_az_block,
                                 &binary_bz_block,
                                 E_in_val_last,
@@ -432,8 +526,10 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                     // finalize: reduce unreduced accumulators and combine pos/neg into field
                     let mut tA_sum_for_current_x_out = [F::zero(); NUM_NONTRIVIAL_TERNARY_POINTS];
                     for i in 0..NUM_NONTRIVIAL_TERNARY_POINTS {
-                        let pos_f = reduce_unreduced_to_field::<F>(&tA_pos_acc_for_current_x_out[i]);
-                        let neg_f = reduce_unreduced_to_field::<F>(&tA_neg_acc_for_current_x_out[i]);
+                        let pos_f =
+                            reduce_unreduced_to_field::<F>(&tA_pos_acc_for_current_x_out[i]);
+                        let neg_f =
+                            reduce_unreduced_to_field::<F>(&tA_neg_acc_for_current_x_out[i]);
                         tA_sum_for_current_x_out[i] = pos_f - neg_f;
                     }
 
@@ -593,7 +689,8 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                         eq_poly.E_in_current()[x_in_val_stream]
                     } else if eq_poly.E_in_current_len() == 1 {
                         eq_poly.E_in_current()[0]
-                    } else { // E_in_current_len() == 0, meaning no x_in variables for eq_poly
+                    } else {
+                        // E_in_current_len() == 0, meaning no x_in variables for eq_poly
                         F::one() // Effective contribution of E_in is 1
                     };
                     let e_block = e_out_val * e_in_val;
@@ -653,11 +750,18 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                             if let Some(bz_for_az) = paired_bz_opt {
                                 // Check Cz mask: only compute Cz if CzKind::NonZero for this constraint.
                                 // Recover the constraint index within the padded modulus.
-                                let constraint_idx_in_step = (az_coeff.index / 2) % self.padded_num_constraints;
+                                let constraint_idx_in_step =
+                                    (az_coeff.index / 2) % self.padded_num_constraints;
                                 // If this constraint is within the concrete set, gate by CzKind; else (padded) treat as Zero
-                                let cz_is_nonzero = if constraint_idx_in_step < self.uniform_r1cs_rows.len() {
-                                    matches!(self.uniform_r1cs_rows[constraint_idx_in_step].cz, CzKind::NonZero)
-                                } else { false };
+                                let cz_is_nonzero =
+                                    if constraint_idx_in_step < self.uniform_r1cs_rows.len() {
+                                        matches!(
+                                            self.uniform_r1cs_rows[constraint_idx_in_step].cz,
+                                            CzKind::NonZero
+                                        )
+                                    } else {
+                                        false
+                                    };
                                 if cz_is_nonzero {
                                     // Accumulate cz at r using typed product with delayed reduction.
                                     let prod = mul_az_bz(az_orig_val, bz_for_az);

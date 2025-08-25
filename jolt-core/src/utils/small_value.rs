@@ -16,7 +16,7 @@ pub mod svo_helpers {
     use crate::subprotocols::sumcheck::process_eq_sumcheck_round;
     use crate::transcripts::Transcript;
     use crate::zkvm::r1cs::types::{
-        AzValue, BzValue, UnreducedProduct, fmadd_unreduced, mul_az_bz,
+        fmadd_unreduced, mul_az_bz, AzValue, BzValue, UnreducedProduct,
     };
 
     // SVOEvalPoint enum definition
@@ -793,7 +793,10 @@ pub mod svo_helpers {
         }
 
         // Sanity: consts must match the chosen NUM_SVO_ROUNDS
-        debug_assert_eq!(M_NON_BINARY_POINTS_CONST, num_non_binary_points(NUM_SVO_ROUNDS));
+        debug_assert_eq!(
+            M_NON_BINARY_POINTS_CONST,
+            num_non_binary_points(NUM_SVO_ROUNDS)
+        );
         debug_assert_eq!(NUM_TERNARY_POINTS_CONST, pow(3, NUM_SVO_ROUNDS));
 
         let num_binary_points = 1usize << NUM_SVO_ROUNDS;
@@ -814,24 +817,17 @@ pub mod svo_helpers {
 
         // Recursive helper: Az extension at ternary index k with memoization
         #[inline]
-        fn get_az_ext_const<
-            const N: usize,
-            const NUM_TERN: usize,
-        >(
+        fn get_az_ext_const<const N: usize, const NUM_TERN: usize>(
             k: usize,
             bin: &[AzValue],
             memo: &mut [Option<AzValue>; NUM_TERN],
             info: &[TernaryPointInfo<N>; NUM_TERN],
         ) -> AzValue {
-            if let Some(v) = memo[k] { return v; }
+            if let Some(v) = memo[k] {
+                return v;
+            }
             let out = if info[k].is_binary {
-                let idx = info[k].binary_eval_idx;
-                // For binary points, pass through; promote S64 to I128 to allow safe diffs
-                match bin[idx] {
-                    AzValue::I8(v) => AzValue::I8(v),
-                    AzValue::S64(s) => AzValue::I128(s.to_i128()),
-                    AzValue::I128(v) => AzValue::I128(v),
-                }
+                bin[info[k].binary_eval_idx]
             } else {
                 let e1 = get_az_ext_const::<N, NUM_TERN>(info[k].k_val_at_one, bin, memo, info);
                 let e0 = get_az_ext_const::<N, NUM_TERN>(info[k].k_val_at_zero, bin, memo, info);
@@ -843,23 +839,17 @@ pub mod svo_helpers {
 
         // Recursive helper: Bz extension at ternary index k with memoization
         #[inline]
-        fn get_bz_ext_const<
-            const N: usize,
-            const NUM_TERN: usize,
-        >(
+        fn get_bz_ext_const<const N: usize, const NUM_TERN: usize>(
             k: usize,
             bin: &[BzValue],
             memo: &mut [Option<BzValue>; NUM_TERN],
             info: &[TernaryPointInfo<N>; NUM_TERN],
         ) -> BzValue {
-            if let Some(v) = memo[k] { return v; }
+            if let Some(v) = memo[k] {
+                return v;
+            }
             let out = if info[k].is_binary {
-                let idx = info[k].binary_eval_idx;
-                match bin[idx] {
-                    BzValue::S64(s1) => BzValue::S64(s1),
-                    BzValue::S128(s2) => BzValue::S128(s2),
-                    BzValue::S192(s3) => BzValue::S192(s3),
-                }
+                bin[info[k].binary_eval_idx]
             } else {
                 let e1 = get_bz_ext_const::<N, NUM_TERN>(info[k].k_val_at_one, bin, memo, info);
                 let e0 = get_bz_ext_const::<N, NUM_TERN>(info[k].k_val_at_zero, bin, memo, info);
@@ -888,7 +878,9 @@ pub mod svo_helpers {
             );
 
             // `az_ext` is likely to be zero
-            if az_ext.is_zero() { continue; }
+            if az_ext.is_zero() {
+                continue;
+            }
 
             let bz_ext = get_bz_ext_const::<NUM_SVO_ROUNDS, NUM_TERNARY_POINTS_CONST>(
                 k_target,
@@ -901,17 +893,19 @@ pub mod svo_helpers {
             // if bz_ext.is_zero() { continue; }
 
             let prod = mul_az_bz(az_ext, bz_ext);
-            fmadd_unreduced::<F>(&mut tA_pos_acc[i_temp_tA], &mut tA_neg_acc[i_temp_tA], e_in_val, prod);
+            fmadd_unreduced::<F>(
+                &mut tA_pos_acc[i_temp_tA],
+                &mut tA_neg_acc[i_temp_tA],
+                e_in_val,
+                prod,
+            );
         }
     }
 
     /// Dispatch wrapper for the typed small-value kernel using const generics.
     /// Supports NUM_SVO_ROUNDS in [0..=5].
     #[inline]
-    pub fn compute_and_update_tA_inplace_small_value<
-        const NUM_SVO_ROUNDS: usize,
-        F: JoltField,
-    >(
+    pub fn compute_and_update_tA_inplace_small_value<const NUM_SVO_ROUNDS: usize, F: JoltField>(
         binary_az_evals: &[AzValue],
         binary_bz_evals: &[BzValue],
         e_in_val: &F,
