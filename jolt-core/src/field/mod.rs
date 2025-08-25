@@ -94,24 +94,6 @@ pub trait JoltField:
         *self * Self::from_u128(n)
     }
 
-    /// Multiply by a ConstantValue, using optimized path for small constants
-    #[inline(always)]
-    fn mul_constant_value(&self, val: crate::zkvm::r1cs::types::ConstantValue) -> Self {
-        match val {
-            crate::zkvm::r1cs::types::ConstantValue::I8(v) => self.mul_i64(v as i64),
-            crate::zkvm::r1cs::types::ConstantValue::I128(v) => self.mul_i128(v),
-        }
-    }
-
-    /// Create field element from ConstantValue
-    #[inline(always)]
-    fn from_constant_value(val: crate::zkvm::r1cs::types::ConstantValue) -> Self {
-        match val {
-            crate::zkvm::r1cs::types::ConstantValue::I8(v) => Self::from_i64(v as i64),
-            crate::zkvm::r1cs::types::ConstantValue::I128(v) => Self::from_i128(v),
-        }
-    }
-
     fn mul_pow_2(&self, mut pow: usize) -> Self {
         if pow > 255 {
             panic!("pow > 255");
@@ -124,17 +106,12 @@ pub trait JoltField:
         res.mul_u64(1 << pow)
     }
 
-    /// Fused multiply-add into an unreduced 512-bit accumulator with a small integer (1..=4 limbs).
-    /// Accumulates into `pos` if `is_positive`, otherwise into `neg`.
-    fn fmadd_small_into_unreduced(
-        &self,
-        _small_limbs: &[u64],
-        _is_positive: bool,
-        _pos: &mut ark_ff::BigInt<8>,
-        _neg: &mut ark_ff::BigInt<8>,
-    ) {
-        unimplemented!("fmadd_small_into_unreduced not implemented for this field");
-    }
+    /// Get reference to the underlying BigInt<4> representation without copying
+    fn into_bigint_ref(&self) -> &ark_ff::BigInt<4>;
+
+    /// Montgomery reduction from 8-limb unreduced product to field element
+    /// Note: Result is in Montgomery form with extra R factor
+    fn from_montgomery_reduce_2n(unreduced: ark_ff::BigInt<8>) -> Self;
 }
 
 #[cfg(feature = "allocative")]

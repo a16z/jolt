@@ -345,6 +345,18 @@ impl JoltField for TrackedFr {
         MULT_COUNT.fetch_add(1, Ordering::Relaxed);
         TrackedFr(self.0.mul_u128::<5, 6>(n))
     }
+
+    #[inline(always)]
+    fn into_bigint_ref(&self) -> &ark_ff::BigInt<4> {
+        // Get reference to the underlying arkworks field's BigInt
+        self.0.into_bigint_ref()
+    }
+
+    #[inline(always)]
+    fn from_montgomery_reduce_2n(unreduced: ark_ff::BigInt<8>) -> Self {
+        // Use arkworks Montgomery backend to efficiently reduce 8-limb to 4-limb
+        TrackedFr(ark_bn254::Fr::montgomery_reduce_2n(unreduced))
+    }
 }
 
 #[cfg(test)]

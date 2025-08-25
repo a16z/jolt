@@ -132,7 +132,7 @@ impl JoltField for ark_bn254::Fr {
     }
 
     fn to_u64(&self) -> Option<u64> {
-        let bigint = self.into_bigint();
+        let bigint = <Self as ark_ff::PrimeField>::into_bigint(*self);
         let limbs: &[u64] = bigint.as_ref();
         let result = limbs[0];
 
@@ -156,7 +156,19 @@ impl JoltField for ark_bn254::Fr {
     }
 
     fn num_bits(&self) -> u32 {
-        self.into_bigint().num_bits()
+        <Self as ark_ff::PrimeField>::into_bigint(*self).num_bits()
+    }
+
+    #[inline(always)]
+    fn into_bigint_ref(&self) -> &ark_ff::BigInt<4> {
+        // arkworks field elements are just wrappers around BigInt, so we can get a direct reference
+        &self.0
+    }
+
+    #[inline(always)]
+    fn from_montgomery_reduce_2n(unreduced: ark_ff::BigInt<8>) -> Self {
+        // Use arkworks Montgomery backend to efficiently reduce 8-limb to 4-limb
+        ark_bn254::Fr::montgomery_reduce_2n(unreduced)
     }
 
     #[inline(always)]

@@ -135,6 +135,22 @@ impl ConstantValue {
             ConstantValue::I128(v) => ConstantValue::I128(-v),
         }
     }
+
+    /// Multiply by a field element.
+    pub fn mul_field<F: JoltField>(self, other: F) -> F {
+        match self {
+            ConstantValue::I8(v) => other.mul_i64(v as i64),
+            ConstantValue::I128(v) => other.mul_i128(v),
+        }
+    }
+
+    /// Convert to a field element.
+    pub fn to_field<F: JoltField>(self) -> F {
+        match self {
+            ConstantValue::I8(v) => F::from_i64(v as i64),
+            ConstantValue::I128(v) => F::from_i128(v),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -267,33 +283,11 @@ pub fn mul_az_bz(az: AzValue, bz: BzValue) -> AzBzProductValue {
     }
 }
 
-#[allow(unused_variables)]
-pub fn field_mul_product<F: JoltField, const K: usize>(
-    field: F,
-    product: [u64; K],
-) -> UnreducedProduct {
-    // Placeholder: return zero; implement proper multi-precision mul
-    BigInt::from(0u8)
-}
-
-#[allow(unused_variables)]
+#[inline(always)]
 pub fn reduce_unreduced_to_field<F: JoltField>(x: &UnreducedProduct) -> F {
-    // Fold 8 u64 limbs into the field: sum_{i=0..7} limb[i] * (2^64)^i
-    let limbs: &[u64; 8] = &x.0;
-    let mut acc = F::zero();
-    let mut factor = F::one();
-    let mut i = 0;
-    while i < 8 {
-        let limb = limbs[i];
-        if limb != 0 {
-            acc += factor.mul_u64(limb);
-        }
-        if i < 7 {
-            factor = factor.mul_pow_2(64);
-        }
-        i += 1;
-    }
-    acc
+    // Use Montgomery reduction to efficiently reduce 8-limb unreduced product to 4-limb field element
+    // Note: This produces a result in Montgomery form with an extra R factor that needs to be handled later
+    F::from_montgomery_reduce_2n(*x)
 }
 
 impl Mul<BzValue> for AzValue {
@@ -308,28 +302,33 @@ impl Mul<BzValue> for AzValue {
 /// - Multiplies `field` (as BigInt<4>) by the magnitude of `product` (1..=4 limbs),
 ///   truncated into 8 limbs.
 /// - Accumulates into `pos_acc` if the product is non-negative, otherwise into `neg_acc`.
+#[inline(always)]
 pub fn fmadd_unreduced<F: JoltField>(
     pos_acc: &mut UnreducedProduct,
     neg_acc: &mut UnreducedProduct,
     field: &F,
     product: AzBzProductValue,
 ) {
+    // Get reference to field element's BigInt<4> without copying
+    let field_bigint = field.into_bigint_ref(); // &BigInt<4> for 256-bit field
+
     match product {
         AzBzProductValue::L1(v) => {
-            let limbs = &v.magnitude.0[..1];
-            field.fmadd_small_into_unreduced(limbs, v.is_positive, pos_acc, neg_acc);
+            // Choose accumulator based on sign
+            let acc = if v.is_positive { pos_acc } else { neg_acc };
+            field_bigint.fmadd_trunc::<1, 8>(&v.magnitude, acc);
         }
         AzBzProductValue::L2(v) => {
-            let limbs = &v.magnitude.0[..2];
-            field.fmadd_small_into_unreduced(limbs, v.is_positive, pos_acc, neg_acc);
+            let acc = if v.is_positive { pos_acc } else { neg_acc };
+            field_bigint.fmadd_trunc::<2, 8>(&v.magnitude, acc);
         }
         AzBzProductValue::L3(v) => {
-            let limbs = &v.magnitude.0[..3];
-            field.fmadd_small_into_unreduced(limbs, v.is_positive, pos_acc, neg_acc);
+            let acc = if v.is_positive { pos_acc } else { neg_acc };
+            field_bigint.fmadd_trunc::<3, 8>(&v.magnitude, acc);
         }
         AzBzProductValue::L4(v) => {
-            let limbs = &v.magnitude.0[..4];
-            field.fmadd_small_into_unreduced(limbs, v.is_positive, pos_acc, neg_acc);
+            let acc = if v.is_positive { pos_acc } else { neg_acc };
+            field_bigint.fmadd_trunc::<4, 8>(&v.magnitude, acc);
         }
     }
 }
