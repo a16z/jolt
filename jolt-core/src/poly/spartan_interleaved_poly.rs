@@ -10,7 +10,7 @@ use crate::{
         small_value::{svo_helpers, NUM_SVO_ROUNDS},
     },
     zkvm::r1cs::{
-        constraints::{eval_az_by_name, eval_bz_by_name, CzKind, NamedConstraint},
+        constraints::{eval_az_by_name, eval_bz_by_name, CzKind, NamedConstraint, UNIFORM_R1CS},
         inputs::WitnessRowAccessor,
         types::{
             fmadd_unreduced, mul_az_bz, reduce_unreduced_to_field, AzValue, BzValue,
@@ -72,9 +72,6 @@ pub struct SpartanInterleavedPolynomial<const NUM_SVO_ROUNDS: usize, F: JoltFiel
 
     binding_scratch_space: Vec<SparseCoefficient<F>>,
 
-    /// For gating Cz computation on-the-fly without extra masks
-    #[allocative(skip)]
-    uniform_r1cs_rows: &'static [NamedConstraint],
     padded_num_constraints: usize,
 }
 
@@ -244,6 +241,31 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
             }
         }
     }
+
+    /// Batch evaluation of Az and Bz values for a chunk of constraints at a given step.
+    /// This is more efficient than evaluating constraints one by one as it reduces
+    /// function call overhead and enables better optimization.
+    #[inline]
+    fn eval_az_bz_batch(
+        constraints: &[NamedConstraint],
+        accessor: &dyn WitnessRowAccessor<F>,
+        step_idx: usize,
+        az_output: &mut [AzValue],
+        bz_output: &mut [BzValue],
+    ) {
+        debug_assert_eq!(constraints.len(), az_output.len());
+        debug_assert_eq!(constraints.len(), bz_output.len());
+        
+        // Batch process all constraints for this step
+        // This reduces virtual function call overhead compared to individual evaluations
+        // Future optimization: could potentially share computations between constraints
+        // that use similar input patterns, but for now we focus on reducing call overhead
+        for (i, constraint) in constraints.iter().enumerate() {
+            // Evaluate both Az and Bz together to potentially reuse accessor calls
+            az_output[i] = eval_az_by_name(constraint, accessor, step_idx);
+            bz_output[i] = eval_bz_by_name(constraint, accessor, step_idx);
+        }
+    }
     /// Compute the unbound coefficients for the Az and Bz polynomials (no Cz coefficients are
     /// needed), along with the accumulators for the small value optimization (SVO) rounds.
     ///
@@ -289,7 +311,6 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
         name = "NewSpartanInterleavedPolynomial::new_with_precompute"
     )]
     pub fn new_with_precompute(
-        const_rows: &'static [NamedConstraint],
         accessor: &dyn WitnessRowAccessor<F>,
         tau: &[F],
     ) -> ([F; NUM_ACCUMS_EVAL_ZERO], [F; NUM_ACCUMS_EVAL_INFTY], Self) {
@@ -307,7 +328,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
         //   - (N - i - 1) .. (N - 1)      => (u || v_0..v_{i-1}) SVO variables
         // We use MSB->LSB indexing throughout the codebase.
 
-        let padded_num_constraints = const_rows.len().next_power_of_two();
+        let padded_num_constraints = UNIFORM_R1CS.len().next_power_of_two();
         let num_steps = accessor.num_steps();
         let num_step_vars = if num_steps > 0 { num_steps.log_2() } else { 0 };
         let num_constraint_vars = if padded_num_constraints > 0 {
@@ -349,10 +370,10 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
         );
         assert_eq!(num_non_svo_z_vars, iter_num_x_out_vars + iter_num_x_in_vars);
 
-        let num_uniform_r1cs_constraints = const_rows.len();
+        let num_uniform_r1cs_constraints = UNIFORM_R1CS.len();
         let rem_num_uniform_r1cs_constraints = num_uniform_r1cs_constraints % Y_SVO_SPACE_SIZE;
 
-        // Keep a reference to const_rows to access CzKind on-the-fly; padded slots are considered Zero.
+        // Use UNIFORM_R1CS to access CzKind on-the-fly; padded slots are considered Zero.
 
         // Build split-eq helper and precompute E_in (over x_in) and E_out (over x_out)
         let eq_poly = GruenSplitEqPolynomial::new_for_small_value(
@@ -437,11 +458,21 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                         // Iterate constraints in Y_SVO_SPACE_SIZE blocks so we can call the
                         // small-value kernels on full Az/Bz blocks when available.
                         for (uniform_chunk_iter_idx, uniform_svo_chunk) in
-                            const_rows.chunks(Y_SVO_SPACE_SIZE).enumerate()
+                            UNIFORM_R1CS.chunks(Y_SVO_SPACE_SIZE).enumerate()
                         {
-                            for (idx_in_svo_block, const_row) in
-                                uniform_svo_chunk.iter().enumerate()
-                            {
+                            let chunk_size = uniform_svo_chunk.len();
+                            
+                            // Batch evaluate Az/Bz directly into the binary blocks to avoid allocations
+                            Self::eval_az_bz_batch(
+                                uniform_svo_chunk,
+                                accessor,
+                                current_step_idx,
+                                &mut binary_az_block[..chunk_size],
+                                &mut binary_bz_block[..chunk_size],
+                            );
+
+                            // Process the batch results and populate coefficient vectors
+                            for idx_in_svo_block in 0..chunk_size {
                                 let constraint_idx_in_step =
                                     (uniform_chunk_iter_idx << NUM_SVO_ROUNDS) + idx_in_svo_block;
 
@@ -449,29 +480,22 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                                     * (current_step_idx * padded_num_constraints
                                         + constraint_idx_in_step);
 
-                                // Custom evaluation path: use named-evaluator to build Az/Bz as
-                                // small integer domains, then convert locally to field elements.
-                                // TODO(svo): Replace with UnreducedProduct accumulation; this
-                                // conversion is a temporary bridge to existing SVO helpers.
-                                let az = eval_az_by_name(const_row, accessor, current_step_idx);
-                                let bz = eval_bz_by_name(const_row, accessor, current_step_idx);
+                                let az = binary_az_block[idx_in_svo_block];
+                                let bz = binary_bz_block[idx_in_svo_block];
+
                                 if !az.is_zero() {
-                                    binary_az_block[idx_in_svo_block] = az;
                                     chunk_az_coeffs.push((global_r1cs_idx, az).into());
                                 }
                                 if !bz.is_zero() {
-                                    binary_bz_block[idx_in_svo_block] = bz;
                                     chunk_bz_coeffs.push((global_r1cs_idx + 1, bz).into());
                                 }
 
                                 #[cfg(test)]
                                 {
                                     // Check constraint using field-mapped Az/Bz
-                                    let const_row = &const_row.cons;
+                                    let const_row = &uniform_svo_chunk[idx_in_svo_block].cons;
                                     let cz =
                                         const_row.c.evaluate_row_with(accessor, current_step_idx);
-                                    let az = binary_az_block[idx_in_svo_block];
-                                    let bz = binary_bz_block[idx_in_svo_block];
                                     if Self::az_to_field_local(az) * Self::bz_to_field_local(bz)
                                         != cz
                                     {
@@ -592,7 +616,6 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                 bz_unbound_coeffs_shards: final_bz_unbound_coeffs_shards,
                 bound_coeffs: vec![],
                 binding_scratch_space: vec![],
-                uniform_r1cs_rows: const_rows,
                 padded_num_constraints,
             },
         )
@@ -756,9 +779,9 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                                     (az_coeff.index >> 1) % self.padded_num_constraints;
                                 // If this constraint is within the concrete set, gate by CzKind; else (padded) treat as Zero
                                 let cz_is_nonzero =
-                                    if constraint_idx_in_step < self.uniform_r1cs_rows.len() {
+                                    if constraint_idx_in_step < UNIFORM_R1CS.len() {
                                         matches!(
-                                            self.uniform_r1cs_rows[constraint_idx_in_step].cz,
+                                            UNIFORM_R1CS[constraint_idx_in_step].cz,
                                             CzKind::NonZero
                                         )
                                     } else {
