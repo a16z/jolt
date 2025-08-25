@@ -1,5 +1,5 @@
-use crate::utils::inline_helpers::InstrAssembler;
 use crate::utils::virtual_registers::allocate_virtual_register;
+use crate::{instruction::mulhu::MULHU, utils::inline_helpers::InstrAssembler};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -11,9 +11,8 @@ use super::{
     add::ADD, format::format_r::FormatR, mul::MUL, virtual_advice::VirtualAdvice,
     virtual_assert_eq::VirtualAssertEQ, virtual_assert_valid_div0::VirtualAssertValidDiv0,
     virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder,
-    virtual_change_divisor_w::VirtualChangeDivisorW, virtual_extend::VirtualExtend,
-    virtual_sign_extend::VirtualSignExtend, RISCVInstruction, RISCVTrace, RV32IMCycle,
-    RV32IMInstruction,
+    virtual_extend::VirtualExtend, virtual_sign_extend::VirtualSignExtend, RISCVInstruction,
+    RISCVTrace, RV32IMCycle, RV32IMInstruction,
 };
 
 declare_riscv_instr!(
@@ -80,28 +79,46 @@ impl RISCVTrace for DIVUW {
     }
 
     fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
-        let v_0 = allocate_virtual_register();
-        let v_q = allocate_virtual_register();
-        let v_r = allocate_virtual_register();
-        let v_qy = allocate_virtual_register();
-        let v_rs1 = allocate_virtual_register();
-        let v_rs2 = allocate_virtual_register();
-
+        let a0 = self.operands.rs1; // dividend
+        let a1 = self.operands.rs2; // divisor
+        let a2 = allocate_virtual_register(); // quotient from oracle
+        let a3 = allocate_virtual_register(); // remainder from oracle
+        let t0 = allocate_virtual_register();
+        let t1 = allocate_virtual_register();
+        let t2 = allocate_virtual_register();
+        let t3 = allocate_virtual_register();
+        let t4 = allocate_virtual_register();
+        let zero = 0; // x0 register
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
-        asm.emit_j::<VirtualAdvice>(*v_q, 0);
-        asm.emit_j::<VirtualAdvice>(*v_r, 0);
-        asm.emit_i::<VirtualExtend>(*v_rs1, self.operands.rs1, 0);
-        asm.emit_i::<VirtualExtend>(*v_rs2, self.operands.rs2, 0);
-        asm.emit_i::<VirtualExtend>(*v_r, *v_r, 0);
-        asm.emit_r::<VirtualChangeDivisorW>(*v_rs2, *v_rs1, *v_rs2);
-        asm.emit_b::<VirtualAssertValidUnsignedRemainder>(*v_r, *v_rs2, 0);
-        asm.emit_b::<VirtualAssertValidDiv0>(*v_rs2, *v_q, 0);
-        asm.emit_i::<VirtualExtend>(*v_q, *v_q, 0);
-        asm.emit_r::<MUL>(*v_qy, *v_q, *v_rs2);
-        asm.emit_r::<ADD>(*v_0, *v_qy, *v_r);
-        asm.emit_i::<VirtualExtend>(*v_0, *v_0, 0);
-        asm.emit_b::<VirtualAssertEQ>(*v_0, *v_rs1, 0);
-        asm.emit_i::<VirtualSignExtend>(self.operands.rd, *v_q, 0);
+
+        // get advice
+        asm.emit_j::<VirtualAdvice>(*a2, 0);
+        asm.emit_j::<VirtualAdvice>(*a3, 0);
+
+        // zero-extend inputs to 32-bit values
+        asm.emit_i::<VirtualExtend>(*t3, a0, 0); // zero-extended dividend
+        asm.emit_i::<VirtualExtend>(*t4, a1, 0); // zero-extended divisor
+
+        // handle special case: check raw quotient before zero-extension
+        asm.emit_b::<VirtualAssertValidDiv0>(*t4, *a2, 0); // checks if t4==0 then a2==u64::MAX
+
+        // zero-extend quotient for calculations
+        asm.emit_i::<VirtualExtend>(*t2, *a2, 0); // zero-extended quotient
+
+        // check 32-bit unsigned multiplication doesn't overflow
+        asm.emit_r::<MUL>(*t0, *t2, *t4); // multiply zero-extended values
+        asm.emit_r::<MULHU>(*t1, *t2, *t4); // upper bits must be 0
+        asm.emit_b::<VirtualAssertEQ>(*t1, zero, 0);
+
+        // verify quotient * divisor + remainder == dividend
+        asm.emit_r::<ADD>(*t0, *t0, *a3);
+        asm.emit_b::<VirtualAssertEQ>(*t0, *t3, 0);
+
+        // check remainder < divisor (unsigned)
+        asm.emit_b::<VirtualAssertValidUnsignedRemainder>(*a3, *t4, 0);
+
+        // sign-extend result (per RISC-V spec)
+        asm.emit_i::<VirtualSignExtend>(self.operands.rd, *a2, 0);
         asm.finalize()
     }
 }

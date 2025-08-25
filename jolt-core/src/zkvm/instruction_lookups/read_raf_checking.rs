@@ -827,7 +827,6 @@ mod tests {
             RV32IMCycle::VirtualAssertWordAlignment(cycle) => cycle.random(rng).into(),
             RV32IMCycle::VirtualAssertLTE(cycle) => cycle.random(rng).into(),
             RV32IMCycle::VirtualAssertValidDiv0(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::VirtualAssertValidSignedRemainder(cycle) => cycle.random(rng).into(),
             RV32IMCycle::VirtualAssertValidUnsignedRemainder(cycle) => cycle.random(rng).into(),
             RV32IMCycle::VirtualMove(cycle) => cycle.random(rng).into(),
             RV32IMCycle::VirtualMovsign(cycle) => cycle.random(rng).into(),
@@ -1176,13 +1175,6 @@ mod tests {
         test_read_raf_sumcheck(Some(
             RV32IMCycle::VirtualAssertValidDiv0(Default::default()),
         ));
-    }
-
-    #[test]
-    fn test_assertvalidsignedremainder() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualAssertValidSignedRemainder(
-            Default::default(),
-        )));
     }
 
     #[test]
