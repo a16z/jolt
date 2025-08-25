@@ -22,7 +22,7 @@ use super::{
 declare_riscv_instr!(
     name   = REMW,
     mask   = 0xfe00707f,
-    match  = 0x1e00003b,
+    match  = 0x200603b,
     format = FormatR,
     ram    = ()
 );

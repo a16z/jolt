@@ -19,7 +19,7 @@ use super::{
 declare_riscv_instr!(
     name   = REMUW,
     mask   = 0xfe00707f,
-    match  = 0x1f00003b,
+    match  = 0x200703b,
     format = FormatR,
     ram    = ()
 );

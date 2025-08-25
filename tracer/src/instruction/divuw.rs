@@ -18,7 +18,7 @@ use super::{
 declare_riscv_instr!(
     name   = DIVUW,
     mask   = 0xfe00707f,
-    match  = 0x1b00003b,
+    match  = 0x200503b,
     format = FormatR,
     ram    = ()
 );
