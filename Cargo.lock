@@ -57,8 +57,7 @@ dependencies = [
 [[package]]
 name = "allocative"
 version = "0.3.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8fac2ce611db8b8cee9b2aa886ca03c924e9da5e5295d0dbd0526e5d0b0710f7"
+source = "git+https://github.com/0xAndoroid/allocative?branch=fix%2Fimpl-for-u128#2353207248b2719951c628af6240f07d6958ec2d"
 dependencies = [
  "allocative_derive",
  "ctor 0.1.26",
@@ -67,8 +66,7 @@ dependencies = [
 [[package]]
 name = "allocative_derive"
 version = "0.3.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fe233a377643e0fc1a56421d7c90acdec45c291b30345eb9f08e8d0ddce5a4ab"
+source = "git+https://github.com/0xAndoroid/allocative?branch=fix%2Fimpl-for-u128#2353207248b2719951c628af6240f07d6958ec2d"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1181,6 +1179,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
+name = "hex-literal"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6fe2267d4ed49bc07b63801559be28c718ea06c4738b7a03c94df7386d2cde46"
+
+[[package]]
 name = "home"
 version = "0.5.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1624,6 +1628,7 @@ dependencies = [
  "indicatif",
  "inferno",
  "itertools 0.10.5",
+ "jolt-inlines-keccak256",
  "jolt-inlines-sha2",
  "jolt-optimizations",
  "jolt-platform",
@@ -1657,10 +1662,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-inlines-keccak256"
+version = "0.1.0"
+dependencies = [
+ "ctor 0.2.9",
+ "hex-literal",
+ "tracer",
+]
+
+[[package]]
 name = "jolt-inlines-sha2"
 version = "0.1.0"
 dependencies = [
  "ctor 0.2.9",
+ "hex-literal",
  "tracer",
 ]
 
@@ -1696,10 +1711,13 @@ dependencies = [
  "ark-bn254",
  "ark-ec",
  "common",
+ "getrandom 0.2.16",
+ "hex-literal",
  "jolt-core",
  "jolt-platform",
  "jolt-sdk-macros",
  "postcard",
+ "rand",
  "tracer",
 ]
 
@@ -2847,6 +2865,7 @@ name = "sha3-chain"
 version = "0.1.0"
 dependencies = [
  "hex",
+ "jolt-inlines-keccak256",
  "jolt-sdk",
  "sha3-chain-guest",
 ]
@@ -2855,8 +2874,8 @@ dependencies = [
 name = "sha3-chain-guest"
 version = "0.1.0"
 dependencies = [
+ "jolt-inlines-keccak256",
  "jolt-sdk",
- "sha3",
 ]
 
 [[package]]
@@ -2864,6 +2883,7 @@ name = "sha3-ex"
 version = "0.1.0"
 dependencies = [
  "hex",
+ "jolt-inlines-keccak256",
  "jolt-sdk",
  "sha3-guest",
 ]
@@ -2872,8 +2892,8 @@ dependencies = [
 name = "sha3-guest"
 version = "0.1.0"
 dependencies = [
+ "jolt-inlines-keccak256",
  "jolt-sdk",
- "sha3",
 ]
 
 [[package]]

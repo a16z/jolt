@@ -24,6 +24,7 @@ keywords = ["SNARK", "cryptography", "proofs"]
 members = [
     "jolt-core",
     "jolt-inlines/sha2",
+    "jolt-inlines/keccak256",
     "tracer",
     "common",
     "jolt-platform",
@@ -96,6 +97,7 @@ lto = "fat"
 inherits = "release"
 incremental = true
 lto = "off"
+overflow-checks = true
 
 [profile.guest]
 inherits = "release"
@@ -106,6 +108,7 @@ ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist
 ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+allocative = { git = "https://github.com/0xAndoroid/allocative", branch = "fix/impl-for-u128" }
 
 [workspace.metadata.cargo-machete]
 ignored = ["jolt-sdk"]

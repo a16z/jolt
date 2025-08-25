@@ -7,24 +7,24 @@ use super::PrefixSuffixDecomposition;
 use crate::field::JoltField;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct UpperWordTable<const WORD_SIZE: usize>;
+pub struct UpperWordTable<const XLEN: usize>;
 
-impl<const WORD_SIZE: usize> JoltLookupTable for UpperWordTable<WORD_SIZE> {
-    fn materialize_entry(&self, index: u64) -> u64 {
-        index >> WORD_SIZE
+impl<const XLEN: usize> JoltLookupTable for UpperWordTable<XLEN> {
+    fn materialize_entry(&self, index: u128) -> u64 {
+        (index >> XLEN) as u64
     }
 
     fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
-        debug_assert_eq!(r.len(), 2 * WORD_SIZE);
+        debug_assert_eq!(r.len(), 2 * XLEN);
         let mut result = F::zero();
-        for i in 0..WORD_SIZE {
-            result += F::from_u64(1 << (WORD_SIZE - 1 - i)) * r[i];
+        for i in 0..XLEN {
+            result += F::from_u64(1 << (XLEN - 1 - i)) * r[i];
         }
         result
     }
 }
 
-impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE> for UpperWordTable<WORD_SIZE> {
+impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for UpperWordTable<XLEN> {
     fn suffixes(&self) -> Vec<Suffixes> {
         vec![Suffixes::One, Suffixes::UpperWord]
     }
@@ -44,10 +44,11 @@ mod test {
     use crate::zkvm::lookup_table::test::{
         lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
     };
+    use common::constants::XLEN;
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<Fr, UpperWordTable<32>>();
+        prefix_suffix_test::<XLEN, Fr, UpperWordTable<XLEN>>();
     }
 
     #[test]
@@ -57,6 +58,6 @@ mod test {
 
     #[test]
     fn mle_random() {
-        lookup_table_mle_random_test::<Fr, UpperWordTable<32>>();
+        lookup_table_mle_random_test::<Fr, UpperWordTable<XLEN>>();
     }
 }

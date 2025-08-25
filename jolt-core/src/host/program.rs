@@ -92,9 +92,9 @@ impl Program {
             ];
 
             let target_triple = if self.std {
-                "riscv32im-jolt-zkvm-elf"
+                "riscv64imac-jolt-zkvm-elf"
             } else {
-                "riscv32im-unknown-none-elf"
+                "riscv64imac-unknown-none-elf"
             };
 
             let mut envs = vec![("CARGO_ENCODED_RUSTFLAGS", rust_flags.join("\x1f"))];
@@ -194,7 +194,7 @@ impl Program {
             File::open(elf).unwrap_or_else(|_| panic!("could not open elf file: {elf:?}"));
         let mut elf_contents = Vec::new();
         elf_file.read_to_end(&mut elf_contents).unwrap();
-        let (_, _, program_end) = tracer::decode(&elf_contents);
+        let (_, _, program_end, _) = tracer::decode(&elf_contents);
         let program_size = program_end - RAM_START_ADDRESS;
 
         let memory_config = MemoryConfig {
@@ -215,7 +215,7 @@ impl Program {
             File::open(elf).unwrap_or_else(|_| panic!("could not open elf file: {elf:?}"));
         let mut elf_contents = Vec::new();
         elf_file.read_to_end(&mut elf_contents).unwrap();
-        let (_, _, program_end) = tracer::decode(&elf_contents);
+        let (_, _, program_end, _) = tracer::decode(&elf_contents);
         let program_size = program_end - RAM_START_ADDRESS;
         let memory_config = MemoryConfig {
             memory_size: self.memory_size,

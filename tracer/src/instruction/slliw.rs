@@ -1,9 +1,15 @@
-use super::{
-    format::{format_i::FormatI, InstructionFormat},
-    RISCVInstruction, RISCVTrace,
+use crate::utils::inline_helpers::InstrAssembler;
+use crate::{
+    declare_riscv_instr,
+    emulator::cpu::{Cpu, Xlen},
+    instruction::virtual_muli::VirtualMULI,
 };
-use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 use serde::{Deserialize, Serialize};
+
+use super::virtual_sign_extend::VirtualSignExtend;
+use super::{
+    format::format_i::FormatI, RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
+};
 
 declare_riscv_instr!(
     name   = SLLIW,
@@ -23,4 +29,27 @@ impl SLLIW {
             ((cpu.x[self.operands.rs1 as usize] as u32) << shamt) as i32 as i64;
     }
 }
-impl RISCVTrace for SLLIW {}
+
+impl RISCVTrace for SLLIW {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
+        let inline_sequence = self.inline_sequence(cpu.xlen);
+        let mut trace = trace;
+        for instr in inline_sequence {
+            // In each iteration, create a new Option containing a re-borrowed reference
+            instr.trace(cpu, trace.as_deref_mut());
+        }
+    }
+
+    fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
+        let mask = match xlen {
+            Xlen::Bit32 => panic!("SLLIW is invalid in 32b mode"),
+            Xlen::Bit64 => 0x1f, //low 5bits
+        };
+        let shift = self.operands.imm & mask;
+
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
+        asm.emit_i::<VirtualMULI>(self.operands.rd, self.operands.rs1, 1 << shift);
+        asm.emit_i::<VirtualSignExtend>(self.operands.rd, self.operands.rd, 0);
+        asm.finalize()
+    }
+}

@@ -1,7 +1,7 @@
 use common::constants::RAM_START_ADDRESS;
 use common::jolt_device::{JoltDevice, MemoryConfig};
 use tracer::emulator::memory::Memory;
-use tracer::instruction::{RV32IMCycle, RV32IMInstruction, VirtualInstructionSequence};
+use tracer::instruction::{RV32IMCycle, RV32IMInstruction};
 
 /// Configuration for program runtime
 #[derive(Debug, Clone)]
@@ -40,34 +40,13 @@ impl Program {
 }
 
 pub fn decode(elf: &[u8]) -> (Vec<RV32IMInstruction>, Vec<(u64, u8)>, u64) {
-    let (mut instructions, raw_bytes, program_end) = tracer::decode(elf);
+    let (mut instructions, raw_bytes, program_end, xlen) = tracer::decode(elf);
     let program_size = program_end - RAM_START_ADDRESS;
 
     // Expand virtual sequences
     instructions = instructions
         .into_iter()
-        .flat_map(|instr| match instr {
-            RV32IMInstruction::DIV(div) => div.virtual_sequence(),
-            RV32IMInstruction::DIVU(divu) => divu.virtual_sequence(),
-            RV32IMInstruction::LB(lb) => lb.virtual_sequence(),
-            RV32IMInstruction::LBU(lbu) => lbu.virtual_sequence(),
-            RV32IMInstruction::LH(lh) => lh.virtual_sequence(),
-            RV32IMInstruction::LHU(lhu) => lhu.virtual_sequence(),
-            RV32IMInstruction::MULH(mulh) => mulh.virtual_sequence(),
-            RV32IMInstruction::MULHSU(mulhsu) => mulhsu.virtual_sequence(),
-            RV32IMInstruction::REM(rem) => rem.virtual_sequence(),
-            RV32IMInstruction::REMU(remu) => remu.virtual_sequence(),
-            RV32IMInstruction::SB(sb) => sb.virtual_sequence(),
-            RV32IMInstruction::SH(sh) => sh.virtual_sequence(),
-            RV32IMInstruction::SLL(sll) => sll.virtual_sequence(),
-            RV32IMInstruction::SLLI(slli) => slli.virtual_sequence(),
-            RV32IMInstruction::SRA(sra) => sra.virtual_sequence(),
-            RV32IMInstruction::SRAI(srai) => srai.virtual_sequence(),
-            RV32IMInstruction::SRL(srl) => srl.virtual_sequence(),
-            RV32IMInstruction::SRLI(srli) => srli.virtual_sequence(),
-            RV32IMInstruction::INLINE(inline) => inline.virtual_sequence(),
-            _ => vec![instr],
-        })
+        .flat_map(|instr| instr.inline_sequence(xlen))
         .collect();
 
     (instructions, raw_bytes, program_size)

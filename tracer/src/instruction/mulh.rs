@@ -1,4 +1,5 @@
-use common::constants::virtual_register_index;
+use crate::utils::inline_helpers::InstrAssembler;
+use crate::utils::virtual_registers::allocate_virtual_register;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -7,12 +8,8 @@ use crate::{
 };
 
 use super::{
-    add::ADD,
-    format::{format_i::FormatI, format_r::FormatR, InstructionFormat},
-    mul::MUL,
-    mulhu::MULHU,
-    virtual_movsign::VirtualMovsign,
-    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction, VirtualInstructionSequence,
+    add::ADD, format::format_r::FormatR, mul::MUL, mulhu::MULHU, virtual_movsign::VirtualMovsign,
+    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
 };
 
 declare_riscv_instr!(
@@ -40,104 +37,30 @@ impl MULH {
 
 impl RISCVTrace for MULH {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let virtual_sequence = self.virtual_sequence();
+        let inline_sequence = self.inline_sequence(cpu.xlen);
         let mut trace = trace;
-        for instr in virtual_sequence {
+        for instr in inline_sequence {
             // In each iteration, create a new Option containing a re-borrowed reference
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
-}
 
-impl VirtualInstructionSequence for MULH {
-    fn virtual_sequence(&self) -> Vec<RV32IMInstruction> {
-        // Virtual registers used in sequence
-        let v_sx = virtual_register_index(0);
-        let v_sy = virtual_register_index(1);
-        let v_0 = virtual_register_index(2);
-        let v_1 = virtual_register_index(3);
-        let v_2 = virtual_register_index(4);
-        let v_3 = virtual_register_index(5);
+    fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
+        let v_sx = allocate_virtual_register();
+        let v_sy = allocate_virtual_register();
+        let v_0 = allocate_virtual_register();
+        let v_1 = allocate_virtual_register();
+        let v_2 = allocate_virtual_register();
+        let v_3 = allocate_virtual_register();
 
-        let mut sequence = vec![];
-
-        let movsign_x = VirtualMovsign {
-            address: self.address,
-            operands: FormatI {
-                rd: v_sx,
-                rs1: self.operands.rs1,
-                imm: 0,
-            },
-            virtual_sequence_remaining: Some(6),
-        };
-        sequence.push(movsign_x.into());
-
-        let movsign_y = VirtualMovsign {
-            address: self.address,
-            operands: FormatI {
-                rd: v_sy,
-                rs1: self.operands.rs2,
-                imm: 0,
-            },
-            virtual_sequence_remaining: Some(5),
-        };
-        sequence.push(movsign_y.into());
-
-        let mulhu = MULHU {
-            address: self.address,
-            operands: FormatR {
-                rd: v_0,
-                rs1: self.operands.rs1,
-                rs2: self.operands.rs2,
-            },
-            virtual_sequence_remaining: Some(4),
-        };
-        sequence.push(mulhu.into());
-
-        let mulu_sx_y = MUL {
-            address: self.address,
-            operands: FormatR {
-                rd: v_1,
-                rs1: v_sx,
-                rs2: self.operands.rs2,
-            },
-            virtual_sequence_remaining: Some(3),
-        };
-        sequence.push(mulu_sx_y.into());
-
-        let mulu_sy_x = MUL {
-            address: self.address,
-            operands: FormatR {
-                rd: v_2,
-                rs1: v_sy,
-                rs2: self.operands.rs1,
-            },
-            virtual_sequence_remaining: Some(2),
-        };
-        sequence.push(mulu_sy_x.into());
-
-        let add_1 = ADD {
-            address: self.address,
-            operands: FormatR {
-                rd: v_3,
-                rs1: v_0,
-                rs2: v_1,
-            },
-            virtual_sequence_remaining: Some(1),
-        };
-        sequence.push(add_1.into());
-
-        let add_2 = ADD {
-            address: self.address,
-            operands: FormatR {
-                rd: self.operands.rd,
-                rs1: v_3,
-                rs2: v_2,
-            },
-            virtual_sequence_remaining: Some(0),
-        };
-        sequence.push(add_2.into());
-
-        sequence
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
+        asm.emit_i::<VirtualMovsign>(*v_sx, self.operands.rs1, 0);
+        asm.emit_i::<VirtualMovsign>(*v_sy, self.operands.rs2, 0);
+        asm.emit_r::<MULHU>(*v_0, self.operands.rs1, self.operands.rs2);
+        asm.emit_r::<MUL>(*v_1, *v_sx, self.operands.rs2);
+        asm.emit_r::<MUL>(*v_2, *v_sy, self.operands.rs1);
+        asm.emit_r::<ADD>(*v_3, *v_0, *v_1);
+        asm.emit_r::<ADD>(self.operands.rd, *v_3, *v_2);
+        asm.finalize()
     }
 }
