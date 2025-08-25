@@ -195,6 +195,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                     if i + 1 < limbs.len() {
                         base *= r64;
                     }
+
                 }
                 if is_positive {
                     acc
@@ -1237,3 +1238,4 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
         [final_az_eval, final_bz_eval, final_cz_eval]
     }
 }
+

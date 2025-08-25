@@ -37,8 +37,7 @@ mod flags {
             assert!(
                 !(flags[CircuitFlags::LeftOperandIsPC]
                     && flags[CircuitFlags::LeftOperandIsRs1Value]),
-                "Left operand flags not exclusive for {:?}",
-                instr
+                "Left operand flags not exclusive for {instr:?}",
             );
         }
     }
@@ -50,8 +49,7 @@ mod flags {
             assert!(
                 !(flags[CircuitFlags::RightOperandIsRs2Value]
                     && flags[CircuitFlags::RightOperandIsImm]),
-                "Right operand flags not exclusive for {:?}",
-                instr
+                "Right operand flags not exclusive for {instr:?}",
             );
         }
     }
@@ -71,8 +69,7 @@ mod flags {
             .count();
             assert!(
                 num_true <= 1,
-                "Lookup shaping flags not exclusive for {:?}",
-                instr
+                "Lookup shaping flags not exclusive for {instr:?}",
             );
         }
     }
@@ -83,8 +80,7 @@ mod flags {
             let flags = instr.circuit_flags();
             assert!(
                 !(flags[CircuitFlags::Load] && flags[CircuitFlags::Store]),
-                "Load/Store flags not exclusive for {:?}",
-                instr
+                "Load/Store flags not exclusive for {instr:?}",
             );
         }
     }

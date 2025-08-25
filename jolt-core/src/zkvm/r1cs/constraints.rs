@@ -1080,8 +1080,7 @@ mod tests {
         for variant in ConstraintName::iter() {
             assert!(
                 seen_names.contains(&variant),
-                "ConstraintName variant {:?} not used in UNIFORM_R1CS",
-                variant
+                "ConstraintName variant {variant:?} not used in UNIFORM_R1CS",
             );
         }
 
@@ -1089,8 +1088,7 @@ mod tests {
         let variant_count = ConstraintName::iter().count();
         assert_eq!(
             variant_count, NUM_R1CS_CONSTRAINTS,
-            "ConstraintName variant count ({}) doesn't match NUM_R1CS_CONSTRAINTS ({})",
-            variant_count, NUM_R1CS_CONSTRAINTS
+            "ConstraintName variant count ({variant_count}) doesn't match NUM_R1CS_CONSTRAINTS ({NUM_R1CS_CONSTRAINTS})",
         );
     }
 

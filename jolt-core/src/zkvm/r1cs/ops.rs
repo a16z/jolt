@@ -670,10 +670,10 @@ impl LC {
                             if c_i128 < 0 {
                                 write!(f, " - {}", -c_i128)?;
                             } else {
-                                write!(f, " + {}", c_i128)?;
+                                write!(f, " + {c_i128}")?;
                             }
                         } else {
-                            write!(f, "{}", c_i128)?;
+                            write!(f, "{c_i128}")?;
                         }
                     }
                 }
