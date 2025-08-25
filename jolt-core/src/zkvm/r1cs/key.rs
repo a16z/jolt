@@ -151,7 +151,8 @@ impl<F: JoltField> UniformSpartanKey<F> {
         let r_sq = r_rlc.square();
 
         // Accumulate directly: for each row, add wr * (A_terms + r*B_terms + r^2*C_terms)
-        for (row_idx, row) in UNIFORM_R1CS.iter().enumerate() {
+        for (row_idx, row_named) in UNIFORM_R1CS.iter().enumerate() {
+            let row = &row_named.cons;
             let wr = eq_rx[row_idx];
 
             row.a.accumulate_evaluations(&mut evals, wr, num_vars);
@@ -230,7 +231,8 @@ impl<F: JoltField> UniformSpartanKey<F> {
         debug_assert!(num_vars < eq_ry.len());
 
         let mut acc = F::zero();
-        for (row_idx, row) in UNIFORM_R1CS.iter().enumerate() {
+        for (row_idx, row_named) in UNIFORM_R1CS.iter().enumerate() {
+            let row = &row_named.cons;
             let wr = eq_rx[row_idx];
             let lc = select(row);
             let col_contrib = lc.dot_eq_ry::<F>(&eq_ry, num_vars);
@@ -257,7 +259,8 @@ impl<F: JoltField> UniformSpartanKey<F> {
         let num_vars: u32 = JoltR1CSInputs::num_inputs() as u32;
         bytes.extend_from_slice(&num_vars.to_be_bytes());
 
-        for row in UNIFORM_R1CS.iter() {
+        for row_named in UNIFORM_R1CS.iter() {
+            let row = &row_named.cons;
             row.a.serialize_canonical(b'A', &mut bytes);
             row.b.serialize_canonical(b'B', &mut bytes);
             row.c.serialize_canonical(b'C', &mut bytes);

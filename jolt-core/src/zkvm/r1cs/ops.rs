@@ -95,6 +95,9 @@ impl LC {
         LC::constant(k)
     }
 
+    // =========================
+    // Introspection
+    // =========================
     pub const fn num_terms(&self) -> usize {
         match self {
             LC::Zero | LC::Const(_) => 0,
@@ -648,6 +651,9 @@ impl LC {
     }
 }
 
+// =============================================================================
+// LC MACRO
+// =============================================================================
 /// lc!: parse a linear combination with +, -, and literal * expr
 /// Examples:
 /// - lc!({ JoltR1CSInputs::UnexpandedPC } + { 4i128 } - { 2 * JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed) })

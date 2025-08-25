@@ -30,10 +30,10 @@ impl JoltField for ark_bn254::Fr {
 
         for i in 0..2 {
             let bitshift = 16 * i;
-            let unit = <Self as ark_ff::PrimeField>::from_u64(1 << bitshift).unwrap();
+            let unit = <Self as ark_ff::PrimeField>::from_u64::<5>(1 << bitshift).unwrap();
             lookup_tables[i] = (0..(1 << 16))
                 .into_par_iter()
-                .map(|j| unit * <Self as ark_ff::PrimeField>::from_u64(j).unwrap())
+                .map(|j| unit * <Self as ark_ff::PrimeField>::from_u64::<5>(j).unwrap())
                 .collect();
         }
 
@@ -42,17 +42,17 @@ impl JoltField for ark_bn254::Fr {
 
     #[inline]
     fn from_u8(n: u8) -> Self {
-        <Self as ark_ff::PrimeField>::from_u64(n as u64).unwrap()
+        <Self as ark_ff::PrimeField>::from_u64::<5>(n as u64).unwrap()
     }
 
     #[inline]
     fn from_u16(n: u16) -> Self {
-        <Self as ark_ff::PrimeField>::from_u64(n as u64).unwrap()
+        <Self as ark_ff::PrimeField>::from_u64::<5>(n as u64).unwrap()
     }
 
     #[inline]
     fn from_u32(n: u32) -> Self {
-        <Self as ark_ff::PrimeField>::from_u64(n as u64).unwrap()
+        <Self as ark_ff::PrimeField>::from_u64::<5>(n as u64).unwrap()
     }
 
     #[inline]
@@ -64,7 +64,7 @@ impl JoltField for ark_bn254::Fr {
         } else if n <= u32::MAX as u64 {
             <Self as JoltField>::from_u32(n as u32)
         } else {
-            <Self as ark_ff::PrimeField>::from_u64(n).unwrap()
+            <Self as ark_ff::PrimeField>::from_u64::<5>(n).unwrap()
         }
     }
 
@@ -168,7 +168,7 @@ impl JoltField for ark_bn254::Fr {
         } else if self.is_one() {
             <Self as JoltField>::from_u64(n)
         } else {
-            ark_ff::Fp::mul_u64(*self, n)
+            ark_ff::Fp::mul_u64::<5>(*self, n)
         }
     }
 
@@ -181,13 +181,13 @@ impl JoltField for ark_bn254::Fr {
         } else if self.is_one() {
             <Self as JoltField>::from_i128(n)
         } else {
-            ark_ff::Fp::mul_i128(*self, n)
+            ark_ff::Fp::mul_i128::<5, 6>(*self, n)
         }
     }
 
     #[inline(always)]
     fn mul_u128(&self, n: u128) -> Self {
-        ark_ff::Fp::mul_u128(*self, n)
+        ark_ff::Fp::mul_u128::<5, 6>(*self, n)
     }
 }
 
@@ -203,13 +203,13 @@ mod tests {
         let mut rng = test_rng();
         for _ in 0..256 {
             let x = rng.next_u64();
-            assert_eq!(<Fr as JoltField>::from_u64(x), Fr::one().mul_u64(x));
+            assert_eq!(<Fr as JoltField>::from_u64(x), Fr::one().mul_u64::<5>(x));
         }
 
         for _ in 0..256 {
             let x = rng.next_u64();
             let y = Fr::random(&mut rng);
-            assert_eq!(y * <Fr as JoltField>::from_u64(x), y.mul_u64(x));
+            assert_eq!(y * <Fr as JoltField>::from_u64(x), y.mul_u64::<5>(x));
         }
     }
 }
