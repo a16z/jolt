@@ -2,14 +2,8 @@
 
 #![cfg_attr(not(feature = "host"), no_std)]
 
-pub mod sdk;
-pub use sdk::*;
-
-// Only include inline registration when compiling for host
-#[cfg(feature = "host")]
-pub mod exec;
-#[cfg(feature = "host")]
-pub mod trace_generator;
+pub mod multiplication;
+pub use multiplication::*;
 
 #[cfg(feature = "host")]
 use tracer::register_inline;
@@ -21,7 +15,7 @@ pub fn init_inlines() -> Result<(), String> {
     register_inline(
         0x0B,
         0x00,
-        0x01,
+        0x02,
         "BIGINT256_MUL",
         std::boxed::Box::new(exec::bigint_mul_exec),
         std::boxed::Box::new(trace_generator::bigint_mul_sequence_builder),

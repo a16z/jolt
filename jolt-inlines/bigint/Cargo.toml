@@ -15,4 +15,7 @@ common = { path = "../../common", optional = true }
 
 [dev-dependencies]
 hex-literal = "0.4.1"
+ark-ff = "0.5.0"
+rand = "0.8"
+tracer = { path = "../../tracer", features = ["test-utils"] }
 

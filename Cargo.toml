@@ -25,6 +25,7 @@ members = [
     "jolt-core",
     "jolt-inlines/sha2",
     "jolt-inlines/keccak256",
+    "jolt-inlines/bigint",
     "tracer",
     "common",
     "jolt-platform",
@@ -60,8 +61,6 @@ members = [
     "examples/verifier/guest",
     "examples/recursion",
     "examples/recursion/guest",
-    "examples/big-int",
-    "examples/big-int/guest",
 ]
 
 [features]
