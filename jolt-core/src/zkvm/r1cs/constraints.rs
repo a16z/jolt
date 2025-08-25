@@ -680,10 +680,13 @@ pub fn eval_az_by_name<F: JoltField>(
             SmallScalar::U8(v) => AzValue::I8(v as i8),
             _ => AzValue::I8(0),
         },
-        ConstraintName::RdWriteEqPCPlusConstIfWritePCtoRD => flag_to_az(matches!(
-            accessor.value_at(Inp::WritePCtoRD.to_index(), row),
-            SmallScalar::Bool(true)
-        )),
+        ConstraintName::RdWriteEqPCPlusConstIfWritePCtoRD => {
+            match accessor.value_at(Inp::WritePCtoRD.to_index(), row) {
+                SmallScalar::U8(v) => AzValue::I8(v as i8),
+                SmallScalar::Bool(b) => AzValue::I8(if b { 1 } else { 0 }),
+                _ => AzValue::I8(0),
+            }
+        }
         ConstraintName::ShouldJumpDef => flag_to_az(matches!(
             accessor.value_at(Inp::OpFlags(CircuitFlags::Jump).to_index(), row),
             SmallScalar::Bool(true)
