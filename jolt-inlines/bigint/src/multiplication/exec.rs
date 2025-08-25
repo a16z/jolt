@@ -22,11 +22,11 @@ pub fn bigint_mul(lhs: [u64; INPUT_LIMBS], rhs: [u64; INPUT_LIMBS]) -> [u64; OUT
 
             // Add to result[i+j] with carry propagation
             let result_position = i + j;
-            
+
             // Add low part
             let (sum, carry1) = result[result_position].overflowing_add(low);
             result[result_position] = sum;
-            
+
             // Propagate carry through high part and beyond
             let mut carry = carry1 as u64;
             if high != 0 || carry != 0 {
@@ -35,7 +35,7 @@ pub fn bigint_mul(lhs: [u64; INPUT_LIMBS], rhs: [u64; INPUT_LIMBS]) -> [u64; OUT
                 let (sum_with_carry, carry_carry) = sum_with_hi.overflowing_add(carry);
                 result[result_position + 1] = sum_with_carry;
                 carry = (carry_hi as u64) + (carry_carry as u64);
-                
+
                 // Continue propagating carry if needed
                 let mut carry_position = result_position + 2;
                 while carry != 0 && carry_position < OUTPUT_LIMBS {
@@ -57,8 +57,8 @@ pub fn bigint_mul_exec(
 ) {
     // Load 4 u64 words from memory at rs1 (first operand)
     let mut a = [0u64; INPUT_LIMBS];
-    for i in 0..INPUT_LIMBS {
-        a[i] = cpu
+    for (i, limb) in a.iter_mut().enumerate().take(INPUT_LIMBS) {
+        *limb = cpu
             .mmu
             .load_doubleword(cpu.x[instr.operands.rs1 as usize].wrapping_add((i * 8) as i64) as u64)
             .expect("BIGINT256_MUL: Failed to load operand A")
@@ -67,8 +67,8 @@ pub fn bigint_mul_exec(
 
     // Load 4 u64 words from memory at rs2 (second operand)
     let mut b = [0u64; INPUT_LIMBS];
-    for i in 0..INPUT_LIMBS {
-        b[i] = cpu
+    for (i, limb) in b.iter_mut().enumerate().take(INPUT_LIMBS) {
+        *limb = cpu
             .mmu
             .load_doubleword(cpu.x[instr.operands.rs2 as usize].wrapping_add((i * 8) as i64) as u64)
             .expect("BIGINT256_MUL: Failed to load operand B")
@@ -79,11 +79,11 @@ pub fn bigint_mul_exec(
     let result = bigint_mul(a, b);
 
     // Store 8 u64 result words back to memory at rs1
-    for i in 0..OUTPUT_LIMBS {
+    for (i, limb) in result.iter().enumerate().take(OUTPUT_LIMBS) {
         cpu.mmu
             .store_doubleword(
                 cpu.x[instr.operands.rd as usize].wrapping_add((i * 8) as i64) as u64,
-                result[i],
+                *limb,
             )
             .expect("BIGINT256_MUL: Failed to store result");
     }

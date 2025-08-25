@@ -9,11 +9,8 @@ use crate::multiplication::trace_generator::NEEDED_REGISTERS;
 
 use tracer::emulator::mmu::DRAM_BASE;
 use tracer::instruction::format::format_r::FormatR;
-use tracer::instruction::{
-    inline::INLINE, RISCVInstruction, RISCVTrace,
-};
+use tracer::instruction::{inline::INLINE, RISCVInstruction, RISCVTrace};
 use tracer::utils::test_harness::CpuTestHarness;
-
 
 pub type BigIntInput = ([u64; INPUT_LIMBS], [u64; INPUT_LIMBS]);
 pub type BigIntOutput = [u64; OUTPUT_LIMBS];
@@ -22,7 +19,7 @@ pub type BigIntOutput = [u64; OUTPUT_LIMBS];
 /// Wrapper around `CpuTestHarness` that offers convenient BigInt helpers.
 pub struct BigIntCpuHarness {
     pub harness: CpuTestHarness,
-    pub vr: [u8; NEEDED_REGISTERS], // 20 virtual registers needed for BigInt multiplication
+    pub vr: [u8; NEEDED_REGISTERS],
 }
 
 impl BigIntCpuHarness {
@@ -31,11 +28,11 @@ impl BigIntCpuHarness {
     const LHS_OFFSET: u64 = 0;
     const RHS_OFFSET: u64 = (INPUT_LIMBS * 8) as u64; // 4 * 8 bytes
     const RESULT_OFFSET: u64 = (INPUT_LIMBS * 2 * 8) as u64; // 8 * 8 bytes
-    
+
     /// Register assignments for the instruction
     pub const RS1: u8 = 10; // Address of first operand
-    pub const RS2: u8 = 11; // Address of second operand  
-    pub const RD: u8 = 12;  // Address where result will be stored
+    pub const RS2: u8 = 11; // Address of second operand
+    pub const RD: u8 = 12; // Address where result will be stored
 
     /// Create a new harness with initialized memory.
     pub fn new() -> Self {
@@ -57,16 +54,19 @@ impl BigIntCpuHarness {
         self.harness.cpu.x[Self::RS1 as usize] = (Self::BASE_ADDR + Self::LHS_OFFSET) as i64;
         self.harness.cpu.x[Self::RS2 as usize] = (Self::BASE_ADDR + Self::RHS_OFFSET) as i64;
         self.harness.cpu.x[Self::RD as usize] = (Self::BASE_ADDR + Self::RESULT_OFFSET) as i64;
-        
+
         // Load operands into memory
-        self.harness.set_memory(Self::BASE_ADDR + Self::LHS_OFFSET, lhs);
-        self.harness.set_memory(Self::BASE_ADDR + Self::RHS_OFFSET, rhs);
+        self.harness
+            .set_memory(Self::BASE_ADDR + Self::LHS_OFFSET, lhs);
+        self.harness
+            .set_memory(Self::BASE_ADDR + Self::RHS_OFFSET, rhs);
     }
 
     /// Read the multiplication result from DRAM
     pub fn read_result(&mut self) -> BigIntOutput {
         let mut out = [0u64; OUTPUT_LIMBS];
-        self.harness.read_memory(Self::BASE_ADDR + Self::RESULT_OFFSET, &mut out);
+        self.harness
+            .read_memory(Self::BASE_ADDR + Self::RESULT_OFFSET, &mut out);
         out
     }
 
@@ -144,7 +144,11 @@ pub mod bigint_verify {
     }
 
     /// Assert that direct `exec` and virtual-sequence `trace` paths match
-    pub fn assert_exec_trace_equiv(lhs: &[u64; INPUT_LIMBS], rhs: &[u64; INPUT_LIMBS], expected: &[u64; OUTPUT_LIMBS]) {
+    pub fn assert_exec_trace_equiv(
+        lhs: &[u64; INPUT_LIMBS],
+        rhs: &[u64; INPUT_LIMBS],
+        expected: &[u64; OUTPUT_LIMBS],
+    ) {
         let mut harness_exec = BigIntCpuHarness::new();
         let mut harness_trace = BigIntCpuHarness::new();
 
@@ -162,13 +166,7 @@ pub mod bigint_verify {
         let exec_result = harness_exec.read_result();
         let trace_result = harness_trace.read_result();
 
-        assert_bigints_equal(
-            &exec_result,
-            &expected,
-            lhs,
-            rhs,
-            "Exec result vs Expected",
-        );
+        assert_bigints_equal(&exec_result, &expected, lhs, rhs, "Exec result vs Expected");
         assert_bigints_equal(
             &trace_result,
             &expected,

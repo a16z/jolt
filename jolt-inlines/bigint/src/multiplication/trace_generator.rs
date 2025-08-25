@@ -1,20 +1,9 @@
 use tracer::{
     emulator::cpu::Xlen,
     instruction::{
-        add::ADD,
-        ld::LD,
-        mul::MUL,
-        mulhu::MULHU,
-        sd::SD,
-        sltu::SLTU,
-        RV32IMInstruction,
+        add::ADD, ld::LD, mul::MUL, mulhu::MULHU, sd::SD, sltu::SLTU, RV32IMInstruction,
     },
-    utils::{
-        inline_helpers::{
-            InstrAssembler,
-        },
-        virtual_registers::allocate_virtual_register,
-    },
+    utils::{inline_helpers::InstrAssembler, virtual_registers::allocate_virtual_register},
 };
 
 use super::{INPUT_LIMBS, OUTPUT_LIMBS};
@@ -34,7 +23,7 @@ pub(crate) const NEEDED_REGISTERS: usize = 20;
 struct BigIntMulSequenceBuilder {
     asm: InstrAssembler,
     /// Virtual registers used by the sequence
-    vr: [u8; NEEDED_REGISTERS as usize],
+    vr: [u8; NEEDED_REGISTERS],
     /// Location of first operand in memory
     operand_rs1: u8,
     /// Location of second operand in memory
@@ -48,7 +37,7 @@ impl BigIntMulSequenceBuilder {
         address: u64,
         is_compressed: bool,
         xlen: Xlen,
-        vr: [u8; NEEDED_REGISTERS as usize],
+        vr: [u8; NEEDED_REGISTERS],
         operand_rs1: u8,
         operand_rs2: u8,
         operand_rd: u8,
@@ -63,19 +52,33 @@ impl BigIntMulSequenceBuilder {
     }
 
     /// Register indices for operands and temporaries
-    fn a(&self, i: usize) -> u8 { self.vr[i] }           // a0-a3
-    fn b(&self, i: usize) -> u8 { self.vr[INPUT_LIMBS + i] }       // a4-a7 (mapped to registers 4-7)
-    fn s(&self, i: usize) -> u8 { self.vr[INPUT_LIMBS + INPUT_LIMBS + i] }       // s0-s7 (result accumulator)
-    fn t(&self, i: usize) -> u8 { self.vr[INPUT_LIMBS + INPUT_LIMBS + OUTPUT_LIMBS + i] }      // t0-t3 (temporaries)
+    // LHS
+    fn a(&self, i: usize) -> u8 {
+        self.vr[i]
+    }
+    // RHS
+    fn b(&self, i: usize) -> u8 {
+        self.vr[INPUT_LIMBS + i]
+    }
+    // Results
+    fn s(&self, i: usize) -> u8 {
+        self.vr[INPUT_LIMBS + INPUT_LIMBS + i]
+    }
+    // Temporaries
+    fn t(&self, i: usize) -> u8 {
+        self.vr[INPUT_LIMBS + INPUT_LIMBS + OUTPUT_LIMBS + i]
+    }
 
     /// Builds the complete multiplication sequence
     fn build(mut self) -> Vec<RV32IMInstruction> {
         for i in 0..INPUT_LIMBS {
-            self.asm.emit_ld::<LD>(self.a(i), self.operand_rs1, i as i64 * 8);
+            self.asm
+                .emit_ld::<LD>(self.a(i), self.operand_rs1, i as i64 * 8);
         }
 
         for i in 0..INPUT_LIMBS {
-            self.asm.emit_ld::<LD>(self.b(i), self.operand_rs2, i as i64 * 8);
+            self.asm
+                .emit_ld::<LD>(self.b(i), self.operand_rs2, i as i64 * 8);
         }
 
         // Initialize result accumulator registers to zero
@@ -91,7 +94,8 @@ impl BigIntMulSequenceBuilder {
 
         // Store result (8 u64 words) back to rd
         for i in 0..OUTPUT_LIMBS {
-            self.asm.emit_s::<SD>(self.operand_rd, self.s(i), i as i64 * 8);
+            self.asm
+                .emit_s::<SD>(self.operand_rd, self.s(i), i as i64 * 8);
         }
 
         self.asm.finalize()
@@ -100,10 +104,9 @@ impl BigIntMulSequenceBuilder {
     /// Implements the MUL-ACC pattern: A[i] × B[j] → R[k] where k = i+j
     /// This multiplies A[i] by B[j] and accumulates the 128-bit result
     /// into R[k], R[k+1], R[k+2] with carry propagation
-    /// Optimized to use fewer instructions similar to arkworks implementation
     fn mul_and_accumulate(&mut self, i: usize, j: usize) {
         let k = i + j;
-        
+
         // Get register indices
         let ai = self.a(i);
         let bj = self.b(j);
@@ -114,10 +117,10 @@ impl BigIntMulSequenceBuilder {
 
         // mulhu t1, ai, bj     # High 64 bits of product (do this first)
         self.asm.emit_r::<MULHU>(t1, ai, bj);
-        
+
         // mul t0, ai, bj       # Low 64 bits of product
         self.asm.emit_r::<MUL>(t0, ai, bj);
-        
+
         // add sk, sk, t0       # Add low bits to R[k]
         self.asm.emit_r::<ADD>(sk, sk, t0);
 
@@ -129,13 +132,13 @@ impl BigIntMulSequenceBuilder {
             self.asm.emit_r::<ADD>(sk1, sk1, t1);
             return;
         }
-        
+
         // sltu t2, sk, t0      # Check for carry (sk < t0 means overflow)
         self.asm.emit_r::<SLTU>(t2, sk, t0);
-        
+
         // add t1, t1, t2       # Add carry from low part to high part
         self.asm.emit_r::<ADD>(t1, t1, t2);
-        
+
         // add sk1, sk1, t1     # Add (high + carry) to R[k+1]
         self.asm.emit_r::<ADD>(sk1, sk1, t1);
 
@@ -165,23 +168,16 @@ pub fn bigint_mul_sequence_builder(
     xlen: Xlen,
     rs1: u8,
     rs2: u8,
-    rd: u8
+    rd: u8,
 ) -> Vec<RV32IMInstruction> {
-    // Virtual registers used as a scratch space
-    let guards: Vec<_> = (0..NEEDED_REGISTERS).map(|_| allocate_virtual_register()).collect();
+    let guards: Vec<_> = (0..NEEDED_REGISTERS)
+        .map(|_| allocate_virtual_register())
+        .collect();
     let mut vr = [0u8; NEEDED_REGISTERS];
     for (i, guard) in guards.iter().enumerate() {
         vr[i] = **guard;
     }
 
-    let builder = BigIntMulSequenceBuilder::new(
-        address,
-        is_compressed,
-        xlen,
-        vr,
-        rs1,
-        rs2,
-        rd,
-    );
+    let builder = BigIntMulSequenceBuilder::new(address, is_compressed, xlen, vr, rs1, rs2, rd);
     builder.build()
 }

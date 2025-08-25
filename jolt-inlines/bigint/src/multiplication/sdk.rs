@@ -58,7 +58,7 @@ pub unsafe fn bigint256_mul_inline(a: *const u64, b: *const u64, result: *mut u6
 #[cfg(feature = "host")]
 pub unsafe fn bigint256_mul_inline(a: *const u64, b: *const u64, result: *mut u64) {
     use crate::multiplication::exec;
-    
+
     let a_array = *(a as *const [u64; INPUT_LIMBS]);
     let b_array = *(b as *const [u64; INPUT_LIMBS]);
     let result_array = exec::bigint_mul(a_array, b_array);
