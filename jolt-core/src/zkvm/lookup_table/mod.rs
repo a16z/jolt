@@ -22,6 +22,7 @@ use upper_word::UpperWordTable;
 use valid_div0::ValidDiv0Table;
 use valid_signed_remainder::ValidSignedRemainderTable;
 use valid_unsigned_remainder::ValidUnsignedRemainderTable;
+use virtual_change_divisor::VirtualChangeDivisorTable;
 use virtual_rotr::VirtualRotrTable;
 use virtual_sra::VirtualSRATable;
 use virtual_srl::VirtualSRLTable;
@@ -76,6 +77,7 @@ pub mod upper_word;
 pub mod valid_div0;
 pub mod valid_signed_remainder;
 pub mod valid_unsigned_remainder;
+pub mod virtual_change_divisor;
 pub mod virtual_rotr;
 pub mod virtual_sra;
 pub mod virtual_srl;
@@ -111,6 +113,7 @@ pub enum LookupTables<const WORD_SIZE: usize> {
     VirtualSRL(VirtualSRLTable<WORD_SIZE>),
     VirtualSRA(VirtualSRATable<WORD_SIZE>),
     VirtualROTRI(VirtualRotrTable<WORD_SIZE>),
+    VirtualChangeDivisor(VirtualChangeDivisorTable<WORD_SIZE>),
 }
 
 impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {
@@ -145,6 +148,7 @@ impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {
             LookupTables::VirtualSRL(table) => table.materialize(),
             LookupTables::VirtualSRA(table) => table.materialize(),
             LookupTables::VirtualROTRI(table) => table.materialize(),
+            LookupTables::VirtualChangeDivisor(table) => table.materialize(),
         }
     }
 
@@ -172,6 +176,7 @@ impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {
             LookupTables::VirtualSRL(table) => table.materialize_entry(index),
             LookupTables::VirtualSRA(table) => table.materialize_entry(index),
             LookupTables::VirtualROTRI(table) => table.materialize_entry(index),
+            LookupTables::VirtualChangeDivisor(table) => table.materialize_entry(index),
         }
     }
 
@@ -199,6 +204,7 @@ impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {
             LookupTables::VirtualSRL(table) => table.evaluate_mle(r),
             LookupTables::VirtualSRA(table) => table.evaluate_mle(r),
             LookupTables::VirtualROTRI(table) => table.evaluate_mle(r),
+            LookupTables::VirtualChangeDivisor(table) => table.evaluate_mle(r),
         }
     }
 
@@ -226,6 +232,7 @@ impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {
             LookupTables::VirtualSRL(table) => table.suffixes(),
             LookupTables::VirtualSRA(table) => table.suffixes(),
             LookupTables::VirtualROTRI(table) => table.suffixes(),
+            LookupTables::VirtualChangeDivisor(table) => table.suffixes(),
         }
     }
 
@@ -257,6 +264,7 @@ impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {
             LookupTables::VirtualSRL(table) => table.combine(prefixes, suffixes),
             LookupTables::VirtualSRA(table) => table.combine(prefixes, suffixes),
             LookupTables::VirtualROTRI(table) => table.combine(prefixes, suffixes),
+            LookupTables::VirtualChangeDivisor(table) => table.combine(prefixes, suffixes),
         }
     }
 }

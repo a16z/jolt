@@ -1,3 +1,4 @@
+use crate::zkvm::lookup_table::suffixes::change_divisor::ChangeDivisorSuffix;
 use crate::zkvm::lookup_table::suffixes::left_shift::LeftShiftSuffix;
 use crate::{field::JoltField, utils::lookup_bits::LookupBits};
 use div_by_zero::DivByZeroSuffix;
@@ -23,6 +24,7 @@ use upper_word::UpperWordSuffix;
 use xor::XorSuffix;
 
 pub mod and;
+pub mod change_divisor;
 pub mod div_by_zero;
 pub mod eq;
 pub mod gt;
@@ -71,6 +73,7 @@ pub enum Suffixes {
     RightShiftHelper,
     SignExtension,
     LeftShift,
+    ChangeDivisor,
 }
 
 pub type SuffixEval<F: JoltField> = F;
@@ -99,6 +102,7 @@ impl Suffixes {
             Suffixes::RightShiftHelper => RightShiftHelperSuffix::suffix_mle(b),
             Suffixes::SignExtension => SignExtensionSuffix::<WORD_SIZE>::suffix_mle(b),
             Suffixes::LeftShift => LeftShiftSuffix::suffix_mle(b),
+            Suffixes::ChangeDivisor => ChangeDivisorSuffix::suffix_mle(b),
         }
     }
 }

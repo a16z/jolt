@@ -15,7 +15,6 @@ use super::{
     mul::MUL,
     virtual_advice::VirtualAdvice,
     virtual_assert_eq::VirtualAssertEQ,
-    virtual_assert_lte::VirtualAssertLTE,
     virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder,
     virtual_move::VirtualMove,
     RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction, VirtualInstructionSequence,
@@ -80,17 +79,17 @@ impl RISCVTrace for REMU {
 impl VirtualInstructionSequence for REMU {
     fn virtual_sequence(&self) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
-        let v_0 = virtual_register_index(0);
-        let v_q = virtual_register_index(1);
-        let v_r = virtual_register_index(2);
-        let v_qy = virtual_register_index(3);
+        let v_q = virtual_register_index(0); // quotient from oracle (ignored when divisor==0)
+        let v_r = virtual_register_index(1); // remainder from oracle
+        let v_t0 = virtual_register_index(2);
 
         let mut sequence = vec![];
 
+        // Get advice
         let advice = VirtualAdvice {
             address: self.address,
             operands: FormatJ { rd: v_q, imm: 0 },
-            virtual_sequence_remaining: Some(7),
+            virtual_sequence_remaining: Some(6),
             advice: 0,
         };
         sequence.push(advice.into());
@@ -98,22 +97,47 @@ impl VirtualInstructionSequence for REMU {
         let advice = VirtualAdvice {
             address: self.address,
             operands: FormatJ { rd: v_r, imm: 0 },
-            virtual_sequence_remaining: Some(6),
+            virtual_sequence_remaining: Some(5),
             advice: 0,
         };
         sequence.push(advice.into());
 
+        // Compute quotient * divisor
         let mul = MUL {
             address: self.address,
             operands: FormatR {
-                rd: v_qy,
+                rd: v_t0,
                 rs1: v_q,
                 rs2: self.operands.rs2,
             },
-            virtual_sequence_remaining: Some(5),
+            virtual_sequence_remaining: Some(4),
         };
         sequence.push(mul.into());
 
+        // Verify quotient * divisor + remainder == dividend (mod 2^n)
+        let add = ADD {
+            address: self.address,
+            operands: FormatR {
+                rd: v_t0,
+                rs1: v_t0,
+                rs2: v_r,
+            },
+            virtual_sequence_remaining: Some(3),
+        };
+        sequence.push(add.into());
+
+        let assert_eq = VirtualAssertEQ {
+            address: self.address,
+            operands: FormatB {
+                rs1: v_t0,
+                rs2: self.operands.rs1,
+                imm: 0,
+            },
+            virtual_sequence_remaining: Some(2),
+        };
+        sequence.push(assert_eq.into());
+
+        // Check remainder < divisor (unsigned)
         let assert_remainder = VirtualAssertValidUnsignedRemainder {
             address: self.address,
             operands: FormatB {
@@ -121,43 +145,11 @@ impl VirtualInstructionSequence for REMU {
                 rs2: self.operands.rs2,
                 imm: 0,
             },
-            virtual_sequence_remaining: Some(4),
+            virtual_sequence_remaining: Some(1),
         };
         sequence.push(assert_remainder.into());
 
-        let assert_lte = VirtualAssertLTE {
-            address: self.address,
-            operands: FormatB {
-                rs1: v_qy,
-                rs2: self.operands.rs1,
-                imm: 0,
-            },
-            virtual_sequence_remaining: Some(3),
-        };
-        sequence.push(assert_lte.into());
-
-        let add = ADD {
-            address: self.address,
-            operands: FormatR {
-                rd: v_0,
-                rs1: v_qy,
-                rs2: v_r,
-            },
-            virtual_sequence_remaining: Some(2),
-        };
-        sequence.push(add.into());
-
-        let assert_eq = VirtualAssertEQ {
-            address: self.address,
-            operands: FormatB {
-                rs1: v_0,
-                rs2: self.operands.rs1,
-                imm: 0,
-            },
-            virtual_sequence_remaining: Some(1),
-        };
-        sequence.push(assert_eq.into());
-
+        // Move remainder to result
         let virtual_move = VirtualMove {
             address: self.address,
             operands: FormatI {

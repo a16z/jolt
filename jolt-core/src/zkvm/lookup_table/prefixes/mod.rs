@@ -1,3 +1,4 @@
+use crate::zkvm::lookup_table::prefixes::change_divisor::ChangeDivisorPrefix;
 use crate::zkvm::lookup_table::prefixes::left_shift::LeftShiftPrefix;
 use crate::zkvm::lookup_table::prefixes::left_shift_helper::LeftShiftHelperPrefix;
 use crate::{field::JoltField, utils::lookup_bits::LookupBits};
@@ -32,6 +33,7 @@ use upper_word::UpperWordPrefix;
 use xor::XorPrefix;
 
 pub mod and;
+pub mod change_divisor;
 pub mod div_by_zero;
 pub mod eq;
 pub mod left_is_zero;
@@ -119,6 +121,7 @@ pub enum Prefixes {
     SignExtension,
     LeftShift,
     LeftShiftHelper,
+    ChangeDivisor,
 }
 
 #[derive(Clone, Copy, Allocative)]
@@ -222,6 +225,9 @@ impl Prefixes {
             }
             Prefixes::LeftShiftHelper => {
                 LeftShiftHelperPrefix::prefix_mle(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::ChangeDivisor => {
+                ChangeDivisorPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j)
             }
         };
         PrefixEval(eval)
@@ -359,6 +365,9 @@ impl Prefixes {
             }
             Prefixes::LeftShiftHelper => {
                 LeftShiftHelperPrefix::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+            }
+            Prefixes::ChangeDivisor => {
+                ChangeDivisorPrefix::<WORD_SIZE>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
             }
         }
     }
