@@ -10,9 +10,12 @@ use crate::{
         small_value::{svo_helpers, NUM_SVO_ROUNDS},
     },
     zkvm::r1cs::{
-        constraints::{eval_az_by_name, eval_bz_by_name, NamedConstraint},
+        constraints::{eval_az_by_name, eval_bz_by_name, NamedConstraint, CzKind},
         inputs::WitnessRowAccessor,
-        types::{reduce_unreduced_to_field, AzValue, BzValue, UnreducedProduct},
+        types::{
+            reduce_unreduced_to_field, AzValue, BzValue, UnreducedProduct, fmadd_unreduced,
+            mul_az_bz,
+        },
     },
 };
 use allocative::Allocative;
@@ -67,10 +70,15 @@ pub struct SpartanInterleavedPolynomial<const NUM_SVO_ROUNDS: usize, F: JoltFiel
     pub(crate) bound_coeffs: Vec<SparseCoefficient<F>>,
 
     binding_scratch_space: Vec<SparseCoefficient<F>>,
+
+    /// For gating Cz computation on-the-fly without extra masks
+    #[allocative(skip)]
+    uniform_r1cs_rows: &'static [NamedConstraint],
+    padded_num_constraints: usize,
 }
 
 impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM_SVO_ROUNDS, F> {
-    // #[cfg(test)]
+    #[cfg(test)]
     fn az_to_field_local(az: AzValue) -> F {
         match az {
             AzValue::I8(v) => F::from_i128(v as i128),
@@ -81,10 +89,13 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                     -F::from_u64(signed_bigint.magnitude.0[0]) 
                 }
             }
+            AzValue::I128(x) => {
+                if x == 0 { F::zero() } else { F::from_i128(x) }
+            }
         }
     }
 
-    // #[cfg(test)]
+    #[cfg(test)]
     fn bz_to_field_local(bz: BzValue) -> F {
         match bz {
             BzValue::S64(signed_bigint) => {
@@ -102,6 +113,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                     -F::from_u128(magnitude) 
                 }
             }
+            BzValue::S192(_s3) => unimplemented!(),
         }
     }
 
@@ -129,9 +141,12 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
     fn mul_field_by_az(val: F, az: AzValue) -> F {
         match az {
             AzValue::I8(v) => {
-                if v == 0 { F::zero() } else { val * F::from_i128(v as i128) }
+                if v == 0 { F::zero() } else { val.mul_i64(v as i64) }
             }
             AzValue::S64(s1) => Self::mul_field_by_signed_limbs(val, &s1.magnitude.0[..1], s1.is_positive),
+            AzValue::I128(x) => {
+                if x == 0 { F::zero() } else { val.mul_i128(x) }
+            }
         }
     }
 
@@ -140,7 +155,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
         match bz {
             BzValue::S64(s1) => Self::mul_field_by_signed_limbs(val, &s1.magnitude.0[..1], s1.is_positive),
             BzValue::S128(s2) => Self::mul_field_by_signed_limbs(val, &s2.magnitude.0[..2], s2.is_positive),
-            // No S192 variant; S128 is the max BzValue magnitude supported
+            BzValue::S192(s3) => Self::mul_field_by_signed_limbs(val, &s3.magnitude.0[..3], s3.is_positive),
         }
     }
     /// Compute the unbound coefficients for the Az and Bz polynomials (no Cz coefficients are
@@ -250,6 +265,8 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
 
         let num_uniform_r1cs_constraints = const_rows.len();
         let rem_num_uniform_r1cs_constraints = num_uniform_r1cs_constraints % Y_SVO_SPACE_SIZE;
+
+        // Keep a reference to const_rows to access CzKind on-the-fly; padded slots are considered Zero.
 
         // Build split-eq helper and precompute E_in (over x_in) and E_out (over x_out)
         let eq_poly = GruenSplitEqPolynomial::new_for_small_value(
@@ -477,6 +494,8 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                 bz_unbound_coeffs_shards: final_bz_unbound_coeffs_shards,
                 bound_coeffs: vec![],
                 binding_scratch_space: vec![],
+                uniform_r1cs_rows: const_rows,
+                padded_num_constraints,
             },
         )
     }
@@ -632,11 +651,26 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                             }
 
                             if let Some(bz_for_az) = paired_bz_opt {
-                                let cz_term = eq_r_y * (Self::az_to_field_local(az_orig_val) * Self::bz_to_field_local(bz_for_az));
-                                match x_next_val {
-                                    0 => cz0_at_r += cz_term,
-                                    1 => cz1_at_r += cz_term,
-                                    _ => unreachable!(),
+                                // Check Cz mask: only compute Cz if CzKind::NonZero for this constraint.
+                                // Recover the constraint index within the padded modulus.
+                                let constraint_idx_in_step = (az_coeff.index / 2) % self.padded_num_constraints;
+                                // If this constraint is within the concrete set, gate by CzKind; else (padded) treat as Zero
+                                let cz_is_nonzero = if constraint_idx_in_step < self.uniform_r1cs_rows.len() {
+                                    matches!(self.uniform_r1cs_rows[constraint_idx_in_step].cz, CzKind::NonZero)
+                                } else { false };
+                                if cz_is_nonzero {
+                                    // Accumulate cz at r using typed product with delayed reduction.
+                                    let prod = mul_az_bz(az_orig_val, bz_for_az);
+                                    let mut pos = UnreducedProduct::zero();
+                                    let mut neg = UnreducedProduct::zero();
+                                    fmadd_unreduced::<F>(&mut pos, &mut neg, &eq_r_y, prod);
+                                    let cz_term = reduce_unreduced_to_field::<F>(&pos)
+                                        - reduce_unreduced_to_field::<F>(&neg);
+                                    match x_next_val {
+                                        0 => cz0_at_r += cz_term,
+                                        1 => cz1_at_r += cz_term,
+                                        _ => unreachable!(),
+                                    }
                                 }
                             }
                         } else if bz_in_block {

@@ -155,7 +155,7 @@ dependencies = [
 [[package]]
 name = "ark-ec"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#433529b5ddeb93f0fda36d8d2094d3ef51e8aa2e"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#ebb26fdac76ab49d06c37fd24f6c0f724f1300dc"
 dependencies = [
  "ahash",
  "ark-ff",
@@ -176,7 +176,7 @@ dependencies = [
 [[package]]
 name = "ark-ff"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#433529b5ddeb93f0fda36d8d2094d3ef51e8aa2e"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#ebb26fdac76ab49d06c37fd24f6c0f724f1300dc"
 dependencies = [
  "allocative",
  "ark-ff-asm",
@@ -197,7 +197,7 @@ dependencies = [
 [[package]]
 name = "ark-ff-asm"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#433529b5ddeb93f0fda36d8d2094d3ef51e8aa2e"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#ebb26fdac76ab49d06c37fd24f6c0f724f1300dc"
 dependencies = [
  "quote",
  "syn 2.0.106",
@@ -206,7 +206,7 @@ dependencies = [
 [[package]]
 name = "ark-ff-macros"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#433529b5ddeb93f0fda36d8d2094d3ef51e8aa2e"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#ebb26fdac76ab49d06c37fd24f6c0f724f1300dc"
 dependencies = [
  "num-bigint",
  "num-traits",
@@ -218,7 +218,7 @@ dependencies = [
 [[package]]
 name = "ark-poly"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#433529b5ddeb93f0fda36d8d2094d3ef51e8aa2e"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#ebb26fdac76ab49d06c37fd24f6c0f724f1300dc"
 dependencies = [
  "ahash",
  "ark-ff",
@@ -232,7 +232,7 @@ dependencies = [
 [[package]]
 name = "ark-serialize"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#433529b5ddeb93f0fda36d8d2094d3ef51e8aa2e"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#ebb26fdac76ab49d06c37fd24f6c0f724f1300dc"
 dependencies = [
  "ark-serialize-derive 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions)",
  "ark-std",
@@ -256,7 +256,7 @@ dependencies = [
 [[package]]
 name = "ark-serialize-derive"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#433529b5ddeb93f0fda36d8d2094d3ef51e8aa2e"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#ebb26fdac76ab49d06c37fd24f6c0f724f1300dc"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1682,7 +1682,7 @@ dependencies = [
 [[package]]
 name = "jolt-optimizations"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#433529b5ddeb93f0fda36d8d2094d3ef51e8aa2e"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#ebb26fdac76ab49d06c37fd24f6c0f724f1300dc"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -2490,14 +2490,14 @@ dependencies = [
 
 [[package]]
 name = "regex"
-version = "1.11.1"
+version = "1.11.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b544ef1b4eac5dc2db33ea63606ae9ffcfac26c1416a2806ae0bf5f56b201191"
+checksum = "23d7fd106d8c02486a8d64e778353d1cffe08ce79ac2e82f540c86d0facf6912"
 dependencies = [
  "aho-corasick",
  "memchr",
- "regex-automata 0.4.9",
- "regex-syntax 0.8.5",
+ "regex-automata 0.4.10",
+ "regex-syntax 0.8.6",
 ]
 
 [[package]]
@@ -2511,13 +2511,13 @@ dependencies = [
 
 [[package]]
 name = "regex-automata"
-version = "0.4.9"
+version = "0.4.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "809e8dc61f6de73b46c85f4c96486310fe304c434cfa43669d7b40f711150908"
+checksum = "6b9458fa0bfeeac22b5ca447c63aaf45f28439a709ccd244698632f9aa6394d6"
 dependencies = [
  "aho-corasick",
  "memchr",
- "regex-syntax 0.8.5",
+ "regex-syntax 0.8.6",
 ]
 
 [[package]]
@@ -2528,9 +2528,9 @@ checksum = "f162c6dd7b008981e4d40210aca20b4bd0f9b60ca9271061b07f78537722f2e1"
 
 [[package]]
 name = "regex-syntax"
-version = "0.8.5"
+version = "0.8.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2b15c43186be67a4fd63bee50d0303afffcef381492ebe2c5d87f324e1b8815c"
+checksum = "caf4aa5b0f434c91fe5c7f1ecb6a5ece2130b02ad2a590589dda5146df959001"
 
 [[package]]
 name = "reqwest"
@@ -3456,13 +3456,14 @@ checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
 
 [[package]]
 name = "url"
-version = "2.5.6"
+version = "2.5.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "137a3c834eaf7139b73688502f3f1141a0337c5d8e4d9b536f9b8c796e26a7c4"
+checksum = "08bc136a29a3d1758e07a9cca267be308aeebf5cfd5a10f3f67ab2097683ef5b"
 dependencies = [
  "form_urlencoded",
  "idna",
  "percent-encoding",
+ "serde",
 ]
 
 [[package]]
@@ -4101,4 +4102,4 @@ dependencies = [
 [[patch.unused]]
 name = "ark-bn254"
 version = "0.5.0-alpha.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#433529b5ddeb93f0fda36d8d2094d3ef51e8aa2e"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#ebb26fdac76ab49d06c37fd24f6c0f724f1300dc"

@@ -16,7 +16,7 @@ use crate::zkvm::JoltProverPreprocessing;
 use super::constraints::NamedConstraint;
 use super::key::UniformSpartanKey;
 use super::spartan::UniformSpartanProof;
-use super::types::{AzExtendedEval, AzValue, BzExtendedEval, BzValue, ConstantValue};
+use super::types::{AzValue, BzValue, ConstantValue};
 use super::ops::LC;
 use crate::utils::small_scalar::SmallScalar;
 use ark_ff::SignedBigInt;
@@ -645,31 +645,33 @@ pub fn lc_az_bz_eval_row_to_typed<F: JoltField>(
 }
 
 #[allow(unused_variables)]
-pub fn accum_az_ext(acc: &mut AzExtendedEval, row: AzValue, is_positive: bool) {
+pub fn accum_az_ext(acc: &mut AzValue, row: AzValue, is_positive: bool) {
+    // Simple counter accumulation; adjust if needed for real semantics
     match acc {
-        AzExtendedEval::I8(v) => {
-            *v = v.saturating_add(if is_positive { 1 } else { -1 });
+        AzValue::I8(v) => { *v = v.saturating_add(if is_positive { 1 } else { -1 }); }
+        AzValue::S64(s) => {
+            let delta = if is_positive { 1i64 } else { -1i64 };
+            let add = SignedBigInt::<1>::from_i64(delta);
+            *s = s.add_trunc::<1>(&add);
         }
-        AzExtendedEval::I128(v) => {
-            *v = v.saturating_add(if is_positive { 1 } else { -1 });
-        }
+        AzValue::I128(v) => { *v = v.saturating_add(if is_positive { 1 } else { -1 }); }
     }
 }
 
 #[allow(unused_variables)]
-pub fn accum_bz_ext(acc: &mut BzExtendedEval, row: BzValue, is_positive: bool) {
+pub fn accum_bz_ext(acc: &mut BzValue, row: BzValue, is_positive: bool) {
     match acc {
-        BzExtendedEval::L1(ref mut signed_bigint) => {
-            signed_bigint.magnitude.0[0] = signed_bigint.magnitude.0[0].saturating_add(1);
-            signed_bigint.is_positive = signed_bigint.is_positive && is_positive;
+        BzValue::S64(ref mut s1) => {
+            s1.magnitude.0[0] = s1.magnitude.0[0].saturating_add(1);
+            s1.is_positive = s1.is_positive && is_positive;
         }
-        BzExtendedEval::L2(ref mut signed_bigint) => {
-            signed_bigint.magnitude.0[0] = signed_bigint.magnitude.0[0].saturating_add(1);
-            signed_bigint.is_positive = signed_bigint.is_positive && is_positive;
+        BzValue::S128(ref mut s2) => {
+            s2.magnitude.0[0] = s2.magnitude.0[0].saturating_add(1);
+            s2.is_positive = s2.is_positive && is_positive;
         }
-        BzExtendedEval::L3(ref mut signed_bigint) => {
-            signed_bigint.magnitude.0[0] = signed_bigint.magnitude.0[0].saturating_add(1);
-            signed_bigint.is_positive = signed_bigint.is_positive && is_positive;
+        BzValue::S192(ref mut s3) => {
+            s3.magnitude.0[0] = s3.magnitude.0[0].saturating_add(1);
+            s3.is_positive = s3.is_positive && is_positive;
         }
     }
 }

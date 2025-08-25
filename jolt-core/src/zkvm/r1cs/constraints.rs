@@ -942,6 +942,7 @@ mod tests {
     use std::collections::HashSet;
     use ark_ff::{SignedBigInt, BigInt};
     use crate::zkvm::r1cs::types::BzValue;
+    use crate::zkvm::r1cs::inputs::{eval_az_typed_generic, eval_bz_typed_generic};
 
     #[test]
     fn constraint_names_bijection() {
@@ -999,6 +1000,7 @@ mod tests {
         match v {
             AzValue::I8(x) => ark_ff::SignedBigInt::from_i64(x as i64),
             AzValue::S64(s) => s,
+            AzValue::I128(x) => ark_ff::SignedBigInt::from_i128(x),
         }
     }
 
@@ -1106,11 +1108,11 @@ mod tests {
     #[test]
     fn az_named_matches_generic_a_up_to_widening() {
         // 3 representative rows with varied flags and values
-        let acc = build_test_accessor(3);
+        let acc = build_test_accessor(100);
         let acc_ref: &dyn WitnessRowAccessor<crate::field::tracked_ark::TrackedFr> = &acc;
         for c in UNIFORM_R1CS.iter() {
             for row in 0..acc.num_steps() {
-                let gen = crate::zkvm::r1cs::inputs::eval_az_typed_generic::<crate::field::tracked_ark::TrackedFr>(&c.cons.a, acc_ref, row);
+                let gen = eval_az_typed_generic::<crate::field::tracked_ark::TrackedFr>(&c.cons.a, acc_ref, row);
                 let named = eval_az_by_name::<crate::field::tracked_ark::TrackedFr>(c, acc_ref, row);
                 let gen_s = az_to_s64(gen);
                 let named_s = az_to_s64(named);
@@ -1123,26 +1125,27 @@ mod tests {
         }
     }
 
-    /// Normalize BzValue to L2 (SignedBigInt<2>) for equality up to widening.
-    fn bz_to_l2(v: BzValue) -> SignedBigInt<2> {
+    /// Normalize BzValue to S192 (SignedBigInt<3>) for equality up to widening.
+    fn bz_to_l3(v: BzValue) -> SignedBigInt<3> {
         match v {
-            BzValue::S64(s) => SignedBigInt::from_bigint({ let mut m = BigInt::<2>::zero(); m.0[0]=s.magnitude.0[0]; m }, s.is_positive),
-            BzValue::S128(s) => s,
+            BzValue::S64(s) => SignedBigInt::from_bigint({ let mut m = BigInt::<3>::zero(); m.0[0]=s.magnitude.0[0]; m }, s.is_positive),
+            BzValue::S128(s) => SignedBigInt::from_bigint({ let mut m = BigInt::<3>::zero(); m.0[0]=s.magnitude.0[0]; m.0[1]=s.magnitude.0[1]; m }, s.is_positive),
+            BzValue::S192(s) => s,
         }
     }
 
     #[test]
     fn bz_named_matches_generic_b_up_to_widening() {
-        let acc = build_test_accessor(3);
+        let acc = build_test_accessor(100);
         let acc_ref: &dyn WitnessRowAccessor<crate::field::tracked_ark::TrackedFr> = &acc;
         for c in UNIFORM_R1CS.iter() {
             for row in 0..acc.num_steps() {
-                let gen = crate::zkvm::r1cs::inputs::eval_bz_typed_generic::<crate::field::tracked_ark::TrackedFr>(&c.cons.b, acc_ref, row);
+                let gen = eval_bz_typed_generic::<crate::field::tracked_ark::TrackedFr>(&c.cons.b, acc_ref, row);
                 let named = eval_bz_by_name::<crate::field::tracked_ark::TrackedFr>(c, acc_ref, row);
-                let gen_l2 = bz_to_l2(gen);
-                let named_l2 = bz_to_l2(named);
+                let gen_l3 = bz_to_l3(gen);
+                let named_l3 = bz_to_l3(named);
                 assert_eq!(
-                    gen_l2, named_l2,
+                    gen_l3, named_l3,
                     "Bz mismatch for {:?} at row {}: generic={:?}, named={:?}",
                     c.name, row, gen, named
                 );

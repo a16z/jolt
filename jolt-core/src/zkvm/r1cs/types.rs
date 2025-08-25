@@ -143,93 +143,61 @@ impl ConstantValue {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AzValue {
+    /// Binary-point Az evaluation: small i8 (e.g. flags, tiny sums)
     I8(i8),
+    /// Binary-point Az evaluation: signed magnitude with 1 limb (u64 magnitude)
     S64(SignedBigInt<1>),
+    /// Extended-point Az evaluation at Infinity (linear combos of binary evals)
+    I128(i128),
 }
 
 impl AzValue {
-    pub fn zero() -> Self {
-        AzValue::I8(0)
-    }
-
+    pub fn zero() -> Self { AzValue::I8(0) }
     pub fn is_zero(&self) -> bool {
         match self {
             AzValue::I8(v) => *v == 0,
             AzValue::S64(v) => v.is_zero(),
+            AzValue::I128(v) => *v == 0,
         }
     }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BzValue {
+    /// Binary-point Bz evaluation: signed magnitude with 1 limb (u64 magnitude)
     S64(SignedBigInt<1>),
+    /// Binary-point Bz evaluation: signed magnitude with 2 limbs (u128 magnitude)
     S128(SignedBigInt<2>),
+    /// Extended-point Bz evaluation at Infinity (linear combos of binary evals)
+    S192(SignedBigInt<3>),
 }
 
 impl BzValue {
-    pub fn zero() -> Self {
-        BzValue::S64(SignedBigInt::zero())
-    }
-
+    pub fn zero() -> Self { BzValue::S64(SignedBigInt::zero()) }
     pub fn is_zero(&self) -> bool {
         match self {
             BzValue::S64(v) => v.is_zero(),
             BzValue::S128(v) => v.is_zero(),
-        }
-    }
-}
-
-// =============================
-// Extended evaluations
-// =============================
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum AzExtendedEval {
-    I8(i8),
-    I128(i128),
-}
-
-impl AzExtendedEval {
-    pub fn is_zero(&self) -> bool {
-        match self {
-            AzExtendedEval::I8(v) => *v == 0,
-            AzExtendedEval::I128(v) => *v == 0,
+            BzValue::S192(v) => v.is_zero(),
         }
     }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum BzExtendedEval {
-    L1(SignedBigInt<1>),
-    L2(SignedBigInt<2>),
-    L3(SignedBigInt<3>),
-}
-
-impl BzExtendedEval {
-    pub fn is_zero(&self) -> bool {
-        match self {
-            BzExtendedEval::L1(v) => v.is_zero(),
-            BzExtendedEval::L2(v) => v.is_zero(),
-            BzExtendedEval::L3(v) => v.is_zero(),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SVOProductValue {
+pub enum AzBzProductValue {
     L1(SignedBigInt<1>),
     L2(SignedBigInt<2>),
     L3(SignedBigInt<3>),
     L4(SignedBigInt<4>),
 }
 
-impl SVOProductValue {
+impl AzBzProductValue {
     pub fn is_zero(&self) -> bool {
         match self {
-            SVOProductValue::L1(v) => v.is_zero(),
-            SVOProductValue::L2(v) => v.is_zero(),
-            SVOProductValue::L3(v) => v.is_zero(),
-            SVOProductValue::L4(v) => v.is_zero(),
+            AzBzProductValue::L1(v) => v.is_zero(),
+            AzBzProductValue::L2(v) => v.is_zero(),
+            AzBzProductValue::L3(v) => v.is_zero(),
+            AzBzProductValue::L4(v) => v.is_zero(),
         }
     }
 }
@@ -237,46 +205,64 @@ impl SVOProductValue {
 /// Final unreduced product after multiplying by a 256-bit field element
 pub type UnreducedProduct = BigInt<8>; // 512-bit unsigned integer
 
-pub fn mul_az_bz(az: AzExtendedEval, bz: BzExtendedEval) -> SVOProductValue {
+/// Multiply Az and Bz evaluations with limb-aware truncation.
+///
+/// Semantics:
+/// - Treat `AzValue` and `BzValue` as signed-magnitude integers with the
+///   indicated limb widths (I8 -> 1 limb, S64 -> 1 limb, I128 -> 2 limbs,
+///   S128 -> 2 limbs, S192 -> 3 limbs).
+/// - The result uses the minimal sufficient limb width with truncation:
+///   - 1 + 1 -> 2 limbs (L2)
+///   - 1 + 2 -> 3 limbs (L3)
+///   - 1 + 3 -> 4 limbs (L4)
+///   - 2 + 1 -> 3 limbs (L3)
+///   - 2 + 2 -> 4 limbs (L4)
+///   - 2 + 3 -> 4 limbs (L4, clamped)
+/// - No modular reduction is performed here; truncation follows
+///   `mul_trunc` behavior on SignedBigInt with the specified limb bound.
+pub fn mul_az_bz(az: AzValue, bz: BzValue) -> AzBzProductValue {
     match (az, bz) {
-        // I8 is first cast to S64 (1 limb)
-        (AzExtendedEval::I8(a), BzExtendedEval::L1(b1)) => {
+        (AzValue::I8(a), BzValue::S64(b1)) => {
             let a1 = SignedBigInt::<1>::from_i64(a as i64);
-            // 1 + 1 = 2 limbs
             let p: SignedBigInt<2> = a1.mul_trunc::<1, 2>(&b1);
-            SVOProductValue::L2(p)
+            AzBzProductValue::L2(p)
         }
-        (AzExtendedEval::I8(a), BzExtendedEval::L2(b2)) => {
+        (AzValue::I8(a), BzValue::S128(b2)) => {
             let a1 = SignedBigInt::<1>::from_i64(a as i64);
-            // 1 + 2 = 3 limbs
             let p: SignedBigInt<3> = a1.mul_trunc::<2, 3>(&b2);
-            SVOProductValue::L3(p)
+            AzBzProductValue::L3(p)
         }
-        (AzExtendedEval::I8(a), BzExtendedEval::L3(b3)) => {
+        (AzValue::I8(a), BzValue::S192(b3)) => {
             let a1 = SignedBigInt::<1>::from_i64(a as i64);
-            // 1 + 3 = 4 limbs (clamped)
             let p: SignedBigInt<4> = a1.mul_trunc::<3, 4>(&b3);
-            SVOProductValue::L4(p)
+            AzBzProductValue::L4(p)
         }
-
-        // I128 maps to 2 limbs
-        (AzExtendedEval::I128(a), BzExtendedEval::L1(b1)) => {
+        (AzValue::I128(a), BzValue::S64(b1)) => {
             let a2 = SignedBigInt::<2>::from_i128(a);
-            // 2 + 1 = 3 limbs
             let p: SignedBigInt<3> = a2.mul_trunc::<1, 3>(&b1);
-            SVOProductValue::L3(p)
+            AzBzProductValue::L3(p)
         }
-        (AzExtendedEval::I128(a), BzExtendedEval::L2(b2)) => {
+        (AzValue::I128(a), BzValue::S128(b2)) => {
             let a2 = SignedBigInt::<2>::from_i128(a);
-            // 2 + 2 = 4 limbs
             let p: SignedBigInt<4> = a2.mul_trunc::<2, 4>(&b2);
-            SVOProductValue::L4(p)
+            AzBzProductValue::L4(p)
         }
-        (AzExtendedEval::I128(a), BzExtendedEval::L3(b3)) => {
+        (AzValue::I128(a), BzValue::S192(b3)) => {
             let a2 = SignedBigInt::<2>::from_i128(a);
-            // 2 + 3 = 5 limbs -> clamp to 4 limbs
             let p: SignedBigInt<4> = a2.mul_trunc::<3, 4>(&b3);
-            SVOProductValue::L4(p)
+            AzBzProductValue::L4(p)
+        }
+        (AzValue::S64(a1), BzValue::S64(b1)) => {
+            let p: SignedBigInt<2> = a1.mul_trunc::<1, 2>(&b1);
+            AzBzProductValue::L2(p)
+        }
+        (AzValue::S64(a1), BzValue::S128(b2)) => {
+            let p: SignedBigInt<3> = a1.mul_trunc::<2, 3>(&b2);
+            AzBzProductValue::L3(p)
+        }
+        (AzValue::S64(a1), BzValue::S192(b3)) => {
+            let p: SignedBigInt<4> = a1.mul_trunc::<3, 4>(&b3);
+            AzBzProductValue::L4(p)
         }
     }
 }
@@ -310,12 +296,10 @@ pub fn reduce_unreduced_to_field<F: JoltField>(x: &UnreducedProduct) -> F {
     acc
 }
 
-impl Mul<BzExtendedEval> for AzExtendedEval {
-    type Output = SVOProductValue;
+impl Mul<BzValue> for AzValue {
+    type Output = AzBzProductValue;
 
-    fn mul(self, rhs: BzExtendedEval) -> Self::Output {
-        mul_az_bz(self, rhs)
-    }
+    fn mul(self, rhs: BzValue) -> Self::Output { mul_az_bz(self, rhs) }
 }
 
 /// Fused multiply-add into unreduced accumulators.
@@ -326,22 +310,22 @@ pub fn fmadd_unreduced<F: JoltField>(
     pos_acc: &mut UnreducedProduct,
     neg_acc: &mut UnreducedProduct,
     field: &F,
-    product: SVOProductValue,
+    product: AzBzProductValue,
 ) {
     match product {
-        SVOProductValue::L1(v) => {
+        AzBzProductValue::L1(v) => {
             let limbs = &v.magnitude.0[..1];
             field.fmadd_small_into_unreduced(limbs, v.is_positive, pos_acc, neg_acc);
         }
-        SVOProductValue::L2(v) => {
+        AzBzProductValue::L2(v) => {
             let limbs = &v.magnitude.0[..2];
             field.fmadd_small_into_unreduced(limbs, v.is_positive, pos_acc, neg_acc);
         }
-        SVOProductValue::L3(v) => {
+        AzBzProductValue::L3(v) => {
             let limbs = &v.magnitude.0[..3];
             field.fmadd_small_into_unreduced(limbs, v.is_positive, pos_acc, neg_acc);
         }
-        SVOProductValue::L4(v) => {
+        AzBzProductValue::L4(v) => {
             let limbs = &v.magnitude.0[..4];
             field.fmadd_small_into_unreduced(limbs, v.is_positive, pos_acc, neg_acc);
         }
@@ -362,113 +346,112 @@ fn widen_signed<const S: usize, const D: usize>(x: &SignedBigInt<S>) -> SignedBi
     SignedBigInt::from_bigint(mag, x.is_positive)
 }
 
-// AzValue - AzValue -> AzExtendedEval (conservative promotion)
+// AzValue - AzValue -> AzValue (conservative promotion)
 impl Sub for AzValue {
-    type Output = AzExtendedEval;
+    type Output = AzValue;
 
     fn sub(self, rhs: Self) -> Self::Output {
         match (self, rhs) {
-            // Contract: never overflows i8
-            (AzValue::I8(a), AzValue::I8(b)) => AzExtendedEval::I8(a - b),
+            (AzValue::I8(a), AzValue::I8(b)) => AzValue::I8(a - b),
             (lhs, rhs) => {
                 let li128: i128 = match lhs {
                     AzValue::I8(v) => v as i128,
                     AzValue::S64(s) => s.to_i128(),
+                    AzValue::I128(v) => v,
                 };
                 let ri128: i128 = match rhs {
                     AzValue::I8(v) => v as i128,
                     AzValue::S64(s) => s.to_i128(),
+                    AzValue::I128(v) => v,
                 };
-                AzExtendedEval::I128(li128 - ri128)
+                AzValue::I128(li128 - ri128)
             }
         }
     }
 }
 
-// AzExtendedEval - AzExtendedEval -> AzExtendedEval (stay I8 if both I8; else I128)
-impl Sub for AzExtendedEval {
-    type Output = AzExtendedEval;
+// Removed Sub impl for AzExtendedEval (enum removed)
 
-    fn sub(self, rhs: Self) -> Self::Output {
-        match (self, rhs) {
-            (AzExtendedEval::I8(a), AzExtendedEval::I8(b)) => AzExtendedEval::I8(a - b),
-            (lhs, rhs) => {
-                let li128: i128 = match lhs {
-                    AzExtendedEval::I8(v) => v as i128,
-                    AzExtendedEval::I128(v) => v,
-                };
-                let ri128: i128 = match rhs {
-                    AzExtendedEval::I8(v) => v as i128,
-                    AzExtendedEval::I128(v) => v,
-                };
-                AzExtendedEval::I128(li128 - ri128)
-            }
-        }
-    }
-}
-
-// BzValue - BzValue -> BzExtendedEval (conservative: same layer stays; different -> larger layer)
+// BzValue - BzValue -> BzValue (conservative: same layer stays; different -> larger layer)
 impl Sub for BzValue {
-    type Output = BzExtendedEval;
+    type Output = BzValue;
 
     fn sub(self, rhs: Self) -> Self::Output {
         match (self, rhs) {
-            (BzValue::S64(a), BzValue::S64(b)) => {
-                let r = a.sub_trunc::<1>(&b);
-                BzExtendedEval::L1(r)
+            // Same-width cases
+            (BzValue::S64(a), BzValue::S64(b)) => BzValue::S64(a.sub_trunc::<1>(&b)),
+            (BzValue::S128(a), BzValue::S128(b)) => BzValue::S128(a.sub_trunc::<2>(&b)),
+            (BzValue::S192(a), BzValue::S192(b)) => {
+                // Compute at L3, then conservatively downcast when possible
+                let r3 = a.sub_trunc::<3>(&b);
+                if r3.magnitude.0[2] == 0 {
+                    // Fits in 2 limbs -> downcast to S128
+                    let mut mag2 = BigInt::<2>::zero();
+                    mag2.0[0] = r3.magnitude.0[0];
+                    mag2.0[1] = r3.magnitude.0[1];
+                    BzValue::S128(SignedBigInt::from_bigint(mag2, r3.is_positive))
+                } else {
+                    BzValue::S192(r3)
+                }
             }
-            (BzValue::S128(a), BzValue::S128(b)) => {
-                let r = a.sub_trunc::<2>(&b);
-                BzExtendedEval::L2(r)
-            }
+
+            // Mixed-width: upcast smaller, compute, then attempt downcast
             (BzValue::S64(a), BzValue::S128(b)) => {
                 let a2 = widen_signed::<1, 2>(&a);
-                let r = a2.sub_trunc::<2>(&b);
-                BzExtendedEval::L2(r)
+                BzValue::S128(a2.sub_trunc::<2>(&b))
             }
             (BzValue::S128(a), BzValue::S64(b)) => {
                 let b2 = widen_signed::<1, 2>(&b);
-                let r = a.sub_trunc::<2>(&b2);
-                BzExtendedEval::L2(r)
+                BzValue::S128(a.sub_trunc::<2>(&b2))
             }
-        }
-    }
-}
-
-// BzExtendedEval - BzExtendedEval -> BzExtendedEval (conservative: same layer; else larger)
-impl Sub for BzExtendedEval {
-    type Output = BzExtendedEval;
-
-    fn sub(self, rhs: Self) -> Self::Output {
-        match (self, rhs) {
-            (BzExtendedEval::L1(a), BzExtendedEval::L1(b)) => BzExtendedEval::L1(a.sub_trunc::<1>(&b)),
-            (BzExtendedEval::L2(a), BzExtendedEval::L2(b)) => BzExtendedEval::L2(a.sub_trunc::<2>(&b)),
-            (BzExtendedEval::L3(a), BzExtendedEval::L3(b)) => BzExtendedEval::L3(a.sub_trunc::<3>(&b)),
-            (BzExtendedEval::L1(a), BzExtendedEval::L2(b)) => {
-                let a2 = widen_signed::<1, 2>(&a);
-                BzExtendedEval::L2(a2.sub_trunc::<2>(&b))
-            }
-            (BzExtendedEval::L2(a), BzExtendedEval::L1(b)) => {
-                let b2 = widen_signed::<1, 2>(&b);
-                BzExtendedEval::L2(a.sub_trunc::<2>(&b2))
-            }
-            (BzExtendedEval::L1(a), BzExtendedEval::L3(b)) => {
+            (BzValue::S64(a), BzValue::S192(b)) => {
                 let a3 = widen_signed::<1, 3>(&a);
-                BzExtendedEval::L3(a3.sub_trunc::<3>(&b))
+                let r3 = a3.sub_trunc::<3>(&b);
+                if r3.magnitude.0[2] == 0 {
+                    let mut mag2 = BigInt::<2>::zero();
+                    mag2.0[0] = r3.magnitude.0[0];
+                    mag2.0[1] = r3.magnitude.0[1];
+                    BzValue::S128(SignedBigInt::from_bigint(mag2, r3.is_positive))
+                } else {
+                    BzValue::S192(r3)
+                }
             }
-            (BzExtendedEval::L3(a), BzExtendedEval::L1(b)) => {
+            (BzValue::S192(a), BzValue::S64(b)) => {
                 let b3 = widen_signed::<1, 3>(&b);
-                BzExtendedEval::L3(a.sub_trunc::<3>(&b3))
+                let r3 = a.sub_trunc::<3>(&b3);
+                if r3.magnitude.0[2] == 0 {
+                    let mut mag2 = BigInt::<2>::zero();
+                    mag2.0[0] = r3.magnitude.0[0];
+                    mag2.0[1] = r3.magnitude.0[1];
+                    BzValue::S128(SignedBigInt::from_bigint(mag2, r3.is_positive))
+                } else {
+                    BzValue::S192(r3)
+                }
             }
-            (BzExtendedEval::L2(a), BzExtendedEval::L3(b)) => {
+            (BzValue::S128(a), BzValue::S192(b)) => {
                 let a3 = widen_signed::<2, 3>(&a);
-                BzExtendedEval::L3(a3.sub_trunc::<3>(&b))
+                let r3 = a3.sub_trunc::<3>(&b);
+                if r3.magnitude.0[2] == 0 {
+                    let mut mag2 = BigInt::<2>::zero();
+                    mag2.0[0] = r3.magnitude.0[0];
+                    mag2.0[1] = r3.magnitude.0[1];
+                    BzValue::S128(SignedBigInt::from_bigint(mag2, r3.is_positive))
+                } else {
+                    BzValue::S192(r3)
+                }
             }
-            (BzExtendedEval::L3(a), BzExtendedEval::L2(b)) => {
+            (BzValue::S192(a), BzValue::S128(b)) => {
                 let b3 = widen_signed::<2, 3>(&b);
-                BzExtendedEval::L3(a.sub_trunc::<3>(&b3))
+                let r3 = a.sub_trunc::<3>(&b3);
+                if r3.magnitude.0[2] == 0 {
+                    let mut mag2 = BigInt::<2>::zero();
+                    mag2.0[0] = r3.magnitude.0[0];
+                    mag2.0[1] = r3.magnitude.0[1];
+                    BzValue::S128(SignedBigInt::from_bigint(mag2, r3.is_positive))
+                } else {
+                    BzValue::S192(r3)
+                }
             }
         }
     }
 }
-
