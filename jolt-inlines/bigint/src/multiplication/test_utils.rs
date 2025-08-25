@@ -101,7 +101,7 @@ pub mod bigint_verify {
 
     /// Print a BigInt value in hexadecimal format
     pub fn print_limbs_hex(label: &str, limbs: &[u64]) {
-        print!("{}: 0x", label);
+        print!("{label}: 0x");
         // Print in big-endian order (most significant limb first)
         for i in (0..limbs.len()).rev() {
             print!("{:016x}", limbs[i]);
@@ -121,7 +121,7 @@ pub mod bigint_verify {
         test_name: &str,
     ) {
         if expected != actual {
-            println!("\n❌ {} FAILED", test_name);
+            println!("\n❌ {test_name} FAILED");
             println!("\nInputs:");
             print_limbs_hex("  LHS    ", lhs);
             print_limbs_hex("  RHS    ", rhs);
@@ -139,7 +139,7 @@ pub mod bigint_verify {
                     );
                 }
             }
-            panic!("{} failed: results do not match", test_name);
+            panic!("{test_name} failed: results do not match");
         }
     }
 
@@ -166,10 +166,10 @@ pub mod bigint_verify {
         let exec_result = harness_exec.read_result();
         let trace_result = harness_trace.read_result();
 
-        assert_bigints_equal(&exec_result, &expected, lhs, rhs, "Exec result vs Expected");
+        assert_bigints_equal(&exec_result, expected, lhs, rhs, "Exec result vs Expected");
         assert_bigints_equal(
             &trace_result,
-            &expected,
+            expected,
             lhs,
             rhs,
             "Trace result vs Expected",
