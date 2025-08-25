@@ -109,7 +109,7 @@ mod test {
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<XLEN, Fr, VirtualChangeDivisorTable<XLEN>>();
+        prefix_suffix_test::<Fr, VirtualChangeDivisorTable<XLEN>>();
     }
 
     #[test]

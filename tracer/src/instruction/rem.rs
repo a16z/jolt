@@ -15,13 +15,13 @@ use super::{
     mul::MUL,
     srai::SRAI,
     sub::SUB,
-    xor::XOR,
     virtual_advice::VirtualAdvice,
     virtual_assert_eq::VirtualAssertEQ,
     virtual_assert_valid_div0::VirtualAssertValidDiv0,
     virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder,
     virtual_change_divisor::VirtualChangeDivisor,
     virtual_move::VirtualMove,
+    xor::XOR,
     RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction, VirtualInstructionSequence,
 };
 

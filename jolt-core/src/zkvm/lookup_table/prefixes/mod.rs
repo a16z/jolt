@@ -1,6 +1,7 @@
 use crate::zkvm::lookup_table::prefixes::change_divisor::ChangeDivisorPrefix;
 use crate::zkvm::lookup_table::prefixes::left_shift::LeftShiftPrefix;
 use crate::zkvm::lookup_table::prefixes::left_shift_helper::LeftShiftHelperPrefix;
+use crate::zkvm::lookup_table::prefixes::right_operand::RightOperandPrefix;
 use crate::{field::JoltField, utils::lookup_bits::LookupBits};
 use allocative::Allocative;
 use lsb::LsbPrefix;
@@ -52,6 +53,7 @@ pub mod positive_remainder_less_than_divisor;
 pub mod pow2;
 pub mod right_is_zero;
 pub mod right_msb;
+pub mod right_operand;
 pub mod right_shift;
 pub mod sign_extension;
 pub mod upper_word;
@@ -122,6 +124,7 @@ pub enum Prefixes {
     LeftShift,
     LeftShiftHelper,
     ChangeDivisor,
+    RightOperand,
 }
 
 #[derive(Clone, Copy, Allocative)]
@@ -228,6 +231,9 @@ impl Prefixes {
             }
             Prefixes::ChangeDivisor => {
                 ChangeDivisorPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::RightOperand => {
+                RightOperandPrefix::<WORD_SIZE>::prefix_mle(checkpoints, r_x, c, b, j)
             }
         };
         PrefixEval(eval)
@@ -368,6 +374,9 @@ impl Prefixes {
             }
             Prefixes::ChangeDivisor => {
                 ChangeDivisorPrefix::<WORD_SIZE>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+            }
+            Prefixes::RightOperand => {
+                RightOperandPrefix::<WORD_SIZE>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
             }
         }
     }

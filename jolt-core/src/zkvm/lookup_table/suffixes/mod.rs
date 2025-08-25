@@ -1,5 +1,6 @@
 use crate::zkvm::lookup_table::suffixes::change_divisor::ChangeDivisorSuffix;
 use crate::zkvm::lookup_table::suffixes::left_shift::LeftShiftSuffix;
+use crate::zkvm::lookup_table::suffixes::right_operand::RightOperandSuffix;
 use crate::{field::JoltField, utils::lookup_bits::LookupBits};
 use div_by_zero::DivByZeroSuffix;
 use eq::EqSuffix;
@@ -37,6 +38,7 @@ pub mod one;
 pub mod or;
 pub mod pow2;
 pub mod right_is_zero;
+pub mod right_operand;
 pub mod right_shift;
 pub mod right_shift_helper;
 pub mod right_shift_padding;
@@ -74,6 +76,7 @@ pub enum Suffixes {
     SignExtension,
     LeftShift,
     ChangeDivisor,
+    RightOperand,
 }
 
 pub type SuffixEval<F: JoltField> = F;
@@ -103,6 +106,7 @@ impl Suffixes {
             Suffixes::SignExtension => SignExtensionSuffix::<WORD_SIZE>::suffix_mle(b),
             Suffixes::LeftShift => LeftShiftSuffix::suffix_mle(b),
             Suffixes::ChangeDivisor => ChangeDivisorSuffix::suffix_mle(b),
+            Suffixes::RightOperand => RightOperandSuffix::suffix_mle(b),
         }
     }
 }
