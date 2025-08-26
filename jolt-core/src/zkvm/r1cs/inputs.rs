@@ -328,15 +328,9 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> WitnessRowAccessor<F>
             }
             JoltR1CSInputs::Rd => SmallScalar::U8(get(t).rd_write().0),
             JoltR1CSInputs::Imm => {
-                // Interpret immediate as signed 64-bit two's-complement when encoded in wider type
+                // Use decoder-provided immediate directly (rv64 semantics)
                 let raw = get(t).instruction().normalize().operands.imm;
-                // two's complement adjust for XLEN=64 when raw is encoded modulo 2^64
-                let signed = if raw > (i64::MAX as i128) {
-                    raw - ((u64::MAX as i128) + 1)
-                } else {
-                    raw
-                };
-                SmallScalar::I128(signed)
+                SmallScalar::I128(raw)
             }
             JoltR1CSInputs::RamAddress => SmallScalar::U64(get(t).ram_access().address() as u64),
             JoltR1CSInputs::Rs1Value => SmallScalar::U64(get(t).rs1_read().1),
@@ -364,13 +358,8 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> WitnessRowAccessor<F>
             }
             JoltR1CSInputs::RightInstructionInput => {
                 let (_left, right) = LookupQuery::<XLEN>::to_instruction_inputs(get(t));
-                // Normalize to signed 64-bit two's complement domain
-                let signed = if right > (i64::MAX as i128) {
-                    right - ((u64::MAX as i128) + 1)
-                } else {
-                    right
-                };
-                SmallScalar::I128(signed)
+                // Store signed value directly (rv64 semantics: use decoder-provided i128 domain)
+                SmallScalar::I128(right)
             }
             JoltR1CSInputs::LeftLookupOperand => {
                 let (l, _r) = LookupQuery::<XLEN>::to_lookup_operands(get(t));
@@ -378,14 +367,9 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> WitnessRowAccessor<F>
             }
             JoltR1CSInputs::RightLookupOperand => {
                 let (_l, r) = LookupQuery::<XLEN>::to_lookup_operands(get(t));
-                // Interpret right lookup operand in signed two's complement domain for add/sub paths
-                let signed = if r > (i64::MAX as u128) {
-                    // two's complement for 64-bit width
-                    (r as i128) - ((u64::MAX as i128) + 1)
-                } else {
-                    r as i128
-                };
-                SmallScalar::I128(signed)
+                // Store as unsigned bit pattern (rv64 semantics). Downstream named evaluators
+                // reinterpret to signed where needed by casting u64 -> i64 -> i128.
+                SmallScalar::U128(r)
             }
             JoltR1CSInputs::Product => {
                 let (left, right) = LookupQuery::<XLEN>::to_instruction_inputs(get(t));
@@ -485,8 +469,7 @@ pub fn eval_az_generic<F: JoltField>(
     accessor: &dyn WitnessRowAccessor<F>,
     row: usize,
 ) -> AzValue {
-    // Pass 1: small i8 fast path is only valid if ALL terms are Bool/U8,
-    // all coeffs fit in i8, and no i8 overflow occurs.
+    // Pass 1: small i8 fast path (Bool/U8 inputs only, i8 coeffs, no overflow)
     let mut acc_i8: i8 = 0;
     let mut small_ok = true;
     a_lc.for_each_term(|input_index, coeff| {
@@ -501,7 +484,7 @@ pub fn eval_az_generic<F: JoltField>(
                 return;
             }
         };
-        // Only Bool/U8 are allowed to keep the i8 path
+        // Only Bool/U8 are allowed to keep the i8 path (rv64 A-side small sums)
         let sc = accessor.value_at(input_index, row);
         let v_i8 = match sc {
             SmallScalar::Bool(b) => {
@@ -545,7 +528,7 @@ pub fn eval_az_generic<F: JoltField>(
         return AzValue::I8(acc_i8);
     }
 
-    // Pass 2: sign-aware u64 magnitude accumulation.
+    // Pass 2: sign-aware u64 magnitude accumulation (rv64-compatible integer LC semantics)
     let mut mag: u64 = 0;
     let mut sign: bool = true; // true => positive
     a_lc.for_each_term(|input_index, coeff| {
@@ -605,6 +588,7 @@ pub fn eval_bz_generic<F: JoltField>(
             SmallScalar::U64(v) => (v, true),
             SmallScalar::I64(v) => (v.unsigned_abs(), v >= 0),
             SmallScalar::I128(v) => {
+                // rv64 semantics: B-side integer LC uses the signed value
                 let mag = v.unsigned_abs();
                 if mag > u64::MAX as u128 {
                     fits_s64 = false;
@@ -670,15 +654,12 @@ pub fn eval_bz_generic<F: JoltField>(
         return BzValue::S64(SignedBigInt::from_u64_with_sign(s64_mag, s64_pos));
     }
 
-    // Fallback: S128 accumulation
+    // Fallback: S128 accumulation (rv64 semantics for wider products)
     let mut acc = SignedBigInt::<2>::zero();
     b_lc.for_each_term(|input_index, coeff| {
         let sc = accessor.value_at(input_index, row);
-        let v_i128 = match sc {
-            SmallScalar::I128(18446744073709551615) => -1i128, // Fix systematic issue: -1 stored as u64::MAX
-            SmallScalar::I64(9223372036854775807) => -1i128, // Fix systematic issue: -1 stored as i64::MAX
-            _ => sc.as_i128(),
-        };
+        // rv64: use signed integer value directly
+        let v_i128 = sc.as_i128();
         let v = SignedBigInt::<2>::from_i128(v_i128);
         let c = SignedBigInt::<2>::from_i128(coeff.to_i128());
         let term = v.mul_trunc::<2, 2>(&c);
