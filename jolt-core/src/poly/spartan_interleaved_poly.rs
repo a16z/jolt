@@ -206,8 +206,12 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
         struct PrecomputeTaskOutput<F: JoltField> {
             az_coeffs_local: Vec<SparseCoefficient<AzValue>>,
             bz_coeffs_local: Vec<SparseCoefficient<BzValue>>,
+            // New-typed accumulators (small-value path)
             svo_accums_zero_local: [F; NUM_ACCUMS_EVAL_ZERO],
             svo_accums_infty_local: [F; NUM_ACCUMS_EVAL_INFTY],
+            // Old field-based accumulators (baseline)
+            svo_accums_zero_old_local: [F; NUM_ACCUMS_EVAL_ZERO],
+            svo_accums_infty_old_local: [F; NUM_ACCUMS_EVAL_INFTY],
         }
 
         let num_parallel_chunks = if num_x_out_vals > 0 {
@@ -250,14 +254,21 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
 
                 let mut chunk_svo_accums_zero = [F::zero(); NUM_ACCUMS_EVAL_ZERO];
                 let mut chunk_svo_accums_infty = [F::zero(); NUM_ACCUMS_EVAL_INFTY];
+                let mut chunk_svo_accums_zero_old = [F::zero(); NUM_ACCUMS_EVAL_ZERO];
+                let mut chunk_svo_accums_infty_old = [F::zero(); NUM_ACCUMS_EVAL_INFTY];
 
                 for x_out_val in x_out_start..x_out_end {
                     let mut tA_pos_acc_for_current_x_out =
                         [UnreducedProduct::zero(); NUM_NONTRIVIAL_TERNARY_POINTS];
                     let mut tA_neg_acc_for_current_x_out =
                         [UnreducedProduct::zero(); NUM_NONTRIVIAL_TERNARY_POINTS];
+                    // Old baseline temp tA in field space
+                    let mut tA_sum_for_current_x_out_old =
+                        [F::zero(); NUM_NONTRIVIAL_TERNARY_POINTS];
                     let mut current_x_out_svo_zero = [F::zero(); NUM_ACCUMS_EVAL_ZERO];
                     let mut current_x_out_svo_infty = [F::zero(); NUM_ACCUMS_EVAL_INFTY];
+                    let mut current_x_out_svo_zero_old = [F::zero(); NUM_ACCUMS_EVAL_ZERO];
+                    let mut current_x_out_svo_infty_old = [F::zero(); NUM_ACCUMS_EVAL_INFTY];
 
                     for x_in_step_val in 0..num_x_in_step_vals {
                         let current_step_idx =
@@ -267,6 +278,9 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                         let mut binary_az_block = [AzValue::I8(0); Y_SVO_SPACE_SIZE];
                         let mut binary_bz_block =
                             [BzValue::S64(SignedBigInt::zero()); Y_SVO_SPACE_SIZE];
+                        // Old baseline blocks in field
+                        let mut binary_az_block_old = [F::zero(); Y_SVO_SPACE_SIZE];
+                        let mut binary_bz_block_old = [F::zero(); Y_SVO_SPACE_SIZE];
 
                         // Iterate constraints in Y_SVO_SPACE_SIZE blocks so we can call the
                         // small-value kernels on full Az/Bz blocks when available.
@@ -283,6 +297,14 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                                 &mut binary_az_block[..chunk_size],
                                 &mut binary_bz_block[..chunk_size],
                             );
+
+                            // Populate old baseline field blocks by mapping typed values to field
+                            for idx_in_svo_block in 0..chunk_size {
+                                binary_az_block_old[idx_in_svo_block] =
+                                    binary_az_block[idx_in_svo_block].to_field::<F>();
+                                binary_bz_block_old[idx_in_svo_block] =
+                                    binary_bz_block[idx_in_svo_block].to_field::<F>();
+                            }
 
                             // Process the batch results and populate coefficient vectors
                             for idx_in_svo_block in 0..chunk_size {
@@ -364,6 +386,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                                     | current_x_in_constraint_val;
                                 let E_in_val = &E_in_evals[x_in_val];
 
+                                // New typed path
                                 svo_helpers::compute_and_update_tA_inplace_small_value::<
                                     NUM_SVO_ROUNDS,
                                     F,
@@ -374,11 +397,24 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                                     &mut tA_pos_acc_for_current_x_out,
                                     &mut tA_neg_acc_for_current_x_out,
                                 );
+                                // Old baseline field path
+                                svo_helpers::compute_and_update_tA_inplace_generic::<
+                                    NUM_SVO_ROUNDS,
+                                    F,
+                                >(
+                                    &binary_az_block_old,
+                                    &binary_bz_block_old,
+                                    E_in_val,
+                                    &mut tA_sum_for_current_x_out_old,
+                                );
 
                                 current_x_in_constraint_val += 1;
                                 binary_az_block = [AzValue::I8(0); Y_SVO_SPACE_SIZE];
                                 binary_bz_block =
                                     [BzValue::S64(SignedBigInt::zero()); Y_SVO_SPACE_SIZE];
+                                // Reset old baseline field blocks
+                                binary_az_block_old = [F::zero(); Y_SVO_SPACE_SIZE];
+                                binary_bz_block_old = [F::zero(); Y_SVO_SPACE_SIZE];
                             }
                         }
 
@@ -388,6 +424,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                                 | current_x_in_constraint_val;
                             let E_in_val_last = &E_in_evals[x_in_val_last];
 
+                            // New typed path
                             svo_helpers::compute_and_update_tA_inplace_small_value::<
                                 NUM_SVO_ROUNDS,
                                 F,
@@ -397,6 +434,16 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                                 E_in_val_last,
                                 &mut tA_pos_acc_for_current_x_out,
                                 &mut tA_neg_acc_for_current_x_out,
+                            );
+                            // Old baseline field path
+                            svo_helpers::compute_and_update_tA_inplace_generic::<
+                                NUM_SVO_ROUNDS,
+                                F,
+                            >(
+                                &binary_az_block_old,
+                                &binary_bz_block_old,
+                                E_in_val_last,
+                                &mut tA_sum_for_current_x_out_old,
                             );
                         }
                     }
@@ -411,6 +458,19 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                         tA_sum_for_current_x_out[i] = pos_f - neg_f;
                     }
 
+                    // Compare typed vs old baseline tA per x_out (commented out for old path test)
+                    // for i in 0..NUM_NONTRIVIAL_TERNARY_POINTS {
+                    //     if tA_sum_for_current_x_out[i] != tA_sum_for_current_x_out_old[i] {
+                    //         panic!(
+                    //             "[SVO precompute mismatch] x_out_val={} idx={} new={} old={}",
+                    //             x_out_val,
+                    //             i,
+                    //             tA_sum_for_current_x_out[i],
+                    //             tA_sum_for_current_x_out_old[i]
+                    //         );
+                    //     }
+                    // }
+
                     // Distribute accumulated tA for this x_out into the SVO accumulators
                     // (both zero and infty evaluations) using precomputed E_out tables.
                     svo_helpers::distribute_tA_to_svo_accumulators_generic::<NUM_SVO_ROUNDS, F>(
@@ -421,11 +481,22 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                         &mut current_x_out_svo_infty,
                     );
 
+                    // Old baseline distribution
+                    svo_helpers::distribute_tA_to_svo_accumulators_generic::<NUM_SVO_ROUNDS, F>(
+                        &tA_sum_for_current_x_out_old,
+                        x_out_val,
+                        E_out_vec,
+                        &mut current_x_out_svo_zero_old,
+                        &mut current_x_out_svo_infty_old,
+                    );
+
                     for i in 0..NUM_ACCUMS_EVAL_ZERO {
                         chunk_svo_accums_zero[i] += current_x_out_svo_zero[i];
+                        chunk_svo_accums_zero_old[i] += current_x_out_svo_zero_old[i];
                     }
                     for i in 0..NUM_ACCUMS_EVAL_INFTY {
                         chunk_svo_accums_infty[i] += current_x_out_svo_infty[i];
+                        chunk_svo_accums_infty_old[i] += current_x_out_svo_infty_old[i];
                     }
                 }
 
@@ -434,12 +505,16 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                     bz_coeffs_local: chunk_bz_coeffs,
                     svo_accums_zero_local: chunk_svo_accums_zero,
                     svo_accums_infty_local: chunk_svo_accums_infty,
+                    svo_accums_zero_old_local: chunk_svo_accums_zero_old,
+                    svo_accums_infty_old_local: chunk_svo_accums_infty_old,
                 }
             })
             .collect();
 
         let mut final_svo_accums_zero = [F::zero(); NUM_ACCUMS_EVAL_ZERO];
         let mut final_svo_accums_infty = [F::zero(); NUM_ACCUMS_EVAL_INFTY];
+        let mut final_svo_accums_zero_old = [F::zero(); NUM_ACCUMS_EVAL_ZERO];
+        let mut final_svo_accums_infty_old = [F::zero(); NUM_ACCUMS_EVAL_INFTY];
         let mut final_az_unbound_coeffs_shards: Vec<Vec<SparseCoefficient<AzValue>>> =
             Vec::with_capacity(collected_chunk_outputs.len());
         let mut final_bz_unbound_coeffs_shards: Vec<Vec<SparseCoefficient<BzValue>>> =
@@ -451,18 +526,44 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
             if NUM_ACCUMS_EVAL_ZERO > 0 {
                 for idx in 0..NUM_ACCUMS_EVAL_ZERO {
                     final_svo_accums_zero[idx] += task_output.svo_accums_zero_local[idx];
+                    final_svo_accums_zero_old[idx] +=
+                        task_output.svo_accums_zero_old_local[idx];
                 }
             }
             if NUM_ACCUMS_EVAL_INFTY > 0 {
                 for idx in 0..NUM_ACCUMS_EVAL_INFTY {
                     final_svo_accums_infty[idx] += task_output.svo_accums_infty_local[idx];
+                    final_svo_accums_infty_old[idx] +=
+                        task_output.svo_accums_infty_old_local[idx];
                 }
             }
         }
 
+        // Final comparison of accumulators (commented out for old path test)
+        // for i in 0..NUM_ACCUMS_EVAL_ZERO {
+        //     if final_svo_accums_zero[i] != final_svo_accums_zero_old[i] {
+        //         panic!(
+        //             "[SVO precompute accum_zero mismatch] idx={} new={} old={}",
+        //             i,
+        //             final_svo_accums_zero[i],
+        //             final_svo_accums_zero_old[i]
+        //         );
+        //     }
+        // }
+        // for i in 0..NUM_ACCUMS_EVAL_INFTY {
+        //     if final_svo_accums_infty[i] != final_svo_accums_infty_old[i] {
+        //         panic!(
+        //             "[SVO precompute accum_infty mismatch] idx={} new={} old={}",
+        //             i,
+        //             final_svo_accums_infty[i],
+        //             final_svo_accums_infty_old[i]
+        //         );
+        //     }
+        // }
+
         (
-            final_svo_accums_zero,
-            final_svo_accums_infty,
+            final_svo_accums_zero_old,  // Use old baseline results
+            final_svo_accums_infty_old, // Use old baseline results
             Self {
                 az_unbound_coeffs_shards: final_az_unbound_coeffs_shards,
                 bz_unbound_coeffs_shards: final_bz_unbound_coeffs_shards,
@@ -532,6 +633,9 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
             bound_coeffs_local: Vec<SparseCoefficient<F>>,
             sumcheck_eval_at_0_local: F,
             sumcheck_eval_at_infty_local: F,
+            // Old baseline (field) contributions for A/B compare
+            sumcheck_eval_at_0_old_local: F,
+            sumcheck_eval_at_infty_old_local: F,
         }
 
         // These are needed to derive x_out_val_stream and x_in_val_stream from a block_id
@@ -549,6 +653,8 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                 let mut task_bound_coeffs = Vec::with_capacity(estimated_num_bound_coeffs);
                 let mut task_sum_contrib_0 = F::zero();
                 let mut task_sum_contrib_infty = F::zero();
+                let mut task_sum_contrib_0_old = F::zero();
+                let mut task_sum_contrib_infty_old = F::zero();
 
                 let mut az_iter = az_shard_data.iter().peekable();
                 let mut bz_iter = bz_shard_data.iter().peekable();
@@ -576,6 +682,13 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                     let mut az_acc = [SignedUnreducedAccum::new(), SignedUnreducedAccum::new()];
                     let mut bz_acc = [SignedUnreducedAccum::new(), SignedUnreducedAccum::new()];
                     let mut cz_acc = [SignedUnreducedAccum::new(), SignedUnreducedAccum::new()];
+                    // Old baseline per-block field accumulators
+                    let mut az0_field = F::zero();
+                    let mut az1_field = F::zero();
+                    let mut bz0_field = F::zero();
+                    let mut bz1_field = F::zero();
+                    let mut cz0_field = F::zero();
+                    let mut cz1_field = F::zero();
 
                     loop {
                         let az_in_block = az_iter.peek().is_some_and(|c| {
@@ -603,12 +716,33 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                             let eq_r_y = eq_r_evals[y_val_idx];
 
                             az_acc[x_next_val].fmadd_az::<F>(&eq_r_y, az_orig_val);
+                            // Baseline field accumulation for Az
+                            let az_field_val = az_orig_val.to_field::<F>();
+                            if x_next_val == 0 {
+                                az0_field += eq_r_y * az_field_val;
+                            } else {
+                                az1_field += eq_r_y * az_field_val;
+                            }
 
                             if let Some(bz_peek) = bz_iter.peek() {
                                 if bz_peek.index == az_coeff.index + 1 {
                                     let bz_coeff = bz_iter.next().unwrap();
                                     paired_bz_opt = Some(bz_coeff.value);
                                     bz_acc[x_next_val].fmadd_bz::<F>(&eq_r_y, bz_coeff.value);
+                                    // Baseline field accumulation for paired Bz and Cz
+                                    let bz_field_val = bz_coeff.value.to_field::<F>();
+                                    if x_next_val == 0 {
+                                        bz0_field += eq_r_y * bz_field_val;
+                                    } else {
+                                        bz1_field += eq_r_y * bz_field_val;
+                                    }
+                                    // Baseline Cz always uses Az*Bz product
+                                    let prod_field = az_field_val * bz_field_val;
+                                    if x_next_val == 0 {
+                                        cz0_field += eq_r_y * prod_field;
+                                    } else {
+                                        cz1_field += eq_r_y * prod_field;
+                                    }
                                 }
                             }
 
@@ -639,6 +773,13 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                             let eq_r_y = eq_r_evals[y_val_idx];
 
                             bz_acc[x_next_val].fmadd_bz::<F>(&eq_r_y, bz_coeff.value);
+                            // Baseline field accumulation for unpaired Bz
+                            let bz_field_val = bz_coeff.value.to_field::<F>();
+                            if x_next_val == 0 {
+                                bz0_field += eq_r_y * bz_field_val;
+                            } else {
+                                bz1_field += eq_r_y * bz_field_val;
+                            }
                         }
                     }
 
@@ -675,12 +816,39 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
 
                     task_sum_contrib_0 += e_block * p_at_xk0;
                     task_sum_contrib_infty += e_block * p_slope_term;
+
+                    // Baseline equivalents from field accumulators
+                    let p_at_xk0_old = az0_field * bz0_field - cz0_field;
+                    let p_slope_term_old = (az1_field - az0_field) * (bz1_field - bz0_field);
+
+                    // Per-block A/B assertions (commented out for old path test)
+                    // if p_at_xk0 != p_at_xk0_old {
+                    //     panic!(
+                    //         "[SVO streaming block mismatch] block_id={} p(0): new={} old={}",
+                    //         current_block_id,
+                    //         p_at_xk0,
+                    //         p_at_xk0_old
+                    //     );
+                    // }
+                    // if p_slope_term != p_slope_term_old {
+                    //     panic!(
+                    //         "[SVO streaming block mismatch] block_id={} p(∞ slope): new={} old={}",
+                    //         current_block_id,
+                    //         p_slope_term,
+                    //         p_slope_term_old
+                    //     );
+                    // }
+
+                    task_sum_contrib_0_old += e_block * p_at_xk0_old;
+                    task_sum_contrib_infty_old += e_block * p_slope_term_old;
                 }
 
                 StreamingTaskOutput {
                     bound_coeffs_local: task_bound_coeffs,
                     sumcheck_eval_at_0_local: task_sum_contrib_0,
                     sumcheck_eval_at_infty_local: task_sum_contrib_infty,
+                    sumcheck_eval_at_0_old_local: task_sum_contrib_0_old,
+                    sumcheck_eval_at_infty_old_local: task_sum_contrib_infty_old,
                 }
             })
             .collect();
@@ -688,15 +856,35 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
         // Aggregate sumcheck contributions directly from collected_chunk_outputs
         let mut total_sumcheck_eval_at_0 = F::zero();
         let mut total_sumcheck_eval_at_infty = F::zero();
+        let mut total_sumcheck_eval_at_0_old = F::zero();
+        let mut total_sumcheck_eval_at_infty_old = F::zero();
         for task_output in &collected_chunk_outputs {
             // Iterate by reference before consuming collected_chunk_outputs
             total_sumcheck_eval_at_0 += task_output.sumcheck_eval_at_0_local;
             total_sumcheck_eval_at_infty += task_output.sumcheck_eval_at_infty_local;
+            total_sumcheck_eval_at_0_old += task_output.sumcheck_eval_at_0_old_local;
+            total_sumcheck_eval_at_infty_old += task_output.sumcheck_eval_at_infty_old_local;
         }
 
-        // Compute r_i challenge using aggregated sumcheck values
+        // A/B comparison: typed (new) vs baseline (old) totals (commented out for old path test)
+        // if total_sumcheck_eval_at_0 != total_sumcheck_eval_at_0_old {
+        //     panic!(
+        //         "[SVO streaming mismatch] t_i(0): new={} old={}",
+        //         total_sumcheck_eval_at_0,
+        //         total_sumcheck_eval_at_0_old
+        //     );
+        // }
+        // if total_sumcheck_eval_at_infty != total_sumcheck_eval_at_infty_old {
+        //     panic!(
+        //         "[SVO streaming mismatch] t_i(∞): new={} old={}",
+        //         total_sumcheck_eval_at_infty,
+        //         total_sumcheck_eval_at_infty_old
+        //     );
+        // }
+
+        // Compute r_i challenge using aggregated sumcheck values (use old baseline)
         let r_i = process_eq_sumcheck_round(
-            (total_sumcheck_eval_at_0, total_sumcheck_eval_at_infty),
+            (total_sumcheck_eval_at_0_old, total_sumcheck_eval_at_infty_old),
             eq_poly,
             round_polys,
             r_challenges,
