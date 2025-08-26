@@ -5,6 +5,11 @@
 //! can use a sumcheck to reduce multiple opening proofs (multiple polynomials, not
 //! necessarily of the same size, each opened at a different point) into a single opening.
 
+#[cfg(feature = "allocative")]
+use crate::utils::profiling::write_flamegraph_svg;
+use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::FlameGraphBuilder;
 use num_derive::FromPrimitive;
 use rayon::prelude::*;
 use std::{
@@ -16,10 +21,14 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 use super::{
     commitment::commitment_scheme::CommitmentScheme,
+    dense_mlpoly::DensePolynomial,
     eq_poly::EqPolynomial,
     multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
+    rlc_polynomial::RLCPolynomial,
     split_eq_poly::GruenSplitEqPolynomial,
 };
+#[cfg(feature = "allocative")]
+use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::{
     field::JoltField,
     poly::{
@@ -36,7 +45,7 @@ pub type Endianness = bool;
 pub const BIG_ENDIAN: Endianness = false;
 pub const LITTLE_ENDIAN: Endianness = true;
 
-#[derive(Clone, Debug, PartialEq, Default)]
+#[derive(Clone, Debug, PartialEq, Default, Allocative)]
 pub struct OpeningPoint<const E: Endianness, F: JoltField> {
     pub r: Vec<F>,
 }
@@ -126,7 +135,7 @@ where
     }
 }
 
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, FromPrimitive)]
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, FromPrimitive, Allocative)]
 #[repr(u8)]
 pub enum SumcheckId {
     SpartanOuter,
@@ -135,6 +144,7 @@ pub enum SumcheckId {
     InstructionBooleanity,
     InstructionHammingWeight,
     InstructionReadRaf,
+    InstructionRaVirtualization,
     RamReadWriteChecking,
     RamRafEvaluation,
     RamHammingWeight,
@@ -152,7 +162,7 @@ pub enum SumcheckId {
     OpeningReduction,
 }
 
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord)]
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Allocative)]
 pub enum OpeningId {
     Committed(CommittedPolynomial, SumcheckId),
     Virtual(VirtualPolynomial, SumcheckId),
@@ -160,6 +170,7 @@ pub enum OpeningId {
 
 pub type Openings<F> = BTreeMap<OpeningId, (OpeningPoint<BIG_ENDIAN, F>, F)>;
 
+#[derive(Allocative)]
 pub struct SharedEqPolynomial<F: JoltField> {
     num_variables_bound: usize,
     eq_poly: GruenSplitEqPolynomial<F>,
@@ -181,7 +192,7 @@ impl<F: JoltField> SharedEqPolynomial<F> {
 /// at the (same) point.
 /// Multiple openings can be accumulated and further
 /// batched/reduced using a `ProverOpeningAccumulator`.
-#[derive(Clone)]
+#[derive(Clone, Allocative)]
 pub struct DensePolynomialProverOpening<F: JoltField> {
     /// The polynomial being opened. May be a random linear combination
     /// of multiple polynomials all being opened at the same point.
@@ -260,13 +271,13 @@ impl<F: JoltField> DensePolynomialProverOpening<F> {
     }
 }
 
-#[derive(derive_more::From, Clone)]
+#[derive(derive_more::From, Clone, Allocative)]
 pub enum ProverOpening<F: JoltField> {
     Dense(DensePolynomialProverOpening<F>),
     OneHot(OneHotPolynomialProverOpening<F>),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Allocative)]
 pub struct OpeningProofReductionSumcheck<F>
 where
     F: JoltField,
@@ -398,14 +409,18 @@ where
 
             if let Some(prover_state) = self.prover_state.as_mut() {
                 let polynomials_map = polynomials_map.unwrap();
-                let polynomials: Vec<_> = self
+
+                let polynomials: Vec<&MultilinearPolynomial<F>> = self
                     .polynomials
                     .par_iter()
                     .map(|label| polynomials_map.get(label).unwrap())
                     .collect();
 
-                let rlc_poly =
-                    MultilinearPolynomial::linear_combination(&polynomials, &self.rlc_coeffs);
+                let result =
+                    DensePolynomial::linear_combination(polynomials.as_ref(), &self.rlc_coeffs);
+
+                let rlc_poly = MultilinearPolynomial::from(result.Z);
+
                 debug_assert_eq!(rlc_poly.evaluate(&self.opening_point), reduced_claim);
                 let num_vars = rlc_poly.get_num_vars();
 
@@ -441,8 +456,8 @@ where
             match prover_state {
                 ProverOpening::Dense(opening) => opening.polynomial = Some(poly.clone()),
                 ProverOpening::OneHot(opening) => {
-                    if let MultilinearPolynomial::OneHot(poly) = poly {
-                        opening.initialize(poly.clone());
+                    if let MultilinearPolynomial::OneHot(one_hot) = poly {
+                        opening.initialize(one_hot.clone());
                     } else {
                         panic!("Unexpected non-one-hot polynomial")
                     }
@@ -534,11 +549,16 @@ where
     ) {
         unimplemented!("Unused")
     }
+
+    #[cfg(feature = "allocative")]
+    fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
+        flamegraph.visit_root(self);
+    }
 }
 
 /// Accumulates openings computed by the prover over the course of Jolt,
 /// so that they can all be reduced to a single opening proof using sumcheck.
-#[derive(Clone)]
+#[derive(Clone, Allocative)]
 pub struct ProverOpeningAccumulator<F>
 where
     F: JoltField,
@@ -547,8 +567,6 @@ where
     pub openings: Openings<F>,
     #[cfg(test)]
     pub appended_virtual_openings: std::rc::Rc<std::cell::RefCell<Vec<OpeningId>>>,
-    // #[cfg(test)]
-    // joint_commitment: Option<PCS::Commitment>,
 }
 
 /// Accumulates openings encountered by the verifier over the course of Jolt,
@@ -563,8 +581,6 @@ where
     /// can detect any places where the openings don't match up.
     #[cfg(test)]
     prover_opening_accumulator: Option<ProverOpeningAccumulator<F>>,
-    // #[cfg(test)]
-    // pcs_setup: Option<PCS::ProverSetup>,
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Clone, Debug)]
@@ -836,10 +852,10 @@ where
                 .map(|(k, v)| (v, polynomials.remove(k).unwrap()))
                 .unzip();
 
-            MultilinearPolynomial::linear_combination(
-                &polynomials.iter().collect::<Vec<_>>(),
+            MultilinearPolynomial::RLC(RLCPolynomial::linear_combination(
+                polynomials.into_iter().map(Arc::new).collect(),
                 &coeffs,
-            )
+            ))
         };
 
         #[cfg(test)]
@@ -900,6 +916,14 @@ where
         &mut self,
         transcript: &mut ProofTranscript,
     ) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, Vec<F>) {
+        #[cfg(feature = "allocative")]
+        {
+            print_data_structure_heap_usage("Opening accumulator", &(*self));
+            let mut flamegraph = FlameGraphBuilder::default();
+            flamegraph.visit_root(&(*self));
+            write_flamegraph_svg(flamegraph, "stage5_start_flamechart.svg");
+        }
+
         let instances: Vec<&mut dyn SumcheckInstance<F>> = self
             .sumchecks
             .iter_mut()
@@ -910,6 +934,13 @@ where
             .collect();
 
         let (sumcheck_proof, r_sumcheck) = BatchedSumcheck::prove(instances, None, transcript);
+
+        #[cfg(feature = "allocative")]
+        {
+            let mut flamegraph = FlameGraphBuilder::default();
+            flamegraph.visit_root(&(*self));
+            write_flamegraph_svg(flamegraph, "stage5_end_flamechart.svg");
+        }
 
         let claims: Vec<_> = self
             .sumchecks

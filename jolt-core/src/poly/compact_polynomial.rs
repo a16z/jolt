@@ -4,10 +4,12 @@ use super::multilinear_polynomial::{BindingOrder, PolynomialBinding};
 use crate::field::{JoltField, OptimizedMul};
 use crate::utils::math::Math;
 use crate::utils::thread::unsafe_allocate_zero_vec;
+use allocative::Allocative;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use num_integer::Integer;
 use rayon::prelude::*;
 use std::cmp::Ordering;
+
 /// A trait for small scalars ({u/i}{8/16/32/64})
 pub trait SmallScalar: Copy + Integer + Sync + CanonicalSerialize + CanonicalDeserialize {
     /// Performs a field multiplication. Uses `JoltField::mul_u64` under the hood.
@@ -101,7 +103,7 @@ impl SmallScalar for i64 {
 ///
 /// They are often initialized with `coeffs` and then converted to `bound_coeffs`
 /// when binding the polynomial.
-#[derive(Default, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Default, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize, Allocative)]
 pub struct CompactPolynomial<T: SmallScalar, F: JoltField> {
     num_vars: usize,
     len: usize,

@@ -1,20 +1,20 @@
 use crate::field::JoltField;
 use crate::msm::VariableBaseMSM;
 use crate::poly::commitment::dory::{DoryGlobals, JoltFieldWrapper, JoltGroupWrapper};
-use crate::poly::compact_polynomial::{CompactPolynomial, SmallScalar};
-use crate::poly::dense_mlpoly::DensePolynomial;
-use crate::poly::one_hot_polynomial::OneHotPolynomial;
+use crate::poly::compact_polynomial::SmallScalar;
+use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::utils::thread::unsafe_allocate_zero_vec;
+use allocative::Allocative;
 use ark_bn254::{Fr, G1Projective};
 use ark_ec::CurveGroup;
-use num_traits::MulAdd;
 use rayon::prelude::*;
+use std::sync::Arc;
 use tracing::trace_span;
 
 /// `RLCPolynomial` represents a multilinear polynomial comprised of a
 /// random linear combination of multiple polynomials, potentially with
 /// different sizes.
-#[derive(Default, Clone, Debug, PartialEq)]
+#[derive(Default, Clone, Debug, PartialEq, Allocative)]
 pub struct RLCPolynomial<F: JoltField> {
     /// Random linear combination of dense (i.e. length T) polynomials.
     pub dense_rlc: Vec<F>,
@@ -23,7 +23,7 @@ pub struct RLCPolynomial<F: JoltField> {
     /// as we do for `dense_rlc`, we store a vector of (coefficient, polynomial)
     /// pairs and lazily handle the linear combination in `commit_rows`
     /// and `vector_matrix_product`.
-    one_hot_rlc: Vec<(F, OneHotPolynomial<F>)>,
+    pub one_hot_rlc: Vec<(F, Arc<MultilinearPolynomial<F>>)>,
 }
 
 impl<F: JoltField> RLCPolynomial<F> {
@@ -32,6 +32,66 @@ impl<F: JoltField> RLCPolynomial<F> {
             dense_rlc: unsafe_allocate_zero_vec(DoryGlobals::get_T()),
             one_hot_rlc: vec![],
         }
+    }
+
+    #[tracing::instrument(skip_all)]
+    pub fn linear_combination(
+        polynomials: Vec<Arc<MultilinearPolynomial<F>>>,
+        coefficients: &[F],
+    ) -> Self {
+        debug_assert_eq!(polynomials.len(), coefficients.len());
+
+        let mut result = RLCPolynomial::<F>::new();
+        let dense_indices: Vec<usize> = polynomials
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| !matches!(p.as_ref(), MultilinearPolynomial::OneHot(_)))
+            .map(|(i, _)| i)
+            .collect();
+
+        if !dense_indices.is_empty() {
+            let dense_len = result.dense_rlc.len();
+
+            result.dense_rlc = (0..dense_len)
+                .into_par_iter()
+                .map(|i| {
+                    let mut acc = F::zero();
+                    for &poly_idx in &dense_indices {
+                        let poly = polynomials[poly_idx].as_ref();
+                        let coeff = coefficients[poly_idx];
+
+                        if i < poly.original_len() {
+                            match poly {
+                                MultilinearPolynomial::U8Scalars(p) => {
+                                    acc += p.coeffs[i].field_mul(coeff);
+                                }
+                                MultilinearPolynomial::U16Scalars(p) => {
+                                    acc += p.coeffs[i].field_mul(coeff);
+                                }
+                                MultilinearPolynomial::U32Scalars(p) => {
+                                    acc += p.coeffs[i].field_mul(coeff);
+                                }
+                                MultilinearPolynomial::U64Scalars(p) => {
+                                    acc += p.coeffs[i].field_mul(coeff);
+                                }
+                                MultilinearPolynomial::I64Scalars(p) => {
+                                    acc += p.coeffs[i].field_mul(coeff);
+                                }
+                                _ => unreachable!(),
+                            }
+                        }
+                    }
+                    acc
+                })
+                .collect();
+        }
+        for (i, poly) in polynomials.into_iter().enumerate() {
+            if matches!(poly.as_ref(), MultilinearPolynomial::OneHot(_)) {
+                result.one_hot_rlc.push((coefficients[i], poly));
+            }
+        }
+
+        result
     }
 
     /// Commits to the rows of `RLCPolynomial`, viewing its coefficients
@@ -65,7 +125,10 @@ impl<F: JoltField> RLCPolynomial<F> {
 
         // Compute the row commitments for one-hot polynomials
         for (coeff, poly) in self.one_hot_rlc.iter() {
-            let mut new_row_commitments: Vec<JoltGroupWrapper<G>> = poly.commit_rows(bases);
+            let mut new_row_commitments: Vec<JoltGroupWrapper<G>> = match poly.as_ref() {
+                MultilinearPolynomial::OneHot(one_hot) => one_hot.commit_rows(bases),
+                _ => panic!("Expected OneHot polynomial in one_hot_rlc"),
+            };
 
             // TODO(moodlezoup): Avoid resize
             new_row_commitments.resize(num_rows, JoltGroupWrapper(G::zero()));
@@ -138,46 +201,14 @@ impl<F: JoltField> RLCPolynomial<F> {
 
         // Compute the vector-matrix product for one-hot polynomials
         for (coeff, poly) in self.one_hot_rlc.iter() {
-            poly.vector_matrix_product(left_vec, *coeff, result_slice);
+            match poly.as_ref() {
+                MultilinearPolynomial::OneHot(one_hot) => {
+                    one_hot.vector_matrix_product(left_vec, *coeff, result_slice);
+                }
+                _ => panic!("Expected OneHot polynomial in one_hot_rlc"),
+            }
         }
 
         result
-    }
-}
-
-impl<F: JoltField> MulAdd<F, RLCPolynomial<F>> for &OneHotPolynomial<F> {
-    type Output = RLCPolynomial<F>;
-
-    fn mul_add(self, a: F, mut b: RLCPolynomial<F>) -> RLCPolynomial<F> {
-        b.one_hot_rlc.push((a, self.clone())); // TODO(moodlezoup): avoid clone
-        b
-    }
-}
-
-impl<T: SmallScalar, F: JoltField> MulAdd<F, RLCPolynomial<F>> for &CompactPolynomial<T, F> {
-    type Output = RLCPolynomial<F>;
-
-    fn mul_add(self, a: F, mut b: RLCPolynomial<F>) -> RLCPolynomial<F> {
-        b.dense_rlc
-            .par_iter_mut()
-            .zip_eq(self.coeffs.par_iter())
-            .for_each(|(acc, new)| {
-                *acc += new.field_mul(a);
-            });
-        b
-    }
-}
-
-impl<F: JoltField> MulAdd<F, RLCPolynomial<F>> for &DensePolynomial<F> {
-    type Output = RLCPolynomial<F>;
-
-    fn mul_add(self, a: F, mut b: RLCPolynomial<F>) -> RLCPolynomial<F> {
-        b.dense_rlc
-            .par_iter_mut()
-            .zip_eq(self.Z.par_iter())
-            .for_each(|(acc, new)| {
-                *acc += a * new;
-            });
-        b
     }
 }

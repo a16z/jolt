@@ -1,4 +1,5 @@
 use crate::field::JoltField;
+use crate::guest;
 use crate::host::analyze::ProgramSummary;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::host::toolchain::{install_no_std_toolchain, install_toolchain};
@@ -9,7 +10,6 @@ use common::constants::{
     EMULATOR_MEMORY_CAPACITY, RAM_START_ADDRESS, STACK_CANARY_SIZE,
 };
 use common::jolt_device::{JoltDevice, MemoryConfig};
-use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::PathBuf;
@@ -17,7 +17,6 @@ use std::process::Command;
 use std::str::FromStr;
 use std::{fs, io};
 use tracer::emulator::memory::Memory;
-use tracer::instruction::VirtualInstructionSequence;
 use tracer::instruction::{RV32IMCycle, RV32IMInstruction};
 
 impl Program {
@@ -40,6 +39,13 @@ impl Program {
 
     pub fn set_func(&mut self, func: &str) {
         self.func = Some(func.to_string())
+    }
+
+    pub fn set_memory_config(&mut self, memory_config: MemoryConfig) {
+        self.set_memory_size(memory_config.memory_size);
+        self.set_stack_size(memory_config.stack_size);
+        self.set_max_input_size(memory_config.max_input_size);
+        self.set_max_output_size(memory_config.max_output_size);
     }
 
     pub fn set_memory_size(&mut self, len: u64) {
@@ -125,30 +131,47 @@ impl Program {
             });
             envs.push((&cc_env_var, cc_value));
 
+            let args = [
+                "build",
+                "--release",
+                "--features",
+                "guest",
+                "-p",
+                &self.guest,
+                "--target-dir",
+                &target,
+                "--target",
+                target_triple,
+            ];
+
             let output = Command::new("cargo")
-                .envs(envs)
-                .args([
-                    "build",
-                    "--release",
-                    "--features",
-                    "guest",
-                    "-p",
-                    &self.guest,
-                    "--target-dir",
-                    &target,
-                    "--target",
-                    target_triple,
-                ])
+                .envs(envs.clone())
+                .args(args)
                 .output()
                 .expect("failed to build guest");
 
             if !output.status.success() {
                 io::stderr().write_all(&output.stderr).unwrap();
+                let cmd_line = compose_command_line("cargo", &envs, &args);
+                let output_msg = format!("::build command: \n{cmd_line}\n");
+                io::stderr().write_all(output_msg.as_bytes()).unwrap();
                 panic!("failed to compile guest");
             }
 
             let elf = format!("{}/{}/release/{}", target, target_triple, self.guest);
             self.elf = Some(PathBuf::from_str(&elf).unwrap());
+        }
+    }
+
+    pub fn get_elf_contents(&self) -> Option<Vec<u8>> {
+        if let Some(elf) = &self.elf {
+            let mut elf_file =
+                File::open(elf).unwrap_or_else(|_| panic!("could not open elf file: {elf:?}"));
+            let mut elf_contents = Vec::new();
+            elf_file.read_to_end(&mut elf_contents).unwrap();
+            Some(elf_contents)
+        } else {
+            None
         }
     }
 
@@ -159,37 +182,7 @@ impl Program {
             File::open(elf).unwrap_or_else(|_| panic!("could not open elf file: {elf:?}"));
         let mut elf_contents = Vec::new();
         elf_file.read_to_end(&mut elf_contents).unwrap();
-        let (mut instructions, raw_bytes, program_end) = tracer::decode(&elf_contents);
-        let program_size = program_end - RAM_START_ADDRESS;
-
-        // Expand virtual sequences
-        instructions = instructions
-            .into_par_iter()
-            .flat_map_iter(|instr| match instr {
-                RV32IMInstruction::DIV(div) => div.virtual_sequence(),
-                RV32IMInstruction::DIVU(divu) => divu.virtual_sequence(),
-                RV32IMInstruction::LB(lb) => lb.virtual_sequence(),
-                RV32IMInstruction::LBU(lbu) => lbu.virtual_sequence(),
-                RV32IMInstruction::LH(lh) => lh.virtual_sequence(),
-                RV32IMInstruction::LHU(lhu) => lhu.virtual_sequence(),
-                RV32IMInstruction::MULH(mulh) => mulh.virtual_sequence(),
-                RV32IMInstruction::MULHSU(mulhsu) => mulhsu.virtual_sequence(),
-                RV32IMInstruction::REM(rem) => rem.virtual_sequence(),
-                RV32IMInstruction::REMU(remu) => remu.virtual_sequence(),
-                RV32IMInstruction::SB(sb) => sb.virtual_sequence(),
-                RV32IMInstruction::SH(sh) => sh.virtual_sequence(),
-                RV32IMInstruction::SLL(sll) => sll.virtual_sequence(),
-                RV32IMInstruction::SLLI(slli) => slli.virtual_sequence(),
-                RV32IMInstruction::SRA(sra) => sra.virtual_sequence(),
-                RV32IMInstruction::SRAI(srai) => srai.virtual_sequence(),
-                RV32IMInstruction::SRL(srl) => srl.virtual_sequence(),
-                RV32IMInstruction::SRLI(srli) => srli.virtual_sequence(),
-                RV32IMInstruction::INLINE(inline) => inline.virtual_sequence(),
-                _ => vec![instr],
-            })
-            .collect();
-
-        (instructions, raw_bytes, program_size)
+        guest::program::decode(&elf_contents)
     }
 
     // TODO(moodlezoup): Make this generic over InstructionSet
@@ -211,7 +204,7 @@ impl Program {
             max_output_size: self.max_output_size,
             program_size: Some(program_size),
         };
-        tracer::trace(elf_contents, inputs, &memory_config)
+        guest::program::trace(&elf_contents, inputs, &memory_config)
     }
 
     #[tracing::instrument(skip_all, name = "Program::trace_to_file")]
@@ -231,7 +224,7 @@ impl Program {
             max_output_size: self.max_output_size,
             program_size: Some(program_size),
         };
-        tracer::trace_to_file(elf_contents, inputs, &memory_config, trace_file)
+        tracer::trace_to_file(&elf_contents, inputs, &memory_config, trace_file)
     }
 
     pub fn trace_analyze<F: JoltField>(mut self, inputs: &[u8]) -> ProgramSummary {
@@ -266,4 +259,80 @@ impl Program {
     fn linker_path(&self) -> String {
         format!("/tmp/jolt-guest-linkers/{}.ld", self.guest)
     }
+}
+
+fn compose_command_line(program: &str, envs: &[(&str, String)], args: &[&str]) -> String {
+    fn has_ctrl(s: &str) -> bool {
+        s.chars()
+            .any(|c| c.is_control() && !matches!(c, '\t' | '\n' | '\r'))
+    }
+
+    // ANSI-C ($'...') quoting for when control chars are present.
+    fn quote_ansi_c(s: &str) -> String {
+        use std::fmt::Write as _;
+        let mut out = String::with_capacity(s.len() + 3);
+        out.push_str("$'");
+        for c in s.chars() {
+            match c {
+                '\n' => out.push_str("\\n"),
+                '\r' => out.push_str("\\r"),
+                '\t' => out.push_str("\\t"),
+                '\\' => out.push_str("\\\\"),
+                '\'' => out.push_str("\\'"),
+                c if c.is_control() => {
+                    let _ = write!(out, "\\x{:02x}", c as u32);
+                }
+                _ => out.push(c),
+            }
+        }
+        out.push('\'');
+        out
+    }
+
+    // Safe POSIX-style single-quote quoting (no expansions).
+    fn sh_quote(s: &str) -> String {
+        const SAFE: &str =
+            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_@%+=:,./-";
+        if !s.is_empty() && s.chars().all(|c| SAFE.contains(c)) {
+            s.to_string()
+        } else {
+            let mut out = String::with_capacity(s.len() + 2);
+            out.push('\'');
+            for ch in s.chars() {
+                if ch == '\'' {
+                    out.push_str("'\\''");
+                } else {
+                    out.push(ch);
+                }
+            }
+            out.push('\'');
+            out
+        }
+    }
+
+    let mut parts = Vec::new();
+
+    if !envs.is_empty() {
+        parts.push("env".to_string());
+        for &(k, ref v) in envs {
+            let v = v.as_str();
+            let q = if has_ctrl(v) {
+                quote_ansi_c(v)
+            } else {
+                sh_quote(v)
+            };
+            parts.push(format!("{k}={q}"));
+        }
+    }
+
+    parts.push(sh_quote(program));
+    parts.extend(args.iter().map(|&a| {
+        if has_ctrl(a) {
+            quote_ansi_c(a)
+        } else {
+            sh_quote(a)
+        }
+    }));
+
+    parts.join(" ")
 }

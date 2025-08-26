@@ -1,6 +1,8 @@
 use rayon::prelude::*;
 use tracer::instruction::RV32IMCycle;
 
+#[cfg(feature = "allocative")]
+use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::{
     field::JoltField,
     poly::{
@@ -10,12 +12,12 @@ use crate::{
     subprotocols::sumcheck::SumcheckInstance,
     transcripts::Transcript,
     utils::thread::unsafe_allocate_zero_vec,
-    zkvm::dag::{stage::SumcheckStages, state_manager::StateManager},
     zkvm::{
+        dag::{stage::SumcheckStages, state_manager::StateManager},
         instruction::LookupQuery,
         instruction_lookups::{
             booleanity::BooleanitySumcheck, hamming_weight::HammingWeightSumcheck,
-            read_raf_checking::ReadRafSumcheck,
+            ra_virtual::RASumCheck, read_raf_checking::ReadRafSumcheck,
         },
         witness::VirtualPolynomial,
     },
@@ -23,6 +25,7 @@ use crate::{
 
 pub mod booleanity;
 pub mod hamming_weight;
+pub mod ra_virtual;
 pub mod read_raf_checking;
 
 pub const WORD_SIZE: usize = 32;
@@ -61,6 +64,19 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         let booleanity = BooleanitySumcheck::new_prover(sm, F.clone());
         let hamming_weight = HammingWeightSumcheck::new_prover(sm, F);
 
+        #[cfg(feature = "allocative")]
+        {
+            print_data_structure_heap_usage("Instruction execution ReadRafSumcheck", &read_raf);
+            print_data_structure_heap_usage(
+                "Instruction execution BooleanitySumcheck",
+                &booleanity,
+            );
+            print_data_structure_heap_usage(
+                "Instruction execution HammingWeightSumcheck",
+                &hamming_weight,
+            );
+        }
+
         vec![
             Box::new(read_raf),
             Box::new(booleanity),
@@ -81,6 +97,24 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
             Box::new(booleanity),
             Box::new(hamming_weight),
         ]
+    }
+
+    fn stage4_prover_instances(
+        &mut self,
+        sm: &mut StateManager<'_, F, T, PCS>,
+    ) -> Vec<Box<dyn SumcheckInstance<F>>> {
+        let ra_virtual = RASumCheck::new_prover(LOG_K, sm);
+
+        vec![Box::new(ra_virtual)]
+    }
+
+    fn stage4_verifier_instances(
+        &mut self,
+        sm: &mut StateManager<'_, F, T, PCS>,
+    ) -> Vec<Box<dyn SumcheckInstance<F>>> {
+        let ra_virtual = RASumCheck::new_verifier(LOG_K, sm);
+
+        vec![Box::new(ra_virtual)]
     }
 }
 

@@ -1,4 +1,5 @@
 # Troubleshooting
+
 ## Insufficient Memory or Stack Size
 Jolt provides reasonable defaults for the total allocated memory and stack size. It is however possible that the defaults are not sufficient, leading to unpredictable errors within our tracer. To fix this we can try to increase these sizes. We suggest starting with the stack size first as this is much more likely to run out.
 
@@ -63,11 +64,4 @@ fn inline_asm() -> (i32, u32, i32, u32) {
 
 
 ## Getting Help
-If none of the above help, please serialize your program and send it along with a detailed bug report.
-
-Serializing a call to the "fib" function in the Jolt guest:
-```rust
-// let (prove_fib, verify_fib) = guest::build_fib();
-let program_summary = guest::analyze_fib(10);
-program_summary.write_to_file("fib_10.txt".into()).expect("should write");
-```
+If none of the above solve the problem, please create a Github issue with a detailed bug report including the Jolt commit hash, the hardware or container configuration used, and a minimal guest program to reproduce the bug.
