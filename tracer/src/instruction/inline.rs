@@ -25,7 +25,7 @@ use std::sync::RwLock;
 // Type alias for the exec and inline_sequence functions signature
 pub type ExecFunction = Box<dyn Fn(&INLINE, &mut Cpu, &mut ()) + Send + Sync>;
 pub type InlineSequenceFunction =
-    Box<dyn Fn(u64, bool, Xlen, u8, u8) -> Vec<RV32IMInstruction> + Send + Sync>;
+    Box<dyn Fn(u64, bool, Xlen, u8, u8, u8) -> Vec<RV32IMInstruction> + Send + Sync>;
 
 // Key type for the registry: (opcode, funct3, funct7)
 type InlineKey = (u32, u32, u32);
@@ -235,6 +235,7 @@ impl RISCVTrace for INLINE {
                             xlen,
                             self.operands.rs1,
                             self.operands.rs2,
+                            self.operands.rd,
                         )
                     }
                     None => {
@@ -287,7 +288,7 @@ mod tests {
             0,
             "test",
             Box::new(|_, _, _| {}),
-            Box::new(|_, _, _, _, _| vec![]),
+            Box::new(|_, _, _, _, _, _| vec![]),
         );
         assert!(result.is_err());
 
@@ -298,7 +299,7 @@ mod tests {
             0,
             "test",
             Box::new(|_, _, _| {}),
-            Box::new(|_, _, _, _, _| vec![]),
+            Box::new(|_, _, _, _, _, _| vec![]),
         );
         assert!(result.is_err());
         assert!(result
@@ -312,7 +313,7 @@ mod tests {
             128, // Invalid funct7 (> 127)
             "test",
             Box::new(|_, _, _| {}),
-            Box::new(|_, _, _, _, _| vec![]),
+            Box::new(|_, _, _, _, _, _| vec![]),
         );
         assert!(result.is_err());
         assert!(result
@@ -329,7 +330,7 @@ mod tests {
             0,
             "test_custom0",
             Box::new(|_, _, _| {}),
-            Box::new(|_, _, _, _, _| vec![]),
+            Box::new(|_, _, _, _, _, _| vec![]),
         );
         assert!(result.is_ok());
 
@@ -340,7 +341,7 @@ mod tests {
             1, // Different funct7 to avoid duplicate registration
             "test_custom1",
             Box::new(|_, _, _| {}),
-            Box::new(|_, _, _, _, _| vec![]),
+            Box::new(|_, _, _, _, _, _| vec![]),
         );
         assert!(result.is_ok());
     }

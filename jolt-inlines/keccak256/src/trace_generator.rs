@@ -442,6 +442,7 @@ pub fn keccak256_inline_sequence_builder(
     xlen: Xlen,
     operand_rs1: u8,
     operand_rs2: u8,
+    _rd: u8,
 ) -> Vec<RV32IMInstruction> {
     // Virtual registers used as a scratch space
     let guards: Vec<_> = (0..NEEDED_REGISTERS)

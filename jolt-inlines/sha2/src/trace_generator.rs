@@ -322,6 +322,7 @@ pub fn sha2_inline_sequence_builder(
     xlen: Xlen,
     rs1: u8,
     rs2: u8,
+    _rd: u8,
 ) -> Vec<RV32IMInstruction> {
     // Virtual registers used as a scratch space
     let guards: Vec<_> = (0..32).map(|_| allocate_virtual_register()).collect();
@@ -348,6 +349,7 @@ pub fn sha2_init_inline_sequence_builder(
     xlen: Xlen,
     rs1: u8,
     rs2: u8,
+    _rd: u8,
 ) -> Vec<RV32IMInstruction> {
     // Virtual registers used as a scratch space
     let guards: Vec<_> = (0..32).map(|_| allocate_virtual_register()).collect();
