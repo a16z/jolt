@@ -144,7 +144,7 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
 
         let (mut E_out_vec, E_in) = rayon::join(
             || EqPolynomial::evals_cached(&w_E_out_vars),
-            || EqPolynomial::evals(&w_E_in_vars),
+            || EqPolynomial::evals_with_scaling(&w_E_in_vars, Some(F::MONTGOMERY_R)),
         );
 
         // Take only the first `num_small_value_rounds` vectors from E_out_vec (after reversing)

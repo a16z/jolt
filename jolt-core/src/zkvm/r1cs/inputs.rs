@@ -13,7 +13,6 @@ use crate::zkvm::instruction::{CircuitFlags, InstructionFlags, LookupQuery};
 use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 use crate::zkvm::JoltProverPreprocessing;
 
-use super::constraints::NamedConstraint;
 use super::key::UniformSpartanKey;
 use super::ops::LC;
 use super::spartan::UniformSpartanProof;
@@ -464,7 +463,7 @@ pub fn compute_claimed_witness_evals<F: JoltField>(
 /// Generic evaluator: evaluates an LC over witness row into an AzValue.
 /// Uses small signed fast-path and falls back to sign/magnitude accumulation.
 #[inline]
-pub fn eval_az_typed_generic<F: JoltField>(
+pub fn eval_az_generic<F: JoltField>(
     a_lc: &LC,
     accessor: &dyn WitnessRowAccessor<F>,
     row: usize,
@@ -568,7 +567,7 @@ pub fn eval_az_typed_generic<F: JoltField>(
 /// Generic evaluator: evaluates an LC over witness row into a BzValue.
 /// Always accumulates into 192-bit signed magnitude (SignedBigInt<3>).
 #[inline]
-pub fn eval_bz_typed_generic<F: JoltField>(
+pub fn eval_bz_generic<F: JoltField>(
     b_lc: &LC,
     accessor: &dyn WitnessRowAccessor<F>,
     row: usize,
@@ -669,56 +668,6 @@ pub fn eval_bz_typed_generic<F: JoltField>(
         acc = acc.add(c);
     }
     BzValue::S128(acc)
-}
-
-#[allow(unused_variables)]
-pub fn lc_az_bz_eval_row_to_typed<F: JoltField>(
-    named: &NamedConstraint,
-    accessor: &dyn WitnessRowAccessor<F>,
-    row: usize,
-) -> (AzValue, BzValue) {
-    let a = &named.cons.a;
-    let b = &named.cons.b;
-
-    let az_typed = eval_az_typed_generic(a, accessor, row);
-    let bz_typed = eval_bz_typed_generic(b, accessor, row);
-    (az_typed, bz_typed)
-}
-
-#[allow(unused_variables)]
-pub fn accum_az_ext(acc: &mut AzValue, row: AzValue, is_positive: bool) {
-    // Simple counter accumulation; adjust if needed for real semantics
-    match acc {
-        AzValue::I8(v) => {
-            *v = v.saturating_add(if is_positive { 1 } else { -1 });
-        }
-        AzValue::S64(s) => {
-            let delta = if is_positive { 1i64 } else { -1i64 };
-            let add = SignedBigInt::<1>::from_i64(delta);
-            *s = s.add_trunc::<1>(&add);
-        }
-        AzValue::I128(v) => {
-            *v = v.saturating_add(if is_positive { 1 } else { -1 });
-        }
-    }
-}
-
-#[allow(unused_variables)]
-pub fn accum_bz_ext(acc: &mut BzValue, row: BzValue, is_positive: bool) {
-    match acc {
-        BzValue::S64(ref mut s1) => {
-            s1.magnitude.0[0] = s1.magnitude.0[0].saturating_add(1);
-            s1.is_positive = s1.is_positive && is_positive;
-        }
-        BzValue::S128(ref mut s2) => {
-            s2.magnitude.0[0] = s2.magnitude.0[0].saturating_add(1);
-            s2.is_positive = s2.is_positive && is_positive;
-        }
-        BzValue::S192(ref mut s3) => {
-            s3.magnitude.0[0] = s3.magnitude.0[0].saturating_add(1);
-            s3.is_positive = s3.is_positive && is_positive;
-        }
-    }
 }
 
 /// Single-pass generation of UnexpandedPC(t), PC(t), and IsNoop(t) witnesses.

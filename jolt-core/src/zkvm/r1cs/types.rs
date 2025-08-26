@@ -174,6 +174,50 @@ impl AzValue {
             AzValue::I128(v) => *v == 0,
         }
     }
+
+    /// Convert to a field element.
+    pub fn to_field<F: JoltField>(self) -> F {
+        match self {
+            AzValue::I8(v) => F::from_i128(v as i128),
+            AzValue::S64(signed_bigint) => {
+                if signed_bigint.is_positive {
+                    F::from_u64(signed_bigint.magnitude.0[0])
+                } else {
+                    -F::from_u64(signed_bigint.magnitude.0[0])
+                }
+            }
+            AzValue::I128(x) => {
+                if x == 0 {
+                    F::zero()
+                } else {
+                    F::from_i128(x)
+                }
+            }
+        }
+    }
+
+    /// Multiply by a field element.
+    pub fn mul_field<F: JoltField>(self, val: F) -> F {
+        match self {
+            AzValue::I8(v) => {
+                if v == 0 {
+                    F::zero()
+                } else {
+                    val.mul_i64(v as i64)
+                }
+            }
+            AzValue::S64(s1) => {
+                mul_field_by_signed_limbs(val, &s1.magnitude.0[..1], s1.is_positive)
+            }
+            AzValue::I128(x) => {
+                if x == 0 {
+                    F::zero()
+                } else {
+                    val.mul_i128(x)
+                }
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -195,6 +239,140 @@ impl BzValue {
             BzValue::S64(v) => v.is_zero(),
             BzValue::S128(v) => v.is_zero(),
             BzValue::S192(v) => v.is_zero(),
+        }
+    }
+
+    /// Convert to a field element.
+    #[inline]
+    pub fn to_field<F: JoltField>(self) -> F {
+        match self {
+            BzValue::S64(signed_bigint) => {
+                if signed_bigint.is_positive {
+                    F::from_u64(signed_bigint.magnitude.0[0])
+                } else {
+                    -F::from_u64(signed_bigint.magnitude.0[0])
+                }
+            }
+            BzValue::S128(signed_bigint) => {
+                let magnitude = signed_bigint.magnitude_as_u128();
+                if signed_bigint.is_positive {
+                    F::from_u128(magnitude)
+                } else {
+                    -F::from_u128(magnitude)
+                }
+            }
+            BzValue::S192(signed_bigint) => {
+                // This should never happen for initial BzValue, so we use a dummy fix:
+                // Chop off the last limb and convert the first 2 limbs to u128
+                let magnitude = (signed_bigint.magnitude.0[0] as u128) | ((signed_bigint.magnitude.0[1] as u128) << 64);
+                if signed_bigint.is_positive {
+                    F::from_u128(magnitude)
+                } else {
+                    -F::from_u128(magnitude)
+                }
+            }
+        }
+    }
+
+    /// Multiply by a field element.
+    #[inline]
+    pub fn mul_field<F: JoltField>(self, val: F) -> F {
+        match self {
+            BzValue::S64(s1) => {
+                mul_field_by_signed_limbs(val, &s1.magnitude.0[..1], s1.is_positive)
+            }
+            BzValue::S128(s2) => {
+                mul_field_by_signed_limbs(val, &s2.magnitude.0[..2], s2.is_positive)
+            }
+            BzValue::S192(s3) => {
+                mul_field_by_signed_limbs(val, &s3.magnitude.0[..3], s3.is_positive)
+            }
+        }
+    }
+}
+
+/// Helper function to multiply a field element by signed limbs.
+#[inline(always)]
+fn mul_field_by_signed_limbs<F: JoltField>(val: F, limbs: &[u64], is_positive: bool) -> F {
+    // Compute val * (± sum(limbs[i] * 2^(64*i))) without BigInt
+    match limbs.len() {
+        0 => F::zero(),
+        1 => {
+            let c0 = if limbs[0] == 0 {
+                F::zero()
+            } else {
+                val.mul_u64(limbs[0])
+            };
+            if is_positive {
+                c0
+            } else {
+                -c0
+            }
+        }
+        2 => {
+            let r64 = F::from_u128(1u128 << 64);
+            let c0 = if limbs[0] == 0 {
+                F::zero()
+            } else {
+                val * F::from_u64(limbs[0])
+            };
+            let c1 = if limbs[1] == 0 {
+                F::zero()
+            } else {
+                (val * r64) * F::from_u64(limbs[1])
+            };
+            let acc = c0 + c1;
+            if is_positive {
+                acc
+            } else {
+                -acc
+            }
+        }
+        3 => {
+            let r64 = F::from_u128(1u128 << 64);
+            let val_r64 = val * r64;
+            let val_r128 = val_r64 * r64;
+            let c0 = if limbs[0] == 0 {
+                F::zero()
+            } else {
+                val * F::from_u64(limbs[0])
+            };
+            let c1 = if limbs[1] == 0 {
+                F::zero()
+            } else {
+                val_r64 * F::from_u64(limbs[1])
+            };
+            let c2 = if limbs[2] == 0 {
+                F::zero()
+            } else {
+                val_r128 * F::from_u64(limbs[2])
+            };
+            let acc = c0 + c1 + c2;
+            if is_positive {
+                acc
+            } else {
+                -acc
+            }
+        }
+        _ => {
+            // Fallback for rare wider magnitudes
+            let mut acc = F::zero();
+            let mut base = val;
+            let r64 = F::from_u128(1u128 << 64);
+            for i in 0..limbs.len() {
+                let limb = limbs[i];
+                if limb != 0 {
+                    acc += base * F::from_u64(limb);
+                }
+                if i + 1 < limbs.len() {
+                    base *= r64;
+                }
+            }
+            if is_positive {
+                acc
+            } else {
+                -acc
+            }
         }
     }
 }

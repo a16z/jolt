@@ -15,6 +15,13 @@ lazy_static::lazy_static! {
 
 impl JoltField for ark_bn254::Fr {
     const NUM_BYTES: usize = 32;
+    /// The Montgomery factor R = 2^(64*N) mod p
+    /// SAFETY: We're directly transmuting from the Montgomery R constant from arkworks,
+    /// which is guaranteed to be a valid field element in Montgomery form.
+    const MONTGOMERY_R: Self = unsafe {
+        use ark_ff::MontConfig;
+        std::mem::transmute(<ark_bn254::FrConfig as MontConfig<4>>::R)
+    };
     type SmallValueLookupTables = [Vec<Self>; 2];
 
     fn random<R: rand_core::RngCore>(rng: &mut R) -> Self {

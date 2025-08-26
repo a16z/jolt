@@ -757,8 +757,8 @@ pub fn eval_az_by_name<F: JoltField>(
             accessor.value_at(Inp::OpFlags(CircuitFlags::Store).to_index(), row),
             SmallScalar::Bool(true)
         )),
-        // Fallback: call generic typed evaluator for Az
-        _ => super::inputs::eval_az_typed_generic(&c.cons.a, accessor, row),
+        // Fallback: call generic evaluator for Az
+        _ => super::inputs::eval_az_generic(&c.cons.a, accessor, row),
     }
 }
 
@@ -1052,15 +1052,44 @@ pub fn eval_bz_by_name<F: JoltField>(
                 rs2 >= wr,
             ))
         }
-        // Fallback: call generic typed evaluator for Bz (S192 accumulation)
-        _ => super::inputs::eval_bz_typed_generic(&c.cons.b, accessor, row),
+        // Fallback: call generic evaluator for Bz (S192 accumulation)
+        _ => super::inputs::eval_bz_generic(&c.cons.b, accessor, row),
+    }
+}
+
+// =============================================================================
+// Batch evaluation functions
+// =============================================================================
+
+/// Batch evaluation of Az and Bz values for a chunk of constraints at a given step.
+/// This is more efficient than evaluating constraints one by one as it reduces
+/// function call overhead and enables better optimization.
+#[inline]
+pub fn eval_az_bz_batch<F: JoltField>(
+    constraints: &[NamedConstraint],
+    accessor: &dyn WitnessRowAccessor<F>,
+    step_idx: usize,
+    az_output: &mut [AzValue],
+    bz_output: &mut [BzValue],
+) {
+    debug_assert_eq!(constraints.len(), az_output.len());
+    debug_assert_eq!(constraints.len(), bz_output.len());
+
+    // Batch process all constraints for this step
+    // This reduces virtual function call overhead compared to individual evaluations
+    // Future optimization: could potentially share computations between constraints
+    // that use similar input patterns, but for now we focus on reducing call overhead
+    for (i, constraint) in constraints.iter().enumerate() {
+        // Evaluate both Az and Bz together to potentially reuse accessor calls
+        az_output[i] = eval_az_by_name(constraint, accessor, step_idx);
+        bz_output[i] = eval_bz_by_name(constraint, accessor, step_idx);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::zkvm::r1cs::inputs::{eval_az_typed_generic, eval_bz_typed_generic};
+    use crate::zkvm::r1cs::inputs::{eval_az_generic, eval_bz_generic};
     use crate::zkvm::r1cs::types::BzValue;
     use ark_ff::{BigInt, SignedBigInt};
     use std::collections::HashSet;
@@ -1240,7 +1269,7 @@ mod tests {
         let acc_ref: &dyn WitnessRowAccessor<crate::field::tracked_ark::TrackedFr> = &acc;
         for c in UNIFORM_R1CS.iter() {
             for row in 0..acc.num_steps() {
-                let gen = eval_az_typed_generic::<crate::field::tracked_ark::TrackedFr>(
+                let gen = eval_az_generic::<crate::field::tracked_ark::TrackedFr>(
                     &c.cons.a, acc_ref, row,
                 );
                 let named =
@@ -1286,7 +1315,7 @@ mod tests {
         let acc_ref: &dyn WitnessRowAccessor<crate::field::tracked_ark::TrackedFr> = &acc;
         for c in UNIFORM_R1CS.iter() {
             for row in 0..acc.num_steps() {
-                let gen = eval_bz_typed_generic::<crate::field::tracked_ark::TrackedFr>(
+                let gen = eval_bz_generic::<crate::field::tracked_ark::TrackedFr>(
                     &c.cons.b, acc_ref, row,
                 );
                 let named =

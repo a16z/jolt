@@ -10,7 +10,7 @@ use crate::{
         small_value::{svo_helpers, NUM_SVO_ROUNDS},
     },
     zkvm::r1cs::{
-        constraints::{eval_az_by_name, eval_bz_by_name, CzKind, NamedConstraint, UNIFORM_R1CS},
+        constraints::{eval_az_bz_batch, CzKind, UNIFORM_R1CS},
         inputs::WitnessRowAccessor,
         types::{
             fmadd_unreduced, mul_az_bz, reduce_unreduced_to_field, AzValue, BzValue,
@@ -76,196 +76,11 @@ pub struct SpartanInterleavedPolynomial<const NUM_SVO_ROUNDS: usize, F: JoltFiel
 }
 
 impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM_SVO_ROUNDS, F> {
-    #[cfg(test)]
-    fn az_to_field_local(az: AzValue) -> F {
-        match az {
-            AzValue::I8(v) => F::from_i128(v as i128),
-            AzValue::S64(signed_bigint) => {
-                if signed_bigint.is_positive {
-                    F::from_u64(signed_bigint.magnitude.0[0])
-                } else {
-                    -F::from_u64(signed_bigint.magnitude.0[0])
-                }
-            }
-            AzValue::I128(x) => {
-                if x == 0 {
-                    F::zero()
-                } else {
-                    F::from_i128(x)
-                }
-            }
-        }
-    }
 
-    #[cfg(test)]
-    fn bz_to_field_local(bz: BzValue) -> F {
-        match bz {
-            BzValue::S64(signed_bigint) => {
-                if signed_bigint.is_positive {
-                    F::from_u64(signed_bigint.magnitude.0[0])
-                } else {
-                    -F::from_u64(signed_bigint.magnitude.0[0])
-                }
-            }
-            BzValue::S128(signed_bigint) => {
-                let magnitude = signed_bigint.magnitude_as_u128();
-                if signed_bigint.is_positive {
-                    F::from_u128(magnitude)
-                } else {
-                    -F::from_u128(magnitude)
-                }
-            }
-            BzValue::S192(_s3) => unimplemented!(),
-        }
-    }
 
-    #[inline(always)]
-    fn mul_field_by_signed_limbs(val: F, limbs: &[u64], is_positive: bool) -> F {
-        // Compute val * (± sum(limbs[i] * 2^(64*i))) without BigInt
-        match limbs.len() {
-            0 => F::zero(),
-            1 => {
-                let c0 = if limbs[0] == 0 {
-                    F::zero()
-                } else {
-                    val * F::from_u64(limbs[0])
-                };
-                if is_positive {
-                    c0
-                } else {
-                    -c0
-                }
-            }
-            2 => {
-                let r64 = F::from_u128(1u128 << 64);
-                let c0 = if limbs[0] == 0 {
-                    F::zero()
-                } else {
-                    val * F::from_u64(limbs[0])
-                };
-                let c1 = if limbs[1] == 0 {
-                    F::zero()
-                } else {
-                    (val * r64) * F::from_u64(limbs[1])
-                };
-                let acc = c0 + c1;
-                if is_positive {
-                    acc
-                } else {
-                    -acc
-                }
-            }
-            3 => {
-                let r64 = F::from_u128(1u128 << 64);
-                let val_r64 = val * r64;
-                let val_r128 = val_r64 * r64;
-                let c0 = if limbs[0] == 0 {
-                    F::zero()
-                } else {
-                    val * F::from_u64(limbs[0])
-                };
-                let c1 = if limbs[1] == 0 {
-                    F::zero()
-                } else {
-                    val_r64 * F::from_u64(limbs[1])
-                };
-                let c2 = if limbs[2] == 0 {
-                    F::zero()
-                } else {
-                    val_r128 * F::from_u64(limbs[2])
-                };
-                let acc = c0 + c1 + c2;
-                if is_positive {
-                    acc
-                } else {
-                    -acc
-                }
-            }
-            _ => {
-                // Fallback for rare wider magnitudes
-                let mut acc = F::zero();
-                let mut base = val;
-                let r64 = F::from_u128(1u128 << 64);
-                for i in 0..limbs.len() {
-                    let limb = limbs[i];
-                    if limb != 0 {
-                        acc += base * F::from_u64(limb);
-                    }
-                    if i + 1 < limbs.len() {
-                        base *= r64;
-                    }
-                }
-                if is_positive {
-                    acc
-                } else {
-                    -acc
-                }
-            }
-        }
-    }
 
-    #[inline]
-    fn mul_field_by_az(val: F, az: AzValue) -> F {
-        match az {
-            AzValue::I8(v) => {
-                if v == 0 {
-                    F::zero()
-                } else {
-                    val.mul_i64(v as i64)
-                }
-            }
-            AzValue::S64(s1) => {
-                Self::mul_field_by_signed_limbs(val, &s1.magnitude.0[..1], s1.is_positive)
-            }
-            AzValue::I128(x) => {
-                if x == 0 {
-                    F::zero()
-                } else {
-                    val.mul_i128(x)
-                }
-            }
-        }
-    }
 
-    #[inline]
-    fn mul_field_by_bz(val: F, bz: BzValue) -> F {
-        match bz {
-            BzValue::S64(s1) => {
-                Self::mul_field_by_signed_limbs(val, &s1.magnitude.0[..1], s1.is_positive)
-            }
-            BzValue::S128(s2) => {
-                Self::mul_field_by_signed_limbs(val, &s2.magnitude.0[..2], s2.is_positive)
-            }
-            BzValue::S192(s3) => {
-                Self::mul_field_by_signed_limbs(val, &s3.magnitude.0[..3], s3.is_positive)
-            }
-        }
-    }
 
-    /// Batch evaluation of Az and Bz values for a chunk of constraints at a given step.
-    /// This is more efficient than evaluating constraints one by one as it reduces
-    /// function call overhead and enables better optimization.
-    #[inline]
-    fn eval_az_bz_batch(
-        constraints: &[NamedConstraint],
-        accessor: &dyn WitnessRowAccessor<F>,
-        step_idx: usize,
-        az_output: &mut [AzValue],
-        bz_output: &mut [BzValue],
-    ) {
-        debug_assert_eq!(constraints.len(), az_output.len());
-        debug_assert_eq!(constraints.len(), bz_output.len());
-
-        // Batch process all constraints for this step
-        // This reduces virtual function call overhead compared to individual evaluations
-        // Future optimization: could potentially share computations between constraints
-        // that use similar input patterns, but for now we focus on reducing call overhead
-        for (i, constraint) in constraints.iter().enumerate() {
-            // Evaluate both Az and Bz together to potentially reuse accessor calls
-            az_output[i] = eval_az_by_name(constraint, accessor, step_idx);
-            bz_output[i] = eval_bz_by_name(constraint, accessor, step_idx);
-        }
-    }
     /// Compute the unbound coefficients for the Az and Bz polynomials (no Cz coefficients are
     /// needed), along with the accumulators for the small value optimization (SVO) rounds.
     ///
@@ -463,7 +278,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                             let chunk_size = uniform_svo_chunk.len();
 
                             // Batch evaluate Az/Bz directly into the binary blocks to avoid allocations
-                            Self::eval_az_bz_batch(
+                            eval_az_bz_batch(
                                 uniform_svo_chunk,
                                 accessor,
                                 current_step_idx,
@@ -496,7 +311,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                                     let const_row = &uniform_svo_chunk[idx_in_svo_block].cons;
                                     let cz =
                                         const_row.c.evaluate_row_with(accessor, current_step_idx);
-                                    if Self::az_to_field_local(az) * Self::bz_to_field_local(bz)
+                                    if az.to_field::<F>() * bz.to_field::<F>()
                                         != cz
                                     {
                                         panic!("Constraint violated at step {current_step_idx}");
@@ -752,7 +567,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                             let x_next_val = (local_offset >> 1) >> NUM_SVO_ROUNDS; // 0 or 1
                             let eq_r_y = eq_r_evals[y_val_idx];
 
-                            let az_contrib = Self::mul_field_by_az(eq_r_y, az_orig_val);
+                            let az_contrib = az_orig_val.mul_field(eq_r_y);
                             match x_next_val {
                                 0 => az0_at_r += az_contrib,
                                 1 => az1_at_r += az_contrib,
@@ -763,7 +578,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                                 if bz_peek.index == az_coeff.index + 1 {
                                     let bz_coeff = bz_iter.next().unwrap();
                                     paired_bz_opt = Some(bz_coeff.value);
-                                    let bz_contrib = Self::mul_field_by_bz(eq_r_y, bz_coeff.value);
+                                    let bz_contrib = bz_coeff.value.mul_field(eq_r_y);
                                     match x_next_val {
                                         0 => bz0_at_r += bz_contrib,
                                         1 => bz1_at_r += bz_contrib,
@@ -808,7 +623,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                             let x_next_val = (local_offset >> 1) >> NUM_SVO_ROUNDS; // 0 or 1
                             let eq_r_y = eq_r_evals[y_val_idx];
 
-                            let bz_contrib = Self::mul_field_by_bz(eq_r_y, bz_coeff.value);
+                            let bz_contrib = bz_coeff.value.mul_field(eq_r_y);
                             match x_next_val {
                                 0 => bz0_at_r += bz_contrib,
                                 1 => bz1_at_r += bz_contrib,

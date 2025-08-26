@@ -44,6 +44,9 @@ pub trait JoltField:
 {
     /// Number of bytes occupied by a single field element.
     const NUM_BYTES: usize;
+    /// The Montgomery factor R = 2^(64*N) mod p
+    const MONTGOMERY_R: Self;
+
     /// An implementation of `JoltField` may use some precomputed lookup tables to speed up the
     /// conversion of small primitive integers (e.g. `u16` values) into field elements. For example,
     /// the arkworks BN254 scalar field requires a conversion into Montgomery form, which naively
