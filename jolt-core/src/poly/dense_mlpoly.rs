@@ -221,6 +221,7 @@ impl<F: JoltField> DensePolynomial<F> {
     }
 
     pub fn bound_poly_var_top_0_small(&mut self, _r: &u128) {}
+
     pub fn bound_poly_var_bot_01_small(&mut self, r: &u128) {
         let n = self.len() / 2;
 
@@ -228,6 +229,7 @@ impl<F: JoltField> DensePolynomial<F> {
             self.binding_scratch_space = Some(unsafe_allocate_zero_vec(n));
         }
 
+        // I am not sure this is relevant.
         let scratch_space = self.binding_scratch_space.as_mut().unwrap();
 
         scratch_space
@@ -239,12 +241,13 @@ impl<F: JoltField> DensePolynomial<F> {
                 *z = if m.is_zero() {
                     self.Z[2 * i]
                 } else if m.is_one() {
-                    self.Z[2 * i].mul_u128(*r)
+                    self.Z[2 * i].mul_u128_mont_form(*r)
                 } else {
-                    self.Z[2 * i] + m.mul_u128(*r)
+                    self.Z[2 * i] + m.mul_u128_mont_form(*r)
                 }
             });
 
+        // I am not sure this is essential.
         std::mem::swap(&mut self.Z, scratch_space);
 
         self.num_vars -= 1;

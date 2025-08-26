@@ -79,12 +79,15 @@ pub trait JoltField:
     fn mul_u64(&self, n: u64) -> Self {
         *self * Self::from_u64(n)
     }
+
     #[inline(always)]
     fn mul_i128(&self, n: i128) -> Self {
         *self * Self::from_i128(n)
     }
+
+    // Here n is already in montgormery form,
     #[inline(always)]
-    fn mul_u128(&self, n: u128) -> Self {
+    fn mul_u128_mont_form(&self, n: u128) -> Self {
         *self * Self::from_u128(n)
     }
 

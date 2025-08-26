@@ -334,7 +334,7 @@ impl JoltField for TrackedFr {
         MULT_COUNT.fetch_add(1, Ordering::Relaxed);
         TrackedFr(self.0.mul_u64(n))
     }
-    fn mul_u128(&self, n: u128) -> Self {
+    fn mul_u128_mont_form(&self, n: u128) -> Self {
         MULT_COUNT.fetch_add(1, Ordering::Relaxed);
         TrackedFr(self.0.mul_u128(n))
     }
