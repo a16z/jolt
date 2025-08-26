@@ -79,7 +79,7 @@ impl BigIntCpuHarness {
                 rs2: Self::RS2,
                 rd: Self::RD,
             },
-            // BIGINT256_MUL has opcode 0x0B, funct3 0x00, funct7 0x01
+            // BIGINT256_MUL has opcode 0x0B, funct3 0x00, funct7 0x02
             opcode: 0x0B,
             funct3: 0x00,
             funct7: 0x02,

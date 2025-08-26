@@ -11,7 +11,7 @@ use tracer::register_inline;
 // Initialize and register inlines
 #[cfg(feature = "host")]
 pub fn init_inlines() -> Result<(), String> {
-    // Register 256-bit Int multiplication with funct3=0x00 and funct7=0x01
+    // Register 256-bit Int multiplication with funct3=0x00 and funct7=0x02
     register_inline(
         0x0B,
         0x00,
@@ -24,7 +24,7 @@ pub fn init_inlines() -> Result<(), String> {
 }
 
 // Automatic registration when the library is loaded
-#[cfg(feature = "host")]
+#[cfg(all(feature = "host", not(target_arch = "wasm32")))]
 #[ctor::ctor]
 fn auto_register() {
     if let Err(e) = init_inlines() {
