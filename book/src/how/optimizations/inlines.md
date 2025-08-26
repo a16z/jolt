@@ -8,7 +8,7 @@ Jolt inlines are a unique optimization technique that replaces high-level operat
 
 **Native RISC-V Integration**: Inlines expand into sequences of RISC-V instructions that execute within the same trace as regular program code. This seamless integration eliminates the complexity of bridging between different proof systems.
 
-**Custom Instructions**: Jolt enables the creation of custom instructions that can accelerate common operations. These custom instructions must have structured multilinear extension (MLE) polynomials, meaning that they can be evaluated efficiently in small space (see [Appendix A](https://eprint.iacr.org/2025/611.pdf) for details on structured MLEs and prefix-suffix). By ensuring all custom instructions maintain this property, Jolt achieves the performance benefits of specialized operations without sacrificing the simplicity of its proof system. This distinguishes Jolt from traditional approaches that require complex glue logic or separate constraint systems.
+**Custom Instructions**: Jolt enables the creation of custom instructions that can accelerate common operations. These custom instructions must have structured multilinear extension (MLE) polynomials, meaning that they can be evaluated efficiently in small space (see [prefix-suffix sumcheck](../instruction-execution.html) for details on structured MLEs). By ensuring all custom instructions maintain this property, Jolt achieves the performance benefits of specialized operations without sacrificing the simplicity of its proof system. This is the core innovation that distinguishes Jolt inlines from traditional precompiles or simple assembly optimizations - we compress complex operations into lookup-friendly instructions that remain fully verifiable within the main zkVM, eliminating the need for complex glue logic or separate constraint systems.
 
 **Extended Register Set**: Inline sequences have access to 32 additional registers beyond the standard RISC-V register set. This expanded register space allows complex operations to maintain state in registers rather than memory, dramatically reducing load/store operations.
 
@@ -87,8 +87,10 @@ Inline sequences have access to 32 additional virtual registers beyond the stand
 
 ### 2. Custom Instructions
 
-Jolt allows creation of custom instructions that can replace common multi-instruction patterns with a single operation. The key here is that these instructions must have structured multilinear extensions (MLEs) that can be evaluated efficiently in small space (see [Appendix A](https://eprint.iacr.org/2025/611.pdf)). This is where the real performance gain comes from: by compressing operations into forms that work naturally with Jolt's lookup-based architecture, we achieve dramatic speedups without the complexity of traditional precompiles. For example, the ROTRI (rotate right immediate) instruction replaces the three-instruction sequence `(x >> imm) | (x << (32-imm))` with a single cycle, while remaining fully verifiable through lookups.  
-  
+Jolt allows creation of custom instructions that can replace common multi-instruction patterns with a single operation. The key innovation here is that these instructions must have structured multilinear extensions (MLEs) that can be evaluated efficiently in small space (see [prefix-suffix sumcheck](../instruction-execution.html)). This is where the real performance gain comes from: by compressing operations into forms that work naturally with Jolt's lookup-based architecture, we achieve dramatic speedups without the complexity of traditional precompiles. 
+
+This is fundamentally different from traditional assembly optimization - we're not just rearranging instructions, we're creating new ones that are specifically designed to be "lookupable" within Jolt's proof system. For example, the ROTRI (rotate right immediate) instruction replaces the three-instruction sequence `(x >> imm) | (x << (32-imm))` with a single cycle, while remaining fully verifiable through lookups because it maintains the structured MLE property.
+
 Note that creating custom user-defined instructions is currently only available within the core Jolt codebase and not yet supported in external crates.
 
 ### 3. 32-bit Immediate Values
@@ -118,7 +120,7 @@ When creating user-defined inlines, you must adhere to these critical requiremen
    - Use `funct3` for sub-instruction variants within your operation
 
 5. **MLE Structure**:
-   - All custom instructions must have structured multilinear extensions (see Appendix C)
+   - All custom instructions must have structured multilinear extensions (see [prefix-suffix sumcheck](../instruction-execution.html))
    - Complex operations may need to be broken down into simpler instructions that maintain this property
 
 ### Implementation Structure
