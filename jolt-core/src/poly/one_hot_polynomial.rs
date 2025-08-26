@@ -298,7 +298,6 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
             let mut H = polynomial.H.write().unwrap();
             let H = H.as_mut().unwrap();
             if H.num_vars == self.log_T + polynomial.K.log_2() - round {
-                println!("Binding H round {round}");
                 H.bind_parallel(r, BindingOrder::HighToLow);
             }
         }
