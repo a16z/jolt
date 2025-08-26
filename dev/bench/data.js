@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756140933510,
+  "lastUpdate": 1756240253262,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -14386,6 +14386,150 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 576700,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "atretyakov@a16z.com",
+            "name": "Andrew Tretyakov",
+            "username": "0xAndoroid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "80f6c9935c5a328a6133e9963d3a128436edf6a9",
+          "message": "docs/inlines (#909)\n\n* docs/inlines\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\n\n* fix comments\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\n\n* note on custom instructions\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\n\n* docs: add note about similarity between inlines and virtual sequences\n\nAddressed PR feedback by adding a sentence that points out the similarity\nbetween inlines and the virtual sequences already used for certain RISC-V\ninstructions, with a link to the relevant documentation section.\n\n* docs: address all PR review comments for inlines documentation\n\n- Changed all Appendix references to link to prefix-suffix sumcheck in instruction-execution.html\n- Fixed incorrect \"Appendix C\" reference to also link to prefix-suffix sumcheck\n- Emphasized that custom instructions with structured MLEs are the core innovation\n- Added clarification that extra register usage comes with ~0 cost to the prover\n- Enhanced explanation of why structured MLEs make instructions \"lookupable\"\n- Clarified that this is fundamentally different from traditional assembly optimization\n- Noted that user-defined custom instructions are only available in core Jolt codebase\n- Maintained \"register pressure\" term per reviewer's defense of its legitimacy\n\n---------\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>",
+          "timestamp": "2025-08-26T15:55:40-04:00",
+          "tree_id": "23b67fdbbd30d7b3d16f94ee404c2e6acc561937",
+          "url": "https://github.com/a16z/jolt/commit/80f6c9935c5a328a6133e9963d3a128436edf6a9"
+        },
+        "date": 1756240251931,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "alloc-time",
+            "value": 3.3209,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 446016,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 3576940,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 3.7162,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 458176,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 2.6506,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 458960,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 2.4261,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 459476,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 2.8545,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 618448,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 117.2929,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 9725392,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 4.8105,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 470004,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 9.953,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 513148,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 5.3233,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 541296,
             "unit": "KB",
             "extra": ""
           }
