@@ -1,5 +1,3 @@
-use std::{char::from_u32, u128};
-
 use ark_ff::{prelude::*, BigInt, PrimeField, UniformRand};
 use rayon::prelude::*;
 
@@ -185,7 +183,7 @@ impl JoltField for ark_bn254::Fr {
         } else if n == 1 {
             *self
         } else if self.is_one() {
-            <Self as JoltField>::from_u32(1 as u32)
+            <Self as JoltField>::from_u8(1_u8)
         } else {
             ark_ff::Fp::mul_u128(*self, n)
         }
