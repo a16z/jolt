@@ -13,7 +13,7 @@ use crate::{
         constraints::{eval_az_bz_batch, CzKind, UNIFORM_R1CS},
         inputs::WitnessRowAccessor,
         types::{
-            fmadd_unreduced, mul_az_bz, reduce_unreduced_to_field, AzValue, BzValue,
+            mul_az_bz, reduce_unreduced_to_field, AzValue, BzValue, SignedUnreducedAccum,
             UnreducedProduct,
         },
     },
@@ -21,6 +21,9 @@ use crate::{
 use allocative::Allocative;
 use ark_ff::SignedBigInt;
 use rayon::prelude::*;
+
+#[cfg(test)]
+use crate::zkvm::r1cs::inputs::JoltR1CSInputs;
 
 pub const TOTAL_NUM_ACCUMS: usize = svo_helpers::total_num_accums(NUM_SVO_ROUNDS);
 pub const NUM_NONTRIVIAL_TERNARY_POINTS: usize =
@@ -76,11 +79,6 @@ pub struct SpartanInterleavedPolynomial<const NUM_SVO_ROUNDS: usize, F: JoltFiel
 }
 
 impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM_SVO_ROUNDS, F> {
-
-
-
-
-
     /// Compute the unbound coefficients for the Az and Bz polynomials (no Cz coefficients are
     /// needed), along with the accumulators for the small value optimization (SVO) rounds.
     ///
@@ -308,12 +306,51 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                                 #[cfg(test)]
                                 {
                                     // Check constraint using field-mapped Az/Bz
-                                    let const_row = &uniform_svo_chunk[idx_in_svo_block].cons;
+                                    let named = &uniform_svo_chunk[idx_in_svo_block];
+                                    let const_row = &named.cons;
                                     let cz =
                                         const_row.c.evaluate_row_with(accessor, current_step_idx);
-                                    if az.to_field::<F>() * bz.to_field::<F>()
-                                        != cz
-                                    {
+                                    let az_field = az.to_field::<F>();
+                                    let bz_field = bz.to_field::<F>();
+                                    let product = az_field * bz_field;
+                                    if product != cz {
+                                        eprintln!(
+                                            "[precompute] constraint mismatch: step={}, constraint_idx_in_step={}, name={:?}",
+                                            current_step_idx, constraint_idx_in_step, named.name
+                                        );
+                                        eprintln!("  Az={:?} -> {}", az, az_field); 
+                                        eprintln!("  Bz={:?} -> {}", bz, bz_field);
+                                        eprintln!("  Az*Bz={}, Cz={}", product, cz);
+                                        // Also dump LC terms sizes for A/B/C
+                                        eprintln!(
+                                            "  LC sizes: A={} B={} C={}",
+                                            const_row.a.num_terms(),
+                                            const_row.b.num_terms(),
+                                            const_row.c.num_terms()
+                                        );
+                                        if matches!(named.name, crate::zkvm::r1cs::constraints::ConstraintName::ProductDef) {
+                                            let left = accessor.value_at(JoltR1CSInputs::LeftInstructionInput.to_index(), current_step_idx);
+                                            let right = accessor.value_at(JoltR1CSInputs::RightInstructionInput.to_index(), current_step_idx);
+                                            let prod = accessor.value_at(JoltR1CSInputs::Product.to_index(), current_step_idx);
+                                            eprintln!("  debug ProductDef: left={:?} right={:?} product={:?}", left, right, prod);
+                                        }
+                                        // Dump key witness values for common failing constraints
+                                        match named.name {
+                                            crate::zkvm::r1cs::constraints::ConstraintName::RightInputEqImm => {
+                                                let flag = accessor.value_at(JoltR1CSInputs::OpFlags(crate::zkvm::instruction::CircuitFlags::RightOperandIsImm).to_index(), current_step_idx);
+                                                let right = accessor.value_at(JoltR1CSInputs::RightInstructionInput.to_index(), current_step_idx);
+                                                let imm = accessor.value_at(JoltR1CSInputs::Imm.to_index(), current_step_idx);
+                                                eprintln!("  debug RightInputEqImm: flag={:?} right={:?} imm={:?}", flag, right, imm);
+                                            }
+                                            crate::zkvm::r1cs::constraints::ConstraintName::RightLookupAdd => {
+                                                let lop = accessor.value_at(JoltR1CSInputs::LeftLookupOperand.to_index(), current_step_idx);
+                                                let rop = accessor.value_at(JoltR1CSInputs::RightLookupOperand.to_index(), current_step_idx);
+                                                let out = accessor.value_at(JoltR1CSInputs::LookupOutput.to_index(), current_step_idx);
+                                                let add = accessor.value_at(JoltR1CSInputs::OpFlags(crate::zkvm::instruction::CircuitFlags::AddOperands).to_index(), current_step_idx);
+                                                eprintln!("  debug RightLookupAdd: LOP={:?} ROP={:?} OUT={:?} AddFlag={:?}", lop, rop, out, add);
+                                            }
+                                            _ => {}
+                                        }
                                         panic!("Constraint violated at step {current_step_idx}");
                                     }
                                 }
@@ -488,7 +525,8 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
         );
         let mut r_rev = r_challenges.clone();
         r_rev.reverse();
-        let eq_r_evals = EqPolynomial::evals(&r_rev);
+        // Scale eq(r, y) by Montgomery R so unreduced fmadd (M(eq) * integer) reduces to M(eq * integer)
+        let eq_r_evals = EqPolynomial::evals_with_scaling(&r_rev, Some(F::MONTGOMERY_R));
 
         struct StreamingTaskOutput<F: JoltField> {
             bound_coeffs_local: Vec<SparseCoefficient<F>>,
@@ -535,12 +573,9 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                     };
                     let e_block = e_out_val * e_in_val;
 
-                    let mut az0_at_r = F::zero();
-                    let mut az1_at_r = F::zero();
-                    let mut bz0_at_r = F::zero();
-                    let mut bz1_at_r = F::zero();
-                    let mut cz0_at_r = F::zero();
-                    let mut cz1_at_r = F::zero();
+                    let mut az_acc = [SignedUnreducedAccum::new(), SignedUnreducedAccum::new()];
+                    let mut bz_acc = [SignedUnreducedAccum::new(), SignedUnreducedAccum::new()];
+                    let mut cz_acc = [SignedUnreducedAccum::new(), SignedUnreducedAccum::new()];
 
                     loop {
                         let az_in_block = az_iter.peek().is_some_and(|c| {
@@ -567,23 +602,13 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                             let x_next_val = (local_offset >> 1) >> NUM_SVO_ROUNDS; // 0 or 1
                             let eq_r_y = eq_r_evals[y_val_idx];
 
-                            let az_contrib = az_orig_val.mul_field(eq_r_y);
-                            match x_next_val {
-                                0 => az0_at_r += az_contrib,
-                                1 => az1_at_r += az_contrib,
-                                _ => unreachable!(),
-                            }
+                            az_acc[x_next_val].fmadd_az::<F>(&eq_r_y, az_orig_val);
 
                             if let Some(bz_peek) = bz_iter.peek() {
                                 if bz_peek.index == az_coeff.index + 1 {
                                     let bz_coeff = bz_iter.next().unwrap();
                                     paired_bz_opt = Some(bz_coeff.value);
-                                    let bz_contrib = bz_coeff.value.mul_field(eq_r_y);
-                                    match x_next_val {
-                                        0 => bz0_at_r += bz_contrib,
-                                        1 => bz1_at_r += bz_contrib,
-                                        _ => unreachable!(),
-                                    }
+                                    bz_acc[x_next_val].fmadd_bz::<F>(&eq_r_y, bz_coeff.value);
                                 }
                             }
 
@@ -602,18 +627,8 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                                     false
                                 };
                                 if cz_is_nonzero {
-                                    // Accumulate cz at r using typed product with delayed reduction.
                                     let prod = mul_az_bz(az_orig_val, bz_for_az);
-                                    let mut pos = UnreducedProduct::zero();
-                                    let mut neg = UnreducedProduct::zero();
-                                    fmadd_unreduced::<F>(&mut pos, &mut neg, &eq_r_y, prod);
-                                    let cz_term = reduce_unreduced_to_field::<F>(&pos)
-                                        - reduce_unreduced_to_field::<F>(&neg);
-                                    match x_next_val {
-                                        0 => cz0_at_r += cz_term,
-                                        1 => cz1_at_r += cz_term,
-                                        _ => unreachable!(),
-                                    }
+                                    cz_acc[x_next_val].fmadd_prod::<F>(&eq_r_y, prod);
                                 }
                             }
                         } else if bz_in_block {
@@ -623,14 +638,16 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                             let x_next_val = (local_offset >> 1) >> NUM_SVO_ROUNDS; // 0 or 1
                             let eq_r_y = eq_r_evals[y_val_idx];
 
-                            let bz_contrib = bz_coeff.value.mul_field(eq_r_y);
-                            match x_next_val {
-                                0 => bz0_at_r += bz_contrib,
-                                1 => bz1_at_r += bz_contrib,
-                                _ => unreachable!(),
-                            }
+                            bz_acc[x_next_val].fmadd_bz::<F>(&eq_r_y, bz_coeff.value);
                         }
                     }
+
+                    let az0_at_r = az_acc[0].reduce_to_field::<F>();
+                    let bz0_at_r = bz_acc[0].reduce_to_field::<F>();
+                    let cz0_at_r = cz_acc[0].reduce_to_field::<F>();
+                    let az1_at_r = az_acc[1].reduce_to_field::<F>();
+                    let bz1_at_r = bz_acc[1].reduce_to_field::<F>();
+                    let cz1_at_r = cz_acc[1].reduce_to_field::<F>();
 
                     if !az0_at_r.is_zero() {
                         task_bound_coeffs.push((6 * current_block_id, az0_at_r).into());

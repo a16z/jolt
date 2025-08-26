@@ -264,7 +264,8 @@ impl BzValue {
             BzValue::S192(signed_bigint) => {
                 // This should never happen for initial BzValue, so we use a dummy fix:
                 // Chop off the last limb and convert the first 2 limbs to u128
-                let magnitude = (signed_bigint.magnitude.0[0] as u128) | ((signed_bigint.magnitude.0[1] as u128) << 64);
+                let magnitude = (signed_bigint.magnitude.0[0] as u128)
+                    | ((signed_bigint.magnitude.0[1] as u128) << 64);
                 if signed_bigint.is_positive {
                     F::from_u128(magnitude)
                 } else {
@@ -314,12 +315,12 @@ fn mul_field_by_signed_limbs<F: JoltField>(val: F, limbs: &[u64], is_positive: b
             let c0 = if limbs[0] == 0 {
                 F::zero()
             } else {
-                val * F::from_u64(limbs[0])
+                val.mul_u64(limbs[0])
             };
             let c1 = if limbs[1] == 0 {
                 F::zero()
             } else {
-                (val * r64) * F::from_u64(limbs[1])
+                (val * r64).mul_u64(limbs[1])
             };
             let acc = c0 + c1;
             if is_positive {
@@ -335,17 +336,17 @@ fn mul_field_by_signed_limbs<F: JoltField>(val: F, limbs: &[u64], is_positive: b
             let c0 = if limbs[0] == 0 {
                 F::zero()
             } else {
-                val * F::from_u64(limbs[0])
+                val.mul_u64(limbs[0])
             };
             let c1 = if limbs[1] == 0 {
                 F::zero()
             } else {
-                val_r64 * F::from_u64(limbs[1])
+                val_r64.mul_u64(limbs[1])
             };
             let c2 = if limbs[2] == 0 {
                 F::zero()
             } else {
-                val_r128 * F::from_u64(limbs[2])
+                val_r128.mul_u64(limbs[2])
             };
             let acc = c0 + c1 + c2;
             if is_positive {
@@ -508,6 +509,126 @@ pub fn fmadd_unreduced<F: JoltField>(
             let acc = if v.is_positive { pos_acc } else { neg_acc };
             field_bigint.fmadd_trunc::<4, 8>(&v.magnitude, acc);
         }
+    }
+}
+
+// =============================
+// Unreduced signed accumulators
+// =============================
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SignedUnreducedAccum {
+    pub pos: UnreducedProduct,
+    pub neg: UnreducedProduct,
+}
+
+impl Default for SignedUnreducedAccum {
+    fn default() -> Self {
+        Self {
+            pos: UnreducedProduct::zero(),
+            neg: UnreducedProduct::zero(),
+        }
+    }
+}
+
+impl SignedUnreducedAccum {
+    #[inline(always)]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    #[inline(always)]
+    pub fn clear(&mut self) {
+        self.pos = UnreducedProduct::zero();
+        self.neg = UnreducedProduct::zero();
+    }
+
+    /// fmadd with an `AzValue` (signed, up to 2 limbs)
+    #[inline(always)]
+    pub fn fmadd_az<F: JoltField>(&mut self, field: &F, az: AzValue) {
+        // Get reference to field element's BigInt<4> without copying
+        let field_bigint = field.as_bigint_ref();
+        match az {
+            AzValue::I8(v) => {
+                if v != 0 {
+                    let abs = (v as i128).unsigned_abs() as u64;
+                    let mut mag = BigInt::<1>::zero();
+                    mag.0[0] = abs;
+                    let acc = if v >= 0 { &mut self.pos } else { &mut self.neg };
+                    field_bigint.fmadd_trunc::<1, 8>(&mag, acc);
+                }
+            }
+            AzValue::S64(s1) => {
+                if !s1.is_zero() {
+                    let acc = if s1.is_positive {
+                        &mut self.pos
+                    } else {
+                        &mut self.neg
+                    };
+                    field_bigint.fmadd_trunc::<1, 8>(&s1.magnitude, acc);
+                }
+            }
+            AzValue::I128(x) => {
+                if x != 0 {
+                    let ux = x.unsigned_abs();
+                    let mut mag = BigInt::<2>::zero();
+                    mag.0[0] = ux as u64;
+                    mag.0[1] = (ux >> 64) as u64;
+                    let acc = if x >= 0 { &mut self.pos } else { &mut self.neg };
+                    field_bigint.fmadd_trunc::<2, 8>(&mag, acc);
+                }
+            }
+        }
+    }
+
+    /// fmadd with a `BzValue` (signed, up to 3 limbs)
+    #[inline(always)]
+    pub fn fmadd_bz<F: JoltField>(&mut self, field: &F, bz: BzValue) {
+        let field_bigint = field.as_bigint_ref();
+        match bz {
+            BzValue::S64(s1) => {
+                if !s1.is_zero() {
+                    let acc = if s1.is_positive {
+                        &mut self.pos
+                    } else {
+                        &mut self.neg
+                    };
+                    field_bigint.fmadd_trunc::<1, 8>(&s1.magnitude, acc);
+                }
+            }
+            BzValue::S128(s2) => {
+                if !s2.is_zero() {
+                    let acc = if s2.is_positive {
+                        &mut self.pos
+                    } else {
+                        &mut self.neg
+                    };
+                    field_bigint.fmadd_trunc::<2, 8>(&s2.magnitude, acc);
+                }
+            }
+            BzValue::S192(s3) => {
+                if !s3.is_zero() {
+                    let acc = if s3.is_positive {
+                        &mut self.pos
+                    } else {
+                        &mut self.neg
+                    };
+                    field_bigint.fmadd_trunc::<3, 8>(&s3.magnitude, acc);
+                }
+            }
+        }
+    }
+
+    /// fmadd with an Az×Bz product value (1..=4 limbs)
+    #[inline(always)]
+    pub fn fmadd_prod<F: JoltField>(&mut self, field: &F, product: AzBzProductValue) {
+        fmadd_unreduced::<F>(&mut self.pos, &mut self.neg, field, product)
+    }
+
+    /// Reduce accumulated value to a field element (pos - neg)
+    #[inline(always)]
+    pub fn reduce_to_field<F: JoltField>(&self) -> F {
+        reduce_unreduced_to_field::<F>(&self.pos) - reduce_unreduced_to_field::<F>(&self.neg)
     }
 }
 

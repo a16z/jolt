@@ -632,6 +632,7 @@ pub fn eval_az_by_name<F: JoltField>(
             SmallScalar::Bool(true)
         )),
         ConstraintName::ProductDef => {
+            // Use unsigned left operand (bit pattern) to match Product witness convention
             let left = accessor
                 .value_at(Inp::LeftInstructionInput.to_index(), row)
                 .as_u64_clamped();
@@ -847,21 +848,25 @@ pub fn eval_bz_by_name<F: JoltField>(
             diff_to_bz(0 - left)
         }
         ConstraintName::RightLookupAdd => {
+            // RightLookupOperand stores the unsigned bit pattern of the signed arithmetic result
             let rlookup = accessor
                 .value_at(Inp::RightLookupOperand.to_index(), row)
-                .as_i128();
+                .as_u64_clamped() as i64 as i128; // u64 -> i64 -> i128 (sign extend)
             let left = accessor
                 .value_at(Inp::LeftInstructionInput.to_index(), row)
                 .as_i128();
             let right = accessor
                 .value_at(Inp::RightInstructionInput.to_index(), row)
                 .as_i128();
-            diff_to_bz(rlookup - (left + right))
+            // Truncate sum to 64-bit signed, then sign-extend to i128
+            let expected_sum = ((left + right) as i64) as i128;
+            diff_to_bz(rlookup - expected_sum)
         }
         ConstraintName::RightLookupSub => {
-            let rlookup = accessor
+            // RightLookupOperand contains the unsigned bit pattern result
+            let rlookup_bits = accessor
                 .value_at(Inp::RightLookupOperand.to_index(), row)
-                .as_i128();
+                .as_u64_clamped() as i128; // treat as unsigned then extend to i128
             let left = accessor
                 .value_at(Inp::LeftInstructionInput.to_index(), row)
                 .as_i128();
@@ -869,21 +874,16 @@ pub fn eval_bz_by_name<F: JoltField>(
                 .value_at(Inp::RightInstructionInput.to_index(), row)
                 .as_i128();
             let two64 = (u64::MAX as u128 + 1) as i128;
-            let target = left - right + two64;
-            diff_to_bz(rlookup - target)
+            let expected_result = left - right + two64;
+            diff_to_bz(rlookup_bits - expected_result)
         }
         ConstraintName::ProductDef => {
-            let right_i128 = accessor
+            // Use 64-bit bit pattern of right operand (unsigned) to align with Product witness
+            let right_bits = accessor
                 .value_at(Inp::RightInstructionInput.to_index(), row)
                 .as_i128();
-            if right_i128 >= 0 {
-                BzValue::S64(SignedBigInt::from_u64_with_sign(right_i128 as u64, true))
-            } else {
-                BzValue::S64(SignedBigInt::from_u64_with_sign(
-                    (-right_i128) as u64,
-                    false,
-                ))
-            }
+            let r = (right_bits as i64) as u64; // reinterpret two's complement
+            BzValue::S64(SignedBigInt::from_u64_with_sign(r, true))
         }
         ConstraintName::RightLookupEqProductIfMul => {
             let rlookup = accessor
@@ -1081,8 +1081,8 @@ pub fn eval_az_bz_batch<F: JoltField>(
     // that use similar input patterns, but for now we focus on reducing call overhead
     for (i, constraint) in constraints.iter().enumerate() {
         // Evaluate both Az and Bz together to potentially reuse accessor calls
-        az_output[i] = eval_az_by_name(constraint, accessor, step_idx);
-        bz_output[i] = eval_bz_by_name(constraint, accessor, step_idx);
+        az_output[i] = super::inputs::eval_az_generic(&constraint.cons.a, accessor, step_idx);
+        bz_output[i] = super::inputs::eval_bz_generic(&constraint.cons.b, accessor, step_idx);
     }
 }
 
