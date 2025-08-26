@@ -87,7 +87,9 @@ Inline sequences have access to 32 additional virtual registers beyond the stand
 
 ### 2. Custom Instructions
 
-Jolt allows creation of custom instructions that can replace common multi-instruction patterns with a single operation. The key here is that these instructions must have structured multilinear extensions (MLEs) that can be evaluated efficiently in small space (see [Appendix A](https://eprint.iacr.org/2025/611.pdf)). This is where the real performance gain comes from: by compressing operations into forms that work naturally with Jolt's lookup-based architecture, we achieve dramatic speedups without the complexity of traditional precompiles. For example, the ROTRI (rotate right immediate) instruction replaces the three-instruction sequence `(x >> imm) | (x << (32-imm))` with a single cycle, while remaining fully verifiable through lookups.
+Jolt allows creation of custom instructions that can replace common multi-instruction patterns with a single operation. The key here is that these instructions must have structured multilinear extensions (MLEs) that can be evaluated efficiently in small space (see [Appendix A](https://eprint.iacr.org/2025/611.pdf)). This is where the real performance gain comes from: by compressing operations into forms that work naturally with Jolt's lookup-based architecture, we achieve dramatic speedups without the complexity of traditional precompiles. For example, the ROTRI (rotate right immediate) instruction replaces the three-instruction sequence `(x >> imm) | (x << (32-imm))` with a single cycle, while remaining fully verifiable through lookups.  
+  
+Note that creating custom user-defined instructions is currently only available within the core Jolt codebase and not yet supported in external crates.
 
 ### 3. 32-bit Immediate Values
 
