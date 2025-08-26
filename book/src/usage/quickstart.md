@@ -1,4 +1,5 @@
 # Quickstart
+
 ## Installing
 Start by installing the `jolt` command line tool.
 ```
@@ -70,3 +71,24 @@ cargo run --release
 ```
 
 This will compile the guest, perform some required preprocessing, and execute the host code which proves and verifies the 50th Fibonacci number. This preprocessing is run within the `build_fib` function and adds significant time to running the host, but only needs to be performed once. This means that we could use the prove method many times without rerunning `build_fib`. In the future we will support caching this across runs of the host.
+
+## Development
+
+### Rust
+
+To build Jolt from source, you will need Rust:
+
+- `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
+- Rustup should automatically install the Rust toolchain and necessary targets on
+the first `cargo` invocation.
+You may also need to add the RISC-V target for building guest programs manually: `rustup target add riscv32im-unknown-none-elf`.
+
+### mdBook
+
+To build this book from source:
+
+`cargo install mdbook mdbook-katex`
+
+For watching the changes in your local browser:
+
+`mdbook watch book --open`

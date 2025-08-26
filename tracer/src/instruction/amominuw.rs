@@ -20,7 +20,7 @@ use super::{format::format_r::FormatR, RISCVInstruction, RISCVTrace, RV32IMCycle
 declare_riscv_instr!(
     name   = AMOMINUW,
     mask   = 0xf800707f,
-    match  = 0xc000302f,
+    match  = 0xc000202f,
     format = FormatR,
     ram    = ()
 );

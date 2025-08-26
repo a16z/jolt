@@ -4,7 +4,7 @@ use jolt_sdk::{self as jolt};
 
 extern crate alloc;
 
-use ark_serialize::CanonicalDeserialize;
+use ark_serialize::{CanonicalDeserialize, Compress, Validate};
 use jolt::Jolt;
 use jolt::{JoltDevice, JoltRV32IM, JoltVerifierPreprocessing, RV32IMJoltProof, F, PCS};
 
@@ -26,36 +26,32 @@ fn verify(bytes: &[u8]) -> u32 {
     };
 
     let mut cursor = std::io::Cursor::new(data_bytes);
-    start_cycle_tracking("deserialize");
-    let _ = u32::deserialize_compressed(&mut cursor).unwrap();
-    end_cycle_tracking("deserialize");
 
-    start_cycle_tracking("preprocessing");
+    start_cycle_tracking("deserialize preprocessing");
     let verifier_preprocessing: JoltVerifierPreprocessing<F, PCS> =
-        JoltVerifierPreprocessing::<F, PCS>::deserialize_compressed(&mut cursor).unwrap();
-    end_cycle_tracking("preprocessing");
+        JoltVerifierPreprocessing::<F, PCS>::deserialize_with_mode(&mut cursor, Compress::Yes, Validate::No).unwrap();
+    end_cycle_tracking("deserialize preprocessing");
 
-    start_cycle_tracking("n");
-    let n: u32 = u32::deserialize_compressed(&mut cursor).unwrap();
-    end_cycle_tracking("n");
+    start_cycle_tracking("deserialize count of proofs");
+    // Deserialize number of proofs to verify
+    let n: u32 = u32::deserialize_with_mode(&mut cursor, Compress::Yes, Validate::No).unwrap();
+    end_cycle_tracking("deserialize count of proofs");
 
     let mut all_valid = true;
     for _ in 0..n {
-        start_cycle_tracking("proof");
-        let proof = RV32IMJoltProof::deserialize_compressed(&mut cursor).unwrap();
-        end_cycle_tracking("proof");
+        start_cycle_tracking("deserialize proof");
+        let proof = RV32IMJoltProof::deserialize_with_mode(&mut cursor, Compress::Yes, Validate::No).unwrap();
+        end_cycle_tracking("deserialize proof");
 
-        start_cycle_tracking("device");
-        let device = JoltDevice::deserialize_compressed(&mut cursor).unwrap();
-        end_cycle_tracking("device");
+        start_cycle_tracking("deserialize device");
+        let device = JoltDevice::deserialize_with_mode(&mut cursor, Compress::Yes, Validate::No).unwrap();
+        end_cycle_tracking("deserialize device");
 
         start_cycle_tracking("verification");
         let is_valid = JoltRV32IM::verify(&verifier_preprocessing, proof, device, None).is_ok();
         end_cycle_tracking("verification");
         all_valid = all_valid && is_valid;
     }
-
-    end_cycle_tracking("verify_proofs");
 
     all_valid as u32
 }

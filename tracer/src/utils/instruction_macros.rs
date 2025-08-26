@@ -30,14 +30,14 @@ macro_rules! declare_riscv_instr {
             }
 
             fn new(word: u32, address: u64, validate: bool, compressed: bool) -> Self {
+              if validate {
+                debug_assert_eq!(word & Self::MASK, Self::MATCH, "word: {:x}, mask: {:x}, word & mask: {:x}, match: {:x}", word, Self::MASK, word & Self::MASK, Self::MATCH);
+              }
               if declare_riscv_instr!(@is_virtual $( $virt )?) {
                     panic!(
                         "virtual instruction `{}` cannot be built from a machine word",
                         stringify!($name)
                     );
-                }
-                if validate {
-                    debug_assert_eq!(word & Self::MASK, Self::MATCH);
                 }
                 Self {
                     address,

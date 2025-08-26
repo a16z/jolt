@@ -25,7 +25,7 @@ use super::{
 declare_riscv_instr!(
     name   = DIVW,
     mask   = 0xfe00707f,
-    match  = 0x1a00003b,
+    match  = 0x200403b,
     format = FormatR,
     ram    = ()
 );

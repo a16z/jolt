@@ -4,7 +4,7 @@ MAKEFILE_DIR := $(abspath $(dir $(firstword $(MAKEFILE_LIST))))
 
 # Define a general macro for RISCOF test runs
 define RISCOF_RUN
-	export PATH=$(MAKEFILE_DIR)/target/release:$(PATH); \
+	export PATH=$(MAKEFILE_DIR)/target/debug:$(PATH); \
 	export RUST_BACKTRACE=full; \
 	riscof --verbose info run --no-browser --config tests/arch-tests/$(1).ini \
 		--suite third-party/riscv-arch-test/riscv-test-suite/ \
@@ -20,7 +20,8 @@ bootstrap: ## Install required dependencies
 	./scripts/apply-patches || true
 
 build-emulator: ## Build the emulator
-	cargo build --release -p tracer --bin jolt-emu
+	# SHOULD NOT USE RELEASE BUILD FOR ARCH TESTS
+	cargo build -p tracer --bin jolt-emu
 
 arch-tests-32im: build-emulator
 	$(call RISCOF_RUN,jolt-32im)
