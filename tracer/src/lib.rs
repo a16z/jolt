@@ -313,6 +313,10 @@ pub fn decode(elf: &[u8]) -> (Vec<RV32IMInstruction>, Vec<(u64, u8)>, u64, Xlen)
                 if (first_halfword & 0b11) != 0b11 {
                     // Compressed 16-bit instruction
                     let compressed_inst = first_halfword;
+                    if compressed_inst == 0x0000 {
+                        offset += 2;
+                        continue;
+                    }
 
                     if let Ok(inst) = RV32IMInstruction::decode(
                         uncompress_instruction(compressed_inst as u32, xlen),
