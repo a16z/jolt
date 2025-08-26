@@ -2,7 +2,7 @@
 
 ## Overview
 
-Jolt inlines are a unique optimization technique that replaces high-level operations with optimized sequences of native RISC-V instructions. Unlike traditional precompiles that operate in a separate constraint system, inlines remain fully integrated within the main Jolt zkVM execution model, requiring no additional "glue" logic for memory correctness.
+Jolt inlines are a unique optimization technique that replaces high-level operations with optimized sequences of native RISC-V instructions. Unlike traditional precompiles that operate in a separate constraint system, inlines remain fully integrated within the main Jolt zkVM execution model, requiring no additional "glue" logic for memory correctness. Similar to the [virtual sequences](https://jolt.a16zcrypto.com/how/architecture/emulation.html#virtual-instructions-and-sequences) already used for certain RISC-V instructions, inlines expand into sequences of simpler operations, but with additional optimizations like extended registers and custom instructions.
 
 ### Key Characteristics
 
