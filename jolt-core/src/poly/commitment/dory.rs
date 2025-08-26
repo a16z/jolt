@@ -296,7 +296,7 @@ impl DoryMultiScalarMul<JoltGroupWrapper<G1Projective>> for JoltMsmG1 {
         let raw_scalars: &[Fr] =
             unsafe { std::slice::from_raw_parts(scalars.as_ptr() as *const Fr, scalars.len()) };
 
-        let result = G1Projective::msm_field_elements(&affines, raw_scalars, None)
+        let result = G1Projective::msm_field_elements(&affines, raw_scalars)
             .expect("msm_field_elements should not fail");
 
         JoltGroupWrapper(result)
@@ -417,7 +417,7 @@ impl DoryMultiScalarMul<JoltGroupWrapper<G2Projective>> for JoltMsmG2 {
         let raw_scalars: &[Fr] =
             unsafe { std::slice::from_raw_parts(scalars.as_ptr() as *const Fr, scalars.len()) };
 
-        let result = G2Projective::msm_field_elements(&affines, raw_scalars, None)
+        let result = G2Projective::msm_field_elements(&affines, raw_scalars)
             .expect("msm_field_elements should not fail");
 
         JoltGroupWrapper(result)
@@ -772,8 +772,7 @@ where
                 .par_chunks(row_len)
                 .map(|row| {
                     JoltGroupWrapper(
-                        VariableBaseMSM::msm_field_elements(&bases[..row.len()], row, None)
-                            .unwrap(),
+                        VariableBaseMSM::msm_field_elements(&bases[..row.len()], row).unwrap(),
                     )
                 })
                 .collect(),
@@ -805,44 +804,29 @@ where
                     JoltGroupWrapper(VariableBaseMSM::msm_u64(&bases[..row.len()], row).unwrap())
                 })
                 .collect(),
+            MultilinearPolynomial::U128Scalars(poly) => poly
+                .coeffs
+                .par_chunks(row_len)
+                .map(|row| {
+                    JoltGroupWrapper(VariableBaseMSM::msm_u128(&bases[..row.len()], row).unwrap())
+                })
+                .collect(),
             MultilinearPolynomial::I64Scalars(poly) => poly
                 .coeffs
                 .par_chunks(row_len)
                 .map(|row| {
-                    // TODO(moodlezoup): This can be optimized
-                    let scalars: Vec<_> = row.iter().map(|x| F::from_i64(*x)).collect();
-                    JoltGroupWrapper(
-                        VariableBaseMSM::msm_field_elements(&bases[..row.len()], &scalars, None)
-                            .unwrap(),
-                    )
+                    JoltGroupWrapper(VariableBaseMSM::msm_i64(&bases[..row.len()], row).unwrap())
                 })
                 .collect(),
             MultilinearPolynomial::I128Scalars(poly) => poly
                 .coeffs
                 .par_chunks(row_len)
                 .map(|row| {
-                    // TODO(moodlezoup): This can be optimized
-                    let scalars: Vec<_> = row.iter().map(|x| F::from_i128(*x)).collect();
-                    JoltGroupWrapper(
-                        VariableBaseMSM::msm_field_elements(&bases[..row.len()], &scalars, None)
-                            .unwrap(),
-                    )
+                    JoltGroupWrapper(VariableBaseMSM::msm_i128(&bases[..row.len()], row).unwrap())
                 })
                 .collect(),
             MultilinearPolynomial::RLC(poly) => poly.commit_rows(&bases[..row_len]),
             MultilinearPolynomial::OneHot(poly) => poly.commit_rows(&bases[..row_len]),
-            MultilinearPolynomial::U128Scalars(poly) => poly
-                .coeffs
-                .par_chunks(row_len)
-                .map(|row| {
-                    // TODO(moodlezoup): This can be optimized
-                    let scalars: Vec<_> = row.iter().map(|x| F::from_u128(*x)).collect();
-                    JoltGroupWrapper(
-                        VariableBaseMSM::msm_field_elements(&bases[..row.len()], &scalars, None)
-                            .unwrap(),
-                    )
-                })
-                .collect(),
         }
     }
 
