@@ -4,8 +4,10 @@ use crate::field::JoltField;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::unipoly::UniPoly;
 use crate::utils::errors::ProofVerifyError;
-use ark_ec::scalar_mul::variable_base::VariableBaseMSM as ArkVariableBaseMSM;
-use ark_ec::scalar_mul::variable_base::{msm_binary, msm_u16, msm_u32, msm_u64, msm_u8};
+use ark_ec::scalar_mul::variable_base::{
+    msm_binary, msm_i128, msm_i64, msm_u128, msm_u16, msm_u32, msm_u64, msm_u8,
+    VariableBaseMSM as ArkVariableBaseMSM,
+};
 use ark_ec::{CurveGroup, ScalarMul};
 use rayon::prelude::*;
 
@@ -117,7 +119,6 @@ where
     fn msm_field_elements(
         bases: &[Self::MulBase],
         scalars: &[Self::ScalarField],
-        _max_num_bits: Option<usize>,
     ) -> Result<Self, ProofVerifyError> {
         ArkVariableBaseMSM::msm_serial(bases, scalars)
             .map_err(|_bad_index| ProofVerifyError::KeyLengthError(bases.len(), scalars.len()))
@@ -158,6 +159,27 @@ where
             .ok_or(ProofVerifyError::KeyLengthError(bases.len(), scalars.len()))
     }
 
+    #[tracing::instrument(skip_all)]
+    fn msm_u128(bases: &[Self::MulBase], scalars: &[u128]) -> Result<Self, ProofVerifyError> {
+        (bases.len() == scalars.len())
+            .then(|| msm_u128::<Self>(bases, scalars, true))
+            .ok_or(ProofVerifyError::KeyLengthError(bases.len(), scalars.len()))
+    }
+
+    #[tracing::instrument(skip_all)]
+    fn msm_i64(bases: &[Self::MulBase], scalars: &[i64]) -> Result<Self, ProofVerifyError> {
+        (bases.len() == scalars.len())
+            .then(|| msm_i64::<Self>(bases, scalars, true))
+            .ok_or(ProofVerifyError::KeyLengthError(bases.len(), scalars.len()))
+    }
+
+    #[tracing::instrument(skip_all)]
+    fn msm_i128(bases: &[Self::MulBase], scalars: &[i128]) -> Result<Self, ProofVerifyError> {
+        (bases.len() == scalars.len())
+            .then(|| msm_i128::<Self>(bases, scalars, true))
+            .ok_or(ProofVerifyError::KeyLengthError(bases.len(), scalars.len()))
+    }
+
     fn batch_msm<U>(bases: &[Self::MulBase], polys: &[U]) -> Vec<Self>
     where
         U: Borrow<MultilinearPolynomial<Self::ScalarField>> + Sync,
@@ -175,7 +197,7 @@ where
         polys
             .par_iter()
             .map(|poly| {
-                VariableBaseMSM::msm_field_elements(&bases[..poly.coeffs.len()], &poly.coeffs, None)
+                VariableBaseMSM::msm_field_elements(&bases[..poly.coeffs.len()], &poly.coeffs)
                     .unwrap()
             })
             .collect()
