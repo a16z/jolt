@@ -20,9 +20,10 @@ use crate::utils::profiling::print_current_memory_usage;
 use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::utils::small_value::svo_helpers::process_svo_sumcheck_rounds;
 use crate::utils::thread::drop_in_background_thread;
-use crate::zkvm::r1cs::{constraints::UNIFORM_R1CS, inputs::WitnessRowAccessor};
+use crate::zkvm::r1cs::inputs::WitnessRowAccessor;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
+
 use ark_serialize::*;
 use rayon::prelude::*;
 use std::cell::RefCell;
@@ -401,12 +402,8 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
         let mut polys = Vec::new();
         let mut claim = F::zero();
 
-        let (accums_zero, accums_infty, mut az_bz_cz_poly) = SpartanInterleavedPolynomial::<
-            NUM_SVO_ROUNDS,
-            F,
-        >::new_with_precompute(
-            &UNIFORM_R1CS, accessor, tau
-        );
+        let (accums_zero, accums_infty, mut az_bz_cz_poly) =
+            SpartanInterleavedPolynomial::<NUM_SVO_ROUNDS, F>::new_with_precompute(accessor, tau);
         #[cfg(feature = "allocative")]
         print_data_structure_heap_usage("SpartanInterleavedPolynomial", &az_bz_cz_poly);
 

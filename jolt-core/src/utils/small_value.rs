@@ -1,4 +1,6 @@
 // Small Value Optimization (SVO) helpers for Spartan first sum-check
+// TODO(svo-typed): Introduce typed accumulation interfaces that accept
+// UnreducedProduct positive/negative accumulators and combine at the end.
 
 use crate::field::JoltField;
 
@@ -13,6 +15,9 @@ pub mod svo_helpers {
     use crate::poly::unipoly::CompressedUniPoly;
     use crate::subprotocols::sumcheck::process_eq_sumcheck_round;
     use crate::transcripts::Transcript;
+    use crate::zkvm::r1cs::types::{
+        fmadd_unreduced, mul_az_bz, AzValue, BzValue, UnreducedProduct,
+    };
 
     // SVOEvalPoint enum definition
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -760,6 +765,196 @@ pub mod svo_helpers {
                     temp_tA[i_temp_tA] += *e_in_val * az_val * bz_val;
                 }
             }
+        }
+    }
+
+    /// Typed (Az/Bz) version of the generic const kernel, accumulating into unreduced products.
+    /// This mirrors `compute_and_update_tA_inplace` but operates on Az/Bz small-value domains
+    /// and uses `mul_az_bz` + `fmadd_unreduced` to avoid early field reduction.
+    #[inline]
+    pub fn compute_and_update_tA_inplace_small_value_const<
+        const NUM_SVO_ROUNDS: usize,
+        const M_NON_BINARY_POINTS_CONST: usize, // num_non_binary_points(NUM_SVO_ROUNDS)
+        const NUM_TERNARY_POINTS_CONST: usize,  // pow(3, NUM_SVO_ROUNDS)
+        F: JoltField,
+    >(
+        binary_az_evals_input: &[AzValue], // 2^N Az at binary points
+        binary_bz_evals_input: &[BzValue], // 2^N Bz at binary points
+        e_in_val: &F,
+        tA_pos_acc: &mut [UnreducedProduct],
+        tA_neg_acc: &mut [UnreducedProduct],
+    ) {
+        if NUM_SVO_ROUNDS == 0 {
+            debug_assert!(binary_az_evals_input.is_empty());
+            debug_assert!(binary_bz_evals_input.is_empty());
+            debug_assert!(tA_pos_acc.is_empty());
+            debug_assert!(tA_neg_acc.is_empty());
+            return;
+        }
+
+        // Sanity: consts must match the chosen NUM_SVO_ROUNDS
+        debug_assert_eq!(
+            M_NON_BINARY_POINTS_CONST,
+            num_non_binary_points(NUM_SVO_ROUNDS)
+        );
+        debug_assert_eq!(NUM_TERNARY_POINTS_CONST, pow(3, NUM_SVO_ROUNDS));
+
+        let num_binary_points = 1usize << NUM_SVO_ROUNDS;
+        debug_assert_eq!(binary_az_evals_input.len(), num_binary_points);
+        debug_assert_eq!(binary_bz_evals_input.len(), num_binary_points);
+        debug_assert_eq!(tA_pos_acc.len(), M_NON_BINARY_POINTS_CONST);
+        debug_assert_eq!(tA_neg_acc.len(), M_NON_BINARY_POINTS_CONST);
+
+        // Precompute ternary point info (const-size array)
+        let ternary_point_info_table: [TernaryPointInfo<NUM_SVO_ROUNDS>; NUM_TERNARY_POINTS_CONST] =
+            precompute_ternary_point_infos::<NUM_SVO_ROUNDS, NUM_TERNARY_POINTS_CONST>();
+
+        // Memo tables (const-size arrays)
+        let mut memoized_az_evals: [Option<AzValue>; NUM_TERNARY_POINTS_CONST] =
+            [None; NUM_TERNARY_POINTS_CONST];
+        let mut memoized_bz_evals: [Option<BzValue>; NUM_TERNARY_POINTS_CONST] =
+            [None; NUM_TERNARY_POINTS_CONST];
+
+        // Recursive helper: Az extension at ternary index k with memoization
+        #[inline]
+        fn get_az_ext_const<const N: usize, const NUM_TERN: usize>(
+            k: usize,
+            bin: &[AzValue],
+            memo: &mut [Option<AzValue>; NUM_TERN],
+            info: &[TernaryPointInfo<N>; NUM_TERN],
+        ) -> AzValue {
+            if let Some(v) = memo[k] {
+                return v;
+            }
+            let out = if info[k].is_binary {
+                bin[info[k].binary_eval_idx]
+            } else {
+                let e1 = get_az_ext_const::<N, NUM_TERN>(info[k].k_val_at_one, bin, memo, info);
+                let e0 = get_az_ext_const::<N, NUM_TERN>(info[k].k_val_at_zero, bin, memo, info);
+                e1 - e0
+            };
+            memo[k] = Some(out);
+            out
+        }
+
+        // Recursive helper: Bz extension at ternary index k with memoization
+        #[inline]
+        fn get_bz_ext_const<const N: usize, const NUM_TERN: usize>(
+            k: usize,
+            bin: &[BzValue],
+            memo: &mut [Option<BzValue>; NUM_TERN],
+            info: &[TernaryPointInfo<N>; NUM_TERN],
+        ) -> BzValue {
+            if let Some(v) = memo[k] {
+                return v;
+            }
+            let out = if info[k].is_binary {
+                bin[info[k].binary_eval_idx]
+            } else {
+                let e1 = get_bz_ext_const::<N, NUM_TERN>(info[k].k_val_at_one, bin, memo, info);
+                let e0 = get_bz_ext_const::<N, NUM_TERN>(info[k].k_val_at_zero, bin, memo, info);
+                e1 - e0
+            };
+            memo[k] = Some(out);
+            out
+        }
+
+        // Iterate non-binary points in deterministic MSB-first order
+        let y_ext_code_map_non_binary: [[SVOEvalPoint; NUM_SVO_ROUNDS]; M_NON_BINARY_POINTS_CONST] =
+            build_y_ext_code_map::<NUM_SVO_ROUNDS, M_NON_BINARY_POINTS_CONST>();
+
+        for i_temp_tA in 0..M_NON_BINARY_POINTS_CONST {
+            let coords_msb = &y_ext_code_map_non_binary[i_temp_tA];
+            let k_target = svo_coords_msb_to_k_ternary_idx::<NUM_SVO_ROUNDS>(coords_msb);
+
+            debug_assert!(k_target < NUM_TERNARY_POINTS_CONST);
+            debug_assert!(!ternary_point_info_table[k_target].is_binary);
+
+            let az_ext = get_az_ext_const::<NUM_SVO_ROUNDS, NUM_TERNARY_POINTS_CONST>(
+                k_target,
+                binary_az_evals_input,
+                &mut memoized_az_evals,
+                &ternary_point_info_table,
+            );
+
+            // `az_ext` is likely to be zero
+            if az_ext.is_zero() {
+                continue;
+            }
+
+            let bz_ext = get_bz_ext_const::<NUM_SVO_ROUNDS, NUM_TERNARY_POINTS_CONST>(
+                k_target,
+                binary_bz_evals_input,
+                &mut memoized_bz_evals,
+                &ternary_point_info_table,
+            );
+
+            // No need for this - `bz_ext` is less likely to be zero than `az_ext`
+            // if bz_ext.is_zero() { continue; }
+
+            let prod = mul_az_bz(az_ext, bz_ext);
+            fmadd_unreduced::<F>(
+                &mut tA_pos_acc[i_temp_tA],
+                &mut tA_neg_acc[i_temp_tA],
+                e_in_val,
+                prod,
+            );
+        }
+    }
+
+    /// Dispatch wrapper for the typed small-value kernel using const generics.
+    /// Supports NUM_SVO_ROUNDS in [0..=5].
+    #[inline]
+    pub fn compute_and_update_tA_inplace_small_value<const NUM_SVO_ROUNDS: usize, F: JoltField>(
+        binary_az_evals: &[AzValue],
+        binary_bz_evals: &[BzValue],
+        e_in_val: &F,
+        tA_pos_acc: &mut [UnreducedProduct],
+        tA_neg_acc: &mut [UnreducedProduct],
+    ) {
+        match NUM_SVO_ROUNDS {
+            0 => {
+                debug_assert!(binary_az_evals.is_empty());
+                debug_assert!(binary_bz_evals.is_empty());
+                debug_assert!(tA_pos_acc.is_empty());
+                debug_assert!(tA_neg_acc.is_empty());
+            }
+            1 => compute_and_update_tA_inplace_small_value_const::<1, 1, 3, F>(
+                binary_az_evals,
+                binary_bz_evals,
+                e_in_val,
+                tA_pos_acc,
+                tA_neg_acc,
+            ),
+            2 => compute_and_update_tA_inplace_small_value_const::<2, 5, 9, F>(
+                binary_az_evals,
+                binary_bz_evals,
+                e_in_val,
+                tA_pos_acc,
+                tA_neg_acc,
+            ),
+            3 => compute_and_update_tA_inplace_small_value_const::<3, 19, 27, F>(
+                binary_az_evals,
+                binary_bz_evals,
+                e_in_val,
+                tA_pos_acc,
+                tA_neg_acc,
+            ),
+            4 => compute_and_update_tA_inplace_small_value_const::<4, 65, 81, F>(
+                binary_az_evals,
+                binary_bz_evals,
+                e_in_val,
+                tA_pos_acc,
+                tA_neg_acc,
+            ),
+            5 => compute_and_update_tA_inplace_small_value_const::<5, 211, 243, F>(
+                binary_az_evals,
+                binary_bz_evals,
+                e_in_val,
+                tA_pos_acc,
+                tA_neg_acc,
+            ),
+            _ => panic!("Unsupported NUM_SVO_ROUNDS: {NUM_SVO_ROUNDS}"),
         }
     }
 
