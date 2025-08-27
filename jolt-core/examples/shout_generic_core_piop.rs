@@ -79,7 +79,7 @@ fn main() {
         _sumcheck_proof,
         _verifier_challenges,
         sumcheck_claim,
-        _ra_address_time_claim,
+        ra_address_time_claim,
         _val_tau_claim,
         _eq_rcycle_rtime_claim,
     ) = prove_generic_core_shout_piop_d_is_one_w_gruen(
@@ -90,7 +90,7 @@ fn main() {
     let duration = start.elapsed();
     println!(
         "{} \nGruen Optimisaton (d is one)- Execution time: {}",
-        sumcheck_claim,
+        ra_address_time_claim,
         duration.as_millis()
     );
 
@@ -99,8 +99,8 @@ fn main() {
     let (
         _sumcheck_proof,
         _verifier_challenges,
-        sumcheck_claim,
-        _ra_address_time_claim,
+        _sumcheck_claim,
+        ra_address_time_claim,
         _val_tau_claim,
         _eq_rcycle_rtime_claim,
     ) = prove_generic_core_shout_piop_d_is_one_w_gruen_small(
@@ -111,7 +111,7 @@ fn main() {
     let duration = start.elapsed();
     println!(
         "{} \nGruen Optimisaton (d is one, small binding)- Execution time: {}",
-        sumcheck_claim,
+        ra_address_time_claim,
         duration.as_millis()
     );
 }

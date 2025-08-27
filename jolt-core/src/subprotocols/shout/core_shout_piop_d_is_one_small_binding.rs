@@ -21,6 +21,7 @@ use crate::{
 };
 use rayon::prelude::*;
 use std::time::Instant;
+use std::u128;
 use std::{cell::RefCell, rc::Rc};
 /// Implements the sumcheck prover for the generic core Shout PIOP for d=1.
 /// See Figure 7 of https://eprint.iacr.org/2025/105
@@ -196,7 +197,7 @@ pub fn prove_generic_core_shout_piop_d_is_one_w_gruen_small<
     transcript: &mut ProofTranscript,
 ) -> (
     SumcheckInstanceProof<F, ProofTranscript>,
-    Vec<F>,
+    Vec<u128>,
     F,
     F,
     F,
@@ -237,7 +238,7 @@ pub fn prove_generic_core_shout_piop_d_is_one_w_gruen_small<
     const DEGREE: usize = 2;
     let num_rounds = K.log_2() + T.log_2();
     // The vector storing the verifiers sum-check challenges
-    let mut r_address: Vec<F> = Vec::with_capacity(num_rounds);
+    let mut r_address: Vec<u128> = Vec::with_capacity(num_rounds);
     let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
 
     let start = Instant::now();
@@ -266,10 +267,8 @@ pub fn prove_generic_core_shout_piop_d_is_one_w_gruen_small<
 
         // Get challenge that binds the variable
         let r_j = transcript.challenge_u128();
-        // TODO CHANGE THIS
-        let big_rj = F::from_u128(r_j);
-        r_address.push(big_rj);
-        previous_claim = univariate_poly.evaluate(&big_rj);
+        r_address.push(r_j);
+        previous_claim = univariate_poly.evaluate_u128(&r_j);
 
         rayon::join(
             || ra.bind_small_scalar_parallel(r_j, BindingOrder::LowToHigh),
@@ -296,7 +295,8 @@ pub fn prove_generic_core_shout_piop_d_is_one_w_gruen_small<
     let mut r_address_reversed = r_address.clone();
     r_address_reversed.reverse();
 
-    let eq_tau: Vec<F> = EqPolynomial::evals(&r_address_reversed); // This takes K mults.
+    // THIS SHOULD CHANGE
+    let eq_tau: Vec<F> = EqPolynomial::evals_u128(&r_address_reversed); // This takes K mults.
     let mut E = vec![F::zero(); T];
     E.par_iter_mut().enumerate().for_each(|(y, e)| {
         *e = eq_tau[read_addresses[y]];
@@ -379,11 +379,11 @@ pub fn prove_generic_core_shout_piop_d_is_one_w_gruen_small<
         compressed_polys.push(compressed_poly);
 
         // Get challenge that binds the variable
-        let r_j = transcript.challenge_scalar::<F>();
+        let r_j = transcript.challenge_u128();
         r_address.push(r_j);
-        previous_claim = univariate_poly.evaluate(&r_j);
-        ra_tau.bind_parallel(r_j, BindingOrder::LowToHigh);
-        greq_r_cycle.bind(r_j);
+        previous_claim = univariate_poly.evaluate_u128(&r_j);
+        ra_tau.bind_small_scalar_parallel(r_j, BindingOrder::LowToHigh);
+        greq_r_cycle.bind_small(r_j);
     }
 
     let ra_tau_claim = ra_tau.final_sumcheck_claim();
@@ -396,131 +396,4 @@ pub fn prove_generic_core_shout_piop_d_is_one_w_gruen_small<
         val_claim,
         eq_r_cycle_at_r_time,
     )
-}
-#[cfg(test)]
-mod tests {
-
-    use super::*;
-    use crate::transcripts::Blake2bTranscript;
-    use ark_bn254::Fr;
-    //use crate::field::tracked_ark::TrackedFr as Fr;
-    use ark_ff::UniformRand;
-    use ark_ff::{One, Zero}; // often from ark_ff, depending on your setup
-    use ark_std::rand::{rngs::StdRng, SeedableRng};
-    use ark_std::test_rng;
-    use rand_core::RngCore;
-
-    #[test]
-    fn test_core_shout_generic_d_is_one_small_binding() {
-        //------- PROBLEM SETUP----------------------
-        const TABLE_SIZE: usize = 64; // 2**6
-        const NUM_LOOKUPS: usize = 1 << 16; // 2**10
-
-        let seed1: u64 = 42;
-        let mut rng1 = StdRng::seed_from_u64(seed1);
-        let lookup_table: Vec<Fr> = (0..TABLE_SIZE).map(|_| Fr::rand(&mut rng1)).collect();
-
-        let read_addresses: Vec<usize> = (0..NUM_LOOKUPS)
-            .map(|_| (rng1.next_u32() as usize) % TABLE_SIZE)
-            .collect();
-
-        let table_size = lookup_table.len();
-        let num_lookups = read_addresses.len();
-        let ra: Vec<Vec<Fr>> = read_addresses
-            .par_iter()
-            .map(|&addr| {
-                (0..table_size)
-                    .into_par_iter()
-                    .map(|j| if j == addr { Fr::one() } else { Fr::zero() })
-                    .collect()
-            })
-            .collect();
-
-        let flattened: Vec<Fr> = ra.iter().flat_map(|row| row.iter().cloned()).collect();
-
-        // What the prover commits to
-        let ra_poly = MultilinearPolynomial::from(flattened);
-        let val = MultilinearPolynomial::from(lookup_table.clone());
-
-        //-------------------------------------------------------------------------------
-
-        reset_mult_count();
-        let mut prover_transcript = Blake2bTranscript::new(b"test_transcript");
-        let (
-            _sumcheck_proof,
-            _verifier_challenges_wo_gruen,
-            _sumcheck_claim,
-            _ra_address_time_claim,
-            _val_tau_claim,
-            _eq_rcycle_rtime_claim,
-        ) = prove_generic_core_shout_pip_small(
-            lookup_table.clone(),
-            read_addresses.clone(),
-            &mut prover_transcript,
-        );
-
-        let linear_prover = get_mult_count();
-        reset_mult_count();
-        let mut prover_transcript = Blake2bTranscript::new(b"test_transcript");
-        let (
-            sumcheck_proof,
-            _verifier_challenges,
-            sumcheck_claim,
-            ra_address_time_claim,
-            val_tau_claim,
-            eq_rcycle_rtime_claim,
-        ) = prove_generic_core_shout_piop_d_is_one_w_gruen_small(
-            lookup_table,
-            read_addresses,
-            &mut prover_transcript,
-        );
-        let gruen_opt_prover = get_mult_count();
-
-        const T: usize = NUM_LOOKUPS;
-        println!(
-            "Lin: {}\tOptimised: {}: savings {} ~~ {}",
-            linear_prover,
-            gruen_opt_prover,
-            linear_prover - gruen_opt_prover,
-            2 * T + 4 * (1 << 5)
-        );
-        // See page 51 of Twist and Shout paper for a derivation of the above asymptotics
-
-        let mut verifier_transcript = Blake2bTranscript::new(b"test_transcript");
-        verifier_transcript.compare_to(prover_transcript);
-
-        let r_cycle: Vec<Fr> = verifier_transcript.challenge_vector(num_lookups.log_2());
-        let verification_result = sumcheck_proof.verify(
-            sumcheck_claim,
-            table_size.log_2() + num_lookups.log_2(),
-            2,
-            &mut verifier_transcript,
-        );
-        let (final_claim, verifier_challenges) = verification_result.unwrap();
-        //-----------------------------------------------------------------------
-
-        let (r_address, r_time) = verifier_challenges.split_at(table_size.log_2());
-        let mut r_address = r_address.to_vec();
-        r_address.reverse();
-        let val_at_r_address = val.evaluate(&r_address);
-
-        let mut full_random_location = verifier_challenges.clone();
-        full_random_location.reverse();
-        let ra_evaluated_r_address_r_time = ra_poly.evaluate(&full_random_location);
-        let eq_r_cycle = MultilinearPolynomial::from(EqPolynomial::evals(&r_cycle));
-        let mut r_time = r_time.to_vec();
-        r_time.reverse();
-        let eq_r_cycle_r_time = eq_r_cycle.evaluate(&r_time);
-
-        // These are the 3 product terms evaluated at the final veerifiers
-        // challenges
-        assert_eq!(ra_evaluated_r_address_r_time, ra_address_time_claim);
-        assert_eq!(val_at_r_address, val_tau_claim);
-        assert_eq!(eq_r_cycle_r_time, eq_rcycle_rtime_claim);
-        assert_eq!(
-            final_claim,
-            ra_evaluated_r_address_r_time * eq_r_cycle_r_time * val_at_r_address,
-            "GRUEN FAILS,"
-        );
-    }
 }

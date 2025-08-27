@@ -192,6 +192,52 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
     }
 
     #[tracing::instrument(skip_all, name = "GruenSplitEqPolynomial::bind")]
+    pub fn bind_small(&mut self, r: u128) {
+        match self.binding_order {
+            BindingOrder::LowToHigh => {
+                // multiply `current_scalar` by `eq(w[i], r) = (1 - w[i]) * (1 - r) + w[i] * r`
+                // which is the same as `1 - w[i] - r + 2 * w[i] * r`
+                let prod_w_r = self.w[self.current_index - 1].mul_u128_mont_form(r);
+                // ALERT -- MAKE SURE FROM 128 does not change into mont from
+                self.current_scalar *= F::one() - self.w[self.current_index - 1] - F::from_u128(r)
+                    + prod_w_r
+                    + prod_w_r;
+                // decrement `current_index`
+                self.current_index -= 1;
+                // pop the last vector from `E_in_vec` or `E_out_vec` (since we don't need it anymore)
+                if self.w.len() / 2 < self.current_index {
+                    self.E_in_vec.pop();
+                } else if 0 < self.current_index {
+                    self.E_out_vec.pop();
+                }
+            }
+            BindingOrder::HighToLow => {
+                // multiply `current_scalar` by `eq(w[i], r) = (1 - w[i]) * (1 - r) + w[i] * r`
+                // which is the same as `1 - w[i] - r + 2 * w[i] * r`
+                let prod_w_r = self.w[self.current_index].mul_u128_mont_form(r);
+
+                // TODO: Double check the from 128
+                self.current_scalar *=
+                    F::one() - self.w[self.current_index] - F::from_u128(r) + prod_w_r + prod_w_r;
+
+                // increment `current_index` (going from 0 to n-1)
+                self.current_index += 1;
+
+                // pop the last vector from `E_in_vec` or `E_out_vec` (since we don't need it anymore)
+                // For high-to-low, we bind variables in the first half first (E_in),
+                // then variables in the second half (E_out)
+                if self.current_index <= self.w.len() / 2 {
+                    // We're binding variables from the first half (E_in)
+                    self.E_in_vec.pop();
+                } else if self.current_index <= self.w.len() {
+                    // We're binding variables from the second half (E_out)
+                    self.E_out_vec.pop();
+                }
+            }
+        }
+    }
+
+    #[tracing::instrument(skip_all, name = "GruenSplitEqPolynomial::bind")]
     pub fn bind(&mut self, r: F) {
         match self.binding_order {
             BindingOrder::LowToHigh => {

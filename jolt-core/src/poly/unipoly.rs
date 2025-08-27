@@ -2,6 +2,7 @@
 use crate::field::JoltField;
 use std::cmp::Ordering;
 use std::ops::{AddAssign, Index, IndexMut, Mul, MulAssign, Sub};
+use std::u128;
 
 use crate::transcripts::{AppendToTranscript, Transcript};
 use crate::utils::gaussian_elimination::gaussian_elimination;
@@ -173,6 +174,9 @@ impl<F: JoltField> UniPoly<F> {
     pub fn evaluate(&self, r: &F) -> F {
         Self::eval_with_coeffs(&self.coeffs, r)
     }
+    pub fn evaluate_u128(&self, r: &u128) -> F {
+        Self::eval_with_coeffs_small(&self.coeffs, r)
+    }
 
     #[tracing::instrument(skip_all, name = "UniPoly::eval_with_coeffs")]
     pub fn eval_with_coeffs(coeffs: &[F], r: &F) -> F {
@@ -180,6 +184,16 @@ impl<F: JoltField> UniPoly<F> {
         let mut power = *r;
         for i in 1..coeffs.len() {
             eval += power * coeffs[i];
+            power *= *r;
+        }
+        eval
+    }
+    #[tracing::instrument(skip_all, name = "UniPoly::eval_with_coeffs_small")]
+    pub fn eval_with_coeffs_small(coeffs: &[F], r: &u128) -> F {
+        let mut eval = coeffs[0];
+        let mut power = *r;
+        for i in 1..coeffs.len() {
+            eval += coeffs[i].mul_u128_mont_form(power);
             power *= *r;
         }
         eval

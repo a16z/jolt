@@ -90,6 +90,7 @@ impl JoltField for ark_bn254::Fr {
         }
     }
 
+    // No montgomery business happening here.
     fn from_u128(n: u128) -> Self {
         if n <= u16::MAX as u128 {
             <Self as JoltField>::from_u16(n as u16)

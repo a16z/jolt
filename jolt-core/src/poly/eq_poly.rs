@@ -3,6 +3,7 @@ use crate::poly::opening_proof::{Endianness, OpeningPoint};
 use crate::utils::{math::Math, thread::unsafe_allocate_zero_vec};
 use rayon::prelude::*;
 use std::marker::PhantomData;
+use std::u128;
 
 const PARALLEL_THRESHOLD: usize = 16;
 
@@ -45,6 +46,13 @@ impl<F: JoltField> EqPolynomial<F> {
         }
     }
 
+    pub fn evals_u128(r: &[u128]) -> Vec<F> {
+        match r.len() {
+            0..=PARALLEL_THRESHOLD => Self::evals_serial_u128(r, None),
+            _ => Self::evals_parallel_u128(r, None),
+        }
+    }
+
     #[tracing::instrument(skip_all, name = "EqPolynomial::evals_cached")]
     /// Computes the table of coefficients like `evals`, but also caches the intermediate results
     ///
@@ -73,6 +81,25 @@ impl<F: JoltField> EqPolynomial<F> {
                 // copy each element from the prior iteration twice
                 let scalar = evals[i / 2];
                 evals[i] = scalar * r[j];
+                evals[i - 1] = scalar - evals[i];
+            }
+        }
+        evals
+    }
+
+    /// Computes the table of coefficients:
+    ///     scaling_factor * eq(r, x) for all x in {0, 1}^n
+    /// serially. More efficient for short `r` (r is 128 bits)
+    fn evals_serial_u128(r: &[u128], scaling_factor: Option<F>) -> Vec<F> {
+        let mut evals: Vec<F> = vec![scaling_factor.unwrap_or(F::one()); r.len().pow2()];
+        let mut size = 1;
+        for j in 0..r.len() {
+            // in each iteration, we double the size of chis
+            size *= 2;
+            for i in (0..size).rev().step_by(2) {
+                // copy each element from the prior iteration twice
+                let scalar = evals[i / 2];
+                evals[i] = scalar.mul_u128_mont_form(r[j]);
                 evals[i - 1] = scalar - evals[i];
             }
         }
@@ -140,6 +167,30 @@ impl<F: JoltField> EqPolynomial<F> {
                 .zip(evals_right.par_iter_mut())
                 .for_each(|(x, y)| {
                     *y = *x * *r;
+                    *x -= *y;
+                });
+
+            size *= 2;
+        }
+
+        evals
+    }
+
+    pub fn evals_parallel_u128(r: &[u128], scaling_factor: Option<F>) -> Vec<F> {
+        let final_size = r.len().pow2();
+        let mut evals: Vec<F> = unsafe_allocate_zero_vec(final_size);
+        let mut size = 1;
+        evals[0] = scaling_factor.unwrap_or(F::one());
+
+        for r in r.iter().rev() {
+            let (evals_left, evals_right) = evals.split_at_mut(size);
+            let (evals_right, _) = evals_right.split_at_mut(size);
+
+            evals_left
+                .par_iter_mut()
+                .zip(evals_right.par_iter_mut())
+                .for_each(|(x, y)| {
+                    *y = (*x).mul_u128_mont_form(*r);
                     *x -= *y;
                 });
 
