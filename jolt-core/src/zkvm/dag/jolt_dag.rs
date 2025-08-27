@@ -49,7 +49,7 @@ impl JoltDAG {
         ),
         anyhow::Error,
     > {
-        println!("|||||||||||||||||||||||> Prove called");
+        // println!("|||||||||||||||||||||||> Prove called");
         state_manager.fiat_shamir_preamble();
 
         // Initialize DoryGlobals at the beginning to keep it alive for the entire proof
@@ -66,7 +66,7 @@ impl JoltDAG {
             DoryGlobals::initialize(DTH_ROOT_OF_K, padded_trace_length),
             AllCommittedPolynomials::initialize(ram_d, bytecode_d),
         );
-        println!("|||||||||||||||||||||||> Initialized DoryGlobals and AllCommittedPolynomials");
+        // println!("|||||||||||||||||||||||> Initialized DoryGlobals and AllCommittedPolynomials");
 
         // Generate and commit to all witness polynomials
         let opening_proof_hints = Self::generate_and_commit_polynomials(&mut state_manager, ram_d)?;
@@ -488,7 +488,7 @@ impl JoltDAG {
         prover_state_manager: &mut StateManager<'a, F, ProofTranscript, PCS>,
         ram_d: usize,
     ) -> Result<HashMap<CommittedPolynomial, PCS::OpeningProofHint>, anyhow::Error> {
-        println!("|||||||||||||||||||||||> generate_and_commit_polynomials");
+        // println!("|||||||||||||||||||||||> generate_and_commit_polynomials");
         let (preprocessing, lazy_trace, trace, _program_io, _final_memory_state) =
             prover_state_manager.get_prover_data();
 
@@ -498,10 +498,10 @@ impl JoltDAG {
         let T = DoryGlobals::get_T();
 
         let polys : Vec<_> = AllCommittedPolynomials::iter().collect(); // .skip(9).take(1).collect();
-        dbg!(&polys);
+        // dbg!(&polys);
         let init_pcss: Vec<_> = polys
             .iter()
-            .map(|poly| PCS::initialize(dbg!(dbg!(poly).to_polynomial_type(&preprocessing)), size, &preprocessing.generators))//AZ: Add ram_d here
+            .map(|poly| PCS::initialize(poly.to_polynomial_type(&preprocessing), T, &preprocessing.generators)) //AZ: Add ram_d here
             .collect();
         let row_len = DoryGlobals::get_num_columns();
         let chunks = lazy_trace.clone() // TODO(JP): More efficient way to zip_with_self_next and chunkify in parallel
@@ -530,7 +530,7 @@ impl JoltDAG {
             .map(|s| PCS::finalize(s))
             .unzip();
 
-        // #[cfg(test)]
+        #[cfg(test)]
         {
             let committed_polys: Vec<_> = polys
                 .iter()
@@ -542,24 +542,19 @@ impl JoltDAG {
                 .map(|poly| PCS::commit(poly, &preprocessing.generators))
                 .collect();
 
-            // assert_eq!(commitments, commitments_non_streaming);
-            // compare commitments and commitments_non_streaming iteratively and print indices that do not match
-            // if an index does not match, print the index and the two commitments and panic.
+            // compare commitments and hints iteratively and print indices that do not match
             for (i, ((commitment, hint), (commitment_non_streaming, hint_non_streaming))) in commitments
                 .iter()
                 .zip(hints.iter())
                 .zip(commitments_non_streaming.iter())
                 .enumerate()
             {
-                println!("i = {i}");
                 assert_eq!(hint, hint_non_streaming, "PCS hint mismatch at {:?}", polys.iter().collect::<Vec<_>>()[i]);
-                println!("PCS hints matched for: {:?}", polys.iter().collect::<Vec<_>>()[i]);
                 assert_eq!(
                     commitment, commitment_non_streaming,
                     "Commitment mismatch at {:?}\n ({}):\n {:?}\n != \n{:?}",
                     polys.iter().collect::<Vec<_>>()[i], i, commitment, commitment_non_streaming
                 );
-                println!("PCS matched for: {:?}", polys.iter().collect::<Vec<_>>()[i]);
             }
         }
 

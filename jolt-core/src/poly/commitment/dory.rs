@@ -1392,7 +1392,7 @@ impl<'a> StreamingProcessChunk<StreamingOneHotWitness<Fr>> for StreamingDoryComm
             panic!("K must be provided for OneHot polynomials.");
         };
 
-        dbg!(chunk.len());
+        // dbg!(chunk.len());
 
         // dbg!(&self.setup.g1_vec()[0..10]);
 
@@ -1466,20 +1466,20 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
             let T = DoryGlobals::get_T();
             let row_len = DoryGlobals::get_num_columns();
             let rows_per_k = T / row_len;
-            dbg!(K);
-            dbg!(row_len);
-            dbg!(T);
-            dbg!(rows_per_k);
+            // dbg!(K);
+            // dbg!(row_len);
+            // dbg!(T);
+            // dbg!(rows_per_k);
 
             // Reshuffle OneHot polynomial's row commitments
             // We do this in finalize since `process_chunk` will eventually run in parallel so we can reshuffle its results once each chunk/row has completed.
             // TODO: Parallelize
             let l= state.row_commitments.len();
-            println!("K={K}, state.row_commitments.len()={l}");
+            // println!("K={K}, state.row_commitments.len()={l}");
             let num_rows = K * T / row_len;
-            let row_pad_count = dbg!(num_rows) - l;
+            let row_pad_count = num_rows - l;
             state.row_commitments.extend(vec![JoltG1Wrapper::identity(); row_pad_count]);
-            dbg!(&state.row_commitments);
+            // dbg!(&state.row_commitments);
             let row_commitments: Vec<_> = (0..num_rows).map(|i| {
                 // let j = (i % K) * K + i / K;
                 // let j = (i % rows_per_k) * rows_per_k + i / rows_per_k;
