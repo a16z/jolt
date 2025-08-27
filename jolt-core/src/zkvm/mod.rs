@@ -182,7 +182,7 @@ where
         memory_init: Vec<(u64, u8)>,
         max_trace_length: usize,
     ) -> JoltProverPreprocessing<F, PCS> {
-        println!("|||||||||||||||||||||||> prover_preprocess called ");
+        // println!("|||||||||||||||||||||||> prover_preprocess called ");
         let small_value_lookup_tables = F::compute_lookup_tables();
         F::initialize_lookup_tables(small_value_lookup_tables.clone());
 
