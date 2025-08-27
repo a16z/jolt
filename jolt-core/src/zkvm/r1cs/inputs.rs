@@ -403,6 +403,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> WitnessRowAccessor<F>
 
 /// Compute `z(r_cycle) = Σ_t eq(r_cycle, t) * P_i(t)` for all inputs i, without
 /// materializing P_i. Returns `[P_0(r_cycle), P_1(r_cycle), ...]` in input order.
+#[tracing::instrument(skip_all)]
 pub fn compute_claimed_witness_evals<F: JoltField>(
     r_cycle: &[F],
     accessor: &dyn WitnessRowAccessor<F>,
@@ -430,6 +431,7 @@ pub fn compute_claimed_witness_evals<F: JoltField>(
 
 /// Single-pass generation of UnexpandedPC(t), PC(t), and IsNoop(t) witnesses.
 /// Reduces traversals from three to one for stage-3 PC sumcheck inputs.
+#[tracing::instrument(skip_all)]
 pub fn generate_pc_noop_witnesses<F, PCS>(
     preprocessing: &JoltProverPreprocessing<F, PCS>,
     trace: &[RV32IMCycle],
