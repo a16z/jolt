@@ -241,7 +241,7 @@ pub static UNIFORM_R1CS: [Constraint; NUM_R1CS_CONSTRAINTS] = [
     //     assert!(RightLookupOperand == Rs1Value * Rs2Value)
     // }
     r1cs_prod!(
-        ({ JoltR1CSInputs::RightInstructionInput }) * ({ JoltR1CSInputs::LeftInstructionInput })
+        ({ JoltR1CSInputs::LeftInstructionInput }) * ({ JoltR1CSInputs::RightInstructionInput })
             == ({ JoltR1CSInputs::Product })
     ),
     r1cs_eq_conditional!(

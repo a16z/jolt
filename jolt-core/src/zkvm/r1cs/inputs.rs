@@ -347,9 +347,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> WitnessRowAccessor<F>
             }
             JoltR1CSInputs::Product => {
                 let (left, right) = LookupQuery::<XLEN>::to_instruction_inputs(get(t));
-                let right_u64 = right as u64;
-                let prod = (left as u128) * (right_u64 as u128);
-                F::from_u128(prod)
+                F::from_u64(left) * F::from_i128(right)
             }
             JoltR1CSInputs::WriteLookupOutputToRD => {
                 let flag = get(t).instruction().circuit_flags()
