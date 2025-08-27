@@ -20,6 +20,6 @@ pub fn init_inlines() -> Result<(), String> {
 #[ctor::ctor]
 fn auto_register() {
     if let Err(e) = init_inlines() {
-        eprintln!("Failed to register Keccak256 inlines: {e}");
+        tracing::error!("Failed to register Keccak256 inlines: {e}");
     }
 }

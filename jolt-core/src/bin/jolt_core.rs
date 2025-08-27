@@ -65,7 +65,7 @@ fn trace(args: ProfileArgs) {
             let (chrome_layer, guard) = ChromeLayerBuilder::new().build();
             layers.push(chrome_layer.boxed());
             guards.push(Box::new(guard));
-            println!("Running tracing-chrome. Files will be saved as trace-<some timestamp>.json and can be viewed in https://ui.perfetto.dev/");
+            tracing::info!("Running tracing-chrome. Files will be saved as trace-<some timestamp>.json and can be viewed in https://ui.perfetto.dev/");
         }
     }
 
