@@ -257,6 +257,10 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                 let mut chunk_svo_accums_zero_old = [F::zero(); NUM_ACCUMS_EVAL_ZERO];
                 let mut chunk_svo_accums_infty_old = [F::zero(); NUM_ACCUMS_EVAL_INFTY];
 
+                let inv_k = crate::zkvm::r1cs::types::fmadd_reduce_factor::<F>()
+                    .inverse()
+                    .unwrap();
+
                 for x_out_val in x_out_start..x_out_end {
                     let mut tA_pos_acc_for_current_x_out =
                         [UnreducedProduct::zero(); NUM_NONTRIVIAL_TERNARY_POINTS];
@@ -455,21 +459,28 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                             reduce_unreduced_to_field::<F>(&tA_pos_acc_for_current_x_out[i]);
                         let neg_f =
                             reduce_unreduced_to_field::<F>(&tA_neg_acc_for_current_x_out[i]);
-                        tA_sum_for_current_x_out[i] = pos_f - neg_f;
+                        // Normalize by inv(K) so subsequent accumulators match field semantics
+                        tA_sum_for_current_x_out[i] = (pos_f - neg_f) * inv_k;
                     }
 
-                    // Compare typed vs old baseline tA per x_out (commented out for old path test)
-                    // for i in 0..NUM_NONTRIVIAL_TERNARY_POINTS {
-                    //     if tA_sum_for_current_x_out[i] != tA_sum_for_current_x_out_old[i] {
-                    //         panic!(
-                    //             "[SVO precompute mismatch] x_out_val={} idx={} new={} old={}",
-                    //             x_out_val,
-                    //             i,
-                    //             tA_sum_for_current_x_out[i],
-                    //             tA_sum_for_current_x_out_old[i]
-                    //         );
-                    //     }
-                    // }
+                    for i in 0..NUM_NONTRIVIAL_TERNARY_POINTS {
+                        tA_sum_for_current_x_out_old[i] *= inv_k;
+                    }
+
+                    // Compare normalized new vs old baseline
+                    for i in 0..NUM_NONTRIVIAL_TERNARY_POINTS {
+                        let new_norm = tA_sum_for_current_x_out[i];
+                        let old_norm = tA_sum_for_current_x_out_old[i];
+                        if new_norm != old_norm {
+                            panic!(
+                                "[SVO precompute mismatch] x_out_val={} idx={} new={} old={}",
+                                x_out_val,
+                                i,
+                                new_norm,
+                                old_norm
+                            );
+                        }
+                    }
 
                     // Distribute accumulated tA for this x_out into the SVO accumulators
                     // (both zero and infty evaluations) using precomputed E_out tables.
@@ -496,7 +507,8 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                     }
                     for i in 0..NUM_ACCUMS_EVAL_INFTY {
                         chunk_svo_accums_infty[i] += current_x_out_svo_infty[i];
-                        chunk_svo_accums_infty_old[i] += current_x_out_svo_infty_old[i];
+                        chunk_svo_accums_infty_old[i] +=
+                            current_x_out_svo_infty_old[i];
                     }
                 }
 
@@ -983,12 +995,13 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                         }
                         current_output_idx_in_slice += 1;
                     }
-                    let bound_cz = cz0 + r_i * (cz1 - cz0);
-                    if !bound_cz.is_zero() {
-                        if current_output_idx_in_slice < output_slice_for_task.len() {
-                            output_slice_for_task[current_output_idx_in_slice] =
-                                (3 * new_block_idx + 2, bound_cz).into();
-                        }
+                    if cz_coeff != (None, None) {
+                        let (low, high) = (
+                            cz_coeff.0.unwrap_or(F::zero()),
+                            cz_coeff.1.unwrap_or(F::zero()),
+                        );
+                        output_slice_for_task[current_output_idx_in_slice] =
+                            (3 * new_block_idx + 2, low + r_i * (high - low)).into();
                         current_output_idx_in_slice += 1;
                     }
                 }
@@ -1032,6 +1045,10 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
         round_polys: &mut Vec<CompressedUniPoly<F>>,
         current_claim: &mut F,
     ) {
+        let inv_k = crate::zkvm::r1cs::types::fmadd_reduce_factor::<F>()
+            .inverse()
+            .unwrap();
+        let inv_k2 = inv_k * inv_k;
         // In order to parallelize, we do a first pass over the coefficients to
         // determine how to divide it into chunks that can be processed independently.
         // In particular, coefficients whose indices are the same modulo 6 cannot
@@ -1070,9 +1087,15 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                             let eq_evals = eq_poly.E_out_current()[block_index];
 
                             (
-                                eq_evals.mul_0_optimized(az.0.mul_0_optimized(bz.0) - cz0),
-                                eq_evals
-                                    .mul_0_optimized(az_eval_infty.mul_0_optimized(bz_eval_infty)),
+                                eq_evals.mul_0_optimized(
+                                    az.0.mul_0_optimized(bz.0).mul_0_optimized(inv_k2)
+                                        - cz0.mul_0_optimized(inv_k),
+                                ),
+                                eq_evals.mul_0_optimized(
+                                    az_eval_infty
+                                        .mul_0_optimized(bz_eval_infty)
+                                        .mul_0_optimized(inv_k2),
+                                ),
                             )
                         })
                 })
@@ -1121,10 +1144,15 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                         let az_eval_infty = az.1 - az.0;
                         let bz_eval_infty = bz.1 - bz.0;
 
-                        inner_sums.0 +=
-                            E_in_evals.mul_0_optimized(az.0.mul_0_optimized(bz.0) - cz0);
-                        inner_sums.1 += E_in_evals
-                            .mul_0_optimized(az_eval_infty.mul_0_optimized(bz_eval_infty));
+                        inner_sums.0 += E_in_evals.mul_0_optimized(
+                            az.0.mul_0_optimized(bz.0).mul_0_optimized(inv_k2)
+                                - cz0.mul_0_optimized(inv_k),
+                        );
+                        inner_sums.1 += E_in_evals.mul_0_optimized(
+                            az_eval_infty
+                                .mul_0_optimized(bz_eval_infty)
+                                .mul_0_optimized(inv_k2),
+                        );
                     }
 
                     eval_point_0 += eq_poly.E_out_current()[prev_x2] * inner_sums.0;

@@ -469,6 +469,21 @@ pub fn reduce_unreduced_to_field<F: JoltField>(x: &UnreducedProduct) -> F {
     F::from_montgomery_reduce_2n(*x)
 }
 
+/// Returns the constant factor K such that for any field element `e` and integer magnitude `m`,
+/// the pipeline fmadd_unreduced(e, m) followed by reduce_unreduced_to_field yields `e * m * K`.
+/// This accounts for representation and Montgomery effects inside the fmadd+reduce path when one
+/// operand is a field element and the other is a small integer magnitude.
+pub fn fmadd_reduce_factor<F: JoltField>() -> F {
+    // Compute by applying fmadd_unreduced to e=1 and magnitude=1, then reducing.
+    let e = F::from_u64(1);
+    let one_mag = ark_ff::SignedBigInt::<1>::from_u64_with_sign(1u64, true);
+    let prod = AzBzProductValue::L1(one_mag);
+    let mut pos = UnreducedProduct::zero();
+    let mut neg = UnreducedProduct::zero();
+    fmadd_unreduced::<F>(&mut pos, &mut neg, &e, prod);
+    reduce_unreduced_to_field::<F>(&pos) - reduce_unreduced_to_field::<F>(&neg)
+}
+
 impl Mul<BzValue> for AzValue {
     type Output = AzBzProductValue;
 

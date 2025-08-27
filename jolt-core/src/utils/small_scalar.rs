@@ -37,8 +37,25 @@ impl SmallScalar {
             SmallScalar::U8(v) => v as i128,
             SmallScalar::U64(v) => v as i128,
             SmallScalar::I64(v) => v as i128,
-            SmallScalar::U128(v) => v as i128, // lossy if > i128::MAX; callers choose variant appropriately
+            SmallScalar::U128(v) => {
+                // Handle large U128 values that exceed i128::MAX
+                if v > i128::MAX as u128 {
+                    // For values that would lose precision, return a special marker
+                    // This preserves the knowledge that this was a large U128 value
+                    i128::MIN // Use i128::MIN as a sentinel value
+                } else {
+                    v as i128
+                }
+            },
             SmallScalar::I128(v) => v,
+        }
+    }
+
+    /// Check if this SmallScalar represents a large U128 that loses precision when converted to i128
+    pub fn is_large_u128(&self) -> bool {
+        match self {
+            SmallScalar::U128(v) => *v > i128::MAX as u128,
+            _ => false,
         }
     }
 

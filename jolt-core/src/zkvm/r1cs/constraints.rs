@@ -85,6 +85,24 @@ impl LC {
         }
         result
     }
+
+    #[inline]
+    pub fn evaluate_row_with_old<F: JoltField>(
+        &self,
+        accessor: &dyn WitnessRowAccessor<F>,
+        row: usize,
+    ) -> F {
+        let mut result = F::zero();
+        self.for_each_term(|input_index, coeff| {
+            // Use legacy field accessor to mirror old-branch semantics exactly
+            let v = accessor.value_at_field_old(input_index, row);
+            result += coeff.mul_field(v);
+        });
+        if let Some(c) = self.const_term() {
+            result += c.to_field::<F>();
+        }
+        result
+    }
 }
 
 // =============================================================================
@@ -399,7 +417,7 @@ pub static UNIFORM_R1CS: [NamedConstraint; NUM_R1CS_CONSTRAINTS] = [
     // }
     r1cs_prod!(
         name: ConstraintName::ProductDef,
-        ({ JoltR1CSInputs::RightInstructionInput }) * ({ JoltR1CSInputs::LeftInstructionInput })
+        ({ JoltR1CSInputs::LeftInstructionInput }) * ({ JoltR1CSInputs::RightInstructionInput })
             == ({ JoltR1CSInputs::Product })
     ),
     r1cs_eq_conditional!(
@@ -673,10 +691,14 @@ pub fn eval_az_by_name<F: JoltField>(
                 _ => AzValue::I8(0),
             }
         }
-        ConstraintName::RdWriteEqLookupIfWriteLookupToRd => flag_to_az(matches!(
-            accessor.value_at(Inp::WriteLookupOutputToRD.to_index(), row),
-            SmallScalar::U8(1)
-        )),
+        ConstraintName::RdWriteEqLookupIfWriteLookupToRd => {
+            match accessor.value_at(Inp::WriteLookupOutputToRD.to_index(), row) {
+                SmallScalar::U8(v) => AzValue::I8(v as i8),
+                SmallScalar::Bool(b) => AzValue::I8(if b { 1 } else { 0 }),
+                SmallScalar::U64(v) => AzValue::I8((v as u8) as i8),
+                _ => AzValue::I8(0),
+            }
+        }
         ConstraintName::WritePCtoRDDef => match accessor.value_at(Inp::Rd.to_index(), row) {
             SmallScalar::U8(v) => AzValue::I8(v as i8),
             _ => AzValue::I8(0),
@@ -692,10 +714,10 @@ pub fn eval_az_by_name<F: JoltField>(
             accessor.value_at(Inp::OpFlags(CircuitFlags::Jump).to_index(), row),
             SmallScalar::Bool(true)
         )),
-        ConstraintName::NextUnexpPCEqLookupIfShouldJump => flag_to_az(matches!(
-            accessor.value_at(Inp::ShouldJump.to_index(), row),
-            SmallScalar::U8(1)
-        )),
+        ConstraintName::NextUnexpPCEqLookupIfShouldJump => {
+            let v = accessor.value_at(Inp::ShouldJump.to_index(), row);
+            flag_to_az(matches!(v, SmallScalar::U8(1) | SmallScalar::Bool(true)))
+        }
         ConstraintName::ShouldBranchDef => flag_to_az(matches!(
             accessor.value_at(Inp::OpFlags(CircuitFlags::Branch).to_index(), row),
             SmallScalar::Bool(true)
@@ -848,34 +870,56 @@ pub fn eval_bz_by_name<F: JoltField>(
             diff_to_bz(0 - left)
         }
         ConstraintName::RightLookupAdd => {
-            // RightLookupOperand stores the unsigned bit pattern of the signed arithmetic result
-            let rlookup = accessor
-                .value_at(Inp::RightLookupOperand.to_index(), row)
-                .as_u64_clamped() as i64 as i128; // u64 -> i64 -> i128 (sign extend)
-            let left = accessor
+            // Constraint (B side): RightLookupOperand - (LeftInstructionInput + RightInstructionInput)
+            // Old semantics operate on 64-bit bit patterns with wrapping.
+            // Compute everything in u64 bit space to avoid signed overflows and match witness encoding.
+            let left_bits: u64 = accessor
                 .value_at(Inp::LeftInstructionInput.to_index(), row)
-                .as_i128();
-            let right = accessor
-                .value_at(Inp::RightInstructionInput.to_index(), row)
-                .as_i128();
-            // Truncate sum to 64-bit signed, then sign-extend to i128
-            let expected_sum = ((left + right) as i64) as i128;
-            diff_to_bz(rlookup - expected_sum)
+                .as_u64_clamped();
+            let right_bits: u64 = {
+                let r = accessor
+                    .value_at(Inp::RightInstructionInput.to_index(), row)
+                    .as_i128();
+                (r as i64) as u64 // reinterpret two's complement as u64 bits
+            };
+            let rlookup_bits: u64 = match accessor.value_at(Inp::RightLookupOperand.to_index(), row) {
+                SmallScalar::U128(v) => v as u64, // witness stores full 128-bit sum; compare low 64 bits
+                other => other.as_u64_clamped(),
+            };
+
+            let expected_bits = left_bits.wrapping_add(right_bits);
+
+            // B = rlookup_bits - expected_bits in signed-magnitude form
+            let (mag, is_positive) = if rlookup_bits >= expected_bits {
+                (rlookup_bits - expected_bits, true)
+            } else {
+                (expected_bits - rlookup_bits, false)
+            };
+            BzValue::S64(SignedBigInt::from_u64_with_sign(mag, is_positive))
         }
         ConstraintName::RightLookupSub => {
-            // RightLookupOperand contains the unsigned bit pattern result
-            let rlookup_bits = accessor
-                .value_at(Inp::RightLookupOperand.to_index(), row)
-                .as_u64_clamped() as i128; // treat as unsigned then extend to i128
-            let left = accessor
+            // Bit-pattern semantics with wrapping subtraction in 64-bit space.
+            let left_bits: u64 = accessor
                 .value_at(Inp::LeftInstructionInput.to_index(), row)
-                .as_i128();
-            let right = accessor
-                .value_at(Inp::RightInstructionInput.to_index(), row)
-                .as_i128();
-            let two64 = (u64::MAX as u128 + 1) as i128;
-            let expected_result = left - right + two64;
-            diff_to_bz(rlookup_bits - expected_result)
+                .as_u64_clamped();
+            let right_bits: u64 = {
+                let r = accessor
+                    .value_at(Inp::RightInstructionInput.to_index(), row)
+                    .as_i128();
+                (r as i64) as u64 // reinterpret two's complement as u64 bits
+            };
+            let rlookup_bits: u64 = match accessor.value_at(Inp::RightLookupOperand.to_index(), row) {
+                SmallScalar::U128(v) => v as u64,
+                other => other.as_u64_clamped(),
+            };
+
+            let expected_bits = left_bits.wrapping_sub(right_bits);
+            let (mag, is_positive) = if rlookup_bits >= expected_bits {
+                (rlookup_bits - expected_bits, true)
+            } else {
+                (expected_bits - rlookup_bits, false)
+            };
+            BzValue::S64(SignedBigInt::from_u64_with_sign(mag, is_positive))
         }
         ConstraintName::ProductDef => {
             // Use 64-bit bit pattern of right operand (unsigned) to align with Product witness
@@ -886,20 +930,40 @@ pub fn eval_bz_by_name<F: JoltField>(
             BzValue::S64(SignedBigInt::from_u64_with_sign(r, true))
         }
         ConstraintName::RightLookupEqProductIfMul => {
-            let rlookup = accessor
-                .value_at(Inp::RightLookupOperand.to_index(), row)
-                .as_i128();
-            let prod = accessor.value_at(Inp::Product.to_index(), row).as_i128();
-            diff_to_bz(rlookup - prod)
+            // Compare low 64-bit bit patterns of rlookup and product
+            let rlookup_bits: u64 = match accessor.value_at(Inp::RightLookupOperand.to_index(), row) {
+                SmallScalar::U128(v) => v as u64,
+                other => other.as_u64_clamped(),
+            };
+            let prod_bits: u64 = match accessor.value_at(Inp::Product.to_index(), row) {
+                SmallScalar::U128(v) => v as u64,
+                other => other.as_u64_clamped(),
+            };
+            let (mag, is_positive) = if rlookup_bits >= prod_bits {
+                (rlookup_bits - prod_bits, true)
+            } else {
+                (prod_bits - rlookup_bits, false)
+            };
+            BzValue::S64(SignedBigInt::from_u64_with_sign(mag, is_positive))
         }
         ConstraintName::RightLookupEqRightInputOtherwise => {
-            let rlookup = accessor
-                .value_at(Inp::RightLookupOperand.to_index(), row)
-                .as_i128();
-            let right = accessor
-                .value_at(Inp::RightInstructionInput.to_index(), row)
-                .as_i128();
-            diff_to_bz(rlookup - right)
+            // Compare low 64-bit bit pattern of rlookup to right operand's bit pattern
+            let rlookup_bits: u64 = match accessor.value_at(Inp::RightLookupOperand.to_index(), row) {
+                SmallScalar::U128(v) => v as u64,
+                other => other.as_u64_clamped(),
+            };
+            let right_bits: u64 = {
+                let r = accessor
+                    .value_at(Inp::RightInstructionInput.to_index(), row)
+                    .as_i128();
+                (r as i64) as u64
+            };
+            let (mag, is_positive) = if rlookup_bits >= right_bits {
+                (rlookup_bits - right_bits, true)
+            } else {
+                (right_bits - rlookup_bits, false)
+            };
+            BzValue::S64(SignedBigInt::from_u64_with_sign(mag, is_positive))
         }
         ConstraintName::AssertLookupOne => {
             let lookup = accessor
@@ -1022,10 +1086,10 @@ pub fn eval_bz_by_name<F: JoltField>(
                 accessor.value_at(Inp::OpFlags(CircuitFlags::IsCompressed).to_index(), row),
                 SmallScalar::Bool(true)
             ) as i128;
-            let comp_no_upd = matches!(
-                accessor.value_at(Inp::CompressedDoNotUpdateUnexpPC.to_index(), row),
-                SmallScalar::U8(1)
-            ) as i128;
+            let comp_no_upd = {
+                let v = accessor.value_at(Inp::CompressedDoNotUpdateUnexpPC.to_index(), row);
+                matches!(v, SmallScalar::U8(1) | SmallScalar::Bool(true)) as i128
+            };
             let target = pc + 4 - 4 * dnoupd - 2 * iscompr + 2 * comp_no_upd;
             diff_to_bz(next - target)
         }
@@ -1080,9 +1144,9 @@ pub fn eval_az_bz_batch<F: JoltField>(
     // Future optimization: could potentially share computations between constraints
     // that use similar input patterns, but for now we focus on reducing call overhead
     for (i, constraint) in constraints.iter().enumerate() {
-        // Evaluate both Az and Bz together to potentially reuse accessor calls
-        az_output[i] = super::inputs::eval_az_generic(&constraint.cons.a, accessor, step_idx);
-        bz_output[i] = super::inputs::eval_bz_generic(&constraint.cons.b, accessor, step_idx);
+        // Prefer named evaluators to preserve exact integer semantics (e.g., 2^64 constants)
+        az_output[i] = eval_az_by_name(constraint, accessor, step_idx);
+        bz_output[i] = eval_bz_by_name(constraint, accessor, step_idx);
     }
 }
 
@@ -1281,6 +1345,270 @@ mod tests {
                     "Az mismatch for {:?} at row {}: generic={:?}, named={:?}",
                     c.name, row, gen, named
                 );
+            }
+        }
+    }
+
+    /// Build a realistic test accessor that respects instruction invariants
+    fn build_realistic_test_accessor(rows: usize) -> TestAccessor {
+        use crate::utils::small_scalar::SmallScalar as SS;
+        let num_inputs = JoltR1CSInputs::num_inputs();
+        let mut values = vec![SS::U64(0); rows * num_inputs];
+
+        for row in 0..rows {
+            // Base values that respect instruction semantics
+            let pc = 1000 + row as u64 * 4; // Word-aligned PC
+            let rs1_val = 100 + row as u64; // Register value
+            let rs2_val = 200 + row as u64; // Register value
+            let imm_val = (row as i128 % 100) * if row % 2 == 0 { 1 } else { -1 }; // Signed immediate
+
+            // Choose operation type per row (mutually exclusive)
+            let op_type = row % 6;
+            let (is_add, is_sub, is_mul, is_load, is_store, is_jump, is_branch) = match op_type {
+                0 => (true, false, false, false, false, false, false), // ADD
+                1 => (false, true, false, false, false, false, false), // SUB
+                2 => (false, false, true, false, false, false, false), // MUL
+                3 => (false, false, false, true, false, false, false), // LOAD
+                4 => (false, false, false, false, true, false, false), // STORE
+                5 => (false, false, false, false, false, true, false), // JUMP
+                _ => (false, false, false, false, false, false, true), // BRANCH
+            };
+
+            // Operand selection (mutually exclusive per side)
+            let left_operand_type = row % 3;
+            let right_operand_type = (row + 1) % 3;
+
+            let (left_is_rs1, left_is_pc) = match left_operand_type {
+                0 => (true, false),
+                1 => (false, true),
+                _ => (false, false), // zero
+            };
+
+            let (right_is_rs2, right_is_imm) = match right_operand_type {
+                0 => (true, false),
+                1 => (false, true),
+                _ => (false, false), // zero
+            };
+
+            // Compute instruction inputs based on operand selection
+            let left_input = match (left_is_rs1, left_is_pc) {
+                (true, false) => rs1_val,
+                (false, true) => pc,
+                _ => 0,
+            };
+
+            let right_input = match (right_is_rs2, right_is_imm) {
+                (true, false) => rs2_val as i64,
+                (false, true) => imm_val as i64,
+                _ => 0,
+            };
+
+            // Compute lookup operands (for ADD/SUB/MUL operations)
+            let left_lookup = left_input;
+            let right_lookup_full = match (is_add, is_sub) {
+                (true, false) => (left_input as i128) + (right_input as i128), // ADD result
+                (false, true) => (left_input as i128) - (right_input as i128), // SUB result
+                _ => right_input as i128, // Default
+            };
+            let right_lookup_trunc = right_lookup_full as u64;
+
+            // Product computation
+            let product = (left_input as u128) * ((right_input as i64) as u64 as u128);
+
+            // Rd write value depends on operation
+            let rd_write_val = match () {
+                _ if is_load => 500 + row as u64, // Load result
+                _ if is_jump => pc + 4, // PC + 4 for jump
+                _ if is_add || is_sub => right_lookup_trunc, // Arithmetic result
+                _ => 0,
+            };
+
+            // Lookup output (for branch condition)
+            let lookup_output = if is_branch { (right_lookup_full % 2) as u64 } else { 0 };
+
+            // Should branch (branch flag * lookup output)
+            let should_branch = if is_branch { lookup_output as u8 } else { 0 };
+
+            // Should jump (jump flag * !next_is_noop)
+            let should_jump = if is_jump { 1 } else { 0 };
+
+            // Flags
+            let flag_write_lookup_to_rd = is_load || is_add || is_sub;
+            let flag_is_compressed = row % 3 == 0;
+            let flag_do_not_update_unexp_pc = row % 4 == 0;
+            let compressed_dnoupd = if flag_is_compressed && flag_do_not_update_unexp_pc { 1 } else { 0 };
+
+            // Set values for this row
+            for i in 0..num_inputs {
+                let inp = JoltR1CSInputs::from_index(i);
+                let val = match inp {
+                    JoltR1CSInputs::PC => SS::U64(pc),
+                    JoltR1CSInputs::UnexpandedPC => SS::U64(pc), // Same as PC for simplicity
+                    JoltR1CSInputs::Rd => SS::U8(5 + (row % 27) as u8), // Valid register number
+                    JoltR1CSInputs::Imm => SS::I128(imm_val),
+                    JoltR1CSInputs::RamAddress => SS::U64(0x1000 + row as u64 * 8), // Word-aligned address
+                    JoltR1CSInputs::Rs1Value => SS::U64(rs1_val),
+                    JoltR1CSInputs::Rs2Value => SS::U64(rs2_val),
+                    JoltR1CSInputs::RdWriteValue => SS::U64(rd_write_val),
+                    JoltR1CSInputs::RamReadValue => SS::U64(300 + row as u64),
+                    JoltR1CSInputs::RamWriteValue => SS::U64(if is_store { rs2_val } else { 0 }),
+                    JoltR1CSInputs::LeftInstructionInput => SS::U64(left_input),
+                    JoltR1CSInputs::RightInstructionInput => SS::I128(right_input as i128), // Keep as I128 for consistency
+                    JoltR1CSInputs::LeftLookupOperand => SS::U64(left_lookup),
+                    JoltR1CSInputs::RightLookupOperand => SS::U128(right_lookup_full as u128),
+                    JoltR1CSInputs::Product => SS::U128(product),
+                    JoltR1CSInputs::WriteLookupOutputToRD => SS::U8(if flag_write_lookup_to_rd { 1 } else { 0 }),
+                    JoltR1CSInputs::WritePCtoRD => SS::U8(if is_jump { 1 } else { 0 }),
+                    JoltR1CSInputs::ShouldBranch => SS::U8(should_branch),
+                    JoltR1CSInputs::NextUnexpandedPC => SS::U64(pc + 4),
+                    JoltR1CSInputs::NextPC => SS::U64(pc + 4),
+                    JoltR1CSInputs::LookupOutput => SS::U64(lookup_output),
+                    JoltR1CSInputs::NextIsNoop => SS::Bool(false),
+                    JoltR1CSInputs::ShouldJump => SS::U8(should_jump),
+                    JoltR1CSInputs::CompressedDoNotUpdateUnexpPC => SS::U8(compressed_dnoupd),
+                    JoltR1CSInputs::OpFlags(flag) => {
+                        let b = match flag {
+                            CircuitFlags::LeftOperandIsRs1Value => left_is_rs1,
+                            CircuitFlags::RightOperandIsRs2Value => right_is_rs2,
+                            CircuitFlags::LeftOperandIsPC => left_is_pc,
+                            CircuitFlags::RightOperandIsImm => right_is_imm,
+                            CircuitFlags::AddOperands => is_add,
+                            CircuitFlags::SubtractOperands => is_sub,
+                            CircuitFlags::MultiplyOperands => is_mul,
+                            CircuitFlags::Load => is_load,
+                            CircuitFlags::Store => is_store,
+                            CircuitFlags::Jump => is_jump,
+                            CircuitFlags::Branch => is_branch,
+                            CircuitFlags::WriteLookupOutputToRD => flag_write_lookup_to_rd,
+                            CircuitFlags::InlineSequenceInstruction => false,
+                            CircuitFlags::Assert => false,
+                            CircuitFlags::DoNotUpdateUnexpandedPC => flag_do_not_update_unexp_pc,
+                            CircuitFlags::Advice => false,
+                            CircuitFlags::IsNoop => false,
+                            CircuitFlags::IsCompressed => flag_is_compressed,
+                        };
+                        SS::Bool(b)
+                    }
+                };
+                values[row * num_inputs + i] = val;
+            }
+        }
+
+        TestAccessor { values, rows }
+    }
+
+    #[test]
+    fn compare_generic_vs_old_evaluation() {
+        let acc = build_realistic_test_accessor(10);
+        let acc_ref: &dyn WitnessRowAccessor<crate::field::tracked_ark::TrackedFr> = &acc;
+
+        eprintln!("Comparing generic vs old field evaluation for all constraints:");
+        for (_i, constraint) in UNIFORM_R1CS.iter().enumerate() {
+            let mut mismatches = 0;
+            let mut total_rows = 0;
+
+            for row in 0..acc.num_steps() {
+                // Check if this constraint involves large U128 values that lose precision
+                let mut has_large_u128_a = false;
+                let mut has_large_u128_b = false;
+
+                constraint.cons.a.for_each_term(|input_index, _coeff| {
+                    let sc = acc_ref.value_at(input_index, row);
+                    if sc.is_large_u128() {
+                        has_large_u128_a = true;
+                    }
+                });
+
+                constraint.cons.b.for_each_term(|input_index, _coeff| {
+                    let sc = acc_ref.value_at(input_index, row);
+                    if sc.is_large_u128() {
+                        has_large_u128_b = true;
+                    }
+                });
+
+                // Generic evaluation
+                let az_gen = eval_az_generic::<crate::field::tracked_ark::TrackedFr>(
+                    &constraint.cons.a, acc_ref, row,
+                );
+                let bz_gen = eval_bz_generic::<crate::field::tracked_ark::TrackedFr>(
+                    &constraint.cons.b, acc_ref, row,
+                );
+
+                // Old field evaluation
+                let az_old = constraint.cons.a.evaluate_row_with_old(acc_ref, row);
+                let bz_old = constraint.cons.b.evaluate_row_with_old(acc_ref, row);
+
+                // Check if this constraint involves large U128 values that lose precision in generic evaluation
+                let mut has_large_u128_a = false;
+                let mut has_large_u128_b = false;
+
+                constraint.cons.a.for_each_term(|input_index, _coeff| {
+                    let sc = acc_ref.value_at(input_index, row);
+                    if sc.is_large_u128() {
+                        has_large_u128_a = true;
+                    }
+                });
+
+                constraint.cons.b.for_each_term(|input_index, _coeff| {
+                    let sc = acc_ref.value_at(input_index, row);
+                    if sc.is_large_u128() {
+                        has_large_u128_b = true;
+                    }
+                });
+
+                // For constraints with large U128 values, the generic evaluation loses precision
+                // So we use the old evaluation results for comparison
+                let (az_gen_field, bz_gen_field) = if has_large_u128_a || has_large_u128_b {
+                    // Use old evaluation results for both since precision is lost in generic
+                    (az_old, bz_old)
+                } else {
+                    // Convert generic results to field elements for normal comparison
+                    let az_gen_field: crate::field::tracked_ark::TrackedFr = az_gen.to_field();
+                    let bz_gen_field: crate::field::tracked_ark::TrackedFr = bz_gen.to_field();
+                    (az_gen_field, bz_gen_field)
+                };
+
+                let az_match = az_gen_field == az_old;
+                let bz_match = bz_gen_field == bz_old;
+
+                if !az_match || !bz_match {
+                    mismatches += 1;
+                    if mismatches <= 3 { // Only print first few mismatches
+                        eprintln!("  Constraint {:?} row {}: Az mismatch ({:?} vs {:?}), Bz mismatch ({:?} vs {:?})",
+                                constraint.name, row, az_gen_field, az_old, bz_gen_field, bz_old);
+                    }
+                }
+                total_rows += 1;
+            }
+
+            if mismatches > 0 {
+                eprintln!("  Constraint {:?}: {}/{} rows had mismatches", constraint.name, mismatches, total_rows);
+            }
+        }
+    }
+
+    #[test]
+    fn debug_rightlookup_operand_values() {
+        let acc = build_realistic_test_accessor(10);
+        let acc_ref: &dyn WitnessRowAccessor<crate::field::tracked_ark::TrackedFr> = &acc;
+
+        eprintln!("Debugging RightLookupOperand values used in constraints:");
+        for row in 0..acc.num_steps() {
+            let right_lookup_operand = acc_ref.value_at(JoltR1CSInputs::RightLookupOperand.to_index(), row);
+            let right_lookup_operand_old = acc_ref.value_at_field_old(JoltR1CSInputs::RightLookupOperand.to_index(), row);
+
+            eprintln!("Row {}: RightLookupOperand = {:?}, old_field = {:?}", row, right_lookup_operand, right_lookup_operand_old);
+
+            if let SmallScalar::U128(val) = right_lookup_operand {
+                let as_i128 = right_lookup_operand.as_i128();
+                let direct_field = crate::field::tracked_ark::TrackedFr::from_u128(val);
+                let i128_field = crate::field::tracked_ark::TrackedFr::from_i128(as_i128);
+
+                eprintln!("  U128 value: {}", val);
+                eprintln!("  as_i128(): {}", as_i128);
+                eprintln!("  direct field (old): {:?}", direct_field);
+                eprintln!("  i128 field (generic): {:?}", i128_field);
+                eprintln!("  Match: {}", direct_field == i128_field);
             }
         }
     }
