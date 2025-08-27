@@ -29,7 +29,7 @@ use allocative::FlameGraphBuilder;
 use anyhow::Context;
 use itertools::Itertools;
 use rayon::prelude::*;
-use tracer::instruction::RV32IMCycle;
+use tracer::{instruction::RV32IMCycle, ChunkWithPeekIterator as _};
 
 pub enum JoltDAG {}
 
@@ -499,33 +499,46 @@ impl JoltDAG {
 
         let polys : Vec<_> = AllCommittedPolynomials::iter().collect(); // .skip(9).take(1).collect();
         // dbg!(&polys);
-        let init_pcss: Vec<_> = polys
+        let pcs_and_polys: Vec<_> = polys
             .iter()
-            .map(|poly| PCS::initialize(poly.to_polynomial_type(&preprocessing), T, &preprocessing.generators)) //AZ: Add ram_d here
+            .map(|poly| (PCS::initialize(poly.to_polynomial_type(&preprocessing), T, &preprocessing.generators), poly)) //AZ: Add ram_d here
             .collect();
         let row_len = DoryGlobals::get_num_columns();
-        let chunks = lazy_trace.clone() // TODO(JP): More efficient way to zip_with_self_next and chunkify in parallel
-            .zip(
-                lazy_trace.clone() // JP: Why are two clones needed?
-                    .skip(1)
-                    .chain(std::iter::once(RV32IMCycle::NoOp)),
-            )
-            .pad_using(T, |_| (RV32IMCycle::NoOp, RV32IMCycle::NoOp))
-            .chunks(row_len);
-        let pcs_state = chunks
-            .into_iter()
-            .fold(init_pcss, |pcss, row_cycles| {
-                let row_cycles: Vec<_> = row_cycles.collect();
-                pcss.into_iter()
-                    .enumerate()
-                    .map(|(i, pcs)| {
-                        let poly = polys[i];
-                        poly.generate_witness_and_commit_row::<_, PCS>(pcs, preprocessing, &row_cycles, ram_d) // TODO: Don't pass preprocessing here. Instead pass precomputed constants.
-                    })
-                    .collect()
-            });
+        // let chunks = lazy_trace.clone() // TODO(JP): More efficient way to zip_with_self_next and chunkify in parallel
+        //     .zip(
+        //         lazy_trace.clone() // JP: Why are two clones needed?
+        //             .skip(1)
+        //             .chain(std::iter::once(RV32IMCycle::NoOp)),
+        //     )
+        //     .pad_using(T, |_| (RV32IMCycle::NoOp, RV32IMCycle::NoOp))
+        //     .chunks(row_len);
+        // let pcs_state = chunks
+        //     .into_iter()
+        //     .fold(init_pcss, |pcss, row_cycles| {
+        //         let row_cycles: Vec<_> = row_cycles.collect();
+        //         pcss.into_iter()
+        //             .enumerate()
+        //             .map(|(i, pcs)| {
+        //                 let poly = polys[i];
+        //                 poly.generate_witness_and_commit_row::<_, PCS>(pcs, preprocessing, &row_cycles, ram_d) // TODO: Don't pass preprocessing here. Instead pass precomputed constants.
+        //             })
+        //             .collect()
+        //     });
 
-        let (commitments, hints): (Vec<_>, Vec<_>) = pcs_state
+        // [row_chunks][polys]
+        let row_commitments = lazy_trace
+            .pad_using(T+1, |_| RV32IMCycle::NoOp)
+            .chunks_with_peek(row_len)
+            // .par_bridge() TODO
+            .map(|row_with_peek| {
+                pcs_and_polys.iter().map(|(pcs, poly)| {
+                    poly.generate_witness_and_commit_row::<_, PCS>(pcs, preprocessing, &row_with_peek, ram_d) // TODO: Don't pass preprocessing here. Instead pass precomputed constants.
+                })
+                .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+
+        let (commitments, hints): (Vec<_>, Vec<_>) = row_commitments
             .into_iter()
             .map(|s| PCS::finalize(s))
             .unzip();

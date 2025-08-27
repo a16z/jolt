@@ -970,67 +970,68 @@ impl CommittedPolynomial {
     // TODO: Make this more amenable to parallelization.
     pub fn generate_witness_and_commit_row<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>>(
         &self,
-        pcs: PCS::State<'a>,
+        pcs: &PCS::State<'a>,
         preprocessing: &'a JoltProverPreprocessing<F, PCS>,
-        row_cycles: &[(RV32IMCycle, RV32IMCycle)], // impl Iterator<Item = (RV32IMCycle, RV32IMCycle)>
+        row_cycles: &[RV32IMCycle], // &[(RV32IMCycle, RV32IMCycle)], // impl Iterator<Item = (RV32IMCycle, RV32IMCycle)>
         ram_d: usize,
     ) -> PCS::State<'a> {
-        #[inline(always)]
-        fn helper<'a, T: StreamWitness<F>, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>>(
-            witness_type: T,
-            pcs: PCS::State<'a>,
-            preprocessing: &'a JoltProverPreprocessing<F, PCS>,
-            row_cycles: &[(RV32IMCycle, RV32IMCycle)], // impl Iterator<Item = (RV32IMCycle, RV32IMCycle)>
-            ram_d: usize,
-        ) -> PCS::State<'a>
-        where
-            PCS::State<'a>: StreamingProcessChunk<T::WitnessType>,
-        {
-            // println!("|||||||||||||||||||||||> generate_witness_and_commit_row");
-            let row: Vec<_> = row_cycles
-                .iter()
-                .map(|(cycle, next_cycle)| witness_type.generate_streaming_witness(preprocessing, &cycle, &next_cycle, ram_d))
-                .collect();
-            PCS::process_chunk(pcs, &row)
-        }
-        match self {
-            CommittedPolynomial::LeftInstructionInput => {
-                helper(LeftInstructionInput, pcs, preprocessing, row_cycles, ram_d)
-            }
-            CommittedPolynomial::RightInstructionInput => {
-                helper(RightInstructionInput, pcs, preprocessing, row_cycles, ram_d)
-            }
-            CommittedPolynomial::Product => {
-                helper(Product, pcs, preprocessing, row_cycles, ram_d)
-            }
-            CommittedPolynomial::WriteLookupOutputToRD => {
-                helper(WriteLookupOutputToRD, pcs, preprocessing, row_cycles, ram_d)
-            }
-            CommittedPolynomial::WritePCtoRD => {
-                helper(WritePCtoRD, pcs, preprocessing, row_cycles, ram_d)
-            }
-            CommittedPolynomial::ShouldBranch => {
-                helper(ShouldBranch, pcs, preprocessing, row_cycles, ram_d)
-            }
-            CommittedPolynomial::ShouldJump => {
-                helper(ShouldJump, pcs, preprocessing, row_cycles, ram_d)
-            }
-            CommittedPolynomial::RdInc => {
-                helper(RdInc, pcs, preprocessing, row_cycles, ram_d)
-            }
-            CommittedPolynomial::RamInc => {
-                helper(RamInc, pcs, preprocessing, row_cycles, ram_d)
-            }
-            CommittedPolynomial::InstructionRa(i) => {
-                helper(InstructionRa(*i), pcs, preprocessing, row_cycles, ram_d)
-            }
-            CommittedPolynomial::BytecodeRa(i) => {
-                helper(BytecodeRa(*i), pcs, preprocessing, row_cycles, ram_d)
-            }
-            CommittedPolynomial::RamRa(i) => {
-                helper(RamRa(*i), pcs, preprocessing, row_cycles, ram_d)
-            }
-        }
+        todo!()
+        // #[inline(always)]
+        // fn helper<'a, T: StreamWitness<F>, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>>(
+        //     witness_type: T,
+        //     pcs: PCS::State<'a>,
+        //     preprocessing: &'a JoltProverPreprocessing<F, PCS>,
+        //     row_cycles: &[(RV32IMCycle, RV32IMCycle)], // impl Iterator<Item = (RV32IMCycle, RV32IMCycle)>
+        //     ram_d: usize,
+        // ) -> PCS::State<'a>
+        // where
+        //     PCS::State<'a>: StreamingProcessChunk<T::WitnessType>,
+        // {
+        //     // println!("|||||||||||||||||||||||> generate_witness_and_commit_row");
+        //     let row: Vec<_> = row_cycles
+        //         .iter()
+        //         .map(|(cycle, next_cycle)| witness_type.generate_streaming_witness(preprocessing, &cycle, &next_cycle, ram_d))
+        //         .collect();
+        //     PCS::process_chunk(pcs, &row)
+        // }
+        // match self {
+        //     CommittedPolynomial::LeftInstructionInput => {
+        //         helper(LeftInstructionInput, pcs, preprocessing, row_cycles, ram_d)
+        //     }
+        //     CommittedPolynomial::RightInstructionInput => {
+        //         helper(RightInstructionInput, pcs, preprocessing, row_cycles, ram_d)
+        //     }
+        //     CommittedPolynomial::Product => {
+        //         helper(Product, pcs, preprocessing, row_cycles, ram_d)
+        //     }
+        //     CommittedPolynomial::WriteLookupOutputToRD => {
+        //         helper(WriteLookupOutputToRD, pcs, preprocessing, row_cycles, ram_d)
+        //     }
+        //     CommittedPolynomial::WritePCtoRD => {
+        //         helper(WritePCtoRD, pcs, preprocessing, row_cycles, ram_d)
+        //     }
+        //     CommittedPolynomial::ShouldBranch => {
+        //         helper(ShouldBranch, pcs, preprocessing, row_cycles, ram_d)
+        //     }
+        //     CommittedPolynomial::ShouldJump => {
+        //         helper(ShouldJump, pcs, preprocessing, row_cycles, ram_d)
+        //     }
+        //     CommittedPolynomial::RdInc => {
+        //         helper(RdInc, pcs, preprocessing, row_cycles, ram_d)
+        //     }
+        //     CommittedPolynomial::RamInc => {
+        //         helper(RamInc, pcs, preprocessing, row_cycles, ram_d)
+        //     }
+        //     CommittedPolynomial::InstructionRa(i) => {
+        //         helper(InstructionRa(*i), pcs, preprocessing, row_cycles, ram_d)
+        //     }
+        //     CommittedPolynomial::BytecodeRa(i) => {
+        //         helper(BytecodeRa(*i), pcs, preprocessing, row_cycles, ram_d)
+        //     }
+        //     CommittedPolynomial::RamRa(i) => {
+        //         helper(RamRa(*i), pcs, preprocessing, row_cycles, ram_d)
+        //     }
+        // }
     }
 }
 
