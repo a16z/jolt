@@ -1,6 +1,6 @@
 #![allow(static_mut_refs)]
 
-use super::commitment_scheme::{CommitmentScheme, StreamingCommitmentScheme};
+use super::commitment_scheme::{CommitmentScheme, StreamingCommitmentScheme_};
 use crate::transcripts::{AppendToTranscript, Transcript};
 use crate::{
     field::JoltField,
@@ -1279,12 +1279,13 @@ impl<'a, E: DoryPairing> StreamingDoryCommitment<'a, E> {
 }
 
 
-impl<'a> StreamingProcessChunk<StreamingDenseWitness<Fr>> for StreamingDoryCommitment<'a, JoltBn254> {
-    fn process_chunk(mut self, chunk: &[StreamingDenseWitness<Fr>]) -> Self {
+impl StreamingProcessChunk<StreamingDenseWitness<Fr>> for DoryCommitmentScheme {
+    fn process_chunk_t<'a>(s: &Self::State<'a>, chunk: &[StreamingDenseWitness<Fr>]) -> Self::ChunkState {
         // JP: TODO: Do this upfront
         //AZ : encapsulate this in a struct that gets passed to PCS::initialize along with ram_d -- streaming specific
-        let bases = self.setup.g1_vec().iter().map(|g| g.0.into_affine()).collect::<Vec<_>>();
+        let bases = s.setup.g1_vec().iter().map(|g| g.0.into_affine()).collect::<Vec<_>>();
         
+        // TODO: Don't unwrap this.
         let row = chunk
             .iter()
             .map(|w| w.value)
@@ -1294,14 +1295,15 @@ impl<'a> StreamingProcessChunk<StreamingDenseWitness<Fr>> for StreamingDoryCommi
                 .unwrap(),
         );
         
-        self.row_commitments.push(row_commitment);
-        self
+        row_commitment
     }
 }
-impl<'a> StreamingProcessChunk<StreamingCompactWitness<u8, Fr>> for StreamingDoryCommitment<'a, JoltBn254> {
-    fn process_chunk(mut self, chunk: &[StreamingCompactWitness<u8, Fr>]) -> Self {
-        let bases = self.setup.g1_vec().iter().map(|g| g.0.into_affine()).collect::<Vec<_>>();
+impl StreamingProcessChunk<StreamingCompactWitness<u8, Fr>> for DoryCommitmentScheme {
+    fn process_chunk_t<'a>(s: &Self::State<'a>, chunk: &[StreamingCompactWitness<u8, Fr>]) -> Self::ChunkState {
+        // JP: TODO: Do this upfront
+        let bases = s.setup.g1_vec().iter().map(|g| g.0.into_affine()).collect::<Vec<_>>();
         
+        // TODO: Don't unwrap this.
         let row = chunk
             .iter()
             .map(|w| w.value)
@@ -1311,13 +1313,12 @@ impl<'a> StreamingProcessChunk<StreamingCompactWitness<u8, Fr>> for StreamingDor
                 .unwrap(),
         );
         
-        self.row_commitments.push(row_commitment);
-        self
+        row_commitment
     }
 }
-impl<'a> StreamingProcessChunk<StreamingCompactWitness<u16, Fr>> for StreamingDoryCommitment<'a, JoltBn254> {
-    fn process_chunk(mut self, chunk: &[StreamingCompactWitness<u16, Fr>]) -> Self {
-        let bases = self.setup.g1_vec().iter().map(|g| g.0.into_affine()).collect::<Vec<_>>();
+impl StreamingProcessChunk<StreamingCompactWitness<u16, Fr>> for DoryCommitmentScheme {
+    fn process_chunk_t<'a>(s: &Self::State<'a>, chunk: &[StreamingCompactWitness<u16, Fr>]) -> Self::ChunkState {
+        let bases = s.setup.g1_vec().iter().map(|g| g.0.into_affine()).collect::<Vec<_>>();
         
         let row = chunk
             .iter()
@@ -1328,13 +1329,12 @@ impl<'a> StreamingProcessChunk<StreamingCompactWitness<u16, Fr>> for StreamingDo
                 .unwrap(),
         );
         
-        self.row_commitments.push(row_commitment);
-        self
+        row_commitment
     }
 }
-impl<'a> StreamingProcessChunk<StreamingCompactWitness<u32, Fr>> for StreamingDoryCommitment<'a, JoltBn254> {
-    fn process_chunk(mut self, chunk: &[StreamingCompactWitness<u32, Fr>]) -> Self {
-        let bases = self.setup.g1_vec().iter().map(|g| g.0.into_affine()).collect::<Vec<_>>();
+impl StreamingProcessChunk<StreamingCompactWitness<u32, Fr>> for DoryCommitmentScheme {
+    fn process_chunk_t<'a>(s: &Self::State<'a>, chunk: &[StreamingCompactWitness<u32, Fr>]) -> Self::ChunkState {
+        let bases = s.setup.g1_vec().iter().map(|g| g.0.into_affine()).collect::<Vec<_>>();
         
         let row = chunk
             .iter()
@@ -1345,13 +1345,12 @@ impl<'a> StreamingProcessChunk<StreamingCompactWitness<u32, Fr>> for StreamingDo
                 .unwrap(),
         );
         
-        self.row_commitments.push(row_commitment);
-        self
+        row_commitment
     }
 }
-impl<'a> StreamingProcessChunk<StreamingCompactWitness<u64, Fr>> for StreamingDoryCommitment<'a, JoltBn254> {
-    fn process_chunk(mut self, chunk: &[StreamingCompactWitness<u64, Fr>]) -> Self {
-        let bases = self.setup.g1_vec().iter().map(|g| g.0.into_affine()).collect::<Vec<_>>();
+impl StreamingProcessChunk<StreamingCompactWitness<u64, Fr>> for DoryCommitmentScheme {
+    fn process_chunk_t<'a>(s: &Self::State<'a>, chunk: &[StreamingCompactWitness<u64, Fr>]) -> Self::ChunkState {
+        let bases = s.setup.g1_vec().iter().map(|g| g.0.into_affine()).collect::<Vec<_>>();
         
         let row = chunk
             .iter()
@@ -1362,18 +1361,18 @@ impl<'a> StreamingProcessChunk<StreamingCompactWitness<u64, Fr>> for StreamingDo
                 .unwrap(),
         );
         
-        self.row_commitments.push(row_commitment);
-        self
+        row_commitment
     }
 }
-impl<'a> StreamingProcessChunk<StreamingCompactWitness<i64, Fr>> for StreamingDoryCommitment<'a, JoltBn254> {
-    fn process_chunk(mut self, chunk: &[StreamingCompactWitness<i64, Fr>]) -> Self {
-        let bases = self.setup.g1_vec().iter().map(|g| g.0.into_affine()).collect::<Vec<_>>();
+impl StreamingProcessChunk<StreamingCompactWitness<i64, Fr>> for DoryCommitmentScheme {
+    fn process_chunk_t<'a>(s: &Self::State<'a>, chunk: &[StreamingCompactWitness<i64, Fr>]) -> Self::ChunkState {
+        let bases = s.setup.g1_vec().iter().map(|g| g.0.into_affine()).collect::<Vec<_>>();
         
         let row = chunk
             .iter()
             .map(|w| w.value)
             .collect::<Vec<_>>();
+        // TODO: This could be optimized.
         let scalars: Vec<_> = row.iter().map(|x| <Fr as JoltField>::from_i64(*x)).collect();
         // let scalars: Vec<_> = row.iter().map(|x| <Fr as DoryField>::from_i64(*x)).collect();
 
@@ -1382,13 +1381,12 @@ impl<'a> StreamingProcessChunk<StreamingCompactWitness<i64, Fr>> for StreamingDo
                 .unwrap(),
         );
         
-        self.row_commitments.push(row_commitment);
-        self
+        row_commitment
     }
 }
-impl<'a> StreamingProcessChunk<StreamingOneHotWitness<Fr>> for StreamingDoryCommitment<'a, JoltBn254> {
-    fn process_chunk(mut self, chunk: &[StreamingOneHotWitness<Fr>]) -> Self {
-        let Some(K) = self.K else {
+impl StreamingProcessChunk<StreamingOneHotWitness<Fr>> for DoryCommitmentScheme {
+    fn process_chunk_t<'a>(s: &Self::State<'a>, chunk: &[StreamingOneHotWitness<Fr>]) -> Self::ChunkState {
+        let Some(K) = s.K else {
             panic!("K must be provided for OneHot polynomials.");
         };
 
@@ -1407,18 +1405,18 @@ impl<'a> StreamingProcessChunk<StreamingOneHotWitness<Fr>> for StreamingDoryComm
             // All the nonzero coefficients are 1, so we simply add
             // the associated base to the result.
             if let Some(k) = k.value {
-                row_commitments[k].0 += self.setup.g1_vec()[col_index].0;
+                row_commitments[k].0 += s.setup.g1_vec()[col_index].0;
             }
         }
 
 
-        self.row_commitments.extend(row_commitments);
-        self
+        // row_commitments // TODO
+        todo!()
     }
 }
 
 
-impl StreamingCommitmentScheme for DoryCommitmentScheme {
+impl StreamingCommitmentScheme_ for DoryCommitmentScheme {
     type State<'a> = StreamingDoryCommitment<'a, JoltBn254>;
     type ChunkState = JoltG1Wrapper; // A chunk's state is the commitment to the row.
 
@@ -1453,13 +1451,12 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
 
     fn process_chunk<'a, T>(state: &Self::State<'a>, chunk: &[T]) -> Self::ChunkState
     where
-        Self::State<'a>: StreamingProcessChunk<T>,
+        Self: StreamingProcessChunk<T>,
     {
         // We require that a chunk is a full row.
         debug_assert_eq!(chunk.len(), DoryGlobals::get_num_columns());
 
-        todo!()
-        // state.process_chunk(chunk)
+        <Self as StreamingProcessChunk<T>>::process_chunk_t(state, chunk)
     }
 
     fn finalize<'a>(mut state: Self::State<'a>, chunks: &[Self::ChunkState]) -> (Self::Commitment, Self::OpeningProofHint) {
