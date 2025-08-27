@@ -12,6 +12,7 @@ use crate::transcripts::Transcript;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::write_flamegraph_svg;
 use crate::utils::thread::drop_in_background_thread;
+use crate::utils::transpose;
 use crate::zkvm::bytecode::BytecodeDag;
 use crate::zkvm::dag::proof_serialization::JoltProof;
 use crate::zkvm::dag::stage::SumcheckStages;
@@ -527,9 +528,10 @@ impl JoltDAG {
 
         // [row_chunks][polys]
         let row_commitments = lazy_trace
+            .clone()
             .pad_using(T+1, |_| RV32IMCycle::NoOp)
             .chunks_with_peek(row_len)
-            // .par_bridge() TODO
+            .par_bridge()
             .map(|row_with_peek| {
                 pcs_and_polys.iter().map(|(pcs, poly)| {
                     poly.generate_witness_and_commit_row::<_, PCS>(pcs, preprocessing, &row_with_peek, ram_d) // TODO: Don't pass preprocessing here. Instead pass precomputed constants.
@@ -538,9 +540,10 @@ impl JoltDAG {
             })
             .collect::<Vec<_>>();
 
-        let (commitments, hints): (Vec<_>, Vec<_>) = row_commitments
+        let (commitments, hints): (Vec<_>, Vec<_>) = transpose(row_commitments)
             .into_iter()
-            .map(|s| PCS::finalize(s))
+            .zip(pcs_and_polys)
+            .map(|(row_commitments, s)| PCS::finalize(s.0, &row_commitments))
             .unzip();
 
         #[cfg(test)]

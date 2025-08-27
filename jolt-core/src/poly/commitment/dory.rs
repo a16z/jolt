@@ -1419,7 +1419,8 @@ impl<'a> StreamingProcessChunk<StreamingOneHotWitness<Fr>> for StreamingDoryComm
 
 
 impl StreamingCommitmentScheme for DoryCommitmentScheme {
-    type State<'a> = StreamingDory<'a, JoltBn254>;
+    type State<'a> = StreamingDoryCommitment<'a, JoltBn254>;
+    type ChunkState = JoltG1Wrapper; // A chunk's state is the commitment to the row.
 
     fn initialize<'a>(ty: Multilinear, _size: usize, setup: &'a Self::ProverSetup) -> Self::State<'a> {
         let sigma = DoryGlobals::get_num_columns().log_2();
@@ -1450,59 +1451,61 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
         todo!("Processing individual elements is not supported for Dory.")
     }
 
-    fn process_chunk<'a, T>(state: Self::State<'a>, chunk: &[T]) -> Self::State<'a>
+    fn process_chunk<'a, T>(state: &Self::State<'a>, chunk: &[T]) -> Self::ChunkState
     where
         Self::State<'a>: StreamingProcessChunk<T>,
     {
         // We require that a chunk is a full row.
         debug_assert_eq!(chunk.len(), DoryGlobals::get_num_columns());
 
-        state.process_chunk(chunk)
+        todo!()
+        // state.process_chunk(chunk)
     }
 
-    fn finalize<'a>(mut state: Self::State<'a>) -> (Self::Commitment, Self::OpeningProofHint) {
+    fn finalize<'a>(mut state: Self::State<'a>, chunks: &[Self::ChunkState]) -> (Self::Commitment, Self::OpeningProofHint) {
+        todo!()
         
-        if let Some(K) = state.K {
-            let T = DoryGlobals::get_T();
-            let row_len = DoryGlobals::get_num_columns();
-            let rows_per_k = T / row_len;
-            // dbg!(K);
-            // dbg!(row_len);
-            // dbg!(T);
-            // dbg!(rows_per_k);
+        // if let Some(K) = state.K {
+        //     let T = DoryGlobals::get_T();
+        //     let row_len = DoryGlobals::get_num_columns();
+        //     let rows_per_k = T / row_len;
+        //     // dbg!(K);
+        //     // dbg!(row_len);
+        //     // dbg!(T);
+        //     // dbg!(rows_per_k);
 
-            // Reshuffle OneHot polynomial's row commitments
-            // We do this in finalize since `process_chunk` will eventually run in parallel so we can reshuffle its results once each chunk/row has completed.
-            // TODO: Parallelize
-            let l= state.row_commitments.len();
-            // println!("K={K}, state.row_commitments.len()={l}");
-            let num_rows = K * T / row_len;
-            let row_pad_count = num_rows - l;
-            state.row_commitments.extend(vec![JoltG1Wrapper::identity(); row_pad_count]);
-            // dbg!(&state.row_commitments);
-            let row_commitments: Vec<_> = (0..num_rows).map(|i| {
-                // let j = (i % K) * K + i / K;
-                // let j = (i % rows_per_k) * rows_per_k + i / rows_per_k;
-                // let j = (i % K) * rows_per_k + i / K;
-                let j = (i % rows_per_k) * K + i / rows_per_k;
-                //i_max = num_rows = K * T/get_num_columns % 
-                
-                // println!("j = {j}, i = {i}");
-                // Default required since we don't pad streamed trace.
-                //state.row_commitments.get(j).cloned().unwrap_or(JoltG1Wrapper::identity())
-                state.row_commitments[j]
-            }).collect();
+        //     // Reshuffle OneHot polynomial's row commitments
+        //     // We do this in finalize since `process_chunk` will eventually run in parallel so we can reshuffle its results once each chunk/row has completed.
+        //     // TODO: Parallelize
+        //     let l= state.row_commitments.len();
+        //     // println!("K={K}, state.row_commitments.len()={l}");
+        //     let num_rows = K * T / row_len;
+        //     let row_pad_count = num_rows - l;
+        //     state.row_commitments.extend(vec![JoltG1Wrapper::identity(); row_pad_count]);
+        //     // dbg!(&state.row_commitments);
+        //     let row_commitments: Vec<_> = (0..num_rows).map(|i| {
+        //         // let j = (i % K) * K + i / K;
+        //         // let j = (i % rows_per_k) * rows_per_k + i / rows_per_k;
+        //         // let j = (i % K) * rows_per_k + i / K;
+        //         let j = (i % rows_per_k) * K + i / rows_per_k;
+        //         //i_max = num_rows = K * T/get_num_columns % 
+        //         
+        //         // println!("j = {j}, i = {i}");
+        //         // Default required since we don't pad streamed trace.
+        //         //state.row_commitments.get(j).cloned().unwrap_or(JoltG1Wrapper::identity())
+        //         state.row_commitments[j]
+        //     }).collect();
 
-            let commitment = JoltBn254::multi_pair(&row_commitments, &state.setup.g2_vec()[..row_commitments.len()]);
-            (DoryCommitment(commitment), row_commitments)
-        } else {
-            let T = DoryGlobals::get_T();
-            // Pad row commitments since we don't pad streamed trace.
-            let row_pad_count = T/DoryGlobals::get_num_columns() - state.row_commitments.len();
-            state.row_commitments.extend(vec![JoltG1Wrapper::identity(); row_pad_count]);
-            let commitment = JoltBn254::multi_pair(&state.row_commitments, &state.setup.g2_vec()[..state.row_commitments.len()]);
-            (DoryCommitment(commitment), state.row_commitments)
-        }
+        //     let commitment = JoltBn254::multi_pair(&row_commitments, &state.setup.g2_vec()[..row_commitments.len()]);
+        //     (DoryCommitment(commitment), row_commitments)
+        // } else {
+        //     let T = DoryGlobals::get_T();
+        //     // Pad row commitments since we don't pad streamed trace.
+        //     let row_pad_count = T/DoryGlobals::get_num_columns() - state.row_commitments.len();
+        //     state.row_commitments.extend(vec![JoltG1Wrapper::identity(); row_pad_count]);
+        //     let commitment = JoltBn254::multi_pair(&state.row_commitments, &state.setup.g2_vec()[..state.row_commitments.len()]);
+        //     (DoryCommitment(commitment), state.row_commitments)
+        // }
     }
 }
 

@@ -132,12 +132,13 @@ where
     for<'a> Self::State<'a>: StreamingProcessChunk<StreamingCompactWitness<i64, Self::Field>>,
     for<'a> Self::State<'a>: StreamingProcessChunk<StreamingOneHotWitness<Self::Field>>,
 {
-    type State<'a>; // : Clone + Debug;
+    type State<'a>: Sync;
+    type ChunkState: Send;
 
     fn initialize<'a>(poly: Multilinear, size: usize, setup: &'a Self::ProverSetup) -> Self::State<'a>;
     fn process<'a>(poly: Multilinear, state: Self::State<'a>, eval: Self::Field) -> Self::State<'a>;
-    fn process_chunk<'a, T>(state: Self::State<'a>, chunk: &[T]) -> Self::State<'a> where Self::State<'a>: StreamingProcessChunk<T>;
-    fn finalize<'a>(state: Self::State<'a>) -> (Self::Commitment, Self::OpeningProofHint);
+    fn process_chunk<'a, T>(state: &Self::State<'a>, chunk: &[T]) -> Self::ChunkState where Self::State<'a>: StreamingProcessChunk<T>;
+    fn finalize<'a>(state: Self::State<'a>, chunks: &[Self::ChunkState]) -> (Self::Commitment, Self::OpeningProofHint);
 }
 
 /// This trait abstraction allows us to use the optimized version of MSMs for small scalars.

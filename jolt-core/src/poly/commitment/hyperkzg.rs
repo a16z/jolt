@@ -564,6 +564,7 @@ where
     <P as Pairing>::ScalarField: JoltField,
 {
     type State<'a> = HyperKZGState<'a, P>;
+    type ChunkState = ();
 
     fn initialize<'a>(_poly: Multilinear, size: usize, setup: &'a Self::ProverSetup) -> Self::State<'a> {
         assert!(
@@ -605,11 +606,11 @@ where
         state
     }
 
-    fn process_chunk<'a, T>(state: Self::State<'a>, chunk: &[T]) -> Self::State<'a> {
+    fn process_chunk<'a, T>(_state: &Self::State<'a>, _chunk: &[T]) -> Self::ChunkState where Self::State<'a>: StreamingProcessChunk<T> {
         todo!("Processing chunks is not implemented for HyperKZG yet.")
     }
 
-    fn finalize<'a>(state: Self::State<'a>) -> (Self::Commitment, Self::OpeningProofHint) {
+    fn finalize<'a>(state: Self::State<'a>, _chunks: &[Self::ChunkState]) -> (Self::Commitment, Self::OpeningProofHint) {
         (HyperKZGCommitment(state.acc.into()), ())
     }
 }
@@ -776,7 +777,7 @@ mod tests {
             for p in poly_raw {
                 state = HyperKZG::process(poly, state, p);
             }
-            let C2 = HyperKZG::finalize(state).0;
+            let C2 = HyperKZG::finalize(state, &[]).0;
             assert_eq!(
                 C, C2,
                 "Streaming commitment did not match non-streaming commitment"
