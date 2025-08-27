@@ -211,13 +211,14 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
             let B = &shared_eq.B;
             let d_gruen = &shared_eq.D;
             let eq_r_address_claim = B.final_sumcheck_claim();
+            let H = &polynomial.H.read().unwrap();
 
             // Retrieve ra(j , r') for first round using F, and H otherwise
             let ra_eval = |j: usize| -> F {
                 if round == polynomial.K.log_2() {
                     polynomial.nonzero_indices[j].map_or(F::zero(), |k| shared_eq.F[k])
                 } else {
-                    polynomial.H.read().unwrap().as_ref().unwrap().Z[j]
+                    H.as_ref().unwrap().Z[j]
                 }
             };
 
