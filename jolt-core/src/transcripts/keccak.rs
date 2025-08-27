@@ -212,6 +212,11 @@ impl Transcript for KeccakTranscript {
         buf = buf.into_iter().rev().collect();
         F::from_bytes(&buf)
     }
+    fn challenge_vector_u128(&mut self, len: usize) -> Vec<u128> {
+        (0..len)
+            .map(|_| self.challenge_u128())
+            .collect::<Vec<u128>>()
+    }
 
     fn challenge_vector<F: JoltField>(&mut self, len: usize) -> Vec<F> {
         (0..len)

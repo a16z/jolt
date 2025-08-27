@@ -5,6 +5,8 @@ use jolt_core::subprotocols::shout::core_shout_piop_d_greater_one::{
     prove_generic_core_shout_pip_d_greater_than_one,
     prove_generic_core_shout_pip_d_greater_than_one_with_gruen,
 };
+use jolt_core::subprotocols::shout::core_shout_piop_d_is_one::prove_generic_core_shout_piop_d_is_one_w_gruen;
+use jolt_core::subprotocols::shout::core_shout_piop_d_is_one_small_binding::prove_generic_core_shout_piop_d_is_one_w_gruen_small;
 use jolt_core::transcripts::Blake2bTranscript;
 use jolt_core::transcripts::Transcript;
 use rand_core::RngCore;
@@ -12,7 +14,7 @@ use std::time::Instant;
 
 fn main() {
     // ------- PROBLEM SETUP ----------------------
-    const K: usize = 64;
+    const K: usize = 1 << 10;
     const T: usize = 1 << 22;
     const D: usize = 2;
 
@@ -68,6 +70,48 @@ fn main() {
     println!(
         "{} \nGruen Optimisaton- Execution time: {}",
         final_opening,
+        duration.as_millis()
+    );
+
+    let mut prover_transcript = Blake2bTranscript::new(b"test_transcript");
+    let start = Instant::now();
+    let (
+        _sumcheck_proof,
+        _verifier_challenges,
+        sumcheck_claim,
+        _ra_address_time_claim,
+        _val_tau_claim,
+        _eq_rcycle_rtime_claim,
+    ) = prove_generic_core_shout_piop_d_is_one_w_gruen(
+        lookup_table.clone(),
+        read_addresses.clone(),
+        &mut prover_transcript,
+    );
+    let duration = start.elapsed();
+    println!(
+        "{} \nGruen Optimisaton (d is one)- Execution time: {}",
+        sumcheck_claim,
+        duration.as_millis()
+    );
+
+    let mut prover_transcript = Blake2bTranscript::new(b"test_transcript");
+    let start = Instant::now();
+    let (
+        _sumcheck_proof,
+        _verifier_challenges,
+        sumcheck_claim,
+        _ra_address_time_claim,
+        _val_tau_claim,
+        _eq_rcycle_rtime_claim,
+    ) = prove_generic_core_shout_piop_d_is_one_w_gruen_small(
+        lookup_table,
+        read_addresses,
+        &mut prover_transcript,
+    );
+    let duration = start.elapsed();
+    println!(
+        "{} \nGruen Optimisaton (d is one, small binding)- Execution time: {}",
+        sumcheck_claim,
         duration.as_millis()
     );
 }

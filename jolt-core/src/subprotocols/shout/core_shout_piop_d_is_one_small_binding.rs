@@ -25,7 +25,7 @@ use std::{cell::RefCell, rc::Rc};
 /// Implements the sumcheck prover for the generic core Shout PIOP for d=1.
 /// See Figure 7 of https://eprint.iacr.org/2025/105
 /// This is a reference implementation without Gruen/Split Poly
-pub fn prove_generic_core_shout_pip<F: JoltField, ProofTranscript: Transcript>(
+pub fn prove_generic_core_shout_pip_small<F: JoltField, ProofTranscript: Transcript>(
     lookup_table: Vec<F>,
     read_addresses: Vec<usize>,
     transcript: &mut ProofTranscript,
@@ -187,7 +187,10 @@ pub fn prove_generic_core_shout_pip<F: JoltField, ProofTranscript: Transcript>(
 /// Implements the sumcheck prover for the generic core Shout PIOP for d=1.
 /// With Gruen And Split Poly Opts Included
 /// See Figure 7 of https://eprint.iacr.org/2025/105
-pub fn prove_generic_core_shout_piop_d_is_one_w_gruen<F: JoltField, ProofTranscript: Transcript>(
+pub fn prove_generic_core_shout_piop_d_is_one_w_gruen_small<
+    F: JoltField,
+    ProofTranscript: Transcript,
+>(
     lookup_table: Vec<F>,
     read_addresses: Vec<usize>,
     transcript: &mut ProofTranscript,
@@ -262,19 +265,20 @@ pub fn prove_generic_core_shout_piop_d_is_one_w_gruen<F: JoltField, ProofTranscr
         compressed_polys.push(compressed_poly);
 
         // Get challenge that binds the variable
-        let r_j = transcript.challenge_scalar::<F>();
-        r_address.push(r_j);
-
-        previous_claim = univariate_poly.evaluate(&r_j);
+        let r_j = transcript.challenge_u128();
+        // TODO CHANGE THIS
+        let big_rj = F::from_u128(r_j);
+        r_address.push(big_rj);
+        previous_claim = univariate_poly.evaluate(&big_rj);
 
         rayon::join(
-            || ra.bind_parallel(r_j, BindingOrder::LowToHigh),
-            || val.bind_parallel(r_j, BindingOrder::LowToHigh),
+            || ra.bind_small_scalar_parallel(r_j, BindingOrder::LowToHigh),
+            || val.bind_small_scalar_parallel(r_j, BindingOrder::LowToHigh),
         );
     }
     let duration = start.elapsed();
     println!(
-        "\n Large (d is one, Gruen Opts)- Execution time: {}",
+        "\n Sum-check time (d is one, small binding)- Execution time: {}",
         duration.as_nanos()
     );
 
@@ -398,8 +402,8 @@ mod tests {
 
     use super::*;
     use crate::transcripts::Blake2bTranscript;
-    //use ark_bn254::Fr;
-    use crate::field::tracked_ark::TrackedFr as Fr;
+    use ark_bn254::Fr;
+    //use crate::field::tracked_ark::TrackedFr as Fr;
     use ark_ff::UniformRand;
     use ark_ff::{One, Zero}; // often from ark_ff, depending on your setup
     use ark_std::rand::{rngs::StdRng, SeedableRng};
@@ -407,7 +411,7 @@ mod tests {
     use rand_core::RngCore;
 
     #[test]
-    fn test_core_shout_generic_d_is_one() {
+    fn test_core_shout_generic_d_is_one_small_binding() {
         //------- PROBLEM SETUP----------------------
         const TABLE_SIZE: usize = 64; // 2**6
         const NUM_LOOKUPS: usize = 1 << 16; // 2**10
@@ -449,7 +453,7 @@ mod tests {
             _ra_address_time_claim,
             _val_tau_claim,
             _eq_rcycle_rtime_claim,
-        ) = prove_generic_core_shout_pip(
+        ) = prove_generic_core_shout_pip_small(
             lookup_table.clone(),
             read_addresses.clone(),
             &mut prover_transcript,
@@ -465,7 +469,7 @@ mod tests {
             ra_address_time_claim,
             val_tau_claim,
             eq_rcycle_rtime_claim,
-        ) = prove_generic_core_shout_piop_d_is_one_w_gruen(
+        ) = prove_generic_core_shout_piop_d_is_one_w_gruen_small(
             lookup_table,
             read_addresses,
             &mut prover_transcript,

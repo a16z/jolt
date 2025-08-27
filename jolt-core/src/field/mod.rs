@@ -86,6 +86,8 @@ pub trait JoltField:
     }
 
     // Here n is already in montgormery form,
+    // This is a dummy implementation
+    // that gets overwritten by the ark-implementation
     #[inline(always)]
     fn mul_u128_mont_form(&self, n: u128) -> Self {
         *self * Self::from_u128(n)

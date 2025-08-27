@@ -7,6 +7,7 @@ use blake2::{Blake2b, Digest};
 
 type Blake2b256 = Blake2b<U32>;
 use std::borrow::Borrow;
+use std::u128;
 
 /// Represents the current state of the protocol's Fiat-Shamir transcript using Blake2b.
 #[derive(Default, Clone)]
@@ -215,6 +216,11 @@ impl Transcript for Blake2bTranscript {
         F::from_bytes(&buf)
     }
 
+    fn challenge_vector_u128(&mut self, len: usize) -> Vec<u128> {
+        (0..len)
+            .map(|_| self.challenge_u128())
+            .collect::<Vec<u128>>()
+    }
     fn challenge_vector<F: JoltField>(&mut self, len: usize) -> Vec<F> {
         (0..len)
             .map(|_i| self.challenge_scalar())
