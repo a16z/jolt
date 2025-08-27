@@ -177,6 +177,10 @@ pub fn uninterleave_bits(val: u64) -> (u32, u32) {
     (x_bits as u32, y_bits as u32)
 }
 
+pub fn transpose<T>(v: Vec<Vec<T>>) -> Vec<Vec<T>> {
+    todo!()
+}
+
 /// Combines two 32-bit values into a single 64-bit value by interleaving their bits.
 /// Takes even bits from the first argument and odd bits from the second argument.
 ///
