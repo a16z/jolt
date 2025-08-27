@@ -28,6 +28,6 @@ pub fn init_inlines() -> Result<(), String> {
 #[ctor::ctor]
 fn auto_register() {
     if let Err(e) = init_inlines() {
-        tracing::error!("Failed to register SHA256 inlines: {e}");
+        eprintln!("Failed to register SHA256 inlines: {e}");
     }
 }
