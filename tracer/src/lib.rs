@@ -242,6 +242,28 @@ impl Iterator for LazyTraceIterator {
     }
 }
 
+/// TODO
+pub struct ChunksWithPeek<I> {
+    chunk_size: usize,
+    iter: I,
+}
+
+pub trait ChunkWithPeekIterator: Iterator + Sized {
+    fn chunks_with_peek(self, size: usize) -> ChunksWithPeek<Self> {
+        todo!()
+    }
+}
+
+impl<I: Iterator + Sized> ChunkWithPeekIterator for I { }
+
+impl<I:Iterator> Iterator for ChunksWithPeek<I> {
+    type Item = Vec<I::Item>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        todo!()
+    }
+}
+
 #[tracing::instrument(skip_all)]
 pub fn decode(elf: &[u8]) -> (Vec<RV32IMInstruction>, Vec<(u64, u8)>) {
     let obj = object::File::parse(elf).unwrap();
