@@ -67,7 +67,6 @@ where
 
             // TODO: Check if this is the fastest way forward.
             MultilinearPolynomial::I64Scalars(poly) => {
-                // Validate input sizes before doing any heavy work.
                 if bases.len() != poly.coeffs.len() {
                     return Err(ProofVerifyError::KeyLengthError(
                         bases.len(),
@@ -91,7 +90,6 @@ where
                                 pos_s.push(scalar as u64);
                                 pos_b.push(*base);
                             } else if scalar < 0 {
-                                // Use unsigned_abs to safely handle i64::MIN without overflow.
                                 neg_s.push(scalar.unsigned_abs());
                                 neg_b.push(*base);
                             }
