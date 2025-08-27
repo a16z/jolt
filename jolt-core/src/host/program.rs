@@ -18,6 +18,7 @@ use std::str::FromStr;
 use std::{fs, io};
 use tracer::emulator::memory::Memory;
 use tracer::instruction::{RV32IMCycle, RV32IMInstruction};
+use tracing::info;
 
 impl Program {
     pub fn new(guest: &str) -> Self {
@@ -144,6 +145,9 @@ impl Program {
                 target_triple,
             ];
 
+            let cmd_line = compose_command_line("cargo", &envs, &args);
+            info!("\n{cmd_line}");
+
             let output = Command::new("cargo")
                 .envs(envs.clone())
                 .args(args)
@@ -152,7 +156,6 @@ impl Program {
 
             if !output.status.success() {
                 io::stderr().write_all(&output.stderr).unwrap();
-                let cmd_line = compose_command_line("cargo", &envs, &args);
                 let output_msg = format!("::build command: \n{cmd_line}\n");
                 io::stderr().write_all(output_msg.as_bytes()).unwrap();
                 panic!("failed to compile guest");
