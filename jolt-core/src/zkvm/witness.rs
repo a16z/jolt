@@ -11,7 +11,7 @@ use tracer::instruction::RV32IMCycle;
 use crate::{
     field::JoltField,
     poly::{
-        commitment::commitment_scheme::{CommitmentScheme, StreamingCommitmentScheme, StreamingProcessChunk},
+        commitment::commitment_scheme::{CommitmentScheme, StreamingCommitmentScheme, StreamingCommitmentScheme_, StreamingProcessChunk},
         compact_polynomial::StreamingCompactWitness,
         multilinear_polynomial::{Multilinear, MultilinearPolynomial, StreamingWitness},
         one_hot_polynomial::{OneHotPolynomial, StreamingOneHotWitness},
@@ -698,15 +698,18 @@ impl CommittedPolynomial {
         }
     }
 
-    pub fn generate_witness_and_commit_row<'a, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>>(
+    pub fn generate_witness_and_commit_row<'a, F: JoltField, PCS>(
         &self,
         pcs: &PCS::State<'a>,
         preprocessing: &'a JoltProverPreprocessing<F, PCS>,
         row_cycles: &[RV32IMCycle],
         ram_d: usize,
-    ) -> PCS::ChunkState {
+    ) -> PCS::ChunkState
+    where 
+        PCS: StreamingCommitmentScheme<Field = F>
+    {
         #[inline(always)]
-        fn helper<'a, T: StreamWitness<F>, F: JoltField, PCS: StreamingCommitmentScheme<Field = F>>(
+        fn helper<'a, T: StreamWitness<F>, F: JoltField, PCS>(
             witness_type: T,
             pcs: &PCS::State<'a>,
             preprocessing: &'a JoltProverPreprocessing<F, PCS>,
@@ -714,7 +717,7 @@ impl CommittedPolynomial {
             ram_d: usize,
         ) -> PCS::ChunkState
         where
-            PCS::State<'a>: StreamingProcessChunk<T::WitnessType>,
+            PCS: StreamingCommitmentScheme_<Field = F> + StreamingProcessChunk<T::WitnessType>,
         {
             let row: Vec<_> = (0..row_cycles.len())
                 // .par_iter() TODO: Parallelize?
@@ -724,7 +727,7 @@ impl CommittedPolynomial {
                     witness_type.generate_streaming_witness(preprocessing, &cycle, &next_cycle, ram_d)
                 })
                 .collect();
-            PCS::process_chunk(pcs, &row)
+            PCS::process_chunk_t(pcs, &row)
         }
         match self {
             CommittedPolynomial::LeftInstructionInput => {
