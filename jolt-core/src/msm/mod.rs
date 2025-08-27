@@ -67,6 +67,14 @@ where
 
             // TODO: Check if this is the fastest way forward.
             MultilinearPolynomial::I64Scalars(poly) => {
+                // Validate input sizes before doing any heavy work.
+                if bases.len() != poly.coeffs.len() {
+                    return Err(ProofVerifyError::KeyLengthError(
+                        bases.len(),
+                        poly.coeffs.len(),
+                    ));
+                }
+
                 let scalars = &poly.coeffs;
                 let (pos_scalars, pos_bases, neg_scalars, neg_bases): (
                     Vec<u64>,
@@ -83,7 +91,8 @@ where
                                 pos_s.push(scalar as u64);
                                 pos_b.push(*base);
                             } else if scalar < 0 {
-                                neg_s.push((-scalar) as u64);
+                                // Use unsigned_abs to safely handle i64::MIN without overflow.
+                                neg_s.push(scalar.unsigned_abs());
                                 neg_b.push(*base);
                             }
                             (pos_s, pos_b, neg_s, neg_b)
@@ -99,15 +108,9 @@ where
                             (ps1, pb1, ns1, nb1)
                         },
                     );
-                (bases.len() == poly.coeffs.len())
-                    .then(|| {
-                        msm_u64::<Self>(&pos_bases, &pos_scalars, false)
-                            - msm_u64::<Self>(&neg_bases, &neg_scalars, false)
-                    })
-                    .ok_or(ProofVerifyError::KeyLengthError(
-                        bases.len(),
-                        poly.coeffs.len(),
-                    ))
+
+                Ok(msm_u64::<Self>(&pos_bases, &pos_scalars, false)
+                    - msm_u64::<Self>(&neg_bases, &neg_scalars, false))
             }
             _ => unimplemented!("This variant of MultilinearPolynomial is not yet handled"),
         }
