@@ -14,6 +14,7 @@
     - [Architecture overview](./how/architecture/architecture.md)
         - [RISC-V emulation](./how/architecture/emulation.md)
         - [R1CS constraints](./how/architecture/r1cs_constraints.md)
+            - [Spartan](./how/architecture/spartan.md)
         - [Registers](./how/architecture/registers.md)
         - [RAM](./how/architecture/ram.md)
         - [Instruction execution](./how/architecture/instruction_execution.md)
