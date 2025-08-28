@@ -995,14 +995,16 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                         }
                         current_output_idx_in_slice += 1;
                     }
-                    if cz_coeff != (None, None) {
-                        let (low, high) = (
-                            cz_coeff.0.unwrap_or(F::zero()),
-                            cz_coeff.1.unwrap_or(F::zero()),
-                        );
-                        output_slice_for_task[current_output_idx_in_slice] =
-                            (3 * new_block_idx + 2, low + r_i * (high - low)).into();
-                        current_output_idx_in_slice += 1;
+                    // Only include Cz when the underlying constraint's Cz is marked NonZero
+                    let constraint_idx_in_step =
+                        (block_idx_for_6_coeffs % self.padded_num_constraints) % UNIFORM_R1CS.len();
+                    if matches!(UNIFORM_R1CS[constraint_idx_in_step].cz, CzKind::NonZero) {
+                        if !cz0.is_zero() || !cz1.is_zero() {
+                            let bound_cz = cz0 + r_i * (cz1 - cz0);
+                            output_slice_for_task[current_output_idx_in_slice] =
+                                (3 * new_block_idx + 2, bound_cz).into();
+                            current_output_idx_in_slice += 1;
+                        }
                     }
                 }
                 debug_assert_eq!(
