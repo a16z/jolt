@@ -29,8 +29,8 @@ use crate::{
 
 use super::instruction::{CircuitFlags, InstructionFlags, LookupQuery};
 
-struct SharedWitnessData(UnsafeCell<WitnessData>);
-unsafe impl Sync for SharedWitnessData {}
+struct SharedWitnessData<F: JoltField>(UnsafeCell<WitnessData<F>>);
+unsafe impl<F: JoltField> Sync for SharedWitnessData<F> {}
 
 /// K^{1/d}
 pub const DTH_ROOT_OF_K: usize = 1 << 8;
@@ -86,11 +86,11 @@ pub enum CommittedPolynomial {
 
 pub static mut ALL_COMMITTED_POLYNOMIALS: OnceCell<Vec<CommittedPolynomial>> = OnceCell::new();
 
-struct WitnessData {
+struct WitnessData<F: JoltField> {
     // Simple polynomial coefficients
     left_instruction_input: Vec<u64>,
     right_instruction_input: Vec<i128>,
-    product: Vec<u128>,
+    product: Vec<F>,
     write_lookup_output_to_rd: Vec<u8>,
     write_pc_to_rd: Vec<u8>,
     should_branch: Vec<u8>,
@@ -105,15 +105,15 @@ struct WitnessData {
     ram_ra: Vec<Vec<Option<usize>>>,
 }
 
-unsafe impl Send for WitnessData {}
-unsafe impl Sync for WitnessData {}
+unsafe impl<F: JoltField> Send for WitnessData<F> {}
+unsafe impl<F: JoltField> Sync for WitnessData<F> {}
 
-impl WitnessData {
+impl<F: JoltField> WitnessData<F> {
     fn new(trace_len: usize, ram_d: usize, bytecode_d: usize) -> Self {
         Self {
             left_instruction_input: vec![0; trace_len],
             right_instruction_input: vec![0; trace_len],
-            product: vec![0; trace_len],
+            product: vec![F::zero(); trace_len],
             write_lookup_output_to_rd: vec![0; trace_len],
             write_pc_to_rd: vec![0; trace_len],
             should_branch: vec![0; trace_len],
@@ -309,7 +309,7 @@ impl CommittedPolynomial {
 
                 batch_ref.left_instruction_input[i] = left;
                 batch_ref.right_instruction_input[i] = right;
-                batch_ref.product[i] = (left as u128) * (right as u64 as u128);
+                batch_ref.product[i] = F::from_u64(left) * F::from_i128(right);
 
                 batch_ref.write_lookup_output_to_rd[i] = rd_write_flag
                     * (circuit_flags[CircuitFlags::WriteLookupOutputToRD as usize] as u8);
@@ -487,12 +487,12 @@ impl CommittedPolynomial {
                 coeffs.into()
             }
             CommittedPolynomial::Product => {
-                let coeffs: Vec<u128> = trace
+                let coeffs: Vec<F> = trace
                     .par_iter()
                     .map(|cycle| {
                         let (left_input, right_input) =
                             LookupQuery::<XLEN>::to_instruction_inputs(cycle);
-                        left_input as u128 * (right_input as u64) as u128
+                        F::from_u64(left_input) * F::from_i128(right_input)
                     })
                     .collect();
                 coeffs.into()

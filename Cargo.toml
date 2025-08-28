@@ -25,6 +25,7 @@ members = [
     "jolt-core",
     "jolt-inlines/sha2",
     "jolt-inlines/keccak256",
+    "jolt-inlines/bigint",
     "tracer",
     "common",
     "jolt-platform",

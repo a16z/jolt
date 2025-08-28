@@ -1,0 +1,21 @@
+[package]
+name = "jolt-inlines-bigint"
+version = "0.1.0"
+edition = "2021"
+description = "BigInteger inline implementations for Jolt VM"
+
+[features]
+default = []
+host = ["dep:ctor", "dep:tracer", "dep:common"]
+
+[dependencies]
+ctor = { version = "0.2", optional = true }
+tracer = { path = "../../tracer", optional = true }
+common = { path = "../../common", optional = true }
+
+[dev-dependencies]
+hex-literal = "0.4.1"
+ark-ff = "0.5.0"
+rand = "0.8"
+tracer = { path = "../../tracer", features = ["test-utils"] }
+

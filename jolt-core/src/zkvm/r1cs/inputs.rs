@@ -371,9 +371,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> TraceWitnessAccessor<'a
             }
             JoltR1CSInputs::Product => {
                 let (left, right) = LookupQuery::<XLEN>::to_instruction_inputs(get(t));
-                let right_u64 = right as u64;
-                let prod = (left as u128) * (right_u64 as u128);
-                F::from_u128(prod)
+                F::from_u64(left) * F::from_i128(right)
             }
             JoltR1CSInputs::WriteLookupOutputToRD => {
                 let flag = get(t).instruction().circuit_flags()
@@ -562,6 +560,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> WitnessRowAccessor<F>
 
 /// Compute `z(r_cycle) = Σ_t eq(r_cycle, t) * P_i(t)` for all inputs i, without
 /// materializing P_i. Returns `[P_0(r_cycle), P_1(r_cycle), ...]` in input order.
+#[tracing::instrument(skip_all)]
 pub fn compute_claimed_witness_evals<F: JoltField>(
     r_cycle: &[F],
     accessor: &dyn WitnessRowAccessor<F>,
@@ -804,6 +803,7 @@ pub fn eval_bz_generic<F: JoltField>(
 
 /// Single-pass generation of UnexpandedPC(t), PC(t), and IsNoop(t) witnesses.
 /// Reduces traversals from three to one for stage-3 PC sumcheck inputs.
+#[tracing::instrument(skip_all)]
 pub fn generate_pc_noop_witnesses<F, PCS>(
     preprocessing: &JoltProverPreprocessing<F, PCS>,
     trace: &[RV32IMCycle],
