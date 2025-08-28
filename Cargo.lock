@@ -57,7 +57,7 @@ dependencies = [
 [[package]]
 name = "allocative"
 version = "0.3.4"
-source = "git+https://github.com/0xAndoroid/allocative?branch=fix%2Fimpl-for-u128#2353207248b2719951c628af6240f07d6958ec2d"
+source = "git+https://github.com/facebookexperimental/allocative?rev=85b773d85d526d068ce94724ff7a7b81203fc95e#85b773d85d526d068ce94724ff7a7b81203fc95e"
 dependencies = [
  "allocative_derive",
  "ctor 0.1.26",
@@ -66,7 +66,7 @@ dependencies = [
 [[package]]
 name = "allocative_derive"
 version = "0.3.3"
-source = "git+https://github.com/0xAndoroid/allocative?branch=fix%2Fimpl-for-u128#2353207248b2719951c628af6240f07d6958ec2d"
+source = "git+https://github.com/facebookexperimental/allocative?rev=85b773d85d526d068ce94724ff7a7b81203fc95e#85b773d85d526d068ce94724ff7a7b81203fc95e"
 dependencies = [
  "proc-macro2",
  "quote",
