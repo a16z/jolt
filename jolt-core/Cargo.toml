@@ -95,7 +95,7 @@ derive_more = { version = "2.0.1", features = ["from"] }
 paste = "1.0.15"
 dory = { git = "https://github.com/spaceandtimefdn/sxt-dory", branch = "feat/return_row_commitments" }
 lazy_static = "1.5.0"
-allocative = { git = "https://github.com/0xAndoroid/allocative", branch = "fix/impl-for-u128" }
+allocative = { git = "https://github.com/facebookexperimental/allocative", rev = "85b773d85d526d068ce94724ff7a7b81203fc95e" }
 inferno = { version = "0.12.3", optional = true }
 jolt-platform = { path = "../jolt-platform", features = ["std"] }
 sha2_inline = { package = "jolt-inlines-sha2", path = "../jolt-inlines/sha2", features = [
