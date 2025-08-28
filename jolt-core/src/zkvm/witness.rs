@@ -988,7 +988,7 @@ impl CommittedPolynomial {
         where
             PCS: StreamingCommitmentScheme_<Field = F> + StreamingProcessChunk<T::WitnessType>,
         {
-            let row: Vec<_> = (0..row_cycles.len())
+            let row: Vec<_> = (0..row_cycles.len()-1)
                 // .par_iter() TODO: Parallelize?
                 .map(|i| {
                     let cycle = row_cycles[i];

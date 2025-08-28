@@ -1260,8 +1260,6 @@ impl CommitmentScheme for DoryCommitmentScheme {
 pub struct StreamingDoryCommitment<'a, E: DoryPairing> {
     // Setup
     setup: &'a ProverSetup<E>,
-    // Pending row commitments.
-    row_commitments: Vec<E::G1>,
     // K (if a OneHot polynomial).
     K: Option<usize>,
 }
@@ -1295,7 +1293,7 @@ impl StreamingProcessChunk<StreamingDenseWitness<Fr>> for DoryCommitmentScheme {
                 .unwrap(),
         );
         
-        row_commitment
+        vec![row_commitment]
     }
 }
 impl StreamingProcessChunk<StreamingCompactWitness<u8, Fr>> for DoryCommitmentScheme {
@@ -1313,7 +1311,7 @@ impl StreamingProcessChunk<StreamingCompactWitness<u8, Fr>> for DoryCommitmentSc
                 .unwrap(),
         );
         
-        row_commitment
+        vec![row_commitment]
     }
 }
 impl StreamingProcessChunk<StreamingCompactWitness<u16, Fr>> for DoryCommitmentScheme {
@@ -1329,7 +1327,7 @@ impl StreamingProcessChunk<StreamingCompactWitness<u16, Fr>> for DoryCommitmentS
                 .unwrap(),
         );
         
-        row_commitment
+        vec![row_commitment]
     }
 }
 impl StreamingProcessChunk<StreamingCompactWitness<u32, Fr>> for DoryCommitmentScheme {
@@ -1345,7 +1343,7 @@ impl StreamingProcessChunk<StreamingCompactWitness<u32, Fr>> for DoryCommitmentS
                 .unwrap(),
         );
         
-        row_commitment
+        vec![row_commitment]
     }
 }
 impl StreamingProcessChunk<StreamingCompactWitness<u64, Fr>> for DoryCommitmentScheme {
@@ -1361,7 +1359,7 @@ impl StreamingProcessChunk<StreamingCompactWitness<u64, Fr>> for DoryCommitmentS
                 .unwrap(),
         );
         
-        row_commitment
+        vec![row_commitment]
     }
 }
 impl StreamingProcessChunk<StreamingCompactWitness<i64, Fr>> for DoryCommitmentScheme {
@@ -1381,7 +1379,7 @@ impl StreamingProcessChunk<StreamingCompactWitness<i64, Fr>> for DoryCommitmentS
                 .unwrap(),
         );
         
-        row_commitment
+        vec![row_commitment]
     }
 }
 impl StreamingProcessChunk<StreamingOneHotWitness<Fr>> for DoryCommitmentScheme {
@@ -1410,34 +1408,27 @@ impl StreamingProcessChunk<StreamingOneHotWitness<Fr>> for DoryCommitmentScheme 
         }
 
 
-        // row_commitments // TODO
-        todo!()
+        row_commitments
     }
 }
 
 
 impl StreamingCommitmentScheme_ for DoryCommitmentScheme {
     type State<'a> = StreamingDoryCommitment<'a, JoltBn254>;
-    type ChunkState = JoltG1Wrapper; // A chunk's state is the commitment to the row.
+    type ChunkState = Vec<JoltG1Wrapper>; // A chunk's state is the commitment to the row.
 
     fn initialize<'a>(ty: Multilinear, _size: usize, setup: &'a Self::ProverSetup) -> Self::State<'a> {
         let sigma = DoryGlobals::get_num_columns().log_2();
         match ty {
             Multilinear::OneHot{K} => {
-                let num_rows = (1 << sigma) * K;
-                let row_commitments = Vec::with_capacity(num_rows);
                 StreamingDoryCommitment {
                     setup,
-                    row_commitments,
                     K: Some(K),
                 }
             }
             _ => {
-                let num_rows = 1 << sigma;
-                let row_commitments = Vec::with_capacity(num_rows);
                 StreamingDoryCommitment {
                     setup,
-                    row_commitments,
                     K: None,
                 }
             }
@@ -1460,9 +1451,7 @@ impl StreamingCommitmentScheme_ for DoryCommitmentScheme {
     }
 
     fn finalize<'a>(mut state: Self::State<'a>, chunks: &[Self::ChunkState]) -> (Self::Commitment, Self::OpeningProofHint) {
-        todo!()
-        
-        // if let Some(K) = state.K {
+        if let Some(K) = state.K {
         //     let T = DoryGlobals::get_T();
         //     let row_len = DoryGlobals::get_num_columns();
         //     let rows_per_k = T / row_len;
@@ -1493,16 +1482,33 @@ impl StreamingCommitmentScheme_ for DoryCommitmentScheme {
         //         state.row_commitments[j]
         //     }).collect();
 
-        //     let commitment = JoltBn254::multi_pair(&row_commitments, &state.setup.g2_vec()[..row_commitments.len()]);
-        //     (DoryCommitment(commitment), row_commitments)
-        // } else {
-        //     let T = DoryGlobals::get_T();
-        //     // Pad row commitments since we don't pad streamed trace.
-        //     let row_pad_count = T/DoryGlobals::get_num_columns() - state.row_commitments.len();
-        //     state.row_commitments.extend(vec![JoltG1Wrapper::identity(); row_pad_count]);
-        //     let commitment = JoltBn254::multi_pair(&state.row_commitments, &state.setup.g2_vec()[..state.row_commitments.len()]);
-        //     (DoryCommitment(commitment), state.row_commitments)
-        // }
+            let row_len = DoryGlobals::get_num_columns();
+            let T = DoryGlobals::get_T();
+            let rows_per_k = T / row_len;
+
+            let num_rows = K * T / row_len;
+
+            let mut row_commitments = vec![JoltGroupWrapper(G1Projective::zero()); num_rows];
+            for (chunk_index, commitments) in chunks.iter().enumerate() {
+                row_commitments
+                    .par_iter_mut()
+                    .skip(chunk_index)
+                    .step_by(rows_per_k)
+                    .zip(commitments.into_par_iter())
+                    .for_each(|(dest, src)| *dest = *src);
+            }
+
+            let commitment = JoltBn254::multi_pair(&row_commitments, &state.setup.g2_vec()[..row_commitments.len()]);
+            (DoryCommitment(commitment), row_commitments)
+        } else {
+            let T = DoryGlobals::get_T();
+            let mut row_commitments: Vec<_> = chunks.into_par_iter().map(|r| r[0]).collect();
+            // Pad row commitments since we don't pad streamed trace.
+            let row_pad_count = T/DoryGlobals::get_num_columns() - row_commitments.len();
+            row_commitments.extend(vec![JoltG1Wrapper::identity(); row_pad_count]);
+            let commitment = JoltBn254::multi_pair(&row_commitments, &state.setup.g2_vec()[..row_commitments.len()]);
+            (DoryCommitment(commitment), row_commitments)
+        }
     }
 }
 
