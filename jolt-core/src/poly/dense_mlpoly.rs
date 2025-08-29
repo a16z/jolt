@@ -448,6 +448,12 @@ impl<F: JoltField> DensePolynomial<F> {
                             MultilinearPolynomial::I64Scalars(p) => {
                                 acc += p.coeffs[i].field_mul(*coeff);
                             }
+                            MultilinearPolynomial::U128Scalars(p) => {
+                                acc += p.coeffs[i].field_mul(*coeff);
+                            }
+                            MultilinearPolynomial::I128Scalars(p) => {
+                                acc += p.coeffs[i].field_mul(*coeff);
+                            }
                             _ => unreachable!(),
                         }
                     }

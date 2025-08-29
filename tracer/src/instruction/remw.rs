@@ -1,14 +1,28 @@
-use super::{
-    format::{format_r::FormatR, InstructionFormat},
-    RISCVInstruction, RISCVTrace,
-};
-use crate::{declare_riscv_instr, emulator::cpu::Cpu};
+use crate::instruction::addw::ADDW;
+use crate::instruction::srai::SRAI;
+use crate::instruction::sub::SUB;
+use crate::instruction::virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder;
+use crate::instruction::xor::XOR;
+use crate::utils::virtual_registers::allocate_virtual_register;
+use crate::{instruction::mulw::MULW, utils::inline_helpers::InstrAssembler};
 use serde::{Deserialize, Serialize};
+
+use crate::{
+    declare_riscv_instr,
+    emulator::cpu::{Cpu, Xlen},
+};
+
+use super::{
+    format::format_r::FormatR, virtual_advice::VirtualAdvice, virtual_assert_eq::VirtualAssertEQ,
+    virtual_assert_valid_div0::VirtualAssertValidDiv0,
+    virtual_change_divisor_w::VirtualChangeDivisorW, virtual_sign_extend::VirtualSignExtend,
+    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
+};
 
 declare_riscv_instr!(
     name   = REMW,
     mask   = 0xfe00707f,
-    match  = 0x1e00003b,
+    match  = 0x200603b,
     format = FormatR,
     ram    = ()
 );
@@ -29,4 +43,94 @@ impl REMW {
         }) as i64;
     }
 }
-impl RISCVTrace for REMW {}
+
+impl RISCVTrace for REMW {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
+        // REMW operands
+        let x = cpu.x[self.operands.rs1 as usize] as i32;
+        let y = cpu.x[self.operands.rs2 as usize] as i32;
+
+        let (quotient, remainder) = match cpu.xlen {
+            Xlen::Bit32 => {
+                panic!("REMW is invalid in 32b mode");
+            }
+            Xlen::Bit64 => {
+                if y == 0 {
+                    (-1i32, x.unsigned_abs())
+                } else if y == -1 && x == i32::MIN {
+                    (i32::MIN, 0) //overflow
+                } else {
+                    let quotient = x / y;
+                    let remainder = x % y;
+                    (quotient, remainder.unsigned_abs())
+                }
+            }
+        };
+
+        let mut inline_sequence = self.inline_sequence(cpu.xlen);
+        if let RV32IMInstruction::VirtualAdvice(instr) = &mut inline_sequence[0] {
+            instr.advice = quotient as u64;
+        } else {
+            panic!("Expected Advice instruction");
+        }
+        if let RV32IMInstruction::VirtualAdvice(instr) = &mut inline_sequence[1] {
+            instr.advice = remainder as u64;
+        } else {
+            panic!("Expected Advice instruction");
+        }
+
+        let mut trace = trace;
+        for instr in inline_sequence {
+            // In each iteration, create a new Option containing a re-borrowed reference
+            instr.trace(cpu, trace.as_deref_mut());
+        }
+    }
+
+    fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
+        let a0 = self.operands.rs1; // dividend
+        let a1 = self.operands.rs2; // divisor
+        let a2 = allocate_virtual_register(); // quotient from oracle (untrusted)
+        let a3 = allocate_virtual_register(); // |remainder| from oracle (unsigned)
+        let t0 = allocate_virtual_register();
+        let t1 = allocate_virtual_register();
+        let t2 = allocate_virtual_register();
+        let t3 = allocate_virtual_register();
+        let t4 = allocate_virtual_register();
+        let t5 = allocate_virtual_register();
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
+
+        // get advice
+        asm.emit_j::<VirtualAdvice>(*a2, 0);
+        asm.emit_j::<VirtualAdvice>(*a3, 0);
+
+        // sign-extend inputs to 32-bit values
+        asm.emit_i::<VirtualSignExtend>(*t4, a0, 0); // sign-extended dividend
+        asm.emit_i::<VirtualSignExtend>(*t5, a1, 0); // sign-extended divisor
+
+        // handle special cases
+        asm.emit_b::<VirtualAssertValidDiv0>(*t5, *a2, 0);
+        asm.emit_r::<VirtualChangeDivisorW>(*t0, *t4, *t5); // handles MIN_INT32/-1
+
+        // compute quotient * divisor (no overflow check needed for remainder!)
+        asm.emit_r::<MULW>(*t1, *a2, *t0); // 32-bit multiply
+
+        // construct signed remainder (apply dividend's sign to |remainder|)
+        asm.emit_i::<SRAI>(*t2, *t4, 31); // sign of 32-bit dividend
+        asm.emit_r::<XOR>(*t3, *a3, *t2);
+        asm.emit_r::<SUB>(*t3, *t3, *t2);
+
+        // verify quotient * divisor + remainder == dividend (in 32-bit space)
+        asm.emit_r::<ADDW>(*t1, *t1, *t3);
+        asm.emit_b::<VirtualAssertEQ>(*t1, *t4, 0);
+
+        // check |remainder| < |divisor|
+        asm.emit_i::<SRAI>(*t2, *t0, 31);
+        asm.emit_r::<XOR>(*t1, *t0, *t2);
+        asm.emit_r::<SUB>(*t1, *t1, *t2);
+        asm.emit_b::<VirtualAssertValidUnsignedRemainder>(*a3, *t1, 0);
+
+        // sign-extend remainder result
+        asm.emit_i::<VirtualSignExtend>(self.operands.rd, *t3, 0);
+        asm.finalize()
+    }
+}

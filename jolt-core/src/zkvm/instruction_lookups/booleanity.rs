@@ -1,6 +1,7 @@
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
+use common::constants::XLEN;
 use rayon::prelude::*;
 use std::{cell::RefCell, rc::Rc};
 use tracer::instruction::RV32IMCycle;
@@ -125,8 +126,8 @@ impl<F: JoltField> BooleanityProverState<F> {
             trace
                 .par_iter()
                 .map(|cycle| {
-                    let lookup_index = LookupQuery::<32>::to_lookup_index(cycle);
-                    ((lookup_index >> (LOG_K_CHUNK * (D - 1 - i))) % K_CHUNK as u64) as usize
+                    let lookup_index = LookupQuery::<XLEN>::to_lookup_index(cycle);
+                    ((lookup_index >> (LOG_K_CHUNK * (D - 1 - i))) % K_CHUNK as u128) as usize
                 })
                 .collect()
         });

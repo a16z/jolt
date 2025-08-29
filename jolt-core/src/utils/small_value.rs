@@ -1,6 +1,6 @@
 // Small Value Optimization (SVO) helpers for Spartan first sum-check
 
-use crate::field::{JoltField, OptimizedMulI128};
+use crate::field::JoltField;
 
 /// Number of rounds to use for small value optimization.
 /// Testing & estimation shows that 3 rounds is the best tradeoff
@@ -243,12 +243,19 @@ pub mod svo_helpers {
     }
 
     pub fn compute_and_update_tA_inplace_generic<const NUM_SVO_ROUNDS: usize, F: JoltField>(
-        binary_az_evals: &[i128],
-        binary_bz_evals: &[i128],
+        binary_az_evals: &[F],
+        binary_bz_evals: &[F],
         e_in_val: &F,
         temp_tA: &mut [F],
     ) {
         match NUM_SVO_ROUNDS {
+            0 => {
+                // No SVO rounds to process, temp_tA should be empty
+                debug_assert!(
+                    temp_tA.is_empty(),
+                    "temp_tA should be empty for 0 SVO rounds"
+                );
+            }
             1 => {
                 compute_and_update_tA_inplace_1(binary_az_evals, binary_bz_evals, e_in_val, temp_tA)
             }
@@ -277,8 +284,8 @@ pub mod svo_helpers {
     /// temp_tA[infty] += e_in_val * (az[1] - az[0]) * (bz[1] - bz[0])
     #[inline]
     pub fn compute_and_update_tA_inplace_1<F: JoltField>(
-        binary_az_evals: &[i128],
-        binary_bz_evals: &[i128],
+        binary_az_evals: &[F],
+        binary_bz_evals: &[F],
         e_in_val: &F,
         temp_tA: &mut [F],
     ) {
@@ -286,13 +293,10 @@ pub mod svo_helpers {
         debug_assert!(binary_bz_evals.len() == 2);
         debug_assert!(temp_tA.len() == 1);
         let az_I = binary_az_evals[1] - binary_az_evals[0];
-        if az_I != 0 {
+        if az_I != F::zero() {
             let bz_I = binary_bz_evals[1] - binary_bz_evals[0];
-            if bz_I != 0 {
-                let product_i128 = az_I
-                    .checked_mul(bz_I)
-                    .expect("Az_I*Bz_I product overflow i128");
-                temp_tA[0] += e_in_val.mul_i128(product_i128);
+            if bz_I != F::zero() {
+                temp_tA[0] += *e_in_val * az_I * bz_I;
             }
         }
     }
@@ -309,8 +313,8 @@ pub mod svo_helpers {
     /// temp_tA[∞,∞] += e_in_val * (az[1,∞] - az[0,∞]) * (bz[1,∞] - bz[0,∞])
     #[inline]
     pub fn compute_and_update_tA_inplace_2<F: JoltField>(
-        binary_az_evals: &[i128],
-        binary_bz_evals: &[i128],
+        binary_az_evals: &[F],
+        binary_bz_evals: &[F],
         e_in_val: &F,
         temp_tA: &mut [F],
     ) {
@@ -333,57 +337,41 @@ pub mod svo_helpers {
         // 1. Point (0,I) -> temp_tA[0]
         let az_0I = az01 - az00;
         let bz_0I = bz01 - bz00;
-        if az_0I != 0 && bz_0I != 0 {
-            let prod_0I = az_0I
-                .checked_mul(bz_0I)
-                .expect("Product overflow for (0,I)");
-            temp_tA[0] += e_in_val.mul_i128(prod_0I);
+        if az_0I != F::zero() && bz_0I != F::zero() {
+            temp_tA[0] += *e_in_val * az_0I * bz_0I;
         }
 
         // 2. Point (1,I) -> temp_tA[1]
         let az_1I = az11 - az10;
         let bz_1I = bz11 - bz10;
-        if az_1I != 0 && bz_1I != 0 {
-            let prod_1I = az_1I
-                .checked_mul(bz_1I)
-                .expect("Product overflow for (1,I)");
-            temp_tA[1] += e_in_val.mul_i128(prod_1I);
+        if az_1I != F::zero() && bz_1I != F::zero() {
+            temp_tA[1] += *e_in_val * az_1I * bz_1I;
         }
 
         // 3. Point (I,0) -> temp_tA[2]
         let az_I0 = az10 - az00;
-        if az_I0 != 0 {
+        if az_I0 != F::zero() {
             let bz_I0 = bz10 - bz00;
-            if bz_I0 != 0 {
-                let prod_I0 = az_I0
-                    .checked_mul(bz_I0)
-                    .expect("Product overflow for (I,0)");
-                temp_tA[2] += e_in_val.mul_i128(prod_I0);
+            if bz_I0 != F::zero() {
+                temp_tA[2] += *e_in_val * az_I0 * bz_I0;
             }
         }
 
         // 4. Point (I,1) -> temp_tA[3]
         let az_I1 = az11 - az01;
-        if az_I1 != 0 {
+        if az_I1 != F::zero() {
             let bz_I1 = bz11 - bz01;
-            if bz_I1 != 0 {
-                let prod_I1 = az_I1
-                    .checked_mul(bz_I1)
-                    .expect("Product overflow for (I,1)");
-                temp_tA[3] += e_in_val.mul_i128(prod_I1);
+            if bz_I1 != F::zero() {
+                temp_tA[3] += *e_in_val * az_I1 * bz_I1;
             }
         }
 
         // 5. Point (I,I) -> temp_tA[4]
         let az_II = az_1I - az_0I;
-        if az_II != 0 {
+        if az_II != F::zero() {
             let bz_II = bz_1I - bz_0I;
-            if bz_II != 0 {
-                let prod_II = az_II
-                    .checked_mul(bz_II)
-                    .expect("Product overflow for (I,I)");
-                // At this point, pretty unlikely for prod_II to be 1
-                temp_tA[4] += e_in_val.mul_i128(prod_II);
+            if bz_II != F::zero() {
+                temp_tA[4] += *e_in_val * az_II * bz_II;
             }
         }
     }
@@ -420,8 +408,8 @@ pub mod svo_helpers {
     ///
     #[inline]
     pub fn compute_and_update_tA_inplace_3<F: JoltField>(
-        binary_az_evals: &[i128],
-        binary_bz_evals: &[i128],
+        binary_az_evals: &[F],
+        binary_bz_evals: &[F],
         e_in_val: &F,
         temp_tA: &mut [F],
     ) {
@@ -453,153 +441,135 @@ pub mod svo_helpers {
         // Point (0,0,I) -> temp_tA[0]
         let az_00I = az001 - az000;
         let bz_00I = bz001 - bz000;
-        if az_00I != 0 && bz_00I != 0 {
-            let prod = az_00I.checked_mul(bz_00I).expect("Prod overflow");
+        if az_00I != F::zero() && bz_00I != F::zero() {
             // Test `mul_i128_1_optimized`
-            temp_tA[0] += e_in_val.mul_i128_1_optimized(prod);
+            temp_tA[0] += *e_in_val * az_00I * bz_00I;
         }
 
         // Point (0,1,I) -> temp_tA[1]
         let az_01I = az011 - az010;
         let bz_01I = bz011 - bz010;
-        if az_01I != 0 && bz_01I != 0 {
-            let prod = az_01I.checked_mul(bz_01I).expect("Prod overflow");
-            temp_tA[1] += e_in_val.mul_i128(prod);
+        if az_01I != F::zero() && bz_01I != F::zero() {
+            temp_tA[1] += *e_in_val * az_01I * bz_01I;
         }
 
         // Point (0,I,0) -> temp_tA[2]
         let az_0I0 = az010 - az000;
         let bz_0I0 = bz010 - bz000;
-        if az_0I0 != 0 && bz_0I0 != 0 {
-            let prod = az_0I0.checked_mul(bz_0I0).expect("Prod overflow");
-            temp_tA[2] += e_in_val.mul_i128(prod);
+        if az_0I0 != F::zero() && bz_0I0 != F::zero() {
+            temp_tA[2] += *e_in_val * az_0I0 * bz_0I0;
         }
 
         // Point (0,I,1) -> temp_tA[3]
         let az_0I1 = az011 - az001;
         let bz_0I1 = bz011 - bz001;
-        if az_0I1 != 0 && bz_0I1 != 0 {
-            let prod = az_0I1.checked_mul(bz_0I1).expect("Prod overflow");
-            temp_tA[3] += e_in_val.mul_i128(prod);
+        if az_0I1 != F::zero() && bz_0I1 != F::zero() {
+            temp_tA[3] += *e_in_val * az_0I1 * bz_0I1;
         }
 
         // Point (0,I,I) -> temp_tA[4]
         let az_0II = az_01I - az_00I;
         let bz_0II = bz_01I - bz_00I; // Need to compute this outside for III term
-        if az_0II != 0 && bz_0II != 0 {
-            let prod = az_0II.checked_mul(bz_0II).expect("Prod overflow");
-            temp_tA[4] += e_in_val.mul_i128(prod);
+        if az_0II != F::zero() && bz_0II != F::zero() {
+            temp_tA[4] += *e_in_val * az_0II * bz_0II;
         }
 
         // Point (1,0,I) -> temp_tA[5]
         let az_10I = az101 - az100;
         let bz_10I = bz101 - bz100;
-        if az_10I != 0 && bz_10I != 0 {
-            let prod = az_10I.checked_mul(bz_10I).expect("Prod overflow");
-            temp_tA[5] += e_in_val.mul_i128(prod);
+        if az_10I != F::zero() && bz_10I != F::zero() {
+            temp_tA[5] += *e_in_val * az_10I * bz_10I;
         }
 
         // Point (1,1,I) -> temp_tA[6]
         let az_11I = az111 - az110;
         let bz_11I = bz111 - bz110;
-        if az_11I != 0 && bz_11I != 0 {
-            let prod = az_11I.checked_mul(bz_11I).expect("Prod overflow");
-            temp_tA[6] += e_in_val.mul_i128(prod);
+        if az_11I != F::zero() && bz_11I != F::zero() {
+            temp_tA[6] += *e_in_val * az_11I * bz_11I;
         }
 
         // Point (1,I,0) -> temp_tA[7]
         let az_1I0 = az110 - az100;
         let bz_1I0 = bz110 - bz100;
-        if az_1I0 != 0 && bz_1I0 != 0 {
-            let prod = az_1I0.checked_mul(bz_1I0).expect("Prod overflow");
-            temp_tA[7] += e_in_val.mul_i128(prod);
+        if az_1I0 != F::zero() && bz_1I0 != F::zero() {
+            temp_tA[7] += *e_in_val * az_1I0 * bz_1I0;
         }
 
         // Point (1,I,1) -> temp_tA[8]
         let az_1I1 = az111 - az101;
         let bz_1I1 = bz111 - bz101;
-        if az_1I1 != 0 && bz_1I1 != 0 {
-            let prod = az_1I1.checked_mul(bz_1I1).expect("Prod overflow");
-            temp_tA[8] += e_in_val.mul_i128(prod);
+        if az_1I1 != F::zero() && bz_1I1 != F::zero() {
+            temp_tA[8] += *e_in_val * az_1I1 * bz_1I1;
         }
 
         // Point (1,I,I) -> temp_tA[9]
         let az_1II = az_11I - az_10I;
         let bz_1II = bz_11I - bz_10I; // Need to compute this outside for III term
-        if az_1II != 0 && bz_1II != 0 {
-            let prod = az_1II.checked_mul(bz_1II).expect("Prod overflow");
-            temp_tA[9] += e_in_val.mul_i128(prod);
+        if az_1II != F::zero() && bz_1II != F::zero() {
+            temp_tA[9] += *e_in_val * az_1II * bz_1II;
         }
 
         // Point (I,0,0) -> temp_tA[10]
         let az_I00 = az100 - az000;
         let bz_I00 = bz100 - bz000;
-        if az_I00 != 0 && bz_I00 != 0 {
-            let prod = az_I00.checked_mul(bz_I00).expect("Prod overflow");
-            temp_tA[10] += e_in_val.mul_i128(prod);
+        if az_I00 != F::zero() && bz_I00 != F::zero() {
+            temp_tA[10] += *e_in_val * az_I00 * bz_I00;
         }
 
         // Point (I,0,1) -> temp_tA[11]
         let az_I01 = az101 - az001;
         let bz_I01 = bz101 - bz001;
-        if az_I01 != 0 && bz_I01 != 0 {
-            let prod = az_I01.checked_mul(bz_I01).expect("Prod overflow");
-            temp_tA[11] += e_in_val.mul_i128(prod);
+        if az_I01 != F::zero() && bz_I01 != F::zero() {
+            temp_tA[11] += *e_in_val * az_I01 * bz_I01;
         }
 
         // Point (I,0,I) -> temp_tA[12]
         let az_I0I = az_I01 - az_I00; // Uses precomputed az_I01, az_I00
-        if az_I0I != 0 {
+        if az_I0I != F::zero() {
             let bz_I0I = bz_I01 - bz_I00; // Uses precomputed bz_I01, bz_I00
-            if bz_I0I != 0 {
-                let prod = az_I0I.checked_mul(bz_I0I).expect("Prod overflow");
-                temp_tA[12] += e_in_val.mul_i128(prod);
+            if bz_I0I != F::zero() {
+                temp_tA[12] += *e_in_val * az_I0I * bz_I0I;
             }
         }
 
         // Point (I,1,0) -> temp_tA[13]
         let az_I10 = az110 - az010;
         let bz_I10 = bz110 - bz010;
-        if az_I10 != 0 && bz_I10 != 0 {
-            let prod = az_I10.checked_mul(bz_I10).expect("Prod overflow");
-            temp_tA[13] += e_in_val.mul_i128(prod);
+        if az_I10 != F::zero() && bz_I10 != F::zero() {
+            temp_tA[13] += *e_in_val * az_I10 * bz_I10;
         }
 
         // Point (I,1,1) -> temp_tA[14]
         let az_I11 = az111 - az011;
         let bz_I11 = bz111 - bz011;
-        if az_I11 != 0 && bz_I11 != 0 {
-            let prod = az_I11.checked_mul(bz_I11).expect("Prod overflow");
-            temp_tA[14] += e_in_val.mul_i128(prod);
+        if az_I11 != F::zero() && bz_I11 != F::zero() {
+            temp_tA[14] += *e_in_val * az_I11 * bz_I11;
         }
 
         // Point (I,1,I) -> temp_tA[15]
         let az_I1I = az_I11 - az_I10; // Uses precomputed az_I11, az_I10
-        if az_I1I != 0 {
+        if az_I1I != F::zero() {
             let bz_I1I = bz_I11 - bz_I10; // Uses precomputed bz_I11, bz_I10
-            if bz_I1I != 0 {
-                let prod = az_I1I.checked_mul(bz_I1I).expect("Prod overflow");
-                temp_tA[15] += e_in_val.mul_i128(prod);
+            if bz_I1I != F::zero() {
+                temp_tA[15] += *e_in_val * az_I1I * bz_I1I;
             }
         }
 
         // Point (I,I,0) -> temp_tA[16]
         let az_II0 = az_1I0 - az_0I0; // Uses precomputed az_1I0, az_0I0
-        if az_II0 != 0 {
+        if az_II0 != F::zero() {
             let bz_II0 = bz_1I0 - bz_0I0; // Uses precomputed bz_1I0, bz_0I0
-            if bz_II0 != 0 {
-                let prod = az_II0.checked_mul(bz_II0).expect("Prod overflow");
-                temp_tA[16] += e_in_val.mul_i128(prod);
+            if bz_II0 != F::zero() {
+                temp_tA[16] += *e_in_val * az_II0 * bz_II0;
             }
         }
 
         // Point (I,I,1) -> temp_tA[17]
         let az_II1 = az_1I1 - az_0I1; // Uses precomputed az_1I1, az_0I1
-        if az_II1 != 0 {
+        if az_II1 != F::zero() {
             let bz_II1 = bz_1I1 - bz_0I1; // Uses precomputed bz_1I1, bz_0I1
-            if bz_II1 != 0 {
-                let prod = az_II1.checked_mul(bz_II1).expect("Prod overflow");
-                temp_tA[17] += e_in_val.mul_i128(prod);
+            if bz_II1 != F::zero() {
+                temp_tA[17] += *e_in_val * az_II1 * bz_II1;
             }
         }
 
@@ -608,14 +578,13 @@ pub mod svo_helpers {
         // az_1II was computed for temp_tA[9]
         // az_0II was computed for temp_tA[4]
         let az_III = az_1II - az_0II;
-        if az_III != 0 {
+        if az_III != F::zero() {
             // bz_III depends on bz_1II and bz_0II.
             // bz_1II was computed for temp_tA[9]
             // bz_0II was computed for temp_tA[4]
             let bz_III = bz_1II - bz_0II;
-            if bz_III != 0 {
-                let prod = az_III.checked_mul(bz_III).expect("Prod overflow");
-                temp_tA[18] += e_in_val.mul_i128(prod);
+            if bz_III != F::zero() {
+                temp_tA[18] += *e_in_val * az_III * bz_III;
             }
         }
     }
@@ -645,12 +614,12 @@ pub mod svo_helpers {
 
     /// Recursive helper to compute extended polynomial evaluations.
     /// Uses memoization to store intermediate results.
-    fn get_extended_eval<const N: usize, const NUM_TERN_PTS: usize>(
+    fn get_extended_eval<const N: usize, const NUM_TERN_PTS: usize, F: JoltField>(
         k_target: usize,
-        binary_evals_input: &[i128],
-        memoized_evals: &mut [Option<i128>; NUM_TERN_PTS], // Using array for memoization table
+        binary_evals_input: &[F],
+        memoized_evals: &mut [Option<F>; NUM_TERN_PTS], // Using array for memoization table
         ternary_point_info_table: &[TernaryPointInfo<N>; NUM_TERN_PTS],
-    ) -> i128 {
+    ) -> F {
         if let Some(val) = memoized_evals[k_target] {
             return val;
         }
@@ -690,8 +659,8 @@ pub mod svo_helpers {
         const NUM_TERNARY_POINTS_CONST: usize,  // pow(3, NUM_SVO_ROUNDS)
         F: JoltField,
     >(
-        binary_az_evals_input: &[i128], // Source of 2^N binary evals for Az
-        binary_bz_evals_input: &[i128], // Source of 2^N binary evals for Bz
+        binary_az_evals_input: &[F], // Source of 2^N binary evals for Az
+        binary_bz_evals_input: &[F], // Source of 2^N binary evals for Bz
         e_in_val: &F,
         temp_tA: &mut [F], // Target for M_NON_BINARY_POINTS_CONST non-binary extended products
     ) {
@@ -702,7 +671,6 @@ pub mod svo_helpers {
             );
             // M_NON_BINARY_POINTS_CONST would be 0, NUM_TERNARY_POINTS_CONST would be 1.
             // The loops below would not run.
-            return;
         }
 
         // Verify consistency of const generic arguments with NUM_SVO_ROUNDS
@@ -743,9 +711,9 @@ pub mod svo_helpers {
         // Memoization tables for all 3^N points.
         // Initialize with a value that signifies "not computed yet".
         // Using array for memoization tables.
-        let mut memoized_az_evals: [Option<i128>; NUM_TERNARY_POINTS_CONST] =
+        let mut memoized_az_evals: [Option<F>; NUM_TERNARY_POINTS_CONST] =
             [None; NUM_TERNARY_POINTS_CONST];
-        let mut memoized_bz_evals: [Option<i128>; NUM_TERNARY_POINTS_CONST] =
+        let mut memoized_bz_evals: [Option<F>; NUM_TERNARY_POINTS_CONST] =
             [None; NUM_TERNARY_POINTS_CONST];
 
         // Get the map of non-binary points. The order here dictates temp_tA indexing.
@@ -771,28 +739,25 @@ pub mod svo_helpers {
                 "Target for temp_tA[{i_temp_tA}] (k={k_target_idx}) is unexpectedly binary."
             );
 
-            let az_val = get_extended_eval::<NUM_SVO_ROUNDS, NUM_TERNARY_POINTS_CONST>(
+            let az_val = get_extended_eval::<NUM_SVO_ROUNDS, NUM_TERNARY_POINTS_CONST, _>(
                 k_target_idx,
                 binary_az_evals_input,
                 &mut memoized_az_evals,
                 &ternary_point_info_table,
             );
 
-            if az_val != 0 {
-                let bz_val = get_extended_eval::<NUM_SVO_ROUNDS, NUM_TERNARY_POINTS_CONST>(
+            if az_val != F::zero() {
+                let bz_val = get_extended_eval::<NUM_SVO_ROUNDS, NUM_TERNARY_POINTS_CONST, _>(
                     k_target_idx,
                     binary_bz_evals_input,
                     &mut memoized_bz_evals,
                     &ternary_point_info_table,
                 );
 
-                if bz_val != 0 {
-                    let product = az_val
-                        .checked_mul(bz_val)
-                        .expect("Extended Az*Bz product overflow i128");
+                if bz_val != F::zero() {
                     // Note: temp_tA is indexed by `i_temp_tA` which is the iteration order
                     // of non-binary points from build_y_ext_code_map.
-                    temp_tA[i_temp_tA] += e_in_val.mul_i128(product);
+                    temp_tA[i_temp_tA] += *e_in_val * az_val * bz_val;
                 }
             }
         }
@@ -807,6 +772,13 @@ pub mod svo_helpers {
         accums_infty: &mut [F],
     ) {
         match NUM_SVO_ROUNDS {
+            0 => {
+                // No SVO rounds to process, tA_accums should be empty
+                debug_assert!(
+                    tA_accums.is_empty(),
+                    "tA_accums should be empty for 0 SVO rounds"
+                );
+            }
             1 => distribute_tA_to_svo_accumulators_1(
                 tA_accums,
                 x_out_val,
@@ -1144,7 +1116,6 @@ pub mod svo_helpers {
                 accums_infty.is_empty(),
                 "accums_infty should be empty for N=0"
             );
-            return;
         }
 
         // Assert that the provided M_NON_BINARY_POINTS is correct.
@@ -1533,11 +1504,11 @@ mod tests {
         let num_temp_tA = num_non_trivial_ternary_points(num_svo_rounds);
 
         // Test with non-zero patterned data
-        let binary_az_evals: Vec<i128> = (0..num_binary_points)
-            .map(|i| (i + 1) as i128 * 2)
+        let binary_az_evals: Vec<TestField> = (0..num_binary_points)
+            .map(|i| TestField::from((i + 1) as i128 * 2))
             .collect();
-        let binary_bz_evals: Vec<i128> = (0..num_binary_points)
-            .map(|i| (i + 2) as i128 * 3)
+        let binary_bz_evals: Vec<TestField> = (0..num_binary_points)
+            .map(|i| TestField::from((i + 2) as i128 * 3))
             .collect();
         let e_in_val = TestField::from(10u64);
 
@@ -1595,8 +1566,8 @@ mod tests {
         );
 
         // Test with all zeros for binary evals
-        let binary_az_evals_zeros: Vec<i128> = vec![0; num_binary_points];
-        let binary_bz_evals_zeros: Vec<i128> = vec![0; num_binary_points];
+        let binary_az_evals_zeros: Vec<TestField> = vec![TestField::zero(); num_binary_points];
+        let binary_bz_evals_zeros: Vec<TestField> = vec![TestField::zero(); num_binary_points];
         let mut temp_tA_new_zeros = vec![TestField::zero(); num_temp_tA];
         let mut temp_tA_old_zeros = vec![TestField::zero(); num_temp_tA];
 

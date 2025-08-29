@@ -7,14 +7,14 @@ use crate::utils::uninterleave_bits;
 /// A bitvector type used to represent a (substring of a) lookup index.
 #[derive(Clone, Copy, Debug, Allocative)]
 pub struct LookupBits {
-    bits: u64,
+    bits: u128,
     len: usize,
 }
 
 impl LookupBits {
-    pub fn new(mut bits: u64, len: usize) -> Self {
-        debug_assert!(len <= 64);
-        if len < 64 {
+    pub fn new(mut bits: u128, len: usize) -> Self {
+        debug_assert!(len <= 128);
+        if len < 128 {
             bits %= 1 << len;
         }
         Self { bits, len }
@@ -22,8 +22,8 @@ impl LookupBits {
 
     pub fn uninterleave(&self) -> (Self, Self) {
         let (x_bits, y_bits) = uninterleave_bits(self.bits);
-        let x = Self::new(x_bits as u64, self.len / 2);
-        let y = Self::new(y_bits as u64, self.len - x.len);
+        let x = Self::new(x_bits as u128, self.len / 2);
+        let y = Self::new(y_bits as u128, self.len - x.len);
         (x, y)
     }
 
@@ -54,7 +54,7 @@ impl LookupBits {
     }
 
     pub fn leading_ones(&self) -> u32 {
-        self.bits.wrapping_shl(64 - self.len as u32).leading_ones()
+        self.bits.wrapping_shl(128 - self.len as u32).leading_ones()
     }
 }
 
@@ -64,8 +64,8 @@ impl Display for LookupBits {
     }
 }
 
-impl From<LookupBits> for u64 {
-    fn from(value: LookupBits) -> u64 {
+impl From<LookupBits> for u128 {
+    fn from(value: LookupBits) -> u128 {
         value.bits
     }
 }
@@ -82,8 +82,14 @@ impl From<LookupBits> for u32 {
     }
 }
 
-impl From<&LookupBits> for u64 {
-    fn from(value: &LookupBits) -> u64 {
+impl From<LookupBits> for u64 {
+    fn from(value: LookupBits) -> u64 {
+        value.bits.try_into().unwrap()
+    }
+}
+
+impl From<&LookupBits> for u128 {
+    fn from(value: &LookupBits) -> u128 {
         value.bits
     }
 }
@@ -104,7 +110,7 @@ impl std::ops::Rem<usize> for &LookupBits {
     type Output = usize;
 
     fn rem(self, rhs: usize) -> Self::Output {
-        usize::from(self) % rhs
+        (u128::from(self) % rhs as u128) as usize
     }
 }
 
@@ -112,12 +118,12 @@ impl std::ops::Rem<usize> for LookupBits {
     type Output = usize;
 
     fn rem(self, rhs: usize) -> Self::Output {
-        usize::from(self) % rhs
+        (u128::from(self) % rhs as u128) as usize
     }
 }
 
 impl PartialEq for LookupBits {
     fn eq(&self, other: &Self) -> bool {
-        u64::from(self) == u64::from(other)
+        u128::from(self) == u128::from(other)
     }
 }

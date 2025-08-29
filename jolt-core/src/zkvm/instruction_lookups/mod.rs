@@ -1,3 +1,4 @@
+use common::constants::XLEN;
 use rayon::prelude::*;
 use tracer::instruction::RV32IMCycle;
 
@@ -28,23 +29,25 @@ pub mod hamming_weight;
 pub mod ra_virtual;
 pub mod read_raf_checking;
 
-pub const WORD_SIZE: usize = 32;
-const LOG_K: usize = WORD_SIZE * 2;
-const PHASES: usize = 4;
-const LOG_M: usize = LOG_K / PHASES;
+const LOG_K: usize = XLEN * 2;
+const PHASES: usize = 8;
+pub const LOG_M: usize = LOG_K / PHASES;
 const M: usize = 1 << LOG_M;
-pub const D: usize = 8;
+pub const D: usize = 16;
 pub const LOG_K_CHUNK: usize = LOG_K / D;
 pub const K_CHUNK: usize = 1 << LOG_K_CHUNK;
 const RA_PER_LOG_M: usize = LOG_M / LOG_K_CHUNK;
 
 #[derive(Default)]
-pub struct LookupsDag {}
+pub struct LookupsDag<F: JoltField> {
+    G: Option<[Vec<F>; D]>,
+    eq_r_cycle: Option<Vec<F>>,
+}
 
 impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStages<F, T, PCS>
-    for LookupsDag
+    for LookupsDag<F>
 {
-    fn stage3_prover_instances(
+    fn stage2_prover_instances(
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F>>> {
@@ -60,28 +63,48 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         let eq_r_cycle = EqPolynomial::evals(&r_cycle);
         let F = compute_ra_evals(trace, &eq_r_cycle);
 
-        let read_raf = ReadRafSumcheck::new_prover(sm, eq_r_cycle.clone());
-        let booleanity = BooleanitySumcheck::new_prover(sm, F.clone());
-        let hamming_weight = HammingWeightSumcheck::new_prover(sm, F);
+        self.eq_r_cycle = Some(eq_r_cycle);
+        self.G = Some(F.clone());
+
+        let booleanity = BooleanitySumcheck::new_prover(sm, F);
 
         #[cfg(feature = "allocative")]
         {
-            print_data_structure_heap_usage("Instruction execution ReadRafSumcheck", &read_raf);
             print_data_structure_heap_usage(
                 "Instruction execution BooleanitySumcheck",
                 &booleanity,
             );
+        }
+
+        vec![Box::new(booleanity)]
+    }
+
+    fn stage2_verifier_instances(
+        &mut self,
+        sm: &mut StateManager<'_, F, T, PCS>,
+    ) -> Vec<Box<dyn SumcheckInstance<F>>> {
+        let booleanity = BooleanitySumcheck::new_verifier(sm);
+
+        vec![Box::new(booleanity)]
+    }
+
+    fn stage3_prover_instances(
+        &mut self,
+        sm: &mut StateManager<'_, F, T, PCS>,
+    ) -> Vec<Box<dyn SumcheckInstance<F>>> {
+        let read_raf = ReadRafSumcheck::new_prover(sm, self.eq_r_cycle.take().unwrap());
+        let hamming_weight = HammingWeightSumcheck::new_prover(sm, self.G.take().unwrap());
+
+        #[cfg(feature = "allocative")]
+        {
+            print_data_structure_heap_usage("Instruction execution ReadRafSumcheck", &read_raf);
             print_data_structure_heap_usage(
                 "Instruction execution HammingWeightSumcheck",
                 &hamming_weight,
             );
         }
 
-        vec![
-            Box::new(read_raf),
-            Box::new(booleanity),
-            Box::new(hamming_weight),
-        ]
+        vec![Box::new(read_raf), Box::new(hamming_weight)]
     }
 
     fn stage3_verifier_instances(
@@ -89,21 +112,24 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         sm: &mut StateManager<'_, F, T, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F>>> {
         let read_raf = ReadRafSumcheck::new_verifier(sm);
-        let booleanity = BooleanitySumcheck::new_verifier(sm);
         let hamming_weight = HammingWeightSumcheck::new_verifier(sm);
 
-        vec![
-            Box::new(read_raf),
-            Box::new(booleanity),
-            Box::new(hamming_weight),
-        ]
+        vec![Box::new(read_raf), Box::new(hamming_weight)]
     }
 
     fn stage4_prover_instances(
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F>>> {
-        let ra_virtual = RASumCheck::new_prover(LOG_K, sm);
+        let ra_virtual = RASumCheck::new_prover(sm);
+
+        #[cfg(feature = "allocative")]
+        {
+            print_data_structure_heap_usage(
+                "Instruction execution RAVirtual sumcheck",
+                &ra_virtual,
+            );
+        }
 
         vec![Box::new(ra_virtual)]
     }
@@ -112,7 +138,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F>>> {
-        let ra_virtual = RASumCheck::new_verifier(LOG_K, sm);
+        let ra_virtual = RASumCheck::new_verifier(sm);
 
         vec![Box::new(ra_virtual)]
     }
@@ -132,9 +158,9 @@ fn compute_ra_evals<F: JoltField>(trace: &[RV32IMCycle], eq_r_cycle: &[F]) -> [V
                 std::array::from_fn(|_| unsafe_allocate_zero_vec(K_CHUNK));
             let mut j = chunk_index * chunk_size;
             for cycle in trace_chunk {
-                let mut lookup_index = LookupQuery::<WORD_SIZE>::to_lookup_index(cycle);
+                let mut lookup_index = LookupQuery::<XLEN>::to_lookup_index(cycle);
                 for i in (0..D).rev() {
-                    let k = lookup_index % K_CHUNK as u64;
+                    let k = lookup_index % K_CHUNK as u128;
                     result[i][k as usize] += eq_r_cycle[j];
                     lookup_index >>= LOG_K_CHUNK;
                 }

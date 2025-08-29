@@ -1,6 +1,8 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
-use jolt_core::benches::bench::{benchmarks, BenchType};
+#[path = "../../benches/e2e_profiling.rs"]
+mod e2e_profiling;
+use e2e_profiling::{benchmarks, BenchType};
 
 use std::any::Any;
 

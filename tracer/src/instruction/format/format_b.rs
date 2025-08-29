@@ -1,7 +1,4 @@
 use crate::emulator::cpu::Cpu;
-use common::constants::REGISTER_COUNT;
-use rand::rngs::StdRng;
-use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
@@ -13,7 +10,7 @@ use super::{
 pub struct FormatB {
     pub rs1: u8,
     pub rs2: u8,
-    pub imm: i64,
+    pub imm: i128,
 }
 
 #[derive(Default, Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
@@ -23,7 +20,9 @@ pub struct RegisterStateFormatB {
 }
 
 impl InstructionRegisterState for RegisterStateFormatB {
-    fn random(rng: &mut StdRng) -> Self {
+    #[cfg(any(feature = "test-utils", test))]
+    fn random(rng: &mut rand::rngs::StdRng) -> Self {
+        use rand::RngCore;
         Self {
             rs1: rng.next_u64(),
             rs2: rng.next_u64(),
@@ -55,7 +54,7 @@ impl InstructionFormat for FormatB {
 			((word >> 20) & 0x000007e0) | // imm[10:5] = [30:25]
 			((word >> 7) & 0x0000001e)
                 // imm[4:1] = [11:8]
-            ) as i32 as i64,
+            ) as i32 as i128,
         }
     }
 
@@ -68,20 +67,35 @@ impl InstructionFormat for FormatB {
         // No register write
     }
 
-    fn random(rng: &mut StdRng) -> Self {
+    #[cfg(any(feature = "test-utils", test))]
+    fn random(rng: &mut rand::rngs::StdRng) -> Self {
+        use common::constants::RISCV_REGISTER_COUNT;
+        use rand::{Rng, RngCore};
         Self {
-            imm: rng.next_u64() as i64,
-            rs1: (rng.next_u64() as u8 % REGISTER_COUNT),
-            rs2: (rng.next_u64() as u8 % REGISTER_COUNT),
+            imm: rng.gen(),
+            rs1: (rng.next_u64() as u8 % RISCV_REGISTER_COUNT),
+            rs2: (rng.next_u64() as u8 % RISCV_REGISTER_COUNT),
         }
     }
+}
 
-    fn normalize(&self) -> NormalizedOperands {
-        NormalizedOperands {
-            rs1: self.rs1,
-            rs2: self.rs2,
+impl From<NormalizedOperands> for FormatB {
+    fn from(operands: NormalizedOperands) -> Self {
+        Self {
+            rs1: operands.rs1,
+            rs2: operands.rs2,
+            imm: operands.imm,
+        }
+    }
+}
+
+impl From<FormatB> for NormalizedOperands {
+    fn from(format: FormatB) -> Self {
+        Self {
+            rs1: format.rs1,
+            rs2: format.rs2,
             rd: 0,
-            imm: self.imm,
+            imm: format.imm,
         }
     }
 }

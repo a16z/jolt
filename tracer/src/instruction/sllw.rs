@@ -1,9 +1,17 @@
-use super::{
-    format::{format_r::FormatR, InstructionFormat},
-    RISCVInstruction, RISCVTrace,
-};
-use crate::{declare_riscv_instr, emulator::cpu::Cpu};
+use crate::utils::inline_helpers::InstrAssembler;
+use crate::utils::virtual_registers::allocate_virtual_register;
 use serde::{Deserialize, Serialize};
+
+use crate::{
+    declare_riscv_instr,
+    emulator::cpu::{Cpu, Xlen},
+};
+
+use super::virtual_sign_extend::VirtualSignExtend;
+use super::{
+    format::format_r::FormatR, mul::MUL, virtual_pow2_w::VirtualPow2W, RISCVInstruction,
+    RISCVTrace, RV32IMCycle, RV32IMInstruction,
+};
 
 declare_riscv_instr!(
     name   = SLLW,
@@ -23,4 +31,24 @@ impl SLLW {
             ((cpu.x[self.operands.rs1 as usize] as u32) << shamt) as i32 as i64;
     }
 }
-impl RISCVTrace for SLLW {}
+
+impl RISCVTrace for SLLW {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
+        let inline_sequence = self.inline_sequence(cpu.xlen);
+        let mut trace = trace;
+        for instr in inline_sequence {
+            // In each iteration, create a new Option containing a re-borrowed reference
+            instr.trace(cpu, trace.as_deref_mut());
+        }
+    }
+
+    fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
+        let v_pow2 = allocate_virtual_register();
+
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
+        asm.emit_i::<VirtualPow2W>(*v_pow2, self.operands.rs2, 0);
+        asm.emit_r::<MUL>(self.operands.rd, self.operands.rs1, *v_pow2);
+        asm.emit_i::<VirtualSignExtend>(self.operands.rd, self.operands.rd, 0);
+        asm.finalize()
+    }
+}

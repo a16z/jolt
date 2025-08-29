@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
 use super::{
-    format::{format_u::FormatU, normalize_imm, InstructionFormat},
+    format::{format_u::FormatU, normalize_imm},
     RISCVInstruction, RISCVTrace,
 };
 
@@ -17,7 +17,7 @@ declare_riscv_instr!(
 
 impl LUI {
     fn exec(&self, cpu: &mut Cpu, _: &mut <LUI as RISCVInstruction>::RAMAccess) {
-        cpu.x[self.operands.rd as usize] = normalize_imm(self.operands.imm);
+        cpu.x[self.operands.rd as usize] = normalize_imm(self.operands.imm, &cpu.xlen);
     }
 }
 
