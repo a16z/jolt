@@ -62,7 +62,7 @@ $$
 \left(\sum_{k_\text{suffix} \in \{0, 1\}^{48}, j \in \{0, 1\}^{\log T}}\widetilde{\textsf{ra}}(k_\text{prefix}, k_\text{suffix}, j) \cdot \widetilde{\textsf{eq}}(r_\text{cycle}, j) \cdot \widetilde{\textsf{suffix}}(k_\text{suffix}) \right)
 $$
 
-This can be computed in $\Theta(T)$: since $\textsf{ra}}$ is one-hot, we can do a single iteration over $j \in \{0, 1\}^{\log T}$ and only compute the terms of the sum where $\widetilde{\textsf{ra}}(k_\text{prefix}, k_\text{suffix}, j) = 1$.
+This can be computed in $\Theta(T)$: since $\widetilde{\textsf{ra}}$ is one-hot, we can do a single iteration over $j \in \{0, 1\}^{\log T}$ and only compute the terms of the sum where $\widetilde{\textsf{ra}}(k_\text{prefix}, k_\text{suffix}, j) = 1$.
 We compute a table of $\widetilde{\textsf{eq}}(r_\text{cycle}, j)$ evaluation a priori, and $\widetilde{\textsf{suffix}}(k_\text{suffix})$ can be evaluated in constant time on Boolean inputs.
 
 After the first phase, the high-order 16 variables of $k$ will have been bound.
