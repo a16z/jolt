@@ -77,6 +77,14 @@ Now $r^{(1)} \in \mathbb{F}^{16}$ are random values that the first 16 variables 
 
 This complicates things slightly, but the algorithm follows the same blueprint as in phase 1. This is a sumcheck over the 16 $k_\text{prefix}$ variables, and there are two multilinear terms. We can still compute each evaluation of $\widetilde{\textsf{prefix}}(r^{(1)}, k_\text{prefix})$ in constant time, and we can still compute the parenthesized term in $\Theta(T)$ time (observe that there is exactly one non-zero coefficient of $\widetilde{\textsf{ra}}(r^{(1)}, k_\text{prefix}, k_\text{suffix}, j)$ per cycle $j$).
 
+After the first $\log K$ rounds of sumcheck, we are left with:
+
+$$
+\sum_{j \in \{0, 1\}^{\log(T)}} \widetilde{\textsf{eq}}(r_\text{cycle}, j) \cdot \widetilde{\textsf{ra}}(r_\text{address}, j) \cdot \widetilde{\textsf{Val}}(r_\text{address})
+$$
+
+which we prove using the standard linear-time sumcheck algorithm. Note that $\widetilde{\textsf{ra}}(r_\text{address}, j)$ here is a [virtual](#ra-virtualization) polynomial.
+
 
 ### Prefix and Suffix Implementations
 
@@ -93,7 +101,7 @@ An execution trace contains many different RISC-V instructions.
 Note that there is a many-to-one relationship between instructions and lookup tables -- multiple instructions may share a lookup table (e.g., XOR and XORI).
 To manage this, Jolt uses the `InstructionLookupTable` trait, whose `lookup_table` method returns an instruction's associated lookup table, if it has one (some instructions do not require a lookup).
 
-Boolean "lookup table flags" indicate which table is active on a given cycle. At most one flag is set per cycle.
+Boolean **lookup table flags** indicate which table is active on a given cycle. At most one flag is set per cycle.
 These flags allow us to "multiplex" between all of the lookup tables:
 
 $$
@@ -114,9 +122,103 @@ Note that each $\widetilde{\textsf{Val}}_\ell$ here has prefix-suffix structure.
 
 ### raf Evaluation
 
-🚧 These docs are under construction 🚧
+The $\widetilde{\textsf{raf}}$-evaluation sumcheck in Jolt deviates from the description in the Twist/Shout paper.
+This is mostly an artifact of the prefix-suffix sumcheck, which imposes some required structure on the lookup index (i.e. the "address" variables $k$).
 
-👷If you are urgently interested in this specific page, open a Github issue and we'll try to expedite it.👷
+#### Case 1: Interleaved operands
+
+Consider, for example, the lookup table for `XOR x y`.
+Intuitively, the lookup index must be crafted from the bits of `x` and `y`.
+A first attempt might be to simply concatenate the bits of `x` and `y`, i.e.:
+
+$$
+(k_1, k_2, \dots, k_{64}) = (x_1, x_2, \dots, x_{32}, y_1, y_2, \dots, y_{32})
+$$
+
+Unfortunately, there is no apparent way for this formulation to satisfy prefix-suffix structure.
+Instead we will *interleave* the bits of `x` and `y`, i.e.
+
+$$
+(k_1, k_2, \dots, k_{64}) = (x_1, y_1, x_2, y_2, \dots, x_{32}, y_{32})
+$$
+
+With this formulation, the prefix-suffix structure is easily apparent. Suppose the prefix-suffix split index is 16, so:
+
+$$
+k_\text{prefix} = (x_1, y_1, x_2, y_2, \dots, x_8, y_8) \\
+k_\text{suffix} = (x_9, y_9, x_{10}, y_{10}, \dots, x_{32}, y_{32})
+$$
+
+Then `XOR x y` has the following prefix-suffix decomposition:
+
+$$
+\widetilde{\textsf{Val}}_{\texttt{XOR}}(k_\text{prefix}, k_\text{suffix}) = \widetilde{\textsf{prefix}}_{\texttt{XOR}}(k_\text{prefix}) + \widetilde{\textsf{suffix}}_{\texttt{XOR}}(k_\text{suffix}) \\
+\widetilde{\textsf{prefix}}_{\texttt{XOR}}(k_\text{prefix}) = 2^{31} \cdot \left( x_1 + y_1 - 2x_1 y_1 \right) + 2^{31} \cdot \left( x_2 + y_2 - 2x_2 y_2 \right) + \dots + 2^{24} \cdot \left( x_8 + y_8 - 2x_8 y_8 \right) \\
+\widetilde{\textsf{suffix}}_{\texttt{XOR}}(k_\text{prefix}) = 2^{23} \cdot \left( x_9 + y_9 - 2x_9 y_9 \right) + 2^{22} \cdot \left( x_{10} + y_{10} - 2x_{10} y_{10} \right) + \dots + 2^0 \cdot \left( x_{32} + y_{32} - 2x_{32} y_{32} \right)
+$$
+
+By inspection, $\widetilde{\textsf{prefix}}_{\texttt{XOR}}(k_\text{prefix})$ effectively computes the 8-bit `XOR` of the high-order bits of `x` and `y`, while $\widetilde{\textsf{suffix}}_{\texttt{XOR}}$ computes the 24-bit `XOR` of the low-order bits of `x` and `y`.
+Then the full result `XOR x y` is obtained by concatenating (adding) the two results.
+
+Now that we've confirmed that we have something with prefix-suffix structure, we can write down the $\widetilde{\textsf{raf}}$-evaluation sumcheck expression.
+Instead of a single $\widetilde{\textsf{raf}}$ polynomial, here we have two **lookup operands** `x` and `y`, which are called `LeftLookupOperand` and `RightLookupOperand` in code.
+These are the values that appear in Jolt's R1CS constraints.
+The point of the $\widetilde{\textsf{raf}}$-evaluation sumcheck is to relate these (non-one-hot) polynomials to their one-hot counterparts.
+In the context of instruction execution Shout, this means the $\widetilde{\textsf{ra}}$ polynomial.
+
+Since we have two $\widetilde{\textsf{raf}}$-like polynomials, we have two sumcheck instances:
+
+$$
+\widetilde{\textsf{LeftLookupOperand}}(r) = \sum_{k,j} \widetilde{\textsf{eq}}(r, j) \cdot \widetilde{\textsf{ra}}(k, j) \cdot \sum_{\ell = 0}^{\log (K) / 2 - 1} 2^{\ell} \cdot k_{2 \ell} \\
+\widetilde{\textsf{RightLookupOperand}}(r) = \sum_{k,j} \widetilde{\textsf{eq}}(r, j) \cdot \widetilde{\textsf{ra}}(k, j) \cdot \sum_{\ell = 0}^{\log (K) / 2 - 1} 2^{\ell} \cdot k_{2 \ell + 1}
+$$
+
+This captures the interleaving behavior we described above: `LeftLookupOperand` is the concatenation of the "odd bits" of $k$, while `RightLookupOperand` is the concatenation of the "even bits" of $k$.
+
+#### Case 2: Single operand
+
+Many RISC-V instructions are similar to `XOR`, in that interleaving the operand bits lends itself to prefix-suffix structure.
+However, there are some instructions where this is _not_ the case.
+The execution of some [arithmetic](./r1cs_constraints.md) instructions, for example, are handled by computing the corresponding operation in the field, and applying a range-check lookup to the result to truncate potential overflow bits.
+
+In this case, the lookup index corresponds to the (single) value `y` being range-checked, so we do not interleave its bits with another operand.
+Instead, we just have:
+
+$$
+(k_1, k_2, \dots, k_{64}) = (0, 0, \dots, 0, y_1 y_2, \dots, y_{32})
+$$
+
+In this case, we have the following sumchecks:
+
+$$
+\widetilde{\textsf{LeftLookupOperand}}(r) = 0 \\
+\widetilde{\textsf{RightLookupOperand}}(r) = \sum_{k,j} \widetilde{\textsf{eq}}(r, j) \cdot \widetilde{\textsf{ra}}(k, j) \cdot \sum_{\ell = 0}^{\log (K) - 1} 2^{\ell} \cdot k_{\ell}
+$$
+
+`LeftLookupOperand` is 0 and `RightLookupOperand` will be the concatenation of _all_ the bits of $k$.
+
+In order to handle Cases 1 and 2 simultaneously, we can use the same "[multiplexing](#multiplexing-between-instructions)" technique as in the read-checking sumcheck.
+We use a flag polynomial to indicate which case we're in:
+
+$$
+\widetilde{\textsf{InterleaveOperands}}(j) = 1 - \widetilde{\textsf{AddOperands}}(j) - \widetilde{\textsf{SubtractOperands}}(j) - \widetilde{\textsf{MultiplyOperands}}(j)
+$$
+
+where $\widetilde{\textsf{AddOperands}}$, $\widetilde{\textsf{SubtractOperands}}$, and $\widetilde{\textsf{MultiplyOperands}}$ are [circuit flags](./r1cs_constraints.md#circuit-flags).
+
+#### Prefix-suffix structure
+
+These sumchecks have similar structure to the read-checking sumcheck.
+A side-by-side comparison of the read-checking sumcheck with the sumchecks for Case 1:
+
+$$
+\widetilde{\textsf{rv}}(r) = \sum_{k, j} \widetilde{\textsf{eq}}(r, j) \cdot \widetilde{\textsf{ra}}(k, j) \cdot \widetilde{\textsf{Val}}(k) \\
+\widetilde{\textsf{LeftLookupOperand}}(r) = \sum_{k,j} \widetilde{\textsf{eq}}(r, j) \cdot \widetilde{\textsf{ra}}(k, j) \cdot \sum_{\ell = 0}^{\log (K) / 2 - 1} 2^{\ell} \cdot k_{2 \ell} \\
+\widetilde{\textsf{RightLookupOperand}}(r) = \sum_{k,j} \widetilde{\textsf{eq}}(r, j) \cdot \widetilde{\textsf{ra}}(k, j) \cdot \sum_{\ell = 0}^{\log (K) / 2 - 1} 2^{\ell} \cdot k_{2 \ell + 1}
+$$
+
+As it turns out, $\sum_{\ell = 0}^{\log (K) / 2 - 1} 2^{\ell} \cdot k_{2 \ell}$ and $\sum_{\ell = 0}^{\log (K) / 2 - 1} 2^{\ell} \cdot k_{2 \ell + 1}$ have prefix-suffix structure, so we can also use the prefix-suffix algorithm for these sumchecks.
+Due to their similarities, we batch the read-checking and these $\widetilde{\textsf{raf}}$-evaluation sumchecks together in a [bespoke](../optimizations/batched-sumcheck.md#bespoke-batching) fashion.
 
 ## Other sumchecks
 
@@ -140,5 +242,5 @@ However, we employ optimizations specific to high-degree sumchecks, adapting tec
 
 ### One-hot checks
 
-Jolt enforces that the $\widetilde{\textsf{ra}}_i$ polynomials used for instruction execution are [one-hot](../twist-shout.md), using a Booleanity and Hamming weight sumcheck as described in the paper.
+Jolt enforces that the $\widetilde{\textsf{ra}}_i$ polynomials used for instruction execution are [one-hot](../twist-shout.md#one-hot-polynomials), using a Booleanity and Hamming weight sumcheck as described in the paper.
 These implementations follow the Twist and Shout paper closely, with no notable deviations.
