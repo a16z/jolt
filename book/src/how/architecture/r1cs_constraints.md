@@ -21,7 +21,7 @@ This is critical because RAM and registers operate as independent Twist memory c
 
 ## Arithmetic instructions
 
-While Jolt's design uniquely leverages lookups for most RISC-V instructions, arithmetic instructions are the execption to this rule.
+While Jolt's design uniquely leverages lookups for most RISC-V instructions, arithmetic instructions are the exception to this rule.
 Most arithmetic instructions (addition, subtraction, multiplication) are primarily constrained using R1CS constraints, with the lookup only serving to truncate potential overflow bits.
 
 For these instructions, we can emulate the 32-bit arithmetic using native field arithmetic, since Jolt's elliptic curve scalar field is big enough to perform these operations without overflow.
