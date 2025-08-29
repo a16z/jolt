@@ -26,7 +26,6 @@
         - [Batched sumcheck](./how/optimizations/batched-sumcheck.md)
         - [Batched openings](./how/optimizations/batched-openings.md)
         - [Inlines](./how/optimizations/inlines.md)
-        - [Leveraging uniformity in Spartan](./how/optimizations/uniform-spartan.md)
         - [Small value optimizations](./how/optimizations/small-value.md)
         - [EQ optimizations](./how/optimizations/eq.md)
     - [Appendix](./how/appendix/appendix.md)
