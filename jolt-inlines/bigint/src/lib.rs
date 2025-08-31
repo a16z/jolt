@@ -6,17 +6,19 @@ pub mod multiplication;
 pub use multiplication::*;
 
 #[cfg(feature = "host")]
+use jolt_inlines_common::constants;
+#[cfg(feature = "host")]
 use tracer::register_inline;
 
 // Initialize and register inlines
 #[cfg(feature = "host")]
 pub fn init_inlines() -> Result<(), String> {
-    // Register 256-bit Int multiplication with funct3=0x00 and funct7=0x02
+    // Register 256-bit Int multiplication
     register_inline(
-        0x0B,
-        0x00,
-        0x02,
-        "BIGINT256_MUL",
+        constants::INLINE_OPCODE,
+        constants::bigint::mul256::FUNCT3,
+        constants::bigint::mul256::FUNCT7,
+        constants::bigint::mul256::NAME,
         std::boxed::Box::new(exec::bigint_mul_exec),
         std::boxed::Box::new(trace_generator::bigint_mul_sequence_builder),
     )?;

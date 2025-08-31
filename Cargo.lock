@@ -1669,9 +1669,14 @@ dependencies = [
  "common",
  "ctor 0.2.9",
  "hex-literal",
+ "jolt-inlines-common",
  "rand",
  "tracer",
 ]
+
+[[package]]
+name = "jolt-inlines-common"
+version = "0.1.0"
 
 [[package]]
 name = "jolt-inlines-keccak256"
@@ -1679,6 +1684,7 @@ version = "0.1.0"
 dependencies = [
  "ctor 0.2.9",
  "hex-literal",
+ "jolt-inlines-common",
  "tracer",
 ]
 
@@ -1688,6 +1694,7 @@ version = "0.1.0"
 dependencies = [
  "ctor 0.2.9",
  "hex-literal",
+ "jolt-inlines-common",
  "tracer",
 ]
 
