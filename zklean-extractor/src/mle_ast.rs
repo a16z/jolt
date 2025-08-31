@@ -95,8 +95,10 @@ impl<const NUM_NODES: usize> MleAst<NUM_NODES> {
         let shift = self.root + 1;
         for i in 0..=other.root {
             self.nodes[shift + i] = other.nodes[i];
-            self.root += 1;
         }
+        
+        // Update root after copying all nodes
+        self.root += other.root + 1;
 
         // de Bruijn indices, i.e., negative relative to the new root
         let left_root = other.root + 2;
