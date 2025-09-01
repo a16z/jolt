@@ -78,34 +78,6 @@ pub(crate) fn compute_eq_taus_serial<F: JoltField>(
         .collect()
 }
 
-/// Extracts the `j`-th digit (0-indexed from the most significant digit) of `addr`
-/// when written in base `base (N=K^{1/d})`, assuming the total number of digits is `d`.
-///
-/// # Arguments
-///
-/// - `addr`: The integer address to decompose.
-/// - `j`: The digit index (0 = most significant, `d - 1` = least significant).
-/// - `d`: The total number of digits in the base-`base` representation.
-/// - `base`: The numerical base (e.g., `K^{1/d}`).
-///
-/// # Returns
-///
-/// The `j`-th digit of `addr` in base `base`.
-///
-/// # Panics
-///
-/// Panics if `base.pow(d as u32)` overflows or if `j >= d`.
-///
-/// # Examples
-///
-/// ```rust
-/// let addr = 10;
-/// let base = 4;
-/// let d = 2; // because 10 in base 4 is "2 2"
-///
-/// assert_eq!(digit_j(addr, 0, d, base), 2); // most significant digit
-/// assert_eq!(digit_j(addr, 1, d, base), 2); // least significant digit
-/// ```
 pub(crate) fn digit_j_of(addr: usize, j: usize, d: usize, base: usize) -> usize {
     // Convert from most-significant-first index (0 = most significant)
     let exp = d - 1 - j;
