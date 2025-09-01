@@ -1,7 +1,7 @@
-use crate::field::JoltField;
+use crate::field::{JoltField, MontU128};
 use ark_ec::CurveGroup;
 use ark_serialize::CanonicalSerialize;
-use std::{borrow::Borrow, u128};
+use std::borrow::Borrow;
 
 pub trait Transcript: Default + Clone + Sync + Send + 'static {
     fn new(label: &'static [u8]) -> Self;
@@ -15,8 +15,8 @@ pub trait Transcript: Default + Clone + Sync + Send + 'static {
     fn append_scalars<F: JoltField>(&mut self, scalars: &[impl Borrow<F>]);
     fn append_point<G: CurveGroup>(&mut self, point: &G);
     fn append_points<G: CurveGroup>(&mut self, points: &[G]);
-    fn challenge_u128(&mut self) -> u128;
-    fn challenge_vector_u128(&mut self, len: usize) -> Vec<u128>;
+    fn challenge_u128(&mut self) -> MontU128;
+    fn challenge_vector_u128(&mut self, len: usize) -> Vec<MontU128>;
     fn challenge_scalar<F: JoltField>(&mut self) -> F;
     fn challenge_scalar_128_bits<F: JoltField>(&mut self) -> F;
     fn challenge_vector<F: JoltField>(&mut self, len: usize) -> Vec<F>;
