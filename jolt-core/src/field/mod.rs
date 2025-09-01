@@ -15,6 +15,23 @@ pub trait FieldOps<Rhs = Self, Output = Self>:
 {
 }
 
+/// A wrapper around `u128` indicating that the value is already
+/// in Montgomery form for the target field.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct MontU128(pub u128);
+
+impl From<u128> for MontU128 {
+    fn from(val: u128) -> Self {
+        MontU128(val)
+    }
+}
+
+impl From<MontU128> for u128 {
+    fn from(val: MontU128) -> u128 {
+        val.0
+    }
+}
+
 pub trait JoltField:
     'static
     + Sized
@@ -89,10 +106,9 @@ pub trait JoltField:
     // This is a dummy implementation
     // that gets overwritten by the ark-implementation
     #[inline(always)]
-    fn mul_u128_mont_form(&self, n: u128) -> Self {
-        *self * Self::from_u128(n)
+    fn mul_u128_mont_form(&self, n: MontU128) -> Self {
+        *self * Self::from_u128(n.0)
     }
-
     fn mul_pow_2(&self, mut pow: usize) -> Self {
         if pow > 255 {
             panic!("pow > 255");

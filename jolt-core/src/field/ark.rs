@@ -1,7 +1,7 @@
+use crate::field::MontU128;
+use crate::utils::thread::unsafe_allocate_zero_vec;
 use ark_ff::{prelude::*, BigInt, PrimeField, UniformRand};
 use rayon::prelude::*;
-
-use crate::utils::thread::unsafe_allocate_zero_vec;
 
 use super::{FieldOps, JoltField};
 
@@ -172,19 +172,32 @@ impl JoltField for ark_bn254::Fr {
             ark_ff::Fp::mul_u64(*self, n)
         }
     }
-
     #[inline(always)]
-    fn mul_u128_mont_form(&self, n: u128) -> Self {
-        if n == 0 || self.is_zero() {
+    fn mul_u128_mont_form(&self, n: MontU128) -> Self {
+        let n_val = n.0;
+        if n_val == 0 || self.is_zero() {
             Self::zero()
-        } else if n == 1 {
+        } else if n_val == 1 {
             *self
         } else if self.is_one() {
-            <Self as JoltField>::from_u8(1_u8)
+            *self
         } else {
-            ark_ff::Fp::mul_hi_u128(*self, n)
+            ark_ff::Fp::mul_hi_u128(*self, n_val)
         }
     }
+
+    //#[inline(always)]
+    //fn mul_u128_mont_form(&self, n: u128) -> Self {
+    //    if n == 0 || self.is_zero() {
+    //        Self::zero()
+    //    } else if n == 1 {
+    //        *self
+    //    } else if self.is_one() {
+    //        <Self as JoltField>::from_u8(1_u8)
+    //    } else {
+    //        ark_ff::Fp::mul_hi_u128(*self, n)
+    //    }
+    //}
 
     #[inline(always)]
     fn mul_i128(&self, n: i128) -> Self {

@@ -1,4 +1,5 @@
 use super::{FieldOps, JoltField};
+use crate::field::MontU128;
 use crate::utils::counters::{INVERSE_COUNT, MULT_COUNT};
 use allocative::Allocative;
 use ark_bn254::Fr;
@@ -334,9 +335,9 @@ impl JoltField for TrackedFr {
         MULT_COUNT.fetch_add(1, Ordering::Relaxed);
         TrackedFr(self.0.mul_u64(n))
     }
-    fn mul_u128_mont_form(&self, n: u128) -> Self {
+    fn mul_u128_mont_form(&self, n: MontU128) -> Self {
         MULT_COUNT.fetch_add(1, Ordering::Relaxed);
-        TrackedFr(self.0.mul_u128(n))
+        Self(self.0.mul_u128_mont_form(n))
     }
 
     fn mul_i128(&self, n: i128) -> Self {
