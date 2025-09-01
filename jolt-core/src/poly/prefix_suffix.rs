@@ -107,9 +107,6 @@ impl<F: JoltField> PolynomialBinding<F> for CachedPolynomial<F> {
         }
     }
 
-    fn bind_small_scalar_parallel(&mut self, _r: u128, _order: BindingOrder) {
-        todo!()
-    }
     fn bind_parallel(&mut self, r: F, order: BindingOrder) {
         if !self.bound_this_round {
             self.inner.bind_parallel(r, order);

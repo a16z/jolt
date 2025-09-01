@@ -6,4 +6,4 @@ pub mod sumcheck;
 pub mod toom;
 
 // Reference implementations
-pub mod shout;
+//pub mod shout;

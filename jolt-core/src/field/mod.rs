@@ -32,6 +32,24 @@ impl From<MontU128> for u128 {
     }
 }
 
+// This is not the most efficient way to do things.
+impl Mul for MontU128 {
+    type Output = Self;
+
+    #[inline(always)]
+    fn mul(self, rhs: Self) -> Self::Output {
+        MontU128(self.0.wrapping_mul(rhs.0))
+        // or normal `*` if no wraparound matters:
+        // MontU128(self.0 * rhs.0)
+    }
+}
+
+impl MulAssign for MontU128 {
+    #[inline(always)]
+    fn mul_assign(&mut self, rhs: Self) {
+        self.0 = self.0.wrapping_mul(rhs.0);
+    }
+}
 pub trait JoltField:
     'static
     + Sized

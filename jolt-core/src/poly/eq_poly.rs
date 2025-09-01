@@ -1,9 +1,8 @@
-use crate::field::JoltField;
+use crate::field::{JoltField, MontU128};
 use crate::poly::opening_proof::{Endianness, OpeningPoint};
 use crate::utils::{math::Math, thread::unsafe_allocate_zero_vec};
 use rayon::prelude::*;
 use std::marker::PhantomData;
-use std::u128;
 
 const PARALLEL_THRESHOLD: usize = 16;
 
@@ -46,7 +45,7 @@ impl<F: JoltField> EqPolynomial<F> {
         }
     }
 
-    pub fn evals_u128(r: &[u128]) -> Vec<F> {
+    pub fn evals_u128(r: &[MontU128]) -> Vec<F> {
         match r.len() {
             0..=PARALLEL_THRESHOLD => Self::evals_serial_u128(r, None),
             _ => Self::evals_parallel_u128(r, None),
@@ -90,7 +89,7 @@ impl<F: JoltField> EqPolynomial<F> {
     /// Computes the table of coefficients:
     ///     scaling_factor * eq(r, x) for all x in {0, 1}^n
     /// serially. More efficient for short `r` (r is 128 bits)
-    fn evals_serial_u128(r: &[u128], scaling_factor: Option<F>) -> Vec<F> {
+    fn evals_serial_u128(r: &[MontU128], scaling_factor: Option<F>) -> Vec<F> {
         let mut evals: Vec<F> = vec![scaling_factor.unwrap_or(F::one()); r.len().pow2()];
         let mut size = 1;
         for j in 0..r.len() {
@@ -176,7 +175,7 @@ impl<F: JoltField> EqPolynomial<F> {
         evals
     }
 
-    pub fn evals_parallel_u128(r: &[u128], scaling_factor: Option<F>) -> Vec<F> {
+    pub fn evals_parallel_u128(r: &[MontU128], scaling_factor: Option<F>) -> Vec<F> {
         let final_size = r.len().pow2();
         let mut evals: Vec<F> = unsafe_allocate_zero_vec(final_size);
         let mut size = 1;

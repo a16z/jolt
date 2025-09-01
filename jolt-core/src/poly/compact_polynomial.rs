@@ -346,8 +346,6 @@ impl<T: SmallScalar, F: JoltField> PolynomialBinding<F> for CompactPolynomial<T,
         self.len = n;
     }
 
-    fn bind_small_scalar_parallel(&mut self, _r: u128, _order: BindingOrder) {}
-
     #[tracing::instrument(skip_all, name = "CompactPolynomial::bind")]
     fn bind_parallel(&mut self, r: F, order: BindingOrder) {
         let n = self.len() / 2;

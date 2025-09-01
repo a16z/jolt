@@ -1,11 +1,11 @@
 //! Implements the Dao-Thaler + Gruen optimization for EQ polynomial evaluations
 //! https://eprint.iacr.org/2024/1210.pdf
 
-use allocative::Allocative;
-
 use super::dense_mlpoly::DensePolynomial;
 use super::multilinear_polynomial::BindingOrder;
+use crate::field::MontU128;
 use crate::{field::JoltField, poly::eq_poly::EqPolynomial};
+use allocative::Allocative;
 
 #[derive(Debug, Clone, PartialEq, Allocative)]
 /// A struct holding the equality polynomial evaluations for use in sum-check, when incorporating
@@ -192,16 +192,17 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
     }
 
     #[tracing::instrument(skip_all, name = "GruenSplitEqPolynomial::bind")]
-    pub fn bind_small(&mut self, r: u128) {
+    pub fn bind_small(&mut self, r: MontU128) {
         match self.binding_order {
             BindingOrder::LowToHigh => {
                 // multiply `current_scalar` by `eq(w[i], r) = (1 - w[i]) * (1 - r) + w[i] * r`
                 // which is the same as `1 - w[i] - r + 2 * w[i] * r`
                 let prod_w_r = self.w[self.current_index - 1].mul_u128_mont_form(r);
                 // ALERT -- MAKE SURE FROM 128 does not change into mont from
-                self.current_scalar *= F::one() - self.w[self.current_index - 1] - F::from_u128(r)
-                    + prod_w_r
-                    + prod_w_r;
+                self.current_scalar *=
+                    F::one() - self.w[self.current_index - 1] - F::from_u128(r.0)
+                        + prod_w_r
+                        + prod_w_r;
                 // decrement `current_index`
                 self.current_index -= 1;
                 // pop the last vector from `E_in_vec` or `E_out_vec` (since we don't need it anymore)
@@ -218,7 +219,7 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
 
                 // TODO: Double check the from 128
                 self.current_scalar *=
-                    F::one() - self.w[self.current_index] - F::from_u128(r) + prod_w_r + prod_w_r;
+                    F::one() - self.w[self.current_index] - F::from_u128(r.0) + prod_w_r + prod_w_r;
 
                 // increment `current_index` (going from 0 to n-1)
                 self.current_index += 1;

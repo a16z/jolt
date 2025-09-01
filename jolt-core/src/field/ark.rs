@@ -180,24 +180,11 @@ impl JoltField for ark_bn254::Fr {
         } else if n_val == 1 {
             *self
         } else if self.is_one() {
-            *self
+            Self::from_u128(n_val)
         } else {
             ark_ff::Fp::mul_hi_u128(*self, n_val)
         }
     }
-
-    //#[inline(always)]
-    //fn mul_u128_mont_form(&self, n: u128) -> Self {
-    //    if n == 0 || self.is_zero() {
-    //        Self::zero()
-    //    } else if n == 1 {
-    //        *self
-    //    } else if self.is_one() {
-    //        <Self as JoltField>::from_u8(1_u8)
-    //    } else {
-    //        ark_ff::Fp::mul_hi_u128(*self, n)
-    //    }
-    //}
 
     #[inline(always)]
     fn mul_i128(&self, n: i128) -> Self {

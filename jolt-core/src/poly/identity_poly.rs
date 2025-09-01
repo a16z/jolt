@@ -50,9 +50,6 @@ impl<F: JoltField> PolynomialBinding<F> for IdentityPolynomial<F> {
         self.num_bound_vars += 1;
     }
 
-    fn bind_small_scalar_parallel(&mut self, _r: u128, _order: BindingOrder) {
-        todo!()
-    }
     fn bind_parallel(&mut self, r: F, order: BindingOrder) {
         // Binding is constant time, no parallelism necessary
         self.bind(r, order);
@@ -196,9 +193,6 @@ impl<F: JoltField> PolynomialBinding<F> for OperandPolynomial<F> {
         self.num_bound_vars != 0
     }
 
-    fn bind_small_scalar_parallel(&mut self, _r: u128, _order: BindingOrder) {
-        todo!()
-    }
     fn bind(&mut self, r: F, order: BindingOrder) {
         debug_assert!(self.num_bound_vars < self.num_vars);
         debug_assert_eq!(
@@ -393,9 +387,6 @@ impl<F: JoltField> PolynomialBinding<F> for UnmapRamAddressPolynomial<F> {
         self.int_poly.is_bound()
     }
 
-    fn bind_small_scalar_parallel(&mut self, _r: u128, _order: BindingOrder) {
-        todo!()
-    }
     fn bind(&mut self, r: F, order: BindingOrder) {
         self.int_poly.bind(r, order);
     }

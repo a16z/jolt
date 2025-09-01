@@ -5,7 +5,7 @@ use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::utils::{compute_dotproduct, compute_dotproduct_low_optimized};
 
-use crate::field::{JoltField, OptimizedMul};
+use crate::field::{JoltField, MontU128, OptimizedMul};
 use crate::poly::compact_polynomial::SmallScalar;
 use crate::utils::math::Math;
 use allocative::Allocative;
@@ -78,12 +78,6 @@ impl<F: JoltField> DensePolynomial<F> {
         }
     }
 
-    pub fn bind_small_scalar_parallel(&mut self, r: u128, order: BindingOrder) {
-        match order {
-            BindingOrder::LowToHigh => self.bound_poly_var_bot_01_small(&r),
-            BindingOrder::HighToLow => self.bound_poly_var_top_0_small(&r),
-        }
-    }
     pub fn bind_parallel(&mut self, r: F, order: BindingOrder) {
         match order {
             BindingOrder::LowToHigh => self.bound_poly_var_bot_01_optimized(&r),
@@ -220,9 +214,9 @@ impl<F: JoltField> DensePolynomial<F> {
         self.len = n;
     }
 
-    pub fn bound_poly_var_top_0_small(&mut self, _r: &u128) {}
+    pub fn bound_poly_var_top_0_small(&mut self, _r: &MontU128) {}
 
-    pub fn bound_poly_var_bot_01_small(&mut self, r: &u128) {
+    pub fn bound_poly_var_bot_01_small(&mut self, r: &MontU128) {
         let n = self.len() / 2;
 
         if self.binding_scratch_space.is_none() {
