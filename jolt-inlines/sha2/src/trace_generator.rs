@@ -330,6 +330,7 @@ pub fn sha2_inline_sequence_builder(
     for (i, guard) in guards.iter().enumerate() {
         vr[i] = **guard;
     }
+    println!("{:?}", vr);
     let builder = Sha256SequenceBuilder::new(
         address,
         is_compressed,
@@ -367,4 +368,16 @@ pub fn sha2_init_inline_sequence_builder(
         true, // initial - uses BLOCK constants
     );
     builder.build()
+}
+
+
+#[cfg(test)]
+mod test {
+    use crate::trace_generator::sha2_inline_sequence_builder;
+
+
+    #[test]
+    fn print_sequence() {
+        sha2_inline_sequence_builder(u64::default(), false, tracer::emulator::cpu::Xlen::Bit64, 10, 11, 12);
+    }
 }

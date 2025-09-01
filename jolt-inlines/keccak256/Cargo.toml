@@ -7,11 +7,12 @@ description = "Keccak-256 inline implementations for Jolt VM"
 [features]
 default = []
 host = ["dep:ctor", "dep:tracer", "dep:jolt-inlines-common"]
+save_trace = ["host"]
 
 [dependencies]
 ctor = { version = "0.2", optional = true }
 tracer = { path = "../../tracer", optional = true }
-jolt-inlines-common = { path = "../common", optional = true }
+jolt-inlines-common = { path = "../common", features = ["save_trace"], optional = true }
 
 [dev-dependencies]
 hex-literal = "0.4.1"

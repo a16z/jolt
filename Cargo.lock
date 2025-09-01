@@ -1677,6 +1677,9 @@ dependencies = [
 [[package]]
 name = "jolt-inlines-common"
 version = "0.1.0"
+dependencies = [
+ "tracer",
+]
 
 [[package]]
 name = "jolt-inlines-keccak256"
