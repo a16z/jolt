@@ -22,6 +22,7 @@ use crate::{
     transcripts::{AppendToTranscript, Transcript},
     utils::{errors::ProofVerifyError, math::Math},
 };
+use crate::field::MontU128;
 
 pub fn compute_eq_mle_product_univariate<F: JoltField>(
     mle_product_coeffs: Vec<F>,
@@ -280,11 +281,11 @@ impl<F: FieldMulSmall, ProofTranscript: Transcript> LargeDMulSumCheckProof<F, Pr
         r_cycle: &[F],
         previous_claim: &mut F,
         transcript: &mut ProofTranscript,
-    ) -> (Self, Vec<F>) {
+    ) -> (Self, Vec<MontU128>) {
         let span = tracing::span!(tracing::Level::INFO, "Initialize eq");
         let _guard = span.enter();
         let log_T = r_cycle.len();
-        let mut r: Vec<F> = Vec::with_capacity(r_cycle.len());
+        let mut r: Vec<MontU128> = Vec::with_capacity(r_cycle.len());
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(r_cycle.len());
         drop(_guard);
         drop(span);
@@ -350,13 +351,13 @@ impl<F: FieldMulSmall, ProofTranscript: Transcript> LargeDMulSumCheckProof<F, Pr
                 );
             }
 
-            let r_j = transcript.challenge_scalar::<F>();
-            *previous_claim = univariate_poly.evaluate(&r_j);
+            let r_j = transcript.challenge_u128();
+            *previous_claim = univariate_poly.evaluate_u128(&r_j);
             r.push(r_j);
 
             // Update factor by the multiplicative factor of wr_j + (1 - r_j)(1 - w) = (2w - 1)r_j + (1 - w), where w is the current bit of r_cycle
             eq_factor = eq_factor.mul_1_optimized(
-                (r_cycle[round] + r_cycle[round] - F::one()) * r_j + (F::one() - r_cycle[round]),
+                (r_cycle[round] + r_cycle[round] - F::one()).mul_u128_mont_form(r_j) + (F::one() - r_cycle[round]),
             );
 
             drop(_guard);
@@ -391,7 +392,7 @@ impl<F: FieldMulSmall, ProofTranscript: Transcript> LargeDMulSumCheckProof<F, Pr
 
     pub fn verify(
         &self,
-        r_prime: Vec<F>,
+        r_prime: Vec<MontU128>,
         claim: F,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
@@ -428,12 +429,12 @@ impl<F: JoltField, ProofTranscript: Transcript> NaiveSumCheckProof<F, ProofTrans
         r_cycle: &[F],
         previous_claim: &mut F,
         transcript: &mut ProofTranscript,
-    ) -> (Self, Vec<F>) {
+    ) -> (Self, Vec<MontU128>) {
         let span = tracing::span!(tracing::Level::INFO, "Initialize eq");
         let _guard = span.enter();
         let mut eq = MultilinearPolynomial::from(EqPolynomial::evals(r_cycle));
         let log_T = r_cycle.len();
-        let mut r: Vec<F> = Vec::with_capacity(r_cycle.len());
+        let mut r: Vec<MontU128> = Vec::with_capacity(r_cycle.len());
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(r_cycle.len());
         drop(_guard);
         drop(span);
@@ -493,8 +494,8 @@ impl<F: JoltField, ProofTranscript: Transcript> NaiveSumCheckProof<F, ProofTrans
             compressed_poly.append_to_transcript(transcript);
             compressed_polys.push(compressed_poly);
 
-            let r_j = transcript.challenge_scalar::<F>();
-            *previous_claim = univariate_poly.evaluate(&r_j);
+            let r_j = transcript.challenge_u128();
+            *previous_claim = univariate_poly.evaluate_u128(&r_j);
             r.push(r_j);
 
             drop(_guard);
@@ -534,7 +535,7 @@ impl<F: JoltField, ProofTranscript: Transcript> NaiveSumCheckProof<F, ProofTrans
 
     pub fn verify(
         &self,
-        r_prime: Vec<F>,
+        r_prime: Vec<MontU128>,
         claim: F,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {

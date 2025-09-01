@@ -68,6 +68,20 @@ impl JoltField for ark_bn254::Fr {
         }
     }
 
+    // No montgomery business happening here.
+    fn from_u128(n: u128) -> Self {
+        if n <= u16::MAX as u128 {
+            <Self as JoltField>::from_u16(n as u16)
+        } else if n <= u32::MAX as u128 {
+            <Self as JoltField>::from_u32(n as u32)
+        } else if n <= u64::MAX as u128 {
+            <Self as JoltField>::from_u64(n as u64)
+        } else {
+            let bigint = BigInt::new([n as u64, (n >> 64) as u64, 0, 0]);
+            <Self as ark_ff::PrimeField>::from_bigint(bigint).unwrap()
+        }
+    }
+
     fn from_i64(val: i64) -> Self {
         if val.is_negative() {
             let val = val.unsigned_abs();
@@ -87,20 +101,6 @@ impl JoltField for ark_bn254::Fr {
             } else {
                 <Self as JoltField>::from_u64(val)
             }
-        }
-    }
-
-    // No montgomery business happening here.
-    fn from_u128(n: u128) -> Self {
-        if n <= u16::MAX as u128 {
-            <Self as JoltField>::from_u16(n as u16)
-        } else if n <= u32::MAX as u128 {
-            <Self as JoltField>::from_u32(n as u32)
-        } else if n <= u64::MAX as u128 {
-            <Self as JoltField>::from_u64(n as u64)
-        } else {
-            let bigint = BigInt::new([n as u64, (n >> 64) as u64, 0, 0]);
-            <Self as ark_ff::PrimeField>::from_bigint(bigint).unwrap()
         }
     }
 
@@ -132,6 +132,18 @@ impl JoltField for ark_bn254::Fr {
         }
     }
 
+    fn square(&self) -> Self {
+        <Self as ark_ff::Field>::square(self)
+    }
+
+    fn from_bytes(bytes: &[u8]) -> Self {
+        ark_bn254::Fr::from_le_bytes_mod_order(bytes)
+    }
+
+    fn inverse(&self) -> Option<Self> {
+        <Self as ark_ff::Field>::inverse(self)
+    }
+
     fn to_u64(&self) -> Option<u64> {
         let bigint = self.into_bigint();
         let limbs: &[u64] = bigint.as_ref();
@@ -142,18 +154,6 @@ impl JoltField for ark_bn254::Fr {
         } else {
             Some(result)
         }
-    }
-
-    fn square(&self) -> Self {
-        <Self as ark_ff::Field>::square(self)
-    }
-
-    fn inverse(&self) -> Option<Self> {
-        <Self as ark_ff::Field>::inverse(self)
-    }
-
-    fn from_bytes(bytes: &[u8]) -> Self {
-        ark_bn254::Fr::from_le_bytes_mod_order(bytes)
     }
 
     fn num_bits(&self) -> u32 {
@@ -173,6 +173,19 @@ impl JoltField for ark_bn254::Fr {
         }
     }
     #[inline(always)]
+    fn mul_i128(&self, n: i128) -> Self {
+        if n == 0 || self.is_zero() {
+            Self::zero()
+        } else if n == 1 {
+            *self
+        } else if self.is_one() {
+            <Self as JoltField>::from_i128(n)
+        } else {
+            ark_ff::Fp::mul_i128(*self, n)
+        }
+    }
+
+    #[inline(always)]
     fn mul_u128_mont_form(&self, n: MontU128) -> Self {
         let n_val = n.0;
         if n_val == 0 || self.is_zero() {
@@ -185,20 +198,32 @@ impl JoltField for ark_bn254::Fr {
             ark_ff::Fp::mul_hi_u128(*self, n_val)
         }
     }
+}
 
+// Provide ergonomic operators for multiplying by a u128 already in Montgomery form.
+impl core::ops::Mul<MontU128> for ark_bn254::Fr {
+    type Output = Self;
     #[inline(always)]
-    fn mul_i128(&self, n: i128) -> Self {
-        if n == 0 || self.is_zero() {
-            Self::zero()
-        } else if n == 1 {
-            *self
-        } else if self.is_one() {
-            <Self as JoltField>::from_i128(n)
-        } else {
-            ark_ff::Fp::mul_i128(*self, n)
-        }
+    fn mul(self, rhs: MontU128) -> Self::Output {
+        Self::mul_u128_mont_form(&self, rhs)
     }
 }
+
+impl core::ops::Mul<MontU128> for &ark_bn254::Fr {
+    type Output = ark_bn254::Fr;
+    #[inline(always)]
+    fn mul(self, rhs: MontU128) -> Self::Output {
+        <ark_bn254::Fr as JoltField>::mul_u128_mont_form(self, rhs)
+    }
+}
+
+impl core::ops::MulAssign<MontU128> for ark_bn254::Fr {
+    #[inline(always)]
+    fn mul_assign(&mut self, rhs: MontU128) {
+        *self = Self::mul_u128_mont_form(self, rhs);
+    }
+}
+
 
 #[cfg(test)]
 mod tests {

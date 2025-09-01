@@ -17,7 +17,8 @@ pub trait FieldOps<Rhs = Self, Output = Self>:
 
 /// A wrapper around `u128` indicating that the value is already
 /// in Montgomery form for the target field.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "allocative", derive(Allocative))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub struct MontU128(pub u128);
 
 impl From<u128> for MontU128 {
@@ -32,24 +33,8 @@ impl From<MontU128> for u128 {
     }
 }
 
-// This is not the most efficient way to do things.
-impl Mul for MontU128 {
-    type Output = Self;
 
-    #[inline(always)]
-    fn mul(self, rhs: Self) -> Self::Output {
-        MontU128(self.0.wrapping_mul(rhs.0))
-        // or normal `*` if no wraparound matters:
-        // MontU128(self.0 * rhs.0)
-    }
-}
 
-impl MulAssign for MontU128 {
-    #[inline(always)]
-    fn mul_assign(&mut self, rhs: Self) {
-        self.0 = self.0.wrapping_mul(rhs.0);
-    }
-}
 pub trait JoltField:
     'static
     + Sized
@@ -81,7 +66,7 @@ pub trait JoltField:
     const NUM_BYTES: usize;
     /// An implementation of `JoltField` may use some precomputed lookup tables to speed up the
     /// conversion of small primitive integers (e.g. `u16` values) into field elements. For example,
-    /// the arkworks BN254 scalar field requires a conversion into Montgomery form, which naively
+    /// the arkworks BN254 scalar field requires a conversion into the Montgomery form, which naively
     /// requires a field multiplication, but can instead be looked up.
     type SmallValueLookupTables: Clone + Default + CanonicalSerialize + CanonicalDeserialize;
 
@@ -120,13 +105,17 @@ pub trait JoltField:
         *self * Self::from_i128(n)
     }
 
-    // Here n is already in montgormery form,
-    // This is a dummy implementation
-    // that gets overwritten by the ark-implementation
+    // Here n is already in Montgomery form.
+    // This MUST be overridden by a concrete field implementation that knows how
+    // to multiply by an u128 already in Montgomery form (e.g., using mul_hi_u128).
+    // Providing a generic fallback (like converting via from_u128) would be WRONG,
+    // because it would interpret n as a canonical integer and re-encode it,
+    // effectively multiplying by R and corrupting the result.
     #[inline(always)]
-    fn mul_u128_mont_form(&self, n: MontU128) -> Self {
-        *self * Self::from_u128(n.0)
+    fn mul_u128_mont_form(&self, _n: MontU128) -> Self {
+        unimplemented!("mul_u128_mont_form must be implemented by the concrete field type")
     }
+
     fn mul_pow_2(&self, mut pow: usize) -> Self {
         if pow > 255 {
             panic!("pow > 255");
