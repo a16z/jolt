@@ -4,8 +4,8 @@ use super::add::ADD;
 use super::amo::{amo_post32, amo_post64, amo_pre32, amo_pre64};
 use super::mul::MUL;
 use super::sltu::SLTU;
-use super::virtual_extend::VirtualExtend;
 use super::virtual_move::VirtualMove;
+use super::virtual_zero_extend_word::VirtualZeroExtendWord;
 use super::xori::XORI;
 use super::RV32IMInstruction;
 use crate::utils::inline_helpers::InstrAssembler;
@@ -98,8 +98,8 @@ impl RISCVTrace for AMOMINUW {
                     *v_dword,
                     *v_shift,
                 );
-                asm.emit_i::<VirtualExtend>(*v_rs2, self.operands.rs2, 0);
-                asm.emit_i::<VirtualExtend>(*v_tmp, *v_rd, 0);
+                asm.emit_i::<VirtualZeroExtendWord>(*v_rs2, self.operands.rs2, 0);
+                asm.emit_i::<VirtualZeroExtendWord>(*v_tmp, *v_rd, 0);
                 asm.emit_r::<SLTU>(*v_sel_rs2, *v_rs2, *v_tmp);
                 asm.emit_i::<XORI>(*v_sel_rd, *v_sel_rs2, 1);
                 asm.emit_r::<MUL>(*v_rs2, *v_sel_rs2, self.operands.rs2);

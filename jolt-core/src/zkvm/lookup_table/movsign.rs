@@ -14,11 +14,7 @@ impl<const XLEN: usize> JoltLookupTable for MovsignTable<XLEN> {
         let sign_bit_pos = 2 * XLEN - 1;
         let sign_bit = 1u128 << sign_bit_pos;
         if index & sign_bit != 0 {
-            if XLEN == 64 {
-                u64::MAX
-            } else {
-                (1u64 << XLEN) - 1
-            }
+            ((1u128 << XLEN) - 1) as u64
         } else {
             0
         }
