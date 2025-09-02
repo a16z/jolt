@@ -5,6 +5,7 @@ extern crate alloc;
 extern crate core;
 
 use itertools::Itertools;
+use core::mem::take;
 use std::vec;
 use tracing::{error, info};
 
@@ -318,33 +319,52 @@ impl Iterator for LazyTraceIterator {
     }
 }
 
-pub struct ChunksWithPeek<I> {
+/// [1,2,3,4,5,6]
+/// chunk_size = 2 with peek
+/// [peek=1,2,3]
+/// [peek=3,4,5]
+/// [5,6]
+
+pub struct ChunksWithPeek<I:Iterator> {
     chunk_size: usize,
     iter: I,
+    peek: Option<I::Item>,
 }
 
 pub trait ChunkWithPeekIterator: Iterator + Sized {
-    fn chunks_with_peek(self, size: usize) -> ChunksWithPeek<Self> {
+    fn chunks_with_peek(mut self, size: usize) -> ChunksWithPeek<Self> {
         assert!(size != 0, "chunk size must be non-zero");
+        let peek = self.next();//.expect("Expected a non-empty iterator");
         ChunksWithPeek {
             chunk_size: size,
             iter: self,
+            peek,
         }
     }
 }
 
 impl<I: Iterator + Sized> ChunkWithPeekIterator for I { }
 
-impl<I:Iterator> Iterator for ChunksWithPeek<I> {
+impl<I:Iterator<Item:Clone>> Iterator for ChunksWithPeek<I> {
     type Item = Vec<I::Item>;
 
     fn next(&mut self) -> Option<Self::Item> {
         // return `None` if `self.iter.next()` is `None`,
-        let first_item = self.iter.next()?;
+        // let first_item = self.iter.next()?;
         // optimize for the chunk size
-        let mut chunk = Vec::with_capacity(self.chunk_size);
-        chunk.push(first_item);
+        let mut chunk = Vec::with_capacity(self.chunk_size + 1);
+        chunk.push(self.peek.take()?);
+        // chunk.push(first_item);
         chunk.extend(self.iter.by_ref().take(self.chunk_size - 1));
+        if chunk.len() == 1
+        {
+            return None;
+        }
+        self.peek = self.iter.next();
+        if let Some(p) = &self.peek
+        {
+            chunk.push(p.clone());
+        }
         Some(chunk)
     }
 }

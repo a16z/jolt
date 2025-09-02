@@ -548,7 +548,7 @@ impl JoltDAG {
             .map(|(row_commitments, s)| PCS::finalize(s.0, &row_commitments))
             .unzip();
 
-        #[cfg(test)]
+        // #[cfg(test)]
         {
             let committed_polys: Vec<_> = polys
                 .iter()

@@ -1505,6 +1505,9 @@ impl StreamingCommitmentScheme_ for DoryCommitmentScheme {
             let mut row_commitments: Vec<_> = chunks.into_par_iter().map(|r| r[0]).collect();
             // Pad row commitments since we don't pad streamed trace.
             let row_pad_count = T/DoryGlobals::get_num_columns() - row_commitments.len();
+            println!("T = {T}, get_num_columns() = {}, row_commitments.len() = {}, row_pad_count = {}", DoryGlobals::get_num_columns(), row_commitments.len(), row_pad_count);
+            // println!("finalize:: rpc={row_pad_count}, row_commitments.len()={}", row_commitments.len());
+            assert!(T/DoryGlobals::get_num_columns() >= row_commitments.len());
             row_commitments.extend(vec![JoltG1Wrapper::identity(); row_pad_count]);
             let commitment = JoltBn254::multi_pair(&row_commitments, &state.setup.g2_vec()[..row_commitments.len()]);
             (DoryCommitment(commitment), row_commitments)
