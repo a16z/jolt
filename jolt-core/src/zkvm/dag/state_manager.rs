@@ -169,7 +169,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         &self,
     ) -> (
         &'a JoltProverPreprocessing<F, PCS>,
-        &LazyTraceIterator,
+        &Option<LazyTraceIterator>,
         &Vec<RV32IMCycle>,
         &JoltDevice,
         &Memory,
@@ -177,7 +177,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
         if let Some(ref prover_state) = self.prover_state {
             (
                 prover_state.preprocessing,
-                &prover_state.lazy_trace.as_ref().unwrap(),//AZ: todo: maybe not unwrap and handle it better
+                &prover_state.lazy_trace,
                 &prover_state.trace,
                 &self.program_io,
                 &prover_state.final_memory_state,
