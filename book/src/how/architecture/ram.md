@@ -91,8 +91,8 @@ $$
 0 = \sum_{k \in \{0, 1\}^{\log K}} \widetilde{\textsf{eq}}(r_\text{address}, k) \cdot \widetilde{\textsf{io-range}}(k) \cdot \left( \widetilde{\textsf{Val}}_\text{final}(k) - \widetilde{\textsf{Val}}_\text{io}(k) \right)
 $$
 
-where $\widetilde{\textsf{io-range}}$ is a "masking" polynomial, equal to 1 at all the indices corresponding to the program I/O region and 0 elsewhere.
-The MLE for a masking polynomial that isolates the range $[\text{start}, \text{end})$ can be written as follows:
+where $\widetilde{\textsf{io-range}}$ is a "range mask" polynomial, equal to 1 at all the indices corresponding to the program I/O region and 0 elsewhere.
+The MLE for a range mask polynomial that isolates the range $[\text{start}, \text{end})$ can be written as follows:
 
 $$
 \widetilde{\textsf{mask}}_\text{start, end}(r) = \widetilde{\textsf{LT}}(r, \text{end}) - \widetilde{\textsf{LT}}(r, \text{start})

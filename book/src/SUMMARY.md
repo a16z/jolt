@@ -41,7 +41,6 @@
     - [64-bit RISC-V (RV64)](./roadmap/rv64.md)
     - [Streaming](./roadmap/streaming.md)
     - [Recursion](./roadmap/recursion.md)
-    - [Known optimizations](./roadmap/optimizations.md)
     - [Zero Knowledge](./roadmap/zk.md)
     - [On-chain verifier (no recursion/composition)](./roadmap/on-chain-verifier.md)
     - [Precompiles](./roadmap/precompiles.md)
