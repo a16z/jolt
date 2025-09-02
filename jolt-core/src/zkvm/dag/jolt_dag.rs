@@ -493,9 +493,6 @@ impl JoltDAG {
         let (preprocessing, lazy_trace, trace, _program_io, _final_memory_state) =
             prover_state_manager.get_prover_data();
 
-        let size = trace.len(); // Remove this from the trait??? Or get from preprocessing?
-        // let lazy_trace_clone = lazy_trace.clone();
-
         let T = DoryGlobals::get_T();
 
         let polys : Vec<_> = AllCommittedPolynomials::iter().collect(); // .skip(9).take(1).collect();
@@ -505,9 +502,12 @@ impl JoltDAG {
             .map(|poly| (PCS::initialize(poly.to_polynomial_type(&preprocessing), T, &preprocessing.generators), poly)) //AZ: Add ram_d here
             .collect();
         let row_len = DoryGlobals::get_num_columns();
-        // let chunks = lazy_trace.clone() // TODO(JP): More efficient way to zip_with_self_next and chunkify in parallel
+
+        // // delete from here
+        // let lzt = lazy_trace.as_ref().unwrap().clone();
+        // let chunks = lzt.clone() // TODO(JP): More efficient way to zip_with_self_next and chunkify in parallel
         //     .zip(
-        //         lazy_trace.clone() // JP: Why are two clones needed?
+        //         lzt.clone() // JP: Why are two clones needed?
         //             .skip(1)
         //             .chain(std::iter::once(RV32IMCycle::NoOp)),
         //     )
@@ -525,10 +525,12 @@ impl JoltDAG {
         //             })
         //             .collect()
         //     });
-
+        
         // [row_chunks][polys]
         let row_commitments = lazy_trace
-            .clone()
+            .as_ref()
+            .unwrap() //AZ: todo: maybe not unwrap and handle it better
+            .clone() //AZ: Can we avoid this clone?
             .pad_using(T+1, |_| RV32IMCycle::NoOp)
             .chunks_with_peek(row_len)
             .par_bridge()

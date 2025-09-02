@@ -318,7 +318,6 @@ impl Iterator for LazyTraceIterator {
     }
 }
 
-/// TODO
 pub struct ChunksWithPeek<I> {
     chunk_size: usize,
     iter: I,
@@ -326,7 +325,11 @@ pub struct ChunksWithPeek<I> {
 
 pub trait ChunkWithPeekIterator: Iterator + Sized {
     fn chunks_with_peek(self, size: usize) -> ChunksWithPeek<Self> {
-        todo!()
+        assert!(size != 0, "chunk size must be non-zero");
+        ChunksWithPeek {
+            chunk_size: size,
+            iter: self,
+        }
     }
 }
 
@@ -336,7 +339,13 @@ impl<I:Iterator> Iterator for ChunksWithPeek<I> {
     type Item = Vec<I::Item>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        todo!()
+        // return `None` if `self.iter.next()` is `None`,
+        let first_item = self.iter.next()?;
+        // optimize for the chunk size
+        let mut chunk = Vec::with_capacity(self.chunk_size);
+        chunk.push(first_item);
+        chunk.extend(self.iter.by_ref().take(self.chunk_size - 1));
+        Some(chunk)
     }
 }
 
