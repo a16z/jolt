@@ -1,10 +1,11 @@
 use std::fmt::{Debug, Display};
 use std::hash::Hash;
+use std::io::{Read};
 use std::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub, SubAssign};
 
 #[cfg(feature = "allocative")]
 use allocative::Allocative;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_serialize::{CanonicalDeserialize, Validate, Valid};
 use ark_std::{One, Zero};
 
 pub trait FieldOps<Rhs = Self, Output = Self>:
@@ -15,8 +16,8 @@ pub trait FieldOps<Rhs = Self, Output = Self>:
 {
 }
 
-/// A wrapper around `u128` indicating that the value is already
-/// in Montgomery form for the target field.
+/// A zero cost-wrapper around `u128` indicating that the value is already
+/// in Montgomery form for the target field
 #[cfg_attr(feature = "allocative", derive(Allocative))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub struct MontU128(pub u128);
@@ -32,8 +33,89 @@ impl From<MontU128> for u128 {
         val.0
     }
 }
+impl From<u64> for MontU128 {
+    fn from(val: u64) -> Self {
+        MontU128(val as u128)
+    }
+}
+// === Serialization impls ===
+
+use ark_serialize::{CanonicalSerialize, SerializationError, Compress};
+use std::io::Write;
 
 
+impl CanonicalSerialize for MontU128 {
+    // fn serialize<W: Write>(&self, writer: W) -> Result<(), SerializationError> {
+    //     self.serialize_uncompressed(writer)
+    // }
+
+    fn serialize_with_mode<W: Write>(
+        &self,
+        writer: W,
+        _compress: Compress,
+    ) -> Result<(), SerializationError> {
+        self.serialize_uncompressed(writer)
+    }
+
+    fn serialized_size(&self, _compress: Compress) -> usize {
+        self.uncompressed_size()
+    }
+
+    fn serialize_compressed<W: Write>(&self, writer: W) -> Result<(), SerializationError> {
+        // u128 doesn’t really compress, so just write as 16 bytes
+        self.serialize_uncompressed(writer)
+    }
+
+    fn compressed_size(&self) -> usize {
+        16
+    }
+
+    fn serialize_uncompressed<W: Write>(&self, mut writer: W) -> Result<(), SerializationError> {
+        writer.write_all(&self.0.to_le_bytes())?;
+        Ok(())
+    }
+
+    fn uncompressed_size(&self) -> usize {
+        16
+    }
+}
+
+
+impl Valid for MontU128 {
+    fn check(&self) -> Result<(), SerializationError> {
+        Ok(())
+    }
+}
+
+impl CanonicalDeserialize for MontU128 {
+    fn deserialize_with_mode<R: Read>(
+        reader: R,
+        _compress: Compress,
+        _validate: Validate,
+    ) -> Result<Self, SerializationError> {
+        Self::deserialize_uncompressed(reader)
+    }
+
+    fn deserialize_compressed<R: Read>(reader: R) -> Result<Self, SerializationError> {
+        Self::deserialize_uncompressed(reader)
+    }
+
+    fn deserialize_compressed_unchecked<R: Read>(reader: R) -> Result<Self, SerializationError> {
+        Self::deserialize_uncompressed_unchecked(reader)
+    }
+
+    fn deserialize_uncompressed<R: Read>(mut reader: R) -> Result<Self, SerializationError> {
+        let mut buf = [0u8; 16];
+        reader.read_exact(&mut buf)?;
+        Ok(MontU128(u128::from_le_bytes(buf)))
+    }
+
+    fn deserialize_uncompressed_unchecked<R: Read>(mut reader: R) -> Result<Self, SerializationError> {
+        let mut buf = [0u8; 16];
+        reader.read_exact(&mut buf)?;
+        Ok(MontU128(u128::from_le_bytes(buf)))
+    }
+}
 
 pub trait JoltField:
     'static

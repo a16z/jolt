@@ -205,7 +205,7 @@ impl<F: JoltField> PolynomialBinding<F> for OperandPolynomial<F> {
             || (self.num_bound_vars.is_odd() && self.side == OperandSide::Right)
         {
             self.bound_value += self.bound_value;
-            self.bound_value += r;
+            self.bound_value += F::from_u128_mont(r);
         }
         self.num_bound_vars += 1;
     }
@@ -237,7 +237,7 @@ impl<F: JoltField> PolynomialEvaluation<F> for OperandPolynomial<F> {
         }
     }
 
-    fn batch_evaluate(_polys: &[&Self], _r: &[F]) -> Vec<F> {
+    fn batch_evaluate(_polys: &[&Self], _r: &[MontU128]) -> Vec<F> {
         unimplemented!("Currently unused")
     }
 
@@ -497,23 +497,23 @@ mod tests {
 
         // Test a few specific points
         // k=0 should map to start_address - 4
-        let point_0 = vec![MontU128::from(0); NUM_VARS];
-        assert_eq!(unmap_poly.evaluate(&point_0), MontU128::from(START_ADDRESS - 4));
+        let point_0 = vec![MontU128::from(0_u128); NUM_VARS];
+        assert_eq!(unmap_poly.evaluate(&point_0), Fr::from(START_ADDRESS - 4));
 
         // k=1 should map to start_address
-        let mut point_1 = vec![Fr::ZERO; NUM_VARS];
-        point_1[NUM_VARS - 1] = Fr::ONE;
+        let mut point_1 = vec![MontU128::from(0_u128); NUM_VARS];
+        point_1[NUM_VARS - 1] = MontU128::from(1_u128);
         assert_eq!(unmap_poly.evaluate(&point_1), Fr::from(START_ADDRESS));
 
         // k=2 should map to start_address + 4
-        let mut point_2 = vec![Fr::ZERO; NUM_VARS];
-        point_2[NUM_VARS - 2] = Fr::ONE;
+        let mut point_2 = vec![MontU128::from(0_u128); NUM_VARS];
+        point_2[NUM_VARS - 2] = MontU128::from(1_u128);
         assert_eq!(unmap_poly.evaluate(&point_2), Fr::from(START_ADDRESS + 4));
 
         // k=3 should map to start_address + 8
-        let mut point_3 = vec![Fr::ZERO; NUM_VARS];
-        point_3[NUM_VARS - 1] = Fr::ONE;
-        point_3[NUM_VARS - 2] = Fr::ONE;
+        let mut point_3 = vec![MontU128::from(0_u128); NUM_VARS];
+        point_3[NUM_VARS - 1] = MontU128::from(1_u128);
+        point_3[NUM_VARS - 2] = MontU128::from(1_u128);
         assert_eq!(unmap_poly.evaluate(&point_3), Fr::from(START_ADDRESS + 8));
     }
 
@@ -526,10 +526,10 @@ mod tests {
 
         // Test evaluation on boolean hypercube
         for i in 0..(1 << NUM_VARS) {
-            let mut eval_point = vec![Fr::ZERO; NUM_VARS];
+            let mut eval_point = vec![MontU128::from(0_u128); NUM_VARS];
             for j in 0..NUM_VARS {
                 if (i >> j) & 1 == 1 {
-                    eval_point[j] = Fr::ONE;
+                    eval_point[j] = MontU128::from(1_u128);
                 }
             }
             eval_point.reverse();
@@ -572,10 +572,10 @@ mod tests {
 
         // Verify that both polynomials agree on the entire boolean hypercube
         for i in 0..(1 << NUM_VARS) {
-            let mut eval_point = vec![Fr::ZERO; NUM_VARS];
+            let mut eval_point = vec![MontU128::from(0_u128); NUM_VARS];
             for j in 0..NUM_VARS {
                 if (i >> j) & 1 == 1 {
-                    eval_point[j] = Fr::ONE;
+                    eval_point[j] = MontU128::from(1_u128);
                 }
             }
             let ro_poly = ro_poly.evaluate(&eval_point);
@@ -604,7 +604,7 @@ mod tests {
                 );
             }
 
-            let r = Fr::random(&mut rng);
+            let r = MontU128::from(rng.gen::<u128>());
             ro_poly.bind(r, BindingOrder::HighToLow);
             lo_poly.bind(r, BindingOrder::HighToLow);
             reference_poly_r.bind(r, BindingOrder::HighToLow);
@@ -656,7 +656,7 @@ mod tests {
                 );
             }
 
-            let r = Fr::from(0x12345678u64 + round as u64);
+            let r = MontU128::from(0x12345678u64 + round as u64);
             unmap_poly.bind(r, BindingOrder::LowToHigh);
             reference_poly.bind(r, BindingOrder::LowToHigh);
         }

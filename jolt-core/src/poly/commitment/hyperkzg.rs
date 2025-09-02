@@ -12,7 +12,7 @@ use super::{
     commitment_scheme::{CommitmentScheme, StreamingCommitmentScheme},
     kzg::{KZGProverKey, KZGVerifierKey, UnivariateKZG},
 };
-use crate::field::JoltField;
+use crate::field::{JoltField, MontU128};
 use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
 use crate::poly::rlc_polynomial::RLCPolynomial;
 use crate::{
@@ -304,7 +304,7 @@ where
     pub fn open<ProofTranscript: Transcript>(
         pk: &HyperKZGProverKey<P>,
         poly: &MultilinearPolynomial<P::ScalarField>,
-        point: &[P::ScalarField],
+        point: &[MontU128],
         _eval: &P::ScalarField,
         transcript: &mut ProofTranscript,
     ) -> Result<HyperKZGProof<P>, ProofVerifyError> {
@@ -322,7 +322,7 @@ where
             let Pi_len = previous_poly.len() / 2;
             let mut Pi = vec![P::ScalarField::zero(); Pi_len];
             Pi.par_iter_mut().enumerate().for_each(|(j, Pi_j)| {
-                *Pi_j = point[ell - i - 1] * (previous_poly[2 * j + 1] - previous_poly[2 * j])
+                *Pi_j = (previous_poly[2 * j + 1] - previous_poly[2 * j]).mul_u128_mont_form(point[ell - i - 1])
                     + previous_poly[2 * j];
             });
 
@@ -352,7 +352,7 @@ where
     pub fn verify<ProofTranscript: Transcript>(
         vk: &HyperKZGVerifierKey<P>,
         C: &HyperKZGCommitment<P>,
-        point: &[P::ScalarField],
+        point: &[MontU128],
         P_of_x: &P::ScalarField,
         pi: &HyperKZGProof<P>,
         transcript: &mut ProofTranscript,
@@ -392,8 +392,8 @@ where
         let two = P::ScalarField::from(2u64);
         for i in 0..ell {
             if two * r * Y[i + 1]
-                != r * (P::ScalarField::one() - point[ell - i - 1]) * (ypos[i] + yneg[i])
-                    + point[ell - i - 1] * (ypos[i] - yneg[i])
+                != r * (P::ScalarField::one() - P::ScalarField::from_u128_mont(point[ell - i - 1])) * (ypos[i] + yneg[i])
+                    +  (ypos[i] - yneg[i]).mul_u128_mont_form(point[ell - i - 1])
             {
                 return Err(ProofVerifyError::InternalError);
             }
@@ -482,7 +482,7 @@ where
     fn prove<ProofTranscript: Transcript>(
         setup: &Self::ProverSetup,
         poly: &MultilinearPolynomial<Self::Field>,
-        opening_point: &[Self::Field], // point at which the polynomial is evaluated
+        opening_point: &[MontU128], // point at which the polynomial is evaluated
         _: Self::OpeningProofHint,
         transcript: &mut ProofTranscript,
     ) -> Self::Proof {
@@ -494,7 +494,7 @@ where
         proof: &Self::Proof,
         setup: &Self::VerifierSetup,
         transcript: &mut ProofTranscript,
-        opening_point: &[Self::Field], // point at which the polynomial is evaluated
+        opening_point: &[MontU128], // point at which the polynomial is evaluated
         opening: &Self::Field,         // evaluation \widetilde{Z}(r)
         commitment: &Self::Commitment,
     ) -> Result<(), ProofVerifyError> {
@@ -573,7 +573,9 @@ mod tests {
     use crate::transcripts::{Blake2bTranscript, Transcript};
     use ark_bn254::{Bn254, Fr};
     use ark_std::UniformRand;
+    use rand::Rng;
     use rand_core::SeedableRng;
+    use crate::field::MontU128;
 
     #[test]
     fn test_hyperkzg_eval() {
@@ -588,7 +590,7 @@ mod tests {
 
         let C = HyperKZG::commit(&pk, &poly).unwrap();
 
-        let test_inner = |point: Vec<Fr>, eval: Fr| -> Result<(), ProofVerifyError> {
+        let test_inner = |point: Vec<MontU128>, eval: Fr| -> Result<(), ProofVerifyError> {
             let mut tr = Blake2bTranscript::new(b"TestEval");
             let proof = HyperKZG::open(&pk, &poly, &point, &eval, &mut tr).unwrap();
             let mut tr = Blake2bTranscript::new(b"TestEval");
@@ -597,32 +599,32 @@ mod tests {
 
         // Call the prover with a (point, eval) pair.
         // The prover does not recompute so it may produce a proof, but it should not verify
-        let point = vec![Fr::from(0), Fr::from(0)];
+        let point = vec![MontU128::from(0_u128), MontU128::from(0_u128)];
         let eval = Fr::from(1);
         assert!(test_inner(point, eval).is_ok());
 
-        let point = vec![Fr::from(0), Fr::from(1)];
+        let point = vec![MontU128::from(0_u128), MontU128::from(1_u128)];
         let eval = Fr::from(2);
         assert!(test_inner(point, eval).is_ok());
 
-        let point = vec![Fr::from(1), Fr::from(1)];
+        let point = vec![MontU128::from(1_u128), MontU128::from(1_u128)];
         let eval = Fr::from(4);
         assert!(test_inner(point, eval).is_ok());
 
-        let point = vec![Fr::from(0), Fr::from(2)];
+        let point = vec![MontU128::from(0_u128), MontU128::from(2_u128)];
         let eval = Fr::from(3);
         assert!(test_inner(point, eval).is_ok());
 
-        let point = vec![Fr::from(2), Fr::from(2)];
+        let point = vec![MontU128::from(2_u128), MontU128::from(2_u128)];
         let eval = Fr::from(9);
         assert!(test_inner(point, eval).is_ok());
 
         // Try a couple incorrect evaluations and expect failure
-        let point = vec![Fr::from(2), Fr::from(2)];
+        let point = vec![MontU128::from(2_u128), MontU128::from(2_u128)];
         let eval = Fr::from(50);
         assert!(test_inner(point, eval).is_err());
 
-        let point = vec![Fr::from(0), Fr::from(2)];
+        let point = vec![MontU128::from(2_u128), MontU128::from(2_u128)];
         let eval = Fr::from(4);
         assert!(test_inner(point, eval).is_err());
     }
@@ -636,7 +638,7 @@ mod tests {
             MultilinearPolynomial::from(vec![Fr::from(1), Fr::from(2), Fr::from(1), Fr::from(4)]);
 
         // point = [4,3]
-        let point = vec![Fr::from(4), Fr::from(3)];
+        let point = vec![MontU128::from(4_u128), MontU128::from(3_u128)];
 
         // eval = 28
         let eval = Fr::from(28);
@@ -694,8 +696,8 @@ mod tests {
                 .map(|_| <Bn254 as Pairing>::ScalarField::rand(&mut rng))
                 .collect::<Vec<_>>();
             let poly = MultilinearPolynomial::from(poly_raw.clone());
-            let point = (0..ell)
-                .map(|_| <Bn254 as Pairing>::ScalarField::rand(&mut rng))
+            let point: Vec<MontU128> = (0..ell)
+                .map(|_| MontU128::from(rng.gen::<u128>()))
                 .collect::<Vec<_>>();
             let eval = poly.evaluate(&point);
 

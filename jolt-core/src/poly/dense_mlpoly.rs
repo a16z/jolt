@@ -618,7 +618,7 @@ mod tests {
         // g(3, 4) = 8*(1 - 3)(1 - 4) + 8*(1-3)(4) + 8*(3)(1-4) + 8*(3)(4) = 48 + -64 + -72 + 96  = 8
         // g(5, 10) = 8*(1 - 5)(1 - 10) + 8*(1 - 5)(10) + 8*(5)(1-10) + 8*(5)(10) = 96 + -16 + -72 + 96  = 8
         assert_eq!(
-            dense_poly.evaluate(vec![MontU128::from(3), MontU128::from(4)].as_slice()),
+            dense_poly.evaluate(vec![MontU128::from(3_u128), MontU128::from(4_u128)].as_slice()),
             Fr::from(8)
         );
     }
@@ -674,7 +674,7 @@ mod tests {
         // g(3, 4) = 8*(1 - 3)(1 - 4) + 8*(1-3)(4) + 8*(3)(1-4) + 8*(3)(4) = 48 + -64 + -72 + 96  = 8
         // g(5, 10) = 8*(1 - 5)(1 - 10) + 8*(1 - 5)(10) + 8*(5)(1-10) + 8*(5)(10) = 96 + -16 + -72 + 96  = 8
         assert_eq!(
-            dense_poly.inside_out_evaluate(vec![MontU128::from(3), MontU128::from(4)].as_slice()),
+            dense_poly.inside_out_evaluate(vec![MontU128::from(3_u128), MontU128::from(4_u128)].as_slice()),
             Fr::from(8)
         );
     }

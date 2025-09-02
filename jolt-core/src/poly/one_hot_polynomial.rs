@@ -539,10 +539,10 @@ use super::*;
         let one_hot_poly = OneHotPolynomial::<Fr>::from_indices(nonzero_indices, K);
         let mut dense_poly = one_hot_poly.to_dense_poly();
 
-        let r_address: Vec<MontU128> = std::iter::repeat_with(|| MontU128::from(rng.gen()))
+        let r_address: Vec<MontU128> = std::iter::repeat_with(|| MontU128::from(rng.gen::<u128>()))
             .take(LOG_K)
             .collect();
-        let r_cycle: Vec<MontU128> = std::iter::repeat_with(|| MontU128::from(rng.gen()))
+        let r_cycle: Vec<MontU128> = std::iter::repeat_with(|| MontU128::from(rng.gen::<u128>()))
             .take(LOG_T)
             .collect();
 
@@ -552,7 +552,7 @@ use super::*;
         one_hot_opening.initialize(one_hot_poly.clone());
 
         let r_concat = [r_address.as_slice(), r_cycle.as_slice()].concat();
-        let mut eq = DensePolynomial::new(EqPolynomial::evals(&r_concat));
+        let mut eq = DensePolynomial::new(EqPolynomial::<Fr>::evals(&r_concat));
 
         // Compute the initial input claim
         let input_claim: Fr = (0..dense_poly.len()).map(|i| dense_poly[i] * eq[i]).sum();
@@ -577,7 +577,7 @@ use super::*;
                 "round {round} prover message mismatch"
             );
 
-            let r = MontU128::from(rng.gen());
+            let r = MontU128::from(rng.gen::<u128>());
 
             // Update previous_claim by evaluating the univariate polynomial at r
             let eval_at_1 = previous_claim - expected_message[0];

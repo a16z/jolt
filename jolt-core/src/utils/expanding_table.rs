@@ -48,7 +48,7 @@ impl<F: JoltField> ExpandingTable<F> {
             .par_iter()
             .zip(self.scratch_space.par_chunks_mut(2))
             .for_each(|(&v_i, dest)| {
-                let eval_1 = r_j * v_i;
+                let eval_1 = v_i.mul_u128_mont_form(r_j);
                 dest[0] = v_i - eval_1;
                 dest[1] = eval_1;
             });
