@@ -7,6 +7,7 @@ use crate::{
     field::JoltField, poly::multilinear_polynomial::MultilinearPolynomial,
     utils::errors::ProofVerifyError,
 };
+use crate::field::MontU128;
 
 pub trait CommitmentScheme: Clone + Sync + Send + 'static {
     type Field: JoltField + Sized;
@@ -93,7 +94,7 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
     fn prove<ProofTranscript: Transcript>(
         setup: &Self::ProverSetup,
         poly: &MultilinearPolynomial<Self::Field>,
-        opening_point: &[Self::Field],
+        opening_point: &[MontU128],
         hint: Self::OpeningProofHint,
         transcript: &mut ProofTranscript,
     ) -> Self::Proof;
@@ -114,7 +115,7 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
         proof: &Self::Proof,
         setup: &Self::VerifierSetup,
         transcript: &mut ProofTranscript,
-        opening_point: &[Self::Field],
+        opening_point: &[MontU128],
         opening: &Self::Field,
         commitment: &Self::Commitment,
     ) -> Result<(), ProofVerifyError>;

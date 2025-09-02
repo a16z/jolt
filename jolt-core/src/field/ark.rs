@@ -69,6 +69,7 @@ impl JoltField for ark_bn254::Fr {
     }
 
     // No montgomery business happening here.
+    #[inline]
     fn from_u128(n: u128) -> Self {
         if n <= u16::MAX as u128 {
             <Self as JoltField>::from_u16(n as u16)
@@ -80,6 +81,15 @@ impl JoltField for ark_bn254::Fr {
             let bigint = BigInt::new([n as u64, (n >> 64) as u64, 0, 0]);
             <Self as ark_ff::PrimeField>::from_bigint(bigint).unwrap()
         }
+    }
+
+    // We assume that MontU128 is a Big Into with the least significant digits set to 0.
+    // In Arkworks 0 index is the least significant digit.
+    #[inline]
+    fn from_u128_mont(n: MontU128) -> Self {
+        let n_val = n.0;
+        let bigint = BigInt::new([ 0, 0, n_val as u64, (n_val >> 64) as u64,]);
+        <Self as ark_ff::PrimeField>::from_bigint(bigint).unwrap()
     }
 
     fn from_i64(val: i64) -> Self {
@@ -193,9 +203,25 @@ impl JoltField for ark_bn254::Fr {
         } else if n_val == 1 {
             *self
         } else if self.is_one() {
-            Self::from_u128(n_val)
+            Self::from_u128_mont(n)
         } else {
             ark_ff::Fp::mul_hi_u128(*self, n_val)
+        }
+    }
+
+    #[inline(always)]
+    fn mul_two_u128s(&self, x: MontU128, y: MontU128) -> Self {
+        let x_val = x.0;
+        let y_val = y.0;
+        if x_val == 0 || y_val == 0 {
+            Self::zero()
+        } else if x_val == 1 {
+            Self::from_u128(y_val)
+        } else if y_val == 1 {
+            Self::from_u128(x_val)
+        } else {
+            // here you need a low-level method from ark_ff for 128x128 multiplication
+            ark_ff::Fp::mul_two_u128s(self, x_val, y_val)
         }
     }
 }

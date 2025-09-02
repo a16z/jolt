@@ -9,36 +9,49 @@ const PARALLEL_THRESHOLD: usize = 16;
 pub struct EqPolynomial<F: JoltField>(PhantomData<F>);
 impl<F: JoltField> EqPolynomial<F> {
     /// Computes the MLE evaluation EQ(x, y)
-    pub fn mle(x: &[F], y: &[F]) -> F {
+    pub fn mle(x: &[MontU128], y: &[MontU128]) -> F {
         assert_eq!(x.len(), y.len());
         x.par_iter()
             .zip(y.par_iter())
-            .map(|(x_i, y_i)| *x_i * y_i + (F::one() - x_i) * (F::one() - y_i))
+            .map(|(x_i, y_i)|{
+                let tmp = F::one();
+                tmp.mul_two_u128s(*x_i, *y_i) + (F::one() - F::from_u128_mont(*x_i)) * (F::one() - F::from_u128_mont(*y_i))
+            })
             .product()
     }
 
     /// Computes the MLE evaluation EQ(x, y)
     pub fn mle_endian<const E1: Endianness, const E2: Endianness>(
-        x: &OpeningPoint<E1, F>,
-        y: &OpeningPoint<E2, F>,
+        x: &OpeningPoint<E1>,
+        y: &OpeningPoint<E2>,
     ) -> F {
         assert_eq!(x.len(), y.len());
         if E1 == E2 {
             x.r.par_iter()
                 .zip(y.r.par_iter())
-                .map(|(x_i, y_i)| *x_i * y_i + (F::one() - x_i) * (F::one() - y_i))
+                .map(|(x_i, y_i)| {
+                    let one = F::one();
+                    let prod = one.mul_two_u128s(*x_i, *y_i);
+                    let f = prod + (F::one() - F::from_u128_mont(*x_i)) * (F::one() - F::from_u128_mont(*y_i));
+                    f
+                })
                 .product()
         } else {
             x.r.par_iter()
                 .zip(y.r.par_iter().rev())
-                .map(|(x_i, y_i)| *x_i * y_i + (F::one() - x_i) * (F::one() - y_i))
+                .map(|(x_i, y_i)| {
+                    let one = F::one();
+                    let prod = one.mul_two_u128s(*x_i, *y_i);
+                    let f = prod + (F::one() - F::from_u128_mont(*x_i)) * (F::one() - F::from_u128_mont(*y_i));
+                    f
+                })
                 .product()
         }
     }
 
     #[tracing::instrument(skip_all, name = "EqPolynomial::evals")]
     /// Computes the table of coefficients: `{eq(r, x) for all x in {0, 1}^n}`
-    pub fn evals(r: &[F]) -> Vec<F> {
+    pub fn evals(r: &[MontU128]) -> Vec<F> {
         match r.len() {
             0..=PARALLEL_THRESHOLD => Self::evals_serial(r, None),
             _ => Self::evals_parallel(r, None),
@@ -57,20 +70,20 @@ impl<F: JoltField> EqPolynomial<F> {
     ///
     /// In other words, computes `{eq(r[i..], x) for all x in {0, 1}^{n - i}}` and for all `i in
     /// 0..r.len()`.
-    pub fn evals_cached(r: &[F]) -> Vec<Vec<F>> {
+    pub fn evals_cached(r: &[MontU128]) -> Vec<Vec<F>> {
         // TODO: implement parallel version & determine switchover point
         Self::evals_serial_cached(r, None)
     }
 
     /// Same as evals_cached but for high-to-low (reverse) binding order
-    pub fn evals_cached_rev(r: &[F]) -> Vec<Vec<F>> {
+    pub fn evals_cached_rev(r: &[MontU128]) -> Vec<Vec<F>> {
         Self::evals_serial_cached_rev(r, None)
     }
 
     /// Computes the table of coefficients:
     ///     scaling_factor * eq(r, x) for all x in {0, 1}^n
     /// serially. More efficient for short `r`.
-    fn evals_serial(r: &[F], scaling_factor: Option<F>) -> Vec<F> {
+    fn evals_serial(r: &[MontU128], scaling_factor: Option<F>) -> Vec<F> {
         let mut evals: Vec<F> = vec![scaling_factor.unwrap_or(F::one()); r.len().pow2()];
         let mut size = 1;
         for j in 0..r.len() {
@@ -79,7 +92,7 @@ impl<F: JoltField> EqPolynomial<F> {
             for i in (0..size).rev().step_by(2) {
                 // copy each element from the prior iteration twice
                 let scalar = evals[i / 2];
-                evals[i] = scalar * r[j];
+                evals[i] = scalar.mul_u128_mont_form(r[j]);
                 evals[i - 1] = scalar - evals[i];
             }
         }
@@ -111,7 +124,7 @@ impl<F: JoltField> EqPolynomial<F> {
     /// `eq(r[..j], x)` for all `x in {0, 1}^{j}`.
     ///
     /// Performance seems at most 10% worse than `evals_serial`
-    fn evals_serial_cached(r: &[F], scaling_factor: Option<F>) -> Vec<Vec<F>> {
+    fn evals_serial_cached(r: &[MontU128], scaling_factor: Option<F>) -> Vec<Vec<F>> {
         let mut evals: Vec<Vec<F>> = (0..r.len() + 1)
             .map(|i| vec![scaling_factor.unwrap_or(F::one()); 1 << i])
             .collect();
@@ -120,14 +133,14 @@ impl<F: JoltField> EqPolynomial<F> {
             size *= 2;
             for i in (0..size).rev().step_by(2) {
                 let scalar = evals[j][i / 2];
-                evals[j + 1][i] = scalar * r[j];
+                evals[j + 1][i] = scalar.mul_u128_mont_form(r[j]);
                 evals[j + 1][i - 1] = scalar - evals[j + 1][i];
             }
         }
         evals
     }
     /// evals_serial_cached but for "high to low" ordering, used specifically in the Gruen x Dao Thaler optimization.
-    fn evals_serial_cached_rev(r: &[F], scaling_factor: Option<F>) -> Vec<Vec<F>> {
+    fn evals_serial_cached_rev(r: &[MontU128], scaling_factor: Option<F>) -> Vec<Vec<F>> {
         let rev_r = r.iter().rev().collect::<Vec<_>>();
         let mut evals: Vec<Vec<F>> = (0..r.len() + 1)
             .map(|i| vec![scaling_factor.unwrap_or(F::one()); 1 << i])
@@ -137,7 +150,7 @@ impl<F: JoltField> EqPolynomial<F> {
             for i in 0..size {
                 let scalar = evals[j][i];
                 let multiple = 1 << j;
-                evals[j + 1][i + multiple] = scalar * *rev_r[j];
+                evals[j + 1][i + multiple] = scalar.mul_u128_mont_form(*rev_r[j]);
                 evals[j + 1][i] = scalar - evals[j + 1][i + multiple];
             }
             size *= 2;
@@ -151,7 +164,7 @@ impl<F: JoltField> EqPolynomial<F> {
     ///
     /// computing biggest layers of the dynamic programming tree in parallel.
     #[tracing::instrument(skip_all, "EqPolynomial::evals_parallel")]
-    pub fn evals_parallel(r: &[F], scaling_factor: Option<F>) -> Vec<F> {
+    pub fn evals_parallel(r: &[MontU128], scaling_factor: Option<F>) -> Vec<F> {
         let final_size = r.len().pow2();
         let mut evals: Vec<F> = unsafe_allocate_zero_vec(final_size);
         let mut size = 1;
@@ -165,7 +178,7 @@ impl<F: JoltField> EqPolynomial<F> {
                 .par_iter_mut()
                 .zip(evals_right.par_iter_mut())
                 .for_each(|(x, y)| {
-                    *y = *x * *r;
+                    *y = x.mul_u128_mont_form(*r);
                     *x -= *y;
                 });
 
@@ -215,7 +228,7 @@ impl<F: JoltField> EqPlusOnePolynomial<F> {
     pub fn evaluate(&self, y: &[F]) -> F {
         let l = self.x.len();
         let x = &self.x;
-        assert!(y.len() == l);
+        assert_eq!(y.len(), l);
         let one = F::from_u64(1_u64);
 
         /* If y+1 = x, then the two bit vectors are of the following form.
@@ -285,7 +298,8 @@ impl<F: JoltField> EqPlusOnePolynomial<F> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use rand::Rng;
+use super::*;
     use ark_bn254::Fr;
     use ark_std::test_rng;
     use std::time::Instant;
@@ -296,13 +310,16 @@ mod tests {
     fn test_evals() {
         let mut rng = test_rng();
         for len in 5..22 {
-            let r = (0..len).map(|_| Fr::random(&mut rng)).collect::<Vec<_>>();
+            // let r = (0..len).map(|_| Fr::random(&mut rng)).collect::<Vec<_>>();
+            let r: Vec<MontU128> = (0..len)
+                .map(|_| MontU128(rng.gen::<u128>()))
+                .collect();
             let start = Instant::now();
-            let evals_serial = EqPolynomial::evals_serial(&r, None);
+            let evals_serial = EqPolynomial::<Fr>::evals_serial(&r, None);
             let end_first = Instant::now();
-            let evals_parallel = EqPolynomial::evals_parallel(&r, None);
+            let evals_parallel = EqPolynomial::<Fr>::evals_parallel(&r, None);
             let end_second = Instant::now();
-            let evals_serial_cached = EqPolynomial::evals_serial_cached(&r, None);
+            let evals_serial_cached = EqPolynomial::<Fr>::evals_serial_cached(&r, None);
             let end_third = Instant::now();
             println!(
                 "len: {}, Time taken to compute evals_serial: {:?}",
@@ -330,10 +347,12 @@ mod tests {
     fn test_evals_cached() {
         let mut rng = test_rng();
         for len in 2..22 {
-            let r = (0..len).map(|_| Fr::random(&mut rng)).collect::<Vec<_>>();
-            let evals_serial_cached = EqPolynomial::evals_serial_cached(&r, None);
+            let r: Vec<MontU128> = (0..len)
+                .map(|_| MontU128(rng.gen::<u128>()))
+                .collect();
+            let evals_serial_cached = EqPolynomial::<Fr>::evals_serial_cached(&r, None);
             for i in 0..len {
-                let evals = EqPolynomial::evals(&r[..i]);
+                let evals = EqPolynomial::<Fr>::evals(&r[..i]);
                 assert_eq!(evals_serial_cached[i], evals);
             }
         }

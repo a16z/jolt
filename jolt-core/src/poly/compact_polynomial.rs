@@ -1,7 +1,7 @@
 use std::ops::Index;
 
 use super::multilinear_polynomial::{BindingOrder, PolynomialBinding};
-use crate::field::{JoltField, OptimizedMul};
+use crate::field::{JoltField, MontU128, OptimizedMul};
 use crate::utils::math::Math;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use allocative::Allocative;
@@ -149,7 +149,7 @@ impl<T: SmallScalar, F: JoltField> CompactPolynomial<T, F> {
         self.coeffs.par_iter().map(|x| x.to_field()).collect()
     }
 
-    pub fn split_eq_evaluate(&self, r: &[F], eq_one: &[F], eq_two: &[F]) -> F {
+    pub fn split_eq_evaluate(&self, r: &[MontU128], eq_one: &[F], eq_two: &[F]) -> F {
         const PARALLEL_THRESHOLD: usize = 16;
         if r.len() < PARALLEL_THRESHOLD {
             self.evaluate_split_eq_serial(eq_one, eq_two)
@@ -269,7 +269,7 @@ impl<T: SmallScalar, F: JoltField> PolynomialBinding<F> for CompactPolynomial<T,
     }
 
     #[tracing::instrument(skip_all, name = "CompactPolynomial::bind")]
-    fn bind(&mut self, r: F, order: BindingOrder) {
+    fn bind(&mut self, r: MontU128, order: BindingOrder) {
         let n = self.len() / 2;
         if self.is_bound() {
             match order {
@@ -347,7 +347,7 @@ impl<T: SmallScalar, F: JoltField> PolynomialBinding<F> for CompactPolynomial<T,
     }
 
     #[tracing::instrument(skip_all, name = "CompactPolynomial::bind")]
-    fn bind_parallel(&mut self, r: F, order: BindingOrder) {
+    fn bind_parallel(&mut self, r: MontU128, order: BindingOrder) {
         let n = self.len() / 2;
         if self.is_bound() {
             match order {

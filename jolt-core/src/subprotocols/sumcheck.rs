@@ -62,20 +62,20 @@ pub trait SumcheckInstance<F: JoltField>: Send + Sync + MaybeAllocative {
         r: &[MontU128],
     ) -> F;
 
-    fn normalize_opening_point(&self, opening_point: &[MontU128]) -> OpeningPoint<BIG_ENDIAN, F>;
+    fn normalize_opening_point(&self, opening_point: &[MontU128]) -> OpeningPoint<BIG_ENDIAN>;
 
     /// Caches polynomial opening claims needed after the sumcheck protocol completes.
     /// These openings will later be proven using either an opening proof or another sumcheck.
     fn cache_openings_prover(
         &self,
         accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
-        opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        opening_point: OpeningPoint<BIG_ENDIAN>,
     );
 
     fn cache_openings_verifier(
         &self,
         accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
-        opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        opening_point: OpeningPoint<BIG_ENDIAN>,
     );
 
     #[cfg(feature = "allocative")]
@@ -397,9 +397,9 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
         padded_num_constraints: usize,
         uniform_constraints: &[Constraint],
         flattened_polys: &[MultilinearPolynomial<F>],
-        tau: &[F],
+        tau: &[MontU128],
         transcript: &mut ProofTranscript,
-    ) -> (Self, Vec<F>, [F; 3]) {
+    ) -> (Self, Vec<MontU128>, [F; 3]) {
         let mut r = Vec::new();
         let mut polys = Vec::new();
         let mut claim = F::zero();
@@ -466,8 +466,8 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
         poly_A: &mut DensePolynomial<F>,
         witness_polynomials: &[&MultilinearPolynomial<F>],
         transcript: &mut ProofTranscript,
-    ) -> (Self, Vec<F>, Vec<F>) {
-        let mut r: Vec<F> = Vec::with_capacity(num_rounds);
+    ) -> (Self, Vec<MontU128>, Vec<F>) {
+        let mut r: Vec<MontU128> = Vec::with_capacity(num_rounds);
         let mut polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
         let mut claim_per_round = *claim;
 
@@ -530,12 +530,12 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
         compressed_poly.append_to_transcript(transcript);
 
         //derive the verifier's challenge for the next round
-        let r_i: F = transcript.challenge_scalar();
+        let r_i: MontU128 = transcript.challenge_u128();
         r.push(r_i);
         polys.push(compressed_poly);
 
         // Set up next round
-        claim_per_round = poly.evaluate(&r_i);
+        claim_per_round = poly.evaluate_u128(&r_i);
 
         // bound all tables to the verifier's challenge
         let (_, mut poly_B) = rayon::join(
@@ -555,7 +555,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
                 let right_iter = Z_iter.skip(len).take(len);
                 let B = left_iter
                     .zip(right_iter)
-                    .map(|(a, b)| if a == b { a } else { a + r_i * (b - a) })
+                    .map(|(a, b)| if a == b { a } else { a + (b - a).mul_u128_mont_form(r_i) })
                     .collect();
                 DensePolynomial::new(B)
             },
@@ -577,13 +577,13 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
             compressed_poly.append_to_transcript(transcript);
 
             //derive the verifier's challenge for the next round
-            let r_i: F = transcript.challenge_scalar();
+            let r_i: MontU128 = transcript.challenge_u128();
 
             r.push(r_i);
             polys.push(compressed_poly);
 
             // Set up next round
-            claim_per_round = poly.evaluate(&r_i);
+            claim_per_round = poly.evaluate_u128(&r_i);
 
             // bound all tables to the verifier's challenge
             rayon::join(
@@ -710,11 +710,11 @@ pub fn process_eq_sumcheck_round<F: JoltField, ProofTranscript: Transcript>(
     quadratic_evals: (F, F), // (t_i(0), t_i(infty))
     eq_poly: &mut GruenSplitEqPolynomial<F>,
     polys: &mut Vec<CompressedUniPoly<F>>,
-    r: &mut Vec<F>,
+    r: &mut Vec<MontU128>,
     claim: &mut F,
     transcript: &mut ProofTranscript,
-) -> F {
-    let scalar_times_w_i = eq_poly.current_scalar * eq_poly.w[eq_poly.current_index - 1];
+) -> MontU128 {
+    let scalar_times_w_i = eq_poly.current_scalar.mul_u128_mont_form(eq_poly.w[eq_poly.current_index - 1]);
 
     let cubic_poly = UniPoly::from_linear_times_quadratic_with_hint(
         // The coefficients of `eq(w[(n - i)..], r[..i]) * eq(w[n - i - 1], X)`
@@ -732,12 +732,12 @@ pub fn process_eq_sumcheck_round<F: JoltField, ProofTranscript: Transcript>(
     compressed_poly.append_to_transcript(transcript);
 
     // Derive challenge
-    let r_i: F = transcript.challenge_scalar();
+    let r_i = transcript.challenge_u128();
     r.push(r_i);
     polys.push(compressed_poly);
 
     // Evaluate for next round's claim
-    *claim = cubic_poly.evaluate(&r_i);
+    *claim = cubic_poly.evaluate_u128(&r_i);
 
     // Bind eq_poly for next round
     eq_poly.bind(r_i);

@@ -169,14 +169,15 @@ pub enum OpeningId {
 
 pub type Openings<F> = BTreeMap<OpeningId, (OpeningPoint<BIG_ENDIAN>, F)>;
 
-#[derive(Allocative)]
+
+#[cfg_attr(feature = "allocative", derive(Allocative))]
 pub struct SharedEqPolynomial<F: JoltField> {
     num_variables_bound: usize,
     eq_poly: GruenSplitEqPolynomial<F>,
 }
 
 impl<F: JoltField> SharedEqPolynomial<F> {
-    fn new_gruen(opening_point: &[F]) -> Self {
+    fn new_gruen(opening_point: &[MontU128]) -> Self {
         Self {
             eq_poly: GruenSplitEqPolynomial::new(opening_point, BindingOrder::HighToLow),
             num_variables_bound: 0,
@@ -191,7 +192,8 @@ impl<F: JoltField> SharedEqPolynomial<F> {
 /// at the (same) point.
 /// Multiple openings can be accumulated and further
 /// batched/reduced using a `ProverOpeningAccumulator`.
-#[derive(Clone, Allocative)]
+#[cfg_attr(feature = "allocative", derive(Allocative))]
+#[derive(Clone)]
 pub struct DensePolynomialProverOpening<F: JoltField> {
     /// The polynomial being opened. May be a random linear combination
     /// of multiple polynomials all being opened at the same point.
@@ -252,7 +254,7 @@ impl<F: JoltField> DensePolynomialProverOpening<F> {
     }
 
     #[tracing::instrument(skip_all, name = "DensePolynomialProverOpening::bind")]
-    fn bind(&mut self, r_j: F, round: usize) {
+    fn bind(&mut self, r_j: MontU128, round: usize) {
         let mut shared_eq = self.eq_poly.write().unwrap();
         if shared_eq.num_variables_bound <= round {
             shared_eq.eq_poly.bind(r_j);
@@ -270,7 +272,9 @@ impl<F: JoltField> DensePolynomialProverOpening<F> {
     }
 }
 
-#[derive(derive_more::From, Clone, Allocative)]
+
+#[cfg_attr(feature = "allocative", derive(Allocative))]
+#[derive(derive_more::From, Clone)]
 pub enum ProverOpening<F: JoltField> {
     Dense(DensePolynomialProverOpening<F>),
     OneHot(OneHotPolynomialProverOpening<F>),
@@ -1250,7 +1254,7 @@ where
             .zip(self.sumchecks.iter())
             .map(|((coeff, claim), opening)| {
                 let r_slice = &r_sumcheck[..num_sumcheck_rounds - opening.opening_point.len()];
-                let lagrange_eval: F = r_slice.iter().map(|r| F::one() - r).product();
+                let lagrange_eval: F = r_slice.iter().map(|r| F::one() - F::from_u128_mont(*r)).product();
                 *coeff * claim * lagrange_eval
             })
             .sum();
@@ -1271,7 +1275,7 @@ where
         &self,
         sumcheck_proof: &SumcheckInstanceProof<F, ProofTranscript>,
         transcript: &mut ProofTranscript,
-    ) -> Result<Vec<F>, ProofVerifyError> {
+    ) -> Result<Vec<MontU128>, ProofVerifyError> {
         let instances: Vec<&dyn SumcheckInstance<F>> = self
             .sumchecks
             .iter()

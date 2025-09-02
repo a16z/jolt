@@ -8,6 +8,7 @@ use crate::field::{JoltField, OptimizedMulI128};
 pub const NUM_SVO_ROUNDS: usize = 3;
 
 pub mod svo_helpers {
+    use crate::field::MontU128;
     use super::*;
     use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
     use crate::poly::unipoly::CompressedUniPoly;
@@ -1274,7 +1275,7 @@ pub mod svo_helpers {
     >(
         accums_zero: &[F],
         accums_infty: &[F],
-        r_challenges: &mut Vec<F>,
+        r_challenges: &mut Vec<MontU128>,
         round_polys: &mut Vec<CompressedUniPoly<F>>,
         claim: &mut F,
         transcript: &mut ProofTranscript,
@@ -1356,7 +1357,7 @@ pub mod svo_helpers {
                 transcript,
             );
 
-            let lagrange_coeffs_r_i = [F::one() - r_i, r_i, r_i * (r_i - F::one())];
+            let lagrange_coeffs_r_i = [F::one() - F::from_u128_mont(r_i), F::from_u128_mont(r_i), (F::from_u128_mont(r_i) - F::one()).mul_u128_mont_form(r_i)];
 
             if i < NUM_SVO_ROUNDS.saturating_sub(1) {
                 lagrange_coeffs = lagrange_coeffs_r_i

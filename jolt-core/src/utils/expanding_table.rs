@@ -2,7 +2,7 @@ use allocative::Allocative;
 use rayon::prelude::*;
 use std::ops::Index;
 
-use crate::field::JoltField;
+use crate::field::{JoltField, MontU128};
 use crate::utils::thread::unsafe_allocate_zero_vec;
 
 /// Table containing the evaluations `EQ(x_1, ..., x_j, r_1, ..., r_j)`,
@@ -43,7 +43,7 @@ impl<F: JoltField> ExpandingTable<F> {
     /// Updates this table (expanding it by a factor of 2) to incorporate
     /// the new random challenge `r_j`.
     #[tracing::instrument(skip_all, name = "ExpandingTable::update")]
-    pub fn update(&mut self, r_j: F) {
+    pub fn update(&mut self, r_j: MontU128) {
         self.values[..self.len]
             .par_iter()
             .zip(self.scratch_space.par_chunks_mut(2))

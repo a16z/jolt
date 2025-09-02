@@ -71,26 +71,26 @@ impl<F: JoltField> DensePolynomial<F> {
         self.len != self.Z.len()
     }
 
-    pub fn bind(&mut self, r: F, order: BindingOrder) {
+    pub fn bind(&mut self, r: MontU128, order: BindingOrder) {
         match order {
             BindingOrder::LowToHigh => self.bound_poly_var_bot(&r),
             BindingOrder::HighToLow => self.bound_poly_var_top(&r),
         }
     }
 
-    pub fn bind_parallel(&mut self, r: F, order: BindingOrder) {
+    pub fn bind_parallel(&mut self, r: MontU128, order: BindingOrder) {
         match order {
             BindingOrder::LowToHigh => self.bound_poly_var_bot_01_optimized(&r),
             BindingOrder::HighToLow => self.bound_poly_var_top_zero_optimized(&r),
         }
     }
 
-    pub fn bound_poly_var_top(&mut self, r: &F) {
+    pub fn bound_poly_var_top(&mut self, r: &MontU128) {
         let n = self.len() / 2;
         let (left, right) = self.Z.split_at_mut(n);
 
         left.iter_mut().zip(right.iter()).for_each(|(a, b)| {
-            *a += *r * (*b - *a);
+            *a +=  (*b - *a).mul_u128_mont_form(*r);
         });
 
         self.num_vars -= 1;
@@ -120,7 +120,7 @@ impl<F: JoltField> DensePolynomial<F> {
     /// Bounds the polynomial's most significant index bit to 'r' optimized for a
     /// high P(eval = 0).
     #[tracing::instrument(skip_all)]
-    pub fn bound_poly_var_top_zero_optimized(&mut self, r: &F) {
+    pub fn bound_poly_var_top_zero_optimized(&mut self, r: &MontU128) {
         let n = self.len() / 2;
 
         let (left, right) = self.Z.split_at_mut(n);
@@ -129,7 +129,7 @@ impl<F: JoltField> DensePolynomial<F> {
             .zip(right.par_iter())
             .filter(|(&mut a, &b)| a != b)
             .for_each(|(a, b)| {
-                *a += *r * (*b - *a);
+                *a += (*b - *a).mul_u128_mont_form(*r);
             });
 
         self.num_vars -= 1;
@@ -204,10 +204,10 @@ impl<F: JoltField> DensePolynomial<F> {
 
     /// Note: does not truncate
     #[tracing::instrument(skip_all)]
-    pub fn bound_poly_var_bot(&mut self, r: &F) {
+    pub fn bound_poly_var_bot(&mut self, r: &MontU128) {
         let n = self.len() / 2;
         for i in 0..n {
-            self.Z[i] = self.Z[2 * i] + *r * (self.Z[2 * i + 1] - self.Z[2 * i]);
+            self.Z[i] = self.Z[2 * i] + (self.Z[2 * i + 1] - self.Z[2 * i]).mul_u128_mont_form(*r);
         }
 
         self.num_vars -= 1;
@@ -247,7 +247,7 @@ impl<F: JoltField> DensePolynomial<F> {
         self.num_vars -= 1;
         self.len = n;
     }
-    pub fn bound_poly_var_bot_01_optimized(&mut self, r: &F) {
+    pub fn bound_poly_var_bot_01_optimized(&mut self, r: &MontU128) {
         let n = self.len() / 2;
 
         if self.binding_scratch_space.is_none() {
@@ -265,9 +265,9 @@ impl<F: JoltField> DensePolynomial<F> {
                 *z = if m.is_zero() {
                     self.Z[2 * i]
                 } else if m.is_one() {
-                    self.Z[2 * i] + r
+                    self.Z[2 * i] + F::from_u128_mont(*r)
                 } else {
-                    self.Z[2 * i] + *r * m
+                    self.Z[2 * i] + m.mul_u128_mont_form(*r)
                 }
             });
 
@@ -278,14 +278,14 @@ impl<F: JoltField> DensePolynomial<F> {
     }
 
     // returns Z(r) in O(n) time
-    pub fn evaluate(&self, r: &[F]) -> F {
+    pub fn evaluate(&self, r: &[MontU128]) -> F {
         // r must have a value for each variable
         assert_eq!(r.len(), self.get_num_vars());
         let chis = EqPolynomial::evals(r);
         assert_eq!(chis.len(), self.Z.len());
         compute_dotproduct(&self.Z, &chis)
     }
-    pub fn split_eq_evaluate(&self, r: &[F], eq_one: &[F], eq_two: &[F]) -> F {
+    pub fn split_eq_evaluate(&self, r: &[MontU128], eq_one: &[F], eq_two: &[F]) -> F {
         const PARALLEL_THRESHOLD: usize = 16;
         if r.len() < PARALLEL_THRESHOLD {
             self.evaluate_split_eq_serial(eq_one, eq_two)
@@ -328,7 +328,7 @@ impl<F: JoltField> DensePolynomial<F> {
     // Faster evaluation based on
     // https://randomwalks.xyz/publish/fast_polynomial_evaluation.html
     // Shaves a factor of 2 from run time.
-    pub fn inside_out_evaluate(&self, r: &[F]) -> F {
+    pub fn inside_out_evaluate(&self, r: &[MontU128]) -> F {
         // Copied over from eq_poly
         // If the number of variables are greater
         // than 2^16 -- use parallel evaluate
@@ -345,7 +345,7 @@ impl<F: JoltField> DensePolynomial<F> {
         }
     }
 
-    fn inside_out_serial(&self, r: &[F]) -> F {
+    fn inside_out_serial(&self, r: &[MontU128]) -> F {
         // r is expected to be big endinan
         // r[0] is the most significant digit
         let mut current = self.Z.clone();
@@ -364,9 +364,9 @@ impl<F: JoltField> DensePolynomial<F> {
                 if slope.is_zero() {
                     current[j] = f0;
                 } else if slope.is_one() {
-                    current[j] = f0 + r[m - 1 - i];
+                    current[j] = f0 + F::from_u128_mont(r[m - 1 - i]);
                 } else {
-                    current[j] = f0 + r[m - 1 - i] * slope;
+                    current[j] = f0 +  slope.mul_u128_mont_form(r[m - 1 - i]);
                 }
             }
             // No benefit to truncating really.
@@ -375,7 +375,7 @@ impl<F: JoltField> DensePolynomial<F> {
         current[0]
     }
 
-    fn inside_out_parallel(&self, r: &[F]) -> F {
+    fn inside_out_parallel(&self, r: &[MontU128]) -> F {
         let mut current: Vec<_> = self.Z.par_iter().cloned().collect();
         let m = r.len();
         // Invoking the same parallelisation structure
@@ -396,9 +396,9 @@ impl<F: JoltField> DensePolynomial<F> {
                         return;
                     }
                     if slope.is_one() {
-                        *x += r_val;
+                        *x += F::from_u128_mont(r_val);
                     } else {
-                        *x += r_val * slope;
+                        *x += slope.mul_u128_mont_form(r_val);
                     }
                 });
         }
@@ -508,12 +508,12 @@ impl<F: JoltField> Index<usize> for DensePolynomial<F> {
 }
 
 impl<F: JoltField> PolynomialEvaluation<F> for DensePolynomial<F> {
-    fn evaluate(&self, r: &[F]) -> F {
+    fn evaluate(&self, r: &[MontU128]) -> F {
         self.evaluate(r)
     }
 
-    fn batch_evaluate(polys: &[&Self], r: &[F]) -> Vec<F> {
-        let eq = EqPolynomial::evals(r);
+    fn batch_evaluate(polys: &[&Self], r: &[MontU128]) -> Vec<F> {
+        let eq = EqPolynomial::<F>::evals(r);
         let evals: Vec<F> = polys
             .into_par_iter()
             .map(|&poly| poly.evaluate_at_chi_low_optimized(&eq))
@@ -561,8 +561,9 @@ mod tests {
     use super::*;
     use ark_bn254::Fr;
     use ark_std::test_rng;
+    use rand::Rng;
 
-    pub fn compute_chis_at_r<F: JoltField>(r: &[F]) -> Vec<F> {
+    pub fn compute_chis_at_r<F: JoltField>(r: &[MontU128]) -> Vec<F> {
         let ell = r.len();
         let n = ell.pow2();
         let mut chis: Vec<F> = Vec::new();
@@ -571,9 +572,9 @@ mod tests {
             for j in 0..r.len() {
                 let bit_j = (i & (1 << (r.len() - j - 1))) > 0;
                 if bit_j {
-                    chi_i *= r[j];
+                    chi_i = chi_i.mul_u128_mont_form(r[j]) ;
                 } else {
-                    chi_i *= F::one() - r[j];
+                    chi_i *= F::one() - F::from_u128_mont(r[j]);
                 }
             }
             chis.push(chi_i);
@@ -590,9 +591,9 @@ mod tests {
         let mut prng = test_rng();
 
         let s = 10;
-        let mut r: Vec<F> = Vec::new();
+        let mut r: Vec<MontU128> = Vec::new();
         for _i in 0..s {
-            r.push(F::random(&mut prng));
+            r.push(MontU128(prng.gen()));
         }
         let chis = compute_chis_at_r::<F>(&r);
         let chis_m = EqPolynomial::<F>::evals(&r);
@@ -617,7 +618,7 @@ mod tests {
         // g(3, 4) = 8*(1 - 3)(1 - 4) + 8*(1-3)(4) + 8*(3)(1-4) + 8*(3)(4) = 48 + -64 + -72 + 96  = 8
         // g(5, 10) = 8*(1 - 5)(1 - 10) + 8*(1 - 5)(10) + 8*(5)(1-10) + 8*(5)(10) = 96 + -16 + -72 + 96  = 8
         assert_eq!(
-            dense_poly.evaluate(vec![Fr::from(3), Fr::from(4)].as_slice()),
+            dense_poly.evaluate(vec![MontU128::from(3), MontU128::from(4)].as_slice()),
             Fr::from(8)
         );
     }
@@ -640,7 +641,7 @@ mod tests {
 
             // Try 10 random evaluation points
             for _ in 0..10 {
-                let eval_point: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
+                let eval_point: Vec<MontU128> = (0..num_vars).map(|_| MontU128::from(rng.gen::<u128>())).collect();
 
                 let eval1 = poly.evaluate(&eval_point);
                 let eval2 = poly.inside_out_evaluate(&eval_point);
@@ -673,7 +674,7 @@ mod tests {
         // g(3, 4) = 8*(1 - 3)(1 - 4) + 8*(1-3)(4) + 8*(3)(1-4) + 8*(3)(4) = 48 + -64 + -72 + 96  = 8
         // g(5, 10) = 8*(1 - 5)(1 - 10) + 8*(1 - 5)(10) + 8*(5)(1-10) + 8*(5)(10) = 96 + -16 + -72 + 96  = 8
         assert_eq!(
-            dense_poly.inside_out_evaluate(vec![Fr::from(3), Fr::from(4)].as_slice()),
+            dense_poly.inside_out_evaluate(vec![MontU128::from(3), MontU128::from(4)].as_slice()),
             Fr::from(8)
         );
     }

@@ -116,6 +116,15 @@ pub trait JoltField:
         unimplemented!("mul_u128_mont_form must be implemented by the concrete field type")
     }
 
+    // new method: multiply two u128s (Montgomery form) directly into Self
+    #[inline(always)]
+    fn mul_two_u128s(&self, x: MontU128, y: MontU128) -> Self;
+
+    #[inline(always)]
+    fn from_u128_mont(_n: MontU128) -> Self {
+        unimplemented!("Must be implemented by the concrete field type")
+    }
+
     fn mul_pow_2(&self, mut pow: usize) -> Self {
         if pow > 255 {
             panic!("pow > 255");
