@@ -13,6 +13,7 @@ use ark_bn254::Fr;
 use ark_std::test_rng;
 use rand_core::RngCore;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
+use crate::field::MontU128;
 
 #[derive(Debug, Copy, Clone, clap::ValueEnum)]
 pub enum BenchType {
@@ -148,7 +149,7 @@ fn compare_sumcheck_implementations<F, ProofTranscript, const D_MINUS_ONE: usize
     };
 
     let mut transcript = ProofTranscript::new(b"test_transcript");
-    let r_cycle: Vec<F> = transcript.challenge_vector(T.log_2());
+    let r_cycle: Vec<MontU128> = transcript.challenge_vector_u128(T.log_2());
 
     let previous_claim = compute_initial_eval_claim(&ra.iter().collect::<Vec<_>>(), &r_cycle);
 

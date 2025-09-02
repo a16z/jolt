@@ -1,5 +1,6 @@
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 use crate::{field::JoltField, utils::lookup_bits::LookupBits};
+use crate::field::MontU128;
 
 /// Computes 2^(y.leading_ones())
 pub enum LeftShiftHelperPrefix {}
@@ -7,7 +8,7 @@ pub enum LeftShiftHelperPrefix {}
 impl<F: JoltField> SparseDensePrefix<F> for LeftShiftHelperPrefix {
     fn prefix_mle(
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: Option<F>,
+        r_x: Option<MontU128>,
         c: u32,
         mut b: LookupBits,
         _: usize,
@@ -29,12 +30,12 @@ impl<F: JoltField> SparseDensePrefix<F> for LeftShiftHelperPrefix {
 
     fn update_prefix_checkpoint(
         checkpoints: &[PrefixCheckpoint<F>],
-        _r_x: F,
-        r_y: F,
+        _r_x: MontU128,
+        r_y: MontU128,
         _: usize,
     ) -> PrefixCheckpoint<F> {
         let mut updated = checkpoints[Prefixes::LeftShiftHelper].unwrap_or(F::one());
-        updated *= F::one() + r_y;
+        updated *= F::one() + F::from_u128_mont(r_y);
         Some(updated).into()
     }
 }

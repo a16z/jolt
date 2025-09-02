@@ -10,7 +10,7 @@ use crate::{
 use num::Integer;
 use rand::prelude::*;
 use strum::{EnumCount, IntoEnumIterator};
-
+use crate::field::MontU128;
 use super::JoltLookupTable;
 
 pub fn lookup_table_mle_random_test<F: JoltField, T: JoltLookupTable + Default>() {
@@ -20,7 +20,7 @@ pub fn lookup_table_mle_random_test<F: JoltField, T: JoltLookupTable + Default>(
         let index = rng.next_u64();
         assert_eq!(
             F::from_u64(T::default().materialize_entry(index)),
-            T::default().evaluate_mle(&index_to_field_bitvector(index, 64)),
+            T::default().evaluate_mle::<F>(&index_to_field_bitvector::<F>(index, 64)),
             "MLE did not match materialized table at index {index}",
         );
     }
@@ -31,7 +31,7 @@ pub fn lookup_table_mle_full_hypercube_test<F: JoltField, T: JoltLookupTable + D
     for (i, entry) in materialized.iter().enumerate() {
         assert_eq!(
             F::from_u64(*entry),
-            T::default().evaluate_mle(&index_to_field_bitvector(i as u64, 16)),
+            T::default().evaluate_mle::<F>(&index_to_field_bitvector::<F>(i as u64, 16)),
             "MLE did not match materialized table at index {i}",
         );
     }
@@ -52,7 +52,7 @@ pub fn prefix_suffix_test<F: JoltField, T: PrefixSuffixDecomposition<32>>() {
         let mut prefix_checkpoints: Vec<PrefixCheckpoint<F>> = vec![None.into(); Prefixes::COUNT];
         let lookup_index = T::random_lookup_index(&mut rng);
         let mut j = 0;
-        let mut r: Vec<F> = vec![];
+        let mut r: Vec<MontU128> = vec![];
         for phase in 0..4 {
             let suffix_len = (3 - phase) * 16;
             let (mut prefix_bits, suffix_bits) =
@@ -67,13 +67,13 @@ pub fn prefix_suffix_test<F: JoltField, T: PrefixSuffixDecomposition<32>>() {
             for _ in 0..16 {
                 let mut eval_point = r.clone();
                 let c = if rng.next_u64().is_even() { 0 } else { 2 };
-                eval_point.push(F::from_u32(c));
+                eval_point.push(MontU128::from(c as u128));
                 prefix_bits.pop_msb();
 
                 eval_point
-                    .extend(index_to_field_bitvector(prefix_bits.into(), prefix_bits.len()).iter());
+                    .extend(index_to_field_bitvector::<F>(prefix_bits.into(), prefix_bits.len()).iter());
                 eval_point
-                    .extend(index_to_field_bitvector(suffix_bits.into(), suffix_bits.len()).iter());
+                    .extend(index_to_field_bitvector::<F>(suffix_bits.into(), suffix_bits.len()).iter());
 
                 let mle_eval = T::default().evaluate_mle(&eval_point);
 
@@ -102,7 +102,7 @@ pub fn prefix_suffix_test<F: JoltField, T: PrefixSuffixDecomposition<32>>() {
                 }
 
                 assert_eq!(combined, mle_eval);
-                r.push(F::from_u64(rng.next_u64()));
+                r.push(MontU128::from(rng.gen::<u128>()));
 
                 if r.len() % 2 == 0 {
                     Prefixes::update_checkpoints::<32, F>(

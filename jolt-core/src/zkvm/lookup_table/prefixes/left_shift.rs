@@ -1,5 +1,6 @@
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 use crate::{field::JoltField, utils::lookup_bits::LookupBits};
+use crate::field::MontU128;
 
 /// Left-shifts the left operand according to the bitmask given by
 /// the right operand.
@@ -10,7 +11,7 @@ pub enum LeftShiftPrefix<const WORD_SIZE: usize> {}
 impl<F: JoltField, const WORD_SIZE: usize> SparseDensePrefix<F> for LeftShiftPrefix<WORD_SIZE> {
     fn prefix_mle(
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: Option<F>,
+        r_x: Option<MontU128>,
         c: u32,
         mut b: LookupBits,
         j: usize,
@@ -19,8 +20,7 @@ impl<F: JoltField, const WORD_SIZE: usize> SparseDensePrefix<F> for LeftShiftPre
         let mut prod_one_plus_y = checkpoints[Prefixes::LeftShiftHelper].unwrap_or(F::one());
 
         if let Some(r_x) = r_x {
-            result += r_x
-                * (F::one() - F::from_u8(c as u8))
+            result += (F::one() - F::from_u8(c as u8)).mul_u128_mont_form(r_x)
                 * prod_one_plus_y
                 * F::from_u32(1 << (WORD_SIZE - 1 - j / 2));
             prod_one_plus_y *= F::from_u8(1 + c as u8);
@@ -43,14 +43,14 @@ impl<F: JoltField, const WORD_SIZE: usize> SparseDensePrefix<F> for LeftShiftPre
 
     fn update_prefix_checkpoint(
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: F,
-        r_y: F,
+        r_x: MontU128,
+        r_y: MontU128,
         j: usize,
     ) -> PrefixCheckpoint<F> {
         let mut updated = checkpoints[Prefixes::LeftShift].unwrap_or(F::zero());
         let prod_one_plus_y = checkpoints[Prefixes::LeftShiftHelper].unwrap_or(F::one());
         updated +=
-            r_x * (F::one() - r_y) * prod_one_plus_y * F::from_u64(1 << (WORD_SIZE - 1 - j / 2));
+             (F::one() - F::from_u128_mont(r_y)).mul_u128_mont_form(r_x) * prod_one_plus_y * F::from_u64(1 << (WORD_SIZE - 1 - j / 2));
         Some(updated).into()
     }
 }

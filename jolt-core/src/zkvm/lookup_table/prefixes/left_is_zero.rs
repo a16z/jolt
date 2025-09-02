@@ -1,5 +1,5 @@
 use crate::{field::JoltField, utils::lookup_bits::LookupBits};
-
+use crate::field::MontU128;
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 
 pub enum LeftOperandIsZeroPrefix {}
@@ -7,7 +7,7 @@ pub enum LeftOperandIsZeroPrefix {}
 impl<F: JoltField> SparseDensePrefix<F> for LeftOperandIsZeroPrefix {
     fn prefix_mle(
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: Option<F>,
+        r_x: Option<MontU128>,
         c: u32,
         b: LookupBits,
         _: usize,
@@ -21,7 +21,7 @@ impl<F: JoltField> SparseDensePrefix<F> for LeftOperandIsZeroPrefix {
         let mut result = checkpoints[Prefixes::LeftOperandIsZero].unwrap_or(F::one());
 
         if let Some(r_x) = r_x {
-            result *= F::one() - r_x;
+            result *= F::one() - F::from_u128_mont(r_x);
         } else {
             let x = F::from_u8(c as u8);
             result *= F::one() - x;
@@ -31,13 +31,13 @@ impl<F: JoltField> SparseDensePrefix<F> for LeftOperandIsZeroPrefix {
 
     fn update_prefix_checkpoint(
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: F,
-        _: F,
+        r_x: MontU128,
+        _: MontU128,
         _: usize,
     ) -> PrefixCheckpoint<F> {
         // checkpoint *= (1 - r_x)
         let updated =
-            checkpoints[Prefixes::LeftOperandIsZero].unwrap_or(F::one()) * (F::one() - r_x);
+            checkpoints[Prefixes::LeftOperandIsZero].unwrap_or(F::one()) * (F::one() - F::from_u128_mont(r_x));
         Some(updated).into()
     }
 }

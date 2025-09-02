@@ -4,7 +4,7 @@ use super::prefixes::PrefixEval;
 use super::suffixes::{SuffixEval, Suffixes};
 use super::JoltLookupTable;
 use super::PrefixSuffixDecomposition;
-use crate::field::JoltField;
+use crate::field::{JoltField, MontU128};
 use crate::utils::uninterleave_bits;
 use crate::zkvm::lookup_table::prefixes::Prefixes;
 
@@ -31,7 +31,7 @@ impl<const WORD_SIZE: usize> JoltLookupTable for VirtualRotrTable<WORD_SIZE> {
         (first_sum + second_sum) as u64
     }
 
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+    fn evaluate_mle<F: JoltField>(&self, r: &[MontU128]) -> F {
         assert_eq!(r.len() % 2, 0, "r must have even length");
         assert_eq!(r.len() / 2, WORD_SIZE, "r must have length 2 * WORD_SIZE");
 
@@ -45,15 +45,15 @@ impl<const WORD_SIZE: usize> JoltLookupTable for VirtualRotrTable<WORD_SIZE> {
             let r_y = chunk[1];
 
             // Update first_sum: multiply by (1 + r_y) then add r_x * r_y
-            first_sum *= F::one() + r_y;
-            first_sum += r_x * r_y;
+            first_sum *= F::one() + F::from_u128_mont(r_y);
+            first_sum += F::from_u128_mont(r_x) * F::from_u128_mont(r_y);
 
             // Update second_sum
             second_sum +=
-                r_x * (F::one() - r_y) * prod_one_plus_y * F::from_u64(1 << (WORD_SIZE - 1 - i));
+                (F::one() - F::from_u128_mont(r_y)).mul_u128_mont_form(r_x) * prod_one_plus_y * F::from_u64(1 << (WORD_SIZE - 1 - i));
 
             // Update prod_one_plus_y for next iteration
-            prod_one_plus_y *= F::one() + r_y;
+            prod_one_plus_y *= F::one() + F::from_u128_mont(r_y);
         }
 
         first_sum + second_sum

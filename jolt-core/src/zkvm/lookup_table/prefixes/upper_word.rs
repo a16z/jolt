@@ -1,6 +1,6 @@
 use crate::zkvm::instruction_lookups::read_raf_checking::current_suffix_len;
 use crate::{field::JoltField, utils::lookup_bits::LookupBits};
-
+use crate::field::MontU128;
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 
 #[derive(Default)]
@@ -9,7 +9,7 @@ pub struct UpperWordPrefix<const WORD_SIZE: usize>;
 impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F> for UpperWordPrefix<WORD_SIZE> {
     fn prefix_mle(
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: Option<F>,
+        r_x: Option<MontU128>,
         c: u32,
         mut b: LookupBits,
         j: usize,
@@ -24,7 +24,7 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F> for UpperWordPre
             let y = F::from_u8(c as u8);
             let x_shift = WORD_SIZE - j;
             let y_shift = WORD_SIZE - j - 1;
-            result += F::from_u64(1 << x_shift) * r_x;
+            result += F::from_u64(1 << x_shift).mul_u128_mont_form(r_x);
             result += F::from_u64(1 << y_shift) * y;
         } else {
             let x = F::from_u8(c as u8);
@@ -49,8 +49,8 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F> for UpperWordPre
 
     fn update_prefix_checkpoint(
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: F,
-        r_y: F,
+        r_x: MontU128,
+        r_y: MontU128,
         j: usize,
     ) -> PrefixCheckpoint<F> {
         if j >= WORD_SIZE {
@@ -59,8 +59,8 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F> for UpperWordPre
         let x_shift = WORD_SIZE - j;
         let y_shift = WORD_SIZE - j - 1;
         let updated = checkpoints[Prefixes::UpperWord].unwrap_or(F::zero())
-            + F::from_u64(1 << x_shift) * r_x
-            + F::from_u64(1 << y_shift) * r_y;
+            + F::from_u64(1 << x_shift).mul_u128_mont_form(r_x)
+            + F::from_u64(1 << y_shift).mul_u128_mont_form(r_y);
         Some(updated).into()
     }
 }

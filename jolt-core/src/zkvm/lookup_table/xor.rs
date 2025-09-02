@@ -1,5 +1,5 @@
 use super::PrefixSuffixDecomposition;
-use crate::field::JoltField;
+use crate::field::{JoltField, MontU128};
 use crate::utils::uninterleave_bits;
 use serde::{Deserialize, Serialize};
 
@@ -16,7 +16,7 @@ impl<const WORD_SIZE: usize> JoltLookupTable for XorTable<WORD_SIZE> {
         (x ^ y) as u64
     }
 
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+    fn evaluate_mle<F: JoltField>(&self, r: &[MontU128]) -> F {
         debug_assert_eq!(r.len(), 2 * WORD_SIZE);
 
         let mut result = F::zero();
@@ -24,7 +24,7 @@ impl<const WORD_SIZE: usize> JoltLookupTable for XorTable<WORD_SIZE> {
             let x_i = r[2 * i];
             let y_i = r[2 * i + 1];
             result += F::from_u64(1u64 << (WORD_SIZE - 1 - i))
-                * ((F::one() - x_i) * y_i + x_i * (F::one() - y_i));
+                * ((F::one() - F::from_u128_mont(x_i)).mul_u128_mont_form(y_i) + (F::one() - F::from_u128_mont(y_i)).mul_u128_mont_form(x_i));
         }
         result
     }

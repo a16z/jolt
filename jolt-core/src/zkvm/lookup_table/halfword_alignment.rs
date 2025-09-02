@@ -4,7 +4,7 @@ use super::prefixes::PrefixEval;
 use super::suffixes::{SuffixEval, Suffixes};
 use super::JoltLookupTable;
 use super::PrefixSuffixDecomposition;
-use crate::field::JoltField;
+use crate::field::{JoltField, MontU128};
 use crate::zkvm::lookup_table::prefixes::Prefixes;
 
 /// (address, offset)
@@ -16,9 +16,9 @@ impl<const WORD_SIZE: usize> JoltLookupTable for HalfwordAlignmentTable<WORD_SIZ
         index.is_multiple_of(2).into()
     }
 
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+    fn evaluate_mle<F: JoltField>(&self, r: &[MontU128]) -> F {
         let lsb = r[r.len() - 1];
-        F::one() - lsb
+        F::one() - F::from_u128_mont(lsb)
     }
 }
 

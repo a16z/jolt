@@ -1,6 +1,6 @@
 use crate::{field::JoltField, utils::uninterleave_bits};
 use serde::{Deserialize, Serialize};
-
+use crate::field::MontU128;
 use super::prefixes::{PrefixEval, Prefixes};
 use super::suffixes::{SuffixEval, Suffixes};
 use super::JoltLookupTable;
@@ -20,7 +20,7 @@ impl<const WORD_SIZE: usize> JoltLookupTable for SignedLessThanTable<WORD_SIZE> 
         }
     }
 
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+    fn evaluate_mle<F: JoltField>(&self, r: &[MontU128]) -> F {
         let x_sign = r[0];
         let y_sign = r[1];
 
@@ -29,11 +29,11 @@ impl<const WORD_SIZE: usize> JoltLookupTable for SignedLessThanTable<WORD_SIZE> 
         for i in 0..WORD_SIZE {
             let x_i = r[2 * i];
             let y_i = r[2 * i + 1];
-            lt += (F::one() - x_i) * y_i * eq;
-            eq *= x_i * y_i + (F::one() - x_i) * (F::one() - y_i);
+            lt += (F::one() - F::from_u128_mont(x_i)).mul_u128_mont_form(y_i)  * eq;
+            eq *= F::from_u128_mont(x_i) * F::from_u128_mont(y_i) + (F::one() - F::from_u128_mont(x_i)) * (F::one() - F::from_u128_mont(y_i));
         }
 
-        x_sign - y_sign + lt
+        F::from_u128_mont(x_sign) - F::from_u128_mont(y_sign) + lt
     }
 }
 

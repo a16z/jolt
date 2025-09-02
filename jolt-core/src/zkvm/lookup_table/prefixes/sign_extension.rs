@@ -1,5 +1,5 @@
 use crate::{field::JoltField, utils::lookup_bits::LookupBits};
-
+use crate::field::MontU128;
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 
 pub enum SignExtensionPrefix<const WORD_SIZE: usize> {}
@@ -7,7 +7,7 @@ pub enum SignExtensionPrefix<const WORD_SIZE: usize> {}
 impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F> for SignExtensionPrefix<WORD_SIZE> {
     fn prefix_mle(
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: Option<F>,
+        r_x: Option<MontU128>,
         c: u32,
         mut b: LookupBits,
         j: usize,
@@ -38,7 +38,7 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F> for SignExtensio
                 result += F::from_u64((1 - y_i) << index);
                 index += 1;
             }
-            return result * sign_bit;
+            return result.mul_u128_mont_form(sign_bit);
         }
 
         let sign_bit = checkpoints[Prefixes::LeftOperandMsb].unwrap();
@@ -67,15 +67,15 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F> for SignExtensio
 
     fn update_prefix_checkpoint(
         checkpoints: &[PrefixCheckpoint<F>],
-        _: F,
-        r_y: F,
+        _: MontU128,
+        r_y: MontU128,
         j: usize,
     ) -> PrefixCheckpoint<F> {
         if j == 1 {
             return None.into();
         }
         let mut updated = checkpoints[Prefixes::SignExtension].unwrap_or(F::zero());
-        updated += F::from_u64(1 << (j / 2)) * (F::one() - r_y);
+        updated += F::from_u64(1 << (j / 2)) * (F::one() - F::from_u128_mont(r_y));
         if j == 2 * WORD_SIZE - 1 {
             updated *= checkpoints[Prefixes::LeftOperandMsb].unwrap();
         }

@@ -42,7 +42,7 @@ pub trait JoltLookupTable: Clone + Debug + Send + Sync + Serialize {
     fn materialize_entry(&self, index: u64) -> u64;
 
     /// Evaluates the MLE of this lookup table on the given point `r`.
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F;
+    fn evaluate_mle<F: JoltField>(&self, r: &[MontU128]) -> F;
 }
 
 pub trait PrefixSuffixDecomposition<const WORD_SIZE: usize>: JoltLookupTable + Default {

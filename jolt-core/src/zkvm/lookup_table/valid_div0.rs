@@ -5,6 +5,7 @@ use super::suffixes::{SuffixEval, Suffixes};
 use super::JoltLookupTable;
 use super::PrefixSuffixDecomposition;
 use crate::{field::JoltField, utils::uninterleave_bits};
+use crate::field::MontU128;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 /// (divisor, quotient)
@@ -24,15 +25,15 @@ impl<const WORD_SIZE: usize> JoltLookupTable for ValidDiv0Table<WORD_SIZE> {
         }
     }
 
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+    fn evaluate_mle<F: JoltField>(&self, r: &[MontU128]) -> F {
         let mut divisor_is_zero = F::one();
         let mut is_valid_div_by_zero = F::one();
 
         for i in 0..WORD_SIZE {
             let x_i = r[2 * i];
             let y_i = r[2 * i + 1];
-            divisor_is_zero *= F::one() - x_i;
-            is_valid_div_by_zero *= (F::one() - x_i) * y_i;
+            divisor_is_zero *= F::one() - F::from_u128_mont(x_i);
+            is_valid_div_by_zero *= (F::one() - F::from_u128_mont(x_i)).mul_u128_mont_form(y_i);
         }
 
         F::one() - divisor_is_zero + is_valid_div_by_zero

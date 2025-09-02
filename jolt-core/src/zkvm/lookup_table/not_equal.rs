@@ -6,6 +6,7 @@ use super::suffixes::{SuffixEval, Suffixes};
 use super::JoltLookupTable;
 use super::PrefixSuffixDecomposition;
 use crate::{field::JoltField, utils::uninterleave_bits};
+use crate::field::MontU128;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct NotEqualTable<const WORD_SIZE: usize>;
@@ -21,7 +22,7 @@ impl<const WORD_SIZE: usize> JoltLookupTable for NotEqualTable<WORD_SIZE> {
         }
     }
 
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+    fn evaluate_mle<F: JoltField>(&self, r: &[MontU128]) -> F {
         F::one() - EqualTable::<WORD_SIZE>.evaluate_mle::<F>(r)
     }
 }

@@ -5,6 +5,7 @@ use super::suffixes::{SuffixEval, Suffixes};
 use super::JoltLookupTable;
 use super::PrefixSuffixDecomposition;
 use crate::{field::JoltField, utils::uninterleave_bits};
+use crate::field::MontU128;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ValidUnsignedRemainderTable<const WORD_SIZE: usize>;
@@ -15,7 +16,7 @@ impl<const WORD_SIZE: usize> JoltLookupTable for ValidUnsignedRemainderTable<WOR
         (divisor == 0 || remainder < divisor).into()
     }
 
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+    fn evaluate_mle<F: JoltField>(&self, r: &[MontU128]) -> F {
         let mut divisor_is_zero = F::one();
         let mut lt = F::zero();
         let mut eq = F::one();
@@ -23,9 +24,9 @@ impl<const WORD_SIZE: usize> JoltLookupTable for ValidUnsignedRemainderTable<WOR
         for i in 0..WORD_SIZE {
             let x_i = r[2 * i];
             let y_i = r[2 * i + 1];
-            divisor_is_zero *= F::one() - y_i;
-            lt += (F::one() - x_i) * y_i * eq;
-            eq *= x_i * y_i + (F::one() - x_i) * (F::one() - y_i);
+            divisor_is_zero *= F::one() - F::from_u128_mont(y_i);
+            lt += (F::one() - F::from_u128_mont(x_i)).mul_u128_mont_form(y_i) * eq;
+            eq *= F::from_u128_mont(x_i) * F::from_u128_mont(y_i) + (F::one() - F::from_u128_mont(x_i)) * (F::one() - F::from_u128_mont(y_i));
         }
 
         lt + divisor_is_zero

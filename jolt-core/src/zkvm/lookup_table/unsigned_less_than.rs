@@ -1,6 +1,6 @@
 use crate::{field::JoltField, utils::uninterleave_bits};
 use serde::{Deserialize, Serialize};
-
+use crate::field::MontU128;
 use super::{
     prefixes::{PrefixEval, Prefixes},
     suffixes::{SuffixEval, Suffixes},
@@ -16,7 +16,7 @@ impl<const WORD_SIZE: usize> JoltLookupTable for UnsignedLessThanTable<WORD_SIZE
         (x < y).into()
     }
 
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+    fn evaluate_mle<F: JoltField>(&self, r: &[MontU128]) -> F {
         debug_assert_eq!(r.len(), 2 * WORD_SIZE);
 
         // \sum_i (1 - x_i) * y_i * \prod_{j < i} ((1 - x_j) * (1 - y_j) + x_j * y_j)
@@ -25,8 +25,8 @@ impl<const WORD_SIZE: usize> JoltLookupTable for UnsignedLessThanTable<WORD_SIZE
         for i in 0..WORD_SIZE {
             let x_i = r[2 * i];
             let y_i = r[2 * i + 1];
-            result += (F::one() - x_i) * y_i * eq_term;
-            eq_term *= x_i * y_i + (F::one() - x_i) * (F::one() - y_i);
+            result += (F::one() - F::from_u128_mont(x_i)).mul_u128_mont_form(y_i)  * eq_term;
+            eq_term *= F::from_u128_mont(x_i) * F::from_u128_mont(y_i) + (F::one() - F::from_u128_mont(x_i)) * (F::one() - F::from_u128_mont(y_i));
         }
         result
     }

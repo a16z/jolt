@@ -73,7 +73,7 @@ pub trait SparseDensePrefix<F: JoltField>: 'static + Sync {
     /// they can be represented by a single bitvector.
     fn prefix_mle(
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: Option<F>,
+        r_x: Option<MontU128>,
         c: u32,
         b: LookupBits,
         j: usize,
@@ -87,8 +87,8 @@ pub trait SparseDensePrefix<F: JoltField>: 'static + Sync {
     /// so we pass in all such `checkpoints` to this function.
     fn update_prefix_checkpoint(
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: F,
-        r_y: F,
+        r_x: MontU128,
+        r_y: MontU128,
         j: usize,
     ) -> PrefixCheckpoint<F>;
 }
@@ -264,8 +264,8 @@ impl Prefixes {
     fn update_prefix_checkpoint<const WORD_SIZE: usize, F: JoltField>(
         &self,
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: F,
-        r_y: F,
+        r_x: MontU128,
+        r_y: MontU128,
         j: usize,
     ) -> PrefixCheckpoint<F> {
         match self {

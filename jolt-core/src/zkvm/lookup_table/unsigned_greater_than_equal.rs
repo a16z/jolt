@@ -7,6 +7,7 @@ use super::{
     JoltLookupTable, PrefixSuffixDecomposition,
 };
 use crate::{field::JoltField, utils::uninterleave_bits, zkvm::lookup_table::suffixes::Suffixes};
+use crate::field::MontU128;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct UnsignedGreaterThanEqualTable<const WORD_SIZE: usize>;
@@ -22,7 +23,7 @@ impl<const WORD_SIZE: usize> JoltLookupTable for UnsignedGreaterThanEqualTable<W
         }
     }
 
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+    fn evaluate_mle<F: JoltField>(&self, r: &[MontU128]) -> F {
         F::one() - UnsignedLessThanTable::<WORD_SIZE>.evaluate_mle::<F>(r)
     }
 }

@@ -108,33 +108,33 @@ sha2_inline = { package = "jolt-inlines-sha2", path = "../jolt-inlines/sha2", fe
 [build-dependencies]
 common = { path = "../common" }
 
-[[bench]]
-name = "iai"
-harness = false
-
-[[bench]]
-name = "commit"
-harness = false
-
-[[bench]]
-name = "binding"
-harness = false
-
-[[bench]]
-name = "large_d_sumcheck"
-harness = false
-
-[[bench]]
-name = "large_d_mul"
-harness = false
-
-[[bench]]
-name = "poly_bench"
-harness = false
-
-[[bench]]
-name = "compact_poly_bench"
-harness = false
+#[[bench]]
+#name = "iai"
+#harness = false
+#
+#[[bench]]
+#name = "commit"
+#harness = false
+#
+#[[bench]]
+#name = "binding"
+#harness = false
+#
+#[[bench]]
+#name = "large_d_sumcheck"
+#harness = false
+#
+#[[bench]]
+#name = "large_d_mul"
+#harness = false
+#
+#[[bench]]
+#name = "poly_bench"
+#harness = false
+#
+#[[bench]]
+#name = "compact_poly_bench"
+#harness = false
 
 [lib]
 name = "jolt_core"

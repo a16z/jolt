@@ -6,6 +6,7 @@ use super::suffixes::{SuffixEval, Suffixes};
 use super::JoltLookupTable;
 use super::PrefixSuffixDecomposition;
 use crate::{field::JoltField, utils::uninterleave_bits};
+use crate::field::MontU128;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct SignedGreaterThanEqualTable<const WORD_SIZE: usize>;
@@ -21,8 +22,8 @@ impl<const WORD_SIZE: usize> JoltLookupTable for SignedGreaterThanEqualTable<WOR
         }
     }
 
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
-        F::one() - SignedLessThanTable::<WORD_SIZE>.evaluate_mle(r)
+    fn evaluate_mle<F: JoltField>(&self, r: &[MontU128]) -> F {
+        F::one() - SignedLessThanTable::<WORD_SIZE>.evaluate_mle::<F>(r)
     }
 }
 

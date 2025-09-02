@@ -6,18 +6,19 @@ use super::{
     JoltLookupTable, PrefixSuffixDecomposition,
 };
 use crate::{field::JoltField, utils::uninterleave_bits};
+use crate::field::MontU128;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct EqualTable<const WORD_SIZE: usize>;
 
 impl<const WORD_SIZE: usize> JoltLookupTable for EqualTable<WORD_SIZE> {
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+    fn evaluate_mle<F: JoltField>(&self, r: &[MontU128]) -> F {
         debug_assert!(r.len().is_multiple_of(2));
 
         let x = r.iter().step_by(2);
         let y = r.iter().skip(1).step_by(2);
         x.zip(y)
-            .map(|(x_i, y_i)| *x_i * y_i + (F::one() - x_i) * (F::one() - y_i))
+            .map(|(x_i, y_i)| F::from_u128_mont(*x_i) * F::from_u128_mont(*y_i) + (F::one() - F::from_u128_mont(*x_i)) * (F::one() - F::from_u128_mont(*y_i)))
             .product()
     }
 

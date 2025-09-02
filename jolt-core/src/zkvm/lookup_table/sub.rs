@@ -1,5 +1,5 @@
 use super::PrefixSuffixDecomposition;
-use crate::field::JoltField;
+use crate::field::{JoltField, MontU128};
 use serde::{Deserialize, Serialize};
 
 use super::prefixes::{PrefixEval, Prefixes};
@@ -14,11 +14,11 @@ impl<const WORD_SIZE: usize> JoltLookupTable for SubTable<WORD_SIZE> {
         index % (1 << WORD_SIZE)
     }
 
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+    fn evaluate_mle<F: JoltField>(&self, r: &[MontU128]) -> F {
         debug_assert_eq!(r.len(), 2 * WORD_SIZE);
         let mut result = F::zero();
         for i in 0..WORD_SIZE {
-            result += F::from_u64(1 << (WORD_SIZE - 1 - i)) * r[WORD_SIZE + i];
+            result += F::from_u64(1 << (WORD_SIZE - 1 - i)).mul_u128_mont_form(r[WORD_SIZE + i]);
         }
         result
     }

@@ -213,13 +213,18 @@ impl<F: JoltField> EqPolynomial<F> {
     }
 }
 
-pub struct EqPlusOnePolynomial {
+pub struct EqPlusOnePolynomial<F> {
     x: Vec<MontU128>,
+    _phantom: std::marker::PhantomData<F>,
+
 }
 
 impl<F: JoltField> EqPlusOnePolynomial<F> {
     pub fn new(x: Vec<MontU128>) -> Self {
-        EqPlusOnePolynomial { x }
+        EqPlusOnePolynomial {
+            x,
+            _phantom: PhantomData,
+        }
     }
 
     /* This MLE is 1 if y = x + 1 for x in the range [0... 2^l-2].
@@ -241,12 +246,12 @@ impl<F: JoltField> EqPlusOnePolynomial<F> {
             .into_par_iter()
             .map(|k| {
                 let lower_bits_product = (0..k)
-                    .map(|i| x[l - 1 - i] * (F::one() - F::from_u128_mont(y[l - 1 - i])))
+                    .map(|i|  (F::one() - F::from_u128_mont(y[l - 1 - i])).mul_u128_mont_form(x[l - 1 - i]))
                     .product::<F>();
-                let kth_bit_product = (F::one() - x[l - 1 - k]).mul_u128_mont_form(y[l - 1 - k]);
+                let kth_bit_product = (F::one() - F::from_u128_mont(x[l - 1 - k])).mul_u128_mont_form(y[l - 1 - k]);
                 let higher_bits_product = ((k + 1)..l)
                     .map(|i| {
-                        x[l - 1 - i].mul_u128_mont_form(y[l - 1 - i])   + (one - x[l - 1 - i]) * (one - F::from_u128_mont(y[l - 1 - i]))
+                        F::from_u128_mont(x[l - 1 - i]) * F::from_u128_mont(y[l - 1 - i])   + (one - F::from_u128_mont(x[l - 1 - i])) * (one - F::from_u128_mont(y[l - 1 - i]))
                     })
                     .product::<F>();
                 lower_bits_product * kth_bit_product * higher_bits_product

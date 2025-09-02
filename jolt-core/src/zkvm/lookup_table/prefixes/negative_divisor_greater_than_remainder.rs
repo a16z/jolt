@@ -1,5 +1,5 @@
 use crate::{field::JoltField, utils::lookup_bits::LookupBits};
-
+use crate::field::MontU128;
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 
 pub enum NegativeDivisorGreaterThanRemainderPrefix {}
@@ -7,7 +7,7 @@ pub enum NegativeDivisorGreaterThanRemainderPrefix {}
 impl<F: JoltField> SparseDensePrefix<F> for NegativeDivisorGreaterThanRemainderPrefix {
     fn prefix_mle(
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: Option<F>,
+        r_x: Option<MontU128>,
         c: u32,
         mut b: LookupBits,
         j: usize,
@@ -33,7 +33,7 @@ impl<F: JoltField> SparseDensePrefix<F> for NegativeDivisorGreaterThanRemainderP
                 // `c` is the sign "bit" of the divisor.
                 // This prefix handles the case where both remainder and
                 // divisor are negative, i.e. their sign bits are one.
-                return r_x.unwrap() * F::from_u32(c);
+                return  F::from_u32(c).mul_u128_mont_form(r_x.unwrap());
             }
         }
 
@@ -58,9 +58,9 @@ impl<F: JoltField> SparseDensePrefix<F> for NegativeDivisorGreaterThanRemainderP
             let r_x = r_x.unwrap();
             let c = F::from_u32(c);
             let (x, y) = b.uninterleave();
-            gt *= r_x * (F::one() - c);
+            gt *= (F::one() - c).mul_u128_mont_form(r_x);
             if u64::from(x) > u64::from(y) {
-                eq *= r_x * c + (F::one() - r_x) * (F::one() - c);
+                eq *= c.mul_u128_mont_form(r_x) + (F::one() - F::from_u128_mont(r_x)) * (F::one() - c);
                 gt += eq;
             }
             return gt;
@@ -68,10 +68,10 @@ impl<F: JoltField> SparseDensePrefix<F> for NegativeDivisorGreaterThanRemainderP
 
         if let Some(r_x) = r_x {
             let c = F::from_u32(c);
-            gt += eq * r_x * (F::one() - c);
+            gt += eq.mul_u128_mont_form(r_x)  * (F::one() - c);
             let (x, y) = b.uninterleave();
             if u64::from(x) > u64::from(y) {
-                eq *= r_x * c + (F::one() - r_x) * (F::one() - c);
+                eq *= c.mul_u128_mont_form(r_x) + (F::one() - F::from_u128_mont(r_x)) * (F::one() - c);
                 gt += eq;
             }
         } else {
@@ -90,26 +90,28 @@ impl<F: JoltField> SparseDensePrefix<F> for NegativeDivisorGreaterThanRemainderP
 
     fn update_prefix_checkpoint(
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: F,
-        r_y: F,
+        r_x: MontU128,
+        r_y: MontU128,
         j: usize,
     ) -> PrefixCheckpoint<F> {
+        let r_x_f = F::from_u128_mont(r_x);
+        let r_y_f = F::from_u128_mont(r_y);
         if j == 1 {
             // `r_x` is the sign bit of the remainder
             // `r_y` is the sign bit of the divisor
             // This prefix handles the case where both remainder and
             // divisor are negative.
-            return Some(r_x * r_y).into();
+            return Some(r_x_f * r_y_f).into();
         }
 
         let gt_checkpoint = checkpoints[Prefixes::NegativeDivisorGreaterThanRemainder].unwrap();
         let eq_checkpoint = checkpoints[Prefixes::NegativeDivisorEqualsRemainder].unwrap();
 
         if j == 3 {
-            return Some(gt_checkpoint * r_x * (F::one() - r_y)).into();
+            return Some(gt_checkpoint * (F::one() - r_y_f).mul_u128_mont_form(r_x)).into();
         }
 
-        let gt_updated = gt_checkpoint + eq_checkpoint * r_x * (F::one() - r_y);
+        let gt_updated = gt_checkpoint + eq_checkpoint * (F::one() - r_y_f).mul_u128_mont_form(r_x);
         Some(gt_updated).into()
     }
 }

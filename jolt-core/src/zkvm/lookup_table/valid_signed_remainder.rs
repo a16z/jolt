@@ -5,6 +5,7 @@ use super::suffixes::{SuffixEval, Suffixes};
 use super::JoltLookupTable;
 use super::PrefixSuffixDecomposition;
 use crate::{field::JoltField, utils::uninterleave_bits};
+use crate::field::MontU128;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 /// (remainder, divisor)
@@ -48,38 +49,38 @@ impl<const WORD_SIZE: usize> JoltLookupTable for ValidSignedRemainderTable<WORD_
         }
     }
 
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+    fn evaluate_mle<F: JoltField>(&self, r: &[MontU128]) -> F {
         let x_sign = r[0];
         let y_sign = r[1];
 
-        let mut remainder_is_zero = F::one() - r[0];
-        let mut divisor_is_zero = F::one() - r[1];
-        let mut positive_remainder_equals_divisor = (F::one() - x_sign) * (F::one() - y_sign);
-        let mut positive_remainder_less_than_divisor = (F::one() - x_sign) * (F::one() - y_sign);
-        let mut negative_divisor_equals_remainder = x_sign * y_sign;
-        let mut negative_divisor_greater_than_remainder = x_sign * y_sign;
+        let mut remainder_is_zero = F::one() - F::from_u128_mont(r[0]);
+        let mut divisor_is_zero = F::one() - F::from_u128_mont(r[1]);
+        let mut positive_remainder_equals_divisor = (F::one() - F::from_u128_mont(x_sign)) * (F::one() - F::from_u128_mont(y_sign));
+        let mut positive_remainder_less_than_divisor = (F::one() - F::from_u128_mont(x_sign)) * (F::one() - F::from_u128_mont(y_sign));
+        let mut negative_divisor_equals_remainder = F::from_u128_mont(x_sign) * F::from_u128_mont(y_sign);
+        let mut negative_divisor_greater_than_remainder = F::from_u128_mont(x_sign) * F::from_u128_mont(y_sign);
 
         for i in 1..WORD_SIZE {
             let x_i = r[2 * i];
             let y_i = r[2 * i + 1];
             if i == 1 {
-                positive_remainder_less_than_divisor *= (F::one() - x_i) * y_i;
-                negative_divisor_greater_than_remainder *= x_i * (F::one() - y_i);
+                positive_remainder_less_than_divisor *= (F::one() - F::from_u128_mont(x_i)).mul_u128_mont_form( y_i);
+                negative_divisor_greater_than_remainder *= (F::one() - F::from_u128_mont(y_i)).mul_u128_mont_form(x_i);
             } else {
                 positive_remainder_less_than_divisor +=
-                    positive_remainder_equals_divisor * (F::one() - x_i) * y_i;
+                    positive_remainder_equals_divisor * (F::one() - F::from_u128_mont(x_i)).mul_u128_mont_form(y_i);
                 negative_divisor_greater_than_remainder +=
-                    negative_divisor_equals_remainder * x_i * (F::one() - y_i);
+                    negative_divisor_equals_remainder * (F::one() - F::from_u128_mont(y_i)).mul_u128_mont_form(x_i);
             }
-            positive_remainder_equals_divisor *= x_i * y_i + (F::one() - x_i) * (F::one() - y_i);
-            negative_divisor_equals_remainder *= x_i * y_i + (F::one() - x_i) * (F::one() - y_i);
-            remainder_is_zero *= F::one() - x_i;
-            divisor_is_zero *= F::one() - y_i;
+            positive_remainder_equals_divisor *= F::from_u128_mont(x_i) * F::from_u128_mont(y_i) + (F::one() - F::from_u128_mont(x_i)) * (F::one() - F::from_u128_mont(y_i));
+            negative_divisor_equals_remainder *= F::from_u128_mont(x_i) * F::from_u128_mont(y_i) + (F::one() - F::from_u128_mont(x_i)) * (F::one() - F::from_u128_mont(y_i));
+            remainder_is_zero *= F::one() - F::from_u128_mont(x_i);
+            divisor_is_zero *= F::one() - F::from_u128_mont(y_i);
         }
 
         positive_remainder_less_than_divisor
             + negative_divisor_greater_than_remainder
-            + y_sign * remainder_is_zero
+            + remainder_is_zero.mul_u128_mont_form(y_sign)
             + divisor_is_zero
     }
 }

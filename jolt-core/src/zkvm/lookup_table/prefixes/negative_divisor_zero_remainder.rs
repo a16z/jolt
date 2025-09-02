@@ -1,5 +1,5 @@
 use crate::{field::JoltField, utils::lookup_bits::LookupBits};
-
+use crate::field::MontU128;
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 
 pub enum NegativeDivisorZeroRemainderPrefix {}
@@ -7,7 +7,7 @@ pub enum NegativeDivisorZeroRemainderPrefix {}
 impl<F: JoltField> SparseDensePrefix<F> for NegativeDivisorZeroRemainderPrefix {
     fn prefix_mle(
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: Option<F>,
+        r_x: Option<MontU128>,
         c: u32,
         mut b: LookupBits,
         j: usize,
@@ -33,7 +33,7 @@ impl<F: JoltField> SparseDensePrefix<F> for NegativeDivisorZeroRemainderPrefix {
                 // `c` is the sign "bit" of the divisor.
                 // This prefix handles the case where the remainder is zero
                 // and the divisor is negative.
-                return (F::one() - r_x.unwrap()) * F::from_u32(c);
+                return (F::one() - F::from_u128_mont(r_x.unwrap())) * F::from_u32(c);
             }
         }
 
@@ -47,7 +47,7 @@ impl<F: JoltField> SparseDensePrefix<F> for NegativeDivisorZeroRemainderPrefix {
                 return F::zero();
             }
 
-            negative_divisor_zero_remainder * (F::one() - r_x)
+            negative_divisor_zero_remainder * (F::one() - F::from_u128_mont(r_x))
         } else {
             let _ = b.pop_msb();
             let (remainder, _) = b.uninterleave();
@@ -62,8 +62,8 @@ impl<F: JoltField> SparseDensePrefix<F> for NegativeDivisorZeroRemainderPrefix {
 
     fn update_prefix_checkpoint(
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: F,
-        r_y: F,
+        r_x: MontU128,
+        r_y: MontU128,
         j: usize,
     ) -> PrefixCheckpoint<F> {
         if j == 1 {
@@ -71,12 +71,12 @@ impl<F: JoltField> SparseDensePrefix<F> for NegativeDivisorZeroRemainderPrefix {
             // `r_y` is the sign bit of the divisor
             // This prefix handles the case where the remainder is zero
             // and the divisor is negative.
-            return Some((F::one() - r_x) * r_y).into();
+            return Some((F::one() - F::from_u128_mont(r_x)).mul_u128_mont_form(r_y)).into();
         }
 
         let mut negative_divisor_zero_remainder =
             checkpoints[Prefixes::NegativeDivisorZeroRemainder].unwrap();
-        negative_divisor_zero_remainder *= F::one() - r_x;
+        negative_divisor_zero_remainder *= F::one() - F::from_u128_mont(r_x);
         Some(negative_divisor_zero_remainder).into()
     }
 }
