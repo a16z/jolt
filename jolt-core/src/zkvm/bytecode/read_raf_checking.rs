@@ -36,6 +36,7 @@ use common::constants::REGISTER_COUNT;
 use rayon::prelude::*;
 use strum::{EnumCount, IntoEnumIterator};
 use tracer::instruction::NormalizedInstruction;
+use crate::field::MontU128;
 
 /// Number of batched read-checking sumchecks bespokely
 const STAGES: usize = 3;
@@ -50,7 +51,7 @@ struct ReadCheckingProverState<F: JoltField> {
     pc: Vec<usize>,
 }
 
-#[derive(Allocative)]
+#[cfg_attr(feature = "allocative", derive(Allocative))]
 pub struct ReadRafSumcheck<F: JoltField> {
     gamma: [F; STAGES],
     gamma_cub: F,
@@ -64,7 +65,7 @@ pub struct ReadRafSumcheck<F: JoltField> {
     prover_state: Option<ReadCheckingProverState<F>>,
     val_polys: [MultilinearPolynomial<F>; STAGES],
     int_poly: IdentityPolynomial<F>,
-    r_cycles: [Vec<F>; STAGES],
+    r_cycles: [Vec<MontU128>; STAGES],
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -266,7 +267,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
     fn compute_val_rv(
         sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
         val_type: ReadCheckingValType,
-    ) -> (Vec<F>, F, Vec<F>) {
+    ) -> (Vec<F>, F, Vec<MontU128>) {
         match val_type {
             ReadCheckingValType::Stage1 => {
                 let gamma: F = sm.get_transcript().borrow_mut().challenge_scalar();
@@ -401,7 +402,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             .0
             .r;
         let r_register = &r_register[..(REGISTER_COUNT as usize).log_2()];
-        let eq_r_register = EqPolynomial::evals(r_register);
+        let eq_r_register = EqPolynomial::<F>::evals(r_register);
         debug_assert_eq!(eq_r_register.len(), REGISTER_COUNT as usize);
         sm.get_bytecode()
             .par_iter()
@@ -656,7 +657,7 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
     }
 
     #[tracing::instrument(skip_all, name = "BytecodeReadRafSumcheck::bind")]
-    fn bind(&mut self, r_j: F, round: usize) {
+    fn bind(&mut self, r_j: MontU128, round: usize) {
         let ps = self
             .prover_state
             .as_mut()
@@ -694,11 +695,11 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
     fn expected_output_claim(
         &self,
         accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
-        r: &[F],
+        r: &[MontU128],
     ) -> F {
         let (r_address_prime, r_cycle_prime) = r.split_at(self.log_K);
         // r_cycle is bound LowToHigh, so reverse
-        let r_cycle_prime = r_cycle_prime.iter().rev().copied().collect::<Vec<F>>();
+        let r_cycle_prime = r_cycle_prime.iter().rev().copied().collect::<Vec<MontU128>>();
 
         let int_poly = self.int_poly.evaluate(r_address_prime);
 
@@ -734,7 +735,7 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
             ])
             .map(|(((val, r_cycle), gamma), int_poly)| {
                 (val.evaluate(r_address_prime) + int_poly)
-                    * EqPolynomial::mle(r_cycle, &r_cycle_prime)
+                    * EqPolynomial::<F>::mle(r_cycle, &r_cycle_prime)
                     * gamma
             })
             .sum::<F>();
@@ -742,7 +743,7 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
         ra_claims.fold(val, |running, ra_claim| running * ra_claim)
     }
 
-    fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(&self, opening_point: &[MontU128]) -> OpeningPoint<BIG_ENDIAN> {
         let mut r = opening_point.to_vec();
         r[self.log_K..].reverse();
         OpeningPoint::new(r)
@@ -751,7 +752,7 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
     fn cache_openings_prover(
         &self,
         accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
-        opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        opening_point: OpeningPoint<BIG_ENDIAN>,
     ) {
         let ps = self
             .prover_state
@@ -774,7 +775,7 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
     fn cache_openings_verifier(
         &self,
         accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
-        opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        opening_point: OpeningPoint<BIG_ENDIAN>,
     ) {
         let (r_address, r_cycle) = opening_point.split_at(self.log_K);
         (0..self.d).for_each(|i| {

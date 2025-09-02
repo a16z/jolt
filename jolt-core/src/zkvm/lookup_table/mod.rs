@@ -27,7 +27,7 @@ use virtual_sra::VirtualSRATable;
 use virtual_srl::VirtualSRLTable;
 use xor::XorTable;
 
-use crate::field::JoltField;
+use crate::field::{JoltField, MontU128};
 use derive_more::From;
 use std::fmt::Debug;
 
@@ -175,7 +175,7 @@ impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {
         }
     }
 
-    pub fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+    pub fn evaluate_mle<F: JoltField>(&self, r: &[MontU128]) -> F {
         match self {
             LookupTables::RangeCheck(table) => table.evaluate_mle(r),
             LookupTables::And(table) => table.evaluate_mle(r),

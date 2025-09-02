@@ -213,19 +213,19 @@ impl<F: JoltField> EqPolynomial<F> {
     }
 }
 
-pub struct EqPlusOnePolynomial<F> {
-    x: Vec<F>,
+pub struct EqPlusOnePolynomial {
+    x: Vec<MontU128>,
 }
 
 impl<F: JoltField> EqPlusOnePolynomial<F> {
-    pub fn new(x: Vec<F>) -> Self {
+    pub fn new(x: Vec<MontU128>) -> Self {
         EqPlusOnePolynomial { x }
     }
 
     /* This MLE is 1 if y = x + 1 for x in the range [0... 2^l-2].
     That is, it ignores the case where x is all 1s, outputting 0.
     Assumes x and y are provided big-endian. */
-    pub fn evaluate(&self, y: &[F]) -> F {
+    pub fn evaluate(&self, y: &[MontU128]) -> F {
         let l = self.x.len();
         let x = &self.x;
         assert_eq!(y.len(), l);
@@ -241,12 +241,12 @@ impl<F: JoltField> EqPlusOnePolynomial<F> {
             .into_par_iter()
             .map(|k| {
                 let lower_bits_product = (0..k)
-                    .map(|i| x[l - 1 - i] * (F::one() - y[l - 1 - i]))
+                    .map(|i| x[l - 1 - i] * (F::one() - F::from_u128_mont(y[l - 1 - i])))
                     .product::<F>();
-                let kth_bit_product = (F::one() - x[l - 1 - k]) * y[l - 1 - k];
+                let kth_bit_product = (F::one() - x[l - 1 - k]).mul_u128_mont_form(y[l - 1 - k]);
                 let higher_bits_product = ((k + 1)..l)
                     .map(|i| {
-                        x[l - 1 - i] * y[l - 1 - i] + (one - x[l - 1 - i]) * (one - y[l - 1 - i])
+                        x[l - 1 - i].mul_u128_mont_form(y[l - 1 - i])   + (one - x[l - 1 - i]) * (one - F::from_u128_mont(y[l - 1 - i]))
                     })
                     .product::<F>();
                 lower_bits_product * kth_bit_product * higher_bits_product
@@ -255,21 +255,21 @@ impl<F: JoltField> EqPlusOnePolynomial<F> {
     }
 
     #[tracing::instrument(skip_all, "EqPlusOnePolynomial::evals")]
-    pub fn evals(r: &[F], scaling_factor: Option<F>) -> (Vec<F>, Vec<F>) {
+    pub fn evals(r: &[MontU128], scaling_factor: Option<F>) -> (Vec<F>, Vec<F>) {
         let ell = r.len();
         let mut eq_evals: Vec<F> = unsafe_allocate_zero_vec(ell.pow2());
         eq_evals[0] = scaling_factor.unwrap_or(F::one());
         let mut eq_plus_one_evals: Vec<F> = unsafe_allocate_zero_vec(ell.pow2());
 
         // i indicates the LENGTH of the prefix of r for which the eq_table is calculated
-        let eq_evals_helper = |eq_evals: &mut Vec<F>, r: &[F], i: usize| {
+        let eq_evals_helper = |eq_evals: &mut Vec<F>, r: &[MontU128], i: usize| {
             debug_assert!(i != 0);
             let step = 1 << (ell - i); // step = (full / size)/2
 
             let mut selected: Vec<_> = eq_evals.par_iter_mut().step_by(step).collect();
 
             selected.par_chunks_mut(2).for_each(|chunk| {
-                *chunk[1] = *chunk[0] * r[i - 1];
+                *chunk[1] = chunk[0].mul_u128_mont_form(r[i - 1]);
                 *chunk[0] -= *chunk[1];
             });
         };
@@ -278,7 +278,11 @@ impl<F: JoltField> EqPlusOnePolynomial<F> {
             let step = 1 << (ell - i);
             let half_step = step / 2;
 
-            let r_lower_product = (F::one() - r[i]) * r.iter().skip(i + 1).copied().product::<F>();
+            let r_lower_product = (F::one() - F::from_u128_mont(r[i])) * r.iter()
+                .skip(i + 1)
+                .copied()
+                .map(F::from_u128_mont)
+                .product::<F>();
 
             eq_plus_one_evals
                 .par_iter_mut()

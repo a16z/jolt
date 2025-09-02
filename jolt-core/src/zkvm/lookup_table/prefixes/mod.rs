@@ -30,6 +30,7 @@ use right_is_zero::RightOperandIsZeroPrefix;
 use right_msb::RightMsbPrefix;
 use upper_word::UpperWordPrefix;
 use xor::XorPrefix;
+use crate::field::MontU128;
 
 pub mod and;
 pub mod div_by_zero;
@@ -170,7 +171,7 @@ impl Prefixes {
     pub fn prefix_mle<const WORD_SIZE: usize, F: JoltField>(
         &self,
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: Option<F>,
+        r_x: Option<MontU128>,
         c: u32,
         b: LookupBits,
         j: usize,
@@ -234,8 +235,8 @@ impl Prefixes {
     #[tracing::instrument(skip_all)]
     pub fn update_checkpoints<const WORD_SIZE: usize, F: JoltField>(
         checkpoints: &mut [PrefixCheckpoint<F>],
-        r_x: F,
-        r_y: F,
+        r_x: MontU128,
+        r_y: MontU128,
         j: usize,
     ) {
         debug_assert_eq!(checkpoints.len(), Self::COUNT);

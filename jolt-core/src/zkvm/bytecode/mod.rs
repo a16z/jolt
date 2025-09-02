@@ -21,6 +21,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS};
 use rayon::prelude::*;
 use tracer::instruction::{RV32IMCycle, RV32IMInstruction};
+use crate::field::MontU128;
 
 pub mod booleanity;
 pub mod hamming_weight;
@@ -109,7 +110,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         let (preprocessing, trace, _, _) = sm.get_prover_data();
         let bytecode_preprocessing = &preprocessing.shared.bytecode;
 
-        let r_cycle: Vec<F> = sm
+        let r_cycle: Vec<MontU128> = sm
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::UnexpandedPC,
                 SumcheckId::SpartanOuter,

@@ -40,18 +40,19 @@ use crate::{
         },
     },
 };
+use crate::field::MontU128;
 
-#[derive(Allocative)]
+#[cfg_attr(feature = "allocative", derive(Allocative))]
 pub struct RASumCheck<F: JoltField> {
-    r_cycle: Vec<F>,
-    r_address_chunks: Vec<Vec<F>>,
+    r_cycle: Vec<MontU128>,
+    r_address_chunks: Vec<Vec<MontU128>>,
     eq_ra_claim: F,
     d: usize,
     T: usize,
     prover_state: Option<RAProverState<F>>,
 }
 
-#[derive(Allocative)]
+#[cfg_attr(feature = "allocative", derive(Allocative))]
 pub struct RAProverState<F: JoltField> {
     ra_i_polys: Vec<MultilinearPolynomial<F>>,
     E_table: Vec<Vec<F>>,
@@ -118,14 +119,14 @@ impl<F: JoltField> RASumCheck<F> {
         } else {
             // Pad with zeros
             [
-                &vec![F::zero(); DTH_ROOT_OF_K.log_2() - (r_address.len() % DTH_ROOT_OF_K.log_2())],
+                &vec![MontU128::from(0_u128); DTH_ROOT_OF_K.log_2() - (r_address.len() % DTH_ROOT_OF_K.log_2())],
                 r_address,
             ]
             .concat()
         };
 
         // Split r_address into d chunks of variable sizes
-        let r_address_chunks: Vec<Vec<F>> = r_address
+        let r_address_chunks: Vec<Vec<MontU128>> = r_address
             .chunks(DTH_ROOT_OF_K.log_2())
             .map(|chunk| chunk.to_vec())
             .collect();
@@ -174,7 +175,7 @@ impl<F: JoltField> RASumCheck<F> {
         assert!(r_address.len().is_multiple_of(DTH_ROOT_OF_K.log_2()));
 
         // Split r_address into d chunks of variable sizes
-        let r_address_chunks: Vec<Vec<F>> = r_address
+        let r_address_chunks: Vec<Vec<MontU128>> = r_address
             .chunks(DTH_ROOT_OF_K.log_2())
             .map(|chunk| chunk.to_vec())
             .collect();
@@ -250,7 +251,7 @@ impl<F: JoltField> SumcheckInstance<F> for RASumCheck<F> {
             .collect()
     }
 
-    fn bind(&mut self, r_j: F, round: usize) {
+    fn bind(&mut self, r_j: MontU128, round: usize) {
         let prover_state = self
             .prover_state
             .as_mut()
@@ -262,17 +263,17 @@ impl<F: JoltField> SumcheckInstance<F> for RASumCheck<F> {
             .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow));
 
         prover_state.eq_factor = prover_state.eq_factor.mul_1_optimized(
-            (self.r_cycle[round] + self.r_cycle[round] - F::one()) * r_j
-                + (F::one() - self.r_cycle[round]),
+            (F::from_u128_mont(self.r_cycle[round]) + F::from_u128_mont(self.r_cycle[round]) - F::one()).mul_u128_mont_form(r_j)
+                + (F::one() - F::from_u128_mont(self.r_cycle[round])),
         );
     }
 
     fn expected_output_claim(
         &self,
         opening_accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
-        r: &[F],
+        r: &[MontU128],
     ) -> F {
-        let eq_eval = EqPolynomial::mle(&self.r_cycle, r);
+        let eq_eval = EqPolynomial::<F>::mle(&self.r_cycle, r);
         let ra_claim_prod: F = (0..self.d)
             .map(|i| {
                 let (_, ra_i_claim) = opening_accumulator
@@ -290,14 +291,14 @@ impl<F: JoltField> SumcheckInstance<F> for RASumCheck<F> {
         eq_eval * ra_claim_prod
     }
 
-    fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(&self, opening_point: &[MontU128]) -> OpeningPoint<BIG_ENDIAN> {
         OpeningPoint::new(opening_point.to_vec())
     }
 
     fn cache_openings_prover(
         &self,
         accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
-        r_cycle: OpeningPoint<BIG_ENDIAN, F>,
+        r_cycle: OpeningPoint<BIG_ENDIAN>,
     ) {
         let prover_state = self
             .prover_state
@@ -319,7 +320,7 @@ impl<F: JoltField> SumcheckInstance<F> for RASumCheck<F> {
     fn cache_openings_verifier(
         &self,
         accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
-        r_cycle: OpeningPoint<BIG_ENDIAN, F>,
+        r_cycle: OpeningPoint<BIG_ENDIAN>,
     ) {
         for i in 0..self.d {
             let opening_point =

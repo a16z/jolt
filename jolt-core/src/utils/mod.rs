@@ -1,4 +1,4 @@
-use crate::field::JoltField;
+use crate::field::{JoltField, MontU128};
 
 use rayon::prelude::*;
 
@@ -88,16 +88,16 @@ macro_rules! join_conditional {
 /// assert_eq!(index_to_field_bitvector::<Fr>(1, 3), vec![zero, zero, one]);
 /// assert_eq!(index_to_field_bitvector::<Fr>(1, 7), vec![zero, zero, zero, zero, zero, zero, one]);
 /// ```
-pub fn index_to_field_bitvector<F: JoltField>(value: u64, bits: usize) -> Vec<F> {
+pub fn index_to_field_bitvector<F: JoltField>(value: u64, bits: usize) -> Vec<MontU128> {
     assert!((value as u128) < 1 << bits);
 
-    let mut bitvector: Vec<F> = Vec::with_capacity(bits);
+    let mut bitvector: Vec<MontU128> = Vec::with_capacity(bits);
 
     for i in (0..bits).rev() {
         if (value >> i) & 1 == 1 {
-            bitvector.push(F::one());
+            bitvector.push(MontU128::from(1_u128));
         } else {
-            bitvector.push(F::zero());
+            bitvector.push(MontU128::from(0_u128));
         }
     }
     bitvector

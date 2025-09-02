@@ -9,7 +9,7 @@ use crate::{
 
 use super::builder::CombinedUniformBuilder;
 use sha3::Digest;
-
+use crate::field::MontU128;
 use crate::utils::math::Math;
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
@@ -133,7 +133,7 @@ impl<F: JoltField> UniformSpartanKey<F> {
     /// This function only handles uniform constraints, ignoring cross-step constraints
     /// Returns evaluations for each y_var
     #[tracing::instrument(skip_all, name = "UniformSpartanKey::evaluate_small_matrix_rlc")]
-    pub fn evaluate_small_matrix_rlc(&self, r_constr: &[F], r_rlc: F) -> Vec<F> {
+    pub fn evaluate_small_matrix_rlc(&self, r_constr: &[MontU128], r_rlc: F) -> Vec<F> {
         assert_eq!(
             r_constr.len(),
             (self.uniform_r1cs.num_rows + 1).next_power_of_two().log_2()
@@ -185,7 +185,7 @@ impl<F: JoltField> UniformSpartanKey<F> {
     pub fn evaluate_z_mle_with_segment_evals(
         &self,
         segment_evals: &[F],
-        r: &[F],
+        r: &[MontU128],
         with_const: bool,
     ) -> F {
         assert_eq!(self.uniform_r1cs.num_vars, segment_evals.len());
@@ -195,7 +195,7 @@ impl<F: JoltField> UniformSpartanKey<F> {
         let num_vars = self.num_vars_uniform_padded();
         let var_bits = num_vars.log_2();
 
-        let eq_ry_var = EqPolynomial::evals(r);
+        let eq_ry_var = EqPolynomial::<F>::evals(r);
         let eval_variables: F = (0..self.uniform_r1cs.num_vars)
             .map(|var_index| eq_ry_var[var_index] * segment_evals[var_index])
             .sum();
@@ -203,7 +203,7 @@ impl<F: JoltField> UniformSpartanKey<F> {
         // Evaluate at the constant position if it exists within the padded space
         let const_eval = if self.uniform_r1cs.num_vars < num_vars && with_const {
             let const_position_bits =
-                index_to_field_bitvector(self.uniform_r1cs.num_vars as u64, var_bits);
+                index_to_field_bitvector::<F>(self.uniform_r1cs.num_vars as u64, var_bits);
             EqPolynomial::mle(r, &const_position_bits)
         } else {
             F::zero()
@@ -213,17 +213,17 @@ impl<F: JoltField> UniformSpartanKey<F> {
     }
 
     /// Evaluate uniform matrix A at a specific point (rx_constr, ry_var)
-    pub fn evaluate_uniform_a_at_point(&self, rx_constr: &[F], ry_var: &[F]) -> F {
+    pub fn evaluate_uniform_a_at_point(&self, rx_constr: &[MontU128], ry_var: &[MontU128]) -> F {
         self.evaluate_uniform_matrix_at_point(&self.uniform_r1cs.a, rx_constr, ry_var)
     }
 
     /// Evaluate uniform matrix B at a specific point (rx_constr, ry_var)
-    pub fn evaluate_uniform_b_at_point(&self, rx_constr: &[F], ry_var: &[F]) -> F {
+    pub fn evaluate_uniform_b_at_point(&self, rx_constr: &[MontU128], ry_var: &[MontU128]) -> F {
         self.evaluate_uniform_matrix_at_point(&self.uniform_r1cs.b, rx_constr, ry_var)
     }
 
     /// Evaluate uniform matrix C at a specific point (rx_constr, ry_var)
-    pub fn evaluate_uniform_c_at_point(&self, rx_constr: &[F], ry_var: &[F]) -> F {
+    pub fn evaluate_uniform_c_at_point(&self, rx_constr: &[MontU128], ry_var: &[MontU128]) -> F {
         self.evaluate_uniform_matrix_at_point(&self.uniform_r1cs.c, rx_constr, ry_var)
     }
 
@@ -231,28 +231,28 @@ impl<F: JoltField> UniformSpartanKey<F> {
     fn evaluate_uniform_matrix_at_point(
         &self,
         constraints: &SparseConstraints<F>,
-        rx_constr: &[F],
-        ry_var: &[F],
+        rx_constr: &[MontU128],
+        ry_var: &[MontU128],
     ) -> F {
         let mut eval = F::zero();
 
         // Evaluate non-constant terms
         for (row, col, val) in constraints.vars.iter() {
-            let row_bits = index_to_field_bitvector(*row as u64, rx_constr.len());
-            let col_bits = index_to_field_bitvector(*col as u64, ry_var.len());
+            let row_bits = index_to_field_bitvector::<F>(*row as u64, rx_constr.len());
+            let col_bits = index_to_field_bitvector::<F>(*col as u64, ry_var.len());
             eval += *val
-                * EqPolynomial::mle(rx_constr, &row_bits)
-                * EqPolynomial::mle(ry_var, &col_bits);
+                * EqPolynomial::<F>::mle(rx_constr, &row_bits)
+                * EqPolynomial::<F>::mle(ry_var, &col_bits);
         }
 
         // Evaluate constant terms
         let constant_column = self.uniform_r1cs.num_vars;
-        let const_col_bits = index_to_field_bitvector(constant_column as u64, ry_var.len());
-        let eq_ry_const = EqPolynomial::mle(ry_var, &const_col_bits);
+        let const_col_bits = index_to_field_bitvector::<F>(constant_column as u64, ry_var.len());
+        let eq_ry_const = EqPolynomial::<F>::mle(ry_var, &const_col_bits);
 
         for (row, val) in constraints.consts.iter() {
-            let row_bits = index_to_field_bitvector(*row as u64, rx_constr.len());
-            eval += *val * EqPolynomial::mle(rx_constr, &row_bits) * eq_ry_const;
+            let row_bits = index_to_field_bitvector::<F>(*row as u64, rx_constr.len());
+            eval += *val * EqPolynomial::<F>::mle(rx_constr, &row_bits) * eq_ry_const;
         }
 
         eval
