@@ -46,7 +46,7 @@ impl RISCVTrace for SRL {
     fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
         let v_bitmask = allocate_virtual_register();
 
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, false);
         asm.emit_i::<VirtualShiftRightBitmask>(*v_bitmask, self.operands.rs2, 0);
         asm.emit_vshift_r::<VirtualSRL>(self.operands.rd, self.operands.rs1, *v_bitmask);
         asm.finalize()

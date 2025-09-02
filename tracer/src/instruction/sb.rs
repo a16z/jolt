@@ -70,7 +70,7 @@ impl SB {
         let v_mask = allocate_virtual_register();
         let v_byte = allocate_virtual_register();
 
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit32);
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit32, false);
         asm.emit_i::<ADDI>(*v_address, self.operands.rs1, self.operands.imm as u64);
         asm.emit_i::<ANDI>(*v_word_address, *v_address, -4i64 as u64);
         asm.emit_i::<VirtualLW>(*v_word, *v_word_address, 0);
@@ -93,7 +93,7 @@ impl SB {
         let v_mask = allocate_virtual_register();
         let v_byte = allocate_virtual_register();
 
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit64);
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit64, false);
         asm.emit_i::<ADDI>(*v_address, self.operands.rs1, self.operands.imm as u64);
         asm.emit_i::<ANDI>(*v_dword_address, *v_address, -8i64 as u64);
         asm.emit_ld::<LD>(*v_dword, *v_dword_address, 0);

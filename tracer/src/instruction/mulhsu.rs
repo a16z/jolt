@@ -71,7 +71,7 @@ impl RISCVTrace for MULHSU {
         let v_tmp = allocate_virtual_register();
         let v_carry = allocate_virtual_register();
 
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, false);
         asm.emit_i::<VirtualMovsign>(*v_sx, self.operands.rs1, 0);
         asm.emit_i::<ANDI>(*v_sx_0, *v_sx, 1);
         asm.emit_r::<XOR>(*v_rs1, self.operands.rs1, *v_sx);

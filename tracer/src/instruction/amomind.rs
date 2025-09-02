@@ -68,7 +68,7 @@ impl RISCVTrace for AMOMIND {
         let v_sel_rs2 = allocate_virtual_register();
         let v_sel_rd = allocate_virtual_register();
         let v_tmp = allocate_virtual_register();
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, false);
         asm.emit_ld::<LD>(*v_rd, self.operands.rs1, 0);
         asm.emit_r::<SLT>(*v_sel_rs2, self.operands.rs2, *v_rd);
         asm.emit_i::<XORI>(*v_sel_rd, *v_sel_rs2, 1);

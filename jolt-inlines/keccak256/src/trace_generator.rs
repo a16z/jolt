@@ -116,7 +116,7 @@ impl Keccak256SequenceBuilder {
         operand_rs2: u8,
     ) -> Self {
         Keccak256SequenceBuilder {
-            asm: InstrAssembler::new(address, is_compressed, xlen),
+            asm: InstrAssembler::new(address, is_compressed, xlen, true),
             round: 0,
             vr,
             operand_rs1,
@@ -147,6 +147,14 @@ impl Keccak256SequenceBuilder {
     #[cfg(test)]
     /// Build sequence up to a specific round and step for testing
     fn build_up_to_step(mut self, target_round: u32, target_step: &str) -> Vec<RV32IMInstruction> {
+        // Override is_format_inline to false for testing purposes. This prevents virtual registers
+        // from being zeroed out, allowing us to inspect their intermediate values during tests.
+        self.asm = InstrAssembler::new(
+            self.asm.address,
+            self.asm.is_compressed,
+            self.asm.xlen,
+            false,
+        );
         // Always start by loading state
         self.load_state();
 

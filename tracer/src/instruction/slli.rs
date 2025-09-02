@@ -50,7 +50,7 @@ impl RISCVTrace for SLLI {
         };
         let shift = self.operands.imm & mask;
 
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, false);
         asm.emit_i::<VirtualMULI>(self.operands.rd, self.operands.rs1, 1 << shift);
         asm.finalize()
     }

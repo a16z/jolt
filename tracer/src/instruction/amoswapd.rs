@@ -57,7 +57,7 @@ impl RISCVTrace for AMOSWAPD {
     fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
         let v_rd = allocate_virtual_register();
 
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, false);
         asm.emit_ld::<LD>(*v_rd, self.operands.rs1, 0);
         asm.emit_s::<SD>(self.operands.rs1, self.operands.rs2, 0);
         asm.emit_i::<VirtualMove>(self.operands.rd, *v_rd, 0);

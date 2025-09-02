@@ -53,7 +53,7 @@ impl RISCVTrace for SRAIW {
         let ones = (1u128 << (len - shift)) - 1;
         let bitmask = (ones << shift) as u64;
 
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, false);
         asm.emit_i::<VirtualSignExtend>(*v_rs1, self.operands.rs1, 0);
         asm.emit_vshift_i::<VirtualSRAI>(self.operands.rd, *v_rs1, bitmask);
         asm.emit_i::<VirtualSignExtend>(self.operands.rd, self.operands.rd, 0);

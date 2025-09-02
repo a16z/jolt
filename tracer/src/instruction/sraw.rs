@@ -46,7 +46,7 @@ impl RISCVTrace for SRAW {
         let v_rs1 = allocate_virtual_register();
         let v_bitmask = allocate_virtual_register();
 
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, false);
         asm.emit_i::<VirtualSignExtend>(*v_rs1, self.operands.rs1, 0);
         asm.emit_i::<ANDI>(*v_bitmask, self.operands.rs2, 0x1f);
         asm.emit_i::<VirtualShiftRightBitmask>(*v_bitmask, *v_bitmask, 0);

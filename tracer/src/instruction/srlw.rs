@@ -48,7 +48,7 @@ impl RISCVTrace for SRLW {
         let v_bitmask = allocate_virtual_register();
         let v_rs1 = allocate_virtual_register();
 
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, false);
         asm.emit_i::<SLLI>(*v_rs1, self.operands.rs1, 32);
         asm.emit_i::<ORI>(*v_bitmask, self.operands.rs2, 32);
         asm.emit_i::<VirtualShiftRightBitmask>(*v_bitmask, *v_bitmask, 0);

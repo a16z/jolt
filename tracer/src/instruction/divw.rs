@@ -100,7 +100,7 @@ impl RISCVTrace for DIVW {
         let t3 = allocate_virtual_register();
         let t4 = allocate_virtual_register();
         let t5 = allocate_virtual_register();
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, false);
 
         // get advice
         asm.emit_j::<VirtualAdvice>(*a2, 0);

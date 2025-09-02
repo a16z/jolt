@@ -75,7 +75,7 @@ impl RISCVTrace for REMU {
         let a2 = allocate_virtual_register(); // quotient from oracle (ignored when divisor==0)
         let a3 = allocate_virtual_register(); // remainder from oracle
         let t0 = allocate_virtual_register();
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, false);
 
         // get advice
         asm.emit_j::<VirtualAdvice>(*a2, 0);

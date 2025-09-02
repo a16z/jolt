@@ -47,7 +47,7 @@ impl RISCVTrace for ADDIW {
     }
 
     fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, false);
         asm.emit_i::<ADDI>(self.operands.rd, self.operands.rs1, self.operands.imm);
         asm.emit_i::<VirtualSignExtend>(self.operands.rd, self.operands.rd, 0);
         asm.finalize()
