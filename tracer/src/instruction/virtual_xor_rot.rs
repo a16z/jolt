@@ -4,9 +4,7 @@
 /// In general, this requires three inputs of the instruction. As rotations are constant and limited,
 /// we define a new instruction for each constant value and keep working on two inputs.
 ///
-/// Two operation modes:
-/// - `declare_virtual_xor_rot_lower`: Operates on lower 32 bits only (required for Blake3)
-/// - `declare_virtual_xor_rot_64`: Operates on full 64 bits (required for Blake2b)
+
 use super::{
     format::{format_r::FormatR},
     RISCVInstruction, RISCVTrace,
@@ -28,11 +26,8 @@ macro_rules! declare_virtual_xor_rot_64 {
 
         impl $name {
             fn exec(&self, cpu: &mut Cpu, _: &mut <$name as RISCVInstruction>::RAMAccess) {
-                // XOR the two registers (full 64-bit)
                 let xor_result = cpu.x[self.operands.rs1 as usize] ^ cpu.x[self.operands.rs2 as usize];
-                // Rotate the full 64-bit value
                 let rotated = (xor_result).rotate_right($shift);
-                // Store the full 64-bit result
                 cpu.x[self.operands.rd as usize] = rotated as i64;
             }
         }

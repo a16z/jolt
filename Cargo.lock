@@ -1678,6 +1678,7 @@ dependencies = [
 name = "jolt-inlines-blake2"
 version = "0.1.0"
 dependencies = [
+ "blake2",
  "ctor 0.2.9",
  "hex-literal",
  "jolt-inlines-common",

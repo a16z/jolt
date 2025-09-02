@@ -16,4 +16,5 @@ jolt-inlines-common = { path = "../common", features = ["save_trace"], optional 
 
 [dev-dependencies]
 hex-literal = "0.4.1"
+blake2 = "0.10"
 tracer = { path = "../../tracer", features = ["test-utils"] }

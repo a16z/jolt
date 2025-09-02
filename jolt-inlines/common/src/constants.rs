@@ -41,7 +41,7 @@ pub mod bigint {
     /// 256-bit multiplication
     pub mod mul256 {
         pub const FUNCT3: u32 = 0x00;
-        pub const FUNCT7: u32 = 0x02;
+        pub const FUNCT7: u32 = 0x03;  // Changed from 0x02 to avoid collision with blake2
         pub const NAME: &str = "BIGINT256_MUL";
     }
 }
