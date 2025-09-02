@@ -525,6 +525,17 @@ macro_rules! define_rv32im_enums {
                     RV32IMInstruction::INLINE(instr) => {instr.inline_sequence_remaining = remaining;}
                 }
             }
+
+            pub fn set_is_compressed(&mut self, is_compressed: bool) {
+                match self {
+                    RV32IMInstruction::NoOp => (),
+                    RV32IMInstruction::UNIMPL => (),
+                    $(
+                        RV32IMInstruction::$instr(instr) => {instr.is_compressed = is_compressed;}
+                    )*
+                    RV32IMInstruction::INLINE(instr) => {instr.is_compressed = is_compressed;}
+                }
+            }
         }
 
         impl From<&RV32IMInstruction> for NormalizedInstruction {

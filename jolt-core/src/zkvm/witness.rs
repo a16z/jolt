@@ -66,8 +66,6 @@ pub enum CommittedPolynomial {
     ShouldBranch,
     /// Whether the current instruction triggers a jump
     ShouldJump,
-    /// Product of `IsCompressed` and `DoNotUpdateUnexpPC`
-    CompressedDoNotUpdateUnexpPC,
     /*  Twist/Shout witnesses */
     /// Inc polynomial for the registers instance of Twist
     RdInc,
@@ -140,7 +138,6 @@ impl AllCommittedPolynomials {
             CommittedPolynomial::WritePCtoRD,
             CommittedPolynomial::ShouldBranch,
             CommittedPolynomial::ShouldJump,
-            CommittedPolynomial::CompressedDoNotUpdateUnexpPC,
             CommittedPolynomial::RdInc,
             CommittedPolynomial::RamInc,
             CommittedPolynomial::InstructionRa(0),
@@ -426,10 +423,6 @@ impl CommittedPolynomial {
                     let coeffs = std::mem::take(&mut batch.ram_inc);
                     results.insert(*poly, MultilinearPolynomial::<F>::from(coeffs));
                 }
-                CommittedPolynomial::CompressedDoNotUpdateUnexpPC => {
-                    let coeffs = std::mem::take(&mut batch.compressed_do_not_update_unexp_pc);
-                    results.insert(*poly, MultilinearPolynomial::<F>::from(coeffs));
-                }
                 CommittedPolynomial::InstructionRa(i) => {
                     if *i < instruction_lookups::D {
                         let indices = std::mem::take(&mut batch.instruction_ra[*i]);
@@ -543,17 +536,6 @@ impl CommittedPolynomial {
                         let is_next_noop =
                             next_cycle.instruction().circuit_flags()[CircuitFlags::IsNoop];
                         is_jump as u8 * (1 - is_next_noop as u8)
-                    })
-                    .collect();
-                coeffs.into()
-            }
-            CommittedPolynomial::CompressedDoNotUpdateUnexpPC => {
-                let coeffs: Vec<u8> = trace
-                    .par_iter()
-                    .map(|cycle| {
-                        let flags = cycle.instruction().circuit_flags();
-                        flags[CircuitFlags::DoNotUpdateUnexpandedPC as usize] as u8
-                            * flags[CircuitFlags::IsCompressed as usize] as u8
                     })
                     .collect();
                 coeffs.into()
