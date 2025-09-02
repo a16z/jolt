@@ -8,7 +8,7 @@ use jolt_inlines_common::constants;
 use tracer::register_inline;
 
 #[cfg(feature = "save_trace")]
-use jolt_inlines_common::trace_writer::{InlineDescriptor, SequenceInputs, write_inline_trace};
+use jolt_inlines_common::trace_writer::{write_inline_trace, InlineDescriptor, SequenceInputs};
 #[cfg(feature = "save_trace")]
 use tracer::emulator::cpu::Xlen;
 
@@ -22,7 +22,7 @@ pub fn init_inlines() -> Result<(), String> {
         std::boxed::Box::new(exec::keccak256_exec),
         std::boxed::Box::new(trace_generator::keccak256_inline_sequence_builder),
     )?;
-    
+
     Ok(())
 }
 
@@ -50,7 +50,7 @@ pub fn store_inlines() -> Result<(), String> {
         &instructions,
         false,
     )?;
-    
+
     Ok(())
 }
 
@@ -60,7 +60,7 @@ fn auto_register() {
     if let Err(e) = init_inlines() {
         eprintln!("Failed to register Keccak256 inlines: {e}");
     }
-    
+
     #[cfg(feature = "save_trace")]
     if let Err(e) = store_inlines() {
         eprintln!("Failed to store Keccak256 inline traces: {e}");

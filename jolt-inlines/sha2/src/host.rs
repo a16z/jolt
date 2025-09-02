@@ -8,7 +8,7 @@ use jolt_inlines_common::constants;
 use tracer::register_inline;
 
 #[cfg(feature = "save_trace")]
-use jolt_inlines_common::trace_writer::{InlineDescriptor, SequenceInputs, write_inline_trace};
+use jolt_inlines_common::trace_writer::{write_inline_trace, InlineDescriptor, SequenceInputs};
 #[cfg(feature = "save_trace")]
 use tracer::emulator::cpu::Xlen;
 
@@ -22,7 +22,7 @@ pub fn init_inlines() -> Result<(), String> {
         std::boxed::Box::new(exec::sha2_exec),
         std::boxed::Box::new(trace_generator::sha2_inline_sequence_builder),
     )?;
-    
+
     register_inline(
         constants::INLINE_OPCODE,
         constants::sha256::init::FUNCT3,
@@ -31,7 +31,7 @@ pub fn init_inlines() -> Result<(), String> {
         std::boxed::Box::new(exec::sha2_init_exec),
         std::boxed::Box::new(trace_generator::sha2_init_inline_sequence_builder),
     )?;
-    
+
     Ok(())
 }
 
@@ -60,7 +60,7 @@ pub fn store_inlines() -> Result<(), String> {
         &instructions,
         false, // Don't append for the first one
     )?;
-    
+
     // Store SHA256 init inline trace (append to the same file)
     let inline_info = InlineDescriptor::new(
         constants::sha256::init::NAME.to_string(),
@@ -84,7 +84,7 @@ pub fn store_inlines() -> Result<(), String> {
         &instructions,
         true, // Append to the existing file
     )?;
-    
+
     Ok(())
 }
 
@@ -94,7 +94,7 @@ fn auto_register() {
     if let Err(e) = init_inlines() {
         eprintln!("Failed to register SHA256 inlines: {e}");
     }
-    
+
     #[cfg(feature = "save_trace")]
     if let Err(e) = store_inlines() {
         eprintln!("Failed to store SHA256 inline traces: {e}");

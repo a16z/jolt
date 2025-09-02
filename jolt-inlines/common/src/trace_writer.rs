@@ -54,14 +54,7 @@ pub struct SequenceInputs {
 }
 
 impl SequenceInputs {
-    pub fn new(
-        address: u64,
-        is_compressed: bool,
-        xlen: u32,
-        rs1: u8,
-        rs2: u8,
-        rd: u8,
-    ) -> Self {
+    pub fn new(address: u64, is_compressed: bool, xlen: u32, rs1: u8, rs2: u8, rd: u8) -> Self {
         Self {
             address,
             is_compressed,
@@ -89,7 +82,7 @@ impl Default for SequenceInputs {
 /// Writes inline instruction trace to a file
 ///
 /// # Format
-/// 
+///
 /// The file format is:
 /// - Empty line (if append=true)
 /// - Line 1: inline_name, opcode, funct3, funct7
@@ -97,7 +90,7 @@ impl Default for SequenceInputs {
 /// - Lines 3+: Each RV32IMInstruction formatted with Debug (`:?`)
 ///
 /// # Arguments
-/// 
+///
 /// * `file_path` - Path to the output file
 /// * `inline_info` - Descriptor containing inline instruction information
 /// * `sequence_inputs` - Input parameters for the instruction sequence
@@ -124,28 +117,25 @@ pub fn write_inline_trace(
     }
 
     writeln!(
-        file, 
-        "{}, {:#04x}, {}, {}", 
-        inline_info.name, 
-        inline_info.opcode, 
-        inline_info.funct3, 
-        inline_info.funct7
+        file,
+        "{}, {:#04x}, {}, {}",
+        inline_info.name, inline_info.opcode, inline_info.funct3, inline_info.funct7
     )?;
-    
+
     writeln!(
-        file, 
-        "{:#010x}, {}, {}, {}, {}, {}", 
-        sequence_inputs.address, 
-        sequence_inputs.is_compressed, 
-        sequence_inputs.xlen, 
-        sequence_inputs.rs1, 
-        sequence_inputs.rs2, 
+        file,
+        "{:#010x}, {}, {}, {}, {}, {}",
+        sequence_inputs.address,
+        sequence_inputs.is_compressed,
+        sequence_inputs.xlen,
+        sequence_inputs.rs1,
+        sequence_inputs.rs2,
         sequence_inputs.rd
     )?;
-    
+
     for instruction in instructions {
-        writeln!(file, "{:?}", instruction)?;
+        writeln!(file, "{instruction:?}")?;
     }
-    
+
     Ok(())
 }

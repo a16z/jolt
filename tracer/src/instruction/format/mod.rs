@@ -4,6 +4,7 @@ use std::fmt::Debug;
 
 pub mod format_b;
 pub mod format_i;
+pub mod format_inline;
 pub mod format_j;
 pub mod format_load;
 pub mod format_r;

@@ -10,7 +10,7 @@
 //! opcode, funct3, and funct7 fields.
 
 use super::{
-    format::{format_r::FormatR, InstructionFormat},
+    format::{format_inline::FormatInline, InstructionFormat},
     RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
 };
 use crate::{
@@ -132,7 +132,7 @@ pub struct INLINE {
     /// Memory address of this instruction
     pub address: u64,
     /// R-format operands (rd, rs1, rs2)
-    pub operands: FormatR,
+    pub operands: FormatInline,
     /// Tracks remaining virtual instructions (used by tracer)
     pub inline_sequence_remaining: Option<u16>,
     pub is_compressed: bool,
@@ -142,7 +142,7 @@ impl RISCVInstruction for INLINE {
     const MASK: u32 = 0x0000707f;
     const MATCH: u32 = 0x0000002b; // opcode=0x2B (custom-1)
 
-    type Format = FormatR;
+    type Format = FormatInline;
     type RAMAccess = ();
 
     fn operands(&self) -> &Self::Format {
@@ -155,7 +155,7 @@ impl RISCVInstruction for INLINE {
             funct3: (word >> 12) & 0x7,
             funct7: (word >> 25) & 0x7f,
             address,
-            operands: FormatR::parse(word),
+            operands: FormatInline::parse(word),
             inline_sequence_remaining: None,
             is_compressed,
         }
@@ -170,7 +170,7 @@ impl RISCVInstruction for INLINE {
             funct3: rng.next_u32() & 0x7,
             funct7: rng.next_u32() & 0x7f,
             address: rng.next_u64(),
-            operands: FormatR::random(rng),
+            operands: FormatInline::random(rng),
             inline_sequence_remaining: None,
             is_compressed: false,
         }
@@ -235,7 +235,7 @@ impl RISCVTrace for INLINE {
                             xlen,
                             self.operands.rs1,
                             self.operands.rs2,
-                            self.operands.rd,
+                            self.operands.rs3,
                         )
                     }
                     None => {

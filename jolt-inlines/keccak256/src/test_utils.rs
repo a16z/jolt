@@ -10,6 +10,7 @@ use crate::trace_generator::{
 };
 use crate::Keccak256State;
 use tracer::emulator::mmu::DRAM_BASE;
+use tracer::instruction::format::format_inline::FormatInline;
 use tracer::instruction::format::format_r::FormatR;
 use tracer::instruction::{
     inline::INLINE, RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
@@ -74,10 +75,10 @@ impl KeccakCpuHarness {
     pub fn instruction() -> INLINE {
         INLINE {
             address: 0,
-            operands: FormatR {
+            operands: FormatInline {
                 rs1: Self::RS1,
                 rs2: 0,
-                rd: 0,
+                rs3: 0,
             },
             // KECCAK256 has opcode 0x0B, funct3 0x00, funct7 0x01
             opcode: 0x0B,

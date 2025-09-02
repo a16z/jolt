@@ -6,9 +6,8 @@
 
 use super::{INPUT_LIMBS, OUTPUT_LIMBS};
 use crate::multiplication::trace_generator::NEEDED_REGISTERS;
-
 use tracer::emulator::mmu::DRAM_BASE;
-use tracer::instruction::format::format_r::FormatR;
+use tracer::instruction::format::format_inline::FormatInline;
 use tracer::instruction::{inline::INLINE, RISCVInstruction, RISCVTrace};
 use tracer::utils::test_harness::CpuTestHarness;
 
@@ -32,7 +31,7 @@ impl BigIntCpuHarness {
     /// Register assignments for the instruction
     pub const RS1: u8 = 10; // Address of first operand
     pub const RS2: u8 = 11; // Address of second operand
-    pub const RD: u8 = 12; // Address where result will be stored
+    pub const RS3: u8 = 12; // Address where result will be stored
 
     /// Create a new harness with initialized memory.
     pub fn new() -> Self {
@@ -53,7 +52,7 @@ impl BigIntCpuHarness {
         // Set up memory pointers in registers
         self.harness.cpu.x[Self::RS1 as usize] = (Self::BASE_ADDR + Self::LHS_OFFSET) as i64;
         self.harness.cpu.x[Self::RS2 as usize] = (Self::BASE_ADDR + Self::RHS_OFFSET) as i64;
-        self.harness.cpu.x[Self::RD as usize] = (Self::BASE_ADDR + Self::RESULT_OFFSET) as i64;
+        self.harness.cpu.x[Self::RS3 as usize] = (Self::BASE_ADDR + Self::RESULT_OFFSET) as i64;
 
         // Load operands into memory
         self.harness
@@ -74,10 +73,10 @@ impl BigIntCpuHarness {
     pub fn instruction() -> INLINE {
         INLINE {
             address: 0,
-            operands: FormatR {
+            operands: FormatInline {
                 rs1: Self::RS1,
                 rs2: Self::RS2,
-                rd: Self::RD,
+                rs3: Self::RS3,
             },
             // BIGINT256_MUL has opcode 0x0B, funct3 0x00, funct7 0x02
             opcode: 0x0B,

@@ -445,7 +445,7 @@ macro_rules! define_rv32im_enums {
                         ),
                     )*
                     RV32IMCycle::INLINE(cycle) => (
-                        cycle.instruction.operands.rd,
+                        cycle.instruction.operands.rs3,
                         cycle.register_state.rd_values().0,
                         cycle.register_state.rd_values().1,
                     ),
