@@ -37,7 +37,7 @@ pub fn bigint256_mul(lhs: [u64; INPUT_LIMBS], rhs: [u64; INPUT_LIMBS]) -> [u64; 
 pub unsafe fn bigint256_mul_inline(a: *const u64, b: *const u64, result: *mut u64) {
     core::arch::asm!(
         ".insn r 0x0B, 0x0, 0x02, {}, {}, {}",     // INLINE BIGINT256_MUL Instruction
-        in(reg) result,  // rd - output address
+        in(reg) result,  // rs3 - output address
         in(reg) a,       // rs1 - first operand address
         in(reg) b,       // rs2 - second operand address
         options(nostack)

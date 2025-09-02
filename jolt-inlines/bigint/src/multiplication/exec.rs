@@ -78,7 +78,7 @@ pub fn bigint_mul_exec(
     // Execute multiplication
     let result = bigint_mul(a, b);
 
-    // Store 8 u64 result words back to memory at rs1
+    // Store 8 u64 result words back to memory at rs3
     for (i, limb) in result.iter().enumerate().take(OUTPUT_LIMBS) {
         cpu.mmu
             .store_doubleword(

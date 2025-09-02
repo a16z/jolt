@@ -19,7 +19,7 @@ pub(crate) const NEEDED_REGISTERS: usize = 20;
 /// Builds assembly sequence for 256-bit × 256-bit multiplication
 /// Expects first operand (4 u64 words) in RAM at location rs1
 /// Expects second operand (4 u64 words) in RAM at location rs2
-/// Output (8 u64 words) will be written to rd
+/// Output (8 u64 words) will be written to the memory rs3 points to
 struct BigIntMulSequenceBuilder {
     asm: InstrAssembler,
     /// Virtual registers used by the sequence
@@ -29,7 +29,7 @@ struct BigIntMulSequenceBuilder {
     /// Location of second operand in memory
     operand_rs2: u8,
     /// Location of result in memory
-    operand_rd: u8,
+    operand_rs3: u8,
 }
 
 impl BigIntMulSequenceBuilder {
@@ -40,14 +40,14 @@ impl BigIntMulSequenceBuilder {
         vr: [u8; NEEDED_REGISTERS],
         operand_rs1: u8,
         operand_rs2: u8,
-        operand_rd: u8,
+        operand_rs3: u8,
     ) -> Self {
         BigIntMulSequenceBuilder {
             asm: InstrAssembler::new(address, is_compressed, xlen),
             vr,
             operand_rs1,
             operand_rs2,
-            operand_rd,
+            operand_rs3,
         }
     }
 
@@ -92,10 +92,10 @@ impl BigIntMulSequenceBuilder {
             }
         }
 
-        // Store result (8 u64 words) back to rd
+        // Store result (8 u64 words) back to the memory rs3 points to
         for i in 0..OUTPUT_LIMBS {
             self.asm
-                .emit_s::<SD>(self.operand_rd, self.s(i), i as i64 * 8);
+                .emit_s::<SD>(self.operand_rs3, self.s(i), i as i64 * 8);
         }
 
         self.asm.finalize()
@@ -168,7 +168,7 @@ pub fn bigint_mul_sequence_builder(
     xlen: Xlen,
     rs1: u8,
     rs2: u8,
-    rd: u8,
+    rs3: u8,
 ) -> Vec<RV32IMInstruction> {
     let guards: Vec<_> = (0..NEEDED_REGISTERS)
         .map(|_| allocate_virtual_register())
@@ -178,6 +178,6 @@ pub fn bigint_mul_sequence_builder(
         vr[i] = **guard;
     }
 
-    let builder = BigIntMulSequenceBuilder::new(address, is_compressed, xlen, vr, rs1, rs2, rd);
+    let builder = BigIntMulSequenceBuilder::new(address, is_compressed, xlen, vr, rs1, rs2, rs3);
     builder.build()
 }

@@ -1,3 +1,35 @@
+//! FormatInline - Custom instruction format for Jolt inline operations
+//!
+//! This is not a RISC-V instruction format, but rather a custom format defined by the Jolt team
+//! specifically for inline operations.
+//!
+//! ## Requirements for Inlines
+//!
+//! Inline operations have two key requirements:
+//! 1. **Risc-V registers must not be changed at all** - Unlike regular instructions, inline operations
+//!    cannot modify any risc-v registers, including the destination register (rd).
+//! 2. **Memory operations are allowed** - Inlines can read from addresses pointed to by registers
+//!    and write their results back to memory addresses. While registers remain unchanged, memory
+//!    locations can be modified.
+//!
+//! ## Memory Operations with rs3
+//!
+//! FormatInline uses `rs3` to specify where the result of the inline operation should be written.
+//! Instead of writing a result back to the `rd` register (as traditional instructions do), the
+//! result is written to the memory location that `rs3` points to. However, this is not a strict
+//! requirement - an inline operation might alternatively write its result to memory locations
+//! pointed to by `rs1` or `rs2`, depending on the specific inline's implementation.
+//!
+//! ## Relationship to FormatR
+//!
+//! FormatInline is very similar to FormatR instructions, with one key difference: we use `rs3`
+//! instead of `rd`. This reflects the fact that inline operations don't have a destination
+//! register in the traditional sense.
+//!
+//! In program SDKs where inline assembly is called, to avoid introducing a new format to the
+//! `asm!` macro, FormatR is still used for inline instructions in the assembly code. However,
+//! these instructions are parsed as FormatInline instructions by the tracer.
+
 use crate::emulator::cpu::Cpu;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
@@ -8,16 +40,16 @@ use super::{
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct FormatInline {
-    pub rs3: u8, // Using rs3 instead of rd
     pub rs1: u8,
     pub rs2: u8,
+    pub rs3: u8,
 }
 
 #[derive(Default, Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RegisterStateFormatInline {
-    pub rs3: u64, // rs3 is a source register (read-only)
     pub rs1: u64,
     pub rs2: u64,
+    pub rs3: u64,
 }
 
 impl InstructionRegisterState for RegisterStateFormatInline {
@@ -25,9 +57,9 @@ impl InstructionRegisterState for RegisterStateFormatInline {
     fn random(rng: &mut rand::rngs::StdRng) -> Self {
         use rand::RngCore;
         Self {
-            rs3: rng.next_u64(),
             rs1: rng.next_u64(),
             rs2: rng.next_u64(),
+            rs3: rng.next_u64(),
         }
     }
 
@@ -45,7 +77,7 @@ impl InstructionFormat for FormatInline {
 
     fn parse(word: u32) -> Self {
         FormatInline {
-            rs3: ((word >> 7) & 0x1f) as u8, // [11:7] - same bit position as rd in FormatR
+            rs3: ((word >> 7) & 0x1f) as u8,  // [11:7]
             rs1: ((word >> 15) & 0x1f) as u8, // [19:15]
             rs2: ((word >> 20) & 0x1f) as u8, // [24:20]
         }
@@ -66,9 +98,9 @@ impl InstructionFormat for FormatInline {
         use common::constants::RISCV_REGISTER_COUNT;
         use rand::RngCore;
         Self {
-            rs3: (rng.next_u64() as u8 % RISCV_REGISTER_COUNT),
             rs1: (rng.next_u64() as u8 % RISCV_REGISTER_COUNT),
             rs2: (rng.next_u64() as u8 % RISCV_REGISTER_COUNT),
+            rs3: (rng.next_u64() as u8 % RISCV_REGISTER_COUNT),
         }
     }
 }
@@ -76,9 +108,9 @@ impl InstructionFormat for FormatInline {
 impl From<NormalizedOperands> for FormatInline {
     fn from(operands: NormalizedOperands) -> Self {
         Self {
-            rs3: operands.rd, // Map rd field to rs3
             rs1: operands.rs1,
             rs2: operands.rs2,
+            rs3: operands.rd, // Map rd field to rs3
         }
     }
 }
@@ -86,9 +118,9 @@ impl From<NormalizedOperands> for FormatInline {
 impl From<FormatInline> for NormalizedOperands {
     fn from(format: FormatInline) -> Self {
         Self {
-            rd: format.rs3, // Map rs3 back to rd field
             rs1: format.rs1,
             rs2: format.rs2,
+            rd: format.rs3, // Map rs3 back to rd field
             imm: 0,
         }
     }

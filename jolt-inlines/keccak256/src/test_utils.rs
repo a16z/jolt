@@ -11,7 +11,6 @@ use crate::trace_generator::{
 use crate::Keccak256State;
 use tracer::emulator::mmu::DRAM_BASE;
 use tracer::instruction::format::format_inline::FormatInline;
-use tracer::instruction::format::format_r::FormatR;
 use tracer::instruction::{
     inline::INLINE, RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
 };

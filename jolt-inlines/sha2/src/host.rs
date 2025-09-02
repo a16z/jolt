@@ -51,7 +51,7 @@ pub fn store_inlines() -> Result<(), String> {
         Xlen::Bit64,
         sequence_inputs.rs1,
         sequence_inputs.rs2,
-        sequence_inputs.rd,
+        sequence_inputs.rs3,
     );
     write_inline_trace(
         "sha256_trace.txt",
@@ -75,7 +75,7 @@ pub fn store_inlines() -> Result<(), String> {
         Xlen::Bit64,
         sequence_inputs.rs1,
         sequence_inputs.rs2,
-        sequence_inputs.rd,
+        sequence_inputs.rs3,
     );
     write_inline_trace(
         "sha256_trace.txt",

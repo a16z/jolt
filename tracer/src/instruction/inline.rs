@@ -6,7 +6,7 @@
 //! # Architecture
 //!
 //! The inline system uses the RISC-V custom-0 (0x0B) and custom-1 (0x2B) opcodes
-//! with the R-format instruction encoding. Inlines are uniquely identified by their
+//! with the Inline-format instruction encoding. Inlines are uniquely identified by their
 //! opcode, funct3, and funct7 fields.
 
 use super::{
