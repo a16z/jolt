@@ -73,7 +73,7 @@ strum_macros = "0.26.4"
 thiserror = "1.0.58"
 tracing = "0.1.37"
 tracing-chrome = "0.7.1"
-tracing-subscriber = { version = "0.3.18", features = ["fmt", "env-filter"] }
+tracing-subscriber = { version = "0.3.20", features = ["fmt", "env-filter"] }
 target-lexicon = { version = "0.12.14", optional = true }
 reqwest = { version = "0.12.3", features = [
     "json",
