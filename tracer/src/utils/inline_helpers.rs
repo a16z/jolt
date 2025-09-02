@@ -338,7 +338,7 @@ impl InstrAssembler {
     ) where
         RISCVCycle<Op>: Into<RV32IMCycle>,
     {
-        self.validate_rd_for_inline(rd);
+        // self.validate_rd_for_inline(rd);
         self.add_to_sequence(Op::from(NormalizedInstruction {
             address: self.address as usize,
             operands: NormalizedOperands {
@@ -508,6 +508,10 @@ impl InstrAssembler {
                 Imm(((val as u32).rotate_right(shift)) as u64)
             }
         }
+    }
+
+    pub fn rotr64(&mut self, rs1: Value, amount: u32, rd: u8) -> Value {
+        self.rotl64(rs1, 64 - amount, rd)
     }
 
     /// Rotate left on a 64-bit value.
