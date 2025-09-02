@@ -1675,6 +1675,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-inlines-blake2"
+version = "0.1.0"
+dependencies = [
+ "ctor 0.2.9",
+ "hex-literal",
+ "jolt-inlines-common",
+ "tracer",
+]
+
+[[package]]
 name = "jolt-inlines-common"
 version = "0.1.0"
 dependencies = [

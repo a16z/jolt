@@ -31,6 +31,7 @@ members = [
     "jolt-inlines/common",
     "jolt-inlines/sha2",
     "jolt-inlines/keccak256",
+    "jolt-inlines/blake2",
     "jolt-inlines/bigint",
     "examples/btreemap/host",
     "examples/btreemap/guest",

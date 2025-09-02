@@ -121,6 +121,7 @@ use virtual_srai::VirtualSRAI;
 use virtual_srl::VirtualSRL;
 use virtual_srli::VirtualSRLI;
 use virtual_sw::VirtualSW;
+use virtual_xor_rot::{VirtualXORROT16, VirtualXORROT24, VirtualXORROT32, VirtualXORROT63};
 
 use self::inline::INLINE;
 
@@ -248,6 +249,7 @@ pub mod virtual_srai;
 pub mod virtual_srl;
 pub mod virtual_srli;
 pub mod virtual_sw;
+pub mod virtual_xor_rot;
 pub mod xor;
 pub mod xori;
 
@@ -566,6 +568,8 @@ define_rv32im_enums! {
         LRW, SCW, AMOSWAPW, AMOADDW, AMOANDW, AMOORW, AMOXORW, AMOMINW, AMOMAXW, AMOMINUW, AMOMAXUW,
         // RV64A (Atomic Memory Operations)
         LRD, SCD, AMOSWAPD, AMOADDD, AMOANDD, AMOORD, AMOXORD, AMOMIND, AMOMAXD, AMOMINUD, AMOMAXUD,
+        // Virtual instructions requried for Blake2
+        VirtualXORROT32, VirtualXORROT24, VirtualXORROT16, VirtualXORROT63,
         // Virtual
         VirtualAdvice, VirtualAssertEQ, VirtualAssertHalfwordAlignment, VirtualAssertWordAlignment, VirtualAssertLTE,
         VirtualAssertValidDiv0, VirtualAssertValidUnsignedRemainder,
