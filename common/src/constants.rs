@@ -1,6 +1,7 @@
 pub const XLEN: usize = 64;
 pub const RISCV_REGISTER_COUNT: u8 = 32;
 pub const VIRTUAL_REGISTER_COUNT: u8 = 96; //  see Section 6.1 of Jolt paper
+pub const VIRTUAL_INSTRUCTION_MAX_REGISTER_COUNT: u8 = 16; // Reserved virtual registers for virtual instructions
 pub const REGISTER_COUNT: u8 = RISCV_REGISTER_COUNT + VIRTUAL_REGISTER_COUNT; // must be a power of 2
 pub const BYTES_PER_INSTRUCTION: usize = 4;
 pub const ALIGNMENT_FACTOR_BYTECODE: usize = 2;

@@ -34,7 +34,7 @@ impl Sha256CpuHarness {
     /// Create a new harness.
     pub fn new(xlen: Xlen) -> Self {
         let guards: Vec<_> = (0..32)
-            .map(|_| tracer::utils::virtual_registers::allocate_virtual_register())
+            .map(|_| tracer::utils::virtual_registers::allocate_virtual_register_for_inline())
             .collect();
         let vr: [u8; 32] = std::array::from_fn(|i| *guards[i]);
         Self {

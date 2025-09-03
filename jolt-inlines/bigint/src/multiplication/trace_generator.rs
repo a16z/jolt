@@ -3,7 +3,9 @@ use tracer::{
     instruction::{
         add::ADD, ld::LD, mul::MUL, mulhu::MULHU, sd::SD, sltu::SLTU, RV32IMInstruction,
     },
-    utils::{inline_helpers::InstrAssembler, virtual_registers::allocate_virtual_register},
+    utils::{
+        inline_helpers::InstrAssembler, virtual_registers::allocate_virtual_register_for_inline,
+    },
 };
 
 use super::{INPUT_LIMBS, OUTPUT_LIMBS};
@@ -43,7 +45,7 @@ impl BigIntMulSequenceBuilder {
         operand_rs3: u8,
     ) -> Self {
         BigIntMulSequenceBuilder {
-            asm: InstrAssembler::new(address, is_compressed, xlen),
+            asm: InstrAssembler::new_inline(address, is_compressed, xlen),
             vr,
             operand_rs1,
             operand_rs2,
@@ -98,7 +100,7 @@ impl BigIntMulSequenceBuilder {
                 .emit_s::<SD>(self.operand_rs3, self.s(i), i as i64 * 8);
         }
 
-        self.asm.finalize()
+        self.asm.finalize_inline(NEEDED_REGISTERS.try_into().unwrap())
     }
 
     /// Implements the MUL-ACC pattern: A[i] × B[j] → R[k] where k = i+j
@@ -171,7 +173,7 @@ pub fn bigint_mul_sequence_builder(
     rs3: u8,
 ) -> Vec<RV32IMInstruction> {
     let guards: Vec<_> = (0..NEEDED_REGISTERS)
-        .map(|_| allocate_virtual_register())
+        .map(|_| allocate_virtual_register_for_inline())
         .collect();
     let mut vr = [0u8; NEEDED_REGISTERS];
     for (i, guard) in guards.iter().enumerate() {
