@@ -53,15 +53,16 @@ use crate::instruction::RISCVTrace;
 use crate::instruction::RV32IMCycle;
 use crate::instruction::RV32IMInstruction;
 
+use common::constants::RISCV_REGISTER_COUNT;
+use common::constants::VIRTUAL_INSTRUCTION_RESERVED_REGISTER_COUNT;
+use common::constants::VIRTUAL_REGISTER_COUNT;
+
 /// Operand that can be either an immediate or a register.
 #[derive(Clone, Copy, Debug)]
 pub enum Value {
     Imm(u64),
     Reg(u8),
 }
-use common::constants::RISCV_REGISTER_COUNT;
-use common::constants::VIRTUAL_INSTRUCTION_MAX_REGISTER_COUNT;
-use common::constants::VIRTUAL_REGISTER_COUNT;
 use Value::{Imm, Reg};
 
 /// Convenience assembler for building a sequence of `RV32IMInstruction`s.
@@ -121,12 +122,12 @@ impl InstrAssembler {
         self.sequence
     }
 
-    /// Finalize inline instructions by zeroing virtual registers
+    /// Finalize inline instructions by zeroing virtual registers, then calling finalize.
     pub fn finalize_inline(mut self, num_inline_virtual_regs: u8) -> Vec<RV32IMInstruction> {
         const INLINE_REGISTER_BASE: u8 =
-            RISCV_REGISTER_COUNT + VIRTUAL_INSTRUCTION_MAX_REGISTER_COUNT;
+            RISCV_REGISTER_COUNT + VIRTUAL_INSTRUCTION_RESERVED_REGISTER_COUNT;
         const MAX_INLINE_REGISTERS: u8 =
-            VIRTUAL_REGISTER_COUNT - VIRTUAL_INSTRUCTION_MAX_REGISTER_COUNT;
+            VIRTUAL_REGISTER_COUNT - VIRTUAL_INSTRUCTION_RESERVED_REGISTER_COUNT;
 
         assert!(
             num_inline_virtual_regs <= MAX_INLINE_REGISTERS,
@@ -141,8 +142,8 @@ impl InstrAssembler {
 
     /// Validates that rd is an inline virtual register (not RISC-V or reserved virtual registers).
     #[inline]
-    fn validate_virtual_rd(virtual_rd: u8) -> bool {
-        virtual_rd == 0 || virtual_rd >= RISCV_REGISTER_COUNT + VIRTUAL_INSTRUCTION_MAX_REGISTER_COUNT
+    fn is_valide_virtual_rd(virtual_rd: u8) -> bool {
+        virtual_rd == 0 || virtual_rd >= RISCV_REGISTER_COUNT + VIRTUAL_INSTRUCTION_RESERVED_REGISTER_COUNT
     }
 
     #[inline]
@@ -152,9 +153,9 @@ impl InstrAssembler {
     {
         if self.has_inline_instr_format {
             let normalized: NormalizedInstruction = inst.into();
-            if !Self::validate_virtual_rd(normalized.operands.rd) {
+            if !Self::is_valide_virtual_rd(normalized.operands.rd) {
                 const MIN_INLINE_REG: u8 =
-                    RISCV_REGISTER_COUNT + VIRTUAL_INSTRUCTION_MAX_REGISTER_COUNT;
+                    RISCV_REGISTER_COUNT + VIRTUAL_INSTRUCTION_RESERVED_REGISTER_COUNT;
                 panic!(
                     "Inline instruction attempted to write to register {}, but must use registers >= {}",
                     normalized.operands.rd, MIN_INLINE_REG

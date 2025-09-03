@@ -325,10 +325,10 @@ pub fn sha2_inline_sequence_builder(
     _rs3: u8,
 ) -> Vec<RV32IMInstruction> {
     // Virtual registers used as a scratch space
-    let guards: Vec<_> = (0..32)
+    let guards: Vec<_> = (0..NEEDED_REGISTERS)
         .map(|_| allocate_virtual_register_for_inline())
         .collect();
-    let mut vr = [0u8; 32];
+    let mut vr = [0u8; NEEDED_REGISTERS as usize];
     for (i, guard) in guards.iter().enumerate() {
         vr[i] = **guard;
     }
@@ -354,10 +354,10 @@ pub fn sha2_init_inline_sequence_builder(
     _rs3: u8,
 ) -> Vec<RV32IMInstruction> {
     // Virtual registers used as a scratch space
-    let guards: Vec<_> = (0..32)
+    let guards: Vec<_> = (0..NEEDED_REGISTERS)
         .map(|_| allocate_virtual_register_for_inline())
         .collect();
-    let mut vr = [0u8; 32];
+    let mut vr = [0u8; NEEDED_REGISTERS as usize];
     for (i, guard) in guards.iter().enumerate() {
         vr[i] = **guard;
     }
