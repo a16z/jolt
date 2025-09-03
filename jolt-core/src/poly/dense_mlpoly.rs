@@ -43,7 +43,7 @@ impl<F: JoltField> DensePolynomial<F> {
     pub fn new_padded(evals: Vec<F>) -> Self {
         // Pad non-power-2 evaluations to fill out the dense multilinear polynomial
         let mut poly_evals = evals;
-        while !(poly_evals.len().is_power_of_two()) {
+        while !poly_evals.len().is_power_of_two() {
             poly_evals.push(F::zero());
         }
 
@@ -90,7 +90,7 @@ impl<F: JoltField> DensePolynomial<F> {
         let (left, right) = self.Z.split_at_mut(n);
 
         left.iter_mut().zip(right.iter()).for_each(|(a, b)| {
-            *a +=  (*b - *a).mul_u128_mont_form(*r);
+            *a += (*b - *a).mul_u128_mont_form(*r);
         });
 
         self.num_vars -= 1;
@@ -285,6 +285,18 @@ impl<F: JoltField> DensePolynomial<F> {
         assert_eq!(chis.len(), self.Z.len());
         compute_dotproduct(&self.Z, &chis)
     }
+
+
+
+    pub fn split_eq_evaluate_field(&self, r: &[F], eq_one: &[F], eq_two: &[F]) -> F {
+        const PARALLEL_THRESHOLD: usize = 16;
+        if r.len() < PARALLEL_THRESHOLD {
+            self.evaluate_split_eq_serial(eq_one, eq_two)
+        } else {
+            self.evaluate_split_eq_parallel(eq_one, eq_two)
+        }
+    }
+
     pub fn split_eq_evaluate(&self, r: &[MontU128], eq_one: &[F], eq_two: &[F]) -> F {
         const PARALLEL_THRESHOLD: usize = 16;
         if r.len() < PARALLEL_THRESHOLD {
@@ -366,7 +378,7 @@ impl<F: JoltField> DensePolynomial<F> {
                 } else if slope.is_one() {
                     current[j] = f0 + F::from_u128_mont(r[m - 1 - i]);
                 } else {
-                    current[j] = f0 +  slope.mul_u128_mont_form(r[m - 1 - i]);
+                    current[j] = f0 + slope.mul_u128_mont_form(r[m - 1 - i]);
                 }
             }
             // No benefit to truncating really.
@@ -509,7 +521,24 @@ impl<F: JoltField> Index<usize> for DensePolynomial<F> {
 
 impl<F: JoltField> PolynomialEvaluation<F> for DensePolynomial<F> {
     fn evaluate(&self, r: &[MontU128]) -> F {
-        self.evaluate(r)
+
+        let m = r.len() / 2;
+        let (r2, r1) = r.split_at(m);
+        let (eq_one, eq_two) =
+            rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
+
+        self.split_eq_evaluate(r, &eq_one, &eq_two)
+    }
+
+    fn evaluate_field(&self, r: &[F]) -> F {
+        let m = r.len() / 2;
+        let (r2, r1) = r.split_at(m);
+        let (eq_one, eq_two) = rayon::join(
+            || EqPolynomial::evals_field(r2),
+            || EqPolynomial::evals_field(r1),
+        );
+
+        self.split_eq_evaluate_field(r, &eq_one, &eq_two)
     }
 
     fn batch_evaluate(polys: &[&Self], r: &[MontU128]) -> Vec<F> {
@@ -572,7 +601,7 @@ mod tests {
             for j in 0..r.len() {
                 let bit_j = (i & (1 << (r.len() - j - 1))) > 0;
                 if bit_j {
-                    chi_i = chi_i.mul_u128_mont_form(r[j]) ;
+                    chi_i = chi_i.mul_u128_mont_form(r[j]);
                 } else {
                     chi_i *= F::one() - F::from_u128_mont(r[j]);
                 }
@@ -593,7 +622,7 @@ mod tests {
         let s = 10;
         let mut r: Vec<MontU128> = Vec::new();
         for _i in 0..s {
-            r.push(MontU128(prng.gen()));
+            r.push(MontU128::from(prng.gen::<u128>()));
         }
         let chis = compute_chis_at_r::<F>(&r);
         let chis_m = EqPolynomial::<F>::evals(&r);
@@ -641,7 +670,9 @@ mod tests {
 
             // Try 10 random evaluation points
             for _ in 0..10 {
-                let eval_point: Vec<MontU128> = (0..num_vars).map(|_| MontU128::from(rng.gen::<u128>())).collect();
+                let eval_point: Vec<MontU128> = (0..num_vars)
+                    .map(|_| MontU128::from(rng.gen::<u128>()))
+                    .collect();
 
                 let eval1 = poly.evaluate(&eval_point);
                 let eval2 = poly.inside_out_evaluate(&eval_point);
@@ -674,7 +705,9 @@ mod tests {
         // g(3, 4) = 8*(1 - 3)(1 - 4) + 8*(1-3)(4) + 8*(3)(1-4) + 8*(3)(4) = 48 + -64 + -72 + 96  = 8
         // g(5, 10) = 8*(1 - 5)(1 - 10) + 8*(1 - 5)(10) + 8*(5)(1-10) + 8*(5)(10) = 96 + -16 + -72 + 96  = 8
         assert_eq!(
-            dense_poly.inside_out_evaluate(vec![MontU128::from(3_u128), MontU128::from(4_u128)].as_slice()),
+            dense_poly.inside_out_evaluate(
+                vec![MontU128::from(3_u128), MontU128::from(4_u128)].as_slice()
+            ),
             Fr::from(8)
         );
     }

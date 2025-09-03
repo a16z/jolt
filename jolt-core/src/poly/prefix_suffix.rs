@@ -90,6 +90,10 @@ impl<F: JoltField> PolynomialEvaluation<F> for CachedPolynomial<F> {
         self.inner.evaluate(x)
     }
 
+    fn evaluate_field(&self, x: &[F]) -> F {
+        self.inner.evaluate_field(x)
+    }
+
     fn batch_evaluate(_polys: &[&Self], _r: &[MontU128]) -> Vec<F> {
         unimplemented!("Currently unused")
     }
@@ -370,10 +374,10 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
 
 #[cfg(test)]
 pub mod tests {
-    use rand::Rng;
-use ark_bn254::Fr;
+    use ark_bn254::Fr;
     use ark_ff::{AdditiveGroup, Field};
     use ark_std::test_rng;
+    use rand::Rng;
 
     use super::*;
 
@@ -419,26 +423,26 @@ use ark_bn254::Fr;
                     let eval_point = rr
                         .iter()
                         .cloned()
-                        .chain(std::iter::once(MontU128(0)))
+                        .chain(std::iter::once(Fr::ZERO))
                         .chain(
                             std::iter::repeat_n(b, round)
                                 .enumerate()
                                 .rev()
-                                .map(|(i, b)| if (b >> i) & 1 == 1 { MontU128(1) } else { MontU128(0) }),
+                                .map(|(i, b)| if (b >> i) & 1 == 1 { Fr::ONE } else { Fr::ZERO }),
                         )
-                        .collect::<Vec<MontU128>>();
+                        .collect::<Vec<Fr>>();
                     let suffix_len = SUFFIX_LEN - phase * PREFIX_LEN;
                     let direct_eval: Fr = (0..(1 << suffix_len))
                         .map(|i| {
                             let mut eval_point = eval_point.clone();
                             for j in (0..suffix_len).rev() {
                                 if (i >> j) & 1 == 1 {
-                                    eval_point.push(MontU128(1));
+                                    eval_point.push(Fr::ONE);
                                 } else {
-                                    eval_point.push(MontU128(0));
+                                    eval_point.push(Fr::ZERO);
                                 }
                             }
-                            poly.evaluate(&eval_point)
+                            poly.evaluate_field(&eval_point)
                         })
                         .sum();
 
@@ -447,32 +451,32 @@ use ark_bn254::Fr;
                     let eval_point = rr
                         .iter()
                         .cloned()
-                        .chain(std::iter::once(MontU128(2) ))
+                        .chain(std::iter::once(Fr::ONE + Fr::ONE))
                         .chain(
                             std::iter::repeat_n(b, round)
                                 .enumerate()
                                 .rev()
-                                .map(|(i, b)| if (b >> i) & 1 == 1 { MontU128(1) } else { MontU128(0)}),
+                                .map(|(i, b)| if (b >> i) & 1 == 1 { Fr::ONE } else { Fr::ZERO }),
                         )
-                        .collect::<Vec<MontU128>>();
+                        .collect::<Vec<Fr>>();
                     let direct_eval: Fr = (0..(1 << suffix_len))
                         .map(|i| {
                             let mut eval_point = eval_point.clone();
                             for j in (0..suffix_len).rev() {
                                 if (i >> j) & 1 == 1 {
-                                    eval_point.push(MontU128(1));
+                                    eval_point.push(Fr::ONE);
                                 } else {
-                                    eval_point.push(MontU128(0));
+                                    eval_point.push(Fr::ZERO);
                                 }
                             }
-                            poly.evaluate(&eval_point)
+                            poly.evaluate_field(&eval_point)
                         })
                         .sum();
 
                     assert_eq!(direct_eval, eval.1);
                 }
-                let r = MontU128(rng.gen::<u128>());
-                rr.push(r);
+                let r = MontU128::from(rng.gen::<u128>());
+                rr.push(Fr::from_u128_mont(r));
                 ps.bind(r);
             }
 
@@ -480,7 +484,7 @@ use ark_bn254::Fr;
         }
         assert_eq!(
             prefix_registry.checkpoints[prefix_registry_index],
-            Some(poly.evaluate(&rr))
+            Some(poly.evaluate_field(&rr))
         )
     }
 }

@@ -8,9 +8,9 @@ use crate::{
 };
 
 use super::builder::CombinedUniformBuilder;
-use sha3::Digest;
 use crate::field::MontU128;
 use crate::utils::math::Math;
+use sha3::Digest;
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct UniformSpartanKey<F: JoltField> {
@@ -204,7 +204,7 @@ impl<F: JoltField> UniformSpartanKey<F> {
         let const_eval = if self.uniform_r1cs.num_vars < num_vars && with_const {
             let const_position_bits =
                 index_to_field_bitvector::<F>(self.uniform_r1cs.num_vars as u64, var_bits);
-            EqPolynomial::mle(r, &const_position_bits)
+            EqPolynomial::mle_half_and_half(r, &const_position_bits)
         } else {
             F::zero()
         };
@@ -241,18 +241,18 @@ impl<F: JoltField> UniformSpartanKey<F> {
             let row_bits = index_to_field_bitvector::<F>(*row as u64, rx_constr.len());
             let col_bits = index_to_field_bitvector::<F>(*col as u64, ry_var.len());
             eval += *val
-                * EqPolynomial::<F>::mle(rx_constr, &row_bits)
-                * EqPolynomial::<F>::mle(ry_var, &col_bits);
+                * EqPolynomial::<F>::mle_half_and_half(rx_constr, &row_bits)
+                * EqPolynomial::<F>::mle_half_and_half(ry_var, &col_bits);
         }
 
         // Evaluate constant terms
         let constant_column = self.uniform_r1cs.num_vars;
         let const_col_bits = index_to_field_bitvector::<F>(constant_column as u64, ry_var.len());
-        let eq_ry_const = EqPolynomial::<F>::mle(ry_var, &const_col_bits);
+        let eq_ry_const = EqPolynomial::<F>::mle_half_and_half(ry_var, &const_col_bits);
 
         for (row, val) in constraints.consts.iter() {
             let row_bits = index_to_field_bitvector::<F>(*row as u64, rx_constr.len());
-            eval += *val * EqPolynomial::<F>::mle(rx_constr, &row_bits) * eq_ry_const;
+            eval += *val * EqPolynomial::<F>::mle_half_and_half(rx_constr, &row_bits) * eq_ry_const;
         }
 
         eval

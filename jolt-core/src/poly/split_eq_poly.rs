@@ -136,7 +136,8 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
 
         let num_actual_suffix_vars = suffix_slice_end.saturating_sub(split_point_x_in);
 
-        let mut w_E_out_vars: Vec<MontU128> = Vec::with_capacity(num_x_out_vars + num_actual_suffix_vars);
+        let mut w_E_out_vars: Vec<MontU128> =
+            Vec::with_capacity(num_x_out_vars + num_actual_suffix_vars);
         w_E_out_vars.extend_from_slice(&w[0..split_point_x_out]);
         if split_point_x_in < suffix_slice_end {
             // Add suffix only if range is valid and non-empty
@@ -198,13 +199,13 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
             BindingOrder::LowToHigh => {
                 // multiply `current_scalar` by `eq(w[i], r) = (1 - w[i]) * (1 - r) + w[i] * r`
                 // which is the same as `1 - w[i] - r + 2 * w[i] * r`
-                let tmp = F::one();
-                let prod_w_r = tmp.mul_two_u128s(self.w[self.current_index - 1], r);
-                // ALERT -- MAKE SURE FROM 128 does not change into mont from
-                self.current_scalar *=
-                    F::one() - F::from_u128_mont(self.w[self.current_index - 1]) - F::from_u128_mont(r)
-                        + prod_w_r
-                        + prod_w_r;
+                let prod_w_r =
+                    F::from_u128_mont(self.w[self.current_index - 1]) * F::from_u128_mont(r);
+                self.current_scalar *= F::one()
+                    - F::from_u128_mont(self.w[self.current_index - 1])
+                    - F::from_u128_mont(r)
+                    + prod_w_r
+                    + prod_w_r;
                 // decrement `current_index`
                 self.current_index -= 1;
                 // pop the last vector from `E_in_vec` or `E_out_vec` (since we don't need it anymore)
@@ -218,11 +219,15 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
                 // multiply `current_scalar` by `eq(w[i], r) = (1 - w[i]) * (1 - r) + w[i] * r`
                 // which is the same as `1 - w[i] - r + 2 * w[i] * r`
                 let tmp = F::one();
-                let prod_w_r = tmp.mul_two_u128s(self.w[self.current_index], r);
+                //let prod_w_r = tmp.mul_two_u128s(self.w[self.current_index], r);
+                let prod_w_r =
+                    F::from_u128_mont(self.w[self.current_index - 1]) * F::from_u128_mont(r);
 
                 // TODO: Double check the from 128
                 self.current_scalar *=
-                    F::one() - F::from_u128_mont(self.w[self.current_index]) - F::from_u128_mont(r) + prod_w_r + prod_w_r;
+                    F::one() - F::from_u128_mont(self.w[self.current_index]) - F::from_u128_mont(r)
+                        + prod_w_r
+                        + prod_w_r;
 
                 // increment `current_index` (going from 0 to n-1)
                 self.current_index += 1;
@@ -247,10 +252,13 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
             BindingOrder::LowToHigh => {
                 // multiply `current_scalar` by `eq(w[i], r) = (1 - w[i]) * (1 - r) + w[i] * r`
                 // which is the same as `1 - w[i] - r + 2 * w[i] * r`
-                let tmp = F::one();
-                let prod_w_r = tmp.mul_two_u128s(self.w[self.current_index - 1], r);
-                self.current_scalar *=
-                    F::one() - F::from_u128_mont(self.w[self.current_index - 1]) - F::from_u128_mont(r) + prod_w_r + prod_w_r;
+                let prod_w_r =
+                    F::from_u128_mont(self.w[self.current_index - 1]) * F::from_u128_mont(r);
+                self.current_scalar *= F::one()
+                    - F::from_u128_mont(self.w[self.current_index - 1])
+                    - F::from_u128_mont(r)
+                    + prod_w_r
+                    + prod_w_r;
                 // decrement `current_index`
                 self.current_index -= 1;
                 // pop the last vector from `E_in_vec` or `E_out_vec` (since we don't need it anymore)
@@ -263,10 +271,12 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
             BindingOrder::HighToLow => {
                 // multiply `current_scalar` by `eq(w[i], r) = (1 - w[i]) * (1 - r) + w[i] * r`
                 // which is the same as `1 - w[i] - r + 2 * w[i] * r`
-                let tmp = F::one();
-                let prod_w_r = tmp.mul_two_u128s(self.w[self.current_index], r);
+
+                let prod_w_r = F::from_u128_mont(self.w[self.current_index]) * F::from_u128_mont(r);
                 self.current_scalar *=
-                    F::one() - F::from_u128_mont(self.w[self.current_index]) - F::from_u128_mont(r) + prod_w_r + prod_w_r;
+                    F::one() - F::from_u128_mont(self.w[self.current_index]) - F::from_u128_mont(r)
+                        + prod_w_r
+                        + prod_w_r;
 
                 // increment `current_index` (going from 0 to n-1)
                 self.current_index += 1;
@@ -312,7 +322,9 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         // and e, but not d. We compute s by first computing l and q at points 2 and 3.
 
         // Evaluations of the linear polynomial
-        let eq_eval_1 = self.current_scalar.mul_u128_mont_form(self.w[self.current_index - 1]);
+        let eq_eval_1 = self
+            .current_scalar
+            .mul_u128_mont_form(self.w[self.current_index - 1]);
         let eq_eval_0 = self.current_scalar - eq_eval_1;
         let eq_m = eq_eval_1 - eq_eval_0;
         let eq_eval_2 = eq_eval_1 + eq_m;
@@ -359,7 +371,9 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
 
         // Evaluations of the linear eq polynomial
         // For high-to-low, we bind from index 0 upward, hence we take wi = self.w[self.current_index] here
-        let eq_eval_1 = self.current_scalar.mul_u128_mont_form(self.w[self.current_index]);
+        let eq_eval_1 = self
+            .current_scalar
+            .mul_u128_mont_form(self.w[self.current_index]);
         let eq_eval_0 = self.current_scalar - eq_eval_1;
 
         // slope for eq
@@ -413,16 +427,16 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
 
 #[cfg(test)]
 mod tests {
-    use rand::Rng;
-use super::*;
+    use super::*;
     use ark_bn254::Fr;
     use ark_std::test_rng;
+    use rand::Rng;
 
     #[test]
     fn bind_low_high() {
         const NUM_VARS: usize = 10;
         let mut rng = test_rng();
-        let w: Vec<MontU128> = std::iter::repeat_with(|| MontU128(rng.gen::<u128>()))
+        let w: Vec<MontU128> = std::iter::repeat_with(|| MontU128::from(rng.gen::<u128>()))
             .take(NUM_VARS)
             .collect();
 
@@ -431,7 +445,7 @@ use super::*;
         assert_eq!(regular_eq, split_eq.merge());
 
         for _ in 0..NUM_VARS {
-            let r: MontU128 =MontU128(rng.gen::<u128>());
+            let r: MontU128 = MontU128::from(rng.gen::<u128>());
             regular_eq.bound_poly_var_bot(&r);
             split_eq.bind(r);
 
@@ -444,19 +458,20 @@ use super::*;
     fn bind_high_low() {
         const NUM_VARS: usize = 10;
         let mut rng = test_rng();
-        let w: Vec<MontU128> = std::iter::repeat_with(|| MontU128(rng.gen::<u128>()))
+        let w: Vec<MontU128> = std::iter::repeat_with(|| MontU128::from(rng.gen::<u128>()))
             .take(NUM_VARS)
             .collect();
 
         let mut regular_eq = DensePolynomial::new(EqPolynomial::<Fr>::evals(&w));
-        let mut split_eq_high_to_low = GruenSplitEqPolynomial::<Fr>::new(&w, BindingOrder::HighToLow);
+        let mut split_eq_high_to_low =
+            GruenSplitEqPolynomial::<Fr>::new(&w, BindingOrder::HighToLow);
 
         // Verify they start equal
         assert_eq!(regular_eq, split_eq_high_to_low.merge());
 
         // Bind with same random values, but regular_eq uses top and split uses new high-to-low
         for _ in 0..NUM_VARS {
-            let r =MontU128(rng.gen::<u128>());
+            let r = MontU128::from(rng.gen::<u128>());
             regular_eq.bound_poly_var_top(&r);
             split_eq_high_to_low.bind(r);
             let merged = split_eq_high_to_low.merge();
@@ -473,19 +488,22 @@ use super::*;
 
         // Test case 1: Standard setup
         let num_x_out_vars_1 = 2; // Example split for x_out part
-        let w1: Vec<MontU128> = (0..N).map(|i| MontU128(i as u128)).collect();
+        let w1: Vec<MontU128> = (0..N).map(|i| MontU128::from(i as u128)).collect();
 
         let num_x_in_vars_1 = N - num_x_out_vars_1 - L0;
-        let split_eq1 =
-            GruenSplitEqPolynomial::<Fr>::new_for_small_value(&w1, num_x_out_vars_1, num_x_in_vars_1, L0);
+        let split_eq1 = GruenSplitEqPolynomial::<Fr>::new_for_small_value(
+            &w1,
+            num_x_out_vars_1,
+            num_x_in_vars_1,
+            L0,
+        );
 
         // Verify split points and variable slices
         let split_point1_expected1 = num_x_out_vars_1; // Should be 2
         let split_point_x_in_expected1 = num_x_out_vars_1 + num_x_in_vars_1;
         assert_eq!(split_eq1.current_index, split_point1_expected1); // repurposed current_index
 
-        let w_E_in_vars_expected1=
-            w1[split_point1_expected1..split_point_x_in_expected1].to_vec(); // w[2..7] = [2,3,4,5,6]
+        let w_E_in_vars_expected1 = w1[split_point1_expected1..split_point_x_in_expected1].to_vec(); // w[2..7] = [2,3,4,5,6]
         let mut w_E_out_vars_expected1 = Vec::new();
         w_E_out_vars_expected1.extend_from_slice(&w1[0..split_point1_expected1]); // w[0..2] = [0,1]
                                                                                   // Suffix slice is w[split_point_x_in .. N-1] = w[7..9] for N=10, L0=3.
@@ -533,18 +551,19 @@ use super::*;
 
         // Test case 2: Edge case L0 = 0
         let num_x_out_vars_2 = N / 2; // Max possible value for num_x_out_vars if num_x_in_vars is also N/2 and L0=0
-        let w2: Vec<MontU128> = (0..N)
-            .map(|_| MontU128(rng.gen::<u128>()))
-            .collect();
+        let w2: Vec<MontU128> = (0..N).map(|_| MontU128::from(rng.gen::<u128>())).collect();
         let num_x_in_vars_2 = N - num_x_out_vars_2; // L0 is 0
-        let split_eq2 =
-            GruenSplitEqPolynomial::<Fr>::new_for_small_value(&w2, num_x_out_vars_2, num_x_in_vars_2, 0);
+        let split_eq2 = GruenSplitEqPolynomial::<Fr>::new_for_small_value(
+            &w2,
+            num_x_out_vars_2,
+            num_x_in_vars_2,
+            0,
+        );
         assert_eq!(split_eq2.E_out_vec.len(), 0);
         assert_eq!(split_eq2.E_in_vec.len(), 1); // E_in should cover w[N/2 .. N/2 + num_x_in_vars_2 -1]
         let split_point1_expected2 = num_x_out_vars_2;
         let split_point_x_in_expected2 = num_x_out_vars_2 + num_x_in_vars_2;
-        let w_E_in_vars_expected2 =
-            w2[split_point1_expected2..split_point_x_in_expected2].to_vec();
+        let w_E_in_vars_expected2 = w2[split_point1_expected2..split_point_x_in_expected2].to_vec();
         assert!(w_E_in_vars_expected2.len() == num_x_in_vars_2);
         let expected_E_in2 = EqPolynomial::<Fr>::evals(&w_E_in_vars_expected2); // evals of N/2 vars
         assert_eq!(split_eq2.E_in_vec[0], expected_E_in2);

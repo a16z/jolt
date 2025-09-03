@@ -1,11 +1,11 @@
 use std::fmt::{Debug, Display};
 use std::hash::Hash;
-use std::io::{Read};
+use std::io::Read;
 use std::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub, SubAssign};
 
 #[cfg(feature = "allocative")]
 use allocative::Allocative;
-use ark_serialize::{CanonicalDeserialize, Validate, Valid};
+use ark_serialize::{CanonicalDeserialize, Valid, Validate};
 use ark_std::{One, Zero};
 
 pub trait FieldOps<Rhs = Self, Output = Self>:
@@ -20,11 +20,13 @@ pub trait FieldOps<Rhs = Self, Output = Self>:
 /// in Montgomery form for the target field
 #[cfg_attr(feature = "allocative", derive(Allocative))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
-pub struct MontU128(pub u128);
+pub struct MontU128(u128);
 
 impl From<u128> for MontU128 {
     fn from(val: u128) -> Self {
-        MontU128(val)
+        // MontU128 can always be represented by 125 bits.
+        let val_masked = val & (u128::MAX >> 3);
+        MontU128(val_masked)
     }
 }
 
@@ -35,14 +37,13 @@ impl From<MontU128> for u128 {
 }
 impl From<u64> for MontU128 {
     fn from(val: u64) -> Self {
-        MontU128(val as u128)
+        MontU128::from(val as u128)
     }
 }
 // === Serialization impls ===
 
-use ark_serialize::{CanonicalSerialize, SerializationError, Compress};
+use ark_serialize::{CanonicalSerialize, Compress, SerializationError};
 use std::io::Write;
-
 
 impl CanonicalSerialize for MontU128 {
     // fn serialize<W: Write>(&self, writer: W) -> Result<(), SerializationError> {
@@ -80,7 +81,6 @@ impl CanonicalSerialize for MontU128 {
     }
 }
 
-
 impl Valid for MontU128 {
     fn check(&self) -> Result<(), SerializationError> {
         Ok(())
@@ -110,7 +110,9 @@ impl CanonicalDeserialize for MontU128 {
         Ok(MontU128(u128::from_le_bytes(buf)))
     }
 
-    fn deserialize_uncompressed_unchecked<R: Read>(mut reader: R) -> Result<Self, SerializationError> {
+    fn deserialize_uncompressed_unchecked<R: Read>(
+        mut reader: R,
+    ) -> Result<Self, SerializationError> {
         let mut buf = [0u8; 16];
         reader.read_exact(&mut buf)?;
         Ok(MontU128(u128::from_le_bytes(buf)))
@@ -193,16 +195,14 @@ pub trait JoltField:
     // Providing a generic fallback (like converting via from_u128) would be WRONG,
     // because it would interpret n as a canonical integer and re-encode it,
     // effectively multiplying by R and corrupting the result.
-    #[inline(always)]
     fn mul_u128_mont_form(&self, _n: MontU128) -> Self {
         unimplemented!("mul_u128_mont_form must be implemented by the concrete field type")
     }
 
-    // new method: multiply two u128s (Montgomery form) directly into Self
-    #[inline(always)]
-    fn mul_two_u128s(&self, x: MontU128, y: MontU128) -> Self;
-
-    #[inline(always)]
+    //fn mul_two_u128s(&self, x: MontU128, y: MontU128) -> Self {
+    //    unimplemented!("Must be implemented by the conrete field type")
+    //}
+    //
     fn from_u128_mont(_n: MontU128) -> Self {
         unimplemented!("Must be implemented by the concrete field type")
     }
