@@ -12,8 +12,9 @@ use crate::{
 use super::{
     format::format_r::FormatR, virtual_advice::VirtualAdvice, virtual_assert_eq::VirtualAssertEQ,
     virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder,
-    virtual_extend::VirtualExtend, virtual_sign_extend::VirtualSignExtend, RISCVInstruction,
-    RISCVTrace, RV32IMCycle, RV32IMInstruction,
+    virtual_sign_extend_word::VirtualSignExtendWord,
+    virtual_zero_extend_word::VirtualZeroExtendWord, RISCVInstruction, RISCVTrace, RV32IMCycle,
+    RV32IMInstruction,
 };
 
 declare_riscv_instr!(
@@ -95,11 +96,11 @@ impl RISCVTrace for REMUW {
         asm.emit_j::<VirtualAdvice>(*a3, 0);
 
         // zero-extend inputs to 32-bit values
-        asm.emit_i::<VirtualExtend>(*t1, a0, 0); // zero-extended dividend
-        asm.emit_i::<VirtualExtend>(*t2, a1, 0); // zero-extended divisor
+        asm.emit_i::<VirtualZeroExtendWord>(*t1, a0, 0); // zero-extended dividend
+        asm.emit_i::<VirtualZeroExtendWord>(*t2, a1, 0); // zero-extended divisor
 
         // zero-extend quotient for unsigned multiplication
-        asm.emit_i::<VirtualExtend>(*t3, *a2, 0); // zero-extended quotient
+        asm.emit_i::<VirtualZeroExtendWord>(*t3, *a2, 0); // zero-extended quotient
 
         // compute quotient * divisor (no overflow check needed for remainder!)
         asm.emit_r::<MUL>(*t0, *t3, *t2); // multiply zero-extended values
@@ -112,7 +113,7 @@ impl RISCVTrace for REMUW {
         asm.emit_b::<VirtualAssertValidUnsignedRemainder>(*a3, *t2, 0);
 
         // sign-extend result (per RISC-V spec for REMUW)
-        asm.emit_i::<VirtualSignExtend>(self.operands.rd, *a3, 0);
+        asm.emit_i::<VirtualSignExtendWord>(self.operands.rd, *a3, 0);
         asm.finalize()
     }
 }

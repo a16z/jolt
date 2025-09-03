@@ -13,7 +13,7 @@ use super::slli::SLLI;
 use super::srl::SRL;
 use super::virtual_assert_word_alignment::VirtualAssertWordAlignment;
 use super::virtual_lw::VirtualLW;
-use super::virtual_sign_extend::VirtualSignExtend;
+use super::virtual_sign_extend_word::VirtualSignExtendWord;
 use super::RAMRead;
 use super::{addi::ADDI, RV32IMInstruction};
 use crate::utils::virtual_registers::allocate_virtual_register;
@@ -86,7 +86,7 @@ impl LW {
         asm.emit_ld::<LD>(*v_dword, *v_dword_address, 0);
         asm.emit_i::<SLLI>(*v_shift, *v_address, 3);
         asm.emit_r::<SRL>(self.operands.rd, *v_dword, *v_shift);
-        asm.emit_i::<VirtualSignExtend>(self.operands.rd, self.operands.rd, 0);
+        asm.emit_i::<VirtualSignExtendWord>(self.operands.rd, self.operands.rd, 0);
         asm.finalize()
     }
 }

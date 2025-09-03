@@ -98,6 +98,10 @@ impl InstrAssembler {
             instr.set_inline_sequence_remaining(Some((len - i - 1) as u16));
         }
         self.sequence
+            .last_mut()
+            .expect("sequence should not be empty")
+            .set_is_compressed(self.is_compressed);
+        self.sequence
     }
 
     #[inline]
@@ -127,7 +131,7 @@ impl InstrAssembler {
                 rs2,
                 imm: 0,
             },
-            is_compressed: self.is_compressed,
+            is_compressed: false,
             inline_sequence_remaining: Some(0),
         }));
     }
@@ -151,7 +155,7 @@ impl InstrAssembler {
                 rs2: 0,
                 imm: imm as i128,
             },
-            is_compressed: self.is_compressed,
+            is_compressed: false,
             inline_sequence_remaining: Some(0),
         }));
     }
@@ -175,7 +179,7 @@ impl InstrAssembler {
                 rs2,
                 imm: imm as i128,
             },
-            is_compressed: self.is_compressed,
+            is_compressed: false,
             inline_sequence_remaining: Some(0),
         }));
     }
@@ -199,7 +203,7 @@ impl InstrAssembler {
                 rs2: 0,
                 imm: imm as i128,
             },
-            is_compressed: self.is_compressed,
+            is_compressed: false,
             inline_sequence_remaining: Some(0),
         }));
     }
@@ -223,7 +227,7 @@ impl InstrAssembler {
                 rs2,
                 imm: imm as i128,
             },
-            is_compressed: self.is_compressed,
+            is_compressed: false,
             inline_sequence_remaining: Some(0),
         }));
     }
@@ -243,7 +247,7 @@ impl InstrAssembler {
                 rs2: 0,
                 imm: imm as i128,
             },
-            is_compressed: self.is_compressed,
+            is_compressed: false,
             inline_sequence_remaining: Some(0),
         }));
     }
@@ -263,7 +267,7 @@ impl InstrAssembler {
                 rs2: 0,
                 imm: imm as i128,
             },
-            is_compressed: self.is_compressed,
+            is_compressed: false,
             inline_sequence_remaining: Some(0),
         }));
     }
@@ -287,7 +291,7 @@ impl InstrAssembler {
                 rs2: 0,
                 imm: imm as i128,
             },
-            is_compressed: self.is_compressed,
+            is_compressed: false,
             inline_sequence_remaining: Some(0),
         }));
     }
@@ -311,7 +315,7 @@ impl InstrAssembler {
                 rs2,
                 imm: 0,
             },
-            is_compressed: self.is_compressed,
+            is_compressed: false,
             inline_sequence_remaining: Some(0),
         }));
     }
@@ -334,7 +338,7 @@ impl InstrAssembler {
                 rs2: 0,
                 imm: imm as i128,
             },
-            is_compressed: self.is_compressed,
+            is_compressed: false,
             inline_sequence_remaining: Some(0),
         }));
     }

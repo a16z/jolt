@@ -6,7 +6,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::virtual_sign_extend::VirtualSignExtend;
+use super::virtual_sign_extend_word::VirtualSignExtendWord;
 use super::{
     format::format_i::FormatI, RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
 };
@@ -49,7 +49,7 @@ impl RISCVTrace for SLLIW {
 
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
         asm.emit_i::<VirtualMULI>(self.operands.rd, self.operands.rs1, 1 << shift);
-        asm.emit_i::<VirtualSignExtend>(self.operands.rd, self.operands.rd, 0);
+        asm.emit_i::<VirtualSignExtendWord>(self.operands.rd, self.operands.rd, 0);
         asm.finalize()
     }
 }
