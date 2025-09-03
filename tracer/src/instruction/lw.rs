@@ -13,7 +13,7 @@ use super::slli::SLLI;
 use super::srl::SRL;
 use super::virtual_assert_word_alignment::VirtualAssertWordAlignment;
 use super::virtual_lw::VirtualLW;
-use super::virtual_sign_extend::VirtualSignExtend;
+use super::virtual_sign_extend_word::VirtualSignExtendWord;
 use super::RAMRead;
 use super::{addi::ADDI, RV32IMInstruction};
 use crate::utils::virtual_registers::allocate_virtual_register;
@@ -63,7 +63,7 @@ impl RISCVTrace for LW {
 
 impl LW {
     fn inline_sequence_32(&self) -> Vec<RV32IMInstruction> {
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit32, false);
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit32);
         asm.emit_i::<VirtualLW>(
             self.operands.rd,
             self.operands.rs1,
@@ -79,14 +79,14 @@ impl LW {
         let v_dword = allocate_virtual_register();
         let v_shift = allocate_virtual_register();
 
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit64, false);
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit64);
         asm.emit_halign::<VirtualAssertWordAlignment>(self.operands.rs1, self.operands.imm);
         asm.emit_i::<ADDI>(*v_address, self.operands.rs1, self.operands.imm as u64);
         asm.emit_i::<ANDI>(*v_dword_address, *v_address, -8i64 as u64);
         asm.emit_ld::<LD>(*v_dword, *v_dword_address, 0);
         asm.emit_i::<SLLI>(*v_shift, *v_address, 3);
         asm.emit_r::<SRL>(self.operands.rd, *v_dword, *v_shift);
-        asm.emit_i::<VirtualSignExtend>(self.operands.rd, self.operands.rd, 0);
+        asm.emit_i::<VirtualSignExtendWord>(self.operands.rd, self.operands.rd, 0);
         asm.finalize()
     }
 }

@@ -107,7 +107,7 @@ impl RISCVTrace for DIV {
             Xlen::Bit64 => 63,
         };
 
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, false);
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
         // get advice
         asm.emit_j::<VirtualAdvice>(*a2, 0);
         asm.emit_j::<VirtualAdvice>(*a3, 0);

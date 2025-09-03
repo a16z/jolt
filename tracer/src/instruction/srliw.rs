@@ -9,7 +9,7 @@ use crate::{
 };
 
 use super::slli::SLLI;
-use super::virtual_sign_extend::VirtualSignExtend;
+use super::virtual_sign_extend_word::VirtualSignExtendWord;
 use super::{
     format::format_i::FormatI, RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
 };
@@ -46,7 +46,7 @@ impl RISCVTrace for SRLIW {
     fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
         let v_rs1 = allocate_virtual_register();
 
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, false);
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
         asm.emit_i::<SLLI>(*v_rs1, self.operands.rs1, 32);
         let (shift, len) = match xlen {
             Xlen::Bit32 => panic!("SRLIW is invalid in 32b mode"),
@@ -55,7 +55,7 @@ impl RISCVTrace for SRLIW {
         let ones = (1u128 << (len - shift)) - 1;
         let bitmask = (ones << shift) as u64;
         asm.emit_vshift_i::<VirtualSRLI>(self.operands.rd, *v_rs1, bitmask);
-        asm.emit_i::<VirtualSignExtend>(self.operands.rd, self.operands.rd, 0);
+        asm.emit_i::<VirtualSignExtendWord>(self.operands.rd, self.operands.rd, 0);
         asm.finalize()
     }
 }

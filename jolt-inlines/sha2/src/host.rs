@@ -2,17 +2,11 @@
 pub use crate::exec;
 pub use crate::trace_generator;
 
-#[cfg(feature = "host")]
 use jolt_inlines_common::constants;
-#[cfg(feature = "host")]
 use tracer::register_inline;
 
-#[cfg(feature = "save_trace")]
 use jolt_inlines_common::trace_writer::{write_inline_trace, InlineDescriptor, SequenceInputs};
-#[cfg(feature = "save_trace")]
-use tracer::emulator::cpu::Xlen;
 
-#[cfg(feature = "host")]
 pub fn init_inlines() -> Result<(), String> {
     register_inline(
         constants::INLINE_OPCODE,
@@ -35,7 +29,6 @@ pub fn init_inlines() -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(feature = "save_trace")]
 pub fn store_inlines() -> Result<(), String> {
     // Store SHA256 default inline trace
     let inline_info = InlineDescriptor::new(
@@ -48,18 +41,19 @@ pub fn store_inlines() -> Result<(), String> {
     let instructions = trace_generator::sha2_inline_sequence_builder(
         sequence_inputs.address,
         sequence_inputs.is_compressed,
-        Xlen::Bit64,
+        sequence_inputs.xlen,
         sequence_inputs.rs1,
         sequence_inputs.rs2,
         sequence_inputs.rs3,
     );
     write_inline_trace(
-        "sha256_trace.txt",
+        "sha256_trace.joltinline",
         &inline_info,
         &sequence_inputs,
         &instructions,
         false, // Don't append for the first one
-    )?;
+    )
+    .map_err(|e| e.to_string())?;
 
     // Store SHA256 init inline trace (append to the same file)
     let inline_info = InlineDescriptor::new(
@@ -72,30 +66,30 @@ pub fn store_inlines() -> Result<(), String> {
     let instructions = trace_generator::sha2_init_inline_sequence_builder(
         sequence_inputs.address,
         sequence_inputs.is_compressed,
-        Xlen::Bit64,
+        sequence_inputs.xlen,
         sequence_inputs.rs1,
         sequence_inputs.rs2,
         sequence_inputs.rs3,
     );
     write_inline_trace(
-        "sha256_trace.txt",
+        "sha256_trace.joltinline",
         &inline_info,
         &sequence_inputs,
         &instructions,
         true, // Append to the existing file
-    )?;
+    )
+    .map_err(|e| e.to_string())?;
 
     Ok(())
 }
 
-#[cfg(all(feature = "host", not(target_arch = "wasm32")))]
+#[cfg(not(target_arch = "wasm32"))]
 #[ctor::ctor]
 fn auto_register() {
     if let Err(e) = init_inlines() {
         eprintln!("Failed to register SHA256 inlines: {e}");
     }
 
-    #[cfg(feature = "save_trace")]
     if let Err(e) = store_inlines() {
         eprintln!("Failed to store SHA256 inline traces: {e}");
     }

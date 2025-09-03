@@ -56,7 +56,7 @@ impl RISCVTrace for AMOSWAPW {
         match xlen {
             Xlen::Bit32 => {
                 let v_rd = allocate_virtual_register();
-                let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, false);
+                let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
                 asm.emit_halign::<super::virtual_assert_word_alignment::VirtualAssertWordAlignment>(self.operands.rs1, 0);
                 asm.emit_i::<super::virtual_lw::VirtualLW>(*v_rd, self.operands.rs1, 0);
                 asm.emit_s::<super::virtual_sw::VirtualSW>(self.operands.rs1, self.operands.rs2, 0);
@@ -70,7 +70,7 @@ impl RISCVTrace for AMOSWAPW {
                 let v_word = allocate_virtual_register();
                 let v_shift = allocate_virtual_register();
                 let v_rd = allocate_virtual_register();
-                let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, false);
+                let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
                 asm.emit_halign::<super::virtual_assert_word_alignment::VirtualAssertWordAlignment>(self.operands.rs1, 0);
                 asm.emit_i::<super::andi::ANDI>(*v_dword_address, self.operands.rs1, -8i64 as u64);
                 asm.emit_ld::<super::ld::LD>(*v_dword, *v_dword_address, 0);
@@ -84,7 +84,7 @@ impl RISCVTrace for AMOSWAPW {
                 asm.emit_r::<super::and::AND>(*v_word, *v_word, *v_mask);
                 asm.emit_r::<super::xor::XOR>(*v_dword, *v_dword, *v_word);
                 asm.emit_s::<super::sd::SD>(*v_dword_address, *v_dword, 0);
-                asm.emit_i::<super::virtual_sign_extend::VirtualSignExtend>(
+                asm.emit_i::<super::virtual_sign_extend_word::VirtualSignExtendWord>(
                     self.operands.rd,
                     *v_rd,
                     0,

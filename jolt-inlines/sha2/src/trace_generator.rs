@@ -64,7 +64,7 @@ impl Sha256SequenceBuilder {
         initial: bool,
     ) -> Self {
         Sha256SequenceBuilder {
-            asm: InstrAssembler::new(address, is_compressed, xlen, true),
+            asm: InstrAssembler::new(address, is_compressed, xlen),
             round: 0,
             vr,
             operand_rs1,
@@ -367,21 +367,4 @@ pub fn sha2_init_inline_sequence_builder(
         true, // initial - uses BLOCK constants
     );
     builder.build()
-}
-
-#[cfg(test)]
-mod test {
-    use crate::trace_generator::sha2_inline_sequence_builder;
-
-    #[test]
-    fn print_sequence() {
-        sha2_inline_sequence_builder(
-            u64::default(),
-            false,
-            tracer::emulator::cpu::Xlen::Bit64,
-            10,
-            11,
-            12,
-        );
-    }
 }

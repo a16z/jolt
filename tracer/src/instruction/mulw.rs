@@ -7,8 +7,8 @@ use crate::{
 };
 
 use super::{
-    format::format_r::FormatR, mul::MUL, virtual_sign_extend::VirtualSignExtend, RISCVInstruction,
-    RISCVTrace, RV32IMCycle, RV32IMInstruction,
+    format::format_r::FormatR, mul::MUL, virtual_sign_extend_word::VirtualSignExtendWord,
+    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
 };
 
 declare_riscv_instr!(
@@ -42,9 +42,9 @@ impl RISCVTrace for MULW {
     }
 
     fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, false);
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
         asm.emit_r::<MUL>(self.operands.rd, self.operands.rs1, self.operands.rs2);
-        asm.emit_i::<VirtualSignExtend>(self.operands.rd, self.operands.rd, 0);
+        asm.emit_i::<VirtualSignExtendWord>(self.operands.rd, self.operands.rd, 0);
         asm.finalize()
     }
 }

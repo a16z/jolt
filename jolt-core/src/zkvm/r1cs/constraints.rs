@@ -138,7 +138,7 @@ macro_rules! r1cs_prod {
 }
 
 /// Number of uniform R1CS constraints
-pub const NUM_R1CS_CONSTRAINTS: usize = 28;
+pub const NUM_R1CS_CONSTRAINTS: usize = 27;
 
 /// Static table of all 28 R1CS uniform constraints.
 pub static UNIFORM_R1CS: [Constraint; NUM_R1CS_CONSTRAINTS] = [
@@ -323,18 +323,13 @@ pub static UNIFORM_R1CS: [Constraint; NUM_R1CS_CONSTRAINTS] = [
     //     }
     // }
     // Note that ShouldBranch and Jump instructions are mutually exclusive
-    r1cs_prod!(
-        ({ JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed) })
-            * ({ JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC) })
-            == ({ JoltR1CSInputs::CompressedDoNotUpdateUnexpPC })
-    ),
+    // And that DoNotUpdatePC and isCompressed are mutually exclusive
     r1cs_eq_conditional!(
         if { { 1i128 } - { JoltR1CSInputs::ShouldBranch } - { JoltR1CSInputs::OpFlags(CircuitFlags::Jump) } }
         => ( { JoltR1CSInputs::NextUnexpandedPC } )
            == ( { JoltR1CSInputs::UnexpandedPC } + { 4i128 }
                 - { 4 * JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC) }
-                - { 2 * JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed) }
-                + { 2 * JoltR1CSInputs::CompressedDoNotUpdateUnexpPC } )
+                - { 2 * JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed) } )
     ),
     // if Inline {
     //     assert!(NextPC == PC + 1)

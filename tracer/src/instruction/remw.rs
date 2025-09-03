@@ -15,8 +15,9 @@ use crate::{
 use super::{
     format::format_r::FormatR, virtual_advice::VirtualAdvice, virtual_assert_eq::VirtualAssertEQ,
     virtual_assert_valid_div0::VirtualAssertValidDiv0,
-    virtual_change_divisor_w::VirtualChangeDivisorW, virtual_sign_extend::VirtualSignExtend,
-    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
+    virtual_change_divisor_w::VirtualChangeDivisorW,
+    virtual_sign_extend_word::VirtualSignExtendWord, RISCVInstruction, RISCVTrace, RV32IMCycle,
+    RV32IMInstruction,
 };
 
 declare_riscv_instr!(
@@ -97,15 +98,15 @@ impl RISCVTrace for REMW {
         let t3 = allocate_virtual_register();
         let t4 = allocate_virtual_register();
         let t5 = allocate_virtual_register();
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, false);
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
 
         // get advice
         asm.emit_j::<VirtualAdvice>(*a2, 0);
         asm.emit_j::<VirtualAdvice>(*a3, 0);
 
         // sign-extend inputs to 32-bit values
-        asm.emit_i::<VirtualSignExtend>(*t4, a0, 0); // sign-extended dividend
-        asm.emit_i::<VirtualSignExtend>(*t5, a1, 0); // sign-extended divisor
+        asm.emit_i::<VirtualSignExtendWord>(*t4, a0, 0); // sign-extended dividend
+        asm.emit_i::<VirtualSignExtendWord>(*t5, a1, 0); // sign-extended divisor
 
         // handle special cases
         asm.emit_b::<VirtualAssertValidDiv0>(*t5, *a2, 0);
@@ -130,7 +131,7 @@ impl RISCVTrace for REMW {
         asm.emit_b::<VirtualAssertValidUnsignedRemainder>(*a3, *t1, 0);
 
         // sign-extend remainder result
-        asm.emit_i::<VirtualSignExtend>(self.operands.rd, *t3, 0);
+        asm.emit_i::<VirtualSignExtendWord>(self.operands.rd, *t3, 0);
         asm.finalize()
     }
 }

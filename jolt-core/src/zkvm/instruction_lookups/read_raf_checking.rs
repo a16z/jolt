@@ -841,8 +841,8 @@ mod tests {
             RV32IMCycle::VirtualSRAI(cycle) => cycle.random(rng).into(),
             RV32IMCycle::VirtualSRL(cycle) => cycle.random(rng).into(),
             RV32IMCycle::VirtualSRLI(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::VirtualExtend(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::VirtualSignExtend(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::VirtualZeroExtendWord(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::VirtualSignExtendWord(cycle) => cycle.random(rng).into(),
             RV32IMCycle::VirtualROTRI(cycle) => cycle.random(rng).into(),
             RV32IMCycle::VirtualROTRIW(cycle) => cycle.random(rng).into(),
             RV32IMCycle::VirtualChangeDivisor(cycle) => cycle.random(rng).into(),
@@ -1265,12 +1265,12 @@ mod tests {
 
     #[test]
     fn test_virtualextend() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualExtend(Default::default())));
+        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualZeroExtendWord(Default::default())));
     }
 
     #[test]
     fn test_virtualsignextend() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualSignExtend(Default::default())));
+        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualSignExtendWord(Default::default())));
     }
 
     #[test]

@@ -10,9 +10,9 @@ use jolt_inlines_common::constants;
 #[cfg(feature = "host")]
 use tracer::register_inline;
 
-#[cfg(feature = "save_trace")]
+#[cfg(feature = "host")]
 use jolt_inlines_common::trace_writer::{write_inline_trace, InlineDescriptor, SequenceInputs};
-#[cfg(feature = "save_trace")]
+#[cfg(feature = "host")]
 use tracer::emulator::cpu::Xlen;
 
 // Initialize and register inlines
@@ -31,7 +31,7 @@ pub fn init_inlines() -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(feature = "save_trace")]
+#[cfg(feature = "host")]
 pub fn store_inlines() -> Result<(), String> {
     let inline_info = InlineDescriptor::new(
         constants::bigint::mul256::NAME.to_string(),
@@ -46,15 +46,16 @@ pub fn store_inlines() -> Result<(), String> {
         Xlen::Bit64,
         sequence_inputs.rs1,
         sequence_inputs.rs2,
-        sequence_inputs.rd,
+        sequence_inputs.rs3,
     );
     write_inline_trace(
-        "bigint_mul256_trace.txt",
+        "bigint_mul256_trace.joltinline",
         &inline_info,
         &sequence_inputs,
         &instructions,
         false,
-    )?;
+    )
+    .map_err(|e| e.to_string())?;
 
     Ok(())
 }
@@ -67,7 +68,6 @@ fn auto_register() {
         eprintln!("Failed to register BIGINT256_MUL inlines: {e}");
     }
 
-    #[cfg(feature = "save_trace")]
     if let Err(e) = store_inlines() {
         eprintln!("Failed to store BIGINT256_MUL inline traces: {e}");
     }

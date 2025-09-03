@@ -56,13 +56,12 @@ pub enum JoltR1CSInputs {
     LookupOutput,     // Virtual (instruction rv)
     NextIsNoop,       // Virtual (spartan shift sumcheck)
     ShouldJump,
-    CompressedDoNotUpdateUnexpPC,
     OpFlags(CircuitFlags),
 }
 
 /// This const serves to define a canonical ordering over inputs (and thus indices
 /// for each input). This is needed for sumcheck.
-pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 42] = [
+pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 41] = [
     JoltR1CSInputs::LeftInstructionInput,
     JoltR1CSInputs::RightInstructionInput,
     JoltR1CSInputs::Product,
@@ -86,7 +85,6 @@ pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 42] = [
     JoltR1CSInputs::LookupOutput,
     JoltR1CSInputs::NextIsNoop,
     JoltR1CSInputs::ShouldJump,
-    JoltR1CSInputs::CompressedDoNotUpdateUnexpPC,
     JoltR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsRs1Value),
     JoltR1CSInputs::OpFlags(CircuitFlags::RightOperandIsRs2Value),
     JoltR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsPC),
@@ -109,7 +107,7 @@ pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 42] = [
 
 /// The subset of `ALL_R1CS_INPUTS` that are committed. The rest of
 /// the inputs are virtual polynomials.
-pub const COMMITTED_R1CS_INPUTS: [JoltR1CSInputs; 8] = [
+pub const COMMITTED_R1CS_INPUTS: [JoltR1CSInputs; 7] = [
     JoltR1CSInputs::LeftInstructionInput,
     JoltR1CSInputs::RightInstructionInput,
     JoltR1CSInputs::Product,
@@ -117,7 +115,6 @@ pub const COMMITTED_R1CS_INPUTS: [JoltR1CSInputs; 8] = [
     JoltR1CSInputs::WritePCtoRD,
     JoltR1CSInputs::ShouldBranch,
     JoltR1CSInputs::ShouldJump,
-    JoltR1CSInputs::CompressedDoNotUpdateUnexpPC,
 ];
 
 impl JoltR1CSInputs {
@@ -161,25 +158,24 @@ impl JoltR1CSInputs {
             JoltR1CSInputs::LookupOutput => 20,
             JoltR1CSInputs::NextIsNoop => 21,
             JoltR1CSInputs::ShouldJump => 22,
-            JoltR1CSInputs::CompressedDoNotUpdateUnexpPC => 23,
-            JoltR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsRs1Value) => 24,
-            JoltR1CSInputs::OpFlags(CircuitFlags::RightOperandIsRs2Value) => 25,
-            JoltR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsPC) => 26,
-            JoltR1CSInputs::OpFlags(CircuitFlags::RightOperandIsImm) => 27,
-            JoltR1CSInputs::OpFlags(CircuitFlags::AddOperands) => 28,
-            JoltR1CSInputs::OpFlags(CircuitFlags::SubtractOperands) => 29,
-            JoltR1CSInputs::OpFlags(CircuitFlags::MultiplyOperands) => 30,
-            JoltR1CSInputs::OpFlags(CircuitFlags::Load) => 31,
-            JoltR1CSInputs::OpFlags(CircuitFlags::Store) => 32,
-            JoltR1CSInputs::OpFlags(CircuitFlags::Jump) => 33,
-            JoltR1CSInputs::OpFlags(CircuitFlags::Branch) => 34,
-            JoltR1CSInputs::OpFlags(CircuitFlags::WriteLookupOutputToRD) => 35,
-            JoltR1CSInputs::OpFlags(CircuitFlags::InlineSequenceInstruction) => 36,
-            JoltR1CSInputs::OpFlags(CircuitFlags::Assert) => 37,
-            JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC) => 38,
-            JoltR1CSInputs::OpFlags(CircuitFlags::Advice) => 39,
-            JoltR1CSInputs::OpFlags(CircuitFlags::IsNoop) => 40,
-            JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed) => 41,
+            JoltR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsRs1Value) => 23,
+            JoltR1CSInputs::OpFlags(CircuitFlags::RightOperandIsRs2Value) => 24,
+            JoltR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsPC) => 25,
+            JoltR1CSInputs::OpFlags(CircuitFlags::RightOperandIsImm) => 26,
+            JoltR1CSInputs::OpFlags(CircuitFlags::AddOperands) => 27,
+            JoltR1CSInputs::OpFlags(CircuitFlags::SubtractOperands) => 28,
+            JoltR1CSInputs::OpFlags(CircuitFlags::MultiplyOperands) => 29,
+            JoltR1CSInputs::OpFlags(CircuitFlags::Load) => 30,
+            JoltR1CSInputs::OpFlags(CircuitFlags::Store) => 31,
+            JoltR1CSInputs::OpFlags(CircuitFlags::Jump) => 32,
+            JoltR1CSInputs::OpFlags(CircuitFlags::Branch) => 33,
+            JoltR1CSInputs::OpFlags(CircuitFlags::WriteLookupOutputToRD) => 34,
+            JoltR1CSInputs::OpFlags(CircuitFlags::InlineSequenceInstruction) => 35,
+            JoltR1CSInputs::OpFlags(CircuitFlags::Assert) => 36,
+            JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC) => 37,
+            JoltR1CSInputs::OpFlags(CircuitFlags::Advice) => 38,
+            JoltR1CSInputs::OpFlags(CircuitFlags::IsNoop) => 39,
+            JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed) => 40,
         }
     }
 }
@@ -198,9 +194,6 @@ impl TryFrom<&JoltR1CSInputs> for CommittedPolynomial {
             JoltR1CSInputs::WritePCtoRD => Ok(CommittedPolynomial::WritePCtoRD),
             JoltR1CSInputs::ShouldBranch => Ok(CommittedPolynomial::ShouldBranch),
             JoltR1CSInputs::ShouldJump => Ok(CommittedPolynomial::ShouldJump),
-            JoltR1CSInputs::CompressedDoNotUpdateUnexpPC => {
-                Ok(CommittedPolynomial::CompressedDoNotUpdateUnexpPC)
-            }
             _ => Err("{value} is not a committed polynomial"),
         }
     }
@@ -383,12 +376,6 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> WitnessRowAccessor<F>
                 };
                 F::from_u8((is_jump && !next_noop) as u8)
             }
-            JoltR1CSInputs::CompressedDoNotUpdateUnexpPC => {
-                let flags = get(t).instruction().circuit_flags();
-                let v = (flags[CircuitFlags::DoNotUpdateUnexpandedPC as usize] as u8)
-                    * (flags[CircuitFlags::IsCompressed as usize] as u8);
-                F::from_u8(v)
-            }
             JoltR1CSInputs::OpFlags(flag) => {
                 F::from_u8(get(t).instruction().circuit_flags()[flag as usize] as u8)
             }
@@ -514,10 +501,6 @@ mod tests {
                 (JoltR1CSInputs::LookupOutput, JoltR1CSInputs::LookupOutput) => true,
                 (JoltR1CSInputs::NextIsNoop, JoltR1CSInputs::NextIsNoop) => true,
                 (JoltR1CSInputs::ShouldJump, JoltR1CSInputs::ShouldJump) => true,
-                (
-                    JoltR1CSInputs::CompressedDoNotUpdateUnexpPC,
-                    JoltR1CSInputs::CompressedDoNotUpdateUnexpPC,
-                ) => true,
                 (JoltR1CSInputs::OpFlags(flag1), JoltR1CSInputs::OpFlags(flag2)) => {
                     self.const_eq_circuit_flags(*flag1, *flag2)
                 }

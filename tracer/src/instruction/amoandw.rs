@@ -57,7 +57,7 @@ impl RISCVTrace for AMOANDW {
         let v_rd = allocate_virtual_register();
         let v_rs2 = allocate_virtual_register();
 
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, false);
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
 
         match xlen {
             Xlen::Bit32 => {

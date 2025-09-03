@@ -53,7 +53,7 @@ impl RISCVTrace for MULH {
         let v_2 = allocate_virtual_register();
         let v_3 = allocate_virtual_register();
 
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, false);
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
         asm.emit_i::<VirtualMovsign>(*v_sx, self.operands.rs1, 0);
         asm.emit_i::<VirtualMovsign>(*v_sy, self.operands.rs2, 0);
         asm.emit_r::<MULHU>(*v_0, self.operands.rs1, self.operands.rs2);

@@ -69,7 +69,7 @@ impl RISCVTrace for AMOMAXD {
         let v_sel_rd = allocate_virtual_register();
         let v_tmp = allocate_virtual_register();
 
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, false);
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
         asm.emit_ld::<LD>(*v_rd, self.operands.rs1, 0);
         asm.emit_r::<SLT>(*v_sel_rs2, *v_rd, self.operands.rs2);
         asm.emit_i::<XORI>(*v_sel_rd, *v_sel_rs2, 1);

@@ -64,7 +64,7 @@ impl RISCVTrace for SW {
 
 impl SW {
     fn inline_sequence_32(&self) -> Vec<RV32IMInstruction> {
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit32, false);
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit32);
         asm.emit_s::<VirtualSW>(self.operands.rs1, self.operands.rs2, self.operands.imm);
         asm.finalize()
     }
@@ -76,7 +76,7 @@ impl SW {
         let v_shift = allocate_virtual_register();
         let v_mask = allocate_virtual_register();
         let v_word = allocate_virtual_register();
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit64, false);
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit64);
 
         asm.emit_halign::<VirtualAssertWordAlignment>(self.operands.rs1, self.operands.imm);
         asm.emit_i::<ADDI>(*v_address, self.operands.rs1, self.operands.imm as u64);

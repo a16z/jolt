@@ -7,7 +7,7 @@ use crate::{
     emulator::cpu::{Cpu, Xlen},
 };
 
-use super::virtual_sign_extend::VirtualSignExtend;
+use super::virtual_sign_extend_word::VirtualSignExtendWord;
 use super::{
     format::format_r::FormatR, mul::MUL, virtual_pow2_w::VirtualPow2W, RISCVInstruction,
     RISCVTrace, RV32IMCycle, RV32IMInstruction,
@@ -45,10 +45,10 @@ impl RISCVTrace for SLLW {
     fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
         let v_pow2 = allocate_virtual_register();
 
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, false);
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
         asm.emit_i::<VirtualPow2W>(*v_pow2, self.operands.rs2, 0);
         asm.emit_r::<MUL>(self.operands.rd, self.operands.rs1, *v_pow2);
-        asm.emit_i::<VirtualSignExtend>(self.operands.rd, self.operands.rd, 0);
+        asm.emit_i::<VirtualSignExtendWord>(self.operands.rd, self.operands.rd, 0);
         asm.finalize()
     }
 }
