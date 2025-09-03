@@ -68,7 +68,6 @@ fn auto_register() {
         eprintln!("Failed to register BIGINT256_MUL inlines: {e}");
     }
 
-    #[cfg(feature = "host")]
     if let Err(e) = store_inlines() {
         eprintln!("Failed to store BIGINT256_MUL inline traces: {e}");
     }
