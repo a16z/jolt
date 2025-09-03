@@ -6,7 +6,6 @@ description = "Common constants and utilities for Jolt inline implementations"
 
 [features]
 default = []
-save_trace = ["dep:tracer"]
 
 [dependencies]
-tracer = { path = "../../tracer", optional = true }
+tracer = { path = "../../tracer" }

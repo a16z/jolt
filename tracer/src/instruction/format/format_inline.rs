@@ -1,34 +1,11 @@
-//! FormatInline - Custom instruction format for Jolt inline operations
+//! Custom format for Jolt inline operations (not a RISC-V instruction format).
 //!
-//! This is not a RISC-V instruction format, but rather a custom format defined by the Jolt team
-//! specifically for inline operations.
+//! FormatInline writes results to memory pointed by `rs3` (or rs1/rs2), but never
+//! modifies the register values themselves - only the memory they reference. This differs from
+//! FormatR instructions which write to the destination register.
 //!
-//! ## Requirements for Inlines
-//!
-//! Inline operations have two key requirements:
-//! 1. **Risc-V registers must not be changed at all** - Unlike regular instructions, inline operations
-//!    cannot modify any risc-v registers, including the destination register (rd).
-//! 2. **Memory operations are allowed** - Inlines can read from addresses pointed to by registers
-//!    and write their results back to memory addresses. While registers remain unchanged, memory
-//!    locations can be modified.
-//!
-//! ## Memory Operations with rs3
-//!
-//! FormatInline uses `rs3` to specify where the result of the inline operation should be written.
-//! Instead of writing a result back to the `rd` register (as traditional instructions do), the
-//! result is written to the memory location that `rs3` points to. However, this is not a strict
-//! requirement - an inline operation might alternatively write its result to memory locations
-//! pointed to by `rs1` or `rs2`, depending on the specific inline's implementation.
-//!
-//! ## Relationship to FormatR
-//!
-//! FormatInline is very similar to FormatR instructions, with one key difference: we use `rs3`
-//! instead of `rd`. This reflects the fact that inline operations don't have a destination
-//! register in the traditional sense.
-//!
-//! In program SDKs where inline assembly is called, to avoid introducing a new format to the
-//! `asm!` macro, FormatR is still used for inline instructions in the assembly code. However,
-//! these instructions are parsed as FormatInline instructions by the tracer.
+//! Note: SDKs use FormatR in assembly code to be compatible with the `core::arch::asm` macro,
+//! but are parsed as FormatInline instructions by the tracer.
 
 use crate::emulator::cpu::Cpu;
 use serde::{Deserialize, Serialize};

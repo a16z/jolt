@@ -368,20 +368,3 @@ pub fn sha2_init_inline_sequence_builder(
     );
     builder.build()
 }
-
-#[cfg(test)]
-mod test {
-    use crate::trace_generator::sha2_inline_sequence_builder;
-
-    #[test]
-    fn print_sequence() {
-        sha2_inline_sequence_builder(
-            u64::default(),
-            false,
-            tracer::emulator::cpu::Xlen::Bit64,
-            10,
-            11,
-            12,
-        );
-    }
-}

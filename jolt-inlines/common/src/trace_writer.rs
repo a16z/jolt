@@ -17,11 +17,12 @@
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
 use std::path::Path;
+use tracer::emulator::cpu::Xlen;
 use tracer::instruction::RV32IMInstruction;
 
 // Default constants for SequenceInputs
 pub const DEFAULT_RAM_START_ADDRESS: u64 = 0x80000000;
-pub const DEFAULT_XLEN: u32 = 64;
+pub const DEFAULT_XLEN: Xlen = Xlen::Bit64;
 pub const DEFAULT_RS1: u8 = 10;
 pub const DEFAULT_RS2: u8 = 11;
 pub const DEFAULT_RS3: u8 = 12;
@@ -56,14 +57,14 @@ pub struct SequenceInputs {
     /// Whether the instruction is compressed
     pub is_compressed: bool,
     /// CPU architecture width (32 or 64)
-    pub xlen: u32,
+    pub xlen: Xlen,
     pub rs1: u8,
     pub rs2: u8,
     pub rs3: u8,
 }
 
 impl SequenceInputs {
-    pub fn new(address: u64, is_compressed: bool, xlen: u32, rs1: u8, rs2: u8, rs3: u8) -> Self {
+    pub fn new(address: u64, is_compressed: bool, xlen: Xlen, rs1: u8, rs2: u8, rs3: u8) -> Self {
         Self {
             address,
             is_compressed,
@@ -131,12 +132,17 @@ pub fn write_inline_trace(
         inline_info.name, inline_info.opcode, inline_info.funct3, inline_info.funct7
     )?;
 
+    let xlen = match sequence_inputs.xlen {
+        Xlen::Bit32 => "32",
+        Xlen::Bit64 => "64",
+    };
+
     writeln!(
         file,
         "{:#010x}, {}, {}, {}, {}, {}",
         sequence_inputs.address,
         sequence_inputs.is_compressed,
-        sequence_inputs.xlen,
+        xlen,
         sequence_inputs.rs1,
         sequence_inputs.rs2,
         sequence_inputs.rs3
