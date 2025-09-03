@@ -43,7 +43,7 @@ impl BigIntMulSequenceBuilder {
         operand_rs3: u8,
     ) -> Self {
         BigIntMulSequenceBuilder {
-            asm: InstrAssembler::new(address, is_compressed, xlen, true),
+            asm: InstrAssembler::new(address, is_compressed, xlen),
             vr,
             operand_rs1,
             operand_rs2,

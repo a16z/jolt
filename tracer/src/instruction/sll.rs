@@ -45,7 +45,7 @@ impl RISCVTrace for SLL {
     fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
         let v_pow2 = allocate_virtual_register();
 
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, false);
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
         asm.emit_i::<VirtualPow2>(*v_pow2, self.operands.rs2, 0);
         asm.emit_r::<MUL>(self.operands.rd, self.operands.rs1, *v_pow2);
         asm.finalize()

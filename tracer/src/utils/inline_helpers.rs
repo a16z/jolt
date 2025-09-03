@@ -59,8 +59,6 @@ pub enum Value {
     Imm(u64),
     Reg(u8),
 }
-use common::constants::REGISTER_COUNT;
-use common::constants::RISCV_REGISTER_COUNT;
 use Value::{Imm, Reg};
 
 /// Convenience assembler for building a sequence of `RV32IMInstruction`s.
@@ -79,74 +77,22 @@ pub struct InstrAssembler {
     pub xlen: Xlen,
     /// Accumulated instruction buffer.
     sequence: Vec<RV32IMInstruction>,
-    /// Indicates whether this instruction uses the FormatInline instruction format.
-    ///
-    /// FormatInline is a custom format used for inline operations that guarantees
-    /// no RISC-V registers are modified. When `is_format_inline` is true:
-    /// - We enforce that no RISC-V registers can be written to during execution
-    /// - All virtual register values are reset to 0 in the finalize step to ensure
-    ///   the no-register-modification invariant is maintained
-    is_format_inline: bool,
 }
 
 impl InstrAssembler {
     /// Create a new assembler with an empty instruction buffer.
-    pub fn new(address: u64, is_compressed: bool, xlen: Xlen, is_format_inline: bool) -> Self {
+    pub fn new(address: u64, is_compressed: bool, xlen: Xlen) -> Self {
         Self {
             address,
             is_compressed,
             xlen,
             sequence: Vec::new(),
-            is_format_inline,
-        }
-    }
-
-    /// Validates that for FormatInline instructions, rd is not a RISC-V register (0-31).
-    ///
-    /// FormatInline instructions must not modify RISC-V registers, so rd must be
-    /// a virtual register (>= 32) if it's used at all.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `is_format_inline` is true and `rd` is in the range [0, 32).
-    #[inline]
-    fn validate_rd_for_inline(&self, rd: u8) {
-        if self.is_format_inline && rd < RISCV_REGISTER_COUNT {
-            panic!(
-                "FormatInline instruction attempted to write to RISC-V register {rd}. \
-                FormatInline instructions must not modify RISC-V registers (0-31). \
-                Use virtual registers (>= 32) instead."
-            );
         }
     }
 
     /// Finalize the instruction buffer: back-fill `inline_sequence_remaining`
     /// and return ownership of the underlying `Vec`.
-    ///
-    /// For FormatInline instructions, this also adds instructions to zero out
-    /// all virtual registers (32-127).
     pub fn finalize(mut self) -> Vec<RV32IMInstruction> {
-        // If this is a FormatInline sequence, add instructions to zero out all virtual registers
-        if self.is_format_inline {
-            // Zero out all virtual registers from 32 to 127
-            // ADDI rd, x0, 0 sets rd = 0
-            for rd in RISCV_REGISTER_COUNT..REGISTER_COUNT {
-                let zero_instr = ADDI::from(NormalizedInstruction {
-                    address: self.address as usize,
-                    operands: NormalizedOperands {
-                        rd,
-                        rs1: 0, // x0 is always 0 in RISC-V
-                        rs2: 0,
-                        imm: 0,
-                    },
-                    is_compressed: self.is_compressed,
-                    inline_sequence_remaining: Some(0),
-                });
-                self.sequence.extend(zero_instr.inline_sequence(self.xlen));
-            }
-        }
-
-        // Update inline_sequence_remaining for all instructions
         let len = self.sequence.len();
         for (i, instr) in self.sequence.iter_mut().enumerate() {
             instr.set_inline_sequence_remaining(Some((len - i - 1) as u16));
@@ -173,7 +119,6 @@ impl InstrAssembler {
     ) where
         RISCVCycle<Op>: Into<RV32IMCycle>,
     {
-        self.validate_rd_for_inline(rd);
         self.add_to_sequence(Op::from(NormalizedInstruction {
             address: self.address as usize,
             operands: NormalizedOperands {
@@ -198,7 +143,6 @@ impl InstrAssembler {
     ) where
         RISCVCycle<Op>: Into<RV32IMCycle>,
     {
-        self.validate_rd_for_inline(rd);
         self.add_to_sequence(Op::from(NormalizedInstruction {
             address: self.address as usize,
             operands: NormalizedOperands {
@@ -247,7 +191,6 @@ impl InstrAssembler {
     ) where
         RISCVCycle<Op>: Into<RV32IMCycle>,
     {
-        self.validate_rd_for_inline(rd);
         self.add_to_sequence(Op::from(NormalizedInstruction {
             address: self.address as usize,
             operands: NormalizedOperands {
@@ -292,7 +235,6 @@ impl InstrAssembler {
     where
         RISCVCycle<Op>: Into<RV32IMCycle>,
     {
-        self.validate_rd_for_inline(rd);
         self.add_to_sequence(Op::from(NormalizedInstruction {
             address: self.address as usize,
             operands: NormalizedOperands {
@@ -313,7 +255,6 @@ impl InstrAssembler {
     where
         RISCVCycle<Op>: Into<RV32IMCycle>,
     {
-        self.validate_rd_for_inline(rd);
         self.add_to_sequence(Op::from(NormalizedInstruction {
             address: self.address as usize,
             operands: NormalizedOperands {
@@ -338,7 +279,6 @@ impl InstrAssembler {
     ) where
         RISCVCycle<Op>: Into<RV32IMCycle>,
     {
-        self.validate_rd_for_inline(rd);
         self.add_to_sequence(Op::from(NormalizedInstruction {
             address: self.address as usize,
             operands: NormalizedOperands {
@@ -363,7 +303,6 @@ impl InstrAssembler {
     ) where
         RISCVCycle<Op>: Into<RV32IMCycle>,
     {
-        self.validate_rd_for_inline(rd);
         self.add_to_sequence(Op::from(NormalizedInstruction {
             address: self.address as usize,
             operands: NormalizedOperands {
@@ -537,51 +476,8 @@ mod tests {
     use super::*;
 
     #[test]
-    #[should_panic(expected = "FormatInline instruction attempted to write to RISC-V register")]
-    fn test_format_inline_rd_validation_panics() {
-        // Create an assembler with is_format_inline = true
-        let mut asm = InstrAssembler::new(0, false, Xlen::Bit64, true);
-
-        // This should panic because rd=5 is a RISC-V register (< 32)
-        asm.emit_r::<ADD>(5, 10, 11);
-    }
-
-    #[test]
-    fn test_format_inline_rd_validation_allows_virtual_registers() {
-        // Create an assembler with is_format_inline = true
-        let mut asm = InstrAssembler::new(0, false, Xlen::Bit64, true);
-
-        // This should NOT panic because rd=32 is a virtual register (>= 32)
-        asm.emit_r::<ADD>(32, 10, 11);
-
-        // Verify we can finalize without issues
-        let instructions = asm.finalize();
-        assert!(!instructions.is_empty());
-
-        // Verify that the finalized sequence includes zeroing instructions for all virtual registers
-        // We should have the original ADD instruction plus 96 ADDI instructions (for registers 32-127)
-        assert!(
-            instructions.len() > 96,
-            "Should include zeroing instructions for virtual registers"
-        );
-    }
-
-    #[test]
-    fn test_non_format_inline_allows_riscv_registers() {
-        // Create an assembler with is_format_inline = false
-        let mut asm = InstrAssembler::new(0, false, Xlen::Bit64, false);
-
-        // This should NOT panic because is_format_inline is false
-        asm.emit_r::<ADD>(5, 10, 11);
-
-        // Verify we can finalize without issues
-        let instructions = asm.finalize();
-        assert!(!instructions.is_empty());
-    }
-
-    #[test]
     fn test_rotl64_immediate_paths() {
-        let mut asm = InstrAssembler::new(0, false, Xlen::Bit64, false);
+        let mut asm = InstrAssembler::new(0, false, Xlen::Bit64);
         let dest = 0;
         let vectors: &[(u64, u32, u64)] = &[
             (0x0000000000000001, 1, 0x0000000000000002),

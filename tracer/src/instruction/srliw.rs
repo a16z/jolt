@@ -46,7 +46,7 @@ impl RISCVTrace for SRLIW {
     fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
         let v_rs1 = allocate_virtual_register();
 
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, false);
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
         asm.emit_i::<SLLI>(*v_rs1, self.operands.rs1, 32);
         let (shift, len) = match xlen {
             Xlen::Bit32 => panic!("SRLIW is invalid in 32b mode"),

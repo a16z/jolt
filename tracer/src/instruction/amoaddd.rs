@@ -60,7 +60,7 @@ impl RISCVTrace for AMOADDD {
         let v_rs2 = allocate_virtual_register();
         let v_rd = allocate_virtual_register();
 
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, false);
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
         asm.emit_ld::<LD>(*v_rd, self.operands.rs1, 0);
         asm.emit_r::<ADD>(*v_rs2, *v_rd, self.operands.rs2);
         asm.emit_s::<SD>(self.operands.rs1, *v_rs2, 0);

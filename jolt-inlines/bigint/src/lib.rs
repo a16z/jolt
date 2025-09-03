@@ -46,7 +46,7 @@ pub fn store_inlines() -> Result<(), String> {
         Xlen::Bit64,
         sequence_inputs.rs1,
         sequence_inputs.rs2,
-        sequence_inputs.rd,
+        sequence_inputs.rs3,
     );
     write_inline_trace(
         "bigint_mul256_trace.joltinline",
@@ -54,7 +54,8 @@ pub fn store_inlines() -> Result<(), String> {
         &sequence_inputs,
         &instructions,
         false,
-    )?;
+    )
+    .map_err(|e| e.to_string())?;
 
     Ok(())
 }

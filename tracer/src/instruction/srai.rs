@@ -49,7 +49,7 @@ impl RISCVTrace for SRAI {
         let ones = (1u128 << (len - shift)) - 1;
         let bitmask = (ones << shift) as u64;
 
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, false);
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
         asm.emit_vshift_i::<VirtualSRAI>(self.operands.rd, self.operands.rs1, bitmask);
         asm.finalize()
     }

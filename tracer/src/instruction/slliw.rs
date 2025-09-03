@@ -47,7 +47,7 @@ impl RISCVTrace for SLLIW {
         };
         let shift = self.operands.imm & mask;
 
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, false);
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
         asm.emit_i::<VirtualMULI>(self.operands.rd, self.operands.rs1, 1 << shift);
         asm.emit_i::<VirtualSignExtend>(self.operands.rd, self.operands.rd, 0);
         asm.finalize()

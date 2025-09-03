@@ -67,7 +67,7 @@ impl LWU {
         let v_dword = allocate_virtual_register();
         let v_shift = allocate_virtual_register();
 
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, false);
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
         asm.emit_halign::<VirtualAssertWordAlignment>(self.operands.rs1, self.operands.imm);
         asm.emit_i::<ADDI>(*v_address, self.operands.rs1, self.operands.imm as u64);
         asm.emit_i::<ANDI>(*v_dword_address, *v_address, -8i64 as u64);

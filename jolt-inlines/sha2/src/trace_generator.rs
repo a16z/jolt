@@ -64,7 +64,7 @@ impl Sha256SequenceBuilder {
         initial: bool,
     ) -> Self {
         Sha256SequenceBuilder {
-            asm: InstrAssembler::new(address, is_compressed, xlen, true),
+            asm: InstrAssembler::new(address, is_compressed, xlen),
             round: 0,
             vr,
             operand_rs1,
