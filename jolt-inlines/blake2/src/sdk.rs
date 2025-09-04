@@ -219,14 +219,14 @@ mod digest_tests {
                 _ => unreachable!(),
             };
             let mut input = [0u8; 1200];
-            for i in 0..1200 {
-                input[i] = pattern_fn(i);
+            for (i, item) in input.iter_mut().enumerate() {
+                *item = pattern_fn(i);
             }
             for length in 0..=1200 {
                 use blake2::Digest as RefDigest;
                 assert_eq!(
                     Blake2b::digest(&input),
-                    Into::<[u8; 64]>::into(blake2::Blake2b512::digest(&input)),
+                    Into::<[u8; 64]>::into(blake2::Blake2b512::digest(input)),
                     "Blake2b mismatch with {pattern_name} pattern at length {length}"
                 );
             }
@@ -356,8 +356,8 @@ mod streaming_tests {
             };
 
             let mut input = [0u8; 1200];
-            for i in 0..1200 {
-                input[i] = pattern_fn(i);
+            for (i, item) in input.iter_mut().enumerate() {
+                *item = pattern_fn(i);
             }
 
             for length in 0..=1200 {
@@ -493,7 +493,7 @@ mod streaming_tests {
         }
         assert_eq!(
             hasher.finalize(),
-            Into::<[u8; 64]>::into(blake2::Blake2b512::digest(&full_data)),
+            Into::<[u8; 64]>::into(blake2::Blake2b512::digest(full_data)),
             "Multiple updates should produce same result as single update"
         );
     }

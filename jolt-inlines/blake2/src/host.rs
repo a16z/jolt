@@ -1,11 +1,10 @@
 //! Host-side implementation and registration.
 pub use crate::exec;
 pub use crate::trace_generator;
-use tracer::register_inline;
-use tracer::emulator::cpu::Xlen;
-use jolt_inlines_common::trace_writer::{write_inline_trace, InlineDescriptor, SequenceInputs};
 use jolt_inlines_common::constants;
-
+use jolt_inlines_common::trace_writer::{write_inline_trace, InlineDescriptor, SequenceInputs};
+use tracer::emulator::cpu::Xlen;
+use tracer::register_inline;
 
 pub fn init_inlines() -> Result<(), String> {
     register_inline(

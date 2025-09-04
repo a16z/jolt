@@ -1,13 +1,11 @@
-
+use crate::{CHAINING_VALUE_SIZE, IV, MSG_BLOCK_SIZE};
 /// ------------------------------------------------------------------------------------------------
 /// Rust implementation of Blake2b-256 on the host.
 /// ------------------------------------------------------------------------------------------------
-
 use tracer::{
     emulator::cpu::Cpu,
     instruction::{inline::INLINE, RISCVInstruction},
 };
-use crate::{IV, CHAINING_VALUE_SIZE, MSG_BLOCK_SIZE};
 
 /// Load words from memory into the provided slice
 /// Returns an error if any memory access fails

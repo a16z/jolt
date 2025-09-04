@@ -1,8 +1,6 @@
-
 /// ------------------------------------------------------------------------------------------------
 /// Rust implementation of Blake2b-256 on the host.
 /// ------------------------------------------------------------------------------------------------
-
 use tracer::{
     emulator::cpu::Cpu,
     instruction::{inline::INLINE, RISCVInstruction},
@@ -10,10 +8,14 @@ use tracer::{
 
 // Blake2b initialization vector (IV)
 const BLAKE2B_IV: [u64; 8] = [
-    0x6a09e667f3bcc908, 0xbb67ae8584caa73b,
-    0x3c6ef372fe94f82b, 0xa54ff53a5f1d36f1,
-    0x510e527fade682d1, 0x9b05688c2b3e6c1f,
-    0x1f83d9abfb41bd6b, 0x5be0cd19137e2179,
+    0x6a09e667f3bcc908,
+    0xbb67ae8584caa73b,
+    0x3c6ef372fe94f82b,
+    0xa54ff53a5f1d36f1,
+    0x510e527fade682d1,
+    0x9b05688c2b3e6c1f,
+    0x1f83d9abfb41bd6b,
+    0x5be0cd19137e2179,
 ];
 
 // Blake2b sigma permutation table for 12 rounds

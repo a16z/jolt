@@ -4,11 +4,12 @@
 // to reduce code duplication in the test suite. It relies on the generic
 // `CpuTestHarness` for the underlying emulator setup.
 
+use crate::trace_generator::NEEDED_REGISTERS;
+use jolt_inlines_common::constants::{blake2, INLINE_OPCODE};
 use tracer::emulator::mmu::DRAM_BASE;
 use tracer::instruction::format::format_inline::FormatInline;
 use tracer::instruction::{inline::INLINE, RISCVInstruction, RISCVTrace};
 use tracer::utils::test_harness::CpuTestHarness;
-use crate::trace_generator::NEEDED_REGISTERS;
 
 // BLAKE2 constants
 pub const HASH_STATE_SIZE: usize = 8; // 8 u64 words
@@ -60,13 +61,13 @@ impl Blake2CpuHarness {
 
         // Load state into memory
         self.harness.set_memory(Self::STATE_ADDR, state);
-        
+
         // Load message block into memory
         self.harness.set_memory(Self::MESSAGE_ADDR, message);
-        
+
         // Load counter
         self.harness.set_memory(Self::COUNTER_ADDR, &[counter]);
-        
+
         // Load final flag
         let flag_value = if is_final { 1u64 } else { 0u64 };
         self.harness.set_memory(Self::FLAG_ADDR, &[flag_value]);
@@ -79,7 +80,6 @@ impl Blake2CpuHarness {
         state
     }
 
-    /// Construct a canonical BLAKE2 instruction
     pub fn instruction() -> INLINE {
         INLINE {
             address: 0,
@@ -88,10 +88,9 @@ impl Blake2CpuHarness {
                 rs2: Self::RS2,
                 rs3: 0,
             },
-            // BLAKE2 inline opcode values
-            opcode: 0x0B,
-            funct3: 0x00,
-            funct7: 0x02,
+            opcode: INLINE_OPCODE,
+            funct3: blake2::FUNCT3,
+            funct7: blake2::FUNCT7,
             inline_sequence_remaining: None,
             is_compressed: false,
         }
@@ -104,30 +103,27 @@ impl Default for Blake2CpuHarness {
     }
 }
 
-/// Helper module for BLAKE2-specific assertions
 pub mod blake2_verify {
     use super::*;
 
-    /// Print hash state in hexadecimal format
     pub fn print_state_hex(label: &str, state: &[u64; HASH_STATE_SIZE]) {
-        println!("{}: ", label);
+        println!("{label}: ");
         for (i, &word) in state.iter().enumerate() {
-            println!("  [{}]: {:#018x}", i, word);
+            println!("  [{i}]: {word:#018x}");
         }
     }
 
-    /// Assert two hash states are identical
     pub fn assert_states_equal(
         expected: &[u64; HASH_STATE_SIZE],
         actual: &[u64; HASH_STATE_SIZE],
         test_name: &str,
     ) {
         if expected != actual {
-            println!("\n❌ {} FAILED", test_name);
+            println!("\n❌ {test_name} FAILED");
             println!("\nOutputs:");
             print_state_hex("  Expected", expected);
             print_state_hex("  Actual  ", actual);
-            panic!("{} failed: results do not match", test_name);
+            panic!("{test_name} failed: results do not match");
         }
     }
 
@@ -142,17 +138,14 @@ pub mod blake2_verify {
         let mut harness_exec = Blake2CpuHarness::new();
         let mut harness_trace = Blake2CpuHarness::new();
 
-        // Set up both CPUs identically
         harness_exec.load_blake2_data(initial_state, message, counter, is_final);
         harness_trace.load_blake2_data(initial_state, message, counter, is_final);
 
         let instruction = Blake2CpuHarness::instruction();
 
-        // Execute both paths
         instruction.execute(&mut harness_exec.harness.cpu, &mut ());
         instruction.trace(&mut harness_trace.harness.cpu, None);
 
-        // Compare results
         let exec_result = harness_exec.read_state();
         let trace_result = harness_trace.read_state();
 

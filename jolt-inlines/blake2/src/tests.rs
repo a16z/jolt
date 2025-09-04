@@ -1,17 +1,3 @@
-#[cfg(test)]
-mod tests {
-
-    use super::TestVectors;
-    use crate::test_utils::blake2_verify;
-
-    #[test]
-    fn test_blake2_permutation_default() {
-        let (mut state, message, expected_state, counter, is_final) = TestVectors::get_default_test();
-        state[0] ^= 0x01010000 ^ (0u64 << 8) ^ 64u64;
-        blake2_verify::assert_exec_trace_equiv(&state, &message, counter, is_final, &expected_state);
-    }
-}
-
 pub struct TestVectors;
 impl TestVectors {
     /// Get the default test case
@@ -19,8 +5,8 @@ impl TestVectors {
         [u64; 8],  // initial state
         [u64; 16], // message block
         [u64; 8],  // expected state
-        u64, // counter
-        bool, // is_final
+        u64,       // counter
+        bool,      // is_final
     ) {
         // Initial state - Blake2b initialization vector
         let state = [
@@ -51,5 +37,26 @@ impl TestVectors {
         ];
 
         (state, message, expected_state, 3u64, true)
+    }
+}
+
+#[cfg(test)]
+mod blake2_tests {
+
+    use super::TestVectors;
+    use crate::test_utils::blake2_verify;
+
+    #[test]
+    fn test_blake2_permutation_default() {
+        let (mut state, message, expected_state, counter, is_final) =
+            TestVectors::get_default_test();
+        state[0] ^= 0x01010000 ^ 64u64;
+        blake2_verify::assert_exec_trace_equiv(
+            &state,
+            &message,
+            counter,
+            is_final,
+            &expected_state,
+        );
     }
 }

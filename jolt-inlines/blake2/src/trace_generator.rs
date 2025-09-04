@@ -14,19 +14,17 @@
 //!   - "G function" = core mixing function that updates 4 state words using 2 message words
 
 use tracer::emulator::cpu::Xlen;
-use tracer::instruction::sub::SUB;
-use tracer::instruction::lui::LUI;
 use tracer::instruction::ld::LD;
+use tracer::instruction::lui::LUI;
 use tracer::instruction::sd::SD;
+use tracer::instruction::sub::SUB;
 #[allow(unused_imports)]
-use tracer::instruction::virtual_xor_rot::{VirtualXORROT16, VirtualXORROT24, VirtualXORROT32, VirtualXORROT63};
+use tracer::instruction::virtual_xor_rot::{
+    VirtualXORROT16, VirtualXORROT24, VirtualXORROT32, VirtualXORROT63,
+};
 use tracer::instruction::xor::XOR;
 use tracer::instruction::RV32IMInstruction;
-use tracer::utils::inline_helpers::{
-    InstrAssembler,
-    Value::Reg,
-    Value::Imm,
-};
+use tracer::utils::inline_helpers::{InstrAssembler, Value::Imm, Value::Reg};
 use tracer::utils::virtual_registers::allocate_virtual_register_for_inline;
 
 /// Blake2b initialization vector (IV)
@@ -187,10 +185,14 @@ impl Blake2SequenceBuilder {
         }
 
         // v[8..15] = IV[0..7]
-        for i in 0..WORKING_STATE_SIZE - HASH_STATE_SIZE {
+        for (i, value) in BLAKE2B_IV
+            .iter()
+            .enumerate()
+            .take(WORKING_STATE_SIZE - HASH_STATE_SIZE)
+        {
             // Load Blake2b IV constants
             let rd = self.vr[VR_WORKING_STATE_START + HASH_STATE_SIZE + i];
-            self.asm.emit_u::<LUI>(rd, BLAKE2B_IV[i]);
+            self.asm.emit_u::<LUI>(rd, *value);
         }
 
         // v[12] = v[12] ^ t (counter low)
@@ -208,7 +210,8 @@ impl Blake2SequenceBuilder {
         // Use the formula: mask = (0 - is_final) to convert 1 to 0xFFFFFFFFFFFFFFFF and 0 to 0
         // First, negate is_final (0 - is_final)
         // Using 0 as x0, which is always 0 in risc-v
-        self.asm.emit_r::<SUB>(self.vr[VR_TEMP], 0, self.vr[VR_IS_FINAL]);
+        self.asm
+            .emit_r::<SUB>(self.vr[VR_TEMP], 0, self.vr[VR_IS_FINAL]);
         // XOR v[14] with the mask: inverts all bits if is_final=1, leaves unchanged if is_final=0
         self.asm.xor(
             Reg(self.vr[VR_WORKING_STATE_START + 14]),
@@ -337,7 +340,7 @@ impl Blake2SequenceBuilder {
         // }
 
         self.asm.emit_r::<XOR>(rd, rs1, rs2);
-                match amount {
+        match amount {
             RotationAmount::ROT32 => {
                 self.asm.rotr64(Reg(rd), 32, rd);
             }

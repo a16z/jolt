@@ -22,7 +22,7 @@ pub fn main() {
     // let mut full_hash = [0u8; 64];
     // full_hash[0..32].copy_from_slice(&first_half);
     // full_hash[32..64].copy_from_slice(&second_half);
-    
+
     println!("output: {}", hex::encode(first_half));
     println!("valid: {is_valid}");
 }

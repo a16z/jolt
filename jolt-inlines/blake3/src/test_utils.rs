@@ -4,11 +4,12 @@
 // to reduce code duplication in the test suite. It relies on the generic
 // `CpuTestHarness` for the underlying emulator setup.
 
+use crate::trace_generator::NEEDED_REGISTERS;
+use jolt_inlines_common::constants::{blake3, INLINE_OPCODE};
 use tracer::emulator::mmu::DRAM_BASE;
 use tracer::instruction::format::format_inline::FormatInline;
-use tracer::instruction::{inline::INLINE, RISCVInstruction, RISCVTrace};
+use tracer::instruction::inline::INLINE;
 use tracer::utils::test_harness::CpuTestHarness;
-use crate::trace_generator::NEEDED_REGISTERS;
 
 // BLAKE3 constants
 pub const HASH_STATE_SIZE: usize = 8; // 8 u32 words for chaining value
@@ -63,33 +64,45 @@ impl Blake3CpuHarness {
 
         // Load chaining value into memory (as u32 words)
         for (i, &word) in chaining_value.iter().enumerate() {
-            self.harness.cpu.mmu
+            self.harness
+                .cpu
+                .mmu
                 .store_word(Self::CHAINING_VALUE_ADDR.wrapping_add((i * 4) as u64), word)
                 .expect("BLAKE3: Failed to store chaining value to memory");
         }
-        
+
         // Load message block into memory (as u32 words)
         for (i, &word) in message.iter().enumerate() {
-            self.harness.cpu.mmu
+            self.harness
+                .cpu
+                .mmu
                 .store_word(Self::MESSAGE_ADDR.wrapping_add((i * 4) as u64), word)
                 .expect("BLAKE3: Failed to store message to memory");
         }
-        
+
         // Load counter (2 u32 words)
-        self.harness.cpu.mmu
+        self.harness
+            .cpu
+            .mmu
             .store_word(Self::COUNTER_ADDR, counter[0])
             .expect("BLAKE3: Failed to store counter[0] to memory");
-        self.harness.cpu.mmu
+        self.harness
+            .cpu
+            .mmu
             .store_word(Self::COUNTER_ADDR.wrapping_add(4), counter[1])
             .expect("BLAKE3: Failed to store counter[1] to memory");
-        
+
         // Load block length
-        self.harness.cpu.mmu
+        self.harness
+            .cpu
+            .mmu
             .store_word(Self::BLOCK_LEN_ADDR, block_len)
             .expect("BLAKE3: Failed to store block_len to memory");
-        
+
         // Load flags
-        self.harness.cpu.mmu
+        self.harness
+            .cpu
+            .mmu
             .store_word(Self::FLAGS_ADDR, flags)
             .expect("BLAKE3: Failed to store flags to memory");
     }
@@ -98,7 +111,10 @@ impl Blake3CpuHarness {
     pub fn read_chaining_value(&mut self) -> [u32; HASH_STATE_SIZE] {
         let mut chaining_value = [0u32; HASH_STATE_SIZE];
         for (i, word) in chaining_value.iter_mut().enumerate() {
-            *word = self.harness.cpu.mmu
+            *word = self
+                .harness
+                .cpu
+                .mmu
                 .load_word(Self::CHAINING_VALUE_ADDR.wrapping_add((i * 4) as u64))
                 .expect("BLAKE3: Failed to load chaining value from memory")
                 .0;
@@ -110,7 +126,10 @@ impl Blake3CpuHarness {
     pub fn read_working_state(&mut self) -> [u32; WORKING_STATE_SIZE] {
         let mut state = [0u32; WORKING_STATE_SIZE];
         for (i, word) in state.iter_mut().enumerate() {
-            *word = self.harness.cpu.mmu
+            *word = self
+                .harness
+                .cpu
+                .mmu
                 .load_word(Self::CHAINING_VALUE_ADDR.wrapping_add((i * 4) as u64))
                 .expect("BLAKE3: Failed to load working state from memory")
                 .0;
@@ -118,7 +137,6 @@ impl Blake3CpuHarness {
         state
     }
 
-    /// Construct a canonical BLAKE3 instruction
     pub fn instruction() -> INLINE {
         INLINE {
             address: 0,
@@ -127,10 +145,9 @@ impl Blake3CpuHarness {
                 rs2: Self::RS2,
                 rs3: 0,
             },
-            // BLAKE3 inline opcode values (same as Blake2 for now)
-            opcode: 0x0B,
-            funct3: 0x00,
-            funct7: 0x03, // Using 0x03 to distinguish Blake3 from Blake2 (0x02)
+            opcode: INLINE_OPCODE,
+            funct3: blake3::FUNCT3,
+            funct7: blake3::FUNCT7,
             inline_sequence_remaining: None,
             is_compressed: false,
         }
@@ -140,111 +157,5 @@ impl Blake3CpuHarness {
 impl Default for Blake3CpuHarness {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-/// Helper module for BLAKE3-specific assertions
-pub mod blake3_verify {
-    use super::*;
-
-    /// Print state in hexadecimal format (for u32 arrays)
-    pub fn print_state_hex(label: &str, state: &[u32]) {
-        println!("{}: ", label);
-        for (i, &word) in state.iter().enumerate() {
-            println!("  [{}]: {:#010x}", i, word);
-        }
-    }
-
-    /// Assert two hash states are identical (8-word chaining values)
-    pub fn assert_chaining_values_equal(
-        expected: &[u32; HASH_STATE_SIZE],
-        actual: &[u32; HASH_STATE_SIZE],
-        test_name: &str,
-    ) {
-        if expected != actual {
-            println!("\n❌ {} FAILED", test_name);
-            println!("\nOutputs:");
-            print_state_hex("  Expected", expected);
-            print_state_hex("  Actual  ", actual);
-            panic!("{} failed: chaining values do not match", test_name);
-        }
-    }
-
-    /// Assert two working states are identical (16-word states)
-    pub fn assert_working_states_equal(
-        expected: &[u32; WORKING_STATE_SIZE],
-        actual: &[u32; WORKING_STATE_SIZE],
-        test_name: &str,
-    ) {
-        if expected != actual {
-            println!("\n❌ {} FAILED", test_name);
-            println!("\nOutputs:");
-            print_state_hex("  Expected", expected);
-            print_state_hex("  Actual  ", actual);
-            panic!("{} failed: working states do not match", test_name);
-        }
-    }
-
-    /// Assert that direct `exec` and virtual-sequence `trace` paths match
-    pub fn assert_exec_trace_equiv(
-        chaining_value: &[u32; HASH_STATE_SIZE],
-        message: &[u32; MESSAGE_BLOCK_SIZE],
-        counter: &[u32; 2],
-        block_len: u32,
-        flags: u32,
-        expected_state: &[u32; WORKING_STATE_SIZE],
-    ) {
-        let mut harness_exec = Blake3CpuHarness::new();
-        let mut harness_trace = Blake3CpuHarness::new();
-
-        // Set up both CPUs identically
-        harness_exec.load_blake3_data(chaining_value, message, counter, block_len, flags);
-        harness_trace.load_blake3_data(chaining_value, message, counter, block_len, flags);
-
-        let instruction = Blake3CpuHarness::instruction();
-
-        // Execute both paths
-        instruction.execute(&mut harness_exec.harness.cpu, &mut ());
-        instruction.trace(&mut harness_trace.harness.cpu, None);
-
-        // Compare results (read the full working state)
-        let exec_result = harness_exec.read_working_state();
-        let trace_result = harness_trace.read_working_state();
-
-        assert_working_states_equal(expected_state, &exec_result, "Exec result vs Expected");
-        assert_working_states_equal(&exec_result, &trace_result, "Exec vs Trace equivalence");
-        assert_working_states_equal(expected_state, &trace_result, "Trace result vs Expected");
-
-    }
-
-    /// Assert that direct `exec` and virtual-sequence `trace` paths match (for chaining value output)
-    pub fn assert_exec_trace_equiv_chaining(
-        chaining_value: &[u32; HASH_STATE_SIZE],
-        message: &[u32; MESSAGE_BLOCK_SIZE],
-        counter: &[u32; 2],
-        block_len: u32,
-        flags: u32,
-        expected_chaining: &[u32; HASH_STATE_SIZE],
-    ) {
-        let mut harness_exec = Blake3CpuHarness::new();
-        let mut harness_trace = Blake3CpuHarness::new();
-
-        // Set up both CPUs identically
-        harness_exec.load_blake3_data(chaining_value, message, counter, block_len, flags);
-        harness_trace.load_blake3_data(chaining_value, message, counter, block_len, flags);
-
-        let instruction = Blake3CpuHarness::instruction();
-
-        // Execute both paths
-        instruction.execute(&mut harness_exec.harness.cpu, &mut ());
-        instruction.trace(&mut harness_trace.harness.cpu, None);
-
-        // Compare results (read the chaining value)
-        let exec_result = harness_exec.read_chaining_value();
-        let trace_result = harness_trace.read_chaining_value();
-
-        assert_chaining_values_equal(expected_chaining, &exec_result, "Exec chaining vs Expected");
-        assert_chaining_values_equal(expected_chaining, &trace_result, "Trace chaining vs Expected");
-        assert_chaining_values_equal(&exec_result, &trace_result, "Exec vs Trace chaining equivalence");
     }
 }

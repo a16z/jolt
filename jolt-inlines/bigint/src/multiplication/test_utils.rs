@@ -6,6 +6,7 @@
 
 use super::{INPUT_LIMBS, OUTPUT_LIMBS};
 use crate::multiplication::trace_generator::NEEDED_REGISTERS;
+use jolt_inlines_common::constants;
 use tracer::emulator::mmu::DRAM_BASE;
 use tracer::instruction::format::format_inline::FormatInline;
 use tracer::instruction::{inline::INLINE, RISCVInstruction, RISCVTrace};
@@ -78,10 +79,9 @@ impl BigIntCpuHarness {
                 rs2: Self::RS2,
                 rs3: Self::RS3,
             },
-            // BIGINT256_MUL has opcode 0x0B, funct3 0x00, funct7 0x03
             opcode: constants::INLINE_OPCODE,
             funct3: constants::bigint::mul256::FUNCT3,
-            funct7: constants::bigint::mul256::FUNCT7,  // Updated to match new constant value (was 0x02)
+            funct7: constants::bigint::mul256::FUNCT7, // Updated to match new constant value (was 0x02)
             inline_sequence_remaining: None,
             is_compressed: false,
         }

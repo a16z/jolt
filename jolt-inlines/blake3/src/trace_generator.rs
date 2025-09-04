@@ -7,21 +7,18 @@
 //!   - "Round" = single application of G function mixing to the working state
 //!   - "G function" = core mixing function that updates 4 state words using 2 message words
 
-use crate::{NUM_ROUNDS, IV, MSG_SCHEDULE};
+use crate::{IV, MSG_SCHEDULE, NUM_ROUNDS};
 use tracer::emulator::cpu::Xlen;
-use tracer::instruction::lw::LW;
 use tracer::instruction::lui::LUI;
+use tracer::instruction::lw::LW;
 use tracer::instruction::sw::SW;
 #[allow(unused_imports)]
-use tracer::instruction::virtual_xor_rot::{VirtualXORROT16, VirtualXORROT24, VirtualXORROT32, VirtualXORROT63};
+use tracer::instruction::virtual_xor_rot::{
+    VirtualXORROT16, VirtualXORROT24, VirtualXORROT32, VirtualXORROT63,
+};
 use tracer::instruction::xor::XOR;
 use tracer::instruction::RV32IMInstruction;
-use tracer::utils::inline_helpers::Value;
-use tracer::utils::inline_helpers::{
-    InstrAssembler,
-    Value::Reg,
-    Value::Imm,
-};
+use tracer::utils::inline_helpers::{InstrAssembler, Value::Imm, Value::Reg};
 use tracer::utils::virtual_registers::allocate_virtual_register_for_inline;
 
 pub const NEEDED_REGISTERS: u8 = 45;
@@ -104,9 +101,17 @@ impl Blake3SequenceBuilder {
             COUNTER_SIZE,
         );
         // Load the input bytes length from memory - stored after the counter
-        self.asm.emit_ld::<LW>(self.vr[VR_INPUT_BYTES_LEN_START], self.operand_rs2, (MESSAGE_BLOCK_SIZE + COUNTER_SIZE) as i64 * 4);
+        self.asm.emit_ld::<LW>(
+            self.vr[VR_INPUT_BYTES_LEN_START],
+            self.operand_rs2,
+            (MESSAGE_BLOCK_SIZE + COUNTER_SIZE) as i64 * 4,
+        );
         // Load the final block flag from memory - stored after the input bytes length
-        self.asm.emit_ld::<LW>(self.vr[VR_FLAG_START], self.operand_rs2, (MESSAGE_BLOCK_SIZE + COUNTER_SIZE + 1) as i64 * 4);
+        self.asm.emit_ld::<LW>(
+            self.vr[VR_FLAG_START],
+            self.operand_rs2,
+            (MESSAGE_BLOCK_SIZE + COUNTER_SIZE + 1) as i64 * 4,
+        );
 
         // 2. Initialize the internal state v[0..15]
         self.initialize_internal_state();
@@ -135,7 +140,11 @@ impl Blake3SequenceBuilder {
         count: usize,
     ) {
         (0..count).for_each(|i| {
-            self.asm.emit_ld::<LW>(self.vr[vr_start + i], base_register, (memory_offset_start + i) as i64 * 4);
+            self.asm.emit_ld::<LW>(
+                self.vr[vr_start + i],
+                base_register,
+                (memory_offset_start + i) as i64 * 4,
+            );
         });
     }
 
@@ -143,12 +152,17 @@ impl Blake3SequenceBuilder {
     fn initialize_internal_state(&mut self) {
         // v[0..7] = h[0..7] (current hash state)
         for i in 0..CHAINING_VALUE_SIZE {
-            self.asm.xor(Reg(self.vr[VR_CHAINING_VALUE_START + i]), Imm(0), self.vr[VR_STATE_START + i]);
+            self.asm.xor(
+                Reg(self.vr[VR_CHAINING_VALUE_START + i]),
+                Imm(0),
+                self.vr[VR_STATE_START + i],
+            );
         }
 
         // v[8..11] = IV[0..3] (first 4 words of initialization vector)
         for i in 0..4 {
-            self.asm.emit_u::<LUI>(self.vr[CHAINING_VALUE_SIZE + i], IV[i] as u64);
+            self.asm
+                .emit_u::<LUI>(self.vr[CHAINING_VALUE_SIZE + i], IV[i] as u64);
         }
         // v[12..15] = counter values, input length, and flags
         self.asm.xor(
@@ -202,27 +216,27 @@ impl Blake3SequenceBuilder {
         let temp1 = self.vr[VR_TEMP];
 
         // v[a] = v[a] + v[b] + m[x]
-         self.asm.add(Reg(va), Reg(vb), temp1);
-         self.asm.add(Reg(temp1), Reg(mx), va);
+        self.asm.add(Reg(va), Reg(vb), temp1);
+        self.asm.add(Reg(temp1), Reg(mx), va);
 
         // // v[d] = rotr32(v[d] ^ v[a], 16)
         self.xor_rotate(vd, va, RotationAmount::ROT16, vd);
 
         // v[c] = v[c] + v[d]
-         self.asm.add(Reg(vc), Reg(vd), vc);
+        self.asm.add(Reg(vc), Reg(vd), vc);
 
         // v[b] = rotr32(v[b] ^ v[c], 12)
         self.xor_rotate(vb, vc, RotationAmount::ROT12, vb);
 
         // v[a] = v[a] + v[b] + m[y]
-         self.asm.add(Reg(va), Reg(vb), temp1);
-         self.asm.add(Reg(temp1), Reg(my), va);
+        self.asm.add(Reg(va), Reg(vb), temp1);
+        self.asm.add(Reg(temp1), Reg(my), va);
 
         // v[d] = rotr32(v[d] ^ v[a], 8)
         self.xor_rotate(vd, va, RotationAmount::ROT8, vd);
 
         // v[c] = v[c] + v[d]
-         self.asm.add(Reg(vc), Reg(vd), vc);
+        self.asm.add(Reg(vc), Reg(vd), vc);
 
         // v[b] = rotr32(v[b] ^ v[c], 7)
         self.xor_rotate(vb, vc, RotationAmount::ROT7, vb);
@@ -256,7 +270,11 @@ impl Blake3SequenceBuilder {
     /// Blake3 compression outputs an 8-word chaining value
     fn store_state(&mut self) {
         for i in 0..STATE_SIZE {
-            self.asm.emit_s::<SW>(self.operand_rs1, self.vr[VR_STATE_START + i], (i as i64) * 4);
+            self.asm.emit_s::<SW>(
+                self.operand_rs1,
+                self.vr[VR_STATE_START + i],
+                (i as i64) * 4,
+            );
         }
     }
 
@@ -278,7 +296,7 @@ impl Blake3SequenceBuilder {
         // }
 
         self.asm.emit_r::<XOR>(rd, rs1, rs2);
-                match amount {
+        match amount {
             RotationAmount::ROT16 => {
                 self.asm.rotri32(Reg(rd), 16, rd);
             }
@@ -315,4 +333,119 @@ pub fn blake3_inline_sequence_builder(
     let builder =
         Blake3SequenceBuilder::new(address, is_compressed, xlen, vr, operand_rs1, operand_rs2);
     builder.build()
+}
+
+#[cfg(test)]
+mod test_sequence_builder {
+    use crate::test_utils::Blake3CpuHarness;
+    use crate::test_utils::{HASH_STATE_SIZE, MESSAGE_BLOCK_SIZE, WORKING_STATE_SIZE};
+    use tracer::instruction::RISCVTrace;
+
+    fn generate_default_input() -> [u32; 16] {
+        [
+            0x03020100, 0x07060504, 0x0B0A0908, 0x0F0E0D0C, 0x13121110, 0x17161514, 0x1B1A1918,
+            0x1F1E1D1C, 0x23222120, 0x27262524, 0x2B2A2928, 0x2F2E2D2C, 0x33323130, 0x37363534,
+            0x3B3A3938, 0x3F3E3D3C,
+        ]
+    }
+
+    /// Generate random input values for testing
+    fn generate_random_input() -> [u32; 16] {
+        use rand::Rng;
+        let mut rng = rand::thread_rng();
+
+        let mut input = [0u32; 16];
+        for i in 0..16 {
+            input[i] = rng.gen();
+        }
+        input
+    }
+
+    fn compute_reference_blake3_hash(input: &[u32; 16]) -> [u32; 8] {
+        // Convert message words to bytes for blake3 hasher
+        let message_bytes: Vec<u8> = input.iter().flat_map(|w| w.to_le_bytes()).collect();
+        let hash = blake3::hash(&message_bytes);
+        let expected_state: [u32; 8] = hash
+            .as_bytes()
+            .chunks_exact(4)
+            .take(8)
+            .map(|chunk| u32::from_le_bytes(chunk.try_into().unwrap()))
+            .collect::<Vec<_>>()
+            .try_into()
+            .unwrap();
+        expected_state
+    }
+
+    fn generate_trace_result(
+        chaining_value: &[u32; HASH_STATE_SIZE],
+        message: &[u32; MESSAGE_BLOCK_SIZE],
+        counter: &[u32; 2],
+        block_len: u32,
+        flags: u32,
+    ) -> [u32; 8] {
+        let mut harness_trace = Blake3CpuHarness::new();
+        harness_trace.load_blake3_data(chaining_value, message, counter, block_len, flags);
+        let instruction = Blake3CpuHarness::instruction();
+        instruction.trace(&mut harness_trace.harness.cpu, None);
+        let trace_result = harness_trace.read_working_state();
+        (&trace_result[0..WORKING_STATE_SIZE / 2])
+            .try_into()
+            .unwrap()
+    }
+
+    /// Assert that trace and execution results match and are correct
+    pub fn assert_trace_hash_equiv(
+        chaining_value: &[u32; HASH_STATE_SIZE],
+        message: &[u32; MESSAGE_BLOCK_SIZE],
+        counter: &[u32; 2],
+        block_len: u32,
+        flags: u32,
+        trace_result: &[u32; WORKING_STATE_SIZE / 2],
+        expected_state: &[u32; WORKING_STATE_SIZE / 2],
+    ) {
+        assert_eq!(
+            expected_state, trace_result,
+            "\n❌ BLAKE3 Trace Verification Failed!\n\
+            Chaining Value: {:08x?}\n\
+            Message: {:08x?}\n\
+            Counter: [{:#010x}, {:#010x}]\n\
+            Block Length: {} (0x{:08x})\n\
+            Flags: {:#010x}",
+            chaining_value, message, counter[0], counter[1], block_len, block_len, flags,
+        );
+    }
+
+    /// Helper function to test blake3 compression with given input
+    fn verify_blake3_compression(message_words: [u32; 16]) {
+        let expected_state = compute_reference_blake3_hash(&message_words);
+
+        // Counter values (2 u32 words)
+        let counter = [0u32, 0u32]; // 64-bit counter split into two 32-bit words
+                                    // Block length and flags
+        let block_len = 64u32; // Full 64-byte block
+        let flags = 1u32 | 2u32 | 8u32; // CHUNK_START | CHUNK_END | ROOT
+
+        let trace_result =
+            generate_trace_result(&crate::IV, &message_words, &counter, block_len, flags);
+
+        // Use assert_trace_hash_equiv to verify that the exec and trace paths match
+        assert_trace_hash_equiv(
+            &crate::IV,
+            &message_words,
+            &counter,
+            block_len,
+            flags,
+            &trace_result,
+            &expected_state,
+        );
+    }
+
+    #[test]
+    fn test_trace_result_equals_blake3_compress_reference() {
+        verify_blake3_compression(generate_default_input());
+
+        for _ in 0..10000 {
+            verify_blake3_compression(generate_random_input());
+        }
+    }
 }
