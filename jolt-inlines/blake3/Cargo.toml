@@ -1,11 +1,11 @@
 [package]
-name = "jolt-inlines-blake2"
+name = "jolt-inlines-blake3"
 version = "0.1.0"
 edition = "2021"
-description = "BLAKE2 inline implementations for Jolt VM"
+description = "BLAKE3 inline implementations for Jolt VM"
 
 [features]
-default = []
+default = ["dep:tracer"]
 host = ["dep:ctor", "dep:tracer", "dep:jolt-inlines-common"]
 
 [dependencies]
@@ -15,5 +15,4 @@ jolt-inlines-common = { path = "../common", optional = true }
 
 [dev-dependencies]
 hex-literal = "0.4.1"
-blake2 = "0.10"
 tracer = { path = "../../tracer", features = ["test-utils"] }

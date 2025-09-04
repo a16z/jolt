@@ -79,9 +79,9 @@ impl BigIntCpuHarness {
                 rs3: Self::RS3,
             },
             // BIGINT256_MUL has opcode 0x0B, funct3 0x00, funct7 0x03
-            opcode: 0x0B,
-            funct3: 0x00,
-            funct7: 0x03,  // Updated to match new constant value (was 0x02)
+            opcode: constants::INLINE_OPCODE,
+            funct3: constants::bigint::mul256::FUNCT3,
+            funct7: constants::bigint::mul256::FUNCT7,  // Updated to match new constant value (was 0x02)
             inline_sequence_remaining: None,
             is_compressed: false,
         }
