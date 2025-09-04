@@ -103,7 +103,7 @@ impl Sha256SequenceBuilder {
             let src = self.vr(*ch);
             self.asm.emit_s::<SW>(self.operand_rs2, src, (i as i64) * 4);
         }
-        self.asm.finalize_inline(NEEDED_REGISTERS.try_into().unwrap())
+        self.asm.finalize_inline(NEEDED_REGISTERS)
     }
 
     /// Adds IV to the final hash value to produce output

@@ -141,7 +141,8 @@ impl Keccak256SequenceBuilder {
         self.store_state();
 
         // 4. Finalize assembler and return instruction sequence.
-        self.asm.finalize_inline(NEEDED_REGISTERS.try_into().unwrap())
+        self.asm
+            .finalize_inline(NEEDED_REGISTERS.try_into().unwrap())
     }
 
     #[cfg(test)]

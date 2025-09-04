@@ -143,7 +143,8 @@ impl InstrAssembler {
     /// Validates that rd is an inline virtual register (not RISC-V or reserved virtual registers).
     #[inline]
     fn is_valide_virtual_rd(virtual_rd: u8) -> bool {
-        virtual_rd == 0 || virtual_rd >= RISCV_REGISTER_COUNT + VIRTUAL_INSTRUCTION_RESERVED_REGISTER_COUNT
+        virtual_rd == 0
+            || virtual_rd >= RISCV_REGISTER_COUNT + VIRTUAL_INSTRUCTION_RESERVED_REGISTER_COUNT
     }
 
     #[inline]

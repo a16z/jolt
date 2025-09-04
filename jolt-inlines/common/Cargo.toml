@@ -9,3 +9,7 @@ default = []
 
 [dependencies]
 tracer = { path = "../../tracer" }
+
+[dev-dependencies]
+tempfile = "3"
+jolt-inlines-keccak256 = { path = "../keccak256", features = ["host"] }

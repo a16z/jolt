@@ -100,7 +100,8 @@ impl BigIntMulSequenceBuilder {
                 .emit_s::<SD>(self.operand_rs3, self.s(i), i as i64 * 8);
         }
 
-        self.asm.finalize_inline(NEEDED_REGISTERS.try_into().unwrap())
+        self.asm
+            .finalize_inline(NEEDED_REGISTERS.try_into().unwrap())
     }
 
     /// Implements the MUL-ACC pattern: A[i] × B[j] → R[k] where k = i+j
