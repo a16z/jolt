@@ -505,7 +505,7 @@ where
     }
 }
 
-// #[derive(Clone, Debug)]
+#[derive(Clone, Debug)]
 pub struct HyperKZGState<'a, P: Pairing> {
     acc: P::G1,
     prover_key: &'a KZGProverKey<P>,
