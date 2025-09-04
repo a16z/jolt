@@ -22,7 +22,7 @@ use tracer::utils::inline_helpers::{
     InstrAssembler,
     Value::{Imm, Reg},
 };
-use tracer::utils::virtual_registers::allocate_virtual_register;
+use tracer::utils::virtual_registers::allocate_virtual_register_for_inline;
 
 use crate::{Keccak256State, NUM_LANES};
 
@@ -73,11 +73,11 @@ const ROTATION_OFFSETS: [[u32; 5]; 5] = [
 /// - `vr[60..64]`: A 5-lane temporary buffer for the current row in `chi`.
 /// - `vr[65..66]`: General-purpose scratch registers for intermediate values.
 /// - `vr[67..95]`: Unused, allocated for padding to meet the power-of-two requirement.
-pub(crate) const NEEDED_REGISTERS: usize = 96;
+pub(crate) const NEEDED_REGISTERS: u8 = 80;
 struct Keccak256SequenceBuilder {
     asm: InstrAssembler,
     round: u32,
-    vr: [u8; NEEDED_REGISTERS],
+    vr: [u8; NEEDED_REGISTERS as usize],
     operand_rs1: u8,
     _operand_rs2: u8,
 }
@@ -111,12 +111,12 @@ impl Keccak256SequenceBuilder {
         address: u64,
         is_compressed: bool,
         xlen: Xlen,
-        vr: [u8; NEEDED_REGISTERS],
+        vr: [u8; NEEDED_REGISTERS as usize],
         operand_rs1: u8,
         operand_rs2: u8,
     ) -> Self {
         Keccak256SequenceBuilder {
-            asm: InstrAssembler::new(address, is_compressed, xlen),
+            asm: InstrAssembler::new_inline(address, is_compressed, xlen),
             round: 0,
             vr,
             operand_rs1,
@@ -141,7 +141,7 @@ impl Keccak256SequenceBuilder {
         self.store_state();
 
         // 4. Finalize assembler and return instruction sequence.
-        self.asm.finalize()
+        self.asm.finalize_inline(NEEDED_REGISTERS)
     }
 
     #[cfg(test)]
@@ -149,7 +149,8 @@ impl Keccak256SequenceBuilder {
     fn build_up_to_step(mut self, target_round: u32, target_step: &str) -> Vec<RV32IMInstruction> {
         // Override is_format_inline to false for testing purposes. This prevents virtual registers
         // from being zeroed out, allowing us to inspect their intermediate values during tests.
-        self.asm = InstrAssembler::new(self.asm.address, self.asm.is_compressed, self.asm.xlen);
+        self.asm =
+            InstrAssembler::new_inline(self.asm.address, self.asm.is_compressed, self.asm.xlen);
         // Always start by loading state
         self.load_state();
 
@@ -313,7 +314,7 @@ pub(crate) fn keccak256_build_up_to_step(
     address: u64,
     is_compressed: bool,
     xlen: Xlen,
-    vr: [u8; NEEDED_REGISTERS],
+    vr: [u8; NEEDED_REGISTERS as usize],
     operand_rs1: u8,
     operand_rs2: u8,
     target_round: u32,
@@ -449,9 +450,9 @@ pub fn keccak256_inline_sequence_builder(
 ) -> Vec<RV32IMInstruction> {
     // Virtual registers used as a scratch space
     let guards: Vec<_> = (0..NEEDED_REGISTERS)
-        .map(|_| allocate_virtual_register())
+        .map(|_| allocate_virtual_register_for_inline())
         .collect();
-    let mut vr = [0; NEEDED_REGISTERS];
+    let mut vr = [0; NEEDED_REGISTERS as usize];
     for (i, guard) in guards.iter().enumerate() {
         vr[i] = **guard;
     }

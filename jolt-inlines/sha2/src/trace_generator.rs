@@ -6,7 +6,7 @@ use tracer::{
             InstrAssembler,
             Value::{self, Imm, Reg},
         },
-        virtual_registers::allocate_virtual_register,
+        virtual_registers::allocate_virtual_register_for_inline,
     },
 };
 
@@ -64,7 +64,7 @@ impl Sha256SequenceBuilder {
         initial: bool,
     ) -> Self {
         Sha256SequenceBuilder {
-            asm: InstrAssembler::new(address, is_compressed, xlen),
+            asm: InstrAssembler::new_inline(address, is_compressed, xlen),
             round: 0,
             vr,
             operand_rs1,
@@ -103,7 +103,7 @@ impl Sha256SequenceBuilder {
             let src = self.vr(*ch);
             self.asm.emit_s::<SW>(self.operand_rs2, src, (i as i64) * 4);
         }
-        self.asm.finalize()
+        self.asm.finalize_inline(NEEDED_REGISTERS)
     }
 
     /// Adds IV to the final hash value to produce output
@@ -325,8 +325,10 @@ pub fn sha2_inline_sequence_builder(
     _rs3: u8,
 ) -> Vec<RV32IMInstruction> {
     // Virtual registers used as a scratch space
-    let guards: Vec<_> = (0..32).map(|_| allocate_virtual_register()).collect();
-    let mut vr = [0u8; 32];
+    let guards: Vec<_> = (0..NEEDED_REGISTERS)
+        .map(|_| allocate_virtual_register_for_inline())
+        .collect();
+    let mut vr = [0u8; NEEDED_REGISTERS as usize];
     for (i, guard) in guards.iter().enumerate() {
         vr[i] = **guard;
     }
@@ -352,8 +354,10 @@ pub fn sha2_init_inline_sequence_builder(
     _rs3: u8,
 ) -> Vec<RV32IMInstruction> {
     // Virtual registers used as a scratch space
-    let guards: Vec<_> = (0..32).map(|_| allocate_virtual_register()).collect();
-    let mut vr = [0u8; 32];
+    let guards: Vec<_> = (0..NEEDED_REGISTERS)
+        .map(|_| allocate_virtual_register_for_inline())
+        .collect();
+    let mut vr = [0u8; NEEDED_REGISTERS as usize];
     for (i, guard) in guards.iter().enumerate() {
         vr[i] = **guard;
     }

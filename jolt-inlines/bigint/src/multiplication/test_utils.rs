@@ -18,7 +18,7 @@ pub type BigIntOutput = [u64; OUTPUT_LIMBS];
 /// Wrapper around `CpuTestHarness` that offers convenient BigInt helpers.
 pub struct BigIntCpuHarness {
     pub harness: CpuTestHarness,
-    pub vr: [u8; NEEDED_REGISTERS],
+    pub vr: [u8; NEEDED_REGISTERS as usize],
 }
 
 impl BigIntCpuHarness {
@@ -37,7 +37,7 @@ impl BigIntCpuHarness {
     pub fn new() -> Self {
         // Allocate virtual registers
         let guards: Vec<_> = (0..NEEDED_REGISTERS)
-            .map(|_| tracer::utils::virtual_registers::allocate_virtual_register())
+            .map(|_| tracer::utils::virtual_registers::allocate_virtual_register_for_inline())
             .collect();
         let vr: [u8; 20] = core::array::from_fn(|i| *guards[i]);
 

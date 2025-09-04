@@ -53,6 +53,10 @@ use crate::instruction::RISCVTrace;
 use crate::instruction::RV32IMCycle;
 use crate::instruction::RV32IMInstruction;
 
+use common::constants::RISCV_REGISTER_COUNT;
+use common::constants::VIRTUAL_INSTRUCTION_RESERVED_REGISTER_COUNT;
+use common::constants::VIRTUAL_REGISTER_COUNT;
+
 /// Operand that can be either an immediate or a register.
 #[derive(Clone, Copy, Debug)]
 pub enum Value {
@@ -77,16 +81,30 @@ pub struct InstrAssembler {
     pub xlen: Xlen,
     /// Accumulated instruction buffer.
     sequence: Vec<RV32IMInstruction>,
+    /// Whether the instruction uses the the FormatInline instruction format.
+    has_inline_instr_format: bool,
 }
 
 impl InstrAssembler {
     /// Create a new assembler with an empty instruction buffer.
-    pub fn new(address: u64, is_compressed: bool, xlen: Xlen) -> Self {
+    pub(crate) fn new(address: u64, is_compressed: bool, xlen: Xlen) -> Self {
         Self {
             address,
             is_compressed,
             xlen,
             sequence: Vec::new(),
+            has_inline_instr_format: false,
+        }
+    }
+
+    /// Create a new assembler with an empty instruction buffer.
+    pub fn new_inline(address: u64, is_compressed: bool, xlen: Xlen) -> Self {
+        Self {
+            address,
+            is_compressed,
+            xlen,
+            sequence: Vec::new(),
+            has_inline_instr_format: true,
         }
     }
 
@@ -104,11 +122,47 @@ impl InstrAssembler {
         self.sequence
     }
 
+    /// Finalize inline instructions by zeroing virtual registers, then calling finalize.
+    pub fn finalize_inline(mut self, num_inline_virtual_regs: u8) -> Vec<RV32IMInstruction> {
+        const INLINE_REGISTER_BASE: u8 =
+            RISCV_REGISTER_COUNT + VIRTUAL_INSTRUCTION_RESERVED_REGISTER_COUNT;
+        const MAX_INLINE_REGISTERS: u8 =
+            VIRTUAL_REGISTER_COUNT - VIRTUAL_INSTRUCTION_RESERVED_REGISTER_COUNT;
+
+        assert!(
+            num_inline_virtual_regs <= MAX_INLINE_REGISTERS,
+            "Attempted to clear {num_inline_virtual_regs} inline virtual registers, but only {MAX_INLINE_REGISTERS} are available"
+        );
+        // Zero inline virtual registers using ADDI rd, x0, 0
+        for reg_offset in 0..num_inline_virtual_regs {
+            self.emit_i::<ADDI>(INLINE_REGISTER_BASE + reg_offset, 0, 0);
+        }
+        self.finalize()
+    }
+
+    /// Validates that rd is an inline virtual register (not RISC-V or reserved virtual registers).
+    #[inline]
+    fn is_valid_virtual_rd(virtual_rd: u8) -> bool {
+        virtual_rd == 0
+            || virtual_rd >= RISCV_REGISTER_COUNT + VIRTUAL_INSTRUCTION_RESERVED_REGISTER_COUNT
+    }
+
     #[inline]
     fn add_to_sequence<I: RISCVInstruction + RISCVTrace>(&mut self, inst: I)
     where
         RISCVCycle<I>: Into<RV32IMCycle>,
     {
+        if self.has_inline_instr_format {
+            let normalized: NormalizedInstruction = inst.into();
+            if !Self::is_valid_virtual_rd(normalized.operands.rd) {
+                const MIN_INLINE_REG: u8 =
+                    RISCV_REGISTER_COUNT + VIRTUAL_INSTRUCTION_RESERVED_REGISTER_COUNT;
+                panic!(
+                    "Inline instruction attempted to write to register {}, but must use registers >= {}",
+                    normalized.operands.rd, MIN_INLINE_REG
+                );
+            }
+        }
         self.sequence.extend(inst.inline_sequence(self.xlen));
     }
 
