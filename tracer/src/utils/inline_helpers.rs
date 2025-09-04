@@ -142,7 +142,7 @@ impl InstrAssembler {
 
     /// Validates that rd is an inline virtual register (not RISC-V or reserved virtual registers).
     #[inline]
-    fn is_valide_virtual_rd(virtual_rd: u8) -> bool {
+    fn is_valid_virtual_rd(virtual_rd: u8) -> bool {
         virtual_rd == 0
             || virtual_rd >= RISCV_REGISTER_COUNT + VIRTUAL_INSTRUCTION_RESERVED_REGISTER_COUNT
     }
@@ -154,7 +154,7 @@ impl InstrAssembler {
     {
         if self.has_inline_instr_format {
             let normalized: NormalizedInstruction = inst.into();
-            if !Self::is_valide_virtual_rd(normalized.operands.rd) {
+            if !Self::is_valid_virtual_rd(normalized.operands.rd) {
                 const MIN_INLINE_REG: u8 =
                     RISCV_REGISTER_COUNT + VIRTUAL_INSTRUCTION_RESERVED_REGISTER_COUNT;
                 panic!(
