@@ -14,7 +14,6 @@ use super::{
 };
 use crate::field::JoltField;
 use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
-use crate::poly::rlc_polynomial::RLCPolynomial;
 use crate::{
     msm::VariableBaseMSM,
     poly::{commitment::kzg::SRS, dense_mlpoly::DensePolynomial, unipoly::UniPoly},
@@ -98,11 +97,12 @@ fn kzg_batch_open_no_rem<P: Pairing>(
     f: &MultilinearPolynomial<P::ScalarField>,
     u: &[P::ScalarField],
     pk: &HyperKZGProverKey<P>,
-) -> Vec<P::G1Affine>
+) -> Result<Vec<P::G1Affine>, ProofVerifyError>
 where
     <P as Pairing>::ScalarField: JoltField,
 {
-    let f: &DensePolynomial<P::ScalarField> = f.try_into().unwrap();
+    let f: &DensePolynomial<P::ScalarField> =
+        f.try_into().map_err(|_| ProofVerifyError::InternalError)?;
     let h = u
         .par_iter()
         .map(|ui| {
@@ -111,7 +111,7 @@ where
         })
         .collect::<Vec<_>>();
 
-    UnivariateKZG::commit_batch(&pk.kzg_pk, &h).unwrap()
+    UnivariateKZG::commit_batch(&pk.kzg_pk, &h).map_err(|_| ProofVerifyError::InternalError)
 }
 
 fn compute_witness_polynomial<P: Pairing>(
@@ -132,17 +132,25 @@ where
     h
 }
 
+#[allow(clippy::type_complexity)]
 fn kzg_open_batch<P: Pairing, ProofTranscript: Transcript>(
     f: &[MultilinearPolynomial<P::ScalarField>],
     u: &[P::ScalarField],
     pk: &HyperKZGProverKey<P>,
     transcript: &mut ProofTranscript,
-) -> (Vec<P::G1Affine>, Vec<Vec<P::ScalarField>>)
+) -> Result<(Vec<P::G1Affine>, Vec<Vec<P::ScalarField>>), ProofVerifyError>
 where
     <P as Pairing>::ScalarField: JoltField,
 {
     let k = f.len();
     let t = u.len();
+
+    // Early reject unsupported variants to avoid panics further down the stack
+    if f.iter()
+        .any(|poly| matches!(poly, MultilinearPolynomial::OneHot(_)))
+    {
+        return Err(ProofVerifyError::InternalError);
+    }
 
     // The verifier needs f_i(u_j), so we compute them here
     // (V will compute B(u_j) itself)
@@ -162,30 +170,21 @@ where
     let f_arc: Vec<Arc<MultilinearPolynomial<P::ScalarField>>> =
         f.iter().map(|poly| Arc::new(poly.clone())).collect();
 
-    // @TODO(markosg04) right now we don't use HyperKZG so we just handle both cases
-    let has_one_hot = f_arc
-        .iter()
-        .any(|poly| matches!(poly.as_ref(), MultilinearPolynomial::OneHot(_)));
-
-    let B = if has_one_hot {
-        let rlc_result = RLCPolynomial::linear_combination(f_arc, &q_powers);
-        MultilinearPolynomial::RLC(rlc_result)
-    } else {
-        let poly_refs: Vec<&MultilinearPolynomial<P::ScalarField>> =
-            f_arc.iter().map(|arc| arc.as_ref()).collect();
-        let dense_result = DensePolynomial::linear_combination(&poly_refs, &q_powers);
-        MultilinearPolynomial::from(dense_result.Z)
-    };
+    // Combine to dense B via linear combination; OneHot is rejected above
+    let poly_refs: Vec<&MultilinearPolynomial<P::ScalarField>> =
+        f_arc.iter().map(|arc| arc.as_ref()).collect();
+    let dense_result = DensePolynomial::linear_combination(&poly_refs, &q_powers);
+    let B = MultilinearPolynomial::from(dense_result.Z);
 
     // Now open B at u0, ..., u_{t-1}
-    let w = kzg_batch_open_no_rem(&B, u, pk);
+    let w = kzg_batch_open_no_rem(&B, u, pk)?;
 
     // The prover computes the challenge to keep the transcript in the same
     // state as that of the verifier
     transcript.append_points(&w.iter().map(|g| g.into_group()).collect::<Vec<P::G1>>());
     let _d_0: P::ScalarField = transcript.challenge_scalar();
 
-    (w, v)
+    Ok((w, v))
 }
 
 // vk is hashed in transcript already, so we do not add it here
@@ -343,7 +342,7 @@ where
         let u = vec![r, -r, r * r];
 
         // Phase 3 -- create response
-        let (w, v) = kzg_open_batch(&polys, &u, pk, transcript);
+        let (w, v) = kzg_open_batch(&polys, &u, pk, transcript)?;
 
         Ok(HyperKZGProof { com, w, v })
     }
