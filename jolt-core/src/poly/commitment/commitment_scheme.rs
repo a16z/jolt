@@ -123,8 +123,8 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
 }
 
 pub trait StreamingCommitmentScheme_: CommitmentScheme {
-    type State<'a>: Sync;
-    type ChunkState: Send;
+    type State<'a>: Sync + Clone;
+    type ChunkState: Send + Clone + PartialEq + Debug;
 
     fn initialize<'a>(poly: Multilinear, size: usize, setup: &'a Self::ProverSetup) -> Self::State<'a>;
     fn process<'a>(poly: Multilinear, state: Self::State<'a>, eval: Self::Field) -> Self::State<'a>;
