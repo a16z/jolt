@@ -319,12 +319,6 @@ impl Iterator for LazyTraceIterator {
     }
 }
 
-/// [1,2,3,4,5,6]
-/// chunk_size = 2 with peek
-/// [peek=1,2,3]
-/// [peek=3,4,5]
-/// [5,6]
-
 pub struct ChunksWithPeek<I:Iterator> {
     chunk_size: usize,
     iter: I,
