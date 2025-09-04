@@ -15,22 +15,19 @@
 
 use tracer::emulator::cpu::Xlen;
 use tracer::instruction::sub::SUB;
-use tracer::instruction::addi::ADDI;
 use tracer::instruction::lui::LUI;
 use tracer::instruction::ld::LD;
 use tracer::instruction::sd::SD;
-use tracer::instruction::slli::SLLI;
-use tracer::instruction::or::OR;
-use tracer::instruction::virtual_rotriw::VirtualROTRIW;
+#[allow(unused_imports)]
 use tracer::instruction::virtual_xor_rot::{VirtualXORROT16, VirtualXORROT24, VirtualXORROT32, VirtualXORROT63};
 use tracer::instruction::xor::XOR;
-use tracer::instruction::virtual_rotri::VirtualROTRI;
 use tracer::instruction::RV32IMInstruction;
 use tracer::utils::inline_helpers::{
     InstrAssembler,
     Value::Reg,
+    Value::Imm,
 };
-use tracer::utils::virtual_registers::allocate_virtual_register;
+use tracer::utils::virtual_registers::allocate_virtual_register_for_inline;
 
 /// Blake2b initialization vector (IV)
 #[rustfmt::skip]
@@ -59,11 +56,6 @@ const SIGMA: [[usize; 16]; 12] = [
     [14, 10, 4, 8, 9, 15, 13, 6, 1, 12, 0, 2, 11, 7, 5, 3],
 ];
 
-/// Layout of the 96 virtual registers (`vr`).
-///
-/// Jolt requires the total number of registers (physical + virtual) to be a power of two.
-/// With 32 physical registers, we need 96 virtual registers to reach 128.
-///
 /// Virtual register layout:
 /// - `vr[0..15]`:  Working state `v` (16 words)
 /// - `vr[16..31]`: Message block `m` (16 words)
@@ -72,8 +64,7 @@ const SIGMA: [[usize; 16]; 12] = [
 /// - `vr[41]`:     Final block flag
 /// - `vr[42]`:     Temporary register
 /// - `vr[43]`:     Zero constant
-/// - `vr[44..95]`: Unused, allocated for padding to meet the power-of-two requirement
-pub const NEEDED_REGISTERS: usize = 96;
+pub const NEEDED_REGISTERS: u8 = 43;
 
 // Memory layout constants for Blake2 virtual registers
 const VR_WORKING_STATE_START: usize = 0;
@@ -85,7 +76,8 @@ pub const HASH_STATE_SIZE: usize = 8;
 const VR_T: usize = 40;
 const VR_IS_FINAL: usize = 41;
 const VR_TEMP: usize = 42;
-const VR_ZERO: usize = 43;
+
+const BLAKE2_NUM_ROUNDS: u8 = 12;
 
 // Rotation constants required in Blake2b
 pub enum RotationAmount {
@@ -97,8 +89,8 @@ pub enum RotationAmount {
 
 struct Blake2SequenceBuilder {
     asm: InstrAssembler,
-    round: u32,
-    vr: [u8; NEEDED_REGISTERS],
+    round: u8,
+    vr: [u8; NEEDED_REGISTERS as usize],
     operand_rs1: u8,
     operand_rs2: u8,
 }
@@ -115,23 +107,17 @@ struct Blake2SequenceBuilder {
 /// - `vr`: An array of virtual register indices used for state and temporary values.
 /// - `operand_rs1`: The source register index for the hash state pointer.
 /// - `operand_rs2`: The source register index for the message block pointer.
-///
-/// # Usage
-/// Typically, you construct a `Blake2SequenceBuilder` with the required register mapping
-/// and operands, then call `.build()` to obtain the full instruction sequence for the
-/// Blake2b operation. This is used to inline the Blake2b compression logic into the
-/// RISC-V instruction stream for tracing or emulation purposes.
 impl Blake2SequenceBuilder {
     fn new(
         address: u64,
         is_compressed: bool,
         xlen: Xlen,
-        vr: [u8; NEEDED_REGISTERS],
+        vr: [u8; NEEDED_REGISTERS as usize],
         operand_rs1: u8,
         operand_rs2: u8,
     ) -> Self {
         Blake2SequenceBuilder {
-            asm: InstrAssembler::new(address, is_compressed, xlen, true),
+            asm: InstrAssembler::new_inline(address, is_compressed, xlen),
             round: 0,
             vr,
             operand_rs1,
@@ -143,13 +129,13 @@ impl Blake2SequenceBuilder {
         // Load inputs
         self.load_hash_state();
         self.load_message_blocks();
-        self.load_counter_and_is_final_and_zero();
+        self.load_counter_and_is_final();
 
         // Initialize the working state v[0..15]
         self.initialize_working_state();
 
         // Cryptographic mixing for 12 rounds
-        for round in 0..12 {
+        for round in 0..BLAKE2_NUM_ROUNDS {
             self.round = round;
             self.blake2_round();
         }
@@ -160,7 +146,7 @@ impl Blake2SequenceBuilder {
         // Store the final hash state back to memory
         self.store_state();
 
-        self.asm.finalize()
+        self.asm.finalize_inline(NEEDED_REGISTERS)
     }
 
     fn load_hash_state(&mut self) {
@@ -176,7 +162,7 @@ impl Blake2SequenceBuilder {
         );
     }
 
-    fn load_counter_and_is_final_and_zero(&mut self) {
+    fn load_counter_and_is_final(&mut self) {
         self.asm.emit_ld::<LD>(
             self.vr[VR_T],
             self.operand_rs2,
@@ -187,28 +173,23 @@ impl Blake2SequenceBuilder {
             self.operand_rs2,
             (MESSAGE_BLOCK_SIZE as i64 + 1) * 8,
         );
-        // Load 0 into VR_ZERO register
-        self.asm.emit_i::<ADDI>(self.vr[VR_ZERO], 0, 0);
     }
 
-    // Initialize the working state v[0..15] according to Blake2b specification:
+    // Initialize the working state v[0..15] according to Blake2b specification
     fn initialize_working_state(&mut self) {
-        // v[0..7] = h[0..7] (current hash state)
+        // v[0..7] = h[0..7]
         for i in 0..HASH_STATE_SIZE {
             self.asm.xor(
                 Reg(self.vr[VR_HASH_STATE_START + i]),
-                Reg(self.vr[VR_ZERO]),
+                Imm(0),
                 self.vr[VR_WORKING_STATE_START + i],
             );
         }
 
-        // v[8..15] = IV[0..7] (initialization vector)
+        // v[8..15] = IV[0..7]
         for i in 0..WORKING_STATE_SIZE - HASH_STATE_SIZE {
-            // Load Blake2b IV constants using our 64-bit immediate loader
+            // Load Blake2b IV constants
             let rd = self.vr[VR_WORKING_STATE_START + HASH_STATE_SIZE + i];
-            let iv_value = BLAKE2B_IV[i];
-            
-            // Original single LUI instruction (commented out):
             self.asm.emit_u::<LUI>(rd, BLAKE2B_IV[i]);
         }
 
@@ -219,19 +200,19 @@ impl Blake2SequenceBuilder {
             self.vr[VR_WORKING_STATE_START + 12],
         );
 
-        // v[13] = IV[5] ^ (t >> 64) (counter high) - for 64-bit counter, high part is 0
         // Since we are using 64-bit counter, the high part is always 0, so v[13] remains unchanged
+        // v[13] = IV[5] ^ (t >> 64) (counter high) - for 64-bit counter, high part is 0
 
         // Handle final block flag: if is_final != 0, invert all bits of v[14]
         // We need to create a mask that is 0xFFFFFFFFFFFFFFFF if is_final != 0, or 0 if is_final == 0
         // Use the formula: mask = (0 - is_final) to convert 1 to 0xFFFFFFFFFFFFFFFF and 0 to 0
-        let temp_mask = self.vr[VR_TEMP];
         // First, negate is_final (0 - is_final)
-        self.asm.emit_r::<SUB>(temp_mask, self.vr[VR_ZERO], self.vr[VR_IS_FINAL]);
+        // Using 0 as x0, which is always 0 in risc-v
+        self.asm.emit_r::<SUB>(self.vr[VR_TEMP], 0, self.vr[VR_IS_FINAL]);
         // XOR v[14] with the mask: inverts all bits if is_final=1, leaves unchanged if is_final=0
         self.asm.xor(
             Reg(self.vr[VR_WORKING_STATE_START + 14]),
-            Reg(temp_mask),
+            Reg(self.vr[VR_TEMP]),
             self.vr[VR_WORKING_STATE_START + 14],
         );
     }
@@ -338,9 +319,8 @@ impl Blake2SequenceBuilder {
         });
     }
 
-    // XOR two registers, and then rotate right by the given amount.
+    /// XOR two registers, and then rotate right by the given amount.
     fn xor_rotate(&mut self, rs1: u8, rs2: u8, amount: RotationAmount, rd: u8) {
-        // Original implementation using combined XOR-ROT virtual instructions
         // match amount {
         //     RotationAmount::ROT32 => {
         //         self.asm.emit_r::<VirtualXORROT32>(rd, rs1, rs2);
@@ -355,34 +335,20 @@ impl Blake2SequenceBuilder {
         //         self.asm.emit_r::<VirtualXORROT63>(rd, rs1, rs2);
         //     }
         // }
-        
-        // New implementation: separate XOR and rotation operations
-        // First perform XOR operation
+
         self.asm.emit_r::<XOR>(rd, rs1, rs2);
-        
-        // Then perform rotation with the appropriate amount
-        // The immediate value is a bitmask where trailing zeros indicate rotation amount
-        match amount {
+                match amount {
             RotationAmount::ROT32 => {
-                // Rotate by 32: bitmask = 1 << 32 = 0x100000000
                 self.asm.rotr64(Reg(rd), 32, rd);
-                // self.asm.rotl64(Reg(rd), 32, rd);
-                // self.asm.rotri(rd, rd, );
             }
             RotationAmount::ROT24 => {
-                // Rotate by 24: bitmask = 1 << 24 = 0x1000000
                 self.asm.rotr64(Reg(rd), 24, rd);
-                // self.asm.emit_vshift_i::<VirtualROTRI>(rd, rd, 0x1000000);
             }
             RotationAmount::ROT16 => {
-                // Rotate by 16: bitmask = 1 << 16 = 0x10000
                 self.asm.rotr64(Reg(rd), 16, rd);
-                // self.asm.emit_vshift_i::<VirtualROTRI>(rd, rd, 0x10000);
             }
             RotationAmount::ROT63 => {
-                // Rotate by 63: bitmask = 1 << 63 = 0x8000000000000000
                 self.asm.rotr64(Reg(rd), 63, rd);
-                // self.asm.emit_vshift_i::<VirtualROTRI>(rd, rd, 0x8000000000000000);
             }
         }
     }
@@ -399,9 +365,9 @@ pub fn blake2b_inline_sequence_builder(
 ) -> Vec<RV32IMInstruction> {
     // Virtual registers used as a scratch space
     let guards: Vec<_> = (0..NEEDED_REGISTERS)
-        .map(|_| allocate_virtual_register())
+        .map(|_| allocate_virtual_register_for_inline())
         .collect();
-    let mut vr = [0; NEEDED_REGISTERS];
+    let mut vr = [0; NEEDED_REGISTERS as usize];
     for (i, guard) in guards.iter().enumerate() {
         vr[i] = **guard;
     }

@@ -1,18 +1,12 @@
 //! Host-side implementation and registration.
 pub use crate::exec;
 pub use crate::trace_generator;
-
-#[cfg(feature = "host")]
-use jolt_inlines_common::constants;
-#[cfg(feature = "host")]
 use tracer::register_inline;
-
-#[cfg(feature = "save_trace")]
-use jolt_inlines_common::trace_writer::{write_inline_trace, InlineDescriptor, SequenceInputs};
-#[cfg(feature = "save_trace")]
 use tracer::emulator::cpu::Xlen;
+use jolt_inlines_common::trace_writer::{write_inline_trace, InlineDescriptor, SequenceInputs};
+use jolt_inlines_common::constants;
 
-#[cfg(feature = "host")]
+
 pub fn init_inlines() -> Result<(), String> {
     register_inline(
         constants::INLINE_OPCODE,
@@ -26,7 +20,6 @@ pub fn init_inlines() -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(feature = "save_trace")]
 pub fn store_inlines() -> Result<(), String> {
     let inline_info = InlineDescriptor::new(
         constants::blake2::NAME.to_string(),
@@ -44,24 +37,24 @@ pub fn store_inlines() -> Result<(), String> {
         sequence_inputs.rs3,
     );
     write_inline_trace(
-        "blake2_trace.txt",
+        "blake2_trace.joltinline",
         &inline_info,
         &sequence_inputs,
         &instructions,
         false,
-    )?;
+    )
+    .map_err(|e| e.to_string())?;
 
     Ok(())
 }
 
-#[cfg(all(feature = "host", not(target_arch = "wasm32")))]
+#[cfg(not(target_arch = "wasm32"))]
 #[ctor::ctor]
 fn auto_register() {
     if let Err(e) = init_inlines() {
         eprintln!("Failed to register Blake2 inlines: {e}");
     }
 
-    #[cfg(feature = "save_trace")]
     if let Err(e) = store_inlines() {
         eprintln!("Failed to store Blake2 inline traces: {e}");
     }

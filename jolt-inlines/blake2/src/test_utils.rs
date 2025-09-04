@@ -18,7 +18,7 @@ pub const MESSAGE_BLOCK_SIZE: usize = 16; // 16 u64 words
 /// Wrapper around `CpuTestHarness` that offers convenient BLAKE2 helpers.
 pub struct Blake2CpuHarness {
     pub harness: CpuTestHarness,
-    pub vr: [u8; NEEDED_REGISTERS],
+    pub vr: [u8; NEEDED_REGISTERS as usize],
 }
 
 impl Blake2CpuHarness {
@@ -36,9 +36,9 @@ impl Blake2CpuHarness {
     pub fn new() -> Self {
         // Allocate virtual registers
         let guards: Vec<_> = (0..NEEDED_REGISTERS)
-            .map(|_| tracer::utils::virtual_registers::allocate_virtual_register())
+            .map(|_| tracer::utils::virtual_registers::allocate_virtual_register_for_inline())
             .collect();
-        let vr: [u8; NEEDED_REGISTERS] = core::array::from_fn(|i| *guards[i]);
+        let vr: [u8; NEEDED_REGISTERS as usize] = core::array::from_fn(|i| *guards[i]);
 
         Self {
             harness: CpuTestHarness::new(),

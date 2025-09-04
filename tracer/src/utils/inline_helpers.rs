@@ -337,10 +337,6 @@ impl InstrAssembler {
     ) where
         RISCVCycle<Op>: Into<RV32IMCycle>,
     {
-<<<<<<< HEAD
-        // self.validate_rd_for_inline(rd);
-=======
->>>>>>> omid/refactor_inlines
         self.add_to_sequence(Op::from(NormalizedInstruction {
             address: self.address as usize,
             operands: NormalizedOperands {
