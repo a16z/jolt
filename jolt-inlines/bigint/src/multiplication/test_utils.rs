@@ -18,7 +18,7 @@ pub type BigIntOutput = [u64; OUTPUT_LIMBS];
 /// Wrapper around `CpuTestHarness` that offers convenient BigInt helpers.
 pub struct BigIntCpuHarness {
     pub harness: CpuTestHarness,
-    pub vr: [u8; NEEDED_REGISTERS],
+    pub vr: [u8; NEEDED_REGISTERS as usize],
 }
 
 impl BigIntCpuHarness {

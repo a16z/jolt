@@ -25,7 +25,7 @@ pub(crate) const NEEDED_REGISTERS: u8 = 20;
 struct BigIntMulSequenceBuilder {
     asm: InstrAssembler,
     /// Virtual registers used by the sequence
-    vr: [u8; NEEDED_REGISTERS as u8],
+    vr: [u8; NEEDED_REGISTERS as usize],
     /// Location of first operand in memory
     operand_rs1: u8,
     /// Location of second operand in memory
@@ -39,7 +39,7 @@ impl BigIntMulSequenceBuilder {
         address: u64,
         is_compressed: bool,
         xlen: Xlen,
-        vr: [u8; NEEDED_REGISTERS as u8],
+        vr: [u8; NEEDED_REGISTERS as usize],
         operand_rs1: u8,
         operand_rs2: u8,
         operand_rs3: u8,
