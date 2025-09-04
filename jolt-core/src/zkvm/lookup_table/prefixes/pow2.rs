@@ -45,6 +45,44 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F> for Pow2Prefix<W
         result
     }
 
+    fn prefix_mle_field(
+        checkpoints: &[PrefixCheckpoint<F>],
+        r_x: Option<F>,
+        c: u32,
+        b: LookupBits,
+        j: usize,
+    ) -> F {
+        if current_suffix_len(2 * WORD_SIZE, j) != 0 {
+            // Handled by suffix
+            return F::one();
+        }
+
+        // Shift amount is the last WORD_SIZE bits of b
+        if b.len() >= WORD_SIZE.log_2() {
+            return F::from_u64(1 << (b % WORD_SIZE));
+        }
+
+        let mut result = F::from_u64(1 << (b % WORD_SIZE));
+        let mut num_bits = b.len();
+        let mut shift = 1 << (1 << num_bits);
+        result *= F::from_u32(1 + (shift - 1) * c);
+
+        // Shift amount is [c, b]
+        if b.len() == WORD_SIZE.log_2() - 1 {
+            return result;
+        }
+
+        // Shift amount is [(r, r_x), c, b]
+        num_bits += 1;
+        shift = 1 << (1 << num_bits);
+        if let Some(r_x) = r_x {
+            result *= F::one() + F::from_u32(shift - 1) * r_x;
+        }
+
+        result *= checkpoints[Prefixes::Pow2].unwrap_or(F::one());
+        result
+    }
+
     fn update_prefix_checkpoint(
         checkpoints: &[PrefixCheckpoint<F>],
         r_x: MontU128,

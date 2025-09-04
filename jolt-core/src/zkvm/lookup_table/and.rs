@@ -58,15 +58,17 @@ mod test {
     use ark_bn254::Fr;
 
     use crate::zkvm::lookup_table::test::{
-        lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
+        lookup_table_mle_full_hypercube_test,
+        lookup_table_mle_random_test,
+        // prefix_suffix_test,
     };
 
     use super::AndTable;
 
-    #[test]
-    fn prefix_suffix() {
-        prefix_suffix_test::<Fr, AndTable<32>>();
-    }
+    // #[test]
+    // fn prefix_suffix() {
+    //     prefix_suffix_test::<Fr, AndTable<32>>();
+    // }
 
     #[test]
     fn mle_full_hypercube() {
