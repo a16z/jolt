@@ -11,7 +11,6 @@ const BLOCK_SIZE_U64: usize = 16; // BLOCK_SIZE / 8
 const STATE_SIZE: usize = 64;
 const STATE_SIZE_U64: usize = 8; // STATE_SIZE / 8
 const OUTPUT_SIZE: usize = 64;
-const MAX_OUTPUT_SIZE: usize = 64;
 
 /// Blake2b initialization vector (IV)
 #[rustfmt::skip]
@@ -39,14 +38,9 @@ impl Blake2b {
     ///
     /// # Panics
     /// Panics if `output_len` is 0 or greater than 64.
-    pub fn new(output_len: usize) -> Self {
-        assert!(
-            output_len > 0 && output_len <= MAX_OUTPUT_SIZE,
-            "Output length must be between 1 and {MAX_OUTPUT_SIZE} bytes, got {output_len}"
-        );
-
+    pub fn new() -> Self {
         let mut h = BLAKE2B_IV;
-        h[0] ^= 0x01010000 ^ (output_len as u64);
+        h[0] ^= 0x01010000 ^ (OUTPUT_SIZE as u64);
 
         Self {
             h,
@@ -89,7 +83,7 @@ impl Blake2b {
 
     /// Computes Blake2b hash in one call.
     pub fn digest(input: &[u8]) -> [u8; OUTPUT_SIZE] {
-        let mut hasher = Self::new(OUTPUT_SIZE);
+        let mut hasher = Self::new();
         hasher.update(input);
         hasher.finalize()
     }
@@ -117,7 +111,7 @@ fn compression_caller(
 
 impl Default for Blake2b {
     fn default() -> Self {
-        Self::new(OUTPUT_SIZE)
+        Self::new()
     }
 }
 
@@ -300,7 +294,6 @@ mod streaming_tests {
     use super::*;
     use hex_literal::hex;
 
-    const OUTPUT_LEN: usize = 64;
     #[test]
     fn test_blake2b_streaming_digest() {
         let test_cases: [(&'static str, &[u8], [u8; 64]); 5] = [
@@ -332,7 +325,7 @@ mod streaming_tests {
         ];
 
         for (test_name, input, expected) in test_cases {
-            let mut hasher = Blake2b::new(OUTPUT_LEN);
+            let mut hasher = Blake2b::new();
             hasher.update(input);
             let hash = hasher.finalize();
             assert_eq!(
@@ -362,7 +355,7 @@ mod streaming_tests {
 
             for length in 0..=1200 {
                 let test_input = &input[..length];
-                let mut hasher = Blake2b::new(OUTPUT_LEN);
+                let mut hasher = Blake2b::new();
                 hasher.update(test_input);
 
                 use blake2::Digest as RefDigest;
@@ -387,7 +380,7 @@ mod streaming_tests {
 
         for length in 0..=MAX_LENGTH {
             let input = &input_buffer[..length];
-            let mut hasher = Blake2b::new(OUTPUT_LEN);
+            let mut hasher = Blake2b::new();
             hasher.update(input);
 
             use blake2::Digest as RefDigest;
@@ -414,7 +407,7 @@ mod streaming_tests {
             for total_length in test_lengths {
                 let input = &input_buffer[..total_length];
                 // Feed data incrementally
-                let mut hasher = Blake2b::new(OUTPUT_LEN);
+                let mut hasher = Blake2b::new();
                 let mut expected_hasher = blake2::Blake2b512::new();
                 let mut offset = 0;
                 while offset < total_length {
@@ -449,7 +442,7 @@ mod streaming_tests {
         for &length in &critical_lengths {
             if length <= MAX_TEST_LENGTH {
                 let input = &input_buffer[..length];
-                let mut hasher = Blake2b::new(OUTPUT_LEN);
+                let mut hasher = Blake2b::new();
                 hasher.update(input);
                 assert_eq!(
                     hasher.finalize(),
@@ -487,7 +480,7 @@ mod streaming_tests {
         }
 
         // Our streaming implementation with multiple updates
-        let mut hasher = Blake2b::new(OUTPUT_LEN);
+        let mut hasher = Blake2b::new();
         for part in data_parts {
             hasher.update(part);
         }
@@ -505,7 +498,7 @@ mod streaming_tests {
         let test_data = b"Some test data for empty update testing";
 
         // Test with empty updates mixed in
-        let mut hasher = Blake2b::new(OUTPUT_LEN);
+        let mut hasher = Blake2b::new();
         hasher.update(b""); // Empty update at start
         hasher.update(&test_data[..10]);
         hasher.update(b""); // Empty update in middle

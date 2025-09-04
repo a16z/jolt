@@ -1,7 +1,3 @@
-//! This file contains Blake2b-specific logic to be used in the Blake2b inline:
-//! 1) Prover: Blake2SequenceBuilder expands the inline to a list of RV instructions.
-//! 2) Host: Rust reference implementation to be called by jolt-sdk.
-//!
 //! Blake2b is a cryptographic hash function operating on 64-bit words.
 //! It uses a compression function that performs 12 rounds of mixing operations
 //! on a 16-word working state derived from the hash state and message block.
@@ -93,12 +89,6 @@ struct Blake2SequenceBuilder {
     operand_rs2: u8,
 }
 
-/// `Blake2SequenceBuilder` is a helper struct for constructing the virtual instruction
-/// sequence required to emulate the Blake2b compression function within the RISC-V
-/// instruction set. This builder is responsible for generating the correct sequence of
-/// `RV32IMInstruction` instances that together perform the Blake2b compression,
-/// using a set of virtual registers to hold intermediate state.
-///
 /// # Fields
 /// - `asm`: Builder for the vector of generated instructions representing the Blake2b operation.
 /// - `round`: The current round of the Blake2b compression (0..12).
