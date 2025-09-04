@@ -490,7 +490,7 @@ impl JoltDAG {
         ram_d: usize,
     ) -> Result<HashMap<CommittedPolynomial, PCS::OpeningProofHint>, anyhow::Error> {
         // println!("|||||||||||||||||||||||> generate_and_commit_polynomials");
-        let (preprocessing, lazy_trace, trace, _program_io, _final_memory_state) =
+        let (preprocessing, lazy_trace, _trace, _program_io, _final_memory_state) =
             prover_state_manager.get_prover_data();
 
         let T = DoryGlobals::get_T();
@@ -503,56 +503,46 @@ impl JoltDAG {
             .collect();
         let row_len = DoryGlobals::get_num_columns();
 
-        // // delete from here
-        // let lzt = lazy_trace.as_ref().unwrap().clone();
-        // let chunks = lzt.clone() // TODO(JP): More efficient way to zip_with_self_next and chunkify in parallel
-        //     .zip(
-        //         lzt.clone() // JP: Why are two clones needed?
-        //             .skip(1)
-        //             .chain(std::iter::once(RV32IMCycle::NoOp)),
-        //     )
-        //     .pad_using(T, |_| (RV32IMCycle::NoOp, RV32IMCycle::NoOp))
-        //     .chunks(row_len);
-        // let pcs_state = chunks
-        //     .into_iter()
-        //     .fold(init_pcss, |pcss, row_cycles| {
-        //         let row_cycles: Vec<_> = row_cycles.collect();
-        //         pcss.into_iter()
-        //             .enumerate()
-        //             .map(|(i, pcs)| {
-        //                 let poly = polys[i];
-        //                 poly.generate_witness_and_commit_row::<_, PCS>(pcs, preprocessing, &row_cycles, ram_d) // TODO: Don't pass preprocessing here. Instead pass precomputed constants.
-        //             })
-        //             .collect()
-        //     });
-        
         // [row_chunks][polys]
-        let row_commitments = lazy_trace
+        let time_start = std::time::Instant::now();
+        //[AZ] TODO: Is T/DoryGlobals::get_max_num_rows() the correct number of rows?
+        let mut row_commitments: Vec<Vec<<PCS>::ChunkState>>  = vec![vec![]; T/DoryGlobals::get_max_num_rows()];
+
+        // [AZ] TODO: Parallelized
+        lazy_trace
             .as_ref()
             .unwrap() //AZ: todo: maybe not unwrap and handle it better
             .clone() //AZ: Can we avoid this clone?
             .pad_using(T+1, |_| RV32IMCycle::NoOp)
             .chunks_with_peek(row_len)
-            .par_bridge()
-            .map(|row_with_peek| {
-                pcs_and_polys.iter().map(|(pcs, poly)| {
-                    poly.generate_witness_and_commit_row::<_, PCS>(pcs, preprocessing, &row_with_peek, ram_d) // TODO: Don't pass preprocessing here. Instead pass precomputed constants.
-                })
-                .collect::<Vec<_>>()
-            })
-            .collect::<Vec<_>>();
+            .zip(&mut row_commitments)
+            .par_bridge()   // 1st parallel iteration
+            .for_each(|(row_with_peek, row_)| {
+                let res = pcs_and_polys.iter().map(|(pcs, poly)| { // 2nd parallel loop
+                    poly.generate_witness_and_commit_row::<_, PCS>(
+                        pcs, 
+                        preprocessing, 
+                        &row_with_peek,
+                        ram_d
+                    )
+                });
+                *row_ = res.collect::<Vec<_>>();
+            });
+            
+        let time_elapsed = time_start.elapsed();
+        println!("Time elapsed in generate_and_commit_polynomials() is: {:?}", time_elapsed);
 
         let (commitments, hints): (Vec<_>, Vec<_>) = transpose(row_commitments)
             .into_iter()
             .zip(pcs_and_polys)
-            .map(|(row_commitments, s)| PCS::finalize(s.0, &row_commitments))
+            .map(|(rc, s)| PCS::finalize(s.0, &rc))
             .unzip();
 
-        // #[cfg(test)]
+        #[cfg(test)]
         {
             let committed_polys: Vec<_> = polys
                 .iter()
-                .map(|poly| poly.generate_witness(preprocessing, trace, ram_d))
+                .map(|poly| poly.generate_witness(preprocessing, _trace, ram_d))
                 .collect();
 
             let commitments_non_streaming: Vec<_> = committed_polys
