@@ -1256,7 +1256,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
         b"dory_commitment_scheme"
     }
 }
-
+#[derive(Clone, Debug)]
 pub struct StreamingDoryCommitment<'a, E: DoryPairing> {
     // Setup
     setup: &'a ProverSetup<E>,
@@ -1407,6 +1407,15 @@ impl StreamingProcessChunk<StreamingOneHotWitness<Fr>> for DoryCommitmentScheme 
             }
         }
 
+        // // [AZ] TODO: Parallelized
+        // chunk.iter().enumerate().for_each(|(col_index, k)| {
+        //     // All the nonzero coefficients are 1, so we simply add
+        //     // the associated base to the result.
+        //     if let Some(k) = k.value {
+        //         row_commitments[k].0 += s.setup.g1_vec()[col_index].0;
+        //     }
+        // });
+
 
         row_commitments
     }
@@ -1487,7 +1496,8 @@ impl StreamingCommitmentScheme_ for DoryCommitmentScheme {
             let rows_per_k = T / row_len;
 
             let num_rows = K * T / row_len;
-
+            // [AZ] TODO: Parallelized
+            // This was copied from the original (possibly optimized) implementation
             let mut row_commitments = vec![JoltGroupWrapper(G1Projective::zero()); num_rows];
             for (chunk_index, commitments) in chunks.iter().enumerate() {
                 row_commitments
