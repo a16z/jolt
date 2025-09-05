@@ -57,8 +57,7 @@ dependencies = [
 [[package]]
 name = "allocative"
 version = "0.3.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8fac2ce611db8b8cee9b2aa886ca03c924e9da5e5295d0dbd0526e5d0b0710f7"
+source = "git+https://github.com/facebookexperimental/allocative?rev=85b773d85d526d068ce94724ff7a7b81203fc95e#85b773d85d526d068ce94724ff7a7b81203fc95e"
 dependencies = [
  "allocative_derive",
  "ctor 0.1.26",
@@ -67,8 +66,7 @@ dependencies = [
 [[package]]
 name = "allocative_derive"
 version = "0.3.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fe233a377643e0fc1a56421d7c90acdec45c291b30345eb9f08e8d0ddce5a4ab"
+source = "git+https://github.com/facebookexperimental/allocative?rev=85b773d85d526d068ce94724ff7a7b81203fc95e#85b773d85d526d068ce94724ff7a7b81203fc95e"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -157,7 +155,7 @@ dependencies = [
 [[package]]
 name = "ark-ec"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#44143c847c8657196a5b9b23d165958f8fe51224"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#5ebdb1789edafdb0e8e43f82089ec6eed9e8b38c"
 dependencies = [
  "ahash",
  "ark-ff",
@@ -178,7 +176,7 @@ dependencies = [
 [[package]]
 name = "ark-ff"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#44143c847c8657196a5b9b23d165958f8fe51224"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#5ebdb1789edafdb0e8e43f82089ec6eed9e8b38c"
 dependencies = [
  "allocative",
  "ark-ff-asm",
@@ -234,7 +232,7 @@ dependencies = [
 [[package]]
 name = "ark-serialize"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#44143c847c8657196a5b9b23d165958f8fe51224"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#5ebdb1789edafdb0e8e43f82089ec6eed9e8b38c"
 dependencies = [
  "ark-serialize-derive 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
  "ark-std",
@@ -560,6 +558,7 @@ dependencies = [
  "strum 0.26.3",
  "strum_macros 0.26.4",
  "syn 1.0.109",
+ "tracing",
 ]
 
 [[package]]
@@ -1181,6 +1180,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
+name = "hex-literal"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6fe2267d4ed49bc07b63801559be28c718ea06c4738b7a03c94df7386d2cde46"
+
+[[package]]
 name = "home"
 version = "0.5.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1624,6 +1629,7 @@ dependencies = [
  "indicatif",
  "inferno",
  "itertools 0.10.5",
+ "jolt-inlines-keccak256",
  "jolt-inlines-sha2",
  "jolt-optimizations",
  "jolt-platform",
@@ -1657,17 +1663,54 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-inlines-bigint"
+version = "0.1.0"
+dependencies = [
+ "ark-ff",
+ "common",
+ "ctor 0.2.9",
+ "hex-literal",
+ "jolt-inlines-common",
+ "rand",
+ "tracer",
+ "tracing",
+]
+
+[[package]]
+name = "jolt-inlines-common"
+version = "0.1.0"
+dependencies = [
+ "jolt-inlines-keccak256",
+ "tempfile",
+ "tracer",
+]
+
+[[package]]
+name = "jolt-inlines-keccak256"
+version = "0.1.0"
+dependencies = [
+ "ctor 0.2.9",
+ "hex-literal",
+ "jolt-inlines-common",
+ "tracer",
+ "tracing",
+]
+
+[[package]]
 name = "jolt-inlines-sha2"
 version = "0.1.0"
 dependencies = [
  "ctor 0.2.9",
+ "hex-literal",
+ "jolt-inlines-common",
  "tracer",
+ "tracing",
 ]
 
 [[package]]
 name = "jolt-optimizations"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#44143c847c8657196a5b9b23d165958f8fe51224"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#5ebdb1789edafdb0e8e43f82089ec6eed9e8b38c"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -1696,10 +1739,13 @@ dependencies = [
  "ark-bn254",
  "ark-ec",
  "common",
+ "getrandom 0.2.16",
+ "hex-literal",
  "jolt-core",
  "jolt-platform",
  "jolt-sdk-macros",
  "postcard",
+ "rand",
  "tracer",
 ]
 
@@ -2825,6 +2871,7 @@ name = "sha3-chain"
 version = "0.1.0"
 dependencies = [
  "hex",
+ "jolt-inlines-keccak256",
  "jolt-sdk",
  "sha3-chain-guest",
 ]
@@ -2833,8 +2880,8 @@ dependencies = [
 name = "sha3-chain-guest"
 version = "0.1.0"
 dependencies = [
+ "jolt-inlines-keccak256",
  "jolt-sdk",
- "sha3",
 ]
 
 [[package]]
@@ -2842,6 +2889,7 @@ name = "sha3-ex"
 version = "0.1.0"
 dependencies = [
  "hex",
+ "jolt-inlines-keccak256",
  "jolt-sdk",
  "sha3-guest",
 ]
@@ -2850,8 +2898,8 @@ dependencies = [
 name = "sha3-guest"
 version = "0.1.0"
 dependencies = [
+ "jolt-inlines-keccak256",
  "jolt-sdk",
- "sha3",
 ]
 
 [[package]]
@@ -4023,4 +4071,4 @@ dependencies = [
 [[patch.unused]]
 name = "ark-bn254"
 version = "0.5.0-alpha.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#44143c847c8657196a5b9b23d165958f8fe51224"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#5ebdb1789edafdb0e8e43f82089ec6eed9e8b38c"

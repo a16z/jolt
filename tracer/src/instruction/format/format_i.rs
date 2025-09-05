@@ -1,7 +1,4 @@
 use crate::emulator::cpu::Cpu;
-use common::constants::REGISTER_COUNT;
-use rand::rngs::StdRng;
-use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
@@ -23,7 +20,9 @@ pub struct RegisterStateFormatI {
 }
 
 impl InstructionRegisterState for RegisterStateFormatI {
-    fn random(rng: &mut StdRng) -> Self {
+    #[cfg(any(feature = "test-utils", test))]
+    fn random(rng: &mut rand::rngs::StdRng) -> Self {
+        use rand::RngCore;
         Self {
             rd: (rng.next_u64(), rng.next_u64()),
             rs1: rng.next_u64(),
@@ -53,7 +52,7 @@ impl InstructionFormat for FormatI {
                     _ => 0,
                 } | ((word >> 20) & 0x000007ff)
                 // imm[10:0] = [30:20]
-            ) as i32 as u32 as u64,
+            ) as i32 as i64 as u64,
         }
     }
 
@@ -66,19 +65,35 @@ impl InstructionFormat for FormatI {
         state.rd.1 = normalize_register_value(cpu.x[self.rd as usize], &cpu.xlen);
     }
 
-    fn random(rng: &mut StdRng) -> Self {
+    #[cfg(any(feature = "test-utils", test))]
+    fn random(rng: &mut rand::rngs::StdRng) -> Self {
+        use common::constants::RISCV_REGISTER_COUNT;
+        use rand::RngCore;
         Self {
             imm: rng.next_u64(),
-            rd: (rng.next_u64() as u8 % REGISTER_COUNT),
-            rs1: (rng.next_u64() as u8 % REGISTER_COUNT),
+            rd: (rng.next_u64() as u8 % RISCV_REGISTER_COUNT),
+            rs1: (rng.next_u64() as u8 % RISCV_REGISTER_COUNT),
         }
     }
-    fn normalize(&self) -> NormalizedOperands {
-        NormalizedOperands {
-            rs1: self.rs1,
+}
+
+impl From<NormalizedOperands> for FormatI {
+    fn from(operands: NormalizedOperands) -> Self {
+        Self {
+            rd: operands.rd,
+            rs1: operands.rs1,
+            imm: operands.imm as u64,
+        }
+    }
+}
+
+impl From<FormatI> for NormalizedOperands {
+    fn from(format: FormatI) -> Self {
+        Self {
+            rd: format.rd,
+            rs1: format.rs1,
             rs2: 0,
-            rd: self.rd,
-            imm: self.imm as i64,
+            imm: format.imm as i128,
         }
     }
 }

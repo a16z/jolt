@@ -5,10 +5,7 @@ use crate::{
     emulator::cpu::{Cpu, Xlen},
 };
 
-use super::{
-    format::{format_i::FormatI, InstructionFormat},
-    RISCVInstruction, RISCVTrace,
-};
+use super::{format::format_i::FormatI, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name = VirtualShiftRightBitmask,
@@ -27,12 +24,12 @@ impl VirtualShiftRightBitmask {
     ) {
         match cpu.xlen {
             Xlen::Bit32 => {
-                let shift = cpu.x[self.operands.rs1 as usize] as u64 % 32;
+                let shift = cpu.x[self.operands.rs1 as usize] as u64 & 0x1F;
                 let ones = (1u64 << (32 - shift)) - 1;
                 cpu.x[self.operands.rd as usize] = (ones << shift) as i64;
             }
             Xlen::Bit64 => {
-                let shift = cpu.x[self.operands.rs1 as usize] as u64 % 64;
+                let shift = cpu.x[self.operands.rs1 as usize] as u64 & 0x3F;
                 let ones = (1u128 << (64 - shift)) - 1;
                 cpu.x[self.operands.rd as usize] = (ones << shift) as i64;
             }

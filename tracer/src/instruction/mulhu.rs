@@ -5,10 +5,7 @@ use crate::{
     emulator::cpu::{Cpu, Xlen},
 };
 
-use super::{
-    format::{format_r::FormatR, InstructionFormat},
-    RISCVInstruction, RISCVTrace,
-};
+use super::{format::format_r::FormatR, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name   = MULHU,

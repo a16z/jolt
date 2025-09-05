@@ -1,20 +1,13 @@
-use self::Value::{Imm, Reg};
-use tracer::instruction::{
-    add::ADD,
-    addi::ADDI,
-    and::AND,
-    andi::ANDI,
-    format::{
-        format_i::FormatI, format_load::FormatLoad, format_r::FormatR, format_s::FormatS,
-        format_virtual_right_shift_i::FormatVirtualRightShiftI,
+use tracer::{
+    emulator::cpu::Xlen,
+    instruction::{andn::ANDN, lw::LW, sw::SW, RV32IMInstruction},
+    utils::{
+        inline_helpers::{
+            InstrAssembler,
+            Value::{self, Imm, Reg},
+        },
+        virtual_registers::allocate_virtual_register_for_inline,
     },
-    lw::LW,
-    sw::SW,
-    virtual_rotri::VirtualROTRI,
-    virtual_srli::VirtualSRLI,
-    xor::XOR,
-    xori::XORI,
-    RV32IMInstruction,
 };
 
 /// SHA-256 initial hash values
@@ -42,19 +35,12 @@ pub const K: [u64; 64] = [
 /// - 28..31: Initial E-H values when using custom IV
 pub const NEEDED_REGISTERS: u8 = 32;
 
-#[derive(Clone, Copy)]
-enum Value {
-    Imm(u64),
-    Reg(u8),
-}
-
 /// Builds assembly sequence for SHA256 compression
 /// Expects input words to be in RAM at location rs1..rs1+16
 /// Expects A..H to be in RAM at location rs2..rs2+8
 /// Output will be written to rs2..rs2+8
 struct Sha256SequenceBuilder {
-    address: u64,
-    sequence: Vec<RV32IMInstruction>,
+    asm: InstrAssembler,
     /// Round id
     round: i32,
     /// Virtual registers used by the sequence
@@ -70,14 +56,15 @@ struct Sha256SequenceBuilder {
 impl Sha256SequenceBuilder {
     fn new(
         address: u64,
+        is_compressed: bool,
+        xlen: Xlen,
         vr: [u8; NEEDED_REGISTERS as usize],
         operand_rs1: u8,
         operand_rs2: u8,
         initial: bool,
     ) -> Self {
         Sha256SequenceBuilder {
-            address,
-            sequence: vec![],
+            asm: InstrAssembler::new_inline(address, is_compressed, xlen),
             round: 0,
             vr,
             operand_rs1,
@@ -92,33 +79,31 @@ impl Sha256SequenceBuilder {
             // Load initial hash values from memory when using custom IV
             // A..D loaded into registers 0..3 (will be used immediately)
             // E..H loaded into registers 28..31 (preserved until needed)
-            (0..4).for_each(|i| self.lw(self.operand_rs2, i, self.vr[i as usize]));
-            (0..4).for_each(|i| self.lw(self.operand_rs2, i + 4, self.vr[(i + 28) as usize]));
+            (0..4).for_each(|i| {
+                self.asm
+                    .emit_ld::<LW>(self.vr[i as usize], self.operand_rs2, i * 4)
+            });
+            (0..4).for_each(|i| {
+                self.asm
+                    .emit_ld::<LW>(self.vr[(i + 28) as usize], self.operand_rs2, (i + 4) * 4)
+            });
         }
         // Load input words into registers 8..23
-        (0..16).for_each(|i| self.lw(self.operand_rs1, i, self.vr[(i + 8) as usize]));
+        (0..16).for_each(|i| {
+            self.asm
+                .emit_ld::<LW>(self.vr[(i + 8) as usize], self.operand_rs1, i * 4)
+        });
         // Run 64 rounds
         (0..64).for_each(|_| self.round());
         self.final_add_iv();
         // Store output values to rs2 location
-        (0..8).for_each(|i| self.sw(self.operand_rs2, self.vr[i as usize], i));
-        self.enumerate_sequence();
-        self.sequence
-    }
-
-    /// Enumerates sequence in reverse order and sets virtual_sequence_remaining
-    fn enumerate_sequence(&mut self) {
-        let len: u16 = self
-            .sequence
-            .len()
-            .try_into()
-            .expect("Sequence length cannot exceed 2^16");
-        self.sequence
-            .iter_mut()
-            .enumerate()
-            .for_each(|(i, instruction)| {
-                instruction.set_virtual_sequence_remaining(Some(len - i as u16 - 1));
-            });
+        // Store output A..H in-order using the current VR mapping after all rotations
+        let outs = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
+        for (i, ch) in outs.iter().enumerate() {
+            let src = self.vr(*ch);
+            self.asm.emit_s::<SW>(self.operand_rs2, src, (i as i64) * 4);
+        }
+        self.asm.finalize_inline(NEEDED_REGISTERS)
     }
 
     /// Adds IV to the final hash value to produce output
@@ -128,25 +113,28 @@ impl Sha256SequenceBuilder {
             // enough space for A, B, C, D, so we need to load them from memory. We can load them
             // into space that was used for t1, t2, ss, ss2. (technically there's no preference,
             // but it just keeps those in order).
-            (0..4).for_each(|i| self.lw(self.operand_rs2, i, self.vr[24 + i as usize]));
-            self.add(self.vri('A'), Reg(self.vr[24]), self.vr('A'));
-            self.add(self.vri('B'), Reg(self.vr[25]), self.vr('B'));
-            self.add(self.vri('C'), Reg(self.vr[26]), self.vr('C'));
-            self.add(self.vri('D'), Reg(self.vr[27]), self.vr('D'));
-            self.add(self.vri('E'), Reg(self.vr[28]), self.vr('E'));
-            self.add(self.vri('F'), Reg(self.vr[29]), self.vr('F'));
-            self.add(self.vri('G'), Reg(self.vr[30]), self.vr('G'));
-            self.add(self.vri('H'), Reg(self.vr[31]), self.vr('H'));
+            (0..4).for_each(|i| {
+                self.asm
+                    .emit_ld::<LW>(self.vr[24 + i as usize], self.operand_rs2, i * 4)
+            });
+            self.asm.add(self.vri('A'), Reg(self.vr[24]), self.vr('A'));
+            self.asm.add(self.vri('B'), Reg(self.vr[25]), self.vr('B'));
+            self.asm.add(self.vri('C'), Reg(self.vr[26]), self.vr('C'));
+            self.asm.add(self.vri('D'), Reg(self.vr[27]), self.vr('D'));
+            self.asm.add(self.vri('E'), Reg(self.vr[28]), self.vr('E'));
+            self.asm.add(self.vri('F'), Reg(self.vr[29]), self.vr('F'));
+            self.asm.add(self.vri('G'), Reg(self.vr[30]), self.vr('G'));
+            self.asm.add(self.vri('H'), Reg(self.vr[31]), self.vr('H'));
         } else {
             // We are using constants for final addition round
-            self.add(self.vri('A'), Imm(BLOCK[0]), self.vr('A'));
-            self.add(self.vri('B'), Imm(BLOCK[1]), self.vr('B'));
-            self.add(self.vri('C'), Imm(BLOCK[2]), self.vr('C'));
-            self.add(self.vri('D'), Imm(BLOCK[3]), self.vr('D'));
-            self.add(self.vri('E'), Imm(BLOCK[4]), self.vr('E'));
-            self.add(self.vri('F'), Imm(BLOCK[5]), self.vr('F'));
-            self.add(self.vri('G'), Imm(BLOCK[6]), self.vr('G'));
-            self.add(self.vri('H'), Imm(BLOCK[7]), self.vr('H'));
+            self.asm.add(self.vri('A'), Imm(BLOCK[0]), self.vr('A'));
+            self.asm.add(self.vri('B'), Imm(BLOCK[1]), self.vr('B'));
+            self.asm.add(self.vri('C'), Imm(BLOCK[2]), self.vr('C'));
+            self.asm.add(self.vri('D'), Imm(BLOCK[3]), self.vr('D'));
+            self.asm.add(self.vri('E'), Imm(BLOCK[4]), self.vr('E'));
+            self.asm.add(self.vri('F'), Imm(BLOCK[5]), self.vr('F'));
+            self.asm.add(self.vri('G'), Imm(BLOCK[6]), self.vr('G'));
+            self.asm.add(self.vri('H'), Imm(BLOCK[7]), self.vr('H'));
         }
     }
 
@@ -159,35 +147,45 @@ impl Sha256SequenceBuilder {
         // scratch space
         let ss = self.vr[26];
         let ss2 = self.vr[27];
-        // Put T_1 into register t1
+        let t1_val = self.compute_t1(t1, ss, ss2);
+        let t2_val = self.compute_t2(t2, ss, ss2);
+        let old_d = self.vri('D');
+        self.apply_round_update(t1_val, t2_val, old_d);
+    }
+
+    /// Compute T1 into the provided `t1` register and return it as a Value.
+    fn compute_t1(&mut self, t1: u8, ss: u8, ss2: u8) -> Value {
         // Put H + K
         // We do this first because H is going to be Imm the longest of all inputs
-        let h_add_k = self.add(Imm(K[self.round as usize]), self.vri('H'), t1);
+        let h_add_k = self.asm.add(Imm(K[self.round as usize]), self.vri('H'), t1);
+        // Put Sigma_1(E_0) into register t1
         let sigma_1 = self.sha_sigma_1(self.vri('E'), ss, ss2);
-        let add_sigma_1 = self.add(h_add_k, sigma_1, t1);
+        let add_sigma_1 = self.asm.add(h_add_k, sigma_1, t1);
         // Put Ch(E_0, F_0, G_0) into register t2
         let ch = self.sha_ch(self.vri('E'), self.vri('F'), self.vri('G'), ss, ss2);
-        let add_ch = self.add(add_sigma_1, ch, t1);
+        let add_ch = self.asm.add(add_sigma_1, ch, t1);
         self.update_w([ss, ss2]);
         // Add W_(rid)
-        let t1 = self.add(add_ch, Reg(self.w(0)), t1);
-        // Done with T_1
+        self.asm.add(add_ch, Reg(self.w(0)), t1)
+    }
 
-        // Put T_2 into register t2
+    /// Compute T2 into the provided `t2` register and return it as a Value.
+    fn compute_t2(&mut self, t2: u8, ss: u8, ss2: u8) -> Value {
         // Put Sigma_0(A_0) into register t2
         let sigma_0 = self.sha_sigma_0(self.vri('A'), t2, ss);
         // Put Maj(A_0, B_0, C_0) into register ss
         let maj = self.sha_maj(self.vri('A'), self.vri('B'), self.vri('C'), ss, ss2);
         // Add Maj to t2
-        let t2 = self.add(sigma_0, maj, t2);
-        // Done with T_2
+        self.asm.add(sigma_0, maj, t2)
+    }
 
-        let old_d = self.vri('D');
+    /// Apply A/E updates for the current round using computed T1/T2 and then advance the round.
+    fn apply_round_update(&mut self, t1: Value, t2: Value, old_d: Value) {
         self.round += 1;
         // Overwrite new A with T_1 + T_2
-        self.add(t1, t2, self.vr('A'));
+        self.asm.add(t1, t2, self.vr('A'));
         // Overwrite D_0 with D_0 + T_1
-        self.add(t1, old_d, self.vr('E'));
+        self.asm.add(t1, old_d, self.vr('E'));
     }
 
     /// Returns either Register or Immediate input for a working variable (A-H)
@@ -249,238 +247,128 @@ impl Sha256SequenceBuilder {
         // Calculate σ₀(W[t-15])
         self.sha_word_sigma_0(self.w(-15), ss[0], ss[1]);
         // Add σ₀ to W[t-16]
-        self.add(Reg(self.w(-16)), Reg(ss[0]), self.w(-16));
+        self.asm.add(Reg(self.w(-16)), Reg(ss[0]), self.w(-16));
         // Add W[t-7] to W[t-16]
-        self.add(Reg(self.w(-7)), Reg(self.w(-16)), self.w(-16));
+        self.asm.add(Reg(self.w(-7)), Reg(self.w(-16)), self.w(-16));
         // Calculate σ₁(W[t-2])
         self.sha_word_sigma_1(self.w(-2), ss[0], ss[1]);
         // Add σ₁ to W[t-16] to get final W[t]
-        self.add(Reg(self.w(-16)), Reg(ss[0]), self.w(-16));
+        self.asm.add(Reg(self.w(-16)), Reg(ss[0]), self.w(-16));
     }
 
     /// Computes sha256 Ch function
     /// Ch(E, F, G) = (E and F) xor ((not E) and G)
     fn sha_ch(&mut self, rs1: Value, rs2: Value, rs3: Value, rd: u8, ss: u8) -> Value {
-        let e_and_f = self.and(rs1, rs2, ss);
-        let neg_e = self.xor(rs1, Imm(u32::MAX as u64), rd);
-        let neg_e_and_g = self.and(neg_e, rs3, rd);
-        self.xor(e_and_f, neg_e_and_g, rd)
+        let e_and_f = self.asm.and(rs1, rs2, ss);
+        // Use ANDN to compute (not E) and G in one instruction
+        // ANDN computes rs1 & !rs2, so andn(G, E) gives G & !E = !E & G
+        match (rs1, rs3) {
+            (Reg(r1), Reg(r3)) => {
+                self.asm.emit_r::<ANDN>(rd, r3, r1);
+                let neg_e_and_g = Reg(rd);
+                self.asm.xor(e_and_f, neg_e_and_g, rd)
+            }
+            _ => {
+                // Fallback for immediate values (used in first few rounds)
+                let neg_e = self.asm.xor(rs1, Imm(u32::MAX as u64), rd);
+                let neg_e_and_g = self.asm.and(neg_e, rs3, rd);
+                self.asm.xor(e_and_f, neg_e_and_g, rd)
+            }
+        }
     }
 
     /// Computes sha256 Maj function: Maj(A, B, C) = (A and B) xor (A and C) xor (B and C)
     fn sha_maj(&mut self, rs1: Value, rs2: Value, rs3: Value, rd: u8, ss: u8) -> Value {
-        let b_and_c = self.and(rs2, rs3, ss);
-        let b_xor_c = self.xor(rs2, rs3, rd);
-        let a_and_b_xor_c = self.and(rs1, b_xor_c, rd);
-        self.xor(b_and_c, a_and_b_xor_c, rd)
+        let b_and_c = self.asm.and(rs2, rs3, ss);
+        let b_xor_c = self.asm.xor(rs2, rs3, rd);
+        let a_and_b_xor_c = self.asm.and(rs1, b_xor_c, rd);
+        self.asm.xor(b_and_c, a_and_b_xor_c, rd)
     }
 
     /// Sigma_0 function of SHA256 compression function: Σ₀(x) = ROTR²(x) ⊕ ROTR¹³(x) ⊕ ROTR²²(x)
     fn sha_sigma_0(&mut self, rs1: Value, rd: u8, ss: u8) -> Value {
-        let rotri_xor = self.rotri_xor_rotri(rs1, 2, 13, rd, ss);
-        let rotri_22 = self.rotri(rs1, 22, ss);
-        self.xor(rotri_xor, rotri_22, rd)
+        let rotri_xor = self.asm.rotri_xor_rotri32(rs1, 2, 13, rd, ss);
+        let rotri_22 = self.asm.rotri32(rs1, 22, ss);
+        self.asm.xor(rotri_xor, rotri_22, rd)
     }
 
     /// Sigma_1 function of SHA256 compression function: Σ₁(x) = ROTR⁶(x) ⊕ ROTR¹¹(x) ⊕ ROTR²⁵(x)
     fn sha_sigma_1(&mut self, rs1: Value, rd: u8, ss: u8) -> Value {
-        let rotri_xor = self.rotri_xor_rotri(rs1, 6, 11, rd, ss);
-        let rotri_25 = self.rotri(rs1, 25, ss);
-        self.xor(rotri_xor, rotri_25, rd)
+        let rotri_xor = self.asm.rotri_xor_rotri32(rs1, 6, 11, rd, ss);
+        let rotri_25 = self.asm.rotri32(rs1, 25, ss);
+        self.asm.xor(rotri_xor, rotri_25, rd)
     }
 
     /// sigma_0 for word computation: σ₀(x) = ROTR⁷(x) ⊕ ROTR¹⁸(x) ⊕ SHR³(x)
     fn sha_word_sigma_0(&mut self, rs1: u8, rd: u8, ss: u8) {
-        self.rotri_xor_rotri(Reg(rs1), 7, 18, rd, ss);
-        let srli = VirtualSRLI {
-            address: self.address,
-            operands: FormatVirtualRightShiftI {
-                rd: ss,
-                rs1,
-                imm: 0xFFFFFFF8, // SRLI by 3
-            },
-            virtual_sequence_remaining: Some(0),
-        };
-        self.sequence.push(srli.into());
-        self.xor(Reg(rd), Reg(ss), rd);
+        self.asm.rotri_xor_rotri32(Reg(rs1), 7, 18, rd, ss);
+        self.asm.srli(Reg(rs1), 3, ss);
+        self.asm.xor(Reg(rd), Reg(ss), rd);
     }
 
     /// sigma_1 for word computation: σ₁(x) = ROTR¹⁷(x) ⊕ ROTR¹⁹(x) ⊕ SHR¹⁰(x)
     fn sha_word_sigma_1(&mut self, rs1: u8, rd: u8, ss: u8) {
         // We don't need to do Imm shenanigans here since words are always in registers
-        self.rotri_xor_rotri(Reg(rs1), 17, 19, rd, ss);
-        let srli = VirtualSRLI {
-            address: self.address,
-            operands: FormatVirtualRightShiftI {
-                rd: ss,
-                rs1,
-                imm: 0xFFFFFC00, // SRLI by 10
-            },
-            virtual_sequence_remaining: Some(0),
-        };
-        self.sequence.push(srli.into());
-        self.xor(Reg(rd), Reg(ss), rd);
+        self.asm.rotri_xor_rotri32(Reg(rs1), 17, 19, rd, ss);
+        self.asm.srli(Reg(rs1), 10, ss);
+        self.asm.xor(Reg(rd), Reg(ss), rd);
     }
-
-    fn lw(&mut self, rs1: u8, offset: i64, rd: u8) {
-        let lw = LW {
-            address: self.address,
-            operands: FormatLoad {
-                rd,
-                rs1,
-                imm: offset * 4,
-            },
-            virtual_sequence_remaining: Some(0),
-        };
-        self.sequence.push(lw.into());
-    }
-
-    fn sw(&mut self, rs1: u8, rs2: u8, offset: i64) {
-        let sw = SW {
-            address: self.address,
-            operands: FormatS {
-                rs1,
-                rs2,
-                imm: offset * 4,
-            },
-            virtual_sequence_remaining: Some(0),
-        };
-        self.sequence.push(sw.into());
-    }
-
-    /// Addition modulo 2^32
-    fn add(&mut self, rs1: Value, rs2: Value, rd: u8) -> Value {
-        match (rs1, rs2) {
-            (Reg(rs1), Reg(rs2)) => {
-                let add = ADD {
-                    address: self.address,
-                    operands: FormatR { rd, rs1, rs2 },
-                    virtual_sequence_remaining: Some(0),
-                };
-                self.sequence.push(add.into());
-                Reg(rd)
-            }
-            (Reg(rs1), Imm(imm)) => {
-                let addi = ADDI {
-                    address: self.address,
-                    operands: FormatI { rd, rs1, imm },
-                    virtual_sequence_remaining: Some(0),
-                };
-                self.sequence.push(addi.into());
-                Reg(rd)
-            }
-            (Imm(_), Reg(_)) => self.add(rs2, rs1, rd),
-            (Imm(imm1), Imm(imm2)) => Imm((imm1 as u32).wrapping_add(imm2 as u32) as u64),
-        }
-    }
-
-    fn and(&mut self, rs1: Value, rs2: Value, rd: u8) -> Value {
-        match (rs1, rs2) {
-            (Reg(rs1), Reg(rs2)) => {
-                let add = AND {
-                    address: self.address,
-                    operands: FormatR { rd, rs1, rs2 },
-                    virtual_sequence_remaining: Some(0),
-                };
-                self.sequence.push(add.into());
-                Reg(rd)
-            }
-            (Reg(rs1), Imm(imm)) => {
-                let add = ANDI {
-                    address: self.address,
-                    operands: FormatI { rd, rs1, imm },
-                    virtual_sequence_remaining: Some(0),
-                };
-                self.sequence.push(add.into());
-                Reg(rd)
-            }
-            (Imm(_), Reg(_)) => self.and(rs2, rs1, rd),
-            (Imm(imm1), Imm(imm2)) => Imm(imm1 & imm2),
-        }
-    }
-
-    fn xor(&mut self, rs1: Value, rs2: Value, rd: u8) -> Value {
-        match (rs1, rs2) {
-            (Reg(rs1), Reg(rs2)) => {
-                let xor = XOR {
-                    address: self.address,
-                    operands: FormatR { rd, rs1, rs2 },
-                    virtual_sequence_remaining: Some(0),
-                };
-                self.sequence.push(xor.into());
-                Reg(rd)
-            }
-            (Reg(rs1), Imm(imm)) => {
-                let xori = XORI {
-                    address: self.address,
-                    operands: FormatI { rd, rs1, imm },
-                    virtual_sequence_remaining: Some(0),
-                };
-                self.sequence.push(xori.into());
-                Reg(rd)
-            }
-            (Imm(_), Reg(_)) => self.xor(rs2, rs1, rd),
-            (Imm(imm1), Imm(imm2)) => Imm(imm1 ^ imm2),
-        }
-    }
-
-    /// ROTRI instruction - Rotate Right Immediate
-    fn rotri(&mut self, rs1: Value, imm: u64, rd: u8) -> Value {
-        match rs1 {
-            Reg(rs1) => {
-                // Construct bitmask: (32-imm) ones followed by imm zeros
-                let ones = (1u64 << (32 - imm)) - 1;
-                let imm = ones << imm;
-                let rotri = VirtualROTRI {
-                    address: self.address,
-                    operands: FormatVirtualRightShiftI { rd, rs1, imm },
-                    virtual_sequence_remaining: Some(0),
-                };
-                self.sequence.push(rotri.into());
-                Reg(rd)
-            }
-            Imm(val) => Imm((val as u32).rotate_right(imm as u32) as u64),
-        }
-    }
-
-    fn rotri_xor_rotri(&mut self, rs1: Value, imm1: u32, imm2: u32, rd: u8, ss: u8) -> Value {
-        let rotri = self.rotri(rs1, imm1 as u64, ss);
-        let rotri2 = self.rotri(rs1, imm2 as u64, rd);
-        self.xor(rotri, rotri2, rd)
-    }
-}
-
-const VIRTUAL_REGISTER_COUNT: u8 = 32; //  see Section 6.1 of Jolt paper
-pub const fn virtual_register_index(index: u8) -> u8 {
-    index + VIRTUAL_REGISTER_COUNT
 }
 
 // Virtual instructions builder for sha256
-pub fn sha2_virtual_sequence_builder(address: u64, rs1: u8, rs2: u8) -> Vec<RV32IMInstruction> {
+pub fn sha2_inline_sequence_builder(
+    address: u64,
+    is_compressed: bool,
+    xlen: Xlen,
+    rs1: u8,
+    rs2: u8,
+    _rs3: u8,
+) -> Vec<RV32IMInstruction> {
     // Virtual registers used as a scratch space
-    let mut vr = [0u8; 32];
-    (0..32).for_each(|i| {
-        vr[i] = virtual_register_index(i as u8);
-    });
+    let guards: Vec<_> = (0..NEEDED_REGISTERS)
+        .map(|_| allocate_virtual_register_for_inline())
+        .collect();
+    let mut vr = [0u8; NEEDED_REGISTERS as usize];
+    for (i, guard) in guards.iter().enumerate() {
+        vr[i] = **guard;
+    }
     let builder = Sha256SequenceBuilder::new(
-        address, vr, rs1, rs2, false, // not initial - uses custom IV from rs2
+        address,
+        is_compressed,
+        xlen,
+        vr,
+        rs1,
+        rs2,
+        false, // not initial - uses custom IV from rs2
     );
     builder.build()
 }
 
 // Virtual instructions builder for sha256_init
-pub fn sha2_init_virtual_sequence_builder(
+pub fn sha2_init_inline_sequence_builder(
     address: u64,
+    is_compressed: bool,
+    xlen: Xlen,
     rs1: u8,
     rs2: u8,
+    _rs3: u8,
 ) -> Vec<RV32IMInstruction> {
     // Virtual registers used as a scratch space
-    let mut vr = [0u8; 32];
-    (0..32).for_each(|i| {
-        vr[i] = virtual_register_index(i as u8);
-    });
+    let guards: Vec<_> = (0..NEEDED_REGISTERS)
+        .map(|_| allocate_virtual_register_for_inline())
+        .collect();
+    let mut vr = [0u8; NEEDED_REGISTERS as usize];
+    for (i, guard) in guards.iter().enumerate() {
+        vr[i] = **guard;
+    }
     let builder = Sha256SequenceBuilder::new(
-        address, vr, rs1, rs2, true, // initial - uses BLOCK constants
+        address,
+        is_compressed,
+        xlen,
+        vr,
+        rs1,
+        rs2,
+        true, // initial - uses BLOCK constants
     );
     builder.build()
 }

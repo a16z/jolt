@@ -1,6 +1,8 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
-use jolt_core::benches::bench::{benchmarks, BenchType};
+#[path = "../../benches/e2e_profiling.rs"]
+mod e2e_profiling;
+use e2e_profiling::{benchmarks, BenchType};
 
 use std::any::Any;
 
@@ -47,7 +49,12 @@ fn trace(args: ProfileArgs) {
     let mut layers = Vec::new();
 
     let log_layer = tracing_subscriber::fmt::layer()
-        .pretty()
+        .compact()
+        .with_target(false)
+        .with_file(false)
+        .with_line_number(false)
+        .with_thread_ids(false)
+        .with_thread_names(false)
         .with_filter(EnvFilter::from_default_env()) // reads RUST_LOG
         .boxed();
     layers.push(log_layer);
@@ -58,6 +65,12 @@ fn trace(args: ProfileArgs) {
         if format.contains(&Format::Default) {
             let collector_layer = tracing_subscriber::fmt::layer()
                 .with_span_events(FmtSpan::CLOSE)
+                .compact()
+                .with_target(false)
+                .with_file(false)
+                .with_line_number(false)
+                .with_thread_ids(false)
+                .with_thread_names(false)
                 .boxed();
             layers.push(collector_layer);
         }
@@ -65,7 +78,7 @@ fn trace(args: ProfileArgs) {
             let (chrome_layer, guard) = ChromeLayerBuilder::new().build();
             layers.push(chrome_layer.boxed());
             guards.push(Box::new(guard));
-            println!("Running tracing-chrome. Files will be saved as trace-<some timestamp>.json and can be viewed in https://ui.perfetto.dev/");
+            tracing::info!("Running tracing-chrome. Files will be saved as trace-<some timestamp>.json and can be viewed in https://ui.perfetto.dev/");
         }
     }
 

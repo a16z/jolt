@@ -77,6 +77,15 @@ impl<F: JoltField> RLCPolynomial<F> {
                                 MultilinearPolynomial::I64Scalars(p) => {
                                     acc += p.coeffs[i].field_mul(coeff);
                                 }
+                                MultilinearPolynomial::U128Scalars(p) => {
+                                    acc += p.coeffs[i].field_mul(coeff);
+                                }
+                                MultilinearPolynomial::I128Scalars(p) => {
+                                    acc += p.coeffs[i].field_mul(coeff);
+                                }
+                                MultilinearPolynomial::LargeScalars(p) => {
+                                    acc += p.Z[i] * coeff;
+                                }
                                 _ => unreachable!(),
                             }
                         }
@@ -107,7 +116,7 @@ impl<F: JoltField> RLCPolynomial<F> {
         bases: &[G::Affine],
     ) -> Vec<JoltGroupWrapper<G>> {
         let num_rows = DoryGlobals::get_max_num_rows();
-        println!("Committing to RLC polynomial with {num_rows} rows");
+        tracing::debug!("Committing to RLC polynomial with {num_rows} rows");
         let row_len = DoryGlobals::get_num_columns();
 
         let mut row_commitments = vec![JoltGroupWrapper(G::zero()); num_rows];
@@ -118,7 +127,7 @@ impl<F: JoltField> RLCPolynomial<F> {
             .zip(row_commitments.par_iter_mut())
             .for_each(|(dense_row, commitment)| {
                 let msm_result: G =
-                    VariableBaseMSM::msm_field_elements(&bases[..dense_row.len()], dense_row, None)
+                    VariableBaseMSM::msm_field_elements(&bases[..dense_row.len()], dense_row)
                         .unwrap();
                 *commitment = JoltGroupWrapper(commitment.0 + msm_result)
             });
