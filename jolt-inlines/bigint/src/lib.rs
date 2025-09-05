@@ -65,10 +65,10 @@ pub fn store_inlines() -> Result<(), String> {
 #[ctor::ctor]
 fn auto_register() {
     if let Err(e) = init_inlines() {
-        eprintln!("Failed to register BIGINT256_MUL inlines: {e}");
+        tracing::error!("Failed to register BIGINT256_MUL inlines: {e}");
     }
 
     if let Err(e) = store_inlines() {
-        eprintln!("Failed to store BIGINT256_MUL inline traces: {e}");
+        tracing::error!("Failed to store BIGINT256_MUL inline traces: {e}");
     }
 }
