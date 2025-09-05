@@ -51,10 +51,10 @@ pub fn store_inlines() -> Result<(), String> {
 #[ctor::ctor]
 fn auto_register() {
     if let Err(e) = init_inlines() {
-        eprintln!("Failed to register Blake3 inlines: {e}");
+        eprintln!("Failed to register BLAKE3 inlines: {e}");
     }
 
     if let Err(e) = store_inlines() {
-        eprintln!("Failed to store Blake3 inline traces: {e}");
+        eprintln!("Failed to store BLAKE3 inline traces: {e}");
     }
 }

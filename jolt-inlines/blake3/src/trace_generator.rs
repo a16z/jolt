@@ -7,7 +7,7 @@
 //!   - "Round" = single application of G function mixing to the working state
 //!   - "G function" = core mixing function that updates 4 state words using 2 message words
 
-use crate::{IV, MSG_SCHEDULE, NUM_ROUNDS, MSG_BLOCK_NUM, CHAINING_VALUE_NUM, COUNTER_NUM};
+use crate::{CHAINING_VALUE_NUM, COUNTER_NUM, IV, MSG_BLOCK_NUM, MSG_SCHEDULE, NUM_ROUNDS};
 use tracer::emulator::cpu::Xlen;
 use tracer::instruction::lui::LUI;
 use tracer::instruction::lw::LW;
@@ -23,7 +23,7 @@ use tracer::utils::virtual_registers::allocate_virtual_register_for_inline;
 
 pub const NEEDED_REGISTERS: u8 = 45;
 
-/// Memory layout constants for Blake3 virtual registers
+/// Memory layout constants for BLAKE3 virtual registers
 ///
 /// The virtual register layout is organized as follows:
 /// - vr[0..15]:  Internal state `v`
@@ -34,7 +34,6 @@ pub const NEEDED_REGISTERS: u8 = 45;
 /// - vr[43]:     Flags
 /// - vr[44]:     Temporary register
 const INTERNAL_STATE_VR_START: usize = 0;
-const INTERNAL_STATE_SIZE: usize = 16;
 const MSG_BLOCK_START_VR: usize = 16;
 const CV_START_VR: usize = 32;
 const COUNTER_START_VR: usize = 40;
@@ -104,9 +103,9 @@ impl Blake3SequenceBuilder {
         }
 
         // v[8..11] = IV[0..3]
-        for i in 0..4 {
+        for (i, val) in IV.iter().enumerate().take(4) {
             self.asm
-                .emit_u::<LUI>(self.vr[CHAINING_VALUE_NUM + i], IV[i] as u64);
+                .emit_u::<LUI>(self.vr[CHAINING_VALUE_NUM + i], *val as u64);
         }
         // v[12..15] = counter values, input length, and flags
         self.asm.xor(
@@ -131,7 +130,7 @@ impl Blake3SequenceBuilder {
         );
     }
 
-    /// Execute one round of Blake3 compression
+    /// Execute one round of BLAKE3 compression
     fn blake3_round(&mut self) {
         let msg_schedule_round = &MSG_SCHEDULE[self.round as usize];
 
@@ -196,11 +195,8 @@ impl Blake3SequenceBuilder {
     /// Update chaining value
     fn store_state(&mut self) {
         for i in 0..CHAINING_VALUE_NUM {
-            self.asm.emit_s::<SW>(
-                self.operand_rs1,
-                self.vr[CV_START_VR + i],
-                (i as i64) * 4,
-            );
+            self.asm
+                .emit_s::<SW>(self.operand_rs1, self.vr[CV_START_VR + i], (i as i64) * 4);
         }
     }
 
@@ -321,7 +317,6 @@ mod test_sequence_builder {
         ]
     }
 
-    /// Generate random input values for testing
     fn generate_random_input() -> MessageBlock {
         use rand::Rng;
         let mut rng = rand::thread_rng();
@@ -334,7 +329,7 @@ mod test_sequence_builder {
     }
 
     fn compute_reference_blake3_hash(input: &MessageBlock) -> ChainingValue {
-        // Convert message words to bytes for blake3 hasher
+        // Convert message words to bytes for BLAKE3 hasher
         let message_bytes: Vec<u8> = input.iter().flat_map(|w| w.to_le_bytes()).collect();
         let hash = blake3::hash(&message_bytes);
         let expected_state: ChainingValue = hash

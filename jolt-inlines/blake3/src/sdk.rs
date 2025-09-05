@@ -1,11 +1,11 @@
-//! This file provides high-level API to use Blake3 compression, both in host and guest mode.
+//! This file provides high-level API to use BLAKE3 compression, both in host and guest mode.
 
 use crate::{
     BLOCK_INPUT_SIZE_IN_BYTES, CHAINING_VALUE_NUM, COUNTER_NUM, IV, MSG_BLOCK_NUM,
     OUTPUT_SIZE_IN_BYTES,
 };
 
-/// Blake3 hasher state for streaming operation.
+/// BLAKE3 hasher state for streaming operation.
 pub struct Blake3 {
     /// Hash state (8 x 32-bit words)
     h: [u32; CHAINING_VALUE_NUM],
@@ -17,7 +17,7 @@ pub struct Blake3 {
     counter: u64,
 }
 
-/// Note: Current implementation only support hashing to at most 64-bytes. More inputs is not supported yet.
+/// Note: Current implementation only supports hashing input of at most 64 bytes. Larger inputs are not supported yet.
 impl Blake3 {
     pub fn new() -> Self {
         Self {
@@ -29,15 +29,18 @@ impl Blake3 {
     }
 
     /// Processes input data incrementally.
+    ///
+    /// # Panics
+    /// Panics if the total input exceeds 64 bytes.
     pub fn update(&mut self, input: &[u8]) {
         if input.is_empty() {
             return;
         }
-        for char in input {
+        for byte in input {
             if self.buffer_len == BLOCK_INPUT_SIZE_IN_BYTES {
-                panic!("Buffer is full and cannot add any new character");
+                panic!("Buffer is full and cannot add any new data");
             }
-            self.buffer[self.buffer_len] = *char;
+            self.buffer[self.buffer_len] = *byte;
             self.buffer_len += 1;
         }
     }
@@ -75,7 +78,7 @@ fn compression_caller(
     counter: u64,
     input_bytes_num: u32,
 ) {
-    // Convert buffer to u64 words
+    // Convert buffer to u32 words
     let mut message = [0u32; MSG_BLOCK_NUM + COUNTER_NUM + 2];
     for i in 0..MSG_BLOCK_NUM {
         message[i] = u32::from_le_bytes(message_block[i * 4..(i + 1) * 4].try_into().unwrap());
@@ -97,28 +100,35 @@ impl Default for Blake3 {
     }
 }
 
-/// Calls the Blake3 compression custom instruction.
+/// Calls the BLAKE3 compression custom instruction.
 /// # Safety
 /// - `chaining_value` must be a valid pointer to 32 bytes of readable and writable memory.
 /// - `message` must be a valid pointer to 64 bytes of readable memory.
 /// - Both pointers must be properly aligned for u32 access (4-byte alignment).
 #[cfg(not(feature = "host"))]
 pub unsafe fn blake3_compress(chaining_value: *mut u32, message: *const u32) {
-    // Memory layout for Blake3 instruction:
+    use jolt_inlines_common::constants::{blake3 as blake3_consts, INLINE_OPCODE};
+    // Memory layout for BLAKE3 instruction:
     // rs1: points to chaining value (32 bytes)
     // rs2: points to message block (64 bytes) + counter (8 bytes) + block_len (4 bytes) + flags (4 bytes)
 
     core::arch::asm!(
-        ".insn r 0x0B, 0x0, 0x03, x0, {}, {}",
-        in(reg) chaining_value,
-        in(reg) message,
+        ".insn r {opcode}, {funct3}, {funct7}, x0, {rs1}, {rs2}",
+        opcode = const INLINE_OPCODE,
+        funct3 = const blake3_consts::FUNCT3,
+        funct7 = const blake3_consts::FUNCT7,
+        rs1 = in(reg) chaining_value,
+        rs2 = in(reg) message,
         options(nostack)
     );
 }
 
+/// # Safety
+/// - `chaining_value` must be a valid pointer to 32 bytes.
+/// - `message` must be a valid pointer to 64 bytes.
 #[cfg(feature = "host")]
 pub unsafe fn blake3_compress(chaining_value: *mut u32, message: *const u32) {
-    // Memory layout for Blake3 instruction:
+    // Memory layout for BLAKE3 instruction:
     // message points to: message block (64 bytes / 16 u32s) + counter (8 bytes / 2 u32s) + block_len (4 bytes / 1 u32) + flags (4 bytes / 1 u32)
 
     // Extract the message block (first 16 u32s)
@@ -147,81 +157,103 @@ pub unsafe fn blake3_compress(chaining_value: *mut u32, message: *const u32) {
 }
 
 #[cfg(test)]
+#[cfg(feature = "host")]
 mod tests {
-    use super::*;
-    use crate::IV;
+    use super::Blake3 as inline_blake3;
+    use crate::{BLOCK_INPUT_SIZE_IN_BYTES, OUTPUT_SIZE_IN_BYTES};
+    use blake3 as reference_blake3;
+    use rand::{Rng, RngCore};
 
-    // #[test]
-    // fn test_blake3_compress_basic() {
-    //     // Test vector from tracer implementation
-    //     let mut chaining_value = [0u32; 16]; // 16 words total
-    //     chaining_value[0..8].copy_from_slice(&IV); // Fill first 8 with IV
-    //                                                // Remaining 8 are already 0
+    fn compute_expected_result(input: &[u8]) -> [u8; OUTPUT_SIZE_IN_BYTES] {
+        reference_blake3::hash(input).as_bytes()[0..OUTPUT_SIZE_IN_BYTES]
+            .try_into()
+            .unwrap()
+    }
 
-    //     // Prepare message buffer with the full layout:
-    //     // message block (16 u32s) + counter (2 u32s) + block_len (1 u32) + flags (1 u32)
-    //     let mut full_message = [0u32; 20];
+    fn random_input(len: usize) -> Vec<u8> {
+        let mut buf = vec![0u8; len];
+        let mut rng = rand::thread_rng();
+        rng.fill_bytes(&mut buf);
+        buf
+    }
 
-    //     // Message block (first 16 u32s): sequential u32 values 0..15
-    //     full_message[0..16].copy_from_slice(&[
-    //         0u32, 1u32, 2u32, 3u32, 4u32, 5u32, 6u32, 7u32, 8u32, 9u32, 10u32, 11u32, 12u32, 13u32,
-    //         14u32, 15u32,
-    //     ]);
+    fn random_partition(data: &[u8]) -> Vec<&[u8]> {
+        let len = data.len();
+        if len == 0 {
+            return vec![&[]];
+        }
+        let mut parts = Vec::new();
+        let mut partitioned_num = 0usize;
+        let mut rng = rand::thread_rng();
+        while partitioned_num < len {
+            let remaining = len - partitioned_num;
+            let take = rng.gen_range(1..=remaining);
+            parts.push(&data[partitioned_num..partitioned_num + take]);
+            partitioned_num += take;
+        }
+        parts
+    }
 
-    //     // Counter (next 2 u32s at indices 16-17)
-    //     let counter = 0u64;
-    //     full_message[16] = counter as u32; // counter low
-    //     full_message[17] = (counter >> 32) as u32; // counter high
+    #[test]
+    fn digest_matches_standard() {
+        for _ in 0..1000 {
+            let len = rand::random::<usize>() % (BLOCK_INPUT_SIZE_IN_BYTES);
+            let input = random_input(len);
+            let result = inline_blake3::digest(&input);
+            let expected = compute_expected_result(&input);
+            assert_eq!(result, expected, "digest mismatch for input={input:02x?}");
+        }
+    }
 
-    //     // Block length (index 18)
-    //     full_message[18] = 64u32;
+    #[test]
+    fn streaming_update_finalize_matches_standard() {
+        for _ in 0..1000 {
+            let len = rand::random::<usize>() % (BLOCK_INPUT_SIZE_IN_BYTES + 1);
+            let data = random_input(len);
+            let expected = compute_expected_result(&data);
+            let parts = random_partition(&data);
+            let mut hasher = inline_blake3::new();
+            for p in &parts {
+                hasher.update(p);
+            }
+            let got = hasher.finalize();
+            assert_eq!(got, expected, "stream mismatch for input={data:02x?}");
+        }
+    }
 
-    //     // Flags (index 19)
-    //     full_message[19] = 0u32;
+    #[test]
+    #[should_panic]
+    fn panics_on_larger_than_block_input() {
+        // 65 bytes triggers internal buffer overflow guard
+        let input = vec![0u8; BLOCK_INPUT_SIZE_IN_BYTES + 1];
+        let _ = inline_blake3::digest(&input);
+    }
 
-    //     // Expected output from tracer test vector
-    //     let expected: [u32; 16] = [
-    //         0x5f98b37e, 0x26b0af2a, 0xdc58b278, 0x85d56ff6, 0x96f5d384, 0x42c9e776, 0xbeedd1e4,
-    //         0xa03faf22, 0x8a4b2d59, 0x1a1c224d, 0x303f2ae7, 0xd36ee60c, 0xfba05dbb, 0xef024714,
-    //         0xf597a6be, 0xd849c813,
-    //     ];
+    #[test]
+    fn edge_cases_zero_max_lengths() {
+        // Empty
+        let empty: &[u8] = &[];
+        assert_eq!(inline_blake3::digest(empty), compute_expected_result(empty));
 
-    //     unsafe { blake3_compress(chaining_value.as_mut_ptr(), full_message.as_ptr()) };
+        // Length 64 (block-size)
+        let mut l64 = [0u8; 64];
+        for (i, b) in l64.iter_mut().enumerate() {
+            *b = 255 - i as u8;
+        }
+        assert_eq!(inline_blake3::digest(&l64), compute_expected_result(&l64));
 
-    //     assert_eq!(chaining_value, expected, "Blake3 compression test failed");
-    // }
+        // All zeros (64 bytes)
+        let zeros = [0u8; 64];
+        assert_eq!(
+            inline_blake3::digest(&zeros),
+            compute_expected_result(&zeros)
+        );
 
-    // #[cfg(feature = "host")]
-    // #[test]
-    // fn test_direct_tracer_call() {
-    //     // Direct call to tracer function
-    //     let mut chaining_value = IV; // 16 words total
-
-    //     let message: [u32; 16] = [
-    //         0u32, 1u32, 2u32, 3u32, 4u32, 5u32, 6u32, 7u32, 8u32, 9u32, 10u32, 11u32, 12u32, 13u32,
-    //         14u32, 15u32,
-    //     ];
-
-    //     let counter = [0u32, 0u32];
-    //     let block_len = 64u32;
-    //     let flags = 0u32;
-
-    //     // Expected output from tracer test vector
-    //     let expected: [u32; 16] = [
-    //         0x5f98b37e, 0x26b0af2a, 0xdc58b278, 0x85d56ff6, 0x96f5d384, 0x42c9e776, 0xbeedd1e4,
-    //         0xa03faf22, 0x8a4b2d59, 0x1a1c224d, 0x303f2ae7, 0xd36ee60c, 0xfba05dbb, 0xef024714,
-    //         0xf597a6be, 0xd849c813,
-    //     ];
-
-    //     // Call exec function directly
-    //     crate::exec::execute_blake3_compression(
-    //         &mut chaining_value,
-    //         &message,
-    //         &counter,
-    //         block_len,
-    //         flags,
-    //     );
-
-    //     assert_eq!(chaining_value, expected, "Direct tracer call failed");
-    // }
+        // All 0xFF (64 bytes)
+        let maxes = [0xFFu8; 64];
+        assert_eq!(
+            inline_blake3::digest(&maxes),
+            compute_expected_result(&maxes)
+        );
+    }
 }

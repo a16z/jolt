@@ -46,7 +46,7 @@ impl Blake3CpuHarness {
                 .cpu
                 .mmu
                 .store_word(Self::CHAINING_VALUE_ADDR.wrapping_add((i * 4) as u64), word)
-                .expect("BLAKE3: Failed to store chaining value to memory");
+                .expect("Failed to store chaining value to memory");
         }
 
         // Load message block into memory (as u32 words)
@@ -55,7 +55,7 @@ impl Blake3CpuHarness {
                 .cpu
                 .mmu
                 .store_word(Self::MESSAGE_ADDR.wrapping_add((i * 4) as u64), word)
-                .expect("BLAKE3: Failed to store message to memory");
+                .expect("Failed to store message to memory");
         }
 
         // Load counter (2 u32 words)
@@ -63,26 +63,26 @@ impl Blake3CpuHarness {
             .cpu
             .mmu
             .store_word(Self::COUNTER_ADDR, counter[0])
-            .expect("BLAKE3: Failed to store counter[0] to memory");
+            .expect("Failed to store counter[0] to memory");
         self.harness
             .cpu
             .mmu
             .store_word(Self::COUNTER_ADDR.wrapping_add(4), counter[1])
-            .expect("BLAKE3: Failed to store counter[1] to memory");
+            .expect("Failed to store counter[1] to memory");
 
         // Load block length
         self.harness
             .cpu
             .mmu
             .store_word(Self::BLOCK_LEN_ADDR, block_len)
-            .expect("BLAKE3: Failed to store block_len to memory");
+            .expect("Failed to store block_len to memory");
 
         // Load flags
         self.harness
             .cpu
             .mmu
             .store_word(Self::FLAGS_ADDR, flags)
-            .expect("BLAKE3: Failed to store flags to memory");
+            .expect("Failed to store flags to memory");
     }
 
     pub fn read_chaining_value(&mut self) -> ChainingValue {
@@ -93,7 +93,7 @@ impl Blake3CpuHarness {
                 .cpu
                 .mmu
                 .load_word(Self::CHAINING_VALUE_ADDR.wrapping_add((i * 4) as u64))
-                .expect("BLAKE3: Failed to load chaining value from memory")
+                .expect("Failed to load chaining value from memory")
                 .0;
         }
         chaining_value

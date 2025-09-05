@@ -17,14 +17,14 @@ pub use host::*;
 #[cfg(all(test, feature = "host"))]
 pub mod test_utils;
 
-/// Blake3 initialization vector (IV)
+/// BLAKE3 initialization vector (IV)
 #[rustfmt::skip]
 pub const IV: [u32; 8] = [
     0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
     0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
 ];
 
-/// Blake3 message scheduling constants for each round
+/// BLAKE3 message scheduling constants for each round
 #[rustfmt::skip]
 pub const MSG_SCHEDULE: [[usize; 16]; NUM_ROUNDS as usize] = [
     [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],

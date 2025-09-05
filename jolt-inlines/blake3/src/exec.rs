@@ -11,11 +11,8 @@ pub fn blake3_exec(
 ) {
 }
 
-/// ------------------------------------------------------------------------------------------------
-/// Rust implementation of Blake3 compression on the host.
-/// ------------------------------------------------------------------------------------------------
-// The following code is obtained from reference Blake3 implementation (https://github.com/BLAKE3-team/BLAKE3/blob/master/reference_impl/reference_impl.rs)
-
+/// Rust implementation of BLAKE3 compression on the host.
+/// The following code is obtained from reference BLAKE3 implementation (https://github.com/BLAKE3-team/BLAKE3/blob/master/reference_impl/reference_impl.rs)
 pub fn execute_blake3_compression(
     chaining_value: &mut [u32; 8],
     block_words: &[u32; 16],
@@ -49,12 +46,11 @@ pub fn execute_blake3_compression(
     for i in 0..8 {
         state[i] ^= state[i + 8];
     }
-    for i in 0..8 {
-        chaining_value[i] = state[i];
-    }
+    chaining_value.copy_from_slice(&state[..8]);
 }
 
-// The mixing function, G, which mixes either a column or a diagonal.
+/// The mixing function G, which mixes either a column or a diagonal in the state matrix.
+/// This is the core operation of the BLAKE3 compression function.
 fn g(state: &mut [u32; 16], a: usize, b: usize, c: usize, d: usize, mx: u32, my: u32) {
     state[a] = state[a].wrapping_add(state[b]).wrapping_add(mx);
     state[d] = (state[d] ^ state[a]).rotate_right(16);
