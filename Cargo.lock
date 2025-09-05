@@ -558,6 +558,7 @@ dependencies = [
  "strum 0.26.3",
  "strum_macros 0.26.4",
  "syn 1.0.109",
+ "tracing",
 ]
 
 [[package]]
@@ -1691,6 +1692,7 @@ dependencies = [
  "hex-literal",
  "jolt-inlines-common",
  "tracer",
+ "tracing",
 ]
 
 [[package]]
@@ -1701,6 +1703,7 @@ dependencies = [
  "hex-literal",
  "jolt-inlines-common",
  "tracer",
+ "tracing",
 ]
 
 [[package]]

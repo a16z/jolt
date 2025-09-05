@@ -12,6 +12,7 @@ host = ["dep:ctor", "dep:tracer", "dep:jolt-inlines-common"]
 ctor = { version = "0.2", optional = true }
 tracer = { path = "../../tracer", optional = true }
 jolt-inlines-common = { path = "../common", optional = true }
+tracing = "0.1"
 
 [dev-dependencies]
 hex-literal = "0.4.1"
