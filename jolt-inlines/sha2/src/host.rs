@@ -87,7 +87,11 @@ pub fn store_inlines() -> Result<(), String> {
 #[ctor::ctor]
 fn auto_register() {
     if let Err(e) = init_inlines() {
-        eprintln!("Failed to register SHA256 inlines: {e}");
+        tracing::error!("Failed to register SHA256 inlines: {e}");
+    }
+
+    if let Err(e) = store_inlines() {
+        eprintln!("Failed to store SHA256 inline traces: {e}");
     }
 
     if let Err(e) = store_inlines() {

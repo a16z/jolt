@@ -6,12 +6,13 @@ description = "SHA2 inline implementations for Jolt VM"
 
 [features]
 default = []
-host = ["dep:ctor", "dep:tracer", "dep:jolt-inlines-common"]
+host = ["dep:ctor", "dep:tracer", "dep:jolt-inlines-common", "dep:tracing"]
 
 [dependencies]
 ctor = { version = "0.2", optional = true }
 tracer = { path = "../../tracer", optional = true }
 jolt-inlines-common = { path = "../common", optional = true }
+tracing = { version = "0.1", optional = true }
 
 [dev-dependencies]
 hex-literal = "0.4.1"
