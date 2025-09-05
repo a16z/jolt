@@ -1,0 +1,15 @@
+[package]
+name = "jolt-inlines-common"
+version = "0.1.0"
+edition = "2021"
+description = "Common constants and utilities for Jolt inline implementations"
+
+[features]
+default = []
+
+[dependencies]
+tracer = { path = "../../tracer" }
+
+[dev-dependencies]
+tempfile = "3"
+jolt-inlines-keccak256 = { path = "../keccak256", features = ["host"] }

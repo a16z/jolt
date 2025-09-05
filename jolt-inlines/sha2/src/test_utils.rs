@@ -6,7 +6,7 @@
 use crate::trace_generator::NEEDED_REGISTERS;
 use tracer::emulator::cpu::Xlen;
 use tracer::emulator::mmu::DRAM_BASE;
-use tracer::instruction::format::format_r::FormatR;
+use tracer::instruction::format::format_inline::FormatInline;
 use tracer::instruction::inline::INLINE;
 use tracer::instruction::{RISCVInstruction, RISCVTrace};
 use tracer::utils::test_harness::CpuTestHarness;
@@ -34,7 +34,7 @@ impl Sha256CpuHarness {
     /// Create a new harness.
     pub fn new(xlen: Xlen) -> Self {
         let guards: Vec<_> = (0..32)
-            .map(|_| tracer::utils::virtual_registers::allocate_virtual_register())
+            .map(|_| tracer::utils::virtual_registers::allocate_virtual_register_for_inline())
             .collect();
         let vr: [u8; 32] = std::array::from_fn(|i| *guards[i]);
         Self {
@@ -75,10 +75,10 @@ impl Sha256CpuHarness {
     pub fn instruction_sha256() -> INLINE {
         INLINE {
             address: 0,
-            operands: FormatR {
+            operands: FormatInline {
                 rs1: Self::RS1,
                 rs2: Self::RS2,
-                rd: 0,
+                rs3: 0,
             },
             // SHA256 has opcode 0x0B, funct3 0x00, funct7 0x00
             opcode: 0x0B,
@@ -93,10 +93,10 @@ impl Sha256CpuHarness {
     pub fn instruction_sha256init() -> INLINE {
         INLINE {
             address: 0,
-            operands: FormatR {
+            operands: FormatInline {
                 rs1: Self::RS1,
                 rs2: Self::RS2,
-                rd: 0,
+                rs3: 0,
             },
             // SHA256INIT has opcode 0x0B, funct3 0x01, funct7 0x00
             opcode: 0x0B,

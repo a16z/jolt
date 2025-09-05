@@ -111,7 +111,9 @@ jobs:
           set -euo pipefail
           pkgs=$(cargo metadata --format-version=1 --no-deps \
                    | jq -r '.packages[].name' \
-                   | grep '^jolt-inlines-' | tr '\n' ' ')
+                   | grep '^jolt-inlines-' \
+                   | grep -v '^jolt-inlines-common$' \
+                   | tr '\n' ' ')
           echo "Found inline crates: $pkgs"
           echo "pkgs=$pkgs" >> "$GITHUB_OUTPUT"
       - name: Test each inline crate (host)

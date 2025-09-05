@@ -78,11 +78,11 @@ pub fn bigint_mul_exec(
     // Execute multiplication
     let result = bigint_mul(a, b);
 
-    // Store 8 u64 result words back to memory at rs1
+    // Store 8 u64 result words back to memory at rs3
     for (i, limb) in result.iter().enumerate().take(OUTPUT_LIMBS) {
         cpu.mmu
             .store_doubleword(
-                cpu.x[instr.operands.rd as usize].wrapping_add((i * 8) as i64) as u64,
+                cpu.x[instr.operands.rs3 as usize].wrapping_add((i * 8) as i64) as u64,
                 *limb,
             )
             .expect("BIGINT256_MUL: Failed to store result");
