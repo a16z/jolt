@@ -558,6 +558,7 @@ dependencies = [
  "strum 0.26.3",
  "strum_macros 0.26.4",
  "syn 1.0.109",
+ "tracing",
 ]
 
 [[package]]
@@ -1680,6 +1681,7 @@ dependencies = [
  "ctor 0.2.9",
  "hex-literal",
  "tracer",
+ "tracing",
 ]
 
 [[package]]
@@ -1689,6 +1691,7 @@ dependencies = [
  "ctor 0.2.9",
  "hex-literal",
  "tracer",
+ "tracing",
 ]
 
 [[package]]

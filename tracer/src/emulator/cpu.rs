@@ -892,7 +892,7 @@ impl Cpu {
                 9 => AddressingMode::SV48,
                 _ => {
                     #[cfg(feature = "std")]
-                    println!("Unknown addressing_mode {:x}", value >> 60);
+                    tracing::error!("Unknown addressing_mode {:x}", value >> 60);
                     panic!();
                 }
             },
@@ -982,7 +982,7 @@ impl Cpu {
                     .values()
                     .any(|marker| marker.label == label);
                 if duplicate {
-                    println!("Warning: Marker with label '{}' is already active", &label);
+                    tracing::warn!("Warning: Marker with label '{}' is already active", &label);
                 }
 
                 self.active_markers.insert(
@@ -999,12 +999,14 @@ impl Cpu {
                 if let Some(mark) = self.active_markers.remove(&ptr) {
                     let real = self.executed_instrs - mark.start_instrs;
                     let virt = self.trace_len - mark.start_trace_len;
-                    println!(
+                    tracing::info!(
                         "\"{}\": {} RV32IM cycles, {} virtual cycles",
-                        mark.label, real, virt
+                        mark.label,
+                        real,
+                        virt
                     );
                 } else {
-                    println!(
+                    tracing::warn!(
                         "Warning: Attempt to end a marker (ptr: 0x{ptr:x}) that was never started"
                     );
                 }
@@ -1043,14 +1045,16 @@ impl Cpu {
 impl Drop for Cpu {
     fn drop(&mut self) {
         if !self.active_markers.is_empty() {
-            println!(
+            tracing::warn!(
                 "Warning: Found {} unclosed cycle tracking marker(s):",
                 self.active_markers.len()
             );
             for (ptr, marker) in &self.active_markers {
-                println!(
+                tracing::warn!(
                     "  - '{}' (at ptr: 0x{:x}), started at {} RV32IM cycles",
-                    marker.label, ptr, marker.start_instrs
+                    marker.label,
+                    ptr,
+                    marker.start_instrs
                 );
             }
         }

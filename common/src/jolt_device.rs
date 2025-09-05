@@ -65,7 +65,7 @@ impl JoltDevice {
 
     pub fn store(&mut self, address: u64, value: u8) {
         if address == self.memory_layout.panic {
-            println!("GUEST PANIC");
+            tracing::error!("GUEST PANIC");
             self.panic = true;
             return;
         } else if self.is_panic(address) || self.is_termination(address) {
