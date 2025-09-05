@@ -1,116 +1,23 @@
-use crate::{CHAINING_VALUE_SIZE, IV, MSG_BLOCK_SIZE};
-/// ------------------------------------------------------------------------------------------------
-/// Rust implementation of Blake2b-256 on the host.
-/// ------------------------------------------------------------------------------------------------
+use crate::IV;
 use tracer::{
     emulator::cpu::Cpu,
     instruction::{inline::INLINE, RISCVInstruction},
 };
 
-/// Load words from memory into the provided slice
-/// Returns an error if any memory access fails
-fn load_words_from_memory(cpu: &mut Cpu, base_addr: u64, state: &mut [u32]) -> Result<(), String> {
-    for (i, word) in state.iter_mut().enumerate() {
-        *word = cpu
-            .mmu
-            .load_word(base_addr.wrapping_add((i * 4) as u64))
-            .map_err(|e| {
-                format!(
-                    "BLAKE3: Failed to load from memory at offset {}: {:?}",
-                    i * 4,
-                    e
-                )
-            })?
-            .0;
-    }
-    Ok(())
-}
-
-/// Store words to memory from the provided slice
-/// Returns an error if any memory access fails
-fn store_words_to_memory(cpu: &mut Cpu, base_addr: u64, values: &[u32]) -> Result<(), String> {
-    for (i, &value) in values.iter().enumerate() {
-        cpu.mmu
-            .store_word(base_addr.wrapping_add((i * 4) as u64), value)
-            .map_err(|e| {
-                format!(
-                    "BLAKE3: Failed to store to memory at offset {}: {:?}",
-                    i * 4,
-                    e
-                )
-            })?;
-    }
-    Ok(())
-}
-
-/// Blake2b inline execution function for the emulator
 pub fn blake3_exec(
-    instr: &INLINE,
-    cpu: &mut Cpu,
+    _instr: &INLINE,
+    _cpu: &mut Cpu,
     _ram_access: &mut <INLINE as RISCVInstruction>::RAMAccess,
 ) {
-    // Memory addresses
-    let state_addr = cpu.x[instr.operands.rs1 as usize] as u64;
-    let block_addr = cpu.x[instr.operands.rs2 as usize] as u64;
-
-    // 1. Read the 8-word chaining value from memory
-    let mut chaining_value = [0u32; (CHAINING_VALUE_SIZE as usize) * 2];
-    load_words_from_memory(cpu, state_addr, &mut chaining_value)
-        .expect("Failed to load chaining value");
-
-    // 2. Read the 16-word message block from memory
-    let mut message_words = [0u32; MSG_BLOCK_SIZE as usize];
-    load_words_from_memory(cpu, block_addr, &mut message_words)
-        .expect("Failed to load message block");
-
-    // 3. Load counter values from memory (2 words after message block)
-    let mut counter = [0u32; 2];
-    load_words_from_memory(
-        cpu,
-        block_addr.wrapping_add(MSG_BLOCK_SIZE as u64 * 4),
-        &mut counter,
-    )
-    .expect("Failed to load counter");
-
-    // 4. Load input bytes length (1 word after counter)
-    let mut input_bytes = [0u32; 1];
-    load_words_from_memory(
-        cpu,
-        block_addr.wrapping_add(MSG_BLOCK_SIZE as u64 * 4 + 8),
-        &mut input_bytes,
-    )
-    .expect("Failed to load input bytes length");
-
-    // 5. Load flags (1 word after input bytes length)
-    let mut flags = [0u32; 1];
-    load_words_from_memory(
-        cpu,
-        block_addr.wrapping_add(MSG_BLOCK_SIZE as u64 * 4 + 12),
-        &mut flags,
-    )
-    .expect("Failed to load flags");
-
-    // 6. Execute Blake3 compression function
-    execute_blake3_compression(
-        &mut chaining_value,
-        &message_words,
-        &counter,
-        input_bytes[0],
-        flags[0],
-    );
-
-    // 7. Write the result back to memory
-    // Blake3 compression returns 16 words, but we only store the first 8 as chaining value
-    store_words_to_memory(cpu, state_addr, &chaining_value).expect("Failed to store result");
 }
+
 /// ------------------------------------------------------------------------------------------------
 /// Rust implementation of Blake3 compression on the host.
 /// ------------------------------------------------------------------------------------------------
-// The following code is copied from reference Blake3 implementation (https://github.com/BLAKE3-team/BLAKE3/blob/master/reference_impl/reference_impl.rs)
+// The following code is obtained from reference Blake3 implementation (https://github.com/BLAKE3-team/BLAKE3/blob/master/reference_impl/reference_impl.rs)
 
-/// Execute Blake3 compression with explicit counter values
 pub fn execute_blake3_compression(
-    chaining_value: &mut [u32; 16],
+    chaining_value: &mut [u32; 8],
     block_words: &[u32; 16],
     counter: &[u32; 2],
     block_len: u32,
@@ -141,9 +48,8 @@ pub fn execute_blake3_compression(
 
     for i in 0..8 {
         state[i] ^= state[i + 8];
-        state[i + 8] ^= chaining_value[i];
     }
-    for i in 0..16 {
+    for i in 0..8 {
         chaining_value[i] = state[i];
     }
 }

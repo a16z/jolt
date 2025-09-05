@@ -36,9 +36,11 @@ pub const MSG_SCHEDULE: [[usize; 16]; NUM_ROUNDS as usize] = [
     [11, 15, 5, 0, 1, 9, 8, 6, 14, 10, 2, 12, 3, 4, 7, 13],
 ];
 
-/// Blake3 number of copression rounds
 pub const NUM_ROUNDS: u8 = 7;
 
-pub const CHAINING_VALUE_SIZE: u8 = 8;
-pub const MSG_BLOCK_SIZE: u8 = 16;
-pub const COUNTER_SIZE: u8 = 2;
+pub const CHAINING_VALUE_NUM: usize = 8;
+pub const MSG_BLOCK_NUM: usize = 16;
+pub const COUNTER_NUM: usize = 2;
+pub const BLOCK_INPUT_SIZE_IN_BYTES: usize = 64;
+pub const OUTPUT_SIZE_IN_BYTES: usize = 32;
+pub const WORD_SIZE: usize = 32;
