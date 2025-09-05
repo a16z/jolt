@@ -35,11 +35,15 @@ pub fn bigint256_mul(lhs: [u64; INPUT_LIMBS], rhs: [u64; INPUT_LIMBS]) -> [u64; 
 /// - The memory regions may overlap (result can be the same as a or b)
 #[cfg(not(feature = "host"))]
 pub unsafe fn bigint256_mul_inline(a: *const u64, b: *const u64, result: *mut u64) {
+    use jolt_inlines_common::constants::{bigint, INLINE_OPCODE};
     core::arch::asm!(
-        ".insn r 0x0B, 0x0, 0x03, {}, {}, {}",     // INLINE BIGINT256_MUL Instruction
-        in(reg) result,  // rs3 - output address
-        in(reg) a,       // rs1 - first operand address
-        in(reg) b,       // rs2 - second operand address
+        ".insn r {opcode}, {funct3}, {funct7}, {rd}, {rs1}, {rs2}",
+        opcode = const INLINE_OPCODE,
+        funct3 = const bigint::mul256::FUNCT3,
+        funct7 = const bigint::mul256::FUNCT7,
+        rd = in(reg) result,  // rd - output address
+        rs1 = in(reg) a,      // rs1 - first operand address
+        rs2 = in(reg) b,      // rs2 - second operand address
         options(nostack)
     );
 }

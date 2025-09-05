@@ -44,6 +44,8 @@ members = [
     "examples/sha2-ex/guest",
     "examples/blake2-ex",
     "examples/blake2-ex/guest",
+    "examples/blake3-ex",
+    "examples/blake3-ex/guest",
     "examples/sha3-ex",
     "examples/sha3-ex/guest",
     "examples/sha2-chain",

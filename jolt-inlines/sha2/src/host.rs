@@ -93,8 +93,4 @@ fn auto_register() {
     if let Err(e) = store_inlines() {
         eprintln!("Failed to store SHA256 inline traces: {e}");
     }
-
-    if let Err(e) = store_inlines() {
-        eprintln!("Failed to store SHA256 inline traces: {e}");
-    }
 }

@@ -72,7 +72,4 @@ fn auto_register() {
         tracing::error!("Failed to store BIGINT256_MUL inline traces: {e}");
     }
 
-    if let Err(e) = store_inlines() {
-        eprintln!("Failed to store BIGINT256_MUL inline traces: {e}");
-    }
 }

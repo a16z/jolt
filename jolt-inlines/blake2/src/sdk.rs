@@ -123,15 +123,18 @@ impl Default for Blake2b {
 /// - Both pointers must be properly aligned for u64 access
 #[cfg(not(feature = "host"))]
 pub unsafe fn blake2b_compress(state: *mut u64, message: *const u64) {
+    use jolt_inlines_common::constants::{blake2, INLINE_OPCODE};
     // Memory layout for Blake2 instruction:
     // rs1: points to state (64 bytes)
     // rs2: points to message block (128 bytes) + counter (8 bytes) + final flag (8 bytes)
 
-    // Call Blake2 instruction using funct7=0x02 to distinguish from Keccak (0x01) and SHA-256 (0x00)
     core::arch::asm!(
-        ".insn r 0x0B, 0x0, 0x02, x0, {}, {}",
-        in(reg) state,
-        in(reg) message,
+        ".insn r {opcode}, {funct3}, {funct7}, x0, {rs1}, {rs2}",
+        opcode = const INLINE_OPCODE,
+        funct3 = const blake2::FUNCT3,
+        funct7 = const blake2::FUNCT7,
+        rs1 = in(reg) state,
+        rs2 = in(reg) message,
         options(nostack)
     );
 }

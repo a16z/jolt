@@ -58,8 +58,4 @@ fn auto_register() {
     if let Err(e) = store_inlines() {
         eprintln!("Failed to store Keccak256 inline traces: {e}");
     }
-
-    if let Err(e) = store_inlines() {
-        eprintln!("Failed to store Keccak256 inline traces: {e}");
-    }
 }
