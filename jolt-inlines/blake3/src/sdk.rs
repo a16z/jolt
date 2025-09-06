@@ -1,14 +1,13 @@
 //! This file provides high-level API to use BLAKE3 compression, both in host and guest mode.
 
 use crate::{
-    BLOCK_INPUT_SIZE_IN_BYTES, CHAINING_VALUE_NUM, COUNTER_NUM, IV, MSG_BLOCK_NUM,
+    BLOCK_INPUT_SIZE_IN_BYTES, CHAINING_VALUE_LEN, COUNTER_LEN, IV, MSG_BLOCK_LEN,
     OUTPUT_SIZE_IN_BYTES,
 };
 
-/// BLAKE3 hasher state for streaming operation.
 pub struct Blake3 {
     /// Hash state (8 x 32-bit words)
-    h: [u32; CHAINING_VALUE_NUM],
+    h: [u32; CHAINING_VALUE_LEN],
     /// Buffer for incomplete blocks
     buffer: [u8; BLOCK_INPUT_SIZE_IN_BYTES],
     /// Current buffer length
@@ -59,7 +58,7 @@ impl Blake3 {
         // Extract hash bytes
         let mut hash = [0u8; OUTPUT_SIZE_IN_BYTES];
         let state_bytes: &[u8] = unsafe {
-            core::slice::from_raw_parts(self.h.as_ptr() as *const u8, CHAINING_VALUE_NUM * 4)
+            core::slice::from_raw_parts(self.h.as_ptr() as *const u8, CHAINING_VALUE_LEN * 4)
         };
         hash.copy_from_slice(&state_bytes[..OUTPUT_SIZE_IN_BYTES]);
         hash
@@ -73,21 +72,21 @@ impl Blake3 {
 }
 
 fn compression_caller(
-    hash_state: &mut [u32; CHAINING_VALUE_NUM],
+    hash_state: &mut [u32; CHAINING_VALUE_LEN],
     message_block: &[u8],
     counter: u64,
     input_bytes_num: u32,
 ) {
     // Convert buffer to u32 words
-    let mut message = [0u32; MSG_BLOCK_NUM + COUNTER_NUM + 2];
-    for i in 0..MSG_BLOCK_NUM {
+    let mut message = [0u32; MSG_BLOCK_LEN + COUNTER_LEN + 2];
+    for i in 0..MSG_BLOCK_LEN {
         message[i] = u32::from_le_bytes(message_block[i * 4..(i + 1) * 4].try_into().unwrap());
     }
 
-    message[MSG_BLOCK_NUM] = counter as u32;
-    message[MSG_BLOCK_NUM + 1] = (counter >> 32) as u32;
-    message[MSG_BLOCK_NUM + COUNTER_NUM] = input_bytes_num;
-    message[MSG_BLOCK_NUM + COUNTER_NUM + 1] = 1u32 | 2u32 | 8u32; // CHUNK_START | CHUNK_END | ROOT
+    message[MSG_BLOCK_LEN] = counter as u32;
+    message[MSG_BLOCK_LEN + 1] = (counter >> 32) as u32;
+    message[MSG_BLOCK_LEN + COUNTER_LEN] = input_bytes_num;
+    message[MSG_BLOCK_LEN + COUNTER_LEN + 1] = 1u32 | 2u32 | 8u32; // CHUNK_START | CHUNK_END | ROOT
 
     unsafe {
         blake3_compress(hash_state.as_mut_ptr(), message.as_ptr());
@@ -100,7 +99,8 @@ impl Default for Blake3 {
     }
 }
 
-/// Calls the BLAKE3 compression custom instruction.
+/// BLAKE3 compression function - guest implementation.
+///
 /// # Safety
 /// - `chaining_value` must be a valid pointer to 32 bytes of readable and writable memory.
 /// - `message` must be a valid pointer to 64 bytes of readable memory.
@@ -123,6 +123,8 @@ pub unsafe fn blake3_compress(chaining_value: *mut u32, message: *const u32) {
     );
 }
 
+/// BLAKE3 compression function - host implementation.
+///
 /// # Safety
 /// - `chaining_value` must be a valid pointer to 32 bytes.
 /// - `message` must be a valid pointer to 64 bytes.

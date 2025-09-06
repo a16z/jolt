@@ -1,4 +1,4 @@
-//! This file contains Blake3-specific logic to expand the inline instruction to a sequence of RISC-V instructions.
+//! This file contains BLAKE3-specific logic to expand the inline instruction to a sequence of RISC-V instructions.
 //!
 //! Glossary:
 //!   - "Internal state" = 16-word state array (v[0..15]) used during compression
@@ -7,7 +7,7 @@
 //!   - "Round" = single application of G function mixing to the working state
 //!   - "G function" = core mixing function that updates 4 state words using 2 message words
 
-use crate::{CHAINING_VALUE_NUM, COUNTER_NUM, IV, MSG_BLOCK_NUM, MSG_SCHEDULE, NUM_ROUNDS};
+use crate::{CHAINING_VALUE_LEN, COUNTER_LEN, IV, MSG_BLOCK_LEN, MSG_SCHEDULE, NUM_ROUNDS};
 use tracer::emulator::cpu::Xlen;
 use tracer::instruction::lui::LUI;
 use tracer::instruction::lw::LW;
@@ -23,9 +23,7 @@ use tracer::utils::virtual_registers::allocate_virtual_register_for_inline;
 
 pub const NEEDED_REGISTERS: u8 = 45;
 
-/// Memory layout constants for BLAKE3 virtual registers
-///
-/// The virtual register layout is organized as follows:
+/// Virtual register layout:
 /// - vr[0..15]:  Internal state `v`
 /// - vr[16..31]: Message block `m`
 /// - vr[32..39]: Chaining value `h`
@@ -94,7 +92,7 @@ impl Blake3SequenceBuilder {
 
     fn initialize_internal_state(&mut self) {
         // v[0..7] = h[0..7]
-        for i in 0..CHAINING_VALUE_NUM {
+        for i in 0..CHAINING_VALUE_LEN {
             self.asm.xor(
                 Reg(self.vr[CV_START_VR + i]),
                 Imm(0),
@@ -105,7 +103,7 @@ impl Blake3SequenceBuilder {
         // v[8..11] = IV[0..3]
         for (i, val) in IV.iter().enumerate().take(4) {
             self.asm
-                .emit_u::<LUI>(self.vr[CHAINING_VALUE_NUM + i], *val as u64);
+                .emit_u::<LUI>(self.vr[CHAINING_VALUE_LEN + i], *val as u64);
         }
         // v[12..15] = counter values, input length, and flags
         self.asm.xor(
@@ -184,7 +182,7 @@ impl Blake3SequenceBuilder {
     }
 
     fn finalize_state(&mut self) {
-        for i in 0..CHAINING_VALUE_NUM {
+        for i in 0..CHAINING_VALUE_LEN {
             let hi = self.vr[CV_START_VR + i];
             let vi = self.vr[INTERNAL_STATE_VR_START + i];
             let vi8 = self.vr[INTERNAL_STATE_VR_START + i + 8];
@@ -194,7 +192,7 @@ impl Blake3SequenceBuilder {
 
     /// Update chaining value
     fn store_state(&mut self) {
-        for i in 0..CHAINING_VALUE_NUM {
+        for i in 0..CHAINING_VALUE_LEN {
             self.asm
                 .emit_s::<SW>(self.operand_rs1, self.vr[CV_START_VR + i], (i as i64) * 4);
         }
@@ -252,19 +250,19 @@ impl Blake3SequenceBuilder {
     }
 
     fn load_chaining_value(&mut self) {
-        self.load_data_range(self.operand_rs1, 0, CV_START_VR, CHAINING_VALUE_NUM);
+        self.load_data_range(self.operand_rs1, 0, CV_START_VR, CHAINING_VALUE_LEN);
     }
 
     fn load_message_blocks(&mut self) {
-        self.load_data_range(self.operand_rs2, 0, MSG_BLOCK_START_VR, MSG_BLOCK_NUM);
+        self.load_data_range(self.operand_rs2, 0, MSG_BLOCK_START_VR, MSG_BLOCK_LEN);
     }
 
     fn load_counter(&mut self) {
         self.load_data_range(
             self.operand_rs2,
-            MSG_BLOCK_NUM,
+            MSG_BLOCK_LEN,
             COUNTER_START_VR,
-            COUNTER_NUM,
+            COUNTER_LEN,
         );
     }
 
@@ -273,13 +271,13 @@ impl Blake3SequenceBuilder {
         self.asm.emit_ld::<LW>(
             self.vr[INPUT_BYTES_VR],
             self.operand_rs2,
-            (MSG_BLOCK_NUM + COUNTER_NUM) as i64 * 4,
+            (MSG_BLOCK_LEN + COUNTER_LEN) as i64 * 4,
         );
         // flag
         self.asm.emit_ld::<LW>(
             self.vr[FLAG_VR],
             self.operand_rs2,
-            (MSG_BLOCK_NUM + COUNTER_NUM + 1) as i64 * 4,
+            (MSG_BLOCK_LEN + COUNTER_LEN + 1) as i64 * 4,
         );
     }
 }
@@ -321,7 +319,7 @@ mod test_sequence_builder {
         use rand::Rng;
         let mut rng = rand::thread_rng();
 
-        let mut input = [0u32; crate::MSG_BLOCK_NUM];
+        let mut input = [0u32; crate::MSG_BLOCK_LEN];
         for val in input.iter_mut() {
             *val = rng.gen();
         }
@@ -335,7 +333,7 @@ mod test_sequence_builder {
         let expected_state: ChainingValue = hash
             .as_bytes()
             .chunks_exact(4)
-            .take(crate::CHAINING_VALUE_NUM)
+            .take(crate::CHAINING_VALUE_LEN)
             .map(|chunk| u32::from_le_bytes(chunk.try_into().unwrap()))
             .collect::<Vec<_>>()
             .try_into()

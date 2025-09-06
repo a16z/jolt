@@ -395,7 +395,6 @@ dependencies = [
  "cc",
  "cfg-if",
  "constant_time_eq",
- "digest",
 ]
 
 [[package]]
@@ -1753,6 +1752,7 @@ dependencies = [
  "ctor 0.2.9",
  "hex-literal",
  "jolt-inlines-common",
+ "rand",
  "tracer",
 ]
 

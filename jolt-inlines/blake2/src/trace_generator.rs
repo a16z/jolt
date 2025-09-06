@@ -1,6 +1,4 @@
-//! Blake2b is a cryptographic hash function operating on 64-bit words.
-//! It uses a compression function that performs 12 rounds of mixing operations
-//! on a 16-word working state derived from the hash state and message block.
+//! BLAKE2b-specific logic to expand the inline instruction into a sequence of RISC-V instructions.
 //!
 //! Glossary:
 //!   - "Working state" = 16-word state array (v[0..15]) used during compression
@@ -9,6 +7,7 @@
 //!   - "Round" = single application of G function mixing to the working state
 //!   - "G function" = core mixing function that updates 4 state words using 2 message words
 
+use crate::{IV, SIGMA};
 use tracer::emulator::cpu::Xlen;
 use tracer::instruction::ld::LD;
 use tracer::instruction::lui::LUI;
@@ -23,32 +22,7 @@ use tracer::instruction::RV32IMInstruction;
 use tracer::utils::inline_helpers::{InstrAssembler, Value::Imm, Value::Reg};
 use tracer::utils::virtual_registers::allocate_virtual_register_for_inline;
 
-/// Blake2b initialization vector (IV)
-#[rustfmt::skip]
-const BLAKE2B_IV: [u64; 8] = [
-    0x6a09e667f3bcc908, 0xbb67ae8584caa73b,
-    0x3c6ef372fe94f82b, 0xa54ff53a5f1d36f1,
-    0x510e527fade682d1, 0x9b05688c2b3e6c1f,
-    0x1f83d9abfb41bd6b, 0x5be0cd19137e2179,
-];
-
-/// Blake2b sigma permutation constants for message scheduling
-/// Each round uses a different permutation of the input words
-#[rustfmt::skip]
-const SIGMA: [[usize; 16]; 12] = [
-    [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
-    [14, 10, 4, 8, 9, 15, 13, 6, 1, 12, 0, 2, 11, 7, 5, 3],
-    [11, 8, 12, 0, 5, 2, 15, 13, 10, 14, 3, 6, 7, 1, 9, 4],
-    [7, 9, 3, 1, 13, 12, 11, 14, 2, 6, 5, 10, 4, 0, 15, 8],
-    [9, 0, 5, 7, 2, 4, 10, 15, 14, 1, 11, 12, 6, 8, 3, 13],
-    [2, 12, 6, 10, 0, 11, 8, 3, 4, 13, 7, 5, 15, 14, 1, 9],
-    [12, 5, 1, 15, 14, 13, 4, 10, 0, 7, 6, 3, 9, 2, 8, 11],
-    [13, 11, 7, 14, 12, 1, 3, 9, 5, 0, 15, 4, 8, 6, 2, 10],
-    [6, 15, 14, 9, 11, 3, 0, 8, 12, 2, 13, 7, 1, 4, 10, 5],
-    [10, 2, 8, 4, 7, 6, 1, 5, 15, 11, 9, 14, 3, 12, 13, 0],
-    [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
-    [14, 10, 4, 8, 9, 15, 13, 6, 1, 12, 0, 2, 11, 7, 5, 3],
-];
+pub const NEEDED_REGISTERS: u8 = 43;
 
 /// Virtual register layout:
 /// - `vr[0..15]`:  Working state `v` (16 words)
@@ -57,23 +31,17 @@ const SIGMA: [[usize; 16]; 12] = [
 /// - `vr[40]`:     Counter value `t`
 /// - `vr[41]`:     Final block flag
 /// - `vr[42]`:     Temporary register
-/// - `vr[43]`:     Zero constant
-pub const NEEDED_REGISTERS: u8 = 43;
-
-// Memory layout constants for Blake2 virtual registers
 const VR_WORKING_STATE_START: usize = 0;
 const WORKING_STATE_SIZE: usize = 16;
 const VR_MESSAGE_BLOCK_START: usize = 16;
-pub const MESSAGE_BLOCK_SIZE: usize = 16;
 const VR_HASH_STATE_START: usize = 32;
-pub const HASH_STATE_SIZE: usize = 8;
 const VR_T: usize = 40;
 const VR_IS_FINAL: usize = 41;
 const VR_TEMP: usize = 42;
 
 const BLAKE2_NUM_ROUNDS: u8 = 12;
 
-// Rotation constants required in Blake2b
+// Rotation constants required in BLAKE2b
 pub enum RotationAmount {
     ROT32,
     ROT24,
@@ -89,12 +57,6 @@ struct Blake2SequenceBuilder {
     operand_rs2: u8,
 }
 
-/// # Fields
-/// - `asm`: Builder for the vector of generated instructions representing the Blake2b operation.
-/// - `round`: The current round of the Blake2b compression (0..12).
-/// - `vr`: An array of virtual register indices used for state and temporary values.
-/// - `operand_rs1`: The source register index for the hash state pointer.
-/// - `operand_rs2`: The source register index for the message block pointer.
 impl Blake2SequenceBuilder {
     fn new(
         address: u64,
@@ -114,31 +76,29 @@ impl Blake2SequenceBuilder {
     }
 
     fn build(mut self) -> Vec<RV32IMInstruction> {
-        // Load inputs
         self.load_hash_state();
         self.load_message_blocks();
         self.load_counter_and_is_final();
 
-        // Initialize the working state v[0..15]
         self.initialize_working_state();
 
-        // Cryptographic mixing for 12 rounds
         for round in 0..BLAKE2_NUM_ROUNDS {
             self.round = round;
             self.blake2_round();
         }
 
-        // Finalize the hash state
         self.finalize_state();
-
-        // Store the final hash state back to memory
         self.store_state();
-
         self.asm.finalize_inline(NEEDED_REGISTERS)
     }
 
     fn load_hash_state(&mut self) {
-        self.load_data_range(self.operand_rs1, 0, VR_HASH_STATE_START, HASH_STATE_SIZE);
+        self.load_data_range(
+            self.operand_rs1,
+            0,
+            VR_HASH_STATE_START,
+            crate::STATE_VECTOR_LEN,
+        );
     }
 
     fn load_message_blocks(&mut self) {
@@ -146,7 +106,7 @@ impl Blake2SequenceBuilder {
             self.operand_rs2,
             0,
             VR_MESSAGE_BLOCK_START,
-            MESSAGE_BLOCK_SIZE,
+            crate::MSG_BLOCK_LEN,
         );
     }
 
@@ -154,19 +114,19 @@ impl Blake2SequenceBuilder {
         self.asm.emit_ld::<LD>(
             self.vr[VR_T],
             self.operand_rs2,
-            MESSAGE_BLOCK_SIZE as i64 * 8,
+            crate::MSG_BLOCK_LEN as i64 * 8,
         );
         self.asm.emit_ld::<LD>(
             self.vr[VR_IS_FINAL],
             self.operand_rs2,
-            (MESSAGE_BLOCK_SIZE as i64 + 1) * 8,
+            (crate::MSG_BLOCK_LEN as i64 + 1) * 8,
         );
     }
 
-    // Initialize the working state v[0..15] according to Blake2b specification
+    // Initialize the working state v[0..15] according to the BLAKE2b specification.
     fn initialize_working_state(&mut self) {
         // v[0..7] = h[0..7]
-        for i in 0..HASH_STATE_SIZE {
+        for i in 0..crate::STATE_VECTOR_LEN {
             self.asm.xor(
                 Reg(self.vr[VR_HASH_STATE_START + i]),
                 Imm(0),
@@ -175,13 +135,13 @@ impl Blake2SequenceBuilder {
         }
 
         // v[8..15] = IV[0..7]
-        for (i, value) in BLAKE2B_IV
+        for (i, value) in IV
             .iter()
             .enumerate()
-            .take(WORKING_STATE_SIZE - HASH_STATE_SIZE)
+            .take(WORKING_STATE_SIZE - crate::STATE_VECTOR_LEN)
         {
-            // Load Blake2b IV constants
-            let rd = self.vr[VR_WORKING_STATE_START + HASH_STATE_SIZE + i];
+            // Load BLAKE2b IV constants.
+            let rd = self.vr[VR_WORKING_STATE_START + crate::STATE_VECTOR_LEN + i];
             self.asm.emit_u::<LUI>(rd, *value);
         }
 
@@ -193,16 +153,16 @@ impl Blake2SequenceBuilder {
         );
 
         // Since we are using 64-bit counter, the high part is always 0, so v[13] remains unchanged
-        // v[13] = IV[5] ^ (t >> 64) (counter high) - for 64-bit counter, high part is 0
+        // v[13] = IV[5] ^ (t >> 64) (counter high) - for 64-bit counter, high part is 0.
 
         // Handle final block flag: if is_final != 0, invert all bits of v[14]
-        // We need to create a mask that is 0xFFFFFFFFFFFFFFFF if is_final != 0, or 0 if is_final == 0
+        // Create a mask that is 0xFFFFFFFFFFFFFFFF if is_final != 0, or 0 if is_final == 0.
         // Use the formula: mask = (0 - is_final) to convert 1 to 0xFFFFFFFFFFFFFFFF and 0 to 0
-        // First, negate is_final (0 - is_final)
-        // Using 0 as x0, which is always 0 in risc-v
+        // First, negate is_final (0 - is_final).
+        // Using 0 as x0, which is always 0 in RISC-V.
         self.asm
             .emit_r::<SUB>(self.vr[VR_TEMP], 0, self.vr[VR_IS_FINAL]);
-        // XOR v[14] with the mask: inverts all bits if is_final=1, leaves unchanged if is_final=0
+        // XOR v[14] with the mask: inverts all bits if is_final=1, leaves unchanged if is_final=0.
         self.asm.xor(
             Reg(self.vr[VR_WORKING_STATE_START + 14]),
             Reg(self.vr[VR_TEMP]),
@@ -210,7 +170,7 @@ impl Blake2SequenceBuilder {
         );
     }
 
-    /// Execute one round of Blake2b compression
+    /// Execute one round of BLAKE2b compression
     fn blake2_round(&mut self) {
         let sigma_round = &SIGMA[self.round as usize];
 
@@ -227,8 +187,6 @@ impl Blake2SequenceBuilder {
         self.g_function(3, 4, 9, 14, sigma_round[14], sigma_round[15]);
     }
 
-    /// Blake2b G function: core mixing function
-    /// Updates v[a], v[b], v[c], v[d] using message words m[x], m[y]
     fn g_function(&mut self, a: usize, b: usize, c: usize, d: usize, x: usize, y: usize) {
         let va = self.vr[VR_WORKING_STATE_START + a];
         let vb = self.vr[VR_WORKING_STATE_START + b];
@@ -265,16 +223,13 @@ impl Blake2SequenceBuilder {
         self.xor_rotate(vb, vc, RotationAmount::ROT63, vb);
     }
 
-    /// Finalize the hash state according to Blake2b specification:
-    /// For i in 0..8: h[i] = h[i] ^ v[i] ^ v[i+8]
-    /// This produces the final 8-word hash output in the hash state registers.
     fn finalize_state(&mut self) {
         let temp = self.vr[VR_TEMP];
 
-        for i in 0..HASH_STATE_SIZE {
+        for i in 0..crate::STATE_VECTOR_LEN {
             let hi = self.vr[VR_HASH_STATE_START + i];
             let vi = self.vr[VR_WORKING_STATE_START + i];
-            let vi8 = self.vr[VR_WORKING_STATE_START + i + HASH_STATE_SIZE];
+            let vi8 = self.vr[VR_WORKING_STATE_START + i + crate::STATE_VECTOR_LEN];
 
             // temp = v[i] ^ v[i+8]
             self.asm.xor(Reg(vi), Reg(vi8), temp);
@@ -283,10 +238,9 @@ impl Blake2SequenceBuilder {
         }
     }
 
-    /// Store the final hash state (8 words) back to memory
-    /// Blake2b compression outputs an 8-word hash state
+    /// Store the final hash state
     fn store_state(&mut self) {
-        for i in 0..HASH_STATE_SIZE {
+        for i in 0..crate::STATE_VECTOR_LEN {
             self.asm.emit_s::<SD>(
                 self.operand_rs1,
                 self.vr[VR_HASH_STATE_START + i],
@@ -312,7 +266,7 @@ impl Blake2SequenceBuilder {
         });
     }
 
-    /// XOR two registers, and then rotate right by the given amount.
+    /// XOR two registers, then rotate right by the given amount.
     fn xor_rotate(&mut self, rs1: u8, rs2: u8, amount: RotationAmount, rd: u8) {
         // match amount {
         //     RotationAmount::ROT32 => {
@@ -347,7 +301,6 @@ impl Blake2SequenceBuilder {
     }
 }
 
-/// Build Blake2b inline sequence for the RISC-V instruction stream
 pub fn blake2b_inline_sequence_builder(
     address: u64,
     is_compressed: bool,
@@ -356,7 +309,6 @@ pub fn blake2b_inline_sequence_builder(
     operand_rs2: u8,
     _operand_rs3: u8,
 ) -> Vec<RV32IMInstruction> {
-    // Virtual registers used as a scratch space
     let guards: Vec<_> = (0..NEEDED_REGISTERS)
         .map(|_| allocate_virtual_register_for_inline())
         .collect();
@@ -367,4 +319,91 @@ pub fn blake2b_inline_sequence_builder(
     let builder =
         Blake2SequenceBuilder::new(address, is_compressed, xlen, vr, operand_rs1, operand_rs2);
     builder.build()
+}
+
+#[cfg(test)]
+mod test_sequence_builder {
+    use crate::{test_utils::Blake2CpuHarness, IV};
+    use tracer::instruction::RISCVTrace;
+
+    fn generate_default_input() -> ([u64; crate::MSG_BLOCK_LEN], u64) {
+        // Message block with "abc" in little-endian
+        let mut message = [0u64; crate::MSG_BLOCK_LEN];
+        message[0] = 0x0000000000636261u64;
+        (message, 3)
+    }
+
+    fn generate_random_input() -> ([u64; crate::MSG_BLOCK_LEN], u64) {
+        use rand::Rng;
+        let mut rng = rand::thread_rng();
+
+        let mut input = [0u64; crate::MSG_BLOCK_LEN];
+        for val in input.iter_mut() {
+            *val = rng.gen();
+        }
+        (input, 128)
+    }
+
+    fn compute_reference_blake2b_hash(
+        message: &[u64; crate::MSG_BLOCK_LEN],
+        message_len: usize,
+    ) -> [u64; crate::STATE_VECTOR_LEN] {
+        use blake2::{Blake2b512, Digest};
+        let mut message_bytes: Vec<u8> = message.iter().flat_map(|w| w.to_le_bytes()).collect();
+        let effective_len = core::cmp::min(message_len, message_bytes.len());
+        message_bytes.truncate(effective_len);
+
+        let hash_result = Blake2b512::digest(&message_bytes);
+
+        let mut state = [0u64; crate::STATE_VECTOR_LEN];
+        for (i, chunk) in hash_result.chunks_exact(8).enumerate() {
+            if i < crate::STATE_VECTOR_LEN {
+                state[i] = u64::from_le_bytes(chunk.try_into().unwrap());
+            }
+        }
+        state
+    }
+
+    fn generate_trace_result(
+        state: &[u64; crate::STATE_VECTOR_LEN],
+        message: &[u64; crate::MSG_BLOCK_LEN],
+        counter: u64,
+        is_final: bool,
+    ) -> [u64; crate::STATE_VECTOR_LEN] {
+        let mut harness_trace = Blake2CpuHarness::new();
+        harness_trace.load_blake2_data(state, message, counter, is_final);
+        let instruction = Blake2CpuHarness::instruction();
+        instruction.trace(&mut harness_trace.harness.cpu, None);
+        harness_trace.read_state()
+    }
+
+    /// Helper function to test blake2b compression with given input
+    fn verify_blake2b_compression(message_words: [u64; crate::MSG_BLOCK_LEN], message_len: u64) {
+        let mut initial_state = IV;
+        initial_state[0] ^= 0x01010000 ^ 64u64;
+
+        let expected_state = compute_reference_blake2b_hash(&message_words, message_len as usize);
+        let trace_result = generate_trace_result(&initial_state, &message_words, message_len, true);
+
+        assert_eq!(
+            &expected_state, &trace_result,
+            "\n❌ BLAKE2b Trace Verification Failed!\n\
+            Message: {message_words:016x?}"
+        );
+    }
+
+    #[test]
+    fn test_trace_result_with_default_input() {
+        let input = generate_default_input();
+        verify_blake2b_compression(input.0, input.1);
+    }
+
+    #[test]
+    fn test_trace_result_with_random_inputs() {
+        // Test with multiple random inputs
+        for _ in 0..1000 {
+            let input = generate_random_input();
+            verify_blake2b_compression(input.0, input.1);
+        }
+    }
 }

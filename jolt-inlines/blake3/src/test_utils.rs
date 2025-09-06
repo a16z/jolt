@@ -4,8 +4,8 @@ use tracer::instruction::format::format_inline::FormatInline;
 use tracer::instruction::inline::INLINE;
 use tracer::utils::test_harness::CpuTestHarness;
 
-pub type ChainingValue = [u32; crate::CHAINING_VALUE_NUM];
-pub type MessageBlock = [u32; crate::MSG_BLOCK_NUM];
+pub type ChainingValue = [u32; crate::CHAINING_VALUE_LEN];
+pub type MessageBlock = [u32; crate::MSG_BLOCK_LEN];
 
 pub struct Blake3CpuHarness {
     pub harness: CpuTestHarness,
@@ -14,8 +14,8 @@ pub struct Blake3CpuHarness {
 impl Blake3CpuHarness {
     /// Memory layout constants (all using 32-bit words)
     const CHAINING_VALUE_ADDR: u64 = DRAM_BASE;
-    const MESSAGE_ADDR: u64 = DRAM_BASE + (crate::CHAINING_VALUE_NUM * 4) as u64; // 8 * 4 bytes
-    const COUNTER_ADDR: u64 = Self::MESSAGE_ADDR + (crate::MSG_BLOCK_NUM * 4) as u64; // After message block
+    const MESSAGE_ADDR: u64 = DRAM_BASE + (crate::CHAINING_VALUE_LEN * 4) as u64; // 8 * 4 bytes
+    const COUNTER_ADDR: u64 = Self::MESSAGE_ADDR + (crate::MSG_BLOCK_LEN * 4) as u64; // After message block
     const BLOCK_LEN_ADDR: u64 = Self::COUNTER_ADDR + 8; // Counter is 2 u32s = 8 bytes
     const FLAGS_ADDR: u64 = Self::BLOCK_LEN_ADDR + 4; // Block len is 1 u32 = 4 bytes
 
@@ -86,7 +86,7 @@ impl Blake3CpuHarness {
     }
 
     pub fn read_chaining_value(&mut self) -> ChainingValue {
-        let mut chaining_value: ChainingValue = [0u32; crate::CHAINING_VALUE_NUM];
+        let mut chaining_value: ChainingValue = [0u32; crate::CHAINING_VALUE_LEN];
         for (i, word) in chaining_value.iter_mut().enumerate() {
             *word = self
                 .harness

@@ -2,7 +2,7 @@
 name = "jolt-inlines-blake2"
 version = "0.1.0"
 edition = "2021"
-description = "BLAKE2 inline implementations for Jolt VM"
+description = "BLAKE2b inline implementations for Jolt VM"
 
 [features]
 default = []
@@ -16,5 +16,6 @@ jolt-inlines-common = { path = "../common" }
 [dev-dependencies]
 hex-literal = "0.4.1"
 blake2 = "0.10"
+rand = "0.8"
 jolt-inlines-common = { path = "../common" }
 tracer = { path = "../../tracer", features = ["test-utils"] }

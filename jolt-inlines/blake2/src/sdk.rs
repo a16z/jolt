@@ -1,87 +1,64 @@
-//! Blake2b hash function optimized for Jolt zkVM.
-//!
-//! This implementation provides:
-//! - Custom RISC-V instruction support for guest execution
-//! - Reference implementation for host execution  
-//! - Streaming interface for large inputs
-
-// Blake2b constants
-const BLOCK_SIZE: usize = 128;
-const BLOCK_SIZE_U64: usize = 16; // BLOCK_SIZE / 8
-const STATE_SIZE: usize = 64;
-const STATE_SIZE_U64: usize = 8; // STATE_SIZE / 8
+//! High-level Blake2b hashing API for host and guest modes.
+use crate::{BLOCK_INPUT_SIZE_IN_BYTES, IV, MSG_BLOCK_LEN, STATE_SIZE_IN_BYTES, STATE_VECTOR_LEN};
 const OUTPUT_SIZE: usize = 64;
 
-/// Blake2b initialization vector (IV)
-#[rustfmt::skip]
-const BLAKE2B_IV: [u64; 8] = [
-    0x6a09e667f3bcc908, 0xbb67ae8584caa73b,
-    0x3c6ef372fe94f82b, 0xa54ff53a5f1d36f1,
-    0x510e527fade682d1, 0x9b05688c2b3e6c1f,
-    0x1f83d9abfb41bd6b, 0x5be0cd19137e2179,
-];
-
-/// Blake2b hasher state for streaming operation.
 pub struct Blake2b {
     /// Hash state (8 x 64-bit words)
-    h: [u64; STATE_SIZE_U64],
+    h: [u64; STATE_VECTOR_LEN],
     /// Buffer for incomplete blocks
-    buffer: [u8; BLOCK_SIZE],
-    /// Current buffer length
+    buffer: [u8; BLOCK_INPUT_SIZE_IN_BYTES],
+    /// Current number of bytes in `buffer`.
     buffer_len: usize,
-    /// Total bytes processed
+    /// Total number of bytes processed so far.
     counter: u64,
 }
 
 impl Blake2b {
-    /// Creates a new Blake2b hasher with specified output length.
-    ///
-    /// # Panics
-    /// Panics if `output_len` is 0 or greater than 64.
     pub fn new() -> Self {
-        let mut h = BLAKE2B_IV;
+        let mut h = IV;
         h[0] ^= 0x01010000 ^ (OUTPUT_SIZE as u64);
 
         Self {
             h,
-            buffer: [0; BLOCK_SIZE],
+            buffer: [0; BLOCK_INPUT_SIZE_IN_BYTES],
             buffer_len: 0,
             counter: 0,
         }
     }
 
-    /// Processes input data incrementally.
+    /// Process input data incrementally.
     pub fn update(&mut self, input: &[u8]) {
         if input.is_empty() {
             return;
         }
-        for char in input {
-            if self.buffer_len == 128 {
-                self.counter += BLOCK_SIZE as u64;
+        for byte in input {
+            if self.buffer_len == BLOCK_INPUT_SIZE_IN_BYTES {
+                self.counter += BLOCK_INPUT_SIZE_IN_BYTES as u64;
                 compression_caller(&mut self.h, &self.buffer, self.counter, false);
                 self.buffer_len = 0;
             }
-            self.buffer[self.buffer_len] = *char;
+            self.buffer[self.buffer_len] = *byte;
             self.buffer_len += 1;
         }
     }
 
-    /// Finalizes the hash and returns the digest.
+    /// Finalize and return BLAKE2b digest.
     pub fn finalize(mut self) -> [u8; OUTPUT_SIZE] {
         self.counter += self.buffer_len as u64;
         self.buffer[self.buffer_len..].fill(0);
-        // Process final block
+        // Process the final block
         compression_caller(&mut self.h, &self.buffer, self.counter, true);
 
         // Extract hash bytes
         let mut hash = [0u8; OUTPUT_SIZE];
-        let state_bytes: &[u8] =
-            unsafe { core::slice::from_raw_parts(self.h.as_ptr() as *const u8, STATE_SIZE) };
+        let state_bytes: &[u8] = unsafe {
+            core::slice::from_raw_parts(self.h.as_ptr() as *const u8, STATE_SIZE_IN_BYTES)
+        };
         hash.copy_from_slice(&state_bytes[..OUTPUT_SIZE]);
         hash
     }
 
-    /// Computes Blake2b hash in one call.
+    /// Computes BLAKE2b hash in one call.
     pub fn digest(input: &[u8]) -> [u8; OUTPUT_SIZE] {
         let mut hasher = Self::new();
         hasher.update(input);
@@ -90,14 +67,14 @@ impl Blake2b {
 }
 
 fn compression_caller(
-    hash_state: &mut [u64; STATE_SIZE_U64],
+    hash_state: &mut [u64; STATE_VECTOR_LEN],
     message_block: &[u8],
     counter: u64,
     is_final: bool,
 ) {
-    // Convert buffer to u64 words
-    let mut message = [0u64; BLOCK_SIZE_U64 + 2];
-    for i in 0..BLOCK_SIZE_U64 {
+    // Convert buffer to u64 words.
+    let mut message = [0u64; MSG_BLOCK_LEN + 2];
+    for i in 0..MSG_BLOCK_LEN {
         message[i] = u64::from_le_bytes(message_block[i * 8..(i + 1) * 8].try_into().unwrap());
     }
 
@@ -115,7 +92,7 @@ impl Default for Blake2b {
     }
 }
 
-/// Blake2b compression function - guest implementation.
+/// BLAKE2b compression function - guest implementation.
 ///
 /// # Safety
 /// - `state` must point to a valid array of 8 u64 values
@@ -139,7 +116,7 @@ pub unsafe fn blake2b_compress(state: *mut u64, message: *const u64) {
     );
 }
 
-/// Blake2b compression function - host implementation.
+/// BLAKE2b compression function - host implementation.
 ///
 /// # Safety  
 /// - `state` must point to a valid array of 8 u64 values
@@ -460,7 +437,6 @@ mod streaming_tests {
     fn test_blake2b_streaming_multiple_updates() {
         use blake2::Digest as RefDigest;
 
-        // Test that multiple small updates produce the same result as one large update
         let data_parts: &[&[u8]] = &[
             b"Hello, ",
             b"this is ",
@@ -472,7 +448,6 @@ mod streaming_tests {
             b"interface!",
         ];
 
-        // Pre-calculated: total is 73 bytes
         const TOTAL_LEN: usize = 77;
         let mut full_data = [0u8; TOTAL_LEN];
         let mut offset = 0;
@@ -482,7 +457,6 @@ mod streaming_tests {
             offset += part.len();
         }
 
-        // Our streaming implementation with multiple updates
         let mut hasher = Blake2b::new();
         for part in data_parts {
             hasher.update(part);
@@ -500,7 +474,6 @@ mod streaming_tests {
 
         let test_data = b"Some test data for empty update testing";
 
-        // Test with empty updates mixed in
         let mut hasher = Blake2b::new();
         hasher.update(b""); // Empty update at start
         hasher.update(&test_data[..10]);

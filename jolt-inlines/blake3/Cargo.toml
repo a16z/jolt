@@ -14,7 +14,7 @@ tracer = { path = "../../tracer", optional = true }
 jolt-inlines-common = { path = "../common" }
 
 [dev-dependencies]
-blake3 = { version = "1.5.0", features = ["traits-preview"] }
+blake3 = { version = "1.5.0" }
 hex-literal = "0.4.1"
 rand = "0.8"
 tracer = { path = "../../tracer", features = ["test-utils"] }
