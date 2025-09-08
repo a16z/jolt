@@ -335,11 +335,13 @@ impl<F: JoltField> ReadRafSumcheck<F> {
                 linear_combination += F::from_u64(unexpanded_pc as u64);
                 linear_combination += operands.imm.field_mul(gamma_powers[1]);
                 linear_combination += (operands.rd as u64).field_mul(gamma_powers[2]);
-                for (flag, gamma_power) in instruction
-                    .circuit_flags()
-                    .iter()
-                    .zip(gamma_powers[3..].iter())
-                {
+                let flags = instruction.circuit_flags();
+                // sanity check
+                assert!(
+                    !flags[CircuitFlags::IsCompressed]
+                        || !flags[CircuitFlags::DoNotUpdateUnexpandedPC]
+                );
+                for (flag, gamma_power) in flags.iter().zip(gamma_powers[3..].iter()) {
                     if *flag {
                         linear_combination += *gamma_power;
                     }

@@ -9,17 +9,17 @@ use super::{
 /// `VirtualAssertHalfwordAlignment` is the only instruction that
 /// uses `rs1` and `imm` but does not write to a destination register.
 #[derive(Default, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct HalfwordAlignFormat {
+pub struct AssertAlignFormat {
     pub rs1: u8,
     pub imm: i64,
 }
 
 #[derive(Default, Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
-pub struct HalfwordAlignRegisterState {
+pub struct AssertAlignRegisterState {
     pub rs1: u64,
 }
 
-impl InstructionRegisterState for HalfwordAlignRegisterState {
+impl InstructionRegisterState for AssertAlignRegisterState {
     #[cfg(any(feature = "test-utils", test))]
     fn random(rng: &mut rand::rngs::StdRng) -> Self {
         use rand::RngCore;
@@ -33,8 +33,8 @@ impl InstructionRegisterState for HalfwordAlignRegisterState {
     }
 }
 
-impl InstructionFormat for HalfwordAlignFormat {
-    type RegisterState = HalfwordAlignRegisterState;
+impl InstructionFormat for AssertAlignFormat {
+    type RegisterState = AssertAlignRegisterState;
 
     fn parse(_: u32) -> Self {
         unimplemented!("virtual instruction")
@@ -59,7 +59,7 @@ impl InstructionFormat for HalfwordAlignFormat {
     }
 }
 
-impl From<NormalizedOperands> for HalfwordAlignFormat {
+impl From<NormalizedOperands> for AssertAlignFormat {
     fn from(operands: NormalizedOperands) -> Self {
         Self {
             rs1: operands.rs1,
@@ -68,8 +68,8 @@ impl From<NormalizedOperands> for HalfwordAlignFormat {
     }
 }
 
-impl From<HalfwordAlignFormat> for NormalizedOperands {
-    fn from(format: HalfwordAlignFormat) -> Self {
+impl From<AssertAlignFormat> for NormalizedOperands {
+    fn from(format: AssertAlignFormat) -> Self {
         Self {
             rs1: format.rs1,
             rs2: 0,
