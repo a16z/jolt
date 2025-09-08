@@ -18,11 +18,11 @@ pub fn main() {
     let is_valid = verify_blake2(input, output, program_io.panic, proof);
 
     // Combine the two 32-byte arrays for display
-    let first_half = output;
-    // let mut full_hash = [0u8; 64];
-    // full_hash[0..32].copy_from_slice(&first_half);
-    // full_hash[32..64].copy_from_slice(&second_half);
+    let (first_half, second_half) = output;
+    let mut full_hash = [0u8; 64];
+    full_hash[0..32].copy_from_slice(&first_half);
+    full_hash[32..64].copy_from_slice(&second_half);
 
-    println!("output: {}", hex::encode(first_half));
+    println!("512-bit output: {}", hex::encode(full_hash));
     println!("valid: {is_valid}");
 }

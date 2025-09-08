@@ -43,7 +43,7 @@ mod exec {
     }
 }
 
-mod cpb {
+mod cycles_per_byte {
     use crate::test_utils::Sha256CpuHarness;
     use tracer::emulator::cpu::Xlen;
 

@@ -13,10 +13,6 @@ use tracer::instruction::ld::LD;
 use tracer::instruction::lui::LUI;
 use tracer::instruction::sd::SD;
 use tracer::instruction::sub::SUB;
-#[allow(unused_imports)]
-use tracer::instruction::virtual_xor_rot::{
-    VirtualXORROT16, VirtualXORROT24, VirtualXORROT32, VirtualXORROT63,
-};
 use tracer::instruction::xor::XOR;
 use tracer::instruction::RV32IMInstruction;
 use tracer::utils::inline_helpers::{InstrAssembler, Value::Imm, Value::Reg};

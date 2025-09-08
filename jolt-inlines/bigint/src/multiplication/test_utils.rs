@@ -81,7 +81,7 @@ impl BigIntCpuHarness {
             },
             opcode: constants::INLINE_OPCODE,
             funct3: constants::bigint::mul256::FUNCT3,
-            funct7: constants::bigint::mul256::FUNCT7, // Updated to match new constant value (was 0x02)
+            funct7: constants::bigint::mul256::FUNCT7,
             inline_sequence_remaining: None,
             is_compressed: false,
         }
@@ -142,25 +142,16 @@ pub mod bigint_verify {
         }
     }
 
-    /// Assert that direct `exec` and virtual-sequence `trace` paths match
     pub fn assert_exec_trace_equiv(
         lhs: &[u64; INPUT_LIMBS],
         rhs: &[u64; INPUT_LIMBS],
         expected: &[u64; OUTPUT_LIMBS],
     ) {
         let mut harness_trace = BigIntCpuHarness::new();
-
-        // Set up both CPUs identically
         harness_trace.load_operands(lhs, rhs);
-
         let instruction = BigIntCpuHarness::instruction();
-
-        // Execute both paths
         instruction.trace(&mut harness_trace.harness.cpu, None);
-
-        // Compare results
         let trace_result = harness_trace.read_result();
-
         assert_bigints_equal(
             &trace_result,
             expected,
