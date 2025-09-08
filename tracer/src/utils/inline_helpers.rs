@@ -29,6 +29,7 @@ use crate::instruction::andi::ANDI;
 use crate::instruction::srli::SRLI;
 use crate::instruction::srliw::SRLIW;
 
+use crate::instruction::format::format_assert_align::AssertAlignFormat;
 use crate::instruction::format::format_b::FormatB;
 use crate::instruction::format::format_i::FormatI;
 use crate::instruction::format::format_j::FormatJ;
@@ -36,7 +37,6 @@ use crate::instruction::format::format_load::FormatLoad;
 use crate::instruction::format::format_r::FormatR;
 use crate::instruction::format::format_s::FormatS;
 use crate::instruction::format::format_u::FormatU;
-use crate::instruction::format::format_virtual_halfword_alignment::HalfwordAlignFormat;
 use crate::instruction::format::format_virtual_right_shift_i::FormatVirtualRightShiftI;
 use crate::instruction::format::format_virtual_right_shift_r::FormatVirtualRightShiftR;
 use crate::instruction::format::NormalizedOperands;
@@ -377,7 +377,7 @@ impl InstrAssembler {
     /// Emit any halfword alignment instruction (rs1, imm).
     #[track_caller]
     #[inline]
-    pub fn emit_halign<Op: RISCVInstruction<Format = HalfwordAlignFormat> + RISCVTrace>(
+    pub fn emit_halign<Op: RISCVInstruction<Format = AssertAlignFormat> + RISCVTrace>(
         &mut self,
         rs1: u8,
         imm: i64,

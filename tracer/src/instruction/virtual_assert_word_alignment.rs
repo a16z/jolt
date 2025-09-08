@@ -2,15 +2,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
-use super::{
-    format::format_virtual_halfword_alignment::HalfwordAlignFormat, RISCVInstruction, RISCVTrace,
-};
+use super::{format::format_assert_align::AssertAlignFormat, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name = VirtualAssertWordAlignment,
     mask = 0,
     match = 0,
-    format = HalfwordAlignFormat,
+    format = AssertAlignFormat,
     ram = (),
     is_virtual = true
 );
