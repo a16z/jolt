@@ -5,6 +5,12 @@ use crate::{
     OUTPUT_SIZE_IN_BYTES,
 };
 
+// BLAKE3 flags
+const FLAG_CHUNK_START: u32 = 1;
+const FLAG_CHUNK_END: u32 = 2;
+const FLAG_ROOT: u32 = 8;
+const FLAG_KEYED_HASH: u32 = 16;
+
 pub struct Blake3 {
     /// Hash state (8 x 32-bit words)
     h: [u32; CHAINING_VALUE_LEN],
@@ -14,6 +20,8 @@ pub struct Blake3 {
     buffer_len: usize,
     /// Total bytes processed
     counter: u64,
+    /// Whether it is in the keyed_hash mode
+    is_keyed_hash: bool,
 }
 
 /// Note: Current implementation only supports hashing input of at most 64 bytes. Larger inputs are not supported yet.
@@ -24,6 +32,17 @@ impl Blake3 {
             buffer: [0; BLOCK_INPUT_SIZE_IN_BYTES],
             buffer_len: 0,
             counter: 0,
+            is_keyed_hash: false,
+        }
+    }
+
+    pub fn new_keyed(key: [u32; CHAINING_VALUE_LEN]) -> Self {
+        Self {
+            h: key,
+            buffer: [0; BLOCK_INPUT_SIZE_IN_BYTES],
+            buffer_len: 0,
+            counter: 0,
+            is_keyed_hash: true
         }
     }
 
@@ -53,6 +72,7 @@ impl Blake3 {
             &self.buffer,
             self.counter,
             self.buffer_len as u32,
+            FLAG_CHUNK_START | FLAG_CHUNK_END | FLAG_ROOT | (if self.is_keyed_hash { FLAG_KEYED_HASH } else { 0 }) // CHUNK_START | CHUNK_END | ROOT | KEYED_HASH
         );
 
         // Extract hash bytes
@@ -69,6 +89,12 @@ impl Blake3 {
         hasher.update(input);
         hasher.finalize()
     }
+
+    pub fn keyed_hash(input: &[u8], key: [u32; CHAINING_VALUE_LEN]) -> [u8; OUTPUT_SIZE_IN_BYTES] {
+        let mut hasher = Self::new_keyed(key);
+        hasher.update(input);
+        hasher.finalize()
+    }
 }
 
 fn compression_caller(
@@ -76,6 +102,7 @@ fn compression_caller(
     message_block: &[u8],
     counter: u64,
     input_bytes_num: u32,
+    flags: u32
 ) {
     // Convert buffer to u32 words
     let mut message = [0u32; MSG_BLOCK_LEN + COUNTER_LEN + 2];
@@ -86,7 +113,7 @@ fn compression_caller(
     message[MSG_BLOCK_LEN] = counter as u32;
     message[MSG_BLOCK_LEN + 1] = (counter >> 32) as u32;
     message[MSG_BLOCK_LEN + COUNTER_LEN] = input_bytes_num;
-    message[MSG_BLOCK_LEN + COUNTER_LEN + 1] = 1u32 | 2u32 | 8u32; // CHUNK_START | CHUNK_END | ROOT
+    message[MSG_BLOCK_LEN + COUNTER_LEN + 1] = flags;
 
     unsafe {
         blake3_compress(hash_state.as_mut_ptr(), message.as_ptr());
@@ -162,12 +189,25 @@ pub unsafe fn blake3_compress(chaining_value: *mut u32, message: *const u32) {
 #[cfg(feature = "host")]
 mod tests {
     use super::Blake3 as inline_blake3;
-    use crate::{BLOCK_INPUT_SIZE_IN_BYTES, OUTPUT_SIZE_IN_BYTES};
+    use crate::{BLOCK_INPUT_SIZE_IN_BYTES, OUTPUT_SIZE_IN_BYTES, CHAINING_VALUE_LEN};
     use blake3 as reference_blake3;
     use rand::{Rng, RngCore};
 
     fn compute_expected_result(input: &[u8]) -> [u8; OUTPUT_SIZE_IN_BYTES] {
         reference_blake3::hash(input).as_bytes()[0..OUTPUT_SIZE_IN_BYTES]
+            .try_into()
+            .unwrap()
+    }
+
+    fn compute_keyed_expected_result(
+        input: &[u8],
+        key: [u32; CHAINING_VALUE_LEN],
+    ) -> [u8; OUTPUT_SIZE_IN_BYTES] {
+        let mut key_bytes = [0u8; 32];
+        for (i, word) in key.iter().enumerate() {
+            key_bytes[i * 4..(i + 1) * 4].copy_from_slice(&word.to_le_bytes());
+        }
+        reference_blake3::keyed_hash(&key_bytes, input).as_bytes()[0..OUTPUT_SIZE_IN_BYTES]
             .try_into()
             .unwrap()
     }
@@ -208,6 +248,26 @@ mod tests {
     }
 
     #[test]
+    fn keyed_digest_random_keys_match_standard() {
+        for _ in 0..1000 {
+            let len = rand::random::<usize>() % (BLOCK_INPUT_SIZE_IN_BYTES);
+            let input = random_input(len);
+            let mut rng = rand::thread_rng();
+            let mut key = [0u32; CHAINING_VALUE_LEN];
+            for i in 0..CHAINING_VALUE_LEN {
+                key[i] = rng.gen::<u32>();
+            }
+            let result = inline_blake3::keyed_hash(&input, key);
+            let expected = compute_keyed_expected_result(&input, key);
+            assert_eq!(
+                result,
+                expected,
+                "keyed digest mismatch for input={input:02x?} and random key={key:x?}"
+            );
+        }
+    }
+
+    #[test]
     fn streaming_update_finalize_matches_standard() {
         for _ in 0..1000 {
             let len = rand::random::<usize>() % (BLOCK_INPUT_SIZE_IN_BYTES + 1);
@@ -232,7 +292,7 @@ mod tests {
     }
 
     #[test]
-    fn edge_cases_zero_max_lengths() {
+    fn edge_cases() {
         // Empty
         let empty: &[u8] = &[];
         assert_eq!(inline_blake3::digest(empty), compute_expected_result(empty));
