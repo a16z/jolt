@@ -1382,42 +1382,80 @@ impl StreamingProcessChunk<StreamingCompactWitness<i64, Fr>> for DoryCommitmentS
         vec![row_commitment]
     }
 }
+use ark_bn254::{G1Affine};
 impl StreamingProcessChunk<StreamingOneHotWitness<Fr>> for DoryCommitmentScheme {
     fn process_chunk_t<'a>(s: &Self::State<'a>, chunk: &[StreamingOneHotWitness<Fr>]) -> Self::ChunkState {
         let Some(K) = s.K else {
             panic!("K must be provided for OneHot polynomials.");
         };
 
-        // dbg!(chunk.len());
+        // // dbg!(chunk.len());
+        // // dbg!(&self.setup.g1_vec()[0..10]);
+        // // TODO: Parallelize and optimize.
+        // let mut row_commitments = vec![JoltGroupWrapper(<Bn254 as ArkPairing>::G1::zero()); K];
 
-        // dbg!(&self.setup.g1_vec()[0..10]);
+        // // // Pad out last chunk if necessary.
+        // // let renaming_c = DoryGlobals::get_num_columns() - chunk.len();
+        // // let zeros = StreamingOneHotWitness::new(Some(0));
+        // // let remaining = repeat(&zeros).take(renaming_c);
 
-        // TODO: Parallelize and optimize.
-        let mut row_commitments = vec![JoltGroupWrapper(<Bn254 as ArkPairing>::G1::zero()); K];
-
-        // // Pad out last chunk if necessary.
-        // let renaming_c = DoryGlobals::get_num_columns() - chunk.len();
-        // let zeros = StreamingOneHotWitness::new(Some(0));
-        // let remaining = repeat(&zeros).take(renaming_c);
-        for (col_index, k) in chunk.iter().enumerate() {
-            // All the nonzero coefficients are 1, so we simply add
-            // the associated base to the result.
-            if let Some(k) = k.value {
-                row_commitments[k].0 += s.setup.g1_vec()[col_index].0;
-            }
-        }
-
-        // // [AZ] TODO: Parallelized
-        // chunk.iter().enumerate().for_each(|(col_index, k)| {
+        // for (col_index, k) in chunk.iter().enumerate() {
         //     // All the nonzero coefficients are 1, so we simply add
         //     // the associated base to the result.
         //     if let Some(k) = k.value {
         //         row_commitments[k].0 += s.setup.g1_vec()[col_index].0;
         //     }
-        // });
+        // }
+        // row_commitments
+
+        // Cache the reference to the G1 vector to avoid repeated method calls.
+        let g1_bases = s.setup.g1_vec();
+
+        chunk
+            .par_iter()
+            .enumerate()
+            .fold(
+                || vec![JoltGroupWrapper(<Bn254 as ArkPairing>::G1::zero()); K],
+                |mut thread_local_commits, (col_index, k)| {
+                    if let Some(k) = k.value {
+                        thread_local_commits[k].0 += g1_bases[col_index].0;
+                    }
+                    thread_local_commits
+                },
+            )
+            .reduce(
+                || vec![JoltGroupWrapper(<Bn254 as ArkPairing>::G1::zero()); K],
+                |mut combined_commits, thread_local_commits| {
+                    combined_commits
+                        .par_iter_mut()
+                        .zip(thread_local_commits.par_iter())
+                        .for_each(|(combined_elem, local_elem)| {
+                            combined_elem.0 += local_elem.0;
+                        });
+                    combined_commits
+                },
+            )
+
+            // // Collect indices for each k
+            // let mut indices_per_k: Vec<Vec<usize>> = vec![Vec::new(); K];
+            // let g1_bases_unsafe =
+            //     unsafe { std::mem::transmute::<&[G::Affine], &[G1Affine]>(g1_bases) };
+            // let results =
+            //     jolt_optimizations::batch_g1_additions_multi(g1_bases_unsafe, &indices_per_k);
+
+            //         // Convert results to row_commitments
+            //         let mut row_commitments = vec![JoltGroupWrapper(G::zero()); K];
+            //         for (k, result) in results.into_iter().enumerate() {
+            //             if !indices_per_k[k].is_empty() {
+            //                 let sum_projective: G1Projective = result.into();
+            //                 // Safety: We know G is G1Projective
+            //                 row_commitments[k].0 = unsafe {
+            //                     std::ptr::read(&sum_projective as *const G1Projective as *const G)
+            //                 };
+            //             }
+            //         }
 
 
-        row_commitments
     }
 }
 
