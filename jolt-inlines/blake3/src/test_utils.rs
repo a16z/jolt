@@ -122,7 +122,6 @@ impl Default for Blake3CpuHarness {
     }
 }
 
-
 pub mod helpers {
     pub fn generate_random_bytes(len: usize) -> Vec<u8> {
         let mut buf = vec![0u8; len];
@@ -135,9 +134,7 @@ pub mod helpers {
     pub fn bytes_to_u32_vec(bytes: &[u8]) -> Vec<u32> {
         bytes
             .chunks_exact(4)
-            .map(|chunk| {
-                u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]])
-            })
+            .map(|chunk| u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
             .collect()
     }
 

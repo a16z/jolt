@@ -1,5 +1,4 @@
 //! Host-side implementation and registration.
-pub use crate::exec;
 pub use crate::trace_generator;
 
 use jolt_inlines_common::constants;
@@ -13,7 +12,6 @@ pub fn init_inlines() -> Result<(), String> {
         constants::keccak256::FUNCT3,
         constants::keccak256::FUNCT7,
         constants::keccak256::NAME,
-        std::boxed::Box::new(exec::keccak256_exec),
         std::boxed::Box::new(trace_generator::keccak256_inline_sequence_builder),
     )?;
 

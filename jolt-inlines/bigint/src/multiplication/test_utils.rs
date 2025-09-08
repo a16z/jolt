@@ -9,7 +9,7 @@ use crate::multiplication::trace_generator::NEEDED_REGISTERS;
 use jolt_inlines_common::constants;
 use tracer::emulator::mmu::DRAM_BASE;
 use tracer::instruction::format::format_inline::FormatInline;
-use tracer::instruction::{inline::INLINE, RISCVInstruction, RISCVTrace};
+use tracer::instruction::{inline::INLINE, RISCVTrace};
 use tracer::utils::test_harness::CpuTestHarness;
 
 pub type BigIntInput = ([u64; INPUT_LIMBS], [u64; INPUT_LIMBS]);
@@ -148,37 +148,25 @@ pub mod bigint_verify {
         rhs: &[u64; INPUT_LIMBS],
         expected: &[u64; OUTPUT_LIMBS],
     ) {
-        let mut harness_exec = BigIntCpuHarness::new();
         let mut harness_trace = BigIntCpuHarness::new();
 
         // Set up both CPUs identically
-        harness_exec.load_operands(lhs, rhs);
         harness_trace.load_operands(lhs, rhs);
 
         let instruction = BigIntCpuHarness::instruction();
 
         // Execute both paths
-        instruction.execute(&mut harness_exec.harness.cpu, &mut ());
         instruction.trace(&mut harness_trace.harness.cpu, None);
 
         // Compare results
-        let exec_result = harness_exec.read_result();
         let trace_result = harness_trace.read_result();
 
-        assert_bigints_equal(&exec_result, expected, lhs, rhs, "Exec result vs Expected");
         assert_bigints_equal(
             &trace_result,
             expected,
             lhs,
             rhs,
             "Trace result vs Expected",
-        );
-        assert_bigints_equal(
-            &exec_result,
-            &trace_result,
-            lhs,
-            rhs,
-            "Exec vs Trace equivalence",
         );
     }
 }

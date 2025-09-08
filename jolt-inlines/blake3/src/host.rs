@@ -1,5 +1,4 @@
 //! Host-side implementation and registration.
-pub use crate::exec;
 pub use crate::trace_generator;
 use jolt_inlines_common::constants;
 use jolt_inlines_common::trace_writer::{write_inline_trace, InlineDescriptor, SequenceInputs};
@@ -12,7 +11,6 @@ pub fn init_inlines() -> Result<(), String> {
         constants::blake3::FUNCT3,
         constants::blake3::FUNCT7,
         constants::blake3::NAME,
-        std::boxed::Box::new(exec::blake3_exec),
         std::boxed::Box::new(trace_generator::blake3_inline_sequence_builder),
     )?;
 

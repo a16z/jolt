@@ -2,7 +2,7 @@ mod exec {
     use crate::test_constants::TestVectors;
     use crate::test_utils::{sverify, Sha256CpuHarness};
     use tracer::emulator::cpu::Xlen;
-    use tracer::instruction::RISCVInstruction;
+    use tracer::instruction::RISCVTrace;
 
     #[test]
     fn test_sha256_direct_execution() {
@@ -11,7 +11,7 @@ mod exec {
                 let mut harness = Sha256CpuHarness::new(xlen);
                 harness.load_block(&block);
                 harness.load_state(&initial_state);
-                Sha256CpuHarness::instruction_sha256().execute(&mut harness.harness.cpu, &mut ());
+                Sha256CpuHarness::instruction_sha256().trace(&mut harness.harness.cpu, None);
                 let result = harness.read_state();
 
                 sverify::assert_states_equal(
@@ -30,8 +30,7 @@ mod exec {
                 let mut harness = Sha256CpuHarness::new(xlen);
                 harness.load_block(&block);
                 harness.setup_output_only();
-                Sha256CpuHarness::instruction_sha256init()
-                    .execute(&mut harness.harness.cpu, &mut ());
+                Sha256CpuHarness::instruction_sha256init().trace(&mut harness.harness.cpu, None);
                 let result = harness.read_state();
 
                 sverify::assert_states_equal(
@@ -44,38 +43,9 @@ mod exec {
     }
 }
 
-mod exec_trace_equivalence {
-    use crate::test_constants::TestVectors;
-    use crate::test_utils::{sverify, Sha256CpuHarness};
-
+mod cpb {
+    use crate::test_utils::Sha256CpuHarness;
     use tracer::emulator::cpu::Xlen;
-
-    #[test]
-    fn test_sha256_exec_trace_equal() {
-        for (desc, block, initial_state, _expected) in TestVectors::get_standard_test_vectors() {
-            for xlen in [Xlen::Bit32, Xlen::Bit64] {
-                sverify::assert_exec_trace_equiv_custom(
-                    &block,
-                    &initial_state,
-                    &format!("SHA256 exec vs trace for {xlen:?}: {desc}"),
-                    xlen,
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn test_sha256init_exec_trace_equal() {
-        for (desc, block, _initial_state, _expected) in TestVectors::get_standard_test_vectors() {
-            for xlen in [Xlen::Bit32, Xlen::Bit64] {
-                sverify::assert_exec_trace_equiv_initial(
-                    &block,
-                    &format!("SHA256INIT exec vs trace for {xlen:?}: {desc}"),
-                    xlen,
-                );
-            }
-        }
-    }
 
     #[test]
     fn measure_sha256_length() {

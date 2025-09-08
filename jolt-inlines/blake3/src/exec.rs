@@ -1,15 +1,4 @@
 use crate::IV;
-use tracer::{
-    emulator::cpu::Cpu,
-    instruction::{inline::INLINE, RISCVInstruction},
-};
-
-pub fn blake3_exec(
-    _instr: &INLINE,
-    _cpu: &mut Cpu,
-    _ram_access: &mut <INLINE as RISCVInstruction>::RAMAccess,
-) {
-}
 
 /// Rust implementation of BLAKE3 compression on the host.
 /// The following code is obtained from reference BLAKE3 implementation (https://github.com/BLAKE3-team/BLAKE3/blob/master/reference_impl/reference_impl.rs)

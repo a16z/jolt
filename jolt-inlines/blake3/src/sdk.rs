@@ -36,7 +36,7 @@ impl Blake3 {
             buffer: [0; BLOCK_INPUT_SIZE_IN_BYTES],
             buffer_len: 0,
             counter: 0,
-            is_keyed_hash: true
+            is_keyed_hash: true,
         }
     }
 
@@ -66,7 +66,14 @@ impl Blake3 {
             &self.buffer,
             self.counter,
             self.buffer_len as u32,
-            FLAG_CHUNK_START | FLAG_CHUNK_END | FLAG_ROOT | (if self.is_keyed_hash { FLAG_KEYED_HASH } else { 0 }) // CHUNK_START | CHUNK_END | ROOT | KEYED_HASH
+            FLAG_CHUNK_START
+                | FLAG_CHUNK_END
+                | FLAG_ROOT
+                | (if self.is_keyed_hash {
+                    FLAG_KEYED_HASH
+                } else {
+                    0
+                }), // CHUNK_START | CHUNK_END | ROOT | KEYED_HASH
         );
 
         // Extract hash bytes
@@ -96,7 +103,7 @@ fn compression_caller(
     message_block: &[u8],
     counter: u64,
     input_bytes_num: u32,
-    flags: u32
+    flags: u32,
 ) {
     // Convert buffer to u32 words
     let mut message = [0u32; MSG_BLOCK_LEN + COUNTER_LEN + 2];
@@ -185,7 +192,7 @@ mod tests {
     use super::Blake3 as inline_blake3;
     use crate::{test_utils::helpers::*, BLOCK_INPUT_SIZE_IN_BYTES, CHAINING_VALUE_LEN};
 
-    fn random_partition<'a>(data: &'a [u8]) -> Vec<&'a [u8]> {
+    fn random_partition(data: &[u8]) -> Vec<&[u8]> {
         if data.is_empty() {
             return vec![&[]];
         }
@@ -225,8 +232,7 @@ mod tests {
             let result = inline_blake3::keyed_hash(&input, key);
             let expected = compute_keyed_expected_result(&input, key);
             assert_eq!(
-                result,
-                expected,
+                result, expected,
                 "keyed digest mismatch for input={input:02x?} and random key={key:x?}"
             );
         }

@@ -1,5 +1,4 @@
 //! Host-side implementation and registration.
-pub use crate::exec;
 pub use crate::trace_generator;
 
 use jolt_inlines_common::constants;
@@ -13,7 +12,6 @@ pub fn init_inlines() -> Result<(), String> {
         constants::sha256::default::FUNCT3,
         constants::sha256::default::FUNCT7,
         constants::sha256::default::NAME,
-        std::boxed::Box::new(exec::sha2_exec),
         std::boxed::Box::new(trace_generator::sha2_inline_sequence_builder),
     )?;
 
@@ -22,7 +20,6 @@ pub fn init_inlines() -> Result<(), String> {
         constants::sha256::init::FUNCT3,
         constants::sha256::init::FUNCT7,
         constants::sha256::init::NAME,
-        std::boxed::Box::new(exec::sha2_init_exec),
         std::boxed::Box::new(trace_generator::sha2_init_inline_sequence_builder),
     )?;
 

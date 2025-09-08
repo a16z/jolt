@@ -1,15 +1,4 @@
 use crate::{IV, SIGMA};
-use tracer::{
-    emulator::cpu::Cpu,
-    instruction::{inline::INLINE, RISCVInstruction},
-};
-
-pub fn blake2b_exec(
-    _instr: &INLINE,
-    _cpu: &mut Cpu,
-    _ram_access: &mut <INLINE as RISCVInstruction>::RAMAccess,
-) {
-}
 
 /// Rust implementation of BLAKE2 compression on the host.
 pub fn execute_blake2b_compression(state: &mut [u64; 8], message_words: &[u64; 18]) {

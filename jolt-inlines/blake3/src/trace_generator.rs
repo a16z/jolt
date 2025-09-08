@@ -305,7 +305,7 @@ pub fn blake3_inline_sequence_builder(
 #[cfg(test)]
 mod test_sequence_builder {
     use crate::test_utils::helpers::*;
-    use crate::test_utils::{Blake3CpuHarness, MessageBlock, ChainingValue};
+    use crate::test_utils::{Blake3CpuHarness, ChainingValue, MessageBlock};
 
     fn generate_trace_result(
         chaining_value: &ChainingValue,
@@ -333,17 +333,26 @@ mod test_sequence_builder {
         for _ in 0..10000 {
             let message_bytes = generate_random_bytes(crate::MSG_BLOCK_LEN * 4);
             // Convert bytes to message block (u32 words)
-            assert_eq!(message_bytes.len(), crate::MSG_BLOCK_LEN * 4, "Message must be exactly {} bytes", crate::MSG_BLOCK_LEN * 4);
+            assert_eq!(
+                message_bytes.len(),
+                crate::MSG_BLOCK_LEN * 4,
+                "Message must be exactly {} bytes",
+                crate::MSG_BLOCK_LEN * 4
+            );
             let words_vec = bytes_to_u32_vec(&message_bytes);
             let mut message_words = [0u32; crate::MSG_BLOCK_LEN];
             message_words.copy_from_slice(&words_vec);
-            
+
             let expected_hash_bytes = compute_expected_result(&message_bytes);
             let counter = [0u32, 0u32];
             let block_len = 64u32;
             let flags = crate::FLAG_CHUNK_START | crate::FLAG_CHUNK_END | crate::FLAG_ROOT;
-            let trace_hash_bytes = generate_trace_result(&crate::IV, &message_words, &counter, block_len, flags);
-            assert_eq!(trace_hash_bytes, expected_hash_bytes, "trace hash bytes mismatch");
+            let trace_hash_bytes =
+                generate_trace_result(&crate::IV, &message_words, &counter, block_len, flags);
+            assert_eq!(
+                trace_hash_bytes, expected_hash_bytes,
+                "trace hash bytes mismatch"
+            );
         }
     }
 
@@ -354,23 +363,30 @@ mod test_sequence_builder {
             let key_bytes = generate_random_bytes(crate::CHAINING_VALUE_LEN * 4);
             let mut key = [0u32; crate::CHAINING_VALUE_LEN];
             key.copy_from_slice(&bytes_to_u32_vec(&key_bytes));
-            
+
             // Generate random message
             let message_bytes = generate_random_bytes(crate::MSG_BLOCK_LEN * 4);
             let words_vec = bytes_to_u32_vec(&message_bytes);
             let mut message_words = [0u32; crate::MSG_BLOCK_LEN];
             message_words.copy_from_slice(&words_vec);
-            
+
             // Compute expected result using keyed hash
             let expected_hash_bytes = compute_keyed_expected_result(&message_bytes, key);
-            
+
             // Generate trace result with keyed hash flag
             let counter = [0u32, 0u32];
             let block_len = 64u32;
-            let flags = crate::FLAG_CHUNK_START | crate::FLAG_CHUNK_END | crate::FLAG_ROOT | crate::FLAG_KEYED_HASH;
-            let trace_hash_bytes = generate_trace_result(&key, &message_words, &counter, block_len, flags);
-            
-            assert_eq!(trace_hash_bytes, expected_hash_bytes, "keyed trace hash bytes mismatch");
+            let flags = crate::FLAG_CHUNK_START
+                | crate::FLAG_CHUNK_END
+                | crate::FLAG_ROOT
+                | crate::FLAG_KEYED_HASH;
+            let trace_hash_bytes =
+                generate_trace_result(&key, &message_words, &counter, block_len, flags);
+
+            assert_eq!(
+                trace_hash_bytes, expected_hash_bytes,
+                "keyed trace hash bytes mismatch"
+            );
         }
     }
 }
