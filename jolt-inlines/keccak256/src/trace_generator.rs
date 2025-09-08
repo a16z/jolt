@@ -56,14 +56,7 @@ const ROTATION_OFFSETS: [[u32; 5]; 5] = [
     [27, 20, 39,  8, 14],
 ];
 
-// Numb
-/// Layout of the 96 virtual registers (`vr`).
-///
-/// Jolt requires the total number of registers (physical + virtual) to be a power of two.
-/// With 32 physical registers, we need 96 virtual registers to reach 128.
-///
-/// While only 67 registers are actively used by this builder, we allocate 96
-/// to satisfy the system requirement.
+/// Layout of the virtual registers (`vr`).
 ///
 /// For NUM_LANES = 25, the layout is:
 /// - `vr[0..24]`: The 25 lanes of the Keccak state array `A`.
@@ -72,8 +65,7 @@ const ROTATION_OFFSETS: [[u32; 5]; 5] = [
 /// - `vr[55..59]`: The 5 lanes of the `D` array (theta effect) in `theta`.
 /// - `vr[60..64]`: A 5-lane temporary buffer for the current row in `chi`.
 /// - `vr[65..66]`: General-purpose scratch registers for intermediate values.
-/// - `vr[67..95]`: Unused, allocated for padding to meet the power-of-two requirement.
-pub(crate) const NEEDED_REGISTERS: u8 = 80;
+pub(crate) const NEEDED_REGISTERS: u8 = 66;
 struct Keccak256SequenceBuilder {
     asm: InstrAssembler,
     round: u32,
