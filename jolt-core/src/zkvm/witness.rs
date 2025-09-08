@@ -93,7 +93,6 @@ struct WitnessData<F: JoltField> {
     write_pc_to_rd: Vec<u8>,
     should_branch: Vec<u8>,
     should_jump: Vec<u8>,
-    compressed_do_not_update_unexp_pc: Vec<u8>,
     rd_inc: Vec<i128>,
     ram_inc: Vec<i128>,
 
@@ -118,7 +117,6 @@ impl<F: JoltField> WitnessData<F> {
             should_jump: vec![0; trace_len],
             rd_inc: vec![0; trace_len],
             ram_inc: vec![0; trace_len],
-            compressed_do_not_update_unexp_pc: vec![0; trace_len],
 
             instruction_ra: array::from_fn(|_| vec![None; trace_len]),
             bytecode_ra: (0..bytecode_d).map(|_| vec![None; trace_len]).collect(),
@@ -316,10 +314,6 @@ impl CommittedPolynomial {
 
                 batch_ref.should_branch[i] =
                     (lookup_output as u8) * (circuit_flags[CircuitFlags::Branch as usize] as u8);
-
-                batch_ref.compressed_do_not_update_unexp_pc[i] =
-                    circuit_flags[CircuitFlags::DoNotUpdateUnexpandedPC as usize] as u8
-                        * circuit_flags[CircuitFlags::IsCompressed as usize] as u8;
 
                 // Handle should_jump
                 let is_jump = circuit_flags[CircuitFlags::Jump] as u8;
