@@ -27,30 +27,32 @@ as $(0, 0, 0, 1)$.
 
 Let
  $F$ denote the evaluation table of $F$, i.e., $F$ is the vector of length $2^n$ whose $k$'th entry stores $f(k)$. 
-Let $u(j,k)$ denote the matrix whose $j$'th row is the one-hot representation of vector $x_j$. 
+Let $\mathsf{ra}(j,k)$ denote the matrix whose $j$'th row is the one-hot representation of vector $x_j$. 
 
-Then $f(x_j)$ is simply the inner product of row $j$ of $u$ with $F$. This can be seen to imply that
-for any $r_1, \dots, r_{\log T} \in \mathbb{F}^{\log T}$, 
-$$\tilde{y}(r_1, \dots, r_{\log T})=\sum_{k \in \\{0, 1\\}^{n}} \tilde{u}(k, r_1, \dots, r_{\log T}) \tilde{f}(k).$$
+Then $f(x_j)$ is simply the inner product of row $j$ of $\mathsf{ra}$ with $F$. This can be seen to imply that
+for any $(r_1, \dots, r_{\log T}) \in \mathbb{F}^{\log T}$, 
+$$\tilde{y}(r_1, \dots, r_{\log T})=\sum_{k \in \\{0, 1\\}^{n}} \tilde{\mathsf{ra}}(k, r_1, \dots, r_{\log T}) \tilde{f}(k).$$
 
 All that Shout does is apply the sum-check protocol to compute the above sum. From the verifier's perspective,
 this reduces the task of computing $\tilde{y}(r_1, \dots, r_{\log T})$ to that of evaluation 
-$\tilde{f}$ at a random point and evaluation $\tilde{u}$ at a random point. Since the vector $\tilde{u}$ was 
-committed by the prover, the prover can provide the requested evaluation of $\tilde{u}$ along with an evaluation proof. 
+$\tilde{f}$ at a random point and evaluation $\tilde{\mathsf{ra}}$ at a random point. Since the vector $\tilde{\mathsf{ra}}$ was 
+committed by the prover, the prover can provide the requested evaluation of $\tilde{\mathsf{ra}}$ along with an evaluation proof. 
 
-In the case where committing to, or providing an evaluation proof for, $u$ is too expensive, Shout instead virtualizes $u$. This means $u$ itself is not committed. Rather, several smaller vectors are committed, and when the verifier needs to evaluate $u$ at a random point,
-the sum-check protocol is applied to reduce evaluating (the MLE of) $u$ at a point to evaluating 
+In the case where committing to, or providing an evaluation proof for, $\mathsf{ra}$ is too expensive, Shout instead virtualizes $\mathsf{ra}$. This means $\mathsf{ra}$ itself is not committed. Rather, several smaller vectors are committed, and when the verifier needs to evaluate $\mathsf{ra}$ at a random point,
+the sum-check protocol is applied to reduce evaluating (the MLE of) $\mathsf{ra}$ at a point to evaluating 
 (the MLEs of) the simpler vectors at a different point. 
 
 In Shout, this virtualization uses the fact that, since (each of the $T$ rows of) $u$ is one-hot and of length $n$ , (each row of) $u$ can be expressed as the tensor product of $d$ smaller one-hot vectors, each of length $2^{n/d}$. 
 Rather than committing to $u$ directly, the prover commits to the $d$ smaller vectors,
 and then we use an additional application of the sum-check protocol to
-reduce the task of evaluating $\tilde{u}$ at a point to the task of evaluation each of the $d$ smaller vectors at a point.  
+reduce the task of evaluating $\tilde{\mathsf{ra}}$ at a point to the task of evaluation each of the $d$ smaller vectors at a point.  
 
 ### Prefix-suffix Shout
 For the Shout verifier to be fast, all that is needed is that $\tilde{f}$ be quickly evaluable. This is the case for all of the primitive RISC-V instructions (and many other functions). However,
 for the Shout prover to be fast, $f$ needs additional structure. We call the kind of structure exploited to make the Jolt prover fast prefix-suffix structure. Prefix-suffix structure is spiritually similar to the notion of decomposable tables in Lasso: roughly, it captures the situation where a single evaluation of $f$ at input $x \in \\{0, 1\\}^{n}$ can be obtained by splitting $x$ into $c$ chunks each of size $n/c$, evaluating a simple function on each chunk, and putting the evaluations together in a simple way. Whereas the Lasso prover had to explicitly commit to the chunks,
 the Shout prover only uses the decomposition ``in its own head'' to compute its sum-check messages quickly. This is one reason the Shout protocol is much more efficient than the Lasso protocol: table decompositions are not baked into the protocol itself but rather used only by the prover to quickly compute sum-check messages. The protocol itself is agnostic to the decomposition used (and in particular does not force the prover to use a particular decomposition). 
+
+For details, see Appendix A of <a href="https://eprint.iacr.org/2025/611">[NTZ25]</a>.
 
 ## Twist
 
