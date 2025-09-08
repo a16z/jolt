@@ -1,15 +1,9 @@
 //! This file provides high-level API to use BLAKE3 compression, both in host and guest mode.
 
 use crate::{
-    BLOCK_INPUT_SIZE_IN_BYTES, CHAINING_VALUE_LEN, COUNTER_LEN, IV, MSG_BLOCK_LEN,
-    OUTPUT_SIZE_IN_BYTES,
+    BLOCK_INPUT_SIZE_IN_BYTES, CHAINING_VALUE_LEN, COUNTER_LEN, FLAG_CHUNK_END, FLAG_CHUNK_START,
+    FLAG_KEYED_HASH, FLAG_ROOT, IV, MSG_BLOCK_LEN, OUTPUT_SIZE_IN_BYTES,
 };
-
-// BLAKE3 flags
-const FLAG_CHUNK_START: u32 = 1;
-const FLAG_CHUNK_END: u32 = 2;
-const FLAG_ROOT: u32 = 8;
-const FLAG_KEYED_HASH: u32 = 16;
 
 pub struct Blake3 {
     /// Hash state (8 x 32-bit words)
@@ -189,44 +183,17 @@ pub unsafe fn blake3_compress(chaining_value: *mut u32, message: *const u32) {
 #[cfg(feature = "host")]
 mod tests {
     use super::Blake3 as inline_blake3;
-    use crate::{BLOCK_INPUT_SIZE_IN_BYTES, OUTPUT_SIZE_IN_BYTES, CHAINING_VALUE_LEN};
-    use blake3 as reference_blake3;
-    use rand::{Rng, RngCore};
+    use crate::{test_utils::helpers::*, BLOCK_INPUT_SIZE_IN_BYTES, CHAINING_VALUE_LEN};
 
-    fn compute_expected_result(input: &[u8]) -> [u8; OUTPUT_SIZE_IN_BYTES] {
-        reference_blake3::hash(input).as_bytes()[0..OUTPUT_SIZE_IN_BYTES]
-            .try_into()
-            .unwrap()
-    }
-
-    fn compute_keyed_expected_result(
-        input: &[u8],
-        key: [u32; CHAINING_VALUE_LEN],
-    ) -> [u8; OUTPUT_SIZE_IN_BYTES] {
-        let mut key_bytes = [0u8; 32];
-        for (i, word) in key.iter().enumerate() {
-            key_bytes[i * 4..(i + 1) * 4].copy_from_slice(&word.to_le_bytes());
-        }
-        reference_blake3::keyed_hash(&key_bytes, input).as_bytes()[0..OUTPUT_SIZE_IN_BYTES]
-            .try_into()
-            .unwrap()
-    }
-
-    fn random_input(len: usize) -> Vec<u8> {
-        let mut buf = vec![0u8; len];
-        let mut rng = rand::thread_rng();
-        rng.fill_bytes(&mut buf);
-        buf
-    }
-
-    fn random_partition(data: &[u8]) -> Vec<&[u8]> {
-        let len = data.len();
-        if len == 0 {
+    fn random_partition<'a>(data: &'a [u8]) -> Vec<&'a [u8]> {
+        if data.is_empty() {
             return vec![&[]];
         }
+        let len = data.len();
         let mut parts = Vec::new();
         let mut partitioned_num = 0usize;
         let mut rng = rand::thread_rng();
+        use rand::Rng;
         while partitioned_num < len {
             let remaining = len - partitioned_num;
             let take = rng.gen_range(1..=remaining);
@@ -240,7 +207,7 @@ mod tests {
     fn digest_matches_standard() {
         for _ in 0..1000 {
             let len = rand::random::<usize>() % (BLOCK_INPUT_SIZE_IN_BYTES);
-            let input = random_input(len);
+            let input = generate_random_bytes(len);
             let result = inline_blake3::digest(&input);
             let expected = compute_expected_result(&input);
             assert_eq!(result, expected, "digest mismatch for input={input:02x?}");
@@ -251,12 +218,10 @@ mod tests {
     fn keyed_digest_random_keys_match_standard() {
         for _ in 0..1000 {
             let len = rand::random::<usize>() % (BLOCK_INPUT_SIZE_IN_BYTES);
-            let input = random_input(len);
-            let mut rng = rand::thread_rng();
+            let input = generate_random_bytes(len);
+            let key_bytes = generate_random_bytes(CHAINING_VALUE_LEN * 4);
             let mut key = [0u32; CHAINING_VALUE_LEN];
-            for i in 0..CHAINING_VALUE_LEN {
-                key[i] = rng.gen::<u32>();
-            }
+            key.copy_from_slice(&bytes_to_u32_vec(&key_bytes));
             let result = inline_blake3::keyed_hash(&input, key);
             let expected = compute_keyed_expected_result(&input, key);
             assert_eq!(
@@ -271,7 +236,7 @@ mod tests {
     fn streaming_update_finalize_matches_standard() {
         for _ in 0..1000 {
             let len = rand::random::<usize>() % (BLOCK_INPUT_SIZE_IN_BYTES + 1);
-            let data = random_input(len);
+            let data = generate_random_bytes(len);
             let expected = compute_expected_result(&data);
             let parts = random_partition(&data);
             let mut hasher = inline_blake3::new();

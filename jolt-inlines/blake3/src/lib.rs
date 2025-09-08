@@ -37,10 +37,15 @@ pub const MSG_SCHEDULE: [[usize; 16]; NUM_ROUNDS as usize] = [
 ];
 
 pub const NUM_ROUNDS: u8 = 7;
-
 pub const CHAINING_VALUE_LEN: usize = 8;
 pub const MSG_BLOCK_LEN: usize = 16;
 pub const COUNTER_LEN: usize = 2;
 pub const BLOCK_INPUT_SIZE_IN_BYTES: usize = 64;
 pub const OUTPUT_SIZE_IN_BYTES: usize = 32;
 pub const WORD_SIZE: usize = 32;
+
+// BLAKE3 flags
+pub const FLAG_CHUNK_START: u32 = 1;
+pub const FLAG_CHUNK_END: u32 = 2;
+pub const FLAG_ROOT: u32 = 8;
+pub const FLAG_KEYED_HASH: u32 = 16;
