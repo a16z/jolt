@@ -56,6 +56,26 @@ For details, see Appendix A of <a href="https://eprint.iacr.org/2025/611">[NTZ25
 
 ## Twist
 
+Shout is a batch-evaluation argument, which can equivalently be viewed as a lookup argument, i.e., for performing reads into a read-only memory. The relevant read-only memory for Shout is the memory that stores all $2^n$ evaluations of the function $f$ being evaluated. 
+
+Twist is an extension from read-only memory to read-write memory. 
+
+Imagine the prover has already committed to $T$ read addresses and $T$ write addresses, each address indexing into a memory of size $K$. The prover has also committed to a \emph{value} associated with each write operation. We think of reads and writes as proceeding in ``cycles'' (analgous to CPU cycle), where in each cycle $j$, the $j$'th read operation happens, followed by the $j$'th write operation. 
+
+The goal of Twist is to give the verifier query access to (the MLE of) the vector $\textsf{rv}$ of read-values, where $\textsf{rv}(j)$ denotes the value returned by the $j$'th read operation (i.e., the value that, as of time $j$, was most recently written to the $j$'th read address). 
+
+In Twist, as in Shout, each address is specified in one-hot form. So we think of the read addresses 
+as a matrix $\textsf{ra}$ whose $j$'th row is the one-hot representation of the address read at cycle $j$, and similarly for write address $\textsf{wa}$. 
+
+Whereas Shout involves a single invocation of the sum-check protocol (plus an additional invocation if $\mathsf{ra}$ is virtualized in terms of smaller vectors), Twist involves several invocations of the sum-check protocol. 
+We call these the read-checking sum-check, the write-checking sum-check, and the Val-evaluation sum-check. 
+
+Prior to the start of these three invocations of the sum-check protocol, the Twist prover commits to a vector called the Increments vector, or $\textsf{Inc}$ for short. If $k$ is the cell written at cycle $j$,
+then $\textsf{Inc}(j)$ returns the difference between
+the value written in cycle $j$ and the stored at cell $k$ at the start of the cycle. 
+The next section explains that once $\textsf{Inc}$ is committed, there is actually no need to commit to
+the write values $\textsf{wv}$: the $j$'th write value is in fact implied by the associated increment, so there is no need to commit to both. 
+
 ### wv virtualization
 
 In the Twist and Shout paper (Figure 9), the read and write checking sumchecks of Twist are presented as follows:
