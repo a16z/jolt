@@ -575,7 +575,7 @@ define_rv32im_enums! {
         LRW, SCW, AMOSWAPW, AMOADDW, AMOANDW, AMOORW, AMOXORW, AMOMINW, AMOMAXW, AMOMINUW, AMOMAXUW,
         // RV64A (Atomic Memory Operations)
         LRD, SCD, AMOSWAPD, AMOADDD, AMOANDD, AMOORD, AMOXORD, AMOMIND, AMOMAXD, AMOMINUD, AMOMAXUD,
-        // Virtual instructions requried for Blake2
+        // Virtual instructions required for Blake2
         VirtualXORROT32, VirtualXORROT24, VirtualXORROT16, VirtualXORROT63,
         // Virtual
         VirtualAdvice, VirtualAssertEQ, VirtualAssertHalfwordAlignment, VirtualAssertWordAlignment, VirtualAssertLTE,
