@@ -40,6 +40,9 @@ impl Blake2bTranscript {
     // Loads arbitrary byte lengths using ceil(out/32) invocations of 32 byte randoms
     // Discards top bits when the size is less than 32 bytes
     fn challenge_bytes(&mut self, out: &mut [u8]) {
+        if out.is_empty() {
+            return;
+        }
         let mut remaining_len = out.len();
         let mut start = 0;
         while remaining_len > 32 {
@@ -223,6 +226,9 @@ impl Transcript for Blake2bTranscript {
 
     // Compute powers of scalar q : (1, q, q^2, ..., q^(len-1))
     fn challenge_scalar_powers<F: JoltField>(&mut self, len: usize) -> Vec<F> {
+        if len == 0 {
+            return Vec::new();
+        }
         let q: F = self.challenge_scalar();
         let mut q_powers = vec![F::one(); len];
         for i in 1..len {
