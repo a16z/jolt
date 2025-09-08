@@ -354,11 +354,7 @@ where
         }
     }
     // Default implementation. Instructions with inline sequences will override this.
-    // This allows other modules (e.g. inline_helpers) to call this method on all instructions.
-    fn inline_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction>
-// where
-    //     Self: Into<RV32IMInstruction>,
-    {
+    fn inline_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
         vec![(*self).into()]
     }
 }
