@@ -59,7 +59,7 @@ mod exec_trace_equivalence {
     use tracer::emulator::cpu::Xlen;
 
     #[test]
-    fn test_keccak_exec_trace_intermediate_vr_equal() {
+    fn test_keccak_trace_intermediate_vr() {
         for (description, initial_state) in TestVectors::get_standard_test_vectors() {
             for round in 0..24 {
                 for step in &["theta", "rho_and_pi", "chi", "iota"] {

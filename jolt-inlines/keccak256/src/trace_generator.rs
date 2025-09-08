@@ -71,8 +71,7 @@ pub (crate) const ROTATION_OFFSETS: [[u32; 5]; 5] = [
 /// - `vr[55..59]`: The 5 lanes of the `D` array (theta effect) in `theta`.
 /// - `vr[60..64]`: A 5-lane temporary buffer for the current row in `chi`.
 /// - `vr[65..66]`: General-purpose scratch registers for intermediate values.
-/// - `vr[67..95]`: Unused, allocated for padding to meet the power-of-two requirement.
-pub(crate) const NEEDED_REGISTERS: u8 = 80;
+pub(crate) const NEEDED_REGISTERS: u8 = 67;
 struct Keccak256SequenceBuilder {
     asm: InstrAssembler,
     round: u32,
