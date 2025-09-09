@@ -1,4 +1,4 @@
-# Leveraging uniformity in Spartan
+# Spartan
 
 🚧 These docs are under construction 🚧
 
