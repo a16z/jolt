@@ -427,9 +427,10 @@ mod tests {
             1 << 16,
         );
 
-        let start = Instant::now();
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
+
+        let start = Instant::now();
         let (jolt_proof, io_device, debug_info) =
             JoltRV32IM::prove(&preprocessing, elf_contents, &inputs);
         let end = start.elapsed();
