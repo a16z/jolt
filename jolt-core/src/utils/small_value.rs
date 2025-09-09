@@ -1690,21 +1690,187 @@ pub mod svo_helpers {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::svo_helpers::{
+        compute_and_update_tA_inplace_generic, compute_and_update_tA_inplace_small_value,
+    };
+    use crate::{
+        field::{JoltField},
+        poly::eq_poly::EqPolynomial,
+        poly::spartan_interleaved_poly::build_eq_r_y_table,
+        zkvm::r1cs::{
+            types::{
+                fmadd_reduce_factor, reduce_unreduced_to_field, AzValue, BzValue, UnreducedProduct,
+            },
+        },
+    };
     use ark_bn254::Fr;
-    use ark_ff::PrimeField;
-    use crate::zkvm::r1cs::types::fmadd_reduce_factor;
+    use ark_ff::{
+        biginteger::SignedBigInt,
+        UniformRand, Zero,
+    };
+    use rand::{Rng, SeedableRng};
+    use rand_chacha::ChaCha20Rng;
 
     #[test]
-    fn test_signed_unreduced_fmadd() {
-        let (num_bin, num_ternary) = (8, 4);
+    fn test_fmadd_reduce_factor_contract() {
+        // Test the contract of fmadd_reduce_factor: it represents the Montgomery factor
+        // introduced by the fmadd+reduce pipeline for normalization
         let k = fmadd_reduce_factor::<Fr>();
+
+        // Verify that k * k.inverse() = 1
         let inv_k = k.inverse().unwrap();
+        assert_eq!(k * inv_k, <Fr as JoltField>::from_u64(1), "k * k.inverse() should equal 1");
 
-        let (az_typed, bz_typed, _az_field, _bz_field) = build_typed_inputs(num_bin);
-        let eq_r_y_table = build_eq_r_y_table(num_ternary);
+        // k should have internal BigInt representation of 1 (represents value 1 in standard form)
+        assert_eq!(
+            k.as_bigint_ref(),
+            &ark_ff::BigInt::<4>::from(1u64),
+            "fmadd_reduce_factor should have an internal BigInt representation of 1."
+        );
+    }
 
-        // Test fmadd_az
-        // ... existing code ...
+    fn random_az_value<R: Rng>(rng: &mut R) -> AzValue {
+        match rng.gen_range(0..5) {
+            0 => AzValue::I8(rng.gen()),
+            1 => AzValue::I8(0), // zero
+            2 => AzValue::I8(1), // one
+            3 => AzValue::S64(SignedBigInt::<1>::from_i64(rng.gen())),
+            4 => AzValue::I128(rng.gen()),
+            _ => unreachable!(),
+        }
+    }
+
+    fn random_bz_value<R: Rng>(rng: &mut R) -> BzValue {
+        match rng.gen_range(0..4) {
+            0 => BzValue::S64(SignedBigInt::<1>::zero()), // zero
+            1 => BzValue::S64(SignedBigInt::<1>::from_i64(1)), // one
+            2 => BzValue::S64(SignedBigInt::<1>::from_i64(rng.gen())),
+            3 => BzValue::S128(SignedBigInt::<2>::from_i128(rng.gen())),
+            _ => unreachable!(),
+        }
+    }
+
+    fn run_svo_consistency_check<const NUM_SVO_ROUNDS: usize>(rng: &mut ChaCha20Rng) {
+        let num_vars = NUM_SVO_ROUNDS;
+        if num_vars == 0 {
+            return;
+        }
+        let num_non_trivial = 3_usize.pow(num_vars as u32) - 2_usize.pow(num_vars as u32);
+
+        let r: Vec<Fr> = (0..num_vars).map(|_| Fr::rand(rng)).collect();
+        let e_in_val: Vec<Fr> = EqPolynomial::evals(&r);
+
+        let mut eq_r_y_table = [Fr::zero(); 1 << 8];
+        build_eq_r_y_table(&mut eq_r_y_table, &r);
+
+        let num_binary_points = 1 << num_vars;
+
+        // Create random binary evaluations for both paths
+        let binary_az_vals: Vec<AzValue> = (0..num_binary_points)
+            .map(|_| random_az_value(rng))
+            .collect();
+        let binary_bz_vals: Vec<BzValue> = (0..num_binary_points)
+            .map(|_| random_bz_value(rng))
+            .collect();
+
+        // Convert to field elements for the generic path
+        let binary_az_field: Vec<Fr> = binary_az_vals.iter()
+            .map(|az| az.to_field::<Fr>())
+            .collect();
+        let binary_bz_field: Vec<Fr> = binary_bz_vals.iter()
+            .map(|bz| bz.to_field::<Fr>())
+            .collect();
+
+        let inv_k = fmadd_reduce_factor::<Fr>().inverse().unwrap();
+
+        // Old path (produces standard Fr elements)
+        let mut temp_ta_old = vec![Fr::zero(); num_non_trivial];
+        compute_and_update_tA_inplace_generic::<NUM_SVO_ROUNDS, Fr>(
+            &binary_az_field,
+            &binary_bz_field,
+            &e_in_val[0], // Use first element
+            &mut temp_ta_old,
+        );
+
+        // New path (produces Montgomery-form Fr elements after reduction)
+        let mut ta_pos_acc = vec![UnreducedProduct::zero(); num_non_trivial];
+        let mut ta_neg_acc = vec![UnreducedProduct::zero(); num_non_trivial];
+        compute_and_update_tA_inplace_small_value::<NUM_SVO_ROUNDS, Fr>(
+            &binary_az_vals,
+            &binary_bz_vals,
+            &e_in_val[0], // Use first element
+            &mut ta_pos_acc,
+            &mut ta_neg_acc,
+        );
+
+        for i in 0..num_non_trivial {
+            let old_result = temp_ta_old[i];
+
+            let new_pos = reduce_unreduced_to_field::<Fr>(&ta_pos_acc[i]);
+            let new_neg = reduce_unreduced_to_field::<Fr>(&ta_neg_acc[i]);
+            let new_result_montgomery = new_pos - new_neg;
+
+            // Normalize new result from Montgomery form to standard form for comparison
+            let new_result_normalized = new_result_montgomery * inv_k;
+
+            assert_eq!(
+                old_result, new_result_normalized,
+                "SVO accumulation mismatch for NUM_SVO_ROUNDS={} at index {}",
+                NUM_SVO_ROUNDS, i
+            );
+        }
+    }
+
+    #[test]
+    fn test_svo_accumulation_consistency_generalized() {
+        let mut rng = ChaCha20Rng::from_seed([0u8; 32]);
+        run_svo_consistency_check::<1>(&mut rng);
+        run_svo_consistency_check::<2>(&mut rng);
+        run_svo_consistency_check::<3>(&mut rng);
+    }
+
+    #[test]
+    fn test_az_bz_value_conversions() {
+        // Test that AzValue/BzValue to_field conversions work correctly
+        let test_az_values = vec![
+            AzValue::I8(0), // zero
+            AzValue::I8(1), // one
+            AzValue::I8(10),
+            AzValue::I8(-10),
+            AzValue::S64(SignedBigInt::from_i64(100)),
+            AzValue::I128(10000),
+        ];
+
+        let test_bz_values = vec![
+            BzValue::S64(SignedBigInt::zero()), // zero
+            BzValue::S64(SignedBigInt::from_i64(1)), // one
+            BzValue::S64(SignedBigInt::from_i64(200)),
+            BzValue::S128(SignedBigInt::from_i128(2000)),
+        ];
+
+        for az in &test_az_values {
+            let field_val = az.to_field::<Fr>();
+            let expected_field_val = match az {
+                AzValue::I8(v) => <Fr as JoltField>::from_i64(*v as i64),
+                AzValue::S64(v) => {
+                    let mag_bytes = v.magnitude.0[0].to_le_bytes();
+                    let mag_u64 = u64::from_le_bytes(mag_bytes);
+                    let mag_f = <Fr as JoltField>::from_u64(mag_u64);
+                    if v.is_positive {
+                        mag_f
+                    } else {
+                        -mag_f
+                    }
+                }
+                AzValue::I128(v) => <Fr as JoltField>::from_i128(*v),
+            };
+            assert_eq!(field_val, expected_field_val);
+            assert_eq!(az.is_zero(), field_val.is_zero());
+        }
+
+        for bz in &test_bz_values {
+            let field_val = bz.to_field::<Fr>();
+            assert_eq!(bz.is_zero(), field_val.is_zero());
+        }
     }
 }

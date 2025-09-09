@@ -1311,3 +1311,14 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
         [final_az_eval, final_bz_eval, final_cz_eval]
     }
 }
+
+pub fn build_eq_r_y_table<F: JoltField>(eq_r_y_table: &mut [F; 256], r: &[F]) {
+    let num_vars = r.len();
+    for y in 0..(1 << num_vars) {
+        let y_bits: Vec<F> = (0..num_vars)
+            .map(|i| if (y & (1 << i)) != 0 { F::one() } else { F::zero() })
+            .collect();
+        let eq_r_y = EqPolynomial::mle(&r, &y_bits) * F::MONTGOMERY_R;
+        eq_r_y_table[y] = eq_r_y;
+    }
+}
