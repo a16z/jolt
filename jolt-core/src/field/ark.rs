@@ -91,7 +91,10 @@ impl JoltField for ark_bn254::Fr {
         let low = n_val as u64;
         let high = (n_val >> 64) as u64;
         let bigint = BigInt::new([0, 0, low, high]);
-        <Self>::new_unchecked(bigint)
+        // Ark workds needs a FAST version of unchecked
+        //<Self>::new_unchecked(bigint)
+        // this is wrong but i want to see if it speeds things up
+        <Self as ark_ff::PrimeField>::from_bigint(bigint).unwrap()
     }
     fn from_i64(val: i64) -> Self {
         if val.is_negative() {
