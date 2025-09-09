@@ -368,6 +368,8 @@ impl Serializable for JoltDevice {}
 
 #[cfg(test)]
 mod tests {
+    use std::time::Instant;
+
     use ark_bn254::Fr;
 
     use crate::host;
@@ -413,6 +415,7 @@ mod tests {
     #[test]
     #[serial]
     fn fib_e2e_dory() {
+        let start = Instant::now();
         let mut program = host::Program::new("fibonacci-guest");
         let inputs = postcard::to_stdvec(&100u32).unwrap();
         let (bytecode, init_memory_state, _) = program.decode();
@@ -437,6 +440,8 @@ mod tests {
             "Verification failed with error: {:?}",
             verification_result.err()
         );
+        let end = start.elapsed();
+        println!("Time end: {}", end.as_millis());
     }
 
     #[test]
