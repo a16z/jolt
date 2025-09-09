@@ -66,6 +66,7 @@ pub struct StateManager<
     pub proofs: Rc<RefCell<Proofs<F, PCS, ProofTranscript>>>,
     pub commitments: Rc<RefCell<Vec<PCS::Commitment>>>,
     pub ram_K: usize,
+    pub ram_d: usize,
     pub twist_sumcheck_switch_index: usize,
     pub program_io: JoltDevice,
     pub prover_state: Option<ProverState<'a, F, PCS>>,
@@ -112,7 +113,8 @@ where
                     + 1,
             )
             .next_power_of_two() as usize;
-
+        
+        let ram_d = compute_d_parameter(ram_K);
         let T = trace.len();
         let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
         let chunk_size = T / num_chunks;
@@ -124,6 +126,7 @@ where
             commitments,
             program_io,
             ram_K,
+            ram_d,
             twist_sumcheck_switch_index,
             prover_state: Some(ProverState {
                 preprocessing,

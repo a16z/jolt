@@ -49,7 +49,6 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
     fn stage2_prover_instances(
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
-        ram_d: usize,
     ) -> Vec<Box<dyn SumcheckInstance<F>>> {
         let (preprocessing, _, trace, _, _) = sm.get_prover_data();
         let r_cycle = sm

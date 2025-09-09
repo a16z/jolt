@@ -229,7 +229,6 @@ pub struct RegistersReadWriteChecking<F: JoltField> {
 impl<F: JoltField> RegistersReadWriteChecking<F> {
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-        ram_d: usize,
     ) -> Self {
         let (preprocessing, _, trace, _, _) = state_manager.get_prover_data();
         let accumulator = state_manager.get_prover_accumulator();
@@ -250,7 +249,7 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
         let input_claim = rd_wv_claim + gamma * rs1_rv_claim + gamma.square() * rs2_rv_claim;
 
         let prover_state =
-            ReadWriteCheckingProverState::initialize(preprocessing, trace, &r_cycle.r, ram_d);
+            ReadWriteCheckingProverState::initialize(preprocessing, trace, &r_cycle.r, state_manager.ram_d);
 
         Self {
             T: trace.len(),

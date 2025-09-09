@@ -40,7 +40,6 @@ pub(crate) struct ValEvaluationSumcheck<F: JoltField> {
 impl<F: JoltField> ValEvaluationSumcheck<F> {
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-        ram_d: usize,
     ) -> Self {
         let (preprocessing, _, trace, _, _) = state_manager.get_prover_data();
         let accumulator = state_manager.get_prover_accumulator();
@@ -56,7 +55,7 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
         let (r_address_slice, r_cycle_slice) = opening_point.split_at(r_address_len);
         let r_address: Vec<F> = r_address_slice.into();
         let r_cycle: Vec<F> = r_cycle_slice.into();
-        let inc = CommittedPolynomial::RdInc.generate_witness(preprocessing, trace, ram_d);
+        let inc = CommittedPolynomial::RdInc.generate_witness(preprocessing, trace, state_manager.ram_d);
 
         let eq_r_address = EqPolynomial::evals(&r_address);
         let wa: Vec<F> = trace

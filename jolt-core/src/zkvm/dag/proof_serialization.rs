@@ -36,6 +36,7 @@ pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcr
     proofs: Proofs<F, PCS, FS>,
     pub trace_length: usize,
     ram_K: usize,
+    ram_d: usize,
     bytecode_d: usize,
     twist_sumcheck_switch_index: usize,
 }
@@ -101,6 +102,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
         validate: Validate,
     ) -> Result<Self, SerializationError> {
         let ram_K = usize::deserialize_with_mode(&mut reader, compress, validate)?;
+        let ram_d = usize::deserialize_with_mode(&mut reader, compress, validate)?;
         let bytecode_d = usize::deserialize_with_mode(&mut reader, compress, validate)?;
 
         // ensure that all committed polys are set up before deserializing proofs
@@ -120,6 +122,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
             proofs,
             trace_length,
             ram_K,
+            ram_d,
             bytecode_d,
             twist_sumcheck_switch_index,
         })
@@ -134,6 +137,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> JoltProof<F
         let proofs = state_manager.proofs.take();
         let trace_length = prover_state.trace.len();
         let ram_K = state_manager.ram_K;
+        let ram_d = state_manager.ram_d;
         let twist_sumcheck_switch_index = state_manager.twist_sumcheck_switch_index;
 
         Self {
@@ -142,6 +146,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> JoltProof<F
             proofs,
             trace_length,
             ram_K,
+            ram_d,
             bytecode_d: prover_state.preprocessing.shared.bytecode.d,
             twist_sumcheck_switch_index,
         }
@@ -170,6 +175,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> JoltProof<F
             commitments,
             program_io,
             ram_K: self.ram_K,
+            ram_d: self.ram_d,
             twist_sumcheck_switch_index: self.twist_sumcheck_switch_index,
             prover_state: None,
             verifier_state: Some(VerifierState {

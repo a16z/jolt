@@ -92,7 +92,7 @@ where
     pub generators: PCS::ProverSetup,
     pub shared: JoltSharedPreprocessing,
     field: F::SmallValueLookupTables,
-    // ram_d: usize,//AZ: ramd
+    ram_d: Option<usize>,//AZ: ramd
 }
 
 impl<F, PCS> Serializable for JoltProverPreprocessing<F, PCS>
@@ -189,7 +189,7 @@ where
             generators,
             shared,
             field: small_value_lookup_tables,
-            // ram_d,//AZ: ramd
+            ram_d: None,//AZ: ramd
         }
     }
 
