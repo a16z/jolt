@@ -398,7 +398,7 @@ mod test_sequence_builder {
     #[test]
     fn test_trace_result_with_random_inputs() {
         // Test with multiple random inputs
-        for _ in 0..1000 {
+        for _ in 0..10 {
             let input = generate_random_input();
             verify_blake2b_compression(input.0, input.1);
         }

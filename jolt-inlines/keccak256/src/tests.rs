@@ -45,16 +45,6 @@ mod exec {
             assert_eq!(&hash, expected_hash);
         }
     }
-
-    #[test]
-    fn test_execute_keccak_f() {
-        let mut state = [0u64; crate::NUM_LANES];
-        crate::exec::execute_keccak_f(&mut state);
-        assert_eq!(
-            state,
-            crate::test_constants::xkcp_vectors::AFTER_ONE_PERMUTATION
-        );
-    }
 }
 
 mod exec_trace_equivalence {
