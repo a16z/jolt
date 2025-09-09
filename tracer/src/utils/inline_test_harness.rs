@@ -3,12 +3,12 @@
 //! Provides a unified testing framework for all inline instructions,
 //! eliminating the need for inline-specific test harnesses.
 
-use super::test_harness::TEST_MEMORY_CAPACITY;
 use crate::emulator::cpu::{Cpu, Xlen};
 use crate::emulator::default_terminal::DefaultTerminal;
 use crate::emulator::mmu::DRAM_BASE;
 use crate::instruction::format::format_inline::FormatInline;
 use crate::instruction::inline::INLINE;
+use crate::instruction::test::TEST_MEMORY_CAPACITY;
 use crate::instruction::{RISCVTrace, RV32IMInstruction};
 
 #[derive(Clone, Copy)]

@@ -251,7 +251,7 @@ pub mod virtual_zero_extend_word;
 pub mod xor;
 pub mod xori;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-utils"))]
 pub mod test;
 
 #[derive(Default, Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]

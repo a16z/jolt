@@ -4,9 +4,13 @@ use crate::Keccak256State;
 use tracer::emulator::cpu::Xlen;
 use tracer::instruction::inline::INLINE;
 use tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness};
-use tracer::utils::test_harness::InstructionTestCase;
 
-pub type KeccakTestCase = InstructionTestCase<Keccak256State, Keccak256State>;
+/// Simple test case structure for Keccak tests
+pub struct KeccakTestCase {
+    pub input: Keccak256State,
+    pub expected: Keccak256State,
+    pub description: &'static str,
+}
 
 pub fn create_keccak_harness(xlen: Xlen) -> InlineTestHarness {
     // Keccak256: rs1=state/output, rs2=input
@@ -26,36 +30,36 @@ pub fn instruction() -> INLINE {
 pub fn keccak_test_vectors() -> Vec<KeccakTestCase> {
     vec![
         // Test case 1: All zeros input (standard test vector)
-        KeccakTestCase::new(
-            [0u64; 25],
-            test_constants::xkcp_vectors::AFTER_ONE_PERMUTATION,
-            "All zeros input (XKCP test vector)",
-        ),
+        KeccakTestCase {
+            input: [0u64; 25],
+            expected: test_constants::xkcp_vectors::AFTER_ONE_PERMUTATION,
+            description: "All zeros input (XKCP test vector)",
+        },
         // Test case 2: Simple pattern
-        KeccakTestCase::new(
-            TestVectors::create_simple_pattern(),
-            {
+        KeccakTestCase {
+            input: TestVectors::create_simple_pattern(),
+            expected: {
                 let mut state = TestVectors::create_simple_pattern();
                 execute_keccak_f(&mut state);
                 state
             },
-            "Simple arithmetic pattern",
-        ),
+            description: "Simple arithmetic pattern",
+        },
         // Test case 3: Single bit set
-        KeccakTestCase::new(
-            {
+        KeccakTestCase {
+            input: {
                 let mut state = [0u64; 25];
                 state[0] = 1;
                 state
             },
-            {
+            expected: {
                 let mut state = [0u64; 25];
                 state[0] = 1;
                 execute_keccak_f(&mut state);
                 state
             },
-            "Single bit in first lane",
-        ),
+            description: "Single bit in first lane",
+        },
     ]
 }
 /// Print a Keccak state in hex format for debugging.
