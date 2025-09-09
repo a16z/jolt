@@ -94,8 +94,9 @@ impl JoltField for ark_bn254::Fr {
         // Ark workds needs a FAST version of unchecked
         //<Self>::new_unchecked(bigint)
         // this is wrong but i want to see if it speeds things up
-        <Self as ark_ff::PrimeField>::from_bigint(bigint).unwrap()
+        <Self as ark_ff::PrimeField>::from_bigint_unchecked(bigint).unwrap()
     }
+
     fn from_i64(val: i64) -> Self {
         if val.is_negative() {
             let val = val.unsigned_abs();
