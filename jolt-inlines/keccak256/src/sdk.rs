@@ -126,8 +126,7 @@ impl Default for Keccak256 {
 /// - The pointer must be properly aligned for u64 access (8-byte alignment).
 #[cfg(not(feature = "host"))]
 pub unsafe fn keccak_f(state: *mut u64) {
-    use crate::{KECCAK256_FUNCT3, KECCAK256_FUNCT7};
-    const INLINE_OPCODE: u32 = 0x0B;
+    use crate::{INLINE_OPCODE, KECCAK256_FUNCT3, KECCAK256_FUNCT7};
     core::arch::asm!(
         ".insn r {opcode}, {funct3}, {funct7}, x0, {rs1}, x0",
         opcode = const INLINE_OPCODE,

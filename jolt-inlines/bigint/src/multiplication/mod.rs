@@ -1,5 +1,4 @@
-#[cfg(feature = "host")]
-pub use tracer::utils::inline_helpers::INLINE_OPCODE;
+pub const INLINE_OPCODE: u32 = 0x0B;
 
 pub const BIGINT256_MUL_FUNCT3: u32 = 0x00;
 pub const BIGINT256_MUL_FUNCT7: u32 = 0x04;

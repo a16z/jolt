@@ -100,8 +100,7 @@ impl Default for Blake2b {
 /// - Both pointers must be properly aligned for u64 access
 #[cfg(not(feature = "host"))]
 pub unsafe fn blake2b_compress(state: *mut u64, message: *const u64) {
-    use crate::{BLAKE2_FUNCT3, BLAKE2_FUNCT7};
-    const INLINE_OPCODE: u32 = 0x0B;
+    use crate::{BLAKE2_FUNCT3, BLAKE2_FUNCT7, INLINE_OPCODE};
     // Memory layout for Blake2 instruction:
     // rs1: points to state (64 bytes)
     // rs2: points to message block (128 bytes) + counter (8 bytes) + final flag (8 bytes)

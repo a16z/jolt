@@ -2,7 +2,7 @@
 
 #![cfg_attr(not(feature = "host"), no_std)]
 
-pub use tracer::utils::inline_helpers::INLINE_OPCODE;
+pub const INLINE_OPCODE: u32 = 0x0B;
 
 pub const KECCAK256_FUNCT3: u32 = 0x00;
 pub const KECCAK256_FUNCT7: u32 = 0x01;

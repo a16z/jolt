@@ -334,8 +334,7 @@ impl Default for Sha256 {
 /// - The memory regions must not overlap
 #[cfg(not(feature = "host"))]
 pub unsafe fn sha256_compression(input: *const u32, state: *mut u32) {
-    use crate::{SHA256_FUNCT3, SHA256_FUNCT7};
-    const INLINE_OPCODE: u32 = 0x0B;
+    use crate::{INLINE_OPCODE, SHA256_FUNCT3, SHA256_FUNCT7};
     core::arch::asm!(
         ".insn r {opcode}, {funct3}, {funct7}, x0, {rs1}, {rs2}",
         opcode = const INLINE_OPCODE,
@@ -382,8 +381,7 @@ pub unsafe fn sha256_compression(input: *const u32, state: *mut u32) {
 /// - The memory regions must not overlap
 #[cfg(not(feature = "host"))]
 pub unsafe fn sha256_compression_initial(input: *const u32, state: *mut u32) {
-    use crate::{SHA256_INIT_FUNCT3, SHA256_INIT_FUNCT7};
-    const INLINE_OPCODE: u32 = 0x0B;
+    use crate::{INLINE_OPCODE, SHA256_INIT_FUNCT3, SHA256_INIT_FUNCT7};
     core::arch::asm!(
         ".insn r {opcode}, {funct3}, {funct7}, x0, {rs1}, {rs2}",
         opcode = const INLINE_OPCODE,

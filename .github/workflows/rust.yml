@@ -32,8 +32,10 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           components: clippy
-      - name: cargo clippy
+      - name: cargo clippy --features allocative,host
         run: cargo clippy --all --all-targets --features allocative,host
+      - name: cargo clippy --no-default-features
+        run: cargo clippy --all --all-targets --no-default-features
 
   machete:
     runs-on: ubuntu-latest

@@ -35,8 +35,7 @@ pub fn bigint256_mul(lhs: [u64; INPUT_LIMBS], rhs: [u64; INPUT_LIMBS]) -> [u64; 
 /// - The memory regions may overlap (result can be the same as a or b)
 #[cfg(not(feature = "host"))]
 pub unsafe fn bigint256_mul_inline(a: *const u64, b: *const u64, result: *mut u64) {
-    use crate::{BIGINT256_MUL_FUNCT3, BIGINT256_MUL_FUNCT7};
-    const INLINE_OPCODE: u32 = 0x0B;
+    use super::{BIGINT256_MUL_FUNCT3, BIGINT256_MUL_FUNCT7, INLINE_OPCODE};
     core::arch::asm!(
         ".insn r {opcode}, {funct3}, {funct7}, {rd}, {rs1}, {rs2}",
         opcode = const INLINE_OPCODE,
