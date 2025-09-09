@@ -2,6 +2,12 @@
 
 #![cfg_attr(not(feature = "host"), no_std)]
 
+pub use tracer::utils::inline_helpers::INLINE_OPCODE;
+
+pub const KECCAK256_FUNCT3: u32 = 0x00;
+pub const KECCAK256_FUNCT7: u32 = 0x01;
+pub const KECCAK256_NAME: &str = "KECCAK256_INLINE";
+
 pub const NUM_LANES: usize = 25;
 pub type Keccak256State = [u64; NUM_LANES];
 

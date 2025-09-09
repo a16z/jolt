@@ -135,7 +135,8 @@ impl Default for Blake3 {
 /// - Both pointers must be properly aligned for u32 access (4-byte alignment).
 #[cfg(not(feature = "host"))]
 pub unsafe fn blake3_compress(chaining_value: *mut u32, message: *const u32) {
-    use jolt_inlines_common::constants::{blake3 as blake3_consts, INLINE_OPCODE};
+    use crate::{BLAKE3_FUNCT3, BLAKE3_FUNCT7};
+    const INLINE_OPCODE: u32 = 0x0B;
     // Memory layout for BLAKE3 instruction:
     // rs1: points to chaining value (32 bytes)
     // rs2: points to message block (64 bytes) + counter (8 bytes) + block_len (4 bytes) + flags (4 bytes)
@@ -143,8 +144,8 @@ pub unsafe fn blake3_compress(chaining_value: *mut u32, message: *const u32) {
     core::arch::asm!(
         ".insn r {opcode}, {funct3}, {funct7}, x0, {rs1}, {rs2}",
         opcode = const INLINE_OPCODE,
-        funct3 = const blake3_consts::FUNCT3,
-        funct7 = const blake3_consts::FUNCT7,
+        funct3 = const BLAKE3_FUNCT3,
+        funct7 = const BLAKE3_FUNCT7,
         rs1 = in(reg) chaining_value,
         rs2 = in(reg) message,
         options(nostack)

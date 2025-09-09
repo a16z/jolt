@@ -334,12 +334,13 @@ impl Default for Sha256 {
 /// - The memory regions must not overlap
 #[cfg(not(feature = "host"))]
 pub unsafe fn sha256_compression(input: *const u32, state: *mut u32) {
-    use jolt_inlines_common::constants::{sha256, INLINE_OPCODE};
+    use crate::{SHA256_FUNCT3, SHA256_FUNCT7};
+    const INLINE_OPCODE: u32 = 0x0B;
     core::arch::asm!(
         ".insn r {opcode}, {funct3}, {funct7}, x0, {rs1}, {rs2}",
         opcode = const INLINE_OPCODE,
-        funct3 = const sha256::default::FUNCT3,
-        funct7 = const sha256::default::FUNCT7,
+        funct3 = const SHA256_FUNCT3,
+        funct7 = const SHA256_FUNCT7,
         rs1 = in(reg) input,
         rs2 = in(reg) state,
         options(nostack)
@@ -381,12 +382,13 @@ pub unsafe fn sha256_compression(input: *const u32, state: *mut u32) {
 /// - The memory regions must not overlap
 #[cfg(not(feature = "host"))]
 pub unsafe fn sha256_compression_initial(input: *const u32, state: *mut u32) {
-    use jolt_inlines_common::constants::{sha256, INLINE_OPCODE};
+    use crate::{SHA256_INIT_FUNCT3, SHA256_INIT_FUNCT7};
+    const INLINE_OPCODE: u32 = 0x0B;
     core::arch::asm!(
         ".insn r {opcode}, {funct3}, {funct7}, x0, {rs1}, {rs2}",
         opcode = const INLINE_OPCODE,
-        funct3 = const sha256::init::FUNCT3,
-        funct7 = const sha256::init::FUNCT7,
+        funct3 = const SHA256_INIT_FUNCT3,
+        funct7 = const SHA256_INIT_FUNCT7,
         rs1 = in(reg) input,
         rs2 = in(reg) state,
         options(nostack)

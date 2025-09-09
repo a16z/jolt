@@ -126,12 +126,13 @@ impl Default for Keccak256 {
 /// - The pointer must be properly aligned for u64 access (8-byte alignment).
 #[cfg(not(feature = "host"))]
 pub unsafe fn keccak_f(state: *mut u64) {
-    use jolt_inlines_common::constants::{keccak256, INLINE_OPCODE};
+    use crate::{KECCAK256_FUNCT3, KECCAK256_FUNCT7};
+    const INLINE_OPCODE: u32 = 0x0B;
     core::arch::asm!(
         ".insn r {opcode}, {funct3}, {funct7}, x0, {rs1}, x0",
         opcode = const INLINE_OPCODE,
-        funct3 = const keccak256::FUNCT3,
-        funct7 = const keccak256::FUNCT7,
+        funct3 = const KECCAK256_FUNCT3,
+        funct7 = const KECCAK256_FUNCT7,
         rs1 = in(reg) state,
         options(nostack)
     );

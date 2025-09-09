@@ -1,19 +1,19 @@
 //! Host-side implementation and registration.
 pub use crate::sequence_builder;
 
-use jolt_inlines_common::constants;
+use crate::{INLINE_OPCODE, KECCAK256_FUNCT3, KECCAK256_FUNCT7, KECCAK256_NAME};
 use tracer::register_inline;
 
-use jolt_inlines_common::trace_writer::{
+use tracer::utils::inline_sequence_writer::{
     write_inline_trace, AppendMode, InlineDescriptor, SequenceInputs,
 };
 
 pub fn init_inlines() -> Result<(), String> {
     register_inline(
-        constants::INLINE_OPCODE,
-        constants::keccak256::FUNCT3,
-        constants::keccak256::FUNCT7,
-        constants::keccak256::NAME,
+        INLINE_OPCODE,
+        KECCAK256_FUNCT3,
+        KECCAK256_FUNCT7,
+        KECCAK256_NAME,
         std::boxed::Box::new(sequence_builder::keccak256_inline_sequence_builder),
     )?;
 
@@ -22,10 +22,10 @@ pub fn init_inlines() -> Result<(), String> {
 
 pub fn store_inlines() -> Result<(), String> {
     let inline_info = InlineDescriptor::new(
-        constants::keccak256::NAME.to_string(),
-        constants::INLINE_OPCODE,
-        constants::keccak256::FUNCT3,
-        constants::keccak256::FUNCT7,
+        KECCAK256_NAME.to_string(),
+        INLINE_OPCODE,
+        KECCAK256_FUNCT3,
+        KECCAK256_FUNCT7,
     );
     let sequence_inputs = SequenceInputs::default();
     let instructions = sequence_builder::keccak256_inline_sequence_builder(
@@ -66,7 +66,7 @@ mod tests {
     use std::io::{BufRead, BufReader};
     use std::path::Path;
 
-    use jolt_inlines_common::trace_writer::{
+    use tracer::utils::inline_sequence_writer::{
         DEFAULT_RAM_START_ADDRESS, DEFAULT_RS1, DEFAULT_RS2, DEFAULT_RS3, DEFAULT_XLEN,
     };
 

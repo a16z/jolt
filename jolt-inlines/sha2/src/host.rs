@@ -1,27 +1,30 @@
 //! Host-side implementation and registration.
 pub use crate::sequence_builder;
 
-use jolt_inlines_common::constants;
+use crate::{
+    INLINE_OPCODE, SHA256_FUNCT3, SHA256_FUNCT7, SHA256_INIT_FUNCT3, SHA256_INIT_FUNCT7,
+    SHA256_INIT_NAME, SHA256_NAME,
+};
 use tracer::register_inline;
 
-use jolt_inlines_common::trace_writer::{
+use tracer::utils::inline_sequence_writer::{
     write_inline_trace, AppendMode, InlineDescriptor, SequenceInputs,
 };
 
 pub fn init_inlines() -> Result<(), String> {
     register_inline(
-        constants::INLINE_OPCODE,
-        constants::sha256::default::FUNCT3,
-        constants::sha256::default::FUNCT7,
-        constants::sha256::default::NAME,
+        INLINE_OPCODE,
+        SHA256_FUNCT3,
+        SHA256_FUNCT7,
+        SHA256_NAME,
         std::boxed::Box::new(sequence_builder::sha2_inline_sequence_builder),
     )?;
 
     register_inline(
-        constants::INLINE_OPCODE,
-        constants::sha256::init::FUNCT3,
-        constants::sha256::init::FUNCT7,
-        constants::sha256::init::NAME,
+        INLINE_OPCODE,
+        SHA256_INIT_FUNCT3,
+        SHA256_INIT_FUNCT7,
+        SHA256_INIT_NAME,
         std::boxed::Box::new(sequence_builder::sha2_init_inline_sequence_builder),
     )?;
 
@@ -31,10 +34,10 @@ pub fn init_inlines() -> Result<(), String> {
 pub fn store_inlines() -> Result<(), String> {
     // Store SHA256 default inline trace
     let inline_info = InlineDescriptor::new(
-        constants::sha256::default::NAME.to_string(),
-        constants::INLINE_OPCODE,
-        constants::sha256::default::FUNCT3,
-        constants::sha256::default::FUNCT7,
+        SHA256_NAME.to_string(),
+        INLINE_OPCODE,
+        SHA256_FUNCT3,
+        SHA256_FUNCT7,
     );
     let sequence_inputs = SequenceInputs::default();
     let instructions = sequence_builder::sha2_inline_sequence_builder(
@@ -56,10 +59,10 @@ pub fn store_inlines() -> Result<(), String> {
 
     // Store SHA256 init inline trace (append to the same file)
     let inline_info = InlineDescriptor::new(
-        constants::sha256::init::NAME.to_string(),
-        constants::INLINE_OPCODE,
-        constants::sha256::init::FUNCT3,
-        constants::sha256::init::FUNCT7,
+        SHA256_INIT_NAME.to_string(),
+        INLINE_OPCODE,
+        SHA256_INIT_FUNCT3,
+        SHA256_INIT_FUNCT7,
     );
     let sequence_inputs = SequenceInputs::default();
     let instructions = sequence_builder::sha2_init_inline_sequence_builder(

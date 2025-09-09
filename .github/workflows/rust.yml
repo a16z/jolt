@@ -33,7 +33,7 @@ jobs:
         with:
           components: clippy
       - name: cargo clippy
-        run: cargo clippy --all --all-targets --features allocative
+        run: cargo clippy --all --all-targets --features allocative,host
 
   machete:
     runs-on: ubuntu-latest
@@ -112,7 +112,6 @@ jobs:
           pkgs=$(cargo metadata --format-version=1 --no-deps \
                    | jq -r '.packages[].name' \
                    | grep '^jolt-inlines-' \
-                   | grep -v '^jolt-inlines-common$' \
                    | tr '\n' ' ')
           echo "Found inline crates: $pkgs"
           echo "pkgs=$pkgs" >> "$GITHUB_OUTPUT"
@@ -141,7 +140,6 @@ jobs:
         uses: taiki-e/install-action@nextest
       - name: Run SDK verifier tests
         run: cargo nextest run --release -p jolt-sdk --features host
-
 
   test-tracer:
     runs-on: ubuntu-latest

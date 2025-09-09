@@ -300,8 +300,10 @@ pub fn blake3_inline_sequence_builder(
 
 #[cfg(test)]
 mod test_sequence_builder {
-    use crate::test_utils::helpers::*;
-    use crate::test_utils::{Blake3CpuHarness, ChainingValue, MessageBlock};
+    use crate::test_utils::{
+        create_blake3_harness, helpers::*, instruction, load_blake3_data, read_output,
+        ChainingValue, MessageBlock,
+    };
 
     fn generate_trace_result(
         chaining_value: &ChainingValue,
@@ -310,12 +312,17 @@ mod test_sequence_builder {
         block_len: u32,
         flags: u32,
     ) -> [u8; crate::OUTPUT_SIZE_IN_BYTES] {
-        let mut harness_trace = Blake3CpuHarness::new();
-        harness_trace.load_blake3_data(chaining_value, message, counter, block_len, flags);
-        let instruction = Blake3CpuHarness::instruction();
-        use tracer::instruction::RISCVTrace;
-        instruction.trace(&mut harness_trace.harness.cpu, None);
-        let words = harness_trace.read_chaining_value();
+        let mut harness = create_blake3_harness();
+        load_blake3_data(
+            &mut harness,
+            chaining_value,
+            message,
+            counter,
+            block_len,
+            flags,
+        );
+        harness.execute_inline(instruction());
+        let words = read_output(&mut harness);
         let mut bytes = [0u8; crate::OUTPUT_SIZE_IN_BYTES];
         for (i, w) in words.iter().enumerate() {
             let le = w.to_le_bytes();

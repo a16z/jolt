@@ -1,18 +1,18 @@
 //! Host-side implementation and registration.
 pub use crate::sequence_builder;
-use jolt_inlines_common::constants;
-use jolt_inlines_common::trace_writer::{
-    write_inline_trace, AppendMode, InlineDescriptor, SequenceInputs,
-};
+use crate::{BLAKE2_FUNCT3, BLAKE2_FUNCT7, BLAKE2_NAME, INLINE_OPCODE};
 use tracer::emulator::cpu::Xlen;
 use tracer::register_inline;
+use tracer::utils::inline_sequence_writer::{
+    write_inline_trace, AppendMode, InlineDescriptor, SequenceInputs,
+};
 
 pub fn init_inlines() -> Result<(), String> {
     register_inline(
-        constants::INLINE_OPCODE,
-        constants::blake2::FUNCT3,
-        constants::blake2::FUNCT7,
-        constants::blake2::NAME,
+        INLINE_OPCODE,
+        BLAKE2_FUNCT3,
+        BLAKE2_FUNCT7,
+        BLAKE2_NAME,
         std::boxed::Box::new(sequence_builder::blake2b_inline_sequence_builder),
     )?;
 
@@ -21,10 +21,10 @@ pub fn init_inlines() -> Result<(), String> {
 
 pub fn store_inlines() -> Result<(), String> {
     let inline_info = InlineDescriptor::new(
-        constants::blake2::NAME.to_string(),
-        constants::INLINE_OPCODE,
-        constants::blake2::FUNCT3,
-        constants::blake2::FUNCT7,
+        BLAKE2_NAME.to_string(),
+        INLINE_OPCODE,
+        BLAKE2_FUNCT3,
+        BLAKE2_FUNCT7,
     );
     let sequence_inputs = SequenceInputs::default();
     let instructions = sequence_builder::blake2b_inline_sequence_builder(

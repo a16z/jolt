@@ -1,32 +1,30 @@
-// Test utilities for Keccak256 instruction tests
-//
-// This module contains Keccak-specific setup code, utilities, and helper functions
-// to reduce code duplication in the test suite. It relies on the generic
-// `CpuTestHarness` for the underlying emulator setup.
 use crate::exec::{execute_chi, execute_iota, execute_keccak_f, execute_rho_and_pi, execute_theta};
 use crate::sequence_builder::{NEEDED_REGISTERS, ROUND_CONSTANTS};
 use crate::test_constants::{self, TestVectors};
 use crate::Keccak256State;
-use tracer::emulator::mmu::DRAM_BASE;
-use tracer::instruction::format::format_inline::FormatInline;
+use tracer::emulator::cpu::Xlen;
 use tracer::instruction::{inline::INLINE, RISCVTrace, RV32IMCycle, RV32IMInstruction};
-use tracer::utils::test_harness::{CpuTestHarness, InstructionTestCase};
+use tracer::utils::inline_test_harness::{hash_helpers, InlineTestHarness};
+use tracer::utils::test_harness::InstructionTestCase;
 
 pub type KeccakTestCase = InstructionTestCase<Keccak256State, Keccak256State>;
 
-/// Keccak-specific CPU test harness.
-/// Wrapper around `CpuTestHarness` that offers convenient Keccak helpers.
+pub const RS1: u8 = 10;
+pub const RS2: u8 = 11;
+
+pub fn create_keccak_harness(xlen: Xlen) -> InlineTestHarness {
+    hash_helpers::keccak256_harness(xlen)
+}
+
+/// Legacy compatibility wrapper for existing tests
 pub struct KeccakCpuHarness {
-    pub harness: CpuTestHarness,
+    pub harness: InlineTestHarness,
     pub vr: [u8; NEEDED_REGISTERS as usize],
 }
 
 impl KeccakCpuHarness {
-    /// Virtual register layout used by the Keccak inline sequence.
-    const BASE_ADDR: u64 = DRAM_BASE;
     pub const RS1: u8 = 10;
 
-    /// Create a new harness with initialized memory.
     pub fn new() -> Self {
         let guards: Vec<_> = (0..NEEDED_REGISTERS)
             .map(|_| tracer::utils::virtual_registers::allocate_virtual_register_for_inline())
@@ -34,54 +32,41 @@ impl KeccakCpuHarness {
         let vr: [u8; NEEDED_REGISTERS as usize] = core::array::from_fn(|i| *guards[i]);
 
         Self {
-            harness: CpuTestHarness::new(),
+            harness: create_keccak_harness(Xlen::Bit64),
             vr,
         }
     }
 
-    /// Load a Keccak state into DRAM and set `x10 = BASE_ADDR`.
     pub fn load_state(&mut self, state: &Keccak256State) {
-        self.harness.cpu.x[Self::RS1 as usize] = Self::BASE_ADDR as i64;
-        self.harness.set_memory(Self::BASE_ADDR, state);
+        self.harness.setup_registers(Self::RS1, RS2, None);
+        self.harness.load_state64(state);
     }
 
-    /// Read the Keccak state from DRAM.
     pub fn read_state(&mut self) -> Keccak256State {
+        let vec = self.harness.read_output64(25);
         let mut out = [0u64; 25];
-        self.harness.read_memory(Self::BASE_ADDR, &mut out);
+        out.copy_from_slice(&vec);
         out
     }
 
-    /// Read the Keccak virtual registers used to store the state (first 25).
     pub fn read_vr(&self) -> Keccak256State {
         let mut out = [0u64; 25];
-        self.harness.read_registers(&self.vr[..25], &mut out);
+        for (i, &reg_idx) in self.vr[..25].iter().enumerate() {
+            out[i] = self.harness.cpu.x[reg_idx as usize] as u64;
+        }
         out
     }
 
     pub fn read_vr_at_offset(&self, offset: usize) -> Keccak256State {
         let mut out = [0u64; 25];
-        self.harness
-            .read_registers(&self.vr[offset..offset + 25], &mut out);
+        for (i, &reg_idx) in self.vr[offset..offset + 25].iter().enumerate() {
+            out[i] = self.harness.cpu.x[reg_idx as usize] as u64;
+        }
         out
     }
 
-    /// Construct a canonical KECCAK256 instruction.
     pub fn instruction() -> INLINE {
-        INLINE {
-            address: 0,
-            operands: FormatInline {
-                rs1: Self::RS1,
-                rs2: 0,
-                rs3: 0,
-            },
-            // KECCAK256 has opcode 0x0B, funct3 0x00, funct7 0x01
-            opcode: 0x0B,
-            funct3: 0x00,
-            funct7: 0x01,
-            inline_sequence_remaining: None,
-            is_compressed: false,
-        }
+        InlineTestHarness::create_instruction(0x0B, 0x00, 0x01, Self::RS1, 0, 0)
     }
 
     pub fn trace_keccak_instruction(&mut self) -> Vec<RV32IMCycle> {
@@ -92,7 +77,7 @@ impl KeccakCpuHarness {
     }
 
     pub fn execute_inline_sequence(&mut self, sequence: &[RV32IMInstruction]) {
-        self.harness.execute_inline_sequence(sequence);
+        self.harness.execute_sequence(sequence);
     }
 }
 

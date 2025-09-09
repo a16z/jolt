@@ -5,11 +5,11 @@
 //! During actual runtime execution, these values will vary according to the specific bytecode being executed
 //! and should be replaced with actual runtime values.
 
+use crate::emulator::cpu::Xlen;
+use crate::instruction::RV32IMInstruction;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
 use std::path::Path;
-use tracer::emulator::cpu::Xlen;
-use tracer::instruction::RV32IMInstruction;
 
 pub const DEFAULT_RAM_START_ADDRESS: u64 = 0x80000000;
 pub const DEFAULT_XLEN: Xlen = Xlen::Bit64;
