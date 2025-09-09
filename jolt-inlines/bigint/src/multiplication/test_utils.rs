@@ -6,9 +6,10 @@
 
 use super::{INPUT_LIMBS, OUTPUT_LIMBS};
 use crate::multiplication::trace_generator::NEEDED_REGISTERS;
+use jolt_inlines_common::constants;
 use tracer::emulator::mmu::DRAM_BASE;
 use tracer::instruction::format::format_inline::FormatInline;
-use tracer::instruction::{inline::INLINE, RISCVInstruction, RISCVTrace};
+use tracer::instruction::{inline::INLINE, RISCVTrace};
 use tracer::utils::test_harness::CpuTestHarness;
 
 pub type BigIntInput = ([u64; INPUT_LIMBS], [u64; INPUT_LIMBS]);
@@ -78,10 +79,9 @@ impl BigIntCpuHarness {
                 rs2: Self::RS2,
                 rs3: Self::RS3,
             },
-            // BIGINT256_MUL has opcode 0x0B, funct3 0x00, funct7 0x02
-            opcode: 0x0B,
-            funct3: 0x00,
-            funct7: 0x02,
+            opcode: constants::INLINE_OPCODE,
+            funct3: constants::bigint::mul256::FUNCT3,
+            funct7: constants::bigint::mul256::FUNCT7,
             inline_sequence_remaining: None,
             is_compressed: false,
         }
@@ -142,43 +142,22 @@ pub mod bigint_verify {
         }
     }
 
-    /// Assert that direct `exec` and virtual-sequence `trace` paths match
     pub fn assert_exec_trace_equiv(
         lhs: &[u64; INPUT_LIMBS],
         rhs: &[u64; INPUT_LIMBS],
         expected: &[u64; OUTPUT_LIMBS],
     ) {
-        let mut harness_exec = BigIntCpuHarness::new();
         let mut harness_trace = BigIntCpuHarness::new();
-
-        // Set up both CPUs identically
-        harness_exec.load_operands(lhs, rhs);
         harness_trace.load_operands(lhs, rhs);
-
         let instruction = BigIntCpuHarness::instruction();
-
-        // Execute both paths
-        instruction.execute(&mut harness_exec.harness.cpu, &mut ());
         instruction.trace(&mut harness_trace.harness.cpu, None);
-
-        // Compare results
-        let exec_result = harness_exec.read_result();
         let trace_result = harness_trace.read_result();
-
-        assert_bigints_equal(&exec_result, expected, lhs, rhs, "Exec result vs Expected");
         assert_bigints_equal(
             &trace_result,
             expected,
             lhs,
             rhs,
             "Trace result vs Expected",
-        );
-        assert_bigints_equal(
-            &exec_result,
-            &trace_result,
-            lhs,
-            rhs,
-            "Exec vs Trace equivalence",
         );
     }
 }

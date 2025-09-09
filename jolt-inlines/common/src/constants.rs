@@ -30,12 +30,24 @@ pub mod keccak256 {
     pub const NAME: &str = "KECCAK256_INLINE";
 }
 
+pub mod blake2 {
+    pub const FUNCT3: u32 = 0x00;
+    pub const FUNCT7: u32 = 0x02;
+    pub const NAME: &str = "BLAKE2_INLINE";
+}
+
+pub mod blake3 {
+    pub const FUNCT3: u32 = 0x00;
+    pub const FUNCT7: u32 = 0x03;
+    pub const NAME: &str = "BLAKE3_INLINE";
+}
+
 /// BigInt operations inline instruction constants
 pub mod bigint {
     /// 256-bit multiplication
     pub mod mul256 {
         pub const FUNCT3: u32 = 0x00;
-        pub const FUNCT7: u32 = 0x02;
+        pub const FUNCT7: u32 = 0x04;
         pub const NAME: &str = "BIGINT256_MUL";
     }
 }

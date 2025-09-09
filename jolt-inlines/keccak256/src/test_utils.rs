@@ -3,17 +3,13 @@
 // This module contains Keccak-specific setup code, utilities, and helper functions
 // to reduce code duplication in the test suite. It relies on the generic
 // `CpuTestHarness` for the underlying emulator setup.
+use crate::exec::{execute_chi, execute_iota, execute_keccak_f, execute_rho_and_pi, execute_theta};
 use crate::test_constants::{self, TestVectors};
-use crate::trace_generator::{
-    execute_chi, execute_iota, execute_keccak_f, execute_rho_and_pi, execute_theta,
-    NEEDED_REGISTERS, ROUND_CONSTANTS,
-};
+use crate::trace_generator::{NEEDED_REGISTERS, ROUND_CONSTANTS};
 use crate::Keccak256State;
 use tracer::emulator::mmu::DRAM_BASE;
 use tracer::instruction::format::format_inline::FormatInline;
-use tracer::instruction::{
-    inline::INLINE, RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
-};
+use tracer::instruction::{inline::INLINE, RISCVTrace, RV32IMCycle, RV32IMInstruction};
 use tracer::utils::test_harness::{CpuTestHarness, InstructionTestCase};
 
 pub type KeccakTestCase = InstructionTestCase<Keccak256State, Keccak256State>;
@@ -86,11 +82,6 @@ impl KeccakCpuHarness {
             inline_sequence_remaining: None,
             is_compressed: false,
         }
-    }
-
-    pub fn execute_keccak_instruction(&mut self) {
-        let instruction = Self::instruction();
-        instruction.execute(&mut self.harness.cpu, &mut ());
     }
 
     pub fn trace_keccak_instruction(&mut self) -> Vec<RV32IMCycle> {
@@ -225,31 +216,5 @@ pub mod kverify {
             }
             panic!("{test_name} failed: states do not match");
         }
-    }
-
-    /// Assert that direct `exec` and virtual-sequence `trace` paths match.
-    pub fn assert_exec_trace_equiv(initial_state: &Keccak256State, desc: &str) {
-        let mut harness_exec = KeccakCpuHarness::new();
-        let mut harness_trace = KeccakCpuHarness::new();
-
-        // Set up both CPUs identically
-        harness_exec.load_state(initial_state);
-        harness_trace.load_state(initial_state);
-
-        let instruction = KeccakCpuHarness::instruction();
-
-        // Execute both paths
-        instruction.execute(&mut harness_exec.harness.cpu, &mut ());
-        instruction.trace(&mut harness_trace.harness.cpu, None);
-
-        // Compare results
-        let exec_result = harness_exec.read_state();
-        let trace_result = harness_trace.read_state();
-
-        self::assert_states_equal(
-            &exec_result,
-            &trace_result,
-            &format!("Exec vs Trace equivalence: {desc}"),
-        );
     }
 }

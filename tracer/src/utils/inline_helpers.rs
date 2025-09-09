@@ -450,7 +450,8 @@ impl InstrAssembler {
 
     /// Rotate-right by amount on a 32-bit word.
     pub fn rotri32(&mut self, rs1: Value, shamt: u32, rd: u8) -> Value {
-        if shamt == 0 {
+        if shamt == 0 || shamt == 32 {
+            // Rotating by 0 or 32 bits on a 32-bit value is a no-op.
             return self.xor(rs1, Imm(0), rd);
         }
         let ones = (1u64 << (32 - shamt)) - 1;
@@ -508,24 +509,30 @@ impl InstrAssembler {
     }
 
     /// Rotate left on a 64-bit value.
-    pub fn rotl64(&mut self, rs1: Value, amount: u32, rd: u8) -> Value {
-        if amount == 0 {
+    pub fn rotr64(&mut self, rs1: Value, amount: u32, rd: u8) -> Value {
+        if amount == 0 || amount == 64 {
             // Identity rotation: emit XOR with zero to copy value.
+            // Rotating by 0 or 64 bits on a 64-bit value is a no-op.
             return self.xor(rs1, Imm(0), rd);
         }
 
         match rs1 {
             Reg(rs1_reg) => {
-                // rotl(n) == rotr(64 − n).  The VirtualROTRI instruction encodes
-                // the rotation via a bitmask whose trailing zeros indicate the
-                // shift amount.  We construct that mask and delegate to `rotri`
-                // to avoid duplication.
-                let ones = (1u64 << amount as u64) - 1;
-                let imm = ones << (64 - amount as u64);
+                // The VirtualROTRI instruction encodes the rotation via a bitmask
+                // whose trailing zeros indicate the shift amount.
+                // For rotr(n), we need n trailing zeros.
+                let ones = (1u64 << (64 - amount as u64)) - 1;
+                let imm = ones << amount as u64;
                 self.rotri(Reg(rs1_reg), imm, rd)
             }
-            Imm(val) => Imm(val.rotate_left(amount)),
+            Imm(val) => Imm(val.rotate_right(amount)),
         }
+    }
+
+    /// Rotate left on a 64-bit value.
+    pub fn rotl64(&mut self, rs1: Value, amount: u32, rd: u8) -> Value {
+        // rotl(n) == rotr(64 - n)
+        self.rotr64(rs1, 64 - amount, rd)
     }
 }
 

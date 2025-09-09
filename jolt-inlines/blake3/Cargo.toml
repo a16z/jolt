@@ -1,19 +1,20 @@
 [package]
-name = "jolt-inlines-sha2"
+name = "jolt-inlines-blake3"
 version = "0.1.0"
 edition = "2021"
-description = "SHA2 inline implementations for Jolt VM"
+description = "BLAKE3 inline implementations for Jolt VM"
 
 [features]
 default = []
-host = ["dep:ctor", "dep:tracer", "jolt-inlines-common/save_trace", "dep:tracing"]
+host = ["dep:ctor", "dep:tracer", "jolt-inlines-common/save_trace"]
 
 [dependencies]
 ctor = { version = "0.2", optional = true }
 tracer = { path = "../../tracer", optional = true }
-jolt-inlines-common = { path = "../common"}
-tracing = { version = "0.1", optional = true }
+jolt-inlines-common = { path = "../common" }
 
 [dev-dependencies]
+blake3 = { version = "1.5.0" }
 hex-literal = "0.4.1"
+rand = "0.8"
 tracer = { path = "../../tracer", features = ["test-utils"] }

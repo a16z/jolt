@@ -6,10 +6,10 @@ mod exec {
     #[test]
     fn test_keccak256_direct_execution() {
         for (i, test_case) in keccak_test_vectors().iter().enumerate() {
-            let mut setup_exec = KeccakCpuHarness::new();
-            setup_exec.load_state(&test_case.input);
-            setup_exec.execute_keccak_instruction();
-            let result = setup_exec.read_state();
+            let mut setup_trace = KeccakCpuHarness::new();
+            setup_trace.load_state(&test_case.input);
+            setup_trace.trace_keccak_instruction();
+            let result = setup_trace.read_state();
             assert_eq!(
                 result, test_case.expected,
                 "Keccak256 direct execution test case {} failed: {}\nInput: {:016x?}\nExpected: {:016x?}\nActual: {:016x?}",
@@ -36,7 +36,7 @@ mod exec {
         ];
 
         for (input, expected_hash) in e2e_vectors {
-            let hash = crate::trace_generator::execute_keccak256(input);
+            let hash = crate::exec::execute_keccak256(input);
             assert_eq!(&hash, expected_hash);
         }
     }
@@ -44,7 +44,7 @@ mod exec {
     #[test]
     fn test_execute_keccak_f() {
         let mut state = [0u64; crate::NUM_LANES];
-        crate::trace_generator::execute_keccak_f(&mut state);
+        crate::exec::execute_keccak_f(&mut state);
         assert_eq!(
             state,
             crate::test_constants::xkcp_vectors::AFTER_ONE_PERMUTATION
@@ -59,14 +59,7 @@ mod exec_trace_equivalence {
     use tracer::emulator::cpu::Xlen;
 
     #[test]
-    fn test_keccak_exec_trace_equal() {
-        for (desc, state) in TestVectors::get_standard_test_vectors() {
-            kverify::assert_exec_trace_equiv(&state, desc);
-        }
-    }
-
-    #[test]
-    fn test_keccak_exec_trace_intermediate_vr_equal() {
+    fn test_keccak_trace_intermediate_vr() {
         for (description, initial_state) in TestVectors::get_standard_test_vectors() {
             for round in 0..24 {
                 for step in &["theta", "rho_and_pi", "chi", "iota"] {
@@ -118,26 +111,20 @@ mod exec_trace_equivalence {
     fn test_keccak_against_reference() {
         let initial_state = [0u64; 25];
         let expected_final_state = xkcp_vectors::AFTER_ONE_PERMUTATION;
-        let mut setup_exec = KeccakCpuHarness::new();
-        setup_exec.load_state(&initial_state);
-        setup_exec.execute_keccak_instruction();
-        let exec_result = setup_exec.read_state();
         let mut setup_trace = KeccakCpuHarness::new();
         setup_trace.load_state(&initial_state);
         setup_trace.trace_keccak_instruction();
         let trace_result = setup_trace.read_state();
         for i in 0..25 {
-            assert_eq!(exec_result[i], trace_result[i]);
-            assert_eq!(exec_result[i], expected_final_state[i]);
+            assert_eq!(trace_result[i], expected_final_state[i]);
         }
     }
 }
 
 mod exec_unit {
+    use crate::exec::{execute_chi, execute_iota, execute_rho_and_pi, execute_theta};
     use crate::test_constants::xkcp_vectors;
-    use crate::trace_generator::{
-        execute_chi, execute_iota, execute_rho_and_pi, execute_theta, ROUND_CONSTANTS,
-    };
+    use crate::trace_generator::ROUND_CONSTANTS;
     use crate::NUM_LANES;
 
     #[test]

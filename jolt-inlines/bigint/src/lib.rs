@@ -24,7 +24,6 @@ pub fn init_inlines() -> Result<(), String> {
         constants::bigint::mul256::FUNCT3,
         constants::bigint::mul256::FUNCT7,
         constants::bigint::mul256::NAME,
-        std::boxed::Box::new(exec::bigint_mul_exec),
         std::boxed::Box::new(trace_generator::bigint_mul_sequence_builder),
     )?;
 
