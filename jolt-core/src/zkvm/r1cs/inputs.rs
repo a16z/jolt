@@ -16,7 +16,7 @@ use crate::zkvm::JoltProverPreprocessing;
 use super::key::UniformSpartanKey;
 use super::spartan::UniformSpartanProof;
 
-use crate::field::JoltField;
+use crate::field::{JoltField, OptimizedMul};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::XLEN;
 use rayon::prelude::*;
@@ -59,6 +59,7 @@ pub enum JoltR1CSInputs {
     OpFlags(CircuitFlags),
 }
 
+const NUM_R1CS_INPUTS: usize = ALL_R1CS_INPUTS.len();
 /// This const serves to define a canonical ordering over inputs (and thus indices
 /// for each input). This is needed for sumcheck.
 pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 41] = [
@@ -119,8 +120,8 @@ pub const COMMITTED_R1CS_INPUTS: [JoltR1CSInputs; 7] = [
 
 impl JoltR1CSInputs {
     /// The total number of unique constraint inputs
-    pub fn num_inputs() -> usize {
-        ALL_R1CS_INPUTS.len()
+    pub const fn num_inputs() -> usize {
+        NUM_R1CS_INPUTS
     }
 
     /// Converts an index to the corresponding constraint input.
@@ -395,25 +396,35 @@ pub fn compute_claimed_witness_evals<F: JoltField>(
     r_cycle: &[F],
     accessor: &dyn WitnessRowAccessor<F>,
 ) -> Vec<F> {
-    let num_inputs = JoltR1CSInputs::num_inputs();
-    let num_steps = accessor.num_steps();
     let eq_rx = EqPolynomial::evals(r_cycle);
 
-    // Parallelize across inputs i; each computes Σ_t eq(r_cycle, t) * P_i(t)
-    (0..num_inputs)
-        .into_par_iter()
-        .map(|i| {
-            let mut acc = F::zero();
-            for t in 0..num_steps {
-                if let Some(&eq_rx_t) = eq_rx.get(t) {
-                    acc += eq_rx_t * accessor.value_at(i, t);
-                } else {
-                    break; // Stop processing if we've reached the end of eq_rx
+    let num_chunks = rayon::current_num_threads().next_power_of_two();
+    let chunk_size = (eq_rx.len() / num_chunks).max(1);
+
+    eq_rx
+        .par_chunks(chunk_size)
+        .enumerate()
+        .map(|(chunk_index, eq_chunk)| {
+            let mut chunk_result = [F::zero(); NUM_R1CS_INPUTS];
+            let mut t = chunk_index * chunk_size;
+            for eq_rx_t in eq_chunk {
+                for i in 0..NUM_R1CS_INPUTS {
+                    chunk_result[i] += accessor.value_at(i, t).mul_01_optimized(*eq_rx_t);
                 }
+                t += 1;
             }
-            acc
+            chunk_result
         })
-        .collect()
+        .reduce(
+            || [F::zero(); NUM_R1CS_INPUTS],
+            |mut acc, evals| {
+                for i in 0..NUM_R1CS_INPUTS {
+                    acc[i] += evals[i];
+                }
+                acc
+            },
+        )
+        .to_vec()
 }
 
 /// Single-pass generation of UnexpandedPC(t), PC(t), and IsNoop(t) witnesses.
