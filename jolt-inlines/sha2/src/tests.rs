@@ -1,7 +1,7 @@
 mod exec {
     use crate::test_constants::TestVectors;
     use crate::test_utils::{
-        create_sha256_harness, instruction_sha256, instruction_sha256init, sverify, RS1, RS2,
+        create_sha256_harness, instruction_sha256, instruction_sha256init, sverify,
     };
     use tracer::emulator::cpu::Xlen;
 
@@ -10,7 +10,7 @@ mod exec {
         for (desc, block, initial_state, expected) in TestVectors::get_standard_test_vectors() {
             for xlen in [Xlen::Bit32, Xlen::Bit64] {
                 let mut harness = create_sha256_harness(xlen);
-                harness.setup_registers(RS1, RS2, None);
+                harness.setup_registers();
                 harness.load_input32(&block);
                 harness.load_state32(&initial_state);
                 harness.execute_inline(instruction_sha256());
@@ -33,7 +33,7 @@ mod exec {
         for (desc, block, _initial_state, expected) in TestVectors::get_standard_test_vectors() {
             for xlen in [Xlen::Bit32, Xlen::Bit64] {
                 let mut harness = create_sha256_harness(xlen);
-                harness.setup_registers(RS1, RS2, None);
+                harness.setup_registers();
                 harness.load_input32(&block);
                 harness.execute_inline(instruction_sha256init());
 

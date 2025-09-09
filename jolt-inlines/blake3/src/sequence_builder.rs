@@ -323,6 +323,7 @@ mod test_sequence_builder {
         );
         harness.execute_inline(instruction());
         let words = read_output(&mut harness);
+
         let mut bytes = [0u8; crate::OUTPUT_SIZE_IN_BYTES];
         for (i, w) in words.iter().enumerate() {
             let le = w.to_le_bytes();

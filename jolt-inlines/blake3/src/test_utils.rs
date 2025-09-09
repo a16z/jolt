@@ -5,9 +5,6 @@ use tracer::utils::inline_test_harness::{hash_helpers, InlineTestHarness};
 pub type ChainingValue = [u32; crate::CHAINING_VALUE_LEN];
 pub type MessageBlock = [u32; crate::MSG_BLOCK_LEN];
 
-pub const RS1: u8 = 10;
-pub const RS2: u8 = 11;
-
 pub fn create_blake3_harness() -> InlineTestHarness {
     hash_helpers::blake3_harness(Xlen::Bit64)
 }
@@ -20,15 +17,20 @@ pub fn load_blake3_data(
     block_len: u32,
     flags: u32,
 ) {
-    harness.setup_registers(RS1, RS2, None);
+    harness.setup_registers();
+    // Load chaining value to output location (rs1 points here)
     harness.load_state32(chaining_value);
-    harness.load_input32(message);
-    // Pack parameters: counter (2 u32s), block_len (1 u32), flags (1 u32)
-    let mut params = Vec::with_capacity(4);
-    params.extend_from_slice(counter);
-    params.push(block_len);
-    params.push(flags);
-    harness.load_input2_32(&params);
+
+    // Blake3 expects message + parameters contiguously at rs2
+    // Create combined input: message (16 u32s) + counter (2 u32s) + block_len (1 u32) + flags (1 u32)
+    let mut combined_input = Vec::with_capacity(20);
+    combined_input.extend_from_slice(message);
+    combined_input.extend_from_slice(counter);
+    combined_input.push(block_len);
+    combined_input.push(flags);
+
+    // Load the combined input
+    harness.load_input32(&combined_input);
 }
 
 pub fn read_output(harness: &mut InlineTestHarness) -> ChainingValue {
@@ -39,7 +41,7 @@ pub fn read_output(harness: &mut InlineTestHarness) -> ChainingValue {
 }
 
 pub fn instruction() -> tracer::instruction::inline::INLINE {
-    InlineTestHarness::create_instruction(INLINE_OPCODE, BLAKE3_FUNCT3, BLAKE3_FUNCT7, RS1, RS2, 0)
+    InlineTestHarness::create_default_instruction(INLINE_OPCODE, BLAKE3_FUNCT3, BLAKE3_FUNCT7)
 }
 
 #[cfg(test)]

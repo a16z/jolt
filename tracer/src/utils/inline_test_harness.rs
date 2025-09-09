@@ -11,6 +11,13 @@ use crate::instruction::format::format_inline::FormatInline;
 use crate::instruction::inline::INLINE;
 use crate::instruction::{RISCVTrace, RV32IMInstruction};
 
+#[derive(Clone, Copy)]
+pub enum RegisterMapping {
+    Input,
+    Input2,
+    Output,
+}
+
 pub struct InlineMemoryLayout {
     pub input_base: u64,
     pub input_size: usize,
@@ -18,10 +25,15 @@ pub struct InlineMemoryLayout {
     pub input2_size: Option<usize>,
     pub output_base: u64,
     pub output_size: usize,
+    // Register mappings: which memory region does each register point to
+    pub rs1_mapping: RegisterMapping,
+    pub rs2_mapping: RegisterMapping,
+    pub rs3_mapping: Option<RegisterMapping>,
 }
 
 impl InlineMemoryLayout {
-    /// Single input, single output (e.g., hash functions like SHA256, Keccak)
+    /// Single input, single output with default mapping (rs1=output, rs2=input)
+    /// Used by Blake2, Blake3, Keccak256
     pub fn single_input(input_size: usize, output_size: usize) -> Self {
         Self {
             input_base: DRAM_BASE,
@@ -30,10 +42,28 @@ impl InlineMemoryLayout {
             input2_size: None,
             output_base: DRAM_BASE + input_size as u64,
             output_size,
+            rs1_mapping: RegisterMapping::Output,
+            rs2_mapping: RegisterMapping::Input,
+            rs3_mapping: None,
         }
     }
 
-    /// Two inputs, single output (e.g., BigInt multiplication, Blake2/3 with extra parameters)
+    /// SHA256-style layout (rs1=input, rs2=output)
+    pub fn sha256_style(input_size: usize, output_size: usize) -> Self {
+        Self {
+            input_base: DRAM_BASE,
+            input_size,
+            input2_base: None,
+            input2_size: None,
+            output_base: DRAM_BASE + input_size as u64,
+            output_size,
+            rs1_mapping: RegisterMapping::Input,
+            rs2_mapping: RegisterMapping::Output,
+            rs3_mapping: None,
+        }
+    }
+
+    /// Two inputs, single output for BigInt (rs1=input, rs2=input2, rs3=output)
     pub fn two_inputs(input_size: usize, input2_size: usize, output_size: usize) -> Self {
         Self {
             input_base: DRAM_BASE,
@@ -42,9 +72,17 @@ impl InlineMemoryLayout {
             input2_size: Some(input2_size),
             output_base: DRAM_BASE + (input_size + input2_size) as u64,
             output_size,
+            rs1_mapping: RegisterMapping::Input,
+            rs2_mapping: RegisterMapping::Input2,
+            rs3_mapping: Some(RegisterMapping::Output),
         }
     }
 }
+
+// Standard register indices used by inline instructions
+pub const INLINE_RS1: u8 = 10;
+pub const INLINE_RS2: u8 = 11;
+pub const INLINE_RS3: u8 = 12;
 
 pub struct InlineTestHarness {
     pub cpu: Cpu,
@@ -194,12 +232,26 @@ impl InlineTestHarness {
         result
     }
 
-    pub fn setup_registers(&mut self, rs1: u8, rs2: u8, rs3: Option<u8>) {
-        self.cpu.x[rs1 as usize] = self.layout.input_base as i64;
-        self.cpu.x[rs2 as usize] = self.layout.output_base as i64;
-        if let Some(rs3_reg) = rs3 {
-            let input2_base = self.layout.input2_base.unwrap_or(self.layout.output_base);
-            self.cpu.x[rs3_reg as usize] = input2_base as i64;
+    fn get_address_for_mapping(&self, mapping: RegisterMapping) -> u64 {
+        match mapping {
+            RegisterMapping::Input => self.layout.input_base,
+            RegisterMapping::Input2 => self
+                .layout
+                .input2_base
+                .expect("Input2 mapping requires input2_base"),
+            RegisterMapping::Output => self.layout.output_base,
+        }
+    }
+
+    pub fn setup_registers(&mut self) {
+        // Set up registers based on the layout's mappings
+        self.cpu.x[INLINE_RS1 as usize] =
+            self.get_address_for_mapping(self.layout.rs1_mapping) as i64;
+        self.cpu.x[INLINE_RS2 as usize] =
+            self.get_address_for_mapping(self.layout.rs2_mapping) as i64;
+
+        if let Some(rs3_mapping) = self.layout.rs3_mapping {
+            self.cpu.x[INLINE_RS3 as usize] = self.get_address_for_mapping(rs3_mapping) as i64;
         }
     }
 
@@ -232,6 +284,10 @@ impl InlineTestHarness {
         }
     }
 
+    pub fn create_default_instruction(opcode: u32, funct3: u32, funct7: u32) -> INLINE {
+        Self::create_instruction(opcode, funct3, funct7, INLINE_RS1, INLINE_RS2, INLINE_RS3)
+    }
+
     pub fn xlen(&self) -> Xlen {
         self.xlen
     }
@@ -241,19 +297,22 @@ pub mod hash_helpers {
     use super::*;
 
     pub fn sha256_harness(xlen: Xlen) -> InlineTestHarness {
-        let layout = InlineMemoryLayout::single_input(64, 32); // 64-byte block, 32-byte state
+        // SHA256: rs1=input, rs2=state/output
+        let layout = InlineMemoryLayout::sha256_style(64, 32); // 64-byte block, 32-byte state
         InlineTestHarness::new(layout, xlen)
     }
 
     pub fn blake2_harness(xlen: Xlen) -> InlineTestHarness {
-        // Blake2 has message block and extra parameters (counter + flag)
-        let layout = InlineMemoryLayout::two_inputs(128, 16, 64); // 128-byte block, 16-byte params, 64-byte state
+        // Blake2 needs message block (128 bytes) + counter (8 bytes) + flag (8 bytes) contiguous at rs2
+        // and state (64 bytes) at rs1
+        let layout = InlineMemoryLayout::single_input(144, 64); // 144 bytes for message+params, 64-byte state
         InlineTestHarness::new(layout, xlen)
     }
 
     pub fn blake3_harness(xlen: Xlen) -> InlineTestHarness {
-        // Blake3 has message block and extra parameters (counter + block_len + flags)
-        let layout = InlineMemoryLayout::two_inputs(64, 16, 32); // 64-byte block, 16-byte params, 32-byte state
+        // Blake3 needs message block (64 bytes) + params (16 bytes) contiguous at rs2
+        // and state (32 bytes) at rs1
+        let layout = InlineMemoryLayout::single_input(80, 32); // 80 bytes for message+params, 32-byte state
         InlineTestHarness::new(layout, xlen)
     }
 

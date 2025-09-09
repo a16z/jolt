@@ -9,9 +9,6 @@ use tracer::utils::test_harness::InstructionTestCase;
 
 pub type KeccakTestCase = InstructionTestCase<Keccak256State, Keccak256State>;
 
-pub const RS1: u8 = 10;
-pub const RS2: u8 = 11;
-
 pub fn create_keccak_harness(xlen: Xlen) -> InlineTestHarness {
     hash_helpers::keccak256_harness(xlen)
 }
@@ -23,8 +20,6 @@ pub struct KeccakCpuHarness {
 }
 
 impl KeccakCpuHarness {
-    pub const RS1: u8 = 10;
-
     pub fn new() -> Self {
         let guards: Vec<_> = (0..NEEDED_REGISTERS)
             .map(|_| tracer::utils::virtual_registers::allocate_virtual_register_for_inline())
@@ -38,7 +33,7 @@ impl KeccakCpuHarness {
     }
 
     pub fn load_state(&mut self, state: &Keccak256State) {
-        self.harness.setup_registers(Self::RS1, RS2, None);
+        self.harness.setup_registers();
         self.harness.load_state64(state);
     }
 
@@ -66,7 +61,7 @@ impl KeccakCpuHarness {
     }
 
     pub fn instruction() -> INLINE {
-        InlineTestHarness::create_instruction(0x0B, 0x00, 0x01, Self::RS1, 0, 0)
+        InlineTestHarness::create_default_instruction(0x0B, 0x00, 0x01)
     }
 
     pub fn trace_keccak_instruction(&mut self) -> Vec<RV32IMCycle> {

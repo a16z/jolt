@@ -2,9 +2,6 @@ use crate::{BLAKE2_FUNCT3, BLAKE2_FUNCT7, INLINE_OPCODE};
 use tracer::emulator::cpu::Xlen;
 use tracer::utils::inline_test_harness::InlineTestHarness;
 
-pub const RS1: u8 = 10;
-pub const RS2: u8 = 11;
-
 pub fn create_blake2_harness() -> InlineTestHarness {
     tracer::utils::inline_test_harness::hash_helpers::blake2_harness(Xlen::Bit64)
 }
@@ -16,12 +13,19 @@ pub fn load_blake2_data(
     counter: u64,
     is_final: bool,
 ) {
-    harness.setup_registers(RS2, RS1, None); // Note: Blake2 has swapped order (message first, state second)
+    harness.setup_registers(); // RS1=state, RS2=message+params
     harness.load_state64(state);
-    harness.load_input64(message);
-    // Load counter and flag as second input
+
+    // Blake2 expects message + counter + flag contiguously at rs2
+    // Create combined input: message (16 u64s) + counter (1 u64) + flag (1 u64)
+    let mut combined_input = Vec::with_capacity(18);
+    combined_input.extend_from_slice(message);
+    combined_input.push(counter);
     let flag_value = if is_final { 1u64 } else { 0u64 };
-    harness.load_input2_64(&[counter, flag_value]);
+    combined_input.push(flag_value);
+
+    // Load the combined input
+    harness.load_input64(&combined_input);
 }
 
 pub fn read_state(harness: &mut InlineTestHarness) -> [u64; crate::STATE_VECTOR_LEN] {
@@ -32,5 +36,5 @@ pub fn read_state(harness: &mut InlineTestHarness) -> [u64; crate::STATE_VECTOR_
 }
 
 pub fn instruction() -> tracer::instruction::inline::INLINE {
-    InlineTestHarness::create_instruction(INLINE_OPCODE, BLAKE2_FUNCT3, BLAKE2_FUNCT7, RS1, RS2, 0)
+    InlineTestHarness::create_default_instruction(INLINE_OPCODE, BLAKE2_FUNCT3, BLAKE2_FUNCT7)
 }
