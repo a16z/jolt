@@ -135,45 +135,6 @@ impl Keccak256SequenceBuilder {
         self.asm.finalize_inline(NEEDED_REGISTERS)
     }
 
-    #[cfg(test)]
-    /// Build sequence up to a specific round and step for testing
-    fn build_up_to_step(mut self, target_round: u32, target_step: &str) -> Vec<RV32IMInstruction> {
-        // Override is_format_inline to false for testing purposes. This prevents virtual registers
-        // from being zeroed out, allowing us to inspect their intermediate values during tests.
-        self.asm =
-            InstrAssembler::new_inline(self.asm.address, self.asm.is_compressed, self.asm.xlen);
-        // Always start by loading state
-        self.load_state();
-
-        // Execute rounds up to target
-        for round in 0..=target_round {
-            self.round = round;
-
-            // Execute steps within the round
-            self.theta();
-            if round == target_round && target_step == "theta" {
-                break;
-            }
-
-            self.rho_and_pi();
-            if round == target_round && target_step == "rho_and_pi" {
-                break;
-            }
-
-            self.chi();
-            if round == target_round && target_step == "chi" {
-                break;
-            }
-
-            self.iota();
-            if round == target_round && target_step == "iota" {
-                break;
-            }
-        }
-
-        self.asm.finalize()
-    }
-
     /// Load the initial Keccak state from memory into virtual registers.
     /// Keccak state is NUM_LANES lanes of 64 bits each (200 bytes total).
     fn load_state(&mut self) {
@@ -297,23 +258,6 @@ impl Keccak256SequenceBuilder {
         self.asm
             .xor(Reg(first_lane_reg), Imm(round_constant), first_lane_reg);
     }
-}
-
-#[cfg(all(test, feature = "host"))]
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn keccak256_build_up_to_step(
-    address: u64,
-    is_compressed: bool,
-    xlen: Xlen,
-    vr: [u8; NEEDED_REGISTERS as usize],
-    operand_rs1: u8,
-    operand_rs2: u8,
-    target_round: u32,
-    target_step: &str,
-) -> Vec<RV32IMInstruction> {
-    let builder =
-        Keccak256SequenceBuilder::new(address, is_compressed, xlen, vr, operand_rs1, operand_rs2);
-    builder.build_up_to_step(target_round, target_step)
 }
 
 pub fn keccak256_inline_sequence_builder(

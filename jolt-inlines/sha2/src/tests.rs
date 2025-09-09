@@ -50,24 +50,3 @@ mod exec {
         }
     }
 }
-
-mod cycles_per_byte {
-    use crate::test_utils::instruction_sha256;
-    use tracer::emulator::cpu::Xlen;
-
-    #[test]
-    fn measure_sha256_length() {
-        use tracer::instruction::RISCVTrace;
-        let instr = instruction_sha256();
-        for xlen in [Xlen::Bit32, Xlen::Bit64] {
-            let sequence = instr.inline_sequence(xlen);
-            let bytecode_len = sequence.len();
-            println!(
-                "SHA256 compression: xlen={:?}, bytecode length {}, {:.2} instructions per byte",
-                xlen,
-                bytecode_len,
-                bytecode_len as f64 / 64.0
-            );
-        }
-    }
-}
