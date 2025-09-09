@@ -53,9 +53,9 @@ mod exec {
 }
 
 mod exec_trace_equivalence {
+    use crate::sequence_builder::keccak256_build_up_to_step;
     use crate::test_constants::*;
     use crate::test_utils::*;
-    use crate::trace_generator::keccak256_build_up_to_step;
     use tracer::emulator::cpu::Xlen;
 
     #[test]
@@ -123,8 +123,8 @@ mod exec_trace_equivalence {
 
 mod exec_unit {
     use crate::exec::{execute_chi, execute_iota, execute_rho_and_pi, execute_theta};
+    use crate::sequence_builder::ROUND_CONSTANTS;
     use crate::test_constants::xkcp_vectors;
-    use crate::trace_generator::ROUND_CONSTANTS;
     use crate::NUM_LANES;
 
     #[test]

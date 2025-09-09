@@ -1,7 +1,9 @@
 //! Host-side implementation and registration.
-pub use crate::trace_generator;
+pub use crate::sequence_builder;
 use jolt_inlines_common::constants;
-use jolt_inlines_common::trace_writer::{write_inline_trace, InlineDescriptor, SequenceInputs};
+use jolt_inlines_common::trace_writer::{
+    write_inline_trace, AppendMode, InlineDescriptor, SequenceInputs,
+};
 use tracer::emulator::cpu::Xlen;
 use tracer::register_inline;
 
@@ -11,7 +13,7 @@ pub fn init_inlines() -> Result<(), String> {
         constants::blake2::FUNCT3,
         constants::blake2::FUNCT7,
         constants::blake2::NAME,
-        std::boxed::Box::new(trace_generator::blake2b_inline_sequence_builder),
+        std::boxed::Box::new(sequence_builder::blake2b_inline_sequence_builder),
     )?;
 
     Ok(())
@@ -25,7 +27,7 @@ pub fn store_inlines() -> Result<(), String> {
         constants::blake2::FUNCT7,
     );
     let sequence_inputs = SequenceInputs::default();
-    let instructions = trace_generator::blake2b_inline_sequence_builder(
+    let instructions = sequence_builder::blake2b_inline_sequence_builder(
         sequence_inputs.address,
         sequence_inputs.is_compressed,
         Xlen::Bit64,
@@ -38,7 +40,7 @@ pub fn store_inlines() -> Result<(), String> {
         &inline_info,
         &sequence_inputs,
         &instructions,
-        false,
+        AppendMode::Overwrite,
     )
     .map_err(|e| e.to_string())?;
 

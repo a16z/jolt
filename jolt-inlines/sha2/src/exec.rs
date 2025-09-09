@@ -1,4 +1,4 @@
-use crate::trace_generator::{BLOCK, K};
+use crate::sequence_builder::{BLOCK, K};
 
 pub fn execute_sha256_compression(initial_state: [u32; 8], input: [u32; 16]) -> [u32; 8] {
     let mut a = initial_state[0];

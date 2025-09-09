@@ -3,7 +3,7 @@
 // This module contains SHA256-specific setup code, utilities, and helper
 // functions to reduce code duplication in the test suite. It relies on the
 // generic `CpuTestHarness` for the underlying emulator setup.
-use crate::trace_generator::NEEDED_REGISTERS;
+use crate::sequence_builder::NEEDED_REGISTERS;
 use tracer::emulator::cpu::Xlen;
 use tracer::emulator::mmu::DRAM_BASE;
 use tracer::instruction::format::format_inline::FormatInline;

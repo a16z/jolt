@@ -24,7 +24,7 @@ pub fn init_inlines() -> Result<(), String> {
         constants::bigint::mul256::FUNCT3,
         constants::bigint::mul256::FUNCT7,
         constants::bigint::mul256::NAME,
-        std::boxed::Box::new(trace_generator::bigint_mul_sequence_builder),
+        std::boxed::Box::new(sequence_builder::bigint_mul_sequence_builder),
     )?;
 
     Ok(())
@@ -32,6 +32,8 @@ pub fn init_inlines() -> Result<(), String> {
 
 #[cfg(feature = "host")]
 pub fn store_inlines() -> Result<(), String> {
+    use jolt_inlines_common::trace_writer::AppendMode;
+
     let inline_info = InlineDescriptor::new(
         constants::bigint::mul256::NAME.to_string(),
         constants::INLINE_OPCODE,
@@ -39,7 +41,7 @@ pub fn store_inlines() -> Result<(), String> {
         constants::bigint::mul256::FUNCT7,
     );
     let sequence_inputs = SequenceInputs::default();
-    let instructions = trace_generator::bigint_mul_sequence_builder(
+    let instructions = sequence_builder::bigint_mul_sequence_builder(
         sequence_inputs.address,
         sequence_inputs.is_compressed,
         Xlen::Bit64,
@@ -52,7 +54,7 @@ pub fn store_inlines() -> Result<(), String> {
         &inline_info,
         &sequence_inputs,
         &instructions,
-        false,
+        AppendMode::Overwrite,
     )
     .map_err(|e| e.to_string())?;
 

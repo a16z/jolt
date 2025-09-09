@@ -7,7 +7,7 @@ pub use sdk::*;
 #[cfg(feature = "host")]
 pub mod exec;
 #[cfg(feature = "host")]
-pub mod trace_generator;
+pub mod sequence_builder;
 
 #[cfg(feature = "host")]
 mod host;

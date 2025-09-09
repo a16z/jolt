@@ -4,8 +4,8 @@
 // to reduce code duplication in the test suite. It relies on the generic
 // `CpuTestHarness` for the underlying emulator setup.
 use crate::exec::{execute_chi, execute_iota, execute_keccak_f, execute_rho_and_pi, execute_theta};
+use crate::sequence_builder::{NEEDED_REGISTERS, ROUND_CONSTANTS};
 use crate::test_constants::{self, TestVectors};
-use crate::trace_generator::{NEEDED_REGISTERS, ROUND_CONSTANTS};
 use crate::Keccak256State;
 use tracer::emulator::mmu::DRAM_BASE;
 use tracer::instruction::format::format_inline::FormatInline;

@@ -5,7 +5,7 @@
 // `CpuTestHarness` for the underlying emulator setup.
 
 use super::{INPUT_LIMBS, OUTPUT_LIMBS};
-use crate::multiplication::trace_generator::NEEDED_REGISTERS;
+use crate::multiplication::sequence_builder::NEEDED_REGISTERS;
 use jolt_inlines_common::constants;
 use tracer::emulator::mmu::DRAM_BASE;
 use tracer::instruction::format::format_inline::FormatInline;

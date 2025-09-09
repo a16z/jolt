@@ -10,7 +10,3 @@ save_trace = ["dep:tracer"]
 
 [dependencies]
 tracer = { path = "../../tracer", optional = true }
-
-[dev-dependencies]
-tempfile = "3"
-jolt-inlines-keccak256 = { path = "../keccak256", features = ["host"] }

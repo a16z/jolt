@@ -414,17 +414,3 @@ pub unsafe fn sha256_compression_initial(input: *const u32, state: *mut u32) {
     let result = exec::execute_sha256_compression_initial(input);
     std::ptr::copy_nonoverlapping(result.as_ptr(), state, 8)
 }
-
-#[cfg(all(test, feature = "host"))]
-mod tests {
-    use super::Sha256;
-    use hex_literal::hex;
-
-    #[test]
-    fn test_sha256_empty_string() {
-        let digest = Sha256::digest(b"");
-        let expected: [u8; 32] =
-            hex!("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
-        assert_eq!(digest, expected);
-    }
-}
