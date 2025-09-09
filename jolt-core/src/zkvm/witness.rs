@@ -677,6 +677,14 @@ pub enum VirtualPolynomial {
     RamVal,
     RamValInit,
     RamValFinal,
+    /// Fixed polynomial g(x) for square-and-multiply sumcheck
+    SquareMultiplyG,
+    /// The a_i polynomials for square-and-multiply sumcheck, indexed 0 to 127
+    SquareMultiplyA(usize),
+    /// The base polynomial a(x) for accumulator multiplication
+    SquareMultiplyBase,
+    /// The accumulator polynomials rho_i for square-and-multiply, indexed 0 to 127
+    SquareMultiplyRho(usize),
     RamHammingWeight,
     OpFlags(CircuitFlags),
     LookupTableFlag(usize),
