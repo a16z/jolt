@@ -72,12 +72,12 @@ mod tests {
 
     use crate::sequence_builder::keccak256_inline_sequence_builder;
 
-    /// Test that verifies the trace writer correctly generates a trace file with placeholders
-    /// and that the placeholders can be replaced to match the original instructions.
-    ///
-    /// This test uses the keccak256 inline instruction as an example.
     #[test]
     fn test_keccak256_trace_file_matches_generated() {
+        use tracer::utils::inline_sequence_writer::{
+            write_inline_trace, AppendMode, InlineDescriptor, SequenceInputs,
+        };
+
         // Generate the instructions
         let generated_instructions = keccak256_inline_sequence_builder(
             DEFAULT_RAM_START_ADDRESS,
@@ -88,18 +88,31 @@ mod tests {
             DEFAULT_RS3,
         );
 
-        // Path to the keccak256 trace file
-        let trace_file_path = Path::new("keccak256_trace.joltinline");
+        let test_file_name = format!("keccak256_trace_test_{}.joltinline", std::process::id());
+        let trace_file_path = Path::new(&test_file_name);
 
-        // Ensure the file is deleted at the end of the test
         let _cleanup = FileCleanup(trace_file_path);
 
-        // Now read and validate the file
+        let inline_info = InlineDescriptor::new(
+            crate::KECCAK256_NAME.to_string(),
+            crate::INLINE_OPCODE,
+            crate::KECCAK256_FUNCT3,
+            crate::KECCAK256_FUNCT7,
+        );
+        let sequence_inputs = SequenceInputs::default();
+        write_inline_trace(
+            &test_file_name,
+            &inline_info,
+            &sequence_inputs,
+            &generated_instructions,
+            AppendMode::Overwrite,
+        )
+        .expect("Failed to write test trace file");
+
         let file = fs::File::open(trace_file_path).expect("Failed to open test trace file");
         let reader = BufReader::new(file);
         let mut lines = reader.lines();
 
-        // Read and validate header (line 1)
         let header = lines
             .next()
             .expect("Missing header line")
@@ -109,16 +122,13 @@ mod tests {
             "Expected KECCAK256_INLINE in header, got: {header}"
         );
 
-        // Read and validate sequence inputs (line 2)
         let inputs_line = lines
             .next()
             .expect("Missing inputs line")
             .expect("Failed to read inputs");
         assert!(inputs_line.contains("address: $ADDR"));
 
-        // Now compare each instruction line by line
         for (i, generated_instr) in generated_instructions.iter().enumerate() {
-            // Read next line from trace file
             let mut trace_line = lines.next().unwrap().unwrap();
             trace_line = trace_line.replace(
                 "address: $ADDR",
@@ -128,7 +138,6 @@ mod tests {
             trace_line = trace_line.replace("$RS2", &format!("{DEFAULT_RS2}"));
             trace_line = trace_line.replace("$RS3", &format!("{DEFAULT_RS3}"));
 
-            // Compare
             assert_eq!(
                 format!("{generated_instr:?}"),
                 trace_line,
@@ -140,14 +149,12 @@ mod tests {
             );
         }
 
-        // Check if there are any extra lines in the trace file
         assert!(
             lines.next().is_none(),
             "Trace file has extra lines after all instructions"
         );
     }
 
-    /// Helper struct to ensure test file cleanup on drop
     struct FileCleanup<'a>(&'a Path);
 
     impl<'a> Drop for FileCleanup<'a> {
