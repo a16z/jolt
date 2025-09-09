@@ -33,7 +33,7 @@ pub struct InlineMemoryLayout {
 
 impl InlineMemoryLayout {
     /// Single input, single output with default mapping (rs1=output, rs2=input)
-    /// Used by Blake2, Blake3, Keccak256
+    /// Used by Sha2, Blake2, Blake3, Keccak256
     pub fn single_input(input_size: usize, output_size: usize) -> Self {
         Self {
             input_base: DRAM_BASE,
@@ -44,21 +44,6 @@ impl InlineMemoryLayout {
             output_size,
             rs1_mapping: RegisterMapping::Output,
             rs2_mapping: RegisterMapping::Input,
-            rs3_mapping: None,
-        }
-    }
-
-    /// SHA256-style layout (rs1=input, rs2=output)
-    pub fn sha256_style(input_size: usize, output_size: usize) -> Self {
-        Self {
-            input_base: DRAM_BASE,
-            input_size,
-            input2_base: None,
-            input2_size: None,
-            output_base: DRAM_BASE + input_size as u64,
-            output_size,
-            rs1_mapping: RegisterMapping::Input,
-            rs2_mapping: RegisterMapping::Output,
             rs3_mapping: None,
         }
     }
@@ -290,43 +275,5 @@ impl InlineTestHarness {
 
     pub fn xlen(&self) -> Xlen {
         self.xlen
-    }
-}
-
-pub mod hash_helpers {
-    use super::*;
-
-    pub fn sha256_harness(xlen: Xlen) -> InlineTestHarness {
-        // SHA256: rs1=input, rs2=state/output
-        let layout = InlineMemoryLayout::sha256_style(64, 32); // 64-byte block, 32-byte state
-        InlineTestHarness::new(layout, xlen)
-    }
-
-    pub fn blake2_harness(xlen: Xlen) -> InlineTestHarness {
-        // Blake2 needs message block (128 bytes) + counter (8 bytes) + flag (8 bytes) contiguous at rs2
-        // and state (64 bytes) at rs1
-        let layout = InlineMemoryLayout::single_input(144, 64); // 144 bytes for message+params, 64-byte state
-        InlineTestHarness::new(layout, xlen)
-    }
-
-    pub fn blake3_harness(xlen: Xlen) -> InlineTestHarness {
-        // Blake3 needs message block (64 bytes) + params (16 bytes) contiguous at rs2
-        // and state (32 bytes) at rs1
-        let layout = InlineMemoryLayout::single_input(80, 32); // 80 bytes for message+params, 32-byte state
-        InlineTestHarness::new(layout, xlen)
-    }
-
-    pub fn keccak256_harness(xlen: Xlen) -> InlineTestHarness {
-        let layout = InlineMemoryLayout::single_input(136, 200); // 136-byte block, 200-byte state
-        InlineTestHarness::new(layout, xlen)
-    }
-}
-
-pub mod bigint_helpers {
-    use super::*;
-
-    pub fn bigint256_mul_harness(xlen: Xlen) -> InlineTestHarness {
-        let layout = InlineMemoryLayout::two_inputs(32, 32, 64); // Two 32-byte inputs, 64-byte output
-        InlineTestHarness::new(layout, xlen)
     }
 }

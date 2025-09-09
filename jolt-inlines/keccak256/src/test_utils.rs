@@ -4,13 +4,15 @@ use crate::test_constants::{self, TestVectors};
 use crate::Keccak256State;
 use tracer::emulator::cpu::Xlen;
 use tracer::instruction::{inline::INLINE, RISCVTrace, RV32IMCycle, RV32IMInstruction};
-use tracer::utils::inline_test_harness::{hash_helpers, InlineTestHarness};
+use tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness};
 use tracer::utils::test_harness::InstructionTestCase;
 
 pub type KeccakTestCase = InstructionTestCase<Keccak256State, Keccak256State>;
 
 pub fn create_keccak_harness(xlen: Xlen) -> InlineTestHarness {
-    hash_helpers::keccak256_harness(xlen)
+    // Keccak256: rs1=state/output, rs2=input
+    let layout = InlineMemoryLayout::single_input(136, 200); // 136-byte block, 200-byte state
+    InlineTestHarness::new(layout, xlen)
 }
 
 /// Legacy compatibility wrapper for existing tests

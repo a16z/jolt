@@ -1,12 +1,14 @@
 use crate::{INLINE_OPCODE, SHA256_FUNCT3, SHA256_FUNCT7, SHA256_INIT_FUNCT3, SHA256_INIT_FUNCT7};
 use tracer::emulator::cpu::Xlen;
-use tracer::utils::inline_test_harness::{hash_helpers, InlineTestHarness};
+use tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness};
 
 pub type Sha256Block = [u32; 16];
 pub type Sha256State = [u32; 8];
 
 pub fn create_sha256_harness(xlen: Xlen) -> InlineTestHarness {
-    hash_helpers::sha256_harness(xlen)
+    // SHA256: rs1=state/output, rs2=input (same as Blake/Keccak)
+    let layout = InlineMemoryLayout::single_input(64, 32); // 64-byte block, 32-byte state
+    InlineTestHarness::new(layout, xlen)
 }
 
 pub fn instruction_sha256() -> tracer::instruction::inline::INLINE {

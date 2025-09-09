@@ -1,12 +1,14 @@
 use super::{BIGINT256_MUL_FUNCT3, BIGINT256_MUL_FUNCT7, INLINE_OPCODE, INPUT_LIMBS, OUTPUT_LIMBS};
 use tracer::emulator::cpu::Xlen;
-use tracer::utils::inline_test_harness::{bigint_helpers, InlineTestHarness};
+use tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness};
 
 pub type BigIntInput = ([u64; INPUT_LIMBS], [u64; INPUT_LIMBS]);
 pub type BigIntOutput = [u64; OUTPUT_LIMBS];
 
 pub fn create_bigint_harness() -> InlineTestHarness {
-    bigint_helpers::bigint256_mul_harness(Xlen::Bit64)
+    // BigInt256 multiplication: rs1=input1, rs2=input2, rs3=output
+    let layout = InlineMemoryLayout::two_inputs(32, 32, 64); // Two 32-byte inputs, 64-byte output
+    InlineTestHarness::new(layout, Xlen::Bit64)
 }
 
 pub fn instruction() -> tracer::instruction::inline::INLINE {

@@ -1,12 +1,15 @@
 use crate::{BLAKE3_FUNCT3, BLAKE3_FUNCT7, INLINE_OPCODE};
 use tracer::emulator::cpu::Xlen;
-use tracer::utils::inline_test_harness::{hash_helpers, InlineTestHarness};
+use tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness};
 
 pub type ChainingValue = [u32; crate::CHAINING_VALUE_LEN];
 pub type MessageBlock = [u32; crate::MSG_BLOCK_LEN];
 
 pub fn create_blake3_harness() -> InlineTestHarness {
-    hash_helpers::blake3_harness(Xlen::Bit64)
+    // Blake3 needs message block (64 bytes) + params (16 bytes) contiguous at rs2
+    // and state (32 bytes) at rs1
+    let layout = InlineMemoryLayout::single_input(80, 32); // 80 bytes for message+params, 32-byte state
+    InlineTestHarness::new(layout, Xlen::Bit64)
 }
 
 pub fn load_blake3_data(
