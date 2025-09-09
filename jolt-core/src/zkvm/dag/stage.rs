@@ -14,7 +14,6 @@ pub trait SumcheckStages<
     fn stage1_prove(
         &mut self,
         _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-        _ram_d: usize,
     ) -> Result<(), anyhow::Error> {
         Ok(())
     }
@@ -30,7 +29,6 @@ pub trait SumcheckStages<
     fn stage2_prover_instances(
         &mut self,
         _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-        _ram_d: usize,
     ) -> Vec<Box<dyn SumcheckInstance<F>>> {
         vec![]
     }
@@ -45,7 +43,6 @@ pub trait SumcheckStages<
     fn stage3_prover_instances(
         &mut self,
         _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-        _ram_d: usize,
     ) -> Vec<Box<dyn SumcheckInstance<F>>> {
         vec![]
     }

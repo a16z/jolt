@@ -42,7 +42,6 @@ impl JoltDAG {
         ),
         anyhow::Error,
     > {
-        // println!("|||||||||||||||||||||||> Prove called");
         state_manager.fiat_shamir_preamble();
 
         // Initialize DoryGlobals at the beginning to keep it alive for the entire proof
@@ -54,15 +53,14 @@ impl JoltDAG {
 
         let ram_K = state_manager.ram_K;
         let bytecode_d = preprocessing.shared.bytecode.d;
-        let ram_d = compute_d_parameter(ram_K);
+
         let _guard = (
             DoryGlobals::initialize(DTH_ROOT_OF_K, padded_trace_length),
-            AllCommittedPolynomials::initialize(ram_d, bytecode_d),
+            AllCommittedPolynomials::initialize(state_manager.ram_d, bytecode_d),
         );
-        // println!("|||||||||||||||||||||||> Initialized DoryGlobals and AllCommittedPolynomials");
 
         // Generate and commit to all witness polynomials
-        let opening_proof_hints = Self::generate_and_commit_polynomials(&mut state_manager, ram_d)?;
+        let opening_proof_hints = Self::generate_and_commit_polynomials(&mut state_manager)?;
 
         // Append commitments to transcript
         let commitments = state_manager.get_commitments();
@@ -81,10 +79,10 @@ impl JoltDAG {
         let mut spartan_dag = SpartanDag::<F>::new::<ProofTranscript>(padded_trace_length);
         let mut lookups_dag = LookupsDag::default();
         let mut registers_dag = RegistersDag::default();
-        let mut ram_dag = RamDag::new_prover(&state_manager);
+        let mut ram_dag: RamDag = RamDag::new_prover(&state_manager);
         let mut bytecode_dag = BytecodeDag::default();
         spartan_dag
-            .stage1_prove(&mut state_manager, ram_d)
+            .stage1_prove(&mut state_manager)
             .context("Stage 1")?;
 
         drop(_guard);
@@ -95,9 +93,9 @@ impl JoltDAG {
         let _guard = span.enter();
 
         let mut stage2_instances: Vec<_> = std::iter::empty()
-            .chain(spartan_dag.stage2_prover_instances(&mut state_manager, ram_d))
-            .chain(registers_dag.stage2_prover_instances(&mut state_manager, ram_d))
-            .chain(ram_dag.stage2_prover_instances(&mut state_manager, ram_d))
+            .chain(spartan_dag.stage2_prover_instances(&mut state_manager))
+            .chain(registers_dag.stage2_prover_instances(&mut state_manager))
+            .chain(ram_dag.stage2_prover_instances(&mut state_manager))
             .collect();
         let stage2_instances_mut: Vec<&mut dyn SumcheckInstance<F>> = stage2_instances
             .iter_mut()
@@ -127,10 +125,10 @@ impl JoltDAG {
         let _guard = span.enter();
 
         let mut stage3_instances: Vec<_> = std::iter::empty()
-            .chain(spartan_dag.stage3_prover_instances(&mut state_manager, ram_d))
-            .chain(registers_dag.stage3_prover_instances(&mut state_manager, ram_d))
-            .chain(lookups_dag.stage3_prover_instances(&mut state_manager, ram_d))
-            .chain(ram_dag.stage3_prover_instances(&mut state_manager, ram_d))
+            .chain(spartan_dag.stage3_prover_instances(&mut state_manager))
+            .chain(registers_dag.stage3_prover_instances(&mut state_manager))
+            .chain(lookups_dag.stage3_prover_instances(&mut state_manager))
+            .chain(ram_dag.stage3_prover_instances(&mut state_manager))
             .collect();
         let stage3_instances_mut: Vec<&mut dyn SumcheckInstance<F>> = stage3_instances
             .iter_mut()
@@ -188,7 +186,7 @@ impl JoltDAG {
         for polynomial in AllCommittedPolynomials::iter() {
             polynomials_map.insert(
                 *polynomial,
-                polynomial.generate_witness(preprocessing, trace, ram_d),
+                polynomial.generate_witness(preprocessing, trace, state_manager.ram_d),
             );
         }
         let opening_proof = accumulator.borrow_mut().reduce_and_prove(
@@ -420,9 +418,7 @@ impl JoltDAG {
         PCS: StreamingCommitmentScheme<Field = F>,
     >(
         prover_state_manager: &mut StateManager<'a, F, ProofTranscript, PCS>,
-        ram_d: usize,
     ) -> Result<HashMap<CommittedPolynomial, PCS::OpeningProofHint>, anyhow::Error> {
-        // println!("|||||||||||||||||||||||> generate_and_commit_polynomials");
         let (preprocessing, lazy_trace, _trace, _program_io, _final_memory_state) =
             prover_state_manager.get_prover_data();
 
@@ -456,7 +452,7 @@ impl JoltDAG {
                         pcs, 
                         preprocessing, 
                         &row_with_peek,
-                        ram_d
+                        prover_state_manager.ram_d
                     )
                 });
                 *row_ = res.collect::<Vec<_>>();
@@ -475,7 +471,7 @@ impl JoltDAG {
         {
             let committed_polys: Vec<_> = polys
                 .iter()
-                .map(|poly| poly.generate_witness(preprocessing, _trace, ram_d))
+                .map(|poly| poly.generate_witness(preprocessing, _trace, prover_state_manager.ram_d))
                 .collect();
 
             let commitments_non_streaming: Vec<_> = committed_polys

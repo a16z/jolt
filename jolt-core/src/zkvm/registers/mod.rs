@@ -21,9 +21,8 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
     fn stage2_prover_instances(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-        ram_d: usize,
     ) -> Vec<Box<dyn SumcheckInstance<F>>> {
-        let read_write_checking = RegistersReadWriteChecking::new_prover(state_manager, ram_d);
+        let read_write_checking = RegistersReadWriteChecking::new_prover(state_manager);
         vec![Box::new(read_write_checking)]
     }
 
@@ -38,9 +37,8 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
     fn stage3_prover_instances(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-        ram_d: usize,
     ) -> Vec<Box<dyn SumcheckInstance<F>>> {
-        let val_evaluation = ValEvaluationSumcheck::new_prover(state_manager, ram_d);
+        let val_evaluation = ValEvaluationSumcheck::new_prover(state_manager);
         vec![Box::new(val_evaluation)]
     }
 

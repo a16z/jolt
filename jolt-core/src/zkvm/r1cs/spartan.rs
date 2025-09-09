@@ -22,6 +22,7 @@ use crate::zkvm::r1cs::inputs::JoltR1CSInputs;
 use crate::zkvm::r1cs::inputs::ALL_R1CS_INPUTS;
 use crate::zkvm::r1cs::inputs::COMMITTED_R1CS_INPUTS;
 use crate::zkvm::r1cs::key::UniformSpartanKey;
+use crate::zkvm::ram;
 use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 
 use crate::utils::small_value::NUM_SVO_ROUNDS;
@@ -630,7 +631,6 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
     fn stage1_prove(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-        ram_d: usize,
     ) -> Result<(), anyhow::Error> {
         /* Sumcheck 1: Outer sumcheck
            Proves: \sum_x eq(tau, x) * (Az(x) * Bz(x) - Cz(x)) = 0
@@ -647,7 +647,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         // Create input polynomials from trace
         let input_polys: Vec<MultilinearPolynomial<F>> = ALL_R1CS_INPUTS
             .par_iter()
-            .map(|var| var.generate_witness(trace, preprocessing, ram_d))
+            .map(|var| var.generate_witness(trace, preprocessing, state_manager.ram_d))
             .collect();
 
         let num_rounds_x = key.num_rows_bits();
@@ -878,7 +878,6 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
     fn stage2_prover_instances(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-        ram_d: usize,
     ) -> Vec<Box<dyn SumcheckInstance<F>>> {
         /* Sumcheck 2: Inner sumcheck
             Proves: claim_Az + r * claim_Bz + r^2 * claim_Cz =
@@ -975,7 +974,6 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
     fn stage3_prover_instances(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-        ram_d: usize,
     ) -> Vec<Box<dyn SumcheckInstance<F>>> {
         /*  Sumcheck 3: Batched sumcheck for NextUnexpandedPC and NextPC verification
             Proves: NextUnexpandedPC(r_cycle) + r * NextPC(r_cycle) =
@@ -985,7 +983,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
             1. NextUnexpandedPC(r_cycle) = \sum_t UnexpandedPC(t) * eq_plus_one(r_cycle, t)
             2. NextPC(r_cycle) = \sum_t PC(t) * eq_plus_one(r_cycle, t)
         */
-
+        let ram_d = state_manager.ram_d;
         let (preprocessing, _, trace, _program_io, _final_memory_state) =
             state_manager.get_prover_data();
 

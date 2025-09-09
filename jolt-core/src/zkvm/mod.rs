@@ -96,7 +96,7 @@ where
     pub generators: PCS::ProverSetup,
     pub shared: JoltSharedPreprocessing,
     field: F::SmallValueLookupTables,
-    // ram_d: usize,//AZ: ramd
+    ram_d: Option<usize>,//AZ: ramd
 }
 
 impl<F, PCS> Serializable for JoltProverPreprocessing<F, PCS>
@@ -182,7 +182,6 @@ where
         memory_init: Vec<(u64, u8)>,
         max_trace_length: usize,
     ) -> JoltProverPreprocessing<F, PCS> {
-        // println!("|||||||||||||||||||||||> prover_preprocess called ");
         let small_value_lookup_tables = F::compute_lookup_tables();
         F::initialize_lookup_tables(small_value_lookup_tables.clone());
 
@@ -198,7 +197,7 @@ where
             generators,
             shared,
             field: small_value_lookup_tables,
-            // ram_d,//AZ: ramd
+            ram_d: None,//AZ: ramd
         }
     }
 
