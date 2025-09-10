@@ -352,9 +352,12 @@ pub fn prove_generic_core_shout_pip_d_greater_than_one_with_gruen<
     // as they start with size \sqrt{T} which is below 16
     // which is the parallel threshold as max T = 2**32
 
-    println!("Starting Sumcheck For T (include buidling of Gr-eq");
+    println!("Starting Sumcheck For T (include building of Gr-eq");
     let start = Instant::now();
+    let start_greq = Instant::now();
     let mut greq_r_cycle = GruenSplitEqPolynomial::<F>::new(&r_cycle, BindingOrder::LowToHigh);
+    let end_greq = start_greq.elapsed();
+    println!("Just greq took: {}", end_greq.as_micros());
     // This how many evals we need to evaluate t(x)
     // The degree of t is d
     let degree = d;
@@ -592,7 +595,6 @@ mod tests {
         //-------------------------------------------------------------------------------
         let mut prover_transcript = Blake2bTranscript::new(b"test_transcript");
 
-        let start = Instant::now();
         let (
             _sumcheck_proof_wo,
             _verifier_challenges_wo,
@@ -607,8 +609,6 @@ mod tests {
             D,
             &mut prover_transcript,
         );
-        let end = start.elapsed().as_millis();
-        println!("Took {end} ms\n");
 
 
         let mut prover_transcript = Blake2bTranscript::new(b"test_transcript");
@@ -631,13 +631,12 @@ mod tests {
         let gruen_opt_prover = get_mult_count();
 
         println!(
-            "Took {} ms\nMultiplications: Optimised: {}: Assymptotics {}",
-            end,
+            "Multiplications: Optimised: {}: Assymptotics {}",
             gruen_opt_prover,
             (D * D + D + 1) * T + 5 * K + 4 * (1 << (POWER_OF_2 / 2))
         );
         let end = start.elapsed();
-        println!("Time elapsed large: {}", end.as_micros());
+        println!("Time elapsed SMALL: {}", end.as_micros());
 
         // Thesea are sanity checks to see that the openings
         // of the sum_check_with_split_eq and gruen opts are
