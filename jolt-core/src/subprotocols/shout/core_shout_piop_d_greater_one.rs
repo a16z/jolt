@@ -21,6 +21,7 @@ use crate::{
 };
 use rayon::prelude::*;
 use std::{cell::RefCell, rc::Rc};
+use std::time::Instant;
 use crate::field::MontU128;
 
 /// Implements the sumcheck prover for the generic core Shout PIOP for d>1.
@@ -141,6 +142,7 @@ pub fn prove_generic_core_shout_pip_d_greater_than_one<
     // The E tables will be dropped once we make ra_taus
     let mut ra_taus: Vec<MultilinearPolynomial<F>> =
         E.into_par_iter().map(MultilinearPolynomial::from).collect();
+
 
     let DEGREE_TIME: usize = d + 1;
     for _time_round_idx in 0..T.log_2() {
@@ -281,6 +283,9 @@ pub fn prove_generic_core_shout_pip_d_greater_than_one_with_gruen<
     // Binding the first log_2 K variables
     const DEGREE_ADDR: usize = 2; // independent of d
     let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
+
+    println!("Starting Sumcheck For K");
+    let start = Instant::now();
     for _addr_idx in 0..K.log_2() {
         // Page 51: (eq 51)
         let univariate_poly_evals: [F; DEGREE_ADDR] = (0..ra.len() / 2)
@@ -314,6 +319,8 @@ pub fn prove_generic_core_shout_pip_d_greater_than_one_with_gruen<
             || val.bind_parallel(r_j, BindingOrder::LowToHigh),
         );
     }
+    let end = start.elapsed();
+    println!("Elapsed time for K sum-check: {:.8?}mu(s)", end.as_micros());
 
     // tau = r_address (the verifiers challenges which bind all log K variables of memory)
     // This is \widetilde{Val}(\tau) from the paper (eq 52)
@@ -345,6 +352,8 @@ pub fn prove_generic_core_shout_pip_d_greater_than_one_with_gruen<
     // as they start with size \sqrt{T} which is below 16
     // which is the parallel threshold as max T = 2**32
 
+    println!("Starting Sumcheck For T (include buidling of Gr-eq");
+    let start = Instant::now();
     let mut greq_r_cycle = GruenSplitEqPolynomial::<F>::new(&r_cycle, BindingOrder::LowToHigh);
     // This how many evals we need to evaluate t(x)
     // The degree of t is d
@@ -475,6 +484,9 @@ pub fn prove_generic_core_shout_pip_d_greater_than_one_with_gruen<
             || greq_r_cycle.bind(r_j),
         );
     }
+
+    let end = start.elapsed();
+    println!("Elapsed time for T sum-check: {:.8?}mu(s)", end.as_micros());
 
     let ras_raddress_rtime_product: F = ra_taus
         .par_iter()
