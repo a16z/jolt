@@ -9,7 +9,7 @@ use crate::{
 
 use super::ori::ORI;
 use super::slli::SLLI;
-use super::virtual_sign_extend::VirtualSignExtend;
+use super::virtual_sign_extend_word::VirtualSignExtendWord;
 use super::{
     format::format_r::FormatR, virtual_shift_right_bitmask::VirtualShiftRightBitmask,
     virtual_srl::VirtualSRL, RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
@@ -53,7 +53,7 @@ impl RISCVTrace for SRLW {
         asm.emit_i::<ORI>(*v_bitmask, self.operands.rs2, 32);
         asm.emit_i::<VirtualShiftRightBitmask>(*v_bitmask, *v_bitmask, 0);
         asm.emit_vshift_r::<VirtualSRL>(self.operands.rd, *v_rs1, *v_bitmask);
-        asm.emit_i::<VirtualSignExtend>(self.operands.rd, self.operands.rd, 0);
+        asm.emit_i::<VirtualSignExtendWord>(self.operands.rd, self.operands.rd, 0);
         asm.finalize()
     }
 }

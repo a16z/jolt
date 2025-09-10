@@ -510,6 +510,7 @@ pub static UNIFORM_R1CS: [NamedConstraint; NUM_R1CS_CONSTRAINTS] = [
     //     }
     // }
     // Note that ShouldBranch and Jump instructions are mutually exclusive
+    // And that DoNotUpdatePC and isCompressed are mutually exclusive
     r1cs_prod!(
         name: ConstraintName::CompressedNoUpdateDef,
         ({ JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed) })
@@ -522,8 +523,7 @@ pub static UNIFORM_R1CS: [NamedConstraint; NUM_R1CS_CONSTRAINTS] = [
         => ( { JoltR1CSInputs::NextUnexpandedPC } )
            == ( { JoltR1CSInputs::UnexpandedPC } + { 4i128 }
                 - { 4 * JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC) }
-                - { 2 * JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed) }
-                + { 2 * JoltR1CSInputs::CompressedDoNotUpdateUnexpPC } )
+                - { 2 * JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed) } )
     ),
     // if Inline {
     //     assert!(NextPC == PC + 1)

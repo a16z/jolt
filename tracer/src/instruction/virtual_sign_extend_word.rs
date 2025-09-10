@@ -8,7 +8,7 @@ use crate::{
 use super::{format::format_i::FormatI, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
-    name = VirtualSignExtend,
+    name = VirtualSignExtendWord,
     mask = 0,
     match = 0,
     format = FormatI,
@@ -16,8 +16,8 @@ declare_riscv_instr!(
     is_virtual = true
 );
 
-impl VirtualSignExtend {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualSignExtend as RISCVInstruction>::RAMAccess) {
+impl VirtualSignExtendWord {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualSignExtendWord as RISCVInstruction>::RAMAccess) {
         match cpu.xlen {
             Xlen::Bit32 => panic!("VirtualSignExtend is not supported for 32-bit mode"),
             Xlen::Bit64 => {
@@ -27,4 +27,4 @@ impl VirtualSignExtend {
     }
 }
 
-impl RISCVTrace for VirtualSignExtend {}
+impl RISCVTrace for VirtualSignExtendWord {}

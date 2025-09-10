@@ -8,10 +8,6 @@ pub enum LowerWordSuffix<const XLEN: usize> {}
 
 impl<const XLEN: usize> SparseDenseSuffix for LowerWordSuffix<XLEN> {
     fn suffix_mle(b: LookupBits) -> u64 {
-        if XLEN == 64 {
-            u128::from(b) as u64
-        } else {
-            (u128::from(b) % (1 << XLEN)) as u64
-        }
+        (u128::from(b) % (1 << XLEN)) as u64
     }
 }

@@ -14,7 +14,6 @@ impl InstructionFlags for VirtualPow2W {
     fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
         let mut flags = [false; NUM_CIRCUIT_FLAGS];
         flags[CircuitFlags::LeftOperandIsRs1Value as usize] = true;
-        flags[CircuitFlags::RightOperandIsImm as usize] = true;
         flags[CircuitFlags::AddOperands as usize] = true;
         flags[CircuitFlags::WriteLookupOutputToRD as usize] = true;
         flags[CircuitFlags::InlineSequenceInstruction as usize] =

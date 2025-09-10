@@ -66,8 +66,6 @@ pub enum CommittedPolynomial {
     ShouldBranch,
     /// Whether the current instruction triggers a jump
     ShouldJump,
-    /// Product of `IsCompressed` and `DoNotUpdateUnexpPC`
-    CompressedDoNotUpdateUnexpPC,
     /*  Twist/Shout witnesses */
     /// Inc polynomial for the registers instance of Twist
     RdInc,
@@ -95,7 +93,6 @@ struct WitnessData<F: JoltField> {
     write_pc_to_rd: Vec<u8>,
     should_branch: Vec<u8>,
     should_jump: Vec<u8>,
-    compressed_do_not_update_unexp_pc: Vec<u8>,
     rd_inc: Vec<i128>,
     ram_inc: Vec<i128>,
 
@@ -120,7 +117,6 @@ impl<F: JoltField> WitnessData<F> {
             should_jump: vec![0; trace_len],
             rd_inc: vec![0; trace_len],
             ram_inc: vec![0; trace_len],
-            compressed_do_not_update_unexp_pc: vec![0; trace_len],
 
             instruction_ra: array::from_fn(|_| vec![None; trace_len]),
             bytecode_ra: (0..bytecode_d).map(|_| vec![None; trace_len]).collect(),
@@ -140,7 +136,6 @@ impl AllCommittedPolynomials {
             CommittedPolynomial::WritePCtoRD,
             CommittedPolynomial::ShouldBranch,
             CommittedPolynomial::ShouldJump,
-            CommittedPolynomial::CompressedDoNotUpdateUnexpPC,
             CommittedPolynomial::RdInc,
             CommittedPolynomial::RamInc,
             CommittedPolynomial::InstructionRa(0),
@@ -320,10 +315,6 @@ impl CommittedPolynomial {
                 batch_ref.should_branch[i] =
                     (lookup_output as u8) * (circuit_flags[CircuitFlags::Branch as usize] as u8);
 
-                batch_ref.compressed_do_not_update_unexp_pc[i] =
-                    circuit_flags[CircuitFlags::DoNotUpdateUnexpandedPC as usize] as u8
-                        * circuit_flags[CircuitFlags::IsCompressed as usize] as u8;
-
                 // Handle should_jump
                 let is_jump = circuit_flags[CircuitFlags::Jump] as u8;
                 let is_next_noop = if i + 1 < trace.len() {
@@ -424,10 +415,6 @@ impl CommittedPolynomial {
                 }
                 CommittedPolynomial::RamInc => {
                     let coeffs = std::mem::take(&mut batch.ram_inc);
-                    results.insert(*poly, MultilinearPolynomial::<F>::from(coeffs));
-                }
-                CommittedPolynomial::CompressedDoNotUpdateUnexpPC => {
-                    let coeffs = std::mem::take(&mut batch.compressed_do_not_update_unexp_pc);
                     results.insert(*poly, MultilinearPolynomial::<F>::from(coeffs));
                 }
                 CommittedPolynomial::InstructionRa(i) => {
@@ -547,17 +534,6 @@ impl CommittedPolynomial {
                     .collect();
                 coeffs.into()
             }
-            CommittedPolynomial::CompressedDoNotUpdateUnexpPC => {
-                let coeffs: Vec<u8> = trace
-                    .par_iter()
-                    .map(|cycle| {
-                        let flags = cycle.instruction().circuit_flags();
-                        flags[CircuitFlags::DoNotUpdateUnexpandedPC as usize] as u8
-                            * flags[CircuitFlags::IsCompressed as usize] as u8
-                    })
-                    .collect();
-                coeffs.into()
-            }
             CommittedPolynomial::BytecodeRa(i) => {
                 let d = preprocessing.shared.bytecode.d;
                 let log_K = preprocessing.shared.bytecode.code_size.log_2();
@@ -655,6 +631,7 @@ pub enum VirtualPolynomial {
     NextPC,
     NextUnexpandedPC,
     NextIsNoop,
+    CompressedDoNotUpdateUnexpPC,
     LeftLookupOperand,
     RightLookupOperand,
     Rd,
@@ -692,6 +669,7 @@ pub static ALL_VIRTUAL_POLYNOMIALS: LazyLock<Vec<VirtualPolynomial>> = LazyLock:
         VirtualPolynomial::NextPC,
         VirtualPolynomial::NextUnexpandedPC,
         VirtualPolynomial::NextIsNoop,
+        VirtualPolynomial::CompressedDoNotUpdateUnexpPC,
         VirtualPolynomial::LeftLookupOperand,
         VirtualPolynomial::RightLookupOperand,
         VirtualPolynomial::Rd,

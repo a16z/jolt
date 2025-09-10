@@ -1,6 +1,6 @@
-use crate::host;
-use crate::zkvm::JoltVerifierPreprocessing;
-use crate::zkvm::{Jolt, JoltRV32IM};
+use jolt_core::host;
+use jolt_core::zkvm::JoltVerifierPreprocessing;
+use jolt_core::zkvm::{Jolt, JoltRV32IM};
 
 #[derive(Debug, Copy, Clone, clap::ValueEnum)]
 pub enum BenchType {

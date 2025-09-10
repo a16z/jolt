@@ -8,7 +8,7 @@ use crate::{
     instruction::virtual_srai::VirtualSRAI,
 };
 
-use super::virtual_sign_extend::VirtualSignExtend;
+use super::virtual_sign_extend_word::VirtualSignExtendWord;
 use super::{
     format::format_i::FormatI, RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
 };
@@ -54,9 +54,9 @@ impl RISCVTrace for SRAIW {
         let bitmask = (ones << shift) as u64;
 
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
-        asm.emit_i::<VirtualSignExtend>(*v_rs1, self.operands.rs1, 0);
+        asm.emit_i::<VirtualSignExtendWord>(*v_rs1, self.operands.rs1, 0);
         asm.emit_vshift_i::<VirtualSRAI>(self.operands.rd, *v_rs1, bitmask);
-        asm.emit_i::<VirtualSignExtend>(self.operands.rd, self.operands.rd, 0);
+        asm.emit_i::<VirtualSignExtendWord>(self.operands.rd, self.operands.rd, 0);
         asm.finalize()
     }
 }

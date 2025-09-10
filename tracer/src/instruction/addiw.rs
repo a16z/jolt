@@ -7,7 +7,7 @@ use crate::{
 };
 
 use super::addi::ADDI;
-use super::virtual_sign_extend::VirtualSignExtend;
+use super::virtual_sign_extend_word::VirtualSignExtendWord;
 use super::RV32IMInstruction;
 
 use super::{
@@ -49,7 +49,7 @@ impl RISCVTrace for ADDIW {
     fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
         asm.emit_i::<ADDI>(self.operands.rd, self.operands.rs1, self.operands.imm);
-        asm.emit_i::<VirtualSignExtend>(self.operands.rd, self.operands.rd, 0);
+        asm.emit_i::<VirtualSignExtendWord>(self.operands.rd, self.operands.rd, 0);
         asm.finalize()
     }
 }

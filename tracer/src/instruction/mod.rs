@@ -102,7 +102,6 @@ use virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder
 use virtual_assert_word_alignment::VirtualAssertWordAlignment;
 use virtual_change_divisor::VirtualChangeDivisor;
 use virtual_change_divisor_w::VirtualChangeDivisorW;
-use virtual_extend::VirtualExtend;
 use virtual_lw::VirtualLW;
 use virtual_move::VirtualMove;
 use virtual_movsign::VirtualMovsign;
@@ -115,12 +114,13 @@ use virtual_rotri::VirtualROTRI;
 use virtual_rotriw::VirtualROTRIW;
 use virtual_shift_right_bitmask::VirtualShiftRightBitmask;
 use virtual_shift_right_bitmaski::VirtualShiftRightBitmaskI;
-use virtual_sign_extend::VirtualSignExtend;
+use virtual_sign_extend_word::VirtualSignExtendWord;
 use virtual_sra::VirtualSRA;
 use virtual_srai::VirtualSRAI;
 use virtual_srl::VirtualSRL;
 use virtual_srli::VirtualSRLI;
 use virtual_sw::VirtualSW;
+use virtual_zero_extend_word::VirtualZeroExtendWord;
 
 use self::inline::INLINE;
 
@@ -229,7 +229,6 @@ pub mod virtual_assert_valid_unsigned_remainder;
 pub mod virtual_assert_word_alignment;
 pub mod virtual_change_divisor;
 pub mod virtual_change_divisor_w;
-pub mod virtual_extend;
 pub mod virtual_lw;
 pub mod virtual_move;
 pub mod virtual_movsign;
@@ -242,12 +241,13 @@ pub mod virtual_rotri;
 pub mod virtual_rotriw;
 pub mod virtual_shift_right_bitmask;
 pub mod virtual_shift_right_bitmaski;
-pub mod virtual_sign_extend;
+pub mod virtual_sign_extend_word;
 pub mod virtual_sra;
 pub mod virtual_srai;
 pub mod virtual_srl;
 pub mod virtual_srli;
 pub mod virtual_sw;
+pub mod virtual_zero_extend_word;
 pub mod xor;
 pub mod xori;
 
@@ -354,11 +354,7 @@ where
         }
     }
     // Default implementation. Instructions with inline sequences will override this.
-    // This allows other modules (e.g. inline_helpers) to call this method on all instructions.
-    fn inline_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction>
-// where
-    //     Self: Into<RV32IMInstruction>,
-    {
+    fn inline_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
         vec![(*self).into()]
     }
 }
@@ -445,7 +441,7 @@ macro_rules! define_rv32im_enums {
                         ),
                     )*
                     RV32IMCycle::INLINE(cycle) => (
-                        cycle.instruction.operands.rd,
+                        cycle.instruction.operands.rs3,
                         cycle.register_state.rd_values().0,
                         cycle.register_state.rd_values().1,
                     ),
@@ -525,6 +521,17 @@ macro_rules! define_rv32im_enums {
                     RV32IMInstruction::INLINE(instr) => {instr.inline_sequence_remaining = remaining;}
                 }
             }
+
+            pub fn set_is_compressed(&mut self, is_compressed: bool) {
+                match self {
+                    RV32IMInstruction::NoOp => (),
+                    RV32IMInstruction::UNIMPL => (),
+                    $(
+                        RV32IMInstruction::$instr(instr) => {instr.is_compressed = is_compressed;}
+                    )*
+                    RV32IMInstruction::INLINE(instr) => {instr.is_compressed = is_compressed;}
+                }
+            }
         }
 
         impl From<&RV32IMInstruction> for NormalizedInstruction {
@@ -569,8 +576,8 @@ define_rv32im_enums! {
         // Virtual
         VirtualAdvice, VirtualAssertEQ, VirtualAssertHalfwordAlignment, VirtualAssertWordAlignment, VirtualAssertLTE,
         VirtualAssertValidDiv0, VirtualAssertValidUnsignedRemainder,
-        VirtualChangeDivisor, VirtualChangeDivisorW, VirtualLW,VirtualSW,VirtualExtend,
-        VirtualSignExtend,VirtualPow2W, VirtualPow2IW,
+        VirtualChangeDivisor, VirtualChangeDivisorW, VirtualLW,VirtualSW, VirtualZeroExtendWord,
+        VirtualSignExtendWord,VirtualPow2W, VirtualPow2IW,
         VirtualMove, VirtualMovsign, VirtualMULI, VirtualPow2, VirtualPow2I, VirtualROTRI,
         VirtualROTRIW,
         VirtualShiftRightBitmask, VirtualShiftRightBitmaskI,

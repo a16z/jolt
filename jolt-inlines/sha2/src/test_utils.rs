@@ -6,9 +6,8 @@
 use crate::trace_generator::NEEDED_REGISTERS;
 use tracer::emulator::cpu::Xlen;
 use tracer::emulator::mmu::DRAM_BASE;
-use tracer::instruction::format::format_r::FormatR;
+use tracer::instruction::format::format_inline::FormatInline;
 use tracer::instruction::inline::INLINE;
-use tracer::instruction::{RISCVInstruction, RISCVTrace};
 use tracer::utils::test_harness::CpuTestHarness;
 
 /// Canonical type alias for a 16-word SHA-256 input block.
@@ -34,7 +33,7 @@ impl Sha256CpuHarness {
     /// Create a new harness.
     pub fn new(xlen: Xlen) -> Self {
         let guards: Vec<_> = (0..32)
-            .map(|_| tracer::utils::virtual_registers::allocate_virtual_register())
+            .map(|_| tracer::utils::virtual_registers::allocate_virtual_register_for_inline())
             .collect();
         let vr: [u8; 32] = std::array::from_fn(|i| *guards[i]);
         Self {
@@ -75,10 +74,10 @@ impl Sha256CpuHarness {
     pub fn instruction_sha256() -> INLINE {
         INLINE {
             address: 0,
-            operands: FormatR {
+            operands: FormatInline {
                 rs1: Self::RS1,
                 rs2: Self::RS2,
-                rd: 0,
+                rs3: 0,
             },
             // SHA256 has opcode 0x0B, funct3 0x00, funct7 0x00
             opcode: 0x0B,
@@ -93,10 +92,10 @@ impl Sha256CpuHarness {
     pub fn instruction_sha256init() -> INLINE {
         INLINE {
             address: 0,
-            operands: FormatR {
+            operands: FormatInline {
                 rs1: Self::RS1,
                 rs2: Self::RS2,
-                rd: 0,
+                rs3: 0,
             },
             // SHA256INIT has opcode 0x0B, funct3 0x01, funct7 0x00
             opcode: 0x0B,
@@ -125,66 +124,5 @@ pub mod sverify {
             println!("Actual state:   {actual:08x?}");
             panic!("{test_name} failed: states do not match");
         }
-    }
-
-    /// Assert that direct `exec` and virtual-sequence `trace` paths match for `SHA256INIT`.
-    pub fn assert_exec_trace_equiv_initial(block: &Sha256Block, desc: &str, xlen: Xlen) {
-        let mut harness_exec = Sha256CpuHarness::new(xlen);
-        let mut harness_trace = Sha256CpuHarness::new(xlen);
-
-        // Set up both CPUs identically
-        harness_exec.load_block(block);
-        harness_exec.setup_output_only();
-        harness_trace.load_block(block);
-        harness_trace.setup_output_only();
-
-        let instruction = Sha256CpuHarness::instruction_sha256init();
-
-        // Execute both paths
-        instruction.execute(&mut harness_exec.harness.cpu, &mut ());
-        instruction.trace(&mut harness_trace.harness.cpu, None);
-
-        // Compare results
-        let exec_result = harness_exec.read_state();
-        let trace_result = harness_trace.read_state();
-
-        assert_states_equal(
-            &exec_result,
-            &trace_result,
-            &format!("Exec vs Trace equivalence (initial): {desc}"),
-        );
-    }
-
-    /// Assert that direct `exec` and virtual-sequence `trace` paths match for `SHA256`.
-    pub fn assert_exec_trace_equiv_custom(
-        block: &Sha256Block,
-        state: &Sha256State,
-        desc: &str,
-        xlen: Xlen,
-    ) {
-        let mut harness_exec = Sha256CpuHarness::new(xlen);
-        let mut harness_trace = Sha256CpuHarness::new(xlen);
-
-        // Set up both CPUs identically
-        harness_exec.load_block(block);
-        harness_exec.load_state(state);
-        harness_trace.load_block(block);
-        harness_trace.load_state(state);
-
-        let instruction = Sha256CpuHarness::instruction_sha256();
-
-        // Execute both paths
-        instruction.execute(&mut harness_exec.harness.cpu, &mut ());
-        instruction.trace(&mut harness_trace.harness.cpu, None);
-
-        // Compare results
-        let exec_result = harness_exec.read_state();
-        let trace_result = harness_trace.read_state();
-
-        assert_states_equal(
-            &exec_result,
-            &trace_result,
-            &format!("Exec vs Trace equivalence (custom): {desc}"),
-        );
     }
 }

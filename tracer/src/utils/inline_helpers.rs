@@ -29,6 +29,7 @@ use crate::instruction::andi::ANDI;
 use crate::instruction::srli::SRLI;
 use crate::instruction::srliw::SRLIW;
 
+use crate::instruction::format::format_assert_align::AssertAlignFormat;
 use crate::instruction::format::format_b::FormatB;
 use crate::instruction::format::format_i::FormatI;
 use crate::instruction::format::format_j::FormatJ;
@@ -36,7 +37,6 @@ use crate::instruction::format::format_load::FormatLoad;
 use crate::instruction::format::format_r::FormatR;
 use crate::instruction::format::format_s::FormatS;
 use crate::instruction::format::format_u::FormatU;
-use crate::instruction::format::format_virtual_halfword_alignment::HalfwordAlignFormat;
 use crate::instruction::format::format_virtual_right_shift_i::FormatVirtualRightShiftI;
 use crate::instruction::format::format_virtual_right_shift_r::FormatVirtualRightShiftR;
 use crate::instruction::format::NormalizedOperands;
@@ -52,6 +52,10 @@ use crate::instruction::RISCVInstruction;
 use crate::instruction::RISCVTrace;
 use crate::instruction::RV32IMCycle;
 use crate::instruction::RV32IMInstruction;
+
+use common::constants::RISCV_REGISTER_COUNT;
+use common::constants::VIRTUAL_INSTRUCTION_RESERVED_REGISTER_COUNT;
+use common::constants::VIRTUAL_REGISTER_COUNT;
 
 /// Operand that can be either an immediate or a register.
 #[derive(Clone, Copy, Debug)]
@@ -77,16 +81,30 @@ pub struct InstrAssembler {
     pub xlen: Xlen,
     /// Accumulated instruction buffer.
     sequence: Vec<RV32IMInstruction>,
+    /// Whether the instruction uses the the FormatInline instruction format.
+    has_inline_instr_format: bool,
 }
 
 impl InstrAssembler {
     /// Create a new assembler with an empty instruction buffer.
-    pub fn new(address: u64, is_compressed: bool, xlen: Xlen) -> Self {
+    pub(crate) fn new(address: u64, is_compressed: bool, xlen: Xlen) -> Self {
         Self {
             address,
             is_compressed,
             xlen,
             sequence: Vec::new(),
+            has_inline_instr_format: false,
+        }
+    }
+
+    /// Create a new assembler with an empty instruction buffer.
+    pub fn new_inline(address: u64, is_compressed: bool, xlen: Xlen) -> Self {
+        Self {
+            address,
+            is_compressed,
+            xlen,
+            sequence: Vec::new(),
+            has_inline_instr_format: true,
         }
     }
 
@@ -98,6 +116,35 @@ impl InstrAssembler {
             instr.set_inline_sequence_remaining(Some((len - i - 1) as u16));
         }
         self.sequence
+            .last_mut()
+            .expect("sequence should not be empty")
+            .set_is_compressed(self.is_compressed);
+        self.sequence
+    }
+
+    /// Finalize inline instructions by zeroing virtual registers, then calling finalize.
+    pub fn finalize_inline(mut self, num_inline_virtual_regs: u8) -> Vec<RV32IMInstruction> {
+        const INLINE_REGISTER_BASE: u8 =
+            RISCV_REGISTER_COUNT + VIRTUAL_INSTRUCTION_RESERVED_REGISTER_COUNT;
+        const MAX_INLINE_REGISTERS: u8 =
+            VIRTUAL_REGISTER_COUNT - VIRTUAL_INSTRUCTION_RESERVED_REGISTER_COUNT;
+
+        assert!(
+            num_inline_virtual_regs <= MAX_INLINE_REGISTERS,
+            "Attempted to clear {num_inline_virtual_regs} inline virtual registers, but only {MAX_INLINE_REGISTERS} are available"
+        );
+        // Zero inline virtual registers using ADDI rd, x0, 0
+        for reg_offset in 0..num_inline_virtual_regs {
+            self.emit_i::<ADDI>(INLINE_REGISTER_BASE + reg_offset, 0, 0);
+        }
+        self.finalize()
+    }
+
+    /// Validates that rd is an inline virtual register (not RISC-V or reserved virtual registers).
+    #[inline]
+    fn is_valid_virtual_rd(virtual_rd: u8) -> bool {
+        virtual_rd == 0
+            || virtual_rd >= RISCV_REGISTER_COUNT + VIRTUAL_INSTRUCTION_RESERVED_REGISTER_COUNT
     }
 
     #[inline]
@@ -105,6 +152,17 @@ impl InstrAssembler {
     where
         RISCVCycle<I>: Into<RV32IMCycle>,
     {
+        if self.has_inline_instr_format {
+            let normalized: NormalizedInstruction = inst.into();
+            if !Self::is_valid_virtual_rd(normalized.operands.rd) {
+                const MIN_INLINE_REG: u8 =
+                    RISCV_REGISTER_COUNT + VIRTUAL_INSTRUCTION_RESERVED_REGISTER_COUNT;
+                panic!(
+                    "Inline instruction attempted to write to register {}, but must use registers >= {}",
+                    normalized.operands.rd, MIN_INLINE_REG
+                );
+            }
+        }
         self.sequence.extend(inst.inline_sequence(self.xlen));
     }
 
@@ -127,7 +185,7 @@ impl InstrAssembler {
                 rs2,
                 imm: 0,
             },
-            is_compressed: self.is_compressed,
+            is_compressed: false,
             inline_sequence_remaining: Some(0),
         }));
     }
@@ -151,7 +209,7 @@ impl InstrAssembler {
                 rs2: 0,
                 imm: imm as i128,
             },
-            is_compressed: self.is_compressed,
+            is_compressed: false,
             inline_sequence_remaining: Some(0),
         }));
     }
@@ -175,7 +233,7 @@ impl InstrAssembler {
                 rs2,
                 imm: imm as i128,
             },
-            is_compressed: self.is_compressed,
+            is_compressed: false,
             inline_sequence_remaining: Some(0),
         }));
     }
@@ -199,7 +257,7 @@ impl InstrAssembler {
                 rs2: 0,
                 imm: imm as i128,
             },
-            is_compressed: self.is_compressed,
+            is_compressed: false,
             inline_sequence_remaining: Some(0),
         }));
     }
@@ -223,7 +281,7 @@ impl InstrAssembler {
                 rs2,
                 imm: imm as i128,
             },
-            is_compressed: self.is_compressed,
+            is_compressed: false,
             inline_sequence_remaining: Some(0),
         }));
     }
@@ -243,7 +301,7 @@ impl InstrAssembler {
                 rs2: 0,
                 imm: imm as i128,
             },
-            is_compressed: self.is_compressed,
+            is_compressed: false,
             inline_sequence_remaining: Some(0),
         }));
     }
@@ -263,7 +321,7 @@ impl InstrAssembler {
                 rs2: 0,
                 imm: imm as i128,
             },
-            is_compressed: self.is_compressed,
+            is_compressed: false,
             inline_sequence_remaining: Some(0),
         }));
     }
@@ -287,7 +345,7 @@ impl InstrAssembler {
                 rs2: 0,
                 imm: imm as i128,
             },
-            is_compressed: self.is_compressed,
+            is_compressed: false,
             inline_sequence_remaining: Some(0),
         }));
     }
@@ -311,7 +369,7 @@ impl InstrAssembler {
                 rs2,
                 imm: 0,
             },
-            is_compressed: self.is_compressed,
+            is_compressed: false,
             inline_sequence_remaining: Some(0),
         }));
     }
@@ -319,7 +377,7 @@ impl InstrAssembler {
     /// Emit any halfword alignment instruction (rs1, imm).
     #[track_caller]
     #[inline]
-    pub fn emit_halign<Op: RISCVInstruction<Format = HalfwordAlignFormat> + RISCVTrace>(
+    pub fn emit_halign<Op: RISCVInstruction<Format = AssertAlignFormat> + RISCVTrace>(
         &mut self,
         rs1: u8,
         imm: i64,
@@ -334,7 +392,7 @@ impl InstrAssembler {
                 rs2: 0,
                 imm: imm as i128,
             },
-            is_compressed: self.is_compressed,
+            is_compressed: false,
             inline_sequence_remaining: Some(0),
         }));
     }
@@ -392,7 +450,8 @@ impl InstrAssembler {
 
     /// Rotate-right by amount on a 32-bit word.
     pub fn rotri32(&mut self, rs1: Value, shamt: u32, rd: u8) -> Value {
-        if shamt == 0 {
+        if shamt == 0 || shamt == 32 {
+            // Rotating by 0 or 32 bits on a 32-bit value is a no-op.
             return self.xor(rs1, Imm(0), rd);
         }
         let ones = (1u64 << (32 - shamt)) - 1;
@@ -450,24 +509,30 @@ impl InstrAssembler {
     }
 
     /// Rotate left on a 64-bit value.
-    pub fn rotl64(&mut self, rs1: Value, amount: u32, rd: u8) -> Value {
-        if amount == 0 {
+    pub fn rotr64(&mut self, rs1: Value, amount: u32, rd: u8) -> Value {
+        if amount == 0 || amount == 64 {
             // Identity rotation: emit XOR with zero to copy value.
+            // Rotating by 0 or 64 bits on a 64-bit value is a no-op.
             return self.xor(rs1, Imm(0), rd);
         }
 
         match rs1 {
             Reg(rs1_reg) => {
-                // rotl(n) == rotr(64 − n).  The VirtualROTRI instruction encodes
-                // the rotation via a bitmask whose trailing zeros indicate the
-                // shift amount.  We construct that mask and delegate to `rotri`
-                // to avoid duplication.
-                let ones = (1u64 << amount as u64) - 1;
-                let imm = ones << (64 - amount as u64);
+                // The VirtualROTRI instruction encodes the rotation via a bitmask
+                // whose trailing zeros indicate the shift amount.
+                // For rotr(n), we need n trailing zeros.
+                let ones = (1u64 << (64 - amount as u64)) - 1;
+                let imm = ones << amount as u64;
                 self.rotri(Reg(rs1_reg), imm, rd)
             }
-            Imm(val) => Imm(val.rotate_left(amount)),
+            Imm(val) => Imm(val.rotate_right(amount)),
         }
+    }
+
+    /// Rotate left on a 64-bit value.
+    pub fn rotl64(&mut self, rs1: Value, amount: u32, rd: u8) -> Value {
+        // rotl(n) == rotr(64 - n)
+        self.rotr64(rs1, 64 - amount, rd)
     }
 }
 

@@ -23,14 +23,17 @@ keywords = ["SNARK", "cryptography", "proofs"]
 [workspace]
 members = [
     "jolt-core",
-    "jolt-inlines/sha2",
-    "jolt-inlines/keccak256",
-    "jolt-inlines/bigint",
     "tracer",
     "common",
     "jolt-platform",
     "jolt-sdk",
     "jolt-sdk/macros",
+    "jolt-inlines/common",
+    "jolt-inlines/sha2",
+    "jolt-inlines/keccak256",
+    "jolt-inlines/blake2",
+    "jolt-inlines/blake3",
+    "jolt-inlines/bigint",
     "examples/btreemap/host",
     "examples/btreemap/guest",
     "examples/collatz",
@@ -39,6 +42,10 @@ members = [
     "examples/fibonacci/guest",
     "examples/sha2-ex",
     "examples/sha2-ex/guest",
+    "examples/blake2-ex",
+    "examples/blake2-ex/guest",
+    "examples/blake3-ex",
+    "examples/blake3-ex/guest",
     "examples/sha3-ex",
     "examples/sha3-ex/guest",
     "examples/sha2-chain",
@@ -105,11 +112,11 @@ inherits = "release"
 debug = false
 
 [patch.crates-io]
-ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "feat/fewer-reductions" }
-ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "feat/fewer-reductions" }
-ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "feat/fewer-reductions" }
-ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "feat/fewer-reductions" }
-allocative = { git = "https://github.com/0xAndoroid/allocative", branch = "fix/impl-for-u128" }
+ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+allocative = { git = "https://github.com/facebookexperimental/allocative", rev = "85b773d85d526d068ce94724ff7a7b81203fc95e" }
 
 [workspace.metadata.cargo-machete]
 ignored = ["jolt-sdk"]

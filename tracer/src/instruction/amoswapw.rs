@@ -84,7 +84,7 @@ impl RISCVTrace for AMOSWAPW {
                 asm.emit_r::<super::and::AND>(*v_word, *v_word, *v_mask);
                 asm.emit_r::<super::xor::XOR>(*v_dword, *v_dword, *v_word);
                 asm.emit_s::<super::sd::SD>(*v_dword_address, *v_dword, 0);
-                asm.emit_i::<super::virtual_sign_extend::VirtualSignExtend>(
+                asm.emit_i::<super::virtual_sign_extend_word::VirtualSignExtendWord>(
                     self.operands.rd,
                     *v_rd,
                     0,

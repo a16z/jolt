@@ -21,7 +21,7 @@ use crate::utils::small_scalar::SmallScalar;
 use ark_ff::biginteger::signed::add_with_sign_u64;
 use ark_ff::SignedBigInt;
 
-use crate::field::JoltField;
+use crate::field::{JoltField, OptimizedMul};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::XLEN;
 use rayon::prelude::*;
@@ -61,10 +61,11 @@ pub enum JoltR1CSInputs {
     LookupOutput,     // Virtual (instruction rv)
     NextIsNoop,       // Virtual (spartan shift sumcheck)
     ShouldJump,
-    CompressedDoNotUpdateUnexpPC,
+    CompressedDoNotUpdateUnexpPC, // Virtual (spartan shift sumcheck)
     OpFlags(CircuitFlags),
 }
 
+const NUM_R1CS_INPUTS: usize = ALL_R1CS_INPUTS.len();
 /// This const serves to define a canonical ordering over inputs (and thus indices
 /// for each input). This is needed for sumcheck.
 pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 42] = [
@@ -114,7 +115,7 @@ pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 42] = [
 
 /// The subset of `ALL_R1CS_INPUTS` that are committed. The rest of
 /// the inputs are virtual polynomials.
-pub const COMMITTED_R1CS_INPUTS: [JoltR1CSInputs; 8] = [
+pub const COMMITTED_R1CS_INPUTS: [JoltR1CSInputs; 7] = [
     JoltR1CSInputs::LeftInstructionInput,
     JoltR1CSInputs::RightInstructionInput,
     JoltR1CSInputs::Product,
@@ -122,13 +123,12 @@ pub const COMMITTED_R1CS_INPUTS: [JoltR1CSInputs; 8] = [
     JoltR1CSInputs::WritePCtoRD,
     JoltR1CSInputs::ShouldBranch,
     JoltR1CSInputs::ShouldJump,
-    JoltR1CSInputs::CompressedDoNotUpdateUnexpPC,
 ];
 
 impl JoltR1CSInputs {
     /// The total number of unique constraint inputs
-    pub fn num_inputs() -> usize {
-        ALL_R1CS_INPUTS.len()
+    pub const fn num_inputs() -> usize {
+        NUM_R1CS_INPUTS
     }
 
     /// Converts an index to the corresponding constraint input.
@@ -203,9 +203,6 @@ impl TryFrom<&JoltR1CSInputs> for CommittedPolynomial {
             JoltR1CSInputs::WritePCtoRD => Ok(CommittedPolynomial::WritePCtoRD),
             JoltR1CSInputs::ShouldBranch => Ok(CommittedPolynomial::ShouldBranch),
             JoltR1CSInputs::ShouldJump => Ok(CommittedPolynomial::ShouldJump),
-            JoltR1CSInputs::CompressedDoNotUpdateUnexpPC => {
-                Ok(CommittedPolynomial::CompressedDoNotUpdateUnexpPC)
-            }
             _ => Err("{value} is not a committed polynomial"),
         }
     }
@@ -233,6 +230,7 @@ impl TryFrom<&JoltR1CSInputs> for VirtualPolynomial {
             JoltR1CSInputs::NextUnexpandedPC => Ok(VirtualPolynomial::NextUnexpandedPC),
             JoltR1CSInputs::NextPC => Ok(VirtualPolynomial::NextPC),
             JoltR1CSInputs::NextIsNoop => Ok(VirtualPolynomial::NextIsNoop),
+            JoltR1CSInputs::CompressedDoNotUpdateUnexpPC => Ok(VirtualPolynomial::CompressedDoNotUpdateUnexpPC),
             JoltR1CSInputs::LookupOutput => Ok(VirtualPolynomial::LookupOutput),
             JoltR1CSInputs::OpFlags(flag) => Ok(VirtualPolynomial::OpFlags(*flag)),
             _ => Err("{value} is not a virtual polynomial"),
@@ -407,12 +405,6 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> TraceWitnessAccessor<'a
                 };
                 F::from_u8((is_jump && !next_noop) as u8)
             }
-            JoltR1CSInputs::CompressedDoNotUpdateUnexpPC => {
-                let flags = get(t).instruction().circuit_flags();
-                let v = (flags[CircuitFlags::DoNotUpdateUnexpandedPC as usize] as u8)
-                    * (flags[CircuitFlags::IsCompressed as usize] as u8);
-                F::from_u8(v)
-            }
             JoltR1CSInputs::OpFlags(flag) => {
                 F::from_u8(get(t).instruction().circuit_flags()[flag as usize] as u8)
             }
@@ -565,25 +557,35 @@ pub fn compute_claimed_witness_evals<F: JoltField>(
     r_cycle: &[F],
     accessor: &dyn WitnessRowAccessor<F>,
 ) -> Vec<F> {
-    let num_inputs = JoltR1CSInputs::num_inputs();
-    let num_steps = accessor.num_steps();
     let eq_rx = EqPolynomial::evals(r_cycle);
 
-    // Parallelize across inputs i; each computes Σ_t eq(r_cycle, t) * P_i(t)
-    (0..num_inputs)
-        .into_par_iter()
-        .map(|i| {
-            let mut acc = F::zero();
-            for t in 0..num_steps {
-                if let Some(&eq_rx_t) = eq_rx.get(t) {
-                    acc += accessor.value_at(i, t).mul_field(eq_rx_t);
-                } else {
-                    break; // Stop processing if we've reached the end of eq_rx
+    let num_chunks = rayon::current_num_threads().next_power_of_two();
+    let chunk_size = (eq_rx.len() / num_chunks).max(1);
+
+    eq_rx
+        .par_chunks(chunk_size)
+        .enumerate()
+        .map(|(chunk_index, eq_chunk)| {
+            let mut chunk_result = [F::zero(); NUM_R1CS_INPUTS];
+            let mut t = chunk_index * chunk_size;
+            for eq_rx_t in eq_chunk {
+                for i in 0..NUM_R1CS_INPUTS {
+                    chunk_result[i] += accessor.value_at(i, t).mul_01_optimized(*eq_rx_t);
                 }
+                t += 1;
             }
-            acc
+            chunk_result
         })
-        .collect()
+        .reduce(
+            || [F::zero(); NUM_R1CS_INPUTS],
+            |mut acc, evals| {
+                for i in 0..NUM_R1CS_INPUTS {
+                    acc[i] += evals[i];
+                }
+                acc
+            },
+        )
+        .to_vec()
 }
 
 // =====================================================================================
@@ -886,10 +888,6 @@ mod tests {
                 (JoltR1CSInputs::LookupOutput, JoltR1CSInputs::LookupOutput) => true,
                 (JoltR1CSInputs::NextIsNoop, JoltR1CSInputs::NextIsNoop) => true,
                 (JoltR1CSInputs::ShouldJump, JoltR1CSInputs::ShouldJump) => true,
-                (
-                    JoltR1CSInputs::CompressedDoNotUpdateUnexpPC,
-                    JoltR1CSInputs::CompressedDoNotUpdateUnexpPC,
-                ) => true,
                 (JoltR1CSInputs::OpFlags(flag1), JoltR1CSInputs::OpFlags(flag2)) => {
                     self.const_eq_circuit_flags(*flag1, *flag2)
                 }

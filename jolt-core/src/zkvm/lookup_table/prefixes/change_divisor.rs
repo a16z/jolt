@@ -4,6 +4,8 @@ use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 
 pub enum ChangeDivisorPrefix<const XLEN: usize> {}
 
+/// Calculates the prefix for the change_divisor instruction
+/// Equivalently, it's a (2 - 2^XLEN) * eq(x, 100...000) * eq(y, 111...111)
 impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for ChangeDivisorPrefix<XLEN> {
     fn prefix_mle(
         checkpoints: &[PrefixCheckpoint<F>],

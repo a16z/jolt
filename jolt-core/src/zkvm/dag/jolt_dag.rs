@@ -54,7 +54,7 @@ impl JoltDAG {
         let trace_length = trace.len();
         let padded_trace_length = trace_length.next_power_of_two();
 
-        println!("bytecode size: {}", preprocessing.shared.bytecode.code_size);
+        tracing::info!("bytecode size: {}", preprocessing.shared.bytecode.code_size);
 
         let ram_K = state_manager.ram_K;
         let bytecode_d = preprocessing.shared.bytecode.d;
@@ -87,6 +87,8 @@ impl JoltDAG {
         let mut registers_dag = RegistersDag::default();
         let mut ram_dag = RamDag::new_prover(&state_manager);
         let mut bytecode_dag = BytecodeDag::default();
+
+        tracing::info!("Stage 1 proving");
         spartan_dag
             .stage1_prove(&mut state_manager)
             .context("Stage 1")?;
@@ -123,6 +125,7 @@ impl JoltDAG {
 
         let transcript = state_manager.get_transcript();
         let accumulator = state_manager.get_prover_accumulator();
+        tracing::info!("Stage 2 proving");
         let (stage2_proof, _r_stage2) = BatchedSumcheck::prove(
             stage2_instances_mut,
             Some(accumulator.clone()),
@@ -175,6 +178,7 @@ impl JoltDAG {
             .map(|instance| &mut **instance as &mut dyn SumcheckInstance<F>)
             .collect();
 
+        tracing::info!("Stage 3 proving");
         let (stage3_proof, _r_stage3) = BatchedSumcheck::prove(
             stage3_instances_mut,
             Some(accumulator.clone()),
@@ -226,6 +230,7 @@ impl JoltDAG {
             .map(|instance| &mut **instance as &mut dyn SumcheckInstance<F>)
             .collect();
 
+        tracing::info!("Stage 4 proving");
         let (stage4_proof, _r_stage4) = BatchedSumcheck::prove(
             stage4_instances_mut,
             Some(accumulator.clone()),
@@ -265,6 +270,7 @@ impl JoltDAG {
         #[cfg(not(target_arch = "wasm32"))]
         print_current_memory_usage("Stage 5 baseline");
 
+        tracing::info!("Stage 5 proving");
         let opening_proof = accumulator.borrow_mut().reduce_and_prove(
             polynomials_map,
             opening_proof_hints,

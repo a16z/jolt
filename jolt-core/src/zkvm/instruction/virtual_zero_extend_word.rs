@@ -1,16 +1,16 @@
-use tracer::instruction::{virtual_extend::VirtualExtend, RISCVCycle};
+use tracer::instruction::{virtual_zero_extend_word::VirtualZeroExtendWord, RISCVCycle};
 
 use crate::zkvm::lookup_table::{lower_half_word::LowerHalfWordTable, LookupTables};
 
 use super::{CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS};
 
-impl<const XLEN: usize> InstructionLookup<XLEN> for VirtualExtend {
+impl<const XLEN: usize> InstructionLookup<XLEN> for VirtualZeroExtendWord {
     fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
         Some(LowerHalfWordTable.into())
     }
 }
 
-impl InstructionFlags for VirtualExtend {
+impl InstructionFlags for VirtualZeroExtendWord {
     fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
         let mut flags = [false; NUM_CIRCUIT_FLAGS];
         flags[CircuitFlags::WriteLookupOutputToRD as usize] = true;
@@ -25,7 +25,7 @@ impl InstructionFlags for VirtualExtend {
     }
 }
 
-impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualExtend> {
+impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualZeroExtendWord> {
     fn to_lookup_operands(&self) -> (u64, u128) {
         let (x, y) = LookupQuery::<XLEN>::to_instruction_inputs(self);
         (0, u128::try_from(x as i128 + y).unwrap())
@@ -56,6 +56,6 @@ mod test {
 
     #[test]
     fn materialize_entry() {
-        materialize_entry_test::<Fr, VirtualExtend>();
+        materialize_entry_test::<Fr, VirtualZeroExtendWord>();
     }
 }
