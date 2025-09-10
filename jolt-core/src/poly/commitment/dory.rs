@@ -22,6 +22,7 @@ use rayon::prelude::*;
 use std::{borrow::Borrow, marker::PhantomData};
 use tracing::trace_span;
 
+use crate::field::MontU128;
 use dory::{
     arithmetic::{
         Field as DoryField, Group as DoryGroup, MultiScalarMul as DoryMultiScalarMul,
@@ -1246,6 +1247,7 @@ mod tests {
     use crate::transcripts::Blake2bTranscript;
     use ark_std::rand::thread_rng;
     use ark_std::UniformRand;
+    use rand::Rng;
     use serial_test::serial;
     use std::time::Instant;
     use rand::Rng;
@@ -1278,6 +1280,9 @@ mod tests {
 
         let mut rng = thread_rng();
         let opening_point: Vec<MontU128> = (0..num_vars).map(|_| MontU128::from(rng.gen::<u128>())).collect();
+        let opening_point: Vec<MontU128> = (0..num_vars)
+            .map(|_| MontU128::from(rng.gen::<u128>()))
+            .collect();
 
         let commit_start = Instant::now();
         let (commitment, row_commitments) = DoryCommitmentScheme::commit(&poly, prover_setup);
@@ -1448,6 +1453,9 @@ mod tests {
         let poly = MultilinearPolynomial::LargeScalars(DensePolynomial::new(coeffs.clone()));
 
         let opening_point: Vec<MontU128> = (0..num_vars).map(|_| MontU128::from(rng.gen::<u128>())).collect();
+        let opening_point: Vec<MontU128> = (0..num_vars)
+            .map(|_| MontU128::from(rng.gen::<u128>()))
+            .collect();
 
         let prover_setup = DoryCommitmentScheme::setup_prover(num_vars);
         let verifier_setup = DoryCommitmentScheme::setup_verifier(&prover_setup);
@@ -1493,6 +1501,9 @@ mod tests {
         {
             let tampered_opening_point: Vec<MontU128> =
                 (0..num_vars).map(|_| MontU128::from(rng.gen::<u128>())).collect();
+            let tampered_opening_point: Vec<MontU128> = (0..num_vars)
+                .map(|_| MontU128::from(rng.gen::<u128>()))
+                .collect();
 
             let mut verify_transcript =
                 Blake2bTranscript::new(DoryCommitmentScheme::protocol_name());
