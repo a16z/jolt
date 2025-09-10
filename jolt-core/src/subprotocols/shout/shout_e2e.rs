@@ -1,3 +1,4 @@
+use std::marker::PhantomData;
 use std::{cell::RefCell, rc::Rc};
 
 use crate::field::MontU128;
@@ -48,8 +49,7 @@ impl<F: JoltField> ShoutProverState<F> {
         debug_assert_eq!(r_cycle.len(), T.log_2());
         // Used to batch the core PIOP sumcheck and Hamming weight sumcheck
         // (see Section 4.2.1)
-        let z: MontU128 = transcript.challenge_u128();
-
+        let z = transcript.challenge_u128();
         let E: Vec<F> = EqPolynomial::evals(r_cycle);
 
         let span = tracing::span!(tracing::Level::INFO, "compute F");
@@ -110,7 +110,7 @@ struct ShoutSumcheckClaims<F: JoltField> {
 
 struct ShoutVerifierState<F: JoltField> {
     K: usize,
-    z: F,
+    z: MontU128,
     val: MultilinearPolynomial<F>,
 }
 
@@ -120,7 +120,7 @@ impl<F: JoltField> ShoutVerifierState<F> {
         transcript: &mut ProofTranscript,
     ) -> Self {
         let K = lookup_table.len();
-        let z: F = transcript.challenge_scalar();
+        let z: MontU128 = transcript.challenge_u128();
         let val = MultilinearPolynomial::from(lookup_table);
         Self { K, z, val }
     }
@@ -167,12 +167,12 @@ impl<F: JoltField> SumcheckInstance<F> for ShoutSumcheck<F> {
         if self.prover_state.is_some() {
             let ShoutProverState { rv_claim, z, .. } = self.prover_state.as_ref().unwrap();
             // Linear combination of the core PIOP claim and the Hamming weight claim (which is 1)
-            *rv_claim + z
+            *rv_claim + F::from_u128_mont(*z)
         } else if self.verifier_state.is_some() {
             let ShoutVerifierState { z, .. } = self.verifier_state.as_ref().unwrap();
             let ShoutSumcheckClaims { rv_claim, .. } = self.claims.as_ref().unwrap();
             // Linear combination of the core PIOP claim and the Hamming weight claim (which is 1)
-            *rv_claim + z
+            *rv_claim + F::from_u128_mont(*z)
         } else {
             panic!("Neither prover state nor verifier state is initialized");
         }
@@ -191,8 +191,8 @@ impl<F: JoltField> SumcheckInstance<F> for ShoutSumcheck<F> {
                 let val_evals = val.sumcheck_evals(i, degree, BindingOrder::LowToHigh);
 
                 [
-                    ra_evals[0] * (*z + val_evals[0]),
-                    ra_evals[1] * (*z + val_evals[1]),
+                    ra_evals[0] * (F::from_u128_mont(*z) + val_evals[0]),
+                    ra_evals[1] * (F::from_u128_mont(*z) + val_evals[1]),
                 ]
             })
             .reduce(
@@ -220,7 +220,7 @@ impl<F: JoltField> SumcheckInstance<F> for ShoutSumcheck<F> {
         let ShoutSumcheckClaims { ra_claim, .. } = self.claims.as_ref().unwrap();
 
         let r_address: Vec<MontU128> = r.iter().rev().copied().collect();
-        *ra_claim * (*z + val.evaluate(&r_address))
+        *ra_claim * (F::from_u128_mont(*z) + val.evaluate(&r_address))
     }
 }
 
@@ -292,13 +292,13 @@ impl<F: JoltField, ProofTranscript: Transcript> ShoutProof<F, ProofTranscript> {
     pub fn verify(
         &self,
         lookup_table: Vec<F>,
-        r_cycle: &[F],
+        r_cycle: &[MontU128],
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         let K = lookup_table.len();
 
-        let core_piop_verifier_state = ShoutVerifierState::initialize(lookup_table, transcript);
-        let booleanity_verifier_state = BooleanityVerifierState::initialize(r_cycle, K, transcript);
+        let core_piop_verifier_state = ShoutVerifierState::<F>::initialize(lookup_table, transcript);
+        let booleanity_verifier_state = BooleanityVerifierState::<F>::initialize(r_cycle, K, transcript);
 
         let core_piop_sumcheck = ShoutSumcheck {
             prover_state: None,
@@ -332,14 +332,19 @@ pub fn prove_core_shout_piop<F: JoltField, ProofTranscript: Transcript>(
     lookup_table: Vec<F>,
     read_addresses: Vec<usize>,
     transcript: &mut ProofTranscript,
-) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, F, F) {
+) -> (
+    SumcheckInstanceProof<F, ProofTranscript>,
+    Vec<MontU128>,
+    F,
+    F,
+) {
     let K = lookup_table.len();
     let T = read_addresses.len();
-    let r_cycle: Vec<F> = transcript.challenge_vector(T.log_2());
+    let r_cycle: Vec<MontU128> = transcript.challenge_vector_u128(T.log_2());
 
     // Sumcheck for the core Shout PIOP (Figure 5)
     let num_rounds = K.log_2();
-    let mut r_address: Vec<F> = Vec::with_capacity(num_rounds);
+    let mut r_address: Vec<MontU128> = Vec::with_capacity(num_rounds);
 
     let E: Vec<F> = EqPolynomial::evals(&r_cycle);
     let F: Vec<_> = (0..K)
@@ -389,10 +394,10 @@ pub fn prove_core_shout_piop<F: JoltField, ProofTranscript: Transcript>(
         compressed_poly.append_to_transcript(transcript);
         compressed_polys.push(compressed_poly);
 
-        let r_j = transcript.challenge_scalar::<F>();
+        let r_j = transcript.challenge_u128();
         r_address.push(r_j);
 
-        previous_claim = univariate_poly.evaluate(&r_j);
+        previous_claim = univariate_poly.evaluate_u128(&r_j);
 
         // Bind polynomials
         rayon::join(
@@ -435,12 +440,12 @@ impl<F: JoltField> BooleanityProverState<F> {
         transcript: &mut ProofTranscript,
     ) -> Self {
         let K = G.len();
-        let r: Vec<F> = transcript.challenge_vector(K.log_2());
+        let r: Vec<MontU128> = transcript.challenge_vector_u128(K.log_2());
         const DEGREE: usize = 3;
         let T = read_addresses.len();
 
         let D = MultilinearPolynomial::from(D);
-        let B = MultilinearPolynomial::from(EqPolynomial::evals(&r)); // (53)
+        let B = MultilinearPolynomial::from(EqPolynomial::<F>::evals(&r)); // (53)
         let mut F: Vec<F> = unsafe_allocate_zero_vec(K);
         F[0] = F::one();
 
@@ -479,24 +484,25 @@ impl<F: JoltField> BooleanityProverState<F> {
 }
 
 struct BooleanityVerifierState<F: JoltField> {
-    r_address: Vec<F>,
-    r_cycle: Vec<F>,
+    r_address: Vec<MontU128>,
+    r_cycle: Vec<MontU128>,
+    _phantom_data: PhantomData<F>
 }
 
 impl<F: JoltField> BooleanityVerifierState<F> {
     fn initialize<ProofTranscript: Transcript>(
-        r_cycle: &[F],
+        r_cycle: &[MontU128],
         K: usize,
         transcript: &mut ProofTranscript,
     ) -> Self {
         let r_cycle: Vec<_> = r_cycle.iter().copied().rev().collect();
-        let r_address: Vec<F> = transcript
-            .challenge_vector(K.log_2())
+        let r_address: Vec<MontU128> = transcript
+            .challenge_vector_u128(K.log_2())
             .into_iter()
             .rev()
             .collect();
 
-        Self { r_cycle, r_address }
+        Self { r_cycle, r_address, _phantom_data: PhantomData }
     }
 }
 
@@ -511,19 +517,19 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
         3
     }
 
-    fn normalize_opening_point(&self, _opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(&self, _opening_point: &[MontU128]) -> OpeningPoint<BIG_ENDIAN> {
         todo!()
     }
     fn cache_openings_verifier(
         &self,
         _accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
-        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        _opening_point: OpeningPoint<BIG_ENDIAN>,
     ) {
     }
     fn cache_openings_prover(
         &self,
         _accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
-        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        _opening_point: OpeningPoint<BIG_ENDIAN>,
     ) {
     }
     fn num_rounds(&self) -> usize {
@@ -531,7 +537,7 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
             let BooleanityProverState { K, T, .. } = self.prover_state.as_ref().unwrap();
             K.log_2() + T.log_2()
         } else if self.verifier_state.is_some() {
-            let BooleanityVerifierState { r_cycle, r_address } =
+            let BooleanityVerifierState { r_cycle, r_address, _phantom_data: PhantomData} =
                 self.verifier_state.as_ref().unwrap();
             r_address.len() + r_cycle.len()
         } else {
@@ -653,7 +659,7 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
         }
     }
 
-    fn bind(&mut self, r_j: F, round: usize) {
+    fn bind(&mut self, r_j: MontU128, round: usize) {
         let BooleanityProverState {
             K,
             B,
@@ -676,7 +682,7 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
                 .par_iter_mut()
                 .zip(F_right.par_iter_mut())
                 .for_each(|(x, y)| {
-                    *y = *x * r_j;
+                    *y = x.mul_u128_mont_form(r_j);
                     *x -= *y;
                 });
 
@@ -702,14 +708,14 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
     fn expected_output_claim(
         &self,
         _opening_accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
-        r: &[F],
+        r: &[MontU128],
     ) -> F {
-        let BooleanityVerifierState { r_address, r_cycle } = self.verifier_state.as_ref().unwrap();
+        let BooleanityVerifierState { r_address, r_cycle, _phantom_data : PhantomData } = self.verifier_state.as_ref().unwrap();
         let (r_address_prime, r_cycle_prime) = r.split_at(r_address.len());
         let ra_claim = self.ra_claim.unwrap();
 
-        EqPolynomial::mle(r_address, r_address_prime)
-            * EqPolynomial::mle(r_cycle, r_cycle_prime)
+        EqPolynomial::<F>::mle(r_address, r_address_prime)
+            * EqPolynomial::<F>::mle(r_cycle, r_cycle_prime)
             * (ra_claim.square() - ra_claim)
     }
 }
@@ -739,18 +745,18 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
 #[tracing::instrument(skip_all, name = "Shout booleanity sumcheck")]
 pub fn prove_booleanity<F: JoltField, ProofTranscript: Transcript>(
     read_addresses: Vec<usize>,
-    r: &[F],
+    r: &[MontU128],
     D: Vec<F>,
     G: Vec<F>,
     transcript: &mut ProofTranscript,
-) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, Vec<F>, F) {
+) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<MontU128>, Vec<MontU128>, F) {
     const DEGREE: usize = 3;
     let K = r.len().pow2();
     let T = read_addresses.len();
     debug_assert_eq!(D.len(), T);
     debug_assert_eq!(G.len(), K);
 
-    let mut B = MultilinearPolynomial::from(EqPolynomial::evals(r)); // (53)
+    let mut B = MultilinearPolynomial::from(EqPolynomial::<F>::evals(r)); // (53)
 
     // First log(K) rounds of sumcheck
 
@@ -758,7 +764,7 @@ pub fn prove_booleanity<F: JoltField, ProofTranscript: Transcript>(
     F[0] = F::one();
 
     let num_rounds = K.log_2() + T.log_2();
-    let mut r_address_prime: Vec<F> = Vec::with_capacity(K.log_2());
+    let mut r_address_prime: Vec<MontU128> = Vec::with_capacity(K.log_2());
     let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
 
     let mut previous_claim = F::zero();
@@ -860,10 +866,10 @@ pub fn prove_booleanity<F: JoltField, ProofTranscript: Transcript>(
         compressed_poly.append_to_transcript(transcript);
         compressed_polys.push(compressed_poly);
 
-        let r_j = transcript.challenge_scalar::<F>();
+        let r_j = transcript.challenge_u128();
         r_address_prime.push(r_j);
 
-        previous_claim = univariate_poly.evaluate(&r_j);
+        previous_claim = univariate_poly.evaluate_u128(&r_j);
 
         B.bind_parallel(r_j, BindingOrder::LowToHigh);
 
@@ -876,7 +882,7 @@ pub fn prove_booleanity<F: JoltField, ProofTranscript: Transcript>(
             .par_iter_mut()
             .zip(F_right.par_iter_mut())
             .for_each(|(x, y)| {
-                *y = *x * r_j;
+                *y = x.mul_u128_mont_form(r_j);
                 *x -= *y;
             });
     }
@@ -894,7 +900,7 @@ pub fn prove_booleanity<F: JoltField, ProofTranscript: Transcript>(
     let H: Vec<F> = read_addresses.par_iter().map(|&k| F[k]).collect();
     let mut H = MultilinearPolynomial::from(H);
     let mut D = MultilinearPolynomial::from(D);
-    let mut r_cycle_prime: Vec<F> = Vec::with_capacity(T.log_2());
+    let mut r_cycle_prime: Vec<MontU128> = Vec::with_capacity(T.log_2());
 
     // Last log(T) rounds of sumcheck
     for _round in 0..T.log_2() {
@@ -960,10 +966,10 @@ pub fn prove_booleanity<F: JoltField, ProofTranscript: Transcript>(
         compressed_poly.append_to_transcript(transcript);
         compressed_polys.push(compressed_poly);
 
-        let r_j = transcript.challenge_scalar::<F>();
+        let r_j = transcript.challenge_u128();
         r_cycle_prime.push(r_j);
 
-        previous_claim = univariate_poly.evaluate(&r_j);
+        previous_claim = univariate_poly.evaluate_u128(&r_j);
 
         // Bind polynomials
         rayon::join(
@@ -986,15 +992,15 @@ pub fn prove_booleanity<F: JoltField, ProofTranscript: Transcript>(
 pub fn prove_hamming_weight<F: JoltField, ProofTranscript: Transcript>(
     lookup_table: Vec<F>,
     read_addresses: Vec<usize>,
-    r_cycle_prime: Vec<F>,
+    r_cycle_prime: Vec<MontU128>,
     transcript: &mut ProofTranscript,
-) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, F) {
+) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<MontU128>, F) {
     let K = lookup_table.len();
     let T = read_addresses.len();
     debug_assert_eq!(T.log_2(), r_cycle_prime.len());
 
     let num_rounds = K.log_2();
-    let mut r_address_double_prime: Vec<F> = Vec::with_capacity(num_rounds);
+    let mut r_address_double_prime: Vec<MontU128> = Vec::with_capacity(num_rounds);
 
     let E: Vec<F> = EqPolynomial::evals(&r_cycle_prime);
     let F: Vec<_> = (0..K)
@@ -1025,10 +1031,10 @@ pub fn prove_hamming_weight<F: JoltField, ProofTranscript: Transcript>(
         compressed_poly.append_to_transcript(transcript);
         compressed_polys.push(compressed_poly);
 
-        let r_j = transcript.challenge_scalar::<F>();
+        let r_j = transcript.challenge_u128();
         r_address_double_prime.push(r_j);
 
-        previous_claim = univariate_poly.evaluate(&r_j);
+        previous_claim = univariate_poly.evaluate_u128(&r_j);
 
         ra.bind_parallel(r_j, BindingOrder::LowToHigh);
     }
@@ -1067,7 +1073,7 @@ pub fn prove_raf_evaluation<F: JoltField, ProofTranscript: Transcript>(
         .collect();
 
     let num_rounds = K.log_2();
-    let mut r_address_double_prime: Vec<F> = Vec::with_capacity(num_rounds);
+    let mut r_address_double_prime: Vec<MontU128> = Vec::with_capacity(num_rounds);
 
     let mut ra = MultilinearPolynomial::from(F);
     let mut int = IdentityPolynomial::new(num_rounds);
@@ -1101,10 +1107,10 @@ pub fn prove_raf_evaluation<F: JoltField, ProofTranscript: Transcript>(
         compressed_poly.append_to_transcript(transcript);
         compressed_polys.push(compressed_poly);
 
-        let r_j = transcript.challenge_scalar::<F>();
+        let r_j = transcript.challenge_u128();
         r_address_double_prime.push(r_j);
 
-        previous_claim = univariate_poly.evaluate(&r_j);
+        previous_claim = univariate_poly.evaluate_u128(&r_j);
 
         // Bind polynomials
         rayon::join(
@@ -1203,7 +1209,7 @@ mod tests {
             .collect();
 
         let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
-        let r: Vec<Fr> = prover_transcript.challenge_vector(TABLE_SIZE.log_2());
+        let r: Vec<MontU128> = prover_transcript.challenge_vector_u128(TABLE_SIZE.log_2());
         let r_prime: Vec<MontU128> = prover_transcript.challenge_vector_u128(NUM_LOOKUPS.log_2());
         let E: Vec<Fr> = EqPolynomial::evals(&r_prime);
         let F: Vec<_> = (0..TABLE_SIZE)
@@ -1253,7 +1259,7 @@ mod tests {
             .collect();
 
         let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
-        let r_cycle_prime: Vec<Fr> = prover_transcript.challenge_vector(NUM_LOOKUPS.log_2());
+        let r_cycle_prime: Vec<MontU128> = prover_transcript.challenge_vector_u128(NUM_LOOKUPS.log_2());
         let (sumcheck_proof, _, _) = prove_hamming_weight(
             lookup_table,
             read_addresses,
