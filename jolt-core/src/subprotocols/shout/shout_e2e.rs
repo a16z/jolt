@@ -1,5 +1,6 @@
 use std::{cell::RefCell, rc::Rc};
 
+use crate::field::MontU128;
 use crate::subprotocols::sumcheck::{BatchedSumcheck, SumcheckInstance, SumcheckInstanceProof};
 use crate::{
     field::JoltField,
@@ -39,7 +40,7 @@ impl<F: JoltField> ShoutProverState<F> {
     fn initialize<ProofTranscript: Transcript>(
         lookup_table: Vec<F>,
         read_addresses: &[usize],
-        r_cycle: &[F],
+        r_cycle: &[MontU128],
         transcript: &mut ProofTranscript,
     ) -> (Self, Vec<F>, Vec<F>) {
         let K = lookup_table.len();
@@ -47,7 +48,7 @@ impl<F: JoltField> ShoutProverState<F> {
         debug_assert_eq!(r_cycle.len(), T.log_2());
         // Used to batch the core PIOP sumcheck and Hamming weight sumcheck
         // (see Section 4.2.1)
-        let z: F = transcript.challenge_scalar();
+        let z: F = transcript.challenge_u128();
 
         let E: Vec<F> = EqPolynomial::evals(r_cycle);
 
@@ -137,19 +138,19 @@ impl<F: JoltField> SumcheckInstance<F> for ShoutSumcheck<F> {
         2
     }
 
-    fn normalize_opening_point(&self, _opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(&self, _opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN> {
         todo!()
     }
     fn cache_openings_prover(
         &self,
         _accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
-        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        _opening_point: OpeningPoint<BIG_ENDIAN>,
     ) {
     }
     fn cache_openings_verifier(
         &self,
         _accumulator: Rc<RefCell<crate::poly::opening_proof::VerifierOpeningAccumulator<F>>>,
-        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        _opening_point: OpeningPoint<BIG_ENDIAN>,
     ) {
     }
     fn num_rounds(&self) -> usize {
@@ -202,7 +203,7 @@ impl<F: JoltField> SumcheckInstance<F> for ShoutSumcheck<F> {
     }
 
     #[tracing::instrument(skip_all)]
-    fn bind(&mut self, r_j: F, _: usize) {
+    fn bind(&mut self, r_j: MontU128, _: usize) {
         let ShoutProverState { ra, val, .. } = self.prover_state.as_mut().unwrap();
         rayon::join(
             || ra.bind_parallel(r_j, BindingOrder::LowToHigh),
@@ -213,12 +214,12 @@ impl<F: JoltField> SumcheckInstance<F> for ShoutSumcheck<F> {
     fn expected_output_claim(
         &self,
         _opening_accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
-        r: &[F],
+        r: &[MontU128],
     ) -> F {
         let ShoutVerifierState { z, val, .. } = self.verifier_state.as_ref().unwrap();
         let ShoutSumcheckClaims { ra_claim, .. } = self.claims.as_ref().unwrap();
 
-        let r_address: Vec<F> = r.iter().rev().copied().collect();
+        let r_address: Vec<MontU128> = r.iter().rev().copied().collect();
         *ra_claim * (*z + val.evaluate(&r_address))
     }
 }
@@ -1045,7 +1046,7 @@ pub fn prove_hamming_weight<F: JoltField, ProofTranscript: Transcript>(
 pub fn prove_raf_evaluation<F: JoltField, ProofTranscript: Transcript>(
     lookup_table: Vec<F>,
     read_addresses: Vec<usize>,
-    r_cycle: Vec<F>,
+    r_cycle: Vec<MontU128>,
     claimed_evaluation: F,
     transcript: &mut ProofTranscript,
 ) -> (SumcheckInstanceProof<F, ProofTranscript>, F) {
@@ -1289,7 +1290,7 @@ mod tests {
         );
 
         let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
-        let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(NUM_LOOKUPS.log_2());
+        let r_cycle: Vec<MontU128> = prover_transcript.challenge_vector_u128(NUM_LOOKUPS.log_2());
         let raf_eval = raf.evaluate(&r_cycle);
         let (sumcheck_proof, _) = prove_raf_evaluation(
             lookup_table,
