@@ -768,7 +768,7 @@ where
         pcs_setup: &PCS::ProverSetup,
         transcript: &mut ProofTranscript,
     ) -> ReducedOpeningProof<F, PCS, ProofTranscript> {
-        tracing::debug!(
+        println!(
             "{} sumcheck instances in batched opening proof reduction",
             self.sumchecks.len()
         );

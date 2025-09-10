@@ -54,7 +54,7 @@ impl JoltDAG {
         let trace_length = trace.len();
         let padded_trace_length = trace_length.next_power_of_two();
 
-        tracing::info!("bytecode size: {}", preprocessing.shared.bytecode.code_size);
+        println!("bytecode size: {}", preprocessing.shared.bytecode.code_size);
 
         let ram_K = state_manager.ram_K;
         let bytecode_d = preprocessing.shared.bytecode.d;
