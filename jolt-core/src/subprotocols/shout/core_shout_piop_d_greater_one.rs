@@ -362,6 +362,8 @@ pub fn prove_generic_core_shout_pip_d_greater_than_one_with_gruen<
     // The degree of t is d
     let degree = d;
     for _time_round_idx in 0..T.log_2() {
+
+        let start_uni_evals = Instant::now();
         let E_2 = greq_r_cycle.E_in_current();
         let E_1 = greq_r_cycle.E_out_current();
 
@@ -472,12 +474,15 @@ pub fn prove_generic_core_shout_pip_d_greater_than_one_with_gruen<
         let compressed_poly = univariate_poly.compress();
         compressed_poly.append_to_transcript(transcript);
         compressed_polys.push(compressed_poly);
+        let end_uni_evals = start_uni_evals.elapsed();
+        println!("Just uni-evals took: {}", end_uni_evals.as_micros());
 
         // Get challenge that binds the variable
         let r_j = transcript.challenge_u128();
         r_address.push(r_j);
         previous_claim = univariate_poly.evaluate_u128(&r_j);
 
+        let start_binding = Instant::now();
         rayon::join(
             || {
                 ra_taus.iter_mut().for_each(|ra_tau| {
@@ -486,6 +491,8 @@ pub fn prove_generic_core_shout_pip_d_greater_than_one_with_gruen<
             },
             || greq_r_cycle.bind(r_j),
         );
+        let end_binding = start_binding.elapsed();
+        println!("Just uni-evals took: {}", end_binding.as_micros());
     }
 
     let end = start.elapsed();
