@@ -21,6 +21,7 @@ use crate::{
 };
 use rayon::prelude::*;
 use std::{cell::RefCell, rc::Rc};
+use crate::field::MontU128;
 
 /// Implements the sumcheck prover for the generic core Shout PIOP for d>1.
 /// See Figure 7 of https://eprint.iacr.org/2025/105
@@ -35,7 +36,7 @@ pub fn prove_generic_core_shout_pip_d_greater_than_one<
     transcript: &mut ProofTranscript,
 ) -> (
     SumcheckInstanceProof<F, ProofTranscript>,
-    Vec<F>,
+    Vec<MontU128>,
     F,
     F,
     F,
@@ -48,14 +49,14 @@ pub fn prove_generic_core_shout_pip_d_greater_than_one<
     let N = (K as f64).powf(1.0 / d as f64).round() as usize;
     // A random field element F^{\log_2 T} for Schwartz-Zippll
     // This is stored in Big Endian
-    let r_cycle: Vec<F> = transcript.challenge_vector(T.log_2());
+    let r_cycle: Vec<MontU128> = transcript.challenge_vector_u128(T.log_2());
     // Page 50: eq(44)
     let E_star: Vec<F> = EqPolynomial::evals(&r_cycle);
     // Page 50: eq(47) : what the paper calls v_k
     let C = construct_vector_c_in_shout(K, &read_addresses, &E_star);
     let num_rounds = K.log_2() + T.log_2();
     // The vector storing the verifiers sum-check challenges
-    let mut r_address: Vec<F> = Vec::with_capacity(num_rounds);
+    let mut r_address: Vec<MontU128> = Vec::with_capacity(num_rounds);
 
     // The sum check answer (for d=1, it's the same as normal one)
     let sumcheck_claim: F = C
@@ -100,10 +101,10 @@ pub fn prove_generic_core_shout_pip_d_greater_than_one<
         compressed_polys.push(compressed_poly);
 
         // Get challenge that binds the variable
-        let r_j = transcript.challenge_scalar::<F>();
+        let r_j = transcript.challenge_u128();
 
         r_address.push(r_j);
-        previous_claim = univariate_poly.evaluate(&r_j);
+        previous_claim = univariate_poly.evaluate_u128(&r_j);
 
         rayon::join(
             || ra.bind_parallel(r_j, BindingOrder::LowToHigh),
@@ -196,9 +197,9 @@ pub fn prove_generic_core_shout_pip_d_greater_than_one<
         compressed_polys.push(compressed_poly);
 
         // Get challenge that binds the variable
-        let r_j = transcript.challenge_scalar::<F>();
+        let r_j = transcript.challenge_u128();
         r_address.push(r_j);
-        previous_claim = univariate_poly.evaluate(&r_j);
+        previous_claim = univariate_poly.evaluate_u128(&r_j);
         rayon::join(
             || {
                 ra_taus.par_iter_mut().for_each(|ra_tau| {
@@ -242,7 +243,7 @@ pub fn prove_generic_core_shout_pip_d_greater_than_one_with_gruen<
     transcript: &mut ProofTranscript,
 ) -> (
     SumcheckInstanceProof<F, ProofTranscript>,
-    Vec<F>,
+    Vec<MontU128>,
     F,
     F,
     F,
@@ -255,15 +256,15 @@ pub fn prove_generic_core_shout_pip_d_greater_than_one_with_gruen<
     let N = (K as f64).powf(1.0 / d as f64).round() as usize;
     // A random field element F^{\log_2 T} for Schwartz-Zippll
     // This is stored in Big Endian
-    let r_cycle: Vec<F> = transcript.challenge_vector(T.log_2());
+    let r_cycle: Vec<MontU128> = transcript.challenge_vector_u128(T.log_2());
     // Page 50: eq(44)
-    let E_star: Vec<F> = EqPolynomial::evals(&r_cycle);
+    let E_star: Vec<F> = EqPolynomial::<F>::evals(&r_cycle);
     // Page 50: eq(47) : what the paper calls v_k
 
     let C = construct_vector_c_in_shout(K, &read_addresses, &E_star);
     let num_rounds = K.log_2() + T.log_2();
     // The vector storing the verifiers sum-check challenges
-    let mut r_address: Vec<F> = Vec::with_capacity(num_rounds);
+    let mut r_address: Vec<MontU128> = Vec::with_capacity(num_rounds);
 
     let sumcheck_claim: F = C
         .par_iter()
@@ -303,10 +304,10 @@ pub fn prove_generic_core_shout_pip_d_greater_than_one_with_gruen<
         compressed_poly.append_to_transcript(transcript);
         compressed_polys.push(compressed_poly);
 
-        let r_j = transcript.challenge_scalar::<F>();
+        let r_j = transcript.challenge_u128();
 
         r_address.push(r_j);
-        previous_claim = univariate_poly.evaluate(&r_j);
+        previous_claim = univariate_poly.evaluate_u128(&r_j);
 
         rayon::join(
             || ra.bind_parallel(r_j, BindingOrder::LowToHigh),
@@ -344,7 +345,7 @@ pub fn prove_generic_core_shout_pip_d_greater_than_one_with_gruen<
     // as they start with size \sqrt{T} which is below 16
     // which is the parallel threshold as max T = 2**32
 
-    let mut greq_r_cycle = GruenSplitEqPolynomial::new(&r_cycle, BindingOrder::LowToHigh);
+    let mut greq_r_cycle = GruenSplitEqPolynomial::<F>::new(&r_cycle, BindingOrder::LowToHigh);
     // This how many evals we need to evaluate t(x)
     // The degree of t is d
     let degree = d;
@@ -413,10 +414,11 @@ pub fn prove_generic_core_shout_pip_d_greater_than_one_with_gruen<
                 },
             );
 
+        let current_w_f = F::from_u128_mont(greq_r_cycle.get_current_w());
         let ell_at_0 = val_claim
             * greq_r_cycle.get_current_scalar()
-            * (F::one() - greq_r_cycle.get_current_w());
-        let ell_at_1 = val_claim * greq_r_cycle.get_current_scalar() * greq_r_cycle.get_current_w();
+            * (F::one() - current_w_f);
+        let ell_at_1 = val_claim * greq_r_cycle.get_current_scalar().mul_u128_mont_form(greq_r_cycle.get_current_w());
         // ell is linear: so do interpolation, don't use multiplication
         let mut d_plus_two_evaluations_of_ell: Vec<F> = vec![F::zero(); d + 2];
         d_plus_two_evaluations_of_ell[0] = ell_at_0;
@@ -460,9 +462,9 @@ pub fn prove_generic_core_shout_pip_d_greater_than_one_with_gruen<
         compressed_polys.push(compressed_poly);
 
         // Get challenge that binds the variable
-        let r_j = transcript.challenge_scalar::<F>();
+        let r_j = transcript.challenge_u128();
         r_address.push(r_j);
-        previous_claim = univariate_poly.evaluate(&r_j);
+        previous_claim = univariate_poly.evaluate_u128(&r_j);
 
         rayon::join(
             || {
@@ -596,6 +598,7 @@ mod tests {
         let end = start.elapsed().as_millis();
         println!("Took {end} ms\n");
 
+
         let mut prover_transcript = Blake2bTranscript::new(b"test_transcript");
         reset_mult_count();
         let start = Instant::now();
@@ -613,7 +616,6 @@ mod tests {
             D,
             &mut prover_transcript,
         );
-        let end = start.elapsed().as_millis();
         let gruen_opt_prover = get_mult_count();
 
         println!(
@@ -622,6 +624,8 @@ mod tests {
             gruen_opt_prover,
             (D * D + D + 1) * T + 5 * K + 4 * (1 << (POWER_OF_2 / 2))
         );
+        let end = start.elapsed();
+        println!("Time elapsed large: {}", end.as_micros());
 
         // Thesea are sanity checks to see that the openings
         // of the sum_check_with_split_eq and gruen opts are
@@ -638,7 +642,7 @@ mod tests {
         verifier_transcript.compare_to(prover_transcript);
 
         // Already in Big ENDIAN
-        let r_cycle: Vec<Fr> = verifier_transcript.challenge_vector(T.log_2());
+        let r_cycle: Vec<MontU128> = verifier_transcript.challenge_vector_u128(T.log_2());
         let verification_result = sumcheck_proof.verify(
             sumcheck_claim,
             K.log_2() + T.log_2(),
@@ -656,7 +660,7 @@ mod tests {
 
         // Now i need to take r_address and split it into D chunks
         let chunk_size = N.log_2();
-        let r_address_chunked: Vec<Vec<Fr>> = (0..D)
+        let r_address_chunked: Vec<Vec<MontU128>> = (0..D)
             .map(|i| {
                 let start = i * chunk_size;
                 let end = (i + 1) * chunk_size;
@@ -665,7 +669,7 @@ mod tests {
             .collect();
 
         // this is r_address_chunkded || r_time
-        let full_random_locations: Vec<Vec<Fr>> = (0..D)
+        let full_random_locations: Vec<Vec<MontU128>> = (0..D)
             .map(|i| {
                 let mut combined = r_address_chunked[i].clone(); // clone the chunk
                 assert_eq!(combined.len(), N.log_2());
@@ -686,10 +690,10 @@ mod tests {
         let evaluations_product: Fr = evaluations.iter().fold(Fr::one(), |acc, val| acc * val);
         assert_eq!(evaluations_product, ra_address_time_claim);
         assert_eq!(val_at_r_address, val_tau_claim);
-        let mut r_time_rev: Vec<Fr> = r_time.to_vec();
+        let mut r_time_rev: Vec<MontU128> = r_time.to_vec();
         r_time_rev.reverse();
         let eq_r_cycle_at_r_time =
-            MultilinearPolynomial::from(EqPolynomial::evals(&r_cycle)).evaluate(&r_time_rev);
+            MultilinearPolynomial::from(EqPolynomial::<Fr>::evals(&r_cycle)).evaluate(&r_time_rev);
         assert_eq!(eq_r_cycle_at_r_time, eq_rcycle_rtime_claim);
 
         let final_oracle_answer = val_at_r_address * evaluations_product * eq_r_cycle_at_r_time;
