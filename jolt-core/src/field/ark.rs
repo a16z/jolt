@@ -201,9 +201,9 @@ impl JoltField for ark_bn254::Fr {
     #[inline(always)]
     fn mul_u128_mont_form(&self, n: MontU128) -> Self {
         // FIXME: This is clearly wrong! But this is to verify a claim of mine.
-        let _n_val = n.0;
-        //ark_ff::Fp::mul_hi_u128(*self, n_val)
-        *self
+        let n_val = n.0;
+        ark_ff::Fp::mul_hi_u128(*self, n_val)
+        //*self
     }
 
     //#[inline(always)]
