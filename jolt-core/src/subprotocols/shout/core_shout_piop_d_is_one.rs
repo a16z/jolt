@@ -274,10 +274,6 @@ pub fn prove_generic_core_shout_piop_d_is_one_w_gruen<F: JoltField, ProofTranscr
         );
     }
     let duration = start.elapsed();
-    println!(
-        "\n Large (d is one, Gruen Opts)- Execution time: {}",
-        duration.as_nanos()
-    );
 
     // tau = r_address (the verifiers challenges which bind all log K variables of memory)
     // This is \widetilde{Val}(\tau) from the paper (eq 52)
