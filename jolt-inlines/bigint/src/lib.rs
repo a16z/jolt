@@ -67,7 +67,9 @@ fn auto_register() {
         tracing::error!("Failed to register BIGINT256_MUL inlines: {e}");
     }
 
-    if let Err(e) = store_inlines() {
-        tracing::error!("Failed to store BIGINT256_MUL inline traces: {e}");
+    if std::env::var("STORE_INLINE").unwrap_or_default() == "true" {
+        if let Err(e) = store_inlines() {
+            tracing::error!("Failed to store BIGINT256_MUL inline traces: {e}");
+        }
     }
 }

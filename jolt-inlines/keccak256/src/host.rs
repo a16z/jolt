@@ -55,8 +55,10 @@ fn auto_register() {
         tracing::error!("Failed to register Keccak256 inlines: {e}");
     }
 
-    if let Err(e) = store_inlines() {
-        eprintln!("Failed to store Keccak256 inline traces: {e}");
+    if std::env::var("STORE_INLINE").unwrap_or_default() == "true" {
+        if let Err(e) = store_inlines() {
+            eprintln!("Failed to store Keccak256 inline traces: {e}");
+        }
     }
 }
 

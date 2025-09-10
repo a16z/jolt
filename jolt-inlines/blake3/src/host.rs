@@ -54,7 +54,9 @@ fn auto_register() {
         eprintln!("Failed to register BLAKE3 inlines: {e}");
     }
 
-    if let Err(e) = store_inlines() {
-        eprintln!("Failed to store BLAKE3 inline traces: {e}");
+    if std::env::var("STORE_INLINE").unwrap_or_default() == "true" {
+        if let Err(e) = store_inlines() {
+            eprintln!("Failed to store BLAKE3 inline traces: {e}");
+        }
     }
 }
