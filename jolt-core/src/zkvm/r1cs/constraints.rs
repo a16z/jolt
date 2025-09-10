@@ -151,7 +151,6 @@ pub enum ConstraintName {
     NextUnexpPCEqLookupIfShouldJump,
     ShouldBranchDef,
     NextUnexpPCEqPCPlusImmIfShouldBranch,
-    CompressedNoUpdateDef,
     NextUnexpPCUpdateOtherwise,
     NextPCEqPCPlusOneIfInline,
 }
@@ -300,7 +299,7 @@ macro_rules! r1cs_prod_named {
 }
 
 /// Number of uniform R1CS constraints
-pub const NUM_R1CS_CONSTRAINTS: usize = 28;
+pub const NUM_R1CS_CONSTRAINTS: usize = 27;
 
 /// Static table of all 28 R1CS uniform constraints.
 pub static UNIFORM_R1CS: [NamedConstraint; NUM_R1CS_CONSTRAINTS] = [
@@ -511,12 +510,6 @@ pub static UNIFORM_R1CS: [NamedConstraint; NUM_R1CS_CONSTRAINTS] = [
     // }
     // Note that ShouldBranch and Jump instructions are mutually exclusive
     // And that DoNotUpdatePC and isCompressed are mutually exclusive
-    r1cs_prod!(
-        name: ConstraintName::CompressedNoUpdateDef,
-        ({ JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed) })
-            * ({ JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC) })
-            == ({ JoltR1CSInputs::CompressedDoNotUpdateUnexpPC })
-    ),
     r1cs_eq_conditional!(
         name: ConstraintName::NextUnexpPCUpdateOtherwise,
         if { { 1i128 } - { JoltR1CSInputs::ShouldBranch } - { JoltR1CSInputs::OpFlags(CircuitFlags::Jump) } }
@@ -725,10 +718,6 @@ pub fn eval_az_by_name<F: JoltField>(
         ConstraintName::NextUnexpPCEqPCPlusImmIfShouldBranch => flag_to_az(matches!(
             accessor.value_at(Inp::ShouldBranch.to_index(), row),
             SmallScalar::U8(1)
-        )),
-        ConstraintName::CompressedNoUpdateDef => flag_to_az(matches!(
-            accessor.value_at(Inp::OpFlags(CircuitFlags::IsCompressed).to_index(), row),
-            SmallScalar::Bool(true)
         )),
         ConstraintName::NextUnexpPCUpdateOtherwise => {
             // Az encodes 1 - ShouldBranch - Jump = (1 - Jump) - ShouldBranch.
@@ -1054,19 +1043,6 @@ pub fn eval_bz_by_name<F: JoltField>(
                 .as_i128();
             let imm = accessor.value_at(Inp::Imm.to_index(), row).as_i128();
             diff_to_bz(next - (pc + imm))
-        }
-        ConstraintName::CompressedNoUpdateDef => {
-            let flag2 = matches!(
-                accessor.value_at(
-                    Inp::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC).to_index(),
-                    row
-                ),
-                SmallScalar::Bool(true)
-            );
-            BzValue::S64(SignedBigInt::from_u64_with_sign(
-                if flag2 { 1 } else { 0 },
-                true,
-            ))
         }
         ConstraintName::NextUnexpPCUpdateOtherwise => {
             let next = accessor
