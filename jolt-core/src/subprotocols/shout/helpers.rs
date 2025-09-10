@@ -1,4 +1,7 @@
-use crate::{field::JoltField, poly::eq_poly::EqPolynomial};
+use crate::{
+    field::{JoltField, MontU128},
+    poly::eq_poly::EqPolynomial,
+};
 use rayon::prelude::*;
 
 /// Constructs the evaluations of the final univariate polynomial for sumcheck in parallel.
@@ -39,7 +42,7 @@ pub(crate) fn construct_final_sumcheck_evals<F: JoltField>(
 }
 
 pub(crate) fn compute_eq_taus_parallel<F: JoltField>(
-    r_address: &[F], // length must be d * log_N = \log K
+    r_address: &[MontU128], // length must be d * log_N = \log K
     d: usize,
     log_n: usize,
 ) -> Vec<Vec<F>> {
@@ -59,21 +62,21 @@ pub(crate) fn compute_eq_taus_parallel<F: JoltField>(
 }
 
 pub(crate) fn compute_eq_taus_serial<F: JoltField>(
-    r_address: &[F], // length must be d * log_N = \log K
+    r_address: &[MontU128], // length must be d * log_N = \log K
     d: usize,
     log_n: usize,
 ) -> Vec<Vec<F>> {
     assert_eq!(r_address.len(), d * log_n);
 
     (0..d)
-        .map(|j| {
+        .map(|j| -> Vec<F> {
             let start = j * log_n;
             let end = start + log_n;
 
             let mut tau_bits = r_address[start..end].to_vec();
             tau_bits.reverse(); // BigEndian
 
-            EqPolynomial::evals(&tau_bits)
+            EqPolynomial::<F>::evals(&tau_bits)
         })
         .collect()
 }
