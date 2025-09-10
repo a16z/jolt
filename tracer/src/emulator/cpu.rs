@@ -985,7 +985,7 @@ impl Cpu {
                     .values()
                     .any(|marker| marker.label == label);
                 if duplicate {
-                    tracing::warn!("Warning: Marker with label '{}' is already active", &label);
+                    println!("Warning: Marker with label '{}' is already active", &label);
                 }
 
                 self.active_markers.insert(
@@ -1002,14 +1002,12 @@ impl Cpu {
                 if let Some(mark) = self.active_markers.remove(&ptr) {
                     let real = self.executed_instrs - mark.start_instrs;
                     let virt = self.trace_len - mark.start_trace_len;
-                    tracing::info!(
+                    println!(
                         "\"{}\": {} RV32IM cycles, {} virtual cycles",
-                        mark.label,
-                        real,
-                        virt
+                        mark.label, real, virt
                     );
                 } else {
-                    tracing::warn!(
+                    println!(
                         "Warning: Attempt to end a marker (ptr: 0x{ptr:x}) that was never started"
                     );
                 }
