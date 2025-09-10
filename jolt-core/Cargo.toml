@@ -108,6 +108,10 @@ sha2_inline = { package = "jolt-inlines-sha2", path = "../jolt-inlines/sha2", fe
 [build-dependencies]
 common = { path = "../common" }
 
+[[bench]]
+name = "mul"
+harness = false
+
 #[[bench]]
 #name = "iai"
 #harness = false

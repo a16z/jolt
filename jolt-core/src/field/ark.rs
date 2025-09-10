@@ -249,7 +249,6 @@ impl core::ops::MulAssign<MontU128> for ark_bn254::Fr {
 
 #[cfg(test)]
 mod tests {
-    use std::u128;
 
     use super::*;
     use ark_bn254::Fr;
