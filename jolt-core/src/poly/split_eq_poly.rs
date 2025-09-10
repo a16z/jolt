@@ -5,7 +5,7 @@ use super::dense_mlpoly::DensePolynomial;
 use super::multilinear_polynomial::BindingOrder;
 use crate::field::MontU128;
 use crate::{field::JoltField, poly::eq_poly::EqPolynomial};
-use allocative::Allocative;
+//use allocative::Allocative;
 
 #[cfg_attr(feature = "allocative", derive(Allocative))]
 #[derive(Debug, Clone, PartialEq)]
@@ -218,8 +218,7 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
             BindingOrder::HighToLow => {
                 // multiply `current_scalar` by `eq(w[i], r) = (1 - w[i]) * (1 - r) + w[i] * r`
                 // which is the same as `1 - w[i] - r + 2 * w[i] * r`
-                let tmp = F::one();
-                //let prod_w_r = tmp.mul_two_u128s(self.w[self.current_index], r);
+                //let _prod_w_r = tmp.mul_two_u128s(self.w[self.current_index], r);
                 let prod_w_r =
                     F::from_u128_mont(self.w[self.current_index - 1]) * F::from_u128_mont(r);
 

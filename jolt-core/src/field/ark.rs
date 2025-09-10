@@ -274,6 +274,7 @@ mod tests {
 
     #[test]
     fn test_small_binding_multiplications() {
+        // TODO: BENCH THIS AND SEE WHAT THE SLOW DOWNS AREtodo
         // SANITY CHECK
         let b_1 = Fr::new_unchecked(BigInt([0, 0, 1, 0]));
         // as z is small enough the masking should not matter
