@@ -4,7 +4,7 @@ Other zkVMs, when applied ``monolithically'' (meaning in non-recursive fashion),
 
 The way other zkVMs address this issue is a technique commonly referred to as continuations. One breaks the CPU execution into ``shards'' (often consisting of about a million cycles each), prove each shard (more or less) independently, and then recursively aggregates the proofs. This leads to many complications and performance overheads.
 
-Jolt is amenable to a different approach that we call the streaming prover. For aribtrarily long CPU executions, the Jolt prover can keep its memory usage bounded to a few GBs (plus the space required to simply run the program itself) without SNARK recursion. The time overhead of the streaming Jolt prover relative to the linear-space Jolt prover will be minimal, certainly well below a factor of 2x. 
+Jolt is amenable to a different approach that we call the streaming prover. For arbitrarily long CPU executions, the Jolt prover can keep its memory usage bounded to a few GBs (plus the space required to simply run the program itself) without SNARK recursion. The time overhead of the streaming Jolt prover relative to the linear-space Jolt prover will be minimal, certainly well below a factor of 2x. 
 
 At a high level, the streaming Jolt prover works as follows. In each round of any invocation of the sum-check protocol within Jolt, each step of the CPU execution contributes independently to the prover's message in that round of sum-check. Hence, the prover can compute the required message in that round incrementally in small space as it runs the CPU from start to finish. This observation is very old (see <a href="https://arxiv.org/abs/1109.6882"> [CTY11] </a> and <a href="https://eprint.iacr.org/2014/846"> [Clover 2014] </a>). 
 
