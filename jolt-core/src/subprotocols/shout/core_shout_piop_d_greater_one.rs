@@ -492,7 +492,7 @@ pub fn prove_generic_core_shout_pip_d_greater_than_one_with_gruen<
             || greq_r_cycle.bind(r_j),
         );
         let end_binding = start_binding.elapsed();
-        println!("Just uni-evals took: {}", end_binding.as_micros());
+        println!("Just binding took: {}", end_binding.as_micros());
     }
 
     let end = start.elapsed();
