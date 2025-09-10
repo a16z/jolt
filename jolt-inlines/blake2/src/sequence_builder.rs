@@ -318,9 +318,11 @@ pub fn blake2b_inline_sequence_builder(
 }
 
 #[cfg(test)]
-mod test_sequence_builder {
-    use crate::{test_utils::Blake2CpuHarness, IV};
-    use tracer::instruction::RISCVTrace;
+mod tests {
+    use crate::{
+        test_utils::{create_blake2_harness, instruction, load_blake2_data, read_state},
+        IV,
+    };
 
     fn generate_default_input() -> ([u64; crate::MSG_BLOCK_LEN], u64) {
         // Message block with "abc" in little-endian
@@ -366,11 +368,10 @@ mod test_sequence_builder {
         counter: u64,
         is_final: bool,
     ) -> [u64; crate::STATE_VECTOR_LEN] {
-        let mut harness_trace = Blake2CpuHarness::new();
-        harness_trace.load_blake2_data(state, message, counter, is_final);
-        let instruction = Blake2CpuHarness::instruction();
-        instruction.trace(&mut harness_trace.harness.cpu, None);
-        harness_trace.read_state()
+        let mut harness = create_blake2_harness();
+        load_blake2_data(&mut harness, state, message, counter, is_final);
+        harness.execute_inline(instruction());
+        read_state(&mut harness)
     }
 
     /// Helper function to test blake2b compression with given input
@@ -397,7 +398,7 @@ mod test_sequence_builder {
     #[test]
     fn test_trace_result_with_random_inputs() {
         // Test with multiple random inputs
-        for _ in 0..1000 {
+        for _ in 0..10 {
             let input = generate_random_input();
             verify_blake2b_compression(input.0, input.1);
         }

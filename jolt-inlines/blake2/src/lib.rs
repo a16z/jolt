@@ -1,13 +1,19 @@
 //! BLAKE2 inline implementation module
 #![cfg_attr(not(feature = "host"), no_std)]
 
+pub const INLINE_OPCODE: u32 = 0x0B;
+
+pub const BLAKE2_FUNCT3: u32 = 0x00;
+pub const BLAKE2_FUNCT7: u32 = 0x02;
+pub const BLAKE2_NAME: &str = "BLAKE2_INLINE";
+
 pub mod sdk;
 pub use sdk::*;
 
 #[cfg(feature = "host")]
 pub mod exec;
 #[cfg(feature = "host")]
-pub mod trace_generator;
+pub mod sequence_builder;
 
 #[cfg(feature = "host")]
 mod host;

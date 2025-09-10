@@ -24,7 +24,7 @@ pub struct RegisterStateFormatLoad {
 impl InstructionRegisterState for RegisterStateFormatLoad {
     #[cfg(any(feature = "test-utils", test))]
     fn random(rng: &mut rand::rngs::StdRng) -> Self {
-        use crate::utils::test_harness::TEST_MEMORY_CAPACITY;
+        use crate::instruction::test::TEST_MEMORY_CAPACITY;
         use rand::RngCore;
         Self {
             rd: (rng.next_u64(), rng.next_u64()),
@@ -70,7 +70,7 @@ impl InstructionFormat for FormatLoad {
 
     #[cfg(any(feature = "test-utils", test))]
     fn random(rng: &mut rand::rngs::StdRng) -> Self {
-        use crate::utils::test_harness::TEST_MEMORY_CAPACITY;
+        use crate::instruction::test::TEST_MEMORY_CAPACITY;
         use common::constants::RISCV_REGISTER_COUNT;
         use rand::RngCore;
         Self {

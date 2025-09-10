@@ -6,25 +6,23 @@ pub mod multiplication;
 pub use multiplication::*;
 
 #[cfg(feature = "host")]
-use jolt_inlines_common::constants;
-#[cfg(feature = "host")]
 use tracer::register_inline;
 
 #[cfg(feature = "host")]
-use jolt_inlines_common::trace_writer::{write_inline_trace, InlineDescriptor, SequenceInputs};
-#[cfg(feature = "host")]
 use tracer::emulator::cpu::Xlen;
+#[cfg(feature = "host")]
+use tracer::utils::inline_sequence_writer::{write_inline_trace, InlineDescriptor, SequenceInputs};
 
 // Initialize and register inlines
 #[cfg(feature = "host")]
 pub fn init_inlines() -> Result<(), String> {
     // Register 256-bit Int multiplication
     register_inline(
-        constants::INLINE_OPCODE,
-        constants::bigint::mul256::FUNCT3,
-        constants::bigint::mul256::FUNCT7,
-        constants::bigint::mul256::NAME,
-        std::boxed::Box::new(trace_generator::bigint_mul_sequence_builder),
+        multiplication::INLINE_OPCODE,
+        multiplication::BIGINT256_MUL_FUNCT3,
+        multiplication::BIGINT256_MUL_FUNCT7,
+        multiplication::BIGINT256_MUL_NAME,
+        std::boxed::Box::new(sequence_builder::bigint_mul_sequence_builder),
     )?;
 
     Ok(())
@@ -32,14 +30,16 @@ pub fn init_inlines() -> Result<(), String> {
 
 #[cfg(feature = "host")]
 pub fn store_inlines() -> Result<(), String> {
+    use tracer::utils::inline_sequence_writer::AppendMode;
+
     let inline_info = InlineDescriptor::new(
-        constants::bigint::mul256::NAME.to_string(),
-        constants::INLINE_OPCODE,
-        constants::bigint::mul256::FUNCT3,
-        constants::bigint::mul256::FUNCT7,
+        multiplication::BIGINT256_MUL_NAME.to_string(),
+        multiplication::INLINE_OPCODE,
+        multiplication::BIGINT256_MUL_FUNCT3,
+        multiplication::BIGINT256_MUL_FUNCT7,
     );
     let sequence_inputs = SequenceInputs::default();
-    let instructions = trace_generator::bigint_mul_sequence_builder(
+    let instructions = sequence_builder::bigint_mul_sequence_builder(
         sequence_inputs.address,
         sequence_inputs.is_compressed,
         Xlen::Bit64,
@@ -52,7 +52,7 @@ pub fn store_inlines() -> Result<(), String> {
         &inline_info,
         &sequence_inputs,
         &instructions,
-        false,
+        AppendMode::Overwrite,
     )
     .map_err(|e| e.to_string())?;
 
@@ -67,7 +67,9 @@ fn auto_register() {
         tracing::error!("Failed to register BIGINT256_MUL inlines: {e}");
     }
 
-    if let Err(e) = store_inlines() {
-        tracing::error!("Failed to store BIGINT256_MUL inline traces: {e}");
+    if std::env::var("STORE_INLINE").unwrap_or_default() == "true" {
+        if let Err(e) = store_inlines() {
+            tracing::error!("Failed to store BIGINT256_MUL inline traces: {e}");
+        }
     }
 }

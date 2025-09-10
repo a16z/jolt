@@ -22,6 +22,9 @@
 //! * The helpers are infallible (in terms of error handling) and run in constant time.
 //! * Composite helpers such as `xor64` and `rotl64` expand into multiple 32-bit
 //!   operations; the exact policy is documented where they are defined.
+
+/// Common opcode for all inline instructions
+pub const INLINE_OPCODE: u32 = 0x0B;
 use crate::instruction::add::ADD;
 use crate::instruction::addi::ADDI;
 use crate::instruction::and::AND;
