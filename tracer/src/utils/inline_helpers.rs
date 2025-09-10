@@ -55,6 +55,7 @@ use crate::instruction::RISCVInstruction;
 use crate::instruction::RISCVTrace;
 use crate::instruction::RV32IMCycle;
 use crate::instruction::RV32IMInstruction;
+use crate::utils::virtual_registers::VirtualRegisterAllocator;
 
 use common::constants::RISCV_REGISTER_COUNT;
 use common::constants::VIRTUAL_INSTRUCTION_RESERVED_REGISTER_COUNT;
@@ -86,28 +87,42 @@ pub struct InstrAssembler {
     sequence: Vec<RV32IMInstruction>,
     /// Whether the instruction uses the the FormatInline instruction format.
     has_inline_instr_format: bool,
+    /// Virtual register allocator
+    pub allocator: VirtualRegisterAllocator,
 }
 
 impl InstrAssembler {
     /// Create a new assembler with an empty instruction buffer.
-    pub(crate) fn new(address: u64, is_compressed: bool, xlen: Xlen) -> Self {
+    pub(crate) fn new(
+        address: u64,
+        is_compressed: bool,
+        xlen: Xlen,
+        allocator: &VirtualRegisterAllocator,
+    ) -> Self {
         Self {
             address,
             is_compressed,
             xlen,
             sequence: Vec::new(),
             has_inline_instr_format: false,
+            allocator: allocator.clone(),
         }
     }
 
     /// Create a new assembler with an empty instruction buffer.
-    pub fn new_inline(address: u64, is_compressed: bool, xlen: Xlen) -> Self {
+    pub fn new_inline(
+        address: u64,
+        is_compressed: bool,
+        xlen: Xlen,
+        allocator: &VirtualRegisterAllocator,
+    ) -> Self {
         Self {
             address,
             is_compressed,
             xlen,
             sequence: Vec::new(),
             has_inline_instr_format: true,
+            allocator: allocator.clone(),
         }
     }
 
@@ -166,7 +181,8 @@ impl InstrAssembler {
                 );
             }
         }
-        self.sequence.extend(inst.inline_sequence(self.xlen));
+        self.sequence
+            .extend(inst.inline_sequence(&self.allocator, self.xlen));
     }
 
     /// Emit any R-type instruction (rd, rs1, rs2).
@@ -545,7 +561,8 @@ mod tests {
 
     #[test]
     fn test_rotl64_immediate_paths() {
-        let mut asm = InstrAssembler::new(0, false, Xlen::Bit64);
+        let allocator = VirtualRegisterAllocator::new();
+        let mut asm = InstrAssembler::new(0, false, Xlen::Bit64, &allocator);
         let dest = 0;
         let vectors: &[(u64, u32, u64)] = &[
             (0x0000000000000001, 1, 0x0000000000000002),

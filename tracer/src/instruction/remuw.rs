@@ -1,7 +1,7 @@
 use crate::instruction::add::ADD;
 use crate::instruction::mul::MUL;
 use crate::utils::inline_helpers::InstrAssembler;
-use crate::utils::virtual_registers::allocate_virtual_register;
+use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -61,7 +61,7 @@ impl RISCVTrace for REMUW {
             }
         };
 
-        let mut inline_sequence = self.inline_sequence(cpu.xlen);
+        let mut inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         if let RV32IMInstruction::VirtualAdvice(instr) = &mut inline_sequence[0] {
             instr.advice = quotient;
         } else {
@@ -80,16 +80,20 @@ impl RISCVTrace for REMUW {
         }
     }
 
-    fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
+    fn inline_sequence(
+        &self,
+        allocator: &VirtualRegisterAllocator,
+        xlen: Xlen,
+    ) -> Vec<RV32IMInstruction> {
         let a0 = self.operands.rs1; // dividend
         let a1 = self.operands.rs2; // divisor
-        let a2 = allocate_virtual_register(); // quotient from oracle
-        let a3 = allocate_virtual_register(); // remainder from oracle
-        let t0 = allocate_virtual_register();
-        let t1 = allocate_virtual_register();
-        let t2 = allocate_virtual_register();
-        let t3 = allocate_virtual_register();
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
+        let a2 = allocator.allocate(); // quotient from oracle
+        let a3 = allocator.allocate(); // remainder from oracle
+        let t0 = allocator.allocate();
+        let t1 = allocator.allocate();
+        let t2 = allocator.allocate();
+        let t3 = allocator.allocate();
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
 
         // get advice
         asm.emit_j::<VirtualAdvice>(*a2, 0);

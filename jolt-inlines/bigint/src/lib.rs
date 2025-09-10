@@ -9,8 +9,6 @@ pub use multiplication::*;
 use tracer::register_inline;
 
 #[cfg(feature = "host")]
-use tracer::emulator::cpu::Xlen;
-#[cfg(feature = "host")]
 use tracer::utils::inline_sequence_writer::{write_inline_trace, InlineDescriptor, SequenceInputs};
 
 // Initialize and register inlines
@@ -38,19 +36,13 @@ pub fn store_inlines() -> Result<(), String> {
         multiplication::BIGINT256_MUL_FUNCT3,
         multiplication::BIGINT256_MUL_FUNCT7,
     );
-    let sequence_inputs = SequenceInputs::default();
-    let instructions = sequence_builder::bigint_mul_sequence_builder(
-        sequence_inputs.address,
-        sequence_inputs.is_compressed,
-        Xlen::Bit64,
-        sequence_inputs.rs1,
-        sequence_inputs.rs2,
-        sequence_inputs.rs3,
-    );
+    let inputs = SequenceInputs::default();
+    let instructions =
+        sequence_builder::bigint_mul_sequence_builder((&inputs).into(), (&inputs).into());
     write_inline_trace(
         "bigint_mul256_trace.joltinline",
         &inline_info,
-        &sequence_inputs,
+        &inputs,
         &instructions,
         AppendMode::Overwrite,
     )

@@ -16,6 +16,7 @@ use super::{
 use crate::{
     emulator::cpu::{Cpu, Xlen},
     instruction::NormalizedInstruction,
+    utils::{inline_helpers::InstrAssembler, virtual_registers::VirtualRegisterAllocator},
 };
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
@@ -24,7 +25,7 @@ use std::sync::RwLock;
 
 // Type alias for the inline_sequence functions signature
 pub type InlineSequenceFunction =
-    Box<dyn Fn(u64, bool, Xlen, u8, u8, u8) -> Vec<RV32IMInstruction> + Send + Sync>;
+    Box<dyn Fn(InstrAssembler, FormatInline) -> Vec<RV32IMInstruction> + Send + Sync>;
 
 // Key type for the registry: (opcode, funct3, funct7)
 type InlineKey = (u32, u32, u32);
@@ -187,29 +188,32 @@ impl INLINE {
 
 impl RISCVTrace for INLINE {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let inline_sequence = self.inline_sequence(cpu.xlen);
+        let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
 
-    fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
+    fn inline_sequence(
+        &self,
+        allocator: &VirtualRegisterAllocator,
+        xlen: Xlen,
+    ) -> Vec<RV32IMInstruction> {
         let key = (self.opcode, self.funct3, self.funct7);
 
         match INLINE_REGISTRY.read() {
             Ok(registry) => {
                 match registry.get(&key) {
                     Some((_name, virtual_seq_fn)) => {
-                        // Generate the virtual instruction sequence
-                        virtual_seq_fn(
+                        let asm = InstrAssembler::new_inline(
                             self.address,
                             self.is_compressed,
                             xlen,
-                            self.operands.rs1,
-                            self.operands.rs2,
-                            self.operands.rs3,
-                        )
+                            allocator,
+                        );
+                        // Generate the virtual instruction sequence
+                        virtual_seq_fn(asm, self.operands)
                     }
                     None => {
                         panic!(
@@ -260,7 +264,7 @@ mod tests {
             0,
             0,
             "test",
-            Box::new(|_, _, _, _, _, _| vec![]),
+            Box::new(|_, _| vec![]),
         );
         assert!(result.is_err());
 
@@ -270,7 +274,7 @@ mod tests {
             8,    // Invalid funct3 (> 7)
             0,
             "test",
-            Box::new(|_, _, _, _, _, _| vec![]),
+            Box::new(|_, _| vec![]),
         );
         assert!(result.is_err());
         assert!(result
@@ -283,7 +287,7 @@ mod tests {
             0,
             128, // Invalid funct7 (> 127)
             "test",
-            Box::new(|_, _, _, _, _, _| vec![]),
+            Box::new(|_, _| vec![]),
         );
         assert!(result.is_err());
         assert!(result
@@ -294,13 +298,7 @@ mod tests {
     #[test]
     fn test_valid_opcodes() {
         // Test that 0x0B (custom-0) is valid
-        let result = register_inline(
-            0x0B,
-            0,
-            0,
-            "test_custom0",
-            Box::new(|_, _, _, _, _, _| vec![]),
-        );
+        let result = register_inline(0x0B, 0, 0, "test_custom0", Box::new(|_, _| vec![]));
         assert!(result.is_ok());
 
         // Test that 0x2B (custom-1) is valid
@@ -309,7 +307,7 @@ mod tests {
             0,
             1, // Different funct7 to avoid duplicate registration
             "test_custom1",
-            Box::new(|_, _, _, _, _, _| vec![]),
+            Box::new(|_, _| vec![]),
         );
         assert!(result.is_ok());
     }

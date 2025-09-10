@@ -1,7 +1,6 @@
 //! Host-side implementation and registration.
 pub use crate::sequence_builder;
 use crate::{BLAKE2_FUNCT3, BLAKE2_FUNCT7, BLAKE2_NAME, INLINE_OPCODE};
-use tracer::emulator::cpu::Xlen;
 use tracer::register_inline;
 use tracer::utils::inline_sequence_writer::{
     write_inline_trace, AppendMode, InlineDescriptor, SequenceInputs,
@@ -26,19 +25,13 @@ pub fn store_inlines() -> Result<(), String> {
         BLAKE2_FUNCT3,
         BLAKE2_FUNCT7,
     );
-    let sequence_inputs = SequenceInputs::default();
-    let instructions = sequence_builder::blake2b_inline_sequence_builder(
-        sequence_inputs.address,
-        sequence_inputs.is_compressed,
-        Xlen::Bit64,
-        sequence_inputs.rs1,
-        sequence_inputs.rs2,
-        sequence_inputs.rs3,
-    );
+    let inputs = SequenceInputs::default();
+    let instructions =
+        sequence_builder::blake2b_inline_sequence_builder((&inputs).into(), (&inputs).into());
     write_inline_trace(
         "blake2_trace.joltinline",
         &inline_info,
-        &sequence_inputs,
+        &inputs,
         &instructions,
         AppendMode::Overwrite,
     )

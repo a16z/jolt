@@ -7,15 +7,17 @@
 //!   - "Round" = single application of G function mixing to the working state
 //!   - "G function" = core mixing function that updates 4 state words using 2 message words
 
+use core::array;
+
 use crate::{CHAINING_VALUE_LEN, COUNTER_LEN, IV, MSG_BLOCK_LEN, MSG_SCHEDULE, NUM_ROUNDS};
-use tracer::emulator::cpu::Xlen;
+use tracer::instruction::format::format_inline::FormatInline;
 use tracer::instruction::lui::LUI;
 use tracer::instruction::lw::LW;
 use tracer::instruction::sw::SW;
 use tracer::instruction::xor::XOR;
 use tracer::instruction::RV32IMInstruction;
 use tracer::utils::inline_helpers::{InstrAssembler, Value::Imm, Value::Reg};
-use tracer::utils::virtual_registers::allocate_virtual_register_for_inline;
+use tracer::utils::virtual_registers::VirtualRegisterGuard;
 
 pub const NEEDED_REGISTERS: u8 = 45;
 
@@ -45,26 +47,18 @@ pub enum RotationAmount {
 struct Blake3SequenceBuilder {
     asm: InstrAssembler,
     round: u8,
-    vr: [u8; NEEDED_REGISTERS as usize],
-    operand_rs1: u8,
-    operand_rs2: u8,
+    vr: [VirtualRegisterGuard; NEEDED_REGISTERS as usize],
+    operands: FormatInline,
 }
 
 impl Blake3SequenceBuilder {
-    fn new(
-        address: u64,
-        is_compressed: bool,
-        xlen: Xlen,
-        vr: [u8; NEEDED_REGISTERS as usize],
-        operand_rs1: u8,
-        operand_rs2: u8,
-    ) -> Self {
+    fn new(asm: InstrAssembler, operands: FormatInline) -> Self {
+        let vr = array::from_fn(|_| asm.allocator.allocate_for_inline());
         Blake3SequenceBuilder {
-            asm: InstrAssembler::new_inline(address, is_compressed, xlen),
+            asm,
             round: 0,
             vr,
-            operand_rs1,
-            operand_rs2,
+            operands,
         }
     }
 
@@ -90,37 +84,37 @@ impl Blake3SequenceBuilder {
         // v[0..7] = h[0..7]
         for i in 0..CHAINING_VALUE_LEN {
             self.asm.xor(
-                Reg(self.vr[CV_START_VR + i]),
+                Reg(*self.vr[CV_START_VR + i]),
                 Imm(0),
-                self.vr[INTERNAL_STATE_VR_START + i],
+                *self.vr[INTERNAL_STATE_VR_START + i],
             );
         }
 
         // v[8..11] = IV[0..3]
         for (i, val) in IV.iter().enumerate().take(4) {
             self.asm
-                .emit_u::<LUI>(self.vr[CHAINING_VALUE_LEN + i], *val as u64);
+                .emit_u::<LUI>(*self.vr[CHAINING_VALUE_LEN + i], *val as u64);
         }
         // v[12..15] = counter values, input length, and flags
         self.asm.xor(
-            Reg(self.vr[COUNTER_START_VR]),
+            Reg(*self.vr[COUNTER_START_VR]),
             Imm(0),
-            self.vr[INTERNAL_STATE_VR_START + 12],
+            *self.vr[INTERNAL_STATE_VR_START + 12],
         );
         self.asm.xor(
-            Reg(self.vr[COUNTER_START_VR + 1]),
+            Reg(*self.vr[COUNTER_START_VR + 1]),
             Imm(0),
-            self.vr[INTERNAL_STATE_VR_START + 13],
+            *self.vr[INTERNAL_STATE_VR_START + 13],
         );
         self.asm.xor(
-            Reg(self.vr[INPUT_BYTES_VR]),
+            Reg(*self.vr[INPUT_BYTES_VR]),
             Imm(0),
-            self.vr[INTERNAL_STATE_VR_START + 14],
+            *self.vr[INTERNAL_STATE_VR_START + 14],
         );
         self.asm.xor(
-            Reg(self.vr[FLAG_VR]),
+            Reg(*self.vr[FLAG_VR]),
             Imm(0),
-            self.vr[INTERNAL_STATE_VR_START + 15],
+            *self.vr[INTERNAL_STATE_VR_START + 15],
         );
     }
 
@@ -142,13 +136,13 @@ impl Blake3SequenceBuilder {
     }
 
     fn g_function(&mut self, a: usize, b: usize, c: usize, d: usize, x: usize, y: usize) {
-        let va = self.vr[a];
-        let vb = self.vr[b];
-        let vc = self.vr[c];
-        let vd = self.vr[d];
-        let mx = self.vr[MSG_BLOCK_START_VR + x];
-        let my = self.vr[MSG_BLOCK_START_VR + y];
-        let temp1 = self.vr[TEMP_VR];
+        let va = *self.vr[a];
+        let vb = *self.vr[b];
+        let vc = *self.vr[c];
+        let vd = *self.vr[d];
+        let mx = *self.vr[MSG_BLOCK_START_VR + x];
+        let my = *self.vr[MSG_BLOCK_START_VR + y];
+        let temp1 = *self.vr[TEMP_VR];
 
         // v[a] = v[a] + v[b] + m[x]
         self.asm.add(Reg(va), Reg(vb), temp1);
@@ -179,9 +173,9 @@ impl Blake3SequenceBuilder {
 
     fn finalize_state(&mut self) {
         for i in 0..CHAINING_VALUE_LEN {
-            let hi = self.vr[CV_START_VR + i];
-            let vi = self.vr[INTERNAL_STATE_VR_START + i];
-            let vi8 = self.vr[INTERNAL_STATE_VR_START + i + 8];
+            let hi = *self.vr[CV_START_VR + i];
+            let vi = *self.vr[INTERNAL_STATE_VR_START + i];
+            let vi8 = *self.vr[INTERNAL_STATE_VR_START + i + 8];
             self.asm.xor(Reg(vi), Reg(vi8), hi);
         }
     }
@@ -190,7 +184,7 @@ impl Blake3SequenceBuilder {
     fn store_state(&mut self) {
         for i in 0..CHAINING_VALUE_LEN {
             self.asm
-                .emit_s::<SW>(self.operand_rs1, self.vr[CV_START_VR + i], (i as i64) * 4);
+                .emit_s::<SW>(self.operands.rs1, *self.vr[CV_START_VR + i], (i as i64) * 4);
         }
     }
 
@@ -204,7 +198,7 @@ impl Blake3SequenceBuilder {
     ) {
         (0..count).for_each(|i| {
             self.asm.emit_ld::<LW>(
-                self.vr[vr_start + i],
+                *self.vr[vr_start + i],
                 base_register,
                 (memory_offset_start + i) as i64 * 4,
             );
@@ -246,16 +240,16 @@ impl Blake3SequenceBuilder {
     }
 
     fn load_chaining_value(&mut self) {
-        self.load_data_range(self.operand_rs1, 0, CV_START_VR, CHAINING_VALUE_LEN);
+        self.load_data_range(self.operands.rs2, 0, CV_START_VR, CHAINING_VALUE_LEN);
     }
 
     fn load_message_blocks(&mut self) {
-        self.load_data_range(self.operand_rs2, 0, MSG_BLOCK_START_VR, MSG_BLOCK_LEN);
+        self.load_data_range(self.operands.rs2, 0, MSG_BLOCK_START_VR, MSG_BLOCK_LEN);
     }
 
     fn load_counter(&mut self) {
         self.load_data_range(
-            self.operand_rs2,
+            self.operands.rs2,
             MSG_BLOCK_LEN,
             COUNTER_START_VR,
             COUNTER_LEN,
@@ -265,36 +259,24 @@ impl Blake3SequenceBuilder {
     fn load_input_len_and_flags(&mut self) {
         // input length
         self.asm.emit_ld::<LW>(
-            self.vr[INPUT_BYTES_VR],
-            self.operand_rs2,
+            *self.vr[INPUT_BYTES_VR],
+            self.operands.rs2,
             (MSG_BLOCK_LEN + COUNTER_LEN) as i64 * 4,
         );
         // flag
         self.asm.emit_ld::<LW>(
-            self.vr[FLAG_VR],
-            self.operand_rs2,
+            *self.vr[FLAG_VR],
+            self.operands.rs2,
             (MSG_BLOCK_LEN + COUNTER_LEN + 1) as i64 * 4,
         );
     }
 }
 
 pub fn blake3_inline_sequence_builder(
-    address: u64,
-    is_compressed: bool,
-    xlen: Xlen,
-    operand_rs1: u8,
-    operand_rs2: u8,
-    _operand_rs3: u8,
+    asm: InstrAssembler,
+    operands: FormatInline,
 ) -> Vec<RV32IMInstruction> {
-    let guards: Vec<_> = (0..NEEDED_REGISTERS)
-        .map(|_| allocate_virtual_register_for_inline())
-        .collect();
-    let mut vr = [0; NEEDED_REGISTERS as usize];
-    for (i, guard) in guards.iter().enumerate() {
-        vr[i] = **guard;
-    }
-    let builder =
-        Blake3SequenceBuilder::new(address, is_compressed, xlen, vr, operand_rs1, operand_rs2);
+    let builder = Blake3SequenceBuilder::new(asm, operands);
     builder.build()
 }
 

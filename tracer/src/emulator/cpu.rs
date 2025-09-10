@@ -8,6 +8,7 @@ use alloc::collections::btree_map::BTreeMap as FnvHashMap;
 use common::constants::REGISTER_COUNT;
 
 use crate::instruction::{uncompress_instruction, RV32IMCycle, RV32IMInstruction};
+use crate::utils::virtual_registers::VirtualRegisterAllocator;
 
 use super::mmu::{AddressingMode, Mmu};
 use super::terminal::Terminal;
@@ -101,6 +102,7 @@ pub struct Cpu {
     pub trace_len: usize,
     executed_instrs: u64, // “real” RV32IM cycles
     active_markers: FnvHashMap<u32, ActiveMarker>,
+    pub vr_allocator: VirtualRegisterAllocator,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -263,6 +265,7 @@ impl Cpu {
             trace_len: 0,
             executed_instrs: 0,
             active_markers: FnvHashMap::default(),
+            vr_allocator: VirtualRegisterAllocator::new(),
         };
         // cpu.x[0xb] = 0x1020; // I don't know why but Linux boot seems to require this initialization
         cpu.write_csr_raw(CSR_MISA_ADDRESS, 0x800000008014312f);

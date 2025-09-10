@@ -39,19 +39,13 @@ pub fn store_inlines() -> Result<(), String> {
         SHA256_FUNCT3,
         SHA256_FUNCT7,
     );
-    let sequence_inputs = SequenceInputs::default();
-    let instructions = sequence_builder::sha2_inline_sequence_builder(
-        sequence_inputs.address,
-        sequence_inputs.is_compressed,
-        sequence_inputs.xlen,
-        sequence_inputs.rs1,
-        sequence_inputs.rs2,
-        sequence_inputs.rs3,
-    );
+    let inputs = SequenceInputs::default();
+    let instructions =
+        sequence_builder::sha2_inline_sequence_builder((&inputs).into(), (&inputs).into());
     write_inline_trace(
         "sha256_trace.joltinline",
         &inline_info,
-        &sequence_inputs,
+        &inputs,
         &instructions,
         AppendMode::Overwrite,
     )
@@ -64,19 +58,13 @@ pub fn store_inlines() -> Result<(), String> {
         SHA256_INIT_FUNCT3,
         SHA256_INIT_FUNCT7,
     );
-    let sequence_inputs = SequenceInputs::default();
-    let instructions = sequence_builder::sha2_init_inline_sequence_builder(
-        sequence_inputs.address,
-        sequence_inputs.is_compressed,
-        sequence_inputs.xlen,
-        sequence_inputs.rs1,
-        sequence_inputs.rs2,
-        sequence_inputs.rs3,
-    );
+    let inputs = SequenceInputs::default();
+    let instructions =
+        sequence_builder::sha2_init_inline_sequence_builder((&inputs).into(), (&inputs).into());
     write_inline_trace(
         "sha256_trace.joltinline",
         &inline_info,
-        &sequence_inputs,
+        &inputs,
         &instructions,
         AppendMode::Append,
     )

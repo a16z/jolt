@@ -27,19 +27,13 @@ pub fn store_inlines() -> Result<(), String> {
         KECCAK256_FUNCT3,
         KECCAK256_FUNCT7,
     );
-    let sequence_inputs = SequenceInputs::default();
-    let instructions = sequence_builder::keccak256_inline_sequence_builder(
-        sequence_inputs.address,
-        sequence_inputs.is_compressed,
-        sequence_inputs.xlen,
-        sequence_inputs.rs1,
-        sequence_inputs.rs2,
-        sequence_inputs.rs3,
-    );
+    let inputs = SequenceInputs::default();
+    let instructions =
+        sequence_builder::keccak256_inline_sequence_builder((&inputs).into(), (&inputs).into());
     write_inline_trace(
         "keccak256_trace.joltinline",
         &inline_info,
-        &sequence_inputs,
+        &inputs,
         &instructions,
         AppendMode::Overwrite,
     )
@@ -69,7 +63,7 @@ mod tests {
     use std::path::Path;
 
     use tracer::utils::inline_sequence_writer::{
-        DEFAULT_RAM_START_ADDRESS, DEFAULT_RS1, DEFAULT_RS2, DEFAULT_RS3, DEFAULT_XLEN,
+        DEFAULT_RAM_START_ADDRESS, DEFAULT_RS1, DEFAULT_RS2, DEFAULT_RS3,
     };
 
     use crate::sequence_builder::keccak256_inline_sequence_builder;
@@ -80,15 +74,10 @@ mod tests {
             write_inline_trace, AppendMode, InlineDescriptor, SequenceInputs,
         };
 
+        let inputs = SequenceInputs::default();
         // Generate the instructions
-        let generated_instructions = keccak256_inline_sequence_builder(
-            DEFAULT_RAM_START_ADDRESS,
-            false,
-            DEFAULT_XLEN,
-            DEFAULT_RS1,
-            DEFAULT_RS2,
-            DEFAULT_RS3,
-        );
+        let generated_instructions =
+            keccak256_inline_sequence_builder((&inputs).into(), (&inputs).into());
 
         let test_file_name = format!("keccak256_trace_test_{}.joltinline", std::process::id());
         let trace_file_path = Path::new(&test_file_name);

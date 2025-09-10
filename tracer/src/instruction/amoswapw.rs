@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::utils::inline_helpers::InstrAssembler;
-use crate::utils::virtual_registers::allocate_virtual_register;
+use crate::utils::virtual_registers::VirtualRegisterAllocator;
 
 use crate::{
     declare_riscv_instr,
@@ -44,7 +44,7 @@ impl AMOSWAPW {
 
 impl RISCVTrace for AMOSWAPW {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let inline_sequence = self.inline_sequence(cpu.xlen);
+        let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
             // In each iteration, create a new Option containing a re-borrowed reference
@@ -52,11 +52,16 @@ impl RISCVTrace for AMOSWAPW {
         }
     }
 
-    fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
+    fn inline_sequence(
+        &self,
+        allocator: &VirtualRegisterAllocator,
+        xlen: Xlen,
+    ) -> Vec<RV32IMInstruction> {
         match xlen {
             Xlen::Bit32 => {
-                let v_rd = allocate_virtual_register();
-                let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
+                let v_rd = allocator.allocate();
+                let mut asm =
+                    InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
                 asm.emit_halign::<super::virtual_assert_word_alignment::VirtualAssertWordAlignment>(self.operands.rs1, 0);
                 asm.emit_i::<super::virtual_lw::VirtualLW>(*v_rd, self.operands.rs1, 0);
                 asm.emit_s::<super::virtual_sw::VirtualSW>(self.operands.rs1, self.operands.rs2, 0);
@@ -64,13 +69,14 @@ impl RISCVTrace for AMOSWAPW {
                 asm.finalize()
             }
             Xlen::Bit64 => {
-                let v_mask = allocate_virtual_register();
-                let v_dword_address = allocate_virtual_register();
-                let v_dword = allocate_virtual_register();
-                let v_word = allocate_virtual_register();
-                let v_shift = allocate_virtual_register();
-                let v_rd = allocate_virtual_register();
-                let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
+                let v_mask = allocator.allocate();
+                let v_dword_address = allocator.allocate();
+                let v_dword = allocator.allocate();
+                let v_word = allocator.allocate();
+                let v_shift = allocator.allocate();
+                let v_rd = allocator.allocate();
+                let mut asm =
+                    InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
                 asm.emit_halign::<super::virtual_assert_word_alignment::VirtualAssertWordAlignment>(self.operands.rs1, 0);
                 asm.emit_i::<super::andi::ANDI>(*v_dword_address, self.operands.rs1, -8i64 as u64);
                 asm.emit_ld::<super::ld::LD>(*v_dword, *v_dword_address, 0);

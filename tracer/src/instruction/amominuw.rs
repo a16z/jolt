@@ -9,7 +9,7 @@ use super::virtual_zero_extend_word::VirtualZeroExtendWord;
 use super::xori::XORI;
 use super::RV32IMInstruction;
 use crate::utils::inline_helpers::InstrAssembler;
-use crate::utils::virtual_registers::allocate_virtual_register;
+use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use crate::{
     declare_riscv_instr,
     emulator::cpu::{Cpu, Xlen},
@@ -54,7 +54,7 @@ impl AMOMINUW {
 
 impl RISCVTrace for AMOMINUW {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let inline_sequence = self.inline_sequence(cpu.xlen);
+        let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
             // In each iteration, create a new Option containing a re-borrowed reference
@@ -62,14 +62,18 @@ impl RISCVTrace for AMOMINUW {
         }
     }
 
-    fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
-        let v_rd = allocate_virtual_register();
-        let v_rs2 = allocate_virtual_register();
-        let v_sel_rs2 = allocate_virtual_register();
-        let v_sel_rd = allocate_virtual_register();
-        let v_tmp = allocate_virtual_register();
+    fn inline_sequence(
+        &self,
+        allocator: &VirtualRegisterAllocator,
+        xlen: Xlen,
+    ) -> Vec<RV32IMInstruction> {
+        let v_rd = allocator.allocate();
+        let v_rs2 = allocator.allocate();
+        let v_sel_rs2 = allocator.allocate();
+        let v_sel_rd = allocator.allocate();
+        let v_tmp = allocator.allocate();
 
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
 
         match xlen {
             Xlen::Bit32 => {
@@ -84,11 +88,11 @@ impl RISCVTrace for AMOMINUW {
                 amo_post32(&mut asm, *v_rs2, self.operands.rs1, self.operands.rd, *v_rd);
             }
             Xlen::Bit64 => {
-                let v_mask = allocate_virtual_register();
-                let v_dword_address = allocate_virtual_register();
-                let v_dword = allocate_virtual_register();
-                let v_word = allocate_virtual_register();
-                let v_shift = allocate_virtual_register();
+                let v_mask = allocator.allocate();
+                let v_dword_address = allocator.allocate();
+                let v_dword = allocator.allocate();
+                let v_word = allocator.allocate();
+                let v_shift = allocator.allocate();
 
                 amo_pre64(
                     &mut asm,

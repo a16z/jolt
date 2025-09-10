@@ -2,6 +2,7 @@ use common::constants::RAM_START_ADDRESS;
 use common::jolt_device::{JoltDevice, MemoryConfig};
 use tracer::emulator::memory::Memory;
 use tracer::instruction::{RV32IMCycle, RV32IMInstruction};
+use tracer::utils::virtual_registers::VirtualRegisterAllocator;
 
 /// Configuration for program runtime
 #[derive(Debug, Clone)]
@@ -42,11 +43,12 @@ impl Program {
 pub fn decode(elf: &[u8]) -> (Vec<RV32IMInstruction>, Vec<(u64, u8)>, u64) {
     let (mut instructions, raw_bytes, program_end, xlen) = tracer::decode(elf);
     let program_size = program_end - RAM_START_ADDRESS;
+    let allocator = VirtualRegisterAllocator::default();
 
     // Expand virtual sequences
     instructions = instructions
         .into_iter()
-        .flat_map(|instr| instr.inline_sequence(xlen))
+        .flat_map(|instr| instr.inline_sequence(&allocator, xlen))
         .collect();
 
     (instructions, raw_bytes, program_size)
