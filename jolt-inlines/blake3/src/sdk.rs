@@ -189,7 +189,7 @@ pub unsafe fn blake3_compress(chaining_value: *mut u32, message: *const u32) {
 #[cfg(test)]
 #[cfg(feature = "host")]
 mod tests {
-    use super::Blake3 as inline_blake3;
+    use super::Blake3;
     use crate::{test_utils::helpers::*, BLOCK_INPUT_SIZE_IN_BYTES, CHAINING_VALUE_LEN};
 
     fn random_partition(data: &[u8]) -> Vec<&[u8]> {
@@ -211,25 +211,25 @@ mod tests {
     }
 
     #[test]
-    fn digest_matches_standard() {
+    fn test_digest_matches_standard() {
         for _ in 0..1000 {
             let len = rand::random::<usize>() % (BLOCK_INPUT_SIZE_IN_BYTES);
             let input = generate_random_bytes(len);
-            let result = inline_blake3::digest(&input);
+            let result = Blake3::digest(&input);
             let expected = compute_expected_result(&input);
             assert_eq!(result, expected, "digest mismatch for input={input:02x?}");
         }
     }
 
     #[test]
-    fn keyed_digest_random_keys_match_standard() {
+    fn test_keyed_digest_random_keys_match_standard() {
         for _ in 0..1000 {
             let len = rand::random::<usize>() % (BLOCK_INPUT_SIZE_IN_BYTES);
             let input = generate_random_bytes(len);
             let key_bytes = generate_random_bytes(CHAINING_VALUE_LEN * 4);
             let mut key = [0u32; CHAINING_VALUE_LEN];
             key.copy_from_slice(&bytes_to_u32_vec(&key_bytes));
-            let result = inline_blake3::keyed_hash(&input, key);
+            let result = Blake3::keyed_hash(&input, key);
             let expected = compute_keyed_expected_result(&input, key);
             assert_eq!(
                 result, expected,
@@ -239,13 +239,13 @@ mod tests {
     }
 
     #[test]
-    fn streaming_update_finalize_matches_standard() {
+    fn test_streaming_update_finalize_matches_standard() {
         for _ in 0..1000 {
             let len = rand::random::<usize>() % (BLOCK_INPUT_SIZE_IN_BYTES + 1);
             let data = generate_random_bytes(len);
             let expected = compute_expected_result(&data);
             let parts = random_partition(&data);
-            let mut hasher = inline_blake3::new();
+            let mut hasher = Blake3::new();
             for p in &parts {
                 hasher.update(p);
             }
@@ -256,37 +256,31 @@ mod tests {
 
     #[test]
     #[should_panic]
-    fn panics_on_larger_than_block_input() {
+    fn test_panics_on_larger_than_block_input() {
         // 65 bytes triggers internal buffer overflow guard
         let input = vec![0u8; BLOCK_INPUT_SIZE_IN_BYTES + 1];
-        let _ = inline_blake3::digest(&input);
+        let _ = Blake3::digest(&input);
     }
 
     #[test]
-    fn edge_cases() {
+    fn test_edge_cases() {
         // Empty
         let empty: &[u8] = &[];
-        assert_eq!(inline_blake3::digest(empty), compute_expected_result(empty));
+        assert_eq!(Blake3::digest(empty), compute_expected_result(empty));
 
         // Length 64 (block-size)
         let mut l64 = [0u8; 64];
         for (i, b) in l64.iter_mut().enumerate() {
             *b = 255 - i as u8;
         }
-        assert_eq!(inline_blake3::digest(&l64), compute_expected_result(&l64));
+        assert_eq!(Blake3::digest(&l64), compute_expected_result(&l64));
 
         // All zeros (64 bytes)
         let zeros = [0u8; 64];
-        assert_eq!(
-            inline_blake3::digest(&zeros),
-            compute_expected_result(&zeros)
-        );
+        assert_eq!(Blake3::digest(&zeros), compute_expected_result(&zeros));
 
         // All 0xFF (64 bytes)
         let maxes = [0xFFu8; 64];
-        assert_eq!(
-            inline_blake3::digest(&maxes),
-            compute_expected_result(&maxes)
-        );
+        assert_eq!(Blake3::digest(&maxes), compute_expected_result(&maxes));
     }
 }

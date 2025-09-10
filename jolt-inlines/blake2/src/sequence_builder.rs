@@ -318,7 +318,7 @@ pub fn blake2b_inline_sequence_builder(
 }
 
 #[cfg(test)]
-mod test_sequence_builder {
+mod tests {
     use crate::{
         test_utils::{create_blake2_harness, instruction, load_blake2_data, read_state},
         IV,

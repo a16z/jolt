@@ -299,7 +299,7 @@ pub fn blake3_inline_sequence_builder(
 }
 
 #[cfg(test)]
-mod test_sequence_builder {
+mod tests {
     use crate::test_utils::{
         create_blake3_harness, helpers::*, instruction, load_blake3_data, read_output,
         ChainingValue, MessageBlock,
