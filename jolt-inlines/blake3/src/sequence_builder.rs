@@ -240,7 +240,7 @@ impl Blake3SequenceBuilder {
     }
 
     fn load_chaining_value(&mut self) {
-        self.load_data_range(self.operands.rs2, 0, CV_START_VR, CHAINING_VALUE_LEN);
+        self.load_data_range(self.operands.rs1, 0, CV_START_VR, CHAINING_VALUE_LEN);
     }
 
     fn load_message_blocks(&mut self) {
