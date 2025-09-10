@@ -30,7 +30,7 @@ pub struct ShoutProof<F: JoltField, ProofTranscript: Transcript> {
 struct ShoutProverState<F: JoltField> {
     K: usize,
     rv_claim: F,
-    z: F,
+    z: MontU128,
     ra: MultilinearPolynomial<F>,
     val: MultilinearPolynomial<F>,
 }
@@ -48,7 +48,7 @@ impl<F: JoltField> ShoutProverState<F> {
         debug_assert_eq!(r_cycle.len(), T.log_2());
         // Used to batch the core PIOP sumcheck and Hamming weight sumcheck
         // (see Section 4.2.1)
-        let z: F = transcript.challenge_u128();
+        let z: MontU128 = transcript.challenge_u128();
 
         let E: Vec<F> = EqPolynomial::evals(r_cycle);
 
@@ -138,7 +138,7 @@ impl<F: JoltField> SumcheckInstance<F> for ShoutSumcheck<F> {
         2
     }
 
-    fn normalize_opening_point(&self, _opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN> {
+    fn normalize_opening_point(&self, _opening_point: &[MontU128]) -> OpeningPoint<BIG_ENDIAN> {
         todo!()
     }
     fn cache_openings_prover(
@@ -251,7 +251,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ShoutProof<F, ProofTranscript> {
     pub fn prove(
         lookup_table: Vec<F>,
         read_addresses: Vec<usize>,
-        r_cycle: &[F],
+        r_cycle: &[MontU128],
         transcript: &mut ProofTranscript,
     ) -> Self {
         let (core_piop_prover_state, E, F) =
@@ -1204,7 +1204,7 @@ mod tests {
 
         let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
         let r: Vec<Fr> = prover_transcript.challenge_vector(TABLE_SIZE.log_2());
-        let r_prime: Vec<Fr> = prover_transcript.challenge_vector(NUM_LOOKUPS.log_2());
+        let r_prime: Vec<MontU128> = prover_transcript.challenge_vector_u128(NUM_LOOKUPS.log_2());
         let E: Vec<Fr> = EqPolynomial::evals(&r_prime);
         let F: Vec<_> = (0..TABLE_SIZE)
             .into_par_iter()

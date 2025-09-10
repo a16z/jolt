@@ -34,7 +34,6 @@ use dory::{
     transcript::Transcript as DoryTranscript,
     verify, DoryProof, DoryProofBuilder, Polynomial as DoryPolynomial, ProverSetup, VerifierSetup,
 };
-use crate::field::MontU128;
 
 /// The (padded) length of the execution trace currently being proven
 static mut GLOBAL_T: OnceCell<usize> = OnceCell::new();
@@ -1084,7 +1083,6 @@ impl CommitmentScheme for DoryCommitmentScheme {
     {
         todo!("Batch commit not yet implemented for Dory")
     }
-
     // Note that Dory implementation sometimes uses the term 'evaluation'/'evaluate' -- this is same as 'opening'/'open'
     #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::prove")]
     fn prove<ProofTranscript: Transcript>(
@@ -1250,7 +1248,6 @@ mod tests {
     use rand::Rng;
     use serial_test::serial;
     use std::time::Instant;
-    use rand::Rng;
 
     fn test_commitment_scheme_with_poly(
         poly: MultilinearPolynomial<Fr>,
@@ -1279,7 +1276,6 @@ mod tests {
         );
 
         let mut rng = thread_rng();
-        let opening_point: Vec<MontU128> = (0..num_vars).map(|_| MontU128::from(rng.gen::<u128>())).collect();
         let opening_point: Vec<MontU128> = (0..num_vars)
             .map(|_| MontU128::from(rng.gen::<u128>()))
             .collect();
@@ -1452,7 +1448,6 @@ mod tests {
         let coeffs: Vec<Fr> = (0..num_coeffs).map(|_| Fr::rand(&mut rng)).collect();
         let poly = MultilinearPolynomial::LargeScalars(DensePolynomial::new(coeffs.clone()));
 
-        let opening_point: Vec<MontU128> = (0..num_vars).map(|_| MontU128::from(rng.gen::<u128>())).collect();
         let opening_point: Vec<MontU128> = (0..num_vars)
             .map(|_| MontU128::from(rng.gen::<u128>()))
             .collect();
@@ -1499,8 +1494,6 @@ mod tests {
 
         // Test 2: Tamper with the opening point
         {
-            let tampered_opening_point: Vec<MontU128> =
-                (0..num_vars).map(|_| MontU128::from(rng.gen::<u128>())).collect();
             let tampered_opening_point: Vec<MontU128> = (0..num_vars)
                 .map(|_| MontU128::from(rng.gen::<u128>()))
                 .collect();
