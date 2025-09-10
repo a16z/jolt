@@ -35,6 +35,7 @@ use one::OneSuffix;
 use two_lsb::TwoLsbSuffix;
 use upper_word::UpperWordSuffix;
 use xor::XorSuffix;
+use xor_rot::XorRotSuffix;
 
 pub mod and;
 pub mod change_divisor;
@@ -69,6 +70,7 @@ pub mod sign_extension_upper_half;
 pub mod two_lsb;
 pub mod upper_word;
 pub mod xor;
+pub mod xor_rot;
 
 pub trait SparseDenseSuffix: 'static + Sync {
     /// Evaluates the MLE for this suffix on the bitvector `b`, where
@@ -113,6 +115,7 @@ pub enum Suffixes {
     RightShiftWHelper,
     LeftShiftWHelper,
     LeftShiftW,
+    XorRot,
 }
 
 pub type SuffixEval<F: JoltField> = F;
@@ -157,6 +160,7 @@ impl Suffixes {
             Suffixes::RightShiftWHelper => RightShiftWHelperSuffix::suffix_mle(b),
             Suffixes::LeftShiftWHelper => LeftShiftWHelperSuffix::suffix_mle(b),
             Suffixes::LeftShiftW => LeftShiftWSuffix::suffix_mle(b),
+            Suffixes::XorRot => XorRotSuffix::suffix_mle(b),
         }
     }
 }

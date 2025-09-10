@@ -32,6 +32,7 @@ use virtual_rotr::VirtualRotrTable;
 use virtual_rotrw::VirtualRotrWTable;
 use virtual_sra::VirtualSRATable;
 use virtual_srl::VirtualSRLTable;
+use virtual_xor_rot::VirtualXORROT32Table;
 use word_alignment::WordAlignmentTable;
 use xor::XorTable;
 
@@ -96,6 +97,7 @@ pub mod virtual_rotr;
 pub mod virtual_rotrw;
 pub mod virtual_sra;
 pub mod virtual_srl;
+pub mod virtual_xor_rot;
 pub mod word_alignment;
 pub mod xor;
 
@@ -137,6 +139,7 @@ pub enum LookupTables<const XLEN: usize> {
     VirtualROTRW(VirtualRotrWTable<XLEN>),
     VirtualChangeDivisor(VirtualChangeDivisorTable<XLEN>),
     VirtualChangeDivisorW(VirtualChangeDivisorWTable<XLEN>),
+    VirtualXORROT32(VirtualXORROT32Table<XLEN>),
 }
 
 impl<const XLEN: usize> LookupTables<XLEN> {
@@ -179,6 +182,7 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::VirtualROTRW(table) => table.materialize(),
             LookupTables::VirtualChangeDivisor(table) => table.materialize(),
             LookupTables::VirtualChangeDivisorW(table) => table.materialize(),
+            LookupTables::VirtualXORROT32(table) => table.materialize(),
         }
     }
 
@@ -214,6 +218,7 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::VirtualROTRW(table) => table.materialize_entry(index),
             LookupTables::VirtualChangeDivisor(table) => table.materialize_entry(index),
             LookupTables::VirtualChangeDivisorW(table) => table.materialize_entry(index),
+            LookupTables::VirtualXORROT32(table) => table.materialize_entry(index),
         }
     }
 
@@ -249,6 +254,7 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::VirtualROTRW(table) => table.evaluate_mle(r),
             LookupTables::VirtualChangeDivisor(table) => table.evaluate_mle(r),
             LookupTables::VirtualChangeDivisorW(table) => table.evaluate_mle(r),
+            LookupTables::VirtualXORROT32(table) => table.evaluate_mle(r),
         }
     }
 
@@ -284,6 +290,7 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::VirtualROTRW(table) => table.suffixes(),
             LookupTables::VirtualChangeDivisor(table) => table.suffixes(),
             LookupTables::VirtualChangeDivisorW(table) => table.suffixes(),
+            LookupTables::VirtualXORROT32(table) => table.suffixes(),
         }
     }
 
@@ -323,6 +330,7 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::VirtualROTRW(table) => table.combine(prefixes, suffixes),
             LookupTables::VirtualChangeDivisor(table) => table.combine(prefixes, suffixes),
             LookupTables::VirtualChangeDivisorW(table) => table.combine(prefixes, suffixes),
+            LookupTables::VirtualXORROT32(table) => table.combine(prefixes, suffixes),
         }
     }
 }

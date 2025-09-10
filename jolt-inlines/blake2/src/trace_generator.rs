@@ -13,6 +13,9 @@ use tracer::instruction::ld::LD;
 use tracer::instruction::lui::LUI;
 use tracer::instruction::sd::SD;
 use tracer::instruction::sub::SUB;
+use tracer::instruction::virtual_xor_rot::{
+    VirtualXORROT16, VirtualXORROT24, VirtualXORROT32, VirtualXORROT63,
+};
 use tracer::instruction::xor::XOR;
 use tracer::instruction::RV32IMInstruction;
 use tracer::utils::inline_helpers::{InstrAssembler, Value::Imm, Value::Reg};
@@ -279,18 +282,21 @@ impl Blake2SequenceBuilder {
         //     }
         // }
 
-        self.asm.emit_r::<XOR>(rd, rs1, rs2);
+        // self.asm.emit_r::<XOR>(rd, rs1, rs2);
         match amount {
             RotationAmount::ROT32 => {
-                self.asm.rotr64(Reg(rd), 32, rd);
+                self.asm.emit_r::<VirtualXORROT32>(rd, rs1, rs2);
             }
             RotationAmount::ROT24 => {
+                self.asm.emit_r::<XOR>(rd, rs1, rs2);
                 self.asm.rotr64(Reg(rd), 24, rd);
             }
             RotationAmount::ROT16 => {
+                self.asm.emit_r::<XOR>(rd, rs1, rs2);
                 self.asm.rotr64(Reg(rd), 16, rd);
             }
             RotationAmount::ROT63 => {
+                self.asm.emit_r::<XOR>(rd, rs1, rs2);
                 self.asm.rotr64(Reg(rd), 63, rd);
             }
         }

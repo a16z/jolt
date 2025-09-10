@@ -120,6 +120,7 @@ use virtual_srai::VirtualSRAI;
 use virtual_srl::VirtualSRL;
 use virtual_srli::VirtualSRLI;
 use virtual_sw::VirtualSW;
+use virtual_xor_rot::{VirtualXORROT16, VirtualXORROT24, VirtualXORROT32, VirtualXORROT63};
 use virtual_zero_extend_word::VirtualZeroExtendWord;
 
 use self::inline::INLINE;
@@ -247,6 +248,7 @@ pub mod virtual_srai;
 pub mod virtual_srl;
 pub mod virtual_srli;
 pub mod virtual_sw;
+pub mod virtual_xor_rot;
 pub mod virtual_zero_extend_word;
 pub mod xor;
 pub mod xori;
@@ -582,6 +584,8 @@ define_rv32im_enums! {
         VirtualROTRIW,
         VirtualShiftRightBitmask, VirtualShiftRightBitmaskI,
         VirtualSRA, VirtualSRAI, VirtualSRL, VirtualSRLI,
+        // XORROT
+        VirtualXORROT32, VirtualXORROT24, VirtualXORROT16, VirtualXORROT63,
     ]
 }
 

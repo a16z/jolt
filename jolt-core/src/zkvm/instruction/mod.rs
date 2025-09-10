@@ -218,7 +218,8 @@ define_rv32im_trait_impls! {
         VirtualZeroExtendWord, VirtualSignExtendWord, VirtualMove, VirtualMovsign, VirtualMULI, VirtualPow2,
         VirtualPow2I, VirtualPow2W, VirtualPow2IW, VirtualShiftRightBitmask, VirtualShiftRightBitmaskI,
         VirtualROTRI, VirtualROTRIW,
-        VirtualSRA, VirtualSRAI, VirtualSRL, VirtualSRLI
+        VirtualSRA, VirtualSRAI, VirtualSRL, VirtualSRLI,
+        VirtualXORROT32
     ]
 }
 
@@ -275,6 +276,7 @@ pub mod virtual_sra;
 pub mod virtual_srai;
 pub mod virtual_srl;
 pub mod virtual_srli;
+pub mod virtual_xor_rot;
 pub mod virtual_zero_extend_word;
 pub mod xor;
 pub mod xori;

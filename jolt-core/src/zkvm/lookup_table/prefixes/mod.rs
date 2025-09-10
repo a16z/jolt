@@ -43,6 +43,7 @@ use right_operand_w::RightOperandWPrefix;
 use two_lsb::TwoLsbPrefix;
 use upper_word::UpperWordPrefix;
 use xor::XorPrefix;
+use xor_rot::XorRotPrefix;
 
 pub mod and;
 pub mod andn;
@@ -80,6 +81,7 @@ pub mod sign_extension_upper_half;
 pub mod two_lsb;
 pub mod upper_word;
 pub mod xor;
+pub mod xor_rot;
 
 pub trait SparseDensePrefix<F: JoltField>: 'static + Sync {
     /// Evalautes the MLE for this prefix:
@@ -158,6 +160,7 @@ pub enum Prefixes {
     RightShiftW,
     LeftShiftWHelper,
     LeftShiftW,
+    XorRot,
 }
 
 #[derive(Clone, Copy, Allocative)]
@@ -224,6 +227,7 @@ impl Prefixes {
             Prefixes::Andn => AndnPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::Or => OrPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::Xor => XorPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j),
+            Prefixes::XorRot => XorRotPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::Eq => EqPrefix::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::LessThan => LessThanPrefix::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::LeftOperandIsZero => {
@@ -343,6 +347,9 @@ impl Prefixes {
             }
             Prefixes::Or => OrPrefix::<XLEN>::update_prefix_checkpoint(checkpoints, r_x, r_y, j),
             Prefixes::Xor => XorPrefix::<XLEN>::update_prefix_checkpoint(checkpoints, r_x, r_y, j),
+            Prefixes::XorRot => {
+                XorRotPrefix::<XLEN>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+            }
             Prefixes::Eq => EqPrefix::update_prefix_checkpoint(checkpoints, r_x, r_y, j),
             Prefixes::LessThan => {
                 LessThanPrefix::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
