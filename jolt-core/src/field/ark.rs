@@ -1,6 +1,7 @@
 use crate::field::MontU128;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use ark_ff::{prelude::*, BigInt, PrimeField, UniformRand};
+use num::zero;
 use rayon::prelude::*;
 
 use super::{FieldOps, JoltField};
@@ -91,9 +92,6 @@ impl JoltField for ark_bn254::Fr {
         let low = n_val as u64;
         let high = (n_val >> 64) as u64;
         let bigint = BigInt::new([0, 0, low, high]);
-        // Ark workds needs a FAST version of unchecked
-        //<Self>::new_unchecked(bigint)
-        // this is wrong but i want to see if it speeds things up
         <Self as ark_ff::PrimeField>::from_bigint_unchecked(bigint).unwrap()
     }
 
@@ -202,8 +200,10 @@ impl JoltField for ark_bn254::Fr {
 
     #[inline(always)]
     fn mul_u128_mont_form(&self, n: MontU128) -> Self {
-        let n_val = n.0;
-        ark_ff::Fp::mul_hi_u128(*self, n_val)
+        // FIXME: This is clearly wrong! But this is to verify a claim of mine.
+        let _n_val = n.0;
+        //ark_ff::Fp::mul_hi_u128(*self, n_val)
+        *self
     }
 
     //#[inline(always)]

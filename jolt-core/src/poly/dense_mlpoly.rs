@@ -247,6 +247,8 @@ impl<F: JoltField> DensePolynomial<F> {
         self.num_vars -= 1;
         self.len = n;
     }
+
+    // TODO:(ari) -- I'm not convinced this memory business is needed
     pub fn bound_poly_var_bot_01_optimized(&mut self, r: &MontU128) {
         let n = self.len() / 2;
 
@@ -285,8 +287,6 @@ impl<F: JoltField> DensePolynomial<F> {
         assert_eq!(chis.len(), self.Z.len());
         compute_dotproduct(&self.Z, &chis)
     }
-
-
 
     pub fn split_eq_evaluate_field(&self, r: &[F], eq_one: &[F], eq_two: &[F]) -> F {
         const PARALLEL_THRESHOLD: usize = 16;
@@ -521,11 +521,9 @@ impl<F: JoltField> Index<usize> for DensePolynomial<F> {
 
 impl<F: JoltField> PolynomialEvaluation<F> for DensePolynomial<F> {
     fn evaluate(&self, r: &[MontU128]) -> F {
-
         let m = r.len() / 2;
         let (r2, r1) = r.split_at(m);
-        let (eq_one, eq_two) =
-            rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
+        let (eq_one, eq_two) = rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
 
         self.split_eq_evaluate(r, &eq_one, &eq_two)
     }
