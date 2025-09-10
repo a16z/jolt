@@ -1,5 +1,6 @@
 #![allow(unused_imports)]
 use super::helpers::*;
+use crate::field::MontU128;
 use crate::subprotocols::sumcheck::{BatchedSumcheck, SumcheckInstance, SumcheckInstanceProof};
 use crate::utils::counters::{get_mult_count, reset_mult_count};
 use crate::{
@@ -31,7 +32,7 @@ pub fn prove_generic_core_shout_pip<F: JoltField, ProofTranscript: Transcript>(
     transcript: &mut ProofTranscript,
 ) -> (
     SumcheckInstanceProof<F, ProofTranscript>,
-    Vec<F>,
+    Vec<MontU128>,
     F,
     F,
     F,
@@ -43,7 +44,7 @@ pub fn prove_generic_core_shout_pip<F: JoltField, ProofTranscript: Transcript>(
 
     // A random field element F^{\log_2 T} for Schwartz-Zippll
     // This is stored in Big Endian
-    let r_cycle: Vec<F> = transcript.challenge_vector(T.log_2());
+    let r_cycle: Vec<MontU128> = transcript.challenge_vector_u128(T.log_2());
 
     // Page 50: eq(44)
     let E_star: Vec<F> = EqPolynomial::evals(&r_cycle);
@@ -69,7 +70,7 @@ pub fn prove_generic_core_shout_pip<F: JoltField, ProofTranscript: Transcript>(
 
     let num_rounds = K.log_2() + T.log_2();
     // The vector storing the verifiers sum-check challenges
-    let mut r_address: Vec<F> = Vec::with_capacity(num_rounds);
+    let mut r_address: Vec<MontU128> = Vec::with_capacity(num_rounds);
 
     // The sum check answer (for d=1, it's the same as normal one)
     let sumcheck_claim: F = C
@@ -110,9 +111,9 @@ pub fn prove_generic_core_shout_pip<F: JoltField, ProofTranscript: Transcript>(
         compressed_polys.push(compressed_poly);
 
         // Get challenge that binds the variable
-        let r_j = transcript.challenge_scalar::<F>();
+        let r_j = transcript.challenge_u128();
         r_address.push(r_j);
-        previous_claim = univariate_poly.evaluate(&r_j);
+        previous_claim = univariate_poly.evaluate_u128(&r_j);
         rayon::join(
             || ra.bind_parallel(r_j, BindingOrder::LowToHigh),
             || val.bind_parallel(r_j, BindingOrder::LowToHigh),
@@ -160,10 +161,10 @@ pub fn prove_generic_core_shout_pip<F: JoltField, ProofTranscript: Transcript>(
         compressed_poly.append_to_transcript(transcript);
         compressed_polys.push(compressed_poly);
         // Get challenge that binds the variable
-        let r_j = transcript.challenge_scalar::<F>();
+        let r_j = transcript.challenge_u128();
         r_address.push(r_j);
 
-        previous_claim = univariate_poly.evaluate(&r_j);
+        previous_claim = univariate_poly.evaluate_u128(&r_j);
 
         rayon::join(
             || ra_tau.bind_parallel(r_j, BindingOrder::LowToHigh),
@@ -193,7 +194,7 @@ pub fn prove_generic_core_shout_piop_d_is_one_w_gruen<F: JoltField, ProofTranscr
     transcript: &mut ProofTranscript,
 ) -> (
     SumcheckInstanceProof<F, ProofTranscript>,
-    Vec<F>,
+    Vec<MontU128>,
     F,
     F,
     F,
@@ -205,7 +206,7 @@ pub fn prove_generic_core_shout_piop_d_is_one_w_gruen<F: JoltField, ProofTranscr
 
     // A random field element F^{\log_2 T} for Schwartz-Zippll
     // This is stored in Big Endian
-    let r_cycle: Vec<F> = transcript.challenge_vector(T.log_2());
+    let r_cycle: Vec<MontU128> = transcript.challenge_vector_u128(T.log_2());
     // Page 50: eq(44)
     let E_star: Vec<F> = EqPolynomial::evals(&r_cycle);
     // Page 50: eq(47) : what the paper calls v_k
@@ -234,7 +235,7 @@ pub fn prove_generic_core_shout_piop_d_is_one_w_gruen<F: JoltField, ProofTranscr
     const DEGREE: usize = 2;
     let num_rounds = K.log_2() + T.log_2();
     // The vector storing the verifiers sum-check challenges
-    let mut r_address: Vec<F> = Vec::with_capacity(num_rounds);
+    let mut r_address: Vec<MontU128> = Vec::with_capacity(num_rounds);
     let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
 
     let start = Instant::now();
@@ -262,10 +263,10 @@ pub fn prove_generic_core_shout_piop_d_is_one_w_gruen<F: JoltField, ProofTranscr
         compressed_polys.push(compressed_poly);
 
         // Get challenge that binds the variable
-        let r_j = transcript.challenge_scalar::<F>();
+        let r_j = transcript.challenge_u128();
         r_address.push(r_j);
 
-        previous_claim = univariate_poly.evaluate(&r_j);
+        previous_claim = univariate_poly.evaluate_u128(&r_j);
 
         rayon::join(
             || ra.bind_parallel(r_j, BindingOrder::LowToHigh),
@@ -298,8 +299,8 @@ pub fn prove_generic_core_shout_piop_d_is_one_w_gruen<F: JoltField, ProofTranscr
         *e = eq_tau[read_addresses[y]];
     });
     // widetilde{ra}(r_1, ..., r_address, Y_1, ..., Y_logT)
-    let mut ra_tau = MultilinearPolynomial::from(E);
-    let mut greq_r_cycle = GruenSplitEqPolynomial::new(&r_cycle, BindingOrder::LowToHigh);
+    let mut ra_tau = MultilinearPolynomial::<F>::from(E);
+    let mut greq_r_cycle = GruenSplitEqPolynomial::<F>::new(&r_cycle, BindingOrder::LowToHigh);
     for _round_i in 0..T.log_2() {
         let E_2 = greq_r_cycle.E_in_current();
         let E_1 = greq_r_cycle.E_out_current();
@@ -341,8 +342,8 @@ pub fn prove_generic_core_shout_piop_d_is_one_w_gruen<F: JoltField, ProofTranscr
         // Procedure 8
         let ell_at_0 = val_claim
             * greq_r_cycle.get_current_scalar()
-            * (F::one() - greq_r_cycle.get_current_w());
-        let ell_at_1 = val_claim * greq_r_cycle.get_current_scalar() * greq_r_cycle.get_current_w();
+            * (F::one() - F::from_u128_mont(greq_r_cycle.get_current_w()));
+        let ell_at_1 = (val_claim*greq_r_cycle.get_current_scalar()).mul_u128_mont_form(greq_r_cycle.get_current_w());
 
         // One inverse
         let ell_one_inverse = ell_at_1
@@ -375,9 +376,9 @@ pub fn prove_generic_core_shout_piop_d_is_one_w_gruen<F: JoltField, ProofTranscr
         compressed_polys.push(compressed_poly);
 
         // Get challenge that binds the variable
-        let r_j = transcript.challenge_scalar::<F>();
+        let r_j = transcript.challenge_u128();
         r_address.push(r_j);
-        previous_claim = univariate_poly.evaluate(&r_j);
+        previous_claim = univariate_poly.evaluate_u128(&r_j);
         ra_tau.bind_parallel(r_j, BindingOrder::LowToHigh);
         greq_r_cycle.bind(r_j);
     }
@@ -398,8 +399,8 @@ mod tests {
 
     use super::*;
     use crate::transcripts::Blake2bTranscript;
-    //use ark_bn254::Fr;
-    use crate::field::tracked_ark::TrackedFr as Fr;
+    use ark_bn254::Fr;
+    // use crate::field::tracked_ark::TrackedFr as Fr;
     use ark_ff::UniformRand;
     use ark_ff::{One, Zero}; // often from ark_ff, depending on your setup
     use ark_std::rand::{rngs::StdRng, SeedableRng};
@@ -455,6 +456,7 @@ mod tests {
             &mut prover_transcript,
         );
 
+        let start = Instant::now();
         let linear_prover = get_mult_count();
         reset_mult_count();
         let mut prover_transcript = Blake2bTranscript::new(b"test_transcript");
@@ -481,11 +483,13 @@ mod tests {
             2 * T + 4 * (1 << 5)
         );
         // See page 51 of Twist and Shout paper for a derivation of the above asymptotics
+        let end = start.elapsed();
+        println!("Elapsed time: {:.5?}", end.as_micros());
 
         let mut verifier_transcript = Blake2bTranscript::new(b"test_transcript");
         verifier_transcript.compare_to(prover_transcript);
 
-        let r_cycle: Vec<Fr> = verifier_transcript.challenge_vector(num_lookups.log_2());
+        let r_cycle: Vec<MontU128> = verifier_transcript.challenge_vector_u128(num_lookups.log_2());
         let verification_result = sumcheck_proof.verify(
             sumcheck_claim,
             table_size.log_2() + num_lookups.log_2(),
@@ -503,7 +507,7 @@ mod tests {
         let mut full_random_location = verifier_challenges.clone();
         full_random_location.reverse();
         let ra_evaluated_r_address_r_time = ra_poly.evaluate(&full_random_location);
-        let eq_r_cycle = MultilinearPolynomial::from(EqPolynomial::evals(&r_cycle));
+        let eq_r_cycle = MultilinearPolynomial::from(EqPolynomial::<Fr>::evals(&r_cycle));
         let mut r_time = r_time.to_vec();
         r_time.reverse();
         let eq_r_cycle_r_time = eq_r_cycle.evaluate(&r_time);

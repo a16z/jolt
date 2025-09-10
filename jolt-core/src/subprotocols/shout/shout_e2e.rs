@@ -297,8 +297,10 @@ impl<F: JoltField, ProofTranscript: Transcript> ShoutProof<F, ProofTranscript> {
     ) -> Result<(), ProofVerifyError> {
         let K = lookup_table.len();
 
-        let core_piop_verifier_state = ShoutVerifierState::<F>::initialize(lookup_table, transcript);
-        let booleanity_verifier_state = BooleanityVerifierState::<F>::initialize(r_cycle, K, transcript);
+        let core_piop_verifier_state =
+            ShoutVerifierState::<F>::initialize(lookup_table, transcript);
+        let booleanity_verifier_state =
+            BooleanityVerifierState::<F>::initialize(r_cycle, K, transcript);
 
         let core_piop_sumcheck = ShoutSumcheck {
             prover_state: None,
@@ -486,7 +488,7 @@ impl<F: JoltField> BooleanityProverState<F> {
 struct BooleanityVerifierState<F: JoltField> {
     r_address: Vec<MontU128>,
     r_cycle: Vec<MontU128>,
-    _phantom_data: PhantomData<F>
+    _phantom_data: PhantomData<F>,
 }
 
 impl<F: JoltField> BooleanityVerifierState<F> {
@@ -502,7 +504,11 @@ impl<F: JoltField> BooleanityVerifierState<F> {
             .rev()
             .collect();
 
-        Self { r_cycle, r_address, _phantom_data: PhantomData }
+        Self {
+            r_cycle,
+            r_address,
+            _phantom_data: PhantomData,
+        }
     }
 }
 
@@ -537,8 +543,11 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
             let BooleanityProverState { K, T, .. } = self.prover_state.as_ref().unwrap();
             K.log_2() + T.log_2()
         } else if self.verifier_state.is_some() {
-            let BooleanityVerifierState { r_cycle, r_address, _phantom_data: PhantomData} =
-                self.verifier_state.as_ref().unwrap();
+            let BooleanityVerifierState {
+                r_cycle,
+                r_address,
+                _phantom_data: PhantomData,
+            } = self.verifier_state.as_ref().unwrap();
             r_address.len() + r_cycle.len()
         } else {
             panic!("Neither prover state nor verifier state is initialized");
@@ -710,7 +719,11 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
         _opening_accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
         r: &[MontU128],
     ) -> F {
-        let BooleanityVerifierState { r_address, r_cycle, _phantom_data : PhantomData } = self.verifier_state.as_ref().unwrap();
+        let BooleanityVerifierState {
+            r_address,
+            r_cycle,
+            _phantom_data: PhantomData,
+        } = self.verifier_state.as_ref().unwrap();
         let (r_address_prime, r_cycle_prime) = r.split_at(r_address.len());
         let ra_claim = self.ra_claim.unwrap();
 
@@ -749,7 +762,12 @@ pub fn prove_booleanity<F: JoltField, ProofTranscript: Transcript>(
     D: Vec<F>,
     G: Vec<F>,
     transcript: &mut ProofTranscript,
-) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<MontU128>, Vec<MontU128>, F) {
+) -> (
+    SumcheckInstanceProof<F, ProofTranscript>,
+    Vec<MontU128>,
+    Vec<MontU128>,
+    F,
+) {
     const DEGREE: usize = 3;
     let K = r.len().pow2();
     let T = read_addresses.len();
@@ -1125,6 +1143,8 @@ pub fn prove_raf_evaluation<F: JoltField, ProofTranscript: Transcript>(
 
 #[cfg(test)]
 mod tests {
+    use std::time::Instant;
+
     use super::*;
     use crate::transcripts::KeccakTranscript;
     use ark_bn254::Fr;
@@ -1259,7 +1279,8 @@ mod tests {
             .collect();
 
         let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
-        let r_cycle_prime: Vec<MontU128> = prover_transcript.challenge_vector_u128(NUM_LOOKUPS.log_2());
+        let r_cycle_prime: Vec<MontU128> =
+            prover_transcript.challenge_vector_u128(NUM_LOOKUPS.log_2());
         let (sumcheck_proof, _, _) = prove_hamming_weight(
             lookup_table,
             read_addresses,
@@ -1282,6 +1303,7 @@ mod tests {
 
     #[test]
     fn raf_evaluation_sumcheck() {
+        let start = Instant::now();
         const TABLE_SIZE: usize = 64;
         const NUM_LOOKUPS: usize = 1 << 10;
 
@@ -1317,5 +1339,7 @@ mod tests {
             "Verification failed with error: {:?}",
             verification_result.err()
         );
+        let end = start.elapsed();
+        println!("Smalll {}", end.as_micros());
     }
 }
