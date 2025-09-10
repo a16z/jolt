@@ -5,11 +5,14 @@
 //! During actual runtime execution, these values will vary according to the specific bytecode being executed
 //! and should be replaced with actual runtime values.
 
+use crate::emulator::cpu::Xlen;
+use crate::instruction::format::format_inline::FormatInline;
+use crate::instruction::RV32IMInstruction;
+use crate::utils::inline_helpers::InstrAssembler;
+use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
 use std::path::Path;
-use tracer::emulator::cpu::Xlen;
-use tracer::instruction::RV32IMInstruction;
 
 pub const DEFAULT_RAM_START_ADDRESS: u64 = 0x80000000;
 pub const DEFAULT_XLEN: Xlen = Xlen::Bit64;
@@ -53,6 +56,27 @@ pub struct SequenceInputs {
     pub rs3: u8,
 }
 
+impl From<&SequenceInputs> for FormatInline {
+    fn from(input: &SequenceInputs) -> Self {
+        FormatInline {
+            rs1: input.rs1,
+            rs2: input.rs2,
+            rs3: input.rs3,
+        }
+    }
+}
+
+impl From<&SequenceInputs> for InstrAssembler {
+    fn from(input: &SequenceInputs) -> Self {
+        InstrAssembler::new_inline(
+            input.address,
+            input.is_compressed,
+            input.xlen,
+            &VirtualRegisterAllocator::default(),
+        )
+    }
+}
+
 impl SequenceInputs {
     pub fn new(address: u64, is_compressed: bool, xlen: Xlen, rs1: u8, rs2: u8, rs3: u8) -> Self {
         Self {
@@ -79,6 +103,11 @@ impl Default for SequenceInputs {
     }
 }
 
+pub enum AppendMode {
+    Append,
+    Overwrite,
+}
+
 /// Writes inline instruction trace to a file
 ///
 /// # Format
@@ -101,18 +130,17 @@ pub fn write_inline_trace(
     inline_info: &InlineDescriptor,
     sequence_inputs: &SequenceInputs,
     instructions: &[RV32IMInstruction],
-    append: bool,
+    append: AppendMode,
 ) -> io::Result<()> {
-    let mut file = if append {
-        OpenOptions::new()
+    let mut file = match append {
+        AppendMode::Append => OpenOptions::new()
             .create(true)
             .append(true)
-            .open(file_path)?
-    } else {
-        File::create(file_path)?
+            .open(file_path)?,
+        AppendMode::Overwrite => File::create(file_path)?,
     };
 
-    if append {
+    if matches!(append, AppendMode::Append) {
         writeln!(file)?;
     }
 
@@ -180,100 +208,4 @@ fn format_instruction_with_placeholders(
     }
 
     formatted
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::fs;
-    use std::io::{BufRead, BufReader};
-    use std::path::Path;
-
-    /// Test that verifies the trace writer correctly generates a trace file with placeholders
-    /// and that the placeholders can be replaced to match the original instructions.
-    ///
-    /// This test uses the keccak256 inline instruction as an example.
-    #[test]
-    fn test_keccak256_trace_file_matches_generated() {
-        use jolt_inlines_keccak256::trace_generator::keccak256_inline_sequence_builder;
-
-        // Generate the instructions
-        let generated_instructions = keccak256_inline_sequence_builder(
-            DEFAULT_RAM_START_ADDRESS,
-            false,
-            DEFAULT_XLEN,
-            DEFAULT_RS1,
-            DEFAULT_RS2,
-            DEFAULT_RS3,
-        );
-
-        // Path to the keccak256 trace file
-        let trace_file_path = Path::new("keccak256_trace.joltinline");
-
-        // Ensure the file is deleted at the end of the test
-        let _cleanup = FileCleanup(trace_file_path);
-
-        // Now read and validate the file
-        let file = fs::File::open(trace_file_path).expect("Failed to open test trace file");
-        let reader = BufReader::new(file);
-        let mut lines = reader.lines();
-
-        // Read and validate header (line 1)
-        let header = lines
-            .next()
-            .expect("Missing header line")
-            .expect("Failed to read header");
-        assert!(
-            header.contains("KECCAK256_INLINE"),
-            "Expected KECCAK256_INLINE in header, got: {header}"
-        );
-
-        // Read and validate sequence inputs (line 2)
-        let inputs_line = lines
-            .next()
-            .expect("Missing inputs line")
-            .expect("Failed to read inputs");
-        assert!(inputs_line.contains("address: $ADDR"));
-
-        // Now compare each instruction line by line
-        for (i, generated_instr) in generated_instructions.iter().enumerate() {
-            // Read next line from trace file
-            let mut trace_line = lines.next().unwrap().unwrap();
-            trace_line = trace_line.replace(
-                "address: $ADDR",
-                &format!("address: {DEFAULT_RAM_START_ADDRESS:#x}"),
-            );
-            trace_line = trace_line.replace("$RS1", &format!("{DEFAULT_RS1}"));
-            trace_line = trace_line.replace("$RS2", &format!("{DEFAULT_RS2}"));
-            trace_line = trace_line.replace("$RS3", &format!("{DEFAULT_RS3}"));
-
-            // Compare
-            assert_eq!(
-                format!("{generated_instr:?}"),
-                trace_line,
-                "Instruction mismatch at line {} (index {}). Generated: {}, Trace: {}",
-                i + 3,
-                i,
-                format!("{:?}", generated_instr),
-                trace_line
-            );
-        }
-
-        // Check if there are any extra lines in the trace file
-        assert!(
-            lines.next().is_none(),
-            "Trace file has extra lines after all instructions"
-        );
-    }
-
-    /// Helper struct to ensure test file cleanup on drop
-    struct FileCleanup<'a>(&'a Path);
-
-    impl<'a> Drop for FileCleanup<'a> {
-        fn drop(&mut self) {
-            if self.0.exists() {
-                let _ = fs::remove_file(self.0);
-            }
-        }
-    }
 }

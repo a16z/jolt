@@ -334,12 +334,12 @@ impl Default for Sha256 {
 /// - The memory regions must not overlap
 #[cfg(not(feature = "host"))]
 pub unsafe fn sha256_compression(input: *const u32, state: *mut u32) {
-    use jolt_inlines_common::constants::{sha256, INLINE_OPCODE};
+    use crate::{INLINE_OPCODE, SHA256_FUNCT3, SHA256_FUNCT7};
     core::arch::asm!(
         ".insn r {opcode}, {funct3}, {funct7}, x0, {rs1}, {rs2}",
         opcode = const INLINE_OPCODE,
-        funct3 = const sha256::default::FUNCT3,
-        funct7 = const sha256::default::FUNCT7,
+        funct3 = const SHA256_FUNCT3,
+        funct7 = const SHA256_FUNCT7,
         rs1 = in(reg) input,
         rs2 = in(reg) state,
         options(nostack)
@@ -381,12 +381,12 @@ pub unsafe fn sha256_compression(input: *const u32, state: *mut u32) {
 /// - The memory regions must not overlap
 #[cfg(not(feature = "host"))]
 pub unsafe fn sha256_compression_initial(input: *const u32, state: *mut u32) {
-    use jolt_inlines_common::constants::{sha256, INLINE_OPCODE};
+    use crate::{INLINE_OPCODE, SHA256_INIT_FUNCT3, SHA256_INIT_FUNCT7};
     core::arch::asm!(
         ".insn r {opcode}, {funct3}, {funct7}, x0, {rs1}, {rs2}",
         opcode = const INLINE_OPCODE,
-        funct3 = const sha256::init::FUNCT3,
-        funct7 = const sha256::init::FUNCT7,
+        funct3 = const SHA256_INIT_FUNCT3,
+        funct7 = const SHA256_INIT_FUNCT7,
         rs1 = in(reg) input,
         rs2 = in(reg) state,
         options(nostack)
@@ -413,18 +413,4 @@ pub unsafe fn sha256_compression_initial(input: *const u32, state: *mut u32) {
     let input = *(input as *const [u32; 16]);
     let result = exec::execute_sha256_compression_initial(input);
     std::ptr::copy_nonoverlapping(result.as_ptr(), state, 8)
-}
-
-#[cfg(all(test, feature = "host"))]
-mod tests {
-    use super::Sha256;
-    use hex_literal::hex;
-
-    #[test]
-    fn test_sha256_empty_string() {
-        let digest = Sha256::digest(b"");
-        let expected: [u8; 32] =
-            hex!("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
-        assert_eq!(digest, expected);
-    }
 }

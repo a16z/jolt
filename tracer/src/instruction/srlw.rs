@@ -1,5 +1,5 @@
 use crate::utils::inline_helpers::InstrAssembler;
-use crate::utils::virtual_registers::allocate_virtual_register;
+use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -36,7 +36,7 @@ impl SRLW {
 
 impl RISCVTrace for SRLW {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let inline_sequence = self.inline_sequence(cpu.xlen);
+        let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
             // In each iteration, create a new Option containing a re-borrowed reference
@@ -44,11 +44,15 @@ impl RISCVTrace for SRLW {
         }
     }
 
-    fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
-        let v_bitmask = allocate_virtual_register();
-        let v_rs1 = allocate_virtual_register();
+    fn inline_sequence(
+        &self,
+        allocator: &VirtualRegisterAllocator,
+        xlen: Xlen,
+    ) -> Vec<RV32IMInstruction> {
+        let v_bitmask = allocator.allocate();
+        let v_rs1 = allocator.allocate();
 
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
         asm.emit_i::<SLLI>(*v_rs1, self.operands.rs1, 32);
         asm.emit_i::<ORI>(*v_bitmask, self.operands.rs2, 32);
         asm.emit_i::<VirtualShiftRightBitmask>(*v_bitmask, *v_bitmask, 0);

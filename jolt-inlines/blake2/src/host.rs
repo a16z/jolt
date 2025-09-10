@@ -1,17 +1,18 @@
 //! Host-side implementation and registration.
-pub use crate::trace_generator;
-use jolt_inlines_common::constants;
-use jolt_inlines_common::trace_writer::{write_inline_trace, InlineDescriptor, SequenceInputs};
-use tracer::emulator::cpu::Xlen;
+pub use crate::sequence_builder;
+use crate::{BLAKE2_FUNCT3, BLAKE2_FUNCT7, BLAKE2_NAME, INLINE_OPCODE};
 use tracer::register_inline;
+use tracer::utils::inline_sequence_writer::{
+    write_inline_trace, AppendMode, InlineDescriptor, SequenceInputs,
+};
 
 pub fn init_inlines() -> Result<(), String> {
     register_inline(
-        constants::INLINE_OPCODE,
-        constants::blake2::FUNCT3,
-        constants::blake2::FUNCT7,
-        constants::blake2::NAME,
-        std::boxed::Box::new(trace_generator::blake2b_inline_sequence_builder),
+        INLINE_OPCODE,
+        BLAKE2_FUNCT3,
+        BLAKE2_FUNCT7,
+        BLAKE2_NAME,
+        std::boxed::Box::new(sequence_builder::blake2b_inline_sequence_builder),
     )?;
 
     Ok(())
@@ -19,26 +20,20 @@ pub fn init_inlines() -> Result<(), String> {
 
 pub fn store_inlines() -> Result<(), String> {
     let inline_info = InlineDescriptor::new(
-        constants::blake2::NAME.to_string(),
-        constants::INLINE_OPCODE,
-        constants::blake2::FUNCT3,
-        constants::blake2::FUNCT7,
+        BLAKE2_NAME.to_string(),
+        INLINE_OPCODE,
+        BLAKE2_FUNCT3,
+        BLAKE2_FUNCT7,
     );
-    let sequence_inputs = SequenceInputs::default();
-    let instructions = trace_generator::blake2b_inline_sequence_builder(
-        sequence_inputs.address,
-        sequence_inputs.is_compressed,
-        Xlen::Bit64,
-        sequence_inputs.rs1,
-        sequence_inputs.rs2,
-        sequence_inputs.rs3,
-    );
+    let inputs = SequenceInputs::default();
+    let instructions =
+        sequence_builder::blake2b_inline_sequence_builder((&inputs).into(), (&inputs).into());
     write_inline_trace(
         "blake2_trace.joltinline",
         &inline_info,
-        &sequence_inputs,
+        &inputs,
         &instructions,
-        false,
+        AppendMode::Overwrite,
     )
     .map_err(|e| e.to_string())?;
 
@@ -52,7 +47,9 @@ fn auto_register() {
         eprintln!("Failed to register BLAKE2 inlines: {e}");
     }
 
-    if let Err(e) = store_inlines() {
-        eprintln!("Failed to store BLAKE2 inline traces: {e}");
+    if std::env::var("STORE_INLINE").unwrap_or_default() == "true" {
+        if let Err(e) = store_inlines() {
+            eprintln!("Failed to store BLAKE2 inline traces: {e}");
+        }
     }
 }

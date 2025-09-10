@@ -1,4 +1,4 @@
-use crate::trace_generator::{ROTATION_OFFSETS, ROUND_CONSTANTS};
+use crate::sequence_builder::{ROTATION_OFFSETS, ROUND_CONSTANTS};
 use crate::{Keccak256State, NUM_LANES};
 
 // Host-side Keccak-256 implementation for reference and testing.

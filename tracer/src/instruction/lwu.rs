@@ -9,7 +9,7 @@ use super::xori::XORI;
 use super::{addi::ADDI, RV32IMInstruction};
 use super::{RISCVInstruction, RISCVTrace, RV32IMCycle};
 use crate::utils::inline_helpers::InstrAssembler;
-use crate::utils::virtual_registers::allocate_virtual_register;
+use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use crate::{
     declare_riscv_instr,
     emulator::cpu::{Cpu, Xlen},
@@ -44,7 +44,7 @@ impl LWU {
 
 impl RISCVTrace for LWU {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let inline_sequence = self.inline_sequence(cpu.xlen);
+        let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
             // In each iteration, create a new Option containing a re-borrowed reference
@@ -52,22 +52,30 @@ impl RISCVTrace for LWU {
         }
     }
 
-    fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
+    fn inline_sequence(
+        &self,
+        allocator: &VirtualRegisterAllocator,
+        xlen: Xlen,
+    ) -> Vec<RV32IMInstruction> {
         match xlen {
             Xlen::Bit32 => panic!("LWU is invalid in 32b mode"),
-            Xlen::Bit64 => self.inline_sequence_64(xlen),
+            Xlen::Bit64 => self.inline_sequence_64(allocator, xlen),
         }
     }
 }
 
 impl LWU {
-    fn inline_sequence_64(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
-        let v_address = allocate_virtual_register();
-        let v_dword_address = allocate_virtual_register();
-        let v_dword = allocate_virtual_register();
-        let v_shift = allocate_virtual_register();
+    fn inline_sequence_64(
+        &self,
+        allocator: &VirtualRegisterAllocator,
+        xlen: Xlen,
+    ) -> Vec<RV32IMInstruction> {
+        let v_address = allocator.allocate();
+        let v_dword_address = allocator.allocate();
+        let v_dword = allocator.allocate();
+        let v_shift = allocator.allocate();
 
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
         asm.emit_halign::<VirtualAssertWordAlignment>(self.operands.rs1, self.operands.imm);
         asm.emit_i::<ADDI>(*v_address, self.operands.rs1, self.operands.imm as u64);
         asm.emit_i::<ANDI>(*v_dword_address, *v_address, -8i64 as u64);

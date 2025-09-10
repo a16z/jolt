@@ -20,7 +20,7 @@ use super::virtual_sw::VirtualSW;
 use super::xor::XOR;
 use super::RAMWrite;
 use super::RV32IMInstruction;
-use crate::utils::virtual_registers::allocate_virtual_register;
+use crate::utils::virtual_registers::VirtualRegisterAllocator;
 
 use super::{format::format_s::FormatS, RISCVInstruction, RISCVTrace, RV32IMCycle};
 
@@ -47,7 +47,7 @@ impl SH {
 
 impl RISCVTrace for SH {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let inline_sequence = self.inline_sequence(cpu.xlen);
+        let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
             // In each iteration, create a new Option containing a re-borrowed reference
@@ -55,25 +55,29 @@ impl RISCVTrace for SH {
         }
     }
 
-    fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
+    fn inline_sequence(
+        &self,
+        allocator: &VirtualRegisterAllocator,
+        xlen: Xlen,
+    ) -> Vec<RV32IMInstruction> {
         match xlen {
-            Xlen::Bit32 => self.inline_sequence_32(),
-            Xlen::Bit64 => self.inline_sequence_64(),
+            Xlen::Bit32 => self.inline_sequence_32(allocator),
+            Xlen::Bit64 => self.inline_sequence_64(allocator),
         }
     }
 }
 
 impl SH {
-    fn inline_sequence_32(&self) -> Vec<RV32IMInstruction> {
+    fn inline_sequence_32(&self, allocator: &VirtualRegisterAllocator) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
-        let v_address = allocate_virtual_register();
-        let v_word_address = allocate_virtual_register();
-        let v_word = allocate_virtual_register();
-        let v_shift = allocate_virtual_register();
-        let v_mask = allocate_virtual_register();
-        let v_halfword = allocate_virtual_register();
+        let v_address = allocator.allocate();
+        let v_word_address = allocator.allocate();
+        let v_word = allocator.allocate();
+        let v_shift = allocator.allocate();
+        let v_mask = allocator.allocate();
+        let v_halfword = allocator.allocate();
 
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit32);
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit32, allocator);
         asm.emit_halign::<VirtualAssertHalfwordAlignment>(self.operands.rs1, self.operands.imm);
         asm.emit_i::<ADDI>(*v_address, self.operands.rs1, self.operands.imm as u64);
         asm.emit_i::<ANDI>(*v_word_address, *v_address, -4i64 as u64);
@@ -89,16 +93,16 @@ impl SH {
         asm.finalize()
     }
 
-    fn inline_sequence_64(&self) -> Vec<RV32IMInstruction> {
+    fn inline_sequence_64(&self, allocator: &VirtualRegisterAllocator) -> Vec<RV32IMInstruction> {
         // Virtual registers used in sequence
-        let v_address = allocate_virtual_register();
-        let v_dword_address = allocate_virtual_register();
-        let v_dword = allocate_virtual_register();
-        let v_shift = allocate_virtual_register();
-        let v_mask = allocate_virtual_register();
-        let v_halfword = allocate_virtual_register();
+        let v_address = allocator.allocate();
+        let v_dword_address = allocator.allocate();
+        let v_dword = allocator.allocate();
+        let v_shift = allocator.allocate();
+        let v_mask = allocator.allocate();
+        let v_halfword = allocator.allocate();
 
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit64);
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit64, allocator);
         asm.emit_halign::<VirtualAssertHalfwordAlignment>(self.operands.rs1, self.operands.imm);
         asm.emit_i::<ADDI>(*v_address, self.operands.rs1, self.operands.imm as u64);
         asm.emit_i::<ANDI>(*v_dword_address, *v_address, -8i64 as u64);

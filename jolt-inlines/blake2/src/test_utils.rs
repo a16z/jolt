@@ -1,76 +1,43 @@
-use jolt_inlines_common::constants::{blake2, INLINE_OPCODE};
-use tracer::emulator::mmu::DRAM_BASE;
-use tracer::instruction::format::format_inline::FormatInline;
-use tracer::instruction::inline::INLINE;
-use tracer::utils::test_harness::CpuTestHarness;
+use crate::{BLAKE2_FUNCT3, BLAKE2_FUNCT7, INLINE_OPCODE};
+use tracer::emulator::cpu::Xlen;
+use tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness};
 
-pub struct Blake2CpuHarness {
-    pub harness: CpuTestHarness,
+pub fn create_blake2_harness() -> InlineTestHarness {
+    // Blake2 needs message block (128 bytes) + counter (8 bytes) + flag (8 bytes) contiguous at rs2
+    // and state (64 bytes) at rs1
+    let layout = InlineMemoryLayout::single_input(144, 64); // 144 bytes for message+params, 64-byte state
+    InlineTestHarness::new(layout, Xlen::Bit64)
 }
 
-impl Blake2CpuHarness {
-    /// Memory layout constants
-    const STATE_ADDR: u64 = DRAM_BASE;
-    const MESSAGE_ADDR: u64 = DRAM_BASE + (crate::STATE_VECTOR_LEN * 8) as u64;
-    const COUNTER_ADDR: u64 = Self::MESSAGE_ADDR + (crate::MSG_BLOCK_LEN * 8) as u64;
-    const FLAG_ADDR: u64 = Self::COUNTER_ADDR + 8;
+pub fn load_blake2_data(
+    harness: &mut InlineTestHarness,
+    state: &[u64; crate::STATE_VECTOR_LEN],
+    message: &[u64; crate::MSG_BLOCK_LEN],
+    counter: u64,
+    is_final: bool,
+) {
+    harness.setup_registers(); // RS1=state, RS2=message+params
+    harness.load_state64(state);
 
-    pub const RS1: u8 = 10; // Points to the state
-    pub const RS2: u8 = 11; // Points to the message block + counter + final flag
+    // Blake2 expects message + counter + flag contiguously at rs2
+    // Create combined input: message (16 u64s) + counter (1 u64) + flag (1 u64)
+    let mut combined_input = Vec::with_capacity(18);
+    combined_input.extend_from_slice(message);
+    combined_input.push(counter);
+    let flag_value = if is_final { 1u64 } else { 0u64 };
+    combined_input.push(flag_value);
 
-    pub fn new() -> Self {
-        Self {
-            harness: CpuTestHarness::new(),
-        }
-    }
-
-    pub fn load_blake2_data(
-        &mut self,
-        state: &[u64; crate::STATE_VECTOR_LEN],
-        message: &[u64; crate::MSG_BLOCK_LEN],
-        counter: u64,
-        is_final: bool,
-    ) {
-        // Set up memory pointers in registers
-        self.harness.cpu.x[Self::RS1 as usize] = Self::STATE_ADDR as i64;
-        self.harness.cpu.x[Self::RS2 as usize] = Self::MESSAGE_ADDR as i64;
-
-        // Load state into memory
-        self.harness.set_memory(Self::STATE_ADDR, state);
-        // Load message block into memory
-        self.harness.set_memory(Self::MESSAGE_ADDR, message);
-        // Load counter
-        self.harness.set_memory(Self::COUNTER_ADDR, &[counter]);
-        // Load final flag
-        let flag_value = if is_final { 1u64 } else { 0u64 };
-        self.harness.set_memory(Self::FLAG_ADDR, &[flag_value]);
-    }
-
-    pub fn read_state(&mut self) -> [u64; crate::STATE_VECTOR_LEN] {
-        let mut state = [0u64; crate::STATE_VECTOR_LEN];
-        self.harness.read_memory(Self::STATE_ADDR, &mut state);
-        state
-    }
-
-    pub fn instruction() -> INLINE {
-        INLINE {
-            address: 0,
-            operands: FormatInline {
-                rs1: Self::RS1,
-                rs2: Self::RS2,
-                rs3: 0,
-            },
-            opcode: INLINE_OPCODE,
-            funct3: blake2::FUNCT3,
-            funct7: blake2::FUNCT7,
-            inline_sequence_remaining: None,
-            is_compressed: false,
-        }
-    }
+    // Load the combined input
+    harness.load_input64(&combined_input);
 }
 
-impl Default for Blake2CpuHarness {
-    fn default() -> Self {
-        Self::new()
-    }
+pub fn read_state(harness: &mut InlineTestHarness) -> [u64; crate::STATE_VECTOR_LEN] {
+    let vec = harness.read_output64(crate::STATE_VECTOR_LEN);
+    let mut state = [0u64; crate::STATE_VECTOR_LEN];
+    state.copy_from_slice(&vec);
+    state
+}
+
+pub fn instruction() -> tracer::instruction::inline::INLINE {
+    InlineTestHarness::create_default_instruction(INLINE_OPCODE, BLAKE2_FUNCT3, BLAKE2_FUNCT7)
 }

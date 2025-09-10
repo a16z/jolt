@@ -126,6 +126,7 @@ use virtual_zero_extend_word::VirtualZeroExtendWord;
 use self::inline::INLINE;
 
 use crate::emulator::cpu::{Cpu, Xlen};
+use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use derive_more::From;
 use format::{InstructionFormat, InstructionRegisterState, NormalizedOperands};
 
@@ -253,7 +254,7 @@ pub mod virtual_zero_extend_word;
 pub mod xor;
 pub mod xori;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-utils"))]
 pub mod test;
 
 #[derive(Default, Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
@@ -356,7 +357,11 @@ where
         }
     }
     // Default implementation. Instructions with inline sequences will override this.
-    fn inline_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction> {
+    fn inline_sequence(
+        &self,
+        _vr_allocator: &VirtualRegisterAllocator,
+        _xlen: Xlen,
+    ) -> Vec<RV32IMInstruction> {
         vec![(*self).into()]
     }
 }
@@ -502,14 +507,14 @@ macro_rules! define_rv32im_enums {
                 self.into()
             }
 
-            pub fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
+            pub fn inline_sequence(&self, allocator: &VirtualRegisterAllocator, xlen: Xlen) -> Vec<RV32IMInstruction> {
                 match self {
                     RV32IMInstruction::NoOp => vec![],
                     RV32IMInstruction::UNIMPL => vec![],
                     $(
-                        RV32IMInstruction::$instr(instr) => instr.inline_sequence(xlen),
+                        RV32IMInstruction::$instr(instr) => instr.inline_sequence(allocator, xlen),
                     )*
-                    RV32IMInstruction::INLINE(instr) => instr.inline_sequence(xlen),
+                    RV32IMInstruction::INLINE(instr) => instr.inline_sequence(allocator, xlen),
                 }
             }
 

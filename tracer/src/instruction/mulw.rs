@@ -1,4 +1,5 @@
 use crate::utils::inline_helpers::InstrAssembler;
+use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -32,7 +33,7 @@ impl MULW {
 
 impl RISCVTrace for MULW {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let inline_sequence = self.inline_sequence(cpu.xlen);
+        let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
 
         let mut trace = trace;
         for instr in inline_sequence {
@@ -41,8 +42,12 @@ impl RISCVTrace for MULW {
         }
     }
 
-    fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
+    fn inline_sequence(
+        &self,
+        allocator: &VirtualRegisterAllocator,
+        xlen: Xlen,
+    ) -> Vec<RV32IMInstruction> {
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
         asm.emit_r::<MUL>(self.operands.rd, self.operands.rs1, self.operands.rs2);
         asm.emit_i::<VirtualSignExtendWord>(self.operands.rd, self.operands.rd, 0);
         asm.finalize()

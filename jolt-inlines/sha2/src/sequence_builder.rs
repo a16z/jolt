@@ -1,12 +1,15 @@
+use core::array;
+
 use tracer::{
-    emulator::cpu::Xlen,
-    instruction::{andn::ANDN, lw::LW, sw::SW, RV32IMInstruction},
+    instruction::{
+        andn::ANDN, format::format_inline::FormatInline, lw::LW, sw::SW, RV32IMInstruction,
+    },
     utils::{
         inline_helpers::{
             InstrAssembler,
             Value::{self, Imm, Reg},
         },
-        virtual_registers::allocate_virtual_register_for_inline,
+        virtual_registers::VirtualRegisterGuard,
     },
 };
 
@@ -36,39 +39,28 @@ pub const K: [u64; 64] = [
 pub const NEEDED_REGISTERS: u8 = 32;
 
 /// Builds assembly sequence for SHA256 compression
-/// Expects input words to be in RAM at location rs1..rs1+16
-/// Expects A..H to be in RAM at location rs2..rs2+8
-/// Output will be written to rs2..rs2+8
+/// Expects A..H to be in RAM at location rs1..rs1+8 (also where output is written)
+/// Expects input words to be in RAM at location rs2..rs2+16
+/// Output will be written to rs1..rs1+8
 struct Sha256SequenceBuilder {
     asm: InstrAssembler,
     /// Round id
     round: i32,
     /// Virtual registers used by the sequence
-    vr: [u8; NEEDED_REGISTERS as usize],
-    /// Location input words to the hash function in 16 memory slots
-    operand_rs1: u8,
-    /// Location of previous hash values A..H (also where output is written)
-    operand_rs2: u8,
+    vr: [VirtualRegisterGuard; NEEDED_REGISTERS as usize],
+    operands: FormatInline,
     /// Whether this is the initial compression (use BLOCK constants)
     initial: bool,
 }
 
 impl Sha256SequenceBuilder {
-    fn new(
-        address: u64,
-        is_compressed: bool,
-        xlen: Xlen,
-        vr: [u8; NEEDED_REGISTERS as usize],
-        operand_rs1: u8,
-        operand_rs2: u8,
-        initial: bool,
-    ) -> Self {
+    fn new(asm: InstrAssembler, operands: FormatInline, initial: bool) -> Self {
+        let vr = array::from_fn(|_| asm.allocator.allocate_for_inline());
         Sha256SequenceBuilder {
-            asm: InstrAssembler::new_inline(address, is_compressed, xlen),
+            asm,
             round: 0,
             vr,
-            operand_rs1,
-            operand_rs2,
+            operands,
             initial,
         }
     }
@@ -81,27 +73,28 @@ impl Sha256SequenceBuilder {
             // E..H loaded into registers 28..31 (preserved until needed)
             (0..4).for_each(|i| {
                 self.asm
-                    .emit_ld::<LW>(self.vr[i as usize], self.operand_rs2, i * 4)
+                    .emit_ld::<LW>(*self.vr[i as usize], self.operands.rs1, i * 4)
             });
             (0..4).for_each(|i| {
                 self.asm
-                    .emit_ld::<LW>(self.vr[(i + 28) as usize], self.operand_rs2, (i + 4) * 4)
+                    .emit_ld::<LW>(*self.vr[(i + 28) as usize], self.operands.rs1, (i + 4) * 4)
             });
         }
         // Load input words into registers 8..23
         (0..16).for_each(|i| {
             self.asm
-                .emit_ld::<LW>(self.vr[(i + 8) as usize], self.operand_rs1, i * 4)
+                .emit_ld::<LW>(*self.vr[(i + 8) as usize], self.operands.rs2, i * 4)
         });
         // Run 64 rounds
         (0..64).for_each(|_| self.round());
         self.final_add_iv();
-        // Store output values to rs2 location
+        // Store output values to rs1 location
         // Store output A..H in-order using the current VR mapping after all rotations
         let outs = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
         for (i, ch) in outs.iter().enumerate() {
             let src = self.vr(*ch);
-            self.asm.emit_s::<SW>(self.operand_rs2, src, (i as i64) * 4);
+            self.asm
+                .emit_s::<SW>(self.operands.rs1, src, (i as i64) * 4);
         }
         self.asm.finalize_inline(NEEDED_REGISTERS)
     }
@@ -115,16 +108,16 @@ impl Sha256SequenceBuilder {
             // but it just keeps those in order).
             (0..4).for_each(|i| {
                 self.asm
-                    .emit_ld::<LW>(self.vr[24 + i as usize], self.operand_rs2, i * 4)
+                    .emit_ld::<LW>(*self.vr[24 + i as usize], self.operands.rs1, i * 4)
             });
-            self.asm.add(self.vri('A'), Reg(self.vr[24]), self.vr('A'));
-            self.asm.add(self.vri('B'), Reg(self.vr[25]), self.vr('B'));
-            self.asm.add(self.vri('C'), Reg(self.vr[26]), self.vr('C'));
-            self.asm.add(self.vri('D'), Reg(self.vr[27]), self.vr('D'));
-            self.asm.add(self.vri('E'), Reg(self.vr[28]), self.vr('E'));
-            self.asm.add(self.vri('F'), Reg(self.vr[29]), self.vr('F'));
-            self.asm.add(self.vri('G'), Reg(self.vr[30]), self.vr('G'));
-            self.asm.add(self.vri('H'), Reg(self.vr[31]), self.vr('H'));
+            self.asm.add(self.vri('A'), Reg(*self.vr[24]), self.vr('A'));
+            self.asm.add(self.vri('B'), Reg(*self.vr[25]), self.vr('B'));
+            self.asm.add(self.vri('C'), Reg(*self.vr[26]), self.vr('C'));
+            self.asm.add(self.vri('D'), Reg(*self.vr[27]), self.vr('D'));
+            self.asm.add(self.vri('E'), Reg(*self.vr[28]), self.vr('E'));
+            self.asm.add(self.vri('F'), Reg(*self.vr[29]), self.vr('F'));
+            self.asm.add(self.vri('G'), Reg(*self.vr[30]), self.vr('G'));
+            self.asm.add(self.vri('H'), Reg(*self.vr[31]), self.vr('H'));
         } else {
             // We are using constants for final addition round
             self.asm.add(self.vri('A'), Imm(BLOCK[0]), self.vr('A'));
@@ -142,11 +135,11 @@ impl Sha256SequenceBuilder {
     /// Assumes for words W_0..W_15 to be loaded in registers 8..24
     fn round(&mut self) {
         assert!(self.round < 64);
-        let t1 = self.vr[24];
-        let t2 = self.vr[25];
+        let t1 = *self.vr[24];
+        let t2 = *self.vr[25];
         // scratch space
-        let ss = self.vr[26];
-        let ss2 = self.vr[27];
+        let ss = *self.vr[26];
+        let ss2 = *self.vr[27];
         let t1_val = self.compute_t1(t1, ss, ss2);
         let t2_val = self.compute_t2(t2, ss, ss2);
         let old_d = self.vri('D');
@@ -226,16 +219,16 @@ impl Sha256SequenceBuilder {
                 || self.round == 2 && shift >= 6
                 || self.round == 3 && shift >= 7)
         {
-            return self.vr[24 - self.round as usize + shift as usize];
+            return *self.vr[24 - self.round as usize + shift as usize];
         }
 
         // Standard rotation: each round shifts all variables by -1
-        self.vr[(-self.round + shift).rem_euclid(8) as usize]
+        *self.vr[(-self.round + shift).rem_euclid(8) as usize]
     }
 
     /// Register number containing W_(rid+shift)
     fn w(&self, shift: i32) -> u8 {
-        self.vr[((self.round + shift).rem_euclid(16) + 8) as usize]
+        *self.vr[((self.round + shift).rem_euclid(16) + 8) as usize]
     }
 
     /// Updates message schedule for rounds 16-63
@@ -317,58 +310,22 @@ impl Sha256SequenceBuilder {
 
 // Virtual instructions builder for sha256
 pub fn sha2_inline_sequence_builder(
-    address: u64,
-    is_compressed: bool,
-    xlen: Xlen,
-    rs1: u8,
-    rs2: u8,
-    _rs3: u8,
+    asm: InstrAssembler,
+    operands: FormatInline,
 ) -> Vec<RV32IMInstruction> {
-    // Virtual registers used as a scratch space
-    let guards: Vec<_> = (0..NEEDED_REGISTERS)
-        .map(|_| allocate_virtual_register_for_inline())
-        .collect();
-    let mut vr = [0u8; NEEDED_REGISTERS as usize];
-    for (i, guard) in guards.iter().enumerate() {
-        vr[i] = **guard;
-    }
     let builder = Sha256SequenceBuilder::new(
-        address,
-        is_compressed,
-        xlen,
-        vr,
-        rs1,
-        rs2,
-        false, // not initial - uses custom IV from rs2
+        asm, operands, false, // not initial - uses custom IV from rs1
     );
     builder.build()
 }
 
 // Virtual instructions builder for sha256_init
 pub fn sha2_init_inline_sequence_builder(
-    address: u64,
-    is_compressed: bool,
-    xlen: Xlen,
-    rs1: u8,
-    rs2: u8,
-    _rs3: u8,
+    asm: InstrAssembler,
+    operands: FormatInline,
 ) -> Vec<RV32IMInstruction> {
-    // Virtual registers used as a scratch space
-    let guards: Vec<_> = (0..NEEDED_REGISTERS)
-        .map(|_| allocate_virtual_register_for_inline())
-        .collect();
-    let mut vr = [0u8; NEEDED_REGISTERS as usize];
-    for (i, guard) in guards.iter().enumerate() {
-        vr[i] = **guard;
-    }
     let builder = Sha256SequenceBuilder::new(
-        address,
-        is_compressed,
-        xlen,
-        vr,
-        rs1,
-        rs2,
-        true, // initial - uses BLOCK constants
+        asm, operands, true, // initial - uses BLOCK constants
     );
     builder.build()
 }
