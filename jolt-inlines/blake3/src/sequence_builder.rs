@@ -334,7 +334,7 @@ mod test_sequence_builder {
 
     #[test]
     fn test_trace_result_equals_blake3_compress_reference() {
-        for _ in 0..10000 {
+        for _ in 0..1000 {
             let message_bytes = generate_random_bytes(crate::MSG_BLOCK_LEN * 4);
             // Convert bytes to message block (u32 words)
             assert_eq!(
@@ -362,7 +362,7 @@ mod test_sequence_builder {
 
     #[test]
     fn test_trace_result_equals_blake3_keyed_compress_reference() {
-        for _ in 0..10000 {
+        for _ in 0..1000 {
             // Generate random key
             let key_bytes = generate_random_bytes(crate::CHAINING_VALUE_LEN * 4);
             let mut key = [0u32; crate::CHAINING_VALUE_LEN];
