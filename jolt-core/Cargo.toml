@@ -21,7 +21,8 @@ license-file = "LICENSE"
 keywords = ["SNARK", "cryptography", "proofs", "zkVM"]
 
 [features]
-default = ["host"]
+default = ["host", "recursion"]
+recursion = []
 host = [
     "dep:reqwest",
     "dep:tokio",

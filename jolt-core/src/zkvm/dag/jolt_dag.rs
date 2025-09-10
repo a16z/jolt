@@ -4,6 +4,8 @@ use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::dory::DoryGlobals;
 use crate::subprotocols::sumcheck::{BatchedSumcheck, SumcheckInstance};
+#[cfg(feature = "recursion")]
+use crate::subprotocols::sz_check_protocol::sz_check_prove;
 use crate::transcripts::Transcript;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::utils::profiling::print_current_memory_usage;
@@ -33,6 +35,7 @@ pub enum JoltDAG {}
 
 impl JoltDAG {
     #[allow(clippy::type_complexity)]
+    #[cfg_attr(feature = "recursion", allow(unused_variables))]
     pub fn prove<
         'a,
         F: JoltField,
@@ -305,6 +308,66 @@ impl JoltDAG {
         };
         #[cfg(not(test))]
         let debug_info = None;
+
+        // Stage 6: Help the verifier in recursion mode
+        #[cfg(feature = "recursion")]
+        {
+            println!("FUCK");
+            use ark_bn254::Fq;
+            use jolt_optimizations::steps::ExponentiationSteps;
+            use std::any::TypeId;
+
+            let exponentiation_steps_vec: Vec<ExponentiationSteps> = Vec::new();
+
+            if !exponentiation_steps_vec.is_empty() {
+                if TypeId::of::<F>() == TypeId::of::<Fq>() {
+                    let (sz_sumcheck_instances_fq, sz_artifacts_fq) =
+                        sz_check_prove::<Fq, ProofTranscript>(
+                            exponentiation_steps_vec,
+                            &mut *transcript.borrow_mut(),
+                        );
+
+                    let mut sz_sumcheck_instances = unsafe {
+                        std::mem::transmute::<
+                            Vec<Box<dyn SumcheckInstance<Fq>>>,
+                            Vec<Box<dyn SumcheckInstance<F>>>,
+                        >(sz_sumcheck_instances_fq)
+                    };
+                    let sz_artifacts = unsafe {
+                        std::mem::transmute::<
+                            crate::subprotocols::sz_check_protocol::SZCheckArtifacts<Fq>,
+                            crate::subprotocols::sz_check_protocol::SZCheckArtifacts<F>,
+                        >(sz_artifacts_fq)
+                    };
+
+                    if !sz_sumcheck_instances.is_empty() {
+                        let sz_instances_mut: Vec<&mut dyn SumcheckInstance<F>> =
+                            sz_sumcheck_instances
+                                .iter_mut()
+                                .map(|instance| &mut **instance as &mut dyn SumcheckInstance<F>)
+                                .collect();
+
+                        let (sz_proof, _r_sz) = BatchedSumcheck::prove(
+                            sz_instances_mut,
+                            Some(accumulator.clone()),
+                            &mut *transcript.borrow_mut(),
+                        );
+
+                        state_manager.proofs.borrow_mut().insert(
+                            ProofKeys::SZCheckSumcheck,
+                            ProofData::SumcheckProof(sz_proof),
+                        );
+
+                        state_manager.proofs.borrow_mut().insert(
+                            ProofKeys::SZCheckArtifacts,
+                            ProofData::SZCheckArtifacts(sz_artifacts),
+                        );
+                    }
+                } else {
+                    panic!("SZ check requires field type to be ark_bn254::Fq");
+                }
+            }
+        }
 
         let proof = JoltProof::from_prover_state_manager(state_manager);
 

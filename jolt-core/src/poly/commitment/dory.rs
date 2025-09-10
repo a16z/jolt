@@ -33,6 +33,7 @@ use dory::{
     transcript::Transcript as DoryTranscript,
     verify, DoryProof, DoryProofBuilder, Polynomial as DoryPolynomial, ProverSetup, VerifierSetup,
 };
+use jolt_optimizations::ExponentiationSteps;
 
 /// The (padded) length of the execution trace currently being proven
 static mut GLOBAL_T: OnceCell<usize> = OnceCell::new();
@@ -211,6 +212,13 @@ where
     fn random<R: RngCore>(rng: &mut R) -> Self {
         Self(G::rand(rng))
     }
+
+    fn scale_with_steps(
+        &self,
+        _: &<Self as dory::arithmetic::Group>::Scalar,
+    ) -> (Self, ExponentiationSteps) {
+        todo!()
+    }
 }
 
 #[repr(transparent)]
@@ -254,6 +262,13 @@ where
 
     fn random<R: RngCore>(rng: &mut R) -> Self {
         Self(P::TargetField::rand(rng))
+    }
+
+    fn scale_with_steps(
+        &self,
+        _: &<Self as dory::arithmetic::Group>::Scalar,
+    ) -> (Self, ExponentiationSteps) {
+        todo!()
     }
 }
 

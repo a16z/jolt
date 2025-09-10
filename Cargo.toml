@@ -63,6 +63,7 @@ members = [
 
 [features]
 host = ["jolt-sdk/host"]
+recursion = ["jolt-core/recursion"]
 
 [lib]
 path = "./src/lib.rs"

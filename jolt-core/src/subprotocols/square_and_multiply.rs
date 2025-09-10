@@ -19,7 +19,7 @@ use allocative::FlameGraphBuilder;
 use rayon::prelude::*;
 
 const DEGREE: usize = 3;
-const NUM_A_POLYS: usize = 128;
+const NUM_A_POLYS: usize = 256;
 
 #[derive(Allocative)]
 struct SquareAndMultiplyProverState<F: JoltField> {

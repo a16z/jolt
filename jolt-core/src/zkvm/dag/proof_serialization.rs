@@ -411,6 +411,12 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
                 1u8.serialize_with_mode(&mut writer, compress)?;
                 proof.serialize_with_mode(&mut writer, compress)
             }
+            #[cfg(feature = "recursion")]
+            ProofData::SZCheckArtifacts(_artifacts) => {
+                2u8.serialize_with_mode(&mut writer, compress)?;
+                // TODO: Implement serialization for SZCheckArtifacts when needed
+                Ok(())
+            }
         }
     }
 
@@ -418,6 +424,11 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
         1 + match self {
             ProofData::SumcheckProof(proof) => proof.serialized_size(compress),
             ProofData::ReducedOpeningProof(proof) => proof.serialized_size(compress),
+            #[cfg(feature = "recursion")]
+            ProofData::SZCheckArtifacts(_artifacts) => {
+                // TODO: Implement proper size calculation when needed
+                0
+            }
         }
     }
 }
