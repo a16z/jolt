@@ -289,8 +289,6 @@ pub struct TraceWitnessAccessor<'a, F: JoltField, PCS: CommitmentScheme<Field = 
     pub trace: &'a [RV32IMCycle],
 }
 
-
-
 impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> TraceWitnessAccessor<'a, F, PCS> {
     /// Construct an accessor that borrows `preprocessing` and `trace`.
     pub fn new(
