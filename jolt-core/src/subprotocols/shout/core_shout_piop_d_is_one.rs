@@ -238,7 +238,6 @@ pub fn prove_generic_core_shout_piop_d_is_one_w_gruen<F: JoltField, ProofTranscr
     let mut r_address: Vec<MontU128> = Vec::with_capacity(num_rounds);
     let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
 
-    let start = Instant::now();
     for _ in 0..K.log_2() {
         // Page 51: (eq 51)
         let univariate_poly_evals: [F; DEGREE] = (0..ra.len() / 2)
@@ -273,7 +272,6 @@ pub fn prove_generic_core_shout_piop_d_is_one_w_gruen<F: JoltField, ProofTranscr
             || val.bind_parallel(r_j, BindingOrder::LowToHigh),
         );
     }
-    let duration = start.elapsed();
 
     // tau = r_address (the verifiers challenges which bind all log K variables of memory)
     // This is \widetilde{Val}(\tau) from the paper (eq 52)
@@ -339,7 +337,8 @@ pub fn prove_generic_core_shout_piop_d_is_one_w_gruen<F: JoltField, ProofTranscr
         let ell_at_0 = val_claim
             * greq_r_cycle.get_current_scalar()
             * (F::one() - F::from_u128_mont(greq_r_cycle.get_current_w()));
-        let ell_at_1 = (val_claim*greq_r_cycle.get_current_scalar()).mul_u128_mont_form(greq_r_cycle.get_current_w());
+        let ell_at_1 = (val_claim * greq_r_cycle.get_current_scalar())
+            .mul_u128_mont_form(greq_r_cycle.get_current_w());
 
         // One inverse
         let ell_one_inverse = ell_at_1
