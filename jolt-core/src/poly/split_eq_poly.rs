@@ -199,13 +199,14 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
             BindingOrder::LowToHigh => {
                 // multiply `current_scalar` by `eq(w[i], r) = (1 - w[i]) * (1 - r) + w[i] * r`
                 // which is the same as `1 - w[i] - r + 2 * w[i] * r`
-                let prod_w_r =
-                    F::from_u128_mont(self.w[self.current_index - 1]) * F::from_u128_mont(r);
+                let w_f = F::from_u128_mont(self.w[self.current_index - 1]);
+                let wr_f =
+                    w_f.mul_u128_mont_form(r);
                 self.current_scalar *= F::one()
-                    - F::from_u128_mont(self.w[self.current_index - 1])
+                    - w_f
                     - F::from_u128_mont(r)
-                    + prod_w_r
-                    + prod_w_r;
+                    + wr_f
+                    + wr_f;
                 // decrement `current_index`
                 self.current_index -= 1;
                 // pop the last vector from `E_in_vec` or `E_out_vec` (since we don't need it anymore)
@@ -219,14 +220,13 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
                 // multiply `current_scalar` by `eq(w[i], r) = (1 - w[i]) * (1 - r) + w[i] * r`
                 // which is the same as `1 - w[i] - r + 2 * w[i] * r`
                 //let _prod_w_r = tmp.mul_two_u128s(self.w[self.current_index], r);
-                let prod_w_r =
-                    F::from_u128_mont(self.w[self.current_index - 1]) * F::from_u128_mont(r);
+                let w_f = F::from_u128_mont(self.w[self.current_index - 1]);
+                let wr_f = w_f.mul_u128_mont_form(r);
 
-                // TODO: Double check the from 128
                 self.current_scalar *=
-                    F::one() - F::from_u128_mont(self.w[self.current_index]) - F::from_u128_mont(r)
-                        + prod_w_r
-                        + prod_w_r;
+                    F::one() - w_f - F::from_u128_mont(r)
+                        + wr_f
+                        + wr_f;
 
                 // increment `current_index` (going from 0 to n-1)
                 self.current_index += 1;
@@ -251,13 +251,14 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
             BindingOrder::LowToHigh => {
                 // multiply `current_scalar` by `eq(w[i], r) = (1 - w[i]) * (1 - r) + w[i] * r`
                 // which is the same as `1 - w[i] - r + 2 * w[i] * r`
-                let prod_w_r =
-                    F::from_u128_mont(self.w[self.current_index - 1]) * F::from_u128_mont(r);
+                let w_f =F::from_u128_mont(self.w[self.current_index - 1]);
+                let wr_f =
+                     w_f.mul_u128_mont_form(r);
                 self.current_scalar *= F::one()
-                    - F::from_u128_mont(self.w[self.current_index - 1])
+                    - w_f
                     - F::from_u128_mont(r)
-                    + prod_w_r
-                    + prod_w_r;
+                    + wr_f
+                    + wr_f;
                 // decrement `current_index`
                 self.current_index -= 1;
                 // pop the last vector from `E_in_vec` or `E_out_vec` (since we don't need it anymore)
@@ -270,12 +271,12 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
             BindingOrder::HighToLow => {
                 // multiply `current_scalar` by `eq(w[i], r) = (1 - w[i]) * (1 - r) + w[i] * r`
                 // which is the same as `1 - w[i] - r + 2 * w[i] * r`
-
-                let prod_w_r = F::from_u128_mont(self.w[self.current_index]) * F::from_u128_mont(r);
+                let w_f = F::from_u128_mont(self.w[self.current_index]);
+                let wr_f =  w_f.mul_u128_mont_form(r);
                 self.current_scalar *=
-                    F::one() - F::from_u128_mont(self.w[self.current_index]) - F::from_u128_mont(r)
-                        + prod_w_r
-                        + prod_w_r;
+                    F::one() - w_f - F::from_u128_mont(r)
+                        + wr_f
+                        + wr_f;
 
                 // increment `current_index` (going from 0 to n-1)
                 self.current_index += 1;

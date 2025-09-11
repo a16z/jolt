@@ -24,8 +24,12 @@ impl<F: JoltField> EqPolynomial<F> {
         x.par_iter()
             .zip(y.par_iter())
             .map(|(x_i, y_i)| {
-                F::from_u128_mont(*x_i) * F::from_u128_mont(*y_i)
-                    + (F::one() - F::from_u128_mont(*x_i)) * (F::one() - F::from_u128_mont(*y_i))
+                //F::from_u128_mont(*x_i) * F::from_u128_mont(*y_i)
+                //    + (F::one() - F::from_u128_mont(*x_i)) * (F::one() - F::from_u128_mont(*y_i))
+                let x_f = F::from_u128_mont(*x_i);
+                let y_f = F::from_u128_mont(*y_i);
+                let xy_f = x_f.mul_u128_mont_form(*y_i);
+                F::one() - x_f - y_f + xy_f + xy_f
             })
             .product()
     }
@@ -36,26 +40,23 @@ impl<F: JoltField> EqPolynomial<F> {
         y: &OpeningPoint<E2>,
     ) -> F {
         assert_eq!(x.len(), y.len());
+        // TODO:(ari, question): What is the difference in the two blocks here?
         if E1 == E2 {
             x.r.par_iter()
                 .zip(y.r.par_iter())
                 .map(|(x_i, y_i)| {
-                    let prod = F::from_u128_mont(*x_i) * F::from_u128_mont(*y_i);
-                    let f = prod
-                        + (F::one() - F::from_u128_mont(*x_i))
-                            * (F::one() - F::from_u128_mont(*y_i));
-                    f
+                    let x_i_f = F::from_u128_mont(*x_i);
+                    let prod = x_i_f.mul_u128_mont_form(*y_i);
+                    prod + (F::one() - x_i_f) * (F::one() - F::from_u128_mont(*y_i))
                 })
                 .product()
         } else {
             x.r.par_iter()
                 .zip(y.r.par_iter().rev())
                 .map(|(x_i, y_i)| {
-                    let prod = F::from_u128_mont(*x_i) * F::from_u128_mont(*y_i);
-                    let f = prod
-                        + (F::one() - F::from_u128_mont(*x_i))
-                            * (F::one() - F::from_u128_mont(*y_i));
-                    f
+                    let x_i_f = F::from_u128_mont(*x_i);
+                    let prod = x_i_f.mul_u128_mont_form(*y_i);
+                    prod + (F::one() - x_i_f) * (F::one() - F::from_u128_mont(*y_i))
                 })
                 .product()
         }
@@ -264,7 +265,7 @@ impl<F: JoltField> EqPlusOnePolynomial<F> {
         let l = self.x.len();
         let x = &self.x;
         assert_eq!(y.len(), l);
-        let one = F::from_u64(1_u64);
+        let one = F::one();
 
         /* If y+1 = x, then the two bit vectors are of the following form.
             Let k be the longest suffix of 1s in x.
@@ -285,9 +286,10 @@ impl<F: JoltField> EqPlusOnePolynomial<F> {
                     (F::one() - F::from_u128_mont(x[l - 1 - k])).mul_u128_mont_form(y[l - 1 - k]);
                 let higher_bits_product = ((k + 1)..l)
                     .map(|i| {
-                        F::from_u128_mont(x[l - 1 - i]) * F::from_u128_mont(y[l - 1 - i])
-                            + (one - F::from_u128_mont(x[l - 1 - i]))
-                                * (one - F::from_u128_mont(y[l - 1 - i]))
+                        let x_f = F::from_u128_mont(x[l - 1 - i]);
+                        let y_f = F::from_u128_mont(y[l - 1 - i]);
+                        let xy_f = x_f.mul_u128_mont_form(y[l - 1 - i]);
+                        one - x_f - y_f + xy_f + xy_f
                     })
                     .product::<F>();
                 lower_bits_product * kth_bit_product * higher_bits_product
@@ -319,13 +321,12 @@ impl<F: JoltField> EqPlusOnePolynomial<F> {
             let step = 1 << (ell - i);
             let half_step = step / 2;
 
-            // this is not efficient is it?
-            let r_lower_product = (F::one() - F::from_u128_mont(r[i]))
-                * r.iter()
-                    .skip(i + 1)
-                    .copied()
-                    .map(F::from_u128_mont)
-                    .product::<F>();
+            // Taking advantage of the faster multiplication when we can
+            let mut r_lower_product = F::one();
+            for &x in r.iter().skip(i + 1) {
+                r_lower_product = r_lower_product.mul_u128_mont_form(x);
+            }
+            r_lower_product *= F::one() - F::from_u128_mont(r[i]);
 
             eq_plus_one_evals
                 .par_iter_mut()

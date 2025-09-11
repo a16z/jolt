@@ -65,6 +65,7 @@ impl<F: JoltField> PolynomialBinding<F> for IdentityPolynomial<F> {
 impl<F: JoltField> PolynomialEvaluation<F> for IdentityPolynomial<F> {
     fn evaluate(&self, r: &[MontU128]) -> F {
         let len = r.len();
+        // TOOD:(Ari) can this be made more efficient?
         debug_assert_eq!(len, self.num_vars);
         (0..len)
             .map(|i| F::from_u128_mont(r[i]).mul_u64(1u64 << (len - 1 - i)))
@@ -252,7 +253,7 @@ impl<F: JoltField> PolynomialEvaluation<F> for OperandPolynomial<F> {
         let len = r.len();
         debug_assert_eq!(len, self.num_vars);
         debug_assert!(len.is_even());
-
+        // TODO:(ari) this mul64's can be made faster!
         match self.side {
             OperandSide::Left => (0..len / 2)
                 .map(|i| F::from_u128_mont(r[2 * i]).mul_u64(1u64 << (self.num_vars / 2 - 1 - i)))
