@@ -1,7 +1,6 @@
 use crate::field::MontU128;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use ark_ff::{prelude::*, BigInt, PrimeField, UniformRand};
-use num::zero;
 use rayon::prelude::*;
 
 use super::{FieldOps, JoltField};
