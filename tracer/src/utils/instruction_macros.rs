@@ -9,58 +9,15 @@ macro_rules! declare_riscv_instr {
       $(, is_virtual = $virt:tt)?
         $(,)?
   ) => {
-        // Create the struct
         #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
         pub struct $name {
             pub address: u64,
             pub operands: $format,
             pub inline_sequence_remaining: Option<u16>,
+            /// Set if instruction is C-Type
             pub is_compressed: bool,
         }
-        
-        declare_riscv_instr! {
-            @impl_traits
-            name = $name,
-            mask = $mask,
-            match = $match_,
-            format = $format,
-            ram = $ram
-            $(, is_virtual = $virt)?
-        }
-    };
-    
-    (
-      for_struct = $name:ty,
-      mask    = $mask:expr,
-      match   = $match_:expr,
-      format  = $format:ty,
-      ram     = $ram:ty
-      $(, is_virtual = $virt:tt)?
-        $(,)?
-  ) => {
-        // Struct already exists
-        declare_riscv_instr! {
-            @impl_traits
-            name = $name,
-            mask = $mask,
-            match = $match_,
-            format = $format,
-            ram = $ram
-            $(, is_virtual = $virt)?
-        }
-    };
-    
-    // Implements all traits
-    (
-      @impl_traits
-      name    = $name:ty,
-      mask    = $mask:expr,
-      match   = $match_:expr,
-      format  = $format:ty,
-      ram     = $ram:ty
-      $(, is_virtual = $virt:tt)?
-        $(,)?
-  ) => {
+
         impl $crate::instruction::RISCVInstruction for $name {
             const MASK: u32 = $mask;
             const MATCH: u32 = $match_;

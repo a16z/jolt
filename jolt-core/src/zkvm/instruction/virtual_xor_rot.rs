@@ -79,8 +79,8 @@ impl_virtual_xor_rot!(VirtualXORROT63, 63);
 
 #[cfg(test)]
 mod test {
-    use crate::zkvm::instruction::test::materialize_entry_test;
     use super::*;
+    use crate::zkvm::instruction::test::materialize_entry_test;
     use ark_bn254::Fr;
 
     #[test]

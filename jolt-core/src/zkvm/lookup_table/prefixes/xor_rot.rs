@@ -5,7 +5,9 @@ use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 
 pub enum XorRotPrefix<const XLEN: usize, const ROTATION: u32> {}
 
-impl<const XLEN: usize, const ROTATION: u32, F: JoltField> SparseDensePrefix<F> for XorRotPrefix<XLEN, ROTATION> {
+impl<const XLEN: usize, const ROTATION: u32, F: JoltField> SparseDensePrefix<F>
+    for XorRotPrefix<XLEN, ROTATION>
+{
     fn prefix_mle(
         checkpoints: &[PrefixCheckpoint<F>],
         r_x: Option<F>,
@@ -18,7 +20,7 @@ impl<const XLEN: usize, const ROTATION: u32, F: JoltField> SparseDensePrefix<F> 
             24 => Prefixes::XorRot24,
             32 => Prefixes::XorRot32,
             63 => Prefixes::XorRot63,
-            _ => panic!("Unsupported rotation value: {}", ROTATION),
+            _ => unimplemented!(),
         };
         let mut result = checkpoints[prefix_idx].unwrap_or(F::zero());
 
@@ -49,9 +51,9 @@ impl<const XLEN: usize, const ROTATION: u32, F: JoltField> SparseDensePrefix<F> 
         let suffix_len = current_suffix_len(j);
 
         let shift = if suffix_len as i32 / 2 - ROTATION as i32 >= 0 {
-            (suffix_len / 2 - ROTATION as usize) as usize
+            suffix_len / 2 - ROTATION as usize
         } else {
-            ((suffix_len as i32 / 2 - ROTATION as i32)) as usize
+            (XLEN as i32 + (suffix_len as i32 / 2 - ROTATION as i32)) as usize
         };
 
         result += F::from_u64((u64::from(x) ^ u64::from(y)) << shift);
@@ -69,10 +71,10 @@ impl<const XLEN: usize, const ROTATION: u32, F: JoltField> SparseDensePrefix<F> 
             24 => Prefixes::XorRot24,
             32 => Prefixes::XorRot32,
             63 => Prefixes::XorRot63,
-            _ => panic!("Unsupported rotation value: {}", ROTATION),
+            _ => unimplemented!(),
         };
         let original_pos = j / 2;
-        let rotated_pos = (original_pos +  ROTATION as usize) % XLEN;
+        let rotated_pos = (original_pos + ROTATION as usize) % XLEN;
         let shift = XLEN - 1 - rotated_pos;
         let updated = checkpoints[prefix_idx].unwrap_or(F::zero())
             + F::from_u64(1 << shift) * ((F::one() - r_x) * r_y + r_x * (F::one() - r_y));

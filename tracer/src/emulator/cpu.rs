@@ -383,12 +383,10 @@ impl Cpu {
                 )
             });
 
-        if let Some(trace_vec) = trace {
-            let init_trace_len = trace_vec.len();
-            instr.trace(self, Some(trace_vec));
-            self.trace_len += trace_vec.len() - init_trace_len;
-        } else {
+        if trace.is_none() {
             instr.execute(self);
+        } else {
+            instr.trace(self, trace);
         }
 
         // check if current instruction is real or not for cycle profiling

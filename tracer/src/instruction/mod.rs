@@ -125,10 +125,10 @@ use virtual_zero_extend_word::VirtualZeroExtendWord;
 use self::inline::INLINE;
 
 use crate::emulator::cpu::{Cpu, Xlen};
-use virtual_xor_rot::{VirtualXORROT16, VirtualXORROT24, VirtualXORROT32, VirtualXORROT63};
 use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use derive_more::From;
 use format::{InstructionFormat, InstructionRegisterState, NormalizedOperands};
+use virtual_xor_rot::{VirtualXORROT16, VirtualXORROT24, VirtualXORROT32, VirtualXORROT63};
 
 pub mod format;
 
