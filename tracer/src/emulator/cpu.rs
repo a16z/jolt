@@ -385,8 +385,10 @@ impl Cpu {
 
         if trace.is_none() {
             instr.execute(self);
+            self.trace_len += 1;
         } else {
             instr.trace(self, trace);
+            self.trace_len += instr.inline_sequence(&self.vr_allocator, self.xlen).len();
         }
 
         // check if current instruction is real or not for cycle profiling
