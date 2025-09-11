@@ -257,49 +257,44 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
 
     #[tracing::instrument(skip_all)]
     pub fn init_Q(&mut self, u_evals: &[F], indices: &[(usize, LookupBits)]) {
-        if self.phase != 0 {
-            self.reset_Q();
-        }
         let suffix_len = self.suffix_len();
         let suffixes = self.poly.suffixes();
 
-        let new_coeffs: Vec<_> = indices
-            .par_chunk_by(|(_, k1), (_, k2)| {
-                let (prefix1, _) = k1.split(suffix_len);
-                let (prefix2, _) = k2.split(suffix_len);
-                (prefix1 % M) == (prefix2 % M)
-            })
+        let num_chunks = rayon::current_num_threads().next_power_of_two();
+        let chunk_size = (indices.len() / num_chunks).max(1);
+
+        let mut new_Q = indices
+            .par_chunks(chunk_size)
             .map(|chunk| {
-                let new_coeffs = chunk
-                    .par_iter()
-                    .map(|(j, k)| {
-                        let (_, suffix_bits) = k.split(suffix_len);
-                        let mut coeffs = [F::zero(); ORDER];
-                        for (suffix, coeff) in suffixes.iter().zip(coeffs.iter_mut()) {
-                            let t = suffix.suffix_mle(suffix_bits);
-                            if t != 0 {
-                                let u = u_evals[*j];
-                                *coeff += u.mul_u128(t);
-                            }
+                let mut chunk_result: [Vec<F>; ORDER] =
+                    std::array::from_fn(|_| unsafe_allocate_zero_vec(M));
+
+                for (j, k) in chunk {
+                    let (prefix_bits, suffix_bits) = k.split(suffix_len);
+                    for (suffix, result) in suffixes.iter().zip(chunk_result.iter_mut()) {
+                        let t = suffix.suffix_mle(suffix_bits);
+                        if t != 0 {
+                            let u = u_evals[*j];
+                            result[prefix_bits % M] += u.mul_u128(t);
                         }
-                        coeffs
-                    })
-                    .reduce(
-                        || [F::zero(); ORDER],
-                        |acc, x| std::array::from_fn(|i| acc[i] + x[i]),
-                    );
+                    }
+                }
 
-                // `coeff_index` is `prefix % M` for this chunk
-                let coeff_index = (chunk[0].1.split(suffix_len).0) % M;
-                (coeff_index, new_coeffs)
+                chunk_result
             })
-            .collect();
+            .reduce(
+                || std::array::from_fn(|_| unsafe_allocate_zero_vec(M)),
+                |mut acc, new| {
+                    for (acc_i, new_i) in acc.iter_mut().zip(new.iter()) {
+                        for (acc_coeff, new_coeff) in acc_i.iter_mut().zip(new_i.iter()) {
+                            *acc_coeff += *new_coeff;
+                        }
+                    }
+                    acc
+                },
+            );
 
-        self.Q.par_iter_mut().enumerate().for_each(|(i, poly)| {
-            for (coeff_index, coeffs) in new_coeffs.iter() {
-                poly.Z[*coeff_index] = coeffs[i];
-            }
-        });
+        self.Q = std::array::from_fn(|i| DensePolynomial::new(std::mem::take(&mut new_Q[i])));
     }
 
     /// Returns evaluation at 0 and at 2 at index

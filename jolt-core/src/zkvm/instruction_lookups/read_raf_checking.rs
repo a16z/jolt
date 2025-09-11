@@ -542,66 +542,6 @@ impl<F: JoltField> ReadRafProverState<F> {
                 });
         }
 
-        // {
-        //     let span = tracing::span!(tracing::Level::INFO, "Partition");
-        //     let _guard = span.enter();
-
-        //     let num_chunks = rayon::current_num_threads().next_power_of_two();
-        //     let chunk_size = (self.lookup_indices_uninterleave.len() / num_chunks).max(1);
-
-        //     let bucket_size = (M / num_chunks).max(1);
-
-        //     let buckets = self
-        //         .lookup_indices_uninterleave
-        //         .par_chunks(chunk_size)
-        //         .map(|chunk| {
-        //             let mut buckets = vec![Vec::new(); num_chunks];
-        //             for (j, k) in chunk.iter() {
-        //                 let (prefix, _) = k.split((PHASES - 1 - phase) * LOG_M);
-        //                 let bucket_index = (prefix % M) / bucket_size;
-        //                 buckets[bucket_index].push((j, k));
-        //             }
-        //             buckets
-        //         })
-        //         .reduce(
-        //             || vec![Vec::new(); num_chunks],
-        //             |mut running, new| {
-        //                 running
-        //                     .iter_mut()
-        //                     .zip(new.iter())
-        //                     .for_each(|(r, n)| r.extend_from_slice(n));
-        //                 running
-        //             },
-        //         );
-        //     for (i, bucket) in buckets.iter().enumerate() {
-        //         println!("Bucket {i}: {}", bucket.len());
-        //     }
-        // }
-
-        {
-            let span = tracing::span!(tracing::Level::INFO, "Sort indices");
-            let _guard = span.enter();
-
-            rayon::join(
-                || {
-                    self.lookup_indices_uninterleave
-                        .par_sort_unstable_by(|(_, k1), (_, k2)| {
-                            let (prefix1, _) = k1.split((PHASES - 1 - phase) * LOG_M);
-                            let (prefix2, _) = k2.split((PHASES - 1 - phase) * LOG_M);
-                            (prefix1 % M).cmp(&(prefix2 % M))
-                        })
-                },
-                || {
-                    self.lookup_indices_identity
-                        .par_sort_unstable_by(|(_, k1), (_, k2)| {
-                            let (prefix1, _) = k1.split((PHASES - 1 - phase) * LOG_M);
-                            let (prefix2, _) = k2.split((PHASES - 1 - phase) * LOG_M);
-                            (prefix1 % M).cmp(&(prefix2 % M))
-                        })
-                },
-            );
-        }
-
         rayon::scope(|s| {
             s.spawn(|_| {
                 self.right_operand_ps
