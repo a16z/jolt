@@ -116,6 +116,11 @@ harness = false
 name = "shout_d_is_one_bench"
 harness = false
 
+[[bench]]
+name = "shout_d_greater_one_bench"
+harness = false
+
+
 #[[bench]]
 #name = "iai"
 #harness = false

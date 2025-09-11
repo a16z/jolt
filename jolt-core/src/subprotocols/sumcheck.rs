@@ -173,6 +173,7 @@ impl BatchedSumcheck {
             .max()
             .unwrap();
 
+        // TODO:(ari) check if this needs to be small as well - i think not!
         let batching_coeffs: Vec<F> = transcript.challenge_vector(sumcheck_instances.len());
 
         // To see why we may need to scale by a power of two, consider a batch of
@@ -555,7 +556,13 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
                 let right_iter = Z_iter.skip(len).take(len);
                 let B = left_iter
                     .zip(right_iter)
-                    .map(|(a, b)| if a == b { a } else { a + (b - a).mul_u128_mont_form(r_i) })
+                    .map(|(a, b)| {
+                        if a == b {
+                            a
+                        } else {
+                            a + (b - a).mul_u128_mont_form(r_i)
+                        }
+                    })
                     .collect();
                 DensePolynomial::new(B)
             },
@@ -714,7 +721,9 @@ pub fn process_eq_sumcheck_round<F: JoltField, ProofTranscript: Transcript>(
     claim: &mut F,
     transcript: &mut ProofTranscript,
 ) -> MontU128 {
-    let scalar_times_w_i = eq_poly.current_scalar.mul_u128_mont_form(eq_poly.w[eq_poly.current_index - 1]);
+    let scalar_times_w_i = eq_poly
+        .current_scalar
+        .mul_u128_mont_form(eq_poly.w[eq_poly.current_index - 1]);
 
     let cubic_poly = UniPoly::from_linear_times_quadratic_with_hint(
         // The coefficients of `eq(w[(n - i)..], r[..i]) * eq(w[n - i - 1], X)`
