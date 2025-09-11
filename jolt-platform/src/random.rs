@@ -32,7 +32,7 @@ pub unsafe fn sys_rand(dest: *mut u8, len: usize) {
 }
 
 #[allow(clippy::missing_safety_doc)]
-#[unsafe(no_mangle)]
+#[no_mangle]
 pub unsafe extern "Rust" fn __getrandom_custom(dest: *mut u8, len: usize) -> Result<(), Error> {
     sys_rand(dest, len);
 
