@@ -1,15 +1,12 @@
 //! Implements the Dao-Thaler + Gruen optimization for EQ polynomial evaluations
 //! https://eprint.iacr.org/2024/1210.pdf
-
 use super::dense_mlpoly::DensePolynomial;
 use super::multilinear_polynomial::BindingOrder;
 use crate::field::MontU128;
 use crate::{field::JoltField, poly::eq_poly::EqPolynomial};
-//use allocative::Allocative;
+use allocative::Allocative;
 
-#[cfg_attr(feature = "allocative", derive(Allocative))]
-#[derive(Debug, Clone, PartialEq)]
-/// A struct holding the equality polynomial evaluations for use in sum-check, when incorporating
+// A struct holding the equality polynomial evaluations for use in sum-check, when incorporating
 /// both the Gruen and Dao-Thaler optimizations.
 ///
 /// For the `i = 0..n`-th round of sum-check, we want the following invariants (low to high):
@@ -21,6 +18,8 @@ use crate::{field::JoltField, poly::eq_poly::EqPolynomial};
 ///   1}^{n/2 - i - 1}]`; else `E_in_vec` is empty
 ///
 /// Implements both LowToHigh ordering and HighToLow ordering.
+#[cfg_attr(feature = "allocative", derive(Allocative))]
+#[derive(Debug, Clone, PartialEq)]
 pub struct GruenSplitEqPolynomial<F> {
     pub(crate) current_index: usize,
     pub(crate) current_scalar: F,
@@ -200,13 +199,8 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
                 // multiply `current_scalar` by `eq(w[i], r) = (1 - w[i]) * (1 - r) + w[i] * r`
                 // which is the same as `1 - w[i] - r + 2 * w[i] * r`
                 let w_f = F::from_u128_mont(self.w[self.current_index - 1]);
-                let wr_f =
-                    w_f.mul_u128_mont_form(r);
-                self.current_scalar *= F::one()
-                    - w_f
-                    - F::from_u128_mont(r)
-                    + wr_f
-                    + wr_f;
+                let wr_f = w_f.mul_u128_mont_form(r);
+                self.current_scalar *= F::one() - w_f - F::from_u128_mont(r) + wr_f + wr_f;
                 // decrement `current_index`
                 self.current_index -= 1;
                 // pop the last vector from `E_in_vec` or `E_out_vec` (since we don't need it anymore)
@@ -223,10 +217,7 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
                 let w_f = F::from_u128_mont(self.w[self.current_index - 1]);
                 let wr_f = w_f.mul_u128_mont_form(r);
 
-                self.current_scalar *=
-                    F::one() - w_f - F::from_u128_mont(r)
-                        + wr_f
-                        + wr_f;
+                self.current_scalar *= F::one() - w_f - F::from_u128_mont(r) + wr_f + wr_f;
 
                 // increment `current_index` (going from 0 to n-1)
                 self.current_index += 1;
@@ -251,14 +242,9 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
             BindingOrder::LowToHigh => {
                 // multiply `current_scalar` by `eq(w[i], r) = (1 - w[i]) * (1 - r) + w[i] * r`
                 // which is the same as `1 - w[i] - r + 2 * w[i] * r`
-                let w_f =F::from_u128_mont(self.w[self.current_index - 1]);
-                let wr_f =
-                     w_f.mul_u128_mont_form(r);
-                self.current_scalar *= F::one()
-                    - w_f
-                    - F::from_u128_mont(r)
-                    + wr_f
-                    + wr_f;
+                let w_f = F::from_u128_mont(self.w[self.current_index - 1]);
+                let wr_f = w_f.mul_u128_mont_form(r);
+                self.current_scalar *= F::one() - w_f - F::from_u128_mont(r) + wr_f + wr_f;
                 // decrement `current_index`
                 self.current_index -= 1;
                 // pop the last vector from `E_in_vec` or `E_out_vec` (since we don't need it anymore)
@@ -272,11 +258,8 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
                 // multiply `current_scalar` by `eq(w[i], r) = (1 - w[i]) * (1 - r) + w[i] * r`
                 // which is the same as `1 - w[i] - r + 2 * w[i] * r`
                 let w_f = F::from_u128_mont(self.w[self.current_index]);
-                let wr_f =  w_f.mul_u128_mont_form(r);
-                self.current_scalar *=
-                    F::one() - w_f - F::from_u128_mont(r)
-                        + wr_f
-                        + wr_f;
+                let wr_f = w_f.mul_u128_mont_form(r);
+                self.current_scalar *= F::one() - w_f - F::from_u128_mont(r) + wr_f + wr_f;
 
                 // increment `current_index` (going from 0 to n-1)
                 self.current_index += 1;

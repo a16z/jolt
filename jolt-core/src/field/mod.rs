@@ -20,7 +20,7 @@ pub trait FieldOps<Rhs = Self, Output = Self>:
 /// in Montgomery form for the target field
 #[cfg_attr(feature = "allocative", derive(Allocative))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
-pub struct MontU128(u128);
+pub struct MontU128(#[cfg_attr(feature = "allocative", allocative(skip))] u128);
 
 impl From<u128> for MontU128 {
     fn from(val: u128) -> Self {

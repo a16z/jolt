@@ -1,3 +1,4 @@
+use allocative::Allocative;
 use std::marker::PhantomData;
 use std::{cell::RefCell, rc::Rc};
 
@@ -125,7 +126,7 @@ impl<F: JoltField> ShoutVerifierState<F> {
         Self { K, z, val }
     }
 }
-
+#[cfg_attr(feature = "allocative", derive(Allocative))]
 struct ShoutSumcheck<F: JoltField> {
     verifier_state: Option<ShoutVerifierState<F>>,
     prover_state: Option<ShoutProverState<F>>,
@@ -511,7 +512,7 @@ impl<F: JoltField> BooleanityVerifierState<F> {
         }
     }
 }
-
+#[cfg_attr(feature = "allocative", derive(Allocative))]
 struct BooleanitySumcheck<F: JoltField> {
     verifier_state: Option<BooleanityVerifierState<F>>,
     prover_state: Option<BooleanityProverState<F>>,
@@ -1143,13 +1144,13 @@ pub fn prove_raf_evaluation<F: JoltField, ProofTranscript: Transcript>(
 
 #[cfg(test)]
 mod tests {
-    use std::time::Instant;
     use super::*;
     use crate::transcripts::KeccakTranscript;
     use ark_bn254::Fr;
     use ark_ff::{One, Zero};
     use ark_std::test_rng;
     use rand_core::RngCore;
+    use std::time::Instant;
 
     //#[test]
     //fn shout_e2e() {

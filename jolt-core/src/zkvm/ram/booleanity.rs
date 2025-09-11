@@ -4,6 +4,7 @@ use allocative::FlameGraphBuilder;
 use rayon::prelude::*;
 use std::{cell::RefCell, rc::Rc};
 
+use crate::field::MontU128;
 use crate::{
     field::JoltField,
     poly::{
@@ -28,7 +29,6 @@ use crate::{
         witness::{compute_d_parameter, CommittedPolynomial, DTH_ROOT_OF_K},
     },
 };
-use crate::field::MontU128;
 
 #[cfg_attr(feature = "allocative", derive(Allocative))]
 struct BooleanityProverState<F: JoltField> {

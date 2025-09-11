@@ -1,4 +1,4 @@
-use crate::field::{JoltField, MontU128};
+use crate::field::JoltField;
 
 use rayon::prelude::*;
 
