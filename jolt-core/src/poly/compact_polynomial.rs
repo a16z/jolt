@@ -10,6 +10,7 @@ use num_integer::Integer;
 use rayon::prelude::*;
 use std::cmp::Ordering;
 
+// TODO:(ari) All the multiplications in here are inefficent.
 /// A trait for small scalars ({u/i}{8/16/32/64})
 pub trait SmallScalar: Copy + Integer + Sync + CanonicalSerialize + CanonicalDeserialize {
     /// Performs a field multiplication. Uses `JoltField::mul_u64` under the hood.
@@ -321,12 +322,12 @@ impl<T: SmallScalar, F: JoltField> PolynomialBinding<F> for CompactPolynomial<T,
                                 // a < b: Compute a + r * (b - a)
                                 Ordering::Less => {
                                     a.to_field::<F>()
-                                        + b.abs_diff_u64(a).field_mul(F::from_u128_mont(r))
+                                        + (b.abs_diff_u64(a)).to_field::<F>().mul_u128_mont_form(r)
                                 }
                                 // a > b: Compute a - r * (a - b)
                                 Ordering::Greater => {
                                     a.to_field::<F>()
-                                        - a.abs_diff_u64(b).field_mul(F::from_u128_mont(r))
+                                        - (a.abs_diff_u64(b)).to_field::<F>().mul_u128_mont_form(r)
                                 }
                             }
                         })
@@ -343,12 +344,12 @@ impl<T: SmallScalar, F: JoltField> PolynomialBinding<F> for CompactPolynomial<T,
                                 // a < b: Compute a + r * (b - a)
                                 Ordering::Less => {
                                     a.to_field::<F>()
-                                        + b.abs_diff_u64(a).field_mul(F::from_u128_mont(r))
+                                        + (b.abs_diff_u64(a)).to_field::<F>().mul_u128_mont_form(r)
                                 }
                                 // a > b: Compute a - r * (a - b)
                                 Ordering::Greater => {
                                     a.to_field::<F>()
-                                        - a.abs_diff_u64(b).field_mul(F::from_u128_mont(r))
+                                        - (a.abs_diff_u64(b)).to_field::<F>().mul_u128_mont_form(r)
                                 }
                             }
                         })
@@ -409,12 +410,12 @@ impl<T: SmallScalar, F: JoltField> PolynomialBinding<F> for CompactPolynomial<T,
                                 // a < b: Compute a + r * (b - a)
                                 Ordering::Less => {
                                     a.to_field::<F>()
-                                        + b.abs_diff_u64(a).field_mul(F::from_u128_mont(r))
+                                        + (b.abs_diff_u64(a)).to_field::<F>().mul_u128_mont_form(r)
                                 }
                                 // a > b: Compute a - r * (a - b)
                                 Ordering::Greater => {
                                     a.to_field::<F>()
-                                        - a.abs_diff_u64(b).field_mul(F::from_u128_mont(r))
+                                        - (a.abs_diff_u64(b)).to_field::<F>().mul_u128_mont_form(r)
                                 }
                             }
                         })
@@ -431,12 +432,12 @@ impl<T: SmallScalar, F: JoltField> PolynomialBinding<F> for CompactPolynomial<T,
                                 // a < b: Compute a + r * (b - a)
                                 Ordering::Less => {
                                     a.to_field::<F>()
-                                        + b.abs_diff_u64(a).field_mul(F::from_u128_mont(r))
+                                        + (b.abs_diff_u64(a)).to_field::<F>().mul_u128_mont_form(r)
                                 }
                                 // a > b: Compute a - r * (a - b)
                                 Ordering::Greater => {
                                     a.to_field::<F>()
-                                        - a.abs_diff_u64(b).field_mul(F::from_u128_mont(r))
+                                        - (a.abs_diff_u64(b)).to_field::<F>().mul_u128_mont_form(r)
                                 }
                             }
                         })
