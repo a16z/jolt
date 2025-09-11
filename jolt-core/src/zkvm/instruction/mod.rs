@@ -219,7 +219,7 @@ define_rv32im_trait_impls! {
         VirtualPow2I, VirtualPow2W, VirtualPow2IW, VirtualShiftRightBitmask, VirtualShiftRightBitmaskI,
         VirtualROTRI, VirtualROTRIW,
         VirtualSRA, VirtualSRAI, VirtualSRL, VirtualSRLI,
-        VirtualXORROT32
+        VirtualXORROT32, VirtualXORROT24, VirtualXORROT16, VirtualXORROT63
     ]
 }
 

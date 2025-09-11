@@ -115,7 +115,10 @@ pub enum Suffixes {
     RightShiftWHelper,
     LeftShiftWHelper,
     LeftShiftW,
-    XorRot,
+    XorRot16,
+    XorRot24,
+    XorRot32,
+    XorRot63,
 }
 
 pub type SuffixEval<F: JoltField> = F;
@@ -160,7 +163,10 @@ impl Suffixes {
             Suffixes::RightShiftWHelper => RightShiftWHelperSuffix::suffix_mle(b),
             Suffixes::LeftShiftWHelper => LeftShiftWHelperSuffix::suffix_mle(b),
             Suffixes::LeftShiftW => LeftShiftWSuffix::suffix_mle(b),
-            Suffixes::XorRot => XorRotSuffix::suffix_mle(b),
+            Suffixes::XorRot16 => XorRotSuffix::<16>::suffix_mle(b),
+            Suffixes::XorRot24 => XorRotSuffix::<24>::suffix_mle(b),
+            Suffixes::XorRot32 => XorRotSuffix::<32>::suffix_mle(b),
+            Suffixes::XorRot63 => XorRotSuffix::<63>::suffix_mle(b),
         }
     }
 }

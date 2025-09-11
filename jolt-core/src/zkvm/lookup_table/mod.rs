@@ -32,7 +32,7 @@ use virtual_rotr::VirtualRotrTable;
 use virtual_rotrw::VirtualRotrWTable;
 use virtual_sra::VirtualSRATable;
 use virtual_srl::VirtualSRLTable;
-use virtual_xor_rot::VirtualXORROT32Table;
+use virtual_xor_rot::VirtualXORROTTable;
 use word_alignment::WordAlignmentTable;
 use xor::XorTable;
 
@@ -139,7 +139,10 @@ pub enum LookupTables<const XLEN: usize> {
     VirtualROTRW(VirtualRotrWTable<XLEN>),
     VirtualChangeDivisor(VirtualChangeDivisorTable<XLEN>),
     VirtualChangeDivisorW(VirtualChangeDivisorWTable<XLEN>),
-    VirtualXORROT32(VirtualXORROT32Table<XLEN>),
+    VirtualXORROT32(VirtualXORROTTable<XLEN, 32>),
+    VirtualXORROT24(VirtualXORROTTable<XLEN, 24>),
+    VirtualXORROT16(VirtualXORROTTable<XLEN, 16>),
+    VirtualXORROT63(VirtualXORROTTable<XLEN, 63>),
 }
 
 impl<const XLEN: usize> LookupTables<XLEN> {
@@ -183,6 +186,9 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::VirtualChangeDivisor(table) => table.materialize(),
             LookupTables::VirtualChangeDivisorW(table) => table.materialize(),
             LookupTables::VirtualXORROT32(table) => table.materialize(),
+            LookupTables::VirtualXORROT24(table) => table.materialize(),
+            LookupTables::VirtualXORROT16(table) => table.materialize(),
+            LookupTables::VirtualXORROT63(table) => table.materialize(),
         }
     }
 
@@ -219,6 +225,9 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::VirtualChangeDivisor(table) => table.materialize_entry(index),
             LookupTables::VirtualChangeDivisorW(table) => table.materialize_entry(index),
             LookupTables::VirtualXORROT32(table) => table.materialize_entry(index),
+            LookupTables::VirtualXORROT24(table) => table.materialize_entry(index),
+            LookupTables::VirtualXORROT16(table) => table.materialize_entry(index),
+            LookupTables::VirtualXORROT63(table) => table.materialize_entry(index),
         }
     }
 
@@ -255,6 +264,9 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::VirtualChangeDivisor(table) => table.evaluate_mle(r),
             LookupTables::VirtualChangeDivisorW(table) => table.evaluate_mle(r),
             LookupTables::VirtualXORROT32(table) => table.evaluate_mle(r),
+            LookupTables::VirtualXORROT24(table) => table.evaluate_mle(r),
+            LookupTables::VirtualXORROT16(table) => table.evaluate_mle(r),
+            LookupTables::VirtualXORROT63(table) => table.evaluate_mle(r),
         }
     }
 
@@ -291,6 +303,9 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::VirtualChangeDivisor(table) => table.suffixes(),
             LookupTables::VirtualChangeDivisorW(table) => table.suffixes(),
             LookupTables::VirtualXORROT32(table) => table.suffixes(),
+            LookupTables::VirtualXORROT24(table) => table.suffixes(),
+            LookupTables::VirtualXORROT16(table) => table.suffixes(),
+            LookupTables::VirtualXORROT63(table) => table.suffixes(),
         }
     }
 
@@ -331,6 +346,9 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::VirtualChangeDivisor(table) => table.combine(prefixes, suffixes),
             LookupTables::VirtualChangeDivisorW(table) => table.combine(prefixes, suffixes),
             LookupTables::VirtualXORROT32(table) => table.combine(prefixes, suffixes),
+            LookupTables::VirtualXORROT24(table) => table.combine(prefixes, suffixes),
+            LookupTables::VirtualXORROT16(table) => table.combine(prefixes, suffixes),
+            LookupTables::VirtualXORROT63(table) => table.combine(prefixes, suffixes),
         }
     }
 }
