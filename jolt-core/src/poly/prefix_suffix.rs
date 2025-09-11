@@ -13,7 +13,6 @@ use crate::poly::multilinear_polynomial::{BindingOrder, PolynomialBinding, Polyn
 use crate::utils::lookup_bits::LookupBits;
 use crate::utils::math::Math;
 use crate::utils::thread::{unsafe_allocate_zero_vec, unsafe_zero_slice};
-use crate::zkvm::instruction_lookups::M;
 
 #[repr(u8)]
 #[derive(Clone, Copy, EnumIterMacro, EnumCountMacro)]
@@ -185,7 +184,7 @@ pub trait PrefixSuffixPolynomial<F: JoltField, const ORDER: usize> {
         phase: usize,
         prefix_registry: &mut PrefixRegistry<F>,
     ) -> [Option<Arc<RwLock<CachedPolynomial<F>>>>; ORDER];
-    fn suffixes(&self) -> [Box<dyn SuffixPolynomial<F> + Sync + Send>; ORDER];
+    fn suffixes(&self) -> [Box<dyn SuffixPolynomial<F> + Sync>; ORDER];
 }
 
 #[derive(Allocative)]
@@ -257,6 +256,7 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
 
     #[tracing::instrument(skip_all)]
     pub fn init_Q(&mut self, u_evals: &[F], indices: &[(usize, LookupBits)]) {
+        let poly_len = self.chunk_len.pow2();
         let suffix_len = self.suffix_len();
         let suffixes = self.poly.suffixes();
 
@@ -267,15 +267,16 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
             .par_chunks(chunk_size)
             .map(|chunk| {
                 let mut chunk_result: [Vec<F>; ORDER] =
-                    std::array::from_fn(|_| unsafe_allocate_zero_vec(M));
+                    std::array::from_fn(|_| unsafe_allocate_zero_vec(poly_len));
 
                 for (j, k) in chunk {
                     let (prefix_bits, suffix_bits) = k.split(suffix_len);
                     for (suffix, result) in suffixes.iter().zip(chunk_result.iter_mut()) {
                         let t = suffix.suffix_mle(suffix_bits);
                         if t != 0 {
-                            let u = u_evals[*j];
-                            result[prefix_bits % M] += u.mul_u128(t);
+                            if let Some(u) = u_evals.get(*j) {
+                                result[prefix_bits % poly_len] += u.mul_u128(t);
+                            }
                         }
                     }
                 }
@@ -283,7 +284,7 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
                 chunk_result
             })
             .reduce(
-                || std::array::from_fn(|_| unsafe_allocate_zero_vec(M)),
+                || std::array::from_fn(|_| unsafe_allocate_zero_vec(poly_len)),
                 |mut acc, new| {
                     for (acc_i, new_i) in acc.iter_mut().zip(new.iter()) {
                         for (acc_coeff, new_coeff) in acc_i.iter_mut().zip(new_i.iter()) {

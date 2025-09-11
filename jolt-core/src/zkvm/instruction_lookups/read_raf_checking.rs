@@ -543,6 +543,9 @@ impl<F: JoltField> ReadRafProverState<F> {
         }
 
         rayon::scope(|s| {
+            // TODO(moodlezoup): `right_operand_ps` and `left_operand_ps` both use
+            // `lookup_indices_uninterleave`; by invoking `init_Q` twice we do two
+            // passes over the indices where we could be doing just one.
             s.spawn(|_| {
                 self.right_operand_ps
                     .init_Q(&self.u_evals, &self.lookup_indices_uninterleave)

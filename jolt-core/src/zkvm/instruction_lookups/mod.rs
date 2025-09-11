@@ -32,7 +32,7 @@ pub mod read_raf_checking;
 const LOG_K: usize = XLEN * 2;
 const PHASES: usize = 8;
 pub const LOG_M: usize = LOG_K / PHASES;
-pub const M: usize = 1 << LOG_M;
+const M: usize = 1 << LOG_M;
 pub const D: usize = 16;
 pub const LOG_K_CHUNK: usize = LOG_K / D;
 pub const K_CHUNK: usize = 1 << LOG_K_CHUNK;
