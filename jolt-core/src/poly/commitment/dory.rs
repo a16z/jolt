@@ -60,8 +60,8 @@ impl DoryGlobals {
         let matrix_size = K as u128 * T as u128;
         let num_columns = matrix_size.isqrt().next_power_of_two();
         let num_rows = num_columns;
-        tracing::info!("[Dory PCS] # rows: {num_rows}");
-        tracing::info!("[Dory PCS] # cols: {num_columns}");
+        println!("[Dory PCS] # rows: {num_rows}");
+        println!("[Dory PCS] # cols: {num_columns}");
 
         unsafe {
             GLOBAL_T.set(T).expect("GLOBAL_T is already initialized");
@@ -1062,7 +1062,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
             // Create and set G2 cache
             (*setup_ptr).g2_cache = Some(G2Cache::new(&g2_elements, Some(&g_fin_element)));
 
-            tracing::info!("Cache initialization completed successfully.");
+            println!("Cache initialization completed successfully.");
         }
 
         prover_setup

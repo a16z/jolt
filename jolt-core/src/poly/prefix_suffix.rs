@@ -255,30 +255,47 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
     }
 
     #[tracing::instrument(skip_all)]
-    pub fn init_Q<'a, I: IntoIterator<Item = &'a (usize, LookupBits)> + Clone + Send + Sync>(
-        &mut self,
-        u_evals: &[F],
-        indices: I,
-    ) {
-        if self.phase != 0 {
-            self.reset_Q();
-        }
+    pub fn init_Q(&mut self, u_evals: &[F], indices: &[(usize, LookupBits)]) {
+        let poly_len = self.chunk_len.pow2();
         let suffix_len = self.suffix_len();
         let suffixes = self.poly.suffixes();
-        self.Q
-            .par_iter_mut()
-            .zip(suffixes.par_iter())
-            .for_each(|(poly, suffix)| {
-                for (j, k) in indices.clone() {
+
+        let num_chunks = rayon::current_num_threads().next_power_of_two();
+        let chunk_size = (indices.len() / num_chunks).max(1);
+
+        let mut new_Q = indices
+            .par_chunks(chunk_size)
+            .map(|chunk| {
+                let mut chunk_result: [Vec<F>; ORDER] =
+                    std::array::from_fn(|_| unsafe_allocate_zero_vec(poly_len));
+
+                for (j, k) in chunk {
                     let (prefix_bits, suffix_bits) = k.split(suffix_len);
-                    let t = suffix.suffix_mle(suffix_bits);
-                    if t != 0 {
-                        if let Some(u) = u_evals.get(*j) {
-                            poly.Z[prefix_bits % self.chunk_len.pow2()] += (*u).mul_u128(t);
+                    for (suffix, result) in suffixes.iter().zip(chunk_result.iter_mut()) {
+                        let t = suffix.suffix_mle(suffix_bits);
+                        if t != 0 {
+                            if let Some(u) = u_evals.get(*j) {
+                                result[prefix_bits % poly_len] += u.mul_u128(t);
+                            }
                         }
                     }
                 }
-            });
+
+                chunk_result
+            })
+            .reduce(
+                || std::array::from_fn(|_| unsafe_allocate_zero_vec(poly_len)),
+                |mut acc, new| {
+                    for (acc_i, new_i) in acc.iter_mut().zip(new.iter()) {
+                        for (acc_coeff, new_coeff) in acc_i.iter_mut().zip(new_i.iter()) {
+                            *acc_coeff += *new_coeff;
+                        }
+                    }
+                    acc
+                },
+            );
+
+        self.Q = std::array::from_fn(|i| DensePolynomial::new(std::mem::take(&mut new_Q[i])));
     }
 
     /// Returns evaluation at 0 and at 2 at index
@@ -408,7 +425,7 @@ pub mod tests {
                 &(0..(1 << (NUM_VARS - PREFIX_LEN * phase)))
                     .map(|_| Fr::ONE)
                     .collect::<Vec<_>>(),
-                indices.iter(),
+                &indices,
             );
 
             for round in (0..PREFIX_LEN).rev() {

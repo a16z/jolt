@@ -46,7 +46,7 @@ pub fn store_inlines() -> Result<(), String> {
 #[ctor::ctor]
 fn auto_register() {
     if let Err(e) = init_inlines() {
-        tracing::error!("Failed to register Keccak256 inlines: {e}");
+        eprintln!("Failed to register Keccak256 inlines: {e}");
     }
 
     if std::env::var("STORE_INLINE").unwrap_or_default() == "true" {
