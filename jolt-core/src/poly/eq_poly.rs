@@ -319,6 +319,7 @@ impl<F: JoltField> EqPlusOnePolynomial<F> {
             let step = 1 << (ell - i);
             let half_step = step / 2;
 
+            // this is not efficient is it?
             let r_lower_product = (F::one() - F::from_u128_mont(r[i]))
                 * r.iter()
                     .skip(i + 1)
