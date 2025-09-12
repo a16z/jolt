@@ -2,6 +2,7 @@ use ark_serialize::CanonicalDeserialize;
 use ark_serialize::CanonicalSerialize;
 use clap::{Parser, Subcommand};
 use jolt_sdk::{JoltDevice, MemoryConfig, RV32IMJoltProof, Serializable};
+use std::cmp::PartialEq;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -44,12 +45,34 @@ enum Commands {
         #[arg(long, value_name = "DIRECTORY", num_args = 0..=1)]
         embed: Option<Option<PathBuf>>,
     },
+    /// Trace the execution of guest programs without attempting to prove them
+    Trace {
+        /// Example to trace (fibonacci or muldiv)
+        #[arg(long, value_name = "EXAMPLE")]
+        example: String,
+        /// Working directory containing proof files
+        #[arg(long, value_name = "DIRECTORY", default_value = "output")]
+        workdir: PathBuf,
+        /// Embed proof data to specified directory
+        #[arg(long, value_name = "DIRECTORY", num_args = 0..=1)]
+        embed: Option<Option<PathBuf>>,
+        /// Trace to disk instead of memory (redues memory usage)
+        #[arg(short = 'd', long = "disk", default_value_t = false)]
+        trace_to_file: bool,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum GuestProgram {
     Fibonacci,
     Muldiv,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RunConfig {
+    Prove,
+    Trace,
+    TraceToFile,
 }
 
 impl GuestProgram {
@@ -411,10 +434,11 @@ fn generate_proofs(guest: GuestProgram, workdir: &Path) {
 }
 
 fn run_recursion_proof(
-    _guest: GuestProgram,
+    guest: GuestProgram,
+    run_config: RunConfig,
     input_bytes: Vec<u8>,
     memory_config: MemoryConfig,
-    max_trace_length: usize,
+    mut max_trace_length: usize,
 ) {
     let target_dir = "/tmp/jolt-guest-targets";
 
@@ -424,12 +448,24 @@ fn run_recursion_proof(
     program.set_memory_config(memory_config);
     program.build(target_dir);
     let elf_contents = program.get_elf_contents().unwrap();
-    let recursion = jolt_sdk::guest::program::Program::new(&elf_contents, &memory_config);
+    let mut recursion = jolt_sdk::guest::program::Program::new(&elf_contents, &memory_config);
 
+    if run_config == RunConfig::Trace || run_config == RunConfig::TraceToFile {
+        // shorten the max_trace_length for tracing only. Speeds up setup time for tracing purposes.
+        max_trace_length = 0;
+    }
     let recursion_prover_preprocessing =
         jolt_sdk::guest::prover::preprocess(&recursion, max_trace_length);
     let recursion_verifier_preprocessing =
         jolt_sdk::JoltVerifierPreprocessing::from(&recursion_prover_preprocessing);
+
+    // update program_size in memory_config now that we know it
+    recursion.memory_config.program_size = Some(
+        recursion_verifier_preprocessing
+            .shared
+            .memory_layout
+            .program_size,
+    );
 
     let mut output_bytes = vec![
         0;
@@ -438,25 +474,48 @@ fn run_recursion_proof(
             .memory_layout
             .max_output_size as usize
     ];
-    let (proof, _io_device, _debug) = jolt_sdk::guest::prover::prove(
-        &recursion,
-        &input_bytes,
-        &mut output_bytes,
-        &recursion_prover_preprocessing,
-    );
-    let is_valid = jolt_sdk::guest::verifier::verify(
-        &input_bytes,
-        &output_bytes,
-        proof,
-        &recursion_verifier_preprocessing,
-    )
-    .is_ok();
-    let rv = postcard::from_bytes::<u32>(&output_bytes).unwrap();
-    println!("  Recursion verification result: {rv}");
-    println!("  Recursion verification result: {is_valid}");
+    match run_config {
+        RunConfig::Prove => {
+            let (proof, _io_device, _debug) = jolt_sdk::guest::prover::prove(
+                &recursion,
+                &input_bytes,
+                &mut output_bytes,
+                &recursion_prover_preprocessing,
+            );
+            let is_valid = jolt_sdk::guest::verifier::verify(
+                &input_bytes,
+                &output_bytes,
+                proof,
+                &recursion_verifier_preprocessing,
+            )
+            .is_ok();
+            let rv = postcard::from_bytes::<u32>(&output_bytes).unwrap();
+            println!("  Recursion verification result: {rv}");
+            println!("  Recursion verification result: {is_valid}");
+        }
+        RunConfig::Trace => {
+            println!("  Trace-only mode: Skipping proof generation and verification.");
+            let (_, _, io_device) = recursion.trace(&input_bytes);
+            let rv = postcard::from_bytes::<u32>(&io_device.outputs).unwrap_or(0);
+            println!("  Recursion output (trace-only): {rv}");
+        }
+        RunConfig::TraceToFile => {
+            println!("  Trace-only mode: Skipping proof generation and verification. Tracing to file: /tmp/{}.trace", guest.name());
+            let (_, io_device) = recursion
+                .trace_to_file(&input_bytes, &format!("/tmp/{}.trace", guest.name()).into());
+            let rv = postcard::from_bytes::<u32>(&io_device.outputs).unwrap_or(0);
+            println!("  Recursion output (trace-only): {rv}");
+        }
+    }
 }
 
-fn verify_proofs(guest: GuestProgram, use_embed: bool, workdir: &Path, output_dir: &Path) {
+fn verify_proofs(
+    guest: GuestProgram,
+    use_embed: bool,
+    workdir: &Path,
+    output_dir: &Path,
+    run_config: RunConfig,
+) {
     println!("Verifying proofs for {} guest program...", guest.name());
     println!("Using embed mode: {use_embed}");
 
@@ -478,6 +537,7 @@ fn verify_proofs(guest: GuestProgram, use_embed: bool, workdir: &Path, output_di
 
         run_recursion_proof(
             guest,
+            run_config,
             input_bytes,
             memory_config,
             guest.get_max_trace_length(use_embed),
@@ -511,6 +571,7 @@ fn verify_proofs(guest: GuestProgram, use_embed: bool, workdir: &Path, output_di
 
         run_recursion_proof(
             guest,
+            run_config,
             input_bytes,
             memory_config,
             guest.get_max_trace_length(use_embed),
@@ -549,7 +610,38 @@ fn main() {
                 .and_then(|inner| inner.as_ref())
                 .cloned()
                 .unwrap_or_else(get_guest_src_dir);
-            verify_proofs(guest, embed.is_some(), workdir, &output_dir);
+            verify_proofs(
+                guest,
+                embed.is_some(),
+                workdir,
+                &output_dir,
+                RunConfig::Prove,
+            );
+        }
+        Some(Commands::Trace {
+            example,
+            workdir,
+            embed,
+            trace_to_file,
+        }) => {
+            let guest = match GuestProgram::from_str(example) {
+                Some(guest) => guest,
+                None => {
+                    println!("Unknown example: {example}. Supported examples: fibonacci, muldiv");
+                    return;
+                }
+            };
+            let output_dir = embed
+                .as_ref()
+                .and_then(|inner| inner.as_ref())
+                .cloned()
+                .unwrap_or_else(get_guest_src_dir);
+            let run_config = if *trace_to_file {
+                RunConfig::TraceToFile
+            } else {
+                RunConfig::Trace
+            };
+            verify_proofs(guest, embed.is_some(), workdir, &output_dir, run_config);
         }
         None => {
             println!("No subcommand specified. Available commands:");
@@ -558,10 +650,14 @@ fn main() {
             println!("  verify --example <fibonacci|muldiv> [--workdir <DIR>] [--embed <DIR>]");
             println!();
             println!("Examples:");
-            println!("  cargo run -- generate --example fibonacci");
-            println!("  cargo run -- generate --example fibonacci --workdir ./output");
-            println!("  cargo run -- verify --example fibonacci");
-            println!("  cargo run -- verify --example fibonacci --workdir ./output --embed");
+            println!("  cargo run --release -- generate --example fibonacci");
+            println!("  cargo run --release -- generate --example fibonacci --workdir ./output");
+            println!("  cargo run --release -- verify --example fibonacci");
+            println!(
+                "  cargo run --release -- verify --example fibonacci --workdir ./output --embed"
+            );
+            println!("  cargo run --release -- trace --example fibonacci --embed");
+            println!("  cargo run --release -- trace --example fibonacci --embed --disk");
         }
     }
 }

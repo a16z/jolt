@@ -1,0 +1,10 @@
+diff --git a/riscv_config/constants.py b/riscv_config/constants.py
+index b2c7d9a..6f53f13 100644
+--- a/riscv_config/constants.py
++++ b/riscv_config/constants.py
+@@ -38,4 +38,4 @@ S_extensions = ['Smrnmi','Smdbltrp', 'Ssdbltrp', 'Svnapot','Svadu', 'Sddbltrp',
+ sub_extensions = Z_extensions + S_extensions
+ 
+ isa_regex = \
+-        re.compile("^RV(32|64|128)[IE][ACDFGHJLMNPQSTUV]*(("+'|'.join(sub_extensions)+")(_("+'|'.join(sub_extensions)+"))*){,1}(X[a-z0-9]*)*(_X[a-z0-9]*)*$")
++        re.compile("^RV(32|64|128)[IE][ACDFGHJLMNPQSTUV]*(_("+'|'.join(sub_extensions)+")+)*(_X[a-zA-Z0-9]+)*$")

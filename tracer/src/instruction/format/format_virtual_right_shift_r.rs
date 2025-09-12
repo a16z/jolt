@@ -1,7 +1,4 @@
 use crate::emulator::cpu::Cpu;
-use common::constants::REGISTER_COUNT;
-use rand::rngs::StdRng;
-use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
@@ -24,7 +21,9 @@ pub struct RegisterStateVirtualRightShift {
 }
 
 impl InstructionRegisterState for RegisterStateVirtualRightShift {
-    fn random(rng: &mut StdRng) -> Self {
+    #[cfg(any(feature = "test-utils", test))]
+    fn random(rng: &mut rand::rngs::StdRng) -> Self {
+        use rand::RngCore;
         let shift = rng.next_u32() % 64;
         let ones: u64 = (1 << shift) - 1;
         let rs2 = ones.wrapping_shl(64 - shift);
@@ -65,19 +64,34 @@ impl InstructionFormat for FormatVirtualRightShiftR {
         state.rd.1 = normalize_register_value(cpu.x[self.rd as usize], &cpu.xlen);
     }
 
-    fn random(rng: &mut StdRng) -> Self {
+    #[cfg(any(feature = "test-utils", test))]
+    fn random(rng: &mut rand::rngs::StdRng) -> Self {
+        use common::constants::RISCV_REGISTER_COUNT;
+        use rand::RngCore;
         Self {
-            rd: (rng.next_u64() as u8 % REGISTER_COUNT),
-            rs1: (rng.next_u64() as u8 % REGISTER_COUNT),
-            rs2: (rng.next_u64() as u8 % REGISTER_COUNT),
+            rd: (rng.next_u64() as u8 % RISCV_REGISTER_COUNT),
+            rs1: (rng.next_u64() as u8 % RISCV_REGISTER_COUNT),
+            rs2: (rng.next_u64() as u8 % RISCV_REGISTER_COUNT),
         }
     }
+}
 
-    fn normalize(&self) -> NormalizedOperands {
-        NormalizedOperands {
-            rs1: self.rs1,
-            rs2: self.rs2,
-            rd: self.rd,
+impl From<NormalizedOperands> for FormatVirtualRightShiftR {
+    fn from(operands: NormalizedOperands) -> Self {
+        Self {
+            rd: operands.rd,
+            rs1: operands.rs1,
+            rs2: operands.rs2,
+        }
+    }
+}
+
+impl From<FormatVirtualRightShiftR> for NormalizedOperands {
+    fn from(format: FormatVirtualRightShiftR) -> Self {
+        Self {
+            rd: format.rd,
+            rs1: format.rs1,
+            rs2: format.rs2,
             imm: 0,
         }
     }

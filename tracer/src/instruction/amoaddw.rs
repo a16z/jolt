@@ -1,11 +1,16 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{declare_riscv_instr, emulator::cpu::Cpu};
-
-use super::{
-    format::{format_r::FormatR, InstructionFormat},
-    RISCVInstruction, RISCVTrace,
+use super::add::ADD;
+use super::amo::{amo_post32, amo_post64, amo_pre32, amo_pre64};
+use super::RV32IMInstruction;
+use crate::utils::inline_helpers::InstrAssembler;
+use crate::utils::virtual_registers::VirtualRegisterAllocator;
+use crate::{
+    declare_riscv_instr,
+    emulator::cpu::{Cpu, Xlen},
 };
+
+use super::{format::format_r::FormatR, RISCVInstruction, RISCVTrace, RV32IMCycle};
 
 declare_riscv_instr!(
     name   = AMOADDW,
@@ -38,4 +43,62 @@ impl AMOADDW {
     }
 }
 
-impl RISCVTrace for AMOADDW {}
+impl RISCVTrace for AMOADDW {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
+        let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
+        let mut trace = trace;
+        for instr in inline_sequence {
+            // In each iteration, create a new Option containing a re-borrowed reference
+            instr.trace(cpu, trace.as_deref_mut());
+        }
+    }
+
+    fn inline_sequence(
+        &self,
+        allocator: &VirtualRegisterAllocator,
+        xlen: Xlen,
+    ) -> Vec<RV32IMInstruction> {
+        let v_rd = allocator.allocate();
+        let v_rs2 = allocator.allocate();
+
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
+
+        match xlen {
+            Xlen::Bit32 => {
+                amo_pre32(&mut asm, self.operands.rs1, *v_rd);
+                asm.emit_r::<ADD>(*v_rs2, *v_rd, self.operands.rs2);
+                amo_post32(&mut asm, *v_rs2, self.operands.rs1, self.operands.rd, *v_rd);
+            }
+            Xlen::Bit64 => {
+                let v_mask = allocator.allocate();
+                let v_dword_address = allocator.allocate();
+                let v_dword = allocator.allocate();
+                let v_word = allocator.allocate();
+                let v_shift = allocator.allocate();
+
+                amo_pre64(
+                    &mut asm,
+                    self.operands.rs1,
+                    *v_rd,
+                    *v_dword_address,
+                    *v_dword,
+                    *v_shift,
+                );
+                asm.emit_r::<ADD>(*v_rs2, *v_rd, self.operands.rs2);
+                amo_post64(
+                    &mut asm,
+                    *v_rs2,
+                    *v_dword_address,
+                    *v_dword,
+                    *v_shift,
+                    *v_mask,
+                    *v_word,
+                    self.operands.rd,
+                    *v_rd,
+                );
+            }
+        }
+
+        asm.finalize()
+    }
+}

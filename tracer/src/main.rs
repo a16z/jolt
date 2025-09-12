@@ -4,10 +4,7 @@ use std::process::exit;
 
 use clap::Parser;
 
-use emulator::{default_terminal::DefaultTerminal, Emulator};
-
-mod emulator;
-mod instruction;
+use tracer::emulator::{default_terminal::DefaultTerminal, Emulator};
 
 /// RISC-V emulator for Jolt
 #[derive(Parser, Debug)]
@@ -33,7 +30,14 @@ fn main() {
     let args = Args::parse();
 
     // Initialize tracing
-    tracing_subscriber::fmt::init();
+    tracing_subscriber::fmt()
+        .compact()
+        .with_target(false)
+        .with_file(false)
+        .with_line_number(false)
+        .with_thread_ids(false)
+        .with_thread_names(false)
+        .init();
 
     // Read the ELF file
     let elf_path = Path::new(&args.elf);

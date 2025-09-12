@@ -29,12 +29,22 @@ host = [
     "dep:dirs",
     "dep:target-lexicon",
     "prover",
+    "dep:sha2_inline",
+    "dep:sha3_inline",
 ]
-prover = ["parallel"]
-parallel = [
+prover = [
+    "minimal",
     "ark-ec/parallel",
     "ark-ff/parallel",
     "ark-std/parallel",
+    "dory/parallel"
+]
+# This is for building jolt-core without prover capabilities, e.g. for recursion
+# jolt-core needs std and rayon to compile, so these are the minimal set of features.
+minimal = [
+    "ark-ec/std",
+    "ark-ff/std",
+    "ark-std/std",
     "ark-ff/asm",
     "rayon",
 ]
@@ -93,16 +103,23 @@ derive_more = { version = "2.0.1", features = ["from"] }
 paste = "1.0.15"
 dory = { git = "https://github.com/spaceandtimefdn/sxt-dory", branch = "feat/return_row_commitments" }
 lazy_static = "1.5.0"
-allocative = "0.3.4"
+allocative = { git = "https://github.com/facebookexperimental/allocative", rev = "85b773d85d526d068ce94724ff7a7b81203fc95e" }
 inferno = { version = "0.12.3", optional = true }
 jolt-platform = { path = "../jolt-platform", features = ["std"] }
+sha2_inline = { package = "jolt-inlines-sha2", path = "../jolt-inlines/sha2", features = [
+    "host",
+], optional = true }
+sha3_inline = { package = "jolt-inlines-keccak256", path = "../jolt-inlines/keccak256", features = [
+    "host",
+], optional = true }
 
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["html_reports"] }
 iai-callgrind = "0.10.2"
 serial_test = "3.2.0"
-sha2_inline = { package = "jolt-inlines-sha2", path = "../jolt-inlines/sha2", features = [
-    "host",
+tracer = { path = "../tracer", default-features = false, features = [
+    "std",
+    "test-utils",
 ] }
 
 [build-dependencies]
@@ -118,14 +135,6 @@ harness = false
 
 [[bench]]
 name = "binding"
-harness = false
-
-[[bench]]
-name = "large_d_sumcheck"
-harness = false
-
-[[bench]]
-name = "large_d_mul"
 harness = false
 
 [[bench]]

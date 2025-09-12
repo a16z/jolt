@@ -9,10 +9,10 @@ use crate::zkvm::lookup_table::prefixes::Prefixes;
 
 /// (address, offset)
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct HalfwordAlignmentTable<const WORD_SIZE: usize>;
+pub struct HalfwordAlignmentTable<const XLEN: usize>;
 
-impl<const WORD_SIZE: usize> JoltLookupTable for HalfwordAlignmentTable<WORD_SIZE> {
-    fn materialize_entry(&self, index: u64) -> u64 {
+impl<const XLEN: usize> JoltLookupTable for HalfwordAlignmentTable<XLEN> {
+    fn materialize_entry(&self, index: u128) -> u64 {
         index.is_multiple_of(2).into()
     }
 
@@ -22,9 +22,7 @@ impl<const WORD_SIZE: usize> JoltLookupTable for HalfwordAlignmentTable<WORD_SIZ
     }
 }
 
-impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE>
-    for HalfwordAlignmentTable<WORD_SIZE>
-{
+impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for HalfwordAlignmentTable<XLEN> {
     fn suffixes(&self) -> Vec<Suffixes> {
         vec![Suffixes::One, Suffixes::Lsb]
     }
@@ -43,6 +41,7 @@ mod test {
     use crate::zkvm::lookup_table::test::{
         lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
     };
+    use common::constants::XLEN;
 
     use super::HalfwordAlignmentTable;
 
@@ -53,11 +52,11 @@ mod test {
 
     #[test]
     fn mle_random() {
-        lookup_table_mle_random_test::<Fr, HalfwordAlignmentTable<32>>();
+        lookup_table_mle_random_test::<Fr, HalfwordAlignmentTable<XLEN>>();
     }
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<Fr, HalfwordAlignmentTable<32>>();
+        prefix_suffix_test::<XLEN, Fr, HalfwordAlignmentTable<XLEN>>();
     }
 }

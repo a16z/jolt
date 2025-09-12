@@ -1,9 +1,18 @@
-use super::{
-    format::{format_i::FormatI, InstructionFormat},
-    RISCVInstruction, RISCVTrace,
-};
-use crate::{declare_riscv_instr, emulator::cpu::Cpu};
+use crate::utils::inline_helpers::InstrAssembler;
+use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use serde::{Deserialize, Serialize};
+
+use crate::{
+    declare_riscv_instr,
+    emulator::cpu::{Cpu, Xlen},
+    instruction::virtual_srli::VirtualSRLI,
+};
+
+use super::slli::SLLI;
+use super::virtual_sign_extend_word::VirtualSignExtendWord;
+use super::{
+    format::format_i::FormatI, RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
+};
 
 declare_riscv_instr!(
     name   = SRLIW,
@@ -23,4 +32,34 @@ impl SRLIW {
             ((cpu.x[self.operands.rs1 as usize] as u32) >> shamt) as i32 as i64;
     }
 }
-impl RISCVTrace for SRLIW {}
+
+impl RISCVTrace for SRLIW {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
+        let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
+        let mut trace = trace;
+        for instr in inline_sequence {
+            // In each iteration, create a new Option containing a re-borrowed reference
+            instr.trace(cpu, trace.as_deref_mut());
+        }
+    }
+
+    fn inline_sequence(
+        &self,
+        allocator: &VirtualRegisterAllocator,
+        xlen: Xlen,
+    ) -> Vec<RV32IMInstruction> {
+        let v_rs1 = allocator.allocate();
+
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
+        asm.emit_i::<SLLI>(*v_rs1, self.operands.rs1, 32);
+        let (shift, len) = match xlen {
+            Xlen::Bit32 => panic!("SRLIW is invalid in 32b mode"),
+            Xlen::Bit64 => ((self.operands.imm & 0x1f) + 32, 64),
+        };
+        let ones = (1u128 << (len - shift)) - 1;
+        let bitmask = (ones << shift) as u64;
+        asm.emit_vshift_i::<VirtualSRLI>(self.operands.rd, *v_rs1, bitmask);
+        asm.emit_i::<VirtualSignExtendWord>(self.operands.rd, self.operands.rd, 0);
+        asm.finalize()
+    }
+}

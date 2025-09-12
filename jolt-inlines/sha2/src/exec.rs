@@ -1,9 +1,4 @@
-use tracer::{
-    emulator::cpu::Cpu,
-    instruction::{inline::INLINE, RISCVInstruction},
-};
-
-use crate::trace_generator::{BLOCK, K};
+use crate::sequence_builder::{BLOCK, K};
 
 pub fn execute_sha256_compression(initial_state: [u32; 8], input: [u32; 16]) -> [u32; 8] {
     let mut a = initial_state[0];
@@ -70,68 +65,4 @@ pub fn execute_sha256_compression(initial_state: [u32; 8], input: [u32; 16]) -> 
 
 pub fn execute_sha256_compression_initial(input: [u32; 16]) -> [u32; 8] {
     execute_sha256_compression(BLOCK.map(|x| x as u32), input)
-}
-
-pub fn sha2_exec(
-    instr: &INLINE,
-    cpu: &mut Cpu,
-    _ram_access: &mut <INLINE as RISCVInstruction>::RAMAccess,
-) {
-    // Load 16 input words from memory at rs1
-    let mut input = [0u32; 16];
-    for (i, word) in input.iter_mut().enumerate() {
-        *word = cpu
-            .mmu
-            .load_word(cpu.x[instr.operands.rs1 as usize].wrapping_add((i * 4) as i64) as u64)
-            .expect("SHA256: Failed to load input word")
-            .0;
-    }
-
-    // Load 8 initial state words from memory at rs2
-    let mut iv = [0u32; 8];
-    for (i, word) in iv.iter_mut().enumerate() {
-        *word = cpu
-            .mmu
-            .load_word(cpu.x[instr.operands.rs2 as usize].wrapping_add((i * 4) as i64) as u64)
-            .expect("SHA256: Failed to load initial state")
-            .0;
-    }
-
-    // Execute compression and store result at rs2
-    let result = execute_sha256_compression(iv, input);
-    for (i, &word) in result.iter().enumerate() {
-        cpu.mmu
-            .store_word(
-                cpu.x[instr.operands.rs2 as usize].wrapping_add((i * 4) as i64) as u64,
-                word,
-            )
-            .expect("SHA256: Failed to store result");
-    }
-}
-
-pub fn sha2_init_exec(
-    instr: &INLINE,
-    cpu: &mut Cpu,
-    _ram_access: &mut <INLINE as RISCVInstruction>::RAMAccess,
-) {
-    // Load 16 input words from memory at rs1
-    let mut input = [0u32; 16];
-    for (i, word) in input.iter_mut().enumerate() {
-        *word = cpu
-            .mmu
-            .load_word(cpu.x[instr.operands.rs1 as usize].wrapping_add((i * 4) as i64) as u64)
-            .expect("SHA256INIT: Failed to load input word")
-            .0;
-    }
-
-    // Execute compression with default initial state and store result
-    let result = execute_sha256_compression_initial(input);
-    for (i, &word) in result.iter().enumerate() {
-        cpu.mmu
-            .store_word(
-                cpu.x[instr.operands.rs2 as usize].wrapping_add((i * 4) as i64) as u64,
-                word,
-            )
-            .expect("SHA256INIT: Failed to store result");
-    }
 }
