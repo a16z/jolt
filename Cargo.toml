@@ -102,18 +102,22 @@ inherits = "release"
 debug = false
 
 [patch.crates-io]
-# ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-# ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-# ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-# ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-ark-ff = { path = "../arkworks-algebra/ff" }
-ark-ec = { path = "../arkworks-algebra/ec" }
-ark-serialize = { path = "../arkworks-algebra/serialize" }
-ark-bn254 = { path = "../arkworks-algebra/curves/bn254" }
+ark-ff = { git = "https://github.com/abiswas3/arkworks-algebra", branch = "dev/twist-shout" }
+ark-ec = { git = "https://github.com/abiswas3/arkworks-algebra", branch = "dev/twist-shout" }
+ark-serialize = { git = "https://github.com/abiswas3/arkworks-algebra", branch = "dev/twist-shout" }
+ark-bn254 = { git = "https://github.com/abiswas3/arkworks-algebra", branch = "dev/twist-shout" }
+# ark-ff = { path = "../arkworks-algebra/ff" }
+# ark-ec = { path = "../arkworks-algebra/ec" }
+# ark-serialize = { path = "../arkworks-algebra/serialize" }
+# ark-bn254 = { path = "../arkworks-algebra/curves/bn254" }
 
 [patch.'https://github.com/a16z/arkworks-algebra']
-jolt-optimizations = {path="../arkworks-algebra/jolt-optimizations"}
-ark-serialize = { path = "../arkworks-algebra/serialize" }
+# jolt-optimizations = {path="../arkworks-algebra/jolt-optimizations"}
+# ark-serialize = { path = "../arkworks-algebra/serialize" }
+jolt-optimizations = { git = "https://github.com/abiswas3/arkworks-algebra", branch = "dev/twist-shout" }
+ark-serialize = { git = "https://github.com/abiswas3/arkworks-algebra", branch = "dev/twist-shout" }
+ 
+
 
 [workspace.metadata.cargo-machete]
 ignored = ["jolt-sdk"]
