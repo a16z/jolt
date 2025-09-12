@@ -33,6 +33,7 @@ use virtual_rotrw::VirtualRotrWTable;
 use virtual_sra::VirtualSRATable;
 use virtual_srl::VirtualSRLTable;
 use virtual_xor_rot::VirtualXORROTTable;
+use virtual_xor_rotw::VirtualXORROTWTable;
 use word_alignment::WordAlignmentTable;
 use xor::XorTable;
 
@@ -98,6 +99,7 @@ pub mod virtual_rotrw;
 pub mod virtual_sra;
 pub mod virtual_srl;
 pub mod virtual_xor_rot;
+pub mod virtual_xor_rotw;
 pub mod word_alignment;
 pub mod xor;
 
@@ -143,6 +145,10 @@ pub enum LookupTables<const XLEN: usize> {
     VirtualXORROT24(VirtualXORROTTable<XLEN, 24>),
     VirtualXORROT16(VirtualXORROTTable<XLEN, 16>),
     VirtualXORROT63(VirtualXORROTTable<XLEN, 63>),
+    VirtualXORROTW16(VirtualXORROTWTable<XLEN, 16>),
+    VirtualXORROTW12(VirtualXORROTWTable<XLEN, 12>),
+    VirtualXORROTW8(VirtualXORROTWTable<XLEN, 8>),
+    VirtualXORROTW7(VirtualXORROTWTable<XLEN, 7>),
 }
 
 impl<const XLEN: usize> LookupTables<XLEN> {
@@ -189,6 +195,10 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::VirtualXORROT24(table) => table.materialize(),
             LookupTables::VirtualXORROT16(table) => table.materialize(),
             LookupTables::VirtualXORROT63(table) => table.materialize(),
+            LookupTables::VirtualXORROTW7(table) => table.materialize(),
+            LookupTables::VirtualXORROTW8(table) => table.materialize(),
+            LookupTables::VirtualXORROTW12(table) => table.materialize(),
+            LookupTables::VirtualXORROTW16(table) => table.materialize(),
         }
     }
 
@@ -228,6 +238,10 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::VirtualXORROT24(table) => table.materialize_entry(index),
             LookupTables::VirtualXORROT16(table) => table.materialize_entry(index),
             LookupTables::VirtualXORROT63(table) => table.materialize_entry(index),
+            LookupTables::VirtualXORROTW7(table) => table.materialize_entry(index),
+            LookupTables::VirtualXORROTW8(table) => table.materialize_entry(index),
+            LookupTables::VirtualXORROTW12(table) => table.materialize_entry(index),
+            LookupTables::VirtualXORROTW16(table) => table.materialize_entry(index),
         }
     }
 
@@ -267,6 +281,10 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::VirtualXORROT24(table) => table.evaluate_mle(r),
             LookupTables::VirtualXORROT16(table) => table.evaluate_mle(r),
             LookupTables::VirtualXORROT63(table) => table.evaluate_mle(r),
+            LookupTables::VirtualXORROTW7(table) => table.evaluate_mle(r),
+            LookupTables::VirtualXORROTW8(table) => table.evaluate_mle(r),
+            LookupTables::VirtualXORROTW12(table) => table.evaluate_mle(r),
+            LookupTables::VirtualXORROTW16(table) => table.evaluate_mle(r),
         }
     }
 
@@ -306,6 +324,10 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::VirtualXORROT24(table) => table.suffixes(),
             LookupTables::VirtualXORROT16(table) => table.suffixes(),
             LookupTables::VirtualXORROT63(table) => table.suffixes(),
+            LookupTables::VirtualXORROTW7(table) => table.suffixes(),
+            LookupTables::VirtualXORROTW8(table) => table.suffixes(),
+            LookupTables::VirtualXORROTW12(table) => table.suffixes(),
+            LookupTables::VirtualXORROTW16(table) => table.suffixes(),
         }
     }
 
@@ -349,6 +371,10 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::VirtualXORROT24(table) => table.combine(prefixes, suffixes),
             LookupTables::VirtualXORROT16(table) => table.combine(prefixes, suffixes),
             LookupTables::VirtualXORROT63(table) => table.combine(prefixes, suffixes),
+            LookupTables::VirtualXORROTW7(table) => table.combine(prefixes, suffixes),
+            LookupTables::VirtualXORROTW8(table) => table.combine(prefixes, suffixes),
+            LookupTables::VirtualXORROTW12(table) => table.combine(prefixes, suffixes),
+            LookupTables::VirtualXORROTW16(table) => table.combine(prefixes, suffixes),
         }
     }
 }

@@ -104,6 +104,7 @@ pub fn prefix_suffix_test<const XLEN: usize, F: JoltField, T: PrefixSuffixDecomp
                     })
                     .collect();
 
+
                 let combined = T::default().combine(&prefix_evals, &suffix_evals);
                 if combined != mle_eval {
                     println!("Lookup index: {lookup_index}");

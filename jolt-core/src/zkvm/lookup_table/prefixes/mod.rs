@@ -44,6 +44,7 @@ use two_lsb::TwoLsbPrefix;
 use upper_word::UpperWordPrefix;
 use xor::XorPrefix;
 use xor_rot::XorRotPrefix;
+use xor_rotw::XorRotWPrefix;
 
 pub mod and;
 pub mod andn;
@@ -82,6 +83,7 @@ pub mod two_lsb;
 pub mod upper_word;
 pub mod xor;
 pub mod xor_rot;
+pub mod xor_rotw;
 
 pub trait SparseDensePrefix<F: JoltField>: 'static + Sync {
     /// Evalautes the MLE for this prefix:
@@ -164,6 +166,10 @@ pub enum Prefixes {
     XorRot24,
     XorRot32,
     XorRot63,
+    XorRotW7,
+    XorRotW8,
+    XorRotW12,
+    XorRotW16,
 }
 
 #[derive(Clone, Copy, Allocative)]
@@ -234,6 +240,10 @@ impl Prefixes {
             Prefixes::XorRot24 => XorRotPrefix::<XLEN, 24>::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::XorRot32 => XorRotPrefix::<XLEN, 32>::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::XorRot63 => XorRotPrefix::<XLEN, 63>::prefix_mle(checkpoints, r_x, c, b, j),
+            Prefixes::XorRotW7 => XorRotWPrefix::<XLEN, 7>::prefix_mle(checkpoints, r_x, c, b, j),
+            Prefixes::XorRotW8 => XorRotWPrefix::<XLEN, 8>::prefix_mle(checkpoints, r_x, c, b, j),
+            Prefixes::XorRotW12 => XorRotWPrefix::<XLEN, 12>::prefix_mle(checkpoints, r_x, c, b, j),
+            Prefixes::XorRotW16 => XorRotWPrefix::<XLEN, 16>::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::Eq => EqPrefix::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::LessThan => LessThanPrefix::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::LeftOperandIsZero => {
@@ -364,6 +374,18 @@ impl Prefixes {
             }
             Prefixes::XorRot63 => {
                 XorRotPrefix::<XLEN, 63>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+            }
+            Prefixes::XorRotW7 => {
+                XorRotWPrefix::<XLEN, 7>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+            }
+            Prefixes::XorRotW8 => {
+                XorRotWPrefix::<XLEN, 8>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+            }
+            Prefixes::XorRotW12 => {
+                XorRotWPrefix::<XLEN, 12>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+            }
+            Prefixes::XorRotW16 => {
+                XorRotWPrefix::<XLEN, 16>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
             }
             Prefixes::Eq => EqPrefix::update_prefix_checkpoint(checkpoints, r_x, r_y, j),
             Prefixes::LessThan => {

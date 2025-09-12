@@ -1,0 +1,121 @@
+use crate::zkvm::instruction_lookups::read_raf_checking::current_suffix_len;
+use crate::{field::JoltField, utils::lookup_bits::LookupBits};
+
+use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
+
+/// XOR the operands and rotate right by a constant value for 32-bit values (word operations).
+/// Only processes the lower 32 bits (j >= XLEN).
+pub enum XorRotWPrefix<const XLEN: usize, const ROTATION: u32> {}
+
+impl<const XLEN: usize, const ROTATION: u32, F: JoltField> SparseDensePrefix<F>
+    for XorRotWPrefix<XLEN, ROTATION>
+{
+    fn prefix_mle(
+        checkpoints: &[PrefixCheckpoint<F>],
+        r_x: Option<F>,
+        c: u32,
+        mut b: LookupBits,
+        j: usize,
+    ) -> F {
+        // Only process when j >= XLEN (lower 32 bits in 64-bit mode)
+        if j < XLEN {
+            return F::zero();
+        }
+        
+        let prefix_idx = match ROTATION {
+            7 => Prefixes::XorRotW7,
+            8 => Prefixes::XorRotW8,
+            12 => Prefixes::XorRotW12,
+            16 => Prefixes::XorRotW16,
+            _ => unimplemented!(),
+        };
+        let mut result = checkpoints[prefix_idx].unwrap_or(F::zero());
+
+        if let Some(r_x) = r_x {
+            let y = F::from_u8(c as u8);
+            let xor_bit = (F::one() - r_x) * y + r_x * (F::one() - y);
+
+            // Calculate where this bit ends up after rotation within 32-bit boundary
+            let original_pos = (j - XLEN) / 2;  // Position within the 32-bit word
+            let rotated_pos = (original_pos + ROTATION as usize) % 32;
+            let shift = 32 - 1 - rotated_pos;
+
+            result += F::from_u64(1 << shift) * xor_bit;
+        } else {
+            let x = F::from_u32(c);
+            let y_msb = F::from_u8(b.pop_msb());
+            let xor_bit = (F::one() - x) * y_msb + x * (F::one() - y_msb);
+
+            let original_pos = (j - XLEN) / 2;  // Position within the 32-bit word
+            let rotated_pos = (original_pos + ROTATION as usize) % 32;
+            let shift = 32 - 1 - rotated_pos;
+
+            result += F::from_u64(1 << shift) * xor_bit;
+        }
+
+        // XOR remaining x and y bits
+        let (x, y) = b.uninterleave();
+        if (ROTATION == 12) {
+            println!("x is: {}", x);
+            println!("y is: {}", y);
+            // 0101101
+            println!("Suffix Len is: {}", current_suffix_len(j));
+        }
+        let suffix_len = current_suffix_len(j);
+        let suffix_bits = suffix_len / 2;  // Number of actual bits in the suffix
+
+        // XOR the suffix bits
+        let x_32 = u64::from(x) as u32;
+        let y_32 = u64::from(y) as u32;
+        let xor_result = x_32 ^ y_32;
+        
+        // Calculate the shift for rotation within 32-bit boundary
+        let shift = if suffix_bits as i32 - ROTATION as i32 >= 0 {
+            suffix_bits - ROTATION as usize
+        } else {
+            (32_i32 + (suffix_bits as i32 - ROTATION as i32)) as usize
+        };
+
+        if ROTATION == 12 {
+            println!("XOR Result: {}", xor_result);
+            println!("shift amount: {}", shift);
+            println!("Suffix_bits: {}", suffix_bits);
+            println!("ROTAION: {}", ROTATION);
+        }
+
+        // Apply shift and mask to 32 bits
+        let shifted = (xor_result.rotate_left(shift as u32));
+        if ROTATION == 12 {
+            println!("Shifted is: {}", shifted);
+        }
+        
+        result += F::from_u32(shifted);
+        result
+    }
+
+
+    fn update_prefix_checkpoint(
+        checkpoints: &[PrefixCheckpoint<F>],
+        r_x: F,
+        r_y: F,
+        j: usize,
+    ) -> PrefixCheckpoint<F> {
+        if j >= XLEN {
+            let prefix_idx = match ROTATION {
+                7 => Prefixes::XorRotW7,
+                8 => Prefixes::XorRotW8,
+                12 => Prefixes::XorRotW12,
+                16 => Prefixes::XorRotW16,
+                _ => unimplemented!(),
+            };
+            let original_pos = (j - XLEN) / 2;  // Position within the 32-bit word
+            let rotated_pos = (original_pos + ROTATION as usize) % 32;
+            let shift = 32 - 1 - rotated_pos;
+            let updated = checkpoints[prefix_idx].unwrap_or(F::zero())
+                + F::from_u64(1 << shift) * ((F::one() - r_x) * r_y + r_x * (F::one() - r_y));
+            Some(updated).into()
+        } else {
+            Some(F::zero()).into()
+        }
+    }
+}

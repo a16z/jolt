@@ -14,6 +14,7 @@ use tracer::instruction::format::format_inline::FormatInline;
 use tracer::instruction::lui::LUI;
 use tracer::instruction::lw::LW;
 use tracer::instruction::sw::SW;
+use tracer::instruction::virtual_xor_rotw::{VirtualXORROTW12, VirtualXORROTW16, VirtualXORROTW7, VirtualXORROTW8};
 use tracer::instruction::xor::XOR;
 use tracer::instruction::RV32IMInstruction;
 use tracer::utils::inline_helpers::{InstrAssembler, Value::Imm, Value::Reg};
@@ -207,36 +208,36 @@ impl Blake3SequenceBuilder {
 
     /// XOR two registers, and then rotate right by the given amount.
     fn xor_rotate(&mut self, rs1: u8, rs2: u8, amount: RotationAmount, rd: u8) {
-        // match amount {
-        //     RotationAmount::ROT32 => {
-        //         self.asm.emit_r::<VirtualXORROT32>(rd, rs1, rs2);
-        //     }
-        //     RotationAmount::ROT24 => {
-        //         self.asm.emit_r::<VirtualXORROT24>(rd, rs1, rs2);
-        //     }
-        //     RotationAmount::ROT16 => {
-        //         self.asm.emit_r::<VirtualXORROT16>(rd, rs1, rs2);
-        //     }
-        //     RotationAmount::ROT63 => {
-        //         self.asm.emit_r::<VirtualXORROT63>(rd, rs1, rs2);
-        //     }
-        // }
-
-        self.asm.emit_r::<XOR>(rd, rs1, rs2);
         match amount {
             RotationAmount::ROT16 => {
-                self.asm.rotri32(Reg(rd), 16, rd);
+                self.asm.emit_r::<VirtualXORROTW16>(rd, rs1, rs2);
             }
             RotationAmount::ROT12 => {
-                self.asm.rotri32(Reg(rd), 12, rd);
+                self.asm.emit_r::<VirtualXORROTW12>(rd, rs1, rs2);
             }
             RotationAmount::ROT8 => {
-                self.asm.rotri32(Reg(rd), 8, rd);
+                self.asm.emit_r::<VirtualXORROTW8>(rd, rs1, rs2);
             }
             RotationAmount::ROT7 => {
-                self.asm.rotri32(Reg(rd), 7, rd);
+                self.asm.emit_r::<VirtualXORROTW7>(rd, rs1, rs2);
             }
         }
+
+        // self.asm.emit_r::<XOR>(rd, rs1, rs2);
+        // match amount {
+        //     RotationAmount::ROT16 => {
+        //         self.asm.rotri32(Reg(rd), 16, rd);
+        //     }
+        //     RotationAmount::ROT12 => {
+        //         self.asm.rotri32(Reg(rd), 12, rd);
+        //     }
+        //     RotationAmount::ROT8 => {
+        //         self.asm.rotri32(Reg(rd), 8, rd);
+        //     }
+        //     RotationAmount::ROT7 => {
+        //         self.asm.rotri32(Reg(rd), 7, rd);
+        //     }
+        // }
     }
 
     fn load_chaining_value(&mut self) {
