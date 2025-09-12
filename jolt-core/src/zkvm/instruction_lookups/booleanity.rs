@@ -44,6 +44,8 @@ struct BooleanityProverState<F: JoltField> {
     H: [MultilinearPolynomial<F>; D],
     F: Vec<F>,
     eq_r_r: F,
+    /// First element of r_cycle_prime
+    r_cycle_prime: Option<F>,
 }
 
 #[derive(Allocative)]
@@ -140,6 +142,7 @@ impl<F: JoltField> BooleanityProverState<F> {
             H: std::array::from_fn(|_| MultilinearPolynomial::from(vec![F::zero()])),
             F,
             eq_r_r: F::zero(),
+            r_cycle_prime: None,
         }
     }
 }
@@ -193,18 +196,29 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
         } else {
             // Phase 2: Bind D and H
             ps.eq_r_cycle.bind(r_j);
+            // For the first two rounds we are using F to compute prover message to save space
+            // After second round we are constructing H from F
+            // See section 6.2.2 of Twist & Shout paper
             if round == LOG_K_CHUNK {
+                ps.r_cycle_prime = Some(r_j);
+            } else if round == LOG_K_CHUNK + 1 {
                 // Initialize H from binding F
                 let h_indices = std::mem::take(&mut ps.H_indices);
-                let half_T = h_indices[0].len() / 2;
-                ps.H = (0..D)
-                    .into_par_iter()
-                    .map(|i| {
-                        (0..half_T)
+                let T_div_4 = h_indices[0].len() / 4;
+                let r_j_prev = ps.r_cycle_prime.unwrap();
+                ps.H = h_indices
+                    .iter()
+                    .map(|h_indices| {
+                        (0..T_div_4)
                             .into_par_iter()
                             .map(|j| {
-                                let h_0 = ps.F[h_indices[i][2 * j]];
-                                let h_1 = ps.F[h_indices[i][2 * j + 1]];
+                                // H[i] = F[H_indices[2i]] + r_prev * (F[H_indices[2i+1]] - F[H_indices[2i]])
+                                let h_0 = ps.F[h_indices[4 * j]]
+                                    + r_j_prev
+                                        * (ps.F[h_indices[4 * j + 1]] - ps.F[h_indices[4 * j]]);
+                                let h_1 = ps.F[h_indices[4 * j + 2]]
+                                    + r_j_prev
+                                        * (ps.F[h_indices[4 * j + 3]] - ps.F[h_indices[4 * j + 2]]);
                                 h_0 + r_j * (h_1 - h_0)
                             })
                             .collect::<Vec<F>>()
@@ -426,14 +440,31 @@ impl<F: JoltField> BooleanitySumcheck<F> {
     fn compute_phase2_message(&self, round: usize, previous_claim: F) -> Vec<F> {
         let p = self.prover_state.as_ref().unwrap();
         let D_poly = &p.eq_r_cycle;
-        let H = &p.H;
         let ra_evals = |j: usize| -> [F; 2] {
             if round == LOG_K_CHUNK {
-                (0..D)
+                p.H_indices
+                    .iter()
                     .zip(self.gamma.iter())
-                    .map(|(i, gamma)| {
-                        let h_0 = p.F[p.H_indices[i][2 * j]];
-                        let h_1 = p.F[p.H_indices[i][2 * j + 1]];
+                    .map(|(h_indices, gamma)| {
+                        let h_0 = p.F[h_indices[2 * j]];
+                        let h_1 = p.F[h_indices[2 * j + 1]];
+                        let b = h_1 - h_0;
+                        [(h_0.square() - h_0) * gamma, b.square() * gamma]
+                    })
+                    .fold([F::zero(); 2], |running, new| {
+                        [running[0] + new[0], running[1] + new[1]]
+                    })
+            } else if round == LOG_K_CHUNK + 1 {
+                let r_j_prev = p.r_cycle_prime.unwrap();
+                p.H_indices
+                    .iter()
+                    .zip(self.gamma.iter())
+                    .map(|(h_indices, gamma)| {
+                        // H[i] = F[H_indices[2i]] + r_prev * (F[H_indices[2i+1]] - F[H_indices[2i]])
+                        let h_0 = p.F[h_indices[4 * j]]
+                            + r_j_prev * (p.F[h_indices[4 * j + 1]] - p.F[h_indices[4 * j]]);
+                        let h_1 = p.F[h_indices[4 * j + 2]]
+                            + r_j_prev * (p.F[h_indices[4 * j + 3]] - p.F[h_indices[4 * j + 2]]);
                         let b = h_1 - h_0;
                         [(h_0.square() - h_0) * gamma, b.square() * gamma]
                     })
@@ -441,22 +472,20 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                         [running[0] + new[0], running[1] + new[1]]
                     })
             } else {
-                let mut coeffs = [F::zero(); DEGREE - 1];
-
-                for i in 0..D {
-                    let h_poly = &H[i];
-
-                    let h_0 = h_poly.get_bound_coeff(2 * j); // h(0)
-                    let h_1 = h_poly.get_bound_coeff(2 * j + 1); // h(1)
-
-                    // For c = 0: h(0)^2 - h(0)
-                    coeffs[0] += self.gamma[i] * (h_0.square() - h_0);
-
-                    // For quadratic coefficient: b^2 where b = h(1) - h(0) is the linear coefficient
-                    let b = h_1 - h_0; // Linear coefficient of h
-                    coeffs[1] += self.gamma[i] * b.square(); // Quadratic coefficient of h^2 - h
-                }
-                coeffs
+                p.H.iter()
+                    .zip(self.gamma.iter())
+                    .map(|(h, gamma)| {
+                        let h_0 = h.get_bound_coeff(2 * j);
+                        let h_1 = h.get_bound_coeff(2 * j + 1);
+                        // Linear coefficient of h
+                        let b = h_1 - h_0;
+                        // For c = 0: h(0)^2 - h(0)
+                        // For quadratic coefficient: b^2 where b = h(1) - h(0) is the linear coefficient
+                        [(h_0.square() - h_0) * gamma, b.square() * gamma]
+                    })
+                    .fold([F::zero(); 2], |running, new| {
+                        [running[0] + new[0], running[1] + new[1]]
+                    })
             }
         };
 
