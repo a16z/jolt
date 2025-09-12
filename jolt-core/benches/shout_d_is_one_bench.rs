@@ -9,7 +9,7 @@ use rand::RngCore;
 /// Benchmark proving for the Gruen-optimized Shout sumcheck (d=1)
 fn gruen_prover_benchmark(c: &mut Criterion) {
     const TABLE_SIZE: usize = 64; // 2^6
-    const NUM_LOOKUPS: usize = 1 << 16; // 2^16
+    const NUM_LOOKUPS: usize = 1 << 22; // 2^16
 
     let seed = 42;
     let mut rng = StdRng::seed_from_u64(seed);

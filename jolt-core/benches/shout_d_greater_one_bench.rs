@@ -35,7 +35,7 @@ fn main() {
     let mut criterion = Criterion::default()
         .configure_from_args()
         .warm_up_time(std::time::Duration::new(30, 0))  // 30 seconds warm-up
-        .measurement_time(std::time::Duration::new(130, 0)) // 120 seconds measurement
+        .measurement_time(std::time::Duration::new(300, 0)) // 120 seconds measurement
         .sample_size(50); // Collect 50 samples
 
     // Manually run the benchmark function
