@@ -32,8 +32,8 @@ use crate::{
 
 pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> {
     opening_claims: Claims<F>,
-    commitments: Vec<PCS::Commitment>,
-    proofs: Proofs<F, PCS, FS>,
+    pub commitments: Vec<PCS::Commitment>,
+    pub proofs: Proofs<F, PCS, FS>,
     pub trace_length: usize,
     ram_K: usize,
     bytecode_d: usize,
@@ -311,7 +311,9 @@ impl CanonicalSerialize for CommittedPolynomial {
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        self.to_index().serialized_size(compress)
+        // self.to_index().serialized_size(compress)
+        // to_index returns a usize
+        (0usize).serialized_size(compress)
     }
 }
 
@@ -342,7 +344,9 @@ impl CanonicalSerialize for VirtualPolynomial {
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        self.to_index().serialized_size(compress)
+        // self.to_index().serialized_size(compress)
+        // to_index returns a usize
+        (0usize).serialized_size(compress)
     }
 }
 
