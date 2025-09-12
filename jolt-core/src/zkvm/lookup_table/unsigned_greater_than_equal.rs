@@ -6,8 +6,8 @@ use super::{
     unsigned_less_than::UnsignedLessThanTable,
     JoltLookupTable, PrefixSuffixDecomposition,
 };
-use crate::{field::JoltField, utils::uninterleave_bits, zkvm::lookup_table::suffixes::Suffixes};
 use crate::field::MontU128;
+use crate::{field::JoltField, utils::uninterleave_bits, zkvm::lookup_table::suffixes::Suffixes};
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct UnsignedGreaterThanEqualTable<const WORD_SIZE: usize>;
@@ -56,7 +56,6 @@ mod test {
         lookup_table_mle_random_test,
         // prefix_suffix_test,
     };
-
 
     use super::UnsignedGreaterThanEqualTable;
 

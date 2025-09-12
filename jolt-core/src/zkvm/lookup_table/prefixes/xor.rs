@@ -1,7 +1,7 @@
+use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
+use crate::field::MontU128;
 use crate::zkvm::instruction_lookups::read_raf_checking::current_suffix_len;
 use crate::{field::JoltField, utils::lookup_bits::LookupBits};
-use crate::field::MontU128;
-use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 
 pub enum XorPrefix<const WORD_SIZE: usize> {}
 
@@ -19,7 +19,9 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F> for XorPrefix<WO
         if let Some(r_x) = r_x {
             let y = F::from_u8(c as u8);
             let shift = WORD_SIZE - 1 - j / 2;
-            result += F::from_u32(1 << shift) * ((F::one() - F::from_u128_mont(r_x)) * y + (F::one() - y).mul_u128_mont_form(r_x));
+            result += F::from_u32(1 << shift)
+                * ((F::one() - F::from_u128_mont(r_x)) * y
+                    + (F::one() - y).mul_u128_mont_form(r_x));
         } else {
             let x = F::from_u32(c);
             let y_msb = F::from_u8(b.pop_msb());
@@ -71,7 +73,9 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F> for XorPrefix<WO
         let shift = WORD_SIZE - 1 - j / 2;
         // checkpoint += 2^shift * ((1 - r_x) * r_y + r_x * (1 - r_y))
         let updated = checkpoints[Prefixes::Xor].unwrap_or(F::zero())
-            + F::from_u32(1 << shift) * ((F::one() - F::from_u128_mont(r_x)).mul_u128_mont_form(r_y)  + (F::one() - F::from_u128_mont(r_y)).mul_u128_mont_form(r_x));
+            + F::from_u32(1 << shift)
+                * ((F::one() - F::from_u128_mont(r_x)).mul_u128_mont_form(r_y)
+                    + (F::one() - F::from_u128_mont(r_y)).mul_u128_mont_form(r_x));
         Some(updated).into()
     }
 }

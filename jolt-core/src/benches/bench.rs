@@ -1,3 +1,4 @@
+use crate::field::MontU128;
 use crate::host;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::subprotocols::large_degree_sumcheck::{
@@ -13,7 +14,6 @@ use ark_bn254::Fr;
 use ark_std::test_rng;
 use rand_core::RngCore;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
-use crate::field::MontU128;
 
 #[derive(Debug, Copy, Clone, clap::ValueEnum)]
 pub enum BenchType {

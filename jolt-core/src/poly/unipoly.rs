@@ -216,8 +216,6 @@ impl<F: JoltField> UniPoly<F> {
         acc
     }
 
-
-
     #[tracing::instrument(skip_all, name = "UniPoly::eval_as_univariate")]
     pub fn eval_as_univariate(poly: &MultilinearPolynomial<F>, r: &F) -> F {
         match poly {
@@ -456,7 +454,6 @@ impl<F: JoltField> CompressedUniPoly<F> {
         acc = (acc + b).mul_u128_mont_form(*x);
         acc + c0
     }
-
 
     pub fn degree(&self) -> usize {
         self.coeffs_except_linear_term.len()

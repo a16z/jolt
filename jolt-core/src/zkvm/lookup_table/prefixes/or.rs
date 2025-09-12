@@ -1,7 +1,7 @@
+use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
+use crate::field::MontU128;
 use crate::zkvm::instruction_lookups::read_raf_checking::current_suffix_len;
 use crate::{field::JoltField, utils::lookup_bits::LookupBits};
-use crate::field::MontU128;
-use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 
 pub enum OrPrefix<const WORD_SIZE: usize> {}
 

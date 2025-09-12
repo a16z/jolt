@@ -1,6 +1,6 @@
-use crate::{field::JoltField, utils::lookup_bits::LookupBits};
-use crate::field::MontU128;
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
+use crate::field::MontU128;
+use crate::{field::JoltField, utils::lookup_bits::LookupBits};
 
 pub enum PositiveRemainderLessThanDivisorPrefix {}
 
@@ -12,7 +12,6 @@ impl<F: JoltField> SparseDensePrefix<F> for PositiveRemainderLessThanDivisorPref
         mut b: LookupBits,
         j: usize,
     ) -> F {
-
         if j == 0 {
             let divisor_sign = F::from_u8(b.pop_msb());
             let (remainder, divisor) = b.uninterleave();

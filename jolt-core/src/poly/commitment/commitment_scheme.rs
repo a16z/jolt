@@ -2,12 +2,12 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use std::borrow::Borrow;
 use std::fmt::Debug;
 
+use crate::field::MontU128;
 use crate::transcripts::{AppendToTranscript, Transcript};
 use crate::{
     field::JoltField, poly::multilinear_polynomial::MultilinearPolynomial,
     utils::errors::ProofVerifyError,
 };
-use crate::field::MontU128;
 
 pub trait CommitmentScheme: Clone + Sync + Send + 'static {
     type Field: JoltField + Sized;

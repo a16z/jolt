@@ -202,7 +202,6 @@ impl Transcript for Blake2bTranscript {
         buf = buf.into_iter().rev().collect();
         let val = u128::from_be_bytes(buf.try_into().unwrap());
         MontU128::from(val)
-
     }
 
     fn challenge_scalar<F: JoltField>(&mut self) -> F {

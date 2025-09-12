@@ -20,7 +20,8 @@ impl<const WORD_SIZE: usize> JoltLookupTable for Pow2Table<WORD_SIZE> {
         debug_assert_eq!(r.len(), 2 * WORD_SIZE);
         let mut result = F::one();
         for i in 0..WORD_SIZE.log_2() {
-            result *= F::one() + (F::from_u64((1 << (1 << i)) - 1)).mul_u128_mont_form(r[r.len() - i - 1]);
+            result *= F::one()
+                + (F::from_u64((1 << (1 << i)) - 1)).mul_u128_mont_form(r[r.len() - i - 1]);
         }
         result
     }
@@ -57,7 +58,6 @@ mod test {
         lookup_table_mle_random_test,
         // prefix_suffix_test,
     };
-
 
     #[test]
     fn mle_full_hypercube() {

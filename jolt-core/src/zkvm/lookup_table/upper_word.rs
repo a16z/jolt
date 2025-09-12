@@ -51,7 +51,8 @@ mod test {
 
     use super::UpperWordTable;
     use crate::zkvm::lookup_table::test::{
-        lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test,
+        lookup_table_mle_full_hypercube_test,
+        lookup_table_mle_random_test,
         // prefix_suffix_test,
     };
 

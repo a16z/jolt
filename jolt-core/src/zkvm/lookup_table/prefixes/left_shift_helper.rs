@@ -1,6 +1,6 @@
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
-use crate::{field::JoltField, utils::lookup_bits::LookupBits};
 use crate::field::MontU128;
+use crate::{field::JoltField, utils::lookup_bits::LookupBits};
 
 /// Computes 2^(y.leading_ones())
 pub enum LeftShiftHelperPrefix {}

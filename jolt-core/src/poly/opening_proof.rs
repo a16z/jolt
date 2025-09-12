@@ -27,6 +27,7 @@ use super::{
     rlc_polynomial::RLCPolynomial,
     split_eq_poly::GruenSplitEqPolynomial,
 };
+use crate::field::MontU128;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::{
@@ -40,7 +41,6 @@ use crate::{
     utils::{errors::ProofVerifyError, math::Math},
     zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
 };
-use crate::field::MontU128;
 
 pub type Endianness = bool;
 pub const BIG_ENDIAN: Endianness = false;
@@ -60,9 +60,7 @@ impl<const E: Endianness> std::ops::Index<usize> for OpeningPoint<E> {
     }
 }
 
-impl<const E: Endianness> std::ops::Index<std::ops::RangeFull>
-    for OpeningPoint<E>
-{
+impl<const E: Endianness> std::ops::Index<std::ops::RangeFull> for OpeningPoint<E> {
     type Output = [MontU128];
 
     fn index(&self, _index: std::ops::RangeFull) -> &Self::Output {
@@ -98,9 +96,7 @@ impl<const E: Endianness> OpeningPoint<E> {
         }
     }
 
-    pub fn match_endianness<const SWAPPED_E: Endianness>(&self) -> OpeningPoint<SWAPPED_E>
-
-    {
+    pub fn match_endianness<const SWAPPED_E: Endianness>(&self) -> OpeningPoint<SWAPPED_E> {
         let mut reversed = self.r.clone();
         if E != SWAPPED_E {
             reversed.reverse();
@@ -127,8 +123,7 @@ impl<const E: Endianness> Into<Vec<MontU128>> for OpeningPoint<E> {
     }
 }
 
-impl<const E: Endianness> Into<Vec<MontU128>> for &OpeningPoint<E>
-{
+impl<const E: Endianness> Into<Vec<MontU128>> for &OpeningPoint<E> {
     fn into(self) -> Vec<MontU128> {
         self.r.clone()
     }
@@ -168,7 +163,6 @@ pub enum OpeningId {
 }
 
 pub type Openings<F> = BTreeMap<OpeningId, (OpeningPoint<BIG_ENDIAN>, F)>;
-
 
 #[cfg_attr(feature = "allocative", derive(Allocative))]
 pub struct SharedEqPolynomial<F: JoltField> {
@@ -272,14 +266,12 @@ impl<F: JoltField> DensePolynomialProverOpening<F> {
     }
 }
 
-
 #[cfg_attr(feature = "allocative", derive(Allocative))]
 #[derive(derive_more::From, Clone)]
 pub enum ProverOpening<F: JoltField> {
     Dense(DensePolynomialProverOpening<F>),
     OneHot(OneHotPolynomialProverOpening<F>),
 }
-
 
 #[cfg_attr(feature = "allocative", derive(Allocative))]
 #[derive(Clone)]
@@ -655,7 +647,6 @@ where
             .get(&OpeningId::Virtual(polynomial, sumcheck))
             .unwrap_or_else(|| panic!("opening for {sumcheck:?} {polynomial:?} not found"));
 
-
         #[cfg(test)]
         {
             let mut virtual_openings = self.appended_virtual_openings.borrow_mut();
@@ -923,7 +914,11 @@ where
     pub fn prove_batch_opening_reduction<ProofTranscript: Transcript>(
         &mut self,
         transcript: &mut ProofTranscript,
-    ) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<MontU128>, Vec<F>) {
+    ) -> (
+        SumcheckInstanceProof<F, ProofTranscript>,
+        Vec<MontU128>,
+        Vec<F>,
+    ) {
         #[cfg(feature = "allocative")]
         {
             print_data_structure_heap_usage("Opening accumulator", &(*self));
@@ -1254,7 +1249,10 @@ where
             .zip(self.sumchecks.iter())
             .map(|((coeff, claim), opening)| {
                 let r_slice = &r_sumcheck[..num_sumcheck_rounds - opening.opening_point.len()];
-                let lagrange_eval: F = r_slice.iter().map(|r| F::one() - F::from_u128_mont(*r)).product();
+                let lagrange_eval: F = r_slice
+                    .iter()
+                    .map(|r| F::one() - F::from_u128_mont(*r))
+                    .product();
                 *coeff * claim * lagrange_eval
             })
             .sum();

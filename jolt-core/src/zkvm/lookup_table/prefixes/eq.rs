@@ -1,6 +1,6 @@
-use crate::{field::JoltField, utils::lookup_bits::LookupBits};
-use crate::field::MontU128;
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
+use crate::field::MontU128;
+use crate::{field::JoltField, utils::lookup_bits::LookupBits};
 
 pub enum EqPrefix {}
 
@@ -17,7 +17,8 @@ impl<F: JoltField> SparseDensePrefix<F> for EqPrefix {
         // EQ high-order variables of x and y
         if let Some(r_x) = r_x {
             let y = F::from_u8(c as u8);
-            result *= y.mul_u128_mont_form(r_x) + (F::one() - F::from_u128_mont(r_x)) * (F::one() - y);
+            result *=
+                y.mul_u128_mont_form(r_x) + (F::one() - F::from_u128_mont(r_x)) * (F::one() - y);
         } else {
             let x = F::from_u8(c as u8);
             let y_msb = F::from_u8(b.pop_msb());

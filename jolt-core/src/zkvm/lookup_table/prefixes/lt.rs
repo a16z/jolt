@@ -1,6 +1,6 @@
-use crate::{field::JoltField, utils::lookup_bits::LookupBits};
-use crate::field::MontU128;
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
+use crate::field::MontU128;
+use crate::{field::JoltField, utils::lookup_bits::LookupBits};
 
 pub enum LessThanPrefix {}
 
@@ -20,7 +20,8 @@ impl<F: JoltField> SparseDensePrefix<F> for LessThanPrefix {
             lt += eq * (F::one() - F::from_u128_mont(r_x)) * c;
             let (x, y) = b.uninterleave();
             if u64::from(x) < u64::from(y) {
-                eq *= c.mul_u128_mont_form(r_x) + (F::one() - F::from_u128_mont(r_x)) * (F::one() - c);
+                eq *= c.mul_u128_mont_form(r_x)
+                    + (F::one() - F::from_u128_mont(r_x)) * (F::one() - c);
                 lt += eq;
             }
         } else {
@@ -77,7 +78,8 @@ impl<F: JoltField> SparseDensePrefix<F> for LessThanPrefix {
     ) -> PrefixCheckpoint<F> {
         let lt_checkpoint = checkpoints[Prefixes::LessThan].unwrap_or(F::zero());
         let eq_checkpoint = checkpoints[Prefixes::Eq].unwrap_or(F::one());
-        let lt_updated = lt_checkpoint + eq_checkpoint * (F::one() - F::from_u128_mont(r_x)).mul_u128_mont_form(r_y);
+        let lt_updated = lt_checkpoint
+            + eq_checkpoint * (F::one() - F::from_u128_mont(r_x)).mul_u128_mont_form(r_y);
         Some(lt_updated).into()
     }
 }

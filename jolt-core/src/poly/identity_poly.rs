@@ -61,7 +61,6 @@ impl<F: JoltField> PolynomialBinding<F> for IdentityPolynomial<F> {
     }
 }
 
-
 impl<F: JoltField> PolynomialEvaluation<F> for IdentityPolynomial<F> {
     fn evaluate(&self, r: &[MontU128]) -> F {
         let len = r.len();
@@ -276,9 +275,7 @@ impl<F: JoltField> PolynomialEvaluation<F> for OperandPolynomial<F> {
                 .map(|i| r[2 * i].mul_u64(1u64 << (self.num_vars / 2 - 1 - i)))
                 .sum(),
             OperandSide::Right => (0..len / 2)
-                .map(|i| {
-                    r[2 * i + 1].mul_u64(1u64 << (self.num_vars / 2 - 1 - i))
-                })
+                .map(|i| r[2 * i + 1].mul_u64(1u64 << (self.num_vars / 2 - 1 - i)))
                 .sum(),
         }
     }

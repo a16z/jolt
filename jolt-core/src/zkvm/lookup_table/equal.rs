@@ -5,8 +5,8 @@ use super::{
     suffixes::{SuffixEval, Suffixes},
     JoltLookupTable, PrefixSuffixDecomposition,
 };
-use crate::{field::JoltField, utils::uninterleave_bits};
 use crate::field::MontU128;
+use crate::{field::JoltField, utils::uninterleave_bits};
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct EqualTable<const WORD_SIZE: usize>;
@@ -18,7 +18,10 @@ impl<const WORD_SIZE: usize> JoltLookupTable for EqualTable<WORD_SIZE> {
         let x = r.iter().step_by(2);
         let y = r.iter().skip(1).step_by(2);
         x.zip(y)
-            .map(|(x_i, y_i)| F::from_u128_mont(*x_i) * F::from_u128_mont(*y_i) + (F::one() - F::from_u128_mont(*x_i)) * (F::one() - F::from_u128_mont(*y_i)))
+            .map(|(x_i, y_i)| {
+                F::from_u128_mont(*x_i) * F::from_u128_mont(*y_i)
+                    + (F::one() - F::from_u128_mont(*x_i)) * (F::one() - F::from_u128_mont(*y_i))
+            })
             .product()
     }
 
@@ -66,7 +69,6 @@ mod test {
     // fn prefix_suffix() {
     //     prefix_suffix_test::<Fr, EqualTable<32>>();
     // }
-
     #[test]
     fn mle_full_hypercube() {
         lookup_table_mle_full_hypercube_test::<Fr, EqualTable<8>>();

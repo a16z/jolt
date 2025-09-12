@@ -99,7 +99,6 @@ mod test {
         // prefix_suffix_test,
     };
 
-
     #[test]
     fn mle_full_hypercube() {
         lookup_table_mle_full_hypercube_test::<Fr, ShiftRightBitmaskTable<8>>();

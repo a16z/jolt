@@ -23,7 +23,9 @@ impl<const WORD_SIZE: usize> JoltLookupTable for OrTable<WORD_SIZE> {
         for i in 0..WORD_SIZE {
             let x_i = r[2 * i];
             let y_i = r[2 * i + 1];
-            result += F::from_u64(1u64 << (WORD_SIZE - 1 - i)) * (F::from_u128_mont(x_i) + F::from_u128_mont(y_i) - F::from_u128_mont(x_i) * F::from_u128_mont(y_i));
+            result += F::from_u64(1u64 << (WORD_SIZE - 1 - i))
+                * (F::from_u128_mont(x_i) + F::from_u128_mont(y_i)
+                    - F::from_u128_mont(x_i) * F::from_u128_mont(y_i));
         }
         result
     }
@@ -62,7 +64,6 @@ mod test {
         lookup_table_mle_random_test,
         // prefix_suffix_test,
     };
-
 
     use super::OrTable;
 

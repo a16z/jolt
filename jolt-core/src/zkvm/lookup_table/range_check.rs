@@ -56,7 +56,6 @@ mod test {
         // prefix_suffix_test,
     };
 
-
     // #[test]
     // fn prefix_suffix() {
     //     prefix_suffix_test::<Fr, RangeCheckTable<32>>();

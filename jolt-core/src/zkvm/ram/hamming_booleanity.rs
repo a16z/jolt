@@ -156,7 +156,10 @@ impl<F: JoltField> SumcheckInstance<F> for HammingBooleanitySumcheck<F> {
             SumcheckId::SpartanOuter,
         );
 
-        let eq = EqPolynomial::<F>::mle(r, &r_cycle.r.iter().cloned().rev().collect::<Vec<MontU128>>());
+        let eq = EqPolynomial::<F>::mle(
+            r,
+            &r_cycle.r.iter().cloned().rev().collect::<Vec<MontU128>>(),
+        );
 
         (H_claim.square() - H_claim) * eq
     }

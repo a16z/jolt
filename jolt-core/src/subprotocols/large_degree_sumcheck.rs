@@ -5,6 +5,7 @@ use rayon::iter::{
     IntoParallelRefMutIterator, ParallelIterator,
 };
 
+use crate::field::MontU128;
 use crate::{
     field::{JoltField, OptimizedMul},
     poly::{
@@ -22,7 +23,6 @@ use crate::{
     transcripts::{AppendToTranscript, Transcript},
     utils::{errors::ProofVerifyError, math::Math},
 };
-use crate::field::MontU128;
 
 pub fn compute_eq_mle_product_univariate<F: JoltField>(
     mle_product_coeffs: Vec<F>,
@@ -357,7 +357,9 @@ impl<F: FieldMulSmall, ProofTranscript: Transcript> LargeDMulSumCheckProof<F, Pr
 
             // Update factor by the multiplicative factor of wr_j + (1 - r_j)(1 - w) = (2w - 1)r_j + (1 - w), where w is the current bit of r_cycle
             eq_factor = eq_factor.mul_1_optimized(
-                (F::from_u128_mont(r_cycle[round]) + F::from_u128_mont(r_cycle[round]) - F::one()).mul_u128_mont_form(r_j) + (F::one() - F::from_u128_mont(r_cycle[round])),
+                (F::from_u128_mont(r_cycle[round]) + F::from_u128_mont(r_cycle[round]) - F::one())
+                    .mul_u128_mont_form(r_j)
+                    + (F::one() - F::from_u128_mont(r_cycle[round])),
             );
 
             drop(_guard);
@@ -810,6 +812,7 @@ mod test {
     use rand_core::RngCore;
     use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
+    use crate::field::MontU128;
     use crate::{
         field::JoltField,
         poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
@@ -820,7 +823,6 @@ mod test {
         transcripts::{KeccakTranscript, Transcript},
         utils::{math::Math, thread::unsafe_allocate_zero_vec},
     };
-    use crate::field::MontU128;
 
     const MAX_NUM_BITS: u32 = 32;
 
@@ -955,7 +957,10 @@ mod test {
                 .iter_mut()
                 .zip(r_cycle.iter().rev())
                 .for_each(|(chunk, digit)| {
-                    chunk.push((Fr::from_u128_mont(*digit), Fr::from_u32(1) - Fr::from_u128_mont(*digit)));
+                    chunk.push((
+                        Fr::from_u128_mont(*digit),
+                        Fr::from_u32(1) - Fr::from_u128_mont(*digit),
+                    ));
                 });
             assert_eq!(j_bit_vec[0].len(), D + 1);
 
@@ -1130,7 +1135,7 @@ mod test {
 
         let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
         verifier_transcript.compare_to(prover_transcript);
-        let _r_cycle= verifier_transcript.challenge_vector_u128(T.log_2());
+        let _r_cycle = verifier_transcript.challenge_vector_u128(T.log_2());
 
         let verification_result = proof.verify(r_prime, claim_copy, &mut verifier_transcript);
         assert!(

@@ -24,7 +24,8 @@ impl<const WORD_SIZE: usize> JoltLookupTable for XorTable<WORD_SIZE> {
             let x_i = r[2 * i];
             let y_i = r[2 * i + 1];
             result += F::from_u64(1u64 << (WORD_SIZE - 1 - i))
-                * ((F::one() - F::from_u128_mont(x_i)).mul_u128_mont_form(y_i) + (F::one() - F::from_u128_mont(y_i)).mul_u128_mont_form(x_i));
+                * ((F::one() - F::from_u128_mont(x_i)).mul_u128_mont_form(y_i)
+                    + (F::one() - F::from_u128_mont(y_i)).mul_u128_mont_form(x_i));
         }
         result
     }
@@ -71,7 +72,6 @@ mod test {
     // fn prefix_suffix() {
     //     prefix_suffix_test::<Fr, XorTable<32>>();
     // }
-
     #[test]
     fn mle_full_hypercube() {
         lookup_table_mle_full_hypercube_test::<Fr, XorTable<8>>();

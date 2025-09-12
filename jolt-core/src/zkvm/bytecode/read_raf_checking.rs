@@ -1,5 +1,6 @@
 use std::{cell::RefCell, iter::once, rc::Rc};
 
+use crate::field::MontU128;
 use crate::{
     field::JoltField,
     poly::{
@@ -36,7 +37,6 @@ use common::constants::REGISTER_COUNT;
 use rayon::prelude::*;
 use strum::{EnumCount, IntoEnumIterator};
 use tracer::instruction::NormalizedInstruction;
-use crate::field::MontU128;
 
 /// Number of batched read-checking sumchecks bespokely
 const STAGES: usize = 3;
@@ -699,7 +699,11 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
     ) -> F {
         let (r_address_prime, r_cycle_prime) = r.split_at(self.log_K);
         // r_cycle is bound LowToHigh, so reverse
-        let r_cycle_prime = r_cycle_prime.iter().rev().copied().collect::<Vec<MontU128>>();
+        let r_cycle_prime = r_cycle_prime
+            .iter()
+            .rev()
+            .copied()
+            .collect::<Vec<MontU128>>();
 
         let int_poly = self.int_poly.evaluate(r_address_prime);
 

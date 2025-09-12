@@ -46,7 +46,7 @@ impl<const WORD_SIZE: usize> JoltLookupTable for VirtualSRATable<WORD_SIZE> {
                 sign_extension += F::from_u64(1 << i) * (F::one() - F::from_u128_mont(y_i));
             }
         }
-        result +  sign_extension.mul_u128_mont_form(r[0])
+        result + sign_extension.mul_u128_mont_form(r[0])
     }
 
     fn evaluate_mle_field<F: JoltField>(&self, r: &[F]) -> F {

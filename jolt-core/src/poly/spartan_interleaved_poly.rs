@@ -2,6 +2,7 @@ use super::{
     eq_poly::EqPolynomial, multilinear_polynomial::MultilinearPolynomial,
     split_eq_poly::GruenSplitEqPolynomial, unipoly::CompressedUniPoly,
 };
+use crate::field::MontU128;
 use crate::subprotocols::sumcheck::process_eq_sumcheck_round;
 use crate::{
     field::{JoltField, OptimizedMul, OptimizedMulI128},
@@ -15,7 +16,6 @@ use crate::{
 use allocative::Allocative;
 use ark_ff::Zero;
 use rayon::prelude::*;
-use crate::field::MontU128;
 
 pub const TOTAL_NUM_ACCUMS: usize = svo_helpers::total_num_accums(NUM_SVO_ROUNDS);
 pub const NUM_NONTRIVIAL_TERNARY_POINTS: usize =
@@ -975,8 +975,11 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                             bz_coeff.0.unwrap_or(F::zero()),
                             bz_coeff.1.unwrap_or(F::zero()),
                         );
-                        output_slice[output_index] =
-                            (3 * block_index + 1, low + (high - low).mul_u128_mont_form(r_i)).into();
+                        output_slice[output_index] = (
+                            3 * block_index + 1,
+                            low + (high - low).mul_u128_mont_form(r_i),
+                        )
+                            .into();
                         output_index += 1;
                     }
                     if cz_coeff != (None, None) {
@@ -984,8 +987,11 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                             cz_coeff.0.unwrap_or(F::zero()),
                             cz_coeff.1.unwrap_or(F::zero()),
                         );
-                        output_slice[output_index] =
-                            (3 * block_index + 2, low + (high - low).mul_u128_mont_form(r_i)).into();
+                        output_slice[output_index] = (
+                            3 * block_index + 2,
+                            low + (high - low).mul_u128_mont_form(r_i),
+                        )
+                            .into();
                         output_index += 1;
                     }
                 }

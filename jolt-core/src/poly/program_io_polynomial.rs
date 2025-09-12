@@ -1,12 +1,12 @@
 use common::constants::RAM_START_ADDRESS;
 use tracer::JoltDevice;
 
+use crate::field::MontU128;
 use crate::{
     field::JoltField,
     poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
     zkvm::ram::remap_address,
 };
-use crate::field::MontU128;
 
 pub struct ProgramIOPolynomial<F: JoltField> {
     poly: MultilinearPolynomial<F>,

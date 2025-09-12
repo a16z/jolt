@@ -23,9 +23,8 @@ impl<const WORD_SIZE: usize> JoltLookupTable for HalfwordAlignmentTable<WORD_SIZ
 
     fn evaluate_mle_field<F: JoltField>(&self, r: &[F]) -> F {
         let lsb = r[r.len() - 1];
-        F::one() -lsb
+        F::one() - lsb
     }
-
 }
 
 impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE>

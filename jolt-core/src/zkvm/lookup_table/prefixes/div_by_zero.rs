@@ -1,6 +1,6 @@
-use crate::{field::JoltField, utils::lookup_bits::LookupBits};
-use crate::field::MontU128;
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
+use crate::field::MontU128;
+use crate::{field::JoltField, utils::lookup_bits::LookupBits};
 
 pub enum DivByZeroPrefix {}
 
@@ -58,7 +58,7 @@ impl<F: JoltField> SparseDensePrefix<F> for DivByZeroPrefix {
         }
         result
     }
-    
+
     fn update_prefix_checkpoint(
         checkpoints: &[PrefixCheckpoint<F>],
         r_x: MontU128,
@@ -66,7 +66,8 @@ impl<F: JoltField> SparseDensePrefix<F> for DivByZeroPrefix {
         _: usize,
     ) -> PrefixCheckpoint<F> {
         // checkpoint *= (1 - r_x) * r_y
-        let updated = checkpoints[Prefixes::DivByZero].unwrap_or(F::one()) * (F::one() - F::from_u128_mont(r_x)).mul_u128_mont_form(r_y) ;
+        let updated = checkpoints[Prefixes::DivByZero].unwrap_or(F::one())
+            * (F::one() - F::from_u128_mont(r_x)).mul_u128_mont_form(r_y);
         Some(updated).into()
     }
 }

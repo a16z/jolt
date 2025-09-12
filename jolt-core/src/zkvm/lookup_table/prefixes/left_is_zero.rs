@@ -1,6 +1,6 @@
-use crate::{field::JoltField, utils::lookup_bits::LookupBits};
-use crate::field::MontU128;
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
+use crate::field::MontU128;
+use crate::{field::JoltField, utils::lookup_bits::LookupBits};
 
 pub enum LeftOperandIsZeroPrefix {}
 
@@ -60,8 +60,8 @@ impl<F: JoltField> SparseDensePrefix<F> for LeftOperandIsZeroPrefix {
         _: usize,
     ) -> PrefixCheckpoint<F> {
         // checkpoint *= (1 - r_x)
-        let updated =
-            checkpoints[Prefixes::LeftOperandIsZero].unwrap_or(F::one()) * (F::one() - F::from_u128_mont(r_x));
+        let updated = checkpoints[Prefixes::LeftOperandIsZero].unwrap_or(F::one())
+            * (F::one() - F::from_u128_mont(r_x));
         Some(updated).into()
     }
 }

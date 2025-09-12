@@ -1,3 +1,4 @@
+use crate::field::MontU128;
 use crate::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN, LITTLE_ENDIAN};
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::zkvm::dag::state_manager::StateManager;
@@ -24,7 +25,6 @@ use fixedbitset::FixedBitSet;
 use rayon::prelude::*;
 use std::{cell::RefCell, rc::Rc};
 use tracer::instruction::RV32IMCycle;
-use crate::field::MontU128;
 
 const K: usize = REGISTER_COUNT as usize;
 

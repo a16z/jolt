@@ -53,7 +53,7 @@ pub struct OuterClaims<F: JoltField> {
 }
 
 #[derive(Clone, Debug)]
-pub struct InnerSumcheckParams{
+pub struct InnerSumcheckParams {
     rx_var: Vec<MontU128>,
 }
 
@@ -114,7 +114,11 @@ where
         input_polys: &[MultilinearPolynomial<F>],
         tau: &[MontU128],
         transcript: &mut ProofTranscript,
-    ) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<MontU128>, [F; 3]) {
+    ) -> (
+        SumcheckInstanceProof<F, ProofTranscript>,
+        Vec<MontU128>,
+        [F; 3],
+    ) {
         SumcheckInstanceProof::prove_spartan_small_value::<NUM_SVO_ROUNDS>(
             num_rounds_x,
             uniform_constraints_only_padded,

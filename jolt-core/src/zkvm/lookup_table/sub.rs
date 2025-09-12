@@ -55,7 +55,6 @@ mod test {
         // prefix_suffix_test,
     };
 
-
     use super::SubTable;
 
     // #[test]

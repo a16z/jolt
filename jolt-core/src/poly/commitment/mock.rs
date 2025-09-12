@@ -3,14 +3,14 @@ use std::marker::PhantomData;
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
+use super::commitment_scheme::CommitmentScheme;
+use crate::field::MontU128;
 use crate::{
     field::JoltField,
     poly::multilinear_polynomial::MultilinearPolynomial,
     transcripts::{AppendToTranscript, Transcript},
     utils::errors::ProofVerifyError,
 };
-use crate::field::MontU128;
-use super::commitment_scheme::CommitmentScheme;
 
 #[derive(Clone)]
 pub struct MockCommitScheme<F: JoltField> {
@@ -29,7 +29,7 @@ impl<F: JoltField> AppendToTranscript for MockCommitment<F> {
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Clone, Debug)]
-pub struct MockProof{
+pub struct MockProof {
     opening_point: Vec<MontU128>,
 }
 

@@ -1,5 +1,4 @@
-use std::{cell::RefCell, rc::Rc};
-use std::marker::PhantomData;
+use crate::field::MontU128;
 use crate::{
     field::JoltField,
     poly::{
@@ -30,8 +29,9 @@ use allocative::FlameGraphBuilder;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::RAM_START_ADDRESS;
 use rayon::prelude::*;
+use std::marker::PhantomData;
+use std::{cell::RefCell, rc::Rc};
 use tracer::JoltDevice;
-use crate::field::MontU128;
 
 #[cfg_attr(feature = "allocative", derive(Allocative))]
 struct OutputSumcheckProverState<F: JoltField> {
@@ -108,7 +108,7 @@ impl<F: JoltField> OutputSumcheckProverState<F> {
 struct OutputSumcheckVerifierState<F: JoltField> {
     r_address: Vec<MontU128>,
     program_io: JoltDevice,
-    _phantom_data: PhantomData<F>
+    _phantom_data: PhantomData<F>,
 }
 
 /// Proves that the final RAM state is consistent with the claimed
@@ -271,7 +271,7 @@ impl<F: JoltField> SumcheckInstance<F> for OutputSumcheck<F> {
         let OutputSumcheckVerifierState {
             r_address,
             program_io,
-            _phantom_data
+            _phantom_data,
         } = self.verifier_state.as_ref().unwrap();
 
         let val_final_claim = accumulator

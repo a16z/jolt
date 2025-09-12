@@ -1,6 +1,6 @@
-use crate::{field::JoltField, utils::lookup_bits::LookupBits};
-use crate::field::MontU128;
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
+use crate::field::MontU128;
+use crate::{field::JoltField, utils::lookup_bits::LookupBits};
 
 pub enum PositiveRemainderEqualsDivisorPrefix {}
 
@@ -47,7 +47,8 @@ impl<F: JoltField> SparseDensePrefix<F> for PositiveRemainderEqualsDivisorPrefix
                 return F::zero();
             }
             let y = F::from_u32(c);
-            positive_remainder_equals_divisor * (y.mul_u128_mont_form(r_x) + (F::one() - F::from_u128_mont(r_x)) * (F::one() - y))
+            positive_remainder_equals_divisor
+                * (y.mul_u128_mont_form(r_x) + (F::one() - F::from_u128_mont(r_x)) * (F::one() - y))
         } else {
             let y = F::from_u8(b.pop_msb());
             let (remainder, divisor) = b.uninterleave();
@@ -115,7 +116,6 @@ impl<F: JoltField> SparseDensePrefix<F> for PositiveRemainderEqualsDivisorPrefix
         }
     }
 
-
     fn update_prefix_checkpoint(
         checkpoints: &[PrefixCheckpoint<F>],
         r_x: MontU128,
@@ -134,7 +134,8 @@ impl<F: JoltField> SparseDensePrefix<F> for PositiveRemainderEqualsDivisorPrefix
 
         let mut positive_remainder_equals_divisor =
             checkpoints[Prefixes::PositiveRemainderEqualsDivisor].unwrap();
-        positive_remainder_equals_divisor *=  r_y_f.mul_u128_mont_form(r_x) + (F::one() - r_x_f) * (F::one() - r_y_f);
+        positive_remainder_equals_divisor *=
+            r_y_f.mul_u128_mont_form(r_x) + (F::one() - r_x_f) * (F::one() - r_y_f);
         Some(positive_remainder_equals_divisor).into()
     }
 }

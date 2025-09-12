@@ -1,10 +1,10 @@
-use crate::{field::JoltField, utils::uninterleave_bits};
-use serde::{Deserialize, Serialize};
-use crate::field::MontU128;
 use super::prefixes::{PrefixEval, Prefixes};
 use super::suffixes::{SuffixEval, Suffixes};
 use super::JoltLookupTable;
 use super::PrefixSuffixDecomposition;
+use crate::field::MontU128;
+use crate::{field::JoltField, utils::uninterleave_bits};
+use serde::{Deserialize, Serialize};
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct SignedLessThanTable<const WORD_SIZE: usize>;
@@ -29,8 +29,9 @@ impl<const WORD_SIZE: usize> JoltLookupTable for SignedLessThanTable<WORD_SIZE> 
         for i in 0..WORD_SIZE {
             let x_i = r[2 * i];
             let y_i = r[2 * i + 1];
-            lt += (F::one() - F::from_u128_mont(x_i)).mul_u128_mont_form(y_i)  * eq;
-            eq *= F::from_u128_mont(x_i) * F::from_u128_mont(y_i) + (F::one() - F::from_u128_mont(x_i)) * (F::one() - F::from_u128_mont(y_i));
+            lt += (F::one() - F::from_u128_mont(x_i)).mul_u128_mont_form(y_i) * eq;
+            eq *= F::from_u128_mont(x_i) * F::from_u128_mont(y_i)
+                + (F::one() - F::from_u128_mont(x_i)) * (F::one() - F::from_u128_mont(y_i));
         }
 
         F::from_u128_mont(x_sign) - F::from_u128_mont(y_sign) + lt
@@ -78,7 +79,6 @@ mod test {
         lookup_table_mle_random_test,
         // prefix_suffix_test,
     };
-
 
     use super::SignedLessThanTable;
 

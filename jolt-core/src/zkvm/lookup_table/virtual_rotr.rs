@@ -49,8 +49,9 @@ impl<const WORD_SIZE: usize> JoltLookupTable for VirtualRotrTable<WORD_SIZE> {
             first_sum += F::from_u128_mont(r_x) * F::from_u128_mont(r_y);
 
             // Update second_sum
-            second_sum +=
-                (F::one() - F::from_u128_mont(r_y)).mul_u128_mont_form(r_x) * prod_one_plus_y * F::from_u64(1 << (WORD_SIZE - 1 - i));
+            second_sum += (F::one() - F::from_u128_mont(r_y)).mul_u128_mont_form(r_x)
+                * prod_one_plus_y
+                * F::from_u64(1 << (WORD_SIZE - 1 - i));
 
             // Update prod_one_plus_y for next iteration
             prod_one_plus_y *= F::one() + F::from_u128_mont(r_y);
@@ -123,7 +124,6 @@ mod test {
         lookup_table_mle_random_test,
         // prefix_suffix_test,
     };
-
 
     #[test]
     fn mle_full_hypercube() {

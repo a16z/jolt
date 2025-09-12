@@ -9,6 +9,7 @@ use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::dag::state_manager::StateManager;
 use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 
+use crate::field::MontU128;
 use crate::{
     field::JoltField,
     poly::{
@@ -29,7 +30,6 @@ use allocative::Allocative;
 use allocative::FlameGraphBuilder;
 use rayon::prelude::*;
 use tracer::instruction::RV32IMCycle;
-use crate::field::MontU128;
 
 #[derive(Allocative)]
 struct BooleanityProverState<F: JoltField> {
@@ -70,7 +70,10 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             gamma_powers[i] = gamma_powers[i - 1] * gamma;
         }
 
-        let r_address: Vec<MontU128> = sm.transcript.borrow_mut().challenge_vector_u128(log_K_chunk);
+        let r_address: Vec<MontU128> = sm
+            .transcript
+            .borrow_mut()
+            .challenge_vector_u128(log_K_chunk);
 
         let (r_cycle, _) = sm.get_virtual_polynomial_opening(
             VirtualPolynomial::LookupOutput,
@@ -106,7 +109,10 @@ impl<F: JoltField> BooleanitySumcheck<F> {
         for i in 1..d {
             gamma_powers[i] = gamma_powers[i - 1] * gamma;
         }
-        let r_address: Vec<MontU128> = sm.transcript.borrow_mut().challenge_vector_u128(log_K_chunk);
+        let r_address: Vec<MontU128> = sm
+            .transcript
+            .borrow_mut()
+            .challenge_vector_u128(log_K_chunk);
         let (r_cycle, _) = sm.get_virtual_polynomial_opening(
             VirtualPolynomial::LookupOutput,
             SumcheckId::SpartanOuter,

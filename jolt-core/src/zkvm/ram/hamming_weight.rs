@@ -5,6 +5,7 @@ use allocative::Allocative;
 use allocative::FlameGraphBuilder;
 use rayon::prelude::*;
 
+use crate::field::MontU128;
 use crate::{
     field::JoltField,
     poly::{
@@ -25,7 +26,6 @@ use crate::{
         witness::{compute_d_parameter, CommittedPolynomial, VirtualPolynomial, DTH_ROOT_OF_K},
     },
 };
-use crate::field::MontU128;
 
 #[derive(Allocative)]
 pub struct HammingWeightProverState<F: JoltField> {

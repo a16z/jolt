@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use crate::field::MontU128;
 use crate::poly::opening_proof::SumcheckId;
 use crate::utils::math::Math;
 #[cfg(feature = "allocative")]
@@ -21,7 +22,6 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS};
 use rayon::prelude::*;
 use tracer::instruction::{RV32IMCycle, RV32IMInstruction};
-use crate::field::MontU128;
 
 pub mod booleanity;
 pub mod hamming_weight;

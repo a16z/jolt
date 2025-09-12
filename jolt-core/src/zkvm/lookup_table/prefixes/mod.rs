@@ -17,6 +17,7 @@ use std::{fmt::Display, ops::Index};
 use strum::EnumCount;
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 
+use crate::field::MontU128;
 use and::AndPrefix;
 use div_by_zero::DivByZeroPrefix;
 use eq::EqPrefix;
@@ -30,7 +31,6 @@ use right_is_zero::RightOperandIsZeroPrefix;
 use right_msb::RightMsbPrefix;
 use upper_word::UpperWordPrefix;
 use xor::XorPrefix;
-use crate::field::MontU128;
 
 pub mod and;
 pub mod div_by_zero;
@@ -86,7 +86,6 @@ pub trait SparseDensePrefix<F: JoltField>: 'static + Sync {
         b: LookupBits,
         j: usize,
     ) -> F;
-
 
     /// Every two rounds of sumcheck, we update the "checkpoint" value for each
     /// prefix, incorporating the two random challenges `r_x` and `r_y` received
@@ -237,7 +236,6 @@ impl Prefixes {
         PrefixEval(eval)
     }
 
-
     pub fn prefix_mle_field<const WORD_SIZE: usize, F: JoltField>(
         &self,
         checkpoints: &[PrefixCheckpoint<F>],
@@ -265,7 +263,9 @@ impl Prefixes {
                 RightOperandIsZeroPrefix::prefix_mle_field(checkpoints, r_x, c, b, j)
             }
             Prefixes::LeftOperandMsb => LeftMsbPrefix::prefix_mle_field(checkpoints, r_x, c, b, j),
-            Prefixes::RightOperandMsb => RightMsbPrefix::prefix_mle_field(checkpoints, r_x, c, b, j),
+            Prefixes::RightOperandMsb => {
+                RightMsbPrefix::prefix_mle_field(checkpoints, r_x, c, b, j)
+            }
             Prefixes::DivByZero => DivByZeroPrefix::prefix_mle_field(checkpoints, r_x, c, b, j),
             Prefixes::PositiveRemainderEqualsDivisor => {
                 PositiveRemainderEqualsDivisorPrefix::prefix_mle_field(checkpoints, r_x, c, b, j)
@@ -280,7 +280,13 @@ impl Prefixes {
                 NegativeDivisorEqualsRemainderPrefix::prefix_mle_field(checkpoints, r_x, c, b, j)
             }
             Prefixes::NegativeDivisorGreaterThanRemainder => {
-                NegativeDivisorGreaterThanRemainderPrefix::prefix_mle_field(checkpoints, r_x, c, b, j)
+                NegativeDivisorGreaterThanRemainderPrefix::prefix_mle_field(
+                    checkpoints,
+                    r_x,
+                    c,
+                    b,
+                    j,
+                )
             }
             Prefixes::Lsb => LsbPrefix::<WORD_SIZE>::prefix_mle_field(checkpoints, r_x, c, b, j),
             Prefixes::Pow2 => Pow2Prefix::<WORD_SIZE>::prefix_mle_field(checkpoints, r_x, c, b, j),
