@@ -35,7 +35,7 @@ fn main() {
     let mut criterion = Criterion::default()
         .configure_from_args()
         .warm_up_time(std::time::Duration::new(30, 0))  // 30 seconds warm-up
-        .sample_size(25); // Collect 50 samples
+        .sample_size(20);
 
     // Manually run the benchmark function
     criterion.bench_function("gruen_prover_d_greater_1", gruen_prover_benchmark);
