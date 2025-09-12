@@ -574,7 +574,7 @@ mod tests {
     use super::*;
     use crate::field::MontU128;
     use crate::transcripts::{Blake2bTranscript, Transcript};
-    use ark_bn254::{Bn254, Fr};
+    use ark_bn254::Bn254;
     use ark_std::UniformRand;
     use rand::Rng;
     use rand_core::SeedableRng;

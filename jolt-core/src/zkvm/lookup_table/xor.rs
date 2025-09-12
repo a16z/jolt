@@ -72,7 +72,6 @@ mod test {
     // fn prefix_suffix() {
     //     prefix_suffix_test::<Fr, XorTable<32>>();
     // }
-    #[test]
     fn mle_full_hypercube() {
         lookup_table_mle_full_hypercube_test::<Fr, XorTable<8>>();
     }

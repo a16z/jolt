@@ -7,7 +7,6 @@ use blake2::{Blake2b, Digest};
 
 type Blake2b256 = Blake2b<U32>;
 use std::borrow::Borrow;
-use std::u128;
 
 /// Represents the current state of the protocol's Fiat-Shamir transcript using Blake2b.
 #[derive(Default, Clone)]
@@ -256,15 +255,12 @@ mod tests {
             let num_bits = scalar.num_bits();
             assert!(
                 num_bits <= 128,
-                "Scalar at iteration {} has {} bits, expected <= 128",
-                i,
-                num_bits
+                "Scalar at iteration {i} has {num_bits} bits, expected <= 128"
             );
 
             assert!(
                 scalars.insert(scalar),
-                "Duplicate scalar found at iteration {}",
-                i
+                "Duplicate scalar found at iteration {i}"
             );
         }
     }
