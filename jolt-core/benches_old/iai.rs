@@ -3,6 +3,7 @@ use ark_std::test_rng;
 use iai_callgrind::{library_benchmark, library_benchmark_group, main};
 use jolt_core::{field::JoltField, poly::dense_mlpoly::DensePolynomial};
 use std::hint::black_box;
+use jolt_core::field::MontU128;
 
 fn bound_poly_setup<F: JoltField>(size: usize) -> (DensePolynomial<F>, F) {
     let mut rng = test_rng();
@@ -23,7 +24,7 @@ fn eval_poly_setup<F: JoltField>(size: usize) -> (DensePolynomial<F>, Vec<F>) {
 
 #[library_benchmark]
 #[bench::long(bound_poly_setup::<Fr>(4096))]
-fn bench_polynomial_binding<F: JoltField>(input: (DensePolynomial<F>, F)) {
+fn bench_polynomial_binding<F: JoltField>(input: (DensePolynomial<F>, MontU128)) {
     let (mut poly, val) = input;
     poly.bound_poly_var_top(&val);
 }

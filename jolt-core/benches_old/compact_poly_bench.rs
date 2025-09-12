@@ -28,10 +28,10 @@ fn bench_u8(c: &mut Criterion) {
         let num_vars = 1 << exp; // 2^exp
         let (poly, eval_point) = setup_u8_inputs(num_vars);
 
-        let id_dot = format!("u8-dot-product-{}", exp);
-        group.bench_function(&id_dot, |b| {
-            b.iter(|| poly.evaluate_dot_product(&eval_point))
-        });
+        // let id_dot = format!("u8-dot-product-{}", exp);
+        // group.bench_function(&id_dot, |b| {
+        //     b.iter(|| poly.evaluate_dot_product(&eval_point))
+        // });
 
         let id_opt = format!("u8-inside-out-{}", exp);
         group.bench_function(&id_opt, |b| b.iter(|| poly.evaluate(&eval_point)));

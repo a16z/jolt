@@ -27,6 +27,7 @@ use super::{
     rlc_polynomial::RLCPolynomial,
     split_eq_poly::GruenSplitEqPolynomial,
 };
+use crate::field::MontU128;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::{
@@ -45,35 +46,34 @@ pub type Endianness = bool;
 pub const BIG_ENDIAN: Endianness = false;
 pub const LITTLE_ENDIAN: Endianness = true;
 
-#[derive(Clone, Debug, PartialEq, Default, Allocative)]
-pub struct OpeningPoint<const E: Endianness, F: JoltField> {
-    pub r: Vec<F>,
+#[cfg_attr(feature = "allocative", derive(Allocative))]
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct OpeningPoint<const E: Endianness> {
+    pub r: Vec<MontU128>,
 }
 
-impl<const E: Endianness, F: JoltField> std::ops::Index<usize> for OpeningPoint<E, F> {
-    type Output = F;
+impl<const E: Endianness> std::ops::Index<usize> for OpeningPoint<E> {
+    type Output = MontU128;
 
     fn index(&self, index: usize) -> &Self::Output {
         &self.r[index]
     }
 }
 
-impl<const E: Endianness, F: JoltField> std::ops::Index<std::ops::RangeFull>
-    for OpeningPoint<E, F>
-{
-    type Output = [F];
+impl<const E: Endianness> std::ops::Index<std::ops::RangeFull> for OpeningPoint<E> {
+    type Output = [MontU128];
 
     fn index(&self, _index: std::ops::RangeFull) -> &Self::Output {
         &self.r[..]
     }
 }
 
-impl<const E: Endianness, F: JoltField> OpeningPoint<E, F> {
+impl<const E: Endianness> OpeningPoint<E> {
     pub fn len(&self) -> usize {
         self.r.len()
     }
 
-    pub fn split_at_r(&self, mid: usize) -> (&[F], &[F]) {
+    pub fn split_at_r(&self, mid: usize) -> (&[MontU128], &[MontU128]) {
         self.r.split_at(mid)
     }
 
@@ -83,8 +83,8 @@ impl<const E: Endianness, F: JoltField> OpeningPoint<E, F> {
     }
 }
 
-impl<const E: Endianness, F: JoltField> OpeningPoint<E, F> {
-    pub fn new(r: Vec<F>) -> Self {
+impl<const E: Endianness> OpeningPoint<E> {
+    pub fn new(r: Vec<MontU128>) -> Self {
         Self { r }
     }
 
@@ -96,41 +96,35 @@ impl<const E: Endianness, F: JoltField> OpeningPoint<E, F> {
         }
     }
 
-    pub fn match_endianness<const SWAPPED_E: Endianness>(&self) -> OpeningPoint<SWAPPED_E, F>
-    where
-        F: Clone,
-    {
+    pub fn match_endianness<const SWAPPED_E: Endianness>(&self) -> OpeningPoint<SWAPPED_E> {
         let mut reversed = self.r.clone();
         if E != SWAPPED_E {
             reversed.reverse();
         }
-        OpeningPoint::<SWAPPED_E, F>::new(reversed)
+        OpeningPoint::<SWAPPED_E>::new(reversed)
     }
 }
 
-impl<F: JoltField> From<Vec<F>> for OpeningPoint<LITTLE_ENDIAN, F> {
-    fn from(r: Vec<F>) -> Self {
+impl From<Vec<MontU128>> for OpeningPoint<LITTLE_ENDIAN> {
+    fn from(r: Vec<MontU128>) -> Self {
         Self::new(r)
     }
 }
 
-impl<F: JoltField> From<Vec<F>> for OpeningPoint<BIG_ENDIAN, F> {
-    fn from(r: Vec<F>) -> Self {
+impl From<Vec<MontU128>> for OpeningPoint<BIG_ENDIAN> {
+    fn from(r: Vec<MontU128>) -> Self {
         Self::new(r)
     }
 }
 
-impl<const E: Endianness, F: JoltField> Into<Vec<F>> for OpeningPoint<E, F> {
-    fn into(self) -> Vec<F> {
+impl<const E: Endianness> Into<Vec<MontU128>> for OpeningPoint<E> {
+    fn into(self) -> Vec<MontU128> {
         self.r
     }
 }
 
-impl<const E: Endianness, F: JoltField> Into<Vec<F>> for &OpeningPoint<E, F>
-where
-    F: Clone,
-{
-    fn into(self) -> Vec<F> {
+impl<const E: Endianness> Into<Vec<MontU128>> for &OpeningPoint<E> {
+    fn into(self) -> Vec<MontU128> {
         self.r.clone()
     }
 }
@@ -168,16 +162,16 @@ pub enum OpeningId {
     Virtual(VirtualPolynomial, SumcheckId),
 }
 
-pub type Openings<F> = BTreeMap<OpeningId, (OpeningPoint<BIG_ENDIAN, F>, F)>;
+pub type Openings<F> = BTreeMap<OpeningId, (OpeningPoint<BIG_ENDIAN>, F)>;
 
-#[derive(Allocative)]
+#[cfg_attr(feature = "allocative", derive(Allocative))]
 pub struct SharedEqPolynomial<F: JoltField> {
     num_variables_bound: usize,
     eq_poly: GruenSplitEqPolynomial<F>,
 }
 
 impl<F: JoltField> SharedEqPolynomial<F> {
-    fn new_gruen(opening_point: &[F]) -> Self {
+    fn new_gruen(opening_point: &[MontU128]) -> Self {
         Self {
             eq_poly: GruenSplitEqPolynomial::new(opening_point, BindingOrder::HighToLow),
             num_variables_bound: 0,
@@ -192,7 +186,8 @@ impl<F: JoltField> SharedEqPolynomial<F> {
 /// at the (same) point.
 /// Multiple openings can be accumulated and further
 /// batched/reduced using a `ProverOpeningAccumulator`.
-#[derive(Clone, Allocative)]
+#[cfg_attr(feature = "allocative", derive(Allocative))]
+#[derive(Clone)]
 pub struct DensePolynomialProverOpening<F: JoltField> {
     /// The polynomial being opened. May be a random linear combination
     /// of multiple polynomials all being opened at the same point.
@@ -253,7 +248,7 @@ impl<F: JoltField> DensePolynomialProverOpening<F> {
     }
 
     #[tracing::instrument(skip_all, name = "DensePolynomialProverOpening::bind")]
-    fn bind(&mut self, r_j: F, round: usize) {
+    fn bind(&mut self, r_j: MontU128, round: usize) {
         let mut shared_eq = self.eq_poly.write().unwrap();
         if shared_eq.num_variables_bound <= round {
             shared_eq.eq_poly.bind(r_j);
@@ -271,13 +266,15 @@ impl<F: JoltField> DensePolynomialProverOpening<F> {
     }
 }
 
-#[derive(derive_more::From, Clone, Allocative)]
+#[cfg_attr(feature = "allocative", derive(Allocative))]
+#[derive(derive_more::From, Clone)]
 pub enum ProverOpening<F: JoltField> {
     Dense(DensePolynomialProverOpening<F>),
     OneHot(OneHotPolynomialProverOpening<F>),
 }
 
-#[derive(Clone, Allocative)]
+#[cfg_attr(feature = "allocative", derive(Allocative))]
+#[derive(Clone)]
 pub struct OpeningProofReductionSumcheck<F>
 where
     F: JoltField,
@@ -290,10 +287,9 @@ where
     sumcheck_id: SumcheckId,
     rlc_coeffs: Vec<F>,
     input_claims: Vec<F>,
-    opening_point: Vec<F>,
+    opening_point: Vec<MontU128>,
     sumcheck_claim: Option<F>,
 }
-
 impl<F> OpeningProofReductionSumcheck<F>
 where
     F: JoltField,
@@ -302,7 +298,7 @@ where
         polynomials: Vec<CommittedPolynomial>,
         sumcheck_id: SumcheckId,
         eq_poly: Arc<RwLock<SharedEqPolynomial<F>>>,
-        opening_point: Vec<F>,
+        opening_point: Vec<MontU128>,
         claims: Vec<F>,
     ) -> Self {
         let opening = DensePolynomialProverOpening {
@@ -324,7 +320,7 @@ where
         polynomial: CommittedPolynomial,
         sumcheck_id: SumcheckId,
         eq_state: Arc<RwLock<OneHotSumcheckState<F>>>,
-        opening_point: Vec<F>,
+        opening_point: Vec<MontU128>,
         claim: F,
     ) -> Self {
         let opening = OneHotPolynomialProverOpening::new(eq_state);
@@ -342,7 +338,7 @@ where
     fn new_verifier_instance(
         polynomials: Vec<CommittedPolynomial>,
         sumcheck_id: SumcheckId,
-        opening_point: Vec<F>,
+        opening_point: Vec<MontU128>,
         claims: Vec<F>,
     ) -> Self {
         let rlc_coeffs = if polynomials.len() == 1 {
@@ -511,7 +507,7 @@ where
         }
     }
 
-    fn bind(&mut self, r_j: F, round: usize) {
+    fn bind(&mut self, r_j: MontU128, round: usize) {
         debug_assert!(round < self.num_rounds());
 
         let prover_state = self.prover_state.as_mut().unwrap();
@@ -524,20 +520,20 @@ where
     fn expected_output_claim(
         &self,
         _: Option<std::rc::Rc<std::cell::RefCell<VerifierOpeningAccumulator<F>>>>,
-        r: &[F],
+        r: &[MontU128],
     ) -> F {
-        let eq_eval = EqPolynomial::mle(&self.opening_point, r);
+        let eq_eval: F = EqPolynomial::mle(&self.opening_point, r);
         eq_eval * self.sumcheck_claim.unwrap()
     }
 
-    fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(&self, opening_point: &[MontU128]) -> OpeningPoint<BIG_ENDIAN> {
         OpeningPoint::new(opening_point.to_vec())
     }
 
     fn cache_openings_prover(
         &self,
         _accumulator: std::rc::Rc<std::cell::RefCell<ProverOpeningAccumulator<F>>>,
-        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        _opening_point: OpeningPoint<BIG_ENDIAN>,
     ) {
         unimplemented!("Unused")
     }
@@ -545,7 +541,7 @@ where
     fn cache_openings_verifier(
         &self,
         _accumulator: std::rc::Rc<std::cell::RefCell<VerifierOpeningAccumulator<F>>>,
-        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        _opening_point: OpeningPoint<BIG_ENDIAN>,
     ) {
         unimplemented!("Unused")
     }
@@ -558,7 +554,9 @@ where
 
 /// Accumulates openings computed by the prover over the course of Jolt,
 /// so that they can all be reduced to a single opening proof using sumcheck.
-#[derive(Clone, Allocative)]
+///
+#[cfg_attr(feature = "allocative", derive(Allocative))]
+#[derive(Clone)]
 pub struct ProverOpeningAccumulator<F>
 where
     F: JoltField,
@@ -643,11 +641,12 @@ where
         &self,
         polynomial: VirtualPolynomial,
         sumcheck: SumcheckId,
-    ) -> (OpeningPoint<BIG_ENDIAN, F>, F) {
+    ) -> (OpeningPoint<BIG_ENDIAN>, F) {
         let (point, claim) = self
             .openings
             .get(&OpeningId::Virtual(polynomial, sumcheck))
             .unwrap_or_else(|| panic!("opening for {sumcheck:?} {polynomial:?} not found"));
+
         #[cfg(test)]
         {
             let mut virtual_openings = self.appended_virtual_openings.borrow_mut();
@@ -665,7 +664,7 @@ where
         &self,
         polynomial: CommittedPolynomial,
         sumcheck: SumcheckId,
-    ) -> (OpeningPoint<BIG_ENDIAN, F>, F) {
+    ) -> (OpeningPoint<BIG_ENDIAN>, F) {
         let (point, claim) = self
             .openings
             .get(&OpeningId::Committed(polynomial, sumcheck))
@@ -682,7 +681,7 @@ where
         &mut self,
         polynomials: Vec<CommittedPolynomial>,
         sumcheck: SumcheckId,
-        opening_point: Vec<F>,
+        opening_point: Vec<MontU128>,
         claims: &[F],
     ) {
         assert_eq!(polynomials.len(), claims.len());
@@ -692,7 +691,7 @@ where
 
         // Add openings to map
         for (label, claim) in polynomials.iter().zip(claims.iter()) {
-            let opening_point_struct = OpeningPoint::<BIG_ENDIAN, F>::new(opening_point.clone());
+            let opening_point_struct = OpeningPoint::<BIG_ENDIAN>::new(opening_point.clone());
             let key = OpeningId::Committed(*label, sumcheck);
             self.openings
                 .insert(key, (opening_point_struct.clone(), *claim));
@@ -713,8 +712,8 @@ where
         &mut self,
         polynomials: Vec<CommittedPolynomial>,
         sumcheck: SumcheckId,
-        r_address: Vec<F>,
-        r_cycle: Vec<F>,
+        r_address: Vec<MontU128>,
+        r_cycle: Vec<MontU128>,
         claims: Vec<F>,
     ) {
         let r_concat = [r_address.as_slice(), r_cycle.as_slice()].concat();
@@ -723,7 +722,7 @@ where
 
         // Add openings to map
         for (label, claim) in polynomials.iter().zip(claims.iter()) {
-            let opening_point_struct = OpeningPoint::<BIG_ENDIAN, F>::new(r_concat.clone());
+            let opening_point_struct = OpeningPoint::<BIG_ENDIAN>::new(r_concat.clone());
             let key = OpeningId::Committed(*label, sumcheck);
             self.openings
                 .insert(key, (opening_point_struct.clone(), *claim));
@@ -745,7 +744,7 @@ where
         &mut self,
         polynomial: VirtualPolynomial,
         sumcheck: SumcheckId,
-        opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        opening_point: OpeningPoint<BIG_ENDIAN>,
         claim: F,
     ) {
         self.openings.insert(
@@ -915,7 +914,11 @@ where
     pub fn prove_batch_opening_reduction<ProofTranscript: Transcript>(
         &mut self,
         transcript: &mut ProofTranscript,
-    ) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, Vec<F>) {
+    ) -> (
+        SumcheckInstanceProof<F, ProofTranscript>,
+        Vec<MontU128>,
+        Vec<F>,
+    ) {
         #[cfg(feature = "allocative")]
         {
             print_data_structure_heap_usage("Opening accumulator", &(*self));
@@ -996,7 +999,7 @@ where
         &self,
         polynomial: VirtualPolynomial,
         sumcheck: SumcheckId,
-    ) -> (OpeningPoint<BIG_ENDIAN, F>, F) {
+    ) -> (OpeningPoint<BIG_ENDIAN>, F) {
         let (point, claim) = self
             .openings
             .get(&OpeningId::Virtual(polynomial, sumcheck))
@@ -1008,7 +1011,7 @@ where
         &self,
         polynomial: CommittedPolynomial,
         sumcheck: SumcheckId,
-    ) -> (OpeningPoint<BIG_ENDIAN, F>, F) {
+    ) -> (OpeningPoint<BIG_ENDIAN>, F) {
         let (point, claim) = self
             .openings
             .get(&OpeningId::Committed(polynomial, sumcheck))
@@ -1027,7 +1030,7 @@ where
         &mut self,
         polynomials: Vec<CommittedPolynomial>,
         sumcheck: SumcheckId,
-        opening_point: Vec<F>,
+        opening_point: Vec<MontU128>,
     ) {
         #[cfg(test)]
         'test: {
@@ -1075,7 +1078,7 @@ where
         &mut self,
         polynomials: Vec<CommittedPolynomial>,
         sumcheck: SumcheckId,
-        opening_point: Vec<F>,
+        opening_point: Vec<MontU128>,
     ) {
         for label in polynomials.into_iter() {
             #[cfg(test)]
@@ -1122,7 +1125,7 @@ where
         &mut self,
         polynomial: VirtualPolynomial,
         sumcheck: SumcheckId,
-        opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        opening_point: OpeningPoint<BIG_ENDIAN>,
     ) {
         let key = OpeningId::Virtual(polynomial, sumcheck);
         if let Some((_, claim)) = self.openings.get(&key) {
@@ -1246,7 +1249,10 @@ where
             .zip(self.sumchecks.iter())
             .map(|((coeff, claim), opening)| {
                 let r_slice = &r_sumcheck[..num_sumcheck_rounds - opening.opening_point.len()];
-                let lagrange_eval: F = r_slice.iter().map(|r| F::one() - r).product();
+                let lagrange_eval: F = r_slice
+                    .iter()
+                    .map(|r| F::one() - F::from_u128_mont(*r))
+                    .product();
                 *coeff * claim * lagrange_eval
             })
             .sum();
@@ -1267,7 +1273,7 @@ where
         &self,
         sumcheck_proof: &SumcheckInstanceProof<F, ProofTranscript>,
         transcript: &mut ProofTranscript,
-    ) -> Result<Vec<F>, ProofVerifyError> {
+    ) -> Result<Vec<MontU128>, ProofVerifyError> {
         let instances: Vec<&dyn SumcheckInstance<F>> = self
             .sumchecks
             .iter()

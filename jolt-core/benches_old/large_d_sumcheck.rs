@@ -16,6 +16,7 @@ use jolt_core::{
 };
 use rand_core::RngCore;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
+use jolt_core::field::MontU128;
 
 fn test_func_data<F: JoltField>(d: usize, t: usize) -> Vec<MultilinearPolynomial<F>> {
     let mut rng = test_rng();
@@ -39,7 +40,7 @@ fn benchmark_appendix_c_sumcheck<const D1: usize>(c: &mut Criterion, d: usize, t
     let ra = test_func_data(d, t);
 
     let mut transcript = KeccakTranscript::new(b"test_transcript");
-    let r_cycle: Vec<Fr> = transcript.challenge_vector(t.log_2());
+    let r_cycle: Vec<MontU128> = transcript.challenge_vector_u128(t.log_2());
     let previous_claim =
         compute_initial_eval_claim(&ra.iter().map(|x| &*x).collect::<Vec<_>>(), &r_cycle);
 

@@ -1,3 +1,4 @@
+use crate::field::MontU128;
 use crate::host;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::subprotocols::large_degree_sumcheck::{
@@ -148,7 +149,7 @@ fn compare_sumcheck_implementations<F, ProofTranscript, const D_MINUS_ONE: usize
     };
 
     let mut transcript = ProofTranscript::new(b"test_transcript");
-    let r_cycle: Vec<F> = transcript.challenge_vector(T.log_2());
+    let r_cycle: Vec<MontU128> = transcript.challenge_vector_u128(T.log_2());
 
     let previous_claim = compute_initial_eval_claim(&ra.iter().collect::<Vec<_>>(), &r_cycle);
 

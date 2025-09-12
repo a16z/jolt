@@ -27,7 +27,7 @@ use virtual_sra::VirtualSRATable;
 use virtual_srl::VirtualSRLTable;
 use xor::XorTable;
 
-use crate::field::JoltField;
+use crate::field::{JoltField, MontU128};
 use derive_more::From;
 use std::fmt::Debug;
 
@@ -42,7 +42,9 @@ pub trait JoltLookupTable: Clone + Debug + Send + Sync + Serialize {
     fn materialize_entry(&self, index: u64) -> u64;
 
     /// Evaluates the MLE of this lookup table on the given point `r`.
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F;
+    fn evaluate_mle<F: JoltField>(&self, r: &[MontU128]) -> F;
+
+    fn evaluate_mle_field<F: JoltField>(&self, r: &[F]) -> F;
 }
 
 pub trait PrefixSuffixDecomposition<const WORD_SIZE: usize>: JoltLookupTable + Default {
@@ -175,7 +177,7 @@ impl<const WORD_SIZE: usize> LookupTables<WORD_SIZE> {
         }
     }
 
-    pub fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+    pub fn evaluate_mle<F: JoltField>(&self, r: &[MontU128]) -> F {
         match self {
             LookupTables::RangeCheck(table) => table.evaluate_mle(r),
             LookupTables::And(table) => table.evaluate_mle(r),

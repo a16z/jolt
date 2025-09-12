@@ -1,12 +1,12 @@
+#[cfg(feature = "allocative")]
+use allocative::{Allocative, FlameGraphBuilder};
 use std::{cell::RefCell, rc::Rc};
 
-use allocative::Allocative;
-#[cfg(feature = "allocative")]
-use allocative::FlameGraphBuilder;
 use rayon::prelude::*;
 
 use super::{D, LOG_K_CHUNK};
 
+use crate::field::MontU128;
 use crate::{
     field::JoltField,
     poly::{
@@ -25,17 +25,17 @@ use crate::{
 
 const DEGREE: usize = 1;
 
-#[derive(Allocative)]
+#[cfg_attr(feature = "allocative", derive(Allocative))]
 struct HammingProverState<F: JoltField> {
     /// ra_i polynomials
     ra: [MultilinearPolynomial<F>; D],
 }
 
-#[derive(Allocative)]
+#[cfg_attr(feature = "allocative", derive(Allocative))]
 pub struct HammingWeightSumcheck<F: JoltField> {
     gamma: [F; D],
     prover_state: Option<HammingProverState<F>>,
-    r_cycle: Vec<F>,
+    r_cycle: Vec<MontU128>,
 }
 
 impl<F: JoltField> HammingWeightSumcheck<F> {
@@ -123,7 +123,7 @@ impl<F: JoltField> SumcheckInstance<F> for HammingWeightSumcheck<F> {
     }
 
     #[tracing::instrument(skip_all, name = "InstructionHammingWeight::bind")]
-    fn bind(&mut self, r_j: F, _round: usize) {
+    fn bind(&mut self, r_j: MontU128, _round: usize) {
         self.prover_state
             .as_mut()
             .unwrap()
@@ -135,7 +135,7 @@ impl<F: JoltField> SumcheckInstance<F> for HammingWeightSumcheck<F> {
     fn expected_output_claim(
         &self,
         accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
-        _r: &[F],
+        _r: &[MontU128],
     ) -> F {
         let ra_claims = (0..D).map(|i| {
             let accumulator = accumulator.as_ref().unwrap();
@@ -155,14 +155,14 @@ impl<F: JoltField> SumcheckInstance<F> for HammingWeightSumcheck<F> {
             .sum()
     }
 
-    fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(&self, opening_point: &[MontU128]) -> OpeningPoint<BIG_ENDIAN> {
         OpeningPoint::new(opening_point.iter().rev().copied().collect())
     }
 
     fn cache_openings_prover(
         &self,
         accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
-        opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        opening_point: OpeningPoint<BIG_ENDIAN>,
     ) {
         let ps = self.prover_state.as_ref().unwrap();
         let ra_claims = ps
@@ -182,7 +182,7 @@ impl<F: JoltField> SumcheckInstance<F> for HammingWeightSumcheck<F> {
     fn cache_openings_verifier(
         &self,
         accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
-        opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        opening_point: OpeningPoint<BIG_ENDIAN>,
     ) {
         let r = opening_point
             .r

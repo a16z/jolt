@@ -5,6 +5,7 @@ use rayon::iter::{
     IntoParallelRefMutIterator, ParallelIterator,
 };
 
+use crate::field::MontU128;
 use crate::{
     field::{JoltField, OptimizedMul},
     poly::{
@@ -26,14 +27,14 @@ use crate::{
 pub fn compute_eq_mle_product_univariate<F: JoltField>(
     mle_product_coeffs: Vec<F>,
     round: usize,
-    r_cycle: &[F],
+    r_cycle: &[MontU128],
 ) -> UniPoly<F> {
     let mut univariate_evals: Vec<F> = Vec::with_capacity(mle_product_coeffs.len() + 2);
 
     // Recall that the eq polynomial is rc + (1 - r)(1 - c), which has constant term 1 - r and slope (2r - 1)
     let eq_coeffs = [
-        F::one() - r_cycle[round],
-        r_cycle[round] + r_cycle[round] - F::one(),
+        F::one() - F::from_u128_mont(r_cycle[round]),
+        F::from_u128_mont(r_cycle[round]) + F::from_u128_mont(r_cycle[round]) - F::one(),
     ];
 
     // Constant term
@@ -252,9 +253,9 @@ pub fn compute_mle_product_coeffs_katatsuba<
 #[inline]
 pub fn compute_initial_eval_claim<F: JoltField>(
     mle_vec: &Vec<&MultilinearPolynomial<F>>,
-    r_cycle: &[F],
+    r_cycle: &[MontU128],
 ) -> F {
-    let eq = MultilinearPolynomial::from(EqPolynomial::evals(r_cycle));
+    let eq = MultilinearPolynomial::from(EqPolynomial::<F>::evals(r_cycle));
     (0..r_cycle.len().pow2())
         .into_par_iter()
         .map(|j| {
@@ -277,21 +278,21 @@ impl<F: FieldMulSmall, ProofTranscript: Transcript> LargeDMulSumCheckProof<F, Pr
     #[tracing::instrument(skip_all, name = "KaratsubaSumCheckProof::prove")]
     pub fn prove(
         mle_vec: &mut Vec<MultilinearPolynomial<F>>,
-        r_cycle: &[F],
+        r_cycle: &[MontU128],
         previous_claim: &mut F,
         transcript: &mut ProofTranscript,
-    ) -> (Self, Vec<F>) {
+    ) -> (Self, Vec<MontU128>) {
         let span = tracing::span!(tracing::Level::INFO, "Initialize eq");
         let _guard = span.enter();
         let log_T = r_cycle.len();
-        let mut r: Vec<F> = Vec::with_capacity(r_cycle.len());
+        let mut r: Vec<MontU128> = Vec::with_capacity(r_cycle.len());
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(r_cycle.len());
         drop(_guard);
         drop(span);
 
         let span = tracing::span!(tracing::Level::INFO, "Initialize E table");
         let _guard = span.enter();
-        let E_table = EqPolynomial::evals_cached_rev(r_cycle)
+        let E_table = EqPolynomial::<F>::evals_cached_rev(r_cycle)
             .into_iter()
             .skip(1)
             .rev()
@@ -350,13 +351,15 @@ impl<F: FieldMulSmall, ProofTranscript: Transcript> LargeDMulSumCheckProof<F, Pr
                 );
             }
 
-            let r_j = transcript.challenge_scalar::<F>();
-            *previous_claim = univariate_poly.evaluate(&r_j);
+            let r_j = transcript.challenge_u128();
+            *previous_claim = univariate_poly.evaluate_u128(&r_j);
             r.push(r_j);
 
             // Update factor by the multiplicative factor of wr_j + (1 - r_j)(1 - w) = (2w - 1)r_j + (1 - w), where w is the current bit of r_cycle
             eq_factor = eq_factor.mul_1_optimized(
-                (r_cycle[round] + r_cycle[round] - F::one()) * r_j + (F::one() - r_cycle[round]),
+                (F::from_u128_mont(r_cycle[round]) + F::from_u128_mont(r_cycle[round]) - F::one())
+                    .mul_u128_mont_form(r_j)
+                    + (F::one() - F::from_u128_mont(r_cycle[round])),
             );
 
             drop(_guard);
@@ -391,7 +394,7 @@ impl<F: FieldMulSmall, ProofTranscript: Transcript> LargeDMulSumCheckProof<F, Pr
 
     pub fn verify(
         &self,
-        r_prime: Vec<F>,
+        r_prime: Vec<MontU128>,
         claim: F,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
@@ -425,15 +428,15 @@ impl<F: JoltField, ProofTranscript: Transcript> NaiveSumCheckProof<F, ProofTrans
     #[tracing::instrument(skip_all, name = "NaiveSumCheckProof::prove")]
     pub fn prove(
         mle_vec: &mut Vec<&mut MultilinearPolynomial<F>>,
-        r_cycle: &[F],
+        r_cycle: &[MontU128],
         previous_claim: &mut F,
         transcript: &mut ProofTranscript,
-    ) -> (Self, Vec<F>) {
+    ) -> (Self, Vec<MontU128>) {
         let span = tracing::span!(tracing::Level::INFO, "Initialize eq");
         let _guard = span.enter();
-        let mut eq = MultilinearPolynomial::from(EqPolynomial::evals(r_cycle));
+        let mut eq = MultilinearPolynomial::from(EqPolynomial::<F>::evals(r_cycle));
         let log_T = r_cycle.len();
-        let mut r: Vec<F> = Vec::with_capacity(r_cycle.len());
+        let mut r: Vec<MontU128> = Vec::with_capacity(r_cycle.len());
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(r_cycle.len());
         drop(_guard);
         drop(span);
@@ -493,8 +496,8 @@ impl<F: JoltField, ProofTranscript: Transcript> NaiveSumCheckProof<F, ProofTrans
             compressed_poly.append_to_transcript(transcript);
             compressed_polys.push(compressed_poly);
 
-            let r_j = transcript.challenge_scalar::<F>();
-            *previous_claim = univariate_poly.evaluate(&r_j);
+            let r_j = transcript.challenge_u128();
+            *previous_claim = univariate_poly.evaluate_u128(&r_j);
             r.push(r_j);
 
             drop(_guard);
@@ -534,7 +537,7 @@ impl<F: JoltField, ProofTranscript: Transcript> NaiveSumCheckProof<F, ProofTrans
 
     pub fn verify(
         &self,
-        r_prime: Vec<F>,
+        r_prime: Vec<MontU128>,
         claim: F,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
@@ -573,10 +576,10 @@ impl<F: JoltField, ProofTranscript: Transcript> AppendixCSumCheckProof<F, ProofT
     #[tracing::instrument(skip_all, name = "LargeDSumCheckProof::prove")]
     pub fn prove<const D_MINUS_ONE: usize>(
         mle_vec: &mut Vec<&mut MultilinearPolynomial<F>>,
-        r_cycle: &[F],
+        r_cycle: &[MontU128],
         previous_claim: &mut F,
         transcript: &mut ProofTranscript,
-    ) -> (Self, Vec<F>) {
+    ) -> (Self, Vec<MontU128>) {
         let mut C = F::one();
         let mut C_summands = [F::one(), F::one()];
         let T = r_cycle.len().pow2();
@@ -593,7 +596,7 @@ impl<F: JoltField, ProofTranscript: Transcript> AppendixCSumCheckProof<F, ProofT
             .skip(1)
             .collect::<Vec<_>>();
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(D * T.log_2());
-        let mut w: Vec<F> = Vec::with_capacity(D * T.log_2());
+        let mut w: Vec<MontU128> = Vec::with_capacity(D * T.log_2());
         drop(_guard);
         drop(span);
 
@@ -662,8 +665,8 @@ impl<F: JoltField, ProofTranscript: Transcript> AppendixCSumCheckProof<F, ProofT
 
                     let r_cycle_val = r_cycle[j_idx];
 
-                    C_summands[0] = r_cycle_val;
-                    C_summands[1] = F::one() - r_cycle_val;
+                    C_summands[0] = F::from_u128_mont(r_cycle_val);
+                    C_summands[1] = F::one() - F::from_u128_mont(r_cycle_val);
                 }
 
                 // Evaluate eq(r_round, w_1, ..., w_{idx - 1}, c, b) at c = 0, 2 and b = 0, 1
@@ -748,15 +751,15 @@ impl<F: JoltField, ProofTranscript: Transcript> AppendixCSumCheckProof<F, ProofT
                 compressed_poly.append_to_transcript(transcript);
                 compressed_polys.push(compressed_poly);
 
-                let w_j = transcript.challenge_scalar::<F>();
-                *previous_claim = univariate_poly.evaluate(&w_j);
+                let w_j = transcript.challenge_u128();
+                *previous_claim = univariate_poly.evaluate_u128(&w_j);
                 w.push(w_j);
 
                 drop(_guard);
                 drop(_span);
 
-                C_summands[0] *= w_j;
-                C_summands[1] *= F::one() - w_j;
+                C_summands[0] *= F::from_u128_mont(w_j);
+                C_summands[1] *= F::one() - F::from_u128_mont(w_j);
 
                 mle_vec[D - d - 1].bind_parallel(w_j, BindingOrder::HighToLow);
             }
@@ -784,7 +787,7 @@ impl<F: JoltField, ProofTranscript: Transcript> AppendixCSumCheckProof<F, ProofT
     pub fn verify(
         &self,
         claim: F,
-        r_prime: Vec<F>,
+        r_prime: Vec<MontU128>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         let (sumcheck_claim, _r_sumcheck) =
@@ -809,6 +812,7 @@ mod test {
     use rand_core::RngCore;
     use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
+    use crate::field::MontU128;
     use crate::{
         field::JoltField,
         poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
@@ -825,9 +829,9 @@ mod test {
     fn multi_eq<F: JoltField>(D: usize, T: usize) -> Vec<F> {
         // Compute the polynomial eq(j, j_1, ..., j_d) = 1 if j = j_1 = ... = j_d and 0 otherwise.
 
-        let mut eq: Vec<F> = unsafe_allocate_zero_vec(T.pow(D as u32 + 1) as usize);
-        let num_bits = (T as usize).log_2() * ((D + 1) as usize);
-        let log_T = (T as usize).log_2();
+        let mut eq: Vec<F> = unsafe_allocate_zero_vec(T.pow(D as u32 + 1));
+        let num_bits = T.log_2() * (D + 1);
+        let log_T = T.log_2();
 
         for i in 0..T.pow(D as u32 + 1) {
             // Lower index correspond to lower bits.
@@ -844,14 +848,14 @@ mod test {
                     bits[..bits.len() - log_T]
                         .iter()
                         .enumerate()
-                        .filter(|(idx, _)| idx % (D as usize) == d as usize)
+                        .filter(|(idx, _)| idx % D == d)
                         .map(|(_, bit)| *bit)
                         .collect::<Vec<u32>>()
                 })
                 .collect::<Vec<_>>();
 
             let mut bit_vec = bits[..bits.len() - log_T]
-                .chunks(D as usize)
+                .chunks(D)
                 .map(|x| x.to_owned())
                 .collect::<Vec<_>>();
             bit_vec
@@ -860,7 +864,7 @@ mod test {
                 .for_each(|(chunk, digit)| {
                     chunk.push(*digit);
                 });
-            assert_eq!(bit_vec[0].len(), D as usize + 1);
+            assert_eq!(bit_vec[0].len(), D + 1);
 
             let val = bit_vec
                 .iter()
@@ -875,13 +879,13 @@ mod test {
                 })
                 .product::<u32>();
 
-            eq[i as usize] = if j.iter().all(|j| *j == *last_j_bits) {
+            eq[i] = if j.iter().all(|j| *j == *last_j_bits) {
                 F::one()
             } else {
                 F::zero()
             };
 
-            assert_eq!(F::from_u32(val), eq[i as usize]);
+            assert_eq!(F::from_u32(val), eq[i]);
         }
 
         eq
@@ -910,18 +914,16 @@ mod test {
             }
         }
 
-        let val_mle = val_vec
+        val_vec
             .into_par_iter()
-            .map(|val| MultilinearPolynomial::from(val))
-            .collect::<Vec<_>>();
-
-        val_mle
+            .map(MultilinearPolynomial::from)
+            .collect::<Vec<_>>()
     }
 
     fn check_initial_eval_claim(
         D: usize,
         T: usize,
-        r_cycle: &Vec<Fr>,
+        r_cycle: &Vec<MontU128>,
         ra: &Vec<MultilinearPolynomial<Fr>>,
     ) {
         assert!(T.is_power_of_two());
@@ -939,7 +941,7 @@ mod test {
             let bits_f = (0..MAX_NUM_BITS)
                 .take(num_bits)
                 .map(|n| ((j >> n) & 1) as u32)
-                .map(|bit| Fr::from_u32(bit))
+                .map(Fr::from_u32)
                 .map(|val| (val, Fr::from_u32(1) - val))
                 .collect::<Vec<_>>();
             assert_eq!(bits_f.len(), num_bits);
@@ -953,7 +955,10 @@ mod test {
                 .iter_mut()
                 .zip(r_cycle.iter().rev())
                 .for_each(|(chunk, digit)| {
-                    chunk.push((*digit, Fr::from_u32(1) - *digit));
+                    chunk.push((
+                        Fr::from_u128_mont(*digit),
+                        Fr::from_u32(1) - Fr::from_u128_mont(*digit),
+                    ));
                 });
             assert_eq!(j_bit_vec[0].len(), D + 1);
 
@@ -985,7 +990,7 @@ mod test {
                         let res: u32 = bits
                             .iter()
                             .enumerate()
-                            .filter(|(idx, _)| idx % (D as usize) == d as usize)
+                            .filter(|(idx, _)| idx % D == d)
                             .map(|(_, bit)| *bit)
                             .enumerate()
                             .map(|(idx, bit)| bit << idx)
@@ -1012,20 +1017,20 @@ mod test {
         let mut ra_copy = ra.clone();
 
         let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
-        let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(T.log_2());
+        let r_cycle: Vec<MontU128> = prover_transcript.challenge_vector_u128(T.log_2());
 
         if D < 6 && T < 1 << 6 {
             check_initial_eval_claim(D, T, &r_cycle, &ra);
         }
         let mut previous_claim =
-            compute_initial_eval_claim(&ra.iter().map(|x| &*x).collect::<Vec<_>>(), &r_cycle);
+            compute_initial_eval_claim(&ra.iter().collect::<Vec<_>>(), &r_cycle);
         let mut previous_claim_copy = previous_claim;
 
-        let claim = previous_claim.clone();
-        let claim_copy = previous_claim_copy.clone();
+        let claim = previous_claim;
+        let claim_copy = previous_claim_copy;
 
         let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
-        let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(T.log_2());
+        let r_cycle: Vec<MontU128> = prover_transcript.challenge_vector_u128(T.log_2());
 
         let start_time = Instant::now();
         let (proof, r_prime) = NaiveSumCheckProof::<Fr, KeccakTranscript>::prove(
@@ -1047,7 +1052,7 @@ mod test {
         );
 
         let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
-        let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(T.log_2());
+        let r_cycle: Vec<MontU128> = prover_transcript.challenge_vector_u128(T.log_2());
 
         let start_time = Instant::now();
         let (proof, r_prime) = LargeDMulSumCheckProof::<Fr, KeccakTranscript>::prove(
@@ -1081,19 +1086,19 @@ mod test {
         let mut ra_copy_2 = ra.clone();
 
         let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
-        let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(T.log_2());
+        let r_cycle: Vec<MontU128> = prover_transcript.challenge_vector_u128(T.log_2());
 
         if D < 6 && T < 1 << 6 {
             check_initial_eval_claim(D, T, &r_cycle, &ra);
         }
         let mut previous_claim =
-            compute_initial_eval_claim(&ra.iter().map(|x| &*x).collect::<Vec<_>>(), &r_cycle);
+            compute_initial_eval_claim(&ra.iter().collect::<Vec<_>>(), &r_cycle);
         let mut previous_claim_copy = previous_claim;
         let mut previous_claim_copy_2 = previous_claim;
 
-        let claim = previous_claim.clone();
-        let claim_copy = previous_claim_copy.clone();
-        let claim_copy_2 = previous_claim_copy_2.clone();
+        let claim = previous_claim;
+        let claim_copy = previous_claim_copy;
+        let claim_copy_2 = previous_claim_copy_2;
 
         let start_time = Instant::now();
         let (proof, r_prime) = AppendixCSumCheckProof::<Fr, KeccakTranscript>::prove::<D1>(
@@ -1106,7 +1111,7 @@ mod test {
 
         let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
         verifier_transcript.compare_to(prover_transcript);
-        let _r_cycle: Vec<Fr> = verifier_transcript.challenge_vector(T.log_2());
+        let _r_cycle = verifier_transcript.challenge_vector_u128(T.log_2());
 
         let verification_result = proof.verify(claim, r_prime, &mut verifier_transcript);
         assert!(
@@ -1115,7 +1120,7 @@ mod test {
         );
 
         let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
-        let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(T.log_2());
+        let r_cycle = prover_transcript.challenge_vector_u128(T.log_2());
 
         let start_time = Instant::now();
         let (proof, r_prime) = NaiveSumCheckProof::<Fr, KeccakTranscript>::prove(
@@ -1128,7 +1133,7 @@ mod test {
 
         let mut verifier_transcript = KeccakTranscript::new(b"test_transcript");
         verifier_transcript.compare_to(prover_transcript);
-        let _r_cycle: Vec<Fr> = verifier_transcript.challenge_vector(T.log_2());
+        let _r_cycle = verifier_transcript.challenge_vector_u128(T.log_2());
 
         let verification_result = proof.verify(r_prime, claim_copy, &mut verifier_transcript);
         assert!(
@@ -1137,7 +1142,7 @@ mod test {
         );
 
         let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
-        let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(T.log_2());
+        let r_cycle = prover_transcript.challenge_vector_u128(T.log_2());
 
         let start_time = Instant::now();
         let (proof, r_prime) = LargeDMulSumCheckProof::<Fr, KeccakTranscript>::prove(

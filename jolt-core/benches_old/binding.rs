@@ -1,7 +1,7 @@
 use ark_bn254::Fr;
 use ark_std::{rand::Rng, test_rng};
 use criterion::Criterion;
-use jolt_core::field::JoltField;
+use jolt_core::field::{JoltField, MontU128};
 use jolt_core::poly::compact_polynomial::CompactPolynomial;
 use jolt_core::poly::dense_mlpoly::DensePolynomial;
 use jolt_core::poly::multilinear_polynomial::{BindingOrder, PolynomialBinding};
@@ -26,9 +26,9 @@ fn benchmark_dense<F: JoltField>(c: &mut Criterion, num_vars: usize) {
             b.iter_with_setup(
                 || {
                     let mut rng = test_rng();
-                    let coeffs = random_dense_coeffs(&mut rng, num_vars);
+                    let coeffs = random_dense_coeffs::<F>(&mut rng, num_vars);
                     let poly = DensePolynomial::new(coeffs);
-                    let r: Vec<F> = std::iter::repeat_with(|| F::random(&mut rng))
+                    let r: Vec<MontU128> = std::iter::repeat_with(|| MontU128::from(rng.gen::<u128>()))
                         .take(num_vars)
                         .collect();
                     (poly, r)
@@ -53,10 +53,10 @@ fn benchmark_dense_batch<F: JoltField>(c: &mut Criterion, num_vars: usize, batch
                     let mut rng = test_rng();
                     let mut polys = vec![];
                     for _ in 0..batch_size {
-                        let coeffs = random_dense_coeffs(&mut rng, num_vars);
+                        let coeffs = random_dense_coeffs::<F>(&mut rng, num_vars);
                         polys.push(DensePolynomial::new(coeffs));
                     }
-                    let r: Vec<F> = std::iter::repeat_with(|| F::random(&mut rng))
+                    let r: Vec<MontU128> = std::iter::repeat_with(|| MontU128::from(rng.gen::<u128>()))
                         .take(num_vars)
                         .collect();
                     (polys, r)
@@ -86,7 +86,7 @@ fn benchmark_compact<F: JoltField>(
                     let mut rng = test_rng();
                     let coeffs = random_compact_coeffs(&mut rng, num_vars);
                     let poly = CompactPolynomial::from_coeffs(coeffs);
-                    let r: Vec<F> = std::iter::repeat_with(|| F::random(&mut rng))
+                    let r: Vec<MontU128> = std::iter::repeat_with(|| MontU128::from(rng.gen::<u128>()))
                         .take(num_vars)
                         .collect();
                     (poly, r)
@@ -113,9 +113,9 @@ fn benchmark_dense_parallel<F: JoltField>(
             b.iter_with_setup(
                 || {
                     let mut rng = test_rng();
-                    let coeffs = random_dense_coeffs(&mut rng, num_vars);
+                    let coeffs = random_dense_coeffs::<F>(&mut rng, num_vars);
                     let poly = DensePolynomial::new(coeffs);
-                    let r: Vec<F> = std::iter::repeat_with(|| F::random(&mut rng))
+                    let r: Vec<MontU128> = std::iter::repeat_with(|| MontU128::from(rng.gen::<u128>()))
                         .take(num_vars)
                         .collect();
                     (poly, r)

@@ -1,5 +1,6 @@
 use std::{cell::RefCell, rc::Rc};
 
+use crate::field::MontU128;
 use crate::{
     field::JoltField,
     poly::{
@@ -17,25 +18,24 @@ use crate::{
     zkvm::dag::state_manager::StateManager,
     zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
 };
-use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 use common::constants::REGISTER_COUNT;
 use rayon::prelude::*;
 
-#[derive(Allocative)]
+#[cfg_attr(feature = "allocative", derive(Allocative))]
 pub struct ValEvaluationProverState<F: JoltField> {
     pub inc: MultilinearPolynomial<F>,
     pub wa: MultilinearPolynomial<F>,
     pub lt: MultilinearPolynomial<F>,
 }
 
-#[derive(Allocative)]
+#[cfg_attr(feature = "allocative", derive(Allocative))]
 pub(crate) struct ValEvaluationSumcheck<F: JoltField> {
-    pub r_address: Vec<F>,
+    pub r_address: Vec<MontU128>,
     pub input_claim: F,
     pub num_rounds: usize,
-    pub r_cycle: Vec<F>,
+    pub r_cycle: Vec<MontU128>,
     pub prover_state: Option<ValEvaluationProverState<F>>,
 }
 
@@ -55,8 +55,8 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
         // The opening point is r_address || r_cycle
         let r_address_len = REGISTER_COUNT.ilog2() as usize;
         let (r_address_slice, r_cycle_slice) = opening_point.split_at(r_address_len);
-        let r_address: Vec<F> = r_address_slice.into();
-        let r_cycle: Vec<F> = r_cycle_slice.into();
+        let r_address: Vec<MontU128> = r_address_slice.into();
+        let r_cycle: Vec<MontU128> = r_cycle_slice.into();
 
         let inc = CommittedPolynomial::RdInc.generate_witness(preprocessing, trace);
 
@@ -78,8 +78,8 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
                 .par_iter_mut()
                 .zip(evals_right.par_iter_mut())
                 .for_each(|(x, y)| {
-                    *y = *x * r;
-                    *x += *r - *y;
+                    *y = x.mul_u128_mont_form(*r);
+                    *x += F::from_u128_mont(*r) - *y;
                 });
         }
         let lt = MultilinearPolynomial::from(lt);
@@ -109,8 +109,8 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
         // The opening point is r_address || r_cycle
         let r_address_len = REGISTER_COUNT.ilog2() as usize;
         let (r_address_slice, r_cycle_slice) = opening_point.split_at(r_address_len);
-        let r_address: Vec<F> = r_address_slice.into();
-        let r_cycle: Vec<F> = r_cycle_slice.into();
+        let r_address: Vec<MontU128> = r_address_slice.into();
+        let r_cycle: Vec<MontU128> = r_cycle_slice.into();
 
         Self {
             input_claim: val_claim,
@@ -180,7 +180,7 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
     }
 
     #[tracing::instrument(skip_all, name = "RegistersValEvaluationSumcheck::bind")]
-    fn bind(&mut self, r_j: F, _round: usize) {
+    fn bind(&mut self, r_j: MontU128, _round: usize) {
         if let Some(prover_state) = &mut self.prover_state {
             [
                 &mut prover_state.inc,
@@ -195,14 +195,17 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
     fn expected_output_claim(
         &self,
         accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
-        r: &[F],
+        r: &[MontU128],
     ) -> F {
         // Compute LT(r_cycle', r_cycle)
         let mut lt_eval = F::zero();
         let mut eq_term = F::one();
         for (x, y) in r.iter().zip(self.r_cycle.iter()) {
-            lt_eval += (F::one() - x) * y * eq_term;
-            eq_term *= F::one() - x - y + *x * y + *x * y;
+            lt_eval += (F::one() - F::from_u128_mont(*x)) * eq_term.mul_u128_mont_form(*y);
+            //TODO (ARI) this is suboptimal u128 x u128 can be sped up
+            eq_term *= F::one() - F::from_u128_mont(*x) - F::from_u128_mont(*y)
+                + F::from_u128_mont(*x) * F::from_u128_mont(*y)
+                + F::from_u128_mont(*x) * F::from_u128_mont(*y);
         }
 
         let accumulator = accumulator.as_ref().unwrap();
@@ -219,14 +222,14 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
         inc_claim * wa_claim * lt_eval
     }
 
-    fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(&self, opening_point: &[MontU128]) -> OpeningPoint<BIG_ENDIAN> {
         OpeningPoint::new(opening_point.to_vec())
     }
 
     fn cache_openings_prover(
         &self,
         accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
-        r_cycle: OpeningPoint<BIG_ENDIAN, F>,
+        r_cycle: OpeningPoint<BIG_ENDIAN>,
     ) {
         let prover_state = self
             .prover_state
@@ -256,7 +259,7 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
     fn cache_openings_verifier(
         &self,
         accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
-        r_cycle: OpeningPoint<BIG_ENDIAN, F>,
+        r_cycle: OpeningPoint<BIG_ENDIAN>,
     ) {
         // Append claims to accumulator
         accumulator.borrow_mut().append_dense(
