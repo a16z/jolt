@@ -5,8 +5,7 @@ use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::unipoly::UniPoly;
 use crate::utils::errors::ProofVerifyError;
 use ark_ec::scalar_mul::variable_base::{
-    msm_binary, msm_i128, msm_i64, msm_u128, msm_u16, msm_u32, msm_u64, msm_u8,
-    VariableBaseMSM as ArkVariableBaseMSM,
+    msm_binary, msm_u16, msm_u32, msm_u64, msm_u8, VariableBaseMSM as ArkVariableBaseMSM,
 };
 use ark_ec::{CurveGroup, ScalarMul};
 use rayon::prelude::*;
@@ -162,23 +161,62 @@ where
 
     #[tracing::instrument(skip_all)]
     fn msm_u128(bases: &[Self::MulBase], scalars: &[u128]) -> Result<Self, ProofVerifyError> {
-        (bases.len() == scalars.len())
-            .then(|| msm_u128::<Self>(bases, scalars, true))
-            .ok_or(ProofVerifyError::KeyLengthError(bases.len(), scalars.len()))
+        if bases.len() != scalars.len() {
+            return Err(ProofVerifyError::KeyLengthError(bases.len(), scalars.len()));
+        }
+        let field_scalars: Vec<Self::ScalarField> =
+            scalars.iter().copied().map(Self::ScalarField::from_u128).collect();
+        ArkVariableBaseMSM::msm_serial(bases, &field_scalars)
+            .map_err(|_bad_index| ProofVerifyError::KeyLengthError(bases.len(), field_scalars.len()))
     }
 
     #[tracing::instrument(skip_all)]
     fn msm_i64(bases: &[Self::MulBase], scalars: &[i64]) -> Result<Self, ProofVerifyError> {
-        (bases.len() == scalars.len())
-            .then(|| msm_i64::<Self>(bases, scalars, true))
-            .ok_or(ProofVerifyError::KeyLengthError(bases.len(), scalars.len()))
+        if bases.len() != scalars.len() {
+            return Err(ProofVerifyError::KeyLengthError(bases.len(), scalars.len()));
+        }
+        // Split by sign and reuse u64 MSMs
+        let (pos_scalars, pos_bases, neg_scalars, neg_bases): (Vec<u64>, Vec<_>, Vec<u64>, Vec<_>) =
+            bases
+                .par_iter()
+                .zip(scalars.par_iter())
+                .fold(
+                    || (vec![], vec![], vec![], vec![]),
+                    |(mut ps, mut pb, mut ns, mut nb), (base, &scalar)| {
+                        if scalar > 0 {
+                            ps.push(scalar as u64);
+                            pb.push(*base);
+                        } else if scalar < 0 {
+                            ns.push(scalar.unsigned_abs());
+                            nb.push(*base);
+                        }
+                        (ps, pb, ns, nb)
+                    },
+                )
+                .reduce(
+                    || (vec![], vec![], vec![], vec![]),
+                    |(mut ps1, mut pb1, mut ns1, mut nb1), (ps2, pb2, ns2, nb2)| {
+                        ps1.extend(ps2);
+                        pb1.extend(pb2);
+                        ns1.extend(ns2);
+                        nb1.extend(nb2);
+                        (ps1, pb1, ns1, nb1)
+                    },
+                );
+
+        Ok(msm_u64::<Self>(&pos_bases, &pos_scalars, true)
+            - msm_u64::<Self>(&neg_bases, &neg_scalars, true))
     }
 
     #[tracing::instrument(skip_all)]
     fn msm_i128(bases: &[Self::MulBase], scalars: &[i128]) -> Result<Self, ProofVerifyError> {
-        (bases.len() == scalars.len())
-            .then(|| msm_i128::<Self>(bases, scalars, true))
-            .ok_or(ProofVerifyError::KeyLengthError(bases.len(), scalars.len()))
+        if bases.len() != scalars.len() {
+            return Err(ProofVerifyError::KeyLengthError(bases.len(), scalars.len()));
+        }
+        let field_scalars: Vec<Self::ScalarField> =
+            scalars.iter().copied().map(Self::ScalarField::from_i128).collect();
+        ArkVariableBaseMSM::msm_serial(bases, &field_scalars)
+            .map_err(|_bad_index| ProofVerifyError::KeyLengthError(bases.len(), field_scalars.len()))
     }
 
     fn batch_msm<U>(bases: &[Self::MulBase], polys: &[U]) -> Vec<Self>

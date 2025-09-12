@@ -142,6 +142,7 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
             w_E_out_vars.extend_from_slice(&w[split_point_x_in..suffix_slice_end]);
         }
 
+        // Do not scale E_in; we correct the typed unreduced accumulation with inv(K) after reduction.
         let (mut E_out_vec, E_in) = rayon::join(
             || EqPolynomial::evals_cached(&w_E_out_vars),
             || EqPolynomial::evals(&w_E_in_vars),

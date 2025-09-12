@@ -14,7 +14,12 @@ use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 use crate::zkvm::JoltProverPreprocessing;
 
 use super::key::UniformSpartanKey;
+use super::ops::LC;
 use super::spartan::UniformSpartanProof;
+use super::types::{AzValue, BzValue, ConstantValue};
+use crate::utils::small_scalar::SmallScalar;
+use ark_ff::biginteger::signed::add_with_sign_u64;
+use ark_ff::SignedBigInt;
 
 use crate::field::{JoltField, OptimizedMul};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -249,8 +254,28 @@ impl TryFrom<&JoltR1CSInputs> for OpeningId {
 /// materializing full `MultilinearPolynomial`s. Implementations should be
 /// zero-copy and cheap per call.
 pub trait WitnessRowAccessor<F: JoltField>: Send + Sync {
-    fn value_at(&self, input_index: usize, t: usize) -> F;
+    /// Primary method: returns small scalar values directly for efficient evaluation
+    fn value_at(&self, input_index: usize, t: usize) -> SmallScalar;
     fn num_steps(&self) -> usize;
+
+    /// Convenience method: converts small scalar to field element
+    fn value_at_field(&self, input_index: usize, t: usize) -> F {
+        let scalar = self.value_at(input_index, t);
+        match scalar {
+            SmallScalar::Bool(v) => F::from_u8(v as u8),
+            SmallScalar::U8(v) => F::from_u8(v),
+            SmallScalar::U64(v) => F::from_u64(v),
+            SmallScalar::I64(v) => F::from_i64(v),
+            SmallScalar::U128(v) => F::from_u128(v),
+            SmallScalar::I128(v) => F::from_i128(v),
+        }
+    }
+
+    /// Legacy field accessor: default to new semantics; overridden by implementations
+    /// that provide an old-field view (e.g., TraceWitnessAccessor::value_at_old).
+    fn value_at_field_old(&self, input_index: usize, t: usize) -> F {
+        self.value_at_field(input_index, t)
+    }
 }
 
 /// Lightweight, zero-copy witness accessor backed by `preprocessing` and `trace`.
@@ -271,13 +296,10 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> TraceWitnessAccessor<'a
             trace,
         }
     }
-}
 
-impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> WitnessRowAccessor<F>
-    for TraceWitnessAccessor<'a, F, PCS>
-{
+    /// Old implementation from rv64 branch that returns field elements directly
     #[inline]
-    fn value_at(&self, input_index: usize, t: usize) -> F {
+    pub fn value_at_old(&self, input_index: usize, t: usize) -> F {
         let len = self.trace.len();
         let get = |idx: usize| -> &RV32IMCycle { &self.trace[idx] };
         match JoltR1CSInputs::from_index(input_index) {
@@ -382,10 +404,137 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> WitnessRowAccessor<F>
             }
         }
     }
+}
+
+impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> WitnessRowAccessor<F>
+    for TraceWitnessAccessor<'a, F, PCS>
+{
+    #[inline]
+    fn value_at(&self, input_index: usize, t: usize) -> SmallScalar {
+        let len = self.trace.len();
+        let get = |idx: usize| -> &RV32IMCycle { &self.trace[idx] };
+        match JoltR1CSInputs::from_index(input_index) {
+            JoltR1CSInputs::PC => {
+                SmallScalar::U64(self.preprocessing.shared.bytecode.get_pc(get(t)) as u64)
+            }
+            JoltR1CSInputs::NextPC => {
+                if t + 1 < len {
+                    SmallScalar::U64(self.preprocessing.shared.bytecode.get_pc(get(t + 1)) as u64)
+                } else {
+                    SmallScalar::U64(0)
+                }
+            }
+            JoltR1CSInputs::UnexpandedPC => {
+                SmallScalar::U64(get(t).instruction().normalize().address as u64)
+            }
+            JoltR1CSInputs::NextUnexpandedPC => {
+                if t + 1 < len {
+                    SmallScalar::U64(get(t + 1).instruction().normalize().address as u64)
+                } else {
+                    SmallScalar::U64(0)
+                }
+            }
+            JoltR1CSInputs::Rd => SmallScalar::U8(get(t).rd_write().0),
+            JoltR1CSInputs::Imm => {
+                // Use decoder-provided immediate directly (rv64 semantics)
+                let raw = get(t).instruction().normalize().operands.imm;
+                SmallScalar::I128(raw)
+            }
+            JoltR1CSInputs::RamAddress => SmallScalar::U64(get(t).ram_access().address() as u64),
+            JoltR1CSInputs::Rs1Value => SmallScalar::U64(get(t).rs1_read().1),
+            JoltR1CSInputs::Rs2Value => SmallScalar::U64(get(t).rs2_read().1),
+            JoltR1CSInputs::RdWriteValue => SmallScalar::U64(get(t).rd_write().2),
+            JoltR1CSInputs::RamReadValue => {
+                let v = match get(t).ram_access() {
+                    tracer::instruction::RAMAccess::Read(read) => read.value,
+                    tracer::instruction::RAMAccess::Write(write) => write.pre_value,
+                    tracer::instruction::RAMAccess::NoOp => 0,
+                };
+                SmallScalar::U64(v)
+            }
+            JoltR1CSInputs::RamWriteValue => {
+                let v = match get(t).ram_access() {
+                    tracer::instruction::RAMAccess::Read(read) => read.value,
+                    tracer::instruction::RAMAccess::Write(write) => write.post_value,
+                    tracer::instruction::RAMAccess::NoOp => 0,
+                };
+                SmallScalar::U64(v)
+            }
+            JoltR1CSInputs::LeftInstructionInput => {
+                let (left, _right) = LookupQuery::<XLEN>::to_instruction_inputs(get(t));
+                SmallScalar::U64(left)
+            }
+            JoltR1CSInputs::RightInstructionInput => {
+                let (_left, right) = LookupQuery::<XLEN>::to_instruction_inputs(get(t));
+                // Store signed value directly (rv64 semantics: use decoder-provided i128 domain)
+                SmallScalar::I128(right)
+            }
+            JoltR1CSInputs::LeftLookupOperand => {
+                let (l, _r) = LookupQuery::<XLEN>::to_lookup_operands(get(t));
+                SmallScalar::U64(l)
+            }
+            JoltR1CSInputs::RightLookupOperand => {
+                let (_l, r) = LookupQuery::<XLEN>::to_lookup_operands(get(t));
+                // Store as unsigned bit pattern (rv64 semantics). Downstream named evaluators
+                // reinterpret to signed where needed by casting u64 -> i64 -> i128.
+                SmallScalar::U128(r)
+            }
+            JoltR1CSInputs::Product => {
+                let (left, right) = LookupQuery::<XLEN>::to_instruction_inputs(get(t));
+                // Unsigned product of 64-bit bit patterns
+                let right_bits = (right as i64) as u64;
+                let prod = (left as u128) * (right_bits as u128);
+                SmallScalar::U128(prod)
+            }
+            JoltR1CSInputs::WriteLookupOutputToRD => {
+                let flag = get(t).instruction().circuit_flags()
+                    [CircuitFlags::WriteLookupOutputToRD as usize];
+                SmallScalar::U8(get(t).rd_write().0 * (flag as u8))
+            }
+            JoltR1CSInputs::WritePCtoRD => {
+                let flag = get(t).instruction().circuit_flags()[CircuitFlags::Jump as usize];
+                SmallScalar::U8(get(t).rd_write().0 * (flag as u8))
+            }
+            JoltR1CSInputs::LookupOutput => {
+                SmallScalar::U64(LookupQuery::<XLEN>::to_lookup_output(get(t)))
+            }
+            JoltR1CSInputs::NextIsNoop => {
+                if t + 1 < len {
+                    let no = get(t + 1).instruction().circuit_flags()[CircuitFlags::IsNoop];
+                    SmallScalar::Bool(no)
+                } else {
+                    SmallScalar::Bool(false)
+                }
+            }
+            JoltR1CSInputs::ShouldBranch => {
+                let is_branch = get(t).instruction().circuit_flags()[CircuitFlags::Branch as usize];
+                let out_u8 = LookupQuery::<XLEN>::to_lookup_output(get(t)) as u8;
+                SmallScalar::U8(out_u8 * (is_branch as u8))
+            }
+            JoltR1CSInputs::ShouldJump => {
+                let is_jump = get(t).instruction().circuit_flags()[CircuitFlags::Jump];
+                let next_noop = if t + 1 < len {
+                    get(t + 1).instruction().circuit_flags()[CircuitFlags::IsNoop]
+                } else {
+                    true
+                };
+                SmallScalar::Bool(is_jump && !next_noop)
+            }
+            JoltR1CSInputs::OpFlags(flag) => {
+                SmallScalar::Bool(get(t).instruction().circuit_flags()[flag as usize])
+            }
+        }
+    }
 
     #[inline]
     fn num_steps(&self) -> usize {
         self.trace.len()
+    }
+
+    #[inline]
+    fn value_at_field_old(&self, input_index: usize, t: usize) -> F {
+        // Delegate to legacy field evaluation for exact old semantics
+        self.value_at_old(input_index, t)
     }
 }
 
@@ -425,6 +574,221 @@ pub fn compute_claimed_witness_evals<F: JoltField>(
             },
         )
         .to_vec()
+}
+
+// =====================================================================================
+// Streaming typed evaluation helpers (SVO types) co-located with witness accessor
+// =====================================================================================
+
+/// Generic evaluator: evaluates an LC over witness row into an AzValue.
+/// Uses small signed fast-path and falls back to sign/magnitude accumulation.
+#[inline]
+pub fn eval_az_generic<F: JoltField>(
+    a_lc: &LC,
+    accessor: &dyn WitnessRowAccessor<F>,
+    row: usize,
+) -> AzValue {
+    // Pass 1: small i8 fast path (Bool/U8 inputs only, i8 coeffs, no overflow)
+    let mut acc_i8: i8 = 0;
+    let mut small_ok = true;
+    a_lc.for_each_term(|input_index, coeff| {
+        if !small_ok {
+            return;
+        }
+        // Fast-path requires coeff to be I8; otherwise bail out to generic path.
+        let coeff_i8: i8 = match coeff {
+            ConstantValue::I8(v) => v,
+            ConstantValue::I128(_) => {
+                small_ok = false;
+                return;
+            }
+        };
+        // Only Bool/U8 are allowed to keep the i8 path (rv64 A-side small sums)
+        let sc = accessor.value_at(input_index, row);
+        let v_i8 = match sc {
+            SmallScalar::Bool(b) => {
+                if b {
+                    1
+                } else {
+                    0
+                }
+            }
+            SmallScalar::U8(v) => v as i8,
+            _ => {
+                small_ok = false;
+                return;
+            }
+        };
+        let (prod, of1) = v_i8.overflowing_mul(coeff_i8);
+        let (sum, of2) = acc_i8.overflowing_add(prod);
+        acc_i8 = sum;
+        if of1 || of2 {
+            small_ok = false;
+        }
+    });
+    if small_ok {
+        if let Some(cst) = a_lc.const_term() {
+            // For Az constraints, constants are expected to be I8; if not, bail to generic.
+            match cst {
+                ConstantValue::I8(c8) => {
+                    let (sum, of) = acc_i8.overflowing_add(c8);
+                    acc_i8 = sum;
+                    if of {
+                        small_ok = false;
+                    }
+                }
+                ConstantValue::I128(_) => {
+                    small_ok = false;
+                }
+            }
+        }
+    }
+    if small_ok {
+        return AzValue::I8(acc_i8);
+    }
+
+    // Pass 2: sign-aware u64 magnitude accumulation (rv64-compatible integer LC semantics)
+    let mut mag: u64 = 0;
+    let mut sign: bool = true; // true => positive
+    a_lc.for_each_term(|input_index, coeff| {
+        let sc = accessor.value_at(input_index, row);
+        let v_i128 = sc.as_i128();
+        let v_mag_u128 = v_i128.unsigned_abs();
+        let v_mag_u64 = if v_mag_u128 > u64::MAX as u128 {
+            u64::MAX
+        } else {
+            v_mag_u128 as u64
+        };
+        let c_i128 = coeff.to_i128();
+        let term_mag = v_mag_u64.saturating_mul(c_i128.unsigned_abs() as u64);
+        let val_pos = v_i128 >= 0;
+        let coeff_pos = c_i128 >= 0;
+        let term_pos = val_pos == coeff_pos; // sign(product) positive if signs equal
+        let (new_mag, new_pos) = add_with_sign_u64(mag, sign, term_mag, term_pos);
+        mag = new_mag;
+        sign = new_pos;
+    });
+    if let Some(cst) = a_lc.const_term() {
+        let cst_i128 = cst.to_i128();
+        let c_mag = if cst_i128.unsigned_abs() > u64::MAX as u128 {
+            u64::MAX
+        } else {
+            cst_i128.unsigned_abs() as u64
+        };
+        let c_pos = cst_i128 >= 0;
+        let (new_mag, new_pos) = add_with_sign_u64(mag, sign, c_mag, c_pos);
+        mag = new_mag;
+        sign = new_pos;
+    }
+    AzValue::S64(SignedBigInt::from_u64_with_sign(mag, sign))
+}
+
+/// Generic evaluator: evaluates an LC over witness row into a BzValue.
+/// Always accumulates into 192-bit signed magnitude (SignedBigInt<3>).
+#[inline]
+pub fn eval_bz_generic<F: JoltField>(
+    b_lc: &LC,
+    accessor: &dyn WitnessRowAccessor<F>,
+    row: usize,
+) -> BzValue {
+    // Try S64 fast path: accumulate using u64 magnitude with sign if all term products fit in u64
+    let mut s64_mag: u64 = 0;
+    let mut s64_pos: bool = true;
+    let mut fits_s64 = true;
+    b_lc.for_each_term(|input_index, coeff| {
+        if !fits_s64 {
+            return;
+        }
+        let sc = accessor.value_at(input_index, row);
+        // Extract magnitude and sign of witness with minimal conversions.
+        let (v_mag_u64, v_nonneg) = match sc {
+            SmallScalar::Bool(b) => (if b { 1u64 } else { 0u64 }, true),
+            SmallScalar::U8(v) => (v as u64, true),
+            SmallScalar::U64(v) => (v, true),
+            SmallScalar::I64(v) => (v.unsigned_abs(), v >= 0),
+            SmallScalar::I128(v) => {
+                // rv64 semantics: B-side integer LC uses the signed value
+                let mag = v.unsigned_abs();
+                if mag > u64::MAX as u128 {
+                    fits_s64 = false;
+                    return;
+                }
+                (mag as u64, v >= 0)
+            }
+            SmallScalar::U128(v) => {
+                if v > u64::MAX as u128 {
+                    fits_s64 = false;
+                    return;
+                }
+                (v as u64, true)
+            }
+        };
+        let (c_mag_u64, c_nonneg) = match coeff {
+            ConstantValue::I8(cv) => (cv.unsigned_abs() as u64, cv >= 0),
+            ConstantValue::I128(cv) => {
+                let c_mag = cv.unsigned_abs();
+                if c_mag > u64::MAX as u128 {
+                    fits_s64 = false;
+                    return;
+                }
+                (c_mag as u64, cv >= 0)
+            }
+        };
+        let prod_mag_u128 = (v_mag_u64 as u128) * (c_mag_u64 as u128);
+        if prod_mag_u128 > u64::MAX as u128 {
+            fits_s64 = false;
+            return;
+        }
+        let prod_mag_u64 = prod_mag_u128 as u64;
+        let term_pos = v_nonneg == c_nonneg;
+        let (new_mag, new_pos) = add_with_sign_u64(s64_mag, s64_pos, prod_mag_u64, term_pos);
+        s64_mag = new_mag;
+        s64_pos = new_pos;
+    });
+    if fits_s64 {
+        if let Some(cst) = b_lc.const_term() {
+            match cst {
+                ConstantValue::I8(cv) => {
+                    let c_mag_u64 = cv.unsigned_abs() as u64;
+                    let (new_mag, new_pos) =
+                        add_with_sign_u64(s64_mag, s64_pos, c_mag_u64, cv >= 0);
+                    s64_mag = new_mag;
+                    s64_pos = new_pos;
+                }
+                ConstantValue::I128(cv) => {
+                    let c_mag = cv.unsigned_abs();
+                    if c_mag > u64::MAX as u128 {
+                        fits_s64 = false;
+                    } else {
+                        let (new_mag, new_pos) =
+                            add_with_sign_u64(s64_mag, s64_pos, c_mag as u64, cv >= 0);
+                        s64_mag = new_mag;
+                        s64_pos = new_pos;
+                    }
+                }
+            }
+        }
+    }
+    if fits_s64 {
+        return BzValue::S64(SignedBigInt::from_u64_with_sign(s64_mag, s64_pos));
+    }
+
+    // Fallback: S128 accumulation (rv64 semantics for wider products)
+    let mut acc = SignedBigInt::<2>::zero();
+    b_lc.for_each_term(|input_index, coeff| {
+        let sc = accessor.value_at(input_index, row);
+        // rv64: use signed integer value directly
+        let v_i128 = sc.as_i128();
+        let v = SignedBigInt::<2>::from_i128(v_i128);
+        let c = SignedBigInt::<2>::from_i128(coeff.to_i128());
+        let term = v.mul_trunc::<2, 2>(&c);
+        acc = acc.add(term);
+    });
+    if let Some(cst) = b_lc.const_term() {
+        let c = SignedBigInt::<2>::from_i128(cst.to_i128());
+        acc = acc.add(c);
+    }
+    BzValue::S128(acc)
 }
 
 /// Single-pass generation of UnexpandedPC(t), PC(t), and IsNoop(t) witnesses.
