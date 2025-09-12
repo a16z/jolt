@@ -1,4 +1,5 @@
-use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::{Allocative, FlameGraphBuilder};
 use std::marker::PhantomData;
 use std::{cell::RefCell, rc::Rc};
 
