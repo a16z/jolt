@@ -1,5 +1,6 @@
 use std::{cell::RefCell, rc::Rc};
 
+use crate::field::MontU128;
 use crate::{
     field::JoltField,
     poly::{
@@ -17,12 +18,10 @@ use crate::{
     zkvm::dag::state_manager::StateManager,
     zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
 };
-use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 use common::constants::REGISTER_COUNT;
 use rayon::prelude::*;
-use crate::field::MontU128;
 
 #[cfg_attr(feature = "allocative", derive(Allocative))]
 pub struct ValEvaluationProverState<F: JoltField> {
@@ -204,7 +203,9 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
         for (x, y) in r.iter().zip(self.r_cycle.iter()) {
             lt_eval += (F::one() - F::from_u128_mont(*x)) * eq_term.mul_u128_mont_form(*y);
             //TODO (ARI) this is suboptimal u128 x u128 can be sped up
-            eq_term *= F::one() - F::from_u128_mont(*x) - F::from_u128_mont(*y) + F::from_u128_mont(*x) * F::from_u128_mont(*y) + F::from_u128_mont(*x) * F::from_u128_mont(*y);
+            eq_term *= F::one() - F::from_u128_mont(*x) - F::from_u128_mont(*y)
+                + F::from_u128_mont(*x) * F::from_u128_mont(*y)
+                + F::from_u128_mont(*x) * F::from_u128_mont(*y);
         }
 
         let accumulator = accumulator.as_ref().unwrap();

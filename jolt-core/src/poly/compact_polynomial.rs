@@ -10,7 +10,6 @@ use num_integer::Integer;
 use rayon::prelude::*;
 use std::cmp::Ordering;
 
-// TODO:(ari) All the multiplications in here are inefficent.
 /// A trait for small scalars ({u/i}{8/16/32/64})
 pub trait SmallScalar: Copy + Integer + Sync + CanonicalSerialize + CanonicalDeserialize {
     /// Performs a field multiplication. Uses `JoltField::mul_u64` under the hood.

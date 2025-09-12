@@ -1,5 +1,6 @@
 use std::{cell::RefCell, rc::Rc};
 
+use crate::field::MontU128;
 use crate::{
     field::JoltField,
     poly::{
@@ -22,11 +23,9 @@ use crate::{
         witness::{CommittedPolynomial, VirtualPolynomial},
     },
 };
-use allocative::Allocative;
 #[cfg(feature = "allocative")]
-use allocative::FlameGraphBuilder;
+use allocative::{Allocative, FlameGraphBuilder};
 use rayon::prelude::*;
-use crate::field::MontU128;
 
 #[cfg_attr(feature = "allocative", derive(Allocative))]
 pub struct ValEvaluationProverState<F: JoltField> {

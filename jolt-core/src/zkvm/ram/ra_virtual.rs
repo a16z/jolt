@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use crate::field::MontU128;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::poly::opening_proof::{
@@ -22,12 +23,10 @@ use crate::{
     transcripts::Transcript,
     utils::math::Math,
 };
-use allocative::Allocative;
 #[cfg(feature = "allocative")]
-use allocative::FlameGraphBuilder;
+use allocative::{Allocative, FlameGraphBuilder};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
-use crate::field::MontU128;
 
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct RAProof<F: JoltField, ProofTranscript: Transcript> {
@@ -107,7 +106,10 @@ impl<F: JoltField> RASumcheck<F> {
         } else {
             // Pad with zeros
             [
-                &vec![MontU128::from(0_u128); DTH_ROOT_OF_K.log_2() - (r_address.len() % DTH_ROOT_OF_K.log_2())],
+                &vec![
+                    MontU128::from(0_u128);
+                    DTH_ROOT_OF_K.log_2() - (r_address.len() % DTH_ROOT_OF_K.log_2())
+                ],
                 r_address,
             ]
             .concat()
@@ -231,7 +233,10 @@ impl<F: JoltField> RASumcheck<F> {
         } else {
             // Pad with zeros
             [
-                &vec![MontU128::from(0_u128); DTH_ROOT_OF_K.log_2() - (r_address.len() % DTH_ROOT_OF_K.log_2())],
+                &vec![
+                    MontU128::from(0_u128);
+                    DTH_ROOT_OF_K.log_2() - (r_address.len() % DTH_ROOT_OF_K.log_2())
+                ],
                 r_address,
             ]
             .concat()

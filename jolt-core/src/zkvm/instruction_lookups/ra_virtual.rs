@@ -1,6 +1,7 @@
+#[cfg(feature = "allocative")]
+use allocative::{Allocative, FlameGraphBuilder};
 use std::{cell::RefCell, rc::Rc};
 
-use allocative::Allocative;
 use rayon::{
     iter::{
         IndexedParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator,
@@ -10,6 +11,7 @@ use rayon::{
 };
 use tracer::instruction::RV32IMCycle;
 
+use crate::field::MontU128;
 use crate::{
     field::{JoltField, OptimizedMul},
     poly::{
@@ -40,7 +42,6 @@ use crate::{
         },
     },
 };
-use crate::field::MontU128;
 
 #[cfg_attr(feature = "allocative", derive(Allocative))]
 pub struct RASumCheck<F: JoltField> {
@@ -119,7 +120,10 @@ impl<F: JoltField> RASumCheck<F> {
         } else {
             // Pad with zeros
             [
-                &vec![MontU128::from(0_u128); DTH_ROOT_OF_K.log_2() - (r_address.len() % DTH_ROOT_OF_K.log_2())],
+                &vec![
+                    MontU128::from(0_u128);
+                    DTH_ROOT_OF_K.log_2() - (r_address.len() % DTH_ROOT_OF_K.log_2())
+                ],
                 r_address,
             ]
             .concat()
@@ -263,7 +267,9 @@ impl<F: JoltField> SumcheckInstance<F> for RASumCheck<F> {
             .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow));
 
         prover_state.eq_factor = prover_state.eq_factor.mul_1_optimized(
-            (F::from_u128_mont(self.r_cycle[round]) + F::from_u128_mont(self.r_cycle[round]) - F::one()).mul_u128_mont_form(r_j)
+            (F::from_u128_mont(self.r_cycle[round]) + F::from_u128_mont(self.r_cycle[round])
+                - F::one())
+            .mul_u128_mont_form(r_j)
                 + (F::one() - F::from_u128_mont(self.r_cycle[round])),
         );
     }

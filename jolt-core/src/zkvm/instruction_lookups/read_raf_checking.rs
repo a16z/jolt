@@ -1,6 +1,5 @@
-use allocative::Allocative;
 #[cfg(feature = "allocative")]
-use allocative::FlameGraphBuilder;
+use allocative::{Allocative, FlameGraphBuilder};
 use rayon::prelude::*;
 use std::{cell::RefCell, rc::Rc};
 use strum::{EnumCount, IntoEnumIterator};
@@ -8,6 +7,7 @@ use tracer::instruction::RV32IMCycle;
 
 use super::{LOG_K, LOG_M, M, PHASES, WORD_SIZE};
 
+use crate::field::MontU128;
 use crate::{
     field::JoltField,
     poly::{
@@ -42,7 +42,6 @@ use crate::{
         witness::VirtualPolynomial,
     },
 };
-use crate::field::MontU128;
 
 const DEGREE: usize = 3;
 
@@ -894,8 +893,14 @@ mod tests {
             prover_sm.twist_sumcheck_switch_index,
         );
 
-        let r_cycle: Vec<MontU128> = prover_sm.transcript.borrow_mut().challenge_vector_u128(LOG_T);
-        let _r_cycle: Vec<MontU128> = verifier_sm.transcript.borrow_mut().challenge_vector_u128(LOG_T);
+        let r_cycle: Vec<MontU128> = prover_sm
+            .transcript
+            .borrow_mut()
+            .challenge_vector_u128(LOG_T);
+        let _r_cycle: Vec<MontU128> = verifier_sm
+            .transcript
+            .borrow_mut()
+            .challenge_vector_u128(LOG_T);
         let eq_r_cycle = EqPolynomial::<Fr>::evals(&r_cycle);
 
         let mut rv_claim = Fr::zero();

@@ -1,6 +1,5 @@
-use allocative::Allocative;
 #[cfg(feature = "allocative")]
-use allocative::FlameGraphBuilder;
+use allocative::{Allocative, FlameGraphBuilder};
 use rayon::prelude::*;
 use std::{cell::RefCell, rc::Rc};
 

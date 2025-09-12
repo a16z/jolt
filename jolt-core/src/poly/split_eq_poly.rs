@@ -4,7 +4,8 @@ use super::dense_mlpoly::DensePolynomial;
 use super::multilinear_polynomial::BindingOrder;
 use crate::field::MontU128;
 use crate::{field::JoltField, poly::eq_poly::EqPolynomial};
-use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::{Allocative, FlameGraphBuilder};
 
 // A struct holding the equality polynomial evaluations for use in sum-check, when incorporating
 /// both the Gruen and Dao-Thaler optimizations.

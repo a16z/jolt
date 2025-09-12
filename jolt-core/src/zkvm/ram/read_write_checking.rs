@@ -2,6 +2,7 @@ use std::{cell::RefCell, rc::Rc};
 
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 
+use crate::field::MontU128;
 use crate::{
     field::{JoltField, OptimizedMul},
     poly::{
@@ -22,13 +23,11 @@ use crate::{
         witness::{CommittedPolynomial, VirtualPolynomial},
     },
 };
-use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
 use tracer::instruction::RAMAccess;
-use crate::field::MontU128;
 
 /// A collection of vectors that are used in each of the first log(T / num_chunks)
 /// rounds of sumcheck. There is one `DataBuffers` struct per thread/chunk, reused

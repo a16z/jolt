@@ -1,12 +1,12 @@
-use allocative::Allocative;
 #[cfg(feature = "allocative")]
-use allocative::FlameGraphBuilder;
+use allocative::{Allocative, FlameGraphBuilder};
 use rayon::prelude::*;
 use std::{cell::RefCell, rc::Rc};
 use tracer::instruction::RV32IMCycle;
 
 use super::{D, K_CHUNK, LOG_K_CHUNK};
 
+use crate::field::MontU128;
 use crate::{
     field::JoltField,
     poly::{
@@ -31,7 +31,6 @@ use crate::{
         witness::{CommittedPolynomial, VirtualPolynomial},
     },
 };
-use crate::field::MontU128;
 
 const DEGREE: usize = 3;
 
@@ -67,7 +66,10 @@ impl<F: JoltField> BooleanitySumcheck<F> {
         for i in 1..D {
             gamma_powers[i] = gamma_powers[i - 1] * gamma;
         }
-        let r_address: Vec<MontU128> = sm.transcript.borrow_mut().challenge_vector_u128(LOG_K_CHUNK);
+        let r_address: Vec<MontU128> = sm
+            .transcript
+            .borrow_mut()
+            .challenge_vector_u128(LOG_K_CHUNK);
         let r_cycle = sm
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::LookupOutput,
@@ -104,7 +106,10 @@ impl<F: JoltField> BooleanitySumcheck<F> {
         for i in 1..D {
             gamma_powers[i] = gamma_powers[i - 1] * gamma;
         }
-        let r_address: Vec<MontU128> = sm.transcript.borrow_mut().challenge_vector_u128(LOG_K_CHUNK);
+        let r_address: Vec<MontU128> = sm
+            .transcript
+            .borrow_mut()
+            .challenge_vector_u128(LOG_K_CHUNK);
         Self {
             gamma: gamma_powers,
             prover_state: None,
@@ -116,7 +121,12 @@ impl<F: JoltField> BooleanitySumcheck<F> {
 }
 
 impl<F: JoltField> BooleanityProverState<F> {
-    fn new(trace: &[RV32IMCycle], G: [Vec<F>; D], r_address: &[MontU128], r_cycle: &[MontU128]) -> Self {
+    fn new(
+        trace: &[RV32IMCycle],
+        G: [Vec<F>; D],
+        r_address: &[MontU128],
+        r_cycle: &[MontU128],
+    ) -> Self {
         let B = GruenSplitEqPolynomial::new(r_address, BindingOrder::LowToHigh);
 
         let mut F: Vec<F> = unsafe_allocate_zero_vec(K_CHUNK);

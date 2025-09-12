@@ -1,12 +1,12 @@
+#[cfg(feature = "allocative")]
+use allocative::{Allocative, FlameGraphBuilder};
 use std::{cell::RefCell, rc::Rc};
 
-use allocative::Allocative;
-#[cfg(feature = "allocative")]
-use allocative::FlameGraphBuilder;
 use rayon::prelude::*;
 
 use super::{D, LOG_K_CHUNK};
 
+use crate::field::MontU128;
 use crate::{
     field::JoltField,
     poly::{
@@ -22,7 +22,6 @@ use crate::{
     zkvm::dag::state_manager::StateManager,
     zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
 };
-use crate::field::MontU128;
 
 const DEGREE: usize = 1;
 
