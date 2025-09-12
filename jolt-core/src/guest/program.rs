@@ -31,12 +31,16 @@ impl Program {
     }
 
     /// Trace the program execution with given inputs
-    pub fn trace(
+    pub fn trace(&self, inputs: &[u8]) -> (Vec<RV32IMCycle>, Memory, JoltDevice) {
+        trace(&self.elf_contents, inputs, &self.memory_config)
+    }
+
+    pub fn trace_to_file(
         &self,
-        memory_config: &MemoryConfig,
         inputs: &[u8],
-    ) -> (Vec<RV32IMCycle>, Memory, JoltDevice) {
-        trace(&self.elf_contents, inputs, memory_config)
+        trace_file: &std::path::PathBuf,
+    ) -> (Memory, JoltDevice) {
+        trace_to_file(&self.elf_contents, inputs, &self.memory_config, trace_file)
     }
 }
 
@@ -61,4 +65,15 @@ pub fn trace(
 ) -> (Vec<RV32IMCycle>, Memory, JoltDevice) {
     let (trace, memory, io_device) = tracer::trace(elf_contents, inputs, memory_config);
     (trace, memory, io_device)
+}
+
+pub fn trace_to_file(
+    elf_contents: &[u8],
+    inputs: &[u8],
+    memory_config: &MemoryConfig,
+    trace_file: &std::path::PathBuf,
+) -> (Memory, JoltDevice) {
+    let (memory, io_device) =
+        tracer::trace_to_file(elf_contents, inputs, memory_config, trace_file);
+    (memory, io_device)
 }
