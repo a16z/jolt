@@ -103,6 +103,8 @@ impl<F: JoltField> OneHotSumcheckState<F> {
 pub struct OneHotPolynomialProverOpening<F: JoltField> {
     pub log_T: usize,
     pub polynomial: OneHotPolynomial<F>,
+    /// First variable of r_cycle_prime
+    r_cycle_prime: Option<F>,
     pub eq_state: Arc<RwLock<OneHotSumcheckState<F>>>,
 }
 
@@ -113,6 +115,7 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
             log_T: 0,
             polynomial: OneHotPolynomial::default(),
             eq_state,
+            r_cycle_prime: None,
         }
     }
 
@@ -212,11 +215,17 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
             let d_gruen = &shared_eq.D;
             let eq_r_address_claim = B.final_sumcheck_claim();
             let H = &polynomial.H.read().unwrap();
+            let F_idx = |j: usize| -> F {
+                polynomial.nonzero_indices[j].map_or(F::zero(), |k| shared_eq.F[k])
+            };
+            let half_T = polynomial.nonzero_indices.len() / 2;
 
             // Retrieve ra(j , r') for first round using F, and H otherwise
             let ra_eval = |j: usize| -> F {
                 if round == polynomial.K.log_2() {
-                    polynomial.nonzero_indices[j].map_or(F::zero(), |k| shared_eq.F[k])
+                    F_idx(j)
+                } else if round == polynomial.K.log_2() + 1 {
+                    F_idx(j) + self.r_cycle_prime.unwrap() * (F_idx(j + half_T) - F_idx(j))
                 } else {
                     H.as_ref().unwrap().Z[j]
                 }
@@ -269,21 +278,27 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
             shared_eq.num_variables_bound += 1;
         }
 
-        // For the first log T round we want to use F still
+        // For the first two log T rounds we want to use F still
         if round == polynomial.K.log_2() {
+            self.r_cycle_prime = Some(r);
+        } else if round == polynomial.K.log_2() + 1 {
             let F = &shared_eq.F;
             let nonzero_indices = &polynomial.nonzero_indices;
             let half_T = nonzero_indices.len() / 2;
+            let quoter_T = nonzero_indices.len() / 4;
+            let r_prev = self.r_cycle_prime.unwrap();
+            let F_idx = |j: usize| -> F { nonzero_indices[j].map_or(F::zero(), |k| F[k]) };
 
             // Initialize H by binding F values
             let mut lock = polynomial.H.write().unwrap();
             if lock.as_ref().is_none() {
                 *lock = Some(DensePolynomial::new(
-                    (0..half_T)
+                    (0..quoter_T)
                         .into_par_iter()
                         .map(|j| {
-                            let h_0 = nonzero_indices[j].map_or(F::zero(), |k| F[k]);
-                            let h_1 = nonzero_indices[j + half_T].map_or(F::zero(), |k| F[k]);
+                            let h_0 = F_idx(j) + r_prev * (F_idx(j + half_T) - F_idx(j));
+                            let h_1 = F_idx(j + quoter_T)
+                                + r_prev * (F_idx(j + half_T + quoter_T) - F_idx(j + quoter_T));
                             h_0 + r * (h_1 - h_0)
                         })
                         .collect(),
@@ -294,7 +309,7 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
             drop_in_background_thread(g);
             let d_coeffs = mem::take(&mut shared_eq.D_coeffs_for_G);
             drop_in_background_thread(d_coeffs);
-        } else if round > polynomial.K.log_2() {
+        } else if round > polynomial.K.log_2() + 1 {
             // Bind H for subsequent T rounds
             let mut H = polynomial.H.write().unwrap();
             let H = H.as_mut().unwrap();
