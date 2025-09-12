@@ -46,8 +46,8 @@ pub fn naive_eval<F: JoltField>(polys: &[(F, F)]) -> Vec<F> {
     res
 }
 
-/// Evaluate product of linear polynomials on the "balanced" grid
-/// {0, 1, -1, 2, -2, …, ⌊n/2⌋, -(n/2) (if n odd), ∞}  (total n+1 points).
+/// Evaluate product of linear polynomials on the "balanced" grid.
+/// Points order for n ≥ 1: {0, 1, -1, 2, -2, …, ∞} (total n+1 points).
 /// Each input polynomial is given as (p(0), p(1)).
 /// Infinity point means the forward difference p(1)-p(0).
 fn balanced_grid<F>(n: usize) -> Vec<Option<F>>
@@ -60,14 +60,13 @@ where
         xs.push(None);
         return xs;
     }
-    xs.push(Some(F::one())); // 1
     let mut k = 1u64;
     while xs.len() < n {
-        k += 1;
-        xs.push(Some(F::from(k))); // +k
+        xs.push(Some(F::from(k))); // +k (1, 2, 3, ...)
         if xs.len() < n {
-            xs.push(Some(-F::from(k))); // -k
+            xs.push(Some(-F::from(k))); // -k (-1, -2, -3, ...)
         }
+        k += 1;
     }
     xs.push(None); // ∞
     xs
@@ -305,7 +304,7 @@ pub fn toom_3_inter<F: JoltField>(p: &[F; 5]) -> [F; 5] {
     let c2 = -p[0] + p[1] / F::from_u16(2) + p[2] / F::from_u16(2) - p[4];
     let c3 = p[0] / F::from_u16(2) - p[1] / F::from_u16(2) - p[2] / F::from_u16(6)
         + p[3] / F::from_u16(6)
-        - double(&p[2]);
+        - double(&p[4]);
     let c4 = p[4];
     [c0, c1, c2, c3, c4]
 }
