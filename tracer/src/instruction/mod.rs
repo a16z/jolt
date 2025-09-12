@@ -120,9 +120,9 @@ use virtual_srai::VirtualSRAI;
 use virtual_srl::VirtualSRL;
 use virtual_srli::VirtualSRLI;
 use virtual_sw::VirtualSW;
-use virtual_zero_extend_word::VirtualZeroExtendWord;
 use virtual_xor_rot::{VirtualXORROT16, VirtualXORROT24, VirtualXORROT32, VirtualXORROT63};
-use virtual_xor_rotw::{VirtualXORROTW16, VirtualXORROTW12, VirtualXORROTW8, VirtualXORROTW7};
+use virtual_xor_rotw::{VirtualXORROTW12, VirtualXORROTW16, VirtualXORROTW7, VirtualXORROTW8};
+use virtual_zero_extend_word::VirtualZeroExtendWord;
 
 use self::inline::INLINE;
 
@@ -593,7 +593,7 @@ define_rv32im_enums! {
         VirtualSRA, VirtualSRAI, VirtualSRL, VirtualSRLI,
         // XORROT
         VirtualXORROT32, VirtualXORROT24, VirtualXORROT16, VirtualXORROT63,
-        VirtualXORROTW16, VirtualXORROTW12, VirtualXORROTW8, VirtualXORROTW7, 
+        VirtualXORROTW16, VirtualXORROTW12, VirtualXORROTW8, VirtualXORROTW7,
     ]
 }
 

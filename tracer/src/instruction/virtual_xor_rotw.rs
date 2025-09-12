@@ -22,8 +22,8 @@ macro_rules! declare_xorrotw {
                         panic!("XORROTW instructions are not supported in 32-bit mode");
                     }
                     Xlen::Bit64 => {
-                        let rs1_val = cpu.x[self.operands.rs1 as usize] as u64 as u32;
-                        let rs2_val = cpu.x[self.operands.rs2 as usize] as u64 as u32;
+                        let rs1_val = cpu.x[self.operands.rs1 as usize] as u32;
+                        let rs2_val = cpu.x[self.operands.rs2 as usize] as u32;
                         let xor_result = rs1_val ^ rs2_val;
                         let rotated = xor_result.rotate_right($rotation);
                         cpu.x[self.operands.rd as usize] = rotated as i64;

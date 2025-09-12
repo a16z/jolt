@@ -14,8 +14,9 @@ use tracer::instruction::format::format_inline::FormatInline;
 use tracer::instruction::lui::LUI;
 use tracer::instruction::lw::LW;
 use tracer::instruction::sw::SW;
-use tracer::instruction::virtual_xor_rotw::{VirtualXORROTW12, VirtualXORROTW16, VirtualXORROTW7, VirtualXORROTW8};
-use tracer::instruction::xor::XOR;
+use tracer::instruction::virtual_xor_rotw::{
+    VirtualXORROTW12, VirtualXORROTW16, VirtualXORROTW7, VirtualXORROTW8,
+};
 use tracer::instruction::RV32IMInstruction;
 use tracer::utils::inline_helpers::{InstrAssembler, Value::Imm, Value::Reg};
 use tracer::utils::virtual_registers::VirtualRegisterGuard;
@@ -37,13 +38,6 @@ const COUNTER_START_VR: usize = 40;
 const INPUT_BYTES_VR: usize = 42;
 const FLAG_VR: usize = 43;
 const TEMP_VR: usize = 44;
-
-pub enum RotationAmount {
-    ROT16,
-    ROT12,
-    ROT8,
-    ROT7,
-}
 
 struct Blake3SequenceBuilder {
     asm: InstrAssembler,
@@ -150,26 +144,26 @@ impl Blake3SequenceBuilder {
         self.asm.add(Reg(temp1), Reg(mx), va);
 
         // v[d] = rotr32(v[d] ^ v[a], 16)
-        self.xor_rotate(vd, va, RotationAmount::ROT16, vd);
+        self.asm.emit_r::<VirtualXORROTW16>(vd, vd, va);
 
         // v[c] = v[c] + v[d]
         self.asm.add(Reg(vc), Reg(vd), vc);
 
         // v[b] = rotr32(v[b] ^ v[c], 12)
-        self.xor_rotate(vb, vc, RotationAmount::ROT12, vb);
+        self.asm.emit_r::<VirtualXORROTW12>(vb, vb, vc);
 
         // v[a] = v[a] + v[b] + m[y]
         self.asm.add(Reg(va), Reg(vb), temp1);
         self.asm.add(Reg(temp1), Reg(my), va);
 
         // v[d] = rotr32(v[d] ^ v[a], 8)
-        self.xor_rotate(vd, va, RotationAmount::ROT8, vd);
+        self.asm.emit_r::<VirtualXORROTW8>(vd, vd, va);
 
         // v[c] = v[c] + v[d]
         self.asm.add(Reg(vc), Reg(vd), vc);
 
         // v[b] = rotr32(v[b] ^ v[c], 7)
-        self.xor_rotate(vb, vc, RotationAmount::ROT7, vb);
+        self.asm.emit_r::<VirtualXORROTW7>(vb, vb, vc);
     }
 
     fn finalize_state(&mut self) {
@@ -204,40 +198,6 @@ impl Blake3SequenceBuilder {
                 (memory_offset_start + i) as i64 * 4,
             );
         });
-    }
-
-    /// XOR two registers, and then rotate right by the given amount.
-    fn xor_rotate(&mut self, rs1: u8, rs2: u8, amount: RotationAmount, rd: u8) {
-        match amount {
-            RotationAmount::ROT16 => {
-                self.asm.emit_r::<VirtualXORROTW16>(rd, rs1, rs2);
-            }
-            RotationAmount::ROT12 => {
-                self.asm.emit_r::<VirtualXORROTW12>(rd, rs1, rs2);
-            }
-            RotationAmount::ROT8 => {
-                self.asm.emit_r::<VirtualXORROTW8>(rd, rs1, rs2);
-            }
-            RotationAmount::ROT7 => {
-                self.asm.emit_r::<VirtualXORROTW7>(rd, rs1, rs2);
-            }
-        }
-
-        // self.asm.emit_r::<XOR>(rd, rs1, rs2);
-        // match amount {
-        //     RotationAmount::ROT16 => {
-        //         self.asm.rotri32(Reg(rd), 16, rd);
-        //     }
-        //     RotationAmount::ROT12 => {
-        //         self.asm.rotri32(Reg(rd), 12, rd);
-        //     }
-        //     RotationAmount::ROT8 => {
-        //         self.asm.rotri32(Reg(rd), 8, rd);
-        //     }
-        //     RotationAmount::ROT7 => {
-        //         self.asm.rotri32(Reg(rd), 7, rd);
-        //     }
-        // }
     }
 
     fn load_chaining_value(&mut self) {

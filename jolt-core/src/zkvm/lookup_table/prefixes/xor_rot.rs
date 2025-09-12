@@ -46,7 +46,7 @@ impl<const XLEN: usize, const ROTATION: u32, F: JoltField> SparseDensePrefix<F>
             result += F::from_u64(1 << shift) * xor_bit;
         }
 
-        // XOR remaining x and y bits
+        // Remaining x and y bits
         let (x, y) = b.uninterleave();
         let suffix_len = current_suffix_len(j);
 
@@ -56,7 +56,8 @@ impl<const XLEN: usize, const ROTATION: u32, F: JoltField> SparseDensePrefix<F>
             (XLEN as i32 + (suffix_len as i32 / 2 - ROTATION as i32)) as usize
         };
 
-        result += F::from_u64((u64::from(x) ^ u64::from(y)) << shift);
+        // Rotate left to position the XOR result bits correctly in the final output.
+        result += F::from_u64((u64::from(x) ^ u64::from(y)).rotate_left(shift as u32));
         result
     }
 
