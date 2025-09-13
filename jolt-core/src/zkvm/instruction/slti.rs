@@ -3,8 +3,7 @@ use tracer::instruction::{slti::SLTI, RISCVCycle};
 use crate::zkvm::lookup_table::{signed_less_than::SignedLessThanTable, LookupTables};
 
 use super::{
-    CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, U64OrI64,
-    NUM_CIRCUIT_FLAGS,
+    CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, U64OrI64, NUM_CIRCUIT_FLAGS,
 };
 
 impl<const XLEN: usize> InstructionLookup<XLEN> for SLTI {

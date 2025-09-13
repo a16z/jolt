@@ -3,8 +3,7 @@ use tracer::instruction::{virtual_shift_right_bitmaski::VirtualShiftRightBitmask
 use crate::zkvm::lookup_table::{shift_right_bitmask::ShiftRightBitmaskTable, LookupTables};
 
 use super::{
-    CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, U64OrI64,
-    NUM_CIRCUIT_FLAGS,
+    CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, U64OrI64, NUM_CIRCUIT_FLAGS,
 };
 
 impl<const XLEN: usize> InstructionLookup<XLEN> for VirtualShiftRightBitmaskI {

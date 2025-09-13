@@ -2,8 +2,7 @@ use crate::zkvm::lookup_table::{unsigned_less_than::UnsignedLessThanTable, Looku
 use tracer::instruction::{bltu::BLTU, RISCVCycle};
 
 use super::{
-    CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, U64OrI64,
-    NUM_CIRCUIT_FLAGS,
+    CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, U64OrI64, NUM_CIRCUIT_FLAGS,
 };
 
 impl<const XLEN: usize> InstructionLookup<XLEN> for BLTU {

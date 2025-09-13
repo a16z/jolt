@@ -2,9 +2,7 @@ use crate::zkvm::lookup_table::LookupTables;
 use crate::zkvm::{instruction::LookupQuery, lookup_table::range_check::RangeCheckTable};
 use tracer::instruction::{addi::ADDI, RISCVCycle};
 
-use super::{
-    CircuitFlags, InstructionFlags, InstructionLookup, U64OrI64, NUM_CIRCUIT_FLAGS,
-};
+use super::{CircuitFlags, InstructionFlags, InstructionLookup, U64OrI64, NUM_CIRCUIT_FLAGS};
 
 impl<const XLEN: usize> InstructionLookup<XLEN> for ADDI {
     fn lookup_table(&self) -> Option<LookupTables<XLEN>> {

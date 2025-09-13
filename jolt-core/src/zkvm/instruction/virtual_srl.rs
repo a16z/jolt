@@ -3,8 +3,7 @@ use tracer::instruction::{virtual_srl::VirtualSRL, RISCVCycle};
 use crate::zkvm::lookup_table::{virtual_srl::VirtualSRLTable, LookupTables};
 
 use super::{
-    CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, U64OrI64,
-    NUM_CIRCUIT_FLAGS,
+    CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, U64OrI64, NUM_CIRCUIT_FLAGS,
 };
 
 impl<const XLEN: usize> InstructionLookup<XLEN> for VirtualSRL {

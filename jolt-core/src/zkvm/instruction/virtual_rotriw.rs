@@ -3,8 +3,7 @@ use tracer::instruction::{virtual_rotriw::VirtualROTRIW, RISCVCycle};
 use crate::zkvm::lookup_table::{virtual_rotrw::VirtualRotrWTable, LookupTables};
 
 use super::{
-    CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, U64OrI64,
-    NUM_CIRCUIT_FLAGS,
+    CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, U64OrI64, NUM_CIRCUIT_FLAGS,
 };
 
 impl<const XLEN: usize> InstructionLookup<XLEN> for VirtualROTRIW {

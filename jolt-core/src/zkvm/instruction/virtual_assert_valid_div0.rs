@@ -3,8 +3,7 @@ use tracer::instruction::{virtual_assert_valid_div0::VirtualAssertValidDiv0, RIS
 use crate::zkvm::lookup_table::{valid_div0::ValidDiv0Table, LookupTables};
 
 use super::{
-    CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, U64OrI64,
-    NUM_CIRCUIT_FLAGS,
+    CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, U64OrI64, NUM_CIRCUIT_FLAGS,
 };
 
 impl<const XLEN: usize> InstructionLookup<XLEN> for VirtualAssertValidDiv0 {

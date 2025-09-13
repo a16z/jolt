@@ -3,8 +3,7 @@ use tracer::instruction::{mulhu::MULHU, RISCVCycle};
 use crate::zkvm::lookup_table::{upper_word::UpperWordTable, LookupTables};
 
 use super::{
-    CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, U64OrI64,
-    NUM_CIRCUIT_FLAGS,
+    CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, U64OrI64, NUM_CIRCUIT_FLAGS,
 };
 
 impl<const XLEN: usize> InstructionLookup<XLEN> for MULHU {

@@ -27,9 +27,7 @@ use crate::{
     },
 };
 
-use super::instruction::{
-    CircuitFlags, InstructionFlags, LookupQuery, U128OrI128, U64OrI64,
-};
+use super::instruction::{CircuitFlags, InstructionFlags, LookupQuery, U128OrI128, U64OrI64};
 
 struct SharedWitnessData(UnsafeCell<WitnessData>);
 unsafe impl Sync for SharedWitnessData {}
@@ -517,12 +515,8 @@ impl CommittedPolynomial {
                         let (left_input, right_input) =
                             LookupQuery::<XLEN>::to_instruction_inputs(cycle);
                         match right_input {
-                            U64OrI64::Unsigned(r) => {
-                                F::from_u128(left_input as u128 * r as u128)
-                            }
-                            U64OrI64::Signed(r) => {
-                                F::from_i128(left_input as i128 * r as i128)
-                            }
+                            U64OrI64::Unsigned(r) => F::from_u128(left_input as u128 * r as u128),
+                            U64OrI64::Signed(r) => F::from_i128(left_input as i128 * r as i128),
                         }
                     })
                     .collect();

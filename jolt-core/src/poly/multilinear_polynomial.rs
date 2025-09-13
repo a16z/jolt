@@ -1,8 +1,8 @@
+use crate::utils::types::{U128OrI128, U64OrI64};
 use crate::{
     poly::{one_hot_polynomial::OneHotPolynomial, rlc_polynomial::RLCPolynomial},
     utils::compute_dotproduct,
 };
-use crate::utils::types::{U128OrI128, U64OrI64};
 use allocative::Allocative;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Valid};
 use rayon::prelude::*;

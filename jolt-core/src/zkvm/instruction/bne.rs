@@ -3,8 +3,7 @@ use tracer::instruction::{bne::BNE, RISCVCycle};
 use crate::zkvm::lookup_table::{not_equal::NotEqualTable, LookupTables};
 
 use super::{
-    CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, U64OrI64,
-    NUM_CIRCUIT_FLAGS,
+    CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, U64OrI64, NUM_CIRCUIT_FLAGS,
 };
 
 impl<const XLEN: usize> InstructionLookup<XLEN> for BNE {

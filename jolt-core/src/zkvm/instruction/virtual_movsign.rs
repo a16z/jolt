@@ -3,8 +3,7 @@ use tracer::instruction::{virtual_movsign::VirtualMovsign, RISCVCycle};
 use crate::zkvm::lookup_table::{movsign::MovsignTable, LookupTables};
 
 use super::{
-    CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, U64OrI64,
-    NUM_CIRCUIT_FLAGS,
+    CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, U64OrI64, NUM_CIRCUIT_FLAGS,
 };
 
 impl<const XLEN: usize> InstructionLookup<XLEN> for VirtualMovsign {
