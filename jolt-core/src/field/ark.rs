@@ -165,6 +165,8 @@ impl JoltField for ark_bn254::Fr {
             Self::zero()
         } else if n == 1 {
             *self
+        } else if self.is_one() {
+            <Self as JoltField>::from_u64(n)
         } else {
             ark_ff::Fp::mul_u64(*self, n)
         }
