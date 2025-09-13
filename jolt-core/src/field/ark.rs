@@ -1,3 +1,4 @@
+use super::{FieldOps, JoltField};
 use crate::field::MontU128;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use ark_ff::{prelude::*, BigInt, PrimeField, UniformRand};
@@ -265,6 +266,56 @@ impl core::ops::MulAssign<MontU128> for ark_bn254::Fr {
     }
 }
 
+// --- Add ---
+impl core::ops::Add<MontU128> for ark_bn254::Fr {
+    type Output = Self;
+    #[inline(always)]
+    fn add(self, rhs: MontU128) -> Self::Output {
+        self + Self::from_u128_mont(rhs)
+    }
+}
+
+impl core::ops::Add<MontU128> for &ark_bn254::Fr {
+    type Output = ark_bn254::Fr;
+    #[inline(always)]
+    fn add(self, rhs: MontU128) -> Self::Output {
+        // Here Self is &ark_bn254::Fr, not ark_bn254::Fr.
+        // so we need the explicit type and not Self::from_u128_form
+        *self + ark_bn254::Fr::from_u128_mont(rhs)
+    }
+}
+
+impl core::ops::AddAssign<MontU128> for ark_bn254::Fr {
+    #[inline(always)]
+    fn add_assign(&mut self, rhs: MontU128) {
+        *self += Self::from_u128_mont(rhs);
+    }
+}
+
+// --- Sub ---
+impl core::ops::Sub<MontU128> for ark_bn254::Fr {
+    type Output = Self;
+    #[inline(always)]
+    fn sub(self, rhs: MontU128) -> Self::Output {
+        self - Self::from_u128_mont(rhs)
+    }
+}
+
+impl core::ops::Sub<MontU128> for &ark_bn254::Fr {
+    type Output = ark_bn254::Fr;
+    #[inline(always)]
+    fn sub(self, rhs: MontU128) -> Self::Output {
+        *self - <ark_bn254::Fr as JoltField>::from_u128_mont(rhs)
+    }
+}
+
+impl core::ops::SubAssign<MontU128> for ark_bn254::Fr {
+    #[inline(always)]
+    fn sub_assign(&mut self, rhs: MontU128) {
+        *self = *self - Self::from_u128_mont(rhs);
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -315,7 +366,15 @@ mod tests {
             let b = Fr::from_u128_mont(x);
             let lhs = a * b;
             let rhs = a.mul_u128_mont_form(x);
+            let rhs_two = a * x;
             assert_eq!(lhs, rhs);
+            assert_eq!(lhs, rhs_two);
+
+            let x = MontU128::from(rng.gen::<u128>());
+            let y = MontU128::from(rng.gen::<u128>());
+            let ans1 = (a - y) * x;
+            let ans2 = (a - Fr::from_u128_mont(y)).mul_u128_mont_form(x);
+            assert_eq!(ans1, ans2);
         }
     }
 }
