@@ -6,10 +6,22 @@
 ///
 /// Helper methods provide width-aware projections to `u64`/`i64` and a
 /// canonical unsigned representation for lookup key construction.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+
+use allocative::Allocative;
+use ark_serialize::{
+    CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Validate, Valid,
+};
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Allocative)]
 pub enum U64OrI64 {
     Unsigned(u64),
     Signed(i64),
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Allocative)]
+pub enum U128OrI128 {
+    Unsigned(u128),
+    Signed(i128),
 }
 
 impl U64OrI64 {
@@ -92,10 +104,188 @@ impl U64OrI64 {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum U128OrI128 {
-    Unsigned(u128),
-    Signed(i128),
+impl U128OrI128 {
+    #[inline]
+    pub fn as_u128(&self) -> u128 {
+        match *self {
+            U128OrI128::Unsigned(u) => u,
+            U128OrI128::Signed(s) => s as u128,
+        }
+    }
+
+    #[inline]
+    pub fn as_i128(&self) -> i128 {
+        match *self {
+            U128OrI128::Unsigned(u) => u as i128,
+            U128OrI128::Signed(s) => s,
+        }
+    }
+}
+
+impl core::cmp::PartialOrd for U64OrI64 {
+    #[inline]
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl core::cmp::Ord for U64OrI64 {
+    #[inline]
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        match (self, other) {
+            (U64OrI64::Unsigned(a), U64OrI64::Unsigned(b)) => a.cmp(b),
+            (U64OrI64::Signed(a), U64OrI64::Signed(b)) => a.cmp(b),
+            (U64OrI64::Unsigned(a), U64OrI64::Signed(b)) => {
+                if *b < 0 { core::cmp::Ordering::Greater } else { a.cmp(&(*b as u64)) }
+            }
+            (U64OrI64::Signed(a), U64OrI64::Unsigned(b)) => {
+                if *a < 0 { core::cmp::Ordering::Less } else { (*a as u64).cmp(b) }
+            }
+        }
+    }
+}
+
+impl core::cmp::PartialOrd for U128OrI128 {
+    #[inline]
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl core::cmp::Ord for U128OrI128 {
+    #[inline]
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        match (self, other) {
+            (U128OrI128::Unsigned(a), U128OrI128::Unsigned(b)) => a.cmp(b),
+            (U128OrI128::Signed(a), U128OrI128::Signed(b)) => a.cmp(b),
+            (U128OrI128::Unsigned(a), U128OrI128::Signed(b)) => {
+                if *b < 0 { core::cmp::Ordering::Greater } else { a.cmp(&(*b as u128)) }
+            }
+            (U128OrI128::Signed(a), U128OrI128::Unsigned(b)) => {
+                if *a < 0 { core::cmp::Ordering::Less } else { (*a as u128).cmp(b) }
+            }
+        }
+    }
+}
+
+impl Default for U64OrI64 {
+    fn default() -> Self {
+        U64OrI64::Unsigned(0)
+    }
+}
+
+impl Default for U128OrI128 {
+    fn default() -> Self {
+        U128OrI128::Unsigned(0)
+    }
+}
+
+impl Valid for U64OrI64 {
+    fn check(&self) -> Result<(), SerializationError> {
+        Ok(())
+    }
+}
+
+impl Valid for U128OrI128 {
+    fn check(&self) -> Result<(), SerializationError> {
+        Ok(())
+    }
+}
+
+impl CanonicalSerialize for U64OrI64 {
+    fn serialize_with_mode<W: std::io::Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        match self {
+            U64OrI64::Unsigned(u) => {
+                0u8.serialize_with_mode(&mut writer, compress)?;
+                u.serialize_with_mode(writer, compress)
+            }
+            U64OrI64::Signed(s) => {
+                1u8.serialize_with_mode(&mut writer, compress)?;
+                s.serialize_with_mode(writer, compress)
+            }
+        }
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        0u8.serialized_size(compress)
+            + match self {
+                U64OrI64::Unsigned(u) => u.serialized_size(compress),
+                U64OrI64::Signed(s) => s.serialized_size(compress),
+            }
+    }
+}
+
+impl CanonicalDeserialize for U64OrI64 {
+    fn deserialize_with_mode<R: std::io::Read>(
+        mut reader: R,
+        compress: Compress,
+        _validate: Validate,
+    ) -> Result<Self, SerializationError> {
+        let tag = u8::deserialize_with_mode(&mut reader, compress, Validate::No)?;
+        match tag {
+            0 => {
+                let u = u64::deserialize_with_mode(reader, compress, Validate::No)?;
+                Ok(U64OrI64::Unsigned(u))
+            }
+            1 => {
+                let s = i64::deserialize_with_mode(reader, compress, Validate::No)?;
+                Ok(U64OrI64::Signed(s))
+            }
+            _ => Err(SerializationError::InvalidData),
+        }
+    }
+}
+
+impl CanonicalSerialize for U128OrI128 {
+    fn serialize_with_mode<W: std::io::Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        match self {
+            U128OrI128::Unsigned(u) => {
+                0u8.serialize_with_mode(&mut writer, compress)?;
+                u.serialize_with_mode(writer, compress)
+            }
+            U128OrI128::Signed(s) => {
+                1u8.serialize_with_mode(&mut writer, compress)?;
+                s.serialize_with_mode(writer, compress)
+            }
+        }
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        0u8.serialized_size(compress)
+            + match self {
+                U128OrI128::Unsigned(u) => u.serialized_size(compress),
+                U128OrI128::Signed(s) => s.serialized_size(compress),
+            }
+    }
+}
+
+impl CanonicalDeserialize for U128OrI128 {
+    fn deserialize_with_mode<R: std::io::Read>(
+        mut reader: R,
+        compress: Compress,
+        _validate: Validate,
+    ) -> Result<Self, SerializationError> {
+        let tag = u8::deserialize_with_mode(&mut reader, compress, Validate::No)?;
+        match tag {
+            0 => {
+                let u = u128::deserialize_with_mode(reader, compress, Validate::No)?;
+                Ok(U128OrI128::Unsigned(u))
+            }
+            1 => {
+                let s = i128::deserialize_with_mode(reader, compress, Validate::No)?;
+                Ok(U128OrI128::Signed(s))
+            }
+            _ => Err(SerializationError::InvalidData),
+        }
+    }
 }
 
 #[cfg(test)]

@@ -827,9 +827,6 @@ where
                 .collect(),
             MultilinearPolynomial::RLC(poly) => poly.commit_rows(&bases[..row_len]),
             MultilinearPolynomial::OneHot(poly) => poly.commit_rows(&bases[..row_len]),
-            // MultilinearPolynomial::RightInputScalars(_) | MultilinearPolynomial::ProductScalars(_) => {
-            //     todo!("MSM for U64OrI64/U128OrI128 CompactPolynomial not yet implemented")
-            // }
         }
     }
 

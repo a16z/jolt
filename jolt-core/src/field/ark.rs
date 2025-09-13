@@ -165,10 +165,19 @@ impl JoltField for ark_bn254::Fr {
             Self::zero()
         } else if n == 1 {
             *self
-        } else if self.is_one() {
-            <Self as JoltField>::from_u64(n)
         } else {
             ark_ff::Fp::mul_u64(*self, n)
+        }
+    }
+
+    #[inline(always)]
+    fn mul_i64(&self, n: i64) -> Self {
+        if n == 0 || self.is_zero() {
+            Self::zero()
+        } else if n == 1 {
+            *self
+        } else {
+            ark_ff::Fp::mul_i64(*self, n)
         }
     }
 
@@ -178,8 +187,6 @@ impl JoltField for ark_bn254::Fr {
             Self::zero()
         } else if n == 1 {
             *self
-        } else if self.is_one() {
-            <Self as JoltField>::from_i128(n)
         } else {
             ark_ff::Fp::mul_i128(*self, n)
         }
