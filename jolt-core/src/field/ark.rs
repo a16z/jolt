@@ -189,6 +189,8 @@ impl JoltField for ark_bn254::Fr {
             Self::zero()
         } else if n == 1 {
             *self
+        } else if self.is_one() {
+            <Self as JoltField>::from_i128(n)
         } else {
             ark_ff::Fp::mul_i128(*self, n)
         }
