@@ -1,3 +1,5 @@
+use super::{PrefixCheckpoint, SparseDensePrefix};
+use crate::field::MontU128;
 use crate::zkvm::instruction_lookups::read_raf_checking::current_suffix_len;
 use crate::{field::JoltField, utils::lookup_bits::LookupBits};
 
@@ -21,8 +23,8 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for LsbPrefix<XLEN> {
 
     fn update_prefix_checkpoint(
         _: &[PrefixCheckpoint<F>],
-        _: F,
-        r_y: F,
+        _: MontU128,
+        r_y: MontU128,
         j: usize,
     ) -> PrefixCheckpoint<F> {
         if j == 2 * XLEN - 1 {

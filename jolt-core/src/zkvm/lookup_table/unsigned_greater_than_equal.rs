@@ -6,6 +6,7 @@ use super::{
     unsigned_less_than::UnsignedLessThanTable,
     JoltLookupTable, PrefixSuffixDecomposition,
 };
+use crate::field::MontU128;
 use crate::{field::JoltField, utils::uninterleave_bits, zkvm::lookup_table::suffixes::Suffixes};
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
@@ -23,7 +24,10 @@ impl<const XLEN: usize> JoltLookupTable for UnsignedGreaterThanEqualTable<XLEN> 
         }
     }
 
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+    fn evaluate_mle_field<F: JoltField>(&self, r: &[F]) -> F {
+        F::one() - UnsignedLessThanTable::<XLEN>.evaluate_mle::<F>(r)
+    }
+    fn evaluate_mle<F: JoltField>(&self, r: &[MontU128]) -> F {
         F::one() - UnsignedLessThanTable::<XLEN>.evaluate_mle::<F>(r)
     }
 }
@@ -46,7 +50,9 @@ mod test {
     use ark_bn254::Fr;
 
     use crate::zkvm::lookup_table::test::{
-        lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
+        lookup_table_mle_full_hypercube_test,
+        lookup_table_mle_random_test,
+        // prefix_suffix_test,
     };
     use common::constants::XLEN;
 

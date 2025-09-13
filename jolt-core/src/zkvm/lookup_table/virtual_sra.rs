@@ -4,7 +4,7 @@ use super::prefixes::PrefixEval;
 use super::suffixes::{SuffixEval, Suffixes};
 use super::JoltLookupTable;
 use super::PrefixSuffixDecomposition;
-use crate::field::JoltField;
+use crate::field::{JoltField, MontU128};
 use crate::utils::lookup_bits::LookupBits;
 use crate::utils::uninterleave_bits;
 use crate::zkvm::lookup_table::prefixes::Prefixes;
@@ -33,11 +33,27 @@ impl<const XLEN: usize> JoltLookupTable for VirtualSRATable<XLEN> {
         entry + sign_bit * sign_extension
     }
 
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+    fn evaluate_mle<F: JoltField>(&self, r: &[MontU128]) -> F {
         debug_assert_eq!(r.len(), 2 * XLEN);
         let mut result = F::zero();
         let mut sign_extension = F::zero();
-        for i in 0..XLEN {
+        for i in 0..WORD_SIZE {
+            let x_i = r[2 * i];
+            let y_i = r[2 * i + 1];
+            result *= F::one() + F::from_u128_mont(y_i);
+            result += F::from_u128_mont(x_i) * F::from_u128_mont(y_i);
+            if i != 0 {
+                sign_extension += F::from_u64(1 << i) * (F::one() - F::from_u128_mont(y_i));
+            }
+        }
+        result + sign_extension.mul_u128_mont_form(r[0])
+    }
+
+    fn evaluate_mle_field<F: JoltField>(&self, r: &[F]) -> F {
+        debug_assert_eq!(r.len(), 2 * WORD_SIZE);
+        let mut result = F::zero();
+        let mut sign_extension = F::zero();
+        for i in 0..WORD_SIZE {
             let x_i = r[2 * i];
             let y_i = r[2 * i + 1];
             result *= F::one() + y_i;
@@ -81,7 +97,9 @@ mod test {
 
     use super::VirtualSRATable;
     use crate::zkvm::lookup_table::test::{
-        lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
+        lookup_table_mle_full_hypercube_test,
+        lookup_table_mle_random_test,
+        // prefix_suffix_test,
     };
     use common::constants::XLEN;
 

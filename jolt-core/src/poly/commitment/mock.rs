@@ -3,14 +3,14 @@ use std::marker::PhantomData;
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
+use super::commitment_scheme::CommitmentScheme;
+use crate::field::MontU128;
 use crate::{
     field::JoltField,
     poly::multilinear_polynomial::MultilinearPolynomial,
     transcripts::{AppendToTranscript, Transcript},
     utils::errors::ProofVerifyError,
 };
-
-use super::commitment_scheme::CommitmentScheme;
 
 #[derive(Clone)]
 pub struct MockCommitScheme<F: JoltField> {
@@ -29,8 +29,8 @@ impl<F: JoltField> AppendToTranscript for MockCommitment<F> {
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Clone, Debug)]
-pub struct MockProof<F: JoltField> {
-    opening_point: Vec<F>,
+pub struct MockProof {
+    opening_point: Vec<MontU128>,
 }
 
 impl<F> CommitmentScheme for MockCommitScheme<F>
@@ -41,8 +41,8 @@ where
     type ProverSetup = ();
     type VerifierSetup = ();
     type Commitment = MockCommitment<F>;
-    type Proof = MockProof<F>;
-    type BatchedProof = MockProof<F>;
+    type Proof = MockProof;
+    type BatchedProof = MockProof;
     type OpeningProofHint = ();
 
     fn setup_prover(_num_vars: usize) -> Self::ProverSetup {}
@@ -82,7 +82,7 @@ where
     fn prove<ProofTranscript: Transcript>(
         _setup: &Self::ProverSetup,
         _poly: &MultilinearPolynomial<Self::Field>,
-        opening_point: &[Self::Field],
+        opening_point: &[MontU128],
         _: Self::OpeningProofHint,
         _transcript: &mut ProofTranscript,
     ) -> Self::Proof {
@@ -95,7 +95,7 @@ where
         proof: &Self::Proof,
         _setup: &Self::VerifierSetup,
         _transcript: &mut ProofTranscript,
-        opening_point: &[Self::Field],
+        opening_point: &[MontU128],
         _opening: &Self::Field,
         _commitment: &Self::Commitment,
     ) -> Result<(), ProofVerifyError> {

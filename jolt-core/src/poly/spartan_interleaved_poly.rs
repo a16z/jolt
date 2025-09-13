@@ -1,6 +1,7 @@
 use super::{
     eq_poly::EqPolynomial, split_eq_poly::GruenSplitEqPolynomial, unipoly::CompressedUniPoly,
 };
+use crate::field::MontU128;
 use crate::subprotocols::sumcheck::process_eq_sumcheck_round;
 use crate::{
     field::{JoltField, OptimizedMul},
@@ -109,7 +110,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
     pub fn new_with_precompute(
         const_rows: &'static [Constraint],
         accessor: &dyn WitnessRowAccessor<F>,
-        tau: &[F],
+        tau: &[MontU128],
     ) -> ([F; NUM_ACCUMS_EVAL_ZERO], [F; NUM_ACCUMS_EVAL_INFTY], Self) {
         // Variable layout and binding order (MSB -> LSB):
         // 0 ... (N/2 - l) ... (n_s) ... (N - l) ... (N - i - 1) ... (N - 1)
@@ -170,8 +171,9 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
         let num_uniform_r1cs_constraints = const_rows.len();
         let rem_num_uniform_r1cs_constraints = num_uniform_r1cs_constraints % Y_SVO_SPACE_SIZE;
 
-        // Build split-eq helper and precompute E_in (over x_in) and E_out (over x_out)
-        let eq_poly = GruenSplitEqPolynomial::new_for_small_value(
+        // --- Setup: E_in and E_out tables ---
+        // Call GruenSplitEqPolynomial::new_for_small_value with the determined variable splits.
+        let eq_poly = GruenSplitEqPolynomial::<F>::new_for_small_value(
             tau,
             iter_num_x_out_vars,
             iter_num_x_in_vars,
@@ -415,7 +417,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
         &mut self,
         eq_poly: &mut GruenSplitEqPolynomial<F>,
         transcript: &mut ProofTranscript,
-        r_challenges: &mut Vec<F>,
+        r_challenges: &mut Vec<MontU128>,
         round_polys: &mut Vec<CompressedUniPoly<F>>,
         claim: &mut F,
     ) {
@@ -426,7 +428,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
         );
         let mut r_rev = r_challenges.clone();
         r_rev.reverse();
-        let eq_r_evals = EqPolynomial::evals(&r_rev);
+        let eq_r_evals = EqPolynomial::<F>::evals(&r_rev);
 
         struct StreamingTaskOutput<F: JoltField> {
             bound_coeffs_local: Vec<SparseCoefficient<F>>,
@@ -676,7 +678,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
 
                     let new_block_idx = block_idx_for_6_coeffs;
 
-                    let bound_az = az0 + r_i * (az1 - az0);
+                    let bound_az = az0 + (az1 - az0).mul_u128_mont_form(r_i);
                     if !bound_az.is_zero() {
                         if current_output_idx_in_slice < output_slice_for_task.len() {
                             output_slice_for_task[current_output_idx_in_slice] =
@@ -684,7 +686,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                         }
                         current_output_idx_in_slice += 1;
                     }
-                    let bound_bz = bz0 + r_i * (bz1 - bz0);
+                    let bound_bz = bz0 + (bz1 - bz0).mul_u128_mont_form(r_i);
                     if !bound_bz.is_zero() {
                         if current_output_idx_in_slice < output_slice_for_task.len() {
                             output_slice_for_task[current_output_idx_in_slice] =
@@ -692,7 +694,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                         }
                         current_output_idx_in_slice += 1;
                     }
-                    let bound_cz = cz0 + r_i * (cz1 - cz0);
+                    let bound_cz = cz0 + (cz1 - cz0).mul_u128_mont_form(r_i);
                     if !bound_cz.is_zero() {
                         if current_output_idx_in_slice < output_slice_for_task.len() {
                             output_slice_for_task[current_output_idx_in_slice] =
@@ -737,7 +739,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
         &mut self,
         eq_poly: &mut GruenSplitEqPolynomial<F>,
         transcript: &mut ProofTranscript,
-        r_challenges: &mut Vec<F>,
+        r_challenges: &mut Vec<MontU128>,
         round_polys: &mut Vec<CompressedUniPoly<F>>,
         current_claim: &mut F,
     ) {
@@ -909,7 +911,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                             az_coeff.1.unwrap_or(F::zero()),
                         );
                         output_slice[output_index] =
-                            (3 * block_index, low + r_i * (high - low)).into();
+                            (3 * block_index, low + (high - low).mul_u128_mont_form(r_i)).into();
                         output_index += 1;
                     }
                     if bz_coeff != (None, None) {
@@ -917,8 +919,11 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                             bz_coeff.0.unwrap_or(F::zero()),
                             bz_coeff.1.unwrap_or(F::zero()),
                         );
-                        output_slice[output_index] =
-                            (3 * block_index + 1, low + r_i * (high - low)).into();
+                        output_slice[output_index] = (
+                            3 * block_index + 1,
+                            low + (high - low).mul_u128_mont_form(r_i),
+                        )
+                            .into();
                         output_index += 1;
                     }
                     if cz_coeff != (None, None) {
@@ -926,8 +931,11 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                             cz_coeff.0.unwrap_or(F::zero()),
                             cz_coeff.1.unwrap_or(F::zero()),
                         );
-                        output_slice[output_index] =
-                            (3 * block_index + 2, low + r_i * (high - low)).into();
+                        output_slice[output_index] = (
+                            3 * block_index + 2,
+                            low + (high - low).mul_u128_mont_form(r_i),
+                        )
+                            .into();
                         output_index += 1;
                     }
                 }

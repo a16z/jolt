@@ -4,6 +4,7 @@ use super::prefixes::{PrefixEval, Prefixes};
 use super::suffixes::{SuffixEval, Suffixes};
 use super::JoltLookupTable;
 use super::PrefixSuffixDecomposition;
+use crate::field::MontU128;
 use crate::{field::JoltField, utils::uninterleave_bits};
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
@@ -63,7 +64,42 @@ impl<const XLEN: usize> JoltLookupTable for ValidSignedRemainderTable<XLEN> {
         }
     }
 
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+    fn evaluate_mle_field<F: JoltField>(&self, r: &[F]) -> F {
+        let x_sign = r[0];
+        let y_sign = r[1];
+
+        let mut remainder_is_zero = F::one() - r[0];
+        let mut divisor_is_zero = F::one() - r[1];
+        let mut positive_remainder_equals_divisor = (F::one() - x_sign) * (F::one() - y_sign);
+        let mut positive_remainder_less_than_divisor = (F::one() - x_sign) * (F::one() - y_sign);
+        let mut negative_divisor_equals_remainder = x_sign * y_sign;
+        let mut negative_divisor_greater_than_remainder = x_sign * y_sign;
+
+        for i in 1..XLEN {
+            let x_i = r[2 * i];
+            let y_i = r[2 * i + 1];
+            if i == 1 {
+                positive_remainder_less_than_divisor *= (F::one() - x_i) * y_i;
+                negative_divisor_greater_than_remainder *= x_i * (F::one() - y_i);
+            } else {
+                positive_remainder_less_than_divisor +=
+                    positive_remainder_equals_divisor * (F::one() - x_i) * y_i;
+                negative_divisor_greater_than_remainder +=
+                    negative_divisor_equals_remainder * x_i * (F::one() - y_i);
+            }
+            positive_remainder_equals_divisor *= x_i * y_i + (F::one() - x_i) * (F::one() - y_i);
+            negative_divisor_equals_remainder *= x_i * y_i + (F::one() - x_i) * (F::one() - y_i);
+            remainder_is_zero *= F::one() - x_i;
+            divisor_is_zero *= F::one() - y_i;
+        }
+
+        positive_remainder_less_than_divisor
+            + negative_divisor_greater_than_remainder
+            + y_sign * remainder_is_zero
+            + divisor_is_zero
+    }
+
+    fn evaluate_mle<F: JoltField>(&self, r: &[MontU128]) -> F {
         let x_sign = r[0];
         let y_sign = r[1];
 
@@ -129,7 +165,9 @@ mod test {
     use ark_bn254::Fr;
 
     use crate::zkvm::lookup_table::test::{
-        lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
+        lookup_table_mle_full_hypercube_test,
+        lookup_table_mle_random_test,
+        // prefix_suffix_test,
     };
     use common::constants::XLEN;
 

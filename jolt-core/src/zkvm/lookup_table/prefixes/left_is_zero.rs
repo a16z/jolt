@@ -1,11 +1,35 @@
-use crate::{field::JoltField, utils::lookup_bits::LookupBits};
-
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
+use crate::field::MontU128;
+use crate::{field::JoltField, utils::lookup_bits::LookupBits};
 
 pub enum LeftOperandIsZeroPrefix {}
 
 impl<F: JoltField> SparseDensePrefix<F> for LeftOperandIsZeroPrefix {
     fn prefix_mle(
+        checkpoints: &[PrefixCheckpoint<F>],
+        r_x: Option<MontU128>,
+        c: u32,
+        b: LookupBits,
+        _: usize,
+    ) -> F {
+        let (x, _) = b.uninterleave();
+        // Short-circuit if low-order bits of `x` are not 0s
+        if u64::from(x) != 0 {
+            return F::zero();
+        }
+
+        let mut result = checkpoints[Prefixes::LeftOperandIsZero].unwrap_or(F::one());
+
+        if let Some(r_x) = r_x {
+            result *= F::one() - F::from_u128_mont(r_x);
+        } else {
+            let x = F::from_u8(c as u8);
+            result *= F::one() - x;
+        }
+        result
+    }
+
+    fn prefix_mle_field(
         checkpoints: &[PrefixCheckpoint<F>],
         r_x: Option<F>,
         c: u32,
@@ -31,13 +55,13 @@ impl<F: JoltField> SparseDensePrefix<F> for LeftOperandIsZeroPrefix {
 
     fn update_prefix_checkpoint(
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: F,
-        _: F,
+        r_x: MontU128,
+        _: MontU128,
         _: usize,
     ) -> PrefixCheckpoint<F> {
         // checkpoint *= (1 - r_x)
-        let updated =
-            checkpoints[Prefixes::LeftOperandIsZero].unwrap_or(F::one()) * (F::one() - r_x);
+        let updated = checkpoints[Prefixes::LeftOperandIsZero].unwrap_or(F::one())
+            * (F::one() - F::from_u128_mont(r_x));
         Some(updated).into()
     }
 }

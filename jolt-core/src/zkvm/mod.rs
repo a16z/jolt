@@ -366,6 +366,8 @@ impl Serializable for JoltDevice {}
 
 #[cfg(test)]
 mod tests {
+    use std::time::Instant;
+
     use ark_bn254::Fr;
 
     use crate::host;
@@ -422,10 +424,15 @@ mod tests {
             init_memory_state,
             1 << 16,
         );
+
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
+
+        let start = Instant::now();
         let (jolt_proof, io_device, debug_info) =
             JoltRV32IM::prove(&preprocessing, elf_contents, &inputs);
+        let end = start.elapsed();
+        println!("Time end: {}", end.as_millis());
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let verification_result =
@@ -459,8 +466,12 @@ mod tests {
         );
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
+
+        let start = Instant::now();
         let (jolt_proof, io_device, debug_info) =
             JoltRV32IM::prove(&preprocessing, elf_contents, &inputs);
+        let end = start.elapsed();
+        println!("Time end: {}", end.as_millis());
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let verification_result =

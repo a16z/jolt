@@ -1,9 +1,9 @@
-use allocative::Allocative;
 #[cfg(feature = "allocative")]
-use allocative::FlameGraphBuilder;
+use allocative::{Allocative, FlameGraphBuilder};
 use rayon::prelude::*;
 use std::{cell::RefCell, rc::Rc};
 
+use crate::field::MontU128;
 use crate::{
     field::JoltField,
     poly::{
@@ -29,7 +29,7 @@ use crate::{
     },
 };
 
-#[derive(Allocative)]
+#[cfg_attr(feature = "allocative", derive(Allocative))]
 struct BooleanityProverState<F: JoltField> {
     /// B polynomial (GruenSplitEqPolynomial)
     B: GruenSplitEqPolynomial<F>,
@@ -45,12 +45,12 @@ struct BooleanityProverState<F: JoltField> {
     eq_r_r: F,
 }
 
-#[derive(Allocative)]
+#[cfg_attr(feature = "allocative", derive(Allocative))]
 pub struct BooleanitySumcheck<F: JoltField> {
     T: usize,
     d: usize,
-    r_address: Vec<F>,
-    r_cycle: Vec<F>,
+    r_address: Vec<MontU128>,
+    r_cycle: Vec<MontU128>,
     gamma_powers: Vec<F>,
     prover_state: Option<BooleanityProverState<F>>,
     current_round: usize,
@@ -73,17 +73,17 @@ impl<F: JoltField> BooleanitySumcheck<F> {
         let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
         let chunk_size = (T / num_chunks).max(1);
 
-        let r_cycle: Vec<F> = state_manager
+        let r_cycle: Vec<MontU128> = state_manager
             .transcript
             .borrow_mut()
-            .challenge_vector(T.log_2());
+            .challenge_vector_u128(T.log_2());
 
-        let r_address: Vec<F> = state_manager
+        let r_address: Vec<MontU128> = state_manager
             .transcript
             .borrow_mut()
-            .challenge_vector(DTH_ROOT_OF_K.log_2());
+            .challenge_vector_u128(DTH_ROOT_OF_K.log_2());
 
-        let eq_r_cycle = EqPolynomial::evals(&r_cycle);
+        let eq_r_cycle = EqPolynomial::<F>::evals(&r_cycle);
 
         // Get gamma challenge for batching
         let gamma: F = state_manager.transcript.borrow_mut().challenge_scalar();
@@ -174,15 +174,15 @@ impl<F: JoltField> BooleanitySumcheck<F> {
         // Calculate D dynamically such that 2^8 = K^(1/D)
         let d = compute_d_parameter(K);
 
-        let r_cycle: Vec<F> = state_manager
+        let r_cycle: Vec<MontU128> = state_manager
             .transcript
             .borrow_mut()
-            .challenge_vector(T.log_2());
+            .challenge_vector_u128(T.log_2());
 
-        let r_address: Vec<F> = state_manager
+        let r_address: Vec<MontU128> = state_manager
             .transcript
             .borrow_mut()
-            .challenge_vector(DTH_ROOT_OF_K.log_2());
+            .challenge_vector_u128(DTH_ROOT_OF_K.log_2());
 
         // Get gamma challenge for batching
         let gamma: F = state_manager.transcript.borrow_mut().challenge_scalar();
@@ -229,7 +229,7 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
     }
 
     #[tracing::instrument(skip_all, name = "RamBooleanitySumcheck::bind")]
-    fn bind(&mut self, r_j: F, round: usize) {
+    fn bind(&mut self, r_j: MontU128, round: usize) {
         let prover_state = self
             .prover_state
             .as_mut()
@@ -245,7 +245,7 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
                 .par_iter_mut()
                 .zip(F_right.par_iter_mut())
                 .for_each(|(x, y)| {
-                    *y = *x * r_j;
+                    *y = x.mul_u128_mont_form(r_j);
                     *x -= *y;
                 });
 
@@ -304,7 +304,7 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
     fn expected_output_claim(
         &self,
         accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
-        r: &[F],
+        r: &[MontU128],
     ) -> F {
         let ra_claims: Vec<_> = (0..self.d)
             .map(|i| {
@@ -323,10 +323,10 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
         let (r_address_prime, r_cycle_prime) = r.split_at(DTH_ROOT_OF_K.log_2());
 
         let r_address_prime: Vec<_> = r_address_prime.iter().copied().rev().collect();
-        let eq_eval_address = EqPolynomial::mle(&self.r_address, &r_address_prime);
+        let eq_eval_address = EqPolynomial::<F>::mle(&self.r_address, &r_address_prime);
 
         let r_cycle_prime: Vec<_> = r_cycle_prime.iter().copied().rev().collect();
-        let eq_eval_cycle = EqPolynomial::mle(&self.r_cycle, &r_cycle_prime);
+        let eq_eval_cycle = EqPolynomial::<F>::mle(&self.r_cycle, &r_cycle_prime);
 
         // Compute batched booleanity check: sum_{i=0}^{d-1} gamma^i * (ra_i^2 - ra_i)
         let mut result = F::zero();
@@ -337,9 +337,9 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
         eq_eval_address * eq_eval_cycle * result
     }
 
-    fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(&self, opening_point: &[MontU128]) -> OpeningPoint<BIG_ENDIAN> {
         let (r_address, r_cycle) = opening_point.split_at(DTH_ROOT_OF_K.log_2());
-        let mut r_big_endian: Vec<F> = r_address.iter().rev().copied().collect();
+        let mut r_big_endian: Vec<MontU128> = r_address.iter().rev().copied().collect();
         r_big_endian.extend(r_cycle.iter().copied().rev());
         OpeningPoint::new(r_big_endian)
     }
@@ -347,7 +347,7 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
     fn cache_openings_prover(
         &self,
         accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
-        opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        opening_point: OpeningPoint<BIG_ENDIAN>,
     ) {
         let prover_state = self
             .prover_state
@@ -373,7 +373,7 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
     fn cache_openings_verifier(
         &self,
         accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
-        opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        opening_point: OpeningPoint<BIG_ENDIAN>,
     ) {
         accumulator.borrow_mut().append_sparse(
             (0..self.d).map(CommittedPolynomial::RamRa).collect(),

@@ -1,3 +1,5 @@
+use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
+use crate::field::MontU128;
 use crate::utils::math::Math;
 use crate::zkvm::instruction_lookups::read_raf_checking::current_suffix_len;
 use crate::{field::JoltField, utils::lookup_bits::LookupBits};
@@ -7,9 +9,46 @@ use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 pub enum Pow2Prefix<const XLEN: usize> {}
 
 impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for Pow2Prefix<XLEN> {
-    fn prefix_mle(
+    fn prefix_mle_field(
         checkpoints: &[PrefixCheckpoint<F>],
         r_x: Option<F>,
+        c: u32,
+        b: LookupBits,
+        j: usize,
+    ) -> F {
+        if current_suffix_len(j) != 0 {
+            // Handled by suffix
+            return F::one();
+        }
+
+        // Shift amount is the last XLEN bits of b
+        if b.len() >= XLEN.log_2() {
+            return F::from_u64(1 << (b % XLEN));
+        }
+
+        let mut result = F::from_u64(1 << (b % XLEN));
+        let mut num_bits = b.len();
+        let mut shift = 1u64 << (1u64 << num_bits);
+        result *= F::from_u64(1 + (shift - 1) * c as u64);
+
+        // Shift amount is [c, b]
+        if b.len() == XLEN.log_2() - 1 {
+            return result;
+        }
+
+        // Shift amount is [(r, r_x), c, b]
+        num_bits += 1;
+        shift = 1 << (1 << num_bits);
+        if let Some(r_x) = r_x {
+            result *= F::one() + F::from_u64(shift - 1) * r_x;
+        }
+
+        result *= checkpoints[Prefixes::Pow2].unwrap_or(F::one());
+        result
+    }
+    fn prefix_mle(
+        checkpoints: &[PrefixCheckpoint<F>],
+        r_x: Option<MontU128>,
         c: u32,
         b: LookupBits,
         j: usize,

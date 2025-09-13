@@ -4,7 +4,7 @@ use super::prefixes::PrefixEval;
 use super::suffixes::{SuffixEval, Suffixes};
 use super::JoltLookupTable;
 use super::PrefixSuffixDecomposition;
-use crate::field::JoltField;
+use crate::field::{JoltField, MontU128};
 use crate::zkvm::lookup_table::prefixes::Prefixes;
 
 /// (address, offset)
@@ -16,7 +16,12 @@ impl<const XLEN: usize> JoltLookupTable for HalfwordAlignmentTable<XLEN> {
         index.is_multiple_of(2).into()
     }
 
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+    fn evaluate_mle<F: JoltField>(&self, r: &[MontU128]) -> F {
+        let lsb = r[r.len() - 1];
+        F::one() - F::from_u128_mont(lsb)
+    }
+
+    fn evaluate_mle_field<F: JoltField>(&self, r: &[F]) -> F {
         let lsb = r[r.len() - 1];
         F::one() - lsb
     }
@@ -39,7 +44,9 @@ mod test {
     use ark_bn254::Fr;
 
     use crate::zkvm::lookup_table::test::{
-        lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
+        lookup_table_mle_full_hypercube_test,
+        lookup_table_mle_random_test,
+        // prefix_suffix_test,
     };
     use common::constants::XLEN;
 

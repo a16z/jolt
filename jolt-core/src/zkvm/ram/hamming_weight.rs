@@ -5,6 +5,7 @@ use allocative::Allocative;
 use allocative::FlameGraphBuilder;
 use rayon::prelude::*;
 
+use crate::field::MontU128;
 use crate::{
     field::JoltField,
     poly::{
@@ -185,7 +186,7 @@ impl<F: JoltField> SumcheckInstance<F> for HammingWeightSumcheck<F> {
     }
 
     #[tracing::instrument(skip_all, name = "RamHammingWeightSumcheck::bind")]
-    fn bind(&mut self, r_j: F, _round: usize) {
+    fn bind(&mut self, r_j: MontU128, _round: usize) {
         if let Some(prover_state) = &mut self.prover_state {
             prover_state
                 .ra
@@ -197,7 +198,7 @@ impl<F: JoltField> SumcheckInstance<F> for HammingWeightSumcheck<F> {
     fn expected_output_claim(
         &self,
         accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
-        _r: &[F],
+        _r: &[MontU128],
     ) -> F {
         let ra_claims: Vec<_> = (0..self.d)
             .map(|i| {
@@ -221,14 +222,14 @@ impl<F: JoltField> SumcheckInstance<F> for HammingWeightSumcheck<F> {
             .sum()
     }
 
-    fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(&self, opening_point: &[MontU128]) -> OpeningPoint<BIG_ENDIAN> {
         OpeningPoint::new(opening_point.iter().copied().rev().collect())
     }
 
     fn cache_openings_prover(
         &self,
         accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
-        r_address: OpeningPoint<BIG_ENDIAN, F>,
+        r_address: OpeningPoint<BIG_ENDIAN>,
     ) {
         let prover_state = self
             .prover_state
@@ -258,13 +259,13 @@ impl<F: JoltField> SumcheckInstance<F> for HammingWeightSumcheck<F> {
     fn cache_openings_verifier(
         &self,
         accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
-        r_address: OpeningPoint<BIG_ENDIAN, F>,
+        r_address: OpeningPoint<BIG_ENDIAN>,
     ) {
         let (r_cycle, _) = accumulator.borrow().get_virtual_polynomial_opening(
             VirtualPolynomial::RamHammingWeight,
             SumcheckId::RamHammingBooleanity,
         );
-        let opening_point: OpeningPoint<BIG_ENDIAN, F> =
+        let opening_point: OpeningPoint<BIG_ENDIAN> =
             OpeningPoint::new([r_address.r.as_slice(), r_cycle.r.as_slice()].concat());
 
         accumulator.borrow_mut().append_sparse(

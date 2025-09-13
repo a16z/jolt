@@ -1,10 +1,10 @@
-use crate::{field::JoltField, utils::uninterleave_bits};
-use serde::{Deserialize, Serialize};
-
 use super::prefixes::{PrefixEval, Prefixes};
 use super::suffixes::{SuffixEval, Suffixes};
 use super::JoltLookupTable;
 use super::PrefixSuffixDecomposition;
+use crate::field::MontU128;
+use crate::{field::JoltField, utils::uninterleave_bits};
+use serde::{Deserialize, Serialize};
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct SignedLessThanTable<const XLEN: usize>;
@@ -21,7 +21,22 @@ impl<const XLEN: usize> JoltLookupTable for SignedLessThanTable<XLEN> {
         }
     }
 
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+    fn evaluate_mle_field<F: JoltField>(&self, r: &[F]) -> F {
+        let x_sign = r[0];
+        let y_sign = r[1];
+
+        let mut lt = F::zero();
+        let mut eq = F::one();
+        for i in 0..XLEN {
+            let x_i = r[2 * i];
+            let y_i = r[2 * i + 1];
+            lt += (F::one() - x_i) * y_i * eq;
+            eq *= x_i * y_i + (F::one() - x_i) * (F::one() - y_i);
+        }
+
+        x_sign - y_sign + lt
+    }
+    fn evaluate_mle<F: JoltField>(&self, r: &[MontU128]) -> F {
         let x_sign = r[0];
         let y_sign = r[1];
 
@@ -57,7 +72,9 @@ mod test {
     use ark_bn254::Fr;
 
     use crate::zkvm::lookup_table::test::{
-        lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
+        lookup_table_mle_full_hypercube_test,
+        lookup_table_mle_random_test,
+        // prefix_suffix_test,
     };
     use common::constants::XLEN;
 

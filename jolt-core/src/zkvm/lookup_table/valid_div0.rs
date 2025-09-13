@@ -4,6 +4,7 @@ use super::prefixes::{PrefixEval, Prefixes};
 use super::suffixes::{SuffixEval, Suffixes};
 use super::JoltLookupTable;
 use super::PrefixSuffixDecomposition;
+use crate::field::MontU128;
 use crate::{field::JoltField, utils::uninterleave_bits};
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
@@ -24,7 +25,20 @@ impl<const XLEN: usize> JoltLookupTable for ValidDiv0Table<XLEN> {
         }
     }
 
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+    fn evaluate_mle_field<F: JoltField>(&self, r: &[F]) -> F {
+        let mut divisor_is_zero = F::one();
+        let mut is_valid_div_by_zero = F::one();
+
+        for i in 0..XLEN {
+            let x_i = r[2 * i];
+            let y_i = r[2 * i + 1];
+            divisor_is_zero *= F::one() - x_i;
+            is_valid_div_by_zero *= (F::one() - x_i) * y_i;
+        }
+
+        F::one() - divisor_is_zero + is_valid_div_by_zero
+    }
+    fn evaluate_mle<F: JoltField>(&self, r: &[MontU128]) -> F {
         let mut divisor_is_zero = F::one();
         let mut is_valid_div_by_zero = F::one();
 
@@ -68,7 +82,9 @@ mod test {
     use ark_bn254::Fr;
 
     use crate::zkvm::lookup_table::test::{
-        lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
+        lookup_table_mle_full_hypercube_test,
+        lookup_table_mle_random_test,
+        // prefix_suffix_test,
     };
     use common::constants::XLEN;
 

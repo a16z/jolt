@@ -1,4 +1,3 @@
-use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 use common::constants::XLEN;
@@ -9,6 +8,7 @@ use tracer::instruction::RV32IMCycle;
 
 use super::{LOG_K, LOG_M, M, PHASES};
 
+use crate::field::MontU128;
 use crate::{
     field::JoltField,
     poly::{
@@ -50,7 +50,7 @@ const DEGREE: usize = 3;
 struct ReadRafProverState<F: JoltField> {
     ra_acc: Option<Vec<F>>,
     ra: Option<MultilinearPolynomial<F>>,
-    r: Vec<F>,
+    r: Vec<MontU128>,
 
     lookup_indices: Vec<LookupBits>,
     lookup_indices_by_table: Vec<Vec<(usize, LookupBits)>>,
@@ -80,7 +80,7 @@ pub struct ReadRafSumcheck<F: JoltField> {
     gamma_squared: F,
     prover_state: Option<ReadRafProverState<F>>,
 
-    r_cycle: Vec<F>,
+    r_cycle: Vec<MontU128>,
     rv_claim: F,
     raf_claim: F,
     log_T: usize,
@@ -324,7 +324,7 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
     }
 
     #[tracing::instrument(skip_all, name = "InstructionReadRafSumcheck::bind")]
-    fn bind(&mut self, r_j: F, round: usize) {
+    fn bind(&mut self, r_j: MontU128, round: usize) {
         let ps = self.prover_state.as_mut().unwrap();
         ps.r.push(r_j);
         if round < LOG_K {
@@ -383,21 +383,21 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
     fn expected_output_claim(
         &self,
         accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
-        r: &[F],
+        r: &[MontU128],
     ) -> F {
         let (r_address_prime, r_cycle_prime) = r.split_at(LOG_K);
         let left_operand_eval =
-            OperandPolynomial::new(LOG_K, OperandSide::Left).evaluate(r_address_prime);
+            OperandPolynomial::<F>::new(LOG_K, OperandSide::Left).evaluate(r_address_prime);
         let right_operand_eval =
-            OperandPolynomial::new(LOG_K, OperandSide::Right).evaluate(r_address_prime);
-        let identity_poly_eval = IdentityPolynomial::new(LOG_K).evaluate(r_address_prime);
+            OperandPolynomial::<F>::new(LOG_K, OperandSide::Right).evaluate(r_address_prime);
+        let identity_poly_eval = IdentityPolynomial::<F>::new(LOG_K).evaluate(r_address_prime);
         let val_evals: Vec<_> = LookupTables::<XLEN>::iter()
             .map(|table| table.evaluate_mle(r_address_prime))
             .collect();
 
         let accumulator = accumulator.as_ref().unwrap();
 
-        let eq_eval_cycle = EqPolynomial::mle(&self.r_cycle, r_cycle_prime);
+        let eq_eval_cycle = EqPolynomial::<F>::mle(&self.r_cycle, r_cycle_prime);
 
         let ra_claim = accumulator
             .borrow()
@@ -440,18 +440,18 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
         eq_eval_cycle * ra_claim * val_eval
     }
 
-    fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(&self, opening_point: &[MontU128]) -> OpeningPoint<BIG_ENDIAN> {
         OpeningPoint::new(opening_point.to_vec())
     }
 
     fn cache_openings_prover(
         &self,
         accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
-        r_sumcheck: OpeningPoint<BIG_ENDIAN, F>,
+        r_sumcheck: OpeningPoint<BIG_ENDIAN>,
     ) {
         let ps = self.prover_state.as_ref().unwrap();
         let (_r_address, r_cycle) = r_sumcheck.clone().split_at(LOG_K);
-        let eq_r_cycle_prime = EqPolynomial::evals(&r_cycle.r);
+        let eq_r_cycle_prime = EqPolynomial::<F>::evals(&r_cycle.r);
 
         let flag_claims = ps
             .lookup_indices_by_table
@@ -494,7 +494,7 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
     fn cache_openings_verifier(
         &self,
         accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
-        r_sumcheck: OpeningPoint<BIG_ENDIAN, F>,
+        r_sumcheck: OpeningPoint<BIG_ENDIAN>,
     ) {
         let (_r_address, r_cycle) = r_sumcheck.split_at(LOG_K);
 
@@ -903,9 +903,15 @@ mod tests {
             prover_sm.twist_sumcheck_switch_index,
         );
 
-        let r_cycle: Vec<Fr> = prover_sm.transcript.borrow_mut().challenge_vector(LOG_T);
-        let _r_cycle: Vec<Fr> = verifier_sm.transcript.borrow_mut().challenge_vector(LOG_T);
-        let eq_r_cycle = EqPolynomial::evals(&r_cycle);
+        let r_cycle: Vec<MontU128> = prover_sm
+            .transcript
+            .borrow_mut()
+            .challenge_vector_u128(LOG_T);
+        let _r_cycle: Vec<MontU128> = verifier_sm
+            .transcript
+            .borrow_mut()
+            .challenge_vector_u128(LOG_T);
+        let eq_r_cycle = EqPolynomial::<Fr>::evals(&r_cycle);
 
         let mut rv_claim = Fr::zero();
         let mut left_operand_claim = Fr::zero();
@@ -959,7 +965,7 @@ mod tests {
         let mut verifier_acc_borrow = verifier_accumulator.borrow_mut();
 
         for (key, (_, value)) in prover_acc_borrow.evaluation_openings().iter() {
-            let empty_point = OpeningPoint::<BIG_ENDIAN, Fr>::new(vec![]);
+            let empty_point = OpeningPoint::<BIG_ENDIAN>::new(vec![]);
             verifier_acc_borrow
                 .openings_mut()
                 .insert(*key, (empty_point, *value));

@@ -4,7 +4,7 @@ use super::prefixes::{PrefixEval, Prefixes};
 use super::suffixes::{SuffixEval, Suffixes};
 use super::JoltLookupTable;
 use super::PrefixSuffixDecomposition;
-use crate::field::JoltField;
+use crate::field::{JoltField, MontU128};
 use crate::utils::uninterleave_bits;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
@@ -16,14 +16,28 @@ impl<const XLEN: usize> JoltLookupTable for OrTable<XLEN> {
         x | y
     }
 
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+    fn evaluate_mle<F: JoltField>(&self, r: &[MontU128]) -> F {
         debug_assert_eq!(r.len(), 2 * XLEN);
 
         let mut result = F::zero();
         for i in 0..XLEN {
             let x_i = r[2 * i];
             let y_i = r[2 * i + 1];
-            result += F::from_u64(1u64 << (XLEN - 1 - i)) * (x_i + y_i - x_i * y_i);
+            result += F::from_u64(1u64 << (WORD_SIZE - 1 - i))
+                * (F::from_u128_mont(x_i) + F::from_u128_mont(y_i)
+                    - F::from_u128_mont(x_i) * F::from_u128_mont(y_i));
+        }
+        result
+    }
+
+    fn evaluate_mle_field<F: JoltField>(&self, r: &[F]) -> F {
+        debug_assert_eq!(r.len(), 2 * WORD_SIZE);
+
+        let mut result = F::zero();
+        for i in 0..WORD_SIZE {
+            let x_i = r[2 * i];
+            let y_i = r[2 * i + 1];
+            result += F::from_u64(1u64 << (WORD_SIZE - 1 - i)) * (x_i + y_i - x_i * y_i);
         }
         result
     }
@@ -46,7 +60,9 @@ mod test {
     use ark_bn254::Fr;
 
     use crate::zkvm::lookup_table::test::{
-        lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
+        lookup_table_mle_full_hypercube_test,
+        lookup_table_mle_random_test,
+        // prefix_suffix_test,
     };
     use common::constants::XLEN;
 

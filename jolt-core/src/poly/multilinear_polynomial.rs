@@ -12,7 +12,7 @@ use super::{
     dense_mlpoly::DensePolynomial,
     eq_poly::EqPolynomial,
 };
-use crate::field::{JoltField, OptimizedMul};
+use crate::field::{JoltField, MontU128, OptimizedMul};
 
 /// Wrapper enum for the various multilinear polynomial types used in Jolt
 #[repr(u8)]
@@ -223,21 +223,21 @@ impl<F: JoltField> MultilinearPolynomial<F> {
         }
     }
 
-    // This is the old polynomial evaluation code that uses
-    // the dot product with langrange bases as the algorithm
-    // This might be eventually removed from the code base
-    pub fn evaluate_dot_product(&self, r: &[F]) -> F {
-        match self {
-            MultilinearPolynomial::LargeScalars(poly) => poly.evaluate(r),
-            MultilinearPolynomial::RLC(_) => {
-                unimplemented!("Unexpected RLC polynomial")
-            }
-            _ => {
-                let chis = EqPolynomial::evals(r);
-                self.dot_product(&chis)
-            }
-        }
-    }
+    // // This is the old polynomial evaluation code that uses
+    // // the dot product with langrange bases as the algorithm
+    // // This might be eventually removed from the code base
+    // pub fn evaluate_dot_product(&self, r: &[F]) -> F {
+    //     match self {
+    //         MultilinearPolynomial::LargeScalars(poly) => poly.evaluate(r),
+    //         MultilinearPolynomial::RLC(_) => {
+    //             unimplemented!("Unexpected RLC polynomial")
+    //         }
+    //         _ => {
+    //             let chis = EqPolynomial::evals(r);
+    //             self.dot_product(&chis)
+    //         }
+    //     }
+    // }
 
     /// Computes the dot product of the polynomial's coefficients and a vector
     /// of field elements.
@@ -478,10 +478,11 @@ pub trait PolynomialBinding<F: JoltField> {
     /// Returns whether or not the polynomial has been bound (in a sumcheck)
     fn is_bound(&self) -> bool;
     /// Binds the polynomial to a random field element `r`.
-    fn bind(&mut self, r: F, order: BindingOrder);
+    fn bind(&mut self, r: MontU128, order: BindingOrder);
     /// Binds the polynomial to a random field element `r`, parallelizing
     /// by coefficient.
-    fn bind_parallel(&mut self, r: F, order: BindingOrder);
+    fn bind_parallel(&mut self, r: MontU128, order: BindingOrder);
+
     /// Returns the final sumcheck claim about the polynomial.
     fn final_sumcheck_claim(&self) -> F;
 }
@@ -490,13 +491,14 @@ pub trait PolynomialEvaluation<F: JoltField> {
     /// Returns the final sumcheck claim about the polynomial.
     /// This uses the algorithm in Lemma 4.3 in Thaler, Proofs and
     /// Arguments -- the inside out processing
-    fn evaluate(&self, r: &[F]) -> F;
+    fn evaluate(&self, r: &[MontU128]) -> F;
+    fn evaluate_field(&self, r: &[F]) -> F;
 
     /// Evaluates a batch of polynomials on the same point `r`.
     /// Returns: (evals, EQ table)
     /// where EQ table is EQ(x, r) for x \in {0, 1}^|r|. This is used for
     /// batched opening proofs (see opening_proof.rs)
-    fn batch_evaluate(polys: &[&Self], r: &[F]) -> Vec<F>
+    fn batch_evaluate(polys: &[&Self], r: &[MontU128]) -> Vec<F>
     where
         Self: Sized;
     /// Computes this polynomial's contribution to the computation of a prover
@@ -520,7 +522,7 @@ impl<F: JoltField> PolynomialBinding<F> for MultilinearPolynomial<F> {
     }
 
     #[tracing::instrument(skip_all, name = "MultilinearPolynomial::bind")]
-    fn bind(&mut self, r: F, order: BindingOrder) {
+    fn bind(&mut self, r: MontU128, order: BindingOrder) {
         match self {
             MultilinearPolynomial::LargeScalars(poly) => poly.bind(r, order),
             MultilinearPolynomial::U8Scalars(poly) => poly.bind(r, order),
@@ -535,7 +537,7 @@ impl<F: JoltField> PolynomialBinding<F> for MultilinearPolynomial<F> {
     }
 
     #[tracing::instrument(skip_all, name = "MultilinearPolynomial::bind_parallel")]
-    fn bind_parallel(&mut self, r: F, order: BindingOrder) {
+    fn bind_parallel(&mut self, r: MontU128, order: BindingOrder) {
         match self {
             MultilinearPolynomial::LargeScalars(poly) => poly.bind_parallel(r, order),
             MultilinearPolynomial::U8Scalars(poly) => poly.bind_parallel(r, order),
@@ -568,8 +570,76 @@ impl<F: JoltField> PolynomialBinding<F> for MultilinearPolynomial<F> {
 }
 
 impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
+    #[tracing::instrument(skip_all, name = "MultilinearPolynomial::evaluate_field")]
+    fn evaluate_field(&self, r: &[F]) -> F {
+        match self {
+            MultilinearPolynomial::LargeScalars(poly) => {
+                let m = r.len() / 2;
+                let (r2, r1) = r.split_at(m);
+                let (eq_one, eq_two) = rayon::join(
+                    || EqPolynomial::evals_field(r2),
+                    || EqPolynomial::evals_field(r1),
+                );
+
+                poly.split_eq_evaluate_field(r, &eq_one, &eq_two)
+            }
+            MultilinearPolynomial::U8Scalars(poly) => {
+                let m = r.len() / 2;
+                let (r2, r1) = r.split_at(m);
+                let (eq_one, eq_two) = rayon::join(
+                    || EqPolynomial::evals_field(r2),
+                    || EqPolynomial::evals_field(r1),
+                );
+
+                poly.split_eq_evaluate_field(r, &eq_one, &eq_two)
+            }
+            MultilinearPolynomial::U16Scalars(poly) => {
+                let m = r.len() / 2;
+                let (r2, r1) = r.split_at(m);
+                let (eq_one, eq_two) = rayon::join(
+                    || EqPolynomial::evals_field(r2),
+                    || EqPolynomial::evals_field(r1),
+                );
+
+                poly.split_eq_evaluate_field(r, &eq_one, &eq_two)
+            }
+            MultilinearPolynomial::U32Scalars(poly) => {
+                let m = r.len() / 2;
+                let (r2, r1) = r.split_at(m);
+                let (eq_one, eq_two) = rayon::join(
+                    || EqPolynomial::evals_field(r2),
+                    || EqPolynomial::evals_field(r1),
+                );
+
+                poly.split_eq_evaluate_field(r, &eq_one, &eq_two)
+            }
+            MultilinearPolynomial::U64Scalars(poly) => {
+                let m = r.len() / 2;
+                let (r2, r1) = r.split_at(m);
+                let (eq_one, eq_two) = rayon::join(
+                    || EqPolynomial::evals_field(r2),
+                    || EqPolynomial::evals_field(r1),
+                );
+
+                poly.split_eq_evaluate_field(r, &eq_one, &eq_two)
+            }
+            MultilinearPolynomial::I64Scalars(poly) => {
+                let m = r.len() / 2;
+                let (r2, r1) = r.split_at(m);
+                let (eq_one, eq_two) = rayon::join(
+                    || EqPolynomial::evals_field(r2),
+                    || EqPolynomial::evals_field(r1),
+                );
+
+                poly.split_eq_evaluate_field(r, &eq_one, &eq_two)
+            }
+            MultilinearPolynomial::OneHot(poly) => poly.evaluate_field(r),
+            _ => unimplemented!("Unsupported MultilinearPolynomial variant"),
+        }
+    }
+
     #[tracing::instrument(skip_all, name = "MultilinearPolynomial::evaluate")]
-    fn evaluate(&self, r: &[F]) -> F {
+    fn evaluate(&self, r: &[MontU128]) -> F {
         match self {
             MultilinearPolynomial::LargeScalars(poly) => {
                 let m = r.len() / 2;
@@ -642,11 +712,14 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
 
     /// Currently unused, previously only used in Spartan.
     #[tracing::instrument(skip_all, name = "MultilinearPolynomial::batch_evaluate")]
-    fn batch_evaluate(polys: &[&Self], r: &[F]) -> Vec<F> {
+    fn batch_evaluate(polys: &[&Self], r: &[MontU128]) -> Vec<F> {
         let num_polys = polys.len();
         let m = r.len() / 2;
         let (r2, r1) = r.split_at(m);
-        let (eq_one, eq_two) = rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
+        let (eq_one, eq_two) = rayon::join(
+            || EqPolynomial::<F>::evals(r2),
+            || EqPolynomial::<F>::evals(r1),
+        );
 
         let evals = (0..eq_one.len())
             .into_par_iter()

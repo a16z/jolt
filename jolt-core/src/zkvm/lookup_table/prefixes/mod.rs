@@ -19,6 +19,7 @@ use std::{fmt::Display, ops::Index};
 use strum::EnumCount;
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 
+use crate::field::MontU128;
 use and::AndPrefix;
 use andn::AndnPrefix;
 use change_divisor::ChangeDivisorPrefix;
@@ -98,6 +99,14 @@ pub trait SparseDensePrefix<F: JoltField>: 'static + Sync {
     /// they can be represented by a single bitvector.
     fn prefix_mle(
         checkpoints: &[PrefixCheckpoint<F>],
+        r_x: Option<MontU128>,
+        c: u32,
+        b: LookupBits,
+        j: usize,
+    ) -> F;
+
+    fn prefix_mle_field(
+        checkpoints: &[PrefixCheckpoint<F>],
         r_x: Option<F>,
         c: u32,
         b: LookupBits,
@@ -112,8 +121,8 @@ pub trait SparseDensePrefix<F: JoltField>: 'static + Sync {
     /// so we pass in all such `checkpoints` to this function.
     fn update_prefix_checkpoint(
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: F,
-        r_y: F,
+        r_x: MontU128,
+        r_y: MontU128,
         j: usize,
     ) -> PrefixCheckpoint<F>;
 }
@@ -209,7 +218,7 @@ impl Prefixes {
     pub fn prefix_mle<const XLEN: usize, F: JoltField>(
         &self,
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: Option<F>,
+        r_x: Option<MontU128>,
         c: u32,
         b: LookupBits,
         j: usize,
@@ -291,6 +300,74 @@ impl Prefixes {
         PrefixEval(eval)
     }
 
+    pub fn prefix_mle_field<const WORD_SIZE: usize, F: JoltField>(
+        &self,
+        checkpoints: &[PrefixCheckpoint<F>],
+        r_x: Option<F>,
+        c: u32,
+        b: LookupBits,
+        j: usize,
+    ) -> PrefixEval<F> {
+        let eval = match self {
+            Prefixes::LowerWord => {
+                LowerWordPrefix::<WORD_SIZE>::prefix_mle_field(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::UpperWord => {
+                UpperWordPrefix::<WORD_SIZE>::prefix_mle_field(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::And => AndPrefix::<WORD_SIZE>::prefix_mle_field(checkpoints, r_x, c, b, j),
+            Prefixes::Or => OrPrefix::<WORD_SIZE>::prefix_mle_field(checkpoints, r_x, c, b, j),
+            Prefixes::Xor => XorPrefix::<WORD_SIZE>::prefix_mle_field(checkpoints, r_x, c, b, j),
+            Prefixes::Eq => EqPrefix::prefix_mle_field(checkpoints, r_x, c, b, j),
+            Prefixes::LessThan => LessThanPrefix::prefix_mle_field(checkpoints, r_x, c, b, j),
+            Prefixes::LeftOperandIsZero => {
+                LeftOperandIsZeroPrefix::prefix_mle_field(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::RightOperandIsZero => {
+                RightOperandIsZeroPrefix::prefix_mle_field(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::LeftOperandMsb => LeftMsbPrefix::prefix_mle_field(checkpoints, r_x, c, b, j),
+            Prefixes::RightOperandMsb => {
+                RightMsbPrefix::prefix_mle_field(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::DivByZero => DivByZeroPrefix::prefix_mle_field(checkpoints, r_x, c, b, j),
+            Prefixes::PositiveRemainderEqualsDivisor => {
+                PositiveRemainderEqualsDivisorPrefix::prefix_mle_field(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::PositiveRemainderLessThanDivisor => {
+                PositiveRemainderLessThanDivisorPrefix::prefix_mle_field(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::NegativeDivisorZeroRemainder => {
+                NegativeDivisorZeroRemainderPrefix::prefix_mle_field(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::NegativeDivisorEqualsRemainder => {
+                NegativeDivisorEqualsRemainderPrefix::prefix_mle_field(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::NegativeDivisorGreaterThanRemainder => {
+                NegativeDivisorGreaterThanRemainderPrefix::prefix_mle_field(
+                    checkpoints,
+                    r_x,
+                    c,
+                    b,
+                    j,
+                )
+            }
+            Prefixes::Lsb => LsbPrefix::<WORD_SIZE>::prefix_mle_field(checkpoints, r_x, c, b, j),
+            Prefixes::Pow2 => Pow2Prefix::<WORD_SIZE>::prefix_mle_field(checkpoints, r_x, c, b, j),
+            Prefixes::RightShift => RightShiftPrefix::prefix_mle_field(checkpoints, r_x, c, b, j),
+            Prefixes::SignExtension => {
+                SignExtensionPrefix::<WORD_SIZE>::prefix_mle_field(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::LeftShift => {
+                LeftShiftPrefix::<WORD_SIZE>::prefix_mle_field(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::LeftShiftHelper => {
+                LeftShiftHelperPrefix::prefix_mle_field(checkpoints, r_x, c, b, j)
+            }
+        };
+        PrefixEval(eval)
+    }
+
     /// Every two rounds of sumcheck, we update the "checkpoint" value for each
     /// prefix, incorporating the two random challenges `r_x` and `r_y` received
     /// since the last update.
@@ -298,8 +375,8 @@ impl Prefixes {
     #[tracing::instrument(skip_all)]
     pub fn update_checkpoints<const XLEN: usize, F: JoltField>(
         checkpoints: &mut [PrefixCheckpoint<F>],
-        r_x: F,
-        r_y: F,
+        r_x: MontU128,
+        r_y: MontU128,
         j: usize,
     ) {
         debug_assert_eq!(checkpoints.len(), Self::COUNT);
@@ -323,8 +400,8 @@ impl Prefixes {
     fn update_prefix_checkpoint<const XLEN: usize, F: JoltField>(
         &self,
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: F,
-        r_y: F,
+        r_x: MontU128,
+        r_y: MontU128,
         j: usize,
     ) -> PrefixCheckpoint<F> {
         match self {

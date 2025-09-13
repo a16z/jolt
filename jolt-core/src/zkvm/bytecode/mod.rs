@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use crate::field::MontU128;
 use crate::poly::opening_proof::SumcheckId;
 use crate::utils::math::Math;
 #[cfg(feature = "allocative")]
@@ -109,7 +110,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         let (preprocessing, trace, _, _) = sm.get_prover_data();
         let bytecode_preprocessing = &preprocessing.shared.bytecode;
 
-        let r_cycle: Vec<F> = sm
+        let r_cycle: Vec<MontU128> = sm
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::UnexpandedPC,
                 SumcheckId::SpartanOuter,

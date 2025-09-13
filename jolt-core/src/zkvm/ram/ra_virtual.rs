@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use crate::field::MontU128;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::poly::opening_proof::{
@@ -22,9 +23,8 @@ use crate::{
     transcripts::Transcript,
     utils::math::Math,
 };
-use allocative::Allocative;
 #[cfg(feature = "allocative")]
-use allocative::FlameGraphBuilder;
+use allocative::{Allocative, FlameGraphBuilder};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
 
@@ -34,7 +34,7 @@ pub struct RAProof<F: JoltField, ProofTranscript: Transcript> {
     pub sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
 }
 
-#[derive(Allocative)]
+#[cfg_attr(feature = "allocative", derive(Allocative))]
 pub struct RAProverState<F: JoltField> {
     /// `ra` polys to be constructed based addresses
     ra_i_polys: Vec<MultilinearPolynomial<F>>,
@@ -42,12 +42,12 @@ pub struct RAProverState<F: JoltField> {
     eq_poly: MultilinearPolynomial<F>,
 }
 
-#[derive(Allocative)]
+#[cfg_attr(feature = "allocative", derive(Allocative))]
 pub struct RASumcheck<F: JoltField> {
     rlc_coeffs: [F; 3],
     /// Random challenge r_cycle
-    r_cycle: [Vec<F>; 3],
-    r_address_chunks: Vec<Vec<F>>,
+    r_cycle: [Vec<MontU128>; 3],
+    r_address_chunks: Vec<Vec<MontU128>>,
     /// [ra(r_address, r_cycle_val), ra(r_address, r_cycle_rw), ra(r_address, r_cycle_raf)]
     ra_claim: F,
     /// Number of decomposition parts
@@ -106,13 +106,16 @@ impl<F: JoltField> RASumcheck<F> {
         } else {
             // Pad with zeros
             [
-                &vec![F::zero(); DTH_ROOT_OF_K.log_2() - (r_address.len() % DTH_ROOT_OF_K.log_2())],
+                &vec![
+                    MontU128::from(0_u128);
+                    DTH_ROOT_OF_K.log_2() - (r_address.len() % DTH_ROOT_OF_K.log_2())
+                ],
                 r_address,
             ]
             .concat()
         };
         // Split r_address into d chunks of variable sizes
-        let r_address_chunks: Vec<Vec<F>> = r_address
+        let r_address_chunks: Vec<Vec<MontU128>> = r_address
             .chunks(DTH_ROOT_OF_K.log_2())
             .map(|chunk| chunk.to_vec())
             .collect();
@@ -131,9 +134,9 @@ impl<F: JoltField> RASumcheck<F> {
         let rlc_coeffs = [F::one(), gamma, gamma.square()];
 
         let eq_polys = [
-            &EqPolynomial::evals(r_cycle_val).into(),
-            &EqPolynomial::evals(r_cycle_rw).into(),
-            &EqPolynomial::evals(r_cycle_raf).into(),
+            &EqPolynomial::<F>::evals(r_cycle_val).into(),
+            &EqPolynomial::<F>::evals(r_cycle_rw).into(),
+            &EqPolynomial::<F>::evals(r_cycle_raf).into(),
         ];
 
         let eq_poly = MultilinearPolynomial::from(
@@ -230,13 +233,16 @@ impl<F: JoltField> RASumcheck<F> {
         } else {
             // Pad with zeros
             [
-                &vec![F::zero(); DTH_ROOT_OF_K.log_2() - (r_address.len() % DTH_ROOT_OF_K.log_2())],
+                &vec![
+                    MontU128::from(0_u128);
+                    DTH_ROOT_OF_K.log_2() - (r_address.len() % DTH_ROOT_OF_K.log_2())
+                ],
                 r_address,
             ]
             .concat()
         };
         // Split r_address into d chunks of variable sizes
-        let r_address_chunks: Vec<Vec<F>> = r_address
+        let r_address_chunks: Vec<Vec<MontU128>> = r_address
             .chunks(DTH_ROOT_OF_K.log_2())
             .map(|chunk| chunk.to_vec())
             .collect();
@@ -278,7 +284,7 @@ impl<F: JoltField> SumcheckInstance<F> for RASumcheck<F> {
     }
 
     #[tracing::instrument(skip_all, name = "RaVirtualization::bind")]
-    fn bind(&mut self, r_j: F, _: usize) {
+    fn bind(&mut self, r_j: MontU128, _: usize) {
         let prover_state = self
             .prover_state
             .as_mut()
@@ -299,13 +305,13 @@ impl<F: JoltField> SumcheckInstance<F> for RASumcheck<F> {
     fn expected_output_claim(
         &self,
         accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
-        r: &[F],
+        r: &[MontU128],
     ) -> F {
         // we need opposite endian-ness here
         let r_rev: Vec<_> = r.iter().cloned().rev().collect();
-        let eq_eval = self.rlc_coeffs[0] * EqPolynomial::mle(&self.r_cycle[0], &r_rev)
-            + self.rlc_coeffs[1] * EqPolynomial::mle(&self.r_cycle[1], &r_rev)
-            + self.rlc_coeffs[2] * EqPolynomial::mle(&self.r_cycle[2], &r_rev);
+        let eq_eval = self.rlc_coeffs[0] * EqPolynomial::<F>::mle(&self.r_cycle[0], &r_rev)
+            + self.rlc_coeffs[1] * EqPolynomial::<F>::mle(&self.r_cycle[1], &r_rev)
+            + self.rlc_coeffs[2] * EqPolynomial::<F>::mle(&self.r_cycle[2], &r_rev);
 
         // Compute the product of all ra_i evaluations
         let mut product = F::one();
@@ -371,14 +377,14 @@ impl<F: JoltField> SumcheckInstance<F> for RASumcheck<F> {
         univariate_poly_evals
     }
 
-    fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(&self, opening_point: &[MontU128]) -> OpeningPoint<BIG_ENDIAN> {
         OpeningPoint::new(opening_point.iter().copied().rev().collect())
     }
 
     fn cache_openings_prover(
         &self,
         accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
-        r_cycle: OpeningPoint<BIG_ENDIAN, F>,
+        r_cycle: OpeningPoint<BIG_ENDIAN>,
     ) {
         let prover_state = self
             .prover_state
@@ -400,7 +406,7 @@ impl<F: JoltField> SumcheckInstance<F> for RASumcheck<F> {
     fn cache_openings_verifier(
         &self,
         accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
-        r_cycle: OpeningPoint<BIG_ENDIAN, F>,
+        r_cycle: OpeningPoint<BIG_ENDIAN>,
     ) {
         for i in 0..self.d {
             let opening_point =

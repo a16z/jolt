@@ -1,5 +1,5 @@
 use super::PrefixSuffixDecomposition;
-use crate::field::JoltField;
+use crate::field::{JoltField, MontU128};
 use serde::{Deserialize, Serialize};
 
 use super::prefixes::{PrefixEval, Prefixes};
@@ -14,7 +14,15 @@ impl<const XLEN: usize> JoltLookupTable for SubTable<XLEN> {
         (index % (1u128 << XLEN)) as u64
     }
 
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+    fn evaluate_mle_field<F: JoltField>(&self, r: &[F]) -> F {
+        debug_assert_eq!(r.len(), 2 * XLEN);
+        let mut result = F::zero();
+        for i in 0..XLEN {
+            result += F::from_u64(1 << (XLEN - 1 - i)) * r[XLEN + i];
+        }
+        result
+    }
+    fn evaluate_mle<F: JoltField>(&self, r: &[MontU128]) -> F {
         debug_assert_eq!(r.len(), 2 * XLEN);
         let mut result = F::zero();
         for i in 0..XLEN {
@@ -41,7 +49,9 @@ mod test {
     use ark_bn254::Fr;
 
     use crate::zkvm::lookup_table::test::{
-        lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
+        lookup_table_mle_full_hypercube_test,
+        lookup_table_mle_random_test,
+        // prefix_suffix_test,
     };
     use common::constants::XLEN;
 

@@ -1,5 +1,5 @@
 use super::transcript::Transcript;
-use crate::field::JoltField;
+use crate::field::{JoltField, MontU128};
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_serialize::CanonicalSerialize;
 use sha3::{Digest, Keccak256};
@@ -193,11 +193,12 @@ impl Transcript for KeccakTranscript {
         self.append_message(b"end_append_vector");
     }
 
-    fn challenge_u128(&mut self) -> u128 {
+    fn challenge_u128(&mut self) -> MontU128 {
         let mut buf = vec![0u8; 16];
         self.challenge_bytes(&mut buf);
         buf = buf.into_iter().rev().collect();
-        u128::from_be_bytes(buf.try_into().unwrap())
+        let val = u128::from_be_bytes(buf.try_into().unwrap());
+        MontU128::from(val)
     }
 
     fn challenge_scalar<F: JoltField>(&mut self) -> F {
@@ -211,6 +212,11 @@ impl Transcript for KeccakTranscript {
 
         buf = buf.into_iter().rev().collect();
         F::from_bytes(&buf)
+    }
+    fn challenge_vector_u128(&mut self, len: usize) -> Vec<MontU128> {
+        (0..len)
+            .map(|_| self.challenge_u128())
+            .collect::<Vec<MontU128>>()
     }
 
     fn challenge_vector<F: JoltField>(&mut self, len: usize) -> Vec<F> {

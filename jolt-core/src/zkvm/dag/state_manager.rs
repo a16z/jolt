@@ -240,7 +240,7 @@ where
         &self,
         polynomial: VirtualPolynomial,
         sumcheck: SumcheckId,
-    ) -> (OpeningPoint<BIG_ENDIAN, F>, F) {
+    ) -> (OpeningPoint<BIG_ENDIAN>, F) {
         if let Some(ref prover_state) = self.prover_state {
             prover_state
                 .accumulator
@@ -261,7 +261,7 @@ where
         &self,
         polynomial: CommittedPolynomial,
         sumcheck: SumcheckId,
-    ) -> (OpeningPoint<BIG_ENDIAN, F>, F) {
+    ) -> (OpeningPoint<BIG_ENDIAN>, F) {
         if let Some(ref prover_state) = self.prover_state {
             prover_state
                 .accumulator

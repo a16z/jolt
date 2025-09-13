@@ -118,24 +118,45 @@ tracer = { path = "../tracer", default-features = false, features = [
 common = { path = "../common" }
 
 [[bench]]
-name = "iai"
+name = "mul"
 harness = false
 
 [[bench]]
-name = "commit"
+name = "shout_d_is_one_bench"
 harness = false
 
 [[bench]]
-name = "binding"
+name = "shout_d_greater_one_bench"
 harness = false
 
-[[bench]]
-name = "poly_bench"
-harness = false
 
-[[bench]]
-name = "compact_poly_bench"
-harness = false
+#[[bench]]
+#name = "iai"
+#harness = false
+#
+#[[bench]]
+#name = "commit"
+#harness = false
+#
+#[[bench]]
+#name = "binding"
+#harness = false
+#
+#[[bench]]
+#name = "large_d_sumcheck"
+#harness = false
+#
+#[[bench]]
+#name = "large_d_mul"
+#harness = false
+#
+#[[bench]]
+#name = "poly_bench"
+#harness = false
+#
+#[[bench]]
+#name = "compact_poly_bench"
+#harness = false
 
 [lib]
 name = "jolt_core"

@@ -7,7 +7,7 @@ use rayon::prelude::*;
 use strum::{EnumCount, IntoEnumIterator};
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter as EnumIterMacro};
 
-use crate::field::JoltField;
+use crate::field::{JoltField, MontU128};
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::multilinear_polynomial::{BindingOrder, PolynomialBinding, PolynomialEvaluation};
 use crate::utils::lookup_bits::LookupBits;
@@ -86,11 +86,15 @@ pub struct CachedPolynomial<F: JoltField> {
 }
 
 impl<F: JoltField> PolynomialEvaluation<F> for CachedPolynomial<F> {
-    fn evaluate(&self, x: &[F]) -> F {
+    fn evaluate(&self, x: &[MontU128]) -> F {
         self.inner.evaluate(x)
     }
 
-    fn batch_evaluate(_polys: &[&Self], _r: &[F]) -> Vec<F> {
+    fn evaluate_field(&self, x: &[F]) -> F {
+        self.inner.evaluate_field(x)
+    }
+
+    fn batch_evaluate(_polys: &[&Self], _r: &[MontU128]) -> Vec<F> {
         unimplemented!("Currently unused")
     }
 
@@ -100,14 +104,14 @@ impl<F: JoltField> PolynomialEvaluation<F> for CachedPolynomial<F> {
 }
 
 impl<F: JoltField> PolynomialBinding<F> for CachedPolynomial<F> {
-    fn bind(&mut self, r: F, order: BindingOrder) {
+    fn bind(&mut self, r: MontU128, order: BindingOrder) {
         if !self.bound_this_round {
             self.inner.bind(r, order);
             self.bound_this_round = true;
         }
     }
 
-    fn bind_parallel(&mut self, r: F, order: BindingOrder) {
+    fn bind_parallel(&mut self, r: MontU128, order: BindingOrder) {
         if !self.bound_this_round {
             self.inner.bind_parallel(r, order);
             self.bound_this_round = true;
@@ -333,7 +337,7 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
         (eval_0, eval_2_right + eval_2_right - eval_2_left)
     }
 
-    pub fn bind(&mut self, r: F) {
+    pub fn bind(&mut self, r: MontU128) {
         self.P.par_iter().for_each(|p| {
             if let Some(p) = p {
                 let mut p = p.write().unwrap();
@@ -390,6 +394,7 @@ pub mod tests {
     use ark_bn254::Fr;
     use ark_ff::{AdditiveGroup, Field};
     use ark_std::test_rng;
+    use rand::Rng;
 
     use super::*;
 
@@ -454,7 +459,7 @@ pub mod tests {
                                     eval_point.push(Fr::ZERO);
                                 }
                             }
-                            poly.evaluate(&eval_point)
+                            poly.evaluate_field(&eval_point)
                         })
                         .sum();
 
@@ -481,14 +486,14 @@ pub mod tests {
                                     eval_point.push(Fr::ZERO);
                                 }
                             }
-                            poly.evaluate(&eval_point)
+                            poly.evaluate_field(&eval_point)
                         })
                         .sum();
 
                     assert_eq!(direct_eval, eval.1);
                 }
-                let r = Fr::random(&mut rng);
-                rr.push(r);
+                let r = MontU128::from(rng.gen::<u128>());
+                rr.push(Fr::from_u128_mont(r));
                 ps.bind(r);
             }
 
@@ -496,7 +501,7 @@ pub mod tests {
         }
         assert_eq!(
             prefix_registry.checkpoints[prefix_registry_index],
-            Some(poly.evaluate(&rr))
+            Some(poly.evaluate_field(&rr))
         )
     }
 }

@@ -1,4 +1,5 @@
 use super::{FieldOps, JoltField};
+use crate::field::MontU128;
 use crate::utils::counters::{INVERSE_COUNT, MULT_COUNT};
 use allocative::Allocative;
 use ark_bn254::Fr;
@@ -300,6 +301,9 @@ impl JoltField for TrackedFr {
     fn from_i64(n: i64) -> Self {
         TrackedFr(<ark_bn254::Fr as JoltField>::from_i64(n))
     }
+    fn from_u128(n: u128) -> Self {
+        TrackedFr(<ark_bn254::Fr as JoltField>::from_u128(n))
+    }
 
     fn from_i128(n: i128) -> Self {
         TrackedFr(<ark_bn254::Fr as JoltField>::from_i128(n))
@@ -335,6 +339,20 @@ impl JoltField for TrackedFr {
         MULT_COUNT.fetch_add(1, Ordering::Relaxed);
         TrackedFr(self.0.mul_u64(n))
     }
+    fn mul_u128_mont_form(&self, n: MontU128) -> Self {
+        MULT_COUNT.fetch_add(1, Ordering::Relaxed);
+        Self(self.0.mul_u128_mont_form(n))
+    }
+
+    //fn mul_two_u128s(&self, x: MontU128, y: MontU128) -> Self {
+    //    let x_val = x.0;
+    //    let y_val = y.0;
+    //    // Increment counter if desired
+    //    MULT_COUNT.fetch_add(1, Ordering::Relaxed);
+    //
+    //    // Call the underlying Fp method, passing self.0 as LHS
+    //    Self(self.0.mul_two_u128s(x_val, y_val))
+    //}
 
     fn mul_i128(&self, n: i128) -> Self {
         MULT_COUNT.fetch_add(1, Ordering::Relaxed);

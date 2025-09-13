@@ -1,3 +1,5 @@
+use crate::field::MontU128;
+use crate::utils::thread::unsafe_allocate_zero_vec;
 use ark_ff::{prelude::*, BigInt, PrimeField, UniformRand};
 use rayon::prelude::*;
 
@@ -66,6 +68,32 @@ impl JoltField for ark_bn254::Fr {
         } else {
             <Self as ark_ff::PrimeField>::from_u64(n).unwrap()
         }
+    }
+
+    // No montgomery business happening here.
+    #[inline]
+    fn from_u128(n: u128) -> Self {
+        if n <= u16::MAX as u128 {
+            <Self as JoltField>::from_u16(n as u16)
+        } else if n <= u32::MAX as u128 {
+            <Self as JoltField>::from_u32(n as u32)
+        } else if n <= u64::MAX as u128 {
+            <Self as JoltField>::from_u64(n as u64)
+        } else {
+            let bigint = BigInt::new([n as u64, (n >> 64) as u64, 0, 0]);
+            <Self as ark_ff::PrimeField>::from_bigint(bigint).unwrap()
+        }
+    }
+
+    // We assume that MontU128 is a Big Into with the least significant digits set to 0.
+    // In Arkworks 0 index is the least significant digit.
+    #[inline]
+    fn from_u128_mont(n: MontU128) -> Self {
+        let n_val = n.0;
+        let low = n_val as u64;
+        let high = (n_val >> 64) as u64;
+        let bigint = BigInt::new([0, 0, low, high]);
+        <Self as ark_ff::PrimeField>::from_bigint_unchecked(bigint).unwrap()
     }
 
     fn from_i64(val: i64) -> Self {
@@ -189,15 +217,63 @@ impl JoltField for ark_bn254::Fr {
     fn mul_u128(&self, n: u128) -> Self {
         ark_ff::Fp::mul_u128(*self, n)
     }
+
+    #[inline(always)]
+    fn mul_u128_mont_form(&self, n: MontU128) -> Self {
+        let n_val = n.0;
+        ark_ff::Fp::mul_hi_u128(*self, n_val)
+    }
+
+    //#[inline(always)]
+    //fn mul_two_u128s(&self, x: MontU128, y: MontU128) -> Self {
+    //    let x_val = x.0;
+    //    let y_val = y.0;
+    //    if x_val == 0 || y_val == 0 {
+    //        Self::zero()
+    //    } else if x_val == 1 {
+    //        Self::from_u128(y_val)
+    //    } else if y_val == 1 {
+    //        Self::from_u128(x_val)
+    //    } else {
+    //        // here you need a low-level method from ark_ff for 128x128 multiplication
+    //        ark_ff::Fp::mul_two_u128s(self, x_val, y_val)
+    //    }
+    //}
+}
+
+// Provide ergonomic operators for multiplying by a u128 already in Montgomery form.
+impl core::ops::Mul<MontU128> for ark_bn254::Fr {
+    type Output = Self;
+    #[inline(always)]
+    fn mul(self, rhs: MontU128) -> Self::Output {
+        Self::mul_u128_mont_form(&self, rhs)
+    }
+}
+
+impl core::ops::Mul<MontU128> for &ark_bn254::Fr {
+    type Output = ark_bn254::Fr;
+    #[inline(always)]
+    fn mul(self, rhs: MontU128) -> Self::Output {
+        <ark_bn254::Fr as JoltField>::mul_u128_mont_form(self, rhs)
+    }
+}
+
+impl core::ops::MulAssign<MontU128> for ark_bn254::Fr {
+    #[inline(always)]
+    fn mul_assign(&mut self, rhs: MontU128) {
+        *self = Self::mul_u128_mont_form(self, rhs);
+    }
 }
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
     use ark_bn254::Fr;
+    use ark_ff::AdditiveGroup;
     use ark_std::test_rng;
+    use rand::{rngs::StdRng, Rng, SeedableRng};
     use rand_chacha::rand_core::RngCore;
-
     #[test]
     fn implicit_montgomery_conversion() {
         let mut rng = test_rng();
@@ -210,6 +286,36 @@ mod tests {
             let x = rng.next_u64();
             let y = Fr::random(&mut rng);
             assert_eq!(y * <Fr as JoltField>::from_u64(x), y.mul_u64(x));
+        }
+    }
+
+    #[test]
+    fn test_small_binding_multiplications() {
+        // TODO: BENCH THIS AND SEE WHAT THE SLOW DOWNS AREtodo
+        // SANITY CHECK
+        let b_1 = Fr::new_unchecked(BigInt([0, 0, 1, 0]));
+        // as z is small enough the masking should not matter
+        // and it shold be stored as the BigInt above
+        let z = MontU128::from(1_u128);
+        let c_1 = Fr::from_u128_mont(z);
+        assert_eq!(b_1, c_1);
+
+        let lhs = Fr::ZERO;
+        let rhs = Fr::zero();
+        let rhs2 = Fr::from_u128_mont(MontU128::from(0_u128));
+        assert_eq!(lhs, rhs);
+        assert_eq!(rhs, rhs2);
+
+        let mut rng = StdRng::seed_from_u64(123);
+        for _ in 0..10000 {
+            let a = Fr::random(&mut rng);
+
+            let x = MontU128::from(rng.gen::<u128>());
+            let _ = x * x;
+            let b = Fr::from_u128_mont(x);
+            let lhs = a * b;
+            let rhs = a.mul_u128_mont_form(x);
+            assert_eq!(lhs, rhs);
         }
     }
 }

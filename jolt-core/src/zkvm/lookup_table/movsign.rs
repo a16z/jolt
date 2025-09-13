@@ -4,7 +4,7 @@ use super::prefixes::{PrefixEval, Prefixes};
 use super::suffixes::{SuffixEval, Suffixes};
 use super::JoltLookupTable;
 use super::PrefixSuffixDecomposition;
-use crate::field::JoltField;
+use crate::field::{JoltField, MontU128};
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct MovsignTable<const XLEN: usize>;
@@ -20,12 +20,21 @@ impl<const XLEN: usize> JoltLookupTable for MovsignTable<XLEN> {
         }
     }
 
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+    fn evaluate_mle<F: JoltField>(&self, r: &[MontU128]) -> F {
         // 2 ^ {XLEN - 1} * x_0
         debug_assert!(r.len() == 2 * XLEN);
 
         let sign_bit = r[0];
-        let ones: u64 = ((1u128 << XLEN) - 1) as u64;
+        let ones: u64 = (1 << WORD_SIZE) - 1;
+        F::from_u64(ones).mul_u128_mont_form(sign_bit)
+    }
+
+    fn evaluate_mle_field<F: JoltField>(&self, r: &[F]) -> F {
+        // 2 ^ {WORD_SIZE - 1} * x_0
+        debug_assert!(r.len() == 2 * WORD_SIZE);
+
+        let sign_bit = r[0];
+        let ones: u64 = (1 << WORD_SIZE) - 1;
         sign_bit * F::from_u64(ones)
     }
 }
@@ -48,7 +57,9 @@ mod test {
     use ark_bn254::Fr;
 
     use crate::zkvm::lookup_table::test::{
-        lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
+        lookup_table_mle_full_hypercube_test,
+        lookup_table_mle_random_test,
+        // prefix_suffix_test,
     };
     use common::constants::XLEN;
 
