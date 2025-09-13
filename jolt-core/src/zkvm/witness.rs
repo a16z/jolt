@@ -27,10 +27,12 @@ use crate::{
     },
 };
 
-use super::instruction::{CircuitFlags, InstructionFlags, LookupQuery, RightInputValue};
+use super::instruction::{
+    CircuitFlags, InstructionFlags, LookupQuery, ProductValue, RightInputValue,
+};
 
-struct SharedWitnessData<F: JoltField>(UnsafeCell<WitnessData<F>>);
-unsafe impl<F: JoltField> Sync for SharedWitnessData<F> {}
+struct SharedWitnessData(UnsafeCell<WitnessData>);
+unsafe impl Sync for SharedWitnessData {}
 
 /// K^{1/d}
 pub const DTH_ROOT_OF_K: usize = 1 << 8;
@@ -84,11 +86,11 @@ pub enum CommittedPolynomial {
 
 pub static mut ALL_COMMITTED_POLYNOMIALS: OnceCell<Vec<CommittedPolynomial>> = OnceCell::new();
 
-struct WitnessData<F: JoltField> {
+struct WitnessData {
     // Simple polynomial coefficients
     left_instruction_input: Vec<u64>,
     right_instruction_input: Vec<RightInputValue>,
-    product: Vec<F>,
+    product: Vec<ProductValue>,
     write_lookup_output_to_rd: Vec<u8>,
     write_pc_to_rd: Vec<u8>,
     should_branch: Vec<u8>,
@@ -102,15 +104,15 @@ struct WitnessData<F: JoltField> {
     ram_ra: Vec<Vec<Option<usize>>>,
 }
 
-unsafe impl<F: JoltField> Send for WitnessData<F> {}
-unsafe impl<F: JoltField> Sync for WitnessData<F> {}
+unsafe impl Send for WitnessData {}
+unsafe impl Sync for WitnessData {}
 
-impl<F: JoltField> WitnessData<F> {
+impl WitnessData {
     fn new(trace_len: usize, ram_d: usize, bytecode_d: usize) -> Self {
         Self {
             left_instruction_input: vec![0; trace_len],
             right_instruction_input: vec![RightInputValue::Unsigned(0); trace_len],
-            product: vec![F::zero(); trace_len],
+            product: vec![ProductValue::Unsigned(0); trace_len],
             write_lookup_output_to_rd: vec![0; trace_len],
             write_pc_to_rd: vec![0; trace_len],
             should_branch: vec![0; trace_len],
@@ -307,10 +309,10 @@ impl CommittedPolynomial {
 
                 match right {
                     RightInputValue::Unsigned(r) => {
-                        batch_ref.product[i] = F::from_u128(left as u128 * r as u128);
+                        batch_ref.product[i] = ProductValue::Unsigned(left as u128 * r as u128);
                     }
                     RightInputValue::Signed(r) => {
-                        batch_ref.product[i] = F::from_i128(left as i128 * r as i128);
+                        batch_ref.product[i] = ProductValue::Signed(left as i128 * r as i128);
                     }
                 }
 
@@ -408,7 +410,18 @@ impl CommittedPolynomial {
                 }
                 CommittedPolynomial::Product => {
                     let coeffs = std::mem::take(&mut batch.product);
-                    results.insert(*poly, MultilinearPolynomial::<F>::from(coeffs));
+                    results.insert(
+                        *poly,
+                        MultilinearPolynomial::<F>::from(
+                            coeffs
+                                .into_iter()
+                                .map(|p| match p {
+                                    ProductValue::Unsigned(v) => F::from_u128(v),
+                                    ProductValue::Signed(v) => F::from_i128(v),
+                                })
+                                .collect::<Vec<F>>(),
+                        ),
+                    );
                 }
                 CommittedPolynomial::WriteLookupOutputToRD => {
                     let coeffs = std::mem::take(&mut batch.write_lookup_output_to_rd);

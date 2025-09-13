@@ -92,6 +92,12 @@ impl RightInputValue {
     }
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ProductValue {
+    Unsigned(u128),
+    Signed(i128),
+}
+
 #[cfg(test)]
 /// Validate that specialized projections as_{u,i}{8,32,64} are equivalent to
 /// widening to i128 and narrowing back for both Unsigned and Signed variants

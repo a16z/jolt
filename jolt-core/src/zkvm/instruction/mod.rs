@@ -10,7 +10,7 @@ use crate::utils::interleave_bits;
 
 use super::lookup_table::LookupTables;
 mod types;
-pub use types::RightInputValue;
+pub use types::{ProductValue, RightInputValue};
 
 pub trait InstructionLookup<const XLEN: usize> {
     fn lookup_table(&self) -> Option<LookupTables<XLEN>>;
