@@ -110,7 +110,11 @@ impl SmallScalar for u128 {
     #[inline]
     fn diff_mul_field<F: JoltField>(self, other: Self, r: F) -> F {
         let diff = self.abs_diff(other);
-        if diff == 0 { F::zero() } else { r.mul_u128(diff) }
+        if diff == 0 {
+            F::zero()
+        } else {
+            r.mul_u128(diff)
+        }
     }
 }
 impl SmallScalar for i128 {
@@ -125,7 +129,11 @@ impl SmallScalar for i128 {
     #[inline]
     fn diff_mul_field<F: JoltField>(self, other: Self, r: F) -> F {
         let diff = self.abs_diff(other);
-        if diff == 0 { F::zero() } else { r.mul_u128(diff) }
+        if diff == 0 {
+            F::zero()
+        } else {
+            r.mul_u128(diff)
+        }
     }
 }
 
@@ -342,13 +350,9 @@ impl<T: SmallScalar, F: JoltField> PolynomialBinding<F> for CompactPolynomial<T,
                             match a.cmp(&b) {
                                 Ordering::Equal => a.to_field(),
                                 // a < b: Compute a + r * (b - a)
-                                Ordering::Less => {
-                                    a.to_field::<F>() + b.diff_mul_field(a, r)
-                                }
+                                Ordering::Less => a.to_field::<F>() + b.diff_mul_field(a, r),
                                 // a > b: Compute a - r * (a - b)
-                                Ordering::Greater => {
-                                    a.to_field::<F>() - a.diff_mul_field(b, r)
-                                }
+                                Ordering::Greater => a.to_field::<F>() - a.diff_mul_field(b, r),
                             }
                         })
                         .collect();
@@ -362,13 +366,9 @@ impl<T: SmallScalar, F: JoltField> PolynomialBinding<F> for CompactPolynomial<T,
                             match a.cmp(&b) {
                                 Ordering::Equal => a.to_field(),
                                 // a < b: Compute a + r * (b - a)
-                                Ordering::Less => {
-                                    a.to_field::<F>() + b.diff_mul_field(a, r)
-                                }
+                                Ordering::Less => a.to_field::<F>() + b.diff_mul_field(a, r),
                                 // a > b: Compute a - r * (a - b)
-                                Ordering::Greater => {
-                                    a.to_field::<F>() - a.diff_mul_field(b, r)
-                                }
+                                Ordering::Greater => a.to_field::<F>() - a.diff_mul_field(b, r),
                             }
                         })
                         .collect();
@@ -425,13 +425,9 @@ impl<T: SmallScalar, F: JoltField> PolynomialBinding<F> for CompactPolynomial<T,
                             match a.cmp(&b) {
                                 Ordering::Equal => a.to_field(),
                                 // a < b: Compute a + r * (b - a)
-                                Ordering::Less => {
-                                    a.to_field::<F>() + b.diff_mul_field(a, r)
-                                }
+                                Ordering::Less => a.to_field::<F>() + b.diff_mul_field(a, r),
                                 // a > b: Compute a - r * (a - b)
-                                Ordering::Greater => {
-                                    a.to_field::<F>() - a.diff_mul_field(b, r)
-                                }
+                                Ordering::Greater => a.to_field::<F>() - a.diff_mul_field(b, r),
                             }
                         })
                         .collect();
@@ -445,13 +441,9 @@ impl<T: SmallScalar, F: JoltField> PolynomialBinding<F> for CompactPolynomial<T,
                             match a.cmp(&b) {
                                 Ordering::Equal => a.to_field(),
                                 // a < b: Compute a + r * (b - a)
-                                Ordering::Less => {
-                                    a.to_field::<F>() + b.diff_mul_field(a, r)
-                                }
+                                Ordering::Less => a.to_field::<F>() + b.diff_mul_field(a, r),
                                 // a > b: Compute a - r * (a - b)
-                                Ordering::Greater => {
-                                    a.to_field::<F>() - a.diff_mul_field(b, r)
-                                }
+                                Ordering::Greater => a.to_field::<F>() - a.diff_mul_field(b, r),
                             }
                         })
                         .collect();

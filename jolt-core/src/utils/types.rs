@@ -6,10 +6,9 @@
 ///
 /// Helper methods provide width-aware projections to `u64`/`i64` and a
 /// canonical unsigned representation for lookup key construction.
-
 use allocative::Allocative;
 use ark_serialize::{
-    CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Validate, Valid,
+    CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
 };
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Allocative)]
@@ -136,10 +135,18 @@ impl core::cmp::Ord for U64OrI64 {
             (U64OrI64::Unsigned(a), U64OrI64::Unsigned(b)) => a.cmp(b),
             (U64OrI64::Signed(a), U64OrI64::Signed(b)) => a.cmp(b),
             (U64OrI64::Unsigned(a), U64OrI64::Signed(b)) => {
-                if *b < 0 { core::cmp::Ordering::Greater } else { a.cmp(&(*b as u64)) }
+                if *b < 0 {
+                    core::cmp::Ordering::Greater
+                } else {
+                    a.cmp(&(*b as u64))
+                }
             }
             (U64OrI64::Signed(a), U64OrI64::Unsigned(b)) => {
-                if *a < 0 { core::cmp::Ordering::Less } else { (*a as u64).cmp(b) }
+                if *a < 0 {
+                    core::cmp::Ordering::Less
+                } else {
+                    (*a as u64).cmp(b)
+                }
             }
         }
     }
@@ -159,10 +166,18 @@ impl core::cmp::Ord for U128OrI128 {
             (U128OrI128::Unsigned(a), U128OrI128::Unsigned(b)) => a.cmp(b),
             (U128OrI128::Signed(a), U128OrI128::Signed(b)) => a.cmp(b),
             (U128OrI128::Unsigned(a), U128OrI128::Signed(b)) => {
-                if *b < 0 { core::cmp::Ordering::Greater } else { a.cmp(&(*b as u128)) }
+                if *b < 0 {
+                    core::cmp::Ordering::Greater
+                } else {
+                    a.cmp(&(*b as u128))
+                }
             }
             (U128OrI128::Signed(a), U128OrI128::Unsigned(b)) => {
-                if *a < 0 { core::cmp::Ordering::Less } else { (*a as u128).cmp(b) }
+                if *a < 0 {
+                    core::cmp::Ordering::Less
+                } else {
+                    (*a as u128).cmp(b)
+                }
             }
         }
     }
