@@ -3,7 +3,10 @@ use tracer::instruction::{virtual_change_divisor_w::VirtualChangeDivisorW, RISCV
 use crate::zkvm::lookup_table::virtual_change_divisor_w::VirtualChangeDivisorWTable;
 use crate::zkvm::lookup_table::LookupTables;
 
-use super::{CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, RightInputValue, NUM_CIRCUIT_FLAGS};
+use super::{
+    CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, RightInputValue,
+    NUM_CIRCUIT_FLAGS,
+};
 
 impl<const XLEN: usize> InstructionLookup<XLEN> for VirtualChangeDivisorW {
     fn lookup_table(&self) -> Option<LookupTables<XLEN>> {

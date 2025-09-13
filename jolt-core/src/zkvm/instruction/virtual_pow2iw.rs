@@ -2,7 +2,10 @@ use tracer::instruction::{virtual_pow2i_w::VirtualPow2IW, RISCVCycle};
 
 use crate::zkvm::lookup_table::{pow2_w::Pow2WTable, LookupTables};
 
-use super::{CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, RightInputValue, NUM_CIRCUIT_FLAGS};
+use super::{
+    CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, RightInputValue,
+    NUM_CIRCUIT_FLAGS,
+};
 
 impl<const XLEN: usize> InstructionLookup<XLEN> for VirtualPow2IW {
     fn lookup_table(&self) -> Option<LookupTables<XLEN>> {

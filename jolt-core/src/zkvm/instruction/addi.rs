@@ -2,7 +2,9 @@ use crate::zkvm::lookup_table::LookupTables;
 use crate::zkvm::{instruction::LookupQuery, lookup_table::range_check::RangeCheckTable};
 use tracer::instruction::{addi::ADDI, RISCVCycle};
 
-use super::{CircuitFlags, InstructionFlags, InstructionLookup, RightInputValue, NUM_CIRCUIT_FLAGS};
+use super::{
+    CircuitFlags, InstructionFlags, InstructionLookup, RightInputValue, NUM_CIRCUIT_FLAGS,
+};
 
 impl<const XLEN: usize> InstructionLookup<XLEN> for ADDI {
     fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
@@ -49,7 +51,7 @@ impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<ADDI> {
             ),
             64 => (
                 self.register_state.rs1,
-                RightInputValue::Unsigned(self.instruction.operands.imm as u64),
+                RightInputValue::Unsigned(self.instruction.operands.imm),
             ),
             _ => panic!("{XLEN}-bit word size is unsupported"),
         }

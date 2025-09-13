@@ -2,7 +2,10 @@ use tracer::instruction::{xori::XORI, RISCVCycle};
 
 use crate::zkvm::lookup_table::{xor::XorTable, LookupTables};
 
-use super::{CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, RightInputValue, NUM_CIRCUIT_FLAGS};
+use super::{
+    CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, RightInputValue,
+    NUM_CIRCUIT_FLAGS,
+};
 
 impl<const XLEN: usize> InstructionLookup<XLEN> for XORI {
     fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
@@ -31,15 +34,15 @@ impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<XORI> {
             #[cfg(test)]
             8 => (
                 self.register_state.rs1 as u8 as u64,
-                RightInputValue::Unsigned(self.instruction.operands.imm as u8 as u64),
+                RightInputValue::Signed(self.instruction.operands.imm as i8 as i64),
             ),
             32 => (
                 self.register_state.rs1 as u32 as u64,
-                RightInputValue::Unsigned(self.instruction.operands.imm as u32 as u64),
+                RightInputValue::Signed(self.instruction.operands.imm as i32 as i64),
             ),
             64 => (
                 self.register_state.rs1,
-                RightInputValue::Unsigned(self.instruction.operands.imm as u64),
+                RightInputValue::Signed(self.instruction.operands.imm as i64),
             ),
             _ => panic!("{XLEN}-bit word size is unsupported"),
         }

@@ -2,7 +2,10 @@ use tracer::instruction::{virtual_shift_right_bitmaski::VirtualShiftRightBitmask
 
 use crate::zkvm::lookup_table::{shift_right_bitmask::ShiftRightBitmaskTable, LookupTables};
 
-use super::{CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, RightInputValue, NUM_CIRCUIT_FLAGS};
+use super::{
+    CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, RightInputValue,
+    NUM_CIRCUIT_FLAGS,
+};
 
 impl<const XLEN: usize> InstructionLookup<XLEN> for VirtualShiftRightBitmaskI {
     fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
@@ -28,8 +31,14 @@ impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualShiftRightBitmas
     fn to_instruction_inputs(&self) -> (u64, RightInputValue) {
         match XLEN {
             #[cfg(test)]
-            8 => (0, RightInputValue::Unsigned(self.instruction.operands.imm as u8 as u64)),
-            32 => (0, RightInputValue::Unsigned(self.instruction.operands.imm as u32 as u64)),
+            8 => (
+                0,
+                RightInputValue::Unsigned(self.instruction.operands.imm as u8 as u64),
+            ),
+            32 => (
+                0,
+                RightInputValue::Unsigned(self.instruction.operands.imm as u32 as u64),
+            ),
             64 => (0, RightInputValue::Unsigned(self.instruction.operands.imm)),
             _ => panic!("{XLEN}-bit word size is unsupported"),
         }

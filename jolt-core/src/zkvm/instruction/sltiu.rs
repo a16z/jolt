@@ -2,7 +2,10 @@ use tracer::instruction::{sltiu::SLTIU, RISCVCycle};
 
 use crate::zkvm::lookup_table::{unsigned_less_than::UnsignedLessThanTable, LookupTables};
 
-use super::{CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, RightInputValue, NUM_CIRCUIT_FLAGS};
+use super::{
+    CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, RightInputValue,
+    NUM_CIRCUIT_FLAGS,
+};
 
 impl<const XLEN: usize> InstructionLookup<XLEN> for SLTIU {
     fn lookup_table(&self) -> Option<LookupTables<XLEN>> {

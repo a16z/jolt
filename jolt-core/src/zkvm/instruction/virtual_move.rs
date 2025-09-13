@@ -2,7 +2,10 @@ use tracer::instruction::{virtual_move::VirtualMove, RISCVCycle};
 
 use crate::zkvm::lookup_table::{range_check::RangeCheckTable, LookupTables};
 
-use super::{CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, RightInputValue, NUM_CIRCUIT_FLAGS};
+use super::{
+    CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, RightInputValue,
+    NUM_CIRCUIT_FLAGS,
+};
 
 impl<const XLEN: usize> InstructionLookup<XLEN> for VirtualMove {
     fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
@@ -30,8 +33,14 @@ impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualMove> {
     fn to_instruction_inputs(&self) -> (u64, RightInputValue) {
         match XLEN {
             #[cfg(test)]
-            8 => (self.register_state.rs1 as u8 as u64, RightInputValue::Unsigned(0)),
-            32 => (self.register_state.rs1 as u32 as u64, RightInputValue::Unsigned(0)),
+            8 => (
+                self.register_state.rs1 as u8 as u64,
+                RightInputValue::Unsigned(0),
+            ),
+            32 => (
+                self.register_state.rs1 as u32 as u64,
+                RightInputValue::Unsigned(0),
+            ),
             64 => (self.register_state.rs1, RightInputValue::Unsigned(0)),
             _ => panic!("{XLEN}-bit word size is unsupported"),
         }

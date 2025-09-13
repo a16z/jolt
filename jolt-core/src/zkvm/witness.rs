@@ -396,7 +396,15 @@ impl CommittedPolynomial {
                 CommittedPolynomial::RightInstructionInput => {
                     let coeffs = std::mem::take(&mut batch.right_instruction_input);
                     // TODO: handle this more efficiently (need to add `RightInputValue` enum into `CompactPolynomial`)
-                    results.insert(*poly, MultilinearPolynomial::<F>::from(coeffs.into_iter().map(|r| r.as_i128()).collect::<Vec<_>>()));
+                    results.insert(
+                        *poly,
+                        MultilinearPolynomial::<F>::from(
+                            coeffs
+                                .into_iter()
+                                .map(|r| r.as_i128())
+                                .collect::<Vec<i128>>(),
+                        ),
+                    );
                 }
                 CommittedPolynomial::Product => {
                     let coeffs = std::mem::take(&mut batch.product);
@@ -480,7 +488,11 @@ impl CommittedPolynomial {
                 // TODO: define `RightInputValue` enum in `CompactPolynomial` which is just `u64 | i64`
                 let coeffs: Vec<i128> = trace
                     .par_iter()
-                    .map(|cycle| LookupQuery::<XLEN>::to_instruction_inputs(cycle).1.as_i128())
+                    .map(|cycle| {
+                        LookupQuery::<XLEN>::to_instruction_inputs(cycle)
+                            .1
+                            .as_i128()
+                    })
                     .collect();
                 coeffs.into()
             }

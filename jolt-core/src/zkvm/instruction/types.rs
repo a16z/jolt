@@ -98,6 +98,7 @@ impl RightInputValue {
 /// under XLEN views 8, 32, and 64.
 mod tests {
     use super::RightInputValue as RIV;
+    use rand::Rng;
 
     fn check_equivalence(v: RIV) {
         let i128_wide = v.as_i128();
@@ -133,6 +134,11 @@ mod tests {
         for &u in cases {
             check_equivalence(RIV::Unsigned(u));
         }
+
+        let mut rng = rand::thread_rng();
+        for _ in 0..100 {
+            check_equivalence(RIV::Unsigned(rng.gen()));
+        }
     }
 
     #[test]
@@ -150,6 +156,11 @@ mod tests {
         ];
         for &s in cases {
             check_equivalence(RIV::Signed(s));
+        }
+
+        let mut rng = rand::thread_rng();
+        for _ in 0..100 {
+            check_equivalence(RIV::Signed(rng.gen()));
         }
     }
 }

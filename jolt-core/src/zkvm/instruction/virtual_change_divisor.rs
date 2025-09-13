@@ -3,7 +3,10 @@ use tracer::instruction::{virtual_change_divisor::VirtualChangeDivisor, RISCVCyc
 use crate::zkvm::lookup_table::virtual_change_divisor::VirtualChangeDivisorTable;
 use crate::zkvm::lookup_table::LookupTables;
 
-use super::{CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, RightInputValue, NUM_CIRCUIT_FLAGS};
+use super::{
+    CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, RightInputValue,
+    NUM_CIRCUIT_FLAGS,
+};
 
 impl<const XLEN: usize> InstructionLookup<XLEN> for VirtualChangeDivisor {
     fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
@@ -38,7 +41,10 @@ impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualChangeDivisor> {
                 self.register_state.rs1 as u32 as u64,
                 RightInputValue::Unsigned(self.register_state.rs2 as u32 as u64),
             ),
-            64 => (self.register_state.rs1, RightInputValue::Unsigned(self.register_state.rs2)),
+            64 => (
+                self.register_state.rs1,
+                RightInputValue::Unsigned(self.register_state.rs2),
+            ),
             _ => panic!("{XLEN}-bit word size is unsupported"),
         }
     }

@@ -330,12 +330,8 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> WitnessRowAccessor<F>
             JoltR1CSInputs::RightInstructionInput => {
                 let (_left, right) = LookupQuery::<XLEN>::to_instruction_inputs(get(t));
                 match right {
-                    RightInputValue::Unsigned(r) => {
-                        F::from_u64(r)
-                    }
-                    RightInputValue::Signed(r) => {
-                        F::from_i64(r)
-                    }
+                    RightInputValue::Unsigned(r) => F::from_u64(r),
+                    RightInputValue::Signed(r) => F::from_i64(r),
                 }
             }
             JoltR1CSInputs::LeftLookupOperand => {
@@ -349,12 +345,8 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> WitnessRowAccessor<F>
             JoltR1CSInputs::Product => {
                 let (left, right) = LookupQuery::<XLEN>::to_instruction_inputs(get(t));
                 match right {
-                    RightInputValue::Unsigned(r) => {
-                        F::from_u128(left as u128 * r as u128)
-                    }
-                    RightInputValue::Signed(r) => {
-                        F::from_i128(left as i128 * r as i128)
-                    }
+                    RightInputValue::Unsigned(r) => F::from_u128(left as u128 * r as u128),
+                    RightInputValue::Signed(r) => F::from_i128(left as i128 * r as i128),
                 }
             }
             JoltR1CSInputs::WriteLookupOutputToRD => {

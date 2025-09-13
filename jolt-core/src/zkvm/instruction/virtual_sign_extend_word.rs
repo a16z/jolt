@@ -2,7 +2,10 @@ use tracer::instruction::{virtual_sign_extend_word::VirtualSignExtendWord, RISCV
 
 use crate::zkvm::lookup_table::{sign_extend_half_word::SignExtendHalfWordTable, LookupTables};
 
-use super::{CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, RightInputValue, NUM_CIRCUIT_FLAGS};
+use super::{
+    CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, RightInputValue,
+    NUM_CIRCUIT_FLAGS,
+};
 
 impl<const XLEN: usize> InstructionLookup<XLEN> for VirtualSignExtendWord {
     fn lookup_table(&self) -> Option<LookupTables<XLEN>> {

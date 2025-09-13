@@ -4,7 +4,10 @@ use tracer::instruction::{
 
 use crate::zkvm::lookup_table::{halfword_alignment::HalfwordAlignmentTable, LookupTables};
 
-use super::{CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, RightInputValue, NUM_CIRCUIT_FLAGS};
+use super::{
+    CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, RightInputValue,
+    NUM_CIRCUIT_FLAGS,
+};
 
 impl<const XLEN: usize> InstructionLookup<XLEN> for VirtualAssertHalfwordAlignment {
     fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
