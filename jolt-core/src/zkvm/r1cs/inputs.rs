@@ -16,7 +16,7 @@ use crate::zkvm::JoltProverPreprocessing;
 use super::key::UniformSpartanKey;
 use super::spartan::UniformSpartanProof;
 
-use crate::field::{JoltField, OptimizedMul};
+use crate::field::{JoltField, MontU128, OptimizedMul};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::XLEN;
 use rayon::prelude::*;
@@ -393,10 +393,10 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> WitnessRowAccessor<F>
 /// materializing P_i. Returns `[P_0(r_cycle), P_1(r_cycle), ...]` in input order.
 #[tracing::instrument(skip_all)]
 pub fn compute_claimed_witness_evals<F: JoltField>(
-    r_cycle: &[F],
+    r_cycle: &[MontU128],
     accessor: &dyn WitnessRowAccessor<F>,
 ) -> Vec<F> {
-    let eq_rx = EqPolynomial::evals(r_cycle);
+    let eq_rx = EqPolynomial::<F>::evals(r_cycle);
 
     let num_chunks = rayon::current_num_threads().next_power_of_two();
     let chunk_size = (eq_rx.len() / num_chunks).max(1);

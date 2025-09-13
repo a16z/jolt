@@ -169,7 +169,6 @@ pub trait JoltField:
     fn from_u128(n: u128) -> Self;
     fn from_i64(val: i64) -> Self;
     fn from_i128(val: i128) -> Self;
-    fn from_u128(val: u128) -> Self;
     fn square(&self) -> Self;
     fn from_bytes(bytes: &[u8]) -> Self;
     fn inverse(&self) -> Option<Self>;

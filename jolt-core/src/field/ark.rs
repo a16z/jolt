@@ -6,8 +6,6 @@ use rayon::prelude::*;
 
 use crate::utils::thread::unsafe_allocate_zero_vec;
 
-use super::{FieldOps, JoltField};
-
 impl FieldOps for ark_bn254::Fr {}
 impl FieldOps<&ark_bn254::Fr, ark_bn254::Fr> for &ark_bn254::Fr {}
 impl FieldOps<&ark_bn254::Fr, ark_bn254::Fr> for ark_bn254::Fr {}
@@ -68,21 +66,6 @@ impl JoltField for ark_bn254::Fr {
             <Self as JoltField>::from_u32(n as u32)
         } else {
             <Self as ark_ff::PrimeField>::from_u64(n).unwrap()
-        }
-    }
-
-    // No montgomery business happening here.
-    #[inline]
-    fn from_u128(n: u128) -> Self {
-        if n <= u16::MAX as u128 {
-            <Self as JoltField>::from_u16(n as u16)
-        } else if n <= u32::MAX as u128 {
-            <Self as JoltField>::from_u32(n as u32)
-        } else if n <= u64::MAX as u128 {
-            <Self as JoltField>::from_u64(n as u64)
-        } else {
-            let bigint = BigInt::new([n as u64, (n >> 64) as u64, 0, 0]);
-            <Self as ark_ff::PrimeField>::from_bigint(bigint).unwrap()
         }
     }
 
