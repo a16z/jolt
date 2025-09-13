@@ -35,6 +35,8 @@ use one::OneSuffix;
 use two_lsb::TwoLsbSuffix;
 use upper_word::UpperWordSuffix;
 use xor::XorSuffix;
+use xor_rot::XorRotSuffix;
+use xor_rotw::XorRotWSuffix;
 
 pub mod and;
 pub mod change_divisor;
@@ -69,6 +71,8 @@ pub mod sign_extension_upper_half;
 pub mod two_lsb;
 pub mod upper_word;
 pub mod xor;
+pub mod xor_rot;
+pub mod xor_rotw;
 
 pub trait SparseDenseSuffix: 'static + Sync {
     /// Evaluates the MLE for this suffix on the bitvector `b`, where
@@ -113,6 +117,14 @@ pub enum Suffixes {
     RightShiftWHelper,
     LeftShiftWHelper,
     LeftShiftW,
+    XorRot16,
+    XorRot24,
+    XorRot32,
+    XorRot63,
+    XorRotW16,
+    XorRotW12,
+    XorRotW8,
+    XorRotW7,
 }
 
 pub type SuffixEval<F: JoltField> = F;
@@ -157,6 +169,14 @@ impl Suffixes {
             Suffixes::RightShiftWHelper => RightShiftWHelperSuffix::suffix_mle(b),
             Suffixes::LeftShiftWHelper => LeftShiftWHelperSuffix::suffix_mle(b),
             Suffixes::LeftShiftW => LeftShiftWSuffix::suffix_mle(b),
+            Suffixes::XorRot16 => XorRotSuffix::<16>::suffix_mle(b),
+            Suffixes::XorRot24 => XorRotSuffix::<24>::suffix_mle(b),
+            Suffixes::XorRot32 => XorRotSuffix::<32>::suffix_mle(b),
+            Suffixes::XorRot63 => XorRotSuffix::<63>::suffix_mle(b),
+            Suffixes::XorRotW7 => XorRotWSuffix::<7>::suffix_mle(b),
+            Suffixes::XorRotW8 => XorRotWSuffix::<8>::suffix_mle(b),
+            Suffixes::XorRotW12 => XorRotWSuffix::<12>::suffix_mle(b),
+            Suffixes::XorRotW16 => XorRotWSuffix::<16>::suffix_mle(b),
         }
     }
 }

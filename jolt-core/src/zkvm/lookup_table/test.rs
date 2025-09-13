@@ -38,6 +38,17 @@ pub fn lookup_table_mle_full_hypercube_test<F: JoltField, T: JoltLookupTable + D
     }
 }
 
+pub fn lookup_table_mle_full_hypercube_64_xlen_test<F: JoltField, T: JoltLookupTable + Default>() {
+    let materialized = T::default().materialize();
+    for (i, entry) in materialized.iter().enumerate() {
+        assert_eq!(
+            F::from_u64(*entry),
+            T::default().evaluate_mle(&index_to_field_bitvector(i as u128, 128)),
+            "MLE did not match materialized table at index {i}",
+        );
+    }
+}
+
 /// Generates a lookup index where right operand is 111..000
 pub fn gen_bitmask_lookup_index(rng: &mut StdRng) -> u128 {
     let x = rng.next_u64();
