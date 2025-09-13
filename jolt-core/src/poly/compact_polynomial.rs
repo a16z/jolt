@@ -6,13 +6,12 @@ use crate::utils::math::Math;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use allocative::Allocative;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use num_integer::Integer;
 use rayon::prelude::*;
 use std::cmp::Ordering;
 
 /// A trait for small scalars ({u/i}{8/16/32/64/128})
 pub trait SmallScalar:
-    Copy + Integer + Sync + CanonicalSerialize + CanonicalDeserialize + Allocative
+    Copy + Ord + Sync + CanonicalSerialize + CanonicalDeserialize + Allocative
 {
     /// Performs a field multiplication. Uses `JoltField::mul_{u/i}{64/128}` under the hood.
     fn field_mul<F: JoltField>(&self, n: F) -> F;
