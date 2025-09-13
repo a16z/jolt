@@ -3,7 +3,7 @@ use tracer::instruction::{virtual_zero_extend_word::VirtualZeroExtendWord, RISCV
 use crate::zkvm::lookup_table::{lower_half_word::LowerHalfWordTable, LookupTables};
 
 use super::{
-    CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, RightInputValue,
+    CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, U64OrI64,
     NUM_CIRCUIT_FLAGS,
 };
 
@@ -34,8 +34,8 @@ impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualZeroExtendWord> 
         (0, u128::try_from(x as i128 + y.as_i128()).unwrap())
     }
 
-    fn to_instruction_inputs(&self) -> (u64, RightInputValue) {
-        (self.register_state.rs1, RightInputValue::Unsigned(0))
+    fn to_instruction_inputs(&self) -> (u64, U64OrI64) {
+        (self.register_state.rs1, U64OrI64::Unsigned(0))
     }
 
     fn to_lookup_index(&self) -> u128 {

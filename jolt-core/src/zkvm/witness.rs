@@ -28,7 +28,7 @@ use crate::{
 };
 
 use super::instruction::{
-    CircuitFlags, InstructionFlags, LookupQuery, ProductValue, RightInputValue,
+    CircuitFlags, InstructionFlags, LookupQuery, U128OrI128, U64OrI64,
 };
 
 struct SharedWitnessData(UnsafeCell<WitnessData>);
@@ -89,8 +89,8 @@ pub static mut ALL_COMMITTED_POLYNOMIALS: OnceCell<Vec<CommittedPolynomial>> = O
 struct WitnessData {
     // Simple polynomial coefficients
     left_instruction_input: Vec<u64>,
-    right_instruction_input: Vec<RightInputValue>,
-    product: Vec<ProductValue>,
+    right_instruction_input: Vec<U64OrI64>,
+    product: Vec<U128OrI128>,
     write_lookup_output_to_rd: Vec<u8>,
     write_pc_to_rd: Vec<u8>,
     should_branch: Vec<u8>,
@@ -111,8 +111,8 @@ impl WitnessData {
     fn new(trace_len: usize, ram_d: usize, bytecode_d: usize) -> Self {
         Self {
             left_instruction_input: vec![0; trace_len],
-            right_instruction_input: vec![RightInputValue::Unsigned(0); trace_len],
-            product: vec![ProductValue::Unsigned(0); trace_len],
+            right_instruction_input: vec![U64OrI64::Unsigned(0); trace_len],
+            product: vec![U128OrI128::Unsigned(0); trace_len],
             write_lookup_output_to_rd: vec![0; trace_len],
             write_pc_to_rd: vec![0; trace_len],
             should_branch: vec![0; trace_len],
@@ -308,11 +308,11 @@ impl CommittedPolynomial {
                 batch_ref.right_instruction_input[i] = right;
 
                 match right {
-                    RightInputValue::Unsigned(r) => {
-                        batch_ref.product[i] = ProductValue::Unsigned(left as u128 * r as u128);
+                    U64OrI64::Unsigned(r) => {
+                        batch_ref.product[i] = U128OrI128::Unsigned(left as u128 * r as u128);
                     }
-                    RightInputValue::Signed(r) => {
-                        batch_ref.product[i] = ProductValue::Signed(left as i128 * r as i128);
+                    U64OrI64::Signed(r) => {
+                        batch_ref.product[i] = U128OrI128::Signed(left as i128 * r as i128);
                     }
                 }
 
@@ -397,7 +397,7 @@ impl CommittedPolynomial {
                 }
                 CommittedPolynomial::RightInstructionInput => {
                     let coeffs = std::mem::take(&mut batch.right_instruction_input);
-                    // TODO: handle this more efficiently (need to add `RightInputValue` enum into `CompactPolynomial`)
+                    // TODO: handle this more efficiently (need to add `U64OrI64` enum into `CompactPolynomial`)
                     results.insert(
                         *poly,
                         MultilinearPolynomial::<F>::from(
@@ -416,8 +416,8 @@ impl CommittedPolynomial {
                             coeffs
                                 .into_iter()
                                 .map(|p| match p {
-                                    ProductValue::Unsigned(v) => F::from_u128(v),
-                                    ProductValue::Signed(v) => F::from_i128(v),
+                                    U128OrI128::Unsigned(v) => F::from_u128(v),
+                                    U128OrI128::Signed(v) => F::from_i128(v),
                                 })
                                 .collect::<Vec<F>>(),
                         ),
@@ -496,9 +496,9 @@ impl CommittedPolynomial {
                     .collect();
                 coeffs.into()
             }
-            // TODO: handle this more efficiently (need to add `RightInputValue` enum into `CompactPolynomial`)
+            // TODO: handle this more efficiently (need to add `U64OrI64` enum into `CompactPolynomial`)
             CommittedPolynomial::RightInstructionInput => {
-                // TODO: define `RightInputValue` enum in `CompactPolynomial` which is just `u64 | i64`
+                // TODO: define `U64OrI64` enum in `CompactPolynomial` which is just `u64 | i64`
                 let coeffs: Vec<i128> = trace
                     .par_iter()
                     .map(|cycle| {
@@ -510,17 +510,17 @@ impl CommittedPolynomial {
                 coeffs.into()
             }
             CommittedPolynomial::Product => {
-                // TODO: define `ProductValue` enum in `CompactPolynomial` which is just `u128 | i128`
+                // TODO: define `U128OrI128` enum in `CompactPolynomial` which is just `u128 | i128`
                 let coeffs: Vec<F> = trace
                     .par_iter()
                     .map(|cycle| {
                         let (left_input, right_input) =
                             LookupQuery::<XLEN>::to_instruction_inputs(cycle);
                         match right_input {
-                            RightInputValue::Unsigned(r) => {
+                            U64OrI64::Unsigned(r) => {
                                 F::from_u128(left_input as u128 * r as u128)
                             }
-                            RightInputValue::Signed(r) => {
+                            U64OrI64::Signed(r) => {
                                 F::from_i128(left_input as i128 * r as i128)
                             }
                         }

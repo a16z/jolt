@@ -3,7 +3,7 @@ use tracer::instruction::{virtual_pow2i_w::VirtualPow2IW, RISCVCycle};
 use crate::zkvm::lookup_table::{pow2_w::Pow2WTable, LookupTables};
 
 use super::{
-    CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, RightInputValue,
+    CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, U64OrI64,
     NUM_CIRCUIT_FLAGS,
 };
 
@@ -29,9 +29,9 @@ impl InstructionFlags for VirtualPow2IW {
 }
 
 impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualPow2IW> {
-    fn to_instruction_inputs(&self) -> (u64, RightInputValue) {
+    fn to_instruction_inputs(&self) -> (u64, U64OrI64) {
         // Only use immediate value
-        (0, RightInputValue::Unsigned(self.instruction.operands.imm))
+        (0, U64OrI64::Unsigned(self.instruction.operands.imm))
     }
 
     fn to_lookup_operands(&self) -> (u64, u128) {

@@ -9,8 +9,7 @@ use tracer::instruction::{RV32IMCycle, RV32IMInstruction};
 use crate::utils::interleave_bits;
 
 use super::lookup_table::LookupTables;
-mod types;
-pub use types::{ProductValue, RightInputValue};
+pub use crate::utils::types::{U128OrI128, U64OrI64};
 
 pub trait InstructionLookup<const XLEN: usize> {
     fn lookup_table(&self) -> Option<LookupTables<XLEN>>;
@@ -22,7 +21,7 @@ pub trait LookupQuery<const XLEN: usize> {
     /// Return the pair of instruction inputs used by the uniform R1CS and
     /// lookup logic. If the instruction has a single semantic input, the
     /// other value is zero/Unsigned(0).
-    fn to_instruction_inputs(&self) -> (u64, RightInputValue);
+    fn to_instruction_inputs(&self) -> (u64, U64OrI64);
 
     /// Return the pair of lookup operands. By default, these equal the inputs,
     /// except the right operand is canonicalized to an unsigned XLEN view for
@@ -170,9 +169,9 @@ macro_rules! define_rv32im_trait_impls {
 
         impl<const XLEN: usize> LookupQuery<XLEN> for RV32IMCycle {
             /// Forward to the concrete instruction's `to_instruction_inputs`.
-            fn to_instruction_inputs(&self) -> (u64, RightInputValue) {
+            fn to_instruction_inputs(&self) -> (u64, U64OrI64) {
                 match self {
-                    RV32IMCycle::NoOp => (0, RightInputValue::Unsigned(0)),
+                    RV32IMCycle::NoOp => (0, U64OrI64::Unsigned(0)),
                     $(
                         RV32IMCycle::$instr(cycle) => LookupQuery::<XLEN>::to_instruction_inputs(cycle),
                     )*

@@ -4,7 +4,7 @@ use crate::zkvm::lookup_table::virtual_change_divisor_w::VirtualChangeDivisorWTa
 use crate::zkvm::lookup_table::LookupTables;
 
 use super::{
-    CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, RightInputValue,
+    CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, U64OrI64,
     NUM_CIRCUIT_FLAGS,
 };
 
@@ -30,11 +30,11 @@ impl InstructionFlags for VirtualChangeDivisorW {
 }
 
 impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualChangeDivisorW> {
-    fn to_instruction_inputs(&self) -> (u64, RightInputValue) {
+    fn to_instruction_inputs(&self) -> (u64, U64OrI64) {
         // Always treat as 32-bit values for W instructions
         (
             self.register_state.rs1 as u32 as u64,
-            RightInputValue::Signed(self.register_state.rs2 as i32 as i64),
+            U64OrI64::Signed(self.register_state.rs2 as i32 as i64),
         )
     }
 

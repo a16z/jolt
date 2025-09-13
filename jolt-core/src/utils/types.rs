@@ -7,18 +7,18 @@
 /// Helper methods provide width-aware projections to `u64`/`i64` and a
 /// canonical unsigned representation for lookup key construction.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum RightInputValue {
+pub enum U64OrI64 {
     Unsigned(u64),
     Signed(i64),
 }
 
-impl RightInputValue {
+impl U64OrI64 {
     /// Return the value as an unsigned 64-bit word (XLEN=64 view).
     #[inline]
     pub fn as_u64(&self) -> u64 {
         match *self {
-            RightInputValue::Unsigned(u) => u,
-            RightInputValue::Signed(s) => s as u64,
+            U64OrI64::Unsigned(u) => u,
+            U64OrI64::Signed(s) => s as u64,
         }
     }
 
@@ -26,8 +26,8 @@ impl RightInputValue {
     #[inline]
     pub fn as_u32(&self) -> u32 {
         match *self {
-            RightInputValue::Unsigned(u) => u as u32,
-            RightInputValue::Signed(s) => s as u32,
+            U64OrI64::Unsigned(u) => u as u32,
+            U64OrI64::Signed(s) => s as u32,
         }
     }
 
@@ -35,8 +35,8 @@ impl RightInputValue {
     #[inline]
     pub fn as_u8(&self) -> u8 {
         match *self {
-            RightInputValue::Unsigned(u) => u as u8,
-            RightInputValue::Signed(s) => s as u8,
+            U64OrI64::Unsigned(u) => u as u8,
+            U64OrI64::Signed(s) => s as u8,
         }
     }
 
@@ -44,8 +44,8 @@ impl RightInputValue {
     #[inline]
     pub fn as_i64(&self) -> i64 {
         match *self {
-            RightInputValue::Unsigned(u) => u as i64,
-            RightInputValue::Signed(s) => s,
+            U64OrI64::Unsigned(u) => u as i64,
+            U64OrI64::Signed(s) => s,
         }
     }
 
@@ -54,8 +54,8 @@ impl RightInputValue {
     #[inline]
     pub fn as_i32(&self) -> i32 {
         match *self {
-            RightInputValue::Unsigned(u) => u as i32,
-            RightInputValue::Signed(s) => s as i32,
+            U64OrI64::Unsigned(u) => u as i32,
+            U64OrI64::Signed(s) => s as i32,
         }
     }
 
@@ -64,8 +64,8 @@ impl RightInputValue {
     #[inline]
     pub fn as_i8(&self) -> i8 {
         match *self {
-            RightInputValue::Unsigned(u) => u as i8,
-            RightInputValue::Signed(s) => s as i8,
+            U64OrI64::Unsigned(u) => u as i8,
+            U64OrI64::Signed(s) => s as i8,
         }
     }
 
@@ -73,8 +73,8 @@ impl RightInputValue {
     #[inline]
     pub fn as_i128(&self) -> i128 {
         match *self {
-            RightInputValue::Unsigned(u) => u as i128,
-            RightInputValue::Signed(s) => s as i128,
+            U64OrI64::Unsigned(u) => u as i128,
+            U64OrI64::Signed(s) => s as i128,
         }
     }
 
@@ -93,7 +93,7 @@ impl RightInputValue {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum ProductValue {
+pub enum U128OrI128 {
     Unsigned(u128),
     Signed(i128),
 }
@@ -103,7 +103,7 @@ pub enum ProductValue {
 /// widening to i128 and narrowing back for both Unsigned and Signed variants
 /// under XLEN views 8, 32, and 64.
 mod tests {
-    use super::RightInputValue as RIV;
+    use super::U64OrI64 as RIV;
     use rand::Rng;
 
     fn check_equivalence(v: RIV) {
@@ -170,3 +170,5 @@ mod tests {
         }
     }
 }
+
+

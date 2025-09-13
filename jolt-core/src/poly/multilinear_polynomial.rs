@@ -2,6 +2,7 @@ use crate::{
     poly::{one_hot_polynomial::OneHotPolynomial, rlc_polynomial::RLCPolynomial},
     utils::compute_dotproduct,
 };
+use crate::utils::types::{U128OrI128, U64OrI64};
 use allocative::Allocative;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Valid};
 use rayon::prelude::*;
@@ -26,6 +27,10 @@ pub enum MultilinearPolynomial<F: JoltField> {
     U128Scalars(CompactPolynomial<u128, F>),
     I64Scalars(CompactPolynomial<i64, F>),
     I128Scalars(CompactPolynomial<i128, F>),
+    // This is either `u64` or `i64`
+    // RightInputScalars(CompactPolynomial<U64OrI64, F>),
+    // This is either `u128` or `i128`
+    // ProductScalars(CompactPolynomial<U128OrI128, F>),
     RLC(RLCPolynomial<F>),
     OneHot(OneHotPolynomial<F>),
 }

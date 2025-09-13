@@ -9,7 +9,7 @@ use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::opening_proof::{OpeningId, SumcheckId};
 use crate::transcripts::Transcript;
-use crate::zkvm::instruction::{CircuitFlags, InstructionFlags, LookupQuery, RightInputValue};
+use crate::zkvm::instruction::{CircuitFlags, InstructionFlags, LookupQuery, U64OrI64};
 use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 use crate::zkvm::JoltProverPreprocessing;
 
@@ -330,8 +330,8 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> WitnessRowAccessor<F>
             JoltR1CSInputs::RightInstructionInput => {
                 let (_left, right) = LookupQuery::<XLEN>::to_instruction_inputs(get(t));
                 match right {
-                    RightInputValue::Unsigned(r) => F::from_u64(r),
-                    RightInputValue::Signed(r) => F::from_i64(r),
+                    U64OrI64::Unsigned(r) => F::from_u64(r),
+                    U64OrI64::Signed(r) => F::from_i64(r),
                 }
             }
             JoltR1CSInputs::LeftLookupOperand => {
@@ -345,8 +345,8 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> WitnessRowAccessor<F>
             JoltR1CSInputs::Product => {
                 let (left, right) = LookupQuery::<XLEN>::to_instruction_inputs(get(t));
                 match right {
-                    RightInputValue::Unsigned(r) => F::from_u128(left as u128 * r as u128),
-                    RightInputValue::Signed(r) => F::from_i128(left as i128 * r as i128),
+                    U64OrI64::Unsigned(r) => F::from_u128(left as u128 * r as u128),
+                    U64OrI64::Signed(r) => F::from_i128(left as i128 * r as i128),
                 }
             }
             JoltR1CSInputs::WriteLookupOutputToRD => {

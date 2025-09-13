@@ -3,7 +3,7 @@ use tracer::instruction::{fence::FENCE, RISCVCycle};
 use crate::zkvm::lookup_table::LookupTables;
 
 use super::{
-    CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, RightInputValue,
+    CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, U64OrI64,
     NUM_CIRCUIT_FLAGS,
 };
 
@@ -22,8 +22,8 @@ impl InstructionFlags for FENCE {
 }
 
 impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<FENCE> {
-    fn to_instruction_inputs(&self) -> (u64, RightInputValue) {
-        (0, RightInputValue::Unsigned(0))
+    fn to_instruction_inputs(&self) -> (u64, U64OrI64) {
+        (0, U64OrI64::Unsigned(0))
     }
 
     fn to_lookup_output(&self) -> u64 {

@@ -3,7 +3,7 @@ use tracer::instruction::{virtual_rotri::VirtualROTRI, RISCVCycle};
 use crate::zkvm::lookup_table::{virtual_rotr::VirtualRotrTable, LookupTables};
 
 use super::{
-    CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, RightInputValue,
+    CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, U64OrI64,
     NUM_CIRCUIT_FLAGS,
 };
 
@@ -29,10 +29,10 @@ impl InstructionFlags for VirtualROTRI {
 }
 
 impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualROTRI> {
-    fn to_instruction_inputs(&self) -> (u64, RightInputValue) {
+    fn to_instruction_inputs(&self) -> (u64, U64OrI64) {
         (
             self.register_state.rs1,
-            RightInputValue::Unsigned(self.instruction.operands.imm),
+            U64OrI64::Unsigned(self.instruction.operands.imm),
         )
     }
 

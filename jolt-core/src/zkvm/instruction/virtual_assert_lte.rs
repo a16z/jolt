@@ -5,7 +5,7 @@ use crate::zkvm::lookup_table::{
 };
 
 use super::{
-    CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, RightInputValue,
+    CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, U64OrI64,
     NUM_CIRCUIT_FLAGS,
 };
 
@@ -31,20 +31,20 @@ impl InstructionFlags for VirtualAssertLTE {
 }
 
 impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualAssertLTE> {
-    fn to_instruction_inputs(&self) -> (u64, RightInputValue) {
+    fn to_instruction_inputs(&self) -> (u64, U64OrI64) {
         match XLEN {
             #[cfg(test)]
             8 => (
                 self.register_state.rs1 as u8 as u64,
-                RightInputValue::Unsigned(self.register_state.rs2 as u8 as u64),
+                U64OrI64::Unsigned(self.register_state.rs2 as u8 as u64),
             ),
             32 => (
                 self.register_state.rs1 as u32 as u64,
-                RightInputValue::Unsigned(self.register_state.rs2 as u32 as u64),
+                U64OrI64::Unsigned(self.register_state.rs2 as u32 as u64),
             ),
             64 => (
                 self.register_state.rs1,
-                RightInputValue::Unsigned(self.register_state.rs2),
+                U64OrI64::Unsigned(self.register_state.rs2),
             ),
             _ => panic!("{XLEN}-bit word size is unsupported"),
         }

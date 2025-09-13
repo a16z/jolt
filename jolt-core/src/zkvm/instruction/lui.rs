@@ -3,7 +3,7 @@ use tracer::instruction::{lui::LUI, RISCVCycle};
 use crate::zkvm::lookup_table::{range_check::RangeCheckTable, LookupTables};
 
 use super::{
-    CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, RightInputValue,
+    CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, U64OrI64,
     NUM_CIRCUIT_FLAGS,
 };
 
@@ -29,18 +29,18 @@ impl InstructionFlags for LUI {
 }
 
 impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<LUI> {
-    fn to_instruction_inputs(&self) -> (u64, RightInputValue) {
+    fn to_instruction_inputs(&self) -> (u64, U64OrI64) {
         match XLEN {
             #[cfg(test)]
             8 => (
                 0,
-                RightInputValue::Unsigned(self.instruction.operands.imm as u8 as u64),
+                U64OrI64::Unsigned(self.instruction.operands.imm as u8 as u64),
             ),
             32 => (
                 0,
-                RightInputValue::Unsigned(self.instruction.operands.imm as u32 as u64),
+                U64OrI64::Unsigned(self.instruction.operands.imm as u32 as u64),
             ),
-            64 => (0, RightInputValue::Unsigned(self.instruction.operands.imm)),
+            64 => (0, U64OrI64::Unsigned(self.instruction.operands.imm)),
             _ => panic!("{XLEN}-bit word size is unsupported"),
         }
     }
