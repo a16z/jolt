@@ -9,22 +9,28 @@ use tracer::instruction::{RV32IMCycle, RV32IMInstruction};
 use crate::utils::interleave_bits;
 
 use super::lookup_table::LookupTables;
+mod types;
+pub use types::RightInputValue;
 
 pub trait InstructionLookup<const XLEN: usize> {
     fn lookup_table(&self) -> Option<LookupTables<XLEN>>;
 }
 
+/// Query interface to convert an instruction (or cycle) into instruction inputs, lookup operands,
+/// lookup index, and outputs under a fixed XLEN.
 pub trait LookupQuery<const XLEN: usize> {
-    /// Returns a tuple of the instruction's inputs. If the instruction has only one input,
-    /// one of the tuple values will be 0.
-    fn to_instruction_inputs(&self) -> (u64, i128);
+    /// Return the pair of instruction inputs used by the uniform R1CS and
+    /// lookup logic. If the instruction has a single semantic input, the
+    /// other value is zero/Unsigned(0).
+    fn to_instruction_inputs(&self) -> (u64, RightInputValue);
 
-    /// Returns a tuple of the instruction's lookup operands. By default, these are the
-    /// same as the instruction inputs returned by `to_instruction_inputs`, but in some cases
-    /// (e.g. ADD, MUL) the instruction inputs are combined to form a single lookup operand.
+    /// Return the pair of lookup operands. By default, these equal the inputs,
+    /// except the right operand is canonicalized to an unsigned XLEN view for
+    /// key construction. Instructions may override this to compress the inputs
+    /// into a single operand (e.g., ADD, MUL set left=0 and right=combined).
     fn to_lookup_operands(&self) -> (u64, u128) {
         let (x, y) = self.to_instruction_inputs();
-        (x, (y as u64) as u128)
+        (x, y.to_u128_lookup::<XLEN>())
     }
 
     /// Converts this instruction's operands into a lookup index (as used in sparse-dense Shout).
@@ -163,9 +169,10 @@ macro_rules! define_rv32im_trait_impls {
         }
 
         impl<const XLEN: usize> LookupQuery<XLEN> for RV32IMCycle {
-            fn to_instruction_inputs(&self) -> (u64, i128) {
+            /// Forward to the concrete instruction's `to_instruction_inputs`.
+            fn to_instruction_inputs(&self) -> (u64, RightInputValue) {
                 match self {
-                    RV32IMCycle::NoOp => (0, 0),
+                    RV32IMCycle::NoOp => (0, RightInputValue::Unsigned(0)),
                     $(
                         RV32IMCycle::$instr(cycle) => LookupQuery::<XLEN>::to_instruction_inputs(cycle),
                     )*
@@ -173,6 +180,7 @@ macro_rules! define_rv32im_trait_impls {
                 }
             }
 
+            /// Forward to the concrete instruction's `to_lookup_index`.
             fn to_lookup_index(&self) -> u128 {
                 match self {
                     RV32IMCycle::NoOp => 0,
@@ -183,6 +191,7 @@ macro_rules! define_rv32im_trait_impls {
                 }
             }
 
+            /// Forward to the concrete instruction's `to_lookup_operands`.
             fn to_lookup_operands(&self) -> (u64, u128) {
                 match self {
                     RV32IMCycle::NoOp => (0, 0),
@@ -193,6 +202,7 @@ macro_rules! define_rv32im_trait_impls {
                 }
             }
 
+            /// Forward to the concrete instruction's `to_lookup_output`.
             fn to_lookup_output(&self) -> u64 {
                 match self {
                     RV32IMCycle::NoOp => 0,

@@ -2,7 +2,7 @@ use tracer::instruction::{virtual_pow2::VirtualPow2, RISCVCycle};
 
 use crate::zkvm::lookup_table::{pow2::Pow2Table, LookupTables};
 
-use super::{CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS};
+use super::{CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, RightInputValue, NUM_CIRCUIT_FLAGS};
 
 impl<const XLEN: usize> InstructionLookup<XLEN> for VirtualPow2 {
     fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
@@ -27,19 +27,19 @@ impl InstructionFlags for VirtualPow2 {
 }
 
 impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualPow2> {
-    fn to_instruction_inputs(&self) -> (u64, i128) {
+    fn to_instruction_inputs(&self) -> (u64, RightInputValue) {
         match XLEN {
             #[cfg(test)]
-            8 => (self.register_state.rs1 as u8 as u64, 0),
-            32 => (self.register_state.rs1 as u32 as u64, 0),
-            64 => (self.register_state.rs1, 0),
+            8 => (self.register_state.rs1 as u8 as u64, RightInputValue::Unsigned(0)),
+            32 => (self.register_state.rs1 as u32 as u64, RightInputValue::Unsigned(0)),
+            64 => (self.register_state.rs1, RightInputValue::Unsigned(0)),
             _ => panic!("{XLEN}-bit word size is unsupported"),
         }
     }
 
     fn to_lookup_operands(&self) -> (u64, u128) {
         let (x, y) = LookupQuery::<XLEN>::to_instruction_inputs(self);
-        (0, x as u128 + y as u64 as u128)
+        (0, x as u128 + y.as_u64() as u128)
     }
 
     fn to_lookup_index(&self) -> u128 {

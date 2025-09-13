@@ -2,7 +2,7 @@ use tracer::instruction::{virtual_sra::VirtualSRA, RISCVCycle};
 
 use crate::zkvm::lookup_table::{virtual_sra::VirtualSRATable, LookupTables};
 
-use super::{CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS};
+use super::{CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, RightInputValue, NUM_CIRCUIT_FLAGS};
 
 impl<const XLEN: usize> InstructionLookup<XLEN> for VirtualSRA {
     fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
@@ -26,18 +26,18 @@ impl InstructionFlags for VirtualSRA {
 }
 
 impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualSRA> {
-    fn to_instruction_inputs(&self) -> (u64, i128) {
+    fn to_instruction_inputs(&self) -> (u64, RightInputValue) {
         match XLEN {
             #[cfg(test)]
             8 => (
                 self.register_state.rs1 as u8 as u64,
-                self.register_state.rs2 as u8 as i128,
+                RightInputValue::Unsigned(self.register_state.rs2 as u8 as u64),
             ),
             32 => (
                 self.register_state.rs1 as u32 as u64,
-                self.register_state.rs2 as u32 as i128,
+                RightInputValue::Unsigned(self.register_state.rs2 as u32 as u64),
             ),
-            64 => (self.register_state.rs1, self.register_state.rs2 as i128),
+            64 => (self.register_state.rs1, RightInputValue::Unsigned(self.register_state.rs2)),
             _ => panic!("{XLEN}-bit word size is unsupported"),
         }
     }
@@ -46,7 +46,7 @@ impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualSRA> {
         use crate::utils::lookup_bits::LookupBits;
         let (x, y) = LookupQuery::<XLEN>::to_instruction_inputs(self);
         let mut x = LookupBits::new(x as u128, XLEN);
-        let mut y = LookupBits::new(y as u64 as u128, XLEN);
+        let mut y = LookupBits::new(y.as_u64() as u128, XLEN);
 
         let sign_bit = if x.leading_ones() == 0 { 0 } else { 1 };
         let mut entry = 0;

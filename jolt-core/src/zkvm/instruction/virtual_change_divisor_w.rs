@@ -3,7 +3,7 @@ use tracer::instruction::{virtual_change_divisor_w::VirtualChangeDivisorW, RISCV
 use crate::zkvm::lookup_table::virtual_change_divisor_w::VirtualChangeDivisorWTable;
 use crate::zkvm::lookup_table::LookupTables;
 
-use super::{CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS};
+use super::{CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, RightInputValue, NUM_CIRCUIT_FLAGS};
 
 impl<const XLEN: usize> InstructionLookup<XLEN> for VirtualChangeDivisorW {
     fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
@@ -27,18 +27,18 @@ impl InstructionFlags for VirtualChangeDivisorW {
 }
 
 impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualChangeDivisorW> {
-    fn to_instruction_inputs(&self) -> (u64, i128) {
+    fn to_instruction_inputs(&self) -> (u64, RightInputValue) {
         // Always treat as 32-bit values for W instructions
         (
             self.register_state.rs1 as u32 as u64,
-            self.register_state.rs2 as i32 as i128,
+            RightInputValue::Signed(self.register_state.rs2 as i32 as i64),
         )
     }
 
     fn to_lookup_output(&self) -> u64 {
         let (remainder, divisor) = LookupQuery::<XLEN>::to_instruction_inputs(self);
         let remainder = remainder as i32;
-        let divisor = divisor as i32;
+        let divisor = divisor.as_i32();
 
         if remainder == i32::MIN && divisor == -1 {
             1

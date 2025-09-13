@@ -27,7 +27,7 @@ use crate::{
     },
 };
 
-use super::instruction::{CircuitFlags, InstructionFlags, LookupQuery};
+use super::instruction::{CircuitFlags, InstructionFlags, LookupQuery, RightInputValue};
 
 struct SharedWitnessData<F: JoltField>(UnsafeCell<WitnessData<F>>);
 unsafe impl<F: JoltField> Sync for SharedWitnessData<F> {}
@@ -87,7 +87,7 @@ pub static mut ALL_COMMITTED_POLYNOMIALS: OnceCell<Vec<CommittedPolynomial>> = O
 struct WitnessData<F: JoltField> {
     // Simple polynomial coefficients
     left_instruction_input: Vec<u64>,
-    right_instruction_input: Vec<i128>,
+    right_instruction_input: Vec<RightInputValue>,
     product: Vec<F>,
     write_lookup_output_to_rd: Vec<u8>,
     write_pc_to_rd: Vec<u8>,
@@ -109,7 +109,7 @@ impl<F: JoltField> WitnessData<F> {
     fn new(trace_len: usize, ram_d: usize, bytecode_d: usize) -> Self {
         Self {
             left_instruction_input: vec![0; trace_len],
-            right_instruction_input: vec![0; trace_len],
+            right_instruction_input: vec![RightInputValue::Unsigned(0); trace_len],
             product: vec![F::zero(); trace_len],
             write_lookup_output_to_rd: vec![0; trace_len],
             write_pc_to_rd: vec![0; trace_len],
@@ -304,7 +304,15 @@ impl CommittedPolynomial {
 
                 batch_ref.left_instruction_input[i] = left;
                 batch_ref.right_instruction_input[i] = right;
-                batch_ref.product[i] = F::from_u64(left) * F::from_i128(right);
+
+                match right {
+                    RightInputValue::Unsigned(r) => {
+                        batch_ref.product[i] = F::from_u128(left as u128 * r as u128);
+                    }
+                    RightInputValue::Signed(r) => {
+                        batch_ref.product[i] = F::from_i128(left as i128 * r as i128);
+                    }
+                }
 
                 batch_ref.write_lookup_output_to_rd[i] = rd_write_flag
                     * (circuit_flags[CircuitFlags::WriteLookupOutputToRD as usize] as u8);
@@ -387,7 +395,8 @@ impl CommittedPolynomial {
                 }
                 CommittedPolynomial::RightInstructionInput => {
                     let coeffs = std::mem::take(&mut batch.right_instruction_input);
-                    results.insert(*poly, MultilinearPolynomial::<F>::from(coeffs));
+                    // TODO: handle this more efficiently (need to add `RightInputValue` enum into `CompactPolynomial`)
+                    results.insert(*poly, MultilinearPolynomial::<F>::from(coeffs.into_iter().map(|r| r.as_i128()).collect::<Vec<_>>()));
                 }
                 CommittedPolynomial::Product => {
                     let coeffs = std::mem::take(&mut batch.product);
@@ -466,20 +475,30 @@ impl CommittedPolynomial {
                     .collect();
                 coeffs.into()
             }
+            // TODO: handle this more efficiently (need to add `RightInputValue` enum into `CompactPolynomial`)
             CommittedPolynomial::RightInstructionInput => {
+                // TODO: define `RightInputValue` enum in `CompactPolynomial` which is just `u64 | i64`
                 let coeffs: Vec<i128> = trace
                     .par_iter()
-                    .map(|cycle| LookupQuery::<XLEN>::to_instruction_inputs(cycle).1)
+                    .map(|cycle| LookupQuery::<XLEN>::to_instruction_inputs(cycle).1.as_i128())
                     .collect();
                 coeffs.into()
             }
             CommittedPolynomial::Product => {
+                // TODO: define `ProductValue` enum in `CompactPolynomial` which is just `u128 | i128`
                 let coeffs: Vec<F> = trace
                     .par_iter()
                     .map(|cycle| {
                         let (left_input, right_input) =
                             LookupQuery::<XLEN>::to_instruction_inputs(cycle);
-                        F::from_u64(left_input) * F::from_i128(right_input)
+                        match right_input {
+                            RightInputValue::Unsigned(r) => {
+                                F::from_u128(left_input as u128 * r as u128)
+                            }
+                            RightInputValue::Signed(r) => {
+                                F::from_i128(left_input as i128 * r as i128)
+                            }
+                        }
                     })
                     .collect();
                 coeffs.into()

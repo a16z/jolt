@@ -29,7 +29,7 @@ pub fn bigint_mul(lhs: [u64; INPUT_LIMBS], rhs: [u64; INPUT_LIMBS]) -> [u64; OUT
                 let (sum_with_hi, carry_hi) = result[result_position + 1].overflowing_add(high);
                 let (sum_with_carry, carry_carry) = sum_with_hi.overflowing_add(carry);
                 result[result_position + 1] = sum_with_carry;
-                carry = (carry_hi as u64) + (carry_carry as u64);
+                carry = (carry_hi as u64) + (carry_carry.as_u64());
 
                 // Continue propagating carry if needed
                 let mut carry_position = result_position + 2;
