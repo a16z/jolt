@@ -1,4 +1,5 @@
 use crate::field::JoltField;
+use ark_ff::SignedBigInt;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SmallScalarConversionError {
@@ -28,6 +29,7 @@ pub enum SmallScalar {
     I64(i64),
     U128(u128),
     I128(i128),
+    S128(SignedBigInt<2>),
 }
 
 impl SmallScalar {
@@ -48,6 +50,7 @@ impl SmallScalar {
                 }
             },
             SmallScalar::I128(v) => v,
+            SmallScalar::S128(v) => v.to_i128(),
         }
     }
 
@@ -73,6 +76,10 @@ impl SmallScalar {
                     0
                 }
             }
+            SmallScalar::S128(v) => {
+                let i = v.to_i128();
+                if i >= 0 { i as u64 } else { 0 }
+            }
         }
     }
 
@@ -84,6 +91,7 @@ impl SmallScalar {
             SmallScalar::I64(v) => v.clamp(i8::MIN as i64, i8::MAX as i64) as i8,
             SmallScalar::U128(v) => (v as i128).clamp(i8::MIN as i128, i8::MAX as i128) as i8,
             SmallScalar::I128(v) => v.clamp(i8::MIN as i128, i8::MAX as i128) as i8,
+            SmallScalar::S128(v) => v.to_i128().clamp(i8::MIN as i128, i8::MAX as i128) as i8,
         }
     }
 
@@ -95,6 +103,7 @@ impl SmallScalar {
             SmallScalar::I64(v) => v != 0,
             SmallScalar::U128(v) => v != 0,
             SmallScalar::I128(v) => v != 0,
+            SmallScalar::S128(v) => v.to_i128() != 0,
         }
     }
 
@@ -115,6 +124,7 @@ impl SmallScalar {
             SmallScalar::I64(v) => field.mul_i128(v as i128),
             SmallScalar::U128(v) => field.mul_u128(v),
             SmallScalar::I128(v) => field.mul_i128(v),
+            SmallScalar::S128(v) => field.mul_i128(v.to_i128()),
         }
     }
 }
@@ -133,6 +143,7 @@ impl From<SmallScalar> for bool {
             SmallScalar::I64(v) => v != 0,
             SmallScalar::U128(v) => v != 0,
             SmallScalar::I128(v) => v != 0,
+            SmallScalar::S128(v) => v.to_i128() != 0,
         }
     }
 }
@@ -149,6 +160,7 @@ impl TryFrom<SmallScalar> for i8 {
             SmallScalar::I64(v) => Ok(v.clamp(i8::MIN as i64, i8::MAX as i64) as i8),
             SmallScalar::U128(v) => Ok((v as i128).clamp(i8::MIN as i128, i8::MAX as i128) as i8),
             SmallScalar::I128(v) => Ok(v.clamp(i8::MIN as i128, i8::MAX as i128) as i8),
+            SmallScalar::S128(v) => Ok(v.to_i128().clamp(i8::MIN as i128, i8::MAX as i128) as i8),
         }
     }
 }
@@ -168,6 +180,10 @@ impl From<SmallScalar> for u64 {
                 } else {
                     0
                 }
+            }
+            SmallScalar::S128(v) => {
+                let i = v.to_i128();
+                if i >= 0 { i as u64 } else { 0 }
             }
         }
     }
@@ -194,6 +210,7 @@ impl TryFrom<SmallScalar> for i128 {
                 }
             }
             SmallScalar::I128(v) => v,
+            SmallScalar::S128(v) => v.to_i128(),
         };
         Ok(result)
     }
