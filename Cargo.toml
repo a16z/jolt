@@ -48,6 +48,8 @@ members = [
     "examples/stdlib/guest",
     "examples/muldiv",
     "examples/muldiv/guest",
+    "examples/btreemap",
+    "examples/btreemap/guest",
     "examples/overflow",
     "examples/overflow/guest",
     "examples/memory-ops",

@@ -1,0 +1,1 @@
+pub static EMBEDDED_BYTES: &[u8] = &[];

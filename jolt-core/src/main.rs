@@ -1,6 +1,6 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
-use jolt_core::benches::bench::{benchmarks, BenchType, PCSType};
+use jolt_core::benches::bench::{benchmarks, BenchType};
 
 use std::any::Any;
 
@@ -24,9 +24,6 @@ struct ProfileArgs {
     /// Output formats
     #[clap(short, long, value_enum)]
     format: Option<Vec<Format>>,
-
-    #[clap(long, value_enum)]
-    pcs: PCSType,
 
     /// Type of benchmark to run
     #[clap(long, value_enum)]
@@ -71,7 +68,7 @@ fn trace(args: ProfileArgs) {
     }
 
     tracing_subscriber::registry().with(layers).init();
-    for (span, bench) in benchmarks(args.pcs, args.name).into_iter() {
+    for (span, bench) in benchmarks(args.name).into_iter() {
         span.to_owned().in_scope(|| {
             bench();
             tracing::info!("Bench Complete");

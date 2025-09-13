@@ -22,3 +22,7 @@ temp_file
 # ide
 .idea
 .vscode
+
+prebuilt-files/*
+
+*.srs

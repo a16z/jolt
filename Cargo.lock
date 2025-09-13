@@ -605,6 +605,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "btreemap"
+version = "0.1.0"
+dependencies = [
+ "btreemap-guest",
+ "jolt-sdk",
+]
+
+[[package]]
+name = "btreemap-guest"
+version = "0.1.0"
+dependencies = [
+ "jolt-sdk",
+]
+
+[[package]]
 name = "build-fs-tree"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
