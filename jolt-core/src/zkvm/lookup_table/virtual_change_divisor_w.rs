@@ -1,5 +1,5 @@
 use super::PrefixSuffixDecomposition;
-use crate::field::JoltField;
+use crate::field::{JoltField, MontU128};
 use crate::utils::uninterleave_bits;
 use crate::zkvm::lookup_table::prefixes::Prefixes;
 use serde::{Deserialize, Serialize};
@@ -39,7 +39,7 @@ impl<const XLEN: usize> JoltLookupTable for VirtualChangeDivisorWTable<XLEN> {
         }
     }
 
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+    fn evaluate_mle<F: JoltField>(&self, r: &[MontU128]) -> F {
         debug_assert_eq!(r.len(), 2 * XLEN);
 
         let sign_bit = r[XLEN + 1];
