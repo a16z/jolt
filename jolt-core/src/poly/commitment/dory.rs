@@ -267,7 +267,6 @@ where
         &self,
         k: &<Self as dory::arithmetic::Group>::Scalar,
     ) -> (Self, ExponentiationSteps) {
-        println!("TRACING!");
         if std::any::TypeId::of::<P>() == std::any::TypeId::of::<Bn254>() {
             let fq12_val = unsafe { std::mem::transmute_copy::<P::TargetField, Fq12>(&self.0) };
             let scalar_fr =
@@ -286,7 +285,6 @@ where
                 naive_result, steps.result,
                 "Mismatch between naive pow() and pow_with_steps_le result"
             );
-            println!("COMPUTE IS CORRECT");
 
             let result_as_target =
                 unsafe { std::mem::transmute_copy::<Fq12, P::TargetField>(&steps.result) };
