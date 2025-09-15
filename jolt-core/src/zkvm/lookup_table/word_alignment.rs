@@ -26,7 +26,7 @@ impl<const XLEN: usize> JoltLookupTable for WordAlignmentTable<XLEN> {
         // The two least significant bits should be 0 for word alignment
         let lsb0 = r[r.len() - 1];
         let lsb1 = r[r.len() - 2];
-        (F::one() - lsb0) * (F::one() - lsb1)
+        (F::one() - F::from_u128_mont(lsb0)) * (F::one() - F::from_u128_mont(lsb1))
     }
 }
 
