@@ -10,21 +10,34 @@ use super::JoltLookupTable;
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct VirtualXORROTWTable<const XLEN: usize, const ROTATION: u32>;
 
-// Note: This only works correctly for XLEN=64
 impl<const XLEN: usize, const ROTATION: u32> JoltLookupTable
     for VirtualXORROTWTable<XLEN, ROTATION>
 {
     fn materialize_entry(&self, index: u128) -> u64 {
-        debug_assert_eq!(XLEN, 64);
-        let (x, y) = uninterleave_bits(index);
-        let x_32 = x as u32;
-        let y_32 = y as u32;
-        let xor_result = x_32 ^ y_32;
-        xor_result.rotate_right(ROTATION) as u64
+        match XLEN {
+            #[cfg(test)]
+            8 => {
+                let rotation = ROTATION as usize % (XLEN / 2);
+                let (x_bits, y_bits) = uninterleave_bits(index);
+                let x_lower = x_bits as u8 & 0x0F;
+                let y_lower = y_bits as u8 & 0x0F;
+                let xor_result = x_lower ^ y_lower;
+                let rotated =
+                    ((xor_result >> rotation) | (xor_result << (XLEN / 2 - rotation))) & 0x0F;
+                rotated as u64
+            }
+            64 => {
+                let (x, y) = uninterleave_bits(index);
+                let x_32 = x as u32;
+                let y_32 = y as u32;
+                let xor_result = x_32 ^ y_32;
+                xor_result.rotate_right(ROTATION) as u64
+            }
+            _ => panic!("{XLEN}-bit word size is unsupported"),
+        }
     }
 
     fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
-        debug_assert_eq!(XLEN, 64);
         debug_assert_eq!(r.len(), 2 * XLEN);
 
         let mut result = F::zero();
@@ -34,8 +47,8 @@ impl<const XLEN: usize, const ROTATION: u32> JoltLookupTable
             let r_y = chunk[1];
             let xor_bit = (F::one() - r_x) * r_y + r_x * (F::one() - r_y);
             let position = idx - (XLEN / 2);
-            let mut rotated_position = (position + ROTATION as usize) % 32;
-            rotated_position = 31 - rotated_position;
+            let mut rotated_position = (position + ROTATION as usize) % (XLEN / 2);
+            rotated_position = (XLEN / 2) - 1 - rotated_position;
             result += F::from_u64(1u64 << rotated_position) * xor_bit;
         }
         result
@@ -75,8 +88,7 @@ mod test {
     use ark_bn254::Fr;
 
     use crate::zkvm::lookup_table::test::{
-        lookup_table_mle_128_length_bitvector_test, lookup_table_mle_random_test,
-        prefix_suffix_test,
+        lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
     };
     use common::constants::XLEN;
 
@@ -94,7 +106,7 @@ mod test {
 
     #[test]
     fn mle_full_hypercube_7() {
-        lookup_table_mle_128_length_bitvector_test::<Fr, VirtualXORROTW7Table<XLEN>>();
+        lookup_table_mle_full_hypercube_test::<Fr, VirtualXORROTW7Table<8>>();
     }
 
     #[test]
@@ -109,7 +121,7 @@ mod test {
 
     #[test]
     fn mle_full_hypercube_8() {
-        lookup_table_mle_128_length_bitvector_test::<Fr, VirtualXORROTW8Table<XLEN>>();
+        lookup_table_mle_full_hypercube_test::<Fr, VirtualXORROTW8Table<8>>();
     }
 
     #[test]
@@ -124,7 +136,7 @@ mod test {
 
     #[test]
     fn mle_full_hypercube_12() {
-        lookup_table_mle_128_length_bitvector_test::<Fr, VirtualXORROTW12Table<XLEN>>();
+        lookup_table_mle_full_hypercube_test::<Fr, VirtualXORROTW12Table<8>>();
     }
 
     #[test]
@@ -139,7 +151,7 @@ mod test {
 
     #[test]
     fn mle_full_hypercube_16() {
-        lookup_table_mle_128_length_bitvector_test::<Fr, VirtualXORROTW16Table<XLEN>>();
+        lookup_table_mle_full_hypercube_test::<Fr, VirtualXORROTW16Table<8>>();
     }
 
     #[test]

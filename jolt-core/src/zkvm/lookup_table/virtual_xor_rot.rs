@@ -10,19 +10,27 @@ use super::JoltLookupTable;
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct VirtualXORROTTable<const XLEN: usize, const ROTATION: u32>;
 
-// Note: This only works correctly for XLEN=64
 impl<const XLEN: usize, const ROTATION: u32> JoltLookupTable
     for VirtualXORROTTable<XLEN, ROTATION>
 {
     fn materialize_entry(&self, index: u128) -> u64 {
-        debug_assert_eq!(XLEN, 64);
-        let (x, y) = uninterleave_bits(index);
-        let xor_result = x ^ y;
-        xor_result.rotate_right(ROTATION)
+        match XLEN {
+            #[cfg(test)]
+            8 => {
+                let (x, y) = uninterleave_bits(index);
+                let xor_result = x as u8 ^ y as u8;
+                xor_result.rotate_right(ROTATION) as u64
+            }
+            64 => {
+                let (x, y) = uninterleave_bits(index);
+                let xor_result = x ^ y;
+                xor_result.rotate_right(ROTATION)
+            }
+            _ => panic!("{XLEN}-bit word size is unsupported"),
+        }
     }
 
     fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
-        debug_assert_eq!(XLEN, 64);
         debug_assert_eq!(r.len(), 2 * XLEN);
 
         let mut result = F::zero();
@@ -73,8 +81,7 @@ mod test {
     use ark_bn254::Fr;
 
     use crate::zkvm::lookup_table::test::{
-        lookup_table_mle_128_length_bitvector_test, lookup_table_mle_random_test,
-        prefix_suffix_test,
+        lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
     };
     use common::constants::XLEN;
 
@@ -94,7 +101,7 @@ mod test {
 
     #[test]
     fn mle_full_hypercube_16() {
-        lookup_table_mle_128_length_bitvector_test::<Fr, VirtualXORROT16Table<XLEN>>();
+        lookup_table_mle_full_hypercube_test::<Fr, VirtualXORROT16Table<8>>();
     }
 
     #[test]
@@ -110,7 +117,7 @@ mod test {
 
     #[test]
     fn mle_full_hypercube_24() {
-        lookup_table_mle_128_length_bitvector_test::<Fr, VirtualXORROT24Table<XLEN>>();
+        lookup_table_mle_full_hypercube_test::<Fr, VirtualXORROT24Table<8>>();
     }
 
     #[test]
@@ -126,7 +133,7 @@ mod test {
 
     #[test]
     fn mle_full_hypercube_32() {
-        lookup_table_mle_128_length_bitvector_test::<Fr, VirtualXORROT32Table<XLEN>>();
+        lookup_table_mle_full_hypercube_test::<Fr, VirtualXORROT32Table<8>>();
     }
 
     #[test]
@@ -142,7 +149,7 @@ mod test {
 
     #[test]
     fn mle_full_hypercube_63() {
-        lookup_table_mle_128_length_bitvector_test::<Fr, VirtualXORROT63Table<XLEN>>();
+        lookup_table_mle_full_hypercube_test::<Fr, VirtualXORROT63Table<8>>();
     }
 
     #[test]
