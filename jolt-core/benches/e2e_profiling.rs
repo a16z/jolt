@@ -200,7 +200,7 @@ fn create_benchmark_plot(
     }
 
     let layout = Layout::new()
-        .title("Jolt zkVM Benchmark<br><sub>Hardware: Macbook M4 Max, 16 core CPU, 128GB RAM</sub>")
+        .title("Jolt zkVM Benchmark<br><sub>Hardware: AMD Threadripper PRO 7975WX 32 cores, 768 GB DDR5 RAM</sub>")
         .x_axis(
             plotly::layout::Axis::new()
                 .title("Trace length (RISCV64IMAC Cycles)")
