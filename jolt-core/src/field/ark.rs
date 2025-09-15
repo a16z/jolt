@@ -4,7 +4,7 @@ use crate::utils::thread::unsafe_allocate_zero_vec;
 use ark_ff::{prelude::*, BigInt, PrimeField, UniformRand};
 use rayon::prelude::*;
 
-use crate::utils::thread::unsafe_allocate_zero_vec;
+
 
 impl FieldOps for ark_bn254::Fr {}
 impl FieldOps<&ark_bn254::Fr, ark_bn254::Fr> for &ark_bn254::Fr {}
@@ -345,7 +345,7 @@ mod tests {
             let a = Fr::random(&mut rng);
 
             let x = MontU128::from(rng.gen::<u128>());
-            let _ = x * x;
+            let _ = Fr::from_u128_mont(x).mul_u128_mont_form(x);
             let b = Fr::from_u128_mont(x);
             let lhs = a * b;
             let rhs = a.mul_u128_mont_form(x);

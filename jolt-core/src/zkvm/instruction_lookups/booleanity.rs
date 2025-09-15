@@ -196,8 +196,8 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
                 .par_iter_mut()
                 .zip(F_right.par_iter_mut())
                 .for_each(|(x, y)| {
-                    *y = *x * r_j;
-                    *x -= *y;
+                    *y = x.mul_u128_mont_form(r_j);
+                    *x -= y.mul_u128_mont_form(r_j);
                 });
             if round == LOG_K_CHUNK - 1 {
                 let mut h_indices = std::mem::take(&mut ps.H_indices);

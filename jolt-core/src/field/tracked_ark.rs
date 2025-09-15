@@ -309,9 +309,6 @@ impl JoltField for TrackedFr {
         TrackedFr(<ark_bn254::Fr as JoltField>::from_i128(n))
     }
 
-    fn from_u128(n: u128) -> Self {
-        TrackedFr(<ark_bn254::Fr as JoltField>::from_u128(n))
-    }
 
     fn to_u64(&self) -> Option<u64> {
         self.0.to_u64()

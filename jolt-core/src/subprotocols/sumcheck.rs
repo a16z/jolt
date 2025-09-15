@@ -549,7 +549,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
                 let right_iter = Z_iter.skip(len).take(len);
                 let B = left_iter
                     .zip(right_iter)
-                    .map(|(a, b)| if a == b { a } else { a + r_i * (b - a) })
+                    .map(|(a, b)| if a == b { a } else { a + (b - a).mul_u128_mont_form(r_i) })
                     .collect();
                 DensePolynomial::new(B)
             },
@@ -707,8 +707,8 @@ pub fn process_eq_sumcheck_round<F: JoltField, ProofTranscript: Transcript>(
     r: &mut Vec<MontU128>,
     claim: &mut F,
     transcript: &mut ProofTranscript,
-) -> F {
-    let scalar_times_w_i = eq_poly.current_scalar * eq_poly.w[eq_poly.current_index - 1];
+) -> MontU128 {
+    let scalar_times_w_i = eq_poly.current_scalar.mul_u128_mont_form(eq_poly.w[eq_poly.current_index - 1]);
 
     let cubic_poly = UniPoly::from_linear_times_quadratic_with_hint(
         // The coefficients of `eq(w[(n - i)..], r[..i]) * eq(w[n - i - 1], X)`

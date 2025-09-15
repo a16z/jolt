@@ -4,8 +4,7 @@ use super::dense_mlpoly::DensePolynomial;
 use super::multilinear_polynomial::BindingOrder;
 use crate::field::MontU128;
 use crate::{field::JoltField, poly::eq_poly::EqPolynomial};
-#[cfg(feature = "allocative")]
-use allocative::{Allocative, FlameGraphBuilder};
+use allocative::{Allocative};
 
 // A struct holding the equality polynomial evaluations for use in sum-check, when incorporating
 /// both the Gruen and Dao-Thaler optimizations.
@@ -19,8 +18,8 @@ use allocative::{Allocative, FlameGraphBuilder};
 ///   1}^{n/2 - i - 1}]`; else `E_in_vec` is empty
 ///
 /// Implements both LowToHigh ordering and HighToLow ordering.
-#[cfg_attr(feature = "allocative", derive(Allocative))]
-#[derive(Debug, Clone, PartialEq)]
+
+#[derive(Debug, Clone, PartialEq, Allocative)]
 pub struct GruenSplitEqPolynomial<F> {
     pub(crate) current_index: usize,
     pub(crate) current_scalar: F,

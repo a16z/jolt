@@ -3,7 +3,6 @@ use std::hash::Hash;
 use std::io::Read;
 use std::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub, SubAssign};
 
-#[cfg(feature = "allocative")]
 use allocative::Allocative;
 use ark_serialize::{CanonicalDeserialize, Valid, Validate};
 use ark_std::{One, Zero};
@@ -19,9 +18,9 @@ pub trait FieldOps<Rhs = Self, Output = Self>:
 /// A zero cost-wrapper around `u128` indicating that the value is already
 /// in Montgomery form for the target field
 //TODO: (Ari) Make this allocative; for memory tracking
-#[cfg_attr(feature = "allocative", derive(Allocative))]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
-pub struct MontU128(#[cfg_attr(feature = "allocative", allocative(skip))] u128);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, Allocative)]
+pub struct MontU128(u128);
 
 impl From<u128> for MontU128 {
     fn from(val: u128) -> Self {

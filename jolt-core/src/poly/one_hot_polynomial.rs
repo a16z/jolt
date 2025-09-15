@@ -286,7 +286,7 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
                         .map(|j| {
                             let h_0 = nonzero_indices[j].map_or(F::zero(), |k| F[k]);
                             let h_1 = nonzero_indices[j + half_T].map_or(F::zero(), |k| F[k]);
-                            h_0 + r * (h_1 - h_0)
+                            h_0 + (h_1 - h_0).mul_u128_mont_form(r)
                         })
                         .collect(),
                 ));

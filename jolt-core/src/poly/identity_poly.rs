@@ -41,11 +41,11 @@ impl<F: JoltField> PolynomialBinding<F> for IdentityPolynomial<F> {
 
         match order {
             BindingOrder::LowToHigh => {
-                self.bound_value += F::from_u128(1 << self.num_bound_vars) * r;
+                self.bound_value += F::from_u128(1 << self.num_bound_vars).mul_u128_mont_form(r);
             }
             BindingOrder::HighToLow => {
                 self.bound_value += self.bound_value;
-                self.bound_value += r;
+                self.bound_value += F::from_u128_mont(r);
             }
         }
         self.num_bound_vars += 1;
@@ -215,7 +215,7 @@ impl<F: JoltField> PolynomialBinding<F> for OperandPolynomial<F> {
             || (self.num_bound_vars.is_odd() && self.side == OperandSide::Right)
         {
             self.bound_value += self.bound_value;
-            self.bound_value += r;
+            self.bound_value += F::from_u128_mont(r);
         }
         self.num_bound_vars += 1;
     }
