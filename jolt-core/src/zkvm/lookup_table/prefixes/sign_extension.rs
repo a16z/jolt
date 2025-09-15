@@ -2,7 +2,7 @@ use crate::{field::JoltField, utils::lookup_bits::LookupBits};
 
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 use crate::field::MontU128;
-use crate::{field::JoltField, utils::lookup_bits::LookupBits};
+
 
 pub enum SignExtensionPrefix<const XLEN: usize> {}
 
@@ -131,6 +131,23 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for SignExtensionPref
         checkpoints: &[PrefixCheckpoint<F>],
         _: MontU128,
         r_y: MontU128,
+        j: usize,
+    ) -> PrefixCheckpoint<F> {
+        if j == 1 {
+            return None.into();
+        }
+        let mut updated = checkpoints[Prefixes::SignExtension].unwrap_or(F::zero());
+        updated += F::from_u64(1 << (j / 2)) * (F::one() - F::from_u128_mont(r_y));
+        if j == 2 * XLEN - 1 {
+            updated *= checkpoints[Prefixes::LeftOperandMsb].unwrap();
+        }
+        Some(updated).into()
+    }
+
+    fn update_prefix_checkpoint_field(
+        checkpoints: &[PrefixCheckpoint<F>],
+        _: F,
+        r_y: F,
         j: usize,
     ) -> PrefixCheckpoint<F> {
         if j == 1 {

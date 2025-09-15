@@ -37,10 +37,12 @@ impl<const XLEN: usize> JoltLookupTable for UnsignedLessThanTable<XLEN> {
         let mut result = F::zero();
         let mut eq_term = F::one();
         for i in 0..XLEN {
-            let x_i = r[2 * i];
+            let _x_i = r[2 * i];
             let y_i = r[2 * i + 1];
-            result += (F::one() - x_i) * y_i * eq_term;
-            eq_term *= x_i * y_i + (F::one() - x_i) * (F::one() - y_i);
+            let x_i_f = F::from_u128_mont(r[2 * i]);
+            let y_i_f = F::from_u128_mont(r[2 * i + 1]);
+            result += (F::one() - x_i_f).mul_u128_mont_form(y_i) * eq_term;
+            eq_term *= x_i_f.mul_u128_mont_form(y_i) + (F::one() - x_i_f) * (F::one() - y_i_f);
         }
         result
     }
@@ -65,7 +67,7 @@ mod test {
     use crate::zkvm::lookup_table::test::{
         lookup_table_mle_full_hypercube_test,
         lookup_table_mle_random_test,
-        // prefix_suffix_test,
+        prefix_suffix_test,
     };
     use common::constants::XLEN;
 

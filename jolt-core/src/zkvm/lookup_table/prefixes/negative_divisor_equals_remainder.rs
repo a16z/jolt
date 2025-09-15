@@ -130,7 +130,7 @@ impl<F: JoltField> SparseDensePrefix<F> for NegativeDivisorEqualsRemainderPrefix
             // `r_y` is the sign bit of the divisor
             // This prefix handles the case where both remainder and
             // divisor are negative.
-            return Some(r_x_f * r_y_f).into();
+            return Some(r_x_f.mul_u128_mont_form(r_y)).into();
         }
 
         let mut negative_divisor_equals_remainder =
@@ -139,6 +139,29 @@ impl<F: JoltField> SparseDensePrefix<F> for NegativeDivisorEqualsRemainderPrefix
 
         negative_divisor_equals_remainder *=
             r_x_f * r_y_f + (F::one() - r_x_f) * (F::one() - r_y_f);
+        Some(negative_divisor_equals_remainder).into()
+    }
+
+    fn update_prefix_checkpoint_field(
+        checkpoints: &[PrefixCheckpoint<F>],
+        r_x: F,
+        r_y: F,
+        j: usize,
+    ) -> PrefixCheckpoint<F> {
+        if j == 1 {
+            // `r_x` is the sign bit of the remainder
+            // `r_y` is the sign bit of the divisor
+            // This prefix handles the case where both remainder and
+            // divisor are negative.
+            return Some(r_x * r_y).into();
+        }
+
+        let mut negative_divisor_equals_remainder =
+            checkpoints[Prefixes::NegativeDivisorEqualsRemainder].unwrap();
+        // checkpoint *= EQ(r_x, r_y)
+
+        negative_divisor_equals_remainder *=
+            r_x * r_y + (F::one() - r_x) * (F::one() - r_y);
         Some(negative_divisor_equals_remainder).into()
     }
 }

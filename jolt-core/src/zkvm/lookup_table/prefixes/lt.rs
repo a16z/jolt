@@ -82,4 +82,17 @@ impl<F: JoltField> SparseDensePrefix<F> for LessThanPrefix {
             + eq_checkpoint * (F::one() - F::from_u128_mont(r_x)).mul_u128_mont_form(r_y);
         Some(lt_updated).into()
     }
+
+    fn update_prefix_checkpoint_field(
+        checkpoints: &[PrefixCheckpoint<F>],
+        r_x: F,
+        r_y: F,
+        _: usize,
+    ) -> PrefixCheckpoint<F> {
+        let lt_checkpoint = checkpoints[Prefixes::LessThan].unwrap_or(F::zero());
+        let eq_checkpoint = checkpoints[Prefixes::Eq].unwrap_or(F::one());
+        let lt_updated = lt_checkpoint
+            + eq_checkpoint * (F::one() - r_x) * r_y;
+        Some(lt_updated).into()
+    }
 }

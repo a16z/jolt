@@ -44,9 +44,10 @@ impl<const XLEN: usize> JoltLookupTable for ValidDiv0Table<XLEN> {
 
         for i in 0..XLEN {
             let x_i = r[2 * i];
+            let x_i_f = F::from_u128_mont(x_i);
             let y_i = r[2 * i + 1];
-            divisor_is_zero *= F::one() - x_i;
-            is_valid_div_by_zero *= (F::one() - x_i) * y_i;
+            divisor_is_zero *= F::one() - x_i_f;
+            is_valid_div_by_zero *= (F::one() - x_i_f).mul_u128_mont_form(y_i);
         }
 
         F::one() - divisor_is_zero + is_valid_div_by_zero
@@ -84,7 +85,7 @@ mod test {
     use crate::zkvm::lookup_table::test::{
         lookup_table_mle_full_hypercube_test,
         lookup_table_mle_random_test,
-        // prefix_suffix_test,
+        prefix_suffix_test,
     };
     use common::constants::XLEN;
 

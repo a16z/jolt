@@ -55,7 +55,7 @@ impl<const XLEN: usize> JoltLookupTable for SignExtendHalfWordTable<XLEN> {
         // Sum for lower half bits (from the second operand, starting at XLEN)
         let mut lower_half = F::zero();
         for i in 0..half_word_size {
-            lower_half += F::from_u64(1 << (half_word_size - 1 - i)) * r[XLEN + half_word_size + i];
+            lower_half += F::from_u64(1 << (half_word_size - 1 - i)).mul_u128_mont_form(r[XLEN + half_word_size + i]);
         }
 
         let sign_bit = r[XLEN + half_word_size];
@@ -63,7 +63,7 @@ impl<const XLEN: usize> JoltLookupTable for SignExtendHalfWordTable<XLEN> {
         // Upper half: all sign bits
         let mut upper_half = F::zero();
         for i in 0..half_word_size {
-            upper_half += F::from_u64(1 << (half_word_size - 1 - i)) * sign_bit;
+            upper_half += F::from_u64(1 << (half_word_size - 1 - i)).mul_u128_mont_form(sign_bit);
         }
 
         lower_half + upper_half * F::from_u64(1 << half_word_size)

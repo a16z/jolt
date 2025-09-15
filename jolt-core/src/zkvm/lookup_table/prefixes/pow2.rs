@@ -4,8 +4,6 @@ use crate::utils::math::Math;
 use crate::zkvm::instruction_lookups::read_raf_checking::current_suffix_len;
 use crate::{field::JoltField, utils::lookup_bits::LookupBits};
 
-use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
-
 pub enum Pow2Prefix<const XLEN: usize> {}
 
 impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for Pow2Prefix<XLEN> {
@@ -77,7 +75,7 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for Pow2Prefix<XLEN> 
         num_bits += 1;
         shift = 1 << (1 << num_bits);
         if let Some(r_x) = r_x {
-            result *= F::one() + F::from_u64(shift - 1) * r_x;
+            result *= F::one() + F::from_u64(shift - 1).mul_u128_mont_form(r_x);
         }
 
         result *= checkpoints[Prefixes::Pow2].unwrap_or(F::one());
@@ -85,6 +83,35 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for Pow2Prefix<XLEN> 
     }
 
     fn update_prefix_checkpoint(
+        checkpoints: &[PrefixCheckpoint<F>],
+        r_x: MontU128,
+        r_y: MontU128,
+        j: usize,
+    ) -> PrefixCheckpoint<F> {
+        if current_suffix_len(j) != 0 {
+            return Some(F::one()).into();
+        }
+
+        // r_y is the highest bit of the shift amount
+        if j == 2 * XLEN - XLEN.log_2() {
+            let shift = 1 << (XLEN / 2);
+            return Some(F::one() + F::from_u64(shift - 1).mul_u128_mont_form(r_y)).into();
+        }
+
+        // r_x and r_y are bits in the shift amount
+        if 2 * XLEN - j < XLEN.log_2() {
+            let mut checkpoint = checkpoints[Prefixes::Pow2].unwrap();
+            let shift = 1 << (1 << (2 * XLEN - j));
+            checkpoint *= F::one() + F::from_u64(shift - 1).mul_u128_mont_form(r_x);
+            let shift = 1 << (1 << (2 * XLEN - j - 1));
+            checkpoint *= F::one() + F::from_u64(shift - 1).mul_u128_mont_form(r_y);
+            return Some(checkpoint).into();
+        }
+
+        Some(F::one()).into()
+    }
+
+    fn update_prefix_checkpoint_field(
         checkpoints: &[PrefixCheckpoint<F>],
         r_x: F,
         r_y: F,

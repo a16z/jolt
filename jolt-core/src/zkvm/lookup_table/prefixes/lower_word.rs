@@ -3,8 +3,6 @@ use crate::field::MontU128;
 use crate::zkvm::instruction_lookups::read_raf_checking::current_suffix_len;
 use crate::{field::JoltField, utils::lookup_bits::LookupBits};
 
-use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
-
 pub enum LowerWordPrefix<const XLEN: usize> {}
 
 impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for LowerWordPrefix<XLEN> {
@@ -12,7 +10,7 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for LowerWordPrefix<X
         checkpoints: &[PrefixCheckpoint<F>],
         r_x: Option<F>,
         c: u32,
-        b: LookupBits,
+        mut b: LookupBits,
         j: usize,
     ) -> F {
         // Ignore high-order variables
@@ -59,7 +57,7 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for LowerWordPrefix<X
             let y = F::from_u8(c as u8);
             let x_shift = 2 * XLEN - j;
             let y_shift = 2 * XLEN - j - 1;
-            result += F::from_u128(1u128 << x_shift) * r_x;
+            result += F::from_u128(1u128 << x_shift).mul_u128_mont_form(r_x);
             result += F::from_u128(1u128 << y_shift) * y;
         } else {
             let x = F::from_u8(c as u8);
@@ -81,6 +79,22 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for LowerWordPrefix<X
         checkpoints: &[PrefixCheckpoint<F>],
         r_x: MontU128,
         r_y: MontU128,
+        j: usize,
+    ) -> PrefixCheckpoint<F> {
+        if j < XLEN {
+            return None.into();
+        }
+        let x_shift = 2 * XLEN - j;
+        let y_shift = 2 * XLEN - j - 1;
+        let mut updated = checkpoints[Prefixes::LowerWord].unwrap_or(F::zero());
+        updated += F::from_u128(1 << x_shift).mul_u128_mont_form(r_x);
+        updated += F::from_u128(1 << y_shift).mul_u128_mont_form(r_y);
+        Some(updated).into()
+    }
+    fn update_prefix_checkpoint_field(
+        checkpoints: &[PrefixCheckpoint<F>],
+        r_x: F,
+        r_y: F,
         j: usize,
     ) -> PrefixCheckpoint<F> {
         if j < XLEN {

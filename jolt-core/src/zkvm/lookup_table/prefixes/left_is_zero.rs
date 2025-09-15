@@ -64,4 +64,16 @@ impl<F: JoltField> SparseDensePrefix<F> for LeftOperandIsZeroPrefix {
             * (F::one() - F::from_u128_mont(r_x));
         Some(updated).into()
     }
+
+    fn update_prefix_checkpoint_field(
+        checkpoints: &[PrefixCheckpoint<F>],
+        r_x: F,
+        _: F,
+        _: usize,
+    ) -> PrefixCheckpoint<F> {
+        // checkpoint *= (1 - r_x)
+        let updated = checkpoints[Prefixes::LeftOperandIsZero].unwrap_or(F::one())
+            * (F::one() - r_x);
+        Some(updated).into()
+    }
 }

@@ -17,7 +17,6 @@ pub trait FieldOps<Rhs = Self, Output = Self>:
 
 /// A zero cost-wrapper around `u128` indicating that the value is already
 /// in Montgomery form for the target field
-//TODO: (Ari) Make this allocative; for memory tracking
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, Allocative)]
 pub struct MontU128(u128);

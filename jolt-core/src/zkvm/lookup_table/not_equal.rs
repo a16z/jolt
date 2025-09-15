@@ -27,7 +27,7 @@ impl<const XLEN: usize> JoltLookupTable for NotEqualTable<XLEN> {
         F::one() - EqualTable::<XLEN>.evaluate_mle::<F>(r)
     }
     fn evaluate_mle_field<F: JoltField>(&self, r: &[F]) -> F {
-        F::one() - EqualTable::<XLEN>.evaluate_mle::<F>(r)
+        F::one() - EqualTable::<XLEN>.evaluate_mle_field::<F>(r)
     }
 }
 
@@ -50,7 +50,7 @@ mod test {
     use crate::zkvm::lookup_table::test::{
         lookup_table_mle_full_hypercube_test,
         lookup_table_mle_random_test,
-        // prefix_suffix_test,
+        prefix_suffix_test,
     };
     use common::constants::XLEN;
 

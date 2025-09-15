@@ -60,4 +60,15 @@ impl<F: JoltField> SparseDensePrefix<F> for LeftShiftHelperPrefix {
         updated *= F::one() + F::from_u128_mont(r_y);
         Some(updated).into()
     }
+
+    fn update_prefix_checkpoint_field(
+        checkpoints: &[PrefixCheckpoint<F>],
+        _r_x: F,
+        r_y: F,
+        _: usize,
+    ) -> PrefixCheckpoint<F> {
+        let mut updated = checkpoints[Prefixes::LeftShiftHelper].unwrap_or(F::one());
+        updated *= F::one() + r_y;
+        Some(updated).into()
+    }
 }

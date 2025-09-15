@@ -23,7 +23,7 @@ impl<const XLEN: usize> JoltLookupTable for OrTable<XLEN> {
         for i in 0..XLEN {
             let x_i = r[2 * i];
             let y_i = r[2 * i + 1];
-            result += F::from_u64(1u64 << (WORD_SIZE - 1 - i))
+            result += F::from_u64(1u64 << (XLEN - 1 - i))
                 * (F::from_u128_mont(x_i) + F::from_u128_mont(y_i)
                     - F::from_u128_mont(x_i) * F::from_u128_mont(y_i));
         }
@@ -31,13 +31,13 @@ impl<const XLEN: usize> JoltLookupTable for OrTable<XLEN> {
     }
 
     fn evaluate_mle_field<F: JoltField>(&self, r: &[F]) -> F {
-        debug_assert_eq!(r.len(), 2 * WORD_SIZE);
+        debug_assert_eq!(r.len(), 2 * XLEN);
 
         let mut result = F::zero();
-        for i in 0..WORD_SIZE {
+        for i in 0..XLEN {
             let x_i = r[2 * i];
             let y_i = r[2 * i + 1];
-            result += F::from_u64(1u64 << (WORD_SIZE - 1 - i)) * (x_i + y_i - x_i * y_i);
+            result += F::from_u64(1u64 << (XLEN - 1 - i)) * (x_i + y_i - x_i * y_i);
         }
         result
     }
@@ -62,7 +62,7 @@ mod test {
     use crate::zkvm::lookup_table::test::{
         lookup_table_mle_full_hypercube_test,
         lookup_table_mle_random_test,
-        // prefix_suffix_test,
+        prefix_suffix_test,
     };
     use common::constants::XLEN;
 

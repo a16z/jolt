@@ -24,10 +24,10 @@ impl<const XLEN: usize> JoltLookupTable for SignedGreaterThanEqualTable<XLEN> {
     }
 
     fn evaluate_mle_field<F: JoltField>(&self, r: &[F]) -> F {
-        F::one() - SignedLessThanTable::<XLEN>.evaluate_mle(r)
+        F::one() - SignedLessThanTable::<XLEN>.evaluate_mle_field::<F>(r)
     }
     fn evaluate_mle<F: JoltField>(&self, r: &[MontU128]) -> F {
-        F::one() - SignedLessThanTable::<XLEN>.evaluate_mle(r)
+        F::one() - SignedLessThanTable::<XLEN>.evaluate_mle::<F>(r)
     }
 }
 
@@ -54,7 +54,7 @@ mod test {
     use crate::zkvm::lookup_table::test::{
         lookup_table_mle_full_hypercube_test,
         lookup_table_mle_random_test,
-        // prefix_suffix_test,
+        prefix_suffix_test,
     };
     use common::constants::XLEN;
 

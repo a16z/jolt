@@ -27,12 +27,12 @@ impl<const XLEN: usize> JoltLookupTable for RangeCheckTable<XLEN> {
         }
         result
     }
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+    fn evaluate_mle<F: JoltField>(&self, r: &[MontU128]) -> F {
         debug_assert_eq!(r.len(), 2 * XLEN);
         let mut result = F::zero();
         for i in 0..XLEN {
             let shift = XLEN - 1 - i;
-            result += F::from_u128(1u128 << shift) * r[XLEN + i];
+            result += F::from_u128(1u128 << shift).mul_u128_mont_form(r[XLEN + i]);
         }
         result
     }
@@ -58,7 +58,7 @@ mod test {
     use crate::zkvm::lookup_table::test::{
         lookup_table_mle_full_hypercube_test,
         lookup_table_mle_random_test,
-        // prefix_suffix_test,
+        prefix_suffix_test,
     };
     use common::constants::XLEN;
 

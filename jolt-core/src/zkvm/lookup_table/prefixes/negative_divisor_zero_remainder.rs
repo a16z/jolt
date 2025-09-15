@@ -134,4 +134,24 @@ impl<F: JoltField> SparseDensePrefix<F> for NegativeDivisorZeroRemainderPrefix {
         negative_divisor_zero_remainder *= F::one() - F::from_u128_mont(r_x);
         Some(negative_divisor_zero_remainder).into()
     }
+
+    fn update_prefix_checkpoint_field(
+        checkpoints: &[PrefixCheckpoint<F>],
+        r_x: F,
+        r_y: F,
+        j: usize,
+    ) -> PrefixCheckpoint<F> {
+        if j == 1 {
+            // `r_x` is the sign bit of the remainder
+            // `r_y` is the sign bit of the divisor
+            // This prefix handles the case where the remainder is zero
+            // and the divisor is negative.
+            return Some((F::one() - r_x) * r_y).into();
+        }
+
+        let mut negative_divisor_zero_remainder =
+            checkpoints[Prefixes::NegativeDivisorZeroRemainder].unwrap();
+        negative_divisor_zero_remainder *= F::one() - r_x;
+        Some(negative_divisor_zero_remainder).into()
+    }
 }

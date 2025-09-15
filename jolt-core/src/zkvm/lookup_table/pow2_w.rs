@@ -33,7 +33,7 @@ impl<const XLEN: usize> JoltLookupTable for Pow2WTable<XLEN> {
         let mut result = F::one();
         for i in 0..5 {
             // 5 bits for 32 values
-            result *= F::one() + (F::from_u64((1 << (1 << i)) - 1)) * r[r.len() - i - 1];
+            result *= F::one() + (F::from_u64((1 << (1 << i)) - 1)).mul_u128_mont_form(r[r.len() - i - 1]);
         }
         result
     }

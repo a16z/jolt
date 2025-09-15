@@ -59,9 +59,9 @@ impl<const XLEN: usize> JoltLookupTable for ShiftRightBitmaskTable<XLEN> {
             for i in 0..log_w {
                 let bit = (s >> i) & 1;
                 eq_val *= if bit == 0 {
-                    F::one() - r[log_w - i - 1]
+                    F::one() - F::from_u128_mont(r[log_w - i - 1])
                 } else {
-                    r[log_w - i - 1]
+                    F::from_u128_mont(r[log_w - i - 1])
                 };
             }
 
@@ -93,7 +93,7 @@ mod test {
     use crate::zkvm::lookup_table::test::{
         lookup_table_mle_full_hypercube_test,
         lookup_table_mle_random_test,
-        // prefix_suffix_test,
+        prefix_suffix_test,
     };
     use common::constants::XLEN;
 

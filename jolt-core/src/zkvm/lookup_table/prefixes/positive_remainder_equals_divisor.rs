@@ -138,4 +138,27 @@ impl<F: JoltField> SparseDensePrefix<F> for PositiveRemainderEqualsDivisorPrefix
             r_y_f.mul_u128_mont_form(r_x) + (F::one() - r_x_f) * (F::one() - r_y_f);
         Some(positive_remainder_equals_divisor).into()
     }
+
+    fn update_prefix_checkpoint_field(
+        checkpoints: &[PrefixCheckpoint<F>],
+        r_x: F,
+        r_y: F,
+        j: usize,
+    ) -> PrefixCheckpoint<F> {
+
+
+        if j == 1 {
+            // `r_x` is the sign bit of the remainder
+            // `r_y` is the sign bit of the divisor
+            // This prefix handles the case where both remainder and divisor
+            // are positive, i.e. their sign bits are zero.
+            return Some((F::one() - r_x) * (F::one() - r_y)).into();
+        }
+
+        let mut positive_remainder_equals_divisor =
+            checkpoints[Prefixes::PositiveRemainderEqualsDivisor].unwrap();
+        positive_remainder_equals_divisor *=
+            r_y * r_x + (F::one() - r_x) * (F::one() - r_y);
+        Some(positive_remainder_equals_divisor).into()
+    }
 }

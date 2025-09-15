@@ -35,7 +35,7 @@ impl<const XLEN: usize> JoltLookupTable for LowerHalfWordTable<XLEN> {
         let mut result = F::zero();
         // Sum the lower half_word_size bits
         for i in 0..half_word_size {
-            result += F::from_u64(1 << (half_word_size - 1 - i)) * r[XLEN + half_word_size + i];
+            result += F::from_u64(1 << (half_word_size - 1 - i)).mul_u128_mont_form(r[XLEN + half_word_size + i]);
         }
         result
     }

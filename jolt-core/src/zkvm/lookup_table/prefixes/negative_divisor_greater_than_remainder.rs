@@ -186,7 +186,7 @@ impl<F: JoltField> SparseDensePrefix<F> for NegativeDivisorGreaterThanRemainderP
             // `r_y` is the sign bit of the divisor
             // This prefix handles the case where both remainder and
             // divisor are negative.
-            return Some(r_x_f * r_y_f).into();
+            return Some(r_x_f.mul_u128_mont_form(r_y)).into();
         }
 
         let gt_checkpoint = checkpoints[Prefixes::NegativeDivisorGreaterThanRemainder].unwrap();
@@ -197,6 +197,32 @@ impl<F: JoltField> SparseDensePrefix<F> for NegativeDivisorGreaterThanRemainderP
         }
 
         let gt_updated = gt_checkpoint + eq_checkpoint * (F::one() - r_y_f).mul_u128_mont_form(r_x);
+        Some(gt_updated).into()
+    }
+
+    fn update_prefix_checkpoint_field(
+        checkpoints: &[PrefixCheckpoint<F>],
+        r_x: F,
+        r_y: F,
+        j: usize,
+    ) -> PrefixCheckpoint<F> {
+
+        if j == 1 {
+            // `r_x` is the sign bit of the remainder
+            // `r_y` is the sign bit of the divisor
+            // This prefix handles the case where both remainder and
+            // divisor are negative.
+            return Some(r_x * r_y).into();
+        }
+
+        let gt_checkpoint = checkpoints[Prefixes::NegativeDivisorGreaterThanRemainder].unwrap();
+        let eq_checkpoint = checkpoints[Prefixes::NegativeDivisorEqualsRemainder].unwrap();
+
+        if j == 3 {
+            return Some(gt_checkpoint * (F::one() - r_y) * r_x).into();
+        }
+
+        let gt_updated = gt_checkpoint + eq_checkpoint * (F::one() - r_y) * r_x;
         Some(gt_updated).into()
     }
 }

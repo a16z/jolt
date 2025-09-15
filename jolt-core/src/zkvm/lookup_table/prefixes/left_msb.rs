@@ -48,4 +48,17 @@ impl<F: JoltField> SparseDensePrefix<F> for LeftMsbPrefix {
             checkpoints[Prefixes::LeftOperandMsb].into()
         }
     }
+
+    fn update_prefix_checkpoint_field(
+        checkpoints: &[PrefixCheckpoint<F>],
+        r_x: F,
+        _: F,
+        j: usize,
+    ) -> PrefixCheckpoint<F> {
+        if j == 1 {
+            Some(r_x).into()
+        } else {
+            checkpoints[Prefixes::LeftOperandMsb].into()
+        }
+    }
 }

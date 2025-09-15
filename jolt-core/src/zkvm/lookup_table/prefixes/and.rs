@@ -14,7 +14,7 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for AndPrefix<XLEN> {
         checkpoints: &[PrefixCheckpoint<F>],
         r_x: Option<F>,
         c: u32,
-        b: LookupBits,
+        mut b: LookupBits,
         j: usize,
     ) -> F {
         let mut result = checkpoints[Prefixes::And].unwrap_or(F::zero());
@@ -49,7 +49,7 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for AndPrefix<XLEN> {
         if let Some(r_x) = r_x {
             let y = F::from_u8(c as u8);
             let shift = XLEN - 1 - j / 2;
-            result += F::from_u64(1 << shift).mul_u128_mont_form(r_x).mul_u128_mont_form(y);
+            result += F::from_u64(1 << shift).mul_u128_mont_form(r_x)*y;
         } else {
             let y_msb = b.pop_msb() as u32;
             let shift = XLEN - 1 - j / 2;
@@ -73,6 +73,19 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for AndPrefix<XLEN> {
         // checkpoint += 2^shift * r_x * r_y
         let updated =
             checkpoints[Prefixes::And].unwrap_or(F::zero()) + F::from_u64(1 << shift).mul_u128_mont_form(r_x).mul_u128_mont_form(r_y);
+        Some(updated).into()
+    }
+
+    fn update_prefix_checkpoint_field(
+        checkpoints: &[PrefixCheckpoint<F>],
+        r_x: F,
+        r_y: F,
+        j: usize,
+    ) -> PrefixCheckpoint<F> {
+        let shift = XLEN - 1 - j / 2;
+        // checkpoint += 2^shift * r_x * r_y
+        let updated =
+            checkpoints[Prefixes::And].unwrap_or(F::zero()) + F::from_u64(1 << shift)*r_x*r_y;
         Some(updated).into()
     }
 }

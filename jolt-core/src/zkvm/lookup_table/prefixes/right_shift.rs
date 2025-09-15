@@ -66,4 +66,16 @@ impl<F: JoltField> SparseDensePrefix<F> for RightShiftPrefix {
         updated += F::from_u128_mont(r_x) * F::from_u128_mont(r_y);
         Some(updated).into()
     }
+
+    fn update_prefix_checkpoint_field(
+        checkpoints: &[PrefixCheckpoint<F>],
+        r_x: F,
+        r_y: F,
+        _: usize,
+    ) -> PrefixCheckpoint<F> {
+        let mut updated = checkpoints[Prefixes::RightShift].unwrap_or(F::zero());
+        updated *= F::one() + r_y;
+        updated += r_x * r_y;
+        Some(updated).into()
+    }
 }

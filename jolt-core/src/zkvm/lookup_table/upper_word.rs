@@ -26,7 +26,7 @@ impl<const XLEN: usize> JoltLookupTable for UpperWordTable<XLEN> {
         debug_assert_eq!(r.len(), 2 * XLEN);
         let mut result = F::zero();
         for i in 0..XLEN {
-            result += F::from_u64(1 << (XLEN - 1 - i)) * r[i];
+            result += F::from_u64(1 << (XLEN - 1 - i)).mul_u128_mont_form(r[i]);
         }
         result
     }
@@ -52,7 +52,7 @@ mod test {
     use crate::zkvm::lookup_table::test::{
         lookup_table_mle_full_hypercube_test,
         lookup_table_mle_random_test,
-        // prefix_suffix_test,
+        prefix_suffix_test,
     };
     use common::constants::XLEN;
 
