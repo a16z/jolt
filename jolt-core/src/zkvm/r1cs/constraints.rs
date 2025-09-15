@@ -34,7 +34,7 @@ use crate::zkvm::instruction::CircuitFlags;
 
 // Re-export key types from ops module for convenience
 pub use super::ops::{Term, LC};
-pub use super::types::ConstantValue;
+pub use super::types::I8OrI96;
 
 /// A single R1CS constraint row
 #[derive(Clone, Copy, Debug)]
@@ -636,13 +636,13 @@ pub fn eval_az_by_name<F: JoltField>(
     match c.name {
         ConstraintName::LeftInputEqRs1 => {
             // Az: LeftOperandIsRs1Value flag (0/1)
-            flag_to_az(matches!(
-                accessor.value_at(
-                    Inp::OpFlags(CircuitFlags::LeftOperandIsRs1Value).to_index(),
-                    row
-                ),
-                SmallScalar::Bool(true)
-            ))
+            // flag_to_az(matches!(
+            accessor.value_at(
+                Inp::OpFlags(CircuitFlags::LeftOperandIsRs1Value).to_index(),
+                row
+            )
+            //     SmallScalar::Bool(true)
+            // ))
         }
         ConstraintName::LeftInputEqPC => {
             // Az: LeftOperandIsPC flag (0/1)
@@ -1393,7 +1393,6 @@ mod tests {
                     JoltR1CSInputs::LookupOutput => SS::U64(lookup_output),
                     JoltR1CSInputs::NextIsNoop => SS::Bool(false),
                     JoltR1CSInputs::ShouldJump => SS::U8(should_jump),
-                    JoltR1CSInputs::CompressedDoNotUpdateUnexpPC => SS::U8(compressed_dnoupd),
                     JoltR1CSInputs::OpFlags(flag) => {
                         let b = match flag {
                             CircuitFlags::LeftOperandIsRs1Value => flag_left_is_rs1,
@@ -1574,7 +1573,6 @@ mod tests {
                     JoltR1CSInputs::LookupOutput => SS::U64(lookup_output),
                     JoltR1CSInputs::NextIsNoop => SS::Bool(false),
                     JoltR1CSInputs::ShouldJump => SS::U8(should_jump),
-                    JoltR1CSInputs::CompressedDoNotUpdateUnexpPC => SS::U8(compressed_dnoupd),
                     JoltR1CSInputs::OpFlags(flag) => {
                         let b = match flag {
                             CircuitFlags::LeftOperandIsRs1Value => left_is_rs1,

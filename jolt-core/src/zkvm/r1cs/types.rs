@@ -1,67 +1,131 @@
 use crate::zkvm::JoltField;
 use ark_ff::BigInt;
 use ark_ff::SignedBigInt;
-use core::ops::{Mul, Sub};
+use core::ops::{Add, AddAssign, Mul, MulAssign, Sub, SubAssign};
 
 // =============================
 // Per-row operand domains
 // =============================
 
-// TODO: rework these to have smaller sizes due to alignment and padding
-// For instance: constant value should have four fields:
-// `is_i8: bool`, `small_i8: i8`, `large_lo: i64`, `large_hi: i8`
-// Same for AzValue and BzValue and AzBzProductValue
-
-/// Represents the value of constants in R1CS constraints.
+/// Compact signed integer optimized for the common `i8` case, widening to a 96-bit
+/// split representation when needed (low 64 bits in `large_lo`, next 32 bits in `large_hi`).
 ///
-/// Design goals:
-/// - Encode the vast majority of coefficients as `I8` for space/time locality.
+/// ## Design goals:
+/// - Set fields so that this fits in 16 bytes
+/// - Encode the vast majority of values as `i8` for space/time locality.
 /// - Keep all operations `const fn` so macros and static tables can fold at compile-time.
-/// - After every operation, results are canonicalized to the smallest fitting variant:
-///   if a result fits in `i8`, it is stored as `I8`, otherwise as `I128`.
+/// - After every operation, results are canonicalized to the smallest fitting form:
+///   if a result fits in `i8`, it is stored in `small_i8`; otherwise it is stored
+///   as a 96-bit split in `large_lo`/`large_hi`.
 ///
-/// Notes:
+/// ## Layout and Semantics
+///
+/// The 96-bit value is stored in two's complement format, split across two fields:
+/// - `large_hi: i32`: The upper 32 bits, which includes the sign bit of the 96-bit integer.
+/// - `large_lo: u64`: The lower 64 bits, treated as an unsigned block of bits.
+///
+/// The full value can be reconstructed using the formula:
+/// `value = (large_hi as i128) << 64 | (large_lo as i128)`
+/// This is equivalent to sign-extending `large_hi` and zero-extending `large_lo`.
+///
+/// ## Notes:
 /// - Arithmetic uses exact `i128` semantics (no modular reduction, no saturation).
-/// - The `neg` implementation avoids `i8` overflow by widening `i8::MIN` to `I128`.
+/// - The `neg` implementation avoids `i8` overflow by widening `i8::MIN` to the wide form.
 /// - Conversions are total: `to_i128()` always returns the exact value.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ConstantValue {
+pub struct I8OrI96 {
+    /// The lower 64 bits of the constant value.
+    large_lo: u64,
+    /// The upper 32 (signed) bits above `large_lo` (bits 64..95)
+    large_hi: i32,
     /// Small constants that fit in i8 (-128 to 127)
-    I8(i8),
-    /// Large constants requiring full i128
-    I128(i128),
+    pub small_i8: i8,
+    /// Whether the constant value is small (i8)
+    pub is_small: bool,
 }
 
-impl ConstantValue {
+impl I8OrI96 {
     /// Returns zero encoded as `I8(0)`.
     pub const fn zero() -> Self {
-        ConstantValue::I8(0)
+        I8OrI96 {
+            large_lo: 0,
+            large_hi: 0,
+            is_small: true,
+            small_i8: 0,
+        }
     }
 
     /// Returns one encoded as `I8(1)`.
     pub const fn one() -> Self {
-        ConstantValue::I8(1)
+        I8OrI96 {
+            large_lo: 0,
+            large_hi: 0,
+            is_small: true,
+            small_i8: 1,
+        }
     }
 
     /// Construct from `i8` without widening.
     pub const fn from_i8(value: i8) -> Self {
-        ConstantValue::I8(value)
+        I8OrI96 {
+            large_lo: 0,
+            large_hi: 0,
+            is_small: true,
+            small_i8: value,
+        }
     }
 
     /// Construct from `i128`, canonicalizing to `I8` if it fits.
+    /// Assumes the value fits in 96 bits (i64 + i32)
     pub const fn from_i128(value: i128) -> Self {
         if value >= i8::MIN as i128 && value <= i8::MAX as i128 {
-            ConstantValue::I8(value as i8)
+            I8OrI96 {
+                large_lo: 0,
+                large_hi: 0,
+                is_small: true,
+                small_i8: value as i8,
+            }
         } else {
-            ConstantValue::I128(value)
+            // Store as 96-bit signed split: low 64 bits and next 32 bits
+            I8OrI96 {
+                large_lo: value as u64,
+                large_hi: (value >> 64) as i32,
+                is_small: false,
+                small_i8: 0,
+            }
+        }
+    }
+
+    /// Mutate in-place from `i8` without widening. Only updates `small_i8` and `is_small`.
+    #[inline]
+    pub const fn set_from_i8(&mut self, value: i8) {
+        self.small_i8 = value;
+        self.is_small = true;
+    }
+
+    /// Mutate in-place from `i128`, canonicalizing to `i8` when it fits.
+    /// Assumes the value fits in 96 bits (i64 + i32). Minimizes writes.
+    #[inline]
+    pub const fn set_from_i128(&mut self, value: i128) {
+        if value >= i8::MIN as i128 && value <= i8::MAX as i128 {
+            self.small_i8 = value as i8;
+            self.is_small = true;
+        } else {
+            self.large_lo = value as u64;
+            self.large_hi = (value >> 64) as i32;
+            self.is_small = false;
         }
     }
 
     /// Exact conversion to `i128`.
+    #[inline]
     pub const fn to_i128(&self) -> i128 {
-        match self {
-            ConstantValue::I8(v) => *v as i128,
-            ConstantValue::I128(v) => *v,
+        if self.is_small {
+            self.small_i8 as i128
+        } else {
+            // The `large_lo` (u64) is zero-extended to i128, and `large_hi` (i32) is sign-extended.
+            // This correctly reconstructs the 96-bit signed value.
+            (self.large_lo as i128) | ((self.large_hi as i128) << 64)
         }
     }
 
@@ -72,94 +136,229 @@ impl ConstantValue {
     }
 
     /// Returns true if the value equals zero.
+    #[inline]
     pub const fn is_zero(&self) -> bool {
-        match self {
-            ConstantValue::I8(v) => *v == 0,
-            ConstantValue::I128(v) => *v == 0,
+        if self.is_small {
+            self.small_i8 == 0
+        } else {
+            self.large_lo == 0 && self.large_hi == 0
         }
     }
 
-    /// Returns true if the value is encoded as `I8`.
-    pub const fn is_small(&self) -> bool {
-        matches!(self, ConstantValue::I8(_))
-    }
-
     /// Returns true if the value is encoded as `I128`.
+    #[inline]
     pub const fn is_large(&self) -> bool {
-        matches!(self, ConstantValue::I128(_))
+        !self.is_small
     }
 
     /// Add two constants, returning a canonicalized result.
     ///
-    /// Fast-path: if both operands are `I8`, accumulate in `i16` to avoid
-    /// unnecessary `i128` conversions, then downcast to `I8` when possible.
-    pub const fn add(self, other: ConstantValue) -> ConstantValue {
-        match (self, other) {
-            (ConstantValue::I8(a), ConstantValue::I8(b)) => {
-                let sum = (a as i16) + (b as i16);
-                if sum >= i8::MIN as i16 && sum <= i8::MAX as i16 {
-                    ConstantValue::I8(sum as i8)
-                } else {
-                    ConstantValue::I128((a as i128) + (b as i128))
-                }
+    /// Fast-path: if both operands are `I8`, perform `i8` addition directly.
+    /// If the `i8` addition overflows, it falls back to the `i128` slow path.
+    #[inline]
+    pub const fn add(self, other: I8OrI96) -> I8OrI96 {
+        let mut out = self;
+        out.add_assign(&other);
+        out
+    }
+
+    /// In-place addition assignment: `self = self + other`.
+    /// Preserves fast path and falls back to `i128` on `i8` overflow.
+    #[inline]
+    pub const fn add_assign(&mut self, other: &I8OrI96) {
+        if self.is_small && other.is_small {
+            let (sum, overflow) = self.small_i8.overflowing_add(other.small_i8);
+            if !overflow {
+                self.set_from_i8(sum);
+                return;
             }
-            (lhs, rhs) => ConstantValue::from_i128(lhs.to_i128() + rhs.to_i128()),
         }
+        let sum = self.to_i128() + other.to_i128();
+        self.set_from_i128(sum);
     }
 
     /// Multiply two constants, returning a canonicalized result.
     ///
-    /// Fast-path: if both operands are `I8`, accumulate in `i16` to avoid
-    /// unnecessary `i128` conversions, then downcast to `I8` when possible.
-    pub const fn mul(self, other: ConstantValue) -> ConstantValue {
-        match (self, other) {
-            (ConstantValue::I8(a), ConstantValue::I8(b)) => {
-                let prod = (a as i16) * (b as i16);
-                if prod >= i8::MIN as i16 && prod <= i8::MAX as i16 {
-                    ConstantValue::I8(prod as i8)
-                } else {
-                    ConstantValue::I128((a as i128) * (b as i128))
-                }
+    /// Fast-path: if both operands are `I8`, perform `i8` multiplication directly.
+    /// If `i8` multiplication overflows, it falls back to the `i128` slow path.
+    #[inline]
+    pub const fn mul(self, other: I8OrI96) -> I8OrI96 {
+        let mut out = self;
+        out.mul_assign(&other);
+        out
+    }
+
+    /// In-place multiplication assignment: `self = self * other`.
+    /// Preserves fast path and falls back to `i128` on `i8` overflow.
+    #[inline]
+    pub const fn mul_assign(&mut self, other: &I8OrI96) {
+        if self.is_small && other.is_small {
+            let (prod, overflow) = self.small_i8.overflowing_mul(other.small_i8);
+            if !overflow {
+                self.set_from_i8(prod);
+                return;
             }
-            (lhs, rhs) => ConstantValue::from_i128(lhs.to_i128() * rhs.to_i128()),
         }
+        let prod = self.to_i128() * other.to_i128();
+        self.set_from_i128(prod);
     }
 
     /// Arithmetic negation with canonicalization.
     ///
     /// Special-cases `I8(i8::MIN)` to avoid overflow by widening to `I128`.
-    pub const fn neg(self) -> ConstantValue {
-        match self {
-            ConstantValue::I8(v) => {
-                if v == i8::MIN {
-                    ConstantValue::I128(-(v as i128))
-                } else {
-                    ConstantValue::I8(-v)
-                }
+    /// In-place arithmetic negation. Preserves `i8::MIN` widening behavior.
+    #[inline]
+    pub const fn neg(&mut self) {
+        if self.is_small {
+            let v = self.small_i8;
+            if v == i8::MIN {
+                self.set_from_i128(-(v as i128));
+            } else {
+                self.set_from_i8(-v);
             }
-            ConstantValue::I128(v) => ConstantValue::I128(-v),
+        } else {
+            self.set_from_i128(-self.to_i128());
         }
     }
 
+    /// Subtraction returning a new value. Delegates to `sub_assign`.
+    #[inline]
+    pub const fn sub(self, other: I8OrI96) -> I8OrI96 {
+        let mut out = self;
+        out.sub_assign(&other);
+        out
+    }
+
+    /// In-place subtraction assignment: `self = self - other`.
+    /// Fast-path: if both operands are `I8`, perform `i8` subtraction directly.
+    /// If `i8` subtraction overflows, it falls back to `i128` slow path.
+    #[inline]
+    pub const fn sub_assign(&mut self, other: &I8OrI96) {
+        if self.is_small && other.is_small {
+            let (diff, overflow) = self.small_i8.overflowing_sub(other.small_i8);
+            if !overflow {
+                self.set_from_i8(diff);
+                return;
+            }
+        }
+        let diff = self.to_i128() - other.to_i128();
+        self.set_from_i128(diff);
+    }
+
     /// Multiply by a field element.
+    #[inline]
     pub fn mul_field<F: JoltField>(self, other: F) -> F {
-        match self {
-            ConstantValue::I8(v) => other.mul_i64(v as i64),
-            ConstantValue::I128(v) => other.mul_i128(v),
+        if self.is_small {
+            other.mul_i64(self.small_i8 as i64)
+        } else {
+            other.mul_i128(self.to_i128())
         }
     }
 
     /// Convert to a field element.
+    #[inline]
     pub fn to_field<F: JoltField>(self) -> F {
-        match self {
-            ConstantValue::I8(v) => F::from_i64(v as i64),
-            ConstantValue::I128(v) => F::from_i128(v),
+        if self.is_small {
+            F::from_i64(self.small_i8 as i64)
+        } else {
+            F::from_i128(self.to_i128())
         }
+    }
+}
+
+impl Add for I8OrI96 {
+    type Output = I8OrI96;
+    #[inline]
+    fn add(self, rhs: Self) -> Self::Output {
+        I8OrI96::add(self, rhs)
+    }
+}
+
+impl AddAssign for I8OrI96 {
+    #[inline]
+    fn add_assign(&mut self, rhs: Self) {
+        self.add_assign(&rhs)
+    }
+}
+
+impl Mul for I8OrI96 {
+    type Output = I8OrI96;
+    #[inline]
+    fn mul(self, rhs: Self) -> Self::Output {
+        I8OrI96::mul(self, rhs)
+    }
+}
+
+impl MulAssign for I8OrI96 {
+    #[inline]
+    fn mul_assign(&mut self, rhs: Self) {
+        self.mul_assign(&rhs)
+    }
+}
+
+impl Sub for I8OrI96 {
+    type Output = I8OrI96;
+    #[inline]
+    fn sub(self, rhs: Self) -> Self::Output {
+        I8OrI96::sub(self, rhs)
+    }
+}
+
+impl SubAssign for I8OrI96 {
+    #[inline]
+    fn sub_assign(&mut self, rhs: Self) {
+        self.sub_assign(&rhs)
+    }
+}
+
+impl Ord for I8OrI96 {
+    #[inline]
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        use std::cmp::Ordering;
+
+        // Fast path for when both values are small.
+        if self.is_small && other.is_small {
+            return self.small_i8.cmp(&other.small_i8);
+        }
+
+        // Deconstruct into (hi, lo) parts to perform a 96-bit two's complement comparison.
+        // If a value is small, we convert it to its large representation on the fly.
+        let (self_hi, self_lo) = if self.is_small {
+            let val = self.small_i8 as i128;
+            ((val >> 64) as i32, val as u64)
+        } else {
+            (self.large_hi, self.large_lo)
+        };
+
+        let (other_hi, other_lo) = if other.is_small {
+            let val = other.small_i8 as i128;
+            ((val >> 64) as i32, val as u64)
+        } else {
+            (other.large_hi, other.large_lo)
+        };
+
+        // Compare the high parts first. If they differ, that determines the order.
+        match self_hi.cmp(&other_hi) {
+            Ordering::Equal => {
+                // If high parts are the same, the order is determined by the low parts.
+                self_lo.cmp(&other_lo)
+            }
+            order => order,
+        }
+    }
+}
+
+impl PartialOrd for I8OrI96 {
+    #[inline]
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
     }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AzValue {
+    // is_small: bool
+    // 
     /// Binary-point Az evaluation: small i8 (e.g. flags, tiny sums)
     I8(i8),
     /// Binary-point Az evaluation: signed magnitude with 1 limb (u64 magnitude)
@@ -532,6 +731,7 @@ pub fn fmadd_unreduced<F: JoltField>(
     }
 }
 
+
 // =============================
 // Unreduced signed accumulators
 // =============================
@@ -774,4 +974,9 @@ impl Sub for BzValue {
             }
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    // Layout tests removed to avoid external dev-deps in this crate.
 }
