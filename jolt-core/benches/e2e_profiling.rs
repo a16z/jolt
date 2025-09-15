@@ -114,6 +114,8 @@ fn sha2_chain() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
 }
 
 fn sha3_chain() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
+    #[cfg(feature = "host")]
+    extern crate sha3_inline;
     let mut inputs = vec![];
     inputs.append(&mut postcard::to_stdvec(&[5u8; 32]).unwrap());
     inputs.append(&mut postcard::to_stdvec(&20u32).unwrap());
@@ -126,16 +128,16 @@ fn get_fib_input(scale: usize) -> u32 {
 }
 
 fn get_sha2_chain_iterations(scale: usize) -> u32 {
-    200 * (1 << (scale - 18)) as u32
+    70 * (1 << (scale - 18)) as u32
 }
 
 fn get_sha3_chain_iterations(scale: usize) -> u32 {
-    20 * (1 << (scale - 18)) as u32
+    50 * (1 << (scale - 18)) as u32
 }
 
 fn get_btreemap_ops(scale: usize) -> u32 {
     let scale_factor = 1 << (scale - 18);
-    300u32 * scale_factor as u32
+    150u32 * scale_factor as u32
 }
 
 fn create_benchmark_plot(
@@ -329,6 +331,8 @@ fn master_benchmark() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     // Ensure SHA2 inline library is linked and auto-registered
     #[cfg(feature = "host")]
     extern crate sha2_inline;
+    #[cfg(feature = "host")]
+    extern crate sha3_inline;
     let bench_type = env::var("BENCH_TYPE").unwrap_or_else(|_| "all".to_string());
     let bench_scales_str = env::var("BENCH_SCALES").unwrap_or_else(|_| {
         env::var("BENCH_SCALE")
