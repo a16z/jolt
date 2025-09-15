@@ -10,10 +10,12 @@ use super::JoltLookupTable;
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct VirtualXORROTWTable<const XLEN: usize, const ROTATION: u32>;
 
+// Note: This only works correctly for XLEN=64
 impl<const XLEN: usize, const ROTATION: u32> JoltLookupTable
     for VirtualXORROTWTable<XLEN, ROTATION>
 {
     fn materialize_entry(&self, index: u128) -> u64 {
+        debug_assert_eq!(XLEN, 64);
         let (x, y) = uninterleave_bits(index);
         let x_32 = x as u32;
         let y_32 = y as u32;
@@ -22,6 +24,7 @@ impl<const XLEN: usize, const ROTATION: u32> JoltLookupTable
     }
 
     fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+        debug_assert_eq!(XLEN, 64);
         debug_assert_eq!(r.len(), 2 * XLEN);
 
         let mut result = F::zero();
@@ -43,6 +46,7 @@ impl<const XLEN: usize, const ROTATION: u32> PrefixSuffixDecomposition<XLEN>
     for VirtualXORROTWTable<XLEN, ROTATION>
 {
     fn suffixes(&self) -> Vec<Suffixes> {
+        debug_assert_eq!(XLEN, 64);
         match ROTATION {
             7 => vec![Suffixes::One, Suffixes::XorRotW7],
             8 => vec![Suffixes::One, Suffixes::XorRotW8],
@@ -53,6 +57,7 @@ impl<const XLEN: usize, const ROTATION: u32> PrefixSuffixDecomposition<XLEN>
     }
 
     fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
+        debug_assert_eq!(XLEN, 64);
         debug_assert_eq!(self.suffixes().len(), suffixes.len());
         let [one, xor_rot] = suffixes.try_into().unwrap();
         match ROTATION {
@@ -70,7 +75,7 @@ mod test {
     use ark_bn254::Fr;
 
     use crate::zkvm::lookup_table::test::{
-        lookup_table_mle_full_hypercube_64_xlen_test, lookup_table_mle_random_test,
+        lookup_table_mle_128_length_bitvector_test, lookup_table_mle_random_test,
         prefix_suffix_test,
     };
     use common::constants::XLEN;
@@ -89,7 +94,7 @@ mod test {
 
     #[test]
     fn mle_full_hypercube_7() {
-        lookup_table_mle_full_hypercube_64_xlen_test::<Fr, VirtualXORROTW7Table<XLEN>>();
+        lookup_table_mle_128_length_bitvector_test::<Fr, VirtualXORROTW7Table<XLEN>>();
     }
 
     #[test]
@@ -104,7 +109,7 @@ mod test {
 
     #[test]
     fn mle_full_hypercube_8() {
-        lookup_table_mle_full_hypercube_64_xlen_test::<Fr, VirtualXORROTW8Table<XLEN>>();
+        lookup_table_mle_128_length_bitvector_test::<Fr, VirtualXORROTW8Table<XLEN>>();
     }
 
     #[test]
@@ -119,7 +124,7 @@ mod test {
 
     #[test]
     fn mle_full_hypercube_12() {
-        lookup_table_mle_full_hypercube_64_xlen_test::<Fr, VirtualXORROTW12Table<XLEN>>();
+        lookup_table_mle_128_length_bitvector_test::<Fr, VirtualXORROTW12Table<XLEN>>();
     }
 
     #[test]
@@ -134,7 +139,7 @@ mod test {
 
     #[test]
     fn mle_full_hypercube_16() {
-        lookup_table_mle_full_hypercube_64_xlen_test::<Fr, VirtualXORROTW16Table<XLEN>>();
+        lookup_table_mle_128_length_bitvector_test::<Fr, VirtualXORROTW16Table<XLEN>>();
     }
 
     #[test]

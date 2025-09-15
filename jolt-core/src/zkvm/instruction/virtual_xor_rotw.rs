@@ -12,6 +12,7 @@ macro_rules! impl_virtual_xor_rotw {
     ($type:ty, $rotation:expr) => {
         impl<const XLEN: usize> InstructionLookup<XLEN> for $type {
             fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
+                debug_assert_eq!(XLEN, 64);
                 Some(VirtualXORROTWTable::<XLEN, $rotation>.into())
             }
         }
@@ -34,15 +35,6 @@ macro_rules! impl_virtual_xor_rotw {
         impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<$type> {
             fn to_instruction_inputs(&self) -> (u64, i128) {
                 match XLEN {
-                    #[cfg(test)]
-                    8 => (
-                        self.register_state.rs1 as u8 as u64,
-                        self.register_state.rs2 as u8 as i128,
-                    ),
-                    32 => (
-                        self.register_state.rs1 as u32 as u64,
-                        self.register_state.rs2 as u32 as i128,
-                    ),
                     64 => (self.register_state.rs1, self.register_state.rs2 as i128),
                     _ => panic!("{XLEN}-bit word size is unsupported"),
                 }
@@ -51,15 +43,6 @@ macro_rules! impl_virtual_xor_rotw {
             fn to_lookup_output(&self) -> u64 {
                 let (x, y) = LookupQuery::<XLEN>::to_instruction_inputs(self);
                 match XLEN {
-                    #[cfg(test)]
-                    8 => {
-                        let xor_result = (x as u8) ^ (y as u8);
-                        xor_result.rotate_right($rotation).into()
-                    }
-                    32 => {
-                        let xor_result = (x as u32) ^ (y as u32);
-                        xor_result.rotate_right($rotation).into()
-                    }
                     64 => {
                         let x_32 = x as u32;
                         let y_32 = y as u32;

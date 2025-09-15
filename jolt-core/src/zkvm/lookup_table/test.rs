@@ -38,7 +38,7 @@ pub fn lookup_table_mle_full_hypercube_test<F: JoltField, T: JoltLookupTable + D
     }
 }
 
-pub fn lookup_table_mle_full_hypercube_64_xlen_test<F: JoltField, T: JoltLookupTable + Default>() {
+pub fn lookup_table_mle_128_length_bitvector_test<F: JoltField, T: JoltLookupTable + Default>() {
     let materialized = T::default().materialize();
     for (i, entry) in materialized.iter().enumerate() {
         assert_eq!(

@@ -10,6 +10,7 @@ pub enum XorRotWPrefix<const XLEN: usize, const ROTATION: u32> {}
 impl<const XLEN: usize, const ROTATION: u32, F: JoltField> SparseDensePrefix<F>
     for XorRotWPrefix<XLEN, ROTATION>
 {
+    // Note: This function only works correctly for XLEN=64
     fn prefix_mle(
         checkpoints: &[PrefixCheckpoint<F>],
         r_x: Option<F>,
