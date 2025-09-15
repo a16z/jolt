@@ -203,7 +203,7 @@ fn create_benchmark_plot(
         .title("Jolt zkVM Benchmark<br><sub>Hardware: Macbook M4 Max, 16 core CPU, 128GB RAM</sub>")
         .x_axis(
             plotly::layout::Axis::new()
-                .title("Trace length (RISCV32IM Cycles)")
+                .title("Trace length (RISCV64IMAC Cycles)")
                 .type_(plotly::layout::AxisType::Linear)
                 .tick_values(tick_vals)
                 .tick_text(tick_text),
@@ -309,7 +309,7 @@ fn create_proof_size_plot(
         .title("Jolt zkVM Proof Size")
         .x_axis(
             plotly::layout::Axis::new()
-                .title("Trace length (RISCV32IM Cycles)")
+                .title("Trace length (RISCV64IMAC Cycles)")
                 .type_(plotly::layout::AxisType::Linear)
                 .tick_values(tick_vals)
                 .tick_text(tick_text),
