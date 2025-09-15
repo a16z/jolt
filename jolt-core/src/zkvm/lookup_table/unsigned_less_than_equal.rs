@@ -36,7 +36,7 @@ impl<const XLEN: usize> JoltLookupTable for UnsignedLessThanEqualTable<XLEN> {
         let mut lt = F::zero();
         let mut eq = F::one();
         for i in 0..XLEN {
-            let x_i = r[2 * i];
+            let _x_i = r[2 * i];
             let y_i = r[2 * i + 1];
             let x_i_f = F::from_u128_mont(r[2 * i]);
             let y_i_f = F::from_u128_mont(r[2 * i + 1]);
