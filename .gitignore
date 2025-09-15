@@ -45,3 +45,5 @@ bin/act
 
 # Inline Traces
 *.joltinline
+
+/perfetto_traces/
