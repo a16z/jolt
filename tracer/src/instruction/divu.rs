@@ -1,3 +1,4 @@
+use crate::instruction::virtual_assert_mul_no_overflow::VirtualAssertMulNoOverflow;
 use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use crate::{instruction::mulhu::MULHU, utils::inline_helpers::InstrAssembler};
 use serde::{Deserialize, Serialize};
@@ -94,8 +95,9 @@ impl RISCVTrace for DIVU {
         asm.emit_b::<VirtualAssertValidDiv0>(a1, *a2, 0);
         // check that quotient * divisor doesn't overflow (unsigned)
         asm.emit_r::<MUL>(*t0, *a2, a1);
-        asm.emit_r::<MULHU>(*t1, *a2, a1); // unsigned high bits
-        asm.emit_b::<VirtualAssertEQ>(*t1, zero, 0);
+        asm.emit_b::<VirtualAssertMulNoOverflow>(*a2, a1, 0);
+        // asm.emit_r::<MULHU>(*t1, *a2, a1); // unsigned high bits
+        // asm.emit_b::<VirtualAssertEQ>(*t1, zero, 0);
         // verify quotient * divisor + remainder == dividend
         asm.emit_r::<ADD>(*t0, *t0, *a3);
         asm.emit_b::<VirtualAssertEQ>(*t0, a0, 0);
