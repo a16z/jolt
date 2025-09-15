@@ -268,6 +268,13 @@ pub trait WitnessRowAccessor<F: JoltField>: Send + Sync {
             SmallScalar::I64(v) => F::from_i64(v),
             SmallScalar::U128(v) => F::from_u128(v),
             SmallScalar::I128(v) => F::from_i128(v),
+            SmallScalar::S128(v) => {
+                if v >= 0 {
+                    F::from_u128(v.magnitude)
+                } else {
+                    -F::from_u128(v.magnitude)
+                }
+            }
         }
     }
 
@@ -596,9 +603,9 @@ pub fn eval_az_generic<F: JoltField>(
             return;
         }
         // Fast-path requires coeff to be I8; otherwise bail out to generic path.
-        let coeff_i8: i8 = match coeff {
-            ConstantValue::I8(v) => v,
-            ConstantValue::I128(_) => {
+        let coeff_i8: i8 = match coeff.as_small_i8() {
+            Some(v) => v,
+            None => {
                 small_ok = false;
                 return;
             }
@@ -629,17 +636,14 @@ pub fn eval_az_generic<F: JoltField>(
     if small_ok {
         if let Some(cst) = a_lc.const_term() {
             // For Az constraints, constants are expected to be I8; if not, bail to generic.
-            match cst {
-                ConstantValue::I8(c8) => {
-                    let (sum, of) = acc_i8.overflowing_add(c8);
-                    acc_i8 = sum;
-                    if of {
-                        small_ok = false;
-                    }
-                }
-                ConstantValue::I128(_) => {
+            if let Some(c8) = cst.as_small_i8() {
+                let (sum, of) = acc_i8.overflowing_add(c8);
+                acc_i8 = sum;
+                if of {
                     small_ok = false;
                 }
+            } else {
+                small_ok = false;
             }
         }
     }
@@ -722,10 +726,11 @@ pub fn eval_bz_generic<F: JoltField>(
                 }
                 (v as u64, true)
             }
+            SmallScalar::S128(v) => (v.magnitude, v >= 0),
         };
         let (c_mag_u64, c_nonneg) = match coeff {
-            ConstantValue::I8(cv) => (cv.unsigned_abs() as u64, cv >= 0),
-            ConstantValue::I128(cv) => {
+            _ => {
+                let cv = coeff.to_i128();
                 let c_mag = cv.unsigned_abs();
                 if c_mag > u64::MAX as u128 {
                     fits_s64 = false;
@@ -747,25 +752,14 @@ pub fn eval_bz_generic<F: JoltField>(
     });
     if fits_s64 {
         if let Some(cst) = b_lc.const_term() {
-            match cst {
-                ConstantValue::I8(cv) => {
-                    let c_mag_u64 = cv.unsigned_abs() as u64;
-                    let (new_mag, new_pos) =
-                        add_with_sign_u64(s64_mag, s64_pos, c_mag_u64, cv >= 0);
-                    s64_mag = new_mag;
-                    s64_pos = new_pos;
-                }
-                ConstantValue::I128(cv) => {
-                    let c_mag = cv.unsigned_abs();
-                    if c_mag > u64::MAX as u128 {
-                        fits_s64 = false;
-                    } else {
-                        let (new_mag, new_pos) =
-                            add_with_sign_u64(s64_mag, s64_pos, c_mag as u64, cv >= 0);
-                        s64_mag = new_mag;
-                        s64_pos = new_pos;
-                    }
-                }
+            let cv = cst.to_i128();
+            let c_mag = cv.unsigned_abs();
+            if c_mag > u64::MAX as u128 {
+                fits_s64 = false;
+            } else {
+                let (new_mag, new_pos) = add_with_sign_u64(s64_mag, s64_pos, c_mag as u64, cv >= 0);
+                s64_mag = new_mag;
+                s64_pos = new_pos;
             }
         }
     }

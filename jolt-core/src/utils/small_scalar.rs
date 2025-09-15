@@ -48,7 +48,7 @@ impl SmallScalar {
                 } else {
                     v as i128
                 }
-            },
+            }
             SmallScalar::I128(v) => v,
             SmallScalar::S128(v) => v.to_i128(),
         }
@@ -78,7 +78,11 @@ impl SmallScalar {
             }
             SmallScalar::S128(v) => {
                 let i = v.to_i128();
-                if i >= 0 { i as u64 } else { 0 }
+                if i >= 0 {
+                    i as u64
+                } else {
+                    0
+                }
             }
         }
     }
@@ -183,7 +187,11 @@ impl From<SmallScalar> for u64 {
             }
             SmallScalar::S128(v) => {
                 let i = v.to_i128();
-                if i >= 0 { i as u64 } else { 0 }
+                if i >= 0 {
+                    i as u64
+                } else {
+                    0
+                }
             }
         }
     }

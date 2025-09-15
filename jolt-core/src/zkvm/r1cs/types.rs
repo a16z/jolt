@@ -7,6 +7,11 @@ use core::ops::{Mul, Sub};
 // Per-row operand domains
 // =============================
 
+// TODO: rework these to have smaller sizes due to alignment and padding
+// For instance: constant value should have four fields:
+// `is_i8: bool`, `small_i8: i8`, `large_lo: i64`, `large_hi: i8`
+// Same for AzValue and BzValue and AzBzProductValue
+
 /// Represents the value of constants in R1CS constraints.
 ///
 /// Design goals:

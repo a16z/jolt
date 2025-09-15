@@ -164,10 +164,14 @@ where
         if bases.len() != scalars.len() {
             return Err(ProofVerifyError::KeyLengthError(bases.len(), scalars.len()));
         }
-        let field_scalars: Vec<Self::ScalarField> =
-            scalars.iter().copied().map(Self::ScalarField::from_u128).collect();
-        ArkVariableBaseMSM::msm_serial(bases, &field_scalars)
-            .map_err(|_bad_index| ProofVerifyError::KeyLengthError(bases.len(), field_scalars.len()))
+        let field_scalars: Vec<Self::ScalarField> = scalars
+            .iter()
+            .copied()
+            .map(Self::ScalarField::from_u128)
+            .collect();
+        ArkVariableBaseMSM::msm_serial(bases, &field_scalars).map_err(|_bad_index| {
+            ProofVerifyError::KeyLengthError(bases.len(), field_scalars.len())
+        })
     }
 
     #[tracing::instrument(skip_all)]
@@ -213,10 +217,14 @@ where
         if bases.len() != scalars.len() {
             return Err(ProofVerifyError::KeyLengthError(bases.len(), scalars.len()));
         }
-        let field_scalars: Vec<Self::ScalarField> =
-            scalars.iter().copied().map(Self::ScalarField::from_i128).collect();
-        ArkVariableBaseMSM::msm_serial(bases, &field_scalars)
-            .map_err(|_bad_index| ProofVerifyError::KeyLengthError(bases.len(), field_scalars.len()))
+        let field_scalars: Vec<Self::ScalarField> = scalars
+            .iter()
+            .copied()
+            .map(Self::ScalarField::from_i128)
+            .collect();
+        ArkVariableBaseMSM::msm_serial(bases, &field_scalars).map_err(|_bad_index| {
+            ProofVerifyError::KeyLengthError(bases.len(), field_scalars.len())
+        })
     }
 
     fn batch_msm<U>(bases: &[Self::MulBase], polys: &[U]) -> Vec<Self>

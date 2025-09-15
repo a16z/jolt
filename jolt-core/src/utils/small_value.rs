@@ -1694,20 +1694,15 @@ mod tests {
         compute_and_update_tA_inplace_generic, compute_and_update_tA_inplace_small_value,
     };
     use crate::{
-        field::{JoltField},
+        field::JoltField,
         poly::eq_poly::EqPolynomial,
         poly::spartan_interleaved_poly::build_eq_r_y_table,
-        zkvm::r1cs::{
-            types::{
-                fmadd_reduce_factor, reduce_unreduced_to_field, AzValue, BzValue, UnreducedProduct,
-            },
+        zkvm::r1cs::types::{
+            fmadd_reduce_factor, reduce_unreduced_to_field, AzValue, BzValue, UnreducedProduct,
         },
     };
     use ark_bn254::Fr;
-    use ark_ff::{
-        biginteger::SignedBigInt,
-        UniformRand, Zero,
-    };
+    use ark_ff::{biginteger::SignedBigInt, UniformRand, Zero};
     use rand::{Rng, SeedableRng};
     use rand_chacha::ChaCha20Rng;
 
@@ -1719,7 +1714,11 @@ mod tests {
 
         // Verify that k * k.inverse() = 1
         let inv_k = k.inverse().unwrap();
-        assert_eq!(k * inv_k, <Fr as JoltField>::from_u64(1), "k * k.inverse() should equal 1");
+        assert_eq!(
+            k * inv_k,
+            <Fr as JoltField>::from_u64(1),
+            "k * k.inverse() should equal 1"
+        );
 
         // k should have internal BigInt representation of 1 (represents value 1 in standard form)
         assert_eq!(
@@ -1774,10 +1773,12 @@ mod tests {
             .collect();
 
         // Convert to field elements for the generic path
-        let binary_az_field: Vec<Fr> = binary_az_vals.iter()
+        let binary_az_field: Vec<Fr> = binary_az_vals
+            .iter()
             .map(|az| az.to_field::<Fr>())
             .collect();
-        let binary_bz_field: Vec<Fr> = binary_bz_vals.iter()
+        let binary_bz_field: Vec<Fr> = binary_bz_vals
+            .iter()
             .map(|bz| bz.to_field::<Fr>())
             .collect();
 
@@ -1842,7 +1843,7 @@ mod tests {
         ];
 
         let test_bz_values = vec![
-            BzValue::S64(SignedBigInt::zero()), // zero
+            BzValue::S64(SignedBigInt::zero()),      // zero
             BzValue::S64(SignedBigInt::from_i64(1)), // one
             BzValue::S64(SignedBigInt::from_i64(200)),
             BzValue::S128(SignedBigInt::from_i128(2000)),

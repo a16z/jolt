@@ -538,15 +538,13 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
             if NUM_ACCUMS_EVAL_ZERO > 0 {
                 for idx in 0..NUM_ACCUMS_EVAL_ZERO {
                     final_svo_accums_zero[idx] += task_output.svo_accums_zero_local[idx];
-                    final_svo_accums_zero_old[idx] +=
-                        task_output.svo_accums_zero_old_local[idx];
+                    final_svo_accums_zero_old[idx] += task_output.svo_accums_zero_old_local[idx];
                 }
             }
             if NUM_ACCUMS_EVAL_INFTY > 0 {
                 for idx in 0..NUM_ACCUMS_EVAL_INFTY {
                     final_svo_accums_infty[idx] += task_output.svo_accums_infty_local[idx];
-                    final_svo_accums_infty_old[idx] +=
-                        task_output.svo_accums_infty_old_local[idx];
+                    final_svo_accums_infty_old[idx] += task_output.svo_accums_infty_old_local[idx];
                 }
             }
         }
@@ -896,7 +894,10 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
 
         // Compute r_i challenge using aggregated sumcheck values (use old baseline)
         let r_i = process_eq_sumcheck_round(
-            (total_sumcheck_eval_at_0_old, total_sumcheck_eval_at_infty_old),
+            (
+                total_sumcheck_eval_at_0_old,
+                total_sumcheck_eval_at_infty_old,
+            ),
             eq_poly,
             round_polys,
             r_challenges,
@@ -1316,7 +1317,13 @@ pub fn build_eq_r_y_table<F: JoltField>(eq_r_y_table: &mut [F; 256], r: &[F]) {
     let num_vars = r.len();
     for y in 0..(1 << num_vars) {
         let y_bits: Vec<F> = (0..num_vars)
-            .map(|i| if (y & (1 << i)) != 0 { F::one() } else { F::zero() })
+            .map(|i| {
+                if (y & (1 << i)) != 0 {
+                    F::one()
+                } else {
+                    F::zero()
+                }
+            })
             .collect();
         let eq_r_y = EqPolynomial::mle(&r, &y_bits) * F::MONTGOMERY_R;
         eq_r_y_table[y] = eq_r_y;
