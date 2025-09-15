@@ -4,8 +4,6 @@ use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::dory::DoryGlobals;
 use crate::subprotocols::sumcheck::{BatchedSumcheck, SumcheckInstance};
-#[cfg(feature = "recursion")]
-use crate::subprotocols::sz_check_protocol::sz_check_prove;
 use crate::transcripts::Transcript;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::utils::profiling::print_current_memory_usage;
@@ -312,19 +310,64 @@ impl JoltDAG {
         // Stage 6: Help the verifier in recursion mode
         #[cfg(feature = "recursion")]
         {
-            println!("FUCK");
+            println("STAGE 6");
+            use crate::poly::commitment::{hyrax::matrix_dimensions, pedersen::PedersenGenerators};
             use ark_bn254::Fq;
+            use ark_grumpkin::Projective as GrumpkinProjective;
             use jolt_optimizations::steps::ExponentiationSteps;
+            use jolt_platform::println;
             use std::any::TypeId;
 
-            let exponentiation_steps_vec: Vec<ExponentiationSteps> = Vec::new();
+            // Extract gt_exponentiation_steps from the ReducedOpeningProof (Dory proof)
+            // let exponentiation_steps_vec: Vec<ExponentiationSteps> = {
+            //     use crate::poly::commitment::dory::DoryProofData;
+            //     use std::any::Any;
+
+            //     let proofs = state_manager.proofs.borrow();
+            //     if let Some(ProofData::ReducedOpeningProof(reduced_proof)) =
+            //         proofs.get(&ProofKeys::ReducedOpeningProof)
+            //     {
+            //         // In recursion mode with Fq field, we know this is a DoryProofData
+            //         // We need to downcast from the generic PCS::Proof to DoryProofData
+            //         let proof_any = &reduced_proof.joint_opening_proof as &dyn Any;
+            //         if let Some(dory_proof) = proof_any.downcast_ref::<DoryProofData>() {
+            //             dory_proof.dory_proof_data.gt_exponentiation_steps.clone()
+            //         } else {
+            //             // If not Dory (shouldn't happen in recursion mode), return empty
+            //             Vec::new()
+            //         }
+            //     } else {
+            //         Vec::new()
+            //     }
+            // };
+            let exponentiation_steps_vec = Vec::new();
 
             if !exponentiation_steps_vec.is_empty() {
-                if TypeId::of::<F>() == TypeId::of::<Fq>() {
+                // if TypeId::of::<F>() == TypeId::of::<Fq>() {
+                if true {
+                    println("THIS BRANCH");
+                    // Create Hyrax generators for Grumpkin curve (for Fq commitments)
+                    // The polynomials have 16 = 2^4 evaluations each
+                    const NUM_VARS: usize = 4; // 2^4 = 16 evaluations per polynomial
+                    const RATIO: usize = 1;
+                    let (_, r_size) = matrix_dimensions(NUM_VARS, RATIO);
+                    println("BEFORE");
+                    let hyrax_generators = PedersenGenerators::<GrumpkinProjective>::new(
+                        r_size,
+                        b"sz_check_hyrax_grumpkin",
+                    );
+
+                    println("AFTER GRUMPKIN GEN");
+
                     let (sz_sumcheck_instances_fq, sz_artifacts_fq) =
-                        sz_check_prove::<Fq, ProofTranscript>(
+                        crate::subprotocols::sz_check_protocol::sz_check_prove::<
+                            Fq,
+                            ProofTranscript,
+                            RATIO,
+                        >(
                             exponentiation_steps_vec,
                             &mut *transcript.borrow_mut(),
+                            &hyrax_generators,
                         );
 
                     let mut sz_sumcheck_instances = unsafe {
@@ -333,12 +376,8 @@ impl JoltDAG {
                             Vec<Box<dyn SumcheckInstance<F>>>,
                         >(sz_sumcheck_instances_fq)
                     };
-                    let sz_artifacts = unsafe {
-                        std::mem::transmute::<
-                            crate::subprotocols::sz_check_protocol::SZCheckArtifacts<Fq>,
-                            crate::subprotocols::sz_check_protocol::SZCheckArtifacts<F>,
-                        >(sz_artifacts_fq)
-                    };
+                    // SZCheckArtifacts is now not parameterized by field type, just RATIO
+                    let sz_artifacts = sz_artifacts_fq;
 
                     if !sz_sumcheck_instances.is_empty() {
                         let sz_instances_mut: Vec<&mut dyn SumcheckInstance<F>> =
@@ -525,6 +564,68 @@ impl JoltDAG {
                 &mut *transcript.borrow_mut(),
             )
             .context("Stage 5")?;
+
+        // Stage 6: Verify SZ check if recursion is enabled
+        #[cfg(feature = "recursion")]
+        {
+            use ark_bn254::Fq;
+            use std::any::TypeId;
+
+            // Check if there's an SZ check proof
+            let proofs = state_manager.proofs.borrow();
+            if let Some(sz_artifacts_data) = proofs.get(&ProofKeys::SZCheckArtifacts) {
+                if TypeId::of::<F>() == TypeId::of::<Fq>() {
+                    // Extract artifacts
+                    let sz_artifacts = match sz_artifacts_data {
+                        ProofData::SZCheckArtifacts(artifacts) => artifacts,
+                        _ => panic!("Invalid proof type for SZ check artifacts"),
+                    };
+
+                    // Get SZ check sumcheck proof
+                    let sz_proof_data = proofs
+                        .get(&ProofKeys::SZCheckSumcheck)
+                        .expect("SZ check sumcheck proof not found");
+                    let sz_proof = match sz_proof_data {
+                        ProofData::SumcheckProof(proof) => proof,
+                        _ => panic!("Invalid proof type for SZ check sumcheck"),
+                    };
+
+                    // Create verifier instances - need to use Fq and then transmute
+                    const RATIO: usize = 1; // Must match prover
+                    let sz_verifier_instances_fq =
+                        crate::subprotocols::sz_check_protocol::sz_check_verify::<
+                            Fq,
+                            ProofTranscript,
+                            RATIO,
+                        >(sz_artifacts, &mut *transcript.borrow_mut());
+
+                    // Safe transmute since we checked F == Fq
+                    let sz_verifier_instances = unsafe {
+                        std::mem::transmute::<
+                            Vec<Box<dyn SumcheckInstance<Fq>>>,
+                            Vec<Box<dyn SumcheckInstance<F>>>,
+                        >(sz_verifier_instances_fq)
+                    };
+
+                    let sz_instances_ref: Vec<&dyn SumcheckInstance<F>> = sz_verifier_instances
+                        .iter()
+                        .map(|instance| &**instance as &dyn SumcheckInstance<F>)
+                        .collect();
+
+                    // Verify the SZ check sumcheck
+                    let _r_sz = BatchedSumcheck::verify(
+                        sz_proof,
+                        sz_instances_ref,
+                        Some(opening_accumulator.clone()),
+                        &mut *transcript.borrow_mut(),
+                    )
+                    .context("Stage 6 - SZ check")?;
+                } else {
+                    panic!("SZ check verification requires field type to be ark_bn254::Fq");
+                }
+            }
+            drop(proofs);
+        }
 
         Ok(())
     }

@@ -1,6 +1,10 @@
 use crate::{
     field::JoltField,
-    poly::{dense_mlpoly::DensePolynomial, multilinear_polynomial::MultilinearPolynomial},
+    poly::{
+        commitment::{hyrax::HyraxCommitment, pedersen::PedersenGenerators},
+        dense_mlpoly::DensePolynomial,
+        multilinear_polynomial::MultilinearPolynomial,
+    },
     subprotocols::{
         square_and_multiply::{AccumulatorMultiplySumcheck, SquareAndMultiplySumcheck},
         sumcheck::SumcheckInstance,
@@ -9,42 +13,56 @@ use crate::{
 };
 use ark_bn254::{Fq, Fq12};
 use ark_ff::{BigInteger, One, PrimeField, Zero};
+use ark_grumpkin::Projective as GrumpkinProjective;
 use jolt_optimizations::{
     fq12_poly::{fq12_to_multilinear_evals, g_coeffs, to_multilinear_evals},
     steps::ExponentiationSteps,
 };
+use jolt_platform::println;
 use std::collections::HashMap;
 
-pub struct SZCheckArtifacts<F: JoltField> {
-    /// The quotient polynomials for each product (needed for verification)
-    pub quotient_polynomials: Vec<Vec<F>>,
-    /// The multilinear polynomials representing Fq12 values
-    /// Organized as triplets (a, b, c) for each product
-    pub fq12_polynomials: Vec<MultilinearPolynomial<F>>,
-    /// Commitments to the Fq12 polynomials (a, b, c values)
-    pub fq12_commitments: Vec<Vec<u8>>, // Will be filled by prover with actual commitments
-    /// Commitments to quotient polynomials  
-    pub quotient_commitments: Vec<Vec<u8>>, // Will be filled by prover with actual commitments
+/// SZ Check artifacts using Hyrax commitments over Grumpkin curve
+/// Note: F is typically Fr (scalar field of BN254), but the polynomials are over Fq
+pub struct SZCheckArtifacts<const RATIO: usize = 1> {
+    /// The quotient polynomials for each product (prover only)
+    pub quotient_polynomials: Option<Vec<Vec<Fq>>>,
+    /// The multilinear polynomials representing Fq12 values (prover only)
+    pub fq12_polynomials: Option<Vec<MultilinearPolynomial<Fq>>>,
+
+    /// Hyrax commitments to the Fq12 polynomials using Grumpkin curve
+    pub fq12_commitments: Vec<HyraxCommitment<RATIO, GrumpkinProjective>>,
+    /// Hyrax commitments to quotient polynomials using Grumpkin curve
+    pub quotient_commitments: Vec<HyraxCommitment<RATIO, GrumpkinProjective>>,
+
+    /// Metadata for verifier
+    pub num_exponentiations: usize,
+    /// Exponent bits for each exponentiation (needed by verifier for AccumulatorMultiplySumcheck)
+    pub exponent_bits_per_exponentiation: Vec<Vec<u8>>,
+    /// Mapping of which Fq12 polynomial indices correspond to each exponentiation
+    pub exponentiation_to_fq12_indices: Vec<Vec<usize>>,
 }
 
 /// Process exponentiation steps and create sumcheck instances for SZ check
-pub fn sz_check_prove<F, ProofTranscript>(
+/// Uses Hyrax commitment scheme with Grumpkin curve for committing to Fq polynomials
+pub fn sz_check_prove<F, ProofTranscript, const RATIO: usize>(
     exponentiation_steps_vec: Vec<ExponentiationSteps>,
     transcript: &mut ProofTranscript,
-) -> (Vec<Box<dyn SumcheckInstance<F>>>, SZCheckArtifacts<F>)
+    hyrax_generators: &PedersenGenerators<GrumpkinProjective>,
+) -> (Vec<Box<dyn SumcheckInstance<F>>>, SZCheckArtifacts<RATIO>)
 where
     F: JoltField + From<Fq>,
     ProofTranscript: Transcript,
 {
     let mut sumcheck_instances: Vec<Box<dyn SumcheckInstance<F>>> = Vec::new();
     let mut all_products = Vec::new();
-    let mut quotient_polynomials = Vec::new();
+    let mut quotient_polynomials: Vec<Vec<Fq>> = Vec::new();
 
+    println("BEFORE THE EXP STEPS TO PRODUCTS");
     // Process all exponentiation steps to collect products
     for steps in &exponentiation_steps_vec {
         let products = steps.to_products();
         for product in &products {
-            quotient_polynomials.push(product.quotient.iter().map(|&fq| F::from(fq)).collect());
+            quotient_polynomials.push(product.quotient.clone());
         }
         all_products.extend(products);
     }
@@ -73,18 +91,24 @@ where
         });
     }
 
-    // Convert Fq12 values to multilinear polynomials
-    let fq12_polynomials: Vec<MultilinearPolynomial<F>> = fp12_values
+    // Convert Fq12 values to multilinear polynomials over Fq (not F)
+    let fq12_polynomials: Vec<MultilinearPolynomial<Fq>> = fp12_values
         .iter()
         .map(|fp12| {
             let evals_fq = fq12_to_multilinear_evals(fp12);
-            let evals_f: Vec<F> = evals_fq.into_iter().map(F::from).collect();
-            MultilinearPolynomial::LargeScalars(DensePolynomial::new(evals_f))
+            MultilinearPolynomial::LargeScalars(DensePolynomial::new(evals_fq))
         })
         .collect();
 
+    // Track metadata for verifier
+    let mut exponent_bits_per_exponentiation = Vec::new();
+    let mut exponentiation_to_fq12_indices = Vec::new();
+
     // Create sumcheck instances for each exponentiation
     for (_exp_idx, steps) in exponentiation_steps_vec.iter().enumerate() {
+        // Track which Fq12 polynomial indices are used in this exponentiation
+        let mut current_exp_indices = Vec::new();
+
         // Get random challenges from transcript
         let r: Vec<F> = transcript.challenge_vector(4); // 4 variables for x ∈ {0,1}⁴
         let gamma: F = transcript.challenge_scalar();
@@ -93,15 +117,35 @@ where
         // We need to map the steps to the corresponding polynomials
         let mut a_polys = Vec::new();
 
-        // Add base polynomial
+        // Add base polynomial (convert from Fq to F)
         if let Some(&base_idx) = fp12_to_index.get(&steps.base) {
-            a_polys.push(fq12_polynomials[base_idx].clone());
+            let fq_poly = &fq12_polynomials[base_idx];
+            let f_evals: Vec<F> = match fq_poly {
+                MultilinearPolynomial::LargeScalars(dense) => {
+                    dense.evals_ref().iter().map(|&fq| F::from(fq)).collect()
+                }
+                _ => panic!("Expected LargeScalars"),
+            };
+            a_polys.push(MultilinearPolynomial::LargeScalars(DensePolynomial::new(
+                f_evals,
+            )));
+            current_exp_indices.push(base_idx);
         }
 
-        // Add intermediate a_i values
+        // Add intermediate a_i values (convert from Fq to F)
         for step in &steps.steps {
             if let Some(&idx) = fp12_to_index.get(&step.a_curr) {
-                a_polys.push(fq12_polynomials[idx].clone());
+                let fq_poly = &fq12_polynomials[idx];
+                let f_evals: Vec<F> = match fq_poly {
+                    MultilinearPolynomial::LargeScalars(dense) => {
+                        dense.evals_ref().iter().map(|&fq| F::from(fq)).collect()
+                    }
+                    _ => panic!("Expected LargeScalars"),
+                };
+                a_polys.push(MultilinearPolynomial::LargeScalars(DensePolynomial::new(
+                    f_evals,
+                )));
+                current_exp_indices.push(idx);
             }
         }
 
@@ -140,13 +184,31 @@ where
         };
 
         if let Some(&idx) = fp12_to_index.get(&initial_rho) {
-            rho_polys.push(fq12_polynomials[idx].clone());
+            let fq_poly = &fq12_polynomials[idx];
+            let f_evals: Vec<F> = match fq_poly {
+                MultilinearPolynomial::LargeScalars(dense) => {
+                    dense.evals_ref().iter().map(|&fq| F::from(fq)).collect()
+                }
+                _ => panic!("Expected LargeScalars"),
+            };
+            rho_polys.push(MultilinearPolynomial::LargeScalars(DensePolynomial::new(
+                f_evals,
+            )));
         }
 
         // Add rho values from steps
         for step in &steps.steps {
             if let Some(&idx) = fp12_to_index.get(&step.rho_after) {
-                rho_polys.push(fq12_polynomials[idx].clone());
+                let fq_poly = &fq12_polynomials[idx];
+                let f_evals: Vec<F> = match fq_poly {
+                    MultilinearPolynomial::LargeScalars(dense) => {
+                        dense.evals_ref().iter().map(|&fq| F::from(fq)).collect()
+                    }
+                    _ => panic!("Expected LargeScalars"),
+                };
+                rho_polys.push(MultilinearPolynomial::LargeScalars(DensePolynomial::new(
+                    f_evals,
+                )));
             }
         }
 
@@ -157,9 +219,16 @@ where
             )));
         }
 
-        // Base polynomial for accumulator
+        // Base polynomial for accumulator (convert from Fq to F)
         let base_poly = if let Some(&idx) = fp12_to_index.get(&steps.base) {
-            fq12_polynomials[idx].clone()
+            let fq_poly = &fq12_polynomials[idx];
+            let f_evals: Vec<F> = match fq_poly {
+                MultilinearPolynomial::LargeScalars(dense) => {
+                    dense.evals_ref().iter().map(|&fq| F::from(fq)).collect()
+                }
+                _ => panic!("Expected LargeScalars"),
+            };
+            MultilinearPolynomial::LargeScalars(DensePolynomial::new(f_evals))
         } else {
             MultilinearPolynomial::LargeScalars(DensePolynomial::new(vec![F::one(); 16]))
         };
@@ -182,6 +251,12 @@ where
         // Result for accumulator sumcheck
         let exp_result = F::from(steps.result.c0.c0.c0);
 
+        // Save exponent bits for this exponentiation
+        exponent_bits_per_exponentiation.push(exponent_bits.clone());
+
+        // Save the Fq12 indices used for this exponentiation
+        exponentiation_to_fq12_indices.push(current_exp_indices);
+
         let accumulator_sumcheck = AccumulatorMultiplySumcheck::new_prover(
             rho_polys,
             base_poly,
@@ -193,14 +268,81 @@ where
         sumcheck_instances.push(Box::new(accumulator_sumcheck));
     }
 
+    // Commit to all polynomials using Hyrax with Grumpkin curve
+    // Note: fq12_polynomials are already over Fq, not F
+    let fq12_poly_refs: Vec<&[Fq]> = fq12_polynomials
+        .iter()
+        .map(|poly| match poly {
+            MultilinearPolynomial::LargeScalars(dense) => dense.evals_ref(),
+            _ => panic!("Expected LargeScalars polynomial"),
+        })
+        .collect();
+
+    // Batch commit all Fq12 polynomials
+    let fq12_commitments = HyraxCommitment::<RATIO, GrumpkinProjective>::batch_commit(
+        &fq12_poly_refs,
+        hyrax_generators,
+    );
+
+    // Commit quotient polynomials
+    let quotient_poly_refs: Vec<&[Fq]> =
+        quotient_polynomials.iter().map(|q| q.as_slice()).collect();
+    let quotient_commitments = HyraxCommitment::<RATIO, GrumpkinProjective>::batch_commit(
+        &quotient_poly_refs,
+        hyrax_generators,
+    );
+
     let artifacts = SZCheckArtifacts {
-        quotient_polynomials,
-        fq12_polynomials,
-        fq12_commitments: Vec::new(), // To be filled by the prover after committing
-        quotient_commitments: Vec::new(), // To be filled by the prover after committing
+        quotient_polynomials: Some(quotient_polynomials),
+        fq12_polynomials: Some(fq12_polynomials),
+        fq12_commitments,
+        quotient_commitments,
+        num_exponentiations: exponentiation_steps_vec.len(),
+        exponent_bits_per_exponentiation,
+        exponentiation_to_fq12_indices,
     };
 
     (sumcheck_instances, artifacts)
+}
+
+/// Verifier side of SZ check - creates verifier instances for sumcheck
+pub fn sz_check_verify<F, ProofTranscript, const RATIO: usize>(
+    artifacts: &SZCheckArtifacts<RATIO>,
+    transcript: &mut ProofTranscript,
+) -> Vec<Box<dyn SumcheckInstance<F>>>
+where
+    F: JoltField + From<Fq>,
+    ProofTranscript: Transcript,
+{
+    let mut sumcheck_instances: Vec<Box<dyn SumcheckInstance<F>>> = Vec::new();
+
+    // Append commitments to transcript for Fiat-Shamir
+    for commitment in &artifacts.fq12_commitments {
+        transcript.append_serializable(commitment);
+    }
+    for commitment in &artifacts.quotient_commitments {
+        transcript.append_serializable(commitment);
+    }
+
+    // For each exponentiation, create verifier instances
+    for i in 0..artifacts.num_exponentiations {
+        // Get random challenges from transcript (must match prover)
+        let r: Vec<F> = transcript.challenge_vector(4); // 4 variables for x ∈ {0,1}⁴
+        let gamma: F = transcript.challenge_scalar();
+
+        // Create verifier instance for SquareAndMultiplySumcheck
+        let square_multiply_verifier = SquareAndMultiplySumcheck::new_verifier(r.clone(), gamma);
+        sumcheck_instances.push(Box::new(square_multiply_verifier));
+
+        // Create verifier instance for AccumulatorMultiplySumcheck
+        let exponent_bits = artifacts.exponent_bits_per_exponentiation[i].clone();
+
+        let accumulator_verifier =
+            AccumulatorMultiplySumcheck::new_verifier(r, gamma, exponent_bits);
+        sumcheck_instances.push(Box::new(accumulator_verifier));
+    }
+
+    sumcheck_instances
 }
 
 #[cfg(test)]

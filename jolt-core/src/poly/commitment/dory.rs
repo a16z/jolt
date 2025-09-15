@@ -9,19 +9,14 @@ use crate::{
     poly::multilinear_polynomial::MultilinearPolynomial,
     utils::{errors::ProofVerifyError, math::Math},
 };
-use ark_bn254::{Bn254, Fr, G1Projective, G2Projective};
+use ark_bn254::{Bn254, Fq, Fq12, Fr, G1Projective, G2Projective};
 use ark_ec::{
     pairing::{MillerLoopOutput, Pairing as ArkPairing, PairingOutput},
     AffineRepr, CurveGroup,
 };
-use ark_ff::{CyclotomicMultSubgroup, Field, One, PrimeField, UniformRand};
+use ark_ff::{BigInteger, CyclotomicMultSubgroup, Field, One, PrimeField, UniformRand};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{rand::RngCore, Zero};
-use once_cell::sync::OnceCell;
-use rayon::prelude::*;
-use std::{borrow::Borrow, marker::PhantomData};
-use tracing::trace_span;
-
 use dory::{
     arithmetic::{
         Field as DoryField, Group as DoryGroup, MultiScalarMul as DoryMultiScalarMul,
@@ -33,7 +28,11 @@ use dory::{
     transcript::Transcript as DoryTranscript,
     verify, DoryProof, DoryProofBuilder, Polynomial as DoryPolynomial, ProverSetup, VerifierSetup,
 };
-use jolt_optimizations::ExponentiationSteps;
+use jolt_optimizations::{pow_with_steps_le, steps::ExponentiationSteps};
+use once_cell::sync::OnceCell;
+use rayon::prelude::*;
+use std::{borrow::Borrow, marker::PhantomData};
+use tracing::trace_span;
 
 /// The (padded) length of the execution trace currently being proven
 static mut GLOBAL_T: OnceCell<usize> = OnceCell::new();
@@ -257,7 +256,7 @@ where
     }
 
     fn scale(&self, k: &Self::Scalar) -> Self {
-        Self(self.0.cyclotomic_exp(k.0.into_bigint()))
+        Self(self.0.pow(k.0.into_bigint()))
     }
 
     fn random<R: RngCore>(rng: &mut R) -> Self {
@@ -266,9 +265,35 @@ where
 
     fn scale_with_steps(
         &self,
-        _: &<Self as dory::arithmetic::Group>::Scalar,
+        k: &<Self as dory::arithmetic::Group>::Scalar,
     ) -> (Self, ExponentiationSteps) {
-        todo!()
+        println!("TRACING!");
+        if std::any::TypeId::of::<P>() == std::any::TypeId::of::<Bn254>() {
+            let fq12_val = unsafe { std::mem::transmute_copy::<P::TargetField, Fq12>(&self.0) };
+            let scalar_fr =
+                unsafe { std::mem::transmute_copy::<P::ScalarField, ark_bn254::Fr>(&k.0) };
+
+            // Convert Fr to Fq by going through the integer representation
+            // This is safe because Fr values are smaller than Fq modulus
+            use ark_ff::{BigInteger, PrimeField};
+            let scalar_fq = Fq::from_le_bytes_mod_order(&scalar_fr.into_bigint().to_bytes_le());
+
+            let steps = pow_with_steps_le(fq12_val, scalar_fq);
+
+            // Sanity check: verify naive pow() equals steps.result
+            let naive_result = fq12_val.pow(scalar_fq.into_bigint());
+            assert_eq!(
+                naive_result, steps.result,
+                "Mismatch between naive pow() and pow_with_steps_le result"
+            );
+            println!("COMPUTE IS CORRECT");
+
+            let result_as_target =
+                unsafe { std::mem::transmute_copy::<Fq12, P::TargetField>(&steps.result) };
+            (Self(result_as_target), steps)
+        } else {
+            panic!("scale_with_steps is only implemented for BN254 pairing");
+        }
     }
 }
 

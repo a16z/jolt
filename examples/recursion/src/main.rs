@@ -129,9 +129,9 @@ impl GuestProgram {
         match self {
             GuestProgram::Fibonacci => {
                 if use_embed {
-                    67108864
+                    1000000
                 } else {
-                    5000000
+                    1000000
                 }
             }
             GuestProgram::Muldiv => {
