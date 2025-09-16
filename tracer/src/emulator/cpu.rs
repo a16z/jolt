@@ -8,6 +8,7 @@ use alloc::collections::btree_map::BTreeMap as FnvHashMap;
 use common::constants::REGISTER_COUNT;
 
 use crate::instruction::{uncompress_instruction, RV32IMCycle, RV32IMInstruction};
+use crate::utils::virtual_registers::VirtualRegisterAllocator;
 
 use super::mmu::{AddressingMode, Mmu};
 use super::terminal::Terminal;
@@ -101,6 +102,7 @@ pub struct Cpu {
     pub trace_len: usize,
     executed_instrs: u64, // “real” RV32IM cycles
     active_markers: FnvHashMap<u32, ActiveMarker>,
+    pub vr_allocator: VirtualRegisterAllocator,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -263,6 +265,7 @@ impl Cpu {
             trace_len: 0,
             executed_instrs: 0,
             active_markers: FnvHashMap::default(),
+            vr_allocator: VirtualRegisterAllocator::new(),
         };
         // cpu.x[0xb] = 0x1020; // I don't know why but Linux boot seems to require this initialization
         cpu.write_csr_raw(CSR_MISA_ADDRESS, 0x800000008014312f);
@@ -382,8 +385,10 @@ impl Cpu {
 
         if trace.is_none() {
             instr.execute(self);
+            self.trace_len += 1;
         } else {
             instr.trace(self, trace);
+            self.trace_len += instr.inline_sequence(&self.vr_allocator, self.xlen).len();
         }
 
         // check if current instruction is real or not for cycle profiling
@@ -892,7 +897,7 @@ impl Cpu {
                 9 => AddressingMode::SV48,
                 _ => {
                     #[cfg(feature = "std")]
-                    tracing::error!("Unknown addressing_mode {:x}", value >> 60);
+                    println!("Unknown addressing_mode {:x}", value >> 60);
                     panic!();
                 }
             },
@@ -982,7 +987,7 @@ impl Cpu {
                     .values()
                     .any(|marker| marker.label == label);
                 if duplicate {
-                    tracing::warn!("Warning: Marker with label '{}' is already active", &label);
+                    println!("Warning: Marker with label '{}' is already active", &label);
                 }
 
                 self.active_markers.insert(
@@ -999,14 +1004,12 @@ impl Cpu {
                 if let Some(mark) = self.active_markers.remove(&ptr) {
                     let real = self.executed_instrs - mark.start_instrs;
                     let virt = self.trace_len - mark.start_trace_len;
-                    tracing::info!(
+                    println!(
                         "\"{}\": {} RV32IM cycles, {} virtual cycles",
-                        mark.label,
-                        real,
-                        virt
+                        mark.label, real, virt
                     );
                 } else {
-                    tracing::warn!(
+                    println!(
                         "Warning: Attempt to end a marker (ptr: 0x{ptr:x}) that was never started"
                     );
                 }
@@ -1045,16 +1048,14 @@ impl Cpu {
 impl Drop for Cpu {
     fn drop(&mut self) {
         if !self.active_markers.is_empty() {
-            tracing::warn!(
+            println!(
                 "Warning: Found {} unclosed cycle tracking marker(s):",
                 self.active_markers.len()
             );
             for (ptr, marker) in &self.active_markers {
-                tracing::warn!(
+                println!(
                     "  - '{}' (at ptr: 0x{:x}), started at {} RV32IM cycles",
-                    marker.label,
-                    ptr,
-                    marker.start_instrs
+                    marker.label, ptr, marker.start_instrs
                 );
             }
         }

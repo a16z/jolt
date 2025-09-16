@@ -1,5 +1,5 @@
 use crate::utils::inline_helpers::InstrAssembler;
-use crate::utils::virtual_registers::allocate_virtual_register;
+use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use serde::{Deserialize, Serialize};
 
 use super::add::ADD;
@@ -54,7 +54,7 @@ impl AMOMINUD {
 
 impl RISCVTrace for AMOMINUD {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let inline_sequence = self.inline_sequence(cpu.xlen);
+        let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
             // In each iteration, create a new Option containing a re-borrowed reference
@@ -62,14 +62,18 @@ impl RISCVTrace for AMOMINUD {
         }
     }
 
-    fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
-        let v_rs2 = allocate_virtual_register();
-        let v_rd = allocate_virtual_register();
-        let v_sel_rs2 = allocate_virtual_register();
-        let v_sel_rd = allocate_virtual_register();
-        let v_tmp = allocate_virtual_register();
+    fn inline_sequence(
+        &self,
+        allocator: &VirtualRegisterAllocator,
+        xlen: Xlen,
+    ) -> Vec<RV32IMInstruction> {
+        let v_rs2 = allocator.allocate();
+        let v_rd = allocator.allocate();
+        let v_sel_rs2 = allocator.allocate();
+        let v_sel_rd = allocator.allocate();
+        let v_tmp = allocator.allocate();
 
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
         asm.emit_ld::<LD>(*v_rd, self.operands.rs1, 0);
         asm.emit_r::<SLTU>(*v_sel_rs2, self.operands.rs2, *v_rd);
         asm.emit_i::<XORI>(*v_sel_rd, *v_sel_rs2, 1);

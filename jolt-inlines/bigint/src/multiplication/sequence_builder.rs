@@ -1,11 +1,11 @@
+use core::array;
+
 use tracer::{
-    emulator::cpu::Xlen,
     instruction::{
-        add::ADD, ld::LD, mul::MUL, mulhu::MULHU, sd::SD, sltu::SLTU, RV32IMInstruction,
+        add::ADD, format::format_inline::FormatInline, ld::LD, mul::MUL, mulhu::MULHU, sd::SD,
+        sltu::SLTU, RV32IMInstruction,
     },
-    utils::{
-        inline_helpers::InstrAssembler, virtual_registers::allocate_virtual_register_for_inline,
-    },
+    utils::{inline_helpers::InstrAssembler, virtual_registers::VirtualRegisterGuard},
 };
 
 use super::{INPUT_LIMBS, OUTPUT_LIMBS};
@@ -25,62 +25,44 @@ pub(crate) const NEEDED_REGISTERS: u8 = 20;
 struct BigIntMulSequenceBuilder {
     asm: InstrAssembler,
     /// Virtual registers used by the sequence
-    vr: [u8; NEEDED_REGISTERS as usize],
-    /// Location of first operand in memory
-    operand_rs1: u8,
-    /// Location of second operand in memory
-    operand_rs2: u8,
-    /// Location of result in memory
-    operand_rs3: u8,
+    vr: [VirtualRegisterGuard; NEEDED_REGISTERS as usize],
+    operands: FormatInline,
 }
 
 impl BigIntMulSequenceBuilder {
-    fn new(
-        address: u64,
-        is_compressed: bool,
-        xlen: Xlen,
-        vr: [u8; NEEDED_REGISTERS as usize],
-        operand_rs1: u8,
-        operand_rs2: u8,
-        operand_rs3: u8,
-    ) -> Self {
-        BigIntMulSequenceBuilder {
-            asm: InstrAssembler::new_inline(address, is_compressed, xlen),
-            vr,
-            operand_rs1,
-            operand_rs2,
-            operand_rs3,
-        }
+    fn new(asm: InstrAssembler, operands: FormatInline) -> Self {
+        let vr = array::from_fn(|_| asm.allocator.allocate_for_inline());
+        BigIntMulSequenceBuilder { asm, vr, operands }
     }
 
     /// Register indices for operands and temporaries
     // LHS
     fn a(&self, i: usize) -> u8 {
-        self.vr[i]
+        *self.vr[i]
     }
     // RHS
     fn b(&self, i: usize) -> u8 {
-        self.vr[INPUT_LIMBS + i]
+        *self.vr[INPUT_LIMBS + i]
     }
     // Results
     fn s(&self, i: usize) -> u8 {
-        self.vr[INPUT_LIMBS + INPUT_LIMBS + i]
+        *self.vr[INPUT_LIMBS + INPUT_LIMBS + i]
     }
     // Temporaries
     fn t(&self, i: usize) -> u8 {
-        self.vr[INPUT_LIMBS + INPUT_LIMBS + OUTPUT_LIMBS + i]
+        *self.vr[INPUT_LIMBS + INPUT_LIMBS + OUTPUT_LIMBS + i]
     }
 
     /// Builds the complete multiplication sequence
     fn build(mut self) -> Vec<RV32IMInstruction> {
         for i in 0..INPUT_LIMBS {
             self.asm
-                .emit_ld::<LD>(self.a(i), self.operand_rs1, i as i64 * 8);
+                .emit_ld::<LD>(self.a(i), self.operands.rs1, i as i64 * 8);
         }
 
         for i in 0..INPUT_LIMBS {
             self.asm
-                .emit_ld::<LD>(self.b(i), self.operand_rs2, i as i64 * 8);
+                .emit_ld::<LD>(self.b(i), self.operands.rs2, i as i64 * 8);
         }
 
         // Initialize result accumulator registers to zero
@@ -97,7 +79,7 @@ impl BigIntMulSequenceBuilder {
         // Store result (8 u64 words) back to the memory rs3 points to
         for i in 0..OUTPUT_LIMBS {
             self.asm
-                .emit_s::<SD>(self.operand_rs3, self.s(i), i as i64 * 8);
+                .emit_s::<SD>(self.operands.rs3, self.s(i), i as i64 * 8);
         }
 
         self.asm.finalize_inline(NEEDED_REGISTERS)
@@ -165,21 +147,9 @@ impl BigIntMulSequenceBuilder {
 
 /// Virtual instructions builder for bigint multiplication
 pub fn bigint_mul_sequence_builder(
-    address: u64,
-    is_compressed: bool,
-    xlen: Xlen,
-    rs1: u8,
-    rs2: u8,
-    rs3: u8,
+    asm: InstrAssembler,
+    operands: FormatInline,
 ) -> Vec<RV32IMInstruction> {
-    let guards: Vec<_> = (0..NEEDED_REGISTERS)
-        .map(|_| allocate_virtual_register_for_inline())
-        .collect();
-    let mut vr = [0u8; NEEDED_REGISTERS as usize];
-    for (i, guard) in guards.iter().enumerate() {
-        vr[i] = **guard;
-    }
-
-    let builder = BigIntMulSequenceBuilder::new(address, is_compressed, xlen, vr, rs1, rs2, rs3);
+    let builder = BigIntMulSequenceBuilder::new(asm, operands);
     builder.build()
 }

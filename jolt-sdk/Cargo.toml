@@ -31,8 +31,8 @@ guest-verifier = [
     "guest-std",
     "dep:tracer",
     "dep:common",
-    "jolt-core/parallel",
     "dep:ark-bn254",
+    "jolt-core/minimal",
 ]
 
 [dependencies]

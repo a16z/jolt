@@ -2,14 +2,19 @@
 
 mod exec {
     use crate::test_utils::*;
+    use tracer::emulator::cpu::Xlen;
 
     #[test]
     fn test_keccak256_direct_execution() {
         for (i, test_case) in keccak_test_vectors().iter().enumerate() {
-            let mut setup_trace = KeccakCpuHarness::new();
-            setup_trace.load_state(&test_case.input);
-            setup_trace.trace_keccak_instruction();
-            let result = setup_trace.read_state();
+            let mut harness = create_keccak_harness(Xlen::Bit64);
+            harness.setup_registers();
+            harness.load_state64(&test_case.input);
+            let instruction = instruction();
+            harness.execute_inline(instruction);
+            let result_vec = harness.read_output64(25);
+            let mut result = [0u64; 25];
+            result.copy_from_slice(&result_vec);
             assert_eq!(
                 result, test_case.expected,
                 "Keccak256 direct execution test case {} failed: {}\nInput: {:016x?}\nExpected: {:016x?}\nActual: {:016x?}",
@@ -40,81 +45,25 @@ mod exec {
             assert_eq!(&hash, expected_hash);
         }
     }
-
-    #[test]
-    fn test_execute_keccak_f() {
-        let mut state = [0u64; crate::NUM_LANES];
-        crate::exec::execute_keccak_f(&mut state);
-        assert_eq!(
-            state,
-            crate::test_constants::xkcp_vectors::AFTER_ONE_PERMUTATION
-        );
-    }
 }
 
 mod exec_trace_equivalence {
     use crate::test_constants::*;
     use crate::test_utils::*;
-    use crate::trace_generator::keccak256_build_up_to_step;
     use tracer::emulator::cpu::Xlen;
-
-    #[test]
-    fn test_keccak_trace_intermediate_vr() {
-        for (description, initial_state) in TestVectors::get_standard_test_vectors() {
-            for round in 0..24 {
-                for step in &["theta", "rho_and_pi", "chi", "iota"] {
-                    let mut setup = KeccakCpuHarness::new();
-                    setup.load_state(&initial_state);
-                    let sequence = keccak256_build_up_to_step(
-                        0x1000,
-                        false,
-                        Xlen::Bit64,
-                        setup.vr,
-                        10,
-                        11,
-                        round,
-                        step,
-                    );
-                    setup.execute_inline_sequence(&sequence);
-                    let vr_state = if *step == "rho_and_pi" {
-                        setup.read_vr_at_offset(25)
-                    } else {
-                        setup.read_vr()
-                    };
-                    let expected_vr_state =
-                        execute_reference_up_to_step(&initial_state, round as usize, step);
-                    kverify::assert_states_equal(
-                        &expected_vr_state,
-                        &vr_state,
-                        &format!(
-                            "test_keccak_exec_trace_intermediate_vr_equal(case={description}, round={round}, step={step})"
-                        ),
-                    );
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn test_measure_keccak_length() {
-        let mut h = KeccakCpuHarness::new();
-        h.load_state(&xkcp_vectors::AFTER_ONE_PERMUTATION);
-        let bytecode_len = h.trace_keccak_instruction().len();
-        println!(
-            "Keccak1600: bytecode length {}, {:.2} instructions per byte",
-            bytecode_len,
-            bytecode_len as f64 / 136.0,
-        );
-    }
 
     #[test]
     fn test_keccak_against_reference() {
         let initial_state = [0u64; 25];
         let expected_final_state = xkcp_vectors::AFTER_ONE_PERMUTATION;
-        let mut setup_trace = KeccakCpuHarness::new();
-        setup_trace.load_state(&initial_state);
-        setup_trace.trace_keccak_instruction();
-        let trace_result = setup_trace.read_state();
+        let mut harness = create_keccak_harness(Xlen::Bit64);
+        harness.setup_registers();
+        harness.load_state64(&initial_state);
+        let instruction = instruction();
+        harness.execute_inline(instruction);
+        let trace_result_vec = harness.read_output64(25);
+        let mut trace_result = [0u64; 25];
+        trace_result.copy_from_slice(&trace_result_vec);
         for i in 0..25 {
             assert_eq!(trace_result[i], expected_final_state[i]);
         }
@@ -123,8 +72,8 @@ mod exec_trace_equivalence {
 
 mod exec_unit {
     use crate::exec::{execute_chi, execute_iota, execute_rho_and_pi, execute_theta};
+    use crate::sequence_builder::ROUND_CONSTANTS;
     use crate::test_constants::xkcp_vectors;
-    use crate::trace_generator::ROUND_CONSTANTS;
     use crate::NUM_LANES;
 
     #[test]

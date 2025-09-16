@@ -1,5 +1,5 @@
 use crate::utils::inline_helpers::InstrAssembler;
-use crate::utils::virtual_registers::allocate_virtual_register;
+use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -35,7 +35,7 @@ impl SRLIW {
 
 impl RISCVTrace for SRLIW {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let inline_sequence = self.inline_sequence(cpu.xlen);
+        let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
             // In each iteration, create a new Option containing a re-borrowed reference
@@ -43,10 +43,14 @@ impl RISCVTrace for SRLIW {
         }
     }
 
-    fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
-        let v_rs1 = allocate_virtual_register();
+    fn inline_sequence(
+        &self,
+        allocator: &VirtualRegisterAllocator,
+        xlen: Xlen,
+    ) -> Vec<RV32IMInstruction> {
+        let v_rs1 = allocator.allocate();
 
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
         asm.emit_i::<SLLI>(*v_rs1, self.operands.rs1, 32);
         let (shift, len) = match xlen {
             Xlen::Bit32 => panic!("SRLIW is invalid in 32b mode"),

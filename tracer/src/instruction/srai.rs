@@ -1,4 +1,5 @@
 use crate::utils::inline_helpers::InstrAssembler;
+use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -33,7 +34,7 @@ impl SRAI {
 
 impl RISCVTrace for SRAI {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let inline_sequence = self.inline_sequence(cpu.xlen);
+        let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
             // In each iteration, create a new Option containing a re-borrowed reference
@@ -41,7 +42,11 @@ impl RISCVTrace for SRAI {
         }
     }
 
-    fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
+    fn inline_sequence(
+        &self,
+        allocator: &VirtualRegisterAllocator,
+        xlen: Xlen,
+    ) -> Vec<RV32IMInstruction> {
         let (shift, len) = match xlen {
             Xlen::Bit32 => (self.operands.imm & 0x1f, 32),
             Xlen::Bit64 => (self.operands.imm & 0x3f, 64),
@@ -49,7 +54,7 @@ impl RISCVTrace for SRAI {
         let ones = (1u128 << (len - shift)) - 1;
         let bitmask = (ones << shift) as u64;
 
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
         asm.emit_vshift_i::<VirtualSRAI>(self.operands.rd, self.operands.rs1, bitmask);
         asm.finalize()
     }

@@ -116,7 +116,7 @@ impl<F: JoltField> RLCPolynomial<F> {
         bases: &[G::Affine],
     ) -> Vec<JoltGroupWrapper<G>> {
         let num_rows = DoryGlobals::get_max_num_rows();
-        tracing::debug!("Committing to RLC polynomial with {num_rows} rows");
+        println!("Committing to RLC polynomial with {num_rows} rows");
         let row_len = DoryGlobals::get_num_columns();
 
         let mut row_commitments = vec![JoltGroupWrapper(G::zero()); num_rows];

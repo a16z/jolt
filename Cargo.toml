@@ -28,7 +28,6 @@ members = [
     "jolt-platform",
     "jolt-sdk",
     "jolt-sdk/macros",
-    "jolt-inlines/common",
     "jolt-inlines/sha2",
     "jolt-inlines/keccak256",
     "jolt-inlines/blake2",

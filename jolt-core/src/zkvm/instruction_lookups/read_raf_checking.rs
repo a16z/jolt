@@ -543,6 +543,21 @@ impl<F: JoltField> ReadRafProverState<F> {
         }
 
         rayon::scope(|s| {
+            // TODO(moodlezoup): `right_operand_ps` and `left_operand_ps` both use
+            // `lookup_indices_uninterleave`; by invoking `init_Q` twice we do two
+            // passes over the indices where we could be doing just one.
+            s.spawn(|_| {
+                self.right_operand_ps
+                    .init_Q(&self.u_evals, &self.lookup_indices_uninterleave)
+            });
+            s.spawn(|_| {
+                self.left_operand_ps
+                    .init_Q(&self.u_evals, &self.lookup_indices_uninterleave)
+            });
+            s.spawn(|_| {
+                self.identity_ps
+                    .init_Q(&self.u_evals, &self.lookup_indices_identity)
+            });
             s.spawn(|_| {
                 LookupTables::<XLEN>::iter()
                     .collect::<Vec<_>>()
@@ -574,18 +589,6 @@ impl<F: JoltField> ReadRafProverState<F> {
                             });
                     });
             });
-            s.spawn(|_| {
-                self.right_operand_ps
-                    .init_Q(&self.u_evals, self.lookup_indices_uninterleave.iter())
-            });
-            s.spawn(|_| {
-                self.left_operand_ps
-                    .init_Q(&self.u_evals, self.lookup_indices_uninterleave.iter())
-            });
-            s.spawn(|_| {
-                self.identity_ps
-                    .init_Q(&self.u_evals, self.lookup_indices_identity.iter())
-            });
         });
         self.identity_ps.init_P(&mut self.prefix_registry);
         self.right_operand_ps.init_P(&mut self.prefix_registry);
@@ -596,23 +599,25 @@ impl<F: JoltField> ReadRafProverState<F> {
 
     /// To be called at the end of each phase, after binding is done
     fn cache_phase(&mut self, phase: usize) {
-        let ra = self
-            .lookup_indices
-            .par_iter()
-            .map(|k| {
-                let (prefix, _) = k.split((PHASES - 1 - phase) * LOG_M);
-                let k_bound: usize = prefix % M;
-                self.v[k_bound]
-            })
-            .collect::<Vec<F>>();
-
         if let Some(ra_acc) = self.ra_acc.as_mut() {
-            assert_eq!(ra_acc.len(), ra.len());
             ra_acc
                 .par_iter_mut()
-                .zip(ra.into_par_iter())
-                .for_each(|(ra, ra_i)| *ra *= ra_i);
+                .zip(self.lookup_indices.par_iter())
+                .for_each(|(ra, k)| {
+                    let (prefix, _) = k.split((PHASES - 1 - phase) * LOG_M);
+                    let k_bound: usize = prefix % M;
+                    *ra *= self.v[k_bound]
+                });
         } else {
+            let ra = self
+                .lookup_indices
+                .par_iter()
+                .map(|k| {
+                    let (prefix, _) = k.split((PHASES - 1 - phase) * LOG_M);
+                    let k_bound: usize = prefix % M;
+                    self.v[k_bound]
+                })
+                .collect::<Vec<F>>();
             self.ra_acc = Some(ra);
         }
 

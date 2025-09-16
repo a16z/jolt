@@ -8,9 +8,8 @@ use std::{
     collections::HashMap,
     sync::{LazyLock, Mutex},
 };
-#[cfg(not(target_arch = "wasm32"))]
-use tracing::debug;
-
+// #[cfg(not(target_arch = "wasm32"))]
+// use tracing::debug;
 static MEMORY_USAGE_MAP: LazyLock<Mutex<HashMap<&'static str, f64>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 static MEMORY_DELTA_MAP: LazyLock<Mutex<HashMap<&'static str, f64>>> =
@@ -38,42 +37,42 @@ pub fn end_memory_tracing_span(label: &'static str) {
 }
 
 pub fn report_memory_usage() {
-    tracing::info!("================ MEMORY USAGE REPORT ================");
+    println!("================ MEMORY USAGE REPORT ================");
 
     let memory_usage_map = MEMORY_USAGE_MAP.lock().unwrap();
     for label in memory_usage_map.keys() {
-        tracing::warn!("  Unclosed memory tracing span: \"{label}\"");
+        eprintln!("  Unclosed memory tracing span: \"{label}\"");
     }
 
     let memory_delta_map = MEMORY_DELTA_MAP.lock().unwrap();
     for (label, delta) in memory_delta_map.iter() {
         if *delta >= 1.0 {
-            tracing::info!("  \"{label}\": {delta:.2} GB");
+            println!("  \"{label}\": {delta:.2} GB");
         } else {
-            tracing::info!("  \"{}\": {:.2} MB", label, delta * 1000.0);
+            println!("  \"{}\": {:.2} MB", label, delta * 1000.0);
         }
     }
 
-    tracing::info!("=====================================================");
+    println!("=====================================================");
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-pub fn print_current_memory_usage(label: &str) {
-    if let Some(usage) = memory_stats() {
-        let memory_usage_gb = usage.physical_mem as f64 / 1_000_000_000.0;
-        if memory_usage_gb >= 1.0 {
-            debug!("\"{label}\" current memory usage: {memory_usage_gb:.2} GB");
-        } else {
-            debug!(
-                "\"{}\" current memory usage: {:.2} MB",
-                label,
-                memory_usage_gb * 1000.0
-            );
-        }
-    } else {
-        debug!("Failed to get current memory usage (\"{label}\")");
-    }
-}
+// #[cfg(not(target_arch = "wasm32"))]
+// pub fn print_current_memory_usage(label: &str) {
+//     if let Some(usage) = memory_stats() {
+//         let memory_usage_gb = usage.physical_mem as f64 / 1_000_000_000.0;
+//         if memory_usage_gb >= 1.0 {
+//             debug!("\"{label}\" current memory usage: {memory_usage_gb:.2} GB");
+//         } else {
+//             debug!(
+//                 "\"{}\" current memory usage: {:.2} MB",
+//                 label,
+//                 memory_usage_gb * 1000.0
+//             );
+//         }
+//     } else {
+//         debug!("Failed to get current memory usage (\"{label}\")");
+//     }
+// }
 
 #[cfg(feature = "allocative")]
 pub fn print_data_structure_heap_usage<T: Allocative>(label: &str, data: &T) {

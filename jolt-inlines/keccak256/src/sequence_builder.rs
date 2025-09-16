@@ -13,9 +13,11 @@
 //! Keccak256 refers to the specific variant where the rate is 1088 bits and the capacity is 512 bits.
 //! Keccak256 differs from SHA3-256 (not implemented here) in the padding scheme.
 
+use core::array;
+
 use crate::NUM_LANES;
-use tracer::emulator::cpu::Xlen;
 use tracer::instruction::andn::ANDN;
+use tracer::instruction::format::format_inline::FormatInline;
 use tracer::instruction::ld::LD;
 use tracer::instruction::sd::SD;
 use tracer::instruction::RV32IMInstruction;
@@ -23,7 +25,7 @@ use tracer::utils::inline_helpers::{
     InstrAssembler,
     Value::{Imm, Reg},
 };
-use tracer::utils::virtual_registers::allocate_virtual_register_for_inline;
+use tracer::utils::virtual_registers::VirtualRegisterGuard;
 
 /// The 24 round constants for the Keccak-f[1600] permutation.
 /// These values are XORed into the state during the `iota` step of each round.
@@ -68,9 +70,8 @@ pub(crate) const NEEDED_REGISTERS: u8 = 66;
 struct Keccak256SequenceBuilder {
     asm: InstrAssembler,
     round: u32,
-    vr: [u8; NEEDED_REGISTERS as usize],
-    operand_rs1: u8,
-    _operand_rs2: u8,
+    vr: [VirtualRegisterGuard; NEEDED_REGISTERS as usize],
+    operands: FormatInline,
 }
 
 /// `Keccak256SequenceBuilder` is a helper struct for constructing the virtual instruction
@@ -98,20 +99,13 @@ struct Keccak256SequenceBuilder {
 /// the appropriate instruction sequence. This struct is not intended for direct execution,
 /// but rather for constructing instruction traces or emulation flows.
 impl Keccak256SequenceBuilder {
-    fn new(
-        address: u64,
-        is_compressed: bool,
-        xlen: Xlen,
-        vr: [u8; NEEDED_REGISTERS as usize],
-        operand_rs1: u8,
-        operand_rs2: u8,
-    ) -> Self {
+    fn new(asm: InstrAssembler, operands: FormatInline) -> Self {
+        let vr = array::from_fn(|_| asm.allocator.allocate_for_inline());
         Keccak256SequenceBuilder {
-            asm: InstrAssembler::new_inline(address, is_compressed, xlen),
+            asm,
             round: 0,
             vr,
-            operand_rs1,
-            _operand_rs2: operand_rs2,
+            operands,
         }
     }
 
@@ -135,51 +129,12 @@ impl Keccak256SequenceBuilder {
         self.asm.finalize_inline(NEEDED_REGISTERS)
     }
 
-    #[cfg(test)]
-    /// Build sequence up to a specific round and step for testing
-    fn build_up_to_step(mut self, target_round: u32, target_step: &str) -> Vec<RV32IMInstruction> {
-        // Override is_format_inline to false for testing purposes. This prevents virtual registers
-        // from being zeroed out, allowing us to inspect their intermediate values during tests.
-        self.asm =
-            InstrAssembler::new_inline(self.asm.address, self.asm.is_compressed, self.asm.xlen);
-        // Always start by loading state
-        self.load_state();
-
-        // Execute rounds up to target
-        for round in 0..=target_round {
-            self.round = round;
-
-            // Execute steps within the round
-            self.theta();
-            if round == target_round && target_step == "theta" {
-                break;
-            }
-
-            self.rho_and_pi();
-            if round == target_round && target_step == "rho_and_pi" {
-                break;
-            }
-
-            self.chi();
-            if round == target_round && target_step == "chi" {
-                break;
-            }
-
-            self.iota();
-            if round == target_round && target_step == "iota" {
-                break;
-            }
-        }
-
-        self.asm.finalize()
-    }
-
     /// Load the initial Keccak state from memory into virtual registers.
     /// Keccak state is NUM_LANES lanes of 64 bits each (200 bytes total).
     fn load_state(&mut self) {
         (0..NUM_LANES).for_each(|i| {
             self.asm
-                .emit_ld::<LD>(self.vr[i], self.operand_rs1, (i * 8) as i64)
+                .emit_ld::<LD>(*self.vr[i], self.operands.rs1, (i * 8) as i64)
         });
     }
 
@@ -187,13 +142,13 @@ impl Keccak256SequenceBuilder {
     fn store_state(&mut self) {
         (0..NUM_LANES).for_each(|i| {
             self.asm
-                .emit_s::<SD>(self.operand_rs1, self.vr[i], (i * 8) as i64)
+                .emit_s::<SD>(self.operands.rs1, *self.vr[i], (i * 8) as i64)
         });
     }
 
     /// Get the register index for a given lane in the state matrix.
     fn lane(&self, x: usize, y: usize) -> u8 {
-        self.vr[5 * y + x]
+        *self.vr[5 * y + x]
     }
 
     // --- Keccak-f Round Functions ---
@@ -201,7 +156,7 @@ impl Keccak256SequenceBuilder {
     fn theta(&mut self) {
         // --- C[x] = A[x,0] ^ A[x,1] ^ A[x,2] ^ A[x,3] ^ A[x,4] ---
         for x in 0..5 {
-            let c_reg = self.vr[50 + x];
+            let c_reg = *self.vr[50 + x];
             // c_reg = A[x,0] ^ A[x,1]
             self.asm
                 .xor(Reg(self.lane(x, 0)), Reg(self.lane(x, 1)), c_reg);
@@ -213,10 +168,10 @@ impl Keccak256SequenceBuilder {
 
         // --- D[x] = C[x-1] ^ rotl(C[x+1], 1) ---
         for x in 0..5 {
-            let d_reg = self.vr[55 + x];
-            let c_prev = self.vr[50 + (x + 4) % 5];
-            let c_next = self.vr[50 + (x + 1) % 5];
-            let temp_rot_reg = self.vr[65]; // Use a scratch register for the rotation result
+            let d_reg = *self.vr[55 + x];
+            let c_prev = *self.vr[50 + (x + 4) % 5];
+            let c_next = *self.vr[50 + (x + 1) % 5];
+            let temp_rot_reg = *self.vr[65]; // Use a scratch register for the rotation result
 
             self.asm.rotl64(Reg(c_next), 1, temp_rot_reg);
             self.asm.xor(Reg(c_prev), Reg(temp_rot_reg), d_reg);
@@ -224,7 +179,7 @@ impl Keccak256SequenceBuilder {
 
         // --- A[x,y] ^= D[x] ---
         for x in 0..5 {
-            let d_reg = self.vr[55 + x];
+            let d_reg = *self.vr[55 + x];
             for y in 0..5 {
                 let a_reg = self.lane(x, y);
                 self.asm.xor(Reg(a_reg), Reg(d_reg), a_reg);
@@ -252,7 +207,7 @@ impl Keccak256SequenceBuilder {
                 // Calculate the permuted destination coordinates in B.
                 let nx = y;
                 let ny = (2 * x + 3 * y) % 5;
-                let dest_reg_in_b = self.vr[NUM_LANES + (5 * ny + nx)];
+                let dest_reg_in_b = *self.vr[NUM_LANES + (5 * ny + nx)];
 
                 // Rotate A[x,y] and store the result in B[nx, ny].
                 self.asm
@@ -273,7 +228,7 @@ impl Keccak256SequenceBuilder {
                 let two_next = NUM_LANES as u8 + self.lane((x + 2) % 5, y);
 
                 // Define scratch registers for intermediate results.
-                let not_next_and_two_next = self.vr[65]; // reuse scratch
+                let not_next_and_two_next = *self.vr[65]; // reuse scratch
 
                 // Get the register for the lane we are updating in the main state A.
                 let dest_a_reg = self.lane(x, y);
@@ -299,40 +254,11 @@ impl Keccak256SequenceBuilder {
     }
 }
 
-#[cfg(all(test, feature = "host"))]
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn keccak256_build_up_to_step(
-    address: u64,
-    is_compressed: bool,
-    xlen: Xlen,
-    vr: [u8; NEEDED_REGISTERS as usize],
-    operand_rs1: u8,
-    operand_rs2: u8,
-    target_round: u32,
-    target_step: &str,
-) -> Vec<RV32IMInstruction> {
-    let builder =
-        Keccak256SequenceBuilder::new(address, is_compressed, xlen, vr, operand_rs1, operand_rs2);
-    builder.build_up_to_step(target_round, target_step)
-}
-
 pub fn keccak256_inline_sequence_builder(
-    address: u64,
-    is_compressed: bool,
-    xlen: Xlen,
-    operand_rs1: u8,
-    operand_rs2: u8,
-    _operand_rs3: u8,
+    asm: InstrAssembler,
+    operands: FormatInline,
 ) -> Vec<RV32IMInstruction> {
     // Virtual registers used as a scratch space
-    let guards: Vec<_> = (0..NEEDED_REGISTERS)
-        .map(|_| allocate_virtual_register_for_inline())
-        .collect();
-    let mut vr = [0; NEEDED_REGISTERS as usize];
-    for (i, guard) in guards.iter().enumerate() {
-        vr[i] = **guard;
-    }
-    let builder =
-        Keccak256SequenceBuilder::new(address, is_compressed, xlen, vr, operand_rs1, operand_rs2);
+    let builder = Keccak256SequenceBuilder::new(asm, operands);
     builder.build()
 }

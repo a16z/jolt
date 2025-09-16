@@ -6,12 +6,11 @@ description = "BLAKE3 inline implementations for Jolt VM"
 
 [features]
 default = []
-host = ["dep:ctor", "dep:tracer", "jolt-inlines-common/save_trace"]
+host = ["dep:ctor", "dep:tracer"]
 
 [dependencies]
 ctor = { version = "0.2", optional = true }
 tracer = { path = "../../tracer", optional = true }
-jolt-inlines-common = { path = "../common" }
 
 [dev-dependencies]
 blake3 = { version = "1.5.0" }

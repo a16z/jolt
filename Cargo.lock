@@ -614,7 +614,6 @@ dependencies = [
  "strum 0.26.3",
  "strum_macros 0.26.4",
  "syn 1.0.109",
- "tracing",
 ]
 
 [[package]]
@@ -856,7 +855,7 @@ dependencies = [
 [[package]]
 name = "dory"
 version = "1.0.0"
-source = "git+https://github.com/quangvdao/sxt-dory?branch=feat%2Freturn_row_commitments#5056572069def4eab770a988c27c63cc2c48cc2d"
+source = "git+https://github.com/quangvdao/sxt-dory?branch=feat%2Freturn_row_commitments#c9d5d0bfca5095c63d2887036e47b2270aa74a58"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -1738,7 +1737,6 @@ dependencies = [
  "common",
  "ctor 0.2.9",
  "hex-literal",
- "jolt-inlines-common",
  "rand",
  "tracer",
  "tracing",
@@ -1751,7 +1749,6 @@ dependencies = [
  "blake2",
  "ctor 0.2.9",
  "hex-literal",
- "jolt-inlines-common",
  "rand",
  "tracer",
 ]
@@ -1763,17 +1760,7 @@ dependencies = [
  "blake3",
  "ctor 0.2.9",
  "hex-literal",
- "jolt-inlines-common",
  "rand",
- "tracer",
-]
-
-[[package]]
-name = "jolt-inlines-common"
-version = "0.1.0"
-dependencies = [
- "jolt-inlines-keccak256",
- "tempfile",
  "tracer",
 ]
 
@@ -1783,7 +1770,6 @@ version = "0.1.0"
 dependencies = [
  "ctor 0.2.9",
  "hex-literal",
- "jolt-inlines-common",
  "tracer",
  "tracing",
 ]
@@ -1794,7 +1780,6 @@ version = "0.1.0"
 dependencies = [
  "ctor 0.2.9",
  "hex-literal",
- "jolt-inlines-common",
  "tracer",
  "tracing",
 ]

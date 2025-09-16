@@ -2,6 +2,7 @@ use common::constants::RAM_START_ADDRESS;
 use common::jolt_device::{JoltDevice, MemoryConfig};
 use tracer::emulator::memory::Memory;
 use tracer::instruction::{RV32IMCycle, RV32IMInstruction};
+use tracer::utils::virtual_registers::VirtualRegisterAllocator;
 
 /// Configuration for program runtime
 #[derive(Debug, Clone)]
@@ -30,23 +31,28 @@ impl Program {
     }
 
     /// Trace the program execution with given inputs
-    pub fn trace(
+    pub fn trace(&self, inputs: &[u8]) -> (Vec<RV32IMCycle>, Memory, JoltDevice) {
+        trace(&self.elf_contents, inputs, &self.memory_config)
+    }
+
+    pub fn trace_to_file(
         &self,
-        memory_config: &MemoryConfig,
         inputs: &[u8],
-    ) -> (Vec<RV32IMCycle>, Memory, JoltDevice) {
-        trace(&self.elf_contents, inputs, memory_config)
+        trace_file: &std::path::PathBuf,
+    ) -> (Memory, JoltDevice) {
+        trace_to_file(&self.elf_contents, inputs, &self.memory_config, trace_file)
     }
 }
 
 pub fn decode(elf: &[u8]) -> (Vec<RV32IMInstruction>, Vec<(u64, u8)>, u64) {
     let (mut instructions, raw_bytes, program_end, xlen) = tracer::decode(elf);
     let program_size = program_end - RAM_START_ADDRESS;
+    let allocator = VirtualRegisterAllocator::default();
 
     // Expand virtual sequences
     instructions = instructions
         .into_iter()
-        .flat_map(|instr| instr.inline_sequence(xlen))
+        .flat_map(|instr| instr.inline_sequence(&allocator, xlen))
         .collect();
 
     (instructions, raw_bytes, program_size)
@@ -59,4 +65,15 @@ pub fn trace(
 ) -> (Vec<RV32IMCycle>, Memory, JoltDevice) {
     let (trace, memory, io_device) = tracer::trace(elf_contents, inputs, memory_config);
     (trace, memory, io_device)
+}
+
+pub fn trace_to_file(
+    elf_contents: &[u8],
+    inputs: &[u8],
+    memory_config: &MemoryConfig,
+    trace_file: &std::path::PathBuf,
+) -> (Memory, JoltDevice) {
+    let (memory, io_device) =
+        tracer::trace_to_file(elf_contents, inputs, memory_config, trace_file);
+    (memory, io_device)
 }
