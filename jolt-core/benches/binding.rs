@@ -1,3 +1,4 @@
+#![allow(clippy::extra_unused_type_parameters)]
 use ark_bn254::Fr;
 use ark_std::{rand::Rng, test_rng};
 use criterion::Criterion;
