@@ -2,6 +2,7 @@ use std::{
     fs::File,
     io::{Read, Write},
     path::Path,
+    time::Instant,
 };
 
 #[cfg(test)]
@@ -194,6 +195,7 @@ where
         JoltProof<F, PCS, FS>,
         JoltDevice,
         Option<ProverDebugInfo<F, FS, PCS>>,
+        Instant,
     ) {
         use crate::{guest, zkvm::dag::state_manager::StateManager};
         use common::jolt_device::MemoryConfig;
@@ -245,11 +247,13 @@ where
                 .map_or(0, |pos| pos + 1),
         );
 
+        let start = Instant::now();
+
         let state_manager =
             StateManager::new_prover(preprocessing, trace, program_io.clone(), final_memory_state);
         let (proof, debug_info) = JoltDAG::prove(state_manager).ok().unwrap();
 
-        (proof, program_io, debug_info)
+        (proof, program_io, debug_info, start)
     }
 
     #[tracing::instrument(skip_all, name = "Jolt::verify")]
@@ -395,7 +399,7 @@ mod tests {
         );
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-        let (jolt_proof, io_device, debug_info) =
+        let (jolt_proof, io_device, debug_info, _) =
             JoltRV32IMMockPCS::prove(&preprocessing, elf_contents, &inputs);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
@@ -424,7 +428,7 @@ mod tests {
         );
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-        let (jolt_proof, io_device, debug_info) =
+        let (jolt_proof, io_device, debug_info, _) =
             JoltRV32IM::prove(&preprocessing, elf_contents, &inputs);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
@@ -459,7 +463,7 @@ mod tests {
         );
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-        let (jolt_proof, io_device, debug_info) =
+        let (jolt_proof, io_device, debug_info, _) =
             JoltRV32IM::prove(&preprocessing, elf_contents, &inputs);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
@@ -493,7 +497,7 @@ mod tests {
         );
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-        let (jolt_proof, io_device, debug_info) =
+        let (jolt_proof, io_device, debug_info, _) =
             JoltRV32IM::prove(&preprocessing, elf_contents, &inputs);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
@@ -521,7 +525,7 @@ mod tests {
         );
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-        let (jolt_proof, io_device, debug_info) =
+        let (jolt_proof, io_device, debug_info, _) =
             JoltRV32IM::prove(&preprocessing, elf_contents, &[]);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
@@ -550,7 +554,7 @@ mod tests {
         );
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-        let (jolt_proof, io_device, debug_info) =
+        let (jolt_proof, io_device, debug_info, _) =
             JoltRV32IM::prove(&preprocessing, elf_contents, &inputs);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
@@ -579,7 +583,7 @@ mod tests {
         );
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-        let (jolt_proof, io_device, debug_info) =
+        let (jolt_proof, io_device, debug_info, _) =
             JoltRV32IM::prove(&preprocessing, elf_contents, &[50]);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);

@@ -547,7 +547,7 @@ fn prove_example(
 
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-        let (jolt_proof, program_io, _) =
+        let (jolt_proof, program_io, _, _) =
             JoltRV32IM::prove(&preprocessing, elf_contents, &serialized_input);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
@@ -590,8 +590,7 @@ fn prove_example_with_trace(
     let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
 
     let span = tracing::info_span!("E2E");
-    let start = std::time::Instant::now();
-    let (jolt_proof, program_io, _) =
+    let (jolt_proof, program_io, _, start) =
         span.in_scope(|| JoltRV32IM::prove(&preprocessing, elf_contents, &serialized_input));
     let prove_duration = start.elapsed();
     let proof_size = jolt_proof.serialized_size(ark_serialize::Compress::Yes);

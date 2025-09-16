@@ -41,7 +41,7 @@ where
     FS: Transcript,
     JoltRV32IM: Jolt<F, PCS, FS>,
 {
-    let (proof, io_device, debug_info) =
+    let (proof, io_device, debug_info, _) =
         JoltRV32IM::prove(preprocessing, &guest.elf_contents, inputs_bytes);
     output_bytes[..io_device.outputs.len()].copy_from_slice(&io_device.outputs);
     (proof, io_device, debug_info)
