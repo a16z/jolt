@@ -104,6 +104,7 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         num_x_out_vars: usize,
         num_x_in_vars: usize,
         num_small_value_rounds: usize,
+        scaling_factor: Option<F>,
     ) -> Self {
         // Split w into the slices: (l = num_small_value_rounds)
         // (n/2 - l) ..... (n - l)
@@ -145,7 +146,7 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         // Do not scale E_in; we correct the typed unreduced accumulation with inv(K) after reduction.
         let (mut E_out_vec, E_in) = rayon::join(
             || EqPolynomial::evals_cached(&w_E_out_vars),
-            || EqPolynomial::evals(&w_E_in_vars),
+            || EqPolynomial::evals_with_scaling(&w_E_in_vars, scaling_factor),
         );
 
         // Take only the first `num_small_value_rounds` vectors from E_out_vec (after reversing)
@@ -425,7 +426,7 @@ mod tests {
 
         let num_x_in_vars_1 = N - num_x_out_vars_1 - L0;
         let split_eq1 =
-            GruenSplitEqPolynomial::new_for_small_value(&w1, num_x_out_vars_1, num_x_in_vars_1, L0);
+            GruenSplitEqPolynomial::new_for_small_value(&w1, num_x_out_vars_1, num_x_in_vars_1, L0, None);
 
         // Verify split points and variable slices
         let split_point1_expected1 = num_x_out_vars_1; // Should be 2
@@ -484,7 +485,7 @@ mod tests {
         let w2: Vec<Fr> = (0..N).map(|_| Fr::random(&mut rng)).collect();
         let num_x_in_vars_2 = N - num_x_out_vars_2; // L0 is 0
         let split_eq2 =
-            GruenSplitEqPolynomial::new_for_small_value(&w2, num_x_out_vars_2, num_x_in_vars_2, 0);
+            GruenSplitEqPolynomial::new_for_small_value(&w2, num_x_out_vars_2, num_x_in_vars_2, 0, None);
         assert_eq!(split_eq2.E_out_vec.len(), 0);
         assert_eq!(split_eq2.E_in_vec.len(), 1); // E_in should cover w[N/2 .. N/2 + num_x_in_vars_2 -1]
         let split_point1_expected2 = num_x_out_vars_2;
@@ -507,6 +508,7 @@ mod tests {
                 num_x_out_vars_3,
                 num_x_in_vars_3,
                 l0_3,
+                None,
             );
         });
         assert!(result3.is_err());

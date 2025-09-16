@@ -1,13 +1,127 @@
 // Small Value Optimization (SVO) helpers for Spartan first sum-check
-// TODO(svo-typed): Introduce typed accumulation interfaces that accept
-// UnreducedProduct positive/negative accumulators and combine at the end.
 
 use crate::field::JoltField;
 
 /// Number of rounds to use for small value optimization.
 /// Testing & estimation shows that 3 rounds is the best tradeoff
-/// It may be 4 rounds when we switch to streaming
+/// It may be 4 rounds when we switch to streaming / GPU proving
 pub const NUM_SVO_ROUNDS: usize = 3;
+
+// Accumulation primitives for SVO (moved from zkvm/r1cs/types.rs)
+pub mod accum {
+    use ark_ff::biginteger::{BigInt, I8OrI96, S160, S224};
+    use crate::field::JoltField;
+
+    /// Final unreduced product after multiplying by a 256-bit field element (512-bit unsigned)
+    pub type UnreducedProduct = BigInt<8>;
+
+    #[inline(always)]
+    pub fn reduce_unreduced_to_field<F: JoltField>(x: &UnreducedProduct) -> F {
+        F::from_montgomery_reduce_2n(*x)
+    }
+
+    /// Returns K such that reduce(fmadd_unreduced(e, m)) = e * m * K
+    pub fn fmadd_reduce_factor<F: JoltField>() -> F {
+        let e = F::from_u64(1);
+        let mut pos = UnreducedProduct::zero();
+        let mut neg = UnreducedProduct::zero();
+        fmadd_unreduced::<F>(&mut pos, &mut neg, &e, S224::one());
+        F::from_montgomery_reduce_2n(pos) - F::from_montgomery_reduce_2n(neg)
+    }
+
+    /// Fused multiply-add into unreduced accumulators.
+    #[inline(always)]
+    pub fn fmadd_unreduced<F: JoltField>(
+        pos_acc: &mut UnreducedProduct,
+        neg_acc: &mut UnreducedProduct,
+        field: &F,
+        product: S224,
+    ) {
+        let field_bigint = field.as_bigint_ref();
+        if !product.is_zero() {
+            let mag: BigInt<4> = product.into();
+            let acc = if product.is_positive() { pos_acc } else { neg_acc };
+            field_bigint.fmadd_trunc::<4, 8>(&mag, acc);
+        }
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct SignedUnreducedAccum {
+        pub pos: UnreducedProduct,
+        pub neg: UnreducedProduct,
+    }
+
+    impl Default for SignedUnreducedAccum {
+        fn default() -> Self {
+            Self { pos: UnreducedProduct::zero(), neg: UnreducedProduct::zero() }
+        }
+    }
+
+    impl SignedUnreducedAccum {
+        #[inline(always)]
+        pub fn new() -> Self { Self::default() }
+
+        #[inline(always)]
+        pub fn clear(&mut self) {
+            self.pos = UnreducedProduct::zero();
+            self.neg = UnreducedProduct::zero();
+        }
+
+        /// fmadd with an `I8OrI96` (signed, up to 2 limbs)
+        #[inline(always)]
+        pub fn fmadd_az<F: JoltField>(&mut self, field: &F, az: I8OrI96) {
+            let field_bigint = field.as_bigint_ref();
+            let v = az.to_i128();
+            if v != 0 {
+                let abs = v.unsigned_abs();
+                let mut mag = BigInt::<2>::zero();
+                mag.0[0] = abs as u64;
+                mag.0[1] = (abs >> 64) as u64;
+                let acc = if v >= 0 { &mut self.pos } else { &mut self.neg };
+                field_bigint.fmadd_trunc::<2, 8>(&mag, acc);
+            }
+        }
+
+        /// fmadd with a `S160` (signed, up to 3 limbs)
+        #[inline(always)]
+        pub fn fmadd_bz<F: JoltField>(&mut self, field: &F, bz: S160) {
+            let field_bigint = field.as_bigint_ref();
+            if !bz.is_zero() {
+                let lo = bz.magnitude_lo();
+                let hi = bz.magnitude_hi() as u64;
+                let mag = BigInt::<3>([lo[0], lo[1], hi]);
+                let acc = if bz.is_positive() { &mut self.pos } else { &mut self.neg };
+                field_bigint.fmadd_trunc::<3, 8>(&mag, acc);
+            }
+        }
+
+        /// fmadd with an Az×Bz product value (1..=4 limbs)
+        #[inline(always)]
+        pub fn fmadd_prod<F: JoltField>(&mut self, field: &F, product: S224) {
+            fmadd_unreduced::<F>(&mut self.pos, &mut self.neg, field, product)
+        }
+
+        /// Reduce accumulated value to a field element (pos - neg)
+        #[inline(always)]
+        pub fn reduce_to_field<F: JoltField>(&self) -> F {
+            reduce_unreduced_to_field::<F>(&self.pos) - reduce_unreduced_to_field::<F>(&self.neg)
+        }
+    }
+
+    /// Local helper to convert `S160` to field without using `.to_field()`
+    #[inline]
+    pub fn s160_to_field<F: JoltField>(bz: &S160) -> F {
+        if bz.is_zero() {
+            return F::zero();
+        }
+        let lo = bz.magnitude_lo();
+        let hi = bz.magnitude_hi() as u64;
+        let r64 = F::from_u128(1u128 << 64);
+        let r128 = r64 * r64;
+        let acc = F::from_u64(lo[0]) + F::from_u64(lo[1]) * r64 + F::from_u64(hi) * r128;
+        if bz.is_positive() { acc } else { -acc }
+    }
+}
 
 pub mod svo_helpers {
     use super::*;
@@ -15,8 +129,9 @@ pub mod svo_helpers {
     use crate::poly::unipoly::CompressedUniPoly;
     use crate::subprotocols::sumcheck::process_eq_sumcheck_round;
     use crate::transcripts::Transcript;
-    use crate::zkvm::r1cs::types::{fmadd_unreduced, mul_az_bz, UnreducedProduct};
-    use ark_ff::biginteger::{I8OrI96, S160, S224};
+    use super::accum::{fmadd_unreduced, UnreducedProduct};
+    use ark_ff::biginteger::{I8OrI96, S160};
+    
 
     // SVOEvalPoint enum definition
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -891,7 +1006,7 @@ pub mod svo_helpers {
             // No need for this - `bz_ext` is less likely to be zero than `az_ext`
             // if bz_ext.is_zero() { continue; }
 
-            let prod = mul_az_bz(az_ext, bz_ext);
+            let prod = az_ext * bz_ext;
             fmadd_unreduced::<F>(
                 &mut tA_pos_acc[i_temp_tA],
                 &mut tA_neg_acc[i_temp_tA],
@@ -1692,16 +1807,12 @@ mod tests {
     use super::svo_helpers::{
         compute_and_update_tA_inplace_generic, compute_and_update_tA_inplace_small_value,
     };
-    use crate::{
-        field::JoltField,
-        poly::eq_poly::EqPolynomial,
-        poly::spartan_interleaved_poly::build_eq_r_y_table,
-        zkvm::r1cs::types::{
-            fmadd_reduce_factor, reduce_unreduced_to_field, I8OrI96, UnreducedProduct, S160,
-        },
-    };
+    use crate::{field::JoltField, poly::eq_poly::EqPolynomial, poly::spartan_interleaved_poly::build_eq_r_y_table};
+    use super::accum::{fmadd_reduce_factor, reduce_unreduced_to_field, UnreducedProduct};
+    use ark_ff::biginteger::{I8OrI96, S160};
     use ark_bn254::Fr;
-    use ark_ff::{biginteger::SignedBigInt, UniformRand, Zero};
+    use ark_ff::{UniformRand, Zero};
+    use crate::utils::small_scalar::SmallScalar;
     use rand::{Rng, SeedableRng};
     use rand_chacha::ChaCha20Rng;
 
@@ -1729,21 +1840,21 @@ mod tests {
 
     fn random_az_value<R: Rng>(rng: &mut R) -> I8OrI96 {
         match rng.gen_range(0..5) {
-            0 => I8OrI96::I8(rng.gen()),
-            1 => I8OrI96::I8(0), // zero
-            2 => I8OrI96::I8(1), // one
-            3 => I8OrI96::S64(SignedBigInt::<1>::from_i64(rng.gen())),
-            4 => I8OrI96::I128(rng.gen()),
+            0 => I8OrI96::from_i8(rng.gen()),
+            1 => I8OrI96::from_i8(0), // zero
+            2 => I8OrI96::from_i8(1), // one
+            3 => I8OrI96::from_i128(rng.gen::<i64>() as i128),
+            4 => I8OrI96::from_i128(rng.gen::<i128>()),
             _ => unreachable!(),
         }
     }
 
     fn random_bz_value<R: Rng>(rng: &mut R) -> S160 {
         match rng.gen_range(0..4) {
-            0 => S160::S64(SignedBigInt::<1>::zero()),      // zero
-            1 => S160::S64(SignedBigInt::<1>::from_i64(1)), // one
-            2 => S160::S64(SignedBigInt::<1>::from_i64(rng.gen())),
-            3 => S160::S128(SignedBigInt::<2>::from_i128(rng.gen())),
+            0 => S160::from(0i128),
+            1 => S160::from(1i128),
+            2 => S160::from(rng.gen::<i64>() as i128),
+            3 => S160::from(rng.gen::<i128>()),
             _ => unreachable!(),
         }
     }
@@ -1776,9 +1887,14 @@ mod tests {
             .iter()
             .map(|az| az.to_field::<Fr>())
             .collect();
+        #[inline]
+        fn s160_to_field<F: JoltField>(bz: &S160) -> F {
+            crate::utils::small_value::accum::s160_to_field::<F>(bz)
+        }
+
         let binary_bz_field: Vec<Fr> = binary_bz_vals
             .iter()
-            .map(|bz| bz.to_field::<Fr>())
+            .map(|bz| s160_to_field::<Fr>(bz))
             .collect();
 
         let inv_k = fmadd_reduce_factor::<Fr>().inverse().unwrap();
@@ -1833,43 +1949,46 @@ mod tests {
     fn test_az_bz_value_conversions() {
         // Test that I8OrI96/S160 to_field conversions work correctly
         let test_az_values = vec![
-            I8OrI96::I8(0), // zero
-            I8OrI96::I8(1), // one
-            I8OrI96::I8(10),
-            I8OrI96::I8(-10),
-            I8OrI96::S64(SignedBigInt::from_i64(100)),
-            I8OrI96::I128(10000),
+            I8OrI96::from_i8(0), // zero
+            I8OrI96::from_i8(1), // one
+            I8OrI96::from_i8(10),
+            I8OrI96::from_i8(-10),
+            I8OrI96::from_i128(100),
+            I8OrI96::from_i128(10000),
         ];
 
-        let test_bz_values = vec![
-            S160::S64(SignedBigInt::zero()),      // zero
-            S160::S64(SignedBigInt::from_i64(1)), // one
-            S160::S64(SignedBigInt::from_i64(200)),
-            S160::S128(SignedBigInt::from_i128(2000)),
+        let test_bz_values: Vec<(S160, i128)> = vec![
+            (S160::from(0i128), 0i128),
+            (S160::from(1i128), 1i128),
+            (S160::from(200i128), 200i128),
+            (S160::from(2000i128), 2000i128),
         ];
 
         for az in &test_az_values {
             let field_val = az.to_field::<Fr>();
-            let expected_field_val = match az {
-                I8OrI96::I8(v) => <Fr as JoltField>::from_i64(*v as i64),
-                I8OrI96::S64(v) => {
-                    let mag_bytes = v.magnitude.0[0].to_le_bytes();
-                    let mag_u64 = u64::from_le_bytes(mag_bytes);
-                    let mag_f = <Fr as JoltField>::from_u64(mag_u64);
-                    if v.is_positive {
-                        mag_f
-                    } else {
-                        -mag_f
-                    }
-                }
-                I8OrI96::I128(v) => <Fr as JoltField>::from_i128(*v),
-            };
+            let expected_field_val = <Fr as JoltField>::from_i128(az.to_i128());
             assert_eq!(field_val, expected_field_val);
             assert_eq!(az.is_zero(), field_val.is_zero());
         }
 
-        for bz in &test_bz_values {
-            let field_val = bz.to_field::<Fr>();
+        for (bz, v) in &test_bz_values {
+            // Duplicate conversion here to keep scope simple
+            let field_val = {
+                if bz.is_zero() {
+                    Fr::zero()
+                } else {
+                    let lo = bz.magnitude_lo();
+                    let hi = bz.magnitude_hi() as u64;
+                    let r64 = Fr::from_u128(1u128 << 64);
+                    let r128 = r64 * r64;
+                    let acc = Fr::from_u64(lo[0])
+                        + Fr::from_u64(lo[1]) * r64
+                        + Fr::from_u64(hi) * r128;
+                    if bz.is_positive() { acc } else { -acc }
+                }
+            };
+            let expected_field_val = <Fr as JoltField>::from_i128(*v);
+            assert_eq!(field_val, expected_field_val);
             assert_eq!(bz.is_zero(), field_val.is_zero());
         }
     }

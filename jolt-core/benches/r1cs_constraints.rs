@@ -1,17 +1,26 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use jolt_core::field::tracked_ark::TrackedFr;
-use jolt_core::utils::small_scalar::SmallScalar;
 use jolt_core::zkvm::instruction::CircuitFlags;
 use jolt_core::zkvm::r1cs::constraints::{eval_az_by_name, eval_bz_by_name, UNIFORM_R1CS};
-use jolt_core::zkvm::r1cs::inputs::{
-    eval_az_generic, eval_bz_generic, JoltR1CSInputs, WitnessRowAccessor,
-};
+use jolt_core::zkvm::r1cs::inputs::{JoltR1CSInputs, WitnessRowAccessor};
+use jolt_core::utils::small_scalar::SmallScalar;
 use rand_chacha::ChaCha20Rng;
 use rand_core::{RngCore, SeedableRng};
+use ark_ff::biginteger::{S128, S64};
+
+/// Random test value covering the typed accessors used by named evaluators
+enum TestValue {
+    Bool(bool),
+    U8(u8),
+    U64(u64),
+    I64(i64),
+    U128(u128),
+    S128(S128),
+}
 
 /// Random test accessor for benchmarking
 struct RandomTestAccessor {
-    values: Vec<SmallScalar>,
+    values: Vec<TestValue>,
     rows: usize,
 }
 
@@ -19,53 +28,53 @@ impl RandomTestAccessor {
     fn new(num_rows: usize, seed: u64) -> Self {
         let mut rng = ChaCha20Rng::seed_from_u64(seed);
         let num_inputs = JoltR1CSInputs::num_inputs();
-        let mut values = vec![SmallScalar::U8(0); num_rows * num_inputs];
+        let mut values = Vec::with_capacity(num_rows * num_inputs);
 
-        for row in 0..num_rows {
-            // Generate random but reasonable values for each input
+        for _row in 0..num_rows {
             for i in 0..num_inputs {
                 let inp = JoltR1CSInputs::from_index(i);
                 let val = match inp {
-                    JoltR1CSInputs::PC => SmallScalar::U64(rng.next_u64() % (1 << 32)),
-                    JoltR1CSInputs::UnexpandedPC => SmallScalar::U64(rng.next_u64() % (1 << 32)),
-                    JoltR1CSInputs::Rd => SmallScalar::U8((rng.next_u32() % 32) as u8),
+                    JoltR1CSInputs::PC => TestValue::U64(rng.next_u64() % (1 << 32)),
+                    JoltR1CSInputs::UnexpandedPC => TestValue::U64(rng.next_u64() % (1 << 32)),
+                    JoltR1CSInputs::Rd => TestValue::U8((rng.next_u32() % 32) as u8),
                     JoltR1CSInputs::Imm => {
-                        SmallScalar::I128(((rng.next_u64() as i64) % (1i64 << 20)) as i128)
+                        let v = (rng.next_u64() as i64) % (1i64 << 20);
+                        TestValue::I64(v)
                     }
-                    JoltR1CSInputs::RamAddress => SmallScalar::U64(rng.next_u64()),
-                    JoltR1CSInputs::Rs1Value => SmallScalar::U64(rng.next_u64()),
-                    JoltR1CSInputs::Rs2Value => SmallScalar::U64(rng.next_u64()),
-                    JoltR1CSInputs::RdWriteValue => SmallScalar::U64(rng.next_u64()),
-                    JoltR1CSInputs::RamReadValue => SmallScalar::U64(rng.next_u64()),
-                    JoltR1CSInputs::RamWriteValue => SmallScalar::U64(rng.next_u64()),
-                    JoltR1CSInputs::LeftInstructionInput => SmallScalar::U64(rng.next_u64()),
+                    JoltR1CSInputs::RamAddress => TestValue::U64(rng.next_u64()),
+                    JoltR1CSInputs::Rs1Value => TestValue::U64(rng.next_u64()),
+                    JoltR1CSInputs::Rs2Value => TestValue::U64(rng.next_u64()),
+                    JoltR1CSInputs::RdWriteValue => TestValue::U64(rng.next_u64()),
+                    JoltR1CSInputs::RamReadValue => TestValue::U64(rng.next_u64()),
+                    JoltR1CSInputs::RamWriteValue => TestValue::U64(rng.next_u64()),
+                    JoltR1CSInputs::LeftInstructionInput => TestValue::U64(rng.next_u64()),
                     JoltR1CSInputs::RightInstructionInput => {
-                        SmallScalar::I64(rng.next_u64() as i64)
+                        TestValue::I64(rng.next_u64() as i64)
                     }
-                    JoltR1CSInputs::LeftLookupOperand => SmallScalar::U64(rng.next_u64()),
-                    JoltR1CSInputs::RightLookupOperand => SmallScalar::U128(
+                    JoltR1CSInputs::LeftLookupOperand => TestValue::U64(rng.next_u64()),
+                    JoltR1CSInputs::RightLookupOperand => TestValue::U128(
                         ((rng.next_u64() as u128) << 64) | (rng.next_u64() as u128),
                     ),
-                    JoltR1CSInputs::Product => SmallScalar::U128(
-                        ((rng.next_u64() as u128) << 64) | (rng.next_u64() as u128),
-                    ),
+                    JoltR1CSInputs::Product => {
+                        // Random s128
+                        let hi = rng.next_u64() as i128;
+                        let lo = rng.next_u64() as i128;
+                        let v = (hi << 64) ^ lo;
+                        TestValue::S128(S128::from_i128(v))
+                    }
                     JoltR1CSInputs::WriteLookupOutputToRD => {
-                        SmallScalar::U8(rng.next_u32() as u8 % 2)
+                        TestValue::U8((rng.next_u32() % 2) as u8)
                     }
-                    JoltR1CSInputs::WritePCtoRD => SmallScalar::U8(rng.next_u32() as u8 % 2),
-                    JoltR1CSInputs::ShouldBranch => SmallScalar::U8(rng.next_u32() as u8 % 2),
+                    JoltR1CSInputs::WritePCtoRD => TestValue::U8((rng.next_u32() % 2) as u8),
+                    JoltR1CSInputs::ShouldBranch => TestValue::U8((rng.next_u32() % 2) as u8),
                     JoltR1CSInputs::NextUnexpandedPC => {
-                        SmallScalar::U64(rng.next_u64() % (1 << 32))
+                        TestValue::U64(rng.next_u64() % (1 << 32))
                     }
-                    JoltR1CSInputs::NextPC => SmallScalar::U64(rng.next_u64() % (1 << 32)),
-                    JoltR1CSInputs::LookupOutput => SmallScalar::U64(rng.next_u64()),
-                    JoltR1CSInputs::NextIsNoop => SmallScalar::Bool(rng.next_u32() % 2 == 0),
-                    JoltR1CSInputs::ShouldJump => SmallScalar::U8(rng.next_u32() as u8 % 2),
-                    JoltR1CSInputs::CompressedDoNotUpdateUnexpPC => {
-                        SmallScalar::U8(rng.next_u32() as u8 % 2)
-                    }
+                    JoltR1CSInputs::NextPC => TestValue::U64(rng.next_u64() % (1 << 32)),
+                    JoltR1CSInputs::LookupOutput => TestValue::U64(rng.next_u64()),
+                    JoltR1CSInputs::NextIsNoop => TestValue::Bool(rng.next_u32() % 2 == 0),
+                    JoltR1CSInputs::ShouldJump => TestValue::Bool(rng.next_u32() % 2 == 0),
                     JoltR1CSInputs::OpFlags(flag) => {
-                        // Generate random but reasonable flags
                         let b = match flag {
                             CircuitFlags::LeftOperandIsRs1Value => rng.next_u32() % 2 == 0,
                             CircuitFlags::RightOperandIsRs2Value => rng.next_u32() % 2 == 0,
@@ -86,33 +95,95 @@ impl RandomTestAccessor {
                             CircuitFlags::IsNoop => rng.next_u32() % 10 == 0,
                             CircuitFlags::IsCompressed => rng.next_u32() % 3 == 0,
                         };
-                        SmallScalar::Bool(b)
+                        TestValue::Bool(b)
                     }
                 };
-                values[row * num_inputs + i] = val;
+                values.push(val);
             }
         }
 
-        RandomTestAccessor {
-            values,
-            rows: num_rows,
-        }
+        RandomTestAccessor { values, rows: num_rows }
     }
 }
 
-impl WitnessRowAccessor<TrackedFr> for RandomTestAccessor {
+impl RandomTestAccessor {
+    #[inline]
+    fn get(&self, input_index: JoltR1CSInputs, row: usize) -> &TestValue {
+        let idx = row * JoltR1CSInputs::num_inputs() + input_index.to_index();
+        &self.values[idx]
+    }
+}
+
+impl WitnessRowAccessor<TrackedFr, JoltR1CSInputs> for RandomTestAccessor {
     fn num_steps(&self) -> usize {
         self.rows
     }
 
-    fn value_at(&self, input_index: usize, row: usize) -> SmallScalar {
-        self.values[row * JoltR1CSInputs::num_inputs() + input_index]
+    fn value_at_field(&self, input_index: JoltR1CSInputs, row: usize) -> TrackedFr {
+        match self.get(input_index, row) {
+            TestValue::Bool(v) => v.to_field(),
+            TestValue::U8(v) => v.to_field(),
+            TestValue::U64(v) => v.to_field(),
+            TestValue::I64(v) => v.to_field(),
+            TestValue::U128(v) => v.to_field(),
+            TestValue::S128(v) => (*v).to_field(),
+        }
+    }
+
+    fn value_at_bool(&self, input_index: JoltR1CSInputs, row: usize) -> bool {
+        match self.get(input_index, row) {
+            TestValue::Bool(v) => *v,
+            TestValue::U8(v) => *v != 0,
+            TestValue::U64(v) => *v != 0,
+            _ => false,
+        }
+    }
+
+    fn value_at_u8(&self, input_index: JoltR1CSInputs, row: usize) -> u8 {
+        match self.get(input_index, row) {
+            TestValue::U8(v) => *v,
+            TestValue::Bool(v) => if *v { 1 } else { 0 },
+            _ => 0,
+        }
+    }
+
+    fn value_at_u64(&self, input_index: JoltR1CSInputs, row: usize) -> u64 {
+        match self.get(input_index, row) {
+            TestValue::U64(v) => *v,
+            TestValue::U8(v) => *v as u64,
+            TestValue::Bool(v) => if *v { 1 } else { 0 },
+            _ => 0,
+        }
+    }
+
+    fn value_at_s64(&self, input_index: JoltR1CSInputs, row: usize) -> S64 {
+        match self.get(input_index, row) {
+            TestValue::I64(v) => {
+                let mag = v.unsigned_abs();
+                S64::from_u64_with_sign(mag, *v >= 0)
+            }
+            _ => S64::from_u64_with_sign(0, true),
+        }
+    }
+
+    fn value_at_u128(&self, input_index: JoltR1CSInputs, row: usize) -> u128 {
+        match self.get(input_index, row) {
+            TestValue::U128(v) => *v,
+            _ => 0,
+        }
+    }
+
+    fn value_at_s128(&self, input_index: JoltR1CSInputs, row: usize) -> S128 {
+        match self.get(input_index, row) {
+            TestValue::S128(v) => *v,
+            _ => S128::from_i128(0),
+        }
     }
 }
 
 fn bench_az_comparison(c: &mut Criterion) {
     let accessor = RandomTestAccessor::new(1000, 12345);
-    let accessor_ref: &dyn WitnessRowAccessor<TrackedFr> = &accessor;
+    let accessor_ref: &dyn WitnessRowAccessor<TrackedFr, JoltR1CSInputs> = &accessor;
 
     c.bench_function("az_evaluation_named", |b| {
         b.iter(|| {
@@ -128,15 +199,15 @@ fn bench_az_comparison(c: &mut Criterion) {
         })
     });
 
-    c.bench_function("az_evaluation_generic", |b| {
+    // Compare against generic LC evaluation over the field
+    c.bench_function("az_evaluation_generic_field", |b| {
         b.iter(|| {
             for constraint in UNIFORM_R1CS.iter() {
                 for row in 0..black_box(10) {
-                    let _result = eval_az_generic::<TrackedFr>(
-                        black_box(&constraint.cons.a),
-                        black_box(accessor_ref),
-                        black_box(row),
-                    );
+                    let _result = constraint
+                        .cons
+                        .a
+                        .evaluate_row_with::<TrackedFr>(black_box(accessor_ref), black_box(row));
                 }
             }
         })
@@ -145,7 +216,7 @@ fn bench_az_comparison(c: &mut Criterion) {
 
 fn bench_bz_comparison(c: &mut Criterion) {
     let accessor = RandomTestAccessor::new(1000, 54321);
-    let accessor_ref: &dyn WitnessRowAccessor<TrackedFr> = &accessor;
+    let accessor_ref: &dyn WitnessRowAccessor<TrackedFr, JoltR1CSInputs> = &accessor;
 
     c.bench_function("bz_evaluation_named", |b| {
         b.iter(|| {
@@ -161,15 +232,15 @@ fn bench_bz_comparison(c: &mut Criterion) {
         })
     });
 
-    c.bench_function("bz_evaluation_generic", |b| {
+    // Compare against generic LC evaluation over the field
+    c.bench_function("bz_evaluation_generic_field", |b| {
         b.iter(|| {
             for constraint in UNIFORM_R1CS.iter() {
                 for row in 0..black_box(10) {
-                    let _result = eval_bz_generic::<TrackedFr>(
-                        black_box(&constraint.cons.b),
-                        black_box(accessor_ref),
-                        black_box(row),
-                    );
+                    let _result = constraint
+                        .cons
+                        .b
+                        .evaluate_row_with::<TrackedFr>(black_box(accessor_ref), black_box(row));
                 }
             }
         })
@@ -178,7 +249,7 @@ fn bench_bz_comparison(c: &mut Criterion) {
 
 fn bench_single_constraint_comparison(c: &mut Criterion) {
     let accessor = RandomTestAccessor::new(1000, 98765);
-    let accessor_ref: &dyn WitnessRowAccessor<TrackedFr> = &accessor;
+    let accessor_ref: &dyn WitnessRowAccessor<TrackedFr, JoltR1CSInputs> = &accessor;
 
     // Test a few representative constraints
     let test_constraints = [0, UNIFORM_R1CS.len() / 2, UNIFORM_R1CS.len() - 1];
@@ -198,14 +269,13 @@ fn bench_single_constraint_comparison(c: &mut Criterion) {
             })
         });
 
-        c.bench_function(&format!("single_constraint_{}_az_generic", idx), |b| {
+        c.bench_function(&format!("single_constraint_{}_az_generic_field", idx), |b| {
             b.iter(|| {
                 for row in 0..black_box(100) {
-                    let _result = eval_az_generic::<TrackedFr>(
-                        black_box(&constraint.cons.a),
-                        black_box(accessor_ref),
-                        black_box(row),
-                    );
+                    let _result = constraint
+                        .cons
+                        .a
+                        .evaluate_row_with::<TrackedFr>(black_box(accessor_ref), black_box(row));
                 }
             })
         });
@@ -222,14 +292,13 @@ fn bench_single_constraint_comparison(c: &mut Criterion) {
             })
         });
 
-        c.bench_function(&format!("single_constraint_{}_bz_generic", idx), |b| {
+        c.bench_function(&format!("single_constraint_{}_bz_generic_field", idx), |b| {
             b.iter(|| {
                 for row in 0..black_box(100) {
-                    let _result = eval_bz_generic::<TrackedFr>(
-                        black_box(&constraint.cons.b),
-                        black_box(accessor_ref),
-                        black_box(row),
-                    );
+                    let _result = constraint
+                        .cons
+                        .b
+                        .evaluate_row_with::<TrackedFr>(black_box(accessor_ref), black_box(row));
                 }
             })
         });
@@ -238,7 +307,7 @@ fn bench_single_constraint_comparison(c: &mut Criterion) {
 
 fn bench_az_evaluation(c: &mut Criterion) {
     let accessor = RandomTestAccessor::new(1000, 12345);
-    let accessor_ref: &dyn WitnessRowAccessor<TrackedFr> = &accessor;
+    let accessor_ref: &dyn WitnessRowAccessor<TrackedFr, JoltR1CSInputs> = &accessor;
 
     c.bench_function("az_evaluation_all_constraints", |b| {
         b.iter(|| {
@@ -257,7 +326,7 @@ fn bench_az_evaluation(c: &mut Criterion) {
 
 fn bench_bz_evaluation(c: &mut Criterion) {
     let accessor = RandomTestAccessor::new(1000, 54321);
-    let accessor_ref: &dyn WitnessRowAccessor<TrackedFr> = &accessor;
+    let accessor_ref: &dyn WitnessRowAccessor<TrackedFr, JoltR1CSInputs> = &accessor;
 
     c.bench_function("bz_evaluation_all_constraints", |b| {
         b.iter(|| {
@@ -276,7 +345,7 @@ fn bench_bz_evaluation(c: &mut Criterion) {
 
 fn bench_constraint_evaluation_single(c: &mut Criterion) {
     let accessor = RandomTestAccessor::new(1000, 98765);
-    let accessor_ref: &dyn WitnessRowAccessor<TrackedFr> = &accessor;
+    let accessor_ref: &dyn WitnessRowAccessor<TrackedFr, JoltR1CSInputs> = &accessor;
 
     // Benchmark a few representative constraints individually
     let representative_constraints = [
@@ -317,7 +386,7 @@ fn bench_constraint_scaling(c: &mut Criterion) {
 
     for &size in &sizes {
         let accessor = RandomTestAccessor::new(size, 11111);
-        let accessor_ref: &dyn WitnessRowAccessor<TrackedFr> = &accessor;
+        let accessor_ref: &dyn WitnessRowAccessor<TrackedFr, JoltR1CSInputs> = &accessor;
 
         c.bench_function(&format!("az_evaluation_size_{}", size), |b| {
             b.iter(|| {
