@@ -38,7 +38,7 @@ pub const Y_SVO_SPACE_SIZE: usize = 1 << NUM_SVO_ROUNDS;
 ///  - 2 polynomials (Az, Bz)
 ///  - 2 evaluations at x_next ∈ {0, 1}
 ///  - Y_SVO_SPACE_SIZE assignments of Y
-/// So total = 4 * Y_SVO_SPACE_SIZE.
+///    So total = 4 * Y_SVO_SPACE_SIZE.
 pub const Y_SVO_RELATED_COEFF_BLOCK_SIZE: usize = 4 * Y_SVO_SPACE_SIZE;
 
 /// Bit-width of a logical block. Computed as log2(4) + NUM_SVO_ROUNDS = 2 + NUM_SVO_ROUNDS.
@@ -1007,13 +1007,13 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                     // Only include Cz when the underlying constraint's Cz is marked NonZero
                     let constraint_idx_in_step =
                         (block_idx_for_6_coeffs % self.padded_num_constraints) % UNIFORM_R1CS.len();
-                    if matches!(UNIFORM_R1CS[constraint_idx_in_step].cz, CzKind::NonZero) {
-                        if !cz0.is_zero() || !cz1.is_zero() {
-                            let bound_cz = cz0 + r_i * (cz1 - cz0);
-                            output_slice_for_task[current_output_idx_in_slice] =
-                                (3 * new_block_idx + 2, bound_cz).into();
-                            current_output_idx_in_slice += 1;
-                        }
+                    if matches!(UNIFORM_R1CS[constraint_idx_in_step].cz, CzKind::NonZero)
+                        && (!cz0.is_zero() || !cz1.is_zero())
+                    {
+                        let bound_cz = cz0 + r_i * (cz1 - cz0);
+                        output_slice_for_task[current_output_idx_in_slice] =
+                            (3 * new_block_idx + 2, bound_cz).into();
+                        current_output_idx_in_slice += 1;
                     }
                 }
                 debug_assert_eq!(
@@ -1318,7 +1318,7 @@ pub fn build_eq_r_y_table<F: JoltField>(eq_r_y_table: &mut [F; 256], r: &[F]) {
                 }
             })
             .collect();
-        let eq_r_y = EqPolynomial::mle(&r, &y_bits) * F::MONTGOMERY_R;
+        let eq_r_y = EqPolynomial::mle(r, &y_bits) * F::MONTGOMERY_R;
         eq_r_y_table[y] = eq_r_y;
     }
 }

@@ -769,7 +769,7 @@ pub fn eval_bz_by_name<F: JoltField>(
         ConstraintName::LeftLookupZeroUnlessAddSubMul => {
             // B: 0 - LeftInstructionInput (true_val - false_val from if-else)
             let left_u64 = accessor.value_at_u64(Inp::LeftInstructionInput, row);
-            S160::from(- (left_u64 as i128))
+            S160::from(-(left_u64 as i128))
         }
         ConstraintName::RightLookupAdd => {
             // B: RightLookupOperand - (LeftInstructionInput + RightInstructionInput) with full-width integer semantics
@@ -805,8 +805,7 @@ pub fn eval_bz_by_name<F: JoltField>(
         ConstraintName::RightLookupEqRightInputOtherwise => {
             // B: RightLookupOperand - RightInstructionInput with exact integer semantics
             let rlookup = accessor.value_at_u128(Inp::RightLookupOperand, row);
-            let right_s64 = accessor
-                .value_at_s64(Inp::RightInstructionInput, row);
+            let right_s64 = accessor.value_at_s64(Inp::RightInstructionInput, row);
             S160::from(rlookup) - S160::from(right_s64)
         }
         ConstraintName::AssertLookupOne => {
@@ -818,7 +817,11 @@ pub fn eval_bz_by_name<F: JoltField>(
             // B: OpFlags(WriteLookupOutputToRD) (boolean 0/1)
             let flag =
                 accessor.value_at_bool(Inp::OpFlags(CircuitFlags::WriteLookupOutputToRD), row);
-            if flag { S160::one() } else { S160::zero() }
+            if flag {
+                S160::one()
+            } else {
+                S160::zero()
+            }
         }
         ConstraintName::RdWriteEqLookupIfWriteLookupToRd => {
             // B: RdWriteValue - LookupOutput (u64 bit-pattern difference)
@@ -829,7 +832,11 @@ pub fn eval_bz_by_name<F: JoltField>(
         ConstraintName::WritePCtoRDDef => {
             // B: OpFlags(Jump) (boolean 0/1)
             let jump = accessor.value_at_bool(Inp::OpFlags(CircuitFlags::Jump), row);
-            if jump { S160::one() } else { S160::zero() }
+            if jump {
+                S160::one()
+            } else {
+                S160::zero()
+            }
         }
         ConstraintName::RdWriteEqPCPlusConstIfWritePCtoRD => {
             // B: RdWriteValue - (UnexpandedPC + (4 - 2*IsCompressed)) (i128 arithmetic)
@@ -842,7 +849,11 @@ pub fn eval_bz_by_name<F: JoltField>(
         ConstraintName::ShouldJumpDef => {
             // B: 1 - NextIsNoop (boolean domain)
             let next_noop = accessor.value_at_bool(Inp::NextIsNoop, row);
-            if !next_noop { S160::one() } else { S160::zero() }
+            if !next_noop {
+                S160::one()
+            } else {
+                S160::zero()
+            }
         }
         ConstraintName::NextUnexpPCEqLookupIfShouldJump => {
             // B: NextUnexpandedPC - LookupOutput (i128 arithmetic)
@@ -866,10 +877,9 @@ pub fn eval_bz_by_name<F: JoltField>(
             // B: NextUnexpandedPC - target, where target = UnexpandedPC + 4 - 4*DoNotUpdateUnexpandedPC - 2*IsCompressed (i128 arithmetic)
             let next_unexp_pc_u64 = accessor.value_at_u64(Inp::NextUnexpandedPC, row);
             let pc_u64 = accessor.value_at_u64(Inp::UnexpandedPC, row);
-            let dnoupd_flag = accessor
-                .value_at_bool(Inp::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC), row);
-            let iscompr =
-                accessor.value_at_bool(Inp::OpFlags(CircuitFlags::IsCompressed), row).into();
+            let dnoupd_flag =
+                accessor.value_at_bool(Inp::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC), row);
+            let iscompr = accessor.value_at_bool(Inp::OpFlags(CircuitFlags::IsCompressed), row);
             let const_term = 4 - if dnoupd_flag { 4 } else { 0 } - if iscompr { 2 } else { 0 };
             let target = pc_u64 as i128 + const_term;
             S160::from(next_unexp_pc_u64 as i128 - target)

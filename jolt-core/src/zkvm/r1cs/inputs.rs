@@ -562,9 +562,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> WitnessRowAccessor<F, J
                 let mag = v.unsigned_abs();
                 debug_assert!(
                     mag <= u64::MAX as u128,
-                    "value_at_s64 overflow for Imm at row {}: |{}| > 2^64-1",
-                    t,
-                    v
+                    "value_at_s64 overflow for Imm at row {t}: |{v}| > 2^64-1"
                 );
                 S64::from_u64_with_sign(mag as u64, v >= 0)
             }
@@ -573,9 +571,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> WitnessRowAccessor<F, J
                 let mag = r.unsigned_abs();
                 debug_assert!(
                     mag <= u64::MAX as u128,
-                    "value_at_s64 overflow for RightInstructionInput at row {}: |{}| > 2^64-1",
-                    t,
-                    r
+                    "value_at_s64 overflow for RightInstructionInput at row {t}: |{r}| > 2^64-1"
                 );
                 S64::from_u64_with_sign(mag as u64, r >= 0)
             }
