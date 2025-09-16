@@ -425,8 +425,13 @@ mod tests {
         let w1: Vec<Fr> = (0..N).map(|i| Fr::from(i as u64)).collect(); // Use predictable values
 
         let num_x_in_vars_1 = N - num_x_out_vars_1 - L0;
-        let split_eq1 =
-            GruenSplitEqPolynomial::new_for_small_value(&w1, num_x_out_vars_1, num_x_in_vars_1, L0, None);
+        let split_eq1 = GruenSplitEqPolynomial::new_for_small_value(
+            &w1,
+            num_x_out_vars_1,
+            num_x_in_vars_1,
+            L0,
+            None,
+        );
 
         // Verify split points and variable slices
         let split_point1_expected1 = num_x_out_vars_1; // Should be 2
@@ -484,8 +489,13 @@ mod tests {
         let num_x_out_vars_2 = N / 2; // Max possible value for num_x_out_vars if num_x_in_vars is also N/2 and L0=0
         let w2: Vec<Fr> = (0..N).map(|_| Fr::random(&mut rng)).collect();
         let num_x_in_vars_2 = N - num_x_out_vars_2; // L0 is 0
-        let split_eq2 =
-            GruenSplitEqPolynomial::new_for_small_value(&w2, num_x_out_vars_2, num_x_in_vars_2, 0, None);
+        let split_eq2 = GruenSplitEqPolynomial::new_for_small_value(
+            &w2,
+            num_x_out_vars_2,
+            num_x_in_vars_2,
+            0,
+            None,
+        );
         assert_eq!(split_eq2.E_out_vec.len(), 0);
         assert_eq!(split_eq2.E_in_vec.len(), 1); // E_in should cover w[N/2 .. N/2 + num_x_in_vars_2 -1]
         let split_point1_expected2 = num_x_out_vars_2;

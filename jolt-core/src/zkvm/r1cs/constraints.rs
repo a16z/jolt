@@ -657,10 +657,7 @@ pub fn eval_az_by_name<F: JoltField>(
         }
         ConstraintName::RightLookupEqProductIfMul => {
             // Az: MultiplyOperands flag (0/1)
-            flag_to_az(accessor.value_at_bool(
-                Inp::OpFlags(CircuitFlags::MultiplyOperands),
-                row,
-            ))
+            flag_to_az(accessor.value_at_bool(Inp::OpFlags(CircuitFlags::MultiplyOperands), row))
         }
         ConstraintName::RightLookupEqRightInputOtherwise => {
             let add = accessor.value_at_bool(Inp::OpFlags(CircuitFlags::AddOperands), row);
@@ -722,14 +719,9 @@ pub fn eval_az_by_name<F: JoltField>(
             )
         }
         ConstraintName::RightInputZeroOtherwise => {
-            let f1 = accessor.value_at_bool(
-                Inp::OpFlags(CircuitFlags::RightOperandIsRs2Value),
-                row,
-            );
-            let f2 = accessor.value_at_bool(
-                Inp::OpFlags(CircuitFlags::RightOperandIsImm),
-                row,
-            );
+            let f1 =
+                accessor.value_at_bool(Inp::OpFlags(CircuitFlags::RightOperandIsRs2Value), row);
+            let f2 = accessor.value_at_bool(Inp::OpFlags(CircuitFlags::RightOperandIsImm), row);
             // NOTE: relies on exclusivity of these circuit flags (validated in tests):
             // return 1 only if neither flag is set
             flag_to_az(!(f1 || f2))
@@ -763,13 +755,17 @@ pub fn eval_bz_by_name<F: JoltField>(
         }
         ConstraintName::RightInputEqRs2 => {
             // B: RightInstructionInput - Rs2Value (i128 arithmetic)
-            let right_i128 = accessor.value_at_s64(Inp::RightInstructionInput, row).to_i128();
+            let right_i128 = accessor
+                .value_at_s64(Inp::RightInstructionInput, row)
+                .to_i128();
             let rs2_u64 = accessor.value_at_u64(Inp::Rs2Value, row);
             diff_to_bz(right_i128 - (rs2_u64 as i128))
         }
         ConstraintName::RightInputEqImm => {
             // B: RightInstructionInput - Imm (i128 arithmetic)
-            let right_i128 = accessor.value_at_s64(Inp::RightInstructionInput, row).to_i128();
+            let right_i128 = accessor
+                .value_at_s64(Inp::RightInstructionInput, row)
+                .to_i128();
             let imm_i128 = accessor.value_at_s64(Inp::Imm, row).to_i128();
             diff_to_bz(right_i128 - imm_i128)
         }
@@ -804,7 +800,9 @@ pub fn eval_bz_by_name<F: JoltField>(
         ConstraintName::RightLookupAdd => {
             // B: RightLookupOperand - (LeftInstructionInput + RightInstructionInput) with full-width integer semantics
             let left_u64 = accessor.value_at_u64(Inp::LeftInstructionInput, row);
-            let right_i128 = accessor.value_at_s64(Inp::RightInstructionInput, row).to_i128();
+            let right_i128 = accessor
+                .value_at_s64(Inp::RightInstructionInput, row)
+                .to_i128();
             let r_u128 = accessor.value_at_u128(Inp::RightLookupOperand, row);
             let expected_i128 = (left_u64 as i128) + right_i128;
             u128_minus_i128_to_bz(r_u128, expected_i128)
@@ -812,14 +810,18 @@ pub fn eval_bz_by_name<F: JoltField>(
         ConstraintName::RightLookupSub => {
             // B: RightLookupOperand - (LeftInstructionInput - RightInstructionInput) with full-width integer semantics
             let left_u64 = accessor.value_at_u64(Inp::LeftInstructionInput, row);
-            let right_i128 = accessor.value_at_s64(Inp::RightInstructionInput, row).to_i128();
+            let right_i128 = accessor
+                .value_at_s64(Inp::RightInstructionInput, row)
+                .to_i128();
             let r_u128 = accessor.value_at_u128(Inp::RightLookupOperand, row);
             let expected = (left_u64 as i128) - right_i128;
             u128_minus_i128_to_bz(r_u128, expected)
         }
         ConstraintName::ProductDef => {
             // B: RightInstructionInput (exact signed value as i128)
-            let right_i128 = accessor.value_at_s64(Inp::RightInstructionInput, row).to_i128();
+            let right_i128 = accessor
+                .value_at_s64(Inp::RightInstructionInput, row)
+                .to_i128();
             S160::from(right_i128)
         }
         ConstraintName::RightLookupEqProductIfMul => {
@@ -842,7 +844,9 @@ pub fn eval_bz_by_name<F: JoltField>(
         ConstraintName::RightLookupEqRightInputOtherwise => {
             // B: RightLookupOperand - RightInstructionInput with exact integer semantics
             let rlookup = accessor.value_at_u128(Inp::RightLookupOperand, row);
-            let right = accessor.value_at_s64(Inp::RightInstructionInput, row).to_i128();
+            let right = accessor
+                .value_at_s64(Inp::RightInstructionInput, row)
+                .to_i128();
             u128_minus_i128_to_bz(rlookup, right)
         }
         ConstraintName::AssertLookupOne => {
@@ -852,10 +856,8 @@ pub fn eval_bz_by_name<F: JoltField>(
         }
         ConstraintName::WriteLookupOutputToRDDef => {
             // B: OpFlags(WriteLookupOutputToRD) (boolean 0/1)
-            let flag = accessor.value_at_bool(
-                Inp::OpFlags(CircuitFlags::WriteLookupOutputToRD),
-                row,
-            );
+            let flag =
+                accessor.value_at_bool(Inp::OpFlags(CircuitFlags::WriteLookupOutputToRD), row);
             diff_to_bz(if flag { 1 } else { 0 })
         }
         ConstraintName::RdWriteEqLookupIfWriteLookupToRd => {
@@ -907,9 +909,8 @@ pub fn eval_bz_by_name<F: JoltField>(
             let dnoupd = accessor
                 .value_at_bool(Inp::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC), row)
                 as i128;
-            let iscompr = accessor
-                .value_at_bool(Inp::OpFlags(CircuitFlags::IsCompressed), row)
-                as i128;
+            let iscompr =
+                accessor.value_at_bool(Inp::OpFlags(CircuitFlags::IsCompressed), row) as i128;
             let target = pc + 4 - 4 * dnoupd - 2 * iscompr;
             diff_to_bz(next - target)
         }

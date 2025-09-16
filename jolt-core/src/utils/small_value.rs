@@ -9,8 +9,8 @@ pub const NUM_SVO_ROUNDS: usize = 3;
 
 // Accumulation primitives for SVO (moved from zkvm/r1cs/types.rs)
 pub mod accum {
-    use ark_ff::biginteger::{BigInt, I8OrI96, S160, S224};
     use crate::field::JoltField;
+    use ark_ff::biginteger::{BigInt, I8OrI96, S160, S224};
 
     /// Final unreduced product after multiplying by a 256-bit field element (512-bit unsigned)
     pub type UnreducedProduct = BigInt<8>;
@@ -40,7 +40,11 @@ pub mod accum {
         let field_bigint = field.as_bigint_ref();
         if !product.is_zero() {
             let mag: BigInt<4> = product.into();
-            let acc = if product.is_positive() { pos_acc } else { neg_acc };
+            let acc = if product.is_positive() {
+                pos_acc
+            } else {
+                neg_acc
+            };
             field_bigint.fmadd_trunc::<4, 8>(&mag, acc);
         }
     }
@@ -53,13 +57,18 @@ pub mod accum {
 
     impl Default for SignedUnreducedAccum {
         fn default() -> Self {
-            Self { pos: UnreducedProduct::zero(), neg: UnreducedProduct::zero() }
+            Self {
+                pos: UnreducedProduct::zero(),
+                neg: UnreducedProduct::zero(),
+            }
         }
     }
 
     impl SignedUnreducedAccum {
         #[inline(always)]
-        pub fn new() -> Self { Self::default() }
+        pub fn new() -> Self {
+            Self::default()
+        }
 
         #[inline(always)]
         pub fn clear(&mut self) {
@@ -90,7 +99,11 @@ pub mod accum {
                 let lo = bz.magnitude_lo();
                 let hi = bz.magnitude_hi() as u64;
                 let mag = BigInt::<3>([lo[0], lo[1], hi]);
-                let acc = if bz.is_positive() { &mut self.pos } else { &mut self.neg };
+                let acc = if bz.is_positive() {
+                    &mut self.pos
+                } else {
+                    &mut self.neg
+                };
                 field_bigint.fmadd_trunc::<3, 8>(&mag, acc);
             }
         }
@@ -119,19 +132,22 @@ pub mod accum {
         let r64 = F::from_u128(1u128 << 64);
         let r128 = r64 * r64;
         let acc = F::from_u64(lo[0]) + F::from_u64(lo[1]) * r64 + F::from_u64(hi) * r128;
-        if bz.is_positive() { acc } else { -acc }
+        if bz.is_positive() {
+            acc
+        } else {
+            -acc
+        }
     }
 }
 
 pub mod svo_helpers {
+    use super::accum::{fmadd_unreduced, UnreducedProduct};
     use super::*;
     use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
     use crate::poly::unipoly::CompressedUniPoly;
     use crate::subprotocols::sumcheck::process_eq_sumcheck_round;
     use crate::transcripts::Transcript;
-    use super::accum::{fmadd_unreduced, UnreducedProduct};
     use ark_ff::biginteger::{I8OrI96, S160};
-    
 
     // SVOEvalPoint enum definition
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -1804,15 +1820,18 @@ pub mod svo_helpers {
 
 #[cfg(test)]
 mod tests {
+    use super::accum::{fmadd_reduce_factor, reduce_unreduced_to_field, UnreducedProduct};
     use super::svo_helpers::{
         compute_and_update_tA_inplace_generic, compute_and_update_tA_inplace_small_value,
     };
-    use crate::{field::JoltField, poly::eq_poly::EqPolynomial, poly::spartan_interleaved_poly::build_eq_r_y_table};
-    use super::accum::{fmadd_reduce_factor, reduce_unreduced_to_field, UnreducedProduct};
-    use ark_ff::biginteger::{I8OrI96, S160};
-    use ark_bn254::Fr;
-    use ark_ff::{UniformRand, Zero};
     use crate::utils::small_scalar::SmallScalar;
+    use crate::{
+        field::JoltField, poly::eq_poly::EqPolynomial,
+        poly::spartan_interleaved_poly::build_eq_r_y_table,
+    };
+    use ark_bn254::Fr;
+    use ark_ff::biginteger::{I8OrI96, S160};
+    use ark_ff::{UniformRand, Zero};
     use rand::{Rng, SeedableRng};
     use rand_chacha::ChaCha20Rng;
 
@@ -1981,10 +2000,13 @@ mod tests {
                     let hi = bz.magnitude_hi() as u64;
                     let r64 = Fr::from_u128(1u128 << 64);
                     let r128 = r64 * r64;
-                    let acc = Fr::from_u64(lo[0])
-                        + Fr::from_u64(lo[1]) * r64
-                        + Fr::from_u64(hi) * r128;
-                    if bz.is_positive() { acc } else { -acc }
+                    let acc =
+                        Fr::from_u64(lo[0]) + Fr::from_u64(lo[1]) * r64 + Fr::from_u64(hi) * r128;
+                    if bz.is_positive() {
+                        acc
+                    } else {
+                        -acc
+                    }
                 }
             };
             let expected_field_val = <Fr as JoltField>::from_i128(*v);

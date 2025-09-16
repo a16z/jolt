@@ -1,19 +1,19 @@
+use ark_ff::biginteger::{S128, S64};
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use jolt_core::field::tracked_ark::TrackedFr;
+use jolt_core::utils::small_scalar::SmallScalar;
 use jolt_core::zkvm::instruction::CircuitFlags;
 use jolt_core::zkvm::r1cs::constraints::{eval_az_by_name, eval_bz_by_name, UNIFORM_R1CS};
 use jolt_core::zkvm::r1cs::inputs::{JoltR1CSInputs, WitnessRowAccessor};
-use jolt_core::utils::small_scalar::SmallScalar;
 use rand_chacha::ChaCha20Rng;
 use rand_core::{RngCore, SeedableRng};
-use ark_ff::biginteger::{S128, S64};
 
 /// Random test value covering the typed accessors used by named evaluators
 enum TestValue {
     Bool(bool),
     U8(u8),
     U64(u64),
-    I64(i64),
+    S64(S64),
     U128(u128),
     S128(S128),
 }
@@ -39,7 +39,8 @@ impl RandomTestAccessor {
                     JoltR1CSInputs::Rd => TestValue::U8((rng.next_u32() % 32) as u8),
                     JoltR1CSInputs::Imm => {
                         let v = (rng.next_u64() as i64) % (1i64 << 20);
-                        TestValue::I64(v)
+                        let mag = v.unsigned_abs();
+                        TestValue::S64(S64::from_u64_with_sign(mag, v >= 0))
                     }
                     JoltR1CSInputs::RamAddress => TestValue::U64(rng.next_u64()),
                     JoltR1CSInputs::Rs1Value => TestValue::U64(rng.next_u64()),
@@ -49,12 +50,14 @@ impl RandomTestAccessor {
                     JoltR1CSInputs::RamWriteValue => TestValue::U64(rng.next_u64()),
                     JoltR1CSInputs::LeftInstructionInput => TestValue::U64(rng.next_u64()),
                     JoltR1CSInputs::RightInstructionInput => {
-                        TestValue::I64(rng.next_u64() as i64)
+                        let v = rng.next_u64() as i64;
+                        let mag = v.unsigned_abs();
+                        TestValue::S64(S64::from_u64_with_sign(mag, v >= 0))
                     }
                     JoltR1CSInputs::LeftLookupOperand => TestValue::U64(rng.next_u64()),
-                    JoltR1CSInputs::RightLookupOperand => TestValue::U128(
-                        ((rng.next_u64() as u128) << 64) | (rng.next_u64() as u128),
-                    ),
+                    JoltR1CSInputs::RightLookupOperand => {
+                        TestValue::U128(((rng.next_u64() as u128) << 64) | (rng.next_u64() as u128))
+                    }
                     JoltR1CSInputs::Product => {
                         // Random s128
                         let hi = rng.next_u64() as i128;
@@ -67,9 +70,7 @@ impl RandomTestAccessor {
                     }
                     JoltR1CSInputs::WritePCtoRD => TestValue::U8((rng.next_u32() % 2) as u8),
                     JoltR1CSInputs::ShouldBranch => TestValue::U8((rng.next_u32() % 2) as u8),
-                    JoltR1CSInputs::NextUnexpandedPC => {
-                        TestValue::U64(rng.next_u64() % (1 << 32))
-                    }
+                    JoltR1CSInputs::NextUnexpandedPC => TestValue::U64(rng.next_u64() % (1 << 32)),
                     JoltR1CSInputs::NextPC => TestValue::U64(rng.next_u64() % (1 << 32)),
                     JoltR1CSInputs::LookupOutput => TestValue::U64(rng.next_u64()),
                     JoltR1CSInputs::NextIsNoop => TestValue::Bool(rng.next_u32() % 2 == 0),
@@ -102,7 +103,10 @@ impl RandomTestAccessor {
             }
         }
 
-        RandomTestAccessor { values, rows: num_rows }
+        RandomTestAccessor {
+            values,
+            rows: num_rows,
+        }
     }
 }
 
@@ -124,7 +128,7 @@ impl WitnessRowAccessor<TrackedFr, JoltR1CSInputs> for RandomTestAccessor {
             TestValue::Bool(v) => v.to_field(),
             TestValue::U8(v) => v.to_field(),
             TestValue::U64(v) => v.to_field(),
-            TestValue::I64(v) => v.to_field(),
+            TestValue::S64(v) => v.to_field(),
             TestValue::U128(v) => v.to_field(),
             TestValue::S128(v) => (*v).to_field(),
         }
@@ -142,7 +146,13 @@ impl WitnessRowAccessor<TrackedFr, JoltR1CSInputs> for RandomTestAccessor {
     fn value_at_u8(&self, input_index: JoltR1CSInputs, row: usize) -> u8 {
         match self.get(input_index, row) {
             TestValue::U8(v) => *v,
-            TestValue::Bool(v) => if *v { 1 } else { 0 },
+            TestValue::Bool(v) => {
+                if *v {
+                    1
+                } else {
+                    0
+                }
+            }
             _ => 0,
         }
     }
@@ -151,17 +161,20 @@ impl WitnessRowAccessor<TrackedFr, JoltR1CSInputs> for RandomTestAccessor {
         match self.get(input_index, row) {
             TestValue::U64(v) => *v,
             TestValue::U8(v) => *v as u64,
-            TestValue::Bool(v) => if *v { 1 } else { 0 },
+            TestValue::Bool(v) => {
+                if *v {
+                    1
+                } else {
+                    0
+                }
+            }
             _ => 0,
         }
     }
 
     fn value_at_s64(&self, input_index: JoltR1CSInputs, row: usize) -> S64 {
         match self.get(input_index, row) {
-            TestValue::I64(v) => {
-                let mag = v.unsigned_abs();
-                S64::from_u64_with_sign(mag, *v >= 0)
-            }
+            TestValue::S64(v) => *v,
             _ => S64::from_u64_with_sign(0, true),
         }
     }
@@ -269,16 +282,19 @@ fn bench_single_constraint_comparison(c: &mut Criterion) {
             })
         });
 
-        c.bench_function(&format!("single_constraint_{}_az_generic_field", idx), |b| {
-            b.iter(|| {
-                for row in 0..black_box(100) {
-                    let _result = constraint
-                        .cons
-                        .a
-                        .evaluate_row_with::<TrackedFr>(black_box(accessor_ref), black_box(row));
-                }
-            })
-        });
+        c.bench_function(
+            &format!("single_constraint_{}_az_generic_field", idx),
+            |b| {
+                b.iter(|| {
+                    for row in 0..black_box(100) {
+                        let _result = constraint.cons.a.evaluate_row_with::<TrackedFr>(
+                            black_box(accessor_ref),
+                            black_box(row),
+                        );
+                    }
+                })
+            },
+        );
 
         c.bench_function(&format!("single_constraint_{}_bz_named", idx), |b| {
             b.iter(|| {
@@ -292,16 +308,19 @@ fn bench_single_constraint_comparison(c: &mut Criterion) {
             })
         });
 
-        c.bench_function(&format!("single_constraint_{}_bz_generic_field", idx), |b| {
-            b.iter(|| {
-                for row in 0..black_box(100) {
-                    let _result = constraint
-                        .cons
-                        .b
-                        .evaluate_row_with::<TrackedFr>(black_box(accessor_ref), black_box(row));
-                }
-            })
-        });
+        c.bench_function(
+            &format!("single_constraint_{}_bz_generic_field", idx),
+            |b| {
+                b.iter(|| {
+                    for row in 0..black_box(100) {
+                        let _result = constraint.cons.b.evaluate_row_with::<TrackedFr>(
+                            black_box(accessor_ref),
+                            black_box(row),
+                        );
+                    }
+                })
+            },
+        );
     }
 }
 

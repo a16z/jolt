@@ -1,6 +1,6 @@
 use crate::field::JoltField;
 use allocative::Allocative;
-use ark_ff::biginteger::{I8OrI96, S64, S128};
+use ark_ff::biginteger::{I8OrI96, S128, S64};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 /// A trait for small scalars ({u/i}{8/16/32/64/128})
@@ -238,9 +238,7 @@ impl SmallScalar for S128 {
                     b_mag - a_mag
                 }
             } else {
-                a_mag
-                    .checked_add(b_mag)
-                    .expect("abs_diff overflowed u128")
+                a_mag.checked_add(b_mag).expect("abs_diff overflowed u128")
             }
         };
         r.mul_u128(diff)

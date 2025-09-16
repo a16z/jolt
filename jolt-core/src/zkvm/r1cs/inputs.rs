@@ -26,6 +26,8 @@ use std::fmt::Debug;
 use std::marker::PhantomData;
 use tracer::instruction::RV32IMCycle;
 
+use strum::IntoEnumIterator;
+
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct R1CSProof<F: JoltField, ProofTranscript: Transcript> {
     pub key: UniformSpartanKey<F>,
@@ -686,118 +688,83 @@ pub fn compute_claimed_witness_evals<F: JoltField, PCS: CommitmentScheme<Field =
                 };
 
                 // 0: LeftInstructionInput (u64)
-                chunk_result[0] = left_u64.field_mul(*eq_rx_t);
+                chunk_result[JoltR1CSInputs::LeftInstructionInput.to_index()] =
+                    left_u64.field_mul(*eq_rx_t);
                 // 1: RightInstructionInput (i128, really a s64)
-                chunk_result[1] = right_i128.field_mul(*eq_rx_t);
+                chunk_result[JoltR1CSInputs::RightInstructionInput.to_index()] =
+                    right_i128.field_mul(*eq_rx_t);
                 // 2: Product = left_u64 * right_i128
-                chunk_result[2] = product_i128.field_mul(*eq_rx_t);
+                chunk_result[JoltR1CSInputs::Product.to_index()] = product_i128.field_mul(*eq_rx_t);
                 // 3: WriteLookupOutputToRD = rd if flag else 0 (u8)
                 if flags[CircuitFlags::WriteLookupOutputToRD] {
-                    chunk_result[3] = rd.field_mul(*eq_rx_t);
+                    chunk_result[JoltR1CSInputs::WriteLookupOutputToRD.to_index()] =
+                        rd.field_mul(*eq_rx_t);
                 };
                 // 4: WritePCtoRD = rd if Jump else 0 (u8)
                 if flags[CircuitFlags::Jump] {
-                    chunk_result[4] = rd.field_mul(*eq_rx_t);
+                    chunk_result[JoltR1CSInputs::WritePCtoRD.to_index()] = rd.field_mul(*eq_rx_t);
                 };
                 // 5: ShouldBranch = LookupOutput if Branch else 0 (u64)
                 if flags[CircuitFlags::Branch] {
-                    chunk_result[5] = lookup_out_u64.field_mul(*eq_rx_t);
+                    chunk_result[JoltR1CSInputs::ShouldBranch.to_index()] =
+                        lookup_out_u64.field_mul(*eq_rx_t);
                 }
                 // 6: PC (u64)
-                chunk_result[6] = pc_u64.field_mul(*eq_rx_t);
+                chunk_result[JoltR1CSInputs::PC.to_index()] = pc_u64.field_mul(*eq_rx_t);
                 // 7: UnexpandedPC (u64)
-                chunk_result[7] = unexp_pc_u64.field_mul(*eq_rx_t);
+                chunk_result[JoltR1CSInputs::UnexpandedPC.to_index()] =
+                    unexp_pc_u64.field_mul(*eq_rx_t);
                 // 8: Rd (u8)
-                chunk_result[8] = rd.field_mul(*eq_rx_t);
+                chunk_result[JoltR1CSInputs::Rd.to_index()] = rd.field_mul(*eq_rx_t);
                 // 9: Imm (i128)
-                chunk_result[9] = norm.operands.imm.field_mul(*eq_rx_t);
+                chunk_result[JoltR1CSInputs::Imm.to_index()] =
+                    norm.operands.imm.field_mul(*eq_rx_t);
                 // 10: RamAddress (u64)
                 let ram_addr_u64 = cycle.ram_access().address() as u64;
-                chunk_result[10] = ram_addr_u64.field_mul(*eq_rx_t);
+                chunk_result[JoltR1CSInputs::RamAddress.to_index()] =
+                    ram_addr_u64.field_mul(*eq_rx_t);
                 // 11: Rs1Value (u64)
                 let rs1_u64 = cycle.rs1_read().1;
-                chunk_result[11] = rs1_u64.field_mul(*eq_rx_t);
+                chunk_result[JoltR1CSInputs::Rs1Value.to_index()] = rs1_u64.field_mul(*eq_rx_t);
                 // 12: Rs2Value (u64)
                 let rs2_u64 = cycle.rs2_read().1;
-                chunk_result[12] = rs2_u64.field_mul(*eq_rx_t);
+                chunk_result[JoltR1CSInputs::Rs2Value.to_index()] = rs2_u64.field_mul(*eq_rx_t);
                 // 13: RdWriteValue (u64)
-                chunk_result[13] = rdw.field_mul(*eq_rx_t);
+                chunk_result[JoltR1CSInputs::RdWriteValue.to_index()] = rdw.field_mul(*eq_rx_t);
                 // 14: RamReadValue (u64)
-                chunk_result[14] = ram_rd_u64.field_mul(*eq_rx_t);
+                chunk_result[JoltR1CSInputs::RamReadValue.to_index()] =
+                    ram_rd_u64.field_mul(*eq_rx_t);
                 // 15: RamWriteValue (u64)
-                chunk_result[15] = ram_wr_u64.field_mul(*eq_rx_t);
+                chunk_result[JoltR1CSInputs::RamWriteValue.to_index()] =
+                    ram_wr_u64.field_mul(*eq_rx_t);
                 // 16: LeftLookupOperand (u64)
-                chunk_result[16] = ll_u64.field_mul(*eq_rx_t);
+                chunk_result[JoltR1CSInputs::LeftLookupOperand.to_index()] =
+                    ll_u64.field_mul(*eq_rx_t);
                 // 17: RightLookupOperand (u128)
-                chunk_result[17] = rl_u128.field_mul(*eq_rx_t);
+                chunk_result[JoltR1CSInputs::RightLookupOperand.to_index()] =
+                    rl_u128.field_mul(*eq_rx_t);
                 // 18: NextUnexpandedPC (u64)
-                chunk_result[18] = next_unexp_pc_u64.field_mul(*eq_rx_t);
+                chunk_result[JoltR1CSInputs::NextUnexpandedPC.to_index()] =
+                    next_unexp_pc_u64.field_mul(*eq_rx_t);
                 // 19: NextPC (u64)
-                chunk_result[19] = next_pc_u64.field_mul(*eq_rx_t);
+                chunk_result[JoltR1CSInputs::NextPC.to_index()] = next_pc_u64.field_mul(*eq_rx_t);
                 // 20: LookupOutput (u64)
-                chunk_result[20] = lookup_out_u64.field_mul(*eq_rx_t);
+                chunk_result[JoltR1CSInputs::LookupOutput.to_index()] =
+                    lookup_out_u64.field_mul(*eq_rx_t);
                 // 21: NextIsNoop (bool)
                 if next_is_noop {
-                    chunk_result[21] = *eq_rx_t;
+                    chunk_result[JoltR1CSInputs::NextIsNoop.to_index()] = *eq_rx_t;
                 }
                 // 22: ShouldJump = Jump && !NextIsNoop (bool)
                 if flags[CircuitFlags::Jump] && !next_is_noop {
-                    chunk_result[22] = *eq_rx_t;
+                    chunk_result[JoltR1CSInputs::ShouldJump.to_index()] = *eq_rx_t;
                 }
+
                 // 23..40: OpFlags (bool)
-                if flags[CircuitFlags::LeftOperandIsRs1Value] {
-                    chunk_result[23] = *eq_rx_t;
-                }
-                if flags[CircuitFlags::RightOperandIsRs2Value] {
-                    chunk_result[24] = *eq_rx_t;
-                }
-                if flags[CircuitFlags::LeftOperandIsPC] {
-                    chunk_result[25] = *eq_rx_t;
-                }
-                if flags[CircuitFlags::RightOperandIsImm] {
-                    chunk_result[26] = *eq_rx_t;
-                }
-                if flags[CircuitFlags::AddOperands] {
-                    chunk_result[27] = *eq_rx_t;
-                }
-                if flags[CircuitFlags::SubtractOperands] {
-                    chunk_result[28] = *eq_rx_t;
-                }
-                if flags[CircuitFlags::MultiplyOperands] {
-                    chunk_result[29] = *eq_rx_t;
-                }
-                if flags[CircuitFlags::Load] {
-                    chunk_result[30] = *eq_rx_t;
-                }
-                if flags[CircuitFlags::Store] {
-                    chunk_result[31] = *eq_rx_t;
-                }
-                if flags[CircuitFlags::Jump] {
-                    chunk_result[32] = *eq_rx_t;
-                }
-                if flags[CircuitFlags::Branch] {
-                    chunk_result[33] = *eq_rx_t;
-                }
-                if flags[CircuitFlags::WriteLookupOutputToRD] {
-                    chunk_result[34] = *eq_rx_t;
-                }
-                if flags[CircuitFlags::InlineSequenceInstruction] {
-                    chunk_result[35] = *eq_rx_t;
-                }
-                if flags[CircuitFlags::Assert] {
-                    chunk_result[36] = *eq_rx_t;
-                }
-                if flags[CircuitFlags::DoNotUpdateUnexpandedPC] {
-                    chunk_result[37] = *eq_rx_t;
-                }
-                if flags[CircuitFlags::Advice] {
-                    chunk_result[38] = *eq_rx_t;
-                }
-                if flags[CircuitFlags::IsNoop] {
-                    chunk_result[39] = *eq_rx_t;
-                }
-                if flags[CircuitFlags::IsCompressed] {
-                    chunk_result[40] = *eq_rx_t;
+                for flag in CircuitFlags::iter() {
+                    if flags[flag] {
+                        chunk_result[JoltR1CSInputs::OpFlags(flag).to_index()] = *eq_rx_t;
+                    }
                 }
 
                 t += 1;
