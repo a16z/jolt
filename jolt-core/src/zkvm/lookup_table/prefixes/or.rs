@@ -3,8 +3,6 @@ use crate::field::MontU128;
 use crate::zkvm::instruction_lookups::read_raf_checking::current_suffix_len;
 use crate::{field::JoltField, utils::lookup_bits::LookupBits};
 
-
-
 pub enum OrPrefix<const XLEN: usize> {}
 
 impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for OrPrefix<XLEN> {
@@ -21,7 +19,8 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for OrPrefix<XLEN> {
         if let Some(r_x) = r_x {
             let y = F::from_u8(c as u8);
             let shift = XLEN - 1 - j / 2;
-            result += F::from_u64(1 << shift) * (F::from_u128_mont(r_x) + y - (y.mul_u128_mont_form(r_x)));
+            result += F::from_u64(1 << shift)
+                * (F::from_u128_mont(r_x) + y - (y.mul_u128_mont_form(r_x)));
         } else {
             let y_msb = b.pop_msb() as u32;
             let shift = XLEN - 1 - j / 2;

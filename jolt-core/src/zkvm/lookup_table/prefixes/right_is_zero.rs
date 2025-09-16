@@ -73,8 +73,8 @@ impl<F: JoltField> SparseDensePrefix<F> for RightOperandIsZeroPrefix {
         _: usize,
     ) -> PrefixCheckpoint<F> {
         // checkpoint *= (1 - r_y)
-        let updated = checkpoints[Prefixes::RightOperandIsZero].unwrap_or(F::one())
-            * (F::one() - r_y);
+        let updated =
+            checkpoints[Prefixes::RightOperandIsZero].unwrap_or(F::one()) * (F::one() - r_y);
         Some(updated).into()
     }
 }

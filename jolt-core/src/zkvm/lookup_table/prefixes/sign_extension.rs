@@ -3,7 +3,6 @@ use crate::{field::JoltField, utils::lookup_bits::LookupBits};
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 use crate::field::MontU128;
 
-
 pub enum SignExtensionPrefix<const XLEN: usize> {}
 
 impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for SignExtensionPrefix<XLEN> {

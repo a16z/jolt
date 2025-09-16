@@ -1,6 +1,6 @@
-use crate::{field::JoltField, utils::lookup_bits::LookupBits};
-use crate::field::MontU128;
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
+use crate::field::MontU128;
+use crate::{field::JoltField, utils::lookup_bits::LookupBits};
 
 pub enum ChangeDivisorWPrefix<const XLEN: usize> {}
 
@@ -109,12 +109,12 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for ChangeDivisorWPre
         let updated = checkpoints[Prefixes::ChangeDivisorW]
             .unwrap_or(F::from_u64(2) - F::from_u128(1u128 << XLEN))
             * if j == XLEN + 1 {
-            r_x*r_y
-        } else if j > XLEN + 1 {
-            (F::one() - r_x)*r_y
-        } else {
-            F::one()
-        };
+                r_x * r_y
+            } else if j > XLEN + 1 {
+                (F::one() - r_x) * r_y
+            } else {
+                F::one()
+            };
         Some(updated).into()
     }
 }

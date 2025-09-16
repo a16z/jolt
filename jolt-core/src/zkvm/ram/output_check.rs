@@ -1,5 +1,4 @@
-use std::{cell::RefCell, rc::Rc};
-use std::marker::PhantomData;
+use crate::field::MontU128;
 use crate::{
     field::JoltField,
     poly::{
@@ -30,8 +29,9 @@ use allocative::FlameGraphBuilder;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::RAM_START_ADDRESS;
 use rayon::prelude::*;
+use std::marker::PhantomData;
+use std::{cell::RefCell, rc::Rc};
 use tracer::JoltDevice;
-use crate::field::MontU128;
 
 #[derive(Allocative)]
 struct OutputSumcheckProverState<F: JoltField> {
@@ -74,7 +74,7 @@ impl<F: JoltField> OutputSumcheckProverState<F> {
             program_io.memory_layout.input_start,
             &program_io.memory_layout,
         )
-            .unwrap() as usize;
+        .unwrap() as usize;
         let io_end = remap_address(RAM_START_ADDRESS, &program_io.memory_layout).unwrap() as usize;
 
         // Compute Val_io by copying the relevant slice of Val_final
@@ -272,7 +272,7 @@ impl<F: JoltField> SumcheckInstance<F> for OutputSumcheck<F> {
         let OutputSumcheckVerifierState {
             r_address,
             program_io,
-            _phantom
+            _phantom,
         } = self.verifier_state.as_ref().unwrap();
 
         let val_final_claim = accumulator
@@ -292,8 +292,8 @@ impl<F: JoltField> SumcheckInstance<F> for OutputSumcheck<F> {
                 program_io.memory_layout.input_start,
                 &program_io.memory_layout,
             )
-                .unwrap()
-                .into(),
+            .unwrap()
+            .into(),
             remap_address(RAM_START_ADDRESS, &program_io.memory_layout)
                 .unwrap()
                 .into(),

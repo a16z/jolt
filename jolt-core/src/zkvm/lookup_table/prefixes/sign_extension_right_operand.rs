@@ -1,7 +1,7 @@
+use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
+use crate::field::MontU128;
 use crate::zkvm::instruction_lookups::read_raf_checking::current_suffix_len;
 use crate::{field::JoltField, utils::lookup_bits::LookupBits};
-use crate::field::MontU128;
-use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 
 pub enum SignExtensionRightOperandPrefix<const XLEN: usize> {}
 
@@ -74,7 +74,8 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F>
     ) -> PrefixCheckpoint<F> {
         if j == XLEN + 1 {
             // Sign bit is in r_y
-            let value = F::from_u128((1u128 << XLEN) - (1u128 << (XLEN / 2))).mul_u128_mont_form(r_y);
+            let value =
+                F::from_u128((1u128 << XLEN) - (1u128 << (XLEN / 2))).mul_u128_mont_form(r_y);
             Some(value).into()
         } else {
             checkpoints[Prefixes::SignExtensionRightOperand].into()

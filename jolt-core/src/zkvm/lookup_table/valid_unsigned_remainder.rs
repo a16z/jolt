@@ -42,8 +42,8 @@ impl<const XLEN: usize> JoltLookupTable for ValidUnsignedRemainderTable<XLEN> {
             let x_i_f = F::from_u128_mont(x_i);
             let y_i_f = F::from_u128_mont(y_i);
             divisor_is_zero *= F::one() - y_i_f;
-            lt += (F::one() - F::from_u128_mont(x_i)).mul_u128_mont_form( y_i) * eq;
-            eq *= x_i_f.mul_u128_mont_form(y_i)  + (F::one() - x_i_f) * (F::one() - y_i_f);
+            lt += (F::one() - F::from_u128_mont(x_i)).mul_u128_mont_form(y_i) * eq;
+            eq *= x_i_f.mul_u128_mont_form(y_i) + (F::one() - x_i_f) * (F::one() - y_i_f);
         }
 
         lt + divisor_is_zero
@@ -74,9 +74,7 @@ mod test {
     use ark_bn254::Fr;
 
     use crate::zkvm::lookup_table::test::{
-        lookup_table_mle_full_hypercube_test,
-        lookup_table_mle_random_test,
-        prefix_suffix_test,
+        lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
     };
     use common::constants::XLEN;
 

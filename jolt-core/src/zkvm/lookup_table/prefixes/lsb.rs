@@ -3,11 +3,16 @@ use crate::field::MontU128;
 use crate::zkvm::instruction_lookups::read_raf_checking::current_suffix_len;
 use crate::{field::JoltField, utils::lookup_bits::LookupBits};
 
-
 pub enum LsbPrefix<const XLEN: usize> {}
 
 impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for LsbPrefix<XLEN> {
-    fn prefix_mle(_: &[PrefixCheckpoint<F>], _: Option<MontU128>, c: u32, b: LookupBits, j: usize) -> F {
+    fn prefix_mle(
+        _: &[PrefixCheckpoint<F>],
+        _: Option<MontU128>,
+        c: u32,
+        b: LookupBits,
+        j: usize,
+    ) -> F {
         if j == 2 * XLEN - 1 {
             // in the log(K)th round, `c` corresponds to the LSB
             debug_assert_eq!(b.len(), 0);
@@ -19,7 +24,13 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for LsbPrefix<XLEN> {
             F::one()
         }
     }
-    fn prefix_mle_field(_: &[PrefixCheckpoint<F>], _: Option<F>, c: u32, b: LookupBits, j: usize) -> F {
+    fn prefix_mle_field(
+        _: &[PrefixCheckpoint<F>],
+        _: Option<F>,
+        c: u32,
+        b: LookupBits,
+        j: usize,
+    ) -> F {
         if j == 2 * XLEN - 1 {
             // in the log(K)th round, `c` corresponds to the LSB
             debug_assert_eq!(b.len(), 0);

@@ -1,7 +1,7 @@
+use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
+use crate::field::MontU128;
 use crate::zkvm::instruction_lookups::read_raf_checking::current_suffix_len;
 use crate::{field::JoltField, utils::lookup_bits::LookupBits};
-use crate::field::MontU128;
-use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 
 pub enum SignExtensionUpperHalfPrefix<const XLEN: usize> {}
 
@@ -26,7 +26,8 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for SignExtensionUppe
             F::from_u128(((1u128 << (half_word_size)) - 1) << (half_word_size)).mul_u64(c as u64)
         } else if j == XLEN + half_word_size + 1 {
             // Sign bit is in r_x
-            F::from_u128(((1u128 << (half_word_size)) - 1) << (half_word_size)).mul_u128_mont_form(r_x.unwrap())
+            F::from_u128(((1u128 << (half_word_size)) - 1) << (half_word_size))
+                .mul_u128_mont_form(r_x.unwrap())
         } else if j > XLEN + half_word_size + 1 {
             // Sign bit has been processed, use checkpoint
             checkpoints[Prefixes::SignExtensionUpperHalf].unwrap_or(F::zero())
@@ -73,7 +74,8 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for SignExtensionUppe
 
         if j == XLEN + half_word_size + 1 {
             // Sign bit is in r_x
-            let value = F::from_u128(((1u128 << (half_word_size)) - 1) << (half_word_size)).mul_u128_mont_form(r_x);
+            let value = F::from_u128(((1u128 << (half_word_size)) - 1) << (half_word_size))
+                .mul_u128_mont_form(r_x);
             Some(value).into()
         } else {
             checkpoints[Prefixes::SignExtensionUpperHalf].into()

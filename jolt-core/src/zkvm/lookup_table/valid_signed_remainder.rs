@@ -108,9 +108,12 @@ impl<const XLEN: usize> JoltLookupTable for ValidSignedRemainderTable<XLEN> {
         let mut remainder_is_zero = F::one() - F::from_u128_mont(r[0]);
         let mut divisor_is_zero = F::one() - F::from_u128_mont(r[1]);
         let mut positive_remainder_equals_divisor = (F::one() - x_sign_f) * (F::one() - y_sign_f);
-        let mut positive_remainder_less_than_divisor = (F::one() - x_sign_f) * (F::one() - y_sign_f);
-        let mut negative_divisor_equals_remainder = F::from_u128_mont(x_sign).mul_u128_mont_form(y_sign);
-        let mut negative_divisor_greater_than_remainder = F::from_u128_mont(x_sign).mul_u128_mont_form(y_sign);
+        let mut positive_remainder_less_than_divisor =
+            (F::one() - x_sign_f) * (F::one() - y_sign_f);
+        let mut negative_divisor_equals_remainder =
+            F::from_u128_mont(x_sign).mul_u128_mont_form(y_sign);
+        let mut negative_divisor_greater_than_remainder =
+            F::from_u128_mont(x_sign).mul_u128_mont_form(y_sign);
 
         for i in 1..XLEN {
             let x_i = r[2 * i];
@@ -118,8 +121,10 @@ impl<const XLEN: usize> JoltLookupTable for ValidSignedRemainderTable<XLEN> {
             let x_i_f = F::from_u128_mont(x_i);
             let y_i_f = F::from_u128_mont(y_i);
             if i == 1 {
-                positive_remainder_less_than_divisor *= (F::one() - F::from_u128_mont(x_i)).mul_u128_mont_form(y_i);
-                negative_divisor_greater_than_remainder *= (F::one() - F::from_u128_mont(y_i)).mul_u128_mont_form(x_i);
+                positive_remainder_less_than_divisor *=
+                    (F::one() - F::from_u128_mont(x_i)).mul_u128_mont_form(y_i);
+                negative_divisor_greater_than_remainder *=
+                    (F::one() - F::from_u128_mont(y_i)).mul_u128_mont_form(x_i);
             } else {
                 positive_remainder_less_than_divisor +=
                     positive_remainder_equals_divisor * (F::one() - x_i_f).mul_u128_mont_form(y_i);
@@ -128,8 +133,10 @@ impl<const XLEN: usize> JoltLookupTable for ValidSignedRemainderTable<XLEN> {
             }
             let x_i_f = F::from_u128_mont(x_i);
             let y_i_f = F::from_u128_mont(y_i);
-            positive_remainder_equals_divisor *= x_i_f.mul_u128_mont_form(y_i) + (F::one() - x_i_f) * (F::one() - y_i_f);
-            negative_divisor_equals_remainder *= x_i_f.mul_u128_mont_form(y_i) + (F::one() - x_i_f) * (F::one() - y_i_f);
+            positive_remainder_equals_divisor *=
+                x_i_f.mul_u128_mont_form(y_i) + (F::one() - x_i_f) * (F::one() - y_i_f);
+            negative_divisor_equals_remainder *=
+                x_i_f.mul_u128_mont_form(y_i) + (F::one() - x_i_f) * (F::one() - y_i_f);
             remainder_is_zero *= F::one() - x_i_f;
             divisor_is_zero *= F::one() - y_i_f;
         }
@@ -171,9 +178,7 @@ mod test {
     use ark_bn254::Fr;
 
     use crate::zkvm::lookup_table::test::{
-        lookup_table_mle_full_hypercube_test,
-        lookup_table_mle_random_test,
-        prefix_suffix_test,
+        lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
     };
     use common::constants::XLEN;
 

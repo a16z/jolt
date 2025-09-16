@@ -116,8 +116,8 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for UpperWordPrefix<X
         let x_shift = XLEN - j;
         let y_shift = XLEN - j - 1;
         let updated = checkpoints[Prefixes::UpperWord].unwrap_or(F::zero())
-            + F::from_u64(1 << x_shift)*r_x
-            + F::from_u64(1 << y_shift)*r_y;
+            + F::from_u64(1 << x_shift) * r_x
+            + F::from_u64(1 << y_shift) * r_y;
         Some(updated).into()
     }
 }

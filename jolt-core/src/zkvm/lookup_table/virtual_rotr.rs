@@ -60,7 +60,6 @@ impl<const XLEN: usize> JoltLookupTable for VirtualRotrTable<XLEN> {
         first_sum + second_sum
     }
 
-
     fn evaluate_mle_field<F: JoltField>(&self, r: &[F]) -> F {
         assert_eq!(r.len() % 2, 0, "r must have even length");
         assert_eq!(r.len() / 2, XLEN, "r must have length 2 * XLEN");
@@ -121,9 +120,7 @@ mod test {
 
     use super::VirtualRotrTable;
     use crate::zkvm::lookup_table::test::{
-        lookup_table_mle_full_hypercube_test,
-        lookup_table_mle_random_test,
-        prefix_suffix_test,
+        lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
     };
     use common::constants::XLEN;
 

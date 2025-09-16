@@ -1,7 +1,7 @@
+use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
+use crate::field::MontU128;
 use crate::zkvm::instruction_lookups::read_raf_checking::current_suffix_len;
 use crate::{field::JoltField, utils::lookup_bits::LookupBits};
-use crate::field::MontU128;
-use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 
 pub enum Pow2WPrefix<const XLEN: usize> {}
 
@@ -104,7 +104,7 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for Pow2WPrefix<XLEN>
         if 2 * XLEN - j < 5 {
             let mut checkpoint = checkpoints[Prefixes::Pow2W].unwrap();
             let shift = 1 << (1 << (2 * XLEN - j));
-            checkpoint *= F::one() + F::from_u64(shift - 1).mul_u128_mont_form(r_x) ;
+            checkpoint *= F::one() + F::from_u64(shift - 1).mul_u128_mont_form(r_x);
             let shift = 1 << (1 << (2 * XLEN - j - 1));
             checkpoint *= F::one() + F::from_u64(shift - 1).mul_u128_mont_form(r_y);
             return Some(checkpoint).into();

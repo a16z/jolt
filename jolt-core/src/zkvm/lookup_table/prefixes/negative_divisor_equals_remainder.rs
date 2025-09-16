@@ -160,8 +160,7 @@ impl<F: JoltField> SparseDensePrefix<F> for NegativeDivisorEqualsRemainderPrefix
             checkpoints[Prefixes::NegativeDivisorEqualsRemainder].unwrap();
         // checkpoint *= EQ(r_x, r_y)
 
-        negative_divisor_equals_remainder *=
-            r_x * r_y + (F::one() - r_x) * (F::one() - r_y);
+        negative_divisor_equals_remainder *= r_x * r_y + (F::one() - r_x) * (F::one() - r_y);
         Some(negative_divisor_equals_remainder).into()
     }
 }

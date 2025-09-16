@@ -65,11 +65,12 @@ impl<const XLEN: usize> JoltLookupTable for VirtualChangeDivisorWTable<XLEN> {
             y_product = y_product.mul_u128_mont_form(r[2 * i + 1]);
         }
 
-        let sign_extension = F::from_u128((1u128 << XLEN) - (1u128 << (XLEN / 2))).mul_u128_mont_form(sign_bit);
+        let sign_extension =
+            F::from_u128((1u128 << XLEN) - (1u128 << (XLEN / 2))).mul_u128_mont_form(sign_bit);
 
         let adjustment = F::from_u64(2) - F::from_u128(1u128 << XLEN);
 
-        divisor_value + adjustment * x_product  * y_product + sign_extension
+        divisor_value + adjustment * x_product * y_product + sign_extension
     }
 
     fn evaluate_mle_field<F: JoltField>(&self, r: &[F]) -> F {
@@ -95,14 +96,14 @@ impl<const XLEN: usize> JoltLookupTable for VirtualChangeDivisorWTable<XLEN> {
 
         let mut y_product = F::one();
         for i in XLEN / 2..XLEN {
-            y_product *=  r[2 * i + 1];
+            y_product *= r[2 * i + 1];
         }
 
         let sign_extension = F::from_u128((1u128 << XLEN) - (1u128 << (XLEN / 2))) * sign_bit;
 
         let adjustment = F::from_u64(2) - F::from_u128(1u128 << XLEN);
 
-        divisor_value + adjustment * x_product  * y_product + sign_extension
+        divisor_value + adjustment * x_product * y_product + sign_extension
     }
 }
 

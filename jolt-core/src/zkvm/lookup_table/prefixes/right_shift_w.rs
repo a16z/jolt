@@ -1,6 +1,6 @@
-use crate::{field::JoltField, utils::lookup_bits::LookupBits};
-use crate::field::MontU128;
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
+use crate::field::MontU128;
+use crate::{field::JoltField, utils::lookup_bits::LookupBits};
 
 /// Right-shifts the left operand according to the bitmask given by
 /// the right operand, processing the second half of bits (j > XLEN).

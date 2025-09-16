@@ -1,13 +1,19 @@
+use super::{PrefixCheckpoint, SparseDensePrefix};
+use crate::field::MontU128;
 use crate::zkvm::instruction_lookups::read_raf_checking::current_suffix_len;
 use crate::zkvm::lookup_table::prefixes::Prefixes;
 use crate::{field::JoltField, utils::lookup_bits::LookupBits};
-use crate::field::MontU128;
-use super::{PrefixCheckpoint, SparseDensePrefix};
 
 pub enum TwoLsbPrefix<const XLEN: usize> {}
 
 impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for TwoLsbPrefix<XLEN> {
-    fn prefix_mle(_: &[PrefixCheckpoint<F>], r_x: Option<MontU128>, c: u32, b: LookupBits, j: usize) -> F {
+    fn prefix_mle(
+        _: &[PrefixCheckpoint<F>],
+        r_x: Option<MontU128>,
+        c: u32,
+        b: LookupBits,
+        j: usize,
+    ) -> F {
         if j == 2 * XLEN - 1 {
             // in the log(K)th round, `c` corresponds to bit 0
             // and `r_x` corresponds to bit 1
@@ -30,7 +36,13 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for TwoLsbPrefix<XLEN
         }
     }
 
-    fn prefix_mle_field(_: &[PrefixCheckpoint<F>], r_x: Option<F>, c: u32, b: LookupBits, j: usize) -> F {
+    fn prefix_mle_field(
+        _: &[PrefixCheckpoint<F>],
+        r_x: Option<F>,
+        c: u32,
+        b: LookupBits,
+        j: usize,
+    ) -> F {
         if j == 2 * XLEN - 1 {
             // in the log(K)th round, `c` corresponds to bit 0
             // and `r_x` corresponds to bit 1

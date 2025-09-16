@@ -318,7 +318,8 @@ impl<T: SmallScalar, F: JoltField> PolynomialBinding<F> for CompactPolynomial<T,
                             self.bound_coeffs[i] = self.bound_coeffs[2 * i];
                         } else {
                             self.bound_coeffs[i] = self.bound_coeffs[2 * i]
-                                + (self.bound_coeffs[2 * i + 1] - self.bound_coeffs[2 * i]).mul_u128_mont_form(r);
+                                + (self.bound_coeffs[2 * i + 1] - self.bound_coeffs[2 * i])
+                                    .mul_u128_mont_form(r);
                         }
                     }
                 }
@@ -409,7 +410,8 @@ impl<T: SmallScalar, F: JoltField> PolynomialBinding<F> for CompactPolynomial<T,
                                 *new_coeff = self.bound_coeffs[2 * i];
                             } else {
                                 *new_coeff = self.bound_coeffs[2 * i]
-                                    + (self.bound_coeffs[2 * i + 1] - self.bound_coeffs[2 * i]).mul_u128_mont_form(r);
+                                    + (self.bound_coeffs[2 * i + 1] - self.bound_coeffs[2 * i])
+                                        .mul_u128_mont_form(r);
                             }
                         });
                     std::mem::swap(&mut self.bound_coeffs, binding_scratch_space);

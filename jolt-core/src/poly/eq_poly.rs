@@ -41,9 +41,9 @@ impl<F: JoltField> EqPolynomial<F> {
             .map(|(x_i, y_i)| {
                 //F::from_u128_mont(*x_i) * F::from_u128_mont(*y_i)
                 //    + (F::one() - F::from_u128_mont(*x_i)) * (F::one() - F::from_u128_mont(*y_i))
-                let x_f =* x_i;
+                let x_f = *x_i;
                 let y_f = *y_i;
-                let xy_f = x_f*y_f;
+                let xy_f = x_f * y_f;
                 F::one() - x_f - y_f + xy_f + xy_f
             })
             .product()

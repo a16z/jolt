@@ -1,6 +1,6 @@
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
-use crate::{field::JoltField, utils::lookup_bits::LookupBits};
 use crate::field::MontU128;
+use crate::{field::JoltField, utils::lookup_bits::LookupBits};
 
 /// Left-shifts the left operand according to the bitmask given by
 /// the right operand, processing the second half of bits (j >= XLEN).
@@ -119,7 +119,8 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for LeftShiftWPrefix<
             let mut updated = checkpoints[Prefixes::LeftShiftW].unwrap_or(F::zero());
             let prod_one_plus_y = checkpoints[Prefixes::LeftShiftWHelper].unwrap_or(F::one());
             let bit_index = XLEN - 1 - j / 2;
-            updated += (F::one() - r_y) * r_x
+            updated += (F::one() - r_y)
+                * r_x
                 * prod_one_plus_y
                 * F::from_u64(1u64.wrapping_shl(bit_index as u32));
             Some(updated).into()

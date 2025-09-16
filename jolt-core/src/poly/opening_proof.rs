@@ -46,7 +46,6 @@ pub type Endianness = bool;
 pub const BIG_ENDIAN: Endianness = false;
 pub const LITTLE_ENDIAN: Endianness = true;
 
-
 #[derive(Clone, Debug, PartialEq, Default, Allocative)]
 pub struct OpeningPoint<const E: Endianness> {
     pub r: Vec<MontU128>,
@@ -179,7 +178,6 @@ impl<F: JoltField> SharedEqPolynomial<F> {
     }
 }
 
-
 #[derive(Clone, Allocative)]
 pub struct DensePolynomialProverOpening<F: JoltField> {
     /// The polynomial being opened. May be a random linear combination
@@ -264,7 +262,6 @@ pub enum ProverOpening<F: JoltField> {
     Dense(DensePolynomialProverOpening<F>),
     OneHot(OneHotPolynomialProverOpening<F>),
 }
-
 
 #[derive(Clone, Allocative)]
 pub struct OpeningProofReductionSumcheck<F>

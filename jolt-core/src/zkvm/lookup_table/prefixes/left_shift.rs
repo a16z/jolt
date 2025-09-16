@@ -81,7 +81,9 @@ impl<F: JoltField, const XLEN: usize> SparseDensePrefix<F> for LeftShiftPrefix<X
     ) -> PrefixCheckpoint<F> {
         let mut updated = checkpoints[Prefixes::LeftShift].unwrap_or(F::zero());
         let prod_one_plus_y = checkpoints[Prefixes::LeftShiftHelper].unwrap_or(F::one());
-        updated += (F::one() - F::from_u128_mont(r_y)).mul_u128_mont_form(r_x) * prod_one_plus_y * F::from_u64(1 << (XLEN - 1 - j / 2));
+        updated += (F::one() - F::from_u128_mont(r_y)).mul_u128_mont_form(r_x)
+            * prod_one_plus_y
+            * F::from_u64(1 << (XLEN - 1 - j / 2));
         Some(updated).into()
     }
 

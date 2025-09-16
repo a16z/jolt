@@ -79,8 +79,9 @@ impl<const XLEN: usize> JoltLookupTable for VirtualRotrWTable<XLEN> {
             first_sum += r_x_f.mul_u128_mont_form(r_y);
 
             // Update second_sum
-            second_sum +=
-                (F::one() - r_y_f).mul_u128_mont_form(r_x) * prod_one_plus_y * F::from_u64(1 << (XLEN - 1 - i));
+            second_sum += (F::one() - r_y_f).mul_u128_mont_form(r_x)
+                * prod_one_plus_y
+                * F::from_u64(1 << (XLEN - 1 - i));
 
             // Update prod_one_plus_y for next iteration
             prod_one_plus_y *= F::one() + r_y_f;

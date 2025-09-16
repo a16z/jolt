@@ -35,7 +35,8 @@ impl<const XLEN: usize> JoltLookupTable for AndnTable<XLEN> {
         for i in 0..XLEN {
             let x_i = r[2 * i];
             let y_i = r[2 * i + 1];
-            result += F::from_u64(1u64 << (XLEN - 1 - i)).mul_u128_mont_form(x_i)  * (F::one() - F::from_u128_mont(y_i));
+            result += F::from_u64(1u64 << (XLEN - 1 - i)).mul_u128_mont_form(x_i)
+                * (F::one() - F::from_u128_mont(y_i));
         }
         result
     }
