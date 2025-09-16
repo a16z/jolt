@@ -29,7 +29,6 @@ impl From<u128> for MontU128 {
     }
 }
 
-//TODO: Implement MUL x MUL
 impl From<MontU128> for u128 {
     fn from(val: MontU128) -> u128 {
         val.0
@@ -204,9 +203,10 @@ pub trait JoltField:
     }
 
     //fn mul_two_u128s(&self, x: MontU128, y: MontU128) -> Self {
-    //    unimplemented!("Must be implemented by the conrete field type")
+    //    unimplemented!("Must be implemented by the concrete field type")
     //}
     //
+
     fn from_u128_mont(_n: MontU128) -> Self {
         unimplemented!("Must be implemented by the concrete field type")
     }
@@ -313,4 +313,5 @@ where
 }
 
 pub mod ark;
-pub mod tracked_ark;
+// Commented out because of allocative issues for now
+// pub mod tracked_ark;

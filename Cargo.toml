@@ -119,6 +119,7 @@ ark-bn254 = { git = "https://github.com/abiswas3/arkworks-algebra", branch = "de
 # ark-ec = { path = "../arkworks-algebra/ec" }
 # ark-serialize = { path = "../arkworks-algebra/serialize" }
 # ark-bn254 = { path = "../arkworks-algebra/curves/bn254" }
+allocative = { git = "https://github.com/facebookexperimental/allocative", rev = "85b773d85d526d068ce94724ff7a7b81203fc95e" }
 
 [patch.'https://github.com/a16z/arkworks-algebra']
 # jolt-optimizations = {path="../arkworks-algebra/jolt-optimizations"}

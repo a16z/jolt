@@ -63,8 +63,8 @@ impl<F: JoltField> PartialEq for OneHotPolynomial<F> {
 ///   \sum eq(k, r_address) * eq(j, r_cycle) * ra(k, j)
 /// so we use a simplified version of the prover algorithm for the
 /// Booleanity sumcheck described in Section 6.3 of the Twist/Shout paper.
-#[cfg_attr(feature = "allocative", derive(Allocative))]
-#[derive(Clone, Debug)]
+
+#[derive(Clone, Debug, Allocative)]
 pub struct OneHotSumcheckState<F: JoltField> {
     /// B stores eq(r, k), see Equation (53)
     pub B: MultilinearPolynomial<F>,
@@ -100,8 +100,7 @@ impl<F: JoltField> OneHotSumcheckState<F> {
     }
 }
 
-#[cfg_attr(feature = "allocative", derive(Allocative))]
-#[derive(Clone)]
+#[derive(Clone, Allocative)]
 pub struct OneHotPolynomialProverOpening<F: JoltField> {
     pub log_T: usize,
     pub polynomial: OneHotPolynomial<F>,

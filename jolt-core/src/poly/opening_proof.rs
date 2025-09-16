@@ -46,8 +46,8 @@ pub type Endianness = bool;
 pub const BIG_ENDIAN: Endianness = false;
 pub const LITTLE_ENDIAN: Endianness = true;
 
-#[cfg_attr(feature = "allocative", derive(Allocative))]
-#[derive(Clone, Debug, PartialEq, Default)]
+
+#[derive(Clone, Debug, PartialEq, Default, Allocative)]
 pub struct OpeningPoint<const E: Endianness> {
     pub r: Vec<MontU128>,
 }
@@ -164,7 +164,7 @@ pub enum OpeningId {
 
 pub type Openings<F> = BTreeMap<OpeningId, (OpeningPoint<BIG_ENDIAN>, F)>;
 
-#[cfg_attr(feature = "allocative", derive(Allocative))]
+#[derive(Allocative)]
 pub struct SharedEqPolynomial<F: JoltField> {
     num_variables_bound: usize,
     eq_poly: GruenSplitEqPolynomial<F>,
@@ -179,15 +179,8 @@ impl<F: JoltField> SharedEqPolynomial<F> {
     }
 }
 
-/// An opening (of a dense polynomial) computed by the prover.
-///
-/// May be a batched opening, where multiple dense polynomials opened
-/// at the *same* point are reduced to a single polynomial opened
-/// at the (same) point.
-/// Multiple openings can be accumulated and further
-/// batched/reduced using a `ProverOpeningAccumulator`.
-#[cfg_attr(feature = "allocative", derive(Allocative))]
-#[derive(Clone)]
+
+#[derive(Clone, Allocative)]
 pub struct DensePolynomialProverOpening<F: JoltField> {
     /// The polynomial being opened. May be a random linear combination
     /// of multiple polynomials all being opened at the same point.
@@ -266,15 +259,14 @@ impl<F: JoltField> DensePolynomialProverOpening<F> {
     }
 }
 
-#[cfg_attr(feature = "allocative", derive(Allocative))]
-#[derive(derive_more::From, Clone)]
+#[derive(derive_more::From, Clone, Allocative)]
 pub enum ProverOpening<F: JoltField> {
     Dense(DensePolynomialProverOpening<F>),
     OneHot(OneHotPolynomialProverOpening<F>),
 }
 
-#[cfg_attr(feature = "allocative", derive(Allocative))]
-#[derive(Clone)]
+
+#[derive(Clone, Allocative)]
 pub struct OpeningProofReductionSumcheck<F>
 where
     F: JoltField,

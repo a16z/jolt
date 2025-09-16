@@ -65,11 +65,8 @@ impl<F: JoltField> PolynomialBinding<F> for IdentityPolynomial<F> {
 impl<F: JoltField> PolynomialEvaluation<F> for IdentityPolynomial<F> {
     fn evaluate(&self, r: &[MontU128]) -> F {
         let len = r.len();
-        // TOOD:(Ari) can this be made more efficient?
         debug_assert_eq!(len, self.num_vars);
-        (0..len)
-            .map(|i| F::from_u128_mont(r[i]).mul_u64(1u64 << (len - 1 - i)))
-            .sum()
+        (0..len).map(|i| F::from_u128_mont(r[i]).mul_u128(1 << (len - 1 - i))).sum()
     }
 
     fn evaluate_field(&self, r: &[F]) -> F {
@@ -551,8 +548,8 @@ mod tests {
         // Test a few specific points
         // k=0 should map to start_address - 4
         // Leave this be as zero is not a problem
-        let point_0 = vec![MontU128::from(0_u128); NUM_VARS];
-        assert_eq!(unmap_poly.evaluate(&point_0), Fr::from(START_ADDRESS - 4));
+        let point_0 = vec![Fr::from(0_u128); NUM_VARS];
+        assert_eq!(unmap_poly.evaluate_field(&point_0), Fr::from(START_ADDRESS - 4));
 
         // k=1 should map to start_address
         let mut point_1 = vec![Fr::ZERO; NUM_VARS];

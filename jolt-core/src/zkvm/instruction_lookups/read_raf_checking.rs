@@ -1,6 +1,6 @@
+use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
-use allocative::Allocative;
 use common::constants::XLEN;
 use rayon::prelude::*;
 use std::{cell::RefCell, rc::Rc};
@@ -9,7 +9,6 @@ use tracer::instruction::RV32IMCycle;
 
 use super::{LOG_K, LOG_M, M, PHASES};
 
-use crate::field::MontU128;
 use crate::{
     field::JoltField,
     poly::{
@@ -44,6 +43,7 @@ use crate::{
         witness::VirtualPolynomial,
     },
 };
+use crate::field::MontU128;
 
 const DEGREE: usize = 3;
 
@@ -374,10 +374,10 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
                 &mut ps.eq_r_cycle,
                 ps.combined_val_polynomial.as_mut().unwrap(),
             ]
-            .par_iter_mut()
-            .for_each(|poly| {
-                poly.bind_parallel(r_j, BindingOrder::HighToLow);
-            });
+                .par_iter_mut()
+                .for_each(|poly| {
+                    poly.bind_parallel(r_j, BindingOrder::HighToLow);
+                });
         }
     }
 
@@ -436,7 +436,7 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
 
         let val_eval = rv_val_claim
             + (F::one() - raf_flag_claim)
-                * (self.gamma * left_operand_eval + self.gamma_squared * right_operand_eval)
+            * (self.gamma * left_operand_eval + self.gamma_squared * right_operand_eval)
             + raf_flag_claim * self.gamma_squared * identity_poly_eval;
         eq_eval_cycle * ra_claim * val_eval
     }
@@ -649,7 +649,7 @@ impl<F: JoltField> ReadRafProverState<F> {
                 if is_interleaved_operands {
                     *val += gamma * self.prefix_registry.checkpoints[Prefix::LeftOperand].unwrap()
                         + gamma_squared
-                            * self.prefix_registry.checkpoints[Prefix::RightOperand].unwrap();
+                        * self.prefix_registry.checkpoints[Prefix::RightOperand].unwrap();
                 } else {
                     *val +=
                         gamma_squared * self.prefix_registry.checkpoints[Prefix::Identity].unwrap();
@@ -904,14 +904,8 @@ mod tests {
             prover_sm.twist_sumcheck_switch_index,
         );
 
-        let r_cycle: Vec<MontU128> = prover_sm
-            .transcript
-            .borrow_mut()
-            .challenge_vector_u128(LOG_T);
-        let _r_cycle: Vec<MontU128> = verifier_sm
-            .transcript
-            .borrow_mut()
-            .challenge_vector_u128(LOG_T);
+        let r_cycle: Vec<MontU128> = prover_sm.transcript.borrow_mut().challenge_vector_u128(LOG_T);
+        let _r_cycle: Vec<MontU128> = verifier_sm.transcript.borrow_mut().challenge_vector_u128(LOG_T);
         let eq_r_cycle = EqPolynomial::<Fr>::evals(&r_cycle);
 
         let mut rv_claim = Fr::zero();
@@ -998,7 +992,7 @@ mod tests {
             Some(verifier_accumulator.clone()),
             &mut *verifier_sm.transcript.borrow_mut(),
         )
-        .unwrap();
+            .unwrap();
 
         assert_eq!(r_sumcheck, r_sumcheck_verif);
     }

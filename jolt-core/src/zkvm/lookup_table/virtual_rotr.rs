@@ -28,7 +28,7 @@ impl<const XLEN: usize> JoltLookupTable for VirtualRotrTable<XLEN> {
             prod_one_plus_y *= 1 + y;
         });
 
-        (first_sum + second_sum) as u64
+        first_sum + second_sum
     }
 
     fn evaluate_mle<F: JoltField>(&self, r: &[MontU128]) -> F {

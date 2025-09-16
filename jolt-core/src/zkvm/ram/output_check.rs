@@ -1,4 +1,5 @@
-use crate::field::MontU128;
+use std::{cell::RefCell, rc::Rc};
+use std::marker::PhantomData;
 use crate::{
     field::JoltField,
     poly::{
@@ -29,11 +30,10 @@ use allocative::FlameGraphBuilder;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::RAM_START_ADDRESS;
 use rayon::prelude::*;
-use std::marker::PhantomData;
-use std::{cell::RefCell, rc::Rc};
 use tracer::JoltDevice;
+use crate::field::MontU128;
 
-#[cfg_attr(feature = "allocative", derive(Allocative))]
+#[derive(Allocative)]
 struct OutputSumcheckProverState<F: JoltField> {
     /// Val(k, 0)
     val_init: MultilinearPolynomial<F>,
@@ -74,7 +74,7 @@ impl<F: JoltField> OutputSumcheckProverState<F> {
             program_io.memory_layout.input_start,
             &program_io.memory_layout,
         )
-        .unwrap() as usize;
+            .unwrap() as usize;
         let io_end = remap_address(RAM_START_ADDRESS, &program_io.memory_layout).unwrap() as usize;
 
         // Compute Val_io by copying the relevant slice of Val_final
@@ -108,7 +108,7 @@ impl<F: JoltField> OutputSumcheckProverState<F> {
 struct OutputSumcheckVerifierState<F: JoltField> {
     r_address: Vec<MontU128>,
     program_io: JoltDevice,
-    _phantom_data: PhantomData<F>,
+    _phantom: PhantomData<F>,
 }
 
 /// Proves that the final RAM state is consistent with the claimed
@@ -127,9 +127,10 @@ pub struct OutputProof<F: JoltField, ProofTranscript: Transcript> {
 /// In plain English: the final memory state (Val_final) should be consistent with
 /// the expected program outputs (Val_io) at the indices where the program
 /// inputs/outputs are stored (io_range).
-#[cfg_attr(feature = "allocative", derive(Allocative))]
+#[derive(Allocative)]
 pub struct OutputSumcheck<F: JoltField> {
     K: usize,
+    #[allocative(skip)]
     verifier_state: Option<OutputSumcheckVerifierState<F>>,
     prover_state: Option<OutputSumcheckProverState<F>>,
 }
@@ -174,10 +175,10 @@ impl<F: JoltField> OutputSumcheck<F> {
             .borrow_mut()
             .challenge_vector_u128(K.log_2());
 
-        let output_sumcheck_verifier_state = OutputSumcheckVerifierState::<F> {
+        let output_sumcheck_verifier_state = OutputSumcheckVerifierState {
             program_io: program_io.clone(),
             r_address: r_address.to_vec(),
-            _phantom_data: PhantomData,
+            _phantom: PhantomData,
         };
 
         OutputSumcheck {
@@ -271,7 +272,7 @@ impl<F: JoltField> SumcheckInstance<F> for OutputSumcheck<F> {
         let OutputSumcheckVerifierState {
             r_address,
             program_io,
-            _phantom_data,
+            _phantom
         } = self.verifier_state.as_ref().unwrap();
 
         let val_final_claim = accumulator
@@ -286,22 +287,22 @@ impl<F: JoltField> SumcheckInstance<F> for OutputSumcheck<F> {
 
         let r_address_prime = &r[..r_address.len()];
 
-        let io_mask = RangeMaskPolynomial::<F>::new(
+        let io_mask = RangeMaskPolynomial::new(
             remap_address(
                 program_io.memory_layout.input_start,
                 &program_io.memory_layout,
             )
-            .unwrap()
-            .into(),
+                .unwrap()
+                .into(),
             remap_address(RAM_START_ADDRESS, &program_io.memory_layout)
                 .unwrap()
                 .into(),
         );
-        let val_io = ProgramIOPolynomial::<F>::new(program_io);
+        let val_io = ProgramIOPolynomial::new(program_io);
 
         let eq_eval = EqPolynomial::<F>::mle(r_address, r_address_prime);
-        let io_mask_eval = io_mask.evaluate_mle(r_address_prime);
-        let val_io_eval = val_io.evaluate(r_address_prime);
+        let io_mask_eval: F = io_mask.evaluate_mle(r_address_prime);
+        let val_io_eval: F = val_io.evaluate(r_address_prime);
 
         // Recall that the sumcheck expression is:
         //   0 = \sum_k eq(r_address, k) * io_range(k) * (Val_final(k) - Val_io(k))

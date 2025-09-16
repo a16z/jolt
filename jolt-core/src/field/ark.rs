@@ -325,11 +325,10 @@ mod tests {
 
     #[test]
     fn test_small_binding_multiplications() {
-        // TODO: BENCH THIS AND SEE WHAT THE SLOW DOWNS AREtodo
         // SANITY CHECK
         let b_1 = Fr::new_unchecked(BigInt([0, 0, 1, 0]));
         // as z is small enough the masking should not matter
-        // and it shold be stored as the BigInt above
+        // and it should be stored as the BigInt above
         let z = MontU128::from(1_u128);
         let c_1 = Fr::from_u128_mont(z);
         assert_eq!(b_1, c_1);

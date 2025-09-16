@@ -2,7 +2,7 @@
 use allocative::{Allocative, FlameGraphBuilder};
 use std::marker::PhantomData;
 use std::{cell::RefCell, rc::Rc};
-
+use allocative::Allocative;
 use crate::field::MontU128;
 use crate::subprotocols::sumcheck::{BatchedSumcheck, SumcheckInstance, SumcheckInstanceProof};
 use crate::{
@@ -418,7 +418,7 @@ pub fn prove_core_shout_piop<F: JoltField, ProofTranscript: Transcript>(
         ra_claim,
     )
 }
-
+#[derive(Allocative)]
 struct BooleanityProverState<F: JoltField> {
     read_addresses: Vec<usize>,
     K: usize,
@@ -486,7 +486,7 @@ impl<F: JoltField> BooleanityProverState<F> {
         }
     }
 }
-
+#[derive(Allocative)]
 struct BooleanityVerifierState<F: JoltField> {
     r_address: Vec<MontU128>,
     r_cycle: Vec<MontU128>,
@@ -513,7 +513,7 @@ impl<F: JoltField> BooleanityVerifierState<F> {
         }
     }
 }
-#[cfg_attr(feature = "allocative", derive(Allocative))]
+#[derive(Allocative)]
 struct BooleanitySumcheck<F: JoltField> {
     verifier_state: Option<BooleanityVerifierState<F>>,
     prover_state: Option<BooleanityProverState<F>>,
