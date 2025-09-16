@@ -1,6 +1,8 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
-use jolt_core::benches::bench::{benchmarks, create_benchmark_plot, BenchType};
+use jolt_core::benches::bench::{
+    benchmarks, create_proof_size_plot, create_prover_speed_plot, BenchType,
+};
 
 use std::any::Any;
 
@@ -37,7 +39,9 @@ enum Format {
 }
 
 fn main() {
-    let _ = create_benchmark_plot();
+    // let _ = create_prover_speed_plot();
+    let _ = create_proof_size_plot();
+
     // let cli = Cli::parse();
     // match cli.command {
     //     Commands::Profile(args) => trace(args),

@@ -459,7 +459,7 @@ fn twist_shout_data() -> HashMap<String, Vec<(usize, f64, usize, usize)>> {
     data
 }
 
-pub fn create_benchmark_plot() -> Result<(), Box<dyn std::error::Error>> {
+pub fn create_prover_speed_plot() -> Result<(), Box<dyn std::error::Error>> {
     let baseline_data = baseline_data();
     let twist_shout_data = twist_shout_data();
 
@@ -561,7 +561,7 @@ pub fn create_benchmark_plot() -> Result<(), Box<dyn std::error::Error>> {
         )
         .y_axis(
             plotly::layout::Axis::new()
-                .title("Prover Speed (Cycles proved per millisecond, aka KHz)"),
+                .title("Prover Speed, kHz (Cycles proved per millisecond)"),
         )
         .width(1200)
         .height(800);
@@ -571,6 +571,130 @@ pub fn create_benchmark_plot() -> Result<(), Box<dyn std::error::Error>> {
     let html_path = "perfetto_traces/benchmark_plot.html";
     plot.write_html(html_path);
     println!("Interactive plot saved to {html_path}");
+
+    Ok(())
+}
+
+pub fn create_proof_size_plot() -> Result<(), Box<dyn std::error::Error>> {
+    let baseline_data = baseline_data();
+    let twist_shout_data = twist_shout_data();
+
+    let mut plot = Plot::new();
+
+    // Define colors for different benchmarks
+    let colors = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd"];
+
+    for (color_idx, (bench_name, points)) in baseline_data.iter().enumerate() {
+        let mut sorted_points = points.clone();
+        sorted_points.sort_by_key(|(scale, _, _)| *scale);
+
+        let color = colors[color_idx % colors.len()];
+
+        // Collect data points for uncompressed proof size
+        let mut x_values: Vec<f64> = Vec::new();
+        let mut y_values: Vec<f64> = Vec::new();
+
+        for (scale, _, proof_size) in sorted_points.iter() {
+            let cycles = (1 << *scale) as f64;
+
+            // Convert proof sizes from bytes to KB
+            let proof_size_kb = *proof_size as f64 / 1024.0;
+
+            x_values.push(cycles);
+            y_values.push(proof_size_kb);
+        }
+
+        // Add uncompressed proof size with filled markers
+        let trace_uncompressed = Scatter::new(x_values, y_values)
+            .name(format!("{bench_name}"))
+            .mode(plotly::common::Mode::Markers)
+            .marker(
+                plotly::common::Marker::new()
+                    .size(10)
+                    .color(color)
+                    .symbol(plotly::common::MarkerSymbol::X),
+            );
+
+        plot.add_trace(trace_uncompressed);
+    }
+
+    for (color_idx, (bench_name, points)) in twist_shout_data.iter().enumerate() {
+        let mut sorted_points = points.clone();
+        sorted_points.sort_by_key(|(scale, _, _, _)| *scale);
+
+        let color = colors[color_idx % colors.len()];
+
+        // Collect data points for uncompressed proof size
+        let mut x_values: Vec<f64> = Vec::new();
+        let mut y_values: Vec<f64> = Vec::new();
+
+        // Collect data points for compressed proof size
+        let mut x_values_comp: Vec<f64> = Vec::new();
+        let mut y_values_comp: Vec<f64> = Vec::new();
+
+        for (scale, _, proof_size, proof_size_comp) in sorted_points.iter() {
+            let cycles = (1 << *scale) as f64;
+
+            // Convert proof sizes from bytes to KB
+            let proof_size_kb = *proof_size as f64 / 1024.0;
+            let proof_size_comp_kb = *proof_size_comp as f64 / 1024.0;
+
+            x_values.push(cycles);
+            y_values.push(proof_size_kb);
+
+            x_values_comp.push(cycles);
+            y_values_comp.push(proof_size_comp_kb);
+        }
+
+        // Add uncompressed proof size with filled markers
+        let trace_uncompressed = Scatter::new(x_values, y_values)
+            .name(format!("{bench_name} uncompressed"))
+            .mode(plotly::common::Mode::Markers)
+            .marker(plotly::common::Marker::new().size(10).color(color));
+
+        plot.add_trace(trace_uncompressed);
+
+        // Add compressed proof size with hollow markers (white fill with colored outline)
+        let trace_compressed = Scatter::new(x_values_comp, y_values_comp)
+            .name(format!("{bench_name} compressed"))
+            .mode(plotly::common::Mode::Markers)
+            .marker(
+                plotly::common::Marker::new()
+                    .size(10)
+                    .color("white")
+                    .line(plotly::common::Line::new().color(color).width(2.0)),
+            );
+
+        plot.add_trace(trace_compressed);
+    }
+
+    // Create custom tick labels for x-axis (in millions, but labeled as 2^n)
+    let mut tick_vals: Vec<f64> = Vec::new();
+    let mut tick_text: Vec<String> = Vec::new();
+
+    for n in [18, 21, 22, 23, 24, 25] {
+        tick_vals.push((1 << n) as f64);
+        tick_text.push(format!("2^{n}"));
+    }
+
+    let layout = Layout::new()
+        .title("Jolt zkVM Proof Size")
+        .x_axis(
+            plotly::layout::Axis::new()
+                .title("Trace length (RV32IM Cycles)")
+                .type_(plotly::layout::AxisType::Linear)
+                .tick_values(tick_vals)
+                .tick_text(tick_text),
+        )
+        .y_axis(plotly::layout::Axis::new().title("Proof size, kB"))
+        .width(1200)
+        .height(800);
+
+    plot.set_layout(layout);
+
+    let html_path = "perfetto_traces/proof_size_plot.html";
+    plot.write_html(html_path);
+    println!("Proof size plot saved to {html_path}");
 
     Ok(())
 }
