@@ -1,8 +1,10 @@
 use super::{FieldOps, JoltField};
-use crate::field::MontU128;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use ark_ff::{prelude::*, BigInt, PrimeField, UniformRand};
 use rayon::prelude::*;
+use allocative::Allocative;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate};
+use std::io::{Read, Write};
 
 impl FieldOps for ark_bn254::Fr {}
 impl FieldOps<&ark_bn254::Fr, ark_bn254::Fr> for &ark_bn254::Fr {}
@@ -69,13 +71,11 @@ impl JoltField for ark_bn254::Fr {
 
     // We assume that MontU128 is a Big Into with the least significant digits set to 0.
     // In Arkworks 0 index is the least significant digit.
-    #[inline]
+    #[inline(always)]
     fn from_u128_mont(n: MontU128) -> Self {
         let n_val = n.0;
-        let low = n_val as u64;
-        let high = (n_val >> 64) as u64;
-        let bigint = BigInt::new([0, 0, low, high]);
-        <Self as ark_ff::PrimeField>::from_bigint_unchecked(bigint).unwrap()
+
+        <Self as ark_ff::PrimeField>::from_bigint_unchecked(BigInt::new(n_val)).unwrap()
     }
 
     fn from_i64(val: i64) -> Self {
@@ -297,6 +297,147 @@ impl core::ops::SubAssign<MontU128> for ark_bn254::Fr {
     }
 }
 
+
+/// A zero cost-wrapper around `u128` indicating that the value is already
+/// in Montgomery form for the target field
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, Allocative)]
+pub struct MontU128([u64; 4]);
+
+impl From<u128> for MontU128 {
+    fn from(val: u128) -> Self {
+        // MontU128 can always be represented by 125 bits.
+        let val_masked = val & (u128::MAX >> 3);
+
+        let low = val_masked as u64;
+        let high = (val_masked >> 64) as u64;
+        // let bigint = BigInt::new([0, 0, low, high]);
+
+        MontU128([0, 0, low, high])
+    }
+}
+
+// impl From<MontU128> for u128 {
+//     fn from(val: MontU128) -> u128 {
+//         val.0
+//     }
+// }
+
+impl From<u64> for MontU128 {
+    fn from(val: u64) -> Self {
+        MontU128::from(val as u128)
+    }
+}
+
+// === Serialization impls ===
+
+
+impl CanonicalSerialize for MontU128 {
+    // fn serialize<W: Write>(&self, writer: W) -> Result<(), SerializationError> {
+    //     self.serialize_uncompressed(writer)
+    // }
+    fn serialize_with_mode<W: Write>(
+        &self,
+        writer: W,
+        _compress: Compress,
+    ) -> Result<(), SerializationError> {
+        self.serialize_uncompressed(writer)
+    }
+
+    fn serialized_size(&self, _compress: Compress) -> usize {
+        self.uncompressed_size()
+    }
+
+    fn serialize_compressed<W: Write>(&self, writer: W) -> Result<(), SerializationError> {
+        // u128 doesn’t really compress, so just write as 16 bytes
+        self.serialize_uncompressed(writer)
+    }
+
+    fn compressed_size(&self) -> usize {
+        16
+    }
+
+    // fn serialize_uncompressed<W: Write>(&self, mut writer: W) -> Result<(), SerializationError> {
+    //     writer.write_all(&self.0.to_le_bytes())?;
+    //     Ok(())
+    // }
+    fn serialize_uncompressed<W: Write>(&self, mut writer: W) -> Result<(), SerializationError> {
+        for limb in &self.0 {
+            writer.write_all(&limb.to_le_bytes())?;
+        }
+        Ok(())
+    }
+
+    fn uncompressed_size(&self) -> usize {
+        16
+    }
+}
+
+impl Valid for MontU128 {
+    fn check(&self) -> Result<(), SerializationError> {
+        Ok(())
+    }
+}
+
+impl CanonicalDeserialize for MontU128 {
+    fn deserialize_with_mode<R: Read>(
+        reader: R,
+        _compress: Compress,
+        _validate: Validate,
+    ) -> Result<Self, SerializationError> {
+        Self::deserialize_uncompressed(reader)
+    }
+
+    fn deserialize_compressed<R: Read>(reader: R) -> Result<Self, SerializationError> {
+        Self::deserialize_uncompressed(reader)
+    }
+
+    fn deserialize_compressed_unchecked<R: Read>(reader: R) -> Result<Self, SerializationError> {
+        Self::deserialize_uncompressed_unchecked(reader)
+    }
+
+    // fn deserialize_uncompressed<R: Read>(mut reader: R) -> Result<Self, SerializationError> {
+    //     let mut buf = [0u8; 16];
+    //     reader.read_exact(&mut buf)?;
+    //     Ok(MontU128(u128::from_le_bytes(buf)))
+    // }
+    fn deserialize_uncompressed<R: Read>(mut reader: R) -> Result<Self, SerializationError> {
+        let mut buf = [0u8; 32]; // 4 limbs × 8 bytes each
+        reader.read_exact(&mut buf)?;
+
+        let mut limbs = [0u64; 4];
+        for i in 0..4 {
+            let start = i * 8;
+            let end = start + 8;
+            limbs[i] = u64::from_le_bytes(buf[start..end].try_into().unwrap());
+        }
+
+        Ok(MontU128(limbs))
+    }
+
+
+    // fn deserialize_uncompressed_unchecked<R: Read>(
+    //     mut reader: R,
+    // ) -> Result<Self, SerializationError> {
+    //     let mut buf = [0u8; 16];
+    //     reader.read_exact(&mut buf)?;
+    //     Ok(MontU128(u128::from_le_bytes(buf)))
+    // }
+    fn deserialize_uncompressed_unchecked<R: Read>(
+        mut reader: R,
+    ) -> Result<Self, SerializationError> {
+        let mut buf = [0u8; 32]; // 4 * 8 = 32 bytes
+        reader.read_exact(&mut buf)?;
+
+        let mut limbs = [0u64; 4];
+        for i in 0..4 {
+            let start = i * 8;
+            let end = start + 8;
+            limbs[i] = u64::from_le_bytes(buf[start..end].try_into().unwrap());
+        }
+
+        Ok(MontU128(limbs))
+    }
+}
 #[cfg(test)]
 mod tests {
 
@@ -358,3 +499,5 @@ mod tests {
         }
     }
 }
+
+
