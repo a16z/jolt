@@ -1,4 +1,4 @@
-use ark_bn254::Fr;
+§use ark_bn254::Fr;
 use ark_ff::UniformRand;
 use ark_std::rand::{rngs::StdRng, SeedableRng};
 use criterion::{Bencher, Criterion};

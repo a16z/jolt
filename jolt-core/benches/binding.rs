@@ -85,7 +85,7 @@ fn benchmark_compact<F: JoltField>(
                 || {
                     let mut rng = test_rng();
                     let coeffs = random_compact_coeffs(&mut rng, num_vars);
-                    let poly = CompactPolynomial::from_coeffs(coeffs);
+                    let poly = CompactPolynomial::<u8, Fr>::from_coeffs(coeffs);
                     let r: Vec<MontU128> = std::iter::repeat_with(|| MontU128::from(rng.gen::<u128>()))
                         .take(num_vars)
                         .collect();
