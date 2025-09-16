@@ -99,7 +99,7 @@ where
     #[tracing::instrument(skip_all)]
     fn prove_outer_sumcheck(
         num_rounds_x: usize,
-        accessor: &dyn WitnessRowAccessor<F>,
+        accessor: &dyn WitnessRowAccessor<F, JoltR1CSInputs>,
         tau: &[F],
         transcript: &mut ProofTranscript,
     ) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, [F; 3]) {
@@ -713,7 +713,7 @@ where
         let (r_cycle, _rx_var) = outer_sumcheck_r.split_at(num_cycles_bits);
 
         // Compute claimed witness evals at r_cycle via streaming
-        let claimed_witness_evals = compute_claimed_witness_evals::<F>(r_cycle, &accessor);
+        let claimed_witness_evals = compute_claimed_witness_evals::<F, PCS>(r_cycle, &accessor);
 
         // Only non-virtual (i.e. committed) polynomials' openings are
         // proven using the PCS opening proof, which we add for future opening proof here

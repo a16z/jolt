@@ -20,7 +20,7 @@ use crate::utils::profiling::print_current_memory_usage;
 use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::utils::small_value::svo_helpers::process_svo_sumcheck_rounds;
 use crate::utils::thread::drop_in_background_thread;
-use crate::zkvm::r1cs::inputs::WitnessRowAccessor;
+use crate::zkvm::r1cs::inputs::{WitnessRowAccessor, JoltR1CSInputs};
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 
@@ -394,7 +394,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
     #[tracing::instrument(skip_all, name = "Spartan::prove_spartan_small_value")]
     pub fn prove_spartan_small_value<const NUM_SVO_ROUNDS: usize>(
         num_rounds: usize,
-        accessor: &dyn WitnessRowAccessor<F>,
+        accessor: &dyn WitnessRowAccessor<F, JoltR1CSInputs>,
         tau: &[F],
         transcript: &mut ProofTranscript,
     ) -> (Self, Vec<F>, [F; 3]) {

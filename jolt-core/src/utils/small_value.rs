@@ -16,8 +16,9 @@ pub mod svo_helpers {
     use crate::subprotocols::sumcheck::process_eq_sumcheck_round;
     use crate::transcripts::Transcript;
     use crate::zkvm::r1cs::types::{
-        fmadd_unreduced, mul_az_bz, AzValue, BzValue, UnreducedProduct,
+        fmadd_unreduced, mul_az_bz, UnreducedProduct,
     };
+    use ark_ff::biginteger::{I8OrI96, S160, S224};
 
     // SVOEvalPoint enum definition
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -778,8 +779,8 @@ pub mod svo_helpers {
         const NUM_TERNARY_POINTS_CONST: usize,  // pow(3, NUM_SVO_ROUNDS)
         F: JoltField,
     >(
-        binary_az_evals_input: &[AzValue], // 2^N Az at binary points
-        binary_bz_evals_input: &[BzValue], // 2^N Bz at binary points
+        binary_az_evals_input: &[I8OrI96], // 2^N Az at binary points
+        binary_bz_evals_input: &[S160], // 2^N Bz at binary points
         e_in_val: &F,
         tA_pos_acc: &mut [UnreducedProduct],
         tA_neg_acc: &mut [UnreducedProduct],
@@ -810,19 +811,19 @@ pub mod svo_helpers {
             precompute_ternary_point_infos::<NUM_SVO_ROUNDS, NUM_TERNARY_POINTS_CONST>();
 
         // Memo tables (const-size arrays)
-        let mut memoized_az_evals: [Option<AzValue>; NUM_TERNARY_POINTS_CONST] =
+        let mut memoized_az_evals: [Option<I8OrI96>; NUM_TERNARY_POINTS_CONST] =
             [None; NUM_TERNARY_POINTS_CONST];
-        let mut memoized_bz_evals: [Option<BzValue>; NUM_TERNARY_POINTS_CONST] =
+        let mut memoized_bz_evals: [Option<S160>; NUM_TERNARY_POINTS_CONST] =
             [None; NUM_TERNARY_POINTS_CONST];
 
         // Recursive helper: Az extension at ternary index k with memoization
         #[inline]
         fn get_az_ext_const<const N: usize, const NUM_TERN: usize>(
             k: usize,
-            bin: &[AzValue],
-            memo: &mut [Option<AzValue>; NUM_TERN],
+            bin: &[I8OrI96],
+            memo: &mut [Option<I8OrI96>; NUM_TERN],
             info: &[TernaryPointInfo<N>; NUM_TERN],
-        ) -> AzValue {
+        ) -> I8OrI96 {
             if let Some(v) = memo[k] {
                 return v;
             }
@@ -841,10 +842,10 @@ pub mod svo_helpers {
         #[inline]
         fn get_bz_ext_const<const N: usize, const NUM_TERN: usize>(
             k: usize,
-            bin: &[BzValue],
-            memo: &mut [Option<BzValue>; NUM_TERN],
+            bin: &[S160],
+            memo: &mut [Option<S160>; NUM_TERN],
             info: &[TernaryPointInfo<N>; NUM_TERN],
-        ) -> BzValue {
+        ) -> S160 {
             if let Some(v) = memo[k] {
                 return v;
             }
@@ -906,8 +907,8 @@ pub mod svo_helpers {
     /// Supports NUM_SVO_ROUNDS in [0..=5].
     #[inline]
     pub fn compute_and_update_tA_inplace_small_value<const NUM_SVO_ROUNDS: usize, F: JoltField>(
-        binary_az_evals: &[AzValue],
-        binary_bz_evals: &[BzValue],
+        binary_az_evals: &[I8OrI96],
+        binary_bz_evals: &[S160],
         e_in_val: &F,
         tA_pos_acc: &mut [UnreducedProduct],
         tA_neg_acc: &mut [UnreducedProduct],
@@ -1698,7 +1699,7 @@ mod tests {
         poly::eq_poly::EqPolynomial,
         poly::spartan_interleaved_poly::build_eq_r_y_table,
         zkvm::r1cs::types::{
-            fmadd_reduce_factor, reduce_unreduced_to_field, AzValue, BzValue, UnreducedProduct,
+            fmadd_reduce_factor, reduce_unreduced_to_field, I8OrI96, S160, UnreducedProduct,
         },
     };
     use ark_bn254::Fr;
@@ -1728,23 +1729,23 @@ mod tests {
         );
     }
 
-    fn random_az_value<R: Rng>(rng: &mut R) -> AzValue {
+    fn random_az_value<R: Rng>(rng: &mut R) -> I8OrI96 {
         match rng.gen_range(0..5) {
-            0 => AzValue::I8(rng.gen()),
-            1 => AzValue::I8(0), // zero
-            2 => AzValue::I8(1), // one
-            3 => AzValue::S64(SignedBigInt::<1>::from_i64(rng.gen())),
-            4 => AzValue::I128(rng.gen()),
+            0 => I8OrI96::I8(rng.gen()),
+            1 => I8OrI96::I8(0), // zero
+            2 => I8OrI96::I8(1), // one
+            3 => I8OrI96::S64(SignedBigInt::<1>::from_i64(rng.gen())),
+            4 => I8OrI96::I128(rng.gen()),
             _ => unreachable!(),
         }
     }
 
-    fn random_bz_value<R: Rng>(rng: &mut R) -> BzValue {
+    fn random_bz_value<R: Rng>(rng: &mut R) -> S160 {
         match rng.gen_range(0..4) {
-            0 => BzValue::S64(SignedBigInt::<1>::zero()), // zero
-            1 => BzValue::S64(SignedBigInt::<1>::from_i64(1)), // one
-            2 => BzValue::S64(SignedBigInt::<1>::from_i64(rng.gen())),
-            3 => BzValue::S128(SignedBigInt::<2>::from_i128(rng.gen())),
+            0 => S160::S64(SignedBigInt::<1>::zero()), // zero
+            1 => S160::S64(SignedBigInt::<1>::from_i64(1)), // one
+            2 => S160::S64(SignedBigInt::<1>::from_i64(rng.gen())),
+            3 => S160::S128(SignedBigInt::<2>::from_i128(rng.gen())),
             _ => unreachable!(),
         }
     }
@@ -1765,10 +1766,10 @@ mod tests {
         let num_binary_points = 1 << num_vars;
 
         // Create random binary evaluations for both paths
-        let binary_az_vals: Vec<AzValue> = (0..num_binary_points)
+        let binary_az_vals: Vec<I8OrI96> = (0..num_binary_points)
             .map(|_| random_az_value(rng))
             .collect();
-        let binary_bz_vals: Vec<BzValue> = (0..num_binary_points)
+        let binary_bz_vals: Vec<S160> = (0..num_binary_points)
             .map(|_| random_bz_value(rng))
             .collect();
 
@@ -1832,28 +1833,28 @@ mod tests {
 
     #[test]
     fn test_az_bz_value_conversions() {
-        // Test that AzValue/BzValue to_field conversions work correctly
+        // Test that I8OrI96/S160 to_field conversions work correctly
         let test_az_values = vec![
-            AzValue::I8(0), // zero
-            AzValue::I8(1), // one
-            AzValue::I8(10),
-            AzValue::I8(-10),
-            AzValue::S64(SignedBigInt::from_i64(100)),
-            AzValue::I128(10000),
+            I8OrI96::I8(0), // zero
+            I8OrI96::I8(1), // one
+            I8OrI96::I8(10),
+            I8OrI96::I8(-10),
+            I8OrI96::S64(SignedBigInt::from_i64(100)),
+            I8OrI96::I128(10000),
         ];
 
         let test_bz_values = vec![
-            BzValue::S64(SignedBigInt::zero()),      // zero
-            BzValue::S64(SignedBigInt::from_i64(1)), // one
-            BzValue::S64(SignedBigInt::from_i64(200)),
-            BzValue::S128(SignedBigInt::from_i128(2000)),
+            S160::S64(SignedBigInt::zero()),      // zero
+            S160::S64(SignedBigInt::from_i64(1)), // one
+            S160::S64(SignedBigInt::from_i64(200)),
+            S160::S128(SignedBigInt::from_i128(2000)),
         ];
 
         for az in &test_az_values {
             let field_val = az.to_field::<Fr>();
             let expected_field_val = match az {
-                AzValue::I8(v) => <Fr as JoltField>::from_i64(*v as i64),
-                AzValue::S64(v) => {
+                I8OrI96::I8(v) => <Fr as JoltField>::from_i64(*v as i64),
+                I8OrI96::S64(v) => {
                     let mag_bytes = v.magnitude.0[0].to_le_bytes();
                     let mag_u64 = u64::from_le_bytes(mag_bytes);
                     let mag_f = <Fr as JoltField>::from_u64(mag_u64);
@@ -1863,7 +1864,7 @@ mod tests {
                         -mag_f
                     }
                 }
-                AzValue::I128(v) => <Fr as JoltField>::from_i128(*v),
+                I8OrI96::I128(v) => <Fr as JoltField>::from_i128(*v),
             };
             assert_eq!(field_val, expected_field_val);
             assert_eq!(az.is_zero(), field_val.is_zero());

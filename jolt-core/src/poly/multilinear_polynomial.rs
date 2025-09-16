@@ -1,6 +1,6 @@
 use crate::{
     poly::{one_hot_polynomial::OneHotPolynomial, rlc_polynomial::RLCPolynomial},
-    utils::compute_dotproduct,
+    utils::{compute_dotproduct, small_scalar::SmallScalar},
 };
 use allocative::Allocative;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Valid};
@@ -8,7 +8,7 @@ use rayon::prelude::*;
 use strum_macros::EnumIter;
 
 use super::{
-    compact_polynomial::{CompactPolynomial, SmallScalar},
+    compact_polynomial::{CompactPolynomial},
     dense_mlpoly::DensePolynomial,
     eq_poly::EqPolynomial,
 };

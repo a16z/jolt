@@ -11,19 +11,16 @@ use crate::{
     },
     zkvm::r1cs::{
         constraints::{eval_az_bz_batch, CzKind, UNIFORM_R1CS},
-        inputs::WitnessRowAccessor,
+        inputs::{WitnessRowAccessor, JoltR1CSInputs},
         types::{
-            mul_az_bz, reduce_unreduced_to_field, AzValue, BzValue, SignedUnreducedAccum,
+            mul_az_bz, reduce_unreduced_to_field, SignedUnreducedAccum,
             UnreducedProduct,
         },
     },
 };
 use allocative::Allocative;
-use ark_ff::SignedBigInt;
+use ark_ff::biginteger::{I8OrI96, S160, SignedBigInt};
 use rayon::prelude::*;
-
-#[cfg(test)]
-use crate::zkvm::r1cs::inputs::JoltR1CSInputs;
 
 pub const TOTAL_NUM_ACCUMS: usize = svo_helpers::total_num_accums(NUM_SVO_ROUNDS);
 pub const NUM_NONTRIVIAL_TERNARY_POINTS: usize =
@@ -67,8 +64,8 @@ pub struct SpartanInterleavedPolynomial<const NUM_SVO_ROUNDS: usize, F: JoltFiel
     /// (note: **no** Cz coefficients are stored here, since they are not needed for small value
     /// precomputation, and can be computed on the fly in streaming round)
     // pub(crate) ab_unbound_coeffs_shards: Vec<Vec<SparseCoefficient<F>>>,
-    pub(crate) az_unbound_coeffs_shards: Vec<Vec<SparseCoefficient<AzValue>>>,
-    pub(crate) bz_unbound_coeffs_shards: Vec<Vec<SparseCoefficient<BzValue>>>,
+    pub(crate) az_unbound_coeffs_shards: Vec<Vec<SparseCoefficient<I8OrI96>>>,
+    pub(crate) bz_unbound_coeffs_shards: Vec<Vec<SparseCoefficient<S160>>>,
 
     /// The bound coefficients for the Az, Bz, Cz polynomials. Will be populated in the streaming round
     pub(crate) bound_coeffs: Vec<SparseCoefficient<F>>,
@@ -124,7 +121,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
         name = "NewSpartanInterleavedPolynomial::new_with_precompute"
     )]
     pub fn new_with_precompute(
-        accessor: &dyn WitnessRowAccessor<F>,
+        accessor: &dyn WitnessRowAccessor<F, JoltR1CSInputs>,
         tau: &[F],
     ) -> ([F; NUM_ACCUMS_EVAL_ZERO], [F; NUM_ACCUMS_EVAL_INFTY], Self) {
         // Variable layout and binding order (MSB -> LSB):
@@ -204,8 +201,8 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
         let num_x_in_step_vals = 1usize << iter_num_x_in_step_vars;
 
         struct PrecomputeTaskOutput<F: JoltField> {
-            az_coeffs_local: Vec<SparseCoefficient<AzValue>>,
-            bz_coeffs_local: Vec<SparseCoefficient<BzValue>>,
+            az_coeffs_local: Vec<SparseCoefficient<I8OrI96>>,
+            bz_coeffs_local: Vec<SparseCoefficient<S160>>,
             // New-typed accumulators (small-value path)
             svo_accums_zero_local: [F; NUM_ACCUMS_EVAL_ZERO],
             svo_accums_infty_local: [F; NUM_ACCUMS_EVAL_INFTY],
@@ -247,9 +244,9 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
 
                 let max_coeffs_capacity = cycles_per_chunk * num_uniform_r1cs_constraints;
 
-                let mut chunk_az_coeffs: Vec<SparseCoefficient<AzValue>> =
+                let mut chunk_az_coeffs: Vec<SparseCoefficient<I8OrI96>> =
                     Vec::with_capacity(max_coeffs_capacity);
-                let mut chunk_bz_coeffs: Vec<SparseCoefficient<BzValue>> =
+                let mut chunk_bz_coeffs: Vec<SparseCoefficient<S160>> =
                     Vec::with_capacity(max_coeffs_capacity);
 
                 let mut chunk_svo_accums_zero = [F::zero(); NUM_ACCUMS_EVAL_ZERO];
@@ -279,9 +276,9 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                             (x_out_val << iter_num_x_in_step_vars) | x_in_step_val;
                         let mut current_x_in_constraint_val = 0;
 
-                        let mut binary_az_block = [AzValue::I8(0); Y_SVO_SPACE_SIZE];
+                        let mut binary_az_block = [I8OrI96::I8(0); Y_SVO_SPACE_SIZE];
                         let mut binary_bz_block =
-                            [BzValue::S64(SignedBigInt::zero()); Y_SVO_SPACE_SIZE];
+                            [S160::S64(SignedBigInt::zero()); Y_SVO_SPACE_SIZE];
                         // Old baseline blocks in field
                         let mut binary_az_block_old = [F::zero(); Y_SVO_SPACE_SIZE];
                         let mut binary_bz_block_old = [F::zero(); Y_SVO_SPACE_SIZE];
@@ -355,24 +352,24 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                                             const_row.c.num_terms()
                                         );
                                         if matches!(named.name, crate::zkvm::r1cs::constraints::ConstraintName::ProductDef) {
-                                            let left = accessor.value_at(JoltR1CSInputs::LeftInstructionInput.to_index(), current_step_idx);
-                                            let right = accessor.value_at(JoltR1CSInputs::RightInstructionInput.to_index(), current_step_idx);
-                                            let prod = accessor.value_at(JoltR1CSInputs::Product.to_index(), current_step_idx);
+                                            let left = accessor.value_at_field(JoltR1CSInputs::LeftInstructionInput, current_step_idx);
+                                            let right = accessor.value_at_field(JoltR1CSInputs::RightInstructionInput, current_step_idx);
+                                            let prod = accessor.value_at_field(JoltR1CSInputs::Product, current_step_idx);
                                             eprintln!("  debug ProductDef: left={:?} right={:?} product={:?}", left, right, prod);
                                         }
                                         // Dump key witness values for common failing constraints
                                         match named.name {
                                             crate::zkvm::r1cs::constraints::ConstraintName::RightInputEqImm => {
-                                                let flag = accessor.value_at(JoltR1CSInputs::OpFlags(crate::zkvm::instruction::CircuitFlags::RightOperandIsImm).to_index(), current_step_idx);
-                                                let right = accessor.value_at(JoltR1CSInputs::RightInstructionInput.to_index(), current_step_idx);
-                                                let imm = accessor.value_at(JoltR1CSInputs::Imm.to_index(), current_step_idx);
+                                                let flag = accessor.value_at_field(JoltR1CSInputs::OpFlags(crate::zkvm::instruction::CircuitFlags::RightOperandIsImm), current_step_idx);
+                                                let right = accessor.value_at_field(JoltR1CSInputs::RightInstructionInput, current_step_idx);
+                                                let imm = accessor.value_at_field(JoltR1CSInputs::Imm, current_step_idx);
                                                 eprintln!("  debug RightInputEqImm: flag={:?} right={:?} imm={:?}", flag, right, imm);
                                             }
                                             crate::zkvm::r1cs::constraints::ConstraintName::RightLookupAdd => {
-                                                let lop = accessor.value_at(JoltR1CSInputs::LeftLookupOperand.to_index(), current_step_idx);
-                                                let rop = accessor.value_at(JoltR1CSInputs::RightLookupOperand.to_index(), current_step_idx);
-                                                let out = accessor.value_at(JoltR1CSInputs::LookupOutput.to_index(), current_step_idx);
-                                                let add = accessor.value_at(JoltR1CSInputs::OpFlags(crate::zkvm::instruction::CircuitFlags::AddOperands).to_index(), current_step_idx);
+                                                let lop = accessor.value_at_field(JoltR1CSInputs::LeftLookupOperand, current_step_idx);
+                                                let rop = accessor.value_at_field(JoltR1CSInputs::RightLookupOperand, current_step_idx);
+                                                let out = accessor.value_at_field(JoltR1CSInputs::LookupOutput, current_step_idx);
+                                                let add = accessor.value_at_field(JoltR1CSInputs::OpFlags(crate::zkvm::instruction::CircuitFlags::AddOperands), current_step_idx);
                                                 eprintln!("  debug RightLookupAdd: LOP={:?} ROP={:?} OUT={:?} AddFlag={:?}", lop, rop, out, add);
                                             }
                                             _ => {}
@@ -413,9 +410,9 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                                 );
 
                                 current_x_in_constraint_val += 1;
-                                binary_az_block = [AzValue::I8(0); Y_SVO_SPACE_SIZE];
+                                binary_az_block = [I8OrI96::I8(0); Y_SVO_SPACE_SIZE];
                                 binary_bz_block =
-                                    [BzValue::S64(SignedBigInt::zero()); Y_SVO_SPACE_SIZE];
+                                    [S160::S64(SignedBigInt::zero()); Y_SVO_SPACE_SIZE];
                                 // Reset old baseline field blocks
                                 binary_az_block_old = [F::zero(); Y_SVO_SPACE_SIZE];
                                 binary_bz_block_old = [F::zero(); Y_SVO_SPACE_SIZE];
@@ -527,9 +524,9 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
         let mut final_svo_accums_infty = [F::zero(); NUM_ACCUMS_EVAL_INFTY];
         let mut final_svo_accums_zero_old = [F::zero(); NUM_ACCUMS_EVAL_ZERO];
         let mut final_svo_accums_infty_old = [F::zero(); NUM_ACCUMS_EVAL_INFTY];
-        let mut final_az_unbound_coeffs_shards: Vec<Vec<SparseCoefficient<AzValue>>> =
+        let mut final_az_unbound_coeffs_shards: Vec<Vec<SparseCoefficient<I8OrI96>>> =
             Vec::with_capacity(collected_chunk_outputs.len());
-        let mut final_bz_unbound_coeffs_shards: Vec<Vec<SparseCoefficient<BzValue>>> =
+        let mut final_bz_unbound_coeffs_shards: Vec<Vec<SparseCoefficient<S160>>> =
             Vec::with_capacity(collected_chunk_outputs.len());
 
         for task_output in collected_chunk_outputs {
@@ -718,7 +715,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                         if az_in_block && next_az_index <= next_bz_index {
                             let az_coeff = az_iter.next().unwrap();
                             let az_orig_val = az_coeff.value;
-                            let mut paired_bz_opt: Option<BzValue> = None;
+                            let mut paired_bz_opt: Option<S160> = None;
 
                             let local_offset = az_coeff.index & Y_SVO_RELATED_COEFF_BLOCK_SIZE_MASK;
                             let y_val_idx = (local_offset >> 1) & (Y_SVO_SPACE_SIZE - 1);

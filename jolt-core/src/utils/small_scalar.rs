@@ -1,6 +1,7 @@
 use crate::field::{JoltField};
 use allocative::Allocative;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_ff::biginteger::{I8OrI96, S64, S128};
 
 /// A trait for small scalars ({u/i}{8/16/32/64})
 pub trait SmallScalar:
@@ -134,6 +135,79 @@ impl SmallScalar for i128 {
     #[inline]
     fn to_field<F: JoltField>(self) -> F {
         F::from_i128(self)
+    }
+    #[inline]
+    fn abs_diff_u128(self, other: Self) -> u128 {
+        self.abs_diff(other)
+    }
+}
+impl SmallScalar for S64 {
+    #[inline]
+    fn field_mul<F: JoltField>(&self, n: F) -> F {
+        if self.is_positive {
+            n.mul_u64(self.magnitude.0[0])
+        } else {
+            -n.mul_u64(self.magnitude.0[0])
+        }
+    }
+    #[inline]
+    fn to_field<F: JoltField>(self) -> F {
+        F::from_i128(self)
+    }
+    #[inline]
+    fn abs_diff_u128(self, other: Self) -> u128 {
+        self.abs_diff(other)
+    }
+}
+impl SmallScalar for I8OrI96 {
+    #[inline]
+    fn field_mul<F: JoltField>(&self, n: F) -> F {
+        if self.is_small {
+            if self.small_i8 = 0 {
+                return F::zero();
+            } else if self.small_i8 = 1 {
+                return n;
+            }
+            return n.mul_i64(self.small_i8 as i64);
+        } else {
+            return n.mul_i128(self.to_i128());
+        }
+    }
+    #[inline]
+    fn to_field<F: JoltField>(self) -> F {
+        if self.is_small {
+            if self.small_i8 = 0 {
+                return F::zero();
+            } else if self.small_i8 = 1 {
+                return F::one();
+            }
+            return F::from_i64(self.small_i8 as i64);
+        } else {
+            return F::from_i128(self.to_i128());
+        }
+    }
+    #[inline]
+    fn abs_diff_u128(self, other: Self) -> u128 {
+        todo!()
+        // self.abs_diff(other)
+    }    
+}
+impl SmallScalar for S128 {
+    #[inline]
+    fn field_mul<F: JoltField>(&self, n: F) -> F {
+        if self.is_positive {
+            n.mul_u128(*self.magnitude.0[0])
+        } else {
+            -n.mul_u128(*self.magnitude.0[0])
+        }
+    }
+    #[inline]
+    fn to_field<F: JoltField>(self) -> F {
+        if self.is_positive {
+            F::from_u128(*self.magnitude.0[0])
+        } else {
+            -F::from_u128(*self.magnitude.0[0])
+        }
     }
     #[inline]
     fn abs_diff_u128(self, other: Self) -> u128 {

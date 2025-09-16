@@ -5,7 +5,7 @@ use crate::transcripts::{AppendToTranscript, Transcript};
 use crate::{
     field::JoltField,
     msm::VariableBaseMSM,
-    poly::compact_polynomial::SmallScalar,
+    utils::small_scalar::SmallScalar,
     poly::multilinear_polynomial::MultilinearPolynomial,
     utils::{errors::ProofVerifyError, math::Math},
 };
