@@ -5,6 +5,7 @@ use super::prefixes::{PrefixEval, Prefixes};
 use super::suffixes::{SuffixEval, Suffixes};
 use super::JoltLookupTable;
 use super::PrefixSuffixDecomposition;
+use crate::field::MontU128;
 use crate::{field::JoltField, utils::uninterleave_bits};
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
@@ -22,8 +23,11 @@ impl<const XLEN: usize> JoltLookupTable for NotEqualTable<XLEN> {
         }
     }
 
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+    fn evaluate_mle<F: JoltField>(&self, r: &[MontU128]) -> F {
         F::one() - EqualTable::<XLEN>.evaluate_mle::<F>(r)
+    }
+    fn evaluate_mle_field<F: JoltField>(&self, r: &[F]) -> F {
+        F::one() - EqualTable::<XLEN>.evaluate_mle_field::<F>(r)
     }
 }
 

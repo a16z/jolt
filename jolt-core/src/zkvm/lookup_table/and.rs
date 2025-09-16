@@ -4,7 +4,7 @@ use super::prefixes::{PrefixEval, Prefixes};
 use super::suffixes::{SuffixEval, Suffixes};
 use super::JoltLookupTable;
 use super::PrefixSuffixDecomposition;
-use crate::field::JoltField;
+use crate::field::{JoltField, MontU128};
 use crate::utils::uninterleave_bits;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
@@ -16,7 +16,21 @@ impl<const XLEN: usize> JoltLookupTable for AndTable<XLEN> {
         x & y
     }
 
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+    fn evaluate_mle<F: JoltField>(&self, r: &[MontU128]) -> F {
+        debug_assert_eq!(r.len(), 2 * XLEN);
+
+        let mut result = F::zero();
+        for i in 0..XLEN {
+            let x_i = r[2 * i];
+            let y_i = r[2 * i + 1];
+            result += F::from_u64(1u64 << (XLEN - 1 - i))
+                .mul_u128_mont_form(x_i)
+                .mul_u128_mont_form(y_i);
+        }
+        result
+    }
+
+    fn evaluate_mle_field<F: JoltField>(&self, r: &[F]) -> F {
         debug_assert_eq!(r.len(), 2 * XLEN);
 
         let mut result = F::zero();

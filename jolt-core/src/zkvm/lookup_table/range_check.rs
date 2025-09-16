@@ -4,7 +4,7 @@ use super::prefixes::{PrefixEval, Prefixes};
 use super::suffixes::{SuffixEval, Suffixes};
 use super::JoltLookupTable;
 use super::PrefixSuffixDecomposition;
-use crate::field::JoltField;
+use crate::field::{JoltField, MontU128};
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct RangeCheckTable<const XLEN: usize>;
@@ -18,12 +18,21 @@ impl<const XLEN: usize> JoltLookupTable for RangeCheckTable<XLEN> {
         }
     }
 
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+    fn evaluate_mle_field<F: JoltField>(&self, r: &[F]) -> F {
         debug_assert_eq!(r.len(), 2 * XLEN);
         let mut result = F::zero();
         for i in 0..XLEN {
             let shift = XLEN - 1 - i;
             result += F::from_u128(1u128 << shift) * r[XLEN + i];
+        }
+        result
+    }
+    fn evaluate_mle<F: JoltField>(&self, r: &[MontU128]) -> F {
+        debug_assert_eq!(r.len(), 2 * XLEN);
+        let mut result = F::zero();
+        for i in 0..XLEN {
+            let shift = XLEN - 1 - i;
+            result += F::from_u128(1u128 << shift).mul_u128_mont_form(r[XLEN + i]);
         }
         result
     }

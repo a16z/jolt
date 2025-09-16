@@ -1,4 +1,4 @@
-use crate::field::JoltField;
+use crate::field::{JoltField, MontU128};
 use std::cmp::Ordering;
 use std::ops::{AddAssign, Index, IndexMut, Mul, MulAssign, Sub};
 
@@ -172,6 +172,9 @@ impl<F: JoltField> UniPoly<F> {
     pub fn evaluate(&self, r: &F) -> F {
         Self::eval_with_coeffs(&self.coeffs, r)
     }
+    pub fn evaluate_u128(&self, r: &MontU128) -> F {
+        Self::eval_with_coeffs_small(&self.coeffs, r)
+    }
 
     #[tracing::instrument(skip_all, name = "UniPoly::eval_with_coeffs")]
     pub fn eval_with_coeffs(coeffs: &[F], r: &F) -> F {
@@ -182,6 +185,34 @@ impl<F: JoltField> UniPoly<F> {
             power *= *r;
         }
         eval
+    }
+
+    /// Evaluate a univariate polynomial at a point `r` where `r` is provided as a u128
+    /// already encoded in Montgomery form (MontU128).
+    ///
+    /// Approach:
+    /// - Uses Horner’s method: (((a_n)·r + a_{n-1})·r + … + a_0)
+    /// - Each multiply-by-r step uses `mul_u128_mont_form`, which expects its u128 input
+    ///   to already be in Montgomery form.
+    ///
+    /// Why Horner:
+    /// - Avoids explicitly building powers r^i as MontU128. Accumulating powers would require
+    ///   a correct Montgomery multiplication on MontU128 itself; Horner’s method side-steps this
+    ///   by repeatedly multiplying the field accumulator by the same MontU128 `r`.
+    ///
+    /// Behavior:
+    /// - Returns 0 for an empty coefficient slice.
+    #[tracing::instrument(skip_all, name = "UniPoly::eval_with_coeffs_small")]
+    pub fn eval_with_coeffs_small(coeffs: &[F], r: &MontU128) -> F {
+        if coeffs.is_empty() {
+            return F::zero();
+        }
+        // Start from the highest-degree coefficient and fold downwards.
+        let mut acc = *coeffs.last().unwrap();
+        for &c in coeffs[..coeffs.len() - 1].iter().rev() {
+            acc = acc.mul_u128_mont_form(*r) + c;
+        }
+        acc
     }
 
     #[tracing::instrument(skip_all, name = "UniPoly::eval_as_univariate")]
@@ -396,20 +427,31 @@ impl<F: JoltField> CompressedUniPoly<F> {
 
     // In the verifier we do not have to check that f(0) + f(1) = hint as we can just
     // recover the linear term assuming the prover did it right, then eval the poly
-    pub fn eval_from_hint(&self, hint: &F, x: &F) -> F {
-        let mut linear_term =
-            *hint - self.coeffs_except_linear_term[0] - self.coeffs_except_linear_term[0];
-        for i in 1..self.coeffs_except_linear_term.len() {
-            linear_term -= self.coeffs_except_linear_term[i];
-        }
+    pub fn eval_from_hint(&self, hint: &F, x: &MontU128) -> F {
+        debug_assert!(
+            !self.coeffs_except_linear_term.is_empty(),
+            "CompressedUniPoly must have at least the constant term"
+        );
 
-        let mut running_point = *x;
-        let mut running_sum = self.coeffs_except_linear_term[0] + *x * linear_term;
-        for i in 1..self.coeffs_except_linear_term.len() {
-            running_point = running_point * x;
-            running_sum += self.coeffs_except_linear_term[i] * running_point;
+        // coeffs_except_linear_term layout: [c0, a2, a3, ...]
+        let coeffs = &self.coeffs_except_linear_term;
+        let c0 = coeffs[0];
+
+        // f(0) + f(1) = hint = c0 + (c0 + b + sum_{i>=2} a_i)
+        // => b = hint - 2*c0 - sum_{i>=2} a_i
+        let sum_without_linear: F = coeffs.iter().copied().sum(); // c0 + sum_{i>=2} a_i
+        let b: F = *hint - sum_without_linear - c0;
+
+        // Evaluate f(x) using Horner's method without multiplying MontU128 values:
+        // Start from highest degree a_i, fold down, then add b and c0.
+        let mut acc = F::zero();
+        if coeffs.len() > 1 {
+            for &ai in coeffs[1..].iter().rev() {
+                acc = (acc + ai).mul_u128_mont_form(*x);
+            }
         }
-        running_sum
+        acc = (acc + b).mul_u128_mont_form(*x);
+        acc + c0
     }
 
     pub fn degree(&self) -> usize {

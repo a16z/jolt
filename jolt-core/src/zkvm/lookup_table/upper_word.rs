@@ -4,7 +4,7 @@ use super::prefixes::{PrefixEval, Prefixes};
 use super::suffixes::{SuffixEval, Suffixes};
 use super::JoltLookupTable;
 use super::PrefixSuffixDecomposition;
-use crate::field::JoltField;
+use crate::field::{JoltField, MontU128};
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct UpperWordTable<const XLEN: usize>;
@@ -14,11 +14,19 @@ impl<const XLEN: usize> JoltLookupTable for UpperWordTable<XLEN> {
         (index >> XLEN) as u64
     }
 
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+    fn evaluate_mle_field<F: JoltField>(&self, r: &[F]) -> F {
         debug_assert_eq!(r.len(), 2 * XLEN);
         let mut result = F::zero();
         for i in 0..XLEN {
             result += F::from_u64(1 << (XLEN - 1 - i)) * r[i];
+        }
+        result
+    }
+    fn evaluate_mle<F: JoltField>(&self, r: &[MontU128]) -> F {
+        debug_assert_eq!(r.len(), 2 * XLEN);
+        let mut result = F::zero();
+        for i in 0..XLEN {
+            result += F::from_u64(1 << (XLEN - 1 - i)).mul_u128_mont_form(r[i]);
         }
         result
     }

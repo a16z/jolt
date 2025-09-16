@@ -1,11 +1,10 @@
-use std::fmt::{Debug, Display};
-use std::hash::Hash;
-use std::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub, SubAssign};
-
 #[cfg(feature = "allocative")]
 use allocative::Allocative;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{One, Zero};
+use std::fmt::{Debug, Display};
+use std::hash::Hash;
+use std::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub, SubAssign};
 
 pub trait FieldOps<Rhs = Self, Output = Self>:
     Add<Rhs, Output = Output>
@@ -46,7 +45,7 @@ pub trait JoltField:
     const NUM_BYTES: usize;
     /// An implementation of `JoltField` may use some precomputed lookup tables to speed up the
     /// conversion of small primitive integers (e.g. `u16` values) into field elements. For example,
-    /// the arkworks BN254 scalar field requires a conversion into Montgomery form, which naively
+    /// the arkworks BN254 scalar field requires a conversion into the Montgomery form, which naively
     /// requires a field multiplication, but can instead be looked up.
     type SmallValueLookupTables: Clone + Default + CanonicalSerialize + CanonicalDeserialize;
 
@@ -60,9 +59,9 @@ pub trait JoltField:
     fn from_u16(n: u16) -> Self;
     fn from_u32(n: u32) -> Self;
     fn from_u64(n: u64) -> Self;
+    fn from_u128(n: u128) -> Self;
     fn from_i64(val: i64) -> Self;
     fn from_i128(val: i128) -> Self;
-    fn from_u128(val: u128) -> Self;
     fn square(&self) -> Self;
     fn from_bytes(bytes: &[u8]) -> Self;
     fn inverse(&self) -> Option<Self>;
@@ -79,6 +78,7 @@ pub trait JoltField:
     fn mul_u64(&self, n: u64) -> Self {
         *self * Self::from_u64(n)
     }
+
     #[inline(always)]
     fn mul_i128(&self, n: i128) -> Self {
         *self * Self::from_i128(n)
@@ -86,6 +86,25 @@ pub trait JoltField:
     #[inline(always)]
     fn mul_u128(&self, n: u128) -> Self {
         *self * Self::from_u128(n)
+    }
+
+    // Here n is already in Montgomery form.
+    // This MUST be overridden by a concrete field implementation that knows how
+    // to multiply by an u128 already in Montgomery form (e.g., using mul_hi_u128).
+    // Providing a generic fallback (like converting via from_u128) would be WRONG,
+    // because it would interpret n as a canonical integer and re-encode it,
+    // effectively multiplying by R and corrupting the result.
+    fn mul_u128_mont_form(&self, _n: MontU128) -> Self {
+        unimplemented!("mul_u128_mont_form must be implemented by the concrete field type")
+    }
+
+    //fn mul_two_u128s(&self, x: MontU128, y: MontU128) -> Self {
+    //    unimplemented!("Must be implemented by the concrete field type")
+    //}
+    //
+
+    fn from_u128_mont(_n: MontU128) -> Self {
+        unimplemented!("Must be implemented by the concrete field type")
     }
 
     fn mul_pow_2(&self, mut pow: usize) -> Self {
@@ -190,4 +209,7 @@ where
 }
 
 pub mod ark;
-pub mod tracked_ark;
+pub use ark::MontU128;
+
+// Commented out because of allocative issues for now
+// pub mod tracked_ark;

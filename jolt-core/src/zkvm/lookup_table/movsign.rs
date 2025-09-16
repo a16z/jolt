@@ -4,7 +4,7 @@ use super::prefixes::{PrefixEval, Prefixes};
 use super::suffixes::{SuffixEval, Suffixes};
 use super::JoltLookupTable;
 use super::PrefixSuffixDecomposition;
-use crate::field::JoltField;
+use crate::field::{JoltField, MontU128};
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct MovsignTable<const XLEN: usize>;
@@ -20,7 +20,16 @@ impl<const XLEN: usize> JoltLookupTable for MovsignTable<XLEN> {
         }
     }
 
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+    fn evaluate_mle<F: JoltField>(&self, r: &[MontU128]) -> F {
+        // 2 ^ {XLEN - 1} * x_0
+        debug_assert!(r.len() == 2 * XLEN);
+
+        let sign_bit = r[0];
+        let ones: u64 = ((1u128 << XLEN) - 1) as u64;
+        F::from_u64(ones).mul_u128_mont_form(sign_bit)
+    }
+
+    fn evaluate_mle_field<F: JoltField>(&self, r: &[F]) -> F {
         // 2 ^ {XLEN - 1} * x_0
         debug_assert!(r.len() == 2 * XLEN);
 

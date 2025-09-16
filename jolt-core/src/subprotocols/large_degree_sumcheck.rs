@@ -1,5 +1,6 @@
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 
+use crate::field::MontU128;
 use crate::{
     field::{JoltField, OptimizedMul},
     poly::{multilinear_polynomial::MultilinearPolynomial, unipoly::UniPoly},
@@ -13,14 +14,15 @@ use crate::{
 pub fn compute_eq_mle_product_univariate<F: JoltField>(
     mle_product_coeffs: Vec<F>,
     round: usize,
-    r_cycle: &[F],
+    r_cycle: &[MontU128],
 ) -> UniPoly<F> {
     let mut univariate_evals: Vec<F> = Vec::with_capacity(mle_product_coeffs.len() + 2);
 
     // Recall that the eq polynomial is rc + (1 - r)(1 - c), which has constant term 1 - r and slope (2r - 1)
+    let r_cycle_round_f = F::from_u128_mont(r_cycle[round]);
     let eq_coeffs = [
-        F::one() - r_cycle[round],
-        r_cycle[round] + r_cycle[round] - F::one(),
+        F::one() - r_cycle_round_f,
+        r_cycle_round_f + r_cycle_round_f - F::one(),
     ];
 
     // Constant term
