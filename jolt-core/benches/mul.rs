@@ -1,8 +1,59 @@
+
 use ark_bn254::Fr;
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
 use jolt_core::field::{JoltField, MontU128};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
+use ark_ff::Zero;
+
+fn bench_add(c: &mut Criterion) {
+    let mut rng = StdRng::seed_from_u64(123);
+
+    // Fr case: (x - a) * b, where a, b ∈ Fr
+    c.bench_function("Fr: (x - a) * b (100x)", |b| {
+        b.iter_batched(
+            || {
+                let x = Fr::random(&mut rng);
+                let ab: Vec<_> = (0..100)
+                    .map(|_| (Fr::random(&mut rng), Fr::random(&mut rng)))
+                    .collect();
+                (x, ab)
+            },
+            |(x, ab)| {
+                let mut acc = Fr::zero();
+                for (a, b) in ab {
+                    acc += (x - a) * b;
+                }
+                acc
+            },
+            BatchSize::SmallInput,
+        )
+    });
+
+    // MontU128 case: (x - from_u128_mont(a)) * mul_u128_mont_form(b), where a, b ∈ MontU128
+    c.bench_function("Fr: (x - from_u128_mont(a)) * mul_u128_mont_form(b) (100x)", |b| {
+        b.iter_batched(
+            || {
+                let x = Fr::random(&mut rng);
+                let ab: Vec<_> = (0..100)
+                    .map(|_| (MontU128::from(rng.gen::<u128>()), MontU128::from(rng.gen::<u128>())))
+                    .collect();
+                (x, ab)
+            },
+            |(x, ab)| {
+                let mut acc = Fr::zero();
+                for (a, b) in ab {
+                    acc += (x - Fr::from_u128_mont(a)).mul_u128_mont_form(b);
+                }
+                acc
+            },
+            BatchSize::SmallInput,
+        )
+    });
+}
+
+
+
 
 fn bench_mul(c: &mut Criterion) {
     let mut rng = StdRng::seed_from_u64(123);
@@ -66,5 +117,8 @@ fn bench_mul(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, bench_mul);
+criterion_group!(benches,
+    bench_mul,
+    bench_add
+);
 criterion_main!(benches);
