@@ -47,7 +47,6 @@ struct BooleanityProverState<F: JoltField> {
     eq_r_r: F,
     /// First element of r_cycle_prime
     r_cycle_prime: Option<MontU128>,
-
 }
 
 #[derive(Allocative)]
@@ -232,7 +231,7 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
                                 let h_1 = ps.F[h_indices[4 * j + 2]]
                                     + (ps.F[h_indices[4 * j + 3]] - ps.F[h_indices[4 * j + 2]])
                                         .mul_u128_mont_form(r_j_prev);
-                                h_0 + (h_1 - h_0).mul_u128_mont_form(r_j)4
+                                h_0 + (h_1 - h_0).mul_u128_mont_form(r_j)
                             })
                             .collect::<Vec<F>>()
                             .into()

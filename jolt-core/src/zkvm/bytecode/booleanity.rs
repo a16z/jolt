@@ -41,7 +41,7 @@ struct BooleanityProverState<F: JoltField> {
     F: Vec<F>,
     eq_r_r: F,
     /// First element of r_cycle_prime
-    r_cycle_prime: Option<F>,
+    r_cycle_prime: Option<MontU128>,
 }
 
 #[cfg_attr(feature = "allocative", derive(Allocative))]
@@ -241,13 +241,12 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
                             .map(|j| {
                                 // H[i] = F[H_indices[2i]] + r_prev * (F[H_indices[2i+1]] - F[H_indices[2i]])
                                 let h_0 = ps.F[pc_indices[4 * j]]
-                                    + r_j_prev
-                                        * (ps.F[pc_indices[4 * j + 1]] - ps.F[pc_indices[4 * j]]);
+                                    + (ps.F[pc_indices[4 * j + 1]] - ps.F[pc_indices[4 * j]])
+                                        .mul_u128_mont_form(r_j_prev);
                                 let h_1 = ps.F[pc_indices[4 * j + 2]]
-                                    + r_j_prev
-                                        * (ps.F[pc_indices[4 * j + 3]]
-                                            - ps.F[pc_indices[4 * j + 2]]);
-                                h_0 + r_j * (h_1 - h_0)
+                                    + (ps.F[pc_indices[4 * j + 3]] - ps.F[pc_indices[4 * j + 2]])
+                                        .mul_u128_mont_form(r_j_prev);
+                                h_0 + (h_1 - h_0).mul_u128_mont_form(r_j)
                             })
                             .collect::<Vec<F>>()
                             .into()
@@ -473,9 +472,11 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                     .map(|(pc_indices, gamma)| {
                         // H[i] = F[H_indices[2i]] + r_prev * (F[H_indices[2i+1]] - F[H_indices[2i]])
                         let h_0 = p.F[pc_indices[4 * j]]
-                            + r_j_prev * (p.F[pc_indices[4 * j + 1]] - p.F[pc_indices[4 * j]]);
+                            + (p.F[pc_indices[4 * j + 1]] - p.F[pc_indices[4 * j]])
+                                .mul_u128_mont_form(r_j_prev);
                         let h_1 = p.F[pc_indices[4 * j + 2]]
-                            + r_j_prev * (p.F[pc_indices[4 * j + 3]] - p.F[pc_indices[4 * j + 2]]);
+                            + (p.F[pc_indices[4 * j + 3]] - p.F[pc_indices[4 * j + 2]])
+                                .mul_u128_mont_form(r_j_prev);
                         // Linear interpolation h(x) = h_0 + x * (h_1 - h_0)
                         // Evaluations at points 0, 2, 3
                         let h_at_0 = h_0;

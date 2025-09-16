@@ -63,7 +63,6 @@ impl<F: JoltField> PartialEq for OneHotPolynomial<F> {
 ///   \sum eq(k, r_address) * eq(j, r_cycle) * ra(k, j)
 /// so we use a simplified version of the prover algorithm for the
 /// Booleanity sumcheck described in Section 6.3 of the Twist/Shout paper.
-
 #[derive(Clone, Debug, Allocative)]
 pub struct OneHotSumcheckState<F: JoltField> {
     /// B stores eq(r, k), see Equation (53)
@@ -105,7 +104,7 @@ pub struct OneHotPolynomialProverOpening<F: JoltField> {
     pub log_T: usize,
     pub polynomial: OneHotPolynomial<F>,
     /// First variable of r_cycle_prime
-    r_cycle_prime: Option<F>,
+    r_cycle_prime: Option<MontU128>,
     pub eq_state: Arc<RwLock<OneHotSumcheckState<F>>>,
 }
 
@@ -226,7 +225,9 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
                 if round == polynomial.K.log_2() {
                     F_idx(j)
                 } else if round == polynomial.K.log_2() + 1 {
-                    F_idx(j) + self.r_cycle_prime.unwrap() * (F_idx(j + half_T) - F_idx(j))
+                    F_idx(j)
+                        + (F_idx(j + half_T) - F_idx(j))
+                            .mul_u128_mont_form(self.r_cycle_prime.unwrap())
                 } else {
                     H.as_ref().unwrap().Z[j]
                 }
@@ -297,8 +298,11 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
                     (0..quoter_T)
                         .into_par_iter()
                         .map(|j| {
-                            let h_0 = nonzero_indices[j].map_or(F::zero(), |k| F[k]);
-                            let h_1 = nonzero_indices[j + half_T].map_or(F::zero(), |k| F[k]);
+                            let h_0 = F_idx(j)
+                                + (F_idx(j + half_T) - F_idx(j)).mul_u128_mont_form(r_prev);
+                            let h_1 = F_idx(j + quoter_T)
+                                + (F_idx(j + half_T + quoter_T) - F_idx(j + quoter_T))
+                                    .mul_u128_mont_form(r_prev);
                             h_0 + (h_1 - h_0).mul_u128_mont_form(r)
                         })
                         .collect(),
@@ -361,11 +365,11 @@ impl<F: JoltField> OneHotPolynomial<F> {
         DensePolynomial::new(dense_coeffs)
     }
 
-    pub fn evaluate_field(&self, r: &[F]) -> F {
+    pub fn evaluate(&self, r: &[MontU128]) -> F {
         assert_eq!(r.len(), self.get_num_vars());
         let (r_left, r_right) = r.split_at(self.num_rows().log_2());
-        let eq_left = EqPolynomial::evals_field(r_left);
-        let eq_right = EqPolynomial::evals_field(r_right);
+        let eq_left = EqPolynomial::evals(r_left);
+        let eq_right = EqPolynomial::evals(r_right);
         let mut left_product = unsafe_allocate_zero_vec(eq_right.len());
         self.vector_matrix_product(&eq_left, F::one(), &mut left_product);
         left_product
@@ -375,11 +379,11 @@ impl<F: JoltField> OneHotPolynomial<F> {
             .sum()
     }
 
-    pub fn evaluate(&self, r: &[MontU128]) -> F {
+    pub fn evaluate_field(&self, r: &[F]) -> F {
         assert_eq!(r.len(), self.get_num_vars());
         let (r_left, r_right) = r.split_at(self.num_rows().log_2());
-        let eq_left = EqPolynomial::evals(r_left);
-        let eq_right = EqPolynomial::evals(r_right);
+        let eq_left = EqPolynomial::evals_field(r_left);
+        let eq_right = EqPolynomial::evals_field(r_right);
         let mut left_product = unsafe_allocate_zero_vec(eq_right.len());
         self.vector_matrix_product(&eq_left, F::one(), &mut left_product);
         left_product
@@ -580,12 +584,18 @@ mod tests {
         let one_hot_poly = OneHotPolynomial::<Fr>::from_indices(nonzero_indices, K);
         let mut dense_poly = one_hot_poly.to_dense_poly();
 
-        let r_address: Vec<MontU128> = std::iter::repeat_with(|| MontU128::from(rng.gen::<u128>()))
-            .take(LOG_K)
-            .collect();
-        let r_cycle: Vec<MontU128> = std::iter::repeat_with(|| MontU128::from(rng.gen::<u128>()))
-            .take(LOG_T)
-            .collect();
+        let r_address: Vec<MontU128> = std::iter::repeat_with(|| {
+            let random_u128: u128 = rng.gen(); // generate random u128
+            MontU128::from(random_u128) // wrap in MontU128
+        })
+        .take(LOG_K)
+        .collect();
+        let r_cycle: Vec<MontU128> = std::iter::repeat_with(|| {
+            let random_u128: u128 = rng.gen(); // generate random u128
+            MontU128::from(random_u128) // wrap in MontU128
+        })
+        .take(LOG_T)
+        .collect();
 
         let one_hot_sumcheck_state = OneHotSumcheckState::new(&r_address, &r_cycle);
         let mut one_hot_opening =
