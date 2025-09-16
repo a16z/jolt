@@ -1,4 +1,5 @@
 use ark_serialize::CanonicalSerialize;
+use plotly::{Layout, Plot, Scatter};
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
@@ -342,6 +343,236 @@ fn prove_example_with_trace(
             / 3);
 
     (prove_duration, proof_size, proof_size_projected)
+}
+
+fn baseline_data() -> HashMap<String, Vec<(usize, f64, usize)>> {
+    let mut data: HashMap<String, Vec<(usize, f64, usize)>> = HashMap::new();
+    data.insert(
+        "Fibonacci (Spice/Lasso)".to_string(),
+        vec![
+            (18, 2.18, 187711),
+            (19, 3.90, 197895),
+            (20, 7.43, 208495),
+            (21, 14.62, 219511),
+            (22, 27.49, 230943),
+            (23, 54.96, 242791),
+            (24, 111.35, 255055),
+            (25, 289.54, 267735),
+        ],
+    );
+    data.insert(
+        "SHA2 chain (Spice/Lasso)".to_string(),
+        vec![
+            (18, 2.19, 191359),
+            (19, 4.08, 201543),
+            (20, 7.65, 212143),
+            (21, 14.34, 223159),
+            (22, 29.65, 234591),
+            (23, 60.89, 246439),
+            (24, 112.07, 258703),
+            (25, 309.63, 271383),
+        ],
+    );
+    data.insert(
+        "SHA3 chain (Spice/Lasso)".to_string(),
+        vec![
+            (18, 2.21, 191359),
+            (19, 3.93, 201543),
+            (20, 7.50, 212143),
+            (21, 14.29, 223159),
+            (22, 27.32, 234591),
+            (23, 55.40, 246439),
+            (24, 111.63, 258703),
+            (25, 314.68, 271383),
+        ],
+    );
+    data.insert(
+        "BTreeMap (Spice/Lasso)".to_string(),
+        vec![
+            (18, 2.11, 192991),
+            (19, 3.80, 203175),
+            (20, 7.08, 213775),
+            (21, 13.89, 226527),
+            (22, 36.21, 239799),
+            (23, 57.81, 251647),
+            (24, 109.58, 265855),
+            (25, 297.00, 280583),
+        ],
+    );
+    data
+}
+
+fn twist_shout_data() -> HashMap<String, Vec<(usize, f64, usize, usize)>> {
+    let mut data: HashMap<String, Vec<(usize, f64, usize, usize)>> = HashMap::new();
+    data.insert(
+        "Fibonacci (Twist/Shout)".to_string(),
+        vec![
+            (18, 3.17, 69876, 40550),
+            (19, 4.79, 73148, 42142),
+            (20, 6.79, 73828, 42774),
+            (21, 11.32, 77100, 44366),
+            (22, 17.79, 77780, 44998),
+            (23, 30.89, 81052, 46590),
+            (24, 51.07, 81732, 47222),
+            (25, 86.75, 85004, 48814),
+        ],
+    );
+    data.insert(
+        "SHA2 chain (Twist/Shout)".to_string(),
+        vec![
+            (18, 3.41, 70020, 40694),
+            (19, 4.99, 73292, 42286),
+            (20, 7.24, 73972, 42918),
+            (21, 11.93, 77244, 44510),
+            (22, 19.19, 77924, 45142),
+            (23, 32.53, 81196, 46734),
+            (24, 55.35, 81876, 47366),
+            (25, 96.43, 85148, 48958),
+        ],
+    );
+    data.insert(
+        "SHA3 chain (Twist/Shout)".to_string(),
+        vec![
+            (18, 3.43, 70020, 40694),
+            (19, 4.97, 73292, 42286),
+            (20, 7.32, 73972, 42918),
+            (21, 12.07, 77244, 44510),
+            (22, 19.27, 77924, 45142),
+            (23, 32.75, 81196, 46734),
+            (24, 57.30, 81876, 47366),
+            (25, 97.94, 85148, 48958),
+        ],
+    );
+    data.insert(
+        "BTreeMap (Twist/Shout)".to_string(),
+        vec![
+            (18, 2.84, 70124, 40798),
+            (19, 4.55, 73396, 42390),
+            (20, 6.73, 74076, 43022),
+            (21, 11.27, 77452, 44718),
+            (22, 18.17, 78236, 45454),
+            (23, 32.37, 81508, 47046),
+            (24, 61.23, 82898, 48068),
+            (25, 98.78, 86274, 49764),
+        ],
+    );
+    data
+}
+
+pub fn create_benchmark_plot() -> Result<(), Box<dyn std::error::Error>> {
+    let baseline_data = baseline_data();
+    let twist_shout_data = twist_shout_data();
+
+    let mut plot = Plot::new();
+
+    // Define colors for different benchmarks
+    let colors = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd"];
+
+    for (color_idx, (bench_name, points)) in baseline_data.iter().enumerate() {
+        let mut sorted_points = points.clone();
+        sorted_points.sort_by_key(|(scale, _, _)| *scale);
+
+        let color = colors[color_idx % colors.len()];
+
+        // Collect data points at scale n positions
+        let mut x_values: Vec<f64> = Vec::new();
+        let mut y_values: Vec<f64> = Vec::new();
+
+        for (scale, time, _) in sorted_points.iter() {
+            // For benchmark at scale n, plot at position n
+            let cycles = (1 << *scale) as f64;
+
+            // Clock speed in KHz (cycles per millisecond)
+            let clock_speed = cycles / (*time * 1000.0);
+
+            // Use the scale value (n) for x-axis
+            x_values.push(*scale as f64);
+            y_values.push(clock_speed);
+        }
+
+        // Add only markers, no lines
+        let trace = Scatter::new(x_values, y_values)
+            .name(bench_name)
+            .mode(plotly::common::Mode::Markers)
+            .marker(
+                plotly::common::Marker::new()
+                    .size(10)
+                    .color(color)
+                    .symbol(plotly::common::MarkerSymbol::X),
+            );
+
+        plot.add_trace(trace);
+    }
+
+    for (color_idx, (bench_name, points)) in twist_shout_data.iter().enumerate() {
+        let mut sorted_points = points.clone();
+        sorted_points.sort_by_key(|(scale, _, _, _)| *scale);
+
+        let color = colors[color_idx % colors.len()];
+
+        // Collect data points at scale n positions
+        let mut x_values: Vec<f64> = Vec::new();
+        let mut y_values: Vec<f64> = Vec::new();
+
+        for (scale, time, _, _) in sorted_points.iter() {
+            // For benchmark at scale n, plot at position n
+            let cycles = (1 << *scale) as f64;
+
+            // Clock speed in KHz (cycles per millisecond)
+            let clock_speed = cycles / (*time * 1000.0);
+
+            // Use the scale value (n) for x-axis
+            x_values.push(*scale as f64);
+            y_values.push(clock_speed);
+        }
+
+        // Add only markers, no lines
+        let trace = Scatter::new(x_values, y_values)
+            .name(bench_name)
+            .mode(plotly::common::Mode::Markers)
+            .marker(
+                plotly::common::Marker::new()
+                    .size(10)
+                    .color(color)
+                    .symbol(plotly::common::MarkerSymbol::Circle),
+            );
+
+        plot.add_trace(trace);
+    }
+
+    // Create custom tick labels
+    let mut tick_vals: Vec<f64> = Vec::new();
+    let mut tick_text: Vec<String> = Vec::new();
+
+    // Add ticks for all scale values from 16 to 30
+    for n in 16..=25 {
+        tick_vals.push(n as f64);
+        tick_text.push(format!("2^{n}"));
+    }
+
+    let layout = Layout::new()
+        .title("Jolt zkVM Benchmark<br><sub>Hardware: 2023 M3 Max Macbook Pro 16 cores, 128 GB RAM</sub>")
+        .x_axis(
+            plotly::layout::Axis::new()
+                .title("Trace length (RV32IM Cycles)")
+                .type_(plotly::layout::AxisType::Linear)
+                .tick_values(tick_vals)
+                .tick_text(tick_text),
+        )
+        .y_axis(
+            plotly::layout::Axis::new()
+                .title("Prover Speed (Cycles proved per millisecond, aka KHz)"),
+        )
+        .width(1200)
+        .height(800);
+
+    plot.set_layout(layout);
+
+    let html_path = "perfetto_traces/benchmark_plot.html";
+    plot.write_html(html_path);
+    println!("Interactive plot saved to {html_path}");
+
+    Ok(())
 }
 
 fn large_d_sumcheck<F, ProofTranscript>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>

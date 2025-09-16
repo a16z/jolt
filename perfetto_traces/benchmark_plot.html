@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+</head>
+
+<body>
+    <div>
+        <script src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-svg.js"></script>
+        <script src="https://cdn.plot.ly/plotly-2.12.1.min.js"></script>
+        <div id="plotly-html-element" class="plotly-graph-div" style="height:100%; width:100%;"></div>
+
+        <script type="module">
+            const graph_div = document.getElementById("plotly-html-element");
+            await Plotly.newPlot(graph_div, {"data":[{"type":"scatter","name":"SHA2 chain (Spice/Lasso)","mode":"markers","x":[18.0,19.0,20.0,21.0,22.0,23.0,24.0,25.0],"y":[119.70045662100456,128.50196078431372,137.06875816993465,146.24490934449094,141.46050590219224,137.7665955000821,149.7030070491657,108.36944740496722],"marker":{"symbol":"x","size":10,"color":"#1f77b4"}},{"type":"scatter","name":"Fibonacci (Spice/Lasso)","mode":"markers","x":[18.0,19.0,20.0,21.0,22.0,23.0,24.0,25.0],"y":[120.24954128440368,134.4328205128205,141.12732166890981,143.44404924760602,152.57562750090943,152.6311499272198,150.67100134710373,115.88876148373282],"marker":{"symbol":"x","size":10,"color":"#ff7f0e"}},{"type":"scatter","name":"BTreeMap (Spice/Lasso)","mode":"markers","x":[18.0,19.0,20.0,21.0,22.0,23.0,24.0,25.0],"y":[124.23886255924171,137.97052631578947,148.1039548022599,150.98286537077033,115.83275338304335,145.10652136308596,153.10472713998905,112.97788552188553],"marker":{"symbol":"x","size":10,"color":"#2ca02c"}},{"type":"scatter","name":"SHA3 chain (Spice/Lasso)","mode":"markers","x":[18.0,19.0,20.0,21.0,22.0,23.0,24.0,25.0],"y":[118.61719457013575,133.40661577608142,139.81013333333334,146.75661301609517,153.52503660322108,151.41891696750903,150.29307533817075,106.630329223338],"marker":{"symbol":"x","size":10,"color":"#d62728"}},{"type":"scatter","name":"SHA3 chain (Twist/Shout)","mode":"markers","x":[18.0,19.0,20.0,21.0,22.0,23.0,24.0,25.0],"y":[76.4268221574344,105.49054325955734,143.248087431694,173.74913007456504,217.65978204462897,256.1407022900763,292.7960907504363,342.6019195425771],"marker":{"symbol":"circle","size":10,"color":"#1f77b4"}},{"type":"scatter","name":"SHA2 chain (Twist/Shout)","mode":"markers","x":[18.0,19.0,20.0,21.0,22.0,23.0,24.0,25.0],"y":[76.87507331378299,105.06773547094188,144.83093922651935,175.78809723386422,218.56717040125065,257.8729787888103,303.11140018066845,347.96673234470603],"marker":{"symbol":"circle","size":10,"color":"#ff7f0e"}},{"type":"scatter","name":"Fibonacci (Twist/Shout)","mode":"markers","x":[18.0,19.0,20.0,21.0,22.0,23.0,24.0,25.0],"y":[82.69526813880127,109.45469728601253,154.42945508100146,185.260777385159,235.76750983698707,271.56387180317256,328.51411787742313,386.79460518731986],"marker":{"symbol":"circle","size":10,"color":"#2ca02c"}},{"type":"scatter","name":"BTreeMap (Twist/Shout)","mode":"markers","x":[18.0,19.0,20.0,21.0,22.0,23.0,24.0,25.0],"y":[92.30422535211268,115.22813186813187,155.80624071322435,186.0826974267968,230.83676389653274,259.1476058078468,274.0032010452393,339.68851994330834],"marker":{"symbol":"circle","size":10,"color":"#d62728"}}],"layout":{"title":{"text":"Jolt zkVM Benchmark\u003cbr\u003e\u003csub\u003eHardware: 2023 M3 Max Macbook Pro 16 cores, 128 GB RAM\u003c/sub\u003e"},"width":1200,"height":800,"xaxis":{"title":{"text":"Trace length (RV32IM Cycles)"},"type":"linear","tickvals":[16.0,17.0,18.0,19.0,20.0,21.0,22.0,23.0,24.0,25.0],"ticktext":["2^16","2^17","2^18","2^19","2^20","2^21","2^22","2^23","2^24","2^25"]},"yaxis":{"title":{"text":"Prover Speed (Cycles proved per millisecond, aka KHz)"}}},"config":{}});
+        </script>
+    </div>
+</body>
+
+</html>
