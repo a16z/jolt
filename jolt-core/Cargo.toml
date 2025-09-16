@@ -32,11 +32,19 @@ host = [
     "dep:sha2_inline",
     "dep:sha3_inline",
 ]
-prover = ["parallel"]
-parallel = [
+prover = [
+    "minimal",
     "ark-ec/parallel",
     "ark-ff/parallel",
     "ark-std/parallel",
+    "dory/parallel"
+]
+# This is for building jolt-core without prover capabilities, e.g. for recursion
+# jolt-core needs std and rayon to compile, so these are the minimal set of features.
+minimal = [
+    "ark-ec/std",
+    "ark-ff/std",
+    "ark-std/std",
     "ark-ff/asm",
     "rayon",
 ]
