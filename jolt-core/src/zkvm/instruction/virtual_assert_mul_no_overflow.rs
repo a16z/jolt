@@ -1,12 +1,12 @@
 use tracer::instruction::{virtual_assert_mul_no_overflow::VirtualAssertMulNoOverflow, RISCVCycle};
 
-use crate::zkvm::lookup_table::{valid_upper_bits0::ValidUpperBits0, LookupTables};
+use crate::zkvm::lookup_table::{overflow_bits_zero::OverflowBitsZero, LookupTables};
 
 use super::{CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS};
 
 impl<const XLEN: usize> InstructionLookup<XLEN> for VirtualAssertMulNoOverflow {
     fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
-        Some(ValidUpperBits0.into())
+        Some(OverflowBitsZero.into())
     }
 }
 

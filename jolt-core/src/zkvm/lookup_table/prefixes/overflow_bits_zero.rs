@@ -6,9 +6,9 @@ use crate::{
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 
 /// Prefix that returns 1 if all upper bits (everything except the lower XLEN bits) are zero
-pub enum UpperWordIsZeroPrefix<const XLEN: usize> {}
+pub enum OverflowBitsZeroPrefix<const XLEN: usize> {}
 
-impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for UpperWordIsZeroPrefix<XLEN> {
+impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for OverflowBitsZeroPrefix<XLEN> {
     fn prefix_mle(
         checkpoints: &[PrefixCheckpoint<F>],
         r_x: Option<F>,
@@ -20,10 +20,10 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for UpperWordIsZeroPr
         // If j >= 128-XLEN, we've already checked all upper bits (those beyond XLEN)
         // and now we're in the lower XLEN bits region, so just return the checkpoint
         if j >= 128 - XLEN {
-            return checkpoints[Prefixes::UpperWordIsZero].unwrap_or(F::one());
+            return checkpoints[Prefixes::OverflowBitsZero].unwrap_or(F::one());
         }
 
-        let mut result = checkpoints[Prefixes::UpperWordIsZero].unwrap_or(F::one());
+        let mut result = checkpoints[Prefixes::OverflowBitsZero].unwrap_or(F::one());
 
         // Check that the current bit(s) are zero
         if let Some(r_x) = r_x {
@@ -54,12 +54,12 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for UpperWordIsZeroPr
         // If j >= XLEN, we're in the lower XLEN bits region
         // Just return the existing checkpoint unchanged
         if j >= 128 - XLEN {
-            return checkpoints[Prefixes::UpperWordIsZero].into();
+            return checkpoints[Prefixes::OverflowBitsZero].into();
         }
 
         // We're still in the upper bits region (those that should be zero)
         // Both r_x and r_y must be zero: (1-r_x)(1-r_y)
-        let updated = checkpoints[Prefixes::UpperWordIsZero].unwrap_or(F::one())
+        let updated = checkpoints[Prefixes::OverflowBitsZero].unwrap_or(F::one())
             * (F::one() - r_x)
             * (F::one() - r_y);
 

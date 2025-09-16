@@ -1,6 +1,6 @@
 use crate::instruction::virtual_assert_mul_no_overflow::VirtualAssertMulNoOverflow;
+use crate::utils::inline_helpers::InstrAssembler;
 use crate::utils::virtual_registers::VirtualRegisterAllocator;
-use crate::{instruction::mulhu::MULHU, utils::inline_helpers::InstrAssembler};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -84,8 +84,8 @@ impl RISCVTrace for DIVU {
         let a2 = allocator.allocate(); // quotient from oracle
         let a3 = allocator.allocate(); // remainder from oracle
         let t0 = allocator.allocate();
-        let t1 = allocator.allocate();
-        let zero = 0;
+        // let t1 = allocator.allocate();
+        // let zero = 0;
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
 
         // get advice

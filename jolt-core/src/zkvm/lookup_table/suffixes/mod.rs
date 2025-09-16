@@ -32,9 +32,9 @@ use lower_half_word::LowerHalfWordSuffix;
 use lower_word::LowerWordSuffix;
 use notand::NotAndSuffix;
 use one::OneSuffix;
+use overflow_bits_zero::OverflowBitsZeroSuffix;
 use two_lsb::TwoLsbSuffix;
 use upper_word::UpperWordSuffix;
-use upper_word_is_zero::UpperWordIsZeroSuffix;
 use xor::XorSuffix;
 
 pub mod and;
@@ -54,6 +54,7 @@ pub mod lt;
 pub mod notand;
 pub mod one;
 pub mod or;
+pub mod overflow_bits_zero;
 pub mod pow2;
 pub mod pow2_w;
 pub mod right_is_zero;
@@ -69,7 +70,6 @@ pub mod sign_extension_right_operand;
 pub mod sign_extension_upper_half;
 pub mod two_lsb;
 pub mod upper_word;
-pub mod upper_word_is_zero;
 pub mod xor;
 
 pub trait SparseDenseSuffix: 'static + Sync {
@@ -115,7 +115,7 @@ pub enum Suffixes {
     RightShiftWHelper,
     LeftShiftWHelper,
     LeftShiftW,
-    UpperWordIsZero,
+    OverflowBitsZero,
 }
 
 pub type SuffixEval<F: JoltField> = F;
@@ -160,7 +160,7 @@ impl Suffixes {
             Suffixes::RightShiftWHelper => RightShiftWHelperSuffix::suffix_mle(b),
             Suffixes::LeftShiftWHelper => LeftShiftWHelperSuffix::suffix_mle(b),
             Suffixes::LeftShiftW => LeftShiftWSuffix::suffix_mle(b),
-            Suffixes::UpperWordIsZero => UpperWordIsZeroSuffix::<XLEN>::suffix_mle(b),
+            Suffixes::OverflowBitsZero => OverflowBitsZeroSuffix::<XLEN>::suffix_mle(b),
         }
     }
 }

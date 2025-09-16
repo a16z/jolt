@@ -21,7 +21,7 @@ impl VirtualAssertMulNoOverflow {
     ) {
         let rs1_val = cpu.x[self.operands.rs1 as usize] as u64;
         let rs2_val = cpu.x[self.operands.rs2 as usize] as u64;
-        assert!(rs1_val.checked_mul(rs2_val).is_some(),);
+        assert!(rs1_val.checked_mul(rs2_val).is_some());
     }
 }
 

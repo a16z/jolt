@@ -36,13 +36,13 @@ use lower_word::LowerWordPrefix;
 use lt::LessThanPrefix;
 use num::FromPrimitive;
 use or::OrPrefix;
+use overflow_bits_zero::OverflowBitsZeroPrefix;
 use right_is_zero::RightOperandIsZeroPrefix;
 use right_msb::RightMsbPrefix;
 use right_operand::RightOperandPrefix;
 use right_operand_w::RightOperandWPrefix;
 use two_lsb::TwoLsbPrefix;
 use upper_word::UpperWordPrefix;
-use upper_word_is_zero::UpperWordIsZeroPrefix;
 use xor::XorPrefix;
 
 pub mod and;
@@ -65,6 +65,7 @@ pub mod negative_divisor_equals_remainder;
 pub mod negative_divisor_greater_than_remainder;
 pub mod negative_divisor_zero_remainder;
 pub mod or;
+pub mod overflow_bits_zero;
 pub mod positive_remainder_equals_divisor;
 pub mod positive_remainder_less_than_divisor;
 pub mod pow2;
@@ -80,7 +81,6 @@ pub mod sign_extension_right_operand;
 pub mod sign_extension_upper_half;
 pub mod two_lsb;
 pub mod upper_word;
-pub mod upper_word_is_zero;
 pub mod xor;
 
 pub trait SparseDensePrefix<F: JoltField>: 'static + Sync {
@@ -127,7 +127,7 @@ pub enum Prefixes {
     LowerWord,
     LowerHalfWord,
     UpperWord,
-    UpperWordIsZero,
+    OverflowBitsZero,
     Eq,
     And,
     Andn,
@@ -223,8 +223,8 @@ impl Prefixes {
                 LowerHalfWordPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j)
             }
             Prefixes::UpperWord => UpperWordPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j),
-            Prefixes::UpperWordIsZero => {
-                UpperWordIsZeroPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j)
+            Prefixes::OverflowBitsZero => {
+                OverflowBitsZeroPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j)
             }
             Prefixes::And => AndPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::Andn => AndnPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j),
@@ -343,8 +343,8 @@ impl Prefixes {
             Prefixes::UpperWord => {
                 UpperWordPrefix::<XLEN>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
             }
-            Prefixes::UpperWordIsZero => {
-                UpperWordIsZeroPrefix::<XLEN>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+            Prefixes::OverflowBitsZero => {
+                OverflowBitsZeroPrefix::<XLEN>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
             }
             Prefixes::And => AndPrefix::<XLEN>::update_prefix_checkpoint(checkpoints, r_x, r_y, j),
             Prefixes::Andn => {

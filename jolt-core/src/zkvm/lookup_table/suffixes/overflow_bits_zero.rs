@@ -3,9 +3,9 @@ use crate::utils::lookup_bits::LookupBits;
 use super::SparseDenseSuffix;
 
 /// 1 if the upper XLEN bits are all zero, 0 otherwise.
-pub enum UpperWordIsZeroSuffix<const XLEN: usize> {}
+pub enum OverflowBitsZeroSuffix<const XLEN: usize> {}
 
-impl<const XLEN: usize> SparseDenseSuffix for UpperWordIsZeroSuffix<XLEN> {
+impl<const XLEN: usize> SparseDenseSuffix for OverflowBitsZeroSuffix<XLEN> {
     fn suffix_mle(b: LookupBits) -> u64 {
         if b.len() <= XLEN {
             1
