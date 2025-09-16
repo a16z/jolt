@@ -1,9 +1,9 @@
-use std::fmt::{Debug, Display};
-use std::hash::Hash;
 #[cfg(feature = "allocative")]
 use allocative::Allocative;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{One, Zero};
+use std::fmt::{Debug, Display};
+use std::hash::Hash;
 use std::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub, SubAssign};
 
 pub trait FieldOps<Rhs = Self, Output = Self>:
