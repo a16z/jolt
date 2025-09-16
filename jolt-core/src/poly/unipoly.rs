@@ -9,8 +9,8 @@ use num::Integer;
 use rand_core::{CryptoRng, RngCore};
 use rayon::prelude::*;
 
-use crate::utils::small_scalar::SmallScalar;
 use super::multilinear_polynomial::MultilinearPolynomial;
+use crate::utils::small_scalar::SmallScalar;
 
 // ax^2 + bx + c stored as vec![c,b,a]
 // ax^3 + bx^2 + cx + d stored as vec![d,c,b,a]

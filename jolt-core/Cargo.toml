@@ -40,7 +40,7 @@ parallel = [
     "ark-ff/asm",
     "rayon",
 ]
-allocative = ["dep:inferno", "ark-ff/allocative"]
+allocative = ["dep:inferno"]
 test_incremental = []
 
 [dependencies]

@@ -15,9 +15,7 @@ pub mod svo_helpers {
     use crate::poly::unipoly::CompressedUniPoly;
     use crate::subprotocols::sumcheck::process_eq_sumcheck_round;
     use crate::transcripts::Transcript;
-    use crate::zkvm::r1cs::types::{
-        fmadd_unreduced, mul_az_bz, UnreducedProduct,
-    };
+    use crate::zkvm::r1cs::types::{fmadd_unreduced, mul_az_bz, UnreducedProduct};
     use ark_ff::biginteger::{I8OrI96, S160, S224};
 
     // SVOEvalPoint enum definition
@@ -780,7 +778,7 @@ pub mod svo_helpers {
         F: JoltField,
     >(
         binary_az_evals_input: &[I8OrI96], // 2^N Az at binary points
-        binary_bz_evals_input: &[S160], // 2^N Bz at binary points
+        binary_bz_evals_input: &[S160],    // 2^N Bz at binary points
         e_in_val: &F,
         tA_pos_acc: &mut [UnreducedProduct],
         tA_neg_acc: &mut [UnreducedProduct],
@@ -1699,7 +1697,7 @@ mod tests {
         poly::eq_poly::EqPolynomial,
         poly::spartan_interleaved_poly::build_eq_r_y_table,
         zkvm::r1cs::types::{
-            fmadd_reduce_factor, reduce_unreduced_to_field, I8OrI96, S160, UnreducedProduct,
+            fmadd_reduce_factor, reduce_unreduced_to_field, I8OrI96, UnreducedProduct, S160,
         },
     };
     use ark_bn254::Fr;
@@ -1742,7 +1740,7 @@ mod tests {
 
     fn random_bz_value<R: Rng>(rng: &mut R) -> S160 {
         match rng.gen_range(0..4) {
-            0 => S160::S64(SignedBigInt::<1>::zero()), // zero
+            0 => S160::S64(SignedBigInt::<1>::zero()),      // zero
             1 => S160::S64(SignedBigInt::<1>::from_i64(1)), // one
             2 => S160::S64(SignedBigInt::<1>::from_i64(rng.gen())),
             3 => S160::S128(SignedBigInt::<2>::from_i128(rng.gen())),

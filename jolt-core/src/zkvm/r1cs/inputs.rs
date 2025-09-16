@@ -16,8 +16,7 @@ use crate::zkvm::JoltProverPreprocessing;
 use super::key::UniformSpartanKey;
 use super::spartan::UniformSpartanProof;
 use crate::utils::small_scalar::SmallScalar;
-use ark_ff::biginteger::{S64, S128};
-use ark_ff::SignedBigInt;
+use ark_ff::biginteger::{S128, S64};
 
 use crate::field::JoltField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -449,7 +448,8 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> WitnessRowAccessor<F, J
             }
             other => panic!(
                 "value_at_bool called on non-boolean input {:?} (index {})",
-                other, input_index.to_index()
+                other,
+                input_index.to_index()
             ),
         }
     }
@@ -477,7 +477,8 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> WitnessRowAccessor<F, J
             }
             other => panic!(
                 "value_at_u8 called on non-u8 input {:?} (index {})",
-                other, input_index.to_index()
+                other,
+                input_index.to_index()
             ),
         }
     }
@@ -489,7 +490,10 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> WitnessRowAccessor<F, J
             JoltR1CSInputs::PC => self.preprocessing.shared.bytecode.get_pc(&self.trace[t]) as u64,
             JoltR1CSInputs::NextPC => {
                 if t + 1 < len {
-                    self.preprocessing.shared.bytecode.get_pc(&self.trace[t + 1]) as u64
+                    self.preprocessing
+                        .shared
+                        .bytecode
+                        .get_pc(&self.trace[t + 1]) as u64
                 } else {
                     0
                 }
@@ -526,7 +530,8 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> WitnessRowAccessor<F, J
             }
             JoltR1CSInputs::LookupOutput => LookupQuery::<XLEN>::to_lookup_output(&self.trace[t]),
             JoltR1CSInputs::ShouldBranch => {
-                let is_branch = self.trace[t].instruction().circuit_flags()[CircuitFlags::Branch as usize];
+                let is_branch =
+                    self.trace[t].instruction().circuit_flags()[CircuitFlags::Branch as usize];
                 if is_branch {
                     LookupQuery::<XLEN>::to_lookup_output(&self.trace[t])
                 } else {
@@ -535,7 +540,8 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> WitnessRowAccessor<F, J
             }
             other => panic!(
                 "value_at_u64 called on non-u64 input {:?} (index {})",
-                other, input_index.to_index()
+                other,
+                input_index.to_index()
             ),
         }
     }
@@ -546,20 +552,29 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> WitnessRowAccessor<F, J
             JoltR1CSInputs::Imm => {
                 let v = self.trace[t].instruction().normalize().operands.imm;
                 let mag = v.unsigned_abs();
-                debug_assert!(mag <= u64::MAX as u128,
-                    "value_at_s64 overflow for Imm at row {}: |{}| > 2^64-1", t, v);
-                SignedBigInt::from_u64_with_sign(mag as u64, v >= 0)
+                debug_assert!(
+                    mag <= u64::MAX as u128,
+                    "value_at_s64 overflow for Imm at row {}: |{}| > 2^64-1",
+                    t,
+                    v
+                );
+                S64::from_u64_with_sign(mag as u64, v >= 0)
             }
             JoltR1CSInputs::RightInstructionInput => {
                 let (_l, r) = LookupQuery::<XLEN>::to_instruction_inputs(&self.trace[t]);
                 let mag = r.unsigned_abs();
-                debug_assert!(mag <= u64::MAX as u128,
-                    "value_at_s64 overflow for RightInstructionInput at row {}: |{}| > 2^64-1", t, r);
-                SignedBigInt::from_u64_with_sign(mag as u64, r >= 0)
+                debug_assert!(
+                    mag <= u64::MAX as u128,
+                    "value_at_s64 overflow for RightInstructionInput at row {}: |{}| > 2^64-1",
+                    t,
+                    r
+                );
+                S64::from_u64_with_sign(mag as u64, r >= 0)
             }
             other => panic!(
                 "value_at_s64 called on unsupported input {:?} (index {})",
-                other, input_index.to_index()
+                other,
+                input_index.to_index()
             ),
         }
     }
@@ -573,7 +588,8 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> WitnessRowAccessor<F, J
             }
             other => panic!(
                 "value_at_u128 called on non-u128 input {:?} (index {})",
-                other, input_index.to_index()
+                other,
+                input_index.to_index()
             ),
         }
     }
@@ -582,14 +598,16 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> WitnessRowAccessor<F, J
     fn value_at_s128(&self, input_index: JoltR1CSInputs, t: usize) -> S128 {
         match input_index {
             JoltR1CSInputs::Product => {
-                let (left_u64, right_i128) = LookupQuery::<XLEN>::to_instruction_inputs(&self.trace[t]);
-                let left = SignedBigInt::<1>::from_u64(left_u64);
-                let right = SignedBigInt::<2>::from_i128(right_i128);
+                let (left_u64, right_i128) =
+                    LookupQuery::<XLEN>::to_instruction_inputs(&self.trace[t]);
+                let left: S64 = S64::from_u64(left_u64);
+                let right: S128 = S128::from_i128(right_i128);
                 left.mul_trunc::<2, 2>(&right)
             }
             other => panic!(
                 "value_at_s128 called on non-signed-128-bit input {:?} (index {})",
-                other, input_index.to_index()
+                other,
+                input_index.to_index()
             ),
         }
     }
@@ -625,15 +643,24 @@ pub fn compute_claimed_witness_evals<F: JoltField, PCS: CommitmentScheme<Field =
 
                 // Next row cached data
                 let has_next = (t + 1) < len;
-                let next_cycle = if has_next { Some(&accessor.trace[t + 1]) } else { None };
+                let next_cycle = if has_next {
+                    Some(&accessor.trace[t + 1])
+                } else {
+                    None
+                };
                 let next_is_noop = next_cycle
                     .map(|c| c.instruction().circuit_flags()[CircuitFlags::IsNoop])
                     .unwrap_or(false);
 
                 // Instruction inputs and lookup operands
                 let (left_u64, right_i128) = LookupQuery::<XLEN>::to_instruction_inputs(cycle);
-                // For streaming eval to field, avoid S128 SmallScalar bounds; compute as i128 directly
-                let product_i128 = (left_u64 as i128).saturating_mul(right_i128);
+                // Compute product as S128 (u64 × s64 -> s128) using type-level helpers
+                let left_s64: S64 = S64::from_u64(left_u64);
+                let right_s128: S128 = S128::from_i128(right_i128);
+                let product_s128: S128 = left_s64.mul_trunc::<2, 2>(&right_s128);
+                let product_i128 = product_s128
+                    .to_i128()
+                    .expect("u64*s64 product must fit in i128");
                 let (ll_u64, rl_u128) = LookupQuery::<XLEN>::to_lookup_operands(cycle);
                 let lookup_out_u64 = LookupQuery::<XLEN>::to_lookup_output(cycle);
 
@@ -657,11 +684,6 @@ pub fn compute_claimed_witness_evals<F: JoltField, PCS: CommitmentScheme<Field =
                 } else {
                     0u64
                 };
-
-                // Common flags
-                let f_wr_lu_rd = flags[CircuitFlags::WriteLookupOutputToRD];
-                let f_jump = flags[CircuitFlags::Jump];
-                let f_branch = flags[CircuitFlags::Branch];
 
                 // 0: LeftInstructionInput (u64)
                 chunk_result[0] = left_u64.field_mul(*eq_rx_t);
@@ -723,24 +745,60 @@ pub fn compute_claimed_witness_evals<F: JoltField, PCS: CommitmentScheme<Field =
                     chunk_result[22] = *eq_rx_t;
                 }
                 // 23..40: OpFlags (bool)
-                if flags[CircuitFlags::LeftOperandIsRs1Value] { chunk_result[23] = *eq_rx_t; }
-                if flags[CircuitFlags::RightOperandIsRs2Value] { chunk_result[24] = *eq_rx_t; }
-                if flags[CircuitFlags::LeftOperandIsPC] { chunk_result[25] = *eq_rx_t; }
-                if flags[CircuitFlags::RightOperandIsImm] { chunk_result[26] = *eq_rx_t; }
-                if flags[CircuitFlags::AddOperands] { chunk_result[27] = *eq_rx_t; }
-                if flags[CircuitFlags::SubtractOperands] { chunk_result[28] = *eq_rx_t; }
-                if flags[CircuitFlags::MultiplyOperands] { chunk_result[29] = *eq_rx_t; }
-                if flags[CircuitFlags::Load] { chunk_result[30] = *eq_rx_t; }
-                if flags[CircuitFlags::Store] { chunk_result[31] = *eq_rx_t; }
-                if flags[CircuitFlags::Jump] { chunk_result[32] = *eq_rx_t; }
-                if flags[CircuitFlags::Branch] { chunk_result[33] = *eq_rx_t; }
-                if flags[CircuitFlags::WriteLookupOutputToRD] { chunk_result[34] = *eq_rx_t; }
-                if flags[CircuitFlags::InlineSequenceInstruction] { chunk_result[35] = *eq_rx_t; }
-                if flags[CircuitFlags::Assert] { chunk_result[36] = *eq_rx_t; }
-                if flags[CircuitFlags::DoNotUpdateUnexpandedPC] { chunk_result[37] = *eq_rx_t; }
-                if flags[CircuitFlags::Advice] { chunk_result[38] = *eq_rx_t; }
-                if flags[CircuitFlags::IsNoop] { chunk_result[39] = *eq_rx_t; }
-                if flags[CircuitFlags::IsCompressed] { chunk_result[40] = *eq_rx_t; }
+                if flags[CircuitFlags::LeftOperandIsRs1Value] {
+                    chunk_result[23] = *eq_rx_t;
+                }
+                if flags[CircuitFlags::RightOperandIsRs2Value] {
+                    chunk_result[24] = *eq_rx_t;
+                }
+                if flags[CircuitFlags::LeftOperandIsPC] {
+                    chunk_result[25] = *eq_rx_t;
+                }
+                if flags[CircuitFlags::RightOperandIsImm] {
+                    chunk_result[26] = *eq_rx_t;
+                }
+                if flags[CircuitFlags::AddOperands] {
+                    chunk_result[27] = *eq_rx_t;
+                }
+                if flags[CircuitFlags::SubtractOperands] {
+                    chunk_result[28] = *eq_rx_t;
+                }
+                if flags[CircuitFlags::MultiplyOperands] {
+                    chunk_result[29] = *eq_rx_t;
+                }
+                if flags[CircuitFlags::Load] {
+                    chunk_result[30] = *eq_rx_t;
+                }
+                if flags[CircuitFlags::Store] {
+                    chunk_result[31] = *eq_rx_t;
+                }
+                if flags[CircuitFlags::Jump] {
+                    chunk_result[32] = *eq_rx_t;
+                }
+                if flags[CircuitFlags::Branch] {
+                    chunk_result[33] = *eq_rx_t;
+                }
+                if flags[CircuitFlags::WriteLookupOutputToRD] {
+                    chunk_result[34] = *eq_rx_t;
+                }
+                if flags[CircuitFlags::InlineSequenceInstruction] {
+                    chunk_result[35] = *eq_rx_t;
+                }
+                if flags[CircuitFlags::Assert] {
+                    chunk_result[36] = *eq_rx_t;
+                }
+                if flags[CircuitFlags::DoNotUpdateUnexpandedPC] {
+                    chunk_result[37] = *eq_rx_t;
+                }
+                if flags[CircuitFlags::Advice] {
+                    chunk_result[38] = *eq_rx_t;
+                }
+                if flags[CircuitFlags::IsNoop] {
+                    chunk_result[39] = *eq_rx_t;
+                }
+                if flags[CircuitFlags::IsCompressed] {
+                    chunk_result[40] = *eq_rx_t;
+                }
 
                 t += 1;
             }

@@ -5,8 +5,8 @@ use crate::transcripts::{AppendToTranscript, Transcript};
 use crate::{
     field::JoltField,
     msm::VariableBaseMSM,
-    utils::small_scalar::SmallScalar,
     poly::multilinear_polynomial::MultilinearPolynomial,
+    utils::small_scalar::SmallScalar,
     utils::{errors::ProofVerifyError, math::Math},
 };
 use ark_bn254::{Bn254, Fr, G1Projective, G2Projective};

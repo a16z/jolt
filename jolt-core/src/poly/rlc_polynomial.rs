@@ -1,8 +1,8 @@
 use crate::field::JoltField;
 use crate::msm::VariableBaseMSM;
 use crate::poly::commitment::dory::{DoryGlobals, JoltFieldWrapper, JoltGroupWrapper};
-use crate::utils::small_scalar::SmallScalar;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
+use crate::utils::small_scalar::SmallScalar;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use allocative::Allocative;
 use ark_bn254::{Fr, G1Projective};

@@ -20,7 +20,7 @@ use crate::utils::profiling::print_current_memory_usage;
 use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::utils::small_value::svo_helpers::process_svo_sumcheck_rounds;
 use crate::utils::thread::drop_in_background_thread;
-use crate::zkvm::r1cs::inputs::{WitnessRowAccessor, JoltR1CSInputs};
+use crate::zkvm::r1cs::inputs::{JoltR1CSInputs, WitnessRowAccessor};
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 

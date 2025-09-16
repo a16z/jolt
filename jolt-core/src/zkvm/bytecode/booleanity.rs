@@ -20,8 +20,8 @@ use crate::{
     transcripts::Transcript,
     utils::{
         math::Math,
-        thread::{drop_in_background_thread, unsafe_allocate_zero_vec},
         small_scalar::SmallScalar,
+        thread::{drop_in_background_thread, unsafe_allocate_zero_vec},
     },
 };
 use allocative::Allocative;

@@ -11,15 +11,12 @@ use crate::{
     },
     zkvm::r1cs::{
         constraints::{eval_az_bz_batch, CzKind, UNIFORM_R1CS},
-        inputs::{WitnessRowAccessor, JoltR1CSInputs},
-        types::{
-            mul_az_bz, reduce_unreduced_to_field, SignedUnreducedAccum,
-            UnreducedProduct,
-        },
+        inputs::{JoltR1CSInputs, WitnessRowAccessor},
+        types::{mul_az_bz, reduce_unreduced_to_field, SignedUnreducedAccum, UnreducedProduct},
     },
 };
 use allocative::Allocative;
-use ark_ff::biginteger::{I8OrI96, S160, SignedBigInt};
+use ark_ff::biginteger::{I8OrI96, SignedBigInt, S160};
 use rayon::prelude::*;
 
 pub const TOTAL_NUM_ACCUMS: usize = svo_helpers::total_num_accums(NUM_SVO_ROUNDS);

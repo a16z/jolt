@@ -1,14 +1,14 @@
-use std::ops::Index;
-
-use super::multilinear_polynomial::{BindingOrder, PolynomialBinding};
 use crate::field::{JoltField, OptimizedMul};
 use crate::utils::math::Math;
-use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::utils::small_scalar::SmallScalar;
+use crate::utils::thread::unsafe_allocate_zero_vec;
 use allocative::Allocative;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
 use std::cmp::Ordering;
+use std::ops::Index;
+
+use super::multilinear_polynomial::{BindingOrder, PolynomialBinding};
 
 /// Compact polynomials are used to store coefficients of small scalars.
 /// They have two representations:
@@ -212,8 +212,6 @@ impl<T: SmallScalar, F: JoltField> PolynomialBinding<F> for CompactPolynomial<T,
             // If `a == b`, we can just return `a`
             // If `a < b`, we can compute `a + r * (b - a)`
             // If `a > b`, we can compute `a - r * (a - b)`
-            // Note that we need to "promote" signed small scalars to unsigned ones with subtraction
-            // i.e. |a - b| can be computed as an u64
             match order {
                 BindingOrder::LowToHigh => {
                     self.bound_coeffs = (0..n)
@@ -223,13 +221,9 @@ impl<T: SmallScalar, F: JoltField> PolynomialBinding<F> for CompactPolynomial<T,
                             match a.cmp(&b) {
                                 Ordering::Equal => a.to_field(),
                                 // a < b: Compute a + r * (b - a)
-                                Ordering::Less => {
-                                    a.to_field::<F>() + b.abs_diff_u128(a).field_mul(r)
-                                }
+                                Ordering::Less => a.to_field::<F>() + b.diff_mul_field(a, r),
                                 // a > b: Compute a - r * (a - b)
-                                Ordering::Greater => {
-                                    a.to_field::<F>() - a.abs_diff_u128(b).field_mul(r)
-                                }
+                                Ordering::Greater => a.to_field::<F>() - a.diff_mul_field(b, r),
                             }
                         })
                         .collect();
@@ -243,13 +237,9 @@ impl<T: SmallScalar, F: JoltField> PolynomialBinding<F> for CompactPolynomial<T,
                             match a.cmp(&b) {
                                 Ordering::Equal => a.to_field(),
                                 // a < b: Compute a + r * (b - a)
-                                Ordering::Less => {
-                                    a.to_field::<F>() + b.abs_diff_u128(a).field_mul(r)
-                                }
+                                Ordering::Less => a.to_field::<F>() + b.diff_mul_field(a, r),
                                 // a > b: Compute a - r * (a - b)
-                                Ordering::Greater => {
-                                    a.to_field::<F>() - a.abs_diff_u128(b).field_mul(r)
-                                }
+                                Ordering::Greater => a.to_field::<F>() - a.diff_mul_field(b, r),
                             }
                         })
                         .collect();
@@ -306,13 +296,9 @@ impl<T: SmallScalar, F: JoltField> PolynomialBinding<F> for CompactPolynomial<T,
                             match a.cmp(&b) {
                                 Ordering::Equal => a.to_field(),
                                 // a < b: Compute a + r * (b - a)
-                                Ordering::Less => {
-                                    a.to_field::<F>() + b.abs_diff_u128(a).field_mul(r)
-                                }
+                                Ordering::Less => a.to_field::<F>() + b.diff_mul_field(a, r),
                                 // a > b: Compute a - r * (a - b)
-                                Ordering::Greater => {
-                                    a.to_field::<F>() - a.abs_diff_u128(b).field_mul(r)
-                                }
+                                Ordering::Greater => a.to_field::<F>() - a.diff_mul_field(b, r),
                             }
                         })
                         .collect();
@@ -326,13 +312,9 @@ impl<T: SmallScalar, F: JoltField> PolynomialBinding<F> for CompactPolynomial<T,
                             match a.cmp(&b) {
                                 Ordering::Equal => a.to_field(),
                                 // a < b: Compute a + r * (b - a)
-                                Ordering::Less => {
-                                    a.to_field::<F>() + b.abs_diff_u128(a).field_mul(r)
-                                }
+                                Ordering::Less => a.to_field::<F>() + b.diff_mul_field(a, r),
                                 // a > b: Compute a - r * (a - b)
-                                Ordering::Greater => {
-                                    a.to_field::<F>() - a.abs_diff_u128(b).field_mul(r)
-                                }
+                                Ordering::Greater => a.to_field::<F>() - a.diff_mul_field(b, r),
                             }
                         })
                         .collect();

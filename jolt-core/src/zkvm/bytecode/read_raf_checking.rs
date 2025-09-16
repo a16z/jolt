@@ -16,7 +16,10 @@ use crate::{
     },
     subprotocols::sumcheck::SumcheckInstance,
     transcripts::Transcript,
-    utils::{expanding_table::ExpandingTable, math::Math, thread::unsafe_allocate_zero_vec, small_scalar::SmallScalar},
+    utils::{
+        expanding_table::ExpandingTable, math::Math, small_scalar::SmallScalar,
+        thread::unsafe_allocate_zero_vec,
+    },
     zkvm::{
         dag::state_manager::StateManager,
         instruction::{

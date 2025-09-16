@@ -8,9 +8,7 @@ use rayon::prelude::*;
 use strum_macros::EnumIter;
 
 use super::{
-    compact_polynomial::{CompactPolynomial},
-    dense_mlpoly::DensePolynomial,
-    eq_poly::EqPolynomial,
+    compact_polynomial::CompactPolynomial, dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial,
 };
 use crate::field::{JoltField, OptimizedMul};
 

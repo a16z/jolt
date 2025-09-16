@@ -5,10 +5,10 @@
 //! and provide better performance in the prover's hot path.
 
 use super::inputs::JoltR1CSInputs;
-use ark_ff::biginteger::I8OrI96;
 use crate::field::JoltField;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::utils::small_scalar::SmallScalar;
+use ark_ff::biginteger::I8OrI96;
 
 /// Helper for JoltR1CSInputs to get indices
 impl JoltR1CSInputs {
@@ -714,33 +714,33 @@ impl LC {
 macro_rules! lc {
 	// Entry points: normalize to accumulator form
 	( { $k:literal * $e:expr } $( $rest:tt )* ) => {
-		$crate::lc!(@acc $crate::zkvm::r1cs::ops::LC::from_input_with_coeff($e, $ark_ff::biginteger::I8OrI96::from_i128($k)) ; $( $rest )* )
+		$crate::lc!(@acc $crate::zkvm::r1cs::ops::LC::from_input_with_coeff_i128($e, $k) ; $($rest)* )
 	};
 	( { $k:literal } $( $rest:tt )* ) => {
-		$crate::lc!(@acc $crate::zkvm::r1cs::ops::LC::from_const($ark_ff::biginteger::I8OrI96::from_i128($k)) ; $( $rest )* )
+		$crate::lc!(@acc $crate::zkvm::r1cs::ops::LC::from_const_i128($k) ; $($rest)* )
 	};
 	( { $e:expr } $( $rest:tt )* ) => {
-		$crate::lc!(@acc $crate::zkvm::r1cs::ops::LC::from_input($e) ; $( $rest )* )
+		$crate::lc!(@acc $crate::zkvm::r1cs::ops::LC::from_input($e) ; $($rest)* )
 	};
 
 	// Accumulator folding rules
 	(@acc $acc:expr ; + { $k:literal * $e:expr } $( $rest:tt )* ) => {
-		$crate::lc!(@acc $acc.add_or_zero($crate::zkvm::r1cs::ops::LC::from_input_with_coeff($e, $ark_ff::biginteger::I8OrI96::from_i128($k))) ; $( $rest )* )
+		$crate::lc!(@acc $acc.add_or_zero($crate::zkvm::r1cs::ops::LC::from_input_with_coeff_i128($e, $k)) ; $($rest)* )
 	};
 	(@acc $acc:expr ; - { $k:literal * $e:expr } $( $rest:tt )* ) => {
-		$crate::lc!(@acc $acc.sub_or_zero($crate::zkvm::r1cs::ops::LC::from_input_with_coeff($e, $ark_ff::biginteger::I8OrI96::from_i128($k))) ; $( $rest )* )
+		$crate::lc!(@acc $acc.sub_or_zero($crate::zkvm::r1cs::ops::LC::from_input_with_coeff_i128($e, $k)) ; $($rest)* )
 	};
 	(@acc $acc:expr ; + { $k:literal } $( $rest:tt )* ) => {
-		$crate::lc!(@acc $acc.add_const_or_zero($ark_ff::biginteger::I8OrI96::from_i128($k)) ; $( $rest )* )
+		$crate::lc!(@acc $acc.add_const_or_zero_i128($k) ; $($rest)* )
 	};
 	(@acc $acc:expr ; - { $k:literal } $( $rest:tt )* ) => {
-		$crate::lc!(@acc $acc.add_const_or_zero($ark_ff::biginteger::I8OrI96::from_i128(-$k)) ; $( $rest )* )
+		$crate::lc!(@acc $acc.add_const_or_zero_i128(-$k) ; $($rest)* )
 	};
 	(@acc $acc:expr ; + { $e:expr } $( $rest:tt )* ) => {
-		$crate::lc!(@acc $acc.add_or_zero($crate::zkvm::r1cs::ops::LC::from_input($e)) ; $( $rest )* )
+		$crate::lc!(@acc $acc.add_or_zero($crate::zkvm::r1cs::ops::LC::from_input($e)) ; $($rest)* )
 	};
 	(@acc $acc:expr ; - { $e:expr } $( $rest:tt )* ) => {
-		$crate::lc!(@acc $acc.sub_or_zero($crate::zkvm::r1cs::ops::LC::from_input($e)) ; $( $rest )* )
+		$crate::lc!(@acc $acc.sub_or_zero($crate::zkvm::r1cs::ops::LC::from_input($e)) ; $($rest)* )
 	};
 
 	// End of input
