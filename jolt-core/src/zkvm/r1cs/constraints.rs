@@ -534,11 +534,6 @@ fn diff_to_bz(diff: i128) -> S160 {
     S160::from(diff)
 }
 
-#[inline]
-fn flag_to_az(flag: bool) -> I8OrI96 {
-    I8OrI96::from(flag)
-}
-
 // =============================
 // Precise integer helpers (no clamping)
 // =============================
@@ -603,53 +598,51 @@ pub fn eval_az_by_name<F: JoltField>(
         }
         ConstraintName::LeftInputEqPC => {
             // Az: LeftOperandIsPC flag (0/1)
-            flag_to_az(accessor.value_at_bool(Inp::OpFlags(CircuitFlags::LeftOperandIsPC), row))
+            accessor.value_at_bool(Inp::OpFlags(CircuitFlags::LeftOperandIsPC), row).into()
         }
         ConstraintName::RightInputEqRs2 => {
             // Az: RightOperandIsRs2Value flag (0/1)
-            flag_to_az(
-                accessor.value_at_bool(Inp::OpFlags(CircuitFlags::RightOperandIsRs2Value), row),
-            )
+            accessor.value_at_bool(Inp::OpFlags(CircuitFlags::RightOperandIsRs2Value), row).into()
         }
         ConstraintName::RightInputEqImm => {
             // Az: RightOperandIsImm flag (0/1)
-            flag_to_az(accessor.value_at_bool(Inp::OpFlags(CircuitFlags::RightOperandIsImm), row))
+            accessor.value_at_bool(Inp::OpFlags(CircuitFlags::RightOperandIsImm), row).into()
         }
         ConstraintName::RamReadEqRamWriteIfLoad => {
             // Az: Load flag (0/1)
-            flag_to_az(accessor.value_at_bool(Inp::OpFlags(CircuitFlags::Load), row))
+            accessor.value_at_bool(Inp::OpFlags(CircuitFlags::Load), row).into()
         }
         ConstraintName::RamReadEqRdWriteIfLoad => {
             // Az: Load flag (0/1)
-            flag_to_az(accessor.value_at_bool(Inp::OpFlags(CircuitFlags::Load), row))
+            accessor.value_at_bool(Inp::OpFlags(CircuitFlags::Load), row).into()
         }
         ConstraintName::LeftInputZeroOtherwise => {
             let f1 = accessor.value_at_bool(Inp::OpFlags(CircuitFlags::LeftOperandIsRs1Value), row);
             let f2 = accessor.value_at_bool(Inp::OpFlags(CircuitFlags::LeftOperandIsPC), row);
             // NOTE: relies on exclusivity of these circuit flags (validated in tests):
             // return 1 only if neither flag is set
-            flag_to_az(!(f1 || f2))
+            (!(f1 || f2)).into()
         }
         ConstraintName::RamAddrEqRs1PlusImmIfLoadStore => {
             // Az: Load OR Store flag (0/1)
             let load = accessor.value_at_bool(Inp::OpFlags(CircuitFlags::Load), row);
             let store = accessor.value_at_bool(Inp::OpFlags(CircuitFlags::Store), row);
-            flag_to_az(load || store)
+            (load || store).into()
         }
         ConstraintName::LeftLookupZeroUnlessAddSubMul => {
             let add = accessor.value_at_bool(Inp::OpFlags(CircuitFlags::AddOperands), row);
             let sub = accessor.value_at_bool(Inp::OpFlags(CircuitFlags::SubtractOperands), row);
             let mul = accessor.value_at_bool(Inp::OpFlags(CircuitFlags::MultiplyOperands), row);
             // NOTE: these are exclusive circuit flags (validated in tests)
-            flag_to_az(add || sub || mul)
+            (add || sub || mul).into()
         }
         ConstraintName::RightLookupAdd => {
             // Az: AddOperands flag (0/1)
-            flag_to_az(accessor.value_at_bool(Inp::OpFlags(CircuitFlags::AddOperands), row))
+            accessor.value_at_bool(Inp::OpFlags(CircuitFlags::AddOperands), row).into()
         }
         ConstraintName::RightLookupSub => {
             // Az: SubtractOperands flag (0/1)
-            flag_to_az(accessor.value_at_bool(Inp::OpFlags(CircuitFlags::SubtractOperands), row))
+            accessor.value_at_bool(Inp::OpFlags(CircuitFlags::SubtractOperands), row).into()
         }
         ConstraintName::ProductDef => {
             // Use unsigned left operand (bit pattern) to match Product witness convention
@@ -657,7 +650,7 @@ pub fn eval_az_by_name<F: JoltField>(
         }
         ConstraintName::RightLookupEqProductIfMul => {
             // Az: MultiplyOperands flag (0/1)
-            flag_to_az(accessor.value_at_bool(Inp::OpFlags(CircuitFlags::MultiplyOperands), row))
+            accessor.value_at_bool(Inp::OpFlags(CircuitFlags::MultiplyOperands), row).into()
         }
         ConstraintName::RightLookupEqRightInputOtherwise => {
             let add = accessor.value_at_bool(Inp::OpFlags(CircuitFlags::AddOperands), row);
@@ -666,11 +659,11 @@ pub fn eval_az_by_name<F: JoltField>(
             let adv = accessor.value_at_bool(Inp::OpFlags(CircuitFlags::Advice), row);
             // NOTE: relies on exclusivity of circuit flags (validated in tests):
             // return 1 only if none of add/sub/mul/adv is set
-            flag_to_az(!(add || sub || mul || adv))
+            (!(add || sub || mul || adv)).into()
         }
         ConstraintName::AssertLookupOne => {
             // Az: Assert flag (0/1)
-            flag_to_az(accessor.value_at_bool(Inp::OpFlags(CircuitFlags::Assert), row))
+            accessor.value_at_bool(Inp::OpFlags(CircuitFlags::Assert), row).into()
         }
         ConstraintName::WriteLookupOutputToRDDef => {
             // Az: Rd register index (0 disables write)
@@ -690,19 +683,19 @@ pub fn eval_az_by_name<F: JoltField>(
         }
         ConstraintName::ShouldJumpDef => {
             // Az: Jump flag (0/1)
-            flag_to_az(accessor.value_at_bool(Inp::OpFlags(CircuitFlags::Jump), row))
+            accessor.value_at_bool(Inp::OpFlags(CircuitFlags::Jump), row).into()
         }
         ConstraintName::NextUnexpPCEqLookupIfShouldJump => {
             // Az: ShouldJump indicator (0/1)
-            flag_to_az(accessor.value_at_bool(Inp::ShouldJump, row))
+            accessor.value_at_bool(Inp::ShouldJump, row).into()
         }
         ConstraintName::ShouldBranchDef => {
             // Az: Branch flag (0/1)
-            flag_to_az(accessor.value_at_bool(Inp::OpFlags(CircuitFlags::Branch), row))
+            accessor.value_at_bool(Inp::OpFlags(CircuitFlags::Branch), row).into()
         }
         ConstraintName::NextUnexpPCEqPCPlusImmIfShouldBranch => {
             // Az: ShouldBranch indicator (0/1)
-            flag_to_az(accessor.value_at_u64(Inp::ShouldBranch, row) != 0)
+            (accessor.value_at_u64(Inp::ShouldBranch, row) != 0).into()
         }
         ConstraintName::NextUnexpPCUpdateOtherwise => {
             // Az encodes 1 - ShouldBranch - Jump = (1 - Jump) - ShouldBranch.
@@ -714,9 +707,7 @@ pub fn eval_az_by_name<F: JoltField>(
         }
         ConstraintName::NextPCEqPCPlusOneIfInline => {
             // Az: InlineSequenceInstruction flag (0/1)
-            flag_to_az(
-                accessor.value_at_bool(Inp::OpFlags(CircuitFlags::InlineSequenceInstruction), row),
-            )
+            accessor.value_at_bool(Inp::OpFlags(CircuitFlags::InlineSequenceInstruction), row).into()
         }
         ConstraintName::RightInputZeroOtherwise => {
             let f1 =
@@ -724,11 +715,11 @@ pub fn eval_az_by_name<F: JoltField>(
             let f2 = accessor.value_at_bool(Inp::OpFlags(CircuitFlags::RightOperandIsImm), row);
             // NOTE: relies on exclusivity of these circuit flags (validated in tests):
             // return 1 only if neither flag is set
-            flag_to_az(!(f1 || f2))
+            (!(f1 || f2)).into()
         }
         ConstraintName::Rs2EqRamWriteIfStore => {
             // Az: Store flag (0/1)
-            flag_to_az(accessor.value_at_bool(Inp::OpFlags(CircuitFlags::Store), row))
+            accessor.value_at_bool(Inp::OpFlags(CircuitFlags::Store), row).into()
         }
     }
 }

@@ -12,7 +12,7 @@ use crate::{
     utils::{
         math::Math,
         small_scalar::SmallScalar,
-        small_value::{svo_helpers, NUM_SVO_ROUNDS},
+        small_value::svo_helpers,
     },
     zkvm::r1cs::{
         constraints::{eval_az_bz_batch, CzKind, UNIFORM_R1CS},
@@ -23,16 +23,36 @@ use allocative::Allocative;
 use ark_ff::biginteger::{I8OrI96, S160};
 use rayon::prelude::*;
 
+/// Number of rounds to use for small value optimization.
+/// Testing & estimation shows that 3 rounds is the best tradeoff
+/// It may be 4 rounds when we switch to streaming / GPU proving
+pub const NUM_SVO_ROUNDS: usize = 3;
+
 pub const TOTAL_NUM_ACCUMS: usize = svo_helpers::total_num_accums(NUM_SVO_ROUNDS);
 pub const NUM_NONTRIVIAL_TERNARY_POINTS: usize =
     svo_helpers::num_non_trivial_ternary_points(NUM_SVO_ROUNDS);
 pub const NUM_ACCUMS_EVAL_ZERO: usize = svo_helpers::num_accums_eval_zero(NUM_SVO_ROUNDS);
 pub const NUM_ACCUMS_EVAL_INFTY: usize = svo_helpers::num_accums_eval_infty(NUM_SVO_ROUNDS);
 
+/// Number of Y-assignments per SVO block. Equal to 2^NUM_SVO_ROUNDS.
+/// This is the size of the subspace over the prefix Y used in small-value optimization.
 pub const Y_SVO_SPACE_SIZE: usize = 1 << NUM_SVO_ROUNDS;
-pub const Y_SVO_RELATED_COEFF_BLOCK_SIZE: usize = 4 * Y_SVO_SPACE_SIZE; // Az/Bz * Xk=0/1 * Y_SVO_SPACE_SIZE
-pub const Y_SVO_RELATED_COEFF_BLOCK_SIZE_SHIFT: usize = 10; // log2(4 * 256) = log2(1024) = 10
-pub const Y_SVO_RELATED_COEFF_BLOCK_SIZE_MASK: usize = Y_SVO_RELATED_COEFF_BLOCK_SIZE - 1; // 0x3FF
+
+/// Number of interleaved coefficients per logical block for a fixed (x_out, x_in):
+///  - 2 polynomials (Az, Bz)
+///  - 2 evaluations at x_next ∈ {0, 1}
+///  - Y_SVO_SPACE_SIZE assignments of Y
+/// So total = 4 * Y_SVO_SPACE_SIZE.
+pub const Y_SVO_RELATED_COEFF_BLOCK_SIZE: usize = 4 * Y_SVO_SPACE_SIZE;
+
+/// Bit-width of a logical block. Computed as log2(4) + NUM_SVO_ROUNDS = 2 + NUM_SVO_ROUNDS.
+/// Use this for fast block id calculation via shifts
+pub const Y_SVO_RELATED_COEFF_BLOCK_SIZE_SHIFT: usize = 2 + NUM_SVO_ROUNDS;
+
+/// Bitmask for the local offset within a block. Equals (1 << SHIFT) - 1.
+/// Use this to extract local offsets via bit-and, instead of modulo.
+pub const Y_SVO_RELATED_COEFF_BLOCK_SIZE_MASK: usize =
+    (1usize << Y_SVO_RELATED_COEFF_BLOCK_SIZE_SHIFT) - 1;
 
 // Modifications for streaming version:
 // 1. Do not have the `unbound_coeffs` in the struct
@@ -693,12 +713,12 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                     let mut cz1_field = F::zero();
 
                     loop {
-                        let az_in_block = az_iter.peek().is_some_and(|c| {
-                            c.index >> Y_SVO_RELATED_COEFF_BLOCK_SIZE_SHIFT == current_block_id
-                        });
-                        let bz_in_block = bz_iter.peek().is_some_and(|c| {
-                            c.index >> Y_SVO_RELATED_COEFF_BLOCK_SIZE_SHIFT == current_block_id
-                        });
+                        let az_in_block = az_iter
+                            .peek()
+                            .is_some_and(|c| (c.index >> Y_SVO_RELATED_COEFF_BLOCK_SIZE_SHIFT) == current_block_id);
+                        let bz_in_block = bz_iter
+                            .peek()
+                            .is_some_and(|c| (c.index >> Y_SVO_RELATED_COEFF_BLOCK_SIZE_SHIFT) == current_block_id);
 
                         if !az_in_block && !bz_in_block {
                             break;
@@ -713,8 +733,8 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                             let mut paired_bz_opt: Option<S160> = None;
 
                             let local_offset = az_coeff.index & Y_SVO_RELATED_COEFF_BLOCK_SIZE_MASK;
-                            let y_val_idx = (local_offset >> 1) & (Y_SVO_SPACE_SIZE - 1);
-                            let x_next_val = (local_offset >> 1) >> NUM_SVO_ROUNDS; // 0 or 1
+                            let y_val_idx = (local_offset >> 1) % Y_SVO_SPACE_SIZE;
+                            let x_next_val = (local_offset >> 1) / Y_SVO_SPACE_SIZE; // 0 or 1
                             let eq_r_y = eq_r_evals[y_val_idx];
 
                             az_acc[x_next_val].fmadd_az::<F>(&eq_r_y, az_orig_val);
@@ -770,8 +790,8 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                         } else if bz_in_block {
                             let bz_coeff = bz_iter.next().unwrap();
                             let local_offset = bz_coeff.index & Y_SVO_RELATED_COEFF_BLOCK_SIZE_MASK;
-                            let y_val_idx = (local_offset >> 1) & (Y_SVO_SPACE_SIZE - 1);
-                            let x_next_val = (local_offset >> 1) >> NUM_SVO_ROUNDS; // 0 or 1
+                            let y_val_idx = (local_offset >> 1) % Y_SVO_SPACE_SIZE;
+                            let x_next_val = (local_offset >> 1) / Y_SVO_SPACE_SIZE; // 0 or 1
                             let eq_r_y = eq_r_evals[y_val_idx];
 
                             bz_acc[x_next_val].fmadd_bz::<F>(&eq_r_y, bz_coeff.value);

@@ -2,11 +2,6 @@
 
 use crate::field::JoltField;
 
-/// Number of rounds to use for small value optimization.
-/// Testing & estimation shows that 3 rounds is the best tradeoff
-/// It may be 4 rounds when we switch to streaming / GPU proving
-pub const NUM_SVO_ROUNDS: usize = 3;
-
 // Accumulation primitives for SVO (moved from zkvm/r1cs/types.rs)
 pub mod accum {
     use crate::field::JoltField;
