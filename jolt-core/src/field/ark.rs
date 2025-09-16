@@ -1,9 +1,11 @@
 use super::{FieldOps, JoltField};
 use crate::utils::thread::unsafe_allocate_zero_vec;
-use ark_ff::{prelude::*, BigInt, PrimeField, UniformRand};
-use rayon::prelude::*;
 use allocative::Allocative;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate};
+use ark_ff::{prelude::*, BigInt, PrimeField, UniformRand};
+use ark_serialize::{
+    CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
+};
+use rayon::prelude::*;
 use std::io::{Read, Write};
 
 impl FieldOps for ark_bn254::Fr {}
@@ -297,7 +299,6 @@ impl core::ops::SubAssign<MontU128> for ark_bn254::Fr {
     }
 }
 
-
 /// A zero cost-wrapper around `u128` indicating that the value is already
 /// in Montgomery form for the target field
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, Allocative)]
@@ -329,7 +330,6 @@ impl From<u64> for MontU128 {
 }
 
 // === Serialization impls ===
-
 
 impl CanonicalSerialize for MontU128 {
     // fn serialize<W: Write>(&self, writer: W) -> Result<(), SerializationError> {
@@ -413,7 +413,6 @@ impl CanonicalDeserialize for MontU128 {
 
         Ok(MontU128(limbs))
     }
-
 
     // fn deserialize_uncompressed_unchecked<R: Read>(
     //     mut reader: R,
@@ -499,5 +498,3 @@ mod tests {
         }
     }
 }
-
-

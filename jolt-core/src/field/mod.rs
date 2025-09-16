@@ -1,9 +1,10 @@
 use std::fmt::{Debug, Display};
 use std::hash::Hash;
-
-use std::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub, SubAssign};
+#[cfg(feature = "allocative")]
+use allocative::Allocative;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{One, Zero};
+use std::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub, SubAssign};
 
 pub trait FieldOps<Rhs = Self, Output = Self>:
     Add<Rhs, Output = Output>
@@ -12,8 +13,6 @@ pub trait FieldOps<Rhs = Self, Output = Self>:
     + Div<Rhs, Output = Output>
 {
 }
-
-
 
 pub trait JoltField:
     'static
