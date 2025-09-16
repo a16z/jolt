@@ -13,7 +13,13 @@ pub trait SmallScalar:
     fn to_field<F: JoltField>(self) -> F;
     /// Fused absolute-difference then multiply by a field element: returns |self - other| * r.
     /// Implementations should choose the most efficient mul (prefer mul_u64 where possible).
-    fn diff_mul_field<F: JoltField>(self, other: Self, r: F) -> F;
+    fn diff_mul_field<F: JoltField>(self, other: Self, r: F) -> F {
+        if self > other {
+            self.field_mul(r) - other.field_mul(r)
+        } else {
+            other.field_mul(r) - self.field_mul(r)
+        }
+    }
 }
 
 impl SmallScalar for bool {
@@ -223,24 +229,5 @@ impl SmallScalar for S128 {
                 -F::from_u128(mag)
             }
         }
-    }
-    #[inline]
-    fn diff_mul_field<F: JoltField>(self, other: Self, r: F) -> F {
-        let diff = if let (Some(a), Some(b)) = (self.to_i128(), other.to_i128()) {
-            (a - b).unsigned_abs()
-        } else {
-            let a_mag = self.magnitude_as_u128();
-            let b_mag = other.magnitude_as_u128();
-            if self.is_positive == other.is_positive {
-                if a_mag >= b_mag {
-                    a_mag - b_mag
-                } else {
-                    b_mag - a_mag
-                }
-            } else {
-                a_mag.checked_add(b_mag).expect("abs_diff overflowed u128")
-            }
-        };
-        r.mul_u128(diff)
     }
 }

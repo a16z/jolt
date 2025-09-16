@@ -297,29 +297,38 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> TraceWitnessAccessor<'a
             trace,
         }
     }
+}
 
-    /// Old implementation from rv64 branch that returns field elements directly
+impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> WitnessRowAccessor<F, JoltR1CSInputs>
+    for TraceWitnessAccessor<'a, F, PCS>
+{
     #[inline]
-    pub fn value_at_old(&self, input_index: JoltR1CSInputs, t: usize) -> F {
+    fn num_steps(&self) -> usize {
+        self.trace.len()
+    }
+
+    /// Implementation that returns field elements directly
+    #[inline]
+    fn value_at_field(&self, input_index: JoltR1CSInputs, t: usize) -> F {
         let len = self.trace.len();
         let get = |idx: usize| -> &RV32IMCycle { &self.trace[idx] };
         match input_index {
             JoltR1CSInputs::PC => {
-                F::from_u64(self.preprocessing.shared.bytecode.get_pc(get(t)) as u64)
+                (self.preprocessing.shared.bytecode.get_pc(get(t)) as u64).to_field()
             }
             JoltR1CSInputs::NextPC => {
                 if t + 1 < len {
-                    F::from_u64(self.preprocessing.shared.bytecode.get_pc(get(t + 1)) as u64)
+                    (self.preprocessing.shared.bytecode.get_pc(get(t + 1)) as u64).to_field()
                 } else {
                     F::zero()
                 }
             }
             JoltR1CSInputs::UnexpandedPC => {
-                F::from_u64(get(t).instruction().normalize().address as u64)
+                (get(t).instruction().normalize().address as u64).to_field()
             }
             JoltR1CSInputs::NextUnexpandedPC => {
                 if t + 1 < len {
-                    F::from_u64(get(t + 1).instruction().normalize().address as u64)
+                    (get(t + 1).instruction().normalize().address as u64).to_field()
                 } else {
                     F::zero()
                 }
@@ -336,7 +345,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> TraceWitnessAccessor<'a
                     tracer::instruction::RAMAccess::Write(write) => write.pre_value,
                     tracer::instruction::RAMAccess::NoOp => 0,
                 };
-                F::from_u64(v)
+                v.to_field()
             }
             JoltR1CSInputs::RamWriteValue => {
                 let v = match get(t).ram_access() {
@@ -344,36 +353,44 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> TraceWitnessAccessor<'a
                     tracer::instruction::RAMAccess::Write(write) => write.post_value,
                     tracer::instruction::RAMAccess::NoOp => 0,
                 };
-                F::from_u64(v)
+                v.to_field()
             }
             JoltR1CSInputs::LeftInstructionInput => {
                 let (left, _right) = LookupQuery::<XLEN>::to_instruction_inputs(get(t));
-                F::from_u64(left)
+                left.to_field()
             }
             JoltR1CSInputs::RightInstructionInput => {
                 let (_left, right) = LookupQuery::<XLEN>::to_instruction_inputs(get(t));
-                F::from_i128(right)
+                right.to_field()
             }
             JoltR1CSInputs::LeftLookupOperand => {
                 let (l, _r) = LookupQuery::<XLEN>::to_lookup_operands(get(t));
-                F::from_u64(l)
+                l.to_field()
             }
             JoltR1CSInputs::RightLookupOperand => {
                 let (_l, r) = LookupQuery::<XLEN>::to_lookup_operands(get(t));
-                F::from_u128(r)
+                r.to_field()
             }
             JoltR1CSInputs::Product => {
                 let (left, right) = LookupQuery::<XLEN>::to_instruction_inputs(get(t));
-                F::from_u64(left) * F::from_i128(right)
+                F::from_i128(right).mul_u64(left)
             }
             JoltR1CSInputs::WriteLookupOutputToRD => {
                 let flag = get(t).instruction().circuit_flags()
                     [CircuitFlags::WriteLookupOutputToRD as usize];
-                F::from_u8(get(t).rd_write().0 * (flag as u8))
+                if flag {
+                    get(t).rd_write().0.to_field()
+                } else {
+                    F::zero()
+                }
             }
             JoltR1CSInputs::WritePCtoRD => {
                 let flag = get(t).instruction().circuit_flags()[CircuitFlags::Jump as usize];
-                F::from_u8(get(t).rd_write().0 * (flag as u8))
+                if flag {
+                    get(t).rd_write().0.to_field()
+                } else {
+                    F::zero()
+                }
             }
             JoltR1CSInputs::LookupOutput => {
                 F::from_u64(LookupQuery::<XLEN>::to_lookup_output(get(t)))
@@ -381,15 +398,19 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> TraceWitnessAccessor<'a
             JoltR1CSInputs::NextIsNoop => {
                 if t + 1 < len {
                     let no = get(t + 1).instruction().circuit_flags()[CircuitFlags::IsNoop];
-                    F::from_u8(no as u8)
+                    no.to_field()
                 } else {
                     F::zero()
                 }
             }
             JoltR1CSInputs::ShouldBranch => {
                 let is_branch = get(t).instruction().circuit_flags()[CircuitFlags::Branch as usize];
-                let out = LookupQuery::<XLEN>::to_lookup_output(get(t)) as u8;
-                F::from_u8(out * (is_branch as u8))
+                if is_branch {
+                    let out = LookupQuery::<XLEN>::to_lookup_output(get(t));
+                    out.to_field()
+                } else {
+                    F::zero()
+                }
             }
             JoltR1CSInputs::ShouldJump => {
                 let is_jump = get(t).instruction().circuit_flags()[CircuitFlags::Jump];
@@ -398,27 +419,12 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> TraceWitnessAccessor<'a
                 } else {
                     true
                 };
-                F::from_u8((is_jump && !next_noop) as u8)
+                (is_jump && !next_noop).to_field()
             }
             JoltR1CSInputs::OpFlags(flag) => {
-                F::from_u8(get(t).instruction().circuit_flags()[flag as usize] as u8)
+                get(t).instruction().circuit_flags()[flag as usize].to_field()
             }
         }
-    }
-}
-
-impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> WitnessRowAccessor<F, JoltR1CSInputs>
-    for TraceWitnessAccessor<'a, F, PCS>
-{
-    #[inline]
-    fn num_steps(&self) -> usize {
-        self.trace.len()
-    }
-
-    #[inline]
-    fn value_at_field(&self, input_index: JoltR1CSInputs, t: usize) -> F {
-        // Delegate to legacy field evaluation for exact old semantics
-        self.value_at_old(input_index, t)
     }
 
     // ============================
@@ -660,9 +666,6 @@ pub fn compute_claimed_witness_evals<F: JoltField, PCS: CommitmentScheme<Field =
                 let left_s64: S64 = S64::from_u64(left_u64);
                 let right_s128: S128 = S128::from_i128(right_i128);
                 let product_s128: S128 = left_s64.mul_trunc::<2, 2>(&right_s128);
-                let product_i128 = product_s128
-                    .to_i128()
-                    .expect("u64*s64 product must fit in i128");
                 let (ll_u64, rl_u128) = LookupQuery::<XLEN>::to_lookup_operands(cycle);
                 let lookup_out_u64 = LookupQuery::<XLEN>::to_lookup_output(cycle);
 
@@ -694,7 +697,7 @@ pub fn compute_claimed_witness_evals<F: JoltField, PCS: CommitmentScheme<Field =
                 chunk_result[JoltR1CSInputs::RightInstructionInput.to_index()] =
                     right_i128.field_mul(*eq_rx_t);
                 // 2: Product = left_u64 * right_i128
-                chunk_result[JoltR1CSInputs::Product.to_index()] = product_i128.field_mul(*eq_rx_t);
+                chunk_result[JoltR1CSInputs::Product.to_index()] = product_s128.field_mul(*eq_rx_t);
                 // 3: WriteLookupOutputToRD = rd if flag else 0 (u8)
                 if flags[CircuitFlags::WriteLookupOutputToRD] {
                     chunk_result[JoltR1CSInputs::WriteLookupOutputToRD.to_index()] =

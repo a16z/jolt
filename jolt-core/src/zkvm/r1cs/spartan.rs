@@ -28,8 +28,8 @@ use crate::zkvm::r1cs::inputs::{
 use crate::zkvm::r1cs::key::UniformSpartanKey;
 use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 
-use crate::transcripts::Transcript;
 use crate::poly::spartan_interleaved_poly::NUM_SVO_ROUNDS;
+use crate::transcripts::Transcript;
 use ark_serialize::CanonicalDeserialize;
 use ark_serialize::CanonicalSerialize;
 

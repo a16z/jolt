@@ -9,11 +9,7 @@ use crate::{
         fmadd_reduce_factor, reduce_unreduced_to_field, s160_to_field, SignedUnreducedAccum,
         UnreducedProduct,
     },
-    utils::{
-        math::Math,
-        small_scalar::SmallScalar,
-        small_value::svo_helpers,
-    },
+    utils::{math::Math, small_scalar::SmallScalar, small_value::svo_helpers},
     zkvm::r1cs::{
         constraints::{eval_az_bz_batch, CzKind, UNIFORM_R1CS},
         inputs::{JoltR1CSInputs, WitnessRowAccessor},
@@ -713,12 +709,12 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                     let mut cz1_field = F::zero();
 
                     loop {
-                        let az_in_block = az_iter
-                            .peek()
-                            .is_some_and(|c| (c.index >> Y_SVO_RELATED_COEFF_BLOCK_SIZE_SHIFT) == current_block_id);
-                        let bz_in_block = bz_iter
-                            .peek()
-                            .is_some_and(|c| (c.index >> Y_SVO_RELATED_COEFF_BLOCK_SIZE_SHIFT) == current_block_id);
+                        let az_in_block = az_iter.peek().is_some_and(|c| {
+                            (c.index >> Y_SVO_RELATED_COEFF_BLOCK_SIZE_SHIFT) == current_block_id
+                        });
+                        let bz_in_block = bz_iter.peek().is_some_and(|c| {
+                            (c.index >> Y_SVO_RELATED_COEFF_BLOCK_SIZE_SHIFT) == current_block_id
+                        });
 
                         if !az_in_block && !bz_in_block {
                             break;

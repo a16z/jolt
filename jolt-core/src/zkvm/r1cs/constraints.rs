@@ -301,7 +301,7 @@ macro_rules! r1cs_prod_named {
 /// Number of uniform R1CS constraints
 pub const NUM_R1CS_CONSTRAINTS: usize = 27;
 
-/// Static table of all 28 R1CS uniform constraints.
+/// Static table of all 27 R1CS uniform constraints.
 pub static UNIFORM_R1CS: [NamedConstraint; NUM_R1CS_CONSTRAINTS] = [
     // if LeftOperandIsRs1Value { assert!(LeftInstructionInput == Rs1Value) }
     r1cs_eq_conditional!(
@@ -528,60 +528,6 @@ pub static UNIFORM_R1CS: [NamedConstraint; NUM_R1CS_CONSTRAINTS] = [
     ),
 ];
 
-#[inline]
-fn diff_to_bz(diff: i128) -> S160 {
-    // New S160 is a sign-magnitude (64*2 + 32)-bit type; From<i128> fits directly
-    S160::from(diff)
-}
-
-// =============================
-// Precise integer helpers (no clamping)
-// =============================
-
-#[inline]
-fn s160_from_u64_diff(a: u64, b: u64) -> S160 {
-    let mag = a.abs_diff(b);
-    let is_positive = a >= b;
-    S160::new([mag, 0], 0, is_positive)
-}
-
-#[inline]
-fn s160_from_u128_mag(mag: u128, is_positive: bool) -> S160 {
-    S160::new([mag as u64, (mag >> 64) as u64], 0, is_positive)
-}
-
-#[inline]
-fn u128_diff_to_bz(u1: u128, u2: u128) -> S160 {
-    if u1 >= u2 {
-        s160_from_u128_mag(u1 - u2, true)
-    } else {
-        s160_from_u128_mag(u2 - u1, false)
-    }
-}
-
-#[inline]
-fn u128_plus_u128_to_s160_mag(u1: u128, u2: u128) -> S160 {
-    let u1_lo = u1 as u64;
-    let u1_hi = (u1 >> 64) as u64;
-    let u2_lo = u2 as u64;
-    let u2_hi = (u2 >> 64) as u64;
-    let (sum_lo, carry0) = u1_lo.overflowing_add(u2_lo);
-    let (sum_hi1, carry1) = u1_hi.overflowing_add(u2_hi);
-    let (sum_hi, carry2) = sum_hi1.overflowing_add(if carry0 { 1 } else { 0 });
-    let carry_out = (carry1 as u8 | carry2 as u8) != 0;
-    S160::new([sum_lo, sum_hi], if carry_out { 1 } else { 0 }, true)
-}
-
-#[inline]
-fn u128_minus_i128_to_bz(u: u128, i: i128) -> S160 {
-    if i >= 0 {
-        u128_diff_to_bz(u, i as u128)
-    } else {
-        let abs_i = i.unsigned_abs();
-        u128_plus_u128_to_s160_mag(u, abs_i)
-    }
-}
-
 #[allow(unreachable_patterns)]
 pub fn eval_az_by_name<F: JoltField>(
     c: &NamedConstraint,
@@ -598,29 +544,35 @@ pub fn eval_az_by_name<F: JoltField>(
         }
         ConstraintName::LeftInputEqPC => {
             // Az: LeftOperandIsPC flag (0/1)
-            accessor.value_at_bool(Inp::OpFlags(CircuitFlags::LeftOperandIsPC), row).into()
+            accessor
+                .value_at_bool(Inp::OpFlags(CircuitFlags::LeftOperandIsPC), row)
+                .into()
+        }
+        ConstraintName::LeftInputZeroOtherwise => {
+            // NOTE: relies on exclusivity of these circuit flags (validated in tests):
+            // return 1 only if neither flag is set
+            let f1 = accessor.value_at_bool(Inp::OpFlags(CircuitFlags::LeftOperandIsRs1Value), row);
+            let f2 = accessor.value_at_bool(Inp::OpFlags(CircuitFlags::LeftOperandIsPC), row);
+            (!(f1 || f2)).into()
         }
         ConstraintName::RightInputEqRs2 => {
             // Az: RightOperandIsRs2Value flag (0/1)
-            accessor.value_at_bool(Inp::OpFlags(CircuitFlags::RightOperandIsRs2Value), row).into()
+            accessor
+                .value_at_bool(Inp::OpFlags(CircuitFlags::RightOperandIsRs2Value), row)
+                .into()
         }
         ConstraintName::RightInputEqImm => {
             // Az: RightOperandIsImm flag (0/1)
-            accessor.value_at_bool(Inp::OpFlags(CircuitFlags::RightOperandIsImm), row).into()
+            accessor
+                .value_at_bool(Inp::OpFlags(CircuitFlags::RightOperandIsImm), row)
+                .into()
         }
-        ConstraintName::RamReadEqRamWriteIfLoad => {
-            // Az: Load flag (0/1)
-            accessor.value_at_bool(Inp::OpFlags(CircuitFlags::Load), row).into()
-        }
-        ConstraintName::RamReadEqRdWriteIfLoad => {
-            // Az: Load flag (0/1)
-            accessor.value_at_bool(Inp::OpFlags(CircuitFlags::Load), row).into()
-        }
-        ConstraintName::LeftInputZeroOtherwise => {
-            let f1 = accessor.value_at_bool(Inp::OpFlags(CircuitFlags::LeftOperandIsRs1Value), row);
-            let f2 = accessor.value_at_bool(Inp::OpFlags(CircuitFlags::LeftOperandIsPC), row);
+        ConstraintName::RightInputZeroOtherwise => {
             // NOTE: relies on exclusivity of these circuit flags (validated in tests):
             // return 1 only if neither flag is set
+            let f1 =
+                accessor.value_at_bool(Inp::OpFlags(CircuitFlags::RightOperandIsRs2Value), row);
+            let f2 = accessor.value_at_bool(Inp::OpFlags(CircuitFlags::RightOperandIsImm), row);
             (!(f1 || f2)).into()
         }
         ConstraintName::RamAddrEqRs1PlusImmIfLoadStore => {
@@ -629,20 +581,42 @@ pub fn eval_az_by_name<F: JoltField>(
             let store = accessor.value_at_bool(Inp::OpFlags(CircuitFlags::Store), row);
             (load || store).into()
         }
+        ConstraintName::RamReadEqRamWriteIfLoad => {
+            // Az: Load flag (0/1)
+            accessor
+                .value_at_bool(Inp::OpFlags(CircuitFlags::Load), row)
+                .into()
+        }
+        ConstraintName::RamReadEqRdWriteIfLoad => {
+            // Az: Load flag (0/1)
+            accessor
+                .value_at_bool(Inp::OpFlags(CircuitFlags::Load), row)
+                .into()
+        }
+        ConstraintName::Rs2EqRamWriteIfStore => {
+            // Az: Store flag (0/1)
+            accessor
+                .value_at_bool(Inp::OpFlags(CircuitFlags::Store), row)
+                .into()
+        }
         ConstraintName::LeftLookupZeroUnlessAddSubMul => {
+            // NOTE: these are exclusive circuit flags (validated in tests)
             let add = accessor.value_at_bool(Inp::OpFlags(CircuitFlags::AddOperands), row);
             let sub = accessor.value_at_bool(Inp::OpFlags(CircuitFlags::SubtractOperands), row);
             let mul = accessor.value_at_bool(Inp::OpFlags(CircuitFlags::MultiplyOperands), row);
-            // NOTE: these are exclusive circuit flags (validated in tests)
             (add || sub || mul).into()
         }
         ConstraintName::RightLookupAdd => {
             // Az: AddOperands flag (0/1)
-            accessor.value_at_bool(Inp::OpFlags(CircuitFlags::AddOperands), row).into()
+            accessor
+                .value_at_bool(Inp::OpFlags(CircuitFlags::AddOperands), row)
+                .into()
         }
         ConstraintName::RightLookupSub => {
             // Az: SubtractOperands flag (0/1)
-            accessor.value_at_bool(Inp::OpFlags(CircuitFlags::SubtractOperands), row).into()
+            accessor
+                .value_at_bool(Inp::OpFlags(CircuitFlags::SubtractOperands), row)
+                .into()
         }
         ConstraintName::ProductDef => {
             // Use unsigned left operand (bit pattern) to match Product witness convention
@@ -650,20 +624,24 @@ pub fn eval_az_by_name<F: JoltField>(
         }
         ConstraintName::RightLookupEqProductIfMul => {
             // Az: MultiplyOperands flag (0/1)
-            accessor.value_at_bool(Inp::OpFlags(CircuitFlags::MultiplyOperands), row).into()
+            accessor
+                .value_at_bool(Inp::OpFlags(CircuitFlags::MultiplyOperands), row)
+                .into()
         }
         ConstraintName::RightLookupEqRightInputOtherwise => {
+            // NOTE: relies on exclusivity of circuit flags (validated in tests):
+            // return 1 only if none of add/sub/mul/adv is set
             let add = accessor.value_at_bool(Inp::OpFlags(CircuitFlags::AddOperands), row);
             let sub = accessor.value_at_bool(Inp::OpFlags(CircuitFlags::SubtractOperands), row);
             let mul = accessor.value_at_bool(Inp::OpFlags(CircuitFlags::MultiplyOperands), row);
             let adv = accessor.value_at_bool(Inp::OpFlags(CircuitFlags::Advice), row);
-            // NOTE: relies on exclusivity of circuit flags (validated in tests):
-            // return 1 only if none of add/sub/mul/adv is set
             (!(add || sub || mul || adv)).into()
         }
         ConstraintName::AssertLookupOne => {
             // Az: Assert flag (0/1)
-            accessor.value_at_bool(Inp::OpFlags(CircuitFlags::Assert), row).into()
+            accessor
+                .value_at_bool(Inp::OpFlags(CircuitFlags::Assert), row)
+                .into()
         }
         ConstraintName::WriteLookupOutputToRDDef => {
             // Az: Rd register index (0 disables write)
@@ -683,7 +661,9 @@ pub fn eval_az_by_name<F: JoltField>(
         }
         ConstraintName::ShouldJumpDef => {
             // Az: Jump flag (0/1)
-            accessor.value_at_bool(Inp::OpFlags(CircuitFlags::Jump), row).into()
+            accessor
+                .value_at_bool(Inp::OpFlags(CircuitFlags::Jump), row)
+                .into()
         }
         ConstraintName::NextUnexpPCEqLookupIfShouldJump => {
             // Az: ShouldJump indicator (0/1)
@@ -691,11 +671,13 @@ pub fn eval_az_by_name<F: JoltField>(
         }
         ConstraintName::ShouldBranchDef => {
             // Az: Branch flag (0/1)
-            accessor.value_at_bool(Inp::OpFlags(CircuitFlags::Branch), row).into()
+            accessor
+                .value_at_bool(Inp::OpFlags(CircuitFlags::Branch), row)
+                .into()
         }
         ConstraintName::NextUnexpPCEqPCPlusImmIfShouldBranch => {
             // Az: ShouldBranch indicator (0/1)
-            (accessor.value_at_u64(Inp::ShouldBranch, row) != 0).into()
+            accessor.value_at_u64(Inp::ShouldBranch, row).into()
         }
         ConstraintName::NextUnexpPCUpdateOtherwise => {
             // Az encodes 1 - ShouldBranch - Jump = (1 - Jump) - ShouldBranch.
@@ -707,19 +689,9 @@ pub fn eval_az_by_name<F: JoltField>(
         }
         ConstraintName::NextPCEqPCPlusOneIfInline => {
             // Az: InlineSequenceInstruction flag (0/1)
-            accessor.value_at_bool(Inp::OpFlags(CircuitFlags::InlineSequenceInstruction), row).into()
-        }
-        ConstraintName::RightInputZeroOtherwise => {
-            let f1 =
-                accessor.value_at_bool(Inp::OpFlags(CircuitFlags::RightOperandIsRs2Value), row);
-            let f2 = accessor.value_at_bool(Inp::OpFlags(CircuitFlags::RightOperandIsImm), row);
-            // NOTE: relies on exclusivity of these circuit flags (validated in tests):
-            // return 1 only if neither flag is set
-            (!(f1 || f2)).into()
-        }
-        ConstraintName::Rs2EqRamWriteIfStore => {
-            // Az: Store flag (0/1)
-            accessor.value_at_bool(Inp::OpFlags(CircuitFlags::Store), row).into()
+            accessor
+                .value_at_bool(Inp::OpFlags(CircuitFlags::InlineSequenceInstruction), row)
+                .into()
         }
     }
 }
@@ -736,57 +708,68 @@ pub fn eval_bz_by_name<F: JoltField>(
             // B: LeftInstructionInput - Rs1Value (signed-magnitude over u64 bit patterns)
             let left = accessor.value_at_u64(Inp::LeftInstructionInput, row);
             let rs1 = accessor.value_at_u64(Inp::Rs1Value, row);
-            s160_from_u64_diff(left, rs1)
+            S160::from_diff_u64(left, rs1)
         }
         ConstraintName::LeftInputEqPC => {
             // B: LeftInstructionInput - UnexpandedPC (signed-magnitude over u64 bit patterns)
             let left = accessor.value_at_u64(Inp::LeftInstructionInput, row);
             let pc = accessor.value_at_u64(Inp::UnexpandedPC, row);
-            s160_from_u64_diff(left, pc)
+            S160::from_diff_u64(left, pc)
+        }
+        ConstraintName::LeftInputZeroOtherwise => {
+            // B: LeftInstructionInput - 0 (u64 bit pattern)
+            let left = accessor.value_at_u64(Inp::LeftInstructionInput, row);
+            S160::from_diff_u64(left, 0)
         }
         ConstraintName::RightInputEqRs2 => {
             // B: RightInstructionInput - Rs2Value (i128 arithmetic)
-            let right_i128 = accessor
-                .value_at_s64(Inp::RightInstructionInput, row)
-                .to_i128();
+            let right_s64 = accessor.value_at_s64(Inp::RightInstructionInput, row);
             let rs2_u64 = accessor.value_at_u64(Inp::Rs2Value, row);
-            diff_to_bz(right_i128 - (rs2_u64 as i128))
+            S160::from(right_s64) - S160::from(rs2_u64)
         }
         ConstraintName::RightInputEqImm => {
             // B: RightInstructionInput - Imm (i128 arithmetic)
-            let right_i128 = accessor
-                .value_at_s64(Inp::RightInstructionInput, row)
-                .to_i128();
-            let imm_i128 = accessor.value_at_s64(Inp::Imm, row).to_i128();
-            diff_to_bz(right_i128 - imm_i128)
+            let right_s64 = accessor.value_at_s64(Inp::RightInstructionInput, row);
+            let imm_s64 = accessor.value_at_s64(Inp::Imm, row);
+            S160::from(right_s64) - S160::from(imm_s64)
+        }
+        ConstraintName::RightInputZeroOtherwise => {
+            // B: RightInstructionInput - 0 (i128 arithmetic)
+            let right_s64 = accessor.value_at_s64(Inp::RightInstructionInput, row);
+            S160::from(right_s64)
+        }
+        ConstraintName::RamAddrEqRs1PlusImmIfLoadStore => {
+            // B: (Rs1Value + Imm) - 0 (true_val - false_val from if-else)
+            let rs1_u64 = accessor.value_at_u64(Inp::Rs1Value, row);
+            let imm_s64 = accessor.value_at_s64(Inp::Imm, row);
+            if imm_s64.is_positive {
+                S160::from(rs1_u64 as u128 + imm_s64.magnitude_as_u64() as u128)
+            } else {
+                S160::from(rs1_u64 as i128 - imm_s64.magnitude_as_u64() as i128)
+            }
         }
         ConstraintName::RamReadEqRamWriteIfLoad => {
             // B: RamReadValue - RamWriteValue (u64 bit-pattern difference)
             let rd = accessor.value_at_u64(Inp::RamReadValue, row);
             let wr = accessor.value_at_u64(Inp::RamWriteValue, row);
-            s160_from_u64_diff(rd, wr)
+            S160::from_diff_u64(rd, wr)
         }
         ConstraintName::RamReadEqRdWriteIfLoad => {
             // B: RamReadValue - RdWriteValue (u64 bit-pattern difference)
-            let rd = accessor.value_at_u64(Inp::RamReadValue, row);
-            let rdw = accessor.value_at_u64(Inp::RdWriteValue, row);
-            s160_from_u64_diff(rd, rdw)
+            let rd_u64 = accessor.value_at_u64(Inp::RamReadValue, row);
+            let rdw_u64 = accessor.value_at_u64(Inp::RdWriteValue, row);
+            S160::from_diff_u64(rd_u64, rdw_u64)
         }
-        ConstraintName::LeftInputZeroOtherwise => {
-            // B: LeftInstructionInput - 0 (u64 bit pattern)
-            let left = accessor.value_at_u64(Inp::LeftInstructionInput, row);
-            s160_from_u64_diff(left, 0)
-        }
-        ConstraintName::RamAddrEqRs1PlusImmIfLoadStore => {
-            // B: (Rs1Value + Imm) - 0 (true_val - false_val from if-else)
-            let rs1 = accessor.value_at_u64(Inp::Rs1Value, row) as i128;
-            let imm = accessor.value_at_s64(Inp::Imm, row).to_i128();
-            diff_to_bz(rs1 + imm)
+        ConstraintName::Rs2EqRamWriteIfStore => {
+            // B: Rs2Value - RamWriteValue (u64 bit-pattern difference)
+            let rs2_u64 = accessor.value_at_u64(Inp::Rs2Value, row);
+            let wr_u64 = accessor.value_at_u64(Inp::RamWriteValue, row);
+            S160::from_diff_u64(rs2_u64, wr_u64)
         }
         ConstraintName::LeftLookupZeroUnlessAddSubMul => {
             // B: 0 - LeftInstructionInput (true_val - false_val from if-else)
-            let left = accessor.value_at_u64(Inp::LeftInstructionInput, row) as i128;
-            diff_to_bz(0 - left)
+            let left_u64 = accessor.value_at_u64(Inp::LeftInstructionInput, row);
+            S160::from(- (left_u64 as i128))
         }
         ConstraintName::RightLookupAdd => {
             // B: RightLookupOperand - (LeftInstructionInput + RightInstructionInput) with full-width integer semantics
@@ -794,9 +777,9 @@ pub fn eval_bz_by_name<F: JoltField>(
             let right_i128 = accessor
                 .value_at_s64(Inp::RightInstructionInput, row)
                 .to_i128();
-            let r_u128 = accessor.value_at_u128(Inp::RightLookupOperand, row);
+            let rlo_u128 = accessor.value_at_u128(Inp::RightLookupOperand, row);
             let expected_i128 = (left_u64 as i128) + right_i128;
-            u128_minus_i128_to_bz(r_u128, expected_i128)
+            S160::from(rlo_u128) - S160::from(expected_i128)
         }
         ConstraintName::RightLookupSub => {
             // B: RightLookupOperand - (LeftInstructionInput - RightInstructionInput) with full-width integer semantics
@@ -804,125 +787,98 @@ pub fn eval_bz_by_name<F: JoltField>(
             let right_i128 = accessor
                 .value_at_s64(Inp::RightInstructionInput, row)
                 .to_i128();
-            let r_u128 = accessor.value_at_u128(Inp::RightLookupOperand, row);
-            let expected = (left_u64 as i128) - right_i128;
-            u128_minus_i128_to_bz(r_u128, expected)
+            let rlo_u128 = accessor.value_at_u128(Inp::RightLookupOperand, row);
+            let expected_i128 = (left_u64 as i128) - right_i128;
+            S160::from(rlo_u128) - S160::from(expected_i128)
         }
         ConstraintName::ProductDef => {
             // B: RightInstructionInput (exact signed value as i128)
-            let right_i128 = accessor
-                .value_at_s64(Inp::RightInstructionInput, row)
-                .to_i128();
-            S160::from(right_i128)
+            let right_s64 = accessor.value_at_s64(Inp::RightInstructionInput, row);
+            S160::from(right_s64)
         }
         ConstraintName::RightLookupEqProductIfMul => {
             // B: RightLookupOperand - Product with full 128-bit semantics
-            let a = accessor.value_at_u128(Inp::RightLookupOperand, row);
+            let rlo_u128 = accessor.value_at_u128(Inp::RightLookupOperand, row);
             let prod = accessor.value_at_s128(Inp::Product, row);
-            if let Some(p_i128) = prod.to_i128() {
-                u128_minus_i128_to_bz(a, p_i128)
-            } else {
-                let b = prod.magnitude_as_u128();
-                if prod.sign() {
-                    // a - |b|
-                    u128_diff_to_bz(a, b)
-                } else {
-                    // a - (-|b|) = a + |b|
-                    u128_plus_u128_to_s160_mag(a, b)
-                }
-            }
+            S160::from(rlo_u128) - S160::from(prod)
         }
         ConstraintName::RightLookupEqRightInputOtherwise => {
             // B: RightLookupOperand - RightInstructionInput with exact integer semantics
             let rlookup = accessor.value_at_u128(Inp::RightLookupOperand, row);
-            let right = accessor
-                .value_at_s64(Inp::RightInstructionInput, row)
-                .to_i128();
-            u128_minus_i128_to_bz(rlookup, right)
+            let right_s64 = accessor
+                .value_at_s64(Inp::RightInstructionInput, row);
+            S160::from(rlookup) - S160::from(right_s64)
         }
         ConstraintName::AssertLookupOne => {
             // B: LookupOutput - 1 (i128 arithmetic)
-            let lookup = accessor.value_at_u64(Inp::LookupOutput, row) as i128;
-            diff_to_bz(lookup - 1)
+            let lookup_u64 = accessor.value_at_u64(Inp::LookupOutput, row);
+            S160::from(lookup_u64 as i128 - 1)
         }
         ConstraintName::WriteLookupOutputToRDDef => {
             // B: OpFlags(WriteLookupOutputToRD) (boolean 0/1)
             let flag =
                 accessor.value_at_bool(Inp::OpFlags(CircuitFlags::WriteLookupOutputToRD), row);
-            diff_to_bz(if flag { 1 } else { 0 })
+            if flag { S160::one() } else { S160::zero() }
         }
         ConstraintName::RdWriteEqLookupIfWriteLookupToRd => {
             // B: RdWriteValue - LookupOutput (u64 bit-pattern difference)
             let rdw = accessor.value_at_u64(Inp::RdWriteValue, row);
             let lookup = accessor.value_at_u64(Inp::LookupOutput, row);
-            s160_from_u64_diff(rdw, lookup)
+            S160::from_diff_u64(rdw, lookup)
         }
         ConstraintName::WritePCtoRDDef => {
             // B: OpFlags(Jump) (boolean 0/1)
             let jump = accessor.value_at_bool(Inp::OpFlags(CircuitFlags::Jump), row);
-            diff_to_bz(if jump { 1 } else { 0 })
+            if jump { S160::one() } else { S160::zero() }
         }
         ConstraintName::RdWriteEqPCPlusConstIfWritePCtoRD => {
-            // B: RdWriteValue - (UnexpandedPC + (4 - 2*IsCompressed))
-            let rdw = accessor.value_at_u64(Inp::RdWriteValue, row) as i128;
-            let pc = accessor.value_at_u64(Inp::UnexpandedPC, row) as i128;
+            // B: RdWriteValue - (UnexpandedPC + (4 - 2*IsCompressed)) (i128 arithmetic)
+            let rdw_u64 = accessor.value_at_u64(Inp::RdWriteValue, row);
+            let pc_u64 = accessor.value_at_u64(Inp::UnexpandedPC, row);
             let is_compr = accessor.value_at_bool(Inp::OpFlags(CircuitFlags::IsCompressed), row);
             let const_term = 4 - if is_compr { 2 } else { 0 };
-            diff_to_bz(rdw - (pc + const_term as i128))
+            S160::from(rdw_u64 as i128 - (pc_u64 as i128 + const_term as i128))
         }
         ConstraintName::ShouldJumpDef => {
             // B: 1 - NextIsNoop (boolean domain)
             let next_noop = accessor.value_at_bool(Inp::NextIsNoop, row);
-            diff_to_bz(if next_noop { 0 } else { 1 })
+            if !next_noop { S160::one() } else { S160::zero() }
         }
         ConstraintName::NextUnexpPCEqLookupIfShouldJump => {
             // B: NextUnexpandedPC - LookupOutput (i128 arithmetic)
-            let nextpc = accessor.value_at_u64(Inp::NextUnexpandedPC, row) as i128;
-            let lookup = accessor.value_at_u64(Inp::LookupOutput, row) as i128;
-            diff_to_bz(nextpc - lookup)
+            let next_unexp_pc_u64 = accessor.value_at_u64(Inp::NextUnexpandedPC, row);
+            let lookup_output_u64 = accessor.value_at_u64(Inp::LookupOutput, row);
+            S160::from_diff_u64(next_unexp_pc_u64, lookup_output_u64)
         }
         ConstraintName::ShouldBranchDef => {
             // B: LookupOutput (u64 bit pattern)
             let lookup = accessor.value_at_u64(Inp::LookupOutput, row);
-            s160_from_u64_diff(lookup, 0)
+            S160::from(lookup)
         }
         ConstraintName::NextUnexpPCEqPCPlusImmIfShouldBranch => {
-            // B: NextUnexpandedPC - (UnexpandedPC + Imm)
-            let next = accessor.value_at_u64(Inp::NextUnexpandedPC, row) as i128;
-            let pc = accessor.value_at_u64(Inp::UnexpandedPC, row) as i128;
-            let imm = accessor.value_at_s64(Inp::Imm, row).to_i128();
-            diff_to_bz(next - (pc + imm))
+            // B: NextUnexpandedPC - (UnexpandedPC + Imm) (i128 arithmetic)
+            let next_unexp_pc_u64 = accessor.value_at_u64(Inp::NextUnexpandedPC, row);
+            let pc_u64 = accessor.value_at_u64(Inp::UnexpandedPC, row);
+            let imm_s64 = accessor.value_at_s64(Inp::Imm, row);
+            S160::from(next_unexp_pc_u64 as i128 - (pc_u64 as i128 + imm_s64.to_i128()))
         }
         ConstraintName::NextUnexpPCUpdateOtherwise => {
-            // B: NextUnexpandedPC - target, where target = UnexpandedPC + 4 - 4*DoNotUpdateUnexpandedPC - 2*IsCompressed
-            let next = accessor.value_at_u64(Inp::NextUnexpandedPC, row) as i128;
-            let pc = accessor.value_at_u64(Inp::UnexpandedPC, row) as i128;
-            let dnoupd = accessor
-                .value_at_bool(Inp::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC), row)
-                as i128;
+            // B: NextUnexpandedPC - target, where target = UnexpandedPC + 4 - 4*DoNotUpdateUnexpandedPC - 2*IsCompressed (i128 arithmetic)
+            let next_unexp_pc_u64 = accessor.value_at_u64(Inp::NextUnexpandedPC, row);
+            let pc_u64 = accessor.value_at_u64(Inp::UnexpandedPC, row);
+            let dnoupd_flag = accessor
+                .value_at_bool(Inp::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC), row);
             let iscompr =
-                accessor.value_at_bool(Inp::OpFlags(CircuitFlags::IsCompressed), row) as i128;
-            let target = pc + 4 - 4 * dnoupd - 2 * iscompr;
-            diff_to_bz(next - target)
+                accessor.value_at_bool(Inp::OpFlags(CircuitFlags::IsCompressed), row).into();
+            let const_term = 4 - if dnoupd_flag { 4 } else { 0 } - if iscompr { 2 } else { 0 };
+            let target = pc_u64 as i128 + const_term;
+            S160::from(next_unexp_pc_u64 as i128 - target)
         }
         ConstraintName::NextPCEqPCPlusOneIfInline => {
-            // B: NextPC - (PC + 1)
-            let next = accessor.value_at_u64(Inp::NextPC, row) as i128;
-            let pc = accessor.value_at_u64(Inp::PC, row) as i128;
-            diff_to_bz(next - (pc + 1))
-        }
-        ConstraintName::RightInputZeroOtherwise => {
-            // B: RightInstructionInput - 0 (i128 arithmetic)
-            let right = accessor
-                .value_at_s64(Inp::RightInstructionInput, row)
-                .to_i128();
-            diff_to_bz(right)
-        }
-        ConstraintName::Rs2EqRamWriteIfStore => {
-            // B: Rs2Value - RamWriteValue (u64 bit-pattern difference)
-            let rs2 = accessor.value_at_u64(Inp::Rs2Value, row);
-            let wr = accessor.value_at_u64(Inp::RamWriteValue, row);
-            s160_from_u64_diff(rs2, wr)
+            // B: NextPC - (PC + 1) (i128 arithmetic)
+            let next_u64 = accessor.value_at_u64(Inp::NextPC, row);
+            let pc_u64 = accessor.value_at_u64(Inp::PC, row);
+            S160::from(next_u64 as i128 - (pc_u64 as i128 + 1))
         }
     }
 }
@@ -953,5 +909,20 @@ pub fn eval_az_bz_batch<F: JoltField>(
         // Prefer named evaluators to preserve exact integer semantics (e.g., 2^64 constants)
         az_output[i] = eval_az_by_name(constraint, accessor, step_idx);
         bz_output[i] = eval_bz_by_name(constraint, accessor, step_idx);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use strum::IntoEnumIterator;
+
+    /// Test that the constraint name enum matches the uniform R1CS order.
+    #[test]
+    fn constraint_enum_matches_uniform_r1cs_order() {
+        let enum_order: Vec<ConstraintName> = ConstraintName::iter().collect();
+        let array_order: Vec<ConstraintName> = UNIFORM_R1CS.iter().map(|nc| nc.name).collect();
+        assert_eq!(array_order.len(), NUM_R1CS_CONSTRAINTS);
+        assert_eq!(enum_order, array_order);
     }
 }
