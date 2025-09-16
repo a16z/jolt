@@ -34,6 +34,7 @@ use notand::NotAndSuffix;
 use one::OneSuffix;
 use two_lsb::TwoLsbSuffix;
 use upper_word::UpperWordSuffix;
+use upper_word_is_zero::UpperWordIsZeroSuffix;
 use xor::XorSuffix;
 
 pub mod and;
@@ -68,6 +69,7 @@ pub mod sign_extension_right_operand;
 pub mod sign_extension_upper_half;
 pub mod two_lsb;
 pub mod upper_word;
+pub mod upper_word_is_zero;
 pub mod xor;
 
 pub trait SparseDenseSuffix: 'static + Sync {
@@ -113,6 +115,7 @@ pub enum Suffixes {
     RightShiftWHelper,
     LeftShiftWHelper,
     LeftShiftW,
+    UpperWordIsZero,
 }
 
 pub type SuffixEval<F: JoltField> = F;
@@ -157,6 +160,7 @@ impl Suffixes {
             Suffixes::RightShiftWHelper => RightShiftWHelperSuffix::suffix_mle(b),
             Suffixes::LeftShiftWHelper => LeftShiftWHelperSuffix::suffix_mle(b),
             Suffixes::LeftShiftW => LeftShiftWSuffix::suffix_mle(b),
+            Suffixes::UpperWordIsZero => UpperWordIsZeroSuffix::<XLEN>::suffix_mle(b),
         }
     }
 }

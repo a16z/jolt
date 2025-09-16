@@ -35,7 +35,7 @@ impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualAssertMulNoOverf
     fn to_lookup_index(&self) -> u128 {
         LookupQuery::<XLEN>::to_lookup_operands(self).1
     }
-    
+
     fn to_instruction_inputs(&self) -> (u64, i128) {
         match XLEN {
             #[cfg(test)]
@@ -55,18 +55,12 @@ impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualAssertMulNoOverf
     fn to_lookup_output(&self) -> u64 {
         let (rs1, rs2) = LookupQuery::<XLEN>::to_instruction_inputs(self);
         let result = (rs1 as u128) * (rs2 as u64 as u128);
-        
+
         match XLEN {
             #[cfg(test)]
-            8 => {
-                (result <= u8::MAX as u128) as u64
-            }
-            32 => {
-                (result <= u32::MAX as u128) as u64
-            }
-            64 => {
-                (result <= u64::MAX as u128) as u64
-            }
+            8 => (result <= u8::MAX as u128) as u64,
+            32 => (result <= u32::MAX as u128) as u64,
+            64 => (result <= u64::MAX as u128) as u64,
             _ => panic!("Unsupported XLEN: {XLEN}"),
         }
     }

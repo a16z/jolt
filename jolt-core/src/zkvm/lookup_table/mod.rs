@@ -26,6 +26,7 @@ use upper_word::UpperWordTable;
 use valid_div0::ValidDiv0Table;
 use valid_signed_remainder::ValidSignedRemainderTable;
 use valid_unsigned_remainder::ValidUnsignedRemainderTable;
+use valid_upper_bits0::ValidUpperBits0;
 use virtual_change_divisor::VirtualChangeDivisorTable;
 use virtual_change_divisor_w::VirtualChangeDivisorWTable;
 use virtual_rotr::VirtualRotrTable;
@@ -33,7 +34,6 @@ use virtual_rotrw::VirtualRotrWTable;
 use virtual_sra::VirtualSRATable;
 use virtual_srl::VirtualSRLTable;
 use word_alignment::WordAlignmentTable;
-use valid_upper_bits0::ValidUpperBits0;
 use xor::XorTable;
 
 use crate::field::JoltField;
@@ -91,6 +91,7 @@ pub mod upper_word;
 pub mod valid_div0;
 pub mod valid_signed_remainder;
 pub mod valid_unsigned_remainder;
+pub mod valid_upper_bits0;
 pub mod virtual_change_divisor;
 pub mod virtual_change_divisor_w;
 pub mod virtual_rotr;
@@ -99,7 +100,6 @@ pub mod virtual_sra;
 pub mod virtual_srl;
 pub mod word_alignment;
 pub mod xor;
-pub mod valid_upper_bits0;
 
 #[cfg(test)]
 pub mod test;
