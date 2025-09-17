@@ -92,7 +92,6 @@ where
     pub generators: PCS::ProverSetup,
     pub shared: JoltSharedPreprocessing,
     field: F::SmallValueLookupTables,
-    ram_d: Option<usize>,//AZ: ramd
 }
 
 impl<F, PCS> Serializable for JoltProverPreprocessing<F, PCS>
@@ -183,13 +182,10 @@ where
 
         let generators = PCS::setup_prover(DTH_ROOT_OF_K.log_2() + max_T.log_2());
 
-        // let ram_d = AllCommittedPolynomials::ram_d();//AZ: ramd
-
         JoltProverPreprocessing {
             generators,
             shared,
             field: small_value_lookup_tables,
-            ram_d: None,//AZ: ramd
         }
     }
 

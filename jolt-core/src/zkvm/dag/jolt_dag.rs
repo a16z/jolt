@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::{CommitmentScheme, StreamingCommitmentScheme};
-use crate::poly::commitment::dory::DoryGlobals;
+use crate::poly::commitment::dory::{DoryGlobals, JoltPairing};
 use crate::subprotocols::sumcheck::{BatchedSumcheck, SumcheckInstance};
 use crate::transcripts::Transcript;
 // #[cfg(not(target_arch = "wasm32"))]
@@ -28,6 +28,8 @@ use crate::zkvm::ProverDebugInfo;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 use anyhow::Context;
+use ark_ec::bn::Bn;
+use dory::ProverSetup;
 use itertools::Itertools;
 use rayon::prelude::*;
 use tracer::{instruction::RV32IMCycle, ChunkWithPeekIterator as _};
@@ -485,36 +487,31 @@ impl JoltDAG {
         PCS: StreamingCommitmentScheme<Field = F>,
     >(
         prover_state_manager: &mut StateManager<'a, F, ProofTranscript, PCS>,
-    ) -> Result<HashMap<CommittedPolynomial, PCS::OpeningProofHint>, anyhow::Error> {
+    ) -> Result<HashMap<CommittedPolynomial, PCS::OpeningProofHint>, anyhow::Error> 
+    {
         let (preprocessing, lazy_trace, _trace, _program_io, _final_memory_state) =
             prover_state_manager.get_prover_data();
 
         let T = DoryGlobals::get_T();
 
         let polys : Vec<_> = AllCommittedPolynomials::iter().collect(); // .skip(9).take(1).collect();
-        // dbg!(&polys);
         let pcs_and_polys: Vec<_> = polys
             .iter()
-            .map(|poly| (PCS::initialize(poly.to_polynomial_type(&preprocessing), T, &preprocessing.generators), poly)) //AZ: Add ram_d here
+            .map(|poly| (PCS::initialize(poly.to_polynomial_type(&preprocessing), T, &preprocessing.generators), poly))
             .collect();
         let row_len = DoryGlobals::get_num_columns();
-
-        // [row_chunks][polys]
-        let time_start = std::time::Instant::now();
-        //[AZ] TODO: Is T/DoryGlobals::get_max_num_rows() the correct number of rows?
         let mut row_commitments: Vec<Vec<<PCS>::ChunkState>>  = vec![vec![]; T/DoryGlobals::get_max_num_rows()];
 
-        // [AZ] TODO: Parallelized
         lazy_trace
             .as_ref()
-            .unwrap() //AZ: todo: maybe not unwrap and handle it better
+            .expect("Lazy trace not found!")
             .clone() //AZ: Can we avoid this clone?
             .pad_using(T+1, |_| RV32IMCycle::NoOp)
             .chunks_with_peek(row_len)
             .zip(&mut row_commitments)
-            .par_bridge()   // 1st parallel iteration
+            .par_bridge()
             .for_each(|(row_with_peek, row_)| {
-                let res = pcs_and_polys.iter().map(|(pcs, poly)| { // 2nd parallel loop
+                let res = pcs_and_polys.iter().map(|(pcs, poly)| {
                     poly.generate_witness_and_commit_row::<_, PCS>(
                         pcs, 
                         preprocessing, 
@@ -524,9 +521,6 @@ impl JoltDAG {
                 });
                 *row_ = res.collect::<Vec<_>>();
             });
-            
-        let time_elapsed = time_start.elapsed();
-        println!("Time elapsed in generate_and_commit_polynomials() is: {:?}", time_elapsed);
 
         let (commitments, hints): (Vec<_>, Vec<_>) = transpose(row_commitments)
             .into_iter()
