@@ -28,7 +28,7 @@ impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualAssertMulNoOverf
     fn to_lookup_operands(&self) -> (u64, u128) {
         let (x, y) = LookupQuery::<XLEN>::to_instruction_inputs(self);
         // For signed multiplication, we need to handle the sign bits properly
-        let result = (x as i64 as i128) * (y as i128);
+        let result = (x as i64 as i128) * y;
         (0, result as u128)
     }
 

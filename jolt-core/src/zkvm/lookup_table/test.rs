@@ -51,7 +51,7 @@ pub fn prefix_suffix_test<const XLEN: usize, F: JoltField, T: PrefixSuffixDecomp
     let total_phases: usize = XLEN * 2 / ROUNDS_PER_PHASE;
     let mut rng = StdRng::seed_from_u64(12345);
 
-    for rrr in 0..300 {
+    for _ in 0..300 {
         let mut prefix_checkpoints: Vec<PrefixCheckpoint<F>> = vec![None.into(); Prefixes::COUNT];
         let lookup_index = T::random_lookup_index(&mut rng);
         let mut j = 0;
@@ -68,7 +68,7 @@ pub fn prefix_suffix_test<const XLEN: usize, F: JoltField, T: PrefixSuffixDecomp
                 .map(|suffix| SuffixEval::from(F::from_u64(suffix.suffix_mle::<XLEN>(suffix_bits))))
                 .collect();
 
-            for kkk in 0..ROUNDS_PER_PHASE {
+            for _ in 0..ROUNDS_PER_PHASE {
                 let mut eval_point = r.clone();
                 let c = if rng.next_u64().is_even() { 0 } else { 2 };
                 eval_point.push(F::from_u32(c));
@@ -78,7 +78,6 @@ pub fn prefix_suffix_test<const XLEN: usize, F: JoltField, T: PrefixSuffixDecomp
                     .extend(index_to_field_bitvector(prefix_bits.into(), prefix_bits.len()).iter());
                 eval_point
                     .extend(index_to_field_bitvector(suffix_bits.into(), suffix_bits.len()).iter());
-                // println!("prefix_bits.len() is: {}", prefix_bits.len());
 
                 let mle_eval = T::default().evaluate_mle(&eval_point);
 
@@ -98,23 +97,12 @@ pub fn prefix_suffix_test<const XLEN: usize, F: JoltField, T: PrefixSuffixDecomp
                 if combined != mle_eval {
                     println!("Lookup index: {lookup_index}");
                     println!("{j} {prefix_bits} {suffix_bits}");
-                    // for (i, x) in prefix_evals.iter().enumerate() {
-                    //     println!("prefix_evals[{i}] = {x}");
-                    // }
-                    // for (i, x) in suffix_evals.iter().enumerate() {
-                    //     println!("suffix_evals[{i}] = {x}");
-                    // }
-                }
-
-                if combined != mle_eval {
-                    eprintln!("Test Failure info:");
-                    eprintln!(
-                        "rrr: {} - Phase: {} - kkk: {} - suffix_length: {} - j: {}",
-                        rrr, phase, kkk, suffix_len, j
-                    );
-                    eprintln!("Eval points are: {:?}", eval_point);
-                    eprintln!("r_x: {:?} - c: {:?}", r_x, c);
-                    eprintln!("prefix_bits: {:?}", prefix_bits);
+                    for (i, x) in prefix_evals.iter().enumerate() {
+                        println!("prefix_evals[{i}] = {x}");
+                    }
+                    for (i, x) in suffix_evals.iter().enumerate() {
+                        println!("suffix_evals[{i}] = {x}");
+                    }
                 }
 
                 assert_eq!(combined, mle_eval);
@@ -128,18 +116,9 @@ pub fn prefix_suffix_test<const XLEN: usize, F: JoltField, T: PrefixSuffixDecomp
                         j,
                     );
                 }
-                // eprintln!("*********************************************************************************");
-                // eprintln!("*********************************************************************************");
 
                 j += 1;
-                // if j == 66 && phase == 4 {
-                //     break;
-                // }
             }
-            // if j == 66 && phase == 4 {
-            //     break;
-            // }
         }
-        // break;
     }
 }
