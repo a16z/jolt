@@ -36,10 +36,6 @@ use lower_word::LowerWordPrefix;
 use lt::LessThanPrefix;
 use num::FromPrimitive;
 use or::OrPrefix;
-use overflow_bits_one::OverflowBitsOnePrefix;
-use overflow_bits_zero::OverflowBitsZeroPrefix;
-use signed_overflow_bits_zero::SignedOverflowBitsZeroPrefix;
-use signed_overflow_bits_one::SignedOverflowBitsOnePrefix;
 use right_is_zero::RightOperandIsZeroPrefix;
 use right_msb::RightMsbPrefix;
 use right_operand::RightOperandPrefix;
@@ -47,6 +43,9 @@ use right_operand_w::RightOperandWPrefix;
 use two_lsb::TwoLsbPrefix;
 use upper_word::UpperWordPrefix;
 use xor::XorPrefix;
+use overflow_bits_zero::OverflowBitsZeroPrefix;
+use signed_overflow_bits_one::SignedOverflowBitsOnePrefix;
+use signed_overflow_bits_zero::SignedOverflowBitsZeroPrefix;
 
 pub mod and;
 pub mod andn;
@@ -68,10 +67,6 @@ pub mod negative_divisor_equals_remainder;
 pub mod negative_divisor_greater_than_remainder;
 pub mod negative_divisor_zero_remainder;
 pub mod or;
-pub mod overflow_bits_one;
-pub mod overflow_bits_zero;
-pub mod signed_overflow_bits_zero;
-pub mod signed_overflow_bits_one;
 pub mod positive_remainder_equals_divisor;
 pub mod positive_remainder_less_than_divisor;
 pub mod pow2;
@@ -88,6 +83,9 @@ pub mod sign_extension_upper_half;
 pub mod two_lsb;
 pub mod upper_word;
 pub mod xor;
+pub mod overflow_bits_zero;
+pub mod signed_overflow_bits_one;
+pub mod signed_overflow_bits_zero;
 
 pub trait SparseDensePrefix<F: JoltField>: 'static + Sync {
     /// Evalautes the MLE for this prefix:
@@ -133,10 +131,6 @@ pub enum Prefixes {
     LowerWord,
     LowerHalfWord,
     UpperWord,
-    OverflowBitsZero,
-    OverflowBitsOne,
-    SignedOverflowBitsZero,
-    SignedOverflowBitsOne,
     Eq,
     And,
     Andn,
@@ -170,6 +164,9 @@ pub enum Prefixes {
     RightShiftW,
     LeftShiftWHelper,
     LeftShiftW,
+    OverflowBitsZero,
+    SignedOverflowBitsZero,
+    SignedOverflowBitsOne,
 }
 
 #[derive(Clone, Copy, Allocative)]
@@ -232,18 +229,6 @@ impl Prefixes {
                 LowerHalfWordPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j)
             }
             Prefixes::UpperWord => UpperWordPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j),
-            Prefixes::OverflowBitsZero => {
-                OverflowBitsZeroPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j)
-            }
-            Prefixes::OverflowBitsOne => {
-                OverflowBitsOnePrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j)
-            }
-            Prefixes::SignedOverflowBitsZero => {
-                SignedOverflowBitsZeroPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j)
-            }
-            Prefixes::SignedOverflowBitsOne => {
-                SignedOverflowBitsOnePrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j)
-            }
             Prefixes::And => AndPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::Andn => AndnPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::Or => OrPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j),
@@ -311,6 +296,15 @@ impl Prefixes {
                 LeftShiftWHelperPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j)
             }
             Prefixes::LeftShiftW => LeftShiftWPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j),
+            Prefixes::OverflowBitsZero => {
+                OverflowBitsZeroPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::SignedOverflowBitsZero => {
+                SignedOverflowBitsZeroPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::SignedOverflowBitsOne => {
+                SignedOverflowBitsOnePrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j)
+            }
         };
         PrefixEval(eval)
     }
@@ -360,18 +354,6 @@ impl Prefixes {
             }
             Prefixes::UpperWord => {
                 UpperWordPrefix::<XLEN>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
-            }
-            Prefixes::OverflowBitsZero => {
-                OverflowBitsZeroPrefix::<XLEN>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
-            }
-            Prefixes::OverflowBitsOne => {
-                OverflowBitsOnePrefix::<XLEN>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
-            }
-            Prefixes::SignedOverflowBitsZero => {
-                SignedOverflowBitsZeroPrefix::<XLEN>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
-            }
-            Prefixes::SignedOverflowBitsOne => {
-                SignedOverflowBitsOnePrefix::<XLEN>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
             }
             Prefixes::And => AndPrefix::<XLEN>::update_prefix_checkpoint(checkpoints, r_x, r_y, j),
             Prefixes::Andn => {
@@ -496,6 +478,25 @@ impl Prefixes {
             }
             Prefixes::LeftShiftW => {
                 LeftShiftWPrefix::<XLEN>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+            }
+            Prefixes::OverflowBitsZero => {
+                OverflowBitsZeroPrefix::<XLEN>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+            }
+            Prefixes::SignedOverflowBitsZero => {
+                SignedOverflowBitsZeroPrefix::<XLEN>::update_prefix_checkpoint(
+                    checkpoints,
+                    r_x,
+                    r_y,
+                    j,
+                )
+            }
+            Prefixes::SignedOverflowBitsOne => {
+                SignedOverflowBitsOnePrefix::<XLEN>::update_prefix_checkpoint(
+                    checkpoints,
+                    r_x,
+                    r_y,
+                    j,
+                )
             }
         }
     }

@@ -78,7 +78,7 @@ pub fn prefix_suffix_test<const XLEN: usize, F: JoltField, T: PrefixSuffixDecomp
                     .extend(index_to_field_bitvector(prefix_bits.into(), prefix_bits.len()).iter());
                 eval_point
                     .extend(index_to_field_bitvector(suffix_bits.into(), suffix_bits.len()).iter());
-                println!("prefix_bits.len() is: {}", prefix_bits.len());
+                // println!("prefix_bits.len() is: {}", prefix_bits.len());
 
                 let mle_eval = T::default().evaluate_mle(&eval_point);
 
@@ -108,7 +108,10 @@ pub fn prefix_suffix_test<const XLEN: usize, F: JoltField, T: PrefixSuffixDecomp
 
                 if combined != mle_eval {
                     eprintln!("Test Failure info:");
-                    eprintln!("rrr: {} - Phase: {} - kkk: {} - suffix_length: {} - j: {}", rrr, phase, kkk, suffix_len, j);
+                    eprintln!(
+                        "rrr: {} - Phase: {} - kkk: {} - suffix_length: {} - j: {}",
+                        rrr, phase, kkk, suffix_len, j
+                    );
                     eprintln!("Eval points are: {:?}", eval_point);
                     eprintln!("r_x: {:?} - c: {:?}", r_x, c);
                     eprintln!("prefix_bits: {:?}", prefix_bits);
@@ -125,8 +128,8 @@ pub fn prefix_suffix_test<const XLEN: usize, F: JoltField, T: PrefixSuffixDecomp
                         j,
                     );
                 }
-                eprintln!("*********************************************************************************");
-                eprintln!("*********************************************************************************");
+                // eprintln!("*********************************************************************************");
+                // eprintln!("*********************************************************************************");
 
                 j += 1;
                 // if j == 66 && phase == 4 {

@@ -22,7 +22,7 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for SignedOverflowBit
         // - Bits 0 to XLEN-1 are overflow bits (processed when j < XLEN)
         // - Bit XLEN is the sign bit (processed when j == XLEN)
         // - Bits XLEN+1 to 2*XLEN-1 are the remaining lower bits
-        
+
         // If j > XLEN, we've already processed overflow bits and sign bit
         if j > XLEN + 1 {
             return checkpoints[Prefixes::SignedOverflowBitsZero].unwrap_or(F::one());
@@ -30,18 +30,17 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for SignedOverflowBit
         // else if j == XLEN + 1 {
         //     return checkpoints[Prefixes::SignedOverflowBitsZero].unwrap_or(F::one()) * ;
         // }
-        
+
         let mut result = checkpoints[Prefixes::SignedOverflowBitsZero].unwrap_or(F::one());
-        eprintln!("prefix_mle(): Initial checkpoint(Zero): {}", result);
-        
+        // eprintln!("prefix_mle(): Initial checkpoint(Zero): {}", result);
+
         // Process the current bit - all overflow bits and sign bit should be 0
         if let Some(r_x) = r_x {
             let y = F::from_u8(c as u8);
             // Current bit should be 0: (1 - r_x) * (1 - y)
             if j == XLEN + 1 {
                 result *= F::one() - r_x
-            }
-            else {
+            } else {
                 result *= (F::one() - r_x) * (F::one() - y);
             }
         } else {
@@ -49,22 +48,21 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for SignedOverflowBit
             let y = F::from_u8(b.pop_msb());
             if j == XLEN {
                 result *= F::one() - x;
-            }
-            else {
+            } else {
                 // Current bit should be 0: (1 - x) * (1 - y)
                 result *= (F::one() - x) * (F::one() - y);
             }
         }
-        eprintln!("prefix_mle(): Updated result(Zero): {}", result);
-        
+        // eprintln!("prefix_mle(): Updated result(Zero): {}", result);
+
         // Check the remaining unprocessed bits in b
         // We only need to check remaining overflow bits if they haven't all been processed yet
         // When j == XLEN, we're at the sign bit, and b contains lower bits that don't affect overflow
         if j < XLEN {
             let rest = u128::from(b);
             let suffix_len = current_suffix_len(j);
-            
-            // Shift left by suffix_len to align the bits, then right by XLEN-1 
+
+            // Shift left by suffix_len to align the bits, then right by XLEN-1
             // to extract just the overflow bits and sign bit
             let temp = F::from_u64((((rest << suffix_len) >> (XLEN - 1)) == 0) as u64);
             // println!("j in zero is: {}", j);
@@ -73,10 +71,10 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for SignedOverflowBit
             // println!("suffix_len in zero is: {}", suffix_len);
             result *= temp;
         }
-        
+
         result
     }
-    
+
     fn update_prefix_checkpoint(
         checkpoints: &[PrefixCheckpoint<F>],
         r_x: F,
@@ -89,21 +87,20 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for SignedOverflowBit
         // - For j > XLEN + 1, no further updates are needed for this prefix.
         let updated;
         if j < XLEN {
-            updated = checkpoints[Prefixes::SignedOverflowBitsZero]
-                .unwrap_or(F::one())
+            updated = checkpoints[Prefixes::SignedOverflowBitsZero].unwrap_or(F::one())
                 * (F::one() - r_x)
                 * (F::one() - r_y);
-        } 
-        else if j == XLEN + 1 {
-            updated = checkpoints[Prefixes::SignedOverflowBitsZero]
-                .unwrap_or(F::one())
+        } else if j == XLEN + 1 {
+            updated = checkpoints[Prefixes::SignedOverflowBitsZero].unwrap_or(F::one())
                 * (F::one() - r_x);
-        } 
-        else {
+        } else {
             return checkpoints[Prefixes::SignedOverflowBitsZero].into();
         }
-        eprintln!("update_prefix_checkpoint(): Updated checkpoint(Zero): {}", updated);
-        
+        // eprintln!(
+        //     "update_prefix_checkpoint(): Updated checkpoint(Zero): {}",
+        //     updated
+        // );
+
         Some(updated).into()
     }
 }

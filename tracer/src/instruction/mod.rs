@@ -97,7 +97,7 @@ use virtual_advice::VirtualAdvice;
 use virtual_assert_eq::VirtualAssertEQ;
 use virtual_assert_halfword_alignment::VirtualAssertHalfwordAlignment;
 use virtual_assert_lte::VirtualAssertLTE;
-use virtual_assert_mul_no_overflow::VirtualAssertMulNoOverflow;
+use virtual_assert_mulu_no_overflow::VirtualAssertMulUNoOverflow;
 use virtual_assert_signed_mul_no_overflow::VirtualAssertSignedMulNoOverflow;
 use virtual_assert_valid_div0::VirtualAssertValidDiv0;
 use virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder;
@@ -227,7 +227,7 @@ pub mod virtual_advice;
 pub mod virtual_assert_eq;
 pub mod virtual_assert_halfword_alignment;
 pub mod virtual_assert_lte;
-pub mod virtual_assert_mul_no_overflow;
+pub mod virtual_assert_mulu_no_overflow;
 pub mod virtual_assert_signed_mul_no_overflow;
 pub mod virtual_assert_valid_div0;
 pub mod virtual_assert_valid_unsigned_remainder;
@@ -584,8 +584,8 @@ define_rv32im_enums! {
         LRD, SCD, AMOSWAPD, AMOADDD, AMOANDD, AMOORD, AMOXORD, AMOMIND, AMOMAXD, AMOMINUD, AMOMAXUD,
         // Virtual
         VirtualAdvice, VirtualAssertEQ, VirtualAssertHalfwordAlignment, VirtualAssertWordAlignment, VirtualAssertLTE,
-        VirtualAssertValidDiv0, VirtualAssertValidUnsignedRemainder, VirtualAssertMulNoOverflow,
-        VirtualAssertSignedMulNoOverflow,
+        VirtualAssertValidDiv0, VirtualAssertValidUnsignedRemainder,
+        VirtualAssertMulUNoOverflow, VirtualAssertSignedMulNoOverflow,
         VirtualChangeDivisor, VirtualChangeDivisorW, VirtualLW,VirtualSW, VirtualZeroExtendWord,
         VirtualSignExtendWord,VirtualPow2W, VirtualPow2IW,
         VirtualMove, VirtualMovsign, VirtualMULI, VirtualPow2, VirtualPow2I, VirtualROTRI,

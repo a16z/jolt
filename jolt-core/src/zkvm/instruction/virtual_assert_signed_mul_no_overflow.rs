@@ -1,4 +1,6 @@
-use tracer::instruction::{virtual_assert_signed_mul_no_overflow::VirtualAssertSignedMulNoOverflow, RISCVCycle};
+use tracer::instruction::{
+    virtual_assert_signed_mul_no_overflow::VirtualAssertSignedMulNoOverflow, RISCVCycle,
+};
 
 use crate::zkvm::lookup_table::{signed_mul_overflow::SignedMulOverflow, LookupTables};
 
@@ -59,24 +61,24 @@ impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualAssertSignedMulN
         let rs1_signed = rs1 as i64;
         let rs2_signed = rs2 as i64;
         let result = (rs1_signed as i128) * (rs2_signed as i128);
-        
+
         match XLEN {
             #[cfg(test)]
             8 => {
                 let min = i8::MIN as i128;
                 let max = i8::MAX as i128;
                 (result >= min && result <= max) as u64
-            },
+            }
             32 => {
                 let min = i32::MIN as i128;
                 let max = i32::MAX as i128;
                 (result >= min && result <= max) as u64
-            },
+            }
             64 => {
                 let min = i64::MIN as i128;
                 let max = i64::MAX as i128;
                 (result >= min && result <= max) as u64
-            },
+            }
             _ => panic!("Unsupported XLEN: {XLEN}"),
         }
     }

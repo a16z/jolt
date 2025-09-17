@@ -1,16 +1,18 @@
-use tracer::instruction::{virtual_assert_mul_no_overflow::VirtualAssertMulNoOverflow, RISCVCycle};
+use tracer::instruction::{
+    virtual_assert_mulu_no_overflow::VirtualAssertMulUNoOverflow, RISCVCycle,
+};
 
-use crate::zkvm::lookup_table::{mul_no_overflow::MulNoOverflow, LookupTables};
+use crate::zkvm::lookup_table::{mulu_no_overflow::MulUNoOverflow, LookupTables};
 
 use super::{CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS};
 
-impl<const XLEN: usize> InstructionLookup<XLEN> for VirtualAssertMulNoOverflow {
+impl<const XLEN: usize> InstructionLookup<XLEN> for VirtualAssertMulUNoOverflow {
     fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
-        Some(MulNoOverflow.into())
+        Some(MulUNoOverflow.into())
     }
 }
 
-impl InstructionFlags for VirtualAssertMulNoOverflow {
+impl InstructionFlags for VirtualAssertMulUNoOverflow {
     fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
         let mut flags = [false; NUM_CIRCUIT_FLAGS];
         flags[CircuitFlags::MultiplyOperands as usize] = true;
@@ -26,7 +28,7 @@ impl InstructionFlags for VirtualAssertMulNoOverflow {
     }
 }
 
-impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualAssertMulNoOverflow> {
+impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualAssertMulUNoOverflow> {
     fn to_lookup_operands(&self) -> (u64, u128) {
         let (x, y) = LookupQuery::<XLEN>::to_instruction_inputs(self);
         (0, x as u128 * y as u64 as u128)
@@ -75,6 +77,6 @@ mod test {
 
     #[test]
     fn materialize_entry() {
-        materialize_entry_test::<Fr, VirtualAssertMulNoOverflow>();
+        materialize_entry_test::<Fr, VirtualAssertMulUNoOverflow>();
     }
 }

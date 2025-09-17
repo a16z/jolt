@@ -1,11 +1,11 @@
-use serde::{Deserialize, Serialize};
-
-use crate::{declare_riscv_instr, emulator::cpu::Cpu};
+//! Virtual instruction that asserts unsigned multiplication of two operands does not overflow.
 
 use super::{format::format_b::FormatB, RISCVInstruction, RISCVTrace};
+use crate::{declare_riscv_instr, emulator::cpu::Cpu};
+use serde::{Deserialize, Serialize};
 
 declare_riscv_instr!(
-    name = VirtualAssertMulNoOverflow,
+    name = VirtualAssertMulUNoOverflow,
     mask = 0,
     match = 0,
     format = FormatB,
@@ -13,11 +13,11 @@ declare_riscv_instr!(
     is_virtual = true
 );
 
-impl VirtualAssertMulNoOverflow {
+impl VirtualAssertMulUNoOverflow {
     fn exec(
         &self,
         cpu: &mut Cpu,
-        _: &mut <VirtualAssertMulNoOverflow as RISCVInstruction>::RAMAccess,
+        _: &mut <VirtualAssertMulUNoOverflow as RISCVInstruction>::RAMAccess,
     ) {
         let rs1_val = cpu.x[self.operands.rs1 as usize] as u64;
         let rs2_val = cpu.x[self.operands.rs2 as usize] as u64;
@@ -25,4 +25,4 @@ impl VirtualAssertMulNoOverflow {
     }
 }
 
-impl RISCVTrace for VirtualAssertMulNoOverflow {}
+impl RISCVTrace for VirtualAssertMulUNoOverflow {}

@@ -13,7 +13,8 @@ use crate::{
 
 use super::{
     add::ADD, format::format_r::FormatR, mul::MUL, virtual_advice::VirtualAdvice,
-    virtual_assert_eq::VirtualAssertEQ, virtual_assert_signed_mul_no_overflow::VirtualAssertSignedMulNoOverflow,
+    virtual_assert_eq::VirtualAssertEQ,
+    virtual_assert_signed_mul_no_overflow::VirtualAssertSignedMulNoOverflow,
     virtual_assert_valid_div0::VirtualAssertValidDiv0,
     virtual_change_divisor::VirtualChangeDivisor, virtual_move::VirtualMove, RISCVInstruction,
     RISCVTrace, RV32IMCycle, RV32IMInstruction,
