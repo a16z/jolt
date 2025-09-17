@@ -1,16 +1,15 @@
 use crate::{
     poly::{one_hot_polynomial::OneHotPolynomial, rlc_polynomial::RLCPolynomial},
-    utils::compute_dotproduct,
+    utils::{compute_dotproduct, small_scalar::SmallScalar},
 };
 use allocative::Allocative;
+use ark_ff::biginteger::S128;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Valid};
 use rayon::prelude::*;
 use strum_macros::EnumIter;
 
 use super::{
-    compact_polynomial::{CompactPolynomial, SmallScalar},
-    dense_mlpoly::DensePolynomial,
-    eq_poly::EqPolynomial,
+    compact_polynomial::CompactPolynomial, dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial,
 };
 use crate::field::{JoltField, OptimizedMul};
 
@@ -26,6 +25,7 @@ pub enum MultilinearPolynomial<F: JoltField> {
     U128Scalars(CompactPolynomial<u128, F>),
     I64Scalars(CompactPolynomial<i64, F>),
     I128Scalars(CompactPolynomial<i128, F>),
+    S128Scalars(CompactPolynomial<S128, F>),
     RLC(RLCPolynomial<F>),
     OneHot(OneHotPolynomial<F>),
 }
@@ -85,6 +85,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
             MultilinearPolynomial::I64Scalars(poly) => poly.coeffs.len(),
             MultilinearPolynomial::I128Scalars(poly) => poly.coeffs.len(),
             MultilinearPolynomial::U128Scalars(poly) => poly.coeffs.len(),
+            MultilinearPolynomial::S128Scalars(poly) => poly.coeffs.len(),
             _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
         }
     }
@@ -100,6 +101,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
             MultilinearPolynomial::I64Scalars(poly) => poly.len(),
             MultilinearPolynomial::I128Scalars(poly) => poly.len(),
             MultilinearPolynomial::U128Scalars(poly) => poly.len(),
+            MultilinearPolynomial::S128Scalars(poly) => poly.len(),
             _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
         }
     }
@@ -114,6 +116,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
             MultilinearPolynomial::I64Scalars(poly) => poly.get_num_vars(),
             MultilinearPolynomial::I128Scalars(poly) => poly.get_num_vars(),
             MultilinearPolynomial::U128Scalars(poly) => poly.get_num_vars(),
+            MultilinearPolynomial::S128Scalars(poly) => poly.get_num_vars(),
             MultilinearPolynomial::OneHot(poly) => poly.get_num_vars(),
             _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
         }
@@ -130,6 +133,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
             MultilinearPolynomial::U128Scalars(poly) => F::from_u128(poly.coeffs[index]),
             MultilinearPolynomial::I64Scalars(poly) => F::from_i64(poly.coeffs[index]),
             MultilinearPolynomial::I128Scalars(poly) => F::from_i128(poly.coeffs[index]),
+            MultilinearPolynomial::S128Scalars(poly) => poly.coeffs[index].to_field(),
             _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
         }
     }
@@ -219,6 +223,13 @@ impl<F: JoltField> MultilinearPolynomial<F> {
                     F::from_u128(poly.coeffs[index])
                 }
             }
+            MultilinearPolynomial::S128Scalars(poly) => {
+                if poly.is_bound() {
+                    poly.bound_coeffs[index]
+                } else {
+                    poly.coeffs[index].to_field()
+                }
+            }
             _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
         }
     }
@@ -281,6 +292,12 @@ impl<F: JoltField> MultilinearPolynomial<F> {
                 .map(|(a, b)| a.field_mul(*b))
                 .sum(),
             MultilinearPolynomial::U128Scalars(poly) => poly
+                .coeffs
+                .par_iter()
+                .zip_eq(other.par_iter())
+                .map(|(a, b)| a.field_mul(*b))
+                .sum(),
+            MultilinearPolynomial::S128Scalars(poly) => poly
                 .coeffs
                 .par_iter()
                 .zip_eq(other.par_iter())
@@ -383,6 +400,13 @@ impl<F: JoltField> From<Vec<i128>> for MultilinearPolynomial<F> {
     fn from(coeffs: Vec<i128>) -> Self {
         let poly = CompactPolynomial::from_coeffs(coeffs);
         Self::I128Scalars(poly)
+    }
+}
+
+impl<F: JoltField> From<Vec<S128>> for MultilinearPolynomial<F> {
+    fn from(coeffs: Vec<S128>) -> Self {
+        let poly = CompactPolynomial::from_coeffs(coeffs);
+        Self::S128Scalars(poly)
     }
 }
 

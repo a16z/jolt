@@ -1,7 +1,6 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::poly::compact_polynomial::SmallScalar;
 use crate::poly::opening_proof::{
     OpeningPoint, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
 };
@@ -21,6 +20,7 @@ use crate::{
     transcripts::Transcript,
     utils::{
         math::Math,
+        small_scalar::SmallScalar,
         thread::{drop_in_background_thread, unsafe_allocate_zero_vec},
     },
 };

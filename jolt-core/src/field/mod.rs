@@ -44,6 +44,9 @@ pub trait JoltField:
 {
     /// Number of bytes occupied by a single field element.
     const NUM_BYTES: usize;
+    /// The Montgomery factor R = 2^(64*N) mod p
+    const MONTGOMERY_R: Self;
+
     /// An implementation of `JoltField` may use some precomputed lookup tables to speed up the
     /// conversion of small primitive integers (e.g. `u16` values) into field elements. For example,
     /// the arkworks BN254 scalar field requires a conversion into Montgomery form, which naively
@@ -79,6 +82,12 @@ pub trait JoltField:
     fn mul_u64(&self, n: u64) -> Self {
         *self * Self::from_u64(n)
     }
+    /// Does a field multiplication with a `i64`.
+    /// The result will be in Montgomery form (if BN254)
+    #[inline(always)]
+    fn mul_i64(&self, n: i64) -> Self {
+        *self * Self::from_i64(n)
+    }
     #[inline(always)]
     fn mul_i128(&self, n: i128) -> Self {
         *self * Self::from_i128(n)
@@ -99,6 +108,13 @@ pub trait JoltField:
         }
         res.mul_u64(1 << pow)
     }
+
+    /// Get reference to the underlying BigInt<4> representation without copying
+    fn as_bigint_ref(&self) -> &ark_ff::BigInt<4>;
+
+    /// Montgomery reduction from 8-limb unreduced product to field element
+    /// Note: Result is in Montgomery form with extra R factor
+    fn from_montgomery_reduce_2n(unreduced: ark_ff::BigInt<8>) -> Self;
 }
 
 #[cfg(feature = "allocative")]

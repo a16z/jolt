@@ -38,10 +38,18 @@ impl<F: JoltField> EqPolynomial<F> {
 
     #[tracing::instrument(skip_all, name = "EqPolynomial::evals")]
     /// Computes the table of coefficients: `{eq(r, x) for all x in {0, 1}^n}`
+    /// If `scaling_factor` is provided, computes `scaling_factor * eq(r, x)` instead.
     pub fn evals(r: &[F]) -> Vec<F> {
+        Self::evals_with_scaling(r, None)
+    }
+
+    /// Computes the table of coefficients: `scaling_factor * eq(r, x) for all x in {0, 1}^n`
+    /// If `scaling_factor` is None, defaults to 1 (no scaling).
+    #[inline]
+    pub fn evals_with_scaling(r: &[F], scaling_factor: Option<F>) -> Vec<F> {
         match r.len() {
-            0..=PARALLEL_THRESHOLD => Self::evals_serial(r, None),
-            _ => Self::evals_parallel(r, None),
+            0..=PARALLEL_THRESHOLD => Self::evals_serial(r, scaling_factor),
+            _ => Self::evals_parallel(r, scaling_factor),
         }
     }
 
@@ -63,6 +71,7 @@ impl<F: JoltField> EqPolynomial<F> {
     /// Computes the table of coefficients:
     ///     scaling_factor * eq(r, x) for all x in {0, 1}^n
     /// serially. More efficient for short `r`.
+    #[inline]
     fn evals_serial(r: &[F], scaling_factor: Option<F>) -> Vec<F> {
         let mut evals: Vec<F> = vec![scaling_factor.unwrap_or(F::one()); r.len().pow2()];
         let mut size = 1;
@@ -85,6 +94,7 @@ impl<F: JoltField> EqPolynomial<F> {
     /// `eq(r[..j], x)` for all `x in {0, 1}^{j}`.
     ///
     /// Performance seems at most 10% worse than `evals_serial`
+    #[inline]
     fn evals_serial_cached(r: &[F], scaling_factor: Option<F>) -> Vec<Vec<F>> {
         let mut evals: Vec<Vec<F>> = (0..r.len() + 1)
             .map(|i| vec![scaling_factor.unwrap_or(F::one()); 1 << i])
@@ -125,6 +135,7 @@ impl<F: JoltField> EqPolynomial<F> {
     ///
     /// computing biggest layers of the dynamic programming tree in parallel.
     #[tracing::instrument(skip_all, "EqPolynomial::evals_parallel")]
+    #[inline]
     pub fn evals_parallel(r: &[F], scaling_factor: Option<F>) -> Vec<F> {
         let final_size = r.len().pow2();
         let mut evals: Vec<F> = unsafe_allocate_zero_vec(final_size);

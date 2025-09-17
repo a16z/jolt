@@ -271,6 +271,8 @@ impl FieldOps<&TrackedFr, TrackedFr> for TrackedFr {}
 
 impl JoltField for TrackedFr {
     const NUM_BYTES: usize = <ark_bn254::Fr as JoltField>::NUM_BYTES;
+    /// The Montgomery factor R = 2^(64*N) mod p
+    const MONTGOMERY_R: Self = TrackedFr(<ark_bn254::Fr as JoltField>::MONTGOMERY_R);
     type SmallValueLookupTables = <ark_bn254::Fr as JoltField>::SmallValueLookupTables;
 
     fn random<R: rand_core::RngCore>(rng: &mut R) -> Self {
@@ -333,17 +335,29 @@ impl JoltField for TrackedFr {
 
     fn mul_u64(&self, n: u64) -> Self {
         MULT_COUNT.fetch_add(1, Ordering::Relaxed);
-        TrackedFr(self.0.mul_u64(n))
+        TrackedFr(self.0.mul_u64::<5>(n))
     }
 
     fn mul_i128(&self, n: i128) -> Self {
         MULT_COUNT.fetch_add(1, Ordering::Relaxed);
-        TrackedFr(self.0.mul_i128(n))
+        TrackedFr(self.0.mul_i128::<5, 6>(n))
     }
 
     fn mul_u128(&self, n: u128) -> Self {
         MULT_COUNT.fetch_add(1, Ordering::Relaxed);
-        TrackedFr(self.0.mul_u128(n))
+        TrackedFr(self.0.mul_u128::<5, 6>(n))
+    }
+
+    #[inline(always)]
+    fn as_bigint_ref(&self) -> &ark_ff::BigInt<4> {
+        // Get reference to the underlying arkworks field's BigInt
+        self.0.as_bigint_ref()
+    }
+
+    #[inline(always)]
+    fn from_montgomery_reduce_2n(unreduced: ark_ff::BigInt<8>) -> Self {
+        // Use arkworks Montgomery backend to efficiently reduce 8-limb to 4-limb
+        TrackedFr(ark_bn254::Fr::montgomery_reduce_2n(unreduced))
     }
 }
 
