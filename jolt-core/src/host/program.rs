@@ -90,8 +90,6 @@ impl Program {
                 "strip=symbols",
                 "-C",
                 "opt-level=z",
-                "--cfg",
-                "getrandom_backend=\"custom\"",
             ];
 
             let target_triple = if self.std {

@@ -46,8 +46,7 @@ jolt-sdk-macros = { path = "./macros" }
 common = { path = "../common", optional = true }
 jolt-core = { path = "../jolt-core", default-features = false, optional = true }
 tracer = { path = "../tracer", optional = true }
-getrandom_v02 = { version = "0.2.16", default-features = false, features = ["custom"], package = "getrandom" }
-getrandom_v03 = { version = "0.3.3" , default-features = false, package = "getrandom" }
+getrandom = { version = "0.2.16", features = ["custom"], optional = true }
 rand = { version = "0.8.5", optional = true }
 
 [dev-dependencies]

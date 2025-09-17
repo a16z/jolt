@@ -7,9 +7,6 @@ pub mod host_utils;
 #[cfg(any(feature = "host", feature = "guest-verifier"))]
 pub use host_utils::*;
 
-#[cfg(not(feature = "host"))]
-mod getrandom;
-
 pub use jolt_platform::*;
 pub use jolt_sdk_macros::provable;
 pub use postcard;
