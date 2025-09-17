@@ -358,7 +358,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> WitnessRowAccessor<F>
             JoltR1CSInputs::NextIsNoop => {
                 if t + 1 < len {
                     let no = get(t + 1).instruction().circuit_flags()[CircuitFlags::IsNoop];
-                    F::from_u8(no as u8)
+                    F::from_bool(no)
                 } else {
                     F::zero()
                 }
@@ -375,10 +375,10 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> WitnessRowAccessor<F>
                 } else {
                     true
                 };
-                F::from_u8((is_jump && !next_noop) as u8)
+                F::from_bool(is_jump && !next_noop)
             }
             JoltR1CSInputs::OpFlags(flag) => {
-                F::from_u8(get(t).instruction().circuit_flags()[flag as usize] as u8)
+                F::from_bool(get(t).instruction().circuit_flags()[flag as usize])
             }
         }
     }
