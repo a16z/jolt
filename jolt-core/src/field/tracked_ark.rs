@@ -1,4 +1,4 @@
-use super::{FieldOps, JoltField};
+use super::{challenge::TrivialChallenge, FieldOps, JoltField};
 use crate::utils::counters::{INVERSE_COUNT, MULT_COUNT};
 use allocative::Allocative;
 use ark_bn254::Fr;
@@ -272,6 +272,7 @@ impl FieldOps<&TrackedFr, TrackedFr> for TrackedFr {}
 impl JoltField for TrackedFr {
     const NUM_BYTES: usize = <ark_bn254::Fr as JoltField>::NUM_BYTES;
     type SmallValueLookupTables = <ark_bn254::Fr as JoltField>::SmallValueLookupTables;
+    type Challenge = TrivialChallenge<Self>;
 
     fn random<R: rand_core::RngCore>(rng: &mut R) -> Self {
         TrackedFr(<ark_bn254::Fr as JoltField>::random(rng))
@@ -344,6 +345,22 @@ impl JoltField for TrackedFr {
     fn mul_u128(&self, n: u128) -> Self {
         MULT_COUNT.fetch_add(1, Ordering::Relaxed);
         TrackedFr(self.0.mul_u128(n))
+    }
+}
+
+impl Mul<TrivialChallenge<TrackedFr>> for TrackedFr {
+    type Output = Self;
+
+    fn mul(self, rhs: TrivialChallenge<Self>) -> Self {
+        self * rhs.value()
+    }
+}
+
+impl<'a> Mul<&'a TrivialChallenge<TrackedFr>> for TrackedFr {
+    type Output = Self;
+
+    fn mul(self, rhs: &'a TrivialChallenge<Self>) -> Self {
+        self * rhs.value()
     }
 }
 

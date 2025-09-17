@@ -1,9 +1,10 @@
 use ark_ff::{prelude::*, BigInt, PrimeField, UniformRand};
 use rayon::prelude::*;
+use std::ops::Mul;
 
 use crate::utils::thread::unsafe_allocate_zero_vec;
 
-use super::{FieldOps, JoltField};
+use super::{challenge::TrivialChallenge, FieldOps, JoltField};
 
 impl FieldOps for ark_bn254::Fr {}
 impl FieldOps<&ark_bn254::Fr, ark_bn254::Fr> for &ark_bn254::Fr {}
@@ -16,6 +17,7 @@ lazy_static::lazy_static! {
 impl JoltField for ark_bn254::Fr {
     const NUM_BYTES: usize = 32;
     type SmallValueLookupTables = [Vec<Self>; 2];
+    type Challenge = TrivialChallenge<Self>;
 
     fn random<R: rand_core::RngCore>(rng: &mut R) -> Self {
         <Self as UniformRand>::rand(rng)
@@ -188,6 +190,31 @@ impl JoltField for ark_bn254::Fr {
     #[inline(always)]
     fn mul_u128(&self, n: u128) -> Self {
         ark_ff::Fp::mul_u128(*self, n)
+    }
+}
+
+// Implement F * Challenge -> F
+impl Mul<TrivialChallenge<ark_bn254::Fr>> for ark_bn254::Fr {
+    type Output = Self;
+
+    fn mul(self, rhs: TrivialChallenge<Self>) -> Self {
+        self * rhs.value()
+    }
+}
+
+impl<'a> Mul<&'a TrivialChallenge<ark_bn254::Fr>> for ark_bn254::Fr {
+    type Output = Self;
+
+    fn mul(self, rhs: &'a TrivialChallenge<Self>) -> Self {
+        self * rhs.value()
+    }
+}
+
+impl<'a> Mul<&'a TrivialChallenge<ark_bn254::Fr>> for &'a ark_bn254::Fr {
+    type Output = ark_bn254::Fr;
+
+    fn mul(self, rhs: &'a TrivialChallenge<ark_bn254::Fr>) -> ark_bn254::Fr {
+        *self * rhs.value()
     }
 }
 

@@ -230,6 +230,28 @@ impl Transcript for Blake2bTranscript {
         }
         q_powers
     }
+
+    // New methods that return F::Challenge
+    fn challenge_scalar_special<F: JoltField>(&mut self) -> F::Challenge {
+        // Do exactly the same thing as challenge_scalar, but wrap in Challenge type
+        let challenge_scalar = self.challenge_scalar::<F>();
+        F::Challenge::from(challenge_scalar)
+    }
+
+    fn challenge_vector_special<F: JoltField>(&mut self, len: usize) -> Vec<F::Challenge> {
+        (0..len)
+            .map(|_i| self.challenge_scalar_special::<F>())
+            .collect::<Vec<F::Challenge>>()
+    }
+
+    fn challenge_scalar_powers_special<F: JoltField>(&mut self, len: usize) -> Vec<F::Challenge> {
+        let q: F::Challenge = self.challenge_scalar_special::<F>();
+        let mut q_powers = vec![<F::Challenge as ark_std::One>::one(); len];
+        for i in 1..len {
+            q_powers[i] = q_powers[i - 1] * q;
+        }
+        q_powers
+    }
 }
 
 #[cfg(test)]
@@ -257,5 +279,72 @@ mod tests {
                 "Duplicate scalar found at iteration {i}",
             );
         }
+    }
+
+    #[test]
+    fn test_challenge_special_trivial() {
+        use ark_std::{UniformRand, Zero};
+
+        let mut rng = ark_std::test_rng();
+        let mut transcript1 = Blake2bTranscript::new(b"test_trivial_challenge");
+        let mut transcript2 = Blake2bTranscript::new(b"test_trivial_challenge");
+
+        let challenge = transcript1.challenge_scalar_special::<Fr>();
+
+        let challenge_regular = transcript2.challenge_scalar::<Fr>();
+
+        let field_elements: Vec<Fr> = (0..10).map(|_| Fr::rand(&mut rng)).collect();
+
+        for (i, &field_elem) in field_elements.iter().enumerate() {
+            let result_challenge = field_elem * challenge;
+
+            let result_regular = field_elem * challenge_regular;
+
+            assert_eq!(
+                result_challenge, result_regular,
+                "Multiplication mismatch at index {i}"
+            );
+        }
+
+        let field_elem = Fr::rand(&mut rng);
+        let result_ref = field_elem * &challenge;
+        let result_regular = field_elem * challenge.value();
+        assert_eq!(
+            result_ref, result_regular,
+            "Reference multiplication mismatch"
+        );
+
+        let mut transcript3 = Blake2bTranscript::new(b"test_trivial_challenge_powers");
+        let mut transcript4 = Blake2bTranscript::new(b"test_trivial_challenge_powers");
+        let challenge_powers = transcript3.challenge_scalar_powers_special::<Fr>(5);
+        let challenge_powers_regular = transcript4.challenge_scalar_powers::<Fr>(5);
+
+        assert_eq!(challenge_powers.len(), 5);
+        assert_eq!(challenge_powers_regular.len(), 5);
+
+        for i in 0..5 {
+            assert_eq!(
+                challenge_powers[i].value(),
+                challenge_powers_regular[i],
+                "Challenge power mismatch at index {i}"
+            );
+        }
+
+        let coefficients: Vec<Fr> = (0..5).map(|_| Fr::rand(&mut rng)).collect();
+        let mut result_special = Fr::zero();
+        let mut result_regular = Fr::zero();
+
+        for (coeff, challenge_power) in coefficients.iter().zip(challenge_powers.iter()) {
+            result_special += *coeff * *challenge_power;
+        }
+
+        for (coeff, challenge_power) in coefficients.iter().zip(challenge_powers_regular.iter()) {
+            result_regular += *coeff * *challenge_power;
+        }
+
+        assert_eq!(
+            result_special, result_regular,
+            "Linear combination results should match"
+        );
     }
 }

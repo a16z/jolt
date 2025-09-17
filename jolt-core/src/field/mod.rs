@@ -40,7 +40,6 @@ pub trait JoltField:
     + CanonicalSerialize
     + CanonicalDeserialize
     + Hash
-    + MaybeAllocative
 {
     /// Number of bytes occupied by a single field element.
     const NUM_BYTES: usize;
@@ -49,6 +48,38 @@ pub trait JoltField:
     /// the arkworks BN254 scalar field requires a conversion into Montgomery form, which naively
     /// requires a field multiplication, but can instead be looked up.
     type SmallValueLookupTables: Clone + Default + CanonicalSerialize + CanonicalDeserialize;
+
+    type Challenge: 'static
+        + Sized
+        + Copy
+        + Clone
+        + Send
+        + Sync
+        + Debug
+        + Display
+        + Default
+        + Eq
+        + Hash
+        + Zero
+        + One
+        + Neg<Output = Self::Challenge>
+        + Add<Self::Challenge, Output = Self::Challenge>
+        + Sub<Self::Challenge, Output = Self::Challenge>
+        + Mul<Self::Challenge, Output = Self::Challenge>
+        + AddAssign<Self::Challenge>
+        + SubAssign<Self::Challenge>
+        + MulAssign<Self::Challenge>
+        + Mul<Self, Output = Self>
+        + for<'a> Mul<&'a Self, Output = Self>
+        + core::iter::Sum<Self::Challenge>
+        + for<'a> core::iter::Sum<&'a Self::Challenge>
+        + core::iter::Product<Self::Challenge>
+        + for<'a> core::iter::Product<&'a Self::Challenge>
+        + CanonicalSerialize
+        + CanonicalDeserialize
+        + MaybeAllocative
+        + From<u128>
+        + From<Self>;
 
     fn random<R: rand_core::RngCore>(rng: &mut R) -> Self;
     /// Computes the small-value lookup tables.
@@ -190,4 +221,5 @@ where
 }
 
 pub mod ark;
+pub mod challenge;
 pub mod tracked_ark;
