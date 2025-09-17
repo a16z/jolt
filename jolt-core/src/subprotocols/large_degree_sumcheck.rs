@@ -825,9 +825,9 @@ mod test {
     fn multi_eq<F: JoltField>(D: usize, T: usize) -> Vec<F> {
         // Compute the polynomial eq(j, j_1, ..., j_d) = 1 if j = j_1 = ... = j_d and 0 otherwise.
 
-        let mut eq: Vec<F> = unsafe_allocate_zero_vec(T.pow(D as u32 + 1) as usize);
-        let num_bits = (T as usize).log_2() * ((D + 1) as usize);
-        let log_T = (T as usize).log_2();
+        let mut eq: Vec<F> = unsafe_allocate_zero_vec(T.pow(D as u32 + 1));
+        let num_bits = T.log_2() * (D + 1);
+        let log_T = T.log_2();
 
         for i in 0..T.pow(D as u32 + 1) {
             // Lower index correspond to lower bits.
@@ -844,14 +844,14 @@ mod test {
                     bits[..bits.len() - log_T]
                         .iter()
                         .enumerate()
-                        .filter(|(idx, _)| idx % (D as usize) == d as usize)
+                        .filter(|(idx, _)| idx % D == d)
                         .map(|(_, bit)| *bit)
                         .collect::<Vec<u32>>()
                 })
                 .collect::<Vec<_>>();
 
             let mut bit_vec = bits[..bits.len() - log_T]
-                .chunks(D as usize)
+                .chunks(D)
                 .map(|x| x.to_owned())
                 .collect::<Vec<_>>();
             bit_vec
@@ -860,7 +860,7 @@ mod test {
                 .for_each(|(chunk, digit)| {
                     chunk.push(*digit);
                 });
-            assert_eq!(bit_vec[0].len(), D as usize + 1);
+            assert_eq!(bit_vec[0].len(), D + 1);
 
             let val = bit_vec
                 .iter()
@@ -875,13 +875,13 @@ mod test {
                 })
                 .product::<u32>();
 
-            eq[i as usize] = if j.iter().all(|j| *j == *last_j_bits) {
+            eq[i] = if j.iter().all(|j| *j == *last_j_bits) {
                 F::one()
             } else {
                 F::zero()
             };
 
-            assert_eq!(F::from_u32(val), eq[i as usize]);
+            assert_eq!(F::from_u32(val), eq[i]);
         }
 
         eq
@@ -910,19 +910,17 @@ mod test {
             }
         }
 
-        let val_mle = val_vec
+        val_vec
             .into_par_iter()
-            .map(|val| MultilinearPolynomial::from(val))
-            .collect::<Vec<_>>();
-
-        val_mle
+            .map(MultilinearPolynomial::from)
+            .collect()
     }
 
     fn check_initial_eval_claim(
         D: usize,
         T: usize,
-        r_cycle: &Vec<Fr>,
-        ra: &Vec<MultilinearPolynomial<Fr>>,
+        r_cycle: &[Fr],
+        ra: &[MultilinearPolynomial<Fr>],
     ) {
         assert!(T.is_power_of_two());
         let eq = multi_eq::<Fr>(D, T);
@@ -939,7 +937,7 @@ mod test {
             let bits_f = (0..MAX_NUM_BITS)
                 .take(num_bits)
                 .map(|n| ((j >> n) & 1) as u32)
-                .map(|bit| Fr::from_u32(bit))
+                .map(Fr::from_u32)
                 .map(|val| (val, Fr::from_u32(1) - val))
                 .collect::<Vec<_>>();
             assert_eq!(bits_f.len(), num_bits);
@@ -985,7 +983,7 @@ mod test {
                         let res: u32 = bits
                             .iter()
                             .enumerate()
-                            .filter(|(idx, _)| idx % (D as usize) == d as usize)
+                            .filter(|(idx, _)| idx % D == d)
                             .map(|(_, bit)| *bit)
                             .enumerate()
                             .map(|(idx, bit)| bit << idx)
@@ -1017,12 +1015,11 @@ mod test {
         if D < 6 && T < 1 << 6 {
             check_initial_eval_claim(D, T, &r_cycle, &ra);
         }
-        let mut previous_claim =
-            compute_initial_eval_claim(&ra.iter().map(|x| &*x).collect::<Vec<_>>(), &r_cycle);
+        let mut previous_claim = compute_initial_eval_claim(&ra.iter().collect(), &r_cycle);
         let mut previous_claim_copy = previous_claim;
 
-        let claim = previous_claim.clone();
-        let claim_copy = previous_claim_copy.clone();
+        let claim = previous_claim;
+        let claim_copy = previous_claim_copy;
 
         let mut prover_transcript = KeccakTranscript::new(b"test_transcript");
         let r_cycle: Vec<Fr> = prover_transcript.challenge_vector(T.log_2());
@@ -1086,14 +1083,13 @@ mod test {
         if D < 6 && T < 1 << 6 {
             check_initial_eval_claim(D, T, &r_cycle, &ra);
         }
-        let mut previous_claim =
-            compute_initial_eval_claim(&ra.iter().map(|x| &*x).collect::<Vec<_>>(), &r_cycle);
+        let mut previous_claim = compute_initial_eval_claim(&ra.iter().collect(), &r_cycle);
         let mut previous_claim_copy = previous_claim;
         let mut previous_claim_copy_2 = previous_claim;
 
-        let claim = previous_claim.clone();
-        let claim_copy = previous_claim_copy.clone();
-        let claim_copy_2 = previous_claim_copy_2.clone();
+        let claim = previous_claim;
+        let claim_copy = previous_claim_copy;
+        let claim_copy_2 = previous_claim_copy_2;
 
         let start_time = Instant::now();
         let (proof, r_prime) = AppendixCSumCheckProof::<Fr, KeccakTranscript>::prove::<D1>(
