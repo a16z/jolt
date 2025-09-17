@@ -8,9 +8,9 @@ use crate::field::JoltField;
 use crate::zkvm::lookup_table::prefixes::Prefixes;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct MulUNoOverflow<const XLEN: usize>;
+pub struct MulUNoOverflowTable<const XLEN: usize>;
 
-impl<const XLEN: usize> JoltLookupTable for MulUNoOverflow<XLEN> {
+impl<const XLEN: usize> JoltLookupTable for MulUNoOverflowTable<XLEN> {
     /// Returns 1 if unsigned multiplication fits in XLEN bits, 0 if overflow.
     /// Overflow occurs when the upper XLEN bits of the 2*XLEN bit product are non-zero.
     fn materialize_entry(&self, index: u128) -> u64 {
@@ -29,7 +29,7 @@ impl<const XLEN: usize> JoltLookupTable for MulUNoOverflow<XLEN> {
     }
 }
 
-impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for MulUNoOverflow<XLEN> {
+impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for MulUNoOverflowTable<XLEN> {
     fn suffixes(&self) -> Vec<Suffixes> {
         vec![Suffixes::OverflowBitsZero]
     }
@@ -45,7 +45,7 @@ impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for MulUNoOverflow<XLEN>
 mod test {
     use ark_bn254::Fr;
 
-    use super::MulUNoOverflow;
+    use super::MulUNoOverflowTable;
     use crate::zkvm::lookup_table::test::{
         lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
     };
@@ -53,16 +53,16 @@ mod test {
 
     #[test]
     fn mle_full_hypercube() {
-        lookup_table_mle_full_hypercube_test::<Fr, MulUNoOverflow<8>>();
+        lookup_table_mle_full_hypercube_test::<Fr, MulUNoOverflowTable<8>>();
     }
 
     #[test]
     fn mle_random() {
-        lookup_table_mle_random_test::<Fr, MulUNoOverflow<XLEN>>();
+        lookup_table_mle_random_test::<Fr, MulUNoOverflowTable<XLEN>>();
     }
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<XLEN, Fr, MulUNoOverflow<XLEN>>();
+        prefix_suffix_test::<XLEN, Fr, MulUNoOverflowTable<XLEN>>();
     }
 }

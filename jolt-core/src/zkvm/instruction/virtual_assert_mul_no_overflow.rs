@@ -1,18 +1,14 @@
-use tracer::instruction::{
-    virtual_assert_signed_mul_no_overflow::VirtualAssertSignedMulNoOverflow, RISCVCycle,
-};
-
-use crate::zkvm::lookup_table::{signed_mul_overflow::SignedMulOverflow, LookupTables};
-
 use super::{CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS};
+use crate::zkvm::lookup_table::{mul_no_overflow::MulNoOverflowTable, LookupTables};
+use tracer::instruction::{virtual_assert_mul_no_overflow::VirtualAssertMulNoOverflow, RISCVCycle};
 
-impl<const XLEN: usize> InstructionLookup<XLEN> for VirtualAssertSignedMulNoOverflow {
+impl<const XLEN: usize> InstructionLookup<XLEN> for VirtualAssertMulNoOverflow {
     fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
-        Some(SignedMulOverflow.into())
+        Some(MulNoOverflowTable.into())
     }
 }
 
-impl InstructionFlags for VirtualAssertSignedMulNoOverflow {
+impl InstructionFlags for VirtualAssertMulNoOverflow {
     fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
         let mut flags = [false; NUM_CIRCUIT_FLAGS];
         flags[CircuitFlags::MultiplyOperands as usize] = true;
@@ -28,7 +24,7 @@ impl InstructionFlags for VirtualAssertSignedMulNoOverflow {
     }
 }
 
-impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualAssertSignedMulNoOverflow> {
+impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualAssertMulNoOverflow> {
     fn to_lookup_operands(&self) -> (u64, u128) {
         let (x, y) = LookupQuery::<XLEN>::to_instruction_inputs(self);
         // For signed multiplication, we need to handle the sign bits properly
@@ -58,9 +54,7 @@ impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualAssertSignedMulN
 
     fn to_lookup_output(&self) -> u64 {
         let (rs1, rs2) = LookupQuery::<XLEN>::to_instruction_inputs(self);
-        let rs1_signed = rs1 as i64;
-        let rs2_signed = rs2 as i64;
-        let result = (rs1_signed as i128) * (rs2_signed as i128);
+        let result = (rs1 as i64 as i128) * (rs2 as i64 as i128);
 
         match XLEN {
             #[cfg(test)]
@@ -86,13 +80,12 @@ impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualAssertSignedMulN
 
 #[cfg(test)]
 mod test {
-    use crate::zkvm::instruction::test::materialize_entry_test;
-
     use super::*;
+    use crate::zkvm::instruction::test::materialize_entry_test;
     use ark_bn254::Fr;
 
     #[test]
     fn materialize_entry() {
-        materialize_entry_test::<Fr, VirtualAssertSignedMulNoOverflow>();
+        materialize_entry_test::<Fr, VirtualAssertMulNoOverflow>();
     }
 }

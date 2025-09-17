@@ -4,7 +4,8 @@ use equal::EqualTable;
 use halfword_alignment::HalfwordAlignmentTable;
 use lower_half_word::LowerHalfWordTable;
 use movsign::MovsignTable;
-use mulu_no_overflow::MulUNoOverflow;
+use mul_no_overflow::MulNoOverflowTable;
+use mulu_no_overflow::MulUNoOverflowTable;
 use not_equal::NotEqualTable;
 use or::OrTable;
 use pow2::Pow2Table;
@@ -16,7 +17,6 @@ use shift_right_bitmask::ShiftRightBitmaskTable;
 use sign_extend_half_word::SignExtendHalfWordTable;
 use signed_greater_than_equal::SignedGreaterThanEqualTable;
 use signed_less_than::SignedLessThanTable;
-use signed_mul_overflow::SignedMulOverflow;
 use std::marker::Sync;
 use strum::EnumCount;
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
@@ -75,6 +75,7 @@ pub mod equal;
 pub mod halfword_alignment;
 pub mod lower_half_word;
 pub mod movsign;
+pub mod mul_no_overflow;
 pub mod mulu_no_overflow;
 pub mod not_equal;
 pub mod or;
@@ -85,7 +86,6 @@ pub mod shift_right_bitmask;
 pub mod sign_extend_half_word;
 pub mod signed_greater_than_equal;
 pub mod signed_less_than;
-pub mod signed_mul_overflow;
 pub mod sub;
 pub mod unsigned_greater_than_equal;
 pub mod unsigned_less_than;
@@ -141,8 +141,8 @@ pub enum LookupTables<const XLEN: usize> {
     VirtualROTRW(VirtualRotrWTable<XLEN>),
     VirtualChangeDivisor(VirtualChangeDivisorTable<XLEN>),
     VirtualChangeDivisorW(VirtualChangeDivisorWTable<XLEN>),
-    MulUNoOverflow(MulUNoOverflow<XLEN>),
-    SignedMulOverflow(SignedMulOverflow<XLEN>),
+    MulUNoOverflow(MulUNoOverflowTable<XLEN>),
+    MulNoOverflow(MulNoOverflowTable<XLEN>),
 }
 
 impl<const XLEN: usize> LookupTables<XLEN> {
@@ -186,7 +186,7 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::VirtualChangeDivisor(table) => table.materialize(),
             LookupTables::VirtualChangeDivisorW(table) => table.materialize(),
             LookupTables::MulUNoOverflow(table) => table.materialize(),
-            LookupTables::SignedMulOverflow(table) => table.materialize(),
+            LookupTables::MulNoOverflow(table) => table.materialize(),
         }
     }
 
@@ -223,7 +223,7 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::VirtualChangeDivisor(table) => table.materialize_entry(index),
             LookupTables::VirtualChangeDivisorW(table) => table.materialize_entry(index),
             LookupTables::MulUNoOverflow(table) => table.materialize_entry(index),
-            LookupTables::SignedMulOverflow(table) => table.materialize_entry(index),
+            LookupTables::MulNoOverflow(table) => table.materialize_entry(index),
         }
     }
 
@@ -260,7 +260,7 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::VirtualChangeDivisor(table) => table.evaluate_mle(r),
             LookupTables::VirtualChangeDivisorW(table) => table.evaluate_mle(r),
             LookupTables::MulUNoOverflow(table) => table.evaluate_mle(r),
-            LookupTables::SignedMulOverflow(table) => table.evaluate_mle(r),
+            LookupTables::MulNoOverflow(table) => table.evaluate_mle(r),
         }
     }
 
@@ -297,7 +297,7 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::VirtualChangeDivisor(table) => table.suffixes(),
             LookupTables::VirtualChangeDivisorW(table) => table.suffixes(),
             LookupTables::MulUNoOverflow(table) => table.suffixes(),
-            LookupTables::SignedMulOverflow(table) => table.suffixes(),
+            LookupTables::MulNoOverflow(table) => table.suffixes(),
         }
     }
 
@@ -338,7 +338,7 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::VirtualChangeDivisor(table) => table.combine(prefixes, suffixes),
             LookupTables::VirtualChangeDivisorW(table) => table.combine(prefixes, suffixes),
             LookupTables::MulUNoOverflow(table) => table.combine(prefixes, suffixes),
-            LookupTables::SignedMulOverflow(table) => table.combine(prefixes, suffixes),
+            LookupTables::MulNoOverflow(table) => table.combine(prefixes, suffixes),
         }
     }
 }

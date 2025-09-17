@@ -36,16 +36,16 @@ use lower_word::LowerWordPrefix;
 use lt::LessThanPrefix;
 use num::FromPrimitive;
 use or::OrPrefix;
+use overflow_bits_zero::OverflowBitsZeroPrefix;
 use right_is_zero::RightOperandIsZeroPrefix;
 use right_msb::RightMsbPrefix;
 use right_operand::RightOperandPrefix;
 use right_operand_w::RightOperandWPrefix;
+use signed_overflow_bits_one::SignedOverflowBitsOnePrefix;
+use signed_overflow_bits_zero::SignedOverflowBitsZeroPrefix;
 use two_lsb::TwoLsbPrefix;
 use upper_word::UpperWordPrefix;
 use xor::XorPrefix;
-use overflow_bits_zero::OverflowBitsZeroPrefix;
-use signed_overflow_bits_one::SignedOverflowBitsOnePrefix;
-use signed_overflow_bits_zero::SignedOverflowBitsZeroPrefix;
 
 pub mod and;
 pub mod andn;
@@ -67,6 +67,7 @@ pub mod negative_divisor_equals_remainder;
 pub mod negative_divisor_greater_than_remainder;
 pub mod negative_divisor_zero_remainder;
 pub mod or;
+pub mod overflow_bits_zero;
 pub mod positive_remainder_equals_divisor;
 pub mod positive_remainder_less_than_divisor;
 pub mod pow2;
@@ -80,12 +81,11 @@ pub mod right_shift_w;
 pub mod sign_extension;
 pub mod sign_extension_right_operand;
 pub mod sign_extension_upper_half;
+pub mod signed_overflow_bits_one;
+pub mod signed_overflow_bits_zero;
 pub mod two_lsb;
 pub mod upper_word;
 pub mod xor;
-pub mod overflow_bits_zero;
-pub mod signed_overflow_bits_one;
-pub mod signed_overflow_bits_zero;
 
 pub trait SparseDensePrefix<F: JoltField>: 'static + Sync {
     /// Evalautes the MLE for this prefix:

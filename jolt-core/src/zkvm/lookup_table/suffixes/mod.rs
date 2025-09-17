@@ -32,12 +32,12 @@ use lower_half_word::LowerHalfWordSuffix;
 use lower_word::LowerWordSuffix;
 use notand::NotAndSuffix;
 use one::OneSuffix;
-use two_lsb::TwoLsbSuffix;
-use upper_word::UpperWordSuffix;
-use xor::XorSuffix;
 use overflow_bits_zero::OverflowBitsZeroSuffix;
 use signed_overflow_bits_one::SignedOverflowBitsOneSuffix;
 use signed_overflow_bits_zero::SignedOverflowBitsZeroSuffix;
+use two_lsb::TwoLsbSuffix;
+use upper_word::UpperWordSuffix;
+use xor::XorSuffix;
 
 pub mod and;
 pub mod change_divisor;

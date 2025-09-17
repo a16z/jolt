@@ -2,13 +2,13 @@ use tracer::instruction::{
     virtual_assert_mulu_no_overflow::VirtualAssertMulUNoOverflow, RISCVCycle,
 };
 
-use crate::zkvm::lookup_table::{mulu_no_overflow::MulUNoOverflow, LookupTables};
+use crate::zkvm::lookup_table::{mulu_no_overflow::MulUNoOverflowTable, LookupTables};
 
 use super::{CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS};
 
 impl<const XLEN: usize> InstructionLookup<XLEN> for VirtualAssertMulUNoOverflow {
     fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
-        Some(MulUNoOverflow.into())
+        Some(MulUNoOverflowTable.into())
     }
 }
 
