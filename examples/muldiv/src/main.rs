@@ -14,7 +14,7 @@ pub fn main() {
     let now = Instant::now();
     let (output, proof, program_io) = prove(12031293, 17, 92);
     println!("Prover runtime: {} s", now.elapsed().as_secs_f64());
-    let is_valid = verify(12031293, 17, 92, output, program_io.panic, proof);
+    let is_valid = verify(-12031293, 17, 92, output, program_io.panic, proof);
 
     println!("output: {output}");
     println!("valid: {is_valid}");
