@@ -1833,23 +1833,14 @@ mod tests {
     #[test]
     fn test_fmadd_reduce_factor_contract() {
         // Test the contract of fmadd_reduce_factor: it represents the Montgomery factor
-        // introduced by the fmadd+reduce pipeline for normalization
+        // introduced by the fmadd+reduce pipeline to convert from standard-int multiply
+        // into the Montgomery domain. For e = 1 and m = 1, the factor should be ONE (R).
         let k = fmadd_reduce_factor::<Fr>();
 
-        // Verify that k * k.inverse() = 1
+        // Verify that k behaves as the multiplicative identity
         let inv_k = k.inverse().unwrap();
-        assert_eq!(
-            k * inv_k,
-            <Fr as JoltField>::from_u64(1),
-            "k * k.inverse() should equal 1"
-        );
-
-        // k should have internal BigInt representation of 1 (represents value 1 in standard form)
-        assert_eq!(
-            k.as_bigint_ref(),
-            &ark_ff::BigInt::<4>::from(1u64),
-            "fmadd_reduce_factor should have an internal BigInt representation of 1."
-        );
+        assert_eq!(k * inv_k, <Fr as JoltField>::from_u64(1));
+        assert_eq!(k, <Fr as JoltField>::from_u64(1), "fmadd_reduce_factor should equal field one (R)");
     }
 
     fn random_az_value<R: Rng>(rng: &mut R) -> I8OrI96 {
@@ -1911,7 +1902,8 @@ mod tests {
             .map(|bz| s160_to_field::<Fr>(bz))
             .collect();
 
-        let inv_k = fmadd_reduce_factor::<Fr>().inverse().unwrap();
+        // Multiply by Montgomery R to map REDC output (standard form) back to Montgomery form
+        let mont_r = <Fr as JoltField>::MONTGOMERY_R;
 
         // Old path (produces standard Fr elements)
         let mut temp_ta_old = vec![Fr::zero(); num_non_trivial];
@@ -1940,8 +1932,8 @@ mod tests {
             let new_neg = reduce_unreduced_to_field::<Fr>(&ta_neg_acc[i]);
             let new_result_montgomery = new_pos - new_neg;
 
-            // Normalize new result from Montgomery form to standard form for comparison
-            let new_result_normalized = new_result_montgomery * inv_k;
+            // Normalize by multiplying with R to match the generic path representation
+            let new_result_normalized = new_result_montgomery * mont_r;
 
             assert_eq!(
                 old_result, new_result_normalized,

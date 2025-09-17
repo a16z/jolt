@@ -825,6 +825,13 @@ where
                     JoltGroupWrapper(VariableBaseMSM::msm_i128(&bases[..row.len()], row).unwrap())
                 })
                 .collect(),
+            MultilinearPolynomial::S128Scalars(poly) => poly
+                .coeffs
+                .par_chunks(row_len)
+                .map(|row| {
+                    JoltGroupWrapper(VariableBaseMSM::msm_s128(&bases[..row.len()], row).unwrap())
+                })
+                .collect(),
             MultilinearPolynomial::RLC(poly) => poly.commit_rows(&bases[..row_len]),
             MultilinearPolynomial::OneHot(poly) => poly.commit_rows(&bases[..row_len]),
         }
