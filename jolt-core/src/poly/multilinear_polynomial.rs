@@ -223,6 +223,13 @@ impl<F: JoltField> MultilinearPolynomial<F> {
                     F::from_u128(poly.coeffs[index])
                 }
             }
+            MultilinearPolynomial::S128Scalars(poly) => {
+                if poly.is_bound() {
+                    poly.bound_coeffs[index]
+                } else {
+                    poly.coeffs[index].to_field()
+                }
+            }
             _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
         }
     }
@@ -285,6 +292,12 @@ impl<F: JoltField> MultilinearPolynomial<F> {
                 .map(|(a, b)| a.field_mul(*b))
                 .sum(),
             MultilinearPolynomial::U128Scalars(poly) => poly
+                .coeffs
+                .par_iter()
+                .zip_eq(other.par_iter())
+                .map(|(a, b)| a.field_mul(*b))
+                .sum(),
+            MultilinearPolynomial::S128Scalars(poly) => poly
                 .coeffs
                 .par_iter()
                 .zip_eq(other.par_iter())

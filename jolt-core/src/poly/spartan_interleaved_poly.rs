@@ -343,7 +343,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                                     chunk_bz_coeffs.push((global_r1cs_idx + 1, bz).into());
                                 }
 
-                                /* Debug/test constraint checks disabled for benchmarking
+                                // Debug/test constraint checks
                                 #[cfg(test)]
                                 {
                                     // Check constraint using field-mapped Az/Bz
@@ -395,7 +395,6 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                                         panic!("Constraint violated at step {current_step_idx}");
                                     }
                                 }
-                                */
                             }
 
                             // If this is a full block, compute and update tA, then reset Az, Bz blocks
@@ -474,8 +473,14 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                         // E_in was pre-scaled by inv(K), so reduction already matches field semantics
                         tA_sum_for_current_x_out[i] = pos_f - neg_f;
                     }
+                    let k = fmadd_reduce_factor::<F>();
 
-                    /* A/B precompute mismatch check disabled for benchmarking
+                    for i in 0..NUM_NONTRIVIAL_TERNARY_POINTS {
+                        // old one times k
+                        tA_sum_for_current_x_out_old[i] *= k;
+                    }
+
+                    // A/B precompute mismatch check (account for fmadd REDC scaling)
                     for i in 0..NUM_NONTRIVIAL_TERNARY_POINTS {
                         let new_norm = tA_sum_for_current_x_out[i];
                         let old_norm = tA_sum_for_current_x_out_old[i];
@@ -489,7 +494,6 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                             );
                         }
                     }
-                    */
 
                     // Distribute accumulated tA for this x_out into the SVO accumulators
                     // (both zero and infty evaluations) using precomputed E_out tables.
@@ -557,31 +561,32 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
             }
         }
 
-        // Final comparison of accumulators (commented out for old path test)
-        // for i in 0..NUM_ACCUMS_EVAL_ZERO {
-        //     if final_svo_accums_zero[i] != final_svo_accums_zero_old[i] {
-        //         panic!(
-        //             "[SVO precompute accum_zero mismatch] idx={} new={} old={}",
-        //             i,
-        //             final_svo_accums_zero[i],
-        //             final_svo_accums_zero_old[i]
-        //         );
-        //     }
-        // }
-        // for i in 0..NUM_ACCUMS_EVAL_INFTY {
-        //     if final_svo_accums_infty[i] != final_svo_accums_infty_old[i] {
-        //         panic!(
-        //             "[SVO precompute accum_infty mismatch] idx={} new={} old={}",
-        //             i,
-        //             final_svo_accums_infty[i],
-        //             final_svo_accums_infty_old[i]
-        //         );
-        //     }
-        // }
+        // Final comparison of accumulators (scaled by K)
+        let k = fmadd_reduce_factor::<F>();
+        for i in 0..NUM_ACCUMS_EVAL_ZERO {
+            if final_svo_accums_zero[i] != final_svo_accums_zero_old[i] * k {
+                panic!(
+                    "[SVO precompute accum_zero mismatch] idx={} new={} old*k={}",
+                    i,
+                    final_svo_accums_zero[i],
+                    final_svo_accums_zero_old[i] * k
+                );
+            }
+        }
+        for i in 0..NUM_ACCUMS_EVAL_INFTY {
+            if final_svo_accums_infty[i] != final_svo_accums_infty_old[i] * k {
+                panic!(
+                    "[SVO precompute accum_infty mismatch] idx={} new={} old*k={}",
+                    i,
+                    final_svo_accums_infty[i],
+                    final_svo_accums_infty_old[i] * k
+                );
+            }
+        }
 
         (
-            final_svo_accums_zero_old,  // Use old baseline results
-            final_svo_accums_infty_old, // Use old baseline results
+            final_svo_accums_zero,  // Use new baseline results
+            final_svo_accums_infty, // Use new baseline results
             Self {
                 az_unbound_coeffs_shards: final_az_unbound_coeffs_shards,
                 bz_unbound_coeffs_shards: final_bz_unbound_coeffs_shards,
@@ -840,22 +845,22 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                     let p_slope_term_old = (az1_field - az0_field) * (bz1_field - bz0_field);
 
                     // Per-block A/B assertions (commented out for old path test)
-                    // if p_at_xk0 != p_at_xk0_old {
-                    //     panic!(
-                    //         "[SVO streaming block mismatch] block_id={} p(0): new={} old={}",
-                    //         current_block_id,
-                    //         p_at_xk0,
-                    //         p_at_xk0_old
-                    //     );
-                    // }
-                    // if p_slope_term != p_slope_term_old {
-                    //     panic!(
-                    //         "[SVO streaming block mismatch] block_id={} p(∞ slope): new={} old={}",
-                    //         current_block_id,
-                    //         p_slope_term,
-                    //         p_slope_term_old
-                    //     );
-                    // }
+                    if p_at_xk0 != p_at_xk0_old {
+                        panic!(
+                            "[SVO streaming block mismatch] block_id={} p(0): new={} old={}",
+                            current_block_id,
+                            p_at_xk0,
+                            p_at_xk0_old
+                        );
+                    }
+                    if p_slope_term != p_slope_term_old {
+                        panic!(
+                            "[SVO streaming block mismatch] block_id={} p(∞ slope): new={} old={}",
+                            current_block_id,
+                            p_slope_term,
+                            p_slope_term_old
+                        );
+                    }
 
                     task_sum_contrib_0_old += e_block * p_at_xk0_old;
                     task_sum_contrib_infty_old += e_block * p_slope_term_old;
@@ -885,20 +890,20 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
         }
 
         // A/B comparison: typed (new) vs baseline (old) totals (commented out for old path test)
-        // if total_sumcheck_eval_at_0 != total_sumcheck_eval_at_0_old {
-        //     panic!(
-        //         "[SVO streaming mismatch] t_i(0): new={} old={}",
-        //         total_sumcheck_eval_at_0,
-        //         total_sumcheck_eval_at_0_old
-        //     );
-        // }
-        // if total_sumcheck_eval_at_infty != total_sumcheck_eval_at_infty_old {
-        //     panic!(
-        //         "[SVO streaming mismatch] t_i(∞): new={} old={}",
-        //         total_sumcheck_eval_at_infty,
-        //         total_sumcheck_eval_at_infty_old
-        //     );
-        // }
+        if total_sumcheck_eval_at_0 != total_sumcheck_eval_at_0_old {
+            panic!(
+                "[SVO streaming mismatch] t_i(0): new={} old={}",
+                total_sumcheck_eval_at_0,
+                total_sumcheck_eval_at_0_old
+            );
+        }
+        if total_sumcheck_eval_at_infty != total_sumcheck_eval_at_infty_old {
+            panic!(
+                "[SVO streaming mismatch] t_i(∞): new={} old={}",
+                total_sumcheck_eval_at_infty,
+                total_sumcheck_eval_at_infty_old
+            );
+        }
 
         // Compute r_i challenge using aggregated sumcheck values (use old baseline)
         let r_i = process_eq_sumcheck_round(

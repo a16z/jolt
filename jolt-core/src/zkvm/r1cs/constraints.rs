@@ -782,13 +782,14 @@ pub fn eval_bz_by_name<F: JoltField>(
             S160::from(rlo_u128) - S160::from(expected_i128)
         }
         ConstraintName::RightLookupSub => {
-            // B: RightLookupOperand - (LeftInstructionInput - RightInstructionInput) with full-width integer semantics
+            // B: RightLookupOperand - (LeftInstructionInput - RightInstructionInput + 2^64)
+            // with full-width integer semantics (matches the +2^64 in the uniform constraint)
             let left_u64 = accessor.value_at_u64(Inp::LeftInstructionInput, row);
             let right_i128 = accessor
                 .value_at_s64(Inp::RightInstructionInput, row)
                 .to_i128();
             let rlo_u128 = accessor.value_at_u128(Inp::RightLookupOperand, row);
-            let expected_i128 = (left_u64 as i128) - right_i128;
+            let expected_i128 = (left_u64 as i128) - right_i128 + (1i128 << 64);
             S160::from(rlo_u128) - S160::from(expected_i128)
         }
         ConstraintName::ProductDef => {

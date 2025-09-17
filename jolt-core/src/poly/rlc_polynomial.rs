@@ -83,6 +83,9 @@ impl<F: JoltField> RLCPolynomial<F> {
                                 MultilinearPolynomial::I128Scalars(p) => {
                                     acc += p.coeffs[i].field_mul(coeff);
                                 }
+                                MultilinearPolynomial::S128Scalars(p) => {
+                                    acc += p.coeffs[i].field_mul(coeff);
+                                }
                                 MultilinearPolynomial::LargeScalars(p) => {
                                     acc += p.Z[i] * coeff;
                                 }
