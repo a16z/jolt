@@ -29,8 +29,8 @@ use crate::{
 
 use super::instruction::{CircuitFlags, InstructionFlags, LookupQuery};
 
-struct SharedWitnessData<F: JoltField>(UnsafeCell<WitnessData<F>>);
-unsafe impl<F: JoltField> Sync for SharedWitnessData<F> {}
+struct SharedWitnessData(UnsafeCell<WitnessData>);
+unsafe impl Sync for SharedWitnessData {}
 
 /// K^{1/d}
 pub const DTH_ROOT_OF_K: usize = 1 << 8;
@@ -84,11 +84,11 @@ pub enum CommittedPolynomial {
 
 pub static mut ALL_COMMITTED_POLYNOMIALS: OnceCell<Vec<CommittedPolynomial>> = OnceCell::new();
 
-struct WitnessData<F: JoltField> {
+struct WitnessData {
     // Simple polynomial coefficients
     left_instruction_input: Vec<u64>,
     right_instruction_input: Vec<i128>,
-    product: Vec<F>,
+    product: Vec<S128>,
     write_lookup_output_to_rd: Vec<u8>,
     write_pc_to_rd: Vec<u8>,
     should_branch: Vec<u8>,
@@ -102,15 +102,15 @@ struct WitnessData<F: JoltField> {
     ram_ra: Vec<Vec<Option<usize>>>,
 }
 
-unsafe impl<F: JoltField> Send for WitnessData<F> {}
-unsafe impl<F: JoltField> Sync for WitnessData<F> {}
+unsafe impl Send for WitnessData {}
+unsafe impl Sync for WitnessData {}
 
-impl<F: JoltField> WitnessData<F> {
+impl WitnessData {
     fn new(trace_len: usize, ram_d: usize, bytecode_d: usize) -> Self {
         Self {
             left_instruction_input: vec![0; trace_len],
             right_instruction_input: vec![0; trace_len],
-            product: vec![F::zero(); trace_len],
+            product: vec![S128::zero(); trace_len],
             write_lookup_output_to_rd: vec![0; trace_len],
             write_pc_to_rd: vec![0; trace_len],
             should_branch: vec![0; trace_len],
@@ -304,7 +304,11 @@ impl CommittedPolynomial {
 
                 batch_ref.left_instruction_input[i] = left;
                 batch_ref.right_instruction_input[i] = right;
-                batch_ref.product[i] = F::from_u64(left) * F::from_i128(right);
+                batch_ref.product[i] = if right >= 0 {
+                    S128::from_u128(left as u128 * right.unsigned_abs())
+                } else {
+                    S128::from_u128_and_sign(left as u128 * right.unsigned_abs(), false)
+                };
 
                 batch_ref.write_lookup_output_to_rd[i] = rd_write_flag
                     * (circuit_flags[CircuitFlags::WriteLookupOutputToRD as usize] as u8);
