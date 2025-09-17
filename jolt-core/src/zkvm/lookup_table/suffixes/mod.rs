@@ -32,7 +32,11 @@ use lower_half_word::LowerHalfWordSuffix;
 use lower_word::LowerWordSuffix;
 use notand::NotAndSuffix;
 use one::OneSuffix;
+use overflow_bits_one::OverflowBitsOneSuffix;
 use overflow_bits_zero::OverflowBitsZeroSuffix;
+use sign_bit::SignBitSuffix;
+use signed_overflow_bits_zero::SignedOverflowBitsZeroSuffix;
+use signed_overflow_bits_one::SignedOverflowBitsOneSuffix;
 use two_lsb::TwoLsbSuffix;
 use upper_word::UpperWordSuffix;
 use xor::XorSuffix;
@@ -54,7 +58,11 @@ pub mod lt;
 pub mod notand;
 pub mod one;
 pub mod or;
+pub mod overflow_bits_one;
 pub mod overflow_bits_zero;
+pub mod sign_bit;
+pub mod signed_overflow_bits_zero;
+pub mod signed_overflow_bits_one;
 pub mod pow2;
 pub mod pow2_w;
 pub mod right_is_zero;
@@ -116,6 +124,10 @@ pub enum Suffixes {
     LeftShiftWHelper,
     LeftShiftW,
     OverflowBitsZero,
+    OverflowBitsOne,
+    SignBit,
+    SignedOverflowBitsZero,
+    SignedOverflowBitsOne,
 }
 
 pub type SuffixEval<F: JoltField> = F;
@@ -161,6 +173,10 @@ impl Suffixes {
             Suffixes::LeftShiftWHelper => LeftShiftWHelperSuffix::suffix_mle(b),
             Suffixes::LeftShiftW => LeftShiftWSuffix::suffix_mle(b),
             Suffixes::OverflowBitsZero => OverflowBitsZeroSuffix::<XLEN>::suffix_mle(b),
+            Suffixes::OverflowBitsOne => OverflowBitsOneSuffix::<XLEN>::suffix_mle(b),
+            Suffixes::SignBit => SignBitSuffix::<XLEN>::suffix_mle(b),
+            Suffixes::SignedOverflowBitsZero => SignedOverflowBitsZeroSuffix::<XLEN>::suffix_mle(b),
+            Suffixes::SignedOverflowBitsOne => SignedOverflowBitsOneSuffix::<XLEN>::suffix_mle(b),
         }
     }
 }

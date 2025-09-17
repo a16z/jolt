@@ -1,16 +1,16 @@
-use tracer::instruction::{virtual_assert_mul_no_overflow::VirtualAssertMulNoOverflow, RISCVCycle};
+use tracer::instruction::{virtual_assert_signed_mul_no_overflow::VirtualAssertSignedMulNoOverflow, RISCVCycle};
 
-use crate::zkvm::lookup_table::{mul_no_overflow::MulNoOverflow, LookupTables};
+use crate::zkvm::lookup_table::{signed_mul_overflow::SignedMulOverflow, LookupTables};
 
 use super::{CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS};
 
-impl<const XLEN: usize> InstructionLookup<XLEN> for VirtualAssertMulNoOverflow {
+impl<const XLEN: usize> InstructionLookup<XLEN> for VirtualAssertSignedMulNoOverflow {
     fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
-        Some(MulNoOverflow.into())
+        Some(SignedMulOverflow.into())
     }
 }
 
-impl InstructionFlags for VirtualAssertMulNoOverflow {
+impl InstructionFlags for VirtualAssertSignedMulNoOverflow {
     fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
         let mut flags = [false; NUM_CIRCUIT_FLAGS];
         flags[CircuitFlags::MultiplyOperands as usize] = true;
@@ -26,10 +26,12 @@ impl InstructionFlags for VirtualAssertMulNoOverflow {
     }
 }
 
-impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualAssertMulNoOverflow> {
+impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualAssertSignedMulNoOverflow> {
     fn to_lookup_operands(&self) -> (u64, u128) {
         let (x, y) = LookupQuery::<XLEN>::to_instruction_inputs(self);
-        (0, x as u128 * y as u64 as u128)
+        // For signed multiplication, we need to handle the sign bits properly
+        let result = (x as i64 as i128) * (y as i128);
+        (0, result as u128)
     }
 
     fn to_lookup_index(&self) -> u128 {
@@ -40,12 +42,12 @@ impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualAssertMulNoOverf
         match XLEN {
             #[cfg(test)]
             8 => (
-                self.register_state.rs1 as u8 as u64,
-                self.register_state.rs2 as u8 as i128,
+                self.register_state.rs1 as i8 as i64 as u64,
+                self.register_state.rs2 as i8 as i128,
             ),
             32 => (
-                self.register_state.rs1 as u32 as u64,
-                self.register_state.rs2 as u32 as i128,
+                self.register_state.rs1 as i32 as i64 as u64,
+                self.register_state.rs2 as i32 as i128,
             ),
             64 => (self.register_state.rs1, self.register_state.rs2 as i128),
             _ => panic!("{XLEN}-bit word size is unsupported"),
@@ -54,13 +56,27 @@ impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualAssertMulNoOverf
 
     fn to_lookup_output(&self) -> u64 {
         let (rs1, rs2) = LookupQuery::<XLEN>::to_instruction_inputs(self);
-        let result = (rs1 as u128) * (rs2 as u64 as u128);
-
+        let rs1_signed = rs1 as i64;
+        let rs2_signed = rs2 as i64;
+        let result = (rs1_signed as i128) * (rs2_signed as i128);
+        
         match XLEN {
             #[cfg(test)]
-            8 => (result <= u8::MAX as u128) as u64,
-            32 => (result <= u32::MAX as u128) as u64,
-            64 => (result <= u64::MAX as u128) as u64,
+            8 => {
+                let min = i8::MIN as i128;
+                let max = i8::MAX as i128;
+                (result >= min && result <= max) as u64
+            },
+            32 => {
+                let min = i32::MIN as i128;
+                let max = i32::MAX as i128;
+                (result >= min && result <= max) as u64
+            },
+            64 => {
+                let min = i64::MIN as i128;
+                let max = i64::MAX as i128;
+                (result >= min && result <= max) as u64
+            },
             _ => panic!("Unsupported XLEN: {XLEN}"),
         }
     }
@@ -75,6 +91,6 @@ mod test {
 
     #[test]
     fn materialize_entry() {
-        materialize_entry_test::<Fr, VirtualAssertMulNoOverflow>();
+        materialize_entry_test::<Fr, VirtualAssertSignedMulNoOverflow>();
     }
 }

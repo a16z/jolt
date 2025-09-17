@@ -8,9 +8,9 @@ use crate::field::JoltField;
 use crate::zkvm::lookup_table::prefixes::Prefixes;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct OverflowBitsZero<const XLEN: usize>;
+pub struct MulNoOverflow<const XLEN: usize>;
 
-impl<const XLEN: usize> JoltLookupTable for OverflowBitsZero<XLEN> {
+impl<const XLEN: usize> JoltLookupTable for MulNoOverflow<XLEN> {
     fn materialize_entry(&self, index: u128) -> u64 {
         // Check if upper XLEN bits are all zero
         let upper_bits = index >> XLEN;
@@ -30,7 +30,7 @@ impl<const XLEN: usize> JoltLookupTable for OverflowBitsZero<XLEN> {
     }
 }
 
-impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for OverflowBitsZero<XLEN> {
+impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for MulNoOverflow<XLEN> {
     fn suffixes(&self) -> Vec<Suffixes> {
         vec![Suffixes::OverflowBitsZero]
     }
@@ -48,7 +48,7 @@ impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for OverflowBitsZero<XLE
 mod test {
     use ark_bn254::Fr;
 
-    use super::OverflowBitsZero;
+    use super::MulNoOverflow;
     use crate::zkvm::lookup_table::test::{
         lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
     };
@@ -56,16 +56,16 @@ mod test {
 
     #[test]
     fn mle_full_hypercube() {
-        lookup_table_mle_full_hypercube_test::<Fr, OverflowBitsZero<8>>();
+        lookup_table_mle_full_hypercube_test::<Fr, MulNoOverflow<8>>();
     }
 
     #[test]
     fn mle_random() {
-        lookup_table_mle_random_test::<Fr, OverflowBitsZero<XLEN>>();
+        lookup_table_mle_random_test::<Fr, MulNoOverflow<XLEN>>();
     }
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<XLEN, Fr, OverflowBitsZero<XLEN>>();
+        prefix_suffix_test::<XLEN, Fr, MulNoOverflow<XLEN>>();
     }
 }
