@@ -45,7 +45,7 @@ pub fn print(text: &str) {
     #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
     riscv_specific::print(text);
     #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
-    print!("{}", text);
+    print!("{text}");
 }
 
 #[allow(unused_variables)]
@@ -53,7 +53,7 @@ pub fn println(text: &str) {
     #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
     riscv_specific::println(text);
     #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
-    println!("{}", text);
+    println!("{text}");
 }
 
 // You might also want formatting support
