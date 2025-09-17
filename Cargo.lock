@@ -1817,7 +1817,6 @@ dependencies = [
  "ark-ec",
  "common",
  "getrandom 0.2.16",
- "getrandom 0.3.3",
  "hex-literal",
  "jolt-core",
  "jolt-platform",
