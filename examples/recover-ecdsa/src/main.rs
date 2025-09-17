@@ -12,7 +12,7 @@ pub fn main() {
     let secp = Secp256k1::new();
 
     let seckey = SecretKey::from_slice(&SECRET_KEY).unwrap();
-    let pubkey = PublicKey::from_secret_key(&secp, &seckey);
+    let _pubkey = PublicKey::from_secret_key(&secp, &seckey);
     let msg_digest = *b"this must be secure hash output.";
 
     let signature = secp.sign_ecdsa_recoverable(&Message::from_digest(msg_digest), &seckey);
