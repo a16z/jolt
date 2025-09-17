@@ -1,19 +1,18 @@
 #![allow(static_mut_refs)]
 
-use std::array;
-use std::cell::UnsafeCell;
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::sync::LazyLock;
 use allocative::Allocative;
 use common::constants::XLEN;
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
 use rayon::prelude::*;
+use std::array;
+use std::cell::UnsafeCell;
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::LazyLock;
 use strum::IntoEnumIterator;
 use tracer::instruction::RV32IMCycle;
 
-use ark_ff::biginteger::S128;
 use crate::{
     field::JoltField,
     poly::{
@@ -26,6 +25,7 @@ use crate::{
         JoltProverPreprocessing,
     },
 };
+use ark_ff::biginteger::S128;
 
 use super::instruction::{CircuitFlags, InstructionFlags, LookupQuery};
 
@@ -487,7 +487,10 @@ impl CommittedPolynomial {
                         if right_input >= 0 {
                             S128::from_u128(left_input as u128 * right_input.unsigned_abs())
                         } else {
-                            S128::from_u128_and_sign(left_input as u128 * right_input.unsigned_abs(), false)
+                            S128::from_u128_and_sign(
+                                left_input as u128 * right_input.unsigned_abs(),
+                                false,
+                            )
                         }
                     })
                     .collect();

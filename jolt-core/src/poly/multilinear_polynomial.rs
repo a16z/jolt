@@ -410,7 +410,6 @@ impl<F: JoltField> From<Vec<S128>> for MultilinearPolynomial<F> {
     }
 }
 
-
 impl<'a, F: JoltField> TryFrom<&'a MultilinearPolynomial<F>> for &'a DensePolynomial<F> {
     type Error = (); // TODO(moodlezoup)
 

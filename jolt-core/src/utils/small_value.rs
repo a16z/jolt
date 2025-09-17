@@ -1854,11 +1854,15 @@ mod tests {
                 // Bounded 90-bit magnitude to ensure it always fits in I8OrI96,
                 // and give headroom so differences during extension remain within 96 bits.
                 const BITS: u32 = 90;
-                let mask: u128 = if BITS == 128 { u128::MAX } else { (1u128 << BITS) - 1 };
+                let mask: u128 = if BITS == 128 {
+                    u128::MAX
+                } else {
+                    (1u128 << BITS) - 1
+                };
                 let mag = (rng.gen::<u128>() & mask) as i128;
                 let val = if rng.gen::<bool>() { mag } else { -mag };
                 I8OrI96::from_i128(val)
-            },
+            }
             _ => unreachable!(),
         }
     }
@@ -1877,7 +1881,7 @@ mod tests {
                 let mag = (rng.gen::<u128>() & mask) as i128;
                 let val = if rng.gen::<bool>() { mag } else { -mag };
                 S160::from(val)
-            },
+            }
             _ => unreachable!(),
         }
     }
