@@ -41,6 +41,15 @@ impl JoltField for ark_bn254::Fr {
     }
 
     #[inline]
+    fn from_bool(val: bool) -> Self {
+        if val {
+            Self::one()
+        } else {
+            Self::zero()
+        }
+    }
+
+    #[inline]
     fn from_u8(n: u8) -> Self {
         <Self as ark_ff::PrimeField>::from_u64(n as u64).unwrap()
     }

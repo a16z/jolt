@@ -779,7 +779,7 @@ mod tests {
     use rand::{rngs::StdRng, RngCore, SeedableRng};
     use strum::IntoEnumIterator;
     use tracer::emulator::memory::Memory;
-    use tracer::instruction::{RV32IMCycle, RV32IMInstruction};
+    use tracer::instruction::RV32IMCycle;
     use tracer::JoltDevice;
 
     const LOG_T: usize = 8;
@@ -862,7 +862,7 @@ mod tests {
         let trace: Vec<_> = (0..T)
             .map(|_| random_instruction(&mut rng, &instruction))
             .collect();
-        let bytecode = vec![RV32IMInstruction::NoOp];
+        let bytecode = vec![];
         let bytecode_preprocessing = BytecodePreprocessing::preprocess(bytecode);
         let memory_layout = MemoryLayout::default();
         let shared_preprocessing = JoltSharedPreprocessing {

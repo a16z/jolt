@@ -132,6 +132,20 @@ impl Program {
             });
             envs.push((&cc_env_var, cc_value));
 
+            let cc_env_var = format!("CFLAGS_{target_triple}");
+            let cc_value = std::env::var(&cc_env_var).unwrap_or_else(|_| {
+                #[cfg(target_os = "linux")]
+                {
+                    "-mcmodel=medany".to_string()
+                }
+                #[cfg(not(target_os = "linux"))]
+                {
+                    // Default fallback for other platforms
+                    "".to_string()
+                }
+            });
+            envs.push((&cc_env_var, cc_value));
+
             let args = [
                 "build",
                 "--release",

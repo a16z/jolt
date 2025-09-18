@@ -65,6 +65,8 @@ members = [
     "examples/memory-ops/guest",
     "examples/recursion",
     "examples/recursion/guest",
+    "examples/recover-ecdsa",
+    "examples/recover-ecdsa/guest",
 ]
 
 [features]

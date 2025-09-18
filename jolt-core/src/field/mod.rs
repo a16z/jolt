@@ -56,6 +56,7 @@ pub trait JoltField:
         unimplemented!("Small-value lookup tables are unimplemented")
     }
     /// Conversion from primitive integers to field elements in Montgomery form.
+    fn from_bool(val: bool) -> Self;
     fn from_u8(n: u8) -> Self;
     fn from_u16(n: u16) -> Self;
     fn from_u32(n: u32) -> Self;
