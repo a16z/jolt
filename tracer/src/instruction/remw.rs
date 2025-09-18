@@ -101,7 +101,6 @@ impl RISCVTrace for REMW {
         let t2 = allocator.allocate();
         let t3 = allocator.allocate();
         let t4 = allocator.allocate();
-        let t5 = allocator.allocate();
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
 
         // get advice
@@ -110,11 +109,11 @@ impl RISCVTrace for REMW {
 
         // sign-extend inputs to 32-bit values
         asm.emit_i::<VirtualSignExtendWord>(*t4, a0, 0); // sign-extended dividend
-        asm.emit_i::<VirtualSignExtendWord>(*t5, a1, 0); // sign-extended divisor
+        asm.emit_i::<VirtualSignExtendWord>(*t3, a1, 0); // sign-extended divisor
 
         // handle special cases
-        asm.emit_b::<VirtualAssertValidDiv0>(*t5, *a2, 0);
-        asm.emit_r::<VirtualChangeDivisorW>(*t0, *t4, *t5); // handles MIN_INT32/-1
+        asm.emit_b::<VirtualAssertValidDiv0>(*t3, *a2, 0);
+        asm.emit_r::<VirtualChangeDivisorW>(*t0, *t4, *t3); // handles MIN_INT32/-1
 
         // compute quotient * divisor (no overflow check needed for remainder!)
         asm.emit_r::<MULW>(*t1, *a2, *t0); // 32-bit multiply
