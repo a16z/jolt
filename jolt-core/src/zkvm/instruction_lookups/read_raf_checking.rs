@@ -1283,8 +1283,6 @@ mod tests {
 
     #[test]
     fn test_virtualassertmulnooverflow() {
-        test_read_raf_sumcheck(Some(Cycle::VirtualAssertMulUNoOverflow(
-            Default::default(),
-        )));
+        test_read_raf_sumcheck(Some(Cycle::VirtualAssertMulUNoOverflow(Default::default())));
     }
 }
