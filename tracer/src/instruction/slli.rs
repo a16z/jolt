@@ -8,9 +8,7 @@ use crate::{
     instruction::virtual_muli::VirtualMULI,
 };
 
-use super::{
-    format::format_i::FormatI, RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
-};
+use super::{format::format_i::FormatI, Cycle, Instruction, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name   = SLLI,
@@ -33,7 +31,7 @@ impl SLLI {
 }
 
 impl RISCVTrace for SLLI {
-    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
         let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
@@ -46,7 +44,7 @@ impl RISCVTrace for SLLI {
         &self,
         allocator: &VirtualRegisterAllocator,
         xlen: Xlen,
-    ) -> Vec<RV32IMInstruction> {
+    ) -> Vec<Instruction> {
         // Determine word size based on immediate value and instruction encoding
         // For SLLI: RV32 uses 5-bit immediates (0-31), RV64 uses 6-bit immediates (0-63)
         let mask = match xlen {

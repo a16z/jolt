@@ -9,7 +9,7 @@ use rayon::{
     },
     slice::ParallelSlice,
 };
-use tracer::instruction::RV32IMCycle;
+use tracer::instruction::Cycle;
 
 use crate::{
     field::{JoltField, OptimizedMul},
@@ -59,7 +59,7 @@ pub struct RAProverState<F: JoltField> {
 
 impl<F: JoltField> RASumCheck<F> {
     fn compute_ra_i_polys(
-        trace: &[RV32IMCycle],
+        trace: &[Cycle],
         state_manager: &StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
     ) -> Vec<MultilinearPolynomial<F>> {
         let lookup_indices: Vec<_> = trace

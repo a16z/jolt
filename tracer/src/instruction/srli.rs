@@ -8,9 +8,7 @@ use crate::{
     instruction::virtual_srli::VirtualSRLI,
 };
 
-use super::{
-    format::format_i::FormatI, RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
-};
+use super::{format::format_i::FormatI, Cycle, Instruction, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name   = SRLI,
@@ -34,7 +32,7 @@ impl SRLI {
 }
 
 impl RISCVTrace for SRLI {
-    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
         let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
@@ -47,7 +45,7 @@ impl RISCVTrace for SRLI {
         &self,
         allocator: &VirtualRegisterAllocator,
         xlen: Xlen,
-    ) -> Vec<RV32IMInstruction> {
+    ) -> Vec<Instruction> {
         let (shift, len) = match xlen {
             Xlen::Bit32 => (self.operands.imm & 0x1f, 32),
             Xlen::Bit64 => (self.operands.imm & 0x3f, 64),

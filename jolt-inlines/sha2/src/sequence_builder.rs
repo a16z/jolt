@@ -1,9 +1,7 @@
 use core::array;
 
 use tracer::{
-    instruction::{
-        andn::ANDN, format::format_inline::FormatInline, lw::LW, sw::SW, RV32IMInstruction,
-    },
+    instruction::{andn::ANDN, format::format_inline::FormatInline, lw::LW, sw::SW, Instruction},
     utils::{
         inline_helpers::{
             InstrAssembler,
@@ -66,7 +64,7 @@ impl Sha256SequenceBuilder {
     }
 
     /// Loads and runs all SHA256 rounds
-    fn build(mut self) -> Vec<RV32IMInstruction> {
+    fn build(mut self) -> Vec<Instruction> {
         if !self.initial {
             // Load initial hash values from memory when using custom IV
             // A..D loaded into registers 0..3 (will be used immediately)
@@ -312,7 +310,7 @@ impl Sha256SequenceBuilder {
 pub fn sha2_inline_sequence_builder(
     asm: InstrAssembler,
     operands: FormatInline,
-) -> Vec<RV32IMInstruction> {
+) -> Vec<Instruction> {
     let builder = Sha256SequenceBuilder::new(
         asm, operands, false, // not initial - uses custom IV from rs1
     );
@@ -323,7 +321,7 @@ pub fn sha2_inline_sequence_builder(
 pub fn sha2_init_inline_sequence_builder(
     asm: InstrAssembler,
     operands: FormatInline,
-) -> Vec<RV32IMInstruction> {
+) -> Vec<Instruction> {
     let builder = Sha256SequenceBuilder::new(
         asm, operands, true, // initial - uses BLOCK constants
     );

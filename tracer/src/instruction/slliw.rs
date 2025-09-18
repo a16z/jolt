@@ -8,9 +8,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 
 use super::virtual_sign_extend_word::VirtualSignExtendWord;
-use super::{
-    format::format_i::FormatI, RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
-};
+use super::{format::format_i::FormatI, Cycle, Instruction, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name   = SLLIW,
@@ -32,7 +30,7 @@ impl SLLIW {
 }
 
 impl RISCVTrace for SLLIW {
-    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
         let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
@@ -45,7 +43,7 @@ impl RISCVTrace for SLLIW {
         &self,
         allocator: &VirtualRegisterAllocator,
         xlen: Xlen,
-    ) -> Vec<RV32IMInstruction> {
+    ) -> Vec<Instruction> {
         let mask = match xlen {
             Xlen::Bit32 => panic!("SLLIW is invalid in 32b mode"),
             Xlen::Bit64 => 0x1f, //low 5bits

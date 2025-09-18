@@ -7,7 +7,7 @@
 
 use crate::emulator::cpu::Xlen;
 use crate::instruction::format::format_inline::FormatInline;
-use crate::instruction::RV32IMInstruction;
+use crate::instruction::Instruction;
 use crate::utils::inline_helpers::InstrAssembler;
 use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use std::fs::{File, OpenOptions};
@@ -116,20 +116,20 @@ pub enum AppendMode {
 /// - Empty line (if append=true)
 /// - Line 1: inline_name, opcode, funct3, funct7
 /// - Line 2: address, is_compressed, xlen, rs1, rs2, rs3
-/// - Lines 3+: Each RV32IMInstruction, using placeholders instead of address, rs1, rs2, and rs3
+/// - Lines 3+: Each Instruction, using placeholders instead of address, rs1, rs2, and rs3
 ///
 /// # Arguments
 ///
 /// * `file_path` - Path to the output file
 /// * `inline_info` - Descriptor containing inline instruction information
 /// * `sequence_inputs` - Input parameters for the instruction sequence
-/// * `instructions` - Slice of RV32IMInstruction to write
+/// * `instructions` - Slice of Instruction to write
 /// * `append` - If true, append to existing file; if false, overwrite
 pub fn write_inline_trace(
     file_path: impl AsRef<Path>,
     inline_info: &InlineDescriptor,
     sequence_inputs: &SequenceInputs,
-    instructions: &[RV32IMInstruction],
+    instructions: &[Instruction],
     append: AppendMode,
 ) -> io::Result<()> {
     let mut file = match append {
@@ -176,7 +176,7 @@ pub fn write_inline_trace(
 /// - Registers matching sequence_inputs.rs1/rs2/rs3 with $RS1/$RS2/$RS3
 /// - Keeps other registers with their actual values
 fn format_instruction_with_placeholders(
-    instruction: &RV32IMInstruction,
+    instruction: &Instruction,
     sequence_inputs: &SequenceInputs,
 ) -> String {
     let mut formatted = format!("{instruction:?}");

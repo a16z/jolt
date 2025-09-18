@@ -20,7 +20,7 @@ use tracer::instruction::andn::ANDN;
 use tracer::instruction::format::format_inline::FormatInline;
 use tracer::instruction::ld::LD;
 use tracer::instruction::sd::SD;
-use tracer::instruction::RV32IMInstruction;
+use tracer::instruction::Instruction;
 use tracer::utils::inline_helpers::{
     InstrAssembler,
     Value::{Imm, Reg},
@@ -77,7 +77,7 @@ struct Keccak256SequenceBuilder {
 /// `Keccak256SequenceBuilder` is a helper struct for constructing the virtual instruction
 /// sequence required to emulate the Keccak-256 hashing operation within the RISC-V
 /// instruction set. This builder is responsible for generating the correct sequence of
-/// `RV32IMInstruction` instances that together perform the Keccak-256 permutation and
+/// `Instruction` instances that together perform the Keccak-256 permutation and
 /// hashing steps, using a set of virtual registers to hold intermediate state.
 ///
 /// # Fields
@@ -109,7 +109,7 @@ impl Keccak256SequenceBuilder {
         }
     }
 
-    fn build(mut self) -> Vec<RV32IMInstruction> {
+    fn build(mut self) -> Vec<Instruction> {
         // 1. Load NUM_LANES lanes (64-bit words) of state from memory into registers.
         self.load_state();
 
@@ -257,7 +257,7 @@ impl Keccak256SequenceBuilder {
 pub fn keccak256_inline_sequence_builder(
     asm: InstrAssembler,
     operands: FormatInline,
-) -> Vec<RV32IMInstruction> {
+) -> Vec<Instruction> {
     // Virtual registers used as a scratch space
     let builder = Keccak256SequenceBuilder::new(asm, operands);
     builder.build()

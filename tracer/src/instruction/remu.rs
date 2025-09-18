@@ -11,7 +11,7 @@ use super::{
     add::ADD, format::format_r::FormatR, mul::MUL, virtual_advice::VirtualAdvice,
     virtual_assert_eq::VirtualAssertEQ,
     virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder,
-    virtual_move::VirtualMove, RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
+    virtual_move::VirtualMove, Cycle, Instruction, RISCVInstruction, RISCVTrace,
 };
 
 declare_riscv_instr!(
@@ -34,9 +34,9 @@ impl REMU {
 }
 
 impl RISCVTrace for REMU {
-    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
         let mut inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
-        if let RV32IMInstruction::VirtualAdvice(instr) = &mut inline_sequence[0] {
+        if let Instruction::VirtualAdvice(instr) = &mut inline_sequence[0] {
             instr.advice = if cpu.unsigned_data(cpu.x[self.operands.rs2 as usize]) == 0 {
                 match cpu.xlen {
                     Xlen::Bit32 => u32::MAX as u64,
@@ -49,7 +49,7 @@ impl RISCVTrace for REMU {
         } else {
             panic!("Expected Advice instruction");
         }
-        if let RV32IMInstruction::VirtualAdvice(instr) = &mut inline_sequence[1] {
+        if let Instruction::VirtualAdvice(instr) = &mut inline_sequence[1] {
             instr.advice = match cpu.unsigned_data(cpu.x[self.operands.rs2 as usize]) {
                 0 => cpu.unsigned_data(cpu.x[self.operands.rs1 as usize]),
                 divisor => {
@@ -73,7 +73,7 @@ impl RISCVTrace for REMU {
         &self,
         allocator: &VirtualRegisterAllocator,
         xlen: Xlen,
-    ) -> Vec<RV32IMInstruction> {
+    ) -> Vec<Instruction> {
         let a0 = self.operands.rs1; // dividend
         let a1 = self.operands.rs2; // divisor
         let a2 = allocator.allocate(); // quotient from oracle (ignored when divisor==0)

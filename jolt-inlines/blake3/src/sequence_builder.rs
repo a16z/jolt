@@ -17,7 +17,7 @@ use tracer::instruction::sw::SW;
 use tracer::instruction::virtual_xor_rotw::{
     VirtualXORROTW12, VirtualXORROTW16, VirtualXORROTW7, VirtualXORROTW8,
 };
-use tracer::instruction::RV32IMInstruction;
+use tracer::instruction::Instruction;
 use tracer::utils::inline_helpers::{InstrAssembler, Value::Imm, Value::Reg};
 use tracer::utils::virtual_registers::VirtualRegisterGuard;
 
@@ -57,7 +57,7 @@ impl Blake3SequenceBuilder {
         }
     }
 
-    fn build(mut self) -> Vec<RV32IMInstruction> {
+    fn build(mut self) -> Vec<Instruction> {
         self.load_chaining_value();
         self.load_message_blocks();
         self.load_counter();
@@ -236,7 +236,7 @@ impl Blake3SequenceBuilder {
 pub fn blake3_inline_sequence_builder(
     asm: InstrAssembler,
     operands: FormatInline,
-) -> Vec<RV32IMInstruction> {
+) -> Vec<Instruction> {
     let builder = Blake3SequenceBuilder::new(asm, operands);
     builder.build()
 }

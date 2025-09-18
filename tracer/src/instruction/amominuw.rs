@@ -7,7 +7,7 @@ use super::sltu::SLTU;
 use super::virtual_move::VirtualMove;
 use super::virtual_zero_extend_word::VirtualZeroExtendWord;
 use super::xori::XORI;
-use super::RV32IMInstruction;
+use super::Instruction;
 use crate::utils::inline_helpers::InstrAssembler;
 use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use crate::{
@@ -15,7 +15,7 @@ use crate::{
     emulator::cpu::{Cpu, Xlen},
 };
 
-use super::{format::format_r::FormatR, RISCVInstruction, RISCVTrace, RV32IMCycle};
+use super::{format::format_r::FormatR, Cycle, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name   = AMOMINUW,
@@ -53,7 +53,7 @@ impl AMOMINUW {
 }
 
 impl RISCVTrace for AMOMINUW {
-    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
         let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
@@ -66,7 +66,7 @@ impl RISCVTrace for AMOMINUW {
         &self,
         allocator: &VirtualRegisterAllocator,
         xlen: Xlen,
-    ) -> Vec<RV32IMInstruction> {
+    ) -> Vec<Instruction> {
         let v_rd = allocator.allocate();
         let v_rs2 = allocator.allocate();
         let v_sel_rs2 = allocator.allocate();

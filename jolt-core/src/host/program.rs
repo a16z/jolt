@@ -17,7 +17,7 @@ use std::process::Command;
 use std::str::FromStr;
 use std::{fs, io};
 use tracer::emulator::memory::Memory;
-use tracer::instruction::{RV32IMCycle, RV32IMInstruction};
+use tracer::instruction::{Cycle, Instruction};
 use tracing::info;
 
 impl Program {
@@ -192,7 +192,7 @@ impl Program {
         }
     }
 
-    pub fn decode(&mut self) -> (Vec<RV32IMInstruction>, Vec<(u64, u8)>, u64) {
+    pub fn decode(&mut self) -> (Vec<Instruction>, Vec<(u64, u8)>, u64) {
         self.build(DEFAULT_TARGET_DIR);
         let elf = self.elf.as_ref().unwrap();
         let mut elf_file =
@@ -204,7 +204,7 @@ impl Program {
 
     // TODO(moodlezoup): Make this generic over InstructionSet
     #[tracing::instrument(skip_all, name = "Program::trace")]
-    pub fn trace(&mut self, inputs: &[u8]) -> (Vec<RV32IMCycle>, Memory, JoltDevice) {
+    pub fn trace(&mut self, inputs: &[u8]) -> (Vec<Cycle>, Memory, JoltDevice) {
         self.build(DEFAULT_TARGET_DIR);
         let elf = self.elf.as_ref().unwrap();
         let mut elf_file =

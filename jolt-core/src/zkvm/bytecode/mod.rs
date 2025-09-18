@@ -18,7 +18,7 @@ use crate::{
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::{ALIGNMENT_FACTOR_BYTECODE, RAM_START_ADDRESS};
 use rayon::prelude::*;
-use tracer::instruction::{RV32IMCycle, RV32IMInstruction};
+use tracer::instruction::{Cycle, Instruction};
 
 pub mod booleanity;
 pub mod hamming_weight;
@@ -27,7 +27,7 @@ pub mod read_raf_checking;
 #[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct BytecodePreprocessing {
     pub code_size: usize,
-    pub bytecode: Vec<RV32IMInstruction>,
+    pub bytecode: Vec<Instruction>,
     /// Maps the memory address of each instruction in the bytecode to its "virtual" address.
     /// See Section 6.1 of the Jolt paper, "Reflecting the program counter". The virtual address
     /// is the one used to keep track of the next (potentially virtual) instruction to execute.
@@ -37,9 +37,9 @@ pub struct BytecodePreprocessing {
 
 impl BytecodePreprocessing {
     #[tracing::instrument(skip_all, name = "BytecodePreprocessing::preprocess")]
-    pub fn preprocess(mut bytecode: Vec<RV32IMInstruction>) -> Self {
+    pub fn preprocess(mut bytecode: Vec<Instruction>) -> Self {
         // Bytecode: Prepend a single no-op instruction
-        bytecode.insert(0, RV32IMInstruction::NoOp);
+        bytecode.insert(0, Instruction::NoOp);
         let pc_map = BytecodePCMapper::new(&bytecode);
 
         let d = compute_d_parameter(bytecode.len().next_power_of_two().max(2));
@@ -49,7 +49,7 @@ impl BytecodePreprocessing {
             .max(DTH_ROOT_OF_K);
 
         // Bytecode: Pad to nearest power of 2
-        bytecode.resize(code_size, RV32IMInstruction::NoOp);
+        bytecode.resize(code_size, Instruction::NoOp);
 
         Self {
             code_size,
@@ -59,8 +59,8 @@ impl BytecodePreprocessing {
         }
     }
 
-    pub fn get_pc(&self, cycle: &RV32IMCycle) -> usize {
-        if matches!(cycle, tracer::instruction::RV32IMCycle::NoOp) {
+    pub fn get_pc(&self, cycle: &Cycle) -> usize {
+        if matches!(cycle, tracer::instruction::Cycle::NoOp) {
             return 0;
         }
         let instr = cycle.instruction().normalize();
@@ -78,7 +78,7 @@ pub struct BytecodePCMapper {
 }
 
 impl BytecodePCMapper {
-    pub fn new(bytecode: &[RV32IMInstruction]) -> Self {
+    pub fn new(bytecode: &[Instruction]) -> Self {
         let mut indices: Vec<Option<(usize, u16)>> = {
             // For read-raf tests we simulate bytecode being empty
             #[cfg(test)]
@@ -193,7 +193,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
 #[tracing::instrument(skip_all, name = "Bytecode::compute_ra_evals")]
 fn compute_ra_evals<F: JoltField>(
     preprocessing: &BytecodePreprocessing,
-    trace: &[RV32IMCycle],
+    trace: &[Cycle],
     eq_r_cycle: &[F],
 ) -> Vec<Vec<F>> {
     let T = trace.len();
