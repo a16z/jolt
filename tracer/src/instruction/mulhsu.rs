@@ -9,8 +9,7 @@ use crate::{
 
 use super::{
     add::ADD, andi::ANDI, format::format_r::FormatR, mul::MUL, mulhu::MULHU, sltu::SLTU,
-    virtual_movsign::VirtualMovsign, xor::XOR, RISCVInstruction, RISCVTrace, RV32IMCycle,
-    RV32IMInstruction,
+    virtual_movsign::VirtualMovsign, xor::XOR, Cycle, Instruction, RISCVInstruction, RISCVTrace,
 };
 
 declare_riscv_instr!(
@@ -39,7 +38,7 @@ impl MULHSU {
 }
 
 impl RISCVTrace for MULHSU {
-    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
         let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
@@ -52,7 +51,7 @@ impl RISCVTrace for MULHSU {
         &self,
         allocator: &VirtualRegisterAllocator,
         xlen: Xlen,
-    ) -> Vec<RV32IMInstruction> {
+    ) -> Vec<Instruction> {
         // MULHSU implements signed-unsigned multiplication: rs1 (signed) × rs2 (unsigned)
         //
         // For negative rs1, two's complement encoding means:

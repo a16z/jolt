@@ -9,13 +9,13 @@ use super::sd::SD;
 use super::slt::SLT;
 use super::virtual_move::VirtualMove;
 use super::xori::XORI;
-use super::RV32IMInstruction;
+use super::Instruction;
 use crate::{
     declare_riscv_instr,
     emulator::cpu::{Cpu, Xlen},
 };
 
-use super::{format::format_r::FormatR, RISCVInstruction, RISCVTrace, RV32IMCycle};
+use super::{format::format_r::FormatR, Cycle, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name   = AMOMAXD,
@@ -53,7 +53,7 @@ impl AMOMAXD {
 }
 
 impl RISCVTrace for AMOMAXD {
-    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
         let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
@@ -66,7 +66,7 @@ impl RISCVTrace for AMOMAXD {
         &self,
         allocator: &VirtualRegisterAllocator,
         xlen: Xlen,
-    ) -> Vec<RV32IMInstruction> {
+    ) -> Vec<Instruction> {
         let v_rs2 = allocator.allocate();
         let v_rd = allocator.allocate();
         let v_sel_rs2 = allocator.allocate();

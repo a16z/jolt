@@ -10,7 +10,7 @@ use crate::{
 use super::virtual_sign_extend_word::VirtualSignExtendWord;
 use super::{
     andi::ANDI, format::format_r::FormatR, virtual_shift_right_bitmask::VirtualShiftRightBitmask,
-    virtual_sra::VirtualSRA, RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
+    virtual_sra::VirtualSRA, Cycle, Instruction, RISCVInstruction, RISCVTrace,
 };
 
 declare_riscv_instr!(
@@ -33,7 +33,7 @@ impl SRAW {
 }
 
 impl RISCVTrace for SRAW {
-    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
         let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
@@ -46,7 +46,7 @@ impl RISCVTrace for SRAW {
         &self,
         allocator: &VirtualRegisterAllocator,
         xlen: Xlen,
-    ) -> Vec<RV32IMInstruction> {
+    ) -> Vec<Instruction> {
         let v_rs1 = allocator.allocate();
         let v_bitmask = allocator.allocate();
 

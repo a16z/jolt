@@ -16,7 +16,7 @@ use emulator::{
     get_mut_emulator, Emulator, EmulatorState,
 };
 
-use instruction::{RV32IMCycle, RV32IMInstruction};
+use instruction::{Cycle, Instruction};
 use object::{Object, ObjectSection, SectionKind};
 
 pub mod emulator;
@@ -42,28 +42,28 @@ use crate::{emulator::memory::Memory, instruction::uncompress_instruction};
 /// * `elf_contents`
 /// * `inputs`
 /// * `memory_config`
-/// * `checkpoint_interval` - Number of RV32IMCycle at which to save emulator checkpoints
+/// * `checkpoint_interval` - Number of Cycle at which to save emulator checkpoints
 ///                          If None, no checkpoints will be saved
 ///
 /// # Returns
 ///
 /// Returns a tuple containing:
-/// * `Vec<RV32IMCycle>` - Complete execution trace
+/// * `Vec<Cycle>` - Complete execution trace
 /// * `JoltDevice`
 /// * `Option<Vec<LazyTraceIterator>>` - If checkpoint_interval is not None, contains emulator
-///                                      checkpoints every n RV32IMCycle. Otherwise None.
+///                                      checkpoints every n Cycle. Otherwise None.
 ///
 /// # Example Usage
 ///
 /// let (execution_trace, checkpoints) = trace(elf_contents, inputs, memory_config, Some(5));
 ///
-/// let full_execution_trace = checkpoints.as_ref().unwrap()[0].clone().collect::Vec<RV32IMCycle>();
+/// let full_execution_trace = checkpoints.as_ref().unwrap()[0].clone().collect::Vec<Cycle>();
 /// assert!(execution_trace == full_execution_trace);
 ///
-/// let trace_from_checkpoint_1 = checkpoints.as_ref().unwrap()[1].clone().collect::Vec<RV32IMCycle>();
+/// let trace_from_checkpoint_1 = checkpoints.as_ref().unwrap()[1].clone().collect::Vec<Cycle>();
 /// assert!(trace_from_checkpoint_1 == execution_trace[n..])
 ///
-/// let trace_from_checkpoint_2 = checkpoints.as_ref().unwrap()[2].clone().collect::Vec<RV32IMCycle>();
+/// let trace_from_checkpoint_2 = checkpoints.as_ref().unwrap()[2].clone().collect::Vec<Cycle>();
 /// assert!(trace_from_checkpoint_2 == execution_trace[2*n..])
 ///
 #[tracing::instrument(skip_all)]
@@ -71,10 +71,10 @@ pub fn trace(
     elf_contents: &[u8],
     inputs: &[u8],
     memory_config: &MemoryConfig,
-) -> (Vec<RV32IMCycle>, Memory, JoltDevice) {
+) -> (Vec<Cycle>, Memory, JoltDevice) {
     let mut lazy_trace_iter =
         LazyTraceIterator::new(setup_emulator(elf_contents, inputs, memory_config));
-    let trace: Vec<RV32IMCycle> = lazy_trace_iter.by_ref().collect();
+    let trace: Vec<Cycle> = lazy_trace_iter.by_ref().collect();
     let final_memory_state = std::mem::take(lazy_trace_iter.final_memory_state.as_mut().unwrap());
     (trace, final_memory_state, lazy_trace_iter.get_jolt_device())
 }
@@ -89,7 +89,7 @@ pub fn trace_to_file(
     let config = TraceWriterConfig::default();
 
     let writer =
-        TraceWriter::<RV32IMCycle>::new(out_path, config).expect("Failed to create trace writer");
+        TraceWriter::<Cycle>::new(out_path, config).expect("Failed to create trace writer");
     let mut collector = TraceBatchCollector::new(writer);
     let mut lazy = LazyTraceIterator::new(setup_emulator(elf_contents, inputs, memory_config));
 
@@ -138,7 +138,7 @@ pub fn trace_checkpoints(
     (checkpoints, emulator_trace_iter.get_jolt_device())
 }
 
-fn step_emulator(emulator: &mut Emulator, prev_pc: &mut u64, trace: Option<&mut Vec<RV32IMCycle>>) {
+fn step_emulator(emulator: &mut Emulator, prev_pc: &mut u64, trace: Option<&mut Vec<Cycle>>) {
     let pc = emulator.get_cpu().read_pc();
     // This is a trick to see if the program has terminated by throwing itself
     // into an infinite loop. It seems to be a good heuristic for now but we
@@ -181,7 +181,7 @@ fn setup_emulator(elf_contents: &[u8], inputs: &[u8], memory_config: &MemoryConf
 pub struct LazyTraceIterator {
     emulator_state: EmulatorState,
     prev_pc: u64,
-    current_traces: Vec<RV32IMCycle>,
+    current_traces: Vec<Cycle>,
     count: usize, // number of cycles completed
     finished: bool,
     pub(crate) final_memory_state: Option<Memory>,
@@ -227,12 +227,12 @@ impl LazyTraceIterator {
 }
 
 impl Iterator for LazyTraceIterator {
-    type Item = RV32IMCycle;
+    type Item = Cycle;
     /// Advances the iterator and returns the next trace entry.
     ///
     /// # Returns
     ///
-    /// * `Some(RV32IMCycle)` - The next instruction trace in the execution sequence
+    /// * `Some(Cycle)` - The next instruction trace in the execution sequence
     /// * `None` - If program execution has completed.
     ///
     /// # Details
@@ -271,7 +271,7 @@ impl Iterator for LazyTraceIterator {
 }
 
 #[tracing::instrument(skip_all)]
-pub fn decode(elf: &[u8]) -> (Vec<RV32IMInstruction>, Vec<(u64, u8)>, u64, Xlen) {
+pub fn decode(elf: &[u8]) -> (Vec<Instruction>, Vec<(u64, u8)>, u64, Xlen) {
     let obj = object::File::parse(elf).unwrap();
     let mut xlen = Xlen::Bit64;
     if let object::File::Elf32(_) = &obj {
@@ -318,7 +318,7 @@ pub fn decode(elf: &[u8]) -> (Vec<RV32IMInstruction>, Vec<(u64, u8)>, u64, Xlen)
                         continue;
                     }
 
-                    if let Ok(inst) = RV32IMInstruction::decode(
+                    if let Ok(inst) = Instruction::decode(
                         uncompress_instruction(compressed_inst as u32, xlen),
                         address,
                         true,
@@ -326,7 +326,7 @@ pub fn decode(elf: &[u8]) -> (Vec<RV32IMInstruction>, Vec<(u64, u8)>, u64, Xlen)
                         instructions.push(inst);
                     } else {
                         eprintln!("Warning: compressed instruction {compressed_inst:04X} at address: {address:08X} failed to decode.");
-                        instructions.push(RV32IMInstruction::UNIMPL);
+                        instructions.push(Instruction::UNIMPL);
                     }
                     offset += 2;
                 } else {
@@ -343,11 +343,11 @@ pub fn decode(elf: &[u8]) -> (Vec<RV32IMInstruction>, Vec<(u64, u8)>, u64, Xlen)
                         raw_data[offset + 3],
                     ]);
 
-                    if let Ok(inst) = RV32IMInstruction::decode(word, address, false) {
+                    if let Ok(inst) = Instruction::decode(word, address, false) {
                         instructions.push(inst);
                     } else {
                         eprintln!("Warning: word: {word:08X} at address: {address:08X} is not recognized as a valid instruction.");
-                        instructions.push(RV32IMInstruction::UNIMPL);
+                        instructions.push(Instruction::UNIMPL);
                     }
                     offset += 4;
                 }
@@ -828,7 +828,7 @@ mod test {
             .map(|x| x.to_vec())
             .collect::<Vec<_>>();
         for (i, checkpoint) in checkpoints.into_iter().enumerate() {
-            let ti: Vec<RV32IMCycle> = checkpoint.collect();
+            let ti: Vec<Cycle> = checkpoint.collect();
             assert_eq!(trace_chunk[i], ti);
         }
     }

@@ -5,7 +5,7 @@ use common::constants::XLEN;
 use rayon::prelude::*;
 use std::{cell::RefCell, rc::Rc};
 use strum::{EnumCount, IntoEnumIterator};
-use tracer::instruction::RV32IMCycle;
+use tracer::instruction::Cycle;
 
 use super::{LOG_K, LOG_M, M, PHASES};
 
@@ -160,7 +160,7 @@ impl<'a, F: JoltField> ReadRafSumcheck<F> {
 }
 
 impl<'a, F: JoltField> ReadRafProverState<F> {
-    fn new(trace: &'a [RV32IMCycle], eq_r_cycle: Vec<F>) -> Self {
+    fn new(trace: &'a [Cycle], eq_r_cycle: Vec<F>) -> Self {
         let log_T = trace.len().log_2();
         let right_operand_poly = OperandPolynomial::new(LOG_K, OperandSide::Right);
         let left_operand_poly = OperandPolynomial::new(LOG_K, OperandSide::Left);
@@ -779,16 +779,16 @@ mod tests {
     use rand::{rngs::StdRng, RngCore, SeedableRng};
     use strum::IntoEnumIterator;
     use tracer::emulator::memory::Memory;
-    use tracer::instruction::{RV32IMCycle, RV32IMInstruction};
+    use tracer::instruction::Cycle;
     use tracer::JoltDevice;
 
     const LOG_T: usize = 8;
     const T: usize = 1 << LOG_T;
 
-    fn random_instruction(rng: &mut StdRng, instruction: &Option<RV32IMCycle>) -> RV32IMCycle {
+    fn random_instruction(rng: &mut StdRng, instruction: &Option<Cycle>) -> Cycle {
         let instruction = instruction.unwrap_or_else(|| {
-            let index = rng.next_u64() as usize % RV32IMCycle::COUNT;
-            RV32IMCycle::iter()
+            let index = rng.next_u64() as usize % Cycle::COUNT;
+            Cycle::iter()
                 .enumerate()
                 .filter(|(i, _)| *i == index)
                 .map(|(_, x)| x)
@@ -797,72 +797,72 @@ mod tests {
         });
 
         match instruction {
-            RV32IMCycle::ADD(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::ADDI(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::AND(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::ANDN(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::ANDI(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::AUIPC(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::BEQ(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::BGE(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::BGEU(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::BLT(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::BLTU(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::BNE(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::FENCE(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::JAL(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::JALR(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::LUI(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::LD(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::MUL(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::MULHU(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::OR(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::ORI(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::SLT(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::SLTI(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::SLTIU(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::SLTU(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::SUB(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::SD(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::XOR(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::XORI(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::VirtualAdvice(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::VirtualAssertEQ(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::VirtualAssertHalfwordAlignment(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::VirtualAssertWordAlignment(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::VirtualAssertLTE(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::VirtualAssertValidDiv0(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::VirtualAssertValidUnsignedRemainder(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::VirtualMove(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::VirtualMovsign(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::VirtualMULI(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::VirtualPow2(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::VirtualPow2I(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::VirtualPow2W(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::VirtualPow2IW(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::VirtualShiftRightBitmask(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::VirtualShiftRightBitmaskI(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::VirtualSRA(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::VirtualSRAI(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::VirtualSRL(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::VirtualSRLI(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::VirtualZeroExtendWord(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::VirtualSignExtendWord(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::VirtualROTRI(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::VirtualROTRIW(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::VirtualChangeDivisor(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::VirtualChangeDivisorW(cycle) => cycle.random(rng).into(),
-            _ => RV32IMCycle::NoOp,
+            Cycle::ADD(cycle) => cycle.random(rng).into(),
+            Cycle::ADDI(cycle) => cycle.random(rng).into(),
+            Cycle::AND(cycle) => cycle.random(rng).into(),
+            Cycle::ANDN(cycle) => cycle.random(rng).into(),
+            Cycle::ANDI(cycle) => cycle.random(rng).into(),
+            Cycle::AUIPC(cycle) => cycle.random(rng).into(),
+            Cycle::BEQ(cycle) => cycle.random(rng).into(),
+            Cycle::BGE(cycle) => cycle.random(rng).into(),
+            Cycle::BGEU(cycle) => cycle.random(rng).into(),
+            Cycle::BLT(cycle) => cycle.random(rng).into(),
+            Cycle::BLTU(cycle) => cycle.random(rng).into(),
+            Cycle::BNE(cycle) => cycle.random(rng).into(),
+            Cycle::FENCE(cycle) => cycle.random(rng).into(),
+            Cycle::JAL(cycle) => cycle.random(rng).into(),
+            Cycle::JALR(cycle) => cycle.random(rng).into(),
+            Cycle::LUI(cycle) => cycle.random(rng).into(),
+            Cycle::LD(cycle) => cycle.random(rng).into(),
+            Cycle::MUL(cycle) => cycle.random(rng).into(),
+            Cycle::MULHU(cycle) => cycle.random(rng).into(),
+            Cycle::OR(cycle) => cycle.random(rng).into(),
+            Cycle::ORI(cycle) => cycle.random(rng).into(),
+            Cycle::SLT(cycle) => cycle.random(rng).into(),
+            Cycle::SLTI(cycle) => cycle.random(rng).into(),
+            Cycle::SLTIU(cycle) => cycle.random(rng).into(),
+            Cycle::SLTU(cycle) => cycle.random(rng).into(),
+            Cycle::SUB(cycle) => cycle.random(rng).into(),
+            Cycle::SD(cycle) => cycle.random(rng).into(),
+            Cycle::XOR(cycle) => cycle.random(rng).into(),
+            Cycle::XORI(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualAdvice(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualAssertEQ(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualAssertHalfwordAlignment(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualAssertWordAlignment(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualAssertLTE(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualAssertValidDiv0(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualAssertValidUnsignedRemainder(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualMove(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualMovsign(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualMULI(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualPow2(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualPow2I(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualPow2W(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualPow2IW(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualShiftRightBitmask(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualShiftRightBitmaskI(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualSRA(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualSRAI(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualSRL(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualSRLI(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualZeroExtendWord(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualSignExtendWord(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualROTRI(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualROTRIW(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualChangeDivisor(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualChangeDivisorW(cycle) => cycle.random(rng).into(),
+            _ => Cycle::NoOp,
         }
     }
 
-    fn test_read_raf_sumcheck(instruction: Option<RV32IMCycle>) {
+    fn test_read_raf_sumcheck(instruction: Option<Cycle>) {
         let mut rng = StdRng::seed_from_u64(12345);
 
         let trace: Vec<_> = (0..T)
             .map(|_| random_instruction(&mut rng, &instruction))
             .collect();
-        let bytecode = vec![RV32IMInstruction::NoOp];
+        let bytecode = vec![];
         let bytecode_preprocessing = BytecodePreprocessing::preprocess(bytecode);
         let memory_layout = MemoryLayout::default();
         let shared_preprocessing = JoltSharedPreprocessing {
@@ -1003,288 +1003,280 @@ mod tests {
 
     #[test]
     fn test_add() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::ADD(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::ADD(Default::default())));
     }
 
     #[test]
     fn test_addi() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::ADDI(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::ADDI(Default::default())));
     }
 
     #[test]
     fn test_and() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::AND(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::AND(Default::default())));
     }
 
     #[test]
     fn test_andn() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::ANDN(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::ANDN(Default::default())));
     }
 
     #[test]
     fn test_andi() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::ANDI(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::ANDI(Default::default())));
     }
 
     #[test]
     fn test_auipc() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::AUIPC(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::AUIPC(Default::default())));
     }
 
     #[test]
     fn test_beq() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::BEQ(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::BEQ(Default::default())));
     }
 
     #[test]
     fn test_bge() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::BGE(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::BGE(Default::default())));
     }
 
     #[test]
     fn test_bgeu() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::BGEU(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::BGEU(Default::default())));
     }
 
     #[test]
     fn test_blt() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::BLT(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::BLT(Default::default())));
     }
 
     #[test]
     fn test_bltu() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::BLTU(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::BLTU(Default::default())));
     }
 
     #[test]
     fn test_bne() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::BNE(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::BNE(Default::default())));
     }
 
     #[test]
     fn test_fence() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::FENCE(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::FENCE(Default::default())));
     }
 
     #[test]
     fn test_jal() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::JAL(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::JAL(Default::default())));
     }
 
     #[test]
     fn test_jalr() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::JALR(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::JALR(Default::default())));
     }
 
     #[test]
     fn test_lui() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::LUI(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::LUI(Default::default())));
     }
 
     #[test]
     fn test_ld() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::LD(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::LD(Default::default())));
     }
 
     #[test]
     fn test_mul() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::MUL(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::MUL(Default::default())));
     }
 
     #[test]
     fn test_mulhu() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::MULHU(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::MULHU(Default::default())));
     }
 
     #[test]
     fn test_or() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::OR(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::OR(Default::default())));
     }
 
     #[test]
     fn test_ori() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::ORI(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::ORI(Default::default())));
     }
 
     #[test]
     fn test_slt() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::SLT(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::SLT(Default::default())));
     }
 
     #[test]
     fn test_slti() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::SLTI(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::SLTI(Default::default())));
     }
 
     #[test]
     fn test_sltiu() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::SLTIU(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::SLTIU(Default::default())));
     }
 
     #[test]
     fn test_sltu() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::SLTU(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::SLTU(Default::default())));
     }
 
     #[test]
     fn test_sub() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::SUB(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::SUB(Default::default())));
     }
 
     #[test]
     fn test_sd() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::SD(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::SD(Default::default())));
     }
 
     #[test]
     fn test_xor() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::XOR(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::XOR(Default::default())));
     }
 
     #[test]
     fn test_xori() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::XORI(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::XORI(Default::default())));
     }
 
     #[test]
     fn test_advice() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualAdvice(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::VirtualAdvice(Default::default())));
     }
 
     #[test]
     fn test_asserteq() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualAssertEQ(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::VirtualAssertEQ(Default::default())));
     }
 
     #[test]
     fn test_asserthalfwordalignment() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualAssertHalfwordAlignment(
+        test_read_raf_sumcheck(Some(Cycle::VirtualAssertHalfwordAlignment(
             Default::default(),
         )));
     }
 
     #[test]
     fn test_assertwordalignment() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualAssertWordAlignment(
-            Default::default(),
-        )));
+        test_read_raf_sumcheck(Some(Cycle::VirtualAssertWordAlignment(Default::default())));
     }
 
     #[test]
     fn test_assertlte() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualAssertLTE(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::VirtualAssertLTE(Default::default())));
     }
 
     #[test]
     fn test_assertvaliddiv0() {
-        test_read_raf_sumcheck(Some(
-            RV32IMCycle::VirtualAssertValidDiv0(Default::default()),
-        ));
+        test_read_raf_sumcheck(Some(Cycle::VirtualAssertValidDiv0(Default::default())));
     }
 
     #[test]
     fn test_assertvalidunsignedremainder() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualAssertValidUnsignedRemainder(
+        test_read_raf_sumcheck(Some(Cycle::VirtualAssertValidUnsignedRemainder(
             Default::default(),
         )));
     }
 
     #[test]
     fn test_move() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualMove(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::VirtualMove(Default::default())));
     }
 
     #[test]
     fn test_movsign() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualMovsign(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::VirtualMovsign(Default::default())));
     }
 
     #[test]
     fn test_muli() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualMULI(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::VirtualMULI(Default::default())));
     }
 
     #[test]
     fn test_pow2() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualPow2(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::VirtualPow2(Default::default())));
     }
 
     #[test]
     fn test_pow2i() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualPow2I(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::VirtualPow2I(Default::default())));
     }
 
     #[test]
     fn test_pow2w() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualPow2W(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::VirtualPow2W(Default::default())));
     }
 
     #[test]
     fn test_pow2iw() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualPow2IW(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::VirtualPow2IW(Default::default())));
     }
 
     #[test]
     fn test_shiftrightbitmask() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualShiftRightBitmask(
-            Default::default(),
-        )));
+        test_read_raf_sumcheck(Some(Cycle::VirtualShiftRightBitmask(Default::default())));
     }
 
     #[test]
     fn test_shiftrightbitmaski() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualShiftRightBitmaskI(
-            Default::default(),
-        )));
+        test_read_raf_sumcheck(Some(Cycle::VirtualShiftRightBitmaskI(Default::default())));
     }
 
     #[test]
     fn test_virtualrotri() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualROTRI(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::VirtualROTRI(Default::default())));
     }
 
     #[test]
     fn test_virtualrotriw() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualROTRIW(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::VirtualROTRIW(Default::default())));
     }
 
     #[test]
     fn test_virtualsra() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualSRA(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::VirtualSRA(Default::default())));
     }
 
     #[test]
     fn test_virtualsrai() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualSRAI(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::VirtualSRAI(Default::default())));
     }
 
     #[test]
     fn test_virtualsrl() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualSRL(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::VirtualSRL(Default::default())));
     }
 
     #[test]
     fn test_virtualsrli() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualSRLI(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::VirtualSRLI(Default::default())));
     }
 
     #[test]
     fn test_virtualextend() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualZeroExtendWord(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::VirtualZeroExtendWord(Default::default())));
     }
 
     #[test]
     fn test_virtualsignextend() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualSignExtendWord(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::VirtualSignExtendWord(Default::default())));
     }
 
     #[test]
     fn test_virtualchangedivisor() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualChangeDivisor(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::VirtualChangeDivisor(Default::default())));
     }
 
     #[test]
     fn test_virtualchangedivisorw() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualChangeDivisorW(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::VirtualChangeDivisorW(Default::default())));
     }
 }

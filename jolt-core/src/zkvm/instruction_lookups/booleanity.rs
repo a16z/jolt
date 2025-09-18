@@ -4,7 +4,7 @@ use allocative::FlameGraphBuilder;
 use common::constants::XLEN;
 use rayon::prelude::*;
 use std::{cell::RefCell, rc::Rc};
-use tracer::instruction::RV32IMCycle;
+use tracer::instruction::Cycle;
 
 use super::{D, K_CHUNK, LOG_K_CHUNK};
 
@@ -118,7 +118,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
 }
 
 impl<F: JoltField> BooleanityProverState<F> {
-    fn new(trace: &[RV32IMCycle], G: [Vec<F>; D], r_address: &[F], r_cycle: &[F]) -> Self {
+    fn new(trace: &[Cycle], G: [Vec<F>; D], r_address: &[F], r_cycle: &[F]) -> Self {
         let B = GruenSplitEqPolynomial::new(r_address, BindingOrder::LowToHigh);
 
         let mut F: Vec<F> = unsafe_allocate_zero_vec(K_CHUNK);

@@ -9,7 +9,7 @@ use crate::emulator::mmu::DRAM_BASE;
 use crate::instruction::format::format_inline::FormatInline;
 use crate::instruction::inline::INLINE;
 use crate::instruction::test::TEST_MEMORY_CAPACITY;
-use crate::instruction::{RISCVTrace, RV32IMInstruction};
+use crate::instruction::{Instruction, RISCVTrace};
 
 #[derive(Clone, Copy)]
 pub enum RegisterMapping {
@@ -244,7 +244,7 @@ impl InlineTestHarness {
         instruction.trace(&mut self.cpu, None);
     }
 
-    pub fn execute_sequence(&mut self, sequence: &[RV32IMInstruction]) {
+    pub fn execute_sequence(&mut self, sequence: &[Instruction]) {
         for instr in sequence {
             instr.execute(&mut self.cpu);
         }

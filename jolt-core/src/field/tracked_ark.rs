@@ -281,6 +281,10 @@ impl JoltField for TrackedFr {
         <ark_bn254::Fr as JoltField>::compute_lookup_tables()
     }
 
+    fn from_bool(val: bool) -> Self {
+        TrackedFr(<ark_bn254::Fr as JoltField>::from_bool(val))
+    }
+
     fn from_u8(n: u8) -> Self {
         TrackedFr(<ark_bn254::Fr as JoltField>::from_u8(n))
     }

@@ -6,8 +6,8 @@ use super::slli::SLLI;
 use super::srli::SRLI;
 use super::virtual_assert_word_alignment::VirtualAssertWordAlignment;
 use super::xori::XORI;
-use super::{addi::ADDI, RV32IMInstruction};
-use super::{RISCVInstruction, RISCVTrace, RV32IMCycle};
+use super::{addi::ADDI, Instruction};
+use super::{Cycle, RISCVInstruction, RISCVTrace};
 use crate::utils::inline_helpers::InstrAssembler;
 use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use crate::{
@@ -43,7 +43,7 @@ impl LWU {
 }
 
 impl RISCVTrace for LWU {
-    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
         let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
@@ -56,7 +56,7 @@ impl RISCVTrace for LWU {
         &self,
         allocator: &VirtualRegisterAllocator,
         xlen: Xlen,
-    ) -> Vec<RV32IMInstruction> {
+    ) -> Vec<Instruction> {
         match xlen {
             Xlen::Bit32 => panic!("LWU is invalid in 32b mode"),
             Xlen::Bit64 => self.inline_sequence_64(allocator, xlen),
@@ -69,7 +69,7 @@ impl LWU {
         &self,
         allocator: &VirtualRegisterAllocator,
         xlen: Xlen,
-    ) -> Vec<RV32IMInstruction> {
+    ) -> Vec<Instruction> {
         let v_address = allocator.allocate();
         let v_dword_address = allocator.allocate();
         let v_dword = allocator.allocate();

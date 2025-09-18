@@ -23,7 +23,7 @@ use crate::{
 use ark_bn254::Fr;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::jolt_device::MemoryLayout;
-use tracer::{instruction::RV32IMInstruction, JoltDevice};
+use tracer::{instruction::Instruction, JoltDevice};
 
 pub mod bytecode;
 pub mod dag;
@@ -153,7 +153,7 @@ where
     PCS: CommitmentScheme<Field = F>,
 {
     fn shared_preprocess(
-        bytecode: Vec<RV32IMInstruction>,
+        bytecode: Vec<Instruction>,
         memory_layout: MemoryLayout,
         memory_init: Vec<(u64, u8)>,
     ) -> JoltSharedPreprocessing {
@@ -169,7 +169,7 @@ where
 
     #[tracing::instrument(skip_all, name = "Jolt::prover_preprocess")]
     fn prover_preprocess(
-        bytecode: Vec<RV32IMInstruction>,
+        bytecode: Vec<Instruction>,
         memory_layout: MemoryLayout,
         memory_init: Vec<(u64, u8)>,
         max_trace_length: usize,
@@ -198,7 +198,7 @@ where
         use crate::{guest, zkvm::dag::state_manager::StateManager};
         use common::jolt_device::MemoryConfig;
         use rayon::prelude::*;
-        use tracer::instruction::RV32IMCycle;
+        use tracer::instruction::Cycle;
 
         let memory_config = MemoryConfig {
             max_input_size: preprocessing.shared.memory_layout.max_input_size,
@@ -234,7 +234,7 @@ where
 
         // Setup trace length and padding
         let padded_trace_length = (trace.len() + 1).next_power_of_two();
-        trace.resize(padded_trace_length, RV32IMCycle::NoOp);
+        trace.resize(padded_trace_length, Cycle::NoOp);
 
         // truncate trailing zeros on device outputs
         program_io.outputs.truncate(
@@ -306,9 +306,9 @@ where
     }
 }
 
-pub struct JoltRV32IM;
-impl Jolt<Fr, DoryCommitmentScheme, Blake2bTranscript> for JoltRV32IM {}
-pub type RV32IMJoltProof = JoltProof<Fr, DoryCommitmentScheme, Blake2bTranscript>;
+pub struct JoltRV64IMAC;
+impl Jolt<Fr, DoryCommitmentScheme, Blake2bTranscript> for JoltRV64IMAC {}
+pub type RV64IMACJoltProof = JoltProof<Fr, DoryCommitmentScheme, Blake2bTranscript>;
 
 use crate::poly::commitment::dory::DoryCommitmentScheme;
 use crate::transcripts::Blake2bTranscript;
@@ -361,7 +361,7 @@ pub trait Serializable: CanonicalSerialize + CanonicalDeserialize + Sized {
     }
 }
 
-impl Serializable for RV32IMJoltProof {}
+impl Serializable for RV64IMACJoltProof {}
 impl Serializable for JoltDevice {}
 
 #[cfg(test)]
@@ -371,7 +371,7 @@ mod tests {
     use crate::host;
     use crate::poly::commitment::mock::MockCommitScheme;
     use crate::zkvm::JoltVerifierPreprocessing;
-    use crate::zkvm::{Jolt, JoltRV32IM};
+    use crate::zkvm::{Jolt, JoltRV64IMAC};
     use serial_test::serial;
 
     use crate::transcripts::Blake2bTranscript;
@@ -416,7 +416,7 @@ mod tests {
         let (bytecode, init_memory_state, _) = program.decode();
         let (_, _, io_device) = program.trace(&inputs);
 
-        let preprocessing = JoltRV32IM::prover_preprocess(
+        let preprocessing = JoltRV64IMAC::prover_preprocess(
             bytecode.clone(),
             io_device.memory_layout.clone(),
             init_memory_state,
@@ -425,11 +425,11 @@ mod tests {
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let (jolt_proof, io_device, debug_info) =
-            JoltRV32IM::prove(&preprocessing, elf_contents, &inputs);
+            JoltRV64IMAC::prove(&preprocessing, elf_contents, &inputs);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let verification_result =
-            JoltRV32IM::verify(&verifier_preprocessing, jolt_proof, io_device, debug_info);
+            JoltRV64IMAC::verify(&verifier_preprocessing, jolt_proof, io_device, debug_info);
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",
@@ -451,7 +451,7 @@ mod tests {
         let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
         let (_, _, io_device) = program.trace(&inputs);
 
-        let preprocessing = JoltRV32IM::prover_preprocess(
+        let preprocessing = JoltRV64IMAC::prover_preprocess(
             bytecode.clone(),
             io_device.memory_layout.clone(),
             init_memory_state,
@@ -460,11 +460,11 @@ mod tests {
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let (jolt_proof, io_device, debug_info) =
-            JoltRV32IM::prove(&preprocessing, elf_contents, &inputs);
+            JoltRV64IMAC::prove(&preprocessing, elf_contents, &inputs);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let verification_result =
-            JoltRV32IM::verify(&verifier_preprocessing, jolt_proof, io_device, debug_info);
+            JoltRV64IMAC::verify(&verifier_preprocessing, jolt_proof, io_device, debug_info);
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",
@@ -485,7 +485,7 @@ mod tests {
         let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
         let (_, _, io_device) = program.trace(&inputs);
 
-        let preprocessing = JoltRV32IM::prover_preprocess(
+        let preprocessing = JoltRV64IMAC::prover_preprocess(
             bytecode.clone(),
             io_device.memory_layout.clone(),
             init_memory_state,
@@ -494,11 +494,11 @@ mod tests {
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let (jolt_proof, io_device, debug_info) =
-            JoltRV32IM::prove(&preprocessing, elf_contents, &inputs);
+            JoltRV64IMAC::prove(&preprocessing, elf_contents, &inputs);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let verification_result =
-            JoltRV32IM::verify(&verifier_preprocessing, jolt_proof, io_device, debug_info);
+            JoltRV64IMAC::verify(&verifier_preprocessing, jolt_proof, io_device, debug_info);
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",
@@ -513,7 +513,7 @@ mod tests {
         let (bytecode, init_memory_state, _) = program.decode();
         let (_, _, io_device) = program.trace(&[]);
 
-        let preprocessing = JoltRV32IM::prover_preprocess(
+        let preprocessing = JoltRV64IMAC::prover_preprocess(
             bytecode.clone(),
             io_device.memory_layout.clone(),
             init_memory_state,
@@ -522,11 +522,11 @@ mod tests {
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let (jolt_proof, io_device, debug_info) =
-            JoltRV32IM::prove(&preprocessing, elf_contents, &[]);
+            JoltRV64IMAC::prove(&preprocessing, elf_contents, &[]);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let verification_result =
-            JoltRV32IM::verify(&verifier_preprocessing, jolt_proof, io_device, debug_info);
+            JoltRV64IMAC::verify(&verifier_preprocessing, jolt_proof, io_device, debug_info);
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",
@@ -542,7 +542,7 @@ mod tests {
         let inputs = postcard::to_stdvec(&50u32).unwrap();
         let (_, _, io_device) = program.trace(&inputs);
 
-        let preprocessing = JoltRV32IM::prover_preprocess(
+        let preprocessing = JoltRV64IMAC::prover_preprocess(
             bytecode.clone(),
             io_device.memory_layout.clone(),
             init_memory_state,
@@ -551,11 +551,11 @@ mod tests {
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let (jolt_proof, io_device, debug_info) =
-            JoltRV32IM::prove(&preprocessing, elf_contents, &inputs);
+            JoltRV64IMAC::prove(&preprocessing, elf_contents, &inputs);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let verification_result =
-            JoltRV32IM::verify(&verifier_preprocessing, jolt_proof, io_device, debug_info);
+            JoltRV64IMAC::verify(&verifier_preprocessing, jolt_proof, io_device, debug_info);
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",
@@ -571,7 +571,7 @@ mod tests {
         let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).unwrap();
         let (_, _, io_device) = program.trace(&inputs);
 
-        let preprocessing = JoltRV32IM::prover_preprocess(
+        let preprocessing = JoltRV64IMAC::prover_preprocess(
             bytecode.clone(),
             io_device.memory_layout.clone(),
             init_memory_state,
@@ -580,11 +580,11 @@ mod tests {
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let (jolt_proof, io_device, debug_info) =
-            JoltRV32IM::prove(&preprocessing, elf_contents, &[50]);
+            JoltRV64IMAC::prove(&preprocessing, elf_contents, &[50]);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let verification_result =
-            JoltRV32IM::verify(&verifier_preprocessing, jolt_proof, io_device, debug_info);
+            JoltRV64IMAC::verify(&verifier_preprocessing, jolt_proof, io_device, debug_info);
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",

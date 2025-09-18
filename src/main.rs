@@ -148,7 +148,7 @@ fn display_greeting() {
         "Twice as fast as Apollo 11.",
         "Mason's favorite zkVM.",
         "Sumcheck Is All You Need",
-        "Lasso-ing RV32 instructions since 2024.",
+        "Lasso-ing RISC-V instructions since 2024.",
         "Read. Write. Jolt.",
         "Jolt is not financial advice. Jolt is a zkVM.",
     ];

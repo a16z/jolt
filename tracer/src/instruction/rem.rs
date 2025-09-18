@@ -15,7 +15,7 @@ use crate::{
 use super::{
     add::ADD, format::format_r::FormatR, mul::MUL, virtual_advice::VirtualAdvice,
     virtual_assert_eq::VirtualAssertEQ, virtual_change_divisor::VirtualChangeDivisor,
-    virtual_move::VirtualMove, RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
+    virtual_move::VirtualMove, Cycle, Instruction, RISCVInstruction, RISCVTrace,
 };
 
 declare_riscv_instr!(
@@ -43,7 +43,7 @@ impl REM {
 }
 
 impl RISCVTrace for REM {
-    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
         // RISCV spec: For REM, the sign of a nonzero result equals the sign of the dividend.
         // REM operands
         let x = cpu.x[self.operands.rs1 as usize];
@@ -75,12 +75,12 @@ impl RISCVTrace for REM {
         };
 
         let mut inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
-        if let RV32IMInstruction::VirtualAdvice(instr) = &mut inline_sequence[0] {
+        if let Instruction::VirtualAdvice(instr) = &mut inline_sequence[0] {
             instr.advice = quotient;
         } else {
             panic!("Expected Advice instruction");
         }
-        if let RV32IMInstruction::VirtualAdvice(instr) = &mut inline_sequence[1] {
+        if let Instruction::VirtualAdvice(instr) = &mut inline_sequence[1] {
             instr.advice = remainder;
         } else {
             panic!("Expected Advice instruction");
@@ -97,7 +97,7 @@ impl RISCVTrace for REM {
         &self,
         allocator: &VirtualRegisterAllocator,
         xlen: Xlen,
-    ) -> Vec<RV32IMInstruction> {
+    ) -> Vec<Instruction> {
         let a0 = self.operands.rs1; // dividend
         let a1 = self.operands.rs2; // divisor
         let a2 = allocator.allocate(); // quotient from oracle (untrusted)

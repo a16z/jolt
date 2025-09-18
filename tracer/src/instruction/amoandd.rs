@@ -11,9 +11,7 @@ use crate::{
     emulator::cpu::{Cpu, Xlen},
 };
 
-use super::{
-    format::format_r::FormatR, RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
-};
+use super::{format::format_r::FormatR, Cycle, Instruction, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name   = AMOANDD,
@@ -47,7 +45,7 @@ impl AMOANDD {
 }
 
 impl RISCVTrace for AMOANDD {
-    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
         let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
@@ -60,7 +58,7 @@ impl RISCVTrace for AMOANDD {
         &self,
         allocator: &VirtualRegisterAllocator,
         xlen: Xlen,
-    ) -> Vec<RV32IMInstruction> {
+    ) -> Vec<Instruction> {
         let v_rs2 = allocator.allocate();
         let v_rd = allocator.allocate();
 

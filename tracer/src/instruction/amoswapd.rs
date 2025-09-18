@@ -5,14 +5,14 @@ use serde::{Deserialize, Serialize};
 use super::ld::LD;
 use super::sd::SD;
 use super::virtual_move::VirtualMove;
-use super::RV32IMInstruction;
+use super::Instruction;
 
 use crate::{
     declare_riscv_instr,
     emulator::cpu::{Cpu, Xlen},
 };
 
-use super::{format::format_r::FormatR, RISCVInstruction, RISCVTrace, RV32IMCycle};
+use super::{format::format_r::FormatR, Cycle, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name   = AMOSWAPD,
@@ -45,7 +45,7 @@ impl AMOSWAPD {
 }
 
 impl RISCVTrace for AMOSWAPD {
-    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
         let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
@@ -58,7 +58,7 @@ impl RISCVTrace for AMOSWAPD {
         &self,
         allocator: &VirtualRegisterAllocator,
         xlen: Xlen,
-    ) -> Vec<RV32IMInstruction> {
+    ) -> Vec<Instruction> {
         let v_rd = allocator.allocate();
 
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);

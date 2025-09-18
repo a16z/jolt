@@ -8,9 +8,7 @@ use crate::{
     emulator::cpu::{Cpu, Xlen},
 };
 
-use super::{
-    format::format_r::FormatR, RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
-};
+use super::{format::format_r::FormatR, Cycle, Instruction, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name   = AMOSWAPW,
@@ -43,7 +41,7 @@ impl AMOSWAPW {
 }
 
 impl RISCVTrace for AMOSWAPW {
-    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
         let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
@@ -56,7 +54,7 @@ impl RISCVTrace for AMOSWAPW {
         &self,
         allocator: &VirtualRegisterAllocator,
         xlen: Xlen,
-    ) -> Vec<RV32IMInstruction> {
+    ) -> Vec<Instruction> {
         match xlen {
             Xlen::Bit32 => {
                 let v_rd = allocator.allocate();
