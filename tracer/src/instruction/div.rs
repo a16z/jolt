@@ -117,7 +117,7 @@ impl RISCVTrace for DIV {
         asm.emit_r::<VirtualChangeDivisor>(*t0, a0, a1);
         // check that quotient * divisor don't overflow
         asm.emit_r::<MULH>(*t1, *a2, *t0);
-        // TODO(Omid): When MULH is done, its allocated virtual registers are freed, then we can allocate registers for the next instructions of the division. 
+        // TODO(Omid): When MULH is done, its allocated virtual registers are freed, then we can allocate registers for the next instructions of the division.
         // We probably need to refactor to allocate registers on dereference.
         let t2 = allocator.allocate();
         let t3 = allocator.allocate();
