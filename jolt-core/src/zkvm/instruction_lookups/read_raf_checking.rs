@@ -852,6 +852,7 @@ mod tests {
             RV32IMCycle::VirtualROTRIW(cycle) => cycle.random(rng).into(),
             RV32IMCycle::VirtualChangeDivisor(cycle) => cycle.random(rng).into(),
             RV32IMCycle::VirtualChangeDivisorW(cycle) => cycle.random(rng).into(),
+            RV32IMCycle::VirtualAssertMulUNoOverflow(cycle) => cycle.random(rng).into(),
             _ => RV32IMCycle::NoOp,
         }
     }
@@ -1286,5 +1287,12 @@ mod tests {
     #[test]
     fn test_virtualchangedivisorw() {
         test_read_raf_sumcheck(Some(RV32IMCycle::VirtualChangeDivisorW(Default::default())));
+    }
+
+    #[test]
+    fn test_virtualassertmulnooverflow() {
+        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualAssertMulUNoOverflow(
+            Default::default(),
+        )));
     }
 }
