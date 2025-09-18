@@ -12,12 +12,16 @@ const RISCV_REGISTER_BASE: u8 = RISCV_REGISTER_COUNT;
 #[derive(Debug, Clone)]
 pub struct VirtualRegisterAllocator {
     allocated: Arc<Mutex<[bool; NUM_VIRTUAL_REGISTERS]>>,
+    /// At the end of the inline execution all registers have to be reset to 0
+    /// This variable tracks which registers were allocated during inline execution
+    pending_clearing_inline: Arc<Mutex<Vec<u8>>>,
 }
 
 impl VirtualRegisterAllocator {
     pub fn new() -> Self {
         Self {
             allocated: Arc::new(Mutex::new([false; NUM_VIRTUAL_REGISTERS])),
+            pending_clearing_inline: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -55,6 +59,10 @@ impl VirtualRegisterAllocator {
         {
             if !*allocated {
                 *allocated = true;
+                self.pending_clearing_inline
+                    .lock()
+                    .expect("Failed to lock virtual register allocator")
+                    .push(i as u8 + RISCV_REGISTER_BASE);
                 return VirtualRegisterGuard {
                     index: i as u8 + RISCV_REGISTER_BASE,
                     allocator: self.clone(),
@@ -62,6 +70,24 @@ impl VirtualRegisterAllocator {
             }
         }
         panic!("Failed to allocate virtual register for inline: No registers left");
+    }
+
+    pub fn get_registers_for_reset(&self) -> Vec<u8> {
+        // Assert that all registers have been dropped
+        assert!(self
+            .allocated
+            .lock()
+            .expect("Failed to lock virtual register allocator")
+            .iter()
+            .skip(NUM_VIRTUAL_INSTRUCTION_REGISTERS)
+            .all(|allocated| !*allocated));
+
+        std::mem::take(
+            &mut self
+                .pending_clearing_inline
+                .lock()
+                .expect("Failed to lock virtual register allocator"),
+        )
     }
 
     fn deallocate(&self, index: u8) {

@@ -72,7 +72,7 @@ impl Blake3SequenceBuilder {
 
         self.finalize_state();
         self.store_state();
-        self.asm.finalize_inline(NEEDED_REGISTERS)
+        self.asm.finalize_inline()
     }
 
     fn initialize_internal_state(&mut self) {

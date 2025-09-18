@@ -73,7 +73,7 @@ impl Blake2SequenceBuilder {
 
         self.finalize_state();
         self.store_state();
-        self.asm.finalize_inline(NEEDED_REGISTERS)
+        self.asm.finalize_inline()
     }
 
     fn load_hash_state(&mut self) {
