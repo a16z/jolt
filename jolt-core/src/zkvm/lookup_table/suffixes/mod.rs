@@ -33,8 +33,6 @@ use lower_word::LowerWordSuffix;
 use notand::NotAndSuffix;
 use one::OneSuffix;
 use overflow_bits_zero::OverflowBitsZeroSuffix;
-use signed_overflow_bits_one::SignedOverflowBitsOneSuffix;
-use signed_overflow_bits_zero::SignedOverflowBitsZeroSuffix;
 use two_lsb::TwoLsbSuffix;
 use upper_word::UpperWordSuffix;
 use xor::XorSuffix;
@@ -72,8 +70,6 @@ pub mod right_shift_w_helper;
 pub mod sign_extension;
 pub mod sign_extension_right_operand;
 pub mod sign_extension_upper_half;
-pub mod signed_overflow_bits_one;
-pub mod signed_overflow_bits_zero;
 pub mod two_lsb;
 pub mod upper_word;
 pub mod xor;
@@ -124,8 +120,6 @@ pub enum Suffixes {
     LeftShiftWHelper,
     LeftShiftW,
     OverflowBitsZero,
-    SignedOverflowBitsZero,
-    SignedOverflowBitsOne,
     XorRot16,
     XorRot24,
     XorRot32,
@@ -179,8 +173,6 @@ impl Suffixes {
             Suffixes::LeftShiftWHelper => LeftShiftWHelperSuffix::suffix_mle(b),
             Suffixes::LeftShiftW => LeftShiftWSuffix::suffix_mle(b),
             Suffixes::OverflowBitsZero => OverflowBitsZeroSuffix::<XLEN>::suffix_mle(b),
-            Suffixes::SignedOverflowBitsZero => SignedOverflowBitsZeroSuffix::<XLEN>::suffix_mle(b),
-            Suffixes::SignedOverflowBitsOne => SignedOverflowBitsOneSuffix::<XLEN>::suffix_mle(b),
             Suffixes::XorRot16 => XorRotSuffix::<16>::suffix_mle(b),
             Suffixes::XorRot24 => XorRotSuffix::<24>::suffix_mle(b),
             Suffixes::XorRot32 => XorRotSuffix::<32>::suffix_mle(b),

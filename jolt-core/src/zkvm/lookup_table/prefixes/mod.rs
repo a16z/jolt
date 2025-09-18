@@ -41,8 +41,6 @@ use right_is_zero::RightOperandIsZeroPrefix;
 use right_msb::RightMsbPrefix;
 use right_operand::RightOperandPrefix;
 use right_operand_w::RightOperandWPrefix;
-use signed_overflow_bits_one::SignedOverflowBitsOnePrefix;
-use signed_overflow_bits_zero::SignedOverflowBitsZeroPrefix;
 use two_lsb::TwoLsbPrefix;
 use upper_word::UpperWordPrefix;
 use xor::XorPrefix;
@@ -83,8 +81,6 @@ pub mod right_shift_w;
 pub mod sign_extension;
 pub mod sign_extension_right_operand;
 pub mod sign_extension_upper_half;
-pub mod signed_overflow_bits_one;
-pub mod signed_overflow_bits_zero;
 pub mod two_lsb;
 pub mod upper_word;
 pub mod xor;
@@ -169,8 +165,6 @@ pub enum Prefixes {
     LeftShiftWHelper,
     LeftShiftW,
     OverflowBitsZero,
-    SignedOverflowBitsZero,
-    SignedOverflowBitsOne,
     XorRot16,
     XorRot24,
     XorRot32,
@@ -318,12 +312,6 @@ impl Prefixes {
             Prefixes::LeftShiftW => LeftShiftWPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::OverflowBitsZero => {
                 OverflowBitsZeroPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j)
-            }
-            Prefixes::SignedOverflowBitsZero => {
-                SignedOverflowBitsZeroPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j)
-            }
-            Prefixes::SignedOverflowBitsOne => {
-                SignedOverflowBitsOnePrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j)
             }
         };
         PrefixEval(eval)
@@ -525,22 +513,6 @@ impl Prefixes {
             }
             Prefixes::OverflowBitsZero => {
                 OverflowBitsZeroPrefix::<XLEN>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
-            }
-            Prefixes::SignedOverflowBitsZero => {
-                SignedOverflowBitsZeroPrefix::<XLEN>::update_prefix_checkpoint(
-                    checkpoints,
-                    r_x,
-                    r_y,
-                    j,
-                )
-            }
-            Prefixes::SignedOverflowBitsOne => {
-                SignedOverflowBitsOnePrefix::<XLEN>::update_prefix_checkpoint(
-                    checkpoints,
-                    r_x,
-                    r_y,
-                    j,
-                )
             }
         }
     }

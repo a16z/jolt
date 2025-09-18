@@ -4,7 +4,6 @@ use equal::EqualTable;
 use halfword_alignment::HalfwordAlignmentTable;
 use lower_half_word::LowerHalfWordTable;
 use movsign::MovsignTable;
-use mul_no_overflow::MulNoOverflowTable;
 use mulu_no_overflow::MulUNoOverflowTable;
 use not_equal::NotEqualTable;
 use or::OrTable;
@@ -77,7 +76,6 @@ pub mod equal;
 pub mod halfword_alignment;
 pub mod lower_half_word;
 pub mod movsign;
-pub mod mul_no_overflow;
 pub mod mulu_no_overflow;
 pub mod not_equal;
 pub mod or;
@@ -146,7 +144,6 @@ pub enum LookupTables<const XLEN: usize> {
     VirtualChangeDivisor(VirtualChangeDivisorTable<XLEN>),
     VirtualChangeDivisorW(VirtualChangeDivisorWTable<XLEN>),
     MulUNoOverflow(MulUNoOverflowTable<XLEN>),
-    MulNoOverflow(MulNoOverflowTable<XLEN>),
     VirtualXORROT32(VirtualXORROTTable<XLEN, 32>),
     VirtualXORROT24(VirtualXORROTTable<XLEN, 24>),
     VirtualXORROT16(VirtualXORROTTable<XLEN, 16>),
@@ -198,7 +195,6 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::VirtualChangeDivisor(table) => table.materialize(),
             LookupTables::VirtualChangeDivisorW(table) => table.materialize(),
             LookupTables::MulUNoOverflow(table) => table.materialize(),
-            LookupTables::MulNoOverflow(table) => table.materialize(),
             LookupTables::VirtualXORROT32(table) => table.materialize(),
             LookupTables::VirtualXORROT24(table) => table.materialize(),
             LookupTables::VirtualXORROT16(table) => table.materialize(),
@@ -243,7 +239,6 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::VirtualChangeDivisor(table) => table.materialize_entry(index),
             LookupTables::VirtualChangeDivisorW(table) => table.materialize_entry(index),
             LookupTables::MulUNoOverflow(table) => table.materialize_entry(index),
-            LookupTables::MulNoOverflow(table) => table.materialize_entry(index),
             LookupTables::VirtualXORROT32(table) => table.materialize_entry(index),
             LookupTables::VirtualXORROT24(table) => table.materialize_entry(index),
             LookupTables::VirtualXORROT16(table) => table.materialize_entry(index),
@@ -288,7 +283,6 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::VirtualChangeDivisor(table) => table.evaluate_mle(r),
             LookupTables::VirtualChangeDivisorW(table) => table.evaluate_mle(r),
             LookupTables::MulUNoOverflow(table) => table.evaluate_mle(r),
-            LookupTables::MulNoOverflow(table) => table.evaluate_mle(r),
             LookupTables::VirtualXORROT32(table) => table.evaluate_mle(r),
             LookupTables::VirtualXORROT24(table) => table.evaluate_mle(r),
             LookupTables::VirtualXORROT16(table) => table.evaluate_mle(r),
@@ -333,7 +327,6 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::VirtualChangeDivisor(table) => table.suffixes(),
             LookupTables::VirtualChangeDivisorW(table) => table.suffixes(),
             LookupTables::MulUNoOverflow(table) => table.suffixes(),
-            LookupTables::MulNoOverflow(table) => table.suffixes(),
             LookupTables::VirtualXORROT32(table) => table.suffixes(),
             LookupTables::VirtualXORROT24(table) => table.suffixes(),
             LookupTables::VirtualXORROT16(table) => table.suffixes(),
@@ -382,7 +375,6 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::VirtualChangeDivisor(table) => table.combine(prefixes, suffixes),
             LookupTables::VirtualChangeDivisorW(table) => table.combine(prefixes, suffixes),
             LookupTables::MulUNoOverflow(table) => table.combine(prefixes, suffixes),
-            LookupTables::MulNoOverflow(table) => table.combine(prefixes, suffixes),
             LookupTables::VirtualXORROT32(table) => table.combine(prefixes, suffixes),
             LookupTables::VirtualXORROT24(table) => table.combine(prefixes, suffixes),
             LookupTables::VirtualXORROT16(table) => table.combine(prefixes, suffixes),
