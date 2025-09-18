@@ -9,7 +9,10 @@
 
 use core::array;
 
-use crate::{CHAINING_VALUE_LEN, COUNTER_LEN, IV, MSG_BLOCK_LEN, MSG_SCHEDULE, NUM_ROUNDS};
+use crate::{
+    CHAINING_VALUE_LEN, COUNTER_LEN, FLAG_CHUNK_END, FLAG_CHUNK_START, FLAG_KEYED_HASH, FLAG_ROOT,
+    IV, MSG_BLOCK_LEN, MSG_SCHEDULE, NUM_ROUNDS,
+};
 use tracer::instruction::format::format_inline::FormatInline;
 use tracer::instruction::lui::LUI;
 use tracer::instruction::lw::LW;
@@ -57,13 +60,15 @@ impl Blake3SequenceBuilder {
         }
     }
 
-    fn build(mut self) -> Vec<RV32IMInstruction> {
+    fn build(mut self, is_keyed: bool) -> Vec<RV32IMInstruction> {
         self.load_chaining_value();
         self.load_message_blocks();
-        self.load_counter();
-        self.load_input_len_and_flags();
+        if !is_keyed {
+            self.load_counter();
+            self.load_input_len_and_flags();
+        }
 
-        self.initialize_internal_state();
+        self.initialize_internal_state(is_keyed);
 
         for round in 0..NUM_ROUNDS {
             self.round = round;
@@ -75,7 +80,7 @@ impl Blake3SequenceBuilder {
         self.asm.finalize_inline(NEEDED_REGISTERS)
     }
 
-    fn initialize_internal_state(&mut self) {
+    fn initialize_internal_state(&mut self, is_keyed: bool) {
         // v[0..7] = h[0..7]
         for i in 0..CHAINING_VALUE_LEN {
             self.asm.xor(
@@ -90,27 +95,40 @@ impl Blake3SequenceBuilder {
             self.asm
                 .emit_u::<LUI>(*self.vr[CHAINING_VALUE_LEN + i], *val as u64);
         }
-        // v[12..15] = counter values, input length, and flags
-        self.asm.xor(
-            Reg(*self.vr[COUNTER_START_VR]),
-            Imm(0),
-            *self.vr[INTERNAL_STATE_VR_START + 12],
-        );
-        self.asm.xor(
-            Reg(*self.vr[COUNTER_START_VR + 1]),
-            Imm(0),
-            *self.vr[INTERNAL_STATE_VR_START + 13],
-        );
-        self.asm.xor(
-            Reg(*self.vr[INPUT_BYTES_VR]),
-            Imm(0),
-            *self.vr[INTERNAL_STATE_VR_START + 14],
-        );
-        self.asm.xor(
-            Reg(*self.vr[FLAG_VR]),
-            Imm(0),
-            *self.vr[INTERNAL_STATE_VR_START + 15],
-        );
+        if !is_keyed {
+            // v[12..15] = counter values, input length, and flags
+            self.asm.xor(
+                Reg(*self.vr[COUNTER_START_VR]),
+                Imm(0),
+                *self.vr[INTERNAL_STATE_VR_START + 12],
+            );
+            self.asm.xor(
+                Reg(*self.vr[COUNTER_START_VR + 1]),
+                Imm(0),
+                *self.vr[INTERNAL_STATE_VR_START + 13],
+            );
+            self.asm.xor(
+                Reg(*self.vr[INPUT_BYTES_VR]),
+                Imm(0),
+                *self.vr[INTERNAL_STATE_VR_START + 14],
+            );
+            self.asm.xor(
+                Reg(*self.vr[FLAG_VR]),
+                Imm(0),
+                *self.vr[INTERNAL_STATE_VR_START + 15],
+            );
+        } else {
+            self.asm
+                .emit_u::<LUI>(*self.vr[INTERNAL_STATE_VR_START + 12], 0);
+            self.asm
+                .emit_u::<LUI>(*self.vr[INTERNAL_STATE_VR_START + 13], 0);
+            self.asm
+                .emit_u::<LUI>(*self.vr[INTERNAL_STATE_VR_START + 14], 64);
+            self.asm.emit_u::<LUI>(
+                *self.vr[INTERNAL_STATE_VR_START + 15],
+                (FLAG_CHUNK_START | FLAG_CHUNK_END | FLAG_ROOT | FLAG_KEYED_HASH) as u64,
+            );
+        }
     }
 
     /// Execute one round of BLAKE3 compression
@@ -238,7 +256,15 @@ pub fn blake3_inline_sequence_builder(
     operands: FormatInline,
 ) -> Vec<RV32IMInstruction> {
     let builder = Blake3SequenceBuilder::new(asm, operands);
-    builder.build()
+    builder.build(false)
+}
+
+pub fn blake3_keyed64_inline_sequence_builder(
+    asm: InstrAssembler,
+    operands: FormatInline,
+) -> Vec<RV32IMInstruction> {
+    let builder = Blake3SequenceBuilder::new(asm, operands);
+    builder.build(true)
 }
 
 #[cfg(test)]
