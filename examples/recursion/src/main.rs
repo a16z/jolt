@@ -1,7 +1,7 @@
 use ark_serialize::CanonicalDeserialize;
 use ark_serialize::CanonicalSerialize;
 use clap::{Parser, Subcommand};
-use jolt_sdk::{JoltDevice, MemoryConfig, RV32IMJoltProof, Serializable};
+use jolt_sdk::{JoltDevice, MemoryConfig, RV64IMACJoltProof, Serializable};
 use std::cmp::PartialEq;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -228,7 +228,7 @@ fn check_data_integrity(all_groups_data: &[u8]) -> (u32, u32) {
     println!("✓ Number of proofs deserialized: {n}");
 
     for i in 0..n {
-        match RV32IMJoltProof::deserialize_compressed(&mut cursor) {
+        match RV64IMACJoltProof::deserialize_compressed(&mut cursor) {
             Ok(_) => println!("✓ Proof {i} deserialized"),
             Err(e) => println!("✗ Failed to deserialize proof {i}: {e:?}"),
         }

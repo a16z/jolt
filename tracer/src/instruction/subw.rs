@@ -8,9 +8,9 @@ use serde::{Deserialize, Serialize};
 
 use super::sub::SUB;
 use super::virtual_sign_extend_word::VirtualSignExtendWord;
-use super::RV32IMInstruction;
+use super::Instruction;
 
-use super::{format::format_r::FormatR, RISCVInstruction, RISCVTrace, RV32IMCycle};
+use super::{format::format_r::FormatR, Cycle, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name   = SUBW,
@@ -33,7 +33,7 @@ impl SUBW {
 }
 
 impl RISCVTrace for SUBW {
-    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
         let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
@@ -46,7 +46,7 @@ impl RISCVTrace for SUBW {
         &self,
         allocator: &VirtualRegisterAllocator,
         xlen: Xlen,
-    ) -> Vec<RV32IMInstruction> {
+    ) -> Vec<Instruction> {
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
         asm.emit_r::<SUB>(self.operands.rd, self.operands.rs1, self.operands.rs2);
         asm.emit_i::<VirtualSignExtendWord>(self.operands.rd, self.operands.rd, 0);

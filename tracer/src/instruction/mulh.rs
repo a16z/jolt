@@ -9,7 +9,7 @@ use crate::{
 
 use super::{
     add::ADD, format::format_r::FormatR, mul::MUL, mulhu::MULHU, virtual_movsign::VirtualMovsign,
-    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
+    Cycle, Instruction, RISCVInstruction, RISCVTrace,
 };
 
 declare_riscv_instr!(
@@ -36,7 +36,7 @@ impl MULH {
 }
 
 impl RISCVTrace for MULH {
-    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
         let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
@@ -49,7 +49,7 @@ impl RISCVTrace for MULH {
         &self,
         allocator: &VirtualRegisterAllocator,
         xlen: Xlen,
-    ) -> Vec<RV32IMInstruction> {
+    ) -> Vec<Instruction> {
         let v_sx = allocator.allocate();
         let v_sy = allocator.allocate();
         let v_0 = allocator.allocate();

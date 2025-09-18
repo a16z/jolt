@@ -3,7 +3,7 @@ use core::array;
 use tracer::{
     instruction::{
         add::ADD, format::format_inline::FormatInline, ld::LD, mul::MUL, mulhu::MULHU, sd::SD,
-        sltu::SLTU, RV32IMInstruction,
+        sltu::SLTU, Instruction,
     },
     utils::{inline_helpers::InstrAssembler, virtual_registers::VirtualRegisterGuard},
 };
@@ -54,7 +54,7 @@ impl BigIntMulSequenceBuilder {
     }
 
     /// Builds the complete multiplication sequence
-    fn build(mut self) -> Vec<RV32IMInstruction> {
+    fn build(mut self) -> Vec<Instruction> {
         for i in 0..INPUT_LIMBS {
             self.asm
                 .emit_ld::<LD>(self.a(i), self.operands.rs1, i as i64 * 8);
@@ -149,7 +149,7 @@ impl BigIntMulSequenceBuilder {
 pub fn bigint_mul_sequence_builder(
     asm: InstrAssembler,
     operands: FormatInline,
-) -> Vec<RV32IMInstruction> {
+) -> Vec<Instruction> {
     let builder = BigIntMulSequenceBuilder::new(asm, operands);
     builder.build()
 }

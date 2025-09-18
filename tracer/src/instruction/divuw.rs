@@ -12,8 +12,8 @@ use super::{
     virtual_assert_eq::VirtualAssertEQ, virtual_assert_valid_div0::VirtualAssertValidDiv0,
     virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder,
     virtual_sign_extend_word::VirtualSignExtendWord,
-    virtual_zero_extend_word::VirtualZeroExtendWord, RISCVInstruction, RISCVTrace, RV32IMCycle,
-    RV32IMInstruction,
+    virtual_zero_extend_word::VirtualZeroExtendWord, Cycle, Instruction, RISCVInstruction,
+    RISCVTrace,
 };
 
 declare_riscv_instr!(
@@ -40,7 +40,7 @@ impl DIVUW {
 }
 
 impl RISCVTrace for DIVUW {
-    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
         // DIVUW operands
         let x = cpu.x[self.operands.rs1 as usize] as u32;
         let y = cpu.x[self.operands.rs2 as usize] as u32;
@@ -61,12 +61,12 @@ impl RISCVTrace for DIVUW {
         };
 
         let mut inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
-        if let RV32IMInstruction::VirtualAdvice(instr) = &mut inline_sequence[0] {
+        if let Instruction::VirtualAdvice(instr) = &mut inline_sequence[0] {
             instr.advice = quotient;
         } else {
             panic!("Expected Advice instruction");
         }
-        if let RV32IMInstruction::VirtualAdvice(instr) = &mut inline_sequence[1] {
+        if let Instruction::VirtualAdvice(instr) = &mut inline_sequence[1] {
             instr.advice = remainder;
         } else {
             panic!("Expected Advice instruction");
@@ -83,7 +83,7 @@ impl RISCVTrace for DIVUW {
         &self,
         allocator: &VirtualRegisterAllocator,
         xlen: Xlen,
-    ) -> Vec<RV32IMInstruction> {
+    ) -> Vec<Instruction> {
         let a0 = self.operands.rs1; // dividend
         let a1 = self.operands.rs2; // divisor
         let a2 = allocator.allocate(); // quotient from oracle

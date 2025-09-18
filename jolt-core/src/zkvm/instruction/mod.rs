@@ -4,7 +4,7 @@ use allocative::Allocative;
 use common::constants::XLEN;
 use strum::EnumCount;
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
-use tracer::instruction::{RV32IMCycle, RV32IMInstruction};
+use tracer::instruction::{Cycle, Instruction};
 
 use crate::utils::interleave_bits;
 
@@ -119,55 +119,55 @@ macro_rules! define_rv32im_trait_impls {
     (
         instructions: [$($instr:ident),* $(,)?]
     ) => {
-        impl InstructionLookup<XLEN> for RV32IMInstruction {
+        impl InstructionLookup<XLEN> for Instruction {
             fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
                 match self {
-                    RV32IMInstruction::NoOp => None,
+                    Instruction::NoOp => None,
                     $(
-                        RV32IMInstruction::$instr(instr) => instr.lookup_table(),
+                        Instruction::$instr(instr) => instr.lookup_table(),
                     )*
-                    RV32IMInstruction::UNIMPL => None,
+                    Instruction::UNIMPL => None,
                     _ => panic!("Unexpected instruction: {:?}", self),
                 }
             }
         }
 
-        impl InstructionFlags for RV32IMInstruction {
+        impl InstructionFlags for Instruction {
             fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
                 match self {
-                    RV32IMInstruction::NoOp => {
+                    Instruction::NoOp => {
                         let mut flags = [false; NUM_CIRCUIT_FLAGS];
                         flags[CircuitFlags::IsNoop] = true;
                         flags[CircuitFlags::DoNotUpdateUnexpandedPC] = true;
                         flags
                     },
                     $(
-                        RV32IMInstruction::$instr(instr) => instr.circuit_flags(),
+                        Instruction::$instr(instr) => instr.circuit_flags(),
                     )*
-                    RV32IMInstruction::UNIMPL => [false; NUM_CIRCUIT_FLAGS],
+                    Instruction::UNIMPL => [false; NUM_CIRCUIT_FLAGS],
                     _ => panic!("Unexpected instruction: {:?}", self),
                 }
             }
         }
 
-        impl<const XLEN: usize> InstructionLookup<XLEN> for RV32IMCycle {
+        impl<const XLEN: usize> InstructionLookup<XLEN> for Cycle {
             fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
                 match self {
-                    RV32IMCycle::NoOp => None,
+                    Cycle::NoOp => None,
                     $(
-                        RV32IMCycle::$instr(cycle) => cycle.instruction.lookup_table(),
+                        Cycle::$instr(cycle) => cycle.instruction.lookup_table(),
                     )*
                     _ => panic!("Unexpected instruction: {:?}", self),
                 }
             }
         }
 
-        impl<const XLEN: usize> LookupQuery<XLEN> for RV32IMCycle {
+        impl<const XLEN: usize> LookupQuery<XLEN> for Cycle {
             fn to_instruction_inputs(&self) -> (u64, i128) {
                 match self {
-                    RV32IMCycle::NoOp => (0, 0),
+                    Cycle::NoOp => (0, 0),
                     $(
-                        RV32IMCycle::$instr(cycle) => LookupQuery::<XLEN>::to_instruction_inputs(cycle),
+                        Cycle::$instr(cycle) => LookupQuery::<XLEN>::to_instruction_inputs(cycle),
                     )*
                     _ => panic!("Unexpected instruction: {:?}", self),
                 }
@@ -175,9 +175,9 @@ macro_rules! define_rv32im_trait_impls {
 
             fn to_lookup_index(&self) -> u128 {
                 match self {
-                    RV32IMCycle::NoOp => 0,
+                    Cycle::NoOp => 0,
                     $(
-                        RV32IMCycle::$instr(cycle) => LookupQuery::<XLEN>::to_lookup_index(cycle),
+                        Cycle::$instr(cycle) => LookupQuery::<XLEN>::to_lookup_index(cycle),
                     )*
                     _ => panic!("Unexpected instruction: {:?}", self),
                 }
@@ -185,9 +185,9 @@ macro_rules! define_rv32im_trait_impls {
 
             fn to_lookup_operands(&self) -> (u64, u128) {
                 match self {
-                    RV32IMCycle::NoOp => (0, 0),
+                    Cycle::NoOp => (0, 0),
                     $(
-                        RV32IMCycle::$instr(cycle) => LookupQuery::<XLEN>::to_lookup_operands(cycle),
+                        Cycle::$instr(cycle) => LookupQuery::<XLEN>::to_lookup_operands(cycle),
                     )*
                     _ => panic!("Unexpected instruction: {:?}", self),
                 }
@@ -195,9 +195,9 @@ macro_rules! define_rv32im_trait_impls {
 
             fn to_lookup_output(&self) -> u64 {
                 match self {
-                    RV32IMCycle::NoOp => 0,
+                    Cycle::NoOp => 0,
                     $(
-                        RV32IMCycle::$instr(cycle) => LookupQuery::<XLEN>::to_lookup_output(cycle),
+                        Cycle::$instr(cycle) => LookupQuery::<XLEN>::to_lookup_output(cycle),
                     )*
                     _ => panic!("Unexpected instruction: {:?}", self),
                 }

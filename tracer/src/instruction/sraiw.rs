@@ -9,9 +9,7 @@ use crate::{
 };
 
 use super::virtual_sign_extend_word::VirtualSignExtendWord;
-use super::{
-    format::format_i::FormatI, RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
-};
+use super::{format::format_i::FormatI, Cycle, Instruction, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name   = SRAIW,
@@ -33,7 +31,7 @@ impl SRAIW {
 }
 
 impl RISCVTrace for SRAIW {
-    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
         let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
@@ -46,7 +44,7 @@ impl RISCVTrace for SRAIW {
         &self,
         allocator: &VirtualRegisterAllocator,
         xlen: Xlen,
-    ) -> Vec<RV32IMInstruction> {
+    ) -> Vec<Instruction> {
         let v_rs1 = allocator.allocate();
 
         let shift = self.operands.imm & 0x1f;

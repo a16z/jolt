@@ -1,6 +1,6 @@
 use jolt_core::host;
 use jolt_core::zkvm::JoltVerifierPreprocessing;
-use jolt_core::zkvm::{Jolt, JoltRV32IM};
+use jolt_core::zkvm::{Jolt, JoltRV64IMAC};
 
 #[derive(Debug, Copy, Clone, clap::ValueEnum)]
 pub enum BenchType {
@@ -60,7 +60,7 @@ fn prove_example(
     let (_, _, program_io) = program.trace(&serialized_input);
 
     let task = move || {
-        let preprocessing = JoltRV32IM::prover_preprocess(
+        let preprocessing = JoltRV64IMAC::prover_preprocess(
             bytecode.clone(),
             program_io.memory_layout.clone(),
             init_memory_state,
@@ -70,11 +70,11 @@ fn prove_example(
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let (jolt_proof, program_io, _) =
-            JoltRV32IM::prove(&preprocessing, elf_contents, &serialized_input);
+            JoltRV64IMAC::prove(&preprocessing, elf_contents, &serialized_input);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let verification_result =
-            JoltRV32IM::verify(&verifier_preprocessing, jolt_proof, program_io, None);
+            JoltRV64IMAC::verify(&verifier_preprocessing, jolt_proof, program_io, None);
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",

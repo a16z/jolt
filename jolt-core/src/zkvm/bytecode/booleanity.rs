@@ -28,7 +28,7 @@ use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 use rayon::prelude::*;
-use tracer::instruction::RV32IMCycle;
+use tracer::instruction::Cycle;
 
 #[derive(Allocative)]
 struct BooleanityProverState<F: JoltField> {
@@ -126,7 +126,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
 
 impl<F: JoltField> BooleanityProverState<F> {
     fn new(
-        trace: &[RV32IMCycle],
+        trace: &[Cycle],
         preprocessing: &BytecodePreprocessing,
         eq_r_cycle: Vec<F>,
         G: Vec<Vec<F>>,
