@@ -15,6 +15,9 @@ pub struct Blake3 {
     counter: u64,
 }
 
+#[repr(align(4))]
+pub struct Aligned64ByteInput([u8; BLOCK_INPUT_SIZE_IN_BYTES]);
+
 /// Note: Current implementation only supports hashing input of at most 64 bytes. Larger inputs are not supported yet.
 impl Blake3 {
     pub fn new() -> Self {
@@ -70,24 +73,13 @@ impl Blake3 {
         hasher.finalize()
     }
 
-    // Note: This only works for 64-byte inputes
-    pub fn keyed_hash(input: &[u8], key: [u32; CHAINING_VALUE_LEN]) -> [u8; OUTPUT_SIZE_IN_BYTES] {
-        debug_assert!(input.len() == 64);
-        let input: &[u8; 64] = input.try_into().unwrap();
-
+    // Note: This only works for 64-byte inputs
+    pub fn keyed_hash(
+        input: &Aligned64ByteInput,
+        key: [u32; CHAINING_VALUE_LEN],
+    ) -> [u8; OUTPUT_SIZE_IN_BYTES] {
         let mut h = key;
-        let mut message = [0u32; MSG_BLOCK_LEN];
-
-        #[cfg(target_endian = "little")]
-        unsafe {
-            // Copy 64 bytes directly into the u32 array. On LE this matches u32::from_le_bytes.
-            core::ptr::copy_nonoverlapping(input.as_ptr(), message.as_mut_ptr() as *mut u8, 64);
-        }
-
-        #[cfg(target_endian = "big")]
-        {
-            unimplemented!()
-        }
+        let message = unsafe { &*(input.0.as_ptr() as *const [u32; 16]) };
 
         unsafe {
             blake3_keyed64_compress(h.as_mut_ptr(), message.as_ptr());
@@ -265,9 +257,9 @@ mod tests {
 
     #[test]
     fn check_output() {
-        let input: &[u8] = &[5u8; 64];
+        let input = super::Aligned64ByteInput([5u8; 64]);
         let key: [u32; 8] = [0, 1, 2, 3, 4, 5, 6, 7];
-        let hash = Blake3::keyed_hash(input, key);
+        let hash = Blake3::keyed_hash(&input, key);
         println!("Hash is: {hash:02x?}");
     }
 
@@ -285,15 +277,16 @@ mod tests {
     #[test]
     fn test_keyed_digest_random_keys_match_standard() {
         for _ in 0..1000 {
-            let input = generate_random_bytes(64);
+            let input = super::Aligned64ByteInput(generate_random_bytes(64).try_into().unwrap());
             let key_bytes = generate_random_bytes(CHAINING_VALUE_LEN * 4);
             let mut key = [0u32; CHAINING_VALUE_LEN];
             key.copy_from_slice(&bytes_to_u32_vec(&key_bytes));
             let result = Blake3::keyed_hash(&input, key);
-            let expected = compute_keyed_expected_result(&input, key);
+            let expected = compute_keyed_expected_result(&input.0, key);
             assert_eq!(
                 result, expected,
-                "keyed digest mismatch for input={input:02x?} and random key={key:x?}"
+                "keyed digest mismatch for input={:02x?} and random key={key:x?}",
+                input.0
             );
         }
     }
