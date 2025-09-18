@@ -1,7 +1,7 @@
-use crate::instruction::srai::SRAI;
 use crate::instruction::sub::SUB;
 use crate::instruction::virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder;
 use crate::instruction::xor::XOR;
+use crate::instruction::{mulh::MULH, srai::SRAI};
 use crate::utils::inline_helpers::InstrAssembler;
 use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use serde::{Deserialize, Serialize};
@@ -13,8 +13,7 @@ use crate::{
 
 use super::{
     add::ADD, format::format_r::FormatR, mul::MUL, virtual_advice::VirtualAdvice,
-    virtual_assert_eq::VirtualAssertEQ, virtual_assert_mul_no_overflow::VirtualAssertMulNoOverflow,
-    virtual_assert_valid_div0::VirtualAssertValidDiv0,
+    virtual_assert_eq::VirtualAssertEQ, virtual_assert_valid_div0::VirtualAssertValidDiv0,
     virtual_change_divisor::VirtualChangeDivisor, virtual_move::VirtualMove, RISCVInstruction,
     RISCVTrace, RV32IMCycle, RV32IMInstruction,
 };
@@ -120,7 +119,9 @@ impl RISCVTrace for DIV {
         asm.emit_r::<VirtualChangeDivisor>(*t0, a0, a1);
         // check that quotient * divisor don't overflow
         asm.emit_r::<MUL>(*t1, *a2, *t0);
-        asm.emit_b::<VirtualAssertMulNoOverflow>(*a2, *t0, 0);
+        asm.emit_r::<MULH>(*t2, *a2, *t0);
+        asm.emit_i::<SRAI>(*t3, *t1, shmat);
+        asm.emit_b::<VirtualAssertEQ>(*t2, *t3, 0);
         // construct signed reminder (apply dividend's sign to reminder)
         asm.emit_i::<SRAI>(*t2, a0, shmat);
         asm.emit_r::<XOR>(*t3, *a3, *t2);
