@@ -123,8 +123,8 @@ impl<F: JoltField> RLCPolynomial<F> {
 
         // Compute the row commitments for dense submatrix
         self.dense_rlc
-            .par_chunks(row_len)
-            .zip(row_commitments.par_iter_mut())
+            .chunks(row_len)
+            .zip(row_commitments.iter_mut())
             .for_each(|(dense_row, commitment)| {
                 let msm_result: G =
                     VariableBaseMSM::msm_field_elements(&bases[..dense_row.len()], dense_row)

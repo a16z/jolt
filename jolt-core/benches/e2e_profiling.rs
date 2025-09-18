@@ -64,7 +64,7 @@ fn prove_example(
             bytecode.clone(),
             program_io.memory_layout.clone(),
             init_memory_state,
-            1 << 24,
+            1 << 25,
         );
 
         let elf_contents_opt = program.get_elf_contents();

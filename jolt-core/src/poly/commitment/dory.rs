@@ -769,7 +769,7 @@ where
         match self {
             MultilinearPolynomial::LargeScalars(poly) => poly
                 .Z
-                .par_chunks(row_len)
+                .chunks(row_len)
                 .map(|row| {
                     JoltGroupWrapper(
                         VariableBaseMSM::msm_field_elements(&bases[..row.len()], row).unwrap(),
@@ -778,49 +778,49 @@ where
                 .collect(),
             MultilinearPolynomial::U8Scalars(poly) => poly
                 .coeffs
-                .par_chunks(row_len)
+                .chunks(row_len)
                 .map(|row| {
                     JoltGroupWrapper(VariableBaseMSM::msm_u8(&bases[..row.len()], row).unwrap())
                 })
                 .collect(),
             MultilinearPolynomial::U16Scalars(poly) => poly
                 .coeffs
-                .par_chunks(row_len)
+                .chunks(row_len)
                 .map(|row| {
                     JoltGroupWrapper(VariableBaseMSM::msm_u16(&bases[..row.len()], row).unwrap())
                 })
                 .collect(),
             MultilinearPolynomial::U32Scalars(poly) => poly
                 .coeffs
-                .par_chunks(row_len)
+                .chunks(row_len)
                 .map(|row| {
                     JoltGroupWrapper(VariableBaseMSM::msm_u32(&bases[..row.len()], row).unwrap())
                 })
                 .collect(),
             MultilinearPolynomial::U64Scalars(poly) => poly
                 .coeffs
-                .par_chunks(row_len)
+                .chunks(row_len)
                 .map(|row| {
                     JoltGroupWrapper(VariableBaseMSM::msm_u64(&bases[..row.len()], row).unwrap())
                 })
                 .collect(),
             MultilinearPolynomial::U128Scalars(poly) => poly
                 .coeffs
-                .par_chunks(row_len)
+                .chunks(row_len)
                 .map(|row| {
                     JoltGroupWrapper(VariableBaseMSM::msm_u128(&bases[..row.len()], row).unwrap())
                 })
                 .collect(),
             MultilinearPolynomial::I64Scalars(poly) => poly
                 .coeffs
-                .par_chunks(row_len)
+                .chunks(row_len)
                 .map(|row| {
                     JoltGroupWrapper(VariableBaseMSM::msm_i64(&bases[..row.len()], row).unwrap())
                 })
                 .collect(),
             MultilinearPolynomial::I128Scalars(poly) => poly
                 .coeffs
-                .par_chunks(row_len)
+                .chunks(row_len)
                 .map(|row| {
                     JoltGroupWrapper(VariableBaseMSM::msm_i128(&bases[..row.len()], row).unwrap())
                 })

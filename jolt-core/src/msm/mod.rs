@@ -121,7 +121,7 @@ where
         bases: &[Self::MulBase],
         scalars: &[Self::ScalarField],
     ) -> Result<Self, ProofVerifyError> {
-        ArkVariableBaseMSM::msm(bases, scalars)
+        ArkVariableBaseMSM::msm_serial(bases, scalars)
             .map_err(|_bad_index| ProofVerifyError::KeyLengthError(bases.len(), scalars.len()))
     }
 
