@@ -1,4 +1,4 @@
-use crate::instruction::virtual_assert_mulu_no_overflow::VirtualAssertMulUNoOverflow;
+use crate::instruction::mulhu::MULHU;
 use crate::utils::inline_helpers::InstrAssembler;
 use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use serde::{Deserialize, Serialize};
@@ -84,6 +84,8 @@ impl RISCVTrace for DIVU {
         let a2 = allocator.allocate(); // quotient from oracle
         let a3 = allocator.allocate(); // remainder from oracle
         let t0 = allocator.allocate();
+        let t1 = allocator.allocate();
+        let zero = 0;
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
 
         // get advice
@@ -92,9 +94,10 @@ impl RISCVTrace for DIVU {
         // handle special case: if divisor==0, quotient must be all 1s
         asm.emit_b::<VirtualAssertValidDiv0>(a1, *a2, 0);
         // check that quotient * divisor doesn't overflow (unsigned)
-        asm.emit_b::<VirtualAssertMulUNoOverflow>(*a2, a1, 0);
-        // verify quotient * divisor + remainder == dividend
         asm.emit_r::<MUL>(*t0, *a2, a1);
+        asm.emit_r::<MULHU>(*t1, *a2, a1); // unsigned high bits
+        asm.emit_b::<VirtualAssertEQ>(*t1, zero, 0);
+        // verify quotient * divisor + remainder == dividend
         asm.emit_r::<ADD>(*t0, *t0, *a3);
         asm.emit_b::<VirtualAssertEQ>(*t0, a0, 0);
         // check remainder < divisor (unsigned)
