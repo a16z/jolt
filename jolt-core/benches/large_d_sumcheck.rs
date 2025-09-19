@@ -22,17 +22,15 @@ fn test_func_data<F: JoltField>(d: usize, t: usize) -> Vec<MultilinearPolynomial
     let mut val_vec: Vec<Vec<F>> = vec![unsafe_allocate_zero_vec(t); d];
 
     for j in 0..t {
-        for i in 0..d {
-            val_vec[i][j] = F::from_u32(rng.next_u32());
+        for val in val_vec.iter_mut().take(d) {
+            val[j] = F::from_u32(rng.next_u32());
         }
     }
 
-    let val_mle = val_vec
+    val_vec
         .into_par_iter()
-        .map(|val| MultilinearPolynomial::from(val))
-        .collect::<Vec<_>>();
-
-    val_mle
+        .map(MultilinearPolynomial::from)
+        .collect()
 }
 
 fn benchmark_appendix_c_sumcheck<const D1: usize>(c: &mut Criterion, d: usize, t: usize) {
@@ -40,14 +38,13 @@ fn benchmark_appendix_c_sumcheck<const D1: usize>(c: &mut Criterion, d: usize, t
 
     let mut transcript = KeccakTranscript::new(b"test_transcript");
     let r_cycle: Vec<Fr> = transcript.challenge_vector(t.log_2());
-    let previous_claim =
-        compute_initial_eval_claim(&ra.iter().map(|x| &*x).collect::<Vec<_>>(), &r_cycle);
+    let previous_claim = compute_initial_eval_claim(&ra.iter().collect::<Vec<_>>(), &r_cycle);
 
     c.bench_function(
         &format!("appendix_c_sumcheck_{}_{}", ra.len(), r_cycle.len().pow2()),
         |b| {
             b.iter_with_setup(
-                || (ra.clone(), transcript.clone(), previous_claim.clone()),
+                || (ra.clone(), transcript.clone(), previous_claim),
                 |(mut ra, mut transcript, mut previous_claim)| {
                     criterion::black_box(
                         AppendixCSumCheckProof::<Fr, KeccakTranscript>::prove::<D1>(
@@ -68,14 +65,13 @@ fn benchmark_karatsuba_sumcheck<F: FieldMulSmall>(c: &mut Criterion, d: usize, t
 
     let mut transcript = KeccakTranscript::new(b"test_transcript");
     let r_cycle: Vec<F> = transcript.challenge_vector(t.log_2());
-    let previous_claim =
-        compute_initial_eval_claim(&ra.iter().map(|x| &*x).collect::<Vec<_>>(), &r_cycle);
+    let previous_claim = compute_initial_eval_claim(&ra.iter().collect::<Vec<_>>(), &r_cycle);
 
     c.bench_function(
         &format!("karatsuba_sumcheck_{}_{}", ra.len(), r_cycle.len().pow2()),
         |b| {
             b.iter_with_setup(
-                || (ra.clone(), transcript.clone(), previous_claim.clone()),
+                || (ra.clone(), transcript.clone(), previous_claim),
                 |(mut ra, mut transcript, mut previous_claim)| {
                     criterion::black_box(LargeDMulSumCheckProof::prove(
                         &mut ra,
@@ -89,19 +85,18 @@ fn benchmark_karatsuba_sumcheck<F: FieldMulSmall>(c: &mut Criterion, d: usize, t
     );
 }
 
-fn benchmark_naive_sumcheck<F: JoltField>(c: &mut Criterion, d: usize, t: usize) {
+fn benchmark_naive_sumcheck(c: &mut Criterion, d: usize, t: usize) {
     let ra = test_func_data(d, t);
 
     let mut transcript = KeccakTranscript::new(b"test_transcript");
     let r_cycle: Vec<Fr> = transcript.challenge_vector(t.log_2());
-    let previous_claim =
-        compute_initial_eval_claim(&ra.iter().map(|x| &*x).collect::<Vec<_>>(), &r_cycle);
+    let previous_claim = compute_initial_eval_claim(&ra.iter().collect::<Vec<_>>(), &r_cycle);
 
     c.bench_function(
         &format!("naive_sumcheck_{}_{}", ra.len(), r_cycle.len().pow2()),
         |b| {
             b.iter_with_setup(
-                || (ra.clone(), transcript.clone(), previous_claim.clone()),
+                || (ra.clone(), transcript.clone(), previous_claim),
                 |(mut ra, mut transcript, mut previous_claim)| {
                     criterion::black_box(NaiveSumCheckProof::prove(
                         &mut ra.iter_mut().collect::<Vec<_>>(),
@@ -123,7 +118,7 @@ fn main() {
     let t = 1 << 20;
 
     benchmark_karatsuba_sumcheck::<Fr>(&mut criterion, 16, t);
-    benchmark_naive_sumcheck::<Fr>(&mut criterion, 16, t);
+    benchmark_naive_sumcheck(&mut criterion, 16, t);
 
     criterion.final_summary();
 }

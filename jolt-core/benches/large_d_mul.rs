@@ -48,7 +48,7 @@ fn karatsuba_branch<F: JoltField, const D: usize>(left: &[F; D], right: &[F; D])
     }
 }
 
-fn benchmark_naive<F: JoltField, const D: usize>(c: &mut Criterion) {
+fn benchmark_naive<const D: usize>(c: &mut Criterion) {
     let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(0);
     c.bench_function(&format!("naive_{}", D), |b| {
         b.iter_with_setup(
@@ -64,7 +64,7 @@ fn benchmark_naive<F: JoltField, const D: usize>(c: &mut Criterion) {
     });
 }
 
-fn benchmark_toom<F: JoltField, const D: usize>(c: &mut Criterion) {
+fn benchmark_toom<const D: usize>(c: &mut Criterion) {
     let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(0);
     c.bench_function(&format!("toom_{}", D), |b| {
         b.iter_with_setup(
@@ -83,7 +83,7 @@ fn benchmark_toom<F: JoltField, const D: usize>(c: &mut Criterion) {
     });
 }
 
-fn benchmark_karatsuba<F: JoltField, const D: usize>(c: &mut Criterion) {
+fn benchmark_karatsuba<const D: usize>(c: &mut Criterion) {
     let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(0);
     c.bench_function(&format!("karatsuba_{}", D), |b| {
         b.iter_with_setup(
@@ -117,18 +117,18 @@ fn main() {
         .configure_from_args()
         .warm_up_time(std::time::Duration::from_secs(10));
 
-    benchmark_naive::<Fr, 4>(&mut criterion);
-    benchmark_karatsuba::<Fr, 4>(&mut criterion);
-    benchmark_toom::<Fr, 4>(&mut criterion);
+    benchmark_naive::<4>(&mut criterion);
+    benchmark_karatsuba::<4>(&mut criterion);
+    benchmark_toom::<4>(&mut criterion);
 
-    benchmark_naive::<Fr, 8>(&mut criterion);
-    benchmark_karatsuba::<Fr, 8>(&mut criterion);
-    benchmark_toom::<Fr, 8>(&mut criterion);
+    benchmark_naive::<8>(&mut criterion);
+    benchmark_karatsuba::<8>(&mut criterion);
+    benchmark_toom::<8>(&mut criterion);
 
     // benchmark_naive::<Fr, 16>(&mut criterion);
-    benchmark_karatsuba::<Fr, 16>(&mut criterion);
-    benchmark_toom::<Fr, 16>(&mut criterion);
+    benchmark_karatsuba::<16>(&mut criterion);
+    benchmark_toom::<16>(&mut criterion);
 
-    benchmark_naive::<Fr, 32>(&mut criterion);
-    benchmark_karatsuba::<Fr, 32>(&mut criterion);
+    benchmark_naive::<32>(&mut criterion);
+    benchmark_karatsuba::<32>(&mut criterion);
 }

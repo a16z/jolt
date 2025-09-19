@@ -9,7 +9,7 @@ A one-hot vector of length $n$ is a unit vector in $\\{0, 1\\}^n$, i.e., a vecto
 
 In Jolt, we refer to the multilinear extension (MLE) of a one-hot vector as a one-hot polynomial. 
 
-We also use the same terminology to refer to the concatentation of $T$ different one-hot vectors. 
+We also use the same terminology to refer to the concatenation of $T$ different one-hot vectors. 
 For example, if $y=(y_1, \dots, y_T) \in \left(\\{0, 1\\}^{n}\right)^T$ where each $y_i$ is one-hot, then we'll call $y$ one-hot, and say the same about its MLE.
 
 ## Shout
@@ -60,7 +60,7 @@ Shout is a batch-evaluation argument, which can equivalently be viewed as a look
 
 Twist is an extension from read-only memory to read-write memory. 
 
-Imagine the prover has already committed to $T$ read addresses and $T$ write addresses, each address indexing into a memory of size $K$. The prover has also committed to a \emph{value} associated with each write operation. We think of reads and writes as proceeding in ``cycles'' (analgous to CPU cycle), where in each cycle $j$, the $j$'th read operation happens, followed by the $j$'th write operation. 
+Imagine the prover has already committed to $T$ read addresses and $T$ write addresses, each address indexing into a memory of size $K$. The prover has also committed to a \emph{value} associated with each write operation. We think of reads and writes as proceeding in ``cycles'' (analogous to CPU cycle), where in each cycle $j$, the $j$'th read operation happens, followed by the $j$'th write operation. 
 
 The goal of Twist is to give the verifier query access to (the MLE of) the vector $\textsf{rv}$ of read-values, where $\textsf{rv}(j)$ denotes the value returned by the $j$'th read operation (i.e., the value that, as of time $j$, was most recently written to the $j$'th read address). 
 
