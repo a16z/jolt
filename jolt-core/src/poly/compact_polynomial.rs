@@ -6,6 +6,8 @@ use crate::field::JoltField;
 use crate::utils::math::Math;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use bytemuck::TransparentWrapper;
+use bytemuck_derive::TransparentWrapper;
 use num_integer::Integer;
 use rayon::prelude::*;
 use std::cmp::Ordering;
@@ -96,6 +98,9 @@ impl SmallScalar for i64 {
     }
 }
 
+#[derive(TransparentWrapper)]
+#[repr(transparent)]
+#[transparent(T)]
 pub struct StreamingCompactWitness<T: SmallScalar, F: JoltField> {
     pub value: T,
     phantom: PhantomData<fn(F)>,
@@ -113,8 +118,7 @@ impl<T: SmallScalar, F: JoltField> StreamingCompactWitness<T, F> {
     pub(crate) fn unwrap_slice<'a>(
         chunk: &'a [StreamingCompactWitness<T,F>],
     ) -> &'a [T] {
-        // chunk.iter().map(|w| w.value).collect()
-        todo!("TODO: Cast to unwrap")
+        StreamingCompactWitness::peel_slice(chunk)
     }
 }
 

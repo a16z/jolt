@@ -8,6 +8,8 @@ use crate::utils::{compute_dotproduct, compute_dotproduct_low_optimized};
 use crate::field::JoltField;
 use crate::utils::math::Math;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use bytemuck::TransparentWrapper;
+use bytemuck_derive::TransparentWrapper;
 use core::ops::Index;
 use rand_core::{CryptoRng, RngCore};
 use rayon::prelude::*;
@@ -15,6 +17,9 @@ use rayon::prelude::*;
 use super::multilinear_polynomial::BindingOrder;
 
 // #[derive(Clone, Debug, Default, PartialEq)]
+#[derive(TransparentWrapper)]
+#[repr(transparent)]
+#[transparent(F)]
 pub struct StreamingDenseWitness<F: JoltField> {
     pub value: F,
 }
@@ -24,8 +29,7 @@ impl<F: JoltField> StreamingDenseWitness<F> {
     pub(crate) fn unwrap_slice<'a>(
         chunk: &'a [StreamingDenseWitness<F>],
     ) -> &'a [F] {
-        // chunk.iter().map(|w| w.value).collect()
-        todo!("TODO: Cast to unwrap")
+        StreamingDenseWitness::peel_slice(chunk)
     }
 }
 
