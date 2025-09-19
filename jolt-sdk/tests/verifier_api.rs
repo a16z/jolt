@@ -1,7 +1,6 @@
 #[cfg(test)]
 #[cfg(feature = "host")]
 mod tests {
-    use crate::{fib_io_device_bytes, fib_proof_bytes, jolt_verifier_preprocessing_bytes};
     use jolt_sdk::{Jolt, JoltRV32IM, JoltVerifierPreprocessing, RV32IMJoltProof, Serializable};
 
     #[test]

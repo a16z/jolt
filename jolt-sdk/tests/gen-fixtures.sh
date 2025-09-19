@@ -13,6 +13,8 @@ FILES=(
   "fib_io_device.bin"
 )
 
+mkdir -p "$FIXTURE_DIR"
+
 for entry in "${FILES[@]}"; do
   read -r SRC <<<"$entry"
 
