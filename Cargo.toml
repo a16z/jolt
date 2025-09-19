@@ -57,6 +57,7 @@ members = [
     "examples/memory-ops/guest",
     "examples/recursion",
     "examples/recursion/guest",
+    "zklean-extractor",
 ]
 
 [features]

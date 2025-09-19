@@ -1,5 +1,5 @@
-#![feature(iter_intersperse, generic_const_exprs, generic_const_items)]
-#![allow(incomplete_features)] // Silence warnings for generic_const_exprs
+//#![feature(iter_intersperse, generic_const_exprs, generic_const_items)]
+//#![allow(incomplete_features)] // Silence warnings for generic_const_exprs
 
 use std::path::PathBuf;
 
@@ -8,15 +8,14 @@ use crate::constants::*;
 mod mle_ast;
 use crate::mle_ast::*;
 mod util;
-//use crate::util::*;
-mod subtable;
-use crate::subtable::*;
-mod instruction;
-use crate::instruction::*;
-mod r1cs;
-use crate::r1cs::*;
-mod flags;
-use crate::flags::*;
+//mod subtable;
+//use crate::subtable::*;
+//mod instruction;
+//use crate::instruction::*;
+//mod r1cs;
+//use crate::r1cs::*;
+//mod flags;
+//use crate::flags::*;
 mod modules;
 use crate::modules::*;
 
@@ -81,10 +80,10 @@ fn main() -> Result<(), FSError> {
     let args = Args::parse();
 
     let modules: Vec<Box<dyn AsModule>> = vec![
-        Box::new(ZkLeanR1CSConstraints::<ParameterSet>::extract()),
-        Box::new(ZkLeanSubtables::<MleAst<16000>, ParameterSet>::extract()),
-        Box::new(ZkLeanInstructions::<ParameterSet>::extract()),
-        Box::new(ZkLeanLookupCases::<ParameterSet>::extract()),
+        //Box::new(ZkLeanR1CSConstraints::<ParameterSet>::extract()),
+        //Box::new(ZkLeanSubtables::<MleAst<16000>, ParameterSet>::extract()),
+        //Box::new(ZkLeanInstructions::<ParameterSet>::extract()),
+        //Box::new(ZkLeanLookupCases::<ParameterSet>::extract()),
     ];
 
     if let Some(package_path) = args.package_path {
