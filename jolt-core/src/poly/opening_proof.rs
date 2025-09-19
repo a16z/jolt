@@ -723,11 +723,9 @@ where
         let r_concat = [r_address.as_slice(), r_cycle.as_slice()].concat();
 
         let shared_eq_address = Arc::new(RwLock::new(EqAddressState::new(&r_address)));
-        if !self.eq_cycle_map.contains_key(&r_cycle) {
-            let eq_cycle_state = Arc::new(RwLock::new(EqCycleState::new(&r_cycle)));
-            self.eq_cycle_map.insert(r_cycle.clone(), eq_cycle_state);
-        };
-        let shared_eq_cycle = self.eq_cycle_map.get(&r_cycle).unwrap();
+        let shared_eq_cycle = self.eq_cycle_map
+            .entry(r_cycle.clone())
+            .or_insert_with(|| Arc::new(RwLock::new(EqCycleState::new(&r_cycle))));
 
         // Add openings to map
         for (label, claim) in polynomials.iter().zip(claims.iter()) {
