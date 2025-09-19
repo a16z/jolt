@@ -1,4 +1,3 @@
-use std::iter::Take;
 use std::marker::PhantomData;
 use std::ops::Index;
 
@@ -10,8 +9,6 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use num_integer::Integer;
 use rayon::prelude::*;
 use std::cmp::Ordering;
-use tracer::instruction::RV32IMCycle;
-use tracer::LazyTraceIterator;
 
 /// A trait for small scalars ({u/i}{8/16/32/64})
 pub trait SmallScalar: Copy + Integer + Sync + CanonicalSerialize + CanonicalDeserialize {
@@ -111,7 +108,16 @@ impl<T: SmallScalar, F: JoltField> StreamingCompactWitness<T, F> {
             phantom: PhantomData,
         }
     }
+
+    // Helper function to unwrap a newtype wrapper with a cast.
+    pub(crate) fn unwrap_slice<'a>(
+        chunk: &'a [StreamingCompactWitness<T,F>],
+    ) -> &'a [T] {
+        // chunk.iter().map(|w| w.value).collect()
+        todo!("TODO: Cast to unwrap")
+    }
 }
+
 
 /// Compact polynomials are used to store coefficients of small scalars.
 /// They have two representations:

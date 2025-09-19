@@ -1,6 +1,6 @@
 use crate::{
     poly::{
-        commitment::commitment_scheme::StreamingCommitmentScheme, compact_polynomial::StreamingCompactWitness, dense_mlpoly::StreamingDenseWitness, one_hot_polynomial::{OneHotPolynomial, StreamingOneHotWitness}, rlc_polynomial::RLCPolynomial
+        compact_polynomial::StreamingCompactWitness, dense_mlpoly::StreamingDenseWitness, one_hot_polynomial::{OneHotPolynomial, StreamingOneHotWitness}, rlc_polynomial::RLCPolynomial
     },
     utils::compute_dotproduct,
 };
@@ -8,7 +8,6 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Valid};
 use num_traits::MulAdd;
 use rayon::prelude::*;
 use strum_macros::EnumIter;
-use tracer::instruction::RV32IMCycle;
 
 use super::{
     compact_polynomial::{CompactPolynomial, SmallScalar},
@@ -89,36 +88,6 @@ pub enum StreamingWitness<F: JoltField> {
     I64Scalars(StreamingCompactWitness<i64, F>),
     // RLC(StreamingRLCPolynomial<F>),
     OneHot(StreamingOneHotWitness<F>),
-}
-
-impl<F: JoltField> StreamingWitness<F> {
-    // TODO: Delete this
-    pub fn to_field(self) -> F {
-        match self {
-            StreamingWitness::LargeScalars(streaming_dense_witness) => {
-                streaming_dense_witness.value
-            }
-            StreamingWitness::U8Scalars(streaming_compact_witness) => {
-                streaming_compact_witness.value.to_field()
-            }
-            StreamingWitness::U16Scalars(streaming_compact_witness) => {
-                streaming_compact_witness.value.to_field()
-            }
-            StreamingWitness::U32Scalars(streaming_compact_witness) => {
-                streaming_compact_witness.value.to_field()
-            }
-            StreamingWitness::U64Scalars(streaming_compact_witness) => {
-                streaming_compact_witness.value.to_field()
-            }
-            StreamingWitness::I64Scalars(streaming_compact_witness) => {
-                streaming_compact_witness.value.to_field()
-            }
-            // StreamingWitness::RLC(streaming_rlcpolynomial) => todo!(),
-            StreamingWitness::OneHot(streaming_one_hot_witness) => {
-                (streaming_one_hot_witness.value.unwrap_or(0) as u64).to_field()
-            } // JP: ???
-        }
-    }
 }
 
 /// The order in which polynomial variables are bound in sumcheck

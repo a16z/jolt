@@ -26,7 +26,7 @@ use crate::{
         bytecode::BytecodePreprocessing,
         dag::{jolt_dag::JoltDAG, proof_serialization::JoltProof, state_manager::StateManager},
         ram::RAMPreprocessing,
-        witness::{AllCommittedPolynomials, DTH_ROOT_OF_K},
+        witness::DTH_ROOT_OF_K,
     },
 };
 

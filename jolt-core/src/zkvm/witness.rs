@@ -13,7 +13,7 @@ use crate::{
     poly::{
         commitment::commitment_scheme::{CommitmentScheme, StreamingCommitmentScheme, StreamingCommitmentScheme_, StreamingProcessChunk},
         compact_polynomial::StreamingCompactWitness,
-        multilinear_polynomial::{Multilinear, MultilinearPolynomial, StreamingWitness},
+        multilinear_polynomial::{Multilinear, MultilinearPolynomial},
         one_hot_polynomial::{OneHotPolynomial, StreamingOneHotWitness},
     },
     utils::math::Math,
@@ -472,18 +472,6 @@ impl CommittedPolynomial {
                 .find_position(|poly| *poly == self)
                 .unwrap()
                 .0
-        }
-    }
-
-    fn ram_d(&self) -> usize {
-        // this is kind of jank but fine for now ig
-        unsafe {
-            ALL_COMMITTED_POLYNOMIALS
-                .get()
-                .expect("ALL_COMMITTED_POLYNOMIALS is uninitialized")
-                .iter()
-                .filter(|poly| matches!(poly, CommittedPolynomial::RamRa(_)))
-                .count()
         }
     }
 

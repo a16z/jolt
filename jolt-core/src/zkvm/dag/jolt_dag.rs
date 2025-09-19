@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::{CommitmentScheme, StreamingCommitmentScheme};
-use crate::poly::commitment::dory::{DoryGlobals, JoltPairing};
+use crate::poly::commitment::dory::DoryGlobals;
 use crate::subprotocols::sumcheck::{BatchedSumcheck, SumcheckInstance};
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::Transcript;
@@ -20,8 +20,6 @@ use crate::zkvm::witness::{
 };
 use crate::zkvm::ProverDebugInfo;
 use anyhow::Context;
-use ark_ec::bn::Bn;
-use dory::ProverSetup;
 use itertools::Itertools;
 use rayon::prelude::*;
 use tracer::{instruction::RV32IMCycle, ChunkWithPeekIterator as _};
@@ -53,7 +51,6 @@ impl JoltDAG {
 
         println!("bytecode size: {}", preprocessing.shared.bytecode.code_size);
 
-        let ram_K = state_manager.ram_K;
         let bytecode_d = preprocessing.shared.bytecode.d;
 
         let _guard = (
@@ -427,7 +424,7 @@ impl JoltDAG {
 
         let T = DoryGlobals::get_T();
 
-        let polys : Vec<_> = AllCommittedPolynomials::iter().collect(); // .skip(9).take(1).collect();
+        let polys : Vec<_> = AllCommittedPolynomials::iter().collect();
         let pcs_and_polys: Vec<_> = polys
             .iter()
             .map(|poly| (PCS::initialize(poly.to_polynomial_type(&preprocessing), T, &preprocessing.generators), poly))
@@ -438,7 +435,7 @@ impl JoltDAG {
         lazy_trace
             .as_ref()
             .expect("Lazy trace not found!")
-            .clone() //AZ: Can we avoid this clone?
+            .clone()
             .pad_using(T+1, |_| RV32IMCycle::NoOp)
             .chunks_with_peek(row_len)
             .zip(&mut row_commitments)

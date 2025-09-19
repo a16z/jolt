@@ -22,7 +22,6 @@ use crate::zkvm::r1cs::inputs::JoltR1CSInputs;
 use crate::zkvm::r1cs::inputs::ALL_R1CS_INPUTS;
 use crate::zkvm::r1cs::inputs::COMMITTED_R1CS_INPUTS;
 use crate::zkvm::r1cs::key::UniformSpartanKey;
-use crate::zkvm::ram;
 use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 
 use crate::utils::small_value::NUM_SVO_ROUNDS;

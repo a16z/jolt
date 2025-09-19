@@ -6,7 +6,6 @@
 extern crate alloc;
 
 use itertools::Itertools;
-use core::mem::take;
 use std::vec;
 
 #[cfg(not(feature = "std"))]
@@ -252,7 +251,7 @@ pub struct ChunksWithPeek<I:Iterator> {
 pub trait ChunkWithPeekIterator: Iterator + Sized {
     fn chunks_with_peek(mut self, size: usize) -> ChunksWithPeek<Self> {
         assert!(size != 0, "chunk size must be non-zero");
-        let peek = self.next();//.expect("Expected a non-empty iterator");
+        let peek = self.next();
         ChunksWithPeek {
             chunk_size: size,
             iter: self,
@@ -272,7 +271,6 @@ impl<I:Iterator<Item:Clone>> Iterator for ChunksWithPeek<I> {
         // optimize for the chunk size
         let mut chunk = Vec::with_capacity(self.chunk_size + 1);
         chunk.push(self.peek.take()?);
-        // chunk.push(first_item);
         chunk.extend(self.iter.by_ref().take(self.chunk_size - 1));
         if chunk.len() == 1
         {

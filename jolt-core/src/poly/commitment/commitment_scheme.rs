@@ -2,13 +2,11 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use std::borrow::Borrow;
 use std::fmt::Debug;
 
-use crate::poly::commitment::dory::JoltG1Wrapper;
 use crate::poly::compact_polynomial::StreamingCompactWitness;
 use crate::poly::dense_mlpoly::StreamingDenseWitness;
 use crate::poly::multilinear_polynomial::Multilinear;
 use crate::poly::one_hot_polynomial::StreamingOneHotWitness;
 use crate::utils::transcript::Transcript;
-use crate::zkvm::witness::CommittedPolynomial;
 use crate::{
     field::JoltField,
     poly::multilinear_polynomial::MultilinearPolynomial,

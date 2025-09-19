@@ -15,7 +15,7 @@ use crate::{
     },
     subprotocols::sumcheck::SumcheckInstance,
     utils::{math::Math, thread::unsafe_allocate_zero_vec, transcript::Transcript},
-    zkvm::{dag::state_manager::StateManager, ram::{self, remap_address}, witness::{CommittedPolynomial, VirtualPolynomial}},
+    zkvm::{dag::state_manager::StateManager, ram::remap_address, witness::{CommittedPolynomial, VirtualPolynomial}},
 };
 use rayon::prelude::*;
 
