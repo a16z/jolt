@@ -238,14 +238,17 @@ mod tests {
     use crate::{test_utils::helpers::*, BLOCK_INPUT_SIZE_IN_BYTES, CHAINING_VALUE_LEN};
 
     fn random_partition(data: &[u8]) -> Vec<&[u8]> {
+        use rand::rngs::StdRng;
+        use rand::{Rng, SeedableRng};
+
         if data.is_empty() {
             return vec![&[]];
         }
         let len = data.len();
         let mut parts = Vec::new();
         let mut partitioned_num = 0usize;
-        let mut rng = rand::thread_rng();
-        use rand::Rng;
+        // Use a fixed seed for deterministic test results
+        let mut rng = StdRng::seed_from_u64(42);
         while partitioned_num < len {
             let remaining = len - partitioned_num;
             let take = rng.gen_range(1..=remaining);
@@ -256,17 +259,13 @@ mod tests {
     }
 
     #[test]
-    fn check_output() {
-        let input = super::Aligned64ByteInput([5u8; 64]);
-        let key: [u32; 8] = [0, 1, 2, 3, 4, 5, 6, 7];
-        let hash = Blake3::keyed_hash(&input, key);
-        println!("Hash is: {hash:02x?}");
-    }
-
-    #[test]
     fn test_digest_matches_standard() {
+        use rand::rngs::StdRng;
+        use rand::{Rng, SeedableRng};
+        let mut rng = StdRng::seed_from_u64(67890);
+
         for _ in 0..1000 {
-            let len = rand::random::<usize>() % (BLOCK_INPUT_SIZE_IN_BYTES);
+            let len = rng.gen::<usize>() % (BLOCK_INPUT_SIZE_IN_BYTES);
             let input = generate_random_bytes(len);
             let result = Blake3::digest(&input);
             let expected = compute_expected_result(&input);
@@ -293,8 +292,12 @@ mod tests {
 
     #[test]
     fn test_streaming_update_finalize_matches_standard() {
+        use rand::rngs::StdRng;
+        use rand::{Rng, SeedableRng};
+        let mut rng = StdRng::seed_from_u64(54321);
+
         for _ in 0..1000 {
-            let len = rand::random::<usize>() % (BLOCK_INPUT_SIZE_IN_BYTES + 1);
+            let len = rng.gen::<usize>() % (BLOCK_INPUT_SIZE_IN_BYTES + 1);
             let data = generate_random_bytes(len);
             let expected = compute_expected_result(&data);
             let parts = random_partition(&data);

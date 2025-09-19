@@ -50,9 +50,12 @@ pub fn instruction() -> tracer::instruction::inline::INLINE {
 #[cfg(test)]
 pub mod helpers {
     pub fn generate_random_bytes(len: usize) -> Vec<u8> {
+        use rand::rngs::StdRng;
+        use rand::{RngCore, SeedableRng};
+
         let mut buf = vec![0u8; len];
-        let mut rng = rand::thread_rng();
-        use rand::RngCore;
+        // Use a fixed seed for deterministic test results
+        let mut rng = StdRng::seed_from_u64(12345);
         rng.fill_bytes(&mut buf);
         buf
     }
