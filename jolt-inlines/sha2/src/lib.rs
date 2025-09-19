@@ -25,10 +25,7 @@ mod host;
 #[cfg(feature = "host")]
 pub use host::*;
 
-// Test modules and constants
 #[cfg(all(test, feature = "host"))]
 pub mod test_constants;
-#[cfg(all(test, feature = "host"))]
-pub mod test_utils;
 #[cfg(all(test, feature = "host"))]
 mod tests;

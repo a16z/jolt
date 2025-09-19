@@ -126,7 +126,8 @@ impl Keccak256SequenceBuilder {
         self.store_state();
 
         // 4. Finalize assembler and return instruction sequence.
-        self.asm.finalize_inline(NEEDED_REGISTERS)
+        drop(self.vr);
+        self.asm.finalize_inline()
     }
 
     /// Load the initial Keccak state from memory into virtual registers.

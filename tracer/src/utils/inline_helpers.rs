@@ -59,8 +59,6 @@ use crate::utils::virtual_registers::VirtualRegisterAllocator;
 
 use common::constants::RISCV_REGISTER_COUNT;
 use common::constants::VIRTUAL_INSTRUCTION_RESERVED_REGISTER_COUNT;
-use common::constants::VIRTUAL_REGISTER_COUNT;
-
 /// Operand that can be either an immediate or a register.
 #[derive(Clone, Copy, Debug)]
 pub enum Value {
@@ -128,7 +126,7 @@ impl InstrAssembler {
 
     /// Finalize the instruction buffer: back-fill `inline_sequence_remaining`
     /// and return ownership of the underlying `Vec`.
-    pub fn finalize(mut self) -> Vec<Instruction> {
+    pub(crate) fn finalize(mut self) -> Vec<Instruction> {
         let len = self.sequence.len();
         for (i, instr) in self.sequence.iter_mut().enumerate() {
             instr.set_inline_sequence_remaining(Some((len - i - 1) as u16));
@@ -141,19 +139,11 @@ impl InstrAssembler {
     }
 
     /// Finalize inline instructions by zeroing virtual registers, then calling finalize.
-    pub fn finalize_inline(mut self, num_inline_virtual_regs: u8) -> Vec<Instruction> {
-        const INLINE_REGISTER_BASE: u8 =
-            RISCV_REGISTER_COUNT + VIRTUAL_INSTRUCTION_RESERVED_REGISTER_COUNT;
-        const MAX_INLINE_REGISTERS: u8 =
-            VIRTUAL_REGISTER_COUNT - VIRTUAL_INSTRUCTION_RESERVED_REGISTER_COUNT;
-
-        assert!(
-            num_inline_virtual_regs <= MAX_INLINE_REGISTERS,
-            "Attempted to clear {num_inline_virtual_regs} inline virtual registers, but only {MAX_INLINE_REGISTERS} are available"
-        );
+    pub fn finalize_inline(mut self) -> Vec<Instruction> {
+        let register = self.allocator.get_registers_for_reset();
         // Zero inline virtual registers using ADDI rd, x0, 0
-        for reg_offset in 0..num_inline_virtual_regs {
-            self.emit_i::<ADDI>(INLINE_REGISTER_BASE + reg_offset, 0, 0);
+        for reg in register {
+            self.emit_i::<ADDI>(reg, 0, 0);
         }
         self.finalize()
     }
