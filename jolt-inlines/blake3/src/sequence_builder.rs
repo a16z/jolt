@@ -72,6 +72,7 @@ impl Blake3SequenceBuilder {
 
         self.finalize_state();
         self.store_state();
+        drop(self.vr);
         self.asm.finalize_inline()
     }
 

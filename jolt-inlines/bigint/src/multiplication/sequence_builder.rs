@@ -82,6 +82,7 @@ impl BigIntMulSequenceBuilder {
                 .emit_s::<SD>(self.operands.rs3, self.s(i), i as i64 * 8);
         }
 
+        drop(self.vr);
         self.asm.finalize_inline()
     }
 

@@ -74,13 +74,15 @@ impl VirtualRegisterAllocator {
 
     pub fn get_registers_for_reset(&self) -> Vec<u8> {
         // Assert that all registers have been dropped
-        assert!(self
-            .allocated
-            .lock()
-            .expect("Failed to lock virtual register allocator")
-            .iter()
-            .skip(NUM_VIRTUAL_INSTRUCTION_REGISTERS)
-            .all(|allocated| !*allocated));
+        assert!(
+            self.allocated
+                .lock()
+                .expect("Failed to lock virtual register allocator")
+                .iter()
+                .skip(NUM_VIRTUAL_INSTRUCTION_REGISTERS)
+                .all(|allocated| !*allocated),
+            "All allocated virtual registers have to be dropped before inline finalization"
+        );
 
         std::mem::take(
             &mut self

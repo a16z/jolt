@@ -126,6 +126,7 @@ impl Keccak256SequenceBuilder {
         self.store_state();
 
         // 4. Finalize assembler and return instruction sequence.
+        drop(self.vr);
         self.asm.finalize_inline()
     }
 
