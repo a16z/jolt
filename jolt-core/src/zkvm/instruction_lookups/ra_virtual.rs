@@ -1,4 +1,4 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, iter::zip, rc::Rc};
 
 use allocative::Allocative;
 use rayon::{
@@ -20,11 +20,10 @@ use crate::{
             OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator,
             BIG_ENDIAN,
         },
+        unipoly::UniPoly,
     },
     subprotocols::{
-        large_degree_sumcheck::{
-            compute_eq_mle_product_univariate, compute_mle_product_coeffs_katatsuba,
-        },
+        large_degree_sumcheck::{compute_eq_mle_product_univariate, compute_mle_product_sum},
         sumcheck::SumcheckInstance,
     },
     transcripts::Transcript,
@@ -204,50 +203,43 @@ impl<F: JoltField> SumcheckInstance<F> for RASumCheck<F> {
         self.eq_ra_claim
     }
 
-    fn compute_prover_message(&mut self, round: usize, _previous_claim: F) -> Vec<F> {
+    fn compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F> {
         let prover_state = self
             .prover_state
             .as_ref()
             .expect("Prover state not initialized");
         let ra_i_polys = &prover_state.ra_i_polys;
 
-        // TODO: we should really use Toom-Cook for d = 4 and 8 but that requires F to implement the SmallFieldMul trait. Need to rethink the interface.
-        let mle_product_coeffs = match self.d {
-            4 => compute_mle_product_coeffs_katatsuba::<F, 4, 5>(
-                ra_i_polys,
-                round,
-                self.T.log_2(),
-                &prover_state.eq_factor,
-                &prover_state.E_table,
-            ),
-            8 => compute_mle_product_coeffs_katatsuba::<F, 8, 9>(
-                ra_i_polys,
-                round,
-                self.T.log_2(),
-                &prover_state.eq_factor,
-                &prover_state.E_table,
-            ),
-            16 => compute_mle_product_coeffs_katatsuba::<F, 16, 17>(
-                ra_i_polys,
-                round,
-                self.T.log_2(),
-                &prover_state.eq_factor,
-                &prover_state.E_table,
-            ),
-            _ => panic!(
-                "Unsupported number of polynomials, got {} and expected 4, 8, or 16",
-                self.d
-            ),
-        };
+        // Eval the product at [1, 2, ..., D - 1, inf].
+        let product_evals =
+            compute_mle_product_sum(ra_i_polys, round, self.T.log_2(), &prover_state.E_table);
 
-        let univariate_poly =
-            compute_eq_mle_product_univariate(mle_product_coeffs, round, &self.r_cycle);
+        let eq_eval_at_0_inv = (F::one() - self.r_cycle[round]).inverse().unwrap();
+        let eq_eval_at_1 = self.r_cycle[round];
 
-        // Turning into eval points.
-        (0..univariate_poly.coeffs.len())
-            .filter(|i| *i != 1)
-            .map(|i| univariate_poly.evaluate(&F::from_u32(i as u32)))
-            .collect()
+        // Obtain the eval at `0`.
+        let eval_at_1 = eq_eval_at_1 * product_evals[0] * eq_eval_at_0_inv;
+        let eval_at_0 = previous_claim - eval_at_1;
+
+        // Interpolate the product polynomial.
+        let toom_evals = [&[eval_at_0], &*product_evals].concat();
+        let product_poly = UniPoly::from_evals_toom(&toom_evals);
+
+        // TODO: Add in missing eq factor.
+        // // Multiply poly by eq(X, r[round]) / eq(0, r[round]).
+        // // Note eq(X, r[round]) / eq(0, r[round]) = 1 + (2*r[round] - 1)/(1 - r[round])X.
+        // // See https://eprint.iacr.org/2024/108.pdf section 3.2.
+        // let x_coeff = (self.r_cycle[round] + self.r_cycle[round] - F::one()) * eq_eval_at_0_inv;
+        // // let res = product_poly
+
+        // Return evals at [0, 2, 3, ..., D + 2].
+        let round_poly_degree = ra_i_polys.len() + 1;
+        let mut res_evals = vec![F::zero(); round_poly_degree + 1];
+        res_evals[0] = product_poly.eval_at_zero();
+        zip(&mut res_evals[1..], 2..)
+            .for_each(|(y, x)| *y = product_poly.evaluate(&F::from_u64(x)));
+
+        res_evals
     }
 
     fn bind(&mut self, r_j: F, round: usize) {

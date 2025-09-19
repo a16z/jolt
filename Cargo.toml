@@ -101,11 +101,46 @@ lto = "off"
 inherits = "release"
 debug = false
 
+# [patch.crates-io]
+# ark-ff = { git = "https://github.com/andrewmilson/algebra", branch = "andrew/twist-shout-with-fewer-reductions" }
+# ark-ec = { git = "https://github.com/andrewmilson/algebra", branch = "andrew/twist-shout-with-fewer-reductions" }
+# ark-serialize = { git = "https://github.com/andrewmilson/algebra", branch = "andrew/twist-shout-with-fewer-reductions" }
+# ark-bn254 = { git = "https://github.com/andrewmilson/algebra", branch = "andrew/twist-shout-with-fewer-reductions" }
+
+# [patch."https://github.com/a16z/arkworks-algebra"]
+# jolt-optimizations = { git = "https://github.com/andrewmilson/algebra", branch = "andrew/twist-shout-with-fewer-reductions" }
+# ark-serialize = { git = "https://github.com/andrewmilson/algebra", branch = "andrew/twist-shout-with-fewer-reductions" }
+# ark-ff = { git = "https://github.com/andrewmilson/algebra", branch = "andrew/twist-shout-with-fewer-reductions" }
+# ark-ec = { git = "https://github.com/andrewmilson/algebra", branch = "andrew/twist-shout-with-fewer-reductions" }
+# ark-bn254 = { git = "https://github.com/andrewmilson/algebra", branch = "andrew/twist-shout-with-fewer-reductions" }
+
+
+
 [patch.crates-io]
-ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-ff = { path = "../jolt-arkworks-algebra/ff" }
+ark-ec = { path = "../jolt-arkworks-algebra/ec" }
+ark-serialize = { path = "../jolt-arkworks-algebra/serialize" }
+ark-bn254 = { path = "../jolt-arkworks-algebra/curves/bn254" }
+
+[patch."https://github.com/a16z/arkworks-algebra"]
+jolt-optimizations = { path = "../jolt-arkworks-algebra/jolt-optimizations" }
+ark-serialize = { path = "../jolt-arkworks-algebra/serialize" }
+ark-ff = { path = "../jolt-arkworks-algebra/ff" }
+ark-ec = { path = "../jolt-arkworks-algebra/ec" }
+ark-bn254 = { path = "../jolt-arkworks-algebra/curves/bn254" }
+
+[patch."https://github.com/andrewmilson/algebra"]
+jolt-optimizations = { path = "../jolt-arkworks-algebra/jolt-optimizations" }
+ark-serialize = { path = "../jolt-arkworks-algebra/serialize" }
+ark-ff = { path = "../jolt-arkworks-algebra/ff" }
+ark-ec = { path = "../jolt-arkworks-algebra/ec" }
+ark-bn254 = { path = "../jolt-arkworks-algebra/curves/bn254" }
+
+
+# ark-ff = { git = "https://github.com/andrewmilson/algebra", branch = "dev/twist-shout" }
+# ark-ec = { git = "https://github.com/andrewmilson/algebra", branch = "dev/twist-shout" }
+# ark-serialize = { git = "https://github.com/andrewmilson/algebra", branch = "dev/twist-shout" }
+# ark-bn254 = { git = "https://github.com/andrewmilson/algebra", branch = "dev/twist-shout" }
 
 [workspace.metadata.cargo-machete]
 ignored = ["jolt-sdk"]

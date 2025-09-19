@@ -78,6 +78,10 @@ pub trait JoltField:
     fn mul_u64(&self, n: u64) -> Self {
         *self * Self::from_u64(n)
     }
+    fn mul_i64(&self, n: i64) -> Self {
+        *self * Self::from_i64(n)
+    }
+    fn mul_u128(&self, n: u128) -> Self;
     #[inline(always)]
     fn mul_i128(&self, n: i128) -> Self {
         *self * Self::from_i128(n)
@@ -94,6 +98,14 @@ pub trait JoltField:
         }
         res.mul_u64(1 << pow)
     }
+
+    fn linear_combination_u64(pairs: &[(Self, u64)], add_terms: &[Self]) -> Self;
+    fn linear_combination_i64(
+        pos: &[(Self, u64)],
+        neg: &[(Self, u64)],
+        pos_add: &[Self],
+        neg_add: &[Self],
+    ) -> Self;
 }
 
 #[cfg(feature = "allocative")]
