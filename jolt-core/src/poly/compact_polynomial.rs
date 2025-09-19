@@ -115,13 +115,10 @@ impl<T: SmallScalar, F: JoltField> StreamingCompactWitness<T, F> {
     }
 
     // Helper function to unwrap a newtype wrapper with a cast.
-    pub(crate) fn unwrap_slice<'a>(
-        chunk: &'a [StreamingCompactWitness<T,F>],
-    ) -> &'a [T] {
+    pub(crate) fn unwrap_slice<'a>(chunk: &'a [StreamingCompactWitness<T, F>]) -> &'a [T] {
         StreamingCompactWitness::peel_slice(chunk)
     }
 }
-
 
 /// Compact polynomials are used to store coefficients of small scalars.
 /// They have two representations:

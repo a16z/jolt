@@ -12,9 +12,16 @@ use super::{
     commitment_scheme::{CommitmentScheme, StreamingCommitmentScheme_},
     kzg::{KZGProverKey, KZGVerifierKey, UnivariateKZG},
 };
-use crate::{field::JoltField, poly::{commitment::commitment_scheme::StreamingProcessChunk, compact_polynomial::StreamingCompactWitness, dense_mlpoly::StreamingDenseWitness, multilinear_polynomial::Multilinear, one_hot_polynomial::StreamingOneHotWitness}};
 use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
 use crate::utils::transcript::Transcript;
+use crate::{
+    field::JoltField,
+    poly::{
+        commitment::commitment_scheme::StreamingProcessChunk,
+        compact_polynomial::StreamingCompactWitness, dense_mlpoly::StreamingDenseWitness,
+        multilinear_polynomial::Multilinear, one_hot_polynomial::StreamingOneHotWitness,
+    },
+};
 use crate::{
     msm::VariableBaseMSM,
     poly::{commitment::kzg::SRS, dense_mlpoly::DensePolynomial, unipoly::UniPoly},
@@ -498,44 +505,79 @@ pub struct HyperKZGState<'a, P: Pairing> {
 }
 
 impl<P: Pairing> StreamingProcessChunk<StreamingDenseWitness<P::ScalarField>> for HyperKZG<P>
-where P::ScalarField: JoltField {
-    fn process_chunk_t<'a>(_s: &Self::State<'a>, _chunk: &[StreamingDenseWitness<P::ScalarField>]) -> Self::ChunkState {
+where
+    P::ScalarField: JoltField,
+{
+    fn process_chunk_t<'a>(
+        _s: &Self::State<'a>,
+        _chunk: &[StreamingDenseWitness<P::ScalarField>],
+    ) -> Self::ChunkState {
         todo!("Not supported")
     }
 }
 impl<P: Pairing> StreamingProcessChunk<StreamingCompactWitness<u8, P::ScalarField>> for HyperKZG<P>
-where P::ScalarField: JoltField {
-    fn process_chunk_t<'a>(_s: &Self::State<'a>, _chunk: &[StreamingCompactWitness<u8, P::ScalarField>]) -> Self::ChunkState {
+where
+    P::ScalarField: JoltField,
+{
+    fn process_chunk_t<'a>(
+        _s: &Self::State<'a>,
+        _chunk: &[StreamingCompactWitness<u8, P::ScalarField>],
+    ) -> Self::ChunkState {
         todo!("Not supported")
     }
 }
 impl<P: Pairing> StreamingProcessChunk<StreamingCompactWitness<u16, P::ScalarField>> for HyperKZG<P>
-where P::ScalarField: JoltField {
-    fn process_chunk_t<'a>(_s: &Self::State<'a>, _chunk: &[StreamingCompactWitness<u16, P::ScalarField>]) -> Self::ChunkState {
+where
+    P::ScalarField: JoltField,
+{
+    fn process_chunk_t<'a>(
+        _s: &Self::State<'a>,
+        _chunk: &[StreamingCompactWitness<u16, P::ScalarField>],
+    ) -> Self::ChunkState {
         todo!("Not supported")
     }
 }
 impl<P: Pairing> StreamingProcessChunk<StreamingCompactWitness<u32, P::ScalarField>> for HyperKZG<P>
-where P::ScalarField: JoltField {
-    fn process_chunk_t<'a>(_s: &Self::State<'a>, _chunk: &[StreamingCompactWitness<u32, P::ScalarField>]) -> Self::ChunkState {
+where
+    P::ScalarField: JoltField,
+{
+    fn process_chunk_t<'a>(
+        _s: &Self::State<'a>,
+        _chunk: &[StreamingCompactWitness<u32, P::ScalarField>],
+    ) -> Self::ChunkState {
         todo!("Not supported")
     }
 }
 impl<P: Pairing> StreamingProcessChunk<StreamingCompactWitness<u64, P::ScalarField>> for HyperKZG<P>
-where P::ScalarField: JoltField {
-    fn process_chunk_t<'a>(_s: &Self::State<'a>, _chunk: &[StreamingCompactWitness<u64, P::ScalarField>]) -> Self::ChunkState {
+where
+    P::ScalarField: JoltField,
+{
+    fn process_chunk_t<'a>(
+        _s: &Self::State<'a>,
+        _chunk: &[StreamingCompactWitness<u64, P::ScalarField>],
+    ) -> Self::ChunkState {
         todo!("Not supported")
     }
 }
 impl<P: Pairing> StreamingProcessChunk<StreamingCompactWitness<i64, P::ScalarField>> for HyperKZG<P>
-where P::ScalarField: JoltField {
-    fn process_chunk_t<'a>(_s: &Self::State<'a>, _chunk: &[StreamingCompactWitness<i64, P::ScalarField>]) -> Self::ChunkState {
+where
+    P::ScalarField: JoltField,
+{
+    fn process_chunk_t<'a>(
+        _s: &Self::State<'a>,
+        _chunk: &[StreamingCompactWitness<i64, P::ScalarField>],
+    ) -> Self::ChunkState {
         todo!("Not supported")
     }
 }
 impl<P: Pairing> StreamingProcessChunk<StreamingOneHotWitness<P::ScalarField>> for HyperKZG<P>
-where P::ScalarField: JoltField {
-    fn process_chunk_t<'a>(_s: &Self::State<'a>, _chunk: &[StreamingOneHotWitness<P::ScalarField>]) -> Self::ChunkState {
+where
+    P::ScalarField: JoltField,
+{
+    fn process_chunk_t<'a>(
+        _s: &Self::State<'a>,
+        _chunk: &[StreamingOneHotWitness<P::ScalarField>],
+    ) -> Self::ChunkState {
         todo!("Not supported")
     }
 }
@@ -555,7 +597,12 @@ where
         ()
     }
 
-    fn initialize<'a>(_poly: Multilinear, size: usize, setup: &'a Self::ProverSetup, _: &'a Self::SetupCache) -> Self::State<'a> {
+    fn initialize<'a>(
+        _poly: Multilinear,
+        size: usize,
+        setup: &'a Self::ProverSetup,
+        _: &'a Self::SetupCache,
+    ) -> Self::State<'a> {
         assert!(
             setup.kzg_pk.g1_powers().len() >= size,
             "COMMIT KEY LENGTH ERROR {}, {}",
@@ -578,7 +625,11 @@ where
         }
     }
 
-    fn process<'a>(_poly: Multilinear, mut state: Self::State<'a>, eval: Self::Field) -> Self::State<'a> {
+    fn process<'a>(
+        _poly: Multilinear,
+        mut state: Self::State<'a>,
+        eval: Self::Field,
+    ) -> Self::State<'a> {
         state.current_chunk.push(eval);
 
         if state.current_chunk.len() == CHUNK_SIZE {
@@ -595,11 +646,17 @@ where
         state
     }
 
-    fn process_chunk<'a, T>(_state: &Self::State<'a>, _chunk: &[T]) -> Self::ChunkState where Self: StreamingProcessChunk<T> {
+    fn process_chunk<'a, T>(_state: &Self::State<'a>, _chunk: &[T]) -> Self::ChunkState
+    where
+        Self: StreamingProcessChunk<T>,
+    {
         todo!("Processing chunks is not implemented for HyperKZG yet.")
     }
 
-    fn finalize<'a>(state: Self::State<'a>, _chunks: &[Self::ChunkState]) -> (Self::Commitment, Self::OpeningProofHint) {
+    fn finalize<'a>(
+        state: Self::State<'a>,
+        _chunks: &[Self::ChunkState],
+    ) -> (Self::Commitment, Self::OpeningProofHint) {
         (HyperKZGCommitment(state.acc.into()), ())
     }
 }

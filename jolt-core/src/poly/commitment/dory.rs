@@ -2,11 +2,20 @@
 
 use super::commitment_scheme::{CommitmentScheme, StreamingCommitmentScheme_};
 use crate::{
-    field::JoltField, msm::VariableBaseMSM, poly::{commitment::commitment_scheme::StreamingProcessChunk, compact_polynomial::{SmallScalar, StreamingCompactWitness}, dense_mlpoly::StreamingDenseWitness, multilinear_polynomial::{Multilinear, MultilinearPolynomial}, one_hot_polynomial::StreamingOneHotWitness}, utils::{
+    field::JoltField,
+    msm::VariableBaseMSM,
+    poly::{
+        commitment::commitment_scheme::StreamingProcessChunk,
+        compact_polynomial::{SmallScalar, StreamingCompactWitness},
+        dense_mlpoly::StreamingDenseWitness,
+        multilinear_polynomial::{Multilinear, MultilinearPolynomial},
+        one_hot_polynomial::StreamingOneHotWitness,
+    },
+    utils::{
         errors::ProofVerifyError,
         math::Math,
         transcript::{AppendToTranscript, Transcript},
-    }
+    },
 };
 use ark_bn254::{Bn254, Fr, G1Projective, G2Projective};
 use ark_ec::{
@@ -30,8 +39,7 @@ use dory::{
     curve::G2Cache,
     evaluate, setup_with_srs_file,
     transcript::Transcript as DoryTranscript,
-    verify, DoryProof, DoryProofBuilder, Polynomial as DoryPolynomial, ProverSetup,
-    VerifierSetup,
+    verify, DoryProof, DoryProofBuilder, Polynomial as DoryPolynomial, ProverSetup, VerifierSetup,
 };
 
 /// The (padded) length of the execution trace currently being proven
@@ -1238,81 +1246,103 @@ pub struct StreamingDoryCommitment<'a, E: DoryPairing> {
     K: Option<usize>,
 }
 
-
 impl StreamingProcessChunk<StreamingDenseWitness<Fr>> for DoryCommitmentScheme {
-    fn process_chunk_t<'a>(s: &Self::State<'a>, chunk: &[StreamingDenseWitness<Fr>]) -> Self::ChunkState {
+    fn process_chunk_t<'a>(
+        s: &Self::State<'a>,
+        chunk: &[StreamingDenseWitness<Fr>],
+    ) -> Self::ChunkState {
         let row = StreamingDenseWitness::unwrap_slice(chunk);
         // add error handling instead of unwrap. Propagate error to caller as returned by msm_field_elements
         let row_commitment = JoltGroupWrapper(
             VariableBaseMSM::msm_field_elements(&s.bases[..chunk.len()], row, None)
-            .expect("MSM calculation failed."),
+                .expect("MSM calculation failed."),
         );
-        
+
         vec![row_commitment]
     }
 }
 impl StreamingProcessChunk<StreamingCompactWitness<u8, Fr>> for DoryCommitmentScheme {
-    fn process_chunk_t<'a>(s: &Self::State<'a>, chunk: &[StreamingCompactWitness<u8, Fr>]) -> Self::ChunkState {
+    fn process_chunk_t<'a>(
+        s: &Self::State<'a>,
+        chunk: &[StreamingCompactWitness<u8, Fr>],
+    ) -> Self::ChunkState {
         let row = StreamingCompactWitness::unwrap_slice(chunk);
         let row_commitment = JoltGroupWrapper(
-            VariableBaseMSM::msm_u8(&s.bases[..chunk.len()], row)
-                .expect("MSM calculation failed."),
+            VariableBaseMSM::msm_u8(&s.bases[..chunk.len()], row).expect("MSM calculation failed."),
         );
-        
+
         vec![row_commitment]
     }
 }
 impl StreamingProcessChunk<StreamingCompactWitness<u16, Fr>> for DoryCommitmentScheme {
-    fn process_chunk_t<'a>(s: &Self::State<'a>, chunk: &[StreamingCompactWitness<u16, Fr>]) -> Self::ChunkState {
+    fn process_chunk_t<'a>(
+        s: &Self::State<'a>,
+        chunk: &[StreamingCompactWitness<u16, Fr>],
+    ) -> Self::ChunkState {
         let row = StreamingCompactWitness::unwrap_slice(chunk);
         let row_commitment = JoltGroupWrapper(
             VariableBaseMSM::msm_u16(&s.bases[..chunk.len()], &row)
                 .expect("MSM calculation failed."),
         );
-        
+
         vec![row_commitment]
     }
 }
 impl StreamingProcessChunk<StreamingCompactWitness<u32, Fr>> for DoryCommitmentScheme {
-    fn process_chunk_t<'a>(s: &Self::State<'a>, chunk: &[StreamingCompactWitness<u32, Fr>]) -> Self::ChunkState {
+    fn process_chunk_t<'a>(
+        s: &Self::State<'a>,
+        chunk: &[StreamingCompactWitness<u32, Fr>],
+    ) -> Self::ChunkState {
         let row = StreamingCompactWitness::unwrap_slice(chunk);
         let row_commitment = JoltGroupWrapper(
             VariableBaseMSM::msm_u32(&s.bases[..chunk.len()], &row)
                 .expect("MSM calculation failed."),
         );
-        
+
         vec![row_commitment]
     }
 }
 impl StreamingProcessChunk<StreamingCompactWitness<u64, Fr>> for DoryCommitmentScheme {
-    fn process_chunk_t<'a>(s: &Self::State<'a>, chunk: &[StreamingCompactWitness<u64, Fr>]) -> Self::ChunkState {
+    fn process_chunk_t<'a>(
+        s: &Self::State<'a>,
+        chunk: &[StreamingCompactWitness<u64, Fr>],
+    ) -> Self::ChunkState {
         let row = StreamingCompactWitness::unwrap_slice(chunk);
         let row_commitment = JoltGroupWrapper(
             VariableBaseMSM::msm_u64(&s.bases[..chunk.len()], &row)
                 .expect("MSM calculation failed."),
         );
-        
+
         vec![row_commitment]
     }
 }
 impl StreamingProcessChunk<StreamingCompactWitness<i64, Fr>> for DoryCommitmentScheme {
-    fn process_chunk_t<'a>(s: &Self::State<'a>, chunk: &[StreamingCompactWitness<i64, Fr>]) -> Self::ChunkState {
+    fn process_chunk_t<'a>(
+        s: &Self::State<'a>,
+        chunk: &[StreamingCompactWitness<i64, Fr>],
+    ) -> Self::ChunkState {
         let row = StreamingCompactWitness::unwrap_slice(chunk);
         // TODO: This could be optimized.
-        let scalars: Vec<_> = row.iter().map(|x| <Fr as JoltField>::from_i64(*x)).collect();
+        let scalars: Vec<_> = row
+            .iter()
+            .map(|x| <Fr as JoltField>::from_i64(*x))
+            .collect();
         // let scalars: Vec<_> = row.iter().map(|x| <Fr as DoryField>::from_i64(*x)).collect();
 
         let row_commitment = JoltGroupWrapper(
             VariableBaseMSM::msm_field_elements(&s.bases[..chunk.len()], &scalars, None)
                 .expect("MSM calculation failed."),
         );
-        
+
         vec![row_commitment]
     }
 }
 
 impl StreamingProcessChunk<StreamingOneHotWitness<Fr>> for DoryCommitmentScheme {
-    fn process_chunk_t<'a>(s: &Self::State<'a>, chunk: &[StreamingOneHotWitness<Fr>]) -> Self::ChunkState {
+    fn process_chunk_t<'a>(
+        s: &Self::State<'a>,
+        chunk: &[StreamingOneHotWitness<Fr>],
+    ) -> Self::ChunkState {
         let Some(K) = s.K else {
             panic!("K must be provided for OneHot polynomials.");
         };
@@ -1326,8 +1356,7 @@ impl StreamingProcessChunk<StreamingOneHotWitness<Fr>> for DoryCommitmentScheme 
             }
         }
 
-        let results =
-            jolt_optimizations::batch_g1_additions_multi(&s.bases, &indices_per_k);
+        let results = jolt_optimizations::batch_g1_additions_multi(&s.bases, &indices_per_k);
 
         // Convert results to row_commitments
         let mut row_commitments = vec![JoltGroupWrapper(<Bn254 as ArkPairing>::G1::zero()); K];
@@ -1341,36 +1370,44 @@ impl StreamingProcessChunk<StreamingOneHotWitness<Fr>> for DoryCommitmentScheme 
     }
 }
 
-
 impl StreamingCommitmentScheme_ for DoryCommitmentScheme {
     type State<'a> = StreamingDoryCommitment<'a, JoltBn254>;
     type ChunkState = Vec<JoltG1Wrapper>; // A chunk's state is the commitment to the row.
     type SetupCache = Vec<ark_ec::short_weierstrass::Affine<ark_bn254::g1::Config>>;
 
     fn cache_setup(setup: &Self::ProverSetup) -> Self::SetupCache {
-        setup.g1_vec().par_iter().map(|g| g.0.into_affine()).collect::<Vec<_>>()
+        setup
+            .g1_vec()
+            .par_iter()
+            .map(|g| g.0.into_affine())
+            .collect::<Vec<_>>()
     }
 
-    fn initialize<'a>(ty: Multilinear, _size: usize, setup: &'a Self::ProverSetup, bases: &'a Self::SetupCache) -> Self::State<'a> {
+    fn initialize<'a>(
+        ty: Multilinear,
+        _size: usize,
+        setup: &'a Self::ProverSetup,
+        bases: &'a Self::SetupCache,
+    ) -> Self::State<'a> {
         match ty {
-            Multilinear::OneHot{K} => {
-                StreamingDoryCommitment {
-                    setup,
-                    bases,
-                    K: Some(K),
-                }
-            }
-            _ => {
-                StreamingDoryCommitment {
-                    setup,
-                    bases,
-                    K: None,
-                }
-            }
+            Multilinear::OneHot { K } => StreamingDoryCommitment {
+                setup,
+                bases,
+                K: Some(K),
+            },
+            _ => StreamingDoryCommitment {
+                setup,
+                bases,
+                K: None,
+            },
         }
     }
 
-    fn process<'a>(_ty: Multilinear, _state: Self::State<'a>, _eval: Self::Field) -> Self::State<'a> {
+    fn process<'a>(
+        _ty: Multilinear,
+        _state: Self::State<'a>,
+        _eval: Self::Field,
+    ) -> Self::State<'a> {
         // state.process::<JoltMsmG1>(JoltFieldWrapper(eval))
         todo!("Processing individual elements is not supported for Dory.")
     }
@@ -1385,9 +1422,11 @@ impl StreamingCommitmentScheme_ for DoryCommitmentScheme {
         <Self as StreamingProcessChunk<T>>::process_chunk_t(state, chunk)
     }
 
-    fn finalize<'a>(state: Self::State<'a>, chunks: &[Self::ChunkState]) -> (Self::Commitment, Self::OpeningProofHint) {
+    fn finalize<'a>(
+        state: Self::State<'a>,
+        chunks: &[Self::ChunkState],
+    ) -> (Self::Commitment, Self::OpeningProofHint) {
         if let Some(K) = state.K {
-
             let row_len = DoryGlobals::get_num_columns();
             let T = DoryGlobals::get_T();
             let rows_per_k = T / row_len;
@@ -1403,16 +1442,22 @@ impl StreamingCommitmentScheme_ for DoryCommitmentScheme {
                     .for_each(|(dest, src)| *dest = *src);
             }
 
-            let commitment = JoltBn254::multi_pair(&row_commitments, &state.setup.g2_vec()[..row_commitments.len()]);
+            let commitment = JoltBn254::multi_pair(
+                &row_commitments,
+                &state.setup.g2_vec()[..row_commitments.len()],
+            );
             (DoryCommitment(commitment), row_commitments)
         } else {
             let T = DoryGlobals::get_T();
             let mut row_commitments: Vec<_> = chunks.into_par_iter().map(|r| r[0]).collect();
             // Pad row commitments since we don't pad streamed trace.
-            let row_pad_count = T/DoryGlobals::get_num_columns() - row_commitments.len();
-            assert!(T/DoryGlobals::get_num_columns() >= row_commitments.len());
+            let row_pad_count = T / DoryGlobals::get_num_columns() - row_commitments.len();
+            assert!(T / DoryGlobals::get_num_columns() >= row_commitments.len());
             row_commitments.extend(vec![JoltG1Wrapper::identity(); row_pad_count]);
-            let commitment = JoltBn254::multi_pair(&row_commitments, &state.setup.g2_vec()[..row_commitments.len()]);
+            let commitment = JoltBn254::multi_pair(
+                &row_commitments,
+                &state.setup.g2_vec()[..row_commitments.len()],
+            );
             (DoryCommitment(commitment), row_commitments)
         }
     }

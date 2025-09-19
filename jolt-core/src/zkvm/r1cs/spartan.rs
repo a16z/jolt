@@ -991,8 +991,11 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         let pc_poly = JoltR1CSInputs::PC.generate_witness(trace, preprocessing, ram_d);
         let unexpanded_pc_poly =
             JoltR1CSInputs::UnexpandedPC.generate_witness(trace, preprocessing, ram_d);
-        let is_noop_poly =
-            JoltR1CSInputs::OpFlags(CircuitFlags::IsNoop).generate_witness(trace, preprocessing, ram_d);
+        let is_noop_poly = JoltR1CSInputs::OpFlags(CircuitFlags::IsNoop).generate_witness(
+            trace,
+            preprocessing,
+            ram_d,
+        );
 
         let num_cycles = key.num_steps;
         let num_cycles_bits = num_cycles.ilog2() as usize;

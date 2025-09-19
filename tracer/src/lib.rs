@@ -242,7 +242,7 @@ impl Iterator for LazyTraceIterator {
     }
 }
 
-pub struct ChunksWithPeek<I:Iterator> {
+pub struct ChunksWithPeek<I: Iterator> {
     chunk_size: usize,
     iter: I,
     peek: Option<I::Item>,
@@ -260,9 +260,9 @@ pub trait ChunkWithPeekIterator: Iterator + Sized {
     }
 }
 
-impl<I: Iterator + Sized> ChunkWithPeekIterator for I { }
+impl<I: Iterator + Sized> ChunkWithPeekIterator for I {}
 
-impl<I:Iterator<Item:Clone>> Iterator for ChunksWithPeek<I> {
+impl<I: Iterator<Item: Clone>> Iterator for ChunksWithPeek<I> {
     type Item = Vec<I::Item>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -272,13 +272,11 @@ impl<I:Iterator<Item:Clone>> Iterator for ChunksWithPeek<I> {
         let mut chunk = Vec::with_capacity(self.chunk_size + 1);
         chunk.push(self.peek.take()?);
         chunk.extend(self.iter.by_ref().take(self.chunk_size - 1));
-        if chunk.len() == 1
-        {
+        if chunk.len() == 1 {
             return None;
         }
         self.peek = self.iter.next();
-        if let Some(p) = &self.peek
-        {
+        if let Some(p) = &self.peek {
             chunk.push(p.clone());
         }
         Some(chunk)

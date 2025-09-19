@@ -11,7 +11,7 @@ use crate::poly::opening_proof::{
 use crate::subprotocols::sumcheck::SumcheckInstanceProof;
 use crate::utils::math::Math;
 use crate::utils::transcript::Transcript;
-use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial, compute_d_parameter};
+use crate::zkvm::witness::{compute_d_parameter, CommittedPolynomial, VirtualPolynomial};
 use crate::zkvm::{JoltProverPreprocessing, JoltVerifierPreprocessing};
 use num_derive::FromPrimitive;
 use rayon::prelude::*;
@@ -110,7 +110,7 @@ impl<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field 
                     + 1,
             )
             .next_power_of_two() as usize;
-        
+
         let ram_d = compute_d_parameter(ram_K);
         let T = trace.len();
         let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);

@@ -288,12 +288,10 @@ impl JoltR1CSInputs {
                     .collect();
                 coeffs.into()
             }
-            JoltR1CSInputs::LeftInstructionInput => {
-                CommittedPolynomial::LeftInstructionInput.generate_witness(preprocessing, trace, ram_d)
-            }
-            JoltR1CSInputs::RightInstructionInput => {
-                CommittedPolynomial::RightInstructionInput.generate_witness(preprocessing, trace, ram_d)
-            }
+            JoltR1CSInputs::LeftInstructionInput => CommittedPolynomial::LeftInstructionInput
+                .generate_witness(preprocessing, trace, ram_d),
+            JoltR1CSInputs::RightInstructionInput => CommittedPolynomial::RightInstructionInput
+                .generate_witness(preprocessing, trace, ram_d),
             JoltR1CSInputs::LeftLookupOperand => {
                 let coeffs: Vec<u64> = trace
                     .par_iter()
@@ -311,9 +309,8 @@ impl JoltR1CSInputs {
             JoltR1CSInputs::Product => {
                 CommittedPolynomial::Product.generate_witness(preprocessing, trace, ram_d)
             }
-            JoltR1CSInputs::WriteLookupOutputToRD => {
-                CommittedPolynomial::WriteLookupOutputToRD.generate_witness(preprocessing, trace, ram_d)
-            }
+            JoltR1CSInputs::WriteLookupOutputToRD => CommittedPolynomial::WriteLookupOutputToRD
+                .generate_witness(preprocessing, trace, ram_d),
             JoltR1CSInputs::WritePCtoRD => {
                 CommittedPolynomial::WritePCtoRD.generate_witness(preprocessing, trace, ram_d)
             }

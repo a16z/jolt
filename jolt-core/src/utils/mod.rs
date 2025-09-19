@@ -184,7 +184,7 @@ pub fn transpose<T>(v: Vec<Vec<T>>) -> Vec<Vec<T>> {
         return vec![];
     }
 
-    // Get the length of the first row. 
+    // Get the length of the first row.
     let first_row_len = v[0].len();
     // Verify that all rows in the matrix have the same length as the first one.
     assert!(
@@ -205,7 +205,6 @@ pub fn transpose<T>(v: Vec<Vec<T>>) -> Vec<Vec<T>> {
         })
         .collect()
 }
-
 
 /// Combines two 32-bit values into a single 64-bit value by interleaving their bits.
 /// Takes even bits from the first argument and odd bits from the second argument.
