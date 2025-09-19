@@ -1,1 +1,0 @@
-pub static JOLT_VERIFIER_PREPROCESSING_BYTES: &[u8] = &[];
