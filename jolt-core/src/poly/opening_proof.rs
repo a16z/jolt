@@ -723,7 +723,8 @@ where
         let r_concat = [r_address.as_slice(), r_cycle.as_slice()].concat();
 
         let shared_eq_address = Arc::new(RwLock::new(EqAddressState::new(&r_address)));
-        let shared_eq_cycle = self.eq_cycle_map
+        let shared_eq_cycle = self
+            .eq_cycle_map
             .entry(r_cycle.clone())
             .or_insert_with(|| Arc::new(RwLock::new(EqCycleState::new(&r_cycle))));
 
