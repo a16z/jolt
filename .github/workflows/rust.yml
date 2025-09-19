@@ -140,6 +140,8 @@ jobs:
         run: cargo run install-toolchain
       - name: Install nextest
         uses: taiki-e/install-action@nextest
+      - name: Generate test fixtures
+        run: bash jolt-sdk/tests/gen-fixtures.sh
       - name: Run SDK verifier tests
         run: cargo nextest run --release -p jolt-sdk --features host
 

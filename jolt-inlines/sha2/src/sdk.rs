@@ -340,8 +340,8 @@ pub unsafe fn sha256_compression(input: *const u32, state: *mut u32) {
         opcode = const INLINE_OPCODE,
         funct3 = const SHA256_FUNCT3,
         funct7 = const SHA256_FUNCT7,
-        rs1 = in(reg) input,
-        rs2 = in(reg) state,
+        rs1 = in(reg) state,
+        rs2 = in(reg) input,
         options(nostack)
     );
 }
@@ -387,8 +387,8 @@ pub unsafe fn sha256_compression_initial(input: *const u32, state: *mut u32) {
         opcode = const INLINE_OPCODE,
         funct3 = const SHA256_INIT_FUNCT3,
         funct7 = const SHA256_INIT_FUNCT7,
-        rs1 = in(reg) input,
-        rs2 = in(reg) state,
+        rs1 = in(reg) state,
+        rs2 = in(reg) input,
         options(nostack)
     );
 }
