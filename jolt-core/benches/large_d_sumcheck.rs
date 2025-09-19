@@ -9,6 +9,7 @@ use jolt_core::{
             compute_initial_eval_claim, AppendixCSumCheckProof, LargeDMulSumCheckProof,
             NaiveSumCheckProof,
         },
+        large_degree_sumcheck_v2,
         toom::FieldMulSmall,
     },
     transcripts::{KeccakTranscript, Transcript},
@@ -85,7 +86,7 @@ fn benchmark_karatsuba_sumcheck<F: FieldMulSmall>(c: &mut Criterion, d: usize, t
     );
 }
 
-fn benchmark_naive_sumcheck(c: &mut Criterion, d: usize, t: usize) {
+fn benchmark_naive_sumcheck<F: JoltField>(c: &mut Criterion, d: usize, t: usize) {
     let ra = test_func_data(d, t);
 
     let mut transcript = KeccakTranscript::new(b"test_transcript");
@@ -115,10 +116,10 @@ fn main() {
         .configure_from_args()
         .warm_up_time(std::time::Duration::from_secs(10));
 
-    let t = 1 << 20;
+    let t = 1 << 18;
 
     benchmark_karatsuba_sumcheck::<Fr>(&mut criterion, 16, t);
-    benchmark_naive_sumcheck(&mut criterion, 16, t);
+    benchmark_naive_sumcheck::<Fr>(&mut criterion, 16, t);
 
     criterion.final_summary();
 }
