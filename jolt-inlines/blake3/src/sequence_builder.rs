@@ -9,7 +9,10 @@
 
 use core::array;
 
-use crate::{CHAINING_VALUE_LEN, COUNTER_LEN, IV, MSG_BLOCK_LEN, MSG_SCHEDULE, NUM_ROUNDS};
+use crate::{
+    CHAINING_VALUE_LEN, COUNTER_LEN, FLAG_CHUNK_END, FLAG_CHUNK_START, FLAG_KEYED_HASH, FLAG_ROOT,
+    IV, MSG_BLOCK_LEN, MSG_SCHEDULE, NUM_ROUNDS,
+};
 use tracer::instruction::format::format_inline::FormatInline;
 use tracer::instruction::lui::LUI;
 use tracer::instruction::lw::LW;
@@ -46,6 +49,11 @@ struct Blake3SequenceBuilder {
     operands: FormatInline,
 }
 
+enum BuildMode {
+    Compression,
+    Keyed64Hash,
+}
+
 impl Blake3SequenceBuilder {
     fn new(asm: InstrAssembler, operands: FormatInline) -> Self {
         let vr = array::from_fn(|_| asm.allocator.allocate_for_inline());
@@ -57,13 +65,15 @@ impl Blake3SequenceBuilder {
         }
     }
 
-    fn build(mut self) -> Vec<Instruction> {
+    fn build(mut self, build_mode: BuildMode) -> Vec<Instruction> {
         self.load_chaining_value();
         self.load_message_blocks();
-        self.load_counter();
-        self.load_input_len_and_flags();
+        if let BuildMode::Compression = build_mode {
+            self.load_counter();
+            self.load_input_len_and_flags();
+        }
 
-        self.initialize_internal_state();
+        self.initialize_internal_state(build_mode);
 
         for round in 0..NUM_ROUNDS {
             self.round = round;
@@ -76,7 +86,7 @@ impl Blake3SequenceBuilder {
         self.asm.finalize_inline()
     }
 
-    fn initialize_internal_state(&mut self) {
+    fn initialize_internal_state(&mut self, build_mode: BuildMode) {
         // v[0..7] = h[0..7]
         for i in 0..CHAINING_VALUE_LEN {
             self.asm.xor(
@@ -91,27 +101,40 @@ impl Blake3SequenceBuilder {
             self.asm
                 .emit_u::<LUI>(*self.vr[CHAINING_VALUE_LEN + i], *val as u64);
         }
-        // v[12..15] = counter values, input length, and flags
-        self.asm.xor(
-            Reg(*self.vr[COUNTER_START_VR]),
-            Imm(0),
-            *self.vr[INTERNAL_STATE_VR_START + 12],
-        );
-        self.asm.xor(
-            Reg(*self.vr[COUNTER_START_VR + 1]),
-            Imm(0),
-            *self.vr[INTERNAL_STATE_VR_START + 13],
-        );
-        self.asm.xor(
-            Reg(*self.vr[INPUT_BYTES_VR]),
-            Imm(0),
-            *self.vr[INTERNAL_STATE_VR_START + 14],
-        );
-        self.asm.xor(
-            Reg(*self.vr[FLAG_VR]),
-            Imm(0),
-            *self.vr[INTERNAL_STATE_VR_START + 15],
-        );
+        if let BuildMode::Compression = build_mode {
+            // v[12..15] = counter values, input length, and flags
+            self.asm.xor(
+                Reg(*self.vr[COUNTER_START_VR]),
+                Imm(0),
+                *self.vr[INTERNAL_STATE_VR_START + 12],
+            );
+            self.asm.xor(
+                Reg(*self.vr[COUNTER_START_VR + 1]),
+                Imm(0),
+                *self.vr[INTERNAL_STATE_VR_START + 13],
+            );
+            self.asm.xor(
+                Reg(*self.vr[INPUT_BYTES_VR]),
+                Imm(0),
+                *self.vr[INTERNAL_STATE_VR_START + 14],
+            );
+            self.asm.xor(
+                Reg(*self.vr[FLAG_VR]),
+                Imm(0),
+                *self.vr[INTERNAL_STATE_VR_START + 15],
+            );
+        } else {
+            self.asm
+                .emit_u::<LUI>(*self.vr[INTERNAL_STATE_VR_START + 12], 0);
+            self.asm
+                .emit_u::<LUI>(*self.vr[INTERNAL_STATE_VR_START + 13], 0);
+            self.asm
+                .emit_u::<LUI>(*self.vr[INTERNAL_STATE_VR_START + 14], 64);
+            self.asm.emit_u::<LUI>(
+                *self.vr[INTERNAL_STATE_VR_START + 15],
+                (FLAG_CHUNK_START | FLAG_CHUNK_END | FLAG_ROOT | FLAG_KEYED_HASH) as u64,
+            );
+        }
     }
 
     /// Execute one round of BLAKE3 compression
@@ -239,7 +262,15 @@ pub fn blake3_inline_sequence_builder(
     operands: FormatInline,
 ) -> Vec<Instruction> {
     let builder = Blake3SequenceBuilder::new(asm, operands);
-    builder.build()
+    builder.build(BuildMode::Compression)
+}
+
+pub fn blake3_keyed64_inline_sequence_builder(
+    asm: InstrAssembler,
+    operands: FormatInline,
+) -> Vec<Instruction> {
+    let builder = Blake3SequenceBuilder::new(asm, operands);
+    builder.build(BuildMode::Keyed64Hash)
 }
 
 #[cfg(test)]
