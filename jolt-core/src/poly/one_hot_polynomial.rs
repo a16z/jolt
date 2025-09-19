@@ -54,23 +54,12 @@ impl<F: JoltField> PartialEq for OneHotPolynomial<F> {
     }
 }
 
-/// State related to the EQ(k, j) term appearing in the opening
+/// State related to the address variable (i.e. k) terms appearing in the opening
 /// proof reduction sumcheck.
-///
-/// The opening proof reduction sumcheck is a batched sumcheck where
-/// each sumcheck instance in the batch corresponds to one opening.
-/// The sumcheck instance for a one-hot polynomial opening has the form
-///   \sum eq(k, r_address) * eq(j, r_cycle) * ra(k, j)
-/// so we use a simplified version of the prover algorithm for the
-/// Booleanity sumcheck described in Section 6.3 of the Twist/Shout paper.
 #[derive(Clone, Debug, Allocative)]
-pub struct OneHotSumcheckState<F: JoltField> {
+pub struct EqAddressState<F: JoltField> {
     /// B stores eq(r, k), see Equation (53)
     pub B: MultilinearPolynomial<F>,
-    /// D stores eq(r', j), see Equation (54) but with Gruen X Dao-Thaler optimizations
-    pub D: GruenSplitEqPolynomial<F>,
-    /// Pre-computed merged D coefficients for G computation
-    pub D_coeffs_for_G: Vec<F>,
     /// F will maintain an array that, at the end of sumcheck round m, has size 2^m
     /// and stores all 2^m values eq((k_1, ..., k_m), (r_1, ..., r_m))
     pub F: ExpandingTable<F>,
@@ -78,43 +67,84 @@ pub struct OneHotSumcheckState<F: JoltField> {
     pub num_variables_bound: usize,
 }
 
-impl<F: JoltField> OneHotSumcheckState<F> {
-    #[tracing::instrument(skip_all, name = "OneHotSumcheckState::new")]
-    pub fn new(r_address: &[F], r_cycle: &[F]) -> Self {
+/// State related to the cycle variable (i.e. j) terms appearing in the opening
+/// proof reduction sumcheck.
+#[derive(Clone, Debug, Allocative)]
+pub struct EqCycleState<F: JoltField> {
+    /// D stores eq(r', j), see Equation (54) but with Gruen X Dao-Thaler optimizations
+    pub D: GruenSplitEqPolynomial<F>,
+    /// Merged D polynomial, used to compute G
+    pub merged_D: Option<DensePolynomial<F>>,
+    /// The number of variables that have been bound during sumcheck so far
+    pub num_variables_bound: usize,
+}
+
+impl<F: JoltField> EqAddressState<F> {
+    #[tracing::instrument(skip_all, name = "EqAddressState::new")]
+    pub fn new(r_address: &[F]) -> Self {
         let K = 1 << r_address.len();
         // F will maintain an array that, at the end of sumcheck round m, has size 2^m
         // and stores all 2^m values eq((k_1, ..., k_m), (r_1, ..., r_m))
         // See Equation (55)
         let mut F = ExpandingTable::new(K);
         F.reset(F::one());
-        let D = GruenSplitEqPolynomial::new(r_cycle, BindingOrder::HighToLow);
-        let D_coeffs_for_G = D.merge().Z;
+
         Self {
             B: MultilinearPolynomial::from(EqPolynomial::evals(r_address)),
-            D,
-            D_coeffs_for_G,
             F,
             num_variables_bound: 0,
         }
     }
 }
 
+impl<F: JoltField> EqCycleState<F> {
+    #[tracing::instrument(skip_all, name = "EqCycleState::new")]
+    pub fn new(r_cycle: &[F]) -> Self {
+        let D = GruenSplitEqPolynomial::new(r_cycle, BindingOrder::HighToLow);
+        Self {
+            D,
+            merged_D: None,
+            num_variables_bound: 0,
+        }
+    }
+
+    pub fn merge_D(&mut self) {
+        self.merged_D = Some(self.D.merge());
+    }
+
+    pub fn drop_merged_D(&mut self) {
+        let merged_D = std::mem::take(&mut self.merged_D);
+        drop_in_background_thread(merged_D);
+    }
+}
+
+/// The opening proof reduction sumcheck is a batched sumcheck where
+/// each sumcheck instance in the batch corresponds to one opening.
+/// The sumcheck instance for a one-hot polynomial opening has the form
+///   \sum eq(k, r_address) * eq(j, r_cycle) * ra(k, j)
+/// so we use a simplified version of the prover algorithm for the
+/// Booleanity sumcheck described in Section 6.3 of the Twist/Shout paper.
 #[derive(Clone, Allocative)]
 pub struct OneHotPolynomialProverOpening<F: JoltField> {
     pub log_T: usize,
     pub polynomial: OneHotPolynomial<F>,
     /// First variable of r_cycle_prime
     r_cycle_prime: Option<F>,
-    pub eq_state: Arc<RwLock<OneHotSumcheckState<F>>>,
+    pub eq_address_state: Arc<RwLock<EqAddressState<F>>>,
+    pub eq_cycle_state: Arc<RwLock<EqCycleState<F>>>,
 }
 
 impl<F: JoltField> OneHotPolynomialProverOpening<F> {
     #[tracing::instrument(skip_all, name = "OneHotPolynomialProverOpening::new")]
-    pub fn new(eq_state: Arc<RwLock<OneHotSumcheckState<F>>>) -> Self {
+    pub fn new(
+        eq_address_state: Arc<RwLock<EqAddressState<F>>>,
+        eq_cycle_state: Arc<RwLock<EqCycleState<F>>>,
+    ) -> Self {
         Self {
             log_T: 0,
             polynomial: OneHotPolynomial::default(),
-            eq_state,
+            eq_address_state,
+            eq_cycle_state,
             r_cycle_prime: None,
         }
     }
@@ -126,8 +156,8 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
         let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
         let chunk_size = (T / num_chunks).max(1);
 
-        let eq = self.eq_state.read().unwrap();
-        let D_coeffs_for_G = &eq.D_coeffs_for_G;
+        let eq = self.eq_cycle_state.read().unwrap();
+        let D_coeffs_for_G = &eq.merged_D.as_ref().unwrap();
 
         // Compute G as described in Section 6.3
         let G = nonzero_indices
@@ -165,13 +195,14 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
         name = "OneHotPolynomialProverOpening::compute_prover_message"
     )]
     pub fn compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F> {
-        let shared_eq = self.eq_state.read().unwrap();
+        let shared_eq_address = self.eq_address_state.read().unwrap();
+        let shared_eq_cycle = self.eq_cycle_state.read().unwrap();
         let polynomial = &self.polynomial;
 
         if round < polynomial.K.log_2() {
             let num_unbound_address_variables = polynomial.K.log_2() - round;
-            let B = &shared_eq.B;
-            let F = &shared_eq.F;
+            let B = &shared_eq_address.B;
+            let F = &shared_eq_address.F;
             let G = &polynomial.G;
 
             let univariate_poly_evals: [F; 2] = (0..B.len() / 2)
@@ -211,12 +242,12 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
             univariate_poly_evals.to_vec()
         } else {
             // T-variable rounds
-            let B = &shared_eq.B;
-            let d_gruen = &shared_eq.D;
+            let B = &shared_eq_address.B;
+            let d_gruen = &shared_eq_cycle.D;
             let eq_r_address_claim = B.final_sumcheck_claim();
             let H = &polynomial.H.read().unwrap();
             let F_idx = |j: usize| -> F {
-                polynomial.nonzero_indices[j].map_or(F::zero(), |k| shared_eq.F[k])
+                polynomial.nonzero_indices[j].map_or(F::zero(), |k| shared_eq_address.F[k])
             };
             let half_T = polynomial.nonzero_indices.len() / 2;
 
@@ -263,26 +294,31 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
 
     #[tracing::instrument(skip_all, name = "OneHotPolynomialProverOpening::bind")]
     pub fn bind(&mut self, r: F, round: usize) {
-        let mut shared_eq = self.eq_state.write().unwrap();
+        let mut shared_eq_address = self.eq_address_state.write().unwrap();
+        let mut shared_eq_cycle = self.eq_cycle_state.write().unwrap();
         let polynomial = &mut self.polynomial;
-        let num_variables_bound = shared_eq.num_variables_bound;
+        let num_variables_bound =
+            shared_eq_address.num_variables_bound + shared_eq_cycle.num_variables_bound;
 
         // Bind shared state if not already bound
         if num_variables_bound <= round {
             if round < polynomial.K.log_2() {
-                shared_eq.B.bind_parallel(r, BindingOrder::HighToLow);
-                shared_eq.F.update(r);
+                shared_eq_address
+                    .B
+                    .bind_parallel(r, BindingOrder::HighToLow);
+                shared_eq_address.F.update(r);
+                shared_eq_address.num_variables_bound += 1;
             } else {
-                shared_eq.D.bind(r);
+                shared_eq_cycle.D.bind(r);
+                shared_eq_cycle.num_variables_bound += 1;
             }
-            shared_eq.num_variables_bound += 1;
         }
 
         // For the first two log T rounds we want to use F still
         if round == polynomial.K.log_2() {
             self.r_cycle_prime = Some(r);
         } else if round == polynomial.K.log_2() + 1 {
-            let F = &shared_eq.F;
+            let F = &shared_eq_address.F;
             let nonzero_indices = &polynomial.nonzero_indices;
             let half_T = nonzero_indices.len() / 2;
             let quoter_T = nonzero_indices.len() / 4;
@@ -307,8 +343,6 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
 
             let g = mem::take(&mut polynomial.G);
             drop_in_background_thread(g);
-            let d_coeffs = mem::take(&mut shared_eq.D_coeffs_for_G);
-            drop_in_background_thread(d_coeffs);
         } else if round > polynomial.K.log_2() + 1 {
             // Bind H for subsequent T rounds
             let mut H = polynomial.H.write().unwrap();
@@ -572,9 +606,14 @@ mod tests {
             .take(LOG_T)
             .collect();
 
-        let one_hot_sumcheck_state = OneHotSumcheckState::new(&r_address, &r_cycle);
-        let mut one_hot_opening =
-            OneHotPolynomialProverOpening::new(Arc::new(RwLock::new(one_hot_sumcheck_state)));
+        let eq_address_state = EqAddressState::new(&r_address);
+        let mut eq_cycle_state = EqCycleState::new(&r_cycle);
+        eq_cycle_state.merge_D();
+
+        let mut one_hot_opening = OneHotPolynomialProverOpening::new(
+            Arc::new(RwLock::new(eq_address_state)),
+            Arc::new(RwLock::new(eq_cycle_state)),
+        );
         one_hot_opening.initialize(one_hot_poly.clone());
 
         let r_concat = [r_address.as_slice(), r_cycle.as_slice()].concat();

@@ -33,7 +33,7 @@ use crate::{
     field::JoltField,
     poly::{
         multilinear_polynomial::PolynomialEvaluation,
-        one_hot_polynomial::{OneHotPolynomialProverOpening, OneHotSumcheckState},
+        one_hot_polynomial::{EqAddressState, EqCycleState, OneHotPolynomialProverOpening},
     },
     subprotocols::sumcheck::{BatchedSumcheck, SumcheckInstance, SumcheckInstanceProof},
     transcripts::Transcript,
@@ -323,11 +323,12 @@ where
     fn new_prover_instance_one_hot(
         polynomial: CommittedPolynomial,
         sumcheck_id: SumcheckId,
-        eq_state: Arc<RwLock<OneHotSumcheckState<F>>>,
+        eq_address: Arc<RwLock<EqAddressState<F>>>,
+        eq_cycle: Arc<RwLock<EqCycleState<F>>>,
         opening_point: Vec<F>,
         claim: F,
     ) -> Self {
-        let opening = OneHotPolynomialProverOpening::new(eq_state);
+        let opening = OneHotPolynomialProverOpening::new(eq_address, eq_cycle);
         Self {
             polynomials: vec![polynomial],
             sumcheck_id,
@@ -565,6 +566,7 @@ where
 {
     pub sumchecks: Vec<OpeningProofReductionSumcheck<F>>,
     pub openings: Openings<F>,
+    eq_cycle_map: HashMap<Vec<F>, Arc<RwLock<EqCycleState<F>>>>,
     #[cfg(test)]
     pub appended_virtual_openings: std::rc::Rc<std::cell::RefCell<Vec<OpeningId>>>,
 }
@@ -615,6 +617,7 @@ where
         Self {
             sumchecks: vec![],
             openings: BTreeMap::new(),
+            eq_cycle_map: HashMap::new(),
             #[cfg(test)]
             appended_virtual_openings: std::rc::Rc::new(std::cell::RefCell::new(vec![])),
             // #[cfg(test)]
@@ -719,7 +722,12 @@ where
     ) {
         let r_concat = [r_address.as_slice(), r_cycle.as_slice()].concat();
 
-        let shared_eq = Arc::new(RwLock::new(OneHotSumcheckState::new(&r_address, &r_cycle)));
+        let shared_eq_address = Arc::new(RwLock::new(EqAddressState::new(&r_address)));
+        if !self.eq_cycle_map.contains_key(&r_cycle) {
+            let eq_cycle_state = Arc::new(RwLock::new(EqCycleState::new(&r_cycle)));
+            self.eq_cycle_map.insert(r_cycle.clone(), eq_cycle_state);
+        };
+        let shared_eq_cycle = self.eq_cycle_map.get(&r_cycle).unwrap();
 
         // Add openings to map
         for (label, claim) in polynomials.iter().zip(claims.iter()) {
@@ -733,7 +741,8 @@ where
             let sumcheck = OpeningProofReductionSumcheck::new_prover_instance_one_hot(
                 label,
                 sumcheck,
-                shared_eq.clone(),
+                shared_eq_address.clone(),
+                shared_eq_cycle.clone(),
                 r_concat.clone(),
                 claim,
             );
@@ -794,6 +803,11 @@ where
         );
         let _enter = prepare_span.enter();
 
+        // Merge D in preparation of `prepare_sumcheck`
+        self.eq_cycle_map
+            .par_iter_mut()
+            .for_each(|(_, eq_cycle)| eq_cycle.write().unwrap().merge_D());
+
         let mut gamma_offsets = vec![0];
         for sumcheck in self.sumchecks.iter() {
             let num_gammas = if sumcheck.polynomials.len() > 1 {
@@ -816,6 +830,11 @@ where
                 let gammas_slice = &all_gammas[offset..offset + num_gammas];
                 sumcheck.prepare_sumcheck(Some(&polynomials), gammas_slice);
             });
+
+        // Drop merged D as they are no longer needed
+        self.eq_cycle_map
+            .par_iter_mut()
+            .for_each(|(_, eq_cycle)| eq_cycle.write().unwrap().drop_merged_D());
 
         drop(_enter);
 
