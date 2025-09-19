@@ -49,6 +49,11 @@ struct Blake3SequenceBuilder {
     operands: FormatInline,
 }
 
+enum BuildMode {
+    Compression,
+    Keyed64Hash,
+}
+
 impl Blake3SequenceBuilder {
     fn new(asm: InstrAssembler, operands: FormatInline) -> Self {
         let vr = array::from_fn(|_| asm.allocator.allocate_for_inline());
@@ -60,15 +65,15 @@ impl Blake3SequenceBuilder {
         }
     }
 
-    fn build(mut self, is_keyed: bool) -> Vec<Instruction> {
+    fn build(mut self, build_mode: BuildMode) -> Vec<Instruction> {
         self.load_chaining_value();
         self.load_message_blocks();
-        if !is_keyed {
+        if let BuildMode::Compression = build_mode {
             self.load_counter();
             self.load_input_len_and_flags();
         }
 
-        self.initialize_internal_state(is_keyed);
+        self.initialize_internal_state(build_mode);
 
         for round in 0..NUM_ROUNDS {
             self.round = round;
@@ -80,7 +85,7 @@ impl Blake3SequenceBuilder {
         self.asm.finalize_inline(NEEDED_REGISTERS)
     }
 
-    fn initialize_internal_state(&mut self, is_keyed: bool) {
+    fn initialize_internal_state(&mut self, build_mode: BuildMode) {
         // v[0..7] = h[0..7]
         for i in 0..CHAINING_VALUE_LEN {
             self.asm.xor(
@@ -95,7 +100,7 @@ impl Blake3SequenceBuilder {
             self.asm
                 .emit_u::<LUI>(*self.vr[CHAINING_VALUE_LEN + i], *val as u64);
         }
-        if !is_keyed {
+        if let BuildMode::Compression = build_mode {
             // v[12..15] = counter values, input length, and flags
             self.asm.xor(
                 Reg(*self.vr[COUNTER_START_VR]),
@@ -256,7 +261,7 @@ pub fn blake3_inline_sequence_builder(
     operands: FormatInline,
 ) -> Vec<Instruction> {
     let builder = Blake3SequenceBuilder::new(asm, operands);
-    builder.build(false)
+    builder.build(BuildMode::Compression)
 }
 
 pub fn blake3_keyed64_inline_sequence_builder(
@@ -264,7 +269,7 @@ pub fn blake3_keyed64_inline_sequence_builder(
     operands: FormatInline,
 ) -> Vec<Instruction> {
     let builder = Blake3SequenceBuilder::new(asm, operands);
-    builder.build(true)
+    builder.build(BuildMode::Keyed64Hash)
 }
 
 #[cfg(test)]

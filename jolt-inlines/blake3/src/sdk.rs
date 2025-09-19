@@ -16,7 +16,7 @@ pub struct Blake3 {
 }
 
 #[repr(align(4))]
-pub struct Aligned64ByteInput([u8; BLOCK_INPUT_SIZE_IN_BYTES]);
+pub struct Aligned64ByteInput(pub [u8; BLOCK_INPUT_SIZE_IN_BYTES]);
 
 /// Note: Current implementation only supports hashing input of at most 64 bytes. Larger inputs are not supported yet.
 impl Blake3 {
@@ -73,30 +73,30 @@ impl Blake3 {
         hasher.finalize()
     }
 
-    // Note: This only works for 64-byte inputs
+    /// Computes a keyed BLAKE3 hash for given input and key.
+    ///
+    /// Note: This only works for 64-byte inputs
     pub fn keyed_hash(
         input: &Aligned64ByteInput,
         key: [u32; CHAINING_VALUE_LEN],
     ) -> [u8; OUTPUT_SIZE_IN_BYTES] {
         let mut h = key;
-        let message = unsafe { &*(input.0.as_ptr() as *const [u32; 16]) };
-
-        unsafe {
-            blake3_keyed64_compress(h.as_mut_ptr(), message.as_ptr());
-        }
-
-        #[cfg(target_endian = "little")]
-        {
-            // Zero-copy reinterpretation on LE
-            unsafe {
-                core::mem::transmute::<[u32; CHAINING_VALUE_LEN], [u8; OUTPUT_SIZE_IN_BYTES]>(h)
-            }
-        }
 
         #[cfg(target_endian = "big")]
         {
             unimplemented!()
         }
+
+        // Cast is safe as [u8; 64] and [u32; 16] have same size/alignment.
+        let message = unsafe { &*(input.0.as_ptr() as *const [u32; 16]) };
+
+        // Both h and message are properly aligned and sized.
+        unsafe {
+            blake3_keyed64_compress(h.as_mut_ptr(), message.as_ptr());
+        }
+
+        // [u32; 8] and [u8; 32] have identical memory layout on little-endian.
+        unsafe { core::mem::transmute::<[u32; CHAINING_VALUE_LEN], [u8; OUTPUT_SIZE_IN_BYTES]>(h) }
     }
 }
 
@@ -199,7 +199,7 @@ pub unsafe fn blake3_keyed64_compress(chaining_value: *mut u32, message: *const 
     use crate::{BLAKE3_FUNCT3, BLAKE3_FUNCT7, BLAKE3_KEYED64_FUNCT3, INLINE_OPCODE};
     // Memory layout for BLAKE3 instruction:
     // rs1: points to chaining value (32 bytes)
-    // rs2: points to message block (64 bytes) + counter (8 bytes) + block_len (4 bytes) + flags (4 bytes)
+    // rs2: points to message block (64 bytes)
 
     core::arch::asm!(
         ".insn r {opcode}, {funct3}, {funct7}, x0, {rs1}, {rs2}",
