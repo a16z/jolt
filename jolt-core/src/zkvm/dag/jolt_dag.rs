@@ -492,9 +492,10 @@ impl JoltDAG {
         let T = DoryGlobals::get_T();
 
         let polys : Vec<_> = AllCommittedPolynomials::iter().collect();
+        let cached_setup = PCS::cache_setup(&preprocessing.generators);
         let pcs_and_polys: Vec<_> = polys
             .iter()
-            .map(|poly| (PCS::initialize(poly.to_polynomial_type(&preprocessing), T, &preprocessing.generators), poly))
+            .map(|poly| (PCS::initialize(poly.to_polynomial_type(&preprocessing), T, &preprocessing.generators, &cached_setup), poly))
             .collect();
         let row_len = DoryGlobals::get_num_columns();
         let mut row_commitments: Vec<Vec<<PCS>::ChunkState>>  = vec![vec![]; T/DoryGlobals::get_max_num_rows()];

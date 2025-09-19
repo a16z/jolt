@@ -565,8 +565,13 @@ where
 {
     type State<'a> = HyperKZGState<'a, P>;
     type ChunkState = ();
+    type SetupCache = ();
 
-    fn initialize<'a>(_poly: Multilinear, size: usize, setup: &'a Self::ProverSetup) -> Self::State<'a> {
+    fn cache_setup(_: &Self::ProverSetup) -> Self::SetupCache {
+        ()
+    }
+
+    fn initialize<'a>(_poly: Multilinear, size: usize, setup: &'a Self::ProverSetup, _: &'a Self::SetupCache) -> Self::State<'a> {
         assert!(
             setup.kzg_pk.g1_powers().len() >= size,
             "COMMIT KEY LENGTH ERROR {}, {}",

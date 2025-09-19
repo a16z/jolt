@@ -1260,7 +1260,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
 pub struct StreamingDoryCommitment<'a, E: DoryPairing> {
     // Setup
     setup: &'a ProverSetup<E>,
-    bases: Vec<ark_ec::short_weierstrass::Affine<ark_bn254::g1::Config>>,
+    bases: &'a Vec<ark_ec::short_weierstrass::Affine<ark_bn254::g1::Config>>,
     // K (if a OneHot polynomial).
     K: Option<usize>,
 }
@@ -1408,9 +1408,13 @@ impl StreamingProcessChunk<StreamingOneHotWitness<Fr>> for DoryCommitmentScheme 
 impl StreamingCommitmentScheme_ for DoryCommitmentScheme {
     type State<'a> = StreamingDoryCommitment<'a, JoltBn254>;
     type ChunkState = Vec<JoltG1Wrapper>; // A chunk's state is the commitment to the row.
+    type SetupCache = Vec<ark_ec::short_weierstrass::Affine<ark_bn254::g1::Config>>;
 
-    fn initialize<'a>(ty: Multilinear, _size: usize, setup: &'a Self::ProverSetup) -> Self::State<'a> {
-        let bases: Vec<ark_ec::short_weierstrass::Affine<ark_bn254::g1::Config>> = setup.g1_vec().iter().map(|g| g.0.into_affine()).collect::<Vec<_>>();
+    fn cache_setup(setup: &Self::ProverSetup) -> Self::SetupCache {
+        setup.g1_vec().par_iter().map(|g| g.0.into_affine()).collect::<Vec<_>>()
+    }
+
+    fn initialize<'a>(ty: Multilinear, _size: usize, setup: &'a Self::ProverSetup, bases: &'a Self::SetupCache) -> Self::State<'a> {
         match ty {
             Multilinear::OneHot{K} => {
                 StreamingDoryCommitment {
