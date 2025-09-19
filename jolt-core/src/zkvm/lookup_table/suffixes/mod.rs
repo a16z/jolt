@@ -32,6 +32,7 @@ use lower_half_word::LowerHalfWordSuffix;
 use lower_word::LowerWordSuffix;
 use notand::NotAndSuffix;
 use one::OneSuffix;
+use overflow_bits_zero::OverflowBitsZeroSuffix;
 use two_lsb::TwoLsbSuffix;
 use upper_word::UpperWordSuffix;
 use xor::XorSuffix;
@@ -55,6 +56,7 @@ pub mod lt;
 pub mod notand;
 pub mod one;
 pub mod or;
+pub mod overflow_bits_zero;
 pub mod pow2;
 pub mod pow2_w;
 pub mod right_is_zero;
@@ -117,6 +119,7 @@ pub enum Suffixes {
     RightShiftWHelper,
     LeftShiftWHelper,
     LeftShiftW,
+    OverflowBitsZero,
     XorRot16,
     XorRot24,
     XorRot32,
@@ -169,6 +172,7 @@ impl Suffixes {
             Suffixes::RightShiftWHelper => RightShiftWHelperSuffix::suffix_mle(b),
             Suffixes::LeftShiftWHelper => LeftShiftWHelperSuffix::suffix_mle(b),
             Suffixes::LeftShiftW => LeftShiftWSuffix::suffix_mle(b),
+            Suffixes::OverflowBitsZero => OverflowBitsZeroSuffix::<XLEN>::suffix_mle(b),
             Suffixes::XorRot16 => XorRotSuffix::<16>::suffix_mle(b),
             Suffixes::XorRot24 => XorRotSuffix::<24>::suffix_mle(b),
             Suffixes::XorRot32 => XorRotSuffix::<32>::suffix_mle(b),

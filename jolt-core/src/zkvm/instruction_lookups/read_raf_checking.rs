@@ -852,6 +852,7 @@ mod tests {
             Cycle::VirtualROTRIW(cycle) => cycle.random(rng).into(),
             Cycle::VirtualChangeDivisor(cycle) => cycle.random(rng).into(),
             Cycle::VirtualChangeDivisorW(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualAssertMulUNoOverflow(cycle) => cycle.random(rng).into(),
             _ => Cycle::NoOp,
         }
     }
@@ -1278,5 +1279,10 @@ mod tests {
     #[test]
     fn test_virtualchangedivisorw() {
         test_read_raf_sumcheck(Some(Cycle::VirtualChangeDivisorW(Default::default())));
+    }
+
+    #[test]
+    fn test_virtualassertmulnooverflow() {
+        test_read_raf_sumcheck(Some(Cycle::VirtualAssertMulUNoOverflow(Default::default())));
     }
 }
