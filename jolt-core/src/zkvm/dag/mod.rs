@@ -22,7 +22,7 @@ mod tests {
         let mut program = host::Program::new("fibonacci-guest");
         let (bytecode, init_memory_state, _) = program.decode();
         let inputs = postcard::to_stdvec(&9u8).unwrap();
-        let (mut trace, final_memory_state, mut program_io) = program.trace(&inputs);
+        let (_, mut trace, final_memory_state, mut program_io) = program.trace(&inputs);
         trace.truncate(100);
         program_io.outputs[0] = 0; // change the output to 0
 

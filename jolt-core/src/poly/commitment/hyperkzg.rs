@@ -515,43 +515,43 @@ pub struct HyperKZGState<'a, P: Pairing> {
 
 impl<P: Pairing> StreamingProcessChunk<StreamingDenseWitness<P::ScalarField>> for HyperKZG<P>
 where P::ScalarField: JoltField {
-    fn process_chunk_t<'a>(s: &Self::State<'a>, chunk: &[StreamingDenseWitness<P::ScalarField>]) -> Self::ChunkState {
+    fn process_chunk_t<'a>(_s: &Self::State<'a>, _chunk: &[StreamingDenseWitness<P::ScalarField>]) -> Self::ChunkState {
         todo!("Not supported")
     }
 }
 impl<P: Pairing> StreamingProcessChunk<StreamingCompactWitness<u8, P::ScalarField>> for HyperKZG<P>
 where P::ScalarField: JoltField {
-    fn process_chunk_t<'a>(s: &Self::State<'a>, chunk: &[StreamingCompactWitness<u8, P::ScalarField>]) -> Self::ChunkState {
+    fn process_chunk_t<'a>(_s: &Self::State<'a>, _chunk: &[StreamingCompactWitness<u8, P::ScalarField>]) -> Self::ChunkState {
         todo!("Not supported")
     }
 }
 impl<P: Pairing> StreamingProcessChunk<StreamingCompactWitness<u16, P::ScalarField>> for HyperKZG<P>
 where P::ScalarField: JoltField {
-    fn process_chunk_t<'a>(s: &Self::State<'a>, chunk: &[StreamingCompactWitness<u16, P::ScalarField>]) -> Self::ChunkState {
+    fn process_chunk_t<'a>(_s: &Self::State<'a>, _chunk: &[StreamingCompactWitness<u16, P::ScalarField>]) -> Self::ChunkState {
         todo!("Not supported")
     }
 }
 impl<P: Pairing> StreamingProcessChunk<StreamingCompactWitness<u32, P::ScalarField>> for HyperKZG<P>
 where P::ScalarField: JoltField {
-    fn process_chunk_t<'a>(s: &Self::State<'a>, chunk: &[StreamingCompactWitness<u32, P::ScalarField>]) -> Self::ChunkState {
+    fn process_chunk_t<'a>(_s: &Self::State<'a>, _chunk: &[StreamingCompactWitness<u32, P::ScalarField>]) -> Self::ChunkState {
         todo!("Not supported")
     }
 }
 impl<P: Pairing> StreamingProcessChunk<StreamingCompactWitness<u64, P::ScalarField>> for HyperKZG<P>
 where P::ScalarField: JoltField {
-    fn process_chunk_t<'a>(s: &Self::State<'a>, chunk: &[StreamingCompactWitness<u64, P::ScalarField>]) -> Self::ChunkState {
+    fn process_chunk_t<'a>(_s: &Self::State<'a>, _chunk: &[StreamingCompactWitness<u64, P::ScalarField>]) -> Self::ChunkState {
         todo!("Not supported")
     }
 }
 impl<P: Pairing> StreamingProcessChunk<StreamingCompactWitness<i64, P::ScalarField>> for HyperKZG<P>
 where P::ScalarField: JoltField {
-    fn process_chunk_t<'a>(s: &Self::State<'a>, chunk: &[StreamingCompactWitness<i64, P::ScalarField>]) -> Self::ChunkState {
+    fn process_chunk_t<'a>(_s: &Self::State<'a>, _chunk: &[StreamingCompactWitness<i64, P::ScalarField>]) -> Self::ChunkState {
         todo!("Not supported")
     }
 }
 impl<P: Pairing> StreamingProcessChunk<StreamingOneHotWitness<P::ScalarField>> for HyperKZG<P>
 where P::ScalarField: JoltField {
-    fn process_chunk_t<'a>(s: &Self::State<'a>, chunk: &[StreamingOneHotWitness<P::ScalarField>]) -> Self::ChunkState {
+    fn process_chunk_t<'a>(_s: &Self::State<'a>, _chunk: &[StreamingOneHotWitness<P::ScalarField>]) -> Self::ChunkState {
         todo!("Not supported")
     }
 }

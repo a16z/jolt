@@ -21,6 +21,16 @@ pub struct StreamingDenseWitness<F: JoltField> {
     pub value: F,
 }
 
+impl<F: JoltField> StreamingDenseWitness<F> {
+    // Helper function to unwrap a newtype wrapper with a cast.
+    pub(crate) fn unwrap_slice<'a>(
+        chunk: &'a [StreamingDenseWitness<F>],
+    ) -> &'a [F] {
+        // chunk.iter().map(|w| w.value).collect()
+        todo!("TODO: Cast to unwrap")
+    }
+}
+
 #[derive(Default, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize, Allocative)]
 pub struct DensePolynomial<F: JoltField> {
     pub num_vars: usize, // the number of variables in the multilinear polynomial

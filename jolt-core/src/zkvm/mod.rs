@@ -17,7 +17,7 @@ use crate::{
         bytecode::BytecodePreprocessing,
         dag::{jolt_dag::JoltDAG, proof_serialization::JoltProof},
         ram::RAMPreprocessing,
-        witness::{AllCommittedPolynomials, DTH_ROOT_OF_K},
+        witness::DTH_ROOT_OF_K,
     },
 };
 use ark_bn254::Fr;

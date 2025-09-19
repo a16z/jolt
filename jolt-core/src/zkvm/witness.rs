@@ -18,7 +18,7 @@ use crate::{
     poly::{
         commitment::commitment_scheme::{CommitmentScheme, StreamingCommitmentScheme, StreamingCommitmentScheme_, StreamingProcessChunk},
         compact_polynomial::StreamingCompactWitness,
-        multilinear_polynomial::{Multilinear, MultilinearPolynomial, StreamingWitness},
+        multilinear_polynomial::{Multilinear, MultilinearPolynomial},
         one_hot_polynomial::{OneHotPolynomial, StreamingOneHotWitness},
     },
     utils::math::Math,
