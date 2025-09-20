@@ -44,6 +44,9 @@ where
     type Proof = MockProof<F>;
     type BatchedProof = MockProof<F>;
     type OpeningProofHint = ();
+    type AuxiliaryVerifierData = ();
+    #[cfg(feature = "recursion")]
+    type CombinedCommitmentHint = ();
 
     fn setup_prover(_num_vars: usize) -> Self::ProverSetup {}
 
@@ -66,9 +69,19 @@ where
             .collect()
     }
 
+    #[cfg(not(feature = "recursion"))]
     fn combine_commitments<C: Borrow<Self::Commitment>>(
         _commitments: &[C],
         _coeffs: &[Self::Field],
+    ) -> Self::Commitment {
+        MockCommitment::default()
+    }
+
+    #[cfg(feature = "recursion")]
+    fn combine_commitments<C: Borrow<Self::Commitment>>(
+        _commitments: &[C],
+        _coeffs: &[Self::Field],
+        _hint: Option<&Self::CombinedCommitmentHint>,
     ) -> Self::Commitment {
         MockCommitment::default()
     }
@@ -85,10 +98,11 @@ where
         opening_point: &[Self::Field],
         _: Self::OpeningProofHint,
         _transcript: &mut ProofTranscript,
-    ) -> Self::Proof {
-        MockProof {
+    ) -> (Self::Proof, Self::AuxiliaryVerifierData) {
+        let proof = MockProof {
             opening_point: opening_point.to_owned(),
-        }
+        };
+        (proof, ())
     }
 
     fn verify<ProofTranscript: Transcript>(
@@ -98,6 +112,7 @@ where
         opening_point: &[Self::Field],
         _opening: &Self::Field,
         _commitment: &Self::Commitment,
+        _auxiliary_data: &Self::AuxiliaryVerifierData,
     ) -> Result<(), ProofVerifyError> {
         assert_eq!(proof.opening_point, opening_point);
         Ok(())

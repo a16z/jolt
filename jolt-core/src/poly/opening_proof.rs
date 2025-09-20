@@ -593,6 +593,7 @@ pub struct ReducedOpeningProof<
     pub sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
     pub sumcheck_claims: Vec<F>,
     pub joint_opening_proof: PCS::Proof,
+    pub joint_auxiliary_data: PCS::AuxiliaryVerifierData,
     #[cfg(test)]
     joint_poly: MultilinearPolynomial<F>,
     #[cfg(test)]
@@ -892,7 +893,8 @@ where
         };
 
         // Reduced opening proof
-        let joint_opening_proof = PCS::prove(pcs_setup, &joint_poly, &r_sumcheck, hint, transcript);
+        let (joint_opening_proof, joint_auxiliary_data) =
+            PCS::prove(pcs_setup, &joint_poly, &r_sumcheck, hint, transcript);
 
         #[cfg(not(test))]
         {
@@ -904,6 +906,7 @@ where
             sumcheck_proof,
             sumcheck_claims,
             joint_opening_proof,
+            joint_auxiliary_data,
             #[cfg(test)]
             joint_poly,
             #[cfg(test)]
@@ -1231,7 +1234,11 @@ where
                 .unzip();
             debug_assert!(commitment_map.is_empty(), "Every commitment should be used");
 
-            PCS::combine_commitments(&commitments, &coeffs)
+            #[cfg(not(feature = "recursion"))]
+            let result = PCS::combine_commitments(&commitments, &coeffs);
+            #[cfg(feature = "recursion")]
+            let result = PCS::combine_commitments(&commitments, &coeffs, None);
+            result
         };
 
         #[cfg(test)]
@@ -1260,6 +1267,7 @@ where
             &r_sumcheck,
             &joint_claim,
             &joint_commitment,
+            &reduced_opening_proof.joint_auxiliary_data,
         )
     }
 

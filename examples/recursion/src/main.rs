@@ -112,8 +112,8 @@ impl GuestProgram {
                     MemoryConfig {
                         max_input_size: 4096,
                         max_output_size: 4096,
-                        memory_size: 33554432,
-                        stack_size: 1048576,
+                        memory_size: 134217728,
+                        stack_size: 33554432,
                         program_size: None,
                     }
                 } else {

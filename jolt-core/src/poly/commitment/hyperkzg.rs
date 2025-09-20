@@ -421,6 +421,9 @@ where
     type Proof = HyperKZGProof<P>;
     type BatchedProof = HyperKZGProof<P>;
     type OpeningProofHint = ();
+    type AuxiliaryVerifierData = ();
+    #[cfg(feature = "recursion")]
+    type CombinedCommitmentHint = ();
 
     fn setup_prover(max_num_vars: usize) -> Self::ProverSetup {
         HyperKZGSRS(Arc::new(SRS::setup(
@@ -466,9 +469,24 @@ where
             .collect()
     }
 
+    #[cfg(not(feature = "recursion"))]
     fn combine_commitments<C: Borrow<Self::Commitment>>(
         commitments: &[C],
         coeffs: &[Self::Field],
+    ) -> Self::Commitment {
+        let combined_commitment: P::G1 = commitments
+            .iter()
+            .zip(coeffs.iter())
+            .map(|(commitment, coeff)| commitment.borrow().0 * coeff)
+            .sum();
+        HyperKZGCommitment(combined_commitment.into_affine())
+    }
+
+    #[cfg(feature = "recursion")]
+    fn combine_commitments<C: Borrow<Self::Commitment>>(
+        commitments: &[C],
+        coeffs: &[Self::Field],
+        _hint: Option<&Self::CombinedCommitmentHint>,
     ) -> Self::Commitment {
         let combined_commitment: P::G1 = commitments
             .iter()
@@ -484,9 +502,10 @@ where
         opening_point: &[Self::Field], // point at which the polynomial is evaluated
         _: Self::OpeningProofHint,
         transcript: &mut ProofTranscript,
-    ) -> Self::Proof {
+    ) -> (Self::Proof, Self::AuxiliaryVerifierData) {
         let eval = poly.evaluate(opening_point);
-        HyperKZG::<P>::open(setup, poly, opening_point, &eval, transcript).unwrap()
+        let proof = HyperKZG::<P>::open(setup, poly, opening_point, &eval, transcript).unwrap();
+        (proof, ())
     }
 
     fn verify<ProofTranscript: Transcript>(
@@ -496,6 +515,7 @@ where
         opening_point: &[Self::Field], // point at which the polynomial is evaluated
         opening: &Self::Field,         // evaluation \widetilde{Z}(r)
         commitment: &Self::Commitment,
+        _auxiliary_data: &Self::AuxiliaryVerifierData,
     ) -> Result<(), ProofVerifyError> {
         HyperKZG::<P>::verify(setup, commitment, opening_point, opening, proof, transcript)
     }

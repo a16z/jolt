@@ -14,7 +14,7 @@ use ark_ec::{
     pairing::{MillerLoopOutput, Pairing as ArkPairing, PairingOutput},
     AffineRepr, CurveGroup,
 };
-use ark_ff::{BigInteger, CyclotomicMultSubgroup, Field, One, PrimeField, UniformRand};
+use ark_ff::{Field, One, PrimeField, UniformRand};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{rand::RngCore, Zero};
 use dory::{
@@ -1057,6 +1057,13 @@ pub struct DoryBatchedProof {
     proofs: Vec<DoryProofData>,
 }
 
+#[cfg(feature = "recursion")]
+#[derive(Clone, Debug, Default, CanonicalSerialize, CanonicalDeserialize)]
+pub struct DoryCombinedCommitmentHint {
+    /// Precomputed GT elements after scalar multiplication
+    pub scaled_commitments: Vec<JoltGTBn254>,
+}
+
 impl CommitmentScheme for DoryCommitmentScheme {
     type Field = Fr;
     type ProverSetup = ProverSetup<JoltBn254>;
@@ -1065,6 +1072,9 @@ impl CommitmentScheme for DoryCommitmentScheme {
     type Proof = DoryProofData;
     type BatchedProof = DoryBatchedProof;
     type OpeningProofHint = Vec<JoltG1Wrapper>; // row commitments
+    type AuxiliaryVerifierData = ();
+    #[cfg(feature = "recursion")]
+    type CombinedCommitmentHint = DoryCombinedCommitmentHint;
 
     #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::setup_prover")]
     fn setup_prover(max_num_vars: usize) -> Self::ProverSetup {
@@ -1137,7 +1147,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
         opening_point: &[Self::Field],
         row_commitments: Self::OpeningProofHint,
         transcript: &mut ProofTranscript,
-    ) -> Self::Proof {
+    ) -> (Self::Proof, Self::AuxiliaryVerifierData) {
         // Dory uses the opposite endian-ness as Jolt
         let point_dory: Vec<JoltFieldWrapper<Self::Field>> = opening_point
             .iter()
@@ -1166,10 +1176,11 @@ impl CommitmentScheme for DoryCommitmentScheme {
 
         let dory_proof = proof_builder.build();
 
-        DoryProofData {
+        let proof = DoryProofData {
             sigma,
             dory_proof_data: dory_proof,
-        }
+        };
+        (proof, ())
     }
 
     #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::verify")]
@@ -1180,6 +1191,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
         opening_point: &[Self::Field],
         opening: &Self::Field,
         commitment: &Self::Commitment,
+        _auxiliary_data: &Self::AuxiliaryVerifierData,
     ) -> Result<(), ProofVerifyError> {
         // Dory uses the opposite endian-ness as Jolt
         let opening_point_dory: Vec<JoltFieldWrapper<Self::Field>> = opening_point
@@ -1215,19 +1227,73 @@ impl CommitmentScheme for DoryCommitmentScheme {
         }
     }
 
-    fn combine_commitments<C: Borrow<Self::Commitment>>(
+    #[cfg(feature = "recursion")]
+    fn precompute_combined_commitment<C: Borrow<Self::Commitment>>(
         commitments: &[C],
         coeffs: &[Self::Field],
-    ) -> Self::Commitment {
-        let combined_commitment: PairingOutput<_> = commitments
+    ) -> (Self::Commitment, Self::CombinedCommitmentHint) {
+        // Compute scaled commitments using scale_with_steps
+        let scaled_commitments: Vec<JoltGTBn254> = commitments
             .iter()
             .zip(coeffs.iter())
             .map(|(commitment, coeff)| {
                 let g: PairingOutput<_> = commitment.borrow().0.clone().into();
-                g * coeff
+                let gt_wrapper = JoltGTWrapper::from(g);
+                // Use scale_with_steps to get the result
+                let (scaled_result, _steps) =
+                    gt_wrapper.scale_with_steps(&JoltFieldWrapper(*coeff));
+                scaled_result
             })
-            .sum();
-        DoryCommitment(JoltGTWrapper::from(combined_commitment))
+            .collect();
+
+        // Sum the precomputed results
+        let combined: JoltGTBn254 = scaled_commitments.iter().cloned().sum();
+
+        let hint = DoryCombinedCommitmentHint { scaled_commitments };
+        (DoryCommitment(combined), hint)
+    }
+
+    #[cfg(not(feature = "recursion"))]
+    fn combine_commitments<C: Borrow<Self::Commitment>>(
+        commitments: &[C],
+        coeffs: &[Self::Field],
+    ) -> Self::Commitment {
+        Self::combine_commitments_native(commitments, coeffs)
+    }
+
+    #[cfg(feature = "recursion")]
+    fn combine_commitments<C: Borrow<Self::Commitment>>(
+        commitments: &[C],
+        coeffs: &[Self::Field],
+        hint: Option<&Self::CombinedCommitmentHint>,
+    ) -> Self::Commitment {
+        if let Some(hint) = hint {
+            // In recursion mode with hint: just sum precomputed values
+            debug_assert_eq!(
+                hint.scaled_commitments.len(),
+                commitments.len(),
+                "Hint length must match commitments length"
+            );
+
+            // Optional debug verification
+            #[cfg(debug_assertions)]
+            {
+                // Verify hint matches native computation
+                let native_result = Self::combine_commitments_native(commitments, coeffs);
+                let hint_result: JoltGTBn254 = hint.scaled_commitments.iter().cloned().sum();
+                assert_eq!(
+                    native_result.0, hint_result,
+                    "Precomputed hint doesn't match native computation"
+                );
+            }
+
+            // Use precomputed results - no expensive GT scaling needed!
+            let combined: JoltGTBn254 = hint.scaled_commitments.iter().cloned().sum();
+            return DoryCommitment(combined);
+        }
+
+        // Fallback to native computation
+        Self::combine_commitments_native(commitments, coeffs)
     }
 
     /// In Dory, the opening proof hint consists of the Pedersen commitments to the rows
@@ -1273,6 +1339,27 @@ impl CommitmentScheme for DoryCommitmentScheme {
 
     fn protocol_name() -> &'static [u8] {
         b"dory_commitment_scheme"
+    }
+}
+
+impl DoryCommitmentScheme {
+    /// Native implementation of combine_commitments that performs GT scalar multiplications
+    fn combine_commitments_native<C: Borrow<DoryCommitment>>(
+        commitments: &[C],
+        coeffs: &[Fr],
+    ) -> DoryCommitment {
+        let mut counter = 0;
+        let combined_commitment: PairingOutput<_> = commitments
+            .iter()
+            .zip(coeffs.iter())
+            .map(|(commitment, coeff)| {
+                counter += 1;
+                let g: PairingOutput<_> = commitment.borrow().0.clone().into();
+                g * coeff
+            })
+            .sum();
+        println!("how many GT? {:?}", counter);
+        DoryCommitment(JoltGTWrapper::from(combined_commitment))
     }
 }
 
@@ -1336,7 +1423,7 @@ mod tests {
 
         let mut prove_transcript = Blake2bTranscript::new(b"dory_test");
         let prove_start = Instant::now();
-        let proof = DoryCommitmentScheme::prove(
+        let (proof, auxiliary_data) = DoryCommitmentScheme::prove(
             prover_setup,
             &poly,
             &opening_point,
@@ -1356,6 +1443,7 @@ mod tests {
             &opening_point,
             &evaluation,
             &commitment,
+            &auxiliary_data,
         );
         let verify_time = verify_start.elapsed();
 
@@ -1503,7 +1591,7 @@ mod tests {
         // Compute the correct evaluation
         let correct_evaluation = poly.evaluate(&opening_point);
 
-        let proof = DoryCommitmentScheme::prove(
+        let (proof, auxiliary_data) = DoryCommitmentScheme::prove(
             &prover_setup,
             &poly,
             &opening_point,
@@ -1524,6 +1612,7 @@ mod tests {
                 &opening_point,
                 &tampered_evaluation,
                 &commitment,
+                &auxiliary_data,
             );
 
             assert!(
@@ -1547,6 +1636,7 @@ mod tests {
                 &tampered_opening_point,
                 &correct_evaluation,
                 &commitment,
+                &auxiliary_data,
             );
 
             assert!(
@@ -1573,6 +1663,7 @@ mod tests {
                 &opening_point,
                 &correct_evaluation,
                 &wrong_commitment,
+                &auxiliary_data,
             );
 
             assert!(
@@ -1592,6 +1683,7 @@ mod tests {
                 &opening_point,
                 &correct_evaluation,
                 &commitment,
+                &auxiliary_data,
             );
 
             assert!(
@@ -1612,6 +1704,7 @@ mod tests {
                 &opening_point,
                 &correct_evaluation,
                 &commitment,
+                &auxiliary_data,
             );
 
             assert!(
