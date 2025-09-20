@@ -26,7 +26,11 @@ temp_file
 .idea
 .vscode
 
+# Ignore .patch files everywhere except in patches/ directory
 *.patch
+!patches/**/*.patch
+
+riscof_work/
 
 # Spike tarballs
 /prebuilt-files/
@@ -37,6 +41,10 @@ temp_file
 
 # act executable
 bin/act
+.notes/
+
+# Inline Traces
+*.joltinline
 
 # verifier test fixtures
 jolt-sdk/tests/fixtures

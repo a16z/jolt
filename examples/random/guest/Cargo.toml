@@ -1,0 +1,12 @@
+[package]
+name = "random-guest"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+guest = []
+
+[dependencies]
+jolt = { package = "jolt-sdk", path = "../../../jolt-sdk" }
+rand_v08 = { version = "0.8.5", package = "rand", default-features = false, features = ["std_rng", "getrandom"] }
+rand_v09 = { version = "0.9.2", package = "rand", default-features = false, features = ["std_rng", "os_rng"]}

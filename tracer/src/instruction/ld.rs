@@ -1,15 +1,14 @@
-use super::{
-    format::{format_i::FormatI, InstructionFormat},
-    RISCVInstruction, RISCVTrace,
+use super::{RISCVInstruction, RISCVTrace};
+use crate::{
+    declare_riscv_instr, emulator::cpu::Cpu, instruction::format::format_load::FormatLoad,
 };
-use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 use serde::{Deserialize, Serialize};
 
 declare_riscv_instr!(
     name   = LD,
     mask   = 0x0000707f,
     match  = 0x00003003,
-    format = FormatI,
+    format = FormatLoad,
     ram    = super::RAMRead
 );
 

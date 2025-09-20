@@ -9,9 +9,6 @@
 #![allow(clippy::too_long_first_doc_paragraph)]
 
 #[cfg(feature = "host")]
-pub mod benches;
-
-#[cfg(feature = "host")]
 pub mod host;
 
 pub mod field;

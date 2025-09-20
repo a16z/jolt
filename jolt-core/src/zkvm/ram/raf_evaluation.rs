@@ -287,7 +287,7 @@ impl<F: JoltField> SumcheckInstance<F> for RafEvaluationSumcheck<F> {
 //         // Create trace with only no-ops (address = 0)
 //         let mut trace = Vec::new();
 //         for i in 0..T {
-//             trace.push(RV32IMCycle::NoOp(i));
+//             trace.push(Cycle::NoOp(i));
 //         }
 
 //         let mut prover_transcript = Blake2bTranscript::new(b"test_no_ops");

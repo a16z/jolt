@@ -13,6 +13,9 @@ repository = "https://github.com/a16z/jolt"
 edition = "2021"
 
 [features]
+default = [
+    "jolt-platform/random"
+]
 host = [
     "jolt-core/default",
     "jolt-platform/std",
@@ -31,8 +34,8 @@ guest-verifier = [
     "guest-std",
     "dep:tracer",
     "dep:common",
-    "jolt-core/parallel",
     "dep:ark-bn254",
+    "jolt-core/minimal",
 ]
 
 [dependencies]
@@ -42,6 +45,11 @@ ark-ec = { version = "0.5.0", default-features = false, optional = true }
 ark-bn254 = { version = "0.5.0", default-features = false, optional = true }
 
 jolt-sdk-macros = { path = "./macros" }
+# Host-only dependencies
+common = { path = "../common", optional = true }
 jolt-core = { path = "../jolt-core", default-features = false, optional = true }
 tracer = { path = "../tracer", optional = true }
-common = { path = "../common", optional = true }
+rand = { version = "0.8.5", optional = true }
+
+[dev-dependencies]
+hex-literal = "0.4.1"

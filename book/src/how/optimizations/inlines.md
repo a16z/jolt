@@ -55,6 +55,18 @@ For advanced use cases, you can invoke inlines directly through inline assembly.
 - **funct7**: Identifies the type of operation (e.g., `0x00` for SHA2)
 - **funct3**: Identifies sub-instructions within that operation (e.g., `0x0` for SHA256, `0x1` for SHA256INIT)
 
+#### Jolt Core Inlines Reference
+
+| Inline        | Opcode | funct7 | funct3 | Description                                |
+| ------------- | ------ | ------ | ------ | ------------------------------------------ |
+| SHA256        | 0x0B   | 0x00   | 0x00   | SHA-256 compression with existing state    |
+| SHA256INIT    | 0x0B   | 0x00   | 0x01   | SHA-256 compression with initial constants |
+| KECCAK256     | 0x0B   | 0x01   | 0x00   | Keccak-256 permutation                     |
+| BLAKE2B       | 0x0B   | 0x02   | 0x00   | BLAKE2b compression                        |
+| BLAKE3        | 0x0B   | 0x03   | 0x00   | BLAKE3 compression                         |
+| BLAKE3KEYED64 | 0x0B   | 0x03   | 0x01   | BLAKE3 compression keyed                   |
+| BIGINT256_MUL | 0x0B   | 0x04   | 0x00   | 256-bit bigint multiplication              |
+
 ```rust
 unsafe {
     // SHA256 compression with existing state
@@ -87,7 +99,7 @@ Inline sequences have access to 32 additional virtual registers beyond the stand
 
 ### 2. Custom Instructions
 
-Jolt allows creation of custom instructions that can replace common multi-instruction patterns with a single operation. The key innovation here is that these instructions must have structured multilinear extensions (MLEs) that can be evaluated efficiently in small space (see [prefix-suffix sumcheck](../instruction-execution.html)). This is where the real performance gain comes from: by compressing operations into forms that work naturally with Jolt's lookup-based architecture, we achieve dramatic speedups without the complexity of traditional precompiles. 
+Jolt allows creation of custom instructions that can replace common multi-instruction patterns with a single operation. The key innovation here is that these instructions must have structured multilinear extensions (MLEs) that can be evaluated efficiently in small space (see [prefix-suffix sumcheck](../instruction-execution.html)). This is where the real performance gain comes from: by compressing operations into forms that work naturally with Jolt's lookup-based architecture, we achieve dramatic speedups without the complexity of traditional precompiles.
 
 This is fundamentally different from traditional assembly optimization - we're not just rearranging instructions, we're creating new ones that are specifically designed to be "lookupable" within Jolt's proof system. For example, the ROTRI (rotate right immediate) instruction replaces the three-instruction sequence `(x >> imm) | (x << (32-imm))` with a single cycle, while remaining fully verifiable through lookups because it maintains the structured MLE property.
 

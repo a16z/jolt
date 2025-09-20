@@ -2,7 +2,7 @@
 This section details the available tools to profile guest programs. There is currently a single utility available: `Cycle-Tracking`, which is detailed below.
 ## Cycle-Tracking in Jolt
 
-Measure **real** (RV32IM) and **virtual** cycles inside your RISC-V guest code with zero-overhead markers. This is useful when analyzing the mapping between the high-level guest program and the equivalent compiled program to be proven by Jolt.
+Measure **real** (RV64IMAC) and **virtual** cycles inside your RISC-V guest code with zero-overhead markers. This is useful when analyzing the mapping between the high-level guest program and the equivalent compiled program to be proven by Jolt.
 
 
 > **Note:** The Rust compiler will often shuffle around your implementation for optimization purposes, which can affect cycle tracking.
@@ -64,7 +64,7 @@ Wrap inputs *or* outputs that must stay observable during the span. In the above
 ###  Expected Output
 
 ~~~text
-"muldiv": 9 RV32IM cycles, 16 virtual cycles
+"muldiv": 9 RV64IMAC cycles, 16 virtual cycles
 Trace length: 533
 Prover runtime: 0.487551667 s
 output: 2223173

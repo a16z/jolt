@@ -1,11 +1,17 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{declare_riscv_instr, emulator::cpu::Cpu};
-
-use super::{
-    format::{format_r::FormatR, InstructionFormat},
-    RISCVInstruction, RISCVTrace,
+use super::and::AND;
+use super::ld::LD;
+use super::sd::SD;
+use super::virtual_move::VirtualMove;
+use crate::utils::inline_helpers::InstrAssembler;
+use crate::utils::virtual_registers::VirtualRegisterAllocator;
+use crate::{
+    declare_riscv_instr,
+    emulator::cpu::{Cpu, Xlen},
 };
+
+use super::{format::format_r::FormatR, Cycle, Instruction, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name   = AMOANDD,
@@ -38,4 +44,29 @@ impl AMOANDD {
     }
 }
 
-impl RISCVTrace for AMOANDD {}
+impl RISCVTrace for AMOANDD {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
+        let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
+        let mut trace = trace;
+        for instr in inline_sequence {
+            // In each iteration, create a new Option containing a re-borrowed reference
+            instr.trace(cpu, trace.as_deref_mut());
+        }
+    }
+
+    fn inline_sequence(
+        &self,
+        allocator: &VirtualRegisterAllocator,
+        xlen: Xlen,
+    ) -> Vec<Instruction> {
+        let v_rs2 = allocator.allocate();
+        let v_rd = allocator.allocate();
+
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
+        asm.emit_ld::<LD>(*v_rd, self.operands.rs1, 0);
+        asm.emit_r::<AND>(*v_rs2, *v_rd, self.operands.rs2);
+        asm.emit_s::<SD>(self.operands.rs1, *v_rs2, 0);
+        asm.emit_i::<VirtualMove>(self.operands.rd, *v_rd, 0);
+        asm.finalize()
+    }
+}

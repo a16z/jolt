@@ -1,5 +1,5 @@
 use common::attributes::{parse_attributes, Attributes};
-use tracer::instruction::RV32IMInstruction;
+use tracer::instruction::Instruction;
 
 use std::{
     fs::{self, File},
@@ -16,7 +16,7 @@ use toml_edit::{value, Array, DocumentMut, InlineTable, Item, Table, Value};
 
 #[derive(Serialize, Deserialize)]
 struct DecodedData {
-    bytecode: Vec<RV32IMInstruction>,
+    bytecode: Vec<Instruction>,
     memory_init: Vec<(u64, u8)>,
 }
 

@@ -23,7 +23,7 @@ use common::constants::REGISTER_COUNT;
 use fixedbitset::FixedBitSet;
 use rayon::prelude::*;
 use std::{cell::RefCell, rc::Rc};
-use tracer::instruction::RV32IMCycle;
+use tracer::instruction::Cycle;
 
 const K: usize = REGISTER_COUNT as usize;
 
@@ -83,7 +83,7 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
     #[tracing::instrument(skip_all, name = "RegistersReadWriteCheckingProverState::initialize")]
     fn initialize<PCS: CommitmentScheme<Field = F>>(
         preprocessing: &JoltProverPreprocessing<F, PCS>,
-        trace: &[RV32IMCycle],
+        trace: &[Cycle],
         r_prime: &[F],
     ) -> Self {
         let T = trace.len();
