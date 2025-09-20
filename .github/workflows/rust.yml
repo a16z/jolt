@@ -54,7 +54,7 @@ jobs:
         run: rustup target add wasm32-unknown-unknown
       - name: Build Wasm
         working-directory: ./jolt-core
-        run: cargo build --release --target wasm32-unknown-unknown
+        run: RUSTFLAGS='--cfg getrandom_backend="wasm_js"' cargo build --release --target wasm32-unknown-unknown
 
   test-core:
     runs-on: ubuntu-latest

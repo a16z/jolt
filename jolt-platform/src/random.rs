@@ -52,4 +52,7 @@ unsafe extern "Rust" fn __getrandom_v03_custom(
     Ok(())
 }
 
+// Register the custom getrandom implementation for getrandom v0.2 on non-wasm targets
+// For wasm targets we use the "js" feature which uses the browser's crypto API
+#[cfg(not(any(target_arch = "wasm32")))]
 getrandom_v02::register_custom_getrandom!(_getrandom_v02);

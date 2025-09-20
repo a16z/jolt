@@ -23,6 +23,12 @@ random = [
     "dep:rand",
 ]
 [dependencies]
+rand = { version = "0.8.5", default-features = false, features = ["std_rng"], optional = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 getrandom_v02 = { version = "0.2.16", package = "getrandom", default-features = false, features = ["custom"], optional = true }
 getrandom_v03 = { version = "0.3.3" , package = "getrandom", default-features = false, features = [], optional = true }
-rand = { version = "0.8.5", default-features = false, features = ["std_rng"], optional = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom_v02 = { version = "0.2.16", package = "getrandom", default-features = false, features = ["js"], optional = true }
+getrandom_v03 = { version = "0.3.3" , package = "getrandom", default-features = false, features = ["wasm_js"], optional = true }
