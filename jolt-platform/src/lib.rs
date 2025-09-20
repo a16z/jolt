@@ -6,9 +6,8 @@ pub use alloc::*;
 pub mod random;
 #[cfg(feature = "random")]
 pub use random::*;
-#[cfg(feature = "std")]
+
 pub mod print;
-#[cfg(feature = "std")]
 pub use print::*;
 
 pub mod cycle_tracking;

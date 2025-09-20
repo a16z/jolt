@@ -1,7 +1,10 @@
 extern crate alloc;
 
+use alloc::format;
 use alloc::slice;
 use rand::{rngs::StdRng, RngCore, SeedableRng};
+
+use crate::jolt_println;
 
 // JOLT in ASCII padded with 1s
 const SEED: u64 = 0x11114A4F4C541111;
@@ -12,6 +15,8 @@ static mut RNG: Option<StdRng> = None;
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
 pub unsafe fn sys_rand(dest: *mut u8, len: usize) {
+    jolt_println!("Warning: sys_rand is a deterministic PRNG, not a cryptographically secure RNG. Use with caution.");
+
     let rng_ptr: *mut Option<StdRng> = &raw mut RNG;
 
     unsafe {
@@ -45,9 +50,7 @@ unsafe extern "Rust" fn __getrandom_v03_custom(
     dest: *mut u8,
     len: usize,
 ) -> Result<(), getrandom_v03::Error> {
-    unsafe {
-        sys_rand(dest, len);
-    }
+    sys_rand(dest, len);
 
     Ok(())
 }
