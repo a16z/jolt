@@ -2,13 +2,12 @@
 
 pub mod alloc;
 pub use alloc::*;
-#[cfg(feature = "std")]
+#[cfg(feature = "random")]
 pub mod random;
-#[cfg(feature = "std")]
+#[cfg(feature = "random")]
 pub use random::*;
-#[cfg(feature = "std")]
+
 pub mod print;
-#[cfg(feature = "std")]
 pub use print::*;
 
 pub mod cycle_tracking;

@@ -67,6 +67,8 @@ members = [
     "examples/recursion/guest",
     "examples/recover-ecdsa",
     "examples/recover-ecdsa/guest",
+    "examples/random",
+    "examples/random/guest",
 ]
 
 [features]
