@@ -9,6 +9,7 @@ use ark_std::rand::Rng;
 use std::default::Default;
 use std::fmt;
 use std::iter::{Product, Sum};
+use std::mem::transmute;
 use std::ops::{Add, Deref, DerefMut, Div, Mul, Sub};
 use std::ops::{AddAssign, MulAssign, Neg, SubAssign};
 use std::sync::atomic::Ordering;
@@ -337,17 +338,45 @@ impl JoltField for TrackedFr {
 
     fn mul_u64(&self, n: u64) -> Self {
         MULT_COUNT.fetch_add(1, Ordering::Relaxed);
-        TrackedFr(self.0.mul_u64(n))
+        Self(<Fr as JoltField>::mul_u64(&self.0, n))
     }
 
-    fn mul_i128(&self, n: i128) -> Self {
+    fn mul_i64(&self, n: i64) -> Self {
         MULT_COUNT.fetch_add(1, Ordering::Relaxed);
-        TrackedFr(self.0.mul_i128(n))
+        Self(<Fr as JoltField>::mul_i64(&self.0, n))
     }
 
     fn mul_u128(&self, n: u128) -> Self {
         MULT_COUNT.fetch_add(1, Ordering::Relaxed);
-        TrackedFr(self.0.mul_u128(n))
+        Self(<Fr as JoltField>::mul_u128(&self.0, n))
+    }
+
+    fn mul_i128(&self, n: i128) -> Self {
+        MULT_COUNT.fetch_add(1, Ordering::Relaxed);
+        Self(<Fr as JoltField>::mul_i128(&self.0, n))
+    }
+
+    fn linear_combination_u64(pairs: &[(Self, u64)], add_terms: &[Self]) -> Self {
+        MULT_COUNT.fetch_add(pairs.len(), Ordering::Relaxed);
+        Self(<Fr as JoltField>::linear_combination_u64(
+            unsafe { transmute::<&[(Self, u64)], &[(Fr, u64)]>(pairs) },
+            unsafe { transmute::<&[Self], &[Fr]>(add_terms) },
+        ))
+    }
+
+    fn linear_combination_i64(
+        pos: &[(Self, u64)],
+        neg: &[(Self, u64)],
+        pos_add: &[Self],
+        neg_add: &[Self],
+    ) -> Self {
+        MULT_COUNT.fetch_add(pos.len() + neg.len(), Ordering::Relaxed);
+        Self(<Fr as JoltField>::linear_combination_i64(
+            unsafe { transmute::<&[(Self, u64)], &[(Fr, u64)]>(pos) },
+            unsafe { transmute::<&[(Self, u64)], &[(Fr, u64)]>(neg) },
+            unsafe { transmute::<&[Self], &[Fr]>(pos_add) },
+            unsafe { transmute::<&[Self], &[Fr]>(neg_add) },
+        ))
     }
 }
 

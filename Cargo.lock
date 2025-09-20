@@ -155,7 +155,7 @@ dependencies = [
 [[package]]
 name = "ark-ec"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#5ebdb1789edafdb0e8e43f82089ec6eed9e8b38c"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#6cb3aa13855187bfa0a0c54da09c9100774751cb"
 dependencies = [
  "ahash",
  "ark-ff",
@@ -176,7 +176,7 @@ dependencies = [
 [[package]]
 name = "ark-ff"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#5ebdb1789edafdb0e8e43f82089ec6eed9e8b38c"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#6cb3aa13855187bfa0a0c54da09c9100774751cb"
 dependencies = [
  "allocative",
  "ark-ff-asm",
@@ -197,7 +197,7 @@ dependencies = [
 [[package]]
 name = "ark-ff-asm"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#5ebdb1789edafdb0e8e43f82089ec6eed9e8b38c"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#6cb3aa13855187bfa0a0c54da09c9100774751cb"
 dependencies = [
  "quote",
  "syn 2.0.106",
@@ -206,7 +206,7 @@ dependencies = [
 [[package]]
 name = "ark-ff-macros"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#5ebdb1789edafdb0e8e43f82089ec6eed9e8b38c"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#6cb3aa13855187bfa0a0c54da09c9100774751cb"
 dependencies = [
  "num-bigint",
  "num-traits",
@@ -218,7 +218,7 @@ dependencies = [
 [[package]]
 name = "ark-poly"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#5ebdb1789edafdb0e8e43f82089ec6eed9e8b38c"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#6cb3aa13855187bfa0a0c54da09c9100774751cb"
 dependencies = [
  "ahash",
  "ark-ff",
@@ -232,9 +232,9 @@ dependencies = [
 [[package]]
 name = "ark-serialize"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#5ebdb1789edafdb0e8e43f82089ec6eed9e8b38c"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#6cb3aa13855187bfa0a0c54da09c9100774751cb"
 dependencies = [
- "ark-serialize-derive 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
+ "ark-serialize-derive 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions)",
  "ark-std",
  "arrayvec",
  "digest",
@@ -256,7 +256,7 @@ dependencies = [
 [[package]]
 name = "ark-serialize-derive"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#5ebdb1789edafdb0e8e43f82089ec6eed9e8b38c"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#6cb3aa13855187bfa0a0c54da09c9100774751cb"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -855,7 +855,7 @@ dependencies = [
 [[package]]
 name = "dory"
 version = "1.0.0"
-source = "git+https://github.com/spaceandtimefdn/sxt-dory?branch=feat%2Freturn_row_commitments#814844f68b093e9c240f3c50288d3fb5b370e06c"
+source = "git+https://github.com/spaceandtimefdn/sxt-dory?branch=feat%2Ffewer-reductions#cfd4e8540c13f6b7e98c83a4af79b0df4a0f6f69"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -1160,9 +1160,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "26145e563e54f2cadc477553f1ec5ee650b00862f0a58bcd12cbdc5f0ea2d2f4"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "r-efi",
  "wasi 0.14.5+wasi-0.2.4",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -1691,7 +1693,6 @@ dependencies = [
  "dory",
  "eyre",
  "fixedbitset",
- "getrandom 0.2.16",
  "iai-callgrind",
  "indicatif",
  "inferno",
@@ -1787,7 +1788,7 @@ dependencies = [
 [[package]]
 name = "jolt-optimizations"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#5ebdb1789edafdb0e8e43f82089ec6eed9e8b38c"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#6cb3aa13855187bfa0a0c54da09c9100774751cb"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -4263,4 +4264,4 @@ dependencies = [
 [[patch.unused]]
 name = "ark-bn254"
 version = "0.5.0-alpha.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#5ebdb1789edafdb0e8e43f82089ec6eed9e8b38c"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#6cb3aa13855187bfa0a0c54da09c9100774751cb"
