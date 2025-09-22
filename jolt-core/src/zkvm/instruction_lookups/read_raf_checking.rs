@@ -843,6 +843,7 @@ mod tests {
             Cycle::VirtualShiftRightBitmask(cycle) => cycle.random(rng).into(),
             Cycle::VirtualShiftRightBitmaskI(cycle) => cycle.random(rng).into(),
             Cycle::VirtualSRA(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualRev8W(cycle) => cycle.random(rng).into(),
             Cycle::VirtualSRAI(cycle) => cycle.random(rng).into(),
             Cycle::VirtualSRL(cycle) => cycle.random(rng).into(),
             Cycle::VirtualSRLI(cycle) => cycle.random(rng).into(),
@@ -1250,6 +1251,11 @@ mod tests {
     #[test]
     fn test_virtualsrai() {
         test_read_raf_sumcheck(Some(Cycle::VirtualSRAI(Default::default())));
+    }
+
+    #[test]
+    fn test_virtualrev8w() {
+        test_read_raf_sumcheck(Some(Cycle::VirtualRev8W(Default::default())));
     }
 
     #[test]

@@ -29,6 +29,7 @@ use valid_signed_remainder::ValidSignedRemainderTable;
 use valid_unsigned_remainder::ValidUnsignedRemainderTable;
 use virtual_change_divisor::VirtualChangeDivisorTable;
 use virtual_change_divisor_w::VirtualChangeDivisorWTable;
+use virtual_rev8w::VirtualRev8WTable;
 use virtual_rotr::VirtualRotrTable;
 use virtual_rotrw::VirtualRotrWTable;
 use virtual_sra::VirtualSRATable;
@@ -96,6 +97,7 @@ pub mod valid_signed_remainder;
 pub mod valid_unsigned_remainder;
 pub mod virtual_change_divisor;
 pub mod virtual_change_divisor_w;
+pub mod virtual_rev8w;
 pub mod virtual_rotr;
 pub mod virtual_rotrw;
 pub mod virtual_sra;
@@ -137,6 +139,7 @@ pub enum LookupTables<const XLEN: usize> {
     Pow2(Pow2Table<XLEN>),
     Pow2W(Pow2WTable<XLEN>),
     ShiftRightBitmask(ShiftRightBitmaskTable<XLEN>),
+    VirtualRev8W(VirtualRev8WTable<XLEN>),
     VirtualSRL(VirtualSRLTable<XLEN>),
     VirtualSRA(VirtualSRATable<XLEN>),
     VirtualROTR(VirtualRotrTable<XLEN>),
@@ -188,6 +191,7 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::Pow2(table) => table.materialize(),
             LookupTables::Pow2W(table) => table.materialize(),
             LookupTables::ShiftRightBitmask(table) => table.materialize(),
+            LookupTables::VirtualRev8W(table) => table.materialize(),
             LookupTables::VirtualSRL(table) => table.materialize(),
             LookupTables::VirtualSRA(table) => table.materialize(),
             LookupTables::VirtualROTR(table) => table.materialize(),
@@ -232,6 +236,7 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::Pow2(table) => table.materialize_entry(index),
             LookupTables::Pow2W(table) => table.materialize_entry(index),
             LookupTables::ShiftRightBitmask(table) => table.materialize_entry(index),
+            LookupTables::VirtualRev8W(table) => table.materialize_entry(index),
             LookupTables::VirtualSRL(table) => table.materialize_entry(index),
             LookupTables::VirtualSRA(table) => table.materialize_entry(index),
             LookupTables::VirtualROTR(table) => table.materialize_entry(index),
@@ -276,6 +281,7 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::Pow2(table) => table.evaluate_mle(r),
             LookupTables::Pow2W(table) => table.evaluate_mle(r),
             LookupTables::ShiftRightBitmask(table) => table.evaluate_mle(r),
+            LookupTables::VirtualRev8W(table) => table.evaluate_mle(r),
             LookupTables::VirtualSRL(table) => table.evaluate_mle(r),
             LookupTables::VirtualSRA(table) => table.evaluate_mle(r),
             LookupTables::VirtualROTR(table) => table.evaluate_mle(r),
@@ -320,6 +326,7 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::Pow2(table) => table.suffixes(),
             LookupTables::Pow2W(table) => table.suffixes(),
             LookupTables::ShiftRightBitmask(table) => table.suffixes(),
+            LookupTables::VirtualRev8W(table) => table.suffixes(),
             LookupTables::VirtualSRL(table) => table.suffixes(),
             LookupTables::VirtualSRA(table) => table.suffixes(),
             LookupTables::VirtualROTR(table) => table.suffixes(),
@@ -368,6 +375,7 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::Pow2(table) => table.combine(prefixes, suffixes),
             LookupTables::Pow2W(table) => table.combine(prefixes, suffixes),
             LookupTables::ShiftRightBitmask(table) => table.combine(prefixes, suffixes),
+            LookupTables::VirtualRev8W(table) => table.combine(prefixes, suffixes),
             LookupTables::VirtualSRL(table) => table.combine(prefixes, suffixes),
             LookupTables::VirtualSRA(table) => table.combine(prefixes, suffixes),
             LookupTables::VirtualROTR(table) => table.combine(prefixes, suffixes),

@@ -111,6 +111,7 @@ use virtual_pow2::VirtualPow2;
 use virtual_pow2_w::VirtualPow2W;
 use virtual_pow2i::VirtualPow2I;
 use virtual_pow2i_w::VirtualPow2IW;
+use virtual_rev8w::VirtualRev8W;
 use virtual_rotri::VirtualROTRI;
 use virtual_rotriw::VirtualROTRIW;
 use virtual_shift_right_bitmask::VirtualShiftRightBitmask;
@@ -242,6 +243,7 @@ pub mod virtual_pow2;
 pub mod virtual_pow2_w;
 pub mod virtual_pow2i;
 pub mod virtual_pow2i_w;
+pub mod virtual_rev8w;
 pub mod virtual_rotri;
 pub mod virtual_rotriw;
 pub mod virtual_shift_right_bitmask;
@@ -589,7 +591,7 @@ define_rv32im_enums! {
         VirtualAssertValidDiv0, VirtualAssertValidUnsignedRemainder, VirtualAssertMulUNoOverflow,
         VirtualChangeDivisor, VirtualChangeDivisorW, VirtualLW,VirtualSW, VirtualZeroExtendWord,
         VirtualSignExtendWord,VirtualPow2W, VirtualPow2IW,
-        VirtualMove, VirtualMovsign, VirtualMULI, VirtualPow2, VirtualPow2I, VirtualROTRI,
+        VirtualMove, VirtualMovsign, VirtualMULI, VirtualPow2, VirtualPow2I, VirtualRev8W, VirtualROTRI,
         VirtualROTRIW,
         VirtualShiftRightBitmask, VirtualShiftRightBitmaskI,
         VirtualSRA, VirtualSRAI, VirtualSRL, VirtualSRLI,
@@ -886,6 +888,14 @@ impl Instruction {
             0b0001011 => Ok(INLINE::new(instr, address, false, compressed).into()),
             // 0x2B is reserved for external inlines
             0b0101011 => Ok(INLINE::new(instr, address, false, compressed).into()),
+            // 0x5B is reserved for I-type virtual instructions.
+            0b1011011 => {
+                let funct3 = (instr >> 12) & 0x7;
+                match funct3 {
+                    0b000 => Ok(VirtualRev8W::new(instr, address, true, compressed).into()),
+                    _ => Err("Invalid I-type virtual instruction"),
+                }
+            }
             _ => Err("Unknown opcode"),
         }
     }
