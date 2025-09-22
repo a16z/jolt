@@ -2,6 +2,7 @@ use std::{cell::RefCell, rc::Rc};
 
 use allocative::Allocative;
 use common::constants::XLEN;
+use itertools::chain;
 use rayon::{
     iter::{
         IndexedParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator,
@@ -12,7 +13,7 @@ use rayon::{
 use tracer::instruction::Cycle;
 
 use crate::{
-    field::{JoltField, OptimizedMul},
+    field::JoltField,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
@@ -22,12 +23,7 @@ use crate::{
             BIG_ENDIAN,
         },
     },
-    subprotocols::{
-        large_degree_sumcheck::{
-            compute_eq_mle_product_univariate, compute_mle_product_coeffs_katatsuba,
-        },
-        sumcheck::SumcheckInstance,
-    },
+    subprotocols::{mles_product_sum::compute_mles_product_sum, sumcheck::SumcheckInstance},
     transcripts::Transcript,
     utils::{lookup_bits::LookupBits, math::Math},
     zkvm::{
@@ -53,7 +49,7 @@ pub struct RASumCheck<F: JoltField> {
 #[derive(Allocative)]
 pub struct RAProverState<F: JoltField> {
     ra_i_polys: Vec<MultilinearPolynomial<F>>,
-    E_table: Vec<Vec<F>>,
+    eq_evals: Vec<F>,
     eq_factor: F,
 }
 
@@ -131,18 +127,12 @@ impl<F: JoltField> RASumCheck<F> {
 
         let ra_i_polys = Self::compute_ra_i_polys(trace, state_manager);
 
-        // E_table[i] stores the evaluation of eq(r_cycle[i..], x), where i starts at 1.
-        let E_table = EqPolynomial::evals_cached_rev(r_cycle)
-            .into_iter()
-            .skip(1)
-            .rev()
-            .skip(1)
-            .collect::<Vec<_>>();
+        let eq_evals = EqPolynomial::evals(&r_cycle[1..]);
 
         let prover_state = RAProverState {
             ra_i_polys,
-            E_table,
-            eq_factor: F::one(),
+            eq_evals,
+            eq_factor: EqPolynomial::mle(&[F::zero()], &[r_cycle[0]]),
         };
 
         Self {
@@ -201,50 +191,33 @@ impl<F: JoltField> SumcheckInstance<F> for RASumCheck<F> {
         self.eq_ra_claim
     }
 
-    fn compute_prover_message(&mut self, round: usize, _previous_claim: F) -> Vec<F> {
+    #[tracing::instrument(skip_all, name = "RaVirtualProverOpening::compute_prover_message")]
+    fn compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F> {
         let prover_state = self
             .prover_state
             .as_ref()
             .expect("Prover state not initialized");
         let ra_i_polys = &prover_state.ra_i_polys;
 
-        // TODO: we should really use Toom-Cook for d = 4 and 8 but that requires F to implement the SmallFieldMul trait. Need to rethink the interface.
-        let mle_product_coeffs = match self.d {
-            4 => compute_mle_product_coeffs_katatsuba::<F, 4, 5>(
-                ra_i_polys,
-                round,
-                self.T.log_2(),
-                &prover_state.eq_factor,
-                &prover_state.E_table,
-            ),
-            8 => compute_mle_product_coeffs_katatsuba::<F, 8, 9>(
-                ra_i_polys,
-                round,
-                self.T.log_2(),
-                &prover_state.eq_factor,
-                &prover_state.E_table,
-            ),
-            16 => compute_mle_product_coeffs_katatsuba::<F, 16, 17>(
-                ra_i_polys,
-                round,
-                self.T.log_2(),
-                &prover_state.eq_factor,
-                &prover_state.E_table,
-            ),
-            _ => panic!(
-                "Unsupported number of polynomials, got {} and expected 4, 8, or 16",
-                self.d
-            ),
-        };
+        let log_sum_n_terms = (self.r_cycle.len() - round - 1) as u32;
 
-        let univariate_poly =
-            compute_eq_mle_product_univariate(mle_product_coeffs, round, &self.r_cycle);
+        let correction_factor = prover_state.eq_factor
+            / EqPolynomial::mle(&vec![F::zero(); round + 1], &self.r_cycle[..round + 1]);
 
-        // Turning into eval points.
-        (0..univariate_poly.coeffs.len())
-            .filter(|i| *i != 1)
-            .map(|i| univariate_poly.evaluate(&F::from_u32(i as u32)))
-            .collect()
+        let poly = compute_mles_product_sum(
+            ra_i_polys,
+            previous_claim,
+            self.r_cycle[round],
+            &prover_state.eq_evals,
+            correction_factor,
+            log_sum_n_terms,
+        );
+
+        // Evaluate the poly at 0, 2, 3, ..., degree.
+        let degree = self.degree();
+        debug_assert_eq!(degree, prover_state.ra_i_polys.len() + 1);
+        let domain = chain!([0], 2..).map(F::from_u64).take(degree);
+        domain.map(|x| poly.evaluate(&x)).collect()
     }
 
     fn bind(&mut self, r_j: F, round: usize) {
@@ -258,10 +231,7 @@ impl<F: JoltField> SumcheckInstance<F> for RASumCheck<F> {
             .par_iter_mut()
             .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow));
 
-        prover_state.eq_factor = prover_state.eq_factor.mul_1_optimized(
-            (self.r_cycle[round] + self.r_cycle[round] - F::one()) * r_j
-                + (F::one() - self.r_cycle[round]),
-        );
+        prover_state.eq_factor *= EqPolynomial::mle(&[r_j], &[self.r_cycle[round]]);
     }
 
     fn expected_output_claim(
