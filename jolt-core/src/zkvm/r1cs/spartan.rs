@@ -2,7 +2,6 @@ use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 use std::cell::RefCell;
-use std::marker::PhantomData;
 use std::rc::Rc;
 use std::sync::Arc;
 use tracing::{span, Level};
@@ -23,82 +22,19 @@ use crate::zkvm::dag::state_manager::{ProofData, ProofKeys, StateManager};
 use crate::zkvm::instruction::CircuitFlags;
 use crate::zkvm::r1cs::inputs::{
     compute_claimed_witness_evals, generate_pc_noop_witnesses, JoltR1CSInputs,
-    TraceWitnessAccessor, WitnessRowAccessor, ALL_R1CS_INPUTS, COMMITTED_R1CS_INPUTS,
+    TraceWitnessAccessor, ALL_R1CS_INPUTS, COMMITTED_R1CS_INPUTS,
 };
 use crate::zkvm::r1cs::key::UniformSpartanKey;
 use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 
 use crate::transcripts::Transcript;
 use crate::utils::small_value::NUM_SVO_ROUNDS;
-use ark_serialize::CanonicalDeserialize;
-use ark_serialize::CanonicalSerialize;
-
-use thiserror::Error;
 
 use crate::{
     poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPlusOnePolynomial},
     subprotocols::sumcheck::{SumcheckInstance, SumcheckInstanceProof},
 };
 use rayon::prelude::*;
-
-#[derive(Clone, Debug, Eq, PartialEq, Error)]
-pub enum SpartanError {
-    /// returned when the outer sumcheck proof fails
-    #[error("InvalidOuterSumcheckProof")]
-    InvalidOuterSumcheckProof,
-
-    /// returned when the final sumcheck opening proof fails
-    #[error("InvalidOuterSumcheckClaim")]
-    InvalidOuterSumcheckClaim,
-
-    /// returned when the recursive sumcheck proof fails
-    #[error("InvalidInnerSumcheckProof")]
-    InvalidInnerSumcheckProof,
-
-    /// returned when the recursive sumcheck proof fails
-    #[error("InvalidShiftSumcheckProof")]
-    InvalidShiftSumcheckProof,
-}
-
-/// A succinct proof of knowledge of a witness to a relaxed R1CS instance
-/// The proof is produced using Spartan's combination of the sum-check and
-/// the commitment to a vector viewed as a polynomial commitment
-#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
-pub struct UniformSpartanProof<F: JoltField, ProofTranscript: Transcript> {
-    pub(crate) outer_sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
-    pub(crate) outer_sumcheck_claims: (F, F, F),
-    pub(crate) inner_sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
-    pub(crate) shift_sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
-    pub(crate) claimed_witness_evals: Vec<F>,
-    pub(crate) shift_sumcheck_witness_eval: Vec<F>,
-    _marker: PhantomData<ProofTranscript>,
-}
-
-impl<F: JoltField, ProofTranscript> UniformSpartanProof<F, ProofTranscript>
-where
-    ProofTranscript: Transcript,
-{
-    #[tracing::instrument(skip_all, name = "Spartan::setup")]
-    #[inline]
-    pub fn setup(padded_num_steps: usize) -> UniformSpartanKey<F> {
-        UniformSpartanKey::new(padded_num_steps)
-    }
-
-    #[tracing::instrument(skip_all)]
-    fn prove_outer_sumcheck(
-        num_rounds_x: usize,
-        accessor: &dyn WitnessRowAccessor<F>,
-        tau: &[F],
-        transcript: &mut ProofTranscript,
-    ) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, [F; 3]) {
-        SumcheckInstanceProof::prove_spartan_small_value::<NUM_SVO_ROUNDS>(
-            num_rounds_x,
-            accessor,
-            tau,
-            transcript,
-        )
-    }
-}
 
 #[derive(Allocative)]
 struct InnerSumcheckProverState<F: JoltField> {
@@ -112,7 +48,7 @@ pub struct InnerSumcheck<F: JoltField> {
     prover_state: Option<InnerSumcheckProverState<F>>,
     #[allocative(skip)]
     key: Option<Arc<UniformSpartanKey<F>>>,
-    gamma: Option<F>,
+    gamma: F,
 }
 
 impl<F: JoltField> InnerSumcheck<F> {
@@ -183,7 +119,7 @@ impl<F: JoltField> InnerSumcheck<F> {
                 poly_z: MultilinearPolynomial::LargeScalars(poly_z),
             }),
             key: None,
-            gamma: None,
+            gamma,
         }
     }
 
@@ -212,7 +148,7 @@ impl<F: JoltField> InnerSumcheck<F> {
             input_claim,
             prover_state: None,
             key: Some(key),
-            gamma: Some(gamma),
+            gamma,
         }
     }
 }
@@ -300,7 +236,6 @@ impl<F: JoltField> SumcheckInstance<F> for InnerSumcheck<F> {
         r: &[F],
     ) -> F {
         let key = self.key.as_ref().expect("Key not initialized");
-        let gamma = self.gamma.expect("gamma not initialized");
 
         let accumulator = accumulator.as_ref().unwrap().borrow();
 
@@ -330,7 +265,7 @@ impl<F: JoltField> SumcheckInstance<F> for InnerSumcheck<F> {
         let eval_b = key.evaluate_uniform_b_at_point(rx_var, r);
         let eval_c = key.evaluate_uniform_c_at_point(rx_var, r);
 
-        let left_expected = eval_a + gamma * eval_b + gamma.square() * eval_c;
+        let left_expected = eval_a + self.gamma * eval_b + self.gamma.square() * eval_c;
 
         // Evaluate z(ry)
         let eval_z = key.evaluate_z_mle_with_segment_evals(&claimed_witness_evals, r, true);
@@ -670,9 +605,7 @@ pub struct SpartanDag<F: JoltField> {
 
 impl<F: JoltField> SpartanDag<F> {
     pub fn new<ProofTranscript: Transcript>(padded_trace_length: usize) -> Self {
-        let key = Arc::new(UniformSpartanProof::<F, ProofTranscript>::setup(
-            padded_trace_length,
-        ));
+        let key = Arc::new(UniformSpartanKey::new(padded_trace_length));
         Self { key }
     }
 }
@@ -708,15 +641,13 @@ where
             .borrow_mut()
             .challenge_vector(num_rounds_x);
 
-        let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) = {
-            let mut transcript = state_manager.transcript.borrow_mut();
-            UniformSpartanProof::<F, ProofTranscript>::prove_outer_sumcheck(
+        let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) =
+            SumcheckInstanceProof::<F, ProofTranscript>::prove_spartan_small_value::<NUM_SVO_ROUNDS>(
                 num_rounds_x,
                 &accessor,
                 &tau,
-                &mut transcript,
-            )
-        };
+                &mut state_manager.transcript.borrow_mut(),
+            );
 
         let outer_sumcheck_r: Vec<F> = outer_sumcheck_r.into_iter().rev().collect();
 

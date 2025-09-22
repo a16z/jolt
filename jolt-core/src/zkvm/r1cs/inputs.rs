@@ -8,28 +8,15 @@ use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::opening_proof::{OpeningId, SumcheckId};
-use crate::transcripts::Transcript;
 use crate::zkvm::instruction::{CircuitFlags, InstructionFlags, LookupQuery};
 use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 use crate::zkvm::JoltProverPreprocessing;
 
-use super::key::UniformSpartanKey;
-use super::spartan::UniformSpartanProof;
-
 use crate::field::{JoltField, OptimizedMul};
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::XLEN;
 use rayon::prelude::*;
 use std::fmt::Debug;
-use std::marker::PhantomData;
 use tracer::instruction::Cycle;
-
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct R1CSProof<F: JoltField, ProofTranscript: Transcript> {
-    pub key: UniformSpartanKey<F>,
-    pub proof: UniformSpartanProof<F, ProofTranscript>,
-    pub _marker: PhantomData<ProofTranscript>,
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum JoltR1CSInputs {
