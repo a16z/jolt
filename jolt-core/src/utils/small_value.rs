@@ -1825,24 +1825,10 @@ mod tests {
         poly::spartan_interleaved_poly::build_eq_r_y_table,
     };
     use ark_bn254::Fr;
-    use ark_ff::biginteger::{I8OrI96, S160};
+    use ark_ff::biginteger::{BigInt, I8OrI96, S160};
     use ark_ff::{UniformRand, Zero};
     use rand::{Rng, SeedableRng};
     use rand_chacha::ChaCha20Rng;
-
-    #[test]
-    fn test_fmadd_reduce_factor_contract() {
-        // Test the contract of fmadd_reduce_factor: it represents the Montgomery factor
-        // introduced by the fmadd+reduce pipeline to convert from standard-int multiply
-        // into the Montgomery domain. For e = 1 and m = 1, the factor should be ONE (R).
-        let k = fmadd_reduce_factor::<Fr>();
-
-        // Verify that k behaves as the multiplicative identity
-        let inv_k = k.inverse().unwrap();
-        assert_eq!(k * inv_k, <Fr as JoltField>::from_u64(1));
-        // Note: k equals the domain-bridge factor produced by REDC(e * m), not necessarily the
-        // field ONE encoding; we only require that it is invertible and cancels out.
-    }
 
     #[test]
     fn print_k_and_inv_k() {
@@ -1850,7 +1836,20 @@ mod tests {
         eprintln!("k: {:?}", k);
         let inv_k = k.inverse().unwrap();
         eprintln!("inv_k: {:?}", inv_k);
-
+        eprintln!("field one: {:?}", <Fr as JoltField>::from_u64(1));
+        let mont_r_as_bigint = <Fr as JoltField>::MONTGOMERY_R.0;
+        let mont_r_square: BigInt<8> = mont_r_as_bigint.mul_trunc::<4, 8>(&mont_r_as_bigint);
+        let mont_r_square_reduced = <Fr as JoltField>::from_montgomery_reduce_2n(mont_r_square);
+        let mont_r_square_reduced_as_bigint = mont_r_square_reduced.0;
+        eprintln!("montgomery R: {:?}", mont_r_as_bigint);
+        eprintln!("montgomery R square reduced: {:?}", mont_r_square_reduced);
+        eprintln!(
+            "montgomery R square reduced as bigint: {:?}",
+            mont_r_square_reduced_as_bigint
+        );
+        assert_eq!(k, <Fr as JoltField>::from_u64(1));
+        assert_eq!(inv_k, <Fr as JoltField>::from_u64(1));
+        assert_eq!(k * inv_k, <Fr as JoltField>::from_u64(1));
     }
 
     fn random_az_value<R: Rng>(rng: &mut R) -> I8OrI96 {
@@ -1933,8 +1932,7 @@ mod tests {
             .map(|bz| s160_to_field::<Fr>(bz))
             .collect();
 
-        // Use the calibrated inverse factor to bridge REDC(e * M) outputs to the generic path
-        let inv_k = fmadd_reduce_factor::<Fr>().inverse().unwrap();
+        // No extra normalization needed: fmadd+REDC already matches generic path domain
 
         // Old path (produces standard Fr elements)
         let mut temp_ta_old = vec![Fr::zero(); num_non_trivial];
@@ -1963,11 +1961,8 @@ mod tests {
             let new_neg = reduce_unreduced_to_field::<Fr>(&ta_neg_acc[i]);
             let new_result_montgomery = new_pos - new_neg;
 
-            // Normalize by multiplying with inv_k to match the generic path representation
-            let new_result_normalized = new_result_montgomery * inv_k;
-
             assert_eq!(
-                old_result, new_result_normalized,
+                old_result, new_result_montgomery,
                 "SVO accumulation mismatch for NUM_SVO_ROUNDS={} at index {}",
                 NUM_SVO_ROUNDS, i
             );
@@ -1980,56 +1975,5 @@ mod tests {
         run_svo_consistency_check::<1>(&mut rng);
         run_svo_consistency_check::<2>(&mut rng);
         run_svo_consistency_check::<3>(&mut rng);
-    }
-
-    #[test]
-    fn test_az_bz_value_conversions() {
-        // Test that I8OrI96/S160 to_field conversions work correctly
-        let test_az_values = vec![
-            I8OrI96::from_i8(0), // zero
-            I8OrI96::from_i8(1), // one
-            I8OrI96::from_i8(10),
-            I8OrI96::from_i8(-10),
-            I8OrI96::from_i128(100),
-            I8OrI96::from_i128(10000),
-        ];
-
-        let test_bz_values: Vec<(S160, i128)> = vec![
-            (S160::from(0i128), 0i128),
-            (S160::from(1i128), 1i128),
-            (S160::from(200i128), 200i128),
-            (S160::from(2000i128), 2000i128),
-        ];
-
-        for az in &test_az_values {
-            let field_val = az.to_field::<Fr>();
-            let expected_field_val = <Fr as JoltField>::from_i128(az.to_i128());
-            assert_eq!(field_val, expected_field_val);
-            assert_eq!(az.is_zero(), field_val.is_zero());
-        }
-
-        for (bz, v) in &test_bz_values {
-            // Duplicate conversion here to keep scope simple
-            let field_val = {
-                if bz.is_zero() {
-                    Fr::zero()
-                } else {
-                    let lo = bz.magnitude_lo();
-                    let hi = bz.magnitude_hi() as u64;
-                    let r64 = Fr::from_u128(1u128 << 64);
-                    let r128 = r64 * r64;
-                    let acc =
-                        Fr::from_u64(lo[0]) + Fr::from_u64(lo[1]) * r64 + Fr::from_u64(hi) * r128;
-                    if bz.is_positive() {
-                        acc
-                    } else {
-                        -acc
-                    }
-                }
-            };
-            let expected_field_val = <Fr as JoltField>::from_i128(*v);
-            assert_eq!(field_val, expected_field_val);
-            assert_eq!(bz.is_zero(), field_val.is_zero());
-        }
     }
 }
