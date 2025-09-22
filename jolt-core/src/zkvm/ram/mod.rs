@@ -15,7 +15,7 @@ use crate::{
         hamming_booleanity::HammingBooleanitySumcheck,
         hamming_weight::HammingWeightSumcheck,
         output_check::{OutputSumcheck, ValFinalSumcheck},
-        ra_virtual::RASumcheck,
+        ra_virtual::RaSumcheck,
         raf_evaluation::RafEvaluationSumcheck,
         read_write_checking::RamReadWriteChecking,
         val_evaluation::ValEvaluationSumcheck,
@@ -381,7 +381,7 @@ where
     ) -> Vec<Box<dyn SumcheckInstance<F>>> {
         let hamming_weight = HammingWeightSumcheck::new_prover(self.K, state_manager);
         let booleanity = BooleanitySumcheck::new_prover(self.K, state_manager);
-        let ra_virtual = RASumcheck::new_prover(self.K, state_manager);
+        let ra_virtual = RaSumcheck::new_prover(self.K, state_manager);
 
         #[cfg(feature = "allocative")]
         {
@@ -403,7 +403,7 @@ where
     ) -> Vec<Box<dyn SumcheckInstance<F>>> {
         let hamming_weight = HammingWeightSumcheck::new_verifier(self.K, state_manager);
         let booleanity = BooleanitySumcheck::new_verifier(self.K, state_manager);
-        let ra_virtual = RASumcheck::new_verifier(self.K, state_manager);
+        let ra_virtual = RaSumcheck::new_verifier(self.K, state_manager);
 
         vec![
             Box::new(hamming_weight),

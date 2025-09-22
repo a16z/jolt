@@ -13,7 +13,7 @@ use crate::{
             BIG_ENDIAN, LITTLE_ENDIAN,
         },
     },
-    subprotocols::sumcheck::{SumcheckInstance, SumcheckInstanceProof},
+    subprotocols::sumcheck::SumcheckInstance,
     transcripts::Transcript,
     utils::{math::Math, thread::unsafe_allocate_zero_vec},
     zkvm::dag::state_manager::StateManager,
@@ -317,13 +317,6 @@ pub struct RamReadWriteChecking<F: JoltField> {
     prover_state: Option<ReadWriteCheckingProverState<F>>,
     rv_claim: F,
     wv_claim: F,
-}
-
-#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
-pub struct RamReadWriteCheckingProof<F: JoltField, ProofTranscript: Transcript> {
-    sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
-    sumcheck_switch_index: usize,
-    pub claims: ReadWriteSumcheckClaims<F>,
 }
 
 impl<F: JoltField> RamReadWriteChecking<F> {

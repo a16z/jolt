@@ -18,24 +18,17 @@ use crate::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
     },
-    subprotocols::sumcheck::{SumcheckInstance, SumcheckInstanceProof},
+    subprotocols::sumcheck::SumcheckInstance,
     transcripts::Transcript,
     utils::math::Math,
 };
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
 
-#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct RAProof<F: JoltField, ProofTranscript: Transcript> {
-    pub ra_i_claims: Vec<F>,
-    pub sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
-}
-
 #[derive(Allocative)]
-pub struct RAProverState<F: JoltField> {
+pub struct RaProverState<F: JoltField> {
     /// `ra` polys to be constructed based addresses
     ra_i_polys: Vec<MultilinearPolynomial<F>>,
     /// eq poly
@@ -43,7 +36,7 @@ pub struct RAProverState<F: JoltField> {
 }
 
 #[derive(Allocative)]
-pub struct RASumcheck<F: JoltField> {
+pub struct RaSumcheck<F: JoltField> {
     rlc_coeffs: [F; 3],
     /// Random challenge r_cycle
     r_cycle: [Vec<F>; 3],
@@ -54,10 +47,10 @@ pub struct RASumcheck<F: JoltField> {
     d: usize,
     /// Length of the trace
     T: usize,
-    prover_state: Option<RAProverState<F>>,
+    prover_state: Option<RaProverState<F>>,
 }
 
-impl<F: JoltField> RASumcheck<F> {
+impl<F: JoltField> RaSumcheck<F> {
     #[tracing::instrument(skip_all, name = "RaVirtualization::new_prover")]
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         K: usize,
@@ -172,7 +165,7 @@ impl<F: JoltField> RASumcheck<F> {
             rlc_coeffs,
             ra_claim: combined_ra_claim,
             d,
-            prover_state: Some(RAProverState {
+            prover_state: Some(RaProverState {
                 ra_i_polys,
                 eq_poly,
             }),
@@ -268,7 +261,7 @@ impl<F: JoltField> RASumcheck<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstance<F> for RASumcheck<F> {
+impl<F: JoltField> SumcheckInstance<F> for RaSumcheck<F> {
     fn degree(&self) -> usize {
         self.d + 1
     }

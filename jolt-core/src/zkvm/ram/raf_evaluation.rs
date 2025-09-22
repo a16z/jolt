@@ -3,7 +3,6 @@ use std::{cell::RefCell, rc::Rc};
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
 
 use crate::{
@@ -20,19 +19,12 @@ use crate::{
             BIG_ENDIAN,
         },
     },
-    subprotocols::sumcheck::{SumcheckInstance, SumcheckInstanceProof},
+    subprotocols::sumcheck::SumcheckInstance,
     transcripts::Transcript,
     utils::{math::Math, thread::unsafe_allocate_zero_vec},
     zkvm::dag::state_manager::StateManager,
     zkvm::{ram::remap_address, witness::VirtualPolynomial},
 };
-
-#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
-pub struct RafEvaluationProof<F: JoltField, ProofTranscript: Transcript> {
-    sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
-    ra_claim: F,
-    raf_claim: F,
-}
 
 #[derive(Allocative)]
 pub struct RafEvaluationProverState<F: JoltField> {

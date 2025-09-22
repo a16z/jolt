@@ -15,7 +15,7 @@ use crate::{
         program_io_polynomial::ProgramIOPolynomial,
         range_mask_polynomial::RangeMaskPolynomial,
     },
-    subprotocols::sumcheck::{SumcheckInstance, SumcheckInstanceProof},
+    subprotocols::sumcheck::SumcheckInstance,
     transcripts::Transcript,
     utils::{expanding_table::ExpandingTable, math::Math},
     zkvm::{
@@ -27,7 +27,6 @@ use crate::{
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::RAM_START_ADDRESS;
 use rayon::prelude::*;
 use tracer::JoltDevice;
@@ -102,17 +101,6 @@ impl<F: JoltField> OutputSumcheckProverState<F> {
             eq_table,
         }
     }
-}
-
-/// Proves that the final RAM state is consistent with the claimed
-/// program output.
-#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
-pub struct OutputProof<F: JoltField, ProofTranscript: Transcript> {
-    output_sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
-    val_final_sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
-    /// Claimed evaluation Val_final(r_address) output by `OutputSumcheck`,
-    /// proven using `ValFinalSumcheck`
-    val_final_claim: F,
 }
 
 /// Sumcheck for the zero-check
