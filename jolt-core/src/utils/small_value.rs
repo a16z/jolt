@@ -1844,6 +1844,15 @@ mod tests {
         // field ONE encoding; we only require that it is invertible and cancels out.
     }
 
+    #[test]
+    fn print_k_and_inv_k() {
+        let k = fmadd_reduce_factor::<Fr>();
+        eprintln!("k: {:?}", k);
+        let inv_k = k.inverse().unwrap();
+        eprintln!("inv_k: {:?}", inv_k);
+
+    }
+
     fn random_az_value<R: Rng>(rng: &mut R) -> I8OrI96 {
         match rng.gen_range(0..5) {
             0 => I8OrI96::from_i8(rng.gen()),

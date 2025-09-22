@@ -687,85 +687,130 @@ pub fn compute_claimed_witness_evals<F: JoltField, PCS: CommitmentScheme<Field =
                 };
 
                 // 0: LeftInstructionInput (u64)
-                chunk_result[JoltR1CSInputs::LeftInstructionInput.to_index()] =
+                chunk_result[JoltR1CSInputs::LeftInstructionInput.to_index()] +=
                     left_u64.field_mul(*eq_rx_t);
                 // 1: RightInstructionInput (i128, really a s64)
-                chunk_result[JoltR1CSInputs::RightInstructionInput.to_index()] =
+                chunk_result[JoltR1CSInputs::RightInstructionInput.to_index()] +=
                     right_i128.field_mul(*eq_rx_t);
                 // 2: Product = left_u64 * right_i128
-                chunk_result[JoltR1CSInputs::Product.to_index()] = product_s128.field_mul(*eq_rx_t);
+                chunk_result[JoltR1CSInputs::Product.to_index()] +=
+                    product_s128.field_mul(*eq_rx_t);
                 // 3: WriteLookupOutputToRD = rd if flag else 0 (u8)
                 if flags[CircuitFlags::WriteLookupOutputToRD] {
-                    chunk_result[JoltR1CSInputs::WriteLookupOutputToRD.to_index()] =
+                    chunk_result[JoltR1CSInputs::WriteLookupOutputToRD.to_index()] +=
                         rd.field_mul(*eq_rx_t);
                 };
                 // 4: WritePCtoRD = rd if Jump else 0 (u8)
                 if flags[CircuitFlags::Jump] {
-                    chunk_result[JoltR1CSInputs::WritePCtoRD.to_index()] = rd.field_mul(*eq_rx_t);
+                    chunk_result[JoltR1CSInputs::WritePCtoRD.to_index()] += rd.field_mul(*eq_rx_t);
                 };
                 // 5: ShouldBranch = LookupOutput if Branch else 0 (u64)
                 if flags[CircuitFlags::Branch] {
-                    chunk_result[JoltR1CSInputs::ShouldBranch.to_index()] =
+                    chunk_result[JoltR1CSInputs::ShouldBranch.to_index()] +=
                         lookup_out_u64.field_mul(*eq_rx_t);
                 }
                 // 6: PC (u64)
-                chunk_result[JoltR1CSInputs::PC.to_index()] = pc_u64.field_mul(*eq_rx_t);
+                chunk_result[JoltR1CSInputs::PC.to_index()] += pc_u64.field_mul(*eq_rx_t);
                 // 7: UnexpandedPC (u64)
-                chunk_result[JoltR1CSInputs::UnexpandedPC.to_index()] =
+                chunk_result[JoltR1CSInputs::UnexpandedPC.to_index()] +=
                     unexp_pc_u64.field_mul(*eq_rx_t);
                 // 8: Rd (u8)
-                chunk_result[JoltR1CSInputs::Rd.to_index()] = rd.field_mul(*eq_rx_t);
+                chunk_result[JoltR1CSInputs::Rd.to_index()] += rd.field_mul(*eq_rx_t);
                 // 9: Imm (i128)
-                chunk_result[JoltR1CSInputs::Imm.to_index()] =
+                chunk_result[JoltR1CSInputs::Imm.to_index()] +=
                     norm.operands.imm.field_mul(*eq_rx_t);
                 // 10: RamAddress (u64)
                 let ram_addr_u64 = cycle.ram_access().address() as u64;
-                chunk_result[JoltR1CSInputs::RamAddress.to_index()] =
+                chunk_result[JoltR1CSInputs::RamAddress.to_index()] +=
                     ram_addr_u64.field_mul(*eq_rx_t);
                 // 11: Rs1Value (u64)
                 let rs1_u64 = cycle.rs1_read().1;
-                chunk_result[JoltR1CSInputs::Rs1Value.to_index()] = rs1_u64.field_mul(*eq_rx_t);
+                chunk_result[JoltR1CSInputs::Rs1Value.to_index()] += rs1_u64.field_mul(*eq_rx_t);
                 // 12: Rs2Value (u64)
                 let rs2_u64 = cycle.rs2_read().1;
-                chunk_result[JoltR1CSInputs::Rs2Value.to_index()] = rs2_u64.field_mul(*eq_rx_t);
+                chunk_result[JoltR1CSInputs::Rs2Value.to_index()] += rs2_u64.field_mul(*eq_rx_t);
                 // 13: RdWriteValue (u64)
-                chunk_result[JoltR1CSInputs::RdWriteValue.to_index()] = rdw.field_mul(*eq_rx_t);
+                chunk_result[JoltR1CSInputs::RdWriteValue.to_index()] += rdw.field_mul(*eq_rx_t);
                 // 14: RamReadValue (u64)
-                chunk_result[JoltR1CSInputs::RamReadValue.to_index()] =
+                chunk_result[JoltR1CSInputs::RamReadValue.to_index()] +=
                     ram_rd_u64.field_mul(*eq_rx_t);
                 // 15: RamWriteValue (u64)
-                chunk_result[JoltR1CSInputs::RamWriteValue.to_index()] =
+                chunk_result[JoltR1CSInputs::RamWriteValue.to_index()] +=
                     ram_wr_u64.field_mul(*eq_rx_t);
                 // 16: LeftLookupOperand (u64)
-                chunk_result[JoltR1CSInputs::LeftLookupOperand.to_index()] =
+                chunk_result[JoltR1CSInputs::LeftLookupOperand.to_index()] +=
                     ll_u64.field_mul(*eq_rx_t);
                 // 17: RightLookupOperand (u128)
-                chunk_result[JoltR1CSInputs::RightLookupOperand.to_index()] =
+                chunk_result[JoltR1CSInputs::RightLookupOperand.to_index()] +=
                     rl_u128.field_mul(*eq_rx_t);
                 // 18: NextUnexpandedPC (u64)
-                chunk_result[JoltR1CSInputs::NextUnexpandedPC.to_index()] =
+                chunk_result[JoltR1CSInputs::NextUnexpandedPC.to_index()] +=
                     next_unexp_pc_u64.field_mul(*eq_rx_t);
                 // 19: NextPC (u64)
-                chunk_result[JoltR1CSInputs::NextPC.to_index()] = next_pc_u64.field_mul(*eq_rx_t);
+                chunk_result[JoltR1CSInputs::NextPC.to_index()] += next_pc_u64.field_mul(*eq_rx_t);
                 // 20: LookupOutput (u64)
-                chunk_result[JoltR1CSInputs::LookupOutput.to_index()] =
+                chunk_result[JoltR1CSInputs::LookupOutput.to_index()] +=
                     lookup_out_u64.field_mul(*eq_rx_t);
                 // 21: NextIsNoop (bool)
                 if next_is_noop {
-                    chunk_result[JoltR1CSInputs::NextIsNoop.to_index()] = *eq_rx_t;
+                    chunk_result[JoltR1CSInputs::NextIsNoop.to_index()] += *eq_rx_t;
                 }
                 // 22: ShouldJump = Jump && !NextIsNoop (bool)
                 if flags[CircuitFlags::Jump] && !next_is_noop {
-                    chunk_result[JoltR1CSInputs::ShouldJump.to_index()] = *eq_rx_t;
+                    chunk_result[JoltR1CSInputs::ShouldJump.to_index()] += *eq_rx_t;
                 }
 
                 // 23..40: OpFlags (bool)
                 for flag in CircuitFlags::iter() {
                     if flags[flag] {
-                        chunk_result[JoltR1CSInputs::OpFlags(flag).to_index()] = *eq_rx_t;
+                        chunk_result[JoltR1CSInputs::OpFlags(flag).to_index()] += *eq_rx_t;
                     }
                 }
 
+                t += 1;
+            }
+            chunk_result
+        })
+        .reduce(
+            || [F::zero(); NUM_R1CS_INPUTS],
+            |mut acc, evals| {
+                for i in 0..NUM_R1CS_INPUTS {
+                    acc[i] += evals[i];
+                }
+                acc
+            },
+        )
+        .to_vec()
+}
+
+/// Straightforward reference implementation using a generic row accessor.
+/// Loops over all `JoltR1CSInputs` and accumulates Σ_t eq(r_cycle, t) * P_i(t).
+#[tracing::instrument(skip_all)]
+pub fn compute_claimed_witness_evals_generic<
+    F: JoltField,
+    A: WitnessRowAccessor<F, JoltR1CSInputs>,
+>(
+    r_cycle: &[F],
+    accessor: &A,
+) -> Vec<F> {
+    let eq_rx = EqPolynomial::evals(r_cycle);
+    debug_assert_eq!(eq_rx.len(), accessor.num_steps());
+
+    let num_chunks = rayon::current_num_threads().next_power_of_two();
+    let chunk_size = (eq_rx.len() / num_chunks).max(1);
+
+    eq_rx
+        .par_chunks(chunk_size)
+        .enumerate()
+        .map(|(chunk_index, eq_chunk)| {
+            let mut chunk_result = [F::zero(); NUM_R1CS_INPUTS];
+            let mut t = chunk_index * chunk_size;
+            for w in eq_chunk {
+                for input in ALL_R1CS_INPUTS {
+                    let idx = input.to_index();
+                    let v = accessor.value_at_field(input, t);
+                    chunk_result[idx] += v * *w;
+                }
                 t += 1;
             }
             chunk_result
@@ -816,212 +861,15 @@ where
     (unexpanded_pc.into(), pc.into(), is_noop.into())
 }
 
-// =====================================================================================
-// Streaming typed evaluation helpers (SVO types) co-located with witness accessor
-// =====================================================================================
-
-/// Generic evaluator: evaluates an LC over witness row into an I8OrI96.
-/// Uses small signed fast-path and falls back to sign/magnitude accumulation.
-// #[inline]
-// pub fn eval_az_generic<F: JoltField>(
-//     a_lc: &LC,
-//     accessor: &dyn WitnessRowAccessor<F, JoltR1CSInputs>,
-//     row: usize,
-// ) -> I8OrI96 {
-//     // Pass 1: small i8 fast path (Bool/U8 inputs only, i8 coeffs, no overflow)
-//     let mut acc_i8: i8 = 0;
-//     let mut small_ok = true;
-//     a_lc.for_each_term(|input_index, coeff| {
-//         if !small_ok {
-//             return;
-//         }
-//         // Fast-path requires coeff to be I8; otherwise bail out to generic path.
-//         let coeff_i8: i8 = match coeff.is_small {
-//             true => coeff.small_i8,
-//             false => {
-//                 small_ok = false;
-//                 return;
-//             }
-//         };
-//         // Only Bool/U8 are allowed to keep the i8 path (rv64 A-side small sums)
-//         let sc = accessor.value_at(input_index, row);
-//         let v_i8 = match sc {
-//             SmallScalar::Bool(b) => {
-//                 if b {
-//                     1
-//                 } else {
-//                     0
-//                 }
-//             }
-//             SmallScalar::U8(v) => v as i8,
-//             _ => {
-//                 small_ok = false;
-//                 return;
-//             }
-//         };
-//         let (prod, of1) = v_i8.overflowing_mul(coeff_i8);
-//         let (sum, of2) = acc_i8.overflowing_add(prod);
-//         acc_i8 = sum;
-//         if of1 || of2 {
-//             small_ok = false;
-//         }
-//     });
-//     if small_ok {
-//         if let Some(cst) = a_lc.const_term() {
-//             // For Az constraints, constants are expected to be I8; if not, bail to generic.
-//             if cst.is_small {
-//                 let c8 = cst.small_i8;
-//                 let (sum, of) = acc_i8.overflowing_add(c8);
-//                 acc_i8 = sum;
-//                 if of {
-//                     small_ok = false;
-//                 }
-//             } else {
-//                 small_ok = false;
-//             }
-//         }
-//     }
-//     if small_ok {
-//         return I8OrI96::I8(acc_i8);
-//     }
-
-//     // Pass 2: sign-aware u64 magnitude accumulation (rv64-compatible integer LC semantics)
-//     let mut mag: u64 = 0;
-//     let mut sign: bool = true; // true => positive
-//     a_lc.for_each_term(|input_index, coeff| {
-//         let sc = accessor.value_at(input_index, row);
-//         let v_i128 = sc.as_i128();
-//         let v_mag_u128 = v_i128.unsigned_abs();
-//         let v_mag_u64 = if v_mag_u128 > u64::MAX as u128 {
-//             u64::MAX
-//         } else {
-//             v_mag_u128 as u64
-//         };
-//         let c_i128 = coeff.to_i128();
-//         let term_mag = v_mag_u64.saturating_mul(c_i128.unsigned_abs() as u64);
-//         let val_pos = v_i128 >= 0;
-//         let coeff_pos = c_i128 >= 0;
-//         let term_pos = val_pos == coeff_pos; // sign(product) positive if signs equal
-//         let (new_mag, new_pos) = add_with_sign_u64(mag, sign, term_mag, term_pos);
-//         mag = new_mag;
-//         sign = new_pos;
-//     });
-//     if let Some(cst) = a_lc.const_term() {
-//         let cst_i128 = cst.to_i128();
-//         let c_mag = if cst_i128.unsigned_abs() > u64::MAX as u128 {
-//             u64::MAX
-//         } else {
-//             cst_i128.unsigned_abs() as u64
-//         };
-//         let c_pos = cst_i128 >= 0;
-//         let (new_mag, new_pos) = add_with_sign_u64(mag, sign, c_mag, c_pos);
-//         mag = new_mag;
-//         sign = new_pos;
-//     }
-//     I8OrI96::S64(SignedBigInt::from_u64_with_sign(mag, sign))
-// }
-
-// /// Generic evaluator: evaluates an LC over witness row into a S160.
-// /// Always accumulates into 192-bit signed magnitude (SignedBigInt<3>).
-// #[inline]
-// pub fn eval_bz_generic<F: JoltField>(
-//     b_lc: &LC,
-//     accessor: &dyn WitnessRowAccessor<F, JoltR1CSInputs>,
-//     row: usize,
-// ) -> S160 {
-//     // Try S64 fast path: accumulate using u64 magnitude with sign if all term products fit in u64
-//     let mut s64_mag: u64 = 0;
-//     let mut s64_pos: bool = true;
-//     let mut fits_s64 = true;
-//     b_lc.for_each_term(|input_index, coeff| {
-//         if !fits_s64 {
-//             return;
-//         }
-//         let sc = accessor.value_at(input_index, row);
-//         // Extract magnitude and sign of witness with minimal conversions.
-//         let (v_mag_u64, v_nonneg) = match sc {
-//             SmallScalar::Bool(b) => (if b { 1u64 } else { 0u64 }, true),
-//             SmallScalar::U8(v) => (v as u64, true),
-//             SmallScalar::U64(v) => (v, true),
-//             SmallScalar::I64(v) => (v.unsigned_abs(), v >= 0),
-//             SmallScalar::I128(v) => {
-//                 // rv64 semantics: B-side integer LC uses the signed value
-//                 let mag = v.unsigned_abs();
-//                 if mag > u64::MAX as u128 {
-//                     fits_s64 = false;
-//                     return;
-//                 }
-//                 (mag as u64, v >= 0)
-//             }
-//             SmallScalar::U128(v) => {
-//                 if v > u64::MAX as u128 {
-//                     fits_s64 = false;
-//                     return;
-//                 }
-//                 (v as u64, true)
-//             }
-//             SmallScalar::S128(v) => (v.magnitude, v.is_positive),
-//         };
-//         let (c_mag_u64, c_nonneg) = match coeff {
-//             _ => {
-//                 let cv = coeff.to_i128();
-//                 let c_mag = cv.unsigned_abs();
-//                 if c_mag > u64::MAX as u128 {
-//                     fits_s64 = false;
-//                     return;
-//                 }
-//                 (c_mag as u64, cv >= 0)
-//             }
-//         };
-//         let prod_mag_u128 = (v_mag_u64 as u128) * (c_mag_u64 as u128);
-//         if prod_mag_u128 > u64::MAX as u128 {
-//             fits_s64 = false;
-//             return;
-//         }
-//         let prod_mag_u64 = prod_mag_u128 as u64;
-//         let term_pos = v_nonneg == c_nonneg;
-//         let (new_mag, new_pos) = add_with_sign_u64(s64_mag, s64_pos, prod_mag_u64, term_pos);
-//         s64_mag = new_mag;
-//         s64_pos = new_pos;
-//     });
-//     if fits_s64 {
-//         if let Some(cst) = b_lc.const_term() {
-//             let cv = cst.to_i128();
-//             let c_mag = cv.unsigned_abs();
-//             if c_mag > u64::MAX as u128 {
-//                 fits_s64 = false;
-//             } else {
-//                 let (new_mag, new_pos) = add_with_sign_u64(s64_mag, s64_pos, c_mag as u64, cv >= 0);
-//                 s64_mag = new_mag;
-//                 s64_pos = new_pos;
-//             }
-//         }
-//     }
-//     if fits_s64 {
-//         return S160::S64(SignedBigInt::from_u64_with_sign(s64_mag, s64_pos));
-//     }
-
-//     // Fallback: S128 accumulation (rv64 semantics for wider products)
-//     let mut acc = SignedBigInt::<2>::zero();
-//     b_lc.for_each_term(|input_index, coeff| {
-//         let sc = accessor.value_at(input_index, row);
-//         // rv64: use signed integer value directly
-//         let v_i128 = sc.as_i128();
-//         let v = SignedBigInt::<2>::from_i128(v_i128);
-//         let c = SignedBigInt::<2>::from_i128(coeff.to_i128());
-//         let term = v.mul_trunc::<2, 2>(&c);
-//         acc = acc.add(term);
-//     });
-//     if let Some(cst) = b_lc.const_term() {
-//         let c = SignedBigInt::<2>::from_i128(cst.to_i128());
-//         acc = acc.add(c);
-//     }
-//     S160::S128(acc)
-// }
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::field::tracked_ark::TrackedFr;
+    use crate::poly::commitment::mock::MockCommitScheme;
+    use crate::utils::math::Math;
+    use crate::zkvm::Jolt;
+    use common::jolt_device::{MemoryConfig, MemoryLayout};
+    use tracer::instruction::{RV32IMCycle, RV32IMInstruction};
 
     impl JoltR1CSInputs {
         /// Alternative const implementation that searches through ALL_R1CS_INPUTS array.
@@ -1139,6 +987,51 @@ mod tests {
                 var.to_index(),
                 var.find_index_via_array_search()
             );
+        }
+    }
+
+    #[test]
+    fn claimed_witness_evals_generic_matches_optimized() {
+        // Minimal bytecode (one no-op); preprocessing will prepend/pad as needed
+        let bytecode = vec![RV32IMInstruction::NoOp];
+
+        // Build a trivial memory layout (program_size must be set)
+        let mem_layout = MemoryLayout::new(&MemoryConfig {
+            program_size: Some(64),
+            ..Default::default()
+        });
+
+        // Use the existing preprocessing constructor to get shared bytecode mapping
+        let shared = crate::zkvm::JoltRV32IM::shared_preprocess(
+            bytecode.clone(),
+            mem_layout.clone(),
+            vec![],
+        );
+        let preprocessing = crate::zkvm::JoltProverPreprocessing::<TrackedFr, MockCommitScheme<TrackedFr>> {
+            generators: <MockCommitScheme<TrackedFr> as crate::poly::commitment::commitment_scheme::CommitmentScheme>::setup_prover(8),
+            shared,
+        };
+
+        // Create a tiny trace of pure no-ops and pad to power of two
+        let mut trace: Vec<RV32IMCycle> = vec![RV32IMCycle::NoOp; 3];
+        let padded_len = trace.len().next_power_of_two();
+        trace.resize(padded_len, RV32IMCycle::NoOp);
+
+        // Accessor over this trace
+        let accessor = TraceWitnessAccessor::new(&preprocessing, &trace);
+
+        // Choose a random r_cycle of correct dimension
+        let r_cycle: Vec<_> = (0..padded_len.log_2())
+            .map(|i| TrackedFr::from_u64((i as u64) + 3))
+            .collect();
+
+        // Compute both versions
+        let fast = compute_claimed_witness_evals(&r_cycle, &accessor);
+        let slow = compute_claimed_witness_evals_generic(&r_cycle, &accessor);
+
+        assert_eq!(fast.len(), slow.len());
+        for (i, (a, b)) in fast.iter().zip(slow.iter()).enumerate() {
+            assert_eq!(*a, *b, "Mismatch at input index {}", i);
         }
     }
 }

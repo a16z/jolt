@@ -101,7 +101,7 @@ rand_distr = "0.4.3"
 anyhow = "1.0.97"
 derive_more = { version = "2.0.1", features = ["from"] }
 paste = "1.0.15"
-dory = { git = "https://github.com/quangvdao/sxt-dory", branch = "feat/return_row_commitments" }
+dory = { git = "https://github.com/spaceandtimefdn/sxt-dory", branch = "feat/fewer-reductions" }
 lazy_static = "1.5.0"
 allocative = { git = "https://github.com/facebookexperimental/allocative", rev = "85b773d85d526d068ce94724ff7a7b81203fc95e" }
 inferno = { version = "0.12.3", optional = true }

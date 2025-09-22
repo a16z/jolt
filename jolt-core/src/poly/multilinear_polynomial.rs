@@ -659,6 +659,14 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
 
                 poly.split_eq_evaluate(r, &eq_one, &eq_two)
             }
+            MultilinearPolynomial::S128Scalars(poly) => {
+                let m = r.len() / 2;
+                let (r2, r1) = r.split_at(m);
+                let (eq_one, eq_two) =
+                    rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
+
+                poly.split_eq_evaluate(r, &eq_one, &eq_two)
+            }
             MultilinearPolynomial::OneHot(poly) => poly.evaluate(r),
             _ => unimplemented!("Unsupported MultilinearPolynomial variant"),
         }
@@ -714,6 +722,10 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
                                     z.field_mul(eq2_val)
                                 }
                                 MultilinearPolynomial::U128Scalars(poly) => {
+                                    let z = poly.coeffs[idx];
+                                    z.field_mul(eq2_val)
+                                }
+                                MultilinearPolynomial::S128Scalars(poly) => {
                                     let z = poly.coeffs[idx];
                                     z.field_mul(eq2_val)
                                 }

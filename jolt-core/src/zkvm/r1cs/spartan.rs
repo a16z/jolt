@@ -22,8 +22,9 @@ use crate::zkvm::dag::stage::SumcheckStages;
 use crate::zkvm::dag::state_manager::{ProofData, ProofKeys, StateManager};
 use crate::zkvm::instruction::CircuitFlags;
 use crate::zkvm::r1cs::inputs::{
-    compute_claimed_witness_evals, generate_pc_noop_witnesses, JoltR1CSInputs,
-    TraceWitnessAccessor, WitnessRowAccessor, ALL_R1CS_INPUTS, COMMITTED_R1CS_INPUTS,
+    compute_claimed_witness_evals, compute_claimed_witness_evals_generic,
+    generate_pc_noop_witnesses, JoltR1CSInputs, TraceWitnessAccessor, WitnessRowAccessor,
+    ALL_R1CS_INPUTS, COMMITTED_R1CS_INPUTS,
 };
 use crate::zkvm::r1cs::key::UniformSpartanKey;
 use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
@@ -712,8 +713,32 @@ where
 
         let (r_cycle, _rx_var) = outer_sumcheck_r.split_at(num_cycles_bits);
 
-        // Compute claimed witness evals at r_cycle via streaming
-        let claimed_witness_evals = compute_claimed_witness_evals::<F, PCS>(r_cycle, &accessor);
+        // Compute claimed witness evals at r_cycle via streaming (fast)
+        let claimed_witness_evals = {
+            let _guard = span!(Level::INFO, "claimed_witness_evals_fast").entered();
+            compute_claimed_witness_evals::<F, PCS>(r_cycle, &accessor)
+        };
+
+        // Cross-check against generic accessor-based evaluation on real traces (reference)
+        let claimed_witness_evals_generic = {
+            let _guard = span!(Level::INFO, "claimed_witness_evals_generic").entered();
+            compute_claimed_witness_evals_generic::<F, _>(r_cycle, &accessor)
+        };
+        debug_assert_eq!(
+            claimed_witness_evals.len(),
+            claimed_witness_evals_generic.len()
+        );
+        for (i, (a, b)) in claimed_witness_evals
+            .iter()
+            .zip(claimed_witness_evals_generic.iter())
+            .enumerate()
+        {
+            assert_eq!(
+                *a, *b,
+                "claimed_witness_evals mismatch at index {} (input {:?})",
+                i, ALL_R1CS_INPUTS[i]
+            );
+        }
 
         // Only non-virtual (i.e. committed) polynomials' openings are
         // proven using the PCS opening proof, which we add for future opening proof here
