@@ -1,4 +1,4 @@
-use ark_ff::{prelude::*, BigInt, PrimeField, UniformRand};
+use ark_ff::{prelude::*, AdditiveGroup, BigInt, PrimeField, UniformRand};
 use rayon::prelude::*;
 
 use crate::utils::thread::unsafe_allocate_zero_vec;
@@ -37,14 +37,23 @@ impl JoltField for ark_bn254::Fr {
 
         for i in 0..2 {
             let bitshift = 16 * i;
-            let unit = <Self as ark_ff::PrimeField>::from_u64::<5>(1 << bitshift).unwrap();
+            let unit = <Self as JoltField>::from_u64(1 << bitshift);
             lookup_tables[i] = (0..(1 << 16))
                 .into_par_iter()
-                .map(|j| unit * <Self as ark_ff::PrimeField>::from_u64::<5>(j).unwrap())
+                .map(|j| unit * <Self as JoltField>::from_u64(j))
                 .collect();
         }
 
         lookup_tables
+    }
+
+    #[inline]
+    fn from_bool(val: bool) -> Self {
+        if val {
+            Self::one()
+        } else {
+            Self::zero()
+        }
     }
 
     #[inline]
@@ -184,11 +193,19 @@ impl JoltField for ark_bn254::Fr {
             Self::zero()
         } else if n == 1 {
             *self
-        } else if self.is_one() {
-            <Self as JoltField>::from_u64(n)
         } else {
             ark_ff::Fp::mul_u64::<5>(*self, n)
         }
+    }
+
+    #[inline(always)]
+    fn mul_i64(&self, n: i64) -> Self {
+        ark_ff::Fp::mul_i64::<5>(*self, n)
+    }
+
+    #[inline(always)]
+    fn mul_u128(&self, n: u128) -> Self {
+        ark_ff::Fp::mul_u128::<5, 6>(*self, n)
     }
 
     #[inline(always)]
@@ -197,24 +214,92 @@ impl JoltField for ark_bn254::Fr {
             Self::zero()
         } else if n == 1 {
             *self
-        } else if self.is_one() {
-            <Self as JoltField>::from_i128(n)
         } else {
             ark_ff::Fp::mul_i128::<5, 6>(*self, n)
         }
     }
 
-    #[inline(always)]
-    fn mul_u128(&self, n: u128) -> Self {
-        ark_ff::Fp::mul_u128::<5, 6>(*self, n)
+    #[inline]
+    fn linear_combination_u64(pairs: &[(Self, u64)], add_terms: &[Self]) -> Self {
+        let mut tmp = ark_ff::BigInt::<4>::mul_u64_w_carry::<5>(&pairs[0].0 .0, pairs[0].1);
+        for (a, b) in &pairs[1..] {
+            let carry = tmp.add_with_carry(&ark_ff::BigInt::<4>::mul_u64_w_carry::<5>(&a.0, *b));
+            debug_assert!(!carry, "spurious carry in linear_combination_u64");
+        }
+
+        // Add the additional terms that don't need multiplication
+        let mut result = ark_ff::Fp::from_unchecked_nplus1(tmp);
+        for term in add_terms {
+            result += *term;
+        }
+        result
+    }
+
+    #[inline]
+    fn linear_combination_i64(
+        pos: &[(Self, u64)],
+        neg: &[(Self, u64)],
+        pos_add: &[Self],
+        neg_add: &[Self],
+    ) -> Self {
+        // unreduced linear combination of positive and negative terms
+        let mut pos_lc = if !pos.is_empty() {
+            let mut tmp = ark_ff::BigInt::<4>::mul_u64_w_carry::<5>(&pos[0].0 .0, pos[0].1);
+            for (a, b) in &pos[1..] {
+                let carry =
+                    tmp.add_with_carry(&ark_ff::BigInt::<4>::mul_u64_w_carry::<5>(&a.0, *b));
+                debug_assert!(!carry, "spurious carry in linear_combination_i64");
+            }
+            tmp
+        } else {
+            ark_ff::BigInt::<5>::zero()
+        };
+
+        let mut neg_lc = if !neg.is_empty() {
+            let mut tmp = ark_ff::BigInt::<4>::mul_u64_w_carry::<5>(&neg[0].0 .0, neg[0].1);
+            for (a, b) in &neg[1..] {
+                let carry =
+                    tmp.add_with_carry(&ark_ff::BigInt::<4>::mul_u64_w_carry::<5>(&a.0, *b));
+                debug_assert!(!carry, "spurious carry in linear_combination_i64");
+            }
+            tmp
+        } else {
+            ark_ff::BigInt::<5>::zero()
+        };
+
+        // Compute the difference of the linear combinations
+        let diff = match pos_lc.cmp(&neg_lc) {
+            std::cmp::Ordering::Greater => {
+                let borrow = pos_lc.sub_with_borrow(&neg_lc);
+                debug_assert!(!borrow, "spurious borrow in linear_combination_i64");
+                ark_ff::Fp::from_unchecked_nplus1(pos_lc)
+            }
+            std::cmp::Ordering::Less => {
+                let borrow = neg_lc.sub_with_borrow(&pos_lc);
+                debug_assert!(!borrow, "spurious borrow in linear_combination_i64");
+                *ark_ff::Fp::from_unchecked_nplus1(neg_lc).neg_in_place()
+            }
+            std::cmp::Ordering::Equal => ark_ff::Fp::zero(),
+        };
+
+        // Add the positive and negative add terms
+        let mut result = diff;
+        for term in pos_add {
+            result += *term;
+        }
+        for term in neg_add {
+            result -= *term;
+        }
+        result
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::field::JoltField;
     use ark_bn254::Fr;
     use ark_std::test_rng;
+    use ark_std::One;
     use rand_chacha::rand_core::RngCore;
 
     #[test]
@@ -222,13 +307,19 @@ mod tests {
         let mut rng = test_rng();
         for _ in 0..256 {
             let x = rng.next_u64();
-            assert_eq!(<Fr as JoltField>::from_u64(x), Fr::one().mul_u64::<5>(x));
+            assert_eq!(
+                <Fr as JoltField>::from_u64(x),
+                JoltField::mul_u64(&Fr::one(), x)
+            );
         }
 
         for _ in 0..256 {
             let x = rng.next_u64();
             let y = Fr::random(&mut rng);
-            assert_eq!(y * <Fr as JoltField>::from_u64(x), y.mul_u64::<5>(x));
+            assert_eq!(
+                y * <Fr as JoltField>::from_u64(x),
+                JoltField::mul_u64(&y, x)
+            );
         }
     }
 }

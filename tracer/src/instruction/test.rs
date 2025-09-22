@@ -49,7 +49,7 @@ use common::constants::RISCV_REGISTER_COUNT;
 
 use rand::{rngs::StdRng, SeedableRng};
 
-use super::{RISCVCycle, RV32IMCycle};
+use super::{Cycle, RISCVCycle};
 
 pub const TEST_MEMORY_CAPACITY: u64 = 1024 * 1024;
 
@@ -84,7 +84,7 @@ fn test_rng() -> StdRng {
 
 pub fn inline_sequence_trace_test<I: RISCVInstruction + RISCVTrace + Copy>()
 where
-    RV32IMCycle: From<RISCVCycle<I>>,
+    Cycle: From<RISCVCycle<I>>,
 {
     let mut rng = test_rng();
     let mut non_panic = 0;

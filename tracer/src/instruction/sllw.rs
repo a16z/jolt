@@ -9,8 +9,8 @@ use crate::{
 
 use super::virtual_sign_extend_word::VirtualSignExtendWord;
 use super::{
-    format::format_r::FormatR, mul::MUL, virtual_pow2_w::VirtualPow2W, RISCVInstruction,
-    RISCVTrace, RV32IMCycle, RV32IMInstruction,
+    format::format_r::FormatR, mul::MUL, virtual_pow2_w::VirtualPow2W, Cycle, Instruction,
+    RISCVInstruction, RISCVTrace,
 };
 
 declare_riscv_instr!(
@@ -33,7 +33,7 @@ impl SLLW {
 }
 
 impl RISCVTrace for SLLW {
-    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
         let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
@@ -46,7 +46,7 @@ impl RISCVTrace for SLLW {
         &self,
         allocator: &VirtualRegisterAllocator,
         xlen: Xlen,
-    ) -> Vec<RV32IMInstruction> {
+    ) -> Vec<Instruction> {
         let v_pow2 = allocator.allocate();
 
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);

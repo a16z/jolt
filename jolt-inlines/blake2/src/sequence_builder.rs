@@ -18,7 +18,7 @@ use tracer::instruction::sub::SUB;
 use tracer::instruction::virtual_xor_rot::{
     VirtualXORROT16, VirtualXORROT24, VirtualXORROT32, VirtualXORROT63,
 };
-use tracer::instruction::RV32IMInstruction;
+use tracer::instruction::Instruction;
 use tracer::utils::inline_helpers::{InstrAssembler, Value::Imm, Value::Reg};
 use tracer::utils::virtual_registers::VirtualRegisterGuard;
 
@@ -59,7 +59,7 @@ impl Blake2SequenceBuilder {
         }
     }
 
-    fn build(mut self) -> Vec<RV32IMInstruction> {
+    fn build(mut self) -> Vec<Instruction> {
         self.load_hash_state();
         self.load_message_blocks();
         self.load_counter_and_is_final();
@@ -73,7 +73,8 @@ impl Blake2SequenceBuilder {
 
         self.finalize_state();
         self.store_state();
-        self.asm.finalize_inline(NEEDED_REGISTERS)
+        drop(self.vr);
+        self.asm.finalize_inline()
     }
 
     fn load_hash_state(&mut self) {
@@ -254,7 +255,7 @@ impl Blake2SequenceBuilder {
 pub fn blake2b_inline_sequence_builder(
     asm: InstrAssembler,
     operands: FormatInline,
-) -> Vec<RV32IMInstruction> {
+) -> Vec<Instruction> {
     let builder = Blake2SequenceBuilder::new(asm, operands);
     builder.build()
 }

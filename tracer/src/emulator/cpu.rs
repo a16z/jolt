@@ -7,7 +7,7 @@ use self::fnv::FnvHashMap;
 use alloc::collections::btree_map::BTreeMap as FnvHashMap;
 use common::constants::REGISTER_COUNT;
 
-use crate::instruction::{uncompress_instruction, RV32IMCycle, RV32IMInstruction};
+use crate::instruction::{uncompress_instruction, Cycle, Instruction};
 use crate::utils::virtual_registers::VirtualRegisterAllocator;
 
 use super::mmu::{AddressingMode, Mmu};
@@ -98,9 +98,9 @@ pub struct Cpu {
     is_reservation_set: bool,
     _dump_flag: bool,
     unsigned_data_mask: u64,
-    // pub trace: Vec<RV32IMCycle>,
+    // pub trace: Vec<Cycle>,
     pub trace_len: usize,
-    executed_instrs: u64, // “real” RV32IM cycles
+    executed_instrs: u64, // “real” RV64IMAC cycles
     active_markers: FnvHashMap<u32, ActiveMarker>,
     pub vr_allocator: VirtualRegisterAllocator,
 }
@@ -337,7 +337,7 @@ impl Cpu {
     }
 
     /// Runs program one cycle. Fetch, decode, and execution are completed in a cycle so far.
-    pub fn tick(&mut self, trace: Option<&mut Vec<RV32IMCycle>>) {
+    pub fn tick(&mut self, trace: Option<&mut Vec<Cycle>>) {
         let instruction_address = self.pc;
         match self.tick_operate(trace) {
             Ok(()) => {}
@@ -354,7 +354,7 @@ impl Cpu {
     }
 
     // @TODO: Rename?
-    fn tick_operate(&mut self, trace: Option<&mut Vec<RV32IMCycle>>) -> Result<(), Trap> {
+    fn tick_operate(&mut self, trace: Option<&mut Vec<Cycle>>) -> Result<(), Trap> {
         if self.wfi {
             if (self.read_csr_raw(CSR_MIE_ADDRESS) & self.read_csr_raw(CSR_MIP_ADDRESS)) != 0 {
                 self.wfi = false;
@@ -376,7 +376,7 @@ impl Cpu {
             }
         };
 
-        let instr = RV32IMInstruction::decode(word, instruction_address, is_compressed)
+        let instr = Instruction::decode(word, instruction_address, is_compressed)
             .unwrap_or_else(|e| {
                 panic!(
                     "Failed to decode instruction: word=0x{word:08x}, address=0x{instruction_address:x}, compressed={is_compressed}: {e}"
@@ -953,7 +953,7 @@ impl Cpu {
             }
         };
 
-        let inst = match RV32IMInstruction::decode(word, self.pc, is_compressed) {
+        let inst = match Instruction::decode(word, self.pc, is_compressed) {
             Ok(inst) => inst,
             Err(e) => {
                 return format!(
@@ -1005,7 +1005,7 @@ impl Cpu {
                     let real = self.executed_instrs - mark.start_instrs;
                     let virt = self.trace_len - mark.start_trace_len;
                     println!(
-                        "\"{}\": {} RV32IM cycles, {} virtual cycles",
+                        "\"{}\": {} RV64IMAC cycles, {} virtual cycles",
                         mark.label, real, virt
                     );
                 } else {
@@ -1054,7 +1054,7 @@ impl Drop for Cpu {
             );
             for (ptr, marker) in &self.active_markers {
                 println!(
-                    "  - '{}' (at ptr: 0x{:x}), started at {} RV32IM cycles",
+                    "  - '{}' (at ptr: 0x{:x}), started at {} RV64IMAC cycles",
                     marker.label, ptr, marker.start_instrs
                 );
             }

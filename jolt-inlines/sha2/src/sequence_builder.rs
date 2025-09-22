@@ -1,9 +1,7 @@
 use core::array;
 
 use tracer::{
-    instruction::{
-        andn::ANDN, format::format_inline::FormatInline, lw::LW, sw::SW, RV32IMInstruction,
-    },
+    instruction::{andn::ANDN, format::format_inline::FormatInline, lw::LW, sw::SW, Instruction},
     utils::{
         inline_helpers::{
             InstrAssembler,
@@ -30,14 +28,6 @@ pub const K: [u64; 64] = [
     0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
 ];
 
-/// Number of virtual registers needed for SHA256 computation
-/// Layout:
-/// - 0..7:   Working variables A-H (rotated during rounds)
-/// - 8..23:  Message schedule W[0..15]
-/// - 24..27: Temporary registers (t1, t2, scratch space)
-/// - 28..31: Initial E-H values when using custom IV
-pub const NEEDED_REGISTERS: u8 = 32;
-
 /// Builds assembly sequence for SHA256 compression
 /// Expects A..H to be in RAM at location rs1..rs1+8 (also where output is written)
 /// Expects input words to be in RAM at location rs2..rs2+16
@@ -46,8 +36,13 @@ struct Sha256SequenceBuilder {
     asm: InstrAssembler,
     /// Round id
     round: i32,
-    /// Virtual registers used by the sequence
-    vr: [VirtualRegisterGuard; NEEDED_REGISTERS as usize],
+    /// Working state registers A-H
+    state: [VirtualRegisterGuard; 8],
+    /// Message schedule W[0..15] (16 registers)
+    message: [VirtualRegisterGuard; 16],
+    /// Initial state values for final addition (8 registers, only used when !initial)
+    iv: Vec<VirtualRegisterGuard>,
+    /// Operands
     operands: FormatInline,
     /// Whether this is the initial compression (use BLOCK constants)
     initial: bool,
@@ -55,35 +50,41 @@ struct Sha256SequenceBuilder {
 
 impl Sha256SequenceBuilder {
     fn new(asm: InstrAssembler, operands: FormatInline, initial: bool) -> Self {
-        let vr = array::from_fn(|_| asm.allocator.allocate_for_inline());
+        let state = array::from_fn(|_| asm.allocator.allocate_for_inline());
+        let message = array::from_fn(|_| asm.allocator.allocate_for_inline());
+        let iv = if initial {
+            vec![]
+        } else {
+            (0..8)
+                .map(|_| asm.allocator.allocate_for_inline())
+                .collect()
+        };
+
         Sha256SequenceBuilder {
             asm,
             round: 0,
-            vr,
+            state,
+            message,
+            iv,
             operands,
             initial,
         }
     }
 
     /// Loads and runs all SHA256 rounds
-    fn build(mut self) -> Vec<RV32IMInstruction> {
+    fn build(mut self) -> Vec<Instruction> {
         if !self.initial {
             // Load initial hash values from memory when using custom IV
-            // A..D loaded into registers 0..3 (will be used immediately)
-            // E..H loaded into registers 28..31 (preserved until needed)
-            (0..4).for_each(|i| {
+            // Load all A-H into initial_state registers (used both for initial values and final addition)
+            (0..8).for_each(|i| {
                 self.asm
-                    .emit_ld::<LW>(*self.vr[i as usize], self.operands.rs1, i * 4)
-            });
-            (0..4).for_each(|i| {
-                self.asm
-                    .emit_ld::<LW>(*self.vr[(i + 28) as usize], self.operands.rs1, (i + 4) * 4)
+                    .emit_ld::<LW>(*self.iv[i], self.operands.rs1, (i * 4) as i64)
             });
         }
-        // Load input words into registers 8..23
+        // Load input words into message registers
         (0..16).for_each(|i| {
             self.asm
-                .emit_ld::<LW>(*self.vr[(i + 8) as usize], self.operands.rs2, i * 4)
+                .emit_ld::<LW>(*self.message[i], self.operands.rs2, (i * 4) as i64)
         });
         // Run 64 rounds
         (0..64).for_each(|_| self.round());
@@ -96,28 +97,26 @@ impl Sha256SequenceBuilder {
             self.asm
                 .emit_s::<SW>(self.operands.rs1, src, (i as i64) * 4);
         }
-        self.asm.finalize_inline(NEEDED_REGISTERS)
+        // Total allocated: 8 (state) + 16 (message) + 8 (initial_state) + 4 (temps per round) = 36
+        // The temps are allocated/deallocated per round, but we need to reserve space for them
+        drop(self.state);
+        drop(self.message);
+        drop(self.iv);
+        self.asm.finalize_inline()
     }
 
     /// Adds IV to the final hash value to produce output
     fn final_add_iv(&mut self) {
         if !self.initial {
-            // We have initial values E, F, G, H stored in the end registers, but we didn't have
-            // enough space for A, B, C, D, so we need to load them from memory. We can load them
-            // into space that was used for t1, t2, ss, ss2. (technically there's no preference,
-            // but it just keeps those in order).
-            (0..4).for_each(|i| {
-                self.asm
-                    .emit_ld::<LW>(*self.vr[24 + i as usize], self.operands.rs1, i * 4)
-            });
-            self.asm.add(self.vri('A'), Reg(*self.vr[24]), self.vr('A'));
-            self.asm.add(self.vri('B'), Reg(*self.vr[25]), self.vr('B'));
-            self.asm.add(self.vri('C'), Reg(*self.vr[26]), self.vr('C'));
-            self.asm.add(self.vri('D'), Reg(*self.vr[27]), self.vr('D'));
-            self.asm.add(self.vri('E'), Reg(*self.vr[28]), self.vr('E'));
-            self.asm.add(self.vri('F'), Reg(*self.vr[29]), self.vr('F'));
-            self.asm.add(self.vri('G'), Reg(*self.vr[30]), self.vr('G'));
-            self.asm.add(self.vri('H'), Reg(*self.vr[31]), self.vr('H'));
+            // We have all initial values A-H stored in iv registers
+            self.asm.add(self.vri('A'), Reg(*self.iv[0]), self.vr('A'));
+            self.asm.add(self.vri('B'), Reg(*self.iv[1]), self.vr('B'));
+            self.asm.add(self.vri('C'), Reg(*self.iv[2]), self.vr('C'));
+            self.asm.add(self.vri('D'), Reg(*self.iv[3]), self.vr('D'));
+            self.asm.add(self.vri('E'), Reg(*self.iv[4]), self.vr('E'));
+            self.asm.add(self.vri('F'), Reg(*self.iv[5]), self.vr('F'));
+            self.asm.add(self.vri('G'), Reg(*self.iv[6]), self.vr('G'));
+            self.asm.add(self.vri('H'), Reg(*self.iv[7]), self.vr('H'));
         } else {
             // We are using constants for final addition round
             self.asm.add(self.vri('A'), Imm(BLOCK[0]), self.vr('A'));
@@ -131,17 +130,16 @@ impl Sha256SequenceBuilder {
         }
     }
 
-    /// Assumes for words A-H to be loaded in registers 0..7
-    /// Assumes for words W_0..W_15 to be loaded in registers 8..24
+    /// Performs one round of SHA256 compression
     fn round(&mut self) {
         assert!(self.round < 64);
-        let t1 = *self.vr[24];
-        let t2 = *self.vr[25];
-        // scratch space
-        let ss = *self.vr[26];
-        let ss2 = *self.vr[27];
-        let t1_val = self.compute_t1(t1, ss, ss2);
-        let t2_val = self.compute_t2(t2, ss, ss2);
+        let t1 = self.asm.allocator.allocate_for_inline();
+        let t2 = self.asm.allocator.allocate_for_inline();
+        let ss = self.asm.allocator.allocate_for_inline();
+        let ss2 = self.asm.allocator.allocate_for_inline();
+
+        let t1_val = self.compute_t1(*t1, *ss, *ss2);
+        let t2_val = self.compute_t2(*t2, *ss, *ss2);
         let old_d = self.vri('D');
         self.apply_round_update(t1_val, t2_val, old_d);
     }
@@ -175,7 +173,8 @@ impl Sha256SequenceBuilder {
     /// Apply A/E updates for the current round using computed T1/T2 and then advance the round.
     fn apply_round_update(&mut self, t1: Value, t2: Value, old_d: Value) {
         self.round += 1;
-        // Overwrite new A with T_1 + T_2
+        // After incrementing round, the rotation has happened
+        // So vr('A') now points to the right place to write the new A
         self.asm.add(t1, t2, self.vr('A'));
         // Overwrite D_0 with D_0 + T_1
         self.asm.add(t1, old_d, self.vr('E'));
@@ -205,30 +204,34 @@ impl Sha256SequenceBuilder {
     }
 
     /// Maps working variable (A-H) to its current register location
-    /// Variables rotate through registers 0-7 as rounds progress
-    /// When not initial, E-H start in registers 28-31
+    /// Variables rotate through state registers as rounds progress
+    /// For custom IV (!initial), values start in iv and gradually move into rotation
     fn vr(&self, shift: char) -> u8 {
         assert!(('A'..='H').contains(&shift));
+        // For custom IV: check if this value hasn't been computed yet
+        // In each round, we compute new A and new E. After rotation:
+        // Round 0: None computed yet, use saved for all
+        // Round 1: A,E computed (now at H,D positions), use saved for B,C,D,F,G,H
+        // Round 2: A,B,E,F computed (now at G,H,C,D positions), use saved for C,D,G,H
+        // Round 3: A,B,C,E,F,G computed (now at F,G,H,B,C,D positions), use saved for D,H
+        // Round 4+: All have been computed, use rotation only
+        if !self.initial
+            && (self.round == 0
+                || (self.round == 1 && !['A', 'E'].contains(&shift))
+                || (self.round == 2 && !['A', 'B', 'E', 'F'].contains(&shift))
+                || (self.round == 3 && !['A', 'B', 'C', 'E', 'F', 'G'].contains(&shift)))
+        {
+            return *self.iv[(shift as i32 - 'A' as i32 - self.round).rem_euclid(8) as usize];
+        }
         let shift = shift as i32 - 'A' as i32;
 
-        // Special handling for custom IV: E-H values start in registers 28-31
-        // and gradually move into the main rotation (registers 0-7)
-        if !self.initial
-            && (self.round == 0 && shift >= 4
-                || self.round == 1 && shift >= 5
-                || self.round == 2 && shift >= 6
-                || self.round == 3 && shift >= 7)
-        {
-            return *self.vr[24 - self.round as usize + shift as usize];
-        }
-
         // Standard rotation: each round shifts all variables by -1
-        *self.vr[(-self.round + shift).rem_euclid(8) as usize]
+        *self.state[(-self.round + shift).rem_euclid(8) as usize]
     }
 
     /// Register number containing W_(rid+shift)
     fn w(&self, shift: i32) -> u8 {
-        *self.vr[((self.round + shift).rem_euclid(16) + 8) as usize]
+        *self.message[((self.round + shift).rem_euclid(16)) as usize]
     }
 
     /// Updates message schedule for rounds 16-63
@@ -312,7 +315,7 @@ impl Sha256SequenceBuilder {
 pub fn sha2_inline_sequence_builder(
     asm: InstrAssembler,
     operands: FormatInline,
-) -> Vec<RV32IMInstruction> {
+) -> Vec<Instruction> {
     let builder = Sha256SequenceBuilder::new(
         asm, operands, false, // not initial - uses custom IV from rs1
     );
@@ -323,7 +326,7 @@ pub fn sha2_inline_sequence_builder(
 pub fn sha2_init_inline_sequence_builder(
     asm: InstrAssembler,
     operands: FormatInline,
-) -> Vec<RV32IMInstruction> {
+) -> Vec<Instruction> {
     let builder = Sha256SequenceBuilder::new(
         asm, operands, true, // initial - uses BLOCK constants
     );

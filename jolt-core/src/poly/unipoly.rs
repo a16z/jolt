@@ -5,7 +5,6 @@ use std::ops::{AddAssign, Index, IndexMut, Mul, MulAssign, Sub};
 use crate::transcripts::{AppendToTranscript, Transcript};
 use crate::utils::gaussian_elimination::gaussian_elimination;
 use ark_serialize::*;
-use num::Integer;
 use rand_core::{CryptoRng, RngCore};
 use rayon::prelude::*;
 
@@ -38,34 +37,17 @@ impl<F: JoltField> UniPoly<F> {
         }
     }
 
-    fn toom_eval_xs(deg: usize) -> Vec<F> {
-        let mut xs = Vec::with_capacity(deg);
-        let mut cur_val = F::zero();
-
-        for i in 0..deg {
-            if i.is_odd() {
-                xs.push(cur_val);
-            } else {
-                xs.push(F::zero() - cur_val);
-            }
-
-            if i < deg - 1 && i.is_even() {
-                cur_val += F::one();
-            }
-        }
-
-        xs
-    }
-
+    /// Interpolates a polynomial from its evaluations on `[0, 1, ..., degree - 1, inf]`.
     pub fn from_evals_toom(evals: &[F]) -> Self {
         let n = evals.len();
-        let xs = Self::toom_eval_xs(n - 1);
 
         let mut interpol_mat: Vec<Vec<F>> = Vec::with_capacity(n);
+
+        // Iterate over all finite x values.
         for i in 0..n - 1 {
             let mut row = Vec::with_capacity(n);
-            let x = xs[i];
             row.push(F::one());
+            let x = F::from_u64(i as u64);
             row.push(x);
             for j in 2..n {
                 row.push(row[j - 1] * x);
@@ -74,6 +56,7 @@ impl<F: JoltField> UniPoly<F> {
             interpol_mat.push(row);
         }
 
+        // Compute the row for x=infinity.
         let mut row = Vec::with_capacity(n);
         for _ in 0..n - 1 {
             row.push(F::zero());
@@ -431,33 +414,21 @@ impl<F: JoltField> AppendToTranscript for CompressedUniPoly<F> {
 mod tests {
     use super::*;
     use ark_bn254::Fr;
-    use ark_std::test_rng;
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
 
     #[test]
     fn test_from_evals_toom() {
-        test_from_evals_toom_helper::<Fr>(4);
-        test_from_evals_toom_helper::<Fr>(8);
-        test_from_evals_toom_helper::<Fr>(16);
-    }
+        // Our degree 3 polynomial is: 5 + x + 3x^2 + 9x^3.
+        let gt_poly = UniPoly::<Fr>::from_coeff(vec![5.into(), 1.into(), 3.into(), 9.into()]);
+        let degree = 3;
+        let finite_evals = (0..degree).map(|x| gt_poly.evaluate(&x.into())).collect();
+        let eval_at_infinity = *gt_poly.coeffs.last().unwrap();
+        let toom_evals = [finite_evals, vec![eval_at_infinity]].concat();
 
-    fn test_from_evals_toom_helper<F: JoltField>(deg: usize) {
-        let mut rng = test_rng();
-        let coeffs = (0..=deg).map(|_| F::random(&mut rng)).collect::<Vec<_>>();
-        let univariate_poly = UniPoly {
-            coeffs: coeffs.clone(),
-        };
+        let poly = UniPoly::from_evals_toom(&toom_evals);
 
-        let xs = UniPoly::toom_eval_xs(deg);
-        let mut evals = xs
-            .iter()
-            .map(|x| univariate_poly.evaluate(x))
-            .collect::<Vec<_>>();
-        evals.push(*coeffs.last().unwrap());
-
-        let univariate_poly_from_evals_toom = UniPoly::from_evals_toom(&evals);
-        assert_eq!(univariate_poly, univariate_poly_from_evals_toom);
+        assert_eq!(gt_poly, poly);
     }
 
     #[test]

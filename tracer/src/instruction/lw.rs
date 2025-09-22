@@ -15,10 +15,10 @@ use super::virtual_assert_word_alignment::VirtualAssertWordAlignment;
 use super::virtual_lw::VirtualLW;
 use super::virtual_sign_extend_word::VirtualSignExtendWord;
 use super::RAMRead;
-use super::{addi::ADDI, RV32IMInstruction};
+use super::{addi::ADDI, Instruction};
 use crate::utils::virtual_registers::VirtualRegisterAllocator;
 
-use super::{RISCVInstruction, RISCVTrace, RV32IMCycle};
+use super::{Cycle, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name   = LW,
@@ -44,7 +44,7 @@ impl LW {
 }
 
 impl RISCVTrace for LW {
-    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
         let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
@@ -57,7 +57,7 @@ impl RISCVTrace for LW {
         &self,
         allocator: &VirtualRegisterAllocator,
         xlen: Xlen,
-    ) -> Vec<RV32IMInstruction> {
+    ) -> Vec<Instruction> {
         match xlen {
             Xlen::Bit32 => self.inline_sequence_32(allocator),
             Xlen::Bit64 => self.inline_sequence_64(allocator),
@@ -66,7 +66,7 @@ impl RISCVTrace for LW {
 }
 
 impl LW {
-    fn inline_sequence_32(&self, allocator: &VirtualRegisterAllocator) -> Vec<RV32IMInstruction> {
+    fn inline_sequence_32(&self, allocator: &VirtualRegisterAllocator) -> Vec<Instruction> {
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit32, allocator);
         asm.emit_i::<VirtualLW>(
             self.operands.rd,
@@ -76,7 +76,7 @@ impl LW {
         asm.finalize()
     }
 
-    fn inline_sequence_64(&self, allocator: &VirtualRegisterAllocator) -> Vec<RV32IMInstruction> {
+    fn inline_sequence_64(&self, allocator: &VirtualRegisterAllocator) -> Vec<Instruction> {
         // Virtual registers used in sequence
         let v_address = allocator.allocate();
         let v_dword_address = allocator.allocate();

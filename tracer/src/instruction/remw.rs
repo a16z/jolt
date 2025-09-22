@@ -16,8 +16,8 @@ use super::{
     format::format_r::FormatR, virtual_advice::VirtualAdvice, virtual_assert_eq::VirtualAssertEQ,
     virtual_assert_valid_div0::VirtualAssertValidDiv0,
     virtual_change_divisor_w::VirtualChangeDivisorW,
-    virtual_sign_extend_word::VirtualSignExtendWord, RISCVInstruction, RISCVTrace, RV32IMCycle,
-    RV32IMInstruction,
+    virtual_sign_extend_word::VirtualSignExtendWord, Cycle, Instruction, RISCVInstruction,
+    RISCVTrace,
 };
 
 declare_riscv_instr!(
@@ -46,7 +46,7 @@ impl REMW {
 }
 
 impl RISCVTrace for REMW {
-    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
         // REMW operands
         let x = cpu.x[self.operands.rs1 as usize] as i32;
         let y = cpu.x[self.operands.rs2 as usize] as i32;
@@ -69,12 +69,12 @@ impl RISCVTrace for REMW {
         };
 
         let mut inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
-        if let RV32IMInstruction::VirtualAdvice(instr) = &mut inline_sequence[0] {
+        if let Instruction::VirtualAdvice(instr) = &mut inline_sequence[0] {
             instr.advice = quotient as u64;
         } else {
             panic!("Expected Advice instruction");
         }
-        if let RV32IMInstruction::VirtualAdvice(instr) = &mut inline_sequence[1] {
+        if let Instruction::VirtualAdvice(instr) = &mut inline_sequence[1] {
             instr.advice = remainder as u64;
         } else {
             panic!("Expected Advice instruction");
@@ -91,7 +91,7 @@ impl RISCVTrace for REMW {
         &self,
         allocator: &VirtualRegisterAllocator,
         xlen: Xlen,
-    ) -> Vec<RV32IMInstruction> {
+    ) -> Vec<Instruction> {
         let a0 = self.operands.rs1; // dividend
         let a1 = self.operands.rs2; // divisor
         let a2 = allocator.allocate(); // quotient from oracle (untrusted)
@@ -101,7 +101,6 @@ impl RISCVTrace for REMW {
         let t2 = allocator.allocate();
         let t3 = allocator.allocate();
         let t4 = allocator.allocate();
-        let t5 = allocator.allocate();
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
 
         // get advice
@@ -110,11 +109,11 @@ impl RISCVTrace for REMW {
 
         // sign-extend inputs to 32-bit values
         asm.emit_i::<VirtualSignExtendWord>(*t4, a0, 0); // sign-extended dividend
-        asm.emit_i::<VirtualSignExtendWord>(*t5, a1, 0); // sign-extended divisor
+        asm.emit_i::<VirtualSignExtendWord>(*t3, a1, 0); // sign-extended divisor
 
         // handle special cases
-        asm.emit_b::<VirtualAssertValidDiv0>(*t5, *a2, 0);
-        asm.emit_r::<VirtualChangeDivisorW>(*t0, *t4, *t5); // handles MIN_INT32/-1
+        asm.emit_b::<VirtualAssertValidDiv0>(*t3, *a2, 0);
+        asm.emit_r::<VirtualChangeDivisorW>(*t0, *t4, *t3); // handles MIN_INT32/-1
 
         // compute quotient * divisor (no overflow check needed for remainder!)
         asm.emit_r::<MULW>(*t1, *a2, *t0); // 32-bit multiply

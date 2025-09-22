@@ -1,6 +1,6 @@
 //! InstrAssembler
 //!
-//! Builds and owns a vector of virtual RISC-V instructions (`RV32IMInstruction`).
+//! Builds and owns a vector of virtual RISC-V instructions (`Instruction`).
 //! The struct provides small helper methods so that higher-level builders can emit
 //! common instructions without repeating encoding boiler-plate.
 //!
@@ -49,18 +49,16 @@ use crate::instruction::virtual_rotri::VirtualROTRI;
 use crate::instruction::virtual_rotriw::VirtualROTRIW;
 use crate::instruction::xor::XOR;
 use crate::instruction::xori::XORI;
+use crate::instruction::Cycle;
+use crate::instruction::Instruction;
 use crate::instruction::NormalizedInstruction;
 use crate::instruction::RISCVCycle;
 use crate::instruction::RISCVInstruction;
 use crate::instruction::RISCVTrace;
-use crate::instruction::RV32IMCycle;
-use crate::instruction::RV32IMInstruction;
 use crate::utils::virtual_registers::VirtualRegisterAllocator;
 
 use common::constants::RISCV_REGISTER_COUNT;
 use common::constants::VIRTUAL_INSTRUCTION_RESERVED_REGISTER_COUNT;
-use common::constants::VIRTUAL_REGISTER_COUNT;
-
 /// Operand that can be either an immediate or a register.
 #[derive(Clone, Copy, Debug)]
 pub enum Value {
@@ -69,7 +67,7 @@ pub enum Value {
 }
 use Value::{Imm, Reg};
 
-/// Convenience assembler for building a sequence of `RV32IMInstruction`s.
+/// Convenience assembler for building a sequence of `Instruction`s.
 /// Includes common instruction emitters to be used by higher-level builders for inlines.
 ///
 /// The assembler stores `address` and `is_compressed` so that
@@ -84,7 +82,7 @@ pub struct InstrAssembler {
     /// Xlen of the CPU.
     pub xlen: Xlen,
     /// Accumulated instruction buffer.
-    sequence: Vec<RV32IMInstruction>,
+    sequence: Vec<Instruction>,
     /// Whether the instruction uses the the FormatInline instruction format.
     has_inline_instr_format: bool,
     /// Virtual register allocator
@@ -128,7 +126,7 @@ impl InstrAssembler {
 
     /// Finalize the instruction buffer: back-fill `inline_sequence_remaining`
     /// and return ownership of the underlying `Vec`.
-    pub fn finalize(mut self) -> Vec<RV32IMInstruction> {
+    pub(crate) fn finalize(mut self) -> Vec<Instruction> {
         let len = self.sequence.len();
         for (i, instr) in self.sequence.iter_mut().enumerate() {
             instr.set_inline_sequence_remaining(Some((len - i - 1) as u16));
@@ -141,19 +139,11 @@ impl InstrAssembler {
     }
 
     /// Finalize inline instructions by zeroing virtual registers, then calling finalize.
-    pub fn finalize_inline(mut self, num_inline_virtual_regs: u8) -> Vec<RV32IMInstruction> {
-        const INLINE_REGISTER_BASE: u8 =
-            RISCV_REGISTER_COUNT + VIRTUAL_INSTRUCTION_RESERVED_REGISTER_COUNT;
-        const MAX_INLINE_REGISTERS: u8 =
-            VIRTUAL_REGISTER_COUNT - VIRTUAL_INSTRUCTION_RESERVED_REGISTER_COUNT;
-
-        assert!(
-            num_inline_virtual_regs <= MAX_INLINE_REGISTERS,
-            "Attempted to clear {num_inline_virtual_regs} inline virtual registers, but only {MAX_INLINE_REGISTERS} are available"
-        );
+    pub fn finalize_inline(mut self) -> Vec<Instruction> {
+        let register = self.allocator.get_registers_for_reset();
         // Zero inline virtual registers using ADDI rd, x0, 0
-        for reg_offset in 0..num_inline_virtual_regs {
-            self.emit_i::<ADDI>(INLINE_REGISTER_BASE + reg_offset, 0, 0);
+        for reg in register {
+            self.emit_i::<ADDI>(reg, 0, 0);
         }
         self.finalize()
     }
@@ -168,7 +158,7 @@ impl InstrAssembler {
     #[inline]
     fn add_to_sequence<I: RISCVInstruction + RISCVTrace>(&mut self, inst: I)
     where
-        RISCVCycle<I>: Into<RV32IMCycle>,
+        RISCVCycle<I>: Into<Cycle>,
     {
         if self.has_inline_instr_format {
             let normalized: NormalizedInstruction = inst.into();
@@ -194,7 +184,7 @@ impl InstrAssembler {
         rs1: u8,
         rs2: u8,
     ) where
-        RISCVCycle<Op>: Into<RV32IMCycle>,
+        RISCVCycle<Op>: Into<Cycle>,
     {
         self.add_to_sequence(Op::from(NormalizedInstruction {
             address: self.address as usize,
@@ -218,7 +208,7 @@ impl InstrAssembler {
         rs1: u8,
         imm: u64,
     ) where
-        RISCVCycle<Op>: Into<RV32IMCycle>,
+        RISCVCycle<Op>: Into<Cycle>,
     {
         self.add_to_sequence(Op::from(NormalizedInstruction {
             address: self.address as usize,
@@ -242,7 +232,7 @@ impl InstrAssembler {
         rs2: u8,
         imm: i64,
     ) where
-        RISCVCycle<Op>: Into<RV32IMCycle>,
+        RISCVCycle<Op>: Into<Cycle>,
     {
         self.add_to_sequence(Op::from(NormalizedInstruction {
             address: self.address as usize,
@@ -266,7 +256,7 @@ impl InstrAssembler {
         rs1: u8,
         imm: i64,
     ) where
-        RISCVCycle<Op>: Into<RV32IMCycle>,
+        RISCVCycle<Op>: Into<Cycle>,
     {
         self.add_to_sequence(Op::from(NormalizedInstruction {
             address: self.address as usize,
@@ -290,7 +280,7 @@ impl InstrAssembler {
         rs2: u8,
         imm: i64,
     ) where
-        RISCVCycle<Op>: Into<RV32IMCycle>,
+        RISCVCycle<Op>: Into<Cycle>,
     {
         self.add_to_sequence(Op::from(NormalizedInstruction {
             address: self.address as usize,
@@ -310,7 +300,7 @@ impl InstrAssembler {
     #[inline]
     pub fn emit_j<Op: RISCVInstruction<Format = FormatJ> + RISCVTrace>(&mut self, rd: u8, imm: u64)
     where
-        RISCVCycle<Op>: Into<RV32IMCycle>,
+        RISCVCycle<Op>: Into<Cycle>,
     {
         self.add_to_sequence(Op::from(NormalizedInstruction {
             address: self.address as usize,
@@ -330,7 +320,7 @@ impl InstrAssembler {
     #[inline]
     pub fn emit_u<Op: RISCVInstruction<Format = FormatU> + RISCVTrace>(&mut self, rd: u8, imm: u64)
     where
-        RISCVCycle<Op>: Into<RV32IMCycle>,
+        RISCVCycle<Op>: Into<Cycle>,
     {
         self.add_to_sequence(Op::from(NormalizedInstruction {
             address: self.address as usize,
@@ -354,7 +344,7 @@ impl InstrAssembler {
         rs1: u8,
         imm: u64,
     ) where
-        RISCVCycle<Op>: Into<RV32IMCycle>,
+        RISCVCycle<Op>: Into<Cycle>,
     {
         self.add_to_sequence(Op::from(NormalizedInstruction {
             address: self.address as usize,
@@ -378,7 +368,7 @@ impl InstrAssembler {
         rs1: u8,
         rs2: u8,
     ) where
-        RISCVCycle<Op>: Into<RV32IMCycle>,
+        RISCVCycle<Op>: Into<Cycle>,
     {
         self.add_to_sequence(Op::from(NormalizedInstruction {
             address: self.address as usize,
@@ -401,7 +391,7 @@ impl InstrAssembler {
         rs1: u8,
         imm: i64,
     ) where
-        RISCVCycle<Op>: Into<RV32IMCycle>,
+        RISCVCycle<Op>: Into<Cycle>,
     {
         self.add_to_sequence(Op::from(NormalizedInstruction {
             address: self.address as usize,
@@ -429,8 +419,8 @@ impl InstrAssembler {
         fold: fn(u64, u64) -> u64,
     ) -> Value
     where
-        RISCVCycle<OR>: Into<RV32IMCycle>,
-        RISCVCycle<OI>: Into<RV32IMCycle>,
+        RISCVCycle<OR>: Into<Cycle>,
+        RISCVCycle<OI>: Into<Cycle>,
     {
         match (rs1, rs2) {
             (Reg(r1), Reg(r2)) => {

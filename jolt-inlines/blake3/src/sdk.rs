@@ -1,8 +1,7 @@
 //! This file provides high-level API to use BLAKE3 compression, both in host and guest mode.
-
 use crate::{
     BLOCK_INPUT_SIZE_IN_BYTES, CHAINING_VALUE_LEN, COUNTER_LEN, FLAG_CHUNK_END, FLAG_CHUNK_START,
-    FLAG_KEYED_HASH, FLAG_ROOT, IV, MSG_BLOCK_LEN, OUTPUT_SIZE_IN_BYTES,
+    FLAG_ROOT, IV, MSG_BLOCK_LEN, OUTPUT_SIZE_IN_BYTES,
 };
 
 pub struct Blake3 {
@@ -14,9 +13,10 @@ pub struct Blake3 {
     buffer_len: usize,
     /// Total bytes processed
     counter: u64,
-    /// Whether it is in the keyed_hash mode
-    is_keyed_hash: bool,
 }
+
+#[repr(align(4))]
+pub struct Aligned64ByteInput(pub [u8; BLOCK_INPUT_SIZE_IN_BYTES]);
 
 /// Note: Current implementation only supports hashing input of at most 64 bytes. Larger inputs are not supported yet.
 impl Blake3 {
@@ -26,17 +26,6 @@ impl Blake3 {
             buffer: [0; BLOCK_INPUT_SIZE_IN_BYTES],
             buffer_len: 0,
             counter: 0,
-            is_keyed_hash: false,
-        }
-    }
-
-    pub fn new_keyed(key: [u32; CHAINING_VALUE_LEN]) -> Self {
-        Self {
-            h: key,
-            buffer: [0; BLOCK_INPUT_SIZE_IN_BYTES],
-            buffer_len: 0,
-            counter: 0,
-            is_keyed_hash: true,
         }
     }
 
@@ -66,14 +55,7 @@ impl Blake3 {
             &self.buffer,
             self.counter,
             self.buffer_len as u32,
-            FLAG_CHUNK_START
-                | FLAG_CHUNK_END
-                | FLAG_ROOT
-                | (if self.is_keyed_hash {
-                    FLAG_KEYED_HASH
-                } else {
-                    0
-                }), // CHUNK_START | CHUNK_END | ROOT | KEYED_HASH
+            FLAG_CHUNK_START | FLAG_CHUNK_END | FLAG_ROOT,
         );
 
         // Extract hash bytes
@@ -91,10 +73,30 @@ impl Blake3 {
         hasher.finalize()
     }
 
-    pub fn keyed_hash(input: &[u8], key: [u32; CHAINING_VALUE_LEN]) -> [u8; OUTPUT_SIZE_IN_BYTES] {
-        let mut hasher = Self::new_keyed(key);
-        hasher.update(input);
-        hasher.finalize()
+    /// Computes a keyed BLAKE3 hash for given input and key.
+    ///
+    /// Note: This only works for 64-byte inputs
+    pub fn keyed_hash(
+        input: &Aligned64ByteInput,
+        key: [u32; CHAINING_VALUE_LEN],
+    ) -> [u8; OUTPUT_SIZE_IN_BYTES] {
+        let mut h = key;
+
+        #[cfg(target_endian = "big")]
+        {
+            unimplemented!()
+        }
+
+        // Cast is safe as [u8; 64] and [u32; 16] have same size/alignment.
+        let message = unsafe { &*(input.0.as_ptr() as *const [u32; 16]) };
+
+        // Both h and message are properly aligned and sized.
+        unsafe {
+            blake3_keyed64_compress(h.as_mut_ptr(), message.as_ptr());
+        }
+
+        // [u32; 8] and [u8; 32] have identical memory layout on little-endian.
+        unsafe { core::mem::transmute::<[u32; CHAINING_VALUE_LEN], [u8; OUTPUT_SIZE_IN_BYTES]>(h) }
     }
 }
 
@@ -186,6 +188,49 @@ pub unsafe fn blake3_compress(chaining_value: *mut u32, message: *const u32) {
     );
 }
 
+/// BLAKE3 compression function - guest implementation.
+///
+/// # Safety
+/// - `chaining_value` must be a valid pointer to 32 bytes of readable and writable memory.
+/// - `message` must be a valid pointer to 64 bytes of readable memory.
+/// - Both pointers must be properly aligned for u32 access (4-byte alignment).
+#[cfg(not(feature = "host"))]
+pub unsafe fn blake3_keyed64_compress(chaining_value: *mut u32, message: *const u32) {
+    use crate::{BLAKE3_FUNCT3, BLAKE3_FUNCT7, BLAKE3_KEYED64_FUNCT3, INLINE_OPCODE};
+    // Memory layout for BLAKE3 instruction:
+    // rs1: points to chaining value (32 bytes)
+    // rs2: points to message block (64 bytes)
+
+    core::arch::asm!(
+        ".insn r {opcode}, {funct3}, {funct7}, x0, {rs1}, {rs2}",
+        opcode = const INLINE_OPCODE,
+        funct3 = const BLAKE3_KEYED64_FUNCT3,
+        funct7 = const BLAKE3_FUNCT7,
+        rs1 = in(reg) chaining_value,
+        rs2 = in(reg) message,
+        options(nostack)
+    );
+}
+
+/// BLAKE3 compression function - host implementation.
+///
+/// # Safety
+/// - `chaining_value` must be a valid pointer to 32 bytes.
+/// - `message` must be a valid pointer to 64 bytes.
+#[cfg(feature = "host")]
+pub unsafe fn blake3_keyed64_compress(chaining_value: *mut u32, message: *const u32) {
+    let message_block = &*(message as *const [u32; 16]);
+
+    // On the host, we call our reference implementation from the exec module.
+    crate::exec::execute_blake3_compression(
+        &mut *(chaining_value as *mut [u32; 8]),
+        message_block,
+        &[0, 0],
+        64,
+        crate::FLAG_CHUNK_START | crate::FLAG_CHUNK_END | crate::FLAG_ROOT | crate::FLAG_KEYED_HASH,
+    );
+}
+
 #[cfg(test)]
 #[cfg(feature = "host")]
 mod tests {
@@ -193,14 +238,17 @@ mod tests {
     use crate::{test_utils::helpers::*, BLOCK_INPUT_SIZE_IN_BYTES, CHAINING_VALUE_LEN};
 
     fn random_partition(data: &[u8]) -> Vec<&[u8]> {
+        use rand::rngs::StdRng;
+        use rand::{Rng, SeedableRng};
+
         if data.is_empty() {
             return vec![&[]];
         }
         let len = data.len();
         let mut parts = Vec::new();
         let mut partitioned_num = 0usize;
-        let mut rng = rand::thread_rng();
-        use rand::Rng;
+        // Use a fixed seed for deterministic test results
+        let mut rng = StdRng::seed_from_u64(42);
         while partitioned_num < len {
             let remaining = len - partitioned_num;
             let take = rng.gen_range(1..=remaining);
@@ -212,8 +260,12 @@ mod tests {
 
     #[test]
     fn test_digest_matches_standard() {
+        use rand::rngs::StdRng;
+        use rand::{Rng, SeedableRng};
+        let mut rng = StdRng::seed_from_u64(67890);
+
         for _ in 0..1000 {
-            let len = rand::random::<usize>() % (BLOCK_INPUT_SIZE_IN_BYTES);
+            let len = rng.gen::<usize>() % (BLOCK_INPUT_SIZE_IN_BYTES);
             let input = generate_random_bytes(len);
             let result = Blake3::digest(&input);
             let expected = compute_expected_result(&input);
@@ -224,24 +276,28 @@ mod tests {
     #[test]
     fn test_keyed_digest_random_keys_match_standard() {
         for _ in 0..1000 {
-            let len = rand::random::<usize>() % (BLOCK_INPUT_SIZE_IN_BYTES);
-            let input = generate_random_bytes(len);
+            let input = super::Aligned64ByteInput(generate_random_bytes(64).try_into().unwrap());
             let key_bytes = generate_random_bytes(CHAINING_VALUE_LEN * 4);
             let mut key = [0u32; CHAINING_VALUE_LEN];
             key.copy_from_slice(&bytes_to_u32_vec(&key_bytes));
             let result = Blake3::keyed_hash(&input, key);
-            let expected = compute_keyed_expected_result(&input, key);
+            let expected = compute_keyed_expected_result(&input.0, key);
             assert_eq!(
                 result, expected,
-                "keyed digest mismatch for input={input:02x?} and random key={key:x?}"
+                "keyed digest mismatch for input={:02x?} and random key={key:x?}",
+                input.0
             );
         }
     }
 
     #[test]
     fn test_streaming_update_finalize_matches_standard() {
+        use rand::rngs::StdRng;
+        use rand::{Rng, SeedableRng};
+        let mut rng = StdRng::seed_from_u64(54321);
+
         for _ in 0..1000 {
-            let len = rand::random::<usize>() % (BLOCK_INPUT_SIZE_IN_BYTES + 1);
+            let len = rng.gen::<usize>() % (BLOCK_INPUT_SIZE_IN_BYTES + 1);
             let data = generate_random_bytes(len);
             let expected = compute_expected_result(&data);
             let parts = random_partition(&data);

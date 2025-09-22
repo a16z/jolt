@@ -13,6 +13,9 @@ repository = "https://github.com/a16z/jolt"
 edition = "2021"
 
 [features]
+default = [
+    "jolt-platform/random"
+]
 host = [
     "jolt-core/default",
     "jolt-platform/std",
@@ -46,7 +49,6 @@ jolt-sdk-macros = { path = "./macros" }
 common = { path = "../common", optional = true }
 jolt-core = { path = "../jolt-core", default-features = false, optional = true }
 tracer = { path = "../tracer", optional = true }
-getrandom = { version = "0.2.16", features = ["custom"], optional = true }
 rand = { version = "0.8.5", optional = true }
 
 [dev-dependencies]

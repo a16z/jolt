@@ -59,6 +59,7 @@ pub trait JoltField:
         unimplemented!("Small-value lookup tables are unimplemented")
     }
     /// Conversion from primitive integers to field elements in Montgomery form.
+    fn from_bool(val: bool) -> Self;
     fn from_u8(n: u8) -> Self;
     fn from_u16(n: u16) -> Self;
     fn from_u32(n: u32) -> Self;
@@ -88,13 +89,15 @@ pub trait JoltField:
     fn mul_i64(&self, n: i64) -> Self {
         *self * Self::from_i64(n)
     }
-    #[inline(always)]
-    fn mul_i128(&self, n: i128) -> Self {
-        *self * Self::from_i128(n)
-    }
+    /// Does a field multiplication with a `u128`.
+    /// Implementations may override with an intrinsic.
     #[inline(always)]
     fn mul_u128(&self, n: u128) -> Self {
         *self * Self::from_u128(n)
+    }
+    #[inline(always)]
+    fn mul_i128(&self, n: i128) -> Self {
+        *self * Self::from_i128(n)
     }
 
     fn mul_pow_2(&self, mut pow: usize) -> Self {
@@ -115,6 +118,23 @@ pub trait JoltField:
     /// Montgomery reduction from 8-limb unreduced product to field element
     /// Note: Result is in Montgomery form with extra R factor
     fn from_montgomery_reduce_2n(unreduced: ark_ff::BigInt<8>) -> Self;
+
+    /// Compute a linear combination of field elements with u64 coefficients.
+    /// Performs unreduced accumulation in BigInt<NPLUS1>, then one final reduction.
+    /// This is more efficient than individual multiplications and additions.
+    #[inline(always)]
+    fn linear_combination_u64(pairs: &[(Self, u64)], add_terms: &[Self]) -> Self;
+
+    /// Compute a linear combination with separate positive and negative terms.
+    /// Each term is multiplied by a u64 coefficient, then positive and negative
+    /// sums are computed separately and subtracted. One final reduction is performed.
+    #[inline(always)]
+    fn linear_combination_i64(
+        pos: &[(Self, u64)],
+        neg: &[(Self, u64)],
+        pos_add: &[Self],
+        neg_add: &[Self],
+    ) -> Self;
 }
 
 #[cfg(feature = "allocative")]

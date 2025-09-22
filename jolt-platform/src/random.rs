@@ -1,7 +1,10 @@
-use crate::jolt_println;
-use getrandom::Error;
+extern crate alloc;
+
+use alloc::format;
+use alloc::slice;
 use rand::{rngs::StdRng, RngCore, SeedableRng};
-use std::slice;
+
+use crate::jolt_println;
 
 // JOLT in ASCII padded with 1s
 const SEED: u64 = 0x11114A4F4C541111;
@@ -32,11 +35,27 @@ pub unsafe fn sys_rand(dest: *mut u8, len: usize) {
 }
 
 #[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub fn _getrandom_v02(s: &mut [u8]) -> Result<(), getrandom_v02::Error> {
+    unsafe {
+        sys_rand(s.as_mut_ptr(), s.len());
+    }
+
+    Ok(())
+}
+
+#[allow(clippy::missing_safety_doc)]
 #[unsafe(no_mangle)]
-pub unsafe extern "Rust" fn __getrandom_custom(dest: *mut u8, len: usize) -> Result<(), Error> {
+unsafe extern "Rust" fn __getrandom_v03_custom(
+    dest: *mut u8,
+    len: usize,
+) -> Result<(), getrandom_v03::Error> {
     sys_rand(dest, len);
 
     Ok(())
 }
 
-// register_custom_getrandom!(__getrandom_v03_custom);
+// Register the custom getrandom implementation for getrandom v0.2 on non-wasm targets
+// For wasm targets we use the "js" feature which uses the browser's crypto API
+#[cfg(not(any(target_arch = "wasm32")))]
+getrandom_v02::register_custom_getrandom!(_getrandom_v02);

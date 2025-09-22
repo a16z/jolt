@@ -24,7 +24,7 @@ use common::constants::XLEN;
 use rayon::prelude::*;
 use std::fmt::Debug;
 use std::marker::PhantomData;
-use tracer::instruction::RV32IMCycle;
+use tracer::instruction::Cycle;
 
 use strum::IntoEnumIterator;
 
@@ -283,15 +283,12 @@ pub trait WitnessRowAccessor<F: JoltField, Index: Copy + Debug>: Send + Sync {
 /// Lifetime `'a` ties this accessor to the borrowed memory.
 pub struct TraceWitnessAccessor<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> {
     pub preprocessing: &'a JoltProverPreprocessing<F, PCS>,
-    pub trace: &'a [RV32IMCycle],
+    pub trace: &'a [Cycle],
 }
 
 impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> TraceWitnessAccessor<'a, F, PCS> {
     /// Construct an accessor that borrows `preprocessing` and `trace`.
-    pub fn new(
-        preprocessing: &'a JoltProverPreprocessing<F, PCS>,
-        trace: &'a [RV32IMCycle],
-    ) -> Self {
+    pub fn new(preprocessing: &'a JoltProverPreprocessing<F, PCS>, trace: &'a [Cycle]) -> Self {
         Self {
             preprocessing,
             trace,
@@ -311,7 +308,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> WitnessRowAccessor<F, J
     #[inline]
     fn value_at_field(&self, input_index: JoltR1CSInputs, t: usize) -> F {
         let len = self.trace.len();
-        let get = |idx: usize| -> &RV32IMCycle { &self.trace[idx] };
+        let get = |idx: usize| -> &Cycle { &self.trace[idx] };
         match input_index {
             JoltR1CSInputs::PC => {
                 (self.preprocessing.shared.bytecode.get_pc(get(t)) as u64).to_field()
@@ -398,7 +395,7 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> WitnessRowAccessor<F, J
             JoltR1CSInputs::NextIsNoop => {
                 if t + 1 < len {
                     let no = get(t + 1).instruction().circuit_flags()[CircuitFlags::IsNoop];
-                    no.to_field()
+                    F::from_bool(no)
                 } else {
                     F::zero()
                 }
@@ -419,10 +416,10 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> WitnessRowAccessor<F, J
                 } else {
                     true
                 };
-                (is_jump && !next_noop).to_field()
+                F::from_bool(is_jump && !next_noop)
             }
             JoltR1CSInputs::OpFlags(flag) => {
-                get(t).instruction().circuit_flags()[flag as usize].to_field()
+                F::from_bool(get(t).instruction().circuit_flags()[flag as usize])
             }
         }
     }
@@ -832,7 +829,7 @@ pub fn compute_claimed_witness_evals_generic<
 #[tracing::instrument(skip_all)]
 pub fn generate_pc_noop_witnesses<F, PCS>(
     preprocessing: &JoltProverPreprocessing<F, PCS>,
-    trace: &[RV32IMCycle],
+    trace: &[Cycle],
 ) -> (
     MultilinearPolynomial<F>, // UnexpandedPC(t)
     MultilinearPolynomial<F>, // PC(t)
