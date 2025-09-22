@@ -8,7 +8,7 @@ pub const ALIGNMENT_FACTOR_BYTECODE: usize = 2;
 pub const RAM_START_ADDRESS: u64 = 0x80000000;
 
 // big enough to run Linux and xv6
-pub const EMULATOR_MEMORY_CAPACITY: u64 = 1024 * 1024 * 1024;
+pub const EMULATOR_MEMORY_CAPACITY: u64 = 1024 * 1024 * 128;
 
 pub const DEFAULT_MEMORY_SIZE: u64 = 32 * 1024 * 1024;
 

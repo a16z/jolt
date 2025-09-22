@@ -594,6 +594,8 @@ pub struct ReducedOpeningProof<
     pub sumcheck_claims: Vec<F>,
     pub joint_opening_proof: PCS::Proof,
     pub joint_auxiliary_data: PCS::AuxiliaryVerifierData,
+    #[cfg(feature = "recursion")]
+    pub combined_commitment_hint: PCS::CombinedCommitmentHint,
     #[cfg(test)]
     joint_poly: MultilinearPolynomial<F>,
     #[cfg(test)]
@@ -767,6 +769,7 @@ where
         &mut self,
         mut polynomials: HashMap<CommittedPolynomial, MultilinearPolynomial<F>>,
         mut opening_hints: HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
+        mut commitments: HashMap<CommittedPolynomial, PCS::Commitment>,
         pcs_setup: &PCS::ProverSetup,
         transcript: &mut ProofTranscript,
     ) -> ReducedOpeningProof<F, PCS, ProofTranscript> {
@@ -892,6 +895,33 @@ where
             PCS::combine_hints(hints, &coeffs)
         };
 
+        // Compute the combined commitment hint for recursion mode
+        #[cfg(feature = "recursion")]
+        let combined_commitment_hint = {
+            let mut rlc_map = BTreeMap::new();
+            for (gamma, sumcheck) in gamma_powers.iter().zip(self.sumchecks.iter()) {
+                for (coeff, polynomial) in
+                    sumcheck.rlc_coeffs.iter().zip(sumcheck.polynomials.iter())
+                {
+                    if let Some(value) = rlc_map.get_mut(&polynomial) {
+                        *value += *coeff * gamma;
+                    } else {
+                        rlc_map.insert(polynomial, *coeff * gamma);
+                    }
+                }
+            }
+
+            let (coeffs, commitments_vec): (Vec<F>, Vec<PCS::Commitment>) = rlc_map
+                .into_iter()
+                .map(|(k, v)| (v, commitments.remove(k).unwrap()))
+                .unzip();
+
+            // Precompute the combined commitment and hint
+            let (_combined_commitment, hint) =
+                PCS::precompute_combined_commitment(&commitments_vec, &coeffs);
+            hint
+        };
+
         // Reduced opening proof
         let (joint_opening_proof, joint_auxiliary_data) =
             PCS::prove(pcs_setup, &joint_poly, &r_sumcheck, hint, transcript);
@@ -907,6 +937,8 @@ where
             sumcheck_claims,
             joint_opening_proof,
             joint_auxiliary_data,
+            #[cfg(feature = "recursion")]
+            combined_commitment_hint,
             #[cfg(test)]
             joint_poly,
             #[cfg(test)]
@@ -1237,7 +1269,11 @@ where
             #[cfg(not(feature = "recursion"))]
             let result = PCS::combine_commitments(&commitments, &coeffs);
             #[cfg(feature = "recursion")]
-            let result = PCS::combine_commitments(&commitments, &coeffs, None);
+            let result = PCS::combine_commitments(
+                &commitments,
+                &coeffs,
+                Some(&reduced_opening_proof.combined_commitment_hint),
+            );
             result
         };
 

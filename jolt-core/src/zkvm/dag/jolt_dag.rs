@@ -65,7 +65,8 @@ impl JoltDAG {
         );
 
         // Generate and commit to all witness polynomials
-        let opening_proof_hints = Self::generate_and_commit_polynomials(&mut state_manager)?;
+        let (opening_proof_hints, commitment_map) =
+            Self::generate_and_commit_polynomials(&mut state_manager)?;
 
         // Append commitments to transcript
         let commitments = state_manager.get_commitments();
@@ -269,6 +270,7 @@ impl JoltDAG {
         let opening_proof = accumulator.borrow_mut().reduce_and_prove(
             polynomials_map,
             opening_proof_hints,
+            commitment_map,
             &preprocessing.generators,
             &mut *transcript.borrow_mut(),
         );
@@ -314,9 +316,7 @@ impl JoltDAG {
             use crate::poly::commitment::{hyrax::matrix_dimensions, pedersen::PedersenGenerators};
             use ark_bn254::Fq;
             use ark_grumpkin::Projective as GrumpkinProjective;
-            use jolt_optimizations::steps::ExponentiationSteps;
             use jolt_platform::println;
-            use std::any::TypeId;
 
             // Extract gt_exponentiation_steps from the ReducedOpeningProof (Dory proof)
             // let exponentiation_steps_vec: Vec<ExponentiationSteps> = {
@@ -538,6 +538,7 @@ impl JoltDAG {
         )
         .context("Stage 4")?;
 
+        // Stage 5: Opening Proof Verification
         // Batch-prove all openings
         let batched_opening_proof = proofs
             .get(&ProofKeys::ReducedOpeningProof)
@@ -554,6 +555,7 @@ impl JoltDAG {
                 commitments.borrow()[polynomial.to_index()].clone(),
             );
         }
+
         let accumulator = state_manager.get_verifier_accumulator();
         accumulator
             .borrow_mut()
@@ -639,7 +641,13 @@ impl JoltDAG {
         PCS: CommitmentScheme<Field = F>,
     >(
         prover_state_manager: &mut StateManager<'a, F, ProofTranscript, PCS>,
-    ) -> Result<HashMap<CommittedPolynomial, PCS::OpeningProofHint>, anyhow::Error> {
+    ) -> Result<
+        (
+            HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
+            HashMap<CommittedPolynomial, PCS::Commitment>,
+        ),
+        anyhow::Error,
+    > {
         let (preprocessing, trace, _program_io, _final_memory_state) =
             prover_state_manager.get_prover_data();
 
@@ -658,14 +666,18 @@ impl JoltDAG {
                 .map(|poly| PCS::commit(poly, &preprocessing.generators))
                 .unzip();
         let mut hint_map = HashMap::with_capacity(committed_polys.len());
-        for (poly, hint) in AllCommittedPolynomials::iter().zip(hints) {
+        let mut commitment_map = HashMap::with_capacity(committed_polys.len());
+        for ((poly, hint), commitment) in
+            AllCommittedPolynomials::iter().zip(hints).zip(&commitments)
+        {
             hint_map.insert(*poly, hint);
+            commitment_map.insert(*poly, commitment.clone());
         }
 
         prover_state_manager.set_commitments(commitments);
 
         drop_in_background_thread(committed_polys);
 
-        Ok(hint_map)
+        Ok((hint_map, commitment_map))
     }
 }

@@ -134,7 +134,7 @@ where
 
         // Add intermediate a_i values (convert from Fq to F)
         for step in &steps.steps {
-            if let Some(&idx) = fp12_to_index.get(&step.a_curr) {
+            if let Some(&idx) = fp12_to_index.get(&step.a_curr()) {
                 let fq_poly = &fq12_polynomials[idx];
                 let f_evals: Vec<F> = match fq_poly {
                     MultilinearPolynomial::LargeScalars(dense) => {
@@ -198,7 +198,7 @@ where
 
         // Add rho values from steps
         for step in &steps.steps {
-            if let Some(&idx) = fp12_to_index.get(&step.rho_after) {
+            if let Some(&idx) = fp12_to_index.get(&step.rho_after()) {
                 let fq_poly = &fq12_polynomials[idx];
                 let f_evals: Vec<F> = match fq_poly {
                     MultilinearPolynomial::LargeScalars(dense) => {
@@ -357,7 +357,7 @@ mod tests {
         },
         subprotocols::sumcheck::SumcheckInstance,
     };
-    use ark_bn254::{Fq, Fq12};
+    use ark_bn254::{Fq, Fq12, Fr};
     use ark_ff::BigInteger;
     use ark_ff::{Field, One, PrimeField, UniformRand, Zero};
     use ark_std::test_rng;
@@ -392,7 +392,7 @@ mod tests {
 
         // Generate random base and exponent
         let base = Fq12::rand(&mut rng);
-        let exponent = Fq::rand(&mut rng);
+        let exponent = Fr::rand(&mut rng);
 
         // Compute a^e using arkworks
         let expected_result = base.pow(exponent.into_bigint());
@@ -433,7 +433,7 @@ mod tests {
         // Add intermediate values from steps
         for step in &steps.steps {
             a_polys.push(MultilinearPolynomial::LargeScalars(DensePolynomial::new(
-                convert_fq12_to_fq_poly(step.a_curr),
+                convert_fq12_to_fq_poly(step.a_curr()),
             )));
         }
 
@@ -496,15 +496,15 @@ mod tests {
         let terms = vec![
             Term {
                 base: Fq12::rand(&mut rng),
-                exponent: Fq::rand(&mut rng),
+                exponent: Fr::rand(&mut rng),
             },
             Term {
                 base: Fq12::rand(&mut rng),
-                exponent: Fq::rand(&mut rng),
+                exponent: Fr::rand(&mut rng),
             },
             Term {
                 base: Fq12::rand(&mut rng),
-                exponent: Fq::rand(&mut rng),
+                exponent: Fr::rand(&mut rng),
             },
         ];
 
@@ -539,7 +539,7 @@ mod tests {
             // Add rho values from steps
             for step in &term_steps.steps {
                 rho_polys.push(MultilinearPolynomial::LargeScalars(DensePolynomial::new(
-                    convert_fq12_to_fq_poly(step.rho_after),
+                    convert_fq12_to_fq_poly(step.rho_after()),
                 )));
             }
 
@@ -625,28 +625,28 @@ mod tests {
 
         // Test case 1: Exponent = 0 (result should be 1)
         let base = Fq12::rand(&mut rng);
-        let exponent = Fq::zero();
+        let exponent = Fr::zero();
         let steps = pow_with_steps_le(base, exponent);
         assert_eq!(steps.result, Fq12::one(), "a^0 should equal 1");
         assert!(steps.sanity_verify(), "Steps should pass sanity check");
 
         // Test case 2: Exponent = 1 (result should be base)
         let base = Fq12::rand(&mut rng);
-        let exponent = Fq::one();
+        let exponent = Fr::one();
         let steps = pow_with_steps_le(base, exponent);
         assert_eq!(steps.result, base, "a^1 should equal a");
         assert!(steps.sanity_verify(), "Steps should pass sanity check");
 
         // Test case 3: Base = 1 (result should always be 1)
         let base = Fq12::one();
-        let exponent = Fq::rand(&mut rng);
+        let exponent = Fr::rand(&mut rng);
         let steps = pow_with_steps_le(base, exponent);
         assert_eq!(steps.result, Fq12::one(), "1^e should equal 1");
         assert!(steps.sanity_verify(), "Steps should pass sanity check");
 
         // Test case 4: Small exponent (e = 2)
         let base = Fq12::rand(&mut rng);
-        let exponent = Fq::from(2u64);
+        let exponent = Fr::from(2u64);
         let steps = pow_with_steps_le(base, exponent);
         assert_eq!(steps.result, base * base, "a^2 should equal a*a");
         assert!(steps.sanity_verify(), "Steps should pass sanity check");
@@ -654,7 +654,7 @@ mod tests {
         // Verify all edge cases with batch_verify
         for exponent_val in [0u64, 1, 2, 3, 7, 15, 255] {
             let base = Fq12::rand(&mut rng);
-            let exponent = Fq::from(exponent_val);
+            let exponent = Fr::from(exponent_val);
             let steps = pow_with_steps_le(base, exponent);
             let products = steps.to_products();
 
@@ -681,7 +681,7 @@ mod tests {
         // Generate multiple exponentiations
         for _ in 0..num_exponentiations {
             let base = Fq12::rand(&mut rng);
-            let exponent = Fq::rand(&mut rng);
+            let exponent = Fr::rand(&mut rng);
 
             let steps = pow_with_steps_le(base, exponent);
             assert!(steps.sanity_verify(), "Steps should pass sanity check");
@@ -702,7 +702,7 @@ mod tests {
         for _ in 0..10 {
             expr_terms.push(Term {
                 base: Fq12::rand(&mut rng),
-                exponent: Fq::rand(&mut rng),
+                exponent: Fr::rand(&mut rng),
             });
         }
 
@@ -747,7 +747,7 @@ mod tests {
 
         // Generate random base and exponent
         let base = Fq12::rand(&mut rng);
-        let exponent = Fq::rand(&mut rng);
+        let exponent = Fr::rand(&mut rng);
 
         // Compute a^e using arkworks
         let expected_result = base.pow(exponent.into_bigint());
@@ -783,7 +783,7 @@ mod tests {
 
         for step in &steps.steps {
             a_polys.push(MultilinearPolynomial::LargeScalars(DensePolynomial::new(
-                convert_fq12_to_fq_poly(step.a_curr),
+                convert_fq12_to_fq_poly(step.a_curr()),
             )));
         }
 
@@ -874,7 +874,7 @@ mod tests {
 
             for step in &steps.steps {
                 rho_polys.push(MultilinearPolynomial::LargeScalars(DensePolynomial::new(
-                    convert_fq12_to_fq_poly(step.rho_after),
+                    convert_fq12_to_fq_poly(step.rho_after()),
                 )));
             }
 
@@ -980,7 +980,7 @@ mod tests {
             },
             transcripts::{Blake2bTranscript, Transcript},
         };
-        use ark_bn254::{Fq, Fq12};
+        use ark_bn254::{Fq, Fq12, Fr};
         use ark_grumpkin::Projective as GrumpkinProjective;
         use jolt_optimizations::fq12_poly::fq12_to_multilinear_evals;
         use rand_core::RngCore;
@@ -994,7 +994,7 @@ mod tests {
         // Generate random base and use a smaller exponent to avoid stack overflow
         let base = Fq12::rand(&mut rng);
         // Use a smaller exponent for testing (e.g., 16 bits)
-        let exponent = Fq::from(rng.next_u32() as u64 & 0xFFFF);
+        let exponent = Fr::from(rng.next_u32() as u64 & 0xFFFF);
 
         // Get exponentiation steps
         let steps = pow_with_steps_le(base, exponent);

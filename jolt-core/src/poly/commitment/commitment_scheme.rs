@@ -38,7 +38,13 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
         + Clone;
     /// Precomputed GT scalar multiplication results for recursion mode
     #[cfg(feature = "recursion")]
-    type CombinedCommitmentHint: Sync + Send + Clone + Debug + Default;
+    type CombinedCommitmentHint: Sync
+        + Send
+        + Clone
+        + Debug
+        + Default
+        + CanonicalSerialize
+        + CanonicalDeserialize;
 
     /// Generates the prover setup for this PCS. `max_num_vars` is the maximum number of
     /// variables of any polynomial that will be committed using this setup.

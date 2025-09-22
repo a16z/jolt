@@ -47,9 +47,9 @@ fn verify(bytes: &[u8]) -> u32 {
         let device = JoltDevice::deserialize_with_mode(&mut cursor, Compress::Yes, Validate::No).unwrap();
         end_cycle_tracking("deserialize device");
 
-        start_cycle_tracking("verification");
+        start_cycle_tracking("verification_total");
         let is_valid = JoltRV32IM::verify(&verifier_preprocessing, proof, device, None).is_ok();
-        end_cycle_tracking("verification");
+        end_cycle_tracking("verification_total");
         all_valid = all_valid && is_valid;
     }
 

@@ -1,0 +1,13 @@
+[package]
+name = "ec-bench-guest"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+guest = []
+
+[dependencies]
+jolt = { package = "jolt-sdk", path = "../../../jolt-sdk" }
+ark-bn254 = { path = "/Users/mgeorghiades/a16z/arkworks-algebra/curves/bn254", default-features = false, features = ["curve"] }
+ark-ff = { path = "/Users/mgeorghiades/a16z/arkworks-algebra/ff", default-features = false }
+ark-ec = { path = "/Users/mgeorghiades/a16z/arkworks-algebra/ec", default-features = false }

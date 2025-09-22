@@ -814,6 +814,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "ec-bench"
+version = "0.1.0"
+dependencies = [
+ "ec-bench-guest",
+ "jolt-sdk",
+]
+
+[[package]]
+name = "ec-bench-guest"
+version = "0.1.0"
+dependencies = [
+ "ark-bn254",
+ "ark-ec",
+ "ark-ff",
+ "jolt-sdk",
+]
+
+[[package]]
 name = "educe"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

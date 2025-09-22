@@ -34,6 +34,7 @@ guest-verifier = [
     "jolt-core/parallel",
     "dep:ark-bn254",
 ]
+recursion = ["jolt-core/recursion"]
 
 [dependencies]
 jolt-platform = { path = "../jolt-platform" }
