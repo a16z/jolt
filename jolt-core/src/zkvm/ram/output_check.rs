@@ -104,11 +104,6 @@ impl<F: JoltField> OutputSumcheckProverState<F> {
     }
 }
 
-struct OutputSumcheckVerifierState<F: JoltField> {
-    r_address: Vec<F>,
-    program_io: JoltDevice,
-}
-
 /// Proves that the final RAM state is consistent with the claimed
 /// program output.
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
@@ -128,9 +123,11 @@ pub struct OutputProof<F: JoltField, ProofTranscript: Transcript> {
 #[derive(Allocative)]
 pub struct OutputSumcheck<F: JoltField> {
     K: usize,
-    #[allocative(skip)]
-    verifier_state: Option<OutputSumcheckVerifierState<F>>,
     prover_state: Option<OutputSumcheckProverState<F>>,
+    #[allocative(skip)]
+    r_address: Option<Vec<F>>,
+    #[allocative(skip)]
+    program_io: Option<JoltDevice>,
 }
 
 impl<F: JoltField> OutputSumcheck<F> {
@@ -157,8 +154,9 @@ impl<F: JoltField> OutputSumcheck<F> {
 
         OutputSumcheck {
             K,
-            verifier_state: None,
             prover_state: Some(output_sumcheck_prover_state),
+            r_address: Some(r_address),
+            program_io: None,
         }
     }
 
@@ -173,15 +171,11 @@ impl<F: JoltField> OutputSumcheck<F> {
             .borrow_mut()
             .challenge_vector(K.log_2());
 
-        let output_sumcheck_verifier_state = OutputSumcheckVerifierState {
-            program_io: program_io.clone(),
-            r_address: r_address.to_vec(),
-        };
-
         OutputSumcheck {
             K,
-            verifier_state: Some(output_sumcheck_verifier_state),
             prover_state: None,
+            r_address: Some(r_address),
+            program_io: Some(program_io.clone()),
         }
     }
 }
@@ -266,11 +260,6 @@ impl<F: JoltField> SumcheckInstance<F> for OutputSumcheck<F> {
         accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
         r: &[F],
     ) -> F {
-        let OutputSumcheckVerifierState {
-            r_address,
-            program_io,
-        } = self.verifier_state.as_ref().unwrap();
-
         let val_final_claim = accumulator
             .as_ref()
             .unwrap()
@@ -281,7 +270,9 @@ impl<F: JoltField> SumcheckInstance<F> for OutputSumcheck<F> {
             )
             .1;
 
+        let r_address = self.r_address.as_ref().unwrap();
         let r_address_prime = &r[..r_address.len()];
+        let program_io = self.program_io.as_ref().unwrap();
 
         let io_mask = RangeMaskPolynomial::new(
             remap_address(
