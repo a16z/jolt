@@ -13,10 +13,10 @@ use crate::{
     },
     zkvm::JoltSharedPreprocessing,
 };
-use tracer::instruction::Cycle;
 use allocative::Allocative;
 use ark_ff::biginteger::{I8OrI96, S160};
 use rayon::prelude::*;
+use tracer::instruction::Cycle;
 
 /// Number of rounds to use for small value optimization.
 /// Testing & estimation shows that 3 rounds is the best tradeoff

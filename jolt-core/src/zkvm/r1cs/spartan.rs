@@ -22,8 +22,8 @@ use crate::zkvm::dag::stage::SumcheckStages;
 use crate::zkvm::dag::state_manager::{ProofData, ProofKeys, StateManager};
 use crate::zkvm::instruction::CircuitFlags;
 use crate::zkvm::r1cs::inputs::{
-    compute_claimed_witness_evals, generate_pc_noop_witnesses, JoltR1CSInputs,
-    ALL_R1CS_INPUTS, COMMITTED_R1CS_INPUTS,
+    compute_claimed_witness_evals, generate_pc_noop_witnesses, JoltR1CSInputs, ALL_R1CS_INPUTS,
+    COMMITTED_R1CS_INPUTS,
 };
 use crate::zkvm::r1cs::key::UniformSpartanKey;
 use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
@@ -667,7 +667,7 @@ where
             let mut transcript = state_manager.transcript.borrow_mut();
             UniformSpartanProof::<F, ProofTranscript>::prove_outer_sumcheck(
                 &preprocessing.shared,
-                &trace,
+                trace,
                 num_rounds_x,
                 &tau,
                 &mut transcript,
@@ -716,7 +716,7 @@ where
         // Compute claimed witness evals at r_cycle via streaming (fast)
         let claimed_witness_evals = {
             let _guard = span!(Level::INFO, "claimed_witness_evals_fast").entered();
-            compute_claimed_witness_evals::<F>(&preprocessing.shared, &trace, r_cycle)
+            compute_claimed_witness_evals::<F>(&preprocessing.shared, trace, r_cycle)
         };
 
         // Only non-virtual (i.e. committed) polynomials' openings are

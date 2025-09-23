@@ -98,11 +98,7 @@ pub struct R1CSCycleInputs {
 impl R1CSCycleInputs {
     /// Build directly from the execution trace and preprocessing,
     /// mirroring the optimized semantics used in `compute_claimed_witness_evals`.
-    pub fn from_trace<F>(
-        preprocessing: &JoltSharedPreprocessing,
-        trace: &[Cycle],
-        t: usize,
-    ) -> Self
+    pub fn from_trace<F>(preprocessing: &JoltSharedPreprocessing, trace: &[Cycle], t: usize) -> Self
     where
         F: JoltField,
     {
@@ -235,8 +231,12 @@ impl R1CSCycleInputs {
         match input_index {
             JoltR1CSInputs::LeftInstructionInput => self.left_u64.to_field(),
             JoltR1CSInputs::RightInstructionInput => F::from_i128(self.right_s64.to_i128()),
-            JoltR1CSInputs::Product => F::from_i128(self.right_s64.to_i128()).mul_u64(self.left_u64),
-            JoltR1CSInputs::WriteLookupOutputToRD => (self.write_lookup_output_to_rd_u8 as u64).to_field(),
+            JoltR1CSInputs::Product => {
+                F::from_i128(self.right_s64.to_i128()).mul_u64(self.left_u64)
+            }
+            JoltR1CSInputs::WriteLookupOutputToRD => {
+                (self.write_lookup_output_to_rd_u8 as u64).to_field()
+            }
             JoltR1CSInputs::WritePCtoRD => (self.write_pc_to_rd_u8 as u64).to_field(),
             JoltR1CSInputs::ShouldBranch => self.should_branch_u64.to_field(),
             JoltR1CSInputs::PC => self.pc_u64.to_field(),

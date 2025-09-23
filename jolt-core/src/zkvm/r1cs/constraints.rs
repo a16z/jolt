@@ -66,10 +66,7 @@ impl Constraint {
 impl LC {
     /// Evaluate this LC given the inputs for a R1CS cycle, using field semantics, only for testing
     #[cfg(test)]
-    pub fn evaluate_row_with<F: JoltField>(
-        &self,
-        inputs: &R1CSCycleInputs,
-    ) -> F {
+    pub fn evaluate_row_with<F: JoltField>(&self, inputs: &R1CSCycleInputs) -> F {
         let mut result = F::zero();
         self.for_each_term(|input_index, coeff| {
             result += crate::utils::small_scalar::SmallScalar::field_mul(
@@ -508,10 +505,7 @@ pub static UNIFORM_R1CS: [NamedConstraint; NUM_R1CS_CONSTRAINTS] = [
 ];
 
 /// Evaluate Az by name using a fully materialized R1CS cycle inputs
-pub fn eval_az_by_name<F: JoltField>(
-    c: &NamedConstraint,
-    row: &R1CSCycleInputs,
-) -> I8OrI96 {
+pub fn eval_az_by_name<F: JoltField>(c: &NamedConstraint, row: &R1CSCycleInputs) -> I8OrI96 {
     use ConstraintName as N;
     match c.name {
         // Az: LeftOperandIsRs1Value flag (0/1)
@@ -638,7 +632,7 @@ pub fn eval_bz_by_name<F: JoltField>(c: &NamedConstraint, row: &R1CSCycleInputs)
         // B: Rs2Value - RamWriteValue (u64 bit-pattern difference)
         N::Rs2EqRamWriteIfStore => S160::from_diff_u64(row.rs2_u64, row.ram_write_value_u64),
         // B: 0 - LeftInstructionInput (true_val - false_val from if-else)
-        N::LeftLookupZeroUnlessAddSubMul => - S160::from(row.left_u64),
+        N::LeftLookupZeroUnlessAddSubMul => -S160::from(row.left_u64),
         N::RightLookupAdd => {
             // B: RightLookupOperand - (LeftInstructionInput + RightInstructionInput) with full-width integer semantics
             let expected_i128 = (row.left_u64 as i128) + row.right_s64.to_i128();
