@@ -134,7 +134,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
     /// Total = 19 accumulators
     #[tracing::instrument(
         skip_all,
-        name = "NewSpartanInterleavedPolynomial::new_with_precompute"
+        name = "SpartanInterleavedPolynomial::new_with_precompute"
     )]
     pub fn new_with_precompute(
         preprocess: &JoltSharedPreprocessing,
@@ -501,7 +501,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
     /// bound coeffs for the next round.
     #[tracing::instrument(
         skip_all,
-        name = "NewSpartanInterleavedPolynomial::streaming_sumcheck_round"
+        name = "SpartanInterleavedPolynomial::streaming_sumcheck_round"
     )]
     pub fn streaming_sumcheck_round<ProofTranscript: Transcript>(
         &mut self,
@@ -863,6 +863,308 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
         std::mem::swap(&mut self.bound_coeffs, &mut self.binding_scratch_space);
     }
 
+    /// Streaming variant that recomputes A/B per cycle instead of consuming cached
+    /// unbound coefficient shards. This reduces memory by not materializing
+    /// Az/Bz shards at all. It computes {Az,Bz,Cz}(r, x_next∈{0,1}) per (x_out, x_in),
+    /// aggregates t_i(0), t_i(∞), derives r_i, then binds into 3 coeffs per block.
+    #[tracing::instrument(
+        skip_all,
+        name = "SpartanInterleavedPolynomial::streaming_sumcheck_round_new"
+    )]
+    pub fn streaming_sumcheck_round_new<ProofTranscript: Transcript>(
+        &mut self,
+        preprocess: &JoltSharedPreprocessing,
+        trace: &[Cycle],
+        eq_poly: &mut GruenSplitEqPolynomial<F>,
+        transcript: &mut ProofTranscript,
+        r_challenges: &mut Vec<F>,
+        round_polys: &mut Vec<CompressedUniPoly<F>>,
+        claim: &mut F,
+    ) {
+        let num_y_svo_vars = r_challenges.len();
+        debug_assert_eq!(
+            num_y_svo_vars, NUM_SVO_ROUNDS,
+            "r_challenges length mismatch with NUM_SVO_ROUNDS"
+        );
+        let mut r_rev = r_challenges.clone();
+        r_rev.reverse();
+        // Scale eq(r, y) by R^2 so unreduced fmadd reductions match field semantics
+        let eq_r_evals = EqPolynomial::evals_with_scaling(&r_rev, Some(F::MONTGOMERY_R_SQUARE));
+
+        // Derive partition from current eq_poly lengths and static SVO params
+        let padded_num_constraints = self.padded_num_constraints;
+        let num_constraint_vars = if padded_num_constraints > 0 {
+            padded_num_constraints.log_2()
+        } else {
+            0
+        };
+        debug_assert!(NUM_SVO_ROUNDS <= num_constraint_vars);
+        let iter_num_x_in_constraint_vars = num_constraint_vars - NUM_SVO_ROUNDS;
+
+        let num_x_out_vals = eq_poly.E_out_current_len();
+        let iter_num_x_out_vars = if num_x_out_vals > 0 { num_x_out_vals.log_2() } else { 0 };
+
+        let num_steps = trace.len();
+        let num_step_vars = if num_steps > 0 { num_steps.log_2() } else { 0 };
+        debug_assert!(iter_num_x_out_vars <= num_step_vars);
+        let iter_num_x_in_step_vars = num_step_vars - iter_num_x_out_vars;
+        let iter_num_x_in_vars = iter_num_x_in_step_vars + iter_num_x_in_constraint_vars;
+        let num_x_in_step_vals = if iter_num_x_in_step_vars > 0 {
+            1usize << iter_num_x_in_step_vars
+        } else {
+            1
+        };
+
+        let num_uniform_r1cs_constraints = UNIFORM_R1CS.len();
+        let rem_num_uniform_r1cs_constraints = num_uniform_r1cs_constraints % Y_SVO_SPACE_SIZE;
+
+        struct TaskOut<F: JoltField> {
+            bound6_at_r: Vec<SparseCoefficient<F>>,
+            sum0: F,
+            sumInf: F,
+        }
+
+        // Parallel chunking across x_out
+        let num_parallel_chunks = if num_x_out_vals > 0 {
+            core::cmp::min(
+                num_x_out_vals,
+                rayon::current_num_threads().next_power_of_two() * 8,
+            )
+        } else {
+            1
+        };
+        let x_out_chunk_size = if num_x_out_vals > 0 {
+            core::cmp::max(1, num_x_out_vals.div_ceil(num_parallel_chunks))
+        } else {
+            0
+        };
+
+        let results: Vec<TaskOut<F>> = (0..num_parallel_chunks)
+            .into_par_iter()
+            .map(|chunk_idx| {
+                let x_out_start = chunk_idx * x_out_chunk_size;
+                let x_out_end = core::cmp::min((chunk_idx + 1) * x_out_chunk_size, num_x_out_vals);
+
+                let mut task_sum0 = F::zero();
+                let mut task_sumInf = F::zero();
+                let mut task_bound6_at_r: Vec<SparseCoefficient<F>> = Vec::new();
+
+                for x_out_val in x_out_start..x_out_end {
+                    for x_in_step_val in 0..num_x_in_step_vals {
+                        let current_step_idx = (x_out_val << iter_num_x_in_step_vars) | x_in_step_val;
+                        let mut current_x_in_constraint_val = 0;
+
+                        // Materialize row once per step
+                        let row_inputs =
+                            R1CSCycleInputs::from_trace::<F>(preprocess, trace, current_step_idx);
+
+                        // typed accumulators for x_next ∈ {0,1}
+                        let mut az_acc = [SignedUnreducedAccum::new(), SignedUnreducedAccum::new()];
+                        let mut bz_acc = [SignedUnreducedAccum::new(), SignedUnreducedAccum::new()];
+                        let mut cz_acc = [SignedUnreducedAccum::new(), SignedUnreducedAccum::new()];
+
+                        let mut binary_az_block = [I8OrI96::zero(); Y_SVO_SPACE_SIZE];
+                        let mut binary_bz_block = [S160::zero(); Y_SVO_SPACE_SIZE];
+
+                        for (uniform_chunk_iter_idx, uniform_svo_chunk) in
+                            UNIFORM_R1CS.chunks(Y_SVO_SPACE_SIZE).enumerate()
+                        {
+                            let chunk_size = uniform_svo_chunk.len();
+                            // Fill Az/Bz for this chunk using materialized row
+                            eval_az_bz_batch_from_row::<F>(
+                                uniform_svo_chunk,
+                                &row_inputs,
+                                &mut binary_az_block[..chunk_size],
+                                &mut binary_bz_block[..chunk_size],
+                            );
+
+                            // x_next toggles per full Y-block (0 for first, 1 for second, etc.)
+                            let x_next_val = uniform_chunk_iter_idx & 1;
+
+                            for idx_in_svo_block in 0..chunk_size {
+                                let eq = eq_r_evals[idx_in_svo_block];
+                                let az = binary_az_block[idx_in_svo_block];
+                                let bz = binary_bz_block[idx_in_svo_block];
+
+                                az_acc[x_next_val].fmadd_az::<F>(&eq, az);
+                                bz_acc[x_next_val].fmadd_bz::<F>(&eq, bz);
+
+                                // Cz gated by per-row CzKind using recovered row id
+                                let row_in_step =
+                                    (uniform_chunk_iter_idx << NUM_SVO_ROUNDS) + idx_in_svo_block;
+                                if row_in_step < UNIFORM_R1CS.len()
+                                    && matches!(UNIFORM_R1CS[row_in_step].cz, CzKind::NonZero)
+                                {
+                                    let prod = az * bz;
+                                    cz_acc[x_next_val].fmadd_prod::<F>(&eq, prod);
+                                }
+                            }
+
+                            if chunk_size == Y_SVO_SPACE_SIZE {
+                                current_x_in_constraint_val += 1;
+                                // reset local blocks
+                                binary_az_block = [I8OrI96::zero(); Y_SVO_SPACE_SIZE];
+                                binary_bz_block = [S160::zero(); Y_SVO_SPACE_SIZE];
+                            }
+                        }
+
+                        // Handle final partial block already accumulated in-place
+                        if rem_num_uniform_r1cs_constraints > 0 {
+                            // nothing extra to do; accumulators already include partial
+                        }
+
+                        // reduce to field values at y=r for both x_next
+                        let az0 = az_acc[0].reduce_to_field::<F>();
+                        let bz0 = bz_acc[0].reduce_to_field::<F>();
+                        let cz0 = cz_acc[0].reduce_to_field::<F>();
+                        let az1 = az_acc[1].reduce_to_field::<F>();
+                        let bz1 = bz_acc[1].reduce_to_field::<F>();
+                        let cz1 = cz_acc[1].reduce_to_field::<F>();
+
+                        // sumcheck contributions
+                        let p0 = az0 * bz0 - cz0;
+                        let slope = (az1 - az0) * (bz1 - bz0);
+
+                        // Compose x_in index for eq_poly
+                        let x_in_val = (x_in_step_val << iter_num_x_in_constraint_vars)
+                            | current_x_in_constraint_val;
+                        let e_out = if eq_poly.E_out_current_len() > 0 {
+                            eq_poly.E_out_current()[x_out_val]
+                        } else {
+                            F::one()
+                        };
+                        let e_in = if eq_poly.E_in_current_len() == 0 {
+                            F::one()
+                        } else if eq_poly.E_in_current_len() == 1 {
+                            eq_poly.E_in_current()[0]
+                        } else {
+                            eq_poly.E_in_current()[x_in_val]
+                        };
+                        let e_block = e_out * e_in;
+
+                        task_sum0 += e_block * p0;
+                        task_sumInf += e_block * slope;
+
+                        // record six-at-r values
+                        let block_id = (x_out_val << iter_num_x_in_vars) | x_in_val;
+                        if !az0.is_zero() {
+                            task_bound6_at_r.push((6 * block_id + 0, az0).into());
+                        }
+                        if !bz0.is_zero() {
+                            task_bound6_at_r.push((6 * block_id + 1, bz0).into());
+                        }
+                        if !cz0.is_zero() {
+                            task_bound6_at_r.push((6 * block_id + 2, cz0).into());
+                        }
+                        if !az1.is_zero() {
+                            task_bound6_at_r.push((6 * block_id + 3, az1).into());
+                        }
+                        if !bz1.is_zero() {
+                            task_bound6_at_r.push((6 * block_id + 4, bz1).into());
+                        }
+                        if !cz1.is_zero() {
+                            task_bound6_at_r.push((6 * block_id + 5, cz1).into());
+                        }
+                    }
+                }
+
+                TaskOut { bound6_at_r: task_bound6_at_r, sum0: task_sum0, sumInf: task_sumInf }
+            })
+            .collect();
+
+        // Aggregate totals and derive r_i
+        let totals = results.iter().fold((F::zero(), F::zero()), |acc, t| {
+            (acc.0 + t.sum0, acc.1 + t.sumInf)
+        });
+        let r_i = process_eq_sumcheck_round(
+            totals,
+            eq_poly,
+            round_polys,
+            r_challenges,
+            claim,
+            transcript,
+        );
+
+        // Pre-size binding_scratch_space using same helper
+        let per_task_sizes: Vec<usize> = results
+            .par_iter()
+            .map(|t| {
+                let mut size = 0usize;
+                for block6 in t.bound6_at_r.chunk_by(|a, b| a.index / 6 == b.index / 6) {
+                    size += Self::binding_output_length(block6);
+                }
+                size
+            })
+            .collect();
+        let total_len: usize = per_task_sizes.iter().sum();
+        if self.binding_scratch_space.capacity() < total_len {
+            self.binding_scratch_space
+                .reserve_exact(total_len - self.binding_scratch_space.capacity());
+        }
+        unsafe {
+            self.binding_scratch_space.set_len(total_len);
+        }
+
+        // Partition scratch and bind in parallel
+        let mut slices: Vec<&mut [SparseCoefficient<F>]> =
+            Vec::with_capacity(results.len());
+        let mut rem = self.binding_scratch_space.as_mut_slice();
+        for len in per_task_sizes {
+            let (a, b) = rem.split_at_mut(len);
+            slices.push(a);
+            rem = b;
+        }
+
+        results
+            .into_par_iter()
+            .zip_eq(slices.into_par_iter())
+            .for_each(|(t, out)| {
+                let mut i = 0usize;
+                for block6 in t.bound6_at_r.chunk_by(|a, b| a.index / 6 == b.index / 6) {
+                    if block6.is_empty() {
+                        continue;
+                    }
+                    let blk = block6[0].index / 6;
+
+                    let mut az0 = F::zero();
+                    let mut bz0 = F::zero();
+                    let mut cz0 = F::zero();
+                    let mut az1 = F::zero();
+                    let mut bz1 = F::zero();
+                    let mut cz1 = F::zero();
+                    for c in block6 {
+                        match c.index % 6 {
+                            0 => az0 = c.value,
+                            1 => bz0 = c.value,
+                            2 => cz0 = c.value,
+                            3 => az1 = c.value,
+                            4 => bz1 = c.value,
+                            5 => cz1 = c.value,
+                            _ => {}
+                        }
+                    }
+
+                    let azb = az0 + r_i * (az1 - az0);
+                    if !azb.is_zero() {
+                        out[i] = (3 * blk + 0, azb).into();
+                        i += 1;
+                    }
+                    let bzb = bz0 + r_i * (bz1 - bz0);
+                    if !bzb.is_zero() {
+                        out[i] = (3 * blk + 1, bzb).into();
+                        i += 1;
+                    }
+                    if !cz0.is_zero() || !cz1.is_zero() {
+                        let czb = cz0 + r_i * (cz1 - cz0);
+                        out[i] = (3 * blk + 2, czb).into();
+                        i += 1;
+                    }
+                }
+            });
+
+        core::mem::swap(&mut self.bound_coeffs, &mut self.binding_scratch_space);
+    }
+
     /// This function computes the polynomial for each of the remaining rounds, using the
     /// linear-time algorithm with split-eq optimizations
     ///
@@ -883,7 +1185,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
     /// derive next challenge `r_i`, then bind both `eq_poly` and `bound_coeffs` with `r_i`.
     #[tracing::instrument(
         skip_all,
-        name = "NewSpartanInterleavedPolynomial::remaining_sumcheck_round"
+        name = "SpartanInterleavedPolynomial::remaining_sumcheck_round"
     )]
     pub fn remaining_sumcheck_round<ProofTranscript: Transcript>(
         &mut self,
