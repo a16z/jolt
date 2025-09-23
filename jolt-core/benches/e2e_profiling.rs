@@ -577,13 +577,18 @@ fn prove_example_with_trace(
 ) -> (std::time::Duration, usize, usize) {
     let mut program = host::Program::new(example_name);
     let (bytecode, init_memory_state, _) = program.decode();
-    let (_, _, program_io) = program.trace(&serialized_input);
+    let (trace, _, program_io) = program.trace(&serialized_input);
+
+    assert!(
+        trace.len().next_power_of_two() <= max_trace_length,
+        "Trace is longer than expected"
+    );
 
     let preprocessing = JoltRV64IMAC::prover_preprocess(
         bytecode.clone(),
         program_io.memory_layout.clone(),
         init_memory_state,
-        max_trace_length,
+        trace.len().next_power_of_two(),
     );
 
     let elf_contents_opt = program.get_elf_contents();
