@@ -8,7 +8,23 @@ version = "0.24.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dfbe277e56a376000877090da837660b4427aad530e3028d44e0bffe4f89a1c1"
 dependencies = [
- "gimli",
+ "gimli 0.31.1",
+]
+
+[[package]]
+name = "addr2line"
+version = "0.25.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1b5d307320b3181d6d7954e663bd7c774a838b8220fe0593c86d9fb09f498b4b"
+dependencies = [
+ "cpp_demangle",
+ "fallible-iterator",
+ "gimli 0.32.3",
+ "memmap2",
+ "object 0.37.3",
+ "rustc-demangle",
+ "smallvec",
+ "typed-arena",
 ]
 
 [[package]]
@@ -164,7 +180,7 @@ dependencies = [
 [[package]]
 name = "ark-ec"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#5ebdb1789edafdb0e8e43f82089ec6eed9e8b38c"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#6cb3aa13855187bfa0a0c54da09c9100774751cb"
 dependencies = [
  "ahash",
  "ark-ff",
@@ -185,7 +201,7 @@ dependencies = [
 [[package]]
 name = "ark-ff"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#5ebdb1789edafdb0e8e43f82089ec6eed9e8b38c"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#6cb3aa13855187bfa0a0c54da09c9100774751cb"
 dependencies = [
  "allocative",
  "ark-ff-asm",
@@ -206,7 +222,7 @@ dependencies = [
 [[package]]
 name = "ark-ff-asm"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#5ebdb1789edafdb0e8e43f82089ec6eed9e8b38c"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#6cb3aa13855187bfa0a0c54da09c9100774751cb"
 dependencies = [
  "quote",
  "syn 2.0.106",
@@ -215,7 +231,7 @@ dependencies = [
 [[package]]
 name = "ark-ff-macros"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#5ebdb1789edafdb0e8e43f82089ec6eed9e8b38c"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#6cb3aa13855187bfa0a0c54da09c9100774751cb"
 dependencies = [
  "num-bigint",
  "num-traits",
@@ -227,7 +243,7 @@ dependencies = [
 [[package]]
 name = "ark-poly"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#5ebdb1789edafdb0e8e43f82089ec6eed9e8b38c"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#6cb3aa13855187bfa0a0c54da09c9100774751cb"
 dependencies = [
  "ahash",
  "ark-ff",
@@ -241,9 +257,9 @@ dependencies = [
 [[package]]
 name = "ark-serialize"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#5ebdb1789edafdb0e8e43f82089ec6eed9e8b38c"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#6cb3aa13855187bfa0a0c54da09c9100774751cb"
 dependencies = [
- "ark-serialize-derive 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
+ "ark-serialize-derive 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions)",
  "ark-std",
  "arrayvec",
  "digest",
@@ -265,7 +281,7 @@ dependencies = [
 [[package]]
 name = "ark-serialize-derive"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#5ebdb1789edafdb0e8e43f82089ec6eed9e8b38c"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#6cb3aa13855187bfa0a0c54da09c9100774751cb"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -279,7 +295,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "246a225cc6131e9ee4f24619af0f19d67761fff15d7ccc22e42b80846e69449a"
 dependencies = [
  "num-traits",
- "rand",
+ "rand 0.8.5",
  "rayon",
 ]
 
@@ -313,11 +329,11 @@ version = "0.3.75"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6806a6321ec58106fea15becdad98371e28d92ccbc7c8f1b3b6dd724fe8f1002"
 dependencies = [
- "addr2line",
+ "addr2line 0.24.2",
  "cfg-if",
  "libc",
  "miniz_oxide",
- "object",
+ "object 0.36.7",
  "rustc-demangle",
  "windows-targets 0.52.6",
 ]
@@ -682,6 +698,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
 
 [[package]]
+name = "cpp_demangle"
+version = "0.4.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "96e58d342ad113c2b878f16d5d034c03be492ae460cdbc02b7f0f2284d310c7d"
+dependencies = [
+ "cfg-if",
+]
+
+[[package]]
 name = "cpufeatures"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -930,7 +955,7 @@ dependencies = [
 [[package]]
 name = "dory"
 version = "1.0.0"
-source = "git+https://github.com/spaceandtimefdn/sxt-dory?branch=feat%2Freturn_row_commitments#814844f68b093e9c240f3c50288d3fb5b370e06c"
+source = "git+https://github.com/spaceandtimefdn/sxt-dory?branch=feat%2Ffewer-reductions#cfd4e8540c13f6b7e98c83a4af79b0df4a0f6f69"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -941,7 +966,7 @@ dependencies = [
  "blake2",
  "digest",
  "jolt-optimizations",
- "rand_chacha",
+ "rand_chacha 0.3.1",
  "rayon",
  "serde",
  "thiserror 2.0.16",
@@ -1076,6 +1101,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "fallible-iterator"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2acce4a10f12dc2fb14a218589d4f1f62ef011b2d0cc4b3cb1bba8e94da14649"
+
+[[package]]
 name = "fastrand"
 version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1107,6 +1138,16 @@ name = "fixedbitset"
 version = "0.5.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d674e81391d1e1ab681a28d99df07927c6d4aa5b027d7da16ba32d1d21ecd99"
+
+[[package]]
+name = "flate2"
+version = "1.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4a3d7db9596fecd151c5f638c0ee5d5bd487b6e0ea232e5dc96d5250f6f94b1d"
+dependencies = [
+ "crc32fast",
+ "miniz_oxide",
+]
 
 [[package]]
 name = "fnv"
@@ -1251,9 +1292,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "26145e563e54f2cadc477553f1ec5ee650b00862f0a58bcd12cbdc5f0ea2d2f4"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "r-efi",
  "wasi 0.14.5+wasi-0.2.4",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -1261,6 +1304,16 @@ name = "gimli"
 version = "0.31.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "07e28edb80900c19c28f1072f2e8aeca7fa06b23cd4169cefe1af5aa3260783f"
+
+[[package]]
+name = "gimli"
+version = "0.32.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e629b9b98ef3dd8afe6ca2bd0f89306cec16d43d907889945bc5d6687f2f13c7"
+dependencies = [
+ "fallible-iterator",
+ "stable_deref_trait",
+]
 
 [[package]]
 name = "glob"
@@ -1808,7 +1861,7 @@ dependencies = [
  "eyre",
  "jolt-core",
  "jolt-sdk",
- "rand",
+ "rand 0.8.5",
  "rmp-serde",
  "serde",
  "syn 1.0.109",
@@ -1839,7 +1892,6 @@ dependencies = [
  "dory",
  "eyre",
  "fixedbitset",
- "getrandom 0.2.16",
  "iai-callgrind",
  "indicatif",
  "inferno",
@@ -1858,9 +1910,9 @@ dependencies = [
  "paste",
  "plotly",
  "postcard",
- "rand",
- "rand_chacha",
- "rand_core",
+ "rand 0.8.5",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
  "rand_distr",
  "rayon",
  "reqwest",
@@ -1886,7 +1938,7 @@ dependencies = [
  "common",
  "ctor 0.2.9",
  "hex-literal",
- "rand",
+ "rand 0.8.5",
  "tracer",
  "tracing",
 ]
@@ -1898,7 +1950,7 @@ dependencies = [
  "blake2",
  "ctor 0.2.9",
  "hex-literal",
- "rand",
+ "rand 0.8.5",
  "tracer",
 ]
 
@@ -1909,7 +1961,7 @@ dependencies = [
  "blake3",
  "ctor 0.2.9",
  "hex-literal",
- "rand",
+ "rand 0.8.5",
  "tracer",
 ]
 
@@ -1936,7 +1988,7 @@ dependencies = [
 [[package]]
 name = "jolt-optimizations"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#5ebdb1789edafdb0e8e43f82089ec6eed9e8b38c"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#6cb3aa13855187bfa0a0c54da09c9100774751cb"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -1955,7 +2007,8 @@ name = "jolt-platform"
 version = "0.1.0"
 dependencies = [
  "getrandom 0.2.16",
- "rand",
+ "getrandom 0.3.3",
+ "rand 0.8.5",
 ]
 
 [[package]]
@@ -1965,13 +2018,12 @@ dependencies = [
  "ark-bn254",
  "ark-ec",
  "common",
- "getrandom 0.2.16",
  "hex-literal",
  "jolt-core",
  "jolt-platform",
  "jolt-sdk-macros",
  "postcard",
- "rand",
+ "rand 0.8.5",
  "tracer",
 ]
 
@@ -2102,6 +2154,15 @@ name = "memchr"
 version = "2.7.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32a282da65faaf38286cf3be983213fcf1d2e2a58700e808f83f4ea9a4804bc0"
+
+[[package]]
+name = "memmap2"
+version = "0.9.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "843a98750cd611cc2965a8213b53b43e715f13c37a9e096c6408e69990961db7"
+dependencies = [
+ "libc",
+]
 
 [[package]]
 name = "memory-ops"
@@ -2367,6 +2428,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "object"
+version = "0.37.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ff76201f031d8863c38aa7f905eca4f53abbfa15f609db4277d44cd8938f33fe"
+dependencies = [
+ "flate2",
+ "memchr",
+ "ruzstd",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.21.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2512,7 +2584,7 @@ dependencies = [
  "erased-serde",
  "once_cell",
  "plotly_derive",
- "rand",
+ "rand 0.8.5",
  "rinja",
  "serde",
  "serde_json",
@@ -2676,8 +2748,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "34af8d1a0e25924bc5b7c43c079c942339d8f0a8b57c39049bef581b46327404"
 dependencies = [
  "libc",
- "rand_chacha",
- "rand_core",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
+]
+
+[[package]]
+name = "rand"
+version = "0.9.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6db2770f06117d490610c7488547d543617b21bfa07796d7a12f6f1bd53850d1"
+dependencies = [
+ "rand_chacha 0.9.0",
+ "rand_core 0.9.3",
 ]
 
 [[package]]
@@ -2687,7 +2769,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6c10a63a0fa32252be49d21e7709d4d4baf8d231c2dbce1eaa8141b9b127d88"
 dependencies = [
  "ppv-lite86",
- "rand_core",
+ "rand_core 0.6.4",
+]
+
+[[package]]
+name = "rand_chacha"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d3022b5f1df60f26e1ffddd6c66e8aa15de382ae63b3a0c1bfc0e4d3e3f325cb"
+dependencies = [
+ "ppv-lite86",
+ "rand_core 0.9.3",
 ]
 
 [[package]]
@@ -2700,13 +2792,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "rand_core"
+version = "0.9.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "99d9a13982dcf210057a8a78572b2217b667c3beacbf3a0d8b454f6f82837d38"
+dependencies = [
+ "getrandom 0.3.3",
+]
+
+[[package]]
 name = "rand_distr"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32cb0b9bc82b0a0876c2dd994a7e7a2683d3e7390ca40e6886785ef0c7e3ee31"
 dependencies = [
  "num-traits",
- "rand",
+ "rand 0.8.5",
+]
+
+[[package]]
+name = "random"
+version = "0.1.0"
+dependencies = [
+ "jolt-sdk",
+ "random-guest",
+]
+
+[[package]]
+name = "random-guest"
+version = "0.1.0"
+dependencies = [
+ "jolt-sdk",
+ "rand 0.8.5",
+ "rand 0.9.2",
 ]
 
 [[package]]
@@ -2727,6 +2845,23 @@ checksum = "22e18b0f0062d30d4230b2e85ff77fdfe4326feb054b9783a3460d8435c8ab91"
 dependencies = [
  "crossbeam-deque",
  "crossbeam-utils",
+]
+
+[[package]]
+name = "recover-ecdsa"
+version = "0.1.0"
+dependencies = [
+ "jolt-sdk",
+ "recover-ecdsa-guest",
+ "secp256k1",
+]
+
+[[package]]
+name = "recover-ecdsa-guest"
+version = "0.1.0"
+dependencies = [
+ "jolt-sdk",
+ "secp256k1",
 ]
 
 [[package]]
@@ -3031,6 +3166,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
 
 [[package]]
+name = "ruzstd"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3640bec8aad418d7d03c72ea2de10d5c646a598f9883c7babc160d91e3c1b26c"
+dependencies = [
+ "twox-hash",
+]
+
+[[package]]
 name = "ryu"
 version = "1.0.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3098,6 +3242,25 @@ name = "sdd"
 version = "3.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "490dcfcbfef26be6800d11870ff2df8774fa6e86d047e3e8c8a76b25655e41ca"
+
+[[package]]
+name = "secp256k1"
+version = "0.30.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b50c5943d326858130af85e049f2661ba3c78b26589b8ab98e65e80ae44a1252"
+dependencies = [
+ "secp256k1-sys",
+ "serde",
+]
+
+[[package]]
+name = "secp256k1-sys"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d4387882333d3aa8cb20530a17c69a3752e97837832f34f6dccc760e715001d9"
+dependencies = [
+ "cc",
+]
 
 [[package]]
 name = "security-framework"
@@ -3763,6 +3926,7 @@ checksum = "8df9b6e13f2d32c91b9bd719c00d1958837bc7dec474d94952798cc8e69eeec3"
 name = "tracer"
 version = "0.2.0"
 dependencies = [
+ "addr2line 0.25.1",
  "ark-serialize",
  "clap",
  "common",
@@ -3771,10 +3935,10 @@ dependencies = [
  "itertools 0.10.5",
  "jolt-platform",
  "lazy_static",
- "object",
+ "object 0.36.7",
  "paste",
  "postcard",
- "rand",
+ "rand 0.8.5",
  "serde",
  "serde_json",
  "strum 0.26.3",
@@ -3860,6 +4024,18 @@ name = "try-lock"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
+
+[[package]]
+name = "twox-hash"
+version = "2.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9ea3136b675547379c4bd395ca6b938e5ad3c3d20fad76e7fe85f9e0d011419c"
+
+[[package]]
+name = "typed-arena"
+version = "2.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6af6ae20167a9ece4bcb41af5b80f8a1f1df981f6391189ce00fd257af04126a"
 
 [[package]]
 name = "typeid"
@@ -4603,4 +4779,4 @@ dependencies = [
 [[patch.unused]]
 name = "ark-bn254"
 version = "0.5.0-alpha.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#5ebdb1789edafdb0e8e43f82089ec6eed9e8b38c"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#6cb3aa13855187bfa0a0c54da09c9100774751cb"

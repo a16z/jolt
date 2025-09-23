@@ -185,12 +185,12 @@ impl MacroBuilder {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #build_verifier_fn_name(
                 preprocessing: jolt::JoltVerifierPreprocessing<jolt::F, jolt::PCS>,
-            ) -> impl Fn(#(#input_types ,)* #output_type, bool, jolt::RV32IMJoltProof) -> bool + Sync + Send
+            ) -> impl Fn(#(#input_types ,)* #output_type, bool, jolt::RV64IMACJoltProof) -> bool + Sync + Send
             {
                 #imports
                 let preprocessing = std::sync::Arc::new(preprocessing);
 
-                let verify_closure = move |#(#inputs,)* output, panic, proof: jolt::RV32IMJoltProof| {
+                let verify_closure = move |#(#inputs,)* output, panic, proof: jolt::RV64IMACJoltProof| {
                     let preprocessing = (*preprocessing).clone();
                     let memory_config = MemoryConfig {
                         max_input_size: preprocessing.shared.memory_layout.max_input_size,
@@ -205,7 +205,7 @@ impl MacroBuilder {
                     io_device.outputs.append(&mut jolt::postcard::to_stdvec(&output).unwrap());
                     io_device.panic = panic;
 
-                    JoltRV32IM::verify(&preprocessing, proof, io_device, None).is_ok()
+                    JoltRV64IMAC::verify(&preprocessing, proof, io_device, None).is_ok()
                 };
 
                 verify_closure
@@ -358,7 +358,7 @@ impl MacroBuilder {
 
                 // TODO(moodlezoup): Feed in size parameters via macro
                 let preprocessing: JoltProverPreprocessing<jolt::F, jolt::PCS> =
-                    JoltRV32IM::prover_preprocess(
+                    JoltRV64IMAC::prover_preprocess(
                         bytecode,
                         memory_layout,
                         memory_init,
@@ -401,7 +401,7 @@ impl MacroBuilder {
 
                 // TODO(moodlezoup): Feed in size parameters via macro
                 let prover_preprocessing: JoltProverPreprocessing<jolt::F, jolt::PCS> =
-                    JoltRV32IM::prover_preprocess(
+                    JoltRV64IMAC::prover_preprocess(
                         bytecode,
                         memory_layout,
                         memory_init,
@@ -472,7 +472,7 @@ impl MacroBuilder {
 
                 let elf_contents_opt = program.get_elf_contents();
                 let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-                let (jolt_proof, io_device, _, _) = JoltRV32IM::prove(
+                let (jolt_proof, io_device, _, _) = JoltRV64IMAC::prove(
                     &preprocessing,
                     &elf_contents,
                     &input_bytes,
@@ -623,8 +623,8 @@ impl MacroBuilder {
                 host::Program,
                 JoltProverPreprocessing,
                 JoltVerifierPreprocessing,
-                JoltRV32IM,
-                RV32IMJoltProof,
+                JoltRV64IMAC,
+                RV64IMACJoltProof,
                 MemoryConfig,
                 MemoryLayout,
                 JoltDevice,
@@ -707,10 +707,10 @@ impl MacroBuilder {
     fn get_prove_output_type(&self) -> TokenStream2 {
         match &self.func.sig.output {
             ReturnType::Default => quote! {
-                ((), jolt::RV32IMJoltProof, jolt::JoltDevice)
+                ((), jolt::RV64IMACJoltProof, jolt::JoltDevice)
             },
             ReturnType::Type(_, ty) => quote! {
-                (#ty, jolt::RV32IMJoltProof, jolt::JoltDevice)
+                (#ty, jolt::RV64IMACJoltProof, jolt::JoltDevice)
             },
         }
     }
@@ -759,18 +759,18 @@ impl MacroBuilder {
             #[wasm_bindgen]
             #[cfg(all(target_arch = "wasm32", not(feature = "guest")))]
             pub fn #verify_wasm_fn_name(preprocessing_data: &[u8], proof_bytes: &[u8]) -> bool {
-                use jolt::{RV32IMJoltProof, JoltRV32IM, Serializable};
+                use jolt::{RV64IMACJoltProof, JoltRV64IMAC, Serializable};
 
                 let decoded_preprocessing_data: DecodedData = deserialize_from_bin(preprocessing_data).unwrap();
-                let proof = RV32IMJoltProof::deserialize_from_bytes(proof_bytes).unwrap();
+                let proof = RV64IMACJoltProof::deserialize_from_bytes(proof_bytes).unwrap();
 
-                let preprocessing = JoltRV32IM::preprocess(
+                let preprocessing = JoltRV64IMAC::preprocess(
                     decoded_preprocessing_data.bytecode,
                     decoded_preprocessing_data.memory_init,
                     #max_trace_length,
                 );
 
-                let result = JoltRV32IM::verify(&preprocessing, proof);
+                let result = JoltRV64IMAC::verify(&preprocessing, proof);
                 result.is_ok()
             }
         }

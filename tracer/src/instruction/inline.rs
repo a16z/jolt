@@ -11,7 +11,7 @@
 
 use super::{
     format::{format_inline::FormatInline, InstructionFormat},
-    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
+    Cycle, Instruction, RISCVInstruction, RISCVTrace,
 };
 use crate::{
     emulator::cpu::{Cpu, Xlen},
@@ -25,7 +25,7 @@ use std::sync::RwLock;
 
 // Type alias for the inline_sequence functions signature
 pub type InlineSequenceFunction =
-    Box<dyn Fn(InstrAssembler, FormatInline) -> Vec<RV32IMInstruction> + Send + Sync>;
+    Box<dyn Fn(InstrAssembler, FormatInline) -> Vec<Instruction> + Send + Sync>;
 
 // Key type for the registry: (opcode, funct3, funct7)
 type InlineKey = (u32, u32, u32);
@@ -187,7 +187,7 @@ impl INLINE {
 }
 
 impl RISCVTrace for INLINE {
-    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
         let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
@@ -199,7 +199,7 @@ impl RISCVTrace for INLINE {
         &self,
         allocator: &VirtualRegisterAllocator,
         xlen: Xlen,
-    ) -> Vec<RV32IMInstruction> {
+    ) -> Vec<Instruction> {
         let key = (self.opcode, self.funct3, self.funct7);
 
         match INLINE_REGISTRY.read() {

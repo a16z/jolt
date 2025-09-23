@@ -1,11 +1,11 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{declare_riscv_instr, emulator::cpu::Cpu};
-
 use super::{
     format::{format_j::FormatJ, normalize_imm},
     RISCVInstruction, RISCVTrace,
 };
+use crate::instruction::format::NormalizedOperands;
+use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
 declare_riscv_instr!(
     name   = JAL,
@@ -18,6 +18,10 @@ declare_riscv_instr!(
 impl JAL {
     fn exec(&self, cpu: &mut Cpu, _: &mut <JAL as RISCVInstruction>::RAMAccess) {
         if self.operands.rd != 0 {
+            if self.operands.rd == 1 {
+                // Track function call if we're saving a return address (rd != 0)
+                cpu.track_call(self.address, NormalizedOperands::from(self.operands));
+            }
             cpu.x[self.operands.rd as usize] = cpu.sign_extend(cpu.pc as i64);
         }
         cpu.pc = (self.address as i64 + normalize_imm(self.operands.imm, &cpu.xlen)) as u64;

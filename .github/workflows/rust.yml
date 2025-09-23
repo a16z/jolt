@@ -54,7 +54,7 @@ jobs:
         run: rustup target add wasm32-unknown-unknown
       - name: Build Wasm
         working-directory: ./jolt-core
-        run: cargo build --release --target wasm32-unknown-unknown
+        run: RUSTFLAGS='--cfg getrandom_backend="wasm_js"' cargo build --release --target wasm32-unknown-unknown
 
   test-core:
     runs-on: ubuntu-latest
@@ -140,6 +140,8 @@ jobs:
         run: cargo run install-toolchain
       - name: Install nextest
         uses: taiki-e/install-action@nextest
+      - name: Generate test fixtures
+        run: bash jolt-sdk/tests/gen-fixtures.sh
       - name: Run SDK verifier tests
         run: cargo nextest run --release -p jolt-sdk --features host
 

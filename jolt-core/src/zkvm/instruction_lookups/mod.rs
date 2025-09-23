@@ -1,6 +1,6 @@
 use common::constants::XLEN;
 use rayon::prelude::*;
-use tracer::instruction::RV32IMCycle;
+use tracer::instruction::Cycle;
 
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
@@ -145,7 +145,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
 }
 
 #[inline(always)]
-fn compute_ra_evals<F: JoltField>(trace: &[RV32IMCycle], eq_r_cycle: &[F]) -> [Vec<F>; D] {
+fn compute_ra_evals<F: JoltField>(trace: &[Cycle], eq_r_cycle: &[F]) -> [Vec<F>; D] {
     let T = trace.len();
     let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
     let chunk_size = (T / num_chunks).max(1);

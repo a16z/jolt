@@ -2,7 +2,7 @@ use ark_serialize::CanonicalSerialize;
 use jolt_core::host;
 use jolt_core::zkvm::dag::state_manager::ProofKeys;
 use jolt_core::zkvm::JoltVerifierPreprocessing;
-use jolt_core::zkvm::{Jolt, JoltRV32IM};
+use jolt_core::zkvm::{Jolt, JoltRV64IMAC};
 use plotly::{Layout, Plot, Scatter};
 use std::collections::HashMap;
 use std::env;
@@ -535,24 +535,24 @@ fn prove_example(
     let mut tasks = Vec::new();
     let mut program = host::Program::new(example_name);
     let (bytecode, init_memory_state, _) = program.decode();
-    let (_, _, program_io) = program.trace(&serialized_input);
+    let (trace, _, program_io) = program.trace(&serialized_input);
 
     let task = move || {
-        let preprocessing = JoltRV32IM::prover_preprocess(
+        let preprocessing = JoltRV64IMAC::prover_preprocess(
             bytecode.clone(),
             program_io.memory_layout.clone(),
             init_memory_state,
-            1 << 24,
+            (trace.len() + 1).next_power_of_two(),
         );
 
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let (jolt_proof, program_io, _, _) =
-            JoltRV32IM::prove(&preprocessing, elf_contents, &serialized_input);
+            JoltRV64IMAC::prove(&preprocessing, elf_contents, &serialized_input);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let verification_result =
-            JoltRV32IM::verify(&verifier_preprocessing, jolt_proof, program_io, None);
+            JoltRV64IMAC::verify(&verifier_preprocessing, jolt_proof, program_io, None);
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",
@@ -579,7 +579,7 @@ fn prove_example_with_trace(
     let (bytecode, init_memory_state, _) = program.decode();
     let (_, _, program_io) = program.trace(&serialized_input);
 
-    let preprocessing = JoltRV32IM::prover_preprocess(
+    let preprocessing = JoltRV64IMAC::prover_preprocess(
         bytecode.clone(),
         program_io.memory_layout.clone(),
         init_memory_state,
@@ -591,7 +591,7 @@ fn prove_example_with_trace(
 
     let span = tracing::info_span!("E2E");
     let (jolt_proof, program_io, _, start) =
-        span.in_scope(|| JoltRV32IM::prove(&preprocessing, elf_contents, &serialized_input));
+        span.in_scope(|| JoltRV64IMAC::prove(&preprocessing, elf_contents, &serialized_input));
     let prove_duration = start.elapsed();
     let proof_size = jolt_proof.serialized_size(ark_serialize::Compress::Yes);
     let proof_size_full_compressed = proof_size
@@ -610,7 +610,7 @@ fn prove_example_with_trace(
 
     let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
     let verification_result =
-        JoltRV32IM::verify(&verifier_preprocessing, jolt_proof, program_io, None);
+        JoltRV64IMAC::verify(&verifier_preprocessing, jolt_proof, program_io, None);
     assert!(
         verification_result.is_ok(),
         "Verification failed with error: {:?}",

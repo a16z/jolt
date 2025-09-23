@@ -5,10 +5,11 @@ use tracer::instruction::{RISCVCycle, RISCVInstruction};
 
 use super::InstructionLookup;
 
-pub fn materialize_entry_test<F: JoltField, T>()
+pub fn materialize_entry_test<F, T>()
 where
     RISCVCycle<T>: LookupQuery<XLEN>,
     T: InstructionLookup<XLEN> + RISCVInstruction + Default,
+    F: JoltField,
 {
     let cycle: RISCVCycle<T> = Default::default();
     let table = cycle.instruction.lookup_table().unwrap();

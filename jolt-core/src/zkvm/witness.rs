@@ -12,7 +12,7 @@ use itertools::Itertools;
 use once_cell::sync::OnceCell;
 use rayon::prelude::*;
 use strum::IntoEnumIterator;
-use tracer::instruction::RV32IMCycle;
+use tracer::instruction::Cycle;
 
 use crate::{
     field::JoltField,
@@ -253,7 +253,7 @@ impl CommittedPolynomial {
     pub fn generate_witness_batch<F, PCS>(
         polynomials: &[CommittedPolynomial],
         preprocessing: &JoltProverPreprocessing<F, PCS>,
-        trace: &[RV32IMCycle],
+        trace: &[Cycle],
     ) -> std::collections::HashMap<CommittedPolynomial, MultilinearPolynomial<F>>
     where
         F: JoltField,
@@ -458,7 +458,7 @@ impl CommittedPolynomial {
     pub fn generate_witness<F, PCS>(
         &self,
         preprocessing: &JoltProverPreprocessing<F, PCS>,
-        trace: &[RV32IMCycle],
+        trace: &[Cycle],
     ) -> MultilinearPolynomial<F>
     where
         F: JoltField,
@@ -529,7 +529,7 @@ impl CommittedPolynomial {
                         trace
                             .par_iter()
                             .skip(1)
-                            .chain(rayon::iter::once(&RV32IMCycle::NoOp)),
+                            .chain(rayon::iter::once(&Cycle::NoOp)),
                     )
                     .map(|(cycle, next_cycle)| {
                         let is_jump = cycle.instruction().circuit_flags()[CircuitFlags::Jump];
