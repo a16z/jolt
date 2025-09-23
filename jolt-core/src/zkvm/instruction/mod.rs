@@ -115,6 +115,13 @@ pub trait InstructionFlags {
     fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS];
 }
 
+/// Extension to query circuit flags without panicking on unsupported instructions.
+/// Useful for testing
+#[cfg(test)]
+pub trait InstructionFlagsExt {
+    fn try_circuit_flags(&self) -> Option<[bool; NUM_CIRCUIT_FLAGS]>;
+}
+
 macro_rules! define_rv32im_trait_impls {
     (
         instructions: [$($instr:ident),* $(,)?]
@@ -146,6 +153,25 @@ macro_rules! define_rv32im_trait_impls {
                     )*
                     Instruction::UNIMPL => [false; NUM_CIRCUIT_FLAGS],
                     _ => panic!("Unexpected instruction: {:?}", self),
+                }
+            }
+        }
+
+        #[cfg(test)]
+        impl InstructionFlagsExt for Instruction {
+            fn try_circuit_flags(&self) -> Option<[bool; NUM_CIRCUIT_FLAGS]> {
+                match self {
+                    Instruction::NoOp => {
+                        let mut flags = [false; NUM_CIRCUIT_FLAGS];
+                        flags[CircuitFlags::IsNoop] = true;
+                        flags[CircuitFlags::DoNotUpdateUnexpandedPC] = true;
+                        Some(flags)
+                    },
+                    $(
+                        Instruction::$instr(instr) => Some(instr.circuit_flags()),
+                    )*
+                    Instruction::UNIMPL => Some([false; NUM_CIRCUIT_FLAGS]),
+                    _ => None,
                 }
             }
         }

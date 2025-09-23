@@ -270,7 +270,7 @@ fn bench_single_constraint_comparison(c: &mut Criterion) {
     for &idx in &test_constraints {
         let constraint = &UNIFORM_R1CS[idx];
 
-        c.bench_function(&format!("single_constraint_{}_az_named", idx), |b| {
+        c.bench_function(&format!("single_constraint_{idx}_az_named"), |b| {
             b.iter(|| {
                 for row in 0..black_box(100) {
                     let _result = eval_az_by_name::<TrackedFr>(
@@ -283,7 +283,7 @@ fn bench_single_constraint_comparison(c: &mut Criterion) {
         });
 
         c.bench_function(
-            &format!("single_constraint_{}_az_generic_field", idx),
+            &format!("single_constraint_{idx}_az_generic_field"),
             |b| {
                 b.iter(|| {
                     for row in 0..black_box(100) {
@@ -296,7 +296,7 @@ fn bench_single_constraint_comparison(c: &mut Criterion) {
             },
         );
 
-        c.bench_function(&format!("single_constraint_{}_bz_named", idx), |b| {
+        c.bench_function(&format!("single_constraint_{idx}_bz_named"), |b| {
             b.iter(|| {
                 for row in 0..black_box(100) {
                     let _result = eval_bz_by_name::<TrackedFr>(
@@ -309,7 +309,7 @@ fn bench_single_constraint_comparison(c: &mut Criterion) {
         });
 
         c.bench_function(
-            &format!("single_constraint_{}_bz_generic_field", idx),
+            &format!("single_constraint_{idx}_bz_generic_field"),
             |b| {
                 b.iter(|| {
                     for row in 0..black_box(100) {
@@ -374,7 +374,7 @@ fn bench_constraint_evaluation_single(c: &mut Criterion) {
     ];
 
     for (i, constraint) in representative_constraints.iter().enumerate() {
-        c.bench_function(&format!("single_constraint_az_{}", i), |b| {
+        c.bench_function(&format!("single_constraint_az_{i}"), |b| {
             b.iter(|| {
                 for row in 0..black_box(100) {
                     let _result = eval_az_by_name::<TrackedFr>(
@@ -386,7 +386,7 @@ fn bench_constraint_evaluation_single(c: &mut Criterion) {
             })
         });
 
-        c.bench_function(&format!("single_constraint_bz_{}", i), |b| {
+        c.bench_function(&format!("single_constraint_bz_{i}"), |b| {
             b.iter(|| {
                 for row in 0..black_box(100) {
                     let _result = eval_bz_by_name::<TrackedFr>(
@@ -407,7 +407,7 @@ fn bench_constraint_scaling(c: &mut Criterion) {
         let accessor = RandomTestAccessor::new(size, 11111);
         let accessor_ref: &dyn WitnessRowAccessor<TrackedFr, JoltR1CSInputs> = &accessor;
 
-        c.bench_function(&format!("az_evaluation_size_{}", size), |b| {
+        c.bench_function(&format!("az_evaluation_size_{size}"), |b| {
             b.iter(|| {
                 // Evaluate first 5 constraints on all rows
                 for constraint in UNIFORM_R1CS.iter().take(5) {
