@@ -50,7 +50,7 @@ pub struct RaProverState<F: JoltField> {
 }
 
 impl<F: JoltField> RaSumcheck<F> {
-    #[tracing::instrument(skip_all)]
+    #[tracing::instrument(skip_all, name = "InstructionRaSumcheck::compute_ra_i_polys")]
     fn compute_ra_i_polys(
         trace: &[Cycle],
         state_manager: &StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
@@ -150,7 +150,7 @@ impl<F: JoltField> SumcheckInstance<F> for RaSumcheck<F> {
         self.input_claim
     }
 
-    #[tracing::instrument(skip_all)]
+    #[tracing::instrument(skip_all, name = "InstructionRaSumcheck::compute_prover_message")]
     fn compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F> {
         let prover_state = self
             .prover_state
@@ -179,6 +179,7 @@ impl<F: JoltField> SumcheckInstance<F> for RaSumcheck<F> {
         domain.map(|x| poly.evaluate(&x)).collect()
     }
 
+    #[tracing::instrument(skip_all, name = "InstructionRaSumcheck::bind")]
     fn bind(&mut self, r_j: F, round: usize) {
         let prover_state = self
             .prover_state

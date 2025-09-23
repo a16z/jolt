@@ -160,6 +160,7 @@ impl<'a, F: JoltField> ReadRafSumcheck<F> {
 }
 
 impl<'a, F: JoltField> ReadRafProverState<F> {
+    #[tracing::instrument(skip_all, name = "InstructionReadRafProverState::new")]
     fn new(trace: &'a [Cycle], eq_r_cycle: Vec<F>) -> Self {
         let log_T = trace.len().log_2();
         let right_operand_poly = OperandPolynomial::new(LOG_K, OperandSide::Right);
@@ -527,6 +528,7 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
 
 impl<F: JoltField> ReadRafProverState<F> {
     /// To be called in the beginning of each phase, before any binding
+    #[tracing::instrument(skip_all, name = "InstructionReadRafProverState::init_phase")]
     fn init_phase(&mut self, phase: usize) {
         // Condensation
         if phase != 0 {
@@ -598,6 +600,7 @@ impl<F: JoltField> ReadRafProverState<F> {
     }
 
     /// To be called at the end of each phase, after binding is done
+    #[tracing::instrument(skip_all, name = "InstructionReadRafProverState::cache_phase")]
     fn cache_phase(&mut self, phase: usize) {
         if let Some(ra_acc) = self.ra_acc.as_mut() {
             ra_acc
@@ -625,6 +628,7 @@ impl<F: JoltField> ReadRafProverState<F> {
     }
 
     /// To be called before the last log(T) rounds
+    #[tracing::instrument(skip_all, name = "InstructionReadRafProverState::init_log_t_rounds")]
     fn init_log_t_rounds(&mut self, gamma: F, gamma_squared: F) {
         let prefixes: Vec<PrefixEval<F>> = std::mem::take(&mut self.prefix_checkpoints)
             .into_iter()
