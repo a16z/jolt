@@ -985,47 +985,6 @@ mod tests {
     }
 
     #[test]
-    fn claimed_witness_evals_generic_matches_optimized() {
-        // Minimal bytecode; keep empty so test-only PC mapper path is used
-        let bytecode: Vec<Instruction> = vec![];
-
-        // Build a trivial memory layout (program_size must be set)
-        let mem_layout = MemoryLayout::new(&MemoryConfig {
-            program_size: Some(64),
-            ..Default::default()
-        });
-
-        // Use RV64IMAC implementation to construct shared preprocessing
-        let shared = JoltRV64IMAC::shared_preprocess(bytecode.clone(), mem_layout.clone(), vec![]);
-        let preprocessing = crate::zkvm::JoltProverPreprocessing::<TrackedFr, MockCommitScheme<TrackedFr>> {
-            generators: <MockCommitScheme<TrackedFr> as crate::poly::commitment::commitment_scheme::CommitmentScheme>::setup_prover(8),
-            shared,
-        };
-
-        // Create a tiny trace of pure no-ops and pad to power of two
-        let mut trace: Vec<Cycle> = vec![Cycle::NoOp; 3];
-        let padded_len = trace.len().next_power_of_two();
-        trace.resize(padded_len, Cycle::NoOp);
-
-        // Accessor over this trace
-        let accessor = TraceWitnessAccessor::new(&preprocessing, &trace);
-
-        // Choose a random r_cycle of correct dimension
-        let r_cycle: Vec<_> = (0..padded_len.log_2())
-            .map(|i| TrackedFr::from_u64((i as u64) + 3))
-            .collect();
-
-        // Compute both versions
-        let fast = compute_claimed_witness_evals(&r_cycle, &accessor);
-        let slow = compute_claimed_witness_evals_generic(&r_cycle, &accessor);
-
-        assert_eq!(fast.len(), slow.len());
-        for (i, (a, b)) in fast.iter().zip(slow.iter()).enumerate() {
-            assert_eq!(*a, *b, "Mismatch at input index {}", i);
-        }
-    }
-
-    #[test]
     fn claimed_witness_evals_sha3_generic_matches_optimized() {
         // Ensure SHA3 inline library is linked and auto-registered
         #[cfg(feature = "host")]
@@ -1070,7 +1029,7 @@ mod tests {
 
         assert_eq!(fast.len(), slow.len());
         for (i, (a, b)) in fast.iter().zip(slow.iter()).enumerate() {
-            assert_eq!(*a, *b, "Mismatch at input index {}", i);
+            assert_eq!(*a, *b, "Mismatch at input index {i}");
         }
     }
 }

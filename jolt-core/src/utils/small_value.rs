@@ -358,353 +358,6 @@ pub mod svo_helpers {
         v_config.contains(&2)
     }
 
-    pub fn compute_and_update_tA_inplace_generic<const NUM_SVO_ROUNDS: usize, F: JoltField>(
-        binary_az_evals: &[F],
-        binary_bz_evals: &[F],
-        e_in_val: &F,
-        temp_tA: &mut [F],
-    ) {
-        match NUM_SVO_ROUNDS {
-            0 => {
-                // No SVO rounds to process, temp_tA should be empty
-                debug_assert!(
-                    temp_tA.is_empty(),
-                    "temp_tA should be empty for 0 SVO rounds"
-                );
-            }
-            1 => {
-                compute_and_update_tA_inplace_1(binary_az_evals, binary_bz_evals, e_in_val, temp_tA)
-            }
-            2 => {
-                compute_and_update_tA_inplace_2(binary_az_evals, binary_bz_evals, e_in_val, temp_tA)
-            }
-            3 => {
-                compute_and_update_tA_inplace_3(binary_az_evals, binary_bz_evals, e_in_val, temp_tA)
-            }
-            // 81 - 16 = 65 non-binary points
-            4 => compute_and_update_tA_inplace::<4, 65, 81, F>(
-                binary_az_evals,
-                binary_bz_evals,
-                e_in_val,
-                temp_tA,
-            ),
-            _ => {
-                panic!("Unsupported number of SVO rounds: {NUM_SVO_ROUNDS}");
-            }
-        }
-    }
-
-    /// Special case when `num_svo_rounds == 1`
-    /// In this case, we know that there is 3 - 2 = 1 temp_tA accumulator,
-    /// corresponding to temp_tA(infty), which should be updated via
-    /// temp_tA[infty] += e_in_val * (az[1] - az[0]) * (bz[1] - bz[0])
-    #[inline]
-    pub fn compute_and_update_tA_inplace_1<F: JoltField>(
-        binary_az_evals: &[F],
-        binary_bz_evals: &[F],
-        e_in_val: &F,
-        temp_tA: &mut [F],
-    ) {
-        debug_assert!(binary_az_evals.len() == 2);
-        debug_assert!(binary_bz_evals.len() == 2);
-        debug_assert!(temp_tA.len() == 1);
-        let az_I = binary_az_evals[1] - binary_az_evals[0];
-        if az_I != F::zero() {
-            let bz_I = binary_bz_evals[1] - binary_bz_evals[0];
-            if bz_I != F::zero() {
-                temp_tA[0] += *e_in_val * az_I * bz_I;
-            }
-        }
-    }
-
-    /// Special case when `num_svo_rounds == 2`
-    /// In this case, we know that there are 4 binary evals of Az and Bz,
-    /// corresponding to (0,0) => 0, (0,1) => 1, (1,0) => 2, (1,1) => 3. (i.e. big endian, TODO: double-check this)
-    ///
-    /// There are 9 - 4 = 5 temp_tA accumulators, with the following logic (in this order 0 => 4 indexing):
-    /// temp_tA[0,∞] += e_in_val * (az[0,1] - az[0,0]) * (bz[0,1] - bz[0,0])
-    /// temp_tA[1,∞] += e_in_val * (az[1,1] - az[1,0]) * (bz[1,1] - bz[1,0])
-    /// temp_tA[∞,0] += e_in_val * (az[1,0] - az[0,0]) * (bz[1,0] - bz[0,0])
-    /// temp_tA[∞,1] += e_in_val * (az[1,1] - az[0,1]) * (bz[1,1] - bz[0,1])
-    /// temp_tA[∞,∞] += e_in_val * (az[1,∞] - az[0,∞]) * (bz[1,∞] - bz[0,∞])
-    #[inline]
-    pub fn compute_and_update_tA_inplace_2<F: JoltField>(
-        binary_az_evals: &[F],
-        binary_bz_evals: &[F],
-        e_in_val: &F,
-        temp_tA: &mut [F],
-    ) {
-        debug_assert!(binary_az_evals.len() == 4);
-        debug_assert!(binary_bz_evals.len() == 4);
-        debug_assert!(temp_tA.len() == 5);
-        // Binary evaluations: (Y0,Y1) -> index Y0*2 + Y1
-        let az00 = binary_az_evals[0];
-        let bz00 = binary_bz_evals[0]; // Y0=0, Y1=0
-        let az01 = binary_az_evals[1];
-        let bz01 = binary_bz_evals[1]; // Y0=0, Y1=1
-        let az10 = binary_az_evals[2];
-        let bz10 = binary_bz_evals[2]; // Y0=1, Y1=0
-        let az11 = binary_az_evals[3];
-        let bz11 = binary_bz_evals[3]; // Y0=1, Y1=1
-
-        // Extended evaluations (points with at least one I)
-        // temp_tA indices follow the order: (0,I), (1,I), (I,0), (I,1), (I,I)
-
-        // 1. Point (0,I) -> temp_tA[0]
-        let az_0I = az01 - az00;
-        let bz_0I = bz01 - bz00;
-        if az_0I != F::zero() && bz_0I != F::zero() {
-            temp_tA[0] += *e_in_val * az_0I * bz_0I;
-        }
-
-        // 2. Point (1,I) -> temp_tA[1]
-        let az_1I = az11 - az10;
-        let bz_1I = bz11 - bz10;
-        if az_1I != F::zero() && bz_1I != F::zero() {
-            temp_tA[1] += *e_in_val * az_1I * bz_1I;
-        }
-
-        // 3. Point (I,0) -> temp_tA[2]
-        let az_I0 = az10 - az00;
-        if az_I0 != F::zero() {
-            let bz_I0 = bz10 - bz00;
-            if bz_I0 != F::zero() {
-                temp_tA[2] += *e_in_val * az_I0 * bz_I0;
-            }
-        }
-
-        // 4. Point (I,1) -> temp_tA[3]
-        let az_I1 = az11 - az01;
-        if az_I1 != F::zero() {
-            let bz_I1 = bz11 - bz01;
-            if bz_I1 != F::zero() {
-                temp_tA[3] += *e_in_val * az_I1 * bz_I1;
-            }
-        }
-
-        // 5. Point (I,I) -> temp_tA[4]
-        let az_II = az_1I - az_0I;
-        if az_II != F::zero() {
-            let bz_II = bz_1I - bz_0I;
-            if bz_II != F::zero() {
-                temp_tA[4] += *e_in_val * az_II * bz_II;
-            }
-        }
-    }
-
-    /// Special case when `num_svo_rounds == 3`
-    /// In this case, we know that there are 8 binary evals of Az and Bz,
-    /// corresponding to (0,0,0) => 0, (0,0,1) => 1, (0,1,0) => 2, (0,1,1) => 3, (1,0,0) => 4,
-    /// (1,0,1) => 5, (1,1,0) => 6, (1,1,1) => 7.
-    ///
-    /// There are 27 - 8 = 19 temp_tA accumulators, with the following logic:
-    /// (listed in increasing order, when considering ∞ as 2 and going from MSB to LSB)
-    ///
-    /// temp_tA[0,0,∞] += e_in_val * (az[0,0,1] - az[0,0,0]) * (bz[0,0,1] - bz[0,0,0])
-    /// temp_tA[0,1,∞] += e_in_val * (az[0,1,1] - az[0,1,0]) * (bz[0,1,1] - bz[0,1,0])
-    /// temp_tA[0,∞,0] += e_in_val * (az[0,1,0] - az[0,0,0]) * (bz[0,1,0] - bz[0,0,0])
-    /// temp_tA[0,∞,1] += e_in_val * (az[0,1,1] - az[0,0,1]) * (bz[0,1,1] - bz[0,0,1])
-    /// temp_tA[0,∞,∞] += e_in_val * (az[0,1,∞] - az[0,0,∞]) * (bz[0,1,∞] - bz[0,0,∞])
-    ///
-    /// temp_tA[1,0,∞] += e_in_val * (az[1,0,1] - az[1,0,0]) * (bz[1,0,1] - bz[1,0,0])
-    /// temp_tA[1,1,∞] += e_in_val * (az[1,1,1] - az[1,1,0]) * (bz[1,1,1] - bz[1,1,0])
-    /// temp_tA[1,∞,0] += e_in_val * (az[1,1,0] - az[1,0,0]) * (bz[1,1,0] - bz[1,0,0])
-    /// temp_tA[1,∞,1] += e_in_val * (az[1,1,0] - az[1,0,0]) * (bz[1,1,0] - bz[1,0,0])
-    /// temp_tA[1,∞,∞] += e_in_val * (az[1,1,∞] - az[1,0,∞]) * (bz[1,1,∞] - bz[1,0,∞])
-    ///
-    /// temp_tA[∞,0,0] += e_in_val * (az[1,0,0] - az[0,0,0]) * (bz[1,0,0] - bz[0,0,0])
-    /// temp_tA[∞,0,1] += e_in_val * (az[1,0,1] - az[0,0,1]) * (bz[1,0,1] - bz[0,0,1])
-    /// temp_tA[∞,0,∞] += e_in_val * (az[1,0,∞] - az[0,0,∞]) * (bz[1,0,∞] - bz[0,0,∞])
-    /// temp_tA[∞,1,0] += e_in_val * (az[1,1,0] - az[0,1,0]) * (bz[1,1,0] - bz[0,1,0])
-    /// temp_tA[∞,1,1] += e_in_val * (az[1,1,1] - az[0,1,1]) * (bz[1,1,1] - bz[0,1,1])
-    /// temp_tA[∞,1,∞] += e_in_val * (az[1,1,∞] - az[0,1,∞]) * (bz[1,1,∞] - bz[0,1,∞])
-    /// temp_tA[∞,∞,0] += e_in_val * (az[1,∞,0] - az[0,∞,0]) * (bz[1,∞,0] - bz[0,∞,0])
-    /// temp_tA[∞,∞,1] += e_in_val * (az[1,∞,1] - az[0,∞,1]) * (bz[1,∞,1] - bz[0,∞,1])
-    /// temp_tA[∞,∞,∞] += e_in_val * (az[1,∞,∞] - az[0,∞,∞]) * (bz[1,∞,∞] - bz[0,∞,∞])
-    ///
-    #[inline]
-    pub fn compute_and_update_tA_inplace_3<F: JoltField>(
-        binary_az_evals: &[F],
-        binary_bz_evals: &[F],
-        e_in_val: &F,
-        temp_tA: &mut [F],
-    ) {
-        debug_assert!(binary_az_evals.len() == 8);
-        debug_assert!(binary_bz_evals.len() == 8);
-        debug_assert!(temp_tA.len() == 19);
-
-        // Binary evaluations (Y0,Y1,Y2) -> index Y0*4 + Y1*2 + Y2
-        let az000 = binary_az_evals[0];
-        let bz000 = binary_bz_evals[0];
-        let az001 = binary_az_evals[1];
-        let bz001 = binary_bz_evals[1];
-        let az010 = binary_az_evals[2];
-        let bz010 = binary_bz_evals[2];
-        let az011 = binary_az_evals[3];
-        let bz011 = binary_bz_evals[3];
-        let az100 = binary_az_evals[4];
-        let bz100 = binary_bz_evals[4];
-        let az101 = binary_az_evals[5];
-        let bz101 = binary_bz_evals[5];
-        let az110 = binary_az_evals[6];
-        let bz110 = binary_bz_evals[6];
-        let az111 = binary_az_evals[7];
-        let bz111 = binary_bz_evals[7];
-
-        // Populate temp_tA in lexicographical MSB-first order
-        // Z=0, O=1, I=2 for Y_i
-
-        // Point (0,0,I) -> temp_tA[0]
-        let az_00I = az001 - az000;
-        let bz_00I = bz001 - bz000;
-        if az_00I != F::zero() && bz_00I != F::zero() {
-            // Test `mul_i128_1_optimized`
-            temp_tA[0] += *e_in_val * az_00I * bz_00I;
-        }
-
-        // Point (0,1,I) -> temp_tA[1]
-        let az_01I = az011 - az010;
-        let bz_01I = bz011 - bz010;
-        if az_01I != F::zero() && bz_01I != F::zero() {
-            temp_tA[1] += *e_in_val * az_01I * bz_01I;
-        }
-
-        // Point (0,I,0) -> temp_tA[2]
-        let az_0I0 = az010 - az000;
-        let bz_0I0 = bz010 - bz000;
-        if az_0I0 != F::zero() && bz_0I0 != F::zero() {
-            temp_tA[2] += *e_in_val * az_0I0 * bz_0I0;
-        }
-
-        // Point (0,I,1) -> temp_tA[3]
-        let az_0I1 = az011 - az001;
-        let bz_0I1 = bz011 - bz001;
-        if az_0I1 != F::zero() && bz_0I1 != F::zero() {
-            temp_tA[3] += *e_in_val * az_0I1 * bz_0I1;
-        }
-
-        // Point (0,I,I) -> temp_tA[4]
-        let az_0II = az_01I - az_00I;
-        let bz_0II = bz_01I - bz_00I; // Need to compute this outside for III term
-        if az_0II != F::zero() && bz_0II != F::zero() {
-            temp_tA[4] += *e_in_val * az_0II * bz_0II;
-        }
-
-        // Point (1,0,I) -> temp_tA[5]
-        let az_10I = az101 - az100;
-        let bz_10I = bz101 - bz100;
-        if az_10I != F::zero() && bz_10I != F::zero() {
-            temp_tA[5] += *e_in_val * az_10I * bz_10I;
-        }
-
-        // Point (1,1,I) -> temp_tA[6]
-        let az_11I = az111 - az110;
-        let bz_11I = bz111 - bz110;
-        if az_11I != F::zero() && bz_11I != F::zero() {
-            temp_tA[6] += *e_in_val * az_11I * bz_11I;
-        }
-
-        // Point (1,I,0) -> temp_tA[7]
-        let az_1I0 = az110 - az100;
-        let bz_1I0 = bz110 - bz100;
-        if az_1I0 != F::zero() && bz_1I0 != F::zero() {
-            temp_tA[7] += *e_in_val * az_1I0 * bz_1I0;
-        }
-
-        // Point (1,I,1) -> temp_tA[8]
-        let az_1I1 = az111 - az101;
-        let bz_1I1 = bz111 - bz101;
-        if az_1I1 != F::zero() && bz_1I1 != F::zero() {
-            temp_tA[8] += *e_in_val * az_1I1 * bz_1I1;
-        }
-
-        // Point (1,I,I) -> temp_tA[9]
-        let az_1II = az_11I - az_10I;
-        let bz_1II = bz_11I - bz_10I; // Need to compute this outside for III term
-        if az_1II != F::zero() && bz_1II != F::zero() {
-            temp_tA[9] += *e_in_val * az_1II * bz_1II;
-        }
-
-        // Point (I,0,0) -> temp_tA[10]
-        let az_I00 = az100 - az000;
-        let bz_I00 = bz100 - bz000;
-        if az_I00 != F::zero() && bz_I00 != F::zero() {
-            temp_tA[10] += *e_in_val * az_I00 * bz_I00;
-        }
-
-        // Point (I,0,1) -> temp_tA[11]
-        let az_I01 = az101 - az001;
-        let bz_I01 = bz101 - bz001;
-        if az_I01 != F::zero() && bz_I01 != F::zero() {
-            temp_tA[11] += *e_in_val * az_I01 * bz_I01;
-        }
-
-        // Point (I,0,I) -> temp_tA[12]
-        let az_I0I = az_I01 - az_I00; // Uses precomputed az_I01, az_I00
-        if az_I0I != F::zero() {
-            let bz_I0I = bz_I01 - bz_I00; // Uses precomputed bz_I01, bz_I00
-            if bz_I0I != F::zero() {
-                temp_tA[12] += *e_in_val * az_I0I * bz_I0I;
-            }
-        }
-
-        // Point (I,1,0) -> temp_tA[13]
-        let az_I10 = az110 - az010;
-        let bz_I10 = bz110 - bz010;
-        if az_I10 != F::zero() && bz_I10 != F::zero() {
-            temp_tA[13] += *e_in_val * az_I10 * bz_I10;
-        }
-
-        // Point (I,1,1) -> temp_tA[14]
-        let az_I11 = az111 - az011;
-        let bz_I11 = bz111 - bz011;
-        if az_I11 != F::zero() && bz_I11 != F::zero() {
-            temp_tA[14] += *e_in_val * az_I11 * bz_I11;
-        }
-
-        // Point (I,1,I) -> temp_tA[15]
-        let az_I1I = az_I11 - az_I10; // Uses precomputed az_I11, az_I10
-        if az_I1I != F::zero() {
-            let bz_I1I = bz_I11 - bz_I10; // Uses precomputed bz_I11, bz_I10
-            if bz_I1I != F::zero() {
-                temp_tA[15] += *e_in_val * az_I1I * bz_I1I;
-            }
-        }
-
-        // Point (I,I,0) -> temp_tA[16]
-        let az_II0 = az_1I0 - az_0I0; // Uses precomputed az_1I0, az_0I0
-        if az_II0 != F::zero() {
-            let bz_II0 = bz_1I0 - bz_0I0; // Uses precomputed bz_1I0, bz_0I0
-            if bz_II0 != F::zero() {
-                temp_tA[16] += *e_in_val * az_II0 * bz_II0;
-            }
-        }
-
-        // Point (I,I,1) -> temp_tA[17]
-        let az_II1 = az_1I1 - az_0I1; // Uses precomputed az_1I1, az_0I1
-        if az_II1 != F::zero() {
-            let bz_II1 = bz_1I1 - bz_0I1; // Uses precomputed bz_1I1, bz_0I1
-            if bz_II1 != F::zero() {
-                temp_tA[17] += *e_in_val * az_II1 * bz_II1;
-            }
-        }
-
-        // Point (I,I,I) -> temp_tA[18]
-        // az_III depends on az_1II and az_0II.
-        // az_1II was computed for temp_tA[9]
-        // az_0II was computed for temp_tA[4]
-        let az_III = az_1II - az_0II;
-        if az_III != F::zero() {
-            // bz_III depends on bz_1II and bz_0II.
-            // bz_1II was computed for temp_tA[9]
-            // bz_0II was computed for temp_tA[4]
-            let bz_III = bz_1II - bz_0II;
-            if bz_III != F::zero() {
-                temp_tA[18] += *e_in_val * az_III * bz_III;
-            }
-        }
-    }
-
     /// Converts MSB-first SVOEvalPoint coordinates to their global ternary index k.
     /// k = sum_{i=0}^{N-1} val(coords_msb[i]) * 3^(N-1-i)
     pub const fn svo_coords_msb_to_k_ternary_idx<const N: usize>(
@@ -769,7 +422,7 @@ pub mod svo_helpers {
     /// This is the generic version with no bound on num_svo_rounds.
     /// TODO: optimize this further
     #[inline]
-    pub fn compute_and_update_tA_inplace<
+    pub fn compute_and_update_tA_inplace_field<
         const NUM_SVO_ROUNDS: usize,
         const M_NON_BINARY_POINTS_CONST: usize, // num_non_binary_points(NUM_SVO_ROUNDS)
         const NUM_TERNARY_POINTS_CONST: usize,  // pow(3, NUM_SVO_ROUNDS)
@@ -883,7 +536,7 @@ pub mod svo_helpers {
     /// This mirrors `compute_and_update_tA_inplace` but operates on Az/Bz small-value domains
     /// and uses `mul_az_bz` + `fmadd_unreduced` to avoid early field reduction.
     #[inline]
-    pub fn compute_and_update_tA_inplace_small_value_const<
+    pub fn compute_and_update_tA_inplace_const<
         const NUM_SVO_ROUNDS: usize,
         const M_NON_BINARY_POINTS_CONST: usize, // num_non_binary_points(NUM_SVO_ROUNDS)
         const NUM_TERNARY_POINTS_CONST: usize,  // pow(3, NUM_SVO_ROUNDS)
@@ -1017,7 +670,7 @@ pub mod svo_helpers {
     /// Updates 5 non-binary accumulators corresponding to:
     /// (0,I), (1,I), (I,0), (I,1), (I,I) in this order.
     #[inline]
-    pub fn compute_and_update_tA_inplace_small_value_2<F: JoltField>(
+    pub fn compute_and_update_tA_inplace_2<F: JoltField>(
         binary_az_evals: &[I8OrI96],
         binary_bz_evals: &[S160],
         e_in_val: &F,
@@ -1084,7 +737,7 @@ pub mod svo_helpers {
     /// Specialized small-value kernel when `NUM_SVO_ROUNDS == 3`.
     /// Updates 19 non-binary accumulators in the same order as the field version.
     #[inline]
-    pub fn compute_and_update_tA_inplace_small_value_3<F: JoltField>(
+    pub fn compute_and_update_tA_inplace_3<F: JoltField>(
         binary_az_evals: &[I8OrI96],
         binary_bz_evals: &[S160],
         e_in_val: &F,
@@ -1251,7 +904,7 @@ pub mod svo_helpers {
     /// Dispatch wrapper for the typed small-value kernel using const generics.
     /// Supports NUM_SVO_ROUNDS in [0..=5].
     #[inline]
-    pub fn compute_and_update_tA_inplace_small_value<const NUM_SVO_ROUNDS: usize, F: JoltField>(
+    pub fn compute_and_update_tA_inplace<const NUM_SVO_ROUNDS: usize, F: JoltField>(
         binary_az_evals: &[I8OrI96],
         binary_bz_evals: &[S160],
         e_in_val: &F,
@@ -1265,35 +918,35 @@ pub mod svo_helpers {
                 debug_assert!(tA_pos_acc.is_empty());
                 debug_assert!(tA_neg_acc.is_empty());
             }
-            1 => compute_and_update_tA_inplace_small_value_const::<1, 1, 3, F>(
+            1 => compute_and_update_tA_inplace_const::<1, 1, 3, F>(
                 binary_az_evals,
                 binary_bz_evals,
                 e_in_val,
                 tA_pos_acc,
                 tA_neg_acc,
             ),
-            2 => compute_and_update_tA_inplace_small_value_2::<F>(
+            2 => compute_and_update_tA_inplace_2::<F>(
                 binary_az_evals,
                 binary_bz_evals,
                 e_in_val,
                 tA_pos_acc,
                 tA_neg_acc,
             ),
-            3 => compute_and_update_tA_inplace_small_value_3::<F>(
+            3 => compute_and_update_tA_inplace_3::<F>(
                 binary_az_evals,
                 binary_bz_evals,
                 e_in_val,
                 tA_pos_acc,
                 tA_neg_acc,
             ),
-            4 => compute_and_update_tA_inplace_small_value_const::<4, 65, 81, F>(
+            4 => compute_and_update_tA_inplace_const::<4, 65, 81, F>(
                 binary_az_evals,
                 binary_bz_evals,
                 e_in_val,
                 tA_pos_acc,
                 tA_neg_acc,
             ),
-            5 => compute_and_update_tA_inplace_small_value_const::<5, 211, 243, F>(
+            5 => compute_and_update_tA_inplace_const::<5, 211, 243, F>(
                 binary_az_evals,
                 binary_bz_evals,
                 e_in_val,
@@ -1307,7 +960,7 @@ pub mod svo_helpers {
     /// Specialized small-value kernel when `NUM_SVO_ROUNDS == 1`.
     /// Updates a single non-binary accumulator corresponding to (u=∞).
     #[inline]
-    pub fn compute_and_update_tA_inplace_small_value_1<F: JoltField>(
+    pub fn compute_and_update_tA_inplace_1<F: JoltField>(
         binary_az_evals: &[I8OrI96],
         binary_bz_evals: &[S160],
         e_in_val: &F,
@@ -2063,16 +1716,16 @@ pub mod svo_helpers {
 mod tests {
     use super::accum::UnreducedProduct;
     use super::svo_helpers::{
-        compute_and_update_tA_inplace_generic, compute_and_update_tA_inplace_small_value,
+        compute_and_update_tA_inplace,
+        compute_and_update_tA_inplace_1, compute_and_update_tA_inplace_2,
+        compute_and_update_tA_inplace_3, compute_and_update_tA_inplace_const,
     };
-    use crate::utils::small_scalar::SmallScalar;
     use crate::{
         field::JoltField, poly::eq_poly::EqPolynomial,
-        poly::spartan_interleaved_poly::build_eq_r_y_table,
     };
     use ark_bn254::Fr;
     use ark_ff::biginteger::{I8OrI96, S160};
-    use ark_ff::{UniformRand, Zero};
+    use ark_ff::UniformRand;
     use rand::{Rng, SeedableRng};
     use rand_chacha::ChaCha20Rng;
 
@@ -2118,7 +1771,8 @@ mod tests {
         }
     }
 
-    fn run_svo_consistency_check<const NUM_SVO_ROUNDS: usize>(rng: &mut ChaCha20Rng) {
+    /// Consistency check: hardcoded vs generic small value compute and update tA in place
+    fn run_svo_hardcoded_vs_generic_consistency_check<const NUM_SVO_ROUNDS: usize>(rng: &mut ChaCha20Rng) {
         let num_vars = NUM_SVO_ROUNDS;
         if num_vars == 0 {
             return;
@@ -2128,12 +1782,9 @@ mod tests {
         let r: Vec<Fr> = (0..num_vars).map(|_| Fr::rand(rng)).collect();
         let e_in_val: Vec<Fr> = EqPolynomial::evals(&r);
 
-        let mut eq_r_y_table = [Fr::zero(); 1 << 8];
-        build_eq_r_y_table(&mut eq_r_y_table, &r);
-
         let num_binary_points = 1 << num_vars;
 
-        // Create random binary evaluations for both paths
+        // Create random binary evaluations
         let binary_az_vals: Vec<I8OrI96> = (0..num_binary_points)
             .map(|_| random_az_value(rng))
             .collect();
@@ -2141,63 +1792,93 @@ mod tests {
             .map(|_| random_bz_value(rng))
             .collect();
 
-        // Convert to field elements for the generic path
-        let binary_az_field: Vec<Fr> = binary_az_vals
-            .iter()
-            .map(|az| az.to_field::<Fr>())
-            .collect();
-        #[inline]
-        fn s160_to_field<F: JoltField>(bz: &S160) -> F {
-            crate::utils::small_value::accum::s160_to_field::<F>(bz)
-        }
-
-        let binary_bz_field: Vec<Fr> = binary_bz_vals
-            .iter()
-            .map(|bz| s160_to_field::<Fr>(bz))
-            .collect();
-
-        // No extra normalization needed: fmadd+REDC already matches generic path domain
-
-        // Old path (produces standard Fr elements)
-        let mut temp_ta_old = vec![Fr::zero(); num_non_trivial];
-        compute_and_update_tA_inplace_generic::<NUM_SVO_ROUNDS, Fr>(
-            &binary_az_field,
-            &binary_bz_field,
-            &e_in_val[0], // Use first element
-            &mut temp_ta_old,
-        );
-
-        // New path (produces Montgomery-form Fr elements after reduction)
-        let mut ta_pos_acc = vec![UnreducedProduct::zero(); num_non_trivial];
-        let mut ta_neg_acc = vec![UnreducedProduct::zero(); num_non_trivial];
-        compute_and_update_tA_inplace_small_value::<NUM_SVO_ROUNDS, Fr>(
+        // Generic small value path (produces Montgomery-form Fr elements after reduction)
+        let mut ta_pos_acc_generic = vec![UnreducedProduct::zero(); num_non_trivial];
+        let mut ta_neg_acc_generic = vec![UnreducedProduct::zero(); num_non_trivial];
+        compute_and_update_tA_inplace::<NUM_SVO_ROUNDS, Fr>(
             &binary_az_vals,
             &binary_bz_vals,
             &e_in_val[0], // Use first element
-            &mut ta_pos_acc,
-            &mut ta_neg_acc,
+            &mut ta_pos_acc_generic,
+            &mut ta_neg_acc_generic,
         );
 
-        for i in 0..num_non_trivial {
-            let old_result = temp_ta_old[i];
+        // Hardcoded small value path - call the hardcoded versions directly
+        let mut ta_pos_acc_hardcoded = vec![UnreducedProduct::zero(); num_non_trivial];
+        let mut ta_neg_acc_hardcoded = vec![UnreducedProduct::zero(); num_non_trivial];
+        
+        // Call the hardcoded versions directly based on NUM_SVO_ROUNDS
+        match NUM_SVO_ROUNDS {
+            1 => compute_and_update_tA_inplace_1::<Fr>(
+                &binary_az_vals,
+                &binary_bz_vals,
+                &e_in_val[0],
+                &mut ta_pos_acc_hardcoded,
+                &mut ta_neg_acc_hardcoded,
+            ),
+            2 => compute_and_update_tA_inplace_2::<Fr>(
+                &binary_az_vals,
+                &binary_bz_vals,
+                &e_in_val[0],
+                &mut ta_pos_acc_hardcoded,
+                &mut ta_neg_acc_hardcoded,
+            ),
+            3 => compute_and_update_tA_inplace_3::<Fr>(
+                &binary_az_vals,
+                &binary_bz_vals,
+                &e_in_val[0],
+                &mut ta_pos_acc_hardcoded,
+                &mut ta_neg_acc_hardcoded,
+            ),
+            4 => {
+                // For NUM_SVO_ROUNDS == 4, use the const generic version
+                compute_and_update_tA_inplace_const::<4, 65, 81, Fr>(
+                    &binary_az_vals,
+                    &binary_bz_vals,
+                    &e_in_val[0],
+                    &mut ta_pos_acc_hardcoded,
+                    &mut ta_neg_acc_hardcoded,
+                );
+            }
+            5 => {
+                // For NUM_SVO_ROUNDS == 5, use the const generic version
+                compute_and_update_tA_inplace_const::<5, 211, 243, Fr>(
+                    &binary_az_vals,
+                    &binary_bz_vals,
+                    &e_in_val[0],
+                    &mut ta_pos_acc_hardcoded,
+                    &mut ta_neg_acc_hardcoded,
+                );
+            }
+            _ => {
+                panic!("Unsupported NUM_SVO_ROUNDS for hardcoded consistency check: {NUM_SVO_ROUNDS}");
+            }
+        }
 
-            let new_pos = Fr::from_montgomery_reduce_2n(ta_pos_acc[i]);
-            let new_neg = Fr::from_montgomery_reduce_2n(ta_neg_acc[i]);
-            let new_result_montgomery = new_pos - new_neg;
+        // Compare results
+        for i in 0..num_non_trivial {
+            let generic_pos = Fr::from_montgomery_reduce_2n(ta_pos_acc_generic[i]);
+            let generic_neg = Fr::from_montgomery_reduce_2n(ta_neg_acc_generic[i]);
+            let generic_result = generic_pos - generic_neg;
+
+            let hardcoded_pos = Fr::from_montgomery_reduce_2n(ta_pos_acc_hardcoded[i]);
+            let hardcoded_neg = Fr::from_montgomery_reduce_2n(ta_neg_acc_hardcoded[i]);
+            let hardcoded_result = hardcoded_pos - hardcoded_neg;
 
             assert_eq!(
-                old_result, new_result_montgomery,
-                "SVO accumulation mismatch for NUM_SVO_ROUNDS={} at index {}",
-                NUM_SVO_ROUNDS, i
+                generic_result, hardcoded_result,
+                "Hardcoded vs Generic small value mismatch for NUM_SVO_ROUNDS={NUM_SVO_ROUNDS} at index {i}"
             );
         }
     }
 
     #[test]
-    fn test_svo_accumulation_consistency_generalized() {
-        let mut rng = ChaCha20Rng::from_seed([0u8; 32]);
-        run_svo_consistency_check::<1>(&mut rng);
-        run_svo_consistency_check::<2>(&mut rng);
-        run_svo_consistency_check::<3>(&mut rng);
+    fn test_svo_hardcoded_vs_generic_consistency() {
+        let mut rng = ChaCha20Rng::from_seed([42u8; 32]);
+        run_svo_hardcoded_vs_generic_consistency_check::<1>(&mut rng);
+        run_svo_hardcoded_vs_generic_consistency_check::<2>(&mut rng);
+        run_svo_hardcoded_vs_generic_consistency_check::<3>(&mut rng);
+        run_svo_hardcoded_vs_generic_consistency_check::<4>(&mut rng);
+        run_svo_hardcoded_vs_generic_consistency_check::<5>(&mut rng);
     }
 }
