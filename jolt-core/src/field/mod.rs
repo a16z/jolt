@@ -44,6 +44,11 @@ pub trait JoltField:
 {
     /// Number of bytes occupied by a single field element.
     const NUM_BYTES: usize;
+    /// The Montgomery factor R = 2^(64*N) mod p
+    const MONTGOMERY_R: Self;
+    /// The squared Montgomery factor R^2 = 2^(128*N) mod p
+    const MONTGOMERY_R_SQUARE: Self;
+
     /// An implementation of `JoltField` may use some precomputed lookup tables to speed up the
     /// conversion of small primitive integers (e.g. `u16` values) into field elements. For example,
     /// the arkworks BN254 scalar field requires a conversion into Montgomery form, which naively
@@ -80,10 +85,18 @@ pub trait JoltField:
     fn mul_u64(&self, n: u64) -> Self {
         *self * Self::from_u64(n)
     }
+    /// Does a field multiplication with a `i64`.
+    /// The result will be in Montgomery form (if BN254)
+    #[inline(always)]
     fn mul_i64(&self, n: i64) -> Self {
         *self * Self::from_i64(n)
     }
-    fn mul_u128(&self, n: u128) -> Self;
+    /// Does a field multiplication with a `u128`.
+    /// Implementations may override with an intrinsic.
+    #[inline(always)]
+    fn mul_u128(&self, n: u128) -> Self {
+        *self * Self::from_u128(n)
+    }
     #[inline(always)]
     fn mul_i128(&self, n: i128) -> Self {
         *self * Self::from_i128(n)
@@ -101,7 +114,21 @@ pub trait JoltField:
         res.mul_u64(1 << pow)
     }
 
+    /// Get reference to the underlying BigInt<4> representation without copying
+    fn as_bigint_ref(&self) -> &ark_ff::BigInt<4>;
+
+    /// Montgomery reduction from 8-limb unreduced product to field element
+    /// Note: Result is in Montgomery form with extra R factor
+    fn from_montgomery_reduce_2n(unreduced: ark_ff::BigInt<8>) -> Self;
+
+    /// Compute a linear combination of field elements with u64 coefficients.
+    /// Performs unreduced accumulation in BigInt<NPLUS1>, then one final reduction.
+    /// This is more efficient than individual multiplications and additions.
     fn linear_combination_u64(pairs: &[(Self, u64)], add_terms: &[Self]) -> Self;
+
+    /// Compute a linear combination with separate positive and negative terms.
+    /// Each term is multiplied by a u64 coefficient, then positive and negative
+    /// sums are computed separately and subtracted. One final reduction is performed.
     fn linear_combination_i64(
         pos: &[(Self, u64)],
         neg: &[(Self, u64)],

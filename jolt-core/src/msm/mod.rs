@@ -5,10 +5,11 @@ use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::unipoly::UniPoly;
 use crate::utils::errors::ProofVerifyError;
 use ark_ec::scalar_mul::variable_base::{
-    msm_binary, msm_i128, msm_i64, msm_u128, msm_u16, msm_u32, msm_u64, msm_u8,
+    msm_binary, msm_i128, msm_i64, msm_s128, msm_s64, msm_u128, msm_u16, msm_u32, msm_u64, msm_u8,
     VariableBaseMSM as ArkVariableBaseMSM,
 };
 use ark_ec::{CurveGroup, ScalarMul};
+use ark_ff::biginteger::{S128, S64};
 use rayon::prelude::*;
 
 // A very light wrapper around Ark5.0 VariableBaseMSM
@@ -175,9 +176,23 @@ where
     }
 
     #[tracing::instrument(skip_all)]
+    fn msm_s64(bases: &[Self::MulBase], scalars: &[S64]) -> Result<Self, ProofVerifyError> {
+        (bases.len() == scalars.len())
+            .then(|| msm_s64::<Self>(bases, scalars, true))
+            .ok_or(ProofVerifyError::KeyLengthError(bases.len(), scalars.len()))
+    }
+
+    #[tracing::instrument(skip_all)]
     fn msm_i128(bases: &[Self::MulBase], scalars: &[i128]) -> Result<Self, ProofVerifyError> {
         (bases.len() == scalars.len())
             .then(|| msm_i128::<Self>(bases, scalars, true))
+            .ok_or(ProofVerifyError::KeyLengthError(bases.len(), scalars.len()))
+    }
+
+    #[tracing::instrument(skip_all)]
+    fn msm_s128(bases: &[Self::MulBase], scalars: &[S128]) -> Result<Self, ProofVerifyError> {
+        (bases.len() == scalars.len())
+            .then(|| msm_s128::<Self>(bases, scalars, true))
             .ok_or(ProofVerifyError::KeyLengthError(bases.len(), scalars.len()))
     }
 
