@@ -36,7 +36,6 @@ const M: usize = 1 << LOG_M;
 pub const D: usize = 16;
 pub const LOG_K_CHUNK: usize = LOG_K / D;
 pub const K_CHUNK: usize = 1 << LOG_K_CHUNK;
-const RA_PER_LOG_M: usize = LOG_M / LOG_K_CHUNK;
 
 #[derive(Default)]
 pub struct LookupsDag<F: JoltField> {

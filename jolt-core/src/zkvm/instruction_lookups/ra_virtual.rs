@@ -29,7 +29,7 @@ use crate::{
     zkvm::{
         dag::state_manager::StateManager,
         instruction::LookupQuery,
-        instruction_lookups::{D, K_CHUNK, LOG_K, LOG_K_CHUNK, LOG_M, M, PHASES, RA_PER_LOG_M},
+        instruction_lookups::{D, K_CHUNK, LOG_K, LOG_K_CHUNK},
         witness::{CommittedPolynomial, VirtualPolynomial},
     },
 };
@@ -66,22 +66,17 @@ impl<F: JoltField> RaSumcheck<F> {
         );
         let (r_address, _r_cycle) = r.split_at_r(LOG_K);
 
-        assert!(r_address.len().is_multiple_of(LOG_M));
-
         r_address
             .par_chunks(LOG_K_CHUNK)
             .enumerate()
             .map(|(i, chunk)| {
                 let eq = EqPolynomial::evals(chunk);
-                let phase = i / 2;
                 let ra = lookup_indices
                     .par_iter()
                     .map(|k| {
-                        let (prefix, _) = k.split((PHASES - 1 - phase) * LOG_M);
-                        let k_bound: usize = ((prefix % M)
-                            >> (LOG_K_CHUNK * (RA_PER_LOG_M - 1 - (i % 2))))
-                            % K_CHUNK;
-                        eq[k_bound]
+                        let k_bound =
+                            (u128::from(k) >> (LOG_K_CHUNK * (D - i - 1))) % K_CHUNK as u128;
+                        eq[k_bound as usize]
                     })
                     .collect::<Vec<F>>();
                 MultilinearPolynomial::from(ra)
@@ -151,7 +146,7 @@ impl<F: JoltField> SumcheckInstance<F> for RaSumcheck<F> {
         self.input_claim
     }
 
-    #[tracing::instrument(skip_all, name = "RaVirtualProverOpening::compute_prover_message")]
+    #[tracing::instrument(skip_all, name = "RaVirtual::compute_prover_message")]
     fn compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F> {
         let prover_state = self
             .prover_state
