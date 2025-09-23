@@ -644,8 +644,8 @@ pub fn compute_claimed_witness_evals<F: JoltField, PCS: CommitmentScheme<Field =
                 let instr = cycle.instruction();
                 let flags = instr.circuit_flags();
                 let norm = instr.normalize();
-                let rd = cycle.rd_write().0 as u8;
-                let rdw = cycle.rd_write().2 as u64;
+                let rd = cycle.rd_write().0;
+                let rdw = cycle.rd_write().2;
 
                 // Next row cached data
                 let has_next = (idx + 1) < len;
@@ -761,7 +761,7 @@ pub fn compute_claimed_witness_evals<F: JoltField, PCS: CommitmentScheme<Field =
 
             // Now multiply accumulated inner sums by eq1[x1]
             for i in 0..NUM_R1CS_INPUTS {
-                inner[i] = inner[i] * eq1_val;
+                inner[i] *= eq1_val;
             }
             inner
         })

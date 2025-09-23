@@ -11,7 +11,7 @@ use strum_macros::EnumIter;
 use super::{
     compact_polynomial::CompactPolynomial, dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial,
 };
-use crate::field::{JoltField, OptimizedMul};
+use crate::field::JoltField;
 
 /// Wrapper enum for the various multilinear polynomial types used in Jolt
 #[repr(u8)]
@@ -672,7 +672,7 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
         }
     }
 
-    fn batch_evaluate(polys: &[&Self], r: &[F]) -> Vec<F> {
+    fn batch_evaluate(_polys: &[&Self], _r: &[F]) -> Vec<F> {
         unimplemented!("Currently unused")
     }
 

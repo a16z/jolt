@@ -123,9 +123,6 @@ struct InnerSumcheckVerifierState<F: JoltField> {
     rx_var: Vec<F>,
     claimed_witness_evals: Vec<F>,
     inner_sumcheck_RLC: F,
-    claim_az: F,
-    claim_bz: F,
-    claim_cz: F,
 }
 
 #[derive(Allocative)]
@@ -202,9 +199,6 @@ impl<F: JoltField> InnerSumcheck<F> {
         rx_var: Vec<F>,
         claimed_witness_evals: Vec<F>,
         inner_sumcheck_RLC: F,
-        claim_az: F,
-        claim_bz: F,
-        claim_cz: F,
     ) -> Self {
         Self {
             input_claim,
@@ -214,9 +208,6 @@ impl<F: JoltField> InnerSumcheck<F> {
                 rx_var,
                 claimed_witness_evals,
                 inner_sumcheck_RLC,
-                claim_az,
-                claim_bz,
-                claim_cz,
             }),
         }
     }
@@ -333,13 +324,7 @@ impl<F: JoltField> SumcheckInstance<F> for InnerSumcheck<F> {
             r,
             true,
         );
-        let expected = left_expected * eval_z;
-        debug_assert!(
-            expected == self.input_claim,
-            "InnerSumcheck mismatch: eval_a={} eval_b={} eval_c={} z={} lhs={} rhs={} (Az={}, Bz={}, Cz={}, rlc={})",
-            eval_a, eval_b, eval_c, eval_z, expected, self.input_claim, verifier_state.claim_az, verifier_state.claim_bz, verifier_state.claim_cz, verifier_state.inner_sumcheck_RLC
-        );
-        expected
+        left_expected * eval_z
     }
 
     fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
@@ -563,12 +548,7 @@ impl<F: JoltField> SumcheckInstance<F> for PCSumcheck<F> {
         let eq_plus_one_shift_sumcheck =
             EqPlusOnePolynomial::new(verifier_state.r_cycle.clone()).evaluate(r);
 
-        let expected = batched_eval_at_shift_r * eq_plus_one_shift_sumcheck;
-        debug_assert!(
-            expected == self.input_claim,
-            "PCSumcheck::expected_output_claim mismatch"
-        );
-        expected
+        batched_eval_at_shift_r * eq_plus_one_shift_sumcheck
     }
 
     fn cache_openings_prover(
@@ -981,9 +961,6 @@ where
             rx_var.to_vec(),
             claimed_witness_evals,
             inner_sumcheck_RLC,
-            claim_Az,
-            claim_Bz,
-            claim_Cz,
         );
 
         vec![Box::new(inner_sumcheck)]
