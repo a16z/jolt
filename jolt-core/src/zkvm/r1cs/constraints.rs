@@ -552,7 +552,7 @@ pub fn eval_az_by_name<F: JoltField>(c: &NamedConstraint, row: &R1CSCycleInputs)
         // Az: SubtractOperands flag (0/1)
         N::RightLookupSub => row.flags[CircuitFlags::SubtractOperands].into(),
         // Use unsigned left operand (bit pattern) to match Product witness convention
-        N::ProductDef => I8OrI96::from(row.left_u64),
+        N::ProductDef => I8OrI96::from(row.left_input),
         // Az: MultiplyOperands flag (0/1)
         N::RightLookupEqProductIfMul => row.flags[CircuitFlags::MultiplyOperands].into(),
         N::RightLookupEqRightInputOtherwise => {
@@ -567,15 +567,15 @@ pub fn eval_az_by_name<F: JoltField>(c: &NamedConstraint, row: &R1CSCycleInputs)
         // Az: Assert flag (0/1)
         N::AssertLookupOne => row.flags[CircuitFlags::Assert].into(),
         // Az: Rd register index (0 disables write)
-        N::WriteLookupOutputToRDDef => I8OrI96::from_i8(row.rd_u8 as i8),
+        N::WriteLookupOutputToRDDef => I8OrI96::from_i8(row.rd_addr as i8),
         N::RdWriteEqLookupIfWriteLookupToRd => {
             // Az: WriteLookupOutputToRD indicator (0/1)
-            I8OrI96::from_i8(row.write_lookup_output_to_rd_u8 as i8)
+            I8OrI96::from_i8(row.write_lookup_output_to_rd_addr as i8)
         }
         // Az: Rd register index (0 disables write)
-        N::WritePCtoRDDef => I8OrI96::from_i8(row.rd_u8 as i8),
+        N::WritePCtoRDDef => I8OrI96::from_i8(row.rd_addr as i8),
         // Az: WritePCtoRD indicator (0/1)
-        N::RdWriteEqPCPlusConstIfWritePCtoRD => I8OrI96::from_i8(row.write_pc_to_rd_u8 as i8),
+        N::RdWriteEqPCPlusConstIfWritePCtoRD => I8OrI96::from_i8(row.write_pc_to_rd_addr as i8),
         // Az: Jump flag (0/1)
         N::ShouldJumpDef => row.flags[CircuitFlags::Jump].into(),
         // Az: ShouldJump indicator (0/1)
@@ -584,12 +584,12 @@ pub fn eval_az_by_name<F: JoltField>(c: &NamedConstraint, row: &R1CSCycleInputs)
         N::ShouldBranchDef => row.flags[CircuitFlags::Branch].into(),
         // Note: Az uses ShouldBranch in the u64 domain (product Branch * LookupOutput)
         // Az: ShouldBranch indicator (0/1)
-        N::NextUnexpPCEqPCPlusImmIfShouldBranch => I8OrI96::from(row.should_branch_u64),
+        N::NextUnexpPCEqPCPlusImmIfShouldBranch => I8OrI96::from(row.should_branch),
         N::NextUnexpPCUpdateOtherwise => {
             // Az encodes 1 - ShouldBranch - Jump = (1 - Jump) - ShouldBranch.
             let jump = row.flags[CircuitFlags::Jump];
             let not_jump: i128 = if jump { 0 } else { 1 };
-            let diff = not_jump - (row.should_branch_u64 as i128);
+            let diff = not_jump - (row.should_branch as i128);
             I8OrI96::from(diff)
         }
         // Az: InlineSequenceInstruction flag (0/1)
@@ -602,60 +602,60 @@ pub fn eval_bz_by_name<F: JoltField>(c: &NamedConstraint, row: &R1CSCycleInputs)
     use ConstraintName as N;
     match c.name {
         // B: LeftInstructionInput - Rs1Value (signed-magnitude over u64 bit patterns)
-        N::LeftInputEqRs1 => S160::from_diff_u64(row.left_u64, row.rs1_u64),
+        N::LeftInputEqRs1 => S160::from_diff_u64(row.left_input, row.rs1_read_value),
         // B: LeftInstructionInput - UnexpandedPC (signed-magnitude over u64 bit patterns)
-        N::LeftInputEqPC => S160::from_diff_u64(row.left_u64, row.unexpanded_pc_u64),
+        N::LeftInputEqPC => S160::from_diff_u64(row.left_input, row.unexpanded_pc),
         // B: LeftInstructionInput - 0 (u64 bit pattern)
-        N::LeftInputZeroOtherwise => S160::from_diff_u64(row.left_u64, 0),
+        N::LeftInputZeroOtherwise => S160::from_diff_u64(row.left_input, 0),
         // B: RightInstructionInput - Rs2Value (i128 arithmetic)
-        N::RightInputEqRs2 => S160::from(row.right_s64) - S160::from(row.rs2_u64),
+        N::RightInputEqRs2 => S160::from(row.right_input) - S160::from(row.rs2_read_value),
         // B: RightInstructionInput - Imm (i128 arithmetic)
-        N::RightInputEqImm => S160::from(row.right_s64) - S160::from(row.imm_s64),
+        N::RightInputEqImm => S160::from(row.right_input) - S160::from(row.imm),
         // B: RightInstructionInput - 0 (i128 arithmetic)
-        N::RightInputZeroOtherwise => S160::from(row.right_s64),
+        N::RightInputZeroOtherwise => S160::from(row.right_input),
         N::RamAddrEqRs1PlusImmIfLoadStore => {
             // B: (Rs1Value + Imm) - 0 (true_val - false_val from if-else)
-            if row.imm_s64.is_positive {
-                S160::from(row.rs1_u64 as u128 + row.imm_s64.magnitude_as_u64() as u128)
+            if row.imm.is_positive {
+                S160::from(row.rs1_read_value as u128 + row.imm.magnitude_as_u64() as u128)
             } else {
-                S160::from(row.rs1_u64 as i128 - row.imm_s64.magnitude_as_u64() as i128)
+                S160::from(row.rs1_read_value as i128 - row.imm.magnitude_as_u64() as i128)
             }
         }
         // B: RamReadValue - RamWriteValue (u64 bit-pattern difference)
         N::RamReadEqRamWriteIfLoad => {
-            S160::from_diff_u64(row.ram_read_value_u64, row.ram_write_value_u64)
+            S160::from_diff_u64(row.ram_read_value, row.ram_write_value)
         }
         // B: RamReadValue - RdWriteValue (u64 bit-pattern difference)
         N::RamReadEqRdWriteIfLoad => {
-            S160::from_diff_u64(row.ram_read_value_u64, row.rd_write_value_u64)
+            S160::from_diff_u64(row.ram_read_value, row.rd_write_value)
         }
         // B: Rs2Value - RamWriteValue (u64 bit-pattern difference)
-        N::Rs2EqRamWriteIfStore => S160::from_diff_u64(row.rs2_u64, row.ram_write_value_u64),
+        N::Rs2EqRamWriteIfStore => S160::from_diff_u64(row.rs2_read_value, row.ram_write_value),
         // B: 0 - LeftInstructionInput (true_val - false_val from if-else)
-        N::LeftLookupZeroUnlessAddSubMul => -S160::from(row.left_u64),
+        N::LeftLookupZeroUnlessAddSubMul => -S160::from(row.left_input),
         N::RightLookupAdd => {
             // B: RightLookupOperand - (LeftInstructionInput + RightInstructionInput) with full-width integer semantics
-            let expected_i128 = (row.left_u64 as i128) + row.right_s64.to_i128();
-            S160::from(row.right_lookup_u128) - S160::from(expected_i128)
+            let expected_i128 = (row.left_input as i128) + row.right_input.to_i128();
+            S160::from(row.right_lookup) - S160::from(expected_i128)
         }
         N::RightLookupSub => {
             // B: RightLookupOperand - (LeftInstructionInput - RightInstructionInput + 2^64)
             // with full-width integer semantics (matches the +2^64 in the uniform constraint)
-            let expected_i128 = (row.left_u64 as i128) - row.right_s64.to_i128() + (1i128 << 64);
-            S160::from(row.right_lookup_u128) - S160::from(expected_i128)
+            let expected_i128 = (row.left_input as i128) - row.right_input.to_i128() + (1i128 << 64);
+            S160::from(row.right_lookup) - S160::from(expected_i128)
         }
         // B: RightInstructionInput (exact signed value as i128)
-        N::ProductDef => S160::from(row.right_s64),
+        N::ProductDef => S160::from(row.right_input),
         N::RightLookupEqProductIfMul => {
             // B: RightLookupOperand - Product with full 128-bit semantics
-            S160::from(row.right_lookup_u128) - S160::from(row.product_s128)
+            S160::from(row.right_lookup) - S160::from(row.product)
         }
         N::RightLookupEqRightInputOtherwise => {
             // B: RightLookupOperand - RightInstructionInput with exact integer semantics
-            S160::from(row.right_lookup_u128) - S160::from(row.right_s64)
+            S160::from(row.right_lookup) - S160::from(row.right_input)
         }
         // B: LookupOutput - 1 (i128 arithmetic)
-        N::AssertLookupOne => S160::from(row.lookup_out_u64 as i128 - 1),
+        N::AssertLookupOne => S160::from(row.lookup_output as i128 - 1),
         N::WriteLookupOutputToRDDef => {
             // B: OpFlags(WriteLookupOutputToRD) (boolean 0/1)
             if row.flags[CircuitFlags::WriteLookupOutputToRD] {
@@ -666,7 +666,7 @@ pub fn eval_bz_by_name<F: JoltField>(c: &NamedConstraint, row: &R1CSCycleInputs)
         }
         N::RdWriteEqLookupIfWriteLookupToRd => {
             // B: RdWriteValue - LookupOutput (u64 bit-pattern difference)
-            S160::from_diff_u64(row.rd_write_value_u64, row.lookup_out_u64)
+            S160::from_diff_u64(row.rd_write_value, row.lookup_output)
         }
         N::WritePCtoRDDef => {
             // B: OpFlags(Jump) (boolean 0/1)
@@ -684,8 +684,8 @@ pub fn eval_bz_by_name<F: JoltField>(c: &NamedConstraint, row: &R1CSCycleInputs)
                 0
             };
             S160::from(
-                row.rd_write_value_u64 as i128
-                    - (row.unexpanded_pc_u64 as i128 + const_term as i128),
+                row.rd_write_value as i128
+                    - (row.unexpanded_pc as i128 + const_term as i128),
             )
         }
         N::ShouldJumpDef => {
@@ -699,14 +699,14 @@ pub fn eval_bz_by_name<F: JoltField>(c: &NamedConstraint, row: &R1CSCycleInputs)
         N::NextUnexpPCEqLookupIfShouldJump => {
             // Note: B uses u64 bit-pattern difference here (matches accessor variant)
             // B: NextUnexpandedPC - LookupOutput (i128 arithmetic)
-            S160::from_diff_u64(row.next_unexpanded_pc_u64, row.lookup_out_u64)
+            S160::from_diff_u64(row.next_unexpanded_pc, row.lookup_output)
         }
         // B: LookupOutput (u64 bit pattern)
-        N::ShouldBranchDef => S160::from(row.lookup_out_u64),
+        N::ShouldBranchDef => S160::from(row.lookup_output),
         // B: NextUnexpandedPC - (UnexpandedPC + Imm) (i128 arithmetic)
         N::NextUnexpPCEqPCPlusImmIfShouldBranch => S160::from(
-            row.next_unexpanded_pc_u64 as i128
-                - (row.unexpanded_pc_u64 as i128 + row.imm_s64.to_i128()),
+            row.next_unexpanded_pc as i128
+                - (row.unexpanded_pc as i128 + row.imm.to_i128()),
         ),
         N::NextUnexpPCUpdateOtherwise => {
             // B: NextUnexpandedPC - target, where target = UnexpandedPC + 4 - 4*DoNotUpdateUnexpandedPC - 2*IsCompressed (i128 arithmetic)
@@ -720,12 +720,12 @@ pub fn eval_bz_by_name<F: JoltField>(c: &NamedConstraint, row: &R1CSCycleInputs)
                 } else {
                     0
                 };
-            let target = row.unexpanded_pc_u64 as i128 + const_term;
-            S160::from(row.next_unexpanded_pc_u64 as i128 - target)
+            let target = row.unexpanded_pc as i128 + const_term;
+            S160::from(row.next_unexpanded_pc as i128 - target)
         }
         N::NextPCEqPCPlusOneIfInline => {
             // B: NextPC - (PC + 1) (i128 arithmetic)
-            S160::from(row.next_pc_u64 as i128 - (row.pc_u64 as i128 + 1))
+            S160::from(row.next_pc as i128 - (row.pc as i128 + 1))
         }
     }
 }
