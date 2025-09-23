@@ -14,7 +14,7 @@ pub mod format_u;
 pub mod format_virtual_right_shift_i;
 pub mod format_virtual_right_shift_r;
 
-#[derive(Default)]
+#[derive(Default, Debug, Clone, Copy, PartialEq)]
 pub struct NormalizedOperands {
     pub rs1: u8,
     pub rs2: u8,

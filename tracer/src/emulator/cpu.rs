@@ -13,14 +13,21 @@ use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use super::mmu::{AddressingMode, Mmu};
 use super::terminal::Terminal;
 
+use crate::instruction::format::NormalizedOperands;
+use crate::utils::panic::CallFrame;
+#[cfg(not(feature = "std"))]
+use alloc::collections::VecDeque;
 #[cfg(not(feature = "std"))]
 use alloc::{boxed::Box, format, rc::Rc, string::String, vec::Vec};
 use jolt_platform::{
     JOLT_CYCLE_MARKER_END, JOLT_CYCLE_MARKER_START, JOLT_CYCLE_TRACK_ECALL_NUM,
     JOLT_PRINT_ECALL_NUM, JOLT_PRINT_LINE, JOLT_PRINT_STRING,
 };
+#[cfg(feature = "std")]
+use std::collections::VecDeque;
 
 const CSR_CAPACITY: usize = 4096;
+const MAX_CALL_STACK_DEPTH: usize = 32;
 
 const CSR_USTATUS_ADDRESS: u16 = 0x000;
 const CSR_FFLAGS_ADDRESS: u16 = 0x001;
@@ -103,6 +110,8 @@ pub struct Cpu {
     executed_instrs: u64, // “real” RV64IMAC cycles
     active_markers: FnvHashMap<u32, ActiveMarker>,
     pub vr_allocator: VirtualRegisterAllocator,
+    /// Call stack tracking (circular buffer)
+    call_stack: VecDeque<CallFrame>,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -266,6 +275,7 @@ impl Cpu {
             executed_instrs: 0,
             active_markers: FnvHashMap::default(),
             vr_allocator: VirtualRegisterAllocator::new(),
+            call_stack: VecDeque::with_capacity(MAX_CALL_STACK_DEPTH),
         };
         // cpu.x[0xb] = 0x1020; // I don't know why but Linux boot seems to require this initialization
         cpu.write_csr_raw(CSR_MISA_ADDRESS, 0x800000008014312f);
@@ -1043,6 +1053,28 @@ impl Cpu {
         }
         Ok(String::from_utf8_lossy(&bytes).into_owned())
     }
+
+    /// Track a function call (JAL/JALR instruction that saves callsite information)
+    /// Optimized for minimal overhead - just append to a circular buffer (VecDeque)
+    #[inline]
+    pub fn track_call(&mut self, return_address: u64, operands: NormalizedOperands) {
+        // Simple circular buffer - if full, overwrite oldest
+        if self.call_stack.len() >= MAX_CALL_STACK_DEPTH {
+            self.call_stack.pop_front();
+        }
+
+        self.call_stack.push_back(CallFrame {
+            call_site: return_address,
+            x: self.x,
+            operands,
+            cycle_count: self.trace_len,
+        });
+    }
+
+    /// Get the current call stack (for displaying on panic)
+    pub fn get_call_stack(&self) -> &VecDeque<CallFrame> {
+        &self.call_stack
+    }
 }
 
 impl Drop for Cpu {
@@ -1063,7 +1095,7 @@ impl Drop for Cpu {
 }
 
 #[allow(dead_code)]
-fn get_register_name(num: usize) -> &'static str {
+pub fn get_register_name(num: usize) -> &'static str {
     match num {
         0 => "zero",
         1 => "ra",
