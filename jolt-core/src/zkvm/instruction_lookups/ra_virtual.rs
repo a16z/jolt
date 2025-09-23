@@ -25,7 +25,7 @@ use crate::{
     },
     subprotocols::{mles_product_sum::compute_mles_product_sum, sumcheck::SumcheckInstance},
     transcripts::Transcript,
-    utils::{lookup_bits::LookupBits, math::Math},
+    utils::{lookup_bits::LookupBits, math::Math, thread::drop_in_background_thread},
     zkvm::{
         dag::state_manager::StateManager,
         instruction::LookupQuery,
@@ -50,6 +50,7 @@ pub struct RaProverState<F: JoltField> {
 }
 
 impl<F: JoltField> RaSumcheck<F> {
+    #[tracing::instrument(skip_all)]
     fn compute_ra_i_polys(
         trace: &[Cycle],
         state_manager: &StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
@@ -66,7 +67,7 @@ impl<F: JoltField> RaSumcheck<F> {
         );
         let (r_address, _r_cycle) = r.split_at_r(LOG_K);
 
-        r_address
+        let ra_i_ploys = r_address
             .par_chunks(LOG_K_CHUNK)
             .enumerate()
             .map(|(i, chunk)| {
@@ -79,9 +80,12 @@ impl<F: JoltField> RaSumcheck<F> {
                         eq[k_bound as usize]
                     })
                     .collect::<Vec<F>>();
+                drop_in_background_thread(eq);
                 MultilinearPolynomial::from(ra)
             })
-            .collect()
+            .collect();
+        drop_in_background_thread(lookup_indices);
+        ra_i_ploys
     }
 
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
@@ -146,7 +150,7 @@ impl<F: JoltField> SumcheckInstance<F> for RaSumcheck<F> {
         self.input_claim
     }
 
-    #[tracing::instrument(skip_all, name = "RaVirtual::compute_prover_message")]
+    #[tracing::instrument(skip_all)]
     fn compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F> {
         let prover_state = self
             .prover_state
