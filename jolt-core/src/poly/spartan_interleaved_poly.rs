@@ -1,3 +1,4 @@
+#![allow(clippy::too_many_arguments)]
 use super::{
     eq_poly::EqPolynomial, split_eq_poly::GruenSplitEqPolynomial, unipoly::CompressedUniPoly,
 };
@@ -132,10 +133,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
     /// - Eval at infty: acc_3(infty, v_1, v_2), where v_1, v_2 \in {0, 1, infty}
     ///
     /// Total = 19 accumulators
-    #[tracing::instrument(
-        skip_all,
-        name = "SpartanInterleavedPolynomial::new_with_precompute"
-    )]
+    #[tracing::instrument(skip_all, name = "SpartanInterleavedPolynomial::new_with_precompute")]
     pub fn new_with_precompute(
         preprocess: &JoltSharedPreprocessing,
         trace: &[Cycle],
@@ -899,16 +897,18 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
             0
         };
         debug_assert!(NUM_SVO_ROUNDS <= num_constraint_vars);
-        let iter_num_x_in_constraint_vars = num_constraint_vars - NUM_SVO_ROUNDS;
 
         let num_x_out_vals = eq_poly.E_out_current_len();
-        let iter_num_x_out_vars = if num_x_out_vals > 0 { num_x_out_vals.log_2() } else { 0 };
+        let iter_num_x_out_vars = if num_x_out_vals > 0 {
+            num_x_out_vals.log_2()
+        } else {
+            0
+        };
 
         let num_steps = trace.len();
         let num_step_vars = if num_steps > 0 { num_steps.log_2() } else { 0 };
         debug_assert!(iter_num_x_out_vars <= num_step_vars);
         let iter_num_x_in_step_vars = num_step_vars - iter_num_x_out_vars;
-        let iter_num_x_in_vars = iter_num_x_in_step_vars + iter_num_x_in_constraint_vars;
         let num_x_in_step_vals = if iter_num_x_in_step_vars > 0 {
             1usize << iter_num_x_in_step_vars
         } else {
@@ -916,7 +916,12 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
         };
 
         let num_uniform_r1cs_constraints = UNIFORM_R1CS.len();
-        let rem_num_uniform_r1cs_constraints = num_uniform_r1cs_constraints % Y_SVO_SPACE_SIZE;
+        let y_blocks_in_constraints = if num_uniform_r1cs_constraints > 0 {
+            num_uniform_r1cs_constraints.div_ceil(Y_SVO_SPACE_SIZE)
+        } else {
+            0
+        };
+        let num_block_pairs_per_step = self.padded_num_constraints >> (NUM_SVO_ROUNDS + 1);
 
         struct TaskOut<F: JoltField> {
             bound6_at_r: Vec<SparseCoefficient<F>>,
@@ -951,124 +956,137 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
 
                 for x_out_val in x_out_start..x_out_end {
                     for x_in_step_val in 0..num_x_in_step_vals {
-                        let current_step_idx = (x_out_val << iter_num_x_in_step_vars) | x_in_step_val;
-                        let mut current_x_in_constraint_val = 0;
+                        let current_step_idx =
+                            (x_out_val << iter_num_x_in_step_vars) | x_in_step_val;
 
                         // Materialize row once per step
                         let row_inputs =
                             R1CSCycleInputs::from_trace::<F>(preprocess, trace, current_step_idx);
 
-                        // typed accumulators for x_next ∈ {0,1}
-                        let mut az_acc = [SignedUnreducedAccum::new(), SignedUnreducedAccum::new()];
-                        let mut bz_acc = [SignedUnreducedAccum::new(), SignedUnreducedAccum::new()];
-                        let mut cz_acc = [SignedUnreducedAccum::new(), SignedUnreducedAccum::new()];
+                        // Iterate block-pairs (each pair groups two Y-blocks: x_next=0 and x_next=1)
+                        for block_pair_idx in 0..num_block_pairs_per_step {
+                            // typed accumulators for x_next ∈ {0,1} within this block-pair
+                            let mut az_acc =
+                                [SignedUnreducedAccum::new(), SignedUnreducedAccum::new()];
+                            let mut bz_acc =
+                                [SignedUnreducedAccum::new(), SignedUnreducedAccum::new()];
+                            let mut cz_acc =
+                                [SignedUnreducedAccum::new(), SignedUnreducedAccum::new()];
 
-                        let mut binary_az_block = [I8OrI96::zero(); Y_SVO_SPACE_SIZE];
-                        let mut binary_bz_block = [S160::zero(); Y_SVO_SPACE_SIZE];
+                            // process up to two Y-blocks for this pair
+                            for k in 0..2 {
+                                let chunk_index = (block_pair_idx << 1) | k;
+                                if chunk_index >= y_blocks_in_constraints {
+                                    continue;
+                                }
 
-                        for (uniform_chunk_iter_idx, uniform_svo_chunk) in
-                            UNIFORM_R1CS.chunks(Y_SVO_SPACE_SIZE).enumerate()
-                        {
-                            let chunk_size = uniform_svo_chunk.len();
-                            // Fill Az/Bz for this chunk using materialized row
-                            eval_az_bz_batch_from_row::<F>(
-                                uniform_svo_chunk,
-                                &row_inputs,
-                                &mut binary_az_block[..chunk_size],
-                                &mut binary_bz_block[..chunk_size],
-                            );
+                                let start = chunk_index * Y_SVO_SPACE_SIZE;
+                                let end = core::cmp::min(
+                                    start + Y_SVO_SPACE_SIZE,
+                                    num_uniform_r1cs_constraints,
+                                );
+                                let uniform_svo_chunk = &UNIFORM_R1CS[start..end];
+                                let chunk_size = uniform_svo_chunk.len();
 
-                            // x_next toggles per full Y-block (0 for first, 1 for second, etc.)
-                            let x_next_val = uniform_chunk_iter_idx & 1;
+                                let mut binary_az_block = [I8OrI96::zero(); Y_SVO_SPACE_SIZE];
+                                let mut binary_bz_block = [S160::zero(); Y_SVO_SPACE_SIZE];
 
-                            for idx_in_svo_block in 0..chunk_size {
-                                let eq = eq_r_evals[idx_in_svo_block];
-                                let az = binary_az_block[idx_in_svo_block];
-                                let bz = binary_bz_block[idx_in_svo_block];
+                                eval_az_bz_batch_from_row::<F>(
+                                    uniform_svo_chunk,
+                                    &row_inputs,
+                                    &mut binary_az_block[..chunk_size],
+                                    &mut binary_bz_block[..chunk_size],
+                                );
 
-                                az_acc[x_next_val].fmadd_az::<F>(&eq, az);
-                                bz_acc[x_next_val].fmadd_bz::<F>(&eq, bz);
+                                let x_next_val = k; // 0 or 1 within the pair
+                                for idx_in_svo_block in 0..chunk_size {
+                                    let eq = eq_r_evals[idx_in_svo_block];
+                                    let az = binary_az_block[idx_in_svo_block];
+                                    let bz = binary_bz_block[idx_in_svo_block];
 
-                                // Cz gated by per-row CzKind using recovered row id
-                                let row_in_step =
-                                    (uniform_chunk_iter_idx << NUM_SVO_ROUNDS) + idx_in_svo_block;
-                                if row_in_step < UNIFORM_R1CS.len()
-                                    && matches!(UNIFORM_R1CS[row_in_step].cz, CzKind::NonZero)
-                                {
-                                    let prod = az * bz;
-                                    cz_acc[x_next_val].fmadd_prod::<F>(&eq, prod);
+                                    az_acc[x_next_val].fmadd_az::<F>(&eq, az);
+                                    bz_acc[x_next_val].fmadd_bz::<F>(&eq, bz);
+
+                                    // Cz gate by row kind using recovered row id
+                                    let row_in_step =
+                                        (chunk_index << NUM_SVO_ROUNDS) + idx_in_svo_block;
+                                    if row_in_step < UNIFORM_R1CS.len()
+                                        && matches!(UNIFORM_R1CS[row_in_step].cz, CzKind::NonZero)
+                                    {
+                                        let prod = az * bz;
+                                        cz_acc[x_next_val].fmadd_prod::<F>(&eq, prod);
+                                    }
                                 }
                             }
 
-                            if chunk_size == Y_SVO_SPACE_SIZE {
-                                current_x_in_constraint_val += 1;
-                                // reset local blocks
-                                binary_az_block = [I8OrI96::zero(); Y_SVO_SPACE_SIZE];
-                                binary_bz_block = [S160::zero(); Y_SVO_SPACE_SIZE];
+                            // reduce to field values at y=r for both x_next
+                            let az0 = az_acc[0].reduce_to_field::<F>();
+                            let bz0 = bz_acc[0].reduce_to_field::<F>();
+                            let cz0 = cz_acc[0].reduce_to_field::<F>();
+                            let az1 = az_acc[1].reduce_to_field::<F>();
+                            let bz1 = bz_acc[1].reduce_to_field::<F>();
+                            let cz1 = cz_acc[1].reduce_to_field::<F>();
+
+                            // sumcheck contributions
+                            let p0 = az0 * bz0 - cz0;
+                            let slope = (az1 - az0) * (bz1 - bz0);
+
+                            // Compute block_id consistent with shard-based indexing
+                            let current_block_id =
+                                current_step_idx * num_block_pairs_per_step + block_pair_idx;
+
+                            let num_streaming_x_in_vars = eq_poly.E_in_current_len().log_2();
+                            let x_out_idx = current_block_id >> num_streaming_x_in_vars;
+                            let x_in_idx = current_block_id & ((1 << num_streaming_x_in_vars) - 1);
+
+                            let e_out = if x_out_idx < eq_poly.E_out_current_len() {
+                                eq_poly.E_out_current()[x_out_idx]
+                            } else {
+                                F::zero()
+                            };
+                            let e_in = if eq_poly.E_in_current_len() == 0 {
+                                F::one()
+                            } else if eq_poly.E_in_current_len() == 1 {
+                                eq_poly.E_in_current()[0]
+                            } else if x_in_idx < eq_poly.E_in_current_len() {
+                                eq_poly.E_in_current()[x_in_idx]
+                            } else {
+                                F::zero()
+                            };
+                            let e_block = e_out * e_in;
+
+                            task_sum0 += e_block * p0;
+                            task_sumInf += e_block * slope;
+
+                            // record six-at-r values
+                            let block_id = current_block_id;
+                            if !az0.is_zero() {
+                                task_bound6_at_r.push((6 * block_id, az0).into());
                             }
-                        }
-
-                        // Handle final partial block already accumulated in-place
-                        if rem_num_uniform_r1cs_constraints > 0 {
-                            // nothing extra to do; accumulators already include partial
-                        }
-
-                        // reduce to field values at y=r for both x_next
-                        let az0 = az_acc[0].reduce_to_field::<F>();
-                        let bz0 = bz_acc[0].reduce_to_field::<F>();
-                        let cz0 = cz_acc[0].reduce_to_field::<F>();
-                        let az1 = az_acc[1].reduce_to_field::<F>();
-                        let bz1 = bz_acc[1].reduce_to_field::<F>();
-                        let cz1 = cz_acc[1].reduce_to_field::<F>();
-
-                        // sumcheck contributions
-                        let p0 = az0 * bz0 - cz0;
-                        let slope = (az1 - az0) * (bz1 - bz0);
-
-                        // Compose x_in index for eq_poly
-                        let x_in_val = (x_in_step_val << iter_num_x_in_constraint_vars)
-                            | current_x_in_constraint_val;
-                        let e_out = if eq_poly.E_out_current_len() > 0 {
-                            eq_poly.E_out_current()[x_out_val]
-                        } else {
-                            F::one()
-                        };
-                        let e_in = if eq_poly.E_in_current_len() == 0 {
-                            F::one()
-                        } else if eq_poly.E_in_current_len() == 1 {
-                            eq_poly.E_in_current()[0]
-                        } else {
-                            eq_poly.E_in_current()[x_in_val]
-                        };
-                        let e_block = e_out * e_in;
-
-                        task_sum0 += e_block * p0;
-                        task_sumInf += e_block * slope;
-
-                        // record six-at-r values
-                        let block_id = (x_out_val << iter_num_x_in_vars) | x_in_val;
-                        if !az0.is_zero() {
-                            task_bound6_at_r.push((6 * block_id + 0, az0).into());
-                        }
-                        if !bz0.is_zero() {
-                            task_bound6_at_r.push((6 * block_id + 1, bz0).into());
-                        }
-                        if !cz0.is_zero() {
-                            task_bound6_at_r.push((6 * block_id + 2, cz0).into());
-                        }
-                        if !az1.is_zero() {
-                            task_bound6_at_r.push((6 * block_id + 3, az1).into());
-                        }
-                        if !bz1.is_zero() {
-                            task_bound6_at_r.push((6 * block_id + 4, bz1).into());
-                        }
-                        if !cz1.is_zero() {
-                            task_bound6_at_r.push((6 * block_id + 5, cz1).into());
+                            if !bz0.is_zero() {
+                                task_bound6_at_r.push((6 * block_id + 1, bz0).into());
+                            }
+                            if !cz0.is_zero() {
+                                task_bound6_at_r.push((6 * block_id + 2, cz0).into());
+                            }
+                            if !az1.is_zero() {
+                                task_bound6_at_r.push((6 * block_id + 3, az1).into());
+                            }
+                            if !bz1.is_zero() {
+                                task_bound6_at_r.push((6 * block_id + 4, bz1).into());
+                            }
+                            if !cz1.is_zero() {
+                                task_bound6_at_r.push((6 * block_id + 5, cz1).into());
+                            }
                         }
                     }
                 }
 
-                TaskOut { bound6_at_r: task_bound6_at_r, sum0: task_sum0, sumInf: task_sumInf }
+                TaskOut {
+                    bound6_at_r: task_bound6_at_r,
+                    sum0: task_sum0,
+                    sumInf: task_sumInf,
+                }
             })
             .collect();
 
@@ -1106,8 +1124,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
         }
 
         // Partition scratch and bind in parallel
-        let mut slices: Vec<&mut [SparseCoefficient<F>]> =
-            Vec::with_capacity(results.len());
+        let mut slices: Vec<&mut [SparseCoefficient<F>]> = Vec::with_capacity(results.len());
         let mut rem = self.binding_scratch_space.as_mut_slice();
         for len in per_task_sizes {
             let (a, b) = rem.split_at_mut(len);
@@ -1146,7 +1163,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
 
                     let azb = az0 + r_i * (az1 - az0);
                     if !azb.is_zero() {
-                        out[i] = (3 * blk + 0, azb).into();
+                        out[i] = (3 * blk, azb).into();
                         i += 1;
                     }
                     let bzb = bz0 + r_i * (bz1 - bz0);

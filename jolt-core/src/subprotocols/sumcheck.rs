@@ -425,7 +425,19 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
             &mut eq_poly,
         );
 
-        az_bz_cz_poly.streaming_sumcheck_round(
+        // Old shard-consuming streaming round (kept for reference):
+        // az_bz_cz_poly.streaming_sumcheck_round(
+        //     &mut eq_poly,
+        //     transcript,
+        //     &mut r,
+        //     &mut polys,
+        //     &mut claim,
+        // );
+
+        // New per-cycle streaming round (recompute A/B on the fly, lower memory):
+        az_bz_cz_poly.streaming_sumcheck_round_new(
+            preprocessing,
+            trace,
             &mut eq_poly,
             transcript,
             &mut r,
