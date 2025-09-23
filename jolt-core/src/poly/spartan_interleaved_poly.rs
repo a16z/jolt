@@ -8,10 +8,12 @@ use crate::{
     utils::small_value::accum::{s160_to_field, SignedUnreducedAccum, UnreducedProduct},
     utils::{math::Math, small_scalar::SmallScalar, small_value::svo_helpers},
     zkvm::r1cs::{
-        constraints::{eval_az_bz_batch, CzKind, UNIFORM_R1CS},
-        inputs::{JoltR1CSInputs, WitnessRowAccessor},
+        constraints::{eval_az_bz_batch_from_row, CzKind, UNIFORM_R1CS},
+        inputs::R1CSCycleInputs,
     },
+    zkvm::JoltSharedPreprocessing,
 };
+use tracer::instruction::Cycle;
 use allocative::Allocative;
 use ark_ff::biginteger::{I8OrI96, S160};
 use rayon::prelude::*;
@@ -135,7 +137,8 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
         name = "NewSpartanInterleavedPolynomial::new_with_precompute"
     )]
     pub fn new_with_precompute(
-        accessor: &dyn WitnessRowAccessor<F, JoltR1CSInputs>,
+        preprocess: &JoltSharedPreprocessing,
+        trace: &[Cycle],
         tau: &[F],
     ) -> ([F; NUM_ACCUMS_EVAL_ZERO], [F; NUM_ACCUMS_EVAL_INFTY], Self) {
         // Variable layout and binding order (MSB -> LSB):
@@ -153,7 +156,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
         // We use MSB->LSB indexing throughout the codebase.
 
         let padded_num_constraints = UNIFORM_R1CS.len().next_power_of_two();
-        let num_steps = accessor.num_steps();
+        let num_steps = trace.len();
         let num_step_vars = if num_steps > 0 { num_steps.log_2() } else { 0 };
         let num_constraint_vars = if padded_num_constraints > 0 {
             padded_num_constraints.log_2()
@@ -275,6 +278,9 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                         let current_step_idx =
                             (x_out_val << iter_num_x_in_step_vars) | x_in_step_val;
                         let mut current_x_in_constraint_val = 0;
+                        // Materialize row once for this step; reused for all chunks
+                        let row_inputs =
+                            R1CSCycleInputs::from_trace::<F>(preprocess, trace, current_step_idx);
 
                         let mut binary_az_block = [I8OrI96::zero(); Y_SVO_SPACE_SIZE];
                         let mut binary_bz_block = [S160::zero(); Y_SVO_SPACE_SIZE];
@@ -285,12 +291,10 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                             UNIFORM_R1CS.chunks(Y_SVO_SPACE_SIZE).enumerate()
                         {
                             let chunk_size = uniform_svo_chunk.len();
-
-                            // Batch evaluate Az/Bz directly into the binary blocks to avoid allocations
-                            eval_az_bz_batch(
+                            // Fill Az/Bz values for this chunk using materialized row
+                            eval_az_bz_batch_from_row::<F>(
                                 uniform_svo_chunk,
-                                accessor,
-                                current_step_idx,
+                                &row_inputs,
                                 &mut binary_az_block[..chunk_size],
                                 &mut binary_bz_block[..chunk_size],
                             );
@@ -308,9 +312,9 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                                         s160_to_field::<F>(&binary_bz_block[idx_in_svo_block]);
 
                                     let az_field_baseline =
-                                        named.cons.a.evaluate_row_with(accessor, current_step_idx);
+                                        named.cons.a.evaluate_row_with(&row_inputs);
                                     let bz_field_baseline =
-                                        named.cons.b.evaluate_row_with(accessor, current_step_idx);
+                                        named.cons.b.evaluate_row_with(&row_inputs);
 
                                     if az_field_from_typed != az_field_baseline {
                                         panic!(
@@ -368,6 +372,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                                 );
 
                                 current_x_in_constraint_val += 1;
+                                // Reset local blocks for the next iteration
                                 binary_az_block = [I8OrI96::zero(); Y_SVO_SPACE_SIZE];
                                 binary_bz_block = [S160::zero(); Y_SVO_SPACE_SIZE];
                             }
@@ -379,7 +384,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                                 | current_x_in_constraint_val;
                             let E_in_val_last = &E_in_evals[x_in_val_last];
 
-                            // New typed path
+                            // New typed path on partial block currently in binary_* blocks
                             svo_helpers::compute_and_update_tA_inplace::<NUM_SVO_ROUNDS, F>(
                                 &binary_az_block,
                                 &binary_bz_block,

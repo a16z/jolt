@@ -23,10 +23,12 @@ use crate::zkvm::dag::state_manager::{ProofData, ProofKeys, StateManager};
 use crate::zkvm::instruction::CircuitFlags;
 use crate::zkvm::r1cs::inputs::{
     compute_claimed_witness_evals, generate_pc_noop_witnesses, JoltR1CSInputs,
-    TraceWitnessAccessor, WitnessRowAccessor, ALL_R1CS_INPUTS, COMMITTED_R1CS_INPUTS,
+    ALL_R1CS_INPUTS, COMMITTED_R1CS_INPUTS,
 };
 use crate::zkvm::r1cs::key::UniformSpartanKey;
 use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
+use crate::zkvm::JoltSharedPreprocessing;
+use tracer::instruction::Cycle;
 
 use crate::poly::spartan_interleaved_poly::NUM_SVO_ROUNDS;
 use crate::transcripts::Transcript;
@@ -98,14 +100,16 @@ where
 
     #[tracing::instrument(skip_all)]
     fn prove_outer_sumcheck(
+        preprocessing: &JoltSharedPreprocessing,
+        trace: &[Cycle],
         num_rounds_x: usize,
-        accessor: &dyn WitnessRowAccessor<F, JoltR1CSInputs>,
         tau: &[F],
         transcript: &mut ProofTranscript,
     ) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>, [F; 3]) {
         SumcheckInstanceProof::prove_spartan_small_value::<NUM_SVO_ROUNDS>(
+            preprocessing,
+            trace,
             num_rounds_x,
-            accessor,
             tau,
             transcript,
         )
@@ -652,9 +656,6 @@ where
 
         let key = self.key.clone();
 
-        // Streaming accessor (no materialization of all input_polys)
-        let accessor = TraceWitnessAccessor::<F, PCS>::new(preprocessing, trace);
-
         let num_rounds_x = key.num_rows_bits();
 
         let tau: Vec<F> = state_manager
@@ -665,8 +666,9 @@ where
         let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) = {
             let mut transcript = state_manager.transcript.borrow_mut();
             UniformSpartanProof::<F, ProofTranscript>::prove_outer_sumcheck(
+                &preprocessing.shared,
+                &trace,
                 num_rounds_x,
-                &accessor,
                 &tau,
                 &mut transcript,
             )
@@ -714,7 +716,7 @@ where
         // Compute claimed witness evals at r_cycle via streaming (fast)
         let claimed_witness_evals = {
             let _guard = span!(Level::INFO, "claimed_witness_evals_fast").entered();
-            compute_claimed_witness_evals::<F, PCS>(r_cycle, &accessor)
+            compute_claimed_witness_evals::<F>(&preprocessing.shared, &trace, r_cycle)
         };
 
         // Only non-virtual (i.e. committed) polynomials' openings are
@@ -986,7 +988,7 @@ where
 
         // Stream once to generate PC, UnexpandedPC and IsNoop witnesses
         let (unexpanded_pc_poly, pc_poly, is_noop_poly) =
-            generate_pc_noop_witnesses(preprocessing, trace);
+            generate_pc_noop_witnesses::<F>(&preprocessing.shared, trace);
 
         let num_cycles = key.num_steps;
         let num_cycles_bits = num_cycles.ilog2() as usize;

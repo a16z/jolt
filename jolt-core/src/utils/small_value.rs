@@ -248,6 +248,43 @@ pub mod svo_helpers {
         map
     }
 
+    /// Returns the list of global ternary indices `k` for all non-binary points,
+    /// in the same deterministic MSB-first order as `build_y_ext_code_map`.
+    /// Size `M` must be exactly `num_non_binary_points(N)`.
+    pub const fn build_non_binary_k_list<const N: usize, const M: usize>() -> [usize; M] {
+        let mut out = [0usize; M];
+        let mut out_idx = 0usize;
+
+        if N == 0 {
+            return out;
+        }
+
+        let num_total_ternary_points = pow(3, N);
+        let mut k = 0usize;
+        while k < num_total_ternary_points {
+            // Check if any ternary digit (base-3) equals 2 (Infinity)
+            let mut temp_k = k;
+            let mut is_non_binary = false;
+            let mut i = 0usize;
+            while i < N {
+                if temp_k % 3 == 2 {
+                    is_non_binary = true;
+                    break;
+                }
+                temp_k /= 3;
+                i += 1;
+            }
+
+            if is_non_binary && out_idx < M {
+                out[out_idx] = k;
+                out_idx += 1;
+            }
+
+            k += 1;
+        }
+        out
+    }
+
     pub const fn v_coords_to_base3_idx(v_coords_lsb_y_ext_order: &[SVOEvalPoint]) -> usize {
         let mut idx = 0;
         let mut current_power_of_3 = 1;
@@ -381,160 +418,9 @@ pub mod svo_helpers {
         k_val
     }
 
-    /// Recursive helper to compute extended polynomial evaluations.
-    /// Uses memoization to store intermediate results.
-    fn get_extended_eval<const N: usize, const NUM_TERN_PTS: usize, F: JoltField>(
-        k_target: usize,
-        binary_evals_input: &[F],
-        memoized_evals: &mut [Option<F>; NUM_TERN_PTS], // Using array for memoization table
-        ternary_point_info_table: &[TernaryPointInfo<N>; NUM_TERN_PTS],
-    ) -> F {
-        if let Some(val) = memoized_evals[k_target] {
-            return val;
-        }
-
-        let point_info = ternary_point_info_table[k_target]; // This is a copy, which is fine for this small struct
-        let result = if point_info.is_binary {
-            binary_evals_input[point_info.binary_eval_idx]
-        } else {
-            // These recursive calls must use the same memoization table and info table
-            let eval_at_1 = get_extended_eval(
-                point_info.k_val_at_one,
-                binary_evals_input,
-                memoized_evals,
-                ternary_point_info_table,
-            );
-            let eval_at_0 = get_extended_eval(
-                point_info.k_val_at_zero,
-                binary_evals_input,
-                memoized_evals,
-                ternary_point_info_table,
-            );
-            eval_at_1 - eval_at_0
-        };
-
-        memoized_evals[k_target] = Some(result);
-        result
-    }
-
-    /// Performs in-place multilinear extension on ternary evaluation vectors
-    /// and updates the temporary accumulator `temp_tA` with the product contribution.
-    /// This is the generic version with no bound on num_svo_rounds.
-    /// TODO: optimize this further
-    #[inline]
-    pub fn compute_and_update_tA_inplace_field<
-        const NUM_SVO_ROUNDS: usize,
-        const M_NON_BINARY_POINTS_CONST: usize, // num_non_binary_points(NUM_SVO_ROUNDS)
-        const NUM_TERNARY_POINTS_CONST: usize,  // pow(3, NUM_SVO_ROUNDS)
-        F: JoltField,
-    >(
-        binary_az_evals_input: &[F], // Source of 2^N binary evals for Az
-        binary_bz_evals_input: &[F], // Source of 2^N binary evals for Bz
-        e_in_val: &F,
-        temp_tA: &mut [F], // Target for M_NON_BINARY_POINTS_CONST non-binary extended products
-    ) {
-        if NUM_SVO_ROUNDS == 0 {
-            debug_assert!(
-                temp_tA.is_empty(),
-                "temp_tA should be empty for 0 SVO rounds"
-            );
-            // M_NON_BINARY_POINTS_CONST would be 0, NUM_TERNARY_POINTS_CONST would be 1.
-            // The loops below would not run.
-        }
-
-        // Verify consistency of const generic arguments with NUM_SVO_ROUNDS
-        debug_assert_eq!(
-            M_NON_BINARY_POINTS_CONST,
-            num_non_binary_points(NUM_SVO_ROUNDS),
-            "M_NON_BINARY_POINTS_CONST mismatch"
-        );
-        debug_assert_eq!(
-            NUM_TERNARY_POINTS_CONST,
-            pow(3, NUM_SVO_ROUNDS),
-            "NUM_TERNARY_POINTS_CONST mismatch"
-        );
-
-        let num_binary_points = 1 << NUM_SVO_ROUNDS;
-        // temp_tA length is M_NON_BINARY_POINTS_CONST
-
-        debug_assert_eq!(
-            binary_az_evals_input.len(),
-            num_binary_points,
-            "binary_az_evals_input length mismatch"
-        );
-        debug_assert_eq!(
-            binary_bz_evals_input.len(),
-            num_binary_points,
-            "binary_bz_evals_input length mismatch"
-        );
-        debug_assert_eq!(
-            temp_tA.len(),
-            M_NON_BINARY_POINTS_CONST, // temp_tA stores only non-binary point contributions
-            "temp_tA length mismatch with M_NON_BINARY_POINTS_CONST"
-        );
-
-        // This table contains info for ALL 3^N points, used by the recursive helper.
-        let ternary_point_info_table: [TernaryPointInfo<NUM_SVO_ROUNDS>; NUM_TERNARY_POINTS_CONST] =
-            precompute_ternary_point_infos::<NUM_SVO_ROUNDS, NUM_TERNARY_POINTS_CONST>();
-
-        // Memoization tables for all 3^N points.
-        // Initialize with a value that signifies "not computed yet".
-        // Using array for memoization tables.
-        let mut memoized_az_evals: [Option<F>; NUM_TERNARY_POINTS_CONST] =
-            [None; NUM_TERNARY_POINTS_CONST];
-        let mut memoized_bz_evals: [Option<F>; NUM_TERNARY_POINTS_CONST] =
-            [None; NUM_TERNARY_POINTS_CONST];
-
-        // Get the map of non-binary points. The order here dictates temp_tA indexing.
-        let y_ext_code_map_non_binary: [[SVOEvalPoint; NUM_SVO_ROUNDS]; M_NON_BINARY_POINTS_CONST] =
-            build_y_ext_code_map::<NUM_SVO_ROUNDS, M_NON_BINARY_POINTS_CONST>();
-
-        for i_temp_tA in 0..M_NON_BINARY_POINTS_CONST {
-            let current_y_ext_coords_msb: &[SVOEvalPoint; NUM_SVO_ROUNDS] =
-                &y_ext_code_map_non_binary[i_temp_tA];
-
-            // Convert the MSB coordinates of the current non-binary point to its global k_ternary_idx
-            let k_target_idx =
-                svo_coords_msb_to_k_ternary_idx::<NUM_SVO_ROUNDS>(current_y_ext_coords_msb);
-
-            // Sanity check: the k_target_idx must be non-binary.
-            // The ternary_point_info_table can be indexed by k_target_idx.
-            debug_assert!(
-                k_target_idx < NUM_TERNARY_POINTS_CONST,
-                "k_target_idx out of bounds for ternary_point_info_table"
-            );
-            debug_assert!(
-                !ternary_point_info_table[k_target_idx].is_binary,
-                "Target for temp_tA[{i_temp_tA}] (k={k_target_idx}) is unexpectedly binary."
-            );
-
-            let az_val = get_extended_eval::<NUM_SVO_ROUNDS, NUM_TERNARY_POINTS_CONST, _>(
-                k_target_idx,
-                binary_az_evals_input,
-                &mut memoized_az_evals,
-                &ternary_point_info_table,
-            );
-
-            if az_val != F::zero() {
-                let bz_val = get_extended_eval::<NUM_SVO_ROUNDS, NUM_TERNARY_POINTS_CONST, _>(
-                    k_target_idx,
-                    binary_bz_evals_input,
-                    &mut memoized_bz_evals,
-                    &ternary_point_info_table,
-                );
-
-                if bz_val != F::zero() {
-                    // Note: temp_tA is indexed by `i_temp_tA` which is the iteration order
-                    // of non-binary points from build_y_ext_code_map.
-                    temp_tA[i_temp_tA] += *e_in_val * az_val * bz_val;
-                }
-            }
-        }
-    }
-
-    /// Typed (Az/Bz) version of the generic const kernel, accumulating into unreduced products.
-    /// This mirrors `compute_and_update_tA_inplace` but operates on Az/Bz small-value domains
-    /// and uses `mul_az_bz` + `fmadd_unreduced` to avoid early field reduction.
+    /// Generic version for arbitrary NUM_SVO_ROUNDS
+    /// NOTE: testing shows about 2x slowdown over hard-coded versions for NUM_SVO_ROUNDS = 1, 2, 3
+    /// We keep this for reference and testing
     #[inline]
     pub fn compute_and_update_tA_inplace_const<
         const NUM_SVO_ROUNDS: usize,
@@ -623,13 +509,12 @@ pub mod svo_helpers {
             out
         }
 
-        // Iterate non-binary points in deterministic MSB-first order (bind as local)
-        let y_ext_code_map_non_binary: [[SVOEvalPoint; NUM_SVO_ROUNDS]; M_NON_BINARY_POINTS_CONST] =
-            build_y_ext_code_map::<NUM_SVO_ROUNDS, M_NON_BINARY_POINTS_CONST>();
+        // Iterate non-binary points via their global k indices in deterministic MSB-first order
+        let non_binary_k_list: [usize; M_NON_BINARY_POINTS_CONST] =
+            build_non_binary_k_list::<NUM_SVO_ROUNDS, M_NON_BINARY_POINTS_CONST>();
 
         for i_temp_tA in 0..M_NON_BINARY_POINTS_CONST {
-            let coords_msb = &y_ext_code_map_non_binary[i_temp_tA];
-            let k_target = svo_coords_msb_to_k_ternary_idx::<NUM_SVO_ROUNDS>(coords_msb);
+            let k_target = non_binary_k_list[i_temp_tA];
 
             debug_assert!(k_target < NUM_TERNARY_POINTS_CONST);
             debug_assert!(!ternary_point_info_table[k_target].is_binary);
