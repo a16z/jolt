@@ -79,20 +79,39 @@ impl Program {
 
             self.save_linker();
 
-            let rust_flags = [
-                "-C",
-                &format!("link-arg=-T{}", self.linker_path()),
-                "-C",
-                "passes=lower-atomic",
-                "-C",
-                "panic=abort",
-                "-C",
-                "strip=symbols",
-                "-C",
-                "opt-level=z",
-                "--cfg",
-                "getrandom_backend=\"custom\"",
+            let mut rust_flags = vec![
+                "-C".to_string(),
+                format!("link-arg=-T{}", self.linker_path()),
+                "-C".to_string(),
+                "passes=lower-atomic".to_string(),
+                "-C".to_string(),
+                "panic=abort".to_string(),
             ];
+
+            // Check environment variable for debug symbols
+            let debug_symbols = std::env::var("JOLT_BACKTRACE")
+                .map(|v| v == "1" || v.to_lowercase() == "full" || v.to_lowercase() == "true")
+                .unwrap_or(false);
+
+            // Build with debug info when debug symbols enabled
+            if debug_symbols {
+                rust_flags.push("-C".to_string());
+                rust_flags.push("debuginfo=2".to_string());
+                rust_flags.push("-C".to_string());
+                rust_flags.push("strip=none".to_string());
+            } else {
+                rust_flags.push("-C".to_string());
+                rust_flags.push("debuginfo=0".to_string());
+                rust_flags.push("-C".to_string());
+                rust_flags.push("strip=symbols".to_string());
+            }
+
+            rust_flags.extend_from_slice(&[
+                "-C".to_string(),
+                "opt-level=z".to_string(),
+                "--cfg".to_string(),
+                "getrandom_backend=\"custom\"".to_string(),
+            ]);
 
             let target_triple = if self.std {
                 "riscv64imac-jolt-zkvm-elf"
@@ -177,8 +196,16 @@ impl Program {
                 panic!("failed to compile guest");
             }
 
-            let elf = format!("{}/{}/release/{}", target, target_triple, self.guest);
-            self.elf = Some(PathBuf::from_str(&elf).unwrap());
+            let elf_path = format!("{}/{}/release/{}", target, target_triple, self.guest);
+
+            // Store the main ELF path
+            self.elf = Some(PathBuf::from_str(&elf_path).unwrap());
+
+            if debug_symbols {
+                println!("Built guest binary with debug symbols: {elf_path}");
+            } else {
+                println!("Built guest binary: {elf_path}");
+            }
         }
     }
 
@@ -223,7 +250,8 @@ impl Program {
             max_output_size: self.max_output_size,
             program_size: Some(program_size),
         };
-        guest::program::trace(&elf_contents, inputs, &memory_config)
+
+        guest::program::trace(&elf_contents, self.elf.as_ref(), inputs, &memory_config)
     }
 
     #[tracing::instrument(skip_all, name = "Program::trace_to_file")]
@@ -243,7 +271,14 @@ impl Program {
             max_output_size: self.max_output_size,
             program_size: Some(program_size),
         };
-        tracer::trace_to_file(&elf_contents, inputs, &memory_config, trace_file)
+
+        tracer::trace_to_file(
+            &elf_contents,
+            self.elf.as_ref(),
+            inputs,
+            &memory_config,
+            trace_file,
+        )
     }
 
     pub fn trace_analyze<F: JoltField>(mut self, inputs: &[u8]) -> ProgramSummary {

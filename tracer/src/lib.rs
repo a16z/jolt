@@ -2,6 +2,7 @@
 
 #[cfg(not(feature = "std"))]
 extern crate alloc;
+extern crate core;
 
 use itertools::Itertools;
 use std::vec;
@@ -69,19 +70,26 @@ use crate::{emulator::memory::Memory, instruction::uncompress_instruction};
 #[tracing::instrument(skip_all)]
 pub fn trace(
     elf_contents: &[u8],
+    elf_path: Option<&std::path::PathBuf>,
     inputs: &[u8],
     memory_config: &MemoryConfig,
 ) -> (Vec<Cycle>, Memory, JoltDevice) {
-    let mut lazy_trace_iter =
-        LazyTraceIterator::new(setup_emulator(elf_contents, inputs, memory_config));
+    let mut lazy_trace_iter = LazyTraceIterator::new(setup_emulator_with_backtraces(
+        elf_contents,
+        elf_path,
+        inputs,
+        memory_config,
+    ));
     let trace: Vec<Cycle> = lazy_trace_iter.by_ref().collect();
     let final_memory_state = std::mem::take(lazy_trace_iter.final_memory_state.as_mut().unwrap());
     (trace, final_memory_state, lazy_trace_iter.get_jolt_device())
 }
+
 use crate::utils::trace_writer::{TraceBatchCollector, TraceWriter, TraceWriterConfig};
 
 pub fn trace_to_file(
     elf_contents: &[u8],
+    elf_path: Option<&std::path::PathBuf>,
     inputs: &[u8],
     memory_config: &MemoryConfig,
     out_path: &std::path::PathBuf,
@@ -91,7 +99,12 @@ pub fn trace_to_file(
     let writer =
         TraceWriter::<Cycle>::new(out_path, config).expect("Failed to create trace writer");
     let mut collector = TraceBatchCollector::new(writer);
-    let mut lazy = LazyTraceIterator::new(setup_emulator(elf_contents, inputs, memory_config));
+    let mut lazy = LazyTraceIterator::new(setup_emulator_with_backtraces(
+        elf_contents,
+        elf_path,
+        inputs,
+        memory_config,
+    ));
 
     for cycle in &mut lazy {
         collector.push(cycle);
@@ -110,10 +123,16 @@ pub fn trace_to_file(
 #[tracing::instrument(skip_all)]
 pub fn trace_lazy(
     elf_contents: &[u8],
+    elf_path: Option<&std::path::PathBuf>,
     inputs: &[u8],
     memory_config: &MemoryConfig,
 ) -> LazyTraceIterator {
-    LazyTraceIterator::new(setup_emulator(elf_contents, inputs, memory_config))
+    LazyTraceIterator::new(setup_emulator_with_backtraces(
+        elf_contents,
+        elf_path,
+        inputs,
+        memory_config,
+    ))
 }
 
 #[tracing::instrument(skip_all)]
@@ -152,6 +171,17 @@ fn step_emulator(emulator: &mut Emulator, prev_pc: &mut u64, trace: Option<&mut 
 
 #[tracing::instrument(skip_all)]
 fn setup_emulator(elf_contents: &[u8], inputs: &[u8], memory_config: &MemoryConfig) -> Emulator {
+    setup_emulator_with_backtraces(elf_contents, None, inputs, memory_config)
+}
+
+#[tracing::instrument(skip_all)]
+/// Sets up an emulator instance with access to the elf-path for symbol loading and de-mangling.
+fn setup_emulator_with_backtraces(
+    elf_contents: &[u8],
+    elf_path: Option<&std::path::PathBuf>,
+    inputs: &[u8],
+    memory_config: &MemoryConfig,
+) -> Emulator {
     let term = DefaultTerminal::default();
     let mut emulator = Emulator::new(Box::new(term));
     emulator.update_xlen(get_xlen());
@@ -159,7 +189,9 @@ fn setup_emulator(elf_contents: &[u8], inputs: &[u8], memory_config: &MemoryConf
     let mut jolt_device = JoltDevice::new(memory_config);
     jolt_device.inputs = inputs.to_vec();
     emulator.get_mut_cpu().get_mut_mmu().jolt_device = Some(jolt_device);
-
+    if let Some(elf_path) = elf_path {
+        emulator.set_elf_path(elf_path);
+    }
     emulator.setup_program(elf_contents);
     emulator
 }
@@ -262,6 +294,21 @@ impl Iterator for LazyTraceIterator {
             self.finished = true;
             // TODO(moodlezoup): Can we take instead of clone?
             self.final_memory_state = Some(self.emulator_state.get_cpu().mmu.memory.memory.clone());
+            if self
+                .emulator_state
+                .get_cpu()
+                .mmu
+                .jolt_device
+                .as_ref()
+                .unwrap()
+                .panic
+            {
+                println!(
+                    "Guest program terminated due to panic after {} cycles.",
+                    self.emulator_state.get_cpu().trace_len
+                );
+                utils::panic::display_panic_backtrace(&self.emulator_state);
+            }
             None
         } else {
             self.current_traces.reverse();
@@ -818,7 +865,7 @@ mod test {
             program_size: Some(elf.len() as u64),
             ..Default::default()
         };
-        let (execution_trace, _, _) = trace(&elf, &INPUTS, &memory_config);
+        let (execution_trace, _, _) = trace(&elf, None, &INPUTS, &memory_config);
         let (checkpoints, _) = trace_checkpoints(&elf, &INPUTS, &memory_config, n);
         assert_eq!(execution_trace.len(), expected_trace_length);
         assert_eq!(checkpoints.len(), 10);
@@ -842,7 +889,7 @@ mod test {
             ..Default::default()
         };
 
-        let (execution_trace, _, _) = trace(&elf, &INPUTS, &memory_config);
+        let (execution_trace, _, _) = trace(&elf, None, &INPUTS, &memory_config);
         let mut emulator = setup_emulator(&elf, &INPUTS, &memory_config);
         let mut prev_pc: u64 = 0;
         let mut trace = vec![];
