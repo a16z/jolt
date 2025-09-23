@@ -1,5 +1,6 @@
 use common::constants::RAM_START_ADDRESS;
 use common::jolt_device::{JoltDevice, MemoryConfig};
+use std::path::PathBuf;
 use tracer::emulator::memory::Memory;
 use tracer::instruction::{Cycle, Instruction};
 use tracer::utils::virtual_registers::VirtualRegisterAllocator;
@@ -15,6 +16,7 @@ pub struct RuntimeConfig {
 pub struct Program {
     pub elf_contents: Vec<u8>,
     pub memory_config: MemoryConfig,
+    pub elf: Option<PathBuf>,
 }
 
 impl Program {
@@ -22,6 +24,7 @@ impl Program {
         Self {
             elf_contents: elf_contents.to_vec(),
             memory_config: *memory_config,
+            elf: None,
         }
     }
 
@@ -32,15 +35,22 @@ impl Program {
 
     /// Trace the program execution with given inputs
     pub fn trace(&self, inputs: &[u8]) -> (Vec<Cycle>, Memory, JoltDevice) {
-        trace(&self.elf_contents, inputs, &self.memory_config)
+        trace(
+            &self.elf_contents,
+            self.elf.as_ref(),
+            inputs,
+            &self.memory_config,
+        )
     }
 
-    pub fn trace_to_file(
-        &self,
-        inputs: &[u8],
-        trace_file: &std::path::PathBuf,
-    ) -> (Memory, JoltDevice) {
-        trace_to_file(&self.elf_contents, inputs, &self.memory_config, trace_file)
+    pub fn trace_to_file(&self, inputs: &[u8], trace_file: &PathBuf) -> (Memory, JoltDevice) {
+        trace_to_file(
+            &self.elf_contents,
+            self.elf.as_ref(),
+            inputs,
+            &self.memory_config,
+            trace_file,
+        )
     }
 }
 
@@ -60,20 +70,22 @@ pub fn decode(elf: &[u8]) -> (Vec<Instruction>, Vec<(u64, u8)>, u64) {
 
 pub fn trace(
     elf_contents: &[u8],
+    elf_path: Option<&PathBuf>,
     inputs: &[u8],
     memory_config: &MemoryConfig,
 ) -> (Vec<Cycle>, Memory, JoltDevice) {
-    let (trace, memory, io_device) = tracer::trace(elf_contents, inputs, memory_config);
+    let (trace, memory, io_device) = tracer::trace(elf_contents, elf_path, inputs, memory_config);
     (trace, memory, io_device)
 }
 
 pub fn trace_to_file(
     elf_contents: &[u8],
+    elf_path: Option<&PathBuf>,
     inputs: &[u8],
     memory_config: &MemoryConfig,
-    trace_file: &std::path::PathBuf,
+    trace_file: &PathBuf,
 ) -> (Memory, JoltDevice) {
     let (memory, io_device) =
-        tracer::trace_to_file(elf_contents, inputs, memory_config, trace_file);
+        tracer::trace_to_file(elf_contents, elf_path, inputs, memory_config, trace_file);
     (memory, io_device)
 }

@@ -14,6 +14,7 @@ use crate::poly::opening_proof::{
     OpeningId, OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator,
     BIG_ENDIAN,
 };
+use crate::poly::spartan_interleaved_poly::NUM_SVO_ROUNDS;
 use crate::utils::math::Math;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
@@ -21,14 +22,13 @@ use crate::zkvm::dag::stage::SumcheckStages;
 use crate::zkvm::dag::state_manager::{ProofData, ProofKeys, StateManager};
 use crate::zkvm::instruction::CircuitFlags;
 use crate::zkvm::r1cs::inputs::{
-    compute_claimed_witness_evals, generate_pc_noop_witnesses, JoltR1CSInputs,
-    TraceWitnessAccessor, ALL_R1CS_INPUTS, COMMITTED_R1CS_INPUTS,
+    compute_claimed_witness_evals, generate_pc_noop_witnesses, JoltR1CSInputs, ALL_R1CS_INPUTS,
+    COMMITTED_R1CS_INPUTS,
 };
 use crate::zkvm::r1cs::key::UniformSpartanKey;
 use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 
 use crate::transcripts::Transcript;
-use crate::utils::small_value::NUM_SVO_ROUNDS;
 
 use crate::{
     poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPlusOnePolynomial},
@@ -269,7 +269,6 @@ impl<F: JoltField> SumcheckInstance<F> for InnerSumcheck<F> {
 
         // Evaluate z(ry)
         let eval_z = key.evaluate_z_mle_with_segment_evals(&claimed_witness_evals, r, true);
-
         left_expected * eval_z
     }
 
@@ -326,7 +325,7 @@ impl<F: JoltField> PCSumcheck<F> {
 
         // Stream once to generate PC, UnexpandedPC and IsNoop witnesses
         let (unexpanded_pc_poly, pc_poly, is_noop_poly) =
-            generate_pc_noop_witnesses(preprocessing, trace);
+            generate_pc_noop_witnesses(&preprocessing.shared, trace);
 
         let num_cycles = key.num_steps;
         let num_cycles_bits = num_cycles.ilog2() as usize;
@@ -631,9 +630,6 @@ where
 
         let key = self.key.clone();
 
-        // Streaming accessor (no materialization of all input_polys)
-        let accessor = TraceWitnessAccessor::<F, PCS>::new(preprocessing, trace);
-
         let num_rounds_x = key.num_rows_bits();
 
         let tau: Vec<F> = state_manager
@@ -643,8 +639,9 @@ where
 
         let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) =
             SumcheckInstanceProof::<F, ProofTranscript>::prove_spartan_small_value::<NUM_SVO_ROUNDS>(
+                &preprocessing.shared,
+                trace,
                 num_rounds_x,
-                &accessor,
                 &tau,
                 &mut state_manager.transcript.borrow_mut(),
             );
@@ -688,8 +685,11 @@ where
 
         let (r_cycle, _rx_var) = outer_sumcheck_r.split_at(num_cycles_bits);
 
-        // Compute claimed witness evals at r_cycle via streaming
-        let claimed_witness_evals = compute_claimed_witness_evals::<F>(r_cycle, &accessor);
+        // Compute claimed witness evals at r_cycle via streaming (fast)
+        let claimed_witness_evals = {
+            let _guard = span!(Level::INFO, "claimed_witness_evals_fast").entered();
+            compute_claimed_witness_evals::<F>(&preprocessing.shared, trace, r_cycle)
+        };
 
         // Only non-virtual (i.e. committed) polynomials' openings are
         // proven using the PCS opening proof, which we add for future opening proof here

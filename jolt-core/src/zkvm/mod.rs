@@ -209,7 +209,7 @@ where
         };
 
         let (mut trace, final_memory_state, mut program_io) =
-            guest::program::trace(elf_contents, inputs, &memory_config);
+            guest::program::trace(elf_contents, None, inputs, &memory_config);
         let num_riscv_cycles: usize = trace
             .par_iter()
             .map(|cycle| {

@@ -4,7 +4,6 @@ use crate::{
     field::JoltField,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
-        compact_polynomial::SmallScalar,
         eq_poly::EqPolynomial,
         identity_poly::IdentityPolynomial,
         multilinear_polynomial::{
@@ -17,7 +16,10 @@ use crate::{
     },
     subprotocols::sumcheck::SumcheckInstance,
     transcripts::Transcript,
-    utils::{expanding_table::ExpandingTable, math::Math, thread::unsafe_allocate_zero_vec},
+    utils::{
+        expanding_table::ExpandingTable, math::Math, small_scalar::SmallScalar,
+        thread::unsafe_allocate_zero_vec,
+    },
     zkvm::{
         dag::state_manager::StateManager,
         instruction::{

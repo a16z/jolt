@@ -33,6 +33,7 @@ use self::terminal::Terminal;
 
 use common::constants::{EMULATOR_MEMORY_CAPACITY, RAM_START_ADDRESS};
 use std::io::Write;
+use std::path::Path;
 
 /// RISC-V emulator. It emulates RISC-V CPU and peripheral devices.
 ///
@@ -49,6 +50,9 @@ use std::io::Write;
 /// ```
 #[derive(Clone)]
 pub struct Emulator {
+    /// addr2line instance for symbol lookups
+    pub elf_path: Option<std::path::PathBuf>,
+
     cpu: Cpu,
 
     /// Stores mapping from symbol to virtual address
@@ -92,6 +96,7 @@ impl Emulator {
             cpu: Cpu::new(terminal),
 
             symbol_map: FnvHashMap::default(),
+            elf_path: None,
 
             // These can be updated in setup_program()
             is_test: false,
@@ -151,6 +156,13 @@ impl Emulator {
     /// Runs CPU one cycle
     pub fn tick(&mut self, trace: Option<&mut Vec<Cycle>>) {
         self.cpu.tick(trace)
+    }
+
+    /// This enables usage of addr2line to find debug info embedded in the binary
+    pub fn set_elf_path(&mut self, elf_path: &Path) {
+        if elf_path.exists() {
+            self.elf_path = Some(elf_path.to_path_buf());
+        }
     }
 
     /// Sets up program run by the program. This method analyzes the passed content

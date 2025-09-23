@@ -55,6 +55,7 @@ clap = { version = "4.4", features = ["derive"] }
 common = { path = "../common", default-features = false }
 postcard = { version = "1.0.8", default-features = false }
 lazy_static = "1.4"
+addr2line = "0.25.1"
 
 [dev-dependencies]
 rand = { version = "0.8.5" }

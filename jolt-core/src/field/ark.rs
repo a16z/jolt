@@ -15,6 +15,18 @@ lazy_static::lazy_static! {
 
 impl JoltField for ark_bn254::Fr {
     const NUM_BYTES: usize = 32;
+    /// The Montgomery factor R = 2^(64*N) mod p
+    /// SAFETY: We're directly transmuting from the Montgomery R constant from arkworks,
+    /// which is guaranteed to be a valid field element in Montgomery form.
+    const MONTGOMERY_R: Self = unsafe {
+        use ark_ff::MontConfig;
+        std::mem::transmute(<ark_bn254::FrConfig as MontConfig<4>>::R)
+    };
+    /// The squared Montgomery factor R^2 = 2^(128*N) mod p
+    const MONTGOMERY_R_SQUARE: Self = unsafe {
+        use ark_ff::MontConfig;
+        std::mem::transmute(<ark_bn254::FrConfig as MontConfig<4>>::R2)
+    };
     type SmallValueLookupTables = [Vec<Self>; 2];
 
     fn random<R: rand_core::RngCore>(rng: &mut R) -> Self {
@@ -141,7 +153,7 @@ impl JoltField for ark_bn254::Fr {
     }
 
     fn to_u64(&self) -> Option<u64> {
-        let bigint = self.into_bigint();
+        let bigint = <Self as ark_ff::PrimeField>::into_bigint(*self);
         let limbs: &[u64] = bigint.as_ref();
         let result = limbs[0];
 
@@ -165,12 +177,30 @@ impl JoltField for ark_bn254::Fr {
     }
 
     fn num_bits(&self) -> u32 {
-        self.into_bigint().num_bits()
+        <Self as ark_ff::PrimeField>::into_bigint(*self).num_bits()
+    }
+
+    #[inline(always)]
+    fn as_bigint_ref(&self) -> &ark_ff::BigInt<4> {
+        // arkworks field elements are just wrappers around BigInt, so we can get a direct reference
+        &self.0
+    }
+
+    #[inline(always)]
+    fn from_montgomery_reduce_2n(unreduced: ark_ff::BigInt<8>) -> Self {
+        // Use arkworks Montgomery backend to efficiently reduce 8-limb to 4-limb
+        ark_bn254::Fr::montgomery_reduce_2n(unreduced)
     }
 
     #[inline(always)]
     fn mul_u64(&self, n: u64) -> Self {
-        ark_ff::Fp::mul_u64::<5>(*self, n)
+        if n == 0 || self.is_zero() {
+            Self::zero()
+        } else if n == 1 {
+            *self
+        } else {
+            ark_ff::Fp::mul_u64::<5>(*self, n)
+        }
     }
 
     #[inline(always)]
@@ -185,7 +215,13 @@ impl JoltField for ark_bn254::Fr {
 
     #[inline(always)]
     fn mul_i128(&self, n: i128) -> Self {
-        ark_ff::Fp::mul_i128::<5, 6>(*self, n)
+        if n == 0 || self.is_zero() {
+            Self::zero()
+        } else if n == 1 {
+            *self
+        } else {
+            ark_ff::Fp::mul_i128::<5, 6>(*self, n)
+        }
     }
 
     #[inline]
