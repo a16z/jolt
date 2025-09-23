@@ -723,26 +723,6 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                     let p_at_xk0_old = az0_field * bz0_field - cz0_field;
                     let p_slope_term_old = (az1_field - az0_field) * (bz1_field - bz0_field);
 
-                    // Per-block A/B assertions disabled for end-to-end run
-                    /*
-                    if p_at_xk0 != p_at_xk0_old {
-                        panic!(
-                            "[SVO streaming block mismatch] block_id={} p(0): new={} old={}",
-                            current_block_id,
-                            p_at_xk0,
-                            p_at_xk0_old
-                        );
-                    }
-                    if p_slope_term != p_slope_term_old {
-                        panic!(
-                            "[SVO streaming block mismatch] block_id={} p(∞ slope): new={} old={}",
-                            current_block_id,
-                            p_slope_term,
-                            p_slope_term_old
-                        );
-                    }
-                    */
-
                     task_sum_contrib_0_old += e_block * p_at_xk0_old;
                     task_sum_contrib_infty_old += e_block * p_slope_term_old;
                 }
@@ -769,23 +749,6 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
             total_sumcheck_eval_at_0_old += task_output.sumcheck_eval_at_0_old_local;
             total_sumcheck_eval_at_infty_old += task_output.sumcheck_eval_at_infty_old_local;
         }
-
-        /* debug: streaming totals comparison disabled for end-to-end run
-        if total_sumcheck_eval_at_0 != total_sumcheck_eval_at_0_old {
-            panic!(
-                "[SVO streaming mismatch] t_i(0): new={} old={}",
-                total_sumcheck_eval_at_0,
-                total_sumcheck_eval_at_0_old
-            );
-        }
-        if total_sumcheck_eval_at_infty != total_sumcheck_eval_at_infty_old {
-            panic!(
-                "[SVO streaming mismatch] t_i(∞): new={} old={}",
-                total_sumcheck_eval_at_infty,
-                total_sumcheck_eval_at_infty_old
-            );
-        }
-        */
 
         // Compute r_i challenge using aggregated sumcheck values (use new baseline)
         let r_i = process_eq_sumcheck_round(
@@ -833,7 +796,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
             output_slices_for_tasks.push(first);
             scratch_remainder = second;
         }
-        // debug_assert_eq!(scratch_remainder.len(), 0);
+        debug_assert_eq!(scratch_remainder.len(), 0);
 
         collected_chunk_outputs // Now consume collected_chunk_outputs
             .into_par_iter()
@@ -895,11 +858,6 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                         current_output_idx_in_slice += 1;
                     }
                 }
-                // debug_assert_eq!(
-                //     current_output_idx_in_slice,
-                //     output_slice_for_task.len(),
-                //     "Mismatch in written elements vs pre-calculated slice length for task output"
-                // );
             });
 
         std::mem::swap(&mut self.bound_coeffs, &mut self.binding_scratch_space);
