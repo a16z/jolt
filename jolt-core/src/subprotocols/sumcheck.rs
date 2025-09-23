@@ -407,7 +407,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
         let (accums_zero, accums_infty, mut az_bz_cz_poly) = SpartanInterleavedPolynomial::<
             NUM_SVO_ROUNDS,
             F,
-        >::new_with_precompute(
+        >::svo_sumcheck_round(
             preprocessing, trace, tau
         );
         #[cfg(feature = "allocative")]
@@ -425,17 +425,8 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
             &mut eq_poly,
         );
 
-        // Old shard-consuming streaming round (kept for reference):
-        // az_bz_cz_poly.streaming_sumcheck_round(
-        //     &mut eq_poly,
-        //     transcript,
-        //     &mut r,
-        //     &mut polys,
-        //     &mut claim,
-        // );
-
-        // New per-cycle streaming round (recompute A/B on the fly, lower memory):
-        az_bz_cz_poly.streaming_sumcheck_round_new(
+        // We stream over the trace again for this round
+        az_bz_cz_poly.streaming_sumcheck_round(
             preprocessing,
             trace,
             &mut eq_poly,
