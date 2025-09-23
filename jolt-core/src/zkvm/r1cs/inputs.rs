@@ -616,26 +616,31 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F>> WitnessRowAccessor<F, J
 
 /// Compute `z(r_cycle) = Σ_t eq(r_cycle, t) * P_i(t)` for all inputs i, without
 /// materializing P_i. Returns `[P_0(r_cycle), P_1(r_cycle), ...]` in input order.
+/// TODO: use delayed reduction while computing the sum
 #[tracing::instrument(skip_all)]
 pub fn compute_claimed_witness_evals<F: JoltField, PCS: CommitmentScheme<Field = F>>(
     r_cycle: &[F],
     accessor: &TraceWitnessAccessor<F, PCS>,
 ) -> Vec<F> {
-    let eq_rx = EqPolynomial::evals(r_cycle);
+    // Implement double-sum semantics: sum_{x1} eq1[x1] * (sum_{x2} eq2[x2] * term(x1||x2))
     let len = accessor.num_steps();
+    let m = r_cycle.len() / 2;
+    let (r2, r1) = r_cycle.split_at(m);
+    let (eq_one, eq_two) = rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
 
-    let num_chunks = rayon::current_num_threads().next_power_of_two();
-    let chunk_size = (eq_rx.len() / num_chunks).max(1);
+    (0..eq_one.len())
+        .into_par_iter()
+        .map(|x1| {
+            let eq1_val = eq_one[x1];
 
-    eq_rx
-        .par_chunks(chunk_size)
-        .enumerate()
-        .map(|(chunk_index, eq_chunk)| {
-            let mut chunk_result = [F::zero(); NUM_R1CS_INPUTS];
-            let mut t = chunk_index * chunk_size;
-            for eq_rx_t in eq_chunk {
+            // Inner serial accumulation over x2: accumulate eq2[x2] * term(row)
+            let mut inner = [F::zero(); NUM_R1CS_INPUTS];
+            for x2 in 0..eq_two.len() {
+                let eq2_val = eq_two[x2];
+                let idx = x1 * eq_two.len() + x2;
+
                 // Row-local cache
-                let cycle = &accessor.trace[t];
+                let cycle = &accessor.trace[idx];
                 let instr = cycle.instruction();
                 let flags = instr.circuit_flags();
                 let norm = instr.normalize();
@@ -643,9 +648,9 @@ pub fn compute_claimed_witness_evals<F: JoltField, PCS: CommitmentScheme<Field =
                 let rdw = cycle.rd_write().2 as u64;
 
                 // Next row cached data
-                let has_next = (t + 1) < len;
+                let has_next = (idx + 1) < len;
                 let next_cycle = if has_next {
-                    Some(&accessor.trace[t + 1])
+                    Some(&accessor.trace[idx + 1])
                 } else {
                     None
                 };
@@ -655,7 +660,6 @@ pub fn compute_claimed_witness_evals<F: JoltField, PCS: CommitmentScheme<Field =
 
                 // Instruction inputs and lookup operands
                 let (left_u64, right_i128) = LookupQuery::<XLEN>::to_instruction_inputs(cycle);
-                // Compute product as S128 (u64 × s64 -> s128) using type-level helpers
                 let left_s64: S64 = S64::from_u64(left_u64);
                 let right_s128: S128 = S128::from_i128(right_i128);
                 let product_s128: S128 = left_s64.mul_trunc::<2, 2>(&right_s128);
@@ -684,95 +688,88 @@ pub fn compute_claimed_witness_evals<F: JoltField, PCS: CommitmentScheme<Field =
                 };
 
                 // 0: LeftInstructionInput (u64)
-                chunk_result[JoltR1CSInputs::LeftInstructionInput.to_index()] +=
-                    left_u64.field_mul(*eq_rx_t);
+                inner[JoltR1CSInputs::LeftInstructionInput.to_index()] +=
+                    left_u64.field_mul(eq2_val);
                 // 1: RightInstructionInput (i128, really a s64)
-                chunk_result[JoltR1CSInputs::RightInstructionInput.to_index()] +=
-                    right_i128.field_mul(*eq_rx_t);
+                inner[JoltR1CSInputs::RightInstructionInput.to_index()] +=
+                    right_i128.field_mul(eq2_val);
                 // 2: Product = left_u64 * right_i128
-                chunk_result[JoltR1CSInputs::Product.to_index()] +=
-                    product_s128.field_mul(*eq_rx_t);
+                inner[JoltR1CSInputs::Product.to_index()] += product_s128.field_mul(eq2_val);
                 // 3: WriteLookupOutputToRD = rd if flag else 0 (u8)
                 if flags[CircuitFlags::WriteLookupOutputToRD] {
-                    chunk_result[JoltR1CSInputs::WriteLookupOutputToRD.to_index()] +=
-                        rd.field_mul(*eq_rx_t);
-                };
+                    inner[JoltR1CSInputs::WriteLookupOutputToRD.to_index()] +=
+                        rd.field_mul(eq2_val);
+                }
                 // 4: WritePCtoRD = rd if Jump else 0 (u8)
                 if flags[CircuitFlags::Jump] {
-                    chunk_result[JoltR1CSInputs::WritePCtoRD.to_index()] += rd.field_mul(*eq_rx_t);
-                };
+                    inner[JoltR1CSInputs::WritePCtoRD.to_index()] += rd.field_mul(eq2_val);
+                }
                 // 5: ShouldBranch = LookupOutput if Branch else 0 (u64)
                 if flags[CircuitFlags::Branch] {
-                    chunk_result[JoltR1CSInputs::ShouldBranch.to_index()] +=
-                        lookup_out_u64.field_mul(*eq_rx_t);
+                    inner[JoltR1CSInputs::ShouldBranch.to_index()] +=
+                        lookup_out_u64.field_mul(eq2_val);
                 }
                 // 6: PC (u64)
-                chunk_result[JoltR1CSInputs::PC.to_index()] += pc_u64.field_mul(*eq_rx_t);
+                inner[JoltR1CSInputs::PC.to_index()] += pc_u64.field_mul(eq2_val);
                 // 7: UnexpandedPC (u64)
-                chunk_result[JoltR1CSInputs::UnexpandedPC.to_index()] +=
-                    unexp_pc_u64.field_mul(*eq_rx_t);
+                inner[JoltR1CSInputs::UnexpandedPC.to_index()] += unexp_pc_u64.field_mul(eq2_val);
                 // 8: Rd (u8)
-                chunk_result[JoltR1CSInputs::Rd.to_index()] += rd.field_mul(*eq_rx_t);
+                inner[JoltR1CSInputs::Rd.to_index()] += rd.field_mul(eq2_val);
                 // 9: Imm (i128)
-                chunk_result[JoltR1CSInputs::Imm.to_index()] +=
-                    norm.operands.imm.field_mul(*eq_rx_t);
+                inner[JoltR1CSInputs::Imm.to_index()] += norm.operands.imm.field_mul(eq2_val);
                 // 10: RamAddress (u64)
                 let ram_addr_u64 = cycle.ram_access().address() as u64;
-                chunk_result[JoltR1CSInputs::RamAddress.to_index()] +=
-                    ram_addr_u64.field_mul(*eq_rx_t);
+                inner[JoltR1CSInputs::RamAddress.to_index()] += ram_addr_u64.field_mul(eq2_val);
                 // 11: Rs1Value (u64)
                 let rs1_u64 = cycle.rs1_read().1;
-                chunk_result[JoltR1CSInputs::Rs1Value.to_index()] += rs1_u64.field_mul(*eq_rx_t);
+                inner[JoltR1CSInputs::Rs1Value.to_index()] += rs1_u64.field_mul(eq2_val);
                 // 12: Rs2Value (u64)
                 let rs2_u64 = cycle.rs2_read().1;
-                chunk_result[JoltR1CSInputs::Rs2Value.to_index()] += rs2_u64.field_mul(*eq_rx_t);
+                inner[JoltR1CSInputs::Rs2Value.to_index()] += rs2_u64.field_mul(eq2_val);
                 // 13: RdWriteValue (u64)
-                chunk_result[JoltR1CSInputs::RdWriteValue.to_index()] += rdw.field_mul(*eq_rx_t);
+                inner[JoltR1CSInputs::RdWriteValue.to_index()] += rdw.field_mul(eq2_val);
                 // 14: RamReadValue (u64)
-                chunk_result[JoltR1CSInputs::RamReadValue.to_index()] +=
-                    ram_rd_u64.field_mul(*eq_rx_t);
+                inner[JoltR1CSInputs::RamReadValue.to_index()] += ram_rd_u64.field_mul(eq2_val);
                 // 15: RamWriteValue (u64)
-                chunk_result[JoltR1CSInputs::RamWriteValue.to_index()] +=
-                    ram_wr_u64.field_mul(*eq_rx_t);
+                inner[JoltR1CSInputs::RamWriteValue.to_index()] += ram_wr_u64.field_mul(eq2_val);
                 // 16: LeftLookupOperand (u64)
-                chunk_result[JoltR1CSInputs::LeftLookupOperand.to_index()] +=
-                    ll_u64.field_mul(*eq_rx_t);
+                inner[JoltR1CSInputs::LeftLookupOperand.to_index()] += ll_u64.field_mul(eq2_val);
                 // 17: RightLookupOperand (u128)
-                chunk_result[JoltR1CSInputs::RightLookupOperand.to_index()] +=
-                    rl_u128.field_mul(*eq_rx_t);
+                inner[JoltR1CSInputs::RightLookupOperand.to_index()] += rl_u128.field_mul(eq2_val);
                 // 18: NextUnexpandedPC (u64)
-                chunk_result[JoltR1CSInputs::NextUnexpandedPC.to_index()] +=
-                    next_unexp_pc_u64.field_mul(*eq_rx_t);
+                inner[JoltR1CSInputs::NextUnexpandedPC.to_index()] +=
+                    next_unexp_pc_u64.field_mul(eq2_val);
                 // 19: NextPC (u64)
-                chunk_result[JoltR1CSInputs::NextPC.to_index()] += next_pc_u64.field_mul(*eq_rx_t);
+                inner[JoltR1CSInputs::NextPC.to_index()] += next_pc_u64.field_mul(eq2_val);
                 // 20: LookupOutput (u64)
-                chunk_result[JoltR1CSInputs::LookupOutput.to_index()] +=
-                    lookup_out_u64.field_mul(*eq_rx_t);
+                inner[JoltR1CSInputs::LookupOutput.to_index()] += lookup_out_u64.field_mul(eq2_val);
                 // 21: NextIsNoop (bool)
                 if next_is_noop {
-                    chunk_result[JoltR1CSInputs::NextIsNoop.to_index()] += *eq_rx_t;
+                    inner[JoltR1CSInputs::NextIsNoop.to_index()] += eq2_val;
                 }
                 // 22: ShouldJump = Jump && !NextIsNoop (bool)
                 if flags[CircuitFlags::Jump] && !next_is_noop {
-                    chunk_result[JoltR1CSInputs::ShouldJump.to_index()] += *eq_rx_t;
+                    inner[JoltR1CSInputs::ShouldJump.to_index()] += eq2_val;
                 }
-
                 // 23..40: OpFlags (bool)
                 for flag in CircuitFlags::iter() {
                     if flags[flag] {
-                        chunk_result[JoltR1CSInputs::OpFlags(flag).to_index()] += *eq_rx_t;
+                        inner[JoltR1CSInputs::OpFlags(flag).to_index()] += eq2_val;
                     }
                 }
-
-                t += 1;
             }
-            chunk_result
+
+            // Now multiply accumulated inner sums by eq1[x1]
+            for i in 0..NUM_R1CS_INPUTS {
+                inner[i] = inner[i] * eq1_val;
+            }
+            inner
         })
         .reduce(
             || [F::zero(); NUM_R1CS_INPUTS],
-            |mut acc, evals| {
+            |mut acc, item| {
                 for i in 0..NUM_R1CS_INPUTS {
-                    acc[i] += evals[i];
+                    acc[i] += item[i];
                 }
                 acc
             },
@@ -999,11 +996,7 @@ mod tests {
         });
 
         // Use RV64IMAC implementation to construct shared preprocessing
-        let shared = JoltRV64IMAC::shared_preprocess(
-            bytecode.clone(),
-            mem_layout.clone(),
-            vec![],
-        );
+        let shared = JoltRV64IMAC::shared_preprocess(bytecode.clone(), mem_layout.clone(), vec![]);
         let preprocessing = crate::zkvm::JoltProverPreprocessing::<TrackedFr, MockCommitScheme<TrackedFr>> {
             generators: <MockCommitScheme<TrackedFr> as crate::poly::commitment::commitment_scheme::CommitmentScheme>::setup_prover(8),
             shared,
@@ -1023,6 +1016,55 @@ mod tests {
             .collect();
 
         // Compute both versions
+        let fast = compute_claimed_witness_evals(&r_cycle, &accessor);
+        let slow = compute_claimed_witness_evals_generic(&r_cycle, &accessor);
+
+        assert_eq!(fast.len(), slow.len());
+        for (i, (a, b)) in fast.iter().zip(slow.iter()).enumerate() {
+            assert_eq!(*a, *b, "Mismatch at input index {}", i);
+        }
+    }
+
+    #[test]
+    fn claimed_witness_evals_sha3_generic_matches_optimized() {
+        // Ensure SHA3 inline library is linked and auto-registered
+        #[cfg(feature = "host")]
+        use sha3_inline as _;
+
+        use crate::host;
+        use crate::zkvm::witness::DTH_ROOT_OF_K;
+
+        // Prepare a real sha3 guest program and inputs
+        let mut program = host::Program::new("sha3-guest");
+        let (bytecode, init_memory_state, _) = program.decode();
+        let inputs = postcard::to_stdvec(&vec![5u8; 2048]).unwrap();
+
+        // Obtain an execution trace from the host interpreter
+        let (mut trace, _final_mem, io_device) = program.trace(&inputs);
+
+        // Pad trace to power of two for EqPolynomial domain
+        let padded_len = trace.len().next_power_of_two();
+        trace.resize(padded_len, Cycle::NoOp);
+
+        // Build shared preprocessing and lightweight prover preprocessing with mock PCS
+        let shared = JoltRV64IMAC::shared_preprocess(
+            bytecode.clone(),
+            io_device.memory_layout.clone(),
+            init_memory_state,
+        );
+        let setup_bits = DTH_ROOT_OF_K.log_2() + padded_len.log_2();
+        let preprocessing = crate::zkvm::JoltProverPreprocessing::<TrackedFr, MockCommitScheme<TrackedFr>> {
+            generators: <MockCommitScheme<TrackedFr> as crate::poly::commitment::commitment_scheme::CommitmentScheme>::setup_prover(setup_bits),
+            shared,
+        };
+
+        // Accessor and random r_cycle of correct dimension
+        let accessor = TraceWitnessAccessor::new(&preprocessing, &trace);
+        let r_cycle: Vec<_> = (0..padded_len.log_2())
+            .map(|i| TrackedFr::from_u64((i as u64) + 7))
+            .collect();
+
+        // Compare optimized vs generic implementations on a real (sha3) trace
         let fast = compute_claimed_witness_evals(&r_cycle, &accessor);
         let slow = compute_claimed_witness_evals_generic(&r_cycle, &accessor);
 

@@ -22,9 +22,8 @@ use crate::zkvm::dag::stage::SumcheckStages;
 use crate::zkvm::dag::state_manager::{ProofData, ProofKeys, StateManager};
 use crate::zkvm::instruction::CircuitFlags;
 use crate::zkvm::r1cs::inputs::{
-    compute_claimed_witness_evals,
-    generate_pc_noop_witnesses, JoltR1CSInputs, TraceWitnessAccessor, WitnessRowAccessor,
-    ALL_R1CS_INPUTS, COMMITTED_R1CS_INPUTS,
+    compute_claimed_witness_evals, generate_pc_noop_witnesses, JoltR1CSInputs,
+    TraceWitnessAccessor, WitnessRowAccessor, ALL_R1CS_INPUTS, COMMITTED_R1CS_INPUTS,
 };
 use crate::zkvm::r1cs::key::UniformSpartanKey;
 use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
@@ -199,7 +198,7 @@ impl<F: JoltField> InnerSumcheck<F> {
 
     pub fn new_verifier(
         input_claim: F,
-        key: Arc<UniformSpartanKey<F>>, 
+        key: Arc<UniformSpartanKey<F>>,
         rx_var: Vec<F>,
         claimed_witness_evals: Vec<F>,
         inner_sumcheck_RLC: F,

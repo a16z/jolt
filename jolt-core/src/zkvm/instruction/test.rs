@@ -28,14 +28,16 @@ where
 /// Test that certain combinations of circuit flags are exclusive.
 mod flags {
     use super::CircuitFlags;
-    use tracer::instruction::Cycle;
     use crate::zkvm::instruction::InstructionFlags;
     use strum::IntoEnumIterator;
+    use tracer::instruction::Cycle;
 
     #[test]
     fn left_operand_exclusive() {
         for cycle in Cycle::iter() {
-            if let Cycle::INLINE(_) = cycle { continue; }
+            if let Cycle::INLINE(_) = cycle {
+                continue;
+            }
             let instr = cycle.instruction();
             let flags = instr.circuit_flags();
             assert!(
@@ -49,7 +51,9 @@ mod flags {
     #[test]
     fn right_operand_exclusive() {
         for cycle in Cycle::iter() {
-            if let Cycle::INLINE(_) = cycle { continue; }
+            if let Cycle::INLINE(_) = cycle {
+                continue;
+            }
             let instr = cycle.instruction();
             let flags = instr.circuit_flags();
             assert!(
@@ -63,7 +67,9 @@ mod flags {
     #[test]
     fn lookup_shape_exclusive() {
         for cycle in Cycle::iter() {
-            if let Cycle::INLINE(_) = cycle { continue; }
+            if let Cycle::INLINE(_) = cycle {
+                continue;
+            }
             let instr = cycle.instruction();
             let flags = instr.circuit_flags();
             let num_true = [
@@ -85,7 +91,9 @@ mod flags {
     #[test]
     fn load_store_exclusive() {
         for cycle in Cycle::iter() {
-            if let Cycle::INLINE(_) = cycle { continue; }
+            if let Cycle::INLINE(_) = cycle {
+                continue;
+            }
             let instr = cycle.instruction();
             let flags = instr.circuit_flags();
             assert!(
