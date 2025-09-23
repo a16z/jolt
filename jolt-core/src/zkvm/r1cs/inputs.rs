@@ -862,8 +862,6 @@ mod tests {
     use crate::poly::commitment::mock::MockCommitScheme;
     use crate::utils::math::Math;
     use crate::zkvm::{Jolt, JoltRV64IMAC};
-    use common::jolt_device::{MemoryConfig, MemoryLayout};
-    use tracer::instruction::{Cycle, Instruction};
 
     impl JoltR1CSInputs {
         /// Alternative const implementation that searches through ALL_R1CS_INPUTS array.

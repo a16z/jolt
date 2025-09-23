@@ -359,10 +359,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                                 let E_in_val = &E_in_evals[x_in_val];
 
                                 // New typed path
-                                svo_helpers::compute_and_update_tA_inplace::<
-                                    NUM_SVO_ROUNDS,
-                                    F,
-                                >(
+                                svo_helpers::compute_and_update_tA_inplace::<NUM_SVO_ROUNDS, F>(
                                     &binary_az_block,
                                     &binary_bz_block,
                                     E_in_val,
@@ -383,10 +380,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                             let E_in_val_last = &E_in_evals[x_in_val_last];
 
                             // New typed path
-                            svo_helpers::compute_and_update_tA_inplace::<
-                                NUM_SVO_ROUNDS,
-                                F,
-                            >(
+                            svo_helpers::compute_and_update_tA_inplace::<NUM_SVO_ROUNDS, F>(
                                 &binary_az_block,
                                 &binary_bz_block,
                                 E_in_val_last,

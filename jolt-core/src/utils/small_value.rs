@@ -1716,13 +1716,11 @@ pub mod svo_helpers {
 mod tests {
     use super::accum::UnreducedProduct;
     use super::svo_helpers::{
-        compute_and_update_tA_inplace,
-        compute_and_update_tA_inplace_1, compute_and_update_tA_inplace_2,
-        compute_and_update_tA_inplace_3, compute_and_update_tA_inplace_const,
+        compute_and_update_tA_inplace, compute_and_update_tA_inplace_1,
+        compute_and_update_tA_inplace_2, compute_and_update_tA_inplace_3,
+        compute_and_update_tA_inplace_const,
     };
-    use crate::{
-        field::JoltField, poly::eq_poly::EqPolynomial,
-    };
+    use crate::{field::JoltField, poly::eq_poly::EqPolynomial};
     use ark_bn254::Fr;
     use ark_ff::biginteger::{I8OrI96, S160};
     use ark_ff::UniformRand;
@@ -1772,7 +1770,9 @@ mod tests {
     }
 
     /// Consistency check: hardcoded vs generic small value compute and update tA in place
-    fn run_svo_hardcoded_vs_generic_consistency_check<const NUM_SVO_ROUNDS: usize>(rng: &mut ChaCha20Rng) {
+    fn run_svo_hardcoded_vs_generic_consistency_check<const NUM_SVO_ROUNDS: usize>(
+        rng: &mut ChaCha20Rng,
+    ) {
         let num_vars = NUM_SVO_ROUNDS;
         if num_vars == 0 {
             return;
@@ -1806,7 +1806,7 @@ mod tests {
         // Hardcoded small value path - call the hardcoded versions directly
         let mut ta_pos_acc_hardcoded = vec![UnreducedProduct::zero(); num_non_trivial];
         let mut ta_neg_acc_hardcoded = vec![UnreducedProduct::zero(); num_non_trivial];
-        
+
         // Call the hardcoded versions directly based on NUM_SVO_ROUNDS
         match NUM_SVO_ROUNDS {
             1 => compute_and_update_tA_inplace_1::<Fr>(
@@ -1851,7 +1851,9 @@ mod tests {
                 );
             }
             _ => {
-                panic!("Unsupported NUM_SVO_ROUNDS for hardcoded consistency check: {NUM_SVO_ROUNDS}");
+                panic!(
+                    "Unsupported NUM_SVO_ROUNDS for hardcoded consistency check: {NUM_SVO_ROUNDS}"
+                );
             }
         }
 
