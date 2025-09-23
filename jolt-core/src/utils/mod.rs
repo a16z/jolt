@@ -8,6 +8,8 @@ pub mod expanding_table;
 pub mod gaussian_elimination;
 pub mod lookup_bits;
 pub mod math;
+#[cfg(feature = "monitor")]
+pub mod monitor;
 pub mod profiling;
 pub mod small_scalar;
 pub mod small_value;
