@@ -497,12 +497,31 @@ mod tests {
             JoltRV64IMAC::prove(&preprocessing, elf_contents, &inputs);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
-        let verification_result =
-            JoltRV64IMAC::verify(&verifier_preprocessing, jolt_proof, io_device, debug_info);
+        let verification_result = JoltRV64IMAC::verify(
+            &verifier_preprocessing,
+            jolt_proof,
+            io_device.clone(),
+            debug_info,
+        );
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",
             verification_result.err()
+        );
+        assert_eq!(
+            io_device.inputs, inputs,
+            "Inputs mismatch: expected {:?}, got {:?}",
+            inputs, io_device.inputs
+        );
+        let expected_output = &[
+            0x28, 0x9b, 0xdf, 0x82, 0x9b, 0x4a, 0x30, 0x26, 0x7, 0x9a, 0x3e, 0xa0, 0x89, 0x73,
+            0xb1, 0x97, 0x2d, 0x12, 0x4e, 0x7e, 0xaf, 0x22, 0x33, 0xc6, 0x3, 0x14, 0x3d, 0xc6,
+            0x3b, 0x50, 0xd2, 0x57,
+        ];
+        assert_eq!(
+            io_device.outputs, expected_output,
+            "Outputs mismatch: expected {:?}, got {:?}",
+            expected_output, io_device.outputs
         );
     }
 
