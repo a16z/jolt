@@ -622,13 +622,9 @@ pub fn eval_bz_by_name<F: JoltField>(c: &NamedConstraint, row: &R1CSCycleInputs)
             }
         }
         // B: RamReadValue - RamWriteValue (u64 bit-pattern difference)
-        N::RamReadEqRamWriteIfLoad => {
-            S160::from_diff_u64(row.ram_read_value, row.ram_write_value)
-        }
+        N::RamReadEqRamWriteIfLoad => S160::from_diff_u64(row.ram_read_value, row.ram_write_value),
         // B: RamReadValue - RdWriteValue (u64 bit-pattern difference)
-        N::RamReadEqRdWriteIfLoad => {
-            S160::from_diff_u64(row.ram_read_value, row.rd_write_value)
-        }
+        N::RamReadEqRdWriteIfLoad => S160::from_diff_u64(row.ram_read_value, row.rd_write_value),
         // B: Rs2Value - RamWriteValue (u64 bit-pattern difference)
         N::Rs2EqRamWriteIfStore => S160::from_diff_u64(row.rs2_read_value, row.ram_write_value),
         // B: 0 - LeftInstructionInput (true_val - false_val from if-else)
@@ -641,7 +637,8 @@ pub fn eval_bz_by_name<F: JoltField>(c: &NamedConstraint, row: &R1CSCycleInputs)
         N::RightLookupSub => {
             // B: RightLookupOperand - (LeftInstructionInput - RightInstructionInput + 2^64)
             // with full-width integer semantics (matches the +2^64 in the uniform constraint)
-            let expected_i128 = (row.left_input as i128) - row.right_input.to_i128() + (1i128 << 64);
+            let expected_i128 =
+                (row.left_input as i128) - row.right_input.to_i128() + (1i128 << 64);
             S160::from(row.right_lookup) - S160::from(expected_i128)
         }
         // B: RightInstructionInput (exact signed value as i128)
@@ -684,8 +681,7 @@ pub fn eval_bz_by_name<F: JoltField>(c: &NamedConstraint, row: &R1CSCycleInputs)
                 0
             };
             S160::from(
-                row.rd_write_value as i128
-                    - (row.unexpanded_pc as i128 + const_term as i128),
+                row.rd_write_value as i128 - (row.unexpanded_pc as i128 + const_term as i128),
             )
         }
         N::ShouldJumpDef => {
@@ -705,8 +701,7 @@ pub fn eval_bz_by_name<F: JoltField>(c: &NamedConstraint, row: &R1CSCycleInputs)
         N::ShouldBranchDef => S160::from(row.lookup_output),
         // B: NextUnexpandedPC - (UnexpandedPC + Imm) (i128 arithmetic)
         N::NextUnexpPCEqPCPlusImmIfShouldBranch => S160::from(
-            row.next_unexpanded_pc as i128
-                - (row.unexpanded_pc as i128 + row.imm.to_i128()),
+            row.next_unexpanded_pc as i128 - (row.unexpanded_pc as i128 + row.imm.to_i128()),
         ),
         N::NextUnexpPCUpdateOtherwise => {
             // B: NextUnexpandedPC - target, where target = UnexpandedPC + 4 - 4*DoNotUpdateUnexpandedPC - 2*IsCompressed (i128 arithmetic)
