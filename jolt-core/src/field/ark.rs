@@ -22,6 +22,11 @@ impl JoltField for ark_bn254::Fr {
         use ark_ff::MontConfig;
         std::mem::transmute(<ark_bn254::FrConfig as MontConfig<4>>::R)
     };
+    /// The squared Montgomery factor R^2 = 2^(128*N) mod p
+    const MONTGOMERY_R_SQUARE: Self = unsafe {
+        use ark_ff::MontConfig;
+        std::mem::transmute(<ark_bn254::FrConfig as MontConfig<4>>::R2)
+    };
     type SmallValueLookupTables = [Vec<Self>; 2];
 
     fn random<R: rand_core::RngCore>(rng: &mut R) -> Self {

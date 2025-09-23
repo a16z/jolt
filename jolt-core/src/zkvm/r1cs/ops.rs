@@ -580,7 +580,7 @@ impl LC {
             evals[input_index] += coeff.field_mul(wr_scale);
         });
         if let Some(c) = self.const_term() {
-            evals[num_vars] += c.to_field::<F>();
+            evals[num_vars] += c.field_mul(wr_scale);
         }
     }
 

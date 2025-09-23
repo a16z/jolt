@@ -5,10 +5,7 @@ use crate::subprotocols::sumcheck::process_eq_sumcheck_round;
 use crate::{
     field::{JoltField, OptimizedMul},
     transcripts::Transcript,
-    utils::small_value::accum::{
-        fmadd_reduce_factor, reduce_unreduced_to_field, s160_to_field, SignedUnreducedAccum,
-        UnreducedProduct,
-    },
+    utils::small_value::accum::{s160_to_field, SignedUnreducedAccum, UnreducedProduct},
     utils::{math::Math, small_scalar::SmallScalar, small_value::svo_helpers},
     zkvm::r1cs::{
         constraints::{eval_az_bz_batch, CzKind, UNIFORM_R1CS},
@@ -201,16 +198,13 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
         let rem_num_uniform_r1cs_constraints = num_uniform_r1cs_constraints % Y_SVO_SPACE_SIZE;
 
         // Build split-eq helper and precompute E_in (over x_in) and E_out (over x_out)
-        // Normalize small-value typed fmadd+reduce by pre-scaling E_in with inv(K),
-        // where K is fmadd_reduce_factor
-        let inv_k = fmadd_reduce_factor::<F>().inverse().unwrap();
         let eq_poly = GruenSplitEqPolynomial::new_for_small_value(
             tau,
             iter_num_x_out_vars,
             iter_num_x_in_vars,
             NUM_SVO_ROUNDS,
-            // Scale E_in by inv(K) so typed accumulators reduce to field semantics
-            Some(inv_k),
+            // Scale E_in by R^2 so typed accumulators reduce to field semantics
+            Some(F::MONTGOMERY_R_SQUARE),
         );
         let E_in_evals = eq_poly.E_in_current();
         let E_out_vec = &eq_poly.E_out_vec;
@@ -405,11 +399,9 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                     // finalize: reduce unreduced accumulators and combine pos/neg into field
                     let mut tA_sum_for_current_x_out = [F::zero(); NUM_NONTRIVIAL_TERNARY_POINTS];
                     for i in 0..NUM_NONTRIVIAL_TERNARY_POINTS {
-                        let pos_f =
-                            reduce_unreduced_to_field::<F>(&tA_pos_acc_for_current_x_out[i]);
-                        let neg_f =
-                            reduce_unreduced_to_field::<F>(&tA_neg_acc_for_current_x_out[i]);
-                        // E_in was pre-scaled by inv(K), so reduction already matches field semantics
+                        let pos_f = F::from_montgomery_reduce_2n(tA_pos_acc_for_current_x_out[i]);
+                        let neg_f = F::from_montgomery_reduce_2n(tA_neg_acc_for_current_x_out[i]);
+                        // E_in was pre-scaled by R^2, so reduction already matches field semantics
                         tA_sum_for_current_x_out[i] = pos_f - neg_f;
                     }
 
@@ -527,11 +519,8 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
         );
         let mut r_rev = r_challenges.clone();
         r_rev.reverse();
-        // Scale eq(r, y) by inv(K) so unreduced fmadd reductions match field semantics
-        let eq_r_evals = EqPolynomial::evals_with_scaling(
-            &r_rev,
-            Some(fmadd_reduce_factor::<F>().inverse().unwrap()),
-        );
+        // Scale eq(r, y) by R^2 so unreduced fmadd reductions match field semantics
+        let eq_r_evals = EqPolynomial::evals_with_scaling(&r_rev, Some(F::MONTGOMERY_R_SQUARE));
 
         struct StreamingTaskOutput<F: JoltField> {
             bound_coeffs_local: Vec<SparseCoefficient<F>>,

@@ -780,9 +780,9 @@ pub fn compute_claimed_witness_evals<F: JoltField, PCS: CommitmentScheme<Field =
         .to_vec()
 }
 
-/// Straightforward reference implementation using a generic row accessor.
+/// Straightforward reference implementation using a generic row accessor with field-based access.
 /// Loops over all `JoltR1CSInputs` and accumulates Σ_t eq(r_cycle, t) * P_i(t).
-#[tracing::instrument(skip_all)]
+#[cfg(test)]
 pub fn compute_claimed_witness_evals_generic<
     F: JoltField,
     A: WitnessRowAccessor<F, JoltR1CSInputs>,
@@ -864,9 +864,9 @@ mod tests {
     use crate::field::tracked_ark::TrackedFr;
     use crate::poly::commitment::mock::MockCommitScheme;
     use crate::utils::math::Math;
-    use crate::zkvm::Jolt;
+    use crate::zkvm::{Jolt, JoltRV64IMAC};
     use common::jolt_device::{MemoryConfig, MemoryLayout};
-    use tracer::instruction::{RV32IMCycle, RV32IMInstruction};
+    use tracer::instruction::{Cycle, Instruction};
 
     impl JoltR1CSInputs {
         /// Alternative const implementation that searches through ALL_R1CS_INPUTS array.
@@ -989,8 +989,8 @@ mod tests {
 
     #[test]
     fn claimed_witness_evals_generic_matches_optimized() {
-        // Minimal bytecode (one no-op); preprocessing will prepend/pad as needed
-        let bytecode = vec![RV32IMInstruction::NoOp];
+        // Minimal bytecode; keep empty so test-only PC mapper path is used
+        let bytecode: Vec<Instruction> = vec![];
 
         // Build a trivial memory layout (program_size must be set)
         let mem_layout = MemoryLayout::new(&MemoryConfig {
@@ -998,8 +998,8 @@ mod tests {
             ..Default::default()
         });
 
-        // Use the existing preprocessing constructor to get shared bytecode mapping
-        let shared = crate::zkvm::JoltRV32IM::shared_preprocess(
+        // Use RV64IMAC implementation to construct shared preprocessing
+        let shared = JoltRV64IMAC::shared_preprocess(
             bytecode.clone(),
             mem_layout.clone(),
             vec![],
@@ -1010,9 +1010,9 @@ mod tests {
         };
 
         // Create a tiny trace of pure no-ops and pad to power of two
-        let mut trace: Vec<RV32IMCycle> = vec![RV32IMCycle::NoOp; 3];
+        let mut trace: Vec<Cycle> = vec![Cycle::NoOp; 3];
         let padded_len = trace.len().next_power_of_two();
-        trace.resize(padded_len, RV32IMCycle::NoOp);
+        trace.resize(padded_len, Cycle::NoOp);
 
         // Accessor over this trace
         let accessor = TraceWitnessAccessor::new(&preprocessing, &trace);

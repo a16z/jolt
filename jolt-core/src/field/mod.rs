@@ -46,6 +46,8 @@ pub trait JoltField:
     const NUM_BYTES: usize;
     /// The Montgomery factor R = 2^(64*N) mod p
     const MONTGOMERY_R: Self;
+    /// The squared Montgomery factor R^2 = 2^(128*N) mod p
+    const MONTGOMERY_R_SQUARE: Self;
 
     /// An implementation of `JoltField` may use some precomputed lookup tables to speed up the
     /// conversion of small primitive integers (e.g. `u16` values) into field elements. For example,
@@ -122,13 +124,11 @@ pub trait JoltField:
     /// Compute a linear combination of field elements with u64 coefficients.
     /// Performs unreduced accumulation in BigInt<NPLUS1>, then one final reduction.
     /// This is more efficient than individual multiplications and additions.
-    #[inline(always)]
     fn linear_combination_u64(pairs: &[(Self, u64)], add_terms: &[Self]) -> Self;
 
     /// Compute a linear combination with separate positive and negative terms.
     /// Each term is multiplied by a u64 coefficient, then positive and negative
     /// sums are computed separately and subtracted. One final reduction is performed.
-    #[inline(always)]
     fn linear_combination_i64(
         pos: &[(Self, u64)],
         neg: &[(Self, u64)],

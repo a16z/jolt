@@ -3,8 +3,7 @@ use common::constants::XLEN;
 use rand::prelude::*;
 use tracer::instruction::{RISCVCycle, RISCVInstruction};
 
-use super::InstructionLookup;
-use super::{CircuitFlags, JoltInstruction};
+use super::{CircuitFlags, InstructionLookup};
 
 pub fn materialize_entry_test<F, T>()
 where
@@ -28,12 +27,16 @@ where
 
 /// Test that certain combinations of circuit flags are exclusive.
 mod flags {
-    use super::{CircuitFlags, JoltInstruction};
+    use super::CircuitFlags;
+    use tracer::instruction::Cycle;
+    use crate::zkvm::instruction::InstructionFlags;
     use strum::IntoEnumIterator;
 
     #[test]
     fn left_operand_exclusive() {
-        for instr in JoltInstruction::iter() {
+        for cycle in Cycle::iter() {
+            if let Cycle::INLINE(_) = cycle { continue; }
+            let instr = cycle.instruction();
             let flags = instr.circuit_flags();
             assert!(
                 !(flags[CircuitFlags::LeftOperandIsPC]
@@ -45,7 +48,9 @@ mod flags {
 
     #[test]
     fn right_operand_exclusive() {
-        for instr in JoltInstruction::iter() {
+        for cycle in Cycle::iter() {
+            if let Cycle::INLINE(_) = cycle { continue; }
+            let instr = cycle.instruction();
             let flags = instr.circuit_flags();
             assert!(
                 !(flags[CircuitFlags::RightOperandIsRs2Value]
@@ -57,7 +62,9 @@ mod flags {
 
     #[test]
     fn lookup_shape_exclusive() {
-        for instr in JoltInstruction::iter() {
+        for cycle in Cycle::iter() {
+            if let Cycle::INLINE(_) = cycle { continue; }
+            let instr = cycle.instruction();
             let flags = instr.circuit_flags();
             let num_true = [
                 flags[CircuitFlags::AddOperands],
@@ -77,7 +84,9 @@ mod flags {
 
     #[test]
     fn load_store_exclusive() {
-        for instr in JoltInstruction::iter() {
+        for cycle in Cycle::iter() {
+            if let Cycle::INLINE(_) = cycle { continue; }
+            let instr = cycle.instruction();
             let flags = instr.circuit_flags();
             assert!(
                 !(flags[CircuitFlags::Load] && flags[CircuitFlags::Store]),

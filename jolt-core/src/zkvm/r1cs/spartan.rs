@@ -22,7 +22,7 @@ use crate::zkvm::dag::stage::SumcheckStages;
 use crate::zkvm::dag::state_manager::{ProofData, ProofKeys, StateManager};
 use crate::zkvm::instruction::CircuitFlags;
 use crate::zkvm::r1cs::inputs::{
-    compute_claimed_witness_evals, compute_claimed_witness_evals_generic,
+    compute_claimed_witness_evals,
     generate_pc_noop_witnesses, JoltR1CSInputs, TraceWitnessAccessor, WitnessRowAccessor,
     ALL_R1CS_INPUTS, COMMITTED_R1CS_INPUTS,
 };
@@ -124,6 +124,9 @@ struct InnerSumcheckVerifierState<F: JoltField> {
     rx_var: Vec<F>,
     claimed_witness_evals: Vec<F>,
     inner_sumcheck_RLC: F,
+    claim_az: F,
+    claim_bz: F,
+    claim_cz: F,
 }
 
 #[derive(Allocative)]
@@ -196,10 +199,13 @@ impl<F: JoltField> InnerSumcheck<F> {
 
     pub fn new_verifier(
         input_claim: F,
-        key: Arc<UniformSpartanKey<F>>,
+        key: Arc<UniformSpartanKey<F>>, 
         rx_var: Vec<F>,
         claimed_witness_evals: Vec<F>,
         inner_sumcheck_RLC: F,
+        claim_az: F,
+        claim_bz: F,
+        claim_cz: F,
     ) -> Self {
         Self {
             input_claim,
@@ -209,6 +215,9 @@ impl<F: JoltField> InnerSumcheck<F> {
                 rx_var,
                 claimed_witness_evals,
                 inner_sumcheck_RLC,
+                claim_az,
+                claim_bz,
+                claim_cz,
             }),
         }
     }
@@ -325,8 +334,13 @@ impl<F: JoltField> SumcheckInstance<F> for InnerSumcheck<F> {
             r,
             true,
         );
-
-        left_expected * eval_z
+        let expected = left_expected * eval_z;
+        debug_assert!(
+            expected == self.input_claim,
+            "InnerSumcheck mismatch: eval_a={} eval_b={} eval_c={} z={} lhs={} rhs={} (Az={}, Bz={}, Cz={}, rlc={})",
+            eval_a, eval_b, eval_c, eval_z, expected, self.input_claim, verifier_state.claim_az, verifier_state.claim_bz, verifier_state.claim_cz, verifier_state.inner_sumcheck_RLC
+        );
+        expected
     }
 
     fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
@@ -550,7 +564,12 @@ impl<F: JoltField> SumcheckInstance<F> for PCSumcheck<F> {
         let eq_plus_one_shift_sumcheck =
             EqPlusOnePolynomial::new(verifier_state.r_cycle.clone()).evaluate(r);
 
-        batched_eval_at_shift_r * eq_plus_one_shift_sumcheck
+        let expected = batched_eval_at_shift_r * eq_plus_one_shift_sumcheck;
+        debug_assert!(
+            expected == self.input_claim,
+            "PCSumcheck::expected_output_claim mismatch"
+        );
+        expected
     }
 
     fn cache_openings_prover(
@@ -718,27 +737,6 @@ where
             let _guard = span!(Level::INFO, "claimed_witness_evals_fast").entered();
             compute_claimed_witness_evals::<F, PCS>(r_cycle, &accessor)
         };
-
-        // Cross-check against generic accessor-based evaluation on real traces (reference)
-        let claimed_witness_evals_generic = {
-            let _guard = span!(Level::INFO, "claimed_witness_evals_generic").entered();
-            compute_claimed_witness_evals_generic::<F, _>(r_cycle, &accessor)
-        };
-        debug_assert_eq!(
-            claimed_witness_evals.len(),
-            claimed_witness_evals_generic.len()
-        );
-        for (i, (a, b)) in claimed_witness_evals
-            .iter()
-            .zip(claimed_witness_evals_generic.iter())
-            .enumerate()
-        {
-            assert_eq!(
-                *a, *b,
-                "claimed_witness_evals mismatch at index {} (input {:?})",
-                i, ALL_R1CS_INPUTS[i]
-            );
-        }
 
         // Only non-virtual (i.e. committed) polynomials' openings are
         // proven using the PCS opening proof, which we add for future opening proof here
@@ -984,6 +982,9 @@ where
             rx_var.to_vec(),
             claimed_witness_evals,
             inner_sumcheck_RLC,
+            claim_Az,
+            claim_Bz,
+            claim_Cz,
         );
 
         vec![Box::new(inner_sumcheck)]
