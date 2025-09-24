@@ -907,7 +907,7 @@ impl Cpu {
                 9 => AddressingMode::SV48,
                 _ => {
                     #[cfg(feature = "std")]
-                    println!("Unknown addressing_mode {:x}", value >> 60);
+                    tracing::error!("Unknown addressing_mode {:x}", value >> 60);
                     panic!();
                 }
             },
@@ -1080,14 +1080,16 @@ impl Cpu {
 impl Drop for Cpu {
     fn drop(&mut self) {
         if !self.active_markers.is_empty() {
-            println!(
+            tracing::warn!(
                 "Warning: Found {} unclosed cycle tracking marker(s):",
                 self.active_markers.len()
             );
             for (ptr, marker) in &self.active_markers {
-                println!(
+                tracing::warn!(
                     "  - '{}' (at ptr: 0x{:x}), started at {} RV64IMAC cycles",
-                    marker.label, ptr, marker.start_instrs
+                    marker.label,
+                    ptr,
+                    marker.start_instrs
                 );
             }
         }

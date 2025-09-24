@@ -35,23 +35,23 @@ pub fn end_memory_tracing_span(label: &'static str) {
 }
 
 pub fn report_memory_usage() {
-    println!("================ MEMORY USAGE REPORT ================");
+    tracing::info!("================ MEMORY USAGE REPORT ================");
 
     let memory_usage_map = MEMORY_USAGE_MAP.lock().unwrap();
     for label in memory_usage_map.keys() {
-        eprintln!("  Unclosed memory tracing span: \"{label}\"");
+        tracing::warn!("  Unclosed memory tracing span: \"{label}\"");
     }
 
     let memory_delta_map = MEMORY_DELTA_MAP.lock().unwrap();
     for (label, delta) in memory_delta_map.iter() {
         if *delta >= 1.0 {
-            println!("  \"{label}\": {delta:.2} GB");
+            tracing::info!("  \"{label}\": {delta:.2} GB");
         } else {
-            println!("  \"{}\": {:.2} MB", label, delta * 1000.0);
+            tracing::info!("  \"{}\": {:.2} MB", label, delta * 1000.0);
         }
     }
 
-    println!("=====================================================");
+    tracing::info!("=====================================================");
 }
 
 // #[cfg(not(target_arch = "wasm32"))]
