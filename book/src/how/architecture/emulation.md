@@ -22,7 +22,7 @@ Two key traits form the backbone of the RISC-V emulator:
 
 ## Core enums
 
-`RV64IMACInstruction` and `RV64IMACCycle` are enums encapsulating all RV64IMAC instruction variants, wrapping implementations of `RISCVInstruction` and `RISCVCycle`, respectively.
+`Instruction` and `Cycle` are enums encapsulating all RV64IMAC instruction variants, wrapping implementations of `RISCVInstruction` and `RISCVCycle`, respectively.
 
 ## Virtual Instructions and Sequences
 

@@ -55,9 +55,15 @@ For detailed instruction formats and encoding, refer to the __chapter 2__ of [sp
 
 - `MULH/MULHU/MULHSU`: Upper 64-bit multiplication (signed×signed, unsigned×unsigned, signed×unsigned)
 
+- `MULW`: Multiplication on 32-bit operands, producing 32-bit result (W-type instruction)
+
 - `DIV/DIVU`: Signed and unsigned division
 
+- `DIVW/DIVUW`: 32-bit signed and unsigned division (W-type instructions)
+
 - `REM/REMU`: Signed and unsigned remainder
+
+- `REMW/REMUW`: 32-bit signed and unsigned remainder (W-type instructions)
 
 
 For detailed instruction formats and encoding, refer to __chapter 7__ of [specification](https://riscv.org/wp-content/uploads/2019/12/riscv-spec-20191213.pdf)

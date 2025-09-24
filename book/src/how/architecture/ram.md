@@ -25,7 +25,7 @@ For the purposes of the memory checking argument, we remap the memory address to
 
 where `input_start` is the left-most address depicted in the diagram above.
 The division by eight reflects the fact that we treat guest memory as "doubleword-addressable" for the purposes of memory-checking.
-Any load or store instructions that access less than a full doubleword (e.g. `LB`, `SH`, `LW`) are expanded into [virtual sequences](./emulation.md#virtual-instructions-and-sequences) that use the `LD` or `SD` instead.
+Any load or store instructions that access less than a full doubleword (e.g. `LB`, `SH`, `LW`) are expanded into [inline sequences](./emulation.md#virtual-instructions-and-sequences) that use the `LD` or `SD` instead.
 
 ## Deviations from the Twist algorithm as described in the paper
 
