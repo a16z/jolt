@@ -135,35 +135,24 @@ pub trait JoltField:
     /// Get reference to the underlying BigInt<4> representation without copying.
     fn as_bigint_ref(&self) -> &BigInt<4>;
 
-    /// Addition of two field elements without conditional subtraction.
+    /// Addition of two field elements without conditional subtraction, returning a
+    /// 5-limb BigInt (each limb is 64 bits)
     ///
-    /// Need to specify the number of limbs in the BigInt (at least 4, usually 5)
-    fn add_unreduced<const N: usize>(self, other: Self) -> BigInt<N>;
+    /// NOTE: for fields like BN254 whose prime has top bit zero, 4 limbs are enough,
+    /// but we don't want to make this assumption in case we support other fields in the future.
+    fn add_unreduced(self, other: Self) -> BigInt<5>;
 
-    /// In-place addition of two field elements without conditional subtraction.
-    ///
-    /// Need to specify the number of limbs in the BigInt (at least 4, usually 5)
-    fn add_assign_unreduced<const N: usize>(&mut self, other: Self);
+    /// Multiplication of two field elements without Montgomery reduction, returning a
+    /// 8-limb BigInt (each limb is 64 bits)
+    fn mul_unreduced(self, other: Self) -> BigInt<8>;
 
-    /// Multiplication of two field elements without Montgomery reduction.
-    ///
-    /// Need to specify the number of limbs in the BigInt (at least 8, usually 9)
-    fn mul_unreduced<const N: usize>(self, other: Self) -> BigInt<N>;
+    /// Multiplication of a field element and a u64 without Barrett reduction, returning a
+    /// 5-limb BigInt (each limb is 64 bits)
+    fn mul_u64_unreduced(self, other: u64) -> BigInt<5>;
 
-    /// In-place multiplication of two field elements without Montgomery reduction.
-    ///
-    /// Need to specify the number of limbs in the BigInt (at least 8, usually 9)
-    fn mul_assign_unreduced<const N: usize>(&mut self, other: Self);
-
-    /// Multiplication of a field element and a u64 without Barrett reduction.
-    ///
-    /// Need to specify the number of limbs in the BigInt (at least 5, could be 6)
-    fn mul_u64_unreduced<const N: usize>(self, other: u64) -> BigInt<N>;
-
-    /// Multiplication of a field element and a i64 without Barrett reduction.
-    ///
-    /// Need to specify the number of limbs in the BigInt (at least 6, could be 7)
-    fn mul_u128_unreduced<const N: usize>(self, other: u128) -> BigInt<N>;
+    /// Multiplication of a field element and a i64 without Barrett reduction, returning a
+    /// 6-limb BigInt (each limb is 64 bits)
+    fn mul_u128_unreduced(self, other: u128) -> BigInt<6>;
 
     /// Montgomery reduction of a BigInt to a field element (compute a * R^{-1} mod p).
     ///

@@ -227,36 +227,24 @@ impl JoltField for ark_bn254::Fr {
     }
 
     #[inline(always)]
-    fn add_unreduced<const N: usize>(self, other: Self) -> BigInt<N> {
-        self.0.add_trunc::<4, N>(&other.0)
+    fn add_unreduced(self, other: Self) -> BigInt<5> {
+        self.0.add_trunc::<4, 5>(&other.0)
     }
 
     #[inline]
-    fn add_assign_unreduced<const N: usize>(&mut self, other: Self) {
-        // TODO: replace with `add_assign_trunc` when available
-        self.0.add_assign_trunc::<4>(&other.0);
+    fn mul_unreduced(self, other: Self) -> BigInt<8> {
+        self.0.mul_trunc::<4, 8>(&other.0)
     }
 
     #[inline]
-    fn mul_unreduced<const N: usize>(self, other: Self) -> BigInt<N> {
-        self.0.mul_trunc::<4, N>(&other.0)
+    fn mul_u64_unreduced(self, other: u64) -> BigInt<5> {
+        self.0.mul_trunc::<1, 5>(&BigInt::new([other]))
     }
 
     #[inline]
-    fn mul_assign_unreduced<const N: usize>(&mut self, other: Self) {
-        // TODO: replace with `mul_assign_trunc` when available
-        self.0.mul_assign_trunc::<4>(&other.0);
-    }
-
-    #[inline]
-    fn mul_u64_unreduced<const N: usize>(self, other: u64) -> BigInt<N> {
-        self.0.mul_trunc::<1, N>(&BigInt::new([other]))
-    }
-
-    #[inline]
-    fn mul_u128_unreduced<const N: usize>(self, other: u128) -> BigInt<N> {
+    fn mul_u128_unreduced(self, other: u128) -> BigInt<6> {
         self.0
-            .mul_trunc::<2, N>(&BigInt::new([other as u64, (other >> 64) as u64]))
+            .mul_trunc::<2, 6>(&BigInt::new([other as u64, (other >> 64) as u64]))
     }
 
     #[inline]

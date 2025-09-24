@@ -64,9 +64,7 @@ pub mod accum {
             let v = az.to_i128();
             if v != 0 {
                 let abs = v.unsigned_abs();
-                let mut mag = BigInt::<2>::zero();
-                mag.0[0] = abs as u64;
-                mag.0[1] = (abs >> 64) as u64;
+                let mag = BigInt::new([abs as u64, (abs >> 64) as u64]);
                 let acc = if v >= 0 { &mut self.pos } else { &mut self.neg };
                 field_bigint.fmadd_trunc::<2, 8>(&mag, acc);
             }
@@ -103,7 +101,8 @@ pub mod accum {
     }
 
     /// Local helper to convert `S160` to field without using `.to_field()`
-    #[inline]
+    /// Used for testing purpose only
+    #[cfg(test)]
     pub fn s160_to_field<F: JoltField>(bz: &S160) -> F {
         if bz.is_zero() {
             return F::zero();
@@ -112,7 +111,7 @@ pub mod accum {
         let hi = bz.magnitude_hi() as u64;
         let r64 = F::from_u128(1u128 << 64);
         let r128 = r64 * r64;
-        let acc = F::from_u64(lo[0]) + F::from_u64(lo[1]) * r64 + F::from_u64(hi) * r128;
+        let acc = F::from_u64(lo[0]) + r64.mul_u64(lo[1]) + r128.mul_u64(hi);
         if bz.is_positive() {
             acc
         } else {

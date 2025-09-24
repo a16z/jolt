@@ -8,7 +8,7 @@ use crate::{
         eq_poly::EqPolynomial, multilinear_polynomial::MultilinearPolynomial, unipoly::UniPoly,
     },
 };
-use ark_ff::BigInt;
+use ark_ff::{BigInt, BigInteger};
 
 /// Computes the univariate polynomial `g(X) = sum_j correction_factor * eq((X, j), r) * prod_i mle_i(X, j)`.
 ///
@@ -254,20 +254,20 @@ fn ex4_2<F: JoltField>(f: &[F; 4], f_inf6: &F) -> (F, F) {
 fn ex8<F: JoltField>(f: &[F; 8], f_inf40320: F) -> F {
     // Specialized linear combination:
     //  a1*8 + a2*56 - n1*28 - n2*70 + f_inf40320 - n3
-    let a1 = f[1].add_unreduced::<4>(f[7]);
-    let acc_a1: BigInt<5> = a1.mul_trunc::<1, 5>(&BigInt::new([8]));
-    let a2 = f[3].add_unreduced::<4>(f[5]);
-    let acc_a2: BigInt<5> = a2.mul_trunc::<1, 5>(&BigInt::new([56]));
+    let a1 = f[1].add_unreduced(f[7]);
+    let acc_a1: BigInt<5> = a1.mul_u64_w_carry(8);
+    let a2 = f[3].add_unreduced(f[5]);
+    let acc_a2: BigInt<5> = a2.mul_u64_w_carry(56);
     let acc_infty = f_inf40320.as_bigint_ref();
 
-    let n1 = f[2].add_unreduced::<4>(f[6]);
-    let acc_n1: BigInt<5> = n1.mul_trunc::<1, 5>(&BigInt::new([28]));
+    let n1 = f[2].add_unreduced(f[6]);
+    let acc_n1: BigInt<5> = n1.mul_u64_w_carry(28);
     let n2 = f[4].as_bigint_ref();
-    let acc_n2: BigInt<5> = n2.mul_trunc::<1, 5>(&BigInt::new([70]));
+    let acc_n2: BigInt<5> = n2.mul_u64_w_carry(70);
     let acc_n3 = f[0].as_bigint_ref();
 
-    let unreduced_pos = (acc_a1.add_trunc::<5, 5>(&acc_a2)).add_trunc::<4, 5>(acc_infty);
-    let unreduced_neg = (acc_n1.add_trunc::<5, 5>(&acc_n2)).add_trunc::<4, 5>(acc_n3);
+    let unreduced_pos = acc_a1 + acc_a2 + acc_infty;
+    let unreduced_neg = acc_n1 + acc_n2 + acc_n3;
 
     let reduced_pos = F::from_montgomery_reduce(unreduced_pos);
     let reduced_neg = F::from_montgomery_reduce(unreduced_neg);

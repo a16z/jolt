@@ -30,6 +30,7 @@ use crate::utils::counters::{
 };
 use allocative::Allocative;
 use ark_bn254::Fr;
+use ark_ff::BigInt;
 use ark_ff::UniformRand;
 use ark_ff::{One, Zero};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -413,45 +414,35 @@ impl JoltField for TrackedFr {
         Self(<Fr as JoltField>::mul_i128(&self.0, n))
     }
 
-    fn as_bigint_ref(&self) -> &ark_ff::BigInt<4> {
+    fn as_bigint_ref(&self) -> &BigInt<4> {
         self.0.as_bigint_ref()
     }
 
-    fn add_unreduced<const N: usize>(self, other: Self) -> ark_ff::BigInt<N> {
+    fn add_unreduced(self, other: Self) -> BigInt<5> {
         <Fr as JoltField>::add_unreduced(self.0, other.0)
     }
 
-    fn add_assign_unreduced<const N: usize>(&mut self, other: Self) {
-        ADD_COUNT.fetch_add(1, Ordering::Relaxed);
-        <Fr as JoltField>::add_assign_unreduced::<N>(&mut self.0, other.0)
-    }
-
-    fn mul_unreduced<const N: usize>(self, other: Self) -> ark_ff::BigInt<N> {
+    fn mul_unreduced(self, other: Self) -> BigInt<8> {
         MUL_UNRED_COUNT.fetch_add(1, Ordering::Relaxed);
         <Fr as JoltField>::mul_unreduced(self.0, other.0)
     }
 
-    fn mul_assign_unreduced<const N: usize>(&mut self, other: Self) {
-        MULT_COUNT.fetch_add(1, Ordering::Relaxed);
-        <Fr as JoltField>::mul_assign_unreduced::<N>(&mut self.0, other.0)
-    }
-
-    fn mul_u64_unreduced<const N: usize>(self, other: u64) -> ark_ff::BigInt<N> {
+    fn mul_u64_unreduced(self, other: u64) -> BigInt<5> {
         MUL_U64_UNRED_COUNT.fetch_add(1, Ordering::Relaxed);
         <Fr as JoltField>::mul_u64_unreduced(self.0, other)
     }
 
-    fn mul_u128_unreduced<const N: usize>(self, other: u128) -> ark_ff::BigInt<N> {
+    fn mul_u128_unreduced(self, other: u128) -> BigInt<6> {
         MUL_U128_UNRED_COUNT.fetch_add(1, Ordering::Relaxed);
         <Fr as JoltField>::mul_u128_unreduced(self.0, other)
     }
 
-    fn from_montgomery_reduce<const N: usize>(unreduced: ark_ff::BigInt<N>) -> Self {
+    fn from_montgomery_reduce<const N: usize>(unreduced: BigInt<N>) -> Self {
         MONT_REDUCE_COUNT.fetch_add(1, Ordering::Relaxed);
         TrackedFr(<Fr as JoltField>::from_montgomery_reduce(unreduced))
     }
 
-    fn from_barrett_reduce<const N: usize>(unreduced: ark_ff::BigInt<N>) -> Self {
+    fn from_barrett_reduce<const N: usize>(unreduced: BigInt<N>) -> Self {
         BARRETT_REDUCE_COUNT.fetch_add(1, Ordering::Relaxed);
         TrackedFr(<Fr as JoltField>::from_barrett_reduce(unreduced))
     }
