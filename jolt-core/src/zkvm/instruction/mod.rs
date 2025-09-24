@@ -242,7 +242,7 @@ define_rv32im_trait_impls! {
         VirtualAssertValidDiv0, VirtualAssertValidUnsignedRemainder,
         VirtualChangeDivisor, VirtualChangeDivisorW, VirtualAssertMulUNoOverflow,
         VirtualZeroExtendWord, VirtualSignExtendWord, VirtualMove, VirtualMovsign, VirtualMULI, VirtualPow2,
-        VirtualPow2I, VirtualPow2W, VirtualPow2IW, VirtualShiftRightBitmask, VirtualShiftRightBitmaskI,
+        VirtualPow2I, VirtualPow2W, VirtualPow2IW, VirtualRev8W, VirtualShiftRightBitmask, VirtualShiftRightBitmaskI,
         VirtualROTRI, VirtualROTRIW,
         VirtualSRA, VirtualSRAI, VirtualSRL, VirtualSRLI,
         VirtualXORROT32, VirtualXORROT24, VirtualXORROT16, VirtualXORROT63,
@@ -295,6 +295,7 @@ pub mod virtual_pow2;
 pub mod virtual_pow2i;
 pub mod virtual_pow2iw;
 pub mod virtual_pow2w;
+pub mod virtual_rev8w;
 pub mod virtual_rotri;
 pub mod virtual_rotriw;
 pub mod virtual_shift_right_bitmask;

@@ -223,8 +223,8 @@ impl Sha256 {
             // Write length in last 8 bytes
             #[cfg(target_endian = "little")]
             {
-                self.buffer[14].write(((bit_len >> 32) as u32).swap_bytes());
-                self.buffer[15].write((bit_len as u32).swap_bytes());
+                self.buffer[14].write(swap_bytes((bit_len >> 32) as u32));
+                self.buffer[15].write(swap_bytes(bit_len as u32));
             }
             #[cfg(target_endian = "big")]
             {
@@ -249,14 +249,14 @@ impl Sha256 {
             #[cfg(target_endian = "little")]
             {
                 // Unroll the loop for cycle optimization
-                result_u32[0] = state[0].swap_bytes();
-                result_u32[1] = state[1].swap_bytes();
-                result_u32[2] = state[2].swap_bytes();
-                result_u32[3] = state[3].swap_bytes();
-                result_u32[4] = state[4].swap_bytes();
-                result_u32[5] = state[5].swap_bytes();
-                result_u32[6] = state[6].swap_bytes();
-                result_u32[7] = state[7].swap_bytes();
+                result_u32[0] = swap_bytes(state[0]);
+                result_u32[1] = swap_bytes(state[1]);
+                result_u32[2] = swap_bytes(state[2]);
+                result_u32[3] = swap_bytes(state[3]);
+                result_u32[4] = swap_bytes(state[4]);
+                result_u32[5] = swap_bytes(state[5]);
+                result_u32[6] = swap_bytes(state[6]);
+                result_u32[7] = swap_bytes(state[7]);
             }
             #[cfg(target_endian = "big")]
             {
@@ -295,22 +295,22 @@ impl Sha256 {
     #[inline(always)]
     fn swap_bytes(buf: &mut [u32]) {
         // Unroll the loop for cycle optimization
-        buf[0] = buf[0].swap_bytes();
-        buf[1] = buf[1].swap_bytes();
-        buf[2] = buf[2].swap_bytes();
-        buf[3] = buf[3].swap_bytes();
-        buf[4] = buf[4].swap_bytes();
-        buf[5] = buf[5].swap_bytes();
-        buf[6] = buf[6].swap_bytes();
-        buf[7] = buf[7].swap_bytes();
-        buf[8] = buf[8].swap_bytes();
-        buf[9] = buf[9].swap_bytes();
-        buf[10] = buf[10].swap_bytes();
-        buf[11] = buf[11].swap_bytes();
-        buf[12] = buf[12].swap_bytes();
-        buf[13] = buf[13].swap_bytes();
-        buf[14] = buf[14].swap_bytes();
-        buf[15] = buf[15].swap_bytes();
+        buf[0] = swap_bytes(buf[0]);
+        buf[1] = swap_bytes(buf[1]);
+        buf[2] = swap_bytes(buf[2]);
+        buf[3] = swap_bytes(buf[3]);
+        buf[4] = swap_bytes(buf[4]);
+        buf[5] = swap_bytes(buf[5]);
+        buf[6] = swap_bytes(buf[6]);
+        buf[7] = swap_bytes(buf[7]);
+        buf[8] = swap_bytes(buf[8]);
+        buf[9] = swap_bytes(buf[9]);
+        buf[10] = swap_bytes(buf[10]);
+        buf[11] = swap_bytes(buf[11]);
+        buf[12] = swap_bytes(buf[12]);
+        buf[13] = swap_bytes(buf[13]);
+        buf[14] = swap_bytes(buf[14]);
+        buf[15] = swap_bytes(buf[15]);
     }
 }
 
@@ -413,4 +413,23 @@ pub unsafe fn sha256_compression_initial(input: *const u32, state: *mut u32) {
     let input = *(input as *const [u32; 16]);
     let result = exec::execute_sha256_compression_initial(input);
     std::ptr::copy_nonoverlapping(result.as_ptr(), state, 8)
+}
+
+#[cfg(not(feature = "host"))]
+fn swap_bytes(mut v: u32) -> u32 {
+    unsafe {
+        core::arch::asm!(
+            ".insn i {opcode}, {funct3}, {r_inout}, {r_inout}, 0",
+            opcode = const crate::VIRTUAL_INSTRUCTION_TYPE_I_OPCODE,
+            funct3 = const crate::REV8W_FUNCT3,
+            r_inout = inout(reg) v,
+            options(nostack)
+        );
+    }
+    v
+}
+
+#[cfg(feature = "host")]
+fn swap_bytes(v: u32) -> u32 {
+    v.swap_bytes()
 }
