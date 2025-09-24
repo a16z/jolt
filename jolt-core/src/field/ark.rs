@@ -227,8 +227,8 @@ impl JoltField for ark_bn254::Fr {
     }
 
     #[inline]
-    fn mul_unreduced(self, other: Self) -> BigInt<8> {
-        self.0.mul_trunc::<4, 8>(&other.0)
+    fn mul_unreduced<const L: usize>(self, other: Self) -> BigInt<L> {
+        self.0.mul_trunc::<4, L>(&other.0)
     }
 
     #[inline]

@@ -427,15 +427,18 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
                 let q_left = q[index];
                 let q_right = q[index + len / 2];
                 (
-                    p_evals.0 * q_left,  // prefix(0) * suffix(0)
-                    p_evals.1 * q_left,  // prefix(2) * suffix(0)
-                    p_evals.1 * q_right, // prefix(2) * suffix(1)
+                    p_evals.0.mul_unreduced::<9>(q_left),  // prefix(0) * suffix(0)
+                    p_evals.1.mul_unreduced::<9>(q_left),  // prefix(2) * suffix(0)
+                    p_evals.1.mul_unreduced::<9>(q_right), // prefix(2) * suffix(1)
                 )
             })
             .reduce(
-                || (F::zero(), F::zero(), F::zero()),
+                || (ark_ff::BigInt::zero(), ark_ff::BigInt::zero(), ark_ff::BigInt::zero()),
                 |running, new| (running.0 + new.0, running.1 + new.1, running.2 + new.2),
             );
+        let eval_0 = F::from_montgomery_reduce(eval_0);
+        let eval_2_right = F::from_montgomery_reduce(eval_2_right);
+        let eval_2_left = F::from_montgomery_reduce(eval_2_left);
         (eval_0, eval_2_right + eval_2_right - eval_2_left)
     }
 

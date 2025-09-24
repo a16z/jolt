@@ -136,8 +136,9 @@ pub trait JoltField:
     fn as_bigint_ref(&self) -> &BigInt<4>;
 
     /// Multiplication of two field elements without Montgomery reduction, returning a
-    /// 8-limb BigInt (each limb is 64 bits)
-    fn mul_unreduced(self, other: Self) -> BigInt<8>;
+    /// L-limb BigInt (each limb is 64 bits).
+    /// L = 8 or 9 depending on what the code needs.
+    fn mul_unreduced<const L: usize>(self, other: Self) -> BigInt<L>;
 
     /// Multiplication of a field element and a u64 without Barrett reduction, returning a
     /// 5-limb BigInt (each limb is 64 bits)

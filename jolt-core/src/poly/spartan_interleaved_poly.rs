@@ -649,8 +649,8 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                                 F::zero()
                             };
 
-                            inner_sum0 += e_in.mul_unreduced(p0);
-                            inner_sumInf += e_in.mul_unreduced(slope);
+                            inner_sum0 += e_in.mul_unreduced::<8>(p0);
+                            inner_sumInf += e_in.mul_unreduced::<8>(slope);
                             prev_x_out_idx = Some(x_out_idx);
 
                             // record six-at-r values
@@ -918,8 +918,8 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                         let abc_term_0 = az.0.mul_0_optimized(bz.0) - cz0;
                         let abc_term_infty = az_eval_infty.mul_0_optimized(bz_eval_infty);
 
-                        inner_sums.0 += E_in_evals.mul_unreduced(abc_term_0);
-                        inner_sums.1 += E_in_evals.mul_unreduced(abc_term_infty);
+                        inner_sums.0 += E_in_evals.mul_unreduced::<9>(abc_term_0);
+                        inner_sums.1 += E_in_evals.mul_unreduced::<9>(abc_term_infty);
                     }
 
                     let reduced_inner_sums = (
