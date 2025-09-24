@@ -68,24 +68,46 @@ impl RISCVTrace for REMU {
         }
     }
 
+    /// REMU computes unsigned remainder using untrusted oracle advice.
+    ///
+    /// The zkVM cannot directly compute modulo, so we receive the quotient and remainder
+    /// as advice from an untrusted oracle, then verify correctness using constraints:
+    /// 1. dividend = quotient × divisor + remainder
+    /// 2. remainder < divisor (unsigned comparison)
+    ///
+    /// Special case per RISC-V spec:
+    /// - Division by zero: remainder = dividend
+    ///
+    /// Note: No overflow check needed since we work modulo the word size for remainder.
+    /// The VirtualAssertValidUnsignedRemainder handles the div-by-zero case by
+    /// allowing remainder == dividend when divisor == 0.
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,
         xlen: Xlen,
     ) -> Vec<Instruction> {
-        let a0 = self.operands.rs1;
-        let a1 = self.operands.rs2;
-        let a2 = allocator.allocate();
-        let a3 = allocator.allocate();
-        let t0 = allocator.allocate();
+        let a0 = self.operands.rs1; // dividend
+        let a1 = self.operands.rs2; // divisor
+        let a2 = allocator.allocate(); // quotient from oracle
+        let a3 = allocator.allocate(); // remainder from oracle
+        let t0 = allocator.allocate(); // temporary for multiplication
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
 
-        asm.emit_j::<VirtualAdvice>(*a2, 0);
-        asm.emit_j::<VirtualAdvice>(*a3, 0);
+        // Get untrusted advice from oracle
+        asm.emit_j::<VirtualAdvice>(*a2, 0); // quotient
+        asm.emit_j::<VirtualAdvice>(*a3, 0); // remainder
+
+        // Compute quotient × divisor (no overflow check needed for remainder)
         asm.emit_r::<MUL>(*t0, *a2, a1);
+
+        // Verify: dividend = quotient × divisor + remainder
         asm.emit_r::<ADD>(*t0, *t0, *a3);
         asm.emit_b::<VirtualAssertEQ>(*t0, a0, 0);
+
+        // Verify: remainder < divisor (or remainder == dividend when divisor == 0)
         asm.emit_b::<VirtualAssertValidUnsignedRemainder>(*a3, a1, 0);
+
+        // Move remainder to destination
         asm.emit_i::<VirtualMove>(self.operands.rd, *a3, 0);
         asm.finalize()
     }
