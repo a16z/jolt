@@ -189,12 +189,12 @@ impl JoltField for ark_bn254::Fr {
     }
 
     #[inline(always)]
-    fn as_bigint_ref(&self) -> &ark_ff::BigInt<4> {
+    fn as_bigint_ref(&self) -> &BigInt<4> {
         // arkworks field elements are just wrappers around BigInt, so we can get a direct reference
         &self.0
     }
 
-    #[inline(always)]
+    #[inline]
     fn mul_u64(&self, n: u64) -> Self {
         if n == 0 || self.is_zero() {
             Self::zero()
@@ -215,7 +215,7 @@ impl JoltField for ark_bn254::Fr {
         ark_ff::Fp::mul_u128::<5, 6>(*self, n)
     }
 
-    #[inline(always)]
+    #[inline]
     fn mul_i128(&self, n: i128) -> Self {
         if n == 0 || self.is_zero() {
             Self::zero()
@@ -226,49 +226,47 @@ impl JoltField for ark_bn254::Fr {
         }
     }
 
-    #[inline]
-    fn add_unreduced<const N: usize>(self, other: Self) -> ark_ff::BigInt<N> {
+    #[inline(always)]
+    fn add_unreduced<const N: usize>(self, other: Self) -> BigInt<N> {
         self.0.add_trunc::<4, N>(&other.0)
     }
 
     #[inline]
     fn add_assign_unreduced<const N: usize>(&mut self, other: Self) {
         // TODO: replace with `add_assign_trunc` when available
-        self.0.add_trunc::<4, N>(&other.0);
+        self.0.add_assign_trunc::<4>(&other.0);
     }
 
     #[inline]
-    fn mul_unreduced<const N: usize>(self, other: Self) -> ark_ff::BigInt<N> {
+    fn mul_unreduced<const N: usize>(self, other: Self) -> BigInt<N> {
         self.0.mul_trunc::<4, N>(&other.0)
     }
 
     #[inline]
     fn mul_assign_unreduced<const N: usize>(&mut self, other: Self) {
         // TODO: replace with `mul_assign_trunc` when available
-        self.0.mul_trunc::<4, N>(&other.0);
+        self.0.mul_assign_trunc::<4>(&other.0);
     }
 
     #[inline]
-    fn mul_u64_unreduced<const N: usize>(self, other: u64) -> ark_ff::BigInt<N> {
+    fn mul_u64_unreduced<const N: usize>(self, other: u64) -> BigInt<N> {
         self.0.mul_trunc::<1, N>(&BigInt::new([other]))
     }
 
     #[inline]
-    fn mul_u128_unreduced<const N: usize>(self, other: u128) -> ark_ff::BigInt<N> {
+    fn mul_u128_unreduced<const N: usize>(self, other: u128) -> BigInt<N> {
         self.0
             .mul_trunc::<2, N>(&BigInt::new([other as u64, (other >> 64) as u64]))
     }
 
     #[inline]
-    fn from_montgomery_reduce<const N: usize>(_unreduced: ark_ff::BigInt<N>) -> Self {
-        todo!()
-        // <Self as ark_ff::Field>::from_montgomery_reduce(unreduced)
+    fn from_montgomery_reduce<const N: usize>(unreduced: BigInt<N>) -> Self {
+        ark_bn254::Fr::from_montgomery_reduce::<N>(unreduced)
     }
 
     #[inline]
-    fn from_barrett_reduce<const N: usize>(_unreduced: ark_ff::BigInt<N>) -> Self {
-        todo!()
-        // <Self as ark_ff::Field>::from_barrett_reduce(unreduced)
+    fn from_barrett_reduce<const N: usize>(unreduced: BigInt<N>) -> Self {
+        ark_bn254::Fr::from_barrett_reduce::<N, 5>(unreduced)
     }
 }
 

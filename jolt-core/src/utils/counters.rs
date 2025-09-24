@@ -5,7 +5,6 @@
 /// or `get_field_op_counts`/`reset_all_field_op_counts` for bulk operations.
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-
 // Fine-grained counters
 /// Count of field additions `a + b`.
 pub static ADD_COUNT: AtomicUsize = AtomicUsize::new(0);

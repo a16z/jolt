@@ -1605,7 +1605,7 @@ mod tests {
         compute_and_update_tA_inplace_2, compute_and_update_tA_inplace_3,
         compute_and_update_tA_inplace_const,
     };
-    use crate::{field::JoltField, poly::eq_poly::EqPolynomial};
+    use crate::poly::eq_poly::EqPolynomial;
     use ark_bn254::Fr;
     use ark_ff::biginteger::{I8OrI96, S160};
     use ark_ff::UniformRand;
