@@ -149,10 +149,10 @@ impl<F: JoltField> OutputSumcheck<F> {
     }
 
     pub fn new_verifier<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
-        K: usize,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
         let (_, program_io, _) = state_manager.get_verifier_data();
+        let K = state_manager.ram_K;
 
         let r_address = state_manager
             .transcript

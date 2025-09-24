@@ -80,7 +80,6 @@ pub struct ReadRafSumcheck<F: JoltField> {
     gamma_squared: F,
     prover_state: Option<ReadRafProverState<F>>,
 
-    r_cycle: Vec<F>,
     rv_claim: F,
     raf_claim: F,
     log_T: usize,
@@ -97,14 +96,6 @@ impl<'a, F: JoltField> ReadRafSumcheck<F> {
         let gamma: F = sm.transcript.borrow_mut().challenge_scalar();
         let mut ps = ReadRafProverState::new(trace, eq_r_cycle);
         ps.init_phase(0);
-        let r_cycle = sm
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::LookupOutput,
-                SumcheckId::SpartanOuter,
-            )
-            .0
-            .r
-            .clone();
         let (_, rv_claim) = sm.get_virtual_polynomial_opening(
             VirtualPolynomial::LookupOutput,
             SumcheckId::SpartanOuter,
@@ -122,7 +113,6 @@ impl<'a, F: JoltField> ReadRafSumcheck<F> {
             gamma,
             gamma_squared: gamma.square(),
             prover_state: Some(ps),
-            r_cycle,
             rv_claim,
             raf_claim: left_operand_claim + gamma * right_operand_claim,
             log_T,
@@ -134,7 +124,7 @@ impl<'a, F: JoltField> ReadRafSumcheck<F> {
     ) -> Self {
         let log_T = sm.get_verifier_data().2.log_2();
         let gamma: F = sm.transcript.borrow_mut().challenge_scalar();
-        let (r_cycle, rv_claim) = sm.get_virtual_polynomial_opening(
+        let (_, rv_claim) = sm.get_virtual_polynomial_opening(
             VirtualPolynomial::LookupOutput,
             SumcheckId::SpartanOuter,
         );
@@ -151,7 +141,6 @@ impl<'a, F: JoltField> ReadRafSumcheck<F> {
             gamma,
             gamma_squared: gamma.square(),
             prover_state: None,
-            r_cycle: r_cycle.r.clone(),
             rv_claim,
             raf_claim: left_operand_claim + gamma * right_operand_claim,
             log_T,
@@ -398,7 +387,15 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
 
         let accumulator = accumulator.as_ref().unwrap();
 
-        let eq_eval_cycle = EqPolynomial::mle(&self.r_cycle, r_cycle_prime);
+        let r_cycle = accumulator
+            .borrow()
+            .get_virtual_polynomial_opening(
+                VirtualPolynomial::LookupOutput,
+                SumcheckId::SpartanOuter,
+            )
+            .0
+            .r;
+        let eq_eval_cycle = EqPolynomial::mle(&r_cycle, r_cycle_prime);
 
         let ra_claim = accumulator
             .borrow()
