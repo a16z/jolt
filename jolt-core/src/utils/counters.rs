@@ -1,10 +1,10 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
-
 /// Global counters for field operations in the BN254 scalar field.
 ///
 /// Incremented in `jolt-core::field::tracked_ark::TrackedFr` to enable
 /// fine-grained performance accounting. Use the getters/resetters below
 /// or `get_field_op_counts`/`reset_all_field_op_counts` for bulk operations.
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 
 // Fine-grained counters
 /// Count of field additions `a + b`.

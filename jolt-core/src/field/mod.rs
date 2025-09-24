@@ -136,42 +136,42 @@ pub trait JoltField:
     fn as_bigint_ref(&self) -> &BigInt<4>;
 
     /// Addition of two field elements without conditional subtraction.
-    /// 
+    ///
     /// Need to specify the number of limbs in the BigInt (at least 4, usually 5)
     fn add_unreduced<const N: usize>(self, other: Self) -> BigInt<N>;
 
     /// In-place addition of two field elements without conditional subtraction.
-    /// 
+    ///
     /// Need to specify the number of limbs in the BigInt (at least 4, usually 5)
     fn add_assign_unreduced<const N: usize>(&mut self, other: Self);
 
     /// Multiplication of two field elements without Montgomery reduction.
-    /// 
+    ///
     /// Need to specify the number of limbs in the BigInt (at least 8, usually 9)
     fn mul_unreduced<const N: usize>(self, other: Self) -> BigInt<N>;
 
     /// In-place multiplication of two field elements without Montgomery reduction.
-    /// 
+    ///
     /// Need to specify the number of limbs in the BigInt (at least 8, usually 9)
     fn mul_assign_unreduced<const N: usize>(&mut self, other: Self);
 
     /// Multiplication of a field element and a u64 without Barrett reduction.
-    /// 
+    ///
     /// Need to specify the number of limbs in the BigInt (at least 5, could be 6)
     fn mul_u64_unreduced<const N: usize>(self, other: u64) -> BigInt<N>;
 
     /// Multiplication of a field element and a i64 without Barrett reduction.
-    /// 
+    ///
     /// Need to specify the number of limbs in the BigInt (at least 6, could be 7)
     fn mul_u128_unreduced<const N: usize>(self, other: u128) -> BigInt<N>;
 
     /// Montgomery reduction of a BigInt to a field element (compute a * R^{-1} mod p).
-    /// 
+    ///
     /// Need to specify the number of limbs in the BigInt (at least 5, usually 8 or 9)
     fn from_montgomery_reduce<const N: usize>(unreduced: BigInt<N>) -> Self;
 
     /// Barrett reduction of a BigInt to a field element (compute a mod p).
-    /// 
+    ///
     /// Need to specify the number of limbs in the BigInt (at least 5, usually 8 or 9)
     fn from_barrett_reduce<const N: usize>(unreduced: BigInt<N>) -> Self;
 }

@@ -266,8 +266,8 @@ fn ex8<F: JoltField>(f: &[F; 8], f_inf40320: F) -> F {
     let acc_n2: BigInt<5> = n2.mul_trunc::<1, 5>(&BigInt::new([70]));
     let acc_n3 = f[0].as_bigint_ref();
 
-    let unreduced_pos = (acc_a1.add_trunc::<5, 5>(&acc_a2)).add_trunc::<4, 5>(&acc_infty);
-    let unreduced_neg = (acc_n1.add_trunc::<5, 5>(&acc_n2)).add_trunc::<4, 5>(&acc_n3);
+    let unreduced_pos = (acc_a1.add_trunc::<5, 5>(&acc_a2)).add_trunc::<4, 5>(acc_infty);
+    let unreduced_neg = (acc_n1.add_trunc::<5, 5>(&acc_n2)).add_trunc::<4, 5>(acc_n3);
 
     let reduced_pos = F::from_montgomery_reduce(unreduced_pos);
     let reduced_neg = F::from_montgomery_reduce(unreduced_neg);
