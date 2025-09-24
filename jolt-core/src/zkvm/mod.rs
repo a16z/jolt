@@ -33,6 +33,7 @@ pub mod lookup_table;
 pub mod r1cs;
 pub mod ram;
 pub mod registers;
+pub mod spartan;
 pub mod witness;
 
 #[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
