@@ -140,10 +140,20 @@ pub trait JoltField:
     /// Need to specify the number of limbs in the BigInt (at least 4, usually 5)
     fn add_unreduced<const N: usize>(self, other: Self) -> BigInt<N>;
 
+    /// In-place addition of two field elements without conditional subtraction.
+    /// 
+    /// Need to specify the number of limbs in the BigInt (at least 4, usually 5)
+    fn add_assign_unreduced<const N: usize>(&mut self, other: Self);
+
     /// Multiplication of two field elements without Montgomery reduction.
     /// 
     /// Need to specify the number of limbs in the BigInt (at least 8, usually 9)
     fn mul_unreduced<const N: usize>(self, other: Self) -> BigInt<N>;
+
+    /// In-place multiplication of two field elements without Montgomery reduction.
+    /// 
+    /// Need to specify the number of limbs in the BigInt (at least 8, usually 9)
+    fn mul_assign_unreduced<const N: usize>(&mut self, other: Self);
 
     /// Multiplication of a field element and a u64 without Barrett reduction.
     /// 

@@ -421,9 +421,19 @@ impl JoltField for TrackedFr {
         <Fr as JoltField>::add_unreduced(self.0, other.0)
     }
 
+    fn add_assign_unreduced<const N: usize>(&mut self, other: Self) {
+        ADD_COUNT.fetch_add(1, Ordering::Relaxed);
+        <Fr as JoltField>::add_assign_unreduced::<N>(&mut self.0, other.0)
+    }
+
     fn mul_unreduced<const N: usize>(self, other: Self) -> ark_ff::BigInt<N> {
         MUL_UNRED_COUNT.fetch_add(1, Ordering::Relaxed);
         <Fr as JoltField>::mul_unreduced(self.0, other.0)
+    }
+
+    fn mul_assign_unreduced<const N: usize>(&mut self, other: Self) {
+        MULT_COUNT.fetch_add(1, Ordering::Relaxed);
+        <Fr as JoltField>::mul_assign_unreduced::<N>(&mut self.0, other.0)
     }
 
     fn mul_u64_unreduced<const N: usize>(self, other: u64) -> ark_ff::BigInt<N> {

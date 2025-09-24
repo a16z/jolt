@@ -232,8 +232,20 @@ impl JoltField for ark_bn254::Fr {
     }
 
     #[inline]
+    fn add_assign_unreduced<const N: usize>(&mut self, other: Self) {
+        // TODO: replace with `add_assign_trunc` when available
+        self.0.add_trunc::<4, N>(&other.0);
+    }
+
+    #[inline]
     fn mul_unreduced<const N: usize>(self, other: Self) -> ark_ff::BigInt<N> {
         self.0.mul_trunc::<4, N>(&other.0)
+    }
+
+    #[inline]
+    fn mul_assign_unreduced<const N: usize>(&mut self, other: Self) {
+        // TODO: replace with `mul_assign_trunc` when available
+        self.0.mul_trunc::<4, N>(&other.0);
     }
 
     #[inline]
@@ -248,13 +260,13 @@ impl JoltField for ark_bn254::Fr {
     }
 
     #[inline]
-    fn from_montgomery_reduce<const N: usize>(unreduced: ark_ff::BigInt<N>) -> Self {
+    fn from_montgomery_reduce<const N: usize>(_unreduced: ark_ff::BigInt<N>) -> Self {
         todo!()
         // <Self as ark_ff::Field>::from_montgomery_reduce(unreduced)
     }
 
     #[inline]
-    fn from_barrett_reduce<const N: usize>(unreduced: ark_ff::BigInt<N>) -> Self {
+    fn from_barrett_reduce<const N: usize>(_unreduced: ark_ff::BigInt<N>) -> Self {
         todo!()
         // <Self as ark_ff::Field>::from_barrett_reduce(unreduced)
     }

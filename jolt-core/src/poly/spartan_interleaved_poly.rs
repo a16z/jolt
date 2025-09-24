@@ -355,8 +355,8 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                     // finalize: reduce unreduced accumulators and combine pos/neg into field
                     let mut tA_sum_for_current_x_out = [F::zero(); NUM_NONTRIVIAL_TERNARY_POINTS];
                     for i in 0..NUM_NONTRIVIAL_TERNARY_POINTS {
-                        let pos_f = F::from_montgomery_reduce_2n(tA_pos_acc_for_current_x_out[i]);
-                        let neg_f = F::from_montgomery_reduce_2n(tA_neg_acc_for_current_x_out[i]);
+                        let pos_f = F::from_montgomery_reduce::<8>(tA_pos_acc_for_current_x_out[i]);
+                        let neg_f = F::from_montgomery_reduce::<8>(tA_neg_acc_for_current_x_out[i]);
                         // E_in was pre-scaled by R^2, so reduction already matches field semantics
                         tA_sum_for_current_x_out[i] = pos_f - neg_f;
                     }
