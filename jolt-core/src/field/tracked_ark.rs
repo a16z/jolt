@@ -1,5 +1,33 @@
 use super::{FieldOps, JoltField};
-use crate::utils::counters::{INVERSE_COUNT, MULT_COUNT};
+use crate::utils::counters::{
+    // basic arithmetic
+    ADD_COUNT,
+    // small-integer and unreduced ops
+    BARRETT_REDUCE_COUNT,
+    // conversions
+    FROM_BOOL_COUNT,
+    FROM_BYTES_COUNT,
+    FROM_I128_COUNT,
+    FROM_I64_COUNT,
+    FROM_U128_COUNT,
+    FROM_U16_COUNT,
+    FROM_U32_COUNT,
+    FROM_U64_COUNT,
+    FROM_U8_COUNT,
+    // full modular ops
+    INVERSE_COUNT,
+    MONT_REDUCE_COUNT,
+    MULT_COUNT,
+    MUL_I128_COUNT,
+    MUL_I64_COUNT,
+    MUL_U128_COUNT,
+    MUL_U128_UNRED_COUNT,
+    MUL_U64_COUNT,
+    MUL_U64_UNRED_COUNT,
+    MUL_UNRED_COUNT,
+    SQUARE_COUNT,
+    SUB_COUNT,
+};
 use allocative::Allocative;
 use ark_bn254::Fr;
 use ark_ff::UniformRand;
@@ -9,7 +37,6 @@ use ark_std::rand::Rng;
 use std::default::Default;
 use std::fmt;
 use std::iter::{Product, Sum};
-use std::mem::transmute;
 use std::ops::{Add, Deref, DerefMut, Div, Mul, Sub};
 use std::ops::{AddAssign, MulAssign, Neg, SubAssign};
 use std::sync::atomic::Ordering;
@@ -45,7 +72,7 @@ impl DerefMut for TrackedFr {
 impl Add for TrackedFr {
     type Output = Self;
     fn add(self, rhs: Self) -> Self::Output {
-        // No MULT_COUNT increment for add, but add if you want
+        ADD_COUNT.fetch_add(1, Ordering::Relaxed);
         Self(self.0 + rhs.0)
     }
 }
@@ -54,6 +81,7 @@ impl Add for TrackedFr {
 impl<'a> Add<&'a TrackedFr> for TrackedFr {
     type Output = Self;
     fn add(self, rhs: &'a TrackedFr) -> Self::Output {
+        ADD_COUNT.fetch_add(1, Ordering::Relaxed);
         Self(self.0 + rhs.0)
     }
 }
@@ -62,6 +90,7 @@ impl<'a> Add<&'a TrackedFr> for TrackedFr {
 impl Sub for TrackedFr {
     type Output = Self;
     fn sub(self, rhs: Self) -> Self::Output {
+        SUB_COUNT.fetch_add(1, Ordering::Relaxed);
         Self(self.0 - rhs.0)
     }
 }
@@ -70,6 +99,7 @@ impl Sub for TrackedFr {
 impl<'a> Sub<&'a TrackedFr> for TrackedFr {
     type Output = Self;
     fn sub(self, rhs: &'a TrackedFr) -> Self::Output {
+        SUB_COUNT.fetch_add(1, Ordering::Relaxed);
         Self(self.0 - rhs.0)
     }
 }
@@ -108,6 +138,7 @@ impl Div<TrackedFr> for TrackedFr {
     type Output = TrackedFr;
     fn div(self, rhs: TrackedFr) -> Self::Output {
         MULT_COUNT.fetch_add(1, Ordering::Relaxed);
+        INVERSE_COUNT.fetch_add(1, Ordering::Relaxed);
         let inv = rhs.0.inverse().expect("division by zero");
         TrackedFr(self.0 * inv)
     }
@@ -118,6 +149,7 @@ impl<'a> Div<&'a TrackedFr> for TrackedFr {
     type Output = TrackedFr;
     fn div(self, rhs: &'a TrackedFr) -> Self::Output {
         MULT_COUNT.fetch_add(1, Ordering::Relaxed);
+        INVERSE_COUNT.fetch_add(1, Ordering::Relaxed);
         TrackedFr(self.0 * ark_ff::Field::inverse(&rhs.0).unwrap())
     }
 }
@@ -128,6 +160,7 @@ impl Div<TrackedFr> for &TrackedFr {
     type Output = TrackedFr;
     fn div(self, rhs: TrackedFr) -> Self::Output {
         MULT_COUNT.fetch_add(1, Ordering::Relaxed);
+        INVERSE_COUNT.fetch_add(1, Ordering::Relaxed);
         TrackedFr(self.0 * ark_ff::Field::inverse(&rhs.0).unwrap())
     }
 }
@@ -161,12 +194,14 @@ impl Neg for TrackedFr {
 // AddAssign, SubAssign, MulAssign
 impl AddAssign for TrackedFr {
     fn add_assign(&mut self, other: Self) {
+        ADD_COUNT.fetch_add(1, Ordering::Relaxed);
         self.0 += other.0;
     }
 }
 
 impl SubAssign for TrackedFr {
     fn sub_assign(&mut self, other: Self) {
+        SUB_COUNT.fetch_add(1, Ordering::Relaxed);
         self.0 -= other.0;
     }
 }
@@ -200,13 +235,19 @@ impl One for TrackedFr {
 // Sum and Product for iterators
 impl Sum for TrackedFr {
     fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
-        iter.fold(Self::zero(), |a, b| Self(a.0 + b.0))
+        iter.fold(Self::zero(), |a, b| {
+            ADD_COUNT.fetch_add(1, Ordering::Relaxed);
+            Self(a.0 + b.0)
+        })
     }
 }
 
 impl<'a> Sum<&'a Self> for TrackedFr {
     fn sum<I: Iterator<Item = &'a Self>>(iter: I) -> Self {
-        iter.fold(Self::zero(), |a, b| Self(a.0 + b.0))
+        iter.fold(Self::zero(), |a, b| {
+            ADD_COUNT.fetch_add(1, Ordering::Relaxed);
+            Self(a.0 + b.0)
+        })
     }
 }
 
@@ -233,6 +274,7 @@ impl<'a> Product<&'a Self> for TrackedFr {
 impl<'a, 'b> Add<&'b TrackedFr> for &'a TrackedFr {
     type Output = TrackedFr;
     fn add(self, rhs: &'b TrackedFr) -> Self::Output {
+        ADD_COUNT.fetch_add(1, Ordering::Relaxed);
         TrackedFr(self.0 + rhs.0)
     }
 }
@@ -242,6 +284,7 @@ impl<'a, 'b> Add<&'b TrackedFr> for &'a TrackedFr {
 impl<'a, 'b> Sub<&'b TrackedFr> for &'a TrackedFr {
     type Output = TrackedFr;
     fn sub(self, rhs: &'b TrackedFr) -> Self::Output {
+        SUB_COUNT.fetch_add(1, Ordering::Relaxed);
         TrackedFr(self.0 - rhs.0)
     }
 }
@@ -263,6 +306,7 @@ impl<'a, 'b> Div<&'b TrackedFr> for &'a TrackedFr {
     type Output = TrackedFr;
     fn div(self, rhs: &'b TrackedFr) -> Self::Output {
         MULT_COUNT.fetch_add(1, Ordering::Relaxed);
+        INVERSE_COUNT.fetch_add(1, Ordering::Relaxed);
         TrackedFr(self.0 * ark_ff::Field::inverse(&rhs.0).unwrap())
     }
 }
@@ -287,34 +331,42 @@ impl JoltField for TrackedFr {
     }
 
     fn from_bool(val: bool) -> Self {
+        FROM_BOOL_COUNT.fetch_add(1, Ordering::Relaxed);
         TrackedFr(<ark_bn254::Fr as JoltField>::from_bool(val))
     }
 
     fn from_u8(n: u8) -> Self {
+        FROM_U8_COUNT.fetch_add(1, Ordering::Relaxed);
         TrackedFr(<ark_bn254::Fr as JoltField>::from_u8(n))
     }
 
     fn from_u16(n: u16) -> Self {
+        FROM_U16_COUNT.fetch_add(1, Ordering::Relaxed);
         TrackedFr(<ark_bn254::Fr as JoltField>::from_u16(n))
     }
 
     fn from_u32(n: u32) -> Self {
+        FROM_U32_COUNT.fetch_add(1, Ordering::Relaxed);
         TrackedFr(<ark_bn254::Fr as JoltField>::from_u32(n))
     }
 
     fn from_u64(n: u64) -> Self {
+        FROM_U64_COUNT.fetch_add(1, Ordering::Relaxed);
         TrackedFr(<ark_bn254::Fr as JoltField>::from_u64(n))
     }
 
     fn from_i64(n: i64) -> Self {
+        FROM_I64_COUNT.fetch_add(1, Ordering::Relaxed);
         TrackedFr(<ark_bn254::Fr as JoltField>::from_i64(n))
     }
 
     fn from_i128(n: i128) -> Self {
+        FROM_I128_COUNT.fetch_add(1, Ordering::Relaxed);
         TrackedFr(<ark_bn254::Fr as JoltField>::from_i128(n))
     }
 
     fn from_u128(n: u128) -> Self {
+        FROM_U128_COUNT.fetch_add(1, Ordering::Relaxed);
         TrackedFr(<ark_bn254::Fr as JoltField>::from_u128(n))
     }
 
@@ -323,7 +375,7 @@ impl JoltField for TrackedFr {
     }
 
     fn square(&self) -> Self {
-        MULT_COUNT.fetch_add(1, Ordering::Relaxed);
+        SQUARE_COUNT.fetch_add(1, Ordering::Relaxed);
         TrackedFr(self.0.square())
     }
 
@@ -333,6 +385,7 @@ impl JoltField for TrackedFr {
     }
 
     fn from_bytes(bytes: &[u8]) -> Self {
+        FROM_BYTES_COUNT.fetch_add(1, Ordering::Relaxed);
         TrackedFr(<ark_bn254::Fr as JoltField>::from_bytes(bytes))
     }
 
@@ -341,56 +394,56 @@ impl JoltField for TrackedFr {
     }
 
     fn mul_u64(&self, n: u64) -> Self {
-        MULT_COUNT.fetch_add(1, Ordering::Relaxed);
+        MUL_U64_COUNT.fetch_add(1, Ordering::Relaxed);
         Self(<Fr as JoltField>::mul_u64(&self.0, n))
     }
 
     fn mul_i64(&self, n: i64) -> Self {
-        MULT_COUNT.fetch_add(1, Ordering::Relaxed);
+        MUL_I64_COUNT.fetch_add(1, Ordering::Relaxed);
         Self(<Fr as JoltField>::mul_i64(&self.0, n))
     }
 
     fn mul_u128(&self, n: u128) -> Self {
-        MULT_COUNT.fetch_add(1, Ordering::Relaxed);
+        MUL_U128_COUNT.fetch_add(1, Ordering::Relaxed);
         Self(<Fr as JoltField>::mul_u128(&self.0, n))
     }
 
     fn mul_i128(&self, n: i128) -> Self {
-        MULT_COUNT.fetch_add(1, Ordering::Relaxed);
+        MUL_I128_COUNT.fetch_add(1, Ordering::Relaxed);
         Self(<Fr as JoltField>::mul_i128(&self.0, n))
     }
 
-    fn linear_combination_u64(pairs: &[(Self, u64)], add_terms: &[Self]) -> Self {
-        MULT_COUNT.fetch_add(pairs.len(), Ordering::Relaxed);
-        Self(<Fr as JoltField>::linear_combination_u64(
-            unsafe { transmute::<&[(Self, u64)], &[(Fr, u64)]>(pairs) },
-            unsafe { transmute::<&[Self], &[Fr]>(add_terms) },
-        ))
-    }
-
-    fn linear_combination_i64(
-        pos: &[(Self, u64)],
-        neg: &[(Self, u64)],
-        pos_add: &[Self],
-        neg_add: &[Self],
-    ) -> Self {
-        MULT_COUNT.fetch_add(pos.len() + neg.len(), Ordering::Relaxed);
-        Self(<Fr as JoltField>::linear_combination_i64(
-            unsafe { transmute::<&[(Self, u64)], &[(Fr, u64)]>(pos) },
-            unsafe { transmute::<&[(Self, u64)], &[(Fr, u64)]>(neg) },
-            unsafe { transmute::<&[Self], &[Fr]>(pos_add) },
-            unsafe { transmute::<&[Self], &[Fr]>(neg_add) },
-        ))
-    }
-
-    #[inline(always)]
     fn as_bigint_ref(&self) -> &ark_ff::BigInt<4> {
         self.0.as_bigint_ref()
     }
 
-    #[inline(always)]
-    fn from_montgomery_reduce_2n(unreduced: ark_ff::BigInt<8>) -> Self {
-        TrackedFr(ark_bn254::Fr::montgomery_reduce_2n(unreduced))
+    fn add_unreduced<const N: usize>(self, other: Self) -> ark_ff::BigInt<N> {
+        <Fr as JoltField>::add_unreduced(self.0, other.0)
+    }
+
+    fn mul_unreduced<const N: usize>(self, other: Self) -> ark_ff::BigInt<N> {
+        MUL_UNRED_COUNT.fetch_add(1, Ordering::Relaxed);
+        <Fr as JoltField>::mul_unreduced(self.0, other.0)
+    }
+
+    fn mul_u64_unreduced<const N: usize>(self, other: u64) -> ark_ff::BigInt<N> {
+        MUL_U64_UNRED_COUNT.fetch_add(1, Ordering::Relaxed);
+        <Fr as JoltField>::mul_u64_unreduced(self.0, other)
+    }
+
+    fn mul_u128_unreduced<const N: usize>(self, other: u128) -> ark_ff::BigInt<N> {
+        MUL_U128_UNRED_COUNT.fetch_add(1, Ordering::Relaxed);
+        <Fr as JoltField>::mul_u128_unreduced(self.0, other)
+    }
+
+    fn from_montgomery_reduce<const N: usize>(unreduced: ark_ff::BigInt<N>) -> Self {
+        MONT_REDUCE_COUNT.fetch_add(1, Ordering::Relaxed);
+        TrackedFr(<Fr as JoltField>::from_montgomery_reduce(unreduced))
+    }
+
+    fn from_barrett_reduce<const N: usize>(unreduced: ark_ff::BigInt<N>) -> Self {
+        BARRETT_REDUCE_COUNT.fetch_add(1, Ordering::Relaxed);
+        TrackedFr(<Fr as JoltField>::from_barrett_reduce(unreduced))
     }
 }
 

@@ -98,7 +98,7 @@ pub mod accum {
         /// Reduce accumulated value to a field element (pos - neg)
         #[inline(always)]
         pub fn reduce_to_field<F: JoltField>(&self) -> F {
-            F::from_montgomery_reduce_2n(self.pos) - F::from_montgomery_reduce_2n(self.neg)
+            F::from_montgomery_reduce::<8>(self.pos) - F::from_montgomery_reduce::<8>(self.neg)
         }
     }
 
@@ -1744,12 +1744,12 @@ mod tests {
 
         // Compare results
         for i in 0..num_non_trivial {
-            let generic_pos = Fr::from_montgomery_reduce_2n(ta_pos_acc_generic[i]);
-            let generic_neg = Fr::from_montgomery_reduce_2n(ta_neg_acc_generic[i]);
+            let generic_pos = Fr::from_montgomery_reduce::<8>(ta_pos_acc_generic[i]);
+            let generic_neg = Fr::from_montgomery_reduce::<8>(ta_neg_acc_generic[i]);
             let generic_result = generic_pos - generic_neg;
 
-            let hardcoded_pos = Fr::from_montgomery_reduce_2n(ta_pos_acc_hardcoded[i]);
-            let hardcoded_neg = Fr::from_montgomery_reduce_2n(ta_neg_acc_hardcoded[i]);
+            let hardcoded_pos = Fr::from_montgomery_reduce::<8>(ta_pos_acc_hardcoded[i]);
+            let hardcoded_neg = Fr::from_montgomery_reduce::<8>(ta_neg_acc_hardcoded[i]);
             let hardcoded_result = hardcoded_pos - hardcoded_neg;
 
             assert_eq!(

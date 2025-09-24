@@ -1,4 +1,4 @@
-use ark_ff::{prelude::*, AdditiveGroup, BigInt, PrimeField, UniformRand};
+use ark_ff::{prelude::*, BigInt, PrimeField, UniformRand};
 use rayon::prelude::*;
 
 use crate::utils::thread::unsafe_allocate_zero_vec;
@@ -89,6 +89,7 @@ impl JoltField for ark_bn254::Fr {
         }
     }
 
+    #[inline]
     fn from_i64(val: i64) -> Self {
         if val.is_negative() {
             let val = val.unsigned_abs();
@@ -111,6 +112,7 @@ impl JoltField for ark_bn254::Fr {
         }
     }
 
+    #[inline]
     fn from_i128(val: i128) -> Self {
         if val.is_negative() {
             let val = val.unsigned_abs();
@@ -139,6 +141,7 @@ impl JoltField for ark_bn254::Fr {
         }
     }
 
+    #[inline]
     fn from_u128(val: u128) -> Self {
         if val <= u16::MAX as u128 {
             <Self as JoltField>::from_u16(val as u16)
@@ -152,6 +155,7 @@ impl JoltField for ark_bn254::Fr {
         }
     }
 
+    #[inline]
     fn to_u64(&self) -> Option<u64> {
         let bigint = <Self as ark_ff::PrimeField>::into_bigint(*self);
         let limbs: &[u64] = bigint.as_ref();
@@ -164,18 +168,22 @@ impl JoltField for ark_bn254::Fr {
         }
     }
 
+    #[inline]
     fn square(&self) -> Self {
         <Self as ark_ff::Field>::square(self)
     }
 
+    #[inline]
     fn inverse(&self) -> Option<Self> {
         <Self as ark_ff::Field>::inverse(self)
     }
 
+    #[inline]
     fn from_bytes(bytes: &[u8]) -> Self {
         ark_bn254::Fr::from_le_bytes_mod_order(bytes)
     }
 
+    #[inline]
     fn num_bits(&self) -> u32 {
         <Self as ark_ff::PrimeField>::into_bigint(*self).num_bits()
     }
@@ -184,12 +192,6 @@ impl JoltField for ark_bn254::Fr {
     fn as_bigint_ref(&self) -> &ark_ff::BigInt<4> {
         // arkworks field elements are just wrappers around BigInt, so we can get a direct reference
         &self.0
-    }
-
-    #[inline(always)]
-    fn from_montgomery_reduce_2n(unreduced: ark_ff::BigInt<8>) -> Self {
-        // Use arkworks Montgomery backend to efficiently reduce 8-limb to 4-limb
-        ark_bn254::Fr::montgomery_reduce_2n(unreduced)
     }
 
     #[inline(always)]
@@ -225,77 +227,36 @@ impl JoltField for ark_bn254::Fr {
     }
 
     #[inline]
-    fn linear_combination_u64(pairs: &[(Self, u64)], add_terms: &[Self]) -> Self {
-        let mut tmp = ark_ff::BigInt::<4>::mul_u64_w_carry::<5>(&pairs[0].0 .0, pairs[0].1);
-        for (a, b) in &pairs[1..] {
-            let carry = tmp.add_with_carry(&ark_ff::BigInt::<4>::mul_u64_w_carry::<5>(&a.0, *b));
-            debug_assert!(!carry, "spurious carry in linear_combination_u64");
-        }
-
-        // Add the additional terms that don't need multiplication
-        let mut result = ark_ff::Fp::from_unchecked_nplus1(tmp);
-        for term in add_terms {
-            result += *term;
-        }
-        result
+    fn add_unreduced<const N: usize>(self, other: Self) -> ark_ff::BigInt<N> {
+        self.0.add_trunc::<4, N>(&other.0)
     }
 
     #[inline]
-    fn linear_combination_i64(
-        pos: &[(Self, u64)],
-        neg: &[(Self, u64)],
-        pos_add: &[Self],
-        neg_add: &[Self],
-    ) -> Self {
-        // unreduced linear combination of positive and negative terms
-        let mut pos_lc = if !pos.is_empty() {
-            let mut tmp = ark_ff::BigInt::<4>::mul_u64_w_carry::<5>(&pos[0].0 .0, pos[0].1);
-            for (a, b) in &pos[1..] {
-                let carry =
-                    tmp.add_with_carry(&ark_ff::BigInt::<4>::mul_u64_w_carry::<5>(&a.0, *b));
-                debug_assert!(!carry, "spurious carry in linear_combination_i64");
-            }
-            tmp
-        } else {
-            ark_ff::BigInt::<5>::zero()
-        };
+    fn mul_unreduced<const N: usize>(self, other: Self) -> ark_ff::BigInt<N> {
+        self.0.mul_trunc::<4, N>(&other.0)
+    }
 
-        let mut neg_lc = if !neg.is_empty() {
-            let mut tmp = ark_ff::BigInt::<4>::mul_u64_w_carry::<5>(&neg[0].0 .0, neg[0].1);
-            for (a, b) in &neg[1..] {
-                let carry =
-                    tmp.add_with_carry(&ark_ff::BigInt::<4>::mul_u64_w_carry::<5>(&a.0, *b));
-                debug_assert!(!carry, "spurious carry in linear_combination_i64");
-            }
-            tmp
-        } else {
-            ark_ff::BigInt::<5>::zero()
-        };
+    #[inline]
+    fn mul_u64_unreduced<const N: usize>(self, other: u64) -> ark_ff::BigInt<N> {
+        self.0.mul_trunc::<1, N>(&BigInt::new([other]))
+    }
 
-        // Compute the difference of the linear combinations
-        let diff = match pos_lc.cmp(&neg_lc) {
-            std::cmp::Ordering::Greater => {
-                let borrow = pos_lc.sub_with_borrow(&neg_lc);
-                debug_assert!(!borrow, "spurious borrow in linear_combination_i64");
-                ark_ff::Fp::from_unchecked_nplus1(pos_lc)
-            }
-            std::cmp::Ordering::Less => {
-                let borrow = neg_lc.sub_with_borrow(&pos_lc);
-                debug_assert!(!borrow, "spurious borrow in linear_combination_i64");
-                *ark_ff::Fp::from_unchecked_nplus1(neg_lc).neg_in_place()
-            }
-            std::cmp::Ordering::Equal => ark_ff::Fp::zero(),
-        };
+    #[inline]
+    fn mul_u128_unreduced<const N: usize>(self, other: u128) -> ark_ff::BigInt<N> {
+        self.0
+            .mul_trunc::<2, N>(&BigInt::new([other as u64, (other >> 64) as u64]))
+    }
 
-        // Add the positive and negative add terms
-        let mut result = diff;
-        for term in pos_add {
-            result += *term;
-        }
-        for term in neg_add {
-            result -= *term;
-        }
-        result
+    #[inline]
+    fn from_montgomery_reduce<const N: usize>(unreduced: ark_ff::BigInt<N>) -> Self {
+        todo!()
+        // <Self as ark_ff::Field>::from_montgomery_reduce(unreduced)
+    }
+
+    #[inline]
+    fn from_barrett_reduce<const N: usize>(unreduced: ark_ff::BigInt<N>) -> Self {
+        todo!()
+        // <Self as ark_ff::Field>::from_barrett_reduce(unreduced)
     }
 }
 
