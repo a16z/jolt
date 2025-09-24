@@ -49,16 +49,34 @@ impl RISCVTrace for AMOSWAPW {
         }
     }
 
-    /// Generates inline sequence for atomic swap operation (32-bit).
+    /// AMOSWAP.W atomically swaps a 32-bit word in memory with rs2.
     ///
-    /// AMOSWAP.W atomically loads a 32-bit word from memory, stores the lower
-    /// 32 bits of rs2 to that location, and returns the original value
-    /// sign-extended in rd.
+    /// This atomic memory operation (AMO) instruction atomically loads a 32-bit word from
+    /// the memory address in rs1, stores the lower 32 bits of rs2 to that location, and
+    /// returns the original value sign-extended in rd. This is an unconditional atomic exchange.
     ///
-    /// Implementation differs between RV32 and RV64:
-    /// - RV32: Simple word-aligned load/store swap
-    /// - RV64: Complex manipulation to handle 32-bit word within 64-bit doubleword,
-    ///   including alignment, masking, and sign extension
+    /// Implementation differences:
+    /// - RV32: Direct word swap using amo_pre32/post32 helpers
+    ///   - Simple load-store sequence on word-aligned addresses
+    ///   - Natural 32-bit operations throughout
+    /// - RV64: Complex handling for 32-bit operations within 64-bit doublewords
+    ///   - Uses amo_pre64 to extract the word from containing doubleword
+    ///   - Preserves other 32 bits when storing back
+    ///   - Uses amo_post64 to merge and sign-extend result
+    ///
+    /// AMOSWAP.W is commonly used for:
+    /// - 32-bit mutex implementations
+    /// - Atomic flag exchanges in embedded systems
+    /// - Producer-consumer buffer management
+    /// - Atomic state machine transitions
+    /// - Legacy 32-bit atomic operations on 64-bit systems
+    ///
+    /// Return value handling:
+    /// - The original 32-bit value is sign-extended to XLEN bits
+    /// - Ensures consistent signed interpretation across architectures
+    ///
+    /// Memory ordering: Like all AMO operations, provides acquire-release
+    /// semantics, though this is implicit in zkVM's single-threaded model.
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,

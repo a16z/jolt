@@ -53,15 +53,32 @@ impl RISCVTrace for AMOSWAPD {
         }
     }
 
-    /// Generates inline sequence for atomic swap operation (64-bit).
+    /// AMOSWAP.D atomically swaps a 64-bit memory location with rs2.
     ///
-    /// AMOSWAP.D atomically loads a 64-bit value from memory, stores rs2 to that
-    /// location, and returns the original value in rd.
+    /// This atomic memory operation (AMO) instruction atomically loads a doubleword from
+    /// the memory address in rs1, stores the value from rs2 to that location, and returns
+    /// the original memory value in rd. This is an unconditional atomic exchange.
     ///
-    /// Simplest AMO operation - unconditional exchange:
-    /// 1. Load current value from memory
-    /// 2. Store rs2 to the same location
+    /// In the zkVM context:
+    /// - Atomicity is guaranteed by the single-threaded execution model
+    /// - No compare-and-swap semantics needed (unlike LR/SC sequences)
+    /// - Direct 64-bit operations on naturally aligned addresses
+    ///
+    /// AMOSWAP is commonly used for:
+    /// - Implementing mutex acquisition (swap in lock value, check old)
+    /// - Atomic pointer swapping in lock-free data structures
+    /// - Message passing between threads (though zkVM is single-threaded)
+    /// - Implementing semaphores and other synchronization primitives
+    /// - Atomic queue operations (head/tail pointer updates)
+    ///
+    /// Implementation sequence:
+    /// 1. Load original value from memory[rs1]
+    /// 2. Store rs2 value to memory[rs1]
     /// 3. Return original value in rd
+    ///
+    /// This is the simplest AMO operation as it requires no computation,
+    /// just an atomic exchange. The returned value can be examined to
+    /// determine the previous state (e.g., was a lock already held).
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,

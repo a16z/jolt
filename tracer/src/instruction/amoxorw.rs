@@ -54,14 +54,33 @@ impl RISCVTrace for AMOXORW {
         }
     }
 
-    /// Generates inline sequence for atomic XOR operation (32-bit).
+    /// AMOXOR.W atomically performs bitwise XOR on a 32-bit word in memory with rs2.
     ///
-    /// AMOXOR.W atomically loads a 32-bit word from memory, performs bitwise XOR
-    /// with the lower 32 bits of rs2, stores the result back to memory, and
-    /// returns the original value sign-extended in rd.
+    /// This atomic memory operation (AMO) instruction atomically loads a 32-bit word from
+    /// the memory address in rs1, performs a bitwise XOR with the lower 32 bits of rs2,
+    /// stores the result back to memory, and returns the original value sign-extended in rd.
     ///
-    /// Simple implementation using LW/SW directly since this appears to be RV32 only
-    /// (uses LW instead of amo_pre/post helpers).
+    /// Implementation note:
+    /// Unlike other AMO.W instructions, this uses direct LW/SW instructions rather than
+    /// amo_pre/post helpers. This simplified approach works because:
+    /// - The zkVM handles word-alignment internally
+    /// - Single-threaded execution guarantees atomicity
+    /// - No need for complex bit manipulation within doublewords
+    ///
+    /// The bitwise XOR operation is commonly used for:
+    /// - Toggling flags or status bits atomically
+    /// - Implementing spinlocks with toggle semantics
+    /// - Checksum and parity calculations
+    /// - Lock-free state machines with reversible transitions
+    ///
+    /// Return value handling:
+    /// - The original 32-bit value is sign-extended to XLEN bits
+    /// - Consistent behavior across different XLEN implementations
+    ///
+    /// XOR properties in concurrent contexts:
+    /// - Commutative: order of XOR operations doesn't matter
+    /// - Self-canceling: applying same XOR twice restores original
+    /// - Useful for temporary locks that auto-release on second application
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,

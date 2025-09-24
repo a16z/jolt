@@ -52,8 +52,26 @@ impl RISCVTrace for AMOANDW {
         }
     }
 
-    /// AMOAND.W atomically ANDs a 32-bit word in memory with rs2.
-    /// On RV64, uses amo_pre64/post64 helpers to handle 32-bit operations within 64-bit memory.
+    /// AMOAND.W atomically performs bitwise AND on a 32-bit word in memory with rs2.
+    ///
+    /// This atomic memory operation (AMO) instruction atomically loads a 32-bit word from
+    /// the memory address in rs1, performs a bitwise AND with the lower 32 bits of rs2,
+    /// stores the result back to memory, and returns the original value sign-extended in rd.
+    ///
+    /// Implementation differences:
+    /// - RV32: Direct 32-bit word operations using amo_pre32/post32 helpers
+    /// - RV64: Requires special handling for 32-bit operations within 64-bit doublewords
+    ///   - Uses amo_pre64 to extract the word from the containing doubleword
+    ///   - Applies the AND operation to the extracted word
+    ///   - Uses amo_post64 to merge the result back into the doubleword
+    ///
+    /// The bitwise AND operation is commonly used for:
+    /// - Clearing specific bits in shared flags or status words
+    /// - Implementing lock-free bit manipulation algorithms
+    /// - Atomic permission masking in concurrent data structures
+    ///
+    /// Memory ordering: Provides acquire-release semantics in multi-threaded contexts,
+    /// though in zkVM's single-threaded execution, atomicity is implicit.
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,
