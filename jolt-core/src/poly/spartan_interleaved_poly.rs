@@ -531,8 +531,8 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                 let mut task_bound6_at_r: Vec<SparseCoefficient<F>> = Vec::new();
 
                 // Two-layer accumulation using grouping by x_out_idx
-                let mut inner_sum0 = F::zero();
-                let mut inner_sumInf = F::zero();
+                let mut inner_sum0 = BigInt::<9>::zero();
+                let mut inner_sumInf = BigInt::<9>::zero();
                 let mut prev_x_out_idx: Option<usize> = None;
 
                 for x_out_val in x_out_start..x_out_end {
@@ -628,10 +628,13 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                                     } else {
                                         F::zero()
                                     };
-                                    task_sum0 += e_out_prev * inner_sum0;
-                                    task_sumInf += e_out_prev * inner_sumInf;
-                                    inner_sum0 = F::zero();
-                                    inner_sumInf = F::zero();
+                                    let reduced_inner_sum0 = F::from_montgomery_reduce(inner_sum0);
+                                    let reduced_inner_sumInf =
+                                        F::from_montgomery_reduce(inner_sumInf);
+                                    task_sum0 += e_out_prev * reduced_inner_sum0;
+                                    task_sumInf += e_out_prev * reduced_inner_sumInf;
+                                    inner_sum0 = BigInt::zero();
+                                    inner_sumInf = BigInt::zero();
                                 }
                             }
 
@@ -646,8 +649,8 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                                 F::zero()
                             };
 
-                            inner_sum0 += e_in * p0;
-                            inner_sumInf += e_in * slope;
+                            inner_sum0 += e_in.mul_unreduced(p0);
+                            inner_sumInf += e_in.mul_unreduced(slope);
                             prev_x_out_idx = Some(x_out_idx);
 
                             // record six-at-r values
@@ -681,8 +684,11 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                     } else {
                         F::zero()
                     };
-                    task_sum0 += e_out_prev * inner_sum0;
-                    task_sumInf += e_out_prev * inner_sumInf;
+                    let reduced_inner_sum0 = F::from_montgomery_reduce(inner_sum0);
+                    let reduced_inner_sumInf = F::from_montgomery_reduce(inner_sumInf);
+
+                    task_sum0 += e_out_prev * reduced_inner_sum0;
+                    task_sumInf += e_out_prev * reduced_inner_sumInf;
                 }
 
                 TaskOut {

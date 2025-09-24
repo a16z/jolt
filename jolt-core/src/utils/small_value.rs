@@ -66,7 +66,7 @@ pub mod accum {
                 let abs = v.unsigned_abs();
                 let mag = BigInt::new([abs as u64, (abs >> 64) as u64]);
                 let acc = if v >= 0 { &mut self.pos } else { &mut self.neg };
-                field_bigint.fmadd_trunc::<2, 8>(&mag, acc);
+                field_bigint.fmadd_trunc(&mag, acc);
             }
         }
 
@@ -83,20 +83,20 @@ pub mod accum {
                 } else {
                     &mut self.neg
                 };
-                field_bigint.fmadd_trunc::<3, 8>(&mag, acc);
+                field_bigint.fmadd_trunc(&mag, acc);
             }
         }
 
         /// fmadd with an Az×Bz product value (1..=4 limbs)
         #[inline(always)]
         pub fn fmadd_prod<F: JoltField>(&mut self, field: &F, product: S224) {
-            fmadd_unreduced::<F>(&mut self.pos, &mut self.neg, field, product)
+            fmadd_unreduced(&mut self.pos, &mut self.neg, field, product)
         }
 
         /// Reduce accumulated value to a field element (pos - neg)
         #[inline(always)]
         pub fn reduce_to_field<F: JoltField>(&self) -> F {
-            F::from_montgomery_reduce::<8>(self.pos) - F::from_montgomery_reduce::<8>(self.neg)
+            F::from_montgomery_reduce(self.pos) - F::from_montgomery_reduce(self.neg)
         }
     }
 
@@ -1743,12 +1743,12 @@ mod tests {
 
         // Compare results
         for i in 0..num_non_trivial {
-            let generic_pos = Fr::from_montgomery_reduce::<8>(ta_pos_acc_generic[i]);
-            let generic_neg = Fr::from_montgomery_reduce::<8>(ta_neg_acc_generic[i]);
+            let generic_pos = Fr::montgomery_reduce_2n::<8>(ta_pos_acc_generic[i]);
+            let generic_neg = Fr::montgomery_reduce_2n::<8>(ta_neg_acc_generic[i]);
             let generic_result = generic_pos - generic_neg;
 
-            let hardcoded_pos = Fr::from_montgomery_reduce::<8>(ta_pos_acc_hardcoded[i]);
-            let hardcoded_neg = Fr::from_montgomery_reduce::<8>(ta_neg_acc_hardcoded[i]);
+            let hardcoded_pos = Fr::montgomery_reduce_2n::<8>(ta_pos_acc_hardcoded[i]);
+            let hardcoded_neg = Fr::montgomery_reduce_2n::<8>(ta_neg_acc_hardcoded[i]);
             let hardcoded_result = hardcoded_pos - hardcoded_neg;
 
             assert_eq!(

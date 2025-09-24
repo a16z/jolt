@@ -135,13 +135,6 @@ pub trait JoltField:
     /// Get reference to the underlying BigInt<4> representation without copying.
     fn as_bigint_ref(&self) -> &BigInt<4>;
 
-    /// Addition of two field elements without conditional subtraction, returning a
-    /// 5-limb BigInt (each limb is 64 bits)
-    ///
-    /// NOTE: for fields like BN254 whose prime has top bit zero, 4 limbs are enough,
-    /// but we don't want to make this assumption in case we support other fields in the future.
-    fn add_unreduced(self, other: Self) -> BigInt<5>;
-
     /// Multiplication of two field elements without Montgomery reduction, returning a
     /// 8-limb BigInt (each limb is 64 bits)
     fn mul_unreduced(self, other: Self) -> BigInt<8>;
@@ -156,13 +149,13 @@ pub trait JoltField:
 
     /// Montgomery reduction of a BigInt to a field element (compute a * R^{-1} mod p).
     ///
-    /// Need to specify the number of limbs in the BigInt (at least 5, usually 8 or 9)
-    fn from_montgomery_reduce<const N: usize>(unreduced: BigInt<N>) -> Self;
+    /// Need to specify the number of limbs in the BigInt (at least 8)
+    fn from_montgomery_reduce<const L: usize>(unreduced: BigInt<L>) -> Self;
 
     /// Barrett reduction of a BigInt to a field element (compute a mod p).
     ///
-    /// Need to specify the number of limbs in the BigInt (at least 5, usually 8 or 9)
-    fn from_barrett_reduce<const N: usize>(unreduced: BigInt<N>) -> Self;
+    /// Need to specify the number of limbs in the BigInt (at least 5, usually up to 7)
+    fn from_barrett_reduce<const L: usize>(unreduced: BigInt<L>) -> Self;
 }
 
 #[cfg(feature = "allocative")]

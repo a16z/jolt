@@ -226,11 +226,6 @@ impl JoltField for ark_bn254::Fr {
         }
     }
 
-    #[inline(always)]
-    fn add_unreduced(self, other: Self) -> BigInt<5> {
-        self.0.add_trunc::<4, 5>(&other.0)
-    }
-
     #[inline]
     fn mul_unreduced(self, other: Self) -> BigInt<8> {
         self.0.mul_trunc::<4, 8>(&other.0)
@@ -248,13 +243,13 @@ impl JoltField for ark_bn254::Fr {
     }
 
     #[inline]
-    fn from_montgomery_reduce<const N: usize>(unreduced: BigInt<N>) -> Self {
-        ark_bn254::Fr::from_montgomery_reduce::<N>(unreduced)
+    fn from_montgomery_reduce<const L: usize>(unreduced: BigInt<L>) -> Self {
+        ark_bn254::Fr::from_montgomery_reduce::<L, 5>(unreduced)
     }
 
     #[inline]
-    fn from_barrett_reduce<const N: usize>(unreduced: BigInt<N>) -> Self {
-        ark_bn254::Fr::from_barrett_reduce::<N, 5>(unreduced)
+    fn from_barrett_reduce<const L: usize>(unreduced: BigInt<L>) -> Self {
+        ark_bn254::Fr::from_barrett_reduce::<L, 5>(unreduced)
     }
 }
 

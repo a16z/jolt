@@ -418,10 +418,6 @@ impl JoltField for TrackedFr {
         self.0.as_bigint_ref()
     }
 
-    fn add_unreduced(self, other: Self) -> BigInt<5> {
-        <Fr as JoltField>::add_unreduced(self.0, other.0)
-    }
-
     fn mul_unreduced(self, other: Self) -> BigInt<8> {
         MUL_UNRED_COUNT.fetch_add(1, Ordering::Relaxed);
         <Fr as JoltField>::mul_unreduced(self.0, other.0)
