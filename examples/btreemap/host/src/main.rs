@@ -41,6 +41,8 @@ pub fn btreemap() {
 }
 
 fn main() {
-    println!("BTreeMap");
+    tracing_subscriber::fmt::init();
+
+    tracing::info!("BTreeMap");
     btreemap();
 }

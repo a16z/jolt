@@ -114,7 +114,7 @@ pub fn trace_to_file(
         .finalize()
         .expect("Failed to finalize trace writer");
 
-    println!("trace length: {total} cycles");
+    tracing::info!("trace length: {total} cycles");
 
     let final_mem = lazy.final_memory_state.take().unwrap();
     (final_mem, lazy.get_jolt_device())
@@ -303,7 +303,7 @@ impl Iterator for LazyTraceIterator {
                 .unwrap()
                 .panic
             {
-                println!(
+                tracing::error!(
                     "Guest program terminated due to panic after {} cycles.",
                     self.emulator_state.get_cpu().trace_len
                 );

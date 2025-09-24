@@ -1,6 +1,8 @@
 use std::time::Instant;
 
 pub fn main() {
+    tracing_subscriber::fmt::init();
+
     let target_dir = "/tmp/jolt-guest-targets";
     let mut program = guest::compile_alloc(target_dir);
 
@@ -14,9 +16,9 @@ pub fn main() {
     let now = Instant::now();
     let input = 41;
     let (output, proof, program_io) = prove_alloc(input);
-    println!("Prover runtime: {} s", now.elapsed().as_secs_f64());
+    tracing::info!("Prover runtime: {} s", now.elapsed().as_secs_f64());
     let is_valid = verify_alloc(input, output, program_io.panic, proof);
 
-    println!("output: {output:?}");
-    println!("valid: {is_valid}");
+    tracing::info!("output: {output:?}");
+    tracing::info!("valid: {is_valid}");
 }

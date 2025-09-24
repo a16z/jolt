@@ -5,5 +5,7 @@ edition = "2021"
 
 [dependencies]
 jolt-sdk = { path = "../../../jolt-sdk", features = ["host"] }
+tracing-subscriber = "0.3"
+tracing = "0.1"
 guest = { package = "btreemap-guest", path = "../guest" }
 spinners = { workspace = true }

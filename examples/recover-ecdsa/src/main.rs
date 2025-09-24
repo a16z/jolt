@@ -9,6 +9,8 @@ const SECRET_KEY: [u8; 32] = [
 ];
 
 pub fn main() {
+    tracing_subscriber::fmt::init();
+
     let secp = Secp256k1::new();
 
     let seckey = SecretKey::from_slice(&SECRET_KEY).unwrap();
@@ -51,14 +53,14 @@ pub fn main() {
     } else {
         (trace_length - 1).next_power_of_two()
     };
-    println!("Trace length: {trace_length:?}");
-    println!("Max trace length: {max_trace_length:?}");
+    tracing::info!("Trace length: {trace_length:?}");
+    tracing::info!("Max trace length: {max_trace_length:?}");
 
     let now = Instant::now();
     let (output, proof, io_device) = prove_recover(&sig_bytes, msg_digest);
-    println!("Prover runtime: {} s", now.elapsed().as_secs_f64());
+    tracing::info!("Prover runtime: {} s", now.elapsed().as_secs_f64());
 
     let is_valid = verify_recover(&sig_bytes, msg_digest, output, io_device.panic, proof);
-    println!("output: {output}");
-    println!("valid: {is_valid}");
+    tracing::info!("output: {output}");
+    tracing::info!("valid: {is_valid}");
 }

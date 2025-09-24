@@ -1,6 +1,8 @@
 use std::time::Instant;
 
 pub fn main() {
+    tracing_subscriber::fmt::init();
+
     let target_dir = "/tmp/jolt-guest-targets";
     let mut program = guest::compile_memory_ops(target_dir);
 
@@ -13,12 +15,15 @@ pub fn main() {
 
     let now = Instant::now();
     let (output, proof, program_io) = prove();
-    println!("Prover runtime: {} s", now.elapsed().as_secs_f64());
+    tracing::info!("Prover runtime: {} s", now.elapsed().as_secs_f64());
     let is_valid = verify(output, program_io.panic, proof);
 
-    println!(
+    tracing::info!(
         "outputs: {} {} {} {}",
-        output.0, output.1, output.2, output.3
+        output.0,
+        output.1,
+        output.2,
+        output.3
     );
-    println!("valid: {is_valid}");
+    tracing::info!("valid: {is_valid}");
 }

@@ -1,6 +1,8 @@
 use std::time::Instant;
 
 pub fn main() {
+    tracing_subscriber::fmt::init();
+
     let target_dir = "/tmp/jolt-guest-targets";
     let mut program = guest::compile_blake3(target_dir);
 
@@ -14,11 +16,11 @@ pub fn main() {
     let input: &[u8] = &[5u8; 32];
     let now = Instant::now();
     let (output, proof, program_io) = prove_blake3(input);
-    println!("Prover runtime: {} s", now.elapsed().as_secs_f64());
+    tracing::info!("Prover runtime: {} s", now.elapsed().as_secs_f64());
     let is_valid = verify_blake3(input, output, program_io.panic, proof);
 
     let first_half = output;
 
-    println!("output: {}", hex::encode(first_half));
-    println!("valid: {is_valid}");
+    tracing::info!("output: {}", hex::encode(first_half));
+    tracing::info!("valid: {is_valid}");
 }

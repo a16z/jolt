@@ -1,6 +1,8 @@
 use std::time::Instant;
 
 pub fn main() {
+    tracing_subscriber::fmt::init();
+
     let target_dir = "/tmp/jolt-guest-targets";
     let mut program = guest::compile_rand(target_dir);
 
@@ -20,14 +22,14 @@ pub fn main() {
     } else {
         (trace_length - 1).next_power_of_two()
     };
-    println!("Trace length: {trace_length:?}");
-    println!("Max trace length: {max_trace_length:?}");
+    tracing::info!("Trace length: {trace_length:?}");
+    tracing::info!("Max trace length: {max_trace_length:?}");
 
     let now = Instant::now();
     let (output, proof, program_io) = prove(a, b);
-    println!("Prover runtime: {} s", now.elapsed().as_secs_f64());
+    tracing::info!("Prover runtime: {} s", now.elapsed().as_secs_f64());
     let is_valid = verify(a, b, output, program_io.panic, proof);
 
-    println!("output: {output}");
-    println!("valid: {is_valid}");
+    tracing::info!("output: {output}");
+    tracing::info!("valid: {is_valid}");
 }

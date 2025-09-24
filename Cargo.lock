@@ -61,6 +61,8 @@ version = "0.1.0"
 dependencies = [
  "alloc-guest",
  "jolt-sdk",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -390,6 +392,8 @@ dependencies = [
  "hex",
  "jolt-inlines-blake2",
  "jolt-sdk",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -421,6 +425,8 @@ dependencies = [
  "hex",
  "jolt-inlines-blake3",
  "jolt-sdk",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -447,6 +453,8 @@ dependencies = [
  "btreemap-guest",
  "jolt-sdk",
  "spinners",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -604,6 +612,8 @@ version = "0.1.0"
 dependencies = [
  "collatz-guest",
  "jolt-sdk",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -1028,6 +1038,8 @@ version = "0.1.0"
 dependencies = [
  "fibonacci-guest",
  "jolt-sdk",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -2029,6 +2041,8 @@ dependencies = [
  "hex",
  "jolt-sdk",
  "memory-ops-guest",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -2087,6 +2101,8 @@ version = "0.1.0"
 dependencies = [
  "jolt-sdk",
  "muldiv-guest",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -2102,6 +2118,8 @@ version = "0.1.0"
 dependencies = [
  "jolt-sdk",
  "multi-function-guest",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -2354,6 +2372,8 @@ version = "0.1.0"
 dependencies = [
  "jolt-sdk",
  "overflow-guest",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -2622,6 +2642,8 @@ version = "0.1.0"
 dependencies = [
  "jolt-sdk",
  "random-guest",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -2660,6 +2682,8 @@ dependencies = [
  "jolt-sdk",
  "recover-ecdsa-guest",
  "secp256k1",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -2678,6 +2702,8 @@ dependencies = [
  "clap",
  "jolt-sdk",
  "postcard",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -3086,6 +3112,8 @@ dependencies = [
  "jolt-inlines-sha2",
  "jolt-sdk",
  "sha2-chain-guest",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -3104,6 +3132,8 @@ dependencies = [
  "jolt-inlines-sha2",
  "jolt-sdk",
  "sha2-guest",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -3132,6 +3162,8 @@ dependencies = [
  "jolt-inlines-keccak256",
  "jolt-sdk",
  "sha3-chain-guest",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -3150,6 +3182,8 @@ dependencies = [
  "jolt-inlines-keccak256",
  "jolt-sdk",
  "sha3-guest",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -3220,6 +3254,8 @@ version = "0.1.0"
 dependencies = [
  "jolt-sdk",
  "stdlib-guest",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
