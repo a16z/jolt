@@ -7,22 +7,16 @@
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::opening_proof::{OpeningId, SumcheckId};
-use crate::transcripts::Transcript;
+use crate::utils::small_scalar::SmallScalar;
 use crate::zkvm::instruction::{CircuitFlags, InstructionFlags, LookupQuery, NUM_CIRCUIT_FLAGS};
 use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 use crate::zkvm::JoltSharedPreprocessing;
 
-use super::key::UniformSpartanKey;
-use super::spartan::UniformSpartanProof;
-use crate::utils::small_scalar::SmallScalar;
-use ark_ff::biginteger::{S128, S64};
-
 use crate::field::JoltField;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_ff::biginteger::{S128, S64};
 use common::constants::XLEN;
 use rayon::prelude::*;
 use std::fmt::Debug;
-use std::marker::PhantomData;
 use tracer::instruction::Cycle;
 
 use strum::IntoEnumIterator;
@@ -259,13 +253,6 @@ impl R1CSCycleInputs {
             JoltR1CSInputs::OpFlags(flag) => F::from_bool(self.flags[flag]),
         }
     }
-}
-
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct R1CSProof<F: JoltField, ProofTranscript: Transcript> {
-    pub key: UniformSpartanKey<F>,
-    pub proof: UniformSpartanProof<F, ProofTranscript>,
-    pub _marker: PhantomData<ProofTranscript>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

@@ -15,7 +15,7 @@ use crate::{
         hamming_booleanity::HammingBooleanitySumcheck,
         hamming_weight::HammingWeightSumcheck,
         output_check::{OutputSumcheck, ValFinalSumcheck},
-        ra_virtual::RASumcheck,
+        ra_virtual::RaSumcheck,
         raf_evaluation::RafEvaluationSumcheck,
         read_write_checking::RamReadWriteChecking,
         val_evaluation::ValEvaluationSumcheck,
@@ -95,8 +95,6 @@ pub fn remap_address(address: u64, memory_layout: &MemoryLayout) -> Option<u64> 
 }
 
 pub struct RamDag {
-    K: usize,
-    T: usize,
     initial_memory_state: Option<Vec<u64>>,
     final_memory_state: Option<Vec<u64>>,
 }
@@ -109,12 +107,10 @@ impl RamDag {
     >(
         state_manager: &StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
-        let (preprocessing, trace, program_io, final_memory) = state_manager.get_prover_data();
+        let (preprocessing, _, program_io, final_memory) = state_manager.get_prover_data();
         let ram_preprocessing = &preprocessing.shared.ram;
 
         let K = state_manager.ram_K;
-
-        let T = trace.len();
 
         let mut initial_memory_state: Vec<u64> = vec![0; K];
         // Copy bytecode
@@ -194,6 +190,8 @@ impl RamDag {
         {
             use crate::zkvm::witness::CommittedPolynomial;
 
+            let trace = state_manager.get_prover_data().1;
+
             let mut expected_final_memory_state: Vec<_> = initial_memory_state
                 .iter()
                 .map(|word| *word as i128)
@@ -216,8 +214,6 @@ impl RamDag {
         }
 
         Self {
-            K,
-            T,
             initial_memory_state: Some(initial_memory_state),
             final_memory_state: Some(final_memory_state),
         }
@@ -230,7 +226,7 @@ impl RamDag {
     >(
         state_manager: &StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
-        let (preprocessing, program_io, T) = state_manager.get_verifier_data();
+        let (preprocessing, program_io, _) = state_manager.get_verifier_data();
         let ram_preprocessing = &preprocessing.shared.ram;
 
         let K = state_manager.ram_K;
@@ -265,8 +261,6 @@ impl RamDag {
         }
 
         Self {
-            K,
-            T,
             initial_memory_state: Some(initial_memory_state),
             final_memory_state: None,
         }
@@ -283,11 +277,9 @@ where
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F>>> {
-        let raf_evaluation = RafEvaluationSumcheck::new_prover(self.K, self.T, state_manager);
+        let raf_evaluation = RafEvaluationSumcheck::new_prover(state_manager);
 
         let read_write_checking = RamReadWriteChecking::new_prover(
-            self.K,
-            self.T,
             self.initial_memory_state.as_ref().unwrap(),
             state_manager,
         );
@@ -316,9 +308,9 @@ where
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F>>> {
-        let raf_evaluation = RafEvaluationSumcheck::new_verifier(self.K, state_manager);
-        let read_write_checking = RamReadWriteChecking::new_verifier(self.K, state_manager);
-        let output_check = OutputSumcheck::new_verifier(self.K, state_manager);
+        let raf_evaluation = RafEvaluationSumcheck::new_verifier(state_manager);
+        let read_write_checking = RamReadWriteChecking::new_verifier(state_manager);
+        let output_check = OutputSumcheck::new_verifier(state_manager);
 
         vec![
             Box::new(raf_evaluation),
@@ -332,7 +324,6 @@ where
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F>>> {
         let val_evaluation = ValEvaluationSumcheck::new_prover(
-            self.K,
             self.initial_memory_state.as_ref().unwrap(),
             state_manager,
         );
@@ -358,7 +349,6 @@ where
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F>>> {
         let val_evaluation = ValEvaluationSumcheck::new_verifier(
-            self.K,
             self.initial_memory_state.as_ref().unwrap(),
             state_manager,
         );
@@ -379,9 +369,9 @@ where
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F>>> {
-        let hamming_weight = HammingWeightSumcheck::new_prover(self.K, state_manager);
-        let booleanity = BooleanitySumcheck::new_prover(self.K, state_manager);
-        let ra_virtual = RASumcheck::new_prover(self.K, state_manager);
+        let hamming_weight = HammingWeightSumcheck::new_prover(state_manager);
+        let booleanity = BooleanitySumcheck::new_prover(state_manager);
+        let ra_virtual = RaSumcheck::new_prover(state_manager);
 
         #[cfg(feature = "allocative")]
         {
@@ -401,9 +391,9 @@ where
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F>>> {
-        let hamming_weight = HammingWeightSumcheck::new_verifier(self.K, state_manager);
-        let booleanity = BooleanitySumcheck::new_verifier(self.K, state_manager);
-        let ra_virtual = RASumcheck::new_verifier(self.K, state_manager);
+        let hamming_weight = HammingWeightSumcheck::new_verifier(state_manager);
+        let booleanity = BooleanitySumcheck::new_verifier(state_manager);
+        let ra_virtual = RaSumcheck::new_verifier(state_manager);
 
         vec![
             Box::new(hamming_weight),

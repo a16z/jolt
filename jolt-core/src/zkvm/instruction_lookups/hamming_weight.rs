@@ -35,7 +35,6 @@ struct HammingProverState<F: JoltField> {
 pub struct HammingWeightSumcheck<F: JoltField> {
     gamma: [F; D],
     prover_state: Option<HammingProverState<F>>,
-    r_cycle: Vec<F>,
 }
 
 impl<F: JoltField> HammingWeightSumcheck<F> {
@@ -55,17 +54,9 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
             .collect::<Vec<_>>()
             .try_into()
             .unwrap();
-        let r_cycle = sm
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::LookupOutput,
-                SumcheckId::SpartanOuter,
-            )
-            .0
-            .r;
         Self {
             gamma: gamma_powers,
             prover_state: Some(HammingProverState { ra }),
-            r_cycle,
         }
     }
 
@@ -77,17 +68,9 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
         for i in 1..D {
             gamma_powers[i] = gamma_powers[i - 1] * gamma;
         }
-        let r_cycle = sm
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::LookupOutput,
-                SumcheckId::SpartanOuter,
-            )
-            .0
-            .r;
         Self {
             gamma: gamma_powers,
             prover_state: None,
-            r_cycle,
         }
     }
 }
@@ -170,11 +153,19 @@ impl<F: JoltField> SumcheckInstance<F> for HammingWeightSumcheck<F> {
             .iter()
             .map(|ra| ra.final_sumcheck_claim())
             .collect::<Vec<F>>();
+        let r_cycle = accumulator
+            .borrow()
+            .get_virtual_polynomial_opening(
+                VirtualPolynomial::LookupOutput,
+                SumcheckId::SpartanOuter,
+            )
+            .0
+            .r;
         accumulator.borrow_mut().append_sparse(
             (0..D).map(CommittedPolynomial::InstructionRa).collect(),
             SumcheckId::InstructionHammingWeight,
             opening_point.r.to_vec(),
-            self.r_cycle.clone(),
+            r_cycle.clone(),
             ra_claims,
         );
     }
@@ -184,11 +175,19 @@ impl<F: JoltField> SumcheckInstance<F> for HammingWeightSumcheck<F> {
         accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
+        let r_cycle = accumulator
+            .borrow()
+            .get_virtual_polynomial_opening(
+                VirtualPolynomial::LookupOutput,
+                SumcheckId::SpartanOuter,
+            )
+            .0
+            .r;
         let r = opening_point
             .r
             .iter()
             .cloned()
-            .chain(self.r_cycle.iter().cloned())
+            .chain(r_cycle.iter().cloned())
             .collect::<Vec<_>>();
         accumulator.borrow_mut().append_sparse(
             (0..D).map(CommittedPolynomial::InstructionRa).collect(),

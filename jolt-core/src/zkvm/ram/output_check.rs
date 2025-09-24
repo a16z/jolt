@@ -15,7 +15,7 @@ use crate::{
         program_io_polynomial::ProgramIOPolynomial,
         range_mask_polynomial::RangeMaskPolynomial,
     },
-    subprotocols::sumcheck::{SumcheckInstance, SumcheckInstanceProof},
+    subprotocols::sumcheck::SumcheckInstance,
     transcripts::Transcript,
     utils::{expanding_table::ExpandingTable, math::Math},
     zkvm::{
@@ -27,7 +27,6 @@ use crate::{
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::RAM_START_ADDRESS;
 use rayon::prelude::*;
 use tracer::JoltDevice;
@@ -104,22 +103,6 @@ impl<F: JoltField> OutputSumcheckProverState<F> {
     }
 }
 
-struct OutputSumcheckVerifierState<F: JoltField> {
-    r_address: Vec<F>,
-    program_io: JoltDevice,
-}
-
-/// Proves that the final RAM state is consistent with the claimed
-/// program output.
-#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
-pub struct OutputProof<F: JoltField, ProofTranscript: Transcript> {
-    output_sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
-    val_final_sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
-    /// Claimed evaluation Val_final(r_address) output by `OutputSumcheck`,
-    /// proven using `ValFinalSumcheck`
-    val_final_claim: F,
-}
-
 /// Sumcheck for the zero-check
 ///   0 = \sum_k eq(r_address, k) * io_range(k) * (Val_final(k) - Val_io(k))
 /// In plain English: the final memory state (Val_final) should be consistent with
@@ -128,9 +111,11 @@ pub struct OutputProof<F: JoltField, ProofTranscript: Transcript> {
 #[derive(Allocative)]
 pub struct OutputSumcheck<F: JoltField> {
     K: usize,
-    #[allocative(skip)]
-    verifier_state: Option<OutputSumcheckVerifierState<F>>,
     prover_state: Option<OutputSumcheckProverState<F>>,
+    #[allocative(skip)]
+    r_address: Option<Vec<F>>,
+    #[allocative(skip)]
+    program_io: Option<JoltDevice>,
 }
 
 impl<F: JoltField> OutputSumcheck<F> {
@@ -157,31 +142,28 @@ impl<F: JoltField> OutputSumcheck<F> {
 
         OutputSumcheck {
             K,
-            verifier_state: None,
             prover_state: Some(output_sumcheck_prover_state),
+            r_address: Some(r_address),
+            program_io: None,
         }
     }
 
     pub fn new_verifier<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
-        K: usize,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
         let (_, program_io, _) = state_manager.get_verifier_data();
+        let K = state_manager.ram_K;
 
         let r_address = state_manager
             .transcript
             .borrow_mut()
             .challenge_vector(K.log_2());
 
-        let output_sumcheck_verifier_state = OutputSumcheckVerifierState {
-            program_io: program_io.clone(),
-            r_address: r_address.to_vec(),
-        };
-
         OutputSumcheck {
             K,
-            verifier_state: Some(output_sumcheck_verifier_state),
             prover_state: None,
+            r_address: Some(r_address),
+            program_io: Some(program_io.clone()),
         }
     }
 }
@@ -266,11 +248,6 @@ impl<F: JoltField> SumcheckInstance<F> for OutputSumcheck<F> {
         accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
         r: &[F],
     ) -> F {
-        let OutputSumcheckVerifierState {
-            r_address,
-            program_io,
-        } = self.verifier_state.as_ref().unwrap();
-
         let val_final_claim = accumulator
             .as_ref()
             .unwrap()
@@ -281,7 +258,9 @@ impl<F: JoltField> SumcheckInstance<F> for OutputSumcheck<F> {
             )
             .1;
 
+        let r_address = self.r_address.as_ref().unwrap();
         let r_address_prime = &r[..r_address.len()];
+        let program_io = self.program_io.as_ref().unwrap();
 
         let io_mask = RangeMaskPolynomial::new(
             remap_address(
