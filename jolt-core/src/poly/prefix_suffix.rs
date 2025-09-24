@@ -301,11 +301,107 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
             std::array::from_fn(|_| unsafe_allocate_zero_vec(poly_len));
         for (q, reduced_q) in new_Q.iter().zip(reduced_Q.iter_mut()) {
             for (q_coeff, reduced_q_coeff) in q.iter().zip(reduced_q.iter_mut()) {
-                *reduced_q_coeff = F::from_montgomery_reduce(*q_coeff);
+                *reduced_q_coeff = F::from_barrett_reduce(*q_coeff);
             }
         }
 
         self.Q = std::array::from_fn(|i| DensePolynomial::new(std::mem::take(&mut reduced_Q[i])));
+    }
+
+    /// Initialize Q for two PrefixSuffixDecomposition instances in a single pass over indices
+    #[tracing::instrument(skip_all)]
+    pub fn init_Q_dual(
+        left: &mut PrefixSuffixDecomposition<F, ORDER>,
+        right: &mut PrefixSuffixDecomposition<F, ORDER>,
+        u_evals: &[F],
+        indices: &[(usize, LookupBits)],
+    ) {
+        debug_assert_eq!(left.chunk_len, right.chunk_len);
+        debug_assert_eq!(left.total_len, right.total_len);
+        debug_assert_eq!(left.phase, right.phase);
+
+        let poly_len = left.chunk_len.pow2();
+        let suffix_len = left.suffix_len();
+        let suffixes_left = left.poly.suffixes();
+        let suffixes_right = right.poly.suffixes();
+
+        let num_chunks = rayon::current_num_threads().next_power_of_two();
+        let chunk_size = (indices.len() / num_chunks).max(1);
+
+        let (new_left, new_right) = indices
+            .par_chunks(chunk_size)
+            .map(|chunk| {
+                let mut chunk_left: [Vec<ark_ff::BigInt<7>>; ORDER] =
+                    std::array::from_fn(|_| unsafe_allocate_zero_vec_bigint(poly_len));
+                let mut chunk_right: [Vec<ark_ff::BigInt<7>>; ORDER] =
+                    std::array::from_fn(|_| unsafe_allocate_zero_vec_bigint(poly_len));
+
+                for (j, k) in chunk {
+                    let (prefix_bits, suffix_bits) = k.split(suffix_len);
+
+                    // Left accumulators
+                    for (suffix, result) in suffixes_left.iter().zip(chunk_left.iter_mut()) {
+                        let t = suffix.suffix_mle(suffix_bits);
+                        if t != 0 {
+                            if let Some(u) = u_evals.get(*j) {
+                                result[prefix_bits % poly_len] += u.mul_u128_unreduced(t);
+                            }
+                        }
+                    }
+
+                    // Right accumulators
+                    for (suffix, result) in suffixes_right.iter().zip(chunk_right.iter_mut()) {
+                        let t = suffix.suffix_mle(suffix_bits);
+                        if t != 0 {
+                            if let Some(u) = u_evals.get(*j) {
+                                result[prefix_bits % poly_len] += u.mul_u128_unreduced(t);
+                            }
+                        }
+                    }
+                }
+
+                (chunk_left, chunk_right)
+            })
+            .reduce(
+                || (
+                    std::array::from_fn(|_| unsafe_allocate_zero_vec_bigint(poly_len)),
+                    std::array::from_fn(|_| unsafe_allocate_zero_vec_bigint(poly_len)),
+                ),
+                |(mut acc_l, mut acc_r), (new_l, new_r)| {
+                    for (acc_i, new_i) in acc_l.iter_mut().zip(new_l.iter()) {
+                        for (acc_coeff, new_coeff) in acc_i.iter_mut().zip(new_i.iter()) {
+                            *acc_coeff += new_coeff;
+                        }
+                    }
+                    for (acc_i, new_i) in acc_r.iter_mut().zip(new_r.iter()) {
+                        for (acc_coeff, new_coeff) in acc_i.iter_mut().zip(new_i.iter()) {
+                            *acc_coeff += new_coeff;
+                        }
+                    }
+                    (acc_l, acc_r)
+                },
+            );
+
+        // Reduce to field for left
+        let mut reduced_left: [Vec<F>; ORDER] =
+            std::array::from_fn(|_| unsafe_allocate_zero_vec(poly_len));
+        for (q, reduced_q) in new_left.iter().zip(reduced_left.iter_mut()) {
+            for (q_coeff, reduced_q_coeff) in q.iter().zip(reduced_q.iter_mut()) {
+                *reduced_q_coeff = F::from_barrett_reduce(*q_coeff);
+            }
+        }
+
+        // Reduce to field for right
+        let mut reduced_right: [Vec<F>; ORDER] =
+            std::array::from_fn(|_| unsafe_allocate_zero_vec(poly_len));
+        for (q, reduced_q) in new_right.iter().zip(reduced_right.iter_mut()) {
+            for (q_coeff, reduced_q_coeff) in q.iter().zip(reduced_q.iter_mut()) {
+                *reduced_q_coeff = F::from_barrett_reduce(*q_coeff);
+            }
+        }
+
+        left.Q = std::array::from_fn(|i| DensePolynomial::new(std::mem::take(&mut reduced_left[i])));
+        right.Q = std::array::from_fn(|i| DensePolynomial::new(std::mem::take(&mut reduced_right[i])));
     }
 
     /// Returns evaluation at 0 and at 2 at index
