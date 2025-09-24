@@ -5,18 +5,18 @@
 Jolt implements the base RISC-V instruction set, making it a RISC-V-compliant virtual machine. This means Jolt can execute and prove any code that compiles to RISC-V.
 
 ## Supported Instruction Sets
-#### **`Current ISA Configuration: RV32IM`**
+#### **`Current ISA Configuration: RV64IMAC`**
 
 ### Base Instruction Set
-#### __RV32I__
-RV32I is the base 32-bit integer instruction set. It's designed to be sufficient for a complete software toolchain while being simple and minimal. Everything else in RISC-V (multiplication, floating point, atomic operations) is built as extensions on top of this base ISA.
+#### __RV64I__
+RV64I is the base 64-bit integer instruction set. It's designed to be sufficient for a complete software toolchain while being simple and minimal. Everything else in RISC-V (multiplication, floating point, atomic operations) is built as extensions on top of this base ISA.
 
 ##### Key properties:
 - 32-bit fixed-width instructions
 
-- 32 integer registers (`x0-x31`), where `x0` is hardwired to zero. Register `x1/ra` is reserved for return address linkage by jump-and-link instructions, `x2/sp` is conventionally used as __stack pointer__. Each register is 32 bits wide and used for both integer and memory address computations.
+- 32 integer registers (`x0-x31`), where `x0` is hardwired to zero. Register `x1/ra` is reserved for return address linkage by jump-and-link instructions, `x2/sp` is conventionally used as __stack pointer__. Each register is 64 bits wide and used for both integer and memory address computations.
 
-- 32-bit address space (byte-addressed and little-endian). Memory accesses can be to byte (8-bit), halfword (16-bit), or word (32-bit) sized values
+- 64-bit address space (byte-addressed and little-endian). Memory accesses can be to byte (8-bit), halfword (16-bit), word (32-bit), or doubleword (64-bit) sized values
 
 - Basic arithmetic operations (add, subtract, shift, logical operations)
 
@@ -33,7 +33,7 @@ For detailed instruction formats and encoding, refer to the __chapter 2__ of [sp
 
 ##### Key properties:
 
-- Multiplication operations generate 32-bit (lower) or 64-bit (full) results
+- Multiplication operations generate 64-bit (lower) or 128-bit (full) results
 
 - Separate signed and unsigned multiply instructions
 
@@ -43,17 +43,17 @@ For detailed instruction formats and encoding, refer to the __chapter 2__ of [sp
 
 - Divide-by-zero results in a well-defined result (maximum unsigned value)
 
-- Maintains the simple register-based architecture of RV32I
+- Maintains the simple register-based architecture of RV64I
 
-- Results always written to a single 32-bit register (for upper/lower multiplication results, two separate instructions are used)
+- Results always written to a single 64-bit register (for upper/lower multiplication results, two separate instructions are used)
 
 - All instructions in this extension are encoded in the standard 32-bit RISC-V format
 
 ##### Core Operations:
 
-- `MUL`: Multiplication, lower 32-bit result
+- `MUL`: Multiplication, lower 64-bit result
 
-- `MULH/MULHU/MULHSU`: Upper 32-bit multiplication (signed×signed, unsigned×unsigned, signed×unsigned)
+- `MULH/MULHU/MULHSU`: Upper 64-bit multiplication (signed×signed, unsigned×unsigned, signed×unsigned)
 
 - `DIV/DIVU`: Signed and unsigned division
 
@@ -61,6 +61,48 @@ For detailed instruction formats and encoding, refer to the __chapter 2__ of [sp
 
 
 For detailed instruction formats and encoding, refer to __chapter 7__ of [specification](https://riscv.org/wp-content/uploads/2019/12/riscv-spec-20191213.pdf)
+
+#### __"A" Standard Extension for Atomic Instructions__
+
+##### Key properties:
+
+- Support for atomic read-modify-write operations
+
+- Load-Reserved/Store-Conditional instructions for synchronization
+
+- Atomic memory operations (swap, add, and, or, xor, min, max)
+
+- All atomic operations work on word (32-bit) and doubleword (64-bit) values
+
+##### Core Operations:
+
+- `LR.W/LR.D`: Load-Reserved word/doubleword
+
+- `SC.W/SC.D`: Store-Conditional word/doubleword
+
+- `AMOSWAP`: Atomic swap
+
+- `AMOADD`: Atomic add
+
+- `AMOAND/AMOOR/AMOXOR`: Atomic logical operations
+
+- `AMOMIN/AMOMAX`: Atomic min/max operations
+
+For detailed instruction formats and encoding, refer to __chapter 8__ of [specification](https://riscv.org/wp-content/uploads/2019/12/riscv-spec-20191213.pdf)
+
+#### __"C" Standard Extension for Compressed Instructions__
+
+##### Key properties:
+
+- 16-bit compressed instruction encodings for common operations
+
+- Reduces code size by ~25-30% on typical programs
+
+- Seamlessly intermixed with 32-bit instructions
+
+- Maps to a subset of RV64I instructions
+
+For detailed instruction formats and encoding, refer to __chapter 16__ of [specification](https://riscv.org/wp-content/uploads/2019/12/riscv-spec-20191213.pdf)
 
 
 ## LLVM
@@ -80,6 +122,6 @@ This means any language that compiles to LLVM IR (like C, C++, Rust, etc.) can b
 
 ## References
 - [RISC-V Specifications](https://riscv.org/technical/specifications/)
-- [RV32I Base ISA Specification](https://github.com/riscv/riscv-isa-manual/releases/download/Ratified-IMAFDQC/riscv-spec-20191213.pdf)
+- [RV64I Base ISA Specification](https://github.com/riscv/riscv-isa-manual/releases/download/Ratified-IMAFDQC/riscv-spec-20191213.pdf)
 - [RISC-V Assembly Programmer's Manual](https://github.com/riscv-non-isa/riscv-asm-manual/blob/main/src/asm-manual.adoc)
 - [LLVM RISC-V Backend Documentation](https://llvm.org/docs/RISCVUsage.html)
