@@ -37,38 +37,21 @@ impl RISCVTrace for SLL {
         let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
-            // In each iteration, create a new Option containing a re-borrowed reference
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
 
-    /// Generates an inline sequence for logical left shift operation.
-    ///
-    /// SLL (Shift Left Logical) shifts rs1 left by the shift amount in the lower
-    /// 5 bits (RV32) or 6 bits (RV64) of rs2, filling the vacated bits with zeros.
-    ///
-    /// The implementation uses the mathematical equivalence:
-    /// x << n = x × 2^n
-    ///
-    /// This allows the shift to be verified using multiplication, which is
-    /// more amenable to proof systems that work with field arithmetic.
+    /// SLL shifts left by multiplying by 2^shift_amount.
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,
         xlen: Xlen,
     ) -> Vec<Instruction> {
-        let v_pow2 = allocator.allocate(); // holds 2^shift_amount
+        let v_pow2 = allocator.allocate();
 
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
-
-        // Step 1: Compute 2^shift_amount
-        // VirtualPow2 computes 2^(rs2 & mask) where mask is 0x1f (RV32) or 0x3f (RV64)
         asm.emit_i::<VirtualPow2>(*v_pow2, self.operands.rs2, 0);
-
-        // Step 2: Multiply rs1 by 2^shift_amount
-        // This achieves the left shift: rs1 << shift_amount = rs1 × 2^shift_amount
         asm.emit_r::<MUL>(self.operands.rd, self.operands.rs1, *v_pow2);
-
         asm.finalize()
     }
 }

@@ -85,83 +85,46 @@ impl RISCVTrace for DIVW {
 
         let mut trace = trace;
         for instr in inline_sequence {
-            // In each iteration, create a new Option containing a re-borrowed reference
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
 
-    /// Generates an inline sequence to verify 32-bit signed division on 64-bit systems.
-    ///
-    /// DIVW is an RV64 instruction that performs signed division on the lower 32 bits of
-    /// the operands, treating them as signed 32-bit integers, and sign-extends the
-    /// 32-bit quotient to 64 bits. This is similar to DIV but operates on 32-bit values
-    /// within 64-bit registers.
-    ///
-    /// The approach:
-    /// 1. Sign-extend inputs to proper 32-bit signed values
-    /// 2. Receive untrusted quotient and |remainder| advice from oracle
-    /// 3. Handle special cases (division by zero, i32::MIN / -1 overflow)
-    /// 4. Verify quotient × divisor doesn't overflow in 32-bit space
-    /// 5. Verify division property: dividend = quotient × divisor + remainder (mod 2^32)
-    /// 6. Ensure |remainder| < |divisor|
-    /// 7. Sign-extend the 32-bit result to 64 bits
+    /// DIVW performs signed 32-bit division on RV64, sign-extending the result to 64 bits.
+    /// Verifies division via untrusted oracle advice, handling overflow and division by zero.
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,
         xlen: Xlen,
     ) -> Vec<Instruction> {
-        let a0 = self.operands.rs1; // dividend register (64-bit, contains 32-bit value)
-        let a1 = self.operands.rs2; // divisor register (64-bit, contains 32-bit value)
-        let a2 = allocator.allocate(); // quotient from oracle (untrusted)
-        let a3 = allocator.allocate(); // |remainder| from oracle (unsigned, untrusted)
-        let t0 = allocator.allocate(); // adjusted 32-bit divisor (handles special cases)
-        let t1 = allocator.allocate(); // temporary for 32-bit multiplication result
-        let t2 = allocator.allocate(); // temporary for 64-bit multiplication / sign operations
-        let t3 = allocator.allocate(); // temporary for signed remainder construction
-        let t4 = allocator.allocate(); // sign-extended 32-bit dividend
+        let a0 = self.operands.rs1;
+        let a1 = self.operands.rs2;
+        let a2 = allocator.allocate();
+        let a3 = allocator.allocate();
+        let t0 = allocator.allocate();
+        let t1 = allocator.allocate();
+        let t2 = allocator.allocate();
+        let t3 = allocator.allocate();
+        let t4 = allocator.allocate();
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
 
-        // Step 1: Get untrusted advice values from oracle
-        asm.emit_j::<VirtualAdvice>(*a2, 0); // get quotient advice
-        asm.emit_j::<VirtualAdvice>(*a3, 0); // get |remainder| advice
-
-        // Step 2: Sign-extend inputs to proper 32-bit values
-        // This ensures we work with correct 32-bit signed interpretations
-        asm.emit_i::<VirtualSignExtendWord>(*t4, a0, 0); // t4 = sign_extend_32(dividend)
-        asm.emit_i::<VirtualSignExtendWord>(*t3, a1, 0); // t3 = sign_extend_32(divisor)
-
-        // Step 3: Handle special cases per RISC-V spec
-        // - Division by zero: quotient = -1
-        // - Overflow (i32::MIN / -1): quotient = i32::MIN
-        asm.emit_b::<VirtualAssertValidDiv0>(*t3, *a2, 0); // validates quotient for div-by-zero
-        asm.emit_r::<VirtualChangeDivisorW>(*t0, *t4, *t3); // t0 = adjusted divisor for overflow
-
-        // Step 4: Check 32-bit multiplication doesn't overflow
-        // We verify this by comparing 32-bit multiply with full 64-bit multiply
-        asm.emit_r::<MULW>(*t1, *a2, *t0); // t1 = 32-bit multiply, sign-extended to 64 bits
-        asm.emit_r::<MUL>(*t2, *a2, *t0); // t2 = full 64-bit multiply
-        asm.emit_b::<VirtualAssertEQ>(*t1, *t2, 0); // assert they match (no 32-bit overflow)
-
-        // Step 5: Construct signed remainder from unsigned advice
-        // Apply dividend's sign to |remainder| per RISC-V spec
-        asm.emit_i::<SRAI>(*t2, *t4, 31); // t2 = sign_bit(32-bit dividend) extended
-        asm.emit_r::<XOR>(*t3, *a3, *t2); // t3 = |remainder| ^ sign_mask
-        asm.emit_r::<SUB>(*t3, *t3, *t2); // t3 = signed_remainder (two's complement if negative)
-
-        // Step 6: Verify division property in 32-bit space
-        // dividend = quotient × divisor + remainder (all operations in 32-bit space)
-        asm.emit_r::<ADDW>(*t1, *t1, *t3); // t1 = (quotient × divisor) + remainder (32-bit add)
-        asm.emit_b::<VirtualAssertEQ>(*t1, *t4, 0); // assert t1 == sign_extended_dividend
-
-        // Step 7: Verify remainder magnitude constraint
-        // |remainder| < |divisor| is required for valid division
-        asm.emit_i::<SRAI>(*t2, *t0, 31); // t2 = sign_bit(adjusted_divisor) extended
-        asm.emit_r::<XOR>(*t1, *t0, *t2); // t1 = adjusted_divisor ^ sign_mask
-        asm.emit_r::<SUB>(*t1, *t1, *t2); // t1 = |adjusted_divisor|
-        asm.emit_b::<VirtualAssertValidUnsignedRemainder>(*a3, *t1, 0); // assert |remainder| < |divisor|
-
-        // Step 8: Sign-extend 32-bit quotient to 64 bits and move to destination
-        // This ensures the result is properly sign-extended as per DIVW specification
+        asm.emit_j::<VirtualAdvice>(*a2, 0);
+        asm.emit_j::<VirtualAdvice>(*a3, 0);
+        asm.emit_i::<VirtualSignExtendWord>(*t4, a0, 0);
+        asm.emit_i::<VirtualSignExtendWord>(*t3, a1, 0);
+        asm.emit_b::<VirtualAssertValidDiv0>(*t3, *a2, 0);
+        asm.emit_r::<VirtualChangeDivisorW>(*t0, *t4, *t3);
+        asm.emit_r::<MULW>(*t1, *a2, *t0);
+        asm.emit_r::<MUL>(*t2, *a2, *t0);
+        asm.emit_b::<VirtualAssertEQ>(*t1, *t2, 0);
+        asm.emit_i::<SRAI>(*t2, *t4, 31);
+        asm.emit_r::<XOR>(*t3, *a3, *t2);
+        asm.emit_r::<SUB>(*t3, *t3, *t2);
+        asm.emit_r::<ADDW>(*t1, *t1, *t3);
+        asm.emit_b::<VirtualAssertEQ>(*t1, *t4, 0);
+        asm.emit_i::<SRAI>(*t2, *t0, 31);
+        asm.emit_r::<XOR>(*t1, *t0, *t2);
+        asm.emit_r::<SUB>(*t1, *t1, *t2);
+        asm.emit_b::<VirtualAssertValidUnsignedRemainder>(*a3, *t1, 0);
         asm.emit_i::<VirtualSignExtendWord>(self.operands.rd, *a2, 0);
         asm.finalize()
     }

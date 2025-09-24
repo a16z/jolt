@@ -38,37 +38,20 @@ impl RISCVTrace for SRL {
         let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
-            // In each iteration, create a new Option containing a re-borrowed reference
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
 
-    /// Generates an inline sequence for logical right shift operation.
-    ///
-    /// SRL (Shift Right Logical) shifts rs1 right by the shift amount in rs2,
-    /// filling the vacated bits with zeros (unlike SRA which fills with sign bit).
-    ///
-    /// The implementation uses a bitmask approach where:
-    /// 1. A bitmask is computed based on the shift amount
-    /// 2. Virtual SRL instruction applies the shift using the bitmask
-    ///
-    /// This approach allows the shift to be verified in a way that's compatible
-    /// with zkVM's constraint system, avoiding direct bit manipulation.
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,
         xlen: Xlen,
     ) -> Vec<Instruction> {
-        let v_bitmask = allocator.allocate(); // holds the shift bitmask
+        let v_bitmask = allocator.allocate();
 
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
 
-        // Step 1: Generate bitmask for right shift
-        // Creates a mask that represents which bits to keep after shifting
         asm.emit_i::<VirtualShiftRightBitmask>(*v_bitmask, self.operands.rs2, 0);
-
-        // Step 2: Apply logical right shift using the bitmask
-        // Fills high bits with zeros during the shift operation
         asm.emit_vshift_r::<VirtualSRL>(self.operands.rd, self.operands.rs1, *v_bitmask);
 
         asm.finalize()

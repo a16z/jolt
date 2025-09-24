@@ -64,62 +64,28 @@ impl RISCVTrace for REMU {
 
         let mut trace = trace;
         for instr in inline_sequence {
-            // In each iteration, create a new Option containing a re-borrowed reference
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
 
-    /// Generates an inline sequence to verify unsigned remainder operation.
-    ///
-    /// This function implements a verifiable unsigned remainder (modulo) operation by
-    /// decomposing it into simpler operations that can be proven correct. Unlike signed
-    /// remainder, unsigned remainder is simpler as all values are non-negative.
-    ///
-    /// The approach:
-    /// 1. Receives untrusted quotient and remainder advice from an oracle
-    /// 2. Verifies the fundamental division property: dividend = quotient × divisor + remainder
-    /// 3. Ensures remainder < divisor (modulo property for unsigned)
-    /// 4. Handles division by zero per RISC-V spec (returns dividend)
-    ///
-    /// Note: When divisor is 0, the quotient advice is ignored (can be any value) since
-    /// multiplication by 0 yields 0, and the check becomes: 0 + remainder = dividend.
-    /// The VirtualAssertValidUnsignedRemainder handles the special case where divisor is 0.
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,
         xlen: Xlen,
     ) -> Vec<Instruction> {
-        let a0 = self.operands.rs1; // dividend (unsigned input)
-        let a1 = self.operands.rs2; // divisor (unsigned input)
-        let a2 = allocator.allocate(); // quotient from oracle (ignored when divisor==0)
-        let a3 = allocator.allocate(); // remainder from oracle (untrusted)
-        let t0 = allocator.allocate(); // temporary for multiplication result
+        let a0 = self.operands.rs1;
+        let a1 = self.operands.rs2;
+        let a2 = allocator.allocate();
+        let a3 = allocator.allocate();
+        let t0 = allocator.allocate();
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
 
-        // Step 1: Get untrusted advice values from oracle
-        // Both quotient and remainder are unsigned values
-        asm.emit_j::<VirtualAdvice>(*a2, 0); // get quotient advice
-        asm.emit_j::<VirtualAdvice>(*a3, 0); // get remainder advice
-
-        // Step 2: Compute quotient × divisor
-        // When divisor is 0, this multiplication yields 0, which is correct
-        // for the special case handling (remainder should equal dividend)
-        asm.emit_r::<MUL>(*t0, *a2, a1); // t0 = quotient × divisor
-
-        // Step 3: Verify fundamental division property
-        // dividend = quotient × divisor + remainder (all operations mod 2^n)
-        // When divisor is 0: dividend = 0 + remainder, so remainder must equal dividend
-        asm.emit_r::<ADD>(*t0, *t0, *a3); // t0 = (quotient × divisor) + remainder
-        asm.emit_b::<VirtualAssertEQ>(*t0, a0, 0); // assert t0 == dividend
-
-        // Step 4: Verify remainder constraint
-        // For valid unsigned division: remainder < divisor
-        // Special case: when divisor is 0, this check ensures remainder == dividend
-        // (the assertion handles this by checking remainder < MAX when divisor is 0)
+        asm.emit_j::<VirtualAdvice>(*a2, 0);
+        asm.emit_j::<VirtualAdvice>(*a3, 0);
+        asm.emit_r::<MUL>(*t0, *a2, a1);
+        asm.emit_r::<ADD>(*t0, *t0, *a3);
+        asm.emit_b::<VirtualAssertEQ>(*t0, a0, 0);
         asm.emit_b::<VirtualAssertValidUnsignedRemainder>(*a3, a1, 0);
-
-        // Step 5: Move verified remainder to destination register
-        // The remainder is the final result for REMU instruction
         asm.emit_i::<VirtualMove>(self.operands.rd, *a3, 0);
         asm.finalize()
     }

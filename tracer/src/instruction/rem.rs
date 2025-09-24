@@ -88,38 +88,23 @@ impl RISCVTrace for REM {
 
         let mut trace = trace;
         for instr in inline_sequence {
-            // In each iteration, create a new Option containing a re-borrowed reference
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
 
-    /// Generates an inline sequence to verify signed remainder operation.
-    ///
-    /// This function implements a verifiable signed remainder (modulo) operation by decomposing
-    /// it into simpler operations that can be proven correct. Per RISC-V spec, the sign of a
-    /// nonzero remainder equals the sign of the dividend.
-    ///
-    /// The approach:
-    /// 1. Receives untrusted quotient and |remainder| advice from an oracle
-    /// 2. Verifies the fundamental division property: dividend = quotient × divisor + remainder
-    /// 3. Ensures |remainder| < |divisor| (modulo property)
-    /// 4. Handles special cases per RISC-V spec (division by zero, overflow)
-    ///
-    /// Unlike DIV, REM doesn't need overflow checking for quotient × divisor since we only
-    /// care about the remainder, and the multiplication is performed modulo 2^n.
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,
         xlen: Xlen,
     ) -> Vec<Instruction> {
-        let a0 = self.operands.rs1; // dividend (input)
-        let a1 = self.operands.rs2; // divisor (input)
-        let a2 = allocator.allocate(); // quotient from oracle (untrusted)
-        let a3 = allocator.allocate(); // |remainder| from oracle (unsigned, untrusted)
-        let t0 = allocator.allocate(); // adjusted divisor (handles special cases)
-        let t1 = allocator.allocate(); // temporary for multiplication result
-        let t2 = allocator.allocate(); // temporary for sign operations
-        let t3 = allocator.allocate(); // temporary for signed remainder construction
+        let a0 = self.operands.rs1;
+        let a1 = self.operands.rs2;
+        let a2 = allocator.allocate();
+        let a3 = allocator.allocate();
+        let t0 = allocator.allocate();
+        let t1 = allocator.allocate();
+        let t2 = allocator.allocate();
+        let t3 = allocator.allocate();
 
         let shmat = match xlen {
             Xlen::Bit32 => 31,
@@ -127,45 +112,20 @@ impl RISCVTrace for REM {
         };
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
 
-        // Step 1: Get untrusted advice values from oracle
-        // The oracle provides quotient and absolute value of remainder
-        asm.emit_j::<VirtualAdvice>(*a2, 0); // get quotient advice
-        asm.emit_j::<VirtualAdvice>(*a3, 0); // get |remainder| advice
-
-        // Step 2: Handle special cases per RISC-V spec
-        // - Division by zero: remainder = dividend
-        // - Overflow (most_negative / -1): remainder = 0
-        asm.emit_b::<VirtualAssertValidDiv0>(a1, *a2, 0); // validates quotient for div-by-zero case
-        asm.emit_r::<VirtualChangeDivisor>(*t0, a0, a1); // adjusts divisor for overflow case
-
-        // Step 3: Compute quotient × divisor (modulo 2^n)
-        // No overflow check needed since we work modulo 2^n for remainder
-        // This is different from DIV where we need to ensure no overflow
-        asm.emit_r::<MUL>(*t1, *a2, *t0); // t1 = quotient × adjusted_divisor (mod 2^n)
-
-        // Step 4: Construct signed remainder from unsigned advice
-        // RISC-V spec: sign(remainder) = sign(dividend) when remainder ≠ 0
-        // We apply two's complement conversion if dividend is negative
-        asm.emit_i::<SRAI>(*t2, a0, shmat); // t2 = sign_bit(dividend) extended (all 1s if negative)
-        asm.emit_r::<XOR>(*t3, *a3, *t2); // t3 = |remainder| ^ sign_mask (flip bits if negative)
-        asm.emit_r::<SUB>(*t3, *t3, *t2); // t3 = signed_remainder (add 1 if negative via subtraction)
-
-        // Step 5: Verify fundamental division property
-        // dividend = quotient × divisor + remainder (all operations mod 2^n)
-        // This ensures our remainder is mathematically correct
-        asm.emit_r::<ADD>(*t1, *t1, *t3); // t1 = (quotient × divisor) + signed_remainder
-        asm.emit_b::<VirtualAssertEQ>(*t1, a0, 0); // assert t1 == dividend
-
-        // Step 6: Verify remainder magnitude constraint
-        // |remainder| < |divisor| is required for valid modulo operation
-        // First compute |adjusted_divisor| using two's complement if negative
-        asm.emit_i::<SRAI>(*t2, *t0, shmat); // t2 = sign_bit(adjusted_divisor) extended
-        asm.emit_r::<XOR>(*t1, *t0, *t2); // t1 = adjusted_divisor ^ sign_mask
-        asm.emit_r::<SUB>(*t1, *t1, *t2); // t1 = |adjusted_divisor|
-        asm.emit_b::<VirtualAssertValidUnsignedRemainder>(*a3, *t1, 0); // assert |remainder| < |divisor|
-
-        // Step 7: Move verified signed remainder to destination register
-        // The signed remainder (with correct sign) is the final result
+        asm.emit_j::<VirtualAdvice>(*a2, 0);
+        asm.emit_j::<VirtualAdvice>(*a3, 0);
+        asm.emit_b::<VirtualAssertValidDiv0>(a1, *a2, 0);
+        asm.emit_r::<VirtualChangeDivisor>(*t0, a0, a1);
+        asm.emit_r::<MUL>(*t1, *a2, *t0);
+        asm.emit_i::<SRAI>(*t2, a0, shmat);
+        asm.emit_r::<XOR>(*t3, *a3, *t2);
+        asm.emit_r::<SUB>(*t3, *t3, *t2);
+        asm.emit_r::<ADD>(*t1, *t1, *t3);
+        asm.emit_b::<VirtualAssertEQ>(*t1, a0, 0);
+        asm.emit_i::<SRAI>(*t2, *t0, shmat);
+        asm.emit_r::<XOR>(*t1, *t0, *t2);
+        asm.emit_r::<SUB>(*t1, *t1, *t2);
+        asm.emit_b::<VirtualAssertValidUnsignedRemainder>(*a3, *t1, 0);
         asm.emit_i::<VirtualMove>(self.operands.rd, *t3, 0);
         asm.finalize()
     }

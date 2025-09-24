@@ -25,11 +25,6 @@ declare_riscv_instr!(
 
 impl ADDIW {
     fn exec(&self, cpu: &mut Cpu, _: &mut <ADDIW as RISCVInstruction>::RAMAccess) {
-        // ADDIW is an RV64I instruction that adds the sign-extended 12-bit immediate to register
-        // rs1 and produces the proper sign extension of a 32-bit result in rd. Overflows are
-        // ignored and the result is the low 32 bits of the result sign-extended to 64 bits. Note,
-        // ADDIW rd, rs1, 0 writes the sign extension of the lower 32 bits of register rs1 into
-        // register rd (assembler pseudoinstruction SEXT.W).
         cpu.x[self.operands.rd as usize] = cpu.x[self.operands.rs1 as usize]
             .wrapping_add(normalize_imm(self.operands.imm, &cpu.xlen))
             as i32 as i64;
@@ -41,12 +36,10 @@ impl RISCVTrace for ADDIW {
         let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
-            // In each iteration, create a new Option containing a re-borrowed reference
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
 
-    /// 32-bit add immediate with sign extension on 64-bit systems.
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,
