@@ -232,14 +232,20 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
                             |running, new| [running[0] + new[0], running[1] + new[1]],
                         );
 
-                    [B_evals[0].mul_unreduced::<9>(inner_sum[0]), B_evals[1].mul_unreduced::<9>(inner_sum[1])]
+                    [
+                        B_evals[0].mul_unreduced::<9>(inner_sum[0]),
+                        B_evals[1].mul_unreduced::<9>(inner_sum[1]),
+                    ]
                 })
                 .reduce(
                     || [ark_ff::BigInt::zero(); 2],
                     |running, new| [running[0] + new[0], running[1] + new[1]],
                 );
 
-            unreduced_univariate_poly_evals.into_iter().map(|evals| F::from_montgomery_reduce(evals)).collect()
+            unreduced_univariate_poly_evals
+                .into_iter()
+                .map(|evals| F::from_montgomery_reduce(evals))
+                .collect()
         } else {
             // T-variable rounds
             let B = &shared_eq_address.B;
@@ -266,10 +272,7 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
                 let unreduced_gruen_eval_0 = (0..d_gruen.len() / 2)
                     .into_par_iter()
                     .map(|j| d_gruen.E_out_current()[j].mul_unreduced::<9>(ra_eval(j)))
-                    .reduce(
-                        || ark_ff::BigInt::zero(),
-                        |running, new| running + new,
-                    );
+                    .reduce(ark_ff::BigInt::zero, |running, new| running + new);
                 F::from_montgomery_reduce(unreduced_gruen_eval_0)
             } else {
                 let d_e_in = d_gruen.E_in_current();
@@ -287,10 +290,7 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
                                 let j = (x_in << num_x_out_bits) | x_out;
                                 d_e_out[x_out].mul_unreduced::<9>(ra_eval(j))
                             })
-                            .reduce(
-                                || ark_ff::BigInt::zero(),
-                                |running, new| running + new,
-                            );
+                            .reduce(ark_ff::BigInt::zero, |running, new| running + new);
                         let inner_sum = F::from_montgomery_reduce(unreduced_inner_sum);
                         d_e_in[x_in] * inner_sum
                     })

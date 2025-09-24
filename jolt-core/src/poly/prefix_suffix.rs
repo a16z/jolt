@@ -363,10 +363,12 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
                 (chunk_left, chunk_right)
             })
             .reduce(
-                || (
-                    std::array::from_fn(|_| unsafe_allocate_zero_vec_bigint(poly_len)),
-                    std::array::from_fn(|_| unsafe_allocate_zero_vec_bigint(poly_len)),
-                ),
+                || {
+                    (
+                        std::array::from_fn(|_| unsafe_allocate_zero_vec_bigint(poly_len)),
+                        std::array::from_fn(|_| unsafe_allocate_zero_vec_bigint(poly_len)),
+                    )
+                },
                 |(mut acc_l, mut acc_r), (new_l, new_r)| {
                     for (acc_i, new_i) in acc_l.iter_mut().zip(new_l.iter()) {
                         for (acc_coeff, new_coeff) in acc_i.iter_mut().zip(new_i.iter()) {
@@ -400,8 +402,10 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
             }
         }
 
-        left.Q = std::array::from_fn(|i| DensePolynomial::new(std::mem::take(&mut reduced_left[i])));
-        right.Q = std::array::from_fn(|i| DensePolynomial::new(std::mem::take(&mut reduced_right[i])));
+        left.Q =
+            std::array::from_fn(|i| DensePolynomial::new(std::mem::take(&mut reduced_left[i])));
+        right.Q =
+            std::array::from_fn(|i| DensePolynomial::new(std::mem::take(&mut reduced_right[i])));
     }
 
     /// Returns evaluation at 0 and at 2 at index
@@ -433,7 +437,13 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
                 )
             })
             .reduce(
-                || (ark_ff::BigInt::zero(), ark_ff::BigInt::zero(), ark_ff::BigInt::zero()),
+                || {
+                    (
+                        ark_ff::BigInt::zero(),
+                        ark_ff::BigInt::zero(),
+                        ark_ff::BigInt::zero(),
+                    )
+                },
                 |running, new| (running.0 + new.0, running.1 + new.1, running.2 + new.2),
             );
         let eval_0 = F::from_montgomery_reduce(eval_0);
