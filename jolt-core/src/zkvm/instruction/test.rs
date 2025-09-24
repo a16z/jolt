@@ -3,7 +3,7 @@ use common::constants::XLEN;
 use rand::prelude::*;
 use tracer::instruction::{RISCVCycle, RISCVInstruction};
 
-use super::InstructionLookup;
+use super::{CircuitFlags, InstructionLookup};
 
 pub fn materialize_entry_test<F, T>()
 where
@@ -22,5 +22,88 @@ where
             "{:?}",
             random_cycle.register_state
         );
+    }
+}
+
+/// Test that certain combinations of circuit flags are exclusive.
+mod flags {
+    use super::CircuitFlags;
+    use crate::zkvm::instruction::InstructionFlagsExt;
+    use strum::IntoEnumIterator;
+    use tracer::instruction::Cycle;
+
+    #[test]
+    fn left_operand_exclusive() {
+        for cycle in Cycle::iter() {
+            if let Cycle::INLINE(_) = cycle {
+                continue;
+            }
+            let instr = cycle.instruction();
+            if let Some(flags) = instr.try_circuit_flags() {
+                assert!(
+                    !(flags[CircuitFlags::LeftOperandIsPC]
+                        && flags[CircuitFlags::LeftOperandIsRs1Value]),
+                    "Left operand flags not exclusive for {instr:?}",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn right_operand_exclusive() {
+        for cycle in Cycle::iter() {
+            if let Cycle::INLINE(_) = cycle {
+                continue;
+            }
+            let instr = cycle.instruction();
+            if let Some(flags) = instr.try_circuit_flags() {
+                assert!(
+                    !(flags[CircuitFlags::RightOperandIsRs2Value]
+                        && flags[CircuitFlags::RightOperandIsImm]),
+                    "Right operand flags not exclusive for {instr:?}",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn lookup_shape_exclusive() {
+        for cycle in Cycle::iter() {
+            if let Cycle::INLINE(_) = cycle {
+                continue;
+            }
+            let instr = cycle.instruction();
+            if let Some(flags) = instr.try_circuit_flags() {
+                let num_true = [
+                    flags[CircuitFlags::AddOperands],
+                    flags[CircuitFlags::SubtractOperands],
+                    flags[CircuitFlags::MultiplyOperands],
+                    flags[CircuitFlags::Advice],
+                ]
+                .iter()
+                .filter(|&&b| b)
+                .count();
+                assert!(
+                    num_true <= 1,
+                    "Lookup shaping flags not exclusive for {instr:?}",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn load_store_exclusive() {
+        for cycle in Cycle::iter() {
+            if let Cycle::INLINE(_) = cycle {
+                continue;
+            }
+            let instr = cycle.instruction();
+            if let Some(flags) = instr.try_circuit_flags() {
+                assert!(
+                    !(flags[CircuitFlags::Load] && flags[CircuitFlags::Store]),
+                    "Load/Store flags not exclusive for {instr:?}",
+                );
+            }
+        }
     }
 }

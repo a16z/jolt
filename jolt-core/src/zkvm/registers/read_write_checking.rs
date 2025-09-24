@@ -10,7 +10,7 @@ use crate::{
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator},
     },
-    subprotocols::sumcheck::{SumcheckInstance, SumcheckInstanceProof},
+    subprotocols::sumcheck::SumcheckInstance,
     transcripts::Transcript,
     utils::{math::Math, thread::unsafe_allocate_zero_vec},
     zkvm::{witness::CommittedPolynomial, JoltProverPreprocessing},
@@ -18,7 +18,6 @@ use crate::{
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::REGISTER_COUNT;
 use fixedbitset::FixedBitSet;
 use rayon::prelude::*;
@@ -216,23 +215,6 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
     }
 }
 
-#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone, Default)]
-pub struct ReadWriteSumcheckClaims<F: JoltField> {
-    pub val_claim: F,
-    pub rs1_ra_claim: F,
-    pub rs2_ra_claim: F,
-    pub rd_wa_claim: F,
-    pub inc_claim: F,
-}
-
-/// Claims for register read/write values from Spartan
-#[derive(Debug, Clone, Default)]
-pub struct ReadWriteValueClaims<F: JoltField> {
-    pub rs1_rv_claim: F,
-    pub rs2_rv_claim: F,
-    pub rd_wv_claim: F,
-}
-
 #[derive(Allocative)]
 pub struct RegistersReadWriteChecking<F: JoltField> {
     T: usize,
@@ -241,12 +223,6 @@ pub struct RegistersReadWriteChecking<F: JoltField> {
     sumcheck_switch_index: usize,
     prover_state: Option<ReadWriteCheckingProverState<F>>,
     input_claim: F,
-}
-
-#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
-pub struct RegistersReadWriteCheckingProof<F: JoltField, ProofTranscript: Transcript> {
-    sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
-    sumcheck_switch_index: usize,
 }
 
 impl<F: JoltField> RegistersReadWriteChecking<F> {

@@ -32,10 +32,8 @@ pub struct ValEvaluationProverState<F: JoltField> {
 
 #[derive(Allocative)]
 pub(crate) struct ValEvaluationSumcheck<F: JoltField> {
-    pub r_address: Vec<F>,
     pub input_claim: F,
     pub num_rounds: usize,
-    pub r_cycle: Vec<F>,
     pub prover_state: Option<ValEvaluationProverState<F>>,
 }
 
@@ -87,9 +85,7 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
         let num_rounds = r_cycle.len().pow2().log_2();
         Self {
             input_claim: val_claim,
-            r_address,
             num_rounds,
-            r_cycle,
             prover_state: Some(ValEvaluationProverState { inc, wa, lt }),
         }
     }
@@ -101,22 +97,14 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
 
         let accumulator = state_manager.get_verifier_accumulator();
         // Get val_claim from the accumulator (from stage 2 RegistersReadWriteChecking)
-        let (opening_point, val_claim) = accumulator.borrow().get_virtual_polynomial_opening(
+        let (_, val_claim) = accumulator.borrow().get_virtual_polynomial_opening(
             VirtualPolynomial::RegistersVal,
             SumcheckId::RegistersReadWriteChecking,
         );
 
-        // The opening point is r_address || r_cycle
-        let r_address_len = REGISTER_COUNT.ilog2() as usize;
-        let (r_address_slice, r_cycle_slice) = opening_point.split_at(r_address_len);
-        let r_address: Vec<F> = r_address_slice.into();
-        let r_cycle: Vec<F> = r_cycle_slice.into();
-
         Self {
             input_claim: val_claim,
-            r_address,
             num_rounds: trace_length.log_2(),
-            r_cycle,
             prover_state: None,
         }
     }
@@ -197,15 +185,22 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
         accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
         r: &[F],
     ) -> F {
+        let accumulator = accumulator.as_ref().unwrap();
+        let (opening_point, _) = accumulator.borrow().get_virtual_polynomial_opening(
+            VirtualPolynomial::RegistersVal,
+            SumcheckId::RegistersReadWriteChecking,
+        );
+        let (_, r_cycle) = opening_point.split_at(REGISTER_COUNT.ilog2() as usize);
+
         // Compute LT(r_cycle', r_cycle)
         let mut lt_eval = F::zero();
         let mut eq_term = F::one();
-        for (x, y) in r.iter().zip(self.r_cycle.iter()) {
+
+        for (x, y) in r.iter().zip(r_cycle.r.iter()) {
             lt_eval += (F::one() - x) * y * eq_term;
             eq_term *= F::one() - x - y + *x * y + *x * y;
         }
 
-        let accumulator = accumulator.as_ref().unwrap();
         let (_, inc_claim) = accumulator.borrow().get_committed_polynomial_opening(
             CommittedPolynomial::RdInc,
             SumcheckId::RegistersValEvaluation,
@@ -233,6 +228,12 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
             .as_ref()
             .expect("Prover state not initialized");
 
+        let (opening_point, _) = accumulator.borrow().get_virtual_polynomial_opening(
+            VirtualPolynomial::RegistersVal,
+            SumcheckId::RegistersReadWriteChecking,
+        );
+        let (r_address, _) = opening_point.split_at(REGISTER_COUNT.ilog2() as usize);
+
         let inc_claim = prover_state.inc.final_sumcheck_claim();
         let wa_claim = prover_state.wa.final_sumcheck_claim();
 
@@ -244,7 +245,7 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
             &[inc_claim],
         );
 
-        let r = [self.r_address.as_slice(), r_cycle.r.as_slice()].concat();
+        let r = [r_address.r.as_slice(), r_cycle.r.as_slice()].concat();
         accumulator.borrow_mut().append_virtual(
             VirtualPolynomial::RdWa,
             SumcheckId::RegistersValEvaluation,
@@ -258,6 +259,12 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
         accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
         r_cycle: OpeningPoint<BIG_ENDIAN, F>,
     ) {
+        let (opening_point, _) = accumulator.borrow().get_virtual_polynomial_opening(
+            VirtualPolynomial::RegistersVal,
+            SumcheckId::RegistersReadWriteChecking,
+        );
+        let (r_address, _) = opening_point.split_at(REGISTER_COUNT.ilog2() as usize);
+
         // Append claims to accumulator
         accumulator.borrow_mut().append_dense(
             vec![CommittedPolynomial::RdInc],
@@ -265,7 +272,7 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
             r_cycle.r.clone(),
         );
 
-        let r = [self.r_address.as_slice(), r_cycle.r.as_slice()].concat();
+        let r = [r_address.r.as_slice(), r_cycle.r.as_slice()].concat();
         accumulator.borrow_mut().append_virtual(
             VirtualPolynomial::RdWa,
             SumcheckId::RegistersValEvaluation,
