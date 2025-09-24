@@ -51,7 +51,6 @@ pub struct BooleanitySumcheck<F: JoltField> {
     log_K_chunk: usize,
     prover_state: Option<BooleanityProverState<F>>,
     r_address: Vec<F>,
-    r_cycle: Vec<F>,
 }
 
 impl<F: JoltField> BooleanitySumcheck<F> {
@@ -73,11 +72,6 @@ impl<F: JoltField> BooleanitySumcheck<F> {
 
         let r_address: Vec<F> = sm.transcript.borrow_mut().challenge_vector(log_K_chunk);
 
-        let (r_cycle, _) = sm.get_virtual_polynomial_opening(
-            VirtualPolynomial::LookupOutput,
-            SumcheckId::SpartanOuter,
-        );
-
         Self {
             gamma: gamma_powers,
             prover_state: Some(BooleanityProverState::new(
@@ -92,13 +86,13 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             log_T: trace.len().log_2(),
             log_K_chunk,
             r_address,
-            r_cycle: r_cycle.into(),
         }
     }
 
     pub fn new_verifier(
         sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
     ) -> Self {
+        let (_, _, T) = sm.get_verifier_data();
         let d = sm.get_verifier_data().0.shared.bytecode.d;
         let log_K = sm.get_bytecode().len().log_2();
         let log_K_chunk = log_K.div_ceil(d);
@@ -108,16 +102,11 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             gamma_powers[i] = gamma_powers[i - 1] * gamma;
         }
         let r_address: Vec<F> = sm.transcript.borrow_mut().challenge_vector(log_K_chunk);
-        let (r_cycle, _) = sm.get_virtual_polynomial_opening(
-            VirtualPolynomial::LookupOutput,
-            SumcheckId::SpartanOuter,
-        );
         Self {
             gamma: gamma_powers,
             prover_state: None,
+            log_T: T.log_2(),
             r_address,
-            log_T: r_cycle.len(),
-            r_cycle: r_cycle.into(),
             log_K_chunk,
             d,
         }
@@ -275,6 +264,10 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
                     .1
             })
             .collect::<Vec<F>>();
+        let (r_cycle, _) = accumulator.borrow().get_virtual_polynomial_opening(
+            VirtualPolynomial::LookupOutput,
+            SumcheckId::SpartanOuter,
+        );
 
         EqPolynomial::mle(
             r,
@@ -283,7 +276,7 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
                 .iter()
                 .cloned()
                 .rev()
-                .chain(self.r_cycle.iter().cloned().rev())
+                .chain(r_cycle.r.iter().cloned().rev())
                 .collect::<Vec<F>>(),
         ) * self
             .gamma

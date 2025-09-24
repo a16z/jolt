@@ -3,7 +3,6 @@ use std::{cell::RefCell, rc::Rc};
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
 
 use crate::{
@@ -20,19 +19,12 @@ use crate::{
             BIG_ENDIAN,
         },
     },
-    subprotocols::sumcheck::{SumcheckInstance, SumcheckInstanceProof},
+    subprotocols::sumcheck::SumcheckInstance,
     transcripts::Transcript,
     utils::{math::Math, thread::unsafe_allocate_zero_vec},
     zkvm::dag::state_manager::StateManager,
     zkvm::{ram::remap_address, witness::VirtualPolynomial},
 };
-
-#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
-pub struct RafEvaluationProof<F: JoltField, ProofTranscript: Transcript> {
-    sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
-    ra_claim: F,
-    raf_claim: F,
-}
 
 #[derive(Allocative)]
 pub struct RafEvaluationProverState<F: JoltField> {
@@ -58,12 +50,12 @@ pub struct RafEvaluationSumcheck<F: JoltField> {
 impl<F: JoltField> RafEvaluationSumcheck<F> {
     #[tracing::instrument(skip_all, name = "RamRafEvaluationSumcheck::new_prover")]
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
-        K: usize,
-        T: usize,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
         let (_, trace, program_io, _) = state_manager.get_prover_data();
         let memory_layout = &program_io.memory_layout;
+        let K = state_manager.ram_K;
+        let T = trace.len();
 
         let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
         let chunk_size = (T / num_chunks).max(1);
@@ -115,10 +107,10 @@ impl<F: JoltField> RafEvaluationSumcheck<F> {
     }
 
     pub fn new_verifier<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
-        K: usize,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
         let (_, program_io, _) = state_manager.get_verifier_data();
+        let K = state_manager.ram_K;
         let raf_claim = state_manager
             .get_virtual_polynomial_opening(VirtualPolynomial::RamAddress, SumcheckId::SpartanOuter)
             .1;

@@ -766,6 +766,10 @@ where
             .collect();
         debug_assert_eq!(DoryGlobals::get_num_columns(), row_len);
 
+        if row_len > g1_generators.len() {
+            panic!("max_trace_length is too small");
+        }
+
         match self {
             MultilinearPolynomial::LargeScalars(poly) => poly
                 .Z
@@ -1086,6 +1090,10 @@ impl CommitmentScheme for DoryCommitmentScheme {
         setup: &Self::ProverSetup,
     ) -> (Self::Commitment, Self::OpeningProofHint) {
         let sigma = DoryGlobals::get_num_columns().log_2();
+        assert!(
+            sigma <= setup.core.g1_vec.len().log_2(),
+            "max_trace_length is too small"
+        );
         let (commitment, row_commitments) =
             commit::<JoltBn254, JoltMsmG1, _>(poly, 0, sigma, setup);
         (DoryCommitment(commitment), row_commitments)

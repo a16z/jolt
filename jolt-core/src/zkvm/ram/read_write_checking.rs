@@ -13,7 +13,7 @@ use crate::{
             BIG_ENDIAN, LITTLE_ENDIAN,
         },
     },
-    subprotocols::sumcheck::{SumcheckInstance, SumcheckInstanceProof},
+    subprotocols::sumcheck::SumcheckInstance,
     transcripts::Transcript,
     utils::{math::Math, thread::unsafe_allocate_zero_vec},
     zkvm::dag::state_manager::StateManager,
@@ -319,21 +319,14 @@ pub struct RamReadWriteChecking<F: JoltField> {
     wv_claim: F,
 }
 
-#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
-pub struct RamReadWriteCheckingProof<F: JoltField, ProofTranscript: Transcript> {
-    sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
-    sumcheck_switch_index: usize,
-    pub claims: ReadWriteSumcheckClaims<F>,
-}
-
 impl<F: JoltField> RamReadWriteChecking<F> {
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
-        K: usize,
-        T: usize,
         initial_memory_state: &[u64],
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
         let gamma = state_manager.transcript.borrow_mut().challenge_scalar();
+        let K = state_manager.ram_K;
+        let T = state_manager.get_prover_data().1.len();
 
         let (_, rv_claim) = state_manager
             .get_prover_accumulator()
@@ -366,11 +359,11 @@ impl<F: JoltField> RamReadWriteChecking<F> {
     }
 
     pub fn new_verifier<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
-        K: usize,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
         let gamma = state_manager.transcript.borrow_mut().challenge_scalar();
         let (_, _, T) = state_manager.get_verifier_data();
+        let K = state_manager.ram_K;
 
         let r_prime = state_manager
             .get_verifier_accumulator()

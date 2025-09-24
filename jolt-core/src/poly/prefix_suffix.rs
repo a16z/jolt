@@ -250,13 +250,14 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
         });
     }
 
+    #[tracing::instrument(skip_all, name = "PrefixSuffix::init_P")]
     pub fn init_P(&mut self, prefix_registry: &mut PrefixRegistry<F>) {
         self.P = self
             .poly
             .prefixes(self.chunk_len, self.phase, prefix_registry);
     }
 
-    #[tracing::instrument(skip_all)]
+    #[tracing::instrument(skip_all, name = "PrefixSuffix::init_Q")]
     pub fn init_Q(&mut self, u_evals: &[F], indices: &[(usize, LookupBits)]) {
         let poly_len = self.chunk_len.pow2();
         let suffix_len = self.suffix_len();
