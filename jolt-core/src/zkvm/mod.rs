@@ -377,8 +377,8 @@ mod tests {
 
     use crate::transcripts::Blake2bTranscript;
 
-    pub struct JoltRV32IMMockPCS;
-    impl Jolt<Fr, MockCommitScheme<Fr>, Blake2bTranscript> for JoltRV32IMMockPCS {}
+    pub struct JoltRV64IMACMockPCS;
+    impl Jolt<Fr, MockCommitScheme<Fr>, Blake2bTranscript> for JoltRV64IMACMockPCS {}
 
     #[test]
     #[serial]
@@ -388,7 +388,7 @@ mod tests {
         let (bytecode, init_memory_state, _) = program.decode();
         let (_, _, io_device) = program.trace(&inputs);
 
-        let preprocessing = JoltRV32IMMockPCS::prover_preprocess(
+        let preprocessing = JoltRV64IMACMockPCS::prover_preprocess(
             bytecode.clone(),
             io_device.memory_layout.clone(),
             init_memory_state,
@@ -397,11 +397,11 @@ mod tests {
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let (jolt_proof, io_device, debug_info) =
-            JoltRV32IMMockPCS::prove(&preprocessing, elf_contents, &inputs);
+            JoltRV64IMACMockPCS::prove(&preprocessing, elf_contents, &inputs);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let verification_result =
-            JoltRV32IMMockPCS::verify(&verifier_preprocessing, jolt_proof, io_device, debug_info);
+            JoltRV64IMACMockPCS::verify(&verifier_preprocessing, jolt_proof, io_device, debug_info);
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",
