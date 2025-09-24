@@ -24,8 +24,8 @@ This is critical because RAM and registers operate as independent Twist memory c
 While Jolt's design uniquely leverages lookups for most RISC-V instructions, arithmetic instructions are the exception to this rule.
 Most arithmetic instructions (addition, subtraction, multiplication) are primarily constrained using R1CS constraints, with the lookup only serving to truncate potential overflow bits.
 
-For these instructions, we can emulate the 32-bit arithmetic using native field arithmetic, since Jolt's elliptic curve scalar field is big enough to perform these operations without overflow.
-E.g. to add two 32-bit numbers `x` and `y`, we can add their $\mathbb{F}_r$ equivalents $x$ and $y$, knowing that $x + y \in \mathbb{F}_r$ will be equivalent to the desired 33-bit sum.
+For these instructions, we can emulate the 64-bit arithmetic using native field arithmetic, since Jolt's elliptic curve scalar field is big enough to perform these operations without overflow.
+E.g. to add two 64-bit numbers `x` and `y`, we can add their $\mathbb{F}_r$ equivalents $x$ and $y$, knowing that $x + y \in \mathbb{F}_r$ will be equivalent to the desired 65-bit sum.
 We then employ a range-check lookup to truncate the potential overflow bit, thus matching the behavior of the RISC-V spec.
 
 ## Circuit Flags

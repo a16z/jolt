@@ -44,20 +44,21 @@ pub struct ValEvaluationSumcheck<F: JoltField> {
     /// log T
     num_rounds: usize,
     /// used to compute LT evaluation
-    r_cycle: Vec<F>,
     prover_state: Option<ValEvaluationProverState<F>>,
+    /// ram K parameter
+    K: usize,
 }
 
 impl<F: JoltField> ValEvaluationSumcheck<F> {
     #[tracing::instrument(skip_all, name = "RamValEvaluationSumcheck::new_prover")]
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
-        K: usize,
         initial_ram_state: &[u64],
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
         let (preprocessing, trace, program_io, _) = state_manager.get_prover_data();
         let memory_layout = &program_io.memory_layout;
         let T = trace.len();
+        let K = state_manager.ram_K;
 
         let (r, claimed_evaluation) = state_manager.get_virtual_polynomial_opening(
             VirtualPolynomial::RamVal,
@@ -114,23 +115,23 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
             claimed_evaluation,
             init_eval,
             num_rounds: T.log_2(),
-            r_cycle: r_cycle.r.clone(),
             prover_state: Some(ValEvaluationProverState { inc, wa, lt }),
+            K,
         }
     }
 
     pub fn new_verifier<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
-        K: usize,
         initial_ram_state: &[u64],
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
         let (_, _, T) = state_manager.get_verifier_data();
+        let K = state_manager.ram_K;
 
         let (r, claimed_evaluation) = state_manager.get_virtual_polynomial_opening(
             VirtualPolynomial::RamVal,
             SumcheckId::RamReadWriteChecking,
         );
-        let (r_address, r_cycle) = r.split_at(K.log_2());
+        let (r_address, _) = r.split_at(K.log_2());
 
         let val_init: MultilinearPolynomial<F> =
             MultilinearPolynomial::from(initial_ram_state.to_vec());
@@ -140,8 +141,8 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
             claimed_evaluation,
             init_eval,
             num_rounds: T.log_2(),
-            r_cycle: r_cycle.r,
             prover_state: None,
+            K,
         }
     }
 }
@@ -218,15 +219,20 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
         accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
         r: &[F],
     ) -> F {
+        let accumulator = accumulator.as_ref().unwrap();
+        let (r_val, _) = accumulator.borrow().get_virtual_polynomial_opening(
+            VirtualPolynomial::RamVal,
+            SumcheckId::RamReadWriteChecking,
+        );
+        let (_, r_cycle) = r_val.split_at(self.K.log_2());
         // Compute LT(r_cycle', r_cycle)
         let mut lt_eval = F::zero();
         let mut eq_term = F::one();
-        for (x, y) in r.iter().zip(self.r_cycle.iter()) {
+        for (x, y) in r.iter().zip(r_cycle.r.iter()) {
             lt_eval += (F::one() - x) * y * eq_term;
             eq_term *= F::one() - x - y + *x * y + *x * y;
         }
 
-        let accumulator = accumulator.as_ref().unwrap();
         let (_, inc_claim) = accumulator.borrow().get_committed_polynomial_opening(
             CommittedPolynomial::RamInc,
             SumcheckId::RamValEvaluation,

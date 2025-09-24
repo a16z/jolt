@@ -272,6 +272,10 @@ impl FieldOps<&TrackedFr, TrackedFr> for TrackedFr {}
 
 impl JoltField for TrackedFr {
     const NUM_BYTES: usize = <ark_bn254::Fr as JoltField>::NUM_BYTES;
+    /// The Montgomery factor R = 2^(64*N) mod p
+    const MONTGOMERY_R: Self = TrackedFr(<ark_bn254::Fr as JoltField>::MONTGOMERY_R);
+    /// The squared Montgomery factor R^2 = 2^(128*N) mod p
+    const MONTGOMERY_R_SQUARE: Self = TrackedFr(<ark_bn254::Fr as JoltField>::MONTGOMERY_R_SQUARE);
     type SmallValueLookupTables = <ark_bn254::Fr as JoltField>::SmallValueLookupTables;
 
     fn random<R: rand_core::RngCore>(rng: &mut R) -> Self {
@@ -377,6 +381,16 @@ impl JoltField for TrackedFr {
             unsafe { transmute::<&[Self], &[Fr]>(pos_add) },
             unsafe { transmute::<&[Self], &[Fr]>(neg_add) },
         ))
+    }
+
+    #[inline(always)]
+    fn as_bigint_ref(&self) -> &ark_ff::BigInt<4> {
+        self.0.as_bigint_ref()
+    }
+
+    #[inline(always)]
+    fn from_montgomery_reduce_2n(unreduced: ark_ff::BigInt<8>) -> Self {
+        TrackedFr(ark_bn254::Fr::montgomery_reduce_2n(unreduced))
     }
 }
 

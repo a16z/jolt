@@ -42,11 +42,10 @@ pub struct HammingWeightSumcheck<F: JoltField> {
 impl<F: JoltField> HammingWeightSumcheck<F> {
     #[tracing::instrument(skip_all, name = "RamHammingWeightSumcheck::new_prover")]
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
-        K: usize,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
         // Calculate D dynamically such that 2^8 = K^(1/D)
-        let d = compute_d_parameter(K);
+        let d = compute_d_parameter(state_manager.ram_K);
 
         let (_, trace, program_io, _) = state_manager.get_prover_data();
         let memory_layout = &program_io.memory_layout;
@@ -120,11 +119,10 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
     }
 
     pub fn new_verifier<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
-        K: usize,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
         // Calculate D dynamically such that 2^8 = K^(1/D)
-        let d = compute_d_parameter(K);
+        let d = compute_d_parameter(state_manager.ram_K);
 
         let gamma: F = state_manager.transcript.borrow_mut().challenge_scalar();
         let mut gamma_powers = vec![F::one(); d];

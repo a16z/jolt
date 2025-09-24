@@ -20,9 +20,11 @@ use crate::utils::mul_0_optimized;
 use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::utils::small_value::svo_helpers::process_svo_sumcheck_rounds;
 use crate::utils::thread::drop_in_background_thread;
-use crate::zkvm::r1cs::{constraints::UNIFORM_R1CS, inputs::WitnessRowAccessor};
+use crate::zkvm::JoltSharedPreprocessing;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
+use tracer::instruction::Cycle;
+
 use ark_serialize::*;
 use rayon::prelude::*;
 use std::cell::RefCell;
@@ -392,8 +394,9 @@ impl BatchedSumcheck {
 impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTranscript> {
     #[tracing::instrument(skip_all, name = "Spartan::prove_spartan_small_value")]
     pub fn prove_spartan_small_value<const NUM_SVO_ROUNDS: usize>(
+        preprocessing: &JoltSharedPreprocessing,
+        trace: &[Cycle],
         num_rounds: usize,
-        accessor: &dyn WitnessRowAccessor<F>,
         tau: &[F],
         transcript: &mut ProofTranscript,
     ) -> (Self, Vec<F>, [F; 3]) {
@@ -404,8 +407,8 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
         let (accums_zero, accums_infty, mut az_bz_cz_poly) = SpartanInterleavedPolynomial::<
             NUM_SVO_ROUNDS,
             F,
-        >::new_with_precompute(
-            &UNIFORM_R1CS, accessor, tau
+        >::svo_sumcheck_round(
+            preprocessing, trace, tau
         );
         #[cfg(feature = "allocative")]
         print_data_structure_heap_usage("SpartanInterleavedPolynomial", &az_bz_cz_poly);
@@ -422,7 +425,10 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
             &mut eq_poly,
         );
 
+        // We stream over the trace again for this round
         az_bz_cz_poly.streaming_sumcheck_round(
+            preprocessing,
+            trace,
             &mut eq_poly,
             transcript,
             &mut r,

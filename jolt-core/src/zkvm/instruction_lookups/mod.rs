@@ -18,7 +18,7 @@ use crate::{
         instruction::LookupQuery,
         instruction_lookups::{
             booleanity::BooleanitySumcheck, hamming_weight::HammingWeightSumcheck,
-            ra_virtual::RASumCheck, read_raf_checking::ReadRafSumcheck,
+            ra_virtual::RaSumcheck, read_raf_checking::ReadRafSumcheck,
         },
         witness::VirtualPolynomial,
     },
@@ -36,7 +36,6 @@ const M: usize = 1 << LOG_M;
 pub const D: usize = 16;
 pub const LOG_K_CHUNK: usize = LOG_K / D;
 pub const K_CHUNK: usize = 1 << LOG_K_CHUNK;
-const RA_PER_LOG_M: usize = LOG_M / LOG_K_CHUNK;
 
 #[derive(Default)]
 pub struct LookupsDag<F: JoltField> {
@@ -121,7 +120,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F>>> {
-        let ra_virtual = RASumCheck::new_prover(sm);
+        let ra_virtual = RaSumcheck::new_prover(sm);
 
         #[cfg(feature = "allocative")]
         {
@@ -138,7 +137,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F>>> {
-        let ra_virtual = RASumCheck::new_verifier(sm);
+        let ra_virtual = RaSumcheck::new_verifier(sm);
 
         vec![Box::new(ra_virtual)]
     }

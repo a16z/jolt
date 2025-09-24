@@ -60,9 +60,9 @@ pub struct BooleanitySumcheck<F: JoltField> {
 impl<F: JoltField> BooleanitySumcheck<F> {
     #[tracing::instrument(skip_all, name = "RamBooleanitySumcheck::new_prover")]
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
-        K: usize,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
+        let K = state_manager.ram_K;
         // Calculate D dynamically such that 2^8 = K^(1/D)
         let d = compute_d_parameter(K);
 
@@ -166,13 +166,12 @@ impl<F: JoltField> BooleanitySumcheck<F> {
     }
 
     pub fn new_verifier<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
-        K: usize,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
         let (_, _, T) = state_manager.get_verifier_data();
 
         // Calculate D dynamically such that 2^8 = K^(1/D)
-        let d = compute_d_parameter(K);
+        let d = compute_d_parameter(state_manager.ram_K);
 
         let r_cycle: Vec<F> = state_manager
             .transcript

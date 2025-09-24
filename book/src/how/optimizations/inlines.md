@@ -105,9 +105,9 @@ This is fundamentally different from traditional assembly optimization - we're n
 
 Note that creating custom user-defined instructions is currently only available within the core Jolt codebase and not yet supported in external crates.
 
-### 3. 32-bit Immediate Values
+### 3. 64-bit Immediate Values
 
-Unlike standard RISC-V which limits immediate values to 12 or 20 bits, inlines can use full 32-bit immediate values. This eliminates the need for multiple instructions to load large constants, reducing both cycle count and register usage.
+Unlike standard RISC-V which limits immediate values to 12 or 20 bits, inlines can use full 64-bit immediate values. This eliminates the need for multiple instructions to load large constants, reducing both cycle count and register usage.
 
 ## Creating Custom Inlines
 
@@ -149,7 +149,7 @@ When designing your inline, consider:
 
 - **Register Allocation**: Maximize use of the 32 additional virtual registers to minimize memory operations
 - **Custom Instructions**: Identify patterns that could benefit from custom instructions (creating custom user-defined instructions is not available at this time)
-- **Immediate Values**: Leverage 32-bit immediate values to reduce instruction count
+- **Immediate Values**: Leverage 64-bit immediate values to reduce instruction count
 - **Memory Access Patterns**: Structure your algorithm to minimize load/store operations
 
 For concrete examples and implementation patterns, study the existing inline implementations in the Jolt codebase.

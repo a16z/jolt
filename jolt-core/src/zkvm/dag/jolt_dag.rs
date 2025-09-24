@@ -17,9 +17,9 @@ use crate::zkvm::dag::proof_serialization::JoltProof;
 use crate::zkvm::dag::stage::SumcheckStages;
 use crate::zkvm::dag::state_manager::{ProofData, ProofKeys, StateManager};
 use crate::zkvm::instruction_lookups::LookupsDag;
-use crate::zkvm::r1cs::spartan::SpartanDag;
 use crate::zkvm::ram::RamDag;
 use crate::zkvm::registers::RegistersDag;
+use crate::zkvm::spartan::SpartanDag;
 use crate::zkvm::witness::{
     compute_d_parameter, AllCommittedPolynomials, CommittedPolynomial, DTH_ROOT_OF_K,
 };
