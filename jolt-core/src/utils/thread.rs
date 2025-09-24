@@ -55,3 +55,35 @@ pub fn unsafe_zero_slice<F: JoltField + Sized>(slice: &mut [F]) {
         std::ptr::write_bytes(slice.as_mut_ptr(), 0, slice.len());
     }
 }
+
+/// Fast allocation of zero vector of BigInt
+/// TODO: refactor so that both this and unsafe_allocate_zero_vec are one function
+#[inline]
+pub fn unsafe_allocate_zero_vec_bigint<const N: usize>(size: usize) -> Vec<ark_ff::BigInt<N>> {
+    // https://stackoverflow.com/questions/59314686/how-to-efficiently-create-a-large-vector-of-items-initialized-to-the-same-value
+
+    #[cfg(test)]
+    {
+        // Check for safety of 0 allocation
+        unsafe {
+            let value = &ark_ff::BigInt::zero();
+            let ptr = value as *const ark_ff::BigInt<N> as *const u8;
+            let bytes = std::slice::from_raw_parts(ptr, std::mem::size_of::<ark_ff::BigInt<N>>());
+            assert!(bytes.iter().all(|&byte| byte == 0));
+        }
+    }
+
+    // Bulk allocate zeros, unsafely
+    let result: Vec<ark_ff::BigInt<N>>;
+    unsafe {
+        let layout = std::alloc::Layout::array::<ark_ff::BigInt<N>>(size).unwrap();
+        let ptr = std::alloc::alloc_zeroed(layout) as *mut ark_ff::BigInt<N>;
+
+        if ptr.is_null() {
+            panic!("Zero vec allocation failed");
+        }
+
+        result = Vec::from_raw_parts(ptr, size, size);
+    }
+    result
+}

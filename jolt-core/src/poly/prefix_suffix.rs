@@ -12,7 +12,9 @@ use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::multilinear_polynomial::{BindingOrder, PolynomialBinding, PolynomialEvaluation};
 use crate::utils::lookup_bits::LookupBits;
 use crate::utils::math::Math;
-use crate::utils::thread::{unsafe_allocate_zero_vec, unsafe_zero_slice};
+use crate::utils::thread::{
+    unsafe_allocate_zero_vec, unsafe_allocate_zero_vec_bigint, unsafe_zero_slice,
+};
 
 #[repr(u8)]
 #[derive(Clone, Copy, EnumIterMacro, EnumCountMacro)]
@@ -263,11 +265,11 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
         let num_chunks = rayon::current_num_threads().next_power_of_two();
         let chunk_size = (indices.len() / num_chunks).max(1);
 
-        let mut new_Q = indices
+        let new_Q = indices
             .par_chunks(chunk_size)
             .map(|chunk| {
-                let mut chunk_result: [Vec<F>; ORDER] =
-                    std::array::from_fn(|_| unsafe_allocate_zero_vec(poly_len));
+                let mut chunk_result: [Vec<ark_ff::BigInt<7>>; ORDER] =
+                    std::array::from_fn(|_| unsafe_allocate_zero_vec_bigint(poly_len));
 
                 for (j, k) in chunk {
                     let (prefix_bits, suffix_bits) = k.split(suffix_len);
@@ -275,7 +277,7 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
                         let t = suffix.suffix_mle(suffix_bits);
                         if t != 0 {
                             if let Some(u) = u_evals.get(*j) {
-                                result[prefix_bits % poly_len] += u.mul_u128(t);
+                                result[prefix_bits % poly_len] += u.mul_u128_unreduced(t);
                             }
                         }
                     }
@@ -284,18 +286,26 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
                 chunk_result
             })
             .reduce(
-                || std::array::from_fn(|_| unsafe_allocate_zero_vec(poly_len)),
+                || std::array::from_fn(|_| unsafe_allocate_zero_vec_bigint(poly_len)),
                 |mut acc, new| {
                     for (acc_i, new_i) in acc.iter_mut().zip(new.iter()) {
                         for (acc_coeff, new_coeff) in acc_i.iter_mut().zip(new_i.iter()) {
-                            *acc_coeff += *new_coeff;
+                            *acc_coeff += new_coeff;
                         }
                     }
                     acc
                 },
             );
 
-        self.Q = std::array::from_fn(|i| DensePolynomial::new(std::mem::take(&mut new_Q[i])));
+        let mut reduced_Q: [Vec<F>; ORDER] =
+            std::array::from_fn(|_| unsafe_allocate_zero_vec(poly_len));
+        for (q, reduced_q) in new_Q.iter().zip(reduced_Q.iter_mut()) {
+            for (q_coeff, reduced_q_coeff) in q.iter().zip(reduced_q.iter_mut()) {
+                *reduced_q_coeff = F::from_montgomery_reduce(*q_coeff);
+            }
+        }
+
+        self.Q = std::array::from_fn(|i| DensePolynomial::new(std::mem::take(&mut reduced_Q[i])));
     }
 
     /// Returns evaluation at 0 and at 2 at index
