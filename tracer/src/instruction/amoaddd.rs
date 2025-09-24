@@ -56,19 +56,41 @@ impl RISCVTrace for AMOADDD {
         }
     }
 
+    /// Generates inline sequence for atomic memory operation add (64-bit).
+    ///
+    /// AMOADD.D atomically loads a 64-bit value from memory, adds rs2 to it,
+    /// stores the result back to memory, and returns the original value in rd.
+    ///
+    /// The implementation sequence:
+    /// 1. Load the current value from memory address in rs1
+    /// 2. Add rs2 to the loaded value
+    /// 3. Store the result back to the same memory address
+    /// 4. Move the original value to rd
+    ///
+    /// Note: In zkVM, atomicity is guaranteed by the execution model rather than
+    /// hardware synchronization, as there's only one execution thread.
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,
         xlen: Xlen,
     ) -> Vec<Instruction> {
-        let v_rs2 = allocator.allocate();
-        let v_rd = allocator.allocate();
+        let v_rs2 = allocator.allocate(); // holds the sum result
+        let v_rd = allocator.allocate(); // holds the original memory value
 
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
+
+        // Step 1: Load the current 64-bit value from memory
         asm.emit_ld::<LD>(*v_rd, self.operands.rs1, 0);
+
+        // Step 2: Add rs2 to the loaded value
         asm.emit_r::<ADD>(*v_rs2, *v_rd, self.operands.rs2);
+
+        // Step 3: Store the sum back to memory
         asm.emit_s::<SD>(self.operands.rs1, *v_rs2, 0);
+
+        // Step 4: Move original value to destination register
         asm.emit_i::<VirtualMove>(self.operands.rd, *v_rd, 0);
+
         asm.finalize()
     }
 }

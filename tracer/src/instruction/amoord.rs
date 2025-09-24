@@ -54,6 +54,16 @@ impl RISCVTrace for AMOORD {
         }
     }
 
+    /// Generates inline sequence for atomic OR operation (64-bit).
+    ///
+    /// AMOOR.D atomically loads a 64-bit value from memory, performs bitwise OR
+    /// with rs2, stores the result back to memory, and returns the original value in rd.
+    ///
+    /// Simple load-modify-store sequence:
+    /// 1. Load current 64-bit value from memory
+    /// 2. OR with rs2
+    /// 3. Store result back to memory
+    /// 4. Return original value in rd
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,

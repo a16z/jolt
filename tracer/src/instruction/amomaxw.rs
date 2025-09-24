@@ -62,6 +62,21 @@ impl RISCVTrace for AMOMAXW {
         }
     }
 
+    /// Generates inline sequence for atomic maximum operation (signed 32-bit).
+    ///
+    /// AMOMAX.W atomically loads a 32-bit word from memory, computes the maximum
+    /// of that value and the lower 32 bits of rs2 (treating both as signed),
+    /// stores the maximum back to memory, and returns the original value
+    /// sign-extended in rd.
+    ///
+    /// Uses branchless maximum computation with signed comparison:
+    /// 1. Load word and prepare operands with sign extension
+    /// 2. Use SLT for signed comparison to generate selector bits
+    /// 3. Multiply each value by its selector bit and add for branchless max
+    /// 4. Store result and return original value sign-extended
+    ///
+    /// On RV64, requires sign-extending both operands to 64 bits before
+    /// comparison to ensure correct signed comparison semantics.
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,

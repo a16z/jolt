@@ -79,50 +79,74 @@ impl RISCVTrace for DIVUW {
         }
     }
 
+    /// Generates an inline sequence to verify 32-bit unsigned division on 64-bit systems.
+    ///
+    /// DIVUW is an RV64 instruction that performs unsigned division on the lower 32 bits
+    /// of the operands, treating them as unsigned 32-bit integers. The 32-bit quotient
+    /// is then sign-extended to 64 bits (despite being unsigned division, the result
+    /// is sign-extended per RISC-V spec).
+    ///
+    /// The approach:
+    /// 1. Zero-extend inputs to get proper 32-bit unsigned values
+    /// 2. Receive untrusted quotient and remainder advice from oracle
+    /// 3. Handle division by zero (returns u32::MAX = 0xFFFFFFFF)
+    /// 4. Verify quotient × divisor doesn't overflow in 32-bit unsigned space
+    /// 5. Verify division property: dividend = quotient × divisor + remainder
+    /// 6. Ensure remainder < divisor (unsigned comparison)
+    /// 7. Sign-extend the 32-bit result to 64 bits
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,
         xlen: Xlen,
     ) -> Vec<Instruction> {
-        let a0 = self.operands.rs1; // dividend
-        let a1 = self.operands.rs2; // divisor
-        let a2 = allocator.allocate(); // quotient from oracle
-        let a3 = allocator.allocate(); // remainder from oracle
-        let t0 = allocator.allocate();
-        let t1 = allocator.allocate();
-        let t2 = allocator.allocate();
-        let t3 = allocator.allocate();
-        let t4 = allocator.allocate();
-        let zero = 0; // x0 register
+        let a0 = self.operands.rs1; // dividend register (64-bit, contains 32-bit value)
+        let a1 = self.operands.rs2; // divisor register (64-bit, contains 32-bit value)
+        let a2 = allocator.allocate(); // quotient from oracle (untrusted)
+        let a3 = allocator.allocate(); // remainder from oracle (untrusted)
+        let t0 = allocator.allocate(); // temporary for multiplication result
+        let t1 = allocator.allocate(); // temporary for high bits check
+        let t2 = allocator.allocate(); // zero-extended quotient
+        let t3 = allocator.allocate(); // zero-extended dividend
+        let t4 = allocator.allocate(); // zero-extended divisor
+        let zero = 0; // x0 register (always contains 0)
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
 
-        // get advice
-        asm.emit_j::<VirtualAdvice>(*a2, 0);
-        asm.emit_j::<VirtualAdvice>(*a3, 0);
+        // Step 1: Get untrusted advice values from oracle
+        asm.emit_j::<VirtualAdvice>(*a2, 0); // get quotient advice
+        asm.emit_j::<VirtualAdvice>(*a3, 0); // get remainder advice
 
-        // zero-extend inputs to 32-bit values
-        asm.emit_i::<VirtualZeroExtendWord>(*t3, a0, 0); // zero-extended dividend
-        asm.emit_i::<VirtualZeroExtendWord>(*t4, a1, 0); // zero-extended divisor
+        // Step 2: Zero-extend inputs to proper 32-bit unsigned values
+        // This ensures we work with correct 32-bit unsigned interpretations
+        asm.emit_i::<VirtualZeroExtendWord>(*t3, a0, 0); // t3 = zero_extend_32(dividend)
+        asm.emit_i::<VirtualZeroExtendWord>(*t4, a1, 0); // t4 = zero_extend_32(divisor)
 
-        // handle special case: check raw quotient before zero-extension
-        asm.emit_b::<VirtualAssertValidDiv0>(*t4, *a2, 0); // checks if t4==0 then a2==u64::MAX
+        // Step 3: Handle division by zero special case
+        // Check raw quotient before zero-extension
+        // If divisor is 0, quotient must be u64::MAX (all 1s)
+        asm.emit_b::<VirtualAssertValidDiv0>(*t4, *a2, 0);
 
-        // zero-extend quotient for calculations
-        asm.emit_i::<VirtualZeroExtendWord>(*t2, *a2, 0); // zero-extended quotient
+        // Step 4: Zero-extend quotient for calculations
+        // After verifying special cases, prepare quotient for arithmetic
+        asm.emit_i::<VirtualZeroExtendWord>(*t2, *a2, 0); // t2 = zero_extend_32(quotient)
 
-        // check 32-bit unsigned multiplication doesn't overflow
-        asm.emit_r::<MUL>(*t0, *t2, *t4); // multiply zero-extended values
-        asm.emit_r::<MULHU>(*t1, *t2, *t4); // upper bits must be 0
-        asm.emit_b::<VirtualAssertEQ>(*t1, zero, 0);
+        // Step 5: Check 32-bit unsigned multiplication doesn't overflow
+        // Valid 32-bit unsigned division means quotient × divisor fits in 32 bits
+        asm.emit_r::<MUL>(*t0, *t2, *t4); // t0 = quotient × divisor (lower 64 bits)
+        asm.emit_r::<MULHU>(*t1, *t2, *t4); // t1 = high bits of unsigned multiply
+        asm.emit_b::<VirtualAssertEQ>(*t1, zero, 0); // assert high bits are 0 (no overflow)
 
-        // verify quotient * divisor + remainder == dividend
-        asm.emit_r::<ADD>(*t0, *t0, *a3);
-        asm.emit_b::<VirtualAssertEQ>(*t0, *t3, 0);
+        // Step 6: Verify fundamental division property
+        // dividend = quotient × divisor + remainder (all unsigned 32-bit values)
+        asm.emit_r::<ADD>(*t0, *t0, *a3); // t0 = (quotient × divisor) + remainder
+        asm.emit_b::<VirtualAssertEQ>(*t0, *t3, 0); // assert t0 == zero_extended_dividend
 
-        // check remainder < divisor (unsigned)
+        // Step 7: Verify remainder constraint
+        // For valid unsigned division: remainder < divisor
         asm.emit_b::<VirtualAssertValidUnsignedRemainder>(*a3, *t4, 0);
 
-        // sign-extend result (per RISC-V spec)
+        // Step 8: Sign-extend result to 64 bits
+        // Despite being unsigned division, RISC-V spec requires sign-extension
+        // This means if bit 31 is set, bits 32-63 will be set to 1
         asm.emit_i::<VirtualSignExtendWord>(self.operands.rd, *a2, 0);
         asm.finalize()
     }

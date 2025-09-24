@@ -42,6 +42,7 @@ impl RISCVTrace for SUBW {
         }
     }
 
+    /// 32-bit subtraction with sign extension on 64-bit systems.    
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,

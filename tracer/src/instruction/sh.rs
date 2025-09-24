@@ -55,6 +55,18 @@ impl RISCVTrace for SH {
         }
     }
 
+    /// Store halfword to memory using word-aligned access.
+    ///
+    /// SH stores the lower 16 bits of rs2 to memory at address rs1+imm.
+    /// Since zkVM uses word-aligned memory, this requires:
+    /// 1. Assert halfword alignment of the target address
+    /// 2. Load the aligned word/doubleword containing the target halfword
+    /// 3. Mask and replace the specific 16-bit halfword
+    /// 4. Store the modified word/doubleword back to memory
+    ///
+    /// The implementation uses the XOR technique: (word ^ halfword) & mask ^ word
+    /// This clears the original halfword bits and sets the new halfword value
+    /// in a single sequence without branches.
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,
@@ -68,6 +80,17 @@ impl RISCVTrace for SH {
 }
 
 impl SH {
+    /// 32-bit implementation of store halfword.
+    ///
+    /// Algorithm:
+    /// 1. Assert halfword alignment (address must be multiple of 2)
+    /// 2. Calculate target address and align to 4-byte boundary
+    /// 3. Load the aligned word containing the target halfword
+    /// 4. Calculate shift amount based on halfword position (bit 1 of address)
+    /// 5. Create 16-bit mask (0xFFFF) shifted to halfword position
+    /// 6. Shift halfword value to correct position
+    /// 7. Use XOR operations to replace the target halfword
+    /// 8. Store the modified word back to memory
     fn inline_sequence_32(&self, allocator: &VirtualRegisterAllocator) -> Vec<Instruction> {
         // Virtual registers used in sequence
         let v_address = allocator.allocate();
@@ -93,6 +116,11 @@ impl SH {
         asm.finalize()
     }
 
+    /// 64-bit implementation of store halfword.
+    ///
+    /// Similar to 32-bit version but operates on 64-bit doublewords.
+    /// The halfword position is determined by bits 1-2 of the address
+    /// (4 possible halfword positions within an 8-byte doubleword).
     fn inline_sequence_64(&self, allocator: &VirtualRegisterAllocator) -> Vec<Instruction> {
         // Virtual registers used in sequence
         let v_address = allocator.allocate();

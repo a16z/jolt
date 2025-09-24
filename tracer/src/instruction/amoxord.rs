@@ -55,6 +55,12 @@ impl RISCVTrace for AMOXORD {
         }
     }
 
+    /// Generates inline sequence for atomic XOR operation (64-bit).
+    ///
+    /// AMOXOR.D atomically loads a 64-bit value from memory, performs bitwise XOR
+    /// with rs2, stores the result back to memory, and returns the original value in rd.
+    ///
+    /// Useful for toggling bits atomically in shared memory locations.
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,

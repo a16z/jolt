@@ -52,6 +52,7 @@ impl RISCVTrace for LWU {
         }
     }
 
+    /// Load unsigned word (32-bit) with zero extension to 64-bit.    
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,

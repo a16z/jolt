@@ -54,6 +54,15 @@ impl RISCVTrace for AMOSWAPD {
         }
     }
 
+    /// Generates inline sequence for atomic swap operation (64-bit).
+    ///
+    /// AMOSWAP.D atomically loads a 64-bit value from memory, stores rs2 to that
+    /// location, and returns the original value in rd.
+    ///
+    /// Simplest AMO operation - unconditional exchange:
+    /// 1. Load current value from memory
+    /// 2. Store rs2 to the same location
+    /// 3. Return original value in rd
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,

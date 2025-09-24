@@ -50,6 +50,16 @@ impl RISCVTrace for AMOSWAPW {
         }
     }
 
+    /// Generates inline sequence for atomic swap operation (32-bit).
+    ///
+    /// AMOSWAP.W atomically loads a 32-bit word from memory, stores the lower
+    /// 32 bits of rs2 to that location, and returns the original value
+    /// sign-extended in rd.
+    ///
+    /// Implementation differs between RV32 and RV64:
+    /// - RV32: Simple word-aligned load/store swap
+    /// - RV64: Complex manipulation to handle 32-bit word within 64-bit doubleword,
+    ///   including alignment, masking, and sign extension
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,

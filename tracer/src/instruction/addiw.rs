@@ -46,6 +46,7 @@ impl RISCVTrace for ADDIW {
         }
     }
 
+    /// 32-bit add immediate with sign extension on 64-bit systems.
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,

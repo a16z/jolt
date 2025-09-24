@@ -53,6 +53,7 @@ impl RISCVTrace for LW {
         }
     }
 
+    /// Load word (32-bit) from aligned memory.    
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,

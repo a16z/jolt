@@ -80,43 +80,69 @@ impl RISCVTrace for REMUW {
         }
     }
 
+    /// Generates an inline sequence to verify 32-bit unsigned remainder on 64-bit systems.
+    ///
+    /// REMUW is an RV64 instruction that computes the unsigned remainder of dividing the
+    /// lower 32 bits of rs1 by the lower 32 bits of rs2, treating them as unsigned 32-bit
+    /// integers. The 32-bit remainder is then sign-extended to 64 bits (despite being
+    /// unsigned remainder, the result is sign-extended per RISC-V spec).
+    ///
+    /// The approach:
+    /// 1. Zero-extend inputs to get proper 32-bit unsigned values
+    /// 2. Receive untrusted quotient and remainder advice from oracle
+    /// 3. Verify division property: dividend = quotient × divisor + remainder (mod 2^32)
+    /// 4. Ensure remainder < divisor (unsigned comparison)
+    /// 5. Sign-extend the 32-bit remainder to 64 bits
+    ///
+    /// Special case: When divisor is 0, remainder = dividend (per RISC-V spec).
+    /// No overflow check is needed since we work modulo 2^32 for remainder.
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,
         xlen: Xlen,
     ) -> Vec<Instruction> {
-        let a0 = self.operands.rs1; // dividend
-        let a1 = self.operands.rs2; // divisor
-        let a2 = allocator.allocate(); // quotient from oracle
-        let a3 = allocator.allocate(); // remainder from oracle
-        let t0 = allocator.allocate();
-        let t1 = allocator.allocate();
-        let t2 = allocator.allocate();
-        let t3 = allocator.allocate();
+        let a0 = self.operands.rs1; // dividend register (64-bit, contains 32-bit value)
+        let a1 = self.operands.rs2; // divisor register (64-bit, contains 32-bit value)
+        let a2 = allocator.allocate(); // quotient from oracle (untrusted)
+        let a3 = allocator.allocate(); // remainder from oracle (untrusted)
+        let t0 = allocator.allocate(); // temporary for multiplication result
+        let t1 = allocator.allocate(); // zero-extended dividend
+        let t2 = allocator.allocate(); // zero-extended divisor
+        let t3 = allocator.allocate(); // zero-extended quotient
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
 
-        // get advice
-        asm.emit_j::<VirtualAdvice>(*a2, 0);
-        asm.emit_j::<VirtualAdvice>(*a3, 0);
+        // Step 1: Get untrusted advice values from oracle
+        asm.emit_j::<VirtualAdvice>(*a2, 0); // get quotient advice
+        asm.emit_j::<VirtualAdvice>(*a3, 0); // get remainder advice
 
-        // zero-extend inputs to 32-bit values
-        asm.emit_i::<VirtualZeroExtendWord>(*t1, a0, 0); // zero-extended dividend
-        asm.emit_i::<VirtualZeroExtendWord>(*t2, a1, 0); // zero-extended divisor
+        // Step 2: Zero-extend inputs to proper 32-bit unsigned values
+        // This ensures we work with correct 32-bit unsigned interpretations
+        asm.emit_i::<VirtualZeroExtendWord>(*t1, a0, 0); // t1 = zero_extend_32(dividend)
+        asm.emit_i::<VirtualZeroExtendWord>(*t2, a1, 0); // t2 = zero_extend_32(divisor)
 
-        // zero-extend quotient for unsigned multiplication
-        asm.emit_i::<VirtualZeroExtendWord>(*t3, *a2, 0); // zero-extended quotient
+        // Step 3: Zero-extend quotient for unsigned multiplication
+        // Prepare quotient for arithmetic operations
+        asm.emit_i::<VirtualZeroExtendWord>(*t3, *a2, 0); // t3 = zero_extend_32(quotient)
 
-        // compute quotient * divisor (no overflow check needed for remainder!)
-        asm.emit_r::<MUL>(*t0, *t3, *t2); // multiply zero-extended values
+        // Step 4: Compute quotient × divisor
+        // No overflow check needed since remainder only cares about value mod 2^32
+        // When divisor is 0, this multiplication yields 0, making the check: 0 + remainder = dividend
+        asm.emit_r::<MUL>(*t0, *t3, *t2); // t0 = quotient × divisor (multiply zero-extended values)
 
-        // verify quotient * divisor + remainder == dividend (mod 2^32)
-        asm.emit_r::<ADD>(*t0, *t0, *a3);
-        asm.emit_b::<VirtualAssertEQ>(*t0, *t1, 0);
+        // Step 5: Verify fundamental division property
+        // dividend = quotient × divisor + remainder (all operations mod 2^32)
+        // This works correctly even when divisor is 0 (remainder must equal dividend)
+        asm.emit_r::<ADD>(*t0, *t0, *a3); // t0 = (quotient × divisor) + remainder
+        asm.emit_b::<VirtualAssertEQ>(*t0, *t1, 0); // assert t0 == zero_extended_dividend
 
-        // check remainder < divisor (unsigned)
+        // Step 6: Verify remainder constraint
+        // For valid unsigned division: remainder < divisor
+        // When divisor is 0, this check ensures remainder fits in 32 bits
         asm.emit_b::<VirtualAssertValidUnsignedRemainder>(*a3, *t2, 0);
 
-        // sign-extend result (per RISC-V spec for REMUW)
+        // Step 7: Sign-extend result to 64 bits
+        // Despite being unsigned remainder, RISC-V spec requires sign-extension
+        // This means if bit 31 is set, bits 32-63 will be set to 1
         asm.emit_i::<VirtualSignExtendWord>(self.operands.rd, *a3, 0);
         asm.finalize()
     }

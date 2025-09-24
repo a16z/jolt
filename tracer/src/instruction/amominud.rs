@@ -62,6 +62,15 @@ impl RISCVTrace for AMOMINUD {
         }
     }
 
+    /// Generates inline sequence for atomic minimum operation (unsigned 64-bit).
+    ///
+    /// AMOMINU.D atomically loads a 64-bit value from memory, computes the minimum
+    /// of that value and rs2 (treating both as unsigned), stores the minimum back
+    /// to memory, and returns the original value in rd.
+    ///
+    /// Uses same branchless approach as AMOMIN.D but with unsigned comparison:
+    /// - SLTU instead of SLT for unsigned comparison
+    /// - Otherwise identical multiplication-based selection logic
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,

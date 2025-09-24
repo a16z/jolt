@@ -62,6 +62,24 @@ impl RISCVTrace for AMOMAXD {
         }
     }
 
+    /// Generates inline sequence for atomic maximum operation (signed 64-bit).
+    ///
+    /// AMOMAX.D atomically loads a 64-bit value from memory, computes the maximum
+    /// of that value and rs2 (treating both as signed), stores the maximum back
+    /// to memory, and returns the original value in rd.
+    ///
+    /// The implementation uses a branchless maximum computation:
+    /// 1. Load the current value from memory
+    /// 2. Compare current value < rs2 to get selector bit (1 if rs2 is larger)
+    /// 3. Invert selector to get bit for current value (1 if current is larger/equal)
+    /// 4. Multiply rs2 by its selector bit (rs2 if larger, 0 otherwise)
+    /// 5. Multiply current by its selector bit (current if larger/equal, 0 otherwise)
+    /// 6. Add the two products to get the maximum
+    /// 7. Store the maximum back to memory
+    /// 8. Return the original value in rd
+    ///
+    /// This branchless approach avoids conditional execution, making it compatible
+    /// with zkVM's constraint system while correctly handling signed comparison.
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,

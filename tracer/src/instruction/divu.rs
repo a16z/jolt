@@ -74,32 +74,59 @@ impl RISCVTrace for DIVU {
         }
     }
 
+    /// Generates an inline sequence to verify unsigned division operation.
+    ///
+    /// This function implements a verifiable unsigned division by decomposing it into simpler
+    /// operations that can be proven correct. Unlike signed division, unsigned division is
+    /// simpler as it doesn't need to handle negative numbers or sign extensions.
+    ///
+    /// The approach:
+    /// 1. Receives untrusted quotient and remainder advice from an oracle
+    /// 2. Verifies quotient × divisor doesn't overflow (must fit in register width)
+    /// 3. Verifies the mathematical relationship: dividend = quotient × divisor + remainder
+    /// 4. Ensures remainder < divisor (division property for unsigned)
+    /// 5. Handles division by zero per RISC-V spec (returns all 1s)
+    ///
+    /// The verification ensures correctness without directly computing division.
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,
         xlen: Xlen,
     ) -> Vec<Instruction> {
-        let a0 = self.operands.rs1; // dividend
-        let a1 = self.operands.rs2; // divisor
-        let a2 = allocator.allocate(); // quotient from oracle
-        let a3 = allocator.allocate(); // remainder from oracle
-        let t0 = allocator.allocate();
+        let a0 = self.operands.rs1; // dividend (unsigned input)
+        let a1 = self.operands.rs2; // divisor (unsigned input)
+        let a2 = allocator.allocate(); // quotient from oracle (untrusted)
+        let a3 = allocator.allocate(); // remainder from oracle (untrusted)
+        let t0 = allocator.allocate(); // temporary for multiplication result
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
 
-        // get advice
-        asm.emit_j::<VirtualAdvice>(*a2, 0);
-        asm.emit_j::<VirtualAdvice>(*a3, 0);
-        // handle special case: if divisor==0, quotient must be all 1s
+        // Step 1: Get untrusted advice values from oracle
+        // Both quotient and remainder are unsigned values
+        asm.emit_j::<VirtualAdvice>(*a2, 0); // get quotient advice
+        asm.emit_j::<VirtualAdvice>(*a3, 0); // get remainder advice
+
+        // Step 2: Handle division by zero special case
+        // Per RISC-V spec: if divisor == 0, quotient = all 1s (maximum unsigned value)
         asm.emit_b::<VirtualAssertValidDiv0>(a1, *a2, 0);
-        // check that quotient * divisor doesn't overflow (unsigned)
+
+        // Step 3: Check for multiplication overflow
+        // For valid unsigned division, quotient × divisor must not overflow
+        // This ensures the quotient is in valid range
         asm.emit_b::<VirtualAssertMulUNoOverflow>(*a2, a1, 0);
-        // verify quotient * divisor + remainder == dividend
-        asm.emit_r::<MUL>(*t0, *a2, a1);
-        asm.emit_r::<ADD>(*t0, *t0, *a3);
-        asm.emit_b::<VirtualAssertEQ>(*t0, a0, 0);
-        // check remainder < divisor (unsigned)
+
+        // Step 4: Verify fundamental division property
+        // dividend = quotient × divisor + remainder
+        // All operations are unsigned and modulo 2^n
+        asm.emit_r::<MUL>(*t0, *a2, a1); // t0 = quotient × divisor
+        asm.emit_r::<ADD>(*t0, *t0, *a3); // t0 = (quotient × divisor) + remainder
+        asm.emit_b::<VirtualAssertEQ>(*t0, a0, 0); // assert t0 == dividend
+
+        // Step 5: Verify remainder constraint
+        // For valid unsigned division, remainder < divisor
+        // This is simpler than signed case as both values are unsigned
         asm.emit_b::<VirtualAssertValidUnsignedRemainder>(*a3, a1, 0);
-        // move result
+
+        // Step 6: Move verified quotient to destination register
         asm.emit_i::<VirtualMove>(self.operands.rd, *a2, 0);
         asm.finalize()
     }

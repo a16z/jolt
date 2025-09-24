@@ -41,6 +41,17 @@ impl RISCVTrace for SRLI {
         }
     }
 
+    /// Logical right shift immediate using bitmask approach.
+    ///
+    /// SRLI (Shift Right Logical Immediate) shifts rs1 right by a constant amount,
+    /// filling the vacated bits with zeros.
+    ///
+    /// Implementation:
+    /// 1. Calculate a bitmask representing which bits remain after the shift
+    /// 2. Apply the shift using VirtualSRLI with the precomputed bitmask
+    ///
+    /// The bitmask has 1s in positions that will contain data after the shift,
+    /// allowing efficient verification in the zkVM constraint system.
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,

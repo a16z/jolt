@@ -39,6 +39,16 @@ impl RISCVTrace for SLLIW {
         }
     }
 
+    /// Shift left logical immediate for 32-bit words with sign extension.
+    ///
+    /// SLLIW is an RV64I-only instruction that shifts the lower 32 bits of rs1
+    /// left by a constant amount, then sign-extends the 32-bit result to 64 bits.
+    ///
+    /// Implementation:
+    /// 1. Multiply by 2^shift_amount (equivalent to left shift)
+    /// 2. Sign-extend the lower 32 bits to 64 bits
+    ///
+    /// The shift amount is restricted to 5 bits (0-31) for 32-bit operations.
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,

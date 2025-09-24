@@ -42,6 +42,8 @@ impl RISCVTrace for ADDW {
         }
     }
 
+    /// Generates inline sequence for 32-bit addition on 64-bit systems.
+    /// Performs 64-bit addition then sign-extends the lower 32 bits.
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,

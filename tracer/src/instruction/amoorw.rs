@@ -53,6 +53,13 @@ impl RISCVTrace for AMOORW {
         }
     }
 
+    /// Generates inline sequence for atomic OR operation (32-bit).
+    ///
+    /// AMOOR.W atomically loads a 32-bit word from memory, performs bitwise OR
+    /// with the lower 32 bits of rs2, stores the result back to memory, and
+    /// returns the original value sign-extended in rd.
+    ///
+    /// Uses amo_pre/post helpers to handle word alignment on both RV32 and RV64.
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,

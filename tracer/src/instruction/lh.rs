@@ -54,6 +54,18 @@ impl RISCVTrace for LH {
         }
     }
 
+    /// Load halfword with sign extension from aligned memory.
+    ///
+    /// LH loads a 16-bit value from memory at address rs1+imm and sign-extends
+    /// it to the full register width. Since zkVM uses word-aligned memory,
+    /// this requires:
+    /// 1. Assert halfword alignment of the source address
+    /// 2. Load the aligned word/doubleword containing the halfword
+    /// 3. Shift the halfword to the high bits
+    /// 4. Arithmetic right shift to sign-extend to full width
+    ///
+    /// The clever trick here is to shift the halfword to the MSB position
+    /// then use arithmetic right shift to simultaneously extract and sign-extend.
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,
@@ -67,6 +79,16 @@ impl RISCVTrace for LH {
 }
 
 impl LH {
+    /// 32-bit implementation of load halfword with sign extension.
+    ///
+    /// Algorithm:
+    /// 1. Assert halfword alignment (address must be multiple of 2)
+    /// 2. Align address to 4-byte boundary to get word address
+    /// 3. Load the aligned word containing the halfword
+    /// 4. XOR address with 2 to get opposite halfword position
+    /// 5. Calculate shift amount (position * 8 bits)
+    /// 6. Shift halfword to bits [31:16]
+    /// 7. Arithmetic right shift by 16 to sign-extend to 32 bits
     fn inline_sequence_32(&self, allocator: &VirtualRegisterAllocator) -> Vec<Instruction> {
         let v_address = allocator.allocate();
         let v_word_address = allocator.allocate();
@@ -85,6 +107,14 @@ impl LH {
         asm.finalize()
     }
 
+    /// 64-bit implementation of load halfword with sign extension.
+    ///
+    /// Similar to 32-bit but works with doublewords:
+    /// 1. Assert halfword alignment
+    /// 2. Align to 8-byte boundary
+    /// 3. XOR address with 6 to handle 4 possible halfword positions
+    /// 4. Shift halfword to bits [63:48]
+    /// 5. Arithmetic right shift by 48 to sign-extend to 64 bits
     fn inline_sequence_64(&self, allocator: &VirtualRegisterAllocator) -> Vec<Instruction> {
         let v_address = allocator.allocate();
         let v_dword_address = allocator.allocate();

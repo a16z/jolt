@@ -53,29 +53,53 @@ impl RISCVTrace for AMOANDW {
         }
     }
 
+    /// Generates inline sequence for atomic memory operation AND (32-bit).
+    ///
+    /// AMOAND.W atomically loads a 32-bit word from memory, performs bitwise AND
+    /// with the lower 32 bits of rs2, stores the result back to memory, and
+    /// returns the original value sign-extended in rd.
+    ///
+    /// The implementation differs between 32-bit and 64-bit systems:
+    /// - On RV32: Direct word operations using amo_pre32/post32 helpers
+    /// - On RV64: More complex due to potential misalignment within 64-bit words
+    ///
+    /// For RV64, the sequence handles:
+    /// 1. Address alignment to 64-bit boundaries
+    /// 2. Extracting the 32-bit word from the aligned 64-bit load
+    /// 3. Performing the AND operation on the 32-bit value
+    /// 4. Merging the result back into the 64-bit word for storage
+    ///
+    /// The amo_pre/post helpers encapsulate the complexity of:
+    /// - Memory alignment and word extraction
+    /// - Sign extension of the result
+    /// - Proper masking and shifting for sub-word operations
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,
         xlen: Xlen,
     ) -> Vec<Instruction> {
-        let v_rd = allocator.allocate();
-        let v_rs2 = allocator.allocate();
+        let v_rd = allocator.allocate(); // holds original 32-bit value
+        let v_rs2 = allocator.allocate(); // holds AND result
 
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
 
         match xlen {
             Xlen::Bit32 => {
-                amo_pre32(&mut asm, self.operands.rs1, *v_rd);
-                asm.emit_r::<AND>(*v_rs2, *v_rd, self.operands.rs2);
+                // Simple case: direct 32-bit word operations
+                amo_pre32(&mut asm, self.operands.rs1, *v_rd); // Load word from memory
+                asm.emit_r::<AND>(*v_rs2, *v_rd, self.operands.rs2); // AND with rs2
                 amo_post32(&mut asm, *v_rs2, self.operands.rs1, self.operands.rd, *v_rd);
+                // Store and return
             }
             Xlen::Bit64 => {
-                let v_mask = allocator.allocate();
-                let v_dword_address = allocator.allocate();
-                let v_dword = allocator.allocate();
-                let v_word = allocator.allocate();
-                let v_shift = allocator.allocate();
+                // Complex case: handle 32-bit operations within 64-bit system
+                let v_mask = allocator.allocate(); // mask for word extraction
+                let v_dword_address = allocator.allocate(); // aligned 64-bit address
+                let v_dword = allocator.allocate(); // 64-bit loaded value
+                let v_word = allocator.allocate(); // extracted 32-bit word
+                let v_shift = allocator.allocate(); // shift amount for alignment
 
+                // Pre-operation: load and extract 32-bit word from 64-bit memory
                 amo_pre64(
                     &mut asm,
                     self.operands.rs1,
@@ -84,7 +108,11 @@ impl RISCVTrace for AMOANDW {
                     *v_dword,
                     *v_shift,
                 );
+
+                // Perform AND on the 32-bit value
                 asm.emit_r::<AND>(*v_rs2, *v_rd, self.operands.rs2);
+
+                // Post-operation: merge result back and store to memory
                 amo_post64(
                     &mut asm,
                     *v_rs2,

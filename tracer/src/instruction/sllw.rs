@@ -42,6 +42,18 @@ impl RISCVTrace for SLLW {
         }
     }
 
+    /// Shift left logical for 32-bit words with sign extension.
+    ///
+    /// SLLW is an RV64I-only instruction that shifts the lower 32 bits of rs1
+    /// left by the amount in the lower 5 bits of rs2, then sign-extends the
+    /// 32-bit result to 64 bits.
+    ///
+    /// Implementation:
+    /// 1. Compute 2^(rs2[4:0]) using VirtualPow2W
+    /// 2. Multiply rs1 by this power of 2 (equivalent to left shift)
+    /// 3. Sign-extend the lower 32 bits of the result
+    ///
+    /// The multiplication approach allows zkVM-friendly verification.
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,

@@ -52,6 +52,16 @@ impl RISCVTrace for LHU {
         }
     }
 
+    /// Load unsigned halfword without sign extension.
+    ///
+    /// LHU loads a 16-bit value from memory at address rs1+imm and zero-extends
+    /// it to the full register width. Since zkVM uses word-aligned memory:
+    /// 1. Assert halfword alignment of the source address
+    /// 2. Load the aligned word/doubleword containing the halfword
+    /// 3. Shift halfword to the high bits
+    /// 4. Logical right shift to extract and zero-extend
+    ///
+    /// Differs from LH only in using logical (not arithmetic) right shift.
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,
@@ -65,6 +75,15 @@ impl RISCVTrace for LHU {
 }
 
 impl LHU {
+    /// 32-bit implementation of load unsigned halfword.
+    ///
+    /// Algorithm:
+    /// 1. Assert halfword alignment
+    /// 2. Align address to 4-byte boundary
+    /// 3. Load word containing the halfword
+    /// 4. XOR with 2 to get opposite halfword position
+    /// 5. Shift halfword to bits [31:16]
+    /// 6. Logical right shift by 16 to zero-extend
     fn inline_sequence_32(&self, allocator: &VirtualRegisterAllocator) -> Vec<Instruction> {
         // Virtual registers used in sequence
         let v_address = allocator.allocate();
@@ -84,6 +103,12 @@ impl LHU {
         asm.finalize()
     }
 
+    /// 64-bit implementation of load unsigned halfword.
+    ///
+    /// Similar to 32-bit but handles 4 halfword positions:
+    /// 1. XOR with 6 for position calculation
+    /// 2. Shift halfword to bits [63:48]
+    /// 3. Logical right shift by 48 to zero-extend
     fn inline_sequence_64(&self, allocator: &VirtualRegisterAllocator) -> Vec<Instruction> {
         // Virtual registers used in sequence
         let v_address = allocator.allocate();

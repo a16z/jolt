@@ -54,6 +54,7 @@ impl RISCVTrace for SW {
         }
     }
 
+    /// Store word (32-bit) to aligned memory.    
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,

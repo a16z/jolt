@@ -55,6 +55,14 @@ impl RISCVTrace for AMOXORW {
         }
     }
 
+    /// Generates inline sequence for atomic XOR operation (32-bit).
+    ///
+    /// AMOXOR.W atomically loads a 32-bit word from memory, performs bitwise XOR
+    /// with the lower 32 bits of rs2, stores the result back to memory, and
+    /// returns the original value sign-extended in rd.
+    ///
+    /// Simple implementation using LW/SW directly since this appears to be RV32 only
+    /// (uses LW instead of amo_pre/post helpers).
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,

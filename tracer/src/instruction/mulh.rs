@@ -45,23 +45,54 @@ impl RISCVTrace for MULH {
         }
     }
 
+    /// Generates an inline sequence to compute the high bits of signed multiplication.
+    ///
+    /// MULH returns the upper XLEN bits of the 2×XLEN-bit product of signed multiplication.
+    /// This is useful for checking multiplication overflow and extended precision arithmetic.
+    ///
+    /// The implementation uses the algebraic identity:
+    /// MULH(x, y) = MULHU(x, y) + sign_adjust_x + sign_adjust_y
+    ///
+    /// Where:
+    /// - MULHU(x, y) computes unsigned high bits
+    /// - sign_adjust_x = sign(x) × y (adjusts for x being negative)
+    /// - sign_adjust_y = sign(y) × x (adjusts for y being negative)
+    ///
+    /// This works because signed multiplication can be expressed as:
+    /// x × y = |x| × |y| × sign(x×y) + corrections for negative operands
+    ///
+    /// The corrections account for two's complement representation where
+    /// a negative number -n is represented as 2^XLEN - n.
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,
         xlen: Xlen,
     ) -> Vec<Instruction> {
-        let v_sx = allocator.allocate();
-        let v_sy = allocator.allocate();
-        let v_0 = allocator.allocate();
+        let v_sx = allocator.allocate(); // sign adjustment for rs1
+        let v_sy = allocator.allocate(); // sign adjustment for rs2
+        let v_0 = allocator.allocate(); // accumulator for result
 
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
-        asm.emit_i::<VirtualMovsign>(*v_sx, self.operands.rs1, 0);
-        asm.emit_i::<VirtualMovsign>(*v_sy, self.operands.rs2, 0);
-        asm.emit_r::<MULHU>(*v_0, self.operands.rs1, self.operands.rs2);
-        asm.emit_r::<MUL>(*v_sx, *v_sx, self.operands.rs2);
-        asm.emit_r::<MUL>(*v_sy, *v_sy, self.operands.rs1);
-        asm.emit_r::<ADD>(*v_0, *v_0, *v_sx);
-        asm.emit_r::<ADD>(self.operands.rd, *v_0, *v_sy);
+
+        // Step 1: Extract sign bits as adjustment factors
+        // VirtualMovsign returns -1 if input is negative, 0 otherwise
+        asm.emit_i::<VirtualMovsign>(*v_sx, self.operands.rs1, 0); // v_sx = sign(rs1)
+        asm.emit_i::<VirtualMovsign>(*v_sy, self.operands.rs2, 0); // v_sy = sign(rs2)
+
+        // Step 2: Compute unsigned high multiplication
+        // This gives us the base high bits treating inputs as unsigned
+        asm.emit_r::<MULHU>(*v_0, self.operands.rs1, self.operands.rs2); // v_0 = MULHU(rs1, rs2)
+
+        // Step 3: Apply sign corrections
+        // If rs1 is negative, subtract rs2 from high bits (accounts for two's complement)
+        asm.emit_r::<MUL>(*v_sx, *v_sx, self.operands.rs2); // v_sx = sign(rs1) × rs2
+                                                            // If rs2 is negative, subtract rs1 from high bits (accounts for two's complement)
+        asm.emit_r::<MUL>(*v_sy, *v_sy, self.operands.rs1); // v_sy = sign(rs2) × rs1
+
+        // Step 4: Combine all components
+        asm.emit_r::<ADD>(*v_0, *v_0, *v_sx); // v_0 += sign_adjust_x
+        asm.emit_r::<ADD>(self.operands.rd, *v_0, *v_sy); // rd = v_0 + sign_adjust_y
+
         asm.finalize()
     }
 }
