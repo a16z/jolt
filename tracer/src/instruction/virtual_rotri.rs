@@ -10,8 +10,7 @@ declare_riscv_instr!(
     mask = 0,
     match = 0,
     format = FormatVirtualRightShiftI,
-    ram = (),
-    is_virtual = true
+    ram = ()
 );
 
 impl VirtualROTRI {
