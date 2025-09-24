@@ -11,8 +11,7 @@ macro_rules! declare_xorrot {
             mask = 0,
             match = 0,
             format = FormatR,
-            ram = (),
-            is_virtual = true
+            ram = ()
         );
 
         impl $name {

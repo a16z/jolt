@@ -6,8 +6,6 @@ macro_rules! declare_riscv_instr {
       match   = $match_:expr,
       format  = $format:ty,
       ram     = $ram:ty
-      $(, is_virtual = $virt:tt)?
-        $(,)?
   ) => {
         #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
         pub struct $name {
