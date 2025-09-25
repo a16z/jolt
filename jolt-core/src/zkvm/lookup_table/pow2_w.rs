@@ -17,7 +17,7 @@ impl<const XLEN: usize> JoltLookupTable for Pow2WTable<XLEN> {
         1 << (index % 32) as u64
     }
 
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+    fn evaluate_mle<F: JoltField>(&self, r: &[F::Challenge]) -> F {
         debug_assert_eq!(r.len(), 2 * XLEN);
         // We only care about the last 5 bits of the second operand (for modulo 32)
         let mut result = F::one();

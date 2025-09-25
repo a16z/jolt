@@ -16,7 +16,7 @@ impl<const XLEN: usize> JoltLookupTable for WordAlignmentTable<XLEN> {
         index.is_multiple_of(4).into()
     }
 
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+    fn evaluate_mle<F: JoltField>(&self, r: &[F::Challenge]) -> F {
         // The two least significant bits should be 0 for word alignment
         let lsb0 = r[r.len() - 1];
         let lsb1 = r[r.len() - 2];

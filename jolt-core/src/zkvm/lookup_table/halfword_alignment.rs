@@ -16,7 +16,7 @@ impl<const XLEN: usize> JoltLookupTable for HalfwordAlignmentTable<XLEN> {
         index.is_multiple_of(2).into()
     }
 
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+    fn evaluate_mle<F: JoltField>(&self, r: &[F::Challenge]) -> F {
         let lsb = r[r.len() - 1];
         F::one() - lsb
     }

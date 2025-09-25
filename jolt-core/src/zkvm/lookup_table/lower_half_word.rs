@@ -19,7 +19,7 @@ impl<const XLEN: usize> JoltLookupTable for LowerHalfWordTable<XLEN> {
         (index % (1u128 << half_word_size)) as u64
     }
 
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+    fn evaluate_mle<F: JoltField>(&self, r: &[F::Challenge]) -> F {
         debug_assert_eq!(r.len(), 2 * XLEN);
         let half_word_size = XLEN / 2;
         let mut result = F::zero();

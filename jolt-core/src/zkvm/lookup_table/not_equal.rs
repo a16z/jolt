@@ -22,7 +22,7 @@ impl<const XLEN: usize> JoltLookupTable for NotEqualTable<XLEN> {
         }
     }
 
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+    fn evaluate_mle<F: JoltField>(&self, r: &[F::Challenge]) -> F {
         F::one() - EqualTable::<XLEN>.evaluate_mle::<F>(r)
     }
 }

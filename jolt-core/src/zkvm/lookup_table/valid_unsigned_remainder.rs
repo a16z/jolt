@@ -15,7 +15,7 @@ impl<const XLEN: usize> JoltLookupTable for ValidUnsignedRemainderTable<XLEN> {
         (divisor == 0 || remainder < divisor).into()
     }
 
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+    fn evaluate_mle<F: JoltField>(&self, r: &[F::Challenge]) -> F {
         let mut divisor_is_zero = F::one();
         let mut lt = F::zero();
         let mut eq = F::one();

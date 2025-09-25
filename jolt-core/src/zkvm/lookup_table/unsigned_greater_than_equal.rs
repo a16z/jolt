@@ -23,7 +23,7 @@ impl<const XLEN: usize> JoltLookupTable for UnsignedGreaterThanEqualTable<XLEN> 
         }
     }
 
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+    fn evaluate_mle<F: JoltField>(&self, r: &[F::Challenge]) -> F {
         F::one() - UnsignedLessThanTable::<XLEN>.evaluate_mle::<F>(r)
     }
 }

@@ -28,7 +28,7 @@ impl<const XLEN: usize> JoltLookupTable for SignExtendHalfWordTable<XLEN> {
         }
     }
 
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+    fn evaluate_mle<F: JoltField>(&self, r: &[F::Challenge]) -> F {
         debug_assert_eq!(r.len(), 2 * XLEN);
         let half_word_size = XLEN / 2;
 

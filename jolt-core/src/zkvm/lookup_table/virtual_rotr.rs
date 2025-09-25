@@ -31,7 +31,7 @@ impl<const XLEN: usize> JoltLookupTable for VirtualRotrTable<XLEN> {
         first_sum + second_sum
     }
 
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+    fn evaluate_mle<F: JoltField>(&self, r: &[F::Challenge]) -> F {
         assert_eq!(r.len() % 2, 0, "r must have even length");
         assert_eq!(r.len() / 2, XLEN, "r must have length 2 * XLEN");
 

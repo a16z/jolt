@@ -1,5 +1,5 @@
 use super::PrefixSuffixDecomposition;
-use crate::field::JoltField;
+use crate::field::{IntoField, JoltField};
 use crate::utils::uninterleave_bits;
 use serde::{Deserialize, Serialize};
 
@@ -47,7 +47,7 @@ impl<const XLEN: usize> JoltLookupTable for VirtualChangeDivisorTable<XLEN> {
         }
     }
 
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+    fn evaluate_mle<F: JoltField>(&self, r: &[F::Challenge]) -> F {
         debug_assert_eq!(r.len(), 2 * XLEN);
 
         let mut divisor_value = F::zero();
@@ -61,14 +61,14 @@ impl<const XLEN: usize> JoltLookupTable for VirtualChangeDivisorTable<XLEN> {
             }
         }
 
-        let mut x_product = r[0];
+        let mut x_product = r[0].into_F();
         for i in 1..XLEN {
             x_product *= F::one() - r[2 * i];
         }
 
         let mut y_product = F::one();
         for i in 0..XLEN {
-            y_product *= r[2 * i + 1];
+            y_product = y_product * r[2 * i + 1];
         }
 
         let adjustment = F::from_u64(2) - F::from_u128(1u128 << XLEN);

@@ -4,7 +4,7 @@ use super::prefixes::PrefixEval;
 use super::suffixes::{SuffixEval, Suffixes};
 use super::JoltLookupTable;
 use super::PrefixSuffixDecomposition;
-use crate::field::JoltField;
+use crate::field::{IntoField, JoltField};
 use crate::utils::math::Math;
 use crate::zkvm::lookup_table::prefixes::Prefixes;
 
@@ -18,7 +18,7 @@ impl<const XLEN: usize> JoltLookupTable for ShiftRightBitmaskTable<XLEN> {
         ones << shift
     }
 
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+    fn evaluate_mle<F: JoltField>(&self, r: &[F::Challenge]) -> F {
         debug_assert_eq!(r.len(), 2 * XLEN);
 
         let log_w = XLEN.log_2();
@@ -35,7 +35,7 @@ impl<const XLEN: usize> JoltLookupTable for ShiftRightBitmaskTable<XLEN> {
                 eq_val *= if bit == 0 {
                     F::one() - r[log_w - i - 1]
                 } else {
-                    r[log_w - i - 1]
+                    r[log_w - i - 1].into_F()
                 };
             }
 

@@ -63,7 +63,7 @@ impl<const XLEN: usize> JoltLookupTable for ValidSignedRemainderTable<XLEN> {
         }
     }
 
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+    fn evaluate_mle<F: JoltField>(&self, r: &[F::Challenge]) -> F {
         let x_sign = r[0];
         let y_sign = r[1];
 

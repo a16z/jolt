@@ -16,7 +16,7 @@ impl<const XLEN: usize> JoltLookupTable for Pow2Table<XLEN> {
         1 << (index % XLEN as u128) as u64
     }
 
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+    fn evaluate_mle<F: JoltField>(&self, r: &[F::Challenge]) -> F {
         debug_assert_eq!(r.len(), 2 * XLEN);
         let mut result = F::one();
         for i in 0..XLEN.log_2() {

@@ -106,7 +106,7 @@ pub trait SparseDensePrefix<F: JoltField>: 'static + Sync {
     /// they can be represented by a single bitvector.
     fn prefix_mle(
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: Option<F>,
+        r_x: Option<F::Challenge>,
         c: u32,
         b: LookupBits,
         j: usize,

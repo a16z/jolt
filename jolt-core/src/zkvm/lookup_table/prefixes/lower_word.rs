@@ -8,7 +8,7 @@ pub enum LowerWordPrefix<const XLEN: usize> {}
 impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for LowerWordPrefix<XLEN> {
     fn prefix_mle(
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: Option<F>,
+        r_x: Option<F::Challenge>,
         c: u32,
         mut b: LookupBits,
         j: usize,

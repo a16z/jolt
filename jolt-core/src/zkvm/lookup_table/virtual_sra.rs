@@ -33,7 +33,7 @@ impl<const XLEN: usize> JoltLookupTable for VirtualSRATable<XLEN> {
         entry + sign_bit * sign_extension
     }
 
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+    fn evaluate_mle<F: JoltField>(&self, r: &[F::Challenge]) -> F {
         debug_assert_eq!(r.len(), 2 * XLEN);
         let mut result = F::zero();
         let mut sign_extension = F::zero();

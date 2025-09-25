@@ -11,7 +11,7 @@ use crate::{field::JoltField, utils::uninterleave_bits};
 pub struct EqualTable<const XLEN: usize>;
 
 impl<const XLEN: usize> JoltLookupTable for EqualTable<XLEN> {
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+    fn evaluate_mle<F: JoltField>(&self, r: &[F::Challenge]) -> F {
         debug_assert!(r.len().is_multiple_of(2));
 
         let x = r.iter().step_by(2);
