@@ -332,7 +332,7 @@ macro_rules! define_rv32im_enums {
     (
         instructions: [$($instr:ident),* $(,)?]
     ) => {
-        #[derive(Debug, IntoStaticStr, From, Clone, Serialize, Deserialize)]
+        #[derive(Debug, IntoStaticStr, From, Clone, Serialize, Deserialize, EnumIter)]
         pub enum RV32IMInstruction {
             /// No-operation instruction (address)
             NoOp,
