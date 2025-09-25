@@ -49,7 +49,6 @@ impl<J: JoltParameterSet> ZkLeanInstruction<J> {
     pub fn iter() -> impl Iterator<Item = Self> {
         RV32IMInstruction::iter().filter_map(|instr| match instr {
             RV32IMInstruction::NoOp | RV32IMInstruction::UNIMPL
-
                 // Virtual instruction sequences
                 | RV32IMInstruction::DIV(_)
                 | RV32IMInstruction::DIVU(_)
@@ -70,51 +69,6 @@ impl<J: JoltParameterSet> ZkLeanInstruction<J> {
                 | RV32IMInstruction::SRL(_)
                 | RV32IMInstruction::SRLI(_)
                 | RV32IMInstruction::INLINE(_)
-
-                // XXX Instructions with lookup tables but no MLE (???)
-                // TODO: Find a better way to filter these out.
-                | RV32IMInstruction::FENCE(_)
-                | RV32IMInstruction::LW(_)
-                | RV32IMInstruction::ECALL(_)
-                | RV32IMInstruction::SW(_)
-
-                // Instructions with no lookup table
-                // TODO: Find a better way to filter these out.
-                | RV32IMInstruction::LD(_)
-                | RV32IMInstruction::SD(_)
-
-                // XXX Temporarily disabled. Too many nodes.
-                // See https://gitlab-ext.galois.com/jb4/jolt-fork/-/issues/14
-                | RV32IMInstruction::BEQ(_)
-                | RV32IMInstruction::BGE(_)
-                | RV32IMInstruction::BGEU(_)
-                | RV32IMInstruction::BLT(_)
-                | RV32IMInstruction::BLTU(_)
-                | RV32IMInstruction::SLT(_)
-                | RV32IMInstruction::SLTI(_)
-                | RV32IMInstruction::SLTIU(_)
-                | RV32IMInstruction::SLTU(_)
-                | RV32IMInstruction::VirtualAssertLTE(_)
-                | RV32IMInstruction::VirtualAssertValidSignedRemainder(_)
-                | RV32IMInstruction::VirtualAssertValidUnsignedRemainder(_)
-
-                // Virtual instructions
-                //| RV32IMInstruction::VirtualAdvice(_)
-                //| RV32IMInstruction::VirtualAssertEQ(_)
-                //| RV32IMInstruction::VirtualAssertHalfwordAlignment(_)
-                //| RV32IMInstruction::VirtualAssertValidDiv0(_)
-                //| RV32IMInstruction::VirtualMove(_)
-                //| RV32IMInstruction::VirtualMovsign(_)
-                //| RV32IMInstruction::VirtualMULI(_)
-                //| RV32IMInstruction::VirtualPow2(_)
-                //| RV32IMInstruction::VirtualPow2I(_)
-                //| RV32IMInstruction::VirtualROTRI(_)
-                //| RV32IMInstruction::VirtualShiftRightBitmask(_)
-                //| RV32IMInstruction::VirtualShiftRightBitmaskI(_)
-                //| RV32IMInstruction::VirtualSRA(_)
-                //| RV32IMInstruction::VirtualSRAI(_)
-                //| RV32IMInstruction::VirtualSRL(_)
-                //| RV32IMInstruction::VirtualSRLI(_)
 
                 // RV64I
                 | RV32IMInstruction::ADDIW(_)
@@ -160,6 +114,35 @@ impl<J: JoltParameterSet> ZkLeanInstruction<J> {
                 | RV32IMInstruction::AMOMAXD(_)
                 | RV32IMInstruction::AMOMINUD(_)
                 | RV32IMInstruction::AMOMAXUD(_)
+
+                // XXX Instructions with lookup tables but no MLE (???)
+                // TODO: Find a better way to filter these out.
+                | RV32IMInstruction::FENCE(_)
+                | RV32IMInstruction::LW(_)
+                | RV32IMInstruction::ECALL(_)
+                | RV32IMInstruction::SW(_)
+
+                // Instructions with no lookup table
+                // TODO: Find a better way to filter these out.
+                | RV32IMInstruction::LD(_)
+                | RV32IMInstruction::SD(_)
+
+                // XXX Temporarily disabled. Too many nodes.
+                // See https://gitlab-ext.galois.com/jb4/jolt-fork/-/issues/14
+                | RV32IMInstruction::BEQ(_)
+                | RV32IMInstruction::BNE(_)
+                | RV32IMInstruction::BGE(_)
+                | RV32IMInstruction::BGEU(_)
+                | RV32IMInstruction::BLT(_)
+                | RV32IMInstruction::BLTU(_)
+                | RV32IMInstruction::SLT(_)
+                | RV32IMInstruction::SLTI(_)
+                | RV32IMInstruction::SLTIU(_)
+                | RV32IMInstruction::SLTU(_)
+                | RV32IMInstruction::VirtualAssertLTE(_)
+                | RV32IMInstruction::VirtualAssertEQ(_)
+                | RV32IMInstruction::VirtualAssertValidSignedRemainder(_)
+                | RV32IMInstruction::VirtualAssertValidUnsignedRemainder(_)
                 => None,
             _ => Some(Self::from(instr)),
         })
@@ -233,76 +216,80 @@ impl<J: JoltParameterSet> AsModule for ZkLeanInstructions<J> {
     }
 }
 
-//#[cfg(test)]
-//mod test {
-//    use super::*;
-//    use crate::util::arb_field_elem;
-//
-//    use jolt_core::field::JoltField;
-//
-//    use proptest::{collection::vec, prelude::*};
-//    use strum::EnumCount as _;
-//
-//    type RefField = ark_bn254::Fr;
-//    type TestField = crate::mle_ast::MleAst<2048>;
-//    type ParamSet = crate::constants::RV32IParameterSet;
-//
-//    #[derive(Clone)]
-//    struct TestableInstruction<J: JoltParameterSet> {
-//        reference: RV32I,
-//        test: ZkLeanInstruction<J>,
-//    }
-//
-//    impl<J: JoltParameterSet> std::fmt::Debug for TestableInstruction<J> {
-//        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-//            f.write_fmt(format_args!("{}", self.test.name()))
-//        }
-//    }
-//
-//    impl<J: JoltParameterSet> TestableInstruction<J> {
-//        fn iter() -> impl Iterator<Item = Self> {
-//            RV32I::iter()
-//                .zip(ZkLeanInstruction::iter())
-//                .map(|(reference, test)| Self { reference, test })
-//        }
-//
-//        fn reference_combine_lookups<R: JoltField>(&self, inputs: &[R]) -> R {
-//            assert_eq!(inputs.len(), self.test.num_lookups::<R>());
-//
-//            self.reference.combine_lookups(inputs, J::C, J::M)
-//        }
-//
-//        fn test_combine_lookups<R: JoltField, T: ZkLeanReprField>(&self, inputs: &[R]) -> R {
-//            assert_eq!(inputs.len(), self.test.num_lookups::<R>());
-//
-//            let ast: T = self.test.combine_lookups('x');
-//            ast.evaluate(inputs)
-//        }
-//    }
-//
-//    fn arb_instruction<J: JoltParameterSet>() -> impl Strategy<Value = TestableInstruction<J>> {
-//        (0..RV32I::COUNT).prop_map(|n| TestableInstruction::iter().nth(n).unwrap())
-//    }
-//
-//    fn arb_instruction_and_input<J: JoltParameterSet + Clone, R: JoltField>(
-//    ) -> impl Strategy<Value = (TestableInstruction<J>, Vec<R>)> {
-//        arb_instruction().prop_flat_map(|instr| {
-//            let input_len = instr.test.num_lookups::<R>();
-//            let inputs = vec(arb_field_elem::<R>(), input_len);
-//
-//            (Just(instr), inputs)
-//        })
-//    }
-//
-//    proptest! {
-//        #[test]
-//        fn combine_lookups(
-//            (instr, inputs) in arb_instruction_and_input::<ParamSet, RefField>(),
-//        ) {
-//            prop_assert_eq!(
-//                instr.test_combine_lookups::<_, TestField>(&inputs),
-//                instr.reference_combine_lookups(&inputs),
-//            );
-//        }
-//    }
-//}
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::util::arb_field_elem;
+
+    use jolt_core::field::JoltField;
+
+    use proptest::{collection::vec, prelude::*};
+    use strum::EnumCount as _;
+
+    type RefField = ark_bn254::Fr;
+    type TestField = crate::mle_ast::MleAst<5400>;
+    type ParamSet = crate::constants::RV32IParameterSet;
+
+    #[derive(Clone)]
+    struct TestableInstruction<J: JoltParameterSet> {
+        reference: RV32IMInstruction,
+        test: ZkLeanInstruction<J>,
+    }
+
+    impl<J: JoltParameterSet> std::fmt::Debug for TestableInstruction<J> {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_fmt(format_args!("{}", self.test.name()))
+        }
+    }
+
+    impl<J: JoltParameterSet> TestableInstruction<J> {
+        fn iter() -> impl Iterator<Item = Self> {
+            ZkLeanInstruction::iter()
+                .map(|instr| Self {
+                    reference: instr.instruction.clone(),
+                    test: instr,
+                })
+        }
+
+        fn evaluate_reference_mle<R: JoltField>(&self, inputs: &[R]) -> R {
+            assert_eq!(inputs.len(), 2 * J::WORD_SIZE);
+
+            self.reference.lookup_table().unwrap().evaluate_mle(inputs)
+        }
+
+        fn evaluate_test_mle<R: JoltField, T: ZkLeanReprField>(&self, inputs: &[R]) -> R {
+            assert_eq!(inputs.len(), 2 * J::WORD_SIZE);
+
+            let ast: T = self.test.evaluate_mle('x');
+            ast.evaluate(inputs)
+        }
+    }
+
+    fn arb_instruction<J: JoltParameterSet>() -> impl Strategy<Value = TestableInstruction<J>> {
+        let num_instrs = TestableInstruction::<J>::iter().count();
+
+        (0..num_instrs).prop_map(|n| TestableInstruction::iter().nth(n).unwrap())
+    }
+
+    fn arb_instruction_and_input<J: JoltParameterSet + Clone, R: JoltField>(
+    ) -> impl Strategy<Value = (TestableInstruction<J>, Vec<R>)> {
+        arb_instruction().prop_flat_map(|instr| {
+            let input_len = 2 * J::WORD_SIZE;
+            let inputs = vec(arb_field_elem::<R>(), input_len);
+
+            (Just(instr), inputs)
+        })
+    }
+
+    proptest! {
+        #[test]
+        fn combine_lookups(
+            (instr, inputs) in arb_instruction_and_input::<ParamSet, RefField>(),
+        ) {
+            prop_assert_eq!(
+                instr.evaluate_test_mle::<_, TestField>(&inputs),
+                instr.evaluate_reference_mle(&inputs),
+            );
+        }
+    }
+}
