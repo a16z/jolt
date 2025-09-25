@@ -6,6 +6,7 @@ use self::fnv::FnvHashMap;
 #[cfg(not(feature = "std"))]
 use alloc::collections::btree_map::BTreeMap as FnvHashMap;
 use common::constants::REGISTER_COUNT;
+use tracing::{info, warn};
 
 use crate::instruction::{uncompress_instruction, Cycle, Instruction};
 use crate::utils::virtual_registers::VirtualRegisterAllocator;
@@ -997,7 +998,7 @@ impl Cpu {
                     .values()
                     .any(|marker| marker.label == label);
                 if duplicate {
-                    tracing::warn!("Marker with label '{}' is already active", &label);
+                    warn!("Marker with label '{}' is already active", &label);
                 }
 
                 self.active_markers.insert(
@@ -1014,16 +1015,12 @@ impl Cpu {
                 if let Some(mark) = self.active_markers.remove(&ptr) {
                     let real = self.executed_instrs - mark.start_instrs;
                     let virt = self.trace_len - mark.start_trace_len;
-                    tracing::info!(
+                    info!(
                         "\"{}\": {} RV64IMAC cycles, {} virtual cycles",
-                        mark.label,
-                        real,
-                        virt
+                        mark.label, real, virt
                     );
                 } else {
-                    tracing::warn!(
-                        "Attempt to end a marker (ptr: 0x{ptr:x}) that was never started"
-                    );
+                    warn!("Attempt to end a marker (ptr: 0x{ptr:x}) that was never started");
                 }
             }
             _ => {
@@ -1082,16 +1079,14 @@ impl Cpu {
 impl Drop for Cpu {
     fn drop(&mut self) {
         if !self.active_markers.is_empty() {
-            tracing::warn!(
+            warn!(
                 "Warning: Found {} unclosed cycle tracking marker(s):",
                 self.active_markers.len()
             );
             for (ptr, marker) in &self.active_markers {
-                tracing::warn!(
+                warn!(
                     "  - '{}' (at ptr: 0x{:x}), started at {} RV64IMAC cycles",
-                    marker.label,
-                    ptr,
-                    marker.start_instrs
+                    marker.label, ptr, marker.start_instrs
                 );
             }
         }

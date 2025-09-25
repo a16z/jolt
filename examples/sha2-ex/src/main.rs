@@ -1,4 +1,5 @@
 use std::time::Instant;
+use tracing::info;
 
 pub fn main() {
     tracing_subscriber::fmt::init();
@@ -16,9 +17,9 @@ pub fn main() {
     let input: &[u8] = &[5u8; 32];
     let now = Instant::now();
     let (output, proof, program_io) = prove_sha2(input);
-    tracing::info!("Prover runtime: {} s", now.elapsed().as_secs_f64());
+    info!("Prover runtime: {} s", now.elapsed().as_secs_f64());
     let is_valid = verify_sha2(input, output, program_io.panic, proof);
 
-    tracing::info!("output: {}", hex::encode(output));
-    tracing::info!("valid: {is_valid}");
+    info!("output: {}", hex::encode(output));
+    info!("valid: {is_valid}");
 }

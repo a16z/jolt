@@ -1,4 +1,5 @@
 use std::time::Instant;
+use tracing::info;
 
 pub fn main() {
     tracing_subscriber::fmt::init();
@@ -16,9 +17,9 @@ pub fn main() {
     let now = Instant::now();
     let input = 41;
     let (output, proof, program_io) = prove_alloc(input);
-    tracing::info!("Prover runtime: {} s", now.elapsed().as_secs_f64());
+    info!("Prover runtime: {} s", now.elapsed().as_secs_f64());
     let is_valid = verify_alloc(input, output, program_io.panic, proof);
 
-    tracing::info!("output: {output:?}");
-    tracing::info!("valid: {is_valid}");
+    info!("output: {output:?}");
+    info!("valid: {is_valid}");
 }

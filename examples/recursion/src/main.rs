@@ -5,6 +5,7 @@ use jolt_sdk::{JoltDevice, MemoryConfig, RV64IMACJoltProof, Serializable};
 use std::cmp::PartialEq;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
+use tracing::{error, info};
 
 fn get_guest_src_dir() -> PathBuf {
     let current_file = file!();
@@ -197,7 +198,7 @@ fn generate_provable_macro(guest: GuestProgram, use_embed: bool, output_dir: &Pa
     std::fs::create_dir_all(output_dir).unwrap();
 
     std::fs::write(&provable_macro_path, macro_content).unwrap();
-    tracing::info!(
+    info!(
         "Generated {} with config: input={}, output={}, memory={}, stack={}, trace={}",
         provable_macro_path.display(),
         memory_config.max_input_size,
@@ -209,7 +210,7 @@ fn generate_provable_macro(guest: GuestProgram, use_embed: bool, output_dir: &Pa
 }
 
 fn check_data_integrity(all_groups_data: &[u8]) -> (u32, u32) {
-    tracing::info!("Checking data integrity...");
+    info!("Checking data integrity...");
 
     let mut cursor = std::io::Cursor::new(all_groups_data);
 
@@ -219,29 +220,29 @@ fn check_data_integrity(all_groups_data: &[u8]) -> (u32, u32) {
         )
         .unwrap();
     let verifier_bytes = verifier_preprocessing.serialize_to_bytes().unwrap();
-    tracing::info!(
+    info!(
         "✓ Verifier preprocessing deserialized successfully ({} bytes)",
         verifier_bytes.len()
     );
 
     let n = u32::deserialize_compressed(&mut cursor).unwrap();
-    tracing::info!("✓ Number of proofs deserialized: {n}");
+    info!("✓ Number of proofs deserialized: {n}");
 
     for i in 0..n {
         match RV64IMACJoltProof::deserialize_compressed(&mut cursor) {
-            Ok(_) => tracing::info!("✓ Proof {i} deserialized"),
-            Err(e) => tracing::error!("✗ Failed to deserialize proof {i}: {e:?}"),
+            Ok(_) => info!("✓ Proof {i} deserialized"),
+            Err(e) => error!("✗ Failed to deserialize proof {i}: {e:?}"),
         }
         match JoltDevice::deserialize_compressed(&mut cursor) {
-            Ok(_) => tracing::info!("✓ Device {i} deserialized"),
-            Err(e) => tracing::error!("✗ Failed to deserialize device {i}: {e:?}"),
+            Ok(_) => info!("✓ Device {i} deserialized"),
+            Err(e) => error!("✗ Failed to deserialize device {i}: {e:?}"),
         }
     }
 
     let position = cursor.position() as usize;
     let all_data = cursor.into_inner();
     let remaining_data: Vec<u8> = all_data[position..].to_vec();
-    tracing::info!("✓ Remaining data size: {} bytes", remaining_data.len());
+    info!("✓ Remaining data size: {} bytes", remaining_data.len());
 
     assert_eq!(
         remaining_data.len(),
@@ -253,7 +254,7 @@ fn check_data_integrity(all_groups_data: &[u8]) -> (u32, u32) {
 }
 
 fn collect_guest_proofs(guest: GuestProgram, target_dir: &str, use_embed: bool) -> Vec<u8> {
-    tracing::info!("Starting collect_guest_proofs for {}", guest.name());
+    info!("Starting collect_guest_proofs for {}", guest.name());
     let max_trace_length = guest.get_max_trace_length(use_embed);
 
     let memory_config = MemoryConfig {
@@ -264,27 +265,27 @@ fn collect_guest_proofs(guest: GuestProgram, target_dir: &str, use_embed: bool) 
         program_size: None,
     };
 
-    tracing::info!("Creating program...");
+    info!("Creating program...");
     let mut program = jolt_sdk::host::Program::new(guest.name());
     program.set_func(guest.func());
     program.set_std(false);
     program.set_memory_config(memory_config);
-    tracing::info!("Building program...");
+    info!("Building program...");
     program.build(target_dir);
-    tracing::info!("Getting ELF contents...");
+    info!("Getting ELF contents...");
     let elf_contents = program.get_elf_contents().unwrap();
-    tracing::info!("Creating guest program...");
+    info!("Creating guest program...");
     let guest_prog = jolt_sdk::guest::program::Program::new(&elf_contents, &memory_config);
 
-    tracing::info!("Preprocessing guest prover...");
+    info!("Preprocessing guest prover...");
     let guest_prover_preprocessing =
         jolt_sdk::guest::prover::preprocess(&guest_prog, max_trace_length);
-    tracing::info!("Preprocessing guest verifier...");
+    info!("Preprocessing guest verifier...");
     let guest_verifier_preprocessing =
         jolt_sdk::JoltVerifierPreprocessing::from(&guest_prover_preprocessing);
 
     let inputs = guest.inputs();
-    tracing::info!("Got inputs: {inputs:?}");
+    info!("Got inputs: {inputs:?}");
 
     let mut all_groups_data = Vec::new();
     let mut cursor = std::io::Cursor::new(&mut all_groups_data);
@@ -297,17 +298,17 @@ fn collect_guest_proofs(guest: GuestProgram, target_dir: &str, use_embed: bool) 
     let n = inputs.len() as u32;
     u32::serialize_compressed(&n, &mut cursor).unwrap();
 
-    tracing::info!("Starting {} recursion with {}", guest.name(), n);
+    info!("Starting {} recursion with {}", guest.name(), n);
 
     for (i, &input) in inputs.iter().enumerate() {
-        tracing::info!("Processing input {i}: {input}");
+        info!("Processing input {i}: {input}");
 
         let now = Instant::now();
 
         let input_bytes = postcard::to_stdvec(&input).unwrap();
         let mut output_bytes = vec![0; 4096];
 
-        tracing::info!("  Proving...");
+        info!("  Proving...");
         let (proof, io_device, _debug) = jolt_sdk::guest::prover::prove(
             &guest_prog,
             &input_bytes,
@@ -316,16 +317,15 @@ fn collect_guest_proofs(guest: GuestProgram, target_dir: &str, use_embed: bool) 
         );
         let prove_time = now.elapsed().as_secs_f64();
         total_prove_time += prove_time;
-        tracing::info!(
+        info!(
             "  Input: {:?}, Prove time: {:.3}s",
-            &input_bytes,
-            prove_time
+            &input_bytes, prove_time
         );
 
         proof.serialize_compressed(&mut cursor).unwrap();
         io_device.serialize_compressed(&mut cursor).unwrap();
 
-        tracing::info!("  Verifying...");
+        info!("  Verifying...");
         let is_valid = jolt_sdk::guest::verifier::verify(
             &input_bytes,
             &output_bytes,
@@ -333,15 +333,15 @@ fn collect_guest_proofs(guest: GuestProgram, target_dir: &str, use_embed: bool) 
             &guest_verifier_preprocessing,
         )
         .is_ok();
-        tracing::info!("  Verification result: {is_valid}");
+        info!("  Verification result: {is_valid}");
     }
-    tracing::info!("Total prove time: {total_prove_time:.3}s");
-    tracing::info!("Total data size: {} bytes", all_groups_data.len());
+    info!("Total prove time: {total_prove_time:.3}s");
+    info!("Total data size: {} bytes", all_groups_data.len());
     all_groups_data
 }
 
 fn generate_embedded_bytes(guest: GuestProgram, all_groups_data: &[u8], output_dir: &Path) {
-    tracing::info!(
+    info!(
         "Generating embedded bytes for {} guest program...",
         guest.name()
     );
@@ -349,8 +349,8 @@ fn generate_embedded_bytes(guest: GuestProgram, all_groups_data: &[u8], output_d
     let (n, remaining_data_size) = check_data_integrity(all_groups_data);
 
     if remaining_data_size > 0 {
-        tracing::info!("Warning: Remaining data is not empty ({remaining_data_size} bytes). This might indicate proofs are included.");
-        tracing::info!("For embedded mode, only verifier preprocessing should be included.");
+        info!("Warning: Remaining data is not empty ({remaining_data_size} bytes). This might indicate proofs are included.");
+        info!("For embedded mode, only verifier preprocessing should be included.");
     }
 
     let mut output = String::new();
@@ -378,11 +378,11 @@ fn generate_embedded_bytes(guest: GuestProgram, all_groups_data: &[u8], output_d
 
     let filename = output_dir.join("embedded_bytes.rs");
     std::fs::write(&filename, output).unwrap();
-    tracing::info!("Embedded bytes written to {}", filename.display());
+    info!("Embedded bytes written to {}", filename.display());
 }
 
 fn save_proof_data(guest: GuestProgram, all_groups_data: &[u8], workdir: &Path) {
-    tracing::info!(
+    info!(
         "Saving proof data for {} to {}",
         guest.name(),
         workdir.display()
@@ -393,12 +393,12 @@ fn save_proof_data(guest: GuestProgram, all_groups_data: &[u8], workdir: &Path) 
     let proof_file = workdir.join(format!("{}_proofs.bin", guest.name()));
     std::fs::write(&proof_file, all_groups_data).unwrap();
 
-    tracing::info!("Proof data saved to {}", proof_file.display());
-    tracing::info!("Total proof data size: {} bytes", all_groups_data.len());
+    info!("Proof data saved to {}", proof_file.display());
+    info!("Total proof data size: {} bytes", all_groups_data.len());
 }
 
 fn load_proof_data(guest: GuestProgram, workdir: &Path) -> Vec<u8> {
-    tracing::info!(
+    info!(
         "Loading proof data for {} from {}",
         guest.name(),
         workdir.display()
@@ -411,7 +411,7 @@ fn load_proof_data(guest: GuestProgram, workdir: &Path) -> Vec<u8> {
     }
 
     let proof_data = std::fs::read(&proof_file).unwrap();
-    tracing::info!(
+    info!(
         "Loaded proof data from {} ({} bytes)",
         proof_file.display(),
         proof_data.len()
@@ -421,7 +421,7 @@ fn load_proof_data(guest: GuestProgram, workdir: &Path) -> Vec<u8> {
 }
 
 fn generate_proofs(guest: GuestProgram, workdir: &Path) {
-    tracing::info!("Generating proofs for {} guest program...", guest.name());
+    info!("Generating proofs for {} guest program...", guest.name());
 
     let target_dir = "/tmp/jolt-guest-targets";
 
@@ -431,7 +431,7 @@ fn generate_proofs(guest: GuestProgram, workdir: &Path) {
     // Save proof data
     save_proof_data(guest, &all_groups_data, workdir);
 
-    tracing::info!("Proof generation completed for {}", guest.name());
+    info!("Proof generation completed for {}", guest.name());
 }
 
 fn run_recursion_proof(
@@ -491,21 +491,21 @@ fn run_recursion_proof(
             )
             .is_ok();
             let rv = postcard::from_bytes::<u32>(&output_bytes).unwrap();
-            tracing::info!("  Recursion verification result: {rv}");
-            tracing::info!("  Recursion verification result: {is_valid}");
+            info!("  Recursion verification result: {rv}");
+            info!("  Recursion verification result: {is_valid}");
         }
         RunConfig::Trace => {
-            tracing::info!("  Trace-only mode: Skipping proof generation and verification.");
+            info!("  Trace-only mode: Skipping proof generation and verification.");
             let (_, _, io_device) = recursion.trace(&input_bytes);
             let rv = postcard::from_bytes::<u32>(&io_device.outputs).unwrap_or(0);
-            tracing::info!("  Recursion output (trace-only): {rv}");
+            info!("  Recursion output (trace-only): {rv}");
         }
         RunConfig::TraceToFile => {
-            tracing::info!("  Trace-only mode: Skipping proof generation and verification. Tracing to file: /tmp/{}.trace", guest.name());
+            info!("  Trace-only mode: Skipping proof generation and verification. Tracing to file: /tmp/{}.trace", guest.name());
             let (_, io_device) = recursion
                 .trace_to_file(&input_bytes, &format!("/tmp/{}.trace", guest.name()).into());
             let rv = postcard::from_bytes::<u32>(&io_device.outputs).unwrap_or(0);
-            tracing::info!("  Recursion output (trace-only): {rv}");
+            info!("  Recursion output (trace-only): {rv}");
         }
     }
 }
@@ -517,8 +517,8 @@ fn verify_proofs(
     output_dir: &Path,
     run_config: RunConfig,
 ) {
-    tracing::info!("Verifying proofs for {} guest program...", guest.name());
-    tracing::info!("Using embed mode: {use_embed}");
+    info!("Verifying proofs for {} guest program...", guest.name());
+    info!("Using embed mode: {use_embed}");
 
     generate_provable_macro(guest, use_embed, output_dir);
 
@@ -527,14 +527,14 @@ fn verify_proofs(
     check_data_integrity(&all_groups_data);
 
     if use_embed {
-        tracing::info!("Running {} recursion with embedded bytes...", guest.name());
+        info!("Running {} recursion with embedded bytes...", guest.name());
 
         generate_embedded_bytes(guest, &all_groups_data, output_dir);
 
         let memory_config = guest.get_memory_config(use_embed);
 
         let input_bytes = vec![];
-        tracing::info!("Using empty input bytes (embedded mode)");
+        info!("Using empty input bytes (embedded mode)");
 
         run_recursion_proof(
             guest,
@@ -544,20 +544,20 @@ fn verify_proofs(
             guest.get_max_trace_length(use_embed),
         );
     } else {
-        tracing::info!("Running {} recursion with input data...", guest.name());
+        info!("Running {} recursion with input data...", guest.name());
 
-        tracing::info!("Testing basic serialization/deserialization...");
+        info!("Testing basic serialization/deserialization...");
         let test_input_bytes = postcard::to_stdvec(&all_groups_data).unwrap();
         let test_deserialized: Vec<u8> = postcard::from_bytes(&test_input_bytes).unwrap();
         assert_eq!(all_groups_data, test_deserialized);
-        tracing::info!("Basic serialization/deserialization test passed!");
+        info!("Basic serialization/deserialization test passed!");
 
         check_data_integrity(&all_groups_data);
 
         let mut input_bytes = vec![];
         input_bytes.append(&mut postcard::to_stdvec(&all_groups_data.as_slice()).unwrap());
 
-        tracing::info!("Serialized input size: {} bytes", input_bytes.len());
+        info!("Serialized input size: {} bytes", input_bytes.len());
 
         let actual_input_size = (input_bytes.len() + 7) & !7; // Align to 8
         let memory_config = guest.get_memory_config(use_embed);
@@ -568,7 +568,7 @@ fn verify_proofs(
         );
         assert!(memory_config.memory_size >= memory_config.max_input_size);
 
-        tracing::info!("Using max_input_size: {actual_input_size} bytes");
+        info!("Using max_input_size: {actual_input_size} bytes");
 
         run_recursion_proof(
             guest,
@@ -590,9 +590,7 @@ fn main() {
             let guest = match GuestProgram::from_str(example) {
                 Some(guest) => guest,
                 None => {
-                    tracing::info!(
-                        "Unknown example: {example}. Supported examples: fibonacci, muldiv"
-                    );
+                    info!("Unknown example: {example}. Supported examples: fibonacci, muldiv");
                     return;
                 }
             };
@@ -606,9 +604,7 @@ fn main() {
             let guest = match GuestProgram::from_str(example) {
                 Some(guest) => guest,
                 None => {
-                    tracing::info!(
-                        "Unknown example: {example}. Supported examples: fibonacci, muldiv"
-                    );
+                    info!("Unknown example: {example}. Supported examples: fibonacci, muldiv");
                     return;
                 }
             };
@@ -634,9 +630,7 @@ fn main() {
             let guest = match GuestProgram::from_str(example) {
                 Some(guest) => guest,
                 None => {
-                    tracing::info!(
-                        "Unknown example: {example}. Supported examples: fibonacci, muldiv"
-                    );
+                    info!("Unknown example: {example}. Supported examples: fibonacci, muldiv");
                     return;
                 }
             };
@@ -653,23 +647,17 @@ fn main() {
             verify_proofs(guest, embed.is_some(), workdir, &output_dir, run_config);
         }
         None => {
-            tracing::info!("No subcommand specified. Available commands:");
-            tracing::info!("  generate --example <fibonacci|muldiv> [--workdir <DIR>]");
-            tracing::info!(
-                "  verify --example <fibonacci|muldiv> [--workdir <DIR>] [--embed <DIR>]"
-            );
-            tracing::info!("");
-            tracing::info!("Examples:");
-            tracing::info!("  cargo run --release -- generate --example fibonacci");
-            tracing::info!(
-                "  cargo run --release -- generate --example fibonacci --workdir ./output"
-            );
-            tracing::info!("  cargo run --release -- verify --example fibonacci");
-            tracing::info!(
-                "  cargo run --release -- verify --example fibonacci --workdir ./output --embed"
-            );
-            tracing::info!("  cargo run --release -- trace --example fibonacci --embed");
-            tracing::info!("  cargo run --release -- trace --example fibonacci --embed --disk");
+            info!("No subcommand specified. Available commands:");
+            info!("  generate --example <fibonacci|muldiv> [--workdir <DIR>]");
+            info!("  verify --example <fibonacci|muldiv> [--workdir <DIR>] [--embed <DIR>]");
+            info!("");
+            info!("Examples:");
+            info!("  cargo run --release -- generate --example fibonacci");
+            info!("  cargo run --release -- generate --example fibonacci --workdir ./output");
+            info!("  cargo run --release -- verify --example fibonacci");
+            info!("  cargo run --release -- verify --example fibonacci --workdir ./output --embed");
+            info!("  cargo run --release -- trace --example fibonacci --embed");
+            info!("  cargo run --release -- trace --example fibonacci --embed --disk");
         }
     }
 }

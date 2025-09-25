@@ -1,4 +1,5 @@
 use spinners::{Spinner, Spinners};
+use tracing::info;
 
 macro_rules! step {
     ($msg:expr, $action:expr) => {{
@@ -43,6 +44,6 @@ pub fn btreemap() {
 fn main() {
     tracing_subscriber::fmt::init();
 
-    tracing::info!("BTreeMap");
+    info!("BTreeMap");
     btreemap();
 }

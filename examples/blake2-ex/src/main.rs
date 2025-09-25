@@ -1,4 +1,5 @@
 use std::time::Instant;
+use tracing::info;
 
 pub fn main() {
     tracing_subscriber::fmt::init();
@@ -16,7 +17,7 @@ pub fn main() {
     let input: &[u8] = &[5u8; 32];
     let now = Instant::now();
     let (output, proof, program_io) = prove_blake2(input);
-    tracing::info!("Prover runtime: {} s", now.elapsed().as_secs_f64());
+    info!("Prover runtime: {} s", now.elapsed().as_secs_f64());
     let is_valid = verify_blake2(input, output, program_io.panic, proof);
 
     // Combine the two 32-byte arrays for display
@@ -25,6 +26,6 @@ pub fn main() {
     full_hash[0..32].copy_from_slice(&first_half);
     full_hash[32..64].copy_from_slice(&second_half);
 
-    tracing::info!("512-bit output: {}", hex::encode(full_hash));
-    tracing::info!("valid: {is_valid}");
+    info!("512-bit output: {}", hex::encode(full_hash));
+    info!("valid: {is_valid}");
 }

@@ -1,4 +1,5 @@
 use std::time::Instant;
+use tracing::info;
 
 pub fn main() {
     tracing_subscriber::fmt::init();
@@ -22,14 +23,14 @@ pub fn main() {
     } else {
         (trace_length - 1).next_power_of_two()
     };
-    tracing::info!("Trace length: {trace_length:?}");
-    tracing::info!("Max trace length: {max_trace_length:?}");
+    info!("Trace length: {trace_length:?}");
+    info!("Max trace length: {max_trace_length:?}");
 
     let now = Instant::now();
     let (output, proof, program_io) = prove(a, b);
-    tracing::info!("Prover runtime: {} s", now.elapsed().as_secs_f64());
+    info!("Prover runtime: {} s", now.elapsed().as_secs_f64());
     let is_valid = verify(a, b, output, program_io.panic, proof);
 
-    tracing::info!("output: {output}");
-    tracing::info!("valid: {is_valid}");
+    info!("output: {output}");
+    info!("valid: {is_valid}");
 }

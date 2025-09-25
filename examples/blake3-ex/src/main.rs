@@ -1,4 +1,5 @@
 use std::time::Instant;
+use tracing::info;
 
 pub fn main() {
     tracing_subscriber::fmt::init();
@@ -16,11 +17,11 @@ pub fn main() {
     let input: &[u8] = &[5u8; 32];
     let now = Instant::now();
     let (output, proof, program_io) = prove_blake3(input);
-    tracing::info!("Prover runtime: {} s", now.elapsed().as_secs_f64());
+    info!("Prover runtime: {} s", now.elapsed().as_secs_f64());
     let is_valid = verify_blake3(input, output, program_io.panic, proof);
 
     let first_half = output;
 
-    tracing::info!("output: {}", hex::encode(first_half));
-    tracing::info!("valid: {is_valid}");
+    info!("output: {}", hex::encode(first_half));
+    info!("valid: {is_valid}");
 }

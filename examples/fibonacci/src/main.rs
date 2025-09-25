@@ -1,5 +1,6 @@
 use jolt_sdk::serialize_and_print_size;
 use std::time::Instant;
+use tracing::info;
 
 pub fn main() {
     tracing_subscriber::fmt::init();
@@ -32,11 +33,11 @@ pub fn main() {
 
     let trace_file = "/tmp/fib_trace.bin";
     guest::trace_fib_to_file(trace_file, 50);
-    tracing::info!("Trace file written to: {trace_file}.");
+    info!("Trace file written to: {trace_file}.");
 
     let now = Instant::now();
     let (output, proof, io_device) = prove_fib(50);
-    tracing::info!("Prover runtime: {} s", now.elapsed().as_secs_f64());
+    info!("Prover runtime: {} s", now.elapsed().as_secs_f64());
 
     if save_to_disk {
         serialize_and_print_size("Proof", "/tmp/fib_proof.bin", &proof)
@@ -46,6 +47,6 @@ pub fn main() {
     }
 
     let is_valid = verify_fib(50, output, io_device.panic, proof);
-    tracing::info!("output: {output}");
-    tracing::info!("valid: {is_valid}");
+    info!("output: {output}");
+    info!("valid: {is_valid}");
 }

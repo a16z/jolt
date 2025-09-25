@@ -1,4 +1,5 @@
 use std::time::Instant;
+use tracing::info;
 
 pub fn main() {
     tracing_subscriber::fmt::init();
@@ -18,11 +19,11 @@ pub fn main() {
     let now = Instant::now();
     let input = 19;
     let (output, proof, program_io) = prove_collatz_single(input);
-    tracing::info!("Prover runtime: {} s", now.elapsed().as_secs_f64());
+    info!("Prover runtime: {} s", now.elapsed().as_secs_f64());
     let is_valid = verify_collatz_single(input, output, program_io.panic, proof);
 
-    tracing::info!("output: {output}");
-    tracing::info!("valid: {is_valid}");
+    info!("output: {output}");
+    info!("valid: {is_valid}");
 
     // Prove/verify convergence for a range of numbers:
     let mut program = guest::compile_collatz_convergence_range(target_dir);
@@ -39,9 +40,9 @@ pub fn main() {
     let start: u128 = 1 << 68;
     let now = Instant::now();
     let (output, proof, program_io) = prove_collatz_convergence(start, start + 100);
-    tracing::info!("Prover runtime: {} s", now.elapsed().as_secs_f64());
+    info!("Prover runtime: {} s", now.elapsed().as_secs_f64());
     let is_valid = verify_collatz_convergence(start, start + 100, output, program_io.panic, proof);
 
-    tracing::info!("output: {output}");
-    tracing::info!("valid: {is_valid}");
+    info!("output: {output}");
+    info!("valid: {is_valid}");
 }
