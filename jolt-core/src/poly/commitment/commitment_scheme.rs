@@ -93,7 +93,7 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
     fn prove<ProofTranscript: Transcript>(
         setup: &Self::ProverSetup,
         poly: &MultilinearPolynomial<Self::Field>,
-        opening_point: &[Self::Field],
+        opening_point: &[Self::Field::Challenge],
         hint: Self::OpeningProofHint,
         transcript: &mut ProofTranscript,
     ) -> Self::Proof;
@@ -114,7 +114,7 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
         proof: &Self::Proof,
         setup: &Self::VerifierSetup,
         transcript: &mut ProofTranscript,
-        opening_point: &[Self::Field],
+        opening_point: &[Self::Field::Challenge],
         opening: &Self::Field,
         commitment: &Self::Commitment,
     ) -> Result<(), ProofVerifyError>;

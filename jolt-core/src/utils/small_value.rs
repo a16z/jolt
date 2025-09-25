@@ -124,6 +124,7 @@ pub mod accum {
 pub mod svo_helpers {
     use super::accum::{fmadd_unreduced, UnreducedProduct};
     use super::*;
+    use crate::field::IntoField;
     use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
     use crate::poly::unipoly::CompressedUniPoly;
     use crate::subprotocols::sumcheck::process_eq_sumcheck_round;
@@ -1349,7 +1350,7 @@ pub mod svo_helpers {
     >(
         accums_zero: &[F],
         accums_infty: &[F],
-        r_challenges: &mut Vec<F>,
+        r_challenges: &mut Vec<F::Challenge>,
         round_polys: &mut Vec<CompressedUniPoly<F>>,
         claim: &mut F,
         transcript: &mut ProofTranscript,
@@ -1431,7 +1432,8 @@ pub mod svo_helpers {
                 transcript,
             );
 
-            let lagrange_coeffs_r_i = [F::one() - r_i, r_i, r_i * (r_i - F::one())];
+            let lagrange_coeffs_r_i: [F; 3] =
+                [F::one() - r_i, r_i.into_F(), r_i * (r_i - F::one())];
 
             if i < NUM_SVO_ROUNDS.saturating_sub(1) {
                 lagrange_coeffs = lagrange_coeffs_r_i
@@ -1605,6 +1607,7 @@ mod tests {
         compute_and_update_tA_inplace_2, compute_and_update_tA_inplace_3,
         compute_and_update_tA_inplace_const,
     };
+    use crate::field::challenge::MontU128Challenge;
     use crate::{field::JoltField, poly::eq_poly::EqPolynomial};
     use ark_bn254::Fr;
     use ark_ff::biginteger::{I8OrI96, S160};
@@ -1664,7 +1667,9 @@ mod tests {
         }
         let num_non_trivial = 3_usize.pow(num_vars as u32) - 2_usize.pow(num_vars as u32);
 
-        let r: Vec<Fr> = (0..num_vars).map(|_| Fr::rand(rng)).collect();
+        let r: Vec<MontU128Challenge<Fr>> = (0..num_vars)
+            .map(|_| MontU128Challenge::from(rng.gen::<u128>()))
+            .collect();
         let e_in_val: Vec<Fr> = EqPolynomial::evals(&r);
 
         let num_binary_points = 1 << num_vars;

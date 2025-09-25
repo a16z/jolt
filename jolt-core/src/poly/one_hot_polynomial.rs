@@ -81,7 +81,7 @@ pub struct EqCycleState<F: JoltField> {
 
 impl<F: JoltField> EqAddressState<F> {
     #[tracing::instrument(skip_all, name = "EqAddressState::new")]
-    pub fn new(r_address: &[F]) -> Self {
+    pub fn new(r_address: &[F::Challenge]) -> Self {
         let K = 1 << r_address.len();
         // F will maintain an array that, at the end of sumcheck round m, has size 2^m
         // and stores all 2^m values eq((k_1, ..., k_m), (r_1, ..., r_m))
@@ -90,7 +90,7 @@ impl<F: JoltField> EqAddressState<F> {
         F.reset(F::one());
 
         Self {
-            B: MultilinearPolynomial::from(EqPolynomial::evals(r_address)),
+            B: MultilinearPolynomial::from(EqPolynomial::<F>::evals(r_address)),
             F,
             num_variables_bound: 0,
         }
@@ -99,7 +99,7 @@ impl<F: JoltField> EqAddressState<F> {
 
 impl<F: JoltField> EqCycleState<F> {
     #[tracing::instrument(skip_all, name = "EqCycleState::new")]
-    pub fn new(r_cycle: &[F]) -> Self {
+    pub fn new(r_cycle: &[F::Challenge]) -> Self {
         let D = GruenSplitEqPolynomial::new(r_cycle, BindingOrder::HighToLow);
         Self {
             D,
@@ -129,7 +129,7 @@ pub struct OneHotPolynomialProverOpening<F: JoltField> {
     pub log_T: usize,
     pub polynomial: OneHotPolynomial<F>,
     /// First variable of r_cycle_prime
-    r_cycle_prime: Option<F>,
+    r_cycle_prime: Option<F::Challenge>,
     pub eq_address_state: Arc<RwLock<EqAddressState<F>>>,
     pub eq_cycle_state: Arc<RwLock<EqCycleState<F>>>,
 }
@@ -293,7 +293,7 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
     }
 
     #[tracing::instrument(skip_all, name = "OneHotPolynomialProverOpening::bind")]
-    pub fn bind(&mut self, r: F, round: usize) {
+    pub fn bind(&mut self, r: F::Challenge, round: usize) {
         let mut shared_eq_address = self.eq_address_state.write().unwrap();
         let mut shared_eq_cycle = self.eq_cycle_state.write().unwrap();
         let polynomial = &mut self.polynomial;
@@ -395,11 +395,25 @@ impl<F: JoltField> OneHotPolynomial<F> {
         DensePolynomial::new(dense_coeffs)
     }
 
-    pub fn evaluate(&self, r: &[F]) -> F {
+    pub fn evaluate(&self, r: &[F::Challenge]) -> F {
         assert_eq!(r.len(), self.get_num_vars());
         let (r_left, r_right) = r.split_at(self.num_rows().log_2());
-        let eq_left = EqPolynomial::evals(r_left);
-        let eq_right = EqPolynomial::evals(r_right);
+        let eq_left = EqPolynomial::<F>::evals(r_left);
+        let eq_right = EqPolynomial::<F>::evals(r_right);
+        let mut left_product = unsafe_allocate_zero_vec(eq_right.len());
+        self.vector_matrix_product(&eq_left, F::one(), &mut left_product);
+        left_product
+            .into_par_iter()
+            .zip_eq(eq_right.par_iter())
+            .map(|(l, r)| l * r)
+            .sum()
+    }
+
+    pub fn evaluate_field(&self, r: &[F]) -> F {
+        assert_eq!(r.len(), self.get_num_vars());
+        let (r_left, r_right) = r.split_at(self.num_rows().log_2());
+        let eq_left = EqPolynomial::evals_field(r_left);
+        let eq_right = EqPolynomial::evals_field(r_right);
         let mut left_product = unsafe_allocate_zero_vec(eq_right.len());
         self.vector_matrix_product(&eq_left, F::one(), &mut left_product);
         left_product
@@ -580,9 +594,11 @@ impl<F: JoltField> OneHotPolynomial<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::field::challenge::MontU128Challenge;
     use crate::poly::unipoly::UniPoly;
     use ark_bn254::Fr;
     use ark_std::{test_rng, Zero};
+    use rand::Rng;
     use rand_core::RngCore;
     use serial_test::serial;
 
@@ -599,12 +615,12 @@ mod tests {
         let one_hot_poly = OneHotPolynomial::<Fr>::from_indices(nonzero_indices, K);
         let mut dense_poly = one_hot_poly.to_dense_poly();
 
-        let r_address: Vec<Fr> = std::iter::repeat_with(|| Fr::random(&mut rng))
+        let r_address = std::iter::repeat_with(|| MontU128Challenge::from(rng.gen::<u128>()))
             .take(LOG_K)
-            .collect();
-        let r_cycle: Vec<Fr> = std::iter::repeat_with(|| Fr::random(&mut rng))
+            .collect::<Vec<_>>();
+        let r_cycle = std::iter::repeat_with(|| MontU128Challenge::from(rng.gen::<u128>()))
             .take(LOG_T)
-            .collect();
+            .collect::<Vec<_>>();
 
         let eq_address_state = EqAddressState::new(&r_address);
         let mut eq_cycle_state = EqCycleState::new(&r_cycle);
@@ -617,7 +633,7 @@ mod tests {
         one_hot_opening.initialize(one_hot_poly.clone());
 
         let r_concat = [r_address.as_slice(), r_cycle.as_slice()].concat();
-        let mut eq = DensePolynomial::new(EqPolynomial::evals(&r_concat));
+        let mut eq = DensePolynomial::new(EqPolynomial::<Fr>::evals(&r_concat));
 
         // Compute the initial input claim
         let input_claim: Fr = (0..dense_poly.len()).map(|i| dense_poly[i] * eq[i]).sum();
@@ -642,7 +658,7 @@ mod tests {
                 "round {round} prover message mismatch"
             );
 
-            let r = Fr::random(&mut rng);
+            let r = MontU128Challenge::from(rng.gen::<u128>());
 
             // Update previous_claim by evaluating the univariate polynomial at r
             let eval_at_1 = previous_claim - expected_message[0];
@@ -692,9 +708,10 @@ mod tests {
         let one_hot_poly = OneHotPolynomial::<Fr>::from_indices(nonzero_indices, K);
         let dense_poly = one_hot_poly.to_dense_poly();
 
-        let r: Vec<Fr> = std::iter::repeat_with(|| Fr::random(&mut rng))
-            .take(LOG_K + LOG_T)
-            .collect();
+        let r: Vec<MontU128Challenge<Fr>> =
+            std::iter::repeat_with(|| MontU128Challenge::from(rng.gen::<u128>()))
+                .take(LOG_K + LOG_T)
+                .collect();
 
         assert_eq!(one_hot_poly.evaluate(&r), dense_poly.evaluate(&r));
     }

@@ -1,11 +1,9 @@
-use std::fmt::{Debug, Display};
-use std::hash::Hash;
-use std::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub, SubAssign};
-
-#[cfg(feature = "allocative")]
 use allocative::Allocative;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{One, Zero};
+use std::fmt::{Debug, Display};
+use std::hash::Hash;
+use std::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub, SubAssign};
 
 pub trait FieldOps<Rhs = Self, Output = Self>:
     Add<Rhs, Output = Output>
@@ -15,6 +13,9 @@ pub trait FieldOps<Rhs = Self, Output = Self>:
 {
 }
 
+pub trait IntoField<F: JoltField> {
+    fn into_F(&self) -> F;
+}
 pub trait JoltField:
     'static
     + Sized
@@ -41,6 +42,12 @@ pub trait JoltField:
     + CanonicalDeserialize
     + Hash
     + MaybeAllocative
+    + Add<Self::Challenge, Output = Self>              // F + Challenge -> F
+    + for<'a> Add<&'a Self::Challenge, Output = Self>  // F + &Challenge -> F
+    + Sub<Self::Challenge, Output = Self>              // F - Challenge -> F
+    + for<'a> Sub<&'a Self::Challenge, Output = Self>  // F - &Challenge -> F
+    + Mul<Self::Challenge, Output = Self>              // F * Challenge -> F
+    + for<'a> Mul<&'a Self::Challenge, Output = Self>  // F * &Challenge -> F
 {
     /// Number of bytes occupied by a single field element.
     const NUM_BYTES: usize;
@@ -54,7 +61,6 @@ pub trait JoltField:
     /// the arkworks BN254 scalar field requires a conversion into Montgomery form, which naively
     /// requires a field multiplication, but can instead be looked up.
     type SmallValueLookupTables: Clone + Default + CanonicalSerialize + CanonicalDeserialize;
-
     type Challenge: 'static
         + Sized
         + Copy
@@ -66,15 +72,40 @@ pub trait JoltField:
         + Default
         + Eq
         + Hash
-        + Add<Self::Challenge, Output = Self>
-        + Sub<Self::Challenge, Output = Self>
-        + Mul<Self::Challenge, Output = Self>
-        + Mul<Self, Output = Self>
-        + for<'a> Mul<&'a Self, Output = Self>
         + CanonicalSerialize
         + CanonicalDeserialize
-        + MaybeAllocative
-        + From<u128>;
+        + Allocative
+        + From<u128>
+        + IntoField<Self> // <-- enforce `into_F` exists
+        //------------------------------------------------------------------
+        // Challenge ⊗ Challenge → F
+        //------------------------------------------------------------------
+        + Add<Self::Challenge, Output = Self> // Challenge + Challenge -> F
+        + for<'a> Add<&'a Self::Challenge, Output = Self> // Challenge + &Challenge -> F
+        + Sub<Self::Challenge, Output = Self> // Challenge - Challenge -> F
+        + for<'a> Sub<&'a Self::Challenge, Output = Self> // Challenge - &Challenge -> F
+        + Mul<Self::Challenge, Output = Self> // Challenge * Challenge -> F
+        + for<'a> Mul<&'a Self::Challenge, Output = Self> // Challenge * &Challenge -> F
+
+        //------------------------------------------------------------------
+        // F ⊗ Challenge → F
+        //------------------------------------------------------------------
+        + Add<Self::Challenge, Output = Self> // F + Challenge -> F
+        + for<'a> Add<&'a Self::Challenge, Output = Self> // F + &Challenge -> F
+        + Sub<Self::Challenge, Output = Self> // F - Challenge -> F
+        + for<'a> Sub<&'a Self::Challenge, Output = Self> // F - &Challenge -> F
+        + Mul<Self::Challenge, Output = Self> // F * Challenge -> F
+        + for<'a> Mul<&'a Self::Challenge, Output = Self> // F * &Challenge -> F
+        //------------------------------------------------------------------
+        // Challenge ⊗ F → F
+        //------------------------------------------------------------------
+        + Add<Self, Output = Self> // Challenge + F -> F
+        + for<'a> Add<&'a Self, Output = Self> // Challenge + &F -> F
+        + Sub<Self, Output = Self> // Challenge - F -> F
+        + for<'a> Sub<&'a Self, Output = Self> // Challenge - &F -> F
+        + Mul<Self, Output = Self> // Challenge * F -> F
+        + for<'a> Mul<&'a Self, Output = Self> // Challenge * &F -> F
+        ;
 
     fn random<R: rand_core::RngCore>(rng: &mut R) -> Self;
     /// Computes the small-value lookup tables.

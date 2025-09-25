@@ -3,7 +3,7 @@ use std::sync::{Arc, RwLock};
 use allocative::Allocative;
 use num::Integer;
 
-use crate::field::JoltField;
+use crate::field::{IntoField, JoltField};
 use crate::poly::prefix_suffix::{
     CacheablePolynomial, CachedPolynomial, Prefix, PrefixCheckpoints, PrefixPolynomial,
     PrefixRegistry, PrefixSuffixPolynomial, SuffixPolynomial,
@@ -36,7 +36,7 @@ impl<F: JoltField> PolynomialBinding<F> for IdentityPolynomial<F> {
         self.num_bound_vars != 0
     }
 
-    fn bind(&mut self, r: F, order: BindingOrder) {
+    fn bind(&mut self, r: F::Challenge, order: BindingOrder) {
         debug_assert!(self.num_bound_vars < self.num_vars);
 
         match order {
@@ -45,13 +45,13 @@ impl<F: JoltField> PolynomialBinding<F> for IdentityPolynomial<F> {
             }
             BindingOrder::HighToLow => {
                 self.bound_value += self.bound_value;
-                self.bound_value += r;
+                self.bound_value = self.bound_value + r;
             }
         }
         self.num_bound_vars += 1;
     }
 
-    fn bind_parallel(&mut self, r: F, order: BindingOrder) {
+    fn bind_parallel(&mut self, r: F::Challenge, order: BindingOrder) {
         // Binding is constant time, no parallelism necessary
         self.bind(r, order);
     }
@@ -63,13 +63,21 @@ impl<F: JoltField> PolynomialBinding<F> for IdentityPolynomial<F> {
 }
 
 impl<F: JoltField> PolynomialEvaluation<F> for IdentityPolynomial<F> {
-    fn evaluate(&self, r: &[F]) -> F {
+    fn evaluate(&self, r: &[F::Challenge]) -> F {
+        let len = r.len();
+        debug_assert_eq!(len, self.num_vars);
+        (0..len)
+            .map(|i| r[i].into_F().mul_u128(1 << (len - 1 - i)))
+            .sum()
+    }
+
+    fn evaluate_field(&self, r: &[F]) -> F {
         let len = r.len();
         debug_assert_eq!(len, self.num_vars);
         (0..len).map(|i| r[i].mul_u128(1 << (len - 1 - i))).sum()
     }
 
-    fn batch_evaluate(_polys: &[&Self], _r: &[F]) -> Vec<F> {
+    fn batch_evaluate(_polys: &[&Self], _r: &[F::Challenge]) -> Vec<F> {
         unimplemented!("Currently unused")
     }
 
@@ -194,7 +202,7 @@ impl<F: JoltField> PolynomialBinding<F> for OperandPolynomial<F> {
         self.num_bound_vars != 0
     }
 
-    fn bind(&mut self, r: F, order: BindingOrder) {
+    fn bind(&mut self, r: F::Challenge, order: BindingOrder) {
         debug_assert!(self.num_bound_vars < self.num_vars);
         debug_assert_eq!(
             order,
@@ -206,12 +214,12 @@ impl<F: JoltField> PolynomialBinding<F> for OperandPolynomial<F> {
             || (self.num_bound_vars.is_odd() && self.side == OperandSide::Right)
         {
             self.bound_value += self.bound_value;
-            self.bound_value += r;
+            self.bound_value += r + F::zero(); //TODO: (Ari) this should be as Fr
         }
         self.num_bound_vars += 1;
     }
 
-    fn bind_parallel(&mut self, r: F, order: BindingOrder) {
+    fn bind_parallel(&mut self, r: F::Challenge, order: BindingOrder) {
         // Binding is constant time, no parallelism necessary
         self.bind(r, order);
     }
@@ -223,22 +231,41 @@ impl<F: JoltField> PolynomialBinding<F> for OperandPolynomial<F> {
 }
 
 impl<F: JoltField> PolynomialEvaluation<F> for OperandPolynomial<F> {
-    fn evaluate(&self, r: &[F]) -> F {
+    fn evaluate(&self, r: &[F::Challenge]) -> F {
         let len = r.len();
         debug_assert_eq!(len, self.num_vars);
         debug_assert!(len.is_even());
 
         match self.side {
             OperandSide::Left => (0..len / 2)
-                .map(|i| r[2 * i].mul_u128(1 << (self.num_vars / 2 - 1 - i)))
+                .map(|i| r[2 * i].into_F().mul_u128(1 << (self.num_vars / 2 - 1 - i)))
                 .sum(),
             OperandSide::Right => (0..len / 2)
-                .map(|i| r[2 * i + 1].mul_u128(1 << (self.num_vars / 2 - 1 - i)))
+                .map(|i| {
+                    r[2 * i + 1]
+                        .into_F()
+                        .mul_u128(1 << (self.num_vars / 2 - 1 - i))
+                })
                 .sum(),
         }
     }
 
-    fn batch_evaluate(_polys: &[&Self], _r: &[F]) -> Vec<F> {
+    fn evaluate_field(&self, r: &[F]) -> F {
+        let len = r.len();
+        debug_assert_eq!(len, self.num_vars);
+        debug_assert!(len.is_even());
+
+        match self.side {
+            OperandSide::Left => (0..len / 2)
+                .map(|i| r[2 * i].mul_u64(1u64 << (self.num_vars / 2 - 1 - i)))
+                .sum(),
+            OperandSide::Right => (0..len / 2)
+                .map(|i| r[2 * i + 1].mul_u64(1u64 << (self.num_vars / 2 - 1 - i)))
+                .sum(),
+        }
+    }
+
+    fn batch_evaluate(_polys: &[&Self], _r: &[F::Challenge]) -> Vec<F> {
         unimplemented!("Currently unused")
     }
 
@@ -388,11 +415,11 @@ impl<F: JoltField> PolynomialBinding<F> for UnmapRamAddressPolynomial<F> {
         self.int_poly.is_bound()
     }
 
-    fn bind(&mut self, r: F, order: BindingOrder) {
+    fn bind(&mut self, r: F::Challenge, order: BindingOrder) {
         self.int_poly.bind(r, order);
     }
 
-    fn bind_parallel(&mut self, r: F, order: BindingOrder) {
+    fn bind_parallel(&mut self, r: F::Challenge, order: BindingOrder) {
         // Binding is constant time, no parallelism necessary
         self.bind(r, order);
     }
@@ -403,11 +430,15 @@ impl<F: JoltField> PolynomialBinding<F> for UnmapRamAddressPolynomial<F> {
 }
 
 impl<F: JoltField> PolynomialEvaluation<F> for UnmapRamAddressPolynomial<F> {
-    fn evaluate(&self, r: &[F]) -> F {
+    fn evaluate(&self, r: &[F::Challenge]) -> F {
         self.int_poly.evaluate(r).mul_u64(8) + F::from_u64(self.start_address - 8)
     }
 
-    fn batch_evaluate(_polys: &[&Self], _r: &[F]) -> Vec<F> {
+    fn evaluate_field(&self, r: &[F]) -> F {
+        self.int_poly.evaluate_field(r).mul_u64(4) + F::from_u64(self.start_address - 4)
+    }
+
+    fn batch_evaluate(_polys: &[&Self], _r: &[F::Challenge]) -> Vec<F> {
         unimplemented!("Unused")
     }
 
@@ -424,8 +455,10 @@ impl<F: JoltField> PolynomialEvaluation<F> for UnmapRamAddressPolynomial<F> {
 mod tests {
     use crate::poly::multilinear_polynomial::MultilinearPolynomial;
     use crate::poly::prefix_suffix::tests::prefix_suffix_decomposition_test;
+    use rand::Rng;
 
     use super::*;
+    use crate::field::challenge::MontU128Challenge;
     use ark_bn254::Fr;
     use ark_ec::AdditiveGroup;
     use ark_ff::Field;
@@ -450,7 +483,7 @@ mod tests {
         }
 
         for _ in 0..NUM_VARS {
-            let r = Fr::random(&mut rng);
+            let r = MontU128Challenge::from(rng.gen::<u128>());
             identity_poly.bind(r, BindingOrder::LowToHigh);
             reference_poly.bind(r, BindingOrder::LowToHigh);
             for j in 0..reference_poly.len() / 2 {
@@ -499,23 +532,32 @@ mod tests {
         // Test a few specific points
         // k=0 should map to start_address - 8
         let point_0 = vec![Fr::ZERO; NUM_VARS];
-        assert_eq!(unmap_poly.evaluate(&point_0), Fr::from(START_ADDRESS - 8));
+        assert_eq!(
+            unmap_poly.evaluate_field(&point_0),
+            Fr::from(START_ADDRESS - 8)
+        );
 
         // k=1 should map to start_address
         let mut point_1 = vec![Fr::ZERO; NUM_VARS];
         point_1[NUM_VARS - 1] = Fr::ONE;
-        assert_eq!(unmap_poly.evaluate(&point_1), Fr::from(START_ADDRESS));
+        assert_eq!(unmap_poly.evaluate_field(&point_1), Fr::from(START_ADDRESS));
 
         // k=2 should map to start_address + 8
         let mut point_2 = vec![Fr::ZERO; NUM_VARS];
         point_2[NUM_VARS - 2] = Fr::ONE;
-        assert_eq!(unmap_poly.evaluate(&point_2), Fr::from(START_ADDRESS + 8));
+        assert_eq!(
+            unmap_poly.evaluate_field(&point_2),
+            Fr::from(START_ADDRESS + 8)
+        );
 
         // k=3 should map to start_address + 16
         let mut point_3 = vec![Fr::ZERO; NUM_VARS];
         point_3[NUM_VARS - 1] = Fr::ONE;
         point_3[NUM_VARS - 2] = Fr::ONE;
-        assert_eq!(unmap_poly.evaluate(&point_3), Fr::from(START_ADDRESS + 16));
+        assert_eq!(
+            unmap_poly.evaluate_field(&point_3),
+            Fr::from(START_ADDRESS + 16)
+        );
     }
 
     #[test]
@@ -541,12 +583,12 @@ mod tests {
             let expected_l = Fr::from_u64(left);
 
             assert_eq!(
-                ro_poly.evaluate(&eval_point),
+                ro_poly.evaluate_field(&eval_point),
                 expected_r,
                 "Boolean hypercube RIGHT OPERAND evaluation failed at index {i}"
             );
             assert_eq!(
-                lo_poly.evaluate(&eval_point),
+                lo_poly.evaluate_field(&eval_point),
                 expected_l,
                 "Boolean hypercube LEFT OPERAND evaluation failed at index {i}"
             );
@@ -579,10 +621,10 @@ mod tests {
                     eval_point[j] = Fr::ONE;
                 }
             }
-            let ro_poly = ro_poly.evaluate(&eval_point);
-            let lo_poly = lo_poly.evaluate(&eval_point);
-            let reference_r = reference_poly_r.evaluate(&eval_point);
-            let reference_l = reference_poly_l.evaluate(&eval_point);
+            let ro_poly = ro_poly.evaluate_field(&eval_point);
+            let lo_poly = lo_poly.evaluate_field(&eval_point);
+            let reference_r = reference_poly_r.evaluate_field(&eval_point);
+            let reference_l = reference_poly_l.evaluate_field(&eval_point);
             assert_eq!(
                 (ro_poly, lo_poly), (reference_r, reference_l),
                 "Evaluation mismatch at index {i}:, operand_poly={ro_poly}, {lo_poly}, reference={reference_r}, {reference_l}"
@@ -605,7 +647,7 @@ mod tests {
                 );
             }
 
-            let r = Fr::random(&mut rng);
+            let r = MontU128Challenge::from(rng.gen::<u128>());
             ro_poly.bind(r, BindingOrder::HighToLow);
             lo_poly.bind(r, BindingOrder::HighToLow);
             reference_poly_r.bind(r, BindingOrder::HighToLow);
@@ -657,7 +699,7 @@ mod tests {
                 );
             }
 
-            let r = Fr::from(0x12345678u64 + round as u64);
+            let r = MontU128Challenge::from(0x12345678u64 as u128 + round as u128);
             unmap_poly.bind(r, BindingOrder::LowToHigh);
             reference_poly.bind(r, BindingOrder::LowToHigh);
         }

@@ -328,7 +328,7 @@ where
     pub fn open(
         pk: &KZGProverKey<P>,
         poly: &UniPoly<P::ScalarField>,
-        point: &P::ScalarField,
+        point: &P::ScalarField::Challenge,
     ) -> Result<(P::G1Affine, P::ScalarField), ProofVerifyError>
     where
         <P as Pairing>::ScalarField: JoltField,

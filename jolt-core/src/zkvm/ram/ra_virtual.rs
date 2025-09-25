@@ -39,8 +39,8 @@ pub struct RaProverState<F: JoltField> {
 pub struct RaSumcheck<F: JoltField> {
     gamma: [F; 3],
     /// Random challenge r_cycle
-    r_cycle: [Vec<F>; 3],
-    r_address_chunks: Vec<Vec<F>>,
+    r_cycle: [Vec<F::Challenge>; 3],
+    r_address_chunks: Vec<Vec<F::Challenge>>,
     /// [ra(r_address, r_cycle_val), ra(r_address, r_cycle_rw), ra(r_address, r_cycle_raf)]
     ra_claim: F,
     /// Number of decomposition parts
@@ -98,13 +98,13 @@ impl<F: JoltField> RaSumcheck<F> {
         } else {
             // Pad with zeros
             [
-                &vec![F::zero(); DTH_ROOT_OF_K.log_2() - (r_address.len() % DTH_ROOT_OF_K.log_2())],
+                &vec![F::Challenge::from(0_u128); DTH_ROOT_OF_K.log_2() - (r_address.len() % DTH_ROOT_OF_K.log_2())],
                 r_address,
             ]
             .concat()
         };
         // Split r_address into d chunks of variable sizes
-        let r_address_chunks: Vec<Vec<F>> = r_address
+        let r_address_chunks: Vec<Vec<F::Challenge>> = r_address
             .chunks(DTH_ROOT_OF_K.log_2())
             .map(|chunk| chunk.to_vec())
             .collect();
@@ -123,9 +123,9 @@ impl<F: JoltField> RaSumcheck<F> {
         let gamma = [F::one(), gamma, gamma.square()];
 
         let eq_polys = [
-            &EqPolynomial::evals(r_cycle_val).into(),
-            &EqPolynomial::evals(r_cycle_rw).into(),
-            &EqPolynomial::evals(r_cycle_raf).into(),
+            &EqPolynomial::<F>::evals(r_cycle_val).into(),
+            &EqPolynomial::<F>::evals(r_cycle_rw).into(),
+            &EqPolynomial::<F>::evals(r_cycle_raf).into(),
         ];
 
         let eq_poly =
@@ -219,13 +219,13 @@ impl<F: JoltField> RaSumcheck<F> {
         } else {
             // Pad with zeros
             [
-                &vec![F::zero(); DTH_ROOT_OF_K.log_2() - (r_address.len() % DTH_ROOT_OF_K.log_2())],
+                &vec![F::Challenge::from(0_u128); DTH_ROOT_OF_K.log_2() - (r_address.len() % DTH_ROOT_OF_K.log_2())],
                 r_address,
             ]
             .concat()
         };
         // Split r_address into d chunks of variable sizes
-        let r_address_chunks: Vec<Vec<F>> = r_address
+        let r_address_chunks: Vec<Vec<F::Challenge>> = r_address
             .chunks(DTH_ROOT_OF_K.log_2())
             .map(|chunk| chunk.to_vec())
             .collect();
@@ -266,7 +266,7 @@ impl<F: JoltField> SumcheckInstance<F> for RaSumcheck<F> {
     }
 
     #[tracing::instrument(skip_all, name = "RaVirtualization::bind")]
-    fn bind(&mut self, r_j: F, _: usize) {
+    fn bind(&mut self, r_j: F::Challenge, _: usize) {
         let prover_state = self
             .prover_state
             .as_mut()
@@ -287,13 +287,13 @@ impl<F: JoltField> SumcheckInstance<F> for RaSumcheck<F> {
     fn expected_output_claim(
         &self,
         accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
-        r: &[F],
+        r: &[F::Challenge],
     ) -> F {
         // we need opposite endian-ness here
         let r_rev: Vec<_> = r.iter().cloned().rev().collect();
-        let eq_eval = self.gamma[0] * EqPolynomial::mle(&self.r_cycle[0], &r_rev)
-            + self.gamma[1] * EqPolynomial::mle(&self.r_cycle[1], &r_rev)
-            + self.gamma[2] * EqPolynomial::mle(&self.r_cycle[2], &r_rev);
+        let eq_eval = self.gamma[0] * EqPolynomial::<F>::mle(&self.r_cycle[0], &r_rev)
+            + self.gamma[1] * EqPolynomial::<F>::mle(&self.r_cycle[1], &r_rev)
+            + self.gamma[2] * EqPolynomial::<F>::mle(&self.r_cycle[2], &r_rev);
 
         // Compute the product of all ra_i evaluations
         let mut product = F::one();
@@ -359,7 +359,10 @@ impl<F: JoltField> SumcheckInstance<F> for RaSumcheck<F> {
         univariate_poly_evals
     }
 
-    fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(
+        &self,
+        opening_point: &[F::Challenge],
+    ) -> OpeningPoint<BIG_ENDIAN, F> {
         OpeningPoint::new(opening_point.iter().copied().rev().collect())
     }
 

@@ -196,7 +196,7 @@ impl<F: JoltField> SumcheckInstance<F> for InnerSumcheck<F> {
     }
 
     #[tracing::instrument(skip_all, name = "InnerSumcheck::bind")]
-    fn bind(&mut self, r_j: F, _round: usize) {
+    fn bind(&mut self, r_j: F::Challenge, _round: usize) {
         let prover_state = self
             .prover_state
             .as_mut()
@@ -220,7 +220,7 @@ impl<F: JoltField> SumcheckInstance<F> for InnerSumcheck<F> {
     fn expected_output_claim(
         &self,
         accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
-        r: &[F],
+        r: &[F::Challenge],
     ) -> F {
         let key = self.key.as_ref().expect("Key not initialized");
 
@@ -259,7 +259,10 @@ impl<F: JoltField> SumcheckInstance<F> for InnerSumcheck<F> {
         left_expected * eval_z
     }
 
-    fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(
+        &self,
+        opening_point: &[F::Challenge],
+    ) -> OpeningPoint<BIG_ENDIAN, F> {
         OpeningPoint::new(opening_point.to_vec())
     }
 

@@ -227,7 +227,7 @@ impl Prefixes {
     pub fn prefix_mle<const XLEN: usize, F: JoltField>(
         &self,
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: Option<F>,
+        r_x: Option<F::Challenge>,
         c: u32,
         b: LookupBits,
         j: usize,
@@ -328,8 +328,8 @@ impl Prefixes {
     #[tracing::instrument(skip_all)]
     pub fn update_checkpoints<const XLEN: usize, F: JoltField>(
         checkpoints: &mut [PrefixCheckpoint<F>],
-        r_x: F,
-        r_y: F,
+        r_x: F::Challenge,
+        r_y: F::Challenge,
         j: usize,
     ) {
         debug_assert_eq!(checkpoints.len(), Self::COUNT);

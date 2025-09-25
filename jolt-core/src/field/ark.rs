@@ -1,4 +1,4 @@
-use super::{FieldOps, JoltField};
+use super::{FieldOps, IntoField, JoltField};
 use crate::{
     field::challenge::{MontU128Challenge, TrivialChallenge},
     utils::thread::unsafe_allocate_zero_vec,
@@ -14,50 +14,180 @@ impl FieldOps<&ark_bn254::Fr, ark_bn254::Fr> for ark_bn254::Fr {}
 lazy_static::lazy_static! {
     static ref SMALL_VALUE_LOOKUP_TABLES: [Vec<ark_bn254::Fr>; 2] = ark_bn254::Fr::compute_lookup_tables();
 }
-impl MontU128Challenge<ark_bn254::Fr> {
+
+impl IntoField<ark_bn254::Fr> for MontU128Challenge<ark_bn254::Fr> {
     #[inline(always)]
-    pub fn as_fr(&self) -> ark_bn254::Fr {
+    fn into_F(&self) -> ark_bn254::Fr {
         ark_bn254::Fr::from_bigint_unchecked(BigInt::new(self.value())).unwrap()
     }
 }
+// impl MontU128Challenge<ark_bn254::Fr> {
+//     #[inline(always)]
+//     pub fn as_fr(&self) -> ark_bn254::Fr {
+//         ark_bn254::Fr::from_bigint_unchecked(BigInt::new(self.value())).unwrap()
+//     }
+// }
 
-impl TrivialChallenge<ark_bn254::Fr> {
+impl IntoField<ark_bn254::Fr> for TrivialChallenge<ark_bn254::Fr> {
     #[inline(always)]
-    pub fn as_fr(&self) -> ark_bn254::Fr {
+    fn into_F(&self) -> ark_bn254::Fr {
         self.value()
     }
 }
 
 macro_rules! impl_field_ops_inline {
     ($t:ty, $f:ty) => {
-        // t + t -> f
+        /* ----------------------
+         * $t ⊗ $t
+         * ---------------------- */
         impl Add<$t> for $t {
             type Output = $f;
             #[inline(always)]
-            fn add(self, rhs: Self) -> Self::Output {
-                self.as_fr() + rhs.as_fr()
+            fn add(self, rhs: $t) -> $f {
+                self.into_F() + rhs.into_F()
+            }
+        }
+        impl<'a> Add<&'a $t> for $t {
+            type Output = $f;
+            #[inline(always)]
+            fn add(self, rhs: &'a $t) -> $f {
+                self.into_F() + rhs.into_F()
+            }
+        }
+        impl<'a> Add<$t> for &'a $t {
+            type Output = $f;
+            #[inline(always)]
+            fn add(self, rhs: $t) -> $f {
+                self.into_F() + rhs.into_F()
+            }
+        }
+        impl<'a, 'b> Add<&'b $t> for &'a $t {
+            type Output = $f;
+            #[inline(always)]
+            fn add(self, rhs: &'b $t) -> $f {
+                self.into_F() + rhs.into_F()
             }
         }
 
-        // t - t -> f
         impl Sub<$t> for $t {
             type Output = $f;
             #[inline(always)]
-            fn sub(self, rhs: Self) -> Self::Output {
-                self.as_fr() - rhs.as_fr()
+            fn sub(self, rhs: $t) -> $f {
+                self.into_F() - rhs.into_F()
+            }
+        }
+        impl<'a> Sub<&'a $t> for $t {
+            type Output = $f;
+            #[inline(always)]
+            fn sub(self, rhs: &'a $t) -> $f {
+                self.into_F() - rhs.into_F()
+            }
+        }
+        impl<'a> Sub<$t> for &'a $t {
+            type Output = $f;
+            #[inline(always)]
+            fn sub(self, rhs: $t) -> $f {
+                self.into_F() - rhs.into_F()
+            }
+        }
+        impl<'a, 'b> Sub<&'b $t> for &'a $t {
+            type Output = $f;
+            #[inline(always)]
+            fn sub(self, rhs: &'b $t) -> $f {
+                self.into_F() - rhs.into_F()
             }
         }
 
-        // t * t -> f
         impl Mul<$t> for $t {
             type Output = $f;
             #[inline(always)]
-            fn mul(self, rhs: Self) -> Self::Output {
-                self.as_fr() * rhs.as_fr()
+            fn mul(self, rhs: $t) -> $f {
+                self.into_F() * rhs.into_F()
+            }
+        }
+        impl<'a> Mul<&'a $t> for $t {
+            type Output = $f;
+            #[inline(always)]
+            fn mul(self, rhs: &'a $t) -> $f {
+                self.into_F() * rhs.into_F()
+            }
+        }
+        impl<'a> Mul<$t> for &'a $t {
+            type Output = $f;
+            #[inline(always)]
+            fn mul(self, rhs: $t) -> $f {
+                self.into_F() * rhs.into_F()
+            }
+        }
+        impl<'a, 'b> Mul<&'b $t> for &'a $t {
+            type Output = $f;
+            #[inline(always)]
+            fn mul(self, rhs: &'b $t) -> $f {
+                self.into_F() * rhs.into_F()
             }
         }
 
-        // t * f -> f
+        /* ----------------------
+         * $t ⊗ $f
+         * ---------------------- */
+        impl Add<$f> for $t {
+            type Output = $f;
+            #[inline(always)]
+            fn add(self, rhs: $f) -> $f {
+                self.into_F() + rhs
+            }
+        }
+        impl<'a> Add<&'a $f> for $t {
+            type Output = $f;
+            #[inline(always)]
+            fn add(self, rhs: &'a $f) -> $f {
+                self.into_F() + rhs
+            }
+        }
+        impl<'a> Add<$f> for &'a $t {
+            type Output = $f;
+            #[inline(always)]
+            fn add(self, rhs: $f) -> $f {
+                self.into_F() + rhs
+            }
+        }
+        impl<'a, 'b> Add<&'b $f> for &'a $t {
+            type Output = $f;
+            #[inline(always)]
+            fn add(self, rhs: &'b $f) -> $f {
+                self.into_F() + rhs
+            }
+        }
+
+        impl Sub<$f> for $t {
+            type Output = $f;
+            #[inline(always)]
+            fn sub(self, rhs: $f) -> $f {
+                self.into_F() - rhs
+            }
+        }
+        impl<'a> Sub<&'a $f> for $t {
+            type Output = $f;
+            #[inline(always)]
+            fn sub(self, rhs: &'a $f) -> $f {
+                self.into_F() - rhs
+            }
+        }
+        impl<'a> Sub<$f> for &'a $t {
+            type Output = $f;
+            #[inline(always)]
+            fn sub(self, rhs: $f) -> $f {
+                self.into_F() - rhs
+            }
+        }
+        impl<'a, 'b> Sub<&'b $f> for &'a $t {
+            type Output = $f;
+            #[inline(always)]
+            fn sub(self, rhs: &'b $f) -> $f {
+                self.into_F() - rhs
+            }
+        }
+
         impl Mul<$f> for $t {
             type Output = $f;
             #[inline(always)]
@@ -65,17 +195,89 @@ macro_rules! impl_field_ops_inline {
                 rhs.mul_hi_bigint_u128(self.value())
             }
         }
-
-        // t * &f -> f
-        impl Mul<&$f> for $t {
+        impl<'a> Mul<&'a $f> for $t {
             type Output = $f;
             #[inline(always)]
-            fn mul(self, rhs: &$f) -> $f {
-                (*rhs).mul_hi_bigint_u128(self.value())
+            fn mul(self, rhs: &'a $f) -> $f {
+                rhs.mul_hi_bigint_u128(self.value())
+            }
+        }
+        impl<'a> Mul<$f> for &'a $t {
+            type Output = $f;
+            #[inline(always)]
+            fn mul(self, rhs: $f) -> $f {
+                rhs.mul_hi_bigint_u128(self.value())
+            }
+        }
+        impl<'a, 'b> Mul<&'b $f> for &'a $t {
+            type Output = $f;
+            #[inline(always)]
+            fn mul(self, rhs: &'b $f) -> $f {
+                rhs.mul_hi_bigint_u128(self.value())
             }
         }
 
-        // f * t -> f
+        /* ----------------------
+         * $f ⊗ $t
+         * ---------------------- */
+        impl Add<$t> for $f {
+            type Output = $f;
+            #[inline(always)]
+            fn add(self, rhs: $t) -> $f {
+                self + rhs.into_F()
+            }
+        }
+        impl<'a> Add<&'a $t> for $f {
+            type Output = $f;
+            #[inline(always)]
+            fn add(self, rhs: &'a $t) -> $f {
+                self + rhs.into_F()
+            }
+        }
+        impl<'a> Add<$t> for &'a $f {
+            type Output = $f;
+            #[inline(always)]
+            fn add(self, rhs: $t) -> $f {
+                *self + rhs.into_F()
+            }
+        }
+        impl<'a, 'b> Add<&'b $t> for &'a $f {
+            type Output = $f;
+            #[inline(always)]
+            fn add(self, rhs: &'b $t) -> $f {
+                *self + rhs.into_F()
+            }
+        }
+
+        impl Sub<$t> for $f {
+            type Output = $f;
+            #[inline(always)]
+            fn sub(self, rhs: $t) -> $f {
+                self - rhs.into_F()
+            }
+        }
+        impl<'a> Sub<&'a $t> for $f {
+            type Output = $f;
+            #[inline(always)]
+            fn sub(self, rhs: &'a $t) -> $f {
+                self - rhs.into_F()
+            }
+        }
+        impl<'a> Sub<$t> for &'a $f {
+            type Output = $f;
+            #[inline(always)]
+            fn sub(self, rhs: $t) -> $f {
+                *self - rhs.into_F()
+            }
+        }
+        impl<'a, 'b> Sub<&'b $t> for &'a $f {
+            type Output = $f;
+            #[inline(always)]
+            fn sub(self, rhs: &'b $t) -> $f {
+                *self - rhs.into_F()
+            }
+        }
+
         impl Mul<$t> for $f {
             type Output = $f;
             #[inline(always)]
@@ -83,49 +285,25 @@ macro_rules! impl_field_ops_inline {
                 self.mul_hi_bigint_u128(rhs.value())
             }
         }
-
-        // f * &t -> f
-        impl Mul<&$t> for $f {
+        impl<'a> Mul<&'a $t> for $f {
             type Output = $f;
             #[inline(always)]
-            fn mul(self, rhs: &$t) -> $f {
+            fn mul(self, rhs: &'a $t) -> $f {
                 self.mul_hi_bigint_u128(rhs.value())
             }
         }
-
-        // f - t -> f
-        impl Sub<$t> for $f {
+        impl<'a> Mul<$t> for &'a $f {
             type Output = $f;
             #[inline(always)]
-            fn sub(self, rhs: $t) -> $f {
-                self - rhs.as_fr()
+            fn mul(self, rhs: $t) -> $f {
+                self.mul_hi_bigint_u128(rhs.value())
             }
         }
-
-        // f + t -> f
-        impl Add<$t> for $f {
+        impl<'a, 'b> Mul<&'b $t> for &'a $f {
             type Output = $f;
             #[inline(always)]
-            fn add(self, rhs: $t) -> $f {
-                self + rhs.as_fr()
-            }
-        }
-
-        // f - &t -> f
-        impl Sub<&$t> for $f {
-            type Output = $f;
-            #[inline(always)]
-            fn sub(self, rhs: &$t) -> $f {
-                self - rhs.as_fr()
-            }
-        }
-
-        // f + &t -> f
-        impl Add<&$t> for $f {
-            type Output = $f;
-            #[inline(always)]
-            fn add(self, rhs: &$t) -> $f {
-                self + rhs.as_fr()
+            fn mul(self, rhs: &'b $t) -> $f {
+                self.mul_hi_bigint_u128(rhs.value())
             }
         }
     };

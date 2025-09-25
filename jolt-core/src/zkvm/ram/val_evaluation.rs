@@ -202,7 +202,7 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
     }
 
     #[tracing::instrument(skip_all, name = "RamValEvaluationSumcheck::bind")]
-    fn bind(&mut self, r_j: F, _round: usize) {
+    fn bind(&mut self, r_j: F::Challenge, _round: usize) {
         if let Some(prover_state) = &mut self.prover_state {
             [
                 &mut prover_state.inc,
@@ -217,7 +217,7 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
     fn expected_output_claim(
         &self,
         accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
-        r: &[F],
+        r: &[F::Challenge],
     ) -> F {
         let accumulator = accumulator.as_ref().unwrap();
         let (r_val, _) = accumulator.borrow().get_virtual_polynomial_opening(
@@ -245,7 +245,7 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
         inc_claim * wa_claim * lt_eval
     }
 
-    fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(&self, opening_point: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
         OpeningPoint::new(opening_point.to_vec())
     }
 

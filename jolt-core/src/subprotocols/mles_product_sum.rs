@@ -18,7 +18,7 @@ use crate::{
 pub fn compute_mles_product_sum<F: JoltField>(
     mles: &[MultilinearPolynomial<F>],
     claim: F,
-    r0: F,
+    r0: F::Challenge,
     eq_evals: &[F],
     correction_factor: F,
     log_sum_n_terms: u32,
@@ -61,8 +61,8 @@ pub fn compute_mles_product_sum<F: JoltField>(
         .iter_mut()
         .for_each(|eval| *eval *= correction_factor);
 
-    let eq_eval_at_0 = EqPolynomial::mle(&[F::zero()], &[r0]);
-    let eq_eval_at_1 = EqPolynomial::mle(&[F::one()], &[r0]);
+    let eq_eval_at_0 = EqPolynomial::<F>::mle_field_and_challenge(&[F::zero()], &[r0]);
+    let eq_eval_at_1 = EqPolynomial::<F>::mle_field_and_challenge(&[F::one()], &[r0]);
 
     // Obtain the eval at 0 from the claim.
     let eval_at_1 = sum_evals[0];
@@ -297,7 +297,7 @@ mod tests {
         let r: &[Fr; 1] = &rng.gen();
         let mles: [_; N_MLE] = from_fn(|_| random_mle(1, rng));
         let correction_factor = rng.gen();
-        let claim = correction_factor * gen_product_mle(&mles).evaluate(r);
+        let claim = correction_factor * gen_product_mle(&mles).evaluate_field(r);
         let r_prime: &[Fr; 1] = &rng.gen();
         let mle_challenge_product = mles.iter().map(|mle| mle.evaluate(r_prime)).product::<Fr>();
         let eval = correction_factor * EqPolynomial::mle(r_prime, r) * mle_challenge_product;

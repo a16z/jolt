@@ -12,6 +12,7 @@ use rayon::{
 };
 use tracer::instruction::Cycle;
 
+use crate::field::IntoField;
 use crate::{
     field::JoltField,
     poly::{
@@ -36,7 +37,7 @@ use crate::{
 
 #[derive(Allocative)]
 pub struct RaSumcheck<F: JoltField> {
-    r_cycle: Vec<F>,
+    r_cycle: Vec<F::Challenge>,
     input_claim: F,
     T: usize,
     prover_state: Option<RaProverState<F>>,
@@ -108,7 +109,7 @@ impl<F: JoltField> RaSumcheck<F> {
         let prover_state = RaProverState {
             ra_i_polys,
             eq_evals,
-            eq_factor: EqPolynomial::mle(&[F::zero()], &[r_cycle[0]]),
+            eq_factor: EqPolynomial::mle_field(&[F::zero()], &[r_cycle[0].into_F()]),
         };
 
         Self {
@@ -161,7 +162,10 @@ impl<F: JoltField> SumcheckInstance<F> for RaSumcheck<F> {
         let log_sum_n_terms = (self.r_cycle.len() - round - 1) as u32;
 
         let correction_factor = prover_state.eq_factor
-            / EqPolynomial::mle(&vec![F::zero(); round + 1], &self.r_cycle[..round + 1]);
+            / EqPolynomial::mle_field_and_challenge(
+                &vec![F::zero(); round + 1],
+                &self.r_cycle[..round + 1],
+            );
 
         let poly = compute_mles_product_sum(
             ra_i_polys,
@@ -176,11 +180,11 @@ impl<F: JoltField> SumcheckInstance<F> for RaSumcheck<F> {
         let degree = self.degree();
         debug_assert_eq!(degree, prover_state.ra_i_polys.len() + 1);
         let domain = chain!([0], 2..).map(F::from_u64).take(degree);
-        domain.map(|x| poly.evaluate(&x)).collect()
+        domain.map(|x| poly.evaluate_field(&x)).collect()
     }
 
     #[tracing::instrument(skip_all, name = "InstructionRaSumcheck::bind")]
-    fn bind(&mut self, r_j: F, round: usize) {
+    fn bind(&mut self, r_j: F::Challenge, round: usize) {
         let prover_state = self
             .prover_state
             .as_mut()
@@ -197,9 +201,9 @@ impl<F: JoltField> SumcheckInstance<F> for RaSumcheck<F> {
     fn expected_output_claim(
         &self,
         opening_accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
-        r: &[F],
+        r: &[F::Challenge],
     ) -> F {
-        let eq_eval = EqPolynomial::mle(&self.r_cycle, r);
+        let eq_eval = EqPolynomial::<F>::mle(&self.r_cycle, r);
         let ra_claim_prod: F = (0..D)
             .map(|i| {
                 let (_, ra_i_claim) = opening_accumulator
@@ -217,7 +221,10 @@ impl<F: JoltField> SumcheckInstance<F> for RaSumcheck<F> {
         eq_eval * ra_claim_prod
     }
 
-    fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(
+        &self,
+        opening_point: &[F::Challenge],
+    ) -> OpeningPoint<BIG_ENDIAN, F> {
         OpeningPoint::new(opening_point.to_vec())
     }
 
@@ -236,7 +243,7 @@ impl<F: JoltField> SumcheckInstance<F> for RaSumcheck<F> {
             SumcheckId::InstructionReadRaf,
         );
 
-        let r_address_chunks: Vec<Vec<F>> = r
+        let r_address_chunks: Vec<Vec<F::Challenge>> = r
             .split_at_r(LOG_K)
             .0
             .chunks(LOG_K_CHUNK)
@@ -265,7 +272,7 @@ impl<F: JoltField> SumcheckInstance<F> for RaSumcheck<F> {
             SumcheckId::InstructionReadRaf,
         );
 
-        let r_address_chunks: Vec<Vec<F>> = r
+        let r_address_chunks: Vec<Vec<F::Challenge>> = r
             .split_at_r(LOG_K)
             .0
             .chunks(LOG_K_CHUNK)

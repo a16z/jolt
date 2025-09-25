@@ -20,7 +20,7 @@ impl<F: JoltField> RangeMaskPolynomial<F> {
     /// For r in the Boolean hypercube, this MLE should evaluate to 1
     /// if r falls in the range [range_start, range_end) and 0 otherwise
     /// In other words, LT(r, range_end) - LT(r, range_start)
-    pub fn evaluate_mle(&self, r: &[F]) -> F {
+    pub fn evaluate_mle(&self, r: &[F::Challenge]) -> F {
         // Compute LT(r, range_end)
         let mut range_end = LookupBits::new(self.range_end, r.len());
         let mut lt_range_end = F::zero();
@@ -29,7 +29,7 @@ impl<F: JoltField> RangeMaskPolynomial<F> {
             let range_end_bit = range_end.pop_msb();
             if range_end_bit == 1 {
                 lt_range_end += eq_range_end * (F::one() - r_i);
-                eq_range_end *= *r_i;
+                eq_range_end = eq_range_end * r_i;
             } else {
                 eq_range_end *= F::one() - r_i;
             }
@@ -43,7 +43,7 @@ impl<F: JoltField> RangeMaskPolynomial<F> {
             let range_start_bit = range_start.pop_msb();
             if range_start_bit == 1 {
                 lt_range_start += eq_range_start * (F::one() - r_i);
-                eq_range_start *= *r_i;
+                eq_range_start = eq_range_start * r_i;
             } else {
                 eq_range_start *= F::one() - r_i;
             }
