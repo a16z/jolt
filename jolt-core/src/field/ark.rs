@@ -62,7 +62,7 @@ macro_rules! impl_field_ops_inline {
             type Output = $f;
             #[inline(always)]
             fn mul(self, rhs: $f) -> $f {
-                rhs.mul_hi_u128(self.value())
+                rhs.mul_hi_bigint_u128(self.value())
             }
         }
 
@@ -71,7 +71,7 @@ macro_rules! impl_field_ops_inline {
             type Output = $f;
             #[inline(always)]
             fn mul(self, rhs: &$f) -> $f {
-                (*rhs).mul_hi_u128(self.value())
+                (*rhs).mul_hi_bigint_u128(self.value())
             }
         }
 
@@ -80,7 +80,7 @@ macro_rules! impl_field_ops_inline {
             type Output = $f;
             #[inline(always)]
             fn mul(self, rhs: $t) -> $f {
-                self.mul_hi_u128(rhs.value())
+                self.mul_hi_bigint_u128(rhs.value())
             }
         }
 
@@ -89,7 +89,7 @@ macro_rules! impl_field_ops_inline {
             type Output = $f;
             #[inline(always)]
             fn mul(self, rhs: &$t) -> $f {
-                self.mul_hi_u128(rhs.value())
+                self.mul_hi_bigint_u128(rhs.value())
             }
         }
 
@@ -176,6 +176,7 @@ impl JoltField for ark_bn254::Fr {
         std::mem::transmute(<ark_bn254::FrConfig as MontConfig<4>>::R2)
     };
     type SmallValueLookupTables = [Vec<Self>; 2];
+    type Challenge = MontU128Challenge<ark_bn254::Fr>;
 
     fn random<R: rand_core::RngCore>(rng: &mut R) -> Self {
         <Self as UniformRand>::rand(rng)

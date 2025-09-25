@@ -247,4 +247,5 @@ where
 }
 
 pub mod ark;
-pub mod tracked_ark;
+pub mod challenge;
+//pub mod tracked_ark;
