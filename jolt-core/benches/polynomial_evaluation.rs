@@ -1,7 +1,8 @@
 #![allow(clippy::uninlined_format_args)]
 use ark_ff::Zero;
 use ark_std::rand::{rngs::StdRng, Rng, SeedableRng};
-use jolt_core::field::tracked_ark::TrackedFr as Fr;
+//use jolt_core::field::tracked_ark::TrackedFr as Fr;
+use ark_bn254::Fr;
 use jolt_core::field::JoltField;
 use jolt_core::utils::counters::{get_mult_count, reset_mult_count};
 use jolt_core::{
