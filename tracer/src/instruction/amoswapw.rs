@@ -45,11 +45,38 @@ impl RISCVTrace for AMOSWAPW {
         let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
-            // In each iteration, create a new Option containing a re-borrowed reference
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
 
+    /// AMOSWAP.W atomically swaps a 32-bit word in memory with rs2.
+    ///
+    /// This atomic memory operation (AMO) instruction atomically loads a 32-bit word from
+    /// the memory address in rs1, stores the lower 32 bits of rs2 to that location, and
+    /// returns the original value sign-extended in rd. This is an unconditional atomic exchange.
+    ///
+    /// Implementation differences:
+    /// - RV32: Direct word swap using amo_pre32/post32 helpers
+    ///   - Simple load-store sequence on word-aligned addresses
+    ///   - Natural 32-bit operations throughout
+    /// - RV64: Complex handling for 32-bit operations within 64-bit doublewords
+    ///   - Uses amo_pre64 to extract the word from containing doubleword
+    ///   - Preserves other 32 bits when storing back
+    ///   - Uses amo_post64 to merge and sign-extend result
+    ///
+    /// AMOSWAP.W is commonly used for:
+    /// - 32-bit mutex implementations
+    /// - Atomic flag exchanges in embedded systems
+    /// - Producer-consumer buffer management
+    /// - Atomic state machine transitions
+    /// - Legacy 32-bit atomic operations on 64-bit systems
+    ///
+    /// Return value handling:
+    /// - The original 32-bit value is sign-extended to XLEN bits
+    /// - Ensures consistent signed interpretation across architectures
+    ///
+    /// Memory ordering: Like all AMO operations, provides acquire-release
+    /// semantics, though this is implicit in zkVM's single-threaded model.
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,

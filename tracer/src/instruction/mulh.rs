@@ -40,11 +40,12 @@ impl RISCVTrace for MULH {
         let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
-            // In each iteration, create a new Option containing a re-borrowed reference
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
 
+    /// MULH computes the high 64 bits of signed multiplication using identity:
+    /// (x × y)_high = (x × y)_high_unsigned + sign(x) × y + sign(y) × x
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,
@@ -55,6 +56,7 @@ impl RISCVTrace for MULH {
         let v_0 = allocator.allocate();
 
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
+
         asm.emit_i::<VirtualMovsign>(*v_sx, self.operands.rs1, 0);
         asm.emit_i::<VirtualMovsign>(*v_sy, self.operands.rs2, 0);
         asm.emit_r::<MULHU>(*v_0, self.operands.rs1, self.operands.rs2);
@@ -62,6 +64,7 @@ impl RISCVTrace for MULH {
         asm.emit_r::<MUL>(*v_sy, *v_sy, self.operands.rs1);
         asm.emit_r::<ADD>(*v_0, *v_0, *v_sx);
         asm.emit_r::<ADD>(self.operands.rd, *v_0, *v_sy);
+
         asm.finalize()
     }
 }

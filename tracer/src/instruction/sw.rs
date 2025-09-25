@@ -49,11 +49,11 @@ impl RISCVTrace for SW {
         let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
-            // In each iteration, create a new Option containing a re-borrowed reference
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
 
+    /// Store word (32-bit) to aligned memory.    
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,
