@@ -55,6 +55,27 @@ pub trait JoltField:
     /// requires a field multiplication, but can instead be looked up.
     type SmallValueLookupTables: Clone + Default + CanonicalSerialize + CanonicalDeserialize;
 
+    type Challenge: 'static
+        + Sized
+        + Copy
+        + Clone
+        + Send
+        + Sync
+        + Debug
+        + Display
+        + Default
+        + Eq
+        + Hash
+        + Add<Self::Challenge, Output = Self>
+        + Sub<Self::Challenge, Output = Self>
+        + Mul<Self::Challenge, Output = Self>
+        + Mul<Self, Output = Self>
+        + for<'a> Mul<&'a Self, Output = Self>
+        + CanonicalSerialize
+        + CanonicalDeserialize
+        + MaybeAllocative
+        + From<u128>;
+
     fn random<R: rand_core::RngCore>(rng: &mut R) -> Self;
     /// Computes the small-value lookup tables.
     fn compute_lookup_tables() -> Self::SmallValueLookupTables {
@@ -226,4 +247,7 @@ where
 }
 
 pub mod ark;
-pub mod tracked_ark;
+pub mod challenge;
+
+// TODO: (ari) THis needs to be fixed later, but it's not critical tod jolt
+//pub mod tracked_ark;

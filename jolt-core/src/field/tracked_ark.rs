@@ -1,4 +1,4 @@
-use super::{FieldOps, JoltField};
+use super::{challenge::TrivialChallenge, FieldOps, JoltField};
 use crate::utils::counters::{INVERSE_COUNT, MULT_COUNT};
 use allocative::Allocative;
 use ark_bn254::Fr;
@@ -9,7 +9,6 @@ use ark_std::rand::Rng;
 use std::default::Default;
 use std::fmt;
 use std::iter::{Product, Sum};
-use std::mem::transmute;
 use std::ops::{Add, Deref, DerefMut, Div, Mul, Sub};
 use std::ops::{AddAssign, MulAssign, Neg, SubAssign};
 use std::sync::atomic::Ordering;
@@ -272,11 +271,8 @@ impl FieldOps<&TrackedFr, TrackedFr> for TrackedFr {}
 
 impl JoltField for TrackedFr {
     const NUM_BYTES: usize = <ark_bn254::Fr as JoltField>::NUM_BYTES;
-    /// The Montgomery factor R = 2^(64*N) mod p
-    const MONTGOMERY_R: Self = TrackedFr(<ark_bn254::Fr as JoltField>::MONTGOMERY_R);
-    /// The squared Montgomery factor R^2 = 2^(128*N) mod p
-    const MONTGOMERY_R_SQUARE: Self = TrackedFr(<ark_bn254::Fr as JoltField>::MONTGOMERY_R_SQUARE);
     type SmallValueLookupTables = <ark_bn254::Fr as JoltField>::SmallValueLookupTables;
+    type Challenge = TrivialChallenge<Self>;
 
     fn random<R: rand_core::RngCore>(rng: &mut R) -> Self {
         TrackedFr(<ark_bn254::Fr as JoltField>::random(rng))
@@ -284,10 +280,6 @@ impl JoltField for TrackedFr {
 
     fn compute_lookup_tables() -> Self::SmallValueLookupTables {
         <ark_bn254::Fr as JoltField>::compute_lookup_tables()
-    }
-
-    fn from_bool(val: bool) -> Self {
-        TrackedFr(<ark_bn254::Fr as JoltField>::from_bool(val))
     }
 
     fn from_u8(n: u8) -> Self {
@@ -342,55 +334,33 @@ impl JoltField for TrackedFr {
 
     fn mul_u64(&self, n: u64) -> Self {
         MULT_COUNT.fetch_add(1, Ordering::Relaxed);
-        Self(<Fr as JoltField>::mul_u64(&self.0, n))
-    }
-
-    fn mul_i64(&self, n: i64) -> Self {
-        MULT_COUNT.fetch_add(1, Ordering::Relaxed);
-        Self(<Fr as JoltField>::mul_i64(&self.0, n))
-    }
-
-    fn mul_u128(&self, n: u128) -> Self {
-        MULT_COUNT.fetch_add(1, Ordering::Relaxed);
-        Self(<Fr as JoltField>::mul_u128(&self.0, n))
+        TrackedFr(self.0.mul_u64(n))
     }
 
     fn mul_i128(&self, n: i128) -> Self {
         MULT_COUNT.fetch_add(1, Ordering::Relaxed);
-        Self(<Fr as JoltField>::mul_i128(&self.0, n))
+        TrackedFr(self.0.mul_i128(n))
     }
 
-    fn linear_combination_u64(pairs: &[(Self, u64)], add_terms: &[Self]) -> Self {
-        MULT_COUNT.fetch_add(pairs.len(), Ordering::Relaxed);
-        Self(<Fr as JoltField>::linear_combination_u64(
-            unsafe { transmute::<&[(Self, u64)], &[(Fr, u64)]>(pairs) },
-            unsafe { transmute::<&[Self], &[Fr]>(add_terms) },
-        ))
+    fn mul_u128(&self, n: u128) -> Self {
+        MULT_COUNT.fetch_add(1, Ordering::Relaxed);
+        TrackedFr(self.0.mul_u128(n))
     }
+}
 
-    fn linear_combination_i64(
-        pos: &[(Self, u64)],
-        neg: &[(Self, u64)],
-        pos_add: &[Self],
-        neg_add: &[Self],
-    ) -> Self {
-        MULT_COUNT.fetch_add(pos.len() + neg.len(), Ordering::Relaxed);
-        Self(<Fr as JoltField>::linear_combination_i64(
-            unsafe { transmute::<&[(Self, u64)], &[(Fr, u64)]>(pos) },
-            unsafe { transmute::<&[(Self, u64)], &[(Fr, u64)]>(neg) },
-            unsafe { transmute::<&[Self], &[Fr]>(pos_add) },
-            unsafe { transmute::<&[Self], &[Fr]>(neg_add) },
-        ))
+impl Mul<TrivialChallenge<TrackedFr>> for TrackedFr {
+    type Output = Self;
+
+    fn mul(self, rhs: TrivialChallenge<Self>) -> Self {
+        self * rhs.value()
     }
+}
 
-    #[inline(always)]
-    fn as_bigint_ref(&self) -> &ark_ff::BigInt<4> {
-        self.0.as_bigint_ref()
-    }
+impl<'a> Mul<&'a TrivialChallenge<TrackedFr>> for TrackedFr {
+    type Output = Self;
 
-    #[inline(always)]
-    fn from_montgomery_reduce_2n(unreduced: ark_ff::BigInt<8>) -> Self {
-        TrackedFr(ark_bn254::Fr::montgomery_reduce_2n(unreduced))
+    fn mul(self, rhs: &'a TrivialChallenge<Self>) -> Self {
+        self * rhs.value()
     }
 }
 
