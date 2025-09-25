@@ -37,6 +37,9 @@ guest-verifier = [
     "dep:ark-bn254",
     "jolt-core/minimal",
 ]
+malloc-shim = [
+    "jolt-platform/malloc-shim"
+]
 
 [dependencies]
 jolt-platform = { path = "../jolt-platform" }
