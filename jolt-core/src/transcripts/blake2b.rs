@@ -230,6 +230,31 @@ impl Transcript for Blake2bTranscript {
         }
         q_powers
     }
+
+    // New methods that return F::Challenge
+    fn challenge_scalar_special<F: JoltField>(&mut self) -> F::Challenge {
+        // The smaller challenge which is then converted into a
+        // MontU128Challenge
+        let challenge_scalar: u128 = self.challenge_u128();
+        F::Challenge::from(challenge_scalar)
+    }
+
+    fn challenge_vector_special<F: JoltField>(&mut self, len: usize) -> Vec<F::Challenge> {
+        (0..len)
+            .map(|_i| self.challenge_scalar_special::<F>())
+            .collect::<Vec<F::Challenge>>()
+    }
+
+    fn challenge_scalar_powers_special<F: JoltField>(&mut self, len: usize) -> Vec<F> {
+        // This is still different from challenge_scalar_powers as inside the for loop
+        // we use an optimised multiplication every time we compute the powers.
+        let q: F::Challenge = self.challenge_scalar_special::<F>();
+        let mut q_powers = vec![<F as ark_std::One>::one(); len];
+        for i in 1..len {
+            q_powers[i] = q * q_powers[i - 1]; // this is optimised
+        }
+        q_powers
+    }
 }
 
 #[cfg(test)]
@@ -257,5 +282,39 @@ mod tests {
                 "Duplicate scalar found at iteration {i}",
             );
         }
+    }
+
+    #[test]
+    fn test_challenge_special_trivial() {
+        use ark_std::UniformRand;
+        //TODO: this test needs to be changed like your old test.
+        let mut rng = ark_std::test_rng();
+        let mut transcript1 = Blake2bTranscript::new(b"test_trivial_challenge");
+
+        let challenge = transcript1.challenge_scalar_special::<Fr>();
+        // The same challenge as a full fat Fr element
+        let challenge_regular = challenge.as_fr();
+
+        let field_elements: Vec<Fr> = (0..10).map(|_| Fr::rand(&mut rng)).collect();
+
+        for (i, &field_elem) in field_elements.iter().enumerate() {
+            let result_challenge = field_elem * challenge;
+            let result_regular = field_elem * challenge_regular;
+
+            assert_eq!(
+                result_challenge, result_regular,
+                "Multiplication mismatch at index {i}"
+            );
+        }
+
+        let field_elem = Fr::rand(&mut rng);
+        #[allow(clippy::op_ref)]
+        let result_ref = field_elem * &challenge;
+        //let result_regular = field_elem * challenge.value();
+        let result_regular = field_elem * challenge;
+        assert_eq!(
+            result_ref, result_regular,
+            "Reference multiplication mismatch"
+        );
     }
 }
