@@ -5,7 +5,7 @@ use crate::{
     field::JoltField, utils::lookup_bits::LookupBits,
     zkvm::instruction_lookups::read_raf_checking::current_suffix_len,
 };
-
+use crate::field::IntoField;
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 
 pub enum Rev8WPrefix {}
@@ -13,7 +13,7 @@ pub enum Rev8WPrefix {}
 impl<F: JoltField> SparseDensePrefix<F> for Rev8WPrefix {
     fn prefix_mle(
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: Option<F>,
+        r_x: Option<F::Challenge>,
         c: u32,
         b: LookupBits,
         j: usize,
@@ -38,7 +38,7 @@ impl<F: JoltField> SparseDensePrefix<F> for Rev8WPrefix {
         if r_x_bit_index < 64 {
             if let Some(r_x) = r_x {
                 let rev_pow2 = rev8w(1 << r_x_bit_index);
-                eval += r_x.mul_u64(rev_pow2);
+                eval += r_x.into_F().mul_u64(rev_pow2);
             }
         }
 
@@ -51,8 +51,8 @@ impl<F: JoltField> SparseDensePrefix<F> for Rev8WPrefix {
 
     fn update_prefix_checkpoint(
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: F,
-        r_y: F,
+        r_x: F::Challenge,
+        r_y: F::Challenge,
         j: usize,
     ) -> PrefixCheckpoint<F> {
         let mut res = checkpoints[Prefixes::Rev8W].unwrap_or(F::zero());
@@ -60,13 +60,13 @@ impl<F: JoltField> SparseDensePrefix<F> for Rev8WPrefix {
         let r_y_bit_index = 2 * XLEN - 1 - j;
         if r_y_bit_index < 64 {
             let rev_pow2 = rev8w(1 << r_y_bit_index);
-            res += r_y.mul_u64(rev_pow2);
+            res += r_y.into_F().mul_u64(rev_pow2);
         }
 
         let r_x_bit_index = r_y_bit_index + 1;
         if r_x_bit_index < 64 {
             let rev_pow2 = rev8w(1 << r_x_bit_index);
-            res += r_x.mul_u64(rev_pow2);
+            res += r_x.into_F().mul_u64(rev_pow2);
         }
 
         Some(res).into()

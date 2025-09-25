@@ -10,7 +10,7 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F>
 {
     fn prefix_mle(
         checkpoints: &[PrefixCheckpoint<F>],
-        _r_x: Option<F>,
+        _r_x: Option<F::Challenge>,
         c: u32,
         mut b: LookupBits,
         j: usize,
@@ -39,8 +39,8 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F>
 
     fn update_prefix_checkpoint(
         checkpoints: &[PrefixCheckpoint<F>],
-        _r_x: F,
-        r_y: F,
+        _r_x: F::Challenge,
+        r_y: F::Challenge,
         j: usize,
     ) -> PrefixCheckpoint<F> {
         if j == XLEN + 1 {

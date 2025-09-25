@@ -7,7 +7,7 @@ pub enum LeftShiftHelperPrefix {}
 impl<F: JoltField> SparseDensePrefix<F> for LeftShiftHelperPrefix {
     fn prefix_mle(
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: Option<F>,
+        r_x: Option<F::Challenge>,
         c: u32,
         mut b: LookupBits,
         _: usize,
@@ -29,8 +29,8 @@ impl<F: JoltField> SparseDensePrefix<F> for LeftShiftHelperPrefix {
 
     fn update_prefix_checkpoint(
         checkpoints: &[PrefixCheckpoint<F>],
-        _r_x: F,
-        r_y: F,
+        _r_x: F::Challenge,
+        r_y: F::Challenge,
         _: usize,
     ) -> PrefixCheckpoint<F> {
         let mut updated = checkpoints[Prefixes::LeftShiftHelper].unwrap_or(F::one());

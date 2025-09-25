@@ -303,7 +303,7 @@ where
     pub fn open<ProofTranscript: Transcript>(
         pk: &HyperKZGProverKey<P>,
         poly: &MultilinearPolynomial<P::ScalarField>,
-        point: &[P::ScalarField],
+        point: &[P::ScalarField::Challenge],
         _eval: &P::ScalarField,
         transcript: &mut ProofTranscript,
     ) -> Result<HyperKZGProof<P>, ProofVerifyError> {
@@ -351,7 +351,7 @@ where
     pub fn verify<ProofTranscript: Transcript>(
         vk: &HyperKZGVerifierKey<P>,
         C: &HyperKZGCommitment<P>,
-        point: &[P::ScalarField],
+        point: &[P::ScalarField::Challenge],
         P_of_x: &P::ScalarField,
         pi: &HyperKZGProof<P>,
         transcript: &mut ProofTranscript,
@@ -481,7 +481,7 @@ where
     fn prove<ProofTranscript: Transcript>(
         setup: &Self::ProverSetup,
         poly: &MultilinearPolynomial<Self::Field>,
-        opening_point: &[Self::Field], // point at which the polynomial is evaluated
+        opening_point: &[Self::Field::Challenge], // point at which the polynomial is evaluated
         _: Self::OpeningProofHint,
         transcript: &mut ProofTranscript,
     ) -> Self::Proof {
@@ -572,7 +572,9 @@ mod tests {
     use crate::transcripts::{Blake2bTranscript, Transcript};
     use ark_bn254::{Bn254, Fr};
     use ark_std::UniformRand;
+    use rand::Rng;
     use rand_core::SeedableRng;
+    use crate::field::challenge::MontU128Challenge;
 
     #[test]
     fn test_hyperkzg_eval() {
@@ -694,7 +696,7 @@ mod tests {
                 .collect::<Vec<_>>();
             let poly = MultilinearPolynomial::from(poly_raw.clone());
             let point = (0..ell)
-                .map(|_| <Bn254 as Pairing>::ScalarField::rand(&mut rng))
+                .map(|_| MontU128Challenge::from(rng.gen::<u128>()))
                 .collect::<Vec<_>>();
             let eval = poly.evaluate(&point);
 

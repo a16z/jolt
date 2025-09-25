@@ -8,7 +8,7 @@ pub enum LeftShiftWPrefix<const XLEN: usize> {}
 impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for LeftShiftWPrefix<XLEN> {
     fn prefix_mle(
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: Option<F>,
+        r_x: Option<F::Challenge>,
         c: u32,
         mut b: LookupBits,
         j: usize,
@@ -50,8 +50,8 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for LeftShiftWPrefix<
 
     fn update_prefix_checkpoint(
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: F,
-        r_y: F,
+        r_x: F::Challenge,
+        r_y: F::Challenge,
         j: usize,
     ) -> PrefixCheckpoint<F> {
         if j >= XLEN {

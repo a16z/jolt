@@ -8,7 +8,7 @@ pub enum RightOperandWPrefix<const XLEN: usize> {}
 impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for RightOperandWPrefix<XLEN> {
     fn prefix_mle(
         checkpoints: &[PrefixCheckpoint<F>],
-        _r_x: Option<F>,
+        _r_x: Option<F::Challenge>,
         c: u32,
         b: LookupBits,
         j: usize,
@@ -32,8 +32,8 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for RightOperandWPref
 
     fn update_prefix_checkpoint(
         checkpoints: &[PrefixCheckpoint<F>],
-        _r_x: F,
-        r_y: F,
+        _r_x: F::Challenge,
+        r_y: F::Challenge,
         j: usize,
     ) -> PrefixCheckpoint<F> {
         if j > XLEN {

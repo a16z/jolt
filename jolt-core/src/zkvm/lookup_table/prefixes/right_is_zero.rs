@@ -7,7 +7,7 @@ pub enum RightOperandIsZeroPrefix {}
 impl<F: JoltField> SparseDensePrefix<F> for RightOperandIsZeroPrefix {
     fn prefix_mle(
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: Option<F>,
+        r_x: Option<F::Challenge>,
         c: u32,
         mut b: LookupBits,
         _: usize,
@@ -32,8 +32,8 @@ impl<F: JoltField> SparseDensePrefix<F> for RightOperandIsZeroPrefix {
 
     fn update_prefix_checkpoint(
         checkpoints: &[PrefixCheckpoint<F>],
-        _: F,
-        r_y: F,
+        _: F::Challenge,
+        r_y: F::Challenge,
         _: usize,
     ) -> PrefixCheckpoint<F> {
         // checkpoint *= (1 - r_y)

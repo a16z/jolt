@@ -7,7 +7,7 @@ pub enum EqPrefix {}
 impl<F: JoltField> SparseDensePrefix<F> for EqPrefix {
     fn prefix_mle(
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: Option<F>,
+        r_x: Option<F::Challenge>,
         c: u32,
         mut b: LookupBits,
         _: usize,
@@ -33,8 +33,8 @@ impl<F: JoltField> SparseDensePrefix<F> for EqPrefix {
 
     fn update_prefix_checkpoint(
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: F,
-        r_y: F,
+        r_x: F::Challenge,
+        r_y: F::Challenge,
         _: usize,
     ) -> PrefixCheckpoint<F> {
         // checkpoint *= r_x * r_y + (1 - r_x) * (1 - r_y)

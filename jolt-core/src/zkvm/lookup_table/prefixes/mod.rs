@@ -120,8 +120,8 @@ pub trait SparseDensePrefix<F: JoltField>: 'static + Sync {
     /// so we pass in all such `checkpoints` to this function.
     fn update_prefix_checkpoint(
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: F,
-        r_y: F,
+        r_x: F::Challenge,
+        r_y: F::Challenge,
         j: usize,
     ) -> PrefixCheckpoint<F>;
 }
@@ -353,8 +353,8 @@ impl Prefixes {
     fn update_prefix_checkpoint<const XLEN: usize, F: JoltField>(
         &self,
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: F,
-        r_y: F,
+        r_x: F::Challenge,
+        r_y: F::Challenge,
         j: usize,
     ) -> PrefixCheckpoint<F> {
         match self {
