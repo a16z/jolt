@@ -1,6 +1,6 @@
 use std::iter::zip;
 
-use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
+use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 
 use crate::{
     field::JoltField,
@@ -9,60 +9,58 @@ use crate::{
     },
 };
 
-/// Computes the univariate polynomial `g(X) = sum_j correction_factor * eq((X, j), r) * prod_i mle_i(X, j)`.
+/// Computes the univariate polynomial `g(X) = sum_j eq((r', X, j), r) * prod_i mle_i(X, j)`.
 ///
-/// Inputs:
-/// - `claim` should equal `g(0) + g(1)`.
-/// - `eq_evals[j]` should store `eq(j, r[1..])`.
-/// - `r0` should equal `r[0]`.
+/// Note `claim` should equal `g(0) + g(1)`.
 pub fn compute_mles_product_sum<F: JoltField>(
     mles: &[MultilinearPolynomial<F>],
     claim: F,
-    r0: F,
-    eq_evals: &[F],
-    correction_factor: F,
-    log_sum_n_terms: u32,
+    r: &[F],
+    r_prime: &[F],
 ) -> UniPoly<F> {
-    let sum_n_terms = 1 << log_sum_n_terms;
+    // Split Eq poly optimization.
+    // See https://eprint.iacr.org/2025/1117.pdf section 5.2.
+    // TODO: Consider refactoring GruenSplitEqPolynomial and integrating here.
+    let w = &r[r_prime.len() + 1..];
+    let (wr, wl) = w.split_at(w.len() / 2);
+    let eq_constant_factor = EqPolynomial::mle(r_prime, &r[..r_prime.len()]);
+    let eq_wl_evals = EqPolynomial::evals_parallel(wl, Some(eq_constant_factor));
+    let eq_wr_evals = EqPolynomial::evals_parallel(wr, None);
 
-    let chunk_size = 512;
+    // Evaluate g(X) / eq(X, r[round]) at [1, 2, ..., |mles| - 1, inf].
+    let sum_evals = eq_wr_evals
+        .par_iter()
+        .enumerate()
+        .map(|(j_wr, eq_wr_eval)| {
+            let mut partial_evals = vec![F::zero(); mles.len()];
+            let mut mle_eval_pairs = vec![(F::zero(), F::zero()); mles.len()];
 
-    // Evaluate sum_j eq(j, r[1..]) * prod_i mle_i(X, j) at [1, 2, ..., |mles| - 1, inf].
-    let mut sum_evals = (0..sum_n_terms)
-        .into_par_iter()
-        .chunks(chunk_size)
-        .map(|j_chunk| {
-            let mut sums = vec![F::zero(); mles.len()];
-            let mut mle_eval_pair_vec = vec![(F::zero(), F::zero()); mles.len()];
+            for (j_wl, &eq_wl_eval) in eq_wl_evals.iter().enumerate() {
+                let j = j_wl + (j_wr << wl.len());
 
-            for j in j_chunk {
                 for (i, mle) in mles.iter().enumerate() {
+                    // TODO: Improve memory access.
                     let mle_eval_at_0_j = mle.get_bound_coeff(j);
-                    let mle_eval_at_1_j = mle.get_bound_coeff(j + sum_n_terms);
-                    mle_eval_pair_vec[i] = (mle_eval_at_0_j, mle_eval_at_1_j);
+                    let mle_eval_at_1_j = mle.get_bound_coeff(j + (1 << w.len()));
+                    mle_eval_pairs[i] = (mle_eval_at_0_j, mle_eval_at_1_j);
                 }
 
-                let eq_eval_at_j_r = eq_evals[j];
-                mle_eval_pair_vec[0].0 *= eq_eval_at_j_r;
-                mle_eval_pair_vec[0].1 *= eq_eval_at_j_r;
-
-                product_eval_univariate(&mle_eval_pair_vec, &mut sums);
+                mle_eval_pairs[0].0 *= eq_wl_eval;
+                mle_eval_pairs[0].1 *= eq_wl_eval;
+                product_eval_univariate(&mle_eval_pairs, &mut partial_evals);
             }
 
-            sums
+            partial_evals.iter_mut().for_each(|v| *v *= *eq_wr_eval);
+            partial_evals
         })
         .reduce(
             || vec![F::zero(); mles.len()],
-            |sums_a, sums_b| zip(sums_a, sums_b).map(|(a, b)| a + b).collect(),
+            |a_evals, b_evals| zip(a_evals, b_evals).map(|(a, b)| a + b).collect(),
         );
 
-    // Apply correction factor.
-    sum_evals
-        .iter_mut()
-        .for_each(|eval| *eval *= correction_factor);
-
-    let eq_eval_at_0 = EqPolynomial::mle(&[F::zero()], &[r0]);
-    let eq_eval_at_1 = EqPolynomial::mle(&[F::one()], &[r0]);
+    let round = r_prime.len();
+    let eq_eval_at_0 = EqPolynomial::mle(&[F::zero()], &[r[round]]);
+    let eq_eval_at_1 = EqPolynomial::mle(&[F::one()], &[r[round]]);
 
     // Obtain the eval at 0 from the claim.
     let eval_at_1 = sum_evals[0];
@@ -72,10 +70,10 @@ pub fn compute_mles_product_sum<F: JoltField>(
     let toom_evals = [&[eval_at_0], &*sum_evals].concat();
     let tmp_coeffs = UniPoly::from_evals_toom(&toom_evals).coeffs;
 
-    // Add in the missing eq(X, r[0]) factor.
-    // Note eq(X, r[0]) = (1 - r[0]) + (2r[0] - 1)X.
-    let constant_coeff = F::one() - r0;
-    let x_coeff = r0 + r0 - F::one();
+    // Add in the missing eq(X, r[round]) factor.
+    // Note eq(X, r[round]) = (1 - r[round]) + (2r[round] - 1)X.
+    let constant_coeff = F::one() - r[round];
+    let x_coeff = r[round] + r[round] - F::one();
     let mut coeffs = vec![F::zero(); tmp_coeffs.len() + 1];
     for (i, coeff) in tmp_coeffs.into_iter().enumerate() {
         coeffs[i] += coeff * constant_coeff;
@@ -296,23 +294,14 @@ mod tests {
         let rng = &mut test_rng();
         let r: &[Fr; 1] = &rng.gen();
         let mles: [_; N_MLE] = from_fn(|_| random_mle(1, rng));
-        let correction_factor = rng.gen();
-        let claim = correction_factor * gen_product_mle(&mles).evaluate(r);
-        let r_prime: &[Fr; 1] = &rng.gen();
-        let mle_challenge_product = mles.iter().map(|mle| mle.evaluate(r_prime)).product::<Fr>();
-        let eval = correction_factor * EqPolynomial::mle(r_prime, r) * mle_challenge_product;
-        let log_sum_n_terms = 0;
+        let claim = gen_product_mle(&mles).evaluate(r);
+        let challenge: &[Fr; 1] = &rng.gen();
+        let mle_challenge_product = mles.iter().map(|p| p.evaluate(challenge)).product::<Fr>();
+        let eval = EqPolynomial::mle(challenge, r) * mle_challenge_product;
 
-        let sum_poly = compute_mles_product_sum(
-            &mles,
-            claim,
-            r[0],
-            &EqPolynomial::evals(&[]),
-            correction_factor,
-            log_sum_n_terms,
-        );
+        let sum_poly = compute_mles_product_sum(&mles, claim, r, &[]);
 
-        assert_eq!(eval, sum_poly.evaluate(&r_prime[0]));
+        assert_eq!(eval, sum_poly.evaluate(&challenge[0]));
     }
 
     #[test]
@@ -321,23 +310,14 @@ mod tests {
         let rng = &mut test_rng();
         let r: &[Fr; 1] = &rng.gen();
         let mles: [_; N_MLE] = from_fn(|_| random_mle(1, rng));
-        let correction_factor = rng.gen();
-        let claim = correction_factor * gen_product_mle(&mles).evaluate(r);
-        let r_prime: &[Fr; 1] = &rng.gen();
-        let mle_challenge_product = mles.iter().map(|mle| mle.evaluate(r_prime)).product::<Fr>();
-        let eval = correction_factor * EqPolynomial::mle(r_prime, r) * mle_challenge_product;
-        let log_sum_n_terms = 0;
+        let claim = gen_product_mle(&mles).evaluate(r);
+        let challenge: &[Fr; 1] = &rng.gen();
+        let mle_challenge_product = mles.iter().map(|p| p.evaluate(challenge)).product::<Fr>();
+        let eval = EqPolynomial::mle(challenge, r) * mle_challenge_product;
 
-        let sum_poly = compute_mles_product_sum(
-            &mles,
-            claim,
-            r[0],
-            &EqPolynomial::evals(&[]),
-            correction_factor,
-            log_sum_n_terms,
-        );
+        let sum_poly = compute_mles_product_sum(&mles, claim, r, &[]);
 
-        assert_eq!(eval, sum_poly.evaluate(&r_prime[0]));
+        assert_eq!(eval, sum_poly.evaluate(&challenge[0]));
     }
 
     #[test]
@@ -346,23 +326,14 @@ mod tests {
         let rng = &mut test_rng();
         let r: &[Fr; 1] = &rng.gen();
         let mles: [_; N_MLE] = from_fn(|_| random_mle(1, rng));
-        let correction_factor = rng.gen();
-        let claim = correction_factor * gen_product_mle(&mles).evaluate(r);
-        let r_prime: &[Fr; 1] = &rng.gen();
-        let mle_challenge_product = mles.iter().map(|mle| mle.evaluate(r_prime)).product::<Fr>();
-        let eval = correction_factor * EqPolynomial::mle(r_prime, r) * mle_challenge_product;
-        let log_sum_n_terms = 0;
+        let claim = gen_product_mle(&mles).evaluate(r);
+        let challenge: &[Fr; 1] = &rng.gen();
+        let mle_challenge_product = mles.iter().map(|p| p.evaluate(challenge)).product::<Fr>();
+        let eval = EqPolynomial::mle(challenge, r) * mle_challenge_product;
 
-        let sum_poly = compute_mles_product_sum(
-            &mles,
-            claim,
-            r[0],
-            &EqPolynomial::evals(&[]),
-            correction_factor,
-            log_sum_n_terms,
-        );
+        let sum_poly = compute_mles_product_sum(&mles, claim, r, &[]);
 
-        assert_eq!(eval, sum_poly.evaluate(&r_prime[0]));
+        assert_eq!(eval, sum_poly.evaluate(&challenge[0]));
     }
 
     #[test]
@@ -371,23 +342,14 @@ mod tests {
         let rng = &mut test_rng();
         let r: &[Fr; 1] = &rng.gen();
         let mles: [_; N_MLE] = from_fn(|_| random_mle(1, rng));
-        let correction_factor = rng.gen();
-        let claim = correction_factor * gen_product_mle(&mles).evaluate(r);
-        let r_prime: &[Fr; 1] = &rng.gen();
-        let mle_challenge_product = mles.iter().map(|mle| mle.evaluate(r_prime)).product::<Fr>();
-        let eval = correction_factor * EqPolynomial::mle(r_prime, r) * mle_challenge_product;
-        let log_sum_n_terms = 0;
+        let claim = gen_product_mle(&mles).evaluate(r);
+        let challenge: &[Fr; 1] = &rng.gen();
+        let mle_challenge_product = mles.iter().map(|p| p.evaluate(challenge)).product::<Fr>();
+        let eval = EqPolynomial::mle(challenge, r) * mle_challenge_product;
 
-        let sum_poly = compute_mles_product_sum(
-            &mles,
-            claim,
-            r[0],
-            &EqPolynomial::evals(&[]),
-            correction_factor,
-            log_sum_n_terms,
-        );
+        let sum_poly = compute_mles_product_sum(&mles, claim, r, &[]);
 
-        assert_eq!(eval, sum_poly.evaluate(&r_prime[0]));
+        assert_eq!(eval, sum_poly.evaluate(&challenge[0]));
     }
 
     fn random_mle(n_vars: usize, rng: &mut StdRng) -> MultilinearPolynomial<Fr> {
