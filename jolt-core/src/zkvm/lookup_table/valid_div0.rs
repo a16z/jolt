@@ -24,6 +24,20 @@ impl<const XLEN: usize> JoltLookupTable for ValidDiv0Table<XLEN> {
         }
     }
 
+    fn evaluate_mle_field<F: JoltField>(&self, r: &[F]) -> F {
+        let mut divisor_is_zero = F::one();
+        let mut is_valid_div_by_zero = F::one();
+
+        for i in 0..XLEN {
+            let x_i = r[2 * i];
+            let y_i = r[2 * i + 1];
+            divisor_is_zero *= F::one() - x_i;
+            is_valid_div_by_zero *= (F::one() - x_i) * y_i;
+        }
+
+        F::one() - divisor_is_zero + is_valid_div_by_zero
+    }
+
     fn evaluate_mle<F: JoltField>(&self, r: &[F::Challenge]) -> F {
         let mut divisor_is_zero = F::one();
         let mut is_valid_div_by_zero = F::one();

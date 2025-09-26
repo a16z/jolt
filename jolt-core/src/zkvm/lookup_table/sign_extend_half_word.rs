@@ -28,6 +28,26 @@ impl<const XLEN: usize> JoltLookupTable for SignExtendHalfWordTable<XLEN> {
         }
     }
 
+    fn evaluate_mle_field<F: JoltField>(&self, r: &[F]) -> F {
+        debug_assert_eq!(r.len(), 2 * XLEN);
+        let half_word_size = XLEN / 2;
+
+        // Sum for lower half bits (from the second operand, starting at XLEN)
+        let mut lower_half = F::zero();
+        for i in 0..half_word_size {
+            lower_half += F::from_u64(1 << (half_word_size - 1 - i)) * r[XLEN + half_word_size + i];
+        }
+
+        let sign_bit = r[XLEN + half_word_size];
+
+        // Upper half: all sign bits
+        let mut upper_half = F::zero();
+        for i in 0..half_word_size {
+            upper_half += F::from_u64(1 << (half_word_size - 1 - i)) * sign_bit;
+        }
+
+        lower_half + upper_half * F::from_u64(1 << half_word_size)
+    }
     fn evaluate_mle<F: JoltField>(&self, r: &[F::Challenge]) -> F {
         debug_assert_eq!(r.len(), 2 * XLEN);
         let half_word_size = XLEN / 2;

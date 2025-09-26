@@ -25,6 +25,10 @@ impl<const XLEN: usize> JoltLookupTable for NotEqualTable<XLEN> {
     fn evaluate_mle<F: JoltField>(&self, r: &[F::Challenge]) -> F {
         F::one() - EqualTable::<XLEN>.evaluate_mle::<F>(r)
     }
+
+    fn evaluate_mle_field<F: JoltField>(&self, r: &[F]) -> F {
+        F::one() - EqualTable::<XLEN>.evaluate_mle_field::<F>(r)
+    }
 }
 
 impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for NotEqualTable<XLEN> {

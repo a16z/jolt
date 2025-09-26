@@ -14,6 +14,14 @@ impl<const XLEN: usize> JoltLookupTable for UpperWordTable<XLEN> {
         (index >> XLEN) as u64
     }
 
+    fn evaluate_mle_field<F: JoltField>(&self, r: &[F]) -> F {
+        debug_assert_eq!(r.len(), 2 * XLEN);
+        let mut result = F::zero();
+        for i in 0..XLEN {
+            result += F::from_u64(1 << (XLEN - 1 - i)) * r[i];
+        }
+        result
+    }
     fn evaluate_mle<F: JoltField>(&self, r: &[F::Challenge]) -> F {
         debug_assert_eq!(r.len(), 2 * XLEN);
         let mut result = F::zero();

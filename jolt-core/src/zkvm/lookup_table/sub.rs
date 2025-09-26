@@ -22,6 +22,14 @@ impl<const XLEN: usize> JoltLookupTable for SubTable<XLEN> {
         }
         result
     }
+    fn evaluate_mle_field<F: JoltField>(&self, r: &[F]) -> F {
+        debug_assert_eq!(r.len(), 2 * XLEN);
+        let mut result = F::zero();
+        for i in 0..XLEN {
+            result += F::from_u64(1 << (XLEN - 1 - i)) * r[XLEN + i];
+        }
+        result
+    }
 }
 
 impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for SubTable<XLEN> {

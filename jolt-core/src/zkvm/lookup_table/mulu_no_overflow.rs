@@ -27,6 +27,16 @@ impl<const XLEN: usize> JoltLookupTable for MulUNoOverflowTable<XLEN> {
         }
         result
     }
+
+    fn evaluate_mle_field<F: JoltField>(&self, r: &[F]) -> F {
+        debug_assert_eq!(r.len(), 2 * XLEN);
+
+        let mut result = F::one();
+        for i in 0..XLEN {
+            result *= F::one() - r[i];
+        }
+        result
+    }
 }
 
 impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for MulUNoOverflowTable<XLEN> {

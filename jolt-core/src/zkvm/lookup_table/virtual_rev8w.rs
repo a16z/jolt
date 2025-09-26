@@ -19,11 +19,31 @@ impl<const XLEN: usize> JoltLookupTable for VirtualRev8WTable<XLEN> {
         rev8w(index as u64)
     }
 
+    fn evaluate_mle_field<F: JoltField>(&self, r: &[F]) -> F {
+        let mut bits = r.iter().rev();
+        let mut bytes = iter::from_fn(|| {
+            let bit_chunk = (&mut bits).take(8).enumerate();
+            Some(bit_chunk.map(|(i, b)| b.mul_u64(1 << i)).sum::<F>())
+        });
+
+        // Reverse the bytes in each 32-bit word. i.e.
+        //   abcd:efgh => dcba:hgfe
+        let [a, b, c, d, e, f, g, h] = array::from_fn(|_| bytes.next().unwrap());
+        [d, c, b, a, h, g, f, e]
+            .iter()
+            .enumerate()
+            .map(|(i, b)| b.mul_u64(1 << (i * 8)))
+            .sum()
+    }
     fn evaluate_mle<F: JoltField>(&self, r: &[F::Challenge]) -> F {
         let mut bits = r.iter().rev();
         let mut bytes = iter::from_fn(|| {
             let bit_chunk = (&mut bits).take(8).enumerate();
-            Some(bit_chunk.map(|(i, b)| b.into_F().mul_u64(1 << i)).sum::<F>())
+            Some(
+                bit_chunk
+                    .map(|(i, b)| b.into_F().mul_u64(1 << i))
+                    .sum::<F>(),
+            )
         });
 
         // Reverse the bytes in each 32-bit word. i.e.

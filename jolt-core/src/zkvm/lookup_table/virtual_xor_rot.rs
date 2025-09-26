@@ -30,6 +30,23 @@ impl<const XLEN: usize, const ROTATION: u32> JoltLookupTable
         }
     }
 
+    fn evaluate_mle_field<F: JoltField>(&self, r: &[F]) -> F {
+        debug_assert_eq!(r.len(), 2 * XLEN);
+
+        let mut result = F::zero();
+        for i in 0..XLEN {
+            let x_i = r[2 * i];
+            let y_i = r[2 * i + 1];
+
+            let rotated_position = (i + ROTATION as usize) % XLEN;
+            let bit_position = XLEN - 1 - rotated_position;
+
+            result += F::from_u64(1u64 << bit_position)
+                * ((F::one() - x_i) * y_i + x_i * (F::one() - y_i));
+        }
+        result
+    }
+
     fn evaluate_mle<F: JoltField>(&self, r: &[F::Challenge]) -> F {
         debug_assert_eq!(r.len(), 2 * XLEN);
 
