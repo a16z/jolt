@@ -344,6 +344,24 @@ impl Prefixes {
             });
     }
 
+    pub fn update_checkpoints_field<const XLEN: usize, F: JoltField>(
+        checkpoints: &mut [PrefixCheckpoint<F>],
+        r_x: F,
+        r_y: F,
+        j: usize,
+    ) {
+        debug_assert_eq!(checkpoints.len(), Self::COUNT);
+        let previous_checkpoints = checkpoints.to_vec();
+        checkpoints
+            .par_iter_mut()
+            .enumerate()
+            .for_each(|(index, new_checkpoint)| {
+                let prefix: Self = FromPrimitive::from_u8(index as u8).unwrap();
+                *new_checkpoint =
+                    prefix.update_prefix_checkpoint::<XLEN, F>(&previous_checkpoints, r_x, r_y, j);
+            });
+    }
+
     /// Every two rounds of sumcheck, we update the "checkpoint" value for each
     /// prefix, incorporating the two random challenges `r_x` and `r_y` received
     /// since the last update.

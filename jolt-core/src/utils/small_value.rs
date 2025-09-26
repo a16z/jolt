@@ -1611,7 +1611,6 @@ mod tests {
     use crate::{field::JoltField, poly::eq_poly::EqPolynomial};
     use ark_bn254::Fr;
     use ark_ff::biginteger::{I8OrI96, S160};
-    use ark_ff::UniformRand;
     use rand::{Rng, SeedableRng};
     use rand_chacha::ChaCha20Rng;
 
