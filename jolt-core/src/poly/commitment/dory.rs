@@ -22,6 +22,7 @@ use rayon::prelude::*;
 use std::{borrow::Borrow, marker::PhantomData};
 use tracing::trace_span;
 
+use crate::field::IntoField;
 use dory::{
     arithmetic::{
         Field as DoryField, Group as DoryGroup, MultiScalarMul as DoryMultiScalarMul,
@@ -33,7 +34,6 @@ use dory::{
     transcript::Transcript as DoryTranscript,
     verify, DoryProof, DoryProofBuilder, Polynomial as DoryPolynomial, ProverSetup, VerifierSetup,
 };
-use crate::field::IntoField;
 
 /// The (padded) length of the execution trace currently being proven
 static mut GLOBAL_T: OnceCell<usize> = OnceCell::new();
@@ -1039,7 +1039,6 @@ impl CommitmentScheme for DoryCommitmentScheme {
     type BatchedProof = DoryBatchedProof;
     type OpeningProofHint = Vec<JoltG1Wrapper>; // row commitments
 
-
     #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::setup_prover")]
     fn setup_prover(max_num_vars: usize) -> Self::ProverSetup {
         let srs_file_name = format!("dory_srs_{max_num_vars}_variables.srs");
@@ -1112,7 +1111,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
     fn prove<ProofTranscript: Transcript>(
         setup: &Self::ProverSetup,
         poly: &MultilinearPolynomial<Self::Field>,
-        opening_point: &[Self::Field::Challenge],
+        opening_point: &[<Self::Field as JoltField>::Challenge],
         row_commitments: Self::OpeningProofHint,
         transcript: &mut ProofTranscript,
     ) -> Self::Proof {
@@ -1155,7 +1154,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
         proof: &Self::Proof,
         setup: &Self::VerifierSetup,
         transcript: &mut ProofTranscript,
-        opening_point: &[Self::Field::Challenge],
+        opening_point: &[<Self::Field as JoltField>::Challenge],
         opening: &Self::Field,
         commitment: &Self::Commitment,
     ) -> Result<(), ProofVerifyError> {
@@ -1263,16 +1262,16 @@ impl AppendToTranscript for DoryCommitment {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::field::challenge::MontU128Challenge;
     use crate::poly::compact_polynomial::CompactPolynomial;
     use crate::poly::dense_mlpoly::DensePolynomial;
     use crate::poly::multilinear_polynomial::PolynomialEvaluation;
     use crate::transcripts::Blake2bTranscript;
     use ark_std::rand::thread_rng;
     use ark_std::UniformRand;
+    use rand::Rng;
     use serial_test::serial;
     use std::time::Instant;
-    use rand::Rng;
-    use crate::field::challenge::MontU128Challenge;
 
     fn test_commitment_scheme_with_poly(
         poly: MultilinearPolynomial<Fr>,
@@ -1301,7 +1300,9 @@ mod tests {
         );
 
         let mut rng = thread_rng();
-        let opening_point: Vec<MontU128Challenge<Fr>> = (0..num_vars).map(|_| MontU128Challenge::from(rng.gen::<u128>())).collect();
+        let opening_point: Vec<MontU128Challenge<Fr>> = (0..num_vars)
+            .map(|_| MontU128Challenge::from(rng.gen::<u128>()))
+            .collect();
 
         let commit_start = Instant::now();
         let (commitment, row_commitments) = DoryCommitmentScheme::commit(&poly, prover_setup);
@@ -1471,7 +1472,9 @@ mod tests {
         let coeffs: Vec<Fr> = (0..num_coeffs).map(|_| Fr::rand(&mut rng)).collect();
         let poly = MultilinearPolynomial::LargeScalars(DensePolynomial::new(coeffs.clone()));
 
-        let opening_point: Vec<MontU128Challenge<Fr>> = (0..num_vars).map(|_| MontU128Challenge::from(rng.gen::<u128>())).collect();
+        let opening_point: Vec<MontU128Challenge<Fr>> = (0..num_vars)
+            .map(|_| MontU128Challenge::from(rng.gen::<u128>()))
+            .collect();
 
         let prover_setup = DoryCommitmentScheme::setup_prover(num_vars);
         let verifier_setup = DoryCommitmentScheme::setup_verifier(&prover_setup);
@@ -1515,8 +1518,9 @@ mod tests {
 
         // Test 2: Tamper with the opening point
         {
-            let tampered_opening_point: Vec<MontU128Challenge<>> =
-                (0..num_vars).map(|_| MontU128Challenge::from(rng.gen::<u128>())).collect();
+            let tampered_opening_point: Vec<MontU128Challenge<Fr>> = (0..num_vars)
+                .map(|_| MontU128Challenge::from(rng.gen::<u128>()))
+                .collect();
 
             let mut verify_transcript =
                 Blake2bTranscript::new(DoryCommitmentScheme::protocol_name());

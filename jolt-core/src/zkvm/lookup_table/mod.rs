@@ -57,6 +57,7 @@ pub trait JoltLookupTable: Clone + Debug + Send + Sync + Serialize {
 
     /// Evaluates the MLE of this lookup table on the given point `r`.
     fn evaluate_mle<F: JoltField>(&self, r: &[F::Challenge]) -> F;
+    fn evaluate_mle_field<F: JoltField>(&self, r: &[F]) -> F;
 }
 
 pub trait PrefixSuffixDecomposition<const XLEN: usize>: JoltLookupTable + Default {

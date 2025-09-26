@@ -21,6 +21,16 @@ impl<const XLEN: usize> JoltLookupTable for EqualTable<XLEN> {
             .product()
     }
 
+    fn evaluate_mle_field<F: JoltField>(&self, r: &[F]) -> F {
+        debug_assert!(r.len().is_multiple_of(2));
+
+        let x = r.iter().step_by(2);
+        let y = r.iter().skip(1).step_by(2);
+        x.zip(y)
+            .map(|(x_i, y_i)| *x_i * y_i + (F::one() - x_i) * (F::one() - y_i))
+            .product()
+    }
+
     fn materialize_entry(&self, index: u128) -> u64 {
         let (x, y) = uninterleave_bits(index);
         (x == y).into()

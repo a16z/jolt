@@ -1,4 +1,4 @@
-use crate::field::JoltField;
+use crate::field::{IntoField, JoltField};
 use crate::msm::VariableBaseMSM;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::unipoly::UniPoly;
@@ -328,7 +328,7 @@ where
     pub fn open(
         pk: &KZGProverKey<P>,
         poly: &UniPoly<P::ScalarField>,
-        point: &P::ScalarField::Challenge,
+        point: &<P::ScalarField as JoltField>::Challenge,
     ) -> Result<(P::G1Affine, P::ScalarField), ProofVerifyError>
     where
         <P as Pairing>::ScalarField: JoltField,
@@ -341,7 +341,7 @@ where
     pub fn verify(
         vk: &KZGVerifierKey<P>,
         commitment: &P::G1Affine,
-        point: &P::ScalarField,
+        point: &<P::ScalarField as JoltField>::Challenge,
         proof: &P::G1Affine,
         evaluation: &P::ScalarField,
     ) -> Result<bool, ProofVerifyError> {
@@ -350,7 +350,10 @@ where
                 commitment.into_group() - vk.g1.into_group() * evaluation,
                 -proof.into_group(),
             ],
-            [vk.g2, (vk.beta_g2.into_group() - (vk.g2 * point)).into()],
+            [
+                vk.g2,
+                (vk.beta_g2.into_group() - (vk.g2 * point.into_F())).into(),
+            ],
         )
         .is_zero())
     }
@@ -365,12 +368,12 @@ where
     pub fn generic_open(
         powers: &[<G::Curve as CurveGroup>::Affine],
         poly: &UniPoly<P::ScalarField>,
-        point: P::ScalarField,
+        point: <P::ScalarField as JoltField>::Challenge,
     ) -> Result<G::Curve, ProofVerifyError>
     where
         <P as Pairing>::ScalarField: JoltField,
     {
-        let divisor = UniPoly::from_coeff(vec![-point, P::ScalarField::one()]);
+        let divisor = UniPoly::from_coeff(vec![-point.into_F(), P::ScalarField::one()]);
         let (witness_poly, _) = poly.divide_with_remainder(&divisor).unwrap();
         let proof = <G::Curve as VariableBaseMSM>::msm_field_elements(
             &powers[..witness_poly.coeffs.len()],
@@ -402,8 +405,9 @@ impl<P: Pairing> UnivariateKZG<P, G2> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use ark_bn254::{Bn254, Fr};
-    use ark_std::{rand::Rng, UniformRand};
+    use crate::field::challenge::MontU128Challenge;
+    use ark_bn254::Bn254;
+    use ark_std::rand::Rng;
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
 
@@ -420,7 +424,7 @@ mod test {
             let (ck, vk) = SRS::trim(pp, degree);
             let p = UniPoly::random::<ChaCha20Rng>(degree, rng);
             let comm = UnivariateKZG::<Bn254>::commit(&ck, &p)?;
-            let point = Fr::rand(rng);
+            let point = MontU128Challenge::from(rng.gen::<u128>());
             let (proof, value) = UnivariateKZG::<Bn254>::open(&ck, &p, &point)?;
             assert!(
                 UnivariateKZG::<_, G1>::verify(&vk, &comm, &point, &proof, &value)?,
