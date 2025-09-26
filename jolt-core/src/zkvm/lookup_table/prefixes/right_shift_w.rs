@@ -56,16 +56,41 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for RightShiftWPrefix
         r_y: F,
         j: usize,
     ) -> PrefixCheckpoint<F> {
-        todo!()
+        if j >= XLEN {
+            let mut updated = checkpoints[Prefixes::RightShiftW].unwrap_or(F::zero());
+            updated *= F::one() + r_y;
+            updated += r_x * r_y;
+            Some(updated).into()
+        } else {
+            Some(F::zero()).into()
+        }
     }
 
     fn prefix_mle_field(
         checkpoints: &[PrefixCheckpoint<F>],
         r_x: Option<F>,
         c: u32,
-        b: LookupBits,
+        mut b: LookupBits,
         j: usize,
     ) -> F {
-        todo!()
+        // Only process when j >= XLEN
+        if j < XLEN {
+            return F::zero();
+        }
+
+        let mut result = checkpoints[Prefixes::RightShiftW].unwrap_or(F::zero());
+        if let Some(r_x) = r_x {
+            result *= F::from_u32(1 + c);
+            result += r_x * F::from_u32(c);
+        } else {
+            let y_msb = b.pop_msb();
+            result *= F::from_u8(1 + y_msb);
+            result += F::from_u8(c as u8 * y_msb);
+        }
+        let (x, y) = b.uninterleave();
+        result *= F::from_u32(1 << y.leading_ones());
+        result += F::from_u32(u32::from(x) >> y.trailing_zeros());
+
+        result
     }
 }

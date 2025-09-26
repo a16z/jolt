@@ -37,22 +37,36 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for LsbPrefix<XLEN> {
             Some(F::one()).into()
         }
     }
+
     fn update_prefix_checkpoint_field(
-        checkpoints: &[PrefixCheckpoint<F>],
-        r_x: F,
+        _: &[PrefixCheckpoint<F>],
+        _: F,
         r_y: F,
         j: usize,
     ) -> PrefixCheckpoint<F> {
-        todo!()
+        if j == 2 * XLEN - 1 {
+            Some(r_y).into()
+        } else {
+            Some(F::one()).into()
+        }
     }
 
     fn prefix_mle_field(
-        checkpoints: &[PrefixCheckpoint<F>],
-        r_x: Option<F>,
+        _: &[PrefixCheckpoint<F>],
+        _: Option<F>,
         c: u32,
         b: LookupBits,
         j: usize,
     ) -> F {
-        todo!()
+        if j == 2 * XLEN - 1 {
+            // in the log(K)th round, `c` corresponds to the LSB
+            debug_assert_eq!(b.len(), 0);
+            F::from_u32(c)
+        } else if current_suffix_len(j) == 0 {
+            // in the (log(K)-1)th round, the LSB of `b` is the LSB
+            F::from_u32(u32::from(b) & 1)
+        } else {
+            F::one()
+        }
     }
 }

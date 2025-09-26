@@ -43,20 +43,38 @@ impl<F: JoltField> SparseDensePrefix<F> for RightOperandIsZeroPrefix {
     }
     fn update_prefix_checkpoint_field(
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: F,
+        _r_x: F,
         r_y: F,
-        j: usize,
+        _j: usize,
     ) -> PrefixCheckpoint<F> {
-        todo!()
+        // checkpoint *= (1 - r_y)
+        let updated =
+            checkpoints[Prefixes::RightOperandIsZero].unwrap_or(F::one()) * (F::one() - r_y);
+        Some(updated).into()
     }
 
     fn prefix_mle_field(
         checkpoints: &[PrefixCheckpoint<F>],
         r_x: Option<F>,
         c: u32,
-        b: LookupBits,
-        j: usize,
+        mut b: LookupBits,
+        _: usize,
     ) -> F {
-        todo!()
+        let (_, y) = b.uninterleave();
+        // Short-circuit if low-order bits of `y` are not 0s
+        if u64::from(y) != 0 {
+            return F::zero();
+        }
+
+        let mut result = checkpoints[Prefixes::RightOperandIsZero].unwrap_or(F::one());
+
+        if r_x.is_some() {
+            let y = F::from_u8(c as u8);
+            result *= F::one() - y;
+        } else {
+            let y = F::from_u8(b.pop_msb());
+            result *= F::one() - y;
+        }
+        result
     }
 }

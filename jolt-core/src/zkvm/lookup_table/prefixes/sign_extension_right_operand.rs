@@ -53,20 +53,45 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F>
     }
     fn update_prefix_checkpoint_field(
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: F,
+        _r_x: F,
         r_y: F,
         j: usize,
     ) -> PrefixCheckpoint<F> {
-        todo!()
+        if j == XLEN + 1 {
+            // Sign bit is in r_y
+            let value = F::from_u128((1u128 << XLEN) - (1u128 << (XLEN / 2))) * r_y;
+            Some(value).into()
+        } else {
+            checkpoints[Prefixes::SignExtensionRightOperand].into()
+        }
     }
 
     fn prefix_mle_field(
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: Option<F>,
+        _r_x: Option<F>,
         c: u32,
-        b: LookupBits,
+        mut b: LookupBits,
         j: usize,
     ) -> F {
-        todo!()
+        let suffix_len = current_suffix_len(j);
+
+        // If suffix handles sign extension, return 1
+        if suffix_len >= XLEN {
+            return F::one();
+        }
+
+        if j == XLEN {
+            // Sign bit is msb of b
+            let sign_bit = b.pop_msb();
+            F::from_u128((1u128 << XLEN) - (1u128 << (XLEN / 2))).mul_u64(sign_bit as u64)
+        } else if j == XLEN + 1 {
+            // Sign bit is in c
+            F::from_u128((1u128 << XLEN) - (1u128 << (XLEN / 2))).mul_u64(c as u64)
+        } else if j >= XLEN + 2 {
+            // Sign bit has been processed, use checkpoint
+            checkpoints[Prefixes::SignExtensionRightOperand].unwrap_or(F::zero())
+        } else {
+            unreachable!("This case should never happen if our prefixes start at half_word_size");
+        }
     }
 }

@@ -49,20 +49,42 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for LeftShiftWHelperP
 
     fn update_prefix_checkpoint_field(
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: F,
+        _r_x: F,
         r_y: F,
         j: usize,
     ) -> PrefixCheckpoint<F> {
-        todo!()
+        if j >= XLEN {
+            let mut updated = checkpoints[Prefixes::LeftShiftWHelper].unwrap_or(F::one());
+            updated *= F::one() + r_y;
+            Some(updated).into()
+        } else {
+            Some(F::one()).into()
+        }
     }
-
     fn prefix_mle_field(
         checkpoints: &[PrefixCheckpoint<F>],
         r_x: Option<F>,
         c: u32,
-        b: LookupBits,
+        mut b: LookupBits,
         j: usize,
     ) -> F {
-        todo!()
+        // Only process when j >= XLEN
+        if j < XLEN {
+            return F::one();
+        }
+
+        let mut result = checkpoints[Prefixes::LeftShiftWHelper].unwrap_or(F::one());
+
+        if r_x.is_some() {
+            result *= F::from_u32(1 + c);
+        } else {
+            let y_msb = b.pop_msb();
+            result *= F::from_u8(1 + y_msb);
+        }
+
+        let (_, y) = b.uninterleave();
+        result *= F::from_u32(1 << y.leading_ones());
+
+        result
     }
 }

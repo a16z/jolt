@@ -37,19 +37,29 @@ impl<F: JoltField> SparseDensePrefix<F> for LeftMsbPrefix {
     fn update_prefix_checkpoint_field(
         checkpoints: &[PrefixCheckpoint<F>],
         r_x: F,
-        r_y: F,
+        _r_y: F,
         j: usize,
     ) -> PrefixCheckpoint<F> {
-        todo!()
+        if j == 1 {
+            Some(r_x).into()
+        } else {
+            checkpoints[Prefixes::LeftOperandMsb].into()
+        }
     }
 
     fn prefix_mle_field(
         checkpoints: &[PrefixCheckpoint<F>],
         r_x: Option<F>,
         c: u32,
-        b: LookupBits,
+        _b: LookupBits,
         j: usize,
     ) -> F {
-        todo!()
+        if j == 0 {
+            F::from_u32(c)
+        } else if j == 1 {
+            r_x.unwrap()
+        } else {
+            checkpoints[Prefixes::LeftOperandMsb].unwrap()
+        }
     }
 }
