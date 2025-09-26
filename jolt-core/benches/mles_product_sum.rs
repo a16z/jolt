@@ -2,8 +2,7 @@ use ark_bn254::Fr;
 use ark_std::test_rng;
 use criterion::{criterion_group, criterion_main, Criterion};
 use jolt_core::{
-    field::{challenge::MontU128Challenge, JoltField},
-    poly::multilinear_polynomial::MultilinearPolynomial,
+    field::JoltField, poly::multilinear_polynomial::MultilinearPolynomial,
     subprotocols::mles_product_sum::compute_mles_product_sum,
 };
 use rand::Rng;
@@ -15,7 +14,7 @@ fn bench_mles_product_sum(c: &mut Criterion, n_mle: usize) {
     let mles = vec![random_mle; n_mle];
     let log_sum_n_terms = mle_n_vars - 1;
     let eq_evals = vec![Fr::random(rng); 1 << log_sum_n_terms];
-    let r0 = MontU128Challenge::from(rng.gen::<u128>());
+    let r0 = <Fr as JoltField>::Challenge::from(rng.gen::<u128>());
     let correction_factor = Fr::random(rng);
     let claim = Fr::random(rng);
 

@@ -1262,7 +1262,6 @@ impl AppendToTranscript for DoryCommitment {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::field::challenge::MontU128Challenge;
     use crate::poly::compact_polynomial::CompactPolynomial;
     use crate::poly::dense_mlpoly::DensePolynomial;
     use crate::poly::multilinear_polynomial::PolynomialEvaluation;
@@ -1300,8 +1299,8 @@ mod tests {
         );
 
         let mut rng = thread_rng();
-        let opening_point: Vec<MontU128Challenge<Fr>> = (0..num_vars)
-            .map(|_| MontU128Challenge::from(rng.gen::<u128>()))
+        let opening_point: Vec<<Fr as JoltField>::Challenge> = (0..num_vars)
+            .map(|_| <Fr as JoltField>::Challenge::from(rng.gen::<u128>()))
             .collect();
 
         let commit_start = Instant::now();
@@ -1472,8 +1471,8 @@ mod tests {
         let coeffs: Vec<Fr> = (0..num_coeffs).map(|_| Fr::rand(&mut rng)).collect();
         let poly = MultilinearPolynomial::LargeScalars(DensePolynomial::new(coeffs.clone()));
 
-        let opening_point: Vec<MontU128Challenge<Fr>> = (0..num_vars)
-            .map(|_| MontU128Challenge::from(rng.gen::<u128>()))
+        let opening_point: Vec<<Fr as JoltField>::Challenge> = (0..num_vars)
+            .map(|_| <Fr as JoltField>::Challenge::from(rng.gen::<u128>()))
             .collect();
 
         let prover_setup = DoryCommitmentScheme::setup_prover(num_vars);
@@ -1518,8 +1517,8 @@ mod tests {
 
         // Test 2: Tamper with the opening point
         {
-            let tampered_opening_point: Vec<MontU128Challenge<Fr>> = (0..num_vars)
-                .map(|_| MontU128Challenge::from(rng.gen::<u128>()))
+            let tampered_opening_point: Vec<<Fr as JoltField>::Challenge> = (0..num_vars)
+                .map(|_| <Fr as JoltField>::Challenge::from(rng.gen::<u128>()))
                 .collect();
 
             let mut verify_transcript =

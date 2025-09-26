@@ -405,7 +405,6 @@ impl<P: Pairing> UnivariateKZG<P, G2> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::field::challenge::MontU128Challenge;
     use ark_bn254::Bn254;
     use ark_std::rand::Rng;
     use rand_chacha::ChaCha20Rng;
@@ -424,7 +423,8 @@ mod test {
             let (ck, vk) = SRS::trim(pp, degree);
             let p = UniPoly::random::<ChaCha20Rng>(degree, rng);
             let comm = UnivariateKZG::<Bn254>::commit(&ck, &p)?;
-            let point = MontU128Challenge::from(rng.gen::<u128>());
+            let point =
+                <<Bn254 as Pairing>::ScalarField as JoltField>::Challenge::from(rng.gen::<u128>());
             let (proof, value) = UnivariateKZG::<Bn254>::open(&ck, &p, &point)?;
             assert!(
                 UnivariateKZG::<_, G1>::verify(&vk, &comm, &point, &proof, &value)?,

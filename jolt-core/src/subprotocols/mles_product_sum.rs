@@ -281,8 +281,8 @@ mod tests {
     use dory::curve::test_rng;
     use rand::{rngs::StdRng, Rng};
 
-    use crate::field::challenge::MontU128Challenge;
     use crate::{
+        field::JoltField,
         poly::{
             dense_mlpoly::DensePolynomial,
             eq_poly::EqPolynomial,
@@ -295,14 +295,14 @@ mod tests {
     fn test_compute_mles_product_sum_with_2_mles() {
         const N_MLE: usize = 2;
         let rng = &mut test_rng();
-        let r_whole = [MontU128Challenge::<Fr>::from(rng.gen::<u128>())];
-        let r: &[MontU128Challenge<Fr>; 1] = &r_whole;
+        let r_whole = [<Fr as JoltField>::Challenge::from(rng.gen::<u128>())];
+        let r: &[<Fr as JoltField>::Challenge; 1] = &r_whole;
         // let r: &[Fr; 1] = &rng.gen();
         let mles: [_; N_MLE] = from_fn(|_| random_mle(1, rng));
         let correction_factor = rng.gen();
         let claim = correction_factor * gen_product_mle(&mles).evaluate(r);
-        let r_whole = [MontU128Challenge::<Fr>::from(rng.gen::<u128>())];
-        let r_prime: &[MontU128Challenge<Fr>; 1] = &r_whole;
+        let r_whole = [<Fr as JoltField>::Challenge::from(rng.gen::<u128>())];
+        let r_prime: &[<Fr as JoltField>::Challenge; 1] = &r_whole;
         // let r_prime: &[Fr; 1] = &rng.gen();
         let mle_challenge_product = mles.iter().map(|mle| mle.evaluate(r_prime)).product::<Fr>();
         let eval = correction_factor * EqPolynomial::<Fr>::mle(r_prime, r) * mle_challenge_product;
@@ -324,15 +324,13 @@ mod tests {
     fn test_compute_mles_product_sum_with_4_mles() {
         const N_MLE: usize = 4;
         let rng = &mut test_rng();
-        let r_whole = [MontU128Challenge::<Fr>::from(rng.gen::<u128>())];
-        let r: &[MontU128Challenge<Fr>; 1] = &r_whole;
-        // let r: &[MontU128Challenge<Fr>; 1] = &rng.gen();
+        let r_whole = [<Fr as JoltField>::Challenge::from(rng.gen::<u128>())];
+        let r: &[<Fr as JoltField>::Challenge; 1] = &r_whole;
         let mles: [_; N_MLE] = from_fn(|_| random_mle(1, rng));
         let correction_factor = rng.gen();
         let claim = correction_factor * gen_product_mle(&mles).evaluate(r);
-        let r_whole = [MontU128Challenge::<Fr>::from(rng.gen::<u128>())];
-        let r_prime: &[MontU128Challenge<Fr>; 1] = &r_whole;
-        // let r_prime: &[Fr; 1] = &rng.gen();
+        let r_whole = [<Fr as JoltField>::Challenge::from(rng.gen::<u128>())];
+        let r_prime: &[<Fr as JoltField>::Challenge; 1] = &r_whole;
         let mle_challenge_product = mles.iter().map(|mle| mle.evaluate(r_prime)).product::<Fr>();
         let eval = correction_factor * EqPolynomial::<Fr>::mle(r_prime, r) * mle_challenge_product;
         let log_sum_n_terms = 0;
@@ -353,14 +351,14 @@ mod tests {
     fn test_compute_mles_product_sum_with_8_mles() {
         const N_MLE: usize = 8;
         let rng = &mut test_rng();
-        let r_whole = [MontU128Challenge::<Fr>::from(rng.gen::<u128>())];
-        let r: &[MontU128Challenge<Fr>; 1] = &r_whole;
+        let r_whole = [<Fr as JoltField>::Challenge::from(rng.gen::<u128>())];
+        let r: &[<Fr as JoltField>::Challenge; 1] = &r_whole;
         // let r: &[Fr; 1] = &rng.gen();
         let mles: [_; N_MLE] = from_fn(|_| random_mle(1, rng));
         let correction_factor = rng.gen();
         let claim = correction_factor * gen_product_mle(&mles).evaluate(r);
-        let r_whole = [MontU128Challenge::<Fr>::from(rng.gen::<u128>())];
-        let r_prime: &[MontU128Challenge<Fr>; 1] = &r_whole;
+        let r_whole = [<Fr as JoltField>::Challenge::from(rng.gen::<u128>())];
+        let r_prime: &[<Fr as JoltField>::Challenge; 1] = &r_whole;
         // let r_prime: &[Fr; 1] = &rng.gen();
         let mle_challenge_product = mles.iter().map(|mle| mle.evaluate(r_prime)).product::<Fr>();
         let eval = correction_factor * EqPolynomial::<Fr>::mle(r_prime, r) * mle_challenge_product;
@@ -383,14 +381,14 @@ mod tests {
         const N_MLE: usize = 16;
         let rng = &mut test_rng();
         //let r: &[Fr; 1] = &rng.gen();
-        let r_whole = [MontU128Challenge::<Fr>::from(rng.gen::<u128>())];
-        let r: &[MontU128Challenge<Fr>; 1] = &r_whole;
+        let r_whole = [<Fr as JoltField>::Challenge::from(rng.gen::<u128>())];
+        let r: &[<Fr as JoltField>::Challenge; 1] = &r_whole;
         let mles: [_; N_MLE] = from_fn(|_| random_mle(1, rng));
         let correction_factor = rng.gen();
         let claim = correction_factor * gen_product_mle(&mles).evaluate(r);
         // let r_prime: &[Fr; 1] = &rng.gen();
-        let r_whole = [MontU128Challenge::<Fr>::from(rng.gen::<u128>())];
-        let r_prime: &[MontU128Challenge<Fr>; 1] = &r_whole;
+        let r_whole = [<Fr as JoltField>::Challenge::from(rng.gen::<u128>())];
+        let r_prime: &[<Fr as JoltField>::Challenge; 1] = &r_whole;
         let mle_challenge_product = mles.iter().map(|mle| mle.evaluate(r_prime)).product::<Fr>();
         let eval = correction_factor * EqPolynomial::<Fr>::mle(r_prime, r) * mle_challenge_product;
         let log_sum_n_terms = 0;

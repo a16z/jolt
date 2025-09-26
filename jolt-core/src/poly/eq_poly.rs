@@ -343,7 +343,6 @@ impl<F: JoltField> EqPlusOnePolynomial<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::field::challenge::MontU128Challenge;
     use ark_bn254::Fr;
     use ark_std::test_rng;
     use rand::Rng;
@@ -356,7 +355,7 @@ mod tests {
         let mut rng = test_rng();
         for len in 5..22 {
             let r = (0..len)
-                .map(|_| MontU128Challenge::from(rng.gen::<u128>()))
+                .map(|_| <Fr as JoltField>::Challenge::from(rng.gen::<u128>()))
                 .collect::<Vec<_>>();
             let start = Instant::now();
             let evals_serial: Vec<Fr> = EqPolynomial::evals_serial(&r, None);
@@ -392,7 +391,7 @@ mod tests {
         let mut rng = test_rng();
         for len in 2..22 {
             let r = (0..len)
-                .map(|_| MontU128Challenge::from(rng.gen::<u128>()))
+                .map(|_| <Fr as JoltField>::Challenge::from(rng.gen::<u128>()))
                 .collect::<Vec<_>>();
             let evals_serial_cached = EqPolynomial::<Fr>::evals_serial_cached(&r, None);
             for i in 0..len {

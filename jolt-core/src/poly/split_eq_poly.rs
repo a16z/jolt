@@ -365,7 +365,6 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::field::challenge::MontU128Challenge;
     use ark_bn254::Fr;
     use ark_std::test_rng;
     use rand::Rng;
@@ -374,8 +373,8 @@ mod tests {
     fn bind_low_high() {
         const NUM_VARS: usize = 10;
         let mut rng = test_rng();
-        let w: Vec<MontU128Challenge<Fr>> =
-            std::iter::repeat_with(|| MontU128Challenge::from(rng.gen::<u128>()))
+        let w: Vec<<Fr as JoltField>::Challenge> =
+            std::iter::repeat_with(|| <Fr as JoltField>::Challenge::from(rng.gen::<u128>()))
                 .take(NUM_VARS)
                 .collect();
 
@@ -384,7 +383,7 @@ mod tests {
         assert_eq!(regular_eq, split_eq.merge());
 
         for _ in 0..NUM_VARS {
-            let r = MontU128Challenge::from(rng.gen::<u128>());
+            let r = <Fr as JoltField>::Challenge::from(rng.gen::<u128>());
             regular_eq.bound_poly_var_bot(&r);
             split_eq.bind(r);
 
@@ -397,8 +396,8 @@ mod tests {
     fn bind_high_low() {
         const NUM_VARS: usize = 10;
         let mut rng = test_rng();
-        let w: Vec<MontU128Challenge<Fr>> =
-            std::iter::repeat_with(|| MontU128Challenge::from(rng.gen::<u128>()))
+        let w: Vec<<Fr as JoltField>::Challenge> =
+            std::iter::repeat_with(|| <Fr as JoltField>::Challenge::from(rng.gen::<u128>()))
                 .take(NUM_VARS)
                 .collect();
 
@@ -410,7 +409,7 @@ mod tests {
 
         // Bind with same random values, but regular_eq uses top and split uses new high-to-low
         for _ in 0..NUM_VARS {
-            let r = MontU128Challenge::from(rng.gen::<u128>());
+            let r = <Fr as JoltField>::Challenge::from(rng.gen::<u128>());
             regular_eq.bound_poly_var_top(&r);
             split_eq_high_to_low.bind(r);
             let merged = split_eq_high_to_low.merge();
@@ -427,8 +426,9 @@ mod tests {
 
         // Test case 1: Standard setup
         let num_x_out_vars_1 = 2; // Example split for x_out part
-        let w1: Vec<MontU128Challenge<Fr>> =
-            (0..N).map(|i| MontU128Challenge::from(i as u128)).collect(); // Use predictable values
+        let w1: Vec<<Fr as JoltField>::Challenge> = (0..N)
+            .map(|i| <Fr as JoltField>::Challenge::from(i as u128))
+            .collect(); // Use predictable values
 
         let num_x_in_vars_1 = N - num_x_out_vars_1 - L0;
         let split_eq1 = GruenSplitEqPolynomial::<Fr>::new_for_small_value(
@@ -444,9 +444,9 @@ mod tests {
         let split_point_x_in_expected1 = num_x_out_vars_1 + num_x_in_vars_1;
         assert_eq!(split_eq1.current_index, split_point1_expected1); // repurposed current_index
 
-        let w_E_in_vars_expected1: Vec<MontU128Challenge<Fr>> =
+        let w_E_in_vars_expected1: Vec<<Fr as JoltField>::Challenge> =
             w1[split_point1_expected1..split_point_x_in_expected1].to_vec(); // w[2..7] = [2,3,4,5,6]
-        let mut w_E_out_vars_expected1: Vec<MontU128Challenge<Fr>> = Vec::new();
+        let mut w_E_out_vars_expected1: Vec<<Fr as JoltField>::Challenge> = Vec::new();
         w_E_out_vars_expected1.extend_from_slice(&w1[0..split_point1_expected1]); // w[0..2] = [0,1]
                                                                                   // Suffix slice is w[split_point_x_in .. N-1] = w[7..9] for N=10, L0=3.
         if split_point_x_in_expected1 < N - 1 {
@@ -493,8 +493,8 @@ mod tests {
 
         // Test case 2: Edge case L0 = 0
         let num_x_out_vars_2 = N / 2; // Max possible value for num_x_out_vars if num_x_in_vars is also N/2 and L0=0
-        let w2: Vec<MontU128Challenge<Fr>> = (0..N)
-            .map(|_| MontU128Challenge::from(rng.gen::<u128>()))
+        let w2: Vec<<Fr as JoltField>::Challenge> = (0..N)
+            .map(|_| <Fr as JoltField>::Challenge::from(rng.gen::<u128>()))
             .collect();
         let num_x_in_vars_2 = N - num_x_out_vars_2; // L0 is 0
         let split_eq2 = GruenSplitEqPolynomial::<Fr>::new_for_small_value(
@@ -508,14 +508,14 @@ mod tests {
         assert_eq!(split_eq2.E_in_vec.len(), 1); // E_in should cover w[N/2 .. N/2 + num_x_in_vars_2 -1]
         let split_point1_expected2 = num_x_out_vars_2;
         let split_point_x_in_expected2 = num_x_out_vars_2 + num_x_in_vars_2;
-        let w_E_in_vars_expected2: Vec<MontU128Challenge<Fr>> =
+        let w_E_in_vars_expected2: Vec<<Fr as JoltField>::Challenge> =
             w2[split_point1_expected2..split_point_x_in_expected2].to_vec();
         assert!(w_E_in_vars_expected2.len() == num_x_in_vars_2);
         let expected_E_in2 = EqPolynomial::evals(&w_E_in_vars_expected2); // evals of N/2 vars
         assert_eq!(split_eq2.E_in_vec[0], expected_E_in2);
 
         // Test case 3: Panic case N = 0
-        let w3: Vec<MontU128Challenge<Fr>> = vec![];
+        let w3: Vec<<Fr as JoltField>::Challenge> = vec![];
         let l0_3 = 0;
         let num_x_out_vars_3 = 0;
         let n3 = w3.len();

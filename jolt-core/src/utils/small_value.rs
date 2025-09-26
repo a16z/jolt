@@ -1607,7 +1607,7 @@ mod tests {
         compute_and_update_tA_inplace_2, compute_and_update_tA_inplace_3,
         compute_and_update_tA_inplace_const,
     };
-    use crate::field::challenge::MontU128Challenge;
+
     use crate::{field::JoltField, poly::eq_poly::EqPolynomial};
     use ark_bn254::Fr;
     use ark_ff::biginteger::{I8OrI96, S160};
@@ -1666,8 +1666,8 @@ mod tests {
         }
         let num_non_trivial = 3_usize.pow(num_vars as u32) - 2_usize.pow(num_vars as u32);
 
-        let r: Vec<MontU128Challenge<Fr>> = (0..num_vars)
-            .map(|_| MontU128Challenge::from(rng.gen::<u128>()))
+        let r: Vec<<Fr as JoltField>::Challenge> = (0..num_vars)
+            .map(|_| <Fr as JoltField>::Challenge::from(rng.gen::<u128>()))
             .collect();
         let e_in_val: Vec<Fr> = EqPolynomial::evals(&r);
 

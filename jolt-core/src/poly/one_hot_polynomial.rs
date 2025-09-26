@@ -594,7 +594,6 @@ impl<F: JoltField> OneHotPolynomial<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::field::challenge::MontU128Challenge;
     use crate::poly::unipoly::UniPoly;
     use ark_bn254::Fr;
     use ark_std::{test_rng, Zero};
@@ -615,12 +614,14 @@ mod tests {
         let one_hot_poly = OneHotPolynomial::<Fr>::from_indices(nonzero_indices, K);
         let mut dense_poly = one_hot_poly.to_dense_poly();
 
-        let r_address = std::iter::repeat_with(|| MontU128Challenge::from(rng.gen::<u128>()))
-            .take(LOG_K)
-            .collect::<Vec<_>>();
-        let r_cycle = std::iter::repeat_with(|| MontU128Challenge::from(rng.gen::<u128>()))
-            .take(LOG_T)
-            .collect::<Vec<_>>();
+        let r_address =
+            std::iter::repeat_with(|| <Fr as JoltField>::Challenge::from(rng.gen::<u128>()))
+                .take(LOG_K)
+                .collect::<Vec<_>>();
+        let r_cycle =
+            std::iter::repeat_with(|| <Fr as JoltField>::Challenge::from(rng.gen::<u128>()))
+                .take(LOG_T)
+                .collect::<Vec<_>>();
 
         let eq_address_state = EqAddressState::new(&r_address);
         let mut eq_cycle_state = EqCycleState::new(&r_cycle);
@@ -658,7 +659,7 @@ mod tests {
                 "round {round} prover message mismatch"
             );
 
-            let r = MontU128Challenge::from(rng.gen::<u128>());
+            let r = <Fr as JoltField>::Challenge::from(rng.gen::<u128>());
 
             // Update previous_claim by evaluating the univariate polynomial at r
             let eval_at_1 = previous_claim - expected_message[0];
@@ -708,8 +709,8 @@ mod tests {
         let one_hot_poly = OneHotPolynomial::<Fr>::from_indices(nonzero_indices, K);
         let dense_poly = one_hot_poly.to_dense_poly();
 
-        let r: Vec<MontU128Challenge<Fr>> =
-            std::iter::repeat_with(|| MontU128Challenge::from(rng.gen::<u128>()))
+        let r: Vec<<Fr as JoltField>::Challenge> =
+            std::iter::repeat_with(|| <Fr as JoltField>::Challenge::from(rng.gen::<u128>()))
                 .take(LOG_K + LOG_T)
                 .collect();
 

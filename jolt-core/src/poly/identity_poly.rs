@@ -458,7 +458,6 @@ mod tests {
     use rand::Rng;
 
     use super::*;
-    use crate::field::challenge::MontU128Challenge;
     use ark_bn254::Fr;
     use ark_ec::AdditiveGroup;
     use ark_ff::Field;
@@ -483,7 +482,7 @@ mod tests {
         }
 
         for _ in 0..NUM_VARS {
-            let r = MontU128Challenge::from(rng.gen::<u128>());
+            let r = <Fr as JoltField>::Challenge::from(rng.gen::<u128>());
             identity_poly.bind(r, BindingOrder::LowToHigh);
             reference_poly.bind(r, BindingOrder::LowToHigh);
             for j in 0..reference_poly.len() / 2 {
@@ -647,7 +646,7 @@ mod tests {
                 );
             }
 
-            let r = MontU128Challenge::from(rng.gen::<u128>());
+            let r = <Fr as JoltField>::Challenge::from(rng.gen::<u128>());
             ro_poly.bind(r, BindingOrder::HighToLow);
             lo_poly.bind(r, BindingOrder::HighToLow);
             reference_poly_r.bind(r, BindingOrder::HighToLow);
@@ -699,7 +698,7 @@ mod tests {
                 );
             }
 
-            let r = MontU128Challenge::from(0x12345678 + round as u128);
+            let r = <Fr as JoltField>::Challenge::from(0x12345678 + round as u128);
             unmap_poly.bind(r, BindingOrder::LowToHigh);
             reference_poly.bind(r, BindingOrder::LowToHigh);
         }

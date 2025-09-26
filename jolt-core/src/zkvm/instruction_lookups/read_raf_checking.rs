@@ -768,7 +768,6 @@ pub fn current_suffix_len(j: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::field::challenge::MontU128Challenge;
     use crate::subprotocols::sumcheck::BatchedSumcheck;
     use crate::transcripts::Blake2bTranscript;
     use crate::{
@@ -910,11 +909,11 @@ mod tests {
             prover_sm.twist_sumcheck_switch_index,
         );
 
-        let r_cycle: Vec<MontU128Challenge<Fr>> = prover_sm
+        let r_cycle: Vec<<Fr as JoltField>::Challenge> = prover_sm
             .transcript
             .borrow_mut()
             .challenge_vector_special::<Fr>(LOG_T);
-        let _r_cycle: Vec<MontU128Challenge<Fr>> = verifier_sm
+        let _r_cycle: Vec<<Fr as JoltField>::Challenge> = verifier_sm
             .transcript
             .borrow_mut()
             .challenge_vector_special::<Fr>(LOG_T);

@@ -569,7 +569,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::field::challenge::MontU128Challenge;
     use crate::transcripts::{Blake2bTranscript, Transcript};
     use ark_bn254::Bn254;
     use ark_std::UniformRand;
@@ -697,7 +696,11 @@ mod tests {
                 .collect::<Vec<_>>();
             let poly = MultilinearPolynomial::from(poly_raw.clone());
             let point = (0..ell)
-                .map(|_| MontU128Challenge::from(rng.gen::<u128>()))
+                .map(|_| {
+                    <<Bn254 as Pairing>::ScalarField as JoltField>::Challenge::from(
+                        rng.gen::<u128>(),
+                    )
+                })
                 .collect::<Vec<_>>();
             let eval = poly.evaluate(&point);
 

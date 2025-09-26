@@ -552,7 +552,6 @@ impl<F: JoltField> PolynomialEvaluation<F> for DensePolynomial<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::field::challenge::MontU128Challenge;
     use ark_bn254::Fr;
     use ark_std::test_rng;
     use rand::Rng;
@@ -635,8 +634,8 @@ mod tests {
 
             // Try 10 random evaluation points
             for _ in 0..10 {
-                let eval_point: Vec<MontU128Challenge<Fr>> = (0..num_vars)
-                    .map(|_| MontU128Challenge::from(rng.gen::<u128>()))
+                let eval_point: Vec<<Fr as JoltField>::Challenge> = (0..num_vars)
+                    .map(|_| <Fr as JoltField>::Challenge::from(rng.gen::<u128>()))
                     .collect();
 
                 let eval1 = poly.evaluate(&eval_point);
