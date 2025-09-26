@@ -317,7 +317,7 @@ mod test {
 
     proptest! {
         #[test]
-        fn combine_lookups(
+        fn evaluate_mle(
             (instr, inputs) in arb_instruction_and_input::<ParamSet, RefField>(),
         ) {
             prop_assert_eq!(
