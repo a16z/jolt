@@ -275,6 +275,14 @@ impl JoltDAG {
             &mut *transcript.borrow_mut(),
         );
 
+        // Get recursion ops from accumulator if available
+        #[cfg(feature = "recursion")]
+        {
+            if let Some(recursion_ops) = accumulator.borrow().get_recursion_ops() {
+                state_manager.set_recursion_ops(recursion_ops.clone());
+            }
+        }
+
         state_manager.proofs.borrow_mut().insert(
             ProofKeys::ReducedOpeningProof,
             ProofData::ReducedOpeningProof(opening_proof),
@@ -316,96 +324,21 @@ impl JoltDAG {
             use crate::poly::commitment::{hyrax::matrix_dimensions, pedersen::PedersenGenerators};
             use ark_bn254::Fq;
             use ark_grumpkin::Projective as GrumpkinProjective;
+            use jolt_optimizations::ExponentiationSteps;
             use jolt_platform::println;
 
-            // Extract gt_exponentiation_steps from the ReducedOpeningProof (Dory proof)
-            // let exponentiation_steps_vec: Vec<ExponentiationSteps> = {
-            //     use crate::poly::commitment::dory::DoryProofData;
-            //     use std::any::Any;
+            // Get exponentiation steps from StateManager
+            let exponentiation_steps_vec: Vec<ExponentiationSteps> = state_manager
+                .get_recursion_ops()
+                .cloned()
+                .unwrap_or_default();
 
-            //     let proofs = state_manager.proofs.borrow();
-            //     if let Some(ProofData::ReducedOpeningProof(reduced_proof)) =
-            //         proofs.get(&ProofKeys::ReducedOpeningProof)
-            //     {
-            //         // In recursion mode with Fq field, we know this is a DoryProofData
-            //         // We need to downcast from the generic PCS::Proof to DoryProofData
-            //         let proof_any = &reduced_proof.joint_opening_proof as &dyn Any;
-            //         if let Some(dory_proof) = proof_any.downcast_ref::<DoryProofData>() {
-            //             dory_proof.dory_proof_data.gt_exponentiation_steps.clone()
-            //         } else {
-            //             // If not Dory (shouldn't happen in recursion mode), return empty
-            //             Vec::new()
-            //         }
-            //     } else {
-            //         Vec::new()
-            //     }
-            // };
-            let exponentiation_steps_vec = Vec::new();
+            println!(
+                "Total number of exponentiation steps: {}",
+                exponentiation_steps_vec.len()
+            );
 
-            if !exponentiation_steps_vec.is_empty() {
-                // if TypeId::of::<F>() == TypeId::of::<Fq>() {
-                if true {
-                    println("THIS BRANCH");
-                    // Create Hyrax generators for Grumpkin curve (for Fq commitments)
-                    // The polynomials have 16 = 2^4 evaluations each
-                    const NUM_VARS: usize = 4; // 2^4 = 16 evaluations per polynomial
-                    const RATIO: usize = 1;
-                    let (_, r_size) = matrix_dimensions(NUM_VARS, RATIO);
-                    println("BEFORE");
-                    let hyrax_generators = PedersenGenerators::<GrumpkinProjective>::new(
-                        r_size,
-                        b"sz_check_hyrax_grumpkin",
-                    );
-
-                    println("AFTER GRUMPKIN GEN");
-
-                    let (sz_sumcheck_instances_fq, sz_artifacts_fq) =
-                        crate::subprotocols::sz_check_protocol::sz_check_prove::<
-                            Fq,
-                            ProofTranscript,
-                            RATIO,
-                        >(
-                            exponentiation_steps_vec,
-                            &mut *transcript.borrow_mut(),
-                            &hyrax_generators,
-                        );
-
-                    let mut sz_sumcheck_instances = unsafe {
-                        std::mem::transmute::<
-                            Vec<Box<dyn SumcheckInstance<Fq>>>,
-                            Vec<Box<dyn SumcheckInstance<F>>>,
-                        >(sz_sumcheck_instances_fq)
-                    };
-                    // SZCheckArtifacts is now not parameterized by field type, just RATIO
-                    let sz_artifacts = sz_artifacts_fq;
-
-                    if !sz_sumcheck_instances.is_empty() {
-                        let sz_instances_mut: Vec<&mut dyn SumcheckInstance<F>> =
-                            sz_sumcheck_instances
-                                .iter_mut()
-                                .map(|instance| &mut **instance as &mut dyn SumcheckInstance<F>)
-                                .collect();
-
-                        let (sz_proof, _r_sz) = BatchedSumcheck::prove(
-                            sz_instances_mut,
-                            Some(accumulator.clone()),
-                            &mut *transcript.borrow_mut(),
-                        );
-
-                        state_manager.proofs.borrow_mut().insert(
-                            ProofKeys::SZCheckSumcheck,
-                            ProofData::SumcheckProof(sz_proof),
-                        );
-
-                        state_manager.proofs.borrow_mut().insert(
-                            ProofKeys::SZCheckArtifacts,
-                            ProofData::SZCheckArtifacts(sz_artifacts),
-                        );
-                    }
-                } else {
-                    panic!("SZ check requires field type to be ark_bn254::Fq");
-                }
-            }
+            if !exponentiation_steps_vec.is_empty() {}
         }
 
         let proof = JoltProof::from_prover_state_manager(state_manager);

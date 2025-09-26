@@ -177,6 +177,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> JoltProof<F
                 trace_length: self.trace_length,
                 accumulator: Rc::new(RefCell::new(opening_accumulator)),
             }),
+            #[cfg(feature = "recursion")]
+            recursion_ops: None,
         }
     }
 }

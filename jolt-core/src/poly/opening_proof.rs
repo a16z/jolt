@@ -559,7 +559,8 @@ where
 
 /// Accumulates openings computed by the prover over the course of Jolt,
 /// so that they can all be reduced to a single opening proof using sumcheck.
-#[derive(Clone, Allocative)]
+#[derive(Clone)]
+#[cfg_attr(not(feature = "recursion"), derive(Allocative))]
 pub struct ProverOpeningAccumulator<F>
 where
     F: JoltField,
@@ -568,6 +569,8 @@ where
     pub openings: Openings<F>,
     #[cfg(test)]
     pub appended_virtual_openings: std::rc::Rc<std::cell::RefCell<Vec<OpeningId>>>,
+    #[cfg(feature = "recursion")]
+    pub recursion_ops: Option<Vec<jolt_optimizations::steps::ExponentiationSteps>>,
 }
 
 /// Accumulates openings encountered by the verifier over the course of Jolt,
@@ -621,6 +624,8 @@ where
             openings: BTreeMap::new(),
             #[cfg(test)]
             appended_virtual_openings: std::rc::Rc::new(std::cell::RefCell::new(vec![])),
+            #[cfg(feature = "recursion")]
+            recursion_ops: None,
             // #[cfg(test)]
             // joint_commitment: None,
         }
@@ -923,8 +928,27 @@ where
         };
 
         // Reduced opening proof
-        let (joint_opening_proof, joint_auxiliary_data) =
+        let (joint_opening_proof, mut joint_auxiliary_data) =
             PCS::prove(pcs_setup, &joint_poly, &r_sumcheck, hint, transcript);
+
+        // Extract recursion ops from auxiliary data if available
+        #[cfg(feature = "recursion")]
+        {
+            use crate::poly::commitment::dory::DoryAuxiliaryData;
+            use ark_bn254::Fr;
+            use std::any::TypeId;
+
+            // Check if we're using Fr field (i.e., Dory with recursion)
+            if TypeId::of::<F>() == TypeId::of::<Fr>() {
+                // Try to extract exponentiation steps from auxiliary data
+                let aux_any_mut = &mut joint_auxiliary_data as &mut dyn std::any::Any;
+                if let Some(dory_aux) = aux_any_mut.downcast_mut::<DoryAuxiliaryData>() {
+                    if let Some(exponentiation_steps) = dory_aux.full_exponentiation_steps.take() {
+                        self.set_recursion_ops(exponentiation_steps);
+                    }
+                }
+            }
+        }
 
         #[cfg(not(test))]
         {
@@ -988,6 +1012,16 @@ where
             .collect();
 
         (sumcheck_proof, r_sumcheck, claims)
+    }
+
+    #[cfg(feature = "recursion")]
+    pub fn set_recursion_ops(&mut self, ops: Vec<jolt_optimizations::steps::ExponentiationSteps>) {
+        self.recursion_ops = Some(ops);
+    }
+
+    #[cfg(feature = "recursion")]
+    pub fn get_recursion_ops(&self) -> Option<&Vec<jolt_optimizations::steps::ExponentiationSteps>> {
+        self.recursion_ops.as_ref()
     }
 }
 

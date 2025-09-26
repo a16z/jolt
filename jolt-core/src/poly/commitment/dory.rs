@@ -1054,6 +1054,15 @@ pub struct DoryBatchedProof {
     proofs: Vec<DoryProofData>,
 }
 
+// HACK: This is a temporary solution to pass exponentiation steps from Dory to StateManager
+// The data is extracted immediately after reduce_and_prove and cleared from auxiliary data
+#[cfg(feature = "recursion")]
+#[derive(Clone, Debug, Default, CanonicalSerialize, CanonicalDeserialize)]
+pub struct DoryAuxiliaryData {
+    /// Full exponentiation steps for sz_check (not minimized)
+    pub full_exponentiation_steps: Option<Vec<ExponentiationSteps>>,
+}
+
 #[cfg(feature = "recursion")]
 #[derive(Clone, Debug, Default, CanonicalSerialize, CanonicalDeserialize)]
 pub struct DoryCombinedCommitmentHint {
@@ -1069,6 +1078,9 @@ impl CommitmentScheme for DoryCommitmentScheme {
     type Proof = DoryProofData;
     type BatchedProof = DoryBatchedProof;
     type OpeningProofHint = Vec<JoltG1Wrapper>; // row commitments
+    #[cfg(feature = "recursion")]
+    type AuxiliaryVerifierData = DoryAuxiliaryData;
+    #[cfg(not(feature = "recursion"))]
     type AuxiliaryVerifierData = ();
     #[cfg(feature = "recursion")]
     type CombinedCommitmentHint = DoryCombinedCommitmentHint;
@@ -1171,13 +1183,31 @@ impl CommitmentScheme for DoryCommitmentScheme {
             dory_transcript,
         );
 
-        let dory_proof = proof_builder.build();
+        #[cfg(feature = "recursion")]
+        {
+            // Build with full steps extraction for recursion
+            let (dory_proof, full_steps) = proof_builder.build_with_full_steps();
+            let proof = DoryProofData {
+                sigma,
+                dory_proof_data: dory_proof,
+            };
+            // HACK: Temporarily store full exponentiation steps in auxiliary data
+            // This will be extracted by the StateManager and then cleared
+            let auxiliary_data = DoryAuxiliaryData {
+                full_exponentiation_steps: full_steps,
+            };
+            (proof, auxiliary_data)
+        }
 
-        let proof = DoryProofData {
-            sigma,
-            dory_proof_data: dory_proof,
-        };
-        (proof, ())
+        #[cfg(not(feature = "recursion"))]
+        {
+            let dory_proof = proof_builder.build();
+            let proof = DoryProofData {
+                sigma,
+                dory_proof_data: dory_proof,
+            };
+            (proof, ())
+        }
     }
 
     #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::verify")]
