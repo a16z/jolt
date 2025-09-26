@@ -15,7 +15,7 @@ use crate::{
     zkvm::JoltSharedPreprocessing,
 };
 use allocative::Allocative;
-use ark_ff::biginteger::{BigInt, I8OrI96, S160};
+use ark_ff::biginteger::{I8OrI96, S160};
 use rayon::prelude::*;
 use tracer::instruction::Cycle;
 
@@ -247,9 +247,9 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
 
                 for x_out_val in x_out_start..x_out_end {
                     let mut tA_pos_acc_for_current_x_out =
-                        [UnreducedProduct::zero(); NUM_NONTRIVIAL_TERNARY_POINTS];
+                        [UnreducedProduct::<F>::default(); NUM_NONTRIVIAL_TERNARY_POINTS];
                     let mut tA_neg_acc_for_current_x_out =
-                        [UnreducedProduct::zero(); NUM_NONTRIVIAL_TERNARY_POINTS];
+                        [UnreducedProduct::<F>::default(); NUM_NONTRIVIAL_TERNARY_POINTS];
                     let mut current_x_out_svo_zero = [F::zero(); NUM_ACCUMS_EVAL_ZERO];
                     let mut current_x_out_svo_infty = [F::zero(); NUM_ACCUMS_EVAL_INFTY];
 
@@ -531,8 +531,8 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                 let mut task_bound6_at_r: Vec<SparseCoefficient<F>> = Vec::new();
 
                 // Two-layer accumulation using grouping by x_out_idx
-                let mut inner_sum0 = BigInt::<9>::zero();
-                let mut inner_sumInf = BigInt::<9>::zero();
+                let mut inner_sum0 = F::Unreduced::<9>::default();
+                let mut inner_sumInf = F::Unreduced::<9>::default();
                 let mut prev_x_out_idx: Option<usize> = None;
 
                 for x_out_val in x_out_start..x_out_end {
@@ -547,12 +547,18 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                         // Iterate block-pairs (each pair groups two Y-blocks: x_next=0 and x_next=1)
                         for block_pair_idx in 0..num_block_pairs_per_step {
                             // typed accumulators for x_next ∈ {0,1} within this block-pair
-                            let mut az_acc =
-                                [SignedUnreducedAccum::new(), SignedUnreducedAccum::new()];
-                            let mut bz_acc =
-                                [SignedUnreducedAccum::new(), SignedUnreducedAccum::new()];
-                            let mut cz_acc =
-                                [SignedUnreducedAccum::new(), SignedUnreducedAccum::new()];
+                            let mut az_acc = [
+                                SignedUnreducedAccum::<F>::new(),
+                                SignedUnreducedAccum::<F>::new(),
+                            ];
+                            let mut bz_acc = [
+                                SignedUnreducedAccum::<F>::new(),
+                                SignedUnreducedAccum::<F>::new(),
+                            ];
+                            let mut cz_acc = [
+                                SignedUnreducedAccum::<F>::new(),
+                                SignedUnreducedAccum::<F>::new(),
+                            ];
 
                             // process up to two Y-blocks for this pair
                             for k in 0..2 {
@@ -585,8 +591,8 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                                     let az = binary_az_block[idx_in_svo_block];
                                     let bz = binary_bz_block[idx_in_svo_block];
 
-                                    az_acc[x_next_val].fmadd_az::<F>(&eq, az);
-                                    bz_acc[x_next_val].fmadd_bz::<F>(&eq, bz);
+                                    az_acc[x_next_val].fmadd_az(&eq, az);
+                                    bz_acc[x_next_val].fmadd_bz(&eq, bz);
 
                                     // Cz gate by row kind using recovered row id
                                     let row_in_step =
@@ -595,18 +601,18 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                                         && matches!(UNIFORM_R1CS[row_in_step].cz, CzKind::NonZero)
                                     {
                                         let prod = az * bz;
-                                        cz_acc[x_next_val].fmadd_prod::<F>(&eq, prod);
+                                        cz_acc[x_next_val].fmadd_prod(&eq, prod);
                                     }
                                 }
                             }
 
                             // reduce to field values at y=r for both x_next
-                            let az0 = az_acc[0].reduce_to_field::<F>();
-                            let bz0 = bz_acc[0].reduce_to_field::<F>();
-                            let cz0 = cz_acc[0].reduce_to_field::<F>();
-                            let az1 = az_acc[1].reduce_to_field::<F>();
-                            let bz1 = bz_acc[1].reduce_to_field::<F>();
-                            let cz1 = cz_acc[1].reduce_to_field::<F>();
+                            let az0 = az_acc[0].reduce_to_field();
+                            let bz0 = bz_acc[0].reduce_to_field();
+                            let cz0 = cz_acc[0].reduce_to_field();
+                            let az1 = az_acc[1].reduce_to_field();
+                            let bz1 = bz_acc[1].reduce_to_field();
+                            let cz1 = cz_acc[1].reduce_to_field();
 
                             // sumcheck contributions
                             let p0 = az0 * bz0 - cz0;
@@ -633,8 +639,8 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                                         F::from_montgomery_reduce(inner_sumInf);
                                     task_sum0 += e_out_prev * reduced_inner_sum0;
                                     task_sumInf += e_out_prev * reduced_inner_sumInf;
-                                    inner_sum0 = BigInt::zero();
-                                    inner_sumInf = BigInt::zero();
+                                    inner_sum0 = F::Unreduced::default();
+                                    inner_sumInf = F::Unreduced::default();
                                 }
                             }
 
@@ -881,7 +887,8 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                     let mut eval_point_0 = F::zero();
                     let mut eval_point_infty = F::zero();
 
-                    let mut inner_sums = (BigInt::<9>::zero(), BigInt::<9>::zero());
+                    let mut inner_sums =
+                        (F::Unreduced::<9>::default(), F::Unreduced::<9>::default());
                     let mut prev_x2 = 0;
 
                     for sparse_block in chunk.chunk_by(|x, y| x.index / 6 == y.index / 6) {
@@ -899,7 +906,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                             eval_point_infty +=
                                 eq_poly.E_out_current()[prev_x2] * reduced_inner_sums.1;
 
-                            inner_sums = (BigInt::zero(), BigInt::zero());
+                            inner_sums = (F::Unreduced::default(), F::Unreduced::default());
                             prev_x2 = x2;
                         }
 

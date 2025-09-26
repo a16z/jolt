@@ -56,6 +56,33 @@ pub fn unsafe_zero_slice<F: JoltField + Sized>(slice: &mut [F]) {
     }
 }
 
+/// Fast allocation of zero vector of Unreduced field elements
+#[inline]
+pub fn unsafe_allocate_zero_vec_unreduced<F: crate::field::JoltField, const N: usize>(
+    size: usize,
+) -> Vec<F::Unreduced<N>> {
+    // https://stackoverflow.com/questions/59314686/how-to-efficiently-create-a-large-vector-of-items-initialized-to-the-same-value
+
+    #[cfg(test)]
+    {
+        // Check for safety of 0 allocation
+        unsafe {
+            let value = &F::Unreduced::<N>::default();
+            let ptr = value as *const F::Unreduced<N> as *const u8;
+            let bytes = std::slice::from_raw_parts(ptr, std::mem::size_of::<F::Unreduced<N>>());
+            assert!(bytes.iter().all(|&byte| byte == 0));
+        }
+    }
+
+    let mut vector = Vec::with_capacity(size);
+    unsafe {
+        let ptr = vector.as_mut_ptr();
+        std::ptr::write_bytes(ptr, 0, size);
+        vector.set_len(size);
+    }
+    vector
+}
+
 /// Fast allocation of zero vector of BigInt
 /// TODO: refactor so that both this and unsafe_allocate_zero_vec are one function
 #[inline]

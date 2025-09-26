@@ -13,7 +13,7 @@ use crate::poly::multilinear_polynomial::{BindingOrder, PolynomialBinding, Polyn
 use crate::utils::lookup_bits::LookupBits;
 use crate::utils::math::Math;
 use crate::utils::thread::{
-    unsafe_allocate_zero_vec, unsafe_allocate_zero_vec_bigint, unsafe_zero_slice,
+    unsafe_allocate_zero_vec, unsafe_allocate_zero_vec_unreduced, unsafe_zero_slice,
 };
 
 #[repr(u8)]
@@ -269,8 +269,8 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
         let new_Q = indices
             .par_chunks(chunk_size)
             .map(|chunk| {
-                let mut chunk_result: [Vec<ark_ff::BigInt<7>>; ORDER] =
-                    std::array::from_fn(|_| unsafe_allocate_zero_vec_bigint(poly_len));
+                let mut chunk_result: [Vec<F::Unreduced<7>>; ORDER] =
+                    std::array::from_fn(|_| unsafe_allocate_zero_vec_unreduced::<F, 7>(poly_len));
 
                 for (j, k) in chunk {
                     let (prefix_bits, suffix_bits) = k.split(suffix_len);
@@ -287,7 +287,7 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
                 chunk_result
             })
             .reduce(
-                || std::array::from_fn(|_| unsafe_allocate_zero_vec_bigint(poly_len)),
+                || std::array::from_fn(|_| vec![F::Unreduced::<7>::default(); poly_len]),
                 |mut acc, new| {
                     for (acc_i, new_i) in acc.iter_mut().zip(new.iter()) {
                         for (acc_coeff, new_coeff) in acc_i.iter_mut().zip(new_i.iter()) {
@@ -332,10 +332,10 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
         let (new_left, new_right) = indices
             .par_chunks(chunk_size)
             .map(|chunk| {
-                let mut chunk_left: [Vec<ark_ff::BigInt<7>>; ORDER] =
-                    std::array::from_fn(|_| unsafe_allocate_zero_vec_bigint(poly_len));
-                let mut chunk_right: [Vec<ark_ff::BigInt<7>>; ORDER] =
-                    std::array::from_fn(|_| unsafe_allocate_zero_vec_bigint(poly_len));
+                let mut chunk_left: [Vec<F::Unreduced<7>>; ORDER] =
+                    std::array::from_fn(|_| vec![F::Unreduced::<7>::default(); poly_len]);
+                let mut chunk_right: [Vec<F::Unreduced<7>>; ORDER] =
+                    std::array::from_fn(|_| vec![F::Unreduced::<7>::default(); poly_len]);
 
                 for (j, k) in chunk {
                     let (prefix_bits, suffix_bits) = k.split(suffix_len);
@@ -366,8 +366,12 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
             .reduce(
                 || {
                     (
-                        std::array::from_fn(|_| unsafe_allocate_zero_vec_bigint(poly_len)),
-                        std::array::from_fn(|_| unsafe_allocate_zero_vec_bigint(poly_len)),
+                        std::array::from_fn(|_| {
+                            unsafe_allocate_zero_vec_unreduced::<F, 7>(poly_len)
+                        }),
+                        std::array::from_fn(|_| {
+                            unsafe_allocate_zero_vec_unreduced::<F, 7>(poly_len)
+                        }),
                     )
                 },
                 |(mut acc_l, mut acc_r), (new_l, new_r)| {
@@ -440,9 +444,9 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
             .reduce(
                 || {
                     (
-                        ark_ff::BigInt::zero(),
-                        ark_ff::BigInt::zero(),
-                        ark_ff::BigInt::zero(),
+                        F::Unreduced::<9>::default(),
+                        F::Unreduced::<9>::default(),
+                        F::Unreduced::<9>::default(),
                     )
                 },
                 |running, new| (running.0 + new.0, running.1 + new.1, running.2 + new.2),

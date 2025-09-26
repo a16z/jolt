@@ -4,7 +4,6 @@ use std::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub, SubAssign};
 
 #[cfg(feature = "allocative")]
 use allocative::Allocative;
-use ark_ff::BigInt;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{One, Zero};
 
@@ -49,6 +48,33 @@ pub trait JoltField:
     const MONTGOMERY_R: Self;
     /// The squared Montgomery factor R^2 = 2^(128*N) mod p
     const MONTGOMERY_R_SQUARE: Self;
+
+    /// Unreduced field element representation with N 64 bit limbs
+    type Unreduced<const N: usize>: Clone
+        + Copy
+        + Debug
+        + Display
+        + Send
+        + Sync
+        + Default
+        + Eq
+        + PartialEq
+        + From<u128>
+        + FromLimbs<N>
+        + FromS224
+        + FmaddTrunc<Other<2> = Self::Unreduced<2>, Acc<8> = Self::Unreduced<8>>
+        + FmaddTrunc<Other<3> = Self::Unreduced<3>, Acc<8> = Self::Unreduced<8>>
+        + FmaddTrunc<Other<4> = Self::Unreduced<4>, Acc<8> = Self::Unreduced<8>>
+        + MulU64WithCarry<Output<5> = Self::Unreduced<5>>
+        + Add<Output = Self::Unreduced<N>>
+        + for<'a> Add<&'a Self::Unreduced<N>, Output = Self::Unreduced<N>>
+        + AddAssign
+        + for<'a> AddAssign<&'a Self::Unreduced<N>>
+        + AddAssign<Self::Unreduced<4>>
+        + AddAssign<Self::Unreduced<5>>
+        + AddAssign<Self::Unreduced<6>>
+        + AddAssign<Self::Unreduced<7>>
+        + AddAssign<Self::Unreduced<8>>;
 
     /// An implementation of `JoltField` may use some precomputed lookup tables to speed up the
     /// conversion of small primitive integers (e.g. `u16` values) into field elements. For example,
@@ -132,31 +158,57 @@ pub trait JoltField:
         res.mul_u64(1 << pow)
     }
 
-    /// Get reference to the underlying BigInt<4> representation without copying.
-    fn as_bigint_ref(&self) -> &BigInt<4>;
+    /// Get reference to the underlying Unreduced<4> representation without copying.
+    fn as_unreduced_ref(&self) -> &Self::Unreduced<4>;
 
     /// Multiplication of two field elements without Montgomery reduction, returning a
-    /// L-limb BigInt (each limb is 64 bits).
+    /// L-limb Unreduced (each limb is 64 bits).
     /// L = 8 or 9 depending on what the code needs.
-    fn mul_unreduced<const L: usize>(self, other: Self) -> BigInt<L>;
+    fn mul_unreduced<const L: usize>(self, other: Self) -> Self::Unreduced<L>;
 
     /// Multiplication of a field element and a u64 without Barrett reduction, returning a
-    /// 5-limb BigInt (each limb is 64 bits)
-    fn mul_u64_unreduced(self, other: u64) -> BigInt<5>;
+    /// 5-limb Unreduced (each limb is 64 bits)
+    fn mul_u64_unreduced(self, other: u64) -> Self::Unreduced<5>;
 
-    /// Multiplication of a field element and a i64 without Barrett reduction, returning a
-    /// 6-limb BigInt (each limb is 64 bits)
-    fn mul_u128_unreduced(self, other: u128) -> BigInt<6>;
+    /// Multiplication of a field element and a u128 without Barrett reduction, returning a
+    /// 6-limb Unreduced (each limb is 64 bits)
+    fn mul_u128_unreduced(self, other: u128) -> Self::Unreduced<6>;
 
-    /// Montgomery reduction of a BigInt to a field element (compute a * R^{-1} mod p).
+    /// Montgomery reduction of an Unreduced to a field element (compute a * R^{-1} mod p).
     ///
-    /// Need to specify the number of limbs in the BigInt (at least 8)
-    fn from_montgomery_reduce<const L: usize>(unreduced: BigInt<L>) -> Self;
+    /// Need to specify the number of limbs in the Unreduced (at least 8)
+    fn from_montgomery_reduce<const L: usize>(unreduced: Self::Unreduced<L>) -> Self;
 
-    /// Barrett reduction of a BigInt to a field element (compute a mod p).
+    /// Barrett reduction of an Unreduced to a field element (compute a mod p).
     ///
-    /// Need to specify the number of limbs in the BigInt (at least 5, usually up to 7)
-    fn from_barrett_reduce<const L: usize>(unreduced: BigInt<L>) -> Self;
+    /// Need to specify the number of limbs in the Unreduced (at least 5, usually up to 7)
+    fn from_barrett_reduce<const L: usize>(unreduced: Self::Unreduced<L>) -> Self;
+}
+
+pub trait MulU64WithCarry {
+    type Output<const NPLUS1: usize>;
+
+    /// Multiply by u64 with carry, returning
+    fn mul_u64_w_carry<const NPLUS1: usize>(&self, other: u64) -> Self::Output<NPLUS1>;
+}
+
+pub trait FmaddTrunc {
+    type Other<const M: usize>;
+    type Acc<const P: usize>;
+
+    fn fmadd_trunc<const M: usize, const P: usize>(
+        &self,
+        other: &Self::Other<M>,
+        acc: &mut Self::Acc<P>,
+    );
+}
+
+pub trait FromLimbs<const N: usize> {
+    fn from_limbs(limbs: [u64; N]) -> Self;
+}
+
+pub trait FromS224 {
+    fn from_s224(value: ark_ff::biginteger::S224) -> Self;
 }
 
 #[cfg(feature = "allocative")]

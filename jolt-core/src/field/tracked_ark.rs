@@ -321,6 +321,7 @@ impl JoltField for TrackedFr {
     const MONTGOMERY_R: Self = TrackedFr(<ark_bn254::Fr as JoltField>::MONTGOMERY_R);
     /// The squared Montgomery factor R^2 = 2^(128*N) mod p
     const MONTGOMERY_R_SQUARE: Self = TrackedFr(<ark_bn254::Fr as JoltField>::MONTGOMERY_R_SQUARE);
+    type Unreduced<const N: usize> = <ark_bn254::Fr as JoltField>::Unreduced<N>;
     type SmallValueLookupTables = <ark_bn254::Fr as JoltField>::SmallValueLookupTables;
 
     fn random<R: rand_core::RngCore>(rng: &mut R) -> Self {
@@ -414,8 +415,8 @@ impl JoltField for TrackedFr {
         Self(<Fr as JoltField>::mul_i128(&self.0, n))
     }
 
-    fn as_bigint_ref(&self) -> &BigInt<4> {
-        self.0.as_bigint_ref()
+    fn as_unreduced_ref(&self) -> &Self::Unreduced<4> {
+        self.0.as_unreduced_ref()
     }
 
     fn mul_unreduced<const L: usize>(self, other: Self) -> BigInt<L> {

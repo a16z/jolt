@@ -1,9 +1,10 @@
 use ark_ff::{prelude::*, BigInt, PrimeField, UniformRand};
 use rayon::prelude::*;
 
+use crate::field::FromLimbs;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 
-use super::{FieldOps, JoltField};
+use super::{FieldOps, FmaddTrunc, FromS224, JoltField, MulU64WithCarry};
 
 impl FieldOps for ark_bn254::Fr {}
 impl FieldOps<&ark_bn254::Fr, ark_bn254::Fr> for &ark_bn254::Fr {}
@@ -27,6 +28,7 @@ impl JoltField for ark_bn254::Fr {
         use ark_ff::MontConfig;
         std::mem::transmute(<ark_bn254::FrConfig as MontConfig<4>>::R2)
     };
+    type Unreduced<const N: usize> = BigInt<N>;
     type SmallValueLookupTables = [Vec<Self>; 2];
 
     fn random<R: rand_core::RngCore>(rng: &mut R) -> Self {
@@ -189,7 +191,7 @@ impl JoltField for ark_bn254::Fr {
     }
 
     #[inline(always)]
-    fn as_bigint_ref(&self) -> &BigInt<4> {
+    fn as_unreduced_ref(&self) -> &Self::Unreduced<4> {
         // arkworks field elements are just wrappers around BigInt, so we can get a direct reference
         &self.0
     }
@@ -250,6 +252,50 @@ impl JoltField for ark_bn254::Fr {
     #[inline]
     fn from_barrett_reduce<const L: usize>(unreduced: BigInt<L>) -> Self {
         ark_bn254::Fr::from_barrett_reduce::<L, 5>(unreduced)
+    }
+}
+
+impl<const N: usize> FmaddTrunc for BigInt<N> {
+    type Other<const M: usize> = BigInt<M>;
+    type Acc<const P: usize> = BigInt<P>;
+
+    fn fmadd_trunc<const M: usize, const P: usize>(
+        &self,
+        other: &Self::Other<M>,
+        acc: &mut Self::Acc<P>,
+    ) {
+        self.fmadd_trunc(other, acc)
+    }
+}
+
+impl<const N: usize> MulU64WithCarry for BigInt<N> {
+    type Output<const NPLUS1: usize> = BigInt<NPLUS1>;
+
+    fn mul_u64_w_carry<const NPLUS1: usize>(&self, other: u64) -> Self::Output<NPLUS1> {
+        <BigInt<N> as BigInteger>::mul_u64_w_carry(self, other)
+    }
+}
+
+impl<const N: usize> FromLimbs<N> for BigInt<N> {
+    fn from_limbs(limbs: [u64; N]) -> Self {
+        Self::new(limbs)
+    }
+}
+
+impl<const N: usize> FromS224 for BigInt<N> {
+    fn from_s224(value: ark_ff::biginteger::S224) -> Self {
+        if N != 4 {
+            panic!("FromS224 for BigInt<N> only supports N=4, got N={N}");
+        }
+
+        // Convert S224 to BigInt<4> first
+        let bigint4: BigInt<4> = value.into();
+
+        // SAFETY: We just checked that N == 4, so this cast is safe
+        unsafe {
+            let ptr = &bigint4 as *const BigInt<4> as *const BigInt<N>;
+            ptr.read()
+        }
     }
 }
 
