@@ -1,8 +1,5 @@
 use super::{FieldOps, JoltField};
-use crate::{
-    field::challenge::{MontU128Challenge, TrivialChallenge},
-    utils::thread::unsafe_allocate_zero_vec,
-};
+use crate::{field::challenge::MontU128Challenge, utils::thread::unsafe_allocate_zero_vec};
 use ark_ff::{prelude::*, AdditiveGroup, BigInt, PrimeField, UniformRand};
 use rayon::prelude::*;
 
@@ -29,8 +26,8 @@ impl JoltField for ark_bn254::Fr {
         std::mem::transmute(<ark_bn254::FrConfig as MontConfig<4>>::R2)
     };
     type SmallValueLookupTables = [Vec<Self>; 2];
-    //type Challenge = MontU128Challenge<ark_bn254::Fr>;
-    type Challenge = TrivialChallenge<ark_bn254::Fr>;
+    type Challenge = MontU128Challenge<ark_bn254::Fr>;
+    //type Challenge = TrivialChallenge<ark_bn254::Fr>;
 
     fn random<R: rand_core::RngCore>(rng: &mut R) -> Self {
         <Self as UniformRand>::rand(rng)

@@ -63,7 +63,7 @@ impl IntoField<ark_bn254::Fr> for TrivialChallenge<ark_bn254::Fr> {
     }
 }
 
-impl<'a> IntoField<ark_bn254::Fr> for &'a TrivialChallenge<ark_bn254::Fr> {
+impl IntoField<ark_bn254::Fr> for &TrivialChallenge<ark_bn254::Fr> {
     #[inline(always)]
     fn into_F(self) -> ark_bn254::Fr {
         self.value()
