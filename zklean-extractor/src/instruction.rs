@@ -71,12 +71,10 @@ impl<J: JoltParameterSet> ZkLeanInstruction<J> {
         format!("{name}_{word_size}")
     }
 
-    // Evaluate
     pub fn evaluate_mle<F: ZkLeanReprField>(&self, reg_name: char) -> F {
         let num_variables = 2 * J::WORD_SIZE;
         let reg = F::register(reg_name, num_variables);
 
-        eprintln!("<><><> Evaluating MLE for {}", self.name());
         self.instruction
             .lookup_table()
             .expect(format!("{} is not an instruction with an MLE", self.name()).as_str())
@@ -262,7 +260,6 @@ mod test {
     use jolt_core::field::JoltField;
 
     use proptest::{collection::vec, prelude::*};
-    use strum::EnumCount as _;
 
     type RefField = ark_bn254::Fr;
     type TestField = crate::mle_ast::MleAst<5400>;
