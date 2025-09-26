@@ -51,3 +51,4 @@ jolt-sdk/tests/fixtures
 jolt-sdk/tests/fib_io_device_bytes.rs
 jolt-sdk/tests/fib_proof_bytes.rs
 jolt-sdk/tests/jolt_verifier_preprocessing_bytes.rs
+blog.md

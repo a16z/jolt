@@ -59,4 +59,22 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for LowerHalfWordPref
         updated += F::from_u128(1 << y_shift) * r_y;
         Some(updated).into()
     }
+
+    fn update_prefix_checkpoint_field(
+        checkpoints: &[PrefixCheckpoint<F>],
+        r_x: F,
+        r_y: F,
+        j: usize,
+    ) -> PrefixCheckpoint<F> {
+        let half_word_size = XLEN / 2;
+        if j < XLEN + half_word_size {
+            return None.into();
+        }
+        let x_shift = 2 * XLEN - j;
+        let y_shift = 2 * XLEN - j - 1;
+        let mut updated = checkpoints[Prefixes::LowerHalfWord].unwrap_or(F::zero());
+        updated += F::from_u128(1 << x_shift) * r_x;
+        updated += F::from_u128(1 << y_shift) * r_y;
+        Some(updated).into()
+    }
 }
