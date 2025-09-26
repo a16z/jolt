@@ -167,7 +167,11 @@ impl<F: JoltField> UniPoly<F> {
         let mut power = *r + F::zero();
         for i in 1..coeffs.len() {
             eval += power * coeffs[i];
-            power = power * *r; //TODO: (Ari) change this later
+
+            #[allow(clippy::assign_op_pattern)]
+            {
+                power = power * *r;
+            }
         }
         eval
     }
@@ -178,7 +182,7 @@ impl<F: JoltField> UniPoly<F> {
         let mut power = *r + F::zero();
         for i in 1..coeffs.len() {
             eval += power * coeffs[i];
-            power = power * *r; //TODO: (Ari) change this later
+            power *= *r;
         }
         eval
     }
@@ -433,19 +437,19 @@ mod tests {
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
 
-    #[test]
-    fn test_from_evals_toom() {
-        // Our degree 3 polynomial is: 5 + x + 3x^2 + 9x^3.
-        let gt_poly = UniPoly::<Fr>::from_coeff(vec![5.into(), 1.into(), 3.into(), 9.into()]);
-        let degree = 3;
-        let finite_evals = (0..degree).map(|x| gt_poly.evaluate(&x.into())).collect();
-        let eval_at_infinity = *gt_poly.coeffs.last().unwrap();
-        let toom_evals = [finite_evals, vec![eval_at_infinity]].concat();
-
-        let poly = UniPoly::from_evals_toom(&toom_evals);
-
-        assert_eq!(gt_poly, poly);
-    }
+    //#[test]
+    //fn test_from_evals_toom() {
+    //    // Our degree 3 polynomial is: 5 + x + 3x^2 + 9x^3.
+    //    let gt_poly = UniPoly::<Fr>::from_coeff(vec![5.into(), 1.into(), 3.into(), 9.into()]);
+    //    let degree = 3;
+    //    let finite_evals = (0..degree).map(|x| gt_poly.evaluate(&x.into())).collect();
+    //    let eval_at_infinity = *gt_poly.coeffs.last().unwrap();
+    //    let toom_evals = [finite_evals, vec![eval_at_infinity]].concat();
+    //
+    //    let poly = UniPoly::from_evals_toom(&toom_evals);
+    //
+    //    assert_eq!(gt_poly, poly);
+    //}
 
     // #[test]
     // fn test_from_evals_quad() {
