@@ -1,4 +1,6 @@
-use jolt_core::zkvm::instruction::InstructionLookup as _;
+use jolt_core::zkvm::instruction::{
+    InstructionFlags as _, InstructionLookup as _, InterleavedBitsMarker as _,
+};
 use strum::IntoEnumIterator as _;
 use tracer::instruction::RV32IMInstruction;
 
@@ -9,18 +11,53 @@ use crate::{
     MleAst,
 };
 
+/// Represents how an instructions operands should be combined into a single vector.
+#[derive(Debug, Clone, Copy)]
+pub enum OperandInterleaving {
+    /// Indicates that the operands should be concatenated:
+    ///     rs1 || rs2
+    Concatenated,
+    /// Indicates that the operands should be interleaved:
+    ///     rs1[0] || rs2[0] || rs1[1] || rs2[1] || ...
+    Interleaved,
+}
+
+impl OperandInterleaving {
+    /// Extract the operand interleaving for an instruction
+    fn instruction_interleaving(instr: &RV32IMInstruction) -> Self {
+        if instr.circuit_flags().is_interleaved_operands() {
+            Self::Interleaved
+        } else {
+            Self::Concatenated
+        }
+    }
+}
+
+impl std::fmt::Display for OperandInterleaving {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Interleaved => write!(f, "Interleaved"),
+            Self::Concatenated => write!(f, "Concatenated"),
+        }
+    }
+}
+
 /// Wrapper around a JoltInstruction
 // TODO: Make this generic over the instruction set
 #[derive(Debug, Clone)]
 pub struct ZkLeanInstruction<J> {
     instruction: tracer::instruction::RV32IMInstruction,
+    interleaving: OperandInterleaving,
     phantom: std::marker::PhantomData<J>,
 }
 
 impl<J> From<RV32IMInstruction> for ZkLeanInstruction<J> {
     fn from(value: RV32IMInstruction) -> Self {
+        let interleaving = OperandInterleaving::instruction_interleaving(&value);
+
         Self {
             instruction: value,
+            interleaving,
             phantom: std::marker::PhantomData,
         }
     }
@@ -159,6 +196,7 @@ impl<J: JoltParameterSet> ZkLeanInstruction<J> {
         mut indent_level: usize,
     ) -> std::io::Result<()> {
         let name = self.name();
+        let interleaving = self.interleaving;
         let num_variables = 2 * J::WORD_SIZE;
         let mle = self.evaluate_mle::<F>('x').as_computation();
 
@@ -168,7 +206,7 @@ impl<J: JoltParameterSet> ZkLeanInstruction<J> {
         ))?;
         indent_level += 1;
         f.write_fmt(format_args!(
-            "{}instructionFromMLE (fun x => {mle})\n",
+            "{}instructionFromMLE {interleaving} (fun x => {mle})\n",
             indent(indent_level),
         ))?;
 
@@ -244,11 +282,10 @@ mod test {
 
     impl<J: JoltParameterSet> TestableInstruction<J> {
         fn iter() -> impl Iterator<Item = Self> {
-            ZkLeanInstruction::iter()
-                .map(|instr| Self {
-                    reference: instr.instruction.clone(),
-                    test: instr,
-                })
+            ZkLeanInstruction::iter().map(|instr| Self {
+                reference: instr.instruction.clone(),
+                test: instr,
+            })
         }
 
         fn evaluate_reference_mle<R: JoltField>(&self, inputs: &[R]) -> R {
