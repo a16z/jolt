@@ -1,8 +1,7 @@
-use common::rv_trace::MemoryLayout;
-use jolt_core::r1cs::{
-    builder::{Constraint, OffsetEqConstraint, OffsetLC, R1CSBuilder},
+use jolt_core::zkvm::r1cs::{
+    builder::{Constraint, R1CSBuilder},
     constraints::R1CSConstraints,
-    inputs::{ConstraintInput as _, JoltR1CSInputs},
+    inputs::{JoltR1CSInputs, ALL_R1CS_INPUTS},
     ops::{Term, Variable, LC},
 };
 use regex::{NoExpand, Regex};
@@ -14,39 +13,31 @@ use crate::{
 };
 
 type F = ark_bn254::Fr;
-type CS = jolt_core::r1cs::constraints::JoltRV32IMConstraints;
+type CS = jolt_core::zkvm::r1cs::constraints::JoltRV32IMConstraints;
 
 pub struct ZkLeanR1CSConstraints<J> {
     inputs: Vec<JoltR1CSInputs>,
     uniform_constraints: Vec<Constraint>,
-    non_uniform_constraints: Vec<OffsetEqConstraint>,
     phantom: std::marker::PhantomData<J>,
 }
 
-impl<J: JoltParameterSet> ZkLeanR1CSConstraints<J>
-where
-    [(); J::C]:,
-{
+impl<J: JoltParameterSet> ZkLeanR1CSConstraints<J> {
     pub fn extract() -> Self {
-        let inputs = JoltR1CSInputs::flatten::<{ J::C }>();
+        let inputs = ALL_R1CS_INPUTS.to_vec();
 
         // XXX Make max input/output sizes configurable?
         let uniform_constraints = {
-            let memory_layout = MemoryLayout::new(&J::MEMORY_CONFIG);
-
-            let mut r1cs_builder = R1CSBuilder::<{ J::C }, F, JoltR1CSInputs>::new();
-            CS::uniform_constraints(&mut r1cs_builder, memory_layout.input_start);
+            // XXX Or should this be `CombinedUniformBuilder`? It seems to add a usize for how many
+            // times to "repeat" the constraints. Not sure if we need that.
+            let mut r1cs_builder = R1CSBuilder::new();
+            <CS as R1CSConstraints<F>>::uniform_constraints(&mut r1cs_builder);
 
             r1cs_builder.get_constraints()
         };
 
-        let non_uniform_constraints =
-            <CS as R1CSConstraints<{ J::C }, F>>::cross_step_constraints();
-
         Self {
             inputs,
             uniform_constraints,
-            non_uniform_constraints,
             phantom: std::marker::PhantomData,
         }
     }
@@ -122,50 +113,18 @@ where
             f.write_fmt(format_args!(
                 "{}{}\n",
                 indent(indent_level),
-                pretty_print_lc::<{ J::C }>("jolt_inputs", a),
+                pretty_print_lc("jolt_inputs", a),
             ))?;
             f.write_fmt(format_args!(
                 "{}{}\n",
                 indent(indent_level),
-                pretty_print_lc::<{ J::C }>("jolt_inputs", b),
+                pretty_print_lc("jolt_inputs", b),
             ))?;
             f.write_fmt(format_args!(
                 "{}{}\n",
                 indent(indent_level),
-                pretty_print_lc::<{ J::C }>("jolt_inputs", c),
+                pretty_print_lc("jolt_inputs", c),
             ))?;
-            indent_level -= 1;
-        }
-
-        f.write_all(b"\n")?;
-        indent_level = top_level_indent;
-        f.write_fmt(format_args!(
-                "{}def non_uniform_jolt_constraints [ZKField f] (jolt_inputs : JoltR1CSInputs f) (jolt_offset_inputs : JoltR1CSInputs f) : ZKBuilder f PUnit := do\n",
-                indent(indent_level),
-        ))?;
-        indent_level += 1;
-        for OffsetEqConstraint { cond, a, b } in &self.non_uniform_constraints {
-            // NOTE: See comments on `materialize_offset_eq` and `OffsetLC`. An offset constraint is three
-            // `OffsetLC`s, cond, a, and b. An `OffsetLC` is an `LC` and a `bool`. If the bool is true,
-            // then the variables in the LC come from the *next* step. The cond, a, and b `LC`s resolve to
-            // a constraint as
-            // A: a - b
-            // B: cond
-            // C: 0
-            f.write_fmt(format_args!("{}constrainR1CS\n", indent(indent_level),))?;
-            indent_level += 1;
-            f.write_fmt(format_args!(
-                "{}({} - {})\n",
-                indent(indent_level),
-                pretty_print_offset_lc::<{ J::C }>("jolt_inputs", "jolt_offset_inputs", a),
-                pretty_print_offset_lc::<{ J::C }>("jolt_inputs", "jolt_offset_inputs", b),
-            ))?;
-            f.write_fmt(format_args!(
-                "{}{}\n",
-                indent(indent_level),
-                pretty_print_offset_lc::<{ J::C }>("jolt_inputs", "jolt_offset_inputs", cond),
-            ))?;
-            f.write_fmt(format_args!("{}0\n", indent(indent_level),))?;
             indent_level -= 1;
         }
 
@@ -177,10 +136,7 @@ where
     }
 }
 
-impl<J: JoltParameterSet> AsModule for ZkLeanR1CSConstraints<J>
-where
-    [(); J::C]:,
-{
+impl<J: JoltParameterSet> AsModule for ZkLeanR1CSConstraints<J> {
     fn as_module(&self) -> std::io::Result<Module> {
         let mut contents: Vec<u8> = vec![];
         self.zklean_pretty_print(&mut contents, 0)?;
@@ -210,17 +166,17 @@ pub fn input_to_field_name(input: &JoltR1CSInputs) -> String {
     string
 }
 
-fn input_index_to_field_name<const C: usize>(index: usize) -> String {
-    input_to_field_name(&JoltR1CSInputs::from_index::<C>(index))
+fn input_index_to_field_name(index: usize) -> String {
+    input_to_field_name(&ALL_R1CS_INPUTS[index])
 }
 
-fn pretty_print_term<const C: usize>(
+fn pretty_print_term(
     inputs_struct: &str,
     Term(var, coeff): &Term,
 ) -> Option<String> {
     let var = match *var {
-        Variable::Input(index) | Variable::Auxiliary(index) => {
-            Some(input_index_to_field_name::<C>(index))
+        Variable::Input(index) => {
+            Some(input_index_to_field_name(index))
         }
         Variable::Constant => None,
     };
@@ -232,28 +188,15 @@ fn pretty_print_term<const C: usize>(
     }
 }
 
-fn pretty_print_lc<const C: usize>(inputs_struct: &str, lc: &LC) -> String {
+fn pretty_print_lc(inputs_struct: &str, lc: &LC) -> String {
     let terms = lc
         .terms()
         .iter()
-        .filter_map(|term| pretty_print_term::<C>(inputs_struct, term))
+        .filter_map(|term| pretty_print_term(inputs_struct, term))
         .collect::<Vec<_>>();
     match terms.len() {
         0 => "0".to_string(),
         1 => terms[0].clone(),
         _ => format!("({})", terms.join(" + ")).to_string(),
     }
-}
-
-fn pretty_print_offset_lc<const C: usize>(
-    inputs_struct: &str,
-    offset_inputs_struct: &str,
-    (offset, lc): &OffsetLC,
-) -> String {
-    let inputs_struct = if *offset {
-        offset_inputs_struct
-    } else {
-        inputs_struct
-    };
-    pretty_print_lc::<C>(inputs_struct, lc)
 }

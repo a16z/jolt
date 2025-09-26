@@ -15,6 +15,7 @@ pub trait JoltParameterSet {
 pub struct RV32IParameterSet;
 
 impl JoltParameterSet for RV32IParameterSet {
+    const WORD_SIZE: usize = 32;
     const MEMORY_CONFIG: MemoryConfig = MemoryConfig {
         max_input_size: constants::DEFAULT_MAX_INPUT_SIZE,
         max_output_size: constants::DEFAULT_MAX_OUTPUT_SIZE,
@@ -22,6 +23,4 @@ impl JoltParameterSet for RV32IParameterSet {
         memory_size: constants::DEFAULT_MEMORY_SIZE,
         program_size: None,
     };
-
-    const WORD_SIZE: usize = 32;
 }
