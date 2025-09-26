@@ -10,8 +10,8 @@ use crate::mle_ast::*;
 mod util;
 //mod subtable;
 //use crate::subtable::*;
-//mod instruction;
-//use crate::instruction::*;
+mod instruction;
+use crate::instruction::*;
 //mod r1cs;
 //use crate::r1cs::*;
 //mod flags;
@@ -82,7 +82,7 @@ fn main() -> Result<(), FSError> {
     let modules: Vec<Box<dyn AsModule>> = vec![
         //Box::new(ZkLeanR1CSConstraints::<ParameterSet>::extract()),
         //Box::new(ZkLeanSubtables::<MleAst<16000>, ParameterSet>::extract()),
-        //Box::new(ZkLeanInstructions::<ParameterSet>::extract()),
+        Box::new(ZkLeanInstructions::<ParameterSet>::extract()),
         //Box::new(ZkLeanLookupCases::<ParameterSet>::extract()),
     ];
 

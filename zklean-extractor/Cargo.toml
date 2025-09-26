@@ -25,6 +25,7 @@ build-fs-tree = "0.7.1"
 
 jolt-core = { path = "../jolt-core" }
 common = { path = "../common" }
+tracer = { path = "../tracer" }
 
 [dev-dependencies]
 proptest = "1.6.0"

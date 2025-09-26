@@ -4212,6 +4212,7 @@ dependencies = [
  "rand_core 0.6.4",
  "regex",
  "strum 0.26.3",
+ "tracer",
 ]
 
 [[patch.unused]]
