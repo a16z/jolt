@@ -73,4 +73,12 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for AndPrefix<XLEN> {
             checkpoints[Prefixes::And].unwrap_or(F::zero()) + F::from_u64(1 << shift) * r_x * r_y;
         Some(updated).into()
     }
+
+    fn update_prefix_checkpoint_field(checkpoints: &[PrefixCheckpoint<F>], r_x: F, r_y: F, j: usize) -> PrefixCheckpoint<F> {
+        let shift = XLEN - 1 - j / 2;
+        // checkpoint += 2^shift * r_x * r_y
+        let updated =
+            checkpoints[Prefixes::And].unwrap_or(F::zero()) + F::from_u64(1 << shift) * r_x * r_y;
+        Some(updated).into()
+    }
 }

@@ -47,4 +47,12 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for AndnPrefix<XLEN> 
             + F::from_u64(1 << shift) * r_x * (F::one() - r_y);
         Some(updated).into()
     }
+
+    fn update_prefix_checkpoint_field(checkpoints: &[PrefixCheckpoint<F>], r_x: F, r_y: F, j: usize) -> PrefixCheckpoint<F> {
+        todo!()
+    }
+
+    fn prefix_mle_field(checkpoints: &[PrefixCheckpoint<F>], r_x: Option<F>, c: u32, b: LookupBits, j: usize) -> F {
+        todo!()
+    }
 }
