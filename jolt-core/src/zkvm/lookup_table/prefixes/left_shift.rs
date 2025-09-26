@@ -52,4 +52,23 @@ impl<F: JoltField, const XLEN: usize> SparseDensePrefix<F> for LeftShiftPrefix<X
         updated += r_x * (F::one() - r_y) * prod_one_plus_y * F::from_u64(1 << (XLEN - 1 - j / 2));
         Some(updated).into()
     }
+
+    fn prefix_mle_field(
+        checkpoints: &[PrefixCheckpoint<F>],
+        r_x: Option<F>,
+        c: u32,
+        b: LookupBits,
+        j: usize,
+    ) -> F {
+        todo!()
+    }
+
+    fn update_prefix_checkpoint_field(
+        checkpoints: &[PrefixCheckpoint<F>],
+        r_x: F,
+        r_y: F,
+        j: usize,
+    ) -> PrefixCheckpoint<F> {
+        todo!()
+    }
 }

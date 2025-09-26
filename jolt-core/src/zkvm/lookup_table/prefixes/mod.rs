@@ -499,8 +499,12 @@ impl Prefixes {
             .enumerate()
             .for_each(|(index, new_checkpoint)| {
                 let prefix: Self = FromPrimitive::from_u8(index as u8).unwrap();
-                *new_checkpoint =
-                    prefix.update_prefix_checkpoint::<XLEN, F>(&previous_checkpoints, r_x, r_y, j);
+                *new_checkpoint = prefix.update_prefix_checkpoint_field::<XLEN, F>(
+                    &previous_checkpoints,
+                    r_x,
+                    r_y,
+                    j,
+                );
             });
     }
 
@@ -722,12 +726,9 @@ impl Prefixes {
             Prefixes::XorRot32 => {
                 XorRotPrefix::<XLEN, 32>::update_prefix_checkpoint_field(checkpoints, r_x, r_y, j)
             }
-            Prefixes::XorRot63 => XorRotPrefix::<XLEN, 63>::update_prefix_checkpoint_field_field(
-                checkpoints,
-                r_x,
-                r_y,
-                j,
-            ),
+            Prefixes::XorRot63 => {
+                XorRotPrefix::<XLEN, 63>::update_prefix_checkpoint_field(checkpoints, r_x, r_y, j)
+            }
             Prefixes::XorRotW7 => {
                 XorRotWPrefix::<XLEN, 7>::update_prefix_checkpoint_field(checkpoints, r_x, r_y, j)
             }

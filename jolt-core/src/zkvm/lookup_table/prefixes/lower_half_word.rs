@@ -42,6 +42,15 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for LowerHalfWordPref
         result
     }
 
+    fn prefix_mle_field(
+        checkpoints: &[PrefixCheckpoint<F>],
+        r_x: Option<F>,
+        c: u32,
+        b: LookupBits,
+        j: usize,
+    ) -> F {
+        todo!()
+    }
     fn update_prefix_checkpoint(
         checkpoints: &[PrefixCheckpoint<F>],
         r_x: F::Challenge,
