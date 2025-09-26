@@ -191,14 +191,18 @@ impl<F: JoltField> SumcheckInstance<F> for RafEvaluationSumcheck<F> {
         r: &[F::Challenge],
     ) -> F {
         // Compute unmap evaluation at r
-        let unmap_eval = UnmapRamAddressPolynomial::<F>::new(self.log_K, self.start_address).evaluate(r);
+        let unmap_eval =
+            UnmapRamAddressPolynomial::<F>::new(self.log_K, self.start_address).evaluate(r);
 
         // Return unmap(r) * ra(r)
         let ra_claim = self.cached_claim.expect("ra_claim not cached");
         unmap_eval * ra_claim
     }
 
-    fn normalize_opening_point(&self, opening_point: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(
+        &self,
+        opening_point: &[F::Challenge],
+    ) -> OpeningPoint<BIG_ENDIAN, F> {
         OpeningPoint::new(opening_point.to_vec())
     }
 

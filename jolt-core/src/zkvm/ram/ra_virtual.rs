@@ -98,7 +98,10 @@ impl<F: JoltField> RaSumcheck<F> {
         } else {
             // Pad with zeros
             [
-                &vec![F::Challenge::from(0_u128); DTH_ROOT_OF_K.log_2() - (r_address.len() % DTH_ROOT_OF_K.log_2())],
+                &vec![
+                    F::Challenge::from(0_u128);
+                    DTH_ROOT_OF_K.log_2() - (r_address.len() % DTH_ROOT_OF_K.log_2())
+                ],
                 r_address,
             ]
             .concat()
@@ -219,7 +222,10 @@ impl<F: JoltField> RaSumcheck<F> {
         } else {
             // Pad with zeros
             [
-                &vec![F::Challenge::from(0_u128); DTH_ROOT_OF_K.log_2() - (r_address.len() % DTH_ROOT_OF_K.log_2())],
+                &vec![
+                    F::Challenge::from(0_u128);
+                    DTH_ROOT_OF_K.log_2() - (r_address.len() % DTH_ROOT_OF_K.log_2())
+                ],
                 r_address,
             ]
             .concat()

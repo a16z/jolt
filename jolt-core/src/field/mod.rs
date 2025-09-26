@@ -14,7 +14,7 @@ pub trait FieldOps<Rhs = Self, Output = Self>:
 }
 
 pub trait IntoField<F: JoltField> {
-    fn into_F(&self) -> F;
+    fn into_F(self) -> F;
 }
 pub trait JoltField:
     'static

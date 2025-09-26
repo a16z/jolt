@@ -62,7 +62,10 @@ impl<const XLEN: usize> JoltLookupTable for VirtualChangeDivisorWTable<XLEN> {
 
         let mut y_product = F::one();
         for i in XLEN / 2..XLEN {
-            y_product = y_product * r[2 * i + 1];
+            #[allow(clippy::assign_op_pattern)]
+            {
+                y_product = y_product * r[2 * i + 1];
+            }
         }
 
         let sign_extension = F::from_u128((1u128 << XLEN) - (1u128 << (XLEN / 2))) * sign_bit;

@@ -1031,7 +1031,10 @@ impl<F: JoltField> SumcheckInstance<F> for RamReadWriteChecking<F> {
         eq_eval_cycle * ra_claim * (val_claim + self.gamma * (val_claim + inc_claim))
     }
 
-    fn normalize_opening_point(&self, opening_point: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(
+        &self,
+        opening_point: &[F::Challenge],
+    ) -> OpeningPoint<BIG_ENDIAN, F> {
         // The high-order cycle variables are bound after the switch
         let mut r_cycle = opening_point[self.sumcheck_switch_index..self.T.log_2()].to_vec();
         // First `sumcheck_switch_index` rounds bind cycle variables from low to high

@@ -313,7 +313,9 @@ impl<F: JoltField> ReadRafSumcheck<F> {
         [r_cycle_1.r, r_cycle_2.r, r_cycle_3.r]
     }
 
-    fn get_r_cycle_verif(acc: &Rc<RefCell<VerifierOpeningAccumulator<F>>>) -> [Vec<F::Challenge>; STAGES] {
+    fn get_r_cycle_verif(
+        acc: &Rc<RefCell<VerifierOpeningAccumulator<F>>>,
+    ) -> [Vec<F::Challenge>; STAGES] {
         let (r_cycle_1, _) = acc
             .borrow()
             .get_virtual_polynomial_opening(VirtualPolynomial::Imm, SumcheckId::SpartanOuter);
@@ -710,7 +712,11 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
         let accumulator = accumulator.as_ref().unwrap();
         let (r_address_prime, r_cycle_prime) = r.split_at(self.log_K);
         // r_cycle is bound LowToHigh, so reverse
-        let r_cycle_prime = r_cycle_prime.iter().rev().copied().collect::<Vec<F::Challenge>>();
+        let r_cycle_prime = r_cycle_prime
+            .iter()
+            .rev()
+            .copied()
+            .collect::<Vec<F::Challenge>>();
 
         let int_poly = self.int_poly.evaluate(r_address_prime);
 
@@ -753,7 +759,10 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
         ra_claims.fold(val, |running, ra_claim| running * ra_claim)
     }
 
-    fn normalize_opening_point(&self, opening_point: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(
+        &self,
+        opening_point: &[F::Challenge],
+    ) -> OpeningPoint<BIG_ENDIAN, F> {
         let mut r = opening_point.to_vec();
         r[self.log_K..].reverse();
         OpeningPoint::new(r)

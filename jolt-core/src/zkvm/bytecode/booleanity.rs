@@ -70,7 +70,10 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             gamma_powers[i] = gamma_powers[i - 1] * gamma;
         }
 
-        let r_address: Vec<F::Challenge> = sm.transcript.borrow_mut().challenge_vector_special::<F>(log_K_chunk);
+        let r_address: Vec<F::Challenge> = sm
+            .transcript
+            .borrow_mut()
+            .challenge_vector_special::<F>(log_K_chunk);
 
         Self {
             gamma: gamma_powers,
@@ -101,7 +104,10 @@ impl<F: JoltField> BooleanitySumcheck<F> {
         for i in 1..d {
             gamma_powers[i] = gamma_powers[i - 1] * gamma;
         }
-        let r_address: Vec<F::Challenge> = sm.transcript.borrow_mut().challenge_vector_special::<F>(log_K_chunk);
+        let r_address: Vec<F::Challenge> = sm
+            .transcript
+            .borrow_mut()
+            .challenge_vector_special::<F>(log_K_chunk);
         Self {
             gamma: gamma_powers,
             prover_state: None,
@@ -286,7 +292,10 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
             .sum::<F>()
     }
 
-    fn normalize_opening_point(&self, opening_point: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(
+        &self,
+        opening_point: &[F::Challenge],
+    ) -> OpeningPoint<BIG_ENDIAN, F> {
         let mut opening_point = opening_point.to_vec();
         opening_point[..self.log_K_chunk].reverse();
         opening_point[self.log_K_chunk..].reverse();

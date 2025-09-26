@@ -281,6 +281,7 @@ mod tests {
     use dory::curve::test_rng;
     use rand::{rngs::StdRng, Rng};
 
+    use crate::field::challenge::MontU128Challenge;
     use crate::{
         poly::{
             dense_mlpoly::DensePolynomial,
@@ -289,7 +290,6 @@ mod tests {
         },
         subprotocols::mles_product_sum::compute_mles_product_sum,
     };
-    use crate::field::challenge::MontU128Challenge;
 
     #[test]
     fn test_compute_mles_product_sum_with_2_mles() {

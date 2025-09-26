@@ -435,7 +435,7 @@ impl<F: JoltField> PolynomialEvaluation<F> for UnmapRamAddressPolynomial<F> {
     }
 
     fn evaluate_field(&self, r: &[F]) -> F {
-        self.int_poly.evaluate_field(r).mul_u64(4) + F::from_u64(self.start_address - 4)
+        self.int_poly.evaluate_field(r).mul_u64(8) + F::from_u64(self.start_address - 8)
     }
 
     fn batch_evaluate(_polys: &[&Self], _r: &[F::Challenge]) -> Vec<F> {
@@ -699,7 +699,7 @@ mod tests {
                 );
             }
 
-            let r = MontU128Challenge::from(0x12345678u64 as u128 + round as u128);
+            let r = MontU128Challenge::from(0x12345678 + round as u128);
             unmap_poly.bind(r, BindingOrder::LowToHigh);
             reference_poly.bind(r, BindingOrder::LowToHigh);
         }

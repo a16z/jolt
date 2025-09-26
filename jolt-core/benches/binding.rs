@@ -26,11 +26,12 @@ fn benchmark_dense<F: JoltField>(c: &mut Criterion, num_vars: usize) {
             b.iter_with_setup(
                 || {
                     let mut rng = test_rng();
-                    let coeffs = random_dense_coeffs(&mut rng, num_vars);
+                    let coeffs = random_dense_coeffs::<F>(&mut rng, num_vars);
                     let poly = DensePolynomial::new(coeffs);
-                    let r: Vec<F> = std::iter::repeat_with(|| F::random(&mut rng))
-                        .take(num_vars)
-                        .collect();
+                    let r: Vec<F::Challenge> =
+                        std::iter::repeat_with(|| F::Challenge::from(rng.gen::<u128>()))
+                            .take(num_vars)
+                            .collect();
                     (poly, r)
                 },
                 |(mut poly, r)| {
@@ -53,12 +54,13 @@ fn benchmark_dense_batch<F: JoltField>(c: &mut Criterion, num_vars: usize, batch
                     let mut rng = test_rng();
                     let mut polys = vec![];
                     for _ in 0..batch_size {
-                        let coeffs = random_dense_coeffs(&mut rng, num_vars);
+                        let coeffs = random_dense_coeffs::<F>(&mut rng, num_vars);
                         polys.push(DensePolynomial::new(coeffs));
                     }
-                    let r: Vec<F> = std::iter::repeat_with(|| F::random(&mut rng))
-                        .take(num_vars)
-                        .collect();
+                    let r: Vec<F::Challenge> =
+                        std::iter::repeat_with(|| F::Challenge::from(rng.gen::<u128>()))
+                            .take(num_vars)
+                            .collect();
                     (polys, r)
                 },
                 |(mut polys, r)| {
@@ -84,11 +86,12 @@ fn benchmark_compact<F: JoltField>(
             b.iter_with_setup(
                 || {
                     let mut rng = test_rng();
-                    let coeffs = random_compact_coeffs(&mut rng, num_vars);
-                    let poly = CompactPolynomial::from_coeffs(coeffs);
-                    let r: Vec<F> = std::iter::repeat_with(|| F::random(&mut rng))
-                        .take(num_vars)
-                        .collect();
+                    let coeffs: Vec<u8> = random_compact_coeffs(&mut rng, num_vars);
+                    let poly = CompactPolynomial::<u8, F>::from_coeffs(coeffs);
+                    let r: Vec<F::Challenge> =
+                        std::iter::repeat_with(|| F::Challenge::from(rng.gen::<u128>()))
+                            .take(num_vars)
+                            .collect();
                     (poly, r)
                 },
                 |(mut poly, r)| {
@@ -113,11 +116,12 @@ fn benchmark_dense_parallel<F: JoltField>(
             b.iter_with_setup(
                 || {
                     let mut rng = test_rng();
-                    let coeffs = random_dense_coeffs(&mut rng, num_vars);
+                    let coeffs = random_dense_coeffs::<F>(&mut rng, num_vars);
                     let poly = DensePolynomial::new(coeffs);
-                    let r: Vec<F> = std::iter::repeat_with(|| F::random(&mut rng))
-                        .take(num_vars)
-                        .collect();
+                    let r: Vec<F::Challenge> =
+                        std::iter::repeat_with(|| F::Challenge::from(rng.gen::<u128>()))
+                            .take(num_vars)
+                            .collect();
                     (poly, r)
                 },
                 |(mut poly, r)| {

@@ -17,7 +17,7 @@ lazy_static::lazy_static! {
 
 impl IntoField<ark_bn254::Fr> for MontU128Challenge<ark_bn254::Fr> {
     #[inline(always)]
-    fn into_F(&self) -> ark_bn254::Fr {
+    fn into_F(self) -> ark_bn254::Fr {
         ark_bn254::Fr::from_bigint_unchecked(BigInt::new(self.value())).unwrap()
     }
 }
@@ -30,7 +30,7 @@ impl IntoField<ark_bn254::Fr> for MontU128Challenge<ark_bn254::Fr> {
 
 impl IntoField<ark_bn254::Fr> for TrivialChallenge<ark_bn254::Fr> {
     #[inline(always)]
-    fn into_F(&self) -> ark_bn254::Fr {
+    fn into_F(self) -> ark_bn254::Fr {
         self.value()
     }
 }
