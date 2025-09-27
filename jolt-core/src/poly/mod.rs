@@ -10,6 +10,5 @@ pub mod prefix_suffix;
 pub mod program_io_polynomial;
 pub mod range_mask_polynomial;
 pub mod rlc_polynomial;
-pub mod spartan_interleaved_poly;
 pub mod split_eq_poly;
 pub mod unipoly;

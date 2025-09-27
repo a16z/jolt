@@ -18,7 +18,6 @@ use crate::utils::profiling::print_data_structure_heap_usage;
 use allocative::FlameGraphBuilder;
 
 use ark_serialize::*;
-use rayon::prelude::*;
 use std::cell::RefCell;
 use std::marker::PhantomData;
 use std::rc::Rc;

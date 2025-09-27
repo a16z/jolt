@@ -216,55 +216,35 @@ pub mod barycentric {
 /// Binomial coefficients C(n, k) for 0 <= n <= 16 and 0 <= k <= floor(n/2).
 /// Stored as a jagged constant table: each row `BINOMIAL_ROW_n` has length floor(n/2)+1.
 pub mod binomial {
-    // Rows store C(n, k) for k = 0..=floor(n/2)
-    pub const BINOMIAL_ROW_0: [u64; 1] = [1];
-    pub const BINOMIAL_ROW_1: [u64; 1] = [1];
-    pub const BINOMIAL_ROW_2: [u64; 2] = [1, 2];
-    pub const BINOMIAL_ROW_3: [u64; 2] = [1, 3];
-    pub const BINOMIAL_ROW_4: [u64; 3] = [1, 4, 6];
-    pub const BINOMIAL_ROW_5: [u64; 3] = [1, 5, 10];
-    pub const BINOMIAL_ROW_6: [u64; 4] = [1, 6, 15, 20];
-    pub const BINOMIAL_ROW_7: [u64; 4] = [1, 7, 21, 35];
-    pub const BINOMIAL_ROW_8: [u64; 5] = [1, 8, 28, 56, 70];
-    pub const BINOMIAL_ROW_9: [u64; 5] = [1, 9, 36, 84, 126];
-    pub const BINOMIAL_ROW_10: [u64; 6] = [1, 10, 45, 120, 210, 252];
-    pub const BINOMIAL_ROW_11: [u64; 6] = [1, 11, 55, 165, 330, 462];
-    pub const BINOMIAL_ROW_12: [u64; 7] = [1, 12, 66, 220, 495, 792, 924];
-    pub const BINOMIAL_ROW_13: [u64; 7] = [1, 13, 78, 286, 715, 1287, 1716];
-    pub const BINOMIAL_ROW_14: [u64; 8] = [1, 14, 91, 364, 1001, 2002, 3003, 3432];
-    pub const BINOMIAL_ROW_15: [u64; 8] = [1, 15, 105, 455, 1365, 3003, 5005, 6435];
-    pub const BINOMIAL_ROW_16: [u64; 9] = [1, 16, 120, 560, 1820, 4368, 8008, 11440, 12870];
-
-    pub const BINOMIAL_HALF_UP_TO_16: [&'static [u64]; 17] = [
-        &BINOMIAL_ROW_0,
-        &BINOMIAL_ROW_1,
-        &BINOMIAL_ROW_2,
-        &BINOMIAL_ROW_3,
-        &BINOMIAL_ROW_4,
-        &BINOMIAL_ROW_5,
-        &BINOMIAL_ROW_6,
-        &BINOMIAL_ROW_7,
-        &BINOMIAL_ROW_8,
-        &BINOMIAL_ROW_9,
-        &BINOMIAL_ROW_10,
-        &BINOMIAL_ROW_11,
-        &BINOMIAL_ROW_12,
-        &BINOMIAL_ROW_13,
-        &BINOMIAL_ROW_14,
-        &BINOMIAL_ROW_15,
-        &BINOMIAL_ROW_16,
-    ];
-
+    /// Compute C(n, k) with k reduced to min(k, n-k). Uses u128 intermediates.
     #[inline]
-    pub const fn half_row(n: usize) -> &'static [u64] {
-        BINOMIAL_HALF_UP_TO_16[n]
+    pub const fn binom_small(n: usize, k: usize) -> u64 {
+        let kk = if k <= n - k { k } else { n - k };
+        let mut i = 0usize;
+        let mut res: u128 = 1u128;
+        while i < kk {
+            // res = res * (n - i) / (i + 1)
+            let num = (n - i) as u128;
+            let den = (i + 1) as u128;
+            res = (res * num) / den;
+            i += 1;
+        }
+        res as u64
     }
 
-    /// Get C(n, k) for 0 <= n <= 16, 0 <= k <= n using the half-row table.
+    /// Build the full row [C(n,0), C(n,1), ..., C(n,n)] as an array of length N = n+1.
+    /// Using [u64; N] avoids unstable generic const expressions in types.
     #[inline]
-    pub fn choose(n: usize, k: usize) -> u64 {
-        let kk = if k <= n / 2 { k } else { n - k };
-        half_row(n)[kk]
+    pub const fn row_const<const N: usize>() -> [u64; N] {
+        // N must be at least 1 (so n = N-1 is valid). Our usages satisfy this.
+        let n = N - 1;
+        let mut out = [0u64; N];
+        let mut i = 0usize;
+        while i < N {
+            out[i] = binom_small(n, i);
+            i += 1;
+        }
+        out
     }
 }
 
@@ -282,7 +262,7 @@ pub fn extrapolate_next_from_consecutive<F: JoltField>(prev: &[F]) -> F {
     debug_assert!(n >= 1 && n <= 16);
     let mut acc = F::zero();
     for i in 0..n {
-        let c = binomial::choose(n, i);
+        let c = binomial::binom_small(n, i);
         let coef = F::from_u64(c as u64);
         let term = prev[i] * coef;
         if ((n - 1 - i) & 1) == 1 {
@@ -425,7 +405,7 @@ pub fn extend_consecutive_symmetric_const<F: JoltField, const N: usize>(base: &[
 pub fn backward_step_exn<F: JoltField, const N: usize>(w: &[F; N]) -> F {
     let mut acc = F::zero();
     for j in 0..N {
-        let c = crate::utils::interpolation::binomial::choose(N, j + 1);
+        let c = crate::utils::interpolation::binomial::binom_small(N, j + 1);
         let coef = F::from_u64(c as u64);
         let term = w[j] * coef;
         if (j & 1) == 1 {

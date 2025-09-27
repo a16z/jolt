@@ -11,7 +11,7 @@ pub mod lookup_bits;
 pub mod math;
 pub mod profiling;
 pub mod small_scalar;
-pub mod small_value;
+pub mod univariate_skip;
 pub mod thread;
 /// Macros that determine the optimal iterator type based on the feature flags.
 ///
