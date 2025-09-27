@@ -18,7 +18,6 @@ use crate::utils::mul_0_optimized;
 // use crate::utils::profiling::print_current_memory_usage;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
-use crate::utils::small_value::svo_helpers::process_svo_sumcheck_rounds;
 use crate::utils::thread::drop_in_background_thread;
 use crate::zkvm::JoltSharedPreprocessing;
 #[cfg(feature = "allocative")]
@@ -404,26 +403,18 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
         let mut polys = Vec::new();
         let mut claim = F::zero();
 
-        let (accums_zero, accums_infty, mut az_bz_cz_poly) = SpartanInterleavedPolynomial::<
-            NUM_SVO_ROUNDS,
-            F,
-        >::svo_sumcheck_round(
-            preprocessing, trace, tau
-        );
+        let (extended_evals, mut az_bz_cz_poly) = SpartanInterleavedPolynomial::<F>::svo_sumcheck_round(preprocessing, trace, tau);
         #[cfg(feature = "allocative")]
         print_data_structure_heap_usage("SpartanInterleavedPolynomial", &az_bz_cz_poly);
 
-        let mut eq_poly = GruenSplitEqPolynomial::new(tau, BindingOrder::LowToHigh);
+        // Process the first sum-check round with univariate skip (of given degree)
+        // We have: s_1(Z) = eq(w_z, Z) * t_1(Z), where
+        // t_1(Z) = \sum_{x} eq(w_rest, x) * \sum_{y} eq(w_y, y) * (Az(x, y, Z) * Bz(x, y, Z) - Cz(x, y, Z))
+        // t_1(Z) has degree 13 + 13 = 26 currently, with 14 evals equal to zero. We have the list
+        // of the 13 other evals. So we just need to interpolate the polynomial (i.e. in coefficient format)
+        // based on the evals, then derive s_1(Z) via process_eq_sumcheck_round.
 
-        process_svo_sumcheck_rounds::<NUM_SVO_ROUNDS, F, ProofTranscript>(
-            &accums_zero,
-            &accums_infty,
-            &mut r,
-            &mut polys,
-            &mut claim,
-            transcript,
-            &mut eq_poly,
-        );
+        let mut eq_poly = GruenSplitEqPolynomial::new(tau, BindingOrder::LowToHigh);
 
         // We stream over the trace again for this round
         az_bz_cz_poly.streaming_sumcheck_round(

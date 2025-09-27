@@ -9,7 +9,7 @@ use crate::{
     utils::small_value::accum::{SignedUnreducedAccum, UnreducedProduct},
     utils::{math::Math, small_value::svo_helpers},
     zkvm::r1cs::{
-        constraints::{eval_az_bz_batch_from_row, CzKind, UNIFORM_R1CS},
+        constraints::{eval_az_bz_batch_from_row, CzKind, UNIFORM_R1CS, UNIFORM_R1CS_FIRST_GROUP, UNIFORM_R1CS_SECOND_GROUP},
         inputs::R1CSCycleInputs,
     },
     zkvm::JoltSharedPreprocessing,
@@ -18,41 +18,9 @@ use allocative::Allocative;
 use ark_ff::biginteger::{I8OrI96, S160};
 use rayon::prelude::*;
 use tracer::instruction::Cycle;
+use crate::poly::multilinear_polynomial::BindingOrder;
 
-/// Number of rounds to use for small value optimization.
-/// Testing & estimation shows that 3 rounds is the best tradeoff
-/// TODO: this will change once we integrate univariate skip
-pub const NUM_SVO_ROUNDS: usize = 3;
-
-pub const TOTAL_NUM_ACCUMS: usize = svo_helpers::total_num_accums(NUM_SVO_ROUNDS);
-pub const NUM_NONTRIVIAL_TERNARY_POINTS: usize =
-    svo_helpers::num_non_trivial_ternary_points(NUM_SVO_ROUNDS);
-pub const NUM_ACCUMS_EVAL_ZERO: usize = svo_helpers::num_accums_eval_zero(NUM_SVO_ROUNDS);
-pub const NUM_ACCUMS_EVAL_INFTY: usize = svo_helpers::num_accums_eval_infty(NUM_SVO_ROUNDS);
-
-/// Number of Y-assignments per SVO block. Equal to 2^NUM_SVO_ROUNDS.
-/// This is the size of the subspace over the prefix Y used in small-value optimization.
-pub const Y_SVO_SPACE_SIZE: usize = 1 << NUM_SVO_ROUNDS;
-
-/// Number of interleaved coefficients per logical block for a fixed (x_out, x_in):
-///  - 2 polynomials (Az, Bz)
-///  - 2 evaluations at x_next ∈ {0, 1}
-///  - Y_SVO_SPACE_SIZE assignments of Y
-///    So total = 4 * Y_SVO_SPACE_SIZE.
-pub const Y_SVO_RELATED_COEFF_BLOCK_SIZE: usize = 4 * Y_SVO_SPACE_SIZE;
-
-/// Bit-width of a logical block. Computed as log2(4) + NUM_SVO_ROUNDS = 2 + NUM_SVO_ROUNDS.
-/// Use this for fast block id calculation via shifts
-pub const Y_SVO_RELATED_COEFF_BLOCK_SIZE_SHIFT: usize = 2 + NUM_SVO_ROUNDS;
-
-/// Bitmask for the local offset within a block. Equals (1 << SHIFT) - 1.
-/// Use this to extract local offsets via bit-and, instead of modulo.
-pub const Y_SVO_RELATED_COEFF_BLOCK_SIZE_MASK: usize =
-    (1usize << Y_SVO_RELATED_COEFF_BLOCK_SIZE_SHIFT) - 1;
-
-// Modifications for streaming version:
-// 1. Do not have the `unbound_coeffs` in the struct
-// 2. Do streaming rounds until we get to a small enough cached size that we can store `bound_coeffs`
+pub const UNIVARIATE_SKIP_DEGREE: usize = UNIFORM_R1CS.len() / 2;
 
 #[derive(Default, Debug, Clone, Copy, PartialEq)]
 pub struct SparseCoefficient<T> {
@@ -74,130 +42,55 @@ impl<T> From<(usize, T)> for SparseCoefficient<T> {
 }
 
 #[derive(Clone, Debug, Allocative)]
-pub struct SpartanInterleavedPolynomial<const NUM_SVO_ROUNDS: usize, F: JoltField> {
+pub struct SpartanInterleavedPolynomial<F: JoltField> {
     /// The bound coefficients for the Az, Bz, Cz polynomials.
     /// Will be populated in the streaming round (after SVO rounds)
     pub(crate) bound_coeffs: Vec<SparseCoefficient<F>>,
 
     binding_scratch_space: Vec<SparseCoefficient<F>>,
-
-    padded_num_constraints: usize,
 }
 
-impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM_SVO_ROUNDS, F> {
-    /// Compute the unbound coefficients for the Az and Bz polynomials (no Cz coefficients are
-    /// needed), along with the accumulators for the small value optimization (SVO) rounds.
-    ///
-    /// Recall that the accumulators are of the form: accum_i[v_0, ..., v_{i-1}, u] = \sum_{y_rest}
-    /// \sum_{x_out} E_out(x_out || y_rest) * \sum_{x_in} E_in(x_in) * P(x_out, x_in, y_rest, u,
-    /// v_0, ..., v_{i-1}),
-    ///
-    /// for all i < NUM_SVO_ROUNDS, v_0,..., v_{i-1} \in {0,1,∞}, u \in {0,∞}, and P(X) = Az(X) *
-    /// Bz(X) - Cz(X).
-    ///
-    /// Note that we have reverse the order of variables from the paper, since in this codebase the
-    /// indexing is MSB to LSB (as we go from 0 to N-1, i.e. left to right).
-    ///
-    /// Note that only the accumulators with at least one infinity among v_j and u are non-zero, so
-    /// the fully binary ones do not need to be computed. Plus, the ones with at least one infinity
-    /// will NOT have any Cz contributions.
-    ///
-    /// This is why we do not need to compute the Cz terms in the unbound coefficients.
-    ///
-    /// The output of the accumulators is ([F; NUM_ACCUMS_EVAL_ZERO]; [F; NUM_ACCUMS_EVAL_INFTY]),
-    /// where the outer array is for evals at u = 0 and u = ∞. The inner array contains all non-zero
-    /// accumulators across all rounds, concatenated in order.
-    ///
-    /// For 1 round of small value optimization, this is:
-    /// - Eval at zero: empty
-    /// - Eval at infty: acc_1(infty)
-    ///
-    /// For 2 rounds of small value optimization, this is same as 1 round, with addition of:
-    /// (recall: we do MSB => LSB, so 0/infty refers to the leftmost variable)
-    /// - Eval at zero: acc_2(0, infty)
-    /// - Eval at infty: acc_2(infty,0), acc_2(infty,1), acc_2(infty, infty)
-    ///
-    /// Total = 5 accumulators
-    ///
-    /// For 3 rounds of small value optimization, this is same as 2 rounds, with addition of:
-    /// - Eval at zero: acc_3(0, 0, infty), acc_3(0, 1, infty),
-    ///   acc_3(0, infty, 0), acc_3(0, infty, 1), acc_3(0, infty, infty)
-    /// - Eval at infty: acc_3(infty, v_1, v_2), where v_1, v_2 \in {0, 1, infty}
-    ///
-    /// Total = 19 accumulators
+impl<F: JoltField> SpartanInterleavedPolynomial<F> {
+
+    /// NEW! Doing small-value optimization with univariate skip instead of round batching / compression
+    /// We hard-code one univariate skip of degree \ceil{NUM_CONSTRAINTS / 2} - 1 (currently 13)
+    /// 
+    /// Returns the 13 accumulators:
+    /// t_1(z) = \sum_{x_out} E_out[x_out] \sum_{x_in} E_in[x_in] *
+    ///             \sum_{y = 0,1} E[y] * (Az(x_out, x_in, y, z) * Bz(x_out, x_in, y, z) - Cz(x_out, x_in, y, z))
+    /// 
+    /// for all z in {-12, ... , 12} \ {-6, ..., 7}
     #[tracing::instrument(skip_all, name = "SpartanInterleavedPolynomial::svo_sumcheck_round")]
     pub fn svo_sumcheck_round(
         preprocess: &JoltSharedPreprocessing,
         trace: &[Cycle],
         tau: &[F],
-    ) -> ([F; NUM_ACCUMS_EVAL_ZERO], [F; NUM_ACCUMS_EVAL_INFTY], Self) {
-        // Variable layout and binding order (MSB -> LSB):
-        // 0 ... (N/2 - l) ... (n_s) ... (N - l) ... (N - i - 1) ... (N - 1)
-        // where:
-        //   n_s = number of step vars (log2(steps))
-        //   N   = total num vars (step + constraint)
-        //   l   = NUM_SVO_ROUNDS (number of Y-prefix variables used by SVO)
-        // Partition:
-        //   - 0 .. (N/2 - l)              => x_out (MSB block shared with y_rest)
-        //   - (N/2 - l) .. (n_s)          => x_in_step
-        //   - (n_s) .. (N - l)            => x_in_constraint (non-SVO constraint vars)
-        //   - (N - l) .. (N - i - 1)      => y_rest (suffix of Y for current round)
-        //   - (N - i - 1) .. (N - 1)      => (u || v_0..v_{i-1}) SVO variables
-        // We use MSB->LSB indexing throughout the codebase.
+    ) -> ([F; UNIVARIATE_SKIP_DEGREE], Self) {
 
+        // This padded will just be 14 + 14 = 28, instead of 32
         let padded_num_constraints = UNIFORM_R1CS.len().next_power_of_two();
         let num_steps = trace.len();
         let num_step_vars = if num_steps > 0 { num_steps.log_2() } else { 0 };
-        let num_constraint_vars = if padded_num_constraints > 0 {
-            padded_num_constraints.log_2()
-        } else {
-            0
-        };
-        let total_num_vars = num_step_vars + num_constraint_vars;
 
+        // The vector tau will be of the form (w_0, ..., w_{log(length(trace)) - 1}, w_y, w_z)
+        // where w_y is for the 2 values of y
+        // w_z is for the univariate skip
         assert_eq!(
             tau.len(),
-            total_num_vars,
-            "tau length ({}) mismatch with R1CS variable count (step_vars {} + constraint_vars {})",
+            num_step_vars + 2,
+            "tau length ({}) mismatch with R1CS variable count (step_vars {} + 2)",
             tau.len(),
             num_step_vars,
-            num_constraint_vars
-        );
-        assert!(
-            NUM_SVO_ROUNDS <= num_constraint_vars,
-            "NUM_SVO_ROUNDS ({NUM_SVO_ROUNDS}) cannot exceed total constraint variables ({num_constraint_vars})"
         );
 
-        let num_non_svo_constraint_vars = num_constraint_vars.saturating_sub(NUM_SVO_ROUNDS);
-        let num_non_svo_z_vars = num_step_vars + num_non_svo_constraint_vars;
-        assert_eq!(
-            num_non_svo_z_vars,
-            total_num_vars - NUM_SVO_ROUNDS,
-            "num_non_svo_z_vars ({num_non_svo_z_vars}) + NUM_SVO_ROUNDS ({NUM_SVO_ROUNDS}) must be == total_num_vars ({total_num_vars})"
-        );
-
-        let potential_x_out_vars = total_num_vars / 2 - NUM_SVO_ROUNDS;
-        let iter_num_x_out_vars = std::cmp::min(potential_x_out_vars, num_step_vars);
-        let iter_num_x_in_vars = num_non_svo_z_vars - iter_num_x_out_vars;
-        let iter_num_x_in_step_vars = num_step_vars - iter_num_x_out_vars;
-        let iter_num_x_in_constraint_vars = num_non_svo_constraint_vars;
-        assert_eq!(
-            iter_num_x_in_vars,
-            iter_num_x_in_step_vars + iter_num_x_in_constraint_vars
-        );
-        assert_eq!(num_non_svo_z_vars, iter_num_x_out_vars + iter_num_x_in_vars);
-
-        let num_uniform_r1cs_constraints = UNIFORM_R1CS.len();
-        let rem_num_uniform_r1cs_constraints = num_uniform_r1cs_constraints % Y_SVO_SPACE_SIZE;
+        let tau_for_steps = &tau[0..num_step_vars];
 
         // Build split-eq helper and precompute E_in (over x_in) and E_out (over x_out)
-        let eq_poly = GruenSplitEqPolynomial::new_for_small_value(
-            tau,
-            iter_num_x_out_vars,
-            iter_num_x_in_vars,
-            NUM_SVO_ROUNDS,
+        let eq_poly = GruenSplitEqPolynomial::new(
+            tau_for_steps,
+            BindingOrder::LowToHigh,
             // Scale E_in by R^2 so typed accumulators reduce to field semantics
-            Some(F::MONTGOMERY_R_SQUARE),
+            // Some(F::MONTGOMERY_R_SQUARE),
         );
         let E_in_evals = eq_poly.E_in_current();
         let E_out_vec = &eq_poly.E_out_vec;
@@ -206,11 +99,6 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
 
         let num_x_out_vals = 1usize << iter_num_x_out_vars;
         let num_x_in_step_vals = 1usize << iter_num_x_in_step_vars;
-
-        struct PrecomputeTaskOutput<F: JoltField> {
-            svo_accums_zero_local: [F; NUM_ACCUMS_EVAL_ZERO],
-            svo_accums_infty_local: [F; NUM_ACCUMS_EVAL_INFTY],
-        }
 
         let num_parallel_chunks = if num_x_out_vals > 0 {
             std::cmp::min(
@@ -235,8 +123,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
         //   - Evaluate each constraint-row's A and B LC at step index to obtain Az/Bz blocks
         //   - Fold Az/Bz with E_in(x_in) into tA contributions
         //   - Distribute tA to SVO accumulators via E_out(x_out)
-        // We also collect sparse AB coefficients interleaved by (x_next ∈ {0,1}).
-        let collected_chunk_outputs: Vec<PrecomputeTaskOutput<F>> = (0..num_parallel_chunks)
+        let collected_chunk_outputs: Vec<[F; UNIVARIATE_SKIP_DEGREE]> = (0..num_parallel_chunks)
             .into_par_iter()
             .map(|chunk_idx| {
                 let x_out_start = chunk_idx * x_out_chunk_size;
@@ -363,52 +250,29 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
 
                     // Distribute accumulated tA for this x_out into the SVO accumulators
                     // (both zero and infty evaluations) using precomputed E_out tables.
-                    svo_helpers::distribute_tA_to_svo_accumulators_generic::<NUM_SVO_ROUNDS, F>(
-                        &tA_sum_for_current_x_out,
-                        x_out_val,
-                        E_out_vec,
-                        &mut current_x_out_svo_zero,
-                        &mut current_x_out_svo_infty,
-                    );
 
-                    for i in 0..NUM_ACCUMS_EVAL_ZERO {
-                        chunk_svo_accums_zero[i] += current_x_out_svo_zero[i];
-                    }
-                    for i in 0..NUM_ACCUMS_EVAL_INFTY {
-                        chunk_svo_accums_infty[i] += current_x_out_svo_infty[i];
-                    }
-                }
+                    // NEW: distribution is just summing
 
-                PrecomputeTaskOutput {
-                    svo_accums_zero_local: chunk_svo_accums_zero,
-                    svo_accums_infty_local: chunk_svo_accums_infty,
+                    for i in 0..UNIVARIATE_SKIP_DEGREE {
+                        chunk_svo_accums[i] += current_x_out_svo[i];
+                    }
                 }
             })
             .collect();
 
-        let mut final_svo_accums_zero = [F::zero(); NUM_ACCUMS_EVAL_ZERO];
-        let mut final_svo_accums_infty = [F::zero(); NUM_ACCUMS_EVAL_INFTY];
+        let mut final_svo_accums = [F::zero(); UNIVARIATE_SKIP_DEGREE];
 
         for task_output in collected_chunk_outputs {
-            if NUM_ACCUMS_EVAL_ZERO > 0 {
-                for idx in 0..NUM_ACCUMS_EVAL_ZERO {
-                    final_svo_accums_zero[idx] += task_output.svo_accums_zero_local[idx];
-                }
-            }
-            if NUM_ACCUMS_EVAL_INFTY > 0 {
-                for idx in 0..NUM_ACCUMS_EVAL_INFTY {
-                    final_svo_accums_infty[idx] += task_output.svo_accums_infty_local[idx];
-                }
+            for i in 0..UNIVARIATE_SKIP_DEGREE {
+                final_svo_accums[i] += task_output[i];
             }
         }
 
         (
-            final_svo_accums_zero,  // Use new baseline results
-            final_svo_accums_infty, // Use new baseline results
+            final_svo_accums,
             Self {
                 bound_coeffs: vec![],
                 binding_scratch_space: vec![],
-                padded_num_constraints,
             },
         )
     }
@@ -451,28 +315,20 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
         trace: &[Cycle],
         eq_poly: &mut GruenSplitEqPolynomial<F>,
         transcript: &mut ProofTranscript,
-        r_challenges: &mut Vec<F>,
+        r_challenge: &mut Vec<F>, // Only one challenge right now
         round_polys: &mut Vec<CompressedUniPoly<F>>,
         claim: &mut F,
     ) {
-        let num_y_svo_vars = r_challenges.len();
-        debug_assert_eq!(
-            num_y_svo_vars, NUM_SVO_ROUNDS,
-            "r_challenges length mismatch with NUM_SVO_ROUNDS"
-        );
-        let mut r_rev = r_challenges.clone();
-        r_rev.reverse();
-        // Scale eq(r, y) by R^2 so unreduced fmadd reductions match field semantics
-        let eq_r_evals = EqPolynomial::evals_with_scaling(&r_rev, Some(F::MONTGOMERY_R_SQUARE));
+        // TODO: need to put lagrange polys of degree 13 here
+        let eq_r_evals = EqPolynomial::evals_with_scaling(&r_challenge, Some(F::MONTGOMERY_R_SQUARE));
 
         // Derive partition from current eq_poly lengths and static SVO params
-        let padded_num_constraints = self.padded_num_constraints;
+        let padded_num_constraints = UNIFORM_R1CS.len().next_power_of_two();
         let num_constraint_vars = if padded_num_constraints > 0 {
             padded_num_constraints.log_2()
         } else {
             0
         };
-        debug_assert!(NUM_SVO_ROUNDS <= num_constraint_vars);
 
         let num_x_out_vals = eq_poly.E_out_current_len();
         let iter_num_x_out_vars = if num_x_out_vals > 0 {
@@ -492,12 +348,6 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
         };
 
         let num_uniform_r1cs_constraints = UNIFORM_R1CS.len();
-        let y_blocks_in_constraints = if num_uniform_r1cs_constraints > 0 {
-            num_uniform_r1cs_constraints.div_ceil(Y_SVO_SPACE_SIZE)
-        } else {
-            0
-        };
-        let num_block_pairs_per_step = self.padded_num_constraints >> (NUM_SVO_ROUNDS + 1);
 
         struct TaskOut<F: JoltField> {
             bound6_at_r: Vec<SparseCoefficient<F>>,
