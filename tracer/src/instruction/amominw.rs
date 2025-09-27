@@ -57,11 +57,24 @@ impl RISCVTrace for AMOMINW {
         let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
-            // In each iteration, create a new Option containing a re-borrowed reference
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
 
+    /// Generates inline sequence for atomic minimum operation (signed 32-bit).
+    ///
+    /// AMOMIN.W atomically loads a 32-bit word from memory, computes the minimum
+    /// of that value and the lower 32 bits of rs2 (treating both as signed),
+    /// stores the minimum back to memory, and returns the original value
+    /// sign-extended in rd.
+    ///
+    /// Uses branchless minimum selection with signed comparison:
+    /// 1. Load word and prepare operands with sign extension (on RV64)
+    /// 2. Use SLT with rs2 < current to determine which is smaller
+    /// 3. Use multiplication to select minimum without branches
+    /// 4. Store result and return original value sign-extended
+    ///
+    /// On RV64, requires sign-extending both operands for correct comparison.
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,

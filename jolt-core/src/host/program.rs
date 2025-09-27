@@ -202,9 +202,9 @@ impl Program {
             self.elf = Some(PathBuf::from_str(&elf_path).unwrap());
 
             if debug_symbols {
-                println!("Built guest binary with debug symbols: {elf_path}");
+                info!("Built guest binary with debug symbols: {elf_path}");
             } else {
-                println!("Built guest binary: {elf_path}");
+                info!("Built guest binary: {elf_path}");
             }
         }
     }

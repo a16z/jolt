@@ -22,6 +22,8 @@ random = [
     "dep:getrandom_v03",
     "dep:rand",
 ]
+malloc-shim = []
+
 [dependencies]
 rand = { version = "0.8.5", default-features = false, features = ["std_rng"], optional = true }
 

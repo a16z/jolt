@@ -57,11 +57,25 @@ impl RISCVTrace for AMOMIND {
         let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
-            // In each iteration, create a new Option containing a re-borrowed reference
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
 
+    /// Generates inline sequence for atomic minimum operation (signed 64-bit).
+    ///
+    /// AMOMIN.D atomically loads a 64-bit value from memory, computes the minimum
+    /// of that value and rs2 (treating both as signed), stores the minimum back
+    /// to memory, and returns the original value in rd.
+    ///
+    /// Uses branchless minimum computation:
+    /// 1. Load current value from memory
+    /// 2. Compare rs2 < current to get selector bit (1 if rs2 is smaller)
+    /// 3. Invert to get selector for current (1 if current is smaller/equal)
+    /// 4. Multiply and add to select minimum without branches
+    /// 5. Store result and return original value
+    ///
+    /// Note the comparison order: SLT(rs2, current) not SLT(current, rs2),
+    /// ensuring correct minimum selection semantics.
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,

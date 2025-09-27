@@ -48,11 +48,35 @@ impl RISCVTrace for AMOORW {
         let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
-            // In each iteration, create a new Option containing a re-borrowed reference
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
 
+    /// AMOOR.W atomically performs bitwise OR on a 32-bit word in memory with rs2.
+    ///
+    /// This atomic memory operation (AMO) instruction atomically loads a 32-bit word from
+    /// the memory address in rs1, performs a bitwise OR with the lower 32 bits of rs2,
+    /// stores the result back to memory, and returns the original value sign-extended in rd.
+    ///
+    /// Implementation differences:
+    /// - RV32: Direct 32-bit word operations using amo_pre32/post32 helpers
+    /// - RV64: Special handling for 32-bit operations within 64-bit doublewords
+    ///   - Uses amo_pre64 to extract and align the 32-bit word
+    ///   - Applies the OR operation to the extracted word
+    ///   - Uses amo_post64 to merge back with preserve of other bits
+    ///
+    /// The bitwise OR operation is commonly used for:
+    /// - Setting flags or status bits atomically
+    /// - Lock-free bit vector updates
+    /// - Atomic capability or permission granting
+    /// - Non-blocking concurrent set operations
+    ///
+    /// Return value handling:
+    /// - The original 32-bit value is sign-extended to XLEN bits
+    /// - Ensures consistent behavior across RV32 and RV64 systems
+    ///
+    /// Memory ordering: Provides acquire-release semantics, though in zkVM's
+    /// single-threaded execution model, ordering is implicitly guaranteed.
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,

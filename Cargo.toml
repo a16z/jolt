@@ -69,6 +69,8 @@ members = [
     "examples/recover-ecdsa/guest",
     "examples/random",
     "examples/random/guest",
+    "examples/malloc",
+    "examples/malloc/guest",
 ]
 
 [features]

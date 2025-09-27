@@ -5,6 +5,8 @@ edition = "2021"
 
 [dependencies]
 jolt-sdk = { path = "../../jolt-sdk", features = ["host"] }
+tracing-subscriber = "0.3"
+tracing = "0.1"
 jolt-inlines-blake2 = { path = "../../jolt-inlines/blake2", features = ["host"] }
 guest = { package = "blake2-guest", path = "./guest" }
 

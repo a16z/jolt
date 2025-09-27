@@ -152,7 +152,7 @@ pub fn display_panic_backtrace(emulator_state: &EmulatorState) {
         None
     };
 
-    if let Some((func, Some(loc))) = panic_info {
+    if let Some((func, Some(loc))) = &panic_info {
         println!(
             "Guest Program panicked in \"{}\" at \"{}\"",
             func,
@@ -178,6 +178,14 @@ pub fn display_panic_backtrace(emulator_state: &EmulatorState) {
         if full_backtrace {
             print_extended_frame_info(frame);
         }
+    }
+
+    if panic_info.is_none() {
+        println!(
+            "note: run with `JOLT_BACKTRACE=1` environment variable to symbolize the backtrace"
+        );
+    } else if !full_backtrace {
+        println!("note: run with `JOLT_BACKTRACE=full` environment variable to display extended emulator state info");
     }
 }
 

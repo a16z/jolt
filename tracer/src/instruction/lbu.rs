@@ -52,6 +52,15 @@ impl RISCVTrace for LBU {
         }
     }
 
+    /// Load unsigned byte without sign extension.
+    ///
+    /// LBU loads an 8-bit value from memory at address rs1+imm and zero-extends
+    /// it to the full register width. Since zkVM uses word-aligned memory:
+    /// 1. Load the aligned word/doubleword containing the byte
+    /// 2. Shift byte to the high bits using XOR-based position calculation
+    /// 3. Logical right shift to extract and zero-extend
+    ///
+    /// Unlike LB, uses logical (not arithmetic) right shift for zero extension.
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,
@@ -65,6 +74,15 @@ impl RISCVTrace for LBU {
 }
 
 impl LBU {
+    /// 32-bit implementation of load unsigned byte.
+    ///
+    /// Algorithm:
+    /// 1. Calculate target address
+    /// 2. Align to 4-byte boundary for word access
+    /// 3. Load word containing the byte
+    /// 4. XOR address with 3 to get opposite byte position (little-endian)
+    /// 5. Shift byte to bits [31:24]
+    /// 6. Logical right shift by 24 to zero-extend to 32 bits
     fn inline_sequence_32(&self, allocator: &VirtualRegisterAllocator) -> Vec<Instruction> {
         let v_address = allocator.allocate();
         let v_word_address = allocator.allocate();
@@ -82,6 +100,12 @@ impl LBU {
         asm.finalize()
     }
 
+    /// 64-bit implementation of load unsigned byte.
+    ///
+    /// Similar to 32-bit but handles 8 possible byte positions:
+    /// 1. XOR address with 7 for position calculation
+    /// 2. Shift byte to bits [63:56]
+    /// 3. Logical right shift by 56 to zero-extend to 64 bits
     fn inline_sequence_64(&self, allocator: &VirtualRegisterAllocator) -> Vec<Instruction> {
         let v_address = allocator.allocate();
         let v_dword_address = allocator.allocate();
