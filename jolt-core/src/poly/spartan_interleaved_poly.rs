@@ -20,7 +20,7 @@ use rayon::prelude::*;
 use tracer::instruction::Cycle;
 use crate::poly::multilinear_polynomial::BindingOrder;
 
-pub const UNIVARIATE_SKIP_DEGREE: usize = UNIFORM_R1CS.len() / 2;
+pub const UNIVARIATE_SKIP_DEGREE: usize = (UNIFORM_R1CS.len() - 1) / 2;
 
 #[derive(Default, Debug, Clone, Copy, PartialEq)]
 pub struct SparseCoefficient<T> {
@@ -86,16 +86,14 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
         let tau_for_steps = &tau[0..num_step_vars];
 
         // Build split-eq helper and precompute E_in (over x_in) and E_out (over x_out)
-        let eq_poly = GruenSplitEqPolynomial::new(
+        let eq_poly = GruenSplitEqPolynomial::new_with_scaling(
             tau_for_steps,
             BindingOrder::LowToHigh,
             // Scale E_in by R^2 so typed accumulators reduce to field semantics
-            // Some(F::MONTGOMERY_R_SQUARE),
+            Some(F::MONTGOMERY_R_SQUARE),
         );
         let E_in_evals = eq_poly.E_in_current();
         let E_out_vec = &eq_poly.E_out_vec;
-
-        assert_eq!(E_out_vec.len(), NUM_SVO_ROUNDS);
 
         let num_x_out_vals = 1usize << iter_num_x_out_vars;
         let num_x_in_step_vals = 1usize << iter_num_x_in_step_vars;
@@ -524,7 +522,7 @@ impl<F: JoltField> SpartanInterleavedPolynomial<F> {
             totals,
             eq_poly,
             round_polys,
-            r_challenges,
+            r_challenge,
             claim,
             transcript,
         );

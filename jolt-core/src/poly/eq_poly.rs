@@ -54,18 +54,41 @@ impl<F: JoltField> EqPolynomial<F> {
     }
 
     #[tracing::instrument(skip_all, name = "EqPolynomial::evals_cached")]
-    /// Computes the table of coefficients like `evals`, but also caches the intermediate results
-    ///
-    /// In other words, computes `{eq(r[i..], x) for all x in {0, 1}^{n - i}}` and for all `i in
-    /// 0..r.len()`.
-    pub fn evals_cached(r: &[F]) -> Vec<Vec<F>> {
+    /// Computes the table of coefficients like `evals_with_scaling`, but also caches the intermediate results
+    pub fn evals_cached(r: &[F], scaling_factor: Option<F>) -> Vec<Vec<F>> {
         // TODO: implement parallel version & determine switchover point
-        Self::evals_serial_cached(r, None)
+        let mut evals: Vec<Vec<F>> = (0..r.len() + 1)
+            .map(|i| vec![scaling_factor.unwrap_or(F::one()); 1 << i])
+            .collect();
+        let mut size = 1;
+        for j in 0..r.len() {
+            size *= 2;
+            for i in (0..size).rev().step_by(2) {
+                let scalar = evals[j][i / 2];
+                evals[j + 1][i] = scalar * r[j];
+                evals[j + 1][i - 1] = scalar - evals[j + 1][i];
+            }
+        }
+        evals
     }
 
     /// Same as evals_cached but for high-to-low (reverse) binding order
-    pub fn evals_cached_rev(r: &[F]) -> Vec<Vec<F>> {
-        Self::evals_serial_cached_rev(r, None)
+    pub fn evals_cached_rev(r: &[F], scaling_factor: Option<F>) -> Vec<Vec<F>> {
+        let rev_r = r.iter().rev().collect::<Vec<_>>();
+        let mut evals: Vec<Vec<F>> = (0..r.len() + 1)
+            .map(|i| vec![scaling_factor.unwrap_or(F::one()); 1 << i])
+            .collect();
+        let mut size = 1;
+        for j in 0..r.len() {
+            for i in 0..size {
+                let scalar = evals[j][i];
+                let multiple = 1 << j;
+                evals[j + 1][i + multiple] = scalar * *rev_r[j];
+                evals[j + 1][i] = scalar - evals[j + 1][i + multiple];
+            }
+            size *= 2;
+        }
+        evals
     }
 
     /// Computes the table of coefficients:
@@ -84,47 +107,6 @@ impl<F: JoltField> EqPolynomial<F> {
                 evals[i] = scalar * r[j];
                 evals[i - 1] = scalar - evals[i];
             }
-        }
-        evals
-    }
-
-    /// Computes the table of coefficients like `evals_serial`, but also caches the intermediate results.
-    ///
-    /// Returns a vector of vectors, where the `j`th vector contains the coefficients for the polynomial
-    /// `eq(r[..j], x)` for all `x in {0, 1}^{j}`.
-    ///
-    /// Performance seems at most 10% worse than `evals_serial`
-    #[inline]
-    fn evals_serial_cached(r: &[F], scaling_factor: Option<F>) -> Vec<Vec<F>> {
-        let mut evals: Vec<Vec<F>> = (0..r.len() + 1)
-            .map(|i| vec![scaling_factor.unwrap_or(F::one()); 1 << i])
-            .collect();
-        let mut size = 1;
-        for j in 0..r.len() {
-            size *= 2;
-            for i in (0..size).rev().step_by(2) {
-                let scalar = evals[j][i / 2];
-                evals[j + 1][i] = scalar * r[j];
-                evals[j + 1][i - 1] = scalar - evals[j + 1][i];
-            }
-        }
-        evals
-    }
-    /// evals_serial_cached but for "high to low" ordering, used specifically in the Gruen x Dao Thaler optimization.
-    fn evals_serial_cached_rev(r: &[F], scaling_factor: Option<F>) -> Vec<Vec<F>> {
-        let rev_r = r.iter().rev().collect::<Vec<_>>();
-        let mut evals: Vec<Vec<F>> = (0..r.len() + 1)
-            .map(|i| vec![scaling_factor.unwrap_or(F::one()); 1 << i])
-            .collect();
-        let mut size = 1;
-        for j in 0..r.len() {
-            for i in 0..size {
-                let scalar = evals[j][i];
-                let multiple = 1 << j;
-                evals[j + 1][i + multiple] = scalar * *rev_r[j];
-                evals[j + 1][i] = scalar - evals[j + 1][i + multiple];
-            }
-            size *= 2;
         }
         evals
     }
@@ -263,7 +245,7 @@ mod tests {
             let end_first = Instant::now();
             let evals_parallel = EqPolynomial::evals_parallel(&r, None);
             let end_second = Instant::now();
-            let evals_serial_cached = EqPolynomial::evals_serial_cached(&r, None);
+            let evals_serial_cached = EqPolynomial::evals_cached(&r, None);
             let end_third = Instant::now();
             println!(
                 "len: {}, Time taken to compute evals_serial: {:?}",
@@ -292,7 +274,7 @@ mod tests {
         let mut rng = test_rng();
         for len in 2..22 {
             let r = (0..len).map(|_| Fr::random(&mut rng)).collect::<Vec<_>>();
-            let evals_serial_cached = EqPolynomial::evals_serial_cached(&r, None);
+            let evals_serial_cached = EqPolynomial::evals_cached(&r, None);
             for i in 0..len {
                 let evals = EqPolynomial::evals(&r[..i]);
                 assert_eq!(evals_serial_cached[i], evals);
