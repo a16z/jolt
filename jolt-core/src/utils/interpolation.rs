@@ -1,3 +1,5 @@
+use std::ops::{Add, Mul, Sub};
+
 /// Barycentric Lagrange interpolation evaluators and small-degree weight tables.
 pub mod barycentric {
     use crate::field::JoltField;
@@ -188,7 +190,7 @@ pub mod barycentric {
         /// Materialize d=5 weights as field elements. One inversion (invert 120).
         pub fn weights_d5<F: JoltField>() -> [F; 6] {
             let inv120 = F::from_u64(120).inverse().unwrap();
-            let p5 = inv120.mul_u64(5);  // 5/120 = 1/24
+            let p5 = inv120.mul_u64(5); // 5/120 = 1/24
             let p10 = inv120.mul_u64(10); // 10/120 = 1/12
             [-inv120, p5, -p10, p10, -p5, inv120]
         }
@@ -196,7 +198,7 @@ pub mod barycentric {
         /// Materialize d=6 weights as field elements. One inversion (invert 720).
         pub fn weights_d6<F: JoltField>() -> [F; 7] {
             let inv720 = F::from_u64(720).inverse().unwrap();
-            let p6 = inv720.mul_u64(6);   // 6/720 = 1/120
+            let p6 = inv720.mul_u64(6); // 6/720 = 1/120
             let p15 = inv720.mul_u64(15); // 15/720 = 1/48
             let p20 = inv720.mul_u64(20); // 20/720 = 1/36
             [inv720, -p6, p15, -p20, p15, -p6, inv720]
@@ -205,7 +207,7 @@ pub mod barycentric {
         /// Materialize d=7 weights as field elements. One inversion (invert 5040).
         pub fn weights_d7<F: JoltField>() -> [F; 8] {
             let inv5040 = F::from_u64(5040).inverse().unwrap();
-            let p7 = inv5040.mul_u64(7);   // 7/5040 = 1/720
+            let p7 = inv5040.mul_u64(7); // 7/5040 = 1/720
             let p21 = inv5040.mul_u64(21); // 21/5040 = 1/240
             let p35 = inv5040.mul_u64(35); // 35/5040 = 1/144
             [-inv5040, p7, -p21, p35, -p35, p21, -p7, inv5040]
@@ -246,6 +248,138 @@ pub mod binomial {
         }
         out
     }
+
+    pub const BINOMIAL_ROW_13: [u64; 14] = row_const::<14>();
+    pub const BINOMIAL_ROW_14: [u64; 15] = row_const::<15>();
+
+    /// Generalized binomial for integer t and k >= 0, as i128.
+    /// Supports negative t via identity: C(t, k) = (-1)^k C(-t + k - 1, k).
+    #[inline]
+    pub fn binom_int_i128(t: i64, k: usize) -> i128 {
+        if k == 0 {
+            return 1;
+        }
+        if t >= 0 {
+            // C(t, k) with t >= 0; if k > t then 0
+            let tt = t as i128;
+            if (k as i128) > tt {
+                return 0;
+            }
+            let mut num: i128 = 1;
+            let mut den: i128 = 1;
+            // Compute product_{j=0}^{k-1} (t - j) / (j + 1)
+            let mut j = 0usize;
+            while j < k {
+                num = num * (tt - (j as i128));
+                den = den * ((j as i128) + 1);
+                j += 1;
+            }
+            // Exact division (combinatorial integer)
+            num / den
+        } else {
+            // Use identity for negative t
+            let sign = if (k & 1) == 1 { -1i128 } else { 1i128 };
+            let tt = (-t) as i128 + (k as i128) - 1; // -t + k - 1 >= 0
+                                                     // Compute C(tt, k)
+            let mut num: i128 = 1;
+            let mut den: i128 = 1;
+            let mut j = 0usize;
+            while j < k {
+                num = num * (tt - (j as i128));
+                den = den * ((j as i128) + 1);
+                j += 1;
+            }
+            sign * (num / den)
+        }
+    }
+
+    /// Lagrange coefficients for evaluating at integer shift `shift` from a window of length N.
+    /// Given base values p(0), p(1), ..., p(N-1) of deg < N, returns alphas such that:
+    ///   p(shift) = sum_{i=0}^{N-1} alpha[i] * p(i)
+    /// Closed-form: alpha_i = (-1)^{N-1-i} C(shift, i) C(shift - i - 1, N - 1 - i)
+    #[inline]
+    pub fn lagrange_shift_coeffs_i128_const<const N: usize>(shift: i64) -> [i128; N] {
+        let mut out = [0i128; N];
+        let n_minus_1 = (N - 1) as i64;
+        let mut i = 0usize;
+        while i < N {
+            let s1 = binom_int_i128(shift, i);
+            let s2 = binom_int_i128(shift - (i as i64) - 1, (N - 1) - i);
+            let sign = if (((n_minus_1 as usize) - i) & 1) == 1 {
+                -1i128
+            } else {
+                1i128
+            };
+            out[i] = sign * s1 * s2;
+            i += 1;
+        }
+        out
+    }
+
+    /// Const-evaluable generalized binomial for integer t and k >= 0, as i128.
+    #[inline]
+    pub const fn binom_int_i128_const(t: i64, k: usize) -> i128 {
+        if k == 0 { return 1; }
+        if t >= 0 {
+            let tt = t as i128;
+            if (k as i128) > tt { return 0; }
+            let mut num: i128 = 1;
+            let mut den: i128 = 1;
+            let mut j: usize = 0;
+            while j < k {
+                num = num * (tt - (j as i128));
+                den = den * ((j as i128) + 1);
+                j += 1;
+            }
+            num / den
+        } else {
+            let sign = if (k & 1) == 1 { -1i128 } else { 1i128 };
+            let tt = (-t) as i128 + (k as i128) - 1;
+            let mut num: i128 = 1;
+            let mut den: i128 = 1;
+            let mut j: usize = 0;
+            while j < k {
+                num = num * (tt - (j as i128));
+                den = den * ((j as i128) + 1);
+                j += 1;
+            }
+            sign * (num / den)
+        }
+    }
+
+    /// Const-evaluable Lagrange coefficients at integer `shift` for a window of size N
+    /// representing samples p(0),...,p(N-1). Returns i32 assuming it fits.
+    #[inline]
+    pub const fn lagrange_shift_coeffs_i32_const<const N: usize>(shift: i64) -> [i32; N] {
+        let mut out = [0i32; N];
+        let n_minus_1 = (N - 1) as i64;
+        let mut i: usize = 0;
+        while i < N {
+            let s1 = binom_int_i128_const(shift, i);
+            let s2 = binom_int_i128_const(shift - (i as i64) - 1, (N - 1) - i);
+            let sign = if (((n_minus_1 as usize) - i) & 1) == 1 { -1i128 } else { 1i128 };
+            let val = sign * s1 * s2;
+            out[i] = val as i32;
+            i += 1;
+        }
+        out
+    }
+
+    /// Constants for degree-13 window p(-6..=7):
+    /// To evaluate p(S), define g(i)=p(i-6) on i=0..13, then compute g(S+6) with N=14.
+    pub const LAGRANGE_DEG13_AT_NEG7: [i32; 14] = lagrange_shift_coeffs_i32_const::<14>(-1);
+    pub const LAGRANGE_DEG13_AT_NEG8: [i32; 14] = lagrange_shift_coeffs_i32_const::<14>(-2);
+    pub const LAGRANGE_DEG13_AT_NEG9: [i32; 14] = lagrange_shift_coeffs_i32_const::<14>(-3);
+    pub const LAGRANGE_DEG13_AT_NEG10: [i32; 14] = lagrange_shift_coeffs_i32_const::<14>(-4);
+    pub const LAGRANGE_DEG13_AT_NEG11: [i32; 14] = lagrange_shift_coeffs_i32_const::<14>(-5);
+    pub const LAGRANGE_DEG13_AT_NEG12: [i32; 14] = lagrange_shift_coeffs_i32_const::<14>(-6);
+    pub const LAGRANGE_DEG13_AT_NEG13: [i32; 14] = lagrange_shift_coeffs_i32_const::<14>(-7);
+
+    pub const LAGRANGE_DEG13_AT_9: [i32; 14] = lagrange_shift_coeffs_i32_const::<14>(15);
+    pub const LAGRANGE_DEG13_AT_10: [i32; 14] = lagrange_shift_coeffs_i32_const::<14>(16);
+    pub const LAGRANGE_DEG13_AT_11: [i32; 14] = lagrange_shift_coeffs_i32_const::<14>(17);
+    pub const LAGRANGE_DEG13_AT_12: [i32; 14] = lagrange_shift_coeffs_i32_const::<14>(18);
+    pub const LAGRANGE_DEG13_AT_13: [i32; 14] = lagrange_shift_coeffs_i32_const::<14>(19);
 }
 
 /// Extrapolate the next value p(x+n) of a polynomial sequence from n consecutive values
@@ -292,8 +426,8 @@ pub fn ex2_consecutive<F: JoltField>(f: &[F; 2]) -> F {
 /// = 3 f[2] - 3 f[1] + f[0].
 #[inline(always)]
 pub fn ex3_consecutive<F: JoltField>(f: &[F; 3]) -> F {
-  let diff21 = f[2] - f[1];
-  F::linear_combination_i64(&[(diff21, 3)], &[], &[f[0]], &[])
+    let diff21 = f[2] - f[1];
+    F::linear_combination_i64(&[(diff21, 3)], &[], &[f[0]], &[])
 }
 
 /// Optimized ex4 on consecutive grid (no infinity):
@@ -313,7 +447,12 @@ pub fn ex8_consecutive<F: JoltField>(f: &[F; 8]) -> F {
     let s17 = f[1] + f[7];
     let s35 = f[3] + f[5];
     let s26 = f[2] + f[6];
-    F::linear_combination_i64(&[(s17, 8), (s35, 56)], &[(f[0], 1), (s26, 28), (f[4], 70)], &[], &[])
+    F::linear_combination_i64(
+        &[(s17, 8), (s35, 56)],
+        &[(f[0], 1), (s26, 28), (f[4], 70)],
+        &[],
+        &[],
+    )
 }
 
 /// Optimized ex16 on consecutive grid (no infinity):
@@ -330,7 +469,13 @@ pub fn ex16_consecutive<F: JoltField>(f: &[F; 16]) -> F {
     let sn6 = f[6] + f[10];
     F::linear_combination_i64(
         &[(sp1, 16), (sp3, 560), (sp5, 4368), (sp7, 11440)],
-        &[(f[0], 1), (sn2, 120), (sn4, 1820), (sn6, 8008), (f[8], 12870)],
+        &[
+            (f[0], 1),
+            (sn2, 120),
+            (sn4, 1820),
+            (sn6, 8008),
+            (f[8], 12870),
+        ],
         &[],
         &[],
     )
@@ -421,7 +566,9 @@ pub fn backward_step_exn<F: JoltField, const N: usize>(w: &[F; N]) -> F {
 /// [-1, N, -2, N+1, ...] using backward_step_exn on the left and specialized
 /// exN (or general recurrence fallback) on the right.
 #[inline]
-pub fn extend_consecutive_symmetric_exn_const<F: JoltField, const N: usize>(base: &[F; N]) -> [F; N] {
+pub fn extend_consecutive_symmetric_exn_const<F: JoltField, const N: usize>(
+    base: &[F; N],
+) -> [F; N] {
     // Left side via backward steps
     let left_cnt = (N + 1) / 2;
     let mut left_window = *base;
@@ -477,16 +624,202 @@ pub fn extend_consecutive_symmetric_7<F: JoltField>(base: &[F; 7]) -> [F; 7] {
     extend_consecutive_symmetric_const::<F, 7>(base)
 }
 
+// Let's start simple. First derive generic implemenetation of extrapolating from a degree-D to a degree-2D polynomial
+// with our symmetric zero-based domain
+pub fn extend_evals_symmetric<const D: usize, F: Copy + Add + Sub + Mul<u32> + Default>(
+    base_evals: &[F],
+) -> [F; D] {
+    // Requires that base_evals.len() == D + 1 (an interpolating set for the degree-D polynomial)
+    assert_eq!(base_evals.len(), D + 1);
+    let mut extended_evals = [Default::default(); D];
+    for i in 0..D {
+        extended_evals[i] = base_evals[i];
+    }
+    extended_evals
+}
+
+// Hard-coded implementation for degree-13 to degree-26 for maximum efficiency
+// Also hard-coded depends on the input type?
+// Tested to be equal to the generic implementation
+
+// First case: Az are boolean (first group), returns i32
+// Assumed layout of base_evals: [-6, -5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5, 6, 7]
+// Output order (interleaved): [-7, 8, -8, 9, -9, 10, -10, 11, -11, 12, -12, 13, -13]
+pub fn extend_evals_deg_13_bool(base_evals: &[bool; 14]) -> [i32; 13] {
+    let c = &crate::utils::interpolation::binomial::BINOMIAL_ROW_13;
+
+    // Current windows for left/backward and right/forward stepping
+    let mut left_w: [i32; 14] = [0; 14];
+    let mut right_w: [i32; 14] = [0; 14];
+    for i in 0..14 {
+        let v = if base_evals[i] { 1 } else { 0 };
+        left_w[i] = v;
+        right_w[i] = v;
+    }
+
+    // p(x-1) using N=14 backward recurrence with explicit signs
+    let prev_left = |w: &[i32; 14]| -> i32 {
+        let c1 = c[1] as i32;
+        let c2 = c[2] as i32;
+        let c3 = c[3] as i32;
+        let c4 = c[4] as i32;
+        let c5 = c[5] as i32;
+        let c6 = c[6] as i32;
+        let c7 = c[7] as i32;
+        let c8 = c[8] as i32;
+        let c9 = c[9] as i32;
+        let c10 = c[10] as i32;
+        let c11 = c[11] as i32;
+        let c12 = c[12] as i32;
+        let c13 = c[13] as i32;
+        let c14 = c[14] as i32;
+        c1 * w[0] - c2 * w[1] + c3 * w[2] - c4 * w[3] + c5 * w[4] - c6 * w[5] + c7 * w[6]
+            - c8 * w[7]
+            + c9 * w[8]
+            - c10 * w[9]
+            + c11 * w[10]
+            - c12 * w[11]
+            + c13 * w[12]
+            - c14 * w[13]
+    };
+
+    // p(x+14) using N=14 forward recurrence grouped like ex8/ex16
+    let next_right = |w: &[i32; 14]| -> i32 {
+        let c0 = c[0] as i32;
+        let c1 = c[1] as i32;
+        let c2 = c[2] as i32;
+        let c3 = c[3] as i32;
+        let c4 = c[4] as i32;
+        let c5 = c[5] as i32;
+        let c6 = c[6] as i32;
+        let c7 = c[7] as i32;
+        let sp1 = w[1] + w[13];
+        let sp3 = w[3] + w[11];
+        let sp5 = w[5] + w[9];
+        let sn2 = w[2] + w[12];
+        let sn4 = w[4] + w[10];
+        let sn6 = w[6] + w[8];
+        c1 * sp1 + c3 * sp3 + c5 * sp5 + c7 * w[7] - c0 * w[0] - c2 * sn2 - c4 * sn4 - c6 * sn6
+    };
+
+    let mut out: [i32; 13] = [0; 13];
+    // Produce 6 interleaved pairs, then one final left value
+    for i in 0..6 {
+        // left: x -> x-1
+        let l = prev_left(&left_w);
+        out[2 * i] = l;
+        // shift left window right and insert new left at position 0
+        for k in (1..14).rev() {
+            left_w[k] = left_w[k - 1];
+        }
+        left_w[0] = l;
+
+        // right: x+13 -> x+14
+        let r = next_right(&right_w);
+        out[2 * i + 1] = r;
+        // shift right window left and append new right at the end
+        for k in 0..13 {
+            right_w[k] = right_w[k + 1];
+        }
+        right_w[13] = r;
+    }
+    // Final left value (-13)
+    let l_last = prev_left(&left_w);
+    out[12] = l_last;
+
+    out
+}
+
+// Second case: Bz are i128 with roughly 64-bit magnitude (first group), returns i128
+pub fn extend_evals_deg_13_i128(base_evals: &[i128; 14]) -> [i128; 13] {
+    let c = &crate::utils::interpolation::binomial::BINOMIAL_ROW_13;
+
+    let mut left_w: [i128; 14] = [0; 14];
+    let mut right_w: [i128; 14] = [0; 14];
+    for i in 0..14 {
+        left_w[i] = base_evals[i];
+        right_w[i] = base_evals[i];
+    }
+
+    let prev_left = |w: &[i128; 14]| -> i128 {
+        let c1 = c[1] as i128;
+        let c2 = c[2] as i128;
+        let c3 = c[3] as i128;
+        let c4 = c[4] as i128;
+        let c5 = c[5] as i128;
+        let c6 = c[6] as i128;
+        let c7 = c[7] as i128;
+        let c8 = c[8] as i128;
+        let c9 = c[9] as i128;
+        let c10 = c[10] as i128;
+        let c11 = c[11] as i128;
+        let c12 = c[12] as i128;
+        let c13 = c[13] as i128;
+        let c14 = c[14] as i128;
+        c1 * w[0] - c2 * w[1] + c3 * w[2] - c4 * w[3] + c5 * w[4] - c6 * w[5] + c7 * w[6]
+            - c8 * w[7]
+            + c9 * w[8]
+            - c10 * w[9]
+            + c11 * w[10]
+            - c12 * w[11]
+            + c13 * w[12]
+            - c14 * w[13]
+    };
+
+    let next_right = |w: &[i128; 14]| -> i128 {
+        let c0 = c[0] as i128;
+        let c1 = c[1] as i128;
+        let c2 = c[2] as i128;
+        let c3 = c[3] as i128;
+        let c4 = c[4] as i128;
+        let c5 = c[5] as i128;
+        let c6 = c[6] as i128;
+        let c7 = c[7] as i128;
+        let sp1 = w[1] + w[13];
+        let sp3 = w[3] + w[11];
+        let sp5 = w[5] + w[9];
+        let sn2 = w[2] + w[12];
+        let sn4 = w[4] + w[10];
+        let sn6 = w[6] + w[8];
+        c1 * sp1 + c3 * sp3 + c5 * sp5 + c7 * w[7] - c0 * w[0] - c2 * sn2 - c4 * sn4 - c6 * sn6
+    };
+
+    let mut out: [i128; 13] = [0; 13];
+    for i in 0..6 {
+        let l = prev_left(&left_w);
+        out[2 * i] = l;
+        for k in (1..14).rev() {
+            left_w[k] = left_w[k - 1];
+        }
+        left_w[0] = l;
+
+        let r = next_right(&right_w);
+        out[2 * i + 1] = r;
+        for k in 0..13 {
+            right_w[k] = right_w[k + 1];
+        }
+        right_w[13] = r;
+    }
+    let l_last = prev_left(&left_w);
+    out[12] = l_last;
+    out
+}
+
 #[cfg(test)]
 mod tests {
+    use crate::field::JoltField;
     use ark_bn254::Fr;
     use ark_std::{One, Zero};
-    use crate::field::JoltField;
 
     #[test]
     fn barycentric_eval_example_d3() {
         // polynomial: 5 + x + 3x^2 + 9x^3
-        let coeffs = [Fr::from_u64(5), Fr::from_u64(1), Fr::from_u64(3), Fr::from_u64(9)];
+        let coeffs = [
+            Fr::from_u64(5),
+            Fr::from_u64(1),
+            Fr::from_u64(3),
+            Fr::from_u64(9),
+        ];
         let eval_poly = |x: Fr| -> Fr {
             let mut acc = coeffs[0];
             let mut pow = Fr::one();
@@ -504,7 +837,12 @@ mod tests {
             Fr::from_u64(1),
             Fr::from_u64(2),
         ];
-        let ys = [eval_poly(xs[0]), eval_poly(xs[1]), eval_poly(xs[2]), eval_poly(xs[3])];
+        let ys = [
+            eval_poly(xs[0]),
+            eval_poly(xs[1]),
+            eval_poly(xs[2]),
+            eval_poly(xs[3]),
+        ];
 
         // Precompute weights (naively for the test)
         let ws_vec = crate::utils::interpolation::barycentric::compute_weights(&xs);
@@ -513,22 +851,21 @@ mod tests {
         // Query points
         let q = Fr::from_u64(7);
         let eval_expected = eval_poly(q);
-        let eval_got = crate::utils::interpolation::barycentric::eval_safe_const::<Fr, 4>(&q, &xs, &ys, &ws);
+        let eval_got =
+            crate::utils::interpolation::barycentric::eval_safe_const::<Fr, 4>(&q, &xs, &ys, &ws);
         assert_eq!(eval_got, eval_expected);
 
         // x equal to a node returns y_i
-        let eval_node = crate::utils::interpolation::barycentric::eval_safe_const::<Fr, 4>(&xs[2], &xs, &ys, &ws);
+        let eval_node = crate::utils::interpolation::barycentric::eval_safe_const::<Fr, 4>(
+            &xs[2], &xs, &ys, &ws,
+        );
         assert_eq!(eval_node, ys[2]);
     }
 
     #[test]
     fn barycentric_weight_tables_match_compute_weights() {
         // d = 2, nodes [-1,0,1]
-        let xs2 = [
-            -Fr::from_u64(1),
-            Fr::from_u64(0),
-            Fr::from_u64(1),
-        ];
+        let xs2 = [-Fr::from_u64(1), Fr::from_u64(0), Fr::from_u64(1)];
         let ws2_generic = crate::utils::interpolation::barycentric::compute_weights(&xs2);
         let ws2_table = crate::utils::interpolation::barycentric::tables::weights_d2::<Fr>();
         assert_eq!(ws2_generic, ws2_table);
@@ -633,12 +970,12 @@ mod tests {
 
     #[test]
     fn optimized_ex_consecutive_random_inputs_consistency() {
-        use ark_std::test_rng;
-        use rand_core::RngCore;
         use crate::utils::interpolation::{
             ex16_consecutive, ex2_consecutive, ex3_consecutive, ex4_consecutive, ex8_consecutive,
             extrapolate_next_from_consecutive,
         };
+        use ark_std::test_rng;
+        use rand_core::RngCore;
 
         let mut rng = test_rng();
 
@@ -724,7 +1061,11 @@ mod tests {
             let c1 = Fr::from_u64(rng.next_u64());
             let c2 = Fr::from_u64(rng.next_u64());
             let eval = |t: i64| -> Fr {
-                let x = if t >= 0 { Fr::from_u64(t as u64) } else { -Fr::from_u64((-t) as u64) };
+                let x = if t >= 0 {
+                    Fr::from_u64(t as u64)
+                } else {
+                    -Fr::from_u64((-t) as u64)
+                };
                 c0 + c1 * x + c2 * (x * x)
             };
             let base = [eval(0), eval(1), eval(2)];
@@ -739,19 +1080,44 @@ mod tests {
         for _ in 0..100 {
             // Random degree-6 polynomial via Horner
             let mut coeffs = [Fr::from_u64(0); 7];
-            for i in 0..7 { coeffs[i] = Fr::from_u64(rng.next_u64()); }
+            for i in 0..7 {
+                coeffs[i] = Fr::from_u64(rng.next_u64());
+            }
             let eval = |t: i64| -> Fr {
-                let x = if t >= 0 { Fr::from_u64(t as u64) } else { -Fr::from_u64((-t) as u64) };
+                let x = if t >= 0 {
+                    Fr::from_u64(t as u64)
+                } else {
+                    -Fr::from_u64((-t) as u64)
+                };
                 let mut acc = coeffs[6];
-                for k in (0..6).rev() { acc = acc * x + coeffs[k]; }
+                for k in (0..6).rev() {
+                    acc = acc * x + coeffs[k];
+                }
                 acc
             };
-            let base = [eval(0), eval(1), eval(2), eval(3), eval(4), eval(5), eval(6)];
+            let base = [
+                eval(0),
+                eval(1),
+                eval(2),
+                eval(3),
+                eval(4),
+                eval(5),
+                eval(6),
+            ];
             let ext = crate::utils::interpolation::extend_consecutive_symmetric_7::<Fr>(&base);
             // Expect [-1, 7, -2, 8, -3, 9, -4]
-            let exp = [eval(-1), eval(7), eval(-2), eval(8), eval(-3), eval(9), eval(-4)];
-            for i in 0..7 { assert_eq!(ext[i], exp[i]); }
+            let exp = [
+                eval(-1),
+                eval(7),
+                eval(-2),
+                eval(8),
+                eval(-3),
+                eval(9),
+                eval(-4),
+            ];
+            for i in 0..7 {
+                assert_eq!(ext[i], exp[i]);
+            }
         }
     }
 }
-

@@ -555,6 +555,31 @@ pub const fn filter_uniform_r1cs<const N: usize>(
     out
 }
 
+/// Compute the complement of `UNIFORM_R1CS_FIRST_GROUP_NAMES` within `UNIFORM_R1CS`,
+/// preserving the global order. Returns exactly 13 names.
+const fn complement_first_group_names() -> [ConstraintName; 13] {
+    // Initialize with a dummy; will be overwritten for all positions 0..12
+    let mut out: [ConstraintName; 13] = [ConstraintName::LeftInputEqRs1; 13];
+    let mut o = 0;
+    let mut i = 0;
+    while i < NUM_R1CS_CONSTRAINTS {
+        let cand = UNIFORM_R1CS[i].name;
+        if !contains_name(&UNIFORM_R1CS_FIRST_GROUP_NAMES, cand) {
+            out[o] = cand;
+            o += 1;
+            if o == 13 {
+                break;
+            }
+        }
+        i += 1;
+    }
+
+    if o != 13 {
+        panic!("complement_first_group_names: expected 13 names");
+    }
+    out
+}
+
 /// UNIFORM_R1CS_FIRST_GROUP_NAMES: 14 boolean-guarded equality constraints with Cz=Zero
 /// and Bz bounded in i128 under `R1CSCycleInputs` semantics (u64 values and S64 immediates).
 ///
@@ -574,31 +599,17 @@ pub const UNIFORM_R1CS_FIRST_GROUP_NAMES: [ConstraintName; 14] = [
     ConstraintName::RamReadEqRamWriteIfLoad,
     ConstraintName::RamReadEqRdWriteIfLoad,
     ConstraintName::Rs2EqRamWriteIfStore,
-    ConstraintName::AssertLookupOne,
-    ConstraintName::RdWriteEqLookupIfWriteLookupToRd,
-    ConstraintName::RdWriteEqPCPlusConstIfWritePCtoRD,
-    ConstraintName::NextUnexpPCEqLookupIfShouldJump,
-    ConstraintName::NextUnexpPCEqPCPlusImmIfShouldBranch,
-];
-
-/// UNIFORM_R1CS_SECOND_GROUP_NAMES: the remaining 13 constraints (non-equality forms,
-/// u128 lookup-based equalities, and any additional eq-conditional constraints not
-/// included in the first group), order-preserving.
-pub const UNIFORM_R1CS_SECOND_GROUP_NAMES: [ConstraintName; 13] = [
-    ConstraintName::RamAddrEqRs1PlusImmIfLoadStore,
-    ConstraintName::LeftLookupZeroUnlessAddSubMul,
     ConstraintName::RightLookupAdd,
     ConstraintName::RightLookupSub,
-    ConstraintName::ProductDef,
-    ConstraintName::RightLookupEqProductIfMul,
-    ConstraintName::RightLookupEqRightInputOtherwise,
-    ConstraintName::WriteLookupOutputToRDDef,
-    ConstraintName::WritePCtoRDDef,
-    ConstraintName::ShouldJumpDef,
-    ConstraintName::ShouldBranchDef,
-    ConstraintName::NextUnexpPCUpdateOtherwise,
+    ConstraintName::AssertLookupOne,
+    ConstraintName::NextUnexpPCEqLookupIfShouldJump,
     ConstraintName::NextPCEqPCPlusOneIfInline,
 ];
+
+/// UNIFORM_R1CS_SECOND_GROUP_NAMES: computed complement of `UNIFORM_R1CS_FIRST_GROUP_NAMES`
+/// within `UNIFORM_R1CS`, order-preserving.
+pub const UNIFORM_R1CS_SECOND_GROUP_NAMES: [ConstraintName; 13] =
+    complement_first_group_names();
 
 /// 14 boolean-guarded eq constraints with Cz=Zero and i128-bounded Bz semantics.
 pub static UNIFORM_R1CS_FIRST_GROUP: [NamedConstraint; 14] =
@@ -797,7 +808,7 @@ pub fn eval_bz_by_name<F: JoltField>(c: &NamedConstraint, row: &R1CSCycleInputs)
             }
         }
         N::NextUnexpPCEqLookupIfShouldJump => {
-            // Note: B uses u64 bit-pattern difference here (matches accessor variant)
+            // Note: B uses u64 bit-pattern difference here
             // B: NextUnexpandedPC - LookupOutput (i128 arithmetic)
             S160::from_diff_u64(row.next_unexpanded_pc, row.lookup_output)
         }
@@ -861,7 +872,11 @@ pub fn eval_az_first_group(row: &R1CSCycleInputs) -> [bool; 14] {
 /// Evaluate Bz for the first group as i128s in the group order (length 14).
 /// Uses the i128-safe semantics established in `eval_bz_by_name`.
 pub fn eval_bz_first_group(row: &R1CSCycleInputs) -> [i128; 14] {
-    let const_term: i128 = 4 - if row.flags[CircuitFlags::IsCompressed] { 2 } else { 0 };
+    let const_term: i128 = 4 - if row.flags[CircuitFlags::IsCompressed] {
+        2
+    } else {
+        0
+    };
     [
         // LeftInputEqRs1: left - rs1
         row.left_input as i128 - row.rs1_read_value as i128,
@@ -933,12 +948,14 @@ pub fn eval_cz_second_group(row: &R1CSCycleInputs) -> [S160; 13] {
             }
             // product: c = result
             N::ProductDef => S160::from(row.product),
-            N::WriteLookupOutputToRDDef => {
-                S160::from(row.write_lookup_output_to_rd_addr as u64)
-            }
+            N::WriteLookupOutputToRDDef => S160::from(row.write_lookup_output_to_rd_addr as u64),
             N::WritePCtoRDDef => S160::from(row.write_pc_to_rd_addr as u64),
             N::ShouldJumpDef => {
-                if row.should_jump { S160::one() } else { S160::zero() }
+                if row.should_jump {
+                    S160::one()
+                } else {
+                    S160::zero()
+                }
             }
             N::ShouldBranchDef => S160::from(row.should_branch),
             // eq-conditional: Cz is zero by construction
@@ -988,51 +1005,5 @@ mod tests {
         let array_order: Vec<ConstraintName> = UNIFORM_R1CS.iter().map(|nc| nc.name).collect();
         assert_eq!(array_order.len(), NUM_R1CS_CONSTRAINTS);
         assert_eq!(enum_order, array_order);
-    }
-
-    /// Verify that the FIRST_GROUP and SECOND_GROUP filtered tables form a disjoint union
-    /// equal to `UNIFORM_R1CS` (no overlap, no missing, order preserved within each subset).
-    #[test]
-    fn primary_secondary_form_disjoint_union() {
-        // Collect names for faster set operations
-        let primary_names: Vec<ConstraintName> =
-            UNIFORM_R1CS_FIRST_GROUP.iter().map(|nc| nc.name).collect();
-        let secondary_names: Vec<ConstraintName> =
-            UNIFORM_R1CS_SECOND_GROUP.iter().map(|nc| nc.name).collect();
-
-        // Sizes
-        assert_eq!(UNIFORM_R1CS_FIRST_GROUP.len(), 14);
-        assert_eq!(UNIFORM_R1CS_SECOND_GROUP.len(), 13);
-        assert_eq!(UNIFORM_R1CS.len(), 27);
-
-        // Disjointness
-        for n in &primary_names {
-            assert!(secondary_names.iter().all(|m| m != n));
-        }
-        for n in &secondary_names {
-            assert!(primary_names.iter().all(|m| m != n));
-        }
-
-        // Coverage: primary ∪ secondary == all
-        let mut union: Vec<ConstraintName> = primary_names.clone();
-        union.extend(secondary_names.iter().cloned());
-        union.sort_by_key(|n| *n as u32);
-        union.dedup();
-        let mut all: Vec<ConstraintName> = UNIFORM_R1CS.iter().map(|nc| nc.name).collect();
-        all.sort_by_key(|n| *n as u32);
-        all.dedup();
-        assert_eq!(union, all);
-
-        // Also ensure that filtering by the declared NAME arrays yields identical sequences.
-        let primary_from_names = filter_uniform_r1cs(&UNIFORM_R1CS_FIRST_GROUP_NAMES);
-        let secondary_from_names = filter_uniform_r1cs(&UNIFORM_R1CS_SECOND_GROUP_NAMES);
-        assert_eq!(primary_from_names.len(), UNIFORM_R1CS_FIRST_GROUP.len());
-        assert_eq!(secondary_from_names.len(), UNIFORM_R1CS_SECOND_GROUP.len());
-        for (a, b) in primary_from_names.iter().zip(UNIFORM_R1CS_FIRST_GROUP.iter()) {
-            assert_eq!(a.name, b.name);
-        }
-        for (a, b) in secondary_from_names.iter().zip(UNIFORM_R1CS_SECOND_GROUP.iter()) {
-            assert_eq!(a.name, b.name);
-        }
     }
 }

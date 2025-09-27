@@ -445,54 +445,71 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
 
         Ok((e, r))
     }
-}
 
-/// Helper function to encapsulate the common subroutine for sumcheck with eq poly factor:
-/// - Compute the linear factor E_i(X) from the current eq-poly
-/// - Reconstruct the cubic polynomial s_i(X) = E_i(X) * t_i(X) for the i-th round
-/// - Compress the cubic polynomial
-/// - Append the compressed polynomial to the transcript
-/// - Derive the challenge for the next round
-/// - Bind the cubic polynomial to the challenge
-/// - Update the claim as the evaluation of the cubic polynomial at the challenge
-///
-/// Returns the derived challenge
-#[inline]
-pub fn process_eq_sumcheck_round<F: JoltField, ProofTranscript: Transcript>(
-    quadratic_evals: (F, F), // (t_i(0), t_i(infty))
-    eq_poly: &mut GruenSplitEqPolynomial<F>,
-    polys: &mut Vec<CompressedUniPoly<F>>,
-    r: &mut Vec<F>,
-    claim: &mut F,
-    transcript: &mut ProofTranscript,
-) -> F {
-    let scalar_times_w_i = eq_poly.current_scalar * eq_poly.w[eq_poly.current_index - 1];
+    /// Verify this sumcheck proof given that the first variable has higher degree than the rest.
+    /// (which happens during Spartan's outer sumcheck with univariate skip)
+    /// Note: Verification does not execute the final check of sumcheck protocol: g_v(r_v) = oracle_g(r),
+    /// as the oracle is not passed in. Expected that the caller will implement.
+    ///
+    /// Params
+    /// - `claim`: Claimed evaluation
+    /// - `num_rounds`: Number of rounds of sumcheck, or number of variables to bind
+    /// - `first_degree`: The degree of the univariate skip
+    /// - `degree_bound_first`: Maximum allowed degree of the first univariate polynomial
+    /// - `degree_bound_rest`: Maximum allowed degree of the rest of the univariate polynomials
+    /// - `transcript`: Fiat-shamir transcript
+    ///
+    /// Returns (e, r)
+    /// - `e`: Claimed evaluation at random point
+    /// - `r`: Evaluation point
+    pub fn verify_univariate_skip(
+        &self,
+        claim: F,
+        num_rounds: usize,
+        first_degree: usize,
+        degree_bound_first: usize,
+        degree_bound_rest: usize,
+        transcript: &mut ProofTranscript,
+    ) -> Result<(F, Vec<F>), ProofVerifyError> {
+        let mut e = claim;
+        let mut r: Vec<F> = Vec::new();
 
-    let cubic_poly = UniPoly::from_linear_times_quadratic_with_hint(
-        // The coefficients of `eq(w[(n - i)..], r[..i]) * eq(w[n - i - 1], X)`
-        [
-            eq_poly.current_scalar - scalar_times_w_i,
-            scalar_times_w_i + scalar_times_w_i - eq_poly.current_scalar,
-        ],
-        quadratic_evals.0,
-        quadratic_evals.1,
-        *claim,
-    );
+        // verify that there is a univariate polynomial for each round
+        assert_eq!(self.compressed_polys.len(), num_rounds);
 
-    // Compress and add to transcript
-    let compressed_poly = cubic_poly.compress();
-    compressed_poly.append_to_transcript(transcript);
+        // verification for the first round
+        if self.compressed_polys[0].degree() > degree_bound_first {
+            return Err(ProofVerifyError::InvalidInputLength(
+                degree_bound_first,
+                self.compressed_polys[0].degree(),
+            ));
+        }
+        self.compressed_polys[0].append_to_transcript(transcript);
+        let r_0 = transcript.challenge_scalar();
+        r.push(r_0);
+        // Replace with high-degree interpolation
+        e = self.compressed_polys[0].eval_from_hint_with_degree(&e, &r_0, first_degree);
 
-    // Derive challenge
-    let r_i: F = transcript.challenge_scalar();
-    r.push(r_i);
-    polys.push(compressed_poly);
+        for i in 1..self.compressed_polys.len() {
+            // verify degree bound
+            if self.compressed_polys[i].degree() > degree_bound_rest {
+                return Err(ProofVerifyError::InvalidInputLength(
+                    degree_bound_rest,
+                    self.compressed_polys[i].degree(),
+                ));
+            }
 
-    // Evaluate for next round's claim
-    *claim = cubic_poly.evaluate(&r_i);
+            // append the prover's message to the transcript
+            self.compressed_polys[i].append_to_transcript(transcript);
 
-    // Bind eq_poly for next round
-    eq_poly.bind(r_i);
+            //derive the verifier's challenge for the next round
+            let r_i = transcript.challenge_scalar();
+            r.push(r_i);
 
-    r_i
+            // evaluate the claimed degree-ell polynomial at r_i using the hint
+            e = self.compressed_polys[i].eval_from_hint(&e, &r_i);
+        }
+
+        Ok((e, r))
+    }
 }

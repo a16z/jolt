@@ -31,7 +31,11 @@ pub struct GruenSplitEqPolynomial<F> {
 
 impl<F: JoltField> GruenSplitEqPolynomial<F> {
     #[tracing::instrument(skip_all, name = "GruenSplitEqPolynomial::new_with_scaling")]
-    pub fn new_with_scaling(w: &[F], binding_order: BindingOrder, scaling_factor: Option<F>) -> Self {
+    pub fn new_with_scaling(
+        w: &[F],
+        binding_order: BindingOrder,
+        scaling_factor: Option<F>,
+    ) -> Self {
         match binding_order {
             BindingOrder::LowToHigh => {
                 let m = w.len() / 2;

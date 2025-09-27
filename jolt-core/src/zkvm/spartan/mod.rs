@@ -14,15 +14,16 @@ use crate::zkvm::r1cs::inputs::{
 };
 use crate::zkvm::r1cs::key::UniformSpartanKey;
 use crate::zkvm::spartan::inner::InnerSumcheck;
+use crate::zkvm::spartan::outer::{OuterSumcheck, UNIVARIATE_SKIP_DEGREE};
 use crate::zkvm::spartan::pc::PCSumcheck;
 use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 
 use crate::transcripts::Transcript;
 
-use crate::subprotocols::sumcheck::{SumcheckInstance, SumcheckInstanceProof};
+use crate::subprotocols::sumcheck::SumcheckInstance;
 
-pub mod outer;
 pub mod inner;
+pub mod outer;
 pub mod pc;
 
 pub struct SpartanDag<F: JoltField> {
@@ -66,7 +67,7 @@ where
             .challenge_vector(num_rounds_x);
 
         let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) =
-            SumcheckInstanceProof::<F, ProofTranscript>::prove_spartan_outer(
+            OuterSumcheck::<F, ProofTranscript>::prove(
                 &preprocessing.shared,
                 trace,
                 num_rounds_x,
@@ -196,7 +197,16 @@ where
         // Run the main sumcheck verifier:
         let (claim_outer_final, outer_sumcheck_r_original) = {
             let transcript = &mut state_manager.transcript.borrow_mut();
-            match outer_sumcheck_proof.verify(F::zero(), num_rounds_x, 3, transcript) {
+            // The outer sumcheck has to be verified with an altered verifier, which takes
+            // into account the univariate skip and does a high-degree interpolation in the first round
+            match outer_sumcheck_proof.verify_univariate_skip(
+                F::zero(),
+                num_rounds_x,
+                UNIVARIATE_SKIP_DEGREE,
+                2 * UNIVARIATE_SKIP_DEGREE + 1,
+                3,
+                transcript,
+            ) {
                 Ok(result) => result,
                 Err(_) => return Err(anyhow::anyhow!("Outer sumcheck verification failed")),
             }
@@ -209,6 +219,10 @@ where
         let opening_point = OpeningPoint::new(outer_sumcheck_r_reversed.clone());
 
         // Populate the opening points for Az, Bz, Cz claims now that we have outer_sumcheck_r
+        // Note that the inner sumcheck will handle this opening point differently than other sumchecks,
+        // due to univariate skip (first degree is higher)
+        // There is NO other sumcheck instance that requires the high-degree part of the opening point
+        // (since it is confined to the R1CS constraint part, not the cycle part)
         accumulator.borrow_mut().append_virtual(
             VirtualPolynomial::SpartanAz,
             SumcheckId::SpartanOuter,

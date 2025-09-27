@@ -122,12 +122,12 @@ pub mod accum {
 
 pub mod svo_helpers {
     use super::accum::{fmadd_unreduced, UnreducedProduct};
+    use crate::field::JoltField;
     use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
     use crate::poly::unipoly::CompressedUniPoly;
-    use crate::subprotocols::sumcheck::process_eq_sumcheck_round;
     use crate::transcripts::Transcript;
     use ark_ff::biginteger::{I8OrI96, S160};
-    use crate::field::JoltField;
+    use std::ops::{Add, Mul, Sub};
 
     // NEW! Univariate skip based SVO
 
@@ -200,6 +200,10 @@ pub mod svo_helpers {
         }
         res
     }
+
+    // compute_first_group
+
+    // compute_second_group
 }
 
 #[cfg(test)]

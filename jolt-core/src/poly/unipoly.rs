@@ -395,6 +395,25 @@ impl<F: JoltField> CompressedUniPoly<F> {
         running_sum
     }
 
+    // Evaluate the compressed polynomial `s` at a given point `x`, given a hint for the equation
+    // `\sum_{x \in D} s(x) = hint`, where `D` is a given symmetric domain in univariate skip
+    // `D = {-floor(degree/2), ..., 0, ..., ceil(degree/2)}`
+    pub fn eval_from_hint_with_degree(&self, hint: &F, x: &F, sumcheck_degree: usize) -> F {
+        // The only difference is the derivation of the linear term from the hint
+        // This requires an interpolation of a `sumcheck_degree` polynomial
+        let linear_term = F::zero();
+
+        // Once we have recovered the linear term, we have all the coefficients and thus
+        // can evaluate the polynomial at the given point `x`
+        let mut running_point = *x;
+        let mut running_sum = self.coeffs_except_linear_term[0] + *x * linear_term;
+        for i in 1..self.coeffs_except_linear_term.len() {
+            running_point = running_point * x;
+            running_sum += self.coeffs_except_linear_term[i] * running_point;
+        }
+        running_sum
+    }
+
     pub fn degree(&self) -> usize {
         self.coeffs_except_linear_term.len()
     }

@@ -11,8 +11,8 @@ pub mod lookup_bits;
 pub mod math;
 pub mod profiling;
 pub mod small_scalar;
-pub mod univariate_skip;
 pub mod thread;
+pub mod univariate_skip;
 /// Macros that determine the optimal iterator type based on the feature flags.
 ///
 /// For some cases (ex. offloading to GPU), we may not want to use a parallel iterator.

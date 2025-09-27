@@ -3,11 +3,11 @@
 use ark_bn254::Fr;
 use ark_std::rand::{rngs::StdRng, RngCore, SeedableRng};
 use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion};
+use jolt_core::field::JoltField;
+use jolt_core::utils::interpolation::binomial::choose as binom_choose;
 use jolt_core::utils::interpolation::{
     ex16_consecutive, ex4_consecutive, ex8_consecutive, extend_consecutive_symmetric_const,
 };
-use jolt_core::utils::interpolation::binomial::choose as binom_choose;
-use jolt_core::field::JoltField;
 
 fn gen_base<const N: usize>(rng: &mut StdRng) -> [Fr; N] {
     let mut arr = [Fr::from_u64(0); N];
