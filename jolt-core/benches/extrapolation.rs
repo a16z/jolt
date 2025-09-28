@@ -3,11 +3,7 @@
 use ark_bn254::Fr;
 use ark_std::rand::{rngs::StdRng, RngCore, SeedableRng};
 use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion};
-use jolt_core::field::JoltField;
-use jolt_core::utils::interpolation::binomial::choose as binom_choose;
-use jolt_core::utils::interpolation::{
-    ex16_consecutive, ex4_consecutive, ex8_consecutive, extend_consecutive_symmetric_const,
-};
+use jolt_core::poly::lagrange_poly::LagrangePolynomial;
 
 fn gen_base<const N: usize>(rng: &mut StdRng) -> [Fr; N] {
     let mut arr = [Fr::from_u64(0); N];
@@ -56,12 +52,7 @@ fn forward_by_exn_sum<const N: usize>(base: &[Fr; N]) -> Fr {
     let mut win = *base;
     let mut acc = Fr::from_u64(0);
     for _ in 0..N {
-        let next = match N {
-            4 => ex4_consecutive::<Fr>(unsafe { &*(win.as_ptr() as *const [Fr; 4]) }),
-            8 => ex8_consecutive::<Fr>(unsafe { &*(win.as_ptr() as *const [Fr; 8]) }),
-            16 => ex16_consecutive::<Fr>(unsafe { &*(win.as_ptr() as *const [Fr; 16]) }),
-            _ => unreachable!(),
-        };
+        let next = LagrangePolynomial::extrapolate_next(&win);
         acc += next;
         // slide window: drop first, push next
         for i in 0..(N - 1) {
@@ -76,7 +67,7 @@ fn backward_step_exn<const N: usize>(w: &[Fr; N]) -> Fr {
     // Compute p(x-1) from [p(x), ..., p(x+N-1)] using recurrence coefficients
     let mut acc = Fr::from_u64(0);
     for j in 0..N {
-        let c = binom_choose(N, j + 1);
+        let c = LagrangePolynomial::<Fr>::binomial_coeff(N, j + 1);
         let coef = Fr::from_u64(c as u64);
         if ((N + j) & 1) == 1 {
             acc -= w[j] * coef;
@@ -88,7 +79,7 @@ fn backward_step_exn<const N: usize>(w: &[Fr; N]) -> Fr {
 }
 
 fn symmetric_by_diffs_sum<const N: usize>(base: &[Fr; N]) -> Fr {
-    let out = extend_consecutive_symmetric_const::<Fr, N>(base);
+    let out = LagrangePolynomial::extend_consecutive_symmetric(base);
     out.iter().copied().fold(Fr::from_u64(0), |a, b| a + b)
 }
 
@@ -111,12 +102,7 @@ fn symmetric_by_exn_sum<const N: usize>(base: &[Fr; N]) -> Fr {
     let right_cnt = N / 2;
     let mut window_right = *base;
     for _ in 0..right_cnt {
-        let next = match N {
-            4 => ex4_consecutive::<Fr>(unsafe { &*(window_right.as_ptr() as *const [Fr; 4]) }),
-            8 => ex8_consecutive::<Fr>(unsafe { &*(window_right.as_ptr() as *const [Fr; 8]) }),
-            16 => ex16_consecutive::<Fr>(unsafe { &*(window_right.as_ptr() as *const [Fr; 16]) }),
-            _ => unreachable!(),
-        };
+        let next = LagrangePolynomial::extrapolate_next(&window_right);
         acc += next;
         for i in 0..(N - 1) {
             window_right[i] = window_right[i + 1];
@@ -141,7 +127,7 @@ fn bench_extrapolation(c: &mut Criterion) {
                         BatchSize::SmallInput,
                     )
                 });
-                group.bench_function("ex4_sliding", |b| {
+                group.bench_function("ex_sliding", |b| {
                     b.iter_batched(
                         || gen_base::<4>(&mut rng),
                         |base| black_box(forward_by_exn_sum::<4>(black_box(&base))),
@@ -171,7 +157,7 @@ fn bench_extrapolation(c: &mut Criterion) {
                         BatchSize::SmallInput,
                     )
                 });
-                group.bench_function("ex8_sliding", |b| {
+                group.bench_function("ex_sliding", |b| {
                     b.iter_batched(
                         || gen_base::<8>(&mut rng),
                         |base| black_box(forward_by_exn_sum::<8>(black_box(&base))),
@@ -201,7 +187,7 @@ fn bench_extrapolation(c: &mut Criterion) {
                         BatchSize::SmallInput,
                     )
                 });
-                group.bench_function("ex16_sliding", |b| {
+                group.bench_function("ex_sliding", |b| {
                     b.iter_batched(
                         || gen_base::<16>(&mut rng),
                         |base| black_box(forward_by_exn_sum::<16>(black_box(&base))),

@@ -586,7 +586,7 @@ const fn complement_first_group_names() -> [ConstraintName; 13] {
 /// Rationale (documented here rather than in the identifier):
 /// - Cz is always zero (all are eq-conditional constraints)
 /// - Az is a boolean selector (flag-derived or derived boolean)
-/// - Bz arithmetic remains within i128
+/// - Bz is a S160
 ///
 /// Selection policy: the first 14 matching constraints in `UNIFORM_R1CS`, order-preserving.
 pub const UNIFORM_R1CS_FIRST_GROUP_NAMES: [ConstraintName; 14] = [

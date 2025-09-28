@@ -2,6 +2,7 @@ use crate::field::JoltField;
 use std::cmp::Ordering;
 use std::ops::{AddAssign, Index, IndexMut, Mul, MulAssign, Sub};
 
+use super::lagrange_poly::LagrangePolynomial;
 use crate::transcripts::{AppendToTranscript, Transcript};
 use crate::utils::gaussian_elimination::gaussian_elimination;
 use ark_serialize::*;
@@ -395,23 +396,71 @@ impl<F: JoltField> CompressedUniPoly<F> {
         running_sum
     }
 
-    // Evaluate the compressed polynomial `s` at a given point `x`, given a hint for the equation
-    // `\sum_{x \in D} s(x) = hint`, where `D` is a given symmetric domain in univariate skip
-    // `D = {-floor(degree/2), ..., 0, ..., ceil(degree/2)}`
-    pub fn eval_from_hint_with_degree(&self, hint: &F, x: &F, sumcheck_degree: usize) -> F {
-        // The only difference is the derivation of the linear term from the hint
-        // This requires an interpolation of a `sumcheck_degree` polynomial
-        let linear_term = F::zero();
+    /// Evaluate compressed poly on symmetric N-node domain with sum hint, missing linear term.
+    /// Sum hint is for the domain of the first-round univariate skip; we recover a1 from S1.
+    pub fn eval_from_symmetric_domain_sum_hint_linear_missing<const N: usize>(
+        &self,
+        degree: usize,
+        hint_sum: &F,
+        x: &F,
+    ) -> F {
+        // Build power sums S_k for the N-node symmetric base domain up to k=degree
+        // Use const helper for k up to N-1, extend to k> N-1 by direct accumulation
+        let d = N - 1;
+        let base_sums = LagrangePolynomial::<F>::power_sums::<N>();
+        let start: i64 = -((d / 2) as i64);
 
-        // Once we have recovered the linear term, we have all the coefficients and thus
-        // can evaluate the polynomial at the given point `x`
-        let mut running_point = *x;
-        let mut running_sum = self.coeffs_except_linear_term[0] + *x * linear_term;
-        for i in 1..self.coeffs_except_linear_term.len() {
-            running_point = running_point * x;
-            running_sum += self.coeffs_except_linear_term[i] * running_point;
+        // Collect S_k as i128 then convert on use
+        let mut sums_i128: Vec<i128> = Vec::with_capacity(degree + 1);
+        for k in 0..=d { sums_i128.push(base_sums[k]); }
+        if degree > d {
+            for k in (d + 1)..=degree {
+                // compute S_k = sum_{t=start}^{start+d} t^k
+                let mut acc: i128 = 0;
+                let mut i = 0;
+                while i < N {
+                    let t = start + (i as i64);
+                    // pow_i128(t, k)
+                    let mut p: i128 = 1;
+                    let mut e = k;
+                    let tt = t as i128;
+                    while e > 0 {
+                        p = p * tt;
+                        e -= 1;
+                    }
+                    acc += p;
+                    i += 1;
+                }
+                sums_i128.push(acc);
+            }
         }
-        running_sum
+
+        // We store coeffs except linear term: [a0, a2, a3, ..., a_degree]
+        // Recover a1 = (hint_sum - (a0*S0 + sum_{k!=1} a_k*S_k)) / S1
+        // First compute partial using placeholder a1=0, then solve and evaluate.
+
+        // Compute sum_except_a1 = sum_{k!=1} a_k S_k
+        let mut sum_except_a1 = F::zero();
+        // a0
+        sum_except_a1 += self.coeffs_except_linear_term[0] * F::from_i128(sums_i128[0]);
+        // a2..a_degree aligned to indices 2..degree
+        for (idx, coeff) in self.coeffs_except_linear_term[1..].iter().enumerate() {
+            let k = idx + 2;
+            sum_except_a1 += *coeff * F::from_i128(sums_i128[k]);
+        }
+        let s1 = F::from_i128(sums_i128[1]);
+        let a1 = (*hint_sum - sum_except_a1) * s1.inverse().unwrap();
+
+        // Evaluate poly at x using Horner with explicit a1 inserted at index 1
+        let mut acc = self.coeffs_except_linear_term[0]; // a0
+        let mut pow = *x;
+        acc += a1 * pow; // a1 * x
+        // continue from k=2
+        for coeff in self.coeffs_except_linear_term[1..].iter() {
+            pow = pow * x;
+            acc += *coeff * pow;
+        }
+        acc
     }
 
     pub fn degree(&self) -> usize {

@@ -14,7 +14,7 @@ use crate::zkvm::r1cs::inputs::{
 };
 use crate::zkvm::r1cs::key::UniformSpartanKey;
 use crate::zkvm::spartan::inner::InnerSumcheck;
-use crate::zkvm::spartan::outer::{OuterSumcheck, UNIVARIATE_SKIP_DEGREE};
+use crate::zkvm::spartan::outer::{OuterSumcheck, UNIVARIATE_SKIP_DEGREE, UNIVARIATE_SKIP_DOMAIN_SIZE};
 use crate::zkvm::spartan::pc::PCSumcheck;
 use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 
@@ -199,10 +199,9 @@ where
             let transcript = &mut state_manager.transcript.borrow_mut();
             // The outer sumcheck has to be verified with an altered verifier, which takes
             // into account the univariate skip and does a high-degree interpolation in the first round
-            match outer_sumcheck_proof.verify_univariate_skip(
+            match outer_sumcheck_proof.verify_univariate_skip::<UNIVARIATE_SKIP_DOMAIN_SIZE>(
                 F::zero(),
                 num_rounds_x,
-                UNIVARIATE_SKIP_DEGREE,
                 2 * UNIVARIATE_SKIP_DEGREE + 1,
                 3,
                 transcript,

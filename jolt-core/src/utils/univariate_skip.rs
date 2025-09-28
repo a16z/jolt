@@ -4,27 +4,41 @@
 // Accumulation primitives for SVO
 pub mod accum {
     use crate::field::JoltField;
-    use ark_ff::biginteger::{BigInt, I8OrI96, S160, S224};
+    use ark_ff::biginteger::{BigInt, I8OrI96, S160, S192, S256, SignedBigInt};
 
     /// Final unreduced product after multiplying by a 256-bit field element (512-bit unsigned)
     pub type UnreducedProduct = BigInt<8>;
 
-    /// Fused multiply-add into unreduced accumulators.
+    /// Multiply-add helper: adds a 192-bit signed product into the unreduced accumulators.
     #[inline(always)]
-    pub fn fmadd_unreduced<F: JoltField>(
+    pub fn fmadd_prod_192<F: JoltField>(
         pos_acc: &mut UnreducedProduct,
         neg_acc: &mut UnreducedProduct,
         field: &F,
-        product: S224,
+        product: S192,
     ) {
         let field_bigint = field.as_bigint_ref();
         if !product.is_zero() {
-            let mag: BigInt<4> = product.into();
-            let acc = if product.is_positive() {
-                pos_acc
-            } else {
-                neg_acc
-            };
+            let limbs = product.magnitude_limbs(); // [u64;3]
+            let mag = BigInt::<4>([limbs[0], limbs[1], limbs[2], 0u64]);
+            let acc = if product.sign() { pos_acc } else { neg_acc };
+            field_bigint.fmadd_trunc::<4, 8>(&mag, acc);
+        }
+    }
+
+    /// Multiply-add helper: adds a 256-bit signed product into the unreduced accumulators.
+    #[inline(always)]
+    pub fn fmadd_prod_256<F: JoltField>(
+        pos_acc: &mut UnreducedProduct,
+        neg_acc: &mut UnreducedProduct,
+        field: &F,
+        product: S256,
+    ) {
+        let field_bigint = field.as_bigint_ref();
+        if !product.is_zero() {
+            let limbs = product.magnitude_limbs(); // [u64;4]
+            let mag = BigInt::<4>([limbs[0], limbs[1], limbs[2], limbs[3]]);
+            let acc = if product.sign() { pos_acc } else { neg_acc };
             field_bigint.fmadd_trunc::<4, 8>(&mag, acc);
         }
     }
@@ -88,17 +102,46 @@ pub mod accum {
             }
         }
 
-        /// fmadd with an Az×Bz product value (1..=4 limbs)
-        #[inline(always)]
-        pub fn fmadd_prod<F: JoltField>(&mut self, field: &F, product: S224) {
-            fmadd_unreduced::<F>(&mut self.pos, &mut self.neg, field, product)
-        }
-
         /// Reduce accumulated value to a field element (pos - neg)
         #[inline(always)]
         pub fn reduce_to_field<F: JoltField>(&self) -> F {
             F::from_montgomery_reduce_2n(self.pos) - F::from_montgomery_reduce_2n(self.neg)
         }
+    }
+
+    /// Multiply S160 by i32 => S192 (exact, truncated to 192 bits)
+    #[inline]
+    pub fn mul_s160_i32_to_s192(s: S160, c: i32) -> S192 {
+        if c == 0 || s.is_zero() {
+            return S192::zero();
+        }
+        let lhs: SignedBigInt<3> = s.to_signed_bigint_nplus1::<3>();
+        let rhs: SignedBigInt<1> = SignedBigInt::<1>::from_i64(c as i64);
+        lhs.mul_trunc::<1, 3>(&rhs)
+    }
+
+    /// Multiply S160 by i128 => S256 (exact low 256 bits)
+    #[inline]
+    pub fn mul_s160_i128_to_s256(s: S160, a: i128) -> S256 {
+        if a == 0 || s.is_zero() {
+            return S256::zero();
+        }
+        let lhs: SignedBigInt<3> = s.to_signed_bigint_nplus1::<3>();
+        let rhs: SignedBigInt<2> = SignedBigInt::<2>::from_i128(a);
+        lhs.mul_trunc::<2, 4>(&rhs)
+    }
+
+    /// Promote S192 -> S256 by zero-extension of magnitude (preserve sign)
+    #[inline]
+    pub fn promote_s192_to_s256(v: S192) -> S256 {
+        SignedBigInt::<4>::zero_extend_from::<3>(&v)
+    }
+
+    /// Promote S160 -> S256 by going through S192 then zero-extending to 256
+    #[inline]
+    pub fn promote_s160_to_s256(v: S160) -> S256 {
+        let mid: SignedBigInt<3> = v.to_signed_bigint_nplus1::<3>();
+        SignedBigInt::<4>::zero_extend_from::<3>(&mid)
     }
 
     /// Local helper to convert `S160` to field without using `.to_field()`
@@ -121,13 +164,7 @@ pub mod accum {
 }
 
 pub mod svo_helpers {
-    use super::accum::{fmadd_unreduced, UnreducedProduct};
-    use crate::field::JoltField;
-    use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
-    use crate::poly::unipoly::CompressedUniPoly;
-    use crate::transcripts::Transcript;
-    use ark_ff::biginteger::{I8OrI96, S160};
-    use std::ops::{Add, Mul, Sub};
+    // (imports added when wiring pipeline)
 
     // NEW! Univariate skip based SVO
 
@@ -208,13 +245,8 @@ pub mod svo_helpers {
 
 #[cfg(test)]
 mod tests {
-    use super::accum::UnreducedProduct;
-    use crate::{field::JoltField, poly::eq_poly::EqPolynomial};
-    use ark_bn254::Fr;
     use ark_ff::biginteger::{I8OrI96, S160};
-    use ark_ff::UniformRand;
-    use rand::{Rng, SeedableRng};
-    use rand_chacha::ChaCha20Rng;
+    use rand::Rng;
 
     fn random_az_value<R: Rng>(rng: &mut R) -> I8OrI96 {
         match rng.gen_range(0..5) {

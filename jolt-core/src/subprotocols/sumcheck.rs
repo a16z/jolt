@@ -6,7 +6,6 @@ use crate::field::MaybeAllocative;
 use crate::poly::opening_proof::{
     OpeningPoint, ProverOpeningAccumulator, VerifierOpeningAccumulator, BIG_ENDIAN,
 };
-use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
 use crate::transcripts::{AppendToTranscript, Transcript};
 use crate::utils::errors::ProofVerifyError;
@@ -452,9 +451,9 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
     /// as the oracle is not passed in. Expected that the caller will implement.
     ///
     /// Params
+    /// - `const N`: the first degree plus one (e.g. the size of the first evaluation domain)
     /// - `claim`: Claimed evaluation
     /// - `num_rounds`: Number of rounds of sumcheck, or number of variables to bind
-    /// - `first_degree`: The degree of the univariate skip
     /// - `degree_bound_first`: Maximum allowed degree of the first univariate polynomial
     /// - `degree_bound_rest`: Maximum allowed degree of the rest of the univariate polynomials
     /// - `transcript`: Fiat-shamir transcript
@@ -462,11 +461,10 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
     /// Returns (e, r)
     /// - `e`: Claimed evaluation at random point
     /// - `r`: Evaluation point
-    pub fn verify_univariate_skip(
+    pub fn verify_univariate_skip<const N: usize>(
         &self,
         claim: F,
         num_rounds: usize,
-        first_degree: usize,
         degree_bound_first: usize,
         degree_bound_rest: usize,
         transcript: &mut ProofTranscript,
@@ -487,8 +485,9 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
         self.compressed_polys[0].append_to_transcript(transcript);
         let r_0 = transcript.challenge_scalar();
         r.push(r_0);
-        // Replace with high-degree interpolation
-        e = self.compressed_polys[0].eval_from_hint_with_degree(&e, &r_0, first_degree);
+        // Replace with high-degree interpolation on symmetric domain, linear term missing
+        e = self.compressed_polys[0]
+            .eval_from_symmetric_domain_sum_hint_linear_missing::<N>(39, &e, &r_0);
 
         for i in 1..self.compressed_polys.len() {
             // verify degree bound
