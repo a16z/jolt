@@ -61,8 +61,8 @@ pub fn compute_mles_product_sum<F: JoltField>(
         .iter_mut()
         .for_each(|eval| *eval *= correction_factor);
 
-    let eq_eval_at_0 = EqPolynomial::<F>::mle_field_and_challenge(&[F::zero()], &[r0]);
-    let eq_eval_at_1 = EqPolynomial::<F>::mle_field_and_challenge(&[F::one()], &[r0]);
+    let eq_eval_at_0 = EqPolynomial::<F>::mle(&[F::zero()], &[r0]);
+    let eq_eval_at_1 = EqPolynomial::<F>::mle(&[F::one()], &[r0]);
 
     // Obtain the eval at 0 from the claim.
     let eval_at_1 = sum_evals[0];

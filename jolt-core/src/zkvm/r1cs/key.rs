@@ -190,8 +190,9 @@ impl<F: JoltField> UniformSpartanKey<F> {
 
         // Evaluate at the constant position if it exists within the padded space
         let const_eval = if Self::num_vars() < num_vars && with_const {
-            let const_position_bits = index_to_field_bitvector(Self::num_vars() as u128, var_bits);
-            EqPolynomial::mle_challenge_and_field(r, &const_position_bits)
+            let const_position_bits: Vec<F> =
+                index_to_field_bitvector(Self::num_vars() as u128, var_bits);
+            EqPolynomial::mle(r, &const_position_bits)
         } else {
             F::zero()
         };

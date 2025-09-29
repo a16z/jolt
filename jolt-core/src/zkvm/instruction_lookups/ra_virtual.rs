@@ -109,7 +109,7 @@ impl<F: JoltField> RaSumcheck<F> {
         let prover_state = RaProverState {
             ra_i_polys,
             eq_evals,
-            eq_factor: EqPolynomial::mle_field(&[F::zero()], &[r_cycle[0].into_F()]),
+            eq_factor: EqPolynomial::mle(&[F::zero()], &[r_cycle[0].into_F()]),
         };
 
         Self {
@@ -162,10 +162,7 @@ impl<F: JoltField> SumcheckInstance<F> for RaSumcheck<F> {
         let log_sum_n_terms = (self.r_cycle.len() - round - 1) as u32;
 
         let correction_factor = prover_state.eq_factor
-            / EqPolynomial::mle_field_and_challenge(
-                &vec![F::zero(); round + 1],
-                &self.r_cycle[..round + 1],
-            );
+            / EqPolynomial::mle(&vec![F::zero(); round + 1], &self.r_cycle[..round + 1]);
 
         let poly = compute_mles_product_sum(
             ra_i_polys,

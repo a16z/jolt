@@ -9,36 +9,49 @@ const PARALLEL_THRESHOLD: usize = 16;
 pub struct EqPolynomial<F: JoltField>(PhantomData<F>);
 impl<F: JoltField> EqPolynomial<F> {
     /// Computes the MLE evaluation EQ(x, y)
-    pub fn mle(x: &[F::Challenge], y: &[F::Challenge]) -> F {
+    //pub fn mle(x: &[F::Challenge], y: &[F::Challenge]) -> F {
+    //    assert_eq!(x.len(), y.len());
+    //    x.par_iter()
+    //        .zip(y.par_iter())
+    //        .map(|(x_i, y_i)| *x_i * y_i + (F::one() - x_i) * (F::one() - y_i))
+    //        .product()
+    //}
+    //
+    pub fn mle<X, Y>(x: &[X], y: &[Y]) -> F
+    where
+        X: Copy + Send + Sync,
+        Y: Copy + Send + Sync,
+        F: JoltField + std::ops::Sub<X, Output = F> + std::ops::Sub<Y, Output = F>,
+        X: std::ops::Mul<Y, Output = F>,
+    {
         assert_eq!(x.len(), y.len());
         x.par_iter()
             .zip(y.par_iter())
-            .map(|(x_i, y_i)| *x_i * y_i + (F::one() - x_i) * (F::one() - y_i))
+            .map(|(x_i, y_i)| *x_i * *y_i + (F::one() - *x_i) * (F::one() - *y_i))
             .product()
     }
-
-    pub fn mle_field(x: &[F], y: &[F]) -> F {
-        assert_eq!(x.len(), y.len());
-        x.par_iter()
-            .zip(y.par_iter())
-            .map(|(x_i, y_i)| *x_i * y_i + (F::one() - x_i) * (F::one() - y_i))
-            .product()
-    }
-    pub fn mle_challenge_and_field(x: &[F::Challenge], y: &[F]) -> F {
-        assert_eq!(x.len(), y.len());
-        x.par_iter()
-            .zip(y.par_iter())
-            .map(|(x_i, y_i)| *x_i * y_i + (F::one() - x_i) * (F::one() - y_i))
-            .product()
-    }
-
-    pub fn mle_field_and_challenge(x: &[F], y: &[F::Challenge]) -> F {
-        assert_eq!(x.len(), y.len());
-        x.par_iter()
-            .zip(y.par_iter())
-            .map(|(x_i, y_i)| *x_i * y_i + (F::one() - x_i) * (F::one() - y_i))
-            .product()
-    }
+    //pub fn mle_field(x: &[F], y: &[F]) -> F {
+    //    assert_eq!(x.len(), y.len());
+    //    x.par_iter()
+    //        .zip(y.par_iter())
+    //        .map(|(x_i, y_i)| *x_i * y_i + (F::one() - x_i) * (F::one() - y_i))
+    //        .product()
+    //}
+    //pub fn mle_challenge_and_field(x: &[F::Challenge], y: &[F]) -> F {
+    //    assert_eq!(x.len(), y.len());
+    //    x.par_iter()
+    //        .zip(y.par_iter())
+    //        .map(|(x_i, y_i)| *x_i * y_i + (F::one() - x_i) * (F::one() - y_i))
+    //        .product()
+    //}
+    //
+    //pub fn mle_field_and_challenge(x: &[F], y: &[F::Challenge]) -> F {
+    //    assert_eq!(x.len(), y.len());
+    //    x.par_iter()
+    //        .zip(y.par_iter())
+    //        .map(|(x_i, y_i)| *x_i * y_i + (F::one() - x_i) * (F::one() - y_i))
+    //        .product()
+    //}
 
     /// Computes the MLE evaluation EQ(x, y)
     pub fn mle_endian<const E1: Endianness, const E2: Endianness>(
