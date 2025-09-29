@@ -36,22 +36,3 @@ pub fn unsafe_allocate_zero_vec<F: JoltField + Sized>(size: usize) -> Vec<F> {
     }
     result
 }
-
-#[tracing::instrument(skip_all)]
-pub fn unsafe_zero_slice<F: JoltField + Sized>(slice: &mut [F]) {
-    #[cfg(test)]
-    {
-        // Check for safety of 0 allocation
-        unsafe {
-            let value = &F::zero();
-            let ptr = value as *const F as *const u8;
-            let bytes = std::slice::from_raw_parts(ptr, std::mem::size_of::<F>());
-            assert!(bytes.iter().all(|&byte| byte == 0));
-        }
-    }
-
-    // Zero out existing slice memory
-    unsafe {
-        std::ptr::write_bytes(slice.as_mut_ptr(), 0, slice.len());
-    }
-}

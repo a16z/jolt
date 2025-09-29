@@ -12,7 +12,7 @@ use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::multilinear_polynomial::{BindingOrder, PolynomialBinding, PolynomialEvaluation};
 use crate::utils::lookup_bits::LookupBits;
 use crate::utils::math::Math;
-use crate::utils::thread::{unsafe_allocate_zero_vec, unsafe_zero_slice};
+use crate::utils::thread::unsafe_allocate_zero_vec;
 
 #[repr(u8)]
 #[derive(Clone, Copy, EnumIterMacro, EnumCountMacro)]
@@ -238,14 +238,6 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
             .collect::<Vec<_>>()
             .try_into()
             .unwrap()
-    }
-
-    pub fn reset_Q(&mut self) {
-        self.Q.iter_mut().for_each(|poly| {
-            poly.len = self.chunk_len.pow2();
-            poly.num_vars = self.chunk_len;
-            unsafe_zero_slice(&mut poly.Z);
-        });
     }
 
     #[tracing::instrument(skip_all, name = "PrefixSuffix::init_P")]
