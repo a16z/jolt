@@ -250,6 +250,9 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
     }
 
     #[tracing::instrument(skip_all, name = "PrefixSuffix::init_P")]
+    /// P array is defined as P[x] = prefix(x)
+    /// Read more about prefix-suffix argument in Appendix A of the paper
+    /// https://eprint.iacr.org/2025/611.pdf
     pub fn init_P(&mut self, prefix_registry: &mut PrefixRegistry<F>) {
         self.P = self
             .poly
@@ -257,6 +260,9 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
     }
 
     #[tracing::instrument(skip_all, name = "PrefixSuffix::init_Q")]
+    /// Q array is defined as Q[x] = \sum_{y \in {0, 1}^m} u(x || y) * suffix(y)
+    /// Read more about prefix-suffix argument in Appendix A of the paper
+    /// https://eprint.iacr.org/2025/611.pdf
     pub fn init_Q(&mut self, u_evals: &[F], indices: &[(usize, LookupBits)]) {
         let poly_len = self.chunk_len.pow2();
         let suffix_len = self.suffix_len();
@@ -310,6 +316,9 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
 
     /// Initialize Q for two PrefixSuffixDecomposition instances in a single pass over indices
     #[tracing::instrument(skip_all)]
+    /// Q array is defined as Q[x] = \sum_{y \in {0, 1}^m} u(x || y) * suffix(y)
+    /// Read more about prefix-suffix argument in Appendix A of the paper
+    /// https://eprint.iacr.org/2025/611.pdf
     pub fn init_Q_dual(
         left: &mut PrefixSuffixDecomposition<F, ORDER>,
         right: &mut PrefixSuffixDecomposition<F, ORDER>,
