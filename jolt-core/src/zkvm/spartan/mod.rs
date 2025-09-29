@@ -9,14 +9,13 @@ use crate::poly::opening_proof::{OpeningPoint, SumcheckId};
 use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::zkvm::dag::stage::SumcheckStages;
 use crate::zkvm::dag::state_manager::{ProofData, ProofKeys, StateManager};
+use crate::zkvm::r1cs::constraints::{UNIVARIATE_SKIP_DEGREE, UNIVARIATE_SKIP_DOMAIN_SIZE};
 use crate::zkvm::r1cs::inputs::{
     compute_claimed_witness_evals, ALL_R1CS_INPUTS, COMMITTED_R1CS_INPUTS,
 };
 use crate::zkvm::r1cs::key::UniformSpartanKey;
 use crate::zkvm::spartan::inner::InnerSumcheck;
-use crate::zkvm::spartan::outer::{
-    OuterSumcheck, UNIVARIATE_SKIP_DEGREE, UNIVARIATE_SKIP_DOMAIN_SIZE,
-};
+use crate::zkvm::spartan::outer::OuterSumcheck;
 use crate::zkvm::spartan::pc::PCSumcheck;
 use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 

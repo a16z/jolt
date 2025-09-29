@@ -274,8 +274,26 @@ macro_rules! r1cs_prod_named {
     }};
 }
 
-/// Number of uniform R1CS constraints
+// Constants to be used in Spartan
+
+/// Number of R1CS constraints
 pub const NUM_R1CS_CONSTRAINTS: usize = 27;
+
+/// Degree of univariate skip, defined to be `(NUM_R1CS_CONSTRAINTS - 1) / 2`
+pub const UNIVARIATE_SKIP_DEGREE: usize = (NUM_R1CS_CONSTRAINTS - 1) / 2;
+
+/// Domain size of univariate skip, defined to be `UNIVARIATE_SKIP_DEGREE + 1`.
+/// Recall that this domain will be symmetric around 0, i.e. `[-floor(D/2), ..., 0, ..., ceil(D/2)]`
+pub const UNIVARIATE_SKIP_DOMAIN_SIZE: usize = UNIVARIATE_SKIP_DEGREE + 1;
+
+/// Number of remaining R1CS constraints in the second group, defined to be `NUM_R1CS_CONSTRAINTS - UNIVARIATE_SKIP_DOMAIN_SIZE`.
+/// This is the same as `UNIVARIATE_SKIP_DOMAIN_SIZE` if `NUM_R1CS_CONSTRAINTS` is even, otherwise it is `UNIVARIATE_SKIP_DOMAIN_SIZE - 1`.
+pub const NUM_REMAINING_R1CS_CONSTRAINTS: usize =
+    NUM_R1CS_CONSTRAINTS - UNIVARIATE_SKIP_DOMAIN_SIZE;
+
+/// Extended domain size of univariate skip, defined to be `2 * UNIVARIATE_SKIP_DEGREE + 1`.
+/// Recall that this domain will be symmetric around 0, i.e. `[-D, ..., 0, ..., D]`
+pub const UNIVARIATE_SKIP_EXTENDED_DOMAIN_SIZE: usize = 2 * UNIVARIATE_SKIP_DEGREE + 1;
 
 /// Static table of all 27 R1CS uniform constraints.
 pub static UNIFORM_R1CS: [NamedConstraint; NUM_R1CS_CONSTRAINTS] = [
@@ -589,7 +607,7 @@ const fn complement_first_group_names() -> [ConstraintName; 13] {
 /// - Bz is a S160
 ///
 /// Selection policy: the first 14 matching constraints in `UNIFORM_R1CS`, order-preserving.
-pub const UNIFORM_R1CS_FIRST_GROUP_NAMES: [ConstraintName; 14] = [
+pub const UNIFORM_R1CS_FIRST_GROUP_NAMES: [ConstraintName; UNIVARIATE_SKIP_DOMAIN_SIZE] = [
     ConstraintName::LeftInputEqRs1,
     ConstraintName::LeftInputEqPC,
     ConstraintName::LeftInputZeroOtherwise,
@@ -608,14 +626,15 @@ pub const UNIFORM_R1CS_FIRST_GROUP_NAMES: [ConstraintName; 14] = [
 
 /// UNIFORM_R1CS_SECOND_GROUP_NAMES: computed complement of `UNIFORM_R1CS_FIRST_GROUP_NAMES`
 /// within `UNIFORM_R1CS`, order-preserving.
-pub const UNIFORM_R1CS_SECOND_GROUP_NAMES: [ConstraintName; 13] = complement_first_group_names();
+pub const UNIFORM_R1CS_SECOND_GROUP_NAMES: [ConstraintName; NUM_REMAINING_R1CS_CONSTRAINTS] =
+    complement_first_group_names();
 
 /// 14 boolean-guarded eq constraints with Cz=Zero and i128-bounded Bz semantics.
-pub static UNIFORM_R1CS_FIRST_GROUP: [NamedConstraint; 14] =
+pub static UNIFORM_R1CS_FIRST_GROUP: [NamedConstraint; UNIVARIATE_SKIP_DOMAIN_SIZE] =
     filter_uniform_r1cs(&UNIFORM_R1CS_FIRST_GROUP_NAMES);
 
 /// Remaining 13 constraints (complement of `UNIFORM_R1CS_FIRST_GROUP` within `UNIFORM_R1CS`).
-pub static UNIFORM_R1CS_SECOND_GROUP: [NamedConstraint; 13] =
+pub static UNIFORM_R1CS_SECOND_GROUP: [NamedConstraint; NUM_REMAINING_R1CS_CONSTRAINTS] =
     filter_uniform_r1cs(&UNIFORM_R1CS_SECOND_GROUP_NAMES);
 
 /// Evaluate Az by name using a fully materialized R1CS cycle inputs

@@ -14,7 +14,7 @@ impl<F: JoltField> LagrangePolynomial<F> {
     /// Returns: `p(r)` using Lagrange interpolation.
     #[inline]
     pub fn evaluate<const N: usize>(values: &[F; N], r: &F) -> F {
-        let basis = Self::basis_values::<N>(r);
+        let basis = Self::evals::<N>(r);
         values.iter().zip(basis.iter()).map(|(v, b)| *v * b).sum()
     }
 
@@ -24,9 +24,9 @@ impl<F: JoltField> LagrangePolynomial<F> {
     ///
     /// **Constraint**: N must be ≤ 2^30 to avoid i64 overflow in symmetric domain calculations.
     #[inline]
-    pub fn basis_values<const N: usize>(r: &F) -> [F; N] {
+    pub fn evals<const N: usize>(r: &F) -> [F; N] {
         const MAX_N: usize = 1 << 32; // 2^32, ensures (N-1)/2 fits in i64
-        debug_assert!(N <= MAX_N, "N={} exceeds maximum safe value {}", N, MAX_N);
+        debug_assert!(N <= MAX_N, "N={N} exceeds maximum safe value {MAX_N}");
         debug_assert!(N > 0, "N must be positive");
         let d = N - 1;
         let start: i64 = -((d / 2) as i64);
@@ -51,8 +51,7 @@ impl<F: JoltField> LagrangePolynomial<F> {
             j += 1;
         }
 
-        // Compute w_i/(r - x_i) up to a common factor using prefix/suffix for denominator products
-        // and reuse one inversion for the product
+        // Compute 1/(r - x_i) for all i using prefix/suffix products with a single inversion
         let mut dists = [F::zero(); N];
         i = 0;
         while i < N {
@@ -77,21 +76,48 @@ impl<F: JoltField> LagrangePolynomial<F> {
         }
         let inv_prod = p[N].inverse().unwrap();
 
-        // Compute barycentric weights for symmetric grid via naive O(N^2); N<=27, acceptable.
-        let mut ws = [F::zero(); N];
-        let mut a = 0usize;
-        while a < N {
-            let mut denom = F::one();
-            let xi = xs[a];
-            let mut b = 0usize;
-            while b < N {
-                if b != a {
-                    denom *= xi - xs[b];
-                }
-                b += 1;
+        // Compute barycentric weights w_i = 1 / prod_{j!=i} (x_i - x_j) in O(N).
+        // For consecutive-integer nodes (unit spacing),
+        //   prod_{j!=i} (x_i - x_j) = i! * (-1)^{N-1-i} * (N-1-i)!
+        // which is independent of the shift `start`.
+        let mut fact = [F::one(); N];
+        let mut k: usize = 1;
+        while k < N {
+            fact[k] = fact[k - 1].mul_u64(k as u64);
+            k += 1;
+        }
+        let mut denoms = [F::zero(); N];
+        i = 0;
+        while i < N {
+            let mut denom = fact[i] * fact[N - 1 - i];
+            if ((N - 1 - i) & 1) == 1 {
+                denom = -denom;
             }
-            ws[a] = denom.inverse().unwrap();
-            a += 1;
+            denoms[i] = denom;
+            i += 1;
+        }
+        // Invert all denominators with one inversion via prefix/suffix products
+        let mut pref: Vec<F> = Vec::with_capacity(N + 1);
+        pref.push(F::one());
+        i = 0;
+        while i < N {
+            let next = pref[i] * denoms[i];
+            pref.push(next);
+            i += 1;
+        }
+        let mut suff: Vec<F> = vec![F::one(); N + 1];
+        let mut idx: isize = (N as isize) - 1;
+        while idx >= 0 {
+            let ui = (idx + 1) as usize;
+            suff[idx as usize] = suff[ui] * denoms[idx as usize];
+            idx -= 1;
+        }
+        let inv_total = pref[N].inverse().unwrap();
+        let mut ws = [F::zero(); N];
+        i = 0;
+        while i < N {
+            ws[i] = pref[i] * suff[i + 1] * inv_total; // = 1 / denoms[i]
+            i += 1;
         }
 
         let mut num = [F::zero(); N];
@@ -117,7 +143,7 @@ impl<F: JoltField> LagrangePolynomial<F> {
     /// Compute evaluations of the interpolated polynomial at multiple points.
     /// Input: `values` on symmetric grid, `points` to evaluate at.
     /// Returns: `[p(points[0]), p(points[1]), ...]`.
-    pub fn evals<const N: usize>(values: &[F; N], points: &[F]) -> Vec<F> {
+    pub fn evaluate_many<const N: usize>(values: &[F; N], points: &[F]) -> Vec<F> {
         if points.is_empty() {
             return Vec::new();
         }
@@ -142,7 +168,7 @@ impl<F: JoltField> LagrangePolynomial<F> {
             points
                 .iter()
                 .map(|r| {
-                    let basis = Self::basis_values::<N>(r);
+                    let basis = Self::evals::<N>(r);
                     values.iter().zip(basis.iter()).map(|(v, b)| *v * b).sum()
                 })
                 .collect()
@@ -157,7 +183,7 @@ impl<F: JoltField> LagrangePolynomial<F> {
     #[inline]
     pub fn interpolate_coeffs<const N: usize>(values: &[F; N]) -> [F; N] {
         const MAX_N: usize = 1 << 32; // 2^32, ensures (N-1)/2 fits in i64
-        debug_assert!(N <= MAX_N, "N={} exceeds maximum safe value {}", N, MAX_N);
+        debug_assert!(N <= MAX_N, "N={MAX_N} exceeds maximum safe value {MAX_N}");
         debug_assert!(N > 0, "N must be positive");
         let d = N - 1;
         let start: i64 = -((d / 2) as i64);
@@ -284,8 +310,8 @@ impl LagrangeHelper {
             let mut den: i128 = 1;
             let mut j: usize = 0;
             while j < k {
-                num = num * (tt - (j as i128));
-                den = den * ((j as i128) + 1);
+                num *= tt - (j as i128);
+                den *= (j as i128) + 1;
                 j += 1;
             }
             num / den
@@ -296,8 +322,8 @@ impl LagrangeHelper {
             let mut den: i128 = 1;
             let mut j: usize = 0;
             while j < k {
-                num = num * (tt - (j as i128));
-                den = den * ((j as i128) + 1);
+                num *= tt - (j as i128);
+                den *= (j as i128) + 1;
                 j += 1;
             }
             sign * (num / den)
@@ -353,11 +379,10 @@ impl LagrangeHelper {
     #[inline]
     pub fn extrapolate_next<F: JoltField>(prev: &[F]) -> F {
         let n = prev.len();
-        debug_assert!(n >= 1 && n <= 16);
         let mut acc = F::zero();
         for i in 0..n {
             let c = Self::binomial_coeff(n, i);
-            let coef = F::from_u64(c as u64);
+            let coef = F::from_u64(c);
             let term = prev[i] * coef;
             if ((n - 1 - i) & 1) == 1 {
                 acc -= term;
@@ -374,7 +399,7 @@ impl LagrangeHelper {
         let mut acc = F::zero();
         for j in 0..N {
             let c = Self::binomial_coeff(N, j + 1);
-            let coef = F::from_u64(c as u64);
+            let coef = F::from_u64(c);
             let term = window[j] * coef;
             if (j & 1) == 1 {
                 acc -= term;
@@ -391,7 +416,7 @@ impl LagrangeHelper {
         debug_assert!(N >= 1 && (N % 2 == 1));
 
         // Build forward-difference diagonal at left edge (i = 0): diffs[k] = Δ^k f(0), k=1..N-1
-        let mut work = base.clone();
+        let mut work = *base;
         let mut diffs = [F::zero(); N];
         for k in 1..N {
             for i in 0..(N - k) {
@@ -401,7 +426,7 @@ impl LagrangeHelper {
         }
 
         // Left-side extension: step N_left = (N+1)/2 times backwards
-        let left_cnt = (N + 1) / 2;
+        let left_cnt = N.div_ceil(2);
         let mut out = [F::zero(); N];
         let mut left_d = diffs;
         let mut left_anchor = base[0];
@@ -463,7 +488,7 @@ impl LagrangeHelper {
             let mut k: usize = 1;
             while k <= d {
                 sums[k] += pow;
-                pow = pow * t;
+                pow *= t;
                 k += 1;
             }
             j += 1;

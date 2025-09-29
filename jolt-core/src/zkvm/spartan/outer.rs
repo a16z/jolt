@@ -5,7 +5,7 @@ use crate::poly::multilinear_polynomial::BindingOrder;
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
 use crate::transcripts::{AppendToTranscript, Transcript};
-use crate::utils::univariate_skip::univariate_skip::{
+use crate::utils::univariate_skip::{
     compute_az_r_group0, compute_az_r_group1, compute_bz_r_group0, compute_bz_r_group1,
     compute_cz_r_group1,
 };
@@ -24,14 +24,14 @@ use ark_serialize::*;
 use std::marker::PhantomData;
 use tracer::instruction::Cycle;
 
-use crate::poly::eq_poly::EqPolynomial;
 use crate::{
     utils::math::Math,
     utils::univariate_skip::accum::s160_to_field,
     zkvm::r1cs::{
         constraints::{
             eval_az_first_group, eval_az_second_group, eval_bz_first_group, eval_bz_second_group,
-            eval_cz_second_group, UNIFORM_R1CS,
+            eval_cz_second_group, UNIFORM_R1CS, UNIVARIATE_SKIP_DEGREE,
+            UNIVARIATE_SKIP_DOMAIN_SIZE,
         },
         inputs::R1CSCycleInputs,
     },
@@ -39,10 +39,6 @@ use crate::{
 use allocative::Allocative;
 use ark_ff::biginteger::S160;
 use rayon::prelude::*;
-
-pub const UNIVARIATE_SKIP_DEGREE: usize = (UNIFORM_R1CS.len() - 1) / 2;
-pub const UNIVARIATE_SKIP_DOMAIN_SIZE: usize = UNIVARIATE_SKIP_DEGREE + 1;
-pub const UNIVARIATE_SKIP_EXTENDED_DOMAIN_SIZE: usize = 2 * UNIVARIATE_SKIP_DEGREE + 1;
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
 /// The proof format for Spartan's outer sumcheck.
@@ -145,7 +141,7 @@ impl<T> From<(usize, T)> for SparseCoefficient<T> {
     }
 }
 
-#[derive(Clone, Debug, Allocative)]
+#[derive(Clone, Debug, Allocative, Default)]
 pub struct SpartanInterleavedPoly<F: JoltField> {
     /// The bound coefficients for the Az, Bz, Cz polynomials.
     /// Will be populated in the streaming round (after SVO rounds)
@@ -198,7 +194,6 @@ impl<F: JoltField, ProofTranscript: Transcript> OuterSumcheck<F, ProofTranscript
         transcript: &mut ProofTranscript,
     ) -> (OuterSumcheckProof<F, ProofTranscript>, Vec<F>, [F; 3]) {
         let mut r = Vec::new();
-        let mut polys = Vec::new();
 
         let mut outer_sumcheck = Self::initialize(tau);
 
@@ -211,6 +206,16 @@ impl<F: JoltField, ProofTranscript: Transcript> OuterSumcheck<F, ProofTranscript
             &extended_evals,
             transcript,
             &mut r,
+        );
+
+        let mut polys: Vec<CompressedUniPoly<F>> = Vec::new();
+
+        outer_sumcheck.streaming_sumcheck_round(
+            preprocessing,
+            trace,
+            transcript,
+            &mut r,
+            &mut polys,
         );
 
         for _ in 2..num_rounds {
@@ -408,7 +413,7 @@ impl<F: JoltField, ProofTranscript: Transcript> OuterSumcheck<F, ProofTranscript
 
         // Build lagrange_poly(Z) coefficients of degree 13 from basis values at tau_high over base window [-6..7]
         let lagrange_poly_values =
-            LagrangePolynomial::basis_values::<UNIVARIATE_SKIP_DOMAIN_SIZE>(&self.tau_high);
+            LagrangePolynomial::evals::<UNIVARIATE_SKIP_DOMAIN_SIZE>(&self.tau_high);
         let lagrange_poly_coeffs = LagrangePolynomial::interpolate_coeffs::<
             UNIVARIATE_SKIP_DOMAIN_SIZE,
         >(&lagrange_poly_values);
@@ -468,9 +473,9 @@ impl<F: JoltField, ProofTranscript: Transcript> OuterSumcheck<F, ProofTranscript
         r_challenge: &mut Vec<F>, // Only one challenge right now
         round_polys: &mut Vec<CompressedUniPoly<F>>,
     ) {
-        // TODO: need to put lagrange polys of degree 13 here
+        // Lagrange basis over the univariate-skip domain (size 14)
         let lagrange_evals_r =
-            EqPolynomial::evals_with_scaling(&r_challenge, Some(F::MONTGOMERY_R_SQUARE));
+            LagrangePolynomial::evals::<UNIVARIATE_SKIP_DOMAIN_SIZE>(&r_challenge[0]);
 
         let eq_poly = &mut self.split_eq_poly;
 
@@ -541,12 +546,12 @@ impl<F: JoltField, ProofTranscript: Transcript> OuterSumcheck<F, ProofTranscript
                         // Then compute az_r * bz_r - cz_r, multiply by e_in (w/ delayed reduction)
 
                         // reduce to field values at y=r for both x_next
-                        let az0 = compute_az_r_group0(&row_inputs, &lagrange_evals_r);
-                        let bz0 = compute_bz_r_group0(&row_inputs, &lagrange_evals_r);
+                        let az0 = compute_az_r_group0(&row_inputs, &lagrange_evals_r[..]);
+                        let bz0 = compute_bz_r_group0(&row_inputs, &lagrange_evals_r[..]);
                         // cz0 is always zero for first group
-                        let az1 = compute_az_r_group1(&row_inputs, &lagrange_evals_r);
-                        let bz1 = compute_bz_r_group1(&row_inputs, &lagrange_evals_r);
-                        let cz1 = compute_cz_r_group1(&row_inputs, &lagrange_evals_r);
+                        let az1 = compute_az_r_group1(&row_inputs, &lagrange_evals_r[..]);
+                        let bz1 = compute_bz_r_group1(&row_inputs, &lagrange_evals_r[..]);
+                        let cz1 = compute_cz_r_group1(&row_inputs, &lagrange_evals_r[..]);
 
                         // sumcheck contributions
                         let p0 = az0 * bz0;
