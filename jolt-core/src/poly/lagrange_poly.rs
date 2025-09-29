@@ -444,17 +444,18 @@ impl LagrangeHelper {
         out
     }
 
-    /// N is the number of nodes, degree D = N-1. Returns [S_0, S_1, ..., S_D].
+    /// N is the number of nodes, degree D = N-1. Returns [S_0, S_1, ..., S_D] as i64.
     /// S_k = sum_{t=start..start+D} t^k, where start = -floor(D/2).
+    /// For N <= 16 and k <= 15, values safely fit in i64.
     #[inline]
-    pub const fn power_sums<const N: usize>() -> [i128; N] {
+    pub const fn power_sums<const N: usize>() -> [i64; N] {
+        debug_assert!(N <= 16, "N exceeds maximum safe value 16");
         let d = N - 1;
         let start: i64 = -((d / 2) as i64);
-        let mut sums = [0i128; N];
+        let mut sums = [0i64; N];
         let mut j: usize = 0;
         while j < N {
-            let t_i64 = start + (j as i64);
-            let t = t_i64 as i128;
+            let t = start + (j as i64);
             // k = 0
             sums[0] += 1;
             // k >= 1 up to D

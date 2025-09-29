@@ -284,43 +284,32 @@ impl<F: JoltField> UniPoly<F> {
         Self::from_coeff(coeffs.to_vec())
     }
 
-    /// Evaluate on symmetric N-node domain and check domain-sum constraint.
-    /// Returns (sum_is_zero, p(x)). Domain is consecutive integers of size N centered at 0.
+    /// Evaluate on a symmetric integer domain of size N and verify a domain-sum constraint.
+    ///
+    /// Contract/assumptions:
+    /// - Domain nodes are consecutive integers centered at 0: t_i = start + i where
+    ///   start = -floor((N-1)/2) and i ∈ {0..N-1}.
+    /// - N ≤ 16 (univariate-skip setting). For k ≤ N-1, the power sums S_k = Σ_i t_i^k fit in i64,
+    ///   and are computed via `LagrangeHelper::power_sums::<N>()`.
+    /// - `self` is the full, uncompressed univariate polynomial s(X) with monomial coefficients
+    ///   of degree exactly N-1 (asserted in debug builds).
+    /// - `claim` is the expected field value of Σ_{t in domain} s(t). In the first outer round of
+    ///   Spartan, this `claim` is zero.
+    ///
+    /// Behavior:
+    /// - Computes Σ_{t in domain} s(t) = Σ_j a_j · S_j using i64 power sums and checks equality to `claim`.
+    /// - Independently evaluates and returns s(x) using Horner.
+    ///
+    /// Returns:
+    /// - (ok, value) where `ok` is true iff the domain-sum equals `claim`, and `value` = s(x).
     pub fn check_sum_evals_and_set_new_claim<const N: usize>(&self, claim: &F, x: &F) -> (bool, F) {
-        let degree = self.degree();
-        let d = N - 1;
-        let base_sums = LagrangeHelper::power_sums::<N>();
-        let start: i64 = -((d / 2) as i64);
-
-        // Collect S_k up to degree
-        let mut sums_i128: Vec<i128> = Vec::with_capacity(degree + 1);
-        for k in 0..=d {
-            sums_i128.push(base_sums[k]);
-        }
-        if degree > d {
-            for k in (d + 1)..=degree {
-                let mut acc: i128 = 0;
-                let mut i = 0;
-                while i < N {
-                    let t = start + (i as i64);
-                    let mut p: i128 = 1;
-                    let mut e = k;
-                    let tt = t as i128;
-                    while e > 0 {
-                        p = p * tt;
-                        e -= 1;
-                    }
-                    acc += p;
-                    i += 1;
-                }
-                sums_i128.push(acc);
-            }
-        }
+        debug_assert_eq!(self.degree(), N - 1);
+        let power_sums = LagrangeHelper::power_sums::<N>();
 
         // Check domain sum Σ_j a_j * S_j == claim
         let mut sum = F::zero();
         for (j, coeff) in self.coeffs.iter().enumerate() {
-            sum += coeff.mul_i128(sums_i128[j]);
+            sum += coeff.mul_i64(power_sums[j]);
         }
         let ok = sum == *claim;
 
