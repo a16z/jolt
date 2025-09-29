@@ -910,9 +910,9 @@ pub fn eval_az_first_group(row: &R1CSCycleInputs) -> [bool; 14] {
         row.flags[CircuitFlags::Load],
         row.flags[CircuitFlags::Load],
         row.flags[CircuitFlags::Store],
+        row.flags[CircuitFlags::AddOperands],
+        row.flags[CircuitFlags::SubtractOperands],
         row.flags[CircuitFlags::Assert],
-        row.write_lookup_output_to_rd_addr != 0,
-        row.write_pc_to_rd_addr != 0,
         row.should_jump,
         row.flags[CircuitFlags::InlineSequenceInstruction],
     ];

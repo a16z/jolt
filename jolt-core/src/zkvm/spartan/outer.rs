@@ -414,7 +414,7 @@ impl<F: JoltField, ProofTranscript: Transcript> OuterSumcheck<F, ProofTranscript
                 // odd: positives starting at 8
                 8 + ((idx / 2) as i64)
             };
-            let pos = (z + (UNIVARIATE_SKIP_DEGREE as i64)) as usize + UNIVARIATE_SKIP_DEGREE;
+            let pos = (z + (UNIVARIATE_SKIP_DEGREE as i64)) as usize;
             t1_vals[pos] = val;
         }
 

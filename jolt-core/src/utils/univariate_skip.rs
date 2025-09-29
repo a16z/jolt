@@ -406,6 +406,7 @@ mod tests {
     use ark_ff::biginteger::{I8OrI96, S160};
     use rand::Rng;
 
+    #[allow(dead_code)]
     fn random_az_value<R: Rng>(rng: &mut R) -> I8OrI96 {
         match rng.gen_range(0..5) {
             0 => I8OrI96::from_i8(rng.gen()),
@@ -429,6 +430,7 @@ mod tests {
         }
     }
 
+    #[allow(dead_code)]
     fn random_bz_value<R: Rng>(rng: &mut R) -> S160 {
         match rng.gen_range(0..4) {
             0 => S160::from(0i128),
