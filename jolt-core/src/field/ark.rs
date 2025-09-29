@@ -1,10 +1,9 @@
 use ark_ff::{prelude::*, BigInt, PrimeField, UniformRand};
 use rayon::prelude::*;
 
-use crate::field::FromLimbs;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 
-use super::{FieldOps, FmaddTrunc, FromS224, JoltField, MulU64WithCarry};
+use super::{FieldOps, FmaddTrunc, JoltField, MulU64WithCarry};
 
 impl FieldOps for ark_bn254::Fr {}
 impl FieldOps<&ark_bn254::Fr, ark_bn254::Fr> for &ark_bn254::Fr {}
@@ -273,29 +272,6 @@ impl<const N: usize> MulU64WithCarry for BigInt<N> {
 
     fn mul_u64_w_carry<const NPLUS1: usize>(&self, other: u64) -> Self::Output<NPLUS1> {
         <BigInt<N> as BigInteger>::mul_u64_w_carry(self, other)
-    }
-}
-
-impl<const N: usize> FromLimbs<N> for BigInt<N> {
-    fn from_limbs(limbs: [u64; N]) -> Self {
-        Self::new(limbs)
-    }
-}
-
-impl<const N: usize> FromS224 for BigInt<N> {
-    fn from_s224(value: ark_ff::biginteger::S224) -> Self {
-        if N != 4 {
-            panic!("FromS224 for BigInt<N> only supports N=4, got N={N}");
-        }
-
-        // Convert S224 to BigInt<4> first
-        let bigint4: BigInt<4> = value.into();
-
-        // SAFETY: We just checked that N == 4, so this cast is safe
-        unsafe {
-            let ptr = &bigint4 as *const BigInt<4> as *const BigInt<N>;
-            ptr.read()
-        }
     }
 }
 

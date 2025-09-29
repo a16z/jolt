@@ -1,4 +1,5 @@
 use crate::field::JoltField;
+use num_traits::Zero;
 
 pub fn drop_in_background_thread<T>(data: T)
 where
@@ -8,14 +9,14 @@ where
     rayon::spawn(move || drop(data));
 }
 
-pub fn unsafe_allocate_zero_vec<T: Sized + Default>(size: usize) -> Vec<T> {
+pub fn unsafe_allocate_zero_vec<T: Sized + Zero>(size: usize) -> Vec<T> {
     // https://stackoverflow.com/questions/59314686/how-to-efficiently-create-a-large-vector-of-items-initialized-to-the-same-value
 
     #[cfg(test)]
     {
         // Check for safety of 0 allocation
         unsafe {
-            let value = &T::default();
+            let value = &T::zero();
             let ptr = value as *const T as *const u8;
             let bytes = std::slice::from_raw_parts(ptr, std::mem::size_of::<T>());
             assert!(bytes.iter().all(|&byte| byte == 0));

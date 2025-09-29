@@ -2,6 +2,7 @@ use std::ops::{Index, IndexMut};
 use std::sync::{Arc, RwLock};
 
 use allocative::Allocative;
+use num_traits::Zero;
 use once_cell::sync::OnceCell;
 use rayon::prelude::*;
 use strum::{EnumCount, IntoEnumIterator};
@@ -285,7 +286,7 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
                 chunk_result
             })
             .reduce(
-                || std::array::from_fn(|_| vec![F::Unreduced::<7>::default(); poly_len]),
+                || std::array::from_fn(|_| unsafe_allocate_zero_vec(poly_len)),
                 |mut acc, new| {
                     for (acc_i, new_i) in acc.iter_mut().zip(new.iter()) {
                         for (acc_coeff, new_coeff) in acc_i.iter_mut().zip(new_i.iter()) {
@@ -331,9 +332,9 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
             .par_chunks(chunk_size)
             .map(|chunk| {
                 let mut chunk_left: [Vec<F::Unreduced<7>>; ORDER] =
-                    std::array::from_fn(|_| vec![F::Unreduced::<7>::default(); poly_len]);
+                    std::array::from_fn(|_| unsafe_allocate_zero_vec(poly_len));
                 let mut chunk_right: [Vec<F::Unreduced<7>>; ORDER] =
-                    std::array::from_fn(|_| vec![F::Unreduced::<7>::default(); poly_len]);
+                    std::array::from_fn(|_| unsafe_allocate_zero_vec(poly_len));
 
                 for (j, k) in chunk {
                     let (prefix_bits, suffix_bits) = k.split(suffix_len);
@@ -438,9 +439,9 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
             .reduce(
                 || {
                     (
-                        F::Unreduced::<9>::default(),
-                        F::Unreduced::<9>::default(),
-                        F::Unreduced::<9>::default(),
+                        F::Unreduced::<9>::zero(),
+                        F::Unreduced::<9>::zero(),
+                        F::Unreduced::<9>::zero(),
                     )
                 },
                 |running, new| (running.0 + new.0, running.1 + new.1, running.2 + new.2),

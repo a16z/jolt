@@ -16,6 +16,7 @@ use crate::{
 };
 use allocative::Allocative;
 use ark_ff::biginteger::{I8OrI96, S160};
+use num_traits::Zero;
 use rayon::prelude::*;
 use tracer::instruction::Cycle;
 
@@ -247,9 +248,9 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
 
                 for x_out_val in x_out_start..x_out_end {
                     let mut tA_pos_acc_for_current_x_out =
-                        [UnreducedProduct::<F>::default(); NUM_NONTRIVIAL_TERNARY_POINTS];
+                        [UnreducedProduct::<F>::zero(); NUM_NONTRIVIAL_TERNARY_POINTS];
                     let mut tA_neg_acc_for_current_x_out =
-                        [UnreducedProduct::<F>::default(); NUM_NONTRIVIAL_TERNARY_POINTS];
+                        [UnreducedProduct::<F>::zero(); NUM_NONTRIVIAL_TERNARY_POINTS];
                     let mut current_x_out_svo_zero = [F::zero(); NUM_ACCUMS_EVAL_ZERO];
                     let mut current_x_out_svo_infty = [F::zero(); NUM_ACCUMS_EVAL_INFTY];
 
@@ -531,8 +532,8 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                 let mut task_bound6_at_r: Vec<SparseCoefficient<F>> = Vec::new();
 
                 // Two-layer accumulation using grouping by x_out_idx
-                let mut inner_sum0 = F::Unreduced::<9>::default();
-                let mut inner_sumInf = F::Unreduced::<9>::default();
+                let mut inner_sum0 = F::Unreduced::<9>::zero();
+                let mut inner_sumInf = F::Unreduced::<9>::zero();
                 let mut prev_x_out_idx: Option<usize> = None;
 
                 for x_out_val in x_out_start..x_out_end {
@@ -639,8 +640,8 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                                         F::from_montgomery_reduce(inner_sumInf);
                                     task_sum0 += e_out_prev * reduced_inner_sum0;
                                     task_sumInf += e_out_prev * reduced_inner_sumInf;
-                                    inner_sum0 = F::Unreduced::default();
-                                    inner_sumInf = F::Unreduced::default();
+                                    inner_sum0 = F::Unreduced::zero();
+                                    inner_sumInf = F::Unreduced::zero();
                                 }
                             }
 
@@ -887,8 +888,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                     let mut eval_point_0 = F::zero();
                     let mut eval_point_infty = F::zero();
 
-                    let mut inner_sums =
-                        (F::Unreduced::<9>::default(), F::Unreduced::<9>::default());
+                    let mut inner_sums = (F::Unreduced::<9>::zero(), F::Unreduced::<9>::zero());
                     let mut prev_x2 = 0;
 
                     for sparse_block in chunk.chunk_by(|x, y| x.index / 6 == y.index / 6) {
@@ -906,7 +906,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                             eval_point_infty +=
                                 eq_poly.E_out_current()[prev_x2] * reduced_inner_sums.1;
 
-                            inner_sums = (F::Unreduced::default(), F::Unreduced::default());
+                            inner_sums = (F::Unreduced::zero(), F::Unreduced::zero());
                             prev_x2 = x2;
                         }
 

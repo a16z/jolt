@@ -4,8 +4,9 @@ use crate::field::JoltField;
 
 // Accumulation primitives for SVO (moved from zkvm/r1cs/types.rs)
 pub mod accum {
-    use crate::field::{FmaddTrunc, FromLimbs, FromS224, JoltField};
+    use crate::field::{FmaddTrunc, JoltField};
     use ark_ff::biginteger::{I8OrI96, S160, S224};
+    use num_traits::Zero;
 
     /// Final unreduced product after multiplying by a 256-bit field element (512-bit unsigned)
     pub type UnreducedProduct<F> = <F as JoltField>::Unreduced<8>;
@@ -20,7 +21,7 @@ pub mod accum {
     ) {
         let field_bigint = field.as_unreduced_ref();
         if !product.is_zero() {
-            let mag = F::Unreduced::<4>::from_s224(product);
+            let mag = F::Unreduced::<4>::from(product);
             let acc = if product.is_positive() {
                 pos_acc
             } else {
@@ -39,8 +40,8 @@ pub mod accum {
     impl<F: JoltField> Default for SignedUnreducedAccum<F> {
         fn default() -> Self {
             Self {
-                pos: UnreducedProduct::<F>::default(),
-                neg: UnreducedProduct::<F>::default(),
+                pos: UnreducedProduct::<F>::zero(),
+                neg: UnreducedProduct::<F>::zero(),
             }
         }
     }
@@ -53,8 +54,8 @@ pub mod accum {
 
         #[inline(always)]
         pub fn clear(&mut self) {
-            self.pos = UnreducedProduct::<F>::default();
-            self.neg = UnreducedProduct::<F>::default();
+            self.pos = UnreducedProduct::<F>::zero();
+            self.neg = UnreducedProduct::<F>::zero();
         }
 
         /// fmadd with an `I8OrI96` (signed, up to 2 limbs)
@@ -77,7 +78,7 @@ pub mod accum {
             if !bz.is_zero() {
                 let lo = bz.magnitude_lo();
                 let hi = bz.magnitude_hi() as u64;
-                let mag = F::Unreduced::from_limbs([lo[0], lo[1], hi]);
+                let mag = F::Unreduced::from([lo[0], lo[1], hi]);
                 let acc = if bz.is_positive() {
                     &mut self.pos
                 } else {
@@ -1677,8 +1678,8 @@ mod tests {
             .collect();
 
         // Generic small value path (produces Montgomery-form Fr elements after reduction)
-        let mut ta_pos_acc_generic = vec![UnreducedProduct::<Fr>::default(); num_non_trivial];
-        let mut ta_neg_acc_generic = vec![UnreducedProduct::<Fr>::default(); num_non_trivial];
+        let mut ta_pos_acc_generic = vec![UnreducedProduct::<Fr>::zero(); num_non_trivial];
+        let mut ta_neg_acc_generic = vec![UnreducedProduct::<Fr>::zero(); num_non_trivial];
         compute_and_update_tA_inplace::<NUM_SVO_ROUNDS, Fr>(
             &binary_az_vals,
             &binary_bz_vals,
@@ -1688,8 +1689,8 @@ mod tests {
         );
 
         // Hardcoded small value path - call the hardcoded versions directly
-        let mut ta_pos_acc_hardcoded = vec![UnreducedProduct::<Fr>::default(); num_non_trivial];
-        let mut ta_neg_acc_hardcoded = vec![UnreducedProduct::<Fr>::default(); num_non_trivial];
+        let mut ta_pos_acc_hardcoded = vec![UnreducedProduct::<Fr>::zero(); num_non_trivial];
+        let mut ta_neg_acc_hardcoded = vec![UnreducedProduct::<Fr>::zero(); num_non_trivial];
 
         // Call the hardcoded versions directly based on NUM_SVO_ROUNDS
         match NUM_SVO_ROUNDS {

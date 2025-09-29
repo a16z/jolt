@@ -11,6 +11,7 @@ use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 use num_derive::FromPrimitive;
+use num_traits::Zero;
 use rayon::prelude::*;
 use std::{
     collections::{BTreeMap, HashMap},
@@ -225,7 +226,7 @@ impl<F: JoltField> DensePolynomialProverOpening<F> {
                     let poly_eval = polynomial.get_bound_coeff(j);
                     eq_eval.mul_unreduced::<9>(poly_eval)
                 })
-                .reduce(F::Unreduced::<9>::default, |running, new| running + new);
+                .reduce(F::Unreduced::<9>::zero, |running, new| running + new);
             F::from_montgomery_reduce(unreduced_q_0)
         } else {
             let num_x_out = gruen_eq.E_out_current_len();
@@ -244,7 +245,7 @@ impl<F: JoltField> DensePolynomialProverOpening<F> {
                             let poly_eval = polynomial.get_bound_coeff(j);
                             d_e_out[x_out].mul_unreduced::<9>(poly_eval)
                         })
-                        .reduce(F::Unreduced::<9>::default, |running, new| running + new);
+                        .reduce(F::Unreduced::<9>::zero, |running, new| running + new);
                     let inner_sum = F::from_montgomery_reduce(unreduced_inner_sum);
                     d_e_in[x_in] * inner_sum
                 })

@@ -1,3 +1,5 @@
+use ark_ff::biginteger::S224;
+use num_traits::{One, Zero};
 use std::fmt::{Debug, Display};
 use std::hash::Hash;
 use std::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub, SubAssign};
@@ -5,7 +7,6 @@ use std::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub, SubAssign};
 #[cfg(feature = "allocative")]
 use allocative::Allocative;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use ark_std::{One, Zero};
 
 pub trait FieldOps<Rhs = Self, Output = Self>:
     Add<Rhs, Output = Output>
@@ -60,8 +61,9 @@ pub trait JoltField:
         + Eq
         + PartialEq
         + From<u128>
-        + FromLimbs<N>
-        + FromS224
+        + From<[u64; N]>
+        + From<S224>
+        + Zero
         + FmaddTrunc<Other<2> = Self::Unreduced<2>, Acc<8> = Self::Unreduced<8>>
         + FmaddTrunc<Other<3> = Self::Unreduced<3>, Acc<8> = Self::Unreduced<8>>
         + FmaddTrunc<Other<4> = Self::Unreduced<4>, Acc<8> = Self::Unreduced<8>>
@@ -201,14 +203,6 @@ pub trait FmaddTrunc {
         other: &Self::Other<M>,
         acc: &mut Self::Acc<P>,
     );
-}
-
-pub trait FromLimbs<const N: usize> {
-    fn from_limbs(limbs: [u64; N]) -> Self;
-}
-
-pub trait FromS224 {
-    fn from_s224(value: ark_ff::biginteger::S224) -> Self;
 }
 
 #[cfg(feature = "allocative")]
