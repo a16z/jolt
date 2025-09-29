@@ -1,6 +1,3 @@
-#![allow(clippy::too_many_arguments)]
-use std::marker::PhantomData;
-
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
@@ -155,7 +152,7 @@ impl<F: JoltField> SpartanInterleavedPoly<F> {
 }
 
 #[derive(Allocative)]
-pub struct OuterSumcheck<F: JoltField, ProofTranscript: Transcript> {
+pub struct OuterSumcheck<F: JoltField> {
     // The claim to be used through the sumcheck rounds, initialized to zero
     claim: F,
     // The interleaved polynomial of Az/Bz/Cz bound evaluations, to be used through the sumcheck rounds
@@ -164,10 +161,9 @@ pub struct OuterSumcheck<F: JoltField, ProofTranscript: Transcript> {
     split_eq_poly: GruenSplitEqPolynomial<F>,
     // The last of tau vector, used for univariate skip
     tau_high: F,
-    _marker: PhantomData<ProofTranscript>,
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> OuterSumcheck<F, ProofTranscript> {
+impl<F: JoltField> OuterSumcheck<F> {
     // Initialize a Spartan outer sumcheck instance given the tau vector
     pub fn initialize(tau: &[F]) -> Self {
         let tau_low = &tau[0..tau.len() - 1];
@@ -176,12 +172,11 @@ impl<F: JoltField, ProofTranscript: Transcript> OuterSumcheck<F, ProofTranscript
             interleaved_poly: SpartanInterleavedPoly::new(),
             split_eq_poly: GruenSplitEqPolynomial::new(tau_low, BindingOrder::LowToHigh),
             tau_high: tau[tau.len() - 1],
-            _marker: PhantomData,
         }
     }
 
     #[tracing::instrument(skip_all, name = "OuterSumcheck::prove")]
-    pub fn prove(
+    pub fn prove<ProofTranscript: Transcript>(
         preprocessing: &JoltSharedPreprocessing,
         trace: &[Cycle],
         num_rounds: usize,
@@ -194,7 +189,12 @@ impl<F: JoltField, ProofTranscript: Transcript> OuterSumcheck<F, ProofTranscript
 
         let extended_evals = outer_sumcheck.compute_univariate_skip_evals(preprocessing, trace);
         #[cfg(feature = "allocative")]
-        print_data_structure_heap_usage("SpartanInterleavedPoly", &outer_sumcheck);
+        {
+            print_data_structure_heap_usage("OuterSumcheck", &outer_sumcheck);
+            let mut flamegraph = FlameGraphBuilder::default();
+            flamegraph.visit_root(&outer_sumcheck);
+            write_flamegraph_svg(flamegraph, "outer_sumcheck_flamechart.svg");
+        }
 
         // First round (univariate skip): build s1(Z) = lagrange_poly(Z) * t1(Z)
         let first_poly = outer_sumcheck.process_first_round_from_extended_evals(
@@ -397,7 +397,7 @@ impl<F: JoltField, ProofTranscript: Transcript> OuterSumcheck<F, ProofTranscript
     /// This round sends the full high-degree polynomial once; subsequent rounds use compressed
     /// cubic polynomials.
     #[inline]
-    fn process_first_round_from_extended_evals(
+    fn process_first_round_from_extended_evals<ProofTranscript: Transcript>(
         &mut self,
         extended_evals: &[F; UNIVARIATE_SKIP_DEGREE],
         transcript: &mut ProofTranscript,
@@ -479,7 +479,7 @@ impl<F: JoltField, ProofTranscript: Transcript> OuterSumcheck<F, ProofTranscript
     /// at 0 + eval at ∞). We then derive the next challenge from the transcript, and bind these
     /// bound coeffs for the next round.
     #[tracing::instrument(skip_all, name = "OuterSumcheck::streaming_sumcheck_round")]
-    pub fn streaming_sumcheck_round(
+    pub fn streaming_sumcheck_round<ProofTranscript: Transcript>(
         &mut self,
         preprocess: &JoltSharedPreprocessing,
         trace: &[Cycle],
@@ -729,7 +729,7 @@ impl<F: JoltField, ProofTranscript: Transcript> OuterSumcheck<F, ProofTranscript
     /// We then process this to form `s_i(X) = l_i(X) * t_i(X)`, append `s_i.compress()` to the transcript,
     /// derive next challenge `r_i`, then bind both `eq_poly` and `bound_coeffs` with `r_i`.
     #[tracing::instrument(skip_all, name = "OuterSumcheck::remaining_sumcheck_round")]
-    pub fn remaining_sumcheck_round(
+    pub fn remaining_sumcheck_round<ProofTranscript: Transcript>(
         &mut self,
         transcript: &mut ProofTranscript,
         r_challenges: &mut Vec<F>,
@@ -949,7 +949,7 @@ impl<F: JoltField, ProofTranscript: Transcript> OuterSumcheck<F, ProofTranscript
     ///
     /// Returns the derived challenge
     #[inline]
-    pub fn process_eq_sumcheck_round(
+    pub fn process_eq_sumcheck_round<ProofTranscript: Transcript>(
         &mut self,
         quadratic_evals: (F, F), // (t_i(0), t_i(infty))
         polys: &mut Vec<CompressedUniPoly<F>>,

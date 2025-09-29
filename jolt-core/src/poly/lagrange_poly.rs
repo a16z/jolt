@@ -239,11 +239,10 @@ impl<F: JoltField> LagrangePolynomial<F> {
     /// Input: `values[i] = p(start + i)` where `start = -floor((N-1)/2)`.
     /// Output: coefficients `[c_0, c_1, ..., c_{N-1}]` with `p(x) = sum_j c_j * x^j`.
     ///
-    /// **Constraint**: N must be ≤ 2^30 to avoid i64 overflow in symmetric domain calculations.
+    /// **Constraint**: we assume N <= 20 for now
     #[inline]
     pub fn interpolate_coeffs<const N: usize>(values: &[F; N]) -> [F; N] {
-        const MAX_N: usize = 1 << 32; // 2^32, ensures (N-1)/2 fits in i64
-        debug_assert!(N <= MAX_N, "N={MAX_N} exceeds maximum safe value {MAX_N}");
+        debug_assert!(N <= 20, "N={N} exceeds maximum safe value 20");
         debug_assert!(N > 0, "N must be positive");
         let d = N - 1;
         let start: i64 = -((d / 2) as i64);

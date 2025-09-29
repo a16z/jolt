@@ -68,7 +68,7 @@ where
             .challenge_vector(num_rounds_x);
 
         let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) =
-            OuterSumcheck::<F, ProofTranscript>::prove(
+            OuterSumcheck::prove::<ProofTranscript>(
                 &preprocessing.shared,
                 trace,
                 num_rounds_x,
