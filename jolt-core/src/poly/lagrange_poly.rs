@@ -11,122 +11,182 @@ pub struct LagrangePolynomial<F: JoltField>(PhantomData<F>);
 impl<F: JoltField> LagrangePolynomial<F> {
     /// Evaluate a Lagrange-interpolated polynomial at point `r` given values on symmetric grid.
     /// Input: `values[i] = p(start + i)` where `start = -floor((N-1)/2)`.
-    /// Returns: `p(r)` using Lagrange interpolation.
+    /// Returns: `p(r)` using the barycentric formula specialized to unit-spaced nodes.
+    ///
+    /// Implementation notes:
+    /// - Barycentric weights use unit-spacing form: `w_i = (-1)^{N-1-i} / (i!(N-1-i)!)`.
+    /// - Factorials are computed in native u64 once; denominators are converted to the field and batch-inverted
+    ///   via prefix/suffix products (one inversion total). This avoids building inverse-factorials in the field.
+    /// - Distances `r - x_i` are inverted via prefix/suffix products (one inversion total).
+    /// - One final inversion for normalization. Total: 3 inversions. Stack-only, early-exit if `r` hits a node.
     #[inline]
     pub fn evaluate<const N: usize>(values: &[F; N], r: &F) -> F {
-        let basis = Self::evals::<N>(r);
-        values.iter().zip(basis.iter()).map(|(v, b)| *v * b).sum()
+        debug_assert!(N > 0, "N must be positive");
+        debug_assert!(N <= 20, "evaluate intended for small N (<= 20)");
+        let d = N - 1;
+        let start: i64 = -((d / 2) as i64);
+
+        // Build distances d_i = r - x_i with x_i = start + i, early-exiting if r hits a node.
+        let mut dists = [F::zero(); N];
+        let mut base = *r - F::from_i64(start);
+        let one = F::one();
+        let mut i: usize = 0;
+        while i < N {
+            let di = base;
+            if di == F::zero() {
+                // r equals x_i, return p(r) = values[i]
+                return values[i];
+            }
+            dists[i] = di;
+            base -= one; // decrement by 1 each step
+            i += 1;
+        }
+
+        // Prefix products (excluding i) and total product
+        let mut prefix = [F::one(); N];
+        i = 1;
+        while i < N {
+            prefix[i] = prefix[i - 1] * dists[i - 1];
+            i += 1;
+        }
+        let inv_prod = (prefix[N - 1] * dists[N - 1]).inverse().unwrap();
+
+        // Suffix products (excluding i)
+        let mut suffix = [F::one(); N];
+        let mut j: isize = (N as isize) - 2;
+        while j >= 0 {
+            let u = j as usize;
+            suffix[u] = suffix[u + 1] * dists[u + 1];
+            j -= 1;
+        }
+
+        // Build denominators denom_i = i! * (N-1-i)!; pull signed values and convert once to field
+        let den_i64 = LagrangeHelper::den_row_i64::<N>();
+        let mut denom = [F::zero(); N];
+        i = 0;
+        while i < N {
+            denom[i] = F::from_i64(den_i64[i]);
+            i += 1;
+        }
+        // batch invert denom -> inv_denom using left prefixes and a single inversion
+        let mut left = [F::one(); N];
+        i = 1;
+        while i < N {
+            left[i] = left[i - 1] * denom[i - 1];
+            i += 1;
+        }
+        let inv_total = (left[N - 1] * denom[N - 1]).inverse().unwrap();
+        let mut inv_denom = [F::zero(); N];
+        let mut right = F::one();
+        let mut t: isize = (N as isize) - 1;
+        while t >= 0 {
+            let u = t as usize;
+            inv_denom[u] = left[u] * right * inv_total;
+            right *= denom[u];
+            t -= 1;
+        }
+
+        // Accumulate numerator and denominator of barycentric form: term_i = w_i/(r-x_i)
+        let mut num = F::zero();
+        let mut den_sum = F::zero();
+        i = 0;
+        while i < N {
+            let w = inv_denom[i];
+            let inv_di = prefix[i] * suffix[i] * inv_prod;
+            let term = w * inv_di;
+            den_sum += term;
+            num += values[i] * term;
+            i += 1;
+        }
+        let inv_den_sum = den_sum.inverse().unwrap();
+        num * inv_den_sum
     }
 
     /// Compute all Lagrange basis polynomial values `[L_i(r)]` at point `r` for symmetric grid of size `N`.
     /// Grid nodes are `{start, start+1, ..., start+N-1}` where `start = -floor((N-1)/2)`.
     /// Returns: `[L_0(r), L_1(r), ..., L_{N-1}(r)]` such that `p(r) = sum_i L_i(r) * p(x_i)`.
     ///
-    /// **Constraint**: N must be ≤ 2^30 to avoid i64 overflow in symmetric domain calculations.
+    /// **Constraint**: N <= 20 (all we need for now)
     #[inline]
     pub fn evals<const N: usize>(r: &F) -> [F; N] {
-        const MAX_N: usize = 1 << 32; // 2^32, ensures (N-1)/2 fits in i64
-        debug_assert!(N <= MAX_N, "N={N} exceeds maximum safe value {MAX_N}");
+        debug_assert!(
+            N <= 20,
+            "N cannot be greater than 20 for current implementation"
+        );
         debug_assert!(N > 0, "N must be positive");
         let d = N - 1;
         let start: i64 = -((d / 2) as i64);
 
-        // Build nodes xs
-        let mut xs = [F::zero(); N];
+        // Build distances d_i = r - x_i with x_i = start + i, early-out with one-hot basis
+        let mut dists = [F::zero(); N];
+        let mut base = *r - F::from_i64(start);
+        let one = F::one();
         let mut i = 0usize;
         while i < N {
-            let t = start + (i as i64);
-            xs[i] = F::from_i64(t);
-            i += 1;
-        }
-
-        // If r equals some node, return one-hot
-        let mut j = 0usize;
-        while j < N {
-            if *r == xs[j] {
+            let di = base;
+            if di == F::zero() {
                 let mut out = [F::zero(); N];
-                out[j] = F::one();
+                out[i] = F::one();
                 return out;
             }
-            j += 1;
-        }
-
-        // Compute 1/(r - x_i) for all i using prefix/suffix products with a single inversion
-        let mut dists = [F::zero(); N];
-        i = 0;
-        while i < N {
-            dists[i] = *r - xs[i];
+            dists[i] = di;
+            base -= one;
             i += 1;
         }
 
-        let mut p: Vec<F> = Vec::with_capacity(N + 1);
-        p.push(F::one());
-        i = 0;
+        // Prefix products (excluding i) and total product
+        let mut prefix = [F::one(); N];
+        i = 1;
         while i < N {
-            let next = p[i] * dists[i];
-            p.push(next);
+            prefix[i] = prefix[i - 1] * dists[i - 1];
             i += 1;
         }
-        let mut s: Vec<F> = vec![F::one(); N + 1];
-        let mut tix: isize = (N as isize) - 2;
-        while tix >= 0 {
-            let ui = (tix + 1) as usize;
-            s[tix as usize] = s[ui] * dists[ui];
-            tix -= 1;
-        }
-        let inv_prod = p[N].inverse().unwrap();
+        let inv_prod = (prefix[N - 1] * dists[N - 1]).inverse().unwrap();
 
-        // Compute barycentric weights w_i = 1 / prod_{j!=i} (x_i - x_j) in O(N).
-        // For consecutive-integer nodes (unit spacing),
-        //   prod_{j!=i} (x_i - x_j) = i! * (-1)^{N-1-i} * (N-1-i)!
-        // which is independent of the shift `start`.
-        let mut fact = [F::one(); N];
-        let mut k: usize = 1;
-        while k < N {
-            fact[k] = fact[k - 1].mul_u64(k as u64);
-            k += 1;
-        }
-        let mut denoms = [F::zero(); N];
-        i = 0;
-        while i < N {
-            let mut denom = fact[i] * fact[N - 1 - i];
-            if ((N - 1 - i) & 1) == 1 {
-                denom = -denom;
-            }
-            denoms[i] = denom;
-            i += 1;
-        }
-        // Invert all denominators with one inversion via prefix/suffix products
-        let mut pref: Vec<F> = Vec::with_capacity(N + 1);
-        pref.push(F::one());
-        i = 0;
-        while i < N {
-            let next = pref[i] * denoms[i];
-            pref.push(next);
-            i += 1;
-        }
-        let mut suff: Vec<F> = vec![F::one(); N + 1];
-        let mut idx: isize = (N as isize) - 1;
-        while idx >= 0 {
-            let ui = (idx + 1) as usize;
-            suff[idx as usize] = suff[ui] * denoms[idx as usize];
-            idx -= 1;
-        }
-        let inv_total = pref[N].inverse().unwrap();
-        let mut ws = [F::zero(); N];
-        i = 0;
-        while i < N {
-            ws[i] = pref[i] * suff[i + 1] * inv_total; // = 1 / denoms[i]
-            i += 1;
+        // Suffix products (excluding i)
+        let mut suffix = [F::one(); N];
+        let mut j: isize = (N as isize) - 2;
+        while j >= 0 {
+            let u = j as usize;
+            suffix[u] = suffix[u + 1] * dists[u + 1];
+            j -= 1;
         }
 
-        let mut num = [F::zero(); N];
+        // Build denominators denom_i = i! * (N-1-i)!; pull signed values and convert once to field
+        let den_i64 = LagrangeHelper::den_row_i64::<N>();
+        let mut denom = [F::zero(); N];
+        i = 0;
+        while i < N {
+            denom[i] = F::from_i64(den_i64[i]);
+            i += 1;
+        }
+        // batch invert denom -> inv_denom using left prefixes and a single inversion
+        let mut left = [F::one(); N];
+        i = 1;
+        while i < N {
+            left[i] = left[i - 1] * denom[i - 1];
+            i += 1;
+        }
+        let inv_total = (left[N - 1] * denom[N - 1]).inverse().unwrap();
+        let mut inv_denom = [F::zero(); N];
+        let mut right = F::one();
+        let mut t: isize = (N as isize) - 1;
+        while t >= 0 {
+            let u = t as usize;
+            inv_denom[u] = left[u] * right * inv_total;
+            right *= denom[u];
+            t -= 1;
+        }
+
+        // Unnormalized basis terms and their sum using inv_den[i] as weights
+        let mut tmp = [F::zero(); N];
         let mut sum = F::zero();
         i = 0;
         while i < N {
-            let inv_di = p[i] * s[i] * inv_prod;
-            let term = ws[i] * inv_di;
-            num[i] = term;
+            let w = inv_denom[i];
+            let inv_di = prefix[i] * suffix[i] * inv_prod;
+            let term = w * inv_di;
+            tmp[i] = term;
             sum += term;
             i += 1;
         }
@@ -134,7 +194,7 @@ impl<F: JoltField> LagrangePolynomial<F> {
         let mut outv = [F::zero(); N];
         i = 0;
         while i < N {
-            outv[i] = num[i] * inv_sum;
+            outv[i] = tmp[i] * inv_sum;
             i += 1;
         }
         outv
@@ -292,6 +352,50 @@ impl LagrangeHelper {
             i += 1;
         }
         res as u64
+    }
+
+    /// Precomputed `[0!, 1!, ..., 20!]` as u64. All entries fit in u64.
+    pub const FACT_U64_0_TO_20: [u64; 21] = [
+        1,
+        1,
+        2,
+        6,
+        24,
+        120,
+        720,
+        5040,
+        40320,
+        362880,
+        3628800,
+        39916800,
+        479001600,
+        6227020800,
+        87178291200,
+        1307674368000,
+        20922789888000,
+        355687428096000,
+        6402373705728000,
+        121645100408832000,
+        2432902008176640000,
+    ];
+
+    /// Returns `[den[0], ..., den[N-1]]` as i64 where den[i] = (-1)^{N-1-i} * i! * (N-1-i)!
+    /// Constraint: N <= 20
+    #[inline]
+    pub const fn den_row_i64<const N: usize>() -> [i64; N] {
+        let mut out = [0i64; N];
+        let mut i: usize = 0;
+        while i < N {
+            let a = Self::FACT_U64_0_TO_20[i] as i128;
+            let b = Self::FACT_U64_0_TO_20[N - 1 - i] as i128;
+            let mut v = a * b;
+            if ((N - 1 - i) & 1) == 1 {
+                v = -v;
+            }
+            out[i] = v as i64;
+            i += 1;
+        }
+        out
     }
 
     /// Generalized binomial coefficient for integer t and k >= 0.
@@ -679,12 +783,10 @@ impl Degree13Lagrange {
     pub fn extend_i128_evals(base_evals: &[i128; 14]) -> [i128; 13] {
         let c = &Self::BINOMIAL_ROW_14;
 
-        let mut left_w: [i128; 14] = [0; 14];
-        let mut right_w: [i128; 14] = [0; 14];
-        for i in 0..14 {
-            left_w[i] = base_evals[i];
-            right_w[i] = base_evals[i];
-        }
+        let mut left_w = [0; 14];
+        left_w.copy_from_slice(base_evals);
+        let mut right_w = [0; 14];
+        right_w.copy_from_slice(base_evals);
 
         let prev_left = |w: &[i128; 14]| -> i128 {
             let c1 = c[1] as i128;

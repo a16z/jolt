@@ -295,6 +295,10 @@ pub const NUM_REMAINING_R1CS_CONSTRAINTS: usize =
 /// Recall that this domain will be symmetric around 0, i.e. `[-D, ..., 0, ..., D]`
 pub const UNIVARIATE_SKIP_EXTENDED_DOMAIN_SIZE: usize = 2 * UNIVARIATE_SKIP_DEGREE + 1;
 
+/// Number of coefficients in the first-round polynomial, defined to be `3 * UNIVARIATE_SKIP_DEGREE + 1`.
+/// This is because `s_1(X) = lagrange_poly(X) * t1(X)`, where t1(X) has degree `2 * UNIVARIATE_SKIP_DEGREE` and lagrange_poly(X) has degree `UNIVARIATE_SKIP_DEGREE`.
+pub const FIRST_ROUND_POLY_NUM_COEFFS: usize = 3 * UNIVARIATE_SKIP_DEGREE + 1;
+
 /// Static table of all 27 R1CS uniform constraints.
 pub static UNIFORM_R1CS: [NamedConstraint; NUM_R1CS_CONSTRAINTS] = [
     // if LeftOperandIsRs1Value { assert!(LeftInstructionInput == Rs1Value) }
