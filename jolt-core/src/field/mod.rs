@@ -166,7 +166,7 @@ pub trait JoltField:
     /// Multiplication of two field elements without Montgomery reduction, returning a
     /// L-limb Unreduced (each limb is 64 bits).
     /// L = 8 or 9 depending on what the code needs.
-    fn mul_unreduced<const L: usize>(self, other: Self) -> Self::Unreduced<L>;
+    fn mul_unreduced<const N: usize>(self, other: Self) -> Self::Unreduced<N>;
 
     /// Multiplication of a field element and a u64 without Barrett reduction, returning a
     /// 5-limb Unreduced (each limb is 64 bits)
@@ -179,12 +179,12 @@ pub trait JoltField:
     /// Montgomery reduction of an Unreduced to a field element (compute a * R^{-1} mod p).
     ///
     /// Need to specify the number of limbs in the Unreduced (at least 8)
-    fn from_montgomery_reduce<const L: usize>(unreduced: Self::Unreduced<L>) -> Self;
+    fn from_montgomery_reduce<const N: usize>(unreduced: Self::Unreduced<N>) -> Self;
 
     /// Barrett reduction of an Unreduced to a field element (compute a mod p).
     ///
     /// Need to specify the number of limbs in the Unreduced (at least 5, usually up to 7)
-    fn from_barrett_reduce<const L: usize>(unreduced: Self::Unreduced<L>) -> Self;
+    fn from_barrett_reduce<const N: usize>(unreduced: Self::Unreduced<N>) -> Self;
 }
 
 pub trait MulU64WithCarry {
