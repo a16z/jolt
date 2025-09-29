@@ -93,10 +93,13 @@ impl<F: JoltField, ProofTranscript: Transcript> OuterSumcheckProof<F, ProofTrans
         let r_0 = transcript.challenge_scalar();
         r.push(r_0);
         // First round: send all coeffs; check symmetric-domain sum is zero (initial claim),
-        // then set next claim to s1(r_0)
+        // then set next claim to s1(r_0). Use i128 power sums up to degree 39 over the 14-window.
         let (ok, next_claim) = self
             .first_poly
-            .check_sum_evals_and_set_new_claim::<N>(&F::zero(), &r_0);
+            .check_sum_evals_and_set_new_claim::<UNIVARIATE_SKIP_DOMAIN_SIZE, FIRST_ROUND_POLY_NUM_COEFFS>(
+                &F::zero(),
+                &r_0,
+            );
         if !ok {
             return Err(ProofVerifyError::SumcheckVerificationError);
         }

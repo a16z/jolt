@@ -9,7 +9,7 @@ use crate::poly::opening_proof::{OpeningPoint, SumcheckId};
 use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::zkvm::dag::stage::SumcheckStages;
 use crate::zkvm::dag::state_manager::{ProofData, ProofKeys, StateManager};
-use crate::zkvm::r1cs::constraints::{UNIVARIATE_SKIP_DEGREE, UNIVARIATE_SKIP_DOMAIN_SIZE};
+use crate::zkvm::r1cs::constraints::{FIRST_ROUND_POLY_NUM_COEFFS, UNIVARIATE_SKIP_DOMAIN_SIZE};
 use crate::zkvm::r1cs::inputs::{
     compute_claimed_witness_evals, ALL_R1CS_INPUTS, COMMITTED_R1CS_INPUTS,
 };
@@ -202,7 +202,7 @@ where
             // into account the univariate skip and does a high-degree interpolation in the first round
             match outer_sumcheck_proof.verify::<UNIVARIATE_SKIP_DOMAIN_SIZE>(
                 num_rounds_x,
-                2 * UNIVARIATE_SKIP_DEGREE + 1,
+                FIRST_ROUND_POLY_NUM_COEFFS - 1,
                 3,
                 transcript,
             ) {

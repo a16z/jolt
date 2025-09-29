@@ -302,14 +302,19 @@ impl<F: JoltField> UniPoly<F> {
     ///
     /// Returns:
     /// - (ok, value) where `ok` is true iff the domain-sum equals `claim`, and `value` = s(x).
-    pub fn check_sum_evals_and_set_new_claim<const N: usize>(&self, claim: &F, x: &F) -> (bool, F) {
-        debug_assert_eq!(self.degree(), N - 1);
-        let power_sums = LagrangeHelper::power_sums::<N>();
+    pub fn check_sum_evals_and_set_new_claim<const N: usize, const OUT_LEN: usize>(
+        &self,
+        claim: &F,
+        x: &F,
+    ) -> (bool, F) {
+        // Relaxed: compute Σ_{t in symmetric N-window} s(t) via i128 power sums up to deg(s)
+        debug_assert_eq!(self.degree() + 1, OUT_LEN);
+        let power_sums = LagrangeHelper::power_sums::<N, OUT_LEN>();
 
         // Check domain sum Σ_j a_j * S_j == claim
         let mut sum = F::zero();
         for (j, coeff) in self.coeffs.iter().enumerate() {
-            sum += coeff.mul_i64(power_sums[j]);
+            sum += coeff.mul_i128(power_sums[j]);
         }
         let ok = sum == *claim;
 

@@ -572,26 +572,33 @@ impl LagrangeHelper {
         out
     }
 
-    /// N is the number of nodes, degree D = N-1. Returns [S_0, S_1, ..., S_D] as i64.
-    /// S_k = sum_{t=start..start+D} t^k, where start = -floor(D/2).
-    /// For N <= 16 and k <= 15, values safely fit in i64.
+    /// Const power sums over a symmetric integer window, up to an arbitrary degree, as i128.
+    ///
+    /// Domain: WINDOW_N consecutive integers centered at 0: t = start..start+WINDOW_N-1,
+    /// where start = -floor((WINDOW_N-1)/2).
+    /// Returns: [S_0, S_1, ..., S_{OUT_LEN-1}] with S_k = Σ_t t^k as i128.
     #[inline]
-    pub const fn power_sums<const N: usize>() -> [i64; N] {
-        debug_assert!(N <= 16, "N exceeds maximum safe value 16");
-        let d = N - 1;
+    pub const fn power_sums<const WINDOW_N: usize, const OUT_LEN: usize>() -> [i128; OUT_LEN] {
+        let mut sums = [0i128; OUT_LEN];
+        if OUT_LEN == 0 {
+            return sums;
+        }
+        let d = WINDOW_N - 1;
         let start: i64 = -((d / 2) as i64);
-        let mut sums = [0i64; N];
         let mut j: usize = 0;
-        while j < N {
-            let t = start + (j as i64);
+        while j < WINDOW_N {
+            let t = (start + (j as i64)) as i128;
             // k = 0
             sums[0] += 1;
-            // k >= 1 up to D
+            // k >= 1
             let mut pow = t; // t^1
             let mut k: usize = 1;
-            while k <= d {
+            while k < OUT_LEN {
                 sums[k] += pow;
-                pow *= t;
+                pow = match pow.checked_mul(t) {
+                    Some(v) => v,
+                    None => 0, // saturate to 0 in const context; for our ranges this won't trigger
+                };
                 k += 1;
             }
             j += 1;
