@@ -4,23 +4,24 @@ use crate::field::JoltField;
 
 // Accumulation primitives for SVO (moved from zkvm/r1cs/types.rs)
 pub mod accum {
-    use crate::field::JoltField;
-    use ark_ff::biginteger::{BigInt, I8OrI96, S160, S224};
+    use crate::field::{FmaddTrunc, JoltField};
+    use ark_ff::biginteger::{I8OrI96, S160, S224};
+    use num_traits::Zero;
 
     /// Final unreduced product after multiplying by a 256-bit field element (512-bit unsigned)
-    pub type UnreducedProduct = BigInt<8>;
+    pub type UnreducedProduct<F> = <F as JoltField>::Unreduced<8>;
 
     /// Fused multiply-add into unreduced accumulators.
     #[inline(always)]
     pub fn fmadd_unreduced<F: JoltField>(
-        pos_acc: &mut UnreducedProduct,
-        neg_acc: &mut UnreducedProduct,
+        pos_acc: &mut UnreducedProduct<F>,
+        neg_acc: &mut UnreducedProduct<F>,
         field: &F,
         product: S224,
     ) {
-        let field_bigint = field.as_bigint_ref();
+        let field_bigint = field.as_unreduced_ref();
         if !product.is_zero() {
-            let mag: BigInt<4> = product.into();
+            let mag = F::Unreduced::<4>::from(product);
             let acc = if product.is_positive() {
                 pos_acc
             } else {
@@ -31,21 +32,21 @@ pub mod accum {
     }
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    pub struct SignedUnreducedAccum {
-        pub pos: UnreducedProduct,
-        pub neg: UnreducedProduct,
+    pub struct SignedUnreducedAccum<F: JoltField> {
+        pub pos: UnreducedProduct<F>,
+        pub neg: UnreducedProduct<F>,
     }
 
-    impl Default for SignedUnreducedAccum {
+    impl<F: JoltField> Default for SignedUnreducedAccum<F> {
         fn default() -> Self {
             Self {
-                pos: UnreducedProduct::zero(),
-                neg: UnreducedProduct::zero(),
+                pos: UnreducedProduct::<F>::zero(),
+                neg: UnreducedProduct::<F>::zero(),
             }
         }
     }
 
-    impl SignedUnreducedAccum {
+    impl<F: JoltField> SignedUnreducedAccum<F> {
         #[inline(always)]
         pub fn new() -> Self {
             Self::default()
@@ -53,20 +54,18 @@ pub mod accum {
 
         #[inline(always)]
         pub fn clear(&mut self) {
-            self.pos = UnreducedProduct::zero();
-            self.neg = UnreducedProduct::zero();
+            self.pos = UnreducedProduct::<F>::zero();
+            self.neg = UnreducedProduct::<F>::zero();
         }
 
         /// fmadd with an `I8OrI96` (signed, up to 2 limbs)
         #[inline(always)]
-        pub fn fmadd_az<F: JoltField>(&mut self, field: &F, az: I8OrI96) {
-            let field_bigint = field.as_bigint_ref();
+        pub fn fmadd_az(&mut self, field: &F, az: I8OrI96) {
+            let field_bigint = field.as_unreduced_ref();
             let v = az.to_i128();
             if v != 0 {
                 let abs = v.unsigned_abs();
-                let mut mag = BigInt::<2>::zero();
-                mag.0[0] = abs as u64;
-                mag.0[1] = (abs >> 64) as u64;
+                let mag = F::Unreduced::<2>::from(abs);
                 let acc = if v >= 0 { &mut self.pos } else { &mut self.neg };
                 field_bigint.fmadd_trunc::<2, 8>(&mag, acc);
             }
@@ -74,12 +73,12 @@ pub mod accum {
 
         /// fmadd with a `S160` (signed, up to 3 limbs)
         #[inline(always)]
-        pub fn fmadd_bz<F: JoltField>(&mut self, field: &F, bz: S160) {
-            let field_bigint = field.as_bigint_ref();
+        pub fn fmadd_bz(&mut self, field: &F, bz: S160) {
+            let field_bigint = field.as_unreduced_ref();
             if !bz.is_zero() {
                 let lo = bz.magnitude_lo();
                 let hi = bz.magnitude_hi() as u64;
-                let mag = BigInt::<3>([lo[0], lo[1], hi]);
+                let mag = F::Unreduced::from([lo[0], lo[1], hi]);
                 let acc = if bz.is_positive() {
                     &mut self.pos
                 } else {
@@ -91,19 +90,20 @@ pub mod accum {
 
         /// fmadd with an Az×Bz product value (1..=4 limbs)
         #[inline(always)]
-        pub fn fmadd_prod<F: JoltField>(&mut self, field: &F, product: S224) {
-            fmadd_unreduced::<F>(&mut self.pos, &mut self.neg, field, product)
+        pub fn fmadd_prod(&mut self, field: &F, product: S224) {
+            fmadd_unreduced(&mut self.pos, &mut self.neg, field, product)
         }
 
         /// Reduce accumulated value to a field element (pos - neg)
         #[inline(always)]
-        pub fn reduce_to_field<F: JoltField>(&self) -> F {
-            F::from_montgomery_reduce_2n(self.pos) - F::from_montgomery_reduce_2n(self.neg)
+        pub fn reduce_to_field(&self) -> F {
+            F::from_montgomery_reduce(self.pos) - F::from_montgomery_reduce(self.neg)
         }
     }
 
     /// Local helper to convert `S160` to field without using `.to_field()`
-    #[inline]
+    /// Used for testing purpose only
+    #[cfg(test)]
     pub fn s160_to_field<F: JoltField>(bz: &S160) -> F {
         if bz.is_zero() {
             return F::zero();
@@ -112,7 +112,7 @@ pub mod accum {
         let hi = bz.magnitude_hi() as u64;
         let r64 = F::from_u128(1u128 << 64);
         let r128 = r64 * r64;
-        let acc = F::from_u64(lo[0]) + F::from_u64(lo[1]) * r64 + F::from_u64(hi) * r128;
+        let acc = F::from_u64(lo[0]) + r64.mul_u64(lo[1]) + r128.mul_u64(hi);
         if bz.is_positive() {
             acc
         } else {
@@ -431,8 +431,8 @@ pub mod svo_helpers {
         binary_az_evals_input: &[I8OrI96], // 2^N Az at binary points
         binary_bz_evals_input: &[S160],    // 2^N Bz at binary points
         e_in_val: &F,
-        tA_pos_acc: &mut [UnreducedProduct],
-        tA_neg_acc: &mut [UnreducedProduct],
+        tA_pos_acc: &mut [UnreducedProduct<F>],
+        tA_neg_acc: &mut [UnreducedProduct<F>],
     ) {
         if NUM_SVO_ROUNDS == 0 {
             debug_assert!(binary_az_evals_input.is_empty());
@@ -559,8 +559,8 @@ pub mod svo_helpers {
         binary_az_evals: &[I8OrI96],
         binary_bz_evals: &[S160],
         e_in_val: &F,
-        tA_pos_acc: &mut [UnreducedProduct],
-        tA_neg_acc: &mut [UnreducedProduct],
+        tA_pos_acc: &mut [UnreducedProduct<F>],
+        tA_neg_acc: &mut [UnreducedProduct<F>],
     ) {
         debug_assert!(binary_az_evals.len() == 4);
         debug_assert!(binary_bz_evals.len() == 4);
@@ -626,8 +626,8 @@ pub mod svo_helpers {
         binary_az_evals: &[I8OrI96],
         binary_bz_evals: &[S160],
         e_in_val: &F,
-        tA_pos_acc: &mut [UnreducedProduct],
-        tA_neg_acc: &mut [UnreducedProduct],
+        tA_pos_acc: &mut [UnreducedProduct<F>],
+        tA_neg_acc: &mut [UnreducedProduct<F>],
     ) {
         debug_assert!(binary_az_evals.len() == 8);
         debug_assert!(binary_bz_evals.len() == 8);
@@ -793,8 +793,8 @@ pub mod svo_helpers {
         binary_az_evals: &[I8OrI96],
         binary_bz_evals: &[S160],
         e_in_val: &F,
-        tA_pos_acc: &mut [UnreducedProduct],
-        tA_neg_acc: &mut [UnreducedProduct],
+        tA_pos_acc: &mut [UnreducedProduct<F>],
+        tA_neg_acc: &mut [UnreducedProduct<F>],
     ) {
         match NUM_SVO_ROUNDS {
             0 => {
@@ -849,8 +849,8 @@ pub mod svo_helpers {
         binary_az_evals: &[I8OrI96],
         binary_bz_evals: &[S160],
         e_in_val: &F,
-        tA_pos_acc: &mut [UnreducedProduct],
-        tA_neg_acc: &mut [UnreducedProduct],
+        tA_pos_acc: &mut [UnreducedProduct<F>],
+        tA_neg_acc: &mut [UnreducedProduct<F>],
     ) {
         debug_assert!(binary_az_evals.len() == 2);
         debug_assert!(binary_bz_evals.len() == 2);
@@ -1605,7 +1605,7 @@ mod tests {
         compute_and_update_tA_inplace_2, compute_and_update_tA_inplace_3,
         compute_and_update_tA_inplace_const,
     };
-    use crate::{field::JoltField, poly::eq_poly::EqPolynomial};
+    use crate::poly::eq_poly::EqPolynomial;
     use ark_bn254::Fr;
     use ark_ff::biginteger::{I8OrI96, S160};
     use ark_ff::UniformRand;
@@ -1678,8 +1678,8 @@ mod tests {
             .collect();
 
         // Generic small value path (produces Montgomery-form Fr elements after reduction)
-        let mut ta_pos_acc_generic = vec![UnreducedProduct::zero(); num_non_trivial];
-        let mut ta_neg_acc_generic = vec![UnreducedProduct::zero(); num_non_trivial];
+        let mut ta_pos_acc_generic = vec![UnreducedProduct::<Fr>::zero(); num_non_trivial];
+        let mut ta_neg_acc_generic = vec![UnreducedProduct::<Fr>::zero(); num_non_trivial];
         compute_and_update_tA_inplace::<NUM_SVO_ROUNDS, Fr>(
             &binary_az_vals,
             &binary_bz_vals,
@@ -1689,8 +1689,8 @@ mod tests {
         );
 
         // Hardcoded small value path - call the hardcoded versions directly
-        let mut ta_pos_acc_hardcoded = vec![UnreducedProduct::zero(); num_non_trivial];
-        let mut ta_neg_acc_hardcoded = vec![UnreducedProduct::zero(); num_non_trivial];
+        let mut ta_pos_acc_hardcoded = vec![UnreducedProduct::<Fr>::zero(); num_non_trivial];
+        let mut ta_neg_acc_hardcoded = vec![UnreducedProduct::<Fr>::zero(); num_non_trivial];
 
         // Call the hardcoded versions directly based on NUM_SVO_ROUNDS
         match NUM_SVO_ROUNDS {
@@ -1744,12 +1744,12 @@ mod tests {
 
         // Compare results
         for i in 0..num_non_trivial {
-            let generic_pos = Fr::from_montgomery_reduce_2n(ta_pos_acc_generic[i]);
-            let generic_neg = Fr::from_montgomery_reduce_2n(ta_neg_acc_generic[i]);
+            let generic_pos = Fr::montgomery_reduce_2n::<8>(ta_pos_acc_generic[i]);
+            let generic_neg = Fr::montgomery_reduce_2n::<8>(ta_neg_acc_generic[i]);
             let generic_result = generic_pos - generic_neg;
 
-            let hardcoded_pos = Fr::from_montgomery_reduce_2n(ta_pos_acc_hardcoded[i]);
-            let hardcoded_neg = Fr::from_montgomery_reduce_2n(ta_neg_acc_hardcoded[i]);
+            let hardcoded_pos = Fr::montgomery_reduce_2n::<8>(ta_pos_acc_hardcoded[i]);
+            let hardcoded_neg = Fr::montgomery_reduce_2n::<8>(ta_neg_acc_hardcoded[i]);
             let hardcoded_result = hardcoded_pos - hardcoded_neg;
 
             assert_eq!(

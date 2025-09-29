@@ -3,7 +3,7 @@ use std::iter::zip;
 use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 
 use crate::{
-    field::JoltField,
+    field::{JoltField, MulU64WithCarry},
     poly::{
         eq_poly::EqPolynomial, multilinear_polynomial::MultilinearPolynomial, unipoly::UniPoly,
     },
@@ -249,17 +249,22 @@ fn ex4_2<F: JoltField>(f: &[F; 4], f_inf6: &F) -> (F, F) {
 
 #[inline(always)]
 fn ex8<F: JoltField>(f: &[F; 8], f_inf40320: F) -> F {
-    let a1 = f[1] + f[7];
-    let a2 = f[3] + f[5];
-    let n1 = f[2] + f[6];
-    let n2 = f[4];
-    let n3 = f[0];
-    F::linear_combination_i64(
-        &[(a1, 8), (a2, 56)],
-        &[(n1, 28), (n2, 70)],
-        &[f_inf40320], // positive add terms
-        &[n3],         // negative add terms
-    )
+    // P(9) from f[i]=P(i+1): 8(f[1]+f[7]) + 56(f[3]+f[5]) - 28(f[2]+f[6]) - 70 f[4] - f[0] + f_inf40320
+    let a1: F::Unreduced<4> = *f[1].as_unreduced_ref() + f[7].as_unreduced_ref();
+    let mut pos_acc: F::Unreduced<5> = a1.mul_u64_w_carry::<5>(8);
+    let a2: F::Unreduced<4> = *f[3].as_unreduced_ref() + f[5].as_unreduced_ref();
+    pos_acc += a2.mul_u64_w_carry::<5>(56);
+    pos_acc += f_inf40320.mul_u64_unreduced(1);
+
+    let n1: F::Unreduced<4> = *f[2].as_unreduced_ref() + f[6].as_unreduced_ref();
+    let mut neg_acc: F::Unreduced<5> = n1.mul_u64_w_carry::<5>(28);
+    neg_acc += f[4].as_unreduced_ref().mul_u64_w_carry::<5>(70);
+    neg_acc += f[0].mul_u64_unreduced(1);
+
+    let reduced_pos = F::from_barrett_reduce(pos_acc);
+    let reduced_neg = F::from_barrett_reduce(neg_acc);
+
+    reduced_pos - reduced_neg
 }
 
 #[inline]
