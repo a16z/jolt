@@ -12,9 +12,7 @@ use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::multilinear_polynomial::{BindingOrder, PolynomialBinding, PolynomialEvaluation};
 use crate::utils::lookup_bits::LookupBits;
 use crate::utils::math::Math;
-use crate::utils::thread::{
-    unsafe_allocate_zero_vec, unsafe_allocate_zero_vec_unreduced, unsafe_zero_slice,
-};
+use crate::utils::thread::{unsafe_allocate_zero_vec, unsafe_zero_slice};
 
 #[repr(u8)]
 #[derive(Clone, Copy, EnumIterMacro, EnumCountMacro)]
@@ -270,7 +268,7 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
             .par_chunks(chunk_size)
             .map(|chunk| {
                 let mut chunk_result: [Vec<F::Unreduced<7>>; ORDER] =
-                    std::array::from_fn(|_| unsafe_allocate_zero_vec_unreduced::<F, 7>(poly_len));
+                    std::array::from_fn(|_| unsafe_allocate_zero_vec(poly_len));
 
                 for (j, k) in chunk {
                     let (prefix_bits, suffix_bits) = k.split(suffix_len);
@@ -366,12 +364,8 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
             .reduce(
                 || {
                     (
-                        std::array::from_fn(|_| {
-                            unsafe_allocate_zero_vec_unreduced::<F, 7>(poly_len)
-                        }),
-                        std::array::from_fn(|_| {
-                            unsafe_allocate_zero_vec_unreduced::<F, 7>(poly_len)
-                        }),
+                        std::array::from_fn(|_| unsafe_allocate_zero_vec(poly_len)),
+                        std::array::from_fn(|_| unsafe_allocate_zero_vec(poly_len)),
                     )
                 },
                 |(mut acc_l, mut acc_r), (new_l, new_r)| {
