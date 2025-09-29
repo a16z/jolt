@@ -9,6 +9,10 @@ use ark_ec::scalar_mul::variable_base::{msm_binary, msm_u16, msm_u32, msm_u64, m
 use ark_ec::{CurveGroup, ScalarMul};
 use rayon::prelude::*;
 
+// Threshold for switching between serial and parallel iteration
+// Consistent with other modules in the codebase (eq_poly, dense_mlpoly, compact_polynomial)
+const PARALLEL_THRESHOLD: usize = 16;
+
 // A very light wrapper around Ark5.0 VariableBaseMSM
 pub trait VariableBaseMSM: ArkVariableBaseMSM
 where
@@ -32,13 +36,24 @@ where
             MultilinearPolynomial::U8Scalars(poly) => (bases.len() == poly.coeffs.len())
                 .then(|| {
                     let scalars = &poly.coeffs;
-                    if scalars.par_iter().all(|&s| s == 0) {
-                        Self::zero()
-                    } else if scalars.par_iter().all(|&s| s <= 1) {
-                        let bool_scalars: Vec<bool> = scalars.par_iter().map(|&s| s == 1).collect();
-                        msm_binary::<Self>(bases, &bool_scalars, false)
+                    if scalars.len() >= PARALLEL_THRESHOLD {
+                        if scalars.par_iter().all(|&s| s == 0) {
+                            Self::zero()
+                        } else if scalars.par_iter().all(|&s| s <= 1) {
+                            let bool_scalars: Vec<bool> = scalars.par_iter().map(|&s| s == 1).collect();
+                            msm_binary::<Self>(bases, &bool_scalars, false)
+                        } else {
+                            msm_u8::<Self>(bases, scalars, false)
+                        }
                     } else {
-                        msm_u8::<Self>(bases, scalars, false)
+                        if scalars.iter().all(|&s| s == 0) {
+                            Self::zero()
+                        } else if scalars.iter().all(|&s| s <= 1) {
+                            let bool_scalars: Vec<bool> = scalars.iter().map(|&s| s == 1).collect();
+                            msm_binary::<Self>(bases, &bool_scalars, false)
+                        } else {
+                            msm_u8::<Self>(bases, scalars, false)
+                        }
                     }
                 })
                 .ok_or(ProofVerifyError::KeyLengthError(
@@ -128,11 +143,20 @@ where
     fn msm_u8(bases: &[Self::MulBase], scalars: &[u8]) -> Result<Self, ProofVerifyError> {
         (bases.len() == scalars.len())
             .then(|| {
-                if scalars.par_iter().all(|&s| s <= 1) {
-                    let bool_scalars: Vec<bool> = scalars.par_iter().map(|&s| s == 1).collect();
-                    msm_binary::<Self>(bases, &bool_scalars, true)
+                if scalars.len() >= PARALLEL_THRESHOLD {
+                    if scalars.par_iter().all(|&s| s <= 1) {
+                        let bool_scalars: Vec<bool> = scalars.par_iter().map(|&s| s == 1).collect();
+                        msm_binary::<Self>(bases, &bool_scalars, true)
+                    } else {
+                        msm_u8::<Self>(bases, scalars, true)
+                    }
                 } else {
-                    msm_u8::<Self>(bases, scalars, true)
+                    if scalars.iter().all(|&s| s <= 1) {
+                        let bool_scalars: Vec<bool> = scalars.iter().map(|&s| s == 1).collect();
+                        msm_binary::<Self>(bases, &bool_scalars, true)
+                    } else {
+                        msm_u8::<Self>(bases, scalars, true)
+                    }
                 }
             })
             .ok_or(ProofVerifyError::KeyLengthError(bases.len(), scalars.len()))
