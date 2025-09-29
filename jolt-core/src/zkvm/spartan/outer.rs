@@ -44,27 +44,6 @@ pub const UNIVARIATE_SKIP_DEGREE: usize = (UNIFORM_R1CS.len() - 1) / 2;
 pub const UNIVARIATE_SKIP_DOMAIN_SIZE: usize = UNIVARIATE_SKIP_DEGREE + 1;
 pub const UNIVARIATE_SKIP_EXTENDED_DOMAIN_SIZE: usize = 2 * UNIVARIATE_SKIP_DEGREE + 1;
 
-// Now provided by utils::univariate_skip
-
-#[derive(Default, Debug, Clone, Copy, PartialEq)]
-pub struct SparseCoefficient<T> {
-    pub(crate) index: usize,
-    pub(crate) value: T,
-}
-
-impl<T> Allocative for SparseCoefficient<T> {
-    fn visit<'a, 'b: 'a>(&self, _visitor: &'a mut allocative::Visitor<'b>) {}
-}
-
-impl<T> From<(usize, T)> for SparseCoefficient<T> {
-    fn from(x: (usize, T)) -> Self {
-        Self {
-            index: x.0,
-            value: x.1,
-        }
-    }
-}
-
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
 /// The proof format for Spartan's outer sumcheck.
 /// This is different from the generic `SumcheckInstanceProof` since we apply univariate skip to the
@@ -144,6 +123,25 @@ impl<F: JoltField, ProofTranscript: Transcript> OuterSumcheckProof<F, ProofTrans
         r.extend(r_rest);
 
         Ok((e, r))
+    }
+}
+
+#[derive(Default, Debug, Clone, Copy, PartialEq)]
+pub struct SparseCoefficient<T> {
+    pub(crate) index: usize,
+    pub(crate) value: T,
+}
+
+impl<T> Allocative for SparseCoefficient<T> {
+    fn visit<'a, 'b: 'a>(&self, _visitor: &'a mut allocative::Visitor<'b>) {}
+}
+
+impl<T> From<(usize, T)> for SparseCoefficient<T> {
+    fn from(x: (usize, T)) -> Self {
+        Self {
+            index: x.0,
+            value: x.1,
+        }
     }
 }
 
@@ -304,16 +302,11 @@ impl<F: JoltField, ProofTranscript: Transcript> OuterSumcheck<F, ProofTranscript
 
                         // First group (14 eq-conditional, Cz=0): Az bool, Bz S160
                         let az1_bool = eval_az_first_group(&row_inputs);
-                        let bz1_i128 = eval_bz_first_group(&row_inputs);
-                        let mut bz1_s160: [S160; UNIVARIATE_SKIP_DOMAIN_SIZE] =
-                            [S160::from(0i128); UNIVARIATE_SKIP_DOMAIN_SIZE];
-                        for i in 0..UNIVARIATE_SKIP_DOMAIN_SIZE {
-                            bz1_s160[i] = S160::from(bz1_i128[i]);
-                        }
+                        let bz1_s160 = eval_bz_first_group(&row_inputs);
 
                         // Second group (13 + pad): Az i128, Bz/Cz S160
-                        let az2_i96 = eval_az_second_group::<F>(&row_inputs);
-                        let bz2 = eval_bz_second_group::<F>(&row_inputs);
+                        let az2_i96 = eval_az_second_group(&row_inputs);
+                        let bz2 = eval_bz_second_group(&row_inputs);
                         let cz2 = eval_cz_second_group(&row_inputs);
 
                         let mut az2_i128_padded: [i128; UNIVARIATE_SKIP_DOMAIN_SIZE] =

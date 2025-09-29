@@ -143,10 +143,6 @@ harness = false
 name = "compact_poly_bench"
 harness = false
 
-[[bench]]
-name = "extrapolation"
-harness = false
-
 [lib]
 name = "jolt_core"
 path = "src/lib.rs"

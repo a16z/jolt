@@ -619,7 +619,7 @@ pub static UNIFORM_R1CS_SECOND_GROUP: [NamedConstraint; 13] =
     filter_uniform_r1cs(&UNIFORM_R1CS_SECOND_GROUP_NAMES);
 
 /// Evaluate Az by name using a fully materialized R1CS cycle inputs
-pub fn eval_az_by_name<F: JoltField>(c: &NamedConstraint, row: &R1CSCycleInputs) -> I8OrI96 {
+pub fn eval_az_by_name(c: &NamedConstraint, row: &R1CSCycleInputs) -> I8OrI96 {
     use ConstraintName as N;
     match c.name {
         // Az: LeftOperandIsRs1Value flag (0/1)
@@ -712,7 +712,7 @@ pub fn eval_az_by_name<F: JoltField>(c: &NamedConstraint, row: &R1CSCycleInputs)
 }
 
 /// Evaluate Bz by name using a fully materialized R1CS cycle inputs
-pub fn eval_bz_by_name<F: JoltField>(c: &NamedConstraint, row: &R1CSCycleInputs) -> S160 {
+pub fn eval_bz_by_name(c: &NamedConstraint, row: &R1CSCycleInputs) -> S160 {
     use ConstraintName as N;
     match c.name {
         // B: LeftInstructionInput - Rs1Value (signed-magnitude over u64 bit patterns)
@@ -839,99 +839,6 @@ pub fn eval_bz_by_name<F: JoltField>(c: &NamedConstraint, row: &R1CSCycleInputs)
     }
 }
 
-// =============================================================================
-// Group-specific evaluators
-// =============================================================================
-
-/// Evaluate Az for the first group as booleans in the group order (length 14).
-/// Booleans are derived from the same semantics as `eval_az_by_name`, with non-zero selectors
-/// interpreted as true.
-pub fn eval_az_first_group(row: &R1CSCycleInputs) -> [bool; 14] {
-    // Order matches UNIFORM_R1CS_FIRST_GROUP_NAMES
-    [
-        row.flags[CircuitFlags::LeftOperandIsRs1Value],
-        row.flags[CircuitFlags::LeftOperandIsPC],
-        !(row.flags[CircuitFlags::LeftOperandIsRs1Value]
-            || row.flags[CircuitFlags::LeftOperandIsPC]),
-        row.flags[CircuitFlags::RightOperandIsRs2Value],
-        row.flags[CircuitFlags::RightOperandIsImm],
-        !(row.flags[CircuitFlags::RightOperandIsRs2Value]
-            || row.flags[CircuitFlags::RightOperandIsImm]),
-        row.flags[CircuitFlags::Load],
-        row.flags[CircuitFlags::Load],
-        row.flags[CircuitFlags::Store],
-        row.flags[CircuitFlags::Assert],
-        row.write_lookup_output_to_rd_addr != 0,
-        row.write_pc_to_rd_addr != 0,
-        row.should_jump,
-        row.should_branch != 0,
-    ]
-}
-
-/// Evaluate Bz for the first group as i128s in the group order (length 14).
-/// Uses the i128-safe semantics established in `eval_bz_by_name`.
-pub fn eval_bz_first_group(row: &R1CSCycleInputs) -> [i128; 14] {
-    let const_term: i128 = 4 - if row.flags[CircuitFlags::IsCompressed] {
-        2
-    } else {
-        0
-    };
-    [
-        // LeftInputEqRs1: left - rs1
-        row.left_input as i128 - row.rs1_read_value as i128,
-        // LeftInputEqPC: left - unexpanded_pc
-        row.left_input as i128 - row.unexpanded_pc as i128,
-        // LeftInputZeroOtherwise: left - 0
-        row.left_input as i128,
-        // RightInputEqRs2: right - rs2
-        row.right_input.to_i128() - row.rs2_read_value as i128,
-        // RightInputEqImm: right - imm
-        row.right_input.to_i128() - row.imm.to_i128(),
-        // RightInputZeroOtherwise: right - 0
-        row.right_input.to_i128(),
-        // RamReadEqRamWriteIfLoad: ram_read - ram_write
-        row.ram_read_value as i128 - row.ram_write_value as i128,
-        // RamReadEqRdWriteIfLoad: ram_read - rd_write
-        row.ram_read_value as i128 - row.rd_write_value as i128,
-        // Rs2EqRamWriteIfStore: rs2 - ram_write
-        row.rs2_read_value as i128 - row.ram_write_value as i128,
-        // AssertLookupOne: lookup_output - 1
-        row.lookup_output as i128 - 1,
-        // RdWriteEqLookupIfWriteLookupToRd: rd_write - lookup_output
-        row.rd_write_value as i128 - row.lookup_output as i128,
-        // RdWriteEqPCPlusConstIfWritePCtoRD: rd_write - (unexpanded_pc + (4 - 2*isCompressed))
-        row.rd_write_value as i128 - (row.unexpanded_pc as i128 + const_term),
-        // NextUnexpPCEqLookupIfShouldJump: next_unexpanded_pc - lookup_output
-        row.next_unexpanded_pc as i128 - row.lookup_output as i128,
-        // NextUnexpPCEqPCPlusImmIfShouldBranch: next_unexpanded_pc - (unexpanded_pc + imm)
-        row.next_unexpanded_pc as i128 - (row.unexpanded_pc as i128 + row.imm.to_i128()),
-    ]
-}
-
-/// Evaluate Az for the second group in group order (length 13), using the same small-scalar
-/// semantics as `eval_az_by_name`.
-pub fn eval_az_second_group<F: JoltField>(row: &R1CSCycleInputs) -> [I8OrI96; 13] {
-    let mut out: [I8OrI96; 13] = [I8OrI96::zero(); 13];
-    let mut i = 0;
-    while i < UNIFORM_R1CS_SECOND_GROUP.len() {
-        out[i] = eval_az_by_name::<F>(&UNIFORM_R1CS_SECOND_GROUP[i], row);
-        i += 1;
-    }
-    out
-}
-
-/// Evaluate Bz for the second group in group order (length 13), using the same small-scalar
-/// semantics as `eval_bz_by_name`.
-pub fn eval_bz_second_group<F: JoltField>(row: &R1CSCycleInputs) -> [S160; 13] {
-    let mut out: [S160; 13] = [S160::zero(); 13];
-    let mut i = 0;
-    while i < UNIFORM_R1CS_SECOND_GROUP.len() {
-        out[i] = eval_bz_by_name::<F>(&UNIFORM_R1CS_SECOND_GROUP[i], row);
-        i += 1;
-    }
-    out
-}
-
 /// Evaluate Cz by name using a fully materialized R1CS cycle inputs
 pub fn eval_cz_by_name(c: &NamedConstraint, row: &R1CSCycleInputs) -> S160 {
     use ConstraintName as N;
@@ -959,6 +866,91 @@ pub fn eval_cz_by_name(c: &NamedConstraint, row: &R1CSCycleInputs) -> S160 {
     }
 }
 
+// =============================================================================
+// Group-specific evaluators
+// =============================================================================
+
+/// Evaluate Az for the first group as booleans in the group order (length 14).
+/// Booleans are derived from the same semantics as `eval_az_by_name`, with non-zero selectors
+/// interpreted as true.
+pub fn eval_az_first_group(row: &R1CSCycleInputs) -> [bool; 14] {
+    // Order matches UNIFORM_R1CS_FIRST_GROUP_NAMES
+    let result = [
+        row.flags[CircuitFlags::LeftOperandIsRs1Value],
+        row.flags[CircuitFlags::LeftOperandIsPC],
+        !(row.flags[CircuitFlags::LeftOperandIsRs1Value]
+            || row.flags[CircuitFlags::LeftOperandIsPC]),
+        row.flags[CircuitFlags::RightOperandIsRs2Value],
+        row.flags[CircuitFlags::RightOperandIsImm],
+        !(row.flags[CircuitFlags::RightOperandIsRs2Value]
+            || row.flags[CircuitFlags::RightOperandIsImm]),
+        row.flags[CircuitFlags::Load],
+        row.flags[CircuitFlags::Load],
+        row.flags[CircuitFlags::Store],
+        row.flags[CircuitFlags::Assert],
+        row.write_lookup_output_to_rd_addr != 0,
+        row.write_pc_to_rd_addr != 0,
+        row.should_jump,
+        row.flags[CircuitFlags::InlineSequenceInstruction],
+    ];
+    #[cfg(test)]
+    {
+        // Test that boolean specialization matches i8/i96 semantics from eval_az_by_name
+        for (i, constraint) in UNIFORM_R1CS_FIRST_GROUP.iter().enumerate() {
+            let az_value = eval_az_by_name(constraint, row);
+            let expected_bool = result[i];
+            let actual_bool = az_value != I8OrI96::zero();
+
+            debug_assert_eq!(
+                expected_bool,
+                actual_bool,
+                "Boolean specialization mismatch for constraint {}: expected {}, got {} (az_value: {:?})",
+                constraint.name as u8,
+                expected_bool,
+                actual_bool,
+                az_value
+            );
+        }
+    }
+    result
+}
+
+/// Evaluate Bz for the first group as S160 in the group order (length 14),
+/// using the same semantics as `eval_bz_by_name`.
+pub fn eval_bz_first_group(row: &R1CSCycleInputs) -> [S160; 14] {
+    let mut out: [S160; 14] = [S160::zero(); 14];
+    let mut i = 0;
+    while i < UNIFORM_R1CS_FIRST_GROUP.len() {
+        out[i] = eval_bz_by_name(&UNIFORM_R1CS_FIRST_GROUP[i], row);
+        i += 1;
+    }
+    out
+}
+
+/// Evaluate Az for the second group in group order (length 13), using the same small-scalar
+/// semantics as `eval_az_by_name`.
+pub fn eval_az_second_group(row: &R1CSCycleInputs) -> [I8OrI96; 13] {
+    let mut out: [I8OrI96; 13] = [I8OrI96::zero(); 13];
+    let mut i = 0;
+    while i < UNIFORM_R1CS_SECOND_GROUP.len() {
+        out[i] = eval_az_by_name(&UNIFORM_R1CS_SECOND_GROUP[i], row);
+        i += 1;
+    }
+    out
+}
+
+/// Evaluate Bz for the second group in group order (length 13), using the same small-scalar
+/// semantics as `eval_bz_by_name`.
+pub fn eval_bz_second_group(row: &R1CSCycleInputs) -> [S160; 13] {
+    let mut out: [S160; 13] = [S160::zero(); 13];
+    let mut i = 0;
+    while i < UNIFORM_R1CS_SECOND_GROUP.len() {
+        out[i] = eval_bz_by_name(&UNIFORM_R1CS_SECOND_GROUP[i], row);
+        i += 1;
+    }
+    out
+}
+
 /// Evaluate Cz for the second group in group order (length 13).
 /// Returns S160 values only for the seven constraints whose Cz is non-zero; returns zero for the rest.
 pub fn eval_cz_second_group(row: &R1CSCycleInputs) -> [S160; 13] {
@@ -974,26 +966,6 @@ pub fn eval_cz_second_group(row: &R1CSCycleInputs) -> [S160; 13] {
         i += 1;
     }
     out
-}
-
-// =============================================================================
-// Batch evaluation functions
-// =============================================================================
-
-/// Batched evaluation using a fully materialized R1CS cycle inputs. This avoids any repeated
-/// reads from the trace or bytecode and computes all constraints.
-pub fn eval_az_bz_batch_from_row<F: JoltField>(
-    constraints: &[NamedConstraint],
-    row: &R1CSCycleInputs,
-    az_output: &mut [I8OrI96],
-    bz_output: &mut [S160],
-) {
-    assert_eq!(constraints.len(), az_output.len());
-    assert_eq!(constraints.len(), bz_output.len());
-    for (i, constraint) in constraints.iter().enumerate() {
-        az_output[i] = eval_az_by_name::<F>(constraint, row);
-        bz_output[i] = eval_bz_by_name::<F>(constraint, row);
-    }
 }
 
 #[cfg(test)]

@@ -336,9 +336,7 @@ pub mod univariate_skip {
         res
     }
 
-    // compute_first_group
-
-    // compute_second_group
+    // TODO: better handling of these compute az/bz/cz at r functions
 
     #[inline]
     pub fn compute_az_r_group0<F: JoltField>(row: &R1CSCycleInputs, lagrange_evals_r: &[F]) -> F {
@@ -360,7 +358,7 @@ pub mod univariate_skip {
         let mut bz_field: [F; 14] = [F::zero(); 14];
         let mut i = 0;
         while i < 14 {
-            bz_field[i] = F::from_i128(bz_vals[i]);
+            bz_field[i] = s160_to_field::<F>(&bz_vals[i]);
             i += 1;
         }
         compute_dotproduct(&bz_field, &lagrange_evals_r[..14])
@@ -369,7 +367,7 @@ pub mod univariate_skip {
     #[inline]
     pub fn compute_az_r_group1<F: JoltField>(row: &R1CSCycleInputs, lagrange_evals_r: &[F]) -> F {
         // Group 1 Az are I8OrI96; use SmallScalar::to_field via explicit loop
-        let az_vals = eval_az_second_group::<F>(row);
+        let az_vals = eval_az_second_group(row);
         let mut az_field: [F; 13] = [F::zero(); 13];
         let mut i = 0;
         while i < 13 {
@@ -382,7 +380,7 @@ pub mod univariate_skip {
     #[inline]
     pub fn compute_bz_r_group1<F: JoltField>(row: &R1CSCycleInputs, lagrange_evals_r: &[F]) -> F {
         // Group 1 Bz are S160; convert to field via helper
-        let bz_vals = eval_bz_second_group::<F>(row);
+        let bz_vals = eval_bz_second_group(row);
         let mut bz_field: [F; 13] = [F::zero(); 13];
         let mut i = 0;
         while i < 13 {
