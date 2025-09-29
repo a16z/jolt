@@ -1,4 +1,3 @@
-use crate::field::JoltField;
 use num_traits::Zero;
 
 pub fn drop_in_background_thread<T>(data: T)
