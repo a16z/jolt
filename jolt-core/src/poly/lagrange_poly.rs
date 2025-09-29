@@ -55,14 +55,26 @@ impl<F: JoltField> LagrangePolynomial<F> {
         // and reuse one inversion for the product
         let mut dists = [F::zero(); N];
         i = 0;
-        while i < N { dists[i] = *r - xs[i]; i += 1; }
+        while i < N {
+            dists[i] = *r - xs[i];
+            i += 1;
+        }
 
         let mut p: Vec<F> = Vec::with_capacity(N + 1);
         p.push(F::one());
-        i = 0; while i < N { let next = p[i] * dists[i]; p.push(next); i += 1; }
+        i = 0;
+        while i < N {
+            let next = p[i] * dists[i];
+            p.push(next);
+            i += 1;
+        }
         let mut s: Vec<F> = vec![F::one(); N + 1];
         let mut tix: isize = (N as isize) - 2;
-        while tix >= 0 { let ui = (tix + 1) as usize; s[tix as usize] = s[ui] * dists[ui]; tix -= 1; }
+        while tix >= 0 {
+            let ui = (tix + 1) as usize;
+            s[tix as usize] = s[ui] * dists[ui];
+            tix -= 1;
+        }
         let inv_prod = p[N].inverse().unwrap();
 
         // Compute barycentric weights for symmetric grid via naive O(N^2); N<=27, acceptable.
@@ -73,7 +85,9 @@ impl<F: JoltField> LagrangePolynomial<F> {
             let xi = xs[a];
             let mut b = 0usize;
             while b < N {
-                if b != a { denom *= xi - xs[b]; }
+                if b != a {
+                    denom *= xi - xs[b];
+                }
                 b += 1;
             }
             ws[a] = denom.inverse().unwrap();
@@ -92,7 +106,11 @@ impl<F: JoltField> LagrangePolynomial<F> {
         }
         let inv_sum = sum.inverse().unwrap();
         let mut outv = [F::zero(); N];
-        i = 0; while i < N { outv[i] = num[i] * inv_sum; i += 1; }
+        i = 0;
+        while i < N {
+            outv[i] = num[i] * inv_sum;
+            i += 1;
+        }
         outv
     }
 
@@ -456,9 +474,7 @@ impl LagrangeHelper {
     /// Input: `base_evals[i] = p(start + i)` where `start = -floor(D/2)`, `N = D+1`.
     /// Output: extended evaluations of length D at points outside the base window.
     #[inline]
-    pub fn extend_evals_symmetric<const D: usize, const N: usize, T>(
-        base_evals: &[T; N],
-    ) -> [T; D]
+    pub fn extend_evals_symmetric<const D: usize, const N: usize, T>(base_evals: &[T; N]) -> [T; D]
     where
         T: Copy + Add<Output = T> + Mul<i32, Output = T> + Default,
     {

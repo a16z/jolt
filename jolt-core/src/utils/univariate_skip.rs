@@ -4,7 +4,7 @@
 // Accumulation primitives for SVO
 pub mod accum {
     use crate::field::JoltField;
-    use ark_ff::biginteger::{BigInt, I8OrI96, S160, S192, S256, SignedBigInt};
+    use ark_ff::biginteger::{BigInt, I8OrI96, SignedBigInt, S160, S192, S256};
 
     /// Final unreduced product after multiplying by a 256-bit field element (512-bit unsigned)
     pub type UnreducedProduct = BigInt<8>;
@@ -144,6 +144,96 @@ pub mod accum {
         SignedBigInt::<4>::zero_extend_from::<3>(&mid)
     }
 
+    /// Optimized: FMA directly with S160 * i32 using hand-rolled limb multiply (no intermediate S192)
+    #[inline(always)]
+    pub fn fmadd_s160_i32<F: JoltField>(
+        pos_acc: &mut UnreducedProduct,
+        neg_acc: &mut UnreducedProduct,
+        field: &F,
+        s: S160,
+        c: i32,
+    ) {
+        if c == 0 || s.is_zero() {
+            return;
+        }
+        let c_abs: u64 = c.unsigned_abs() as u64;
+        let lo = s.magnitude_lo(); // [u64;2]
+        let m0 = lo[0] as u128;
+        let m1 = lo[1] as u128;
+        let m2 = s.magnitude_hi() as u128;
+        let k = c_abs as u128;
+
+        // 3x1 schoolbook (low 256 bits in 4 limbs)
+        let t0 = m0 * k;
+        let r0 = t0 as u64;
+        let mut carry = t0 >> 64;
+
+        let t1 = m1 * k + carry;
+        let r1 = t1 as u64;
+        carry = t1 >> 64;
+
+        let t2 = m2 * k + carry;
+        let r2 = t2 as u64;
+        carry = t2 >> 64;
+        let r3 = carry as u64;
+
+        let mag = BigInt::<4>([r0, r1, r2, r3]);
+        let acc = if s.is_positive() ^ (c < 0) {
+            pos_acc
+        } else {
+            neg_acc
+        };
+        field.as_bigint_ref().fmadd_trunc::<4, 8>(&mag, acc);
+    }
+
+    /// Optimized: FMA directly with S160 * i128 using hand-rolled 3x2 limb multiply (low 256 bits)
+    #[inline(always)]
+    pub fn fmadd_s160_i128<F: JoltField>(
+        pos_acc: &mut UnreducedProduct,
+        neg_acc: &mut UnreducedProduct,
+        field: &F,
+        s: S160,
+        a: i128,
+    ) {
+        if a == 0 || s.is_zero() {
+            return;
+        }
+        let a_abs = a.unsigned_abs();
+        let a0 = (a_abs as u64) as u128;
+        let a1 = (a_abs >> 64) as u64 as u128;
+        let lo = s.magnitude_lo();
+        let m0 = lo[0] as u128;
+        let m1 = lo[1] as u128;
+        let m2 = s.magnitude_hi() as u128;
+
+        // limb 0
+        let p00 = m0 * a0;
+        let r0 = p00 as u64;
+        let mut carry = p00 >> 64;
+
+        // limb 1
+        let s1 = m0 * a1 + m1 * a0 + carry;
+        let r1 = s1 as u64;
+        carry = s1 >> 64;
+
+        // limb 2
+        let s2 = m1 * a1 + m2 * a0 + carry;
+        let r2 = s2 as u64;
+        carry = s2 >> 64;
+
+        // limb 3 (truncate higher)
+        let s3 = m2 * a1 + carry;
+        let r3 = s3 as u64;
+
+        let mag = BigInt::<4>([r0, r1, r2, r3]);
+        let acc = if s.is_positive() ^ (a < 0) {
+            pos_acc
+        } else {
+            neg_acc
+        };
+        field.as_bigint_ref().fmadd_trunc::<4, 8>(&mag, acc);
+    }
+
     /// Local helper to convert `S160` to field without using `.to_field()`
     #[inline]
     pub fn s160_to_field<F: JoltField>(bz: &S160) -> F {
@@ -163,8 +253,16 @@ pub mod accum {
     }
 }
 
-pub mod svo_helpers {
+pub mod univariate_skip {
     // (imports added when wiring pipeline)
+    use super::accum::s160_to_field;
+    use crate::field::JoltField;
+    use crate::utils::compute_dotproduct;
+    use crate::zkvm::r1cs::constraints::{
+        eval_az_first_group, eval_az_second_group, eval_bz_first_group, eval_bz_second_group,
+        eval_cz_second_group,
+    };
+    use crate::zkvm::r1cs::inputs::R1CSCycleInputs;
 
     // NEW! Univariate skip based SVO
 
@@ -241,6 +339,70 @@ pub mod svo_helpers {
     // compute_first_group
 
     // compute_second_group
+
+    #[inline]
+    pub fn compute_az_r_group0<F: JoltField>(row: &R1CSCycleInputs, lagrange_evals_r: &[F]) -> F {
+        // Group 0 Az are booleans; convert to field and inner product with Lagrange evals
+        let az_flags = eval_az_first_group(row);
+        let mut az_field: [F; 14] = [F::zero(); 14];
+        let mut i = 0;
+        while i < 14 {
+            az_field[i] = if az_flags[i] { F::one() } else { F::zero() };
+            i += 1;
+        }
+        compute_dotproduct(&az_field, &lagrange_evals_r[..14])
+    }
+
+    #[inline]
+    pub fn compute_bz_r_group0<F: JoltField>(row: &R1CSCycleInputs, lagrange_evals_r: &[F]) -> F {
+        // Group 0 Bz are i128 semantics; convert and inner product
+        let bz_vals = eval_bz_first_group(row);
+        let mut bz_field: [F; 14] = [F::zero(); 14];
+        let mut i = 0;
+        while i < 14 {
+            bz_field[i] = F::from_i128(bz_vals[i]);
+            i += 1;
+        }
+        compute_dotproduct(&bz_field, &lagrange_evals_r[..14])
+    }
+
+    #[inline]
+    pub fn compute_az_r_group1<F: JoltField>(row: &R1CSCycleInputs, lagrange_evals_r: &[F]) -> F {
+        // Group 1 Az are I8OrI96; use SmallScalar::to_field via explicit loop
+        let az_vals = eval_az_second_group::<F>(row);
+        let mut az_field: [F; 13] = [F::zero(); 13];
+        let mut i = 0;
+        while i < 13 {
+            az_field[i] = crate::utils::small_scalar::SmallScalar::to_field::<F>(az_vals[i]);
+            i += 1;
+        }
+        compute_dotproduct(&az_field, &lagrange_evals_r[..13])
+    }
+
+    #[inline]
+    pub fn compute_bz_r_group1<F: JoltField>(row: &R1CSCycleInputs, lagrange_evals_r: &[F]) -> F {
+        // Group 1 Bz are S160; convert to field via helper
+        let bz_vals = eval_bz_second_group::<F>(row);
+        let mut bz_field: [F; 13] = [F::zero(); 13];
+        let mut i = 0;
+        while i < 13 {
+            bz_field[i] = s160_to_field::<F>(&bz_vals[i]);
+            i += 1;
+        }
+        compute_dotproduct(&bz_field, &lagrange_evals_r[..13])
+    }
+
+    #[inline]
+    pub fn compute_cz_r_group1<F: JoltField>(row: &R1CSCycleInputs, lagrange_evals_r: &[F]) -> F {
+        let cz_vals = eval_cz_second_group(row);
+        let mut cz_field: [F; 13] = [F::zero(); 13];
+        let mut i = 0;
+        while i < 13 {
+            cz_field[i] = s160_to_field::<F>(&cz_vals[i]);
+            i += 1;
+        }
+        compute_dotproduct(&cz_field, &lagrange_evals_r[..13])
+    }
 }
 
 #[cfg(test)]

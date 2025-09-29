@@ -11,6 +11,7 @@ use ark_serialize::{
 use num::FromPrimitive;
 use tracer::JoltDevice;
 
+use crate::zkvm::spartan::outer::OuterSumcheckProof;
 use crate::zkvm::witness::AllCommittedPolynomials;
 use crate::{
     field::JoltField,
@@ -407,8 +408,12 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
                 0u8.serialize_with_mode(&mut writer, compress)?;
                 proof.serialize_with_mode(&mut writer, compress)
             }
-            ProofData::ReducedOpeningProof(proof) => {
+            ProofData::OuterSumcheckProof(proof) => {
                 1u8.serialize_with_mode(&mut writer, compress)?;
+                proof.serialize_with_mode(&mut writer, compress)
+            }
+            ProofData::ReducedOpeningProof(proof) => {
+                2u8.serialize_with_mode(&mut writer, compress)?;
                 proof.serialize_with_mode(&mut writer, compress)
             }
         }
@@ -417,6 +422,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
     fn serialized_size(&self, compress: Compress) -> usize {
         1 + match self {
             ProofData::SumcheckProof(proof) => proof.serialized_size(compress),
+            ProofData::OuterSumcheckProof(proof) => proof.serialized_size(compress),
             ProofData::ReducedOpeningProof(proof) => proof.serialized_size(compress),
         }
     }
@@ -446,6 +452,11 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
                 Ok(ProofData::SumcheckProof(proof))
             }
             1 => {
+                let proof =
+                    OuterSumcheckProof::deserialize_with_mode(&mut reader, compress, validate)?;
+                Ok(ProofData::OuterSumcheckProof(proof))
+            }
+            2 => {
                 let proof =
                     ReducedOpeningProof::deserialize_with_mode(&mut reader, compress, validate)?;
                 Ok(ProofData::ReducedOpeningProof(proof))

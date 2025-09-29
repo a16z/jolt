@@ -608,8 +608,7 @@ pub const UNIFORM_R1CS_FIRST_GROUP_NAMES: [ConstraintName; 14] = [
 
 /// UNIFORM_R1CS_SECOND_GROUP_NAMES: computed complement of `UNIFORM_R1CS_FIRST_GROUP_NAMES`
 /// within `UNIFORM_R1CS`, order-preserving.
-pub const UNIFORM_R1CS_SECOND_GROUP_NAMES: [ConstraintName; 13] =
-    complement_first_group_names();
+pub const UNIFORM_R1CS_SECOND_GROUP_NAMES: [ConstraintName; 13] = complement_first_group_names();
 
 /// 14 boolean-guarded eq constraints with Cz=Zero and i128-bounded Bz semantics.
 pub static UNIFORM_R1CS_FIRST_GROUP: [NamedConstraint; 14] =
@@ -933,41 +932,45 @@ pub fn eval_bz_second_group<F: JoltField>(row: &R1CSCycleInputs) -> [S160; 13] {
     out
 }
 
+/// Evaluate Cz by name using a fully materialized R1CS cycle inputs
+pub fn eval_cz_by_name(c: &NamedConstraint, row: &R1CSCycleInputs) -> S160 {
+    use ConstraintName as N;
+    match c.name {
+        // Cz: RamAddress - 0 (if-else: c = result - false_val)
+        N::RamAddrEqRs1PlusImmIfLoadStore => S160::from(row.ram_addr),
+        // Cz: LeftLookupOperand - LeftInstructionInput (if-else: c = result - false_val)
+        N::LeftLookupZeroUnlessAddSubMul => {
+            S160::from_diff_u64(row.left_lookup, row.left_input)
+        }
+        // Cz: Product (product: c = result)
+        N::ProductDef => S160::from(row.product),
+        // Cz: WriteLookupOutputToRD (Rd * WriteLookupOutputToRD flag) (product: c = result)
+        N::WriteLookupOutputToRDDef => S160::from(row.write_lookup_output_to_rd_addr as u64),
+        // Cz: WritePCtoRD (Rd * Jump) (product: c = result)
+        N::WritePCtoRDDef => S160::from(row.write_pc_to_rd_addr as u64),
+        // Cz: ShouldJump (Jump * (1 - NextIsNoop)) as 0/1
+        N::ShouldJumpDef => {
+            if row.should_jump { S160::one() } else { S160::zero() }
+        }
+        // Cz: ShouldBranch (Branch * LookupOutput)
+        N::ShouldBranchDef => S160::from(row.should_branch),
+        // Cz: 0 for eq-conditional constraints (rest)
+        _ => panic!("Cz is zero for eq-conditional constraints. Should never be called, always gate by CzKind first."),
+    }
+}
+
 /// Evaluate Cz for the second group in group order (length 13).
 /// Returns S160 values only for the seven constraints whose Cz is non-zero; returns zero for the rest.
 pub fn eval_cz_second_group(row: &R1CSCycleInputs) -> [S160; 13] {
-    use ConstraintName as N;
     let mut out: [S160; 13] = [S160::zero(); 13];
     let mut i = 0;
     while i < UNIFORM_R1CS_SECOND_GROUP.len() {
-        let val = match UNIFORM_R1CS_SECOND_GROUP[i].name {
-            // if-else: c = result - false_val
-            N::RamAddrEqRs1PlusImmIfLoadStore => S160::from(row.ram_addr),
-            N::LeftLookupZeroUnlessAddSubMul => {
-                S160::from(row.left_lookup as i128 - row.left_input as i128)
-            }
-            // product: c = result
-            N::ProductDef => S160::from(row.product),
-            N::WriteLookupOutputToRDDef => S160::from(row.write_lookup_output_to_rd_addr as u64),
-            N::WritePCtoRDDef => S160::from(row.write_pc_to_rd_addr as u64),
-            N::ShouldJumpDef => {
-                if row.should_jump {
-                    S160::one()
-                } else {
-                    S160::zero()
-                }
-            }
-            N::ShouldBranchDef => S160::from(row.should_branch),
-            // eq-conditional: Cz is zero by construction
-            N::RightLookupAdd
-            | N::RightLookupSub
-            | N::RightLookupEqProductIfMul
-            | N::RightLookupEqRightInputOtherwise
-            | N::NextUnexpPCUpdateOtherwise
-            | N::NextPCEqPCPlusOneIfInline => S160::zero(),
-            _ => S160::zero(),
+        let nc = &UNIFORM_R1CS_SECOND_GROUP[i];
+        out[i] = if nc.cz == CzKind::NonZero {
+            eval_cz_by_name(nc, row)
+        } else {
+            S160::zero()
         };
-        out[i] = val;
         i += 1;
     }
     out
