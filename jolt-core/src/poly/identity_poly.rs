@@ -3,7 +3,7 @@ use std::sync::{Arc, RwLock};
 use allocative::Allocative;
 use num::Integer;
 
-use crate::field::{IntoField, JoltField};
+use crate::field::JoltField;
 use crate::poly::prefix_suffix::{
     CacheablePolynomial, CachedPolynomial, Prefix, PrefixCheckpoints, PrefixPolynomial,
     PrefixRegistry, PrefixSuffixPolynomial, SuffixPolynomial,
@@ -67,7 +67,7 @@ impl<F: JoltField> PolynomialEvaluation<F> for IdentityPolynomial<F> {
         let len = r.len();
         debug_assert_eq!(len, self.num_vars);
         (0..len)
-            .map(|i| r[i].into_F().mul_u128(1 << (len - 1 - i)))
+            .map(|i| r[i].into().mul_u128(1 << (len - 1 - i)))
             .sum()
     }
 
@@ -238,12 +238,12 @@ impl<F: JoltField> PolynomialEvaluation<F> for OperandPolynomial<F> {
 
         match self.side {
             OperandSide::Left => (0..len / 2)
-                .map(|i| r[2 * i].into_F().mul_u128(1 << (self.num_vars / 2 - 1 - i)))
+                .map(|i| r[2 * i].into().mul_u128(1 << (self.num_vars / 2 - 1 - i)))
                 .sum(),
             OperandSide::Right => (0..len / 2)
                 .map(|i| {
                     r[2 * i + 1]
-                        .into_F()
+                        .into()
                         .mul_u128(1 << (self.num_vars / 2 - 1 - i))
                 })
                 .sum(),

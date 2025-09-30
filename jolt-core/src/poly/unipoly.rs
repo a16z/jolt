@@ -1,4 +1,4 @@
-use crate::field::{IntoField, JoltField};
+use crate::field::JoltField;
 use std::cmp::Ordering;
 use std::ops::{AddAssign, Index, IndexMut, Mul, MulAssign, Sub};
 
@@ -406,7 +406,7 @@ impl<F: JoltField> CompressedUniPoly<F> {
             linear_term -= self.coeffs_except_linear_term[i];
         }
 
-        let mut running_point = x.into_F();
+        let mut running_point: F = (*x).into();
         let mut running_sum = self.coeffs_except_linear_term[0] + *x * linear_term;
         for i in 1..self.coeffs_except_linear_term.len() {
             running_point = running_point * x;

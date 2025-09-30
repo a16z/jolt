@@ -393,7 +393,6 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::field::IntoField;
     use ark_bn254::Fr;
     use ark_ff::{AdditiveGroup, Field};
     use ark_std::test_rng;
@@ -494,7 +493,7 @@ pub mod tests {
                     assert_eq!(direct_eval, eval.1);
                 }
                 let r = <Fr as JoltField>::Challenge::from(rng.gen::<u128>());
-                rr.push(r.into_F());
+                rr.push(r.into());
                 ps.bind(r);
             }
 
