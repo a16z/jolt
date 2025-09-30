@@ -4,7 +4,7 @@ use crate::field::challenge::MontU128Challenge;
 #[cfg(feature = "trivial-challenge")]
 use crate::field::challenge::TrivialChallenge;
 use crate::utils::thread::unsafe_allocate_zero_vec;
-use ark_ff::{prelude::*, AdditiveGroup, BigInt, PrimeField, UniformRand};
+use ark_ff::{prelude::*, BigInt, PrimeField, UniformRand};
 use rayon::prelude::*;
 
 impl FieldOps for ark_bn254::Fr {}

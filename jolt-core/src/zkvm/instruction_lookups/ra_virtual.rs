@@ -46,7 +46,7 @@ pub struct RaSumcheck<F: JoltField> {
 pub struct RaProverState<F: JoltField> {
     ra_i_polys: Vec<MultilinearPolynomial<F>>,
     /// Challenges drawn throughout  the sumcheck.
-    r_sumcheck: Vec<F>,
+    r_sumcheck: Vec<F::Challenge>,
 }
 
 impl<F: JoltField> RaSumcheck<F> {
@@ -170,7 +170,7 @@ impl<F: JoltField> SumcheckInstance<F> for RaSumcheck<F> {
     }
 
     #[tracing::instrument(skip_all, name = "InstructionRaSumcheck::bind")]
-    fn bind(&mut self, r_j: F::Challenge, round: usize) {
+    fn bind(&mut self, r_j: F::Challenge, _round: usize) {
         let prover_state = self
             .prover_state
             .as_mut()
