@@ -785,41 +785,55 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             None
         };
 
-        let (eval_0, eval_2_left, eval_2_right) = (0..len / 2)
+        let prefix_evals: Vec<Vec<[PrefixEval<F>; 2]>> = Prefixes::iter()
+            .map(|prefix| {
+                (0..len / 2)
+                    .into_par_iter()
+                    .map(|b| {
+                        let b = LookupBits::new(b as u128, log_len - 1);
+                        let eval_0 =
+                            prefix.prefix_mle::<XLEN, F>(&ps.prefix_checkpoints, r_x, 0, b, j);
+                        let eval_2 =
+                            prefix.prefix_mle::<XLEN, F>(&ps.prefix_checkpoints, r_x, 2, b, j);
+                        [eval_0, eval_2]
+                    })
+                    .collect()
+            })
+            .collect();
+
+        // Reshape prefix_evals
+        let prefix_evals_0: Vec<Vec<_>> = (0..len / 2)
             .into_par_iter()
-            .flat_map_iter(|b| {
-                let b = LookupBits::new(b as u128, log_len - 1);
-                let prefixes_c0: Vec<_> = Prefixes::iter()
-                    .map(|prefix| {
-                        prefix.prefix_mle::<XLEN, F>(&ps.prefix_checkpoints, r_x, 0, b, j)
-                    })
-                    .collect();
-                let prefixes_c2: Vec<_> = Prefixes::iter()
-                    .map(|prefix| {
-                        prefix.prefix_mle::<XLEN, F>(&ps.prefix_checkpoints, r_x, 2, b, j)
-                    })
-                    .collect();
-                lookup_tables
-                    .iter()
-                    .zip(ps.suffix_polys.iter())
-                    .map(move |(table, suffixes)| {
-                        let suffixes_left: Vec<_> =
-                            suffixes.iter().map(|suffix| suffix[b.into()]).collect();
-                        let suffixes_right: Vec<_> = suffixes
-                            .iter()
-                            .map(|suffix| suffix[usize::from(b) + len / 2])
-                            .collect();
-                        (
-                            table.combine(&prefixes_c0, &suffixes_left),
-                            table.combine(&prefixes_c2, &suffixes_left),
-                            table.combine(&prefixes_c2, &suffixes_right),
-                        )
-                    })
+            .map(|b| prefix_evals.iter().map(|prefix| prefix[b][0]).collect())
+            .collect();
+        let prefix_evals_2: Vec<Vec<_>> = (0..len / 2)
+            .into_par_iter()
+            .map(|b| prefix_evals.iter().map(|prefix| prefix[b][1]).collect())
+            .collect();
+
+        let (eval_0, eval_2_left, eval_2_right) = lookup_tables
+            .par_iter()
+            .zip(ps.suffix_polys.par_iter())
+            .flat_map(|(table, suffixes)| {
+                (0..len / 2).into_par_iter().map(|b| {
+                    let suffixes_left: Vec<_> =
+                        suffixes.iter().map(|suffix| suffix[b.into()]).collect();
+                    let suffixes_right: Vec<_> = suffixes
+                        .iter()
+                        .map(|suffix| suffix[usize::from(b) + len / 2])
+                        .collect();
+                    (
+                        table.combine(&prefix_evals_0[b], &suffixes_left),
+                        table.combine(&prefix_evals_2[b], &suffixes_left),
+                        table.combine(&prefix_evals_2[b], &suffixes_right),
+                    )
+                })
             })
             .reduce(
                 || (F::zero(), F::zero(), F::zero()),
                 |running, new| (running.0 + new.0, running.1 + new.1, running.2 + new.2),
             );
+
         [eval_0, eval_2_right + eval_2_right - eval_2_left]
     }
 }
