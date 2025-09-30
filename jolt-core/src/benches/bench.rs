@@ -1,5 +1,6 @@
 use ark_serialize::CanonicalSerialize;
-use plotly::{Layout, Plot, Scatter};
+use plotly::layout::{Axis, BarMode};
+use plotly::{Bar, Layout, Plot, Scatter};
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
@@ -31,6 +32,7 @@ pub enum BenchType {
     Sha2,
     Sha3,
     Sha2Chain,
+    Sha3Chain,
     LargeDSumCheck,
     Suite,
 }
@@ -41,6 +43,7 @@ pub fn benchmarks(bench_type: BenchType) -> Vec<(tracing::Span, Box<dyn FnOnce()
         BenchType::Sha2 => sha2(),
         BenchType::Sha3 => sha3(),
         BenchType::Sha2Chain => sha2_chain(),
+        BenchType::Sha3Chain => sha3_chain(),
         BenchType::Fibonacci => fibonacci(),
         BenchType::LargeDSumCheck => large_d_sumcheck::<Fr, Blake2bTranscript>(),
         BenchType::Suite => benchmark_suite(),
@@ -60,14 +63,27 @@ fn sha3() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
 }
 
 fn btreemap() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
-    prove_example("btreemap-guest", postcard::to_stdvec(&50u32).unwrap())
+    let bench_scale = 23;
+    let btreemap_ops = get_btreemap_ops(bench_scale);
+    prove_example(
+        "btreemap-guest",
+        postcard::to_stdvec(&btreemap_ops).unwrap(),
+    )
 }
 
 fn sha2_chain() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
+    let iterations = get_sha2_chain_iterations(26);
     let mut inputs = vec![];
     inputs.append(&mut postcard::to_stdvec(&[5u8; 32]).unwrap());
-    inputs.append(&mut postcard::to_stdvec(&1000u32).unwrap());
+    inputs.append(&mut postcard::to_stdvec(&iterations).unwrap());
     prove_example("sha2-chain-guest", inputs)
+}
+
+fn sha3_chain() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
+    let mut inputs = vec![];
+    inputs.append(&mut postcard::to_stdvec(&[5u8; 32]).unwrap());
+    inputs.append(&mut postcard::to_stdvec(&300u32).unwrap());
+    prove_example("sha3-chain-guest", inputs)
 }
 
 fn get_fib_input(scale: usize) -> u32 {
@@ -273,7 +289,7 @@ fn prove_example(
             bytecode.clone(),
             program_io.memory_layout.clone(),
             init_memory_state,
-            1 << 24,
+            1 << 26,
         );
 
         let elf_contents_opt = program.get_elf_contents();
@@ -554,7 +570,7 @@ pub fn create_prover_speed_plot() -> Result<(), Box<dyn std::error::Error>> {
         .title("Jolt zkVM Benchmark<br><sub>Hardware: 2023 M3 Max Macbook Pro 16 cores, 128 GB RAM</sub>")
         .x_axis(
             plotly::layout::Axis::new()
-                .title("Trace length (RV32IM Cycles)")
+                .title("Trace length (RV32IM cycles)")
                 .type_(plotly::layout::AxisType::Linear)
                 .tick_values(tick_vals)
                 .tick_text(tick_text),
@@ -697,6 +713,115 @@ pub fn create_proof_size_plot() -> Result<(), Box<dyn std::error::Error>> {
     println!("Proof size plot saved to {html_path}");
 
     Ok(())
+}
+
+pub fn create_prover_time_stacked_bar_chart() {
+    let x_vals = vec!["2^18", "2^20", "2^22", "2^24", "2^26"];
+
+    let spartan_times = vec![
+        0.063218167,
+        0.241247792,
+        0.918651959,
+        4.018379291,
+        16.883696959,
+    ];
+    let total_prove_times = vec![
+        3.455596291,
+        7.249402208,
+        17.665766708,
+        52.122210833,
+        183.01000275,
+    ];
+    let dory_commitment_times = vec![
+        0.760738916,
+        1.62285075,
+        3.745405291,
+        9.76091225,
+        29.817534042,
+    ];
+    let registers_twist_times = vec![
+        0.050287377,
+        0.169915421,
+        0.553899621,
+        2.094848582,
+        8.968360504,
+    ];
+    let ram_twist_times = vec![
+        0.075968592,
+        0.168778755,
+        0.48967716,
+        1.693429088,
+        6.842295842,
+    ];
+    let bytecode_shout_times = vec![
+        0.057913128,
+        0.121835336,
+        0.397341205,
+        1.606799953,
+        6.50301608,
+    ];
+    let instruction_shout_times = vec![
+        0.298935496,
+        0.586434921,
+        1.665092297,
+        5.584993702,
+        22.535375962,
+    ];
+    let dory_opening_times = vec![
+        1.235668416,
+        2.444058125,
+        4.76064775,
+        10.265910917,
+        21.44526775,
+    ];
+
+    let dory_commitment_percentages: Vec<_> = dory_commitment_times
+        .iter()
+        .zip(total_prove_times.iter())
+        .map(|(commit, total)| commit / total * 100.0)
+        .collect();
+    let dory_opening_percentages: Vec<_> = dory_opening_times
+        .iter()
+        .zip(total_prove_times.iter())
+        .map(|(opening, total)| opening / total * 100.0)
+        .collect();
+    let remaining_percentages: Vec<_> = dory_commitment_percentages
+        .iter()
+        .zip(dory_opening_percentages.iter())
+        .map(|(commit, open)| 100.0 - commit - open)
+        .collect();
+
+    let trace_commit = Bar::new(x_vals.clone(), dory_commitment_percentages)
+        .name("Dory commitment")
+        .width(0.5);
+    let trace_open = Bar::new(x_vals.clone(), dory_opening_percentages)
+        .name("Dory opening proof")
+        .width(0.5);
+    let trace_other = Bar::new(x_vals.clone(), remaining_percentages)
+        .name("Other")
+        .width(0.5);
+
+    let layout = Layout::new()
+        .title("Jolt zkVM Prover Time Breakdown")
+        .bar_mode(BarMode::Stack)
+        .x_axis(Axis::new().title("Trace length (RV32IM cycles)"))
+        .y_axis(
+            Axis::new()
+                .title("Percentage of prover time")
+                .range(vec![0.0, 100.0])
+                .dtick(20.0),
+        )
+        .width(800);
+
+    let mut plot = Plot::new();
+    plot.add_trace(trace_commit);
+    plot.add_trace(trace_open);
+    plot.add_trace(trace_other);
+    plot.set_layout(layout);
+
+    let html_path = "perfetto_traces/prover_time_breakdown.html";
+    plot.write_html(html_path);
+    println!("Proof size plot saved to {html_path}");
 }
 
 fn large_d_sumcheck<F, ProofTranscript>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>

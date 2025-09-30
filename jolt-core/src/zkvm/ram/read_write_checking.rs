@@ -408,7 +408,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
         }
     }
 
-    #[tracing::instrument(skip_all, name = "RamReadWriteChecking::phase1_compute_prover_message")]
+    // #[tracing::instrument(skip_all, name = "RamReadWriteChecking::phase1_compute_prover_message")]
     fn phase1_compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F> {
         const DEGREE: usize = 3;
         let ReadWriteCheckingProverState {

@@ -98,6 +98,7 @@ impl<F: JoltField> RASumCheck<F> {
             .collect()
     }
 
+    #[tracing::instrument(skip_all, name = "InstructionRaVirtualization::new_prover")]
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         log_K: usize,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
@@ -204,6 +205,7 @@ impl<F: JoltField> SumcheckInstance<F> for RASumCheck<F> {
         self.eq_ra_claim
     }
 
+    #[tracing::instrument(skip_all, name = "InstructionRaVirtualization::compute_prover_message")]
     fn compute_prover_message(&mut self, round: usize, _previous_claim: F) -> Vec<F> {
         let prover_state = self
             .prover_state
@@ -250,6 +252,7 @@ impl<F: JoltField> SumcheckInstance<F> for RASumCheck<F> {
             .collect()
     }
 
+    #[tracing::instrument(skip_all, name = "InstructionRaVirtualization::bind")]
     fn bind(&mut self, r_j: F, round: usize) {
         let prover_state = self
             .prover_state

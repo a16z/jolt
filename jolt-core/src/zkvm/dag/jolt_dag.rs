@@ -58,6 +58,8 @@ impl JoltDAG {
 
         let ram_K = state_manager.ram_K;
         let bytecode_d = preprocessing.shared.bytecode.d;
+        println!("Bytecode d = {bytecode_d}");
+        println!("RAM d = {}", compute_d_parameter(ram_K));
         let _guard = (
             DoryGlobals::initialize(DTH_ROOT_OF_K, padded_trace_length),
             AllCommittedPolynomials::initialize(compute_d_parameter(ram_K), bytecode_d),

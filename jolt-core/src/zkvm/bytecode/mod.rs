@@ -39,7 +39,7 @@ pub struct BytecodePreprocessing {
 }
 
 impl BytecodePreprocessing {
-    #[tracing::instrument(skip_all, name = "BytecodePreprocessing::preprocess")]
+    // #[tracing::instrument(skip_all, name = "BytecodePreprocessing::preprocess")]
     pub fn preprocess(mut bytecode: Vec<RV32IMInstruction>) -> Self {
         let mut virtual_address_map = BTreeMap::new();
         let mut virtual_address = 1; // Account for no-op instruction prepended to bytecode
@@ -155,7 +155,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
 }
 
 #[inline(always)]
-#[tracing::instrument(skip_all, name = "Bytecode::compute_ra_evals")]
+// #[tracing::instrument(skip_all, name = "Bytecode::compute_ra_evals")]
 fn compute_ra_evals<F: JoltField>(
     preprocessing: &BytecodePreprocessing,
     trace: &[RV32IMCycle],

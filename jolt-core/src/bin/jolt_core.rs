@@ -1,7 +1,8 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use jolt_core::benches::bench::{
-    benchmarks, create_proof_size_plot, create_prover_speed_plot, BenchType,
+    benchmarks, create_proof_size_plot, create_prover_speed_plot,
+    create_prover_time_stacked_bar_chart, BenchType,
 };
 
 use std::any::Any;
@@ -40,7 +41,8 @@ enum Format {
 
 fn main() {
     // let _ = create_prover_speed_plot();
-    let _ = create_proof_size_plot();
+    // let _ = create_proof_size_plot();
+    create_prover_time_stacked_bar_chart();
 
     // let cli = Cli::parse();
     // match cli.command {

@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <script src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-svg.js"></script>
+        <script src="https://cdn.plot.ly/plotly-3.0.1.min.js"></script>
+        
+</head>
+
+<body>
+    <div>
+        <div id="plotly-html-element" class="plotly-graph-div" style="height:100%; width:100%;"></div>
+
+        <script type="module">
+            const graph_div = document.getElementById("plotly-html-element");
+            await Plotly.newPlot(graph_div, {"data":[{"type":"bar","x":["2^18","2^20","2^22","2^24","2^26"],"y":[22.014693035217174,22.385994092162807,21.20148733371352,18.72697280872073,16.29284388500453],"name":"Dory commitment","width":0.5},{"type":"bar","x":["2^18","2^20","2^22","2^24","2^26"],"y":[35.75847153263425,33.7139264021368,26.948435517628145,19.69584703513837,11.718085037840915],"name":"Dory opening proof","width":0.5},{"type":"bar","x":["2^18","2^20","2^22","2^24","2^26"],"y":[42.22683543214857,43.9000795057004,51.85007714865834,61.5771801561409,71.98907107715456],"name":"Other","width":0.5}],"layout":{"title":{"text":"Jolt zkVM Prover Time Breakdown"},"width":800,"xaxis":{"title":{"text":"Trace length (RV32IM cycles)"}},"yaxis":{"title":{"text":"Percentage of prover time"},"range":[0.0,100.0],"dtick":20.0},"barmode":"stack"},"config":{},"frames":null});
+        </script>
+    </div>
+</body>
+
+</html>
