@@ -10,7 +10,7 @@ use super::srli::SRLI;
 use super::virtual_assert_word_alignment::VirtualAssertWordAlignment;
 use super::virtual_lw::VirtualLW;
 use super::virtual_move::VirtualMove;
-use super::virtual_sign_extend::VirtualSignExtend;
+use super::virtual_sign_extend_word::VirtualSignExtendWord;
 use super::virtual_sw::VirtualSW;
 use super::xor::XOR;
 
@@ -51,7 +51,7 @@ pub fn amo_post64(
     asm.emit_r::<AND>(v_word, v_word, v_mask);
     asm.emit_r::<XOR>(v_dword, v_dword, v_word);
     asm.emit_s::<SD>(v_dword_address, v_dword, 0);
-    asm.emit_i::<VirtualSignExtend>(rd, v_rd, 0);
+    asm.emit_i::<VirtualSignExtendWord>(rd, v_rd, 0);
 }
 
 pub fn amo_pre32(asm: &mut InstrAssembler, rs1: u8, v_rd: u8) {

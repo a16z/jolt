@@ -4,8 +4,8 @@ use std::panic;
 use crate::emulator::cpu::Cpu;
 use crate::instruction::format::{InstructionFormat, InstructionRegisterState};
 use crate::instruction::NormalizedInstruction;
-use crate::utils::test_harness::TEST_MEMORY_CAPACITY;
 
+#[cfg(test)]
 use super::{
     // amoaddd::AMOADDD, amoaddw::AMOADDW, amoandd::AMOANDD,
     // amoandw::AMOANDW, amomaxd::AMOMAXD, amomaxud::AMOMAXUD, amomaxuw::AMOMAXUW, amomaxw::AMOMAXW,
@@ -39,9 +39,9 @@ use super::{
     srliw::SRLIW,
     srlw::SRLW,
     subw::SUBW,
-    RISCVInstruction,
-    RISCVTrace,
 };
+
+use super::{RISCVInstruction, RISCVTrace};
 
 use crate::emulator::terminal::DummyTerminal;
 
@@ -49,7 +49,9 @@ use common::constants::RISCV_REGISTER_COUNT;
 
 use rand::{rngs::StdRng, SeedableRng};
 
-use super::{RISCVCycle, RV32IMCycle};
+use super::{Cycle, RISCVCycle};
+
+pub const TEST_MEMORY_CAPACITY: u64 = 1024 * 1024;
 
 macro_rules! test_inline_sequences {
   ($( $instr:ty ),* $(,)?) => {
@@ -82,7 +84,7 @@ fn test_rng() -> StdRng {
 
 pub fn inline_sequence_trace_test<I: RISCVInstruction + RISCVTrace + Copy>()
 where
-    RV32IMCycle: From<RISCVCycle<I>>,
+    Cycle: From<RISCVCycle<I>>,
 {
     let mut rng = test_rng();
     let mut non_panic = 0;

@@ -12,7 +12,7 @@ Our implementation of the Twist prover algorithm differs from the description gi
 ### Two reads, one write per cycle
 
 The Twist algorithm as described in the paper assumes one read and one write per cycle, with corresponding polynomials $\widetilde{\textsf{ra}}$ (read address) and $\widetilde{\textsf{wa}}$ (write address).
-However, in the context of the RV32IM instruction set, a single instruction (specifically, an R-type instruction) can read from two source registers (`rs1` and `rs2`) and write to a destination register (`rd`).
+However, in the context of the RV64IMAC instruction set, a single instruction (specifically, an R-type instruction) can read from two source registers (`rs1` and `rs2`) and write to a destination register (`rd`).
 
 Thus, we have *two* $\widetilde{\textsf{ra}}$ polynomials corresponding to `rs1` and `rs2`, plus a $\widetilde{\textsf{wa}}$) polynomial corresponding to `rd`.
 Similarly, there are two $\widetilde{\textsf{rv}}$ polynomials and one $\widetilde{\textsf{wv}}$ polynomial.

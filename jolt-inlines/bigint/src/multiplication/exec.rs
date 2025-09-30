@@ -1,8 +1,3 @@
-use tracer::{
-    emulator::cpu::Cpu,
-    instruction::{inline::INLINE, RISCVInstruction},
-};
-
 use super::{INPUT_LIMBS, OUTPUT_LIMBS};
 
 /// Execute n-bit × n-bit = 2n-bit multiplication
@@ -48,43 +43,4 @@ pub fn bigint_mul(lhs: [u64; INPUT_LIMBS], rhs: [u64; INPUT_LIMBS]) -> [u64; OUT
         }
     }
     result
-}
-
-pub fn bigint_mul_exec(
-    instr: &INLINE,
-    cpu: &mut Cpu,
-    _ram_access: &mut <INLINE as RISCVInstruction>::RAMAccess,
-) {
-    // Load 4 u64 words from memory at rs1 (first operand)
-    let mut a = [0u64; INPUT_LIMBS];
-    for (i, limb) in a.iter_mut().enumerate().take(INPUT_LIMBS) {
-        *limb = cpu
-            .mmu
-            .load_doubleword(cpu.x[instr.operands.rs1 as usize].wrapping_add((i * 8) as i64) as u64)
-            .expect("BIGINT256_MUL: Failed to load operand A")
-            .0;
-    }
-
-    // Load 4 u64 words from memory at rs2 (second operand)
-    let mut b = [0u64; INPUT_LIMBS];
-    for (i, limb) in b.iter_mut().enumerate().take(INPUT_LIMBS) {
-        *limb = cpu
-            .mmu
-            .load_doubleword(cpu.x[instr.operands.rs2 as usize].wrapping_add((i * 8) as i64) as u64)
-            .expect("BIGINT256_MUL: Failed to load operand B")
-            .0;
-    }
-
-    // Execute multiplication
-    let result = bigint_mul(a, b);
-
-    // Store 8 u64 result words back to memory at rs1
-    for (i, limb) in result.iter().enumerate().take(OUTPUT_LIMBS) {
-        cpu.mmu
-            .store_doubleword(
-                cpu.x[instr.operands.rd as usize].wrapping_add((i * 8) as i64) as u64,
-                *limb,
-            )
-            .expect("BIGINT256_MUL: Failed to store result");
-    }
 }

@@ -595,7 +595,7 @@ pub fn serialize_and_print_size(
     item.serialize_compressed(&mut file)?;
     let file_size_bytes = file.metadata()?.len();
     let file_size_kb = file_size_bytes as f64 / 1024.0;
-    println!("{item_name} Written to {file_name}");
-    println!("{item_name} size: {file_size_kb:.1} kB");
+    tracing::info!("{item_name} Written to {file_name}");
+    tracing::info!("{item_name} size: {file_size_kb:.1} kB");
     Ok(())
 }

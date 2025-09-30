@@ -1,18 +1,17 @@
 #![allow(static_mut_refs)]
 
-use std::array;
-use std::cell::UnsafeCell;
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::sync::LazyLock;
-
 use allocative::Allocative;
 use common::constants::XLEN;
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
 use rayon::prelude::*;
+use std::array;
+use std::cell::UnsafeCell;
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::LazyLock;
 use strum::IntoEnumIterator;
-use tracer::instruction::RV32IMCycle;
+use tracer::instruction::Cycle;
 
 use crate::{
     field::JoltField,
@@ -26,11 +25,12 @@ use crate::{
         JoltProverPreprocessing,
     },
 };
+use ark_ff::biginteger::S128;
 
 use super::instruction::{CircuitFlags, InstructionFlags, LookupQuery};
 
-struct SharedWitnessData<F: JoltField>(UnsafeCell<WitnessData<F>>);
-unsafe impl<F: JoltField> Sync for SharedWitnessData<F> {}
+struct SharedWitnessData(UnsafeCell<WitnessData>);
+unsafe impl Sync for SharedWitnessData {}
 
 /// K^{1/d}
 pub const DTH_ROOT_OF_K: usize = 1 << 8;
@@ -66,8 +66,6 @@ pub enum CommittedPolynomial {
     ShouldBranch,
     /// Whether the current instruction triggers a jump
     ShouldJump,
-    /// Product of `IsCompressed` and `DoNotUpdateUnexpPC`
-    CompressedDoNotUpdateUnexpPC,
     /*  Twist/Shout witnesses */
     /// Inc polynomial for the registers instance of Twist
     RdInc,
@@ -135,16 +133,15 @@ impl RecursionCommittedPolynomial {
 
 pub static mut ALL_COMMITTED_POLYNOMIALS: OnceCell<Vec<CommittedPolynomial>> = OnceCell::new();
 
-struct WitnessData<F: JoltField> {
+struct WitnessData {
     // Simple polynomial coefficients
     left_instruction_input: Vec<u64>,
     right_instruction_input: Vec<i128>,
-    product: Vec<F>,
+    product: Vec<S128>,
     write_lookup_output_to_rd: Vec<u8>,
     write_pc_to_rd: Vec<u8>,
     should_branch: Vec<u8>,
     should_jump: Vec<u8>,
-    compressed_do_not_update_unexp_pc: Vec<u8>,
     rd_inc: Vec<i128>,
     ram_inc: Vec<i128>,
 
@@ -154,22 +151,21 @@ struct WitnessData<F: JoltField> {
     ram_ra: Vec<Vec<Option<usize>>>,
 }
 
-unsafe impl<F: JoltField> Send for WitnessData<F> {}
-unsafe impl<F: JoltField> Sync for WitnessData<F> {}
+unsafe impl Send for WitnessData {}
+unsafe impl Sync for WitnessData {}
 
-impl<F: JoltField> WitnessData<F> {
+impl WitnessData {
     fn new(trace_len: usize, ram_d: usize, bytecode_d: usize) -> Self {
         Self {
             left_instruction_input: vec![0; trace_len],
             right_instruction_input: vec![0; trace_len],
-            product: vec![F::zero(); trace_len],
+            product: vec![S128::zero(); trace_len],
             write_lookup_output_to_rd: vec![0; trace_len],
             write_pc_to_rd: vec![0; trace_len],
             should_branch: vec![0; trace_len],
             should_jump: vec![0; trace_len],
             rd_inc: vec![0; trace_len],
             ram_inc: vec![0; trace_len],
-            compressed_do_not_update_unexp_pc: vec![0; trace_len],
 
             instruction_ra: array::from_fn(|_| vec![None; trace_len]),
             bytecode_ra: (0..bytecode_d).map(|_| vec![None; trace_len]).collect(),
@@ -189,7 +185,6 @@ impl AllCommittedPolynomials {
             CommittedPolynomial::WritePCtoRD,
             CommittedPolynomial::ShouldBranch,
             CommittedPolynomial::ShouldJump,
-            CommittedPolynomial::CompressedDoNotUpdateUnexpPC,
             CommittedPolynomial::RdInc,
             CommittedPolynomial::RamInc,
             CommittedPolynomial::InstructionRa(0),
@@ -301,7 +296,7 @@ impl CommittedPolynomial {
     pub fn generate_witness_batch<F, PCS>(
         polynomials: &[CommittedPolynomial],
         preprocessing: &JoltProverPreprocessing<F, PCS>,
-        trace: &[RV32IMCycle],
+        trace: &[Cycle],
     ) -> std::collections::HashMap<CommittedPolynomial, MultilinearPolynomial<F>>
     where
         F: JoltField,
@@ -358,7 +353,11 @@ impl CommittedPolynomial {
 
                 batch_ref.left_instruction_input[i] = left;
                 batch_ref.right_instruction_input[i] = right;
-                batch_ref.product[i] = F::from_u64(left) * F::from_i128(right);
+                batch_ref.product[i] = if right >= 0 {
+                    S128::from_u128(left as u128 * right.unsigned_abs())
+                } else {
+                    S128::from_u128_and_sign(left as u128 * right.unsigned_abs(), false)
+                };
 
                 batch_ref.write_lookup_output_to_rd[i] = rd_write_flag
                     * (circuit_flags[CircuitFlags::WriteLookupOutputToRD as usize] as u8);
@@ -368,10 +367,6 @@ impl CommittedPolynomial {
 
                 batch_ref.should_branch[i] =
                     (lookup_output as u8) * (circuit_flags[CircuitFlags::Branch as usize] as u8);
-
-                batch_ref.compressed_do_not_update_unexp_pc[i] =
-                    circuit_flags[CircuitFlags::DoNotUpdateUnexpandedPC as usize] as u8
-                        * circuit_flags[CircuitFlags::IsCompressed as usize] as u8;
 
                 // Handle should_jump
                 let is_jump = circuit_flags[CircuitFlags::Jump] as u8;
@@ -475,10 +470,6 @@ impl CommittedPolynomial {
                     let coeffs = std::mem::take(&mut batch.ram_inc);
                     results.insert(*poly, MultilinearPolynomial::<F>::from(coeffs));
                 }
-                CommittedPolynomial::CompressedDoNotUpdateUnexpPC => {
-                    let coeffs = std::mem::take(&mut batch.compressed_do_not_update_unexp_pc);
-                    results.insert(*poly, MultilinearPolynomial::<F>::from(coeffs));
-                }
                 CommittedPolynomial::InstructionRa(i) => {
                     if *i < instruction_lookups::D {
                         let indices = std::mem::take(&mut batch.instruction_ra[*i]);
@@ -514,7 +505,7 @@ impl CommittedPolynomial {
     pub fn generate_witness<F, PCS>(
         &self,
         preprocessing: &JoltProverPreprocessing<F, PCS>,
-        trace: &[RV32IMCycle],
+        trace: &[Cycle],
     ) -> MultilinearPolynomial<F>
     where
         F: JoltField,
@@ -536,12 +527,20 @@ impl CommittedPolynomial {
                 coeffs.into()
             }
             CommittedPolynomial::Product => {
-                let coeffs: Vec<F> = trace
+                let coeffs: Vec<S128> = trace
                     .par_iter()
                     .map(|cycle| {
                         let (left_input, right_input) =
                             LookupQuery::<XLEN>::to_instruction_inputs(cycle);
-                        F::from_u64(left_input) * F::from_i128(right_input)
+                        // Use the fact that `|right_input|` fits in u64 to avoid overflow
+                        if right_input >= 0 {
+                            S128::from_u128(left_input as u128 * right_input.unsigned_abs())
+                        } else {
+                            S128::from_u128_and_sign(
+                                left_input as u128 * right_input.unsigned_abs(),
+                                false,
+                            )
+                        }
                     })
                     .collect();
                 coeffs.into()
@@ -585,24 +584,13 @@ impl CommittedPolynomial {
                         trace
                             .par_iter()
                             .skip(1)
-                            .chain(rayon::iter::once(&RV32IMCycle::NoOp)),
+                            .chain(rayon::iter::once(&Cycle::NoOp)),
                     )
                     .map(|(cycle, next_cycle)| {
                         let is_jump = cycle.instruction().circuit_flags()[CircuitFlags::Jump];
                         let is_next_noop =
                             next_cycle.instruction().circuit_flags()[CircuitFlags::IsNoop];
                         is_jump as u8 * (1 - is_next_noop as u8)
-                    })
-                    .collect();
-                coeffs.into()
-            }
-            CommittedPolynomial::CompressedDoNotUpdateUnexpPC => {
-                let coeffs: Vec<u8> = trace
-                    .par_iter()
-                    .map(|cycle| {
-                        let flags = cycle.instruction().circuit_flags();
-                        flags[CircuitFlags::DoNotUpdateUnexpandedPC as usize] as u8
-                            * flags[CircuitFlags::IsCompressed as usize] as u8
                     })
                     .collect();
                 coeffs.into()

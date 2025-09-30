@@ -4,18 +4,18 @@ use super::add::ADD;
 use super::amo::{amo_post32, amo_post64, amo_pre32, amo_pre64};
 use super::mul::MUL;
 use super::sltu::SLTU;
-use super::virtual_extend::VirtualExtend;
 use super::virtual_move::VirtualMove;
+use super::virtual_zero_extend_word::VirtualZeroExtendWord;
 use super::xori::XORI;
-use super::RV32IMInstruction;
+use super::Instruction;
 use crate::utils::inline_helpers::InstrAssembler;
-use crate::utils::virtual_registers::allocate_virtual_register;
+use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use crate::{
     declare_riscv_instr,
     emulator::cpu::{Cpu, Xlen},
 };
 
-use super::{format::format_r::FormatR, RISCVInstruction, RISCVTrace, RV32IMCycle};
+use super::{format::format_r::FormatR, Cycle, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name   = AMOMINUW,
@@ -53,23 +53,37 @@ impl AMOMINUW {
 }
 
 impl RISCVTrace for AMOMINUW {
-    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let inline_sequence = self.inline_sequence(cpu.xlen);
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
+        let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
-            // In each iteration, create a new Option containing a re-borrowed reference
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
 
-    fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
-        let v_rd = allocate_virtual_register();
-        let v_rs2 = allocate_virtual_register();
-        let v_sel_rs2 = allocate_virtual_register();
-        let v_sel_rd = allocate_virtual_register();
-        let v_tmp = allocate_virtual_register();
+    /// Generates inline sequence for atomic minimum operation (unsigned 32-bit).
+    ///
+    /// AMOMINU.W atomically loads a 32-bit word from memory, computes the minimum
+    /// of that value and the lower 32 bits of rs2 (treating both as unsigned),
+    /// stores the minimum back to memory, and returns the original value
+    /// sign-extended in rd.
+    ///
+    /// Uses branchless minimum selection with unsigned comparison:
+    /// - SLTU for unsigned comparison instead of SLT
+    /// - Zero-extension on RV64 for correct unsigned semantics
+    /// - Otherwise identical multiplication-based selection
+    fn inline_sequence(
+        &self,
+        allocator: &VirtualRegisterAllocator,
+        xlen: Xlen,
+    ) -> Vec<Instruction> {
+        let v_rd = allocator.allocate();
+        let v_rs2 = allocator.allocate();
+        let v_sel_rs2 = allocator.allocate();
+        let v_sel_rd = allocator.allocate();
+        let v_tmp = allocator.allocate();
 
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
 
         match xlen {
             Xlen::Bit32 => {
@@ -84,11 +98,11 @@ impl RISCVTrace for AMOMINUW {
                 amo_post32(&mut asm, *v_rs2, self.operands.rs1, self.operands.rd, *v_rd);
             }
             Xlen::Bit64 => {
-                let v_mask = allocate_virtual_register();
-                let v_dword_address = allocate_virtual_register();
-                let v_dword = allocate_virtual_register();
-                let v_word = allocate_virtual_register();
-                let v_shift = allocate_virtual_register();
+                let v_mask = allocator.allocate();
+                let v_dword_address = allocator.allocate();
+                let v_dword = allocator.allocate();
+                let v_word = allocator.allocate();
+                let v_shift = allocator.allocate();
 
                 amo_pre64(
                     &mut asm,
@@ -98,8 +112,8 @@ impl RISCVTrace for AMOMINUW {
                     *v_dword,
                     *v_shift,
                 );
-                asm.emit_i::<VirtualExtend>(*v_rs2, self.operands.rs2, 0);
-                asm.emit_i::<VirtualExtend>(*v_tmp, *v_rd, 0);
+                asm.emit_i::<VirtualZeroExtendWord>(*v_rs2, self.operands.rs2, 0);
+                asm.emit_i::<VirtualZeroExtendWord>(*v_tmp, *v_rd, 0);
                 asm.emit_r::<SLTU>(*v_sel_rs2, *v_rs2, *v_tmp);
                 asm.emit_i::<XORI>(*v_sel_rd, *v_sel_rs2, 1);
                 asm.emit_r::<MUL>(*v_rs2, *v_sel_rs2, self.operands.rs2);

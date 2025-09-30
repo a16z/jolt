@@ -1,5 +1,5 @@
 use crate::utils::inline_helpers::InstrAssembler;
-use crate::utils::virtual_registers::allocate_virtual_register;
+use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -8,10 +8,8 @@ use crate::{
     instruction::virtual_srai::VirtualSRAI,
 };
 
-use super::virtual_sign_extend::VirtualSignExtend;
-use super::{
-    format::format_i::FormatI, RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
-};
+use super::virtual_sign_extend_word::VirtualSignExtendWord;
+use super::{format::format_i::FormatI, Cycle, Instruction, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name   = SRAIW,
@@ -33,17 +31,32 @@ impl SRAIW {
 }
 
 impl RISCVTrace for SRAIW {
-    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let inline_sequence = self.inline_sequence(cpu.xlen);
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
+        let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
-            // In each iteration, create a new Option containing a re-borrowed reference
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
 
-    fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
-        let v_rs1 = allocate_virtual_register();
+    /// Arithmetic right shift immediate for 32-bit words with sign extension.
+    ///
+    /// SRAIW is an RV64I-only instruction that arithmetically shifts the lower 32 bits
+    /// of rs1 right by a constant amount (preserving sign), then sign-extends the
+    /// 32-bit result to 64 bits.
+    ///
+    /// Implementation:
+    /// 1. Sign-extend rs1 from 32 to 64 bits
+    /// 2. Apply 64-bit arithmetic right shift
+    /// 3. Sign-extend the result again to ensure proper 32-bit semantics
+    ///
+    /// The double sign-extension ensures correct handling of negative 32-bit values.
+    fn inline_sequence(
+        &self,
+        allocator: &VirtualRegisterAllocator,
+        xlen: Xlen,
+    ) -> Vec<Instruction> {
+        let v_rs1 = allocator.allocate();
 
         let shift = self.operands.imm & 0x1f;
         let len = match xlen {
@@ -53,10 +66,10 @@ impl RISCVTrace for SRAIW {
         let ones = (1u128 << (len - shift)) - 1;
         let bitmask = (ones << shift) as u64;
 
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
-        asm.emit_i::<VirtualSignExtend>(*v_rs1, self.operands.rs1, 0);
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
+        asm.emit_i::<VirtualSignExtendWord>(*v_rs1, self.operands.rs1, 0);
         asm.emit_vshift_i::<VirtualSRAI>(self.operands.rd, *v_rs1, bitmask);
-        asm.emit_i::<VirtualSignExtend>(self.operands.rd, self.operands.rd, 0);
+        asm.emit_i::<VirtualSignExtendWord>(self.operands.rd, self.operands.rd, 0);
         asm.finalize()
     }
 }

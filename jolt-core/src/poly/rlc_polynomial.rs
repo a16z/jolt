@@ -1,8 +1,8 @@
 use crate::field::JoltField;
 use crate::msm::VariableBaseMSM;
 use crate::poly::commitment::dory::{DoryGlobals, JoltFieldWrapper, JoltGroupWrapper};
-use crate::poly::compact_polynomial::SmallScalar;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
+use crate::utils::small_scalar::SmallScalar;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use allocative::Allocative;
 use ark_bn254::{Fr, G1Projective};
@@ -83,6 +83,9 @@ impl<F: JoltField> RLCPolynomial<F> {
                                 MultilinearPolynomial::I128Scalars(p) => {
                                     acc += p.coeffs[i].field_mul(coeff);
                                 }
+                                MultilinearPolynomial::S128Scalars(p) => {
+                                    acc += p.coeffs[i].field_mul(coeff);
+                                }
                                 MultilinearPolynomial::LargeScalars(p) => {
                                     acc += p.Z[i] * coeff;
                                 }
@@ -116,7 +119,7 @@ impl<F: JoltField> RLCPolynomial<F> {
         bases: &[G::Affine],
     ) -> Vec<JoltGroupWrapper<G>> {
         let num_rows = DoryGlobals::get_max_num_rows();
-        println!("Committing to RLC polynomial with {num_rows} rows");
+        tracing::debug!("Committing to RLC polynomial with {num_rows} rows");
         let row_len = DoryGlobals::get_num_columns();
 
         let mut row_commitments = vec![JoltGroupWrapper(G::zero()); num_rows];

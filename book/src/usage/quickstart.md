@@ -81,7 +81,7 @@ To build Jolt from source, you will need Rust:
 - `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
 - Rustup should automatically install the Rust toolchain and necessary targets on
 the first `cargo` invocation.
-You may also need to add the RISC-V target for building guest programs manually: `rustup target add riscv32im-unknown-none-elf`.
+You may also need to add the RISC-V target for building guest programs manually: `rustup target add riscv64imac-unknown-none-elf`.
 
 ### mdBook
 

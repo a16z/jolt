@@ -126,11 +126,13 @@ impl Default for Keccak256 {
 /// - The pointer must be properly aligned for u64 access (8-byte alignment).
 #[cfg(not(feature = "host"))]
 pub unsafe fn keccak_f(state: *mut u64) {
-    // We use funct7=0x01 to distinguish Keccak from SHA-256 (funct7=0x00)
-    // using the custom-0 opcode (0x0B).
+    use crate::{INLINE_OPCODE, KECCAK256_FUNCT3, KECCAK256_FUNCT7};
     core::arch::asm!(
-        ".insn r 0x0B, 0x0, 0x01, x0, {}, x0",
-        in(reg) state,
+        ".insn r {opcode}, {funct3}, {funct7}, x0, {rs1}, x0",
+        opcode = const INLINE_OPCODE,
+        funct3 = const KECCAK256_FUNCT3,
+        funct7 = const KECCAK256_FUNCT7,
+        rs1 = in(reg) state,
         options(nostack)
     );
 }
@@ -150,7 +152,7 @@ pub unsafe fn keccak_f(state: *mut u64) {
 pub unsafe fn keccak_f(state: *mut u64) {
     // On the host, we call our own reference implementation from the tracer crate.
     let state_slice = core::slice::from_raw_parts_mut(state, 25);
-    crate::trace_generator::execute_keccak_f(
+    crate::exec::execute_keccak_f(
         state_slice
             .try_into()
             .expect("State slice was not 25 words"),

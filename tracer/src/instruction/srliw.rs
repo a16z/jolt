@@ -1,5 +1,5 @@
 use crate::utils::inline_helpers::InstrAssembler;
-use crate::utils::virtual_registers::allocate_virtual_register;
+use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -9,10 +9,8 @@ use crate::{
 };
 
 use super::slli::SLLI;
-use super::virtual_sign_extend::VirtualSignExtend;
-use super::{
-    format::format_i::FormatI, RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
-};
+use super::virtual_sign_extend_word::VirtualSignExtendWord;
+use super::{format::format_i::FormatI, Cycle, Instruction, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name   = SRLIW,
@@ -34,19 +32,33 @@ impl SRLIW {
 }
 
 impl RISCVTrace for SRLIW {
-    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let inline_sequence = self.inline_sequence(cpu.xlen);
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
+        let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
-            // In each iteration, create a new Option containing a re-borrowed reference
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
 
-    fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
-        let v_rs1 = allocate_virtual_register();
+    /// Logical right shift immediate for 32-bit words with sign extension.
+    ///
+    /// SRLIW is an RV64I-only instruction that logically shifts the lower 32 bits
+    /// of rs1 right by a constant amount, then sign-extends the 32-bit result to 64 bits.
+    ///
+    /// Implementation:
+    /// 1. Shift rs1 left by 32 to position the lower 32 bits in the upper half
+    /// 2. Apply a 64-bit logical right shift by (shift_amount + 32)
+    /// 3. Sign-extend the resulting 32-bit value
+    ///
+    /// This technique ensures proper 32-bit logical shift semantics on 64-bit system.
+    fn inline_sequence(
+        &self,
+        allocator: &VirtualRegisterAllocator,
+        xlen: Xlen,
+    ) -> Vec<Instruction> {
+        let v_rs1 = allocator.allocate();
 
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
         asm.emit_i::<SLLI>(*v_rs1, self.operands.rs1, 32);
         let (shift, len) = match xlen {
             Xlen::Bit32 => panic!("SRLIW is invalid in 32b mode"),
@@ -55,7 +67,7 @@ impl RISCVTrace for SRLIW {
         let ones = (1u128 << (len - shift)) - 1;
         let bitmask = (ones << shift) as u64;
         asm.emit_vshift_i::<VirtualSRLI>(self.operands.rd, *v_rs1, bitmask);
-        asm.emit_i::<VirtualSignExtend>(self.operands.rd, self.operands.rd, 0);
+        asm.emit_i::<VirtualSignExtendWord>(self.operands.rd, self.operands.rd, 0);
         asm.finalize()
     }
 }

@@ -5,7 +5,7 @@ use common::constants::XLEN;
 use rayon::prelude::*;
 use std::{cell::RefCell, rc::Rc};
 use strum::{EnumCount, IntoEnumIterator};
-use tracer::instruction::RV32IMCycle;
+use tracer::instruction::Cycle;
 
 use super::{LOG_K, LOG_M, M, PHASES};
 
@@ -28,10 +28,8 @@ use crate::{
     subprotocols::sumcheck::SumcheckInstance,
     transcripts::Transcript,
     utils::{
-        expanding_table::ExpandingTable,
-        lookup_bits::LookupBits,
-        math::Math,
-        thread::{unsafe_allocate_zero_vec, unsafe_zero_slice},
+        expanding_table::ExpandingTable, lookup_bits::LookupBits, math::Math,
+        thread::unsafe_allocate_zero_vec,
     },
     zkvm::{
         dag::state_manager::StateManager,
@@ -43,6 +41,9 @@ use crate::{
         witness::VirtualPolynomial,
     },
 };
+
+use itertools::Itertools;
+use rayon::iter::IndexedParallelIterator;
 
 const DEGREE: usize = 3;
 
@@ -80,7 +81,6 @@ pub struct ReadRafSumcheck<F: JoltField> {
     gamma_squared: F,
     prover_state: Option<ReadRafProverState<F>>,
 
-    r_cycle: Vec<F>,
     rv_claim: F,
     raf_claim: F,
     log_T: usize,
@@ -97,14 +97,6 @@ impl<'a, F: JoltField> ReadRafSumcheck<F> {
         let gamma: F = sm.transcript.borrow_mut().challenge_scalar();
         let mut ps = ReadRafProverState::new(trace, eq_r_cycle);
         ps.init_phase(0);
-        let r_cycle = sm
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::LookupOutput,
-                SumcheckId::SpartanOuter,
-            )
-            .0
-            .r
-            .clone();
         let (_, rv_claim) = sm.get_virtual_polynomial_opening(
             VirtualPolynomial::LookupOutput,
             SumcheckId::SpartanOuter,
@@ -122,7 +114,6 @@ impl<'a, F: JoltField> ReadRafSumcheck<F> {
             gamma,
             gamma_squared: gamma.square(),
             prover_state: Some(ps),
-            r_cycle,
             rv_claim,
             raf_claim: left_operand_claim + gamma * right_operand_claim,
             log_T,
@@ -134,7 +125,7 @@ impl<'a, F: JoltField> ReadRafSumcheck<F> {
     ) -> Self {
         let log_T = sm.get_verifier_data().2.log_2();
         let gamma: F = sm.transcript.borrow_mut().challenge_scalar();
-        let (r_cycle, rv_claim) = sm.get_virtual_polynomial_opening(
+        let (_, rv_claim) = sm.get_virtual_polynomial_opening(
             VirtualPolynomial::LookupOutput,
             SumcheckId::SpartanOuter,
         );
@@ -151,7 +142,6 @@ impl<'a, F: JoltField> ReadRafSumcheck<F> {
             gamma,
             gamma_squared: gamma.square(),
             prover_state: None,
-            r_cycle: r_cycle.r.clone(),
             rv_claim,
             raf_claim: left_operand_claim + gamma * right_operand_claim,
             log_T,
@@ -160,7 +150,8 @@ impl<'a, F: JoltField> ReadRafSumcheck<F> {
 }
 
 impl<'a, F: JoltField> ReadRafProverState<F> {
-    fn new(trace: &'a [RV32IMCycle], eq_r_cycle: Vec<F>) -> Self {
+    #[tracing::instrument(skip_all, name = "InstructionReadRafProverState::new")]
+    fn new(trace: &'a [Cycle], eq_r_cycle: Vec<F>) -> Self {
         let log_T = trace.len().log_2();
         let right_operand_poly = OperandPolynomial::new(LOG_K, OperandSide::Right);
         let left_operand_poly = OperandPolynomial::new(LOG_K, OperandSide::Left);
@@ -171,65 +162,105 @@ impl<'a, F: JoltField> ReadRafProverState<F> {
             PrefixSuffixDecomposition::new(Box::new(left_operand_poly), LOG_M, LOG_K);
         let identity_ps = PrefixSuffixDecomposition::new(Box::new(identity_poly), LOG_M, LOG_K);
 
-        // TODO: This was probably already calculated in Spartan, maybe we should just get it.
-        let lookup_indices: Vec<_> = trace
-            .par_iter()
-            .map(|cycle| LookupBits::new(LookupQuery::<XLEN>::to_lookup_index(cycle), LOG_K))
-            .collect();
-        let lookup_indices_by_table: Vec<_> = LookupTables::<XLEN>::iter()
-            .collect::<Vec<_>>()
-            .par_iter()
-            .map(|table| {
-                let table_lookups: Vec<_> = trace
-                    .iter()
-                    .zip(lookup_indices.iter().cloned())
-                    .enumerate()
-                    .filter_map(|(j, (cycle, k))| match cycle.lookup_table() {
-                        Some(lookup) => {
-                            if LookupTables::<XLEN>::enum_index(&lookup)
-                                == LookupTables::enum_index(table)
-                            {
-                                Some((j, k))
-                            } else {
-                                None
-                            }
-                        }
-                        None => None,
-                    })
-                    .collect();
-                table_lookups
-            })
-            .collect();
-        let (lookup_indices_uninterleave, lookup_indices_identity): (Vec<_>, Vec<_>) =
-            lookup_indices
-                .par_iter()
-                .cloned()
-                .enumerate()
-                .zip(trace.par_iter())
-                .partition_map(|((idx, item), cycle)| {
-                    if cycle
-                        .instruction()
-                        .circuit_flags()
-                        .is_interleaved_operands()
-                    {
-                        itertools::Either::Left((idx, item))
-                    } else {
-                        itertools::Either::Right((idx, item))
-                    }
-                });
+        // Heuristic: number of chunks = next_power_of_two(num_threads) * 4
+        let threads = rayon::current_num_threads();
+        let target_chunks = threads.next_power_of_two().saturating_mul(4);
+        let chunk_size = std::cmp::max(1, trace.len().div_ceil(target_chunks));
+        let num_tables = LookupTables::<XLEN>::COUNT;
 
-        let (is_interleaved_operands, lookup_tables): (Vec<_>, Vec<_>) = trace
-            .par_iter()
-            .map(|cycle| {
-                (
-                    cycle
+        struct ChunkAgg<const XLEN: usize> {
+            base: usize,
+            lookup_indices: Vec<LookupBits>,
+            uninterleave: Vec<(usize, LookupBits)>,
+            identity: Vec<(usize, LookupBits)>,
+            by_table: Vec<Vec<(usize, LookupBits)>>,
+            flags: Vec<bool>,
+            tables: Vec<Option<LookupTables<XLEN>>>,
+        }
+
+        let chunk_aggs: Vec<ChunkAgg<XLEN>> = trace
+            .par_chunks(chunk_size)
+            .enumerate()
+            .map(|(chunk_idx, chunk)| {
+                let base = chunk_idx * chunk_size;
+                let chunk_len = chunk.len();
+                let mut lookup_indices = Vec::with_capacity(chunk_len);
+                let mut flags = Vec::with_capacity(chunk_len);
+                let mut tables = Vec::with_capacity(chunk_len);
+
+                let mut uninterleave = Vec::with_capacity(chunk_len / 2 + 1);
+                let mut identity = Vec::with_capacity(chunk_len / 2 + 1);
+                let mut by_table = (0..num_tables)
+                    .map(|_| Vec::with_capacity(chunk_len / num_tables + 1))
+                    .collect::<Vec<_>>();
+
+                for (off, cycle) in chunk.iter().enumerate() {
+                    let idx = base + off;
+                    let bits = LookupBits::new(LookupQuery::<XLEN>::to_lookup_index(cycle), LOG_K);
+                    let is_interleaved = cycle
                         .instruction()
                         .circuit_flags()
-                        .is_interleaved_operands(),
-                    cycle.instruction().lookup_table(),
-                )
+                        .is_interleaved_operands();
+                    let table = cycle.lookup_table();
+
+                    if is_interleaved {
+                        uninterleave.push((idx, bits));
+                    } else {
+                        identity.push((idx, bits));
+                    }
+
+                    if let Some(t) = table {
+                        let t_idx = LookupTables::<XLEN>::enum_index(&t);
+                        by_table[t_idx].push((idx, bits));
+                    }
+
+                    lookup_indices.push(bits);
+                    flags.push(is_interleaved);
+                    tables.push(table);
+                }
+
+                ChunkAgg {
+                    base,
+                    lookup_indices,
+                    uninterleave,
+                    identity,
+                    by_table,
+                    flags,
+                    tables,
+                }
             })
             .collect();
+
+        let total_len = trace.len();
+        let total_uninterleave: usize = chunk_aggs.iter().map(|a| a.uninterleave.len()).sum();
+        let total_identity: usize = chunk_aggs.iter().map(|a| a.identity.len()).sum();
+        let mut total_by_table = vec![0usize; num_tables];
+        for agg in &chunk_aggs {
+            for t in 0..num_tables {
+                total_by_table[t] += agg.by_table[t].len();
+            }
+        }
+
+        let mut lookup_indices = Vec::with_capacity(total_len);
+        let mut is_interleaved_operands = Vec::with_capacity(total_len);
+        let mut lookup_tables = Vec::with_capacity(total_len);
+        let mut lookup_indices_uninterleave = Vec::with_capacity(total_uninterleave);
+        let mut lookup_indices_identity = Vec::with_capacity(total_identity);
+        let mut lookup_indices_by_table = (0..num_tables)
+            .map(|t| Vec::with_capacity(total_by_table[t]))
+            .collect::<Vec<_>>();
+
+        for agg in chunk_aggs.into_iter().sorted_by_key(|a| a.base) {
+            lookup_indices.extend(agg.lookup_indices);
+            lookup_indices_uninterleave.extend(agg.uninterleave);
+            lookup_indices_identity.extend(agg.identity);
+            for t in 0..num_tables {
+                lookup_indices_by_table[t].extend(agg.by_table[t].iter().copied());
+            }
+            is_interleaved_operands.extend(agg.flags);
+            lookup_tables.extend(agg.tables);
+        }
+
         let suffix_polys: Vec<Vec<DensePolynomial<F>>> = LookupTables::<XLEN>::iter()
             .collect::<Vec<_>>()
             .par_iter()
@@ -237,7 +268,7 @@ impl<'a, F: JoltField> ReadRafProverState<F> {
                 table
                     .suffixes()
                     .par_iter()
-                    .map(|_| DensePolynomial::new(unsafe_allocate_zero_vec(M)))
+                    .map(|_| DensePolynomial::default()) // Will be properly initialized in `init_phase`
                     .collect()
             })
             .collect();
@@ -397,7 +428,15 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
 
         let accumulator = accumulator.as_ref().unwrap();
 
-        let eq_eval_cycle = EqPolynomial::mle(&self.r_cycle, r_cycle_prime);
+        let r_cycle = accumulator
+            .borrow()
+            .get_virtual_polynomial_opening(
+                VirtualPolynomial::LookupOutput,
+                SumcheckId::SpartanOuter,
+            )
+            .0
+            .r;
+        let eq_eval_cycle = EqPolynomial::mle(&r_cycle, r_cycle_prime);
 
         let ra_claim = accumulator
             .borrow()
@@ -527,6 +566,7 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
 
 impl<F: JoltField> ReadRafProverState<F> {
     /// To be called in the beginning of each phase, before any binding
+    #[tracing::instrument(skip_all, name = "InstructionReadRafProverState::init_phase")]
     fn init_phase(&mut self, phase: usize) {
         // Condensation
         if phase != 0 {
@@ -543,50 +583,23 @@ impl<F: JoltField> ReadRafProverState<F> {
         }
 
         rayon::scope(|s| {
+            // Single pass over lookup_indices_uninterleave for both operands
             s.spawn(|_| {
-                LookupTables::<XLEN>::iter()
-                    .collect::<Vec<_>>()
-                    .par_iter()
-                    .zip(self.suffix_polys.par_iter_mut())
-                    .zip(self.lookup_indices_by_table.par_iter())
-                    .for_each(|((table, polys), lookup_indices)| {
-                        table
-                            .suffixes()
-                            .par_iter()
-                            .zip(polys.par_iter_mut())
-                            .for_each(|(suffix, poly)| {
-                                if phase != 0 {
-                                    // Reset polynomial
-                                    poly.len = M;
-                                    poly.num_vars = poly.len.log_2();
-                                    unsafe_zero_slice(&mut poly.Z);
-                                }
-
-                                for (j, k) in lookup_indices.iter() {
-                                    let (prefix_bits, suffix_bits) =
-                                        k.split((PHASES - 1 - phase) * LOG_M);
-                                    let t = suffix.suffix_mle::<XLEN>(suffix_bits);
-                                    if t != 0 {
-                                        let u = self.u_evals[*j];
-                                        poly.Z[prefix_bits % M] += u.mul_u64(t);
-                                    }
-                                }
-                            });
-                    });
-            });
-            s.spawn(|_| {
-                self.right_operand_ps
-                    .init_Q(&self.u_evals, self.lookup_indices_uninterleave.iter())
-            });
-            s.spawn(|_| {
-                self.left_operand_ps
-                    .init_Q(&self.u_evals, self.lookup_indices_uninterleave.iter())
+                PrefixSuffixDecomposition::init_Q_dual(
+                    &mut self.left_operand_ps,
+                    &mut self.right_operand_ps,
+                    &self.u_evals,
+                    &self.lookup_indices_uninterleave,
+                )
             });
             s.spawn(|_| {
                 self.identity_ps
-                    .init_Q(&self.u_evals, self.lookup_indices_identity.iter())
+                    .init_Q(&self.u_evals, &self.lookup_indices_identity)
             });
         });
+
+        self.init_suffix_polys(phase);
+
         self.identity_ps.init_P(&mut self.prefix_registry);
         self.right_operand_ps.init_P(&mut self.prefix_registry);
         self.left_operand_ps.init_P(&mut self.prefix_registry);
@@ -594,25 +607,85 @@ impl<F: JoltField> ReadRafProverState<F> {
         self.v.reset(F::one());
     }
 
-    /// To be called at the end of each phase, after binding is done
-    fn cache_phase(&mut self, phase: usize) {
-        let ra = self
-            .lookup_indices
-            .par_iter()
-            .map(|k| {
-                let (prefix, _) = k.split((PHASES - 1 - phase) * LOG_M);
-                let k_bound: usize = prefix % M;
-                self.v[k_bound]
-            })
-            .collect::<Vec<F>>();
+    #[tracing::instrument(skip_all, name = "InstructionReadRafProverState::init_suffix_polys")]
+    fn init_suffix_polys(&mut self, phase: usize) {
+        let num_chunks = rayon::current_num_threads().next_power_of_two();
+        let chunk_size = (self.lookup_indices.len() / num_chunks).max(1);
 
+        let new_suffix_polys: Vec<_> = LookupTables::<XLEN>::iter()
+            .collect::<Vec<_>>()
+            .par_iter()
+            .zip(self.lookup_indices_by_table.par_iter())
+            .map(|(table, lookup_indices)| {
+                let suffixes = table.suffixes();
+                lookup_indices
+                    .par_chunks(chunk_size)
+                    .map(|chunk| {
+                        let mut chunk_result: Vec<Vec<F>> =
+                            vec![unsafe_allocate_zero_vec(M); suffixes.len()];
+
+                        for (j, k) in chunk {
+                            let (prefix_bits, suffix_bits) = k.split((PHASES - 1 - phase) * LOG_M);
+                            for (suffix, result) in suffixes.iter().zip(chunk_result.iter_mut()) {
+                                let t = suffix.suffix_mle::<XLEN>(suffix_bits);
+                                if t != 0 {
+                                    let u = self.u_evals[*j];
+                                    result[prefix_bits % M] += u.mul_u64(t);
+                                }
+                            }
+                        }
+
+                        chunk_result
+                    })
+                    .reduce(
+                        || vec![unsafe_allocate_zero_vec(M); suffixes.len()],
+                        |mut acc, new| {
+                            for (acc_i, new_i) in acc.iter_mut().zip(new.iter()) {
+                                for (acc_coeff, new_coeff) in acc_i.iter_mut().zip(new_i.iter()) {
+                                    *acc_coeff += *new_coeff;
+                                }
+                            }
+                            acc
+                        },
+                    )
+            })
+            .collect();
+
+        // Replace existing suffix polynomials
+        self.suffix_polys
+            .iter_mut()
+            .zip(new_suffix_polys.into_iter())
+            .for_each(|(old, new)| {
+                old.iter_mut()
+                    .zip(new.into_iter())
+                    .for_each(|(poly, mut coeffs)| {
+                        *poly = DensePolynomial::new(std::mem::take(&mut coeffs));
+                    });
+            });
+    }
+
+    /// To be called at the end of each phase, after binding is done
+    #[tracing::instrument(skip_all, name = "InstructionReadRafProverState::cache_phase")]
+    fn cache_phase(&mut self, phase: usize) {
         if let Some(ra_acc) = self.ra_acc.as_mut() {
-            assert_eq!(ra_acc.len(), ra.len());
             ra_acc
                 .par_iter_mut()
-                .zip(ra.into_par_iter())
-                .for_each(|(ra, ra_i)| *ra *= ra_i);
+                .zip(self.lookup_indices.par_iter())
+                .for_each(|(ra, k)| {
+                    let (prefix, _) = k.split((PHASES - 1 - phase) * LOG_M);
+                    let k_bound: usize = prefix % M;
+                    *ra *= self.v[k_bound]
+                });
         } else {
+            let ra = self
+                .lookup_indices
+                .par_iter()
+                .map(|k| {
+                    let (prefix, _) = k.split((PHASES - 1 - phase) * LOG_M);
+                    let k_bound: usize = prefix % M;
+                    self.v[k_bound]
+                })
+                .collect::<Vec<F>>();
             self.ra_acc = Some(ra);
         }
 
@@ -620,6 +693,7 @@ impl<F: JoltField> ReadRafProverState<F> {
     }
 
     /// To be called before the last log(T) rounds
+    #[tracing::instrument(skip_all, name = "InstructionReadRafProverState::init_log_t_rounds")]
     fn init_log_t_rounds(&mut self, gamma: F, gamma_squared: F) {
         let prefixes: Vec<PrefixEval<F>> = std::mem::take(&mut self.prefix_checkpoints)
             .into_iter()
@@ -774,16 +848,16 @@ mod tests {
     use rand::{rngs::StdRng, RngCore, SeedableRng};
     use strum::IntoEnumIterator;
     use tracer::emulator::memory::Memory;
-    use tracer::instruction::{RV32IMCycle, RV32IMInstruction};
+    use tracer::instruction::Cycle;
     use tracer::JoltDevice;
 
     const LOG_T: usize = 8;
     const T: usize = 1 << LOG_T;
 
-    fn random_instruction(rng: &mut StdRng, instruction: &Option<RV32IMCycle>) -> RV32IMCycle {
+    fn random_instruction(rng: &mut StdRng, instruction: &Option<Cycle>) -> Cycle {
         let instruction = instruction.unwrap_or_else(|| {
-            let index = rng.next_u64() as usize % RV32IMCycle::COUNT;
-            RV32IMCycle::iter()
+            let index = rng.next_u64() as usize % Cycle::COUNT;
+            Cycle::iter()
                 .enumerate()
                 .filter(|(i, _)| *i == index)
                 .map(|(_, x)| x)
@@ -792,72 +866,74 @@ mod tests {
         });
 
         match instruction {
-            RV32IMCycle::ADD(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::ADDI(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::AND(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::ANDN(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::ANDI(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::AUIPC(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::BEQ(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::BGE(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::BGEU(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::BLT(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::BLTU(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::BNE(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::FENCE(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::JAL(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::JALR(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::LUI(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::LD(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::MUL(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::MULHU(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::OR(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::ORI(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::SLT(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::SLTI(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::SLTIU(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::SLTU(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::SUB(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::SD(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::XOR(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::XORI(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::VirtualAdvice(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::VirtualAssertEQ(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::VirtualAssertHalfwordAlignment(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::VirtualAssertWordAlignment(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::VirtualAssertLTE(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::VirtualAssertValidDiv0(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::VirtualAssertValidUnsignedRemainder(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::VirtualMove(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::VirtualMovsign(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::VirtualMULI(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::VirtualPow2(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::VirtualPow2I(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::VirtualPow2W(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::VirtualPow2IW(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::VirtualShiftRightBitmask(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::VirtualShiftRightBitmaskI(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::VirtualSRA(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::VirtualSRAI(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::VirtualSRL(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::VirtualSRLI(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::VirtualExtend(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::VirtualSignExtend(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::VirtualROTRI(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::VirtualROTRIW(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::VirtualChangeDivisor(cycle) => cycle.random(rng).into(),
-            RV32IMCycle::VirtualChangeDivisorW(cycle) => cycle.random(rng).into(),
-            _ => RV32IMCycle::NoOp,
+            Cycle::ADD(cycle) => cycle.random(rng).into(),
+            Cycle::ADDI(cycle) => cycle.random(rng).into(),
+            Cycle::AND(cycle) => cycle.random(rng).into(),
+            Cycle::ANDN(cycle) => cycle.random(rng).into(),
+            Cycle::ANDI(cycle) => cycle.random(rng).into(),
+            Cycle::AUIPC(cycle) => cycle.random(rng).into(),
+            Cycle::BEQ(cycle) => cycle.random(rng).into(),
+            Cycle::BGE(cycle) => cycle.random(rng).into(),
+            Cycle::BGEU(cycle) => cycle.random(rng).into(),
+            Cycle::BLT(cycle) => cycle.random(rng).into(),
+            Cycle::BLTU(cycle) => cycle.random(rng).into(),
+            Cycle::BNE(cycle) => cycle.random(rng).into(),
+            Cycle::FENCE(cycle) => cycle.random(rng).into(),
+            Cycle::JAL(cycle) => cycle.random(rng).into(),
+            Cycle::JALR(cycle) => cycle.random(rng).into(),
+            Cycle::LUI(cycle) => cycle.random(rng).into(),
+            Cycle::LD(cycle) => cycle.random(rng).into(),
+            Cycle::MUL(cycle) => cycle.random(rng).into(),
+            Cycle::MULHU(cycle) => cycle.random(rng).into(),
+            Cycle::OR(cycle) => cycle.random(rng).into(),
+            Cycle::ORI(cycle) => cycle.random(rng).into(),
+            Cycle::SLT(cycle) => cycle.random(rng).into(),
+            Cycle::SLTI(cycle) => cycle.random(rng).into(),
+            Cycle::SLTIU(cycle) => cycle.random(rng).into(),
+            Cycle::SLTU(cycle) => cycle.random(rng).into(),
+            Cycle::SUB(cycle) => cycle.random(rng).into(),
+            Cycle::SD(cycle) => cycle.random(rng).into(),
+            Cycle::XOR(cycle) => cycle.random(rng).into(),
+            Cycle::XORI(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualAdvice(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualAssertEQ(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualAssertHalfwordAlignment(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualAssertWordAlignment(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualAssertLTE(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualAssertValidDiv0(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualAssertValidUnsignedRemainder(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualMove(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualMovsign(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualMULI(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualPow2(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualPow2I(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualPow2W(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualPow2IW(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualShiftRightBitmask(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualShiftRightBitmaskI(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualSRA(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualRev8W(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualSRAI(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualSRL(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualSRLI(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualZeroExtendWord(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualSignExtendWord(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualROTRI(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualROTRIW(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualChangeDivisor(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualChangeDivisorW(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualAssertMulUNoOverflow(cycle) => cycle.random(rng).into(),
+            _ => Cycle::NoOp,
         }
     }
 
-    fn test_read_raf_sumcheck(instruction: Option<RV32IMCycle>) {
+    fn test_read_raf_sumcheck(instruction: Option<Cycle>) {
         let mut rng = StdRng::seed_from_u64(12345);
 
         let trace: Vec<_> = (0..T)
             .map(|_| random_instruction(&mut rng, &instruction))
             .collect();
-        let bytecode = vec![RV32IMInstruction::NoOp];
+        let bytecode = vec![];
         let bytecode_preprocessing = BytecodePreprocessing::preprocess(bytecode);
         let memory_layout = MemoryLayout::default();
         let shared_preprocessing = JoltSharedPreprocessing {
@@ -910,11 +986,12 @@ mod tests {
             let lookup_index = LookupQuery::<XLEN>::to_lookup_index(cycle);
             let table: Option<LookupTables<XLEN>> = cycle.lookup_table();
             if let Some(table) = table {
-                rv_claim += eq_r_cycle[i].mul_u64(table.materialize_entry(lookup_index));
+                rv_claim +=
+                    JoltField::mul_u64(&eq_r_cycle[i], table.materialize_entry(lookup_index));
             }
             let (lo, ro) = LookupQuery::<XLEN>::to_lookup_operands(cycle);
-            left_operand_claim += eq_r_cycle[i].mul_u64(lo);
-            right_operand_claim += eq_r_cycle[i].mul_u128(ro);
+            left_operand_claim += JoltField::mul_u64(&eq_r_cycle[i], lo);
+            right_operand_claim += JoltField::mul_u128(&eq_r_cycle[i], ro);
         }
 
         let prover_accumulator = prover_sm.get_prover_accumulator();
@@ -998,288 +1075,290 @@ mod tests {
 
     #[test]
     fn test_add() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::ADD(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::ADD(Default::default())));
     }
 
     #[test]
     fn test_addi() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::ADDI(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::ADDI(Default::default())));
     }
 
     #[test]
     fn test_and() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::AND(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::AND(Default::default())));
     }
 
     #[test]
     fn test_andn() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::ANDN(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::ANDN(Default::default())));
     }
 
     #[test]
     fn test_andi() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::ANDI(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::ANDI(Default::default())));
     }
 
     #[test]
     fn test_auipc() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::AUIPC(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::AUIPC(Default::default())));
     }
 
     #[test]
     fn test_beq() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::BEQ(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::BEQ(Default::default())));
     }
 
     #[test]
     fn test_bge() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::BGE(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::BGE(Default::default())));
     }
 
     #[test]
     fn test_bgeu() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::BGEU(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::BGEU(Default::default())));
     }
 
     #[test]
     fn test_blt() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::BLT(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::BLT(Default::default())));
     }
 
     #[test]
     fn test_bltu() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::BLTU(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::BLTU(Default::default())));
     }
 
     #[test]
     fn test_bne() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::BNE(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::BNE(Default::default())));
     }
 
     #[test]
     fn test_fence() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::FENCE(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::FENCE(Default::default())));
     }
 
     #[test]
     fn test_jal() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::JAL(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::JAL(Default::default())));
     }
 
     #[test]
     fn test_jalr() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::JALR(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::JALR(Default::default())));
     }
 
     #[test]
     fn test_lui() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::LUI(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::LUI(Default::default())));
     }
 
     #[test]
     fn test_ld() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::LD(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::LD(Default::default())));
     }
 
     #[test]
     fn test_mul() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::MUL(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::MUL(Default::default())));
     }
 
     #[test]
     fn test_mulhu() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::MULHU(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::MULHU(Default::default())));
     }
 
     #[test]
     fn test_or() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::OR(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::OR(Default::default())));
     }
 
     #[test]
     fn test_ori() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::ORI(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::ORI(Default::default())));
     }
 
     #[test]
     fn test_slt() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::SLT(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::SLT(Default::default())));
     }
 
     #[test]
     fn test_slti() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::SLTI(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::SLTI(Default::default())));
     }
 
     #[test]
     fn test_sltiu() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::SLTIU(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::SLTIU(Default::default())));
     }
 
     #[test]
     fn test_sltu() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::SLTU(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::SLTU(Default::default())));
     }
 
     #[test]
     fn test_sub() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::SUB(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::SUB(Default::default())));
     }
 
     #[test]
     fn test_sd() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::SD(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::SD(Default::default())));
     }
 
     #[test]
     fn test_xor() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::XOR(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::XOR(Default::default())));
     }
 
     #[test]
     fn test_xori() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::XORI(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::XORI(Default::default())));
     }
 
     #[test]
     fn test_advice() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualAdvice(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::VirtualAdvice(Default::default())));
     }
 
     #[test]
     fn test_asserteq() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualAssertEQ(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::VirtualAssertEQ(Default::default())));
     }
 
     #[test]
     fn test_asserthalfwordalignment() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualAssertHalfwordAlignment(
+        test_read_raf_sumcheck(Some(Cycle::VirtualAssertHalfwordAlignment(
             Default::default(),
         )));
     }
 
     #[test]
     fn test_assertwordalignment() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualAssertWordAlignment(
-            Default::default(),
-        )));
+        test_read_raf_sumcheck(Some(Cycle::VirtualAssertWordAlignment(Default::default())));
     }
 
     #[test]
     fn test_assertlte() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualAssertLTE(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::VirtualAssertLTE(Default::default())));
     }
 
     #[test]
     fn test_assertvaliddiv0() {
-        test_read_raf_sumcheck(Some(
-            RV32IMCycle::VirtualAssertValidDiv0(Default::default()),
-        ));
+        test_read_raf_sumcheck(Some(Cycle::VirtualAssertValidDiv0(Default::default())));
     }
 
     #[test]
     fn test_assertvalidunsignedremainder() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualAssertValidUnsignedRemainder(
+        test_read_raf_sumcheck(Some(Cycle::VirtualAssertValidUnsignedRemainder(
             Default::default(),
         )));
     }
 
     #[test]
     fn test_move() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualMove(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::VirtualMove(Default::default())));
     }
 
     #[test]
     fn test_movsign() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualMovsign(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::VirtualMovsign(Default::default())));
     }
 
     #[test]
     fn test_muli() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualMULI(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::VirtualMULI(Default::default())));
     }
 
     #[test]
     fn test_pow2() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualPow2(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::VirtualPow2(Default::default())));
     }
 
     #[test]
     fn test_pow2i() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualPow2I(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::VirtualPow2I(Default::default())));
     }
 
     #[test]
     fn test_pow2w() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualPow2W(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::VirtualPow2W(Default::default())));
     }
 
     #[test]
     fn test_pow2iw() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualPow2IW(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::VirtualPow2IW(Default::default())));
     }
 
     #[test]
     fn test_shiftrightbitmask() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualShiftRightBitmask(
-            Default::default(),
-        )));
+        test_read_raf_sumcheck(Some(Cycle::VirtualShiftRightBitmask(Default::default())));
     }
 
     #[test]
     fn test_shiftrightbitmaski() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualShiftRightBitmaskI(
-            Default::default(),
-        )));
+        test_read_raf_sumcheck(Some(Cycle::VirtualShiftRightBitmaskI(Default::default())));
     }
 
     #[test]
     fn test_virtualrotri() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualROTRI(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::VirtualROTRI(Default::default())));
     }
 
     #[test]
     fn test_virtualrotriw() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualROTRIW(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::VirtualROTRIW(Default::default())));
     }
 
     #[test]
     fn test_virtualsra() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualSRA(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::VirtualSRA(Default::default())));
     }
 
     #[test]
     fn test_virtualsrai() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualSRAI(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::VirtualSRAI(Default::default())));
+    }
+
+    #[test]
+    fn test_virtualrev8w() {
+        test_read_raf_sumcheck(Some(Cycle::VirtualRev8W(Default::default())));
     }
 
     #[test]
     fn test_virtualsrl() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualSRL(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::VirtualSRL(Default::default())));
     }
 
     #[test]
     fn test_virtualsrli() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualSRLI(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::VirtualSRLI(Default::default())));
     }
 
     #[test]
     fn test_virtualextend() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualExtend(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::VirtualZeroExtendWord(Default::default())));
     }
 
     #[test]
     fn test_virtualsignextend() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualSignExtend(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::VirtualSignExtendWord(Default::default())));
     }
 
     #[test]
     fn test_virtualchangedivisor() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualChangeDivisor(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::VirtualChangeDivisor(Default::default())));
     }
 
     #[test]
     fn test_virtualchangedivisorw() {
-        test_read_raf_sumcheck(Some(RV32IMCycle::VirtualChangeDivisorW(Default::default())));
+        test_read_raf_sumcheck(Some(Cycle::VirtualChangeDivisorW(Default::default())));
+    }
+
+    #[test]
+    fn test_virtualassertmulnooverflow() {
+        test_read_raf_sumcheck(Some(Cycle::VirtualAssertMulUNoOverflow(Default::default())));
     }
 }

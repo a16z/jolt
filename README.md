@@ -4,7 +4,7 @@
 
 Just One Lookup Table.
 
-Jolt is a zkVM (zero-knowledge virtual machine) for RISC-V, built to be the simplest, fastest, and most extensible general-purpose of its kind. This repository currently contains an implementation of Jolt for the RISC-V 32-bit Base Integer Instruction Set + M Standard Extension for Integer Multiplication and Division (RV32IM). _Contributors are welcome!_
+Jolt is a zkVM (zero-knowledge virtual machine) for RISC-V, built to be the simplest, fastest, and most extensible general-purpose of its kind. This repository currently contains an implementation of Jolt for the RISC-V 64-bit Base Integer Instruction Set + M Standard Extension for Integer Multiplication and Division + A Standard Extension for Atomic Operations + C Standard Extension for Compressed Instructions (RV64IMAC). _Contributors are welcome!_
 
 ## Resources
 
@@ -110,6 +110,23 @@ To generate allocative output, run:
 Where, as above, `--name` can be `sha2`, `sha3`, `sha2-chain`, `fibonacci`, or `btreemap`.
 
 The above command will log memory usage info to the command line and output multiple SVG files, e.g. `stage3_start_flamechart.svg`, which can be viewed in a web browser of your choosing.
+
+### Debugging
+
+Tracer, Jolt's emulator, doesn't currently support attaching a debugger. 
+
+However, it supports backtraces for panics that happen in guest programs. 
+By default, DWARF symbols are stripped from the guest elf and backtraces won't have much information. 
+
+To enable symbolized backtraces, set the `JOLT_BACKTRACE` environment variable to `1` or `full`:
+```
+JOLT_BACKTRACE=1 cargo run --release -p example
+```
+When `JOLT_BACKTRACE=full` is set, the backtraces include cycle counts and non-zero values of registers at each frame.
+
+To further assist in debugging, Jolt also supports prints via `jolt_print!` and `jolt_println!` macros, which can be used in guest programs.
+
+When debugging issues with guest programs, it's recommended to use the corresponding `trace_analyze` for your `#[jolt::provable]` functions. This skips instantiating the prover and allows for faster iteration.
 
 ## CI Benchmarking
 

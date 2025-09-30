@@ -223,8 +223,8 @@ impl Sha256 {
             // Write length in last 8 bytes
             #[cfg(target_endian = "little")]
             {
-                self.buffer[14].write(((bit_len >> 32) as u32).swap_bytes());
-                self.buffer[15].write((bit_len as u32).swap_bytes());
+                self.buffer[14].write(swap_bytes((bit_len >> 32) as u32));
+                self.buffer[15].write(swap_bytes(bit_len as u32));
             }
             #[cfg(target_endian = "big")]
             {
@@ -249,14 +249,14 @@ impl Sha256 {
             #[cfg(target_endian = "little")]
             {
                 // Unroll the loop for cycle optimization
-                result_u32[0] = state[0].swap_bytes();
-                result_u32[1] = state[1].swap_bytes();
-                result_u32[2] = state[2].swap_bytes();
-                result_u32[3] = state[3].swap_bytes();
-                result_u32[4] = state[4].swap_bytes();
-                result_u32[5] = state[5].swap_bytes();
-                result_u32[6] = state[6].swap_bytes();
-                result_u32[7] = state[7].swap_bytes();
+                result_u32[0] = swap_bytes(state[0]);
+                result_u32[1] = swap_bytes(state[1]);
+                result_u32[2] = swap_bytes(state[2]);
+                result_u32[3] = swap_bytes(state[3]);
+                result_u32[4] = swap_bytes(state[4]);
+                result_u32[5] = swap_bytes(state[5]);
+                result_u32[6] = swap_bytes(state[6]);
+                result_u32[7] = swap_bytes(state[7]);
             }
             #[cfg(target_endian = "big")]
             {
@@ -295,22 +295,22 @@ impl Sha256 {
     #[inline(always)]
     fn swap_bytes(buf: &mut [u32]) {
         // Unroll the loop for cycle optimization
-        buf[0] = buf[0].swap_bytes();
-        buf[1] = buf[1].swap_bytes();
-        buf[2] = buf[2].swap_bytes();
-        buf[3] = buf[3].swap_bytes();
-        buf[4] = buf[4].swap_bytes();
-        buf[5] = buf[5].swap_bytes();
-        buf[6] = buf[6].swap_bytes();
-        buf[7] = buf[7].swap_bytes();
-        buf[8] = buf[8].swap_bytes();
-        buf[9] = buf[9].swap_bytes();
-        buf[10] = buf[10].swap_bytes();
-        buf[11] = buf[11].swap_bytes();
-        buf[12] = buf[12].swap_bytes();
-        buf[13] = buf[13].swap_bytes();
-        buf[14] = buf[14].swap_bytes();
-        buf[15] = buf[15].swap_bytes();
+        buf[0] = swap_bytes(buf[0]);
+        buf[1] = swap_bytes(buf[1]);
+        buf[2] = swap_bytes(buf[2]);
+        buf[3] = swap_bytes(buf[3]);
+        buf[4] = swap_bytes(buf[4]);
+        buf[5] = swap_bytes(buf[5]);
+        buf[6] = swap_bytes(buf[6]);
+        buf[7] = swap_bytes(buf[7]);
+        buf[8] = swap_bytes(buf[8]);
+        buf[9] = swap_bytes(buf[9]);
+        buf[10] = swap_bytes(buf[10]);
+        buf[11] = swap_bytes(buf[11]);
+        buf[12] = swap_bytes(buf[12]);
+        buf[13] = swap_bytes(buf[13]);
+        buf[14] = swap_bytes(buf[14]);
+        buf[15] = swap_bytes(buf[15]);
     }
 }
 
@@ -332,14 +332,30 @@ impl Default for Sha256 {
 /// - `state` must be a valid pointer to at least 32 bytes of readable and writable memory
 /// - Both pointers must be properly aligned for u32 access (4-byte alignment)
 /// - The memory regions must not overlap
-#[cfg(not(feature = "host"))]
+#[cfg(all(
+    not(feature = "host"),
+    any(target_arch = "riscv32", target_arch = "riscv64")
+))]
 pub unsafe fn sha256_compression(input: *const u32, state: *mut u32) {
+    use crate::{INLINE_OPCODE, SHA256_FUNCT3, SHA256_FUNCT7};
     core::arch::asm!(
-        ".insn r 0x0B, 0x0, 0x00, x0, {}, {}",     // PRECOMPILE SHA256 Instruction
-        in(reg) input,
-        in(reg) state,
+        ".insn r {opcode}, {funct3}, {funct7}, x0, {rs1}, {rs2}",
+        opcode = const INLINE_OPCODE,
+        funct3 = const SHA256_FUNCT3,
+        funct7 = const SHA256_FUNCT7,
+        rs1 = in(reg) state,
+        rs2 = in(reg) input,
         options(nostack)
     );
+}
+
+#[cfg(all(
+    not(feature = "host"),
+    not(any(target_arch = "riscv32", target_arch = "riscv64"))
+))]
+pub unsafe fn sha256_compression(_input: *const u32, _state: *mut u32) {
+    // This should not be called on non-RISC-V targets without host feature
+    panic!("SHA256 compression called on non-RISC-V target without host feature");
 }
 /// Calls the SHA256 compression custom instruction
 ///
@@ -375,14 +391,30 @@ pub unsafe fn sha256_compression(input: *const u32, state: *mut u32) {
 /// - `state` must be a valid pointer to at least 32 bytes of writable memory
 /// - Both pointers must be properly aligned for u32 access (4-byte alignment)
 /// - The memory regions must not overlap
-#[cfg(not(feature = "host"))]
+#[cfg(all(
+    not(feature = "host"),
+    any(target_arch = "riscv32", target_arch = "riscv64")
+))]
 pub unsafe fn sha256_compression_initial(input: *const u32, state: *mut u32) {
+    use crate::{INLINE_OPCODE, SHA256_INIT_FUNCT3, SHA256_INIT_FUNCT7};
     core::arch::asm!(
-        ".insn r 0x0B, 0x1, 0x00, x0, {}, {}",     // PRECOMPILE SHA256 Instruction
-        in(reg) input,
-        in(reg) state,
+        ".insn r {opcode}, {funct3}, {funct7}, x0, {rs1}, {rs2}",
+        opcode = const INLINE_OPCODE,
+        funct3 = const SHA256_INIT_FUNCT3,
+        funct7 = const SHA256_INIT_FUNCT7,
+        rs1 = in(reg) state,
+        rs2 = in(reg) input,
         options(nostack)
     );
+}
+
+#[cfg(all(
+    not(feature = "host"),
+    not(any(target_arch = "riscv32", target_arch = "riscv64"))
+))]
+pub unsafe fn sha256_compression_initial(_input: *const u32, _state: *mut u32) {
+    // This should not be called on non-RISC-V targets without host feature
+    panic!("SHA256 compression initial called on non-RISC-V target without host feature");
 }
 
 /// Calls the SHA256 compression custom instruction with initial block
@@ -407,16 +439,32 @@ pub unsafe fn sha256_compression_initial(input: *const u32, state: *mut u32) {
     std::ptr::copy_nonoverlapping(result.as_ptr(), state, 8)
 }
 
-#[cfg(all(test, feature = "host"))]
-mod tests {
-    use super::Sha256;
-    use hex_literal::hex;
-
-    #[test]
-    fn test_sha256_empty_string() {
-        let digest = Sha256::digest(b"");
-        let expected: [u8; 32] =
-            hex!("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
-        assert_eq!(digest, expected);
+#[cfg(all(
+    not(feature = "host"),
+    any(target_arch = "riscv32", target_arch = "riscv64")
+))]
+fn swap_bytes(mut v: u32) -> u32 {
+    unsafe {
+        core::arch::asm!(
+            ".insn i {opcode}, {funct3}, {r_inout}, {r_inout}, 0",
+            opcode = const crate::VIRTUAL_INSTRUCTION_TYPE_I_OPCODE,
+            funct3 = const crate::REV8W_FUNCT3,
+            r_inout = inout(reg) v,
+            options(nostack)
+        );
     }
+    v
+}
+
+#[cfg(all(
+    not(feature = "host"),
+    not(any(target_arch = "riscv32", target_arch = "riscv64"))
+))]
+fn swap_bytes(v: u32) -> u32 {
+    v.swap_bytes()
+}
+
+#[cfg(feature = "host")]
+fn swap_bytes(v: u32) -> u32 {
+    v.swap_bytes()
 }

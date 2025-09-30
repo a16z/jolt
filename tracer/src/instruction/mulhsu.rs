@@ -1,5 +1,5 @@
 use crate::utils::inline_helpers::InstrAssembler;
-use crate::utils::virtual_registers::allocate_virtual_register;
+use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -9,8 +9,7 @@ use crate::{
 
 use super::{
     add::ADD, andi::ANDI, format::format_r::FormatR, mul::MUL, mulhu::MULHU, sltu::SLTU,
-    virtual_movsign::VirtualMovsign, xor::XOR, RISCVInstruction, RISCVTrace, RV32IMCycle,
-    RV32IMInstruction,
+    virtual_movsign::VirtualMovsign, xor::XOR, Cycle, Instruction, RISCVInstruction, RISCVTrace,
 };
 
 declare_riscv_instr!(
@@ -39,39 +38,29 @@ impl MULHSU {
 }
 
 impl RISCVTrace for MULHSU {
-    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let inline_sequence = self.inline_sequence(cpu.xlen);
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
+        let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
-            // In each iteration, create a new Option containing a re-borrowed reference
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
 
-    fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
-        // MULHSU implements signed-unsigned multiplication: rs1 (signed) × rs2 (unsigned)
-        //
-        // For negative rs1, two's complement encoding means:
-        // rs1_unsigned = rs1 + 2^32 (when rs1 < 0)
-        //
-        // Therefore:
-        // MULHU(rs1_unsigned, rs2) = upper_bits((rs1 + 2^32) × rs2)
-        //                          = upper_bits(rs1 × rs2 + 2^32 × rs2)
-        //                          = upper_bits(rs1 × rs2) + rs2
-        //                          = MULHSU(rs1, rs2) + rs2
-        //
-        // So: MULHSU(rs1, rs2) = MULHU(rs1_unsigned, rs2) - rs2
+    fn inline_sequence(
+        &self,
+        allocator: &VirtualRegisterAllocator,
+        xlen: Xlen,
+    ) -> Vec<Instruction> {
+        let v_sx = allocator.allocate();
+        let v_sx_0 = allocator.allocate();
+        let v_rs1 = allocator.allocate();
+        let v_hi = allocator.allocate();
+        let v_lo = allocator.allocate();
+        let v_tmp = allocator.allocate();
+        let v_carry = allocator.allocate();
 
-        // Virtual registers used in sequence
-        let v_sx = allocate_virtual_register();
-        let v_sx_0 = allocate_virtual_register();
-        let v_rs1 = allocate_virtual_register();
-        let v_hi = allocate_virtual_register();
-        let v_lo = allocate_virtual_register();
-        let v_tmp = allocate_virtual_register();
-        let v_carry = allocate_virtual_register();
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
 
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
         asm.emit_i::<VirtualMovsign>(*v_sx, self.operands.rs1, 0);
         asm.emit_i::<ANDI>(*v_sx_0, *v_sx, 1);
         asm.emit_r::<XOR>(*v_rs1, self.operands.rs1, *v_sx);
@@ -83,6 +72,7 @@ impl RISCVTrace for MULHSU {
         asm.emit_r::<ADD>(*v_tmp, *v_lo, *v_sx_0);
         asm.emit_r::<SLTU>(*v_carry, *v_tmp, *v_lo);
         asm.emit_r::<ADD>(self.operands.rd, *v_hi, *v_carry);
+
         asm.finalize()
     }
 }

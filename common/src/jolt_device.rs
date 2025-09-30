@@ -1,6 +1,11 @@
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use serde::{Deserialize, Serialize};
 
+#[cfg(not(feature = "std"))]
+use alloc::vec::Vec;
+#[cfg(feature = "std")]
+use std::vec::Vec;
+
 use crate::constants::{
     DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE, DEFAULT_MEMORY_SIZE, DEFAULT_STACK_SIZE,
     RAM_START_ADDRESS,
@@ -65,7 +70,6 @@ impl JoltDevice {
 
     pub fn store(&mut self, address: u64, value: u8) {
         if address == self.memory_layout.panic {
-            println!("GUEST PANIC");
             self.panic = true;
             return;
         } else if self.is_panic(address) || self.is_termination(address) {

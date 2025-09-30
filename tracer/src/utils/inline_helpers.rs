@@ -1,6 +1,6 @@
 //! InstrAssembler
 //!
-//! Builds and owns a vector of virtual RISC-V instructions (`RV32IMInstruction`).
+//! Builds and owns a vector of virtual RISC-V instructions (`Instruction`).
 //! The struct provides small helper methods so that higher-level builders can emit
 //! common instructions without repeating encoding boiler-plate.
 //!
@@ -22,6 +22,9 @@
 //! * The helpers are infallible (in terms of error handling) and run in constant time.
 //! * Composite helpers such as `xor64` and `rotl64` expand into multiple 32-bit
 //!   operations; the exact policy is documented where they are defined.
+
+/// Common opcode for all inline instructions
+pub const INLINE_OPCODE: u32 = 0x0B;
 use crate::instruction::add::ADD;
 use crate::instruction::addi::ADDI;
 use crate::instruction::and::AND;
@@ -29,6 +32,7 @@ use crate::instruction::andi::ANDI;
 use crate::instruction::srli::SRLI;
 use crate::instruction::srliw::SRLIW;
 
+use crate::instruction::format::format_assert_align::AssertAlignFormat;
 use crate::instruction::format::format_b::FormatB;
 use crate::instruction::format::format_i::FormatI;
 use crate::instruction::format::format_j::FormatJ;
@@ -36,7 +40,6 @@ use crate::instruction::format::format_load::FormatLoad;
 use crate::instruction::format::format_r::FormatR;
 use crate::instruction::format::format_s::FormatS;
 use crate::instruction::format::format_u::FormatU;
-use crate::instruction::format::format_virtual_halfword_alignment::HalfwordAlignFormat;
 use crate::instruction::format::format_virtual_right_shift_i::FormatVirtualRightShiftI;
 use crate::instruction::format::format_virtual_right_shift_r::FormatVirtualRightShiftR;
 use crate::instruction::format::NormalizedOperands;
@@ -46,13 +49,16 @@ use crate::instruction::virtual_rotri::VirtualROTRI;
 use crate::instruction::virtual_rotriw::VirtualROTRIW;
 use crate::instruction::xor::XOR;
 use crate::instruction::xori::XORI;
+use crate::instruction::Cycle;
+use crate::instruction::Instruction;
 use crate::instruction::NormalizedInstruction;
 use crate::instruction::RISCVCycle;
 use crate::instruction::RISCVInstruction;
 use crate::instruction::RISCVTrace;
-use crate::instruction::RV32IMCycle;
-use crate::instruction::RV32IMInstruction;
+use crate::utils::virtual_registers::VirtualRegisterAllocator;
 
+use common::constants::RISCV_REGISTER_COUNT;
+use common::constants::VIRTUAL_INSTRUCTION_RESERVED_REGISTER_COUNT;
 /// Operand that can be either an immediate or a register.
 #[derive(Clone, Copy, Debug)]
 pub enum Value {
@@ -61,7 +67,7 @@ pub enum Value {
 }
 use Value::{Imm, Reg};
 
-/// Convenience assembler for building a sequence of `RV32IMInstruction`s.
+/// Convenience assembler for building a sequence of `Instruction`s.
 /// Includes common instruction emitters to be used by higher-level builders for inlines.
 ///
 /// The assembler stores `address` and `is_compressed` so that
@@ -76,36 +82,97 @@ pub struct InstrAssembler {
     /// Xlen of the CPU.
     pub xlen: Xlen,
     /// Accumulated instruction buffer.
-    sequence: Vec<RV32IMInstruction>,
+    sequence: Vec<Instruction>,
+    /// Whether the instruction uses the the FormatInline instruction format.
+    has_inline_instr_format: bool,
+    /// Virtual register allocator
+    pub allocator: VirtualRegisterAllocator,
 }
 
 impl InstrAssembler {
     /// Create a new assembler with an empty instruction buffer.
-    pub fn new(address: u64, is_compressed: bool, xlen: Xlen) -> Self {
+    pub(crate) fn new(
+        address: u64,
+        is_compressed: bool,
+        xlen: Xlen,
+        allocator: &VirtualRegisterAllocator,
+    ) -> Self {
         Self {
             address,
             is_compressed,
             xlen,
             sequence: Vec::new(),
+            has_inline_instr_format: false,
+            allocator: allocator.clone(),
+        }
+    }
+
+    /// Create a new assembler with an empty instruction buffer.
+    pub fn new_inline(
+        address: u64,
+        is_compressed: bool,
+        xlen: Xlen,
+        allocator: &VirtualRegisterAllocator,
+    ) -> Self {
+        Self {
+            address,
+            is_compressed,
+            xlen,
+            sequence: Vec::new(),
+            has_inline_instr_format: true,
+            allocator: allocator.clone(),
         }
     }
 
     /// Finalize the instruction buffer: back-fill `inline_sequence_remaining`
     /// and return ownership of the underlying `Vec`.
-    pub fn finalize(mut self) -> Vec<RV32IMInstruction> {
+    pub(crate) fn finalize(mut self) -> Vec<Instruction> {
         let len = self.sequence.len();
         for (i, instr) in self.sequence.iter_mut().enumerate() {
             instr.set_inline_sequence_remaining(Some((len - i - 1) as u16));
         }
         self.sequence
+            .last_mut()
+            .expect("sequence should not be empty")
+            .set_is_compressed(self.is_compressed);
+        self.sequence
+    }
+
+    /// Finalize inline instructions by zeroing virtual registers, then calling finalize.
+    pub fn finalize_inline(mut self) -> Vec<Instruction> {
+        let register = self.allocator.get_registers_for_reset();
+        // Zero inline virtual registers using ADDI rd, x0, 0
+        for reg in register {
+            self.emit_i::<ADDI>(reg, 0, 0);
+        }
+        self.finalize()
+    }
+
+    /// Validates that rd is an inline virtual register (not RISC-V or reserved virtual registers).
+    #[inline]
+    fn is_valid_virtual_rd(virtual_rd: u8) -> bool {
+        virtual_rd == 0
+            || virtual_rd >= RISCV_REGISTER_COUNT + VIRTUAL_INSTRUCTION_RESERVED_REGISTER_COUNT
     }
 
     #[inline]
     fn add_to_sequence<I: RISCVInstruction + RISCVTrace>(&mut self, inst: I)
     where
-        RISCVCycle<I>: Into<RV32IMCycle>,
+        RISCVCycle<I>: Into<Cycle>,
     {
-        self.sequence.extend(inst.inline_sequence(self.xlen));
+        if self.has_inline_instr_format {
+            let normalized: NormalizedInstruction = inst.into();
+            if !Self::is_valid_virtual_rd(normalized.operands.rd) {
+                const MIN_INLINE_REG: u8 =
+                    RISCV_REGISTER_COUNT + VIRTUAL_INSTRUCTION_RESERVED_REGISTER_COUNT;
+                panic!(
+                    "Inline instruction attempted to write to register {}, but must use registers >= {}",
+                    normalized.operands.rd, MIN_INLINE_REG
+                );
+            }
+        }
+        self.sequence
+            .extend(inst.inline_sequence(&self.allocator, self.xlen));
     }
 
     /// Emit any R-type instruction (rd, rs1, rs2).
@@ -117,7 +184,7 @@ impl InstrAssembler {
         rs1: u8,
         rs2: u8,
     ) where
-        RISCVCycle<Op>: Into<RV32IMCycle>,
+        RISCVCycle<Op>: Into<Cycle>,
     {
         self.add_to_sequence(Op::from(NormalizedInstruction {
             address: self.address as usize,
@@ -127,7 +194,7 @@ impl InstrAssembler {
                 rs2,
                 imm: 0,
             },
-            is_compressed: self.is_compressed,
+            is_compressed: false,
             inline_sequence_remaining: Some(0),
         }));
     }
@@ -141,7 +208,7 @@ impl InstrAssembler {
         rs1: u8,
         imm: u64,
     ) where
-        RISCVCycle<Op>: Into<RV32IMCycle>,
+        RISCVCycle<Op>: Into<Cycle>,
     {
         self.add_to_sequence(Op::from(NormalizedInstruction {
             address: self.address as usize,
@@ -151,7 +218,7 @@ impl InstrAssembler {
                 rs2: 0,
                 imm: imm as i128,
             },
-            is_compressed: self.is_compressed,
+            is_compressed: false,
             inline_sequence_remaining: Some(0),
         }));
     }
@@ -165,7 +232,7 @@ impl InstrAssembler {
         rs2: u8,
         imm: i64,
     ) where
-        RISCVCycle<Op>: Into<RV32IMCycle>,
+        RISCVCycle<Op>: Into<Cycle>,
     {
         self.add_to_sequence(Op::from(NormalizedInstruction {
             address: self.address as usize,
@@ -175,7 +242,7 @@ impl InstrAssembler {
                 rs2,
                 imm: imm as i128,
             },
-            is_compressed: self.is_compressed,
+            is_compressed: false,
             inline_sequence_remaining: Some(0),
         }));
     }
@@ -189,7 +256,7 @@ impl InstrAssembler {
         rs1: u8,
         imm: i64,
     ) where
-        RISCVCycle<Op>: Into<RV32IMCycle>,
+        RISCVCycle<Op>: Into<Cycle>,
     {
         self.add_to_sequence(Op::from(NormalizedInstruction {
             address: self.address as usize,
@@ -199,7 +266,7 @@ impl InstrAssembler {
                 rs2: 0,
                 imm: imm as i128,
             },
-            is_compressed: self.is_compressed,
+            is_compressed: false,
             inline_sequence_remaining: Some(0),
         }));
     }
@@ -213,7 +280,7 @@ impl InstrAssembler {
         rs2: u8,
         imm: i64,
     ) where
-        RISCVCycle<Op>: Into<RV32IMCycle>,
+        RISCVCycle<Op>: Into<Cycle>,
     {
         self.add_to_sequence(Op::from(NormalizedInstruction {
             address: self.address as usize,
@@ -223,7 +290,7 @@ impl InstrAssembler {
                 rs2,
                 imm: imm as i128,
             },
-            is_compressed: self.is_compressed,
+            is_compressed: false,
             inline_sequence_remaining: Some(0),
         }));
     }
@@ -233,7 +300,7 @@ impl InstrAssembler {
     #[inline]
     pub fn emit_j<Op: RISCVInstruction<Format = FormatJ> + RISCVTrace>(&mut self, rd: u8, imm: u64)
     where
-        RISCVCycle<Op>: Into<RV32IMCycle>,
+        RISCVCycle<Op>: Into<Cycle>,
     {
         self.add_to_sequence(Op::from(NormalizedInstruction {
             address: self.address as usize,
@@ -243,7 +310,7 @@ impl InstrAssembler {
                 rs2: 0,
                 imm: imm as i128,
             },
-            is_compressed: self.is_compressed,
+            is_compressed: false,
             inline_sequence_remaining: Some(0),
         }));
     }
@@ -253,7 +320,7 @@ impl InstrAssembler {
     #[inline]
     pub fn emit_u<Op: RISCVInstruction<Format = FormatU> + RISCVTrace>(&mut self, rd: u8, imm: u64)
     where
-        RISCVCycle<Op>: Into<RV32IMCycle>,
+        RISCVCycle<Op>: Into<Cycle>,
     {
         self.add_to_sequence(Op::from(NormalizedInstruction {
             address: self.address as usize,
@@ -263,7 +330,7 @@ impl InstrAssembler {
                 rs2: 0,
                 imm: imm as i128,
             },
-            is_compressed: self.is_compressed,
+            is_compressed: false,
             inline_sequence_remaining: Some(0),
         }));
     }
@@ -277,7 +344,7 @@ impl InstrAssembler {
         rs1: u8,
         imm: u64,
     ) where
-        RISCVCycle<Op>: Into<RV32IMCycle>,
+        RISCVCycle<Op>: Into<Cycle>,
     {
         self.add_to_sequence(Op::from(NormalizedInstruction {
             address: self.address as usize,
@@ -287,7 +354,7 @@ impl InstrAssembler {
                 rs2: 0,
                 imm: imm as i128,
             },
-            is_compressed: self.is_compressed,
+            is_compressed: false,
             inline_sequence_remaining: Some(0),
         }));
     }
@@ -301,7 +368,7 @@ impl InstrAssembler {
         rs1: u8,
         rs2: u8,
     ) where
-        RISCVCycle<Op>: Into<RV32IMCycle>,
+        RISCVCycle<Op>: Into<Cycle>,
     {
         self.add_to_sequence(Op::from(NormalizedInstruction {
             address: self.address as usize,
@@ -311,7 +378,7 @@ impl InstrAssembler {
                 rs2,
                 imm: 0,
             },
-            is_compressed: self.is_compressed,
+            is_compressed: false,
             inline_sequence_remaining: Some(0),
         }));
     }
@@ -319,12 +386,12 @@ impl InstrAssembler {
     /// Emit any halfword alignment instruction (rs1, imm).
     #[track_caller]
     #[inline]
-    pub fn emit_halign<Op: RISCVInstruction<Format = HalfwordAlignFormat> + RISCVTrace>(
+    pub fn emit_halign<Op: RISCVInstruction<Format = AssertAlignFormat> + RISCVTrace>(
         &mut self,
         rs1: u8,
         imm: i64,
     ) where
-        RISCVCycle<Op>: Into<RV32IMCycle>,
+        RISCVCycle<Op>: Into<Cycle>,
     {
         self.add_to_sequence(Op::from(NormalizedInstruction {
             address: self.address as usize,
@@ -334,7 +401,7 @@ impl InstrAssembler {
                 rs2: 0,
                 imm: imm as i128,
             },
-            is_compressed: self.is_compressed,
+            is_compressed: false,
             inline_sequence_remaining: Some(0),
         }));
     }
@@ -352,8 +419,8 @@ impl InstrAssembler {
         fold: fn(u64, u64) -> u64,
     ) -> Value
     where
-        RISCVCycle<OR>: Into<RV32IMCycle>,
-        RISCVCycle<OI>: Into<RV32IMCycle>,
+        RISCVCycle<OR>: Into<Cycle>,
+        RISCVCycle<OI>: Into<Cycle>,
     {
         match (rs1, rs2) {
             (Reg(r1), Reg(r2)) => {
@@ -392,7 +459,8 @@ impl InstrAssembler {
 
     /// Rotate-right by amount on a 32-bit word.
     pub fn rotri32(&mut self, rs1: Value, shamt: u32, rd: u8) -> Value {
-        if shamt == 0 {
+        if shamt == 0 || shamt == 32 {
+            // Rotating by 0 or 32 bits on a 32-bit value is a no-op.
             return self.xor(rs1, Imm(0), rd);
         }
         let ones = (1u64 << (32 - shamt)) - 1;
@@ -450,24 +518,30 @@ impl InstrAssembler {
     }
 
     /// Rotate left on a 64-bit value.
-    pub fn rotl64(&mut self, rs1: Value, amount: u32, rd: u8) -> Value {
-        if amount == 0 {
+    pub fn rotr64(&mut self, rs1: Value, amount: u32, rd: u8) -> Value {
+        if amount == 0 || amount == 64 {
             // Identity rotation: emit XOR with zero to copy value.
+            // Rotating by 0 or 64 bits on a 64-bit value is a no-op.
             return self.xor(rs1, Imm(0), rd);
         }
 
         match rs1 {
             Reg(rs1_reg) => {
-                // rotl(n) == rotr(64 − n).  The VirtualROTRI instruction encodes
-                // the rotation via a bitmask whose trailing zeros indicate the
-                // shift amount.  We construct that mask and delegate to `rotri`
-                // to avoid duplication.
-                let ones = (1u64 << amount as u64) - 1;
-                let imm = ones << (64 - amount as u64);
+                // The VirtualROTRI instruction encodes the rotation via a bitmask
+                // whose trailing zeros indicate the shift amount.
+                // For rotr(n), we need n trailing zeros.
+                let ones = (1u64 << (64 - amount as u64)) - 1;
+                let imm = ones << amount as u64;
                 self.rotri(Reg(rs1_reg), imm, rd)
             }
-            Imm(val) => Imm(val.rotate_left(amount)),
+            Imm(val) => Imm(val.rotate_right(amount)),
         }
+    }
+
+    /// Rotate left on a 64-bit value.
+    pub fn rotl64(&mut self, rs1: Value, amount: u32, rd: u8) -> Value {
+        // rotl(n) == rotr(64 - n)
+        self.rotr64(rs1, 64 - amount, rd)
     }
 }
 
@@ -477,7 +551,8 @@ mod tests {
 
     #[test]
     fn test_rotl64_immediate_paths() {
-        let mut asm = InstrAssembler::new(0, false, Xlen::Bit64);
+        let allocator = VirtualRegisterAllocator::new();
+        let mut asm = InstrAssembler::new(0, false, Xlen::Bit64, &allocator);
         let dest = 0;
         let vectors: &[(u64, u32, u64)] = &[
             (0x0000000000000001, 1, 0x0000000000000002),

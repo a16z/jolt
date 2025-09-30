@@ -6,20 +6,29 @@ use self::fnv::FnvHashMap;
 #[cfg(not(feature = "std"))]
 use alloc::collections::btree_map::BTreeMap as FnvHashMap;
 use common::constants::REGISTER_COUNT;
+use tracing::{info, warn};
 
-use crate::instruction::{uncompress_instruction, RV32IMCycle, RV32IMInstruction};
+use crate::instruction::{uncompress_instruction, Cycle, Instruction};
+use crate::utils::virtual_registers::VirtualRegisterAllocator;
 
 use super::mmu::{AddressingMode, Mmu};
 use super::terminal::Terminal;
 
+use crate::instruction::format::NormalizedOperands;
+use crate::utils::panic::CallFrame;
+#[cfg(not(feature = "std"))]
+use alloc::collections::VecDeque;
 #[cfg(not(feature = "std"))]
 use alloc::{boxed::Box, format, rc::Rc, string::String, vec::Vec};
 use jolt_platform::{
     JOLT_CYCLE_MARKER_END, JOLT_CYCLE_MARKER_START, JOLT_CYCLE_TRACK_ECALL_NUM,
     JOLT_PRINT_ECALL_NUM, JOLT_PRINT_LINE, JOLT_PRINT_STRING,
 };
+#[cfg(feature = "std")]
+use std::collections::VecDeque;
 
 const CSR_CAPACITY: usize = 4096;
+const MAX_CALL_STACK_DEPTH: usize = 32;
 
 const CSR_USTATUS_ADDRESS: u16 = 0x000;
 const CSR_FFLAGS_ADDRESS: u16 = 0x001;
@@ -97,10 +106,13 @@ pub struct Cpu {
     is_reservation_set: bool,
     _dump_flag: bool,
     unsigned_data_mask: u64,
-    // pub trace: Vec<RV32IMCycle>,
+    // pub trace: Vec<Cycle>,
     pub trace_len: usize,
-    executed_instrs: u64, // “real” RV32IM cycles
+    executed_instrs: u64, // “real” RV64IMAC cycles
     active_markers: FnvHashMap<u32, ActiveMarker>,
+    pub vr_allocator: VirtualRegisterAllocator,
+    /// Call stack tracking (circular buffer)
+    call_stack: VecDeque<CallFrame>,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -263,6 +275,8 @@ impl Cpu {
             trace_len: 0,
             executed_instrs: 0,
             active_markers: FnvHashMap::default(),
+            vr_allocator: VirtualRegisterAllocator::new(),
+            call_stack: VecDeque::with_capacity(MAX_CALL_STACK_DEPTH),
         };
         // cpu.x[0xb] = 0x1020; // I don't know why but Linux boot seems to require this initialization
         cpu.write_csr_raw(CSR_MISA_ADDRESS, 0x800000008014312f);
@@ -334,7 +348,7 @@ impl Cpu {
     }
 
     /// Runs program one cycle. Fetch, decode, and execution are completed in a cycle so far.
-    pub fn tick(&mut self, trace: Option<&mut Vec<RV32IMCycle>>) {
+    pub fn tick(&mut self, trace: Option<&mut Vec<Cycle>>) {
         let instruction_address = self.pc;
         match self.tick_operate(trace) {
             Ok(()) => {}
@@ -351,7 +365,7 @@ impl Cpu {
     }
 
     // @TODO: Rename?
-    fn tick_operate(&mut self, trace: Option<&mut Vec<RV32IMCycle>>) -> Result<(), Trap> {
+    fn tick_operate(&mut self, trace: Option<&mut Vec<Cycle>>) -> Result<(), Trap> {
         if self.wfi {
             if (self.read_csr_raw(CSR_MIE_ADDRESS) & self.read_csr_raw(CSR_MIP_ADDRESS)) != 0 {
                 self.wfi = false;
@@ -373,7 +387,7 @@ impl Cpu {
             }
         };
 
-        let instr = RV32IMInstruction::decode(word, instruction_address, is_compressed)
+        let instr = Instruction::decode(word, instruction_address, is_compressed)
             .unwrap_or_else(|e| {
                 panic!(
                     "Failed to decode instruction: word=0x{word:08x}, address=0x{instruction_address:x}, compressed={is_compressed}: {e}"
@@ -382,8 +396,10 @@ impl Cpu {
 
         if trace.is_none() {
             instr.execute(self);
+            self.trace_len += 1;
         } else {
             instr.trace(self, trace);
+            self.trace_len += instr.inline_sequence(&self.vr_allocator, self.xlen).len();
         }
 
         // check if current instruction is real or not for cycle profiling
@@ -892,7 +908,7 @@ impl Cpu {
                 9 => AddressingMode::SV48,
                 _ => {
                     #[cfg(feature = "std")]
-                    println!("Unknown addressing_mode {:x}", value >> 60);
+                    tracing::error!("Unknown addressing_mode {:x}", value >> 60);
                     panic!();
                 }
             },
@@ -948,7 +964,7 @@ impl Cpu {
             }
         };
 
-        let inst = match RV32IMInstruction::decode(word, self.pc, is_compressed) {
+        let inst = match Instruction::decode(word, self.pc, is_compressed) {
             Ok(inst) => inst,
             Err(e) => {
                 return format!(
@@ -982,7 +998,7 @@ impl Cpu {
                     .values()
                     .any(|marker| marker.label == label);
                 if duplicate {
-                    println!("Warning: Marker with label '{}' is already active", &label);
+                    warn!("Marker with label '{}' is already active", &label);
                 }
 
                 self.active_markers.insert(
@@ -999,14 +1015,12 @@ impl Cpu {
                 if let Some(mark) = self.active_markers.remove(&ptr) {
                     let real = self.executed_instrs - mark.start_instrs;
                     let virt = self.trace_len - mark.start_trace_len;
-                    println!(
-                        "\"{}\": {} RV32IM cycles, {} virtual cycles",
+                    info!(
+                        "\"{}\": {} RV64IMAC cycles, {} virtual cycles",
                         mark.label, real, virt
                     );
                 } else {
-                    println!(
-                        "Warning: Attempt to end a marker (ptr: 0x{ptr:x}) that was never started"
-                    );
+                    warn!("Attempt to end a marker (ptr: 0x{ptr:x}) that was never started");
                 }
             }
             _ => {
@@ -1038,18 +1052,40 @@ impl Cpu {
         }
         Ok(String::from_utf8_lossy(&bytes).into_owned())
     }
+
+    /// Track a function call (JAL/JALR instruction that saves callsite information)
+    /// Optimized for minimal overhead - just append to a circular buffer (VecDeque)
+    #[inline]
+    pub fn track_call(&mut self, return_address: u64, operands: NormalizedOperands) {
+        // Simple circular buffer - if full, overwrite oldest
+        if self.call_stack.len() >= MAX_CALL_STACK_DEPTH {
+            self.call_stack.pop_front();
+        }
+
+        self.call_stack.push_back(CallFrame {
+            call_site: return_address,
+            x: self.x,
+            operands,
+            cycle_count: self.trace_len,
+        });
+    }
+
+    /// Get the current call stack (for displaying on panic)
+    pub fn get_call_stack(&self) -> &VecDeque<CallFrame> {
+        &self.call_stack
+    }
 }
 
 impl Drop for Cpu {
     fn drop(&mut self) {
         if !self.active_markers.is_empty() {
-            println!(
+            warn!(
                 "Warning: Found {} unclosed cycle tracking marker(s):",
                 self.active_markers.len()
             );
             for (ptr, marker) in &self.active_markers {
-                println!(
-                    "  - '{}' (at ptr: 0x{:x}), started at {} RV32IM cycles",
+                warn!(
+                    "  - '{}' (at ptr: 0x{:x}), started at {} RV64IMAC cycles",
                     marker.label, ptr, marker.start_instrs
                 );
             }
@@ -1058,7 +1094,7 @@ impl Drop for Cpu {
 }
 
 #[allow(dead_code)]
-fn get_register_name(num: usize) -> &'static str {
+pub fn get_register_name(num: usize) -> &'static str {
     match num {
         0 => "zero",
         1 => "ra",

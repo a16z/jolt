@@ -16,7 +16,7 @@ use crate::zkvm::{JoltProverPreprocessing, JoltVerifierPreprocessing};
 use num_derive::FromPrimitive;
 use rayon::prelude::*;
 use tracer::emulator::memory::Memory;
-use tracer::instruction::{RV32IMCycle, RV32IMInstruction};
+use tracer::instruction::{Cycle, Instruction};
 use tracer::JoltDevice;
 
 #[derive(PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, FromPrimitive)]
@@ -45,7 +45,7 @@ where
     PCS: CommitmentScheme<Field = F>,
 {
     pub preprocessing: &'a JoltProverPreprocessing<F, PCS>,
-    pub trace: Vec<RV32IMCycle>,
+    pub trace: Vec<Cycle>,
     pub final_memory_state: Memory,
     pub accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
 }
@@ -85,7 +85,7 @@ where
 {
     pub fn new_prover(
         preprocessing: &'a JoltProverPreprocessing<F, PCS>,
-        trace: Vec<RV32IMCycle>,
+        trace: Vec<Cycle>,
         program_io: JoltDevice,
         final_memory_state: Memory,
     ) -> Self {
@@ -179,7 +179,7 @@ where
         &self,
     ) -> (
         &'a JoltProverPreprocessing<F, PCS>,
-        &Vec<RV32IMCycle>,
+        &Vec<Cycle>,
         &JoltDevice,
         &Memory,
     ) {
@@ -207,7 +207,7 @@ where
         }
     }
 
-    pub fn get_bytecode(&self) -> &[RV32IMInstruction] {
+    pub fn get_bytecode(&self) -> &[Instruction] {
         if let Some(ref verifier_state) = self.verifier_state {
             &verifier_state.preprocessing.shared.bytecode.bytecode
         } else if let Some(ref prover_state) = self.prover_state {

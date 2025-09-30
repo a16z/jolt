@@ -1,4 +1,5 @@
 use crate::utils::inline_helpers::InstrAssembler;
+use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use crate::{
     declare_riscv_instr,
     emulator::cpu::{Cpu, Xlen},
@@ -6,10 +7,8 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::virtual_sign_extend::VirtualSignExtend;
-use super::{
-    format::format_i::FormatI, RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
-};
+use super::virtual_sign_extend_word::VirtualSignExtendWord;
+use super::{format::format_i::FormatI, Cycle, Instruction, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name   = SLLIW,
@@ -31,25 +30,38 @@ impl SLLIW {
 }
 
 impl RISCVTrace for SLLIW {
-    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let inline_sequence = self.inline_sequence(cpu.xlen);
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
+        let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
-            // In each iteration, create a new Option containing a re-borrowed reference
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
 
-    fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
+    /// Shift left logical immediate for 32-bit words with sign extension.
+    ///
+    /// SLLIW is an RV64I-only instruction that shifts the lower 32 bits of rs1
+    /// left by a constant amount, then sign-extends the 32-bit result to 64 bits.
+    ///
+    /// Implementation:
+    /// 1. Multiply by 2^shift_amount (equivalent to left shift)
+    /// 2. Sign-extend the lower 32 bits to 64 bits
+    ///
+    /// The shift amount is restricted to 5 bits (0-31) for 32-bit operations.
+    fn inline_sequence(
+        &self,
+        allocator: &VirtualRegisterAllocator,
+        xlen: Xlen,
+    ) -> Vec<Instruction> {
         let mask = match xlen {
             Xlen::Bit32 => panic!("SLLIW is invalid in 32b mode"),
             Xlen::Bit64 => 0x1f, //low 5bits
         };
         let shift = self.operands.imm & mask;
 
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
         asm.emit_i::<VirtualMULI>(self.operands.rd, self.operands.rs1, 1 << shift);
-        asm.emit_i::<VirtualSignExtend>(self.operands.rd, self.operands.rd, 0);
+        asm.emit_i::<VirtualSignExtendWord>(self.operands.rd, self.operands.rd, 0);
         asm.finalize()
     }
 }

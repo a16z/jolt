@@ -4,7 +4,7 @@ const PROGRAM_MEMORY_CAPACITY: u64 = EMULATOR_MEMORY_CAPACITY; // big enough to 
 
 extern crate fnv;
 
-use crate::instruction::RV32IMCycle;
+use crate::instruction::Cycle;
 
 #[cfg(feature = "std")]
 use self::fnv::FnvHashMap;
@@ -33,6 +33,7 @@ use self::terminal::Terminal;
 
 use common::constants::{EMULATOR_MEMORY_CAPACITY, RAM_START_ADDRESS};
 use std::io::Write;
+use std::path::Path;
 
 /// RISC-V emulator. It emulates RISC-V CPU and peripheral devices.
 ///
@@ -49,6 +50,9 @@ use std::io::Write;
 /// ```
 #[derive(Clone)]
 pub struct Emulator {
+    /// addr2line instance for symbol lookups
+    pub elf_path: Option<std::path::PathBuf>,
+
     cpu: Cpu,
 
     /// Stores mapping from symbol to virtual address
@@ -92,6 +96,7 @@ impl Emulator {
             cpu: Cpu::new(terminal),
 
             symbol_map: FnvHashMap::default(),
+            elf_path: None,
 
             // These can be updated in setup_program()
             is_test: false,
@@ -113,10 +118,10 @@ impl Emulator {
     pub fn run_test(&mut self, trace: bool) {
         // @TODO: Send this message to terminal?
         #[cfg(feature = "std")]
-        println!("This elf file seems like a riscv-tests elf file. Running in test mode.");
+        tracing::info!("This elf file seems like a riscv-tests elf file. Running in test mode.");
         loop {
             let disas = self.cpu.disassemble_next_instruction();
-            println!("{disas}");
+            tracing::debug!("{disas}");
 
             let mut traces = if trace { Some(Vec::new()) } else { None };
             self.tick(traces.as_mut());
@@ -139,8 +144,8 @@ impl Emulator {
                     // Extract exit code by shifting payload right by 1
                     let endcode = payload >> 1;
                     match endcode {
-                        0 => println!("Test Passed with {endcode:X}\n"),
-                        _ => println!("Test Failed with {endcode:X}\n"),
+                        0 => tracing::info!("Test Passed with {endcode:X}\n"),
+                        _ => tracing::error!("Test Failed with {endcode:X}\n"),
                     };
                     break;
                 }
@@ -149,8 +154,15 @@ impl Emulator {
     }
 
     /// Runs CPU one cycle
-    pub fn tick(&mut self, trace: Option<&mut Vec<RV32IMCycle>>) {
+    pub fn tick(&mut self, trace: Option<&mut Vec<Cycle>>) {
         self.cpu.tick(trace)
+    }
+
+    /// This enables usage of addr2line to find debug info embedded in the binary
+    pub fn set_elf_path(&mut self, elf_path: &Path) {
+        if elf_path.exists() {
+            self.elf_path = Some(elf_path.to_path_buf());
+        }
     }
 
     /// Sets up program run by the program. This method analyzes the passed content

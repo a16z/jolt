@@ -12,7 +12,7 @@ Jolt is currently configured so that $K^{1/d} = 2^8$.
 
 ## Address remapping
 
-We treat each 4-byte-aligned word in the guest memory as one "cell" for the purposes of memory checking.
+We treat each 8-byte-aligned doubleword in the guest memory as one "cell" for the purposes of memory checking.
 Our RISC-V [emulator](./emulation.md) is configured to use `0x80000000` as the DRAM start address -- the stack and heap occupy addresses above the start address, while Jolt reserves some memory below the start address for program inputs and outputs.
 
 ![memory layout](../../imgs/memory_layout.png)
@@ -20,12 +20,12 @@ Our RISC-V [emulator](./emulation.md) is configured to use `0x80000000` as the D
 For the purposes of the memory checking argument, we remap the memory address to a witness index:
 
 ```rust
-(address - memory_layout.input_start) / 4 + 1
+(address - memory_layout.input_start) / 8 + 1
 ```
 
 where `input_start` is the left-most address depicted in the diagram above.
-The division by four reflects the fact that we treat guest memory as "word-addressable" for the purposes of memory-checking.
-Any load or store instructions that access less than a full word (e.g. `LB`, `SH`) are expanded into [virtual sequences](./emulation.md#virtual-instructions-and-sequences) that use the `LW` or `SW` instead.
+The division by eight reflects the fact that we treat guest memory as "doubleword-addressable" for the purposes of memory-checking.
+Any load or store instructions that access less than a full doubleword (e.g. `LB`, `SH`, `LW`) are expanded into [inline sequences](./emulation.md#virtual-instructions-and-sequences) that use the `LD` or `SD` instead.
 
 ## Deviations from the Twist algorithm as described in the paper
 
@@ -34,7 +34,7 @@ Our implementation of the Twist prover algorithm differs from the description gi
 ### Single operation per cycle
 
 The Twist algorithm as described in the paper assumes one read and one write per cycle, with corresponding polynomials $\widetilde{\textsf{ra}}$ (read address) and $\widetilde{\textsf{wa}}$ (write address).
-However, in the context of the RV32IM instruction set, only a single memory operation -- either a read or a write (or neither) -- is performed per cycle.
+However, in the context of the RV64IMAC instruction set, only a single memory operation -- either a read or a write (or neither) -- is performed per cycle.
 Thus, a single polynomial (merging $\widetilde{\textsf{ra}}$ and $\widetilde{\textsf{wa}}$) suffices, simplifying and optimizing the algorithm.
 This polynomial is referred to as $\widetilde{\textsf{ra}}$ for the rest of this document.
 
@@ -91,8 +91,8 @@ $$
 0 = \sum_{k \in \{0, 1\}^{\log K}} \widetilde{\textsf{eq}}(r_\text{address}, k) \cdot \widetilde{\textsf{io-range}}(k) \cdot \left( \widetilde{\textsf{Val}}_\text{final}(k) - \widetilde{\textsf{Val}}_\text{io}(k) \right)
 $$
 
-where $\widetilde{\textsf{io-range}}$ is a "masking" polynomial, equal to 1 at all the indices corresponding to the program I/O region and 0 elsewhere.
-The MLE for a masking polynomial that isolates the range $[\text{start}, \text{end})$ can be written as follows:
+where $\widetilde{\textsf{io-range}}$ is a "range mask" polynomial, equal to 1 at all the indices corresponding to the program I/O region and 0 elsewhere.
+The MLE for a range mask polynomial that isolates the range $[\text{start}, \text{end})$ can be written as follows:
 
 $$
 \widetilde{\textsf{mask}}_\text{start, end}(r) = \widetilde{\textsf{LT}}(r, \text{end}) - \widetilde{\textsf{LT}}(r, \text{start})

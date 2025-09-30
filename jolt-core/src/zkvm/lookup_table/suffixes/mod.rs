@@ -17,6 +17,7 @@ use num_derive::FromPrimitive;
 use or::OrSuffix;
 use pow2::Pow2Suffix;
 use pow2_w::Pow2WSuffix;
+use rev8w::Rev8W;
 use right_is_zero::RightOperandIsZeroSuffix;
 use right_shift::RightShiftSuffix;
 use right_shift_helper::RightShiftHelperSuffix;
@@ -32,9 +33,12 @@ use lower_half_word::LowerHalfWordSuffix;
 use lower_word::LowerWordSuffix;
 use notand::NotAndSuffix;
 use one::OneSuffix;
+use overflow_bits_zero::OverflowBitsZeroSuffix;
 use two_lsb::TwoLsbSuffix;
 use upper_word::UpperWordSuffix;
 use xor::XorSuffix;
+use xor_rot::XorRotSuffix;
+use xor_rotw::XorRotWSuffix;
 
 pub mod and;
 pub mod change_divisor;
@@ -53,8 +57,10 @@ pub mod lt;
 pub mod notand;
 pub mod one;
 pub mod or;
+pub mod overflow_bits_zero;
 pub mod pow2;
 pub mod pow2_w;
+pub mod rev8w;
 pub mod right_is_zero;
 pub mod right_operand;
 pub mod right_operand_w;
@@ -69,6 +75,8 @@ pub mod sign_extension_upper_half;
 pub mod two_lsb;
 pub mod upper_word;
 pub mod xor;
+pub mod xor_rot;
+pub mod xor_rotw;
 
 pub trait SparseDenseSuffix: 'static + Sync {
     /// Evaluates the MLE for this suffix on the bitvector `b`, where
@@ -101,6 +109,7 @@ pub enum Suffixes {
     DivByZero,
     Pow2,
     Pow2W,
+    Rev8W,
     RightShiftPadding,
     RightShift,
     RightShiftHelper,
@@ -113,6 +122,15 @@ pub enum Suffixes {
     RightShiftWHelper,
     LeftShiftWHelper,
     LeftShiftW,
+    OverflowBitsZero,
+    XorRot16,
+    XorRot24,
+    XorRot32,
+    XorRot63,
+    XorRotW16,
+    XorRotW12,
+    XorRotW8,
+    XorRotW7,
 }
 
 pub type SuffixEval<F: JoltField> = F;
@@ -143,6 +161,7 @@ impl Suffixes {
             Suffixes::DivByZero => DivByZeroSuffix::suffix_mle(b),
             Suffixes::Pow2 => Pow2Suffix::<XLEN>::suffix_mle(b),
             Suffixes::Pow2W => Pow2WSuffix::<XLEN>::suffix_mle(b),
+            Suffixes::Rev8W => Rev8W::suffix_mle(b),
             Suffixes::RightShiftPadding => RightShiftPaddingSuffix::<XLEN>::suffix_mle(b),
             Suffixes::RightShift => RightShiftSuffix::suffix_mle(b),
             Suffixes::RightShiftHelper => RightShiftHelperSuffix::suffix_mle(b),
@@ -157,6 +176,15 @@ impl Suffixes {
             Suffixes::RightShiftWHelper => RightShiftWHelperSuffix::suffix_mle(b),
             Suffixes::LeftShiftWHelper => LeftShiftWHelperSuffix::suffix_mle(b),
             Suffixes::LeftShiftW => LeftShiftWSuffix::suffix_mle(b),
+            Suffixes::OverflowBitsZero => OverflowBitsZeroSuffix::<XLEN>::suffix_mle(b),
+            Suffixes::XorRot16 => XorRotSuffix::<16>::suffix_mle(b),
+            Suffixes::XorRot24 => XorRotSuffix::<24>::suffix_mle(b),
+            Suffixes::XorRot32 => XorRotSuffix::<32>::suffix_mle(b),
+            Suffixes::XorRot63 => XorRotSuffix::<63>::suffix_mle(b),
+            Suffixes::XorRotW7 => XorRotWSuffix::<7>::suffix_mle(b),
+            Suffixes::XorRotW8 => XorRotWSuffix::<8>::suffix_mle(b),
+            Suffixes::XorRotW12 => XorRotWSuffix::<12>::suffix_mle(b),
+            Suffixes::XorRotW16 => XorRotWSuffix::<16>::suffix_mle(b),
         }
     }
 }

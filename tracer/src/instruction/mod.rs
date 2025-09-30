@@ -97,12 +97,12 @@ use virtual_advice::VirtualAdvice;
 use virtual_assert_eq::VirtualAssertEQ;
 use virtual_assert_halfword_alignment::VirtualAssertHalfwordAlignment;
 use virtual_assert_lte::VirtualAssertLTE;
+use virtual_assert_mulu_no_overflow::VirtualAssertMulUNoOverflow;
 use virtual_assert_valid_div0::VirtualAssertValidDiv0;
 use virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder;
 use virtual_assert_word_alignment::VirtualAssertWordAlignment;
 use virtual_change_divisor::VirtualChangeDivisor;
 use virtual_change_divisor_w::VirtualChangeDivisorW;
-use virtual_extend::VirtualExtend;
 use virtual_lw::VirtualLW;
 use virtual_move::VirtualMove;
 use virtual_movsign::VirtualMovsign;
@@ -111,20 +111,25 @@ use virtual_pow2::VirtualPow2;
 use virtual_pow2_w::VirtualPow2W;
 use virtual_pow2i::VirtualPow2I;
 use virtual_pow2i_w::VirtualPow2IW;
+use virtual_rev8w::VirtualRev8W;
 use virtual_rotri::VirtualROTRI;
 use virtual_rotriw::VirtualROTRIW;
 use virtual_shift_right_bitmask::VirtualShiftRightBitmask;
 use virtual_shift_right_bitmaski::VirtualShiftRightBitmaskI;
-use virtual_sign_extend::VirtualSignExtend;
+use virtual_sign_extend_word::VirtualSignExtendWord;
 use virtual_sra::VirtualSRA;
 use virtual_srai::VirtualSRAI;
 use virtual_srl::VirtualSRL;
 use virtual_srli::VirtualSRLI;
 use virtual_sw::VirtualSW;
+use virtual_xor_rot::{VirtualXORROT16, VirtualXORROT24, VirtualXORROT32, VirtualXORROT63};
+use virtual_xor_rotw::{VirtualXORROTW12, VirtualXORROTW16, VirtualXORROTW7, VirtualXORROTW8};
+use virtual_zero_extend_word::VirtualZeroExtendWord;
 
 use self::inline::INLINE;
 
 use crate::emulator::cpu::{Cpu, Xlen};
+use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use derive_more::From;
 use format::{InstructionFormat, InstructionRegisterState, NormalizedOperands};
 
@@ -224,12 +229,12 @@ pub mod virtual_advice;
 pub mod virtual_assert_eq;
 pub mod virtual_assert_halfword_alignment;
 pub mod virtual_assert_lte;
+pub mod virtual_assert_mulu_no_overflow;
 pub mod virtual_assert_valid_div0;
 pub mod virtual_assert_valid_unsigned_remainder;
 pub mod virtual_assert_word_alignment;
 pub mod virtual_change_divisor;
 pub mod virtual_change_divisor_w;
-pub mod virtual_extend;
 pub mod virtual_lw;
 pub mod virtual_move;
 pub mod virtual_movsign;
@@ -238,20 +243,24 @@ pub mod virtual_pow2;
 pub mod virtual_pow2_w;
 pub mod virtual_pow2i;
 pub mod virtual_pow2i_w;
+pub mod virtual_rev8w;
 pub mod virtual_rotri;
 pub mod virtual_rotriw;
 pub mod virtual_shift_right_bitmask;
 pub mod virtual_shift_right_bitmaski;
-pub mod virtual_sign_extend;
+pub mod virtual_sign_extend_word;
 pub mod virtual_sra;
 pub mod virtual_srai;
 pub mod virtual_srl;
 pub mod virtual_srli;
 pub mod virtual_sw;
+pub mod virtual_xor_rot;
+pub mod virtual_xor_rotw;
+pub mod virtual_zero_extend_word;
 pub mod xor;
 pub mod xori;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-utils"))]
 pub mod test;
 
 #[derive(Default, Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
@@ -313,7 +322,7 @@ pub trait RISCVInstruction:
     std::fmt::Debug
     + Sized
     + Copy
-    + Into<RV32IMInstruction>
+    + Into<Instruction>
     + From<NormalizedInstruction>
     + Into<NormalizedInstruction>
 {
@@ -336,9 +345,9 @@ pub trait RISCVInstruction:
 
 pub trait RISCVTrace: RISCVInstruction
 where
-    RISCVCycle<Self>: Into<RV32IMCycle>,
+    RISCVCycle<Self>: Into<Cycle>,
 {
-    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
         let mut cycle: RISCVCycle<Self> = RISCVCycle {
             instruction: *self,
             register_state: Default::default(),
@@ -354,11 +363,11 @@ where
         }
     }
     // Default implementation. Instructions with inline sequences will override this.
-    // This allows other modules (e.g. inline_helpers) to call this method on all instructions.
-    fn inline_sequence(&self, _xlen: Xlen) -> Vec<RV32IMInstruction>
-// where
-    //     Self: Into<RV32IMInstruction>,
-    {
+    fn inline_sequence(
+        &self,
+        _vr_allocator: &VirtualRegisterAllocator,
+        _xlen: Xlen,
+    ) -> Vec<Instruction> {
         vec![(*self).into()]
     }
 }
@@ -368,7 +377,7 @@ macro_rules! define_rv32im_enums {
         instructions: [$($instr:ident),* $(,)?]
     ) => {
         #[derive(Debug, IntoStaticStr, From, Clone, Serialize, Deserialize)]
-        pub enum RV32IMInstruction {
+        pub enum Instruction {
             /// No-operation instruction (address)
             NoOp,
             UNIMPL,
@@ -382,7 +391,7 @@ macro_rules! define_rv32im_enums {
         #[derive(
             From, Debug, Copy, Clone, Serialize, Deserialize, IntoStaticStr, EnumIter, EnumCountMacro, PartialEq
         )]
-        pub enum RV32IMCycle {
+        pub enum Cycle {
             /// No-operation cycle (address)
             NoOp,
             $(
@@ -391,27 +400,27 @@ macro_rules! define_rv32im_enums {
             INLINE(RISCVCycle<INLINE>),
         }
 
-        impl RV32IMCycle {
+        impl Cycle {
             pub fn ram_access(&self) -> RAMAccess {
                 match self {
-                    RV32IMCycle::NoOp => RAMAccess::NoOp,
+                    Cycle::NoOp => RAMAccess::NoOp,
                     $(
-                        RV32IMCycle::$instr(cycle) => cycle.ram_access.into(),
+                        Cycle::$instr(cycle) => cycle.ram_access.into(),
                     )*
-                    RV32IMCycle::INLINE(cycle) => cycle.ram_access.into(),
+                    Cycle::INLINE(cycle) => cycle.ram_access.into(),
                 }
             }
 
             pub fn rs1_read(&self) -> (u8, u64) {
                 match self {
-                    RV32IMCycle::NoOp => (0, 0),
+                    Cycle::NoOp => (0, 0),
                     $(
-                        RV32IMCycle::$instr(cycle) => (
+                        Cycle::$instr(cycle) => (
                             NormalizedOperands::from(cycle.instruction.operands).rs1,
                             cycle.register_state.rs1_value(),
                         ),
                     )*
-                    RV32IMCycle::INLINE(cycle) => (
+                    Cycle::INLINE(cycle) => (
                         cycle.instruction.operands.rs1,
                         cycle.register_state.rs1_value(),
                     ),
@@ -420,14 +429,14 @@ macro_rules! define_rv32im_enums {
 
             pub fn rs2_read(&self) -> (u8, u64) {
                 match self {
-                    RV32IMCycle::NoOp => (0, 0),
+                    Cycle::NoOp => (0, 0),
                     $(
-                        RV32IMCycle::$instr(cycle) => (
+                        Cycle::$instr(cycle) => (
                             NormalizedOperands::from(cycle.instruction.operands).rs2,
                             cycle.register_state.rs2_value(),
                         ),
                     )*
-                    RV32IMCycle::INLINE(cycle) => (
+                    Cycle::INLINE(cycle) => (
                         cycle.instruction.operands.rs2,
                         cycle.register_state.rs2_value(),
                     ),
@@ -436,51 +445,51 @@ macro_rules! define_rv32im_enums {
 
             pub fn rd_write(&self) -> (u8, u64, u64) {
                 match self {
-                    RV32IMCycle::NoOp => (0, 0, 0),
+                    Cycle::NoOp => (0, 0, 0),
                     $(
-                        RV32IMCycle::$instr(cycle) => (
+                        Cycle::$instr(cycle) => (
                             NormalizedOperands::from(cycle.instruction.operands).rd,
                             cycle.register_state.rd_values().0,
                             cycle.register_state.rd_values().1,
                         ),
                     )*
-                    RV32IMCycle::INLINE(cycle) => (
-                        cycle.instruction.operands.rd,
+                    Cycle::INLINE(cycle) => (
+                        cycle.instruction.operands.rs3,
                         cycle.register_state.rd_values().0,
                         cycle.register_state.rd_values().1,
                     ),
                 }
             }
 
-            pub fn instruction(&self) -> RV32IMInstruction {
+            pub fn instruction(&self) -> Instruction {
                 match self {
-                    RV32IMCycle::NoOp => RV32IMInstruction::NoOp,
+                    Cycle::NoOp => Instruction::NoOp,
                     $(
-                        RV32IMCycle::$instr(cycle) => cycle.instruction.into(),
+                        Cycle::$instr(cycle) => cycle.instruction.into(),
                     )*
-                    RV32IMCycle::INLINE(cycle) => cycle.instruction.into(),
+                    Cycle::INLINE(cycle) => cycle.instruction.into(),
                 }
             }
         }
 
-        impl RV32IMInstruction {
-            pub fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
+        impl Instruction {
+            pub fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
                 match self {
-                    RV32IMInstruction::NoOp => panic!("Unsupported instruction: {:?}", self),
-                    RV32IMInstruction::UNIMPL => panic!("Unsupported instruction: {:?}", self),
+                    Instruction::NoOp => panic!("Unsupported instruction: {:?}", self),
+                    Instruction::UNIMPL => panic!("Unsupported instruction: {:?}", self),
                     $(
-                        RV32IMInstruction::$instr(instr) => instr.trace(cpu, trace),
+                        Instruction::$instr(instr) => instr.trace(cpu, trace),
                     )*
-                    RV32IMInstruction::INLINE(instr) => instr.trace(cpu, trace),
+                    Instruction::INLINE(instr) => instr.trace(cpu, trace),
                 }
             }
 
             pub fn execute(&self, cpu: &mut Cpu) {
                 match self {
-                    RV32IMInstruction::NoOp => panic!("Unsupported instruction: {:?}", self),
-                    RV32IMInstruction::UNIMPL => panic!("Unsupported instruction: {:?}", self),
+                    Instruction::NoOp => panic!("Unsupported instruction: {:?}", self),
+                    Instruction::UNIMPL => panic!("Unsupported instruction: {:?}", self),
                     $(
-                        RV32IMInstruction::$instr(instr) => {
+                        Instruction::$instr(instr) => {
                             let mut cycle: RISCVCycle<$instr> = RISCVCycle {
                                 instruction: *instr,
                                 register_state: Default::default(),
@@ -489,7 +498,7 @@ macro_rules! define_rv32im_enums {
                             instr.execute(cpu, &mut cycle.ram_access);
                         }
                     )*
-                    RV32IMInstruction::INLINE(instr) => {
+                    Instruction::INLINE(instr) => {
                         let mut cycle: RISCVCycle<INLINE> = RISCVCycle {
                             instruction: *instr,
                             register_state: Default::default(),
@@ -504,43 +513,54 @@ macro_rules! define_rv32im_enums {
                 self.into()
             }
 
-            pub fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
+            pub fn inline_sequence(&self, allocator: &VirtualRegisterAllocator, xlen: Xlen) -> Vec<Instruction> {
                 match self {
-                    RV32IMInstruction::NoOp => vec![],
-                    RV32IMInstruction::UNIMPL => vec![],
+                    Instruction::NoOp => vec![],
+                    Instruction::UNIMPL => vec![],
                     $(
-                        RV32IMInstruction::$instr(instr) => instr.inline_sequence(xlen),
+                        Instruction::$instr(instr) => instr.inline_sequence(allocator, xlen),
                     )*
-                    RV32IMInstruction::INLINE(instr) => instr.inline_sequence(xlen),
+                    Instruction::INLINE(instr) => instr.inline_sequence(allocator, xlen),
                 }
             }
 
             pub fn set_inline_sequence_remaining(&mut self, remaining: Option<u16>) {
                 match self {
-                    RV32IMInstruction::NoOp => (),
-                    RV32IMInstruction::UNIMPL => (),
+                    Instruction::NoOp => (),
+                    Instruction::UNIMPL => (),
                     $(
-                        RV32IMInstruction::$instr(instr) => {instr.inline_sequence_remaining = remaining;}
+                        Instruction::$instr(instr) => {instr.inline_sequence_remaining = remaining;}
                     )*
-                    RV32IMInstruction::INLINE(instr) => {instr.inline_sequence_remaining = remaining;}
+                    Instruction::INLINE(instr) => {instr.inline_sequence_remaining = remaining;}
+                }
+            }
+
+            pub fn set_is_compressed(&mut self, is_compressed: bool) {
+                match self {
+                    Instruction::NoOp => (),
+                    Instruction::UNIMPL => (),
+                    $(
+                        Instruction::$instr(instr) => {instr.is_compressed = is_compressed;}
+                    )*
+                    Instruction::INLINE(instr) => {instr.is_compressed = is_compressed;}
                 }
             }
         }
 
-        impl From<&RV32IMInstruction> for NormalizedInstruction {
-            fn from(instr: &RV32IMInstruction) -> Self {
+        impl From<&Instruction> for NormalizedInstruction {
+            fn from(instr: &Instruction) -> Self {
                 match instr {
-                    RV32IMInstruction::NoOp => Default::default(),
-                    RV32IMInstruction::UNIMPL => Default::default(),
+                    Instruction::NoOp => Default::default(),
+                    Instruction::UNIMPL => Default::default(),
                     $(
-                        RV32IMInstruction::$instr(instr) => NormalizedInstruction {
+                        Instruction::$instr(instr) => NormalizedInstruction {
                             address: instr.address as usize,
                             operands: instr.operands.into(),
                             inline_sequence_remaining: instr.inline_sequence_remaining,
                             is_compressed: instr.is_compressed,
                         },
                     )*
-                    RV32IMInstruction::INLINE(instr) => NormalizedInstruction {
+                    Instruction::INLINE(instr) => NormalizedInstruction {
                         address: instr.address as usize,
                         operands: instr.operands.into(),
                         inline_sequence_remaining: instr.inline_sequence_remaining,
@@ -568,17 +588,20 @@ define_rv32im_enums! {
         LRD, SCD, AMOSWAPD, AMOADDD, AMOANDD, AMOORD, AMOXORD, AMOMIND, AMOMAXD, AMOMINUD, AMOMAXUD,
         // Virtual
         VirtualAdvice, VirtualAssertEQ, VirtualAssertHalfwordAlignment, VirtualAssertWordAlignment, VirtualAssertLTE,
-        VirtualAssertValidDiv0, VirtualAssertValidUnsignedRemainder,
-        VirtualChangeDivisor, VirtualChangeDivisorW, VirtualLW,VirtualSW,VirtualExtend,
-        VirtualSignExtend,VirtualPow2W, VirtualPow2IW,
-        VirtualMove, VirtualMovsign, VirtualMULI, VirtualPow2, VirtualPow2I, VirtualROTRI,
+        VirtualAssertValidDiv0, VirtualAssertValidUnsignedRemainder, VirtualAssertMulUNoOverflow,
+        VirtualChangeDivisor, VirtualChangeDivisorW, VirtualLW,VirtualSW, VirtualZeroExtendWord,
+        VirtualSignExtendWord,VirtualPow2W, VirtualPow2IW,
+        VirtualMove, VirtualMovsign, VirtualMULI, VirtualPow2, VirtualPow2I, VirtualRev8W, VirtualROTRI,
         VirtualROTRIW,
         VirtualShiftRightBitmask, VirtualShiftRightBitmaskI,
         VirtualSRA, VirtualSRAI, VirtualSRL, VirtualSRLI,
+        // XORROT
+        VirtualXORROT32, VirtualXORROT24, VirtualXORROT16, VirtualXORROT63,
+        VirtualXORROTW16, VirtualXORROTW12, VirtualXORROTW8, VirtualXORROTW7,
     ]
 }
 
-impl CanonicalSerialize for RV32IMInstruction {
+impl CanonicalSerialize for Instruction {
     fn serialize_with_mode<W: ark_serialize::Write>(
         &self,
         mut writer: W,
@@ -599,7 +622,7 @@ impl CanonicalSerialize for RV32IMInstruction {
     }
 }
 
-impl CanonicalDeserialize for RV32IMInstruction {
+impl CanonicalDeserialize for Instruction {
     fn deserialize_with_mode<R: ark_serialize::Read>(
         mut reader: R,
         compress: Compress,
@@ -617,16 +640,16 @@ impl CanonicalDeserialize for RV32IMInstruction {
     }
 }
 
-impl Valid for RV32IMInstruction {
+impl Valid for Instruction {
     fn check(&self) -> Result<(), SerializationError> {
         Ok(())
     }
 }
 
-impl RV32IMInstruction {
+impl Instruction {
     pub fn is_real(&self) -> bool {
         // ignore no-op
-        if matches!(self, RV32IMInstruction::NoOp) {
+        if matches!(self, Instruction::NoOp) {
             return false;
         }
 
@@ -865,6 +888,14 @@ impl RV32IMInstruction {
             0b0001011 => Ok(INLINE::new(instr, address, false, compressed).into()),
             // 0x2B is reserved for external inlines
             0b0101011 => Ok(INLINE::new(instr, address, false, compressed).into()),
+            // 0x5B is reserved for I-type virtual instructions.
+            0b1011011 => {
+                let funct3 = (instr >> 12) & 0x7;
+                match funct3 {
+                    0b000 => Ok(VirtualRev8W::new(instr, address, true, compressed).into()),
+                    _ => Err("Invalid I-type virtual instruction"),
+                }
+            }
             _ => Err("Unknown opcode"),
         }
     }
@@ -1472,13 +1503,13 @@ mod tests {
     use super::*;
 
     #[test]
-    // Check that the size of RV32IMCycle is as expected.
+    // Check that the size of Cycle is as expected.
     fn rv32im_cycle_size() {
-        let size = size_of::<RV32IMCycle>();
+        let size = size_of::<Cycle>();
         let expected = 80;
         assert_eq!(
             size, expected,
-            "RV32IMCycle size should be {expected} bytes, but is {size} bytes"
+            "Cycle size should be {expected} bytes, but is {size} bytes"
         );
     }
 }

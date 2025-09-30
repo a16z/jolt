@@ -4,7 +4,7 @@ use allocative::Allocative;
 use common::constants::XLEN;
 use strum::EnumCount;
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
-use tracer::instruction::{RV32IMCycle, RV32IMInstruction};
+use tracer::instruction::{Cycle, Instruction};
 
 use crate::utils::interleave_bits;
 
@@ -115,59 +115,85 @@ pub trait InstructionFlags {
     fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS];
 }
 
+/// Extension to query circuit flags without panicking on unsupported instructions.
+/// Useful for testing
+#[cfg(test)]
+pub trait InstructionFlagsExt {
+    fn try_circuit_flags(&self) -> Option<[bool; NUM_CIRCUIT_FLAGS]>;
+}
+
 macro_rules! define_rv32im_trait_impls {
     (
         instructions: [$($instr:ident),* $(,)?]
     ) => {
-        impl InstructionLookup<XLEN> for RV32IMInstruction {
+        impl InstructionLookup<XLEN> for Instruction {
             fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
                 match self {
-                    RV32IMInstruction::NoOp => None,
+                    Instruction::NoOp => None,
                     $(
-                        RV32IMInstruction::$instr(instr) => instr.lookup_table(),
+                        Instruction::$instr(instr) => instr.lookup_table(),
                     )*
-                    RV32IMInstruction::UNIMPL => None,
+                    Instruction::UNIMPL => None,
                     _ => panic!("Unexpected instruction: {:?}", self),
                 }
             }
         }
 
-        impl InstructionFlags for RV32IMInstruction {
+        impl InstructionFlags for Instruction {
             fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
                 match self {
-                    RV32IMInstruction::NoOp => {
+                    Instruction::NoOp => {
                         let mut flags = [false; NUM_CIRCUIT_FLAGS];
                         flags[CircuitFlags::IsNoop] = true;
                         flags[CircuitFlags::DoNotUpdateUnexpandedPC] = true;
                         flags
                     },
                     $(
-                        RV32IMInstruction::$instr(instr) => instr.circuit_flags(),
+                        Instruction::$instr(instr) => instr.circuit_flags(),
                     )*
-                    RV32IMInstruction::UNIMPL => [false; NUM_CIRCUIT_FLAGS],
+                    Instruction::UNIMPL => [false; NUM_CIRCUIT_FLAGS],
                     _ => panic!("Unexpected instruction: {:?}", self),
                 }
             }
         }
 
-        impl<const XLEN: usize> InstructionLookup<XLEN> for RV32IMCycle {
+        #[cfg(test)]
+        impl InstructionFlagsExt for Instruction {
+            fn try_circuit_flags(&self) -> Option<[bool; NUM_CIRCUIT_FLAGS]> {
+                match self {
+                    Instruction::NoOp => {
+                        let mut flags = [false; NUM_CIRCUIT_FLAGS];
+                        flags[CircuitFlags::IsNoop] = true;
+                        flags[CircuitFlags::DoNotUpdateUnexpandedPC] = true;
+                        Some(flags)
+                    },
+                    $(
+                        Instruction::$instr(instr) => Some(instr.circuit_flags()),
+                    )*
+                    Instruction::UNIMPL => Some([false; NUM_CIRCUIT_FLAGS]),
+                    _ => None,
+                }
+            }
+        }
+
+        impl<const XLEN: usize> InstructionLookup<XLEN> for Cycle {
             fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
                 match self {
-                    RV32IMCycle::NoOp => None,
+                    Cycle::NoOp => None,
                     $(
-                        RV32IMCycle::$instr(cycle) => cycle.instruction.lookup_table(),
+                        Cycle::$instr(cycle) => cycle.instruction.lookup_table(),
                     )*
                     _ => panic!("Unexpected instruction: {:?}", self),
                 }
             }
         }
 
-        impl<const XLEN: usize> LookupQuery<XLEN> for RV32IMCycle {
+        impl<const XLEN: usize> LookupQuery<XLEN> for Cycle {
             fn to_instruction_inputs(&self) -> (u64, i128) {
                 match self {
-                    RV32IMCycle::NoOp => (0, 0),
+                    Cycle::NoOp => (0, 0),
                     $(
-                        RV32IMCycle::$instr(cycle) => LookupQuery::<XLEN>::to_instruction_inputs(cycle),
+                        Cycle::$instr(cycle) => LookupQuery::<XLEN>::to_instruction_inputs(cycle),
                     )*
                     _ => panic!("Unexpected instruction: {:?}", self),
                 }
@@ -175,9 +201,9 @@ macro_rules! define_rv32im_trait_impls {
 
             fn to_lookup_index(&self) -> u128 {
                 match self {
-                    RV32IMCycle::NoOp => 0,
+                    Cycle::NoOp => 0,
                     $(
-                        RV32IMCycle::$instr(cycle) => LookupQuery::<XLEN>::to_lookup_index(cycle),
+                        Cycle::$instr(cycle) => LookupQuery::<XLEN>::to_lookup_index(cycle),
                     )*
                     _ => panic!("Unexpected instruction: {:?}", self),
                 }
@@ -185,9 +211,9 @@ macro_rules! define_rv32im_trait_impls {
 
             fn to_lookup_operands(&self) -> (u64, u128) {
                 match self {
-                    RV32IMCycle::NoOp => (0, 0),
+                    Cycle::NoOp => (0, 0),
                     $(
-                        RV32IMCycle::$instr(cycle) => LookupQuery::<XLEN>::to_lookup_operands(cycle),
+                        Cycle::$instr(cycle) => LookupQuery::<XLEN>::to_lookup_operands(cycle),
                     )*
                     _ => panic!("Unexpected instruction: {:?}", self),
                 }
@@ -195,9 +221,9 @@ macro_rules! define_rv32im_trait_impls {
 
             fn to_lookup_output(&self) -> u64 {
                 match self {
-                    RV32IMCycle::NoOp => 0,
+                    Cycle::NoOp => 0,
                     $(
-                        RV32IMCycle::$instr(cycle) => LookupQuery::<XLEN>::to_lookup_output(cycle),
+                        Cycle::$instr(cycle) => LookupQuery::<XLEN>::to_lookup_output(cycle),
                     )*
                     _ => panic!("Unexpected instruction: {:?}", self),
                 }
@@ -214,11 +240,13 @@ define_rv32im_trait_impls! {
         VirtualAdvice, VirtualAssertEQ, VirtualAssertHalfwordAlignment,
         VirtualAssertWordAlignment, VirtualAssertLTE,
         VirtualAssertValidDiv0, VirtualAssertValidUnsignedRemainder,
-        VirtualChangeDivisor, VirtualChangeDivisorW,
-        VirtualExtend, VirtualSignExtend, VirtualMove, VirtualMovsign, VirtualMULI, VirtualPow2, VirtualPow2I,
-        VirtualPow2W, VirtualPow2IW, VirtualShiftRightBitmask, VirtualShiftRightBitmaskI, VirtualROTRI,
-        VirtualROTRIW,
-        VirtualSRA, VirtualSRAI, VirtualSRL, VirtualSRLI
+        VirtualChangeDivisor, VirtualChangeDivisorW, VirtualAssertMulUNoOverflow,
+        VirtualZeroExtendWord, VirtualSignExtendWord, VirtualMove, VirtualMovsign, VirtualMULI, VirtualPow2,
+        VirtualPow2I, VirtualPow2W, VirtualPow2IW, VirtualRev8W, VirtualShiftRightBitmask, VirtualShiftRightBitmaskI,
+        VirtualROTRI, VirtualROTRIW,
+        VirtualSRA, VirtualSRAI, VirtualSRL, VirtualSRLI,
+        VirtualXORROT32, VirtualXORROT24, VirtualXORROT16, VirtualXORROT63,
+        VirtualXORROTW16, VirtualXORROTW12, VirtualXORROTW8, VirtualXORROTW7
     ]
 }
 
@@ -254,12 +282,12 @@ pub mod virtual_advice;
 pub mod virtual_assert_eq;
 pub mod virtual_assert_halfword_alignment;
 pub mod virtual_assert_lte;
+pub mod virtual_assert_mulu_no_overflow;
 pub mod virtual_assert_valid_div0;
 pub mod virtual_assert_valid_unsigned_remainder;
 pub mod virtual_assert_word_alignment;
 pub mod virtual_change_divisor;
 pub mod virtual_change_divisor_w;
-pub mod virtual_extend;
 pub mod virtual_move;
 pub mod virtual_movsign;
 pub mod virtual_muli;
@@ -267,15 +295,19 @@ pub mod virtual_pow2;
 pub mod virtual_pow2i;
 pub mod virtual_pow2iw;
 pub mod virtual_pow2w;
+pub mod virtual_rev8w;
 pub mod virtual_rotri;
 pub mod virtual_rotriw;
 pub mod virtual_shift_right_bitmask;
 pub mod virtual_shift_right_bitmaski;
-pub mod virtual_sign_extend;
+pub mod virtual_sign_extend_word;
 pub mod virtual_sra;
 pub mod virtual_srai;
 pub mod virtual_srl;
 pub mod virtual_srli;
+pub mod virtual_xor_rot;
+pub mod virtual_xor_rotw;
+pub mod virtual_zero_extend_word;
 pub mod xor;
 pub mod xori;
 

@@ -2,14 +2,19 @@
 
 pub mod alloc;
 pub use alloc::*;
-#[cfg(feature = "std")]
+#[cfg(feature = "random")]
 pub mod random;
-#[cfg(feature = "std")]
+#[cfg(feature = "random")]
 pub use random::*;
-#[cfg(feature = "std")]
+
 pub mod print;
-#[cfg(feature = "std")]
 pub use print::*;
 
 pub mod cycle_tracking;
 pub use cycle_tracking::*;
+
+#[cfg(all(
+    feature = "malloc-shim",
+    any(target_arch = "riscv32", target_arch = "riscv64")
+))]
+mod malloc_shim;

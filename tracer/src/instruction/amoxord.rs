@@ -4,15 +4,15 @@ use super::ld::LD;
 use super::sd::SD;
 use super::virtual_move::VirtualMove;
 use super::xor::XOR;
-use super::RV32IMInstruction;
+use super::Instruction;
 use crate::utils::inline_helpers::InstrAssembler;
-use crate::utils::virtual_registers::allocate_virtual_register;
+use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use crate::{
     declare_riscv_instr,
     emulator::cpu::{Cpu, Xlen},
 };
 
-use super::{format::format_r::FormatR, RISCVInstruction, RISCVTrace, RV32IMCycle};
+use super::{format::format_r::FormatR, Cycle, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name   = AMOXORD,
@@ -46,20 +46,51 @@ impl AMOXORD {
 }
 
 impl RISCVTrace for AMOXORD {
-    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let inline_sequence = self.inline_sequence(cpu.xlen);
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
+        let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
-            // In each iteration, create a new Option containing a re-borrowed reference
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
 
-    fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
-        let v_rs2 = allocate_virtual_register();
-        let v_rd = allocate_virtual_register();
+    /// AMOXOR.D atomically performs bitwise XOR on a 64-bit memory location with rs2.
+    ///
+    /// This atomic memory operation (AMO) instruction atomically loads a doubleword from
+    /// the memory address in rs1, performs a bitwise XOR with the value in rs2, stores
+    /// the result back to memory, and returns the original memory value in rd.
+    ///
+    /// In the zkVM context:
+    /// - Atomicity is guaranteed by the single-threaded execution model
+    /// - No explicit memory barriers or synchronization needed
+    /// - Direct 64-bit operations on naturally aligned addresses
+    ///
+    /// The bitwise XOR operation is commonly used for:
+    /// - Toggling specific bits in shared flags or control words
+    /// - Implementing lock-free toggle switches
+    /// - Cryptographic operations and checksums
+    /// - Atomic bit flipping without branching
+    /// - Invertible transformations in concurrent algorithms
+    ///
+    /// Implementation sequence:
+    /// 1. Load original value from memory[rs1]
+    /// 2. Compute new_value = original ^ rs2
+    /// 3. Store new_value back to memory[rs1]
+    /// 4. Return original value in rd
+    ///
+    /// XOR properties leveraged:
+    /// - Self-inverse: x ^ y ^ y = x (useful for temporary modifications)
+    /// - Toggle behavior: x ^ 1 flips bit, x ^ 0 preserves bit
+    /// - Branchless conditional flip based on mask patterns
+    fn inline_sequence(
+        &self,
+        allocator: &VirtualRegisterAllocator,
+        xlen: Xlen,
+    ) -> Vec<Instruction> {
+        let v_rs2 = allocator.allocate();
+        let v_rd = allocator.allocate();
 
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
         asm.emit_ld::<LD>(*v_rd, self.operands.rs1, 0);
         asm.emit_r::<XOR>(*v_rs2, *v_rd, self.operands.rs2);
         asm.emit_s::<SD>(self.operands.rs1, *v_rs2, 0);

@@ -1,7 +1,7 @@
 use crate::instruction::add::ADD;
 use crate::instruction::mul::MUL;
 use crate::utils::inline_helpers::InstrAssembler;
-use crate::utils::virtual_registers::allocate_virtual_register;
+use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -12,8 +12,9 @@ use crate::{
 use super::{
     format::format_r::FormatR, virtual_advice::VirtualAdvice, virtual_assert_eq::VirtualAssertEQ,
     virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder,
-    virtual_extend::VirtualExtend, virtual_sign_extend::VirtualSignExtend, RISCVInstruction,
-    RISCVTrace, RV32IMCycle, RV32IMInstruction,
+    virtual_sign_extend_word::VirtualSignExtendWord,
+    virtual_zero_extend_word::VirtualZeroExtendWord, Cycle, Instruction, RISCVInstruction,
+    RISCVTrace,
 };
 
 declare_riscv_instr!(
@@ -40,7 +41,7 @@ impl REMUW {
 }
 
 impl RISCVTrace for REMUW {
-    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
         // REMUW operands
         let x = cpu.x[self.operands.rs1 as usize] as u32;
         let y = cpu.x[self.operands.rs2 as usize] as u32;
@@ -60,13 +61,13 @@ impl RISCVTrace for REMUW {
             }
         };
 
-        let mut inline_sequence = self.inline_sequence(cpu.xlen);
-        if let RV32IMInstruction::VirtualAdvice(instr) = &mut inline_sequence[0] {
+        let mut inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
+        if let Instruction::VirtualAdvice(instr) = &mut inline_sequence[0] {
             instr.advice = quotient;
         } else {
             panic!("Expected Advice instruction");
         }
-        if let RV32IMInstruction::VirtualAdvice(instr) = &mut inline_sequence[1] {
+        if let Instruction::VirtualAdvice(instr) = &mut inline_sequence[1] {
             instr.advice = remainder;
         } else {
             panic!("Expected Advice instruction");
@@ -74,45 +75,61 @@ impl RISCVTrace for REMUW {
 
         let mut trace = trace;
         for instr in inline_sequence {
-            // In each iteration, create a new Option containing a re-borrowed reference
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
 
-    fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
-        let a0 = self.operands.rs1; // dividend
-        let a1 = self.operands.rs2; // divisor
-        let a2 = allocate_virtual_register(); // quotient from oracle
-        let a3 = allocate_virtual_register(); // remainder from oracle
-        let t0 = allocate_virtual_register();
-        let t1 = allocate_virtual_register();
-        let t2 = allocate_virtual_register();
-        let t3 = allocate_virtual_register();
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
+    /// REMUW computes unsigned 32-bit remainder on RV64, sign-extending the result to 64 bits.
+    ///
+    /// This RV64 instruction computes the remainder of dividing the lower 32 bits of rs1
+    /// by the lower 32 bits of rs2, treating them as unsigned integers. The result is
+    /// sign-extended to 64 bits despite being unsigned remainder (per RISC-V spec).
+    ///
+    /// Verification strategy:
+    /// 1. Zero-extend inputs to get proper 32-bit unsigned values
+    /// 2. Receive untrusted quotient and remainder from oracle
+    /// 3. Verify: dividend = quotient × divisor + remainder (all 32-bit unsigned)
+    /// 4. Verify: remainder < divisor
+    ///
+    /// Special case: Division by zero returns dividend (handled by VirtualAssertValidUnsignedRemainder)
+    ///
+    /// Note: No overflow check needed since remainder operations work modulo 2^32.
+    fn inline_sequence(
+        &self,
+        allocator: &VirtualRegisterAllocator,
+        xlen: Xlen,
+    ) -> Vec<Instruction> {
+        let a0 = self.operands.rs1; // dividend (contains 32-bit value)
+        let a1 = self.operands.rs2; // divisor (contains 32-bit value)
+        let a2 = allocator.allocate(); // quotient from oracle
+        let a3 = allocator.allocate(); // remainder from oracle
+        let t0 = allocator.allocate(); // multiplication result
+        let t1 = allocator.allocate(); // zero-extended dividend
+        let t2 = allocator.allocate(); // zero-extended divisor
+        let t3 = allocator.allocate(); // zero-extended quotient
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
 
-        // get advice
-        asm.emit_j::<VirtualAdvice>(*a2, 0);
-        asm.emit_j::<VirtualAdvice>(*a3, 0);
+        // Get untrusted advice from oracle
+        asm.emit_j::<VirtualAdvice>(*a2, 0); // quotient
+        asm.emit_j::<VirtualAdvice>(*a3, 0); // remainder
 
-        // zero-extend inputs to 32-bit values
-        asm.emit_i::<VirtualExtend>(*t1, a0, 0); // zero-extended dividend
-        asm.emit_i::<VirtualExtend>(*t2, a1, 0); // zero-extended divisor
+        // Zero-extend inputs to proper 32-bit unsigned values
+        asm.emit_i::<VirtualZeroExtendWord>(*t1, a0, 0); // dividend
+        asm.emit_i::<VirtualZeroExtendWord>(*t2, a1, 0); // divisor
+        asm.emit_i::<VirtualZeroExtendWord>(*t3, *a2, 0); // quotient
 
-        // zero-extend quotient for unsigned multiplication
-        asm.emit_i::<VirtualExtend>(*t3, *a2, 0); // zero-extended quotient
+        // Compute quotient × divisor (32-bit unsigned values)
+        asm.emit_r::<MUL>(*t0, *t3, *t2);
 
-        // compute quotient * divisor (no overflow check needed for remainder!)
-        asm.emit_r::<MUL>(*t0, *t3, *t2); // multiply zero-extended values
-
-        // verify quotient * divisor + remainder == dividend (mod 2^32)
+        // Verify: dividend = quotient × divisor + remainder
         asm.emit_r::<ADD>(*t0, *t0, *a3);
         asm.emit_b::<VirtualAssertEQ>(*t0, *t1, 0);
 
-        // check remainder < divisor (unsigned)
+        // Verify: remainder < divisor (or remainder == dividend when divisor == 0)
         asm.emit_b::<VirtualAssertValidUnsignedRemainder>(*a3, *t2, 0);
 
-        // sign-extend result (per RISC-V spec for REMUW)
-        asm.emit_i::<VirtualSignExtend>(self.operands.rd, *a3, 0);
+        // Sign-extend 32-bit remainder to 64 bits
+        asm.emit_i::<VirtualSignExtendWord>(self.operands.rd, *a3, 0);
         asm.finalize()
     }
 }

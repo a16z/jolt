@@ -5,8 +5,8 @@ use crate::transcripts::{AppendToTranscript, Transcript};
 use crate::{
     field::JoltField,
     msm::VariableBaseMSM,
-    poly::compact_polynomial::SmallScalar,
     poly::multilinear_polynomial::MultilinearPolynomial,
+    utils::small_scalar::SmallScalar,
     utils::{errors::ProofVerifyError, math::Math},
 };
 use ark_bn254::{Bn254, Fr, G1Projective, G2Projective};
@@ -64,8 +64,8 @@ impl DoryGlobals {
         let matrix_size = K as u128 * T as u128;
         let num_columns = matrix_size.isqrt().next_power_of_two();
         let num_rows = num_columns;
-        println!("[Dory PCS] # rows: {num_rows}");
-        println!("[Dory PCS] # cols: {num_columns}");
+        tracing::info!("[Dory PCS] # rows: {num_rows}");
+        tracing::info!("[Dory PCS] # cols: {num_columns}");
 
         unsafe {
             GLOBAL_T.set(T).expect("GLOBAL_T is already initialized");
@@ -805,6 +805,10 @@ where
             .collect();
         debug_assert_eq!(DoryGlobals::get_num_columns(), row_len);
 
+        if row_len > g1_generators.len() {
+            panic!("max_trace_length is too small");
+        }
+
         match self {
             MultilinearPolynomial::LargeScalars(poly) => poly
                 .Z
@@ -862,6 +866,13 @@ where
                 .par_chunks(row_len)
                 .map(|row| {
                     JoltGroupWrapper(VariableBaseMSM::msm_i128(&bases[..row.len()], row).unwrap())
+                })
+                .collect(),
+            MultilinearPolynomial::S128Scalars(poly) => poly
+                .coeffs
+                .par_chunks(row_len)
+                .map(|row| {
+                    JoltGroupWrapper(VariableBaseMSM::msm_s128(&bases[..row.len()], row).unwrap())
                 })
                 .collect(),
             MultilinearPolynomial::RLC(poly) => poly.commit_rows(&bases[..row_len]),
@@ -1123,7 +1134,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
             // Create and set G2 cache
             (*setup_ptr).g2_cache = Some(G2Cache::new(&g2_elements, Some(&g_fin_element)));
 
-            println!("Cache initialization completed successfully.");
+            tracing::info!("Cache initialization completed successfully.");
         }
 
         prover_setup
@@ -1140,6 +1151,10 @@ impl CommitmentScheme for DoryCommitmentScheme {
         setup: &Self::ProverSetup,
     ) -> (Self::Commitment, Self::OpeningProofHint) {
         let sigma = DoryGlobals::get_num_columns().log_2();
+        assert!(
+            sigma <= setup.core.g1_vec.len().log_2(),
+            "max_trace_length is too small"
+        );
         let (commitment, row_commitments) =
             commit::<JoltBn254, JoltMsmG1, _>(poly, 0, sigma, setup);
         (DoryCommitment(commitment), row_commitments)
@@ -1394,7 +1409,7 @@ impl DoryCommitmentScheme {
                 g * coeff
             })
             .sum();
-        println!("how many GT? {:?}", counter);
+        // println!("how many GT? {:?}", counter);
         DoryCommitment(JoltGTWrapper::from(combined_commitment))
     }
 }

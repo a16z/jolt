@@ -1,4 +1,4 @@
-use crate::field::JoltField;
+use num_traits::Zero;
 
 pub fn drop_in_background_thread<T>(data: T)
 where
@@ -8,25 +8,25 @@ where
     rayon::spawn(move || drop(data));
 }
 
-pub fn unsafe_allocate_zero_vec<F: JoltField + Sized>(size: usize) -> Vec<F> {
+pub fn unsafe_allocate_zero_vec<T: Sized + Zero>(size: usize) -> Vec<T> {
     // https://stackoverflow.com/questions/59314686/how-to-efficiently-create-a-large-vector-of-items-initialized-to-the-same-value
 
     #[cfg(test)]
     {
         // Check for safety of 0 allocation
         unsafe {
-            let value = &F::zero();
-            let ptr = value as *const F as *const u8;
-            let bytes = std::slice::from_raw_parts(ptr, std::mem::size_of::<F>());
+            let value = &T::zero();
+            let ptr = value as *const T as *const u8;
+            let bytes = std::slice::from_raw_parts(ptr, std::mem::size_of::<T>());
             assert!(bytes.iter().all(|&byte| byte == 0));
         }
     }
 
     // Bulk allocate zeros, unsafely
-    let result: Vec<F>;
+    let result: Vec<T>;
     unsafe {
-        let layout = std::alloc::Layout::array::<F>(size).unwrap();
-        let ptr = std::alloc::alloc_zeroed(layout) as *mut F;
+        let layout = std::alloc::Layout::array::<T>(size).unwrap();
+        let ptr = std::alloc::alloc_zeroed(layout) as *mut T;
 
         if ptr.is_null() {
             panic!("Zero vec allocation failed");
@@ -35,23 +35,4 @@ pub fn unsafe_allocate_zero_vec<F: JoltField + Sized>(size: usize) -> Vec<F> {
         result = Vec::from_raw_parts(ptr, size, size);
     }
     result
-}
-
-#[tracing::instrument(skip_all)]
-pub fn unsafe_zero_slice<F: JoltField + Sized>(slice: &mut [F]) {
-    #[cfg(test)]
-    {
-        // Check for safety of 0 allocation
-        unsafe {
-            let value = &F::zero();
-            let ptr = value as *const F as *const u8;
-            let bytes = std::slice::from_raw_parts(ptr, std::mem::size_of::<F>());
-            assert!(bytes.iter().all(|&byte| byte == 0));
-        }
-    }
-
-    // Zero out existing slice memory
-    unsafe {
-        std::ptr::write_bytes(slice.as_mut_ptr(), 0, slice.len());
-    }
 }

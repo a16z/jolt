@@ -14,10 +14,10 @@ use super::virtual_assert_halfword_alignment::VirtualAssertHalfwordAlignment;
 use super::virtual_lw::VirtualLW;
 use super::xori::XORI;
 use super::RAMRead;
-use super::{addi::ADDI, RV32IMInstruction};
-use crate::utils::virtual_registers::allocate_virtual_register;
+use super::{addi::ADDI, Instruction};
+use crate::utils::virtual_registers::VirtualRegisterAllocator;
 
-use super::{RISCVInstruction, RISCVTrace, RV32IMCycle};
+use super::{Cycle, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name   = LHU,
@@ -43,32 +43,54 @@ impl LHU {
 }
 
 impl RISCVTrace for LHU {
-    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let inline_sequence = self.inline_sequence(cpu.xlen);
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
+        let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
-            // In each iteration, create a new Option containing a re-borrowed reference
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
 
-    fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
+    /// Load unsigned halfword without sign extension.
+    ///
+    /// LHU loads a 16-bit value from memory at address rs1+imm and zero-extends
+    /// it to the full register width. Since zkVM uses word-aligned memory:
+    /// 1. Assert halfword alignment of the source address
+    /// 2. Load the aligned word/doubleword containing the halfword
+    /// 3. Shift halfword to the high bits
+    /// 4. Logical right shift to extract and zero-extend
+    ///
+    /// Differs from LH only in using logical (not arithmetic) right shift.
+    fn inline_sequence(
+        &self,
+        allocator: &VirtualRegisterAllocator,
+        xlen: Xlen,
+    ) -> Vec<Instruction> {
         match xlen {
-            Xlen::Bit32 => self.inline_sequence_32(),
-            Xlen::Bit64 => self.inline_sequence_64(),
+            Xlen::Bit32 => self.inline_sequence_32(allocator),
+            Xlen::Bit64 => self.inline_sequence_64(allocator),
         }
     }
 }
 
 impl LHU {
-    fn inline_sequence_32(&self) -> Vec<RV32IMInstruction> {
+    /// 32-bit implementation of load unsigned halfword.
+    ///
+    /// Algorithm:
+    /// 1. Assert halfword alignment
+    /// 2. Align address to 4-byte boundary
+    /// 3. Load word containing the halfword
+    /// 4. XOR with 2 to get opposite halfword position
+    /// 5. Shift halfword to bits [31:16]
+    /// 6. Logical right shift by 16 to zero-extend
+    fn inline_sequence_32(&self, allocator: &VirtualRegisterAllocator) -> Vec<Instruction> {
         // Virtual registers used in sequence
-        let v_address = allocate_virtual_register();
-        let v_word_address = allocate_virtual_register();
-        let v_word = allocate_virtual_register();
-        let v_shift = allocate_virtual_register();
+        let v_address = allocator.allocate();
+        let v_word_address = allocator.allocate();
+        let v_word = allocator.allocate();
+        let v_shift = allocator.allocate();
 
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit32);
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit32, allocator);
         asm.emit_halign::<VirtualAssertHalfwordAlignment>(self.operands.rs1, self.operands.imm);
         asm.emit_i::<ADDI>(*v_address, self.operands.rs1, self.operands.imm as u64);
         asm.emit_i::<ANDI>(*v_word_address, *v_address, -4i64 as u64);
@@ -80,14 +102,20 @@ impl LHU {
         asm.finalize()
     }
 
-    fn inline_sequence_64(&self) -> Vec<RV32IMInstruction> {
+    /// 64-bit implementation of load unsigned halfword.
+    ///
+    /// Similar to 32-bit but handles 4 halfword positions:
+    /// 1. XOR with 6 for position calculation
+    /// 2. Shift halfword to bits [63:48]
+    /// 3. Logical right shift by 48 to zero-extend
+    fn inline_sequence_64(&self, allocator: &VirtualRegisterAllocator) -> Vec<Instruction> {
         // Virtual registers used in sequence
-        let v_address = allocate_virtual_register();
-        let v_dword_address = allocate_virtual_register();
-        let v_dword = allocate_virtual_register();
-        let v_shift = allocate_virtual_register();
+        let v_address = allocator.allocate();
+        let v_dword_address = allocator.allocate();
+        let v_dword = allocator.allocate();
+        let v_shift = allocator.allocate();
 
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit64);
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit64, allocator);
         asm.emit_halign::<VirtualAssertHalfwordAlignment>(self.operands.rs1, self.operands.imm);
         asm.emit_i::<ADDI>(*v_address, self.operands.rs1, self.operands.imm as u64);
         asm.emit_i::<ANDI>(*v_dword_address, *v_address, -8i64 as u64);

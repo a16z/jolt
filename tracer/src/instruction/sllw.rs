@@ -1,5 +1,5 @@
 use crate::utils::inline_helpers::InstrAssembler;
-use crate::utils::virtual_registers::allocate_virtual_register;
+use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -7,10 +7,10 @@ use crate::{
     emulator::cpu::{Cpu, Xlen},
 };
 
-use super::virtual_sign_extend::VirtualSignExtend;
+use super::virtual_sign_extend_word::VirtualSignExtendWord;
 use super::{
-    format::format_r::FormatR, mul::MUL, virtual_pow2_w::VirtualPow2W, RISCVInstruction,
-    RISCVTrace, RV32IMCycle, RV32IMInstruction,
+    format::format_r::FormatR, mul::MUL, virtual_pow2_w::VirtualPow2W, Cycle, Instruction,
+    RISCVInstruction, RISCVTrace,
 };
 
 declare_riscv_instr!(
@@ -33,22 +33,37 @@ impl SLLW {
 }
 
 impl RISCVTrace for SLLW {
-    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let inline_sequence = self.inline_sequence(cpu.xlen);
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
+        let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
-            // In each iteration, create a new Option containing a re-borrowed reference
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
 
-    fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
-        let v_pow2 = allocate_virtual_register();
+    /// Shift left logical for 32-bit words with sign extension.
+    ///
+    /// SLLW is an RV64I-only instruction that shifts the lower 32 bits of rs1
+    /// left by the amount in the lower 5 bits of rs2, then sign-extends the
+    /// 32-bit result to 64 bits.
+    ///
+    /// Implementation:
+    /// 1. Compute 2^(rs2[4:0]) using VirtualPow2W
+    /// 2. Multiply rs1 by this power of 2 (equivalent to left shift)
+    /// 3. Sign-extend the lower 32 bits of the result
+    ///
+    /// The multiplication approach allows zkVM-friendly verification.
+    fn inline_sequence(
+        &self,
+        allocator: &VirtualRegisterAllocator,
+        xlen: Xlen,
+    ) -> Vec<Instruction> {
+        let v_pow2 = allocator.allocate();
 
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
         asm.emit_i::<VirtualPow2W>(*v_pow2, self.operands.rs2, 0);
         asm.emit_r::<MUL>(self.operands.rd, self.operands.rs1, *v_pow2);
-        asm.emit_i::<VirtualSignExtend>(self.operands.rd, self.operands.rd, 0);
+        asm.emit_i::<VirtualSignExtendWord>(self.operands.rd, self.operands.rd, 0);
         asm.finalize()
     }
 }

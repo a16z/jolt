@@ -4,15 +4,15 @@ use super::lw::LW;
 use super::sw::SW;
 use super::virtual_move::VirtualMove;
 use super::xor::XOR;
-use super::RV32IMInstruction;
+use super::Instruction;
 use crate::utils::inline_helpers::InstrAssembler;
-use crate::utils::virtual_registers::allocate_virtual_register;
+use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use crate::{
     declare_riscv_instr,
     emulator::cpu::{Cpu, Xlen},
 };
 
-use super::{format::format_r::FormatR, RISCVInstruction, RISCVTrace, RV32IMCycle};
+use super::{format::format_r::FormatR, Cycle, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name   = AMOXORW,
@@ -46,20 +46,50 @@ impl AMOXORW {
 }
 
 impl RISCVTrace for AMOXORW {
-    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let inline_sequence = self.inline_sequence(cpu.xlen);
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
+        let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
-            // In each iteration, create a new Option containing a re-borrowed reference
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
 
-    fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
-        let v_rs2 = allocate_virtual_register();
-        let v_rd = allocate_virtual_register();
+    /// AMOXOR.W atomically performs bitwise XOR on a 32-bit word in memory with rs2.
+    ///
+    /// This atomic memory operation (AMO) instruction atomically loads a 32-bit word from
+    /// the memory address in rs1, performs a bitwise XOR with the lower 32 bits of rs2,
+    /// stores the result back to memory, and returns the original value sign-extended in rd.
+    ///
+    /// Implementation note:
+    /// Unlike other AMO.W instructions, this uses direct LW/SW instructions rather than
+    /// amo_pre/post helpers. This simplified approach works because:
+    /// - The zkVM handles word-alignment internally
+    /// - Single-threaded execution guarantees atomicity
+    /// - No need for complex bit manipulation within doublewords
+    ///
+    /// The bitwise XOR operation is commonly used for:
+    /// - Toggling flags or status bits atomically
+    /// - Implementing spinlocks with toggle semantics
+    /// - Checksum and parity calculations
+    /// - Lock-free state machines with reversible transitions
+    ///
+    /// Return value handling:
+    /// - The original 32-bit value is sign-extended to XLEN bits
+    /// - Consistent behavior across different XLEN implementations
+    ///
+    /// XOR properties in concurrent contexts:
+    /// - Commutative: order of XOR operations doesn't matter
+    /// - Self-canceling: applying same XOR twice restores original
+    /// - Useful for temporary locks that auto-release on second application
+    fn inline_sequence(
+        &self,
+        allocator: &VirtualRegisterAllocator,
+        xlen: Xlen,
+    ) -> Vec<Instruction> {
+        let v_rs2 = allocator.allocate();
+        let v_rd = allocator.allocate();
 
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
         asm.emit_ld::<LW>(*v_rd, self.operands.rs1, 0);
         asm.emit_r::<XOR>(*v_rs2, *v_rd, self.operands.rs2);
         asm.emit_s::<SW>(self.operands.rs1, *v_rs2, 0);

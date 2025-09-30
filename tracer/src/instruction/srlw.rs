@@ -1,5 +1,5 @@
 use crate::utils::inline_helpers::InstrAssembler;
-use crate::utils::virtual_registers::allocate_virtual_register;
+use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -9,10 +9,10 @@ use crate::{
 
 use super::ori::ORI;
 use super::slli::SLLI;
-use super::virtual_sign_extend::VirtualSignExtend;
+use super::virtual_sign_extend_word::VirtualSignExtendWord;
 use super::{
     format::format_r::FormatR, virtual_shift_right_bitmask::VirtualShiftRightBitmask,
-    virtual_srl::VirtualSRL, RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
+    virtual_srl::VirtualSRL, Cycle, Instruction, RISCVInstruction, RISCVTrace,
 };
 
 declare_riscv_instr!(
@@ -35,25 +35,42 @@ impl SRLW {
 }
 
 impl RISCVTrace for SRLW {
-    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let inline_sequence = self.inline_sequence(cpu.xlen);
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
+        let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
-            // In each iteration, create a new Option containing a re-borrowed reference
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
 
-    fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
-        let v_bitmask = allocate_virtual_register();
-        let v_rs1 = allocate_virtual_register();
+    /// Logical right shift for 32-bit words with sign extension.
+    ///
+    /// SRLW is an RV64I-only instruction that logically shifts the lower 32 bits
+    /// of rs1 right by the amount in the lower 5 bits of rs2, then sign-extends
+    /// the 32-bit result to 64 bits.
+    ///
+    /// Implementation:
+    /// 1. Shift rs1 left by 32 to position the lower 32 bits in the upper half
+    /// 2. OR rs2 with 32 to create a shift amount for 64-bit logical right shift
+    /// 3. Generate bitmask for the adjusted shift amount
+    /// 4. Apply logical right shift (which now operates on the upper 32 bits)
+    /// 5. Sign-extend the resulting 32-bit value
+    ///
+    /// This approach ensures proper 32-bit logical shift semantics on 64-bit system.
+    fn inline_sequence(
+        &self,
+        allocator: &VirtualRegisterAllocator,
+        xlen: Xlen,
+    ) -> Vec<Instruction> {
+        let v_bitmask = allocator.allocate();
+        let v_rs1 = allocator.allocate();
 
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
         asm.emit_i::<SLLI>(*v_rs1, self.operands.rs1, 32);
         asm.emit_i::<ORI>(*v_bitmask, self.operands.rs2, 32);
         asm.emit_i::<VirtualShiftRightBitmask>(*v_bitmask, *v_bitmask, 0);
         asm.emit_vshift_r::<VirtualSRL>(self.operands.rd, *v_rs1, *v_bitmask);
-        asm.emit_i::<VirtualSignExtend>(self.operands.rd, self.operands.rd, 0);
+        asm.emit_i::<VirtualSignExtendWord>(self.operands.rd, self.operands.rd, 0);
         asm.finalize()
     }
 }

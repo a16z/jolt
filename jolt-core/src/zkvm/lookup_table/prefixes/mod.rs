@@ -10,6 +10,7 @@ use positive_remainder_less_than_divisor::PositiveRemainderLessThanDivisorPrefix
 use pow2::Pow2Prefix;
 use pow2_w::Pow2WPrefix;
 use rayon::prelude::*;
+use rev8w::Rev8WPrefix;
 use right_shift::RightShiftPrefix;
 use right_shift_w::RightShiftWPrefix;
 use sign_extension::SignExtensionPrefix;
@@ -36,6 +37,7 @@ use lower_word::LowerWordPrefix;
 use lt::LessThanPrefix;
 use num::FromPrimitive;
 use or::OrPrefix;
+use overflow_bits_zero::OverflowBitsZeroPrefix;
 use right_is_zero::RightOperandIsZeroPrefix;
 use right_msb::RightMsbPrefix;
 use right_operand::RightOperandPrefix;
@@ -43,6 +45,8 @@ use right_operand_w::RightOperandWPrefix;
 use two_lsb::TwoLsbPrefix;
 use upper_word::UpperWordPrefix;
 use xor::XorPrefix;
+use xor_rot::XorRotPrefix;
+use xor_rotw::XorRotWPrefix;
 
 pub mod and;
 pub mod andn;
@@ -64,10 +68,12 @@ pub mod negative_divisor_equals_remainder;
 pub mod negative_divisor_greater_than_remainder;
 pub mod negative_divisor_zero_remainder;
 pub mod or;
+pub mod overflow_bits_zero;
 pub mod positive_remainder_equals_divisor;
 pub mod positive_remainder_less_than_divisor;
 pub mod pow2;
 pub mod pow2_w;
+pub mod rev8w;
 pub mod right_is_zero;
 pub mod right_msb;
 pub mod right_operand;
@@ -80,6 +86,8 @@ pub mod sign_extension_upper_half;
 pub mod two_lsb;
 pub mod upper_word;
 pub mod xor;
+pub mod xor_rot;
+pub mod xor_rotw;
 
 pub trait SparseDensePrefix<F: JoltField>: 'static + Sync {
     /// Evalautes the MLE for this prefix:
@@ -144,6 +152,7 @@ pub enum Prefixes {
     Lsb,
     Pow2,
     Pow2W,
+    Rev8W,
     RightShift,
     SignExtension,
     LeftShift,
@@ -158,6 +167,15 @@ pub enum Prefixes {
     RightShiftW,
     LeftShiftWHelper,
     LeftShiftW,
+    OverflowBitsZero,
+    XorRot16,
+    XorRot24,
+    XorRot32,
+    XorRot63,
+    XorRotW7,
+    XorRotW8,
+    XorRotW12,
+    XorRotW16,
 }
 
 #[derive(Clone, Copy, Allocative)]
@@ -224,6 +242,14 @@ impl Prefixes {
             Prefixes::Andn => AndnPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::Or => OrPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::Xor => XorPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j),
+            Prefixes::XorRot16 => XorRotPrefix::<XLEN, 16>::prefix_mle(checkpoints, r_x, c, b, j),
+            Prefixes::XorRot24 => XorRotPrefix::<XLEN, 24>::prefix_mle(checkpoints, r_x, c, b, j),
+            Prefixes::XorRot32 => XorRotPrefix::<XLEN, 32>::prefix_mle(checkpoints, r_x, c, b, j),
+            Prefixes::XorRot63 => XorRotPrefix::<XLEN, 63>::prefix_mle(checkpoints, r_x, c, b, j),
+            Prefixes::XorRotW7 => XorRotWPrefix::<XLEN, 7>::prefix_mle(checkpoints, r_x, c, b, j),
+            Prefixes::XorRotW8 => XorRotWPrefix::<XLEN, 8>::prefix_mle(checkpoints, r_x, c, b, j),
+            Prefixes::XorRotW12 => XorRotWPrefix::<XLEN, 12>::prefix_mle(checkpoints, r_x, c, b, j),
+            Prefixes::XorRotW16 => XorRotWPrefix::<XLEN, 16>::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::Eq => EqPrefix::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::LessThan => LessThanPrefix::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::LeftOperandIsZero => {
@@ -253,6 +279,7 @@ impl Prefixes {
             Prefixes::Lsb => LsbPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::Pow2 => Pow2Prefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::Pow2W => Pow2WPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j),
+            Prefixes::Rev8W => Rev8WPrefix::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::RightShift => RightShiftPrefix::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::SignExtension => {
                 SignExtensionPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j)
@@ -287,6 +314,9 @@ impl Prefixes {
                 LeftShiftWHelperPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j)
             }
             Prefixes::LeftShiftW => LeftShiftWPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j),
+            Prefixes::OverflowBitsZero => {
+                OverflowBitsZeroPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j)
+            }
         };
         PrefixEval(eval)
     }
@@ -343,6 +373,30 @@ impl Prefixes {
             }
             Prefixes::Or => OrPrefix::<XLEN>::update_prefix_checkpoint(checkpoints, r_x, r_y, j),
             Prefixes::Xor => XorPrefix::<XLEN>::update_prefix_checkpoint(checkpoints, r_x, r_y, j),
+            Prefixes::XorRot16 => {
+                XorRotPrefix::<XLEN, 16>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+            }
+            Prefixes::XorRot24 => {
+                XorRotPrefix::<XLEN, 24>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+            }
+            Prefixes::XorRot32 => {
+                XorRotPrefix::<XLEN, 32>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+            }
+            Prefixes::XorRot63 => {
+                XorRotPrefix::<XLEN, 63>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+            }
+            Prefixes::XorRotW7 => {
+                XorRotWPrefix::<XLEN, 7>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+            }
+            Prefixes::XorRotW8 => {
+                XorRotWPrefix::<XLEN, 8>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+            }
+            Prefixes::XorRotW12 => {
+                XorRotWPrefix::<XLEN, 12>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+            }
+            Prefixes::XorRotW16 => {
+                XorRotWPrefix::<XLEN, 16>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+            }
             Prefixes::Eq => EqPrefix::update_prefix_checkpoint(checkpoints, r_x, r_y, j),
             Prefixes::LessThan => {
                 LessThanPrefix::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
@@ -409,6 +463,7 @@ impl Prefixes {
             Prefixes::Pow2W => {
                 Pow2WPrefix::<XLEN>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
             }
+            Prefixes::Rev8W => Rev8WPrefix::update_prefix_checkpoint(checkpoints, r_x, r_y, j),
             Prefixes::RightShift => {
                 RightShiftPrefix::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
             }
@@ -460,6 +515,9 @@ impl Prefixes {
             }
             Prefixes::LeftShiftW => {
                 LeftShiftWPrefix::<XLEN>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
+            }
+            Prefixes::OverflowBitsZero => {
+                OverflowBitsZeroPrefix::<XLEN>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)
             }
         }
     }

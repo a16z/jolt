@@ -1,5 +1,6 @@
-use crate::utils::virtual_registers::allocate_virtual_register;
-use crate::{instruction::mulhu::MULHU, utils::inline_helpers::InstrAssembler};
+use crate::instruction::virtual_assert_mulu_no_overflow::VirtualAssertMulUNoOverflow;
+use crate::utils::inline_helpers::InstrAssembler;
+use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -11,7 +12,7 @@ use super::{
     add::ADD, format::format_r::FormatR, mul::MUL, virtual_advice::VirtualAdvice,
     virtual_assert_eq::VirtualAssertEQ, virtual_assert_valid_div0::VirtualAssertValidDiv0,
     virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder,
-    virtual_move::VirtualMove, RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction,
+    virtual_move::VirtualMove, Cycle, Instruction, RISCVInstruction, RISCVTrace,
 };
 
 declare_riscv_instr!(
@@ -36,7 +37,7 @@ impl DIVU {
 }
 
 impl RISCVTrace for DIVU {
-    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
         // DIV operands
         let x = cpu.x[self.operands.rs1 as usize] as u64;
         let y = cpu.x[self.operands.rs2 as usize] as u64;
@@ -54,13 +55,13 @@ impl RISCVTrace for DIVU {
         };
         let remainder = if y == 0 { x } else { x - quotient * y };
 
-        let mut inline_sequence = self.inline_sequence(cpu.xlen);
-        if let RV32IMInstruction::VirtualAdvice(instr) = &mut inline_sequence[0] {
+        let mut inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
+        if let Instruction::VirtualAdvice(instr) = &mut inline_sequence[0] {
             instr.advice = quotient;
         } else {
             panic!("Expected Advice instruction");
         }
-        if let RV32IMInstruction::VirtualAdvice(instr) = &mut inline_sequence[1] {
+        if let Instruction::VirtualAdvice(instr) = &mut inline_sequence[1] {
             instr.advice = remainder;
         } else {
             panic!("Expected Advice instruction");
@@ -68,36 +69,53 @@ impl RISCVTrace for DIVU {
 
         let mut trace = trace;
         for instr in inline_sequence {
-            // In each iteration, create a new Option containing a re-borrowed reference
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
 
-    fn inline_sequence(&self, xlen: Xlen) -> Vec<RV32IMInstruction> {
+    /// DIVU performs unsigned division using untrusted oracle advice.
+    ///
+    /// The zkVM cannot directly compute division, so we receive the quotient and remainder
+    /// as advice from an untrusted oracle, then verify the correctness using constraints:
+    /// 1. dividend = quotient × divisor + remainder
+    /// 2. remainder < divisor (unsigned comparison)
+    /// 3. quotient × divisor does not overflow
+    ///
+    /// Special case per RISC-V spec:
+    /// - Division by zero: returns all 1s (u32::MAX or u64::MAX)
+    fn inline_sequence(
+        &self,
+        allocator: &VirtualRegisterAllocator,
+        xlen: Xlen,
+    ) -> Vec<Instruction> {
         let a0 = self.operands.rs1; // dividend
         let a1 = self.operands.rs2; // divisor
-        let a2 = allocate_virtual_register(); // quotient from oracle
-        let a3 = allocate_virtual_register(); // remainder from oracle
-        let t0 = allocate_virtual_register();
-        let t1 = allocate_virtual_register();
-        let zero = 0;
-        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen);
+        let a2 = allocator.allocate(); // quotient (from oracle)
+        let a3 = allocator.allocate(); // remainder (from oracle)
+        let t0 = allocator.allocate(); // temporary for multiplication
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
 
-        // get advice
-        asm.emit_j::<VirtualAdvice>(*a2, 0);
-        asm.emit_j::<VirtualAdvice>(*a3, 0);
-        // handle special case: if divisor==0, quotient must be all 1s
+        // Get untrusted advice from oracle
+        asm.emit_j::<VirtualAdvice>(*a2, 0); // quotient
+        asm.emit_j::<VirtualAdvice>(*a3, 0); // remainder
+
+        // Handle special case: division by zero
         asm.emit_b::<VirtualAssertValidDiv0>(a1, *a2, 0);
-        // check that quotient * divisor doesn't overflow (unsigned)
+
+        // Verify no overflow: quotient × divisor must not overflow
+        asm.emit_b::<VirtualAssertMulUNoOverflow>(*a2, a1, 0);
+
+        // Compute quotient × divisor
         asm.emit_r::<MUL>(*t0, *a2, a1);
-        asm.emit_r::<MULHU>(*t1, *a2, a1); // unsigned high bits
-        asm.emit_b::<VirtualAssertEQ>(*t1, zero, 0);
-        // verify quotient * divisor + remainder == dividend
+
+        // Verify: dividend = quotient × divisor + remainder
         asm.emit_r::<ADD>(*t0, *t0, *a3);
         asm.emit_b::<VirtualAssertEQ>(*t0, a0, 0);
-        // check remainder < divisor (unsigned)
+
+        // Verify: remainder < divisor (unsigned)
         asm.emit_b::<VirtualAssertValidUnsignedRemainder>(*a3, a1, 0);
-        // move result
+
+        // Move quotient to destination register
         asm.emit_i::<VirtualMove>(self.operands.rd, *a2, 0);
         asm.finalize()
     }
