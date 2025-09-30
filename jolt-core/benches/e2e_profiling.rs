@@ -113,7 +113,7 @@ fn sha2_chain() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     use jolt_inlines_sha2 as _;
     let mut inputs = vec![];
     inputs.append(&mut postcard::to_stdvec(&[5u8; 32]).unwrap());
-    inputs.append(&mut postcard::to_stdvec(&50u32).unwrap());
+    inputs.append(&mut postcard::to_stdvec(&4480u32).unwrap());
     prove_example("sha2-chain-guest", inputs)
 }
 
