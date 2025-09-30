@@ -810,6 +810,7 @@ mod tests {
     use super::*;
     use crate::subprotocols::sumcheck::BatchedSumcheck;
     use crate::transcripts::Blake2bTranscript;
+    use crate::zkvm::witness::AllCommittedPolynomials;
     use crate::{
         poly::commitment::mock::MockCommitScheme,
         zkvm::{
@@ -916,13 +917,10 @@ mod tests {
             ram: RAMPreprocessing::preprocess(vec![]),
             memory_layout: memory_layout.clone(),
         };
-        let ram_d = AllCommittedPolynomials::ram_d();
         let prover_preprocessing: JoltProverPreprocessing<Fr, MockCommitScheme<Fr>> =
             JoltProverPreprocessing {
                 generators: (),
                 shared: shared_preprocessing.clone(),
-                field: Default::default(),
-                ram_d,
             };
 
         let verifier_preprocessing: JoltVerifierPreprocessing<Fr, MockCommitScheme<Fr>> =
@@ -938,8 +936,10 @@ mod tests {
         };
         let final_memory_state = Memory::default();
 
+        let lazy_trace = todo!("Fix this test");
         let mut prover_sm = StateManager::<'_, Fr, Blake2bTranscript, _>::new_prover(
             &prover_preprocessing,
+            lazy_trace,
             trace.clone(),
             program_io.clone(),
             final_memory_state,

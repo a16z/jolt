@@ -549,6 +549,12 @@ where P::ScalarField: JoltField {
         todo!("Not supported")
     }
 }
+impl<P: Pairing> StreamingProcessChunk<StreamingCompactWitness<i128, P::ScalarField>> for HyperKZG<P>
+where P::ScalarField: JoltField {
+    fn process_chunk_t<'a>(_s: &Self::State<'a>, _chunk: &[StreamingCompactWitness<i128, P::ScalarField>]) -> Self::ChunkState {
+        todo!("Not supported")
+    }
+}
 impl<P: Pairing> StreamingProcessChunk<StreamingOneHotWitness<P::ScalarField>> for HyperKZG<P>
 where P::ScalarField: JoltField {
     fn process_chunk_t<'a>(_s: &Self::State<'a>, _chunk: &[StreamingOneHotWitness<P::ScalarField>]) -> Self::ChunkState {
@@ -778,7 +784,7 @@ mod tests {
 
             // Test the streaming implementation
             let poly = Multilinear::LargeScalars;
-            let mut state = HyperKZG::initialize(poly, n, &pk);
+            let mut state = HyperKZG::initialize(poly, n, &pk, &());
             for p in poly_raw {
                 state = HyperKZG::process(poly, state, p);
             }

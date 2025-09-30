@@ -91,7 +91,6 @@ where
 {
     pub generators: PCS::ProverSetup,
     pub shared: JoltSharedPreprocessing,
-    field: F::SmallValueLookupTables,
 }
 
 impl<F, PCS> Serializable for JoltProverPreprocessing<F, PCS>
@@ -185,7 +184,6 @@ where
         JoltProverPreprocessing {
             generators,
             shared,
-            field: small_value_lookup_tables,
         }
     }
 
@@ -391,7 +389,7 @@ mod tests {
         let mut program = host::Program::new("fibonacci-guest");
         let inputs = postcard::to_stdvec(&9u32).unwrap();
         let (bytecode, init_memory_state, _) = program.decode();
-        let (_, _, io_device) = program.trace(&inputs);
+        let (_, _, _, io_device) = program.trace(&inputs);
 
         let preprocessing = JoltRV64IMACMockPCS::prover_preprocess(
             bytecode.clone(),
@@ -420,7 +418,7 @@ mod tests {
         let mut program = host::Program::new("fibonacci-guest");
         let inputs = postcard::to_stdvec(&100u32).unwrap();
         let (bytecode, init_memory_state, _) = program.decode();
-        let (_, _, io_device) = program.trace(&inputs);
+        let (_, _, _, io_device) = program.trace(&inputs);
 
         let preprocessing = JoltRV64IMAC::prover_preprocess(
             bytecode.clone(),
@@ -455,7 +453,7 @@ mod tests {
         let mut program = host::Program::new("sha3-guest");
         let (bytecode, init_memory_state, _) = program.decode();
         let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
-        let (_, _, io_device) = program.trace(&inputs);
+        let (_, _, _, io_device) = program.trace(&inputs);
 
         let preprocessing = JoltRV64IMAC::prover_preprocess(
             bytecode.clone(),
@@ -504,7 +502,7 @@ mod tests {
         let mut program = host::Program::new("sha2-guest");
         let (bytecode, init_memory_state, _) = program.decode();
         let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
-        let (_, _, io_device) = program.trace(&inputs);
+        let (_, _, _, io_device) = program.trace(&inputs);
 
         let preprocessing = JoltRV64IMAC::prover_preprocess(
             bytecode.clone(),
@@ -546,7 +544,7 @@ mod tests {
     fn memory_ops_e2e_dory() {
         let mut program = host::Program::new("memory-ops-guest");
         let (bytecode, init_memory_state, _) = program.decode();
-        let (_, _, io_device) = program.trace(&[]);
+        let (_, _, _, io_device) = program.trace(&[]);
 
         let preprocessing = JoltRV64IMAC::prover_preprocess(
             bytecode.clone(),
@@ -575,7 +573,7 @@ mod tests {
         let mut program = host::Program::new("btreemap-guest");
         let (bytecode, init_memory_state, _) = program.decode();
         let inputs = postcard::to_stdvec(&50u32).unwrap();
-        let (_, _, io_device) = program.trace(&inputs);
+        let (_, _, _, io_device) = program.trace(&inputs);
 
         let preprocessing = JoltRV64IMAC::prover_preprocess(
             bytecode.clone(),
@@ -604,7 +602,7 @@ mod tests {
         let mut program = host::Program::new("muldiv-guest");
         let (bytecode, init_memory_state, _) = program.decode();
         let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).unwrap();
-        let (_, _, io_device) = program.trace(&inputs);
+        let (_, _, _, io_device) = program.trace(&inputs);
 
         let preprocessing = JoltRV64IMAC::prover_preprocess(
             bytecode.clone(),

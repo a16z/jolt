@@ -1,5 +1,6 @@
 use common::constants::RAM_START_ADDRESS;
 use common::jolt_device::{JoltDevice, MemoryConfig};
+use tracer::LazyTraceIterator;
 use std::path::PathBuf;
 use tracer::emulator::memory::Memory;
 use tracer::instruction::{Cycle, Instruction};
@@ -34,7 +35,7 @@ impl Program {
     }
 
     /// Trace the program execution with given inputs
-    pub fn trace(&self, inputs: &[u8]) -> (Vec<Cycle>, Memory, JoltDevice) {
+    pub fn trace(&self, inputs: &[u8]) -> (LazyTraceIterator, Vec<Cycle>, Memory, JoltDevice) {
         trace(
             &self.elf_contents,
             self.elf.as_ref(),
@@ -73,9 +74,9 @@ pub fn trace(
     elf_path: Option<&PathBuf>,
     inputs: &[u8],
     memory_config: &MemoryConfig,
-) -> (Vec<Cycle>, Memory, JoltDevice) {
-    let (trace, memory, io_device) = tracer::trace(elf_contents, elf_path, inputs, memory_config);
-    (trace, memory, io_device)
+) -> (LazyTraceIterator, Vec<Cycle>, Memory, JoltDevice) {
+    let (lazy_trace, trace, memory, io_device) = tracer::trace(elf_contents, elf_path, inputs, memory_config);
+    (lazy_trace, trace, memory, io_device)
 }
 
 pub fn trace_to_file(

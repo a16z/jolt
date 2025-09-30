@@ -215,7 +215,7 @@ dependencies = [
 [[package]]
 name = "ark-ff-asm"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#6cb3aa13855187bfa0a0c54da09c9100774751cb"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#ad2e2866e87c513353838b911ca502f4aa1500e5"
 dependencies = [
  "quote",
  "syn 2.0.106",
@@ -224,7 +224,7 @@ dependencies = [
 [[package]]
 name = "ark-ff-macros"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#6cb3aa13855187bfa0a0c54da09c9100774751cb"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#ad2e2866e87c513353838b911ca502f4aa1500e5"
 dependencies = [
  "num-bigint",
  "num-traits",
@@ -236,7 +236,7 @@ dependencies = [
 [[package]]
 name = "ark-poly"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#6cb3aa13855187bfa0a0c54da09c9100774751cb"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#ad2e2866e87c513353838b911ca502f4aa1500e5"
 dependencies = [
  "ahash",
  "ark-ff",
@@ -274,7 +274,7 @@ dependencies = [
 [[package]]
 name = "ark-serialize-derive"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#6cb3aa13855187bfa0a0c54da09c9100774751cb"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#ad2e2866e87c513353838b911ca502f4aa1500e5"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -475,6 +475,17 @@ name = "bytemuck"
 version = "1.23.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3995eaeebcdf32f91f980d360f78732ddc061097ab4e39991ae7a6ace9194677"
+
+[[package]]
+name = "bytemuck_derive"
+version = "1.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4f154e572231cb6ba2bd1176980827e3d5dc04cc183a75dea38109fbdd672d29"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.106",
+]
 
 [[package]]
 name = "byteorder"
@@ -1755,6 +1766,8 @@ dependencies = [
  "ark-std",
  "bincode",
  "blake2",
+ "bytemuck",
+ "bytemuck_derive",
  "clap",
  "common",
  "criterion",
@@ -2003,6 +2016,22 @@ name = "log"
 version = "0.4.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "34080505efa8e45a4b816c349525ebe327ceaa8559756f0356cba97ef3bf7432"
+
+[[package]]
+name = "malloc-guest"
+version = "0.1.0"
+dependencies = [
+ "cc",
+ "jolt-sdk",
+]
+
+[[package]]
+name = "malloc-host"
+version = "0.1.0"
+dependencies = [
+ "jolt-sdk",
+ "malloc-guest",
+]
 
 [[package]]
 name = "maplit"

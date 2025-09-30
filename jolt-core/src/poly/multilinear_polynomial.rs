@@ -1,5 +1,5 @@
 use crate::{
-    poly::{one_hot_polynomial::OneHotPolynomial, rlc_polynomial::RLCPolynomial},
+    poly::{compact_polynomial::StreamingCompactWitness, dense_mlpoly::StreamingDenseWitness, one_hot_polynomial::{OneHotPolynomial, StreamingOneHotWitness}, rlc_polynomial::RLCPolynomial},
     utils::{compute_dotproduct, small_scalar::SmallScalar},
 };
 use allocative::Allocative;

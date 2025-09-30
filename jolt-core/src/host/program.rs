@@ -10,6 +10,7 @@ use common::constants::{
     EMULATOR_MEMORY_CAPACITY, RAM_START_ADDRESS, STACK_CANARY_SIZE,
 };
 use common::jolt_device::{JoltDevice, MemoryConfig};
+use tracer::LazyTraceIterator;
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::PathBuf;
@@ -233,7 +234,7 @@ impl Program {
 
     // TODO(moodlezoup): Make this generic over InstructionSet
     #[tracing::instrument(skip_all, name = "Program::trace")]
-    pub fn trace(&mut self, inputs: &[u8]) -> (Vec<Cycle>, Memory, JoltDevice) {
+    pub fn trace(&mut self, inputs: &[u8]) -> (LazyTraceIterator, Vec<Cycle>, Memory, JoltDevice) {
         self.build(DEFAULT_TARGET_DIR);
         let elf = self.elf.as_ref().unwrap();
         let mut elf_file =
@@ -283,7 +284,7 @@ impl Program {
 
     pub fn trace_analyze<F: JoltField>(mut self, inputs: &[u8]) -> ProgramSummary {
         let (bytecode, init_memory_state, _) = self.decode();
-        let (trace, _, io_device) = self.trace(inputs);
+        let (_, trace, _, io_device) = self.trace(inputs);
 
         ProgramSummary {
             trace,

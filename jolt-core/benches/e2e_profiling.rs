@@ -57,7 +57,7 @@ fn prove_example(
     let mut tasks = Vec::new();
     let mut program = host::Program::new(example_name);
     let (bytecode, init_memory_state, _) = program.decode();
-    let (trace, _, program_io) = program.trace(&serialized_input);
+    let (_, trace, _, program_io) = program.trace(&serialized_input);
 
     let task = move || {
         let preprocessing = JoltRV64IMAC::prover_preprocess(

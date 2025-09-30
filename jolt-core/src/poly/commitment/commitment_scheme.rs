@@ -152,6 +152,7 @@ pub trait StreamingCommitmentScheme :
     + StreamingProcessChunk<StreamingCompactWitness<u32, <Self as CommitmentScheme>::Field>>
     + StreamingProcessChunk<StreamingCompactWitness<u64, <Self as CommitmentScheme>::Field>>
     + StreamingProcessChunk<StreamingCompactWitness<i64, <Self as CommitmentScheme>::Field>>
+    + StreamingProcessChunk<StreamingCompactWitness<i128, <Self as CommitmentScheme>::Field>>
     + StreamingProcessChunk<StreamingOneHotWitness<<Self as CommitmentScheme>::Field>>
 {}
 
@@ -164,5 +165,6 @@ where
     + StreamingProcessChunk<StreamingCompactWitness<u32, <Self as CommitmentScheme>::Field>>
     + StreamingProcessChunk<StreamingCompactWitness<u64, <Self as CommitmentScheme>::Field>>
     + StreamingProcessChunk<StreamingCompactWitness<i64, <Self as CommitmentScheme>::Field>>
+    + StreamingProcessChunk<StreamingCompactWitness<i128, <Self as CommitmentScheme>::Field>>
     + StreamingProcessChunk<StreamingOneHotWitness<<Self as CommitmentScheme>::Field>>,
 {}

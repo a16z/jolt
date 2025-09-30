@@ -404,6 +404,7 @@ impl JoltR1CSInputs {
         }
     }
 
+    /*
     pub fn generate_witness<F, PCS>(
         &self,
         trace: &[RV32IMCycle],
@@ -598,6 +599,7 @@ impl JoltR1CSInputs {
             }
         }
     }
+    */
 }
 
 /// Converts a JoltR1CSInputs to a CommittedPolynomial if the input represents a committed

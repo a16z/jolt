@@ -326,7 +326,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
     ) -> Self {
         let gamma = state_manager.transcript.borrow_mut().challenge_scalar();
         let K = state_manager.ram_K;
-        let T = state_manager.get_prover_data().1.len();
+        let T = state_manager.get_prover_data().2.len();
 
         let (_, rv_claim) = state_manager
             .get_prover_accumulator()

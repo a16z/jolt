@@ -30,7 +30,8 @@ use allocative::FlameGraphBuilder;
 use anyhow::Context;
 use itertools::Itertools;
 use rayon::prelude::*;
-use tracer::{instruction::RV32IMCycle, ChunkWithPeekIterator as _};
+use tracer::instruction::Cycle;
+use tracer::{ChunkWithPeekIterator as _};
 
 pub enum JoltDAG {}
 
@@ -260,7 +261,7 @@ impl JoltDAG {
         drop(span);
 
         // Batch-prove all openings
-        let (_, trace, _, _) = state_manager.get_prover_data();
+        let (_, _, trace, _, _) = state_manager.get_prover_data();
 
         let all_polys: Vec<CommittedPolynomial> =
             AllCommittedPolynomials::iter().copied().collect();
@@ -504,7 +505,7 @@ impl JoltDAG {
             .as_ref()
             .expect("Lazy trace not found!")
             .clone()
-            .pad_using(T+1, |_| RV32IMCycle::NoOp)
+            .pad_using(T+1, |_| Cycle::NoOp)
             .chunks_with_peek(row_len)
             .zip(&mut row_commitments)
             .par_bridge()

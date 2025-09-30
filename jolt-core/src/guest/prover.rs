@@ -1,6 +1,6 @@
 use super::program::Program;
 use crate::field::JoltField;
-use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::commitment::commitment_scheme::StreamingCommitmentScheme;
 use crate::poly::commitment::dory::DoryCommitmentScheme;
 use crate::transcripts::Transcript;
 use crate::zkvm::dag::proof_serialization::JoltProof;
@@ -37,7 +37,7 @@ pub fn prove<F, PCS, FS>(
 )
 where
     F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
+    PCS: StreamingCommitmentScheme<Field = F>,
     FS: Transcript,
     JoltRV64IMAC: Jolt<F, PCS, FS>,
 {

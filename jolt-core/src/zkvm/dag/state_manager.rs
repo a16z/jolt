@@ -11,7 +11,7 @@ use crate::poly::opening_proof::{
 use crate::subprotocols::sumcheck::SumcheckInstanceProof;
 use crate::transcripts::Transcript;
 use crate::utils::math::Math;
-use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
+use crate::zkvm::witness::{compute_d_parameter, CommittedPolynomial, VirtualPolynomial};
 use crate::zkvm::{JoltProverPreprocessing, JoltVerifierPreprocessing};
 use num_derive::FromPrimitive;
 use rayon::prelude::*;
@@ -41,7 +41,7 @@ where
     PCS: CommitmentScheme<Field = F>,
 {
     pub preprocessing: &'a JoltProverPreprocessing<F, PCS>,
-    pub lazy_trace: Option<LazyTraceIterator>,
+    pub lazy_trace: Option<LazyTraceIterator>, // JP: Why is this Option?
     pub trace: Vec<Cycle>,
     pub final_memory_state: Memory,
     pub accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
@@ -154,6 +154,7 @@ where
         let transcript = Rc::new(RefCell::new(ProofTranscript::new(b"Jolt")));
         let proofs = Rc::new(RefCell::new(BTreeMap::new()));
         let commitments = Rc::new(RefCell::new(vec![]));
+        let ram_d = compute_d_parameter(ram_K);
 
         StateManager {
             transcript,
@@ -161,6 +162,7 @@ where
             commitments,
             program_io,
             ram_K,
+            ram_d,
             twist_sumcheck_switch_index,
             prover_state: None,
             verifier_state: Some(VerifierState {

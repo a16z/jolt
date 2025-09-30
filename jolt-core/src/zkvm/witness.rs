@@ -104,8 +104,8 @@ trait StreamWitness<F: JoltField> {
     fn generate_streaming_witness<'a, PCS>(
         &self,
         preprocessing: &'a JoltProverPreprocessing<F, PCS>,
-        cycle: &RV32IMCycle,
-        next_cycle: &RV32IMCycle,
+        cycle: &Cycle,
+        next_cycle: &Cycle,
         ram_d: usize,
     ) -> Self::WitnessType
     where
@@ -118,8 +118,8 @@ impl<F: JoltField> StreamWitness<F> for InstructionRa {
     fn generate_streaming_witness<'a, PCS>(
         &self,
         _preprocessing: &'a JoltProverPreprocessing<F, PCS>,
-        cycle: &RV32IMCycle,
-        _next_cycle: &RV32IMCycle,
+        cycle: &Cycle,
+        _next_cycle: &Cycle,
         _ram_d: usize,
     ) -> Self::WitnessType
     where
@@ -131,7 +131,7 @@ impl<F: JoltField> StreamWitness<F> for InstructionRa {
             let lookup_index = LookupQuery::<32>::to_lookup_index(cycle);
             let k = (lookup_index
                 >> (instruction_lookups::LOG_K_CHUNK * (instruction_lookups::D - 1 - i)))
-                % instruction_lookups::K_CHUNK as u64;
+                % instruction_lookups::K_CHUNK as u128;
             k as usize
         };
 
@@ -145,8 +145,8 @@ impl<F: JoltField> StreamWitness<F> for LeftInstructionInput {
     fn generate_streaming_witness<'a, PCS>(
         &self,
         _preprocessing: &'a JoltProverPreprocessing<F, PCS>,
-        cycle: &RV32IMCycle,
-        _next_cycle: &RV32IMCycle,
+        cycle: &Cycle,
+        _next_cycle: &Cycle,
         _ram_d: usize,
     ) -> Self::WitnessType
     where PCS: CommitmentScheme<Field = F>
@@ -157,13 +157,13 @@ impl<F: JoltField> StreamWitness<F> for LeftInstructionInput {
 }
 
 impl<F: JoltField> StreamWitness<F> for RightInstructionInput {
-    type WitnessType = StreamingCompactWitness<i64, F>;
+    type WitnessType = StreamingCompactWitness<i128, F>;
 
     fn generate_streaming_witness<'a, PCS>(
         &self,
         _preprocessing: &'a JoltProverPreprocessing<F, PCS>,
-        cycle: &RV32IMCycle,
-        _next_cycle: &RV32IMCycle,
+        cycle: &Cycle,
+        _next_cycle: &Cycle,
         _ram_d: usize,
     ) -> Self::WitnessType
     where PCS: CommitmentScheme<Field = F> {
@@ -178,8 +178,8 @@ impl<F: JoltField> StreamWitness<F> for Product {
     fn generate_streaming_witness<'a, PCS>(
         &self,
         _preprocessing: &'a JoltProverPreprocessing<F, PCS>,
-        cycle: &RV32IMCycle,
-        _next_cycle: &RV32IMCycle,
+        cycle: &Cycle,
+        _next_cycle: &Cycle,
         _ram_d: usize,
     ) -> Self::WitnessType
     where PCS: CommitmentScheme<Field = F> {
@@ -197,8 +197,8 @@ impl<F: JoltField> StreamWitness<F> for WriteLookupOutputToRD {
     fn generate_streaming_witness<'a, PCS>(
         &self,
         _preprocessing: &'a JoltProverPreprocessing<F, PCS>,
-        cycle: &RV32IMCycle,
-        _next_cycle: &RV32IMCycle,
+        cycle: &Cycle,
+        _next_cycle: &Cycle,
         _ram_d: usize,
     ) -> Self::WitnessType
     where PCS: CommitmentScheme<Field = F> {
@@ -217,8 +217,8 @@ impl<F: JoltField> StreamWitness<F> for WritePCtoRD {
     fn generate_streaming_witness<'a, PCS>(
         &self,
         _preprocessing: &'a JoltProverPreprocessing<F, PCS>,
-        cycle: &RV32IMCycle,
-        _next_cycle: &RV32IMCycle,
+        cycle: &Cycle,
+        _next_cycle: &Cycle,
         _ram_d: usize,
     ) -> Self::WitnessType
     where PCS: CommitmentScheme<Field = F> {
@@ -236,8 +236,8 @@ impl<F: JoltField> StreamWitness<F> for ShouldBranch {
     fn generate_streaming_witness<'a, PCS>(
         &self,
         _preprocessing: &'a JoltProverPreprocessing<F, PCS>,
-        cycle: &RV32IMCycle,
-        _next_cycle: &RV32IMCycle,
+        cycle: &Cycle,
+        _next_cycle: &Cycle,
         _ram_d: usize,
     ) -> Self::WitnessType
     where PCS: CommitmentScheme<Field = F> {
@@ -256,8 +256,8 @@ impl<F: JoltField> StreamWitness<F> for ShouldJump {
     fn generate_streaming_witness<'a, PCS>(
         &self,
         _preprocessing: &'a JoltProverPreprocessing<F, PCS>,
-        cycle: &RV32IMCycle,
-        next_cycle: &RV32IMCycle,
+        cycle: &Cycle,
+        next_cycle: &Cycle,
         _ram_d: usize,
     ) -> Self::WitnessType
     where PCS: CommitmentScheme<Field = F> {
@@ -277,8 +277,8 @@ impl<F: JoltField> StreamWitness<F> for RdInc {
     fn generate_streaming_witness<'a, PCS>(
         &self,
         _preprocessing: &'a JoltProverPreprocessing<F, PCS>,
-        cycle: &RV32IMCycle,
-        _next_cycle: &RV32IMCycle,
+        cycle: &Cycle,
+        _next_cycle: &Cycle,
         _ram_d: usize,
     ) -> Self::WitnessType
     where PCS: CommitmentScheme<Field = F> {
@@ -296,8 +296,8 @@ impl<F: JoltField> StreamWitness<F> for RamInc {
     fn generate_streaming_witness<'a, PCS>(
         &self,
         _preprocessing: &'a JoltProverPreprocessing<F, PCS>,
-        cycle: &RV32IMCycle,
-        _next_cycle: &RV32IMCycle,
+        cycle: &Cycle,
+        _next_cycle: &Cycle,
         _ram_d: usize,
     ) -> Self::WitnessType
     where PCS: CommitmentScheme<Field = F> {
@@ -320,8 +320,8 @@ impl<F: JoltField> StreamWitness<F> for BytecodeRa {
     fn generate_streaming_witness<'a, PCS>(
         &self,
         preprocessing: &'a JoltProverPreprocessing<F, PCS>,
-        cycle: &RV32IMCycle,
-        _next_cycle: &RV32IMCycle,
+        cycle: &Cycle,
+        _next_cycle: &Cycle,
         _ram_d: usize,
     ) -> Self::WitnessType
     where PCS: CommitmentScheme<Field = F> {
@@ -346,8 +346,8 @@ impl<F: JoltField> StreamWitness<F> for RamRa {
     fn generate_streaming_witness<'a, PCS>(
         &self,
         preprocessing: &'a JoltProverPreprocessing<F, PCS>,
-        cycle: &RV32IMCycle,
-        _next_cycle: &RV32IMCycle,
+        cycle: &Cycle,
+        _next_cycle: &Cycle,
         ram_d: usize,
     ) -> Self::WitnessType
     where PCS: CommitmentScheme<Field = F> {
@@ -966,7 +966,7 @@ impl CommittedPolynomial {
         &self,
         pcs: &PCS::State<'a>,
         preprocessing: &'a JoltProverPreprocessing<F, PCS>,
-        row_cycles: &[RV32IMCycle],
+        row_cycles: &[Cycle],
         ram_d: usize,
     ) -> PCS::ChunkState
     where 
@@ -977,7 +977,7 @@ impl CommittedPolynomial {
             witness_type: T,
             pcs: &PCS::State<'a>,
             preprocessing: &'a JoltProverPreprocessing<F, PCS>,
-            row_cycles: &[RV32IMCycle],
+            row_cycles: &[Cycle],
             ram_d: usize,
         ) -> PCS::ChunkState
         where

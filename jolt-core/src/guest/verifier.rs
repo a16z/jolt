@@ -1,5 +1,5 @@
 use crate::field::JoltField;
-use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::commitment::commitment_scheme::{CommitmentScheme, StreamingCommitmentScheme};
 
 use crate::guest::program::Program;
 use crate::poly::commitment::dory::DoryCommitmentScheme;
@@ -38,7 +38,7 @@ pub fn verify<F, PCS, FS>(
 ) -> Result<(), ProofVerifyError>
 where
     F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
+    PCS: StreamingCommitmentScheme<Field = F>,
     FS: Transcript,
     JoltRV64IMAC: Jolt<F, PCS, FS>,
 {

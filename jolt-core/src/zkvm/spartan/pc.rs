@@ -43,7 +43,7 @@ impl<F: JoltField> PCSumcheck<F> {
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         key: Arc<UniformSpartanKey<F>>,
     ) -> Self {
-        let (preprocessing, trace, _program_io, _final_memory_state) =
+        let (preprocessing, _, trace, _program_io, _final_memory_state) =
             state_manager.get_prover_data();
 
         // Stream once to generate PC, UnexpandedPC and IsNoop witnesses

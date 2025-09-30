@@ -74,16 +74,17 @@ pub fn trace(
     elf_path: Option<&std::path::PathBuf>,
     inputs: &[u8],
     memory_config: &MemoryConfig,
-) -> (Vec<Cycle>, Memory, JoltDevice) {
+) -> (LazyTraceIterator, Vec<Cycle>, Memory, JoltDevice) {
     let mut lazy_trace_iter = LazyTraceIterator::new(setup_emulator_with_backtraces(
         elf_contents,
         elf_path,
         inputs,
         memory_config,
     ));
+    let lazy_trace_iter_ = lazy_trace_iter.clone();
     let trace: Vec<Cycle> = lazy_trace_iter.by_ref().collect();
     let final_memory_state = std::mem::take(lazy_trace_iter.final_memory_state.as_mut().unwrap());
-    (trace, final_memory_state, lazy_trace_iter.get_jolt_device())
+    (lazy_trace_iter_, trace, final_memory_state, lazy_trace_iter.get_jolt_device())
 }
 
 use crate::utils::trace_writer::{TraceBatchCollector, TraceWriter, TraceWriterConfig};
@@ -909,7 +910,7 @@ mod test {
             program_size: Some(elf.len() as u64),
             ..Default::default()
         };
-        let (execution_trace, _, _) = trace(&elf, None, &INPUTS, &memory_config);
+        let (_, execution_trace, _, _) = trace(&elf, None, &INPUTS, &memory_config);
         let (checkpoints, _) = trace_checkpoints(&elf, &INPUTS, &memory_config, n);
         assert_eq!(execution_trace.len(), expected_trace_length);
         assert_eq!(checkpoints.len(), 10);
@@ -933,7 +934,7 @@ mod test {
             ..Default::default()
         };
 
-        let (execution_trace, _, _) = trace(&elf, None, &INPUTS, &memory_config);
+        let (_, execution_trace, _, _) = trace(&elf, None, &INPUTS, &memory_config);
         let mut emulator = setup_emulator(&elf, &INPUTS, &memory_config);
         let mut prev_pc: u64 = 0;
         let mut trace = vec![];
