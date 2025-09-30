@@ -28,10 +28,8 @@ use crate::{
     subprotocols::sumcheck::SumcheckInstance,
     transcripts::Transcript,
     utils::{
-        expanding_table::ExpandingTable,
-        lookup_bits::LookupBits,
-        math::Math,
-        thread::{unsafe_allocate_zero_vec, unsafe_zero_slice},
+        expanding_table::ExpandingTable, lookup_bits::LookupBits, math::Math,
+        thread::unsafe_allocate_zero_vec,
     },
     zkvm::{
         dag::state_manager::StateManager,
@@ -270,7 +268,7 @@ impl<'a, F: JoltField> ReadRafProverState<F> {
                 table
                     .suffixes()
                     .par_iter()
-                    .map(|_| DensePolynomial::new(unsafe_allocate_zero_vec(M)))
+                    .map(|_| DensePolynomial::default()) // Will be properly initialized in `init_phase`
                     .collect()
             })
             .collect();
@@ -598,43 +596,72 @@ impl<F: JoltField> ReadRafProverState<F> {
                 self.identity_ps
                     .init_Q(&self.u_evals, &self.lookup_indices_identity)
             });
-            s.spawn(|_| {
-                LookupTables::<XLEN>::iter()
-                    .collect::<Vec<_>>()
-                    .par_iter()
-                    .zip(self.suffix_polys.par_iter_mut())
-                    .zip(self.lookup_indices_by_table.par_iter())
-                    .for_each(|((table, polys), lookup_indices)| {
-                        table
-                            .suffixes()
-                            .par_iter()
-                            .zip(polys.par_iter_mut())
-                            .for_each(|(suffix, poly)| {
-                                if phase != 0 {
-                                    // Reset polynomial
-                                    poly.len = M;
-                                    poly.num_vars = poly.len.log_2();
-                                    unsafe_zero_slice(&mut poly.Z);
-                                }
-
-                                for (j, k) in lookup_indices.iter() {
-                                    let (prefix_bits, suffix_bits) =
-                                        k.split((PHASES - 1 - phase) * LOG_M);
-                                    let t = suffix.suffix_mle::<XLEN>(suffix_bits);
-                                    if t != 0 {
-                                        let u = self.u_evals[*j];
-                                        poly.Z[prefix_bits % M] += u.mul_u64(t);
-                                    }
-                                }
-                            });
-                    });
-            });
         });
+
+        self.init_suffix_polys(phase);
+
         self.identity_ps.init_P(&mut self.prefix_registry);
         self.right_operand_ps.init_P(&mut self.prefix_registry);
         self.left_operand_ps.init_P(&mut self.prefix_registry);
 
         self.v.reset(F::one());
+    }
+
+    #[tracing::instrument(skip_all, name = "InstructionReadRafProverState::init_suffix_polys")]
+    fn init_suffix_polys(&mut self, phase: usize) {
+        let num_chunks = rayon::current_num_threads().next_power_of_two();
+        let chunk_size = (self.lookup_indices.len() / num_chunks).max(1);
+
+        let new_suffix_polys: Vec<_> = LookupTables::<XLEN>::iter()
+            .collect::<Vec<_>>()
+            .par_iter()
+            .zip(self.lookup_indices_by_table.par_iter())
+            .map(|(table, lookup_indices)| {
+                let suffixes = table.suffixes();
+                lookup_indices
+                    .par_chunks(chunk_size)
+                    .map(|chunk| {
+                        let mut chunk_result: Vec<Vec<F>> =
+                            vec![unsafe_allocate_zero_vec(M); suffixes.len()];
+
+                        for (j, k) in chunk {
+                            let (prefix_bits, suffix_bits) = k.split((PHASES - 1 - phase) * LOG_M);
+                            for (suffix, result) in suffixes.iter().zip(chunk_result.iter_mut()) {
+                                let t = suffix.suffix_mle::<XLEN>(suffix_bits);
+                                if t != 0 {
+                                    let u = self.u_evals[*j];
+                                    result[prefix_bits % M] += u.mul_u64(t);
+                                }
+                            }
+                        }
+
+                        chunk_result
+                    })
+                    .reduce(
+                        || vec![unsafe_allocate_zero_vec(M); suffixes.len()],
+                        |mut acc, new| {
+                            for (acc_i, new_i) in acc.iter_mut().zip(new.iter()) {
+                                for (acc_coeff, new_coeff) in acc_i.iter_mut().zip(new_i.iter()) {
+                                    *acc_coeff += *new_coeff;
+                                }
+                            }
+                            acc
+                        },
+                    )
+            })
+            .collect();
+
+        // Replace existing suffix polynomials
+        self.suffix_polys
+            .iter_mut()
+            .zip(new_suffix_polys.into_iter())
+            .for_each(|(old, new)| {
+                old.iter_mut()
+                    .zip(new.into_iter())
+                    .for_each(|(poly, mut coeffs)| {
+                        *poly = DensePolynomial::new(std::mem::take(&mut coeffs));
+                    });
+            });
     }
 
     /// To be called at the end of each phase, after binding is done
