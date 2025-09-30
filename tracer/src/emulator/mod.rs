@@ -118,10 +118,10 @@ impl Emulator {
     pub fn run_test(&mut self, trace: bool) {
         // @TODO: Send this message to terminal?
         #[cfg(feature = "std")]
-        println!("This elf file seems like a riscv-tests elf file. Running in test mode.");
+        tracing::info!("This elf file seems like a riscv-tests elf file. Running in test mode.");
         loop {
             let disas = self.cpu.disassemble_next_instruction();
-            println!("{disas}");
+            tracing::debug!("{disas}");
 
             let mut traces = if trace { Some(Vec::new()) } else { None };
             self.tick(traces.as_mut());
@@ -144,8 +144,8 @@ impl Emulator {
                     // Extract exit code by shifting payload right by 1
                     let endcode = payload >> 1;
                     match endcode {
-                        0 => println!("Test Passed with {endcode:X}\n"),
-                        _ => println!("Test Failed with {endcode:X}\n"),
+                        0 => tracing::info!("Test Passed with {endcode:X}\n"),
+                        _ => tracing::error!("Test Failed with {endcode:X}\n"),
                     };
                     break;
                 }

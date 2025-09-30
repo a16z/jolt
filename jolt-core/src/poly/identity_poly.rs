@@ -4,9 +4,10 @@ use allocative::Allocative;
 use num::Integer;
 
 use crate::field::JoltField;
+use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::prefix_suffix::{
-    CacheablePolynomial, CachedPolynomial, Prefix, PrefixCheckpoints, PrefixPolynomial,
-    PrefixRegistry, PrefixSuffixPolynomial, SuffixPolynomial,
+    CachedPolynomial, Prefix, PrefixCheckpoints, PrefixPolynomial, PrefixRegistry,
+    PrefixSuffixPolynomial, SuffixPolynomial,
 };
 use crate::utils::lookup_bits::LookupBits;
 use crate::utils::math::Math;
@@ -105,8 +106,6 @@ impl<F: JoltField> PolynomialEvaluation<F> for IdentityPolynomial<F> {
     }
 }
 
-impl<F: JoltField> CacheablePolynomial<F> for IdentityPolynomial<F> {}
-
 impl<F: JoltField> PrefixSuffixPolynomial<F, 2> for IdentityPolynomial<F> {
     fn suffixes(&self) -> [Box<dyn SuffixPolynomial<F> + Sync>; 2] {
         [Box::new(ShiftSuffixPolynomial), Box::new(self.clone())]
@@ -134,14 +133,16 @@ impl<F: JoltField> PrefixPolynomial<F> for IdentityPolynomial<F> {
         &self,
         checkpoints: &PrefixCheckpoints<F>,
         chunk_len: usize,
-        phase: usize,
+        _phase: usize,
     ) -> CachedPolynomial<F> {
         debug_assert!(chunk_len.is_even());
         let bound_value = checkpoints[Prefix::Identity].unwrap_or(F::zero());
-        let mut poly = IdentityPolynomial::new((phase + 1) * chunk_len);
-        poly.bound_value = bound_value;
-        poly.num_bound_vars = phase * chunk_len;
-        CachedPolynomial::new(Box::new(poly), (chunk_len - 1).pow2())
+
+        let evals: Vec<F> = (0..chunk_len.pow2())
+            .map(|i| bound_value.mul_u128(1 << chunk_len) + F::from_u64(i as u64))
+            .collect();
+
+        CachedPolynomial::new(MultilinearPolynomial::from(evals), (chunk_len - 1).pow2())
     }
 }
 
@@ -323,8 +324,6 @@ impl<F: JoltField> PolynomialEvaluation<F> for OperandPolynomial<F> {
     }
 }
 
-impl<F: JoltField> CacheablePolynomial<F> for OperandPolynomial<F> {}
-
 impl<F: JoltField> PrefixSuffixPolynomial<F, 2> for OperandPolynomial<F> {
     fn suffixes(&self) -> [Box<dyn SuffixPolynomial<F> + Sync>; 2] {
         [Box::new(ShiftHalfSuffixPolynomial), Box::new(self.clone())]
@@ -376,7 +375,7 @@ impl<F: JoltField> PrefixPolynomial<F> for OperandPolynomial<F> {
         &self,
         checkpoints: &PrefixCheckpoints<F>,
         chunk_len: usize,
-        phase: usize,
+        _phase: usize,
     ) -> CachedPolynomial<F> {
         debug_assert!(chunk_len.is_even());
         debug_assert!(self.num_bound_vars.is_even());
@@ -386,10 +385,19 @@ impl<F: JoltField> PrefixPolynomial<F> for OperandPolynomial<F> {
             OperandSide::Right => checkpoints[Prefix::RightOperand].unwrap_or(F::zero()),
         };
 
-        let mut poly = OperandPolynomial::new((phase + 1) * chunk_len, self.side);
-        poly.bound_value = bound_value;
-        poly.num_bound_vars = phase * chunk_len;
-        CachedPolynomial::new(Box::new(poly), (chunk_len - 1).pow2())
+        let evals: Vec<F> = (0..chunk_len.pow2())
+            .map(|i| {
+                let bits = LookupBits::new(i as u128, chunk_len);
+                let (left, right) = bits.uninterleave();
+                let operand_value = match self.side {
+                    OperandSide::Left => F::from_u64(u64::from(left)),
+                    OperandSide::Right => F::from_u64(u64::from(right)),
+                };
+                bound_value.mul_u128(1 << (chunk_len / 2)) + operand_value
+            })
+            .collect();
+
+        CachedPolynomial::new(MultilinearPolynomial::from(evals), (chunk_len - 1).pow2())
     }
 }
 

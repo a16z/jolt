@@ -1,6 +1,9 @@
 use std::time::Instant;
+use tracing::info;
 
 pub fn main() {
+    tracing_subscriber::fmt::init();
+
     let target_dir = "/tmp/jolt-guest-targets";
     let mut program = guest::compile_int_to_string(target_dir);
 
@@ -11,10 +14,10 @@ pub fn main() {
     let prove = guest::build_prover_int_to_string(program, prover_preprocessing);
     let verify = guest::build_verifier_int_to_string(verifier_preprocessing);
     let (output, proof, program_io) = prove(81);
-    println!("int to string output: {output:?}");
+    info!("int to string output: {output:?}");
 
     let is_valid = verify(81, output, program_io.panic, proof);
-    println!("int to string valid: {is_valid}");
+    info!("int to string valid: {is_valid}");
 
     let mut program = guest::compile_string_concat(target_dir);
 
@@ -27,9 +30,9 @@ pub fn main() {
 
     let now = Instant::now();
     let (output, proof, program_io) = prove(20);
-    println!("Prover runtime: {} s", now.elapsed().as_secs_f64());
-    println!("string concat output: {output:?}");
+    info!("Prover runtime: {} s", now.elapsed().as_secs_f64());
+    info!("string concat output: {output:?}");
 
     let is_valid = verify(20, output, program_io.panic, proof);
-    println!("string concat valid: {is_valid}");
+    info!("string concat valid: {is_valid}");
 }

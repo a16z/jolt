@@ -28,10 +28,8 @@ use crate::{
     subprotocols::sumcheck::SumcheckInstance,
     transcripts::Transcript,
     utils::{
-        expanding_table::ExpandingTable,
-        lookup_bits::LookupBits,
-        math::Math,
-        thread::{unsafe_allocate_zero_vec, unsafe_zero_slice},
+        expanding_table::ExpandingTable, lookup_bits::LookupBits, math::Math,
+        thread::unsafe_allocate_zero_vec,
     },
     zkvm::{
         dag::state_manager::StateManager,
@@ -43,6 +41,9 @@ use crate::{
         witness::VirtualPolynomial,
     },
 };
+
+use itertools::Itertools;
+use rayon::iter::IndexedParallelIterator;
 
 const DEGREE: usize = 3;
 
@@ -161,65 +162,105 @@ impl<'a, F: JoltField> ReadRafProverState<F> {
             PrefixSuffixDecomposition::new(Box::new(left_operand_poly), LOG_M, LOG_K);
         let identity_ps = PrefixSuffixDecomposition::new(Box::new(identity_poly), LOG_M, LOG_K);
 
-        // TODO: This was probably already calculated in Spartan, maybe we should just get it.
-        let lookup_indices: Vec<_> = trace
-            .par_iter()
-            .map(|cycle| LookupBits::new(LookupQuery::<XLEN>::to_lookup_index(cycle), LOG_K))
-            .collect();
-        let lookup_indices_by_table: Vec<_> = LookupTables::<XLEN>::iter()
-            .collect::<Vec<_>>()
-            .par_iter()
-            .map(|table| {
-                let table_lookups: Vec<_> = trace
-                    .iter()
-                    .zip(lookup_indices.iter().cloned())
-                    .enumerate()
-                    .filter_map(|(j, (cycle, k))| match cycle.lookup_table() {
-                        Some(lookup) => {
-                            if LookupTables::<XLEN>::enum_index(&lookup)
-                                == LookupTables::enum_index(table)
-                            {
-                                Some((j, k))
-                            } else {
-                                None
-                            }
-                        }
-                        None => None,
-                    })
-                    .collect();
-                table_lookups
-            })
-            .collect();
-        let (lookup_indices_uninterleave, lookup_indices_identity): (Vec<_>, Vec<_>) =
-            lookup_indices
-                .par_iter()
-                .cloned()
-                .enumerate()
-                .zip(trace.par_iter())
-                .partition_map(|((idx, item), cycle)| {
-                    if cycle
-                        .instruction()
-                        .circuit_flags()
-                        .is_interleaved_operands()
-                    {
-                        itertools::Either::Left((idx, item))
-                    } else {
-                        itertools::Either::Right((idx, item))
-                    }
-                });
+        // Heuristic: number of chunks = next_power_of_two(num_threads) * 4
+        let threads = rayon::current_num_threads();
+        let target_chunks = threads.next_power_of_two().saturating_mul(4);
+        let chunk_size = std::cmp::max(1, trace.len().div_ceil(target_chunks));
+        let num_tables = LookupTables::<XLEN>::COUNT;
 
-        let (is_interleaved_operands, lookup_tables): (Vec<_>, Vec<_>) = trace
-            .par_iter()
-            .map(|cycle| {
-                (
-                    cycle
+        struct ChunkAgg<const XLEN: usize> {
+            base: usize,
+            lookup_indices: Vec<LookupBits>,
+            uninterleave: Vec<(usize, LookupBits)>,
+            identity: Vec<(usize, LookupBits)>,
+            by_table: Vec<Vec<(usize, LookupBits)>>,
+            flags: Vec<bool>,
+            tables: Vec<Option<LookupTables<XLEN>>>,
+        }
+
+        let chunk_aggs: Vec<ChunkAgg<XLEN>> = trace
+            .par_chunks(chunk_size)
+            .enumerate()
+            .map(|(chunk_idx, chunk)| {
+                let base = chunk_idx * chunk_size;
+                let chunk_len = chunk.len();
+                let mut lookup_indices = Vec::with_capacity(chunk_len);
+                let mut flags = Vec::with_capacity(chunk_len);
+                let mut tables = Vec::with_capacity(chunk_len);
+
+                let mut uninterleave = Vec::with_capacity(chunk_len / 2 + 1);
+                let mut identity = Vec::with_capacity(chunk_len / 2 + 1);
+                let mut by_table = (0..num_tables)
+                    .map(|_| Vec::with_capacity(chunk_len / num_tables + 1))
+                    .collect::<Vec<_>>();
+
+                for (off, cycle) in chunk.iter().enumerate() {
+                    let idx = base + off;
+                    let bits = LookupBits::new(LookupQuery::<XLEN>::to_lookup_index(cycle), LOG_K);
+                    let is_interleaved = cycle
                         .instruction()
                         .circuit_flags()
-                        .is_interleaved_operands(),
-                    cycle.instruction().lookup_table(),
-                )
+                        .is_interleaved_operands();
+                    let table = cycle.lookup_table();
+
+                    if is_interleaved {
+                        uninterleave.push((idx, bits));
+                    } else {
+                        identity.push((idx, bits));
+                    }
+
+                    if let Some(t) = table {
+                        let t_idx = LookupTables::<XLEN>::enum_index(&t);
+                        by_table[t_idx].push((idx, bits));
+                    }
+
+                    lookup_indices.push(bits);
+                    flags.push(is_interleaved);
+                    tables.push(table);
+                }
+
+                ChunkAgg {
+                    base,
+                    lookup_indices,
+                    uninterleave,
+                    identity,
+                    by_table,
+                    flags,
+                    tables,
+                }
             })
             .collect();
+
+        let total_len = trace.len();
+        let total_uninterleave: usize = chunk_aggs.iter().map(|a| a.uninterleave.len()).sum();
+        let total_identity: usize = chunk_aggs.iter().map(|a| a.identity.len()).sum();
+        let mut total_by_table = vec![0usize; num_tables];
+        for agg in &chunk_aggs {
+            for t in 0..num_tables {
+                total_by_table[t] += agg.by_table[t].len();
+            }
+        }
+
+        let mut lookup_indices = Vec::with_capacity(total_len);
+        let mut is_interleaved_operands = Vec::with_capacity(total_len);
+        let mut lookup_tables = Vec::with_capacity(total_len);
+        let mut lookup_indices_uninterleave = Vec::with_capacity(total_uninterleave);
+        let mut lookup_indices_identity = Vec::with_capacity(total_identity);
+        let mut lookup_indices_by_table = (0..num_tables)
+            .map(|t| Vec::with_capacity(total_by_table[t]))
+            .collect::<Vec<_>>();
+
+        for agg in chunk_aggs.into_iter().sorted_by_key(|a| a.base) {
+            lookup_indices.extend(agg.lookup_indices);
+            lookup_indices_uninterleave.extend(agg.uninterleave);
+            lookup_indices_identity.extend(agg.identity);
+            for t in 0..num_tables {
+                lookup_indices_by_table[t].extend(agg.by_table[t].iter().copied());
+            }
+            is_interleaved_operands.extend(agg.flags);
+            lookup_tables.extend(agg.tables);
+        }
+
         let suffix_polys: Vec<Vec<DensePolynomial<F>>> = LookupTables::<XLEN>::iter()
             .collect::<Vec<_>>()
             .par_iter()
@@ -227,7 +268,7 @@ impl<'a, F: JoltField> ReadRafProverState<F> {
                 table
                     .suffixes()
                     .par_iter()
-                    .map(|_| DensePolynomial::new(unsafe_allocate_zero_vec(M)))
+                    .map(|_| DensePolynomial::default()) // Will be properly initialized in `init_phase`
                     .collect()
             })
             .collect();
@@ -545,58 +586,85 @@ impl<F: JoltField> ReadRafProverState<F> {
         }
 
         rayon::scope(|s| {
-            // TODO(moodlezoup): `right_operand_ps` and `left_operand_ps` both use
-            // `lookup_indices_uninterleave`; by invoking `init_Q` twice we do two
-            // passes over the indices where we could be doing just one.
+            // Single pass over lookup_indices_uninterleave for both operands
             s.spawn(|_| {
-                self.right_operand_ps
-                    .init_Q(&self.u_evals, &self.lookup_indices_uninterleave)
-            });
-            s.spawn(|_| {
-                self.left_operand_ps
-                    .init_Q(&self.u_evals, &self.lookup_indices_uninterleave)
+                PrefixSuffixDecomposition::init_Q_dual(
+                    &mut self.left_operand_ps,
+                    &mut self.right_operand_ps,
+                    &self.u_evals,
+                    &self.lookup_indices_uninterleave,
+                )
             });
             s.spawn(|_| {
                 self.identity_ps
                     .init_Q(&self.u_evals, &self.lookup_indices_identity)
             });
-            s.spawn(|_| {
-                LookupTables::<XLEN>::iter()
-                    .collect::<Vec<_>>()
-                    .par_iter()
-                    .zip(self.suffix_polys.par_iter_mut())
-                    .zip(self.lookup_indices_by_table.par_iter())
-                    .for_each(|((table, polys), lookup_indices)| {
-                        table
-                            .suffixes()
-                            .par_iter()
-                            .zip(polys.par_iter_mut())
-                            .for_each(|(suffix, poly)| {
-                                if phase != 0 {
-                                    // Reset polynomial
-                                    poly.len = M;
-                                    poly.num_vars = poly.len.log_2();
-                                    unsafe_zero_slice(&mut poly.Z);
-                                }
-
-                                for (j, k) in lookup_indices.iter() {
-                                    let (prefix_bits, suffix_bits) =
-                                        k.split((PHASES - 1 - phase) * LOG_M);
-                                    let t = suffix.suffix_mle::<XLEN>(suffix_bits);
-                                    if t != 0 {
-                                        let u = self.u_evals[*j];
-                                        poly.Z[prefix_bits % M] += u.mul_u64(t);
-                                    }
-                                }
-                            });
-                    });
-            });
         });
+
+        self.init_suffix_polys(phase);
+
         self.identity_ps.init_P(&mut self.prefix_registry);
         self.right_operand_ps.init_P(&mut self.prefix_registry);
         self.left_operand_ps.init_P(&mut self.prefix_registry);
 
         self.v.reset(F::one());
+    }
+
+    #[tracing::instrument(skip_all, name = "InstructionReadRafProverState::init_suffix_polys")]
+    fn init_suffix_polys(&mut self, phase: usize) {
+        let num_chunks = rayon::current_num_threads().next_power_of_two();
+        let chunk_size = (self.lookup_indices.len() / num_chunks).max(1);
+
+        let new_suffix_polys: Vec<_> = LookupTables::<XLEN>::iter()
+            .collect::<Vec<_>>()
+            .par_iter()
+            .zip(self.lookup_indices_by_table.par_iter())
+            .map(|(table, lookup_indices)| {
+                let suffixes = table.suffixes();
+                lookup_indices
+                    .par_chunks(chunk_size)
+                    .map(|chunk| {
+                        let mut chunk_result: Vec<Vec<F>> =
+                            vec![unsafe_allocate_zero_vec(M); suffixes.len()];
+
+                        for (j, k) in chunk {
+                            let (prefix_bits, suffix_bits) = k.split((PHASES - 1 - phase) * LOG_M);
+                            for (suffix, result) in suffixes.iter().zip(chunk_result.iter_mut()) {
+                                let t = suffix.suffix_mle::<XLEN>(suffix_bits);
+                                if t != 0 {
+                                    let u = self.u_evals[*j];
+                                    result[prefix_bits % M] += u.mul_u64(t);
+                                }
+                            }
+                        }
+
+                        chunk_result
+                    })
+                    .reduce(
+                        || vec![unsafe_allocate_zero_vec(M); suffixes.len()],
+                        |mut acc, new| {
+                            for (acc_i, new_i) in acc.iter_mut().zip(new.iter()) {
+                                for (acc_coeff, new_coeff) in acc_i.iter_mut().zip(new_i.iter()) {
+                                    *acc_coeff += *new_coeff;
+                                }
+                            }
+                            acc
+                        },
+                    )
+            })
+            .collect();
+
+        // Replace existing suffix polynomials
+        self.suffix_polys
+            .iter_mut()
+            .zip(new_suffix_polys.into_iter())
+            .for_each(|(old, new)| {
+                old.iter_mut()
+                    .zip(new.into_iter())
+                    .for_each(|(poly, mut coeffs)| {
+                        *poly = DensePolynomial::new(std::mem::take(&mut coeffs));
+                    });
+            });
     }
 
     /// To be called at the end of each phase, after binding is done

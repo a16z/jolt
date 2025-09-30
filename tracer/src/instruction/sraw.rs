@@ -37,11 +37,24 @@ impl RISCVTrace for SRAW {
         let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
-            // In each iteration, create a new Option containing a re-borrowed reference
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
 
+    /// Arithmetic right shift for 32-bit words with sign extension.
+    ///
+    /// SRAW is an RV64I-only instruction that arithmetically shifts the lower 32 bits
+    /// of rs1 right by the amount in the lower 5 bits of rs2, preserving the sign bit,
+    /// then sign-extends the 32-bit result to 64 bits.
+    ///
+    /// Implementation:
+    /// 1. Sign-extend rs1 from 32 to 64 bits to prepare for arithmetic shift
+    /// 2. Mask rs2 to get only the lower 5 bits (shift amount 0-31)
+    /// 3. Generate bitmask for the shift amount
+    /// 4. Apply arithmetic right shift (preserves sign bit)
+    /// 5. Sign-extend the result to ensure proper 32-bit semantics
+    ///
+    /// The double sign-extension ensures correct handling of negative 32-bit values.
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,

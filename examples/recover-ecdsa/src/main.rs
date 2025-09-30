@@ -2,6 +2,7 @@ use guest::recover;
 use jolt_sdk::serialize_and_print_size;
 use secp256k1::{Message, PublicKey, Secp256k1, SecretKey};
 use std::time::Instant;
+use tracing::info;
 
 const SECRET_KEY: [u8; 32] = [
     59, 148, 11, 85, 134, 130, 61, 253, 2, 174, 59, 70, 27, 180, 51, 107, 94, 203, 174, 253, 102,
@@ -9,6 +10,8 @@ const SECRET_KEY: [u8; 32] = [
 ];
 
 pub fn main() {
+    tracing_subscriber::fmt::init();
+
     let secp = Secp256k1::new();
 
     let seckey = SecretKey::from_slice(&SECRET_KEY).unwrap();
@@ -51,14 +54,14 @@ pub fn main() {
     } else {
         (trace_length - 1).next_power_of_two()
     };
-    println!("Trace length: {trace_length:?}");
-    println!("Max trace length: {max_trace_length:?}");
+    info!("Trace length: {trace_length:?}");
+    info!("Max trace length: {max_trace_length:?}");
 
     let now = Instant::now();
     let (output, proof, io_device) = prove_recover(&sig_bytes, msg_digest);
-    println!("Prover runtime: {} s", now.elapsed().as_secs_f64());
+    info!("Prover runtime: {} s", now.elapsed().as_secs_f64());
 
     let is_valid = verify_recover(&sig_bytes, msg_digest, output, io_device.panic, proof);
-    println!("output: {output}");
-    println!("valid: {is_valid}");
+    info!("output: {output}");
+    info!("valid: {is_valid}");
 }

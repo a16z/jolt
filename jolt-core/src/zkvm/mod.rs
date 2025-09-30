@@ -227,7 +227,7 @@ where
                 1
             })
             .sum();
-        println!(
+        tracing::info!(
             "{num_riscv_cycles} raw RISC-V instructions + {} virtual instructions = {} total cycles",
             trace.len() - num_riscv_cycles,
             trace.len(),

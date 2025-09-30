@@ -16,6 +16,7 @@ use crate::{
 };
 use allocative::Allocative;
 use ark_ff::biginteger::{I8OrI96, S160};
+use num_traits::Zero;
 use rayon::prelude::*;
 use tracer::instruction::Cycle;
 
@@ -247,9 +248,9 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
 
                 for x_out_val in x_out_start..x_out_end {
                     let mut tA_pos_acc_for_current_x_out =
-                        [UnreducedProduct::zero(); NUM_NONTRIVIAL_TERNARY_POINTS];
+                        [UnreducedProduct::<F>::zero(); NUM_NONTRIVIAL_TERNARY_POINTS];
                     let mut tA_neg_acc_for_current_x_out =
-                        [UnreducedProduct::zero(); NUM_NONTRIVIAL_TERNARY_POINTS];
+                        [UnreducedProduct::<F>::zero(); NUM_NONTRIVIAL_TERNARY_POINTS];
                     let mut current_x_out_svo_zero = [F::zero(); NUM_ACCUMS_EVAL_ZERO];
                     let mut current_x_out_svo_infty = [F::zero(); NUM_ACCUMS_EVAL_INFTY];
 
@@ -355,8 +356,8 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                     // finalize: reduce unreduced accumulators and combine pos/neg into field
                     let mut tA_sum_for_current_x_out = [F::zero(); NUM_NONTRIVIAL_TERNARY_POINTS];
                     for i in 0..NUM_NONTRIVIAL_TERNARY_POINTS {
-                        let pos_f = F::from_montgomery_reduce_2n(tA_pos_acc_for_current_x_out[i]);
-                        let neg_f = F::from_montgomery_reduce_2n(tA_neg_acc_for_current_x_out[i]);
+                        let pos_f = F::from_montgomery_reduce::<8>(tA_pos_acc_for_current_x_out[i]);
+                        let neg_f = F::from_montgomery_reduce::<8>(tA_neg_acc_for_current_x_out[i]);
                         // E_in was pre-scaled by R^2, so reduction already matches field semantics
                         tA_sum_for_current_x_out[i] = pos_f - neg_f;
                     }
@@ -531,6 +532,11 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                 let mut task_sumInf = F::zero();
                 let mut task_bound6_at_r: Vec<SparseCoefficient<F>> = Vec::new();
 
+                // Two-layer accumulation using grouping by x_out_idx
+                let mut inner_sum0 = F::Unreduced::<9>::zero();
+                let mut inner_sumInf = F::Unreduced::<9>::zero();
+                let mut prev_x_out_idx: Option<usize> = None;
+
                 for x_out_val in x_out_start..x_out_end {
                     for x_in_step_val in 0..num_x_in_step_vals {
                         let current_step_idx =
@@ -543,12 +549,18 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                         // Iterate block-pairs (each pair groups two Y-blocks: x_next=0 and x_next=1)
                         for block_pair_idx in 0..num_block_pairs_per_step {
                             // typed accumulators for x_next ∈ {0,1} within this block-pair
-                            let mut az_acc =
-                                [SignedUnreducedAccum::new(), SignedUnreducedAccum::new()];
-                            let mut bz_acc =
-                                [SignedUnreducedAccum::new(), SignedUnreducedAccum::new()];
-                            let mut cz_acc =
-                                [SignedUnreducedAccum::new(), SignedUnreducedAccum::new()];
+                            let mut az_acc = [
+                                SignedUnreducedAccum::<F>::new(),
+                                SignedUnreducedAccum::<F>::new(),
+                            ];
+                            let mut bz_acc = [
+                                SignedUnreducedAccum::<F>::new(),
+                                SignedUnreducedAccum::<F>::new(),
+                            ];
+                            let mut cz_acc = [
+                                SignedUnreducedAccum::<F>::new(),
+                                SignedUnreducedAccum::<F>::new(),
+                            ];
 
                             // process up to two Y-blocks for this pair
                             for k in 0..2 {
@@ -581,8 +593,8 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                                     let az = binary_az_block[idx_in_svo_block];
                                     let bz = binary_bz_block[idx_in_svo_block];
 
-                                    az_acc[x_next_val].fmadd_az::<F>(&eq, az);
-                                    bz_acc[x_next_val].fmadd_bz::<F>(&eq, bz);
+                                    az_acc[x_next_val].fmadd_az(&eq, az);
+                                    bz_acc[x_next_val].fmadd_bz(&eq, bz);
 
                                     // Cz gate by row kind using recovered row id
                                     let row_in_step =
@@ -591,18 +603,18 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                                         && matches!(UNIFORM_R1CS[row_in_step].cz, CzKind::NonZero)
                                     {
                                         let prod = az * bz;
-                                        cz_acc[x_next_val].fmadd_prod::<F>(&eq, prod);
+                                        cz_acc[x_next_val].fmadd_prod(&eq, prod);
                                     }
                                 }
                             }
 
                             // reduce to field values at y=r for both x_next
-                            let az0 = az_acc[0].reduce_to_field::<F>();
-                            let bz0 = bz_acc[0].reduce_to_field::<F>();
-                            let cz0 = cz_acc[0].reduce_to_field::<F>();
-                            let az1 = az_acc[1].reduce_to_field::<F>();
-                            let bz1 = bz_acc[1].reduce_to_field::<F>();
-                            let cz1 = cz_acc[1].reduce_to_field::<F>();
+                            let az0 = az_acc[0].reduce_to_field();
+                            let bz0 = bz_acc[0].reduce_to_field();
+                            let cz0 = cz_acc[0].reduce_to_field();
+                            let az1 = az_acc[1].reduce_to_field();
+                            let bz1 = bz_acc[1].reduce_to_field();
+                            let cz1 = cz_acc[1].reduce_to_field();
 
                             // sumcheck contributions
                             let p0 = az0 * bz0 - cz0;
@@ -616,11 +628,25 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                             let x_out_idx = current_block_id >> num_streaming_x_in_vars;
                             let x_in_idx = current_block_id & ((1 << num_streaming_x_in_vars) - 1);
 
-                            let e_out = if x_out_idx < eq_poly.E_out_current_len() {
-                                eq_poly.E_out_current()[x_out_idx]
-                            } else {
-                                F::zero()
-                            };
+                            // If x_out_idx changes, flush the previous group's inner sums
+                            if let Some(prev_idx) = prev_x_out_idx {
+                                if prev_idx != x_out_idx {
+                                    let e_out_prev = if prev_idx < eq_poly.E_out_current_len() {
+                                        eq_poly.E_out_current()[prev_idx]
+                                    } else {
+                                        F::zero()
+                                    };
+                                    let reduced_inner_sum0 = F::from_montgomery_reduce(inner_sum0);
+                                    let reduced_inner_sumInf =
+                                        F::from_montgomery_reduce(inner_sumInf);
+                                    task_sum0 += e_out_prev * reduced_inner_sum0;
+                                    task_sumInf += e_out_prev * reduced_inner_sumInf;
+                                    inner_sum0 = F::Unreduced::zero();
+                                    inner_sumInf = F::Unreduced::zero();
+                                }
+                            }
+
+                            // Accumulate inner sums with E_in only
                             let e_in = if eq_poly.E_in_current_len() == 0 {
                                 F::one()
                             } else if eq_poly.E_in_current_len() == 1 {
@@ -630,10 +656,10 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                             } else {
                                 F::zero()
                             };
-                            let e_block = e_out * e_in;
 
-                            task_sum0 += e_block * p0;
-                            task_sumInf += e_block * slope;
+                            inner_sum0 += e_in.mul_unreduced::<8>(p0);
+                            inner_sumInf += e_in.mul_unreduced::<8>(slope);
+                            prev_x_out_idx = Some(x_out_idx);
 
                             // record six-at-r values
                             let block_id = current_block_id;
@@ -657,6 +683,20 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                             }
                         }
                     }
+                }
+
+                // Final flush for the last x_out group in this chunk
+                if let Some(prev_idx) = prev_x_out_idx {
+                    let e_out_prev = if prev_idx < eq_poly.E_out_current_len() {
+                        eq_poly.E_out_current()[prev_idx]
+                    } else {
+                        F::zero()
+                    };
+                    let reduced_inner_sum0 = F::from_montgomery_reduce(inner_sum0);
+                    let reduced_inner_sumInf = F::from_montgomery_reduce(inner_sumInf);
+
+                    task_sum0 += e_out_prev * reduced_inner_sum0;
+                    task_sumInf += e_out_prev * reduced_inner_sumInf;
                 }
 
                 TaskOut {
@@ -849,7 +889,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                     let mut eval_point_0 = F::zero();
                     let mut eval_point_infty = F::zero();
 
-                    let mut inner_sums = (F::zero(), F::zero());
+                    let mut inner_sums = (F::Unreduced::<9>::zero(), F::Unreduced::<9>::zero());
                     let mut prev_x2 = 0;
 
                     for sparse_block in chunk.chunk_by(|x, y| x.index / 6 == y.index / 6) {
@@ -859,10 +899,15 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                         let x2 = block_index >> num_x1_bits;
 
                         if x2 != prev_x2 {
-                            eval_point_0 += eq_poly.E_out_current()[prev_x2] * inner_sums.0;
-                            eval_point_infty += eq_poly.E_out_current()[prev_x2] * inner_sums.1;
+                            let reduced_inner_sums = (
+                                F::from_montgomery_reduce(inner_sums.0),
+                                F::from_montgomery_reduce(inner_sums.1),
+                            );
+                            eval_point_0 += eq_poly.E_out_current()[prev_x2] * reduced_inner_sums.0;
+                            eval_point_infty +=
+                                eq_poly.E_out_current()[prev_x2] * reduced_inner_sums.1;
 
-                            inner_sums = (F::zero(), F::zero());
+                            inner_sums = (F::Unreduced::zero(), F::Unreduced::zero());
                             prev_x2 = x2;
                         }
 
@@ -878,14 +923,20 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
                         let az_eval_infty = az.1 - az.0;
                         let bz_eval_infty = bz.1 - bz.0;
 
-                        inner_sums.0 +=
-                            E_in_evals.mul_0_optimized(az.0.mul_0_optimized(bz.0) - cz0);
-                        inner_sums.1 += E_in_evals
-                            .mul_0_optimized(az_eval_infty.mul_0_optimized(bz_eval_infty));
+                        let abc_term_0 = az.0.mul_0_optimized(bz.0) - cz0;
+                        let abc_term_infty = az_eval_infty.mul_0_optimized(bz_eval_infty);
+
+                        inner_sums.0 += E_in_evals.mul_unreduced::<9>(abc_term_0);
+                        inner_sums.1 += E_in_evals.mul_unreduced::<9>(abc_term_infty);
                     }
 
-                    eval_point_0 += eq_poly.E_out_current()[prev_x2] * inner_sums.0;
-                    eval_point_infty += eq_poly.E_out_current()[prev_x2] * inner_sums.1;
+                    let reduced_inner_sums = (
+                        F::from_montgomery_reduce(inner_sums.0),
+                        F::from_montgomery_reduce(inner_sums.1),
+                    );
+
+                    eval_point_0 += eq_poly.E_out_current()[prev_x2] * reduced_inner_sums.0;
+                    eval_point_infty += eq_poly.E_out_current()[prev_x2] * reduced_inner_sums.1;
 
                     (eval_point_0, eval_point_infty)
                 })

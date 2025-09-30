@@ -51,6 +51,13 @@ impl RISCVTrace for LB {
         }
     }
 
+    /// LB loads a byte from memory and sign-extends it to XLEN bits.
+    ///
+    /// The zkVM constraint system requires word-aligned memory access, so loading
+    /// individual bytes requires extracting them from the containing word/doubleword.
+    /// The byte is then sign-extended to fill the destination register.
+    ///
+    /// Different implementations for RV32 and RV64 due to different word sizes.
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,
@@ -64,6 +71,15 @@ impl RISCVTrace for LB {
 }
 
 impl LB {
+    /// RV32 implementation: Extracts and sign-extends a byte from a 32-bit word.
+    ///
+    /// Steps:
+    /// 1. Calculate byte address
+    /// 2. Align to word boundary
+    /// 3. Load the containing word
+    /// 4. Calculate shift amount based on byte position (XOR with 3 for little-endian)
+    /// 5. Shift byte to MSB position
+    /// 6. Arithmetic right shift by 24 to sign-extend to 32 bits
     fn inline_sequence_32(&self, allocator: &VirtualRegisterAllocator) -> Vec<Instruction> {
         let v_address = allocator.allocate();
         let v_word_address = allocator.allocate();
@@ -71,6 +87,7 @@ impl LB {
         let v_shift = allocator.allocate();
 
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit32, allocator);
+
         asm.emit_i::<ADDI>(*v_address, self.operands.rs1, self.operands.imm as u64);
         asm.emit_i::<ANDI>(*v_word_address, *v_address, -4i64 as u64);
         asm.emit_i::<VirtualLW>(*v_word, *v_word_address, 0);
@@ -78,9 +95,19 @@ impl LB {
         asm.emit_i::<SLLI>(*v_shift, *v_shift, 3);
         asm.emit_r::<SLL>(self.operands.rd, *v_word, *v_shift);
         asm.emit_i::<SRAI>(self.operands.rd, self.operands.rd, 24);
+
         asm.finalize()
     }
 
+    /// RV64 implementation: Extracts and sign-extends a byte from a 64-bit doubleword.
+    ///
+    /// Steps:
+    /// 1. Calculate byte address
+    /// 2. Align to doubleword boundary
+    /// 3. Load the containing doubleword
+    /// 4. Calculate shift amount based on byte position (XOR with 7 for little-endian)
+    /// 5. Shift byte to MSB position
+    /// 6. Arithmetic right shift by 56 to sign-extend to 64 bits
     fn inline_sequence_64(&self, allocator: &VirtualRegisterAllocator) -> Vec<Instruction> {
         let v_address = allocator.allocate();
         let v_dword_address = allocator.allocate();
@@ -88,6 +115,7 @@ impl LB {
         let v_shift = allocator.allocate();
 
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit64, allocator);
+
         asm.emit_i::<ADDI>(*v_address, self.operands.rs1, self.operands.imm as u64);
         asm.emit_i::<ANDI>(*v_dword_address, *v_address, -8i64 as u64);
         asm.emit_ld::<LD>(*v_dword, *v_dword_address, 0);
@@ -95,6 +123,7 @@ impl LB {
         asm.emit_i::<SLLI>(*v_shift, *v_shift, 3);
         asm.emit_r::<SLL>(self.operands.rd, *v_dword, *v_shift);
         asm.emit_i::<SRAI>(self.operands.rd, self.operands.rd, 56);
+
         asm.finalize()
     }
 }

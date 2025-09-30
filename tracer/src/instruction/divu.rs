@@ -69,11 +69,20 @@ impl RISCVTrace for DIVU {
 
         let mut trace = trace;
         for instr in inline_sequence {
-            // In each iteration, create a new Option containing a re-borrowed reference
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
 
+    /// DIVU performs unsigned division using untrusted oracle advice.
+    ///
+    /// The zkVM cannot directly compute division, so we receive the quotient and remainder
+    /// as advice from an untrusted oracle, then verify the correctness using constraints:
+    /// 1. dividend = quotient × divisor + remainder
+    /// 2. remainder < divisor (unsigned comparison)
+    /// 3. quotient × divisor does not overflow
+    ///
+    /// Special case per RISC-V spec:
+    /// - Division by zero: returns all 1s (u32::MAX or u64::MAX)
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,
@@ -81,25 +90,32 @@ impl RISCVTrace for DIVU {
     ) -> Vec<Instruction> {
         let a0 = self.operands.rs1; // dividend
         let a1 = self.operands.rs2; // divisor
-        let a2 = allocator.allocate(); // quotient from oracle
-        let a3 = allocator.allocate(); // remainder from oracle
-        let t0 = allocator.allocate();
+        let a2 = allocator.allocate(); // quotient (from oracle)
+        let a3 = allocator.allocate(); // remainder (from oracle)
+        let t0 = allocator.allocate(); // temporary for multiplication
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
 
-        // get advice
-        asm.emit_j::<VirtualAdvice>(*a2, 0);
-        asm.emit_j::<VirtualAdvice>(*a3, 0);
-        // handle special case: if divisor==0, quotient must be all 1s
+        // Get untrusted advice from oracle
+        asm.emit_j::<VirtualAdvice>(*a2, 0); // quotient
+        asm.emit_j::<VirtualAdvice>(*a3, 0); // remainder
+
+        // Handle special case: division by zero
         asm.emit_b::<VirtualAssertValidDiv0>(a1, *a2, 0);
-        // check that quotient * divisor doesn't overflow (unsigned)
+
+        // Verify no overflow: quotient × divisor must not overflow
         asm.emit_b::<VirtualAssertMulUNoOverflow>(*a2, a1, 0);
-        // verify quotient * divisor + remainder == dividend
+
+        // Compute quotient × divisor
         asm.emit_r::<MUL>(*t0, *a2, a1);
+
+        // Verify: dividend = quotient × divisor + remainder
         asm.emit_r::<ADD>(*t0, *t0, *a3);
         asm.emit_b::<VirtualAssertEQ>(*t0, a0, 0);
-        // check remainder < divisor (unsigned)
+
+        // Verify: remainder < divisor (unsigned)
         asm.emit_b::<VirtualAssertValidUnsignedRemainder>(*a3, a1, 0);
-        // move result
+
+        // Move quotient to destination register
         asm.emit_i::<VirtualMove>(self.operands.rd, *a2, 0);
         asm.finalize()
     }

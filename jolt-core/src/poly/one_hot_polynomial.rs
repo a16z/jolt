@@ -18,6 +18,7 @@ use crate::utils::thread::unsafe_allocate_zero_vec;
 use allocative::Allocative;
 use ark_bn254::{G1Affine, G1Projective};
 use ark_ec::CurveGroup;
+use num_traits::Zero;
 use rayon::prelude::*;
 use std::mem;
 use std::sync::{Arc, RwLock};
@@ -205,7 +206,7 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
             let F = &shared_eq_address.F;
             let G = &polynomial.G;
 
-            let univariate_poly_evals: [F; 2] = (0..B.len() / 2)
+            let unreduced_univariate_poly_evals = (0..B.len() / 2)
                 .into_par_iter()
                 .map(|k_prime| {
                     let B_evals = B.sumcheck_evals_array::<2>(k_prime, BindingOrder::HighToLow);
@@ -232,14 +233,20 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
                             |running, new| [running[0] + new[0], running[1] + new[1]],
                         );
 
-                    [B_evals[0] * inner_sum[0], B_evals[1] * inner_sum[1]]
+                    [
+                        B_evals[0].mul_unreduced::<9>(inner_sum[0]),
+                        B_evals[1].mul_unreduced::<9>(inner_sum[1]),
+                    ]
                 })
                 .reduce(
-                    || [F::zero(); 2],
+                    || [F::Unreduced::<9>::zero(); 2],
                     |running, new| [running[0] + new[0], running[1] + new[1]],
                 );
 
-            univariate_poly_evals.to_vec()
+            unreduced_univariate_poly_evals
+                .into_iter()
+                .map(|evals| F::from_montgomery_reduce(evals))
+                .collect()
         } else {
             // T-variable rounds
             let B = &shared_eq_address.B;
@@ -263,21 +270,30 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
             };
 
             let gruen_eval_0 = if d_gruen.E_in_current_len() == 1 {
-                (0..d_gruen.len() / 2)
+                let unreduced_gruen_eval_0 = (0..d_gruen.len() / 2)
                     .into_par_iter()
-                    .map(|j| d_gruen.E_out_current()[j] * ra_eval(j))
-                    .sum()
+                    .map(|j| d_gruen.E_out_current()[j].mul_unreduced::<9>(ra_eval(j)))
+                    .reduce(F::Unreduced::<9>::zero, |running, new| running + new);
+                F::from_montgomery_reduce(unreduced_gruen_eval_0)
             } else {
-                let num_x_out_bits = d_gruen.E_out_current_len().log_2();
                 let d_e_in = d_gruen.E_in_current();
                 let d_e_out = d_gruen.E_out_current();
+                let num_x_in = d_gruen.E_in_current_len();
+                let num_x_out = d_gruen.E_out_current_len();
+                let num_x_out_bits = num_x_out.log_2();
 
-                (0..d_gruen.len() / 2)
+                (0..num_x_in)
                     .into_par_iter()
-                    .map(|j| {
-                        let x_out = j & ((1 << num_x_out_bits) - 1);
-                        let x_in = j >> num_x_out_bits;
-                        d_e_in[x_in] * d_e_out[x_out] * ra_eval(j)
+                    .map(|x_in| {
+                        let unreduced_inner_sum = (0..num_x_out)
+                            .into_par_iter()
+                            .map(|x_out| {
+                                let j = (x_in << num_x_out_bits) | x_out;
+                                d_e_out[x_out].mul_unreduced::<9>(ra_eval(j))
+                            })
+                            .reduce(F::Unreduced::<9>::zero, |running, new| running + new);
+                        let inner_sum = F::from_montgomery_reduce(unreduced_inner_sum);
+                        d_e_in[x_in] * inner_sum
                     })
                     .sum()
             };
@@ -439,7 +455,7 @@ impl<F: JoltField> OneHotPolynomial<F> {
         bases: &[G::Affine],
     ) -> Vec<JoltGroupWrapper<G>> {
         let num_rows = self.num_rows();
-        println!("Committing to one-hot polynomial with {num_rows} rows");
+        tracing::debug!("Committing to one-hot polynomial with {num_rows} rows");
         let row_len = DoryGlobals::get_num_columns();
         let T = DoryGlobals::get_T();
 
