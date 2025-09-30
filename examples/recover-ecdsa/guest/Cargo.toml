@@ -1,0 +1,11 @@
+[package]
+name = "recover-ecdsa-guest"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+guest = []
+
+[dependencies]
+jolt = { package = "jolt-sdk", path = "../../../jolt-sdk" }
+secp256k1 = { version = "0.30", default-features = false, features = ["alloc", "recovery", "serde"] }

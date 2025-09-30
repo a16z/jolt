@@ -1,8 +1,10 @@
-pub const XLEN: usize = 32;
-const RISCV_REGISTER_COUNT: u8 = 32;
-const VIRTUAL_REGISTER_COUNT: u8 = 32; //  see Section 6.1 of Jolt paper
-pub const REGISTER_COUNT: u8 = RISCV_REGISTER_COUNT + VIRTUAL_REGISTER_COUNT;
+pub const XLEN: usize = 64;
+pub const RISCV_REGISTER_COUNT: u8 = 32;
+pub const VIRTUAL_REGISTER_COUNT: u8 = 96; //  see Section 6.1 of Jolt paper
+pub const VIRTUAL_INSTRUCTION_RESERVED_REGISTER_COUNT: u8 = 16; // Reserved virtual registers for virtual instructions
+pub const REGISTER_COUNT: u8 = RISCV_REGISTER_COUNT + VIRTUAL_REGISTER_COUNT; // must be a power of 2
 pub const BYTES_PER_INSTRUCTION: usize = 4;
+pub const ALIGNMENT_FACTOR_BYTECODE: usize = 2;
 
 pub const RAM_START_ADDRESS: u64 = 0x80000000;
 
@@ -17,10 +19,6 @@ pub const STACK_CANARY_SIZE: u64 = 128;
 pub const DEFAULT_MAX_INPUT_SIZE: u64 = 4096;
 pub const DEFAULT_MAX_OUTPUT_SIZE: u64 = 4096;
 pub const DEFAULT_MAX_TRACE_LENGTH: u64 = 1 << 24;
-
-pub const fn virtual_register_index(index: u8) -> u8 {
-    index + VIRTUAL_REGISTER_COUNT
-}
 
 // Layout of the witness (where || denotes concatenation):
 //     inputs || outputs || panic || termination || padding || RAM

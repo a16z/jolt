@@ -7,20 +7,20 @@ use super::PrefixSuffixDecomposition;
 use crate::{field::JoltField, utils::uninterleave_bits};
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct UnsignedLessThanEqualTable<const WORD_SIZE: usize>;
+pub struct UnsignedLessThanEqualTable<const XLEN: usize>;
 
-impl<const WORD_SIZE: usize> JoltLookupTable for UnsignedLessThanEqualTable<WORD_SIZE> {
-    fn materialize_entry(&self, index: u64) -> u64 {
+impl<const XLEN: usize> JoltLookupTable for UnsignedLessThanEqualTable<XLEN> {
+    fn materialize_entry(&self, index: u128) -> u64 {
         let (x, y) = uninterleave_bits(index);
         (x <= y).into()
     }
 
     fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
-        debug_assert_eq!(r.len(), 2 * WORD_SIZE);
+        debug_assert_eq!(r.len(), 2 * XLEN);
 
         let mut lt = F::zero();
         let mut eq = F::one();
-        for i in 0..WORD_SIZE {
+        for i in 0..XLEN {
             let x_i = r[2 * i];
             let y_i = r[2 * i + 1];
             lt += (F::one() - x_i) * y_i * eq;
@@ -31,9 +31,7 @@ impl<const WORD_SIZE: usize> JoltLookupTable for UnsignedLessThanEqualTable<WORD
     }
 }
 
-impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE>
-    for UnsignedLessThanEqualTable<WORD_SIZE>
-{
+impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for UnsignedLessThanEqualTable<XLEN> {
     fn suffixes(&self) -> Vec<Suffixes> {
         vec![Suffixes::One, Suffixes::LessThan, Suffixes::Eq]
     }
@@ -55,6 +53,7 @@ mod test {
     use crate::zkvm::lookup_table::test::{
         lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
     };
+    use common::constants::XLEN;
 
     use super::UnsignedLessThanEqualTable;
 
@@ -65,11 +64,11 @@ mod test {
 
     #[test]
     fn mle_random() {
-        lookup_table_mle_random_test::<Fr, UnsignedLessThanEqualTable<32>>();
+        lookup_table_mle_random_test::<Fr, UnsignedLessThanEqualTable<XLEN>>();
     }
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<Fr, UnsignedLessThanEqualTable<32>>();
+        prefix_suffix_test::<XLEN, Fr, UnsignedLessThanEqualTable<XLEN>>();
     }
 }

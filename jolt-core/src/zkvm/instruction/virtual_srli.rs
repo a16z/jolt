@@ -4,8 +4,8 @@ use crate::zkvm::lookup_table::{virtual_srl::VirtualSRLTable, LookupTables};
 
 use super::{CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS};
 
-impl<const WORD_SIZE: usize> InstructionLookup<WORD_SIZE> for VirtualSRLI {
-    fn lookup_table(&self) -> Option<LookupTables<WORD_SIZE>> {
+impl<const XLEN: usize> InstructionLookup<XLEN> for VirtualSRLI {
+    fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
         Some(VirtualSRLTable.into())
     }
 }
@@ -17,41 +17,42 @@ impl InstructionFlags for VirtualSRLI {
         flags[CircuitFlags::RightOperandIsImm as usize] = true;
         flags[CircuitFlags::WriteLookupOutputToRD as usize] = true;
         flags[CircuitFlags::InlineSequenceInstruction as usize] =
-            self.virtual_sequence_remaining.is_some();
+            self.inline_sequence_remaining.is_some();
         flags[CircuitFlags::DoNotUpdateUnexpandedPC as usize] =
-            self.virtual_sequence_remaining.unwrap_or(0) != 0;
+            self.inline_sequence_remaining.unwrap_or(0) != 0;
+        flags[CircuitFlags::IsCompressed as usize] = self.is_compressed;
         flags
     }
 }
 
-impl<const WORD_SIZE: usize> LookupQuery<WORD_SIZE> for RISCVCycle<VirtualSRLI> {
-    fn to_instruction_inputs(&self) -> (u64, i64) {
-        match WORD_SIZE {
+impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualSRLI> {
+    fn to_instruction_inputs(&self) -> (u64, i128) {
+        match XLEN {
             #[cfg(test)]
             8 => (
                 self.register_state.rs1 as u8 as u64,
-                self.instruction.operands.imm as u8 as i64,
+                self.instruction.operands.imm as u8 as i128,
             ),
             32 => (
                 self.register_state.rs1 as u32 as u64,
-                self.instruction.operands.imm as u32 as i64,
+                self.instruction.operands.imm as u32 as i128,
             ),
             64 => (
                 self.register_state.rs1,
-                self.instruction.operands.imm as i64,
+                self.instruction.operands.imm as i128,
             ),
-            _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
+            _ => panic!("{XLEN}-bit word size is unsupported"),
         }
     }
 
     fn to_lookup_output(&self) -> u64 {
         use crate::utils::lookup_bits::LookupBits;
-        let (x, y) = LookupQuery::<WORD_SIZE>::to_instruction_inputs(self);
-        let mut x = LookupBits::new(x, WORD_SIZE);
-        let mut y = LookupBits::new(y as u64, WORD_SIZE);
+        let (x, y) = LookupQuery::<XLEN>::to_instruction_inputs(self);
+        let mut x = LookupBits::new(x as u128, XLEN);
+        let mut y = LookupBits::new(y as u128, XLEN);
 
         let mut entry = 0;
-        for _ in 0..WORD_SIZE {
+        for _ in 0..XLEN {
             let x_i = x.pop_msb();
             let y_i = y.pop_msb();
             entry *= 1 + y_i as u64;

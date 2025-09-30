@@ -9,11 +9,11 @@ mod tests {
     use crate::poly::commitment::dory::DoryCommitmentScheme;
     use crate::zkvm::dag::jolt_dag::JoltDAG;
     use crate::zkvm::dag::state_manager::StateManager;
-    use crate::zkvm::{Jolt, JoltRV32IM, JoltVerifierPreprocessing};
+    use crate::zkvm::{Jolt, JoltRV64IMAC, JoltVerifierPreprocessing};
     use ark_bn254::Fr;
     use serial_test::serial;
     use tracer;
-    use tracer::instruction::RV32IMCycle;
+    use tracer::instruction::Cycle;
 
     #[test]
     #[serial]
@@ -26,7 +26,7 @@ mod tests {
         trace.truncate(100);
         program_io.outputs[0] = 0; // change the output to 0
 
-        let preprocessing = JoltRV32IM::prover_preprocess(
+        let preprocessing = JoltRV64IMAC::prover_preprocess(
             bytecode.clone(),
             program_io.memory_layout.clone(),
             init_memory_state,
@@ -35,7 +35,7 @@ mod tests {
 
         // Setup trace length and padding
         let padded_trace_length = (trace.len() + 1).next_power_of_two();
-        trace.resize(padded_trace_length, RV32IMCycle::NoOp);
+        trace.resize(padded_trace_length, Cycle::NoOp);
 
         // truncate trailing zeros on device outputs
         program_io.outputs.truncate(
@@ -57,7 +57,7 @@ mod tests {
         let verifier_preprocessing =
             JoltVerifierPreprocessing::<Fr, DoryCommitmentScheme>::from(&preprocessing);
         let _verification_result =
-            JoltRV32IM::verify(&verifier_preprocessing, proof, program_io, None);
+            JoltRV64IMAC::verify(&verifier_preprocessing, proof, program_io, None);
     }
 
     #[test]
@@ -70,7 +70,7 @@ mod tests {
         let (mut trace, final_memory_state, mut program_io) = program.trace(&inputs);
 
         // Since the preprocessing is done with the original memory layout, the verifier should fail
-        let preprocessing = JoltRV32IM::prover_preprocess(
+        let preprocessing = JoltRV64IMAC::prover_preprocess(
             bytecode.clone(),
             program_io.memory_layout.clone(),
             init_memory_state,
@@ -85,7 +85,7 @@ mod tests {
 
         // Setup trace length and padding
         let padded_trace_length = (trace.len() + 1).next_power_of_two();
-        trace.resize(padded_trace_length, RV32IMCycle::NoOp);
+        trace.resize(padded_trace_length, Cycle::NoOp);
 
         // truncate trailing zeros on device outputs
         program_io.outputs.truncate(
@@ -107,6 +107,6 @@ mod tests {
         let verifier_preprocessing =
             JoltVerifierPreprocessing::<Fr, DoryCommitmentScheme>::from(&preprocessing);
         let _verification_result =
-            JoltRV32IM::verify(&verifier_preprocessing, proof, program_io, None);
+            JoltRV64IMAC::verify(&verifier_preprocessing, proof, program_io, None);
     }
 }

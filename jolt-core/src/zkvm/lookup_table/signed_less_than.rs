@@ -7,16 +7,17 @@ use super::JoltLookupTable;
 use super::PrefixSuffixDecomposition;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct SignedLessThanTable<const WORD_SIZE: usize>;
+pub struct SignedLessThanTable<const XLEN: usize>;
 
-impl<const WORD_SIZE: usize> JoltLookupTable for SignedLessThanTable<WORD_SIZE> {
-    fn materialize_entry(&self, index: u64) -> u64 {
+impl<const XLEN: usize> JoltLookupTable for SignedLessThanTable<XLEN> {
+    fn materialize_entry(&self, index: u128) -> u64 {
         let (x, y) = uninterleave_bits(index);
-        match WORD_SIZE {
+        match XLEN {
             #[cfg(test)]
             8 => ((x as i8) < y as i8).into(),
             32 => ((x as i32) < y as i32).into(),
-            _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
+            64 => ((x as i64) < y as i64).into(),
+            _ => panic!("{XLEN}-bit word size is unsupported"),
         }
     }
 
@@ -26,7 +27,7 @@ impl<const WORD_SIZE: usize> JoltLookupTable for SignedLessThanTable<WORD_SIZE> 
 
         let mut lt = F::zero();
         let mut eq = F::one();
-        for i in 0..WORD_SIZE {
+        for i in 0..XLEN {
             let x_i = r[2 * i];
             let y_i = r[2 * i + 1];
             lt += (F::one() - x_i) * y_i * eq;
@@ -37,9 +38,7 @@ impl<const WORD_SIZE: usize> JoltLookupTable for SignedLessThanTable<WORD_SIZE> 
     }
 }
 
-impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE>
-    for SignedLessThanTable<WORD_SIZE>
-{
+impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for SignedLessThanTable<XLEN> {
     fn suffixes(&self) -> Vec<Suffixes> {
         vec![Suffixes::One, Suffixes::LessThan]
     }
@@ -60,6 +59,7 @@ mod test {
     use crate::zkvm::lookup_table::test::{
         lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
     };
+    use common::constants::XLEN;
 
     use super::SignedLessThanTable;
 
@@ -70,11 +70,11 @@ mod test {
 
     #[test]
     fn mle_random() {
-        lookup_table_mle_random_test::<Fr, SignedLessThanTable<32>>();
+        lookup_table_mle_random_test::<Fr, SignedLessThanTable<XLEN>>();
     }
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<Fr, SignedLessThanTable<32>>();
+        prefix_suffix_test::<XLEN, Fr, SignedLessThanTable<XLEN>>();
     }
 }

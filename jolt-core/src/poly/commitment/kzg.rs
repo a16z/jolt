@@ -319,7 +319,6 @@ where
         let c = <P::G1 as VariableBaseMSM>::msm_field_elements(
             &pk.g1_powers()[offset..offset + coeffs.len()],
             coeffs,
-            None,
         )?;
 
         Ok(c)
@@ -376,7 +375,6 @@ where
         let proof = <G::Curve as VariableBaseMSM>::msm_field_elements(
             &powers[..witness_poly.coeffs.len()],
             witness_poly.coeffs.as_slice(),
-            None,
         )?;
         Ok(proof)
     }

@@ -5,15 +5,14 @@ use crate::{
     instruction::format::format_virtual_right_shift_i::FormatVirtualRightShiftI,
 };
 
-use super::{format::InstructionFormat, RISCVInstruction, RISCVTrace};
+use super::{RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name = VirtualSRAI,
     mask = 0,
     match = 0,
     format = FormatVirtualRightShiftI,
-    ram = (),
-    is_virtual = true
+    ram = ()
 );
 
 impl VirtualSRAI {

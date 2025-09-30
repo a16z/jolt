@@ -1,11 +1,21 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{declare_riscv_instr, emulator::cpu::Cpu};
-
-use super::{
-    format::{format_r::FormatR, InstructionFormat},
-    RISCVInstruction, RISCVTrace,
+use super::add::ADD;
+use super::amo::{amo_post32, amo_post64, amo_pre32, amo_pre64};
+use super::mul::MUL;
+use super::sltu::SLTU;
+use super::virtual_move::VirtualMove;
+use super::virtual_zero_extend_word::VirtualZeroExtendWord;
+use super::xori::XORI;
+use super::Instruction;
+use crate::utils::inline_helpers::InstrAssembler;
+use crate::utils::virtual_registers::VirtualRegisterAllocator;
+use crate::{
+    declare_riscv_instr,
+    emulator::cpu::{Cpu, Xlen},
 };
+
+use super::{format::format_r::FormatR, Cycle, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name   = AMOMAXUW,
@@ -42,4 +52,93 @@ impl AMOMAXUW {
     }
 }
 
-impl RISCVTrace for AMOMAXUW {}
+impl RISCVTrace for AMOMAXUW {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
+        let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
+        let mut trace = trace;
+        for instr in inline_sequence {
+            instr.trace(cpu, trace.as_deref_mut());
+        }
+    }
+
+    /// Generates inline sequence for atomic maximum operation (unsigned 32-bit).
+    ///
+    /// AMOMAXU.W atomically loads a 32-bit word from memory, computes the maximum
+    /// of that value and the lower 32 bits of rs2 (treating both as unsigned),
+    /// stores the maximum back to memory, and returns the original value
+    /// sign-extended in rd.
+    ///
+    /// The implementation uses a branchless maximum selection:
+    /// 1. Load and prepare operands with proper zero-extension for comparison
+    /// 2. Use SLTU to compare unsigned values
+    /// 3. Use multiplication with selector bits to choose maximum
+    /// 4. Store result and return original value sign-extended
+    ///
+    /// On RV64, additional complexity arises from:
+    /// - Need to zero-extend both operands for correct unsigned comparison
+    /// - Use amo_pre64/post64 helpers for word alignment within doublewords
+    /// - Proper sign extension of the original value for rd
+    fn inline_sequence(
+        &self,
+        allocator: &VirtualRegisterAllocator,
+        xlen: Xlen,
+    ) -> Vec<Instruction> {
+        let v_rd = allocator.allocate();
+        let v_rs2 = allocator.allocate();
+        let v_sel_rs2 = allocator.allocate();
+        let v_sel_rd = allocator.allocate();
+        let v_tmp = allocator.allocate();
+
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
+
+        match xlen {
+            Xlen::Bit32 => {
+                amo_pre32(&mut asm, self.operands.rs1, *v_rd);
+                asm.emit_i::<VirtualMove>(*v_rs2, self.operands.rs2, 0);
+                asm.emit_i::<VirtualMove>(*v_tmp, *v_rd, 0);
+                asm.emit_r::<SLTU>(*v_sel_rs2, *v_tmp, *v_rs2);
+                asm.emit_i::<XORI>(*v_sel_rd, *v_sel_rs2, 1);
+                asm.emit_r::<MUL>(*v_rs2, *v_sel_rs2, self.operands.rs2);
+                asm.emit_r::<MUL>(*v_tmp, *v_sel_rd, *v_rd);
+                asm.emit_r::<ADD>(*v_rs2, *v_tmp, *v_rs2);
+                amo_post32(&mut asm, *v_rs2, self.operands.rs1, self.operands.rd, *v_rd);
+            }
+            Xlen::Bit64 => {
+                let v_mask = allocator.allocate();
+                let v_dword_address = allocator.allocate();
+                let v_dword = allocator.allocate();
+                let v_word = allocator.allocate();
+                let v_shift = allocator.allocate();
+
+                amo_pre64(
+                    &mut asm,
+                    self.operands.rs1,
+                    *v_rd,
+                    *v_dword_address,
+                    *v_dword,
+                    *v_shift,
+                );
+                asm.emit_i::<VirtualZeroExtendWord>(*v_rs2, self.operands.rs2, 0);
+                asm.emit_i::<VirtualZeroExtendWord>(*v_tmp, *v_rd, 0);
+                asm.emit_r::<SLTU>(*v_sel_rs2, *v_tmp, *v_rs2);
+                asm.emit_i::<XORI>(*v_sel_rd, *v_sel_rs2, 1);
+                asm.emit_r::<MUL>(*v_rs2, *v_sel_rs2, self.operands.rs2);
+                asm.emit_r::<MUL>(*v_tmp, *v_sel_rd, *v_rd);
+                asm.emit_r::<ADD>(*v_rs2, *v_tmp, *v_rs2);
+                amo_post64(
+                    &mut asm,
+                    *v_rs2,
+                    *v_dword_address,
+                    *v_dword,
+                    *v_shift,
+                    *v_mask,
+                    *v_word,
+                    self.operands.rd,
+                    *v_rd,
+                );
+            }
+        }
+
+        asm.finalize()
+    }
+}

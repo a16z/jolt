@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
 use super::{
-    format::{format_i::FormatI, normalize_imm, InstructionFormat},
+    format::{format_i::FormatI, normalize_imm},
     RISCVInstruction, RISCVTrace,
 };
 
@@ -18,7 +18,7 @@ declare_riscv_instr!(
 impl SLTI {
     fn exec(&self, cpu: &mut Cpu, _: &mut <SLTI as RISCVInstruction>::RAMAccess) {
         cpu.x[self.operands.rd as usize] =
-            match cpu.x[self.operands.rs1 as usize] < normalize_imm(self.operands.imm) {
+            match cpu.x[self.operands.rs1 as usize] < normalize_imm(self.operands.imm, &cpu.xlen) {
                 true => 1,
                 false => 0,
             };

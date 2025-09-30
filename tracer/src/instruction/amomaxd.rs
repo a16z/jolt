@@ -1,11 +1,21 @@
+use crate::utils::inline_helpers::InstrAssembler;
+use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use serde::{Deserialize, Serialize};
 
-use crate::{declare_riscv_instr, emulator::cpu::Cpu};
-
-use super::{
-    format::{format_r::FormatR, InstructionFormat},
-    RISCVInstruction, RISCVTrace,
+use super::add::ADD;
+use super::ld::LD;
+use super::mul::MUL;
+use super::sd::SD;
+use super::slt::SLT;
+use super::virtual_move::VirtualMove;
+use super::xori::XORI;
+use super::Instruction;
+use crate::{
+    declare_riscv_instr,
+    emulator::cpu::{Cpu, Xlen},
 };
+
+use super::{format::format_r::FormatR, Cycle, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name   = AMOMAXD,
@@ -42,4 +52,53 @@ impl AMOMAXD {
     }
 }
 
-impl RISCVTrace for AMOMAXD {}
+impl RISCVTrace for AMOMAXD {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
+        let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
+        let mut trace = trace;
+        for instr in inline_sequence {
+            instr.trace(cpu, trace.as_deref_mut());
+        }
+    }
+
+    /// Generates inline sequence for atomic maximum operation (signed 64-bit).
+    ///
+    /// AMOMAX.D atomically loads a 64-bit value from memory, computes the maximum
+    /// of that value and rs2 (treating both as signed), stores the maximum back
+    /// to memory, and returns the original value in rd.
+    ///
+    /// The implementation uses a branchless maximum computation:
+    /// 1. Load the current value from memory
+    /// 2. Compare current value < rs2 to get selector bit (1 if rs2 is larger)
+    /// 3. Invert selector to get bit for current value (1 if current is larger/equal)
+    /// 4. Multiply rs2 by its selector bit (rs2 if larger, 0 otherwise)
+    /// 5. Multiply current by its selector bit (current if larger/equal, 0 otherwise)
+    /// 6. Add the two products to get the maximum
+    /// 7. Store the maximum back to memory
+    /// 8. Return the original value in rd
+    ///
+    /// This branchless approach avoids conditional execution, making it compatible
+    /// with zkVM's constraint system while correctly handling signed comparison.
+    fn inline_sequence(
+        &self,
+        allocator: &VirtualRegisterAllocator,
+        xlen: Xlen,
+    ) -> Vec<Instruction> {
+        let v_rs2 = allocator.allocate();
+        let v_rd = allocator.allocate();
+        let v_sel_rs2 = allocator.allocate();
+        let v_sel_rd = allocator.allocate();
+        let v_tmp = allocator.allocate();
+
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
+        asm.emit_ld::<LD>(*v_rd, self.operands.rs1, 0);
+        asm.emit_r::<SLT>(*v_sel_rs2, *v_rd, self.operands.rs2);
+        asm.emit_i::<XORI>(*v_sel_rd, *v_sel_rs2, 1);
+        asm.emit_r::<MUL>(*v_rs2, *v_sel_rs2, self.operands.rs2);
+        asm.emit_r::<MUL>(*v_tmp, *v_sel_rd, *v_rd);
+        asm.emit_r::<ADD>(*v_rs2, *v_tmp, *v_rs2);
+        asm.emit_s::<SD>(self.operands.rs1, *v_rs2, 0);
+        asm.emit_i::<VirtualMove>(self.operands.rd, *v_rd, 0);
+        asm.finalize()
+    }
+}

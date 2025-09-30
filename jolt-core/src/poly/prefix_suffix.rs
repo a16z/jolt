@@ -2,6 +2,7 @@ use std::ops::{Index, IndexMut};
 use std::sync::{Arc, RwLock};
 
 use allocative::Allocative;
+use num_traits::Zero;
 use once_cell::sync::OnceCell;
 use rayon::prelude::*;
 use strum::{EnumCount, IntoEnumIterator};
@@ -9,10 +10,12 @@ use strum_macros::{EnumCount as EnumCountMacro, EnumIter as EnumIterMacro};
 
 use crate::field::JoltField;
 use crate::poly::dense_mlpoly::DensePolynomial;
-use crate::poly::multilinear_polynomial::{BindingOrder, PolynomialBinding, PolynomialEvaluation};
+use crate::poly::multilinear_polynomial::{
+    BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
+};
 use crate::utils::lookup_bits::LookupBits;
 use crate::utils::math::Math;
-use crate::utils::thread::{unsafe_allocate_zero_vec, unsafe_zero_slice};
+use crate::utils::thread::unsafe_allocate_zero_vec;
 
 #[repr(u8)]
 #[derive(Clone, Copy, EnumIterMacro, EnumCountMacro)]
@@ -74,13 +77,8 @@ impl<T> IndexMut<Prefix> for [T; Prefix::COUNT] {
     }
 }
 
-pub trait CacheablePolynomial<F: JoltField>:
-    PolynomialEvaluation<F> + PolynomialBinding<F> + Send + Sync
-{
-}
-
 pub struct CachedPolynomial<F: JoltField> {
-    pub inner: Box<dyn CacheablePolynomial<F>>,
+    pub inner: MultilinearPolynomial<F>,
     pub sumcheck_evals_cache: Vec<OnceCell<(F, F)>>,
     pub bound_this_round: bool,
 }
@@ -124,7 +122,7 @@ impl<F: JoltField> PolynomialBinding<F> for CachedPolynomial<F> {
 }
 
 impl<F: JoltField> CachedPolynomial<F> {
-    pub fn new(inner: Box<dyn CacheablePolynomial<F>>, cache_capacity: usize) -> Self {
+    pub fn new(inner: MultilinearPolynomial<F>, cache_capacity: usize) -> Self {
         Self {
             inner,
             sumcheck_evals_cache: vec![OnceCell::new(); cache_capacity],
@@ -174,7 +172,7 @@ pub trait PrefixPolynomial<F: JoltField> {
 }
 
 pub trait SuffixPolynomial<F: JoltField> {
-    fn suffix_mle(&self, index: u64, suffix_len: usize) -> u64;
+    fn suffix_mle(&self, b: LookupBits) -> u128;
 }
 
 pub trait PrefixSuffixPolynomial<F: JoltField, const ORDER: usize> {
@@ -240,45 +238,172 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
             .unwrap()
     }
 
-    pub fn reset_Q(&mut self) {
-        self.Q.iter_mut().for_each(|poly| {
-            poly.len = self.chunk_len.pow2();
-            poly.num_vars = self.chunk_len;
-            unsafe_zero_slice(&mut poly.Z);
-        });
-    }
-
+    /// P array is defined as P[x] = prefix(x)
+    /// Read more about prefix-suffix argument in Appendix A of the paper
+    /// https://eprint.iacr.org/2025/611.pdf
+    #[tracing::instrument(skip_all, name = "PrefixSuffix::init_P")]
     pub fn init_P(&mut self, prefix_registry: &mut PrefixRegistry<F>) {
         self.P = self
             .poly
             .prefixes(self.chunk_len, self.phase, prefix_registry);
     }
 
-    #[tracing::instrument(skip_all)]
-    pub fn init_Q<'a, I: IntoIterator<Item = &'a (usize, LookupBits)> + Clone + Send + Sync>(
-        &mut self,
-        u_evals: &[F],
-        indices: I,
-    ) {
-        if self.phase != 0 {
-            self.reset_Q();
-        }
+    /// Q array is defined as Q[x] = \sum_{y \in {0, 1}^m} u(x || y) * suffix(y)
+    /// Read more about prefix-suffix argument in Appendix A of the paper
+    /// https://eprint.iacr.org/2025/611.pdf
+    #[tracing::instrument(skip_all, name = "PrefixSuffix::init_Q")]
+    pub fn init_Q(&mut self, u_evals: &[F], indices: &[(usize, LookupBits)]) {
+        let poly_len = self.chunk_len.pow2();
         let suffix_len = self.suffix_len();
         let suffixes = self.poly.suffixes();
-        self.Q
-            .par_iter_mut()
-            .zip(suffixes.par_iter())
-            .for_each(|(poly, suffix)| {
-                for (j, k) in indices.clone() {
+
+        let num_chunks = rayon::current_num_threads().next_power_of_two();
+        let chunk_size = (indices.len() / num_chunks).max(1);
+
+        let new_Q = indices
+            .par_chunks(chunk_size)
+            .map(|chunk| {
+                let mut chunk_result: [Vec<F::Unreduced<7>>; ORDER] =
+                    std::array::from_fn(|_| unsafe_allocate_zero_vec(poly_len));
+
+                for (j, k) in chunk {
                     let (prefix_bits, suffix_bits) = k.split(suffix_len);
-                    let t = suffix.suffix_mle(suffix_bits.into(), suffix_len);
-                    if t != 0 {
-                        if let Some(u) = u_evals.get(*j) {
-                            poly.Z[prefix_bits % self.chunk_len.pow2()] += (*u).mul_u64(t);
+                    for (suffix, result) in suffixes.iter().zip(chunk_result.iter_mut()) {
+                        let t = suffix.suffix_mle(suffix_bits);
+                        if t != 0 {
+                            if let Some(u) = u_evals.get(*j) {
+                                result[prefix_bits % poly_len] += u.mul_u128_unreduced(t);
+                            }
                         }
                     }
                 }
-            });
+
+                chunk_result
+            })
+            .reduce(
+                || std::array::from_fn(|_| unsafe_allocate_zero_vec(poly_len)),
+                |mut acc, new| {
+                    for (acc_i, new_i) in acc.iter_mut().zip(new.iter()) {
+                        for (acc_coeff, new_coeff) in acc_i.iter_mut().zip(new_i.iter()) {
+                            *acc_coeff += new_coeff;
+                        }
+                    }
+                    acc
+                },
+            );
+
+        let mut reduced_Q: [Vec<F>; ORDER] =
+            std::array::from_fn(|_| unsafe_allocate_zero_vec(poly_len));
+        for (q, reduced_q) in new_Q.iter().zip(reduced_Q.iter_mut()) {
+            for (q_coeff, reduced_q_coeff) in q.iter().zip(reduced_q.iter_mut()) {
+                *reduced_q_coeff = F::from_barrett_reduce(*q_coeff);
+            }
+        }
+
+        self.Q = std::array::from_fn(|i| DensePolynomial::new(std::mem::take(&mut reduced_Q[i])));
+    }
+
+    /// Initialize Q for two PrefixSuffixDecomposition instances in a single pass over indices
+    /// Q array is defined as Q[x] = \sum_{y \in {0, 1}^m} u(x || y) * suffix(y)
+    /// Read more about prefix-suffix argument in Appendix A of the paper
+    /// https://eprint.iacr.org/2025/611.pdf
+    #[tracing::instrument(skip_all)]
+    pub fn init_Q_dual(
+        left: &mut PrefixSuffixDecomposition<F, ORDER>,
+        right: &mut PrefixSuffixDecomposition<F, ORDER>,
+        u_evals: &[F],
+        indices: &[(usize, LookupBits)],
+    ) {
+        debug_assert_eq!(left.chunk_len, right.chunk_len);
+        debug_assert_eq!(left.total_len, right.total_len);
+        debug_assert_eq!(left.phase, right.phase);
+
+        let poly_len = left.chunk_len.pow2();
+        let suffix_len = left.suffix_len();
+        let suffixes_left = left.poly.suffixes();
+        let suffixes_right = right.poly.suffixes();
+
+        let num_chunks = rayon::current_num_threads().next_power_of_two();
+        let chunk_size = (indices.len() / num_chunks).max(1);
+
+        let (new_left, new_right) = indices
+            .par_chunks(chunk_size)
+            .map(|chunk| {
+                let mut chunk_left: [Vec<F::Unreduced<7>>; ORDER] =
+                    std::array::from_fn(|_| unsafe_allocate_zero_vec(poly_len));
+                let mut chunk_right: [Vec<F::Unreduced<7>>; ORDER] =
+                    std::array::from_fn(|_| unsafe_allocate_zero_vec(poly_len));
+
+                for (j, k) in chunk {
+                    let (prefix_bits, suffix_bits) = k.split(suffix_len);
+
+                    // Left accumulators
+                    for (suffix, result) in suffixes_left.iter().zip(chunk_left.iter_mut()) {
+                        let t = suffix.suffix_mle(suffix_bits);
+                        if t != 0 {
+                            if let Some(u) = u_evals.get(*j) {
+                                result[prefix_bits % poly_len] += u.mul_u128_unreduced(t);
+                            }
+                        }
+                    }
+
+                    // Right accumulators
+                    for (suffix, result) in suffixes_right.iter().zip(chunk_right.iter_mut()) {
+                        let t = suffix.suffix_mle(suffix_bits);
+                        if t != 0 {
+                            if let Some(u) = u_evals.get(*j) {
+                                result[prefix_bits % poly_len] += u.mul_u128_unreduced(t);
+                            }
+                        }
+                    }
+                }
+
+                (chunk_left, chunk_right)
+            })
+            .reduce(
+                || {
+                    (
+                        std::array::from_fn(|_| unsafe_allocate_zero_vec(poly_len)),
+                        std::array::from_fn(|_| unsafe_allocate_zero_vec(poly_len)),
+                    )
+                },
+                |(mut acc_l, mut acc_r), (new_l, new_r)| {
+                    for (acc_i, new_i) in acc_l.iter_mut().zip(new_l.iter()) {
+                        for (acc_coeff, new_coeff) in acc_i.iter_mut().zip(new_i.iter()) {
+                            *acc_coeff += new_coeff;
+                        }
+                    }
+                    for (acc_i, new_i) in acc_r.iter_mut().zip(new_r.iter()) {
+                        for (acc_coeff, new_coeff) in acc_i.iter_mut().zip(new_i.iter()) {
+                            *acc_coeff += new_coeff;
+                        }
+                    }
+                    (acc_l, acc_r)
+                },
+            );
+
+        // Reduce to field for left
+        let mut reduced_left: [Vec<F>; ORDER] =
+            std::array::from_fn(|_| unsafe_allocate_zero_vec(poly_len));
+        for (q, reduced_q) in new_left.iter().zip(reduced_left.iter_mut()) {
+            for (q_coeff, reduced_q_coeff) in q.iter().zip(reduced_q.iter_mut()) {
+                *reduced_q_coeff = F::from_barrett_reduce(*q_coeff);
+            }
+        }
+
+        // Reduce to field for right
+        let mut reduced_right: [Vec<F>; ORDER] =
+            std::array::from_fn(|_| unsafe_allocate_zero_vec(poly_len));
+        for (q, reduced_q) in new_right.iter().zip(reduced_right.iter_mut()) {
+            for (q_coeff, reduced_q_coeff) in q.iter().zip(reduced_q.iter_mut()) {
+                *reduced_q_coeff = F::from_barrett_reduce(*q_coeff);
+            }
+        }
+
+        left.Q =
+            std::array::from_fn(|i| DensePolynomial::new(std::mem::take(&mut reduced_left[i])));
+        right.Q =
+            std::array::from_fn(|i| DensePolynomial::new(std::mem::take(&mut reduced_right[i])));
     }
 
     /// Returns evaluation at 0 and at 2 at index
@@ -304,15 +429,24 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
                 let q_left = q[index];
                 let q_right = q[index + len / 2];
                 (
-                    p_evals.0 * q_left,  // prefix(0) * suffix(0)
-                    p_evals.1 * q_left,  // prefix(2) * suffix(0)
-                    p_evals.1 * q_right, // prefix(2) * suffix(1)
+                    p_evals.0.mul_unreduced::<9>(q_left),  // prefix(0) * suffix(0)
+                    p_evals.1.mul_unreduced::<9>(q_left),  // prefix(2) * suffix(0)
+                    p_evals.1.mul_unreduced::<9>(q_right), // prefix(2) * suffix(1)
                 )
             })
             .reduce(
-                || (F::zero(), F::zero(), F::zero()),
+                || {
+                    (
+                        F::Unreduced::<9>::zero(),
+                        F::Unreduced::<9>::zero(),
+                        F::Unreduced::<9>::zero(),
+                    )
+                },
                 |running, new| (running.0 + new.0, running.1 + new.1, running.2 + new.2),
             );
+        let eval_0 = F::from_montgomery_reduce(eval_0);
+        let eval_2_right = F::from_montgomery_reduce(eval_2_right);
+        let eval_2_left = F::from_montgomery_reduce(eval_2_left);
         (eval_0, eval_2_right + eval_2_right - eval_2_left)
     }
 
@@ -334,15 +468,15 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
             .par_iter()
             .zip(self.poly.suffixes().par_iter())
             .map(|(p, suffix)| {
-                let suff = suffix.suffix_mle(0, 0);
+                let suff = suffix.suffix_mle(LookupBits::new(0, 0));
                 if suff == 0 {
                     return F::zero();
                 }
                 if let Some(p) = p {
                     let p = p.read().unwrap();
-                    p.final_sumcheck_claim().mul_u64(suff)
+                    p.final_sumcheck_claim().mul_u128(suff)
                 } else {
-                    F::from_u64(suff)
+                    F::from_u128(suff)
                 }
             })
             .sum()
@@ -408,7 +542,7 @@ pub mod tests {
                 &(0..(1 << (NUM_VARS - PREFIX_LEN * phase)))
                     .map(|_| Fr::ONE)
                     .collect::<Vec<_>>(),
-                indices.iter(),
+                &indices,
             );
 
             for round in (0..PREFIX_LEN).rev() {

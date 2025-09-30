@@ -4,18 +4,17 @@ use sha3::Sha3_256;
 use crate::{
     field::JoltField,
     poly::eq_poly::EqPolynomial,
-    utils::{index_to_field_bitvector, mul_0_1_optimized, thread::unsafe_allocate_zero_vec},
+    utils::{index_to_field_bitvector, thread::unsafe_allocate_zero_vec},
 };
 
-use super::builder::CombinedUniformBuilder;
 use sha3::Digest;
 
+use super::constraints::{Constraint, LC, UNIFORM_R1CS};
 use crate::utils::math::Math;
+use crate::zkvm::r1cs::inputs::JoltR1CSInputs;
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct UniformSpartanKey<F: JoltField> {
-    pub uniform_r1cs: UniformR1CS<F>,
-
     /// Number of constraints across all steps padded to nearest power of 2
     pub num_cons_total: usize,
 
@@ -29,7 +28,7 @@ pub struct UniformSpartanKey<F: JoltField> {
 /// (row, col, value)
 pub type Coeff<F> = (usize, usize, F);
 
-/// Sparse representation of a single R1CS matrix.
+/// (Deprecated) Sparse representation of a single R1CS matrix.
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct SparseConstraints<F: JoltField> {
     /// Non-zero, non-constant coefficients
@@ -48,8 +47,7 @@ impl<F: JoltField> SparseConstraints<F> {
     }
 }
 
-/// Sparse representation of all 3 uniform R1CS matrices. Uniform matrices can be repeated over a number of steps
-/// and efficiently evaluated by taking advantage of the structure.
+/// (Deprecated) Sparse representation of all 3 uniform R1CS matrices.
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct UniformR1CS<F: JoltField> {
     pub a: SparseConstraints<F>,
@@ -63,8 +61,7 @@ pub struct UniformR1CS<F: JoltField> {
     pub num_rows: usize,
 }
 
-/// Represents a single constraint row where the variables are either from the current step (offset = false)
-/// or from the proceeding step (offset = true).
+/// (Optional legacy) Represents a single constraint row with possible offsets.
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug, PartialEq)]
 pub struct SparseEqualityItem<F: JoltField> {
     /// (uniform_col, offset, val)
@@ -83,29 +80,35 @@ impl<F: JoltField> SparseEqualityItem<F> {
 }
 
 impl<F: JoltField> UniformSpartanKey<F> {
-    pub fn from_builder(constraint_builder: &CombinedUniformBuilder<F>) -> Self {
-        let uniform_r1cs = constraint_builder.materialize_uniform();
-
-        let total_rows = constraint_builder.constraint_rows().next_power_of_two();
-        let num_steps = constraint_builder.uniform_repeat().next_power_of_two(); // TODO(JP): Number of steps no longer need to be padded.
-
-        let vk_digest = Self::digest(&uniform_r1cs, num_steps);
-
+    pub fn new(num_steps: usize) -> Self {
+        assert!(num_steps.is_power_of_two());
+        let rows_per_step_padded = Self::num_rows_per_step().next_power_of_two();
+        let total_rows = (num_steps * rows_per_step_padded).next_power_of_two();
+        let vk_digest = Self::digest(num_steps);
         Self {
-            uniform_r1cs,
             num_cons_total: total_rows,
             num_steps,
             vk_digest,
         }
     }
 
+    #[inline]
+    fn num_vars() -> usize {
+        JoltR1CSInputs::num_inputs()
+    }
+
+    #[inline]
+    fn num_rows_per_step() -> usize {
+        UNIFORM_R1CS.len()
+    }
+
     pub fn num_vars_uniform_padded(&self) -> usize {
-        self.uniform_r1cs.num_vars.next_power_of_two()
+        Self::num_vars().next_power_of_two()
     }
 
     /// Number of variables across all steps padded to next power of two.
     pub fn num_vars_total(&self) -> usize {
-        self.num_steps * self.uniform_r1cs.num_vars.next_power_of_two()
+        self.num_steps * Self::num_vars().next_power_of_two()
     }
 
     /// Number of columns across all steps + constant column padded to next power of two.
@@ -120,7 +123,7 @@ impl<F: JoltField> UniformSpartanKey<F> {
     /// Padded number of constraint rows per step.
     pub fn padded_row_constraint_per_step(&self) -> usize {
         // JP: This is redundant with `padded_rows_per_step`. Can we reuse that instead?
-        self.uniform_r1cs.num_rows.next_power_of_two()
+        Self::num_rows_per_step().next_power_of_two()
     }
 
     /// Number of bits needed for all rows.
@@ -136,45 +139,30 @@ impl<F: JoltField> UniformSpartanKey<F> {
     pub fn evaluate_small_matrix_rlc(&self, r_constr: &[F], r_rlc: F) -> Vec<F> {
         assert_eq!(
             r_constr.len(),
-            (self.uniform_r1cs.num_rows + 1).next_power_of_two().log_2()
+            (Self::num_rows_per_step() + 1).next_power_of_two().log_2()
         );
 
-        let eq_rx_constr = EqPolynomial::evals(r_constr);
-        let num_vars_padded = self.uniform_r1cs.num_vars.next_power_of_two();
-        // The constant column is at position num_vars (within the padded allocation)
-        let constant_column = self.uniform_r1cs.num_vars;
+        let eq_rx = EqPolynomial::evals(r_constr);
+        let num_vars = Self::num_vars();
+        let num_vars_padded = num_vars.next_power_of_two();
 
-        // Helper function to evaluate a single small matrix
-        let evaluate_small_matrix = |constraints: &SparseConstraints<F>| -> Vec<F> {
-            // Allocate vector with power-of-2 size
-            let mut evals = unsafe_allocate_zero_vec(num_vars_padded);
+        // Allocate output vector and precompute rlc powers
+        let mut evals = unsafe_allocate_zero_vec(num_vars_padded);
+        let r_sq = r_rlc.square();
 
-            // Evaluate non-constant terms
-            for (row, col, val) in constraints.vars.iter() {
-                evals[*col] += mul_0_1_optimized(val, &eq_rx_constr[*row]);
-            }
+        // Accumulate directly: for each row, add wr * (A_terms + r*B_terms + r^2*C_terms)
+        for (row_idx, row_named) in UNIFORM_R1CS.iter().enumerate() {
+            let row = &row_named.cons;
+            let wr = eq_rx[row_idx];
 
-            // Evaluate constant terms
-            for (row, val) in constraints.consts.iter() {
-                evals[constant_column] += mul_0_1_optimized(val, &eq_rx_constr[*row]);
-            }
+            row.a.accumulate_evaluations(&mut evals, wr, num_vars);
+            row.b
+                .accumulate_evaluations(&mut evals, wr * r_rlc, num_vars);
+            row.c
+                .accumulate_evaluations(&mut evals, wr * r_sq, num_vars);
+        }
 
-            evals
-        };
-
-        // Evaluate A_small, B_small, C_small
-        let a_small_evals = evaluate_small_matrix(&self.uniform_r1cs.a);
-        let b_small_evals = evaluate_small_matrix(&self.uniform_r1cs.b);
-        let c_small_evals = evaluate_small_matrix(&self.uniform_r1cs.c);
-
-        // Compute RLC: A_small + r_rlc * B_small + r_rlc^2 * C_small
-        let r_rlc_sq = r_rlc.square();
-        a_small_evals
-            .iter()
-            .zip(b_small_evals.iter())
-            .zip(c_small_evals.iter())
-            .map(|((a, b), c)| *a + mul_0_1_optimized(b, &r_rlc) + mul_0_1_optimized(c, &r_rlc_sq))
-            .collect()
+        evals
     }
 
     /// (Verifier) Evaluates the full expanded witness vector at 'r' using evaluations of segments.
@@ -188,7 +176,7 @@ impl<F: JoltField> UniformSpartanKey<F> {
         r: &[F],
         with_const: bool,
     ) -> F {
-        assert_eq!(self.uniform_r1cs.num_vars, segment_evals.len());
+        assert_eq!(Self::num_vars(), segment_evals.len());
         assert_eq!(r.len(), self.num_vars_uniform_padded().log_2());
 
         // Variables vector is [vars, ..., 1, ...] where ... denotes padding to power of 2
@@ -196,14 +184,13 @@ impl<F: JoltField> UniformSpartanKey<F> {
         let var_bits = num_vars.log_2();
 
         let eq_ry_var = EqPolynomial::evals(r);
-        let eval_variables: F = (0..self.uniform_r1cs.num_vars)
+        let eval_variables: F = (0..Self::num_vars())
             .map(|var_index| eq_ry_var[var_index] * segment_evals[var_index])
             .sum();
 
         // Evaluate at the constant position if it exists within the padded space
-        let const_eval = if self.uniform_r1cs.num_vars < num_vars && with_const {
-            let const_position_bits =
-                index_to_field_bitvector(self.uniform_r1cs.num_vars as u64, var_bits);
+        let const_eval = if Self::num_vars() < num_vars && with_const {
+            let const_position_bits = index_to_field_bitvector(Self::num_vars() as u128, var_bits);
             EqPolynomial::mle(r, &const_position_bits)
         } else {
             F::zero()
@@ -214,57 +201,73 @@ impl<F: JoltField> UniformSpartanKey<F> {
 
     /// Evaluate uniform matrix A at a specific point (rx_constr, ry_var)
     pub fn evaluate_uniform_a_at_point(&self, rx_constr: &[F], ry_var: &[F]) -> F {
-        self.evaluate_uniform_matrix_at_point(&self.uniform_r1cs.a, rx_constr, ry_var)
+        self.evaluate_uniform_matrix_at_point(|row| &row.a, rx_constr, ry_var)
     }
 
     /// Evaluate uniform matrix B at a specific point (rx_constr, ry_var)
     pub fn evaluate_uniform_b_at_point(&self, rx_constr: &[F], ry_var: &[F]) -> F {
-        self.evaluate_uniform_matrix_at_point(&self.uniform_r1cs.b, rx_constr, ry_var)
+        self.evaluate_uniform_matrix_at_point(|row| &row.b, rx_constr, ry_var)
     }
 
     /// Evaluate uniform matrix C at a specific point (rx_constr, ry_var)
     pub fn evaluate_uniform_c_at_point(&self, rx_constr: &[F], ry_var: &[F]) -> F {
-        self.evaluate_uniform_matrix_at_point(&self.uniform_r1cs.c, rx_constr, ry_var)
+        self.evaluate_uniform_matrix_at_point(|row| &row.c, rx_constr, ry_var)
     }
 
     /// Helper function to evaluate a uniform matrix at a specific point
     fn evaluate_uniform_matrix_at_point(
         &self,
-        constraints: &SparseConstraints<F>,
+        select: impl Fn(&Constraint) -> &LC,
         rx_constr: &[F],
         ry_var: &[F],
     ) -> F {
-        let mut eval = F::zero();
+        // Precompute eq tables for rows and columns once
+        let eq_rx = EqPolynomial::evals(rx_constr);
+        let eq_ry = EqPolynomial::evals(ry_var);
 
-        // Evaluate non-constant terms
-        for (row, col, val) in constraints.vars.iter() {
-            let row_bits = index_to_field_bitvector(*row as u64, rx_constr.len());
-            let col_bits = index_to_field_bitvector(*col as u64, ry_var.len());
-            eval += *val
-                * EqPolynomial::mle(rx_constr, &row_bits)
-                * EqPolynomial::mle(ry_var, &col_bits);
+        let num_vars = JoltR1CSInputs::num_inputs();
+
+        debug_assert!(UNIFORM_R1CS.len() <= eq_rx.len());
+        debug_assert!(num_vars < eq_ry.len());
+
+        let mut acc = F::zero();
+        for (row_idx, row_named) in UNIFORM_R1CS.iter().enumerate() {
+            let row = &row_named.cons;
+            let wr = eq_rx[row_idx];
+            let lc = select(row);
+            let col_contrib = lc.dot_eq_ry::<F>(&eq_ry, num_vars);
+            acc += wr * col_contrib;
         }
 
-        // Evaluate constant terms
-        let constant_column = self.uniform_r1cs.num_vars;
-        let const_col_bits = index_to_field_bitvector(constant_column as u64, ry_var.len());
-        let eq_ry_const = EqPolynomial::mle(ry_var, &const_col_bits);
-
-        for (row, val) in constraints.consts.iter() {
-            let row_bits = index_to_field_bitvector(*row as u64, rx_constr.len());
-            eval += *val * EqPolynomial::mle(rx_constr, &row_bits) * eq_ry_const;
-        }
-
-        eval
+        acc
     }
 
-    /// Returns the digest of the r1cs shape
-    fn digest(uniform_r1cs: &UniformR1CS<F>, num_steps: usize) -> F {
-        let mut hash_bytes = Vec::new();
-        uniform_r1cs.serialize_compressed(&mut hash_bytes).unwrap();
-        hash_bytes.extend(num_steps.to_be_bytes().to_vec());
+    /// Returns the digest of the R1CS "shape" derived from compile-time constants
+    /// Canonical serialization of constants:
+    /// - domain tag
+    /// - num_steps (u64 BE)
+    /// - num_vars (u32 BE)
+    /// - for each row in UNIFORM_R1CS:
+    ///   - tag 'A' | row.a terms (sorted by input_index asc) + const term
+    ///   - tag 'B' | row.b terms (sorted by input_index asc) + const term
+    ///   - tag 'C' | row.c terms (sorted by input_index asc) + const term
+    fn digest(num_steps: usize) -> F {
+        let mut bytes: Vec<u8> = Vec::new();
+        bytes.extend_from_slice(b"JOLT_UNIFORM_R1CS");
+        bytes.extend_from_slice(&num_steps.to_be_bytes());
+
+        let num_vars: u32 = JoltR1CSInputs::num_inputs() as u32;
+        bytes.extend_from_slice(&num_vars.to_be_bytes());
+
+        for row_named in UNIFORM_R1CS.iter() {
+            let row = &row_named.cons;
+            row.a.serialize_canonical(b'A', &mut bytes);
+            row.b.serialize_canonical(b'B', &mut bytes);
+            row.c.serialize_canonical(b'C', &mut bytes);
+        }
+
         let mut hasher = Sha3_256::new();
-        hasher.update(hash_bytes);
+        hasher.update(&bytes);
 
         let map_to_field = |digest: &[u8]| -> F {
             let bv = (0..250).map(|i| {

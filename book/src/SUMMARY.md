@@ -38,7 +38,6 @@
         - [Jolt 0.1.0](./how/appendix/jolt-classic.md)
         - [Additional resources](./how/appendix/resources.md)
 - [Roadmap](./roadmap/roadmap.md)
-    - [64-bit RISC-V (RV64)](./roadmap/rv64.md)
     - [Streaming](./roadmap/streaming.md)
     - [Recursion](./roadmap/recursion.md)
     - [Zero Knowledge](./roadmap/zk.md)

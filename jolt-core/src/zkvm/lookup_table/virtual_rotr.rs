@@ -9,17 +9,17 @@ use crate::utils::uninterleave_bits;
 use crate::zkvm::lookup_table::prefixes::Prefixes;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct VirtualRotrTable<const WORD_SIZE: usize>;
+pub struct VirtualRotrTable<const XLEN: usize>;
 
-impl<const WORD_SIZE: usize> JoltLookupTable for VirtualRotrTable<WORD_SIZE> {
-    fn materialize_entry(&self, index: u64) -> u64 {
+impl<const XLEN: usize> JoltLookupTable for VirtualRotrTable<XLEN> {
+    fn materialize_entry(&self, index: u128) -> u64 {
         let (x_bits, y_bits) = uninterleave_bits(index);
 
         let mut prod_one_plus_y = 1;
         let mut first_sum = 0;
         let mut second_sum = 0;
 
-        (0..WORD_SIZE).rev().for_each(|i| {
+        (0..XLEN).rev().for_each(|i| {
             let x = x_bits >> i & 1;
             let y = y_bits >> i & 1;
             first_sum *= 1 + y;
@@ -28,12 +28,12 @@ impl<const WORD_SIZE: usize> JoltLookupTable for VirtualRotrTable<WORD_SIZE> {
             prod_one_plus_y *= 1 + y;
         });
 
-        (first_sum + second_sum) as u64
+        first_sum + second_sum
     }
 
     fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
         assert_eq!(r.len() % 2, 0, "r must have even length");
-        assert_eq!(r.len() / 2, WORD_SIZE, "r must have length 2 * WORD_SIZE");
+        assert_eq!(r.len() / 2, XLEN, "r must have length 2 * XLEN");
 
         let mut prod_one_plus_y = F::one();
         let mut first_sum = F::zero();
@@ -50,7 +50,7 @@ impl<const WORD_SIZE: usize> JoltLookupTable for VirtualRotrTable<WORD_SIZE> {
 
             // Update second_sum
             second_sum +=
-                r_x * (F::one() - r_y) * prod_one_plus_y * F::from_u64(1 << (WORD_SIZE - 1 - i));
+                r_x * (F::one() - r_y) * prod_one_plus_y * F::from_u64(1 << (XLEN - 1 - i));
 
             // Update prod_one_plus_y for next iteration
             prod_one_plus_y *= F::one() + r_y;
@@ -60,7 +60,7 @@ impl<const WORD_SIZE: usize> JoltLookupTable for VirtualRotrTable<WORD_SIZE> {
     }
 }
 
-impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE> for VirtualRotrTable<WORD_SIZE> {
+impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for VirtualRotrTable<XLEN> {
     fn suffixes(&self) -> Vec<Suffixes> {
         vec![
             Suffixes::RightShiftHelper,
@@ -80,7 +80,7 @@ impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE> for VirtualRot
     }
 
     #[cfg(test)]
-    fn random_lookup_index(rng: &mut rand::rngs::StdRng) -> u64 {
+    fn random_lookup_index(rng: &mut rand::rngs::StdRng) -> u128 {
         super::test::gen_bitmask_lookup_index(rng)
     }
 }
@@ -93,6 +93,7 @@ mod test {
     use crate::zkvm::lookup_table::test::{
         lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
     };
+    use common::constants::XLEN;
 
     #[test]
     fn mle_full_hypercube() {
@@ -101,11 +102,11 @@ mod test {
 
     #[test]
     fn mle_random() {
-        lookup_table_mle_random_test::<Fr, VirtualRotrTable<32>>();
+        lookup_table_mle_random_test::<Fr, VirtualRotrTable<XLEN>>();
     }
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<Fr, VirtualRotrTable<32>>();
+        prefix_suffix_test::<XLEN, Fr, VirtualRotrTable<XLEN>>();
     }
 }

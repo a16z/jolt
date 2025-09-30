@@ -17,7 +17,8 @@ use std::process::Command;
 use std::str::FromStr;
 use std::{fs, io};
 use tracer::emulator::memory::Memory;
-use tracer::instruction::{RV32IMCycle, RV32IMInstruction};
+use tracer::instruction::{Cycle, Instruction};
+use tracing::info;
 
 impl Program {
     pub fn new(guest: &str) -> Self {
@@ -78,23 +79,44 @@ impl Program {
 
             self.save_linker();
 
-            let rust_flags = [
-                "-C",
-                &format!("link-arg=-T{}", self.linker_path()),
-                "-C",
-                "passes=lower-atomic",
-                "-C",
-                "panic=abort",
-                "-C",
-                "strip=symbols",
-                "-C",
-                "opt-level=z",
+            let mut rust_flags = vec![
+                "-C".to_string(),
+                format!("link-arg=-T{}", self.linker_path()),
+                "-C".to_string(),
+                "passes=lower-atomic".to_string(),
+                "-C".to_string(),
+                "panic=abort".to_string(),
             ];
 
-            let target_triple = if self.std {
-                "riscv32im-jolt-zkvm-elf"
+            // Check environment variable for debug symbols
+            let debug_symbols = std::env::var("JOLT_BACKTRACE")
+                .map(|v| v == "1" || v.to_lowercase() == "full" || v.to_lowercase() == "true")
+                .unwrap_or(false);
+
+            // Build with debug info when debug symbols enabled
+            if debug_symbols {
+                rust_flags.push("-C".to_string());
+                rust_flags.push("debuginfo=2".to_string());
+                rust_flags.push("-C".to_string());
+                rust_flags.push("strip=none".to_string());
             } else {
-                "riscv32im-unknown-none-elf"
+                rust_flags.push("-C".to_string());
+                rust_flags.push("debuginfo=0".to_string());
+                rust_flags.push("-C".to_string());
+                rust_flags.push("strip=symbols".to_string());
+            }
+
+            rust_flags.extend_from_slice(&[
+                "-C".to_string(),
+                "opt-level=z".to_string(),
+                "--cfg".to_string(),
+                "getrandom_backend=\"custom\"".to_string(),
+            ]);
+
+            let target_triple = if self.std {
+                "riscv64imac-jolt-zkvm-elf"
+            } else {
+                "riscv64imac-unknown-none-elf"
             };
 
             let mut envs = vec![("CARGO_ENCODED_RUSTFLAGS", rust_flags.join("\x1f"))];
@@ -131,6 +153,20 @@ impl Program {
             });
             envs.push((&cc_env_var, cc_value));
 
+            let cc_env_var = format!("CFLAGS_{target_triple}");
+            let cc_value = std::env::var(&cc_env_var).unwrap_or_else(|_| {
+                #[cfg(target_os = "linux")]
+                {
+                    "-mcmodel=medany".to_string()
+                }
+                #[cfg(not(target_os = "linux"))]
+                {
+                    // Default fallback for other platforms
+                    "".to_string()
+                }
+            });
+            envs.push((&cc_env_var, cc_value));
+
             let args = [
                 "build",
                 "--release",
@@ -144,6 +180,9 @@ impl Program {
                 target_triple,
             ];
 
+            let cmd_line = compose_command_line("cargo", &envs, &args);
+            info!("\n{cmd_line}");
+
             let output = Command::new("cargo")
                 .envs(envs.clone())
                 .args(args)
@@ -152,14 +191,21 @@ impl Program {
 
             if !output.status.success() {
                 io::stderr().write_all(&output.stderr).unwrap();
-                let cmd_line = compose_command_line("cargo", &envs, &args);
                 let output_msg = format!("::build command: \n{cmd_line}\n");
                 io::stderr().write_all(output_msg.as_bytes()).unwrap();
                 panic!("failed to compile guest");
             }
 
-            let elf = format!("{}/{}/release/{}", target, target_triple, self.guest);
-            self.elf = Some(PathBuf::from_str(&elf).unwrap());
+            let elf_path = format!("{}/{}/release/{}", target, target_triple, self.guest);
+
+            // Store the main ELF path
+            self.elf = Some(PathBuf::from_str(&elf_path).unwrap());
+
+            if debug_symbols {
+                info!("Built guest binary with debug symbols: {elf_path}");
+            } else {
+                info!("Built guest binary: {elf_path}");
+            }
         }
     }
 
@@ -175,7 +221,7 @@ impl Program {
         }
     }
 
-    pub fn decode(&mut self) -> (Vec<RV32IMInstruction>, Vec<(u64, u8)>, u64) {
+    pub fn decode(&mut self) -> (Vec<Instruction>, Vec<(u64, u8)>, u64) {
         self.build(DEFAULT_TARGET_DIR);
         let elf = self.elf.as_ref().unwrap();
         let mut elf_file =
@@ -187,14 +233,14 @@ impl Program {
 
     // TODO(moodlezoup): Make this generic over InstructionSet
     #[tracing::instrument(skip_all, name = "Program::trace")]
-    pub fn trace(&mut self, inputs: &[u8]) -> (Vec<RV32IMCycle>, Memory, JoltDevice) {
+    pub fn trace(&mut self, inputs: &[u8]) -> (Vec<Cycle>, Memory, JoltDevice) {
         self.build(DEFAULT_TARGET_DIR);
         let elf = self.elf.as_ref().unwrap();
         let mut elf_file =
             File::open(elf).unwrap_or_else(|_| panic!("could not open elf file: {elf:?}"));
         let mut elf_contents = Vec::new();
         elf_file.read_to_end(&mut elf_contents).unwrap();
-        let (_, _, program_end) = tracer::decode(&elf_contents);
+        let (_, _, program_end, _) = tracer::decode(&elf_contents);
         let program_size = program_end - RAM_START_ADDRESS;
 
         let memory_config = MemoryConfig {
@@ -204,7 +250,8 @@ impl Program {
             max_output_size: self.max_output_size,
             program_size: Some(program_size),
         };
-        guest::program::trace(&elf_contents, inputs, &memory_config)
+
+        guest::program::trace(&elf_contents, self.elf.as_ref(), inputs, &memory_config)
     }
 
     #[tracing::instrument(skip_all, name = "Program::trace_to_file")]
@@ -215,7 +262,7 @@ impl Program {
             File::open(elf).unwrap_or_else(|_| panic!("could not open elf file: {elf:?}"));
         let mut elf_contents = Vec::new();
         elf_file.read_to_end(&mut elf_contents).unwrap();
-        let (_, _, program_end) = tracer::decode(&elf_contents);
+        let (_, _, program_end, _) = tracer::decode(&elf_contents);
         let program_size = program_end - RAM_START_ADDRESS;
         let memory_config = MemoryConfig {
             memory_size: self.memory_size,
@@ -224,7 +271,14 @@ impl Program {
             max_output_size: self.max_output_size,
             program_size: Some(program_size),
         };
-        tracer::trace_to_file(&elf_contents, inputs, &memory_config, trace_file)
+
+        tracer::trace_to_file(
+            &elf_contents,
+            self.elf.as_ref(),
+            inputs,
+            &memory_config,
+            trace_file,
+        )
     }
 
     pub fn trace_analyze<F: JoltField>(mut self, inputs: &[u8]) -> ProgramSummary {

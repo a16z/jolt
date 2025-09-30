@@ -1,11 +1,21 @@
+use crate::utils::inline_helpers::InstrAssembler;
+use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use serde::{Deserialize, Serialize};
 
-use crate::{declare_riscv_instr, emulator::cpu::Cpu};
-
-use super::{
-    format::{format_r::FormatR, InstructionFormat},
-    RISCVInstruction, RISCVTrace,
+use super::add::ADD;
+use super::ld::LD;
+use super::mul::MUL;
+use super::sd::SD;
+use super::sltu::SLTU;
+use super::virtual_move::VirtualMove;
+use super::xori::XORI;
+use super::Instruction;
+use crate::{
+    declare_riscv_instr,
+    emulator::cpu::{Cpu, Xlen},
 };
+
+use super::{format::format_r::FormatR, Cycle, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name   = AMOMINUD,
@@ -42,4 +52,44 @@ impl AMOMINUD {
     }
 }
 
-impl RISCVTrace for AMOMINUD {}
+impl RISCVTrace for AMOMINUD {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
+        let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
+        let mut trace = trace;
+        for instr in inline_sequence {
+            instr.trace(cpu, trace.as_deref_mut());
+        }
+    }
+
+    /// Generates inline sequence for atomic minimum operation (unsigned 64-bit).
+    ///
+    /// AMOMINU.D atomically loads a 64-bit value from memory, computes the minimum
+    /// of that value and rs2 (treating both as unsigned), stores the minimum back
+    /// to memory, and returns the original value in rd.
+    ///
+    /// Uses same branchless approach as AMOMIN.D but with unsigned comparison:
+    /// - SLTU instead of SLT for unsigned comparison
+    /// - Otherwise identical multiplication-based selection logic
+    fn inline_sequence(
+        &self,
+        allocator: &VirtualRegisterAllocator,
+        xlen: Xlen,
+    ) -> Vec<Instruction> {
+        let v_rs2 = allocator.allocate();
+        let v_rd = allocator.allocate();
+        let v_sel_rs2 = allocator.allocate();
+        let v_sel_rd = allocator.allocate();
+        let v_tmp = allocator.allocate();
+
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
+        asm.emit_ld::<LD>(*v_rd, self.operands.rs1, 0);
+        asm.emit_r::<SLTU>(*v_sel_rs2, self.operands.rs2, *v_rd);
+        asm.emit_i::<XORI>(*v_sel_rd, *v_sel_rs2, 1);
+        asm.emit_r::<MUL>(*v_rs2, *v_sel_rs2, self.operands.rs2);
+        asm.emit_r::<MUL>(*v_tmp, *v_sel_rd, *v_rd);
+        asm.emit_r::<ADD>(*v_rs2, *v_tmp, *v_rs2);
+        asm.emit_s::<SD>(self.operands.rs1, *v_rs2, 0);
+        asm.emit_i::<VirtualMove>(self.operands.rd, *v_rd, 0);
+        asm.finalize()
+    }
+}

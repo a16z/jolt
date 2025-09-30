@@ -9,3 +9,10 @@ RUN <<-'EOF' bash
 	curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sed 's#/proc/self/exe#\/bin\/sh#g' | sh -s -- -y --no-update-default-toolchain 1>/dev/null
 	rm -rf /var/lib/apt/lists/*
 EOF
+
+RUN <<-'EOF' bash
+	set -eu -o pipefail
+	mkdir -p ~/.config/pip && printf "[global]\nbreak-system-packages = true\n" > ~/.config/pip/pip.conf
+EOF
+
+ENV PATH="/opt/riscv/bin/:$PATH"

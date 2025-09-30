@@ -1,18 +1,15 @@
-use common::constants::virtual_register_index;
+use crate::utils::inline_helpers::InstrAssembler;
+use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     declare_riscv_instr,
     emulator::cpu::{Cpu, Xlen},
-    instruction::mul::MUL,
 };
 
 use super::{
-    add::ADD,
-    format::{format_i::FormatI, format_r::FormatR, InstructionFormat},
-    mulhu::MULHU,
-    virtual_movsign::VirtualMovsign,
-    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction, VirtualInstructionSequence,
+    add::ADD, andi::ANDI, format::format_r::FormatR, mul::MUL, mulhu::MULHU, sltu::SLTU,
+    virtual_movsign::VirtualMovsign, xor::XOR, Cycle, Instruction, RISCVInstruction, RISCVTrace,
 };
 
 declare_riscv_instr!(
@@ -41,82 +38,41 @@ impl MULHSU {
 }
 
 impl RISCVTrace for MULHSU {
-    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let virtual_sequence = self.virtual_sequence();
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
+        let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
-        for instr in virtual_sequence {
-            // In each iteration, create a new Option containing a re-borrowed reference
+        for instr in inline_sequence {
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
-}
 
-impl VirtualInstructionSequence for MULHSU {
-    fn virtual_sequence(&self) -> Vec<RV32IMInstruction> {
-        // MULHSU implements signed-unsigned multiplication: rs1 (signed) × rs2 (unsigned)
-        //
-        // For negative rs1, two's complement encoding means:
-        // rs1_unsigned = rs1 + 2^32 (when rs1 < 0)
-        //
-        // Therefore:
-        // MULHU(rs1_unsigned, rs2) = upper_bits((rs1 + 2^32) × rs2)
-        //                          = upper_bits(rs1 × rs2 + 2^32 × rs2)
-        //                          = upper_bits(rs1 × rs2) + rs2
-        //                          = MULHSU(rs1, rs2) + rs2
-        //
-        // So: MULHSU(rs1, rs2) = MULHU(rs1_unsigned, rs2) - rs2
+    fn inline_sequence(
+        &self,
+        allocator: &VirtualRegisterAllocator,
+        xlen: Xlen,
+    ) -> Vec<Instruction> {
+        let v_sx = allocator.allocate();
+        let v_sx_0 = allocator.allocate();
+        let v_rs1 = allocator.allocate();
+        let v_hi = allocator.allocate();
+        let v_lo = allocator.allocate();
+        let v_tmp = allocator.allocate();
+        let v_carry = allocator.allocate();
 
-        // Virtual registers used in sequence
-        let v_sx = virtual_register_index(0);
-        let v_1 = virtual_register_index(1);
-        let v_2 = virtual_register_index(2);
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
 
-        let mut sequence = vec![];
+        asm.emit_i::<VirtualMovsign>(*v_sx, self.operands.rs1, 0);
+        asm.emit_i::<ANDI>(*v_sx_0, *v_sx, 1);
+        asm.emit_r::<XOR>(*v_rs1, self.operands.rs1, *v_sx);
+        asm.emit_r::<ADD>(*v_rs1, *v_rs1, *v_sx_0);
+        asm.emit_r::<MULHU>(*v_hi, *v_rs1, self.operands.rs2);
+        asm.emit_r::<MUL>(*v_lo, *v_rs1, self.operands.rs2);
+        asm.emit_r::<XOR>(*v_hi, *v_hi, *v_sx);
+        asm.emit_r::<XOR>(*v_lo, *v_lo, *v_sx);
+        asm.emit_r::<ADD>(*v_tmp, *v_lo, *v_sx_0);
+        asm.emit_r::<SLTU>(*v_carry, *v_tmp, *v_lo);
+        asm.emit_r::<ADD>(self.operands.rd, *v_hi, *v_carry);
 
-        let movsign = VirtualMovsign {
-            address: self.address,
-            operands: FormatI {
-                rd: v_sx,
-                rs1: self.operands.rs1,
-                imm: 0,
-            },
-            virtual_sequence_remaining: Some(3),
-        };
-        sequence.push(movsign.into());
-
-        let mulhu = MULHU {
-            address: self.address,
-            operands: FormatR {
-                rd: v_1,
-                rs1: self.operands.rs1,
-                rs2: self.operands.rs2,
-            },
-            virtual_sequence_remaining: Some(2),
-        };
-        sequence.push(mulhu.into());
-
-        let mulu = MUL {
-            address: self.address,
-            operands: FormatR {
-                rd: v_2,
-                rs1: v_sx,
-                rs2: self.operands.rs2,
-            },
-            virtual_sequence_remaining: Some(1),
-        };
-        sequence.push(mulu.into());
-
-        let add = ADD {
-            address: self.address,
-            operands: FormatR {
-                rd: self.operands.rd,
-                rs1: v_1,
-                rs2: v_2,
-            },
-            virtual_sequence_remaining: Some(0),
-        };
-        sequence.push(add.into());
-
-        sequence
+        asm.finalize()
     }
 }

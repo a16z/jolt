@@ -33,7 +33,7 @@ pub fn install_toolchain() -> Result<()> {
             remove_archive()?;
             link_toolchain(channel)?;
             write_tag_file()?;
-            println!(
+            tracing::info!(
                 "\"{channel}-jolt-{TOOLCHAIN_VERSION}\" toolchain installed successfully at {:?}",
                 jolt_dir()
             );
@@ -45,7 +45,7 @@ pub fn install_toolchain() -> Result<()> {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn install_no_std_toolchain() -> Result<()> {
     std::process::Command::new("rustup")
-        .args(["target", "add", "riscv32im-unknown-none-elf"])
+        .args(["target", "add", "riscv64imac-unknown-none-elf"])
         .output()?;
     std::process::Command::new("rustup")
         .args(["target", "add", "riscv64imac-unknown-none-elf"])
@@ -60,12 +60,14 @@ where
     E: Future<Output = Result<T>>,
 {
     for i in 0..times {
-        println!("Attempt {}/{}", i + 1, times);
+        tracing::info!("Attempt {}/{}", i + 1, times);
         match f().await {
             Ok(t) => return Ok(t),
             Err(e) => {
                 let timeout = delay_timeout(i, base_ms);
-                println!("Toolchain download error {i}/{times}: {e}. Retrying in {timeout}ms");
+                tracing::warn!(
+                    "Toolchain download error {i}/{times}: {e}. Retrying in {timeout}ms"
+                );
                 tokio::time::sleep(std::time::Duration::from_millis(timeout)).await;
             }
         }
@@ -234,13 +236,13 @@ fn toolchain_url(channel: &str) -> String {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn uninstall_no_std_toolchain() -> Result<()> {
     std::process::Command::new("rustup")
-        .args(["target", "remove", "riscv32im-unknown-none-elf"])
+        .args(["target", "remove", "riscv64imac-unknown-none-elf"])
         .output()?;
     std::process::Command::new("rustup")
         .args(["target", "remove", "riscv64imac-unknown-none-elf"])
         .output()?;
 
-    println!("\"riscv\" toolchains uninstalled successfully");
+    tracing::info!("\"riscv\" toolchains uninstalled successfully");
     Ok(())
 }
 
@@ -248,7 +250,7 @@ pub fn uninstall_no_std_toolchain() -> Result<()> {
 /// Uninstalls the toolchain if it is already installed
 pub fn uninstall_toolchain() -> Result<()> {
     if !has_toolchain() {
-        println!("Toolchain is not installed");
+        tracing::info!("Toolchain is not installed");
         return Ok(());
     }
 
@@ -282,7 +284,7 @@ pub fn uninstall_toolchain() -> Result<()> {
         fs::remove_file(&tag_file)?;
     }
 
-    println!("\"Jolt\" toolchain uninstalled successfully");
+    tracing::info!("\"Jolt\" toolchain uninstalled successfully");
     Ok(())
 }
 

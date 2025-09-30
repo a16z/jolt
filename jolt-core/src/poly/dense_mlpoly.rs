@@ -6,8 +6,8 @@ use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::utils::{compute_dotproduct, compute_dotproduct_low_optimized};
 
 use crate::field::{JoltField, OptimizedMul};
-use crate::poly::compact_polynomial::SmallScalar;
 use crate::utils::math::Math;
+use crate::utils::small_scalar::SmallScalar;
 use allocative::Allocative;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use core::ops::Index;
@@ -446,6 +446,15 @@ impl<F: JoltField> DensePolynomial<F> {
                                 acc += p.coeffs[i].field_mul(*coeff);
                             }
                             MultilinearPolynomial::I64Scalars(p) => {
+                                acc += p.coeffs[i].field_mul(*coeff);
+                            }
+                            MultilinearPolynomial::U128Scalars(p) => {
+                                acc += p.coeffs[i].field_mul(*coeff);
+                            }
+                            MultilinearPolynomial::I128Scalars(p) => {
+                                acc += p.coeffs[i].field_mul(*coeff);
+                            }
+                            MultilinearPolynomial::S128Scalars(p) => {
                                 acc += p.coeffs[i].field_mul(*coeff);
                             }
                             _ => unreachable!(),

@@ -1,4 +1,5 @@
-use common::constants::virtual_register_index;
+use crate::utils::inline_helpers::InstrAssembler;
+use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -7,13 +8,8 @@ use crate::{
 };
 
 use super::{
-    format::{
-        format_i::FormatI, format_r::FormatR,
-        format_virtual_right_shift_r::FormatVirtualRightShiftR, InstructionFormat,
-    },
-    virtual_shift_right_bitmask::VirtualShiftRightBitmask,
-    virtual_sra::VirtualSRA,
-    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction, VirtualInstructionSequence,
+    format::format_r::FormatR, virtual_shift_right_bitmask::VirtualShiftRightBitmask,
+    virtual_sra::VirtualSRA, Cycle, Instruction, RISCVInstruction, RISCVTrace,
 };
 
 declare_riscv_instr!(
@@ -38,46 +34,25 @@ impl SRA {
 }
 
 impl RISCVTrace for SRA {
-    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let virtual_sequence = self.virtual_sequence();
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
+        let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
-        for instr in virtual_sequence {
-            // In each iteration, create a new Option containing a re-borrowed reference
+        for instr in inline_sequence {
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
-}
 
-impl VirtualInstructionSequence for SRA {
-    fn virtual_sequence(&self) -> Vec<RV32IMInstruction> {
-        let v_bitmask = virtual_register_index(6);
+    /// SRA performs arithmetic right shift preserving the sign bit.
+    fn inline_sequence(
+        &self,
+        allocator: &VirtualRegisterAllocator,
+        xlen: Xlen,
+    ) -> Vec<Instruction> {
+        let v_bitmask = allocator.allocate();
 
-        let mut virtual_sequence_remaining = self.virtual_sequence_remaining.unwrap_or(1);
-        let mut sequence = vec![];
-
-        let bitmask = VirtualShiftRightBitmask {
-            address: self.address,
-            operands: FormatI {
-                rd: v_bitmask,
-                rs1: self.operands.rs2,
-                imm: 0,
-            },
-            virtual_sequence_remaining: Some(virtual_sequence_remaining),
-        };
-        sequence.push(bitmask.into());
-        virtual_sequence_remaining -= 1;
-
-        let sra = VirtualSRA {
-            address: self.address,
-            operands: FormatVirtualRightShiftR {
-                rd: self.operands.rd,
-                rs1: self.operands.rs1,
-                rs2: v_bitmask,
-            },
-            virtual_sequence_remaining: Some(virtual_sequence_remaining),
-        };
-        sequence.push(sra.into());
-
-        sequence
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
+        asm.emit_i::<VirtualShiftRightBitmask>(*v_bitmask, self.operands.rs2, 0);
+        asm.emit_vshift_r::<VirtualSRA>(self.operands.rd, self.operands.rs1, *v_bitmask);
+        asm.finalize()
     }
 }

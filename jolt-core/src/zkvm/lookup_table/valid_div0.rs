@@ -8,16 +8,16 @@ use crate::{field::JoltField, utils::uninterleave_bits};
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 /// (divisor, quotient)
-pub struct ValidDiv0Table<const WORD_SIZE: usize>;
+pub struct ValidDiv0Table<const XLEN: usize>;
 
-impl<const WORD_SIZE: usize> JoltLookupTable for ValidDiv0Table<WORD_SIZE> {
-    fn materialize_entry(&self, index: u64) -> u64 {
+impl<const XLEN: usize> JoltLookupTable for ValidDiv0Table<XLEN> {
+    fn materialize_entry(&self, index: u128) -> u64 {
         let (divisor, quotient) = uninterleave_bits(index);
         if divisor == 0 {
-            match WORD_SIZE {
-                8 => (quotient == u8::MAX as u32).into(),
-                32 => (quotient == u32::MAX).into(),
-                _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
+            match XLEN {
+                8 => (quotient == u8::MAX as u64).into(),
+                32 => (quotient == u32::MAX as u64).into(),
+                _ => panic!("{XLEN}-bit word size is unsupported"),
             }
         } else {
             1
@@ -28,7 +28,7 @@ impl<const WORD_SIZE: usize> JoltLookupTable for ValidDiv0Table<WORD_SIZE> {
         let mut divisor_is_zero = F::one();
         let mut is_valid_div_by_zero = F::one();
 
-        for i in 0..WORD_SIZE {
+        for i in 0..XLEN {
             let x_i = r[2 * i];
             let y_i = r[2 * i + 1];
             divisor_is_zero *= F::one() - x_i;
@@ -39,7 +39,7 @@ impl<const WORD_SIZE: usize> JoltLookupTable for ValidDiv0Table<WORD_SIZE> {
     }
 }
 
-impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE> for ValidDiv0Table<WORD_SIZE> {
+impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for ValidDiv0Table<XLEN> {
     fn suffixes(&self) -> Vec<Suffixes> {
         vec![
             Suffixes::One,
@@ -57,7 +57,7 @@ impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE> for ValidDiv0T
         // will be zero.
         //
         // If the divisor *is* zero, returns 1 (on the Boolean hypercube)
-        // iff the quotient is valid (i.e. 2^WORD_SIZE - 1).
+        // iff the quotient is valid (i.e. 2^XLEN - 1).
         one - prefixes[Prefixes::LeftOperandIsZero] * left_operand_is_zero
             + prefixes[Prefixes::DivByZero] * div_by_zero
     }
@@ -70,6 +70,7 @@ mod test {
     use crate::zkvm::lookup_table::test::{
         lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
     };
+    use common::constants::XLEN;
 
     use super::ValidDiv0Table;
 
@@ -80,11 +81,11 @@ mod test {
 
     #[test]
     fn mle_random() {
-        lookup_table_mle_random_test::<Fr, ValidDiv0Table<32>>();
+        lookup_table_mle_random_test::<Fr, ValidDiv0Table<XLEN>>();
     }
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<Fr, ValidDiv0Table<32>>();
+        prefix_suffix_test::<XLEN, Fr, ValidDiv0Table<XLEN>>();
     }
 }
