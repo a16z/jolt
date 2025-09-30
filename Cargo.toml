@@ -95,10 +95,10 @@ serde.workspace = true
 rmp-serde.workspace = true
 toml_edit.workspace = true
 
-jolt-sdk.workspace = true
-jolt-core.workspace = true
-tracer.workspace = true
-common.workspace = true
+jolt-sdk = { workspace = true, features = ["host"] }
+jolt-core = { workspace = true, features = ["default"] }
+tracer = { workspace = true, features = ["default"] }
+common = { workspace = true, features = ["std"] }
 
 [profile.test]
 opt-level = 3
