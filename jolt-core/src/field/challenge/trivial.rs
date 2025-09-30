@@ -1,6 +1,8 @@
-use crate::field::{IntoField, JoltField};
+use crate::field::JoltField;
 use allocative::Allocative;
+use ark_ff::UniformRand;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use rand::{Rng, RngCore};
 use std::fmt::{Debug, Display};
 use std::hash::Hash;
 use std::ops::*;
@@ -29,6 +31,16 @@ impl<F: JoltField> TrivialChallenge<F> {
     pub fn value(&self) -> F {
         self.value
     }
+
+    pub fn random<R: Rng + ?Sized>(rng: &mut R) -> Self {
+        Self::from(rng.gen::<u128>())
+    }
+}
+
+impl<F: JoltField> UniformRand for TrivialChallenge<F> {
+    fn rand<R: RngCore + ?Sized>(rng: &mut R) -> Self {
+        Self::from(rng.gen::<u128>())
+    }
 }
 
 impl<F: JoltField> Display for TrivialChallenge<F> {
@@ -56,16 +68,16 @@ impl<F: JoltField> From<F> for TrivialChallenge<F> {
         Self::new(value)
     }
 }
-impl IntoField<ark_bn254::Fr> for TrivialChallenge<ark_bn254::Fr> {
+impl Into<ark_bn254::Fr> for TrivialChallenge<ark_bn254::Fr> {
     #[inline(always)]
-    fn into_F(self) -> ark_bn254::Fr {
+    fn into(self) -> ark_bn254::Fr {
         self.value()
     }
 }
 
-impl IntoField<ark_bn254::Fr> for &TrivialChallenge<ark_bn254::Fr> {
+impl Into<ark_bn254::Fr> for &TrivialChallenge<ark_bn254::Fr> {
     #[inline(always)]
-    fn into_F(self) -> ark_bn254::Fr {
+    fn into(self) -> ark_bn254::Fr {
         self.value()
     }
 }
@@ -78,28 +90,28 @@ macro_rules! impl_field_ops_inline {
             type Output = $f;
             #[inline(always)]
             fn add(self, rhs: $t) -> $f {
-                self.into_F() + rhs.into_F()
+                Into::<$f>::into(self) + Into::<$f>::into(rhs)
             }
         }
         impl<'a> Add<&'a $t> for $t {
             type Output = $f;
             #[inline(always)]
             fn add(self, rhs: &'a $t) -> $f {
-                self.into_F() + rhs.into_F()
+                Into::<$f>::into(self) + Into::<$f>::into(rhs)
             }
         }
         impl<'a> Add<$t> for &'a $t {
             type Output = $f;
             #[inline(always)]
             fn add(self, rhs: $t) -> $f {
-                self.into_F() + rhs.into_F()
+                Into::<$f>::into(self) + Into::<$f>::into(rhs)
             }
         }
         impl<'a, 'b> Add<&'b $t> for &'a $t {
             type Output = $f;
             #[inline(always)]
             fn add(self, rhs: &'b $t) -> $f {
-                self.into_F() + rhs.into_F()
+                Into::<$f>::into(self) + Into::<$f>::into(rhs)
             }
         }
 
@@ -107,28 +119,28 @@ macro_rules! impl_field_ops_inline {
             type Output = $f;
             #[inline(always)]
             fn sub(self, rhs: $t) -> $f {
-                self.into_F() - rhs.into_F()
+                Into::<$f>::into(self) - Into::<$f>::into(rhs)
             }
         }
         impl<'a> Sub<&'a $t> for $t {
             type Output = $f;
             #[inline(always)]
             fn sub(self, rhs: &'a $t) -> $f {
-                self.into_F() - rhs.into_F()
+                Into::<$f>::into(self) - Into::<$f>::into(rhs)
             }
         }
         impl<'a> Sub<$t> for &'a $t {
             type Output = $f;
             #[inline(always)]
             fn sub(self, rhs: $t) -> $f {
-                self.into_F() - rhs.into_F()
+                Into::<$f>::into(self) - Into::<$f>::into(rhs)
             }
         }
         impl<'a, 'b> Sub<&'b $t> for &'a $t {
             type Output = $f;
             #[inline(always)]
             fn sub(self, rhs: &'b $t) -> $f {
-                self.into_F() - rhs.into_F()
+                Into::<$f>::into(self) - Into::<$f>::into(rhs)
             }
         }
 
@@ -136,28 +148,28 @@ macro_rules! impl_field_ops_inline {
             type Output = $f;
             #[inline(always)]
             fn mul(self, rhs: $t) -> $f {
-                self.into_F() * rhs.into_F()
+                Into::<$f>::into(self) * Into::<$f>::into(rhs)
             }
         }
         impl<'a> Mul<&'a $t> for $t {
             type Output = $f;
             #[inline(always)]
             fn mul(self, rhs: &'a $t) -> $f {
-                self.into_F() * rhs.into_F()
+                Into::<$f>::into(self) * Into::<$f>::into(rhs)
             }
         }
         impl<'a> Mul<$t> for &'a $t {
             type Output = $f;
             #[inline(always)]
             fn mul(self, rhs: $t) -> $f {
-                self.into_F() * rhs.into_F()
+                Into::<$f>::into(self) * Into::<$f>::into(rhs)
             }
         }
         impl<'a, 'b> Mul<&'b $t> for &'a $t {
             type Output = $f;
             #[inline(always)]
             fn mul(self, rhs: &'b $t) -> $f {
-                self.into_F() * rhs.into_F()
+                Into::<$f>::into(self) * Into::<$f>::into(rhs)
             }
         }
 
@@ -168,28 +180,28 @@ macro_rules! impl_field_ops_inline {
             type Output = $f;
             #[inline(always)]
             fn add(self, rhs: $f) -> $f {
-                self.into_F() + rhs
+                Into::<$f>::into(self) + rhs
             }
         }
         impl<'a> Add<&'a $f> for $t {
             type Output = $f;
             #[inline(always)]
             fn add(self, rhs: &'a $f) -> $f {
-                self.into_F() + rhs
+                Into::<$f>::into(self) + rhs
             }
         }
         impl<'a> Add<$f> for &'a $t {
             type Output = $f;
             #[inline(always)]
             fn add(self, rhs: $f) -> $f {
-                self.into_F() + rhs
+                Into::<$f>::into(self) + rhs
             }
         }
         impl<'a, 'b> Add<&'b $f> for &'a $t {
             type Output = $f;
             #[inline(always)]
             fn add(self, rhs: &'b $f) -> $f {
-                self.into_F() + rhs
+                Into::<$f>::into(self) + rhs
             }
         }
 
@@ -197,28 +209,28 @@ macro_rules! impl_field_ops_inline {
             type Output = $f;
             #[inline(always)]
             fn sub(self, rhs: $f) -> $f {
-                self.into_F() - rhs
+                Into::<$f>::into(self) - rhs
             }
         }
         impl<'a> Sub<&'a $f> for $t {
             type Output = $f;
             #[inline(always)]
             fn sub(self, rhs: &'a $f) -> $f {
-                self.into_F() - rhs
+                Into::<$f>::into(self) - rhs
             }
         }
         impl<'a> Sub<$f> for &'a $t {
             type Output = $f;
             #[inline(always)]
             fn sub(self, rhs: $f) -> $f {
-                self.into_F() - rhs
+                Into::<$f>::into(self) - rhs
             }
         }
         impl<'a, 'b> Sub<&'b $f> for &'a $t {
             type Output = $f;
             #[inline(always)]
             fn sub(self, rhs: &'b $f) -> $f {
-                self.into_F() - rhs
+                Into::<$f>::into(self) - rhs
             }
         }
 
@@ -226,14 +238,14 @@ macro_rules! impl_field_ops_inline {
             type Output = $f;
             #[inline(always)]
             fn mul(self, rhs: $f) -> $f {
-                self.into_F() * rhs
+                Into::<$f>::into(self) * rhs
             }
         }
         impl<'a> Mul<&'a $f> for $t {
             type Output = $f;
             #[inline(always)]
             fn mul(self, rhs: &'a $f) -> $f {
-                *rhs * self.into_F()
+                *rhs * Into::<$f>::into(self)
             }
         }
 
@@ -241,14 +253,14 @@ macro_rules! impl_field_ops_inline {
             type Output = $f;
             #[inline(always)]
             fn mul(self, rhs: $f) -> $f {
-                rhs * self.into_F()
+                rhs * Into::<$f>::into(self)
             }
         }
         impl<'a, 'b> Mul<&'b $f> for &'a $t {
             type Output = $f;
             #[inline(always)]
             fn mul(self, rhs: &'b $f) -> $f {
-                *rhs * self.into_F()
+                *rhs * Into::<$f>::into(self)
             }
         }
 
@@ -259,28 +271,28 @@ macro_rules! impl_field_ops_inline {
             type Output = $f;
             #[inline(always)]
             fn add(self, rhs: $t) -> $f {
-                self + rhs.into_F()
+                self + Into::<$f>::into(rhs)
             }
         }
         impl<'a> Add<&'a $t> for $f {
             type Output = $f;
             #[inline(always)]
             fn add(self, rhs: &'a $t) -> $f {
-                self + rhs.into_F()
+                self + Into::<$f>::into(rhs)
             }
         }
         impl<'a> Add<$t> for &'a $f {
             type Output = $f;
             #[inline(always)]
             fn add(self, rhs: $t) -> $f {
-                *self + rhs.into_F()
+                *self + Into::<$f>::into(rhs)
             }
         }
         impl<'a, 'b> Add<&'b $t> for &'a $f {
             type Output = $f;
             #[inline(always)]
             fn add(self, rhs: &'b $t) -> $f {
-                *self + rhs.into_F()
+                *self + Into::<$f>::into(rhs)
             }
         }
 
@@ -288,28 +300,28 @@ macro_rules! impl_field_ops_inline {
             type Output = $f;
             #[inline(always)]
             fn sub(self, rhs: $t) -> $f {
-                self - rhs.into_F()
+                self - Into::<$f>::into(rhs)
             }
         }
         impl<'a> Sub<&'a $t> for $f {
             type Output = $f;
             #[inline(always)]
             fn sub(self, rhs: &'a $t) -> $f {
-                self - rhs.into_F()
+                self - Into::<$f>::into(rhs)
             }
         }
         impl<'a> Sub<$t> for &'a $f {
             type Output = $f;
             #[inline(always)]
             fn sub(self, rhs: $t) -> $f {
-                *self - rhs.into_F()
+                *self - Into::<$f>::into(rhs)
             }
         }
         impl<'a, 'b> Sub<&'b $t> for &'a $f {
             type Output = $f;
             #[inline(always)]
             fn sub(self, rhs: &'b $t) -> $f {
-                *self - rhs.into_F()
+                *self - Into::<$f>::into(rhs)
             }
         }
 
@@ -317,28 +329,28 @@ macro_rules! impl_field_ops_inline {
             type Output = $f;
             #[inline(always)]
             fn mul(self, rhs: $t) -> $f {
-                self * rhs.into_F()
+                self * Into::<$f>::into(rhs)
             }
         }
         impl<'a> Mul<&'a $t> for $f {
             type Output = $f;
             #[inline(always)]
             fn mul(self, rhs: &'a $t) -> $f {
-                self * rhs.into_F()
+                self * Into::<$f>::into(rhs)
             }
         }
         impl<'a> Mul<$t> for &'a $f {
             type Output = $f;
             #[inline(always)]
             fn mul(self, rhs: $t) -> $f {
-                *self * rhs.into_F()
+                *self * Into::<$f>::into(rhs)
             }
         }
         impl<'a, 'b> Mul<&'b $t> for &'a $f {
             type Output = $f;
             #[inline(always)]
             fn mul(self, rhs: &'b $t) -> $f {
-                *self * rhs.into_F()
+                *self * Into::<$f>::into(rhs)
             }
         }
     };

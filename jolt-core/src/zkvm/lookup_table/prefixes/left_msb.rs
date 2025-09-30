@@ -1,5 +1,4 @@
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
-use crate::field::IntoField;
 use crate::{field::JoltField, utils::lookup_bits::LookupBits};
 
 pub enum LeftMsbPrefix {}
@@ -15,7 +14,7 @@ impl<F: JoltField> SparseDensePrefix<F> for LeftMsbPrefix {
         if j == 0 {
             F::from_u32(c)
         } else if j == 1 {
-            r_x.unwrap().into_F()
+            r_x.unwrap().into()
         } else {
             checkpoints[Prefixes::LeftOperandMsb].unwrap()
         }
@@ -28,7 +27,7 @@ impl<F: JoltField> SparseDensePrefix<F> for LeftMsbPrefix {
         j: usize,
     ) -> PrefixCheckpoint<F> {
         if j == 1 {
-            Some(r_x.into_F()).into()
+            Some(r_x.into()).into()
         } else {
             checkpoints[Prefixes::LeftOperandMsb].into()
         }

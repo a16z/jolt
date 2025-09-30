@@ -1,5 +1,4 @@
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
-use crate::field::IntoField;
 use crate::{field::JoltField, utils::lookup_bits::LookupBits};
 
 pub enum RightMsbPrefix {}
@@ -29,7 +28,7 @@ impl<F: JoltField> SparseDensePrefix<F> for RightMsbPrefix {
         j: usize,
     ) -> PrefixCheckpoint<F> {
         if j == 1 {
-            Some(r_y.into_F()).into()
+            Some(r_y.into()).into()
         } else {
             checkpoints[Prefixes::RightOperandMsb].into()
         }

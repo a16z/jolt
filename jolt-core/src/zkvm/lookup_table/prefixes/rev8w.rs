@@ -2,7 +2,6 @@ use common::constants::XLEN;
 use tracer::instruction::virtual_rev8w::rev8w;
 
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
-use crate::field::IntoField;
 use crate::{
     field::JoltField, utils::lookup_bits::LookupBits,
     zkvm::instruction_lookups::read_raf_checking::current_suffix_len,
@@ -38,7 +37,7 @@ impl<F: JoltField> SparseDensePrefix<F> for Rev8WPrefix {
         if r_x_bit_index < 64 {
             if let Some(r_x) = r_x {
                 let rev_pow2 = rev8w(1 << r_x_bit_index);
-                eval += r_x.into_F().mul_u64(rev_pow2);
+                eval += r_x.into().mul_u64(rev_pow2);
             }
         }
 
@@ -60,13 +59,13 @@ impl<F: JoltField> SparseDensePrefix<F> for Rev8WPrefix {
         let r_y_bit_index = 2 * XLEN - 1 - j;
         if r_y_bit_index < 64 {
             let rev_pow2 = rev8w(1 << r_y_bit_index);
-            res += r_y.into_F().mul_u64(rev_pow2);
+            res += r_y.into().mul_u64(rev_pow2);
         }
 
         let r_x_bit_index = r_y_bit_index + 1;
         if r_x_bit_index < 64 {
             let rev_pow2 = rev8w(1 << r_x_bit_index);
-            res += r_x.into_F().mul_u64(rev_pow2);
+            res += r_x.into().mul_u64(rev_pow2);
         }
 
         Some(res).into()

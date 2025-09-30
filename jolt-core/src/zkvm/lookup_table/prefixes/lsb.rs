@@ -1,5 +1,4 @@
 use super::{PrefixCheckpoint, SparseDensePrefix};
-use crate::field::IntoField;
 use crate::zkvm::instruction_lookups::read_raf_checking::current_suffix_len;
 use crate::{field::JoltField, utils::lookup_bits::LookupBits};
 
@@ -32,7 +31,7 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for LsbPrefix<XLEN> {
         j: usize,
     ) -> PrefixCheckpoint<F> {
         if j == 2 * XLEN - 1 {
-            Some(r_y.into_F()).into()
+            Some(r_y.into()).into()
         } else {
             Some(F::one()).into()
         }

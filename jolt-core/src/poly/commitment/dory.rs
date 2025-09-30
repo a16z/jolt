@@ -22,7 +22,6 @@ use rayon::prelude::*;
 use std::{borrow::Borrow, marker::PhantomData};
 use tracing::trace_span;
 
-use crate::field::IntoField;
 use dory::{
     arithmetic::{
         Field as DoryField, Group as DoryGroup, MultiScalarMul as DoryMultiScalarMul,
@@ -1119,7 +1118,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
         let point_dory: Vec<JoltFieldWrapper<Self::Field>> = opening_point
             .iter()
             .rev()
-            .map(|&p| JoltFieldWrapper(p.into_F()))
+            .map(|&p| JoltFieldWrapper(p.into()))
             .collect();
 
         let sigma = DoryGlobals::get_num_columns().log_2();
@@ -1162,7 +1161,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
         let opening_point_dory: Vec<JoltFieldWrapper<Self::Field>> = opening_point
             .iter()
             .rev()
-            .map(|&p| JoltFieldWrapper(p.into_F()))
+            .map(|&p| JoltFieldWrapper(p.into()))
             .collect();
 
         let claimed_opening = JoltFieldWrapper(*opening);

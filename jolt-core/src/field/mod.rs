@@ -1,4 +1,5 @@
 use allocative::Allocative;
+use ark_ff::UniformRand;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{One, Zero};
 use std::fmt::{Debug, Display};
@@ -11,10 +12,6 @@ pub trait FieldOps<Rhs = Self, Output = Self>:
     + Mul<Rhs, Output = Output>
     + Div<Rhs, Output = Output>
 {
-}
-
-pub trait IntoField<F: JoltField> {
-    fn into_F(self) -> F;
 }
 pub trait JoltField:
     'static
@@ -42,12 +39,12 @@ pub trait JoltField:
     + CanonicalDeserialize
     + Hash
     + MaybeAllocative
-    + Add<Self::Challenge, Output = Self>              // F + Challenge -> F
-    + for<'a> Add<&'a Self::Challenge, Output = Self>  // F + &Challenge -> F
-    + Sub<Self::Challenge, Output = Self>              // F - Challenge -> F
-    + for<'a> Sub<&'a Self::Challenge, Output = Self>  // F - &Challenge -> F
-    + Mul<Self::Challenge, Output = Self>              // F * Challenge -> F
-    + for<'a> Mul<&'a Self::Challenge, Output = Self>  // F * &Challenge -> F
+    + Add<Self::Challenge, Output = Self>
+    + for<'a> Add<&'a Self::Challenge, Output = Self>
+    + Sub<Self::Challenge, Output = Self>
+    + for<'a> Sub<&'a Self::Challenge, Output = Self>
+    + Mul<Self::Challenge, Output = Self>
+    + for<'a> Mul<&'a Self::Challenge, Output = Self>
 {
     /// Number of bytes occupied by a single field element.
     const NUM_BYTES: usize;
@@ -76,36 +73,26 @@ pub trait JoltField:
         + CanonicalDeserialize
         + Allocative
         + From<u128>
-        + IntoField<Self> // <-- enforce `into_F` exists
-        //------------------------------------------------------------------
-        // Challenge ⊗ Challenge → F
-        //------------------------------------------------------------------
-        + Add<Self::Challenge, Output = Self> // Challenge + Challenge -> F
-        + for<'a> Add<&'a Self::Challenge, Output = Self> // Challenge + &Challenge -> F
-        + Sub<Self::Challenge, Output = Self> // Challenge - Challenge -> F
-        + for<'a> Sub<&'a Self::Challenge, Output = Self> // Challenge - &Challenge -> F
-        + Mul<Self::Challenge, Output = Self> // Challenge * Challenge -> F
-        + for<'a> Mul<&'a Self::Challenge, Output = Self> // Challenge * &Challenge -> F
-
-        //------------------------------------------------------------------
-        // F ⊗ Challenge → F
-        //------------------------------------------------------------------
-        + Add<Self::Challenge, Output = Self> // F + Challenge -> F
-        + for<'a> Add<&'a Self::Challenge, Output = Self> // F + &Challenge -> F
-        + Sub<Self::Challenge, Output = Self> // F - Challenge -> F
-        + for<'a> Sub<&'a Self::Challenge, Output = Self> // F - &Challenge -> F
-        + Mul<Self::Challenge, Output = Self> // F * Challenge -> F
-        + for<'a> Mul<&'a Self::Challenge, Output = Self> // F * &Challenge -> F
-        //------------------------------------------------------------------
-        // Challenge ⊗ F → F
-        //------------------------------------------------------------------
-        + Add<Self, Output = Self> // Challenge + F -> F
-        + for<'a> Add<&'a Self, Output = Self> // Challenge + &F -> F
-        + Sub<Self, Output = Self> // Challenge - F -> F
-        + for<'a> Sub<&'a Self, Output = Self> // Challenge - &F -> F
-        + Mul<Self, Output = Self> // Challenge * F -> F
-        + for<'a> Mul<&'a Self, Output = Self> // Challenge * &F -> F
-        ;
+        + Into<Self>
+        + Add<Self::Challenge, Output = Self>
+        + for<'a> Add<&'a Self::Challenge, Output = Self>
+        + Sub<Self::Challenge, Output = Self>
+        + for<'a> Sub<&'a Self::Challenge, Output = Self>
+        + Mul<Self::Challenge, Output = Self>
+        + for<'a> Mul<&'a Self::Challenge, Output = Self>
+        + Add<Self::Challenge, Output = Self>
+        + for<'a> Add<&'a Self::Challenge, Output = Self>
+        + Sub<Self::Challenge, Output = Self>
+        + for<'a> Sub<&'a Self::Challenge, Output = Self>
+        + Mul<Self::Challenge, Output = Self>
+        + for<'a> Mul<&'a Self::Challenge, Output = Self>
+        + Add<Self, Output = Self>
+        + for<'a> Add<&'a Self, Output = Self>
+        + Sub<Self, Output = Self>
+        + for<'a> Sub<&'a Self, Output = Self>
+        + Mul<Self, Output = Self>
+        + for<'a> Mul<&'a Self, Output = Self>
+        + UniformRand;
 
     fn random<R: rand_core::RngCore>(rng: &mut R) -> Self;
     /// Computes the small-value lookup tables.

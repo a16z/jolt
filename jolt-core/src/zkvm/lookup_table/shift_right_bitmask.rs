@@ -4,7 +4,7 @@ use super::prefixes::PrefixEval;
 use super::suffixes::{SuffixEval, Suffixes};
 use super::JoltLookupTable;
 use super::PrefixSuffixDecomposition;
-use crate::field::{IntoField, JoltField};
+use crate::field::JoltField;
 use crate::utils::math::Math;
 use crate::zkvm::lookup_table::prefixes::Prefixes;
 
@@ -62,7 +62,7 @@ impl<const XLEN: usize> JoltLookupTable for ShiftRightBitmaskTable<XLEN> {
                 eq_val *= if bit == 0 {
                     F::one() - r[log_w - i - 1]
                 } else {
-                    r[log_w - i - 1].into_F()
+                    r[log_w - i - 1].into()
                 };
             }
 

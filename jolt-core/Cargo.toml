@@ -21,7 +21,7 @@ license-file = "LICENSE"
 keywords = ["SNARK", "cryptography", "proofs", "zkVM"]
 
 [features]
-default = ["host"]
+default = ["host", "mont-challenge"]
 host = [
     "dep:reqwest",
     "dep:tokio",
@@ -44,6 +44,8 @@ prover = [
 minimal = ["ark-ec/std", "ark-ff/std", "ark-std/std", "ark-ff/asm", "rayon"]
 allocative = ["dep:inferno"]
 test_incremental = []
+mont-challenge = []
+trivial-challenge = []
 
 [dependencies]
 ark-bn254 = "0.5.0"

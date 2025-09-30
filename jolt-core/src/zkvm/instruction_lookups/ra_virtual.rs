@@ -12,7 +12,6 @@ use rayon::{
 };
 use tracer::instruction::Cycle;
 
-use crate::field::IntoField;
 use crate::{
     field::JoltField,
     poly::{
@@ -109,7 +108,7 @@ impl<F: JoltField> RaSumcheck<F> {
         let prover_state = RaProverState {
             ra_i_polys,
             eq_evals,
-            eq_factor: EqPolynomial::mle(&[F::zero()], &[r_cycle[0].into_F()]),
+            eq_factor: EqPolynomial::mle(&[F::zero()], &[r_cycle[0].into()]),
         };
 
         Self {

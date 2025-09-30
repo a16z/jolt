@@ -124,7 +124,6 @@ pub mod accum {
 pub mod svo_helpers {
     use super::accum::{fmadd_unreduced, UnreducedProduct};
     use super::*;
-    use crate::field::IntoField;
     use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
     use crate::poly::unipoly::CompressedUniPoly;
     use crate::subprotocols::sumcheck::process_eq_sumcheck_round;
@@ -1432,8 +1431,7 @@ pub mod svo_helpers {
                 transcript,
             );
 
-            let lagrange_coeffs_r_i: [F; 3] =
-                [F::one() - r_i, r_i.into_F(), r_i * (r_i - F::one())];
+            let lagrange_coeffs_r_i: [F; 3] = [F::one() - r_i, r_i.into(), r_i * (r_i - F::one())];
 
             if i < NUM_SVO_ROUNDS.saturating_sub(1) {
                 lagrange_coeffs = lagrange_coeffs_r_i

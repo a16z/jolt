@@ -1,6 +1,6 @@
 #![allow(clippy::assign_op_pattern)]
 use super::PrefixSuffixDecomposition;
-use crate::field::{IntoField, JoltField};
+use crate::field::JoltField;
 use crate::utils::uninterleave_bits;
 use serde::{Deserialize, Serialize};
 
@@ -94,7 +94,7 @@ impl<const XLEN: usize> JoltLookupTable for VirtualChangeDivisorTable<XLEN> {
             }
         }
 
-        let mut x_product = r[0].into_F();
+        let mut x_product = r[0].into();
         for i in 1..XLEN {
             x_product *= F::one() - r[2 * i];
         }

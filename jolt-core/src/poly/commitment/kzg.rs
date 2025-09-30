@@ -1,4 +1,4 @@
-use crate::field::{IntoField, JoltField};
+use crate::field::JoltField;
 use crate::msm::VariableBaseMSM;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::unipoly::UniPoly;
@@ -352,7 +352,7 @@ where
             ],
             [
                 vk.g2,
-                (vk.beta_g2.into_group() - (vk.g2 * point.into_F())).into(),
+                (vk.beta_g2.into_group() - (vk.g2 * (*point).into())).into(),
             ],
         )
         .is_zero())
@@ -373,7 +373,7 @@ where
     where
         <P as Pairing>::ScalarField: JoltField,
     {
-        let divisor = UniPoly::from_coeff(vec![-point.into_F(), P::ScalarField::one()]);
+        let divisor = UniPoly::from_coeff(vec![-point.into(), P::ScalarField::one()]);
         let (witness_poly, _) = poly.divide_with_remainder(&divisor).unwrap();
         let proof = <G::Curve as VariableBaseMSM>::msm_field_elements(
             &powers[..witness_poly.coeffs.len()],

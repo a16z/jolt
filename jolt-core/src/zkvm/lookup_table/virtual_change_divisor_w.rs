@@ -1,5 +1,5 @@
 use super::PrefixSuffixDecomposition;
-use crate::field::{IntoField, JoltField};
+use crate::field::JoltField;
 use crate::utils::uninterleave_bits;
 use crate::zkvm::lookup_table::prefixes::Prefixes;
 use serde::{Deserialize, Serialize};
@@ -91,7 +91,7 @@ impl<const XLEN: usize> JoltLookupTable for VirtualChangeDivisorWTable<XLEN> {
             }
         }
 
-        let mut x_product = r[XLEN].into_F();
+        let mut x_product = r[XLEN].into();
         for i in XLEN / 2 + 1..XLEN {
             x_product *= F::one() - r[2 * i];
         }

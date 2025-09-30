@@ -8,7 +8,7 @@ use super::prefixes::PrefixEval;
 use super::suffixes::{SuffixEval, Suffixes};
 use super::JoltLookupTable;
 use super::PrefixSuffixDecomposition;
-use crate::field::{IntoField, JoltField};
+use crate::field::JoltField;
 use crate::zkvm::lookup_table::prefixes::Prefixes;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
@@ -41,7 +41,7 @@ impl<const XLEN: usize> JoltLookupTable for VirtualRev8WTable<XLEN> {
             let bit_chunk = (&mut bits).take(8).enumerate();
             Some(
                 bit_chunk
-                    .map(|(i, b)| b.into_F().mul_u64(1 << i))
+                    .map(|(i, b)| (*b).into().mul_u64(1 << i))
                     .sum::<F>(),
             )
         });

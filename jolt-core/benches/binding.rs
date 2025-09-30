@@ -1,4 +1,5 @@
 use ark_bn254::Fr;
+use ark_ff::UniformRand;
 use ark_std::{rand::Rng, test_rng};
 use criterion::Criterion;
 use jolt_core::field::JoltField;
@@ -29,7 +30,7 @@ fn benchmark_dense<F: JoltField>(c: &mut Criterion, num_vars: usize) {
                     let coeffs = random_dense_coeffs::<F>(&mut rng, num_vars);
                     let poly = DensePolynomial::new(coeffs);
                     let r: Vec<F::Challenge> =
-                        std::iter::repeat_with(|| F::Challenge::from(rng.gen::<u128>()))
+                        std::iter::repeat_with(|| F::Challenge::rand(&mut rng))
                             .take(num_vars)
                             .collect();
                     (poly, r)
@@ -58,7 +59,7 @@ fn benchmark_dense_batch<F: JoltField>(c: &mut Criterion, num_vars: usize, batch
                         polys.push(DensePolynomial::new(coeffs));
                     }
                     let r: Vec<F::Challenge> =
-                        std::iter::repeat_with(|| F::Challenge::from(rng.gen::<u128>()))
+                        std::iter::repeat_with(|| F::Challenge::rand(&mut rng))
                             .take(num_vars)
                             .collect();
                     (polys, r)
@@ -89,7 +90,7 @@ fn benchmark_compact<F: JoltField>(
                     let coeffs: Vec<u8> = random_compact_coeffs(&mut rng, num_vars);
                     let poly = CompactPolynomial::<u8, F>::from_coeffs(coeffs);
                     let r: Vec<F::Challenge> =
-                        std::iter::repeat_with(|| F::Challenge::from(rng.gen::<u128>()))
+                        std::iter::repeat_with(|| F::Challenge::rand(&mut rng))
                             .take(num_vars)
                             .collect();
                     (poly, r)
@@ -119,7 +120,7 @@ fn benchmark_dense_parallel<F: JoltField>(
                     let coeffs = random_dense_coeffs::<F>(&mut rng, num_vars);
                     let poly = DensePolynomial::new(coeffs);
                     let r: Vec<F::Challenge> =
-                        std::iter::repeat_with(|| F::Challenge::from(rng.gen::<u128>()))
+                        std::iter::repeat_with(|| F::Challenge::rand(&mut rng))
                             .take(num_vars)
                             .collect();
                     (poly, r)
