@@ -28,16 +28,14 @@ pub enum ProofKeys {
     Stage4Sumcheck,
     ReducedOpeningProof,
     #[cfg(feature = "recursion")]
-    SZCheckSumcheck,
-    #[cfg(feature = "recursion")]
-    SZCheckArtifacts,
+    SZCheckProof,
 }
 
 pub enum ProofData<F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript> {
     SumcheckProof(SumcheckInstanceProof<F, ProofTranscript>),
     ReducedOpeningProof(ReducedOpeningProof<F, PCS, ProofTranscript>),
     #[cfg(feature = "recursion")]
-    SZCheckArtifacts(crate::subprotocols::sz_check_protocol::SZCheckArtifacts<1>), // RATIO = 1 for now
+    SZCheckProof(crate::subprotocols::sz_check_protocol::SZCheckProof<F, ProofTranscript, 1>), // RATIO = 1
 }
 
 pub type Proofs<F, PCS, ProofTranscript> = BTreeMap<ProofKeys, ProofData<F, PCS, ProofTranscript>>;
@@ -76,7 +74,7 @@ pub struct StateManager<
     pub prover_state: Option<ProverState<'a, F, PCS>>,
     pub verifier_state: Option<VerifierState<'a, F, PCS>>,
     #[cfg(feature = "recursion")]
-    pub recursion_ops: Option<Vec<jolt_optimizations::steps::ExponentiationSteps>>,
+    pub recursion_ops: Option<Vec<jolt_optimizations::ExponentiationSteps>>,
 }
 
 impl<'a, F, ProofTranscript, PCS> StateManager<'a, F, ProofTranscript, PCS>
@@ -325,12 +323,12 @@ where
     }
 
     #[cfg(feature = "recursion")]
-    pub fn set_recursion_ops(&mut self, ops: Vec<jolt_optimizations::steps::ExponentiationSteps>) {
+    pub fn set_recursion_ops(&mut self, ops: Vec<jolt_optimizations::ExponentiationSteps>) {
         self.recursion_ops = Some(ops);
     }
 
     #[cfg(feature = "recursion")]
-    pub fn get_recursion_ops(&self) -> Option<&Vec<jolt_optimizations::steps::ExponentiationSteps>> {
+    pub fn get_recursion_ops(&self) -> Option<&Vec<jolt_optimizations::ExponentiationSteps>> {
         self.recursion_ops.as_ref()
     }
 }

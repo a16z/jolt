@@ -9,7 +9,7 @@ use crate::{
     poly::multilinear_polynomial::MultilinearPolynomial,
     utils::{errors::ProofVerifyError, math::Math},
 };
-use ark_bn254::{Bn254, Fq12, Fr, G1Projective, G2Projective};
+use ark_bn254::{Bn254, Fr, G1Projective, G2Projective};
 use ark_ec::{
     pairing::{MillerLoopOutput, Pairing as ArkPairing, PairingOutput},
     AffineRepr, CurveGroup,
@@ -24,11 +24,15 @@ use dory::{
     },
     commit,
     curve::G2Cache,
-    evaluate, setup_with_srs_file,
+    evaluate, setup_with_urs_file,
     transcript::Transcript as DoryTranscript,
     verify, DoryProof, DoryProofBuilder, Polynomial as DoryPolynomial, ProverSetup, VerifierSetup,
 };
-use jolt_optimizations::{pow_with_steps_le, steps::ExponentiationSteps};
+
+#[cfg(feature = "recursion")]
+use ark_bn254::Fq12;
+#[cfg(feature = "recursion")]
+use jolt_optimizations::ExponentiationSteps;
 use once_cell::sync::OnceCell;
 use rayon::prelude::*;
 use std::{borrow::Borrow, marker::PhantomData};
@@ -274,13 +278,13 @@ where
             let scalar_fr =
                 unsafe { std::mem::transmute_copy::<P::ScalarField, ark_bn254::Fr>(&k.0) };
 
-            let steps = pow_with_steps_le(fq12_val, scalar_fr);
+            let steps = ExponentiationSteps::new(fq12_val, scalar_fr);
 
             // Sanity check: verify naive pow() equals steps.result
             let naive_result = fq12_val.pow(scalar_fr.into_bigint());
             assert_eq!(
                 naive_result, steps.result,
-                "Mismatch between naive pow() and pow_with_steps_le result"
+                "Mismatch between naive pow() and ExponentiationSteps::new result"
             );
 
             let result_as_target =
@@ -1087,11 +1091,11 @@ impl CommitmentScheme for DoryCommitmentScheme {
 
     #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::setup_prover")]
     fn setup_prover(max_num_vars: usize) -> Self::ProverSetup {
-        let srs_file_name = format!("dory_srs_{max_num_vars}_variables.srs");
-        let (mut prover_setup, _) = setup_with_srs_file::<JoltBn254, _>(
+        let urs_file_name = format!("dory_urs_{max_num_vars}_variables.urs");
+        let (mut prover_setup, _) = setup_with_urs_file::<JoltBn254, _>(
             &mut ark_std::rand::thread_rng(),
             max_num_vars,
-            Some(&srs_file_name), // Will load if exists, generate and save if not
+            Some(&urs_file_name), // Will load if exists, generate and save if not
         );
 
         // Initialize cache for G2 Prepared elements for multi pairing

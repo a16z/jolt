@@ -1,1141 +1,672 @@
 use crate::{
     field::JoltField,
     poly::{
-        commitment::{hyrax::HyraxCommitment, pedersen::PedersenGenerators},
+        commitment::{
+            hyrax::{HyraxCommitment, HyraxOpeningProof},
+            pedersen::PedersenGenerators,
+        },
         dense_mlpoly::DensePolynomial,
-        multilinear_polynomial::MultilinearPolynomial,
+        opening_proof::{ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator},
     },
     subprotocols::{
-        square_and_multiply::{AccumulatorMultiplySumcheck, SquareAndMultiplySumcheck},
-        sumcheck::SumcheckInstance,
+        square_and_multiply::SZCheckSumcheck,
+        sumcheck::{BatchedSumcheck, SumcheckInstance, SumcheckInstanceProof},
     },
     transcripts::Transcript,
+    utils::errors::ProofVerifyError,
+    zkvm::witness::RecursionCommittedPolynomial,
 };
-use ark_bn254::{Fq, Fq12};
-use ark_ff::{BigInteger, One, PrimeField, Zero};
+use ark_bn254::Fq;
 use ark_grumpkin::Projective as GrumpkinProjective;
-use jolt_optimizations::{
-    fq12_poly::{fq12_to_multilinear_evals, g_coeffs, to_multilinear_evals},
-    steps::ExponentiationSteps,
-};
-use jolt_platform::println;
-use std::collections::HashMap;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_std::Zero;
+use jolt_optimizations::ExponentiationSteps;
+use std::{cell::RefCell, rc::Rc};
 
-/// SZ Check artifacts using Hyrax commitments over Grumpkin curve
-/// Note: F is typically Fr (scalar field of BN254), but the polynomials are over Fq
+/// Artifacts needed by the verifier for SZ check protocol
+#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct SZCheckArtifacts<const RATIO: usize = 1> {
-    /// The quotient polynomials for each product (prover only)
-    pub quotient_polynomials: Option<Vec<Vec<Fq>>>,
-    /// The multilinear polynomials representing Fq12 values (prover only)
-    pub fq12_polynomials: Option<Vec<MultilinearPolynomial<Fq>>>,
-
-    /// Hyrax commitments to the Fq12 polynomials using Grumpkin curve
-    pub fq12_commitments: Vec<HyraxCommitment<RATIO, GrumpkinProjective>>,
-    /// Hyrax commitments to quotient polynomials using Grumpkin curve
-    pub quotient_commitments: Vec<HyraxCommitment<RATIO, GrumpkinProjective>>,
-
-    /// Metadata for verifier
+    pub rho_commitments: Vec<Vec<HyraxCommitment<RATIO, GrumpkinProjective>>>,
+    pub quotient_commitments: Vec<Vec<HyraxCommitment<RATIO, GrumpkinProjective>>>,
+    pub base_commitments: Vec<HyraxCommitment<RATIO, GrumpkinProjective>>,
     pub num_exponentiations: usize,
-    /// Exponent bits for each exponentiation (needed by verifier for AccumulatorMultiplySumcheck)
-    pub exponent_bits_per_exponentiation: Vec<Vec<u8>>,
-    /// Mapping of which Fq12 polynomial indices correspond to each exponentiation
-    pub exponentiation_to_fq12_indices: Vec<Vec<usize>>,
+    pub num_constraints_per_exponentiation: Vec<usize>,
+    pub bits_per_exponentiation: Vec<Vec<bool>>,
 }
 
-/// Process exponentiation steps and create sumcheck instances for SZ check
-/// Uses Hyrax commitment scheme with Grumpkin curve for committing to Fq polynomials
+/// Complete proof for SZ check protocol including sumcheck and Hyrax opening
+#[derive(Clone, Debug)]
+pub struct SZCheckProof<F: JoltField, ProofTranscript: Transcript, const RATIO: usize> {
+    pub artifacts: SZCheckArtifacts<RATIO>,
+    pub sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
+    pub r_sumcheck: Vec<F>,
+    pub batched_hyrax_proof: HyraxOpeningProof<RATIO, GrumpkinProjective>,
+    pub openings: crate::poly::opening_proof::Openings<F>,
+}
+
+/// Helper function to convert F to Fq when F implements Into<Fq>
+fn field_to_fq<F: JoltField>(f: &F) -> Fq {
+    // This is a temporary solution - in production, F should properly implement Into<Fq>
+    // For now, we assume F is Fq in the sz_check context
+    unsafe { std::mem::transmute_copy(f) }
+}
+
+/// Helper function to convert Vec<F> to Vec<Fq>
+fn vec_field_to_fq<F: JoltField>(vec: &[F]) -> Vec<Fq> {
+    vec.iter().map(field_to_fq).collect()
+}
+
+/// Helper function to commit to a polynomial
+fn commit_polynomial<const RATIO: usize>(
+    poly: &[Fq],
+    generators: &PedersenGenerators<GrumpkinProjective>,
+) -> HyraxCommitment<RATIO, GrumpkinProjective> {
+    HyraxCommitment::<RATIO, GrumpkinProjective>::commit(
+        &DensePolynomial::new(poly.to_vec()),
+        generators,
+    )
+}
+
+/// Proves the SZ check protocol, handling the complete flow from sumcheck to Hyrax
+///
+/// # Protocol Flow:
+/// 1. Commit to all polynomials (rho, quotient, base)
+/// 2. Run sumcheck protocol to reduce to opening claims
+/// 3. Batch all opening claims with random challenges
+/// 4. Generate Hyrax opening proof for the batched polynomial
 pub fn sz_check_prove<F, ProofTranscript, const RATIO: usize>(
     exponentiation_steps_vec: Vec<ExponentiationSteps>,
     transcript: &mut ProofTranscript,
     hyrax_generators: &PedersenGenerators<GrumpkinProjective>,
-) -> (Vec<Box<dyn SumcheckInstance<F>>>, SZCheckArtifacts<RATIO>)
+) -> SZCheckProof<F, ProofTranscript, RATIO>
 where
     F: JoltField + From<Fq>,
     ProofTranscript: Transcript,
 {
-    let mut sumcheck_instances: Vec<Box<dyn SumcheckInstance<F>>> = Vec::new();
-    let mut all_products = Vec::new();
-    let mut quotient_polynomials: Vec<Vec<Fq>> = Vec::new();
+    // Step 1: Prepare polynomials and commitments
+    let num_exponentiations = exponentiation_steps_vec.len();
+    let mut rho_commitments = Vec::with_capacity(num_exponentiations);
+    let mut quotient_commitments = Vec::with_capacity(num_exponentiations);
+    let mut base_commitments = Vec::with_capacity(num_exponentiations);
 
-    println("BEFORE THE EXP STEPS TO PRODUCTS");
-    // Process all exponentiation steps to collect products
+    let mut all_rho_polys = Vec::with_capacity(num_exponentiations);
+    let mut all_quotient_polys = Vec::with_capacity(num_exponentiations);
+    let mut all_base_polys = Vec::with_capacity(num_exponentiations);
+
     for steps in &exponentiation_steps_vec {
-        let products = steps.to_products();
-        for product in &products {
-            quotient_polynomials.push(product.quotient.clone());
-        }
-        all_products.extend(products);
-    }
-
-    // Collect unique Fq12 values and create index mapping
-    let mut fp12_values = Vec::new();
-    let mut fp12_to_index = HashMap::new();
-
-    for product in &all_products {
-        fp12_to_index.entry(product.a).or_insert_with(|| {
-            let idx = fp12_values.len();
-            fp12_values.push(product.a);
-            idx
-        });
-
-        fp12_to_index.entry(product.b).or_insert_with(|| {
-            let idx = fp12_values.len();
-            fp12_values.push(product.b);
-            idx
-        });
-
-        fp12_to_index.entry(product.c).or_insert_with(|| {
-            let idx = fp12_values.len();
-            fp12_values.push(product.c);
-            idx
-        });
-    }
-
-    // Convert Fq12 values to multilinear polynomials over Fq (not F)
-    let fq12_polynomials: Vec<MultilinearPolynomial<Fq>> = fp12_values
-        .iter()
-        .map(|fp12| {
-            let evals_fq = fq12_to_multilinear_evals(fp12);
-            MultilinearPolynomial::LargeScalars(DensePolynomial::new(evals_fq))
-        })
-        .collect();
-
-    // Track metadata for verifier
-    let mut exponent_bits_per_exponentiation = Vec::new();
-    let mut exponentiation_to_fq12_indices = Vec::new();
-
-    // Create sumcheck instances for each exponentiation
-    for (_exp_idx, steps) in exponentiation_steps_vec.iter().enumerate() {
-        // Track which Fq12 polynomial indices are used in this exponentiation
-        let mut current_exp_indices = Vec::new();
-
-        // Get random challenges from transcript
-        let r: Vec<F> = transcript.challenge_vector(4); // 4 variables for x ∈ {0,1}⁴
-        let gamma: F = transcript.challenge_scalar();
-
-        // Create a_polys for SquareAndMultiplySumcheck
-        // We need to map the steps to the corresponding polynomials
-        let mut a_polys = Vec::new();
-
-        // Add base polynomial (convert from Fq to F)
-        if let Some(&base_idx) = fp12_to_index.get(&steps.base) {
-            let fq_poly = &fq12_polynomials[base_idx];
-            let f_evals: Vec<F> = match fq_poly {
-                MultilinearPolynomial::LargeScalars(dense) => {
-                    dense.evals_ref().iter().map(|&fq| F::from(fq)).collect()
-                }
-                _ => panic!("Expected LargeScalars"),
-            };
-            a_polys.push(MultilinearPolynomial::LargeScalars(DensePolynomial::new(
-                f_evals,
-            )));
-            current_exp_indices.push(base_idx);
-        }
-
-        // Add intermediate a_i values (convert from Fq to F)
-        for step in &steps.steps {
-            if let Some(&idx) = fp12_to_index.get(&step.a_curr()) {
-                let fq_poly = &fq12_polynomials[idx];
-                let f_evals: Vec<F> = match fq_poly {
-                    MultilinearPolynomial::LargeScalars(dense) => {
-                        dense.evals_ref().iter().map(|&fq| F::from(fq)).collect()
-                    }
-                    _ => panic!("Expected LargeScalars"),
-                };
-                a_polys.push(MultilinearPolynomial::LargeScalars(DensePolynomial::new(
-                    f_evals,
-                )));
-                current_exp_indices.push(idx);
-            }
-        }
-
-        // Pad to 256 polynomials
-        while a_polys.len() < 256 {
-            a_polys.push(MultilinearPolynomial::LargeScalars(DensePolynomial::new(
-                vec![F::zero(); 16],
-            )));
-        }
-
-        // Create g polynomial
-        let g_coeffs_vec = g_coeffs();
-        let mut g_coeffs_array = [Fq::zero(); 12];
-        for i in 0..g_coeffs_vec.len().min(12) {
-            g_coeffs_array[i] = g_coeffs_vec[i];
-        }
-        let g_evals = to_multilinear_evals(&g_coeffs_array);
-        let g_poly = MultilinearPolynomial::LargeScalars(DensePolynomial::new(
-            g_evals.into_iter().map(F::from).collect(),
-        ));
-
-        // Create SquareAndMultiplySumcheck instance
-        let square_multiply_sumcheck =
-            SquareAndMultiplySumcheck::new_prover(a_polys, g_poly, r.clone(), gamma);
-        sumcheck_instances.push(Box::new(square_multiply_sumcheck));
-
-        // Create AccumulatorMultiplySumcheck
-        // Extract rho polynomials
-        let mut rho_polys = Vec::new();
-
-        // Initial rho
-        let initial_rho = if steps.exponent.into_bigint().to_bits_le()[0] {
-            steps.base
-        } else {
-            Fq12::one()
-        };
-
-        if let Some(&idx) = fp12_to_index.get(&initial_rho) {
-            let fq_poly = &fq12_polynomials[idx];
-            let f_evals: Vec<F> = match fq_poly {
-                MultilinearPolynomial::LargeScalars(dense) => {
-                    dense.evals_ref().iter().map(|&fq| F::from(fq)).collect()
-                }
-                _ => panic!("Expected LargeScalars"),
-            };
-            rho_polys.push(MultilinearPolynomial::LargeScalars(DensePolynomial::new(
-                f_evals,
-            )));
-        }
-
-        // Add rho values from steps
-        for step in &steps.steps {
-            if let Some(&idx) = fp12_to_index.get(&step.rho_after()) {
-                let fq_poly = &fq12_polynomials[idx];
-                let f_evals: Vec<F> = match fq_poly {
-                    MultilinearPolynomial::LargeScalars(dense) => {
-                        dense.evals_ref().iter().map(|&fq| F::from(fq)).collect()
-                    }
-                    _ => panic!("Expected LargeScalars"),
-                };
-                rho_polys.push(MultilinearPolynomial::LargeScalars(DensePolynomial::new(
-                    f_evals,
-                )));
-            }
-        }
-
-        // Pad to 256
-        while rho_polys.len() < 256 {
-            rho_polys.push(MultilinearPolynomial::LargeScalars(DensePolynomial::new(
-                vec![F::zero(); 16],
-            )));
-        }
-
-        // Base polynomial for accumulator (convert from Fq to F)
-        let base_poly = if let Some(&idx) = fp12_to_index.get(&steps.base) {
-            let fq_poly = &fq12_polynomials[idx];
-            let f_evals: Vec<F> = match fq_poly {
-                MultilinearPolynomial::LargeScalars(dense) => {
-                    dense.evals_ref().iter().map(|&fq| F::from(fq)).collect()
-                }
-                _ => panic!("Expected LargeScalars"),
-            };
-            MultilinearPolynomial::LargeScalars(DensePolynomial::new(f_evals))
-        } else {
-            MultilinearPolynomial::LargeScalars(DensePolynomial::new(vec![F::one(); 16]))
-        };
-
-        // Extract exponent bits
-        let exponent_bits: Vec<u8> = steps
-            .exponent
-            .into_bigint()
-            .to_bits_le()
+        // Commit to rho polynomials
+        let rho_comms: Vec<_> = steps
+            .rho_mles
             .iter()
-            .take(256)
-            .map(|&b| if b { 1 } else { 0 })
+            .map(|poly| commit_polynomial::<RATIO>(poly, hyrax_generators))
             .collect();
+        rho_commitments.push(rho_comms);
+        all_rho_polys.push(steps.rho_mles.clone());
 
-        let mut exponent_bits = exponent_bits;
-        while exponent_bits.len() < 256 {
-            exponent_bits.push(0);
-        }
+        // Commit to quotient polynomials
+        let quotient_comms: Vec<_> = steps
+            .quotient_mles
+            .iter()
+            .map(|poly| commit_polynomial::<RATIO>(poly, hyrax_generators))
+            .collect();
+        quotient_commitments.push(quotient_comms);
+        all_quotient_polys.push(steps.quotient_mles.clone());
 
-        // Result for accumulator sumcheck
-        let exp_result = F::from(steps.result.c0.c0.c0);
-
-        // Save exponent bits for this exponentiation
-        exponent_bits_per_exponentiation.push(exponent_bits.clone());
-
-        // Save the Fq12 indices used for this exponentiation
-        exponentiation_to_fq12_indices.push(current_exp_indices);
-
-        let accumulator_sumcheck = AccumulatorMultiplySumcheck::new_prover(
-            rho_polys,
-            base_poly,
-            r,
-            gamma,
-            exponent_bits,
-            exp_result,
-        );
-        sumcheck_instances.push(Box::new(accumulator_sumcheck));
+        // Commit to base polynomial
+        let base_poly = jolt_optimizations::fq12_to_multilinear_evals(&steps.base);
+        let base_comm = commit_polynomial::<RATIO>(&base_poly, hyrax_generators);
+        base_commitments.push(base_comm);
+        all_base_polys.push(base_poly);
     }
 
-    // Commit to all polynomials using Hyrax with Grumpkin curve
-    // Note: fq12_polynomials are already over Fq, not F
-    let fq12_poly_refs: Vec<&[Fq]> = fq12_polynomials
+    // Append all commitments to transcript
+    for commitments in rho_commitments
         .iter()
-        .map(|poly| match poly {
-            MultilinearPolynomial::LargeScalars(dense) => dense.evals_ref(),
-            _ => panic!("Expected LargeScalars polynomial"),
-        })
-        .collect();
+        .chain(quotient_commitments.iter())
+        .flat_map(|v| v.iter())
+        .chain(base_commitments.iter())
+    {
+        transcript.append_serializable(commitments);
+    }
 
-    // Batch commit all Fq12 polynomials
-    let fq12_commitments = HyraxCommitment::<RATIO, GrumpkinProjective>::batch_commit(
-        &fq12_poly_refs,
-        hyrax_generators,
-    );
-
-    // Commit quotient polynomials
-    let quotient_poly_refs: Vec<&[Fq]> =
-        quotient_polynomials.iter().map(|q| q.as_slice()).collect();
-    let quotient_commitments = HyraxCommitment::<RATIO, GrumpkinProjective>::batch_commit(
-        &quotient_poly_refs,
-        hyrax_generators,
-    );
-
+    // Create artifacts for verifier
     let artifacts = SZCheckArtifacts {
-        quotient_polynomials: Some(quotient_polynomials),
-        fq12_polynomials: Some(fq12_polynomials),
-        fq12_commitments,
-        quotient_commitments,
-        num_exponentiations: exponentiation_steps_vec.len(),
-        exponent_bits_per_exponentiation,
-        exponentiation_to_fq12_indices,
+        rho_commitments: rho_commitments.clone(),
+        quotient_commitments: quotient_commitments.clone(),
+        base_commitments: base_commitments.clone(),
+        num_exponentiations,
+        num_constraints_per_exponentiation: exponentiation_steps_vec
+            .iter()
+            .map(|steps| steps.quotient_mles.len())
+            .collect(),
+        bits_per_exponentiation: exponentiation_steps_vec
+            .iter()
+            .map(|steps| steps.bits.clone())
+            .collect(),
     };
 
-    (sumcheck_instances, artifacts)
+    // Step 2: Create sumcheck instances and run sumcheck protocol
+    let mut sumcheck_instances: Vec<Box<dyn SumcheckInstance<F>>> = exponentiation_steps_vec
+        .iter()
+        .enumerate()
+        .map(|(exp_idx, steps)| {
+            let r: Vec<F> = transcript.challenge_vector(4);
+            let gamma: F = transcript.challenge_scalar();
+            Box::new(SZCheckSumcheck::new_prover(exp_idx, steps, r, gamma))
+                as Box<dyn SumcheckInstance<F>>
+        })
+        .collect();
+
+    let prover_accumulator = Rc::new(RefCell::new(ProverOpeningAccumulator::<F>::new()));
+    let sumcheck_instances_mut: Vec<&mut dyn SumcheckInstance<F>> = sumcheck_instances
+        .iter_mut()
+        .map(|instance| &mut **instance as &mut dyn SumcheckInstance<F>)
+        .collect();
+
+    let (sumcheck_proof, r_sumcheck) = BatchedSumcheck::prove(
+        sumcheck_instances_mut,
+        Some(prover_accumulator.clone()),
+        transcript,
+    );
+
+    // Step 3: Batch all polynomials for Hyrax opening
+    let total_polys = all_rho_polys.iter().map(|v| v.len()).sum::<usize>()
+        + all_quotient_polys.iter().map(|v| v.len()).sum::<usize>()
+        + all_base_polys.len()
+        + num_exponentiations; // for g polynomials
+
+    let batching_challenges: Vec<F> = transcript.challenge_vector(total_polys);
+
+    // Create batched polynomial
+    let mut batched_poly = vec![F::zero(); 16]; // 2^4 = 16 for 4 variables
+    let mut batched_eval = F::zero();
+    let mut challenge_idx = 0;
+
+    // Batch rho polynomials
+    for (exp_idx, rho_polys) in all_rho_polys.iter().enumerate() {
+        for (poly_idx, rho_poly) in rho_polys.iter().enumerate() {
+            let gamma = batching_challenges[challenge_idx];
+            challenge_idx += 1;
+
+            // Get evaluation from accumulator
+            let eval = prover_accumulator
+                .borrow()
+                .get_recursion_polynomial_opening(
+                    RecursionCommittedPolynomial::SZCheckRho(exp_idx, poly_idx),
+                    SumcheckId::SZCheck,
+                )
+                .1;
+            batched_eval += gamma * eval;
+
+            // Add to batched polynomial
+            for (j, &coeff) in rho_poly.iter().enumerate() {
+                batched_poly[j] += gamma * F::from(coeff);
+            }
+        }
+    }
+
+    // Batch quotient polynomials
+    for (exp_idx, quotient_polys) in all_quotient_polys.iter().enumerate() {
+        for (poly_idx, q_poly) in quotient_polys.iter().enumerate() {
+            let gamma = batching_challenges[challenge_idx];
+            challenge_idx += 1;
+
+            // Get evaluation from accumulator
+            let eval = prover_accumulator
+                .borrow()
+                .get_recursion_polynomial_opening(
+                    RecursionCommittedPolynomial::SZCheckQuotient(exp_idx, poly_idx),
+                    SumcheckId::SZCheck,
+                )
+                .1;
+            batched_eval += gamma * eval;
+
+            // Add to batched polynomial
+            for (j, &coeff) in q_poly.iter().enumerate() {
+                batched_poly[j] += gamma * F::from(coeff);
+            }
+        }
+    }
+
+    // Batch base polynomials
+    for (exp_idx, base_poly) in all_base_polys.iter().enumerate() {
+        let gamma = batching_challenges[challenge_idx];
+        challenge_idx += 1;
+
+        // Get evaluation from accumulator
+        let eval = prover_accumulator
+            .borrow()
+            .get_recursion_polynomial_opening(
+                RecursionCommittedPolynomial::SZCheckBase(exp_idx),
+                SumcheckId::SZCheck,
+            )
+            .1;
+        batched_eval += gamma * eval;
+
+        // Add to batched polynomial
+        for (j, &coeff) in base_poly.iter().enumerate() {
+            batched_poly[j] += gamma * F::from(coeff);
+        }
+    }
+
+    // Batch g polynomials
+    let g_mle = jolt_optimizations::witness_gen::get_g_mle();
+    for exp_idx in 0..num_exponentiations {
+        let gamma = batching_challenges[challenge_idx];
+        challenge_idx += 1;
+
+        // Get evaluation from accumulator
+        let eval = prover_accumulator
+            .borrow()
+            .get_recursion_polynomial_opening(
+                RecursionCommittedPolynomial::SZCheckG(exp_idx),
+                SumcheckId::SZCheck,
+            )
+            .1;
+        batched_eval += gamma * eval;
+
+        // Add to batched polynomial
+        for (j, &coeff) in g_mle.iter().enumerate() {
+            batched_poly[j] += gamma * F::from(coeff);
+        }
+    }
+
+    // Step 4: Generate Hyrax opening proof
+    let r_sumcheck_fq = vec_field_to_fq(&r_sumcheck);
+    let batched_poly_fq = vec_field_to_fq(&batched_poly);
+    let batched_dense_poly = DensePolynomial::new(batched_poly_fq);
+
+    // Note: r_sumcheck needs to be reversed for Hyrax
+    let r_sumcheck_fq_reversed: Vec<Fq> = r_sumcheck_fq.into_iter().rev().collect();
+
+    let batched_hyrax_proof = HyraxOpeningProof::<RATIO, GrumpkinProjective>::prove(
+        &batched_dense_poly,
+        &r_sumcheck_fq_reversed,
+        RATIO,
+    );
+
+    // Get openings from accumulator
+    let openings = prover_accumulator.borrow().evaluation_openings().clone();
+
+    SZCheckProof {
+        artifacts,
+        sumcheck_proof,
+        r_sumcheck,
+        batched_hyrax_proof,
+        openings,
+    }
 }
 
-/// Verifier side of SZ check - creates verifier instances for sumcheck
+/// Verifies the SZ check protocol
 pub fn sz_check_verify<F, ProofTranscript, const RATIO: usize>(
-    artifacts: &SZCheckArtifacts<RATIO>,
+    proof: &SZCheckProof<F, ProofTranscript, RATIO>,
     transcript: &mut ProofTranscript,
-) -> Vec<Box<dyn SumcheckInstance<F>>>
+    hyrax_generators: &PedersenGenerators<GrumpkinProjective>,
+) -> Result<(), ProofVerifyError>
 where
     F: JoltField + From<Fq>,
     ProofTranscript: Transcript,
 {
-    let mut sumcheck_instances: Vec<Box<dyn SumcheckInstance<F>>> = Vec::new();
+    let artifacts = &proof.artifacts;
 
-    // Append commitments to transcript for Fiat-Shamir
-    for commitment in &artifacts.fq12_commitments {
-        transcript.append_serializable(commitment);
-    }
-    for commitment in &artifacts.quotient_commitments {
-        transcript.append_serializable(commitment);
-    }
-
-    // For each exponentiation, create verifier instances
-    for i in 0..artifacts.num_exponentiations {
-        // Get random challenges from transcript (must match prover)
-        let r: Vec<F> = transcript.challenge_vector(4); // 4 variables for x ∈ {0,1}⁴
-        let gamma: F = transcript.challenge_scalar();
-
-        // Create verifier instance for SquareAndMultiplySumcheck
-        let square_multiply_verifier = SquareAndMultiplySumcheck::new_verifier(r.clone(), gamma);
-        sumcheck_instances.push(Box::new(square_multiply_verifier));
-
-        // Create verifier instance for AccumulatorMultiplySumcheck
-        let exponent_bits = artifacts.exponent_bits_per_exponentiation[i].clone();
-
-        let accumulator_verifier =
-            AccumulatorMultiplySumcheck::new_verifier(r, gamma, exponent_bits);
-        sumcheck_instances.push(Box::new(accumulator_verifier));
+    // Step 1: Reconstruct transcript state
+    for commitments in artifacts
+        .rho_commitments
+        .iter()
+        .chain(artifacts.quotient_commitments.iter())
+        .flat_map(|v| v.iter())
+        .chain(artifacts.base_commitments.iter())
+    {
+        transcript.append_serializable(commitments);
     }
 
-    sumcheck_instances
+    // Step 2: Create verifier sumcheck instances
+    let verifier_sumcheck_instances: Vec<Box<dyn SumcheckInstance<F>>> = (0..artifacts
+        .num_exponentiations)
+        .map(|i| {
+            let r: Vec<F> = transcript.challenge_vector(4);
+            let gamma: F = transcript.challenge_scalar();
+            Box::new(SZCheckSumcheck::new_verifier(
+                i, // exponentiation index
+                artifacts.num_constraints_per_exponentiation[i],
+                artifacts.bits_per_exponentiation[i].clone(),
+                r,
+                gamma,
+            )) as Box<dyn SumcheckInstance<F>>
+        })
+        .collect();
+
+    let verifier_instances_ref: Vec<&dyn SumcheckInstance<F>> = verifier_sumcheck_instances
+        .iter()
+        .map(|instance| &**instance as &dyn SumcheckInstance<F>)
+        .collect();
+
+    // Step 3: Verify sumcheck with openings
+    let verifier_accumulator = Rc::new(RefCell::new(VerifierOpeningAccumulator::<F>::new()));
+
+    // Populate verifier accumulator with openings from the proof
+    for (opening_id, (point, claim)) in proof.openings.iter() {
+        verifier_accumulator
+            .borrow_mut()
+            .openings_mut()
+            .insert(opening_id.clone(), (point.clone(), *claim));
+    }
+
+    let verified_r = BatchedSumcheck::verify(
+        &proof.sumcheck_proof,
+        verifier_instances_ref,
+        Some(verifier_accumulator.clone()),
+        transcript,
+    )?;
+
+    if verified_r != proof.r_sumcheck {
+        return Err(ProofVerifyError::InternalError);
+    }
+
+    // Step 4: Verify Hyrax opening proof
+    // Get batching challenges
+    let total_polys = artifacts
+        .rho_commitments
+        .iter()
+        .map(|v| v.len())
+        .sum::<usize>()
+        + artifacts
+            .quotient_commitments
+            .iter()
+            .map(|v| v.len())
+            .sum::<usize>()
+        + artifacts.base_commitments.len()
+        + artifacts.num_exponentiations;
+
+    let batching_challenges: Vec<F> = transcript.challenge_vector(total_polys);
+
+    // Compute batched commitment homomorphically
+    let (L_size, _) = crate::poly::commitment::hyrax::matrix_dimensions(4, RATIO);
+    let mut batched_row_commitments = vec![GrumpkinProjective::zero(); L_size];
+    let mut challenge_idx = 0;
+
+    // Batch rho commitments
+    for rho_commitments_vec in &artifacts.rho_commitments {
+        for commitment in rho_commitments_vec {
+            let gamma = batching_challenges[challenge_idx];
+            challenge_idx += 1;
+            let gamma_fq = field_to_fq(&gamma);
+
+            for (i, &com) in commitment.row_commitments.iter().enumerate() {
+                batched_row_commitments[i] += com * gamma_fq;
+            }
+        }
+    }
+
+    // Batch quotient commitments
+    for quotient_commitments_vec in &artifacts.quotient_commitments {
+        for commitment in quotient_commitments_vec {
+            let gamma = batching_challenges[challenge_idx];
+            challenge_idx += 1;
+            let gamma_fq = field_to_fq(&gamma);
+
+            for (i, &com) in commitment.row_commitments.iter().enumerate() {
+                batched_row_commitments[i] += com * gamma_fq;
+            }
+        }
+    }
+
+    // Batch base commitments
+    for commitment in &artifacts.base_commitments {
+        let gamma = batching_challenges[challenge_idx];
+        challenge_idx += 1;
+        let gamma_fq = field_to_fq(&gamma);
+
+        for (i, &com) in commitment.row_commitments.iter().enumerate() {
+            batched_row_commitments[i] += com * gamma_fq;
+        }
+    }
+
+    // Batch g commitments
+    let g_mle = jolt_optimizations::witness_gen::get_g_mle();
+    let g_poly = DensePolynomial::new(g_mle);
+    let g_commitment =
+        HyraxCommitment::<RATIO, GrumpkinProjective>::commit(&g_poly, hyrax_generators);
+
+    for _ in 0..artifacts.num_exponentiations {
+        let gamma = batching_challenges[challenge_idx];
+        challenge_idx += 1;
+        let gamma_fq = field_to_fq(&gamma);
+
+        for (i, &com) in g_commitment.row_commitments.iter().enumerate() {
+            batched_row_commitments[i] += com * gamma_fq;
+        }
+    }
+
+    // Create batched commitment and verify
+    let batched_hyrax_commitment = HyraxCommitment {
+        row_commitments: batched_row_commitments,
+    };
+
+    // Compute batched opening claim
+    let mut batched_opening_fq = Fq::zero();
+    for (opening_id, (_, claim)) in proof.openings.iter() {
+        match opening_id {
+            crate::poly::opening_proof::OpeningId::Recursion(
+                RecursionCommittedPolynomial::SZCheckRho(exp_idx, poly_idx),
+                _,
+            ) => {
+                // Calculate the challenge index for this rho polynomial
+                let challenge_idx = artifacts.rho_commitments[0..*exp_idx]
+                    .iter()
+                    .map(|v| v.len())
+                    .sum::<usize>()
+                    + poly_idx;
+                let gamma_fq = field_to_fq(&batching_challenges[challenge_idx]);
+                batched_opening_fq += gamma_fq * field_to_fq(claim);
+            }
+            crate::poly::opening_proof::OpeningId::Recursion(
+                RecursionCommittedPolynomial::SZCheckQuotient(exp_idx, poly_idx),
+                _,
+            ) => {
+                // Calculate the challenge index for this quotient polynomial
+                let rho_count = artifacts
+                    .rho_commitments
+                    .iter()
+                    .map(|v| v.len())
+                    .sum::<usize>();
+                let challenge_idx = rho_count
+                    + artifacts.quotient_commitments[0..*exp_idx]
+                        .iter()
+                        .map(|v| v.len())
+                        .sum::<usize>()
+                    + poly_idx;
+                let gamma_fq = field_to_fq(&batching_challenges[challenge_idx]);
+                batched_opening_fq += gamma_fq * field_to_fq(claim);
+            }
+            crate::poly::opening_proof::OpeningId::Recursion(
+                RecursionCommittedPolynomial::SZCheckBase(exp_idx),
+                _,
+            ) => {
+                let rho_count = artifacts
+                    .rho_commitments
+                    .iter()
+                    .map(|v| v.len())
+                    .sum::<usize>();
+                let quotient_count = artifacts
+                    .quotient_commitments
+                    .iter()
+                    .map(|v| v.len())
+                    .sum::<usize>();
+                let challenge_idx = rho_count + quotient_count + exp_idx;
+                let gamma_fq = field_to_fq(&batching_challenges[challenge_idx]);
+                batched_opening_fq += gamma_fq * field_to_fq(claim);
+            }
+            crate::poly::opening_proof::OpeningId::Recursion(
+                RecursionCommittedPolynomial::SZCheckG(exp_idx),
+                _,
+            ) => {
+                let rho_count = artifacts
+                    .rho_commitments
+                    .iter()
+                    .map(|v| v.len())
+                    .sum::<usize>();
+                let quotient_count = artifacts
+                    .quotient_commitments
+                    .iter()
+                    .map(|v| v.len())
+                    .sum::<usize>();
+                let base_count = artifacts.base_commitments.len();
+                let challenge_idx = rho_count + quotient_count + base_count + exp_idx;
+                let gamma_fq = field_to_fq(&batching_challenges[challenge_idx]);
+                batched_opening_fq += gamma_fq * field_to_fq(claim);
+            }
+            _ => {}
+        }
+    }
+
+    // Convert r_sumcheck to Fq and reverse for Hyrax
+    let r_sumcheck_fq = vec_field_to_fq(&proof.r_sumcheck);
+    let r_sumcheck_fq_reversed: Vec<Fq> = r_sumcheck_fq.into_iter().rev().collect();
+
+    proof.batched_hyrax_proof.verify(
+        hyrax_generators,
+        &r_sumcheck_fq_reversed,
+        &batched_opening_fq,
+        &batched_hyrax_commitment,
+    )
 }
 
 #[cfg(test)]
 mod tests {
-    use super::super::square_and_multiply::{
-        AccumulatorMultiplySumcheck, SquareAndMultiplySumcheck,
-    };
-    use crate::{
-        poly::{
-            dense_mlpoly::DensePolynomial, multilinear_polynomial::MultilinearPolynomial,
-            unipoly::UniPoly,
-        },
-        subprotocols::sumcheck::SumcheckInstance,
-    };
+    use super::*;
+    use crate::transcripts::Blake2bTranscript;
     use ark_bn254::{Fq, Fq12, Fr};
-    use ark_ff::BigInteger;
-    use ark_ff::{Field, One, PrimeField, UniformRand, Zero};
+    use ark_ff::UniformRand;
+    use ark_grumpkin::Projective as GrumpkinProjective;
     use ark_std::test_rng;
-    use jolt_optimizations::{
-        expression::{Expression, Term},
-        fq12_poly::{fq12_to_poly12_coeffs, g_coeffs, to_multilinear_evals},
-        steps::pow_with_steps_le,
-        sz_check::batch_verify,
-    };
-
-    fn create_g_polynomial() -> MultilinearPolynomial<Fq> {
-        let g_coeffs = g_coeffs();
-        let mut g_evals = vec![Fq::zero(); 16];
-
-        // Convert g(x) coefficients to evaluations over the boolean hypercube
-        // For now, we'll use the coefficients directly padded to 16 elements
-        for i in 0..g_coeffs.len().min(16) {
-            g_evals[i] = g_coeffs[i];
-        }
-
-        MultilinearPolynomial::LargeScalars(DensePolynomial::new(g_evals))
-    }
-
-    fn convert_fq12_to_fq_poly(fq12: Fq12) -> Vec<Fq> {
-        let coeffs = fq12_to_poly12_coeffs(&fq12);
-        to_multilinear_evals(&coeffs)
-    }
+    use jolt_optimizations::ExponentiationSteps;
 
     #[test]
-    fn test_single_exponentiation_sumcheck() {
-        let mut rng = test_rng();
-
-        // Generate random base and exponent
-        let base = Fq12::rand(&mut rng);
-        let exponent = Fr::rand(&mut rng);
-
-        // Compute a^e using arkworks
-        let expected_result = base.pow(exponent.into_bigint());
-
-        // Get exponentiation steps using jolt_optimizations
-        let steps = pow_with_steps_le(base, exponent);
-        assert!(steps.sanity_verify(), "Steps should pass sanity check");
-        assert_eq!(
-            steps.result, expected_result,
-            "Result should match expected"
-        );
-
-        // Convert steps to products for sz_check
-        let products = steps.to_products();
-
-        // Verify products using batch_verify
-        let r = Fq::rand(&mut rng);
-        assert!(
-            batch_verify(&products, &r),
-            "Batch verification should pass"
-        );
-
-        // Now test the sumcheck protocol
-        // Convert Fq12 elements to multilinear polynomials
-        let num_steps = steps.steps.len();
-        if num_steps == 0 {
-            return; // Edge case: exponent is 0 or 1
-        }
-
-        // Create a_polys from the step sequence
-        let mut a_polys = Vec::new();
-
-        // a_0 is the base
-        a_polys.push(MultilinearPolynomial::LargeScalars(DensePolynomial::new(
-            convert_fq12_to_fq_poly(base),
-        )));
-
-        // Add intermediate values from steps
-        for step in &steps.steps {
-            a_polys.push(MultilinearPolynomial::LargeScalars(DensePolynomial::new(
-                convert_fq12_to_fq_poly(step.a_curr()),
-            )));
-        }
-
-        // Pad to 256 polynomials
-        while a_polys.len() < 256 {
-            a_polys.push(MultilinearPolynomial::LargeScalars(DensePolynomial::new(
-                vec![Fq::zero(); 16],
-            )));
-        }
-
-        // Create g polynomial
-        let g = create_g_polynomial();
-
-        // Random point for eq(r, x)
-        let r: Vec<Fq> = (0..4).map(|_| Fq::rand(&mut rng)).collect();
-        let gamma = Fq::rand(&mut rng);
-
-        // Create sumcheck instance
-        let mut sumcheck =
-            SquareAndMultiplySumcheck::new_prover(a_polys.clone(), g.clone(), r.clone(), gamma);
-
-        // Run sumcheck rounds
-        let mut previous_claim = sumcheck.input_claim();
-
-        for round in 0..4 {
-            let prover_message = sumcheck.compute_prover_message(round, previous_claim);
-
-            // Verify degree bound
-            assert_eq!(
-                prover_message.len(),
-                3,
-                "Should have degree-2 polynomial (3 evaluations)"
-            );
-
-            // Generate random challenge
-            let challenge = Fq::rand(&mut rng);
-
-            // Compute next claim using univariate evaluation
-            let univariate_evals = vec![
-                prover_message[0],
-                previous_claim - prover_message[0], // eval at 1
-                prover_message[1],                  // eval at 2
-                prover_message[2],                  // eval at 3
-            ];
-            let univariate_poly = UniPoly::from_evals(&univariate_evals);
-            previous_claim = univariate_poly.evaluate(&challenge);
-
-            // Bind the sumcheck
-            sumcheck.bind(challenge, round);
-        }
-
-        println!("Single exponentiation sumcheck test passed!");
-    }
-
-    #[test]
-    fn test_expression_composition_sumcheck() {
-        let mut rng = test_rng();
-
-        // Create an expression with multiple terms
-        let terms = vec![
-            Term {
-                base: Fq12::rand(&mut rng),
-                exponent: Fr::rand(&mut rng),
-            },
-            Term {
-                base: Fq12::rand(&mut rng),
-                exponent: Fr::rand(&mut rng),
-            },
-            Term {
-                base: Fq12::rand(&mut rng),
-                exponent: Fr::rand(&mut rng),
-            },
-        ];
-
-        let expr = Expression::new(terms.clone());
-
-        // Evaluate the expression and get steps
-        let (result, expr_steps) = expr.evaluate_with_steps();
-
-        // Convert to products
-        let products = Expression::steps_to_products(&expr_steps);
-
-        // Verify with batch_verify
-        let r = Fq::rand(&mut rng);
-        assert!(
-            batch_verify(&products, &r),
-            "Batch verification should pass"
-        );
-
-        // Test accumulator multiply sumcheck
-        // We'll test the accumulator updates for one of the terms
-        if let Some(term_steps) = expr_steps.term_steps.first() {
-            let num_bits = 256; // Using 256 bits as in the sumcheck
-
-            // Create rho polynomials from the steps
-            let mut rho_polys = Vec::new();
-
-            // Initial rho_0
-            rho_polys.push(MultilinearPolynomial::LargeScalars(DensePolynomial::new(
-                vec![Fq::one(); 16],
-            )));
-
-            // Add rho values from steps
-            for step in &term_steps.steps {
-                rho_polys.push(MultilinearPolynomial::LargeScalars(DensePolynomial::new(
-                    convert_fq12_to_fq_poly(step.rho_after()),
-                )));
-            }
-
-            // Pad to 256
-            while rho_polys.len() < 256 {
-                rho_polys.push(MultilinearPolynomial::LargeScalars(DensePolynomial::new(
-                    vec![Fq::zero(); 16],
-                )));
-            }
-
-            // Base polynomial
-            let a_poly = MultilinearPolynomial::LargeScalars(DensePolynomial::new(
-                convert_fq12_to_fq_poly(term_steps.base),
-            ));
-
-            // Extract exponent bits
-            let exponent_bits: Vec<u8> = term_steps
-                .exponent
-                .into_bigint()
-                .to_bits_le()
-                .iter()
-                .take(256)
-                .map(|&b| if b { 1 } else { 0 })
-                .collect();
-
-            // Pad to 256 bits
-            let mut exponent_bits = exponent_bits;
-            while exponent_bits.len() < 256 {
-                exponent_bits.push(0);
-            }
-
-            let r: Vec<Fq> = (0..4).map(|_| Fq::rand(&mut rng)).collect();
-            let gamma = Fq::rand(&mut rng);
-            // Use one of the Fq coefficients as the result (simplified for testing)
-            let exp_result = term_steps.result.c0.c0.c0;
-
-            // Create accumulator multiply sumcheck
-            let mut acc_sumcheck = AccumulatorMultiplySumcheck::new_prover(
-                rho_polys,
-                a_poly,
-                r.clone(),
-                gamma,
-                exponent_bits,
-                exp_result,
-            );
-
-            // Run sumcheck rounds
-            let mut previous_claim = acc_sumcheck.input_claim();
-
-            for round in 0..4 {
-                let prover_message = acc_sumcheck.compute_prover_message(round, previous_claim);
-
-                // Verify degree bound (degree 2 for accumulator multiply)
-                assert_eq!(
-                    prover_message.len(),
-                    2,
-                    "Should have degree-1 polynomial (2 evaluations)"
-                );
-
-                // Generate random challenge
-                let challenge = Fq::rand(&mut rng);
-
-                // Compute next claim
-                let univariate_evals = vec![
-                    prover_message[0],
-                    previous_claim - prover_message[0], // eval at 1
-                    prover_message[1],                  // eval at 2
-                ];
-                let univariate_poly = UniPoly::from_evals(&univariate_evals);
-                previous_claim = univariate_poly.evaluate(&challenge);
-
-                // Bind the sumcheck
-                acc_sumcheck.bind(challenge, round);
-            }
-        }
-
-        println!("Expression composition sumcheck test passed!");
-    }
-
-    #[test]
-    fn test_edge_cases_sumcheck() {
-        let mut rng = test_rng();
-
-        // Test case 1: Exponent = 0 (result should be 1)
-        let base = Fq12::rand(&mut rng);
-        let exponent = Fr::zero();
-        let steps = pow_with_steps_le(base, exponent);
-        assert_eq!(steps.result, Fq12::one(), "a^0 should equal 1");
-        assert!(steps.sanity_verify(), "Steps should pass sanity check");
-
-        // Test case 2: Exponent = 1 (result should be base)
-        let base = Fq12::rand(&mut rng);
-        let exponent = Fr::one();
-        let steps = pow_with_steps_le(base, exponent);
-        assert_eq!(steps.result, base, "a^1 should equal a");
-        assert!(steps.sanity_verify(), "Steps should pass sanity check");
-
-        // Test case 3: Base = 1 (result should always be 1)
-        let base = Fq12::one();
-        let exponent = Fr::rand(&mut rng);
-        let steps = pow_with_steps_le(base, exponent);
-        assert_eq!(steps.result, Fq12::one(), "1^e should equal 1");
-        assert!(steps.sanity_verify(), "Steps should pass sanity check");
-
-        // Test case 4: Small exponent (e = 2)
-        let base = Fq12::rand(&mut rng);
-        let exponent = Fr::from(2u64);
-        let steps = pow_with_steps_le(base, exponent);
-        assert_eq!(steps.result, base * base, "a^2 should equal a*a");
-        assert!(steps.sanity_verify(), "Steps should pass sanity check");
-
-        // Verify all edge cases with batch_verify
-        for exponent_val in [0u64, 1, 2, 3, 7, 15, 255] {
-            let base = Fq12::rand(&mut rng);
-            let exponent = Fr::from(exponent_val);
-            let steps = pow_with_steps_le(base, exponent);
-            let products = steps.to_products();
-
-            if !products.is_empty() {
-                let r = Fq::rand(&mut rng);
-                assert!(
-                    batch_verify(&products, &r),
-                    "Batch verification should pass for exponent = {}",
-                    exponent_val
-                );
-            }
-        }
-
-        println!("Edge cases sumcheck test passed!");
-    }
-
-    #[test]
-    fn test_large_batch_sumcheck() {
-        let mut rng = test_rng();
-        let num_exponentiations = 100;
-
-        let mut all_products = Vec::new();
-
-        // Generate multiple exponentiations
-        for _ in 0..num_exponentiations {
-            let base = Fq12::rand(&mut rng);
-            let exponent = Fr::rand(&mut rng);
-
-            let steps = pow_with_steps_le(base, exponent);
-            assert!(steps.sanity_verify(), "Steps should pass sanity check");
-
-            let products = steps.to_products();
-            all_products.extend(products);
-        }
-
-        // Batch verify all products
-        let r = Fq::rand(&mut rng);
-        assert!(
-            batch_verify(&all_products, &r),
-            "Large batch verification should pass"
-        );
-
-        // Test with expression composition
-        let mut expr_terms = Vec::new();
-        for _ in 0..10 {
-            expr_terms.push(Term {
-                base: Fq12::rand(&mut rng),
-                exponent: Fr::rand(&mut rng),
-            });
-        }
-
-        let expr = Expression::new(expr_terms);
-        let (result, expr_steps) = expr.evaluate_with_steps();
-
-        // Verify the expression result
-        let expected = expr.terms.iter().fold(Fq12::one(), |acc, term| {
-            acc * term.base.pow(term.exponent.into_bigint())
-        });
-        assert_eq!(result, expected, "Expression result should match expected");
-
-        // Convert to products and verify
-        let expr_products = Expression::steps_to_products(&expr_steps);
-        let r = Fq::rand(&mut rng);
-        assert!(
-            batch_verify(&expr_products, &r),
-            "Expression batch verification should pass"
-        );
-
-        println!(
-            "Large batch sumcheck test passed with {} total products!",
-            all_products.len()
-        );
-    }
-
-    #[test]
-    #[ignore]
-    fn test_full_sumcheck_prove_verify() {
-        use crate::{
-            poly::opening_proof::{
-                OpeningId, OpeningPoint, ProverOpeningAccumulator, VerifierOpeningAccumulator,
-                BIG_ENDIAN,
-            },
-            subprotocols::sumcheck::SingleSumcheck,
-            transcripts::{KeccakTranscript, Transcript},
-            zkvm::witness::VirtualPolynomial,
-        };
-        use std::{cell::RefCell, rc::Rc};
-
-        let mut rng = test_rng();
-
-        // Generate random base and exponent
-        let base = Fq12::rand(&mut rng);
-        let exponent = Fr::rand(&mut rng);
-
-        // Compute a^e using arkworks
-        let expected_result = base.pow(exponent.into_bigint());
-
-        // Get exponentiation steps
-        let steps = pow_with_steps_le(base, exponent);
-        assert!(steps.sanity_verify(), "Steps should pass sanity check");
-        assert_eq!(
-            steps.result, expected_result,
-            "Result should match expected"
-        );
-
-        // Convert steps to products for sz_check
-        let products = steps.to_products();
-
-        // Verify products using batch_verify
-        let r_batch = Fq::rand(&mut rng);
-        assert!(
-            batch_verify(&products, &r_batch),
-            "Batch verification should pass"
-        );
-
-        // // Skip edge cases with no steps
-        // if steps.steps.is_empty() {
-        //     return;
-        // }
-
-        // Create a_polys from the step sequence
-        let mut a_polys = Vec::new();
-        a_polys.push(MultilinearPolynomial::LargeScalars(DensePolynomial::new(
-            convert_fq12_to_fq_poly(base),
-        )));
-
-        for step in &steps.steps {
-            a_polys.push(MultilinearPolynomial::LargeScalars(DensePolynomial::new(
-                convert_fq12_to_fq_poly(step.a_curr()),
-            )));
-        }
-
-        // Pad to 256 polynomials
-        while a_polys.len() < 256 {
-            a_polys.push(MultilinearPolynomial::LargeScalars(DensePolynomial::new(
-                vec![Fq::zero(); 16],
-            )));
-        }
-
-        // Create g polynomial
-        let g = create_g_polynomial();
-
-        // Random point for eq(r, x)
-        let r: Vec<Fq> = (0..4).map(|_| Fq::rand(&mut rng)).collect();
-        let gamma = Fq::rand(&mut rng);
-
-        // Test 1: SquareAndMultiplySumcheck with full prove/verify
-        {
-            // Create prover sumcheck instance
-            let mut prover_sumcheck =
-                SquareAndMultiplySumcheck::new_prover(a_polys.clone(), g.clone(), r.clone(), gamma);
-
-            // Create prover accumulator and transcript
-            let prover_accumulator = Rc::new(RefCell::new(ProverOpeningAccumulator::new()));
-            let mut prover_transcript = KeccakTranscript::new(b"test_square_multiply");
-
-            // Prove
-            let (proof, r_sumcheck) = SingleSumcheck::prove(
-                &mut prover_sumcheck,
-                Some(prover_accumulator.clone()),
-                &mut prover_transcript,
-            );
-
-            // The prover accumulator should now have the openings cached
-            // We need to populate the verifier's accumulator with these same openings
-            // In a real protocol, these would come from the commitment scheme
-
-            // Create verifier sumcheck instance
-            let verifier_sumcheck = SquareAndMultiplySumcheck::new_verifier(r.clone(), gamma);
-
-            // Create verifier accumulator and transcript
-            let verifier_accumulator = Rc::new(RefCell::new(VerifierOpeningAccumulator::new()));
-            let mut verifier_transcript = KeccakTranscript::new(b"test_square_multiply");
-
-            // Copy the prover's openings to the verifier's accumulator
-            // In a real protocol, these would come from commitment opening proofs
-            for (opening_id, (point, claim)) in
-                prover_accumulator.borrow().evaluation_openings().iter()
-            {
-                verifier_accumulator
-                    .borrow_mut()
-                    .openings_mut()
-                    .insert(opening_id.clone(), (point.clone(), *claim));
-            }
-
-            // Verify
-            let verify_result = SingleSumcheck::verify(
-                &verifier_sumcheck,
-                &proof,
-                Some(verifier_accumulator.clone()),
-                &mut verifier_transcript,
-            );
-
-            // assert!(verify_result.is_ok(), "Sumcheck verification should pass");
-            // let verified_r = verify_result.unwrap();
-            // assert_eq!(r_sumcheck, verified_r, "Sumcheck points should match");
-
-            // Verify that the expected output claim matches
-            // let expected_claim = verifier_sumcheck
-            //     .expected_output_claim(Some(verifier_accumulator.clone()), &verified_r);
-
-            // The claim should be zero for a valid constraint system
-            // assert_eq!(
-            //     expected_claim,
-            //     Fq::zero(),
-            //     "Expected claim should be zero for valid constraints"
-            // );
-        }
-
-        // Test 2: AccumulatorMultiplySumcheck with full prove/verify
-        {
-            // Create rho polynomials from the steps
-            let mut rho_polys = Vec::new();
-            rho_polys.push(MultilinearPolynomial::LargeScalars(DensePolynomial::new(
-                vec![Fq::one(); 16],
-            )));
-
-            for step in &steps.steps {
-                rho_polys.push(MultilinearPolynomial::LargeScalars(DensePolynomial::new(
-                    convert_fq12_to_fq_poly(step.rho_after()),
-                )));
-            }
-
-            // Pad to 256
-            while rho_polys.len() < 256 {
-                rho_polys.push(MultilinearPolynomial::LargeScalars(DensePolynomial::new(
-                    vec![Fq::zero(); 16],
-                )));
-            }
-
-            // Base polynomial
-            let a_poly = MultilinearPolynomial::LargeScalars(DensePolynomial::new(
-                convert_fq12_to_fq_poly(base),
-            ));
-
-            // Extract exponent bits
-            let exponent_bits: Vec<u8> = exponent
-                .into_bigint()
-                .to_bits_le()
-                .iter()
-                .take(256)
-                .map(|&b| if b { 1 } else { 0 })
-                .collect();
-
-            // Pad to 256 bits
-            let mut exponent_bits = exponent_bits;
-            while exponent_bits.len() < 256 {
-                exponent_bits.push(0);
-            }
-
-            // Use the result coefficient as the claim
-            let exp_result = expected_result.c0.c0.c0;
-
-            // Create prover accumulator sumcheck
-            let mut prover_acc_sumcheck = AccumulatorMultiplySumcheck::new_prover(
-                rho_polys.clone(),
-                a_poly.clone(),
-                r.clone(),
-                gamma,
-                exponent_bits.clone(),
-                exp_result,
-            );
-
-            // Create prover accumulator and transcript
-            let prover_accumulator = Rc::new(RefCell::new(ProverOpeningAccumulator::new()));
-            let mut prover_transcript = KeccakTranscript::new(b"test_accumulator_multiply");
-
-            // Prove
-            let (proof, r_sumcheck) = SingleSumcheck::prove(
-                &mut prover_acc_sumcheck,
-                Some(prover_accumulator.clone()),
-                &mut prover_transcript,
-            );
-
-            // Create verifier accumulator sumcheck
-            let verifier_acc_sumcheck =
-                AccumulatorMultiplySumcheck::new_verifier(r.clone(), gamma, exponent_bits.clone());
-
-            // Create verifier accumulator and transcript
-            let verifier_accumulator = Rc::new(RefCell::new(VerifierOpeningAccumulator::new()));
-            let mut verifier_transcript = KeccakTranscript::new(b"test_accumulator_multiply");
-
-            // Copy the prover's openings to the verifier's accumulator
-            // In a real protocol, these would come from commitment opening proofs
-            for (opening_id, (point, claim)) in
-                prover_accumulator.borrow().evaluation_openings().iter()
-            {
-                verifier_accumulator
-                    .borrow_mut()
-                    .openings_mut()
-                    .insert(opening_id.clone(), (point.clone(), *claim));
-            }
-
-            // Verify
-            let verify_result = SingleSumcheck::verify(
-                &verifier_acc_sumcheck,
-                &proof,
-                Some(verifier_accumulator.clone()),
-                &mut verifier_transcript,
-            );
-
-            // assert!(
-            //     verify_result.is_ok(),
-            //     "Accumulator sumcheck verification should pass"
-            // );
-            let verified_r = verify_result.unwrap();
-            // assert_eq!(r_sumcheck, verified_r, "Sumcheck points should match");
-        }
-
-        println!("Full sumcheck prove/verify test passed!");
-    }
-
-    #[test]
-    fn test_hyrax_exponentiation_steps() {
-        use crate::{
-            poly::{
-                commitment::{
-                    commitment_scheme::CommitmentScheme,
-                    hyrax::{matrix_dimensions, BatchedHyraxOpeningProof, HyraxCommitment},
-                    pedersen::PedersenGenerators,
-                },
-                dense_mlpoly::DensePolynomial,
-            },
-            transcripts::{Blake2bTranscript, Transcript},
-        };
-        use ark_bn254::{Fq, Fq12, Fr};
-        use ark_grumpkin::Projective as GrumpkinProjective;
-        use jolt_optimizations::fq12_poly::fq12_to_multilinear_evals;
-        use rand_core::RngCore;
-
+    fn test_single_exponentiation_sz_check() {
         const RATIO: usize = 1;
-        type G = GrumpkinProjective; // Grumpkin's scalar field is BN254's Fq
-        type TranscriptType = Blake2bTranscript;
-
         let mut rng = test_rng();
 
-        // Generate random base and use a smaller exponent to avoid stack overflow
+        // Generate random exponentiation
         let base = Fq12::rand(&mut rng);
-        // Use a smaller exponent for testing (e.g., 16 bits)
-        let exponent = Fr::from(rng.next_u32() as u64 & 0xFFFF);
-
-        // Get exponentiation steps
-        let steps = pow_with_steps_le(base, exponent);
-        assert!(steps.sanity_verify(), "Steps should pass sanity check");
-
-        // Get all products from the steps - these are the constraints we need to commit to
-        let products = steps.to_products();
-
-        // For each product (a * b = c), we need to commit to the polynomials representing a, b, and c
-        // Collect all unique Fq12 values that appear in the products
-        let mut fp12_values = Vec::new();
-        let mut fp12_to_index = std::collections::HashMap::new();
-
-        // Helper to add unique Fq12 values and track their indices
-        let mut add_unique_fp12 = |val: Fq12| -> usize {
-            if let Some(&idx) = fp12_to_index.get(&val) {
-                idx
-            } else {
-                let idx = fp12_values.len();
-                fp12_values.push(val);
-                fp12_to_index.insert(val, idx);
-                idx
-            }
-        };
-
-        // Collect all Fq12 values from products and track which indices correspond to each product
-        let mut product_indices = Vec::new();
-        for product in &products {
-            let a_idx = add_unique_fp12(product.a);
-            let b_idx = add_unique_fp12(product.b);
-            let c_idx = add_unique_fp12(product.c);
-            product_indices.push((a_idx, b_idx, c_idx));
-        }
-
-        println!(
-            "Generated {} products from {} steps, with {} unique Fq12 values to commit",
-            products.len(),
-            steps.steps.len(),
-            fp12_values.len()
+        let exponent = Fr::rand(&mut rng);
+        let steps = ExponentiationSteps::new(base, exponent);
+        assert!(
+            steps.verify_result(),
+            "ExponentiationSteps should verify correctly"
         );
 
-        // Convert all unique Fq12 values to multilinear evaluations
-        let multilinear_evals_fq: Vec<Vec<Fq>> = fp12_values
-            .iter()
-            .map(|fp12| fq12_to_multilinear_evals(fp12))
-            .collect();
+        // Initialize transcripts and generators
+        let mut prover_transcript = Blake2bTranscript::new(b"test_sz_check");
+        let mut verifier_transcript = Blake2bTranscript::new(b"test_sz_check");
+        let hyrax_generators = PedersenGenerators::<GrumpkinProjective>::new(16, b"test sz check");
 
-        // Create DensePolynomials from the Fq evaluations
-        let polys: Vec<DensePolynomial<Fq>> = multilinear_evals_fq
-            .iter()
-            .map(|evals| DensePolynomial::new(evals.clone()))
-            .collect();
+        // Generate proof
+        let proof =
+            sz_check_prove::<Fq, _, RATIO>(vec![steps], &mut prover_transcript, &hyrax_generators);
 
-        // Setup generators for Hyrax (16 = 2^4 elements per poly)
-        let num_vars = 4; // 2^4 = 16 evaluations
-        let (_, R_size) = matrix_dimensions(num_vars, RATIO);
-        let gens = PedersenGenerators::<G>::new(R_size, b"test exponentiation steps");
-
-        // Commit to all polynomials
-        let poly_refs: Vec<&[Fq]> = polys.iter().map(|p| p.evals_ref()).collect();
-        let commitments = HyraxCommitment::<RATIO, G>::batch_commit(&poly_refs, &gens);
-
-        println!(
-            "Committed to {} unique polynomials from {} products",
-            fp12_values.len(),
-            products.len()
-        );
-
-        // Generate random opening point
-        let opening_point: Vec<Fq> = (0..num_vars).map(|_| Fq::rand(&mut rng)).collect();
-
-        // Evaluate all polynomials at the opening point
-        let openings: Vec<Fq> = polys.iter().map(|p| p.evaluate(&opening_point)).collect();
-
-        // Create opening proof
-        let mut prover_transcript = TranscriptType::new(b"test_exp_steps");
-        let poly_ptrs: Vec<&DensePolynomial<Fq>> = polys.iter().collect();
-        let proof = BatchedHyraxOpeningProof::<RATIO, G>::prove(
-            &poly_ptrs,
-            &opening_point,
-            &openings,
-            &mut prover_transcript,
-        );
-
-        // Verify the proof
-        let mut verifier_transcript = TranscriptType::new(b"test_exp_steps");
-        let commitment_refs: Vec<&HyraxCommitment<RATIO, G>> = commitments.iter().collect();
-        let verification_result = proof.verify(
-            &gens,
-            &opening_point,
-            &openings,
-            &commitment_refs,
-            &mut verifier_transcript,
-        );
+        // Verify proof
+        let verification_result =
+            sz_check_verify::<Fq, _, RATIO>(&proof, &mut verifier_transcript, &hyrax_generators);
 
         assert!(
             verification_result.is_ok(),
-            "Hyrax proof verification should pass"
+            "SZ check verification should pass: {:?}",
+            verification_result
         );
+    }
 
-        // Verify the products using sz_check batch verification
-        // This checks that a * b - c = q * g(X) for the irreducible polynomial g
-        let r_sz = Fq::rand(&mut rng);
+    #[test]
+    fn test_multiple_exponentiations_sz_check() {
+        const RATIO: usize = 1;
+        let mut rng = test_rng();
+
+        // Generate multiple random exponentiations
+        let steps_vec: Vec<_> = (0..100)
+            .map(|_| {
+                let base = Fq12::rand(&mut rng);
+                let exponent = Fr::rand(&mut rng);
+                let steps = ExponentiationSteps::new(base, exponent);
+                assert!(steps.verify_result());
+                steps
+            })
+            .collect();
+
+        // Initialize transcripts and generators
+        let mut prover_transcript = Blake2bTranscript::new(b"test_sz_check_multi");
+        let mut verifier_transcript = Blake2bTranscript::new(b"test_sz_check_multi");
+        let hyrax_generators = PedersenGenerators::<GrumpkinProjective>::new(16, b"test sz check");
+
+        // Generate proof
+        let proof =
+            sz_check_prove::<Fq, _, RATIO>(steps_vec, &mut prover_transcript, &hyrax_generators);
+
+        // Verify proof
+        let verification_result =
+            sz_check_verify::<Fq, _, RATIO>(&proof, &mut verifier_transcript, &hyrax_generators);
+
         assert!(
-            batch_verify(&products, &r_sz),
-            "SZ check batch verification should pass for all products"
+            verification_result.is_ok(),
+            "SZ check verification with multiple exponentiations should pass: {:?}",
+            verification_result
         );
-        println!(
-            "All {} product constraints verified using sz_check at random point",
-            products.len()
-        );
+    }
 
-        // Test with incorrect opening (should fail)
-        let mut wrong_openings = openings.clone();
-        wrong_openings[0] = wrong_openings[0] + Fq::from(1u64);
+    #[test]
+    fn test_edge_case_exponent_zero() {
+        const RATIO: usize = 1;
+        let mut rng = test_rng();
 
-        let mut verifier_transcript = TranscriptType::new(b"test_exp_steps");
-        let wrong_result = proof.verify(
-            &gens,
-            &opening_point,
-            &wrong_openings,
-            &commitment_refs,
-            &mut verifier_transcript,
-        );
+        // Test with exponent = 0
+        let base = Fq12::rand(&mut rng);
+        let exponent = Fr::from(0u64);
+        let steps = ExponentiationSteps::new(base, exponent);
+        assert!(steps.verify_result());
+
+        // Initialize transcripts and generators
+        let mut prover_transcript = Blake2bTranscript::new(b"test_sz_check_zero");
+        let mut verifier_transcript = Blake2bTranscript::new(b"test_sz_check_zero");
+        let hyrax_generators = PedersenGenerators::<GrumpkinProjective>::new(16, b"test sz check");
+
+        // Generate and verify proof
+        let proof =
+            sz_check_prove::<Fq, _, RATIO>(vec![steps], &mut prover_transcript, &hyrax_generators);
+
+        let verification_result =
+            sz_check_verify::<Fq, _, RATIO>(&proof, &mut verifier_transcript, &hyrax_generators);
 
         assert!(
-            wrong_result.is_err(),
-            "Hyrax proof verification should fail with wrong opening"
+            verification_result.is_ok(),
+            "SZ check should handle zero exponent correctly"
         );
+    }
 
-        // Verify that the exponentiation result is correct
-        let expected_result = base.pow(exponent.into_bigint());
-        assert_eq!(
-            steps.result, expected_result,
-            "Exponentiation result should match expected value"
-        );
+    #[test]
+    fn test_edge_case_exponent_one() {
+        const RATIO: usize = 1;
+        let mut rng = test_rng();
 
-        println!(
-            "Hyrax exponentiation steps test passed! Committed and proved {} unique polynomials from {} products",
-            fp12_values.len(),
-            products.len()
+        // Test with exponent = 1
+        let base = Fq12::rand(&mut rng);
+        let exponent = Fr::from(1u64);
+        let steps = ExponentiationSteps::new(base, exponent);
+        assert!(steps.verify_result());
+
+        // Initialize transcripts and generators
+        let mut prover_transcript = Blake2bTranscript::new(b"test_sz_check_one");
+        let mut verifier_transcript = Blake2bTranscript::new(b"test_sz_check_one");
+        let hyrax_generators = PedersenGenerators::<GrumpkinProjective>::new(16, b"test sz check");
+
+        // Generate and verify proof
+        let proof =
+            sz_check_prove::<Fq, _, RATIO>(vec![steps], &mut prover_transcript, &hyrax_generators);
+
+        let verification_result =
+            sz_check_verify::<Fq, _, RATIO>(&proof, &mut verifier_transcript, &hyrax_generators);
+
+        assert!(
+            verification_result.is_ok(),
+            "SZ check should handle exponent = 1 correctly"
         );
     }
 }

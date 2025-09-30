@@ -115,7 +115,7 @@ impl<const RATIO: usize, G: CurveGroup> AppendToTranscript for HyraxCommitment<R
 }
 
 /// A Hyrax opening proof for a single polynomial opened at a single point.
-#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct HyraxOpeningProof<const RATIO: usize, G: CurveGroup> {
     pub vector_matrix_product: Vec<G::ScalarField>,
 }
@@ -204,7 +204,7 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F>> HyraxOpen
 }
 
 /// A Hyrax opening proof for multiple polynomials opened at the same point.
-#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct BatchedHyraxOpeningProof<const RATIO: usize, G: CurveGroup> {
     pub joint_proof: HyraxOpeningProof<RATIO, G>,
 }

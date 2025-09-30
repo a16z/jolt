@@ -38,7 +38,7 @@ use crate::{
     subprotocols::sumcheck::{BatchedSumcheck, SumcheckInstance, SumcheckInstanceProof},
     transcripts::Transcript,
     utils::{errors::ProofVerifyError, math::Math},
-    zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
+    zkvm::witness::{CommittedPolynomial, RecursionCommittedPolynomial, VirtualPolynomial},
 };
 
 pub type Endianness = bool;
@@ -160,13 +160,14 @@ pub enum SumcheckId {
     BytecodeBooleanity,
     BytecodeHammingWeight,
     OpeningReduction,
-    SquareAndMultiply,
+    SZCheck,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Allocative)]
 pub enum OpeningId {
     Committed(CommittedPolynomial, SumcheckId),
     Virtual(VirtualPolynomial, SumcheckId),
+    Recursion(RecursionCommittedPolynomial, SumcheckId),
 }
 
 pub type Openings<F> = BTreeMap<OpeningId, (OpeningPoint<BIG_ENDIAN, F>, F)>;
@@ -570,7 +571,7 @@ where
     #[cfg(test)]
     pub appended_virtual_openings: std::rc::Rc<std::cell::RefCell<Vec<OpeningId>>>,
     #[cfg(feature = "recursion")]
-    pub recursion_ops: Option<Vec<jolt_optimizations::steps::ExponentiationSteps>>,
+    pub recursion_ops: Option<Vec<jolt_optimizations::ExponentiationSteps>>,
 }
 
 /// Accumulates openings encountered by the verifier over the course of Jolt,
@@ -682,6 +683,18 @@ where
         (point.clone(), *claim)
     }
 
+    pub fn get_recursion_polynomial_opening(
+        &self,
+        polynomial: RecursionCommittedPolynomial,
+        sumcheck: SumcheckId,
+    ) -> (OpeningPoint<BIG_ENDIAN, F>, F) {
+        let (point, claim) = self
+            .openings
+            .get(&OpeningId::Recursion(polynomial, sumcheck))
+            .unwrap_or_else(|| panic!("opening for {sumcheck:?} {polynomial:?} not found"));
+        (point.clone(), *claim)
+    }
+
     /// Adds openings to the accumulator. The given `polynomials` are opened at
     /// `opening_point`, yielding the claimed evaluations `claims`.
     /// Multiple polynomials opened at a single point are batched into a single
@@ -765,6 +778,25 @@ where
         self.appended_virtual_openings
             .borrow_mut()
             .push(OpeningId::Virtual(polynomial, sumcheck));
+    }
+
+    #[tracing::instrument(skip_all, name = "ProverOpeningAccumulator::append_dense_recursion")]
+    pub fn append_dense_recursion(
+        &mut self,
+        polynomials: Vec<RecursionCommittedPolynomial>,
+        sumcheck: SumcheckId,
+        opening_point: Vec<F>,
+        claims: &[F],
+    ) {
+        assert_eq!(polynomials.len(), claims.len());
+
+        // Add openings to map
+        for (label, claim) in polynomials.iter().zip(claims.iter()) {
+            let opening_point_struct = OpeningPoint::<BIG_ENDIAN, F>::new(opening_point.clone());
+            let key = OpeningId::Recursion(*label, sumcheck);
+            self.openings
+                .insert(key, (opening_point_struct.clone(), *claim));
+        }
     }
 
     /// Reduces the multiple openings accumulated into a single opening proof,
@@ -1015,12 +1047,12 @@ where
     }
 
     #[cfg(feature = "recursion")]
-    pub fn set_recursion_ops(&mut self, ops: Vec<jolt_optimizations::steps::ExponentiationSteps>) {
+    pub fn set_recursion_ops(&mut self, ops: Vec<jolt_optimizations::ExponentiationSteps>) {
         self.recursion_ops = Some(ops);
     }
 
     #[cfg(feature = "recursion")]
-    pub fn get_recursion_ops(&self) -> Option<&Vec<jolt_optimizations::steps::ExponentiationSteps>> {
+    pub fn get_recursion_ops(&self) -> Option<&Vec<jolt_optimizations::ExponentiationSteps>> {
         self.recursion_ops.as_ref()
     }
 }
@@ -1070,6 +1102,18 @@ where
         let (point, claim) = self
             .openings
             .get(&OpeningId::Virtual(polynomial, sumcheck))
+            .unwrap_or_else(|| panic!("No opening found for {sumcheck:?} {polynomial:?}"));
+        (point.clone(), *claim)
+    }
+
+    pub fn get_recursion_polynomial_opening(
+        &self,
+        polynomial: RecursionCommittedPolynomial,
+        sumcheck: SumcheckId,
+    ) -> (OpeningPoint<BIG_ENDIAN, F>, F) {
+        let (point, claim) = self
+            .openings
+            .get(&OpeningId::Recursion(polynomial, sumcheck))
             .unwrap_or_else(|| panic!("No opening found for {sumcheck:?} {polynomial:?}"));
         (point.clone(), *claim)
     }
@@ -1200,6 +1244,36 @@ where
             self.openings.insert(key, (opening_point.clone(), claim));
         } else {
             panic!("Tried to populate opening point for non-existent key: {key:?}");
+        }
+    }
+
+    pub fn append_dense_recursion(
+        &mut self,
+        polynomials: Vec<RecursionCommittedPolynomial>,
+        sumcheck: SumcheckId,
+        opening_point: Vec<F>,
+    ) {
+        // For recursion polynomials, we need to handle them separately
+        // since they don't fit into the regular CommittedPolynomial enum
+
+        // Get the claims from the openings map
+        let claims: Vec<F> = polynomials
+            .iter()
+            .map(|poly| {
+                self.openings
+                    .get(&OpeningId::Recursion(*poly, sumcheck))
+                    .map(|(_, claim)| *claim)
+                    .unwrap_or_else(|| {
+                        panic!("No opening found for recursion polynomial {:?}", poly)
+                    })
+            })
+            .collect();
+
+        // Store the opening points with claims
+        for (poly, claim) in polynomials.iter().zip(claims.iter()) {
+            let opening_point_struct = OpeningPoint::<BIG_ENDIAN, F>::new(opening_point.clone());
+            let key = OpeningId::Recursion(*poly, sumcheck);
+            self.openings.insert(key, (opening_point_struct, *claim));
         }
     }
 

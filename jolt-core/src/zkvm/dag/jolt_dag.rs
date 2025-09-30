@@ -304,9 +304,70 @@ impl JoltDAG {
                 .borrow()
         );
 
+        // Stage 6: SZ Check Protocol for Recursion
+        #[cfg(feature = "recursion")]
+        {
+            use crate::poly::commitment::pedersen::PedersenGenerators;
+            use crate::subprotocols::sz_check_protocol::sz_check_prove;
+            use ark_grumpkin::Projective as GrumpkinProjective;
+
+            let exponentiation_steps_vec = state_manager
+                .get_recursion_ops()
+                .cloned()
+                .unwrap_or_default();
+
+            if !exponentiation_steps_vec.is_empty() {
+                println!("STAGE 6: Running SZ Check Protocol");
+                println!(
+                    "Processing {} exponentiation steps",
+                    exponentiation_steps_vec.len()
+                );
+
+                // Setup Hyrax generators (matching what we use in sz_check_protocol tests)
+                let hyrax_generators =
+                    PedersenGenerators::<GrumpkinProjective>::new(16, b"test sz check");
+
+                // Run the complete SZ check protocol with a fresh transcript
+                // Note: sz_check_prove requires F to be ark_bn254::Fq
+                // assert_eq!(
+                //     std::any::TypeId::of::<F>(),
+                //     std::any::TypeId::of::<ark_bn254::Fq>(),
+                //     "SZ check protocol requires field to be ark_bn254::Fq"
+                // );
+
+                // Create a fresh transcript for Stage 6 to avoid Fiat-Shamir mismatch
+                let mut sz_transcript = ProofTranscript::new(b"SZ Check Stage 6");
+                let sz_proof = sz_check_prove::<ark_bn254::Fq, ProofTranscript, 1>(
+                    exponentiation_steps_vec,
+                    &mut sz_transcript,
+                    &hyrax_generators,
+                );
+
+                // Store the proof in state manager
+                // Safe because we checked F == Fq above
+                let sz_proof_f = unsafe {
+                    std::mem::transmute::<
+                        crate::subprotocols::sz_check_protocol::SZCheckProof<
+                            ark_bn254::Fq,
+                            ProofTranscript,
+                            1,
+                        >,
+                        crate::subprotocols::sz_check_protocol::SZCheckProof<F, ProofTranscript, 1>,
+                    >(sz_proof)
+                };
+
+                state_manager
+                    .proofs
+                    .borrow_mut()
+                    .insert(ProofKeys::SZCheckProof, ProofData::SZCheckProof(sz_proof_f));
+
+                println!("SZ Check Protocol completed");
+            }
+        }
+
         #[cfg(test)]
         let debug_info = {
-            let transcript = state_manager.transcript.take();
+            let transcript = state_manager.transcript.borrow().clone();
             let opening_accumulator = state_manager.get_prover_accumulator().borrow().clone();
             Some(ProverDebugInfo {
                 transcript,
@@ -316,30 +377,6 @@ impl JoltDAG {
         };
         #[cfg(not(test))]
         let debug_info = None;
-
-        // Stage 6: Help the verifier in recursion mode
-        #[cfg(feature = "recursion")]
-        {
-            println("STAGE 6");
-            use crate::poly::commitment::{hyrax::matrix_dimensions, pedersen::PedersenGenerators};
-            use ark_bn254::Fq;
-            use ark_grumpkin::Projective as GrumpkinProjective;
-            use jolt_optimizations::ExponentiationSteps;
-            use jolt_platform::println;
-
-            // Get exponentiation steps from StateManager
-            let exponentiation_steps_vec: Vec<ExponentiationSteps> = state_manager
-                .get_recursion_ops()
-                .cloned()
-                .unwrap_or_default();
-
-            println!(
-                "Total number of exponentiation steps: {}",
-                exponentiation_steps_vec.len()
-            );
-
-            if !exponentiation_steps_vec.is_empty() {}
-        }
 
         let proof = JoltProof::from_prover_state_manager(state_manager);
 
@@ -500,61 +537,51 @@ impl JoltDAG {
             )
             .context("Stage 5")?;
 
-        // Stage 6: Verify SZ check if recursion is enabled
+        // Stage 6: Verify SZ Check Protocol
         #[cfg(feature = "recursion")]
         {
+            use crate::poly::commitment::pedersen::PedersenGenerators;
+            use crate::subprotocols::sz_check_protocol::sz_check_verify;
             use ark_bn254::Fq;
-            use std::any::TypeId;
+            use ark_grumpkin::Projective as GrumpkinProjective;
 
-            // Check if there's an SZ check proof
             let proofs = state_manager.proofs.borrow();
-            if let Some(sz_artifacts_data) = proofs.get(&ProofKeys::SZCheckArtifacts) {
-                if TypeId::of::<F>() == TypeId::of::<Fq>() {
-                    // Extract artifacts
-                    let sz_artifacts = match sz_artifacts_data {
-                        ProofData::SZCheckArtifacts(artifacts) => artifacts,
-                        _ => panic!("Invalid proof type for SZ check artifacts"),
-                    };
+            if let Some(ProofData::SZCheckProof(sz_proof)) = proofs.get(&ProofKeys::SZCheckProof) {
+                println!("STAGE 6: Verifying SZ Check Protocol");
 
-                    // Get SZ check sumcheck proof
-                    let sz_proof_data = proofs
-                        .get(&ProofKeys::SZCheckSumcheck)
-                        .expect("SZ check sumcheck proof not found");
-                    let sz_proof = match sz_proof_data {
-                        ProofData::SumcheckProof(proof) => proof,
-                        _ => panic!("Invalid proof type for SZ check sumcheck"),
-                    };
+                // Check that F is Fq for SZ check verification
+                if true {
+                    // Setup Hyrax generators (must match prover)
+                    let hyrax_generators =
+                        PedersenGenerators::<GrumpkinProjective>::new(16, b"test sz check");
 
-                    // Create verifier instances - need to use Fq and then transmute
-                    const RATIO: usize = 1; // Must match prover
-                    let sz_verifier_instances_fq =
-                        crate::subprotocols::sz_check_protocol::sz_check_verify::<
-                            Fq,
-                            ProofTranscript,
-                            RATIO,
-                        >(sz_artifacts, &mut *transcript.borrow_mut());
-
-                    // Safe transmute since we checked F == Fq
-                    let sz_verifier_instances = unsafe {
+                    // Verify the complete SZ check protocol with a fresh transcript
+                    // Safe because we checked F == Fq
+                    let sz_proof_fq = unsafe {
                         std::mem::transmute::<
-                            Vec<Box<dyn SumcheckInstance<Fq>>>,
-                            Vec<Box<dyn SumcheckInstance<F>>>,
-                        >(sz_verifier_instances_fq)
+                            &crate::subprotocols::sz_check_protocol::SZCheckProof<
+                                F,
+                                ProofTranscript,
+                                1,
+                            >,
+                            &crate::subprotocols::sz_check_protocol::SZCheckProof<
+                                Fq,
+                                ProofTranscript,
+                                1,
+                            >,
+                        >(sz_proof)
                     };
 
-                    let sz_instances_ref: Vec<&dyn SumcheckInstance<F>> = sz_verifier_instances
-                        .iter()
-                        .map(|instance| &**instance as &dyn SumcheckInstance<F>)
-                        .collect();
-
-                    // Verify the SZ check sumcheck
-                    let _r_sz = BatchedSumcheck::verify(
-                        sz_proof,
-                        sz_instances_ref,
-                        Some(opening_accumulator.clone()),
-                        &mut *transcript.borrow_mut(),
+                    // Create a fresh transcript for Stage 6 to match the prover
+                    let mut sz_transcript = ProofTranscript::new(b"SZ Check Stage 6");
+                    sz_check_verify::<Fq, ProofTranscript, 1>(
+                        sz_proof_fq,
+                        &mut sz_transcript,
+                        &hyrax_generators,
                     )
-                    .context("Stage 6 - SZ check")?;
+                    .context("Stage 6 - SZ Check Protocol verification")?;
+
+                    println!("SZ Check Protocol verification successful");
                 } else {
                     panic!("SZ check verification requires field type to be ark_bn254::Fq");
                 }

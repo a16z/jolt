@@ -12,6 +12,7 @@ use num::FromPrimitive;
 use tracer::JoltDevice;
 
 use crate::zkvm::witness::AllCommittedPolynomials;
+use crate::zkvm::witness::RecursionCommittedPolynomial;
 use crate::{
     field::JoltField,
     poly::{
@@ -57,7 +58,31 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
             .serialize_with_mode(&mut writer, compress)?;
         self.commitments
             .serialize_with_mode(&mut writer, compress)?;
-        self.proofs.serialize_with_mode(&mut writer, compress)?;
+
+        // Serialize proofs, handling SZCheckProof specially
+        // First write the number of proofs (excluding SZCheckProof if present)
+        #[cfg(feature = "recursion")]
+        let proof_count = self
+            .proofs
+            .iter()
+            .filter(|(_, proof_data)| !matches!(proof_data, ProofData::SZCheckProof(_)))
+            .count();
+        #[cfg(not(feature = "recursion"))]
+        let proof_count = self.proofs.len();
+
+        proof_count.serialize_with_mode(&mut writer, compress)?;
+
+        // Then serialize each proof entry
+        for (key, proof_data) in &self.proofs {
+            #[cfg(feature = "recursion")]
+            {
+                if matches!(proof_data, ProofData::SZCheckProof(_)) {
+                    continue; // Skip SZCheckProof entries
+                }
+            }
+            key.serialize_with_mode(&mut writer, compress)?;
+            proof_data.serialize_with_mode(&mut writer, compress)?;
+        }
         self.trace_length
             .serialize_with_mode(&mut writer, compress)?;
         self.twist_sumcheck_switch_index
@@ -67,9 +92,35 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
         Ok(())
     }
     fn serialized_size(&self, compress: Compress) -> usize {
+        // Calculate size for filtered proofs
+        #[cfg(feature = "recursion")]
+        let proofs_size = {
+            let proof_count = self
+                .proofs
+                .iter()
+                .filter(|(_, proof_data)| !matches!(proof_data, ProofData::SZCheckProof(_)))
+                .count();
+            let mut size = proof_count.serialized_size(compress);
+            for (key, proof_data) in &self.proofs {
+                if matches!(proof_data, ProofData::SZCheckProof(_)) {
+                    continue;
+                }
+                size += key.serialized_size(compress) + proof_data.serialized_size(compress);
+            }
+            size
+        };
+        #[cfg(not(feature = "recursion"))]
+        let proofs_size = {
+            let mut size = self.proofs.len().serialized_size(compress);
+            for (key, proof_data) in &self.proofs {
+                size += key.serialized_size(compress) + proof_data.serialized_size(compress);
+            }
+            size
+        };
+
         self.opening_claims.serialized_size(compress)
             + self.commitments.serialized_size(compress)
-            + self.proofs.serialized_size(compress)
+            + proofs_size
             + self.trace_length.serialized_size(compress)
             + self.ram_K.serialized_size(compress)
             + self.bytecode_d.serialized_size(compress)
@@ -108,7 +159,16 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
         let opening_claims = Claims::deserialize_with_mode(&mut reader, compress, validate)?;
         let commitments =
             Vec::<PCS::Commitment>::deserialize_with_mode(&mut reader, compress, validate)?;
-        let proofs = Proofs::<F, PCS, FS>::deserialize_with_mode(&mut reader, compress, validate)?;
+
+        // Deserialize proofs with custom handling
+        let proof_count = usize::deserialize_with_mode(&mut reader, compress, validate)?;
+        let mut proofs = BTreeMap::new();
+        for _ in 0..proof_count {
+            let key = ProofKeys::deserialize_with_mode(&mut reader, compress, validate)?;
+            let proof_data =
+                ProofData::<F, PCS, FS>::deserialize_with_mode(&mut reader, compress, validate)?;
+            proofs.insert(key, proof_data);
+        }
         let trace_length = usize::deserialize_with_mode(&mut reader, compress, validate)?;
         let twist_sumcheck_switch_index =
             usize::deserialize_with_mode(&mut reader, compress, validate)?;
@@ -250,6 +310,11 @@ impl CanonicalSerialize for OpeningId {
                 (*sumcheck_id as u8).serialize_with_mode(&mut writer, compress)?;
                 virtual_polynomial.serialize_with_mode(&mut writer, compress)
             }
+            OpeningId::Recursion(recursion_polynomial, sumcheck_id) => {
+                2u8.serialize_with_mode(&mut writer, compress)?;
+                (*sumcheck_id as u8).serialize_with_mode(&mut writer, compress)?;
+                recursion_polynomial.serialize_with_mode(&mut writer, compress)
+            }
         }
     }
 
@@ -262,6 +327,10 @@ impl CanonicalSerialize for OpeningId {
             OpeningId::Virtual(virtual_polynomial, _) => {
                 // +1 for OpeningIdVariant, +1 for sumcheck_id (which is a u8)
                 virtual_polynomial.serialized_size(compress) + 2
+            }
+            OpeningId::Recursion(recursion_polynomial, _) => {
+                // +1 for OpeningIdVariant, +1 for sumcheck_id (which is a u8)
+                recursion_polynomial.serialized_size(compress) + 2
             }
         }
     }
@@ -294,6 +363,17 @@ impl CanonicalDeserialize for OpeningId {
                 let polynomial =
                     VirtualPolynomial::deserialize_with_mode(&mut reader, compress, validate)?;
                 Ok(OpeningId::Virtual(
+                    polynomial,
+                    SumcheckId::from_u8(sumcheck_id).ok_or(SerializationError::InvalidData)?,
+                ))
+            }
+            2 => {
+                let polynomial = RecursionCommittedPolynomial::deserialize_with_mode(
+                    &mut reader,
+                    compress,
+                    validate,
+                )?;
+                Ok(OpeningId::Recursion(
                     polynomial,
                     SumcheckId::from_u8(sumcheck_id).ok_or(SerializationError::InvalidData)?,
                 ))
@@ -365,6 +445,37 @@ impl CanonicalDeserialize for VirtualPolynomial {
     }
 }
 
+impl CanonicalSerialize for RecursionCommittedPolynomial {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        self.to_index().serialize_with_mode(&mut writer, compress)
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        self.to_index().serialized_size(compress)
+    }
+}
+
+impl Valid for RecursionCommittedPolynomial {
+    fn check(&self) -> Result<(), SerializationError> {
+        Ok(())
+    }
+}
+
+impl CanonicalDeserialize for RecursionCommittedPolynomial {
+    fn deserialize_with_mode<R: Read>(
+        mut reader: R,
+        compress: Compress,
+        validate: Validate,
+    ) -> Result<Self, SerializationError> {
+        let index = usize::deserialize_with_mode(&mut reader, compress, validate)?;
+        Ok(RecursionCommittedPolynomial::from_index(index))
+    }
+}
+
 impl CanonicalSerialize for ProofKeys {
     fn serialize_with_mode<W: Write>(
         &self,
@@ -414,9 +525,9 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
                 proof.serialize_with_mode(&mut writer, compress)
             }
             #[cfg(feature = "recursion")]
-            ProofData::SZCheckArtifacts(_artifacts) => {
+            ProofData::SZCheckProof(_proof) => {
                 2u8.serialize_with_mode(&mut writer, compress)?;
-                // TODO: Implement serialization for SZCheckArtifacts when needed
+                // TODO: Implement serialization for SZCheckProof when needed
                 Ok(())
             }
         }
@@ -427,7 +538,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
             ProofData::SumcheckProof(proof) => proof.serialized_size(compress),
             ProofData::ReducedOpeningProof(proof) => proof.serialized_size(compress),
             #[cfg(feature = "recursion")]
-            ProofData::SZCheckArtifacts(_artifacts) => {
+            ProofData::SZCheckProof(_proof) => {
                 // TODO: Implement proper size calculation when needed
                 0
             }
@@ -462,6 +573,12 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
                 let proof =
                     ReducedOpeningProof::deserialize_with_mode(&mut reader, compress, validate)?;
                 Ok(ProofData::ReducedOpeningProof(proof))
+            }
+            #[cfg(feature = "recursion")]
+            2 => {
+                // TODO: Implement deserialization for SZCheckProof when needed
+                // For now, this should never be reached as SZCheckProof is not fully serialized
+                Err(SerializationError::NotEnoughSpace)
             }
             _ => Err(SerializationError::InvalidData),
         }

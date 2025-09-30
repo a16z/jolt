@@ -84,6 +84,55 @@ pub enum CommittedPolynomial {
     RamRa(usize),
 }
 
+// #[cfg(feature = "recursion")]
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Allocative)]
+pub enum RecursionCommittedPolynomial {
+    /// Rho polynomials for S-Z check: (exponentiation_idx, local_rho_idx)
+    SZCheckRho(usize, usize),
+    /// Base polynomial for exponentiation: exponentiation_idx
+    SZCheckBase(usize),
+    /// Final evaluation G(z): exponentiation_idx
+    SZCheckG(usize),
+    /// Quotient polynomial for S-Z check: (exponentiation_idx, local_quotient_idx)
+    SZCheckQuotient(usize, usize),
+}
+
+impl RecursionCommittedPolynomial {
+    pub fn to_index(&self) -> usize {
+        match self {
+            RecursionCommittedPolynomial::SZCheckRho(exp_idx, local_idx) => {
+                // Each exponentiation can have up to 1000 rho polynomials
+                exp_idx * 1000 + local_idx
+            }
+            RecursionCommittedPolynomial::SZCheckBase(exp_idx) => 10000 + exp_idx,
+            RecursionCommittedPolynomial::SZCheckG(exp_idx) => 20000 + exp_idx,
+            RecursionCommittedPolynomial::SZCheckQuotient(exp_idx, local_idx) => {
+                // Each exponentiation can have up to 1000 quotient polynomials
+                30000 + exp_idx * 1000 + local_idx
+            }
+        }
+    }
+
+    pub fn from_index(index: usize) -> Self {
+        match index {
+            0..=9999 => {
+                let exp_idx = index / 1000;
+                let local_idx = index % 1000;
+                RecursionCommittedPolynomial::SZCheckRho(exp_idx, local_idx)
+            }
+            10000..=19999 => RecursionCommittedPolynomial::SZCheckBase(index - 10000),
+            20000..=29999 => RecursionCommittedPolynomial::SZCheckG(index - 20000),
+            30000..=39999 => {
+                let adjusted_idx = index - 30000;
+                let exp_idx = adjusted_idx / 1000;
+                let local_idx = adjusted_idx % 1000;
+                RecursionCommittedPolynomial::SZCheckQuotient(exp_idx, local_idx)
+            }
+            _ => panic!("Invalid RecursionCommittedPolynomial index: {}", index),
+        }
+    }
+}
+
 pub static mut ALL_COMMITTED_POLYNOMIALS: OnceCell<Vec<CommittedPolynomial>> = OnceCell::new();
 
 struct WitnessData<F: JoltField> {
@@ -685,6 +734,12 @@ pub enum VirtualPolynomial {
     SquareMultiplyBase,
     /// The accumulator polynomials rho_i for square-and-multiply, indexed 0 to 127
     SquareMultiplyRho(usize),
+    /// SZ Check polynomials
+    SZCheckBase,
+    SZCheckG,
+    SZCheckRho(usize),
+    SZCheckQuotient(usize),
+    SZCheckCombinedH,
     RamHammingWeight,
     OpFlags(CircuitFlags),
     LookupTableFlag(usize),
