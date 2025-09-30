@@ -13,10 +13,10 @@ host = ["dep:ctor", "dep:tracer"]
 
 [dependencies]
 ctor = { workspace = true, optional = true }
-tracer = { workspace = true, optional = true }
+tracer = { workspace = true, optional = true, features = ["std"] }
 
 [dev-dependencies]
 blake3.workspace = true
 hex-literal.workspace = true
 rand.workspace = true
-tracer = { workspace = true, features = ["test-utils"] }
+tracer = { workspace = true, features = ["std", "test-utils"] }

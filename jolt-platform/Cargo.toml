@@ -26,14 +26,14 @@ rand = { workspace = true, default-features = false, features = [
 ], optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-getrandom_v02 = { workspace = true, package = "getrandom", default-features = false, features = [
+getrandom_v02 = { workspace = true, default-features = false, features = [
     "custom",
 ], optional = true }
 getrandom_v03 = { workspace = true, default-features = false, features = [
 ], optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-getrandom_v02 = { workspace = true, package = "getrandom", default-features = false, features = [
+getrandom_v02 = { workspace = true, default-features = false, features = [
     "js",
 ], optional = true }
 getrandom_v03 = { workspace = true, default-features = false, features = [

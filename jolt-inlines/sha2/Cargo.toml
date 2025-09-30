@@ -13,9 +13,9 @@ host = ["dep:ctor", "dep:tracer", "dep:tracing"]
 
 [dependencies]
 ctor = { workspace = true, optional = true }
-tracer = { workspace = true, optional = true }
+tracer = { workspace = true, optional = true, features = ["std"] }
 tracing = { workspace = true, optional = true }
 
 [dev-dependencies]
 hex-literal.workspace = true
-tracer = { workspace = true, features = ["test-utils"] }
+tracer = { workspace = true, features = ["std", "test-utils"] }
