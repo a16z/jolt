@@ -658,8 +658,8 @@ impl<F: JoltField> ReadRafProverState<F> {
             .for_each(|(old, new)| {
                 old.iter_mut()
                     .zip(new.into_iter())
-                    .for_each(|(src, mut dest)| {
-                        *src = DensePolynomial::new(std::mem::take(&mut dest));
+                    .for_each(|(poly, mut coeffs)| {
+                        *poly = DensePolynomial::new(std::mem::take(&mut coeffs));
                     });
             });
     }
