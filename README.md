@@ -4,7 +4,7 @@
 
 Just One Lookup Table.
 
-Jolt is a zkVM (zero-knowledge virtual machine) for RISC-V, built to be the simplest, fastest, and most extensible general-purpose of its kind. This repository currently contains an implementation of Jolt for the RISC-V 32-bit Base Integer Instruction Set + M Standard Extension for Integer Multiplication and Division (RV32IM). _Contributors are welcome!_
+Jolt is a zkVM (zero-knowledge virtual machine) for RISC-V, built to be the simplest, fastest, and most extensible general-purpose of its kind. This repository currently contains an implementation of Jolt for the RISC-V 64-bit Base Integer Instruction Set + M Standard Extension for Integer Multiplication and Division + A Standard Extension for Atomic Operations + C Standard Extension for Compressed Instructions (RV64IMAC). _Contributors are welcome!_
 
 ## Resources
 
