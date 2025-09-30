@@ -13,9 +13,7 @@ repository = "https://github.com/a16z/jolt"
 edition = "2021"
 
 [features]
-default = [
-    "jolt-platform/random"
-]
+default = ["jolt-platform/random"]
 host = [
     "jolt-core/default",
     "jolt-platform/std",
@@ -37,22 +35,20 @@ guest-verifier = [
     "dep:ark-bn254",
     "jolt-core/minimal",
 ]
-malloc-shim = [
-    "jolt-platform/malloc-shim"
-]
+malloc-shim = ["jolt-platform/malloc-shim"]
 
 [dependencies]
-jolt-platform = { path = "../jolt-platform" }
-postcard = { version = "1.0.8", default-features = false }
-ark-ec = { version = "0.5.0", default-features = false, optional = true }
-ark-bn254 = { version = "0.5.0", default-features = false, optional = true }
+jolt-platform.workspace = true
+postcard.workspace = true
+ark-ec = { workspace = true, default-features = false, optional = true }
+ark-bn254 = { workspace = true, default-features = false, optional = true }
 
-jolt-sdk-macros = { path = "./macros" }
+jolt-sdk-macros.workspace = true
 # Host-only dependencies
-common = { path = "../common", optional = true }
-jolt-core = { path = "../jolt-core", default-features = false, optional = true }
-tracer = { path = "../tracer", optional = true }
-rand = { version = "0.8.5", optional = true }
+common = { workspace = true, optional = true }
+jolt-core = { workspace = true, default-features = false, optional = true }
+tracer = { workspace = true, optional = true }
+rand = { workspace = true, optional = true }
 
 [dev-dependencies]
-hex-literal = "0.4.1"
+hex-literal.workspace = true

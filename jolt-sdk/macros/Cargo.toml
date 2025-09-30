@@ -4,13 +4,13 @@ version = "0.1.0"
 authors = [
     "Michael Zhu <mzhu@a16z.com>",
     "Sam Ragsdale <sragsdale@a16z.com>",
-    "Noah Citron <ncitron@a16z.com>"
+    "Noah Citron <ncitron@a16z.com>",
 ]
 description = "SDK for Jolt"
 license = "MIT"
 homepage = "https://github.com/a16z/jolt/README.md"
 repository = "https://github.com/a16z/jolt"
-edition="2021"
+edition = "2021"
 
 [lib]
 proc-macro = true
@@ -19,8 +19,8 @@ proc-macro = true
 guest-std = []
 
 [dependencies]
-syn = { version = "1.0", features = ["full"] }
-quote = "1.0"
-proc-macro2 = "1.0.79"
+syn.workspace = true
+quote.workspace = true
+proc-macro2.workspace = true
 
-common = { path = "../../common" }
+common.workspace = true

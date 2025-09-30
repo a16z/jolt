@@ -9,11 +9,12 @@ default = []
 host = ["dep:ctor", "dep:tracer"]
 
 [dependencies]
-ctor = { version = "0.2", optional = true }
-tracer = { path = "../../tracer", optional = true }
+ctor = { workspace = true, optional = true }
+tracer = { workspace = true, optional = true }
 
 [dev-dependencies]
-hex-literal = "0.4.1"
-blake2 = "0.10"
-rand = "0.8"
-tracer = { path = "../../tracer", features = ["test-utils"] }
+hex-literal.workspace = true
+blake2.workspace = true
+rand.workspace = true
+tracer = { workspace = true, features = ["test-utils"] }
+
