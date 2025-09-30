@@ -6,8 +6,6 @@ macro_rules! declare_riscv_instr {
       match   = $match_:expr,
       format  = $format:ty,
       ram     = $ram:ty
-      $(, is_virtual = $virt:tt)?
-        $(,)?
   ) => {
         #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
         pub struct $name {
@@ -30,18 +28,22 @@ macro_rules! declare_riscv_instr {
             }
 
             fn new(word: u32, address: u64, validate: bool, compressed: bool) -> Self {
-              if validate {
-                debug_assert_eq!(word & Self::MASK, Self::MATCH, "word: {:x}, mask: {:x}, word & mask: {:x}, match: {:x}", word, Self::MASK, word & Self::MASK, Self::MATCH);
-              }
-              if declare_riscv_instr!(@is_virtual $( $virt )?) {
-                    panic!(
-                        "virtual instruction `{}` cannot be built from a machine word",
-                        stringify!($name)
+                if validate {
+                    debug_assert_eq!(
+                        word & Self::MASK,
+                        Self::MATCH,
+                        "word: {:x}, mask: {:x}, word & mask: {:x}, match: {:x}",
+                        word,
+                        Self::MASK,
+                        word & Self::MASK,
+                        Self::MATCH
                     );
                 }
                 Self {
                     address,
-                    operands: <$format as $crate::instruction::format::InstructionFormat>::parse(word),
+                    operands: <$format as $crate::instruction::format::InstructionFormat>::parse(
+                        word,
+                    ),
                     inline_sequence_remaining: None,
                     is_compressed: compressed,
                 }
@@ -51,7 +53,9 @@ macro_rules! declare_riscv_instr {
             fn random(rng: &mut rand::rngs::StdRng) -> Self {
                 Self {
                     address: rand::RngCore::next_u64(rng),
-                    operands: <$format as $crate::instruction::format::InstructionFormat>::random(rng),
+                    operands: <$format as $crate::instruction::format::InstructionFormat>::random(
+                        rng,
+                    ),
                     inline_sequence_remaining: None,
                     is_compressed: false,
                 }
@@ -83,12 +87,5 @@ macro_rules! declare_riscv_instr {
                 }
             }
         }
-    };
-
-    (@is_virtual true) => {
-        true
-    };
-    (@is_virtual) => {
-        false
     };
 }

@@ -37,7 +37,6 @@ impl RISCVTrace for MULW {
 
         let mut trace = trace;
         for instr in inline_sequence {
-            // In each iteration, create a new Option containing a re-borrowed reference
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
@@ -48,8 +47,10 @@ impl RISCVTrace for MULW {
         xlen: Xlen,
     ) -> Vec<Instruction> {
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
+
         asm.emit_r::<MUL>(self.operands.rd, self.operands.rs1, self.operands.rs2);
         asm.emit_i::<VirtualSignExtendWord>(self.operands.rd, self.operands.rd, 0);
+
         asm.finalize()
     }
 }

@@ -50,11 +50,38 @@ impl RISCVTrace for AMOXORD {
         let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
-            // In each iteration, create a new Option containing a re-borrowed reference
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
 
+    /// AMOXOR.D atomically performs bitwise XOR on a 64-bit memory location with rs2.
+    ///
+    /// This atomic memory operation (AMO) instruction atomically loads a doubleword from
+    /// the memory address in rs1, performs a bitwise XOR with the value in rs2, stores
+    /// the result back to memory, and returns the original memory value in rd.
+    ///
+    /// In the zkVM context:
+    /// - Atomicity is guaranteed by the single-threaded execution model
+    /// - No explicit memory barriers or synchronization needed
+    /// - Direct 64-bit operations on naturally aligned addresses
+    ///
+    /// The bitwise XOR operation is commonly used for:
+    /// - Toggling specific bits in shared flags or control words
+    /// - Implementing lock-free toggle switches
+    /// - Cryptographic operations and checksums
+    /// - Atomic bit flipping without branching
+    /// - Invertible transformations in concurrent algorithms
+    ///
+    /// Implementation sequence:
+    /// 1. Load original value from memory[rs1]
+    /// 2. Compute new_value = original ^ rs2
+    /// 3. Store new_value back to memory[rs1]
+    /// 4. Return original value in rd
+    ///
+    /// XOR properties leveraged:
+    /// - Self-inverse: x ^ y ^ y = x (useful for temporary modifications)
+    /// - Toggle behavior: x ^ 1 flips bit, x ^ 0 preserves bit
+    /// - Branchless conditional flip based on mask patterns
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,

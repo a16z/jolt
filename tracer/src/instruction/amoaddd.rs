@@ -51,11 +51,11 @@ impl RISCVTrace for AMOADDD {
         let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
-            // In each iteration, create a new Option containing a re-borrowed reference
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
 
+    /// AMOADD.D atomically adds rs2 to a memory location and returns the original value.
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,

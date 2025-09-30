@@ -57,11 +57,27 @@ impl RISCVTrace for AMOMAXUW {
         let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
-            // In each iteration, create a new Option containing a re-borrowed reference
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
 
+    /// Generates inline sequence for atomic maximum operation (unsigned 32-bit).
+    ///
+    /// AMOMAXU.W atomically loads a 32-bit word from memory, computes the maximum
+    /// of that value and the lower 32 bits of rs2 (treating both as unsigned),
+    /// stores the maximum back to memory, and returns the original value
+    /// sign-extended in rd.
+    ///
+    /// The implementation uses a branchless maximum selection:
+    /// 1. Load and prepare operands with proper zero-extension for comparison
+    /// 2. Use SLTU to compare unsigned values
+    /// 3. Use multiplication with selector bits to choose maximum
+    /// 4. Store result and return original value sign-extended
+    ///
+    /// On RV64, additional complexity arises from:
+    /// - Need to zero-extend both operands for correct unsigned comparison
+    /// - Use amo_pre64/post64 helpers for word alignment within doublewords
+    /// - Proper sign extension of the original value for rd
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,

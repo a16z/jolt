@@ -10,8 +10,7 @@ declare_riscv_instr!(
     mask = 0,
     match = 0,
     format = FormatI,
-    ram    = super::RAMRead,
-    is_virtual = true
+    ram    = super::RAMRead
 );
 
 impl VirtualLW {

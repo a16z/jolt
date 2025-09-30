@@ -57,11 +57,23 @@ impl RISCVTrace for AMOMAXUD {
         let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
-            // In each iteration, create a new Option containing a re-borrowed reference
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
 
+    /// Generates inline sequence for atomic maximum operation (unsigned 64-bit).
+    ///
+    /// AMOMAXU.D atomically loads a 64-bit value from memory, computes the maximum
+    /// of that value and rs2 (treating both as unsigned), stores the maximum back
+    /// to memory, and returns the original value in rd.
+    ///
+    /// Uses the same branchless approach as AMOMAX.D but with unsigned comparison:
+    /// 1. Load current value from memory
+    /// 2. Use SLTU for unsigned comparison (current < rs2)
+    /// 3. Compute selector bits and use multiplication to select maximum
+    /// 4. Store result and return original value
+    ///
+    /// The branchless multiplication technique ensures zkVM compatibility.
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,

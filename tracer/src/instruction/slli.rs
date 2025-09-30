@@ -35,11 +35,21 @@ impl RISCVTrace for SLLI {
         let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
-            // In each iteration, create a new Option containing a re-borrowed reference
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
 
+    /// Generates inline sequence for shift left logical immediate.
+    ///
+    /// SLLI (Shift Left Logical Immediate) shifts rs1 left by a constant amount.
+    /// The implementation uses multiplication by 2^shift_amount, leveraging the
+    /// mathematical equivalence: x << n = x * 2^n
+    ///
+    /// This approach is zkVM-friendly as multiplication is a native operation
+    /// that can be efficiently verified in the constraint system.
+    ///
+    /// The shift amount is masked to 5 bits on RV32 (0-31) or 6 bits on RV64 (0-63),
+    /// ensuring the shift stays within valid bounds for the architecture.
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,

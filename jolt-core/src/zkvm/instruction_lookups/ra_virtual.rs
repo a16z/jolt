@@ -45,8 +45,8 @@ pub struct RaSumcheck<F: JoltField> {
 #[derive(Allocative)]
 pub struct RaProverState<F: JoltField> {
     ra_i_polys: Vec<MultilinearPolynomial<F>>,
-    eq_evals: Vec<F>,
-    eq_factor: F,
+    /// Challenges drawn throughout  the sumcheck.
+    r_sumcheck: Vec<F>,
 }
 
 impl<F: JoltField> RaSumcheck<F> {
@@ -103,12 +103,9 @@ impl<F: JoltField> RaSumcheck<F> {
 
         let ra_i_polys = Self::compute_ra_i_polys(trace, state_manager);
 
-        let eq_evals = EqPolynomial::evals(&r_cycle[1..]);
-
         let prover_state = RaProverState {
             ra_i_polys,
-            eq_evals,
-            eq_factor: EqPolynomial::mle(&[F::zero()], &[r_cycle[0]]),
+            r_sumcheck: vec![],
         };
 
         Self {
@@ -151,25 +148,18 @@ impl<F: JoltField> SumcheckInstance<F> for RaSumcheck<F> {
     }
 
     #[tracing::instrument(skip_all, name = "InstructionRaSumcheck::compute_prover_message")]
-    fn compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F> {
+    fn compute_prover_message(&mut self, _round: usize, previous_claim: F) -> Vec<F> {
         let prover_state = self
             .prover_state
             .as_ref()
             .expect("Prover state not initialized");
         let ra_i_polys = &prover_state.ra_i_polys;
 
-        let log_sum_n_terms = (self.r_cycle.len() - round - 1) as u32;
-
-        let correction_factor = prover_state.eq_factor
-            / EqPolynomial::mle(&vec![F::zero(); round + 1], &self.r_cycle[..round + 1]);
-
         let poly = compute_mles_product_sum(
             ra_i_polys,
             previous_claim,
-            self.r_cycle[round],
-            &prover_state.eq_evals,
-            correction_factor,
-            log_sum_n_terms,
+            &self.r_cycle,
+            &prover_state.r_sumcheck,
         );
 
         // Evaluate the poly at 0, 2, 3, ..., degree.
@@ -180,7 +170,7 @@ impl<F: JoltField> SumcheckInstance<F> for RaSumcheck<F> {
     }
 
     #[tracing::instrument(skip_all, name = "InstructionRaSumcheck::bind")]
-    fn bind(&mut self, r_j: F, round: usize) {
+    fn bind(&mut self, r_j: F, _round: usize) {
         let prover_state = self
             .prover_state
             .as_mut()
@@ -191,7 +181,7 @@ impl<F: JoltField> SumcheckInstance<F> for RaSumcheck<F> {
             .par_iter_mut()
             .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow));
 
-        prover_state.eq_factor *= EqPolynomial::mle(&[r_j], &[self.r_cycle[round]]);
+        prover_state.r_sumcheck.push(r_j);
     }
 
     fn expected_output_claim(
