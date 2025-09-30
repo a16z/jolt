@@ -2,16 +2,16 @@
 name = "jolt-core"
 version = "0.1.0"
 authors = [
-    # author of original Spartan paper and code base
-    "Srinath Setty <srinath@microsoft.com>",
-    # authors who contributed to the Arkworks Spartan fork
-    "Zhenfei Zhang <zhenfei.zhang@hotmail.com>",
-    # authors who contributed to Lasso/Jolt
-    "Michael Zhu <mzhu@a16z.com>",
-    "Sam Ragsdale <sragsdale@a16z.com>",
-    "Noah Citron <ncitron@a16z.com>",
-    "Arasu Arun <arasu.arun5@gmail.com>",
-    "Quang Dao <dvquang85@gmail.com>",
+  # author of original Spartan paper and code base
+  "Srinath Setty <srinath@microsoft.com>",
+  # authors who contributed to the Arkworks Spartan fork
+  "Zhenfei Zhang <zhenfei.zhang@hotmail.com>",
+  # authors who contributed to Lasso/Jolt
+  "Michael Zhu <mzhu@a16z.com>",
+  "Sam Ragsdale <sragsdale@a16z.com>",
+  "Noah Citron <ncitron@a16z.com>",
+  "Arasu Arun <arasu.arun5@gmail.com>",
+  "Quang Dao <dvquang85@gmail.com>",
 ]
 edition = "2021"
 description = "The lookup singularity. Based on Spartan; built on Arkworks."
@@ -23,21 +23,21 @@ keywords = ["SNARK", "cryptography", "proofs", "zkVM"]
 [features]
 default = ["host", "mont-challenge"]
 host = [
-    "dep:reqwest",
-    "dep:tokio",
-    "dep:indicatif",
-    "dep:dirs",
-    "dep:target-lexicon",
-    "prover",
-    "dep:sha2_inline",
-    "dep:sha3_inline",
+  "dep:reqwest",
+  "dep:tokio",
+  "dep:indicatif",
+  "dep:dirs",
+  "dep:target-lexicon",
+  "prover",
+  "dep:sha2_inline",
+  "dep:sha3_inline",
 ]
 prover = [
-    "minimal",
-    "ark-ec/parallel",
-    "ark-ff/parallel",
-    "ark-std/parallel",
-    "dory/parallel",
+  "minimal",
+  "ark-ec/parallel",
+  "ark-ff/parallel",
+  "ark-std/parallel",
+  "dory/parallel",
 ]
 # This is for building jolt-core without prover capabilities, e.g. for recursion
 # jolt-core needs std and rayon to compile, so these are the minimal set of features.
@@ -53,7 +53,7 @@ jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", branch 
 ark-ec = { version = "0.5.0", default-features = false }
 ark-ff = { version = "0.5.0", default-features = false }
 ark-serialize = { version = "0.5.0", default-features = false, features = [
-    "derive",
+  "derive",
 ] }
 ark-serialize-derive = { version = "0.5.0", default-features = false }
 ark-std = { version = "0.5.0" }
@@ -65,7 +65,7 @@ num-derive = "0.4.2"
 num = "0.4.3"
 num-traits = "0.2.19"
 postcard = { version = "1.0.8", default-features = false, features = [
-    "use-std",
+  "use-std",
 ] }
 rand = "0.8.5"
 rand_chacha = { version = "0.3.0", default-features = false }
@@ -82,8 +82,8 @@ tracing-chrome = "0.7.1"
 tracing-subscriber = { version = "0.3.20", features = ["fmt", "env-filter"] }
 target-lexicon = { version = "0.12.14", optional = true }
 reqwest = { version = "0.12.3", features = [
-    "json",
-    "blocking",
+  "json",
+  "blocking",
 ], optional = true }
 dirs = { version = "5.0.1", optional = true }
 eyre = "0.6.12"
@@ -103,10 +103,10 @@ allocative = { git = "https://github.com/facebookexperimental/allocative", rev =
 inferno = { version = "0.12.3", optional = true }
 jolt-platform = { path = "../jolt-platform", features = ["std"] }
 sha2_inline = { package = "jolt-inlines-sha2", path = "../jolt-inlines/sha2", features = [
-    "host",
+  "host",
 ], optional = true }
 sha3_inline = { package = "jolt-inlines-keccak256", path = "../jolt-inlines/keccak256", features = [
-    "host",
+  "host",
 ], optional = true }
 
 [dev-dependencies]
@@ -114,8 +114,8 @@ criterion = { version = "0.5.1", features = ["html_reports"] }
 iai-callgrind = "0.10.2"
 serial_test = "3.2.0"
 tracer = { path = "../tracer", default-features = false, features = [
-    "std",
-    "test-utils",
+  "std",
+  "test-utils",
 ] }
 
 [build-dependencies]
@@ -146,9 +146,8 @@ harness = false
 # harness = false
 #
 [[bench]]
-name = "mul"
+name = "challenge_mult_performance"
 harness = false
-
 
 
 [lib]
