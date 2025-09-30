@@ -245,7 +245,11 @@ impl<F: JoltField> DensePolynomial<F> {
     }
 
     // returns Z(r) in O(n) time
-    pub fn evaluate(&self, r: &[F::Challenge]) -> F {
+    pub fn evaluate<C>(&self, r: &[C]) -> F
+    where
+        C: Copy + Send + Sync + Into<F>,
+        F: std::ops::Mul<C, Output = F> + std::ops::SubAssign<F>,
+    {
         //// r must have a value for each variable
         //assert_eq!(r.len(), self.get_num_vars());
         //let chis = EqPolynomial::evals(r);
@@ -490,19 +494,12 @@ impl<F: JoltField> Index<usize> for DensePolynomial<F> {
 }
 
 impl<F: JoltField> PolynomialEvaluation<F> for DensePolynomial<F> {
-    fn evaluate(&self, r: &[F::Challenge]) -> F {
+    fn evaluate<C>(&self, r: &[C]) -> F
+    where
+        C: Copy + Send + Sync + Into<F>,
+        F: std::ops::Mul<C, Output = F> + std::ops::SubAssign<F>,
+    {
         self.evaluate(r)
-    }
-
-    fn evaluate_field(&self, r: &[F]) -> F {
-        let m = r.len() / 2;
-        let (r2, r1) = r.split_at(m);
-        let (eq_one, eq_two) = rayon::join(
-            || EqPolynomial::evals_field(r2),
-            || EqPolynomial::evals_field(r1),
-        );
-
-        self.split_eq_evaluate(r.len(), &eq_one, &eq_two)
     }
 
     fn batch_evaluate(polys: &[&Self], r: &[F::Challenge]) -> Vec<F> {

@@ -84,12 +84,12 @@ pub struct CachedPolynomial<F: JoltField> {
 }
 
 impl<F: JoltField> PolynomialEvaluation<F> for CachedPolynomial<F> {
-    fn evaluate(&self, x: &[F::Challenge]) -> F {
+    fn evaluate<C>(&self, x: &[C]) -> F
+    where
+        C: Copy + Send + Sync + Into<F>,
+        F: std::ops::Mul<C, Output = F> + std::ops::SubAssign<F>,
+    {
         self.inner.evaluate(x)
-    }
-
-    fn evaluate_field(&self, x: &[F]) -> F {
-        self.inner.evaluate_field(x)
     }
 
     fn batch_evaluate(_polys: &[&Self], _r: &[F::Challenge]) -> Vec<F> {
@@ -575,7 +575,7 @@ pub mod tests {
                                     eval_point.push(Fr::ZERO);
                                 }
                             }
-                            poly.evaluate_field(&eval_point)
+                            poly.evaluate(&eval_point)
                         })
                         .sum();
 
@@ -602,7 +602,7 @@ pub mod tests {
                                     eval_point.push(Fr::ZERO);
                                 }
                             }
-                            poly.evaluate_field(&eval_point)
+                            poly.evaluate(&eval_point)
                         })
                         .sum();
 
@@ -617,7 +617,7 @@ pub mod tests {
         }
         assert_eq!(
             prefix_registry.checkpoints[prefix_registry_index],
-            Some(poly.evaluate_field(&rr))
+            Some(poly.evaluate(&rr))
         )
     }
 }

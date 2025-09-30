@@ -411,25 +411,15 @@ impl<F: JoltField> OneHotPolynomial<F> {
         DensePolynomial::new(dense_coeffs)
     }
 
-    pub fn evaluate(&self, r: &[F::Challenge]) -> F {
+    pub fn evaluate<C>(&self, r: &[C]) -> F
+    where
+        C: Copy + Send + Sync + Into<F>,
+        F: std::ops::Mul<C, Output = F> + std::ops::SubAssign<F>,
+    {
         assert_eq!(r.len(), self.get_num_vars());
         let (r_left, r_right) = r.split_at(self.num_rows().log_2());
         let eq_left = EqPolynomial::<F>::evals(r_left);
         let eq_right = EqPolynomial::<F>::evals(r_right);
-        let mut left_product = unsafe_allocate_zero_vec(eq_right.len());
-        self.vector_matrix_product(&eq_left, F::one(), &mut left_product);
-        left_product
-            .into_par_iter()
-            .zip_eq(eq_right.par_iter())
-            .map(|(l, r)| l * r)
-            .sum()
-    }
-
-    pub fn evaluate_field(&self, r: &[F]) -> F {
-        assert_eq!(r.len(), self.get_num_vars());
-        let (r_left, r_right) = r.split_at(self.num_rows().log_2());
-        let eq_left = EqPolynomial::evals_field(r_left);
-        let eq_right = EqPolynomial::evals_field(r_right);
         let mut left_product = unsafe_allocate_zero_vec(eq_right.len());
         self.vector_matrix_product(&eq_left, F::one(), &mut left_product);
         left_product

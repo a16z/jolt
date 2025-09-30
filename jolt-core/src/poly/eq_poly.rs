@@ -7,16 +7,8 @@ use std::marker::PhantomData;
 const PARALLEL_THRESHOLD: usize = 16;
 
 pub struct EqPolynomial<F: JoltField>(PhantomData<F>);
+
 impl<F: JoltField> EqPolynomial<F> {
-    /// Computes the MLE evaluation EQ(x, y)
-    //pub fn mle(x: &[F::Challenge], y: &[F::Challenge]) -> F {
-    //    assert_eq!(x.len(), y.len());
-    //    x.par_iter()
-    //        .zip(y.par_iter())
-    //        .map(|(x_i, y_i)| *x_i * y_i + (F::one() - x_i) * (F::one() - y_i))
-    //        .product()
-    //}
-    //
     pub fn mle<X, Y>(x: &[X], y: &[Y]) -> F
     where
         X: Copy + Send + Sync,
@@ -30,29 +22,6 @@ impl<F: JoltField> EqPolynomial<F> {
             .map(|(x_i, y_i)| *x_i * *y_i + (F::one() - *x_i) * (F::one() - *y_i))
             .product()
     }
-    //pub fn mle_field(x: &[F], y: &[F]) -> F {
-    //    assert_eq!(x.len(), y.len());
-    //    x.par_iter()
-    //        .zip(y.par_iter())
-    //        .map(|(x_i, y_i)| *x_i * y_i + (F::one() - x_i) * (F::one() - y_i))
-    //        .product()
-    //}
-    //pub fn mle_challenge_and_field(x: &[F::Challenge], y: &[F]) -> F {
-    //    assert_eq!(x.len(), y.len());
-    //    x.par_iter()
-    //        .zip(y.par_iter())
-    //        .map(|(x_i, y_i)| *x_i * y_i + (F::one() - x_i) * (F::one() - y_i))
-    //        .product()
-    //}
-    //
-    //pub fn mle_field_and_challenge(x: &[F], y: &[F::Challenge]) -> F {
-    //    assert_eq!(x.len(), y.len());
-    //    x.par_iter()
-    //        .zip(y.par_iter())
-    //        .map(|(x_i, y_i)| *x_i * y_i + (F::one() - x_i) * (F::one() - y_i))
-    //        .product()
-    //}
-
     /// Computes the MLE evaluation EQ(x, y)
     pub fn mle_endian<const E1: Endianness, const E2: Endianness>(
         x: &OpeningPoint<E1, F>,
@@ -72,37 +41,28 @@ impl<F: JoltField> EqPolynomial<F> {
         }
     }
 
-    #[tracing::instrument(skip_all, name = "EqPolynomial::evals_field")]
-    /// Computes the table of coefficients: `{eq(r, x) for all x in {0, 1}^n}`
-    /// If `scaling_factor` is provided, computes `scaling_factor * eq(r, x)` instead.
-    pub fn evals_field(r: &[F]) -> Vec<F> {
-        Self::evals_with_scaling_field(r, None)
-    }
-
     #[tracing::instrument(skip_all, name = "EqPolynomial::evals")]
     /// Computes the table of coefficients: `{eq(r, x) for all x in {0, 1}^n}`
     /// If `scaling_factor` is provided, computes `scaling_factor * eq(r, x)` instead.
-    pub fn evals(r: &[F::Challenge]) -> Vec<F> {
+    pub fn evals<C>(r: &[C]) -> Vec<F>
+    where
+        C: Copy + Send + Sync + Into<F>,
+        F: std::ops::Mul<C, Output = F> + std::ops::SubAssign<F>,
+    {
         Self::evals_with_scaling(r, None)
     }
 
     /// Computes the table of coefficients: `scaling_factor * eq(r, x) for all x in {0, 1}^n`
     /// If `scaling_factor` is None, defaults to 1 (no scaling).
     #[inline]
-    pub fn evals_with_scaling(r: &[F::Challenge], scaling_factor: Option<F>) -> Vec<F> {
+    pub fn evals_with_scaling<C>(r: &[C], scaling_factor: Option<F>) -> Vec<F>
+    where
+        C: Copy + Send + Sync + Into<F>,
+        F: std::ops::Mul<C, Output = F> + std::ops::SubAssign<F>,
+    {
         match r.len() {
             0..=PARALLEL_THRESHOLD => Self::evals_serial(r, scaling_factor),
             _ => Self::evals_parallel(r, scaling_factor),
-        }
-    }
-
-    /// Computes the table of coefficients: `scaling_factor * eq(r, x) for all x in {0, 1}^n`
-    /// If `scaling_factor` is None, defaults to 1 (no scaling).
-    #[inline]
-    pub fn evals_with_scaling_field(r: &[F], scaling_factor: Option<F>) -> Vec<F> {
-        match r.len() {
-            0..=PARALLEL_THRESHOLD => Self::evals_serial_field(r, scaling_factor),
-            _ => Self::evals_parallel_field(r, scaling_factor),
         }
     }
 
@@ -111,7 +71,11 @@ impl<F: JoltField> EqPolynomial<F> {
     ///
     /// In other words, computes `{eq(r[i..], x) for all x in {0, 1}^{n - i}}` and for all `i in
     /// 0..r.len()`.
-    pub fn evals_cached(r: &[F::Challenge]) -> Vec<Vec<F>> {
+    pub fn evals_cached<C>(r: &[C]) -> Vec<Vec<F>>
+    where
+        C: Copy + Send + Sync + Into<F>,
+        F: std::ops::Mul<C, Output = F> + std::ops::SubAssign<F>,
+    {
         // TODO: implement parallel version & determine switchover point
         Self::evals_serial_cached(r, None)
     }
@@ -125,27 +89,11 @@ impl<F: JoltField> EqPolynomial<F> {
     ///     scaling_factor * eq(r, x) for all x in {0, 1}^n
     /// serially. More efficient for short `r`.
     #[inline]
-    fn evals_serial(r: &[F::Challenge], scaling_factor: Option<F>) -> Vec<F> {
-        let mut evals: Vec<F> = vec![scaling_factor.unwrap_or(F::one()); r.len().pow2()];
-        let mut size = 1;
-        for j in 0..r.len() {
-            // in each iteration, we double the size of chis
-            size *= 2;
-            for i in (0..size).rev().step_by(2) {
-                // copy each element from the prior iteration twice
-                let scalar = evals[i / 2];
-                evals[i] = scalar * r[j];
-                evals[i - 1] = scalar - evals[i];
-            }
-        }
-        evals
-    }
-
-    /// Computes the table of coefficients:
-    ///     scaling_factor * eq(r, x) for all x in {0, 1}^n
-    /// serially. More efficient for short `r`.
-    #[inline]
-    fn evals_serial_field(r: &[F], scaling_factor: Option<F>) -> Vec<F> {
+    fn evals_serial<C>(r: &[C], scaling_factor: Option<F>) -> Vec<F>
+    where
+        C: Copy + Send + Sync + Into<F>,
+        F: std::ops::Mul<C, Output = F> + std::ops::SubAssign<F>,
+    {
         let mut evals: Vec<F> = vec![scaling_factor.unwrap_or(F::one()); r.len().pow2()];
         let mut size = 1;
         for j in 0..r.len() {
@@ -168,7 +116,11 @@ impl<F: JoltField> EqPolynomial<F> {
     ///
     /// Performance seems at most 10% worse than `evals_serial`
     #[inline]
-    fn evals_serial_cached(r: &[F::Challenge], scaling_factor: Option<F>) -> Vec<Vec<F>> {
+    fn evals_serial_cached<C>(r: &[C], scaling_factor: Option<F>) -> Vec<Vec<F>>
+    where
+        C: Copy + Send + Sync + Into<F>,
+        F: std::ops::Mul<C, Output = F> + std::ops::SubAssign<F>,
+    {
         let mut evals: Vec<Vec<F>> = (0..r.len() + 1)
             .map(|i| vec![scaling_factor.unwrap_or(F::one()); 1 << i])
             .collect();
@@ -209,38 +161,11 @@ impl<F: JoltField> EqPolynomial<F> {
     /// computing biggest layers of the dynamic programming tree in parallel.
     #[tracing::instrument(skip_all, "EqPolynomial::evals_parallel")]
     #[inline]
-    pub fn evals_parallel(r: &[F::Challenge], scaling_factor: Option<F>) -> Vec<F> {
-        let final_size = r.len().pow2();
-        let mut evals: Vec<F> = unsafe_allocate_zero_vec(final_size);
-        let mut size = 1;
-        evals[0] = scaling_factor.unwrap_or(F::one());
-
-        for r in r.iter().rev() {
-            let (evals_left, evals_right) = evals.split_at_mut(size);
-            let (evals_right, _) = evals_right.split_at_mut(size);
-
-            evals_left
-                .par_iter_mut()
-                .zip(evals_right.par_iter_mut())
-                .for_each(|(x, y)| {
-                    *y = *x * *r;
-                    *x -= *y;
-                });
-
-            size *= 2;
-        }
-
-        evals
-    }
-
-    /// Computes the table of coefficients:
-    ///
-    /// scaling_factor * eq(r, x) for all x in {0, 1}^n
-    ///
-    /// computing biggest layers of the dynamic programming tree in parallel.
-    #[tracing::instrument(skip_all, "EqPolynomial::evals_parallel_field")]
-    #[inline]
-    pub fn evals_parallel_field(r: &[F], scaling_factor: Option<F>) -> Vec<F> {
+    pub fn evals_parallel<C>(r: &[C], scaling_factor: Option<F>) -> Vec<F>
+    where
+        C: Copy + Send + Sync + Into<F>,
+        F: std::ops::Mul<C, Output = F> + std::ops::SubAssign<F>,
+    {
         let final_size = r.len().pow2();
         let mut evals: Vec<F> = unsafe_allocate_zero_vec(final_size);
         let mut size = 1;

@@ -515,8 +515,11 @@ pub trait PolynomialEvaluation<F: JoltField> {
     /// Returns the final sumcheck claim about the polynomial.
     /// This uses the algorithm in Lemma 4.3 in Thaler, Proofs and
     /// Arguments -- the inside out processing
-    fn evaluate(&self, r: &[F::Challenge]) -> F;
-    fn evaluate_field(&self, r: &[F]) -> F;
+    fn evaluate<C>(&self, r: &[C]) -> F
+    where
+        C: Copy + Send + Sync + Into<F>,
+        F: std::ops::Mul<C, Output = F> + std::ops::SubAssign<F>;
+    //fn evaluate_field(&self, r: &[F]) -> F;
 
     /// Evaluates a batch of polynomials on the same point `r`.
     /// Returns: (evals, EQ table)
@@ -595,7 +598,11 @@ impl<F: JoltField> PolynomialBinding<F> for MultilinearPolynomial<F> {
 
 impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
     #[tracing::instrument(skip_all, name = "MultilinearPolynomial::evaluate")]
-    fn evaluate(&self, r: &[F::Challenge]) -> F {
+    fn evaluate<C>(&self, r: &[C]) -> F
+    where
+        C: Copy + Send + Sync + Into<F>,
+        F: std::ops::Mul<C, Output = F> + std::ops::SubAssign<F>,
+    {
         match self {
             MultilinearPolynomial::LargeScalars(poly) => {
                 let m = r.len() / 2;
@@ -670,74 +677,6 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
                 poly.split_eq_evaluate(r.len(), &eq_one, &eq_two)
             }
             MultilinearPolynomial::OneHot(poly) => poly.evaluate(r),
-            _ => unimplemented!("Unsupported MultilinearPolynomial variant"),
-        }
-    }
-
-    #[tracing::instrument(skip_all, name = "MultilinearPolynomial::evaluate_field")]
-    fn evaluate_field(&self, r: &[F]) -> F {
-        match self {
-            MultilinearPolynomial::LargeScalars(poly) => {
-                let m = r.len() / 2;
-                let (r2, r1) = r.split_at(m);
-                let (eq_one, eq_two) = rayon::join(
-                    || EqPolynomial::evals_field(r2),
-                    || EqPolynomial::evals_field(r1),
-                );
-
-                poly.split_eq_evaluate(r.len(), &eq_one, &eq_two)
-            }
-            MultilinearPolynomial::U8Scalars(poly) => {
-                let m = r.len() / 2;
-                let (r2, r1) = r.split_at(m);
-                let (eq_one, eq_two) = rayon::join(
-                    || EqPolynomial::evals_field(r2),
-                    || EqPolynomial::evals_field(r1),
-                );
-
-                poly.split_eq_evaluate(r.len(), &eq_one, &eq_two)
-            }
-            MultilinearPolynomial::U16Scalars(poly) => {
-                let m = r.len() / 2;
-                let (r2, r1) = r.split_at(m);
-                let (eq_one, eq_two) = rayon::join(
-                    || EqPolynomial::evals_field(r2),
-                    || EqPolynomial::evals_field(r1),
-                );
-
-                poly.split_eq_evaluate(r.len(), &eq_one, &eq_two)
-            }
-            MultilinearPolynomial::U32Scalars(poly) => {
-                let m = r.len() / 2;
-                let (r2, r1) = r.split_at(m);
-                let (eq_one, eq_two) = rayon::join(
-                    || EqPolynomial::evals_field(r2),
-                    || EqPolynomial::evals_field(r1),
-                );
-
-                poly.split_eq_evaluate(r.len(), &eq_one, &eq_two)
-            }
-            MultilinearPolynomial::U64Scalars(poly) => {
-                let m = r.len() / 2;
-                let (r2, r1) = r.split_at(m);
-                let (eq_one, eq_two) = rayon::join(
-                    || EqPolynomial::evals_field(r2),
-                    || EqPolynomial::evals_field(r1),
-                );
-
-                poly.split_eq_evaluate(r.len(), &eq_one, &eq_two)
-            }
-            MultilinearPolynomial::I64Scalars(poly) => {
-                let m = r.len() / 2;
-                let (r2, r1) = r.split_at(m);
-                let (eq_one, eq_two) = rayon::join(
-                    || EqPolynomial::evals_field(r2),
-                    || EqPolynomial::evals_field(r1),
-                );
-
-                poly.split_eq_evaluate(r.len(), &eq_one, &eq_two)
-            }
-            MultilinearPolynomial::OneHot(poly) => poly.evaluate_field(r),
             _ => unimplemented!("Unsupported MultilinearPolynomial variant"),
         }
     }
