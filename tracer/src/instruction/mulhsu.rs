@@ -42,7 +42,6 @@ impl RISCVTrace for MULHSU {
         let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
-            // In each iteration, create a new Option containing a re-borrowed reference
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
@@ -52,20 +51,6 @@ impl RISCVTrace for MULHSU {
         allocator: &VirtualRegisterAllocator,
         xlen: Xlen,
     ) -> Vec<Instruction> {
-        // MULHSU implements signed-unsigned multiplication: rs1 (signed) × rs2 (unsigned)
-        //
-        // For negative rs1, two's complement encoding means:
-        // rs1_unsigned = rs1 + 2^32 (when rs1 < 0)
-        //
-        // Therefore:
-        // MULHU(rs1_unsigned, rs2) = upper_bits((rs1 + 2^32) × rs2)
-        //                          = upper_bits(rs1 × rs2 + 2^32 × rs2)
-        //                          = upper_bits(rs1 × rs2) + rs2
-        //                          = MULHSU(rs1, rs2) + rs2
-        //
-        // So: MULHSU(rs1, rs2) = MULHU(rs1_unsigned, rs2) - rs2
-
-        // Virtual registers used in sequence
         let v_sx = allocator.allocate();
         let v_sx_0 = allocator.allocate();
         let v_rs1 = allocator.allocate();
@@ -75,6 +60,7 @@ impl RISCVTrace for MULHSU {
         let v_carry = allocator.allocate();
 
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
+
         asm.emit_i::<VirtualMovsign>(*v_sx, self.operands.rs1, 0);
         asm.emit_i::<ANDI>(*v_sx_0, *v_sx, 1);
         asm.emit_r::<XOR>(*v_rs1, self.operands.rs1, *v_sx);
@@ -86,6 +72,7 @@ impl RISCVTrace for MULHSU {
         asm.emit_r::<ADD>(*v_tmp, *v_lo, *v_sx_0);
         asm.emit_r::<SLTU>(*v_carry, *v_tmp, *v_lo);
         asm.emit_r::<ADD>(self.operands.rd, *v_hi, *v_carry);
+
         asm.finalize()
     }
 }

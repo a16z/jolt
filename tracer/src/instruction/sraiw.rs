@@ -35,11 +35,22 @@ impl RISCVTrace for SRAIW {
         let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
-            // In each iteration, create a new Option containing a re-borrowed reference
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
 
+    /// Arithmetic right shift immediate for 32-bit words with sign extension.
+    ///
+    /// SRAIW is an RV64I-only instruction that arithmetically shifts the lower 32 bits
+    /// of rs1 right by a constant amount (preserving sign), then sign-extends the
+    /// 32-bit result to 64 bits.
+    ///
+    /// Implementation:
+    /// 1. Sign-extend rs1 from 32 to 64 bits
+    /// 2. Apply 64-bit arithmetic right shift
+    /// 3. Sign-extend the result again to ensure proper 32-bit semantics
+    ///
+    /// The double sign-extension ensures correct handling of negative 32-bit values.
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,

@@ -14,8 +14,8 @@ use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
 use crate::transcripts::{AppendToTranscript, Transcript};
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::mul_0_optimized;
-// #[cfg(not(target_arch = "wasm32"))]
-// use crate::utils::profiling::print_current_memory_usage;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::utils::profiling::print_current_memory_usage;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::utils::small_value::svo_helpers::process_svo_sumcheck_rounds;
@@ -206,11 +206,11 @@ impl BatchedSumcheck {
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(max_num_rounds);
 
         for round in 0..max_num_rounds {
-            // #[cfg(not(target_arch = "wasm32"))]
-            // {
-            //     let label = format!("Sumcheck round {round}");
-            //     print_current_memory_usage(label.as_str());
-            // }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let label = format!("Sumcheck round {round}");
+                print_current_memory_usage(label.as_str());
+            }
 
             let remaining_rounds = max_num_rounds - round;
 

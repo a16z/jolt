@@ -39,11 +39,24 @@ impl RISCVTrace for SRLW {
         let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
-            // In each iteration, create a new Option containing a re-borrowed reference
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
 
+    /// Logical right shift for 32-bit words with sign extension.
+    ///
+    /// SRLW is an RV64I-only instruction that logically shifts the lower 32 bits
+    /// of rs1 right by the amount in the lower 5 bits of rs2, then sign-extends
+    /// the 32-bit result to 64 bits.
+    ///
+    /// Implementation:
+    /// 1. Shift rs1 left by 32 to position the lower 32 bits in the upper half
+    /// 2. OR rs2 with 32 to create a shift amount for 64-bit logical right shift
+    /// 3. Generate bitmask for the adjusted shift amount
+    /// 4. Apply logical right shift (which now operates on the upper 32 bits)
+    /// 5. Sign-extend the resulting 32-bit value
+    ///
+    /// This approach ensures proper 32-bit logical shift semantics on 64-bit system.
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,

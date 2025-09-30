@@ -35,54 +35,59 @@ pub fn end_memory_tracing_span(label: &'static str) {
 }
 
 pub fn report_memory_usage() {
-    println!("================ MEMORY USAGE REPORT ================");
+    tracing::info!("================ MEMORY USAGE REPORT ================");
 
     let memory_usage_map = MEMORY_USAGE_MAP.lock().unwrap();
     for label in memory_usage_map.keys() {
-        eprintln!("  Unclosed memory tracing span: \"{label}\"");
+        tracing::warn!("  Unclosed memory tracing span: \"{label}\"");
     }
 
     let memory_delta_map = MEMORY_DELTA_MAP.lock().unwrap();
     for (label, delta) in memory_delta_map.iter() {
         if *delta >= 1.0 {
-            println!("  \"{label}\": {delta:.2} GB");
+            tracing::info!("  \"{label}\": {delta:.2} GB");
         } else {
-            println!("  \"{}\": {:.2} MB", label, delta * 1000.0);
+            tracing::info!("  \"{}\": {:.2} MB", label, delta * 1000.0);
         }
     }
 
-    println!("=====================================================");
+    tracing::info!("=====================================================");
 }
 
-// #[cfg(not(target_arch = "wasm32"))]
-// pub fn print_current_memory_usage(label: &str) {
-//     if let Some(usage) = memory_stats() {
-//         let memory_usage_gb = usage.physical_mem as f64 / 1_000_000_000.0;
-//         if memory_usage_gb >= 1.0 {
-//             tracing::debug!("\"{label}\" current memory usage: {memory_usage_gb:.2} GB");
-//         } else {
-//             tracing::debug!(
-//                 "\"{}\" current memory usage: {:.2} MB",
-//                 label,
-//                 memory_usage_gb * 1000.0
-//             );
-//         }
-//     } else {
-//         tracing::debug!("Failed to get current memory usage (\"{label}\")");
-//     }
-// }
+#[cfg(not(target_arch = "wasm32"))]
+pub fn print_current_memory_usage(label: &str) {
+    if tracing::enabled!(tracing::Level::DEBUG) {
+        if let Some(usage) = memory_stats() {
+            let memory_usage_gb = usage.physical_mem as f64 / 1_000_000_000.0;
+            if memory_usage_gb >= 1.0 {
+                tracing::debug!("\"{label}\" current memory usage: {memory_usage_gb:.2} GB");
+            } else {
+                tracing::debug!(
+                    "\"{}\" current memory usage: {:.2} MB",
+                    label,
+                    memory_usage_gb * 1000.0
+                );
+            }
+        } else {
+            tracing::debug!("Failed to get current memory usage (\"{label}\")");
+        }
+    }
+}
 
 #[cfg(feature = "allocative")]
 pub fn print_data_structure_heap_usage<T: Allocative>(label: &str, data: &T) {
-    let memory_usage_gb = allocative::size_of_unique_allocated_data(data) as f64 / 1_000_000_000.0;
-    if memory_usage_gb >= 1.0 {
-        tracing::debug!("\"{label}\" memory usage: {memory_usage_gb:.2} GB");
-    } else {
-        tracing::debug!(
-            "\"{}\" memory usage: {:.2} MB",
-            label,
-            memory_usage_gb * 1000.0
-        );
+    if tracing::enabled!(tracing::Level::DEBUG) {
+        let memory_usage_gb =
+            allocative::size_of_unique_allocated_data(data) as f64 / 1_000_000_000.0;
+        if memory_usage_gb >= 1.0 {
+            tracing::debug!("\"{label}\" memory usage: {memory_usage_gb:.2} GB");
+        } else {
+            tracing::debug!(
+                "\"{}\" memory usage: {:.2} MB",
+                label,
+                memory_usage_gb * 1000.0
+            );
+        }
     }
 }
 

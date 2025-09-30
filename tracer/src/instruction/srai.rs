@@ -35,11 +35,21 @@ impl RISCVTrace for SRAI {
         let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
         for instr in inline_sequence {
-            // In each iteration, create a new Option containing a re-borrowed reference
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
 
+    /// Arithmetic right shift immediate using bitmask approach.
+    ///
+    /// SRAI (Shift Right Arithmetic Immediate) shifts rs1 right by a constant amount,
+    /// filling the vacated bits with copies of the sign bit.
+    ///
+    /// Implementation:
+    /// 1. Calculate a bitmask for the shift amount
+    /// 2. Apply arithmetic shift using VirtualSRAI with the bitmask
+    ///
+    /// The arithmetic shift preserves the sign bit, extending it into the
+    /// high-order bits, which is essential for signed integer division by powers of 2.
     fn inline_sequence(
         &self,
         allocator: &VirtualRegisterAllocator,

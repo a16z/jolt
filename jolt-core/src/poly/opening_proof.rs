@@ -11,6 +11,7 @@ use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 use num_derive::FromPrimitive;
+use num_traits::Zero;
 use rayon::prelude::*;
 use std::{
     collections::{BTreeMap, HashMap},
@@ -217,31 +218,35 @@ impl<F: JoltField> DensePolynomialProverOpening<F> {
         let mle_half = polynomial.len() / 2;
         let q_0 = if gruen_eq.E_in_current_len() <= 1 {
             // E_in is fully bound
-            (0..mle_half)
+            let unreduced_q_0 = (0..mle_half)
                 .into_par_iter()
                 .map(|j| {
                     let eq_eval = gruen_eq.E_out_current()[j];
+                    // TODO(quang): special case depending on the polynomial type?
                     let poly_eval = polynomial.get_bound_coeff(j);
-                    eq_eval * poly_eval
+                    eq_eval.mul_unreduced::<9>(poly_eval)
                 })
-                .sum()
+                .reduce(F::Unreduced::<9>::zero, |running, new| running + new);
+            F::from_montgomery_reduce(unreduced_q_0)
         } else {
             let num_x_out = gruen_eq.E_out_current_len();
             let num_x_in = gruen_eq.E_in_current_len();
+            let num_x_out_bits = num_x_out.log_2();
             let d_e_in = gruen_eq.E_in_current();
             let d_e_out = gruen_eq.E_out_current();
 
             (0..num_x_in)
                 .into_par_iter()
                 .map(|x_in| {
-                    let inner_sum: F = (0..num_x_out)
+                    let unreduced_inner_sum = (0..num_x_out)
                         .into_par_iter()
                         .map(|x_out| {
-                            let j = (x_in << num_x_out.log_2()) | x_out;
+                            let j = (x_in << num_x_out_bits) | x_out;
                             let poly_eval = polynomial.get_bound_coeff(j);
-                            d_e_out[x_out] * poly_eval
+                            d_e_out[x_out].mul_unreduced::<9>(poly_eval)
                         })
-                        .sum();
+                        .reduce(F::Unreduced::<9>::zero, |running, new| running + new);
+                    let inner_sum = F::from_montgomery_reduce(unreduced_inner_sum);
                     d_e_in[x_in] * inner_sum
                 })
                 .sum()
@@ -776,7 +781,7 @@ where
         pcs_setup: &PCS::ProverSetup,
         transcript: &mut ProofTranscript,
     ) -> ReducedOpeningProof<F, PCS, ProofTranscript> {
-        println!(
+        tracing::debug!(
             "{} sumcheck instances in batched opening proof reduction",
             self.sumchecks.len()
         );

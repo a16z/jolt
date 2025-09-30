@@ -93,10 +93,14 @@ fn fibonacci() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
 }
 
 fn sha2() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
+    #[cfg(feature = "host")]
+    use jolt_inlines_sha2 as _;
     prove_example("sha2-guest", postcard::to_stdvec(&vec![5u8; 2048]).unwrap())
 }
 
 fn sha3() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
+    #[cfg(feature = "host")]
+    use jolt_inlines_keccak256 as _;
     prove_example("sha3-guest", postcard::to_stdvec(&vec![5u8; 2048]).unwrap())
 }
 
@@ -106,7 +110,7 @@ fn btreemap() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
 
 fn sha2_chain() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     #[cfg(feature = "host")]
-    extern crate sha2_inline;
+    use jolt_inlines_sha2 as _;
     let mut inputs = vec![];
     inputs.append(&mut postcard::to_stdvec(&[5u8; 32]).unwrap());
     inputs.append(&mut postcard::to_stdvec(&50u32).unwrap());
@@ -115,7 +119,7 @@ fn sha2_chain() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
 
 fn sha3_chain() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     #[cfg(feature = "host")]
-    extern crate sha3_inline;
+    extern crate jolt_inlines_keccak256;
     let mut inputs = vec![];
     inputs.append(&mut postcard::to_stdvec(&[5u8; 32]).unwrap());
     inputs.append(&mut postcard::to_stdvec(&20u32).unwrap());
@@ -332,9 +336,9 @@ fn create_proof_size_plot(
 fn master_benchmark() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     // Ensure SHA2 inline library is linked and auto-registered
     #[cfg(feature = "host")]
-    extern crate sha2_inline;
+    extern crate jolt_inlines_sha2;
     #[cfg(feature = "host")]
-    extern crate sha3_inline;
+    extern crate jolt_inlines_keccak256;
     let bench_type = env::var("BENCH_TYPE").unwrap_or_else(|_| "all".to_string());
     let bench_scales_str = env::var("BENCH_SCALES").unwrap_or_else(|_| {
         env::var("BENCH_SCALE")

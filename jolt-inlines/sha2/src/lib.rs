@@ -3,6 +3,9 @@
 #![cfg_attr(not(feature = "host"), no_std)]
 
 pub const INLINE_OPCODE: u32 = 0x0B;
+pub const VIRTUAL_INSTRUCTION_TYPE_I_OPCODE: u32 = 0x5B;
+
+pub const REV8W_FUNCT3: u32 = 0x00;
 
 pub const SHA256_FUNCT3: u32 = 0x00;
 pub const SHA256_FUNCT7: u32 = 0x00;
