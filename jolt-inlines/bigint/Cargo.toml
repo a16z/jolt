@@ -3,6 +3,9 @@ name = "jolt-inlines-bigint"
 version = "0.1.0"
 edition = "2021"
 description = "BigInteger inline implementations for Jolt VM"
+license = "MIT"
+homepage = "https://github.com/a16z/jolt/README.md"
+repository = "https://github.com/a16z/jolt"
 
 [features]
 default = []

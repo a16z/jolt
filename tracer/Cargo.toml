@@ -8,6 +8,8 @@ authors = [
     "Michael Zhu <mzhu@a16z.com>",
     "Sam Ragsdale <sragsdale@a16z.com>",
     "Noah Citron <ncitron@a16z.com>",
+    "Andrew Tretyakov <atretyakov@a16z.com>",
+    "Markos Georghiades <mgeorghiades@a16z.com>",
 ]
 description = "RISC-V emulator for Jolt"
 license = "MIT"

@@ -6,6 +6,8 @@ authors = [
     "Sam Ragsdale <sragsdale@a16z.com>",
     "Noah Citron <ncitron@a16z.com>",
     "Sagar Dhawan <sdhawan@a16z.com>",
+    "Andrew Tretyakov <atretyakov@a16z.com>",
+    "Markos Georghiades <mgeorghiades@a16z.com>",
 ]
 description = "Jolt platform SDK provides the necessary tools and libraries to build applications on the Jolt platform. Supports std and no_std."
 license = "MIT"
@@ -37,4 +39,3 @@ getrandom_v02 = { workspace = true, package = "getrandom", default-features = fa
 getrandom_v03 = { workspace = true, default-features = false, features = [
     "wasm_js",
 ], optional = true }
-

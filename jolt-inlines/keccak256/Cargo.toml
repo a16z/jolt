@@ -3,6 +3,9 @@ name = "jolt-inlines-keccak256"
 version = "0.1.0"
 edition = "2021"
 description = "Keccak-256 inline implementations for Jolt VM"
+license = "MIT"
+homepage = "https://github.com/a16z/jolt/README.md"
+repository = "https://github.com/a16z/jolt"
 
 [features]
 default = []

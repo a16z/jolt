@@ -3,6 +3,9 @@ name = "jolt-inlines-blake2"
 version = "0.1.0"
 edition = "2021"
 description = "BLAKE2b inline implementations for Jolt VM"
+license = "MIT"
+homepage = "https://github.com/a16z/jolt/README.md"
+repository = "https://github.com/a16z/jolt"
 
 [features]
 default = []
@@ -17,4 +20,3 @@ hex-literal.workspace = true
 blake2.workspace = true
 rand.workspace = true
 tracer = { workspace = true, features = ["test-utils"] }
-
