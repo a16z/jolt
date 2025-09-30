@@ -199,15 +199,23 @@ lto = "fat"
 [dependencies]
 jolt-sdk = { git = "https://github.com/a16z/jolt", features = ["host"] }
 guest = { path = "./guest" }
+tracing = "0.1"
+tracing-subscriber = "0.3"
 
 [patch.crates-io]
-ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "feat/fewer-reductions" }
+ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "feat/fewer-reductions" }
+jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", branch = "feat/fewer-reductions" }
+ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "feat/fewer-reductions" }
+ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "feat/fewer-reductions" }
+allocative = { git = "https://github.com/facebookexperimental/allocative", rev = "85b773d85d526d068ce94724ff7a7b81203fc95e" }
 "#;
 
-const HOST_MAIN: &str = r#"pub fn main() {
+const HOST_MAIN: &str = r#"use tracing::info;
+
+pub fn main() {
+    tracing_subscriber::fmt::init();
+
     let target_dir = "/tmp/jolt-guest-targets";
     let mut program = guest::compile_fib(target_dir);
 
@@ -220,8 +228,8 @@ const HOST_MAIN: &str = r#"pub fn main() {
     let (output, proof, io_device) = prove_fib(50);
     let is_valid = verify_fib(50, output, io_device.panic, proof);
 
-    println!("output: {output}");
-    println!("valid: {is_valid}");
+    info!("output: {output}");
+    info!("valid: {is_valid}");
 }
 "#;
 
