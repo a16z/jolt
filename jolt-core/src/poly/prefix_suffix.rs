@@ -10,7 +10,9 @@ use strum_macros::{EnumCount as EnumCountMacro, EnumIter as EnumIterMacro};
 
 use crate::field::JoltField;
 use crate::poly::dense_mlpoly::DensePolynomial;
-use crate::poly::multilinear_polynomial::{BindingOrder, PolynomialBinding, PolynomialEvaluation};
+use crate::poly::multilinear_polynomial::{
+    BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
+};
 use crate::utils::lookup_bits::LookupBits;
 use crate::utils::math::Math;
 use crate::utils::thread::unsafe_allocate_zero_vec;
@@ -75,13 +77,8 @@ impl<T> IndexMut<Prefix> for [T; Prefix::COUNT] {
     }
 }
 
-pub trait CacheablePolynomial<F: JoltField>:
-    PolynomialEvaluation<F> + PolynomialBinding<F> + Send + Sync
-{
-}
-
 pub struct CachedPolynomial<F: JoltField> {
-    pub inner: Box<dyn CacheablePolynomial<F>>,
+    pub inner: MultilinearPolynomial<F>,
     pub sumcheck_evals_cache: Vec<OnceCell<(F, F)>>,
     pub bound_this_round: bool,
 }
@@ -125,7 +122,7 @@ impl<F: JoltField> PolynomialBinding<F> for CachedPolynomial<F> {
 }
 
 impl<F: JoltField> CachedPolynomial<F> {
-    pub fn new(inner: Box<dyn CacheablePolynomial<F>>, cache_capacity: usize) -> Self {
+    pub fn new(inner: MultilinearPolynomial<F>, cache_capacity: usize) -> Self {
         Self {
             inner,
             sumcheck_evals_cache: vec![OnceCell::new(); cache_capacity],
