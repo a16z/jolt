@@ -374,7 +374,7 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
             });
             {
                 if ps.r.len().is_multiple_of(2) {
-                    Prefixes::update_checkpoints::<XLEN, F>(
+                    Prefixes::update_checkpoints::<XLEN, F, F::Challenge>(
                         &mut ps.prefix_checkpoints,
                         ps.r[ps.r.len() - 2],
                         ps.r[ps.r.len() - 1],
@@ -423,7 +423,7 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
             OperandPolynomial::<F>::new(LOG_K, OperandSide::Right).evaluate(r_address_prime);
         let identity_poly_eval = IdentityPolynomial::<F>::new(LOG_K).evaluate(r_address_prime);
         let val_evals: Vec<_> = LookupTables::<XLEN>::iter()
-            .map(|table| table.evaluate_mle::<F>(r_address_prime))
+            .map(|table| table.evaluate_mle::<F, F::Challenge>(r_address_prime))
             .collect();
 
         let accumulator = accumulator.as_ref().unwrap();
@@ -794,12 +794,24 @@ impl<F: JoltField> ReadRafSumcheck<F> {
                 let b = LookupBits::new(b as u128, log_len - 1);
                 let prefixes_c0: Vec<_> = Prefixes::iter()
                     .map(|prefix| {
-                        prefix.prefix_mle::<XLEN, F>(&ps.prefix_checkpoints, r_x, 0, b, j)
+                        prefix.prefix_mle::<XLEN, F, F::Challenge>(
+                            &ps.prefix_checkpoints,
+                            r_x,
+                            0,
+                            b,
+                            j,
+                        )
                     })
                     .collect();
                 let prefixes_c2: Vec<_> = Prefixes::iter()
                     .map(|prefix| {
-                        prefix.prefix_mle::<XLEN, F>(&ps.prefix_checkpoints, r_x, 2, b, j)
+                        prefix.prefix_mle::<XLEN, F, F::Challenge>(
+                            &ps.prefix_checkpoints,
+                            r_x,
+                            2,
+                            b,
+                            j,
+                        )
                     })
                     .collect();
                 lookup_tables
