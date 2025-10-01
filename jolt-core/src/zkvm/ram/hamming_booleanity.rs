@@ -100,7 +100,7 @@ impl<F: JoltField> SumcheckInstance<F> for HammingBooleanitySumcheck<F> {
     fn compute_prover_message(&mut self, _round: usize, _previous_claim: F) -> Vec<F> {
         let p = self.prover_state.as_ref().unwrap();
 
-        let univariate_poly_evals: [F::Unreduced<9>; 3] = (0..p.eq_r_cycle.len() / 2)
+        (0..p.eq_r_cycle.len() / 2)
             .into_par_iter()
             .map(|i| {
                 let eq_evals = p
@@ -122,13 +122,7 @@ impl<F: JoltField> SumcheckInstance<F> for HammingBooleanitySumcheck<F> {
                 ]
             })
             .reduce(
-                || {
-                    [
-                        F::Unreduced::zero(),
-                        F::Unreduced::zero(),
-                        F::Unreduced::zero(),
-                    ]
-                },
+                || [F::Unreduced::zero(); DEGREE],
                 |running, new| {
                     [
                         running[0] + new[0],
@@ -136,9 +130,7 @@ impl<F: JoltField> SumcheckInstance<F> for HammingBooleanitySumcheck<F> {
                         running[2] + new[2],
                     ]
                 },
-            );
-
-        univariate_poly_evals
+            )
             .into_iter()
             .map(F::from_montgomery_reduce)
             .collect()

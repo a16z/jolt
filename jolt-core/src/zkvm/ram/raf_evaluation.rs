@@ -144,22 +144,19 @@ impl<F: JoltField> SumcheckInstance<F> for RafEvaluationSumcheck<F> {
 
     #[tracing::instrument(skip_all, name = "RamRafEvaluationSumcheck::compute_prover_message")]
     fn compute_prover_message(&mut self, _round: usize, _previous_claim: F) -> Vec<F> {
-        let prover_state = self
+        let ps = self
             .prover_state
             .as_ref()
             .expect("Prover state not initialized");
         const DEGREE: usize = 2;
 
-        let univariate_poly_evals: [F::Unreduced<9>; 2] = (0..prover_state.ra.len() / 2)
+        (0..ps.ra.len() / 2)
             .into_par_iter()
             .map(|i| {
-                let ra_evals = prover_state
+                let ra_evals = ps
                     .ra
                     .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
-                let unmap_evals =
-                    prover_state
-                        .unmap
-                        .sumcheck_evals(i, DEGREE, BindingOrder::HighToLow);
+                let unmap_evals = ps.unmap.sumcheck_evals(i, DEGREE, BindingOrder::HighToLow);
 
                 // Compute the product evaluations
                 [
@@ -168,11 +165,9 @@ impl<F: JoltField> SumcheckInstance<F> for RafEvaluationSumcheck<F> {
                 ]
             })
             .reduce(
-                || [F::Unreduced::zero(), F::Unreduced::zero()],
+                || [F::Unreduced::zero(); DEGREE],
                 |running, new| [running[0] + new[0], running[1] + new[1]],
-            );
-
-        univariate_poly_evals
+            )
             .into_iter()
             .map(F::from_montgomery_reduce)
             .collect()

@@ -619,8 +619,8 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
                         running
                     },
                 )
-                .into_par_iter()
-                .map(|evals| F::from_montgomery_reduce(evals))
+                .into_iter()
+                .map(F::from_montgomery_reduce)
                 .collect()
         } else {
             let degree = self.degree();
@@ -675,8 +675,8 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
                         running
                     },
                 )
-                .into_par_iter()
-                .map(|evals| F::from_montgomery_reduce(evals))
+                .into_iter()
+                .map(F::from_montgomery_reduce)
                 .collect()
         }
     }

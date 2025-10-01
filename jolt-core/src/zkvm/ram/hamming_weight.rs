@@ -162,30 +162,28 @@ impl<F: JoltField> SumcheckInstance<F> for HammingWeightSumcheck<F> {
 
     #[tracing::instrument(skip_all, name = "RamHammingWeightSumcheck::compute_prover_message")]
     fn compute_prover_message(&mut self, _round: usize, _previous_claim: F) -> Vec<F> {
-        let prover_state = self
+        let ps = self
             .prover_state
             .as_ref()
             .expect("Prover state not initialized");
 
-        let univariate_poly_eval = F::from_montgomery_reduce(
-            prover_state
-                .ra
-                .par_iter()
-                .zip(self.gamma_powers.par_iter())
-                .map(|(ra_poly, gamma_power)| {
-                    let ra_sum = (0..ra_poly.len() / 2)
-                        .into_par_iter()
-                        .map(|i| ra_poly.get_bound_coeff(2 * i))
-                        .fold(F::Unreduced::<5>::zero, |running, new| {
-                            running + new.as_unreduced_ref()
-                        })
-                        .reduce(F::Unreduced::zero, |running, new| running + new);
-                    ra_sum.mul_trunc::<4, 9>(gamma_power.as_unreduced_ref())
-                })
-                .reduce(F::Unreduced::zero, |running, new| running + new),
-        );
+        let prover_msg = ps
+            .ra
+            .par_iter()
+            .zip(self.gamma_powers.par_iter())
+            .map(|(ra_poly, gamma_power)| {
+                let ra_sum = (0..ra_poly.len() / 2)
+                    .into_par_iter()
+                    .map(|i| ra_poly.get_bound_coeff(2 * i))
+                    .fold(F::Unreduced::<5>::zero, |running, new| {
+                        running + new.as_unreduced_ref()
+                    })
+                    .reduce(F::Unreduced::zero, |running, new| running + new);
+                ra_sum.mul_trunc::<4, 9>(gamma_power.as_unreduced_ref())
+            })
+            .reduce(F::Unreduced::zero, |running, new| running + new);
 
-        vec![univariate_poly_eval]
+        vec![F::from_montgomery_reduce(prover_msg)]
     }
 
     #[tracing::instrument(skip_all, name = "RamHammingWeightSumcheck::bind")]

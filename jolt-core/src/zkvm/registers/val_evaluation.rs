@@ -136,7 +136,7 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
             .expect("Prover state not initialized");
 
         const DEGREE: usize = 3;
-        let univariate_poly_evals: [F::Unreduced<9>; 3] = (0..prover_state.inc.len() / 2)
+        (0..prover_state.inc.len() / 2)
             .into_par_iter()
             .map(|i| {
                 let inc_evals = prover_state
@@ -156,13 +156,7 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
                 ]
             })
             .reduce(
-                || {
-                    [
-                        F::Unreduced::zero(),
-                        F::Unreduced::zero(),
-                        F::Unreduced::zero(),
-                    ]
-                },
+                || [F::Unreduced::zero(); DEGREE],
                 |running, new| {
                     [
                         running[0] + new[0],
@@ -170,9 +164,7 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
                         running[2] + new[2],
                     ]
                 },
-            );
-
-        univariate_poly_evals
+            )
             .into_iter()
             .map(F::from_montgomery_reduce)
             .collect()

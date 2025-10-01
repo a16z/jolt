@@ -431,7 +431,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                 },
             )
             .into_iter()
-            .map(|evals| F::from_montgomery_reduce(evals))
+            .map(F::from_montgomery_reduce)
             .collect()
     }
 

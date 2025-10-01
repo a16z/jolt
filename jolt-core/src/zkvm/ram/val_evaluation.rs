@@ -163,22 +163,22 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
 
     #[tracing::instrument(skip_all, name = "RamValEvaluationSumcheck::compute_prover_message")]
     fn compute_prover_message(&mut self, _round: usize, _previous_claim: F) -> Vec<F> {
-        let prover_state = self
+        let ps = self
             .prover_state
             .as_ref()
             .expect("Prover state not initialized");
 
         const DEGREE: usize = 3;
-        let univariate_poly_evals: [F::Unreduced<9>; 3] = (0..prover_state.inc.len() / 2)
+        (0..ps.inc.len() / 2)
             .into_par_iter()
             .map(|i| {
-                let inc_evals = prover_state
+                let inc_evals = ps
                     .inc
                     .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
-                let wa_evals = prover_state
+                let wa_evals = ps
                     .wa
                     .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
-                let lt_evals = prover_state
+                let lt_evals = ps
                     .lt
                     .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
 
@@ -189,13 +189,7 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
                 ]
             })
             .reduce(
-                || {
-                    [
-                        F::Unreduced::zero(),
-                        F::Unreduced::zero(),
-                        F::Unreduced::zero(),
-                    ]
-                },
+                || [F::Unreduced::zero(); DEGREE],
                 |running, new| {
                     [
                         running[0] + new[0],
@@ -203,9 +197,7 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
                         running[2] + new[2],
                     ]
                 },
-            );
-
-        univariate_poly_evals
+            )
             .into_iter()
             .map(F::from_montgomery_reduce)
             .collect()

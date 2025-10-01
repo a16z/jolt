@@ -192,7 +192,7 @@ impl<F: JoltField> SumcheckInstance<F> for OutputSumcheck<F> {
             ..
         } = self.prover_state.as_ref().unwrap();
 
-        let univariate_poly_evals: [F::Unreduced<9>; DEGREE] = (0..eq_poly.len() / 2)
+        (0..eq_poly.len() / 2)
             .into_par_iter()
             .map(|k| {
                 let eq_evals = eq_poly.sumcheck_evals_array::<DEGREE>(k, BindingOrder::HighToLow);
@@ -212,13 +212,7 @@ impl<F: JoltField> SumcheckInstance<F> for OutputSumcheck<F> {
                 ]
             })
             .reduce(
-                || {
-                    [
-                        F::Unreduced::zero(),
-                        F::Unreduced::zero(),
-                        F::Unreduced::zero(),
-                    ]
-                },
+                || [F::Unreduced::zero(); DEGREE],
                 |running, new| {
                     [
                         running[0] + new[0],
@@ -226,9 +220,7 @@ impl<F: JoltField> SumcheckInstance<F> for OutputSumcheck<F> {
                         running[2] + new[2],
                     ]
                 },
-            );
-
-        univariate_poly_evals
+            )
             .into_iter()
             .map(F::from_montgomery_reduce)
             .collect()
@@ -505,7 +497,7 @@ impl<F: JoltField> SumcheckInstance<F> for ValFinalSumcheck<F> {
 
         let ValFinalSumcheckProverState { inc, wa, .. } = self.prover_state.as_ref().unwrap();
 
-        let univariate_poly_evals: [F::Unreduced<9>; DEGREE] = (0..inc.len() / 2)
+        (0..inc.len() / 2)
             .into_par_iter()
             .map(|j| {
                 let inc_evals = inc.sumcheck_evals_array::<DEGREE>(j, BindingOrder::HighToLow);
@@ -516,11 +508,9 @@ impl<F: JoltField> SumcheckInstance<F> for ValFinalSumcheck<F> {
                 ]
             })
             .reduce(
-                || [F::Unreduced::zero(), F::Unreduced::zero()],
+                || [F::Unreduced::zero(); DEGREE],
                 |running, new| [running[0] + new[0], running[1] + new[1]],
-            );
-
-        univariate_poly_evals
+            )
             .into_iter()
             .map(F::from_montgomery_reduce)
             .collect()

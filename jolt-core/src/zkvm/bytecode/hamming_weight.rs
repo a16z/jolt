@@ -99,25 +99,25 @@ impl<F: JoltField> SumcheckInstance<F> for HammingWeightSumcheck<F> {
 
     #[tracing::instrument(skip_all, name = "BytecodeHammingWeight::compute_prover_message")]
     fn compute_prover_message(&mut self, _round: usize, _previous_claim: F) -> Vec<F> {
-        let prover_state = self.prover_state.as_ref().unwrap();
+        let ps = self.prover_state.as_ref().unwrap();
 
-        vec![F::from_montgomery_reduce(
-            prover_state
-                .ra
-                .par_iter()
-                .zip(self.gamma.par_iter())
-                .map(|(ra, gamma)| {
-                    let ra_sum = (0..ra.len() / 2)
-                        .into_par_iter()
-                        .map(|i| ra.get_bound_coeff(2 * i))
-                        .fold(F::Unreduced::<5>::zero, |running, new| {
-                            running + new.as_unreduced_ref()
-                        })
-                        .reduce(F::Unreduced::zero, |running, new| running + new);
-                    ra_sum.mul_trunc::<4, 9>(gamma.as_unreduced_ref())
-                })
-                .reduce(F::Unreduced::zero, |running, new| running + new),
-        )]
+        let prover_msg = ps
+            .ra
+            .par_iter()
+            .zip(self.gamma.par_iter())
+            .map(|(ra, gamma)| {
+                let ra_sum = (0..ra.len() / 2)
+                    .into_par_iter()
+                    .map(|i| ra.get_bound_coeff(2 * i))
+                    .fold(F::Unreduced::<5>::zero, |running, new| {
+                        running + new.as_unreduced_ref()
+                    })
+                    .reduce(F::Unreduced::zero, |running, new| running + new);
+                ra_sum.mul_trunc::<4, 9>(gamma.as_unreduced_ref())
+            })
+            .reduce(F::Unreduced::zero, |running, new| running + new);
+
+        vec![F::from_montgomery_reduce(prover_msg)]
     }
 
     #[tracing::instrument(skip_all, name = "BytecodeHammingWeight::bind")]
