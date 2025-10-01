@@ -19,6 +19,9 @@ use tracer::emulator::memory::Memory;
 use tracer::instruction::{Cycle, Instruction};
 use tracer::JoltDevice;
 
+#[cfg(feature = "recursion")]
+use crate::subprotocols::snark_composition::RecursionProof;
+
 #[derive(PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, FromPrimitive)]
 #[repr(u8)]
 pub enum ProofKeys {
@@ -28,14 +31,14 @@ pub enum ProofKeys {
     Stage4Sumcheck,
     ReducedOpeningProof,
     #[cfg(feature = "recursion")]
-    SZCheckProof,
+    Recursion,
 }
 
 pub enum ProofData<F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript> {
     SumcheckProof(SumcheckInstanceProof<F, ProofTranscript>),
     ReducedOpeningProof(ReducedOpeningProof<F, PCS, ProofTranscript>),
     #[cfg(feature = "recursion")]
-    SZCheckProof(crate::subprotocols::snark_composition::RecursionProof<F, ProofTranscript, 1>), // RATIO = 1
+    RecursionProof(crate::subprotocols::snark_composition::RecursionProof<F, ProofTranscript, 1>), // RATIO = 1
 }
 
 pub type Proofs<F, PCS, ProofTranscript> = BTreeMap<ProofKeys, ProofData<F, PCS, ProofTranscript>>;

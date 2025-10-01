@@ -1121,7 +1121,7 @@ pub struct DoryBatchedProof {
 #[cfg(feature = "recursion")]
 #[derive(Clone, Debug, Default, CanonicalSerialize, CanonicalDeserialize)]
 pub struct DoryAuxiliaryData {
-    /// Full exponentiation steps for sz_check (not minimized)
+    /// Full exponentiation steps for recursion check (not minimized)
     pub full_exponentiation_steps: Option<Vec<ExponentiationSteps>>,
 }
 

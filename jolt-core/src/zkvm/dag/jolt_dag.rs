@@ -30,11 +30,17 @@ use allocative::FlameGraphBuilder;
 use anyhow::Context;
 use rayon::prelude::*;
 
+#[cfg(feature = "recursion")]
+use crate::poly::commitment::pedersen::PedersenGenerators;
+#[cfg(feature = "recursion")]
+use crate::subprotocols::snark_composition::snark_composition_prove;
+#[cfg(feature = "recursion")]
+use ark_grumpkin::Projective as GrumpkinProjective;
+
 pub enum JoltDAG {}
 
 impl JoltDAG {
     #[allow(clippy::type_complexity)]
-    #[cfg_attr(feature = "recursion", allow(unused_variables))]
     pub fn prove<
         'a,
         F: JoltField,
@@ -282,18 +288,18 @@ impl JoltDAG {
             &mut *transcript.borrow_mut(),
         );
 
-        // Get recursion ops from accumulator if available
+        state_manager.proofs.borrow_mut().insert(
+            ProofKeys::ReducedOpeningProof,
+            ProofData::ReducedOpeningProof(opening_proof),
+        );
+
+        // Recursion mode: we extract the simulated work from the dory verifier program
         #[cfg(feature = "recursion")]
         {
             if let Some(recursion_ops) = accumulator.borrow().get_recursion_ops() {
                 state_manager.set_recursion_ops(recursion_ops.clone());
             }
         }
-
-        state_manager.proofs.borrow_mut().insert(
-            ProofKeys::ReducedOpeningProof,
-            ProofData::ReducedOpeningProof(opening_proof),
-        );
 
         #[cfg(test)]
         assert!(
@@ -311,61 +317,46 @@ impl JoltDAG {
                 .borrow()
         );
 
-        // Stage 6: SZ Check Protocol for Recursion
+        // Stage 6: SNARK Composition for dory verifier in recursion mode
         #[cfg(feature = "recursion")]
         {
-            use crate::poly::commitment::pedersen::PedersenGenerators;
-            use crate::subprotocols::snark_composition::snark_composition_prove;
-            use ark_grumpkin::Projective as GrumpkinProjective;
+            tracing::info!("Stage 6 in recursion mode");
 
-            let exponentiation_steps_vec = state_manager
+            let exps_to_prove = state_manager
                 .get_recursion_ops()
                 .cloned()
                 .unwrap_or_default();
 
-            if !exponentiation_steps_vec.is_empty() {
-                println!("STAGE 6: Running SZ Check Protocol");
-                println!(
-                    "Processing {} exponentiation steps",
-                    exponentiation_steps_vec.len()
-                );
+            let hyrax_generators = PedersenGenerators::<GrumpkinProjective>::from_urs_file(
+                16,
+                b"recursion check",
+                Some("hyrax_urs_16.urs"),
+            );
 
-                // Setup Hyrax generators (matching what we use in sz_check_protocol tests)
-                let hyrax_generators =
-                    PedersenGenerators::<GrumpkinProjective>::new(16, b"test sz check");
+            // TODO(markosg04): this is jank
+            // Better way to handle the generics here?
+            let mut recursion_transcript = ProofTranscript::new(b"Recursion Check Stage 6");
+            let recursion_proof = snark_composition_prove::<ark_bn254::Fq, ProofTranscript, 1>(
+                exps_to_prove,
+                &mut recursion_transcript,
+                &hyrax_generators,
+            );
 
-                // Create a fresh transcript for Stage 6 to avoid Fiat-Shamir mismatch
-                let mut sz_transcript = ProofTranscript::new(b"SZ Check Stage 6");
-                let sz_proof = snark_composition_prove::<ark_bn254::Fq, ProofTranscript, 1>(
-                    exponentiation_steps_vec,
-                    &mut sz_transcript,
-                    &hyrax_generators,
-                );
+            let recursion_proof_f = unsafe {
+                std::mem::transmute::<
+                    crate::subprotocols::snark_composition::RecursionProof<
+                        ark_bn254::Fq,
+                        ProofTranscript,
+                        1,
+                    >,
+                    crate::subprotocols::snark_composition::RecursionProof<F, ProofTranscript, 1>,
+                >(recursion_proof)
+            };
 
-                // Store the proof in state manager
-                // Safe because we checked F == Fq above
-                let sz_proof_f = unsafe {
-                    std::mem::transmute::<
-                        crate::subprotocols::snark_composition::RecursionProof<
-                            ark_bn254::Fq,
-                            ProofTranscript,
-                            1,
-                        >,
-                        crate::subprotocols::snark_composition::RecursionProof<
-                            F,
-                            ProofTranscript,
-                            1,
-                        >,
-                    >(sz_proof)
-                };
-
-                state_manager
-                    .proofs
-                    .borrow_mut()
-                    .insert(ProofKeys::SZCheckProof, ProofData::SZCheckProof(sz_proof_f));
-
-                println!("SZ Check Protocol completed");
-            }
+            state_manager.proofs.borrow_mut().insert(
+                ProofKeys::Recursion,
+                ProofData::RecursionProof(recursion_proof_f),
+            );
         }
 
         #[cfg(test)]
@@ -512,7 +503,6 @@ impl JoltDAG {
         .context("Stage 4")?;
 
         // Stage 5: Opening Proof Verification
-        // Batch-prove all openings
         let batched_opening_proof = proofs
             .get(&ProofKeys::ReducedOpeningProof)
             .expect("Reduced opening proof not found");
@@ -540,7 +530,7 @@ impl JoltDAG {
             )
             .context("Stage 5")?;
 
-        // Stage 6: Verify SZ Check Protocol
+        // Stage 6: Verify SNARK Composition in recursion mode
         #[cfg(feature = "recursion")]
         {
             use crate::poly::commitment::pedersen::PedersenGenerators;
@@ -548,49 +538,40 @@ impl JoltDAG {
             use ark_bn254::Fq;
             use ark_grumpkin::Projective as GrumpkinProjective;
 
-            tracing::info!("wtf?");
+            tracing::info!("Verifier: Stage 6 in recursion mode");
 
             let proofs = state_manager.proofs.borrow();
-            if let Some(ProofData::SZCheckProof(sz_proof)) = proofs.get(&ProofKeys::SZCheckProof) {
-                tracing::info!("STAGE 6: Verifying SZ Check Protocol");
+            if let Some(ProofData::RecursionProof(sz_proof)) = proofs.get(&ProofKeys::Recursion) {
+                let hyrax_generators = PedersenGenerators::<GrumpkinProjective>::from_urs_file(
+                    16,
+                    b"recursion check",
+                    Some("hyrax_urs_16.urs"),
+                );
 
-                // Check that F is Fq for SZ check verification
-                // TODO: Fix this jank-ass part
-                if true {
-                    // Setup Hyrax generators (must match prover)
-                    let hyrax_generators =
-                        PedersenGenerators::<GrumpkinProjective>::new(16, b"test sz check");
+                let sz_proof_fq = unsafe {
+                    std::mem::transmute::<
+                        &crate::subprotocols::snark_composition::RecursionProof<
+                            F,
+                            ProofTranscript,
+                            1,
+                        >,
+                        &crate::subprotocols::snark_composition::RecursionProof<
+                            Fq,
+                            ProofTranscript,
+                            1,
+                        >,
+                    >(sz_proof)
+                };
 
-                    // Verify the complete SZ check protocol with a fresh transcript
-                    // Safe because we checked F == Fq
-                    let sz_proof_fq = unsafe {
-                        std::mem::transmute::<
-                            &crate::subprotocols::snark_composition::RecursionProof<
-                                F,
-                                ProofTranscript,
-                                1,
-                            >,
-                            &crate::subprotocols::snark_composition::RecursionProof<
-                                Fq,
-                                ProofTranscript,
-                                1,
-                            >,
-                        >(sz_proof)
-                    };
+                let mut sz_transcript = ProofTranscript::new(b"Recursion Check Stage 6");
+                snark_composition_verify::<Fq, ProofTranscript, 1>(
+                    sz_proof_fq,
+                    &mut sz_transcript,
+                    &hyrax_generators,
+                )
+                .context("Stage 6 - Recursion Check Protocol verification")?;
 
-                    // Create a fresh transcript for Stage 6 to match the prover
-                    let mut sz_transcript = ProofTranscript::new(b"SZ Check Stage 6");
-                    snark_composition_verify::<Fq, ProofTranscript, 1>(
-                        sz_proof_fq,
-                        &mut sz_transcript,
-                        &hyrax_generators,
-                    )
-                    .context("Stage 6 - SZ Check Protocol verification")?;
-
-                    println!("SZ Check Protocol verification successful");
-                } else {
-                    panic!("SZ check verification requires field type to be ark_bn254::Fq");
-                }
+                tracing::info!("Recursion Check Protocol verification successful");
             }
             drop(proofs);
         }

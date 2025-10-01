@@ -14,7 +14,6 @@ use num_derive::FromPrimitive;
 use num_traits::Zero;
 use rayon::prelude::*;
 use std::{
-    any::TypeId,
     collections::{BTreeMap, HashMap},
     sync::{Arc, RwLock},
 };
@@ -164,7 +163,7 @@ pub enum SumcheckId {
     BytecodeBooleanity,
     BytecodeHammingWeight,
     OpeningReduction,
-    SZCheck,
+    RecursionCheck,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Allocative)]
@@ -956,60 +955,6 @@ where
             );
 
             PCS::combine_hints(hints, &coeffs)
-        };
-
-        // Compute the combined commitment hint for recursion mode
-        #[cfg(feature = "recursion")]
-        let combined_commitment_hint = {
-            use super::commitment::recursion::RecursionCommitmentScheme;
-
-            let mut rlc_map = BTreeMap::new();
-            for (gamma, sumcheck) in gamma_powers.iter().zip(self.sumchecks.iter()) {
-                for (coeff, polynomial) in
-                    sumcheck.rlc_coeffs.iter().zip(sumcheck.polynomials.iter())
-                {
-                    if let Some(value) = rlc_map.get_mut(&polynomial) {
-                        *value += *coeff * gamma;
-                    } else {
-                        rlc_map.insert(polynomial, *coeff * gamma);
-                    }
-                }
-            }
-
-            let (coeffs, commitments_vec): (Vec<F>, Vec<PCS::Commitment>) = rlc_map
-                .into_iter()
-                .map(|(k, v)| (v, commitments.remove(k).unwrap()))
-                .unzip();
-
-            // For recursion schemes, precompute the combined commitment
-            // This will collect exponentiation steps in Dory
-            if std::any::TypeId::of::<PCS>()
-                == std::any::TypeId::of::<super::commitment::dory::DoryCommitmentScheme>()
-            {
-                // Type check that F is indeed Fr for Dory
-                if std::any::TypeId::of::<F>() == std::any::TypeId::of::<ark_bn254::Fr>() {
-                    // SAFETY: We just checked the types
-                    let dory_commitments: Vec<&super::commitment::dory::DoryCommitment> =
-                        commitments_vec
-                            .iter()
-                            .map(|c| unsafe { std::mem::transmute(c) })
-                            .collect();
-
-                    // SAFETY: We just verified F is Fr
-                    let dory_coeffs =
-                        unsafe { std::mem::transmute::<&[F], &[ark_bn254::Fr]>(&coeffs[..]) };
-
-                    // Call precompute_combined_commitment to collect exponentiation steps
-                    let (_combined_commitment, hint) = super::commitment::dory::DoryCommitmentScheme::precompute_combined_commitment(&dory_commitments, dory_coeffs);
-
-                    // Extract and store the exponentiation steps in the accumulator
-                    if !hint.exponentiation_steps.is_empty() {
-                        self.recursion_ops = Some(hint.exponentiation_steps);
-                    }
-                }
-            }
-
-            PCS::OpeningProofHint::default()
         };
 
         // Reduced opening proof

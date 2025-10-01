@@ -59,13 +59,13 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
         self.commitments
             .serialize_with_mode(&mut writer, compress)?;
 
-        // Serialize proofs, handling SZCheckProof specially
-        // First write the number of proofs (excluding SZCheckProof if present)
+        // Serialize proofs, handling RecursionProof specially
+        // First write the number of proofs (excluding RecursionProof if present)
         #[cfg(feature = "recursion")]
         let proof_count = self
             .proofs
             .iter()
-            .filter(|(_, proof_data)| !matches!(proof_data, ProofData::SZCheckProof(_)))
+            .filter(|(_, proof_data)| !matches!(proof_data, ProofData::RecursionProof(_)))
             .count();
         #[cfg(not(feature = "recursion"))]
         let proof_count = self.proofs.len();
@@ -76,8 +76,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
         for (key, proof_data) in &self.proofs {
             #[cfg(feature = "recursion")]
             {
-                if matches!(proof_data, ProofData::SZCheckProof(_)) {
-                    continue; // Skip SZCheckProof entries
+                if matches!(proof_data, ProofData::RecursionProof(_)) {
+                    continue; // Skip RecursionProof entries
                 }
             }
             key.serialize_with_mode(&mut writer, compress)?;
@@ -98,11 +98,11 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
             let proof_count = self
                 .proofs
                 .iter()
-                .filter(|(_, proof_data)| !matches!(proof_data, ProofData::SZCheckProof(_)))
+                .filter(|(_, proof_data)| !matches!(proof_data, ProofData::RecursionProof(_)))
                 .count();
             let mut size = proof_count.serialized_size(compress);
             for (key, proof_data) in &self.proofs {
-                if matches!(proof_data, ProofData::SZCheckProof(_)) {
+                if matches!(proof_data, ProofData::RecursionProof(_)) {
                     continue;
                 }
                 size += key.serialized_size(compress) + proof_data.serialized_size(compress);
@@ -525,9 +525,9 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
                 proof.serialize_with_mode(&mut writer, compress)
             }
             #[cfg(feature = "recursion")]
-            ProofData::SZCheckProof(_proof) => {
+            ProofData::RecursionProof(_proof) => {
                 2u8.serialize_with_mode(&mut writer, compress)?;
-                // TODO: Implement serialization for SZCheckProof when needed
+                // TODO: Implement serialization for RecursionProof when needed
                 Ok(())
             }
         }
@@ -538,7 +538,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
             ProofData::SumcheckProof(proof) => proof.serialized_size(compress),
             ProofData::ReducedOpeningProof(proof) => proof.serialized_size(compress),
             #[cfg(feature = "recursion")]
-            ProofData::SZCheckProof(_proof) => {
+            ProofData::RecursionProof(_proof) => {
                 // TODO: Implement proper size calculation when needed
                 0
             }
@@ -576,8 +576,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
             }
             #[cfg(feature = "recursion")]
             2 => {
-                // TODO: Implement deserialization for SZCheckProof when needed
-                // For now, this should never be reached as SZCheckProof is not fully serialized
+                // TODO: Implement deserialization for RecursionProof when needed
+                // For now, this should never be reached as RecursionProof is not fully serialized
                 Err(SerializationError::NotEnoughSpace)
             }
             _ => Err(SerializationError::InvalidData),

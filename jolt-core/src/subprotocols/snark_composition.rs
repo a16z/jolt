@@ -142,6 +142,7 @@ fn batch_polynomials_with_challenges<'a, F: JoltField + From<Fq> + Into<Fq>>(
     batched_eval: &mut F,
     polynomials: impl Iterator<Item = (PolynomialType, &'a PolyCoeffs, F, F)>, // (type, poly, eval, challenge)
 ) {
+    tracing::debug!("Batching all recursion polys");
     for (_, poly, eval, challenge) in polynomials {
         *batched_eval += challenge * eval;
         for (idx, &coeff) in poly.iter().enumerate() {
@@ -156,17 +157,17 @@ fn get_polynomial_evaluation<F: JoltField>(
 ) -> F {
     let poly_id = match poly_type {
         PolynomialType::Rho(exp_idx, poly_idx) => {
-            RecursionCommittedPolynomial::SZCheckRho(exp_idx, poly_idx)
+            RecursionCommittedPolynomial::RecursionRho(exp_idx, poly_idx)
         }
         PolynomialType::Quotient(exp_idx, poly_idx) => {
-            RecursionCommittedPolynomial::SZCheckQuotient(exp_idx, poly_idx)
+            RecursionCommittedPolynomial::RecursionQuotient(exp_idx, poly_idx)
         }
-        PolynomialType::Base(exp_idx) => RecursionCommittedPolynomial::SZCheckBase(exp_idx),
-        PolynomialType::G(exp_idx) => RecursionCommittedPolynomial::SZCheckG(exp_idx),
+        PolynomialType::Base(exp_idx) => RecursionCommittedPolynomial::RecursionBase(exp_idx),
+        PolynomialType::G(exp_idx) => RecursionCommittedPolynomial::RecursionG(exp_idx),
     };
     accumulator
         .borrow()
-        .get_recursion_polynomial_opening(poly_id, SumcheckId::SZCheck)
+        .get_recursion_polynomial_opening(poly_id, SumcheckId::RecursionCheck)
         .1
 }
 
@@ -200,6 +201,7 @@ where
     ProofTranscript: Transcript,
 {
     // Step 1: Prepare polynomials and commitments
+    tracing::debug!("Commit to all polys");
     let num_exponentiations = exponentiation_steps_vec.len();
     let mut rho_commitments = Vec::with_capacity(num_exponentiations);
     let mut quotient_commitments = Vec::with_capacity(num_exponentiations);
@@ -249,6 +251,7 @@ where
     };
 
     // Step 2: Create sumcheck instances and run sumcheck protocol
+    tracing::debug!("Exp sumchecks");
     let mut sumcheck_instances: Vec<Box<dyn SumcheckInstance<F>>> = exponentiation_steps_vec
         .iter()
         .enumerate()
@@ -273,6 +276,7 @@ where
     );
 
     // Step 3: Batch all polynomials for Hyrax opening
+    tracing::debug!("Prepare polys for batching");
     let indexer = ChallengeIndexer::new(&artifacts);
     let total_polys = all_rho_polys.iter().map(|v| v.len()).sum::<usize>()
         + all_quotient_polys.iter().map(|v| v.len()).sum::<usize>()
@@ -332,6 +336,7 @@ where
     let batched_poly_fq: Vec<Fq> = batched_poly.iter().map(|&x| x.into()).collect();
     let batched_dense_poly = DensePolynomial::new(batched_poly_fq);
 
+    tracing::debug!("Hyrax evaluation proof");
     let batched_hyrax_proof = HyraxOpeningProof::<RATIO, GrumpkinProjective>::prove(
         &batched_dense_poly,
         &r_sumcheck_fq,
@@ -486,26 +491,21 @@ where
     for (opening_id, (_, claim)) in proof.openings.iter() {
         if let crate::poly::opening_proof::OpeningId::Recursion(poly_id, _) = opening_id {
             let poly_type = match poly_id {
-                RecursionCommittedPolynomial::SZCheckRho(exp_idx, poly_idx) => {
-                    Some(PolynomialType::Rho(*exp_idx, *poly_idx))
+                RecursionCommittedPolynomial::RecursionRho(exp_idx, poly_idx) => {
+                    PolynomialType::Rho(*exp_idx, *poly_idx)
                 }
-                RecursionCommittedPolynomial::SZCheckQuotient(exp_idx, poly_idx) => {
-                    Some(PolynomialType::Quotient(*exp_idx, *poly_idx))
+                RecursionCommittedPolynomial::RecursionQuotient(exp_idx, poly_idx) => {
+                    PolynomialType::Quotient(*exp_idx, *poly_idx)
                 }
-                RecursionCommittedPolynomial::SZCheckBase(exp_idx) => {
-                    Some(PolynomialType::Base(*exp_idx))
+                RecursionCommittedPolynomial::RecursionBase(exp_idx) => {
+                    PolynomialType::Base(*exp_idx)
                 }
-                RecursionCommittedPolynomial::SZCheckG(exp_idx) => {
-                    Some(PolynomialType::G(*exp_idx))
-                }
-                _ => None,
+                RecursionCommittedPolynomial::RecursionG(exp_idx) => PolynomialType::G(*exp_idx),
             };
 
-            if let Some(poly_type) = poly_type {
-                let challenge_idx = indexer.get_index(poly_type);
-                let gamma_fq: Fq = batching_challenges[challenge_idx].into();
-                batched_opening_fq += gamma_fq * (*claim).into();
-            }
+            let challenge_idx = indexer.get_index(poly_type);
+            let gamma_fq: Fq = batching_challenges[challenge_idx].into();
+            batched_opening_fq += gamma_fq * (*claim).into();
         }
     }
 
@@ -531,7 +531,7 @@ mod tests {
     use jolt_optimizations::ExponentiationSteps;
 
     #[test]
-    fn test_single_exponentiation_sz_check() {
+    fn test_single_exponentiation_recursion_check() {
         const RATIO: usize = 1;
         let mut rng = test_rng();
 
@@ -545,7 +545,8 @@ mod tests {
 
         let mut prover_transcript = Blake2bTranscript::new(b"test_exp_check");
         let mut verifier_transcript = Blake2bTranscript::new(b"test_exp_check");
-        let hyrax_generators = PedersenGenerators::<GrumpkinProjective>::new(16, b"test sz check");
+        let hyrax_generators =
+            PedersenGenerators::<GrumpkinProjective>::new(16, b"recursion check");
 
         let proof = snark_composition_prove::<Fq, _, RATIO>(
             vec![steps],
@@ -561,13 +562,13 @@ mod tests {
 
         assert!(
             verification_result.is_ok(),
-            "SZ check verification should pass: {:?}",
+            "recursion check verification should pass: {:?}",
             verification_result
         );
     }
 
     #[test]
-    fn test_multiple_exponentiations_sz_check() {
+    fn test_multiple_exponentiations_recursion_check() {
         const RATIO: usize = 1;
         let mut rng = test_rng();
 
@@ -583,7 +584,8 @@ mod tests {
 
         let mut prover_transcript = Blake2bTranscript::new(b"test_exp_check_multi");
         let mut verifier_transcript = Blake2bTranscript::new(b"test_exp_check_multi");
-        let hyrax_generators = PedersenGenerators::<GrumpkinProjective>::new(16, b"test sz check");
+        let hyrax_generators =
+            PedersenGenerators::<GrumpkinProjective>::new(16, b"recursion check");
 
         let proof = snark_composition_prove::<Fq, _, RATIO>(
             steps_vec,
@@ -599,7 +601,7 @@ mod tests {
 
         assert!(
             verification_result.is_ok(),
-            "SZ check verification with multiple exponentiations should pass: {:?}",
+            "recursion check verification with multiple exponentiations should pass: {:?}",
             verification_result
         );
     }

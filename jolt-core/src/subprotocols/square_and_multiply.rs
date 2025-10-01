@@ -6,7 +6,7 @@ use crate::{
         dense_mlpoly::DensePolynomial,
         eq_poly::EqPolynomial,
         multilinear_polynomial::{
-            BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
+            BindingOrder, MultilinearPolynomial, PolynomialBinding,
         },
         opening_proof::{
             OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator,
@@ -272,8 +272,8 @@ impl<F: JoltField> SumcheckInstance<F> for ExpSumcheck<F> {
                 accumulator
                     .borrow()
                     .get_recursion_polynomial_opening(
-                        RecursionCommittedPolynomial::SZCheckRho(self.exponentiation_index, i),
-                        SumcheckId::SZCheck,
+                        RecursionCommittedPolynomial::RecursionRho(self.exponentiation_index, i),
+                        SumcheckId::RecursionCheck,
                     )
                     .1
             })
@@ -282,16 +282,16 @@ impl<F: JoltField> SumcheckInstance<F> for ExpSumcheck<F> {
         let base_eval = accumulator
             .borrow()
             .get_recursion_polynomial_opening(
-                RecursionCommittedPolynomial::SZCheckBase(self.exponentiation_index),
-                SumcheckId::SZCheck,
+                RecursionCommittedPolynomial::RecursionBase(self.exponentiation_index),
+                SumcheckId::RecursionCheck,
             )
             .1;
 
         let g_eval = accumulator
             .borrow()
             .get_recursion_polynomial_opening(
-                RecursionCommittedPolynomial::SZCheckG(self.exponentiation_index),
-                SumcheckId::SZCheck,
+                RecursionCommittedPolynomial::RecursionG(self.exponentiation_index),
+                SumcheckId::RecursionCheck,
             )
             .1;
 
@@ -300,8 +300,8 @@ impl<F: JoltField> SumcheckInstance<F> for ExpSumcheck<F> {
                 accumulator
                     .borrow()
                     .get_recursion_polynomial_opening(
-                        RecursionCommittedPolynomial::SZCheckQuotient(self.exponentiation_index, i),
-                        SumcheckId::SZCheck,
+                        RecursionCommittedPolynomial::RecursionQuotient(self.exponentiation_index, i),
+                        SumcheckId::RecursionCheck,
                     )
                     .1
             })
@@ -338,7 +338,7 @@ impl<F: JoltField> SumcheckInstance<F> for ExpSumcheck<F> {
         let mut rho_polynomials = Vec::new();
         let mut rho_claims = Vec::new();
         for (i, rho_poly) in prover_state.rho_polys.iter().enumerate() {
-            rho_polynomials.push(RecursionCommittedPolynomial::SZCheckRho(
+            rho_polynomials.push(RecursionCommittedPolynomial::RecursionRho(
                 self.exponentiation_index,
                 i,
             ));
@@ -347,7 +347,7 @@ impl<F: JoltField> SumcheckInstance<F> for ExpSumcheck<F> {
 
         accumulator.borrow_mut().append_dense_recursion(
             rho_polynomials,
-            SumcheckId::SZCheck,
+            SumcheckId::RecursionCheck,
             opening_point.r.clone(),
             &rho_claims,
         );
@@ -355,7 +355,7 @@ impl<F: JoltField> SumcheckInstance<F> for ExpSumcheck<F> {
         let mut quotient_polynomials = Vec::new();
         let mut quotient_claims = Vec::new();
         for (i, q_poly) in prover_state.quotient_polys.iter().enumerate() {
-            quotient_polynomials.push(RecursionCommittedPolynomial::SZCheckQuotient(
+            quotient_polynomials.push(RecursionCommittedPolynomial::RecursionQuotient(
                 self.exponentiation_index,
                 i,
             ));
@@ -364,17 +364,17 @@ impl<F: JoltField> SumcheckInstance<F> for ExpSumcheck<F> {
 
         accumulator.borrow_mut().append_dense_recursion(
             quotient_polynomials,
-            SumcheckId::SZCheck,
+            SumcheckId::RecursionCheck,
             opening_point.r.clone(),
             &quotient_claims,
         );
 
         accumulator.borrow_mut().append_dense_recursion(
             vec![
-                RecursionCommittedPolynomial::SZCheckBase(self.exponentiation_index),
-                RecursionCommittedPolynomial::SZCheckG(self.exponentiation_index),
+                RecursionCommittedPolynomial::RecursionBase(self.exponentiation_index),
+                RecursionCommittedPolynomial::RecursionG(self.exponentiation_index),
             ],
-            SumcheckId::SZCheck,
+            SumcheckId::RecursionCheck,
             opening_point.r,
             &[
                 prover_state.base_poly.final_sumcheck_claim(),
@@ -390,7 +390,7 @@ impl<F: JoltField> SumcheckInstance<F> for ExpSumcheck<F> {
     ) {
         let mut rho_polynomials = Vec::new();
         for i in 0..=self.num_constraints {
-            rho_polynomials.push(RecursionCommittedPolynomial::SZCheckRho(
+            rho_polynomials.push(RecursionCommittedPolynomial::RecursionRho(
                 self.exponentiation_index,
                 i,
             ));
@@ -398,13 +398,13 @@ impl<F: JoltField> SumcheckInstance<F> for ExpSumcheck<F> {
 
         accumulator.borrow_mut().append_dense_recursion(
             rho_polynomials,
-            SumcheckId::SZCheck,
+            SumcheckId::RecursionCheck,
             opening_point.r.clone(),
         );
 
         let mut quotient_polynomials = Vec::new();
         for i in 0..self.num_constraints {
-            quotient_polynomials.push(RecursionCommittedPolynomial::SZCheckQuotient(
+            quotient_polynomials.push(RecursionCommittedPolynomial::RecursionQuotient(
                 self.exponentiation_index,
                 i,
             ));
@@ -412,16 +412,16 @@ impl<F: JoltField> SumcheckInstance<F> for ExpSumcheck<F> {
 
         accumulator.borrow_mut().append_dense_recursion(
             quotient_polynomials,
-            SumcheckId::SZCheck,
+            SumcheckId::RecursionCheck,
             opening_point.r.clone(),
         );
 
         accumulator.borrow_mut().append_dense_recursion(
             vec![
-                RecursionCommittedPolynomial::SZCheckBase(self.exponentiation_index),
-                RecursionCommittedPolynomial::SZCheckG(self.exponentiation_index),
+                RecursionCommittedPolynomial::RecursionBase(self.exponentiation_index),
+                RecursionCommittedPolynomial::RecursionG(self.exponentiation_index),
             ],
-            SumcheckId::SZCheck,
+            SumcheckId::RecursionCheck,
             opening_point.r,
         );
     }

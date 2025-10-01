@@ -4,7 +4,8 @@ use ark_std::rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 use sha3::digest::{ExtendableOutput, Update};
 use sha3::Shake256;
-use std::io::Read;
+use std::fs::File;
+use std::io::{Read, Write};
 
 use crate::field::JoltField;
 use crate::msm::VariableBaseMSM;
@@ -46,6 +47,50 @@ impl<G: CurveGroup> PedersenGenerators<G> {
         let slice = &self.generators[..n];
         PedersenGenerators {
             generators: slice.into(),
+        }
+    }
+
+    /// Load generators from a URS file if it exists, otherwise generate new ones and save to file
+    #[tracing::instrument(skip_all, name = "PedersenGenerators::from_urs_file")]
+    pub fn from_urs_file(len: usize, label: &[u8], urs_filename: Option<&str>) -> Self {
+        match urs_filename {
+            Some(filename) => {
+                tracing::info!("Attempting to load Hyrax URS from file: {}", filename);
+
+                if let Ok(mut file) = File::open(filename) {
+                    let mut buffer = Vec::new();
+                    if file.read_to_end(&mut buffer).is_ok() {
+                        if let Ok(generators) = Self::deserialize_compressed(&buffer[..]) {
+                            if generators.generators.len() == len {
+                                tracing::info!("Successfully loaded Hyrax URS from file");
+                                return generators;
+                            } else {
+                                tracing::warn!(
+                                    "Loaded generators have wrong length: expected {}, got {}",
+                                    len,
+                                    generators.generators.len()
+                                );
+                            }
+                        }
+                    }
+                }
+
+                // If loading failed, generate new and save
+                tracing::info!("Generating new Hyrax URS and saving to file");
+                let generators = Self::new(len, label);
+
+                // Try to save to file
+                if let Ok(mut file) = File::create(filename) {
+                    let mut buffer = Vec::new();
+                    if generators.serialize_compressed(&mut buffer).is_ok() {
+                        let _ = file.write_all(&buffer);
+                        tracing::info!("Saved Hyrax URS to file: {}", filename);
+                    }
+                }
+
+                generators
+            }
+            None => Self::new(len, label),
         }
     }
 }
