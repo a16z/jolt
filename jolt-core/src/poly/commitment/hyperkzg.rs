@@ -22,6 +22,7 @@ use crate::{
     utils::errors::ProofVerifyError,
 };
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
+use ark_ff::biginteger::S128;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{One, Zero};
 use rand_chacha::ChaCha20Rng;
@@ -552,6 +553,12 @@ where P::ScalarField: JoltField {
 impl<P: Pairing> StreamingProcessChunk<StreamingCompactWitness<i128, P::ScalarField>> for HyperKZG<P>
 where P::ScalarField: JoltField {
     fn process_chunk_t<'a>(_s: &Self::State<'a>, _chunk: &[StreamingCompactWitness<i128, P::ScalarField>]) -> Self::ChunkState {
+        todo!("Not supported")
+    }
+}
+impl<P: Pairing> StreamingProcessChunk<StreamingCompactWitness<S128, P::ScalarField>> for HyperKZG<P>
+where P::ScalarField: JoltField {
+    fn process_chunk_t<'a>(_s: &Self::State<'a>, _chunk: &[StreamingCompactWitness<S128, P::ScalarField>]) -> Self::ChunkState {
         todo!("Not supported")
     }
 }

@@ -22,6 +22,8 @@ pub enum Multilinear {
     U32Scalars,
     U64Scalars,
     I64Scalars,
+    I128Scalars,
+    S128Scalars,
     RLC,
     OneHot{K: usize},
 }

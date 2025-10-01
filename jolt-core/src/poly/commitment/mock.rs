@@ -1,6 +1,7 @@
 use std::borrow::Borrow;
 use std::marker::PhantomData;
 
+use ark_ff::biginteger::S128;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 use crate::{
@@ -197,6 +198,15 @@ where
     F: JoltField,
 {
     fn process_chunk_t<'a>(s: &Self::State<'a>, chunk: &[StreamingCompactWitness<i128, F>]) -> Self::ChunkState {
+        todo!()
+    }
+}
+
+impl<F> StreamingProcessChunk<StreamingCompactWitness<S128, F>> for MockCommitScheme<F>
+where
+    F: JoltField,
+{
+    fn process_chunk_t<'a>(s: &Self::State<'a>, chunk: &[StreamingCompactWitness<S128, F>]) -> Self::ChunkState {
         todo!()
     }
 }

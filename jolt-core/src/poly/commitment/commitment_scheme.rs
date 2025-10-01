@@ -1,3 +1,4 @@
+use ark_ff::biginteger::S128;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use std::borrow::Borrow;
 use std::fmt::Debug;
@@ -153,6 +154,7 @@ pub trait StreamingCommitmentScheme :
     + StreamingProcessChunk<StreamingCompactWitness<u64, <Self as CommitmentScheme>::Field>>
     + StreamingProcessChunk<StreamingCompactWitness<i64, <Self as CommitmentScheme>::Field>>
     + StreamingProcessChunk<StreamingCompactWitness<i128, <Self as CommitmentScheme>::Field>>
+    + StreamingProcessChunk<StreamingCompactWitness<S128, <Self as CommitmentScheme>::Field>>
     + StreamingProcessChunk<StreamingOneHotWitness<<Self as CommitmentScheme>::Field>>
 {}
 
@@ -166,5 +168,6 @@ where
     + StreamingProcessChunk<StreamingCompactWitness<u64, <Self as CommitmentScheme>::Field>>
     + StreamingProcessChunk<StreamingCompactWitness<i64, <Self as CommitmentScheme>::Field>>
     + StreamingProcessChunk<StreamingCompactWitness<i128, <Self as CommitmentScheme>::Field>>
+    + StreamingProcessChunk<StreamingCompactWitness<S128, <Self as CommitmentScheme>::Field>>
     + StreamingProcessChunk<StreamingOneHotWitness<<Self as CommitmentScheme>::Field>>,
 {}
