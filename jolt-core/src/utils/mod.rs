@@ -1,4 +1,4 @@
-use crate::field::JoltField;
+use crate::field::{ChallengeFieldOps, JoltField};
 
 use rayon::prelude::*;
 
@@ -89,7 +89,10 @@ macro_rules! join_conditional {
 /// assert_eq!(index_to_field_bitvector::<Fr>(1, 3), vec![zero, zero, one]);
 /// assert_eq!(index_to_field_bitvector::<Fr>(1, 7), vec![zero, zero, zero, zero, zero, zero, one]);
 /// ```
-pub fn index_to_field_bitvector<F: JoltField>(value: u128, bits: usize) -> Vec<F> {
+pub fn index_to_field_bitvector<F: JoltField + ChallengeFieldOps>(
+    value: u128,
+    bits: usize,
+) -> Vec<F> {
     if bits != 128 {
         assert!(value < 1u128 << bits);
     }
