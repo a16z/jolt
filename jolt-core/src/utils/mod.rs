@@ -89,7 +89,7 @@ macro_rules! join_conditional {
 /// assert_eq!(index_to_field_bitvector::<Fr>(1, 3), vec![zero, zero, one]);
 /// assert_eq!(index_to_field_bitvector::<Fr>(1, 7), vec![zero, zero, zero, zero, zero, zero, one]);
 /// ```
-pub fn index_to_field_bitvector<F: JoltField + ChallengeFieldOps>(
+pub fn index_to_field_bitvector<F: JoltField + ChallengeFieldOps<F>>(
     value: u128,
     bits: usize,
 ) -> Vec<F> {
