@@ -1,11 +1,11 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::uninlined_format_args)]
-use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::utils::{compute_dotproduct, compute_dotproduct_low_optimized};
+use crate::{field::ChallengeFieldOps, poly::eq_poly::EqPolynomial};
 
-use crate::field::{JoltField, OptimizedMul};
+use crate::field::{FieldChallengeOps, JoltField, OptimizedMul};
 use crate::utils::math::Math;
 use crate::utils::small_scalar::SmallScalar;
 use allocative::Allocative;
@@ -247,8 +247,8 @@ impl<F: JoltField> DensePolynomial<F> {
     // returns Z(r) in O(n) time
     pub fn evaluate<C>(&self, r: &[C]) -> F
     where
-        C: Copy + Send + Sync + Into<F>,
-        F: std::ops::Mul<C, Output = F> + std::ops::SubAssign<F>,
+        C: Copy + Send + Sync + Into<F> + ChallengeFieldOps<F>,
+        F: FieldChallengeOps<C>,
     {
         //// r must have a value for each variable
         //assert_eq!(r.len(), self.get_num_vars());
@@ -496,13 +496,17 @@ impl<F: JoltField> Index<usize> for DensePolynomial<F> {
 impl<F: JoltField> PolynomialEvaluation<F> for DensePolynomial<F> {
     fn evaluate<C>(&self, r: &[C]) -> F
     where
-        C: Copy + Send + Sync + Into<F>,
-        F: std::ops::Mul<C, Output = F> + std::ops::SubAssign<F>,
+        C: Copy + Send + Sync + Into<F> + ChallengeFieldOps<F>,
+        F: FieldChallengeOps<C>,
     {
         self.evaluate(r)
     }
 
-    fn batch_evaluate(polys: &[&Self], r: &[F::Challenge]) -> Vec<F> {
+    fn batch_evaluate<C>(polys: &[&Self], r: &[C]) -> Vec<F>
+    where
+        C: Copy + Send + Sync + Into<F> + ChallengeFieldOps<F>,
+        F: FieldChallengeOps<C>,
+    {
         let eq = EqPolynomial::evals(r);
         let evals: Vec<F> = polys
             .into_par_iter()
@@ -562,7 +566,7 @@ mod tests {
             for j in 0..r.len() {
                 let bit_j = (i & (1 << (r.len() - j - 1))) > 0;
                 if bit_j {
-                    chi_i *= r[j] + F::zero(); //TODO: (ari) this should be as F
+                    chi_i *= r[j].into();
                 } else {
                     chi_i *= F::one() - r[j];
                 }
@@ -590,28 +594,28 @@ mod tests {
         assert_eq!(chis, chis_m);
     }
 
-    // #[test]
-    // fn evaluation() {
-    //     let num_evals = 4;
-    //     let mut evals: Vec<Fr> = Vec::with_capacity(num_evals);
-    //     for _ in 0..num_evals {
-    //         evals.push(Fr::from(8));
-    //     }
-    //     let dense_poly: DensePolynomial<Fr> = DensePolynomial::new(evals.clone());
-    //
-    //     // Evaluate at 3:
-    //     // (0, 0) = 1
-    //     // (0, 1) = 1
-    //     // (1, 0) = 1
-    //     // (1, 1) = 1
-    //     // g(x_0,x_1) => c_0*(1 - x_0)(1 - x_1) + c_1*(1-x_0)(x_1) + c_2*(x_0)(1-x_1) + c_3*(x_0)(x_1)
-    //     // g(3, 4) = 8*(1 - 3)(1 - 4) + 8*(1-3)(4) + 8*(3)(1-4) + 8*(3)(4) = 48 + -64 + -72 + 96  = 8
-    //     // g(5, 10) = 8*(1 - 5)(1 - 10) + 8*(1 - 5)(10) + 8*(5)(1-10) + 8*(5)(10) = 96 + -16 + -72 + 96  = 8
-    //     assert_eq!(
-    //         dense_poly.evaluate_field(vec![Fr::from(3), Fr::from(4)].as_slice()),
-    //         Fr::from(8)
-    //     );
-    // }
+    #[test]
+    fn evaluation() {
+        let num_evals = 4;
+        let mut evals: Vec<Fr> = Vec::with_capacity(num_evals);
+        for _ in 0..num_evals {
+            evals.push(Fr::from(8));
+        }
+        let dense_poly: DensePolynomial<Fr> = DensePolynomial::new(evals.clone());
+
+        // Evaluate at 3:
+        // (0, 0) = 1
+        // (0, 1) = 1
+        // (1, 0) = 1
+        // (1, 1) = 1
+        // g(x_0,x_1) => c_0*(1 - x_0)(1 - x_1) + c_1*(1-x_0)(x_1) + c_2*(x_0)(1-x_1) + c_3*(x_0)(x_1)
+        // g(3, 4) = 8*(1 - 3)(1 - 4) + 8*(1-3)(4) + 8*(3)(1-4) + 8*(3)(4) = 48 + -64 + -72 + 96  = 8
+        // g(5, 10) = 8*(1 - 5)(1 - 10) + 8*(1 - 5)(10) + 8*(5)(1-10) + 8*(5)(10) = 96 + -16 + -72 + 96  = 8
+        assert_eq!(
+            dense_poly.evaluate(vec![Fr::from(3), Fr::from(4)].as_slice()),
+            Fr::from(8)
+        );
+    }
     #[test]
     fn compare_random_evaluations() {
         // Compares optimised polynomial evaluation

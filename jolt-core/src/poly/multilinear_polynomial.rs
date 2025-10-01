@@ -1,4 +1,5 @@
 use crate::{
+    field::{ChallengeFieldOps, FieldChallengeOps},
     poly::{one_hot_polynomial::OneHotPolynomial, rlc_polynomial::RLCPolynomial},
     utils::{compute_dotproduct, small_scalar::SmallScalar},
 };
@@ -517,17 +518,18 @@ pub trait PolynomialEvaluation<F: JoltField> {
     /// Arguments -- the inside out processing
     fn evaluate<C>(&self, r: &[C]) -> F
     where
-        C: Copy + Send + Sync + Into<F>,
-        F: std::ops::Mul<C, Output = F> + std::ops::SubAssign<F>;
-    //fn evaluate_field(&self, r: &[F]) -> F;
+        C: Copy + Send + Sync + Into<F> + ChallengeFieldOps<F>,
+        F: FieldChallengeOps<C>;
 
     /// Evaluates a batch of polynomials on the same point `r`.
     /// Returns: (evals, EQ table)
     /// where EQ table is EQ(x, r) for x \in {0, 1}^|r|. This is used for
     /// batched opening proofs (see opening_proof.rs)
-    fn batch_evaluate(polys: &[&Self], r: &[F::Challenge]) -> Vec<F>
+    fn batch_evaluate<C>(polys: &[&Self], r: &[C]) -> Vec<F>
     where
-        Self: Sized;
+        Self: Sized,
+        C: Copy + Send + Sync + Into<F> + ChallengeFieldOps<F>,
+        F: FieldChallengeOps<C>;
     /// Computes this polynomial's contribution to the computation of a prover
     /// sumcheck message (i.e. a univariate polynomial of the given `degree`).
     fn sumcheck_evals(&self, index: usize, degree: usize, order: BindingOrder) -> Vec<F>;
@@ -681,7 +683,11 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
         }
     }
 
-    fn batch_evaluate(_polys: &[&Self], _r: &[F::Challenge]) -> Vec<F> {
+    fn batch_evaluate<C>(_polys: &[&Self], _r: &[C]) -> Vec<F>
+    where
+        C: Copy + Send + Sync + Into<F> + ChallengeFieldOps<F>,
+        F: FieldChallengeOps<C>,
+    {
         unimplemented!("Currently unused")
     }
 

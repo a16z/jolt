@@ -8,7 +8,7 @@ use rayon::prelude::*;
 use strum::{EnumCount, IntoEnumIterator};
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter as EnumIterMacro};
 
-use crate::field::JoltField;
+use crate::field::{ChallengeFieldOps, FieldChallengeOps, JoltField};
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::multilinear_polynomial::{
     BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
@@ -86,13 +86,17 @@ pub struct CachedPolynomial<F: JoltField> {
 impl<F: JoltField> PolynomialEvaluation<F> for CachedPolynomial<F> {
     fn evaluate<C>(&self, x: &[C]) -> F
     where
-        C: Copy + Send + Sync + Into<F>,
-        F: std::ops::Mul<C, Output = F> + std::ops::SubAssign<F>,
+        C: Copy + Send + Sync + Into<F> + ChallengeFieldOps<F>,
+        F: FieldChallengeOps<C>,
     {
         self.inner.evaluate(x)
     }
 
-    fn batch_evaluate(_polys: &[&Self], _r: &[F::Challenge]) -> Vec<F> {
+    fn batch_evaluate<C>(_polys: &[&Self], _r: &[C]) -> Vec<F>
+    where
+        C: Copy + Send + Sync + Into<F>,
+        F: std::ops::Mul<C, Output = F> + std::ops::SubAssign<F>,
+    {
         unimplemented!("Currently unused")
     }
 

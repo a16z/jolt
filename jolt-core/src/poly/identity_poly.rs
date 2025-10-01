@@ -3,7 +3,7 @@ use std::sync::{Arc, RwLock};
 use allocative::Allocative;
 use num::Integer;
 
-use crate::field::JoltField;
+use crate::field::{ChallengeFieldOps, FieldChallengeOps, JoltField};
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::prefix_suffix::{
     CachedPolynomial, Prefix, PrefixCheckpoints, PrefixPolynomial, PrefixRegistry,
@@ -76,7 +76,11 @@ impl<F: JoltField> PolynomialEvaluation<F> for IdentityPolynomial<F> {
             .sum()
     }
 
-    fn batch_evaluate(_polys: &[&Self], _r: &[F::Challenge]) -> Vec<F> {
+    fn batch_evaluate<C>(_polys: &[&Self], _r: &[C]) -> Vec<F>
+    where
+        C: Copy + Send + Sync + Into<F> + ChallengeFieldOps<F>,
+        F: FieldChallengeOps<C>,
+    {
         unimplemented!("Currently unused")
     }
 
@@ -253,7 +257,11 @@ impl<F: JoltField> PolynomialEvaluation<F> for OperandPolynomial<F> {
         }
     }
 
-    fn batch_evaluate(_polys: &[&Self], _r: &[F::Challenge]) -> Vec<F> {
+    fn batch_evaluate<C>(_polys: &[&Self], _r: &[C]) -> Vec<F>
+    where
+        C: Copy + Send + Sync + Into<F> + ChallengeFieldOps<F>,
+        F: FieldChallengeOps<C>,
+    {
         unimplemented!("Currently unused")
     }
 
@@ -427,13 +435,17 @@ impl<F: JoltField> PolynomialBinding<F> for UnmapRamAddressPolynomial<F> {
 impl<F: JoltField> PolynomialEvaluation<F> for UnmapRamAddressPolynomial<F> {
     fn evaluate<C>(&self, r: &[C]) -> F
     where
-        C: Copy + Send + Sync + Into<F>,
-        F: std::ops::Mul<C, Output = F> + std::ops::SubAssign<F>,
+        C: Copy + Send + Sync + Into<F> + ChallengeFieldOps<F>,
+        F: FieldChallengeOps<C>,
     {
         self.int_poly.evaluate(r).mul_u64(8) + F::from_u64(self.start_address - 8)
     }
 
-    fn batch_evaluate(_polys: &[&Self], _r: &[F::Challenge]) -> Vec<F> {
+    fn batch_evaluate<C>(_polys: &[&Self], _r: &[C]) -> Vec<F>
+    where
+        C: Copy + Send + Sync + Into<F> + ChallengeFieldOps<F>,
+        F: FieldChallengeOps<C>,
+    {
         unimplemented!("Unused")
     }
 
