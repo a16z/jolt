@@ -50,7 +50,7 @@ test_incremental = []
 
 [dependencies]
 ark-bn254.workspace = true
-ark-grumpkin = "0.5.0"
+ark-grumpkin.workspace = true
 jolt-optimizations.workspace = true
 ark-ec.workspace = true
 ark-ff.workspace = true

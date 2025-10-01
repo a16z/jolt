@@ -1,12 +1,16 @@
-//! JoltField implementations for ark field types used in recursion.
+//! JoltField implementations for ark_bn254::Fq field type.
 //!
 //! This module provides JoltField implementations for field types that are
-//! specifically needed for recursive SNARK composition, such as ark_bn254::Fq.
+//! specifically needed for recursive SNARK composition.
 
-use crate::field::{FieldOps, JoltField, OptimizedMul};
+use crate::field::{FieldOps, JoltField};
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use ark_ff::{BigInt, BigInteger, Field, One, PrimeField, UniformRand, Zero};
 use rayon::prelude::*;
+
+impl FieldOps for ark_bn254::Fq {}
+impl FieldOps<&ark_bn254::Fq, ark_bn254::Fq> for &ark_bn254::Fq {}
+impl FieldOps<&ark_bn254::Fq, ark_bn254::Fq> for ark_bn254::Fq {}
 
 impl JoltField for ark_bn254::Fq {
     const NUM_BYTES: usize = 32;

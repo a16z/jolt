@@ -9,10 +9,6 @@ impl FieldOps for ark_bn254::Fr {}
 impl FieldOps<&ark_bn254::Fr, ark_bn254::Fr> for &ark_bn254::Fr {}
 impl FieldOps<&ark_bn254::Fr, ark_bn254::Fr> for ark_bn254::Fr {}
 
-impl FieldOps for ark_bn254::Fq {}
-impl FieldOps<&ark_bn254::Fq, ark_bn254::Fq> for &ark_bn254::Fq {}
-impl FieldOps<&ark_bn254::Fq, ark_bn254::Fq> for ark_bn254::Fq {}
-
 lazy_static::lazy_static! {
     static ref SMALL_VALUE_LOOKUP_TABLES: [Vec<ark_bn254::Fr>; 2] = ark_bn254::Fr::compute_lookup_tables();
 }
@@ -278,10 +274,6 @@ impl<const N: usize> MulU64WithCarry for BigInt<N> {
         <BigInt<N> as BigInteger>::mul_u64_w_carry(self, other)
     }
 }
-
-// Fq implementation moved to ark_recursion module for recursion support
-#[cfg(feature = "recursion")]
-pub use super::ark_recursion::*;
 
 #[cfg(test)]
 mod tests {
