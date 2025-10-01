@@ -6,7 +6,7 @@ use rayon::prelude::*;
 use std::{cell::RefCell, rc::Rc};
 
 use crate::{
-    field::{JoltField, MulTrunc},
+    field::JoltField,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
@@ -407,23 +407,21 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                 .into_par_iter()
                 .map(|k_prime| {
                     let B_eval = B.E_out_current()[k_prime];
+                    let mut coeffs = [F::zero(); DEGREE - 1];
 
-                    // Accumulate all gamma powers at once
-                    let inner_sum = (0..1 << m)
-                        .into_par_iter()
-                        .map(|k| {
-                            let k_m = k >> (m - 1);
-                            let F_k = prover_state.F[k % (1 << (m - 1))];
-
-                            let mut sum_0 = F::zero();
-                            let mut sum_1 = F::zero();
-
-                            for i in 0..self.d {
-                                let G_k = prover_state.G[i][(k_prime << m) + k];
+                    for i in 0..self.d {
+                        let G_i = &prover_state.G[i];
+                        let inner_sum = G_i[k_prime << m..(k_prime + 1) << m]
+                            .par_iter()
+                            .enumerate()
+                            .map(|(k, &G_k)| {
+                                let k_m = k >> (m - 1);
+                                let F_k = prover_state.F[k % (1 << (m - 1))];
                                 let G_times_F = G_k * F_k;
 
                                 // For c \in {0, infty} compute:
                                 // G[k] * (F[k_1, ...., k_{m-1}, c]^2 - F[k_1, ...., k_{m-1}, c])
+                                // = G_times_F * (eq(k_m, c)^2 * F[k_1, ...., k_{m-1}] - eq(k_m, c))
                                 let eval_infty = G_times_F * F_k;
                                 let eval_0 = if k_m == 0 {
                                     eval_infty - G_times_F
@@ -431,26 +429,27 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                                     F::zero()
                                 };
 
-                                sum_0 += self.gamma_powers[i] * eval_0;
-                                sum_1 += self.gamma_powers[i] * eval_infty;
-                            }
+                                [eval_0, eval_infty]
+                            })
+                            .fold_with([F::Unreduced::<5>::zero(); DEGREE - 1], |running, new| {
+                                [
+                                    running[0] + new[0].as_unreduced_ref(),
+                                    running[1] + new[1].as_unreduced_ref(),
+                                ]
+                            })
+                            .reduce(
+                                || [F::Unreduced::zero(); DEGREE - 1],
+                                |running, new| [running[0] + new[0], running[1] + new[1]],
+                            );
 
-                            [sum_0, sum_1]
-                        })
-                        .fold_with([F::Unreduced::<5>::zero(); DEGREE - 1], |running, new| {
-                            [
-                                running[0] + new[0].as_unreduced_ref(),
-                                running[1] + new[1].as_unreduced_ref(),
-                            ]
-                        })
-                        .reduce(
-                            || [F::Unreduced::zero(); DEGREE - 1],
-                            |running, new| [running[0] + new[0], running[1] + new[1]],
-                        );
+                        // Use barrett_reduce for Unreduced<5> (5 limbs)
+                        coeffs[0] += self.gamma_powers[i] * F::from_barrett_reduce(inner_sum[0]);
+                        coeffs[1] += self.gamma_powers[i] * F::from_barrett_reduce(inner_sum[1]);
+                    }
 
                     [
-                        inner_sum[0].mul_trunc::<4, 9>(B_eval.as_unreduced_ref()),
-                        inner_sum[1].mul_trunc::<4, 9>(B_eval.as_unreduced_ref()),
+                        B_eval.mul_unreduced::<9>(coeffs[0]),
+                        B_eval.mul_unreduced::<9>(coeffs[1]),
                     ]
                 })
                 .reduce(
@@ -480,18 +479,16 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                         .map(|k_prime| {
                             let x_in = k_prime & x_bitmask;
                             let B_E_in_eval = B.E_in_current()[x_in];
+                            let mut coeffs = [F::zero(); DEGREE - 1];
 
-                            let inner_sum = (0..1 << m)
-                                .into_par_iter()
-                                .map(|k| {
-                                    let k_m = k >> (m - 1);
-                                    let F_k = prover_state.F[k % (1 << (m - 1))];
-
-                                    let mut sum_0 = F::zero();
-                                    let mut sum_1 = F::zero();
-
-                                    for i in 0..self.d {
-                                        let G_k = prover_state.G[i][(k_prime << m) + k];
+                            for i in 0..self.d {
+                                let G_i = &prover_state.G[i];
+                                let inner_sum = G_i[k_prime << m..(k_prime + 1) << m]
+                                    .par_iter()
+                                    .enumerate()
+                                    .map(|(k, &G_k)| {
+                                        let k_m = k >> (m - 1);
+                                        let F_k = prover_state.F[k % (1 << (m - 1))];
                                         let G_times_F = G_k * F_k;
 
                                         let eval_infty = G_times_F * F_k;
@@ -500,30 +497,32 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                                         } else {
                                             F::zero()
                                         };
+                                        [eval_0, eval_infty]
+                                    })
+                                    .fold_with(
+                                        [F::Unreduced::<5>::zero(); DEGREE - 1],
+                                        |running, new| {
+                                            [
+                                                running[0] + new[0].as_unreduced_ref(),
+                                                running[1] + new[1].as_unreduced_ref(),
+                                            ]
+                                        },
+                                    )
+                                    .reduce(
+                                        || [F::Unreduced::zero(); DEGREE - 1],
+                                        |running, new| [running[0] + new[0], running[1] + new[1]],
+                                    );
 
-                                        sum_0 += self.gamma_powers[i] * eval_0;
-                                        sum_1 += self.gamma_powers[i] * eval_infty;
-                                    }
-
-                                    [sum_0, sum_1]
-                                })
-                                .fold_with(
-                                    [F::Unreduced::<5>::zero(); DEGREE - 1],
-                                    |running, new| {
-                                        [
-                                            running[0] + new[0].as_unreduced_ref(),
-                                            running[1] + new[1].as_unreduced_ref(),
-                                        ]
-                                    },
-                                )
-                                .reduce(
-                                    || [F::Unreduced::zero(); DEGREE - 1],
-                                    |running, new| [running[0] + new[0], running[1] + new[1]],
-                                );
+                                // Use barrett_reduce for Unreduced<5> (5 limbs)
+                                coeffs[0] +=
+                                    self.gamma_powers[i] * F::from_barrett_reduce(inner_sum[0]);
+                                coeffs[1] +=
+                                    self.gamma_powers[i] * F::from_barrett_reduce(inner_sum[1]);
+                            }
 
                             [
-                                inner_sum[0].mul_trunc::<4, 9>(B_E_in_eval.as_unreduced_ref()),
-                                inner_sum[1].mul_trunc::<4, 9>(B_E_in_eval.as_unreduced_ref()),
+                                B_E_in_eval.mul_unreduced::<9>(coeffs[0]),
+                                B_E_in_eval.mul_unreduced::<9>(coeffs[1]),
                             ]
                         })
                         .reduce(
