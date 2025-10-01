@@ -774,54 +774,108 @@ pub fn create_prover_time_stacked_bar_chart() {
         10.265910917,
         21.44526775,
     ];
+    let other_times: Vec<_> = total_prove_times
+        .iter()
+        .enumerate()
+        .map(|(i, total)| {
+            total
+                - dory_commitment_times[i]
+                - dory_opening_times[i]
+                - spartan_times[i]
+                - instruction_shout_times[i]
+                - bytecode_shout_times[i]
+                - ram_twist_times[i]
+                - registers_twist_times[i]
+        })
+        .collect();
+    println!("Other times: {:?}", other_times);
 
     let dory_commitment_percentages: Vec<_> = dory_commitment_times
         .iter()
         .zip(total_prove_times.iter())
-        .map(|(commit, total)| commit / total * 100.0)
+        .map(|(time, total)| time / total * 100.0)
         .collect();
+    println!("dory_commitment_percentages: {dory_commitment_percentages:?}");
     let dory_opening_percentages: Vec<_> = dory_opening_times
         .iter()
         .zip(total_prove_times.iter())
-        .map(|(opening, total)| opening / total * 100.0)
+        .map(|(time, total)| time / total * 100.0)
         .collect();
-    let remaining_percentages: Vec<_> = dory_commitment_percentages
+    println!("dory_opening_percentages: {dory_opening_percentages:?}");
+    let spartan_percentages: Vec<_> = spartan_times
         .iter()
-        .zip(dory_opening_percentages.iter())
-        .map(|(commit, open)| 100.0 - commit - open)
+        .zip(total_prove_times.iter())
+        .map(|(time, total)| time / total * 100.0)
         .collect();
+    println!("spartan_percentages: {spartan_percentages:?}");
+    let instruction_shout_percentages: Vec<_> = instruction_shout_times
+        .iter()
+        .zip(total_prove_times.iter())
+        .map(|(time, total)| time / total * 100.0)
+        .collect();
+    println!("instruction_shout_percentages: {instruction_shout_percentages:?}");
+    let bytecode_shout_percentages: Vec<_> = bytecode_shout_times
+        .iter()
+        .zip(total_prove_times.iter())
+        .map(|(time, total)| time / total * 100.0)
+        .collect();
+    println!("bytecode_shout_percentages: {bytecode_shout_percentages:?}");
+    let ram_twist_percentages: Vec<_> = ram_twist_times
+        .iter()
+        .zip(total_prove_times.iter())
+        .map(|(time, total)| time / total * 100.0)
+        .collect();
+    println!("ram_twist_percentages: {ram_twist_percentages:?}");
+    let registers_twist_percentages: Vec<_> = registers_twist_times
+        .iter()
+        .zip(total_prove_times.iter())
+        .map(|(time, total)| time / total * 100.0)
+        .collect();
+    println!("registers_twist_percentages: {registers_twist_percentages:?}");
+    let other_percentages: Vec<_> = other_times
+        .iter()
+        .zip(total_prove_times.iter())
+        .map(|(time, total)| time / total * 100.0)
+        .collect();
+    println!("other_percentages: {other_percentages:?}");
 
-    let trace_commit = Bar::new(x_vals.clone(), dory_commitment_percentages)
-        .name("Dory commitment")
-        .width(0.5);
-    let trace_open = Bar::new(x_vals.clone(), dory_opening_percentages)
-        .name("Dory opening proof")
-        .width(0.5);
-    let trace_other = Bar::new(x_vals.clone(), remaining_percentages)
-        .name("Other")
-        .width(0.5);
+    // let remaining_percentages: Vec<_> = dory_commitment_percentages
+    //     .iter()
+    //     .zip(dory_opening_percentages.iter())
+    //     .map(|(commit, open)| 100.0 - commit - open)
+    //     .collect();
 
-    let layout = Layout::new()
-        .title("Jolt zkVM Prover Time Breakdown")
-        .bar_mode(BarMode::Stack)
-        .x_axis(Axis::new().title("Trace length (RV32IM cycles)"))
-        .y_axis(
-            Axis::new()
-                .title("Percentage of prover time")
-                .range(vec![0.0, 100.0])
-                .dtick(20.0),
-        )
-        .width(800);
+    // let trace_commit = Bar::new(x_vals.clone(), dory_commitment_percentages)
+    //     .name("Dory commitment")
+    //     .width(0.5);
+    // let trace_open = Bar::new(x_vals.clone(), dory_opening_percentages)
+    //     .name("Dory opening proof")
+    //     .width(0.5);
+    // let trace_other = Bar::new(x_vals.clone(), remaining_percentages)
+    //     .name("Other")
+    //     .width(0.5);
 
-    let mut plot = Plot::new();
-    plot.add_trace(trace_commit);
-    plot.add_trace(trace_open);
-    plot.add_trace(trace_other);
-    plot.set_layout(layout);
+    // let layout = Layout::new()
+    //     .title("Jolt zkVM Prover Time Breakdown")
+    //     .bar_mode(BarMode::Stack)
+    //     .x_axis(Axis::new().title("Trace length (RV32IM cycles)"))
+    //     .y_axis(
+    //         Axis::new()
+    //             .title("Percentage of prover time")
+    //             .range(vec![0.0, 100.0])
+    //             .dtick(20.0),
+    //     )
+    //     .width(800);
 
-    let html_path = "perfetto_traces/prover_time_breakdown.html";
-    plot.write_html(html_path);
-    println!("Proof size plot saved to {html_path}");
+    // let mut plot = Plot::new();
+    // plot.add_trace(trace_commit);
+    // plot.add_trace(trace_open);
+    // plot.add_trace(trace_other);
+    // plot.set_layout(layout);
+
+    // let html_path = "perfetto_traces/prover_time_breakdown.html";
+    // plot.write_html(html_path);
+    // println!("Proof size plot saved to {html_path}");
 }
 
 fn large_d_sumcheck<F, ProofTranscript>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
