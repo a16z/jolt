@@ -67,9 +67,11 @@ pub trait JoltField:
         + FmaddTrunc<Other<2> = Self::Unreduced<2>, Acc<8> = Self::Unreduced<8>>
         + FmaddTrunc<Other<3> = Self::Unreduced<3>, Acc<8> = Self::Unreduced<8>>
         + FmaddTrunc<Other<4> = Self::Unreduced<4>, Acc<8> = Self::Unreduced<8>>
+        + MulTrunc<Other<4> = Self::Unreduced<4>, Output<9> = Self::Unreduced<9>>
         + MulU64WithCarry<Output<5> = Self::Unreduced<5>>
         + Add<Output = Self::Unreduced<N>>
         + for<'a> Add<&'a Self::Unreduced<N>, Output = Self::Unreduced<N>>
+        + for<'a> Add<&'a Self::Unreduced<4>, Output = Self::Unreduced<N>>
         + AddAssign
         + for<'a> AddAssign<&'a Self::Unreduced<N>>
         + AddAssign<Self::Unreduced<4>>
@@ -203,6 +205,13 @@ pub trait FmaddTrunc {
         other: &Self::Other<M>,
         acc: &mut Self::Acc<P>,
     );
+}
+
+pub trait MulTrunc {
+    type Other<const M: usize>;
+    type Output<const P: usize>;
+
+    fn mul_trunc<const M: usize, const P: usize>(&self, other: &Self::Other<M>) -> Self::Output<P>;
 }
 
 #[cfg(feature = "allocative")]
