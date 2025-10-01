@@ -1,3 +1,4 @@
+use num_traits::Zero;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -99,7 +100,7 @@ impl<F: JoltField> SumcheckInstance<F> for HammingBooleanitySumcheck<F> {
     fn compute_prover_message(&mut self, _round: usize, _previous_claim: F) -> Vec<F> {
         let p = self.prover_state.as_ref().unwrap();
 
-        let univariate_poly_evals: [F; 3] = (0..p.eq_r_cycle.len() / 2)
+        let univariate_poly_evals: [F::Unreduced<9>; 3] = (0..p.eq_r_cycle.len() / 2)
             .into_par_iter()
             .map(|i| {
                 let eq_evals = p
@@ -115,13 +116,19 @@ impl<F: JoltField> SumcheckInstance<F> for HammingBooleanitySumcheck<F> {
                 ];
 
                 [
-                    eq_evals[0] * evals[0],
-                    eq_evals[1] * evals[1],
-                    eq_evals[2] * evals[2],
+                    eq_evals[0].mul_unreduced::<9>(evals[0]),
+                    eq_evals[1].mul_unreduced::<9>(evals[1]),
+                    eq_evals[2].mul_unreduced::<9>(evals[2]),
                 ]
             })
             .reduce(
-                || [F::zero(); 3],
+                || {
+                    [
+                        F::Unreduced::zero(),
+                        F::Unreduced::zero(),
+                        F::Unreduced::zero(),
+                    ]
+                },
                 |running, new| {
                     [
                         running[0] + new[0],
@@ -131,7 +138,10 @@ impl<F: JoltField> SumcheckInstance<F> for HammingBooleanitySumcheck<F> {
                 },
             );
 
-        univariate_poly_evals.to_vec()
+        univariate_poly_evals
+            .into_iter()
+            .map(F::from_montgomery_reduce)
+            .collect()
     }
 
     #[tracing::instrument(skip_all, name = "RamHammingBooleanitySumcheck::bind")]
