@@ -177,7 +177,7 @@ impl<F: JoltField> DensePolynomial<F> {
 
             if low.is_zero() {
                 if high.is_one() {
-                    new_evals[i] = *r + F::zero();
+                    new_evals[i] = (*r).into();
                 } else if !high.is_zero() {
                     panic!("Shouldn't happen for a flag poly");
                 }
