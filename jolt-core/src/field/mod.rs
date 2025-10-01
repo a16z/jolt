@@ -7,8 +7,6 @@ use std::fmt::{Debug, Display};
 use std::hash::Hash;
 use std::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub, SubAssign};
 
-#[cfg(feature = "allocative")]
-use allocative::Allocative;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 pub trait FieldOps<Rhs = Self, Output = Self>:
