@@ -79,7 +79,6 @@ struct ReadWriteCheckingProverState<F: JoltField> {
 }
 
 impl<F: JoltField> ReadWriteCheckingProverState<F> {
-    #[tracing::instrument(skip_all, name = "RegistersReadWriteCheckingProverState::initialize")]
     fn initialize<PCS: CommitmentScheme<Field = F>>(
         preprocessing: &JoltProverPreprocessing<F, PCS>,
         trace: &[Cycle],
@@ -226,6 +225,7 @@ pub struct RegistersReadWriteChecking<F: JoltField> {
 }
 
 impl<F: JoltField> RegistersReadWriteChecking<F> {
+    #[tracing::instrument(skip_all, name = "RegistersReadWriteChecking::new_prover")]
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
