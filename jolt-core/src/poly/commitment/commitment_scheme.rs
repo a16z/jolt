@@ -1,5 +1,4 @@
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use std::borrow::Borrow;
 use std::fmt::Debug;
 
 use crate::transcripts::{AppendToTranscript, Transcript};
@@ -48,18 +47,6 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
         poly: &MultilinearPolynomial<Self::Field>,
         setup: &Self::ProverSetup,
     ) -> (Self::Commitment, Self::OpeningProofHint);
-
-    /// Commits to multiple multilinear polynomials in batch.
-    ///
-    /// # Arguments
-    /// * `polys` - A slice of multilinear polynomials to commit to
-    /// * `gens` - The prover setup for the commitment scheme
-    ///
-    /// # Returns
-    /// A vector of commitments, one for each input polynomial
-    fn batch_commit<U>(polys: &[U], gens: &Self::ProverSetup) -> Vec<Self::Commitment>
-    where
-        U: Borrow<MultilinearPolynomial<Self::Field>> + Sync;
 
     /// Generates a proof of evaluation for a polynomial at a specific point.
     ///

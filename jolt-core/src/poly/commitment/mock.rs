@@ -56,16 +56,6 @@ where
         (MockCommitment::default(), ())
     }
 
-    fn batch_commit<P>(polys: &[P], gens: &Self::ProverSetup) -> Vec<Self::Commitment>
-    where
-        P: Borrow<MultilinearPolynomial<Self::Field>>,
-    {
-        polys
-            .iter()
-            .map(|poly| Self::commit(poly.borrow(), gens).0)
-            .collect()
-    }
-
     fn prove<ProofTranscript: Transcript>(
         _setup: &Self::ProverSetup,
         _poly: &MultilinearPolynomial<Self::Field>,
@@ -103,7 +93,6 @@ where
         _commitments: &[C],
         _coeffs: &[Self::Field],
     ) -> Result<Self::Commitment, ProofVerifyError> {
-        // Mock implementation - just return a default commitment
         Ok(MockCommitment::default())
     }
 }

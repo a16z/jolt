@@ -3,7 +3,7 @@
 use super::additive_homomorphic::AdditivelyHomomorphic;
 use super::commitment_scheme::CommitmentScheme;
 #[cfg(feature = "recursion")]
-use super::recursion::{RecursionAuxiliaryData, RecursionCommitmentScheme};
+use super::recursion::RecursionCommitmentScheme;
 use crate::transcripts::{AppendToTranscript, Transcript};
 use crate::{
     field::JoltField,
@@ -38,8 +38,6 @@ use dory::{
 use jolt_optimizations::ExponentiationSteps;
 use once_cell::sync::OnceCell;
 use rayon::prelude::*;
-#[cfg(feature = "recursion")]
-use std::cell::RefCell;
 use std::{borrow::Borrow, marker::PhantomData};
 use tracing::trace_span;
 
@@ -1106,9 +1104,6 @@ pub struct DoryCommitment(pub JoltGTBn254);
 pub struct DoryProofData {
     pub sigma: usize,
     pub dory_proof_data: DoryProof<JoltG1Wrapper, JoltG2Wrapper, JoltGTBn254>,
-    /// Exponentiation steps from Dory's internal proof building (only populated with recursion feature)
-    #[cfg(feature = "recursion")]
-    pub internal_exponentiation_steps: Option<Vec<ExponentiationSteps>>,
 }
 
 #[derive(Default, Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
@@ -1116,12 +1111,10 @@ pub struct DoryBatchedProof {
     proofs: Vec<DoryProofData>,
 }
 
-// HACK: This is a temporary solution to pass exponentiation steps from Dory to StateManager
-// The data is extracted immediately after reduce_and_prove and cleared from auxiliary data
 #[cfg(feature = "recursion")]
 #[derive(Clone, Debug, Default, CanonicalSerialize, CanonicalDeserialize)]
 pub struct DoryAuxiliaryData {
-    /// Full exponentiation steps for recursion check (not minimized)
+    /// Full exponentiation steps for recursion verification
     pub full_exponentiation_steps: Option<Vec<ExponentiationSteps>>,
 }
 
@@ -1203,13 +1196,6 @@ impl CommitmentScheme for DoryCommitmentScheme {
         (DoryCommitment(commitment), row_commitments)
     }
 
-    fn batch_commit<U>(_polys: &[U], _setup: &Self::ProverSetup) -> Vec<Self::Commitment>
-    where
-        U: Borrow<MultilinearPolynomial<Self::Field>> + Sync,
-    {
-        panic!("Batch commit not yet implemented for Dory")
-    }
-
     // Note that Dory implementation sometimes uses the term 'evaluation'/'evaluate' -- this is same as 'opening'/'open'
     #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::prove")]
     fn prove<ProofTranscript: Transcript>(
@@ -1245,16 +1231,11 @@ impl CommitmentScheme for DoryCommitmentScheme {
             dory_transcript,
         );
 
-        #[cfg(feature = "recursion")]
-        let (dory_proof, internal_steps) = proof_builder.build_with_full_steps();
-        #[cfg(not(feature = "recursion"))]
         let dory_proof = proof_builder.build();
 
         DoryProofData {
             sigma,
             dory_proof_data: dory_proof,
-            #[cfg(feature = "recursion")]
-            internal_exponentiation_steps: internal_steps,
         }
     }
 
@@ -1309,6 +1290,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
 #[cfg(feature = "recursion")]
 impl RecursionCommitmentScheme for DoryCommitmentScheme {
     type CombinedCommitmentHint = DoryCombinedCommitmentHint;
+    type AuxiliaryVerifierData = DoryAuxiliaryData;
 
     fn precompute_combined_commitment<C: Borrow<Self::Commitment>>(
         commitments: &[C],
@@ -1354,7 +1336,6 @@ impl RecursionCommitmentScheme for DoryCommitmentScheme {
                 "Hint length must match commitments length"
             );
 
-            // Optional debug verification
             #[cfg(debug_assertions)]
             {
                 // Verify hint matches native computation
@@ -1375,11 +1356,53 @@ impl RecursionCommitmentScheme for DoryCommitmentScheme {
         // Fallback to native computation
         Self::combine_commitments_native(commitments, coeffs)
     }
-}
 
-#[cfg(feature = "recursion")]
-impl RecursionAuxiliaryData for DoryCommitmentScheme {
-    type AuxiliaryVerifierData = DoryAuxiliaryData;
+    fn prove_with_auxiliary<ProofTranscript: Transcript>(
+        setup: &Self::ProverSetup,
+        poly: &MultilinearPolynomial<Self::Field>,
+        opening_point: &[Self::Field],
+        row_commitments: Self::OpeningProofHint,
+        transcript: &mut ProofTranscript,
+    ) -> (Self::Proof, Self::AuxiliaryVerifierData) {
+        // Dory uses the opposite endian-ness as Jolt
+        let point_dory: Vec<JoltFieldWrapper<Self::Field>> = opening_point
+            .iter()
+            .rev()
+            .map(|&p| JoltFieldWrapper(p))
+            .collect();
+
+        let sigma = DoryGlobals::get_num_columns().log_2();
+        let dory_transcript = JoltToDoryTranscriptRef::<Self::Field, _>::new(transcript);
+
+        let proof_builder = evaluate::<
+            JoltBn254,
+            JoltToDoryTranscriptRef<'_, Self::Field, ProofTranscript>,
+            JoltMsmG1,
+            JoltMsmG2,
+            _,
+        >(
+            poly,
+            Some(row_commitments),
+            &point_dory,
+            sigma,
+            setup,
+            dory_transcript,
+        );
+
+        // Build proof with full exponentiation steps for recursion
+        let (dory_proof, full_exponentiation_steps) = proof_builder.build_with_full_steps();
+
+        let proof = DoryProofData {
+            sigma,
+            dory_proof_data: dory_proof,
+        };
+
+        let auxiliary_data = DoryAuxiliaryData {
+            full_exponentiation_steps,
+        };
+
+        (proof, auxiliary_data)
+    }
 }
 
 impl AdditivelyHomomorphic for DoryCommitmentScheme {
