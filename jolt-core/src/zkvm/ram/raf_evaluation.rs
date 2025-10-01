@@ -1,3 +1,4 @@
+use num_traits::Zero;
 use std::{cell::RefCell, rc::Rc};
 
 use allocative::Allocative;
@@ -149,7 +150,7 @@ impl<F: JoltField> SumcheckInstance<F> for RafEvaluationSumcheck<F> {
             .expect("Prover state not initialized");
         const DEGREE: usize = 2;
 
-        let univariate_poly_evals: [F; 2] = (0..prover_state.ra.len() / 2)
+        let univariate_poly_evals: [F::Unreduced<9>; 2] = (0..prover_state.ra.len() / 2)
             .into_par_iter()
             .map(|i| {
                 let ra_evals = prover_state
@@ -161,14 +162,20 @@ impl<F: JoltField> SumcheckInstance<F> for RafEvaluationSumcheck<F> {
                         .sumcheck_evals(i, DEGREE, BindingOrder::HighToLow);
 
                 // Compute the product evaluations
-                [ra_evals[0] * unmap_evals[0], ra_evals[1] * unmap_evals[1]]
+                [
+                    ra_evals[0].mul_unreduced::<9>(unmap_evals[0]),
+                    ra_evals[1].mul_unreduced::<9>(unmap_evals[1]),
+                ]
             })
             .reduce(
-                || [F::zero(); 2],
+                || [F::Unreduced::zero(), F::Unreduced::zero()],
                 |running, new| [running[0] + new[0], running[1] + new[1]],
             );
 
-        univariate_poly_evals.to_vec()
+        univariate_poly_evals
+            .into_iter()
+            .map(F::from_montgomery_reduce)
+            .collect()
     }
 
     #[tracing::instrument(skip_all, name = "RamRafEvaluationSumcheck::bind")]
