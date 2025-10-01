@@ -3,10 +3,11 @@ use std::{cell::RefCell, rc::Rc};
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
+use num_traits::Zero;
 use rayon::prelude::*;
 
 use crate::{
-    field::JoltField,
+    field::{JoltField, MulTrunc},
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
@@ -166,18 +167,23 @@ impl<F: JoltField> SumcheckInstance<F> for HammingWeightSumcheck<F> {
             .as_ref()
             .expect("Prover state not initialized");
 
-        let univariate_poly_eval: F = prover_state
-            .ra
-            .par_iter()
-            .zip(self.gamma_powers.par_iter())
-            .map(|(ra_poly, gamma_power)| {
-                let sum: F = (0..ra_poly.len() / 2)
-                    .into_par_iter()
-                    .map(|i| ra_poly.get_bound_coeff(2 * i))
-                    .sum();
-                sum * gamma_power
-            })
-            .sum();
+        let univariate_poly_eval = F::from_montgomery_reduce(
+            prover_state
+                .ra
+                .par_iter()
+                .zip(self.gamma_powers.par_iter())
+                .map(|(ra_poly, gamma_power)| {
+                    let ra_sum = (0..ra_poly.len() / 2)
+                        .into_par_iter()
+                        .map(|i| ra_poly.get_bound_coeff(2 * i))
+                        .fold(F::Unreduced::<5>::zero, |running, new| {
+                            running + new.as_unreduced_ref()
+                        })
+                        .reduce(F::Unreduced::zero, |running, new| running + new);
+                    ra_sum.mul_trunc::<4, 9>(gamma_power.as_unreduced_ref())
+                })
+                .reduce(F::Unreduced::zero, |running, new| running + new),
+        );
 
         vec![univariate_poly_eval]
     }
