@@ -320,26 +320,42 @@ impl JoltDAG {
         // Stage 6: SNARK Composition for dory verifier in recursion mode
         #[cfg(feature = "recursion")]
         {
-            tracing::info!("Stage 6 in recursion mode");
+            let stage6_start = std::time::Instant::now();
+            tracing::info!("Stage 6: SNARK composition proving");
 
             let exps_to_prove = state_manager
                 .get_recursion_ops()
                 .cloned()
                 .unwrap_or_default();
 
+            tracing::debug!(
+                num_exponentiations = exps_to_prove.len(),
+                "Retrieved recursion operations"
+            );
+
+            let gen_start = std::time::Instant::now();
             let hyrax_generators = PedersenGenerators::<GrumpkinProjective>::from_urs_file(
                 16,
                 b"recursion check",
                 Some("hyrax_urs_16.urs"),
             );
+            tracing::debug!(
+                duration_ms = gen_start.elapsed().as_millis(),
+                "Loaded Hyrax generators"
+            );
 
             // TODO(markosg04): this is jank
             // Better way to handle the generics here?
             let mut recursion_transcript = ProofTranscript::new(b"Recursion Check Stage 6");
+            let prove_start = std::time::Instant::now();
             let recursion_proof = snark_composition_prove::<ark_bn254::Fq, ProofTranscript, 1>(
                 exps_to_prove,
                 &mut recursion_transcript,
                 &hyrax_generators,
+            );
+            tracing::info!(
+                duration_ms = prove_start.elapsed().as_millis(),
+                "SNARK composition proof generated"
             );
 
             let recursion_proof_f = unsafe {
@@ -356,6 +372,11 @@ impl JoltDAG {
             state_manager.proofs.borrow_mut().insert(
                 ProofKeys::Recursion,
                 ProofData::RecursionProof(recursion_proof_f),
+            );
+
+            tracing::info!(
+                total_duration_ms = stage6_start.elapsed().as_millis(),
+                "Stage 6 complete"
             );
         }
 
@@ -538,14 +559,20 @@ impl JoltDAG {
             use ark_bn254::Fq;
             use ark_grumpkin::Projective as GrumpkinProjective;
 
-            tracing::info!("Verifier: Stage 6 in recursion mode");
+            let stage6_start = std::time::Instant::now();
+            tracing::info!("Verifier: Stage 6 SNARK composition verification");
 
             let proofs = state_manager.proofs.borrow();
             if let Some(ProofData::RecursionProof(sz_proof)) = proofs.get(&ProofKeys::Recursion) {
+                let gen_start = std::time::Instant::now();
                 let hyrax_generators = PedersenGenerators::<GrumpkinProjective>::from_urs_file(
                     16,
                     b"recursion check",
                     Some("hyrax_urs_16.urs"),
+                );
+                tracing::debug!(
+                    duration_ms = gen_start.elapsed().as_millis(),
+                    "Loaded Hyrax generators"
                 );
 
                 let sz_proof_fq = unsafe {
@@ -564,6 +591,7 @@ impl JoltDAG {
                 };
 
                 let mut sz_transcript = ProofTranscript::new(b"Recursion Check Stage 6");
+                let verify_start = std::time::Instant::now();
                 snark_composition_verify::<Fq, ProofTranscript, 1>(
                     sz_proof_fq,
                     &mut sz_transcript,
@@ -571,7 +599,11 @@ impl JoltDAG {
                 )
                 .context("Stage 6 - Recursion Check Protocol verification")?;
 
-                tracing::info!("Recursion Check Protocol verification successful");
+                tracing::info!(
+                    verify_duration_ms = verify_start.elapsed().as_millis(),
+                    total_duration_ms = stage6_start.elapsed().as_millis(),
+                    "Stage 6 verification successful"
+                );
             }
             drop(proofs);
         }

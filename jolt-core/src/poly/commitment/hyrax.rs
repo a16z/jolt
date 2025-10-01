@@ -61,11 +61,19 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F>> HyraxComm
         poly: &DensePolynomial<G::ScalarField>,
         generators: &PedersenGenerators<G>,
     ) -> Self {
+        let start = std::time::Instant::now();
         let n = poly.len();
         let ell = n.log_2();
 
         let (L_size, R_size) = matrix_dimensions(ell, 1);
         assert_eq!(L_size * R_size, n);
+
+        tracing::debug!(
+            poly_size = n,
+            L_size,
+            R_size,
+            "Committing single polynomial"
+        );
 
         let gens = CurveGroup::normalize_batch(&generators.generators[..R_size]);
         let row_commitments = poly
@@ -73,7 +81,116 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F>> HyraxComm
             .par_chunks(R_size)
             .map(|row| PedersenCommitment::commit_vector(row, &gens))
             .collect();
+
+        tracing::debug!(duration_ms = start.elapsed().as_millis(), "Commit complete");
+
         Self { row_commitments }
+    }
+
+    /// Optimized batch commit for 4-variable (16-coefficient) polynomials.
+    ///
+    /// For small polynomials, the overhead of calling MSM dominates. This function:
+    /// 1. Computes each row commitment as a simple serial linear combination (4 ops)
+    /// 2. Parallelizes across ALL rows of ALL polynomials simultaneously
+    ///
+    /// This is much faster than calling MSM 160k times for size-4 operations.
+    #[tracing::instrument(skip_all, name = "HyraxCommitment::batch_commit_4var")]
+    fn batch_commit_4var(
+        batch: &[&[G::ScalarField]],
+        generators: &PedersenGenerators<G>,
+    ) -> Vec<Self> {
+        const EXPECTED_SIZE: usize = 16; // 2^4
+        const ROW_SIZE: usize = 4; // 2^2
+        const NUM_ROWS: usize = 4; // 2^2
+
+        let start = std::time::Instant::now();
+        tracing::info!(
+            num_polynomials = batch.len(),
+            poly_size = EXPECTED_SIZE,
+            "Using optimized 4-var batch commit"
+        );
+
+        // Verify all polynomials are size 16
+        batch.iter().for_each(|poly| {
+            assert_eq!(
+                poly.len(),
+                EXPECTED_SIZE,
+                "batch_commit_4var requires 16-coefficient polynomials"
+            );
+        });
+
+        // Normalize generators once upfront
+        let gen_start = std::time::Instant::now();
+        let gens = CurveGroup::normalize_batch(&generators.generators[..ROW_SIZE]);
+        tracing::debug!(
+            duration_ms = gen_start.elapsed().as_millis(),
+            "Generator normalization complete"
+        );
+
+        // Flatten all polynomial rows for parallel processing
+        // Each polynomial has 4 rows of 4 elements
+        let flatten_start = std::time::Instant::now();
+        let all_rows: Vec<(usize, usize, &[G::ScalarField])> = batch
+            .iter()
+            .enumerate()
+            .flat_map(|(poly_idx, poly)| {
+                poly.chunks(ROW_SIZE)
+                    .enumerate()
+                    .map(move |(row_idx, row)| (poly_idx, row_idx, row))
+            })
+            .collect();
+
+        tracing::debug!(
+            total_rows = all_rows.len(),
+            duration_ms = flatten_start.elapsed().as_millis(),
+            "Flattened polynomial rows"
+        );
+
+        // Parallel computation of ALL row commitments
+        // For size 4, serial inner product is faster than MSM overhead
+        let commit_start = std::time::Instant::now();
+        let row_commitments: Vec<(usize, usize, G)> = all_rows
+            .par_iter()
+            .map(|(poly_idx, row_idx, row)| {
+                // Serial linear combination: acc = sum(g_i * coeff_i)
+                let mut acc = G::zero();
+                for (i, &coeff) in row.iter().enumerate() {
+                    acc += gens[i] * coeff;
+                }
+                (*poly_idx, *row_idx, acc)
+            })
+            .collect();
+
+        tracing::debug!(
+            duration_ms = commit_start.elapsed().as_millis(),
+            total_operations = row_commitments.len(),
+            "Parallel row commitment computation complete"
+        );
+
+        // Reorganize commitments back into per-polynomial structure
+        let reorg_start = std::time::Instant::now();
+        let mut result = vec![vec![G::zero(); NUM_ROWS]; batch.len()];
+        for (poly_idx, row_idx, commitment) in row_commitments {
+            result[poly_idx][row_idx] = commitment;
+        }
+
+        let final_result: Vec<Self> = result
+            .into_iter()
+            .map(|row_commitments| Self { row_commitments })
+            .collect();
+
+        tracing::debug!(
+            duration_ms = reorg_start.elapsed().as_millis(),
+            "Reorganization complete"
+        );
+
+        tracing::info!(
+            total_duration_ms = start.elapsed().as_millis(),
+            num_polynomials = batch.len(),
+            "Optimized 4-var batch commit complete"
+        );
+
+        final_result
     }
 
     /// Same result as committing to each polynomial in the batch individually,
@@ -87,22 +204,68 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F>> HyraxComm
         batch.iter().for_each(|poly| assert_eq!(poly.len(), n));
         let ell = n.log_2();
 
+        // Fast path for 4-variable polynomials (common in recursion with Hyrax)
+        // For small MSMs, the overhead dominates - use optimized serial inner product
+        if ell == 4 && RATIO == 1 {
+            return Self::batch_commit_4var(batch, generators);
+        }
+
+        let start = std::time::Instant::now();
+        tracing::info!(
+            num_polynomials = batch.len(),
+            poly_size = batch[0].len(),
+            "Starting batch commit"
+        );
+
         let (L_size, R_size) = matrix_dimensions(ell, RATIO);
         assert_eq!(L_size * R_size, n);
 
+        tracing::debug!(
+            L_size,
+            R_size,
+            num_rows_per_poly = L_size,
+            row_size = R_size,
+            "Matrix dimensions"
+        );
+
+        let gen_start = std::time::Instant::now();
         let gens = CurveGroup::normalize_batch(&generators.generators[..R_size]);
+        tracing::debug!(
+            duration_ms = gen_start.elapsed().as_millis(),
+            "Generator normalization complete"
+        );
 
-        let rows = batch.par_iter().flat_map(|poly| poly.par_chunks(R_size));
-        let row_commitments: Vec<G> = rows
-            .map(|row| PedersenCommitment::commit_vector(row, &gens))
-            .collect();
+        // Process each polynomial sequentially to avoid thread pool exhaustion
+        let mut all_commitments = Vec::with_capacity(batch.len());
 
-        row_commitments
-            .par_chunks(L_size)
-            .map(|chunk| Self {
-                row_commitments: chunk.to_vec(),
-            })
-            .collect()
+        for (poly_idx, poly) in batch.iter().enumerate() {
+            let poly_start = std::time::Instant::now();
+            tracing::debug!(poly_idx, num_rows = L_size, "Committing polynomial");
+
+            // Parallelize only the MSM operations within each polynomial
+            let row_commitments: Vec<G> = poly
+                .par_chunks(R_size)
+                .map(|row| {
+                    // Use msm_field_elements directly for better performance
+                    VariableBaseMSM::msm_field_elements(&gens[..row.len()], row).unwrap()
+                })
+                .collect();
+
+            tracing::debug!(
+                poly_idx,
+                duration_ms = poly_start.elapsed().as_millis(),
+                "Polynomial commit complete"
+            );
+
+            all_commitments.push(Self { row_commitments });
+        }
+
+        tracing::info!(
+            total_duration_ms = start.elapsed().as_millis(),
+            num_polynomials = batch.len(),
+            "Batch commit complete"
+        );
+        all_commitments
     }
 }
 
@@ -128,6 +291,13 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F>> HyraxOpen
         opening_point: &[G::ScalarField], // point at which the polynomial is evaluated
         ratio: usize,
     ) -> HyraxOpeningProof<RATIO, G> {
+        let start = std::time::Instant::now();
+        tracing::debug!(
+            num_vars = poly.get_num_vars(),
+            poly_size = poly.len(),
+            "Generating Hyrax opening proof"
+        );
+
         // assert vectors are of the right size
         assert_eq!(poly.get_num_vars(), opening_point.len());
 
@@ -137,6 +307,11 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F>> HyraxOpen
 
         // compute vector-matrix product between L and Z viewed as a matrix
         let vector_matrix_product = Self::vector_matrix_product(poly, &L, ratio);
+
+        tracing::debug!(
+            duration_ms = start.elapsed().as_millis(),
+            "Hyrax opening proof complete"
+        );
 
         HyraxOpeningProof {
             vector_matrix_product,
@@ -220,11 +395,19 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F>>
         openings: &[G::ScalarField],
         transcript: &mut ProofTranscript,
     ) -> Self {
+        let start = std::time::Instant::now();
+        tracing::info!(
+            num_polynomials = polynomials.len(),
+            poly_size = polynomials[0].len(),
+            "Starting batched Hyrax opening proof"
+        );
+
         // append the claimed evaluations to transcript
         transcript.append_scalars(openings);
 
         let rlc_coefficients: Vec<_> = transcript.challenge_vector(polynomials.len());
 
+        let rlc_start = std::time::Instant::now();
         let _span = trace_span!("Compute RLC of polynomials");
         let _enter = _span.enter();
 
@@ -270,8 +453,24 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F>>
         drop(_enter);
         drop(_span);
 
+        tracing::debug!(
+            duration_ms = rlc_start.elapsed().as_millis(),
+            "RLC computation complete"
+        );
+
+        let prove_start = std::time::Instant::now();
         let joint_proof =
             HyraxOpeningProof::prove(&DensePolynomial::new(rlc_poly), opening_point, RATIO);
+
+        tracing::debug!(
+            duration_ms = prove_start.elapsed().as_millis(),
+            "Joint proof generation complete"
+        );
+
+        tracing::info!(
+            total_duration_ms = start.elapsed().as_millis(),
+            "Batched Hyrax opening proof complete"
+        );
 
         Self { joint_proof }
     }

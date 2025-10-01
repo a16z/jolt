@@ -101,26 +101,7 @@ pub struct RecursionProof<F: JoltField, ProofTranscript: Transcript, const RATIO
     pub openings: Openings<F>,
 }
 
-fn commit_polynomial<const RATIO: usize>(
-    poly: &PolyCoeffs,
-    generators: &PedersenGenerators<GrumpkinProjective>,
-) -> HyraxCommitment<RATIO, GrumpkinProjective> {
-    HyraxCommitment::<RATIO, GrumpkinProjective>::commit(
-        &DensePolynomial::new(poly.clone()),
-        generators,
-    )
-}
-
-fn batch_commit_polynomials<const RATIO: usize>(
-    polys: &[PolyCoeffs],
-    generators: &PedersenGenerators<GrumpkinProjective>,
-) -> Vec<HyraxCommitment<RATIO, GrumpkinProjective>> {
-    polys
-        .iter()
-        .map(|poly| commit_polynomial::<RATIO>(poly, generators))
-        .collect()
-}
-
+#[tracing::instrument(skip_all, name = "append_commitments_to_transcript")]
 fn append_commitments_to_transcript<ProofTranscript: Transcript, const RATIO: usize>(
     transcript: &mut ProofTranscript,
     rho_commitments: &[Vec<HyraxCommitment<RATIO, GrumpkinProjective>>],
@@ -137,12 +118,12 @@ fn append_commitments_to_transcript<ProofTranscript: Transcript, const RATIO: us
     }
 }
 
+#[tracing::instrument(skip_all, name = "batch_polynomials_with_challenges")]
 fn batch_polynomials_with_challenges<'a, F: JoltField + From<Fq> + Into<Fq>>(
     batched_poly: &mut Vec<F>,
     batched_eval: &mut F,
     polynomials: impl Iterator<Item = (PolynomialType, &'a PolyCoeffs, F, F)>, // (type, poly, eval, challenge)
 ) {
-    tracing::debug!("Batching all recursion polys");
     for (_, poly, eval, challenge) in polynomials {
         *batched_eval += challenge * eval;
         for (idx, &coeff) in poly.iter().enumerate() {
@@ -171,6 +152,7 @@ fn get_polynomial_evaluation<F: JoltField>(
         .1
 }
 
+#[tracing::instrument(skip_all, name = "accumulate_commitments")]
 fn accumulate_commitments<'a, F: JoltField + From<Fq> + Into<Fq>, const RATIO: usize>(
     batched_row_commitments: &mut Vec<GrumpkinProjective>,
     commitments: impl Iterator<Item = &'a HyraxCommitment<RATIO, GrumpkinProjective>>,
@@ -191,6 +173,7 @@ fn accumulate_commitments<'a, F: JoltField + From<Fq> + Into<Fq>, const RATIO: u
 /// 2. Run Exp sumcheck protocol to reduce to opening claims
 /// 3. Batch all opening claims with random challenges
 /// 4. Generate Hyrax opening proof for the batched polynomial
+#[tracing::instrument(skip_all, name = "snark_composition_prove")]
 pub fn snark_composition_prove<F, ProofTranscript, const RATIO: usize>(
     exponentiation_steps_vec: Vec<ExponentiationSteps>,
     transcript: &mut ProofTranscript,
@@ -200,8 +183,14 @@ where
     F: JoltField + From<Fq> + Into<Fq>,
     ProofTranscript: Transcript,
 {
+    tracing::info!(
+        num_exponentiations = exponentiation_steps_vec.len(),
+        "SNARK composition proving"
+    );
+
     // Step 1: Prepare polynomials and commitments
-    tracing::debug!("Commit to all polys");
+    tracing::debug!("Preparing polynomial commitments");
+
     let num_exponentiations = exponentiation_steps_vec.len();
     let mut rho_commitments = Vec::with_capacity(num_exponentiations);
     let mut quotient_commitments = Vec::with_capacity(num_exponentiations);
@@ -211,21 +200,64 @@ where
     let mut all_quotient_polys: Vec<Vec<PolyCoeffs>> = Vec::with_capacity(num_exponentiations);
     let mut all_base_polys: Vec<PolyCoeffs> = Vec::with_capacity(num_exponentiations);
 
+    // First convert all base polynomials and store them
     for steps in &exponentiation_steps_vec {
-        let rho_comms = batch_commit_polynomials::<RATIO>(&steps.rho_mles, hyrax_generators);
-        rho_commitments.push(rho_comms);
-        all_rho_polys.push(steps.rho_mles.clone());
-
-        let quotient_comms =
-            batch_commit_polynomials::<RATIO>(&steps.quotient_mles, hyrax_generators);
-        quotient_commitments.push(quotient_comms);
-        all_quotient_polys.push(steps.quotient_mles.clone());
-
-        // Commit base polynomial
         let base_poly = jolt_optimizations::fq12_to_multilinear_evals(&steps.base);
-        let base_comm = commit_polynomial::<RATIO>(&base_poly, hyrax_generators);
-        base_commitments.push(base_comm);
         all_base_polys.push(base_poly);
+        all_rho_polys.push(steps.rho_mles.clone());
+        all_quotient_polys.push(steps.quotient_mles.clone());
+    }
+
+    // Prepare all polynomials for batch commitment
+    let mut all_polys_to_commit: Vec<&[Fq]> = Vec::new();
+    let mut poly_counts = Vec::with_capacity(exponentiation_steps_vec.len());
+
+    for i in 0..exponentiation_steps_vec.len() {
+        // Collect rho polynomials
+        let rho_count = all_rho_polys[i].len();
+        for rho_poly in &all_rho_polys[i] {
+            all_polys_to_commit.push(rho_poly);
+        }
+
+        // Collect quotient polynomials
+        let quotient_count = all_quotient_polys[i].len();
+        for quotient_poly in &all_quotient_polys[i] {
+            all_polys_to_commit.push(quotient_poly);
+        }
+
+        // Collect base polynomial
+        all_polys_to_commit.push(&all_base_polys[i]);
+
+        poly_counts.push((rho_count, quotient_count));
+    }
+
+    // Batch commit all polynomials at once
+    tracing::debug!(
+        total_polynomials = all_polys_to_commit.len(),
+        "Batch committing polynomials"
+    );
+    let all_commitments = HyraxCommitment::<RATIO, GrumpkinProjective>::batch_commit(
+        &all_polys_to_commit,
+        hyrax_generators,
+    );
+
+    // Reorganize commitments back into the expected structure
+    let mut commitment_idx = 0;
+    for (rho_count, quotient_count) in poly_counts {
+        // Extract rho commitments
+        let rho_comms = all_commitments[commitment_idx..commitment_idx + rho_count].to_vec();
+        rho_commitments.push(rho_comms);
+        commitment_idx += rho_count;
+
+        // Extract quotient commitments
+        let quotient_comms =
+            all_commitments[commitment_idx..commitment_idx + quotient_count].to_vec();
+        quotient_commitments.push(quotient_comms);
+        commitment_idx += quotient_count;
+
+        // Extract base commitment
+        base_commitments.push(all_commitments[commitment_idx].clone());
+        commitment_idx += 1;
     }
 
     append_commitments_to_transcript(
@@ -251,7 +283,10 @@ where
     };
 
     // Step 2: Create sumcheck instances and run sumcheck protocol
-    tracing::debug!("Exp sumchecks");
+    tracing::debug!(
+        num_instances = num_exponentiations,
+        "Creating exponentiation sumcheck instances"
+    );
     let mut sumcheck_instances: Vec<Box<dyn SumcheckInstance<F>>> = exponentiation_steps_vec
         .iter()
         .enumerate()
@@ -269,6 +304,7 @@ where
         .map(|instance| &mut **instance as &mut dyn SumcheckInstance<F>)
         .collect();
 
+    tracing::debug!("Running batched sumcheck protocol");
     let (sumcheck_proof, r_sumcheck) = BatchedSumcheck::prove(
         sumcheck_instances_mut,
         Some(prover_accumulator.clone()),
@@ -276,13 +312,13 @@ where
     );
 
     // Step 3: Batch all polynomials for Hyrax opening
-    tracing::debug!("Prepare polys for batching");
     let indexer = ChallengeIndexer::new(&artifacts);
     let total_polys = all_rho_polys.iter().map(|v| v.len()).sum::<usize>()
         + all_quotient_polys.iter().map(|v| v.len()).sum::<usize>()
         + all_base_polys.len()
         + num_exponentiations;
 
+    tracing::debug!(total_polys, "Batching polynomials for opening proof");
     let batching_challenges: Vec<F> = transcript.challenge_vector(total_polys);
 
     let mut batched_poly = vec![F::zero(); 16]; // 2^4 = 16 for 4 variables
@@ -336,7 +372,7 @@ where
     let batched_poly_fq: Vec<Fq> = batched_poly.iter().map(|&x| x.into()).collect();
     let batched_dense_poly = DensePolynomial::new(batched_poly_fq);
 
-    tracing::debug!("Hyrax evaluation proof");
+    tracing::debug!("Generating Hyrax opening proof");
     let batched_hyrax_proof = HyraxOpeningProof::<RATIO, GrumpkinProjective>::prove(
         &batched_dense_poly,
         &r_sumcheck_fq,
@@ -344,6 +380,8 @@ where
     );
 
     let openings = prover_accumulator.borrow().evaluation_openings().clone();
+
+    tracing::info!("SNARK composition proof generated");
 
     RecursionProof {
         commitments: artifacts,
@@ -355,6 +393,7 @@ where
 }
 
 /// Verifies the SNARK Composition protocol
+#[tracing::instrument(skip_all, name = "snark_composition_verify")]
 pub fn snark_composition_verify<F, ProofTranscript, const RATIO: usize>(
     proof: &RecursionProof<F, ProofTranscript, RATIO>,
     transcript: &mut ProofTranscript,
@@ -365,6 +404,10 @@ where
     ProofTranscript: Transcript,
 {
     let artifacts = &proof.commitments;
+    tracing::info!(
+        num_exponentiations = artifacts.num_exponentiations,
+        "SNARK composition verification"
+    );
 
     append_commitments_to_transcript(
         transcript,
@@ -402,6 +445,7 @@ where
             .insert(opening_id.clone(), (point.clone(), *claim));
     }
 
+    tracing::debug!("Verifying batched sumcheck");
     let verified_r = BatchedSumcheck::verify(
         &proof.sumcheck_proof,
         verifier_instances_ref,
@@ -410,6 +454,7 @@ where
     )?;
 
     if verified_r != proof.r_sumcheck {
+        tracing::error!("Sumcheck randomness mismatch");
         return Err(ProofVerifyError::InternalError);
     }
 

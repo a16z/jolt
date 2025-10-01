@@ -5,9 +5,7 @@ use crate::{
     poly::{
         dense_mlpoly::DensePolynomial,
         eq_poly::EqPolynomial,
-        multilinear_polynomial::{
-            BindingOrder, MultilinearPolynomial, PolynomialBinding,
-        },
+        multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{
             OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator,
             BIG_ENDIAN,
@@ -54,6 +52,7 @@ pub struct ExpSumcheck<F: JoltField> {
 }
 
 impl<F: JoltField> ExpSumcheck<F> {
+    #[tracing::instrument(skip_all, name = "ExpSumcheck::new_prover")]
     pub fn new_prover(
         exponentiation_index: usize,
         steps: &ExponentiationSteps,
@@ -157,6 +156,7 @@ impl<F: JoltField> SumcheckInstance<F> for ExpSumcheck<F> {
         F::zero()
     }
 
+    #[tracing::instrument(skip_all, name = "ExpSumcheck::compute_prover_message")]
     fn compute_prover_message(&mut self, _round: usize, _previous_claim: F) -> Vec<F> {
         let prover_state = self.prover_state.as_ref().unwrap();
         const DEGREE: usize = 4;
@@ -222,6 +222,7 @@ impl<F: JoltField> SumcheckInstance<F> for ExpSumcheck<F> {
         univariate_poly_evals.to_vec()
     }
 
+    #[tracing::instrument(skip_all, name = "ExpSumcheck::bind")]
     fn bind(&mut self, r_j: F, _round: usize) {
         if let Some(prover_state) = self.prover_state.as_mut() {
             use rayon::prelude::*;
@@ -257,6 +258,7 @@ impl<F: JoltField> SumcheckInstance<F> for ExpSumcheck<F> {
         }
     }
 
+    #[tracing::instrument(skip_all, name = "ExpSumcheck::expected_output_claim")]
     fn expected_output_claim(
         &self,
         accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
@@ -300,7 +302,10 @@ impl<F: JoltField> SumcheckInstance<F> for ExpSumcheck<F> {
                 accumulator
                     .borrow()
                     .get_recursion_polynomial_opening(
-                        RecursionCommittedPolynomial::RecursionQuotient(self.exponentiation_index, i),
+                        RecursionCommittedPolynomial::RecursionQuotient(
+                            self.exponentiation_index,
+                            i,
+                        ),
                         SumcheckId::RecursionCheck,
                     )
                     .1
@@ -325,6 +330,7 @@ impl<F: JoltField> SumcheckInstance<F> for ExpSumcheck<F> {
         OpeningPoint::new(opening_point.to_vec())
     }
 
+    #[tracing::instrument(skip_all, name = "ExpSumcheck::cache_openings_prover")]
     fn cache_openings_prover(
         &self,
         accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
@@ -383,6 +389,7 @@ impl<F: JoltField> SumcheckInstance<F> for ExpSumcheck<F> {
         );
     }
 
+    #[tracing::instrument(skip_all, name = "ExpSumcheck::cache_openings_verifier")]
     fn cache_openings_verifier(
         &self,
         accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,

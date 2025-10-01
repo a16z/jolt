@@ -1046,11 +1046,14 @@ where
     }
 
     #[cfg(feature = "recursion")]
+    #[tracing::instrument(skip_all, name = "ProverOpeningAccumulator::set_recursion_ops")]
     pub fn set_recursion_ops(&mut self, ops: Vec<jolt_optimizations::ExponentiationSteps>) {
+        tracing::debug!(num_operations = ops.len(), "Setting recursion operations");
         self.recursion_ops = Some(ops);
     }
 
     #[cfg(feature = "recursion")]
+    #[tracing::instrument(skip_all, name = "ProverOpeningAccumulator::get_recursion_ops")]
     pub fn get_recursion_ops(&self) -> Option<&Vec<jolt_optimizations::ExponentiationSteps>> {
         self.recursion_ops.as_ref()
     }
