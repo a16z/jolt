@@ -10,7 +10,6 @@ use common::constants::{
     EMULATOR_MEMORY_CAPACITY, RAM_START_ADDRESS, STACK_CANARY_SIZE,
 };
 use common::jolt_device::{JoltDevice, MemoryConfig};
-use tracer::LazyTraceIterator;
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::PathBuf;
@@ -19,6 +18,7 @@ use std::str::FromStr;
 use std::{fs, io};
 use tracer::emulator::memory::Memory;
 use tracer::instruction::{Cycle, Instruction};
+use tracer::LazyTraceIterator;
 use tracing::info;
 
 impl Program {

@@ -272,7 +272,8 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
 
         let gruens_eq_r_prime = GruenSplitEqPolynomial::new(&r_prime.r, BindingOrder::LowToHigh);
 
-        let inc_cycle = CommittedPolynomial::RamInc.generate_witness(preprocessing, trace, state_manager.ram_d);
+        let inc_cycle =
+            CommittedPolynomial::RamInc.generate_witness(preprocessing, trace, state_manager.ram_d);
 
         let data_buffers: Vec<DataBuffers<F>> = (0..num_chunks)
             .into_par_iter()

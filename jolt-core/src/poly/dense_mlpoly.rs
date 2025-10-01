@@ -28,9 +28,7 @@ pub struct StreamingDenseWitness<F: JoltField> {
 
 impl<F: JoltField> StreamingDenseWitness<F> {
     // Helper function to unwrap a newtype wrapper with a cast.
-    pub(crate) fn unwrap_slice<'a>(
-        chunk: &'a [StreamingDenseWitness<F>],
-    ) -> &'a [F] {
+    pub(crate) fn unwrap_slice<'a>(chunk: &'a [StreamingDenseWitness<F>]) -> &'a [F] {
         StreamingDenseWitness::peel_slice(chunk)
     }
 }

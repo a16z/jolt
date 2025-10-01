@@ -9,7 +9,8 @@ use crate::poly::commitment::dory::DoryGlobals;
 use crate::{
     field::JoltField,
     poly::{
-        commitment::commitment_scheme::{CommitmentScheme, StreamingCommitmentScheme}, opening_proof::ProverOpeningAccumulator,
+        commitment::commitment_scheme::{CommitmentScheme, StreamingCommitmentScheme},
+        opening_proof::ProverOpeningAccumulator,
     },
     transcripts::Transcript,
     utils::{errors::ProofVerifyError, math::Math},
@@ -181,10 +182,7 @@ where
 
         let generators = PCS::setup_prover(DTH_ROOT_OF_K.log_2() + max_T.log_2());
 
-        JoltProverPreprocessing {
-            generators,
-            shared,
-        }
+        JoltProverPreprocessing { generators, shared }
     }
 
     #[allow(clippy::type_complexity)]
@@ -249,8 +247,13 @@ where
                 .map_or(0, |pos| pos + 1),
         );
 
-        let state_manager =
-            StateManager::new_prover(preprocessing, lazy_trace, trace, program_io.clone(), final_memory_state);
+        let state_manager = StateManager::new_prover(
+            preprocessing,
+            lazy_trace,
+            trace,
+            program_io.clone(),
+            final_memory_state,
+        );
         let (proof, debug_info) = JoltDAG::prove(state_manager).ok().unwrap();
 
         (proof, program_io, debug_info)

@@ -1,3 +1,4 @@
+use super::multilinear_polynomial::{BindingOrder, PolynomialBinding};
 use crate::field::{JoltField, OptimizedMul};
 use crate::utils::math::Math;
 use crate::utils::small_scalar::SmallScalar;
@@ -8,9 +9,8 @@ use bytemuck::TransparentWrapper;
 use bytemuck_derive::TransparentWrapper;
 use rayon::prelude::*;
 use std::cmp::Ordering;
-use std::ops::Index;
 use std::marker::PhantomData;
-use super::multilinear_polynomial::{BindingOrder, PolynomialBinding};
+use std::ops::Index;
 
 #[derive(TransparentWrapper)]
 #[repr(transparent)]
@@ -29,9 +29,7 @@ impl<T: SmallScalar, F: JoltField> StreamingCompactWitness<T, F> {
     }
 
     // Helper function to unwrap a newtype wrapper with a cast.
-    pub(crate) fn unwrap_slice<'a>(
-        chunk: &'a [StreamingCompactWitness<T,F>],
-    ) -> &'a [T] {
+    pub(crate) fn unwrap_slice<'a>(chunk: &'a [StreamingCompactWitness<T, F>]) -> &'a [T] {
         StreamingCompactWitness::peel_slice(chunk)
     }
 }

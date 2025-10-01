@@ -133,10 +133,21 @@ pub trait StreamingCommitmentScheme_: CommitmentScheme {
     type SetupCache;
 
     fn cache_setup(setup: &Self::ProverSetup) -> Self::SetupCache;
-    fn initialize<'a>(poly: Multilinear, size: usize, setup: &'a Self::ProverSetup, setup_cache: &'a Self::SetupCache) -> Self::State<'a>;
-    fn process<'a>(poly: Multilinear, state: Self::State<'a>, eval: Self::Field) -> Self::State<'a>;
-    fn process_chunk<'a, T>(state: &Self::State<'a>, chunk: &[T]) -> Self::ChunkState where Self: StreamingProcessChunk<T>;
-    fn finalize<'a>(state: Self::State<'a>, chunks: &[Self::ChunkState]) -> (Self::Commitment, Self::OpeningProofHint);
+    fn initialize<'a>(
+        poly: Multilinear,
+        size: usize,
+        setup: &'a Self::ProverSetup,
+        setup_cache: &'a Self::SetupCache,
+    ) -> Self::State<'a>;
+    fn process<'a>(poly: Multilinear, state: Self::State<'a>, eval: Self::Field)
+        -> Self::State<'a>;
+    fn process_chunk<'a, T>(state: &Self::State<'a>, chunk: &[T]) -> Self::ChunkState
+    where
+        Self: StreamingProcessChunk<T>;
+    fn finalize<'a>(
+        state: Self::State<'a>,
+        chunks: &[Self::ChunkState],
+    ) -> (Self::Commitment, Self::OpeningProofHint);
 }
 
 /// This trait abstraction allows us to use the optimized version of MSMs for small scalars.
@@ -145,9 +156,9 @@ pub trait StreamingProcessChunk<T>: StreamingCommitmentScheme_ {
     fn process_chunk_t<'a>(s: &Self::State<'a>, chunk: &[T]) -> Self::ChunkState;
 }
 
-pub trait StreamingCommitmentScheme :
-    StreamingCommitmentScheme_ +
-      StreamingProcessChunk<StreamingDenseWitness<<Self as CommitmentScheme>::Field>>
+pub trait StreamingCommitmentScheme:
+    StreamingCommitmentScheme_
+    + StreamingProcessChunk<StreamingDenseWitness<<Self as CommitmentScheme>::Field>>
     + StreamingProcessChunk<StreamingCompactWitness<u8, <Self as CommitmentScheme>::Field>>
     + StreamingProcessChunk<StreamingCompactWitness<u16, <Self as CommitmentScheme>::Field>>
     + StreamingProcessChunk<StreamingCompactWitness<u32, <Self as CommitmentScheme>::Field>>
@@ -156,18 +167,19 @@ pub trait StreamingCommitmentScheme :
     + StreamingProcessChunk<StreamingCompactWitness<i128, <Self as CommitmentScheme>::Field>>
     + StreamingProcessChunk<StreamingCompactWitness<S128, <Self as CommitmentScheme>::Field>>
     + StreamingProcessChunk<StreamingOneHotWitness<<Self as CommitmentScheme>::Field>>
-{}
+{
+}
 
-impl<PCS> StreamingCommitmentScheme for PCS
-where
-    PCS: StreamingCommitmentScheme_ +
-      StreamingProcessChunk<StreamingDenseWitness<<Self as CommitmentScheme>::Field>>
-    + StreamingProcessChunk<StreamingCompactWitness<u8, <Self as CommitmentScheme>::Field>>
-    + StreamingProcessChunk<StreamingCompactWitness<u16, <Self as CommitmentScheme>::Field>>
-    + StreamingProcessChunk<StreamingCompactWitness<u32, <Self as CommitmentScheme>::Field>>
-    + StreamingProcessChunk<StreamingCompactWitness<u64, <Self as CommitmentScheme>::Field>>
-    + StreamingProcessChunk<StreamingCompactWitness<i64, <Self as CommitmentScheme>::Field>>
-    + StreamingProcessChunk<StreamingCompactWitness<i128, <Self as CommitmentScheme>::Field>>
-    + StreamingProcessChunk<StreamingCompactWitness<S128, <Self as CommitmentScheme>::Field>>
-    + StreamingProcessChunk<StreamingOneHotWitness<<Self as CommitmentScheme>::Field>>,
-{}
+impl<PCS> StreamingCommitmentScheme for PCS where
+    PCS: StreamingCommitmentScheme_
+        + StreamingProcessChunk<StreamingDenseWitness<<Self as CommitmentScheme>::Field>>
+        + StreamingProcessChunk<StreamingCompactWitness<u8, <Self as CommitmentScheme>::Field>>
+        + StreamingProcessChunk<StreamingCompactWitness<u16, <Self as CommitmentScheme>::Field>>
+        + StreamingProcessChunk<StreamingCompactWitness<u32, <Self as CommitmentScheme>::Field>>
+        + StreamingProcessChunk<StreamingCompactWitness<u64, <Self as CommitmentScheme>::Field>>
+        + StreamingProcessChunk<StreamingCompactWitness<i64, <Self as CommitmentScheme>::Field>>
+        + StreamingProcessChunk<StreamingCompactWitness<i128, <Self as CommitmentScheme>::Field>>
+        + StreamingProcessChunk<StreamingCompactWitness<S128, <Self as CommitmentScheme>::Field>>
+        + StreamingProcessChunk<StreamingOneHotWitness<<Self as CommitmentScheme>::Field>>
+{
+}

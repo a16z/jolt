@@ -1,5 +1,10 @@
 use crate::{
-    poly::{compact_polynomial::StreamingCompactWitness, dense_mlpoly::StreamingDenseWitness, one_hot_polynomial::{OneHotPolynomial, StreamingOneHotWitness}, rlc_polynomial::RLCPolynomial},
+    poly::{
+        compact_polynomial::StreamingCompactWitness,
+        dense_mlpoly::StreamingDenseWitness,
+        one_hot_polynomial::{OneHotPolynomial, StreamingOneHotWitness},
+        rlc_polynomial::RLCPolynomial,
+    },
     utils::{compute_dotproduct, small_scalar::SmallScalar},
 };
 use allocative::Allocative;
@@ -25,7 +30,7 @@ pub enum Multilinear {
     I128Scalars,
     S128Scalars,
     RLC,
-    OneHot{K: usize},
+    OneHot { K: usize },
 }
 
 /// Wrapper enum for the various multilinear polynomial types used in Jolt

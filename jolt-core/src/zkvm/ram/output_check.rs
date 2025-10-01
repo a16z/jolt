@@ -395,7 +395,8 @@ impl<F: JoltField> ValFinalSumcheck<F> {
         drop(_guard);
         drop(span);
 
-        let inc = CommittedPolynomial::RamInc.generate_witness(preprocessing, trace, state_manager.ram_d);
+        let inc =
+            CommittedPolynomial::RamInc.generate_witness(preprocessing, trace, state_manager.ram_d);
 
         // #[cfg(test)]
         // {

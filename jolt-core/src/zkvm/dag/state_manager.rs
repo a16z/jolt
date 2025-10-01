@@ -113,7 +113,7 @@ where
                     + 1,
             )
             .next_power_of_two() as usize;
-        
+
         let ram_d = compute_d_parameter(ram_K);
         let T = trace.len();
         let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);

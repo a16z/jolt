@@ -248,8 +248,12 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
         let gamma: F = transcript.challenge_scalar();
         let input_claim = rd_wv_claim + gamma * rs1_rv_claim + gamma.square() * rs2_rv_claim;
 
-        let prover_state =
-            ReadWriteCheckingProverState::initialize(preprocessing, trace, &r_cycle.r, state_manager.ram_d);
+        let prover_state = ReadWriteCheckingProverState::initialize(
+            preprocessing,
+            trace,
+            &r_cycle.r,
+            state_manager.ram_d,
+        );
 
         Self {
             T: trace.len(),

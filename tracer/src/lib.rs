@@ -84,7 +84,12 @@ pub fn trace(
     let lazy_trace_iter_ = lazy_trace_iter.clone();
     let trace: Vec<Cycle> = lazy_trace_iter.by_ref().collect();
     let final_memory_state = std::mem::take(lazy_trace_iter.final_memory_state.as_mut().unwrap());
-    (lazy_trace_iter_, trace, final_memory_state, lazy_trace_iter.get_jolt_device())
+    (
+        lazy_trace_iter_,
+        trace,
+        final_memory_state,
+        lazy_trace_iter.get_jolt_device(),
+    )
 }
 
 use crate::utils::trace_writer::{TraceBatchCollector, TraceWriter, TraceWriterConfig};
@@ -319,7 +324,7 @@ impl Iterator for LazyTraceIterator {
     }
 }
 
-pub struct ChunksWithPeek<I:Iterator> {
+pub struct ChunksWithPeek<I: Iterator> {
     chunk_size: usize,
     iter: I,
     peek: Option<I::Item>,
@@ -337,9 +342,9 @@ pub trait ChunkWithPeekIterator: Iterator + Sized {
     }
 }
 
-impl<I: Iterator + Sized> ChunkWithPeekIterator for I { }
+impl<I: Iterator + Sized> ChunkWithPeekIterator for I {}
 
-impl<I:Iterator<Item:Clone>> Iterator for ChunksWithPeek<I> {
+impl<I: Iterator<Item: Clone>> Iterator for ChunksWithPeek<I> {
     type Item = Vec<I::Item>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -349,13 +354,11 @@ impl<I:Iterator<Item:Clone>> Iterator for ChunksWithPeek<I> {
         let mut chunk = Vec::with_capacity(self.chunk_size + 1);
         chunk.push(self.peek.take()?);
         chunk.extend(self.iter.by_ref().take(self.chunk_size - 1));
-        if chunk.len() == 1
-        {
+        if chunk.len() == 1 {
             return None;
         }
         self.peek = self.iter.next();
-        if let Some(p) = &self.peek
-        {
+        if let Some(p) = &self.peek {
             chunk.push(p.clone());
         }
         Some(chunk)

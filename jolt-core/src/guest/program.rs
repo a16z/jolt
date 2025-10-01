@@ -1,10 +1,10 @@
 use common::constants::RAM_START_ADDRESS;
 use common::jolt_device::{JoltDevice, MemoryConfig};
-use tracer::LazyTraceIterator;
 use std::path::PathBuf;
 use tracer::emulator::memory::Memory;
 use tracer::instruction::{Cycle, Instruction};
 use tracer::utils::virtual_registers::VirtualRegisterAllocator;
+use tracer::LazyTraceIterator;
 
 /// Configuration for program runtime
 #[derive(Debug, Clone)]
@@ -75,7 +75,8 @@ pub fn trace(
     inputs: &[u8],
     memory_config: &MemoryConfig,
 ) -> (LazyTraceIterator, Vec<Cycle>, Memory, JoltDevice) {
-    let (lazy_trace, trace, memory, io_device) = tracer::trace(elf_contents, elf_path, inputs, memory_config);
+    let (lazy_trace, trace, memory, io_device) =
+        tracer::trace(elf_contents, elf_path, inputs, memory_config);
     (lazy_trace, trace, memory, io_device)
 }
 

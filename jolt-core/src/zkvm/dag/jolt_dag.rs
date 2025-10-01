@@ -31,7 +31,7 @@ use anyhow::Context;
 use itertools::Itertools;
 use rayon::prelude::*;
 use tracer::instruction::Cycle;
-use tracer::{ChunkWithPeekIterator as _};
+use tracer::ChunkWithPeekIterator as _;
 
 pub enum JoltDAG {}
 
@@ -485,37 +485,47 @@ impl JoltDAG {
         PCS: StreamingCommitmentScheme<Field = F>,
     >(
         prover_state_manager: &mut StateManager<'a, F, ProofTranscript, PCS>,
-    ) -> Result<HashMap<CommittedPolynomial, PCS::OpeningProofHint>, anyhow::Error> 
-    {
+    ) -> Result<HashMap<CommittedPolynomial, PCS::OpeningProofHint>, anyhow::Error> {
         let (preprocessing, lazy_trace, _trace, _program_io, _final_memory_state) =
             prover_state_manager.get_prover_data();
 
         let T = DoryGlobals::get_T();
 
-        let polys : Vec<_> = AllCommittedPolynomials::iter().collect();
+        let polys: Vec<_> = AllCommittedPolynomials::iter().collect();
         let cached_setup = PCS::cache_setup(&preprocessing.generators);
         let pcs_and_polys: Vec<_> = polys
             .iter()
-            .map(|poly| (PCS::initialize(poly.to_polynomial_type(&preprocessing), T, &preprocessing.generators, &cached_setup), poly))
+            .map(|poly| {
+                (
+                    PCS::initialize(
+                        poly.to_polynomial_type(&preprocessing),
+                        T,
+                        &preprocessing.generators,
+                        &cached_setup,
+                    ),
+                    poly,
+                )
+            })
             .collect();
         let row_len = DoryGlobals::get_num_columns();
-        let mut row_commitments: Vec<Vec<<PCS>::ChunkState>>  = vec![vec![]; T/DoryGlobals::get_max_num_rows()];
+        let mut row_commitments: Vec<Vec<<PCS>::ChunkState>> =
+            vec![vec![]; T / DoryGlobals::get_max_num_rows()];
 
         lazy_trace
             .as_ref()
             .expect("Lazy trace not found!")
             .clone()
-            .pad_using(T+1, |_| Cycle::NoOp)
+            .pad_using(T + 1, |_| Cycle::NoOp)
             .chunks_with_peek(row_len)
             .zip(&mut row_commitments)
             .par_bridge()
             .for_each(|(row_with_peek, row_)| {
                 let res = pcs_and_polys.iter().map(|(pcs, poly)| {
                     poly.generate_witness_and_commit_row::<_, PCS>(
-                        pcs, 
-                        preprocessing, 
+                        pcs,
+                        preprocessing,
                         &row_with_peek,
-                        prover_state_manager.ram_d
+                        prover_state_manager.ram_d,
                     )
                 });
                 *row_ = res.collect::<Vec<_>>();
@@ -531,7 +541,9 @@ impl JoltDAG {
         {
             let committed_polys: Vec<_> = polys
                 .iter()
-                .map(|poly| poly.generate_witness(preprocessing, _trace, prover_state_manager.ram_d))
+                .map(|poly| {
+                    poly.generate_witness(preprocessing, _trace, prover_state_manager.ram_d)
+                })
                 .collect();
 
             let commitments_non_streaming: Vec<_> = committed_polys
@@ -540,17 +552,27 @@ impl JoltDAG {
                 .collect();
 
             // compare commitments and hints iteratively and print indices that do not match
-            for (i, ((commitment, hint), (commitment_non_streaming, hint_non_streaming))) in commitments
-                .iter()
-                .zip(hints.iter())
-                .zip(commitments_non_streaming.iter())
-                .enumerate()
+            for (i, ((commitment, hint), (commitment_non_streaming, hint_non_streaming))) in
+                commitments
+                    .iter()
+                    .zip(hints.iter())
+                    .zip(commitments_non_streaming.iter())
+                    .enumerate()
             {
-                assert_eq!(hint, hint_non_streaming, "PCS hint mismatch at {:?}", polys.iter().collect::<Vec<_>>()[i]);
                 assert_eq!(
-                    commitment, commitment_non_streaming,
+                    hint,
+                    hint_non_streaming,
+                    "PCS hint mismatch at {:?}",
+                    polys.iter().collect::<Vec<_>>()[i]
+                );
+                assert_eq!(
+                    commitment,
+                    commitment_non_streaming,
                     "Commitment mismatch at {:?}\n ({}):\n {:?}\n != \n{:?}",
-                    polys.iter().collect::<Vec<_>>()[i], i, commitment, commitment_non_streaming
+                    polys.iter().collect::<Vec<_>>()[i],
+                    i,
+                    commitment,
+                    commitment_non_streaming
                 );
             }
         }
