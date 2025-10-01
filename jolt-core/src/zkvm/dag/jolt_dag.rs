@@ -532,9 +532,9 @@ impl JoltDAG {
             });
 
         let (commitments, hints): (Vec<_>, Vec<_>) = transpose(row_commitments)
-            .into_iter()
-            .zip(pcs_and_polys)
-            .map(|(rc, s)| PCS::finalize(s.0, &rc))
+            .into_par_iter()
+            .zip(pcs_and_polys.into_par_iter())
+            .map(|(rc, (s, _))| PCS::finalize(s, &rc))
             .unzip();
 
         #[cfg(test)]

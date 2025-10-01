@@ -155,7 +155,7 @@ where
     }
 
     fn finalize<'a>(
-        state: Self::State<'a>,
+        state: &Self::State<'a>,
         chunks: &[Self::ChunkState],
     ) -> (Self::Commitment, Self::OpeningProofHint) {
         todo!()

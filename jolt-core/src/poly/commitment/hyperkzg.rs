@@ -695,7 +695,7 @@ where
     }
 
     fn finalize<'a>(
-        state: Self::State<'a>,
+        state: &Self::State<'a>,
         _chunks: &[Self::ChunkState],
     ) -> (Self::Commitment, Self::OpeningProofHint) {
         (HyperKZGCommitment(state.acc.into()), ())
@@ -864,7 +864,7 @@ mod tests {
             for p in poly_raw {
                 state = HyperKZG::process(poly, state, p);
             }
-            let C2 = HyperKZG::finalize(state, &[]).0;
+            let C2 = HyperKZG::finalize(&state, &[]).0;
             assert_eq!(
                 C, C2,
                 "Streaming commitment did not match non-streaming commitment"
