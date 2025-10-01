@@ -2,6 +2,7 @@ use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 use common::constants::XLEN;
+use num_traits::Zero;
 use rayon::prelude::*;
 use std::{cell::RefCell, rc::Rc};
 use strum::{EnumCount, IntoEnumIterator};
@@ -11,6 +12,7 @@ use super::{LOG_K, LOG_M, M, PHASES};
 
 use crate::{
     field::JoltField,
+    field::MulTrunc,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         dense_mlpoly::DensePolynomial,
@@ -339,10 +341,13 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
                         .unwrap()
                         .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
 
-                    std::array::from_fn(|i| eq_evals[i] * ra_evals[i] * val_evals[i])
+                    std::array::from_fn::<F::Unreduced<9>, DEGREE, _>(|i| {
+                        let eq_ra = eq_evals[i] * ra_evals[i];
+                        eq_ra.mul_unreduced::<9>(val_evals[i])
+                    })
                 })
                 .reduce(
-                    || [F::zero(); DEGREE],
+                    || [F::Unreduced::zero(); DEGREE],
                     |mut running, new| {
                         for j in 0..DEGREE {
                             running[j] += new[j];
@@ -350,7 +355,9 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
                         running
                     },
                 )
-                .to_vec()
+                .into_iter()
+                .map(F::from_montgomery_reduce)
+                .collect()
         }
     }
 
@@ -753,10 +760,40 @@ impl<F: JoltField> ReadRafSumcheck<F> {
                 let (i0, i2) = ps.identity_ps.sumcheck_evals(b);
                 let (r0, r2) = ps.right_operand_ps.sumcheck_evals(b);
                 let (l0, l2) = ps.left_operand_ps.sumcheck_evals(b);
-                (l0, l2, i0 + r0, i2 + r2)
+                (
+                    *l0.as_unreduced_ref(),
+                    *l2.as_unreduced_ref(),
+                    *(i0 + r0).as_unreduced_ref(),
+                    *(i2 + r2).as_unreduced_ref(),
+                )
             })
+            .fold(
+                || {
+                    (
+                        F::Unreduced::<5>::zero(),
+                        F::Unreduced::<5>::zero(),
+                        F::Unreduced::<5>::zero(),
+                        F::Unreduced::<5>::zero(),
+                    )
+                },
+                |running, new| {
+                    (
+                        running.0 + &new.0,
+                        running.1 + &new.1,
+                        running.2 + &new.2,
+                        running.3 + &new.3,
+                    )
+                },
+            )
             .reduce(
-                || (F::zero(), F::zero(), F::zero(), F::zero()),
+                || {
+                    (
+                        F::Unreduced::zero(),
+                        F::Unreduced::zero(),
+                        F::Unreduced::zero(),
+                        F::Unreduced::zero(),
+                    )
+                },
                 |running, new| {
                     (
                         running.0 + new.0,
@@ -767,8 +804,14 @@ impl<F: JoltField> ReadRafSumcheck<F> {
                 },
             );
         [
-            self.gamma * left_0 + self.gamma_squared * right_0,
-            self.gamma * left_2 + self.gamma_squared * right_2,
+            F::from_montgomery_reduce(
+                left_0.mul_trunc::<4, 9>(self.gamma.as_unreduced_ref())
+                    + right_0.mul_trunc::<4, 9>(self.gamma_squared.as_unreduced_ref()),
+            ),
+            F::from_montgomery_reduce(
+                left_2.mul_trunc::<4, 9>(self.gamma.as_unreduced_ref())
+                    + right_2.mul_trunc::<4, 9>(self.gamma_squared.as_unreduced_ref()),
+            ),
         ]
     }
 
@@ -816,6 +859,10 @@ impl<F: JoltField> ReadRafSumcheck<F> {
                         )
                     })
             })
+            .fold(
+                || (F::zero(), F::zero(), F::zero()),
+                |running, new| (running.0 + new.0, running.1 + new.1, running.2 + new.2),
+            )
             .reduce(
                 || (F::zero(), F::zero(), F::zero()),
                 |running, new| (running.0 + new.0, running.1 + new.1, running.2 + new.2),
