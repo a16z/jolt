@@ -239,9 +239,13 @@ impl<F: JoltField> MultilinearPolynomial<F> {
     // This is the old polynomial evaluation code that uses
     // the dot product with langrange bases as the algorithm
     // This might be eventually removed from the code base
-    pub fn evaluate_dot_product(&self, r: &[F::Challenge]) -> F {
+    pub fn evaluate_dot_product<C>(&self, r: &[C]) -> F
+    where
+        C: ChallengeFieldOps<F>,
+        F: FieldChallengeOps<C>,
+    {
         match self {
-            MultilinearPolynomial::LargeScalars(poly) => poly.evaluate(r),
+            MultilinearPolynomial::LargeScalars(poly) => poly.evaluate_dot_product(r),
             MultilinearPolynomial::RLC(_) => {
                 unimplemented!("Unexpected RLC polynomial")
             }
@@ -515,7 +519,7 @@ pub trait PolynomialBinding<F: JoltField> {
 pub trait PolynomialEvaluation<F: JoltField> {
     /// Returns the final sumcheck claim about the polynomial.
     /// This uses the algorithm in Lemma 4.3 in Thaler, Proofs and
-    /// Arguments -- the inside out processing
+    /// Arguments -- the point at which we evaluate the polynomial
     fn evaluate<C>(&self, r: &[C]) -> F
     where
         C: Copy + Send + Sync + Into<F> + ChallengeFieldOps<F>,
@@ -602,8 +606,8 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
     #[tracing::instrument(skip_all, name = "MultilinearPolynomial::evaluate")]
     fn evaluate<C>(&self, r: &[C]) -> F
     where
-        C: Copy + Send + Sync + Into<F>,
-        F: std::ops::Mul<C, Output = F> + std::ops::SubAssign<F>,
+        C: Copy + Send + Sync + Into<F> + ChallengeFieldOps<F>,
+        F: FieldChallengeOps<C>,
     {
         match self {
             MultilinearPolynomial::LargeScalars(poly) => {

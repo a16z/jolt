@@ -137,14 +137,14 @@ harness = false
 name = "mles_product_sum"
 harness = false
 
-# [[bench]]
-# name = "poly_bench"
-# harness = false
-#
-# [[bench]]
-# name = "compact_poly_bench"
-# harness = false
-#
+[[bench]]
+name = "poly_bench"
+harness = false
+
+[[bench]]
+name = "polynomial_evaluation"
+harness = false
+
 [[bench]]
 name = "challenge_mult_performance"
 harness = false

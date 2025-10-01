@@ -244,18 +244,24 @@ impl<F: JoltField> DensePolynomial<F> {
         self.len = n;
     }
 
+    pub fn evaluate_dot_product<C>(&self, r: &[C]) -> F
+    where
+        C: Copy + Send + Sync + Into<F> + ChallengeFieldOps<F>,
+        F: FieldChallengeOps<C>,
+    {
+        // r must have a value for each variable
+        assert_eq!(r.len(), self.get_num_vars());
+        let chis = EqPolynomial::evals(r);
+        assert_eq!(chis.len(), self.Z.len());
+        self.evaluate_at_chi(&chis)
+    }
+
     // returns Z(r) in O(n) time
     pub fn evaluate<C>(&self, r: &[C]) -> F
     where
         C: Copy + Send + Sync + Into<F> + ChallengeFieldOps<F>,
         F: FieldChallengeOps<C>,
     {
-        //// r must have a value for each variable
-        //assert_eq!(r.len(), self.get_num_vars());
-        //let chis = EqPolynomial::evals(r);
-        //assert_eq!(chis.len(), self.Z.len());
-        //compute_dotproduct(&self.Z, &chis)
-
         let m = r.len() / 2;
         let (r2, r1) = r.split_at(m);
         let (eq_one, eq_two) = rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
@@ -305,7 +311,11 @@ impl<F: JoltField> DensePolynomial<F> {
     // Faster evaluation based on
     // https://randomwalks.xyz/publish/fast_polynomial_evaluation.html
     // Shaves a factor of 2 from run time.
-    pub fn inside_out_evaluate(&self, r: &[F::Challenge]) -> F {
+    pub fn inside_out_evaluate<C>(&self, r: &[C]) -> F
+    where
+        C: Copy + Send + Sync + Into<F> + ChallengeFieldOps<F>,
+        F: FieldChallengeOps<C>,
+    {
         // Copied over from eq_poly
         // If the number of variables are greater
         // than 2^16 -- use parallel evaluate
@@ -322,7 +332,11 @@ impl<F: JoltField> DensePolynomial<F> {
         }
     }
 
-    fn inside_out_serial(&self, r: &[F::Challenge]) -> F {
+    fn inside_out_serial<C>(&self, r: &[C]) -> F
+    where
+        C: Copy + Send + Sync + Into<F> + ChallengeFieldOps<F>,
+        F: FieldChallengeOps<C>,
+    {
         // r is expected to be big endinan
         // r[0] is the most significant digit
         let mut current = self.Z.clone();
@@ -352,7 +366,11 @@ impl<F: JoltField> DensePolynomial<F> {
         current[0]
     }
 
-    fn inside_out_parallel(&self, r: &[F::Challenge]) -> F {
+    fn inside_out_parallel<C>(&self, r: &[C]) -> F
+    where
+        C: Copy + Send + Sync + Into<F> + ChallengeFieldOps<F>,
+        F: FieldChallengeOps<C>,
+    {
         let mut current: Vec<_> = self.Z.par_iter().cloned().collect();
         let m = r.len();
         // Invoking the same parallelisation structure
@@ -507,11 +525,53 @@ impl<F: JoltField> PolynomialEvaluation<F> for DensePolynomial<F> {
         C: Copy + Send + Sync + Into<F> + ChallengeFieldOps<F>,
         F: FieldChallengeOps<C>,
     {
-        let eq = EqPolynomial::evals(r);
-        let evals: Vec<F> = polys
+        // A more cache-efficient batch polynomial evaluation
+        let num_polys = polys.len();
+        let m = r.len() / 2;
+        let (r2, r1) = r.split_at(m);
+        let (eq_one, eq_two) = rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
+
+        let evals = (0..eq_one.len())
             .into_par_iter()
-            .map(|&poly| poly.evaluate_at_chi_low_optimized(&eq))
-            .collect();
+            .map(|x1| {
+                let eq1_val = eq_one[x1];
+                let inner_sums = (0..eq_two.len())
+                    .into_par_iter()
+                    .filter_map(|x2| {
+                        let eq2_val = eq_two[x2];
+                        let idx = x1 * eq_two.len() + x2;
+                        let partial: Vec<F> = polys
+                            .iter()
+                            .map(|poly| {
+                                let coeff = poly.Z[idx];
+                                OptimizedMul::mul_01_optimized(eq2_val, coeff)
+                            })
+                            .collect();
+                        Some(partial)
+                    })
+                    .reduce(
+                        || vec![F::zero(); num_polys],
+                        |mut acc, item| {
+                            for i in 0..num_polys {
+                                acc[i] += item[i];
+                            }
+                            acc
+                        },
+                    );
+                inner_sums
+                    .into_iter()
+                    .map(|s| OptimizedMul::mul_01_optimized(eq1_val, s))
+                    .collect::<Vec<_>>()
+            })
+            .reduce(
+                || vec![F::zero(); num_polys],
+                |mut acc, item| {
+                    for i in 0..num_polys {
+                        acc[i] += item[i];
+                    }
+                    acc
+                },
+            );
         evals
     }
 
