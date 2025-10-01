@@ -18,34 +18,23 @@ impl<const XLEN: usize> JoltLookupTable for ShiftRightBitmaskTable<XLEN> {
         ones << shift
     }
 
-    fn evaluate_mle_field<F: JoltField>(&self, r: &[F]) -> F {
-        debug_assert_eq!(r.len(), 2 * XLEN);
-
-        let log_w = XLEN.log_2();
-        let r = &r[r.len() - log_w..];
-
-        let mut dp = vec![F::zero(); 1 << log_w];
-
-        for s in 0..XLEN {
-            let bitmask = ((1u128 << (XLEN - s)) - 1) << s;
-            let mut eq_val = F::one();
-
-            for i in 0..log_w {
-                let bit = (s >> i) & 1;
-                eq_val *= if bit == 0 {
-                    F::one() - r[log_w - i - 1]
-                } else {
-                    r[log_w - i - 1]
-                };
-            }
-
-            dp[s] = F::from_u128(bitmask) * eq_val;
-        }
-
-        dp.into_iter().sum()
-    }
-
-    fn evaluate_mle<F: JoltField>(&self, r: &[F::Challenge]) -> F {
+    fn evaluate_mle<F, C>(&self, r: &[C]) -> F
+    where
+        C: Copy
+            + Send
+            + Sync
+            + Into<F>
+            + std::ops::Mul<F, Output = F>
+            + std::ops::Add<F, Output = F>
+            + std::ops::Sub<F, Output = F>,
+        F: JoltField
+            + std::ops::Mul<C, Output = F>
+            + std::ops::Add<C, Output = F>
+            + std::ops::Sub<C, Output = F>
+            + std::ops::SubAssign<F>
+            + std::ops::AddAssign<F>
+            + std::ops::MulAssign<F>,
+    {
         debug_assert_eq!(r.len(), 2 * XLEN);
 
         let log_w = XLEN.log_2();

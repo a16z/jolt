@@ -18,6 +18,69 @@ pub trait FieldOps<Rhs = Self, Output = Self>:
     + Div<Rhs, Output = Output>
 {
 }
+
+// Define the helper traits once
+pub trait ChallengeFieldOps<F>:
+    Copy
+    + Send
+    + Sync
+    + Into<F>
+    + Add<F, Output = F>
+    + for<'a> Add<&'a F, Output = F>
+    + Sub<F, Output = F>
+    + for<'a> Sub<&'a F, Output = F>
+    + Mul<F, Output = F>
+    + for<'a> Mul<&'a F, Output = F>
+    + Add<Self, Output = F>
+    + for<'a> Add<&'a Self, Output = F>
+    + Sub<Self, Output = F>
+    + for<'a> Sub<&'a Self, Output = F>
+    + Mul<Self, Output = F>
+    + for<'a> Mul<&'a Self, Output = F>
+{
+}
+
+pub trait FieldChallengeOps<C>:
+    Add<C, Output = Self>
+    + for<'a> Add<&'a C, Output = Self>
+    + Sub<C, Output = Self>
+    + for<'a> Sub<&'a C, Output = Self>
+    + Mul<C, Output = Self>
+    + for<'a> Mul<&'a C, Output = Self>
+{
+}
+
+impl<F, C> ChallengeFieldOps<F> for C where
+    C: Copy
+        + Send
+        + Sync
+        + Into<F>
+        + Add<F, Output = F>
+        + for<'a> Add<&'a F, Output = F>
+        + Sub<F, Output = F>
+        + for<'a> Sub<&'a F, Output = F>
+        + Mul<F, Output = F>
+        + for<'a> Mul<&'a F, Output = F>
+        + Add<C, Output = F>
+        + for<'a> Add<&'a C, Output = F>
+        + Sub<C, Output = F>
+        + for<'a> Sub<&'a C, Output = F>
+        + Mul<C, Output = F>
+        + for<'a> Mul<&'a C, Output = F>
+{
+}
+
+impl<F, C> FieldChallengeOps<C> for F where
+    F: JoltField
+        + Add<C, Output = F>
+        + for<'a> Add<&'a C, Output = F>
+        + Sub<C, Output = F>
+        + for<'a> Sub<&'a C, Output = F>
+        + Mul<C, Output = F>
+        + for<'a> Mul<&'a C, Output = F>
+{
+}
+
 pub trait JoltField:
     'static
     + Sized
@@ -44,12 +107,7 @@ pub trait JoltField:
     + CanonicalDeserialize
     + Hash
     + MaybeAllocative
-    + Add<Self::Challenge, Output = Self>
-    + for<'a> Add<&'a Self::Challenge, Output = Self>
-    + Sub<Self::Challenge, Output = Self>
-    + for<'a> Sub<&'a Self::Challenge, Output = Self>
-    + Mul<Self::Challenge, Output = Self>
-    + for<'a> Mul<&'a Self::Challenge, Output = Self>
+    + FieldChallengeOps<Self::Challenge>
 {
     /// Number of bytes occupied by a single field element.
     const NUM_BYTES: usize;
@@ -107,24 +165,7 @@ pub trait JoltField:
         + Allocative
         + From<u128>
         + Into<Self>
-        + Add<Self::Challenge, Output = Self>
-        + for<'a> Add<&'a Self::Challenge, Output = Self>
-        + Sub<Self::Challenge, Output = Self>
-        + for<'a> Sub<&'a Self::Challenge, Output = Self>
-        + Mul<Self::Challenge, Output = Self>
-        + for<'a> Mul<&'a Self::Challenge, Output = Self>
-        + Add<Self::Challenge, Output = Self>
-        + for<'a> Add<&'a Self::Challenge, Output = Self>
-        + Sub<Self::Challenge, Output = Self>
-        + for<'a> Sub<&'a Self::Challenge, Output = Self>
-        + Mul<Self::Challenge, Output = Self>
-        + for<'a> Mul<&'a Self::Challenge, Output = Self>
-        + Add<Self, Output = Self>
-        + for<'a> Add<&'a Self, Output = Self>
-        + Sub<Self, Output = Self>
-        + for<'a> Sub<&'a Self, Output = Self>
-        + Mul<Self, Output = Self>
-        + for<'a> Mul<&'a Self, Output = Self>
+        + ChallengeFieldOps<Self>
         + UniformRand;
 
     fn random<R: rand_core::RngCore>(rng: &mut R) -> Self;

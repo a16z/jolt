@@ -1,56 +1,15 @@
-use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 use crate::{field::JoltField, utils::lookup_bits::LookupBits};
+
+use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 
 pub enum LeftMsbPrefix {}
 
 impl<F: JoltField> SparseDensePrefix<F> for LeftMsbPrefix {
     fn prefix_mle(
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: Option<F::Challenge>,
-        c: u32,
-        _: LookupBits,
-        j: usize,
-    ) -> F {
-        if j == 0 {
-            F::from_u32(c)
-        } else if j == 1 {
-            r_x.unwrap().into()
-        } else {
-            checkpoints[Prefixes::LeftOperandMsb].unwrap()
-        }
-    }
-
-    fn update_prefix_checkpoint(
-        checkpoints: &[PrefixCheckpoint<F>],
-        r_x: F::Challenge,
-        _: F::Challenge,
-        j: usize,
-    ) -> PrefixCheckpoint<F> {
-        if j == 1 {
-            Some(r_x.into()).into()
-        } else {
-            checkpoints[Prefixes::LeftOperandMsb].into()
-        }
-    }
-
-    fn update_prefix_checkpoint_field(
-        checkpoints: &[PrefixCheckpoint<F>],
-        r_x: F,
-        _r_y: F,
-        j: usize,
-    ) -> PrefixCheckpoint<F> {
-        if j == 1 {
-            Some(r_x).into()
-        } else {
-            checkpoints[Prefixes::LeftOperandMsb].into()
-        }
-    }
-
-    fn prefix_mle_field(
-        checkpoints: &[PrefixCheckpoint<F>],
         r_x: Option<F>,
         c: u32,
-        _b: LookupBits,
+        _: LookupBits,
         j: usize,
     ) -> F {
         if j == 0 {
@@ -59,6 +18,19 @@ impl<F: JoltField> SparseDensePrefix<F> for LeftMsbPrefix {
             r_x.unwrap()
         } else {
             checkpoints[Prefixes::LeftOperandMsb].unwrap()
+        }
+    }
+
+    fn update_prefix_checkpoint(
+        checkpoints: &[PrefixCheckpoint<F>],
+        r_x: F,
+        _: F,
+        j: usize,
+    ) -> PrefixCheckpoint<F> {
+        if j == 1 {
+            Some(r_x).into()
+        } else {
+            checkpoints[Prefixes::LeftOperandMsb].into()
         }
     }
 }

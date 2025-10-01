@@ -1,4 +1,7 @@
-use crate::{field::JoltField, utils::uninterleave_bits};
+use crate::{
+    field::{ChallengeFieldOps, FieldChallengeOps, JoltField},
+    utils::uninterleave_bits,
+};
 use serde::{Deserialize, Serialize};
 
 use super::prefixes::{PrefixEval, Prefixes};
@@ -20,23 +23,11 @@ impl<const XLEN: usize> JoltLookupTable for SignedLessThanTable<XLEN> {
             _ => panic!("{XLEN}-bit word size is unsupported"),
         }
     }
-
-    fn evaluate_mle_field<F: JoltField>(&self, r: &[F]) -> F {
-        let x_sign = r[0];
-        let y_sign = r[1];
-
-        let mut lt = F::zero();
-        let mut eq = F::one();
-        for i in 0..XLEN {
-            let x_i = r[2 * i];
-            let y_i = r[2 * i + 1];
-            lt += (F::one() - x_i) * y_i * eq;
-            eq *= x_i * y_i + (F::one() - x_i) * (F::one() - y_i);
-        }
-
-        x_sign - y_sign + lt
-    }
-    fn evaluate_mle<F: JoltField>(&self, r: &[F::Challenge]) -> F {
+    fn evaluate_mle<F, C>(&self, r: &[C]) -> F
+    where
+        C: ChallengeFieldOps<F>,
+        F: JoltField + FieldChallengeOps<C>,
+    {
         let x_sign = r[0];
         let y_sign = r[1];
 

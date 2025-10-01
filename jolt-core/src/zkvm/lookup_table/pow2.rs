@@ -4,7 +4,7 @@ use super::prefixes::PrefixEval;
 use super::suffixes::{SuffixEval, Suffixes};
 use super::JoltLookupTable;
 use super::PrefixSuffixDecomposition;
-use crate::field::JoltField;
+use crate::field::{ChallengeFieldOps, FieldChallengeOps, JoltField};
 use crate::utils::math::Math;
 use crate::zkvm::lookup_table::prefixes::Prefixes;
 
@@ -16,16 +16,11 @@ impl<const XLEN: usize> JoltLookupTable for Pow2Table<XLEN> {
         1 << (index % XLEN as u128) as u64
     }
 
-    fn evaluate_mle_field<F: JoltField>(&self, r: &[F]) -> F {
-        debug_assert_eq!(r.len(), 2 * XLEN);
-        let mut result = F::one();
-        for i in 0..XLEN.log_2() {
-            result *= F::one() + (F::from_u64((1 << (1 << i)) - 1)) * r[r.len() - i - 1];
-        }
-        result
-    }
-
-    fn evaluate_mle<F: JoltField>(&self, r: &[F::Challenge]) -> F {
+    fn evaluate_mle<F, C>(&self, r: &[C]) -> F
+    where
+        C: ChallengeFieldOps<F>,
+        F: JoltField + FieldChallengeOps<C>,
+    {
         debug_assert_eq!(r.len(), 2 * XLEN);
         let mut result = F::one();
         for i in 0..XLEN.log_2() {

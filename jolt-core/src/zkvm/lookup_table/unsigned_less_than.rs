@@ -1,4 +1,7 @@
-use crate::{field::JoltField, utils::uninterleave_bits};
+use crate::{
+    field::{ChallengeFieldOps, FieldChallengeOps, JoltField},
+    utils::uninterleave_bits,
+};
 use serde::{Deserialize, Serialize};
 
 use super::{
@@ -15,23 +18,11 @@ impl<const XLEN: usize> JoltLookupTable for UnsignedLessThanTable<XLEN> {
         let (x, y) = uninterleave_bits(index);
         (x < y).into()
     }
-
-    fn evaluate_mle_field<F: JoltField>(&self, r: &[F]) -> F {
-        debug_assert_eq!(r.len(), 2 * XLEN);
-
-        // \sum_i (1 - x_i) * y_i * \prod_{j < i} ((1 - x_j) * (1 - y_j) + x_j * y_j)
-        let mut result = F::zero();
-        let mut eq_term = F::one();
-        for i in 0..XLEN {
-            let x_i = r[2 * i];
-            let y_i = r[2 * i + 1];
-            result += (F::one() - x_i) * y_i * eq_term;
-            eq_term *= x_i * y_i + (F::one() - x_i) * (F::one() - y_i);
-        }
-        result
-    }
-
-    fn evaluate_mle<F: JoltField>(&self, r: &[F::Challenge]) -> F {
+    fn evaluate_mle<F, C>(&self, r: &[C]) -> F
+    where
+        C: ChallengeFieldOps<F>,
+        F: JoltField + FieldChallengeOps<C>,
+    {
         debug_assert_eq!(r.len(), 2 * XLEN);
 
         // \sum_i (1 - x_i) * y_i * \prod_{j < i} ((1 - x_j) * (1 - y_j) + x_j * y_j)

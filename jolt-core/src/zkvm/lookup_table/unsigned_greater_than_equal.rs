@@ -6,7 +6,11 @@ use super::{
     unsigned_less_than::UnsignedLessThanTable,
     JoltLookupTable, PrefixSuffixDecomposition,
 };
-use crate::{field::JoltField, utils::uninterleave_bits, zkvm::lookup_table::suffixes::Suffixes};
+use crate::{
+    field::{ChallengeFieldOps, FieldChallengeOps, JoltField},
+    utils::uninterleave_bits,
+    zkvm::lookup_table::suffixes::Suffixes,
+};
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct UnsignedGreaterThanEqualTable<const XLEN: usize>;
@@ -22,12 +26,12 @@ impl<const XLEN: usize> JoltLookupTable for UnsignedGreaterThanEqualTable<XLEN> 
             _ => panic!("{XLEN}-bit word size is unsupported"),
         }
     }
-
-    fn evaluate_mle<F: JoltField>(&self, r: &[F::Challenge]) -> F {
-        F::one() - UnsignedLessThanTable::<XLEN>.evaluate_mle::<F>(r)
-    }
-    fn evaluate_mle_field<F: JoltField>(&self, r: &[F]) -> F {
-        F::one() - UnsignedLessThanTable::<XLEN>.evaluate_mle_field::<F>(r)
+    fn evaluate_mle<F, C>(&self, r: &[C]) -> F
+    where
+        C: ChallengeFieldOps<F>,
+        F: JoltField + FieldChallengeOps<C>,
+    {
+        F::one() - UnsignedLessThanTable::<XLEN>.evaluate_mle::<F, C>(r)
     }
 }
 

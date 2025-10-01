@@ -1,5 +1,5 @@
 use super::PrefixSuffixDecomposition;
-use crate::field::JoltField;
+use crate::field::{ChallengeFieldOps, FieldChallengeOps, JoltField};
 use crate::utils::uninterleave_bits;
 use crate::zkvm::lookup_table::prefixes::Prefixes;
 use serde::{Deserialize, Serialize};
@@ -38,44 +38,11 @@ impl<const XLEN: usize> JoltLookupTable for VirtualChangeDivisorWTable<XLEN> {
             _ => panic!("Unsupported {XLEN} word size"),
         }
     }
-
-    fn evaluate_mle_field<F: JoltField>(&self, r: &[F]) -> F {
-        debug_assert_eq!(r.len(), 2 * XLEN);
-
-        let sign_bit = r[XLEN + 1];
-
-        let mut divisor_value = F::zero();
-        for i in XLEN / 2..XLEN {
-            let bit_value = r[2 * i + 1];
-            let shift = XLEN - 1 - i;
-            if shift >= 64 {
-                divisor_value += F::from_u128(1u128 << shift) * bit_value;
-            } else {
-                divisor_value += F::from_u64(1u64 << shift) * bit_value;
-            }
-        }
-
-        let mut x_product = r[XLEN];
-        for i in XLEN / 2 + 1..XLEN {
-            x_product *= F::one() - r[2 * i];
-        }
-
-        let mut y_product = F::one();
-        for i in XLEN / 2..XLEN {
-            #[allow(clippy::assign_op_pattern)]
-            {
-                y_product = y_product * r[2 * i + 1];
-            }
-        }
-
-        let sign_extension = F::from_u128((1u128 << XLEN) - (1u128 << (XLEN / 2))) * sign_bit;
-
-        let adjustment = F::from_u64(2) - F::from_u128(1u128 << XLEN);
-
-        divisor_value + adjustment * x_product * y_product + sign_extension
-    }
-
-    fn evaluate_mle<F: JoltField>(&self, r: &[F::Challenge]) -> F {
+    fn evaluate_mle<F, C>(&self, r: &[C]) -> F
+    where
+        C: ChallengeFieldOps<F>,
+        F: JoltField + FieldChallengeOps<C>,
+    {
         debug_assert_eq!(r.len(), 2 * XLEN);
 
         let sign_bit = r[XLEN + 1];

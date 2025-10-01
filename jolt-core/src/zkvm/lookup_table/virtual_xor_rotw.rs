@@ -1,5 +1,5 @@
 use super::PrefixSuffixDecomposition;
-use crate::field::JoltField;
+use crate::field::{ChallengeFieldOps, FieldChallengeOps, JoltField};
 use crate::utils::uninterleave_bits;
 use serde::{Deserialize, Serialize};
 
@@ -36,25 +36,11 @@ impl<const XLEN: usize, const ROTATION: u32> JoltLookupTable
             _ => panic!("{XLEN}-bit word size is unsupported"),
         }
     }
-
-    fn evaluate_mle_field<F: JoltField>(&self, r: &[F]) -> F {
-        debug_assert_eq!(r.len(), 2 * XLEN);
-
-        let mut result = F::zero();
-        // Process r in pairs, but only for the lower 32 bits (skip first XLEN/2 pairs)
-        for (idx, chunk) in r.chunks_exact(2).enumerate().skip(XLEN / 2) {
-            let r_x = chunk[0];
-            let r_y = chunk[1];
-            let xor_bit = (F::one() - r_x) * r_y + r_x * (F::one() - r_y);
-            let position = idx - (XLEN / 2);
-            let mut rotated_position = (position + ROTATION as usize) % (XLEN / 2);
-            rotated_position = (XLEN / 2) - 1 - rotated_position;
-            result += F::from_u64(1u64 << rotated_position) * xor_bit;
-        }
-        result
-    }
-
-    fn evaluate_mle<F: JoltField>(&self, r: &[F::Challenge]) -> F {
+    fn evaluate_mle<F, C>(&self, r: &[C]) -> F
+    where
+        C: ChallengeFieldOps<F>,
+        F: JoltField + FieldChallengeOps<C>,
+    {
         debug_assert_eq!(r.len(), 2 * XLEN);
 
         let mut result = F::zero();
