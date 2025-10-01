@@ -9,12 +9,8 @@ use bytemuck_derive::TransparentWrapper;
 use rayon::prelude::*;
 use std::cmp::Ordering;
 use std::ops::Index;
-use std::iter::Take;
 use std::marker::PhantomData;
 use super::multilinear_polynomial::{BindingOrder, PolynomialBinding};
-
-use num_integer::Integer;
-use tracer::LazyTraceIterator;
 
 #[derive(TransparentWrapper)]
 #[repr(transparent)]

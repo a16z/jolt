@@ -21,8 +21,7 @@ use ark_ec::CurveGroup;
 use rayon::prelude::*;
 use std::marker::PhantomData;
 use std::mem;
-use std::sync::{Arc, Mutex, RwLock};
-use tracer::LazyTraceIterator;
+use std::sync::{Arc, RwLock};
 
 // #[derive(Clone, Debug, Default, PartialEq)]
 pub struct StreamingOneHotWitness<F> {

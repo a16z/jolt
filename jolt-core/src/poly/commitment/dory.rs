@@ -26,7 +26,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{rand::RngCore, Zero};
 use once_cell::sync::OnceCell;
 use rayon::prelude::*;
-use std::{borrow::Borrow, iter::repeat, marker::PhantomData};
+use std::{borrow::Borrow, marker::PhantomData};
 use tracing::trace_span;
 
 use dory::{
@@ -1418,7 +1418,7 @@ impl StreamingCommitmentScheme_ for DoryCommitmentScheme {
         }
     }
 
-    fn process<'a>(ty: Multilinear, state: Self::State<'a>, eval: Self::Field) -> Self::State<'a> {
+    fn process<'a>(_ty: Multilinear, _state: Self::State<'a>, _eval: Self::Field) -> Self::State<'a> {
         // state.process::<JoltMsmG1>(JoltFieldWrapper(eval))
         todo!("Processing individual elements is not supported for Dory.")
     }
