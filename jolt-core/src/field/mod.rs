@@ -255,4 +255,6 @@ where
 }
 
 pub mod ark;
+#[cfg(feature = "recursion")]
+pub mod ark_recursion;
 pub mod tracked_ark;

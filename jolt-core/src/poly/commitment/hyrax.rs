@@ -401,7 +401,7 @@ pub struct HyraxCommitmentState<G: CurveGroup> {
     R_size: usize,
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "recursion"))]
 mod tests {
     use super::*;
     use crate::transcripts::Blake2bTranscript;

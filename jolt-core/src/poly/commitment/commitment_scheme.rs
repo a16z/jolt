@@ -26,25 +26,7 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
     /// A hint that helps the prover compute an opening proof. Typically some byproduct of
     /// the commitment computation, e.g. for Dory the Pedersen commitments to the rows can be
     /// used as a hint for the opening proof.
-    type OpeningProofHint: Sync + Send + Clone + Debug;
-    /// Optional auxiliary data computed by the prover to help the verifier.
-    /// Schemes that don't use auxiliary data should set this to ().
-    type AuxiliaryVerifierData: Default
-        + Debug
-        + Sync
-        + Send
-        + CanonicalSerialize
-        + CanonicalDeserialize
-        + Clone;
-    /// Precomputed GT scalar multiplication results for recursion mode
-    #[cfg(feature = "recursion")]
-    type CombinedCommitmentHint: Sync
-        + Send
-        + Clone
-        + Debug
-        + Default
-        + CanonicalSerialize
-        + CanonicalDeserialize;
+    type OpeningProofHint: Sync + Send + Clone + Debug + Default;
 
     /// Generates the prover setup for this PCS. `max_num_vars` is the maximum number of
     /// variables of any polynomial that will be committed using this setup.
@@ -79,47 +61,6 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
     where
         U: Borrow<MultilinearPolynomial<Self::Field>> + Sync;
 
-    /// Precomputes the combined commitment and hint for recursion mode
-    #[cfg(feature = "recursion")]
-    fn precompute_combined_commitment<C: Borrow<Self::Commitment>>(
-        commitments: &[C],
-        coeffs: &[Self::Field],
-    ) -> (Self::Commitment, Self::CombinedCommitmentHint) {
-        // Default implementation just calls combine_commitments with no hint
-        let commitment = Self::combine_commitments(commitments, coeffs, None);
-        (commitment, Self::CombinedCommitmentHint::default())
-    }
-
-    /// Homomorphically combines multiple commitments into a single commitment, computed as a
-    /// linear combination with the given coefficients.
-    #[cfg(not(feature = "recursion"))]
-    fn combine_commitments<C: Borrow<Self::Commitment>>(
-        _commitments: &[C],
-        _coeffs: &[Self::Field],
-    ) -> Self::Commitment {
-        todo!("`combine_commitments` should be on a separate `AdditivelyHomomorphic` trait")
-    }
-
-    /// Homomorphically combines multiple commitments into a single commitment, computed as a
-    /// linear combination with the given coefficients.
-    #[cfg(feature = "recursion")]
-    fn combine_commitments<C: Borrow<Self::Commitment>>(
-        _commitments: &[C],
-        _coeffs: &[Self::Field],
-        _hint: Option<&Self::CombinedCommitmentHint>,
-    ) -> Self::Commitment {
-        todo!("`combine_commitments` should be on a separate `AdditivelyHomomorphic` trait")
-    }
-
-    /// Homomorphically combines multiple opening proof hints into a single hint, computed as a
-    /// linear combination with the given coefficients.
-    fn combine_hints(
-        _hints: Vec<Self::OpeningProofHint>,
-        _coeffs: &[Self::Field],
-    ) -> Self::OpeningProofHint {
-        unimplemented!()
-    }
-
     /// Generates a proof of evaluation for a polynomial at a specific point.
     ///
     /// # Arguments
@@ -130,16 +71,14 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
     /// * `transcript` - The transcript for Fiat-Shamir transformation
     ///
     /// # Returns
-    /// A tuple containing:
-    /// * The proof of polynomial evaluation at the specified point
-    /// * Optional auxiliary data to help the verifier (can be () for schemes that don't use it)
+    /// The proof of polynomial evaluation at the specified point
     fn prove<ProofTranscript: Transcript>(
         setup: &Self::ProverSetup,
         poly: &MultilinearPolynomial<Self::Field>,
         opening_point: &[Self::Field],
         hint: Self::OpeningProofHint,
         transcript: &mut ProofTranscript,
-    ) -> (Self::Proof, Self::AuxiliaryVerifierData);
+    ) -> Self::Proof;
 
     /// Verifies a proof of polynomial evaluation at a specific point.
     ///
@@ -150,7 +89,6 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
     /// * `opening_point` - The point at which the polynomial is evaluated
     /// * `opening` - The claimed evaluation value of the polynomial at the opening point
     /// * `commitment` - The commitment to the polynomial
-    /// * `auxiliary_data` - Optional auxiliary data from the prover to help verification
     ///
     /// # Returns
     /// Ok(()) if the proof is valid, otherwise a ProofVerifyError
@@ -161,7 +99,6 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
         opening_point: &[Self::Field],
         opening: &Self::Field,
         commitment: &Self::Commitment,
-        auxiliary_data: &Self::AuxiliaryVerifierData,
     ) -> Result<(), ProofVerifyError>;
 
     fn protocol_name() -> &'static [u8];

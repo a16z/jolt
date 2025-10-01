@@ -491,23 +491,6 @@ fn run_recursion_proof(
             )
             .is_ok();
             let rv = postcard::from_bytes::<u32>(&output_bytes).unwrap();
-<<<<<<< HEAD
-            println!("  Recursion verification result: {rv}");
-            println!("  Recursion verification result: {is_valid}");
-        }
-        RunConfig::Trace => {
-            println!("  Trace-only mode: Skipping proof generation and verification.");
-            let (_, _, io_device) = recursion.trace(&input_bytes);
-            let rv = postcard::from_bytes::<u32>(&io_device.outputs).unwrap_or(0);
-            println!("  Recursion output (trace-only): {rv}");
-        }
-        RunConfig::TraceToFile => {
-            println!("  Trace-only mode: Skipping proof generation and verification. Tracing to file: /tmp/{}.trace", guest.name());
-            let (_, io_device) = recursion
-                .trace_to_file(&input_bytes, &format!("/tmp/{}.trace", guest.name()).into());
-            let rv = postcard::from_bytes::<u32>(&io_device.outputs).unwrap_or(0);
-            println!("  Recursion output (trace-only): {rv}");
-=======
             info!("  Recursion verification result: {rv}");
             info!("  Recursion verification result: {is_valid}");
         }
@@ -523,7 +506,6 @@ fn run_recursion_proof(
                 .trace_to_file(&input_bytes, &format!("/tmp/{}.trace", guest.name()).into());
             let rv = postcard::from_bytes::<u32>(&io_device.outputs).unwrap_or(0);
             info!("  Recursion output (trace-only): {rv}");
->>>>>>> main
         }
     }
 }
@@ -535,13 +517,8 @@ fn verify_proofs(
     output_dir: &Path,
     run_config: RunConfig,
 ) {
-<<<<<<< HEAD
-    println!("Verifying proofs for {} guest program...", guest.name());
-    println!("Using embed mode: {use_embed}");
-=======
     info!("Verifying proofs for {} guest program...", guest.name());
     info!("Using embed mode: {use_embed}");
->>>>>>> main
 
     generate_provable_macro(guest, use_embed, output_dir);
 
@@ -653,11 +630,7 @@ fn main() {
             let guest = match GuestProgram::from_str(example) {
                 Some(guest) => guest,
                 None => {
-<<<<<<< HEAD
-                    println!("Unknown example: {example}. Supported examples: fibonacci, muldiv");
-=======
                     info!("Unknown example: {example}. Supported examples: fibonacci, muldiv");
->>>>>>> main
                     return;
                 }
             };
@@ -674,23 +647,8 @@ fn main() {
             verify_proofs(guest, embed.is_some(), workdir, &output_dir, run_config);
         }
         None => {
-<<<<<<< HEAD
-            println!("No subcommand specified. Available commands:");
-            println!();
-            println!("  generate --example <fibonacci|muldiv> [--workdir <DIR>]");
-            println!("  verify --example <fibonacci|muldiv> [--workdir <DIR>] [--embed <DIR>]");
-            println!();
-            println!("Examples:");
-            println!("  cargo run --release -- generate --example fibonacci");
-            println!("  cargo run --release -- generate --example fibonacci --workdir ./output");
-            println!("  cargo run --release -- verify --example fibonacci");
-            println!(
-                "  cargo run --release -- verify --example fibonacci --workdir ./output --embed"
-            );
-            println!("  cargo run --release -- trace --example fibonacci --embed");
-            println!("  cargo run --release -- trace --example fibonacci --embed --disk");
-=======
             info!("No subcommand specified. Available commands:");
+            info!("");
             info!("  generate --example <fibonacci|muldiv> [--workdir <DIR>]");
             info!("  verify --example <fibonacci|muldiv> [--workdir <DIR>] [--embed <DIR>]");
             info!("");
@@ -701,7 +659,6 @@ fn main() {
             info!("  cargo run --release -- verify --example fibonacci --workdir ./output --embed");
             info!("  cargo run --release -- trace --example fibonacci --embed");
             info!("  cargo run --release -- trace --example fibonacci --embed --disk");
->>>>>>> main
         }
     }
 }

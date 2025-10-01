@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use crate::field::JoltField;
+use crate::poly::commitment::additive_homomorphic::AdditivelyHomomorphic;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::dory::DoryGlobals;
 use crate::subprotocols::sumcheck::{BatchedSumcheck, SumcheckInstance};
@@ -38,7 +39,7 @@ impl JoltDAG {
         'a,
         F: JoltField,
         ProofTranscript: Transcript,
-        PCS: CommitmentScheme<Field = F>,
+        PCS: CommitmentScheme<Field = F> + AdditivelyHomomorphic,
     >(
         mut state_manager: StateManager<'a, F, ProofTranscript, PCS>,
     ) -> Result<
@@ -393,7 +394,7 @@ impl JoltDAG {
         'a,
         F: JoltField,
         ProofTranscript: Transcript,
-        PCS: CommitmentScheme<Field = F>,
+        PCS: CommitmentScheme<Field = F> + AdditivelyHomomorphic,
     >(
         mut state_manager: StateManager<'a, F, ProofTranscript, PCS>,
     ) -> Result<(), anyhow::Error> {
@@ -551,11 +552,14 @@ impl JoltDAG {
             use ark_bn254::Fq;
             use ark_grumpkin::Projective as GrumpkinProjective;
 
+            tracing::info!("wtf?");
+
             let proofs = state_manager.proofs.borrow();
             if let Some(ProofData::SZCheckProof(sz_proof)) = proofs.get(&ProofKeys::SZCheckProof) {
-                println!("STAGE 6: Verifying SZ Check Protocol");
+                tracing::info!("STAGE 6: Verifying SZ Check Protocol");
 
                 // Check that F is Fq for SZ check verification
+                // TODO: Fix this jank-ass part
                 if true {
                     // Setup Hyrax generators (must match prover)
                     let hyrax_generators =
