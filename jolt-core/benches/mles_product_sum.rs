@@ -5,7 +5,6 @@ use jolt_core::{
     field::JoltField, poly::multilinear_polynomial::MultilinearPolynomial,
     subprotocols::mles_product_sum::compute_mles_product_sum,
 };
-use rand::Rng;
 
 fn bench_mles_product_sum(c: &mut Criterion, n_mle: usize) {
     let rng = &mut test_rng();

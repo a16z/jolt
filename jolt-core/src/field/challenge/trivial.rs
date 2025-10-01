@@ -1,4 +1,4 @@
-use crate::field::JoltField;
+use crate::field::{tracked_ark::TrackedFr, JoltField};
 use allocative::Allocative;
 use ark_ff::UniformRand;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -356,3 +356,19 @@ macro_rules! impl_field_ops_inline {
     };
 }
 impl_field_ops_inline!(TrivialChallenge<ark_bn254::Fr>, ark_bn254::Fr);
+
+impl Into<TrackedFr> for TrivialChallenge<TrackedFr> {
+    #[inline(always)]
+    fn into(self) -> TrackedFr {
+        TrackedFr(self.value().0)
+    }
+}
+
+impl Into<TrackedFr> for &TrivialChallenge<TrackedFr> {
+    #[inline(always)]
+    fn into(self) -> TrackedFr {
+        TrackedFr(self.value().0)
+    }
+}
+
+impl_field_ops_inline!(TrivialChallenge<TrackedFr>, TrackedFr);

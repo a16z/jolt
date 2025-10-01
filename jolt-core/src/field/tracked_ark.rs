@@ -1,4 +1,9 @@
 use super::{FieldOps, JoltField};
+#[cfg(feature = "mont-challenge")]
+use crate::field::challenge::MontU128Challenge;
+#[cfg(feature = "trivial-challenge")]
+use crate::field::challenge::TrivialChallenge;
+
 use crate::utils::counters::{
     // basic arithmetic
     ADD_COUNT,
@@ -171,11 +176,6 @@ impl PartialEq<Fr> for TrackedFr {
         self.0 == *other
     }
 }
-impl PartialEq<TrackedFr> for Fr {
-    fn eq(&self, other: &TrackedFr) -> bool {
-        *self == other.0
-    }
-}
 
 // Display delegates to Debug or inner Display
 impl fmt::Display for TrackedFr {
@@ -323,7 +323,12 @@ impl JoltField for TrackedFr {
     const MONTGOMERY_R_SQUARE: Self = TrackedFr(<ark_bn254::Fr as JoltField>::MONTGOMERY_R_SQUARE);
     type Unreduced<const N: usize> = <ark_bn254::Fr as JoltField>::Unreduced<N>;
     type SmallValueLookupTables = <ark_bn254::Fr as JoltField>::SmallValueLookupTables;
-    type Challenge = TrivialChallenge<Self>;
+
+    #[cfg(feature = "mont-challenge")]
+    type Challenge = MontU128Challenge<TrackedFr>;
+
+    #[cfg(feature = "trivial-challenge")]
+    type Challenge = TrivialChallenge<TrackedFr>;
 
     fn random<R: rand_core::RngCore>(rng: &mut R) -> Self {
         TrackedFr(<ark_bn254::Fr as JoltField>::random(rng))
@@ -419,13 +424,11 @@ impl JoltField for TrackedFr {
     fn as_unreduced_ref(&self) -> &Self::Unreduced<4> {
         self.0.as_unreduced_ref()
     }
-}
 
     fn mul_unreduced<const L: usize>(self, other: Self) -> BigInt<L> {
         MUL_UNRED_COUNT.fetch_add(1, Ordering::Relaxed);
         <Fr as JoltField>::mul_unreduced(self.0, other.0)
     }
-}
 
     fn mul_u64_unreduced(self, other: u64) -> BigInt<5> {
         MUL_U64_UNRED_COUNT.fetch_add(1, Ordering::Relaxed);
@@ -445,6 +448,14 @@ impl JoltField for TrackedFr {
     fn from_barrett_reduce<const N: usize>(unreduced: BigInt<N>) -> Self {
         BARRETT_REDUCE_COUNT.fetch_add(1, Ordering::Relaxed);
         TrackedFr(<Fr as JoltField>::from_barrett_reduce(unreduced))
+    }
+}
+
+impl TrackedFr {
+    #[inline]
+    pub fn mul_hi_bigint_u128(&self, n: [u64; 4]) -> Self {
+        MUL_U128_COUNT.fetch_add(1, Ordering::Relaxed);
+        TrackedFr(self.0.mul_hi_bigint_u128(n))
     }
 }
 

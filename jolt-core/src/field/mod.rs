@@ -340,5 +340,4 @@ where
 
 pub mod ark;
 pub mod challenge;
-// TODO: (ari) THis needs to be fixed later, but it's not critical tod jolt
-//pub mod tracked_ark;
+pub mod tracked_ark;

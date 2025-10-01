@@ -1,4 +1,4 @@
-use crate::field::JoltField;
+use crate::field::{tracked_ark::TrackedFr, JoltField};
 use allocative::Allocative;
 use ark_ff::{BigInt, PrimeField, UniformRand};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -358,3 +358,19 @@ macro_rules! impl_field_ops_inline {
     };
 }
 impl_field_ops_inline!(MontU128Challenge<ark_bn254::Fr>, ark_bn254::Fr);
+
+impl Into<TrackedFr> for MontU128Challenge<TrackedFr> {
+    #[inline(always)]
+    fn into(self) -> TrackedFr {
+        TrackedFr(ark_bn254::Fr::from_bigint_unchecked(BigInt::new(self.value())).unwrap())
+    }
+}
+
+impl Into<TrackedFr> for &MontU128Challenge<TrackedFr> {
+    #[inline(always)]
+    fn into(self) -> TrackedFr {
+        TrackedFr(ark_bn254::Fr::from_bigint_unchecked(BigInt::new(self.value())).unwrap())
+    }
+}
+
+impl_field_ops_inline!(MontU128Challenge<TrackedFr>, TrackedFr);

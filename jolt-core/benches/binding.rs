@@ -21,8 +21,9 @@ fn random_compact_coeffs(rng: &mut impl Rng, num_vars: usize) -> Vec<u8> {
 }
 
 fn benchmark_dense<F: JoltField>(c: &mut Criterion, num_vars: usize) {
+    let challenge_type = std::any::type_name::<F::Challenge>();
     c.bench_function(
-        &format!("DensePolynomial::bind {num_vars} variables"),
+        &format!("DensePolynomial::bind {num_vars} variables [Challenge: {challenge_type}]"),
         |b| {
             b.iter_with_setup(
                 || {
@@ -47,8 +48,10 @@ fn benchmark_dense<F: JoltField>(c: &mut Criterion, num_vars: usize) {
 }
 
 fn benchmark_dense_batch<F: JoltField>(c: &mut Criterion, num_vars: usize, batch_size: usize) {
+    let challenge_type = std::any::type_name::<F::Challenge>();
+
     c.bench_function(
-        &format!("DensePolynomial::bind {batch_size} x {num_vars} variables"),
+        &format!("DensePolynomial::bind {batch_size} x {num_vars} variables [Challenge: {challenge_type}]"),
         |b| {
             b.iter_with_setup(
                 || {
@@ -81,8 +84,9 @@ fn benchmark_compact<F: JoltField>(
     num_vars: usize,
     binding_order: BindingOrder,
 ) {
+    let challenge_type = std::any::type_name::<F::Challenge>();
     c.bench_function(
-        &format!("CompactPolynomial::bind {num_vars} variables {binding_order:?} binding order"),
+        &format!("CompactPolynomial::bind {num_vars} variables {binding_order:?} binding order [Challenge: {challenge_type}]"),
         |b| {
             b.iter_with_setup(
                 || {
