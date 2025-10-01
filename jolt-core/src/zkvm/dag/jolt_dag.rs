@@ -315,7 +315,7 @@ impl JoltDAG {
         #[cfg(feature = "recursion")]
         {
             use crate::poly::commitment::pedersen::PedersenGenerators;
-            use crate::subprotocols::sz_check_protocol::sz_check_prove;
+            use crate::subprotocols::snark_composition::snark_composition_prove;
             use ark_grumpkin::Projective as GrumpkinProjective;
 
             let exponentiation_steps_vec = state_manager
@@ -334,17 +334,9 @@ impl JoltDAG {
                 let hyrax_generators =
                     PedersenGenerators::<GrumpkinProjective>::new(16, b"test sz check");
 
-                // Run the complete SZ check protocol with a fresh transcript
-                // Note: sz_check_prove requires F to be ark_bn254::Fq
-                // assert_eq!(
-                //     std::any::TypeId::of::<F>(),
-                //     std::any::TypeId::of::<ark_bn254::Fq>(),
-                //     "SZ check protocol requires field to be ark_bn254::Fq"
-                // );
-
                 // Create a fresh transcript for Stage 6 to avoid Fiat-Shamir mismatch
                 let mut sz_transcript = ProofTranscript::new(b"SZ Check Stage 6");
-                let sz_proof = sz_check_prove::<ark_bn254::Fq, ProofTranscript, 1>(
+                let sz_proof = snark_composition_prove::<ark_bn254::Fq, ProofTranscript, 1>(
                     exponentiation_steps_vec,
                     &mut sz_transcript,
                     &hyrax_generators,
@@ -354,12 +346,16 @@ impl JoltDAG {
                 // Safe because we checked F == Fq above
                 let sz_proof_f = unsafe {
                     std::mem::transmute::<
-                        crate::subprotocols::sz_check_protocol::SZCheckProof<
+                        crate::subprotocols::snark_composition::RecursionProof<
                             ark_bn254::Fq,
                             ProofTranscript,
                             1,
                         >,
-                        crate::subprotocols::sz_check_protocol::SZCheckProof<F, ProofTranscript, 1>,
+                        crate::subprotocols::snark_composition::RecursionProof<
+                            F,
+                            ProofTranscript,
+                            1,
+                        >,
                     >(sz_proof)
                 };
 
@@ -548,7 +544,7 @@ impl JoltDAG {
         #[cfg(feature = "recursion")]
         {
             use crate::poly::commitment::pedersen::PedersenGenerators;
-            use crate::subprotocols::sz_check_protocol::sz_check_verify;
+            use crate::subprotocols::snark_composition::snark_composition_verify;
             use ark_bn254::Fq;
             use ark_grumpkin::Projective as GrumpkinProjective;
 
@@ -569,12 +565,12 @@ impl JoltDAG {
                     // Safe because we checked F == Fq
                     let sz_proof_fq = unsafe {
                         std::mem::transmute::<
-                            &crate::subprotocols::sz_check_protocol::SZCheckProof<
+                            &crate::subprotocols::snark_composition::RecursionProof<
                                 F,
                                 ProofTranscript,
                                 1,
                             >,
-                            &crate::subprotocols::sz_check_protocol::SZCheckProof<
+                            &crate::subprotocols::snark_composition::RecursionProof<
                                 Fq,
                                 ProofTranscript,
                                 1,
@@ -584,7 +580,7 @@ impl JoltDAG {
 
                     // Create a fresh transcript for Stage 6 to match the prover
                     let mut sz_transcript = ProofTranscript::new(b"SZ Check Stage 6");
-                    sz_check_verify::<Fq, ProofTranscript, 1>(
+                    snark_composition_verify::<Fq, ProofTranscript, 1>(
                         sz_proof_fq,
                         &mut sz_transcript,
                         &hyrax_generators,

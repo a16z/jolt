@@ -12,7 +12,6 @@ use crate::{
             OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator,
             BIG_ENDIAN,
         },
-        unipoly::UniPoly,
     },
     subprotocols::sumcheck::SumcheckInstance,
     zkvm::witness::RecursionCommittedPolynomial,
@@ -25,80 +24,36 @@ use jolt_optimizations::ExponentiationSteps;
 use rayon::prelude::*;
 
 #[derive(Allocative)]
-struct SZCheckProverState<F: JoltField> {
-    /// The ρ polynomials: ρ_0, ρ_1, ..., ρ_t
+struct ExpProverState<F: JoltField> {
+    /// MLE of accumulator polynomials, ρ: ρ_0, ρ_1, ..., ρ_t
     rho_polys: Vec<MultilinearPolynomial<F>>,
-    /// The quotient polynomials Q_1, Q_2, ..., Q_t
+    /// MLE of quotient polynomials q_1, q_2, ..., q_t
     quotient_polys: Vec<MultilinearPolynomial<F>>,
-    /// The base polynomial A(x)
+    /// MLE of base polynomial a(x)
     base_poly: MultilinearPolynomial<F>,
-    /// The fixed polynomial g(x) = X^12 - 18X^6 + 82
+    /// MLE of g(x) = X^12 - 18X^6 + 82
     g_poly: MultilinearPolynomial<F>,
-    /// eq(r, x) polynomial evaluations
+    /// eq(r, x)
     eq_poly: MultilinearPolynomial<F>,
     /// Exponent bits b_1, b_2, ..., b_t
     bits: Vec<bool>,
 }
 
 #[derive(Allocative)]
-pub struct SZCheckSumcheck<F: JoltField> {
+pub struct ExpSumcheck<F: JoltField> {
     /// Index of the exponentiation this instance belongs to
     exponentiation_index: usize,
-    /// Number of constraints (t)
     num_constraints: usize,
-    /// Powers of gamma for batching: [γ, γ², ..., γ^t]
     gamma_powers: Vec<F>,
-    /// The fixed point r for eq(r, x)
     r: Vec<F>,
-    /// Number of variables (expecting 4 for x ∈ {0,1}⁴)
+    /// Number of variables (expecting 4 for exp polys)
     num_vars: usize,
     /// Exponent bits b_1, b_2, ..., b_t (public to both prover and verifier)
     bits: Vec<bool>,
-    current_round: usize,
-    prover_state: Option<SZCheckProverState<F>>,
+    prover_state: Option<ExpProverState<F>>,
 }
 
-impl<F: JoltField> SZCheckSumcheck<F> {
-    /// Evaluate the batched constraint polynomial at a given point
-    /// Returns: eq(z,x) * sum_{i=1}^t gamma^i * (rho_i(x) - rho_{i-1}(x)^2 * A(x)^{b_i} - Q_i(x) * g(x))
-    pub fn evaluate_constraint_at_point(&self, x: &[F]) -> F {
-        let prover_state = self.prover_state.as_ref().expect("Prover state required");
-
-        // Evaluate eq(z, x) where z is self.r
-        let eq_eval = prover_state.eq_poly.evaluate(x);
-
-        // Evaluate base polynomial A(x)
-        let base_eval = prover_state.base_poly.evaluate(x);
-
-        // Evaluate g(x)
-        let g_eval = prover_state.g_poly.evaluate(x);
-
-        // Compute the batched constraint sum
-        let mut batched_sum = F::zero();
-
-        for i in 0..self.num_constraints {
-            // Evaluate rho_{i-1}(x) and rho_i(x)
-            let rho_prev_eval = prover_state.rho_polys[i].evaluate(x);
-            let rho_curr_eval = prover_state.rho_polys[i + 1].evaluate(x);
-
-            // Evaluate Q_i(x)
-            let q_eval = prover_state.quotient_polys[i].evaluate(x);
-
-            // Compute A(x)^{b_i}
-            let base_power = if self.bits[i] { base_eval } else { F::one() };
-
-            // Compute constraint_i = rho_i(x) - rho_{i-1}(x)^2 * A(x)^{b_i} - Q_i(x) * g(x)
-            let constraint_i =
-                rho_curr_eval - rho_prev_eval * rho_prev_eval * base_power - q_eval * g_eval;
-
-            // Add gamma^i * constraint_i to the batch
-            batched_sum += self.gamma_powers[i] * constraint_i;
-        }
-
-        // Return eq(z, x) * batched_sum
-        eq_eval * batched_sum
-    }
-
+impl<F: JoltField> ExpSumcheck<F> {
     pub fn new_prover(
         exponentiation_index: usize,
         steps: &ExponentiationSteps,
@@ -108,42 +63,39 @@ impl<F: JoltField> SZCheckSumcheck<F> {
     where
         F: From<ark_bn254::Fq>,
     {
-        assert_eq!(r.len(), 4, "Expected 4 variables for x ∈ {{0,1}}⁴");
+        assert_eq!(r.len(), 4, "Expected 4 variables for Exp sumcheck");
 
-        // Convert Vec<ark_bn254::Fq> to Vec<F> and wrap in MultilinearPolynomial
-        let convert_to_mle = |fq_vec: &Vec<ark_bn254::Fq>| -> MultilinearPolynomial<F> {
-            let f_vec: Vec<F> = fq_vec.iter().map(|&fq| F::from(fq)).collect();
-            MultilinearPolynomial::LargeScalars(DensePolynomial::new(f_vec))
-        };
+        let rho_polys: Vec<MultilinearPolynomial<F>> = steps
+            .rho_mles
+            .iter()
+            .map(|mle| MultilinearPolynomial::from_fq_vec(mle.clone()))
+            .collect();
 
-        // Convert all rho MLEs
-        let rho_polys: Vec<MultilinearPolynomial<F>> =
-            steps.rho_mles.iter().map(convert_to_mle).collect();
+        let quotient_polys: Vec<MultilinearPolynomial<F>> = steps
+            .quotient_mles
+            .iter()
+            .map(|mle| MultilinearPolynomial::from_fq_vec(mle.clone()))
+            .collect();
 
-        // Convert all quotient MLEs
-        let quotient_polys: Vec<MultilinearPolynomial<F>> =
-            steps.quotient_mles.iter().map(convert_to_mle).collect();
+        let base_poly = MultilinearPolynomial::from_fq_vec(
+            jolt_optimizations::fq12_to_multilinear_evals(&steps.base),
+        );
+        let g_poly =
+            MultilinearPolynomial::from_fq_vec(jolt_optimizations::witness_gen::get_g_mle());
 
-        // Convert base polynomial
-        let base_mle = jolt_optimizations::fq12_to_multilinear_evals(&steps.base);
-        let base_poly = convert_to_mle(&base_mle);
-
-        // Convert g polynomial
-        let g_mle = jolt_optimizations::witness_gen::get_g_mle();
-        let g_poly = convert_to_mle(&g_mle);
-
-        // Initialize eq(r, x) polynomial
         let eq_poly =
             MultilinearPolynomial::LargeScalars(DensePolynomial::new(EqPolynomial::evals(&r)));
 
-        // Compute gamma powers: [γ, γ², ..., γ^t]
         let num_constraints = steps.quotient_mles.len();
-        let mut gamma_powers = vec![gamma];
-        for i in 1..num_constraints {
-            gamma_powers.push(gamma_powers[i - 1] * gamma);
-        }
+        let gamma_powers: Vec<F> = (0..num_constraints)
+            .scan(F::one(), |acc, _| {
+                let current = *acc;
+                *acc *= gamma;
+                Some(current * gamma)
+            })
+            .collect();
 
-        let prover_state = SZCheckProverState {
+        let prover_state = ExpProverState {
             rho_polys,
             quotient_polys,
             base_poly,
@@ -159,7 +111,6 @@ impl<F: JoltField> SZCheckSumcheck<F> {
             r,
             num_vars: 4,
             bits: steps.bits.clone(),
-            current_round: 0,
             prover_state: Some(prover_state),
         }
     }
@@ -171,13 +122,15 @@ impl<F: JoltField> SZCheckSumcheck<F> {
         r: Vec<F>,
         gamma: F,
     ) -> Self {
-        assert_eq!(r.len(), 4, "Expected 4 variables for x ∈ {{0,1}}⁴");
+        assert_eq!(r.len(), 4, "Expected 4 variables for Exp sumcheck");
 
-        // Compute gamma powers: [γ, γ², ..., γ^t]
-        let mut gamma_powers = vec![gamma];
-        for i in 1..num_constraints {
-            gamma_powers.push(gamma_powers[i - 1] * gamma);
-        }
+        let gamma_powers: Vec<F> = (0..num_constraints)
+            .scan(F::one(), |acc, _| {
+                let current = *acc;
+                *acc *= gamma;
+                Some(current * gamma)
+            })
+            .collect();
 
         Self {
             exponentiation_index,
@@ -186,13 +139,12 @@ impl<F: JoltField> SZCheckSumcheck<F> {
             r,
             num_vars: 4,
             bits,
-            current_round: 0,
             prover_state: None,
         }
     }
 }
 
-impl<F: JoltField> SumcheckInstance<F> for SZCheckSumcheck<F> {
+impl<F: JoltField> SumcheckInstance<F> for ExpSumcheck<F> {
     fn degree(&self) -> usize {
         4
     }
@@ -207,70 +159,7 @@ impl<F: JoltField> SumcheckInstance<F> for SZCheckSumcheck<F> {
 
     fn compute_prover_message(&mut self, _round: usize, _previous_claim: F) -> Vec<F> {
         let prover_state = self.prover_state.as_ref().unwrap();
-        const DEGREE: usize = 4; // Polynomial has degree 4, so we need 5 evaluations
-
-        #[cfg(test)]
-        {
-            if _round == 0 {
-                println!(
-                    "Debug: First round, input_claim = {:?}, previous_claim = {:?}",
-                    self.input_claim(),
-                    _previous_claim
-                );
-            }
-            // Only run this check in the first round when polynomials haven't been bound yet
-            if self.current_round == 0 {
-                // Debug check: verify constraints are zero over hypercube
-                let actual_num_vars = if !prover_state.rho_polys.is_empty() {
-                    prover_state.rho_polys[0].get_num_vars()
-                } else {
-                    return vec![F::zero(); DEGREE - 1];
-                };
-
-                // println!(
-                //     "Debug: Round {}, num_vars = {}, poly num_vars = {}",
-                //     self.current_round, self.num_vars, actual_num_vars
-                // );
-
-                let num_points = 1 << actual_num_vars;
-                for idx in 0..num_points {
-                    let mut x = Vec::new();
-                    for j in 0..actual_num_vars {
-                        x.push(if (idx >> j) & 1 == 0 {
-                            F::zero()
-                        } else {
-                            F::one()
-                        });
-                    }
-
-                    // Evaluate each constraint at this hypercube point
-                    for constraint_idx in 0..self.num_constraints {
-                        let rho_prev_eval = prover_state.rho_polys[constraint_idx].evaluate(&x);
-                        let rho_curr_eval = prover_state.rho_polys[constraint_idx + 1].evaluate(&x);
-                        let q_eval = prover_state.quotient_polys[constraint_idx].evaluate(&x);
-                        let base_eval = prover_state.base_poly.evaluate(&x);
-                        let g_eval = prover_state.g_poly.evaluate(&x);
-
-                        let base_power = if self.bits[constraint_idx] {
-                            base_eval
-                        } else {
-                            F::one()
-                        };
-
-                        let constraint_i = rho_curr_eval
-                            - rho_prev_eval * rho_prev_eval * base_power
-                            - q_eval * g_eval;
-
-                        if constraint_i != F::zero() {
-                            panic!(
-                                "Constraint {} not zero at hypercube point {:?}: got {:?}",
-                                constraint_idx, x, constraint_i
-                            );
-                        }
-                    }
-                }
-            }
-        }
+        const DEGREE: usize = 4;
 
         let univariate_poly_evals: [F; DEGREE] = (0..prover_state.eq_poly.len() / 2)
             .into_par_iter()
@@ -330,52 +219,10 @@ impl<F: JoltField> SumcheckInstance<F> for SZCheckSumcheck<F> {
                 },
             );
 
-        let result = univariate_poly_evals.to_vec();
-
-        #[cfg(test)]
-        if _round == self.num_rounds() - 1 {
-            // Last round - let's see what the final evaluation is
-            // println!("Debug: Last round evaluations: {:?}", result);
-            // println!("Debug: This is round {} of {}", _round, self.num_rounds());
-        }
-
-        // Debug assertion: verify that g(0) + g(1) = previous_claim
-        #[cfg(debug_assertions)]
-        if _round > 0 {
-            // We have evaluations at 0, 2, 3, 4 and need to interpolate to get value at 1
-            let mut evals_with_one = vec![result[0]]; // eval at 0
-            evals_with_one.push(F::zero()); // placeholder for eval at 1 (will be computed)
-            evals_with_one.extend_from_slice(&result[1..]); // evals at 2, 3, 4
-
-            // Compute eval at 1 using the sumcheck relation: g(0) + g(1) = previous_claim
-            evals_with_one[1] = _previous_claim - evals_with_one[0];
-
-            // Verify by interpolating and evaluating
-            let poly = UniPoly::from_evals(&evals_with_one);
-            let eval_at_0 = poly.evaluate(&F::zero());
-            let eval_at_1 = poly.evaluate(&F::one());
-
-            // println!(
-            //     "Debug: Round {}, g(0) = {:?}, g(1) = {:?}, sum = {:?}, previous_claim = {:?}",
-            //     _round,
-            //     eval_at_0,
-            //     eval_at_1,
-            //     eval_at_0 + eval_at_1,
-            //     _previous_claim
-            // );
-
-            debug_assert_eq!(
-                eval_at_0 + eval_at_1,
-                _previous_claim,
-                "Sumcheck relation failed: g(0) + g(1) != previous_claim"
-            );
-        }
-
-        result
+        univariate_poly_evals.to_vec()
     }
 
     fn bind(&mut self, r_j: F, _round: usize) {
-        self.current_round += 1;
         if let Some(prover_state) = self.prover_state.as_mut() {
             use rayon::prelude::*;
 
@@ -408,8 +255,6 @@ impl<F: JoltField> SumcheckInstance<F> for SZCheckSumcheck<F> {
                 .par_iter_mut()
                 .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh));
         }
-
-        self.current_round += 1;
     }
 
     fn expected_output_claim(
@@ -417,15 +262,10 @@ impl<F: JoltField> SumcheckInstance<F> for SZCheckSumcheck<F> {
         accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
         r_sumcheck: &[F],
     ) -> F {
-        #[cfg(test)]
-        {
-            // println!(
-            //     "Debug: expected_output_claim called with r_sumcheck = {:?}",
-            //     r_sumcheck
-            // );
-            // println!("Debug: self.r = {:?}", self.r);
-        }
         let accumulator = accumulator.expect("Accumulator required for expected output claim");
+
+        // this sumcheck is LowToHigh hence we need to reverse here.
+        let r = self.r.iter().cloned().rev().collect::<Vec<_>>();
 
         let rho_evals: Vec<F> = (0..=self.num_constraints)
             .map(|i| {
@@ -467,43 +307,18 @@ impl<F: JoltField> SumcheckInstance<F> for SZCheckSumcheck<F> {
             })
             .collect();
 
-        // Compute eq(r, r_sumcheck)
-        //
+        let eq_eval = EqPolynomial::mle(&r, r_sumcheck);
 
-        let r_rev = self.r.iter().cloned().rev().collect::<Vec<_>>();
-        let eq_eval = EqPolynomial::mle(&r_rev, r_sumcheck);
+        let batched_constraint = (0..self.num_constraints)
+            .map(|i| {
+                let base_power = if self.bits[i] { base_eval } else { F::one() };
+                let constraint =
+                    rho_evals[i + 1] - rho_evals[i].square() * base_power - q_evals[i] * g_eval;
+                self.gamma_powers[i] * constraint
+            })
+            .sum::<F>();
 
-        // Compute batched constraint evaluation
-        let mut batched_constraint = F::zero();
-        for i in 0..self.num_constraints {
-            let base_power = if self.bits[i] { base_eval } else { F::one() };
-            let constraint =
-                rho_evals[i + 1] - rho_evals[i].square() * base_power - q_evals[i] * g_eval;
-
-            // println!("Constraint {}: ", i);
-            // println!("  rho_evals[{}] = {:?}", i, rho_evals[i]);
-            // println!("  rho_evals[{}] = {:?}", i + 1, rho_evals[i + 1]);
-            // println!("  rho_evals[{}].square() = {:?}", i, rho_evals[i].square());
-            // println!("  bits[{}] = {}", i, self.bits[i]);
-            // println!("  base_eval = {:?}", base_eval);
-            // println!("  base_power = {:?}", base_power);
-            // println!("  q_evals[{}] = {:?}", i, q_evals[i]);
-            // println!("  g_eval = {:?}", g_eval);
-            // println!("  constraint = {:?}", constraint);
-            // println!("  gamma_powers[{}] = {:?}", i, self.gamma_powers[i]);
-
-            batched_constraint += self.gamma_powers[i] * constraint;
-        }
-
-        let result = eq_eval * batched_constraint;
-        #[cfg(test)]
-        {
-            // println!(
-            //     "Debug: expected_output_claim: eq_eval = {:?}, batched_constraint = {:?}, result = {:?}",
-            //     eq_eval, batched_constraint, result
-            // );
-        }
-        result
+        eq_eval * batched_constraint
     }
 
     fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
@@ -515,15 +330,11 @@ impl<F: JoltField> SumcheckInstance<F> for SZCheckSumcheck<F> {
         accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
-        // let result = eq_poly
         let prover_state = self
             .prover_state
             .as_ref()
             .expect("Prover state not initialized");
 
-        let _result = prover_state.eq_poly.final_sumcheck_claim();
-
-        // println!("final claim: {:?}", result);
         let mut rho_polynomials = Vec::new();
         let mut rho_claims = Vec::new();
         for (i, rho_poly) in prover_state.rho_polys.iter().enumerate() {
