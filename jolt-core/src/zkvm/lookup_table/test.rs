@@ -89,7 +89,7 @@ pub fn prefix_suffix_test<const XLEN: usize, F: JoltField, T: PrefixSuffixDecomp
 
                 let prefix_evals: Vec<_> = Prefixes::iter()
                     .map(|prefix| {
-                        prefix.prefix_mle::<XLEN, F>(&prefix_checkpoints, r_x, c, prefix_bits, j)
+                        prefix.prefix_mle::<XLEN, F, F>(&prefix_checkpoints, r_x, c, prefix_bits, j)
                     })
                     .collect();
 
@@ -109,7 +109,7 @@ pub fn prefix_suffix_test<const XLEN: usize, F: JoltField, T: PrefixSuffixDecomp
                 r.push(F::from_u64(rng.next_u64()));
 
                 if r.len() % 2 == 0 {
-                    Prefixes::update_checkpoints::<XLEN, F>(
+                    Prefixes::update_checkpoints::<XLEN, F, F>(
                         &mut prefix_checkpoints,
                         r[r.len() - 2],
                         r[r.len() - 1],

@@ -12,7 +12,7 @@ fn bench_mles_product_sum(c: &mut Criterion, n_mle: usize) {
     let mle_n_vars = 14;
     let random_mle: MultilinearPolynomial<Fr> = vec![Fr::random(rng); 1 << mle_n_vars].into();
     let mles = vec![random_mle; n_mle];
-    let r = &vec![Fr::random(rng); mle_n_vars]; //TODO: (Ari check if this should be challenge)
+    let r = &vec![<Fr as JoltField>::Challenge::random(rng); mle_n_vars];
     let r_prime = &[];
     let claim = Fr::random(rng);
 
