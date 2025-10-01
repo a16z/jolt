@@ -625,10 +625,10 @@ impl<F: JoltField> ReadRafProverState<F> {
             .zip(self.lookup_indices_by_table.par_iter())
             .map(|(table, lookup_indices)| {
                 let suffixes = table.suffixes();
-                lookup_indices
+                let unreduced_polys = lookup_indices
                     .par_chunks(chunk_size)
                     .map(|chunk| {
-                        let mut chunk_result: Vec<Vec<F>> =
+                        let mut chunk_result: Vec<Vec<F::Unreduced<6>>> =
                             vec![unsafe_allocate_zero_vec(M); suffixes.len()];
 
                         for (j, k) in chunk {
@@ -637,7 +637,7 @@ impl<F: JoltField> ReadRafProverState<F> {
                                 let t = suffix.suffix_mle::<XLEN>(suffix_bits);
                                 if t != 0 {
                                     let u = self.u_evals[*j];
-                                    result[prefix_bits % M] += u.mul_u64(t);
+                                    result[prefix_bits % M] += u.mul_u64_unreduced(t);
                                 }
                             }
                         }
@@ -649,12 +649,23 @@ impl<F: JoltField> ReadRafProverState<F> {
                         |mut acc, new| {
                             for (acc_i, new_i) in acc.iter_mut().zip(new.iter()) {
                                 for (acc_coeff, new_coeff) in acc_i.iter_mut().zip(new_i.iter()) {
-                                    *acc_coeff += *new_coeff;
+                                    *acc_coeff += new_coeff;
                                 }
                             }
                             acc
                         },
-                    )
+                    );
+
+                // Reduce the unreduced values to field elements
+                unreduced_polys
+                    .into_iter()
+                    .map(|unreduced_coeffs| {
+                        unreduced_coeffs
+                            .into_iter()
+                            .map(F::from_barrett_reduce)
+                            .collect::<Vec<F>>()
+                    })
+                    .collect::<Vec<_>>()
             })
             .collect();
 
@@ -754,53 +765,36 @@ impl<F: JoltField> ReadRafSumcheck<F> {
     fn prover_msg_raf(&self) -> [F; 2] {
         let ps = self.prover_state.as_ref().unwrap();
         let len = ps.identity_ps.Q_len();
-        let (left_0, left_2, right_0, right_2) = (0..len / 2)
+        let [left_0, left_2, right_0, right_2] = (0..len / 2)
             .into_par_iter()
             .map(|b| {
                 let (i0, i2) = ps.identity_ps.sumcheck_evals(b);
                 let (r0, r2) = ps.right_operand_ps.sumcheck_evals(b);
                 let (l0, l2) = ps.left_operand_ps.sumcheck_evals(b);
-                (
+                [
                     *l0.as_unreduced_ref(),
                     *l2.as_unreduced_ref(),
                     *(i0 + r0).as_unreduced_ref(),
                     *(i2 + r2).as_unreduced_ref(),
-                )
+                ]
             })
-            .fold(
-                || {
-                    (
-                        F::Unreduced::<5>::zero(),
-                        F::Unreduced::<5>::zero(),
-                        F::Unreduced::<5>::zero(),
-                        F::Unreduced::<5>::zero(),
-                    )
-                },
-                |running, new| {
-                    (
-                        running.0 + &new.0,
-                        running.1 + &new.1,
-                        running.2 + &new.2,
-                        running.3 + &new.3,
-                    )
-                },
-            )
+            .fold_with([F::Unreduced::<5>::zero(); 4], |running, new| {
+                [
+                    running[0] + &new[0],
+                    running[1] + &new[1],
+                    running[2] + &new[2],
+                    running[3] + &new[3],
+                ]
+            })
             .reduce(
-                || {
-                    (
-                        F::Unreduced::zero(),
-                        F::Unreduced::zero(),
-                        F::Unreduced::zero(),
-                        F::Unreduced::zero(),
-                    )
-                },
+                || [F::Unreduced::zero(); 4],
                 |running, new| {
-                    (
-                        running.0 + new.0,
-                        running.1 + new.1,
-                        running.2 + new.2,
-                        running.3 + new.3,
-                    )
+                    [
+                        running[0] + new[0],
+                        running[1] + new[1],
+                        running[2] + new[2],
+                        running[3] + new[3],
+                    ]
                 },
             );
         [
@@ -828,7 +822,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             None
         };
 
-        let (eval_0, eval_2_left, eval_2_right) = (0..len / 2)
+        let [eval_0, eval_2_left, eval_2_right] = (0..len / 2)
             .into_par_iter()
             .flat_map_iter(|b| {
                 let b = LookupBits::new(b as u128, log_len - 1);
@@ -852,21 +846,31 @@ impl<F: JoltField> ReadRafSumcheck<F> {
                             .iter()
                             .map(|suffix| suffix[usize::from(b) + len / 2])
                             .collect();
-                        (
+                        [
                             table.combine(&prefixes_c0, &suffixes_left),
                             table.combine(&prefixes_c2, &suffixes_left),
                             table.combine(&prefixes_c2, &suffixes_right),
-                        )
+                        ]
                     })
             })
-            .fold(
-                || (F::zero(), F::zero(), F::zero()),
-                |running, new| (running.0 + new.0, running.1 + new.1, running.2 + new.2),
-            )
+            .fold_with([F::Unreduced::<5>::zero(); 3], |running, new| {
+                [
+                    running[0] + new[0].as_unreduced_ref(),
+                    running[1] + new[1].as_unreduced_ref(),
+                    running[2] + new[2].as_unreduced_ref(),
+                ]
+            })
             .reduce(
-                || (F::zero(), F::zero(), F::zero()),
-                |running, new| (running.0 + new.0, running.1 + new.1, running.2 + new.2),
-            );
+                || [F::Unreduced::zero(); 3],
+                |running, new| {
+                    [
+                        running[0] + new[0],
+                        running[1] + new[1],
+                        running[2] + new[2],
+                    ]
+                },
+            )
+            .map(F::from_barrett_reduce);
         [eval_0, eval_2_right + eval_2_right - eval_2_left]
     }
 }

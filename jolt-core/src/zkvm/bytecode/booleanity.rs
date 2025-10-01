@@ -393,16 +393,13 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                                     - F::from_i64(EQ_KM_C[k_m][2] as i64)),
                         ]
                     })
-                    .fold(
-                        || [F::Unreduced::<5>::zero(); 3],
-                        |running, new| {
-                            [
-                                running[0] + new[0].as_unreduced_ref(),
-                                running[1] + new[1].as_unreduced_ref(),
-                                running[2] + new[2].as_unreduced_ref(),
-                            ]
-                        },
-                    )
+                    .fold_with([F::Unreduced::<5>::zero(); 3], |running, new| {
+                        [
+                            running[0] + new[0].as_unreduced_ref(),
+                            running[1] + new[1].as_unreduced_ref(),
+                            running[2] + new[2].as_unreduced_ref(),
+                        ]
+                    })
                     .reduce(
                         || [F::Unreduced::zero(); 3],
                         |running, new| {

@@ -175,7 +175,7 @@ impl<F: JoltField> SumcheckInstance<F> for HammingWeightSumcheck<F> {
                 let ra_sum = (0..ra_poly.len() / 2)
                     .into_par_iter()
                     .map(|i| ra_poly.get_bound_coeff(2 * i))
-                    .fold(F::Unreduced::<5>::zero, |running, new| {
+                    .fold_with(F::Unreduced::<5>::zero(), |running, new| {
                         running + new.as_unreduced_ref()
                     })
                     .reduce(F::Unreduced::zero, |running, new| running + new);
