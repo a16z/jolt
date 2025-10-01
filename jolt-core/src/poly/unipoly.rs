@@ -1,4 +1,4 @@
-use crate::field::JoltField;
+use crate::field::{ChallengeFieldOps, FieldChallengeOps, JoltField};
 use std::cmp::Ordering;
 use std::ops::{AddAssign, Index, IndexMut, Mul, MulAssign, Sub};
 
@@ -152,17 +152,20 @@ impl<F: JoltField> UniPoly<F> {
     }
 
     #[tracing::instrument(skip_all, name = "UniPoly::evaluate")]
-    pub fn evaluate(&self, r: &F::Challenge) -> F {
+    pub fn evaluate<C>(&self, r: &C) -> F
+    where
+        C: Copy + Send + Sync + Into<F> + ChallengeFieldOps<F>,
+        F: FieldChallengeOps<C>,
+    {
         Self::eval_with_coeffs(&self.coeffs, r)
     }
 
-    #[tracing::instrument(skip_all, name = "UniPoly::evaluate_field")]
-    pub fn evaluate_field(&self, r: &F) -> F {
-        Self::eval_with_coeffs_field(&self.coeffs, r)
-    }
-
     #[tracing::instrument(skip_all, name = "UniPoly::eval_with_coeffs")]
-    pub fn eval_with_coeffs(coeffs: &[F], r: &F::Challenge) -> F {
+    pub fn eval_with_coeffs<C>(coeffs: &[F], r: &C) -> F
+    where
+        C: Copy + Send + Sync + Into<F> + ChallengeFieldOps<F>,
+        F: FieldChallengeOps<C>,
+    {
         let mut eval = coeffs[0];
         let mut power = *r + F::zero();
         for i in 1..coeffs.len() {
@@ -437,82 +440,84 @@ mod tests {
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
 
-    //#[test]
-    //fn test_from_evals_toom() {
-    //    // Our degree 3 polynomial is: 5 + x + 3x^2 + 9x^3.
-    //    let gt_poly = UniPoly::<Fr>::from_coeff(vec![5.into(), 1.into(), 3.into(), 9.into()]);
-    //    let degree = 3;
-    //    let finite_evals = (0..degree).map(|x| gt_poly.evaluate(&x.into())).collect();
-    //    let eval_at_infinity = *gt_poly.coeffs.last().unwrap();
-    //    let toom_evals = [finite_evals, vec![eval_at_infinity]].concat();
-    //
-    //    let poly = UniPoly::from_evals_toom(&toom_evals);
-    //
-    //    assert_eq!(gt_poly, poly);
-    //}
+    #[test]
+    fn test_from_evals_toom() {
+        // Our degree 3 polynomial is: 5 + x + 3x^2 + 9x^3.
+        let gt_poly = UniPoly::<Fr>::from_coeff(vec![5.into(), 1.into(), 3.into(), 9.into()]);
+        let degree = 3;
+        let finite_evals = (0..degree)
+            .map(|x| gt_poly.evaluate::<Fr>(&x.into()))
+            .collect();
+        let eval_at_infinity = *gt_poly.coeffs.last().unwrap();
+        let toom_evals = [finite_evals, vec![eval_at_infinity]].concat();
 
-    // #[test]
-    // fn test_from_evals_quad() {
-    //     test_from_evals_quad_helper::<Fr>()
-    // }
+        let poly = UniPoly::from_evals_toom(&toom_evals);
 
-    // fn test_from_evals_quad_helper<F: JoltField>() {
-    //     // polynomial is 2x^2 + 3x + 1
-    //     let e0 = F::one();
-    //     let e1 = F::from_u64(6u64);
-    //     let e2 = F::from_u64(15u64);
-    //     let evals = vec![e0, e1, e2];
-    //     let poly = UniPoly::from_evals(&evals);
-    //
-    //     assert_eq!(poly.eval_at_zero(), e0);
-    //     assert_eq!(poly.eval_at_one(), e1);
-    //     assert_eq!(poly.coeffs.len(), 3);
-    //     assert_eq!(poly.coeffs[0], F::one());
-    //     assert_eq!(poly.coeffs[1], F::from_u64(3u64));
-    //     assert_eq!(poly.coeffs[2], F::from_u64(2u64));
-    //
-    //     let hint = e0 + e1;
-    //     let compressed_poly = poly.compress();
-    //     let decompressed_poly = compressed_poly.decompress(&hint);
-    //     for i in 0..decompressed_poly.coeffs.len() {
-    //         assert_eq!(decompressed_poly.coeffs[i], poly.coeffs[i]);
-    //     }
-    //
-    //     let e3 = F::from_u64(28u64);
-    //     assert_eq!(poly.evaluate(&F::from_u64(3u64)), e3);
-    // }
+        assert_eq!(gt_poly, poly);
+    }
 
-    // #[test]
-    // fn test_from_evals_cubic() {
-    //     test_from_evals_cubic_helper::<Fr>()
-    // }
-    // fn test_from_evals_cubic_helper<F: JoltField>() {
-    //     // polynomial is x^3 + 2x^2 + 3x + 1
-    //     let e0 = F::one();
-    //     let e1 = F::from_u64(7u64);
-    //     let e2 = F::from_u64(23u64);
-    //     let e3 = F::from_u64(55u64);
-    //     let evals = vec![e0, e1, e2, e3];
-    //     let poly = UniPoly::from_evals(&evals);
-    //
-    //     assert_eq!(poly.eval_at_zero(), e0);
-    //     assert_eq!(poly.eval_at_one(), e1);
-    //     assert_eq!(poly.coeffs.len(), 4);
-    //     assert_eq!(poly.coeffs[0], F::one());
-    //     assert_eq!(poly.coeffs[1], F::from_u64(3u64));
-    //     assert_eq!(poly.coeffs[2], F::from_u64(2u64));
-    //     assert_eq!(poly.coeffs[3], F::one());
-    //
-    //     let hint = e0 + e1;
-    //     let compressed_poly = poly.compress();
-    //     let decompressed_poly = compressed_poly.decompress(&hint);
-    //     for i in 0..decompressed_poly.coeffs.len() {
-    //         assert_eq!(decompressed_poly.coeffs[i], poly.coeffs[i]);
-    //     }
-    //
-    //     let e4 = F::from_u64(109u64);
-    //     assert_eq!(poly.evaluate_field(&F::from_u64(4u64)), e4);
-    // }
+    #[test]
+    fn test_from_evals_quad() {
+        test_from_evals_quad_helper::<Fr>()
+    }
+
+    fn test_from_evals_quad_helper<F: JoltField>() {
+        // polynomial is 2x^2 + 3x + 1
+        let e0 = F::one();
+        let e1 = F::from_u64(6u64);
+        let e2 = F::from_u64(15u64);
+        let evals = vec![e0, e1, e2];
+        let poly = UniPoly::from_evals(&evals);
+
+        assert_eq!(poly.eval_at_zero(), e0);
+        assert_eq!(poly.eval_at_one(), e1);
+        assert_eq!(poly.coeffs.len(), 3);
+        assert_eq!(poly.coeffs[0], F::one());
+        assert_eq!(poly.coeffs[1], F::from_u64(3u64));
+        assert_eq!(poly.coeffs[2], F::from_u64(2u64));
+
+        let hint = e0 + e1;
+        let compressed_poly = poly.compress();
+        let decompressed_poly = compressed_poly.decompress(&hint);
+        for i in 0..decompressed_poly.coeffs.len() {
+            assert_eq!(decompressed_poly.coeffs[i], poly.coeffs[i]);
+        }
+
+        let e3 = F::from_u64(28u64);
+        assert_eq!(poly.evaluate::<F>(&F::from_u64(3u64)), e3);
+    }
+
+    #[test]
+    fn test_from_evals_cubic() {
+        test_from_evals_cubic_helper::<Fr>()
+    }
+    fn test_from_evals_cubic_helper<F: JoltField>() {
+        // polynomial is x^3 + 2x^2 + 3x + 1
+        let e0 = F::one();
+        let e1 = F::from_u64(7u64);
+        let e2 = F::from_u64(23u64);
+        let e3 = F::from_u64(55u64);
+        let evals = vec![e0, e1, e2, e3];
+        let poly = UniPoly::from_evals(&evals);
+
+        assert_eq!(poly.eval_at_zero(), e0);
+        assert_eq!(poly.eval_at_one(), e1);
+        assert_eq!(poly.coeffs.len(), 4);
+        assert_eq!(poly.coeffs[0], F::one());
+        assert_eq!(poly.coeffs[1], F::from_u64(3u64));
+        assert_eq!(poly.coeffs[2], F::from_u64(2u64));
+        assert_eq!(poly.coeffs[3], F::one());
+
+        let hint = e0 + e1;
+        let compressed_poly = poly.compress();
+        let decompressed_poly = compressed_poly.decompress(&hint);
+        for i in 0..decompressed_poly.coeffs.len() {
+            assert_eq!(decompressed_poly.coeffs[i], poly.coeffs[i]);
+        }
+
+        let e4 = F::from_u64(109u64);
+        assert_eq!(poly.evaluate::<F>(&F::from_u64(4u64)), e4);
+    }
 
     pub fn naive_mul<F: JoltField>(ours: &UniPoly<F>, other: &UniPoly<F>) -> UniPoly<F> {
         if ours.is_zero() || other.is_zero() {

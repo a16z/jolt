@@ -166,7 +166,7 @@ impl<F: JoltField> SumcheckInstance<F> for RaSumcheck<F> {
         let degree = self.degree();
         debug_assert_eq!(degree, prover_state.ra_i_polys.len() + 1);
         let domain = chain!([0], 2..).map(F::from_u64).take(degree);
-        domain.map(|x| poly.evaluate_field(&x)).collect()
+        domain.map(|x| poly.evaluate::<F>(&x)).collect()
     }
 
     #[tracing::instrument(skip_all, name = "InstructionRaSumcheck::bind")]
