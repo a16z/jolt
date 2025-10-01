@@ -14,15 +14,13 @@ std = [
 ]
 
 [dependencies]
-derive_more = { version = "2.0.1", features = ["from"] }
-ark-serialize = { version = "0.5.0", features = [
-    "derive",
-], default-features = false }
-serde = { version = "1.0.193", features = ["derive"], default-features = false }
-serde_json = { version = "1.0.108", features = [
+derive_more.workspace = true
+ark-serialize = { workspace = true, default-features = false }
+serde = { workspace = true, default-features = false }
+serde_json = { workspace = true, features = [
     "alloc",
 ], default-features = false }
-strum_macros = "0.26.4"
-strum = { version = "0.26.3", default-features = false }
-syn = { version = "1.0", optional = true }
-tracing = "0.1"
+strum_macros.workspace = true
+strum = { workspace = true, default-features = false }
+syn = { workspace = true, optional = true }
+tracing.workspace = true

@@ -1,4 +1,5 @@
 use allocative::Allocative;
+use ark_std::Zero;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 use ark_ff::biginteger::S160;
@@ -543,8 +544,8 @@ impl<F: JoltField> OuterSumcheck<F> {
                 let mut task_bound6_at_r: Vec<SparseCoefficient<F>> = Vec::new();
 
                 for x_out_val in x_out_start..x_out_end {
-                    let mut inner_sum0 = F::zero();
-                    let mut inner_sumInf = F::zero();
+                    let mut inner_sum0 = F::Unreduced::<9>::zero();
+                    let mut inner_sumInf = F::Unreduced::<9>::zero();
 
                     for x_in_val in 0..num_x_in_vals {
                         let current_step_idx = (x_out_val << iter_num_x_in_vars) | x_in_val;
@@ -577,8 +578,8 @@ impl<F: JoltField> OuterSumcheck<F> {
                             eq_poly.E_in_current()[x_in_val]
                         };
 
-                        inner_sum0 += e_in * p0;
-                        inner_sumInf += e_in * slope;
+                        inner_sum0 += e_in.mul_unreduced::<9>(p0);
+                        inner_sumInf += e_in.mul_unreduced::<9>(slope);
 
                         // record six-at-r values
                         let block_id = current_step_idx;
@@ -609,9 +610,11 @@ impl<F: JoltField> OuterSumcheck<F> {
                         F::zero()
                     };
 
-                    // Multiply once by e_out for this x_out
-                    task_sum0 += e_out * inner_sum0;
-                    task_sumInf += e_out * inner_sumInf;
+                    // Reduce once per x_out, then multiply by e_out
+                    let reduced0 = F::from_montgomery_reduce::<9>(inner_sum0);
+                    let reducedInf = F::from_montgomery_reduce::<9>(inner_sumInf);
+                    task_sum0 += e_out * reduced0;
+                    task_sumInf += e_out * reducedInf;
                 }
 
                 StreamingTaskOutput {
@@ -793,10 +796,10 @@ impl<F: JoltField> OuterSumcheck<F> {
                 .par_iter()
                 .map(|&(start, end)| {
                     let chunk = &self.interleaved_poly.bound_coeffs[start..end];
-                    let mut eval_point_0 = F::zero();
-                    let mut eval_point_infty = F::zero();
+            let mut eval_point_0 = F::zero();
+            let mut eval_point_infty = F::zero();
 
-                    let mut inner_sums = (F::zero(), F::zero());
+                    let mut inner_sums = (F::Unreduced::<9>::zero(), F::Unreduced::<9>::zero());
                     let mut prev_x2 = 0;
 
                     for sparse_block in chunk.chunk_by(|x, y| x.index / 6 == y.index / 6) {
@@ -806,12 +809,14 @@ impl<F: JoltField> OuterSumcheck<F> {
                         let x2 = block_index >> num_x1_bits;
 
                         if x2 != prev_x2 {
+                            let reduced0 = F::from_montgomery_reduce::<9>(inner_sums.0);
+                            let reducedInf = F::from_montgomery_reduce::<9>(inner_sums.1);
                             eval_point_0 +=
-                                self.split_eq_poly.E_out_current()[prev_x2] * inner_sums.0;
+                                self.split_eq_poly.E_out_current()[prev_x2] * reduced0;
                             eval_point_infty +=
-                                self.split_eq_poly.E_out_current()[prev_x2] * inner_sums.1;
+                                self.split_eq_poly.E_out_current()[prev_x2] * reducedInf;
 
-                            inner_sums = (F::zero(), F::zero());
+                            inner_sums = (F::Unreduced::<9>::zero(), F::Unreduced::<9>::zero());
                             prev_x2 = x2;
                         }
 
@@ -827,14 +832,18 @@ impl<F: JoltField> OuterSumcheck<F> {
                         let az_eval_infty = az.1 - az.0;
                         let bz_eval_infty = bz.1 - bz.0;
 
-                        inner_sums.0 +=
-                            E_in_evals.mul_0_optimized(az.0.mul_0_optimized(bz.0) - cz0);
-                        inner_sums.1 += E_in_evals
-                            .mul_0_optimized(az_eval_infty.mul_0_optimized(bz_eval_infty));
+                        inner_sums.0 += E_in_evals.mul_unreduced::<9>(
+                            az.0.mul_0_optimized(bz.0) - cz0,
+                        );
+                        inner_sums.1 += E_in_evals.mul_unreduced::<9>(
+                            az_eval_infty.mul_0_optimized(bz_eval_infty),
+                        );
                     }
 
-                    eval_point_0 += self.split_eq_poly.E_out_current()[prev_x2] * inner_sums.0;
-                    eval_point_infty += self.split_eq_poly.E_out_current()[prev_x2] * inner_sums.1;
+                    let reduced0 = F::from_montgomery_reduce::<9>(inner_sums.0);
+                    let reducedInf = F::from_montgomery_reduce::<9>(inner_sums.1);
+                    eval_point_0 += self.split_eq_poly.E_out_current()[prev_x2] * reduced0;
+                    eval_point_infty += self.split_eq_poly.E_out_current()[prev_x2] * reducedInf;
 
                     (eval_point_0, eval_point_infty)
                 })

@@ -6,6 +6,8 @@ authors = [
     "Sam Ragsdale <sragsdale@a16z.com>",
     "Noah Citron <ncitron@a16z.com>",
     "Sagar Dhawan <sdhawan@a16z.com>",
+    "Andrew Tretyakov <atretyakov@a16z.com>",
+    "Markos Georghiades <mgeorghiades@a16z.com>",
 ]
 description = "Jolt platform SDK provides the necessary tools and libraries to build applications on the Jolt platform. Supports std and no_std."
 license = "MIT"
@@ -14,23 +16,26 @@ repository = "https://github.com/a16z/jolt"
 edition = "2021"
 
 [features]
-std = [
-    "random"
-]
-random = [
-    "dep:getrandom_v02",
-    "dep:getrandom_v03",
-    "dep:rand",
-]
+std = ["random"]
+random = ["dep:getrandom_v02", "dep:getrandom_v03", "dep:rand"]
 malloc-shim = []
 
 [dependencies]
-rand = { version = "0.8.5", default-features = false, features = ["std_rng"], optional = true }
+rand = { workspace = true, default-features = false, features = [
+    "std_rng",
+], optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-getrandom_v02 = { version = "0.2.16", package = "getrandom", default-features = false, features = ["custom"], optional = true }
-getrandom_v03 = { version = "0.3.3" , package = "getrandom", default-features = false, features = [], optional = true }
+getrandom_v02 = { workspace = true, default-features = false, features = [
+    "custom",
+], optional = true }
+getrandom_v03 = { workspace = true, default-features = false, features = [
+], optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-getrandom_v02 = { version = "0.2.16", package = "getrandom", default-features = false, features = ["js"], optional = true }
-getrandom_v03 = { version = "0.3.3" , package = "getrandom", default-features = false, features = ["wasm_js"], optional = true }
+getrandom_v02 = { workspace = true, default-features = false, features = [
+    "js",
+], optional = true }
+getrandom_v03 = { workspace = true, default-features = false, features = [
+    "wasm_js",
+], optional = true }
