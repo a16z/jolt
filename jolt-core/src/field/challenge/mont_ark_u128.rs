@@ -86,9 +86,6 @@ impl Into<ark_bn254::Fr> for &MontU128Challenge<ark_bn254::Fr> {
 }
 macro_rules! impl_field_ops_inline {
     ($t:ty, $f:ty) => {
-        /* ----------------------
-         * $t ⊗ $t
-         * ---------------------- */
         impl Add<$t> for $t {
             type Output = $f;
             #[inline(always)]
@@ -176,9 +173,6 @@ macro_rules! impl_field_ops_inline {
             }
         }
 
-        /* ----------------------
-         * $t ⊗ $f
-         * ---------------------- */
         impl Add<$f> for $t {
             type Output = $f;
             #[inline(always)]
@@ -266,9 +260,6 @@ macro_rules! impl_field_ops_inline {
             }
         }
 
-        /* ----------------------
-         * $f ⊗ $t
-         * ---------------------- */
         impl Add<$t> for $f {
             type Output = $f;
             #[inline(always)]

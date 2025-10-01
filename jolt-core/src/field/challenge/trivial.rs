@@ -6,7 +6,7 @@ use rand::{Rng, RngCore};
 use std::fmt::{Debug, Display};
 use std::hash::Hash;
 use std::ops::*;
-/// Trivial implementation of Challenge type that just wraps the field element
+
 #[derive(
     Copy,
     Clone,
