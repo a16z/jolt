@@ -2,7 +2,10 @@ use crate::field::JoltField;
 use crate::poly::opening_proof::{Endianness, OpeningPoint};
 use crate::utils::{math::Math, thread::unsafe_allocate_zero_vec};
 use rayon::prelude::*;
-use std::marker::PhantomData;
+use std::{
+    marker::PhantomData,
+    ops::{Mul, Sub},
+};
 
 const PARALLEL_THRESHOLD: usize = 16;
 
@@ -13,8 +16,8 @@ impl<F: JoltField> EqPolynomial<F> {
     where
         X: Copy + Send + Sync,
         Y: Copy + Send + Sync,
-        F: JoltField + std::ops::Sub<X, Output = F> + std::ops::Sub<Y, Output = F>,
-        X: std::ops::Mul<Y, Output = F>,
+        F: JoltField + Sub<X, Output = F> + Sub<Y, Output = F>,
+        X: Mul<Y, Output = F>,
     {
         assert_eq!(x.len(), y.len());
         x.par_iter()
