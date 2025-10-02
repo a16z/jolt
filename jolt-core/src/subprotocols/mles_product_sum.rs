@@ -1,3 +1,4 @@
+use num_traits::Zero;
 use std::iter::zip;
 
 use rayon::prelude::*;
@@ -48,13 +49,32 @@ pub fn compute_mles_product_sum<F: JoltField>(
                 product_eval_univariate(&mle_eval_pairs, &mut partial_evals);
             }
 
-            partial_evals.iter_mut().for_each(|v| *v *= *eq_wr_eval);
+            // Convert to unreduced after multiplication
             partial_evals
+                .iter()
+                .map(|v| {
+                    let result = *v * *eq_wr_eval;
+                    // Convert to unreduced<5> for accumulation
+                    let unreduced_4 = *result.as_unreduced_ref();
+                    let mut unreduced_5 = <F::Unreduced<5> as Zero>::zero();
+                    unreduced_5 = unreduced_5 + &unreduced_4;
+                    unreduced_5
+                })
+                .collect()
         })
         .reduce(
-            || vec![F::zero(); mles.len()],
+            || {
+                let mut v = vec![];
+                for _ in 0..mles.len() {
+                    v.push(<F::Unreduced<5> as Zero>::zero());
+                }
+                v
+            },
             |a_evals, b_evals| zip(a_evals, b_evals).map(|(a, b)| a + b).collect(),
         );
+
+    // Convert back from unreduced
+    let sum_evals: Vec<F> = sum_evals.into_iter().map(F::from_barrett_reduce).collect();
 
     let round = r_prime.len();
     let eq_eval_at_0 = EqPolynomial::mle(&[F::zero()], &[r[round]]);
