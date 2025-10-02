@@ -1,3 +1,7 @@
+/// Bespoke implementation of Challenge type that is a subset of the JoltField
+/// with the property that the 2 least significant digits are 0'd out, and it needs
+/// 125 bits to represent.
+/// For more details See: *TODO: LINK**
 use crate::field::{tracked_ark::TrackedFr, JoltField};
 use allocative::Allocative;
 use ark_ff::{BigInt, PrimeField, UniformRand};
@@ -7,9 +11,6 @@ use std::fmt::{Debug, Display};
 use std::hash::Hash;
 use std::marker::PhantomData;
 use std::ops::{Add, Mul, Sub};
-/// Bespoke implementation of Challenge type that is a subset of the JoltField
-/// with the property that the 2 least significant digits are 0'd out, and it needs
-/// 125 bits to represent.
 #[derive(
     Copy,
     Clone,
