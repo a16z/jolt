@@ -33,10 +33,6 @@ for f in /sys/kernel/mm/transparent_hugepage/enabled /sys/kernel/mm/transparent_
   [[ -f "$f" ]] && echo always > "$f" || true
 done
 
-echo "==> Disabling automatic NUMA balancing (we'll pin manually)"
-if [[ -f /proc/sys/kernel/numa_balancing ]]; then
-  echo 0 > /proc/sys/kernel/numa_balancing
-fi
 
 echo "==> Reducing I/O writeback jitter"
 sysctl -q vm.dirty_ratio=10
@@ -59,22 +55,9 @@ echo "==> Dropping page cache (optional, for clean benchmark runs)"
 sync
 echo 3 > /proc/sys/vm/drop_caches
 
-echo "==> Detecting NUMA topology and preparing core list on node 0"
-if ! command -v lscpu >/dev/null 2>&1; then
-  apt-get update && apt-get install -y util-linux
-fi
-
-# Build a comma-separated list of CPU IDs that belong to NUMA node 0.
-CORES_NODE0=$(lscpu -e=CPU,NODE | awk '$2 == 0 {print $1}' | paste -sd, -)
-if [[ -z "${CORES_NODE0}" ]]; then
-  echo "Could not determine cores for NUMA node 0; using all cores."
-  CORES_NODE0=$(lscpu -e=CPU | awk 'NR>1{print $1}' | paste -sd, -)
-fi
-echo "Cores on node 0: ${CORES_NODE0}"
-
 echo "==> Ready-to-run Jolt profiling command:"
 echo
-echo "numactl --cpunodebind=0 --membind=0 taskset -c ${CORES_NODE0} chrt -f 80 RUST_LOG=info cargo run --release -p jolt-core profile --name sha2-chain --format chrome"
+echo "RUST_LOG=info chrt -f 80 cargo run --release -p jolt-core profile --name sha2-chain --format chrome"
 
 echo
 echo "All set. Run the command above to benchmark."
