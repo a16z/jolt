@@ -127,6 +127,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
 }
 
 impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> JoltProof<F, PCS, FS> {
+    #[tracing::instrument(skip_all, name = "JoltProof::from_prover_state_manager")]
     pub fn from_prover_state_manager(mut state_manager: StateManager<'_, F, FS, PCS>) -> Self {
         let prover_state = state_manager.prover_state.as_mut().unwrap();
         let openings = std::mem::take(&mut prover_state.accumulator.borrow_mut().openings);

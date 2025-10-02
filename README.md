@@ -9,7 +9,9 @@ Jolt is a zkVM (zero-knowledge virtual machine) for RISC-V, built to be the simp
 ## Resources
 
 ### Docs
+
 [The Jolt Book](https://jolt.a16zcrypto.com/)
+
 - 🚧 currently undergoing updates 🚧
 
 ### Papers
@@ -25,15 +27,19 @@ Srinath Setty, Justin Thaler
 Srinath Setty, Justin Thaler, Riad Wahby
 
 ### Blog posts
+
 Initial launch:
+
 - [Releasing Jolt](https://a16zcrypto.com/posts/article/a-new-era-in-snark-design-releasing-jolt/)
 - [FAQ on Jolt's initial implementation](https://a16zcrypto.com/posts/article/faqs-on-jolts-initial-implementation/)
 
 Updates:
+
 - Nov 12, 2024 [blog](https://a16zcrypto.com/posts/article/jolt-an-update/) [video](https://a16zcrypto.com/posts/videos/an-update-on-jolts-development-roadmap/)
 - Aug 18, 2025 (Twist and Shout upgrade) [blog](https://a16zcrypto.com/posts/article/jolt-6x-speedup/)
 
 ### Background
+
 - [Proofs, Arguments, and Zero-Knowledge](https://people.cs.georgetown.edu/jthaler/ProofsArgsAndZK.pdf)
 
 ## Quickstart
@@ -52,7 +58,6 @@ You will need Rust [nightly](./rust-toolchain.toml).
 If you have `rustup` installed, you do not need to do anything as it will
 automatically install the correct toolchain and any additional targets on the
 first `cargo` invocation.
-
 
 Clone this repo:
 
@@ -97,6 +102,14 @@ Where `--name` can be `sha2`, `sha3`, `sha2-chain`, `fibonacci`, or `btreemap`. 
 
 The above command will output a JSON file in the workspace rootwith a name `trace-<timestamp>.json`, which can be viewed in [Perfetto](https://ui.perfetto.dev/).
 
+You may also enable pprof for detailed CPU profiling:
+
+```cargo run --release --features pprof -p jolt-core profile --name sha3 --format chrome```
+
+This will produce a `.pb` profile, which you can view in [pprof](https://github.com/google/pprof):
+
+```go tool pprof -http=:8080 pprof.pb```
+
 ### Memory profiling
 
 Jolt uses [allocative](https://github.com/facebookexperimental/allocative) for memory profiling.
@@ -134,7 +147,7 @@ We have enabled [benchmarking during CI](https://a16z.github.io/jolt/dev/bench/)
 
 ## Acknowledgements
 
-*This repository started as a fork of https://github.com/arkworks-rs/spartan. Original Spartan [code](https://github.com/microsoft/Spartan) by Srinath Setty.*
+_This repository started as a fork of <https://github.com/arkworks-rs/spartan>. Original Spartan [code](https://github.com/microsoft/Spartan) by Srinath Setty._
 
 ## Licensing
 
@@ -144,4 +157,4 @@ Jolt is Copyright (c) a16z 2023. However, certain portions of the Jolt codebase 
 
 ## Disclaimer
 
-*This code is being provided as is. No guarantee, representation or warranty is being made, express or implied, as to the safety or correctness of the code. It has not been audited and as such there can be no assurance it will work as intended, and users may experience delays, failures, errors, omissions or loss of transmitted information. Nothing in this repo should be construed as investment advice or legal advice for any particular facts or circumstances and is not meant to replace competent counsel. It is strongly advised for you to contact a reputable attorney in your jurisdiction for any questions or concerns with respect thereto. a16z is not liable for any use of the foregoing, and users should proceed with caution and use at their own risk. See a16z.com/disclosures for more info.*
+_This code is being provided as is. No guarantee, representation or warranty is being made, express or implied, as to the safety or correctness of the code. It has not been audited and as such there can be no assurance it will work as intended, and users may experience delays, failures, errors, omissions or loss of transmitted information. Nothing in this repo should be construed as investment advice or legal advice for any particular facts or circumstances and is not meant to replace competent counsel. It is strongly advised for you to contact a reputable attorney in your jurisdiction for any questions or concerns with respect thereto. a16z is not liable for any use of the foregoing, and users should proceed with caution and use at their own risk. See a16z.com/disclosures for more info._

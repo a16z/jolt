@@ -29,6 +29,29 @@ use allocative::FlameGraphBuilder;
 use anyhow::Context;
 use rayon::prelude::*;
 
+pub struct ProofDags<F: JoltField> {
+    pub spartan: SpartanDag<F>,
+    pub registers: RegistersDag,
+    pub ram: RamDag,
+    pub lookups: LookupsDag<F>,
+    pub bytecode: BytecodeDag,
+}
+
+impl<F: JoltField> ProofDags<F> {
+    pub fn new(
+        spartan: SpartanDag<F>,
+        state_manager: &StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+    ) -> Self {
+        Self {
+            spartan,
+            registers: RegistersDag::default(),
+            ram: RamDag::new_prover(state_manager),
+            lookups: LookupsDag::default(),
+            bytecode: BytecodeDag::default(),
+        }
+    }
+}
+
 pub enum JoltDAG {}
 
 impl JoltDAG {
@@ -63,225 +86,13 @@ impl JoltDAG {
             AllCommittedPolynomials::initialize(compute_d_parameter(ram_K), bytecode_d),
         );
 
-        // Generate and commit to all witness polynomials
-        let opening_proof_hints = Self::generate_and_commit_polynomials(&mut state_manager)?;
-
-        // Append commitments to transcript
-        let commitments = state_manager.get_commitments();
-        let transcript = state_manager.get_transcript();
-        for commitment in commitments.borrow().iter() {
-            transcript.borrow_mut().append_serializable(commitment);
-        }
-        drop(commitments);
-
-        // Stage 1:
-        #[cfg(not(target_arch = "wasm32"))]
-        print_current_memory_usage("Stage 1 baseline");
-        let span = tracing::span!(tracing::Level::INFO, "Stage 1 sumchecks");
-        let _guard = span.enter();
-
-        let (_, trace, _, _) = state_manager.get_prover_data();
-        let padded_trace_length = trace.len().next_power_of_two();
-        let mut spartan_dag = SpartanDag::<F>::new::<ProofTranscript>(padded_trace_length);
-        let mut lookups_dag = LookupsDag::default();
-        let mut registers_dag = RegistersDag::default();
-        let mut ram_dag = RamDag::new_prover(&state_manager);
-        let mut bytecode_dag = BytecodeDag::default();
-
-        tracing::info!("Stage 1 proving");
-        spartan_dag
-            .stage1_prove(&mut state_manager)
-            .context("Stage 1")?;
-
-        drop(_guard);
-        drop(span);
-
-        // Stage 2:
-        #[cfg(not(target_arch = "wasm32"))]
-        print_current_memory_usage("Stage 2 baseline");
-        let span = tracing::span!(tracing::Level::INFO, "Stage 2 sumchecks");
-        let _guard = span.enter();
-
-        let mut stage2_instances: Vec<_> = std::iter::empty()
-            .chain(spartan_dag.stage2_prover_instances(&mut state_manager))
-            .chain(registers_dag.stage2_prover_instances(&mut state_manager))
-            .chain(ram_dag.stage2_prover_instances(&mut state_manager))
-            .chain(lookups_dag.stage2_prover_instances(&mut state_manager))
-            .collect();
-
-        #[cfg(feature = "allocative")]
-        {
-            let mut flamegraph = FlameGraphBuilder::default();
-            for sumcheck in stage2_instances.iter() {
-                sumcheck.update_flamegraph(&mut flamegraph);
-            }
-            write_flamegraph_svg(flamegraph, "stage2_start_flamechart.svg");
-        }
-
-        let stage2_instances_mut: Vec<&mut dyn SumcheckInstance<F>> = stage2_instances
-            .iter_mut()
-            .map(|instance| &mut **instance as &mut dyn SumcheckInstance<F>)
-            .collect();
-
-        let transcript = state_manager.get_transcript();
-        let accumulator = state_manager.get_prover_accumulator();
-        tracing::info!("Stage 2 proving");
-        let (stage2_proof, _r_stage2) = BatchedSumcheck::prove(
-            stage2_instances_mut,
-            Some(accumulator.clone()),
-            &mut *transcript.borrow_mut(),
-        );
-
-        state_manager.proofs.borrow_mut().insert(
-            ProofKeys::Stage2Sumcheck,
-            ProofData::SumcheckProof(stage2_proof),
-        );
-
-        #[cfg(feature = "allocative")]
-        {
-            let mut flamegraph = FlameGraphBuilder::default();
-            for sumcheck in stage2_instances.iter() {
-                sumcheck.update_flamegraph(&mut flamegraph);
-            }
-            write_flamegraph_svg(flamegraph, "stage2_end_flamechart.svg");
-        }
-
-        drop_in_background_thread(stage2_instances);
-
-        drop(_guard);
-        drop(span);
-
-        // Stage 3:
-        #[cfg(not(target_arch = "wasm32"))]
-        print_current_memory_usage("Stage 3 baseline");
-        let span = tracing::span!(tracing::Level::INFO, "Stage 3 sumchecks");
-        let _guard = span.enter();
-
-        let mut stage3_instances: Vec<_> = std::iter::empty()
-            .chain(spartan_dag.stage3_prover_instances(&mut state_manager))
-            .chain(registers_dag.stage3_prover_instances(&mut state_manager))
-            .chain(lookups_dag.stage3_prover_instances(&mut state_manager))
-            .chain(ram_dag.stage3_prover_instances(&mut state_manager))
-            .collect();
-
-        #[cfg(feature = "allocative")]
-        {
-            let mut flamegraph = FlameGraphBuilder::default();
-            for sumcheck in stage3_instances.iter() {
-                sumcheck.update_flamegraph(&mut flamegraph);
-            }
-            write_flamegraph_svg(flamegraph, "stage3_start_flamechart.svg");
-        }
-
-        let stage3_instances_mut: Vec<&mut dyn SumcheckInstance<F>> = stage3_instances
-            .iter_mut()
-            .map(|instance| &mut **instance as &mut dyn SumcheckInstance<F>)
-            .collect();
-
-        tracing::info!("Stage 3 proving");
-        let (stage3_proof, _r_stage3) = BatchedSumcheck::prove(
-            stage3_instances_mut,
-            Some(accumulator.clone()),
-            &mut *transcript.borrow_mut(),
-        );
-
-        state_manager.proofs.borrow_mut().insert(
-            ProofKeys::Stage3Sumcheck,
-            ProofData::SumcheckProof(stage3_proof),
-        );
-
-        #[cfg(feature = "allocative")]
-        {
-            let mut flamegraph = FlameGraphBuilder::default();
-            for sumcheck in stage3_instances.iter() {
-                sumcheck.update_flamegraph(&mut flamegraph);
-            }
-            write_flamegraph_svg(flamegraph, "stage3_end_flamechart.svg");
-        }
-
-        drop_in_background_thread(stage3_instances);
-
-        drop(_guard);
-        drop(span);
-
-        // Stage 4:
-        #[cfg(not(target_arch = "wasm32"))]
-        print_current_memory_usage("Stage 4 baseline");
-        let span = tracing::span!(tracing::Level::INFO, "Stage 4 sumchecks");
-        let _guard = span.enter();
-
-        let mut stage4_instances: Vec<_> = std::iter::empty()
-            .chain(ram_dag.stage4_prover_instances(&mut state_manager))
-            .chain(bytecode_dag.stage4_prover_instances(&mut state_manager))
-            .chain(lookups_dag.stage4_prover_instances(&mut state_manager))
-            .collect();
-
-        #[cfg(feature = "allocative")]
-        {
-            let mut flamegraph = FlameGraphBuilder::default();
-            for sumcheck in stage4_instances.iter() {
-                sumcheck.update_flamegraph(&mut flamegraph);
-            }
-            write_flamegraph_svg(flamegraph, "stage4_start_flamechart.svg");
-        }
-
-        let stage4_instances_mut: Vec<&mut dyn SumcheckInstance<F>> = stage4_instances
-            .iter_mut()
-            .map(|instance| &mut **instance as &mut dyn SumcheckInstance<F>)
-            .collect();
-
-        tracing::info!("Stage 4 proving");
-        let (stage4_proof, _r_stage4) = BatchedSumcheck::prove(
-            stage4_instances_mut,
-            Some(accumulator.clone()),
-            &mut *transcript.borrow_mut(),
-        );
-
-        state_manager.proofs.borrow_mut().insert(
-            ProofKeys::Stage4Sumcheck,
-            ProofData::SumcheckProof(stage4_proof),
-        );
-
-        #[cfg(feature = "allocative")]
-        {
-            let mut flamegraph = FlameGraphBuilder::default();
-            for sumcheck in stage4_instances.iter() {
-                sumcheck.update_flamegraph(&mut flamegraph);
-            }
-            write_flamegraph_svg(flamegraph, "stage4_end_flamechart.svg");
-        }
-
-        drop_in_background_thread(stage4_instances);
-
-        drop(_guard);
-        drop(span);
-
-        // Batch-prove all openings
-        let (_, trace, _, _) = state_manager.get_prover_data();
-
-        let all_polys: Vec<CommittedPolynomial> =
-            AllCommittedPolynomials::iter().copied().collect();
-        let polynomials_map =
-            CommittedPolynomial::generate_witness_batch(&all_polys, preprocessing, trace);
-
-        #[cfg(feature = "allocative")]
-        print_data_structure_heap_usage("Committed polynomials map", &polynomials_map);
-
-        #[cfg(not(target_arch = "wasm32"))]
-        print_current_memory_usage("Stage 5 baseline");
-
-        tracing::info!("Stage 5 proving");
-        let opening_proof = accumulator.borrow_mut().reduce_and_prove(
-            polynomials_map,
-            opening_proof_hints,
-            &preprocessing.generators,
-            &mut *transcript.borrow_mut(),
-        );
-
-        state_manager.proofs.borrow_mut().insert(
-            ProofKeys::ReducedOpeningProof,
-            ProofData::ReducedOpeningProof(opening_proof),
-        );
+        let opening_proof_hints = Self::prove_setup(&mut state_manager)?;
+        let spartan_dag = Self::prove_stage1(&mut state_manager)?;
+        let mut dags = ProofDags::new(spartan_dag, &state_manager);
+        Self::prove_stage2(&mut dags, &mut state_manager)?;
+        Self::prove_stage3(&mut dags, &mut state_manager)?;
+        Self::prove_stage4(&mut dags, &mut state_manager)?;
+        Self::prove_stage5(&mut state_manager, opening_proof_hints)?;
 
         #[cfg(test)]
         assert!(
@@ -315,6 +126,118 @@ impl JoltDAG {
         let proof = JoltProof::from_prover_state_manager(state_manager);
 
         Ok((proof, debug_info))
+    }
+
+    fn prove_setup<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
+        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+    ) -> Result<HashMap<CommittedPolynomial, PCS::OpeningProofHint>, anyhow::Error> {
+        // Generate and commit to all witness polynomials
+        let opening_proof_hints = Self::generate_and_commit_polynomials(state_manager)?;
+
+        // Append commitments to transcript
+        let commitments = state_manager.get_commitments();
+        let transcript = state_manager.get_transcript();
+        for commitment in commitments.borrow().iter() {
+            transcript.borrow_mut().append_serializable(commitment);
+        }
+        drop(commitments);
+
+        Ok(opening_proof_hints)
+    }
+
+    fn prove_stage1<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
+        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+    ) -> Result<SpartanDag<F>, anyhow::Error> {
+        let _span = tracing::span!(tracing::Level::INFO, "Stage 1 sumchecks").entered();
+
+        let (_, trace, _, _) = state_manager.get_prover_data();
+        let padded_trace_length = trace.len().next_power_of_two();
+        let mut spartan_dag = SpartanDag::<F>::new::<ProofTranscript>(padded_trace_length);
+
+        spartan_dag.stage1_prove(state_manager).context("Stage 1")?;
+
+        Ok(spartan_dag)
+    }
+
+    fn prove_stage2<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
+        dags: &mut ProofDags<F>,
+        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+    ) -> Result<(), anyhow::Error> {
+        let _span = tracing::span!(tracing::Level::INFO, "Stage 2 sumchecks").entered();
+        let instances: Vec<_> = std::iter::empty()
+            .chain(dags.spartan.stage2_prover_instances(state_manager))
+            .chain(dags.registers.stage2_prover_instances(state_manager))
+            .chain(dags.ram.stage2_prover_instances(state_manager))
+            .chain(dags.lookups.stage2_prover_instances(state_manager))
+            .collect();
+
+        Self::execute_sumcheck_stage(2, instances, state_manager, ProofKeys::Stage2Sumcheck)
+    }
+
+    fn prove_stage3<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
+        dags: &mut ProofDags<F>,
+        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+    ) -> Result<(), anyhow::Error> {
+        let _span = tracing::span!(tracing::Level::INFO, "Stage 3 sumchecks").entered();
+        let instances: Vec<_> = std::iter::empty()
+            .chain(dags.spartan.stage3_prover_instances(state_manager))
+            .chain(dags.registers.stage3_prover_instances(state_manager))
+            .chain(dags.lookups.stage3_prover_instances(state_manager))
+            .chain(dags.ram.stage3_prover_instances(state_manager))
+            .collect();
+
+        Self::execute_sumcheck_stage(3, instances, state_manager, ProofKeys::Stage3Sumcheck)
+    }
+
+    fn prove_stage4<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
+        dags: &mut ProofDags<F>,
+        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+    ) -> Result<(), anyhow::Error> {
+        let _span = tracing::span!(tracing::Level::INFO, "Stage 4 sumchecks").entered();
+        let instances: Vec<_> = std::iter::empty()
+            .chain(dags.ram.stage4_prover_instances(state_manager))
+            .chain(dags.bytecode.stage4_prover_instances(state_manager))
+            .chain(dags.lookups.stage4_prover_instances(state_manager))
+            .collect();
+
+        Self::execute_sumcheck_stage(4, instances, state_manager, ProofKeys::Stage4Sumcheck)
+    }
+
+    fn prove_stage5<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
+        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        opening_proof_hints: HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
+    ) -> Result<(), anyhow::Error> {
+        let _span = tracing::span!(tracing::Level::INFO, "Stage 5 sumchecks").entered();
+        // Batch-prove all openings
+        let (preprocessing, trace, _, _) = state_manager.get_prover_data();
+
+        let all_polys: Vec<CommittedPolynomial> =
+            AllCommittedPolynomials::iter().copied().collect();
+        let polynomials_map =
+            CommittedPolynomial::generate_witness_batch(&all_polys, preprocessing, trace);
+
+        #[cfg(feature = "allocative")]
+        print_data_structure_heap_usage("Committed polynomials map", &polynomials_map);
+
+        // #[cfg(not(target_arch = "wasm32"))]
+        // print_current_memory_usage("Stage 5 baseline");
+
+        tracing::info!("Stage 5 proving");
+        let accumulator = state_manager.get_prover_accumulator();
+        let transcript = state_manager.get_transcript();
+        let opening_proof = accumulator.borrow_mut().reduce_and_prove(
+            polynomials_map,
+            opening_proof_hints,
+            &preprocessing.generators,
+            &mut *transcript.borrow_mut(),
+        );
+
+        state_manager.proofs.borrow_mut().insert(
+            ProofKeys::ReducedOpeningProof,
+            ProofData::ReducedOpeningProof(opening_proof),
+        );
+
+        Ok(())
     }
 
     pub fn verify<
@@ -509,5 +432,68 @@ impl JoltDAG {
         drop_in_background_thread(committed_polys);
 
         Ok(hint_map)
+    }
+
+    /// Execute a sumcheck stage with common boilerplate (stages 2-4)
+    fn execute_sumcheck_stage<
+        F: JoltField,
+        ProofTranscript: Transcript,
+        PCS: CommitmentScheme<Field = F>,
+    >(
+        stage_num: u8,
+        mut instances: Vec<Box<dyn SumcheckInstance<F>>>,
+        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        proof_key: ProofKeys,
+    ) -> Result<(), anyhow::Error> {
+        // #[cfg(not(target_arch = "wasm32"))]
+        // print_current_memory_usage("Stage {} baseline", stage_num);
+        #[cfg(feature = "allocative")]
+        Self::write_stage_flamegraph(
+            &instances,
+            &format!("stage{}_start_flamechart.svg", stage_num),
+        );
+
+        let instances_mut: Vec<&mut dyn SumcheckInstance<F>> = instances
+            .iter_mut()
+            .map(|instance| &mut **instance as &mut dyn SumcheckInstance<F>)
+            .collect();
+
+        let transcript = state_manager.get_transcript();
+        let accumulator = state_manager.get_prover_accumulator();
+
+        tracing::info!("Stage {} proving", stage_num);
+        let (proof, _r) = BatchedSumcheck::prove(
+            instances_mut,
+            Some(accumulator.clone()),
+            &mut *transcript.borrow_mut(),
+        );
+
+        state_manager
+            .proofs
+            .borrow_mut()
+            .insert(proof_key, ProofData::SumcheckProof(proof));
+
+        #[cfg(feature = "allocative")]
+        Self::write_stage_flamegraph(
+            &instances,
+            &format!("stage{}_end_flamechart.svg", stage_num),
+        );
+
+        drop_in_background_thread(instances);
+
+        Ok(())
+    }
+
+    /// Helper function to write flamegraph for sumcheck instances
+    #[cfg(feature = "allocative")]
+    fn write_stage_flamegraph<F: JoltField>(
+        instances: &[Box<dyn SumcheckInstance<F>>],
+        filename: &str,
+    ) {
+        let mut flamegraph = FlameGraphBuilder::default();
+        for sumcheck in instances.iter() {
+            sumcheck.update_flamegraph(&mut flamegraph);
+        }
+        write_flamegraph_svg(flamegraph, filename);
     }
 }
