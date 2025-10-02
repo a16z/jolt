@@ -17,7 +17,6 @@ pub trait FieldOps<Rhs = Self, Output = Self>:
 {
 }
 
-// Define the helper traits once
 pub trait ChallengeFieldOps<F>:
     Copy
     + Send
