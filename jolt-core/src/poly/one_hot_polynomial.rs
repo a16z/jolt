@@ -603,7 +603,6 @@ mod tests {
     use crate::poly::unipoly::UniPoly;
     use ark_bn254::Fr;
     use ark_std::{test_rng, Zero};
-    use rand::Rng;
     use rand_core::RngCore;
     use serial_test::serial;
 
@@ -620,14 +619,12 @@ mod tests {
         let one_hot_poly = OneHotPolynomial::<Fr>::from_indices(nonzero_indices, K);
         let mut dense_poly = one_hot_poly.to_dense_poly();
 
-        let r_address =
-            std::iter::repeat_with(|| <Fr as JoltField>::Challenge::from(rng.gen::<u128>()))
-                .take(LOG_K)
-                .collect::<Vec<_>>();
-        let r_cycle =
-            std::iter::repeat_with(|| <Fr as JoltField>::Challenge::from(rng.gen::<u128>()))
-                .take(LOG_T)
-                .collect::<Vec<_>>();
+        let r_address = std::iter::repeat_with(|| <Fr as JoltField>::Challenge::random(&mut rng))
+            .take(LOG_K)
+            .collect::<Vec<_>>();
+        let r_cycle = std::iter::repeat_with(|| <Fr as JoltField>::Challenge::random(&mut rng))
+            .take(LOG_T)
+            .collect::<Vec<_>>();
 
         let eq_address_state = EqAddressState::new(&r_address);
         let mut eq_cycle_state = EqCycleState::new(&r_cycle);
@@ -665,7 +662,7 @@ mod tests {
                 "round {round} prover message mismatch"
             );
 
-            let r = <Fr as JoltField>::Challenge::from(rng.gen::<u128>());
+            let r = <Fr as JoltField>::Challenge::random(&mut rng);
 
             // Update previous_claim by evaluating the univariate polynomial at r
             let eval_at_1 = previous_claim - expected_message[0];
@@ -716,7 +713,7 @@ mod tests {
         let dense_poly = one_hot_poly.to_dense_poly();
 
         let r: Vec<<Fr as JoltField>::Challenge> =
-            std::iter::repeat_with(|| <Fr as JoltField>::Challenge::from(rng.gen::<u128>()))
+            std::iter::repeat_with(|| <Fr as JoltField>::Challenge::random(&mut rng))
                 .take(LOG_K + LOG_T)
                 .collect();
 

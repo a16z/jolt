@@ -462,7 +462,6 @@ impl<F: JoltField> PolynomialEvaluation<F> for UnmapRamAddressPolynomial<F> {
 mod tests {
     use crate::poly::multilinear_polynomial::MultilinearPolynomial;
     use crate::poly::prefix_suffix::tests::prefix_suffix_decomposition_test;
-    use rand::Rng;
 
     use super::*;
     use ark_bn254::Fr;
@@ -489,7 +488,7 @@ mod tests {
         }
 
         for _ in 0..NUM_VARS {
-            let r = <Fr as JoltField>::Challenge::from(rng.gen::<u128>());
+            let r = <Fr as JoltField>::Challenge::random(&mut rng);
             identity_poly.bind(r, BindingOrder::LowToHigh);
             reference_poly.bind(r, BindingOrder::LowToHigh);
             for j in 0..reference_poly.len() / 2 {
@@ -644,7 +643,7 @@ mod tests {
                 );
             }
 
-            let r = <Fr as JoltField>::Challenge::from(rng.gen::<u128>());
+            let r = <Fr as JoltField>::Challenge::random(&mut rng);
             ro_poly.bind(r, BindingOrder::HighToLow);
             lo_poly.bind(r, BindingOrder::HighToLow);
             reference_poly_r.bind(r, BindingOrder::HighToLow);

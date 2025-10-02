@@ -423,8 +423,7 @@ mod test {
             let (ck, vk) = SRS::trim(pp, degree);
             let p = UniPoly::random::<ChaCha20Rng>(degree, rng);
             let comm = UnivariateKZG::<Bn254>::commit(&ck, &p)?;
-            let point =
-                <<Bn254 as Pairing>::ScalarField as JoltField>::Challenge::from(rng.gen::<u128>());
+            let point = <<Bn254 as Pairing>::ScalarField as JoltField>::Challenge::random(&mut rng);
             let (proof, value) = UnivariateKZG::<Bn254>::open(&ck, &p, &point)?;
             assert!(
                 UnivariateKZG::<_, G1>::verify(&vk, &comm, &point, &proof, &value)?,

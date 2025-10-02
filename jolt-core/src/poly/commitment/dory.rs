@@ -1267,7 +1267,6 @@ mod tests {
     use crate::transcripts::Blake2bTranscript;
     use ark_std::rand::thread_rng;
     use ark_std::UniformRand;
-    use rand::Rng;
     use serial_test::serial;
     use std::time::Instant;
 
@@ -1299,7 +1298,7 @@ mod tests {
 
         let mut rng = thread_rng();
         let opening_point: Vec<<Fr as JoltField>::Challenge> = (0..num_vars)
-            .map(|_| <Fr as JoltField>::Challenge::from(rng.gen::<u128>()))
+            .map(|_| <Fr as JoltField>::Challenge::random(&mut rng))
             .collect();
 
         let commit_start = Instant::now();
@@ -1471,7 +1470,7 @@ mod tests {
         let poly = MultilinearPolynomial::LargeScalars(DensePolynomial::new(coeffs.clone()));
 
         let opening_point: Vec<<Fr as JoltField>::Challenge> = (0..num_vars)
-            .map(|_| <Fr as JoltField>::Challenge::from(rng.gen::<u128>()))
+            .map(|_| <Fr as JoltField>::Challenge::random(&mut rng))
             .collect();
 
         let prover_setup = DoryCommitmentScheme::setup_prover(num_vars);
@@ -1517,7 +1516,7 @@ mod tests {
         // Test 2: Tamper with the opening point
         {
             let tampered_opening_point: Vec<<Fr as JoltField>::Challenge> = (0..num_vars)
-                .map(|_| <Fr as JoltField>::Challenge::from(rng.gen::<u128>()))
+                .map(|_| <Fr as JoltField>::Challenge::random(&mut rng))
                 .collect();
 
             let mut verify_transcript =

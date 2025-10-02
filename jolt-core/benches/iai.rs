@@ -1,8 +1,8 @@
 use ark_bn254::Fr;
 use ark_std::test_rng;
+use ark_std::UniformRand;
 use iai_callgrind::{library_benchmark, library_benchmark_group, main};
 use jolt_core::{field::JoltField, poly::dense_mlpoly::DensePolynomial};
-use rand::Rng;
 use std::hint::black_box;
 
 fn bound_poly_setup<F: JoltField>(size: usize) -> (DensePolynomial<F>, F::Challenge) {
@@ -10,7 +10,7 @@ fn bound_poly_setup<F: JoltField>(size: usize) -> (DensePolynomial<F>, F::Challe
 
     (
         DensePolynomial::new(vec![F::random(&mut rng); size]),
-        F::Challenge::from(rng.gen::<u128>()),
+        F::Challenge::rand(&mut rng),
     )
 }
 
@@ -18,7 +18,7 @@ fn eval_poly_setup<F: JoltField>(size: usize) -> (DensePolynomial<F>, Vec<F::Cha
     let mut rng = test_rng();
 
     let poly = DensePolynomial::new(vec![F::random(&mut rng); size]);
-    let points = vec![F::Challenge::from(rng.gen::<u128>()); poly.get_num_vars()];
+    let points = vec![F::Challenge::rand(&mut rng); poly.get_num_vars()];
     (poly, points)
 }
 

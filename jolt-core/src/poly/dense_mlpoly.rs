@@ -696,7 +696,7 @@ mod tests {
             // Try 10 random evaluation points
             for _ in 0..10 {
                 let eval_point: Vec<<Fr as JoltField>::Challenge> = (0..num_vars)
-                    .map(|_| <Fr as JoltField>::Challenge::from(rng.gen::<u128>()))
+                    .map(|_| <Fr as JoltField>::Challenge::random(&mut rng))
                     .collect();
 
                 let eval1 = poly.evaluate(&eval_point);

@@ -285,7 +285,6 @@ mod tests {
     use super::*;
     use ark_bn254::Fr;
     use ark_std::test_rng;
-    use rand::Rng;
     use std::time::Instant;
 
     #[test]

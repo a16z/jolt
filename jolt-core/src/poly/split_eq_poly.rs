@@ -367,14 +367,13 @@ mod tests {
     use super::*;
     use ark_bn254::Fr;
     use ark_std::test_rng;
-    use rand::Rng;
 
     #[test]
     fn bind_low_high() {
         const NUM_VARS: usize = 10;
         let mut rng = test_rng();
         let w: Vec<<Fr as JoltField>::Challenge> =
-            std::iter::repeat_with(|| <Fr as JoltField>::Challenge::from(rng.gen::<u128>()))
+            std::iter::repeat_with(|| <Fr as JoltField>::Challenge::random(&mut rng))
                 .take(NUM_VARS)
                 .collect();
 
@@ -383,7 +382,7 @@ mod tests {
         assert_eq!(regular_eq, split_eq.merge());
 
         for _ in 0..NUM_VARS {
-            let r = <Fr as JoltField>::Challenge::from(rng.gen::<u128>());
+            let r = <Fr as JoltField>::Challenge::random(&mut rng);
             regular_eq.bound_poly_var_bot(&r);
             split_eq.bind(r);
 
@@ -397,7 +396,7 @@ mod tests {
         const NUM_VARS: usize = 10;
         let mut rng = test_rng();
         let w: Vec<<Fr as JoltField>::Challenge> =
-            std::iter::repeat_with(|| <Fr as JoltField>::Challenge::from(rng.gen::<u128>()))
+            std::iter::repeat_with(|| <Fr as JoltField>::Challenge::random(&mut rng))
                 .take(NUM_VARS)
                 .collect();
 
@@ -409,7 +408,7 @@ mod tests {
 
         // Bind with same random values, but regular_eq uses top and split uses new high-to-low
         for _ in 0..NUM_VARS {
-            let r = <Fr as JoltField>::Challenge::from(rng.gen::<u128>());
+            let r = <Fr as JoltField>::Challenge::random(&mut rng);
             regular_eq.bound_poly_var_top(&r);
             split_eq_high_to_low.bind(r);
             let merged = split_eq_high_to_low.merge();
@@ -494,7 +493,7 @@ mod tests {
         // Test case 2: Edge case L0 = 0
         let num_x_out_vars_2 = N / 2; // Max possible value for num_x_out_vars if num_x_in_vars is also N/2 and L0=0
         let w2: Vec<<Fr as JoltField>::Challenge> = (0..N)
-            .map(|_| <Fr as JoltField>::Challenge::from(rng.gen::<u128>()))
+            .map(|_| <Fr as JoltField>::Challenge::random(&mut rng))
             .collect();
         let num_x_in_vars_2 = N - num_x_out_vars_2; // L0 is 0
         let split_eq2 = GruenSplitEqPolynomial::<Fr>::new_for_small_value(

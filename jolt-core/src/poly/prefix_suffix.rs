@@ -612,7 +612,7 @@ pub mod tests {
 
                     assert_eq!(direct_eval, eval.1);
                 }
-                let r = <Fr as JoltField>::Challenge::from(rng.gen::<u128>());
+                let r = <Fr as JoltField>::Challenge::random(&mut rng);
                 rr.push(r.into());
                 ps.bind(r);
             }
