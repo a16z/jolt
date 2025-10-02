@@ -355,7 +355,6 @@ mod tests {
     fn test_compute_mles_product_sum_with_16_mles() {
         const N_MLE: usize = 16;
         let mut rng = &mut test_rng();
-        //let r: &[Fr; 1] = &rng.gen();
         let r_whole = [<Fr as JoltField>::Challenge::random(&mut rng)];
         let r: &[<Fr as JoltField>::Challenge; 1] = &r_whole;
         let mles: [_; N_MLE] = from_fn(|_| random_mle(1, rng));
