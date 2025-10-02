@@ -92,27 +92,6 @@ impl Into<ark_bn254::Fr> for &MontU128Challenge<ark_bn254::Fr> {
 }
 
 /// Implements standard arithmetic operators (+, -, *) for F as JoltField types
-///
-/// This macro generates inline operator implementations between `F::Challenge`
-/// and `F` types, as well as `Challenge` with itself, enabling efficient field
-/// arithmetic without repeated boilerplate.
-///
-/// # Generated implementations
-///
-/// **Challenge with Field:**
-/// - `F::Challenge + F` and `F + F::Challenge`
-/// - `F::Challenge - F` and `F - F::Challenge`
-/// - `F::Challenge * F` and `F * F::Challenge`
-/// - Similar for `&F::Challenge` (reference types)
-///
-/// **Challenge with Challenge:**
-/// - `F::Challenge + F::Challenge`
-/// - `F::Challenge - F::Challenge`
-/// - `F::Challenge * F::Challenge`
-/// - Reference variants
-///
-/// All operations are marked `#[inline(always)]` for optimal performance in
-/// hot path polynomial operations.
 macro_rules! impl_field_ops_inline {
     ($t:ty, $f:ty) => {
         impl Add<$t> for $t {
