@@ -7,16 +7,11 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use crate::{
     field::JoltField,
     poly::{
-        commitment::commitment_scheme::{
-            StreamingCommitmentScheme, StreamingCommitmentScheme_, StreamingProcessChunk,
-        },
-        compact_polynomial::StreamingCompactWitness,
-        dense_mlpoly::StreamingDenseWitness,
+        commitment::commitment_scheme::StreamingCommitmentScheme,
         multilinear_polynomial::MultilinearPolynomial,
-        one_hot_polynomial::StreamingOneHotWitness,
     },
     transcripts::{AppendToTranscript, Transcript},
-    utils::errors::ProofVerifyError,
+    utils::{errors::ProofVerifyError, small_scalar::SmallScalar},
 };
 
 use super::commitment_scheme::CommitmentScheme;
@@ -116,7 +111,7 @@ where
         b"mock_commit"
     }
 }
-impl<F> StreamingCommitmentScheme_ for MockCommitScheme<F>
+impl<F> StreamingCommitmentScheme for MockCommitScheme<F>
 where
     F: JoltField,
 {
@@ -147,10 +142,18 @@ where
         todo!()
     }
 
-    fn process_chunk<'a, T>(state: &Self::State<'a>, chunk: &[T]) -> Self::ChunkState
-    where
-        Self: super::commitment_scheme::StreamingProcessChunk<T>,
-    {
+    fn process_chunk<'a, T: SmallScalar>(state: &Self::State<'a>, chunk: &[T]) -> Self::ChunkState {
+        todo!()
+    }
+
+    fn process_chunk_field<'a>(state: &Self::State<'a>, chunk: &[Self::Field]) -> Self::ChunkState {
+        todo!()
+    }
+
+    fn process_chunk_onehot<'a>(
+        state: &Self::State<'a>,
+        chunk: &[Option<usize>],
+    ) -> Self::ChunkState {
         todo!()
     }
 
@@ -158,114 +161,6 @@ where
         state: &Self::State<'a>,
         chunks: &[Self::ChunkState],
     ) -> (Self::Commitment, Self::OpeningProofHint) {
-        todo!()
-    }
-}
-
-impl<F> StreamingProcessChunk<StreamingDenseWitness<F>> for MockCommitScheme<F>
-where
-    F: JoltField,
-{
-    fn process_chunk_t<'a>(
-        s: &Self::State<'a>,
-        chunk: &[StreamingDenseWitness<F>],
-    ) -> Self::ChunkState {
-        todo!()
-    }
-}
-
-impl<F> StreamingProcessChunk<StreamingCompactWitness<u8, F>> for MockCommitScheme<F>
-where
-    F: JoltField,
-{
-    fn process_chunk_t<'a>(
-        s: &Self::State<'a>,
-        chunk: &[StreamingCompactWitness<u8, F>],
-    ) -> Self::ChunkState {
-        todo!()
-    }
-}
-
-impl<F> StreamingProcessChunk<StreamingCompactWitness<u16, F>> for MockCommitScheme<F>
-where
-    F: JoltField,
-{
-    fn process_chunk_t<'a>(
-        s: &Self::State<'a>,
-        chunk: &[StreamingCompactWitness<u16, F>],
-    ) -> Self::ChunkState {
-        todo!()
-    }
-}
-
-impl<F> StreamingProcessChunk<StreamingCompactWitness<u32, F>> for MockCommitScheme<F>
-where
-    F: JoltField,
-{
-    fn process_chunk_t<'a>(
-        s: &Self::State<'a>,
-        chunk: &[StreamingCompactWitness<u32, F>],
-    ) -> Self::ChunkState {
-        todo!()
-    }
-}
-
-impl<F> StreamingProcessChunk<StreamingCompactWitness<u64, F>> for MockCommitScheme<F>
-where
-    F: JoltField,
-{
-    fn process_chunk_t<'a>(
-        s: &Self::State<'a>,
-        chunk: &[StreamingCompactWitness<u64, F>],
-    ) -> Self::ChunkState {
-        todo!()
-    }
-}
-
-impl<F> StreamingProcessChunk<StreamingCompactWitness<i64, F>> for MockCommitScheme<F>
-where
-    F: JoltField,
-{
-    fn process_chunk_t<'a>(
-        s: &Self::State<'a>,
-        chunk: &[StreamingCompactWitness<i64, F>],
-    ) -> Self::ChunkState {
-        todo!()
-    }
-}
-
-impl<F> StreamingProcessChunk<StreamingCompactWitness<i128, F>> for MockCommitScheme<F>
-where
-    F: JoltField,
-{
-    fn process_chunk_t<'a>(
-        s: &Self::State<'a>,
-        chunk: &[StreamingCompactWitness<i128, F>],
-    ) -> Self::ChunkState {
-        todo!()
-    }
-}
-
-impl<F> StreamingProcessChunk<StreamingCompactWitness<S128, F>> for MockCommitScheme<F>
-where
-    F: JoltField,
-{
-    fn process_chunk_t<'a>(
-        s: &Self::State<'a>,
-        chunk: &[StreamingCompactWitness<S128, F>],
-    ) -> Self::ChunkState {
-        todo!()
-    }
-}
-
-impl<F> StreamingProcessChunk<StreamingOneHotWitness<F>> for MockCommitScheme<F>
-where
-    F: JoltField,
-{
-    fn process_chunk_t<'a>(
-        s: &Self::State<'a>,
-        chunk: &[StreamingOneHotWitness<F>],
-    ) -> Self::ChunkState {
         todo!()
     }
 }

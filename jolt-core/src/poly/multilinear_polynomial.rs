@@ -1,10 +1,5 @@
 use crate::{
-    poly::{
-        compact_polynomial::StreamingCompactWitness,
-        dense_mlpoly::StreamingDenseWitness,
-        one_hot_polynomial::{OneHotPolynomial, StreamingOneHotWitness},
-        rlc_polynomial::RLCPolynomial,
-    },
+    poly::{one_hot_polynomial::OneHotPolynomial, rlc_polynomial::RLCPolynomial},
     utils::{compute_dotproduct, small_scalar::SmallScalar},
 };
 use allocative::Allocative;
@@ -78,20 +73,6 @@ impl<F: JoltField> CanonicalSerialize for MultilinearPolynomial<F> {
     fn serialized_size(&self, _compress: ark_serialize::Compress) -> usize {
         unimplemented!("Only here to satisfy trait bounds")
     }
-}
-
-/// Wrapper enum for the various streaming witness types used in Jolt
-#[repr(u8)]
-// #[derive(Clone, Debug, EnumIter)]
-pub enum StreamingWitness<F: JoltField> {
-    LargeScalars(StreamingDenseWitness<F>),
-    U8Scalars(StreamingCompactWitness<u8, F>),
-    U16Scalars(StreamingCompactWitness<u16, F>),
-    U32Scalars(StreamingCompactWitness<u32, F>),
-    U64Scalars(StreamingCompactWitness<u64, F>),
-    I64Scalars(StreamingCompactWitness<i64, F>),
-    // RLC(StreamingRLCPolynomial<F>),
-    OneHot(StreamingOneHotWitness<F>),
 }
 
 /// The order in which polynomial variables are bound in sumcheck

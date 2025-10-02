@@ -5,34 +5,9 @@ use crate::utils::small_scalar::SmallScalar;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use allocative::Allocative;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use bytemuck::TransparentWrapper;
-use bytemuck_derive::TransparentWrapper;
 use rayon::prelude::*;
 use std::cmp::Ordering;
-use std::marker::PhantomData;
 use std::ops::Index;
-
-#[derive(TransparentWrapper)]
-#[repr(transparent)]
-#[transparent(T)]
-pub struct StreamingCompactWitness<T: SmallScalar, F: JoltField> {
-    pub value: T,
-    phantom: PhantomData<fn(F)>,
-}
-
-impl<T: SmallScalar, F: JoltField> StreamingCompactWitness<T, F> {
-    pub(crate) fn new(v: T) -> Self {
-        Self {
-            value: v,
-            phantom: PhantomData,
-        }
-    }
-
-    // Helper function to unwrap a newtype wrapper with a cast.
-    pub(crate) fn unwrap_slice<'a>(chunk: &'a [StreamingCompactWitness<T, F>]) -> &'a [T] {
-        StreamingCompactWitness::peel_slice(chunk)
-    }
-}
 
 /// Compact polynomials are used to store coefficients of small scalars.
 /// They have two representations:

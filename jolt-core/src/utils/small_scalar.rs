@@ -1,4 +1,6 @@
 use crate::field::JoltField;
+use crate::msm::VariableBaseMSM;
+use crate::utils::errors::ProofVerifyError;
 use allocative::Allocative;
 use ark_ff::biginteger::{I8OrI96, S128, S64};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -20,6 +22,13 @@ pub trait SmallScalar:
             other.field_mul(r) - self.field_mul(r)
         }
     }
+    /// Perform multi-scalar multiplication with this scalar type using optimized implementations
+    fn msm<G: VariableBaseMSM>(
+        bases: &[G::MulBase],
+        scalars: &[Self],
+    ) -> Result<G, ProofVerifyError>
+    where
+        G::ScalarField: JoltField;
 }
 
 impl SmallScalar for bool {
@@ -47,6 +56,21 @@ impl SmallScalar for bool {
             F::zero()
         }
     }
+    #[inline]
+    fn msm<G: VariableBaseMSM>(
+        bases: &[G::MulBase],
+        scalars: &[Self],
+    ) -> Result<G, ProofVerifyError>
+    where
+        G::ScalarField: JoltField,
+    {
+        if bases.len() != scalars.len() {
+            return Err(ProofVerifyError::KeyLengthError(bases.len(), scalars.len()));
+        }
+        Ok(ark_ec::scalar_mul::variable_base::msm_binary::<G>(
+            bases, scalars, false,
+        ))
+    }
 }
 
 impl SmallScalar for u8 {
@@ -62,6 +86,16 @@ impl SmallScalar for u8 {
     fn diff_mul_field<F: JoltField>(self, other: Self, r: F) -> F {
         r.mul_u64(self.abs_diff(other) as u64)
     }
+    #[inline]
+    fn msm<G: VariableBaseMSM>(
+        bases: &[G::MulBase],
+        scalars: &[Self],
+    ) -> Result<G, ProofVerifyError>
+    where
+        G::ScalarField: JoltField,
+    {
+        <G as crate::msm::VariableBaseMSM>::msm_u8(bases, scalars)
+    }
 }
 impl SmallScalar for u16 {
     #[inline]
@@ -75,6 +109,16 @@ impl SmallScalar for u16 {
     #[inline]
     fn diff_mul_field<F: JoltField>(self, other: Self, r: F) -> F {
         r.mul_u64(self.abs_diff(other) as u64)
+    }
+    #[inline]
+    fn msm<G: VariableBaseMSM>(
+        bases: &[G::MulBase],
+        scalars: &[Self],
+    ) -> Result<G, ProofVerifyError>
+    where
+        G::ScalarField: JoltField,
+    {
+        <G as crate::msm::VariableBaseMSM>::msm_u16(bases, scalars)
     }
 }
 impl SmallScalar for u32 {
@@ -90,6 +134,16 @@ impl SmallScalar for u32 {
     fn diff_mul_field<F: JoltField>(self, other: Self, r: F) -> F {
         r.mul_u64(self.abs_diff(other) as u64)
     }
+    #[inline]
+    fn msm<G: VariableBaseMSM>(
+        bases: &[G::MulBase],
+        scalars: &[Self],
+    ) -> Result<G, ProofVerifyError>
+    where
+        G::ScalarField: JoltField,
+    {
+        <G as crate::msm::VariableBaseMSM>::msm_u32(bases, scalars)
+    }
 }
 impl SmallScalar for u64 {
     #[inline]
@@ -103,6 +157,16 @@ impl SmallScalar for u64 {
     #[inline]
     fn diff_mul_field<F: JoltField>(self, other: Self, r: F) -> F {
         r.mul_u64(self.abs_diff(other))
+    }
+    #[inline]
+    fn msm<G: VariableBaseMSM>(
+        bases: &[G::MulBase],
+        scalars: &[Self],
+    ) -> Result<G, ProofVerifyError>
+    where
+        G::ScalarField: JoltField,
+    {
+        <G as crate::msm::VariableBaseMSM>::msm_u64(bases, scalars)
     }
 }
 impl SmallScalar for i64 {
@@ -121,6 +185,16 @@ impl SmallScalar for i64 {
     #[inline]
     fn diff_mul_field<F: JoltField>(self, other: Self, r: F) -> F {
         r.mul_u64(self.abs_diff(other))
+    }
+    #[inline]
+    fn msm<G: VariableBaseMSM>(
+        bases: &[G::MulBase],
+        scalars: &[Self],
+    ) -> Result<G, ProofVerifyError>
+    where
+        G::ScalarField: JoltField,
+    {
+        <G as crate::msm::VariableBaseMSM>::msm_i64(bases, scalars)
     }
 }
 impl SmallScalar for u128 {
@@ -141,6 +215,16 @@ impl SmallScalar for u128 {
             r.mul_u128(diff)
         }
     }
+    #[inline]
+    fn msm<G: VariableBaseMSM>(
+        bases: &[G::MulBase],
+        scalars: &[Self],
+    ) -> Result<G, ProofVerifyError>
+    where
+        G::ScalarField: JoltField,
+    {
+        <G as crate::msm::VariableBaseMSM>::msm_u128(bases, scalars)
+    }
 }
 impl SmallScalar for i128 {
     #[inline]
@@ -159,6 +243,16 @@ impl SmallScalar for i128 {
         } else {
             r.mul_u128(diff)
         }
+    }
+    #[inline]
+    fn msm<G: VariableBaseMSM>(
+        bases: &[G::MulBase],
+        scalars: &[Self],
+    ) -> Result<G, ProofVerifyError>
+    where
+        G::ScalarField: JoltField,
+    {
+        <G as crate::msm::VariableBaseMSM>::msm_i128(bases, scalars)
     }
 }
 impl SmallScalar for S64 {
@@ -185,6 +279,16 @@ impl SmallScalar for S64 {
         let diff = (a - b).unsigned_abs();
         r.mul_u64(diff as u64)
     }
+    #[inline]
+    fn msm<G: VariableBaseMSM>(
+        bases: &[G::MulBase],
+        scalars: &[Self],
+    ) -> Result<G, ProofVerifyError>
+    where
+        G::ScalarField: JoltField,
+    {
+        <G as crate::msm::VariableBaseMSM>::msm_s64(bases, scalars)
+    }
 }
 impl SmallScalar for I8OrI96 {
     #[inline]
@@ -205,6 +309,18 @@ impl SmallScalar for I8OrI96 {
         let b = other.to_i128();
         let diff = (a - b).unsigned_abs();
         r.mul_u128(diff)
+    }
+    #[inline]
+    fn msm<G: VariableBaseMSM>(
+        bases: &[G::MulBase],
+        scalars: &[Self],
+    ) -> Result<G, ProofVerifyError>
+    where
+        G::ScalarField: JoltField,
+    {
+        // I8OrI96 doesn't have a specific MSM function, so we convert to i128
+        let i128_scalars: Vec<i128> = scalars.iter().map(|s| s.to_i128()).collect();
+        <G as crate::msm::VariableBaseMSM>::msm_i128(bases, &i128_scalars)
     }
 }
 impl SmallScalar for S128 {
@@ -229,5 +345,15 @@ impl SmallScalar for S128 {
                 -F::from_u128(mag)
             }
         }
+    }
+    #[inline]
+    fn msm<G: VariableBaseMSM>(
+        bases: &[G::MulBase],
+        scalars: &[Self],
+    ) -> Result<G, ProofVerifyError>
+    where
+        G::ScalarField: JoltField,
+    {
+        <G as crate::msm::VariableBaseMSM>::msm_s128(bases, scalars)
     }
 }

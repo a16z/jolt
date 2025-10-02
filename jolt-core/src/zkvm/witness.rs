@@ -16,15 +16,12 @@ use tracer::instruction::Cycle;
 use crate::{
     field::JoltField,
     poly::{
-        commitment::commitment_scheme::{
-            CommitmentScheme, StreamingCommitmentScheme, StreamingCommitmentScheme_,
-            StreamingProcessChunk,
-        },
-        compact_polynomial::StreamingCompactWitness,
+        commitment::commitment_scheme::{CommitmentScheme, StreamingCommitmentScheme},
         multilinear_polynomial::{Multilinear, MultilinearPolynomial},
-        one_hot_polynomial::{OneHotPolynomial, StreamingOneHotWitness},
+        one_hot_polynomial::OneHotPolynomial,
     },
     utils::math::Math,
+    utils::small_scalar::SmallScalar,
     zkvm::{
         instruction_lookups, lookup_table::LookupTables, ram::remap_address,
         JoltProverPreprocessing,
@@ -116,7 +113,7 @@ trait StreamWitness<F: JoltField> {
 }
 
 impl<F: JoltField> StreamWitness<F> for InstructionRa {
-    type WitnessType = StreamingOneHotWitness<F>;
+    type WitnessType = Option<usize>;
 
     fn generate_streaming_witness<'a, PCS>(
         &self,
@@ -141,12 +138,12 @@ impl<F: JoltField> StreamWitness<F> for InstructionRa {
             k as usize
         };
 
-        StreamingOneHotWitness::new(Some(v))
+        Some(v)
     }
 }
 
 impl<F: JoltField> StreamWitness<F> for LeftInstructionInput {
-    type WitnessType = StreamingCompactWitness<u64, F>;
+    type WitnessType = u64;
 
     fn generate_streaming_witness<'a, PCS>(
         &self,
@@ -159,12 +156,12 @@ impl<F: JoltField> StreamWitness<F> for LeftInstructionInput {
         PCS: CommitmentScheme<Field = F>,
     {
         let v = LookupQuery::<XLEN>::to_instruction_inputs(cycle).0;
-        StreamingCompactWitness::new(v)
+        v
     }
 }
 
 impl<F: JoltField> StreamWitness<F> for RightInstructionInput {
-    type WitnessType = StreamingCompactWitness<i128, F>;
+    type WitnessType = i128;
 
     fn generate_streaming_witness<'a, PCS>(
         &self,
@@ -177,12 +174,12 @@ impl<F: JoltField> StreamWitness<F> for RightInstructionInput {
         PCS: CommitmentScheme<Field = F>,
     {
         let v = LookupQuery::<XLEN>::to_instruction_inputs(cycle).1;
-        StreamingCompactWitness::new(v)
+        v
     }
 }
 
 impl<F: JoltField> StreamWitness<F> for Product {
-    type WitnessType = StreamingCompactWitness<S128, F>;
+    type WitnessType = S128;
 
     fn generate_streaming_witness<'a, PCS>(
         &self,
@@ -203,12 +200,12 @@ impl<F: JoltField> StreamWitness<F> for Product {
                 S128::from_u128_and_sign(left_input as u128 * right_input.unsigned_abs(), false)
             }
         };
-        StreamingCompactWitness::new(v)
+        v
     }
 }
 
 impl<F: JoltField> StreamWitness<F> for WriteLookupOutputToRD {
-    type WitnessType = StreamingCompactWitness<u8, F>;
+    type WitnessType = u8;
 
     fn generate_streaming_witness<'a, PCS>(
         &self,
@@ -225,12 +222,12 @@ impl<F: JoltField> StreamWitness<F> for WriteLookupOutputToRD {
                 cycle.instruction().circuit_flags()[CircuitFlags::WriteLookupOutputToRD as usize];
             (cycle.rd_write().0 as u8) * (flag as u8)
         };
-        StreamingCompactWitness::new(v)
+        v
     }
 }
 
 impl<F: JoltField> StreamWitness<F> for WritePCtoRD {
-    type WitnessType = StreamingCompactWitness<u8, F>;
+    type WitnessType = u8;
 
     fn generate_streaming_witness<'a, PCS>(
         &self,
@@ -246,12 +243,12 @@ impl<F: JoltField> StreamWitness<F> for WritePCtoRD {
             let flag = cycle.instruction().circuit_flags()[CircuitFlags::Jump as usize];
             (cycle.rd_write().0 as u8) * (flag as u8)
         };
-        StreamingCompactWitness::new(v)
+        v
     }
 }
 
 impl<F: JoltField> StreamWitness<F> for ShouldBranch {
-    type WitnessType = StreamingCompactWitness<u8, F>;
+    type WitnessType = u8;
 
     fn generate_streaming_witness<'a, PCS>(
         &self,
@@ -267,12 +264,12 @@ impl<F: JoltField> StreamWitness<F> for ShouldBranch {
             let is_branch = cycle.instruction().circuit_flags()[CircuitFlags::Branch as usize];
             (LookupQuery::<XLEN>::to_lookup_output(cycle) as u8) * is_branch as u8
         };
-        StreamingCompactWitness::new(v)
+        v
     }
 }
 
 impl<F: JoltField> StreamWitness<F> for ShouldJump {
-    type WitnessType = StreamingCompactWitness<u8, F>;
+    type WitnessType = u8;
 
     fn generate_streaming_witness<'a, PCS>(
         &self,
@@ -289,12 +286,12 @@ impl<F: JoltField> StreamWitness<F> for ShouldJump {
             let is_next_noop = next_cycle.instruction().circuit_flags()[CircuitFlags::IsNoop];
             is_jump as u8 * (1 - is_next_noop as u8)
         };
-        StreamingCompactWitness::new(v)
+        v
     }
 }
 
 impl<F: JoltField> StreamWitness<F> for RdInc {
-    type WitnessType = StreamingCompactWitness<i128, F>;
+    type WitnessType = i128;
 
     fn generate_streaming_witness<'a, PCS>(
         &self,
@@ -310,12 +307,12 @@ impl<F: JoltField> StreamWitness<F> for RdInc {
             let (_, pre_value, post_value) = cycle.rd_write();
             post_value as i128 - pre_value as i128
         };
-        StreamingCompactWitness::new(v)
+        v
     }
 }
 
 impl<F: JoltField> StreamWitness<F> for RamInc {
-    type WitnessType = StreamingCompactWitness<i128, F>;
+    type WitnessType = i128;
 
     fn generate_streaming_witness<'a, PCS>(
         &self,
@@ -336,12 +333,12 @@ impl<F: JoltField> StreamWitness<F> for RamInc {
                 _ => 0,
             }
         };
-        StreamingCompactWitness::new(v)
+        v
     }
 }
 
 impl<F: JoltField> StreamWitness<F> for BytecodeRa {
-    type WitnessType = StreamingOneHotWitness<F>;
+    type WitnessType = Option<usize>;
 
     fn generate_streaming_witness<'a, PCS>(
         &self,
@@ -364,12 +361,12 @@ impl<F: JoltField> StreamWitness<F> for BytecodeRa {
             let pc = preprocessing.shared.bytecode.get_pc(cycle);
             (pc >> (log_K_chunk * (d - 1 - i))) % K_chunk
         };
-        StreamingOneHotWitness::new(Some(v))
+        Some(v)
     }
 }
 
 impl<F: JoltField> StreamWitness<F> for RamRa {
-    type WitnessType = StreamingOneHotWitness<F>;
+    type WitnessType = Option<usize>;
 
     fn generate_streaming_witness<'a, PCS>(
         &self,
@@ -394,7 +391,7 @@ impl<F: JoltField> StreamWitness<F> for RamRa {
             })
         };
 
-        StreamingOneHotWitness::new(v)
+        v
     }
 }
 
@@ -1003,7 +1000,13 @@ impl CommittedPolynomial {
         PCS: StreamingCommitmentScheme<Field = F>,
     {
         #[inline(always)]
-        fn helper<'a, T: StreamWitness<F>, F: JoltField, PCS>(
+        fn helper_scalar<
+            'a,
+            T: StreamWitness<F, WitnessType = S>,
+            S: SmallScalar,
+            F: JoltField,
+            PCS,
+        >(
             witness_type: T,
             pcs: &PCS::State<'a>,
             preprocessing: &'a JoltProverPreprocessing<F, PCS>,
@@ -1011,48 +1014,84 @@ impl CommittedPolynomial {
             ram_d: usize,
         ) -> PCS::ChunkState
         where
-            PCS: StreamingCommitmentScheme_<Field = F> + StreamingProcessChunk<T::WitnessType>,
+            PCS: StreamingCommitmentScheme<Field = F>,
         {
-            let row: Vec<_> = (0..row_cycles.len()-1)
-                // .par_iter() TODO: Parallelize?
+            let row: Vec<S> = (0..row_cycles.len() - 1)
                 .map(|i| {
                     let cycle = row_cycles[i];
-                    let next_cycle = row_cycles[i+1];
-                    witness_type.generate_streaming_witness(preprocessing, &cycle, &next_cycle, ram_d)
+                    let next_cycle = row_cycles[i + 1];
+                    witness_type.generate_streaming_witness(
+                        preprocessing,
+                        &cycle,
+                        &next_cycle,
+                        ram_d,
+                    )
                 })
                 .collect();
-            PCS::process_chunk_t(pcs, &row)
+            PCS::process_chunk(pcs, &row)
+        }
+
+        #[inline(always)]
+        fn helper_onehot<'a, T: StreamWitness<F, WitnessType = Option<usize>>, F: JoltField, PCS>(
+            witness_type: T,
+            pcs: &PCS::State<'a>,
+            preprocessing: &'a JoltProverPreprocessing<F, PCS>,
+            row_cycles: &[Cycle],
+            ram_d: usize,
+        ) -> PCS::ChunkState
+        where
+            PCS: StreamingCommitmentScheme<Field = F>,
+        {
+            let row: Vec<Option<usize>> = (0..row_cycles.len() - 1)
+                .map(|i| {
+                    let cycle = row_cycles[i];
+                    let next_cycle = row_cycles[i + 1];
+                    witness_type.generate_streaming_witness(
+                        preprocessing,
+                        &cycle,
+                        &next_cycle,
+                        ram_d,
+                    )
+                })
+                .collect();
+            PCS::process_chunk_onehot(pcs, &row)
         }
         match self {
             CommittedPolynomial::LeftInstructionInput => {
-                helper(LeftInstructionInput, pcs, preprocessing, row_cycles, ram_d)
+                helper_scalar(LeftInstructionInput, pcs, preprocessing, row_cycles, ram_d)
             }
             CommittedPolynomial::RightInstructionInput => {
-                helper(RightInstructionInput, pcs, preprocessing, row_cycles, ram_d)
+                helper_scalar(RightInstructionInput, pcs, preprocessing, row_cycles, ram_d)
             }
-            CommittedPolynomial::Product => helper(Product, pcs, preprocessing, row_cycles, ram_d),
+            CommittedPolynomial::Product => {
+                helper_scalar(Product, pcs, preprocessing, row_cycles, ram_d)
+            }
             CommittedPolynomial::WriteLookupOutputToRD => {
-                helper(WriteLookupOutputToRD, pcs, preprocessing, row_cycles, ram_d)
+                helper_scalar(WriteLookupOutputToRD, pcs, preprocessing, row_cycles, ram_d)
             }
             CommittedPolynomial::WritePCtoRD => {
-                helper(WritePCtoRD, pcs, preprocessing, row_cycles, ram_d)
+                helper_scalar(WritePCtoRD, pcs, preprocessing, row_cycles, ram_d)
             }
             CommittedPolynomial::ShouldBranch => {
-                helper(ShouldBranch, pcs, preprocessing, row_cycles, ram_d)
+                helper_scalar(ShouldBranch, pcs, preprocessing, row_cycles, ram_d)
             }
             CommittedPolynomial::ShouldJump => {
-                helper(ShouldJump, pcs, preprocessing, row_cycles, ram_d)
+                helper_scalar(ShouldJump, pcs, preprocessing, row_cycles, ram_d)
             }
-            CommittedPolynomial::RdInc => helper(RdInc, pcs, preprocessing, row_cycles, ram_d),
-            CommittedPolynomial::RamInc => helper(RamInc, pcs, preprocessing, row_cycles, ram_d),
+            CommittedPolynomial::RdInc => {
+                helper_scalar(RdInc, pcs, preprocessing, row_cycles, ram_d)
+            }
+            CommittedPolynomial::RamInc => {
+                helper_scalar(RamInc, pcs, preprocessing, row_cycles, ram_d)
+            }
             CommittedPolynomial::InstructionRa(i) => {
-                helper(InstructionRa(*i), pcs, preprocessing, row_cycles, ram_d)
+                helper_onehot(InstructionRa(*i), pcs, preprocessing, row_cycles, ram_d)
             }
             CommittedPolynomial::BytecodeRa(i) => {
-                helper(BytecodeRa(*i), pcs, preprocessing, row_cycles, ram_d)
+                helper_onehot(BytecodeRa(*i), pcs, preprocessing, row_cycles, ram_d)
             }
             CommittedPolynomial::RamRa(i) => {
-                helper(RamRa(*i), pcs, preprocessing, row_cycles, ram_d)
+                helper_onehot(RamRa(*i), pcs, preprocessing, row_cycles, ram_d)
             }
         }
     }

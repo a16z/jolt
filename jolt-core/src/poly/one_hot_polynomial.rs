@@ -19,23 +19,8 @@ use allocative::Allocative;
 use ark_bn254::{G1Affine, G1Projective};
 use ark_ec::CurveGroup;
 use rayon::prelude::*;
-use std::marker::PhantomData;
 use std::mem;
 use std::sync::{Arc, RwLock};
-
-// #[derive(Clone, Debug, Default, PartialEq)]
-pub struct StreamingOneHotWitness<F> {
-    pub value: Option<usize>,
-    phantom: PhantomData<fn(F)>,
-}
-impl<F: JoltField> StreamingOneHotWitness<F> {
-    pub(crate) fn new(value: Option<usize>) -> Self {
-        Self {
-            value,
-            phantom: PhantomData,
-        }
-    }
-}
 
 /// Represents a one-hot multilinear polynomial (ra/wa) used
 /// in Twist/Shout. Perhaps somewhat unintuitively, the implementation

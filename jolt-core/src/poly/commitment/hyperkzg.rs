@@ -9,19 +9,12 @@
 //! (2) HyperKZG is specialized to use KZG as the univariate commitment scheme, so it includes several optimizations (both during the transformation of multilinear-to-univariate claims
 //! and within the KZG commitment scheme implementation itself).
 use super::{
-    commitment_scheme::{CommitmentScheme, StreamingCommitmentScheme_},
+    commitment_scheme::CommitmentScheme,
     kzg::{KZGProverKey, KZGVerifierKey, UnivariateKZG},
 };
+use crate::field::JoltField;
 use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
 use crate::poly::rlc_polynomial::RLCPolynomial;
-use crate::{
-    field::JoltField,
-    poly::{
-        commitment::commitment_scheme::StreamingProcessChunk,
-        compact_polynomial::StreamingCompactWitness, dense_mlpoly::StreamingDenseWitness,
-        multilinear_polynomial::Multilinear, one_hot_polynomial::StreamingOneHotWitness,
-    },
-};
 use crate::{
     msm::VariableBaseMSM,
     poly::{commitment::kzg::SRS, dense_mlpoly::DensePolynomial, unipoly::UniPoly},
@@ -29,7 +22,6 @@ use crate::{
     utils::errors::ProofVerifyError,
 };
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
-use ark_ff::biginteger::S128;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{One, Zero};
 use rand_chacha::ChaCha20Rng;
@@ -521,187 +513,6 @@ pub struct HyperKZGState<'a, P: Pairing> {
     row_count: usize,
 }
 
-impl<P: Pairing> StreamingProcessChunk<StreamingDenseWitness<P::ScalarField>> for HyperKZG<P>
-where
-    P::ScalarField: JoltField,
-{
-    fn process_chunk_t<'a>(
-        _s: &Self::State<'a>,
-        _chunk: &[StreamingDenseWitness<P::ScalarField>],
-    ) -> Self::ChunkState {
-        todo!("Not supported")
-    }
-}
-impl<P: Pairing> StreamingProcessChunk<StreamingCompactWitness<u8, P::ScalarField>> for HyperKZG<P>
-where
-    P::ScalarField: JoltField,
-{
-    fn process_chunk_t<'a>(
-        _s: &Self::State<'a>,
-        _chunk: &[StreamingCompactWitness<u8, P::ScalarField>],
-    ) -> Self::ChunkState {
-        todo!("Not supported")
-    }
-}
-impl<P: Pairing> StreamingProcessChunk<StreamingCompactWitness<u16, P::ScalarField>> for HyperKZG<P>
-where
-    P::ScalarField: JoltField,
-{
-    fn process_chunk_t<'a>(
-        _s: &Self::State<'a>,
-        _chunk: &[StreamingCompactWitness<u16, P::ScalarField>],
-    ) -> Self::ChunkState {
-        todo!("Not supported")
-    }
-}
-impl<P: Pairing> StreamingProcessChunk<StreamingCompactWitness<u32, P::ScalarField>> for HyperKZG<P>
-where
-    P::ScalarField: JoltField,
-{
-    fn process_chunk_t<'a>(
-        _s: &Self::State<'a>,
-        _chunk: &[StreamingCompactWitness<u32, P::ScalarField>],
-    ) -> Self::ChunkState {
-        todo!("Not supported")
-    }
-}
-impl<P: Pairing> StreamingProcessChunk<StreamingCompactWitness<u64, P::ScalarField>> for HyperKZG<P>
-where
-    P::ScalarField: JoltField,
-{
-    fn process_chunk_t<'a>(
-        _s: &Self::State<'a>,
-        _chunk: &[StreamingCompactWitness<u64, P::ScalarField>],
-    ) -> Self::ChunkState {
-        todo!("Not supported")
-    }
-}
-impl<P: Pairing> StreamingProcessChunk<StreamingCompactWitness<i64, P::ScalarField>> for HyperKZG<P>
-where
-    P::ScalarField: JoltField,
-{
-    fn process_chunk_t<'a>(
-        _s: &Self::State<'a>,
-        _chunk: &[StreamingCompactWitness<i64, P::ScalarField>],
-    ) -> Self::ChunkState {
-        todo!("Not supported")
-    }
-}
-impl<P: Pairing> StreamingProcessChunk<StreamingCompactWitness<i128, P::ScalarField>>
-    for HyperKZG<P>
-where
-    P::ScalarField: JoltField,
-{
-    fn process_chunk_t<'a>(
-        _s: &Self::State<'a>,
-        _chunk: &[StreamingCompactWitness<i128, P::ScalarField>],
-    ) -> Self::ChunkState {
-        todo!("Not supported")
-    }
-}
-impl<P: Pairing> StreamingProcessChunk<StreamingCompactWitness<S128, P::ScalarField>>
-    for HyperKZG<P>
-where
-    P::ScalarField: JoltField,
-{
-    fn process_chunk_t<'a>(
-        _s: &Self::State<'a>,
-        _chunk: &[StreamingCompactWitness<S128, P::ScalarField>],
-    ) -> Self::ChunkState {
-        todo!("Not supported")
-    }
-}
-impl<P: Pairing> StreamingProcessChunk<StreamingOneHotWitness<P::ScalarField>> for HyperKZG<P>
-where
-    P::ScalarField: JoltField,
-{
-    fn process_chunk_t<'a>(
-        _s: &Self::State<'a>,
-        _chunk: &[StreamingOneHotWitness<P::ScalarField>],
-    ) -> Self::ChunkState {
-        todo!("Not supported")
-    }
-}
-
-// TODO: This should go somewhere else.
-pub(crate) const CHUNK_SIZE: usize = 256;
-
-impl<P: Pairing> StreamingCommitmentScheme_ for HyperKZG<P>
-where
-    <P as Pairing>::ScalarField: JoltField,
-{
-    type State<'a> = HyperKZGState<'a, P>;
-    type ChunkState = ();
-    type SetupCache = ();
-
-    fn cache_setup(_: &Self::ProverSetup) -> Self::SetupCache {
-        ()
-    }
-
-    fn initialize<'a>(
-        _poly: Multilinear,
-        size: usize,
-        setup: &'a Self::ProverSetup,
-        _: &'a Self::SetupCache,
-    ) -> Self::State<'a> {
-        assert!(
-            setup.kzg_pk.g1_powers().len() >= size,
-            "COMMIT KEY LENGTH ERROR {}, {}",
-            setup.kzg_pk.g1_powers().len(),
-            size,
-        );
-        assert_eq!(
-            size % CHUNK_SIZE,
-            0,
-            "CHUNK_SIZE ({CHUNK_SIZE}) must evenly divide the size ({size})"
-        );
-
-        let current_chunk = Vec::with_capacity(CHUNK_SIZE);
-
-        HyperKZGState {
-            acc: P::G1::zero(),
-            prover_key: &setup.kzg_pk,
-            current_chunk,
-            row_count: 0,
-        }
-    }
-
-    fn process<'a>(
-        _poly: Multilinear,
-        mut state: Self::State<'a>,
-        eval: Self::Field,
-    ) -> Self::State<'a> {
-        state.current_chunk.push(eval);
-
-        if state.current_chunk.len() == CHUNK_SIZE {
-            let offset = state.row_count * CHUNK_SIZE;
-            let c: P::G1 =
-                UnivariateKZG::commit_inner_helper(state.prover_key, &state.current_chunk, offset)
-                    .unwrap();
-
-            state.acc += c;
-            state.current_chunk.clear();
-            state.row_count += 1;
-        }
-
-        state
-    }
-
-    fn process_chunk<'a, T>(_state: &Self::State<'a>, _chunk: &[T]) -> Self::ChunkState
-    where
-        Self: StreamingProcessChunk<T>,
-    {
-        todo!("Processing chunks is not implemented for HyperKZG yet.")
-    }
-
-    fn finalize<'a>(
-        state: &Self::State<'a>,
-        _chunks: &[Self::ChunkState],
-    ) -> (Self::Commitment, Self::OpeningProofHint) {
-        (HyperKZGCommitment(state.acc.into()), ())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -856,18 +667,6 @@ mod tests {
             let mut verifier_tr2 = Blake2bTranscript::new(b"TestEval");
             assert!(
                 HyperKZG::verify(&vk, &C, &point, &eval, &bad_proof, &mut verifier_tr2,).is_err()
-            );
-
-            // Test the streaming implementation
-            let poly = Multilinear::LargeScalars;
-            let mut state = HyperKZG::initialize(poly, n, &pk, &());
-            for p in poly_raw {
-                state = HyperKZG::process(poly, state, p);
-            }
-            let C2 = HyperKZG::finalize(&state, &[]).0;
-            assert_eq!(
-                C, C2,
-                "Streaming commitment did not match non-streaming commitment"
             );
         }
     }
