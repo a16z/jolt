@@ -20,6 +20,7 @@ use allocative::Allocative;
 use allocative::FlameGraphBuilder;
 use common::constants::REGISTER_COUNT;
 use fixedbitset::FixedBitSet;
+use num_traits::Zero;
 use rayon::prelude::*;
 use std::{cell::RefCell, rc::Rc};
 use tracer::instruction::Cycle;
@@ -311,7 +312,7 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
                 .zip(data_buffers.par_iter_mut())
                 .zip(val_checkpoints.par_chunks(K))
                 .map(|((I_chunk, buffers), checkpoint)| {
-                    let mut evals = [F::zero(), F::zero()];
+                    let mut evals = [F::Unreduced::<9>::zero(); 2];
 
                     let DataBuffers {
                         val_j_0,
@@ -458,22 +459,28 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
                             }
                             dirty_indices.clear();
 
-                            evals[0] += eq_r_prime_eval
-                                * (rd_inner_sum_evals[0]
-                                    + self.gamma * rs1_inner_sum_evals[0]
-                                    + self.gamma_sqr * rs2_inner_sum_evals[0]);
-                            evals[1] += eq_r_prime_eval
-                                * (rd_inner_sum_evals[1]
-                                    + self.gamma * rs1_inner_sum_evals[1]
-                                    + self.gamma_sqr * rs2_inner_sum_evals[1]);
+                            let sum_0 = rd_inner_sum_evals[0]
+                                + self.gamma * rs1_inner_sum_evals[0]
+                                + self.gamma_sqr * rs2_inner_sum_evals[0];
+                            let sum_1 = rd_inner_sum_evals[1]
+                                + self.gamma * rs1_inner_sum_evals[1]
+                                + self.gamma_sqr * rs2_inner_sum_evals[1];
+
+                            evals[0] += eq_r_prime_eval.mul_unreduced::<9>(sum_0);
+                            evals[1] += eq_r_prime_eval.mul_unreduced::<9>(sum_1);
                         });
 
                     evals
                 })
                 .reduce(
-                    || [F::zero(); DEGREE - 1],
+                    || [F::Unreduced::zero(); DEGREE - 1],
                     |running, new| [running[0] + new[0], running[1] + new[1]],
                 )
+                .into_iter()
+                .map(F::from_montgomery_reduce)
+                .collect::<Vec<_>>()
+                .try_into()
+                .unwrap()
         } else {
             // E_in is not fully bound, handle E_in and E_out
             let num_x_in_bits = gruens_eq_r_prime.E_in_current_len().log_2();
@@ -483,7 +490,7 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
                 .zip(data_buffers.par_iter_mut())
                 .zip(val_checkpoints.par_chunks(K))
                 .map(|((I_chunk, buffers), checkpoint)| {
-                    let mut evals = [F::zero(), F::zero()];
+                    let mut evals = [F::Unreduced::<9>::zero(); 2];
 
                     let mut evals_for_current_E_out = [F::zero(), F::zero()];
                     let mut x_out_prev: Option<usize> = None;
@@ -596,8 +603,10 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
                                     x_out_prev = Some(x_out);
 
                                     let E_out_eval = gruens_eq_r_prime.E_out_current()[x];
-                                    evals[0] += E_out_eval * evals_for_current_E_out[0];
-                                    evals[1] += E_out_eval * evals_for_current_E_out[1];
+                                    evals[0] +=
+                                        E_out_eval.mul_unreduced::<9>(evals_for_current_E_out[0]);
+                                    evals[1] +=
+                                        E_out_eval.mul_unreduced::<9>(evals_for_current_E_out[1]);
 
                                     evals_for_current_E_out = [F::zero(), F::zero()];
                                 }
@@ -653,29 +662,35 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
                             }
                             dirty_indices.clear();
 
-                            evals_for_current_E_out[0] += E_in_eval
-                                * (rd_inner_sum_evals[0]
-                                    + self.gamma * rs1_inner_sum_evals[0]
-                                    + self.gamma_sqr * rs2_inner_sum_evals[0]);
-                            evals_for_current_E_out[1] += E_in_eval
-                                * (rd_inner_sum_evals[1]
-                                    + self.gamma * rs1_inner_sum_evals[1]
-                                    + self.gamma_sqr * rs2_inner_sum_evals[1]);
+                            let sum_0 = rd_inner_sum_evals[0]
+                                + self.gamma * rs1_inner_sum_evals[0]
+                                + self.gamma_sqr * rs2_inner_sum_evals[0];
+                            let sum_1 = rd_inner_sum_evals[1]
+                                + self.gamma * rs1_inner_sum_evals[1]
+                                + self.gamma_sqr * rs2_inner_sum_evals[1];
+
+                            evals_for_current_E_out[0] += E_in_eval * sum_0;
+                            evals_for_current_E_out[1] += E_in_eval * sum_1;
                         });
 
                     // Multiply the final running sum by the final value of E_out_eval and add the
                     // result to the total.
                     if let Some(x) = x_out_prev {
                         let E_out_eval = gruens_eq_r_prime.E_out_current()[x];
-                        evals[0] += E_out_eval * evals_for_current_E_out[0];
-                        evals[1] += E_out_eval * evals_for_current_E_out[1];
+                        evals[0] += E_out_eval.mul_unreduced::<9>(evals_for_current_E_out[0]);
+                        evals[1] += E_out_eval.mul_unreduced::<9>(evals_for_current_E_out[1]);
                     }
                     evals
                 })
                 .reduce(
-                    || [F::zero(); DEGREE - 1],
+                    || [F::Unreduced::zero(); DEGREE - 1],
                     |running, new| [running[0] + new[0], running[1] + new[1]],
                 )
+                .into_iter()
+                .map(F::from_montgomery_reduce)
+                .collect::<Vec<_>>()
+                .try_into()
+                .unwrap()
         };
 
         // Convert quadratic coefficients to cubic evaluations
