@@ -286,7 +286,6 @@ mod tests {
     #[test]
     fn test_challenge_special_trivial() {
         use ark_std::UniformRand;
-        //TODO: this test needs to be changed like your old test.
         let mut rng = ark_std::test_rng();
         let mut transcript1 = Blake2bTranscript::new(b"test_trivial_challenge");
 
