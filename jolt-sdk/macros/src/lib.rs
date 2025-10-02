@@ -40,12 +40,13 @@ struct MacroBuilder {
     attr: AttributeArgs,
     func: ItemFn,
     std: bool,
-    func_args: Vec<(Ident, Box<Type>)>,
+    pub_func_args: Vec<(Ident, Box<Type>)>,
+    priv_func_args: Vec<(Ident, Box<Type>)>,
 }
 
 impl MacroBuilder {
     fn new(attr: AttributeArgs, func: ItemFn) -> Self {
-        let func_args = Self::get_func_args(&func);
+        let (pub_func_args, priv_func_args) = Self::get_func_args(&func);
         #[cfg(feature = "guest-std")]
         let std = true;
         #[cfg(not(feature = "guest-std"))]
@@ -55,7 +56,8 @@ impl MacroBuilder {
             attr,
             func,
             std,
-            func_args,
+            pub_func_args,
+            priv_func_args,
         }
     }
 
@@ -135,8 +137,8 @@ impl MacroBuilder {
         let build_prover_fn_name = Ident::new(&format!("build_prover_{fn_name}"), fn_name.span());
         let prove_output_ty = self.get_prove_output_type();
 
-        let input_names = self.func_args.iter().map(|(name, _)| name);
-        let input_types = self.func_args.iter().map(|(_, ty)| ty);
+        let input_names = self.pub_func_args.iter().map(|(name, _)| name);
+        let input_types = self.pub_func_args.iter().map(|(_, ty)| ty);
         let inputs = &self.func.sig.inputs;
         let prove_fn_name = Ident::new(&format!("prove_{fn_name}"), fn_name.span());
         let imports = self.make_imports();
@@ -168,14 +170,14 @@ impl MacroBuilder {
         let build_verifier_fn_name =
             Ident::new(&format!("build_verifier_{fn_name}"), fn_name.span());
 
-        let input_types = self.func_args.iter().map(|(_, ty)| ty);
+        let input_types = self.pub_func_args.iter().map(|(_, ty)| ty);
         let output_type: Type = match &self.func.sig.output {
             ReturnType::Default => syn::parse_quote!(()),
             ReturnType::Type(_, ty) => syn::parse_quote!((#ty)),
         };
         let inputs = self.func.sig.inputs.iter();
         let imports = self.make_imports();
-        let set_program_args = self.func_args.iter().map(|(name, _)| {
+        let set_program_args = self.pub_func_args.iter().map(|(name, _)| {
             quote! {
                 io_device.inputs.append(&mut jolt::postcard::to_stdvec(&#name).unwrap())
             }
@@ -237,7 +239,7 @@ impl MacroBuilder {
         let fn_name_str = fn_name.to_string();
         let analyze_fn_name = Ident::new(&format!("analyze_{fn_name}"), fn_name.span());
         let inputs = &self.func.sig.inputs;
-        let set_program_args = self.func_args.iter().map(|(name, _)| {
+        let set_program_args = self.pub_func_args.iter().map(|(name, _)| {
             quote! {
                 input_bytes.append(&mut jolt::postcard::to_stdvec(&#name).unwrap())
             }
@@ -272,7 +274,7 @@ impl MacroBuilder {
         let fn_name_str = fn_name.to_string();
         let trace_to_file_fn_name = Ident::new(&format!("trace_{fn_name}_to_file"), fn_name.span());
         let inputs = &self.func.sig.inputs;
-        let set_program_args = self.func_args.iter().map(|(name, _)| {
+        let set_program_args = self.pub_func_args.iter().map(|(name, _)| {
             quote! {
                 input_bytes.append(&mut jolt::postcard::to_stdvec(&#name).unwrap())
             }
@@ -447,7 +449,7 @@ impl MacroBuilder {
             },
         };
 
-        let set_program_args = self.func_args.iter().map(|(name, _)| {
+        let set_program_args = self.pub_func_args.iter().map(|(name, _)| {
             quote! {
                 input_bytes.append(&mut jolt::postcard::to_stdvec(&#name).unwrap())
             }
@@ -508,7 +510,7 @@ impl MacroBuilder {
             };
         };
 
-        let args = &self.func_args;
+        let args = &self.pub_func_args;
         let args_fetch = args.iter().map(|(name, ty)| {
             quote! {
                 let (#name, input_slice) =
@@ -715,12 +717,22 @@ impl MacroBuilder {
         }
     }
 
-    fn get_func_args(func: &ItemFn) -> Vec<(Ident, Box<Type>)> {
-        let mut args = Vec::new();
+    fn get_func_args(func: &ItemFn) -> (Vec<(Ident, Box<Type>)>, Vec<(Ident, Box<Type>)>) {
+        let mut pub_args = Vec::new();
+        let mut priv_args = Vec::new();
+        
         for arg in &func.sig.inputs {
             if let syn::FnArg::Typed(PatType { pat, ty, .. }) = arg {
                 if let syn::Pat::Ident(pat_ident) = pat.as_ref() {
-                    args.push((pat_ident.ident.clone(), ty.clone()));
+                    let ident = pat_ident.ident.clone();
+                    let arg_type = ty.clone();
+                    
+                    // Check if the type is wrapped in jolt::Private<> or Private<>
+                    if Self::is_private_type(&arg_type) {
+                        priv_args.push((ident, arg_type));
+                    } else {
+                        pub_args.push((ident, arg_type));
+                    }
                 } else {
                     panic!("cannot parse arg");
                 }
@@ -729,7 +741,17 @@ impl MacroBuilder {
             }
         }
 
-        args
+        (pub_args, priv_args)
+    }
+    
+    fn is_private_type(ty: &Type) -> bool {
+        if let Type::Path(type_path) = ty {
+            if let Some(last_segment) = type_path.path.segments.last() {
+                // Check for "Private" or path ending in "Private" (e.g., jolt::Private)
+                return last_segment.ident == "Private";
+            }
+        }
+        false
     }
 
     fn get_func_name(&self) -> &Ident {

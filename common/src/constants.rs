@@ -18,6 +18,7 @@ pub const DEFAULT_STACK_SIZE: u64 = 4096;
 pub const STACK_CANARY_SIZE: u64 = 128;
 pub const DEFAULT_MAX_INPUT_SIZE: u64 = 4096;
 pub const DEFAULT_MAX_OUTPUT_SIZE: u64 = 4096;
+pub const DEFAULT_MAX_PRIVATE_INPUT_SIZE: u64 = 4096;
 pub const DEFAULT_MAX_TRACE_LENGTH: u64 = 1 << 24;
 
 // Layout of the witness (where || denotes concatenation):

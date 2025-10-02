@@ -1879,6 +1879,7 @@ dependencies = [
  "jolt-sdk-macros",
  "postcard",
  "rand 0.8.5",
+ "serde",
  "tracer",
 ]
 
