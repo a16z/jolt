@@ -725,7 +725,7 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
                 let inc_evals =
                     inc_cycle.sumcheck_evals_array::<DEGREE>(j, BindingOrder::HighToLow);
 
-                let inner_sum_evals: [F; DEGREE] = (0..K)
+                let inner_sum_evals = (0..K)
                     .into_par_iter()
                     .map(|k| {
                         let index = j * K + k;
@@ -750,8 +750,15 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
                                 + self.gamma_sqr * rs2_ra_evals[2].mul_0_optimized(val_evals[2]),
                         ]
                     })
+                    .fold_with([F::Unreduced::<5>::zero(); DEGREE], |running, new| {
+                        [
+                            running[0] + new[0].as_unreduced_ref(),
+                            running[1] + new[1].as_unreduced_ref(),
+                            running[2] + new[2].as_unreduced_ref(),
+                        ]
+                    })
                     .reduce(
-                        || [F::zero(); DEGREE],
+                        || [F::Unreduced::<5>::zero(); DEGREE],
                         |running, new| {
                             [
                                 running[0] + new[0],
@@ -762,13 +769,16 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
                     );
 
                 [
-                    eq_r_prime_evals[0] * inner_sum_evals[0],
-                    eq_r_prime_evals[1] * inner_sum_evals[1],
-                    eq_r_prime_evals[2] * inner_sum_evals[2],
+                    eq_r_prime_evals[0]
+                        .mul_unreduced::<9>(F::from_barrett_reduce(inner_sum_evals[0])),
+                    eq_r_prime_evals[1]
+                        .mul_unreduced::<9>(F::from_barrett_reduce(inner_sum_evals[1])),
+                    eq_r_prime_evals[2]
+                        .mul_unreduced::<9>(F::from_barrett_reduce(inner_sum_evals[2])),
                 ]
             })
             .reduce(
-                || [F::zero(); DEGREE],
+                || [F::Unreduced::<9>::zero(); DEGREE],
                 |running, new| {
                     [
                         running[0] + new[0],
@@ -776,7 +786,8 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
                         running[2] + new[2],
                     ]
                 },
-            );
+            )
+            .map(F::from_montgomery_reduce);
 
         univariate_poly_evals.into()
     }
@@ -826,8 +837,15 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
                         + self.gamma_sqr * rs2_ra_evals[2] * val_evals[2],
                 ]
             })
+            .fold_with([F::Unreduced::<5>::zero(); DEGREE], |running, new| {
+                [
+                    running[0] + new[0].as_unreduced_ref(),
+                    running[1] + new[1].as_unreduced_ref(),
+                    running[2] + new[2].as_unreduced_ref(),
+                ]
+            })
             .reduce(
-                || [F::zero(); DEGREE],
+                || [F::Unreduced::<5>::zero(); DEGREE],
                 |running, new| {
                     [
                         running[0] + new[0],
@@ -838,9 +856,9 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
             );
 
         vec![
-            eq_r_prime_eval * evals[0],
-            eq_r_prime_eval * evals[1],
-            eq_r_prime_eval * evals[2],
+            eq_r_prime_eval * F::from_barrett_reduce(evals[0]),
+            eq_r_prime_eval * F::from_barrett_reduce(evals[1]),
+            eq_r_prime_eval * F::from_barrett_reduce(evals[2]),
         ]
     }
 
