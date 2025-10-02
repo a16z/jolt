@@ -187,7 +187,6 @@ where
 
     #[allow(clippy::type_complexity)]
     #[cfg(feature = "prover")]
-    #[tracing::instrument(skip_all, name = "Jolt::prove")]
     fn prove(
         preprocessing: &JoltProverPreprocessing<F, PCS>,
         elf_contents: &[u8],
