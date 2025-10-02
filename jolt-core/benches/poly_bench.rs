@@ -39,7 +39,6 @@ fn setup_inputs(n: u64) -> (MultilinearPolynomial<Fr>, Vec<Fr>) {
 /// across different polynomial sizes (2^12 to 2^24 coefficients)
 fn bench_all(c: &mut Criterion) {
     let mut group = c.benchmark_group("evals");
-    //group.measurement_time(std::time::Duration::from_secs(60));
 
     for &exp in &[12, 14, 16, 18, 20, 22, 24] {
         let num_vars = 1 << exp; // 2^exp
