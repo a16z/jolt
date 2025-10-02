@@ -57,7 +57,7 @@ echo 3 > /proc/sys/vm/drop_caches
 
 echo "==> Ready-to-run Jolt profiling command:"
 echo
-echo "RUST_LOG=info chrt -f 80 cargo run --release -p jolt-core profile --name sha2-chain --format chrome"
+echo 'RUSTFLAGS="-C target-cpu=native -C opt-level=3 -C codegen-units=1 -C embed-bitcode=yes" RUST_LOG=info chrt -f 80 cargo run --release -p jolt-core profile --name sha2-chain --format chrome'
 
 echo
 echo "All set. Run the command above to benchmark."
