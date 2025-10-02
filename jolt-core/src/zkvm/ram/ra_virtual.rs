@@ -1,3 +1,4 @@
+use num_traits::Zero;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -321,12 +322,12 @@ impl<F: JoltField> SumcheckInstance<F> for RaSumcheck<F> {
 
         // We need to compute evaluations at 0, 2, 3, ..., degree
         // = eq(r_cycle, j) * ∏_{i=0}^{D-1} ra_i(j)
-        let univariate_poly_evals: Vec<F> = (0..ra_i_polys[0].len() / 2)
+        let univariate_poly_evals = (0..ra_i_polys[0].len() / 2)
             .into_par_iter()
             .map(|i| {
                 let eq_evals = eq_poly.sumcheck_evals(i, degree, BindingOrder::LowToHigh);
 
-                let mut evals = vec![F::zero(); degree];
+                let mut evals = vec![];
 
                 // Firstly compute all ra_i_evals
                 let all_ra_i_evals: Vec<Vec<F>> = ra_i_polys
@@ -335,19 +336,28 @@ impl<F: JoltField> SumcheckInstance<F> for RaSumcheck<F> {
                     .collect();
 
                 for eval_point in 0..degree {
+                    // Multiply all ra evaluations together in field arithmetic
                     let mut result = eq_evals[eval_point];
-
                     for ra_i_evals in all_ra_i_evals.iter() {
                         result *= ra_i_evals[eval_point];
                     }
-
-                    evals[eval_point] = result;
+                    // Convert to unreduced<5> by adding zero
+                    let unreduced_4 = *result.as_unreduced_ref();
+                    let mut unreduced_5 = <F::Unreduced<5> as Zero>::zero();
+                    unreduced_5 = unreduced_5 + &unreduced_4;
+                    evals.push(unreduced_5);
                 }
 
                 evals
             })
             .reduce(
-                || vec![F::zero(); degree],
+                || {
+                    let mut v = vec![];
+                    for _ in 0..degree {
+                        v.push(<F::Unreduced<5> as Zero>::zero());
+                    }
+                    v
+                },
                 |mut running, new| {
                     for i in 0..degree {
                         running[i] += new[i];
@@ -357,6 +367,9 @@ impl<F: JoltField> SumcheckInstance<F> for RaSumcheck<F> {
             );
 
         univariate_poly_evals
+            .into_iter()
+            .map(F::from_barrett_reduce)
+            .collect()
     }
 
     fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
