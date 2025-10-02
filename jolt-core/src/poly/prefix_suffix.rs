@@ -516,7 +516,6 @@ pub mod tests {
     use ark_bn254::Fr;
     use ark_ff::{AdditiveGroup, Field};
     use ark_std::test_rng;
-    use rand::Rng;
 
     pub fn prefix_suffix_decomposition_test<
         const NUM_VARS: usize,

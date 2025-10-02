@@ -1,3 +1,5 @@
+#[macro_use]
+pub mod macros;
 pub mod mont_ark_u128;
 pub mod trivial;
 
