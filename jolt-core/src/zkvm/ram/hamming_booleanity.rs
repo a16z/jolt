@@ -33,6 +33,7 @@ pub struct HammingBooleanitySumcheck<F: JoltField> {
 }
 
 impl<F: JoltField> HammingBooleanitySumcheck<F> {
+    #[tracing::instrument(skip_all, name = "RamHammingBooleanitySumcheck::new_prover")]
     pub fn new_prover(
         sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
     ) -> Self {
@@ -91,6 +92,10 @@ impl<F: JoltField> SumcheckInstance<F> for HammingBooleanitySumcheck<F> {
         F::zero()
     }
 
+    #[tracing::instrument(
+        skip_all,
+        name = "RamHammingBooleanitySumcheck::compute_prover_message"
+    )]
     fn compute_prover_message(&mut self, _round: usize, _previous_claim: F) -> Vec<F> {
         let p = self.prover_state.as_ref().unwrap();
 
@@ -129,6 +134,7 @@ impl<F: JoltField> SumcheckInstance<F> for HammingBooleanitySumcheck<F> {
         univariate_poly_evals.to_vec()
     }
 
+    #[tracing::instrument(skip_all, name = "RamHammingBooleanitySumcheck::bind")]
     fn bind(&mut self, r_j: F::Challenge, _round: usize) {
         let ps = self.prover_state.as_mut().unwrap();
         rayon::join(

@@ -332,7 +332,10 @@ impl Default for Sha256 {
 /// - `state` must be a valid pointer to at least 32 bytes of readable and writable memory
 /// - Both pointers must be properly aligned for u32 access (4-byte alignment)
 /// - The memory regions must not overlap
-#[cfg(not(feature = "host"))]
+#[cfg(all(
+    not(feature = "host"),
+    any(target_arch = "riscv32", target_arch = "riscv64")
+))]
 pub unsafe fn sha256_compression(input: *const u32, state: *mut u32) {
     use crate::{INLINE_OPCODE, SHA256_FUNCT3, SHA256_FUNCT7};
     core::arch::asm!(
@@ -344,6 +347,15 @@ pub unsafe fn sha256_compression(input: *const u32, state: *mut u32) {
         rs2 = in(reg) input,
         options(nostack)
     );
+}
+
+#[cfg(all(
+    not(feature = "host"),
+    not(any(target_arch = "riscv32", target_arch = "riscv64"))
+))]
+pub unsafe fn sha256_compression(_input: *const u32, _state: *mut u32) {
+    // This should not be called on non-RISC-V targets without host feature
+    panic!("SHA256 compression called on non-RISC-V target without host feature");
 }
 /// Calls the SHA256 compression custom instruction
 ///
@@ -379,7 +391,10 @@ pub unsafe fn sha256_compression(input: *const u32, state: *mut u32) {
 /// - `state` must be a valid pointer to at least 32 bytes of writable memory
 /// - Both pointers must be properly aligned for u32 access (4-byte alignment)
 /// - The memory regions must not overlap
-#[cfg(not(feature = "host"))]
+#[cfg(all(
+    not(feature = "host"),
+    any(target_arch = "riscv32", target_arch = "riscv64")
+))]
 pub unsafe fn sha256_compression_initial(input: *const u32, state: *mut u32) {
     use crate::{INLINE_OPCODE, SHA256_INIT_FUNCT3, SHA256_INIT_FUNCT7};
     core::arch::asm!(
@@ -391,6 +406,15 @@ pub unsafe fn sha256_compression_initial(input: *const u32, state: *mut u32) {
         rs2 = in(reg) input,
         options(nostack)
     );
+}
+
+#[cfg(all(
+    not(feature = "host"),
+    not(any(target_arch = "riscv32", target_arch = "riscv64"))
+))]
+pub unsafe fn sha256_compression_initial(_input: *const u32, _state: *mut u32) {
+    // This should not be called on non-RISC-V targets without host feature
+    panic!("SHA256 compression initial called on non-RISC-V target without host feature");
 }
 
 /// Calls the SHA256 compression custom instruction with initial block
@@ -415,7 +439,10 @@ pub unsafe fn sha256_compression_initial(input: *const u32, state: *mut u32) {
     std::ptr::copy_nonoverlapping(result.as_ptr(), state, 8)
 }
 
-#[cfg(not(feature = "host"))]
+#[cfg(all(
+    not(feature = "host"),
+    any(target_arch = "riscv32", target_arch = "riscv64")
+))]
 fn swap_bytes(mut v: u32) -> u32 {
     unsafe {
         core::arch::asm!(
@@ -427,6 +454,14 @@ fn swap_bytes(mut v: u32) -> u32 {
         );
     }
     v
+}
+
+#[cfg(all(
+    not(feature = "host"),
+    not(any(target_arch = "riscv32", target_arch = "riscv64"))
+))]
+fn swap_bytes(v: u32) -> u32 {
+    v.swap_bytes()
 }
 
 #[cfg(feature = "host")]

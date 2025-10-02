@@ -39,6 +39,7 @@ pub struct PCSumcheck<F: JoltField> {
 }
 
 impl<F: JoltField> PCSumcheck<F> {
+    #[tracing::instrument(skip_all, name = "PCSumcheck::new_prover")]
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         key: Arc<UniformSpartanKey<F>>,

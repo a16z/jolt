@@ -1,19 +1,17 @@
 use std::iter::zip;
 
-use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
+use rayon::prelude::*;
 
 use crate::{
     field::{JoltField, MulU64WithCarry},
-    poly::{
-        eq_poly::EqPolynomial, multilinear_polynomial::MultilinearPolynomial, unipoly::UniPoly,
-    },
+    poly::{eq_poly::EqPolynomial, ra_poly::RaPolynomial, unipoly::UniPoly},
 };
 
 /// Computes the univariate polynomial `g(X) = sum_j eq((r', X, j), r) * prod_i mle_i(X, j)`.
 ///
 /// Note `claim` should equal `g(0) + g(1)`.
 pub fn compute_mles_product_sum<F: JoltField>(
-    mles: &[MultilinearPolynomial<F>],
+    mles: &[RaPolynomial<F>],
     claim: F,
     r: &[F::Challenge],
     r_prime: &[F::Challenge],
@@ -290,6 +288,7 @@ mod tests {
             dense_mlpoly::DensePolynomial,
             eq_poly::EqPolynomial,
             multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
+            ra_poly::RaPolynomial,
         },
         subprotocols::mles_product_sum::compute_mles_product_sum,
     };
@@ -307,6 +306,7 @@ mod tests {
         let challenge: &[<Fr as JoltField>::Challenge; 1] = &r_whole;
         let mle_challenge_product = mles.iter().map(|p| p.evaluate(challenge)).product::<Fr>();
         let eval = EqPolynomial::mle(challenge, r) * mle_challenge_product;
+        let mles = mles.map(RaPolynomial::RoundN);
 
         let sum_poly = compute_mles_product_sum(&mles, claim, r, &[]);
 
@@ -325,6 +325,7 @@ mod tests {
         let challenge: &[<Fr as JoltField>::Challenge; 1] = &r_whole;
         let mle_challenge_product = mles.iter().map(|p| p.evaluate(challenge)).product::<Fr>();
         let eval = EqPolynomial::mle(challenge, r) * mle_challenge_product;
+        let mles = mles.map(RaPolynomial::RoundN);
 
         let sum_poly = compute_mles_product_sum(&mles, claim, r, &[]);
 
@@ -343,6 +344,7 @@ mod tests {
         let challenge: &[<Fr as JoltField>::Challenge; 1] = &r_whole;
         let mle_challenge_product = mles.iter().map(|p| p.evaluate(challenge)).product::<Fr>();
         let eval = EqPolynomial::mle(challenge, r) * mle_challenge_product;
+        let mles = mles.map(RaPolynomial::RoundN);
 
         let sum_poly = compute_mles_product_sum(&mles, claim, r, &[]);
 
@@ -361,6 +363,7 @@ mod tests {
         let challenge: &[<Fr as JoltField>::Challenge; 1] = &r_whole;
         let mle_challenge_product = mles.iter().map(|p| p.evaluate(challenge)).product::<Fr>();
         let eval = EqPolynomial::mle(challenge, r) * mle_challenge_product;
+        let mles = mles.map(RaPolynomial::RoundN);
 
         let sum_poly = compute_mles_product_sum(&mles, claim, r, &[]);
 

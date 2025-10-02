@@ -186,7 +186,6 @@ where
 
     #[allow(clippy::type_complexity)]
     #[cfg(feature = "prover")]
-    #[tracing::instrument(skip_all, name = "Jolt::prove")]
     fn prove(
         preprocessing: &JoltProverPreprocessing<F, PCS>,
         elf_contents: &[u8],
@@ -443,9 +442,9 @@ mod tests {
     fn sha3_e2e_dory() {
         // Ensure SHA3 inline library is linked and auto-registered
         #[cfg(feature = "host")]
-        use sha3_inline as _;
+        use jolt_inlines_keccak256 as _;
         // SHA3 inlines are automatically registered via #[ctor::ctor]
-        // when the sha3_inline crate is linked (see lib.rs)
+        // when the jolt-inlines-keccak256 crate is linked (see lib.rs)
 
         let mut program = host::Program::new("sha3-guest");
         let (bytecode, init_memory_state, _) = program.decode();
@@ -493,9 +492,9 @@ mod tests {
     fn sha2_e2e_dory() {
         // Ensure SHA2 inline library is linked and auto-registered
         #[cfg(feature = "host")]
-        use sha2_inline as _;
+        use jolt_inlines_sha2 as _;
         // SHA2 inlines are automatically registered via #[ctor::ctor]
-        // when the sha2_inline crate is linked (see lib.rs)
+        // when the jolt-inlines-sha2 crate is linked (see lib.rs)
         let mut program = host::Program::new("sha2-guest");
         let (bytecode, init_memory_state, _) = program.decode();
         let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();

@@ -38,7 +38,7 @@ pub struct HammingWeightSumcheck<F: JoltField> {
 }
 
 impl<F: JoltField> HammingWeightSumcheck<F> {
-    #[tracing::instrument(skip_all, name = "InstructionHammingWeightSumcheck::new_prover")]
+    #[tracing::instrument(skip_all, name = "InstructionHammingWeight::new_prover")]
     pub fn new_prover(
         sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
         F: [Vec<F>; D],

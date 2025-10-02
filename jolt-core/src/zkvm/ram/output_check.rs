@@ -55,7 +55,6 @@ struct OutputSumcheckProverState<F: JoltField> {
 }
 
 impl<F: JoltField> OutputSumcheckProverState<F> {
-    #[tracing::instrument(skip_all, name = "OutputSumcheckProverState::initialize")]
     fn new(
         initial_ram_state: Vec<u64>,
         final_ram_state: Vec<u64>,
@@ -119,7 +118,7 @@ pub struct OutputSumcheck<F: JoltField> {
 }
 
 impl<F: JoltField> OutputSumcheck<F> {
-    #[tracing::instrument(skip_all, name = "OutputSumcheck")]
+    #[tracing::instrument(skip_all, name = "OutputSumcheck::new_prover")]
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         initial_ram_state: Vec<u64>,
         final_ram_state: Vec<u64>,
@@ -370,6 +369,7 @@ pub struct ValFinalSumcheck<F: JoltField> {
 }
 
 impl<F: JoltField> ValFinalSumcheck<F> {
+    #[tracing::instrument(skip_all, name = "ValFinalSumcheck::new_prover")]
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {

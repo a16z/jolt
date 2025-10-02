@@ -71,7 +71,6 @@ struct ReadWriteCheckingProverState<F: JoltField> {
 }
 
 impl<F: JoltField> ReadWriteCheckingProverState<F> {
-    #[tracing::instrument(skip_all, name = "RamReadWriteCheckingProverState::initialize")]
     fn initialize<PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript>(
         initial_memory_state: &[u64],
         K: usize,
@@ -320,6 +319,7 @@ pub struct RamReadWriteChecking<F: JoltField> {
 }
 
 impl<F: JoltField> RamReadWriteChecking<F> {
+    #[tracing::instrument(skip_all, name = "RamReadWriteChecking::new_prover")]
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         initial_memory_state: &[u64],
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
@@ -401,7 +401,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
         }
     }
 
-    #[tracing::instrument(skip_all, name = "RamReadWriteChecking::phase1_compute_prover_message")]
+    #[tracing::instrument(skip_all, name = "phase1_compute_prover_message")]
     fn phase1_compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F> {
         const DEGREE: usize = 3;
         let ReadWriteCheckingProverState {
