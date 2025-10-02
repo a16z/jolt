@@ -111,7 +111,8 @@ impl MacroBuilder {
         let attributes = parse_attributes(&self.attr);
         let max_input_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_input_size);
         let max_output_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_output_size);
-        let max_private_input_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_private_input_size);
+        let max_private_input_size =
+            proc_macro2::Literal::u64_unsuffixed(attributes.max_private_input_size);
         let stack_size = proc_macro2::Literal::u64_unsuffixed(attributes.stack_size);
         let memory_size = proc_macro2::Literal::u64_unsuffixed(attributes.memory_size);
 
@@ -142,7 +143,7 @@ impl MacroBuilder {
         // Include both public and private arguments for the prover
         let all_args = self.pub_func_args.iter().chain(self.priv_func_args.iter());
         let input_names = all_args.clone().map(|(name, _)| name);
-        let input_types = self.pub_func_args.iter().chain(self.priv_func_args.iter()).map(|(_, ty)| ty);
+        let input_types = all_args.clone().map(|(_, ty)| ty);
         let inputs = &self.func.sig.inputs;
         let prove_fn_name = Ident::new(&format!("prove_{fn_name}"), fn_name.span());
         let imports = self.make_imports();
@@ -248,7 +249,12 @@ impl MacroBuilder {
         let fn_name_str = fn_name.to_string();
         let analyze_fn_name = Ident::new(&format!("analyze_{fn_name}"), fn_name.span());
         let inputs = &self.func.sig.inputs;
-        let set_program_args = self.pub_func_args.iter().map(|(name, _)| {
+        let set_pub_args = self.pub_func_args.iter().map(|(name, _)| {
+            quote! {
+                input_bytes.append(&mut jolt::postcard::to_stdvec(&#name).unwrap())
+            }
+        });
+        let set_priv_args = self.priv_func_args.iter().map(|(name, _)| {
             quote! {
                 input_bytes.append(&mut jolt::postcard::to_stdvec(&#name).unwrap())
             }
@@ -266,7 +272,8 @@ impl MacroBuilder {
                 #set_mem_size
 
                 let mut input_bytes = vec![];
-                #(#set_program_args;)*
+                #(#set_pub_args;)*
+                #(#set_priv_args;)*
 
                 program.trace_analyze::<jolt::F>(&input_bytes)
              }
@@ -283,7 +290,12 @@ impl MacroBuilder {
         let fn_name_str = fn_name.to_string();
         let trace_to_file_fn_name = Ident::new(&format!("trace_{fn_name}_to_file"), fn_name.span());
         let inputs = &self.func.sig.inputs;
-        let set_program_args = self.pub_func_args.iter().map(|(name, _)| {
+        let set_pub_args = self.pub_func_args.iter().map(|(name, _)| {
+            quote! {
+                input_bytes.append(&mut jolt::postcard::to_stdvec(&#name).unwrap())
+            }
+        });
+        let set_priv_args = self.priv_func_args.iter().map(|(name, _)| {
             quote! {
                 input_bytes.append(&mut jolt::postcard::to_stdvec(&#name).unwrap())
             }
@@ -300,7 +312,8 @@ impl MacroBuilder {
                 #set_mem_size
 
                 let mut input_bytes = vec![];
-                #(#set_program_args;)*
+                #(#set_pub_args;)*
+                #(#set_priv_args;)*
 
                 program.trace_to_file(&input_bytes, &path);
             }
@@ -342,7 +355,8 @@ impl MacroBuilder {
         let attributes = parse_attributes(&self.attr);
         let max_input_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_input_size);
         let max_output_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_output_size);
-        let max_private_input_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_private_input_size);
+        let max_private_input_size =
+            proc_macro2::Literal::u64_unsuffixed(attributes.max_private_input_size);
         let stack_size = proc_macro2::Literal::u64_unsuffixed(attributes.stack_size);
         let memory_size = proc_macro2::Literal::u64_unsuffixed(attributes.memory_size);
         let max_trace_length = proc_macro2::Literal::u64_unsuffixed(attributes.max_trace_length);
@@ -387,7 +401,8 @@ impl MacroBuilder {
         let attributes = parse_attributes(&self.attr);
         let max_input_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_input_size);
         let max_output_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_output_size);
-        let max_private_input_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_private_input_size);
+        let max_private_input_size =
+            proc_macro2::Literal::u64_unsuffixed(attributes.max_private_input_size);
         let stack_size = proc_macro2::Literal::u64_unsuffixed(attributes.stack_size);
         let memory_size = proc_macro2::Literal::u64_unsuffixed(attributes.memory_size);
         let max_trace_length = proc_macro2::Literal::u64_unsuffixed(attributes.max_trace_length);
@@ -467,6 +482,11 @@ impl MacroBuilder {
                 input_bytes.append(&mut jolt::postcard::to_stdvec(&#name).unwrap())
             }
         });
+        let set_program_private_args = self.priv_func_args.iter().map(|(name, _)| {
+            quote! {
+                private_input_bytes.append(&mut jolt::postcard::to_stdvec(&#name).unwrap())
+            }
+        });
 
         let fn_name = self.get_func_name();
         let inputs = &self.func.sig.inputs;
@@ -484,6 +504,7 @@ impl MacroBuilder {
 
                 let mut input_bytes = vec![];
                 #(#set_program_args;)*
+                #(#set_program_private_args;)*
 
                 let elf_contents_opt = program.get_elf_contents();
                 let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
@@ -513,6 +534,7 @@ impl MacroBuilder {
         });
         let input_start = memory_layout.input_start;
         let output_start = memory_layout.output_start;
+        let private_input_start = memory_layout.private_input_start;
         let max_input_len = attributes.max_input_size as usize;
         let max_output_len = attributes.max_output_size as usize;
         let max_private_input_len = attributes.max_private_input_size as usize;
@@ -525,11 +547,26 @@ impl MacroBuilder {
             };
         };
 
-        let args = &self.pub_func_args;
-        let args_fetch = args.iter().map(|(name, ty)| {
+        let get_private_input_slice = quote! {
+            let private_input_ptr = #private_input_start as *const u8;
+            let private_input_slice = unsafe {
+                core::slice::from_raw_parts(private_input_ptr, #max_private_input_len)
+            };
+        };
+
+        // Fetch public arguments from the public input slice
+        let pub_args_fetch = self.pub_func_args.iter().map(|(name, ty)| {
             quote! {
                 let (#name, input_slice) =
                     jolt::postcard::take_from_bytes::<#ty>(input_slice).unwrap();
+            }
+        });
+
+        // Fetch private arguments from the private input slice
+        let priv_args_fetch = self.priv_func_args.iter().map(|(name, ty)| {
+            quote! {
+                let (#name, private_input_slice) =
+                    jolt::postcard::take_from_bytes::<#ty>(private_input_slice).unwrap();
             }
         });
 
@@ -575,7 +612,9 @@ impl MacroBuilder {
             pub extern "C" fn main() {
                 let mut offset = 0;
                 #get_input_slice
-                #(#args_fetch;)*
+                #get_private_input_slice
+                #(#pub_args_fetch;)*
+                #(#priv_args_fetch;)*
                 #check_input_len
                 #block
                 #handle_return
@@ -740,13 +779,13 @@ impl MacroBuilder {
     fn get_func_args(func: &ItemFn) -> (Vec<(Ident, Box<Type>)>, Vec<(Ident, Box<Type>)>) {
         let mut pub_args = Vec::new();
         let mut priv_args = Vec::new();
-        
+
         for arg in &func.sig.inputs {
             if let syn::FnArg::Typed(PatType { pat, ty, .. }) = arg {
                 if let syn::Pat::Ident(pat_ident) = pat.as_ref() {
                     let ident = pat_ident.ident.clone();
                     let arg_type = ty.clone();
-                    
+
                     // Check if the type is wrapped in jolt::Private<> or Private<>
                     if Self::is_private_type(&arg_type) {
                         priv_args.push((ident, arg_type));
@@ -763,7 +802,7 @@ impl MacroBuilder {
 
         (pub_args, priv_args)
     }
-    
+
     fn is_private_type(ty: &Type) -> bool {
         if let Type::Path(type_path) = ty {
             if let Some(last_segment) = type_path.path.segments.last() {

@@ -14,11 +14,11 @@ pub use postcard;
 use serde::{Deserialize, Serialize};
 
 /// A wrapper type to mark function inputs as private in zero-knowledge proofs.
-/// 
+///
 /// When an input is wrapped with `Private<T>`, it indicates that this input
 /// should be treated as private (witness) data in the proof system, meaning
 /// its value will not be revealed in the generated proof.
-/// 
+///
 /// # Example
 /// ```rust
 /// #[provable]
@@ -38,17 +38,17 @@ impl<T> Private<T> {
     pub fn new(value: T) -> Self {
         Self { value }
     }
-    
+
     /// Extract the inner value
     pub fn into_inner(self) -> T {
         self.value
     }
-    
+
     /// Get a reference to the inner value
     pub fn inner(&self) -> &T {
         &self.value
     }
-    
+
     /// Get a mutable reference to the inner value
     pub fn inner_mut(&mut self) -> &mut T {
         &mut self.value
@@ -64,7 +64,7 @@ impl<T> From<T> for Private<T> {
 // Implement Deref for ergonomic usage in guest code
 impl<T> core::ops::Deref for Private<T> {
     type Target = T;
-    
+
     fn deref(&self) -> &Self::Target {
         &self.value
     }

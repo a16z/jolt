@@ -74,7 +74,8 @@ pub fn trace(
     inputs: &[u8],
     memory_config: &MemoryConfig,
 ) -> (Vec<Cycle>, Memory, JoltDevice) {
-    let (trace, memory, io_device) = tracer::trace(elf_contents, elf_path, inputs, memory_config);
+    let (trace, memory, io_device) =
+        tracer::trace(elf_contents, elf_path, inputs, &[], memory_config);
     (trace, memory, io_device)
 }
 
@@ -85,7 +86,13 @@ pub fn trace_to_file(
     memory_config: &MemoryConfig,
     trace_file: &PathBuf,
 ) -> (Memory, JoltDevice) {
-    let (memory, io_device) =
-        tracer::trace_to_file(elf_contents, elf_path, inputs, memory_config, trace_file);
+    let (memory, io_device) = tracer::trace_to_file(
+        elf_contents,
+        elf_path,
+        inputs,
+        &[],
+        memory_config,
+        trace_file,
+    );
     (memory, io_device)
 }

@@ -954,6 +954,7 @@ mod tests {
             };
         let program_io = JoltDevice {
             memory_layout,
+            private_inputs: vec![],
             inputs: vec![],
             outputs: vec![],
             panic: false,
