@@ -72,24 +72,9 @@ if [[ -z "${CORES_NODE0}" ]]; then
 fi
 echo "Cores on node 0: ${CORES_NODE0}"
 
-echo "==> Example: run your binary pinned to node 0 + those cores, high priority"
+echo "==> Ready-to-run Jolt profiling command:"
 echo
-cat <<'EOF'
-
-# Replace ./target/release/your-binary and <args> as needed.
-# chrt -f uses FIFO scheduling; requires root. If you prefer normal policy, drop chrt.
-
-numactl --cpunodebind=0 --membind=0 \
-taskset -c __CORES_NODE0__ \
-chrt -f 80 \
-./target/release/your-binary <args>
-
-EOF
-echo
-
-# Print a ready-to-paste command with actual cores filled in:
-echo "Ready-to-paste command with detected cores:"
-echo "numactl --cpunodebind=0 --membind=0 taskset -c ${CORES_NODE0} chrt -f 80 ./target/release/your-binary <args>"
+echo "numactl --cpunodebind=0 --membind=0 taskset -c ${CORES_NODE0} chrt -f 80 RUST_LOG=info cargo run --release -p jolt-core profile --name sha2-chain --format chrome"
 
 echo
 echo "All set. Run the command above to benchmark."
