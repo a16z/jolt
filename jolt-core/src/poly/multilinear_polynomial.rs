@@ -6,7 +6,6 @@ use crate::{
 use allocative::Allocative;
 use ark_ff::biginteger::S128;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Valid};
-// use ark_std::iterable::Iterable;
 use rayon::prelude::*;
 use strum_macros::EnumIter;
 
