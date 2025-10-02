@@ -260,7 +260,6 @@ impl<F: JoltField> EqPlusOnePolynomial<F> {
                 r_lower_product = r_lower_product * x; // To get the benefits of multiplication
             }
             r_lower_product *= F::one() - r[i];
-            // let r_lower_product = (F::one() - r[i]) * r.iter().skip(i + 1).copied().product::<F>();
 
             eq_plus_one_evals
                 .par_iter_mut()
