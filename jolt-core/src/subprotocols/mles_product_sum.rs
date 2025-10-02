@@ -337,7 +337,6 @@ mod tests {
         let mut rng = &mut test_rng();
         let r_whole = [<Fr as JoltField>::Challenge::random(&mut rng)];
         let r: &[<Fr as JoltField>::Challenge; 1] = &r_whole;
-        // let r: &[Fr; 1] = &rng.gen();
         let mles: [_; N_MLE] = from_fn(|_| random_mle(1, rng));
         let claim = gen_product_mle(&mles).evaluate(r);
         let r_whole = [<Fr as JoltField>::Challenge::rand(&mut rng)];
