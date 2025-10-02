@@ -107,7 +107,7 @@ impl<F: JoltField> DensePolynomial<F> {
             .for_each(|(a, b)| {
                 let m = *b - *a;
                 if m.is_one() {
-                    *a += *r + F::zero();
+                    *a += (*r).into();
                 } else {
                     *a += *r * m;
                 }
@@ -391,7 +391,7 @@ impl<F: JoltField> DensePolynomial<F> {
                         return;
                     }
                     if slope.is_one() {
-                        *x += r_val + F::zero(); //TODO: (ari) this should be as F
+                        *x += r_val.into();
                     } else {
                         *x += r_val * slope;
                     }

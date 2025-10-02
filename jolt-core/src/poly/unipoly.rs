@@ -167,7 +167,7 @@ impl<F: JoltField> UniPoly<F> {
         F: FieldChallengeOps<C>,
     {
         let mut eval = coeffs[0];
-        let mut power = *r + F::zero();
+        let mut power = (*r).into();
         for i in 1..coeffs.len() {
             eval += power * coeffs[i];
 
@@ -175,17 +175,6 @@ impl<F: JoltField> UniPoly<F> {
             {
                 power = power * *r;
             }
-        }
-        eval
-    }
-
-    #[tracing::instrument(skip_all, name = "UniPoly::eval_with_coeffs")]
-    pub fn eval_with_coeffs_field(coeffs: &[F], r: &F) -> F {
-        let mut eval = coeffs[0];
-        let mut power = *r + F::zero();
-        for i in 1..coeffs.len() {
-            eval += power * coeffs[i];
-            power *= *r;
         }
         eval
     }

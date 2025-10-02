@@ -217,7 +217,7 @@ impl<F: JoltField> PolynomialBinding<F> for OperandPolynomial<F> {
             || (self.num_bound_vars.is_odd() && self.side == OperandSide::Right)
         {
             self.bound_value += self.bound_value;
-            self.bound_value += r + F::zero(); //TODO: (Ari) this should be as Fr
+            self.bound_value += r.into();
         }
         self.num_bound_vars += 1;
     }
