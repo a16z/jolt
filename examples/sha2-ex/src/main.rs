@@ -1,4 +1,5 @@
 use std::time::Instant;
+use jolt_sdk::Private;
 use tracing::info;
 
 pub fn main() {
@@ -16,9 +17,9 @@ pub fn main() {
 
     let input: &[u8] = &[5u8; 32];
     let now = Instant::now();
-    let (output, proof, program_io) = prove_sha2(input);
+    let (output, proof, program_io) = prove_sha2(input, Private::new(5u8));
     info!("Prover runtime: {} s", now.elapsed().as_secs_f64());
-    let is_valid = verify_sha2(input, output, program_io.panic, proof);
+    let is_valid = verify_sha2(&[5u8; 32], output, program_io.panic, proof);
 
     info!("output: {}", hex::encode(output));
     info!("valid: {is_valid}");

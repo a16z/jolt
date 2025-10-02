@@ -17,11 +17,14 @@ pub struct Attributes {
     pub stack_size: u64,
     pub max_input_size: u64,
     pub max_output_size: u64,
+    pub max_private_input_size: u64,
     pub max_trace_length: u64,
 }
 
 #[cfg(feature = "std")]
 pub fn parse_attributes(attr: &Vec<NestedMeta>) -> Attributes {
+    use crate::constants::DEFAULT_MAX_PRIVATE_INPUT_SIZE;
+
     let mut attributes = HashMap::<_, u64>::new();
     let mut wasm = false;
     let mut guest_only = false;
@@ -40,6 +43,7 @@ pub fn parse_attributes(attr: &Vec<NestedMeta>) -> Attributes {
                     "stack_size" => attributes.insert("stack_size", value),
                     "max_input_size" => attributes.insert("max_input_size", value),
                     "max_output_size" => attributes.insert("max_output_size", value),
+                    "max_private_input_size" => attributes.insert("max_private_input_size", value),
                     "max_trace_length" => attributes.insert("max_trace_length", value),
                     _ => panic!("invalid attribute"),
                 };
@@ -67,6 +71,9 @@ pub fn parse_attributes(attr: &Vec<NestedMeta>) -> Attributes {
     let max_output_size = *attributes
         .get("max_output_size")
         .unwrap_or(&DEFAULT_MAX_OUTPUT_SIZE);
+    let max_private_input_size = *attributes
+        .get("max_private_input_size")
+        .unwrap_or(&DEFAULT_MAX_PRIVATE_INPUT_SIZE);
     let max_trace_length = *attributes
         .get("max_trace_length")
         .unwrap_or(&DEFAULT_MAX_TRACE_LENGTH);
@@ -79,6 +86,7 @@ pub fn parse_attributes(attr: &Vec<NestedMeta>) -> Attributes {
         stack_size,
         max_input_size,
         max_output_size,
+        max_private_input_size,
         max_trace_length,
     }
 }

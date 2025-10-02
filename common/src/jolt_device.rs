@@ -7,8 +7,7 @@ use alloc::vec::Vec;
 use std::vec::Vec;
 
 use crate::constants::{
-    DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE, DEFAULT_MEMORY_SIZE, DEFAULT_STACK_SIZE,
-    RAM_START_ADDRESS,
+    DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE, DEFAULT_MAX_PRIVATE_INPUT_SIZE, DEFAULT_MEMORY_SIZE, DEFAULT_STACK_SIZE, RAM_START_ADDRESS
 };
 
 #[allow(clippy::too_long_first_doc_paragraph)]
@@ -116,6 +115,7 @@ impl JoltDevice {
 pub struct MemoryConfig {
     pub max_input_size: u64,
     pub max_output_size: u64,
+    pub max_private_input_size: u64,
     pub stack_size: u64,
     pub memory_size: u64,
     pub program_size: Option<u64>,
@@ -126,6 +126,7 @@ impl Default for MemoryConfig {
         Self {
             max_input_size: DEFAULT_MAX_INPUT_SIZE,
             max_output_size: DEFAULT_MAX_OUTPUT_SIZE,
+            max_private_input_size: DEFAULT_MAX_PRIVATE_INPUT_SIZE,
             stack_size: DEFAULT_STACK_SIZE,
             memory_size: DEFAULT_MEMORY_SIZE,
             program_size: None,
@@ -141,10 +142,13 @@ pub struct MemoryLayout {
     pub program_size: u64,
     pub max_input_size: u64,
     pub max_output_size: u64,
+    pub max_private_input_size: u64,
     pub input_start: u64,
     pub input_end: u64,
     pub output_start: u64,
     pub output_end: u64,
+    pub private_input_start: u64, 
+    pub private_input_end: u64,
     pub stack_size: u64,
     /// Stack starts from (RAM_START_ADDRESS + `program_size` + `stack_size`) and grows in descending addresses by `stack_size` bytes.
     pub stack_end: u64,
@@ -164,10 +168,13 @@ impl core::fmt::Debug for MemoryLayout {
             .field("program_size", &self.program_size)
             .field("max_input_size", &self.max_input_size)
             .field("max_output_size", &self.max_output_size)
+            .field("max_private_input_size", &self.max_private_input_size)
             .field("input_start", &format_args!("{:#X}", self.input_start))
             .field("input_end", &format_args!("{:#X}", self.input_end))
             .field("output_start", &format_args!("{:#X}", self.output_start))
             .field("output_end", &format_args!("{:#X}", self.output_end))
+            .field("private_input_start", &format_args!("{:#X}", self.private_input_start))
+            .field("private_input_end", &format_args!("{:#X}", self.private_input_end))
             .field("stack_size", &format_args!("{:#X}", self.stack_size))
             .field("stack_end", &format_args!("{:#X}", self.stack_end))
             .field("memory_size", &format_args!("{:#X}", self.memory_size))
@@ -202,6 +209,7 @@ impl MemoryLayout {
 
         let max_input_size = align_up(config.max_input_size, 8);
         let max_output_size = align_up(config.max_output_size, 8);
+        let max_private_input_size = align_up(config.max_private_input_size, 8);
         let stack_size = align_up(config.stack_size, 8);
         let memory_size = align_up(config.memory_size, 8);
 
@@ -235,8 +243,12 @@ impl MemoryLayout {
         let io_end = termination.checked_add(8).expect("io_end overflow");
 
         let program_size = config.program_size.unwrap();
+
+        let private_input_start = RAM_START_ADDRESS;
+        let private_input_end = RAM_START_ADDRESS + max_private_input_size;
+
         // stack grows downwards (decreasing addresses) from the bytecode_end + stack_size up to bytecode_end
-        let stack_end = RAM_START_ADDRESS
+        let stack_end = private_input_end
             .checked_add(program_size)
             .expect("stack_end overflow");
         let stack_start = stack_end
@@ -252,10 +264,13 @@ impl MemoryLayout {
             program_size,
             max_input_size,
             max_output_size,
+            max_private_input_size,
             input_start,
             input_end,
             output_start,
             output_end,
+            private_input_start,
+            private_input_end,
             stack_size,
             stack_end,
             memory_size,

@@ -111,6 +111,7 @@ impl MacroBuilder {
         let attributes = parse_attributes(&self.attr);
         let max_input_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_input_size);
         let max_output_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_output_size);
+        let max_private_input_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_private_input_size);
         let stack_size = proc_macro2::Literal::u64_unsuffixed(attributes.stack_size);
         let memory_size = proc_macro2::Literal::u64_unsuffixed(attributes.memory_size);
 
@@ -124,6 +125,7 @@ impl MacroBuilder {
                 MemoryConfig {
                     max_input_size: #max_input_size,
                     max_output_size: #max_output_size,
+                    max_private_input_size: #max_private_input_size,
                     stack_size: #stack_size,
                     memory_size: #memory_size,
                     program_size: None,
@@ -137,8 +139,10 @@ impl MacroBuilder {
         let build_prover_fn_name = Ident::new(&format!("build_prover_{fn_name}"), fn_name.span());
         let prove_output_ty = self.get_prove_output_type();
 
-        let input_names = self.pub_func_args.iter().map(|(name, _)| name);
-        let input_types = self.pub_func_args.iter().map(|(_, ty)| ty);
+        // Include both public and private arguments for the prover
+        let all_args = self.pub_func_args.iter().chain(self.priv_func_args.iter());
+        let input_names = all_args.clone().map(|(name, _)| name);
+        let input_types = self.pub_func_args.iter().chain(self.priv_func_args.iter()).map(|(_, ty)| ty);
         let inputs = &self.func.sig.inputs;
         let prove_fn_name = Ident::new(&format!("prove_{fn_name}"), fn_name.span());
         let imports = self.make_imports();
@@ -175,7 +179,11 @@ impl MacroBuilder {
             ReturnType::Default => syn::parse_quote!(()),
             ReturnType::Type(_, ty) => syn::parse_quote!((#ty)),
         };
-        let inputs = self.func.sig.inputs.iter();
+        // Only use public inputs for the verifier
+        // let inputs = self.func.sig.inputs.iter();
+        let public_inputs = self.pub_func_args.iter().map(|(name, ty)| {
+            quote! { #name: #ty }
+        });
         let imports = self.make_imports();
         let set_program_args = self.pub_func_args.iter().map(|(name, _)| {
             quote! {
@@ -192,11 +200,12 @@ impl MacroBuilder {
                 #imports
                 let preprocessing = std::sync::Arc::new(preprocessing);
 
-                let verify_closure = move |#(#inputs,)* output, panic, proof: jolt::RV64IMACJoltProof| {
+                let verify_closure = move |#(#public_inputs,)* output, panic, proof: jolt::RV64IMACJoltProof| {
                     let preprocessing = (*preprocessing).clone();
                     let memory_config = MemoryConfig {
                         max_input_size: preprocessing.shared.memory_layout.max_input_size,
                         max_output_size: preprocessing.shared.memory_layout.max_output_size,
+                        max_private_input_size: preprocessing.shared.memory_layout.max_private_input_size,
                         stack_size: preprocessing.shared.memory_layout.stack_size,
                         memory_size: preprocessing.shared.memory_layout.memory_size,
                         program_size: Some(preprocessing.shared.memory_layout.program_size),
@@ -333,6 +342,7 @@ impl MacroBuilder {
         let attributes = parse_attributes(&self.attr);
         let max_input_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_input_size);
         let max_output_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_output_size);
+        let max_private_input_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_private_input_size);
         let stack_size = proc_macro2::Literal::u64_unsuffixed(attributes.stack_size);
         let memory_size = proc_macro2::Literal::u64_unsuffixed(attributes.memory_size);
         let max_trace_length = proc_macro2::Literal::u64_unsuffixed(attributes.max_trace_length);
@@ -352,6 +362,7 @@ impl MacroBuilder {
                 let memory_config = MemoryConfig {
                     max_input_size: #max_input_size,
                     max_output_size: #max_output_size,
+                    max_private_input_size: #max_private_input_size,
                     stack_size: #stack_size,
                     memory_size: #memory_size,
                     program_size: Some(program_size),
@@ -376,6 +387,7 @@ impl MacroBuilder {
         let attributes = parse_attributes(&self.attr);
         let max_input_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_input_size);
         let max_output_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_output_size);
+        let max_private_input_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_private_input_size);
         let stack_size = proc_macro2::Literal::u64_unsuffixed(attributes.stack_size);
         let memory_size = proc_macro2::Literal::u64_unsuffixed(attributes.memory_size);
         let max_trace_length = proc_macro2::Literal::u64_unsuffixed(attributes.max_trace_length);
@@ -395,6 +407,7 @@ impl MacroBuilder {
                 let memory_config = MemoryConfig {
                     max_input_size: #max_input_size,
                     max_output_size: #max_output_size,
+                    max_private_input_size: #max_private_input_size,
                     stack_size: #stack_size,
                     memory_size: #memory_size,
                     program_size: Some(program_size),
@@ -492,6 +505,7 @@ impl MacroBuilder {
         let memory_layout = MemoryLayout::new(&MemoryConfig {
             max_input_size: attributes.max_input_size,
             max_output_size: attributes.max_output_size,
+            max_private_input_size: attributes.max_private_input_size,
             stack_size: attributes.stack_size,
             memory_size: attributes.memory_size,
             // Not needed for the main function, but we need the io region information from MemoryLayout.
@@ -501,6 +515,7 @@ impl MacroBuilder {
         let output_start = memory_layout.output_start;
         let max_input_len = attributes.max_input_size as usize;
         let max_output_len = attributes.max_output_size as usize;
+        let max_private_input_len = attributes.max_private_input_size as usize;
         let termination_bit = memory_layout.termination as usize;
 
         let get_input_slice = quote! {
@@ -687,6 +702,11 @@ impl MacroBuilder {
         let value = attributes.max_output_size;
         code.push(quote! {
             program.set_max_output_size(#value);
+        });
+
+        let value = attributes.max_private_input_size;
+        code.push(quote! {
+            program.set_max_private_input_size(#value);
         });
 
         quote! {

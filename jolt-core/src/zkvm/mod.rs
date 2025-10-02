@@ -204,6 +204,7 @@ where
         let memory_config = MemoryConfig {
             max_input_size: preprocessing.shared.memory_layout.max_input_size,
             max_output_size: preprocessing.shared.memory_layout.max_output_size,
+            max_private_input_size: preprocessing.shared.memory_layout.max_private_input_size,
             stack_size: preprocessing.shared.memory_layout.stack_size,
             memory_size: preprocessing.shared.memory_layout.memory_size,
             program_size: Some(preprocessing.shared.memory_layout.program_size),

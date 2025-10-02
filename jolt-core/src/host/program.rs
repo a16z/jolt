@@ -6,8 +6,7 @@ use crate::host::toolchain::{install_no_std_toolchain, install_toolchain};
 use crate::host::TOOLCHAIN_VERSION;
 use crate::host::{Program, DEFAULT_TARGET_DIR, LINKER_SCRIPT_TEMPLATE};
 use common::constants::{
-    DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE, DEFAULT_MEMORY_SIZE, DEFAULT_STACK_SIZE,
-    EMULATOR_MEMORY_CAPACITY, RAM_START_ADDRESS, STACK_CANARY_SIZE,
+    DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE, DEFAULT_MAX_PRIVATE_INPUT_SIZE, DEFAULT_MEMORY_SIZE, DEFAULT_STACK_SIZE, EMULATOR_MEMORY_CAPACITY, RAM_START_ADDRESS, STACK_CANARY_SIZE
 };
 use common::jolt_device::{JoltDevice, MemoryConfig};
 use std::fs::File;
@@ -29,6 +28,7 @@ impl Program {
             stack_size: DEFAULT_STACK_SIZE,
             max_input_size: DEFAULT_MAX_INPUT_SIZE,
             max_output_size: DEFAULT_MAX_OUTPUT_SIZE,
+            max_private_input_size: DEFAULT_MAX_PRIVATE_INPUT_SIZE,
             std: false,
             elf: None,
         }
@@ -47,6 +47,7 @@ impl Program {
         self.set_stack_size(memory_config.stack_size);
         self.set_max_input_size(memory_config.max_input_size);
         self.set_max_output_size(memory_config.max_output_size);
+        self.set_max_private_input_size(memory_config.max_private_input_size);
     }
 
     pub fn set_memory_size(&mut self, len: u64) {
@@ -63,6 +64,10 @@ impl Program {
 
     pub fn set_max_output_size(&mut self, size: u64) {
         self.max_output_size = size;
+    }
+
+    pub fn set_max_private_input_size(&mut self, size: u64) {
+        self.max_private_input_size = size;
     }
 
     pub fn build(&mut self, target_dir: &str) {
@@ -248,6 +253,7 @@ impl Program {
             stack_size: self.stack_size,
             max_input_size: self.max_input_size,
             max_output_size: self.max_output_size,
+            max_private_input_size: self.max_private_input_size,
             program_size: Some(program_size),
         };
 
@@ -269,6 +275,7 @@ impl Program {
             stack_size: self.stack_size,
             max_input_size: self.max_input_size,
             max_output_size: self.max_output_size,
+            max_private_input_size: self.max_private_input_size,
             program_size: Some(program_size),
         };
 
