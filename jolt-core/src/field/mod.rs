@@ -70,6 +70,7 @@ pub trait JoltField:
         + MulTrunc<Other<4> = Self::Unreduced<4>, Output<9> = Self::Unreduced<9>>
         + MulU64WithCarry<Output<5> = Self::Unreduced<5>>
         + Add<Output = Self::Unreduced<N>>
+        + Add<Self::Unreduced<4>, Output = Self::Unreduced<N>>
         + for<'a> Add<&'a Self::Unreduced<N>, Output = Self::Unreduced<N>>
         + for<'a> Add<&'a Self::Unreduced<4>, Output = Self::Unreduced<N>>
         + AddAssign

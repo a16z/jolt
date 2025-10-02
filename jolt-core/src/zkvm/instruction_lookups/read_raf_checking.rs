@@ -780,10 +780,10 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             })
             .fold_with([F::Unreduced::<5>::zero(); 4], |running, new| {
                 [
-                    running[0] + &new[0],
-                    running[1] + &new[1],
-                    running[2] + &new[2],
-                    running[3] + &new[3],
+                    running[0] + new[0],
+                    running[1] + new[1],
+                    running[2] + new[2],
+                    running[3] + new[3],
                 ]
             })
             .reduce(

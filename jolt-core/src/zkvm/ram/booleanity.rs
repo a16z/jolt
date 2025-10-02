@@ -442,7 +442,6 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                                 |running, new| [running[0] + new[0], running[1] + new[1]],
                             );
 
-                        // Use barrett_reduce for Unreduced<5> (5 limbs)
                         coeffs[0] += self.gamma_powers[i] * F::from_barrett_reduce(inner_sum[0]);
                         coeffs[1] += self.gamma_powers[i] * F::from_barrett_reduce(inner_sum[1]);
                     }
@@ -513,7 +512,6 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                                         |running, new| [running[0] + new[0], running[1] + new[1]],
                                     );
 
-                                // Use barrett_reduce for Unreduced<5> (5 limbs)
                                 coeffs[0] +=
                                     self.gamma_powers[i] * F::from_barrett_reduce(inner_sum[0]);
                                 coeffs[1] +=
