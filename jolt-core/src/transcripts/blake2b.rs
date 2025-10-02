@@ -231,7 +231,6 @@ impl Transcript for Blake2bTranscript {
         q_powers
     }
 
-    // New methods that return F::Challenge
     fn challenge_scalar_special<F: JoltField>(&mut self) -> F::Challenge {
         // The smaller challenge which is then converted into a
         // MontU128Challenge
