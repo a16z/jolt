@@ -295,7 +295,7 @@ mod tests {
         let mut rng = test_rng();
         for len in 5..22 {
             let r = (0..len)
-                .map(|_| <Fr as JoltField>::Challenge::from(rng.gen::<u128>()))
+                .map(|_| <Fr as JoltField>::Challenge::random(&mut rng))
                 .collect::<Vec<_>>();
             let start = Instant::now();
             let evals_serial: Vec<Fr> = EqPolynomial::evals_serial(&r, None);
@@ -331,7 +331,7 @@ mod tests {
         let mut rng = test_rng();
         for len in 2..22 {
             let r = (0..len)
-                .map(|_| <Fr as JoltField>::Challenge::from(rng.gen::<u128>()))
+                .map(|_| <Fr as JoltField>::Challenge::random(&mut rng))
                 .collect::<Vec<_>>();
             let evals_serial_cached = EqPolynomial::<Fr>::evals_serial_cached(&r, None);
             for i in 0..len {

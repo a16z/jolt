@@ -1,7 +1,6 @@
 use super::{FieldOps, JoltField};
-#[cfg(feature = "mont-challenge")]
 use crate::field::challenge::MontU128Challenge;
-#[cfg(feature = "trivial-challenge")]
+#[cfg(feature = "challenge-254-bit")]
 use crate::field::challenge::TrivialChallenge;
 
 use crate::utils::counters::{
@@ -324,12 +323,13 @@ impl JoltField for TrackedFr {
     type Unreduced<const N: usize> = <ark_bn254::Fr as JoltField>::Unreduced<N>;
     type SmallValueLookupTables = <ark_bn254::Fr as JoltField>::SmallValueLookupTables;
 
-    #[cfg(feature = "mont-challenge")]
+    // Default: Use optimized 125-bit MontChallenge
+    #[cfg(not(feature = "challenge-254-bit"))]
     type Challenge = MontU128Challenge<TrackedFr>;
 
-    #[cfg(feature = "trivial-challenge")]
+    // Optional: Use full 254-bit field elements
+    #[cfg(feature = "challenge-254-bit")]
     type Challenge = TrivialChallenge<TrackedFr>;
-
     fn random<R: rand_core::RngCore>(rng: &mut R) -> Self {
         TrackedFr(<ark_bn254::Fr as JoltField>::random(rng))
     }

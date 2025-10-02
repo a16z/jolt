@@ -1,7 +1,6 @@
 use super::{FieldOps, FmaddTrunc, JoltField, MulU64WithCarry};
-#[cfg(feature = "mont-challenge")]
 use crate::field::challenge::MontU128Challenge;
-#[cfg(feature = "trivial-challenge")]
+#[cfg(feature = "challenge-254-bit")]
 use crate::field::challenge::TrivialChallenge;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use ark_ff::{prelude::*, BigInt, PrimeField, UniformRand};
@@ -32,10 +31,12 @@ impl JoltField for ark_bn254::Fr {
     type Unreduced<const N: usize> = BigInt<N>;
     type SmallValueLookupTables = [Vec<Self>; 2];
 
-    #[cfg(feature = "mont-challenge")]
+    // Default: Use optimized 125-bit MontChallenge
+    #[cfg(not(feature = "challenge-254-bit"))]
     type Challenge = MontU128Challenge<ark_bn254::Fr>;
 
-    #[cfg(feature = "trivial-challenge")]
+    // Optional: Use full 254-bit field elements
+    #[cfg(feature = "challenge-254-bit")]
     type Challenge = TrivialChallenge<ark_bn254::Fr>;
 
     fn random<R: rand_core::RngCore>(rng: &mut R) -> Self {
