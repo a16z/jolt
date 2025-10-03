@@ -1,8 +1,6 @@
 pub mod additive_homomorphic;
 pub mod commitment_scheme;
 pub mod dory;
-#[cfg(feature = "recursion")]
-pub mod dory_utils;
 pub mod hyperkzg;
 pub mod hyrax;
 pub mod kzg;

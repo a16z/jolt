@@ -79,7 +79,6 @@ impl<G: CurveGroup> PedersenGenerators<G> {
                 tracing::info!("Generating new Hyrax URS and saving to file");
                 let generators = Self::new(len, label);
 
-                // Try to save to file
                 if let Ok(mut file) = File::create(filename) {
                     let mut buffer = Vec::new();
                     if generators.serialize_compressed(&mut buffer).is_ok() {

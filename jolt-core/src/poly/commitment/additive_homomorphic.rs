@@ -21,7 +21,6 @@ pub trait AdditivelyHomomorphic: CommitmentScheme {
         coeffs: &[Self::Field],
     ) -> Self::OpeningProofHint {
         let _ = (hints, coeffs);
-
         unimplemented!("Hint combination not implemented for this commitment scheme")
     }
 }

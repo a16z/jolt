@@ -1,11 +1,4 @@
-//! This file implements the Hyrax polynomial commitment scheme.
-//! Note that we choose not to implement the `CommitmentScheme` trait, as
-//! Hyrax is not intended to be used as the core PCS for Jolt itself (in fact,
-//! there are some incompatibilities with the batched opening proof protocol
-//! used in Jolt).
-//!
-//! Instead, Hyrax will be used as the PCS in Spartan to prove the verification
-//! of a Jolt proof (i.e. SNARK composition).
+//! This file implements the Hyrax polynomial commitment scheme used in snark composition
 use super::pedersen::{PedersenCommitment, PedersenGenerators};
 use crate::field::JoltField;
 use crate::msm::VariableBaseMSM;
@@ -88,12 +81,6 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F>> HyraxComm
     }
 
     /// Optimized batch commit for 4-variable (16-coefficient) polynomials.
-    ///
-    /// For small polynomials, the overhead of calling MSM dominates. This function:
-    /// 1. Computes each row commitment as a simple serial linear combination (4 ops)
-    /// 2. Parallelizes across ALL rows of ALL polynomials simultaneously
-    ///
-    /// This is much faster than calling MSM 160k times for size-4 operations.
     #[tracing::instrument(skip_all, name = "HyraxCommitment::batch_commit_4var")]
     fn batch_commit_4var(
         batch: &[&[G::ScalarField]],
@@ -146,8 +133,6 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F>> HyraxComm
             "Flattened polynomial rows"
         );
 
-        // Parallel computation of ALL row commitments
-        // For size 4, serial inner product is faster than MSM overhead
         let commit_start = std::time::Instant::now();
         let row_commitments: Vec<(usize, usize, G)> = all_rows
             .par_iter()
@@ -298,7 +283,6 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F>> HyraxOpen
             "Generating Hyrax opening proof"
         );
 
-        // assert vectors are of the right size
         assert_eq!(poly.get_num_vars(), opening_point.len());
 
         // compute the L and R vectors
@@ -536,70 +520,6 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F>>
     }
 }
 
-// A non-impl of StreamingCommitmentScheme
-impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F>> HyraxCommitment<RATIO, G> {
-    // type State<'a> = HyraxCommitmentState<G>;
-
-    pub fn initialize(n: usize, generators: &PedersenGenerators<G>) -> HyraxCommitmentState<G> {
-        let ell = n.log_2();
-
-        let (L_size, R_size) = matrix_dimensions(ell, RATIO);
-        assert_eq!(L_size * R_size, n);
-
-        let generators = CurveGroup::normalize_batch(&generators.generators[..R_size]);
-
-        let row_commitments = Vec::with_capacity(L_size);
-        let current_row = Vec::with_capacity(R_size);
-
-        HyraxCommitmentState {
-            row_commitments,
-            generators,
-            current_row,
-            L_size,
-            R_size,
-        }
-    }
-
-    pub fn process(mut state: HyraxCommitmentState<G>, eval: F) -> HyraxCommitmentState<G> {
-        state.current_row.push(eval);
-
-        if state.current_row.len() == state.R_size {
-            let commitment =
-                PedersenCommitment::commit_vector(&state.current_row, &state.generators);
-            state.row_commitments.push(commitment);
-
-            state.current_row.clear();
-        }
-
-        state
-    }
-
-    pub fn finalize(state: HyraxCommitmentState<G>) -> HyraxCommitment<RATIO, G> {
-        assert_eq!(
-            state.current_row.len(),
-            0,
-            "Incorrect number of elements processed."
-        );
-        assert_eq!(
-            state.row_commitments.len(),
-            state.L_size,
-            "Incorrect number of elements processed."
-        );
-
-        HyraxCommitment {
-            row_commitments: state.row_commitments,
-        }
-    }
-}
-
-pub struct HyraxCommitmentState<G: CurveGroup> {
-    row_commitments: Vec<G>,
-    generators: Vec<<G as CurveGroup>::Affine>,
-    current_row: Vec<G::ScalarField>,
-    L_size: usize,
-    R_size: usize,
-}
-
 #[cfg(all(test, feature = "recursion"))]
 mod tests {
     use super::*;
@@ -730,7 +650,7 @@ mod tests {
     #[test]
     fn test_hyrax_fp12_multilinear_completeness() {
         use ark_bn254::{Fq, Fq12};
-        use ark_grumpkin::{Fr as GrumpkinFr, Projective as GrumpkinProjective};
+        use ark_grumpkin::Projective as GrumpkinProjective;
         use jolt_optimizations::fq12_to_multilinear_evals;
 
         const RATIO: usize = 1;
@@ -740,42 +660,34 @@ mod tests {
 
         let mut rng = test_rng();
 
-        // Generate random Fp12 elements
         let fp12_elements: Vec<Fq12> = (0..NUM_FP12_ELEMENTS)
             .map(|_| Fq12::rand(&mut rng))
             .collect();
 
-        // Convert each Fp12 to multilinear evaluations (16 Fq elements)
         let multilinear_evals_fq: Vec<Vec<Fq>> = fp12_elements
             .iter()
             .map(|fp12| fq12_to_multilinear_evals(fp12))
             .collect();
 
-        // Create DensePolynomials from the Fq evaluations
         let polys: Vec<DensePolynomial<Fq>> = multilinear_evals_fq
             .iter()
             .map(|evals| DensePolynomial::new(evals.clone()))
             .collect();
 
-        // Setup generators for Hyrax (16 = 2^4 elements per poly)
         let num_vars = 4; // 2^4 = 16
         let (_, R_size) = matrix_dimensions(num_vars, RATIO);
         let gens = PedersenGenerators::<G>::new(R_size, b"test fp12 hyrax");
 
-        // Commit to all polynomials
         let poly_refs: Vec<&[Fq]> = polys.iter().map(|p| p.evals_ref()).collect();
         let commitments = HyraxCommitment::<RATIO, G>::batch_commit(&poly_refs[..], &gens);
 
-        // Generate random opening point (4 variables)
         let opening_point: Vec<Fq> = (0..num_vars).map(|_| Fq::rand(&mut rng)).collect();
 
-        // Compute evaluations at the opening point
         let openings: Vec<Fq> = polys
             .iter()
             .map(|poly| poly.evaluate(&opening_point))
             .collect();
 
-        // Create batched opening proof
         let mut prover_transcript = Transcript::new(b"test_fp12_batch");
         let poly_refs_for_proof: Vec<&DensePolynomial<Fq>> = polys.iter().collect();
         let proof = BatchedHyraxOpeningProof::<RATIO, G>::prove(
@@ -785,7 +697,6 @@ mod tests {
             &mut prover_transcript,
         );
 
-        // Verify the proof
         let mut verifier_transcript = Transcript::new(b"test_fp12_batch");
         let commitment_refs: Vec<&HyraxCommitment<RATIO, G>> = commitments.iter().collect();
         let result = proof.verify(
@@ -947,185 +858,5 @@ mod tests {
             &mut verifier_transcript_correct,
         );
         assert!(result_correct.is_ok(), "Correct proof should still verify");
-    }
-
-    #[test]
-    fn test_hyrax_fp12_batch_eval_performance() {
-        use ark_bn254::{Fq, Fq12};
-        use ark_ff::BigInteger;
-        use ark_ff::Field;
-        use ark_grumpkin::Projective as GrumpkinProjective;
-        use jolt_optimizations::fq12_poly::{fq12_to_multilinear_evals, fq12_to_poly12_coeffs};
-        use std::time::Instant;
-        const RATIO: usize = 1;
-        const NUM_FP12_ELEMENTS: usize = 12800;
-        type G = GrumpkinProjective;
-        type Transcript = Blake2bTranscript;
-
-        let mut rng = test_rng();
-        println!("\n=== Hyrax Fq12 Batch Evaluation Performance Test ===");
-        println!("Number of Fq12 elements: {}", NUM_FP12_ELEMENTS);
-
-        // Generate random Fq12 elements
-        let start = Instant::now();
-        let fp12_elements: Vec<Fq12> = (0..NUM_FP12_ELEMENTS)
-            .map(|_| Fq12::rand(&mut rng))
-            .collect();
-        println!(
-            "Time to generate {} Fq12 elements: {:?}",
-            NUM_FP12_ELEMENTS,
-            start.elapsed()
-        );
-
-        // Convert each Fq12 to multilinear evaluations
-        let start = Instant::now();
-        let multilinear_evals_fq: Vec<Vec<Fq>> = fp12_elements
-            .iter()
-            .map(|fp12| fq12_to_multilinear_evals(fp12))
-            .collect();
-        println!("Time to convert to multilinear form: {:?}", start.elapsed());
-
-        // Create DensePolynomials
-        let start = Instant::now();
-        let polys: Vec<DensePolynomial<Fq>> = multilinear_evals_fq
-            .iter()
-            .map(|evals| DensePolynomial::new(evals.clone()))
-            .collect();
-        println!("Time to create dense polynomials: {:?}", start.elapsed());
-
-        // Setup generators
-        let num_vars = 4; // 2^4 = 16
-        let (_, R_size) = matrix_dimensions(num_vars, RATIO);
-        let gens = PedersenGenerators::<G>::new(R_size, b"test fp12 batch perf");
-
-        // Commit to each polynomial individually (to avoid thread pool issues)
-        let start = Instant::now();
-        let commitments: Vec<HyraxCommitment<RATIO, G>> = polys
-            .iter()
-            .map(|poly| HyraxCommitment::<RATIO, G>::commit(poly, &gens))
-            .collect();
-        let commit_time = start.elapsed();
-        println!(
-            "\nTime to commit {} polynomials individually: {:?}",
-            NUM_FP12_ELEMENTS, commit_time
-        );
-
-        // Generate random opening point
-        let opening_point: Vec<Fq> = (0..num_vars).map(|_| Fq::rand(&mut rng)).collect();
-
-        // Compute all evaluations
-        let start = Instant::now();
-        let openings: Vec<Fq> = polys
-            .iter()
-            .map(|poly| poly.evaluate(&opening_point))
-            .collect();
-        let eval_time = start.elapsed();
-        println!(
-            "Time to evaluate {} polynomials: {:?}",
-            NUM_FP12_ELEMENTS, eval_time
-        );
-
-        // Create batched opening proof
-        let start = Instant::now();
-        let mut prover_transcript = Transcript::new(b"test_fp12_batch_perf");
-        let poly_ptrs: Vec<&DensePolynomial<Fq>> = polys.iter().collect();
-        let proof = BatchedHyraxOpeningProof::<RATIO, G>::prove(
-            &poly_ptrs,
-            &opening_point,
-            &openings,
-            &mut prover_transcript,
-        );
-        let prove_time = start.elapsed();
-        println!("\nBatch proof generation time: {:?}", prove_time);
-
-        // Verify the batched proof
-        let start = Instant::now();
-        let mut verifier_transcript = Transcript::new(b"test_fp12_batch_perf");
-        let commitment_refs: Vec<&HyraxCommitment<RATIO, G>> = commitments.iter().collect();
-        let result = proof.verify(
-            &gens,
-            &opening_point,
-            &openings,
-            &commitment_refs,
-            &mut verifier_transcript,
-        );
-        let verify_time = start.elapsed();
-        println!("Batch proof verification time: {:?}", verify_time);
-
-        assert!(result.is_ok(), "Batch proof verification failed");
-
-        // Test soundness: tamper with one evaluation
-        let mut tampered_openings = openings.clone();
-        let tamper_index = NUM_FP12_ELEMENTS / 2;
-        tampered_openings[tamper_index] = tampered_openings[tamper_index] + Fq::from(1u64);
-
-        let mut verifier_transcript_tampered = Transcript::new(b"test_fp12_batch_perf");
-        let tampered_result = proof.verify(
-            &gens,
-            &opening_point,
-            &tampered_openings,
-            &commitment_refs,
-            &mut verifier_transcript_tampered,
-        );
-        assert!(
-            tampered_result.is_err(),
-            "Verification should fail when one evaluation is tampered"
-        );
-
-        // For comparison, time a single proof (just for reference)
-        let start = Instant::now();
-        let mut single_transcript = Transcript::new(b"single");
-        let single_proof = BatchedHyraxOpeningProof::<RATIO, G>::prove(
-            &[&polys[0]],
-            &opening_point,
-            &[openings[0]],
-            &mut single_transcript,
-        );
-        let single_prove_time = start.elapsed();
-
-        let start = Instant::now();
-        let mut single_verifier_transcript = Transcript::new(b"single");
-        let single_result = single_proof.verify(
-            &gens,
-            &opening_point,
-            &[openings[0]],
-            &[&commitments[0]],
-            &mut single_verifier_transcript,
-        );
-        let single_verify_time = start.elapsed();
-        assert!(single_result.is_ok());
-
-        println!("\n=== Performance Comparison ===");
-        println!("Single proof generation: {:?}", single_prove_time);
-        println!(
-            "Batch proof generation ({} polys): {:?}",
-            NUM_FP12_ELEMENTS, prove_time
-        );
-        println!(
-            "Batch speedup factor: {:.2}x",
-            (single_prove_time.as_nanos() as f64 * NUM_FP12_ELEMENTS as f64)
-                / prove_time.as_nanos() as f64
-        );
-
-        println!("\nSingle proof verification: {:?}", single_verify_time);
-        println!(
-            "Batch proof verification ({} polys): {:?}",
-            NUM_FP12_ELEMENTS, verify_time
-        );
-        println!(
-            "Verification speedup factor: {:.2}x",
-            (single_verify_time.as_nanos() as f64 * NUM_FP12_ELEMENTS as f64)
-                / verify_time.as_nanos() as f64
-        );
-
-        println!("\n=== Summary ===");
-        println!(
-            "Successfully proved and verified {} Fq12 polynomial evaluations in a single batch",
-            NUM_FP12_ELEMENTS
-        );
-        println!(
-            "Total time (commit + prove + verify): {:?}",
-            commit_time + prove_time + verify_time
-        );
     }
 }

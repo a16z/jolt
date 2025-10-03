@@ -1,5 +1,4 @@
 //! Trait extensions for recursion-specific commitment scheme machinery.
-//!
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use std::borrow::Borrow;
 use std::fmt::Debug;
@@ -48,25 +47,11 @@ pub trait RecursionCommitmentScheme: CommitmentScheme {
     ///
     /// This is the recursion-aware version of `CommitmentScheme::prove()` that
     /// additionally returns auxiliary data needed for recursive verification.
-    ///
-    /// # Arguments
-    /// * `setup` - The prover setup for the commitment scheme
-    /// * `poly` - The multilinear polynomial being proved
-    /// * `opening_point` - The point at which the polynomial is evaluated
-    /// * `hint` - A hint that helps optimize the proof generation
-    /// * `transcript` - The transcript for Fiat-Shamir transformation
-    ///
-    /// # Returns
-    /// A tuple containing the proof and auxiliary verifier data
     fn prove_with_auxiliary<ProofTranscript: crate::transcripts::Transcript>(
         setup: &Self::ProverSetup,
         poly: &crate::poly::multilinear_polynomial::MultilinearPolynomial<Self::Field>,
         opening_point: &[Self::Field],
         hint: Self::OpeningProofHint,
         transcript: &mut ProofTranscript,
-    ) -> (Self::Proof, Self::AuxiliaryVerifierData) {
-        // Default implementation just calls the standard prove and returns default auxiliary data
-        let proof = Self::prove(setup, poly, opening_point, hint, transcript);
-        (proof, Self::AuxiliaryVerifierData::default())
-    }
+    ) -> (Self::Proof, Self::AuxiliaryVerifierData);
 }
