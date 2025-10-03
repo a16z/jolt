@@ -37,6 +37,7 @@ guest-verifier = [
     "dep:ark-bn254",
     "jolt-core/minimal",
 ]
+recursion = ["jolt-core/recursion"]
 malloc-shim = ["jolt-platform/malloc-shim"]
 
 [dependencies]

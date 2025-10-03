@@ -8,7 +8,7 @@ name = "recursion"
 path = "src/main.rs"
 
 [dependencies]
-jolt-sdk = { path = "../../jolt-sdk", features = ["host"] }
+jolt-sdk = { path = "../../jolt-sdk", features = ["host", "recursion"] }
 tracing-subscriber = "0.3"
 tracing = "0.1"
 ark-serialize = { version = "0.5.0", default-features = false }

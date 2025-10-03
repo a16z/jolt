@@ -254,5 +254,6 @@ where
     }
 }
 
-pub mod ark;
+pub mod ark_bn254_fq;
+pub mod ark_bn254_fr;
 pub mod tracked_ark;

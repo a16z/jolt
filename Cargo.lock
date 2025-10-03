@@ -153,8 +153,6 @@ checksum = "a23eb6b1614318a8071c9b2521f36b424b2c83db5eb3a0fead4a6c0809af6e61"
 [[package]]
 name = "ark-bn254"
 version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d69eab57e8d2663efa5c63135b2af4f396d66424f88954c21104125ab6b3e6bc"
 dependencies = [
  "ark-ec",
  "ark-ff",
@@ -164,7 +162,6 @@ dependencies = [
 [[package]]
 name = "ark-ec"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#ad2e2866e87c513353838b911ca502f4aa1500e5"
 dependencies = [
  "ahash",
  "ark-ff",
@@ -185,7 +182,6 @@ dependencies = [
 [[package]]
 name = "ark-ff"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#ad2e2866e87c513353838b911ca502f4aa1500e5"
 dependencies = [
  "allocative",
  "ark-ff-asm",
@@ -206,7 +202,6 @@ dependencies = [
 [[package]]
 name = "ark-ff-asm"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#ad2e2866e87c513353838b911ca502f4aa1500e5"
 dependencies = [
  "quote",
  "syn 2.0.106",
@@ -215,7 +210,6 @@ dependencies = [
 [[package]]
 name = "ark-ff-macros"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#ad2e2866e87c513353838b911ca502f4aa1500e5"
 dependencies = [
  "num-bigint",
  "num-traits",
@@ -225,9 +219,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "ark-grumpkin"
+version = "0.5.0"
+dependencies = [
+ "ark-bn254",
+ "ark-ec",
+ "ark-ff",
+ "ark-std",
+]
+
+[[package]]
 name = "ark-poly"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#ad2e2866e87c513353838b911ca502f4aa1500e5"
 dependencies = [
  "ahash",
  "ark-ff",
@@ -241,9 +244,8 @@ dependencies = [
 [[package]]
 name = "ark-serialize"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#ad2e2866e87c513353838b911ca502f4aa1500e5"
 dependencies = [
- "ark-serialize-derive 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions)",
+ "ark-serialize-derive 0.5.0",
  "ark-std",
  "arrayvec",
  "digest",
@@ -254,8 +256,6 @@ dependencies = [
 [[package]]
 name = "ark-serialize-derive"
 version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "213888f660fddcca0d257e88e54ac05bca01885f258ccdf695bafd77031bb69d"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -265,7 +265,8 @@ dependencies = [
 [[package]]
 name = "ark-serialize-derive"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#ad2e2866e87c513353838b911ca502f4aa1500e5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "213888f660fddcca0d257e88e54ac05bca01885f258ccdf695bafd77031bb69d"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -882,7 +883,6 @@ dependencies = [
 [[package]]
 name = "dory"
 version = "1.0.0"
-source = "git+https://github.com/spaceandtimefdn/sxt-dory?branch=feat%2Ffewer-reductions#cfd4e8540c13f6b7e98c83a4af79b0df4a0f6f69"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -1735,6 +1735,7 @@ dependencies = [
  "ark-bn254",
  "ark-ec",
  "ark-ff",
+ "ark-grumpkin",
  "ark-serialize",
  "ark-serialize-derive 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "ark-std",
@@ -1843,7 +1844,6 @@ dependencies = [
 [[package]]
 name = "jolt-optimizations"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#ad2e2866e87c513353838b911ca502f4aa1500e5"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -4398,8 +4398,3 @@ dependencies = [
  "quote",
  "syn 2.0.106",
 ]
-
-[[patch.unused]]
-name = "ark-bn254"
-version = "0.5.0-alpha.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=feat%2Ffewer-reductions#ad2e2866e87c513353838b911ca502f4aa1500e5"

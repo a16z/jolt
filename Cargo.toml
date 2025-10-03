@@ -77,6 +77,7 @@ members = [
 
 [features]
 host = ["jolt-sdk/host"]
+recursion = ["jolt-core/recursion"]
 
 [lib]
 path = "./src/lib.rs"
@@ -119,11 +120,13 @@ inherits = "release"
 debug = false
 
 [patch.crates-io]
-ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "feat/fewer-reductions" }
-ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "feat/fewer-reductions" }
-jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", branch = "feat/fewer-reductions" }
-ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "feat/fewer-reductions" }
-ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "feat/fewer-reductions" }
+jolt-optimizations = { path = "/Users/mgeorghiades/a16z/arkworks-algebra/jolt-optimizations" }
+ark-ff = { path = "/Users/mgeorghiades/a16z/arkworks-algebra/ff" }
+ark-ec = { path = "/Users/mgeorghiades/a16z/arkworks-algebra/ec" }
+ark-serialize = { path = "/Users/mgeorghiades/a16z/arkworks-algebra/serialize" }
+ark-bn254 = { path = "/Users/mgeorghiades/a16z/arkworks-algebra/curves/bn254" }
+ark-grumpkin = { path = "/Users/mgeorghiades/a16z/arkworks-algebra/curves/grumpkin" }
+# dory = { path = "/Users/mgeorghiades/a16z/clean-dory" }
 allocative = { git = "https://github.com/facebookexperimental/allocative", rev = "85b773d85d526d068ce94724ff7a7b81203fc95e" }
 
 [workspace.metadata.cargo-machete]
@@ -132,6 +135,7 @@ ignored = ["jolt-sdk"]
 [workspace.dependencies]
 # Cryptography and Math
 ark-bn254 = { version = "0.5.0", default-features = false }
+ark-grumpkin = { version = "0.5.0", default-features = false }
 ark-ec = { version = "0.5.0", default-features = false }
 ark-ff = { version = "0.5.0", default-features = false }
 ark-serialize = { version = "0.5.0", default-features = false, features = [
@@ -139,8 +143,10 @@ ark-serialize = { version = "0.5.0", default-features = false, features = [
 ] }
 ark-serialize-derive = { version = "0.5.0", default-features = false }
 ark-std = { version = "0.5.0", default-features = false }
-jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", branch = "feat/fewer-reductions" }
-dory = { git = "https://github.com/spaceandtimefdn/sxt-dory", branch = "feat/fewer-reductions" }
+# jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", branch = "feat/fewer-reductions" }
+jolt-optimizations = { path = "/Users/mgeorghiades/a16z/arkworks-algebra/jolt-optimizations" }
+# dory = { git = "https://github.com/spaceandtimefdn/sxt-dory", branch = "feat/fewer-reductions" }
+dory = { path = "/Users/mgeorghiades/a16z/clean-dory" }
 sha3 = "0.10.8"
 blake2 = "0.10"
 blake3 = { version = "1.5.0" }

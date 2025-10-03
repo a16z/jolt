@@ -27,11 +27,15 @@ pub enum ProofKeys {
     Stage3Sumcheck,
     Stage4Sumcheck,
     ReducedOpeningProof,
+    #[cfg(feature = "recursion")]
+    Recursion,
 }
 
 pub enum ProofData<F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript> {
     SumcheckProof(SumcheckInstanceProof<F, ProofTranscript>),
     ReducedOpeningProof(ReducedOpeningProof<F, PCS, ProofTranscript>),
+    #[cfg(feature = "recursion")]
+    RecursionProof(crate::subprotocols::snark_composition::RecursionProof<F, ProofTranscript, 1>), // RATIO = 1
 }
 
 pub type Proofs<F, PCS, ProofTranscript> = BTreeMap<ProofKeys, ProofData<F, PCS, ProofTranscript>>;

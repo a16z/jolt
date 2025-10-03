@@ -82,6 +82,69 @@ pub enum CommittedPolynomial {
     RamRa(usize),
 }
 
+// #[cfg(feature = "recursion")]
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Allocative)]
+pub enum RecursionCommittedPolynomial {
+    /// Rho polynomials for recursion check: (exponentiation_idx, local_rho_idx)
+    RecursionRho(usize, usize),
+    /// Base polynomial for exponentiation: exponentiation_idx
+    RecursionBase(usize),
+    /// Final evaluation G(z): exponentiation_idx
+    RecursionG(usize),
+    /// Quotient polynomial for recursion check: (exponentiation_idx, local_quotient_idx)
+    RecursionQuotient(usize, usize),
+}
+
+impl RecursionCommittedPolynomial {
+    // Constants for the indexing scheme
+    const POLY_TYPE_BITS: usize = 2; // 2 bits for 4 types
+    const EXP_IDX_BITS: usize = 12; // 12 bits = up to 4096 exponentiations
+    const LOCAL_IDX_BITS: usize = 10; // 10 bits = up to 1024 local polynomials
+
+    const POLY_TYPE_SHIFT: usize = Self::EXP_IDX_BITS + Self::LOCAL_IDX_BITS;
+    const EXP_IDX_SHIFT: usize = Self::LOCAL_IDX_BITS;
+
+    const POLY_TYPE_RHO: usize = 0;
+    const POLY_TYPE_QUOTIENT: usize = 1;
+    const POLY_TYPE_BASE: usize = 2;
+    const POLY_TYPE_G: usize = 3;
+
+    pub fn to_index(&self) -> usize {
+        let (poly_type, exp_idx, local_idx) = match self {
+            RecursionCommittedPolynomial::RecursionRho(exp_idx, local_idx) => {
+                (Self::POLY_TYPE_RHO, *exp_idx, *local_idx)
+            }
+            RecursionCommittedPolynomial::RecursionQuotient(exp_idx, local_idx) => {
+                (Self::POLY_TYPE_QUOTIENT, *exp_idx, *local_idx)
+            }
+            RecursionCommittedPolynomial::RecursionBase(exp_idx) => {
+                (Self::POLY_TYPE_BASE, *exp_idx, 0)
+            }
+            RecursionCommittedPolynomial::RecursionG(exp_idx) => (Self::POLY_TYPE_G, *exp_idx, 0),
+        };
+
+        // Encode: [poly_type:2][exp_idx:12][local_idx:10]
+        (poly_type << Self::POLY_TYPE_SHIFT) | (exp_idx << Self::EXP_IDX_SHIFT) | local_idx
+    }
+
+    pub fn from_index(index: usize) -> Self {
+        // Decode the components
+        let poly_type = index >> Self::POLY_TYPE_SHIFT;
+        let exp_idx = (index >> Self::EXP_IDX_SHIFT) & ((1 << Self::EXP_IDX_BITS) - 1);
+        let local_idx = index & ((1 << Self::LOCAL_IDX_BITS) - 1);
+
+        match poly_type {
+            Self::POLY_TYPE_RHO => RecursionCommittedPolynomial::RecursionRho(exp_idx, local_idx),
+            Self::POLY_TYPE_QUOTIENT => {
+                RecursionCommittedPolynomial::RecursionQuotient(exp_idx, local_idx)
+            }
+            Self::POLY_TYPE_BASE => RecursionCommittedPolynomial::RecursionBase(exp_idx),
+            Self::POLY_TYPE_G => RecursionCommittedPolynomial::RecursionG(exp_idx),
+            _ => panic!("Invalid RecursionCommittedPolynomial type: {}", poly_type),
+        }
+    }
+}
+
 pub static mut ALL_COMMITTED_POLYNOMIALS: OnceCell<Vec<CommittedPolynomial>> = OnceCell::new();
 
 struct WitnessData {
@@ -665,6 +728,11 @@ pub enum VirtualPolynomial {
     RamVal,
     RamValInit,
     RamValFinal,
+    SZCheckBase,
+    SZCheckG,
+    SZCheckRho(usize),
+    SZCheckQuotient(usize),
+    SZCheckCombinedH,
     RamHammingWeight,
     OpFlags(CircuitFlags),
     LookupTableFlag(usize),

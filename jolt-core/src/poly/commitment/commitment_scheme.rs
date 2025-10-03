@@ -1,5 +1,4 @@
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use std::borrow::Borrow;
 use std::fmt::Debug;
 
 use crate::transcripts::{AppendToTranscript, Transcript};
@@ -26,7 +25,7 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
     /// A hint that helps the prover compute an opening proof. Typically some byproduct of
     /// the commitment computation, e.g. for Dory the Pedersen commitments to the rows can be
     /// used as a hint for the opening proof.
-    type OpeningProofHint: Sync + Send + Clone + Debug;
+    type OpeningProofHint: Sync + Send + Clone + Debug + Default;
 
     /// Generates the prover setup for this PCS. `max_num_vars` is the maximum number of
     /// variables of any polynomial that will be committed using this setup.
@@ -49,36 +48,6 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
         setup: &Self::ProverSetup,
     ) -> (Self::Commitment, Self::OpeningProofHint);
 
-    /// Commits to multiple multilinear polynomials in batch.
-    ///
-    /// # Arguments
-    /// * `polys` - A slice of multilinear polynomials to commit to
-    /// * `gens` - The prover setup for the commitment scheme
-    ///
-    /// # Returns
-    /// A vector of commitments, one for each input polynomial
-    fn batch_commit<U>(polys: &[U], gens: &Self::ProverSetup) -> Vec<Self::Commitment>
-    where
-        U: Borrow<MultilinearPolynomial<Self::Field>> + Sync;
-
-    /// Homomorphically combines multiple commitments into a single commitment, computed as a
-    /// linear combination with the given coefficients.
-    fn combine_commitments<C: Borrow<Self::Commitment>>(
-        _commitments: &[C],
-        _coeffs: &[Self::Field],
-    ) -> Self::Commitment {
-        todo!("`combine_commitments` should be on a separate `AdditivelyHomomorphic` trait")
-    }
-
-    /// Homomorphically combines multiple opening proof hints into a single hint, computed as a
-    /// linear combination with the given coefficients.
-    fn combine_hints(
-        _hints: Vec<Self::OpeningProofHint>,
-        _coeffs: &[Self::Field],
-    ) -> Self::OpeningProofHint {
-        unimplemented!()
-    }
-
     /// Generates a proof of evaluation for a polynomial at a specific point.
     ///
     /// # Arguments
@@ -89,7 +58,7 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
     /// * `transcript` - The transcript for Fiat-Shamir transformation
     ///
     /// # Returns
-    /// A proof of the polynomial evaluation at the specified point
+    /// The proof of polynomial evaluation at the specified point
     fn prove<ProofTranscript: Transcript>(
         setup: &Self::ProverSetup,
         poly: &MultilinearPolynomial<Self::Field>,
