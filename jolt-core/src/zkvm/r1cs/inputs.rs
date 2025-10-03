@@ -332,10 +332,9 @@ pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 41] = [
 
 /// The subset of `ALL_R1CS_INPUTS` that are committed. The rest of
 /// the inputs are virtual polynomials.
-pub const COMMITTED_R1CS_INPUTS: [JoltR1CSInputs; 7] = [
+pub const COMMITTED_R1CS_INPUTS: [JoltR1CSInputs; 6] = [
     JoltR1CSInputs::LeftInstructionInput,
     JoltR1CSInputs::RightInstructionInput,
-    JoltR1CSInputs::Product,
     JoltR1CSInputs::WriteLookupOutputToRD,
     JoltR1CSInputs::WritePCtoRD,
     JoltR1CSInputs::ShouldBranch,
@@ -414,7 +413,6 @@ impl TryFrom<&JoltR1CSInputs> for CommittedPolynomial {
         match input {
             JoltR1CSInputs::LeftInstructionInput => Ok(CommittedPolynomial::LeftInstructionInput),
             JoltR1CSInputs::RightInstructionInput => Ok(CommittedPolynomial::RightInstructionInput),
-            JoltR1CSInputs::Product => Ok(CommittedPolynomial::Product),
             JoltR1CSInputs::WriteLookupOutputToRD => Ok(CommittedPolynomial::WriteLookupOutputToRD),
             JoltR1CSInputs::WritePCtoRD => Ok(CommittedPolynomial::WritePCtoRD),
             JoltR1CSInputs::ShouldBranch => Ok(CommittedPolynomial::ShouldBranch),
@@ -443,6 +441,7 @@ impl TryFrom<&JoltR1CSInputs> for VirtualPolynomial {
             JoltR1CSInputs::RamWriteValue => Ok(VirtualPolynomial::RamWriteValue),
             JoltR1CSInputs::LeftLookupOperand => Ok(VirtualPolynomial::LeftLookupOperand),
             JoltR1CSInputs::RightLookupOperand => Ok(VirtualPolynomial::RightLookupOperand),
+            JoltR1CSInputs::Product => Ok(VirtualPolynomial::Product),
             JoltR1CSInputs::NextUnexpandedPC => Ok(VirtualPolynomial::NextUnexpandedPC),
             JoltR1CSInputs::NextPC => Ok(VirtualPolynomial::NextPC),
             JoltR1CSInputs::NextIsNoop => Ok(VirtualPolynomial::NextIsNoop),
