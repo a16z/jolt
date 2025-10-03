@@ -5,24 +5,26 @@ use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::opening_proof::{OpeningPoint, SumcheckId};
-use crate::poly::spartan_interleaved_poly::NUM_SVO_ROUNDS;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::zkvm::dag::stage::SumcheckStages;
 use crate::zkvm::dag::state_manager::{ProofData, ProofKeys, StateManager};
+use crate::zkvm::r1cs::constraints::{FIRST_ROUND_POLY_NUM_COEFFS, UNIVARIATE_SKIP_DOMAIN_SIZE};
 use crate::zkvm::r1cs::inputs::{
     compute_claimed_witness_evals, ALL_R1CS_INPUTS, COMMITTED_R1CS_INPUTS,
 };
 use crate::zkvm::r1cs::key::UniformSpartanKey;
 use crate::zkvm::spartan::inner::InnerSumcheck;
+use crate::zkvm::spartan::outer::OuterSumcheck;
 use crate::zkvm::spartan::pc::PCSumcheck;
 use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 
 use crate::transcripts::Transcript;
 
-use crate::subprotocols::sumcheck::{SumcheckInstance, SumcheckInstanceProof};
+use crate::subprotocols::sumcheck::SumcheckInstance;
 
 pub mod inner;
+pub mod outer;
 pub mod pc;
 
 pub struct SpartanDag<F: JoltField> {
@@ -66,7 +68,7 @@ where
             .challenge_vector(num_rounds_x);
 
         let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) =
-            SumcheckInstanceProof::<F, ProofTranscript>::prove_spartan_small_value::<NUM_SVO_ROUNDS>(
+            OuterSumcheck::prove::<ProofTranscript>(
                 &preprocessing.shared,
                 trace,
                 num_rounds_x,
@@ -105,7 +107,7 @@ where
         // Append the outer sumcheck proof to the state manager
         state_manager.proofs.borrow_mut().insert(
             ProofKeys::Stage1Sumcheck,
-            ProofData::SumcheckProof(outer_sumcheck_proof),
+            ProofData::OuterSumcheckProof(outer_sumcheck_proof),
         );
 
         let num_cycles = key.num_steps;
@@ -177,7 +179,7 @@ where
         };
 
         let outer_sumcheck_proof = match proof_data {
-            ProofData::SumcheckProof(proof) => proof,
+            ProofData::OuterSumcheckProof(proof) => proof,
             _ => panic!("Invalid proof data type"),
         };
 
@@ -196,7 +198,14 @@ where
         // Run the main sumcheck verifier:
         let (claim_outer_final, outer_sumcheck_r_original) = {
             let transcript = &mut state_manager.transcript.borrow_mut();
-            match outer_sumcheck_proof.verify(F::zero(), num_rounds_x, 3, transcript) {
+            // The outer sumcheck has to be verified with an altered verifier, which takes
+            // into account the univariate skip and does a high-degree interpolation in the first round
+            match outer_sumcheck_proof.verify::<UNIVARIATE_SKIP_DOMAIN_SIZE>(
+                num_rounds_x,
+                FIRST_ROUND_POLY_NUM_COEFFS - 1,
+                3,
+                transcript,
+            ) {
                 Ok(result) => result,
                 Err(_) => return Err(anyhow::anyhow!("Outer sumcheck verification failed")),
             }
@@ -209,6 +218,10 @@ where
         let opening_point = OpeningPoint::new(outer_sumcheck_r_reversed.clone());
 
         // Populate the opening points for Az, Bz, Cz claims now that we have outer_sumcheck_r
+        // Note that the inner sumcheck will handle this opening point differently than other sumchecks,
+        // due to univariate skip (first degree is higher)
+        // There is NO other sumcheck instance that requires the high-degree part of the opening point
+        // (since it is confined to the R1CS constraint part, not the cycle part)
         accumulator.borrow_mut().append_virtual(
             VirtualPolynomial::SpartanAz,
             SumcheckId::SpartanOuter,
