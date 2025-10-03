@@ -65,8 +65,8 @@ impl MacroBuilder {
         let memory_config_fn = self.make_memory_config_fn();
         let build_prover_fn = self.make_build_prover_fn();
         let build_verifier_fn = self.make_build_verifier_fn();
-        let analyze_fn = self.make_analyze_function();
-        let trace_to_file_fn = self.make_trace_to_file_func();
+        // let analyze_fn = self.make_analyze_function();
+        // let trace_to_file_fn = self.make_trace_to_file_func();
         let compile_fn = self.make_compile_func();
         let preprocess_prover_fn = self.make_preprocess_prover_func();
         let preprocess_verifier_fn = self.make_preprocess_verifier_func();
@@ -94,8 +94,8 @@ impl MacroBuilder {
             #build_prover_fn
             #build_verifier_fn
             #execute_fn
-            #analyze_fn
-            #trace_to_file_fn
+            // #analyze_fn
+            // #trace_to_file_fn
             #compile_fn
             #preprocess_prover_fn
             #preprocess_verifier_fn
@@ -141,9 +141,11 @@ impl MacroBuilder {
         let prove_output_ty = self.get_prove_output_type();
 
         // Include both public and private arguments for the prover
-        let all_args = self.pub_func_args.iter().chain(self.priv_func_args.iter());
-        let input_names = all_args.clone().map(|(name, _)| name);
-        let input_types = all_args.clone().map(|(_, ty)| ty);
+        let input_names = self.pub_func_args.iter().clone().map(|(name, _)| name);
+        let input_types = self.pub_func_args.iter().clone().map(|(_, ty)| ty);
+        let private_input_names = self.priv_func_args.iter().clone().map(|(name, _)| name);
+        let private_input_types = self.priv_func_args.iter().clone().map(|(_, ty)| ty);
+
         let inputs = &self.func.sig.inputs;
         let prove_fn_name = Ident::new(&format!("prove_{fn_name}"), fn_name.span());
         let imports = self.make_imports();
@@ -153,7 +155,7 @@ impl MacroBuilder {
             pub fn #build_prover_fn_name(
                 program: jolt::host::Program,
                 preprocessing: jolt::JoltProverPreprocessing<jolt::F, jolt::PCS>,
-            ) -> impl Fn(#(#input_types),*) -> #prove_output_ty + Sync + Send
+            ) -> impl Fn(#(#input_types),*, #(#private_input_types),*) -> #prove_output_ty + Sync + Send
             {
                 #imports
                 let program = std::sync::Arc::new(program);
@@ -162,7 +164,7 @@ impl MacroBuilder {
                 let prove_closure = move |#inputs| {
                     let program = (*program).clone();
                     let preprocessing = (*preprocessing).clone();
-                    #prove_fn_name(program, preprocessing, #(#input_names),*)
+                    #prove_fn_name(program, preprocessing, #(#input_names),*, #(#private_input_names),*)
                 };
 
                 prove_closure
@@ -239,46 +241,46 @@ impl MacroBuilder {
         }
     }
 
-    fn make_analyze_function(&self) -> TokenStream2 {
-        let set_mem_size = self.make_set_linker_parameters();
-        let guest_name = self.get_guest_name();
-        let imports = self.make_imports();
-        let set_std = self.make_set_std();
+    // fn make_analyze_function(&self) -> TokenStream2 {
+    //     let set_mem_size = self.make_set_linker_parameters();
+    //     let guest_name = self.get_guest_name();
+    //     let imports = self.make_imports();
+    //     let set_std = self.make_set_std();
 
-        let fn_name = self.get_func_name();
-        let fn_name_str = fn_name.to_string();
-        let analyze_fn_name = Ident::new(&format!("analyze_{fn_name}"), fn_name.span());
-        let inputs = &self.func.sig.inputs;
-        let set_pub_args = self.pub_func_args.iter().map(|(name, _)| {
-            quote! {
-                input_bytes.append(&mut jolt::postcard::to_stdvec(&#name).unwrap())
-            }
-        });
-        let set_priv_args = self.priv_func_args.iter().map(|(name, _)| {
-            quote! {
-                input_bytes.append(&mut jolt::postcard::to_stdvec(&#name).unwrap())
-            }
-        });
+    //     let fn_name = self.get_func_name();
+    //     let fn_name_str = fn_name.to_string();
+    //     let analyze_fn_name = Ident::new(&format!("analyze_{fn_name}"), fn_name.span());
+    //     let inputs = &self.func.sig.inputs;
+    //     let set_pub_args = self.pub_func_args.iter().map(|(name, _)| {
+    //         quote! {
+    //             input_bytes.append(&mut jolt::postcard::to_stdvec(&#name).unwrap())
+    //         }
+    //     });
+    //     let set_priv_args = self.priv_func_args.iter().map(|(name, _)| {
+    //         quote! {
+    //             input_bytes.append(&mut jolt::postcard::to_stdvec(&#name).unwrap())
+    //         }
+    //     });
 
-        quote! {
-             #[cfg(not(target_arch = "wasm32"))]
-             #[cfg(not(feature = "guest"))]
-             pub fn #analyze_fn_name(#inputs) -> jolt::host::analyze::ProgramSummary {
-                #imports
+    //     quote! {
+    //          #[cfg(not(target_arch = "wasm32"))]
+    //          #[cfg(not(feature = "guest"))]
+    //          pub fn #analyze_fn_name(#inputs) -> jolt::host::analyze::ProgramSummary {
+    //             #imports
 
-                let mut program = Program::new(#guest_name);
-                program.set_func(#fn_name_str);
-                #set_std
-                #set_mem_size
+    //             let mut program = Program::new(#guest_name);
+    //             program.set_func(#fn_name_str);
+    //             #set_std
+    //             #set_mem_size
 
-                let mut input_bytes = vec![];
-                #(#set_pub_args;)*
-                #(#set_priv_args;)*
+    //             let mut input_bytes = vec![];
+    //             #(#set_pub_args;)*
+    //             #(#set_priv_args;)*
 
-                program.trace_analyze::<jolt::F>(&input_bytes)
-             }
-        }
-    }
+    //             program.trace_analyze::<jolt::F>(&input_bytes)
+    //          }
+    //     }
+    // }
 
     fn make_trace_to_file_func(&self) -> TokenStream2 {
         let imports = self.make_imports();
@@ -504,6 +506,7 @@ impl MacroBuilder {
 
                 let mut input_bytes = vec![];
                 #(#set_program_args;)*
+                let mut private_input_bytes = vec![];
                 #(#set_program_private_args;)*
 
                 let elf_contents_opt = program.get_elf_contents();
@@ -512,6 +515,7 @@ impl MacroBuilder {
                     &preprocessing,
                     &elf_contents,
                     &input_bytes,
+                    &private_input_bytes,
                 );
 
                 #handle_return

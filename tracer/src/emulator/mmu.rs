@@ -173,7 +173,7 @@ impl Mmu {
                 "I/O overflow: Attempted to {verb} 0x{ea:X}. Out of bounds.\n{layout:#?}",
             );
             assert!(
-                ea >= layout.input_start,
+                ea >= layout.private_input_start,
                 "I/O underflow: Attempted to {verb} 0x{ea:X}. Out of bounds.\n{layout:#?}",
             );
 
@@ -186,6 +186,7 @@ impl Mmu {
             } else {
                 // loads also from input
                 jolt_device.is_input(ea)
+                    || jolt_device.is_private_input(ea)
                     || jolt_device.is_output(ea)
                     || jolt_device.is_panic(ea)
                     || jolt_device.is_termination(ea)
@@ -502,6 +503,7 @@ impl Mmu {
                 _ => {
                     if let Some(jolt_device) = self.jolt_device.as_ref() {
                         if jolt_device.is_input(effective_address)
+                            || jolt_device.is_private_input(effective_address)
                             || jolt_device.is_output(effective_address)
                             || jolt_device.is_panic(effective_address)
                             || jolt_device.is_termination(effective_address)

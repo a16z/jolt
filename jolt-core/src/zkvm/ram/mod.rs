@@ -87,7 +87,14 @@ pub fn remap_address(address: u64, memory_layout: &MemoryLayout) -> Option<u64> 
     if address == 0 {
         return None;
     }
+
+    if address < memory_layout.private_input_end {
+        return None;
+    }
+
+    // Handle addresses in the private input region or regular input/output region
     if address >= memory_layout.input_start {
+        // Remap from the start of the private input region
         Some((address - memory_layout.input_start) / 8 + 1)
     } else {
         panic!("Unexpected address {address}")

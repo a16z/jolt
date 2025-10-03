@@ -48,6 +48,7 @@ impl Program {
         self.set_memory_size(memory_config.memory_size);
         self.set_stack_size(memory_config.stack_size);
         self.set_max_input_size(memory_config.max_input_size);
+        self.set_max_private_input_size(memory_config.max_private_input_size);
         self.set_max_output_size(memory_config.max_output_size);
     }
 
@@ -61,6 +62,10 @@ impl Program {
 
     pub fn set_max_input_size(&mut self, size: u64) {
         self.max_input_size = size;
+    }
+
+    pub fn set_max_private_input_size(&mut self, size: u64) {
+        self.max_private_input_size = size;
     }
 
     pub fn set_max_output_size(&mut self, size: u64) {
@@ -235,7 +240,11 @@ impl Program {
 
     // TODO(moodlezoup): Make this generic over InstructionSet
     #[tracing::instrument(skip_all, name = "Program::trace")]
-    pub fn trace(&mut self, inputs: &[u8]) -> (Vec<Cycle>, Memory, JoltDevice) {
+    pub fn trace(
+        &mut self,
+        inputs: &[u8],
+        private_inputs: &[u8],
+    ) -> (Vec<Cycle>, Memory, JoltDevice) {
         self.build(DEFAULT_TARGET_DIR);
         let elf = self.elf.as_ref().unwrap();
         let mut elf_file =
@@ -254,7 +263,13 @@ impl Program {
             program_size: Some(program_size),
         };
 
-        guest::program::trace(&elf_contents, self.elf.as_ref(), inputs, &memory_config)
+        guest::program::trace(
+            &elf_contents,
+            self.elf.as_ref(),
+            inputs,
+            private_inputs,
+            &memory_config,
+        )
     }
 
     #[tracing::instrument(skip_all, name = "Program::trace_to_file")]
@@ -286,9 +301,13 @@ impl Program {
         )
     }
 
-    pub fn trace_analyze<F: JoltField>(mut self, inputs: &[u8]) -> ProgramSummary {
+    pub fn trace_analyze<F: JoltField>(
+        mut self,
+        inputs: &[u8],
+        private_inputs: &[u8],
+    ) -> ProgramSummary {
         let (bytecode, init_memory_state, _) = self.decode();
-        let (trace, _, io_device) = self.trace(inputs);
+        let (trace, _, io_device) = self.trace(inputs, private_inputs);
 
         ProgramSummary {
             trace,

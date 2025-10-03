@@ -28,6 +28,7 @@ pub fn preprocess(
 pub fn prove<F, PCS, FS>(
     guest: &Program,
     inputs_bytes: &[u8],
+    private_input_bytes: &[u8],
     output_bytes: &mut [u8],
     preprocessing: &JoltProverPreprocessing<F, PCS>,
 ) -> (
@@ -41,8 +42,12 @@ where
     FS: Transcript,
     JoltRV64IMAC: Jolt<F, PCS, FS>,
 {
-    let (proof, io_device, debug_info) =
-        JoltRV64IMAC::prove(preprocessing, &guest.elf_contents, inputs_bytes);
+    let (proof, io_device, debug_info) = JoltRV64IMAC::prove(
+        preprocessing,
+        &guest.elf_contents,
+        inputs_bytes,
+        private_input_bytes,
+    );
     output_bytes[..io_device.outputs.len()].copy_from_slice(&io_device.outputs);
     (proof, io_device, debug_info)
 }

@@ -252,7 +252,7 @@ impl MemoryLayout {
             .expect("I/O region exceeds RAM_START_ADDRESS");
         let private_input_end = private_input_start
             .checked_add(max_private_input_size)
-            .expect("input_end overflow");
+            .expect("private_input_end overflow");
 
         let input_start = private_input_end;
         let input_end = input_start
