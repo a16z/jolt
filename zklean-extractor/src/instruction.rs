@@ -1,5 +1,8 @@
-use jolt_core::zkvm::instruction::{
-    InstructionFlags as _, InstructionLookup as _, InterleavedBitsMarker as _,
+use jolt_core::zkvm::{
+    instruction::{
+        CircuitFlags, InstructionFlags as _, InstructionLookup as _, InterleavedBitsMarker as _,
+    },
+    r1cs::inputs::JoltR1CSInputs,
 };
 use strum::IntoEnumIterator as _;
 use tracer::instruction::RV32IMInstruction;
@@ -8,6 +11,7 @@ use crate::{
     constants::JoltParameterSet,
     lookups::ZkLeanLookupTable,
     modules::{AsModule, Module},
+    r1cs::input_to_field_name,
     util::{indent, ZkLeanReprField},
     MleAst,
 };
@@ -163,6 +167,16 @@ impl<J: JoltParameterSet> ZkLeanInstruction<J> {
             None => String::from("none"),
             Some(t) => format!("(some {t})"),
         };
+        let circuit_flags = CircuitFlags::iter()
+            .filter_map(|f| {
+                if self.instruction.circuit_flags()[f] {
+                    Some(input_to_field_name(&JoltR1CSInputs::OpFlags(f)))
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
 
         f.write_fmt(format_args!(
             "{}def {name} [Field f] : Instruction f :=\n",
@@ -171,6 +185,10 @@ impl<J: JoltParameterSet> ZkLeanInstruction<J> {
         indent_level += 1;
         f.write_fmt(format_args!(
             "{}instructionFromMLE {interleaving} {lookup_table}\n",
+            indent(indent_level),
+        ))?;
+        f.write_fmt(format_args!(
+            "{}-- Circuit flags: {circuit_flags}\n",
             indent(indent_level),
         ))?;
 
