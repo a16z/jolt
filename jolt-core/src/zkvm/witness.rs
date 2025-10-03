@@ -25,7 +25,6 @@ use crate::{
         JoltProverPreprocessing,
     },
 };
-use ark_ff::biginteger::S128;
 
 use super::instruction::{CircuitFlags, InstructionFlags, LookupQuery};
 
@@ -54,8 +53,6 @@ pub enum CommittedPolynomial {
     /// The "right" input to the current instruction. Typically either the
     /// rs2 value or the immediate value.
     RightInstructionInput,
-    /// Product of `LeftInstructionInput` and `RightInstructionInput`
-    Product,
     /// Whether the current instruction should write the lookup output to
     /// the destination register
     WriteLookupOutputToRD,
@@ -88,7 +85,6 @@ struct WitnessData {
     // Simple polynomial coefficients
     left_instruction_input: Vec<u64>,
     right_instruction_input: Vec<i128>,
-    product: Vec<S128>,
     write_lookup_output_to_rd: Vec<u8>,
     write_pc_to_rd: Vec<u8>,
     should_branch: Vec<u8>,
@@ -110,7 +106,6 @@ impl WitnessData {
         Self {
             left_instruction_input: vec![0; trace_len],
             right_instruction_input: vec![0; trace_len],
-            product: vec![S128::zero(); trace_len],
             write_lookup_output_to_rd: vec![0; trace_len],
             write_pc_to_rd: vec![0; trace_len],
             should_branch: vec![0; trace_len],
@@ -131,7 +126,6 @@ impl AllCommittedPolynomials {
         let mut polynomials = vec![
             CommittedPolynomial::LeftInstructionInput,
             CommittedPolynomial::RightInstructionInput,
-            CommittedPolynomial::Product,
             CommittedPolynomial::WriteLookupOutputToRD,
             CommittedPolynomial::WritePCtoRD,
             CommittedPolynomial::ShouldBranch,
@@ -304,11 +298,6 @@ impl CommittedPolynomial {
 
                 batch_ref.left_instruction_input[i] = left;
                 batch_ref.right_instruction_input[i] = right;
-                batch_ref.product[i] = if right >= 0 {
-                    S128::from_u128(left as u128 * right.unsigned_abs())
-                } else {
-                    S128::from_u128_and_sign(left as u128 * right.unsigned_abs(), false)
-                };
 
                 batch_ref.write_lookup_output_to_rd[i] = rd_write_flag
                     * (circuit_flags[CircuitFlags::WriteLookupOutputToRD as usize] as u8);
@@ -393,10 +382,6 @@ impl CommittedPolynomial {
                     let coeffs = std::mem::take(&mut batch.right_instruction_input);
                     results.insert(*poly, MultilinearPolynomial::<F>::from(coeffs));
                 }
-                CommittedPolynomial::Product => {
-                    let coeffs = std::mem::take(&mut batch.product);
-                    results.insert(*poly, MultilinearPolynomial::<F>::from(coeffs));
-                }
                 CommittedPolynomial::WriteLookupOutputToRD => {
                     let coeffs = std::mem::take(&mut batch.write_lookup_output_to_rd);
                     results.insert(*poly, MultilinearPolynomial::<F>::from(coeffs));
@@ -474,25 +459,6 @@ impl CommittedPolynomial {
                 let coeffs: Vec<i128> = trace
                     .par_iter()
                     .map(|cycle| LookupQuery::<XLEN>::to_instruction_inputs(cycle).1)
-                    .collect();
-                coeffs.into()
-            }
-            CommittedPolynomial::Product => {
-                let coeffs: Vec<S128> = trace
-                    .par_iter()
-                    .map(|cycle| {
-                        let (left_input, right_input) =
-                            LookupQuery::<XLEN>::to_instruction_inputs(cycle);
-                        // Use the fact that `|right_input|` fits in u64 to avoid overflow
-                        if right_input >= 0 {
-                            S128::from_u128(left_input as u128 * right_input.unsigned_abs())
-                        } else {
-                            S128::from_u128_and_sign(
-                                left_input as u128 * right_input.unsigned_abs(),
-                                false,
-                            )
-                        }
-                    })
                     .collect();
                 coeffs.into()
             }
@@ -645,6 +611,7 @@ pub enum VirtualPolynomial {
     NextIsNoop,
     LeftLookupOperand,
     RightLookupOperand,
+    Product,
     Rd,
     Imm,
     Rs1Value,
