@@ -1,3 +1,4 @@
+use num_traits::Zero;
 use std::{cell::RefCell, rc::Rc};
 
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
@@ -422,7 +423,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
                 .zip(data_buffers.par_iter_mut())
                 .zip(val_checkpoints.par_chunks(self.K))
                 .map(|((I_chunk, buffers), checkpoint)| {
-                    let mut evals = [F::zero(), F::zero()];
+                    let mut evals = [F::Unreduced::<9>::zero(); 2];
 
                     let DataBuffers {
                         val_j_0,
@@ -517,16 +518,17 @@ impl<F: JoltField> RamReadWriteChecking<F> {
                                 val_j_r[1][k] = F::zero();
                             }
 
-                            evals[0] += eq_r_prime_eval * inner_sum_evals[0];
-                            evals[1] += eq_r_prime_eval * inner_sum_evals[1];
+                            evals[0] += eq_r_prime_eval.mul_unreduced::<9>(inner_sum_evals[0]);
+                            evals[1] += eq_r_prime_eval.mul_unreduced::<9>(inner_sum_evals[1]);
                         });
 
                     evals
                 })
                 .reduce(
-                    || [F::zero(); DEGREE - 1],
+                    || [F::Unreduced::<9>::zero(); DEGREE - 1],
                     |running, new| [running[0] + new[0], running[1] + new[1]],
                 )
+                .map(F::from_montgomery_reduce)
         } else {
             // E_in is not fully bound, handle both E_in and E_out
             let num_x_in_bits = gruens_eq_r_prime.E_in_current_len().log_2();
@@ -536,7 +538,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
                 .zip(data_buffers.par_iter_mut())
                 .zip(val_checkpoints.par_chunks(self.K))
                 .map(|((I_chunk, buffers), checkpoint)| {
-                    let mut evals = [F::zero(), F::zero()];
+                    let mut evals = [F::Unreduced::<9>::zero(); 2];
 
                     let mut evals_for_current_E_out = [F::zero(), F::zero()];
                     let mut x_out_prev: Option<usize> = None;
@@ -625,8 +627,10 @@ impl<F: JoltField> RamReadWriteChecking<F> {
                                     x_out_prev = Some(x_out);
 
                                     let E_out_eval = gruens_eq_r_prime.E_out_current()[x];
-                                    evals[0] += E_out_eval * evals_for_current_E_out[0];
-                                    evals[1] += E_out_eval * evals_for_current_E_out[1];
+                                    evals[0] +=
+                                        E_out_eval.mul_unreduced::<9>(evals_for_current_E_out[0]);
+                                    evals[1] +=
+                                        E_out_eval.mul_unreduced::<9>(evals_for_current_E_out[1]);
 
                                     evals_for_current_E_out = [F::zero(), F::zero()];
                                 }
@@ -663,15 +667,16 @@ impl<F: JoltField> RamReadWriteChecking<F> {
                     // result to the total.
                     if let Some(x) = x_out_prev {
                         let E_out_eval = gruens_eq_r_prime.E_out_current()[x];
-                        evals[0] += E_out_eval * evals_for_current_E_out[0];
-                        evals[1] += E_out_eval * evals_for_current_E_out[1];
+                        evals[0] += E_out_eval.mul_unreduced::<9>(evals_for_current_E_out[0]);
+                        evals[1] += E_out_eval.mul_unreduced::<9>(evals_for_current_E_out[1]);
                     }
                     evals
                 })
                 .reduce(
-                    || [F::zero(); DEGREE - 1],
+                    || [F::Unreduced::<9>::zero(); DEGREE - 1],
                     |running, new| [running[0] + new[0], running[1] + new[1]],
                 )
+                .map(F::from_montgomery_reduce)
         };
 
         // Convert quadratic coefficients to cubic evaluations
@@ -702,7 +707,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
                 let inc_evals =
                     inc_cycle.sumcheck_evals_array::<DEGREE>(j, BindingOrder::HighToLow);
 
-                let inner_sum_evals: [F; DEGREE] = (0..self.K)
+                let inner_sum_evals = (0..self.K)
                     .into_par_iter()
                     .map(|k| {
                         let index = j * self.K + k;
@@ -723,8 +728,15 @@ impl<F: JoltField> RamReadWriteChecking<F> {
                             ),
                         ]
                     })
+                    .fold_with([F::Unreduced::<5>::zero(); DEGREE], |running, new| {
+                        [
+                            running[0] + new[0].as_unreduced_ref(),
+                            running[1] + new[1].as_unreduced_ref(),
+                            running[2] + new[2].as_unreduced_ref(),
+                        ]
+                    })
                     .reduce(
-                        || [F::zero(); DEGREE],
+                        || [F::Unreduced::<5>::zero(); DEGREE],
                         |running, new| {
                             [
                                 running[0] + new[0],
@@ -735,13 +747,16 @@ impl<F: JoltField> RamReadWriteChecking<F> {
                     );
 
                 [
-                    eq_r_prime_evals[0] * inner_sum_evals[0],
-                    eq_r_prime_evals[1] * inner_sum_evals[1],
-                    eq_r_prime_evals[2] * inner_sum_evals[2],
+                    eq_r_prime_evals[0]
+                        .mul_unreduced::<9>(F::from_barrett_reduce(inner_sum_evals[0])),
+                    eq_r_prime_evals[1]
+                        .mul_unreduced::<9>(F::from_barrett_reduce(inner_sum_evals[1])),
+                    eq_r_prime_evals[2]
+                        .mul_unreduced::<9>(F::from_barrett_reduce(inner_sum_evals[2])),
                 ]
             })
             .reduce(
-                || [F::zero(); DEGREE],
+                || [F::Unreduced::<9>::zero(); DEGREE],
                 |running, new| {
                     [
                         running[0] + new[0],
@@ -749,7 +764,8 @@ impl<F: JoltField> RamReadWriteChecking<F> {
                         running[2] + new[2],
                     ]
                 },
-            );
+            )
+            .map(F::from_montgomery_reduce);
 
         univariate_poly_evals.into()
     }
@@ -785,8 +801,15 @@ impl<F: JoltField> RamReadWriteChecking<F> {
                     ra_evals[2] * (val_evals[2] + self.gamma * (val_evals[2] + inc_cycle_eval)),
                 ]
             })
+            .fold_with([F::Unreduced::<5>::zero(); DEGREE], |running, new| {
+                [
+                    running[0] + new[0].as_unreduced_ref(),
+                    running[1] + new[1].as_unreduced_ref(),
+                    running[2] + new[2].as_unreduced_ref(),
+                ]
+            })
             .reduce(
-                || [F::zero(); DEGREE],
+                || [F::Unreduced::<5>::zero(); DEGREE],
                 |running, new| {
                     [
                         running[0] + new[0],
@@ -797,9 +820,9 @@ impl<F: JoltField> RamReadWriteChecking<F> {
             );
 
         vec![
-            eq_r_prime_eval * evals[0],
-            eq_r_prime_eval * evals[1],
-            eq_r_prime_eval * evals[2],
+            eq_r_prime_eval * F::from_barrett_reduce(evals[0]),
+            eq_r_prime_eval * F::from_barrett_reduce(evals[1]),
+            eq_r_prime_eval * F::from_barrett_reduce(evals[2]),
         ]
     }
 
