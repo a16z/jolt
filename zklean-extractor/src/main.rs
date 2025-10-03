@@ -8,6 +8,8 @@ use crate::constants::*;
 mod mle_ast;
 use crate::mle_ast::*;
 mod util;
+mod lookups;
+use crate::lookups::*;
 mod instruction;
 use crate::instruction::*;
 mod r1cs;
@@ -80,6 +82,7 @@ fn main() -> Result<(), FSError> {
     let modules: Vec<Box<dyn AsModule>> = vec![
         Box::new(ZkLeanR1CSConstraints::<ParameterSet>::extract()),
         Box::new(ZkLeanInstructions::<ParameterSet>::extract()),
+        Box::new(ZkLeanLookupTables::<32>::extract()), // FIXME: Make WORD_SIZE generic
         //Box::new(ZkLeanLookupCases::<ParameterSet>::extract()),
     ];
 
