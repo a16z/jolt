@@ -8,6 +8,7 @@ fn sha2(public_input: &[u8], second_input: jolt::Private<[u8; 32]>) -> [u8; 32] 
     let hash1 = jolt_inlines_sha2::Sha256::digest(public_input);
 
     // Compute hash of second input
+    // let hash2 = jolt_inlines_sha2::Sha256::digest(&second_input);
     let hash2 = jolt_inlines_sha2::Sha256::digest(second_input.deref());
 
     // Concatenate both hashes
