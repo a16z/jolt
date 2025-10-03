@@ -258,10 +258,10 @@ impl<const XLEN: usize> LookupTables<XLEN> {
         }
     }
 
-    pub fn evaluate_mle<F: JoltField, C>(&self, r: &[C]) -> F
+    pub fn evaluate_mle<F, C>(&self, r: &[C]) -> F
     where
         C: ChallengeFieldOps<F>,
-        F: FieldChallengeOps<C>,
+        F: JoltField + FieldChallengeOps<C>,
     {
         match self {
             LookupTables::RangeCheck(table) => table.evaluate_mle(r),

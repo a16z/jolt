@@ -1,7 +1,7 @@
 use super::{FieldOps, FmaddTrunc, JoltField, MulU64WithCarry};
 use crate::field::challenge::MontU128Challenge;
 #[cfg(feature = "challenge-254-bit")]
-use crate::field::challenge::TrivialChallenge;
+use crate::field::challenge::Mont254BitChallenge;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use ark_ff::{prelude::*, BigInt, PrimeField, UniformRand};
 use rayon::prelude::*;
@@ -37,7 +37,7 @@ impl JoltField for ark_bn254::Fr {
 
     // Optional: Use full 254-bit field elements
     #[cfg(feature = "challenge-254-bit")]
-    type Challenge = TrivialChallenge<ark_bn254::Fr>;
+    type Challenge = Mont254BitChallenge<ark_bn254::Fr>;
 
     fn random<R: rand_core::RngCore>(rng: &mut R) -> Self {
         <Self as UniformRand>::rand(rng)

@@ -63,7 +63,7 @@ where
         let tau: Vec<F::Challenge> = state_manager
             .transcript
             .borrow_mut()
-            .challenge_vector_special::<F>(num_rounds_x);
+            .challenge_vector_optimized::<F>(num_rounds_x);
 
         let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) =
             SumcheckInstanceProof::<F, ProofTranscript>::prove_spartan_small_value::<NUM_SVO_ROUNDS>(
@@ -166,7 +166,7 @@ where
         let tau: Vec<F::Challenge> = state_manager
             .transcript
             .borrow_mut()
-            .challenge_vector_special::<F>(num_rounds_x);
+            .challenge_vector_optimized::<F>(num_rounds_x);
 
         // Get the outer sumcheck proof
         let proofs = state_manager.proofs.borrow();

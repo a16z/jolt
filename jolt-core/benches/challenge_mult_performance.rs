@@ -1,7 +1,7 @@
 use ark_bn254::Fr;
 use ark_ff::Zero;
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
-use jolt_core::field::challenge::{MontU128Challenge, TrivialChallenge};
+use jolt_core::field::challenge::{MontU128Challenge, Mont254BitChallenge};
 use jolt_core::field::JoltField;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
@@ -10,7 +10,7 @@ fn bench_add(c: &mut Criterion) {
     let mut rng = StdRng::seed_from_u64(123);
 
     c.bench_function(
-        "(x - a) * b (100x): where x: Fr, a,b: Trivial Challenge",
+        "(x - a) * b (100x): where x: Fr, a,b: Mont254BitChallenge Challenge",
         |b| {
             b.iter_batched(
                 || {
@@ -18,8 +18,8 @@ fn bench_add(c: &mut Criterion) {
                     let ab: Vec<_> = (0..100)
                         .map(|_| {
                             (
-                                TrivialChallenge::random(&mut rng),
-                                TrivialChallenge::random(&mut rng),
+                                Mont254BitChallenge::random(&mut rng),
+                                Mont254BitChallenge::random(&mut rng),
                             )
                         })
                         .collect();
@@ -70,12 +70,12 @@ fn bench_mul(c: &mut Criterion) {
     let mut rng = StdRng::seed_from_u64(123);
 
     // Fr * Fr
-    c.bench_function("Fr * TrivialChallenge (100x)", |b| {
+    c.bench_function("Fr * Mont254BitChallenge (100x)", |b| {
         b.iter_batched(
             || {
                 let a = Fr::random(&mut rng);
                 let bs: Vec<_> = (0..100)
-                    .map(|_| TrivialChallenge::random(&mut rng))
+                    .map(|_| Mont254BitChallenge::random(&mut rng))
                     .collect();
                 (a, bs)
             },

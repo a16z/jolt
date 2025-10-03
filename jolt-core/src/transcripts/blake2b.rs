@@ -231,23 +231,23 @@ impl Transcript for Blake2bTranscript {
         q_powers
     }
 
-    fn challenge_scalar_special<F: JoltField>(&mut self) -> F::Challenge {
+    fn challenge_scalar_optimized<F: JoltField>(&mut self) -> F::Challenge {
         // The smaller challenge which is then converted into a
         // MontU128Challenge
         let challenge_scalar: u128 = self.challenge_u128();
         F::Challenge::from(challenge_scalar)
     }
 
-    fn challenge_vector_special<F: JoltField>(&mut self, len: usize) -> Vec<F::Challenge> {
+    fn challenge_vector_optimized<F: JoltField>(&mut self, len: usize) -> Vec<F::Challenge> {
         (0..len)
-            .map(|_i| self.challenge_scalar_special::<F>())
+            .map(|_i| self.challenge_scalar_optimized::<F>())
             .collect::<Vec<F::Challenge>>()
     }
 
-    fn challenge_scalar_powers_special<F: JoltField>(&mut self, len: usize) -> Vec<F> {
+    fn challenge_scalar_powers_optimized<F: JoltField>(&mut self, len: usize) -> Vec<F> {
         // This is still different from challenge_scalar_powers as inside the for loop
         // we use an optimised multiplication every time we compute the powers.
-        let q: F::Challenge = self.challenge_scalar_special::<F>();
+        let q: F::Challenge = self.challenge_scalar_optimized::<F>();
         let mut q_powers = vec![<F as ark_std::One>::one(); len];
         for i in 1..len {
             q_powers[i] = q * q_powers[i - 1]; // this is optimised
@@ -289,7 +289,7 @@ mod tests {
         let mut rng = ark_std::test_rng();
         let mut transcript1 = Blake2bTranscript::new(b"test_trivial_challenge");
 
-        let challenge = transcript1.challenge_scalar_special::<Fr>();
+        let challenge = transcript1.challenge_scalar_optimized::<Fr>();
         // The same challenge as a full fat Fr element
         let challenge_regular: Fr = challenge.into();
 

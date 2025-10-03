@@ -149,7 +149,8 @@ fn benchmark_batch_evaluation(c: &mut Criterion) {
     for exp in [16] {
         let num_vars = 1 << exp;
         for sparsity in [0.75, 0.50, 0.20] {
-            for batch_size in [50] {
+            {
+                let batch_size = 50;
                 group.bench_with_input(
                     BenchmarkId::new("dot_product", format!("2^{exp}_s{sparsity}_b{batch_size}")),
                     &(num_vars, sparsity, batch_size),

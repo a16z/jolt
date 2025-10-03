@@ -230,7 +230,7 @@ impl Transcript for KeccakTranscript {
     }
 
     // New methods that return F::Challenge
-    fn challenge_scalar_special<F: JoltField>(&mut self) -> F::Challenge {
+    fn challenge_scalar_optimized<F: JoltField>(&mut self) -> F::Challenge {
         let mut buf = vec![0u8; 16];
         self.challenge_bytes(&mut buf);
 
@@ -238,14 +238,14 @@ impl Transcript for KeccakTranscript {
         F::Challenge::from(u128::from_be_bytes(buf.try_into().unwrap()))
     }
 
-    fn challenge_vector_special<F: JoltField>(&mut self, len: usize) -> Vec<F::Challenge> {
+    fn challenge_vector_optimized<F: JoltField>(&mut self, len: usize) -> Vec<F::Challenge> {
         (0..len)
-            .map(|_i| self.challenge_scalar_special::<F>())
+            .map(|_i| self.challenge_scalar_optimized::<F>())
             .collect::<Vec<F::Challenge>>()
     }
 
-    fn challenge_scalar_powers_special<F: JoltField>(&mut self, len: usize) -> Vec<F> {
-        let q: F::Challenge = self.challenge_scalar_special::<F>();
+    fn challenge_scalar_powers_optimized<F: JoltField>(&mut self, len: usize) -> Vec<F> {
+        let q: F::Challenge = self.challenge_scalar_optimized::<F>();
         let mut q_powers = vec![<F as ark_std::One>::one(); len];
         for i in 1..len {
             q_powers[i] = q * q_powers[i - 1];

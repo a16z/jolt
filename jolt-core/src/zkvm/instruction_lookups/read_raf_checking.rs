@@ -992,11 +992,11 @@ mod tests {
         let r_cycle: Vec<<Fr as JoltField>::Challenge> = prover_sm
             .transcript
             .borrow_mut()
-            .challenge_vector_special::<Fr>(LOG_T);
+            .challenge_vector_optimized::<Fr>(LOG_T);
         let _r_cycle: Vec<<Fr as JoltField>::Challenge> = verifier_sm
             .transcript
             .borrow_mut()
-            .challenge_vector_special::<Fr>(LOG_T);
+            .challenge_vector_optimized::<Fr>(LOG_T);
         let eq_r_cycle = EqPolynomial::evals(&r_cycle);
 
         let mut rv_claim = Fr::zero();

@@ -130,7 +130,7 @@ impl<F: JoltField> OutputSumcheck<F> {
         let r_address = state_manager
             .transcript
             .borrow_mut()
-            .challenge_vector_special::<F>(K.log_2());
+            .challenge_vector_optimized::<F>(K.log_2());
 
         let output_sumcheck_prover_state = OutputSumcheckProverState::new(
             initial_ram_state,
@@ -156,7 +156,7 @@ impl<F: JoltField> OutputSumcheck<F> {
         let r_address = state_manager
             .transcript
             .borrow_mut()
-            .challenge_vector_special::<F>(K.log_2());
+            .challenge_vector_optimized::<F>(K.log_2());
 
         OutputSumcheck {
             K,

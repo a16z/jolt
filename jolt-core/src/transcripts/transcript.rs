@@ -22,9 +22,9 @@ pub trait Transcript: Default + Clone + Sync + Send + 'static {
     // Compute powers of scalar q : (1, q, q^2, ..., q^(len-1))
     fn challenge_scalar_powers<F: JoltField>(&mut self, len: usize) -> Vec<F>;
     // New methods that return F::Challenge
-    fn challenge_scalar_special<F: JoltField>(&mut self) -> F::Challenge;
-    fn challenge_vector_special<F: JoltField>(&mut self, len: usize) -> Vec<F::Challenge>;
-    fn challenge_scalar_powers_special<F: JoltField>(&mut self, len: usize) -> Vec<F>;
+    fn challenge_scalar_optimized<F: JoltField>(&mut self) -> F::Challenge;
+    fn challenge_vector_optimized<F: JoltField>(&mut self, len: usize) -> Vec<F::Challenge>;
+    fn challenge_scalar_powers_optimized<F: JoltField>(&mut self, len: usize) -> Vec<F>;
 }
 
 pub trait AppendToTranscript {

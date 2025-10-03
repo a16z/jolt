@@ -1,7 +1,7 @@
 use super::{FieldOps, JoltField};
 use crate::field::challenge::MontU128Challenge;
 #[cfg(feature = "challenge-254-bit")]
-use crate::field::challenge::TrivialChallenge;
+use crate::field::challenge::Mont254BitChallenge;
 
 use crate::utils::counters::{
     // basic arithmetic
@@ -329,7 +329,7 @@ impl JoltField for TrackedFr {
 
     // Optional: Use full 254-bit field elements
     #[cfg(feature = "challenge-254-bit")]
-    type Challenge = TrivialChallenge<TrackedFr>;
+    type Challenge = Mont254BitChallenge<TrackedFr>;
     fn random<R: rand_core::RngCore>(rng: &mut R) -> Self {
         TrackedFr(<ark_bn254::Fr as JoltField>::random(rng))
     }

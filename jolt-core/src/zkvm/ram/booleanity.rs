@@ -76,12 +76,12 @@ impl<F: JoltField> BooleanitySumcheck<F> {
         let r_cycle: Vec<F::Challenge> = state_manager
             .transcript
             .borrow_mut()
-            .challenge_vector_special::<F>(T.log_2());
+            .challenge_vector_optimized::<F>(T.log_2());
 
         let r_address: Vec<F::Challenge> = state_manager
             .transcript
             .borrow_mut()
-            .challenge_vector_special::<F>(DTH_ROOT_OF_K.log_2());
+            .challenge_vector_optimized::<F>(DTH_ROOT_OF_K.log_2());
 
         let eq_r_cycle = EqPolynomial::<F>::evals(&r_cycle);
 
@@ -176,12 +176,12 @@ impl<F: JoltField> BooleanitySumcheck<F> {
         let r_cycle: Vec<F::Challenge> = state_manager
             .transcript
             .borrow_mut()
-            .challenge_vector_special::<F>(T.log_2());
+            .challenge_vector_optimized::<F>(T.log_2());
 
         let r_address: Vec<F::Challenge> = state_manager
             .transcript
             .borrow_mut()
-            .challenge_vector_special::<F>(DTH_ROOT_OF_K.log_2());
+            .challenge_vector_optimized::<F>(DTH_ROOT_OF_K.log_2());
 
         // Get gamma challenge for batching
         let gamma: F = state_manager.transcript.borrow_mut().challenge_scalar();

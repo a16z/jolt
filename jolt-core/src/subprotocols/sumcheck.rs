@@ -110,7 +110,7 @@ impl SingleSumcheck {
             compressed_poly.append_to_transcript(transcript);
             compressed_polys.push(compressed_poly);
 
-            let r_j: F::Challenge = transcript.challenge_scalar_special::<F>();
+            let r_j: F::Challenge = transcript.challenge_scalar_optimized::<F>();
             r_sumcheck.push(r_j);
 
             // Cache claim for this round
@@ -256,7 +256,7 @@ impl BatchedSumcheck {
 
             // append the prover's message to the transcript
             compressed_poly.append_to_transcript(transcript);
-            let r_j = transcript.challenge_scalar_special::<F>();
+            let r_j = transcript.challenge_scalar_optimized::<F>();
             r_sumcheck.push(r_j);
 
             // Cache individual claims for this round
@@ -532,7 +532,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
         compressed_poly.append_to_transcript(transcript);
 
         //derive the verifier's challenge for the next round
-        let r_i: F::Challenge = transcript.challenge_scalar_special::<F>();
+        let r_i: F::Challenge = transcript.challenge_scalar_optimized::<F>();
         r.push(r_i);
         polys.push(compressed_poly);
 
@@ -579,7 +579,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
             compressed_poly.append_to_transcript(transcript);
 
             //derive the verifier's challenge for the next round
-            let r_i: F::Challenge = transcript.challenge_scalar_special::<F>();
+            let r_i: F::Challenge = transcript.challenge_scalar_optimized::<F>();
 
             r.push(r_i);
             polys.push(compressed_poly);
@@ -686,7 +686,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
             self.compressed_polys[i].append_to_transcript(transcript);
 
             //derive the verifier's challenge for the next round
-            let r_i = transcript.challenge_scalar_special::<F>();
+            let r_i = transcript.challenge_scalar_optimized::<F>();
             r.push(r_i);
 
             // evaluate the claimed degree-ell polynomial at r_i using the hint
@@ -734,7 +734,7 @@ pub fn process_eq_sumcheck_round<F: JoltField, ProofTranscript: Transcript>(
     compressed_poly.append_to_transcript(transcript);
 
     // Derive challenge
-    let r_i: F::Challenge = transcript.challenge_scalar_special::<F>();
+    let r_i: F::Challenge = transcript.challenge_scalar_optimized::<F>();
     r.push(r_i);
     polys.push(compressed_poly);
 

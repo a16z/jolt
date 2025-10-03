@@ -71,7 +71,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
         let r_address: Vec<F::Challenge> = sm
             .transcript
             .borrow_mut()
-            .challenge_vector_special::<F>(LOG_K_CHUNK);
+            .challenge_vector_optimized::<F>(LOG_K_CHUNK);
         let r_cycle = sm
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::LookupOutput,
@@ -102,7 +102,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
         let r_address: Vec<F::Challenge> = sm
             .transcript
             .borrow_mut()
-            .challenge_vector_special::<F>(LOG_K_CHUNK);
+            .challenge_vector_optimized::<F>(LOG_K_CHUNK);
         Self {
             gamma: gamma_powers,
             prover_state: None,
