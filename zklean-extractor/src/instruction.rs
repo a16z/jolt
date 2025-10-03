@@ -6,6 +6,7 @@ use tracer::instruction::RV32IMInstruction;
 
 use crate::{
     constants::JoltParameterSet,
+    lookups::ZkLeanLookupTable,
     modules::{AsModule, Module},
     util::{indent, ZkLeanReprField},
     MleAst,
@@ -71,20 +72,10 @@ impl<J: JoltParameterSet> ZkLeanInstruction<J> {
         format!("{name}_{word_size}")
     }
 
-    pub fn evaluate_mle<F: ZkLeanReprField>(&self, reg_name: char) -> F {
-        let num_variables = 2 * J::WORD_SIZE;
-        let reg = F::register(reg_name, num_variables);
-
-        self.instruction
-            .lookup_table()
-            .expect(format!("{} is not an instruction with an MLE", self.name()).as_str())
-            .evaluate_mle::<F>(&reg)
-    }
-
     pub fn iter() -> impl Iterator<Item = Self> {
         RV32IMInstruction::iter().filter_map(|instr| match instr {
             RV32IMInstruction::NoOp | RV32IMInstruction::UNIMPL
-                // Virtual instruction sequences
+                // Inline sequences
                 | RV32IMInstruction::DIV(_)
                 | RV32IMInstruction::DIVU(_)
                 | RV32IMInstruction::LB(_)
@@ -116,6 +107,8 @@ impl<J: JoltParameterSet> ZkLeanInstruction<J> {
                 | RV32IMInstruction::SRLW(_)
                 | RV32IMInstruction::SRAW(_)
                 | RV32IMInstruction::LWU(_)
+                | RV32IMInstruction::LD(_)
+                | RV32IMInstruction::SD(_)
 
                 // RV64M
                 | RV32IMInstruction::DIVUW(_)
@@ -149,42 +142,9 @@ impl<J: JoltParameterSet> ZkLeanInstruction<J> {
                 | RV32IMInstruction::AMOMAXD(_)
                 | RV32IMInstruction::AMOMINUD(_)
                 | RV32IMInstruction::AMOMAXUD(_)
-
-                // XXX Instructions with lookup tables but no MLE (???)
-                // TODO: Find a better way to filter these out.
-                | RV32IMInstruction::FENCE(_)
-                | RV32IMInstruction::LW(_)
-                | RV32IMInstruction::ECALL(_)
-                | RV32IMInstruction::SW(_)
-
-                // Instructions with no lookup table
-                // TODO: Find a better way to filter these out.
-                | RV32IMInstruction::LD(_)
-                | RV32IMInstruction::SD(_)
-
-                // XXX Temporarily disabled. Too many nodes.
-                // See https://gitlab-ext.galois.com/jb4/jolt-fork/-/issues/14
-                | RV32IMInstruction::BEQ(_)
-                | RV32IMInstruction::BNE(_)
-                | RV32IMInstruction::BGE(_)
-                | RV32IMInstruction::BGEU(_)
-                | RV32IMInstruction::BLT(_)
-                | RV32IMInstruction::BLTU(_)
-                | RV32IMInstruction::SLT(_)
-                | RV32IMInstruction::SLTI(_)
-                | RV32IMInstruction::SLTIU(_)
-                | RV32IMInstruction::SLTU(_)
-                | RV32IMInstruction::VirtualAssertLTE(_)
-                | RV32IMInstruction::VirtualAssertEQ(_)
-                | RV32IMInstruction::VirtualAssertValidSignedRemainder(_)
-                | RV32IMInstruction::VirtualAssertValidUnsignedRemainder(_)
                 => None,
             _ => Some(Self::from(instr)),
         })
-    }
-
-    pub fn to_instruction_set(&self) -> RV32IMInstruction {
-        self.instruction.clone()
     }
 
     /// Pretty print an instruction as a ZkLean `ComposedLookupTable`.
@@ -195,16 +155,22 @@ impl<J: JoltParameterSet> ZkLeanInstruction<J> {
     ) -> std::io::Result<()> {
         let name = self.name();
         let interleaving = self.interleaving;
-        let num_variables = 2 * J::WORD_SIZE;
-        let mle = self.evaluate_mle::<F>('x').as_computation();
+        let lookup_table = match self
+            .instruction
+            .lookup_table()
+            .map(|t| ZkLeanLookupTable::from(t).name())
+        {
+            None => String::from("none"),
+            Some(t) => format!("(some {t})"),
+        };
 
         f.write_fmt(format_args!(
-            "{}def {name} [Field f] : Instruction f {num_variables} :=\n",
+            "{}def {name} [Field f] : Instruction f :=\n",
             indent(indent_level),
         ))?;
         indent_level += 1;
         f.write_fmt(format_args!(
-            "{}instructionFromMLE {interleaving} (fun x => {mle})\n",
+            "{}instructionFromMLE {interleaving} {lookup_table}\n",
             indent(indent_level),
         ))?;
 
@@ -235,7 +201,7 @@ impl<J: JoltParameterSet> ZkLeanInstructions<J> {
     }
 
     pub fn zklean_imports(&self) -> Vec<String> {
-        vec![String::from("ZkLean"), String::from("Jolt.Subtables")]
+        vec![String::from("ZkLean"), String::from("Jolt.LookupTables")]
     }
 }
 
@@ -249,81 +215,5 @@ impl<J: JoltParameterSet> AsModule for ZkLeanInstructions<J> {
             imports: self.zklean_imports(),
             contents,
         })
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-    use crate::util::arb_field_elem;
-
-    use jolt_core::field::JoltField;
-
-    use proptest::{collection::vec, prelude::*};
-
-    type RefField = ark_bn254::Fr;
-    type TestField = crate::mle_ast::MleAst<5400>;
-    type ParamSet = crate::constants::RV32IParameterSet;
-
-    #[derive(Clone)]
-    struct TestableInstruction<J: JoltParameterSet> {
-        reference: RV32IMInstruction,
-        test: ZkLeanInstruction<J>,
-    }
-
-    impl<J: JoltParameterSet> std::fmt::Debug for TestableInstruction<J> {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            f.write_fmt(format_args!("{}", self.test.name()))
-        }
-    }
-
-    impl<J: JoltParameterSet> TestableInstruction<J> {
-        fn iter() -> impl Iterator<Item = Self> {
-            ZkLeanInstruction::iter().map(|instr| Self {
-                reference: instr.instruction.clone(),
-                test: instr,
-            })
-        }
-
-        fn evaluate_reference_mle<R: JoltField>(&self, inputs: &[R]) -> R {
-            assert_eq!(inputs.len(), 2 * J::WORD_SIZE);
-
-            self.reference.lookup_table().unwrap().evaluate_mle(inputs)
-        }
-
-        fn evaluate_test_mle<R: JoltField, T: ZkLeanReprField>(&self, inputs: &[R]) -> R {
-            assert_eq!(inputs.len(), 2 * J::WORD_SIZE);
-
-            let ast: T = self.test.evaluate_mle('x');
-            ast.evaluate(inputs)
-        }
-    }
-
-    fn arb_instruction<J: JoltParameterSet>() -> impl Strategy<Value = TestableInstruction<J>> {
-        let num_instrs = TestableInstruction::<J>::iter().count();
-
-        (0..num_instrs).prop_map(|n| TestableInstruction::iter().nth(n).unwrap())
-    }
-
-    fn arb_instruction_and_input<J: JoltParameterSet + Clone, R: JoltField>(
-    ) -> impl Strategy<Value = (TestableInstruction<J>, Vec<R>)> {
-        arb_instruction().prop_flat_map(|instr| {
-            let input_len = 2 * J::WORD_SIZE;
-            let inputs = vec(arb_field_elem::<R>(), input_len);
-
-            (Just(instr), inputs)
-        })
-    }
-
-    proptest! {
-        #[test]
-        fn evaluate_mle(
-            (instr, inputs) in arb_instruction_and_input::<ParamSet, RefField>(),
-        ) {
-            prop_assert_eq!(
-                instr.evaluate_test_mle::<_, TestField>(&inputs),
-                instr.evaluate_reference_mle(&inputs),
-            );
-        }
     }
 }
