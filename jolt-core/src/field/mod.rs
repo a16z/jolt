@@ -1,7 +1,6 @@
 use allocative::Allocative;
 use ark_ff::biginteger::S224;
 use ark_ff::UniformRand;
-//use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use num_traits::{One, Zero};
 use std::fmt::{Debug, Display};
 use std::hash::Hash;
