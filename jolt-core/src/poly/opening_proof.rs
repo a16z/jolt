@@ -48,7 +48,9 @@ pub type Endianness = bool;
 pub const BIG_ENDIAN: Endianness = false;
 pub const LITTLE_ENDIAN: Endianness = true;
 
-#[derive(Clone, Debug, PartialEq, Default, Allocative)]
+#[derive(
+    Clone, Debug, PartialEq, Default, Allocative, CanonicalSerialize, CanonicalDeserialize,
+)]
 pub struct OpeningPoint<const E: Endianness, F: JoltField> {
     pub r: Vec<F>,
 }

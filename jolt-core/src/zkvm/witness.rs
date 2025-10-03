@@ -96,37 +96,51 @@ pub enum RecursionCommittedPolynomial {
 }
 
 impl RecursionCommittedPolynomial {
+    // Constants for the indexing scheme
+    const POLY_TYPE_BITS: usize = 2; // 2 bits for 4 types
+    const EXP_IDX_BITS: usize = 12; // 12 bits = up to 4096 exponentiations
+    const LOCAL_IDX_BITS: usize = 10; // 10 bits = up to 1024 local polynomials
+
+    const POLY_TYPE_SHIFT: usize = Self::EXP_IDX_BITS + Self::LOCAL_IDX_BITS;
+    const EXP_IDX_SHIFT: usize = Self::LOCAL_IDX_BITS;
+
+    const POLY_TYPE_RHO: usize = 0;
+    const POLY_TYPE_QUOTIENT: usize = 1;
+    const POLY_TYPE_BASE: usize = 2;
+    const POLY_TYPE_G: usize = 3;
+
     pub fn to_index(&self) -> usize {
-        match self {
+        let (poly_type, exp_idx, local_idx) = match self {
             RecursionCommittedPolynomial::RecursionRho(exp_idx, local_idx) => {
-                // Each exponentiation can have up to 1000 rho polynomials
-                exp_idx * 1000 + local_idx
+                (Self::POLY_TYPE_RHO, *exp_idx, *local_idx)
             }
-            RecursionCommittedPolynomial::RecursionBase(exp_idx) => 10000 + exp_idx,
-            RecursionCommittedPolynomial::RecursionG(exp_idx) => 20000 + exp_idx,
             RecursionCommittedPolynomial::RecursionQuotient(exp_idx, local_idx) => {
-                // Each exponentiation can have up to 1000 quotient polynomials
-                30000 + exp_idx * 1000 + local_idx
+                (Self::POLY_TYPE_QUOTIENT, *exp_idx, *local_idx)
             }
-        }
+            RecursionCommittedPolynomial::RecursionBase(exp_idx) => {
+                (Self::POLY_TYPE_BASE, *exp_idx, 0)
+            }
+            RecursionCommittedPolynomial::RecursionG(exp_idx) => (Self::POLY_TYPE_G, *exp_idx, 0),
+        };
+
+        // Encode: [poly_type:2][exp_idx:12][local_idx:10]
+        (poly_type << Self::POLY_TYPE_SHIFT) | (exp_idx << Self::EXP_IDX_SHIFT) | local_idx
     }
 
     pub fn from_index(index: usize) -> Self {
-        match index {
-            0..=9999 => {
-                let exp_idx = index / 1000;
-                let local_idx = index % 1000;
-                RecursionCommittedPolynomial::RecursionRho(exp_idx, local_idx)
-            }
-            10000..=19999 => RecursionCommittedPolynomial::RecursionBase(index - 10000),
-            20000..=29999 => RecursionCommittedPolynomial::RecursionG(index - 20000),
-            30000..=39999 => {
-                let adjusted_idx = index - 30000;
-                let exp_idx = adjusted_idx / 1000;
-                let local_idx = adjusted_idx % 1000;
+        // Decode the components
+        let poly_type = index >> Self::POLY_TYPE_SHIFT;
+        let exp_idx = (index >> Self::EXP_IDX_SHIFT) & ((1 << Self::EXP_IDX_BITS) - 1);
+        let local_idx = index & ((1 << Self::LOCAL_IDX_BITS) - 1);
+
+        match poly_type {
+            Self::POLY_TYPE_RHO => RecursionCommittedPolynomial::RecursionRho(exp_idx, local_idx),
+            Self::POLY_TYPE_QUOTIENT => {
                 RecursionCommittedPolynomial::RecursionQuotient(exp_idx, local_idx)
             }
-            _ => panic!("Invalid RecursionCommittedPolynomial index: {}", index),
+            Self::POLY_TYPE_BASE => RecursionCommittedPolynomial::RecursionBase(exp_idx),
+            Self::POLY_TYPE_G => RecursionCommittedPolynomial::RecursionG(exp_idx),
+            _ => panic!("Invalid RecursionCommittedPolynomial type: {}", poly_type),
         }
     }
 }
@@ -714,15 +728,6 @@ pub enum VirtualPolynomial {
     RamVal,
     RamValInit,
     RamValFinal,
-    /// Fixed polynomial g(x) for square-and-multiply sumcheck
-    SquareMultiplyG,
-    /// The a_i polynomials for square-and-multiply sumcheck, indexed 0 to 127
-    SquareMultiplyA(usize),
-    /// The base polynomial a(x) for accumulator multiplication
-    SquareMultiplyBase,
-    /// The accumulator polynomials rho_i for square-and-multiply, indexed 0 to 127
-    SquareMultiplyRho(usize),
-    /// SZ Check polynomials
     SZCheckBase,
     SZCheckG,
     SZCheckRho(usize),

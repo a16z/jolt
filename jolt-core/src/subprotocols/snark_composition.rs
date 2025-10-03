@@ -92,7 +92,7 @@ pub struct ExpCommitments<const RATIO: usize = 1> {
     pub bits_per_exponentiation: Vec<Vec<bool>>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct RecursionProof<F: JoltField, ProofTranscript: Transcript, const RATIO: usize> {
     pub commitments: ExpCommitments<RATIO>,
     pub sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
@@ -213,21 +213,17 @@ where
     let mut poly_counts = Vec::with_capacity(exponentiation_steps_vec.len());
 
     for i in 0..exponentiation_steps_vec.len() {
-        // Collect rho polynomials
         let rho_count = all_rho_polys[i].len();
         for rho_poly in &all_rho_polys[i] {
             all_polys_to_commit.push(rho_poly);
         }
 
-        // Collect quotient polynomials
         let quotient_count = all_quotient_polys[i].len();
         for quotient_poly in &all_quotient_polys[i] {
             all_polys_to_commit.push(quotient_poly);
         }
 
-        // Collect base polynomial
         all_polys_to_commit.push(&all_base_polys[i]);
-
         poly_counts.push((rho_count, quotient_count));
     }
 
@@ -244,18 +240,15 @@ where
     // Reorganize commitments back into the expected structure
     let mut commitment_idx = 0;
     for (rho_count, quotient_count) in poly_counts {
-        // Extract rho commitments
         let rho_comms = all_commitments[commitment_idx..commitment_idx + rho_count].to_vec();
         rho_commitments.push(rho_comms);
         commitment_idx += rho_count;
 
-        // Extract quotient commitments
         let quotient_comms =
             all_commitments[commitment_idx..commitment_idx + quotient_count].to_vec();
         quotient_commitments.push(quotient_comms);
         commitment_idx += quotient_count;
 
-        // Extract base commitment
         base_commitments.push(all_commitments[commitment_idx].clone());
         commitment_idx += 1;
     }

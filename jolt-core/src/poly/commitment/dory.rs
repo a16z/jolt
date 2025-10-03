@@ -39,7 +39,6 @@ use jolt_optimizations::ExponentiationSteps;
 use once_cell::sync::OnceCell;
 use rayon::prelude::*;
 use std::{borrow::Borrow, marker::PhantomData};
-use tracing::trace_span;
 
 /// The (padded) length of the execution trace currently being proven
 static mut GLOBAL_T: OnceCell<usize> = OnceCell::new();
@@ -276,16 +275,7 @@ where
         &self,
         k: &<Self as dory::arithmetic::Group>::Scalar,
     ) -> (Self, ExponentiationSteps) {
-        // This method is only called for BN254 in practice, but we still need
-        // runtime check since we can't constrain P at compile time here
         if std::any::TypeId::of::<P>() == std::any::TypeId::of::<Bn254>() {
-            // For BN254, we know:
-            // - P::TargetField is Fq12
-            // - P::ScalarField is Fr
-            // But we still need to be careful with the conversion
-
-            // Since we've verified this is BN254, we can use a specialized implementation
-            // that avoids transmute by going through serialization/deserialization
             let mut target_bytes = Vec::new();
             self.0
                 .serialize_compressed(&mut target_bytes)
@@ -1325,7 +1315,7 @@ impl RecursionCommitmentScheme for DoryCommitmentScheme {
         hint: Option<&Self::CombinedCommitmentHint>,
     ) -> Self::Commitment {
         if let Some(hint) = hint {
-            println!(
+            tracing::info!(
                 "DORY: Using precomputed GT hint with {} elements",
                 hint.scaled_commitments.len()
             );
@@ -1352,8 +1342,7 @@ impl RecursionCommitmentScheme for DoryCommitmentScheme {
             return DoryCommitment(combined);
         }
 
-        println!("DORY: Computing GT operations natively (no hint)");
-        // Fallback to native computation
+        tracing::info!("DORY: Computing GT operations natively (no hint)");
         Self::combine_commitments_native(commitments, coeffs)
     }
 
@@ -1436,7 +1425,7 @@ impl AdditivelyHomomorphic for DoryCommitmentScheme {
                 std::slice::from_raw_parts(rlc_hint.as_ptr() as *const G1Projective, rlc_hint.len())
             };
 
-            let _span = trace_span!("vector_scalar_mul_add_gamma_g1_online");
+            let _span = tracing::trace_span!("vector_scalar_mul_add_gamma_g1_online");
             let _enter = _span.enter();
 
             // Scales the row commitments for the current polynomial by

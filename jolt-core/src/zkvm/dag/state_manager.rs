@@ -19,9 +19,6 @@ use tracer::emulator::memory::Memory;
 use tracer::instruction::{Cycle, Instruction};
 use tracer::JoltDevice;
 
-#[cfg(feature = "recursion")]
-use crate::subprotocols::snark_composition::RecursionProof;
-
 #[derive(PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, FromPrimitive)]
 #[repr(u8)]
 pub enum ProofKeys {
@@ -76,8 +73,6 @@ pub struct StateManager<
     pub program_io: JoltDevice,
     pub prover_state: Option<ProverState<'a, F, PCS>>,
     pub verifier_state: Option<VerifierState<'a, F, PCS>>,
-    #[cfg(feature = "recursion")]
-    pub recursion_ops: Option<Vec<jolt_optimizations::ExponentiationSteps>>,
 }
 
 impl<'a, F, ProofTranscript, PCS> StateManager<'a, F, ProofTranscript, PCS>
@@ -139,8 +134,6 @@ where
                 accumulator: opening_accumulator,
             }),
             verifier_state: None,
-            #[cfg(feature = "recursion")]
-            recursion_ops: None,
         }
     }
 
@@ -173,8 +166,6 @@ where
                 trace_length,
                 accumulator: opening_accumulator,
             }),
-            #[cfg(feature = "recursion")]
-            recursion_ops: None,
         }
     }
 
@@ -323,15 +314,5 @@ where
         } else {
             panic!("Neither prover nor verifier state initialized");
         }
-    }
-
-    #[cfg(feature = "recursion")]
-    pub fn set_recursion_ops(&mut self, ops: Vec<jolt_optimizations::ExponentiationSteps>) {
-        self.recursion_ops = Some(ops);
-    }
-
-    #[cfg(feature = "recursion")]
-    pub fn get_recursion_ops(&self) -> Option<&Vec<jolt_optimizations::ExponentiationSteps>> {
-        self.recursion_ops.as_ref()
     }
 }
