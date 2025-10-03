@@ -21,7 +21,6 @@ use crate::{
         one_hot_polynomial::OneHotPolynomial,
     },
     utils::math::Math,
-    utils::small_scalar::SmallScalar,
     zkvm::{
         instruction_lookups, lookup_table::LookupTables, ram::remap_address,
         JoltProverPreprocessing,
@@ -82,317 +81,6 @@ pub enum CommittedPolynomial {
     /// Note that for RAM, ra and wa are the same polynomial because
     /// there is at most one load or store per cycle.
     RamRa(usize),
-}
-
-// Types of witness polynomials.
-struct LeftInstructionInput;
-struct RightInstructionInput;
-struct Product;
-struct WriteLookupOutputToRD;
-struct WritePCtoRD;
-struct ShouldBranch;
-struct ShouldJump;
-struct RdInc;
-struct RamInc;
-struct InstructionRa(usize);
-struct BytecodeRa(usize);
-struct RamRa(usize);
-
-trait StreamWitness<F: JoltField> {
-    type WitnessType;
-
-    fn generate_streaming_witness<'a, PCS>(
-        &self,
-        preprocessing: &'a JoltProverPreprocessing<F, PCS>,
-        cycle: &Cycle,
-        next_cycle: &Cycle,
-        ram_d: usize,
-    ) -> Self::WitnessType
-    where
-        PCS: CommitmentScheme<Field = F>;
-}
-
-impl<F: JoltField> StreamWitness<F> for InstructionRa {
-    type WitnessType = Option<usize>;
-
-    fn generate_streaming_witness<'a, PCS>(
-        &self,
-        _preprocessing: &'a JoltProverPreprocessing<F, PCS>,
-        cycle: &Cycle,
-        _next_cycle: &Cycle,
-        _ram_d: usize,
-    ) -> Self::WitnessType
-    where
-        PCS: CommitmentScheme<Field = F>,
-    {
-        let i = self.0;
-        debug_assert!(
-            i < instruction_lookups::D,
-            "Invalid index for instruction ra: {i}"
-        );
-        let v = {
-            let lookup_index = LookupQuery::<XLEN>::to_lookup_index(cycle);
-            let k = (lookup_index
-                >> (instruction_lookups::LOG_K_CHUNK * (instruction_lookups::D - 1 - i)))
-                % instruction_lookups::K_CHUNK as u128;
-            k as usize
-        };
-
-        Some(v)
-    }
-}
-
-impl<F: JoltField> StreamWitness<F> for LeftInstructionInput {
-    type WitnessType = u64;
-
-    fn generate_streaming_witness<'a, PCS>(
-        &self,
-        _preprocessing: &'a JoltProverPreprocessing<F, PCS>,
-        cycle: &Cycle,
-        _next_cycle: &Cycle,
-        _ram_d: usize,
-    ) -> Self::WitnessType
-    where
-        PCS: CommitmentScheme<Field = F>,
-    {
-        let v = LookupQuery::<XLEN>::to_instruction_inputs(cycle).0;
-        v
-    }
-}
-
-impl<F: JoltField> StreamWitness<F> for RightInstructionInput {
-    type WitnessType = i128;
-
-    fn generate_streaming_witness<'a, PCS>(
-        &self,
-        _preprocessing: &'a JoltProverPreprocessing<F, PCS>,
-        cycle: &Cycle,
-        _next_cycle: &Cycle,
-        _ram_d: usize,
-    ) -> Self::WitnessType
-    where
-        PCS: CommitmentScheme<Field = F>,
-    {
-        let v = LookupQuery::<XLEN>::to_instruction_inputs(cycle).1;
-        v
-    }
-}
-
-impl<F: JoltField> StreamWitness<F> for Product {
-    type WitnessType = S128;
-
-    fn generate_streaming_witness<'a, PCS>(
-        &self,
-        _preprocessing: &'a JoltProverPreprocessing<F, PCS>,
-        cycle: &Cycle,
-        _next_cycle: &Cycle,
-        _ram_d: usize,
-    ) -> Self::WitnessType
-    where
-        PCS: CommitmentScheme<Field = F>,
-    {
-        let v = {
-            let (left_input, right_input) = LookupQuery::<XLEN>::to_instruction_inputs(cycle);
-            // Use the fact that `|right_input|` fits in u64 to avoid overflow
-            if right_input >= 0 {
-                S128::from_u128(left_input as u128 * right_input.unsigned_abs())
-            } else {
-                S128::from_u128_and_sign(left_input as u128 * right_input.unsigned_abs(), false)
-            }
-        };
-        v
-    }
-}
-
-impl<F: JoltField> StreamWitness<F> for WriteLookupOutputToRD {
-    type WitnessType = u8;
-
-    fn generate_streaming_witness<'a, PCS>(
-        &self,
-        _preprocessing: &'a JoltProverPreprocessing<F, PCS>,
-        cycle: &Cycle,
-        _next_cycle: &Cycle,
-        _ram_d: usize,
-    ) -> Self::WitnessType
-    where
-        PCS: CommitmentScheme<Field = F>,
-    {
-        let v = {
-            let flag =
-                cycle.instruction().circuit_flags()[CircuitFlags::WriteLookupOutputToRD as usize];
-            (cycle.rd_write().0 as u8) * (flag as u8)
-        };
-        v
-    }
-}
-
-impl<F: JoltField> StreamWitness<F> for WritePCtoRD {
-    type WitnessType = u8;
-
-    fn generate_streaming_witness<'a, PCS>(
-        &self,
-        _preprocessing: &'a JoltProverPreprocessing<F, PCS>,
-        cycle: &Cycle,
-        _next_cycle: &Cycle,
-        _ram_d: usize,
-    ) -> Self::WitnessType
-    where
-        PCS: CommitmentScheme<Field = F>,
-    {
-        let v = {
-            let flag = cycle.instruction().circuit_flags()[CircuitFlags::Jump as usize];
-            (cycle.rd_write().0 as u8) * (flag as u8)
-        };
-        v
-    }
-}
-
-impl<F: JoltField> StreamWitness<F> for ShouldBranch {
-    type WitnessType = u8;
-
-    fn generate_streaming_witness<'a, PCS>(
-        &self,
-        _preprocessing: &'a JoltProverPreprocessing<F, PCS>,
-        cycle: &Cycle,
-        _next_cycle: &Cycle,
-        _ram_d: usize,
-    ) -> Self::WitnessType
-    where
-        PCS: CommitmentScheme<Field = F>,
-    {
-        let v = {
-            let is_branch = cycle.instruction().circuit_flags()[CircuitFlags::Branch as usize];
-            (LookupQuery::<XLEN>::to_lookup_output(cycle) as u8) * is_branch as u8
-        };
-        v
-    }
-}
-
-impl<F: JoltField> StreamWitness<F> for ShouldJump {
-    type WitnessType = u8;
-
-    fn generate_streaming_witness<'a, PCS>(
-        &self,
-        _preprocessing: &'a JoltProverPreprocessing<F, PCS>,
-        cycle: &Cycle,
-        next_cycle: &Cycle,
-        _ram_d: usize,
-    ) -> Self::WitnessType
-    where
-        PCS: CommitmentScheme<Field = F>,
-    {
-        let v = {
-            let is_jump = cycle.instruction().circuit_flags()[CircuitFlags::Jump];
-            let is_next_noop = next_cycle.instruction().circuit_flags()[CircuitFlags::IsNoop];
-            is_jump as u8 * (1 - is_next_noop as u8)
-        };
-        v
-    }
-}
-
-impl<F: JoltField> StreamWitness<F> for RdInc {
-    type WitnessType = i128;
-
-    fn generate_streaming_witness<'a, PCS>(
-        &self,
-        _preprocessing: &'a JoltProverPreprocessing<F, PCS>,
-        cycle: &Cycle,
-        _next_cycle: &Cycle,
-        _ram_d: usize,
-    ) -> Self::WitnessType
-    where
-        PCS: CommitmentScheme<Field = F>,
-    {
-        let v = {
-            let (_, pre_value, post_value) = cycle.rd_write();
-            post_value as i128 - pre_value as i128
-        };
-        v
-    }
-}
-
-impl<F: JoltField> StreamWitness<F> for RamInc {
-    type WitnessType = i128;
-
-    fn generate_streaming_witness<'a, PCS>(
-        &self,
-        _preprocessing: &'a JoltProverPreprocessing<F, PCS>,
-        cycle: &Cycle,
-        _next_cycle: &Cycle,
-        _ram_d: usize,
-    ) -> Self::WitnessType
-    where
-        PCS: CommitmentScheme<Field = F>,
-    {
-        let v = {
-            let ram_op = cycle.ram_access();
-            match ram_op {
-                tracer::instruction::RAMAccess::Write(write) => {
-                    write.post_value as i128 - write.pre_value as i128
-                }
-                _ => 0,
-            }
-        };
-        v
-    }
-}
-
-impl<F: JoltField> StreamWitness<F> for BytecodeRa {
-    type WitnessType = Option<usize>;
-
-    fn generate_streaming_witness<'a, PCS>(
-        &self,
-        preprocessing: &'a JoltProverPreprocessing<F, PCS>,
-        cycle: &Cycle,
-        _next_cycle: &Cycle,
-        _ram_d: usize,
-    ) -> Self::WitnessType
-    where
-        PCS: CommitmentScheme<Field = F>,
-    {
-        let i = self.0;
-        // TODO: Compute this up front?
-        let d = preprocessing.shared.bytecode.d;
-        let log_K = preprocessing.shared.bytecode.code_size.log_2();
-        let log_K_chunk = log_K.div_ceil(d);
-        let K_chunk = 1 << log_K_chunk;
-        debug_assert!(i < d, "Invalid index for bytecode ra: {i}");
-        let v = {
-            let pc = preprocessing.shared.bytecode.get_pc(cycle);
-            (pc >> (log_K_chunk * (d - 1 - i))) % K_chunk
-        };
-        Some(v)
-    }
-}
-
-impl<F: JoltField> StreamWitness<F> for RamRa {
-    type WitnessType = Option<usize>;
-
-    fn generate_streaming_witness<'a, PCS>(
-        &self,
-        preprocessing: &'a JoltProverPreprocessing<F, PCS>,
-        cycle: &Cycle,
-        _next_cycle: &Cycle,
-        ram_d: usize,
-    ) -> Self::WitnessType
-    where
-        PCS: CommitmentScheme<Field = F>,
-    {
-        let i = self.0;
-        let d = ram_d;
-        debug_assert!(i < d, "Invalid index for ram ra: {i}");
-        let v = {
-            remap_address(
-                cycle.ram_access().address() as u64,
-                &preprocessing.shared.memory_layout,
-            )
-            .map(|address| {
-                (address as usize >> (DTH_ROOT_OF_K.log_2() * (d - 1 - i))) % DTH_ROOT_OF_K
-            })
-        };
-
-        v
-    }
 }
 
 pub static mut ALL_COMMITTED_POLYNOMIALS: OnceCell<Vec<CommittedPolynomial>> = OnceCell::new();
@@ -999,99 +687,147 @@ impl CommittedPolynomial {
     where
         PCS: StreamingCommitmentScheme<Field = F>,
     {
-        #[inline(always)]
-        fn helper_scalar<
-            'a,
-            T: StreamWitness<F, WitnessType = S>,
-            S: SmallScalar,
-            F: JoltField,
-            PCS,
-        >(
-            witness_type: T,
-            pcs: &PCS::State<'a>,
-            preprocessing: &'a JoltProverPreprocessing<F, PCS>,
-            row_cycles: &[Cycle],
-            ram_d: usize,
-        ) -> PCS::ChunkState
-        where
-            PCS: StreamingCommitmentScheme<Field = F>,
-        {
-            let row: Vec<S> = (0..row_cycles.len() - 1)
-                .map(|i| {
-                    let cycle = row_cycles[i];
-                    let next_cycle = row_cycles[i + 1];
-                    witness_type.generate_streaming_witness(
-                        preprocessing,
-                        &cycle,
-                        &next_cycle,
-                        ram_d,
-                    )
-                })
-                .collect();
-            PCS::process_chunk(pcs, &row)
-        }
+        let num_cycles = row_cycles.len() - 1;
 
-        #[inline(always)]
-        fn helper_onehot<'a, T: StreamWitness<F, WitnessType = Option<usize>>, F: JoltField, PCS>(
-            witness_type: T,
-            pcs: &PCS::State<'a>,
-            preprocessing: &'a JoltProverPreprocessing<F, PCS>,
-            row_cycles: &[Cycle],
-            ram_d: usize,
-        ) -> PCS::ChunkState
-        where
-            PCS: StreamingCommitmentScheme<Field = F>,
-        {
-            let row: Vec<Option<usize>> = (0..row_cycles.len() - 1)
-                .map(|i| {
-                    let cycle = row_cycles[i];
-                    let next_cycle = row_cycles[i + 1];
-                    witness_type.generate_streaming_witness(
-                        preprocessing,
-                        &cycle,
-                        &next_cycle,
-                        ram_d,
-                    )
-                })
-                .collect();
-            PCS::process_chunk_onehot(pcs, &row)
-        }
         match self {
             CommittedPolynomial::LeftInstructionInput => {
-                helper_scalar(LeftInstructionInput, pcs, preprocessing, row_cycles, ram_d)
+                let row: Vec<u64> = (0..num_cycles)
+                    .map(|i| LookupQuery::<XLEN>::to_instruction_inputs(&row_cycles[i]).0)
+                    .collect();
+                PCS::process_chunk(pcs, &row)
             }
             CommittedPolynomial::RightInstructionInput => {
-                helper_scalar(RightInstructionInput, pcs, preprocessing, row_cycles, ram_d)
+                let row: Vec<i128> = (0..num_cycles)
+                    .map(|i| LookupQuery::<XLEN>::to_instruction_inputs(&row_cycles[i]).1)
+                    .collect();
+                PCS::process_chunk(pcs, &row)
             }
             CommittedPolynomial::Product => {
-                helper_scalar(Product, pcs, preprocessing, row_cycles, ram_d)
+                let row: Vec<S128> = (0..num_cycles)
+                    .map(|i| {
+                        let (left_input, right_input) =
+                            LookupQuery::<XLEN>::to_instruction_inputs(&row_cycles[i]);
+                        if right_input >= 0 {
+                            S128::from_u128(left_input as u128 * right_input.unsigned_abs())
+                        } else {
+                            S128::from_u128_and_sign(
+                                left_input as u128 * right_input.unsigned_abs(),
+                                false,
+                            )
+                        }
+                    })
+                    .collect();
+                PCS::process_chunk(pcs, &row)
             }
             CommittedPolynomial::WriteLookupOutputToRD => {
-                helper_scalar(WriteLookupOutputToRD, pcs, preprocessing, row_cycles, ram_d)
+                let row: Vec<u8> = (0..num_cycles)
+                    .map(|i| {
+                        let cycle = &row_cycles[i];
+                        let flag = cycle.instruction().circuit_flags()
+                            [CircuitFlags::WriteLookupOutputToRD as usize];
+                        cycle.rd_write().0 * (flag as u8)
+                    })
+                    .collect();
+                PCS::process_chunk(pcs, &row)
             }
             CommittedPolynomial::WritePCtoRD => {
-                helper_scalar(WritePCtoRD, pcs, preprocessing, row_cycles, ram_d)
+                let row: Vec<u8> = (0..num_cycles)
+                    .map(|i| {
+                        let cycle = &row_cycles[i];
+                        let flag = cycle.instruction().circuit_flags()[CircuitFlags::Jump as usize];
+                        cycle.rd_write().0 * (flag as u8)
+                    })
+                    .collect();
+                PCS::process_chunk(pcs, &row)
             }
             CommittedPolynomial::ShouldBranch => {
-                helper_scalar(ShouldBranch, pcs, preprocessing, row_cycles, ram_d)
+                let row: Vec<u8> = (0..num_cycles)
+                    .map(|i| {
+                        let cycle = &row_cycles[i];
+                        let is_branch =
+                            cycle.instruction().circuit_flags()[CircuitFlags::Branch as usize];
+                        (LookupQuery::<XLEN>::to_lookup_output(cycle) as u8) * is_branch as u8
+                    })
+                    .collect();
+                PCS::process_chunk(pcs, &row)
             }
             CommittedPolynomial::ShouldJump => {
-                helper_scalar(ShouldJump, pcs, preprocessing, row_cycles, ram_d)
+                let row: Vec<u8> = (0..num_cycles)
+                    .map(|i| {
+                        let cycle = &row_cycles[i];
+                        let next_cycle = &row_cycles[i + 1];
+                        let is_jump = cycle.instruction().circuit_flags()[CircuitFlags::Jump] as u8;
+                        let is_next_noop =
+                            next_cycle.instruction().circuit_flags()[CircuitFlags::IsNoop] as u8;
+                        is_jump * (1 - is_next_noop)
+                    })
+                    .collect();
+                PCS::process_chunk(pcs, &row)
             }
             CommittedPolynomial::RdInc => {
-                helper_scalar(RdInc, pcs, preprocessing, row_cycles, ram_d)
+                let row: Vec<i128> = (0..num_cycles)
+                    .map(|i| {
+                        let (_, pre_value, post_value) = row_cycles[i].rd_write();
+                        post_value as i128 - pre_value as i128
+                    })
+                    .collect();
+                PCS::process_chunk(pcs, &row)
             }
             CommittedPolynomial::RamInc => {
-                helper_scalar(RamInc, pcs, preprocessing, row_cycles, ram_d)
+                let row: Vec<i128> = (0..num_cycles)
+                    .map(|i| {
+                        let ram_op = row_cycles[i].ram_access();
+                        match ram_op {
+                            tracer::instruction::RAMAccess::Write(write) => {
+                                write.post_value as i128 - write.pre_value as i128
+                            }
+                            _ => 0,
+                        }
+                    })
+                    .collect();
+                PCS::process_chunk(pcs, &row)
             }
-            CommittedPolynomial::InstructionRa(i) => {
-                helper_onehot(InstructionRa(*i), pcs, preprocessing, row_cycles, ram_d)
+            CommittedPolynomial::InstructionRa(idx) => {
+                let row: Vec<Option<usize>> = (0..num_cycles)
+                    .map(|i| {
+                        let lookup_index = LookupQuery::<XLEN>::to_lookup_index(&row_cycles[i]);
+                        let k = (lookup_index
+                            >> (instruction_lookups::LOG_K_CHUNK
+                                * (instruction_lookups::D - 1 - idx)))
+                            % instruction_lookups::K_CHUNK as u128;
+                        Some(k as usize)
+                    })
+                    .collect();
+                PCS::process_chunk_onehot(pcs, &row)
             }
-            CommittedPolynomial::BytecodeRa(i) => {
-                helper_onehot(BytecodeRa(*i), pcs, preprocessing, row_cycles, ram_d)
+            CommittedPolynomial::BytecodeRa(idx) => {
+                let d = preprocessing.shared.bytecode.d;
+                let log_K = preprocessing.shared.bytecode.code_size.log_2();
+                let log_K_chunk = log_K.div_ceil(d);
+                let K_chunk = 1 << log_K_chunk;
+
+                let row: Vec<Option<usize>> = (0..num_cycles)
+                    .map(|i| {
+                        let pc = preprocessing.shared.bytecode.get_pc(&row_cycles[i]);
+                        Some((pc >> (log_K_chunk * (d - 1 - idx))) % K_chunk)
+                    })
+                    .collect();
+                PCS::process_chunk_onehot(pcs, &row)
             }
-            CommittedPolynomial::RamRa(i) => {
-                helper_onehot(RamRa(*i), pcs, preprocessing, row_cycles, ram_d)
+            CommittedPolynomial::RamRa(idx) => {
+                let row: Vec<Option<usize>> = (0..num_cycles)
+                    .map(|i| {
+                        remap_address(
+                            row_cycles[i].ram_access().address() as u64,
+                            &preprocessing.shared.memory_layout,
+                        )
+                        .map(|address| {
+                            (address as usize >> (DTH_ROOT_OF_K.log_2() * (ram_d - 1 - idx)))
+                                % DTH_ROOT_OF_K
+                        })
+                    })
+                    .collect();
+                PCS::process_chunk_onehot(pcs, &row)
             }
         }
     }
