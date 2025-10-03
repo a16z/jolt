@@ -1,7 +1,7 @@
 use ark_bn254::Fr;
 use ark_ff::Zero;
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
-use jolt_core::field::challenge::{MontU128Challenge, Mont254BitChallenge};
+use jolt_core::field::challenge::{Mont254BitChallenge, MontU128Challenge};
 use jolt_core::field::JoltField;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
