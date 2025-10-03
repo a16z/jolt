@@ -126,18 +126,10 @@ where
     }
 
     fn initialize<'a>(
-        poly: crate::poly::multilinear_polynomial::Multilinear,
+        onehot_k: Option<usize>,
         size: usize,
         setup: &'a Self::ProverSetup,
         setup_cache: &'a Self::SetupCache,
-    ) -> Self::State<'a> {
-        todo!()
-    }
-
-    fn process<'a>(
-        poly: crate::poly::multilinear_polynomial::Multilinear,
-        state: Self::State<'a>,
-        eval: Self::Field,
     ) -> Self::State<'a> {
         todo!()
     }

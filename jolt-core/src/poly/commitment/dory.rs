@@ -1,7 +1,6 @@
 #![allow(static_mut_refs)]
 
 use super::commitment_scheme::{CommitmentScheme, StreamingCommitmentScheme};
-use crate::poly::multilinear_polynomial::Multilinear;
 use crate::transcripts::{AppendToTranscript, Transcript};
 use crate::{
     field::JoltField,
@@ -1277,32 +1276,16 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
     }
 
     fn initialize<'a>(
-        ty: Multilinear,
+        onehot_k: Option<usize>,
         _size: usize,
         setup: &'a Self::ProverSetup,
         bases: &'a Self::SetupCache,
     ) -> Self::State<'a> {
-        match ty {
-            Multilinear::OneHot { K } => StreamingDoryCommitment {
-                setup,
-                bases,
-                K: Some(K),
-            },
-            _ => StreamingDoryCommitment {
-                setup,
-                bases,
-                K: None,
-            },
+        StreamingDoryCommitment {
+            setup,
+            bases,
+            K: onehot_k,
         }
-    }
-
-    fn process<'a>(
-        _ty: Multilinear,
-        _state: Self::State<'a>,
-        _eval: Self::Field,
-    ) -> Self::State<'a> {
-        // state.process::<JoltMsmG1>(JoltFieldWrapper(eval))
-        todo!("Processing individual elements is not supported for Dory.")
     }
 
     fn process_chunk<'a, T: SmallScalar>(state: &Self::State<'a>, chunk: &[T]) -> Self::ChunkState {

@@ -17,7 +17,7 @@ use crate::{
     field::JoltField,
     poly::{
         commitment::commitment_scheme::{CommitmentScheme, StreamingCommitmentScheme},
-        multilinear_polynomial::{Multilinear, MultilinearPolynomial},
+        multilinear_polynomial::MultilinearPolynomial,
         one_hot_polynomial::OneHotPolynomial,
     },
     utils::math::Math,
@@ -644,36 +644,26 @@ impl CommittedPolynomial {
         }
     }
 
-    pub fn to_polynomial_type<F, PCS>(
+    pub fn get_onehot_k<F, PCS>(
         &self,
         preprocessing: &JoltProverPreprocessing<F, PCS>,
-    ) -> Multilinear
+    ) -> Option<usize>
     where
         F: JoltField,
         PCS: CommitmentScheme<Field = F>,
     {
         match self {
-            CommittedPolynomial::LeftInstructionInput => Multilinear::U64Scalars,
-            CommittedPolynomial::RightInstructionInput => Multilinear::I128Scalars,
-            CommittedPolynomial::Product => Multilinear::S128Scalars,
-            CommittedPolynomial::WriteLookupOutputToRD => Multilinear::U8Scalars,
-            CommittedPolynomial::WritePCtoRD => Multilinear::U8Scalars,
-            CommittedPolynomial::ShouldBranch => Multilinear::U8Scalars,
-            CommittedPolynomial::ShouldJump => Multilinear::U8Scalars,
-            CommittedPolynomial::RdInc => Multilinear::I128Scalars,
-            CommittedPolynomial::RamInc => Multilinear::I128Scalars,
-            CommittedPolynomial::InstructionRa(_) => Multilinear::OneHot {
-                K: instruction_lookups::K_CHUNK,
-            },
+            CommittedPolynomial::InstructionRa(_) => Some(instruction_lookups::K_CHUNK),
             CommittedPolynomial::BytecodeRa(_) => {
                 // TODO: Compute this up front?
                 let d = preprocessing.shared.bytecode.d;
                 let log_K = preprocessing.shared.bytecode.code_size.log_2();
                 let log_K_chunk = log_K.div_ceil(d);
                 let K_chunk = 1 << log_K_chunk;
-                Multilinear::OneHot { K: K_chunk }
+                Some(K_chunk)
             }
-            CommittedPolynomial::RamRa(_) => Multilinear::OneHot { K: DTH_ROOT_OF_K },
+            CommittedPolynomial::RamRa(_) => Some(DTH_ROOT_OF_K),
+            _ => None,
         }
     }
 

@@ -13,21 +13,6 @@ use super::{
 };
 use crate::field::JoltField;
 
-// Enum to identify the type of the polynomial.
-#[derive(Clone, Copy, Debug)]
-pub enum Multilinear {
-    LargeScalars,
-    U8Scalars,
-    U16Scalars,
-    U32Scalars,
-    U64Scalars,
-    I64Scalars,
-    I128Scalars,
-    S128Scalars,
-    RLC,
-    OneHot { K: usize },
-}
-
 /// Wrapper enum for the various multilinear polynomial types used in Jolt
 #[repr(u8)]
 #[derive(Clone, Debug, EnumIter, PartialEq, Allocative)]

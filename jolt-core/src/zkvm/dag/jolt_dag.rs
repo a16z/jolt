@@ -498,7 +498,7 @@ impl JoltDAG {
             .map(|poly| {
                 (
                     PCS::initialize(
-                        poly.to_polynomial_type(preprocessing),
+                        poly.get_onehot_k(preprocessing),
                         T,
                         &preprocessing.generators,
                         &cached_setup,

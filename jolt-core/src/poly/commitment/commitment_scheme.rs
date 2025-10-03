@@ -2,7 +2,6 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use std::borrow::Borrow;
 use std::fmt::Debug;
 
-use crate::poly::multilinear_polynomial::Multilinear;
 use crate::transcripts::{AppendToTranscript, Transcript};
 use crate::utils::small_scalar::SmallScalar;
 use crate::{
@@ -132,14 +131,11 @@ pub trait StreamingCommitmentScheme: CommitmentScheme {
     fn cache_setup(setup: &Self::ProverSetup) -> Self::SetupCache;
 
     fn initialize<'a>(
-        poly: Multilinear,
+        onehot_k: Option<usize>,
         size: usize,
         setup: &'a Self::ProverSetup,
         setup_cache: &'a Self::SetupCache,
     ) -> Self::State<'a>;
-
-    fn process<'a>(poly: Multilinear, state: Self::State<'a>, eval: Self::Field)
-        -> Self::State<'a>;
 
     /// Process a chunk of small scalar values using optimized MSM
     fn process_chunk<'a, T: SmallScalar>(state: &Self::State<'a>, chunk: &[T]) -> Self::ChunkState;
