@@ -41,6 +41,7 @@ pub enum JoltDAG {}
 
 impl JoltDAG {
     #[allow(clippy::type_complexity)]
+    #[tracing::instrument(skip_all, name = "JoltDAG::prove")]
     pub fn prove<
         'a,
         F: JoltField,
@@ -398,6 +399,7 @@ impl JoltDAG {
         Ok((proof, debug_info))
     }
 
+    #[tracing::instrument(skip_all, name = "JoltDAG::verify")]
     pub fn verify<
         'a,
         F: JoltField,
