@@ -44,6 +44,27 @@ struct MacroBuilder {
 }
 
 impl MacroBuilder {
+    // Helper to check if a type is a reference to a slice of u8
+    fn is_byte_slice(ty: &Type) -> bool {
+        // matches `&[u8]` (immutable reference to a slice of u8)
+        if let syn::Type::Reference(syn::TypeReference {
+            elem,
+            mutability: None,
+            ..
+        }) = ty
+        {
+            if let syn::Type::Slice(syn::TypeSlice {
+                elem: slice_elem, ..
+            }) = &**elem
+            {
+                if let syn::Type::Path(syn::TypePath { path, .. }) = &**slice_elem {
+                    return path.is_ident("u8");
+                }
+            }
+        }
+        false
+    }
+
     fn new(attr: AttributeArgs, func: ItemFn) -> Self {
         let func_args = Self::get_func_args(&func);
         #[cfg(feature = "guest-std")]
@@ -175,11 +196,20 @@ impl MacroBuilder {
         };
         let inputs = self.func.sig.inputs.iter();
         let imports = self.make_imports();
-        let set_program_args = self.func_args.iter().map(|(name, _)| {
-            quote! {
-                io_device.inputs.append(&mut jolt::postcard::to_stdvec(&#name).unwrap())
-            }
-        });
+        let set_program_args =
+            if self.func_args.len() == 1 && Self::is_byte_slice(&self.func_args[0].1) {
+                let name = &self.func_args[0].0;
+                vec![quote! { io_device.inputs.extend_from_slice(#name); }]
+            } else {
+                self.func_args
+                    .iter()
+                    .map(|(name, _)| {
+                        quote! {
+                            io_device.inputs.append(&mut jolt::postcard::to_stdvec(&#name).unwrap())
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            };
 
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
@@ -237,11 +267,20 @@ impl MacroBuilder {
         let fn_name_str = fn_name.to_string();
         let analyze_fn_name = Ident::new(&format!("analyze_{fn_name}"), fn_name.span());
         let inputs = &self.func.sig.inputs;
-        let set_program_args = self.func_args.iter().map(|(name, _)| {
-            quote! {
-                input_bytes.append(&mut jolt::postcard::to_stdvec(&#name).unwrap())
-            }
-        });
+        let set_program_args =
+            if self.func_args.len() == 1 && Self::is_byte_slice(&self.func_args[0].1) {
+                let name = &self.func_args[0].0;
+                vec![quote! { input_bytes.extend_from_slice(#name); }]
+            } else {
+                self.func_args
+                    .iter()
+                    .map(|(name, _)| {
+                        quote! {
+                            input_bytes.append(&mut jolt::postcard::to_stdvec(&#name).unwrap())
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            };
 
         quote! {
              #[cfg(not(target_arch = "wasm32"))]
@@ -272,11 +311,20 @@ impl MacroBuilder {
         let fn_name_str = fn_name.to_string();
         let trace_to_file_fn_name = Ident::new(&format!("trace_{fn_name}_to_file"), fn_name.span());
         let inputs = &self.func.sig.inputs;
-        let set_program_args = self.func_args.iter().map(|(name, _)| {
-            quote! {
-                input_bytes.append(&mut jolt::postcard::to_stdvec(&#name).unwrap())
-            }
-        });
+        let set_program_args =
+            if self.func_args.len() == 1 && Self::is_byte_slice(&self.func_args[0].1) {
+                let name = &self.func_args[0].0;
+                vec![quote! { input_bytes.extend_from_slice(#name); }]
+            } else {
+                self.func_args
+                    .iter()
+                    .map(|(name, _)| {
+                        quote! {
+                            input_bytes.append(&mut jolt::postcard::to_stdvec(&#name).unwrap())
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            };
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #trace_to_file_fn_name(target_dir: &str, #inputs) {
@@ -447,11 +495,20 @@ impl MacroBuilder {
             },
         };
 
-        let set_program_args = self.func_args.iter().map(|(name, _)| {
-            quote! {
-                input_bytes.append(&mut jolt::postcard::to_stdvec(&#name).unwrap())
-            }
-        });
+        let set_program_args =
+            if self.func_args.len() == 1 && Self::is_byte_slice(&self.func_args[0].1) {
+                let name = &self.func_args[0].0;
+                vec![quote! { input_bytes.extend_from_slice(#name); }]
+            } else {
+                self.func_args
+                    .iter()
+                    .map(|(name, _)| {
+                        quote! {
+                            input_bytes.append(&mut jolt::postcard::to_stdvec(&#name).unwrap())
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            };
 
         let fn_name = self.get_func_name();
         let inputs = &self.func.sig.inputs;
@@ -509,12 +566,19 @@ impl MacroBuilder {
         };
 
         let args = &self.func_args;
-        let args_fetch = args.iter().map(|(name, ty)| {
-            quote! {
-                let (#name, input_slice) =
-                    jolt::postcard::take_from_bytes::<#ty>(input_slice).unwrap();
-            }
-        });
+        let args_fetch = if args.len() == 1 && Self::is_byte_slice(&args[0].1) {
+            let name = &args[0].0;
+            vec![quote! { let #name = input_slice; }]
+        } else {
+            args.iter()
+                .map(|(name, ty)| {
+                    quote! {
+                        let (#name, input_slice) =
+                            jolt::postcard::take_from_bytes::<#ty>(input_slice).unwrap();
+                    }
+                })
+                .collect::<Vec<_>>()
+        };
 
         // TODO: ensure that input slice hasn't overflown
         let check_input_len = quote! {};
