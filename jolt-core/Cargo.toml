@@ -35,11 +35,11 @@ host = [
     "dep:jolt-inlines-keccak256",
 ]
 prover = [
-  "minimal",
-  "ark-ec/parallel",
-  "ark-ff/parallel",
-  "ark-std/parallel",
-  "dory/parallel",
+    "minimal",
+    "ark-ec/parallel",
+    "ark-ff/parallel",
+    "ark-std/parallel",
+    "dory/parallel",
 ]
 # This is for building jolt-core without prover capabilities, e.g. for recursion
 # jolt-core needs std and rayon to compile, so these are the minimal set of features.
@@ -140,7 +140,6 @@ harness = false
 [[bench]]
 name = "challenge_mult_performance"
 harness = false
-
 
 [lib]
 name = "jolt_core"

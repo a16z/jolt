@@ -118,34 +118,14 @@ overflow-checks = true
 inherits = "release"
 debug = false
 
-# [patch.crates-io]
-# ark-ff = { git = "https://github.com/abiswas3/arkworks-algebra", branch = "feat/fewer-reductions" }
-# ark-ec = { git = "https://github.com/abiswas3/arkworks-algebra", branch = "feat/fewer-reductions" }
-# jolt-optimizations = { git = "https://github.com/abiswas3/arkworks-algebra", branch = "feat/fewer-reductions" }
-# ark-serialize = { git = "https://github.com/abiswas3/arkworks-algebra", branch = "feat/fewer-reductions" }
-# ark-bn254 = { git = "https://github.com/abiswas3/arkworks-algebra", branch = "feat/fewer-reductions" }
-# allocative = { git = "https://github.com/facebookexperimental/allocative", rev = "85b773d85d526d068ce94724ff7a7b81203fc95e" }
 [patch.crates-io]
-ark-ff = { git = "https://github.com/abiswas3/arkworks-algebra", branch = "feat/fewer-reductions" }
-ark-ec = { git = "https://github.com/abiswas3/arkworks-algebra", branch = "feat/fewer-reductions" }
-ark-serialize = { git = "https://github.com/abiswas3/arkworks-algebra", branch = "feat/fewer-reductions" }
-ark-bn254 = { git = "https://github.com/abiswas3/arkworks-algebra", branch = "feat/fewer-reductions" }
-# ark-ff = { path = "../arkworks-algebra/ff" }
-# ark-ec = { path = "../arkworks-algebra/ec" }
-# ark-serialize = { path = "../arkworks-algebra/serialize" }
-# ark-bn254 = { path = "../arkworks-algebra/curves/bn254" }
-# ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-# ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-# ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-# ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-#
+ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 allocative = { git = "https://github.com/facebookexperimental/allocative", rev = "85b773d85d526d068ce94724ff7a7b81203fc95e" }
 
-[patch.'https://github.com/a16z/arkworks-algebra']
-# jolt-optimizations = {path="../arkworks-algebra/jolt-optimizations"}
-# ark-serialize = { path = "../arkworks-algebra/serialize" }
-jolt-optimizations = { git = "https://github.com/abiswas3/arkworks-algebra", branch = "feat/fewer-reductions" }
-ark-serialize = { git = "https://github.com/abiswas3/arkworks-algebra", branch = "feat/fewer-reductions" }
 [workspace.metadata.cargo-machete]
 ignored = ["jolt-sdk"]
 
@@ -155,12 +135,12 @@ ark-bn254 = { version = "0.5.0", default-features = false }
 ark-ec = { version = "0.5.0", default-features = false }
 ark-ff = { version = "0.5.0", default-features = false }
 ark-serialize = { version = "0.5.0", default-features = false, features = [
-    "derive",
+  "derive",
 ] }
 ark-serialize-derive = { version = "0.5.0", default-features = false }
 ark-std = { version = "0.5.0", default-features = false }
-jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", branch = "feat/fewer-reductions" }
-dory = { git = "https://github.com/spaceandtimefdn/sxt-dory", branch = "feat/fewer-reductions" }
+jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+dory = { git = "https://github.com/spaceandtimefdn/sxt-dory", branch = "feat/return_row_commitments" }
 sha3 = "0.10.8"
 blake2 = "0.10"
 blake3 = { version = "1.5.0" }
@@ -228,8 +208,8 @@ proc-macro2 = "1.0.79"
 # Platform-specific
 fnv = { version = "1.0.7", default-features = false }
 object = { version = "0.36.7", features = [
-    "build_core",
-    "elf",
+  "build_core",
+  "elf",
 ], default-features = false }
 addr2line = "0.25.1"
 getrandom = { version = "0.2.16", default-features = false }
