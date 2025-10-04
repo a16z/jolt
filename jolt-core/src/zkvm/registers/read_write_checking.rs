@@ -1043,7 +1043,7 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstance<F> for RegistersReadWriteChecking<F> {
+impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for RegistersReadWriteChecking<F> {
     fn degree(&self) -> usize {
         3
     }

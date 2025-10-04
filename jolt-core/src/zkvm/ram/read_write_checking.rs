@@ -962,7 +962,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstance<F> for RamReadWriteChecking<F> {
+impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for RamReadWriteChecking<F> {
     fn degree(&self) -> usize {
         3
     }

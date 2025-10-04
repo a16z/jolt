@@ -79,7 +79,7 @@ impl<F: JoltField> HammingBooleanitySumcheck<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstance<F> for HammingBooleanitySumcheck<F> {
+impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for HammingBooleanitySumcheck<F> {
     fn degree(&self) -> usize {
         DEGREE
     }

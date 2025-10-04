@@ -128,7 +128,7 @@ impl<F: JoltField> PCSumcheck<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstance<F> for PCSumcheck<F> {
+impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for PCSumcheck<F> {
     fn degree(&self) -> usize {
         2
     }

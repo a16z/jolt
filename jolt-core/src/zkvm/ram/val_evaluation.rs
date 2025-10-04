@@ -147,7 +147,7 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
+impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ValEvaluationSumcheck<F> {
     fn degree(&self) -> usize {
         3
     }

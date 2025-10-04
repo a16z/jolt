@@ -297,7 +297,7 @@ impl<'a, F: JoltField> ReadRafProverState<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
+impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> {
     fn degree(&self) -> usize {
         DEGREE
     }

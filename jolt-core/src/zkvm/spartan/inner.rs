@@ -141,7 +141,7 @@ impl<F: JoltField> InnerSumcheck<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstance<F> for InnerSumcheck<F> {
+impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for InnerSumcheck<F> {
     fn degree(&self) -> usize {
         2
     }
