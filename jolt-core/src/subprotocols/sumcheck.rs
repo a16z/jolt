@@ -99,6 +99,8 @@ impl SingleSumcheck {
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
 
         let mut previous_claim = sumcheck_instance.input_claim();
+        transcript.append_scalar(&previous_claim); // Append input claim
+
         for round in 0..num_rounds {
             let mut univariate_poly_evals =
                 sumcheck_instance.compute_prover_message(round, previous_claim);
@@ -138,8 +140,11 @@ impl SingleSumcheck {
         opening_accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
         transcript: &mut ProofTranscript,
     ) -> Result<Vec<F::Challenge>, ProofVerifyError> {
+        let input_claim = sumcheck_instance.input_claim();
+        transcript.append_scalar(&input_claim); // Append input claim
+
         let (output_claim, r) = proof.verify(
-            sumcheck_instance.input_claim(),
+            input_claim,
             sumcheck_instance.num_rounds(),
             sumcheck_instance.degree(),
             transcript,
@@ -192,9 +197,9 @@ impl BatchedSumcheck {
             .iter()
             .map(|sumcheck| {
                 let num_rounds = sumcheck.num_rounds();
-                sumcheck
-                    .input_claim()
-                    .mul_pow_2(max_num_rounds - num_rounds)
+                let input_claim = sumcheck.input_claim();
+                transcript.append_scalar(&input_claim);
+                input_claim.mul_pow_2(max_num_rounds - num_rounds)
             })
             .collect();
 
@@ -351,10 +356,9 @@ impl BatchedSumcheck {
             .zip(batching_coeffs.iter())
             .map(|(sumcheck, coeff)| {
                 let num_rounds = sumcheck.num_rounds();
-                sumcheck
-                    .input_claim()
-                    .mul_pow_2(max_num_rounds - num_rounds)
-                    * coeff
+                let input_claim = sumcheck.input_claim();
+                transcript.append_scalar(&input_claim);
+                input_claim.mul_pow_2(max_num_rounds - num_rounds) * coeff
             })
             .sum();
 
