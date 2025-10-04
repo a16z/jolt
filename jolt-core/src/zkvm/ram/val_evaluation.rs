@@ -147,7 +147,7 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
+impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ValEvaluationSumcheck<F> {
     fn degree(&self) -> usize {
         3
     }
@@ -252,6 +252,7 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
     fn cache_openings_prover(
         &self,
         accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
+        transcript: &mut T,
         r_cycle_prime: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         if let Some(prover_state) = &self.prover_state {
@@ -267,6 +268,7 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
                 OpeningPoint::new([r_address.r.as_slice(), r_cycle_prime.r.as_slice()].concat());
 
             accumulator.borrow_mut().append_virtual(
+                transcript,
                 VirtualPolynomial::RamRa,
                 SumcheckId::RamValEvaluation,
                 wa_opening_point,
@@ -274,6 +276,7 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
             );
 
             accumulator.borrow_mut().append_dense(
+                transcript,
                 vec![CommittedPolynomial::RamInc],
                 SumcheckId::RamValEvaluation,
                 r_cycle_prime.r,
@@ -285,6 +288,7 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
     fn cache_openings_verifier(
         &self,
         accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
+        transcript: &mut T,
         r_cycle_prime: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         let r = accumulator
@@ -299,12 +303,14 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
             OpeningPoint::new([r_address.r.as_slice(), r_cycle_prime.r.as_slice()].concat());
 
         accumulator.borrow_mut().append_virtual(
+            transcript,
             VirtualPolynomial::RamRa,
             SumcheckId::RamValEvaluation,
             wa_opening_point,
         );
 
         accumulator.borrow_mut().append_dense(
+            transcript,
             vec![CommittedPolynomial::RamInc],
             SumcheckId::RamValEvaluation,
             r_cycle_prime.r,

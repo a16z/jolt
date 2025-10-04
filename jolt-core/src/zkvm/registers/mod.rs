@@ -23,7 +23,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
     fn stage2_prover_instances(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstance<F>>> {
+    ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
         let read_write_checking = RegistersReadWriteChecking::new_prover(state_manager);
         #[cfg(feature = "allocative")]
         print_data_structure_heap_usage(
@@ -36,7 +36,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
     fn stage2_verifier_instances(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstance<F>>> {
+    ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
         let read_write_checking = RegistersReadWriteChecking::new_verifier(state_manager);
         vec![Box::new(read_write_checking)]
     }
@@ -44,7 +44,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
     fn stage3_prover_instances(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstance<F>>> {
+    ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
         let val_evaluation = ValEvaluationSumcheck::new_prover(state_manager);
         #[cfg(feature = "allocative")]
         print_data_structure_heap_usage("registers ValEvaluationSumcheck", &val_evaluation);
@@ -54,7 +54,7 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
     fn stage3_verifier_instances(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstance<F>>> {
+    ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
         let val_evaluation = ValEvaluationSumcheck::new_verifier(state_manager);
         vec![Box::new(val_evaluation)]
     }

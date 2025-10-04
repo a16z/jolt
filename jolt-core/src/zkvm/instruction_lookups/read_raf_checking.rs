@@ -297,7 +297,7 @@ impl<'a, F: JoltField> ReadRafProverState<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
+impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> {
     fn degree(&self) -> usize {
         DEGREE
     }
@@ -486,6 +486,7 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
     fn cache_openings_prover(
         &self,
         accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
+        transcript: &mut T,
         r_sumcheck: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         let ps = self.prover_state.as_ref().unwrap();
@@ -504,6 +505,7 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
             .collect::<Vec<F>>();
         flag_claims.into_iter().enumerate().for_each(|(i, claim)| {
             accumulator.borrow_mut().append_virtual(
+                transcript,
                 VirtualPolynomial::LookupTableFlag(i),
                 SumcheckId::InstructionReadRaf,
                 r_cycle.clone(),
@@ -512,6 +514,7 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
         });
 
         accumulator.borrow_mut().append_virtual(
+            transcript,
             VirtualPolynomial::InstructionRa,
             SumcheckId::InstructionReadRaf,
             r_sumcheck,
@@ -523,6 +526,7 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
             .map(|(j, _)| eq_r_cycle_prime[*j])
             .sum::<F>();
         accumulator.borrow_mut().append_virtual(
+            transcript,
             VirtualPolynomial::InstructionRafFlag,
             SumcheckId::InstructionReadRaf,
             r_cycle.clone(),
@@ -533,12 +537,14 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
     fn cache_openings_verifier(
         &self,
         accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
+        transcript: &mut T,
         r_sumcheck: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         let (_r_address, r_cycle) = r_sumcheck.split_at(LOG_K);
 
         (0..LookupTables::<XLEN>::COUNT).for_each(|i| {
             accumulator.borrow_mut().append_virtual(
+                transcript,
                 VirtualPolynomial::LookupTableFlag(i),
                 SumcheckId::InstructionReadRaf,
                 r_cycle.clone(),
@@ -546,15 +552,17 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
         });
 
         accumulator.borrow_mut().append_virtual(
-            VirtualPolynomial::InstructionRafFlag,
-            SumcheckId::InstructionReadRaf,
-            r_cycle.clone(),
-        );
-
-        accumulator.borrow_mut().append_virtual(
+            transcript,
             VirtualPolynomial::InstructionRa,
             SumcheckId::InstructionReadRaf,
             r_sumcheck,
+        );
+
+        accumulator.borrow_mut().append_virtual(
+            transcript,
+            VirtualPolynomial::InstructionRafFlag,
+            SumcheckId::InstructionReadRaf,
+            r_cycle.clone(),
         );
     }
 
@@ -832,6 +840,8 @@ pub fn current_suffix_len(j: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
+    use std::ops::DerefMut;
+
     use super::*;
     use crate::subprotocols::sumcheck::BatchedSumcheck;
     use crate::transcripts::Blake2bTranscript;
@@ -996,18 +1006,21 @@ mod tests {
 
         let prover_accumulator = prover_sm.get_prover_accumulator();
         prover_accumulator.borrow_mut().append_virtual(
+            prover_sm.transcript.borrow_mut().deref_mut(),
             VirtualPolynomial::LookupOutput,
             SumcheckId::SpartanOuter,
             OpeningPoint::new(r_cycle.clone()),
             rv_claim,
         );
         prover_accumulator.borrow_mut().append_virtual(
+            prover_sm.transcript.borrow_mut().deref_mut(),
             VirtualPolynomial::LeftLookupOperand,
             SumcheckId::SpartanOuter,
             OpeningPoint::new(r_cycle.clone()),
             left_operand_claim,
         );
         prover_accumulator.borrow_mut().append_virtual(
+            prover_sm.transcript.borrow_mut().deref_mut(),
             VirtualPolynomial::RightLookupOperand,
             SumcheckId::SpartanOuter,
             OpeningPoint::new(r_cycle.clone()),
@@ -1040,16 +1053,19 @@ mod tests {
         drop(verifier_acc_borrow);
 
         verifier_accumulator.borrow_mut().append_virtual(
+            verifier_sm.transcript.borrow_mut().deref_mut(),
             VirtualPolynomial::LookupOutput,
             SumcheckId::SpartanOuter,
             OpeningPoint::new(r_cycle.clone()),
         );
         verifier_accumulator.borrow_mut().append_virtual(
+            verifier_sm.transcript.borrow_mut().deref_mut(),
             VirtualPolynomial::LeftLookupOperand,
             SumcheckId::SpartanOuter,
             OpeningPoint::new(r_cycle.clone()),
         );
         verifier_accumulator.borrow_mut().append_virtual(
+            verifier_sm.transcript.borrow_mut().deref_mut(),
             VirtualPolynomial::RightLookupOperand,
             SumcheckId::SpartanOuter,
             OpeningPoint::new(r_cycle.clone()),
