@@ -128,7 +128,7 @@ impl<F: JoltField> RafEvaluationSumcheck<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstance<F> for RafEvaluationSumcheck<F> {
+impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for RafEvaluationSumcheck<F> {
     fn degree(&self) -> usize {
         2
     }

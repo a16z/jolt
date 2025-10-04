@@ -537,7 +537,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
+impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> {
     fn degree(&self) -> usize {
         self.d + 1
     }
@@ -619,7 +619,7 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
 
             univariate_poly_evals.to_vec()
         } else {
-            let degree = self.degree();
+            let degree = <Self as SumcheckInstance<F, T>>::degree(self);
             (0..ps.ra[0].len() / 2)
                 .into_par_iter()
                 .map(|i| {

@@ -35,7 +35,7 @@ use std::rc::Rc;
 ///
 /// This trait defines the interface needed to participate in the `BatchedSumcheck` protocol,
 /// which reduces verifier cost and proof size by batching multiple sumcheck protocols.
-pub trait SumcheckInstance<F: JoltField>: Send + Sync + MaybeAllocative {
+pub trait SumcheckInstance<F: JoltField, T: Transcript>: Send + Sync + MaybeAllocative {
     /// Returns the maximum degree of the sumcheck polynomial.
     fn degree(&self) -> usize;
 
@@ -90,7 +90,7 @@ pub enum SingleSumcheck {}
 impl SingleSumcheck {
     /// Proves a single sumcheck instance.
     pub fn prove<F: JoltField, ProofTranscript: Transcript>(
-        sumcheck_instance: &mut dyn SumcheckInstance<F>,
+        sumcheck_instance: &mut dyn SumcheckInstance<F, ProofTranscript>,
         opening_accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F>>>>,
         transcript: &mut ProofTranscript,
     ) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F::Challenge>) {
@@ -135,7 +135,7 @@ impl SingleSumcheck {
 
     /// Verifies a single sumcheck instance.
     pub fn verify<F: JoltField, ProofTranscript: Transcript>(
-        sumcheck_instance: &dyn SumcheckInstance<F>,
+        sumcheck_instance: &dyn SumcheckInstance<F, ProofTranscript>,
         proof: &SumcheckInstanceProof<F, ProofTranscript>,
         opening_accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
         transcript: &mut ProofTranscript,
@@ -172,7 +172,7 @@ impl SingleSumcheck {
 pub enum BatchedSumcheck {}
 impl BatchedSumcheck {
     pub fn prove<F: JoltField, ProofTranscript: Transcript>(
-        mut sumcheck_instances: Vec<&mut dyn SumcheckInstance<F>>,
+        mut sumcheck_instances: Vec<&mut dyn SumcheckInstance<F, ProofTranscript>>,
         opening_accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F>>>>,
         transcript: &mut ProofTranscript,
     ) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F::Challenge>) {
@@ -325,7 +325,7 @@ impl BatchedSumcheck {
 
     pub fn verify<F: JoltField, ProofTranscript: Transcript>(
         proof: &SumcheckInstanceProof<F, ProofTranscript>,
-        sumcheck_instances: Vec<&dyn SumcheckInstance<F>>,
+        sumcheck_instances: Vec<&dyn SumcheckInstance<F, ProofTranscript>>,
         opening_accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
         transcript: &mut ProofTranscript,
     ) -> Result<Vec<F::Challenge>, ProofVerifyError> {

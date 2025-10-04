@@ -140,7 +140,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
     fn stage4_prover_instances(
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstance<F>>> {
+    ) -> Vec<Box<dyn SumcheckInstance<F, T>>> {
         let (preprocessing, trace, _, _) = sm.get_prover_data();
         let bytecode_preprocessing = &preprocessing.shared.bytecode;
 
@@ -176,7 +176,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
     fn stage4_verifier_instances(
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstance<F>>> {
+    ) -> Vec<Box<dyn SumcheckInstance<F, T>>> {
         let read_checking = ReadRafSumcheck::new_verifier(sm);
         let booleanity = BooleanitySumcheck::new_verifier(sm);
         let hamming_weight = HammingWeightSumcheck::new_verifier(sm);

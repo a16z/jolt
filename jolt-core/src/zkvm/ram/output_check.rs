@@ -167,7 +167,7 @@ impl<F: JoltField> OutputSumcheck<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstance<F> for OutputSumcheck<F> {
+impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for OutputSumcheck<F> {
     fn degree(&self) -> usize {
         3
     }
@@ -484,7 +484,7 @@ impl<F: JoltField> ValFinalSumcheck<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstance<F> for ValFinalSumcheck<F> {
+impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ValFinalSumcheck<F> {
     fn degree(&self) -> usize {
         2
     }

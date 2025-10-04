@@ -97,7 +97,7 @@ impl<F: JoltField> RaSumcheck<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstance<F> for RaSumcheck<F> {
+impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for RaSumcheck<F> {
     fn degree(&self) -> usize {
         D + 1
     }
@@ -120,7 +120,7 @@ impl<F: JoltField> SumcheckInstance<F> for RaSumcheck<F> {
         let poly = compute_mles_product_sum(ra_i_polys, previous_claim, r_cycle, r_sumcheck);
 
         // Evaluate the poly at 0, 2, 3, ..., degree.
-        let degree = self.degree();
+        let degree = <Self as SumcheckInstance<F, T>>::degree(self);
         debug_assert_eq!(degree, prover_state.ra_i_polys.len() + 1);
         let domain = chain!([0], 2..).map(F::from_u64).take(degree);
         domain.map(|x| poly.evaluate::<F>(&x)).collect()

@@ -75,7 +75,7 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstance<F> for HammingWeightSumcheck<F> {
+impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for HammingWeightSumcheck<F> {
     fn degree(&self) -> usize {
         DEGREE
     }

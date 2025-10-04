@@ -262,7 +262,7 @@ impl<F: JoltField> RaSumcheck<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstance<F> for RaSumcheck<F> {
+impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for RaSumcheck<F> {
     fn degree(&self) -> usize {
         self.d + 1
     }
@@ -321,7 +321,7 @@ impl<F: JoltField> SumcheckInstance<F> for RaSumcheck<F> {
             .prover_state
             .as_ref()
             .expect("Prover state not initialized");
-        let degree = <Self as SumcheckInstance<F>>::degree(self);
+        let degree = <Self as SumcheckInstance<F, T>>::degree(self);
         let ra_i_polys = &prover_state.ra_i_polys;
         let eq_poly = &prover_state.eq_poly;
 

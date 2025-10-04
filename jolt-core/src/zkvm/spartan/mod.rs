@@ -273,7 +273,7 @@ where
     fn stage2_prover_instances(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstance<F>>> {
+    ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
         /* Sumcheck 2: Inner sumcheck
             Proves: claim_Az + r * claim_Bz + r^2 * claim_Cz =
                     \sum_y (A_small(rx, y) + r * B_small(rx, y) + r^2 * C_small(rx, y)) * z(y)
@@ -293,7 +293,7 @@ where
     fn stage2_verifier_instances(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstance<F>>> {
+    ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
         /* Sumcheck 2: Inner sumcheck
            Verifies: claim_Az + r * claim_Bz + r^2 * claim_Cz =
                     (A_small(rx, ry) + r * B_small(rx, ry) + r^2 * C_small(rx, ry)) * z(ry)
@@ -306,7 +306,7 @@ where
     fn stage3_prover_instances(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstance<F>>> {
+    ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
         /*  Sumcheck 3: Batched sumcheck for NextUnexpandedPC and NextPC verification
             Proves: NextUnexpandedPC(r_cycle) + r * NextPC(r_cycle) =
                     \sum_t (UnexpandedPC(t) + r * PC(t)) * eq_plus_one(r_cycle, t)
@@ -327,7 +327,7 @@ where
     fn stage3_verifier_instances(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstance<F>>> {
+    ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
         /* Sumcheck 3: Batched sumcheck for NextUnexpandedPC and NextPC verification
            Verifies the batched constraint for both NextUnexpandedPC and NextPC
         */

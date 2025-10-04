@@ -487,7 +487,7 @@ where
     }
 }
 
-impl<F> SumcheckInstance<F> for OpeningProofReductionSumcheck<F>
+impl<F, T: Transcript> SumcheckInstance<F, T> for OpeningProofReductionSumcheck<F>
 where
     F: JoltField,
 {
@@ -509,7 +509,6 @@ where
     }
 
     fn compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F> {
-        debug_assert!(round < self.num_rounds());
         let prover_state = self.prover_state.as_mut().unwrap();
         match prover_state {
             ProverOpening::Dense(opening) => opening.compute_prover_message(round, previous_claim),
@@ -518,8 +517,6 @@ where
     }
 
     fn bind(&mut self, r_j: F::Challenge, round: usize) {
-        debug_assert!(round < self.num_rounds());
-
         let prover_state = self.prover_state.as_mut().unwrap();
         match prover_state {
             ProverOpening::Dense(opening) => opening.bind(r_j, round),
@@ -954,11 +951,11 @@ where
             write_flamegraph_svg(flamegraph, "stage5_start_flamechart.svg");
         }
 
-        let instances: Vec<&mut dyn SumcheckInstance<F>> = self
+        let instances: Vec<&mut dyn SumcheckInstance<F, ProofTranscript>> = self
             .sumchecks
             .iter_mut()
             .map(|opening| {
-                let instance: &mut dyn SumcheckInstance<F> = opening;
+                let instance: &mut dyn SumcheckInstance<F, ProofTranscript> = opening;
                 instance
             })
             .collect();
@@ -1298,11 +1295,11 @@ where
         sumcheck_proof: &SumcheckInstanceProof<F, ProofTranscript>,
         transcript: &mut ProofTranscript,
     ) -> Result<Vec<F::Challenge>, ProofVerifyError> {
-        let instances: Vec<&dyn SumcheckInstance<F>> = self
+        let instances: Vec<&dyn SumcheckInstance<F, ProofTranscript>> = self
             .sumchecks
             .iter()
             .map(|opening| {
-                let instance: &dyn SumcheckInstance<F> = opening;
+                let instance: &dyn SumcheckInstance<F, ProofTranscript> = opening;
                 instance
             })
             .collect();

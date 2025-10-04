@@ -163,7 +163,7 @@ impl<F: JoltField> BooleanityProverState<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
+impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for BooleanitySumcheck<F> {
     fn degree(&self) -> usize {
         3
     }
