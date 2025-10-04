@@ -43,7 +43,7 @@ impl<F: JoltField> ExpandingTable<F> {
     /// Updates this table (expanding it by a factor of 2) to incorporate
     /// the new random challenge `r_j`.
     #[tracing::instrument(skip_all, name = "ExpandingTable::update")]
-    pub fn update(&mut self, r_j: F) {
+    pub fn update(&mut self, r_j: F::Challenge) {
         self.values[..self.len]
             .par_iter()
             .zip(self.scratch_space.par_chunks_mut(2))

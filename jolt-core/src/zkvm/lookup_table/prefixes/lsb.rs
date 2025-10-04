@@ -1,12 +1,25 @@
-use crate::zkvm::instruction_lookups::read_raf_checking::current_suffix_len;
 use crate::{field::JoltField, utils::lookup_bits::LookupBits};
+use crate::{
+    field::{ChallengeFieldOps, FieldChallengeOps},
+    zkvm::instruction_lookups::read_raf_checking::current_suffix_len,
+};
 
 use super::{PrefixCheckpoint, SparseDensePrefix};
 
 pub enum LsbPrefix<const XLEN: usize> {}
 
 impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for LsbPrefix<XLEN> {
-    fn prefix_mle(_: &[PrefixCheckpoint<F>], _: Option<F>, c: u32, b: LookupBits, j: usize) -> F {
+    fn prefix_mle<C>(
+        _checkpoints: &[PrefixCheckpoint<F>],
+        _r_x: Option<C>,
+        c: u32,
+        b: LookupBits,
+        j: usize,
+    ) -> F
+    where
+        C: ChallengeFieldOps<F>,
+        F: FieldChallengeOps<C>,
+    {
         if j == 2 * XLEN - 1 {
             // in the log(K)th round, `c` corresponds to the LSB
             debug_assert_eq!(b.len(), 0);
@@ -19,14 +32,18 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for LsbPrefix<XLEN> {
         }
     }
 
-    fn update_prefix_checkpoint(
+    fn update_prefix_checkpoint<C>(
         _: &[PrefixCheckpoint<F>],
-        _: F,
-        r_y: F,
+        _: C,
+        r_y: C,
         j: usize,
-    ) -> PrefixCheckpoint<F> {
+    ) -> PrefixCheckpoint<F>
+    where
+        C: ChallengeFieldOps<F>,
+        F: FieldChallengeOps<C>,
+    {
         if j == 2 * XLEN - 1 {
-            Some(r_y).into()
+            Some(r_y.into()).into()
         } else {
             Some(F::one()).into()
         }

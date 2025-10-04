@@ -1,17 +1,24 @@
-use crate::{field::JoltField, utils::lookup_bits::LookupBits};
+use crate::{
+    field::{ChallengeFieldOps, FieldChallengeOps, JoltField},
+    utils::lookup_bits::LookupBits,
+};
 
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 
 pub enum LeftOperandIsZeroPrefix {}
 
 impl<F: JoltField> SparseDensePrefix<F> for LeftOperandIsZeroPrefix {
-    fn prefix_mle(
+    fn prefix_mle<C>(
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: Option<F>,
+        r_x: Option<C>,
         c: u32,
         b: LookupBits,
         _: usize,
-    ) -> F {
+    ) -> F
+    where
+        C: ChallengeFieldOps<F>,
+        F: FieldChallengeOps<C>,
+    {
         let (x, _) = b.uninterleave();
         // Short-circuit if low-order bits of `x` are not 0s
         if u64::from(x) != 0 {
@@ -29,12 +36,16 @@ impl<F: JoltField> SparseDensePrefix<F> for LeftOperandIsZeroPrefix {
         result
     }
 
-    fn update_prefix_checkpoint(
+    fn update_prefix_checkpoint<C>(
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: F,
-        _: F,
+        r_x: C,
+        _: C,
         _: usize,
-    ) -> PrefixCheckpoint<F> {
+    ) -> PrefixCheckpoint<F>
+    where
+        C: ChallengeFieldOps<F>,
+        F: FieldChallengeOps<C>,
+    {
         // checkpoint *= (1 - r_x)
         let updated =
             checkpoints[Prefixes::LeftOperandIsZero].unwrap_or(F::one()) * (F::one() - r_x);

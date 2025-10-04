@@ -172,7 +172,7 @@ impl<F: JoltField> SumcheckInstance<F> for RafEvaluationSumcheck<F> {
     }
 
     #[tracing::instrument(skip_all, name = "RamRafEvaluationSumcheck::bind")]
-    fn bind(&mut self, r_j: F, _round: usize) {
+    fn bind(&mut self, r_j: F::Challenge, _round: usize) {
         if let Some(prover_state) = &mut self.prover_state {
             rayon::join(
                 || prover_state.ra.bind_parallel(r_j, BindingOrder::HighToLow),
@@ -188,17 +188,21 @@ impl<F: JoltField> SumcheckInstance<F> for RafEvaluationSumcheck<F> {
     fn expected_output_claim(
         &self,
         _accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
-        r: &[F],
+        r: &[F::Challenge],
     ) -> F {
         // Compute unmap evaluation at r
-        let unmap_eval = UnmapRamAddressPolynomial::new(self.log_K, self.start_address).evaluate(r);
+        let unmap_eval =
+            UnmapRamAddressPolynomial::<F>::new(self.log_K, self.start_address).evaluate(r);
 
         // Return unmap(r) * ra(r)
         let ra_claim = self.cached_claim.expect("ra_claim not cached");
         unmap_eval * ra_claim
     }
 
-    fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(
+        &self,
+        opening_point: &[F::Challenge],
+    ) -> OpeningPoint<BIG_ENDIAN, F> {
         OpeningPoint::new(opening_point.to_vec())
     }
 

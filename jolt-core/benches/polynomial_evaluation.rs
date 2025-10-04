@@ -1,49 +1,36 @@
-#![allow(clippy::uninlined_format_args)]
+//! Benchmarks comparing algorithms for multilinear polynomial evaluation
+//!
+//! Source: https://randomwalks.xyz/publish/fast_polynomial_evaluation.html
+//!
+//! This benchmark suite tests:
+//! 1. Single polynomial evaluation with three algorithms across varying sparsity
+//! 2. Batch evaluation of multiple polynomials at the same point
 use ark_ff::Zero;
 use ark_std::rand::{rngs::StdRng, Rng, SeedableRng};
-use jolt_core::field::tracked_ark::TrackedFr as Fr;
-use jolt_core::field::JoltField;
-use jolt_core::utils::counters::{get_mult_count, reset_mult_count};
-use jolt_core::{
-    poly::eq_poly::EqPolynomial,
-    poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
-    utils::math::Math,
-};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use jolt_core::{field::tracked_ark::TrackedFr as Fr, poly::dense_mlpoly::DensePolynomial};
+use jolt_core::{field::JoltField, poly::multilinear_polynomial::PolynomialEvaluation};
+use jolt_core::{poly::eq_poly::EqPolynomial, utils::math::Math};
 use rayon::prelude::*;
-use std::fs::OpenOptions;
-use std::io::Write;
-use std::time::Instant;
 
-fn setup_batch_inputs(
-    n: usize,
-    batch_size: usize,
-    sparsity: f64,
-) -> (Vec<MultilinearPolynomial<Fr>>, Vec<Fr>) {
-    let mut rng = StdRng::seed_from_u64(123);
-    let eval_loc: Vec<Fr> = (0..n.log_2())
-        .map(|_| Fr::random(&mut rng))
-        .collect::<Vec<Fr>>();
-
-    // Get many dense polynomials
-    let polys: Vec<MultilinearPolynomial<Fr>> = (0..batch_size)
-        .map(|_| {
-            let (poly, _) = sparse_inputs(n, sparsity);
-            poly
-        })
-        .collect();
-
-    (polys, eval_loc)
-}
-
-fn sparse_inputs(n: usize, c: f64) -> (MultilinearPolynomial<Fr>, Vec<Fr>) {
+/// Generate a sparse multilinear polynomial with controlled sparsity
+///
+/// # Arguments
+/// * `n` - Number of coefficients (must be power of 2)
+/// * `sparsity` - Fraction of coefficients that should be zero (0.0 to 1.0)
+///
+/// # Returns
+/// Tuple of (sparse polynomial, random evaluation point with log2(n) variables)
+///
+/// # Example
+/// `sparse_inputs(1024, 0.75)` creates a polynomial with ~75% zero coefficients
+fn sparse_inputs(n: usize, sparsity: f64) -> (DensePolynomial<Fr>, Vec<Fr>) {
     assert!(n.is_power_of_two(), "n must be a power of 2");
-
     let mut rng = StdRng::seed_from_u64(123);
-    // Compute number of zeros
-    // Each position independently: zero with prob c, random otherwise
+
     let values: Vec<Fr> = (0..n)
         .map(|_| {
-            if rng.gen::<f64>() < c {
+            if rng.gen::<f64>() < sparsity {
                 Fr::zero()
             } else {
                 Fr::random(&mut rng)
@@ -51,204 +38,159 @@ fn sparse_inputs(n: usize, c: f64) -> (MultilinearPolynomial<Fr>, Vec<Fr>) {
         })
         .collect();
 
-    let poly = MultilinearPolynomial::from(values);
-
-    // Random evaluation point remains unchanged
-    let eval_point = (0..n.log_2())
-        .map(|_| Fr::random(&mut rng))
-        .collect::<Vec<_>>();
+    let poly = DensePolynomial::new(values);
+    let eval_point = (0..n.log_2()).map(|_| Fr::random(&mut rng)).collect();
 
     (poly, eval_point)
 }
-fn benchmark_batch_polynomial_evaluation(batch_size: usize) {
-    let mut file = OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open("batch_results.csv")
-        .expect("Unable to open file");
 
-    // Write CSV header
-    writeln!(
-        file,
-        "exp,num_vars,c,algorithm,time_ms,mults,trial,num_non_zero,batch_size"
-    )
-    .unwrap();
-    let num_trials = 1;
-    for exp in [16, 18, 20] {
-        let num_evals = 1 << exp;
+/// Setup inputs for batch polynomial evaluation benchmarks
+///
+/// # Arguments
+/// * `n` - Number of coefficients per polynomial
+/// * `batch_size` - Number of polynomials to evaluate
+/// * `sparsity` - Fraction of zero coefficients in each polynomial
+///
+/// # Returns
+/// Tuple of (vector of sparse polynomials, shared evaluation point)
+fn setup_batch_inputs(
+    n: usize,
+    batch_size: usize,
+    sparsity: f64,
+) -> (Vec<DensePolynomial<Fr>>, Vec<Fr>) {
+    let mut rng = StdRng::seed_from_u64(123);
+    let eval_point: Vec<Fr> = (0..n.log_2()).map(|_| Fr::random(&mut rng)).collect();
 
-        for c in [0.005, 0.50, 0.75] {
-            for trial in 0..num_trials {
-                let (polys, eval_point) = setup_batch_inputs(num_evals, batch_size, c);
-                let poly_refs: Vec<&MultilinearPolynomial<Fr>> = polys.iter().collect();
+    let polys: Vec<DensePolynomial<Fr>> = (0..batch_size)
+        .map(|_| sparse_inputs(n, sparsity).0)
+        .collect();
 
-                let mut num_non_zero = 0;
-                for poly in &polys {
-                    let sparsity: u64 = (0..poly.len())
-                        .map(|i| if poly.get_coeff(i).is_zero() { 1 } else { 0 })
-                        .sum();
-                    num_non_zero += poly.len() as u64 - sparsity;
-                }
-                // --- Algorithm 1: Dot Product ---
-                reset_mult_count();
-                let start = Instant::now();
-                let evals_eq = batch_evaluate_with_eq(&poly_refs, &eval_point);
-                let time_ms = start.elapsed().as_millis();
-                let mults = get_mult_count();
-                writeln!(
-                    file,
-                    "{exp},{num_evals},{c},DotProduct,{time_ms}, {mults}, {trial}, {num_non_zero}, {batch_size}",
-                )
-                .unwrap();
-
-                // --- Algorithm 2: Inside/Out ---
-                reset_mult_count();
-                let start = Instant::now();
-                batch_evaluate_inside_out(&poly_refs, &eval_point);
-                let time_ms = start.elapsed().as_millis();
-                let mults = get_mult_count();
-                writeln!(
-                    file,
-                    "{exp},{num_evals},{c},InsideOut,{time_ms}, {mults}, {trial},{num_non_zero},{batch_size}",
-                )
-                .unwrap();
-
-                // --- Algorithm 3: Sparse Dot Product ---
-                reset_mult_count();
-                let start = Instant::now();
-                let evals_split = MultilinearPolynomial::batch_evaluate(&poly_refs, &eval_point);
-                let time_ms = start.elapsed().as_millis();
-                let mults = get_mult_count();
-                writeln!(
-                    file,
-                    "{exp},{num_evals},{c},SparseDot,{time_ms}, {mults}, {trial},{num_non_zero}, {batch_size}",
-                )
-                .unwrap();
-
-                for (x, y) in evals_eq.iter().zip(evals_split.iter()) {
-                    assert_eq!(x, y);
-                }
-            }
-        }
-    }
+    (polys, eval_point)
 }
-fn benchmark_single_polynomial_evaluation() {
-    let mut file = OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open("results.csv")
-        .expect("Unable to open file");
 
-    // Write CSV header
-    writeln!(
-        file,
-        "exp,num_vars,c,algorithm,time_ms,mults,num_non_zero,trial"
-    )
-    .unwrap();
-    let num_trials = 3;
-    for exp in [14, 16, 18, 20, 22] {
+/// Benchmark three algorithms for single polynomial evaluation with varying sparsity
+///
+/// Compares:
+/// 1. `dot_product` - Dot product the chi's with the evaluations over the hyper cube
+/// 2. `evaluate` - First split the chi's and then do a a cache efficient dot product
+/// 3. `inside_out` - For denese representations do not spend time doing dot product and then
+///    computing chi's
+///
+/// Tests across different polynomial sizes (2^14, 2^16) and sparsity levels (20%, 50%, 75% zeros)
+///  2^14 is configured to be serial and 2^16 is configured to parallel.
+///
+/// See: https://randomwalks.xyz/publish/fast_polynomial_evaluation.html
+fn benchmark_single_evaluation(c: &mut Criterion) {
+    let mut group = c.benchmark_group("single_polynomial");
+
+    for exp in [14, 16] {
         let num_vars = 1 << exp;
+        for sparsity in [0.20, 0.50, 0.75] {
+            group.bench_with_input(
+                BenchmarkId::new("dot_product", format!("2^{exp}_s{sparsity}")),
+                &(num_vars, sparsity),
+                |b, params| {
+                    let (n, s) = *params;
+                    b.iter_with_setup(
+                        || sparse_inputs(n, s),
+                        |(poly, eval_point)| black_box(poly.evaluate_dot_product(&eval_point)),
+                    )
+                },
+            );
 
-        for c in [0.20, 0.35, 0.50, 0.66, 0.75, 0.95] {
-            for trial in 0..num_trials {
-                let (poly, eval_point) = sparse_inputs(num_vars, c);
+            group.bench_with_input(
+                BenchmarkId::new("evaluate", format!("2^{exp}_s{sparsity}")),
+                &(num_vars, sparsity),
+                |b, params| {
+                    let (n, s) = *params;
+                    b.iter_with_setup(
+                        || sparse_inputs(n, s),
+                        |(poly, eval_point)| black_box(poly.evaluate(&eval_point)),
+                    )
+                },
+            );
 
-                let sparsity: u64 = (0..poly.len())
-                    .map(|i| if poly.get_coeff(i).is_zero() { 1 } else { 0 })
-                    .sum();
-                let num_non_zero = poly.len() as u64 - sparsity;
+            group.bench_with_input(
+                BenchmarkId::new("inside_out", format!("2^{exp}_s{sparsity}")),
+                &(num_vars, sparsity),
+                |b, params| {
+                    let (n, s) = *params;
+                    b.iter_with_setup(
+                        || sparse_inputs(n, s),
+                        |(poly, eval_point)| black_box(poly.inside_out_evaluate(&eval_point)),
+                    )
+                },
+            );
+        }
+    }
+    group.finish();
+}
 
-                // --- Algorithm 1: Dot Product ---
-                reset_mult_count();
-                let start = Instant::now();
-                let dot_prod = poly.evaluate_dot_product(&eval_point);
-                let time_ms = start.elapsed().as_millis();
-                let mults = get_mult_count();
-                writeln!(
-                    file,
-                    "{},{},{},DotProduct,{},{},{},{}",
-                    exp, num_vars, c, time_ms, mults, num_non_zero, trial
-                )
-                .unwrap();
+// Benchmark batch evaluation of multiple polynomials at the same point
+///
+/// Compares:
+/// 1. `dot_product` - Parallel evaluation using EqPolynomial precomputation
+/// 2. `batch_evaluate` - A cache efficient dot product with SplitEqPolynomial instead of EqPolynomial
+///
+/// Tests with 50 polynomials of size 2^16 at varying sparsity levels.
+/// Batch evaluation can amortize work across polynomials for better efficiency.
+///
+/// See: https://randomwalks.xyz/publish/fast_polynomial_evaluation.html
+fn benchmark_batch_evaluation(c: &mut Criterion) {
+    let mut group = c.benchmark_group("batch_polynomial");
+    fn batch_dot_product(polys: &[DensePolynomial<Fr>], eval_point: &[Fr]) -> Vec<Fr> {
+        let eq = EqPolynomial::evals(eval_point);
+        polys
+            .par_iter()
+            .map(|poly| poly.evaluate_at_chi_low_optimized(&eq))
+            .collect()
+    }
 
-                // --- Algorithm 2: Inside-Out Product ---
-                reset_mult_count();
-                let start = Instant::now();
-                let inside_out_prod = evaluate_inside_out(&poly, &eval_point);
-                let time_ms = start.elapsed().as_millis();
-                let mults = get_mult_count();
-                writeln!(
-                    file,
-                    "{},{},{},InsideOut,{},{},{},{}",
-                    exp, num_vars, c, time_ms, mults, num_non_zero, trial
-                )
-                .unwrap();
+    for exp in [16] {
+        let num_vars = 1 << exp;
+        for sparsity in [0.75, 0.50, 0.20] {
+            {
+                let batch_size = 50;
+                group.bench_with_input(
+                    BenchmarkId::new("dot_product", format!("2^{exp}_s{sparsity}_b{batch_size}")),
+                    &(num_vars, sparsity, batch_size),
+                    |b, params| {
+                        let (n, s, bs) = *params;
+                        b.iter_with_setup(
+                            || setup_batch_inputs(n, bs, s),
+                            |(polys, eval_point)| black_box(batch_dot_product(&polys, &eval_point)),
+                        )
+                    },
+                );
 
-                // --- Algorithm 3: Sparse Dot Product ---
-                reset_mult_count();
-                let start = Instant::now();
-                let sparse_prod = poly.evaluate(&eval_point);
-                let time_ms = start.elapsed().as_millis();
-                let mults = get_mult_count();
-                writeln!(
-                    file,
-                    "{},{},{},SparseDot,{},{},{},{}",
-                    exp, num_vars, c, time_ms, mults, num_non_zero, trial
-                )
-                .unwrap();
-
-                assert_eq!(dot_prod, inside_out_prod);
-                assert_eq!(dot_prod, sparse_prod);
+                group.bench_with_input(
+                    BenchmarkId::new(
+                        "batch_evaluate",
+                        format!("2^{exp}_s{sparsity}_b{batch_size}"),
+                    ),
+                    &(num_vars, sparsity, batch_size),
+                    |b, params| {
+                        let (n, s, bs) = *params;
+                        b.iter_with_setup(
+                            || setup_batch_inputs(n, bs, s),
+                            |(polys, eval_point)| {
+                                let poly_refs: Vec<&DensePolynomial<Fr>> = polys.iter().collect();
+                                black_box(DensePolynomial::batch_evaluate::<Fr>(
+                                    &poly_refs,
+                                    &eval_point,
+                                ))
+                            },
+                        )
+                    },
+                );
             }
         }
     }
+    group.finish();
 }
-pub fn evaluate_inside_out(poly: &MultilinearPolynomial<Fr>, r: &[Fr]) -> Fr {
-    match poly {
-        MultilinearPolynomial::LargeScalars(poly) => poly.inside_out_evaluate(r),
-        MultilinearPolynomial::U8Scalars(poly) => poly.inside_out_evaluate(r),
-        MultilinearPolynomial::U16Scalars(poly) => poly.inside_out_evaluate(r),
-        MultilinearPolynomial::U32Scalars(poly) => poly.inside_out_evaluate(r),
-        MultilinearPolynomial::U64Scalars(poly) => poly.inside_out_evaluate(r),
-        MultilinearPolynomial::I64Scalars(poly) => poly.inside_out_evaluate(r),
-        MultilinearPolynomial::OneHot(poly) => poly.evaluate(r),
-        _ => unimplemented!("Unsupported MultilinearPolynomial variant"),
-    }
-}
-pub fn batch_evaluate_with_eq(polys: &[&MultilinearPolynomial<Fr>], r: &[Fr]) -> Vec<Fr> {
-    let eq = EqPolynomial::evals(r);
-    let evals: Vec<Fr> = polys
-        .into_par_iter()
-        .map(|&poly| match poly {
-            MultilinearPolynomial::LargeScalars(poly) => poly.evaluate_at_chi_low_optimized(&eq),
-            _ => poly.dot_product(&eq),
-        })
-        .collect();
-    evals
-}
-
-pub fn batch_evaluate_inside_out(polys: &[&MultilinearPolynomial<Fr>], r: &[Fr]) -> Vec<Fr> {
-    let evals: Vec<Fr> = polys
-        .into_par_iter()
-        .map(|&poly| match poly {
-            MultilinearPolynomial::LargeScalars(poly) => poly.inside_out_evaluate(r),
-            MultilinearPolynomial::U8Scalars(poly) => poly.inside_out_evaluate(r),
-            MultilinearPolynomial::U16Scalars(poly) => poly.inside_out_evaluate(r),
-            MultilinearPolynomial::U32Scalars(poly) => poly.inside_out_evaluate(r),
-            MultilinearPolynomial::U64Scalars(poly) => poly.inside_out_evaluate(r),
-            MultilinearPolynomial::I64Scalars(poly) => poly.inside_out_evaluate(r),
-            _ => {
-                let eq = EqPolynomial::evals(r);
-                poly.dot_product(&eq)
-            }
-        })
-        .collect();
-    evals
-}
-
-fn main() {
-    benchmark_single_polynomial_evaluation();
-    benchmark_batch_polynomial_evaluation(49);
-}
+criterion_group!(
+    benches,
+    benchmark_single_evaluation,
+    benchmark_batch_evaluation
+);
+criterion_main!(benches);

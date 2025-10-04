@@ -1,17 +1,24 @@
-use crate::{field::JoltField, utils::lookup_bits::LookupBits};
+use crate::{
+    field::{ChallengeFieldOps, FieldChallengeOps, JoltField},
+    utils::lookup_bits::LookupBits,
+};
 
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 
 pub enum LessThanPrefix {}
 
 impl<F: JoltField> SparseDensePrefix<F> for LessThanPrefix {
-    fn prefix_mle(
+    fn prefix_mle<C>(
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: Option<F>,
+        r_x: Option<C>,
         c: u32,
         mut b: LookupBits,
         _: usize,
-    ) -> F {
+    ) -> F
+    where
+        C: ChallengeFieldOps<F>,
+        F: FieldChallengeOps<C>,
+    {
         let mut lt = checkpoints[Prefixes::LessThan].unwrap_or(F::zero());
         let mut eq = checkpoints[Prefixes::Eq].unwrap_or(F::one());
 
@@ -37,12 +44,16 @@ impl<F: JoltField> SparseDensePrefix<F> for LessThanPrefix {
         lt
     }
 
-    fn update_prefix_checkpoint(
+    fn update_prefix_checkpoint<C>(
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: F,
-        r_y: F,
+        r_x: C,
+        r_y: C,
         _: usize,
-    ) -> PrefixCheckpoint<F> {
+    ) -> PrefixCheckpoint<F>
+    where
+        C: ChallengeFieldOps<F>,
+        F: FieldChallengeOps<C>,
+    {
         let lt_checkpoint = checkpoints[Prefixes::LessThan].unwrap_or(F::zero());
         let eq_checkpoint = checkpoints[Prefixes::Eq].unwrap_or(F::one());
         let lt_updated = lt_checkpoint + eq_checkpoint * (F::one() - r_x) * r_y;

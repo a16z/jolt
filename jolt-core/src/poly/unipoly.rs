@@ -1,4 +1,4 @@
-use crate::field::JoltField;
+use crate::field::{ChallengeFieldOps, FieldChallengeOps, JoltField};
 use std::cmp::Ordering;
 use std::ops::{AddAssign, Index, IndexMut, Mul, MulAssign, Sub};
 
@@ -152,17 +152,29 @@ impl<F: JoltField> UniPoly<F> {
     }
 
     #[tracing::instrument(skip_all, name = "UniPoly::evaluate")]
-    pub fn evaluate(&self, r: &F) -> F {
+    pub fn evaluate<C>(&self, r: &C) -> F
+    where
+        C: Copy + Send + Sync + Into<F> + ChallengeFieldOps<F>,
+        F: FieldChallengeOps<C>,
+    {
         Self::eval_with_coeffs(&self.coeffs, r)
     }
 
     #[tracing::instrument(skip_all, name = "UniPoly::eval_with_coeffs")]
-    pub fn eval_with_coeffs(coeffs: &[F], r: &F) -> F {
+    pub fn eval_with_coeffs<C>(coeffs: &[F], r: &C) -> F
+    where
+        C: Copy + Send + Sync + Into<F> + ChallengeFieldOps<F>,
+        F: FieldChallengeOps<C>,
+    {
         let mut eval = coeffs[0];
-        let mut power = *r;
+        let mut power = (*r).into();
         for i in 1..coeffs.len() {
             eval += power * coeffs[i];
-            power *= *r;
+
+            #[allow(clippy::assign_op_pattern)]
+            {
+                power = power * *r;
+            }
         }
         eval
     }
@@ -379,14 +391,14 @@ impl<F: JoltField> CompressedUniPoly<F> {
 
     // In the verifier we do not have to check that f(0) + f(1) = hint as we can just
     // recover the linear term assuming the prover did it right, then eval the poly
-    pub fn eval_from_hint(&self, hint: &F, x: &F) -> F {
+    pub fn eval_from_hint(&self, hint: &F, x: &F::Challenge) -> F {
         let mut linear_term =
             *hint - self.coeffs_except_linear_term[0] - self.coeffs_except_linear_term[0];
         for i in 1..self.coeffs_except_linear_term.len() {
             linear_term -= self.coeffs_except_linear_term[i];
         }
 
-        let mut running_point = *x;
+        let mut running_point: F = (*x).into();
         let mut running_sum = self.coeffs_except_linear_term[0] + *x * linear_term;
         for i in 1..self.coeffs_except_linear_term.len() {
             running_point = running_point * x;
@@ -422,7 +434,9 @@ mod tests {
         // Our degree 3 polynomial is: 5 + x + 3x^2 + 9x^3.
         let gt_poly = UniPoly::<Fr>::from_coeff(vec![5.into(), 1.into(), 3.into(), 9.into()]);
         let degree = 3;
-        let finite_evals = (0..degree).map(|x| gt_poly.evaluate(&x.into())).collect();
+        let finite_evals = (0..degree)
+            .map(|x| gt_poly.evaluate::<Fr>(&x.into()))
+            .collect();
         let eval_at_infinity = *gt_poly.coeffs.last().unwrap();
         let toom_evals = [finite_evals, vec![eval_at_infinity]].concat();
 
@@ -459,7 +473,7 @@ mod tests {
         }
 
         let e3 = F::from_u64(28u64);
-        assert_eq!(poly.evaluate(&F::from_u64(3u64)), e3);
+        assert_eq!(poly.evaluate::<F>(&F::from_u64(3u64)), e3);
     }
 
     #[test]
@@ -491,7 +505,7 @@ mod tests {
         }
 
         let e4 = F::from_u64(109u64);
-        assert_eq!(poly.evaluate(&F::from_u64(4u64)), e4);
+        assert_eq!(poly.evaluate::<F>(&F::from_u64(4u64)), e4);
     }
 
     pub fn naive_mul<F: JoltField>(ours: &UniPoly<F>, other: &UniPoly<F>) -> UniPoly<F> {

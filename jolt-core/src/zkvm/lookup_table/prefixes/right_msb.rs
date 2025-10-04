@@ -1,17 +1,24 @@
-use crate::{field::JoltField, utils::lookup_bits::LookupBits};
+use crate::{
+    field::{ChallengeFieldOps, FieldChallengeOps, JoltField},
+    utils::lookup_bits::LookupBits,
+};
 
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 
 pub enum RightMsbPrefix {}
 
 impl<F: JoltField> SparseDensePrefix<F> for RightMsbPrefix {
-    fn prefix_mle(
+    fn prefix_mle<C>(
         checkpoints: &[PrefixCheckpoint<F>],
-        _: Option<F>,
+        _: Option<C>,
         c: u32,
         mut b: LookupBits,
         j: usize,
-    ) -> F {
+    ) -> F
+    where
+        C: ChallengeFieldOps<F>,
+        F: FieldChallengeOps<C>,
+    {
         if j == 0 {
             let y_msb = b.pop_msb();
             F::from_u8(y_msb)
@@ -22,14 +29,18 @@ impl<F: JoltField> SparseDensePrefix<F> for RightMsbPrefix {
         }
     }
 
-    fn update_prefix_checkpoint(
+    fn update_prefix_checkpoint<C>(
         checkpoints: &[PrefixCheckpoint<F>],
-        _: F,
-        r_y: F,
+        _: C,
+        r_y: C,
         j: usize,
-    ) -> PrefixCheckpoint<F> {
+    ) -> PrefixCheckpoint<F>
+    where
+        C: ChallengeFieldOps<F>,
+        F: FieldChallengeOps<C>,
+    {
         if j == 1 {
-            Some(r_y).into()
+            Some(r_y.into()).into()
         } else {
             checkpoints[Prefixes::RightOperandMsb].into()
         }

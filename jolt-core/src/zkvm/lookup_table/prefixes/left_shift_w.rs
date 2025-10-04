@@ -1,18 +1,25 @@
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
-use crate::{field::JoltField, utils::lookup_bits::LookupBits};
+use crate::{
+    field::{ChallengeFieldOps, FieldChallengeOps, JoltField},
+    utils::lookup_bits::LookupBits,
+};
 
 /// Left-shifts the left operand according to the bitmask given by
 /// the right operand, processing the second half of bits (j >= XLEN).
 pub enum LeftShiftWPrefix<const XLEN: usize> {}
 
 impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for LeftShiftWPrefix<XLEN> {
-    fn prefix_mle(
+    fn prefix_mle<C>(
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: Option<F>,
+        r_x: Option<C>,
         c: u32,
         mut b: LookupBits,
         j: usize,
-    ) -> F {
+    ) -> F
+    where
+        C: ChallengeFieldOps<F>,
+        F: FieldChallengeOps<C>,
+    {
         // Only process when j >= XLEN
         if j < XLEN {
             return F::zero();
@@ -48,12 +55,16 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for LeftShiftWPrefix<
         result
     }
 
-    fn update_prefix_checkpoint(
+    fn update_prefix_checkpoint<C>(
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: F,
-        r_y: F,
+        r_x: C,
+        r_y: C,
         j: usize,
-    ) -> PrefixCheckpoint<F> {
+    ) -> PrefixCheckpoint<F>
+    where
+        C: ChallengeFieldOps<F>,
+        F: FieldChallengeOps<C>,
+    {
         if j >= XLEN {
             let mut updated = checkpoints[Prefixes::LeftShiftW].unwrap_or(F::zero());
             let prod_one_plus_y = checkpoints[Prefixes::LeftShiftWHelper].unwrap_or(F::one());

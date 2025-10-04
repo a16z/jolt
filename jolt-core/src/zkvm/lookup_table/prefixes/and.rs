@@ -1,5 +1,6 @@
 use crate::{
-    field::JoltField, utils::lookup_bits::LookupBits,
+    field::{ChallengeFieldOps, FieldChallengeOps, JoltField},
+    utils::lookup_bits::LookupBits,
     zkvm::instruction_lookups::read_raf_checking::current_suffix_len,
 };
 
@@ -8,13 +9,17 @@ use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 pub enum AndPrefix<const XLEN: usize> {}
 
 impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for AndPrefix<XLEN> {
-    fn prefix_mle(
+    fn prefix_mle<C>(
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: Option<F>,
+        r_x: Option<C>,
         c: u32,
         mut b: LookupBits,
         j: usize,
-    ) -> F {
+    ) -> F
+    where
+        C: ChallengeFieldOps<F>,
+        F: FieldChallengeOps<C>,
+    {
         let mut result = checkpoints[Prefixes::And].unwrap_or(F::zero());
 
         // AND high-order variables of x and y
@@ -35,12 +40,16 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for AndPrefix<XLEN> {
         result
     }
 
-    fn update_prefix_checkpoint(
+    fn update_prefix_checkpoint<C>(
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: F,
-        r_y: F,
+        r_x: C,
+        r_y: C,
         j: usize,
-    ) -> PrefixCheckpoint<F> {
+    ) -> PrefixCheckpoint<F>
+    where
+        C: ChallengeFieldOps<F>,
+        F: FieldChallengeOps<C>,
+    {
         let shift = XLEN - 1 - j / 2;
         // checkpoint += 2^shift * r_x * r_y
         let updated =

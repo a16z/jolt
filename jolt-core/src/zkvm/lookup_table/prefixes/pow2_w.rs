@@ -1,18 +1,25 @@
-use crate::zkvm::instruction_lookups::read_raf_checking::current_suffix_len;
 use crate::{field::JoltField, utils::lookup_bits::LookupBits};
+use crate::{
+    field::{ChallengeFieldOps, FieldChallengeOps},
+    zkvm::instruction_lookups::read_raf_checking::current_suffix_len,
+};
 
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 
 pub enum Pow2WPrefix<const XLEN: usize> {}
 
 impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for Pow2WPrefix<XLEN> {
-    fn prefix_mle(
+    fn prefix_mle<C>(
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: Option<F>,
+        r_x: Option<C>,
         c: u32,
         b: LookupBits,
         j: usize,
-    ) -> F {
+    ) -> F
+    where
+        C: ChallengeFieldOps<F>,
+        F: FieldChallengeOps<C>,
+    {
         if current_suffix_len(j) != 0 {
             // Handled by suffix
             return F::one();
@@ -45,12 +52,16 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for Pow2WPrefix<XLEN>
         result
     }
 
-    fn update_prefix_checkpoint(
+    fn update_prefix_checkpoint<C>(
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: F,
-        r_y: F,
+        r_x: C,
+        r_y: C,
         j: usize,
-    ) -> PrefixCheckpoint<F> {
+    ) -> PrefixCheckpoint<F>
+    where
+        C: ChallengeFieldOps<F>,
+        F: FieldChallengeOps<C>,
+    {
         if current_suffix_len(j) != 0 {
             return Some(F::one()).into();
         }

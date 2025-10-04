@@ -39,7 +39,7 @@ use virtual_xor_rotw::VirtualXORROTWTable;
 use word_alignment::WordAlignmentTable;
 use xor::XorTable;
 
-use crate::field::JoltField;
+use crate::field::{ChallengeFieldOps, FieldChallengeOps, JoltField};
 use derive_more::From;
 use std::fmt::Debug;
 
@@ -56,7 +56,10 @@ pub trait JoltLookupTable: Clone + Debug + Send + Sync + Serialize {
     fn materialize_entry(&self, index: u128) -> u64;
 
     /// Evaluates the MLE of this lookup table on the given point `r`.
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F;
+    fn evaluate_mle<F, C>(&self, r: &[C]) -> F
+    where
+        C: ChallengeFieldOps<F>,
+        F: JoltField + FieldChallengeOps<C>;
 }
 
 pub trait PrefixSuffixDecomposition<const XLEN: usize>: JoltLookupTable + Default {
@@ -255,7 +258,11 @@ impl<const XLEN: usize> LookupTables<XLEN> {
         }
     }
 
-    pub fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+    pub fn evaluate_mle<F, C>(&self, r: &[C]) -> F
+    where
+        C: ChallengeFieldOps<F>,
+        F: JoltField + FieldChallengeOps<C>,
+    {
         match self {
             LookupTables::RangeCheck(table) => table.evaluate_mle(r),
             LookupTables::And(table) => table.evaluate_mle(r),

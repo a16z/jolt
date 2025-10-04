@@ -3,7 +3,7 @@ use std::sync::{Arc, RwLock};
 use allocative::Allocative;
 use num::Integer;
 
-use crate::field::JoltField;
+use crate::field::{ChallengeFieldOps, FieldChallengeOps, JoltField};
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::prefix_suffix::{
     CachedPolynomial, Prefix, PrefixCheckpoints, PrefixPolynomial, PrefixRegistry,
@@ -37,7 +37,7 @@ impl<F: JoltField> PolynomialBinding<F> for IdentityPolynomial<F> {
         self.num_bound_vars != 0
     }
 
-    fn bind(&mut self, r: F, order: BindingOrder) {
+    fn bind(&mut self, r: F::Challenge, order: BindingOrder) {
         debug_assert!(self.num_bound_vars < self.num_vars);
 
         match order {
@@ -46,13 +46,14 @@ impl<F: JoltField> PolynomialBinding<F> for IdentityPolynomial<F> {
             }
             BindingOrder::HighToLow => {
                 self.bound_value += self.bound_value;
-                self.bound_value += r;
+                self.bound_value = self.bound_value + r;
             }
         }
         self.num_bound_vars += 1;
     }
 
-    fn bind_parallel(&mut self, r: F, order: BindingOrder) {
+    fn bind_parallel(&mut self, r: F::Challenge, order: BindingOrder) {
+        // Binding is constant time, no parallelism necessary
         self.bind(r, order);
     }
 
@@ -63,13 +64,23 @@ impl<F: JoltField> PolynomialBinding<F> for IdentityPolynomial<F> {
 }
 
 impl<F: JoltField> PolynomialEvaluation<F> for IdentityPolynomial<F> {
-    fn evaluate(&self, r: &[F]) -> F {
+    fn evaluate<C>(&self, r: &[C]) -> F
+    where
+        C: Copy + Send + Sync + Into<F>,
+        F: std::ops::Mul<C, Output = F> + std::ops::SubAssign<F>,
+    {
         let len = r.len();
         debug_assert_eq!(len, self.num_vars);
-        (0..len).map(|i| r[i].mul_u128(1 << (len - 1 - i))).sum()
+        (0..len)
+            .map(|i| r[i].into().mul_u128(1 << (len - 1 - i)))
+            .sum()
     }
 
-    fn batch_evaluate(_polys: &[&Self], _r: &[F]) -> Vec<F> {
+    fn batch_evaluate<C>(_polys: &[&Self], _r: &[C]) -> Vec<F>
+    where
+        C: Copy + Send + Sync + Into<F> + ChallengeFieldOps<F>,
+        F: FieldChallengeOps<C>,
+    {
         unimplemented!("Currently unused")
     }
 
@@ -194,7 +205,7 @@ impl<F: JoltField> PolynomialBinding<F> for OperandPolynomial<F> {
         self.num_bound_vars != 0
     }
 
-    fn bind(&mut self, r: F, order: BindingOrder) {
+    fn bind(&mut self, r: F::Challenge, order: BindingOrder) {
         debug_assert!(self.num_bound_vars < self.num_vars);
         debug_assert_eq!(
             order,
@@ -206,12 +217,12 @@ impl<F: JoltField> PolynomialBinding<F> for OperandPolynomial<F> {
             || (self.num_bound_vars.is_odd() && self.side == OperandSide::Right)
         {
             self.bound_value += self.bound_value;
-            self.bound_value += r;
+            self.bound_value += r.into();
         }
         self.num_bound_vars += 1;
     }
 
-    fn bind_parallel(&mut self, r: F, order: BindingOrder) {
+    fn bind_parallel(&mut self, r: F::Challenge, order: BindingOrder) {
         // Binding is constant time, no parallelism necessary
         self.bind(r, order);
     }
@@ -223,22 +234,34 @@ impl<F: JoltField> PolynomialBinding<F> for OperandPolynomial<F> {
 }
 
 impl<F: JoltField> PolynomialEvaluation<F> for OperandPolynomial<F> {
-    fn evaluate(&self, r: &[F]) -> F {
+    fn evaluate<C>(&self, r: &[C]) -> F
+    where
+        C: Copy + Send + Sync + Into<F>,
+        F: std::ops::Mul<C, Output = F> + std::ops::SubAssign<F>,
+    {
         let len = r.len();
         debug_assert_eq!(len, self.num_vars);
         debug_assert!(len.is_even());
 
         match self.side {
             OperandSide::Left => (0..len / 2)
-                .map(|i| r[2 * i].mul_u128(1 << (self.num_vars / 2 - 1 - i)))
+                .map(|i| r[2 * i].into().mul_u128(1 << (self.num_vars / 2 - 1 - i)))
                 .sum(),
             OperandSide::Right => (0..len / 2)
-                .map(|i| r[2 * i + 1].mul_u128(1 << (self.num_vars / 2 - 1 - i)))
+                .map(|i| {
+                    r[2 * i + 1]
+                        .into()
+                        .mul_u128(1 << (self.num_vars / 2 - 1 - i))
+                })
                 .sum(),
         }
     }
 
-    fn batch_evaluate(_polys: &[&Self], _r: &[F]) -> Vec<F> {
+    fn batch_evaluate<C>(_polys: &[&Self], _r: &[C]) -> Vec<F>
+    where
+        C: Copy + Send + Sync + Into<F> + ChallengeFieldOps<F>,
+        F: FieldChallengeOps<C>,
+    {
         unimplemented!("Currently unused")
     }
 
@@ -395,11 +418,11 @@ impl<F: JoltField> PolynomialBinding<F> for UnmapRamAddressPolynomial<F> {
         self.int_poly.is_bound()
     }
 
-    fn bind(&mut self, r: F, order: BindingOrder) {
+    fn bind(&mut self, r: F::Challenge, order: BindingOrder) {
         self.int_poly.bind(r, order);
     }
 
-    fn bind_parallel(&mut self, r: F, order: BindingOrder) {
+    fn bind_parallel(&mut self, r: F::Challenge, order: BindingOrder) {
         // Binding is constant time, no parallelism necessary
         self.bind(r, order);
     }
@@ -410,11 +433,19 @@ impl<F: JoltField> PolynomialBinding<F> for UnmapRamAddressPolynomial<F> {
 }
 
 impl<F: JoltField> PolynomialEvaluation<F> for UnmapRamAddressPolynomial<F> {
-    fn evaluate(&self, r: &[F]) -> F {
+    fn evaluate<C>(&self, r: &[C]) -> F
+    where
+        C: Copy + Send + Sync + Into<F> + ChallengeFieldOps<F>,
+        F: FieldChallengeOps<C>,
+    {
         self.int_poly.evaluate(r).mul_u64(8) + F::from_u64(self.start_address - 8)
     }
 
-    fn batch_evaluate(_polys: &[&Self], _r: &[F]) -> Vec<F> {
+    fn batch_evaluate<C>(_polys: &[&Self], _r: &[C]) -> Vec<F>
+    where
+        C: Copy + Send + Sync + Into<F> + ChallengeFieldOps<F>,
+        F: FieldChallengeOps<C>,
+    {
         unimplemented!("Unused")
     }
 
@@ -457,7 +488,7 @@ mod tests {
         }
 
         for _ in 0..NUM_VARS {
-            let r = Fr::random(&mut rng);
+            let r = <Fr as JoltField>::Challenge::random(&mut rng);
             identity_poly.bind(r, BindingOrder::LowToHigh);
             reference_poly.bind(r, BindingOrder::LowToHigh);
             for j in 0..reference_poly.len() / 2 {
@@ -612,7 +643,7 @@ mod tests {
                 );
             }
 
-            let r = Fr::random(&mut rng);
+            let r = <Fr as JoltField>::Challenge::random(&mut rng);
             ro_poly.bind(r, BindingOrder::HighToLow);
             lo_poly.bind(r, BindingOrder::HighToLow);
             reference_poly_r.bind(r, BindingOrder::HighToLow);
@@ -664,7 +695,7 @@ mod tests {
                 );
             }
 
-            let r = Fr::from(0x12345678u64 + round as u64);
+            let r = <Fr as JoltField>::Challenge::from(0x12345678 + round as u128);
             unmap_poly.bind(r, BindingOrder::LowToHigh);
             reference_poly.bind(r, BindingOrder::LowToHigh);
         }

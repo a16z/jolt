@@ -53,17 +53,20 @@ pub trait SumcheckInstance<F: JoltField>: Send + Sync + MaybeAllocative {
 
     /// Binds this sumcheck instance to the verifier's challenge from a specific round.
     /// This updates the internal state to prepare for the next round.
-    fn bind(&mut self, r_j: F, round: usize);
+    fn bind(&mut self, r_j: F::Challenge, round: usize);
 
     /// Computes the expected output claim given the verifier's challenges.
     /// This is used to verify the final result of the sumcheck protocol.
     fn expected_output_claim(
         &self,
         opening_accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
-        r: &[F],
+        r: &[F::Challenge],
     ) -> F;
 
-    fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F>;
+    fn normalize_opening_point(
+        &self,
+        opening_point: &[F::Challenge],
+    ) -> OpeningPoint<BIG_ENDIAN, F>;
 
     /// Caches polynomial opening claims needed after the sumcheck protocol completes.
     /// These openings will later be proven using either an opening proof or another sumcheck.
@@ -90,9 +93,9 @@ impl SingleSumcheck {
         sumcheck_instance: &mut dyn SumcheckInstance<F>,
         opening_accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F>>>>,
         transcript: &mut ProofTranscript,
-    ) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>) {
+    ) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F::Challenge>) {
         let num_rounds = sumcheck_instance.num_rounds();
-        let mut r_sumcheck: Vec<F> = Vec::with_capacity(num_rounds);
+        let mut r_sumcheck: Vec<F::Challenge> = Vec::with_capacity(num_rounds);
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
 
         let mut previous_claim = sumcheck_instance.input_claim();
@@ -107,7 +110,7 @@ impl SingleSumcheck {
             compressed_poly.append_to_transcript(transcript);
             compressed_polys.push(compressed_poly);
 
-            let r_j = transcript.challenge_scalar();
+            let r_j: F::Challenge = transcript.challenge_scalar_optimized::<F>();
             r_sumcheck.push(r_j);
 
             // Cache claim for this round
@@ -134,7 +137,7 @@ impl SingleSumcheck {
         proof: &SumcheckInstanceProof<F, ProofTranscript>,
         opening_accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
         transcript: &mut ProofTranscript,
-    ) -> Result<Vec<F>, ProofVerifyError> {
+    ) -> Result<Vec<F::Challenge>, ProofVerifyError> {
         let (output_claim, r) = proof.verify(
             sumcheck_instance.input_claim(),
             sumcheck_instance.num_rounds(),
@@ -167,7 +170,7 @@ impl BatchedSumcheck {
         mut sumcheck_instances: Vec<&mut dyn SumcheckInstance<F>>,
         opening_accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F>>>>,
         transcript: &mut ProofTranscript,
-    ) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F>) {
+    ) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F::Challenge>) {
         let max_num_rounds = sumcheck_instances
             .iter()
             .map(|sumcheck| sumcheck.num_rounds())
@@ -202,7 +205,7 @@ impl BatchedSumcheck {
             .map(|(claim, coeff)| *claim * coeff)
             .sum();
 
-        let mut r_sumcheck: Vec<F> = Vec::with_capacity(max_num_rounds);
+        let mut r_sumcheck: Vec<F::Challenge> = Vec::with_capacity(max_num_rounds);
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(max_num_rounds);
 
         for round in 0..max_num_rounds {
@@ -253,7 +256,7 @@ impl BatchedSumcheck {
 
             // append the prover's message to the transcript
             compressed_poly.append_to_transcript(transcript);
-            let r_j = transcript.challenge_scalar();
+            let r_j = transcript.challenge_scalar_optimized::<F>();
             r_sumcheck.push(r_j);
 
             // Cache individual claims for this round
@@ -265,8 +268,8 @@ impl BatchedSumcheck {
             #[cfg(test)]
             {
                 // Sanity check
-                let h0 = batched_univariate_poly.evaluate(&F::zero());
-                let h1 = batched_univariate_poly.evaluate(&F::one());
+                let h0 = batched_univariate_poly.evaluate::<F>(&F::zero());
+                let h1 = batched_univariate_poly.evaluate::<F>(&F::one());
                 assert_eq!(
                     h0 + h1,
                     batched_claim,
@@ -320,7 +323,7 @@ impl BatchedSumcheck {
         sumcheck_instances: Vec<&dyn SumcheckInstance<F>>,
         opening_accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
         transcript: &mut ProofTranscript,
-    ) -> Result<Vec<F>, ProofVerifyError> {
+    ) -> Result<Vec<F::Challenge>, ProofVerifyError> {
         let max_degree = sumcheck_instances
             .iter()
             .map(|sumcheck| sumcheck.degree())
@@ -397,10 +400,10 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
         preprocessing: &JoltSharedPreprocessing,
         trace: &[Cycle],
         num_rounds: usize,
-        tau: &[F],
+        tau: &[F::Challenge],
         transcript: &mut ProofTranscript,
-    ) -> (Self, Vec<F>, [F; 3]) {
-        let mut r = Vec::new();
+    ) -> (Self, Vec<F::Challenge>, [F; 3]) {
+        let mut r: Vec<F::Challenge> = Vec::new();
         let mut polys = Vec::new();
         let mut claim = F::zero();
 
@@ -465,8 +468,8 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
         poly_A: &mut DensePolynomial<F>,
         witness_polynomials: &[&MultilinearPolynomial<F>],
         transcript: &mut ProofTranscript,
-    ) -> (Self, Vec<F>, Vec<F>) {
-        let mut r: Vec<F> = Vec::with_capacity(num_rounds);
+    ) -> (Self, Vec<F::Challenge>, Vec<F>) {
+        let mut r: Vec<F::Challenge> = Vec::with_capacity(num_rounds);
         let mut polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
         let mut claim_per_round = *claim;
 
@@ -529,7 +532,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
         compressed_poly.append_to_transcript(transcript);
 
         //derive the verifier's challenge for the next round
-        let r_i: F = transcript.challenge_scalar();
+        let r_i: F::Challenge = transcript.challenge_scalar_optimized::<F>();
         r.push(r_i);
         polys.push(compressed_poly);
 
@@ -576,7 +579,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
             compressed_poly.append_to_transcript(transcript);
 
             //derive the verifier's challenge for the next round
-            let r_i: F = transcript.challenge_scalar();
+            let r_i: F::Challenge = transcript.challenge_scalar_optimized::<F>();
 
             r.push(r_i);
             polys.push(compressed_poly);
@@ -664,9 +667,9 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
         num_rounds: usize,
         degree_bound: usize,
         transcript: &mut ProofTranscript,
-    ) -> Result<(F, Vec<F>), ProofVerifyError> {
+    ) -> Result<(F, Vec<F::Challenge>), ProofVerifyError> {
         let mut e = claim;
-        let mut r: Vec<F> = Vec::new();
+        let mut r: Vec<F::Challenge> = Vec::new();
 
         // verify that there is a univariate polynomial for each round
         assert_eq!(self.compressed_polys.len(), num_rounds);
@@ -683,7 +686,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
             self.compressed_polys[i].append_to_transcript(transcript);
 
             //derive the verifier's challenge for the next round
-            let r_i = transcript.challenge_scalar();
+            let r_i = transcript.challenge_scalar_optimized::<F>();
             r.push(r_i);
 
             // evaluate the claimed degree-ell polynomial at r_i using the hint
@@ -709,10 +712,10 @@ pub fn process_eq_sumcheck_round<F: JoltField, ProofTranscript: Transcript>(
     quadratic_evals: (F, F), // (t_i(0), t_i(infty))
     eq_poly: &mut GruenSplitEqPolynomial<F>,
     polys: &mut Vec<CompressedUniPoly<F>>,
-    r: &mut Vec<F>,
+    r: &mut Vec<F::Challenge>,
     claim: &mut F,
     transcript: &mut ProofTranscript,
-) -> F {
+) -> F::Challenge {
     let scalar_times_w_i = eq_poly.current_scalar * eq_poly.w[eq_poly.current_index - 1];
 
     let cubic_poly = UniPoly::from_linear_times_quadratic_with_hint(
@@ -731,7 +734,7 @@ pub fn process_eq_sumcheck_round<F: JoltField, ProofTranscript: Transcript>(
     compressed_poly.append_to_transcript(transcript);
 
     // Derive challenge
-    let r_i: F = transcript.challenge_scalar();
+    let r_i: F::Challenge = transcript.challenge_scalar_optimized::<F>();
     r.push(r_i);
     polys.push(compressed_poly);
 

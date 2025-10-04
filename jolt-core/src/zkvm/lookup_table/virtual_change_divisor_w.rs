@@ -1,5 +1,5 @@
 use super::PrefixSuffixDecomposition;
-use crate::field::JoltField;
+use crate::field::{ChallengeFieldOps, FieldChallengeOps, JoltField};
 use crate::utils::uninterleave_bits;
 use crate::zkvm::lookup_table::prefixes::Prefixes;
 use serde::{Deserialize, Serialize};
@@ -38,8 +38,11 @@ impl<const XLEN: usize> JoltLookupTable for VirtualChangeDivisorWTable<XLEN> {
             _ => panic!("Unsupported {XLEN} word size"),
         }
     }
-
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+    fn evaluate_mle<F, C>(&self, r: &[C]) -> F
+    where
+        C: ChallengeFieldOps<F>,
+        F: JoltField + FieldChallengeOps<C>,
+    {
         debug_assert_eq!(r.len(), 2 * XLEN);
 
         let sign_bit = r[XLEN + 1];
@@ -55,14 +58,14 @@ impl<const XLEN: usize> JoltLookupTable for VirtualChangeDivisorWTable<XLEN> {
             }
         }
 
-        let mut x_product = r[XLEN];
+        let mut x_product = r[XLEN].into();
         for i in XLEN / 2 + 1..XLEN {
             x_product *= F::one() - r[2 * i];
         }
 
         let mut y_product = F::one();
         for i in XLEN / 2..XLEN {
-            y_product *= r[2 * i + 1];
+            y_product = y_product * r[2 * i + 1];
         }
 
         let sign_extension = F::from_u128((1u128 << XLEN) - (1u128 << (XLEN / 2))) * sign_bit;

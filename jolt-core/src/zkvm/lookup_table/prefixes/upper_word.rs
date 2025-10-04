@@ -1,5 +1,8 @@
-use crate::zkvm::instruction_lookups::read_raf_checking::current_suffix_len;
 use crate::{field::JoltField, utils::lookup_bits::LookupBits};
+use crate::{
+    field::{ChallengeFieldOps, FieldChallengeOps},
+    zkvm::instruction_lookups::read_raf_checking::current_suffix_len,
+};
 
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 
@@ -7,13 +10,17 @@ use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 pub struct UpperWordPrefix<const XLEN: usize>;
 
 impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for UpperWordPrefix<XLEN> {
-    fn prefix_mle(
+    fn prefix_mle<C>(
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: Option<F>,
+        r_x: Option<C>,
         c: u32,
         mut b: LookupBits,
         j: usize,
-    ) -> F {
+    ) -> F
+    where
+        C: ChallengeFieldOps<F>,
+        F: FieldChallengeOps<C>,
+    {
         let mut result = checkpoints[Prefixes::UpperWord].unwrap_or(F::zero());
         // Ignore low-order variables
         if j >= XLEN {
@@ -47,12 +54,16 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for UpperWordPrefix<X
         result
     }
 
-    fn update_prefix_checkpoint(
+    fn update_prefix_checkpoint<C>(
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: F,
-        r_y: F,
+        r_x: C,
+        r_y: C,
         j: usize,
-    ) -> PrefixCheckpoint<F> {
+    ) -> PrefixCheckpoint<F>
+    where
+        C: ChallengeFieldOps<F>,
+        F: FieldChallengeOps<C>,
+    {
         if j >= XLEN {
             return checkpoints[Prefixes::UpperWord].into();
         }

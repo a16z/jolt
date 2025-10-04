@@ -60,10 +60,10 @@ where
 
         let num_rounds_x = key.num_rows_bits();
 
-        let tau: Vec<F> = state_manager
+        let tau: Vec<F::Challenge> = state_manager
             .transcript
             .borrow_mut()
-            .challenge_vector(num_rounds_x);
+            .challenge_vector_optimized::<F>(num_rounds_x);
 
         let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) =
             SumcheckInstanceProof::<F, ProofTranscript>::prove_spartan_small_value::<NUM_SVO_ROUNDS>(
@@ -74,7 +74,7 @@ where
                 &mut state_manager.transcript.borrow_mut(),
             );
 
-        let outer_sumcheck_r: Vec<F> = outer_sumcheck_r.into_iter().rev().collect();
+        let outer_sumcheck_r: Vec<F::Challenge> = outer_sumcheck_r.into_iter().rev().collect();
 
         ProofTranscript::append_scalars(
             &mut *state_manager.transcript.borrow_mut(),
@@ -163,10 +163,10 @@ where
 
         let num_rounds_x = key.num_rows_bits();
 
-        let tau: Vec<F> = state_manager
+        let tau: Vec<F::Challenge> = state_manager
             .transcript
             .borrow_mut()
-            .challenge_vector(num_rounds_x);
+            .challenge_vector_optimized::<F>(num_rounds_x);
 
         // Get the outer sumcheck proof
         let proofs = state_manager.proofs.borrow();
@@ -204,7 +204,7 @@ where
 
         // Outer sumcheck is bound from the top, reverse the challenge
         // TODO(markosg04): Make use of Endianness here?
-        let outer_sumcheck_r_reversed: Vec<F> =
+        let outer_sumcheck_r_reversed: Vec<F::Challenge> =
             outer_sumcheck_r_original.iter().rev().cloned().collect();
         let opening_point = OpeningPoint::new(outer_sumcheck_r_reversed.clone());
 
@@ -225,7 +225,7 @@ where
             opening_point.clone(),
         );
 
-        let tau_bound_rx = EqPolynomial::mle(&tau, &outer_sumcheck_r_reversed);
+        let tau_bound_rx = EqPolynomial::<F>::mle(&tau, &outer_sumcheck_r_reversed);
         let claim_outer_final_expected = tau_bound_rx * (claim_Az * claim_Bz - claim_Cz);
         if claim_outer_final != claim_outer_final_expected {
             return Err(anyhow::anyhow!("Invalid outer sumcheck claim"));

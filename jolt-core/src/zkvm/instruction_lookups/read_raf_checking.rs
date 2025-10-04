@@ -51,7 +51,7 @@ const DEGREE: usize = 3;
 struct ReadRafProverState<F: JoltField> {
     ra_acc: Option<Vec<F>>,
     ra: Option<MultilinearPolynomial<F>>,
-    r: Vec<F>,
+    r: Vec<F::Challenge>,
 
     lookup_indices: Vec<LookupBits>,
     lookup_indices_by_table: Vec<Vec<(usize, LookupBits)>>,
@@ -355,7 +355,7 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
     }
 
     #[tracing::instrument(skip_all, name = "InstructionReadRafSumcheck::bind")]
-    fn bind(&mut self, r_j: F, round: usize) {
+    fn bind(&mut self, r_j: F::Challenge, round: usize) {
         let ps = self.prover_state.as_mut().unwrap();
         ps.r.push(r_j);
         if round < LOG_K {
@@ -374,7 +374,7 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
             });
             {
                 if ps.r.len().is_multiple_of(2) {
-                    Prefixes::update_checkpoints::<XLEN, F>(
+                    Prefixes::update_checkpoints::<XLEN, F, F::Challenge>(
                         &mut ps.prefix_checkpoints,
                         ps.r[ps.r.len() - 2],
                         ps.r[ps.r.len() - 1],
@@ -414,16 +414,16 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
     fn expected_output_claim(
         &self,
         accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
-        r: &[F],
+        r: &[F::Challenge],
     ) -> F {
         let (r_address_prime, r_cycle_prime) = r.split_at(LOG_K);
         let left_operand_eval =
-            OperandPolynomial::new(LOG_K, OperandSide::Left).evaluate(r_address_prime);
+            OperandPolynomial::<F>::new(LOG_K, OperandSide::Left).evaluate(r_address_prime);
         let right_operand_eval =
-            OperandPolynomial::new(LOG_K, OperandSide::Right).evaluate(r_address_prime);
-        let identity_poly_eval = IdentityPolynomial::new(LOG_K).evaluate(r_address_prime);
+            OperandPolynomial::<F>::new(LOG_K, OperandSide::Right).evaluate(r_address_prime);
+        let identity_poly_eval = IdentityPolynomial::<F>::new(LOG_K).evaluate(r_address_prime);
         let val_evals: Vec<_> = LookupTables::<XLEN>::iter()
-            .map(|table| table.evaluate_mle(r_address_prime))
+            .map(|table| table.evaluate_mle::<F, F::Challenge>(r_address_prime))
             .collect();
 
         let accumulator = accumulator.as_ref().unwrap();
@@ -436,7 +436,7 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
             )
             .0
             .r;
-        let eq_eval_cycle = EqPolynomial::mle(&r_cycle, r_cycle_prime);
+        let eq_eval_cycle = EqPolynomial::<F>::mle(&r_cycle, r_cycle_prime);
 
         let ra_claim = accumulator
             .borrow()
@@ -479,7 +479,10 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
         eq_eval_cycle * ra_claim * val_eval
     }
 
-    fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(
+        &self,
+        opening_point: &[F::Challenge],
+    ) -> OpeningPoint<BIG_ENDIAN, F> {
         OpeningPoint::new(opening_point.to_vec())
     }
 
@@ -490,7 +493,7 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
     ) {
         let ps = self.prover_state.as_ref().unwrap();
         let (_r_address, r_cycle) = r_sumcheck.clone().split_at(LOG_K);
-        let eq_r_cycle_prime = EqPolynomial::evals(&r_cycle.r);
+        let eq_r_cycle_prime = EqPolynomial::<F>::evals(&r_cycle.r);
 
         let flag_claims = ps
             .lookup_indices_by_table
@@ -791,12 +794,24 @@ impl<F: JoltField> ReadRafSumcheck<F> {
                 let b = LookupBits::new(b as u128, log_len - 1);
                 let prefixes_c0: Vec<_> = Prefixes::iter()
                     .map(|prefix| {
-                        prefix.prefix_mle::<XLEN, F>(&ps.prefix_checkpoints, r_x, 0, b, j)
+                        prefix.prefix_mle::<XLEN, F, F::Challenge>(
+                            &ps.prefix_checkpoints,
+                            r_x,
+                            0,
+                            b,
+                            j,
+                        )
                     })
                     .collect();
                 let prefixes_c2: Vec<_> = Prefixes::iter()
                     .map(|prefix| {
-                        prefix.prefix_mle::<XLEN, F>(&ps.prefix_checkpoints, r_x, 2, b, j)
+                        prefix.prefix_mle::<XLEN, F, F::Challenge>(
+                            &ps.prefix_checkpoints,
+                            r_x,
+                            2,
+                            b,
+                            j,
+                        )
                     })
                     .collect();
                 lookup_tables
@@ -974,8 +989,14 @@ mod tests {
             prover_sm.twist_sumcheck_switch_index,
         );
 
-        let r_cycle: Vec<Fr> = prover_sm.transcript.borrow_mut().challenge_vector(LOG_T);
-        let _r_cycle: Vec<Fr> = verifier_sm.transcript.borrow_mut().challenge_vector(LOG_T);
+        let r_cycle: Vec<<Fr as JoltField>::Challenge> = prover_sm
+            .transcript
+            .borrow_mut()
+            .challenge_vector_optimized::<Fr>(LOG_T);
+        let _r_cycle: Vec<<Fr as JoltField>::Challenge> = verifier_sm
+            .transcript
+            .borrow_mut()
+            .challenge_vector_optimized::<Fr>(LOG_T);
         let eq_r_cycle = EqPolynomial::evals(&r_cycle);
 
         let mut rv_claim = Fr::zero();

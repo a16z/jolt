@@ -30,7 +30,7 @@ impl<F: JoltField> AppendToTranscript for MockCommitment<F> {
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Clone, Debug)]
 pub struct MockProof<F: JoltField> {
-    opening_point: Vec<F>,
+    opening_point: Vec<F::Challenge>,
 }
 
 impl<F> CommitmentScheme for MockCommitScheme<F>
@@ -82,7 +82,7 @@ where
     fn prove<ProofTranscript: Transcript>(
         _setup: &Self::ProverSetup,
         _poly: &MultilinearPolynomial<Self::Field>,
-        opening_point: &[Self::Field],
+        opening_point: &[<Self::Field as JoltField>::Challenge],
         _: Self::OpeningProofHint,
         _transcript: &mut ProofTranscript,
     ) -> Self::Proof {
@@ -95,7 +95,7 @@ where
         proof: &Self::Proof,
         _setup: &Self::VerifierSetup,
         _transcript: &mut ProofTranscript,
-        opening_point: &[Self::Field],
+        opening_point: &[<Self::Field as JoltField>::Challenge],
         _opening: &Self::Field,
         _commitment: &Self::Commitment,
     ) -> Result<(), ProofVerifyError> {

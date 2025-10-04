@@ -1,17 +1,24 @@
-use crate::{field::JoltField, utils::lookup_bits::LookupBits};
+use crate::{
+    field::{ChallengeFieldOps, FieldChallengeOps, JoltField},
+    utils::lookup_bits::LookupBits,
+};
 
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 
 pub enum PositiveRemainderEqualsDivisorPrefix {}
 
 impl<F: JoltField> SparseDensePrefix<F> for PositiveRemainderEqualsDivisorPrefix {
-    fn prefix_mle(
+    fn prefix_mle<C>(
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: Option<F>,
+        r_x: Option<C>,
         c: u32,
         mut b: LookupBits,
         j: usize,
-    ) -> F {
+    ) -> F
+    where
+        C: ChallengeFieldOps<F>,
+        F: FieldChallengeOps<C>,
+    {
         if j == 0 {
             let divisor_sign = F::from_u8(b.pop_msb());
             let (remainder, divisor) = b.uninterleave();
@@ -60,12 +67,16 @@ impl<F: JoltField> SparseDensePrefix<F> for PositiveRemainderEqualsDivisorPrefix
         }
     }
 
-    fn update_prefix_checkpoint(
+    fn update_prefix_checkpoint<C>(
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: F,
-        r_y: F,
+        r_x: C,
+        r_y: C,
         j: usize,
-    ) -> PrefixCheckpoint<F> {
+    ) -> PrefixCheckpoint<F>
+    where
+        C: ChallengeFieldOps<F>,
+        F: FieldChallengeOps<C>,
+    {
         if j == 1 {
             // `r_x` is the sign bit of the remainder
             // `r_y` is the sign bit of the divisor

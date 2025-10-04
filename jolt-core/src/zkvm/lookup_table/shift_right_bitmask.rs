@@ -18,7 +18,23 @@ impl<const XLEN: usize> JoltLookupTable for ShiftRightBitmaskTable<XLEN> {
         ones << shift
     }
 
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+    fn evaluate_mle<F, C>(&self, r: &[C]) -> F
+    where
+        C: Copy
+            + Send
+            + Sync
+            + Into<F>
+            + std::ops::Mul<F, Output = F>
+            + std::ops::Add<F, Output = F>
+            + std::ops::Sub<F, Output = F>,
+        F: JoltField
+            + std::ops::Mul<C, Output = F>
+            + std::ops::Add<C, Output = F>
+            + std::ops::Sub<C, Output = F>
+            + std::ops::SubAssign<F>
+            + std::ops::AddAssign<F>
+            + std::ops::MulAssign<F>,
+    {
         debug_assert_eq!(r.len(), 2 * XLEN);
 
         let log_w = XLEN.log_2();
@@ -35,7 +51,7 @@ impl<const XLEN: usize> JoltLookupTable for ShiftRightBitmaskTable<XLEN> {
                 eq_val *= if bit == 0 {
                     F::one() - r[log_w - i - 1]
                 } else {
-                    r[log_w - i - 1]
+                    r[log_w - i - 1].into()
                 };
             }
 

@@ -70,7 +70,7 @@ impl<F: JoltField> ProgramIOPolynomial<F> {
         }
     }
 
-    pub fn evaluate(&self, r_address: &[F]) -> F {
+    pub fn evaluate(&self, r_address: &[F::Challenge]) -> F {
         let (r_hi, r_lo) = r_address.split_at(r_address.len() - self.poly.get_num_vars());
         debug_assert_eq!(r_lo.len(), self.poly.get_num_vars());
 

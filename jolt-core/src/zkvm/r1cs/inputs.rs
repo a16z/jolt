@@ -476,7 +476,7 @@ impl TryFrom<&JoltR1CSInputs> for OpeningId {
 pub fn compute_claimed_witness_evals<F: JoltField>(
     preprocessing: &JoltSharedPreprocessing,
     trace: &[Cycle],
-    r_cycle: &[F],
+    r_cycle: &[F::Challenge],
 ) -> Vec<F> {
     // Implement double-sum semantics: sum_{x1} eq1[x1] * (sum_{x2} eq2[x2] * term(x1||x2))
     let m = r_cycle.len() / 2;
