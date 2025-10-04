@@ -259,6 +259,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for PCSumcheck<F> {
     fn cache_openings_prover(
         &self,
         accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
+        transcript: &mut T,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         let prover_state = self
@@ -271,18 +272,21 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for PCSumcheck<F> {
         let is_noop_eval = prover_state.is_noop_poly.final_sumcheck_claim();
 
         accumulator.borrow_mut().append_virtual(
+            transcript,
             VirtualPolynomial::UnexpandedPC,
             SumcheckId::SpartanShift,
             opening_point.clone(),
             unexpanded_pc_eval,
         );
         accumulator.borrow_mut().append_virtual(
+            transcript,
             VirtualPolynomial::PC,
             SumcheckId::SpartanShift,
             opening_point.clone(),
             pc_eval,
         );
         accumulator.borrow_mut().append_virtual(
+            transcript,
             VirtualPolynomial::OpFlags(CircuitFlags::IsNoop),
             SumcheckId::SpartanShift,
             opening_point,
@@ -300,19 +304,23 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for PCSumcheck<F> {
     fn cache_openings_verifier(
         &self,
         accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
+        transcript: &mut T,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         accumulator.borrow_mut().append_virtual(
+            transcript,
             VirtualPolynomial::UnexpandedPC,
             SumcheckId::SpartanShift,
             opening_point.clone(),
         );
         accumulator.borrow_mut().append_virtual(
+            transcript,
             VirtualPolynomial::PC,
             SumcheckId::SpartanShift,
             opening_point.clone(),
         );
         accumulator.borrow_mut().append_virtual(
+            transcript,
             VirtualPolynomial::OpFlags(CircuitFlags::IsNoop),
             SumcheckId::SpartanShift,
             opening_point,

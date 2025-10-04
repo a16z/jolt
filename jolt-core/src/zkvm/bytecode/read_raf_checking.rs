@@ -771,6 +771,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
     fn cache_openings_prover(
         &self,
         accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
+        transcript: &mut T,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         let ps = self
@@ -782,6 +783,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
         for i in 0..self.d {
             let r_address = &r_address.r[self.log_K_chunk * i..self.log_K_chunk * (i + 1)];
             accumulator.borrow_mut().append_sparse(
+                transcript,
                 vec![CommittedPolynomial::BytecodeRa(i)],
                 SumcheckId::BytecodeReadRaf,
                 r_address.to_vec(),
@@ -794,12 +796,14 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
     fn cache_openings_verifier(
         &self,
         accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
+        transcript: &mut T,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         let (r_address, r_cycle) = opening_point.split_at(self.log_K);
         (0..self.d).for_each(|i| {
             let r_address = &r_address.r[self.log_K_chunk * i..self.log_K_chunk * (i + 1)];
             accumulator.borrow_mut().append_sparse(
+                transcript,
                 vec![CommittedPolynomial::BytecodeRa(i)],
                 SumcheckId::BytecodeReadRaf,
                 [r_address, &r_cycle.r].concat(),

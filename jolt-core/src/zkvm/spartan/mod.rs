@@ -65,37 +65,38 @@ where
             .borrow_mut()
             .challenge_vector_optimized::<F>(num_rounds_x);
 
+        let transcript = &mut *state_manager.transcript.borrow_mut();
         let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) =
             SumcheckInstanceProof::<F, ProofTranscript>::prove_spartan_small_value::<NUM_SVO_ROUNDS>(
                 &preprocessing.shared,
                 trace,
                 num_rounds_x,
                 &tau,
-                &mut state_manager.transcript.borrow_mut(),
+                transcript,
             );
 
         let outer_sumcheck_r: Vec<F::Challenge> = outer_sumcheck_r.into_iter().rev().collect();
 
-        ProofTranscript::append_scalars(
-            &mut *state_manager.transcript.borrow_mut(),
-            &outer_sumcheck_claims,
-        );
+        ProofTranscript::append_scalars(transcript, &outer_sumcheck_claims);
 
         // Store Az, Bz, Cz claims with the outer sumcheck point
         let accumulator = state_manager.get_prover_accumulator();
         accumulator.borrow_mut().append_virtual(
+            transcript,
             VirtualPolynomial::SpartanAz,
             SumcheckId::SpartanOuter,
             OpeningPoint::new(outer_sumcheck_r.clone()),
             outer_sumcheck_claims[0],
         );
         accumulator.borrow_mut().append_virtual(
+            transcript,
             VirtualPolynomial::SpartanBz,
             SumcheckId::SpartanOuter,
             OpeningPoint::new(outer_sumcheck_r.clone()),
             outer_sumcheck_claims[1],
         );
         accumulator.borrow_mut().append_virtual(
+            transcript,
             VirtualPolynomial::SpartanCz,
             SumcheckId::SpartanOuter,
             OpeningPoint::new(outer_sumcheck_r.clone()),
@@ -132,6 +133,7 @@ where
 
         let accumulator = state_manager.get_prover_accumulator();
         accumulator.borrow_mut().append_dense(
+            transcript,
             committed_polys,
             SumcheckId::SpartanOuter,
             r_cycle.to_vec(),
@@ -144,6 +146,7 @@ where
             // Skip if it's a committed input (already added above)
             if !COMMITTED_R1CS_INPUTS.contains(input) {
                 accumulator.borrow_mut().append_virtual(
+                    transcript,
                     VirtualPolynomial::try_from(input).ok().unwrap(),
                     SumcheckId::SpartanOuter,
                     OpeningPoint::new(r_cycle.to_vec()),
@@ -193,9 +196,10 @@ where
         drop(accumulator_ref);
         let outer_sumcheck_claims = [claim_Az, claim_Bz, claim_Cz];
 
+        let transcript = &mut *state_manager.transcript.borrow_mut();
+
         // Run the main sumcheck verifier:
         let (claim_outer_final, outer_sumcheck_r_original) = {
-            let transcript = &mut state_manager.transcript.borrow_mut();
             match outer_sumcheck_proof.verify(F::zero(), num_rounds_x, 3, transcript) {
                 Ok(result) => result,
                 Err(_) => return Err(anyhow::anyhow!("Outer sumcheck verification failed")),
@@ -208,18 +212,23 @@ where
             outer_sumcheck_r_original.iter().rev().cloned().collect();
         let opening_point = OpeningPoint::new(outer_sumcheck_r_reversed.clone());
 
+        ProofTranscript::append_scalars(transcript, &outer_sumcheck_claims[..]);
+
         // Populate the opening points for Az, Bz, Cz claims now that we have outer_sumcheck_r
         accumulator.borrow_mut().append_virtual(
+            transcript,
             VirtualPolynomial::SpartanAz,
             SumcheckId::SpartanOuter,
             opening_point.clone(),
         );
         accumulator.borrow_mut().append_virtual(
+            transcript,
             VirtualPolynomial::SpartanBz,
             SumcheckId::SpartanOuter,
             opening_point.clone(),
         );
         accumulator.borrow_mut().append_virtual(
+            transcript,
             VirtualPolynomial::SpartanCz,
             SumcheckId::SpartanOuter,
             opening_point.clone(),
@@ -230,11 +239,6 @@ where
         if claim_outer_final != claim_outer_final_expected {
             return Err(anyhow::anyhow!("Invalid outer sumcheck claim"));
         }
-
-        ProofTranscript::append_scalars(
-            &mut state_manager.transcript.borrow_mut(),
-            &outer_sumcheck_claims[..],
-        );
 
         // Add the commitments to verifier accumulator
         let num_cycles = key.num_steps;
@@ -251,6 +255,7 @@ where
             .map(|input| CommittedPolynomial::try_from(input).ok().unwrap())
             .collect();
         accumulator.borrow_mut().append_dense(
+            transcript,
             committed_polys,
             SumcheckId::SpartanOuter,
             r_cycle.to_vec(),
@@ -260,6 +265,7 @@ where
             // Skip if it's a committed input (already added above)
             if !COMMITTED_R1CS_INPUTS.contains(input) {
                 accumulator.borrow_mut().append_virtual(
+                    transcript,
                     VirtualPolynomial::try_from(input).ok().unwrap(),
                     SumcheckId::SpartanOuter,
                     OpeningPoint::new(r_cycle.to_vec()),

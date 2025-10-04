@@ -203,9 +203,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
     }
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstance<F, ProofTranscript>
-    for BooleanitySumcheck<F>
-{
+impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for BooleanitySumcheck<F> {
     fn degree(&self) -> usize {
         3
     }
@@ -351,6 +349,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstance<F, ProofTranscr
     fn cache_openings_prover(
         &self,
         accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
+        transcript: &mut T,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         let prover_state = self
@@ -366,6 +365,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstance<F, ProofTranscr
 
         let (r_address, r_cycle) = opening_point.split_at(DTH_ROOT_OF_K.log_2());
         accumulator.borrow_mut().append_sparse(
+            transcript,
             (0..self.d).map(CommittedPolynomial::RamRa).collect(),
             SumcheckId::RamBooleanity,
             r_address.r,
@@ -377,9 +377,11 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstance<F, ProofTranscr
     fn cache_openings_verifier(
         &self,
         accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
+        transcript: &mut T,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         accumulator.borrow_mut().append_sparse(
+            transcript,
             (0..self.d).map(CommittedPolynomial::RamRa).collect(),
             SumcheckId::RamBooleanity,
             opening_point.r,

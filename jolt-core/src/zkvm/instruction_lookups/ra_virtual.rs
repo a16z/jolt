@@ -174,6 +174,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for RaSumcheck<F> {
     fn cache_openings_prover(
         &self,
         accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
+        transcript: &mut T,
         r_cycle: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         let prover_state = self
@@ -196,6 +197,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for RaSumcheck<F> {
         for (i, r_address) in r_address_chunks.into_iter().enumerate() {
             let claim = prover_state.ra_i_polys[i].final_sumcheck_claim();
             accumulator.borrow_mut().append_sparse(
+                transcript,
                 vec![CommittedPolynomial::InstructionRa(i)],
                 SumcheckId::InstructionRaVirtualization,
                 r_address,
@@ -208,6 +210,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for RaSumcheck<F> {
     fn cache_openings_verifier(
         &self,
         accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
+        transcript: &mut T,
         r_cycle: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         let (r, _) = accumulator.borrow().get_virtual_polynomial_opening(
@@ -226,6 +229,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for RaSumcheck<F> {
             let opening_point = [r_address, r_cycle.r.as_slice()].concat();
 
             accumulator.borrow_mut().append_sparse(
+                transcript,
                 vec![CommittedPolynomial::InstructionRa(i)],
                 SumcheckId::InstructionRaVirtualization,
                 opening_point,

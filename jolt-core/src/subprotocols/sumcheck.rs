@@ -73,12 +73,14 @@ pub trait SumcheckInstance<F: JoltField, T: Transcript>: Send + Sync + MaybeAllo
     fn cache_openings_prover(
         &self,
         accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
+        transcript: &mut T,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     );
 
     fn cache_openings_verifier(
         &self,
         accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
+        transcript: &mut T,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     );
 
@@ -126,6 +128,7 @@ impl SingleSumcheck {
             // opening proof or sumcheck (in the case of virtual polynomials).
             sumcheck_instance.cache_openings_prover(
                 opening_accumulator,
+                transcript,
                 sumcheck_instance.normalize_opening_point(&r_sumcheck),
             );
         }
@@ -157,6 +160,7 @@ impl SingleSumcheck {
 
         sumcheck_instance.cache_openings_verifier(
             opening_accumulator.unwrap(),
+            transcript,
             sumcheck_instance.normalize_opening_point(&r),
         );
 
@@ -315,6 +319,7 @@ impl BatchedSumcheck {
                 // opening proof or sumcheck (in the case of virtual polynomials).
                 sumcheck.cache_openings_prover(
                     opening_accumulator.clone(),
+                    transcript,
                     sumcheck.normalize_opening_point(r_slice),
                 );
             }
@@ -381,6 +386,7 @@ impl BatchedSumcheck {
                     // opening proof or sumcheck (in the case of virtual polynomials).
                     sumcheck.cache_openings_verifier(
                         opening_accumulator.clone(),
+                        transcript,
                         sumcheck.normalize_opening_point(r_slice),
                     );
                 }

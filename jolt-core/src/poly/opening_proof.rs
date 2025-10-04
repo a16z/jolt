@@ -543,6 +543,7 @@ where
     fn cache_openings_prover(
         &self,
         _accumulator: std::rc::Rc<std::cell::RefCell<ProverOpeningAccumulator<F>>>,
+        _transcript: &mut T,
         _opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         unimplemented!("Unused")
@@ -551,6 +552,7 @@ where
     fn cache_openings_verifier(
         &self,
         _accumulator: std::rc::Rc<std::cell::RefCell<VerifierOpeningAccumulator<F>>>,
+        _transcript: &mut T,
         _opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         unimplemented!("Unused")
@@ -686,13 +688,15 @@ where
     /// Multiple polynomials opened at a single point are batched into a single
     /// polynomial opened at the same point.
     #[tracing::instrument(skip_all, name = "ProverOpeningAccumulator::append_dense")]
-    pub fn append_dense(
+    pub fn append_dense<T: Transcript>(
         &mut self,
+        transcript: &mut T,
         polynomials: Vec<CommittedPolynomial>,
         sumcheck: SumcheckId,
         opening_point: Vec<F::Challenge>,
         claims: &[F],
     ) {
+        transcript.append_scalars(claims);
         assert_eq!(polynomials.len(), claims.len());
 
         // Use Gruen optimization for the eq polynomial
@@ -717,14 +721,18 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "ProverOpeningAccumulator::append_sparse")]
-    pub fn append_sparse(
+    pub fn append_sparse<T: Transcript>(
         &mut self,
+        transcript: &mut T,
         polynomials: Vec<CommittedPolynomial>,
         sumcheck: SumcheckId,
         r_address: Vec<F::Challenge>,
         r_cycle: Vec<F::Challenge>,
         claims: Vec<F>,
     ) {
+        claims.iter().for_each(|claim| {
+            transcript.append_scalar(claim);
+        });
         let r_concat = [r_address.as_slice(), r_cycle.as_slice()].concat();
 
         let shared_eq_address = Arc::new(RwLock::new(EqAddressState::new(&r_address)));
@@ -754,13 +762,15 @@ where
         }
     }
 
-    pub fn append_virtual(
+    pub fn append_virtual<T: Transcript>(
         &mut self,
+        transcript: &mut T,
         polynomial: VirtualPolynomial,
         sumcheck: SumcheckId,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
         claim: F,
     ) {
+        transcript.append_scalar(&claim);
         self.openings.insert(
             OpeningId::Virtual(polynomial, sumcheck),
             (opening_point, claim),
@@ -1050,8 +1060,9 @@ where
     /// polynomial opened at the same point. This function performs the verifier side
     /// of this batching by homomorphically combining the commitments before appending
     /// to `self.openings`.
-    pub fn append_dense(
+    pub fn append_dense<T: Transcript>(
         &mut self,
+        transcript: &mut T,
         polynomials: Vec<CommittedPolynomial>,
         sumcheck: SumcheckId,
         opening_point: Vec<F::Challenge>,
@@ -1074,7 +1085,7 @@ where
             );
         }
 
-        let claims = polynomials
+        let claims: Vec<F> = polynomials
             .iter()
             .map(|poly| {
                 self.openings
@@ -1083,6 +1094,7 @@ where
                     .1
             })
             .collect();
+        transcript.append_scalars(&claims);
 
         self.sumchecks
             .push(OpeningProofReductionSumcheck::new_verifier_instance(
@@ -1098,8 +1110,9 @@ where
     /// `claims`.
     /// Multiple sparse polynomials opened at a single point are NOT batched into
     /// a single polynomial opened at the same point.
-    pub fn append_sparse(
+    pub fn append_sparse<T: Transcript>(
         &mut self,
+        transcript: &mut T,
         polynomials: Vec<CommittedPolynomial>,
         sumcheck: SumcheckId,
         opening_point: Vec<F::Challenge>,
@@ -1133,6 +1146,7 @@ where
                 .get(&OpeningId::Committed(label, sumcheck))
                 .unwrap()
                 .1;
+            transcript.append_scalar(&claim);
 
             self.sumchecks
                 .push(OpeningProofReductionSumcheck::new_verifier_instance(
@@ -1145,14 +1159,16 @@ where
     }
 
     /// Populates the opening point for an existing claim in the evaluation_openings map.
-    pub fn append_virtual(
+    pub fn append_virtual<T: Transcript>(
         &mut self,
+        transcript: &mut T,
         polynomial: VirtualPolynomial,
         sumcheck: SumcheckId,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         let key = OpeningId::Virtual(polynomial, sumcheck);
         if let Some((_, claim)) = self.openings.get(&key) {
+            transcript.append_scalar(claim);
             let claim = *claim; // Copy the claim value
             self.openings.insert(key, (opening_point.clone(), claim));
         } else {
