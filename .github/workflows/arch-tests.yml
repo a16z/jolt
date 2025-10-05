@@ -28,7 +28,7 @@ jobs:
           apt-get update && apt-get install -y --no-install-recommends ca-certificates curl make git nodejs
 
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Mark Git repo as safe
         run: |
