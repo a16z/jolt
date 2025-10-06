@@ -396,17 +396,23 @@ where
     F: JoltField + From<Fq> + Into<Fq>,
     ProofTranscript: Transcript,
 {
+    let verification_start = std::time::Instant::now();
     let artifacts = &proof.commitments;
     tracing::info!(
         num_exponentiations = artifacts.num_exponentiations,
         "SNARK composition verification"
     );
 
+    let transcript_start = std::time::Instant::now();
     append_commitments_to_transcript(
         transcript,
         &artifacts.rho_commitments,
         &artifacts.quotient_commitments,
         &artifacts.base_commitments,
+    );
+    tracing::debug!(
+        duration_us = transcript_start.elapsed().as_micros(),
+        "Appended commitments to transcript"
     );
 
     let verifier_sumcheck_instances: Vec<Box<dyn SumcheckInstance<F>>> = (0..artifacts
@@ -457,11 +463,25 @@ where
         + indexer.base_count
         + indexer.g_count;
 
+    tracing::debug!(
+        total_polys,
+        rho_polys = indexer.rho_counts.iter().sum::<usize>(),
+        quotient_polys = indexer.quotient_counts.iter().sum::<usize>(),
+        base_polys = indexer.base_count,
+        g_polys = indexer.g_count,
+        "Polynomial counts for batching"
+    );
+
     let batching_challenges: Vec<F> = transcript.challenge_vector(total_polys);
 
     // Compute batched commitment homomorphically
     let (L_size, _) = crate::poly::commitment::hyrax::matrix_dimensions(4, RATIO);
     let mut batched_row_commitments = vec![GrumpkinProjective::zero(); L_size];
+
+    tracing::debug!(
+        L_size,
+        "Hyrax matrix L_size (row commitments per polynomial)"
+    );
 
     let mut rho_challenges = Vec::new();
     for (exp_idx, rho_vec) in artifacts.rho_commitments.iter().enumerate() {
@@ -488,28 +508,64 @@ where
         .map(|(exp_idx, _)| batching_challenges[indexer.get_index(PolynomialType::Base(exp_idx))])
         .collect();
 
+    let rho_start = std::time::Instant::now();
+    let num_rho = artifacts
+        .rho_commitments
+        .iter()
+        .map(|v| v.len())
+        .sum::<usize>();
     accumulate_commitments(
         &mut batched_row_commitments,
         artifacts.rho_commitments.iter().flat_map(|v| v.iter()),
         rho_challenges.into_iter(),
     );
+    tracing::debug!(
+        num_commitments = num_rho,
+        total_ops = num_rho * L_size,
+        duration_ms = rho_start.elapsed().as_millis(),
+        "Accumulated rho commitments"
+    );
 
+    let quotient_start = std::time::Instant::now();
+    let num_quotient = artifacts
+        .quotient_commitments
+        .iter()
+        .map(|v| v.len())
+        .sum::<usize>();
     accumulate_commitments(
         &mut batched_row_commitments,
         artifacts.quotient_commitments.iter().flat_map(|v| v.iter()),
         quotient_challenges.into_iter(),
     );
+    tracing::debug!(
+        num_commitments = num_quotient,
+        total_ops = num_quotient * L_size,
+        duration_ms = quotient_start.elapsed().as_millis(),
+        "Accumulated quotient commitments"
+    );
 
+    let base_start = std::time::Instant::now();
     accumulate_commitments(
         &mut batched_row_commitments,
         artifacts.base_commitments.iter(),
         base_challenges.into_iter(),
     );
+    tracing::debug!(
+        num_commitments = artifacts.base_commitments.len(),
+        total_ops = artifacts.base_commitments.len() * L_size,
+        duration_ms = base_start.elapsed().as_millis(),
+        "Accumulated base commitments"
+    );
 
+    let g_start = std::time::Instant::now();
     let g_mle = jolt_optimizations::witness_gen::get_g_mle();
     let g_poly = DensePolynomial::new(g_mle);
     let g_commitment =
         HyraxCommitment::<RATIO, GrumpkinProjective>::commit(&g_poly, hyrax_generators);
+    tracing::debug!(
+        duration_ms = g_start.elapsed().as_millis(),
+        "Computed G polynomial commitment"
+    );
 
     let g_challenges = (0..artifacts.num_exponentiations)
         .map(|exp_idx| batching_challenges[indexer.get_index(PolynomialType::G(exp_idx))]);
@@ -550,12 +606,27 @@ where
     // Reverse and cast due to LowToHigh binding
     let r_sumcheck_fq: Vec<Fq> = proof.r_sumcheck.iter().rev().map(|&x| x.into()).collect();
 
-    proof.hyrax_proof.verify(
+    let verify_start = std::time::Instant::now();
+    let result = proof.hyrax_proof.verify(
         hyrax_generators,
         &r_sumcheck_fq,
         &batched_opening_fq,
         &batched_hyrax_commitment,
-    )
+    );
+    let hyrax_duration = verify_start.elapsed().as_millis();
+    tracing::debug!(
+        duration_ms = hyrax_duration,
+        "Hyrax opening proof verification"
+    );
+
+    tracing::info!(
+        total_duration_ms = verification_start.elapsed().as_millis(),
+        hyrax_verify_ms = hyrax_duration,
+        total_commitments = num_rho + num_quotient + artifacts.base_commitments.len(),
+        "Stage 6 verification breakdown complete"
+    );
+
+    result
 }
 
 #[cfg(test)]

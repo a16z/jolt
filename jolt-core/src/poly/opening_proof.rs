@@ -827,7 +827,7 @@ where
         &mut self,
         mut polynomials: HashMap<CommittedPolynomial, MultilinearPolynomial<F>>,
         mut opening_hints: HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
-        mut commitments: HashMap<CommittedPolynomial, PCS::Commitment>,
+        commitments: HashMap<CommittedPolynomial, PCS::Commitment>,
         pcs_setup: &PCS::ProverSetup,
         transcript: &mut ProofTranscript,
     ) -> ReducedOpeningProof<F, PCS, ProofTranscript> {
@@ -1013,11 +1013,7 @@ where
                     );
 
                 // Add exponentiation steps to recursion_ops for stage 6 recursion proof
-                if let Some(ref mut existing_steps) = self.recursion_ops {
-                    existing_steps.extend(hint_with_steps.exponentiation_steps.clone());
-                } else {
-                    self.recursion_ops = Some(hint_with_steps.exponentiation_steps.clone());
-                }
+                self.extend_recursion_ops(hint_with_steps.exponentiation_steps.clone());
 
                 tracing::debug!(
                     num_gt_exponentiations = hint_with_steps.exponentiation_steps.len(),
@@ -1061,11 +1057,7 @@ where
 
                 // Extract exponentiation steps from auxiliary data
                 if let Some(ref steps) = auxiliary_data.full_exponentiation_steps {
-                    if let Some(ref mut existing_steps) = self.recursion_ops {
-                        existing_steps.extend(steps.clone());
-                    } else {
-                        self.recursion_ops = Some(steps.clone());
-                    }
+                    self.extend_recursion_ops(steps.clone());
                 }
 
                 proof
@@ -1166,6 +1158,12 @@ where
     #[tracing::instrument(skip_all, name = "ProverOpeningAccumulator::get_recursion_ops")]
     pub fn get_recursion_ops(&self) -> Option<&Vec<jolt_optimizations::ExponentiationSteps>> {
         self.recursion_ops.as_ref()
+    }
+
+    #[cfg(feature = "recursion")]
+    #[tracing::instrument(skip_all, name = "ProverOpeningAccumulator::extend_recursion_ops")]
+    fn extend_recursion_ops(&mut self, ops: impl IntoIterator<Item = jolt_optimizations::ExponentiationSteps>) {
+        self.recursion_ops.get_or_insert_with(Vec::new).extend(ops);
     }
 }
 

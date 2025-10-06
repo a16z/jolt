@@ -1392,6 +1392,58 @@ impl RecursionCommitmentScheme for DoryCommitmentScheme {
 
         (proof, auxiliary_data)
     }
+
+    fn prove_opening_with_recursion<ProofTranscript: Transcript>(
+        setup: &Self::ProverSetup,
+        poly: &MultilinearPolynomial<Self::Field>,
+        opening_point: &[Self::Field],
+        hint: Self::OpeningProofHint,
+        transcript: &mut ProofTranscript,
+        commitment_coeffs: Option<&[(Self::Commitment, Self::Field)]>,
+    ) -> (Self::Proof, Self::CombinedCommitmentHint, Self::AuxiliaryVerifierData) {
+        // First, handle homomorphic combining if commitment_coeffs provided
+        let combined_hint = if let Some(coeffs_data) = commitment_coeffs {
+            let (commitments, coeffs): (Vec<_>, Vec<_>) = coeffs_data
+                .iter()
+                .map(|(c, coeff)| (c, *coeff))
+                .unzip();
+
+            tracing::debug!(
+                num_commitments = commitments.len(),
+                "Precomputing combined commitment with steps"
+            );
+
+            let (_combined_commitment, hint) =
+                Self::precompute_combined_commitment(&commitments, &coeffs);
+
+            tracing::debug!(
+                num_gt_exponentiations = hint.exponentiation_steps.len(),
+                "Captured GT exponentiation steps from homomorphic combining"
+            );
+
+            hint
+        } else {
+            DoryCombinedCommitmentHint::default()
+        };
+
+        // Generate the opening proof with auxiliary data
+        let (proof, mut auxiliary_data) = Self::prove_with_auxiliary(
+            setup,
+            poly,
+            opening_point,
+            hint,
+            transcript,
+        );
+
+        // Merge combining steps into auxiliary data
+        if !combined_hint.exponentiation_steps.is_empty() {
+            auxiliary_data.full_exponentiation_steps
+                .get_or_insert_with(Vec::new)
+                .splice(0..0, combined_hint.exponentiation_steps.clone());
+        }
+
+        (proof, combined_hint, auxiliary_data)
+    }
 }
 
 impl AdditivelyHomomorphic for DoryCommitmentScheme {

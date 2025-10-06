@@ -54,4 +54,22 @@ pub trait RecursionCommitmentScheme: CommitmentScheme {
         hint: Self::OpeningProofHint,
         transcript: &mut ProofTranscript,
     ) -> (Self::Proof, Self::AuxiliaryVerifierData);
+
+    /// Generates opening proof with recursion artifacts.
+    ///
+    /// This method combines homomorphic commitment combining with opening proof generation,
+    /// returning both the proof and the recursion-specific artifacts (GT hints and
+    /// exponentiation steps) needed for Stage 6 SNARK composition.
+    fn prove_opening_with_recursion<ProofTranscript: crate::transcripts::Transcript>(
+        setup: &Self::ProverSetup,
+        poly: &crate::poly::multilinear_polynomial::MultilinearPolynomial<Self::Field>,
+        opening_point: &[Self::Field],
+        hint: Self::OpeningProofHint,
+        transcript: &mut ProofTranscript,
+        commitment_coeffs: Option<&[(Self::Commitment, Self::Field)]>,
+    ) -> (
+        Self::Proof,
+        Self::CombinedCommitmentHint,
+        Self::AuxiliaryVerifierData,
+    );
 }

@@ -294,14 +294,6 @@ impl JoltDAG {
             ProofData::ReducedOpeningProof(opening_proof),
         );
 
-        // Recursion mode: we extract the simulated work from the dory verifier program
-        #[cfg(feature = "recursion")]
-        {
-            if let Some(recursion_ops) = accumulator.borrow().get_recursion_ops() {
-                state_manager.set_recursion_ops(recursion_ops.clone());
-            }
-        }
-
         #[cfg(test)]
         assert!(
             state_manager
@@ -325,6 +317,8 @@ impl JoltDAG {
             tracing::info!("Stage 6: SNARK composition proving");
 
             let exps_to_prove = state_manager
+                .get_prover_accumulator()
+                .borrow()
                 .get_recursion_ops()
                 .cloned()
                 .unwrap_or_default();

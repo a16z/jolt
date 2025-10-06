@@ -311,23 +311,63 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F>> HyraxOpen
     ) -> Result<(), ProofVerifyError> {
         // compute L and R
         let (L_size, R_size) = matrix_dimensions(opening_point.len(), RATIO);
+
+        tracing::debug!(
+            L_size,
+            R_size,
+            opening_point_len = opening_point.len(),
+            "Hyrax verify matrix dimensions"
+        );
+
+        let eq_start = std::time::Instant::now();
         let L = EqPolynomial::evals(&opening_point[..L_size.log_2()]);
         let R = EqPolynomial::evals(&opening_point[L_size.log_2()..]);
+        tracing::debug!(
+            duration_us = eq_start.elapsed().as_micros(),
+            "Computed EqPolynomial evals for L and R"
+        );
 
         // Verifier-derived commitment to u * a = \prod Com(u_j)^{a_j}
+        let msm1_start = std::time::Instant::now();
+        let normalized_commitments = G::normalize_batch(&commitment.row_commitments);
+        tracing::debug!(
+            num_bases = normalized_commitments.len(),
+            duration_us = msm1_start.elapsed().as_micros(),
+            "Normalized row commitments"
+        );
+
+        let msm1_compute_start = std::time::Instant::now();
         let homomorphically_derived_commitment: G = VariableBaseMSM::msm(
-            &G::normalize_batch(&commitment.row_commitments),
+            &normalized_commitments,
             &MultilinearPolynomial::from(L),
         )
         .unwrap();
+        tracing::debug!(
+            num_bases = normalized_commitments.len(),
+            duration_ms = msm1_compute_start.elapsed().as_millis(),
+            "MSM #1: homomorphically derived commitment"
+        );
 
+        let msm2_start = std::time::Instant::now();
+        let normalized_generators = G::normalize_batch(&pedersen_generators.generators[..R_size]);
         let product_commitment = VariableBaseMSM::msm_field_elements(
-            &G::normalize_batch(&pedersen_generators.generators[..R_size]),
+            &normalized_generators,
             &self.vector_matrix_product,
         )
         .unwrap();
+        tracing::debug!(
+            num_bases = R_size,
+            vector_matrix_product_len = self.vector_matrix_product.len(),
+            duration_ms = msm2_start.elapsed().as_millis(),
+            "MSM #2: product commitment"
+        );
 
+        let dot_start = std::time::Instant::now();
         let dot_product = compute_dotproduct(&self.vector_matrix_product, &R);
+        tracing::debug!(
+            duration_us = dot_start.elapsed().as_micros(),
+            "Computed dot product"
+        );
 
         if (homomorphically_derived_commitment == product_commitment) && (dot_product == *opening) {
             Ok(())
