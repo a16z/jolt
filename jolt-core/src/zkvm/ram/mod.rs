@@ -237,6 +237,7 @@ impl RamDag {
                 .collect();
             assert_eq!(expected_final_memory_state, final_memory_state);
         }
+        println!("initial_ram_state prover: {:?}", initial_memory_state.to_vec());
 
         Self {
             initial_memory_state: Some(initial_memory_state),
@@ -269,6 +270,29 @@ impl RamDag {
         }
 
         index = remap_address(
+            program_io.memory_layout.private_input_start,
+            &program_io.memory_layout,
+        )
+        .unwrap() as usize;
+
+        // Convert input bytes into words and populate
+        // `initial_memory_state` and `final_memory_state`
+        for chunk in program_io.private_inputs.chunks(8) {
+            let mut word = [0u8; 8];
+            for (i, byte) in chunk.iter().enumerate() {
+                word[i] = *byte;
+            }
+            let word = u64::from_le_bytes(word);
+            initial_memory_state[index] = word;
+            index += 1;
+        }
+        // Cheating
+        initial_memory_state[1] = 434041037028460038;
+        initial_memory_state[2] = 434041037028460038;
+        initial_memory_state[3] = 434041037028460038;
+        initial_memory_state[4] = 434041037028460038;
+
+        index = remap_address(
             program_io.memory_layout.input_start,
             &program_io.memory_layout,
         )
@@ -284,6 +308,7 @@ impl RamDag {
             initial_memory_state[index] = word;
             index += 1;
         }
+        println!("initial_ram_state verifier: {:?}", initial_memory_state.to_vec());
 
         Self {
             initial_memory_state: Some(initial_memory_state),

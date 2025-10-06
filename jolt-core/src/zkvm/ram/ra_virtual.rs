@@ -281,9 +281,7 @@ impl<F: JoltField> SumcheckInstance<F> for RaSumcheck<F> {
     }
 
     fn input_claim(&self) -> F {
-        // TEMPORARY: Always return zero to make sumcheck pass
-        F::zero()
-        // Original: self.ra_claim
+        self.ra_claim
     }
 
     fn expected_output_claim(
@@ -291,12 +289,6 @@ impl<F: JoltField> SumcheckInstance<F> for RaSumcheck<F> {
         accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
         r: &[F],
     ) -> F {
-        // TEMPORARY: Always return zero to make sumcheck pass
-        let _ = accumulator;
-        let _ = r;
-        F::zero()
-        
-        /* Original implementation:
         // we need opposite endian-ness here
         let r_rev: Vec<_> = r.iter().cloned().rev().collect();
         let eq_eval = self.gamma[0] * EqPolynomial::mle(&self.r_cycle[0], &r_rev)
@@ -315,16 +307,10 @@ impl<F: JoltField> SumcheckInstance<F> for RaSumcheck<F> {
             product *= ra_i_claim;
         }
         eq_eval * product
-        */
     }
 
     #[tracing::instrument(skip_all, name = "RamRaVirtualization::compute_prover_message")]
     fn compute_prover_message(&mut self, _round: usize, _previous_claim: F) -> Vec<F> {
-        // TEMPORARY: Always return zeros to make sumcheck pass
-        let degree = <Self as SumcheckInstance<F>>::degree(self);
-        vec![F::zero(); degree]
-        
-        /* Original implementation:
         let prover_state = self
             .prover_state
             .as_ref()
@@ -371,7 +357,6 @@ impl<F: JoltField> SumcheckInstance<F> for RaSumcheck<F> {
             );
 
         univariate_poly_evals
-        */
     }
 
     fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
@@ -383,18 +368,6 @@ impl<F: JoltField> SumcheckInstance<F> for RaSumcheck<F> {
         accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
         r_cycle: OpeningPoint<BIG_ENDIAN, F>,
     ) {
-        // TEMPORARY: Use zero claims to make sumcheck pass
-        for i in 0..self.d {
-            accumulator.borrow_mut().append_sparse(
-                vec![CommittedPolynomial::RamRa(i)],
-                SumcheckId::RamRaVirtualization,
-                self.r_address_chunks[i].clone(),
-                r_cycle.r.clone(),
-                vec![F::zero()], // Use zero instead of actual claim
-            );
-        }
-        
-        /* Original implementation:
         let prover_state = self
             .prover_state
             .as_ref()
@@ -410,7 +383,6 @@ impl<F: JoltField> SumcheckInstance<F> for RaSumcheck<F> {
                 vec![claim],
             );
         }
-        */
     }
 
     fn cache_openings_verifier(

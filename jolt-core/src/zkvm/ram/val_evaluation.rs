@@ -68,7 +68,9 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
 
         let val_init: MultilinearPolynomial<F> =
             MultilinearPolynomial::from(initial_ram_state.to_vec());
+        // println!("initial_ram_state prover: {:?}", initial_ram_state.to_vec());
         let init_eval = val_init.evaluate(&r_address.r);
+        println!("Val init is: {}", init_eval);
 
         // Compute the size-K table storing all eq(r_address, k) evaluations for
         // k \in {0, 1}^log(K)
@@ -135,7 +137,9 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
 
         let val_init: MultilinearPolynomial<F> =
             MultilinearPolynomial::from(initial_ram_state.to_vec());
+        // println!("initial_ram_state verifier: {:?}", initial_ram_state.to_vec());
         let init_eval = val_init.evaluate(&r_address.r);
+        println!("Val init is verifier: {}", init_eval);
 
         ValEvaluationSumcheck {
             claimed_evaluation,
@@ -157,17 +161,11 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
     }
 
     fn input_claim(&self) -> F {
-        // TEMPORARY: Always return zero to make sumcheck pass
-        F::zero()
-        // Original: self.claimed_evaluation - self.init_eval
+        self.claimed_evaluation - self.init_eval
     }
 
     #[tracing::instrument(skip_all, name = "RamValEvaluationSumcheck::compute_prover_message")]
     fn compute_prover_message(&mut self, _round: usize, _previous_claim: F) -> Vec<F> {
-        // TEMPORARY: Always return zeros to make sumcheck pass
-        vec![F::zero(), F::zero(), F::zero()]
-        
-        /* Original implementation:
         let prover_state = self
             .prover_state
             .as_ref()
@@ -205,13 +203,10 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
             );
 
         univariate_poly_evals.to_vec()
-        */
     }
 
     #[tracing::instrument(skip_all, name = "RamValEvaluationSumcheck::bind")]
     fn bind(&mut self, r_j: F, _round: usize) {
-        // IMPORTANT: We must still perform binding to maintain correct state,
-        // even though we're making the sumcheck trivially pass
         if let Some(prover_state) = &mut self.prover_state {
             [
                 &mut prover_state.inc,
@@ -228,12 +223,6 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
         accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
         r: &[F],
     ) -> F {
-        // TEMPORARY: Always return zero to make sumcheck pass
-        let _ = accumulator;
-        let _ = r;
-        F::zero()
-        
-        /* Original implementation:
         let accumulator = accumulator.as_ref().unwrap();
         let (r_val, _) = accumulator.borrow().get_virtual_polynomial_opening(
             VirtualPolynomial::RamVal,
@@ -258,7 +247,6 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
 
         // Return inc_claim * wa_claim * lt_eval
         inc_claim * wa_claim * lt_eval
-        */
     }
 
     fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
@@ -270,35 +258,6 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
         accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
         r_cycle_prime: OpeningPoint<BIG_ENDIAN, F>,
     ) {
-        // TEMPORARY: Use zero claims to make sumcheck pass
-        if self.prover_state.is_some() {
-            let r = accumulator
-                .borrow()
-                .get_virtual_polynomial_opening(
-                    VirtualPolynomial::RamVal,
-                    SumcheckId::RamReadWriteChecking,
-                )
-                .0;
-            let (r_address, _) = r.split_at(r.len() - r_cycle_prime.len());
-            let wa_opening_point =
-                OpeningPoint::new([r_address.r.as_slice(), r_cycle_prime.r.as_slice()].concat());
-
-            accumulator.borrow_mut().append_virtual(
-                VirtualPolynomial::RamRa,
-                SumcheckId::RamValEvaluation,
-                wa_opening_point,
-                F::zero(), // Use zero instead of prover_state.wa.final_sumcheck_claim()
-            );
-
-            accumulator.borrow_mut().append_dense(
-                vec![CommittedPolynomial::RamInc],
-                SumcheckId::RamValEvaluation,
-                r_cycle_prime.r,
-                &[F::zero()], // Use zero instead of prover_state.inc.final_sumcheck_claim()
-            );
-        }
-        
-        /* Original implementation:
         if let Some(prover_state) = &self.prover_state {
             let r = accumulator
                 .borrow()
@@ -325,7 +284,6 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
                 &[prover_state.inc.final_sumcheck_claim()],
             );
         }
-        */
     }
 
     fn cache_openings_verifier(

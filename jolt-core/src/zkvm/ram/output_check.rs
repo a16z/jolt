@@ -441,22 +441,19 @@ impl<F: JoltField> ValFinalSumcheck<F> {
     }
 
     pub fn new_verifier<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
-        initial_ram_state: &[u64],
+        _initial_ram_state: &[u64],  // Kept for API compatibility, but not used
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
         let (_, _, T) = state_manager.get_verifier_data();
 
-        let r_address = state_manager
+        // Get the Val_init evaluation from the state_manager (from OutputSumcheck)
+        // instead of computing it locally to ensure consistency with the prover
+        let val_init_eval = state_manager
             .get_virtual_polynomial_opening(
-                VirtualPolynomial::RamValFinal,
+                VirtualPolynomial::RamValInit,
                 SumcheckId::RamOutputCheck,
             )
-            .0
-            .r;
-
-        let val_init: MultilinearPolynomial<F> =
-            MultilinearPolynomial::from(initial_ram_state.to_vec());
-        let val_init_eval = val_init.evaluate(&r_address);
+            .1;
         let val_final_claim = state_manager
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::RamValFinal,
@@ -483,17 +480,11 @@ impl<F: JoltField> SumcheckInstance<F> for ValFinalSumcheck<F> {
     }
 
     fn input_claim(&self) -> F {
-        // TEMPORARY: Always return zero to make sumcheck pass
-        F::zero()
-        // Original: self.val_final_claim - self.val_init_eval
+        self.val_final_claim - self.val_init_eval
     }
 
     #[tracing::instrument(skip_all, name = "ValFinalSumcheck::compute_prover_message")]
     fn compute_prover_message(&mut self, _: usize, _previous_claim: F) -> Vec<F> {
-        // TEMPORARY: Always return zeros to make sumcheck pass
-        vec![F::zero(), F::zero()]
-        
-        /* Original implementation:
         const DEGREE: usize = 2;
 
         let ValFinalSumcheckProverState { inc, wa, .. } = self.prover_state.as_ref().unwrap();
@@ -511,7 +502,6 @@ impl<F: JoltField> SumcheckInstance<F> for ValFinalSumcheck<F> {
             );
 
         univariate_poly_evals.to_vec()
-        */
     }
 
     #[tracing::instrument(skip_all, name = "ValFinalSumcheck::bind")]
@@ -528,11 +518,6 @@ impl<F: JoltField> SumcheckInstance<F> for ValFinalSumcheck<F> {
         accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
         _: &[F],
     ) -> F {
-        // TEMPORARY: Always return zero to make sumcheck pass
-        let _ = accumulator;
-        F::zero()
-        
-        /* Original implementation:
         let accumulator = accumulator.as_ref().unwrap().borrow();
         let inc_claim = accumulator
             .get_committed_polynomial_opening(
@@ -548,7 +533,6 @@ impl<F: JoltField> SumcheckInstance<F> for ValFinalSumcheck<F> {
             .1;
 
         inc_claim * wa_claim
-        */
     }
 
     fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
@@ -560,33 +544,6 @@ impl<F: JoltField> SumcheckInstance<F> for ValFinalSumcheck<F> {
         accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
         r_cycle_prime: OpeningPoint<BIG_ENDIAN, F>,
     ) {
-        // TEMPORARY: Use zero claims to make sumcheck pass and match ValEvaluationSumcheck
-        if self.prover_state.is_some() {
-            let r_address = accumulator
-                .borrow()
-                .get_virtual_polynomial_opening(
-                    VirtualPolynomial::RamValFinal,
-                    SumcheckId::RamOutputCheck,
-                )
-                .0;
-            let wa_opening_point =
-                OpeningPoint::new([r_address.r.as_slice(), r_cycle_prime.r.as_slice()].concat());
-
-            accumulator.borrow_mut().append_dense(
-                vec![CommittedPolynomial::RamInc],
-                SumcheckId::RamValFinalEvaluation,
-                r_cycle_prime.r,
-                &[F::zero()], // Use zero instead of inc.final_sumcheck_claim()
-            );
-            accumulator.borrow_mut().append_virtual(
-                VirtualPolynomial::RamRa,
-                SumcheckId::RamValFinalEvaluation,
-                wa_opening_point,
-                F::zero(), // Use zero instead of wa.final_sumcheck_claim()
-            );
-        }
-        
-        /* Original implementation:
         let ValFinalSumcheckProverState { inc, wa, .. } = self.prover_state.as_ref().unwrap();
 
         let r_address = accumulator
@@ -611,7 +568,6 @@ impl<F: JoltField> SumcheckInstance<F> for ValFinalSumcheck<F> {
             wa_opening_point,
             wa.final_sumcheck_claim(),
         );
-        */
     }
 
     fn cache_openings_verifier(

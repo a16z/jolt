@@ -446,7 +446,7 @@ impl JoltDAG {
         let batched_opening_proof = proofs
             .get(&ProofKeys::ReducedOpeningProof)
             .expect("Reduced opening proof not found");
-        let _batched_opening_proof = match batched_opening_proof {
+        let batched_opening_proof = match batched_opening_proof {
             ProofData::ReducedOpeningProof(proof) => proof,
             _ => panic!("Invalid proof type for stage 4"),
         };
@@ -458,11 +458,6 @@ impl JoltDAG {
                 commitments.borrow()[polynomial.to_index()].clone(),
             );
         }
-        // TEMPORARY: Skip Stage 5 opening verification to test if only RAM sumchecks are affected
-        let _accumulator = state_manager.get_verifier_accumulator();
-        eprintln!("WARNING: Stage 5 polynomial opening verification SKIPPED for testing");
-        
-        /* Original implementation:
         let accumulator = state_manager.get_verifier_accumulator();
         accumulator
             .borrow_mut()
@@ -473,9 +468,6 @@ impl JoltDAG {
                 &mut *transcript.borrow_mut(),
             )
             .context("Stage 5")?;
-        */
-        let _ = preprocessing; // Suppress unused variable warning
-        let _ = commitments_map; // Suppress unused variable warning
 
         Ok(())
     }
