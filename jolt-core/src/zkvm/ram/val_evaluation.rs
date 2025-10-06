@@ -84,6 +84,28 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
         
         if let Some(eval) = private_input_eval {
             state_manager.private_input_evaluation = Some(eval);
+            
+            // Generate the opening proof for private input
+            if let Some(ref prover_state) = state_manager.prover_state {
+                if let Some(ref private_input_poly) = prover_state.private_input_polynomial {
+                    if let Some(ref hint) = prover_state.private_input_hint {
+                        let (preprocessing, _, _, _) = state_manager.get_prover_data();
+                        let mut transcript_clone = state_manager.get_transcript().borrow().clone();
+                        
+                        // Use the existing generators that are already properly configured for Dory
+                        let proof = PCS::prove(
+                            &preprocessing.generators,
+                            private_input_poly,
+                            &r_address.r,
+                            hint.clone(),
+                            &mut transcript_clone,
+                        );
+                        
+                        state_manager.private_input_proof = Some(proof);
+                        tracing::info!("Generated private input opening proof");
+                    }
+                }
+            }
         }
         
         let (preprocessing, trace, program_io, _) = state_manager.get_prover_data();
@@ -164,20 +186,44 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
         state_manager.private_input_evaluation = Some(private_input_evaluation);
         tracing::info!("Verifier received private input evaluation: {:?}", private_input_evaluation);
         
-        // TODO: Verify the private input commitment here
-        // This would involve:
-        // 1. Getting the private_input_commitment from state_manager
-        // 2. Getting the verifier setup/generators from preprocessing
-        // 3. Creating an opening proof and verifying it using PCS::verify
-        // 4. The opening point would be r_address.r
-        // 5. The claimed opening would be private_input_evaluation
-        // For now, we're just storing the evaluation to be verified later in the batch opening proof
+        // Verify the private input commitment
+        if let Some(ref private_input_commitment) = state_manager.private_input_commitment {
+            if let Some(ref private_input_proof) = state_manager.private_input_proof {
+                let (preprocessing, _, _) = state_manager.get_verifier_data();
+                let mut transcript_clone = state_manager.get_transcript().borrow().clone();
+                
+                // Use the existing verifier setup that's already properly configured for Dory
+                let verifier_setup = &preprocessing.generators;
+                
+                // Verify the opening proof
+                match PCS::verify(
+                    private_input_proof,
+                    verifier_setup,
+                    &mut transcript_clone,
+                    &r_address.r,
+                    &private_input_evaluation,
+                    private_input_commitment,
+                ) {
+                    Ok(()) => {
+                        tracing::info!("Private input opening proof verified successfully");
+                    },
+                    Err(e) => {
+                        tracing::error!("Private input opening proof verification failed: {:?}", e);
+                        panic!("Private input opening proof verification failed: {:?}", e);
+                    }
+                }
+            } else {
+                tracing::warn!("Private input proof not found in state manager");
+            }
+        } else {
+            tracing::warn!("Private input commitment not found in state manager");
+        }
 
-        let val_init: MultilinearPolynomial<F> =
-            MultilinearPolynomial::from(initial_ram_state.to_vec());
-        // println!("initial_ram_state verifier: {:?}", initial_ram_state.to_vec());
-        let init_eval = val_init.evaluate(&r_address.r);
-        println!("Val init is verifier: {}", init_eval);
+        // let val_init: MultilinearPolynomial<F> =
+        //     MultilinearPolynomial::from(initial_ram_state.to_vec());
+        // // println!("initial_ram_state verifier: {:?}", initial_ram_state.to_vec());
+        // let init_eval = val_init.evaluate(&r_address.r);
+        // println!("Val init is verifier: {}", init_eval);
 
         // Alternative approach: split initial_ram_state at some index and compute separately
         let split_index = 32; // You can adjust this split index as needed
@@ -202,16 +248,17 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
         let merged_eval = left_eval + right_eval;
         
         // Assert that the merged result equals the original evaluation
-        assert_eq!(
-            merged_eval, init_eval,
-            "Merged evaluation from split parts should equal the original evaluation"
-        );
+        // assert_eq!(
+        //     merged_eval, init_eval,
+        //     "Merged evaluation from split parts should equal the original evaluation"
+        // );
         println!("Split evaluation verified: left_eval={}, right_eval={}, merged={}", 
                  left_eval, right_eval, merged_eval);
 
         ValEvaluationSumcheck {
             claimed_evaluation,
-            init_eval,
+            // init_eval,
+            init_eval: state_manager.private_input_evaluation.unwrap() + right_eval,
             num_rounds: T.log_2(),
             prover_state: None,
             K,

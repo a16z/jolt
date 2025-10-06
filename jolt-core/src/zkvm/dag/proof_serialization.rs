@@ -35,6 +35,7 @@ pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcr
     commitments: Vec<PCS::Commitment>,
     pub private_input_commitment: PCS::Commitment,
     pub private_input_evaluation: F,
+    pub private_input_proof: PCS::Proof,
     proofs: Proofs<F, PCS, FS>,
     pub trace_length: usize,
     ram_K: usize,
@@ -63,6 +64,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
             .serialize_with_mode(&mut writer, compress)?;
         self.private_input_evaluation
             .serialize_with_mode(&mut writer, compress)?;
+        self.private_input_proof
+            .serialize_with_mode(&mut writer, compress)?;
         self.proofs.serialize_with_mode(&mut writer, compress)?;
         self.trace_length
             .serialize_with_mode(&mut writer, compress)?;
@@ -77,6 +80,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
             + self.commitments.serialized_size(compress)
             + self.private_input_commitment.serialized_size(compress)
             + self.private_input_evaluation.serialized_size(compress)
+            + self.private_input_proof.serialized_size(compress)
             + self.proofs.serialized_size(compress)
             + self.trace_length.serialized_size(compress)
             + self.ram_K.serialized_size(compress)
@@ -121,6 +125,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
         let private_input_commitment =
             PCS::Commitment::deserialize_with_mode(&mut reader, compress, validate)?;
         let private_input_evaluation = F::deserialize_with_mode(&mut reader, compress, validate)?;
+        let private_input_proof = PCS::Proof::deserialize_with_mode(&mut reader, compress, validate)?;
         let proofs = Proofs::<F, PCS, FS>::deserialize_with_mode(&mut reader, compress, validate)?;
         let trace_length = usize::deserialize_with_mode(&mut reader, compress, validate)?;
         let twist_sumcheck_switch_index =
@@ -132,6 +137,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
             commitments,
             private_input_commitment,
             private_input_evaluation,
+            private_input_proof,
             proofs,
             trace_length,
             ram_K,
@@ -154,12 +160,15 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> JoltProof<F
             .expect("Private input commitment not set");
         let private_input_evaluation = state_manager.private_input_evaluation
             .expect("Private input evaluation not set");
+        let private_input_proof = state_manager.private_input_proof
+            .expect("Private input proof not set");
 
         Self {
             opening_claims: Claims(openings),
             commitments,
             private_input_commitment,
             private_input_evaluation,
+            private_input_proof,
             proofs,
             trace_length,
             ram_K,
@@ -191,6 +200,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> JoltProof<F
             commitments,
             private_input_commitment: Some(self.private_input_commitment),
             private_input_evaluation: Some(self.private_input_evaluation),
+            private_input_proof: Some(self.private_input_proof),
             program_io,
             ram_K: self.ram_K,
             twist_sumcheck_switch_index: self.twist_sumcheck_switch_index,

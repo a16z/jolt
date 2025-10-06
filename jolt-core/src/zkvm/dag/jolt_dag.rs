@@ -51,6 +51,8 @@ fn commit_to_private_inputs<F: JoltField, PCS: CommitmentScheme<Field = F>>(
     setup: &PCS::ProverSetup,
     ram_K: usize,
 ) -> (MultilinearPolynomial<F>, PCS::Commitment, PCS::OpeningProofHint) {
+    tracing::info!("commit_to_private_inputs: ram_K = {}", ram_K);
+    
     let mut initial_memory_state = vec![0; ram_K];
 
     let mut index = remap_address(
@@ -58,6 +60,9 @@ fn commit_to_private_inputs<F: JoltField, PCS: CommitmentScheme<Field = F>>(
         &jolt_device.memory_layout,
     )
     .unwrap() as usize;
+    
+    tracing::info!("Private input start index = {}", index);
+    tracing::info!("Private input size = {} bytes", jolt_device.private_inputs.len());
 
     // Convert input bytes into words and populate
     // `initial_memory_state` and `final_memory_state`
@@ -90,8 +95,23 @@ fn commit_to_private_inputs<F: JoltField, PCS: CommitmentScheme<Field = F>>(
     // // Ensure we don't exceed K
     // coeffs.truncate(ram_K);
     
-    // Create a multilinear polynomial from the field elements
+    // Pad the initial memory state to match Dory's expected matrix dimensions
+    // Dory views polynomials as matrices with fixed dimensions based on its global initialization
+    let num_columns = DoryGlobals::get_num_columns();
+    let num_rows = DoryGlobals::get_max_num_rows();
+    let expected_size = num_columns * num_rows;
+    
+    tracing::info!("Dory expects matrix: {} rows x {} cols = {} total", num_rows, num_columns, expected_size);
+    tracing::info!("Initial state size before padding: {}", initial_memory_state.len());
+    
+    if initial_memory_state.len() < expected_size {
+        initial_memory_state.resize(expected_size, 0u64);
+        tracing::info!("Padded initial state to size: {}", initial_memory_state.len());
+    }
+    
+    // Create a multilinear polynomial from the padded field elements
     let poly = MultilinearPolynomial::from(initial_memory_state);
+    tracing::info!("Polynomial len: {}, num_vars: {}", poly.len(), poly.get_num_vars());
     
     tracing::info!(
         "Created private input polynomial with {} coefficients (log2({}) = {} variables)",
@@ -100,7 +120,7 @@ fn commit_to_private_inputs<F: JoltField, PCS: CommitmentScheme<Field = F>>(
         poly.get_num_vars()
     );
     
-    // Commit to the polynomial using the commitment scheme
+    // Commit to the polynomial using the existing setup that's already configured for Dory
     let (commitment, hint) = PCS::commit(&poly, setup);
     
     (poly, commitment, hint)

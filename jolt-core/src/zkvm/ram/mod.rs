@@ -269,29 +269,29 @@ impl RamDag {
             index += 1;
         }
 
-        index = remap_address(
-            program_io.memory_layout.private_input_start,
-            &program_io.memory_layout,
-        )
-        .unwrap() as usize;
+        // index = remap_address(
+        //     program_io.memory_layout.private_input_start,
+        //     &program_io.memory_layout,
+        // )
+        // .unwrap() as usize;
 
-        // Convert input bytes into words and populate
-        // `initial_memory_state` and `final_memory_state`
-        for chunk in program_io.private_inputs.chunks(8) {
-            let mut word = [0u8; 8];
-            for (i, byte) in chunk.iter().enumerate() {
-                word[i] = *byte;
-            }
-            let word = u64::from_le_bytes(word);
-            initial_memory_state[index] = word;
-            index += 1;
-        }
-        println!("Double check private_input len: {}", program_io.private_inputs.len());
-        // Cheating
-        initial_memory_state[1] = 434041037028460038;
-        initial_memory_state[2] = 434041037028460038;
-        initial_memory_state[3] = 434041037028460038;
-        initial_memory_state[4] = 434041037028460038;
+        // // Convert input bytes into words and populate
+        // // `initial_memory_state` and `final_memory_state`
+        // for chunk in program_io.private_inputs.chunks(8) {
+        //     let mut word = [0u8; 8];
+        //     for (i, byte) in chunk.iter().enumerate() {
+        //         word[i] = *byte;
+        //     }
+        //     let word = u64::from_le_bytes(word);
+        //     initial_memory_state[index] = word;
+        //     index += 1;
+        // }
+        // println!("Double check private_input len: {}", program_io.private_inputs.len());
+        // // Cheating
+        // initial_memory_state[1] = 434041037028460038;
+        // initial_memory_state[2] = 434041037028460038;
+        // initial_memory_state[3] = 434041037028460038;
+        // initial_memory_state[4] = 434041037028460038;
 
         index = remap_address(
             program_io.memory_layout.input_start,
