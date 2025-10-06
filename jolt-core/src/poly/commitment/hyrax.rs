@@ -337,11 +337,8 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F>> HyraxOpen
         );
 
         let msm1_compute_start = std::time::Instant::now();
-        let homomorphically_derived_commitment: G = VariableBaseMSM::msm(
-            &normalized_commitments,
-            &MultilinearPolynomial::from(L),
-        )
-        .unwrap();
+        let homomorphically_derived_commitment: G =
+            VariableBaseMSM::msm(&normalized_commitments, &MultilinearPolynomial::from(L)).unwrap();
         tracing::debug!(
             num_bases = normalized_commitments.len(),
             duration_ms = msm1_compute_start.elapsed().as_millis(),

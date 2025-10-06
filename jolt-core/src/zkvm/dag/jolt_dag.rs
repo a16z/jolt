@@ -341,11 +341,10 @@ impl JoltDAG {
 
             // TODO(markosg04): this is jank
             // Better way to handle the generics here?
-            let mut recursion_transcript = ProofTranscript::new(b"Recursion Check Stage 6");
             let prove_start = std::time::Instant::now();
             let recursion_proof = snark_composition_prove::<ark_bn254::Fq, ProofTranscript, 1>(
                 exps_to_prove,
-                &mut recursion_transcript,
+                &mut *transcript.borrow_mut(),
                 &hyrax_generators,
             );
             tracing::info!(
@@ -586,11 +585,10 @@ impl JoltDAG {
                     >(sz_proof)
                 };
 
-                let mut sz_transcript = ProofTranscript::new(b"Recursion Check Stage 6");
                 let verify_start = std::time::Instant::now();
                 snark_composition_verify::<Fq, ProofTranscript, 1>(
                     sz_proof_fq,
-                    &mut sz_transcript,
+                    &mut *transcript.borrow_mut(),
                     &hyrax_generators,
                 )
                 .context("Stage 6 - Recursion Check Protocol verification")?;

@@ -1162,7 +1162,10 @@ where
 
     #[cfg(feature = "recursion")]
     #[tracing::instrument(skip_all, name = "ProverOpeningAccumulator::extend_recursion_ops")]
-    fn extend_recursion_ops(&mut self, ops: impl IntoIterator<Item = jolt_optimizations::ExponentiationSteps>) {
+    fn extend_recursion_ops(
+        &mut self,
+        ops: impl IntoIterator<Item = jolt_optimizations::ExponentiationSteps>,
+    ) {
         self.recursion_ops.get_or_insert_with(Vec::new).extend(ops);
     }
 }

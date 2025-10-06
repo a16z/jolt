@@ -1400,13 +1400,15 @@ impl RecursionCommitmentScheme for DoryCommitmentScheme {
         hint: Self::OpeningProofHint,
         transcript: &mut ProofTranscript,
         commitment_coeffs: Option<&[(Self::Commitment, Self::Field)]>,
-    ) -> (Self::Proof, Self::CombinedCommitmentHint, Self::AuxiliaryVerifierData) {
+    ) -> (
+        Self::Proof,
+        Self::CombinedCommitmentHint,
+        Self::AuxiliaryVerifierData,
+    ) {
         // First, handle homomorphic combining if commitment_coeffs provided
         let combined_hint = if let Some(coeffs_data) = commitment_coeffs {
-            let (commitments, coeffs): (Vec<_>, Vec<_>) = coeffs_data
-                .iter()
-                .map(|(c, coeff)| (c, *coeff))
-                .unzip();
+            let (commitments, coeffs): (Vec<_>, Vec<_>) =
+                coeffs_data.iter().map(|(c, coeff)| (c, *coeff)).unzip();
 
             tracing::debug!(
                 num_commitments = commitments.len(),
@@ -1427,17 +1429,13 @@ impl RecursionCommitmentScheme for DoryCommitmentScheme {
         };
 
         // Generate the opening proof with auxiliary data
-        let (proof, mut auxiliary_data) = Self::prove_with_auxiliary(
-            setup,
-            poly,
-            opening_point,
-            hint,
-            transcript,
-        );
+        let (proof, mut auxiliary_data) =
+            Self::prove_with_auxiliary(setup, poly, opening_point, hint, transcript);
 
         // Merge combining steps into auxiliary data
         if !combined_hint.exponentiation_steps.is_empty() {
-            auxiliary_data.full_exponentiation_steps
+            auxiliary_data
+                .full_exponentiation_steps
                 .get_or_insert_with(Vec::new)
                 .splice(0..0, combined_hint.exponentiation_steps.clone());
         }
