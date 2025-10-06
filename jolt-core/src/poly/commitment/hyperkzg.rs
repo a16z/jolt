@@ -9,6 +9,7 @@
 //! (2) HyperKZG is specialized to use KZG as the univariate commitment scheme, so it includes several optimizations (both during the transformation of multilinear-to-univariate claims
 //! and within the KZG commitment scheme implementation itself).
 use super::{
+    additive_homomorphic::AdditivelyHomomorphic,
     commitment_scheme::{CommitmentScheme, StreamingCommitmentScheme},
     kzg::{KZGProverKey, KZGVerifierKey, UnivariateKZG},
 };
@@ -454,30 +455,6 @@ where
         (commitment, ())
     }
 
-    #[tracing::instrument(skip_all, name = "HyperKZG::batch_commit")]
-    fn batch_commit<U>(polys: &[U], gens: &Self::ProverSetup) -> Vec<Self::Commitment>
-    where
-        U: Borrow<MultilinearPolynomial<Self::Field>> + Sync,
-    {
-        UnivariateKZG::commit_batch(&gens.kzg_pk, polys)
-            .unwrap()
-            .into_par_iter()
-            .map(|c| HyperKZGCommitment(c))
-            .collect()
-    }
-
-    fn combine_commitments<C: Borrow<Self::Commitment>>(
-        commitments: &[C],
-        coeffs: &[Self::Field],
-    ) -> Self::Commitment {
-        let combined_commitment: P::G1 = commitments
-            .iter()
-            .zip(coeffs.iter())
-            .map(|(commitment, coeff)| commitment.borrow().0 * coeff)
-            .sum();
-        HyperKZGCommitment(combined_commitment.into_affine())
-    }
-
     fn prove<ProofTranscript: Transcript>(
         setup: &Self::ProverSetup,
         poly: &MultilinearPolynomial<Self::Field>,
@@ -502,6 +479,23 @@ where
 
     fn protocol_name() -> &'static [u8] {
         b"hyperkzg"
+    }
+}
+
+impl<P: Pairing> AdditivelyHomomorphic for HyperKZG<P>
+where
+    <P as Pairing>::ScalarField: JoltField,
+{
+    fn combine_commitments<C: Borrow<Self::Commitment>>(
+        commitments: &[C],
+        coeffs: &[Self::Field],
+    ) -> Result<Self::Commitment, ProofVerifyError> {
+        let combined_commitment: P::G1 = commitments
+            .iter()
+            .zip(coeffs.iter())
+            .map(|(commitment, coeff)| commitment.borrow().0 * coeff)
+            .sum();
+        Ok(HyperKZGCommitment(combined_commitment.into_affine()))
     }
 }
 

@@ -10,7 +10,7 @@ use crate::{
     utils::errors::ProofVerifyError,
 };
 
-use super::commitment_scheme::CommitmentScheme;
+use super::{additive_homomorphic::AdditivelyHomomorphic, commitment_scheme::CommitmentScheme};
 
 #[derive(Clone)]
 pub struct MockCommitScheme<F: JoltField> {
@@ -56,29 +56,6 @@ where
         (MockCommitment::default(), ())
     }
 
-    fn batch_commit<P>(polys: &[P], gens: &Self::ProverSetup) -> Vec<Self::Commitment>
-    where
-        P: Borrow<MultilinearPolynomial<Self::Field>>,
-    {
-        polys
-            .iter()
-            .map(|poly| Self::commit(poly.borrow(), gens).0)
-            .collect()
-    }
-
-    fn combine_commitments<C: Borrow<Self::Commitment>>(
-        _commitments: &[C],
-        _coeffs: &[Self::Field],
-    ) -> Self::Commitment {
-        MockCommitment::default()
-    }
-
-    fn combine_hints(
-        _hints: Vec<Self::OpeningProofHint>,
-        _coeffs: &[Self::Field],
-    ) -> Self::OpeningProofHint {
-    }
-
     fn prove<ProofTranscript: Transcript>(
         _setup: &Self::ProverSetup,
         _poly: &MultilinearPolynomial<Self::Field>,
@@ -105,5 +82,17 @@ where
 
     fn protocol_name() -> &'static [u8] {
         b"mock_commit"
+    }
+}
+
+impl<F> AdditivelyHomomorphic for MockCommitScheme<F>
+where
+    F: JoltField,
+{
+    fn combine_commitments<C: Borrow<Self::Commitment>>(
+        _commitments: &[C],
+        _coeffs: &[Self::Field],
+    ) -> Result<Self::Commitment, ProofVerifyError> {
+        Ok(MockCommitment::default())
     }
 }

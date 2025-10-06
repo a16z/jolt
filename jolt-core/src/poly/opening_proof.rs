@@ -21,7 +21,9 @@ use std::{
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 use super::{
-    commitment::commitment_scheme::CommitmentScheme,
+    commitment::{
+        additive_homomorphic::AdditivelyHomomorphic, commitment_scheme::CommitmentScheme,
+    },
     dense_mlpoly::DensePolynomial,
     eq_poly::EqPolynomial,
     multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
@@ -39,14 +41,16 @@ use crate::{
     subprotocols::sumcheck::{BatchedSumcheck, SumcheckInstance, SumcheckInstanceProof},
     transcripts::Transcript,
     utils::{errors::ProofVerifyError, math::Math},
-    zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
+    zkvm::witness::{CommittedPolynomial, RecursionCommittedPolynomial, VirtualPolynomial},
 };
 
 pub type Endianness = bool;
 pub const BIG_ENDIAN: Endianness = false;
 pub const LITTLE_ENDIAN: Endianness = true;
 
-#[derive(Clone, Debug, PartialEq, Default, Allocative)]
+#[derive(
+    Clone, Debug, PartialEq, Default, Allocative, CanonicalSerialize, CanonicalDeserialize,
+)]
 pub struct OpeningPoint<const E: Endianness, F: JoltField> {
     pub r: Vec<F>,
 }
@@ -161,12 +165,14 @@ pub enum SumcheckId {
     BytecodeBooleanity,
     BytecodeHammingWeight,
     OpeningReduction,
+    RecursionCheck,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Allocative)]
 pub enum OpeningId {
     Committed(CommittedPolynomial, SumcheckId),
     Virtual(VirtualPolynomial, SumcheckId),
+    Recursion(RecursionCommittedPolynomial, SumcheckId),
 }
 
 pub type Openings<F> = BTreeMap<OpeningId, (OpeningPoint<BIG_ENDIAN, F>, F)>;
@@ -564,7 +570,8 @@ where
 
 /// Accumulates openings computed by the prover over the course of Jolt,
 /// so that they can all be reduced to a single opening proof using sumcheck.
-#[derive(Clone, Allocative)]
+#[derive(Clone)]
+#[cfg_attr(not(feature = "recursion"), derive(Allocative))]
 pub struct ProverOpeningAccumulator<F>
 where
     F: JoltField,
@@ -574,6 +581,8 @@ where
     eq_cycle_map: HashMap<Vec<F>, Arc<RwLock<EqCycleState<F>>>>,
     #[cfg(test)]
     pub appended_virtual_openings: std::rc::Rc<std::cell::RefCell<Vec<OpeningId>>>,
+    #[cfg(feature = "recursion")]
+    pub recursion_ops: Option<Vec<jolt_optimizations::ExponentiationSteps>>,
 }
 
 /// Accumulates openings encountered by the verifier over the course of Jolt,
@@ -598,7 +607,10 @@ pub struct ReducedOpeningProof<
 > {
     pub sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
     pub sumcheck_claims: Vec<F>,
-    joint_opening_proof: PCS::Proof,
+    pub joint_opening_proof: PCS::Proof,
+    /// Precomputed GT commitments from homomorphic combining (Dory recursion-mode verifier optimization)
+    #[cfg(feature = "recursion")]
+    pub homomorphic_gt_results: Option<Vec<super::commitment::dory::JoltGTBn254>>,
     #[cfg(test)]
     joint_poly: MultilinearPolynomial<F>,
     #[cfg(test)]
@@ -625,6 +637,8 @@ where
             eq_cycle_map: HashMap::new(),
             #[cfg(test)]
             appended_virtual_openings: std::rc::Rc::new(std::cell::RefCell::new(vec![])),
+            #[cfg(feature = "recursion")]
+            recursion_ops: None,
             // #[cfg(test)]
             // joint_commitment: None,
         }
@@ -677,6 +691,18 @@ where
         let (point, claim) = self
             .openings
             .get(&OpeningId::Committed(polynomial, sumcheck))
+            .unwrap_or_else(|| panic!("opening for {sumcheck:?} {polynomial:?} not found"));
+        (point.clone(), *claim)
+    }
+
+    pub fn get_recursion_polynomial_opening(
+        &self,
+        polynomial: RecursionCommittedPolynomial,
+        sumcheck: SumcheckId,
+    ) -> (OpeningPoint<BIG_ENDIAN, F>, F) {
+        let (point, claim) = self
+            .openings
+            .get(&OpeningId::Recursion(polynomial, sumcheck))
             .unwrap_or_else(|| panic!("opening for {sumcheck:?} {polynomial:?} not found"));
         (point.clone(), *claim)
     }
@@ -771,13 +797,36 @@ where
             .push(OpeningId::Virtual(polynomial, sumcheck));
     }
 
+    #[tracing::instrument(skip_all, name = "ProverOpeningAccumulator::append_dense_recursion")]
+    pub fn append_dense_recursion(
+        &mut self,
+        polynomials: Vec<RecursionCommittedPolynomial>,
+        sumcheck: SumcheckId,
+        opening_point: Vec<F>,
+        claims: &[F],
+    ) {
+        assert_eq!(polynomials.len(), claims.len());
+
+        // Add openings to map
+        for (label, claim) in polynomials.iter().zip(claims.iter()) {
+            let opening_point_struct = OpeningPoint::<BIG_ENDIAN, F>::new(opening_point.clone());
+            let key = OpeningId::Recursion(*label, sumcheck);
+            self.openings
+                .insert(key, (opening_point_struct.clone(), *claim));
+        }
+    }
+
     /// Reduces the multiple openings accumulated into a single opening proof,
     /// using a single sumcheck.
     #[tracing::instrument(skip_all, name = "ProverOpeningAccumulator::reduce_and_prove")]
-    pub fn reduce_and_prove<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
+    pub fn reduce_and_prove<
+        ProofTranscript: Transcript,
+        PCS: CommitmentScheme<Field = F> + AdditivelyHomomorphic,
+    >(
         &mut self,
         mut polynomials: HashMap<CommittedPolynomial, MultilinearPolynomial<F>>,
         mut opening_hints: HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
+        commitments: HashMap<CommittedPolynomial, PCS::Commitment>,
         pcs_setup: &PCS::ProverSetup,
         transcript: &mut ProofTranscript,
     ) -> ReducedOpeningProof<F, PCS, ProofTranscript> {
@@ -886,6 +935,11 @@ where
 
         // Compute the opening proof hint for the reduced opening by homomorphically combining
         // the hints for the individual sumchecks.
+        #[cfg(feature = "recursion")]
+        let mut homomorphic_combining_hint: Option<
+            Vec<super::commitment::dory::JoltGTBn254>,
+        > = None;
+
         let hint = {
             let mut rlc_map = BTreeMap::new();
             for (gamma, sumcheck) in gamma_powers.iter().zip(self.sumchecks.iter()) {
@@ -900,6 +954,23 @@ where
                 }
             }
 
+            // In recursion mode with Dory, capture GT exponentiation steps before consuming rlc_map
+            let commitment_coeffs_for_recursion = if cfg!(feature = "recursion")
+                && std::any::TypeId::of::<PCS>()
+                    == std::any::TypeId::of::<super::commitment::dory::DoryCommitmentScheme>()
+            {
+                Some(
+                    rlc_map
+                        .iter()
+                        .map(|(polynomial, coeff)| {
+                            (commitments.get(polynomial).unwrap().clone(), *coeff)
+                        })
+                        .collect::<Vec<_>>(),
+                )
+            } else {
+                None
+            };
+
             let (coeffs, hints): (Vec<F>, Vec<PCS::OpeningProofHint>) = rlc_map
                 .into_iter()
                 .map(|(k, v)| (v, opening_hints.remove(k).unwrap()))
@@ -910,10 +981,89 @@ where
                 opening_hints.keys()
             );
 
+            // In recursion mode with Dory, compute GT exponentiation steps
+            #[cfg(feature = "recursion")]
+            if let Some(commitment_coeffs) = commitment_coeffs_for_recursion {
+                use super::commitment::dory::{DoryCommitment, DoryCommitmentScheme};
+                use super::commitment::recursion::RecursionCommitmentScheme;
+
+                let (dory_commitments, dory_coeffs_vec): (Vec<_>, Vec<_>) =
+                    commitment_coeffs.into_iter().unzip();
+
+                let dory_commitments_slice: &[DoryCommitment] = unsafe {
+                    std::slice::from_raw_parts(
+                        dory_commitments.as_ptr() as *const DoryCommitment,
+                        dory_commitments.len(),
+                    )
+                };
+
+                let dory_coeffs: &[<DoryCommitmentScheme as super::commitment::commitment_scheme::CommitmentScheme>::Field] = unsafe {
+                    std::slice::from_raw_parts(
+                        dory_coeffs_vec.as_ptr() as *const <DoryCommitmentScheme as super::commitment::commitment_scheme::CommitmentScheme>::Field,
+                        dory_coeffs_vec.len(),
+                    )
+                };
+
+                let (_joint_commitment, hint_with_steps) =
+                    DoryCommitmentScheme::precompute_combined_commitment(
+                        dory_commitments_slice,
+                        dory_coeffs,
+                    );
+
+                // Add the dory verifier steps witness for stage 6
+                self.extend_recursion_ops(hint_with_steps.exponentiation_steps.clone());
+
+                tracing::debug!(
+                    num_gt_exponentiations = hint_with_steps.exponentiation_steps.len(),
+                    num_commitments = dory_commitments_slice.len(),
+                    "Prover captured GT exponentiation steps from homomorphic commitment combining"
+                );
+
+                homomorphic_combining_hint = Some(hint_with_steps.scaled_commitments);
+            }
+
             PCS::combine_hints(hints, &coeffs)
         };
 
         // Reduced opening proof
+        #[cfg(feature = "recursion")]
+        let joint_opening_proof = {
+            // Check if PCS is DoryCommitmentScheme and use prove_with_auxiliary
+            if std::any::TypeId::of::<PCS>()
+                == std::any::TypeId::of::<super::commitment::dory::DoryCommitmentScheme>()
+            {
+                use super::commitment::recursion::RecursionCommitmentScheme;
+
+                // Call prove_with_auxiliary through the RecursionCommitmentScheme trait
+                // SAFETY: We just checked the type is DoryCommitmentScheme
+                let prove_fn: fn(
+                    &PCS::ProverSetup,
+                    &MultilinearPolynomial<F>,
+                    &[F],
+                    PCS::OpeningProofHint,
+                    &mut ProofTranscript,
+                ) -> (PCS::Proof, <super::commitment::dory::DoryCommitmentScheme as RecursionCommitmentScheme>::AuxiliaryVerifierData) = unsafe {
+                    std::mem::transmute(
+                        super::commitment::dory::DoryCommitmentScheme::prove_with_auxiliary::<ProofTranscript>
+                            as fn(_, _, _, _, _) -> _,
+                    )
+                };
+
+                let (proof, auxiliary_data) =
+                    prove_fn(pcs_setup, &joint_poly, &r_sumcheck, hint, transcript);
+
+                // Extract exponentiation steps from auxiliary data
+                if let Some(ref steps) = auxiliary_data.full_exponentiation_steps {
+                    self.extend_recursion_ops(steps.clone());
+                }
+
+                proof
+            } else {
+                PCS::prove(pcs_setup, &joint_poly, &r_sumcheck, hint, transcript)
+            }
+        };
+
+        #[cfg(not(feature = "recursion"))]
         let joint_opening_proof = PCS::prove(pcs_setup, &joint_poly, &r_sumcheck, hint, transcript);
 
         #[cfg(not(test))]
@@ -922,14 +1072,31 @@ where
             crate::utils::thread::drop_in_background_thread(sumchecks);
         }
 
-        ReducedOpeningProof {
-            sumcheck_proof,
-            sumcheck_claims,
-            joint_opening_proof,
-            #[cfg(test)]
-            joint_poly,
-            #[cfg(test)]
-            joint_commitment,
+        #[cfg(feature = "recursion")]
+        {
+            ReducedOpeningProof {
+                sumcheck_proof,
+                sumcheck_claims,
+                joint_opening_proof,
+                homomorphic_gt_results: homomorphic_combining_hint,
+                #[cfg(test)]
+                joint_poly,
+                #[cfg(test)]
+                joint_commitment,
+            }
+        }
+
+        #[cfg(not(feature = "recursion"))]
+        {
+            ReducedOpeningProof {
+                sumcheck_proof,
+                sumcheck_claims,
+                joint_opening_proof,
+                #[cfg(test)]
+                joint_poly,
+                #[cfg(test)]
+                joint_commitment,
+            }
         }
     }
 
@@ -975,6 +1142,25 @@ where
             .collect();
 
         (sumcheck_proof, r_sumcheck, claims)
+    }
+
+    #[cfg(feature = "recursion")]
+    pub fn set_recursion_ops(&mut self, ops: Vec<jolt_optimizations::ExponentiationSteps>) {
+        tracing::debug!(num_operations = ops.len(), "Setting recursion operations");
+        self.recursion_ops = Some(ops);
+    }
+
+    #[cfg(feature = "recursion")]
+    pub fn get_recursion_ops(&self) -> Option<&Vec<jolt_optimizations::ExponentiationSteps>> {
+        self.recursion_ops.as_ref()
+    }
+
+    #[cfg(feature = "recursion")]
+    fn extend_recursion_ops(
+        &mut self,
+        ops: impl IntoIterator<Item = jolt_optimizations::ExponentiationSteps>,
+    ) {
+        self.recursion_ops.get_or_insert_with(Vec::new).extend(ops);
     }
 }
 
@@ -1023,6 +1209,18 @@ where
         let (point, claim) = self
             .openings
             .get(&OpeningId::Virtual(polynomial, sumcheck))
+            .unwrap_or_else(|| panic!("No opening found for {sumcheck:?} {polynomial:?}"));
+        (point.clone(), *claim)
+    }
+
+    pub fn get_recursion_polynomial_opening(
+        &self,
+        polynomial: RecursionCommittedPolynomial,
+        sumcheck: SumcheckId,
+    ) -> (OpeningPoint<BIG_ENDIAN, F>, F) {
+        let (point, claim) = self
+            .openings
+            .get(&OpeningId::Recursion(polynomial, sumcheck))
             .unwrap_or_else(|| panic!("No opening found for {sumcheck:?} {polynomial:?}"));
         (point.clone(), *claim)
     }
@@ -1156,9 +1354,38 @@ where
         }
     }
 
+    pub fn append_dense_recursion(
+        &mut self,
+        polynomials: Vec<RecursionCommittedPolynomial>,
+        sumcheck: SumcheckId,
+        opening_point: Vec<F>,
+    ) {
+        let claims: Vec<F> = polynomials
+            .iter()
+            .map(|poly| {
+                self.openings
+                    .get(&OpeningId::Recursion(*poly, sumcheck))
+                    .map(|(_, claim)| *claim)
+                    .unwrap_or_else(|| {
+                        panic!("No opening found for recursion polynomial {:?}", poly)
+                    })
+            })
+            .collect();
+
+        // Store the opening points with claims
+        for (poly, claim) in polynomials.iter().zip(claims.iter()) {
+            let opening_point_struct = OpeningPoint::<BIG_ENDIAN, F>::new(opening_point.clone());
+            let key = OpeningId::Recursion(*poly, sumcheck);
+            self.openings.insert(key, (opening_point_struct, *claim));
+        }
+    }
+
     /// Verifies that the given `reduced_opening_proof` (consisting of a sumcheck proof
     /// and a single opening proof) indeed proves the openings accumulated.
-    pub fn reduce_and_verify<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
+    pub fn reduce_and_verify<
+        ProofTranscript: Transcript,
+        PCS: CommitmentScheme<Field = F> + AdditivelyHomomorphic,
+    >(
         &mut self,
         pcs_setup: &PCS::VerifierSetup,
         commitment_map: &mut HashMap<CommittedPolynomial, PCS::Commitment>,
@@ -1253,7 +1480,70 @@ where
                 .unzip();
             debug_assert!(commitment_map.is_empty(), "Every commitment should be used");
 
-            PCS::combine_commitments(&commitments, &coeffs)
+            // In recursion mode with Dory, use precomputed GT results from prover
+            #[cfg(feature = "recursion")]
+            {
+                if std::any::TypeId::of::<PCS>()
+                    == std::any::TypeId::of::<super::commitment::dory::DoryCommitmentScheme>()
+                {
+                    use super::commitment::dory::{
+                        DoryCombinedCommitmentHint, DoryCommitment, DoryCommitmentScheme,
+                    };
+                    use super::commitment::recursion::RecursionCommitmentScheme;
+
+                    if let Some(ref gt_results) = reduced_opening_proof.homomorphic_gt_results {
+                        tracing::debug!(
+                            num_gt_results = gt_results.len(),
+                            num_commitments = commitments.len(),
+                            "Verifier using precomputed GT hint for homomorphic commitment combining"
+                        );
+
+                        let hint = DoryCombinedCommitmentHint {
+                            scaled_commitments: gt_results.clone(),
+                            exponentiation_steps: vec![], // Verifier doesn't need steps
+                        };
+
+                        let dory_commitments: &[DoryCommitment] = unsafe {
+                            std::slice::from_raw_parts(
+                                commitments.as_ptr() as *const DoryCommitment,
+                                commitments.len(),
+                            )
+                        };
+
+                        let dory_coeffs: &[<DoryCommitmentScheme as super::commitment::commitment_scheme::CommitmentScheme>::Field] = unsafe {
+                            std::slice::from_raw_parts(
+                                coeffs.as_ptr() as *const <DoryCommitmentScheme as super::commitment::commitment_scheme::CommitmentScheme>::Field,
+                                coeffs.len(),
+                            )
+                        };
+
+                        let joint_commitment_dory =
+                            DoryCommitmentScheme::combine_commitments_with_hint(
+                                dory_commitments,
+                                dory_coeffs,
+                                Some(&hint),
+                            );
+
+                        tracing::debug!("Verifier successfully combined commitments using GT hint");
+
+                        unsafe {
+                            std::mem::transmute_copy::<DoryCommitment, PCS::Commitment>(
+                                &joint_commitment_dory,
+                            )
+                        }
+                    } else {
+                        tracing::debug!(
+                            "Verifier computing GT operations natively (no hint available)"
+                        );
+                        PCS::combine_commitments(&commitments, &coeffs).unwrap()
+                    }
+                } else {
+                    PCS::combine_commitments(&commitments, &coeffs).unwrap()
+                }
+            }
+
+            #[cfg(not(feature = "recursion"))]
+            PCS::combine_commitments(&commitments, &coeffs).unwrap()
         };
 
         #[cfg(test)]
@@ -1282,7 +1572,9 @@ where
             &r_sumcheck,
             &joint_claim,
             &joint_commitment,
-        )
+        )?;
+
+        Ok(())
     }
 
     /// Verifies the sumcheck proven in `ProverOpeningAccumulator::prove_batch_opening_reduction`.

@@ -113,8 +113,8 @@ impl GuestProgram {
                     MemoryConfig {
                         max_input_size: 4096,
                         max_output_size: 4096,
-                        memory_size: 33554432,
-                        stack_size: 1048576,
+                        memory_size: 134217728,
+                        stack_size: 16777216,
                         program_size: None,
                     }
                 } else {
@@ -153,9 +153,9 @@ impl GuestProgram {
         match self {
             GuestProgram::Fibonacci => {
                 if use_embed {
-                    67108864
+                    1000000
                 } else {
-                    5000000
+                    1000000
                 }
             }
             GuestProgram::Muldiv => {
@@ -648,6 +648,7 @@ fn main() {
         }
         None => {
             info!("No subcommand specified. Available commands:");
+            info!("");
             info!("  generate --example <fibonacci|muldiv> [--workdir <DIR>]");
             info!("  verify --example <fibonacci|muldiv> [--workdir <DIR>] [--embed <DIR>]");
             info!("");

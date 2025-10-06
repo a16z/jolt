@@ -1,4 +1,5 @@
 use crate::field::JoltField;
+use crate::poly::commitment::additive_homomorphic::AdditivelyHomomorphic;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 
 use crate::guest::program::Program;
@@ -38,7 +39,7 @@ pub fn verify<F, PCS, FS>(
 ) -> Result<(), ProofVerifyError>
 where
     F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<Field = F> + AdditivelyHomomorphic,
     FS: Transcript,
     JoltRV64IMAC: Jolt<F, PCS, FS>,
 {

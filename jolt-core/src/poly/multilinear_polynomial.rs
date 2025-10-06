@@ -74,6 +74,14 @@ impl<F: JoltField> Default for MultilinearPolynomial<F> {
 }
 
 impl<F: JoltField> MultilinearPolynomial<F> {
+    pub fn from_fq_vec(fq_vec: Vec<ark_bn254::Fq>) -> Self
+    where
+        F: From<ark_bn254::Fq>,
+    {
+        let f_vec: Vec<F> = fq_vec.into_iter().map(F::from).collect();
+        MultilinearPolynomial::LargeScalars(DensePolynomial::new(f_vec))
+    }
+
     /// The length of the polynomial before it was bound
     pub fn original_len(&self) -> usize {
         match self {

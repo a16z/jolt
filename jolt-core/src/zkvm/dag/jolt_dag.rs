@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use crate::field::JoltField;
+use crate::poly::commitment::additive_homomorphic::AdditivelyHomomorphic;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::dory::DoryGlobals;
 use crate::subprotocols::sumcheck::{BatchedSumcheck, SumcheckInstance};
@@ -29,6 +30,13 @@ use allocative::FlameGraphBuilder;
 use anyhow::Context;
 use rayon::prelude::*;
 
+#[cfg(feature = "recursion")]
+use crate::poly::commitment::pedersen::PedersenGenerators;
+#[cfg(feature = "recursion")]
+use crate::subprotocols::snark_composition::snark_composition_prove;
+#[cfg(feature = "recursion")]
+use ark_grumpkin::Projective as GrumpkinProjective;
+
 pub enum JoltDAG {}
 
 impl JoltDAG {
@@ -38,7 +46,7 @@ impl JoltDAG {
         'a,
         F: JoltField,
         ProofTranscript: Transcript,
-        PCS: CommitmentScheme<Field = F>,
+        PCS: CommitmentScheme<Field = F> + AdditivelyHomomorphic,
     >(
         mut state_manager: StateManager<'a, F, ProofTranscript, PCS>,
     ) -> Result<
@@ -65,7 +73,8 @@ impl JoltDAG {
         );
 
         // Generate and commit to all witness polynomials
-        let opening_proof_hints = Self::generate_and_commit_polynomials(&mut state_manager)?;
+        let (opening_proof_hints, commitment_map) =
+            Self::generate_and_commit_polynomials(&mut state_manager)?;
 
         // Append commitments to transcript
         let commitments = state_manager.get_commitments();
@@ -275,6 +284,7 @@ impl JoltDAG {
         let opening_proof = accumulator.borrow_mut().reduce_and_prove(
             polynomials_map,
             opening_proof_hints,
+            commitment_map,
             &preprocessing.generators,
             &mut *transcript.borrow_mut(),
         );
@@ -300,6 +310,70 @@ impl JoltDAG {
                 .borrow()
         );
 
+        // Stage 6: SNARK Composition for dory verifier in recursion mode
+        #[cfg(feature = "recursion")]
+        {
+            let stage6_start = std::time::Instant::now();
+            tracing::info!("Stage 6: SNARK composition proving");
+
+            let exps_to_prove = state_manager
+                .get_prover_accumulator()
+                .borrow()
+                .get_recursion_ops()
+                .cloned()
+                .unwrap_or_default();
+
+            tracing::debug!(
+                num_exponentiations = exps_to_prove.len(),
+                "Retrieved recursion operations"
+            );
+
+            let gen_start = std::time::Instant::now();
+            let hyrax_generators = PedersenGenerators::<GrumpkinProjective>::from_urs_file(
+                16,
+                b"recursion check",
+                Some("hyrax_urs_16.urs"),
+            );
+            tracing::debug!(
+                duration_ms = gen_start.elapsed().as_millis(),
+                "Loaded Hyrax generators"
+            );
+
+            // TODO(markosg04): this is jank
+            // Better way to handle the generics here?
+            let prove_start = std::time::Instant::now();
+            let recursion_proof = snark_composition_prove::<ark_bn254::Fq, ProofTranscript, 1>(
+                exps_to_prove,
+                &mut *transcript.borrow_mut(),
+                &hyrax_generators,
+            );
+            tracing::info!(
+                duration_ms = prove_start.elapsed().as_millis(),
+                "SNARK composition proof generated"
+            );
+
+            let recursion_proof_f = unsafe {
+                std::mem::transmute::<
+                    crate::subprotocols::snark_composition::RecursionProof<
+                        ark_bn254::Fq,
+                        ProofTranscript,
+                        1,
+                    >,
+                    crate::subprotocols::snark_composition::RecursionProof<F, ProofTranscript, 1>,
+                >(recursion_proof)
+            };
+
+            state_manager.proofs.borrow_mut().insert(
+                ProofKeys::Recursion,
+                ProofData::RecursionProof(recursion_proof_f),
+            );
+
+            tracing::info!(
+                total_duration_ms = stage6_start.elapsed().as_millis(),
+                "Stage 6 complete"
+            );
+        }
+
         #[cfg(test)]
         let debug_info = {
             let transcript = state_manager.transcript.take();
@@ -323,7 +397,7 @@ impl JoltDAG {
         'a,
         F: JoltField,
         ProofTranscript: Transcript,
-        PCS: CommitmentScheme<Field = F>,
+        PCS: CommitmentScheme<Field = F> + AdditivelyHomomorphic,
     >(
         mut state_manager: StateManager<'a, F, ProofTranscript, PCS>,
     ) -> Result<(), anyhow::Error> {
@@ -444,7 +518,7 @@ impl JoltDAG {
         )
         .context("Stage 4")?;
 
-        // Batch-prove all openings
+        // Stage 5: Opening Proof Verification
         let batched_opening_proof = proofs
             .get(&ProofKeys::ReducedOpeningProof)
             .expect("Reduced opening proof not found");
@@ -460,6 +534,7 @@ impl JoltDAG {
                 commitments.borrow()[polynomial.to_index()].clone(),
             );
         }
+
         let accumulator = state_manager.get_verifier_accumulator();
         accumulator
             .borrow_mut()
@@ -470,6 +545,63 @@ impl JoltDAG {
                 &mut *transcript.borrow_mut(),
             )
             .context("Stage 5")?;
+
+        // Stage 6: Verify SNARK Composition in recursion mode
+        #[cfg(feature = "recursion")]
+        {
+            // @TODO(markosg04) jank casts
+            use crate::poly::commitment::pedersen::PedersenGenerators;
+            use crate::subprotocols::snark_composition::snark_composition_verify;
+            use ark_bn254::Fq;
+            use ark_grumpkin::Projective as GrumpkinProjective;
+
+            let stage6_start = std::time::Instant::now();
+            tracing::info!("Verifier: Stage 6 SNARK composition verification");
+
+            let proofs = state_manager.proofs.borrow();
+            if let Some(ProofData::RecursionProof(sz_proof)) = proofs.get(&ProofKeys::Recursion) {
+                let gen_start = std::time::Instant::now();
+                let hyrax_generators = PedersenGenerators::<GrumpkinProjective>::from_urs_file(
+                    16,
+                    b"recursion check",
+                    Some("hyrax_urs_16.urs"),
+                );
+                tracing::debug!(
+                    duration_ms = gen_start.elapsed().as_millis(),
+                    "Loaded Hyrax generators"
+                );
+
+                let sz_proof_fq = unsafe {
+                    std::mem::transmute::<
+                        &crate::subprotocols::snark_composition::RecursionProof<
+                            F,
+                            ProofTranscript,
+                            1,
+                        >,
+                        &crate::subprotocols::snark_composition::RecursionProof<
+                            Fq,
+                            ProofTranscript,
+                            1,
+                        >,
+                    >(sz_proof)
+                };
+
+                let verify_start = std::time::Instant::now();
+                snark_composition_verify::<Fq, ProofTranscript, 1>(
+                    sz_proof_fq,
+                    &mut *transcript.borrow_mut(),
+                    &hyrax_generators,
+                )
+                .context("Stage 6 - Recursion Check Protocol verification")?;
+
+                tracing::info!(
+                    verify_duration_ms = verify_start.elapsed().as_millis(),
+                    total_duration_ms = stage6_start.elapsed().as_millis(),
+                    "Stage 6 verification successful"
+                );
+            }
+            drop(proofs);
+        }
 
         Ok(())
     }
@@ -483,7 +615,13 @@ impl JoltDAG {
         PCS: CommitmentScheme<Field = F>,
     >(
         prover_state_manager: &mut StateManager<'a, F, ProofTranscript, PCS>,
-    ) -> Result<HashMap<CommittedPolynomial, PCS::OpeningProofHint>, anyhow::Error> {
+    ) -> Result<
+        (
+            HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
+            HashMap<CommittedPolynomial, PCS::Commitment>,
+        ),
+        anyhow::Error,
+    > {
         let (preprocessing, trace, _program_io, _final_memory_state) =
             prover_state_manager.get_prover_data();
 
@@ -502,14 +640,18 @@ impl JoltDAG {
                 .map(|poly| PCS::commit(poly, &preprocessing.generators))
                 .unzip();
         let mut hint_map = HashMap::with_capacity(committed_polys.len());
-        for (poly, hint) in AllCommittedPolynomials::iter().zip(hints) {
+        let mut commitment_map = HashMap::with_capacity(committed_polys.len());
+        for ((poly, hint), commitment) in
+            AllCommittedPolynomials::iter().zip(hints).zip(&commitments)
+        {
             hint_map.insert(*poly, hint);
+            commitment_map.insert(*poly, commitment.clone());
         }
 
         prover_state_manager.set_commitments(commitments);
 
         drop_in_background_thread(committed_polys);
 
-        Ok(hint_map)
+        Ok((hint_map, commitment_map))
     }
 }

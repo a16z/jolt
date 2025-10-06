@@ -1,5 +1,6 @@
 use super::program::Program;
 use crate::field::JoltField;
+use crate::poly::commitment::additive_homomorphic::AdditivelyHomomorphic;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::dory::DoryCommitmentScheme;
 use crate::transcripts::Transcript;
@@ -37,7 +38,7 @@ pub fn prove<F, PCS, FS>(
 )
 where
     F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<Field = F> + AdditivelyHomomorphic,
     FS: Transcript,
     JoltRV64IMAC: Jolt<F, PCS, FS>,
 {
