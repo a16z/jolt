@@ -291,21 +291,19 @@ where
 
             let steps = ExponentiationSteps::new(fq12_val, scalar_fr);
 
-            // Sanity check: verify naive pow() equals steps.result
-            let naive_result = fq12_val.pow(scalar_fr.into_bigint());
-            assert_eq!(
-                naive_result, steps.result,
-                "Mismatch between naive pow() and ExponentiationSteps::new result"
-            );
+            #[cfg(test)]
+            {
+                let naive_result = fq12_val.pow(scalar_fr.into_bigint());
+                assert_eq!(
+                    naive_result, steps.result,
+                    "Mismatch between naive pow() and ExponentiationSteps::new result"
+                );
+            }
 
-            // Convert back through serialization
-            let mut result_bytes = Vec::new();
-            steps
-                .result
-                .serialize_compressed(&mut result_bytes)
-                .expect("Serialization should not fail");
-            let result_as_target = P::TargetField::deserialize_compressed(&result_bytes[..])
-                .expect("Deserialization should not fail for valid data");
+            // # SAFETY: P is Bn254, and Fq12 == P::TargetField
+            let result_as_target = unsafe {
+                std::mem::transmute_copy::<ark_bn254::Fq12, P::TargetField>(&steps.result)
+            };
 
             (Self(result_as_target), steps)
         } else {
@@ -349,8 +347,7 @@ impl DoryMultiScalarMul<JoltGroupWrapper<G1Projective>> for JoltMsmG1 {
         let affines = G1Projective::normalize_batch(projective_points);
 
         // # Safety
-        // JoltFieldWrapper is repr(transparent) with Fr as its only field,
-        // so it has identical memory layout to Fr. This makes the pointer cast safe.
+        // JoltFieldWrapper always has same memory layout as underlying Fr here.
         let raw_scalars: &[Fr] =
             unsafe { std::slice::from_raw_parts(scalars.as_ptr() as *const Fr, scalars.len()) };
 
@@ -371,8 +368,7 @@ impl DoryMultiScalarMul<JoltGroupWrapper<G1Projective>> for JoltMsmG1 {
         }
 
         // # Safety
-        // JoltFieldWrapper is repr(transparent) with Fr as its only field,
-        // so it has identical memory layout to Fr. This makes the pointer cast safe.
+        // JoltFieldWrapper always has same memory layout as underlying Fr
         let raw_scalars: &[Fr] =
             unsafe { std::slice::from_raw_parts(scalars.as_ptr() as *const Fr, scalars.len()) };
 
@@ -473,7 +469,6 @@ impl DoryMultiScalarMul<JoltGroupWrapper<G2Projective>> for JoltMsmG2 {
 
         // # Safety
         // JoltFieldWrapper is repr(transparent) with Fr as its only field,
-        // so it has identical memory layout to Fr. This makes the pointer cast safe.
         let raw_scalars: &[Fr] =
             unsafe { std::slice::from_raw_parts(scalars.as_ptr() as *const Fr, scalars.len()) };
 
@@ -495,7 +490,6 @@ impl DoryMultiScalarMul<JoltGroupWrapper<G2Projective>> for JoltMsmG2 {
 
         // # Safety
         // JoltFieldWrapper is repr(transparent) with Fr as its only field,
-        // so it has identical memory layout to Fr. This makes the pointer cast safe.
         let raw_scalars: &[Fr] =
             unsafe { std::slice::from_raw_parts(scalars.as_ptr() as *const Fr, scalars.len()) };
 
@@ -798,21 +792,11 @@ where
         let pairing_result = Bn254::final_exponentiation(MillerLoopOutput(ml_result))
             .expect("Final exponentiation should not fail");
 
-        // Since we know this is BN254 at runtime (checked by the type system via the cache types),
-        // and JoltGTWrapper is repr(transparent), we can safely convert via serialization
-        // to avoid unsafe transmute
+        // # Safety
+        // When E = Bn254, JoltGTWrapper<Bn254> has same memory layout as JoltGTWrapper<E>
+        // since JoltGTWrapper is repr(transparent) and E::TargetField = Bn254::TargetField
         let bn_result = JoltGTWrapper::<Bn254>(pairing_result.0);
-
-        // Serialize and deserialize to convert between generic E and concrete Bn254
-        let mut bytes = Vec::new();
-        bn_result
-            .0
-            .serialize_compressed(&mut bytes)
-            .expect("Serialization should not fail");
-        let target_field = E::TargetField::deserialize_compressed(&bytes[..])
-            .expect("Deserialization should not fail for valid data");
-
-        JoltGTWrapper(target_field)
+        unsafe { std::mem::transmute_copy(&bn_result) }
     }
 }
 
@@ -1104,7 +1088,7 @@ pub struct DoryBatchedProof {
 #[cfg(feature = "recursion")]
 #[derive(Clone, Debug, Default, CanonicalSerialize, CanonicalDeserialize)]
 pub struct DoryAuxiliaryData {
-    /// Full exponentiation steps for recursion verification
+    /// Witness data for the dory SNARK composition
     pub full_exponentiation_steps: Option<Vec<ExponentiationSteps>>,
 }
 
@@ -1113,7 +1097,7 @@ pub struct DoryAuxiliaryData {
 pub struct DoryCombinedCommitmentHint {
     /// Precomputed GT elements after scalar multiplication
     pub scaled_commitments: Vec<JoltGTBn254>,
-    /// Exponentiation steps collected during precomputation
+    /// Witness data for the dory SNARK composition
     pub exponentiation_steps: Vec<ExponentiationSteps>,
 }
 
@@ -1286,14 +1270,13 @@ impl RecursionCommitmentScheme for DoryCommitmentScheme {
         commitments: &[C],
         coeffs: &[Self::Field],
     ) -> (Self::Commitment, Self::CombinedCommitmentHint) {
-        // Compute scaled commitments using scale_with_steps
         let mut scaled_commitments = Vec::new();
         let mut exponentiation_steps = Vec::new();
 
         for (commitment, coeff) in commitments.iter().zip(coeffs.iter()) {
             let g: PairingOutput<_> = commitment.borrow().0.clone().into();
             let gt_wrapper = JoltGTWrapper::from(g);
-            // Use scale_with_steps to get the result and collect the steps
+
             let (scaled_result, steps) = gt_wrapper.scale_with_steps(&JoltFieldWrapper(*coeff));
             scaled_commitments.push(scaled_result);
             exponentiation_steps.push(steps);
@@ -1319,14 +1302,14 @@ impl RecursionCommitmentScheme for DoryCommitmentScheme {
                 "DORY: Using precomputed GT hint with {} elements",
                 hint.scaled_commitments.len()
             );
-            // In recursion mode with hint: just sum precomputed values
+            // In recursion mode with hint we just sum precomputed values
             debug_assert_eq!(
                 hint.scaled_commitments.len(),
                 commitments.len(),
                 "Hint length must match commitments length"
             );
 
-            #[cfg(debug_assertions)]
+            #[cfg(test)]
             {
                 // Verify hint matches native computation
                 let native_result = Self::combine_commitments_native(commitments, coeffs);
@@ -1337,7 +1320,6 @@ impl RecursionCommitmentScheme for DoryCommitmentScheme {
                 );
             }
 
-            // Use precomputed results - no expensive GT scaling needed!
             let combined: JoltGTBn254 = hint.scaled_commitments.iter().cloned().sum();
             return DoryCommitment(combined);
         }
@@ -1378,7 +1360,7 @@ impl RecursionCommitmentScheme for DoryCommitmentScheme {
             dory_transcript,
         );
 
-        // Build proof with full exponentiation steps for recursion
+        // Build proof with full witness for recursion
         let (dory_proof, full_exponentiation_steps) = proof_builder.build_with_full_steps();
 
         let proof = DoryProofData {
@@ -1391,56 +1373,6 @@ impl RecursionCommitmentScheme for DoryCommitmentScheme {
         };
 
         (proof, auxiliary_data)
-    }
-
-    fn prove_opening_with_recursion<ProofTranscript: Transcript>(
-        setup: &Self::ProverSetup,
-        poly: &MultilinearPolynomial<Self::Field>,
-        opening_point: &[Self::Field],
-        hint: Self::OpeningProofHint,
-        transcript: &mut ProofTranscript,
-        commitment_coeffs: Option<&[(Self::Commitment, Self::Field)]>,
-    ) -> (
-        Self::Proof,
-        Self::CombinedCommitmentHint,
-        Self::AuxiliaryVerifierData,
-    ) {
-        // First, handle homomorphic combining if commitment_coeffs provided
-        let combined_hint = if let Some(coeffs_data) = commitment_coeffs {
-            let (commitments, coeffs): (Vec<_>, Vec<_>) =
-                coeffs_data.iter().map(|(c, coeff)| (c, *coeff)).unzip();
-
-            tracing::debug!(
-                num_commitments = commitments.len(),
-                "Precomputing combined commitment with steps"
-            );
-
-            let (_combined_commitment, hint) =
-                Self::precompute_combined_commitment(&commitments, &coeffs);
-
-            tracing::debug!(
-                num_gt_exponentiations = hint.exponentiation_steps.len(),
-                "Captured GT exponentiation steps from homomorphic combining"
-            );
-
-            hint
-        } else {
-            DoryCombinedCommitmentHint::default()
-        };
-
-        // Generate the opening proof with auxiliary data
-        let (proof, mut auxiliary_data) =
-            Self::prove_with_auxiliary(setup, poly, opening_point, hint, transcript);
-
-        // Merge combining steps into auxiliary data
-        if !combined_hint.exponentiation_steps.is_empty() {
-            auxiliary_data
-                .full_exponentiation_steps
-                .get_or_insert_with(Vec::new)
-                .splice(0..0, combined_hint.exponentiation_steps.clone());
-        }
-
-        (proof, combined_hint, auxiliary_data)
     }
 }
 
@@ -1457,6 +1389,7 @@ impl AdditivelyHomomorphic for DoryCommitmentScheme {
     /// can homomorphically combine the row commitments for multiple polynomials into the
     /// row commitments for the RLC of those polynomials. This is more efficient than computing
     /// the row commitments for the RLC from scratch.
+    #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::combine_hints")]
     fn combine_hints(
         hints: Vec<Self::OpeningProofHint>,
         coeffs: &[Self::Field],
@@ -1494,7 +1427,6 @@ impl AdditivelyHomomorphic for DoryCommitmentScheme {
 }
 
 impl DoryCommitmentScheme {
-    /// Native implementation of combine_commitments that performs GT scalar multiplications
     fn combine_commitments_native<C: Borrow<DoryCommitment>>(
         commitments: &[C],
         coeffs: &[Fr],
@@ -1509,7 +1441,6 @@ impl DoryCommitmentScheme {
                 g * coeff
             })
             .sum();
-        // println!("how many GT? {:?}", counter);
         DoryCommitment(JoltGTWrapper::from(combined_commitment))
     }
 }
@@ -1718,7 +1649,7 @@ mod tests {
 
     #[test]
     #[serial]
-    #[cfg(not(feature = "recursion"))] //TODO(markosg04) this is broken when not? the other tests pass with recursion on...
+    #[cfg(not(feature = "recursion"))]
     fn test_dory_soundness() {
         use ark_std::UniformRand;
 

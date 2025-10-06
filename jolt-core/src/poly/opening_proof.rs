@@ -608,8 +608,7 @@ pub struct ReducedOpeningProof<
     pub sumcheck_proof: SumcheckInstanceProof<F, ProofTranscript>,
     pub sumcheck_claims: Vec<F>,
     pub joint_opening_proof: PCS::Proof,
-    /// Precomputed GT commitments from homomorphic combining (Dory recursion verifier optimization)
-    /// Contains only the scaled GT commitments, not the exponentiation steps
+    /// Precomputed GT commitments from homomorphic combining (Dory recursion-mode verifier optimization)
     #[cfg(feature = "recursion")]
     pub homomorphic_gt_results: Option<Vec<super::commitment::dory::JoltGTBn254>>,
     #[cfg(test)]
@@ -991,7 +990,6 @@ where
                 let (dory_commitments, dory_coeffs_vec): (Vec<_>, Vec<_>) =
                     commitment_coeffs.into_iter().unzip();
 
-                // SAFETY: We just checked the type is DoryCommitmentScheme
                 let dory_commitments_slice: &[DoryCommitment] = unsafe {
                     std::slice::from_raw_parts(
                         dory_commitments.as_ptr() as *const DoryCommitment,
@@ -1012,7 +1010,7 @@ where
                         dory_coeffs,
                     );
 
-                // Add exponentiation steps to recursion_ops for stage 6 recursion proof
+                // Add the dory verifier steps witness for stage 6
                 self.extend_recursion_ops(hint_with_steps.exponentiation_steps.clone());
 
                 tracing::debug!(
@@ -1021,7 +1019,6 @@ where
                     "Prover captured GT exponentiation steps from homomorphic commitment combining"
                 );
 
-                // Store GT results for the verifier (not the steps)
                 homomorphic_combining_hint = Some(hint_with_steps.scaled_commitments);
             }
 
@@ -1148,20 +1145,17 @@ where
     }
 
     #[cfg(feature = "recursion")]
-    #[tracing::instrument(skip_all, name = "ProverOpeningAccumulator::set_recursion_ops")]
     pub fn set_recursion_ops(&mut self, ops: Vec<jolt_optimizations::ExponentiationSteps>) {
         tracing::debug!(num_operations = ops.len(), "Setting recursion operations");
         self.recursion_ops = Some(ops);
     }
 
     #[cfg(feature = "recursion")]
-    #[tracing::instrument(skip_all, name = "ProverOpeningAccumulator::get_recursion_ops")]
     pub fn get_recursion_ops(&self) -> Option<&Vec<jolt_optimizations::ExponentiationSteps>> {
         self.recursion_ops.as_ref()
     }
 
     #[cfg(feature = "recursion")]
-    #[tracing::instrument(skip_all, name = "ProverOpeningAccumulator::extend_recursion_ops")]
     fn extend_recursion_ops(
         &mut self,
         ops: impl IntoIterator<Item = jolt_optimizations::ExponentiationSteps>,
@@ -1366,10 +1360,6 @@ where
         sumcheck: SumcheckId,
         opening_point: Vec<F>,
     ) {
-        // For recursion polynomials, we need to handle them separately
-        // since they don't fit into the regular CommittedPolynomial enum
-
-        // Get the claims from the openings map
         let claims: Vec<F> = polynomials
             .iter()
             .map(|poly| {
@@ -1490,7 +1480,7 @@ where
                 .unzip();
             debug_assert!(commitment_map.is_empty(), "Every commitment should be used");
 
-            // In recursion mode with Dory, use precomputed GT results if available
+            // In recursion mode with Dory, use precomputed GT results from prover
             #[cfg(feature = "recursion")]
             {
                 if std::any::TypeId::of::<PCS>()
@@ -1508,13 +1498,11 @@ where
                             "Verifier using precomputed GT hint for homomorphic commitment combining"
                         );
 
-                        // Build hint from GT results
                         let hint = DoryCombinedCommitmentHint {
                             scaled_commitments: gt_results.clone(),
                             exponentiation_steps: vec![], // Verifier doesn't need steps
                         };
 
-                        // SAFETY: We just checked the type is DoryCommitmentScheme
                         let dory_commitments: &[DoryCommitment] = unsafe {
                             std::slice::from_raw_parts(
                                 commitments.as_ptr() as *const DoryCommitment,
@@ -1538,7 +1526,6 @@ where
 
                         tracing::debug!("Verifier successfully combined commitments using GT hint");
 
-                        // SAFETY: We know this is DoryCommitment
                         unsafe {
                             std::mem::transmute_copy::<DoryCommitment, PCS::Commitment>(
                                 &joint_commitment_dory,

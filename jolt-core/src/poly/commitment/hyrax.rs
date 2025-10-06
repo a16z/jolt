@@ -86,9 +86,9 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F>> HyraxComm
         batch: &[&[G::ScalarField]],
         generators: &PedersenGenerators<G>,
     ) -> Vec<Self> {
-        const EXPECTED_SIZE: usize = 16; // 2^4
-        const ROW_SIZE: usize = 4; // 2^2
-        const NUM_ROWS: usize = 4; // 2^2
+        const EXPECTED_SIZE: usize = 16;
+        const ROW_SIZE: usize = 4;
+        const NUM_ROWS: usize = 4;
 
         let start = std::time::Instant::now();
         tracing::info!(
@@ -97,16 +97,17 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F>> HyraxComm
             "Using optimized 4-var batch commit"
         );
 
-        // Verify all polynomials are size 16
-        batch.iter().for_each(|poly| {
-            assert_eq!(
-                poly.len(),
-                EXPECTED_SIZE,
-                "batch_commit_4var requires 16-coefficient polynomials"
-            );
-        });
+        #[cfg(test)]
+        {
+            batch.iter().for_each(|poly| {
+                assert_eq!(
+                    poly.len(),
+                    EXPECTED_SIZE,
+                    "batch_commit_4var requires 16-coefficient polynomials"
+                );
+            });
+        }
 
-        // Normalize generators once upfront
         let gen_start = std::time::Instant::now();
         let gens = CurveGroup::normalize_batch(&generators.generators[..ROW_SIZE]);
         tracing::debug!(
@@ -114,8 +115,6 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F>> HyraxComm
             "Generator normalization complete"
         );
 
-        // Flatten all polynomial rows for parallel processing
-        // Each polynomial has 4 rows of 4 elements
         let flatten_start = std::time::Instant::now();
         let all_rows: Vec<(usize, usize, &[G::ScalarField])> = batch
             .iter()
@@ -152,7 +151,6 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F>> HyraxComm
             "Parallel row commitment computation complete"
         );
 
-        // Reorganize commitments back into per-polynomial structure
         let reorg_start = std::time::Instant::now();
         let mut result = vec![vec![G::zero(); NUM_ROWS]; batch.len()];
         for (poly_idx, row_idx, commitment) in row_commitments {
@@ -189,8 +187,7 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F>> HyraxComm
         batch.iter().for_each(|poly| assert_eq!(poly.len(), n));
         let ell = n.log_2();
 
-        // Fast path for 4-variable polynomials (common in recursion with Hyrax)
-        // For small MSMs, the overhead dominates - use optimized serial inner product
+        // We we optimized variant for the recursion 4 variable polys
         if ell == 4 && RATIO == 1 {
             return Self::batch_commit_4var(batch, generators);
         }
@@ -220,20 +217,16 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F>> HyraxComm
             "Generator normalization complete"
         );
 
-        // Process each polynomial sequentially to avoid thread pool exhaustion
+        // TODO(markosg04) this path seems to cause a stack overflow with arkworks Variablebase MSM
         let mut all_commitments = Vec::with_capacity(batch.len());
 
         for (poly_idx, poly) in batch.iter().enumerate() {
             let poly_start = std::time::Instant::now();
             tracing::debug!(poly_idx, num_rows = L_size, "Committing polynomial");
 
-            // Parallelize only the MSM operations within each polynomial
             let row_commitments: Vec<G> = poly
                 .par_chunks(R_size)
-                .map(|row| {
-                    // Use msm_field_elements directly for better performance
-                    VariableBaseMSM::msm_field_elements(&gens[..row.len()], row).unwrap()
-                })
+                .map(|row| VariableBaseMSM::msm_field_elements(&gens[..row.len()], row).unwrap())
                 .collect();
 
             tracing::debug!(
@@ -423,7 +416,6 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F>>
             "Starting batched Hyrax opening proof"
         );
 
-        // append the claimed evaluations to transcript
         transcript.append_scalars(openings);
 
         let rlc_coefficients: Vec<_> = transcript.challenge_vector(polynomials.len());
@@ -517,7 +509,6 @@ impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F>>
             )
         });
 
-        // append the claimed evaluations to transcript
         transcript.append_scalars(openings);
 
         let rlc_coefficients: Vec<_> = transcript.challenge_vector(openings.len());

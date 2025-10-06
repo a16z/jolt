@@ -85,19 +85,17 @@ pub enum CommittedPolynomial {
 // #[cfg(feature = "recursion")]
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Allocative)]
 pub enum RecursionCommittedPolynomial {
-    /// Rho polynomials for recursion check: (exponentiation_idx, local_rho_idx)
+    /// Rho polynomials for exponentiation
     RecursionRho(usize, usize),
-    /// Base polynomial for exponentiation: exponentiation_idx
+    /// Base polynomial for exponentiation
     RecursionBase(usize),
-    /// Final evaluation G(z): exponentiation_idx
+    /// Irreducible poly for exponentiation
     RecursionG(usize),
-    /// Quotient polynomial for recursion check: (exponentiation_idx, local_quotient_idx)
+    /// Quotient polynomial for exponentiation
     RecursionQuotient(usize, usize),
 }
 
 impl RecursionCommittedPolynomial {
-    // Constants for the indexing scheme
-    const POLY_TYPE_BITS: usize = 2; // 2 bits for 4 types
     const EXP_IDX_BITS: usize = 12; // 12 bits = up to 4096 exponentiations
     const LOCAL_IDX_BITS: usize = 10; // 10 bits = up to 1024 local polynomials
 
@@ -128,7 +126,6 @@ impl RecursionCommittedPolynomial {
     }
 
     pub fn from_index(index: usize) -> Self {
-        // Decode the components
         let poly_type = index >> Self::POLY_TYPE_SHIFT;
         let exp_idx = (index >> Self::EXP_IDX_SHIFT) & ((1 << Self::EXP_IDX_BITS) - 1);
         let local_idx = index & ((1 << Self::LOCAL_IDX_BITS) - 1);

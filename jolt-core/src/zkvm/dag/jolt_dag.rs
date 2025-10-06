@@ -376,7 +376,7 @@ impl JoltDAG {
 
         #[cfg(test)]
         let debug_info = {
-            let transcript = state_manager.transcript.borrow().clone();
+            let transcript = state_manager.transcript.take();
             let opening_accumulator = state_manager.get_prover_accumulator().borrow().clone();
             Some(ProverDebugInfo {
                 transcript,
@@ -549,6 +549,7 @@ impl JoltDAG {
         // Stage 6: Verify SNARK Composition in recursion mode
         #[cfg(feature = "recursion")]
         {
+            // @TODO(markosg04) jank casts
             use crate::poly::commitment::pedersen::PedersenGenerators;
             use crate::subprotocols::snark_composition::snark_composition_verify;
             use ark_bn254::Fq;

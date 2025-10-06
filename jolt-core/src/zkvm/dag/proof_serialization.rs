@@ -59,11 +59,9 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
         self.commitments
             .serialize_with_mode(&mut writer, compress)?;
 
-        // Serialize all proofs
         let proof_count = self.proofs.len();
         proof_count.serialize_with_mode(&mut writer, compress)?;
 
-        // Serialize each proof entry
         for (key, proof_data) in &self.proofs {
             key.serialize_with_mode(&mut writer, compress)?;
             proof_data.serialize_with_mode(&mut writer, compress)?;
@@ -77,7 +75,6 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
         Ok(())
     }
     fn serialized_size(&self, compress: Compress) -> usize {
-        // Calculate size for all proofs
         let mut proofs_size = self.proofs.len().serialized_size(compress);
         for (key, proof_data) in &self.proofs {
             proofs_size += key.serialized_size(compress) + proof_data.serialized_size(compress);
@@ -125,7 +122,6 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
         let commitments =
             Vec::<PCS::Commitment>::deserialize_with_mode(&mut reader, compress, validate)?;
 
-        // Deserialize proofs with custom handling
         let proof_count = usize::deserialize_with_mode(&mut reader, compress, validate)?;
         let mut proofs = BTreeMap::new();
         for _ in 0..proof_count {
