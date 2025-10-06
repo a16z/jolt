@@ -33,6 +33,8 @@ use crate::{
 pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> {
     opening_claims: Claims<F>,
     commitments: Vec<PCS::Commitment>,
+    pub private_input_commitment: PCS::Commitment,
+    pub private_input_evaluation: F,
     proofs: Proofs<F, PCS, FS>,
     pub trace_length: usize,
     ram_K: usize,
@@ -57,6 +59,10 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
             .serialize_with_mode(&mut writer, compress)?;
         self.commitments
             .serialize_with_mode(&mut writer, compress)?;
+        self.private_input_commitment
+            .serialize_with_mode(&mut writer, compress)?;
+        self.private_input_evaluation
+            .serialize_with_mode(&mut writer, compress)?;
         self.proofs.serialize_with_mode(&mut writer, compress)?;
         self.trace_length
             .serialize_with_mode(&mut writer, compress)?;
@@ -69,6 +75,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
     fn serialized_size(&self, compress: Compress) -> usize {
         self.opening_claims.serialized_size(compress)
             + self.commitments.serialized_size(compress)
+            + self.private_input_commitment.serialized_size(compress)
+            + self.private_input_evaluation.serialized_size(compress)
             + self.proofs.serialized_size(compress)
             + self.trace_length.serialized_size(compress)
             + self.ram_K.serialized_size(compress)
@@ -83,6 +91,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> Valid
     fn check(&self) -> Result<(), SerializationError> {
         self.opening_claims.check()?;
         self.commitments.check()?;
+        self.private_input_commitment.check()?;
+        self.private_input_evaluation.check()?;
         self.proofs.check()?;
         self.trace_length.check()?;
         self.ram_K.check()?;
@@ -108,6 +118,9 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
         let opening_claims = Claims::deserialize_with_mode(&mut reader, compress, validate)?;
         let commitments =
             Vec::<PCS::Commitment>::deserialize_with_mode(&mut reader, compress, validate)?;
+        let private_input_commitment =
+            PCS::Commitment::deserialize_with_mode(&mut reader, compress, validate)?;
+        let private_input_evaluation = F::deserialize_with_mode(&mut reader, compress, validate)?;
         let proofs = Proofs::<F, PCS, FS>::deserialize_with_mode(&mut reader, compress, validate)?;
         let trace_length = usize::deserialize_with_mode(&mut reader, compress, validate)?;
         let twist_sumcheck_switch_index =
@@ -117,6 +130,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
         Ok(Self {
             opening_claims,
             commitments,
+            private_input_commitment,
+            private_input_evaluation,
             proofs,
             trace_length,
             ram_K,
@@ -135,10 +150,16 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> JoltProof<F
         let trace_length = prover_state.trace.len();
         let ram_K = state_manager.ram_K;
         let twist_sumcheck_switch_index = state_manager.twist_sumcheck_switch_index;
+        let private_input_commitment = state_manager.private_input_commitment
+            .expect("Private input commitment not set");
+        let private_input_evaluation = state_manager.private_input_evaluation
+            .expect("Private input evaluation not set");
 
         Self {
             opening_claims: Claims(openings),
             commitments,
+            private_input_commitment,
+            private_input_evaluation,
             proofs,
             trace_length,
             ram_K,
@@ -168,6 +189,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> JoltProof<F
             transcript,
             proofs,
             commitments,
+            private_input_commitment: Some(self.private_input_commitment),
+            private_input_evaluation: Some(self.private_input_evaluation),
             program_io,
             ram_K: self.ram_K,
             twist_sumcheck_switch_index: self.twist_sumcheck_switch_index,

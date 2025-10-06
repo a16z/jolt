@@ -237,7 +237,7 @@ impl RamDag {
                 .collect();
             assert_eq!(expected_final_memory_state, final_memory_state);
         }
-        println!("initial_ram_state prover: {:?}", initial_memory_state.to_vec());
+        // println!("initial_ram_state prover: {:?}", initial_memory_state.to_vec());
 
         Self {
             initial_memory_state: Some(initial_memory_state),
@@ -286,6 +286,7 @@ impl RamDag {
             initial_memory_state[index] = word;
             index += 1;
         }
+        println!("Double check private_input len: {}", program_io.private_inputs.len());
         // Cheating
         initial_memory_state[1] = 434041037028460038;
         initial_memory_state[2] = 434041037028460038;
@@ -308,7 +309,7 @@ impl RamDag {
             initial_memory_state[index] = word;
             index += 1;
         }
-        println!("initial_ram_state verifier: {:?}", initial_memory_state.to_vec());
+        // println!("initial_ram_state verifier: {:?}", initial_memory_state.to_vec());
 
         Self {
             initial_memory_state: Some(initial_memory_state),
@@ -398,9 +399,12 @@ where
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F>>> {
+        let private_input_eval = state_manager.private_input_evaluation
+            .expect("Private input evaluation not found in state manager");
         let val_evaluation = ValEvaluationSumcheck::new_verifier(
             self.initial_memory_state.as_ref().unwrap(),
             state_manager,
+            private_input_eval,
         );
         let val_final_evaluation = ValFinalSumcheck::new_verifier(
             self.initial_memory_state.as_ref().unwrap(),

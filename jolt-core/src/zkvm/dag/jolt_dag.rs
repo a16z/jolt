@@ -17,7 +17,7 @@ use crate::zkvm::dag::proof_serialization::JoltProof;
 use crate::zkvm::dag::stage::SumcheckStages;
 use crate::zkvm::dag::state_manager::{ProofData, ProofKeys, StateManager};
 use crate::zkvm::instruction_lookups::LookupsDag;
-use crate::zkvm::ram::RamDag;
+use crate::zkvm::ram::{remap_address, RamDag};
 use crate::zkvm::registers::RegistersDag;
 use crate::zkvm::spartan::SpartanDag;
 use crate::zkvm::witness::{
@@ -28,6 +28,83 @@ use crate::zkvm::ProverDebugInfo;
 use allocative::FlameGraphBuilder;
 use anyhow::Context;
 use rayon::prelude::*;
+use crate::poly::multilinear_polynomial::MultilinearPolynomial;
+use common::jolt_device::JoltDevice;
+
+/// Commits to the private inputs of a JoltDevice using the Dory commitment scheme.
+/// 
+/// This function extracts the private inputs from the JoltDevice, converts them into
+/// a multilinear polynomial, and commits to them using the specified commitment scheme.
+///
+/// # Arguments
+/// * `jolt_device` - The JoltDevice containing the private inputs to commit to
+/// * `setup` - The PCS prover setup
+/// * `ram_K` - The RAM size parameter K (polynomial will have log2(K) variables)
+///
+/// # Returns
+/// A tuple containing:
+/// * The multilinear polynomial of private inputs
+/// * The commitment to the private inputs
+/// * The opening proof hint (for later use in opening proofs)
+fn commit_to_private_inputs<F: JoltField, PCS: CommitmentScheme<Field = F>>(
+    jolt_device: &JoltDevice,
+    setup: &PCS::ProverSetup,
+    ram_K: usize,
+) -> (MultilinearPolynomial<F>, PCS::Commitment, PCS::OpeningProofHint) {
+    let mut initial_memory_state = vec![0; ram_K];
+
+    let mut index = remap_address(
+        jolt_device.memory_layout.private_input_start,
+        &jolt_device.memory_layout,
+    )
+    .unwrap() as usize;
+
+    // Convert input bytes into words and populate
+    // `initial_memory_state` and `final_memory_state`
+    for chunk in jolt_device.private_inputs.chunks(8) {
+        let mut word = [0u8; 8];
+        for (i, byte) in chunk.iter().enumerate() {
+            word[i] = *byte;
+        }
+        let word = u64::from_le_bytes(word);
+        initial_memory_state[index] = word;
+        index += 1;
+    }
+
+    
+    // for chunk in jolt_device.private_inputs.chunks(8) {
+    //     let mut word = [0u8; 8];
+    //     for (i, byte) in chunk.iter().enumerate() {
+    //         word[i] = *byte;
+    //     }
+    //     let word = u64::from_le_bytes(word);
+    //     coeffs.push(F::from_u64(word));
+    // }
+    
+    // // Pad with zeros to reach the required size (K)
+    // // The polynomial needs K coefficients to have log2(K) variables
+    // while coeffs.len() < ram_K {
+    //     coeffs.push(F::zero());
+    // }
+    
+    // // Ensure we don't exceed K
+    // coeffs.truncate(ram_K);
+    
+    // Create a multilinear polynomial from the field elements
+    let poly = MultilinearPolynomial::from(initial_memory_state);
+    
+    tracing::info!(
+        "Created private input polynomial with {} coefficients (log2({}) = {} variables)",
+        poly.len(),
+        poly.len(),
+        poly.get_num_vars()
+    );
+    
+    // Commit to the polynomial using the commitment scheme
+    let (commitment, hint) = PCS::commit(&poly, setup);
+    
+    (poly, commitment, hint)
+}
 
 pub enum JoltDAG {}
 
@@ -73,6 +150,25 @@ impl JoltDAG {
             transcript.borrow_mut().append_serializable(commitment);
         }
         drop(commitments);
+
+        let (preprocessing, _, program_io, _) = state_manager.get_prover_data();
+        let (private_input_poly, private_input_commitment, private_input_hint) = 
+            commit_to_private_inputs::<F, PCS>(program_io, &preprocessing.generators, state_manager.ram_K);
+        
+        // Store the polynomial and hint in the prover state for later evaluation
+        if let Some(ref mut prover_state) = state_manager.prover_state {
+            prover_state.private_input_polynomial = Some(private_input_poly);
+            prover_state.private_input_hint = Some(private_input_hint);
+        }
+        
+        // Append the private input commitment to the transcript for Fiat-Shamir
+        state_manager
+            .get_transcript()
+            .borrow_mut()
+            .append_serializable(&private_input_commitment);
+        
+        // Store the commitment in the state manager for later use in the proof
+        state_manager.private_input_commitment = Some(private_input_commitment);
 
         // Stage 1:
         #[cfg(not(target_arch = "wasm32"))]
@@ -336,6 +432,11 @@ impl JoltDAG {
         let transcript = state_manager.get_transcript();
         for commitment in commitments.borrow().iter() {
             transcript.borrow_mut().append_serializable(commitment);
+        }
+        
+        // Append private input commitment to transcript for Fiat-Shamir
+        if let Some(ref private_input_commitment) = state_manager.private_input_commitment {
+            transcript.borrow_mut().append_serializable(private_input_commitment);
         }
 
         // Stage 1:

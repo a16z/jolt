@@ -55,16 +55,40 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
         initial_ram_state: &[u64],
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
-        let (preprocessing, trace, program_io, _) = state_manager.get_prover_data();
-        let memory_layout = &program_io.memory_layout;
-        let T = trace.len();
         let K = state_manager.ram_K;
 
         let (r, claimed_evaluation) = state_manager.get_virtual_polynomial_opening(
             VirtualPolynomial::RamVal,
             SumcheckId::RamReadWriteChecking,
         );
+        println!("Prover's private_input_len: {}", state_manager.get_prover_data().2.private_inputs.len());
         let (r_address, r_cycle) = r.split_at(K.log_2());
+        
+        // Compute the evaluation of private input polynomial at r_address
+        let private_input_eval = if let Some(ref prover_state) = state_manager.prover_state {
+            if let Some(ref private_input_poly) = prover_state.private_input_polynomial {
+                tracing::info!(
+                    "Evaluating private input polynomial: poly has {} vars, r_address has {} vars",
+                    private_input_poly.get_num_vars(),
+                    r_address.r.len()
+                );
+                let eval = private_input_poly.evaluate(&r_address.r);
+                tracing::info!("Private input evaluation at r_address: {:?}", eval);
+                Some(eval)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        
+        if let Some(eval) = private_input_eval {
+            state_manager.private_input_evaluation = Some(eval);
+        }
+        
+        let (preprocessing, trace, program_io, _) = state_manager.get_prover_data();
+        let memory_layout = &program_io.memory_layout;
+        let T = trace.len();
 
         let val_init: MultilinearPolynomial<F> =
             MultilinearPolynomial::from(initial_ram_state.to_vec());
@@ -125,6 +149,7 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
     pub fn new_verifier<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         initial_ram_state: &[u64],
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        private_input_evaluation: F,
     ) -> Self {
         let (_, _, T) = state_manager.get_verifier_data();
         let K = state_manager.ram_K;
@@ -134,12 +159,55 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
             SumcheckId::RamReadWriteChecking,
         );
         let (r_address, _) = r.split_at(K.log_2());
+        
+        // Store the private input evaluation for verification later
+        state_manager.private_input_evaluation = Some(private_input_evaluation);
+        tracing::info!("Verifier received private input evaluation: {:?}", private_input_evaluation);
+        
+        // TODO: Verify the private input commitment here
+        // This would involve:
+        // 1. Getting the private_input_commitment from state_manager
+        // 2. Getting the verifier setup/generators from preprocessing
+        // 3. Creating an opening proof and verifying it using PCS::verify
+        // 4. The opening point would be r_address.r
+        // 5. The claimed opening would be private_input_evaluation
+        // For now, we're just storing the evaluation to be verified later in the batch opening proof
 
         let val_init: MultilinearPolynomial<F> =
             MultilinearPolynomial::from(initial_ram_state.to_vec());
         // println!("initial_ram_state verifier: {:?}", initial_ram_state.to_vec());
         let init_eval = val_init.evaluate(&r_address.r);
         println!("Val init is verifier: {}", init_eval);
+
+        // Alternative approach: split initial_ram_state at some index and compute separately
+        let split_index = 32; // You can adjust this split index as needed
+        
+        // Left part: first split_index elements, padded with zeros to maintain original length
+        let mut left_part = vec![0u64; initial_ram_state.len()];
+        left_part[..split_index].copy_from_slice(&initial_ram_state[..split_index]);
+        
+        // Right part: same length as initial_ram_state, but first split_index elements are 0
+        let mut right_part = vec![0u64; initial_ram_state.len()];
+        right_part[split_index..].copy_from_slice(&initial_ram_state[split_index..]);
+        
+        // Create multilinear polynomials from the split parts
+        let val_left: MultilinearPolynomial<F> = MultilinearPolynomial::from(left_part);
+        let val_right: MultilinearPolynomial<F> = MultilinearPolynomial::from(right_part);
+        
+        // Evaluate each part separately
+        let left_eval = val_left.evaluate(&r_address.r);
+        let right_eval = val_right.evaluate(&r_address.r);
+        
+        // Merge the results by adding them (since multilinear polynomial evaluation is linear)
+        let merged_eval = left_eval + right_eval;
+        
+        // Assert that the merged result equals the original evaluation
+        assert_eq!(
+            merged_eval, init_eval,
+            "Merged evaluation from split parts should equal the original evaluation"
+        );
+        println!("Split evaluation verified: left_eval={}, right_eval={}, merged={}", 
+                 left_eval, right_eval, merged_eval);
 
         ValEvaluationSumcheck {
             claimed_evaluation,

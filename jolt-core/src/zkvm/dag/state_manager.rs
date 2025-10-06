@@ -12,6 +12,7 @@ use crate::subprotocols::sumcheck::SumcheckInstanceProof;
 use crate::transcripts::Transcript;
 use crate::utils::math::Math;
 use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
+use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::zkvm::{JoltProverPreprocessing, JoltVerifierPreprocessing};
 use num_derive::FromPrimitive;
 use rayon::prelude::*;
@@ -44,6 +45,8 @@ where
     pub trace: Vec<Cycle>,
     pub final_memory_state: Memory,
     pub accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
+    pub private_input_polynomial: Option<MultilinearPolynomial<F>>,
+    pub private_input_hint: Option<PCS::OpeningProofHint>,
 }
 
 pub struct VerifierState<'a, F: JoltField, PCS>
@@ -64,6 +67,8 @@ pub struct StateManager<
     pub transcript: Rc<RefCell<ProofTranscript>>,
     pub proofs: Rc<RefCell<Proofs<F, PCS, ProofTranscript>>>,
     pub commitments: Rc<RefCell<Vec<PCS::Commitment>>>,
+    pub private_input_commitment: Option<PCS::Commitment>,
+    pub private_input_evaluation: Option<F>,
     pub ram_K: usize,
     pub twist_sumcheck_switch_index: usize,
     pub program_io: JoltDevice,
@@ -120,6 +125,8 @@ where
             transcript,
             proofs,
             commitments,
+            private_input_commitment: None,
+            private_input_evaluation: None,
             program_io,
             ram_K,
             twist_sumcheck_switch_index,
@@ -128,6 +135,8 @@ where
                 trace,
                 final_memory_state,
                 accumulator: opening_accumulator,
+                private_input_polynomial: None,
+                private_input_hint: None,
             }),
             verifier_state: None,
         }
@@ -153,6 +162,8 @@ where
             transcript,
             proofs,
             commitments,
+            private_input_commitment: None,
+            private_input_evaluation: None,
             program_io,
             ram_K,
             twist_sumcheck_switch_index,
