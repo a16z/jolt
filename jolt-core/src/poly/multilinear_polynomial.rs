@@ -62,8 +62,9 @@ impl<F: JoltField> CanonicalSerialize for MultilinearPolynomial<F> {
 }
 
 /// The order in which polynomial variables are bound in sumcheck
-#[derive(Clone, Copy, Debug, PartialEq, Allocative)]
+#[derive(Clone, Copy, Debug, PartialEq, Allocative, Default)]
 pub enum BindingOrder {
+    #[default]
     LowToHigh,
     HighToLow,
 }
