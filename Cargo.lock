@@ -1748,6 +1748,7 @@ dependencies = [
  "dory",
  "eyre",
  "fixedbitset",
+ "hex",
  "iai-callgrind",
  "indicatif",
  "inferno",

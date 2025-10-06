@@ -88,14 +88,14 @@ pub fn remap_address(address: u64, memory_layout: &MemoryLayout) -> Option<u64> 
         return None;
     }
 
-    if address < memory_layout.private_input_end {
-        return None;
-    }
+    // if address < memory_layout.private_input_end {
+    //     return None;
+    // }
 
     // Handle addresses in the private input region or regular input/output region
-    if address >= memory_layout.input_start {
+    if address >= memory_layout.private_input_start {
         // Remap from the start of the private input region
-        Some((address - memory_layout.input_start) / 8 + 1)
+        Some((address - memory_layout.private_input_start) / 8 + 1)
     } else {
         panic!("Unexpected address {address}")
     }
@@ -143,6 +143,24 @@ impl RamDag {
             .for_each(|(k, word)| {
                 *word = final_memory.read_doubleword(8 * k as u64);
             });
+
+        index = remap_address(
+            program_io.memory_layout.private_input_start,
+            &program_io.memory_layout,
+        )
+        .unwrap() as usize;
+        // Convert input bytes into words and populate
+        // `initial_memory_state` and `final_memory_state`
+        for chunk in program_io.private_inputs.chunks(8) {
+            let mut word = [0u8; 8];
+            for (i, byte) in chunk.iter().enumerate() {
+                word[i] = *byte;
+            }
+            let word = u64::from_le_bytes(word);
+            initial_memory_state[index] = word;
+            final_memory_state[index] = word;
+            index += 1;
+        }
 
         index = remap_address(
             program_io.memory_layout.input_start,
