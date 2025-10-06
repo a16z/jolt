@@ -1,9 +1,11 @@
 use std::iter::zip;
 
-use jolt_field::{JoltField, MulU64WithCarry};
 use rayon::prelude::*;
 
-use crate::poly::{eq_poly::EqPolynomial, ra_poly::RaPolynomial, unipoly::UniPoly};
+use crate::{
+    field::{JoltField, MulU64WithCarry},
+    poly::{eq_poly::EqPolynomial, ra_poly::RaPolynomial, unipoly::UniPoly},
+};
 
 /// Computes the univariate polynomial `g(X) = sum_j eq((r', X, j), r) * prod_i mle_i(X, j)`.
 ///

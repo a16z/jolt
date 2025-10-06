@@ -8,12 +8,12 @@ use std::{
 use ark_serialize::{
     CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
 };
-use jolt_field::JoltField;
 use num::FromPrimitive;
 use tracer::JoltDevice;
 
 use crate::zkvm::witness::AllCommittedPolynomials;
 use crate::{
+    field::JoltField,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         opening_proof::{

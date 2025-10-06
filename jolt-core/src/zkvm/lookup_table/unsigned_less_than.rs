@@ -1,5 +1,4 @@
-use crate::utils::uninterleave_bits;
-use jolt_field::JoltField;
+use crate::{field::JoltField, utils::uninterleave_bits};
 use serde::{Deserialize, Serialize};
 
 use super::{

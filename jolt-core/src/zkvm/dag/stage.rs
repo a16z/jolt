@@ -1,8 +1,8 @@
+use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::subprotocols::sumcheck::SumcheckInstance;
 use crate::transcripts::Transcript;
 use crate::zkvm::dag::state_manager::StateManager;
-use jolt_field::JoltField;
 
 pub trait SumcheckStages<
     F: JoltField,

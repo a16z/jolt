@@ -1,4 +1,4 @@
-use jolt_field::JoltField;
+use crate::field::JoltField;
 use std::cmp::Ordering;
 use std::ops::{AddAssign, Index, IndexMut, Mul, MulAssign, Sub};
 

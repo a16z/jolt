@@ -1,3 +1,4 @@
+use crate::field::JoltField;
 use crate::guest;
 use crate::host::analyze::ProgramSummary;
 #[cfg(not(target_arch = "wasm32"))]
@@ -9,7 +10,6 @@ use common::constants::{
     EMULATOR_MEMORY_CAPACITY, RAM_START_ADDRESS, STACK_CANARY_SIZE,
 };
 use common::jolt_device::{JoltDevice, MemoryConfig};
-use jolt_field::JoltField;
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::PathBuf;

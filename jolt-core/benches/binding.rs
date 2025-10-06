@@ -1,10 +1,10 @@
 use ark_bn254::Fr;
 use ark_std::{rand::Rng, test_rng};
 use criterion::Criterion;
+use jolt_core::field::JoltField;
 use jolt_core::poly::compact_polynomial::CompactPolynomial;
 use jolt_core::poly::dense_mlpoly::DensePolynomial;
 use jolt_core::poly::multilinear_polynomial::{BindingOrder, PolynomialBinding};
-use jolt_field::JoltField;
 use rayon::prelude::*;
 
 fn random_dense_coeffs<F: JoltField>(rng: &mut impl Rng, num_vars: usize) -> Vec<F> {

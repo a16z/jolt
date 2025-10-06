@@ -10,7 +10,6 @@ use crate::utils::profiling::write_flamegraph_svg;
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
-use jolt_field::JoltField;
 use num_derive::FromPrimitive;
 use num_traits::Zero;
 use rayon::prelude::*;
@@ -32,6 +31,7 @@ use super::{
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::{
+    field::JoltField,
     poly::{
         multilinear_polynomial::PolynomialEvaluation,
         one_hot_polynomial::{EqAddressState, EqCycleState, OneHotPolynomialProverOpening},

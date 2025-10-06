@@ -9,6 +9,7 @@ use crate::zkvm::dag::stage::SumcheckStages;
 use crate::zkvm::dag::state_manager::StateManager;
 use crate::zkvm::witness::{compute_d_parameter, VirtualPolynomial, DTH_ROOT_OF_K};
 use crate::{
+    field::JoltField,
     poly::{commitment::commitment_scheme::CommitmentScheme, eq_poly::EqPolynomial},
     subprotocols::sumcheck::SumcheckInstance,
     transcripts::Transcript,
@@ -16,7 +17,6 @@ use crate::{
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::{ALIGNMENT_FACTOR_BYTECODE, RAM_START_ADDRESS};
-use jolt_field::JoltField;
 use rayon::prelude::*;
 use tracer::instruction::{Cycle, Instruction};
 

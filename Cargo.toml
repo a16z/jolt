@@ -230,7 +230,6 @@ serial_test = "3.2.0"
 common = { path = "./common", default-features = false }
 tracer = { path = "./tracer", default-features = false }
 jolt-core = { path = "./jolt-core", default-features = false }
-jolt-field = { path = "./jolt-field", default-features = false }
 jolt-platform = { path = "./jolt-platform", default-features = false }
 jolt-sdk = { path = "./jolt-sdk", default-features = false }
 jolt-sdk-macros = { path = "./jolt-sdk/macros" }
@@ -239,10 +238,3 @@ jolt-inlines-keccak256 = { path = "./jolt-inlines/keccak256", default-features =
 jolt-inlines-blake2 = { path = "./jolt-inlines/blake2", default-features = false }
 jolt-inlines-blake3 = { path = "./jolt-inlines/blake3", default-features = false }
 jolt-inlines-bigint = { path = "./jolt-inlines/bigint", default-features = false }
-
-[workspace.package]
-version = "0.1.0"
-edition = "2021"
-repository = "https://github.com/a16z/jolt"
-homepage = "https://jolt.a16zcrypto.com"
-license = "MIT OR Apache-2.0"

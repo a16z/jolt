@@ -12,9 +12,9 @@ use crate::zkvm::instruction::{CircuitFlags, InstructionFlags, LookupQuery, NUM_
 use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 use crate::zkvm::JoltSharedPreprocessing;
 
+use crate::field::JoltField;
 use ark_ff::biginteger::{S128, S64};
 use common::constants::XLEN;
-use jolt_field::JoltField;
 use rayon::prelude::*;
 use std::fmt::Debug;
 use tracer::instruction::Cycle;
@@ -593,11 +593,7 @@ where
             *n = cycle.instruction().circuit_flags()[CircuitFlags::IsNoop] as u8;
         });
 
-    (
-        MultilinearPolynomial::from_u64_coeffs(unexpanded_pc),
-        MultilinearPolynomial::from_u64_coeffs(pc),
-        MultilinearPolynomial::from_u8_coeffs(is_noop),
-    )
+    (unexpanded_pc.into(), pc.into(), is_noop.into())
 }
 
 #[cfg(test)]

@@ -4,8 +4,8 @@ use super::prefixes::{PrefixEval, Prefixes};
 use super::suffixes::{SuffixEval, Suffixes};
 use super::JoltLookupTable;
 use super::PrefixSuffixDecomposition;
+use crate::field::JoltField;
 use crate::utils::uninterleave_bits;
-use jolt_field::JoltField;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct OrTable<const XLEN: usize>;

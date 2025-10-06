@@ -1,9 +1,8 @@
 use common::constants::XLEN;
-use jolt_field::JoltField;
 use tracer::instruction::virtual_rev8w::rev8w;
 
 use crate::{
-    utils::lookup_bits::LookupBits,
+    field::JoltField, utils::lookup_bits::LookupBits,
     zkvm::instruction_lookups::read_raf_checking::current_suffix_len,
 };
 

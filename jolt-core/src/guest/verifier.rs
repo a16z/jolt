@@ -1,5 +1,5 @@
+use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use jolt_field::JoltField;
 
 use crate::guest::program::Program;
 use crate::poly::commitment::dory::DoryCommitmentScheme;

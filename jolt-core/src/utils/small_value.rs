@@ -1,11 +1,11 @@
 // Small Value Optimization (SVO) helpers for Spartan first sum-check
 
-use jolt_field::JoltField;
+use crate::field::JoltField;
 
 // Accumulation primitives for SVO (moved from zkvm/r1cs/types.rs)
 pub mod accum {
+    use crate::field::{FmaddTrunc, JoltField};
     use ark_ff::biginteger::{I8OrI96, S160, S224};
-    use jolt_field::{FmaddTrunc, JoltField};
     use num_traits::Zero;
 
     /// Final unreduced product after multiplying by a 256-bit field element (512-bit unsigned)

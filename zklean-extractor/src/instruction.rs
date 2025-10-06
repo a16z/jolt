@@ -153,7 +153,7 @@ mod test {
     use super::*;
     use crate::util::arb_field_elem;
 
-    use jolt_field::JoltField;
+    use jolt_core::field::JoltField;
 
     use proptest::{collection::vec, prelude::*};
     use strum::EnumCount as _;

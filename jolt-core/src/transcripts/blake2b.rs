@@ -1,9 +1,9 @@
 use super::transcript::Transcript;
+use crate::field::JoltField;
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_serialize::CanonicalSerialize;
 use blake2::digest::consts::U32;
 use blake2::{Blake2b, Digest};
-use jolt_field::JoltField;
 
 type Blake2b256 = Blake2b<U32>;
 use std::borrow::Borrow;

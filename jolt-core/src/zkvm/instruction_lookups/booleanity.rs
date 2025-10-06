@@ -2,7 +2,6 @@ use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 use common::constants::XLEN;
-use jolt_field::JoltField;
 use rayon::prelude::*;
 use std::{cell::RefCell, rc::Rc};
 use tracer::instruction::Cycle;
@@ -10,6 +9,7 @@ use tracer::instruction::Cycle;
 use super::{D, K_CHUNK, LOG_K_CHUNK};
 
 use crate::{
+    field::JoltField,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,

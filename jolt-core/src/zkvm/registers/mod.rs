@@ -1,6 +1,7 @@
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::{
+    field::JoltField,
     poly::commitment::commitment_scheme::CommitmentScheme,
     subprotocols::sumcheck::SumcheckInstance,
     transcripts::Transcript,
@@ -9,7 +10,6 @@ use crate::{
         read_write_checking::RegistersReadWriteChecking, val_evaluation::ValEvaluationSumcheck,
     },
 };
-use jolt_field::JoltField;
 
 pub mod read_write_checking;
 pub mod val_evaluation;

@@ -2,6 +2,7 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
+use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::opening_proof::{
     OpeningPoint, ProverOpeningAccumulator, ReducedOpeningProof, SumcheckId,
@@ -12,7 +13,6 @@ use crate::transcripts::Transcript;
 use crate::utils::math::Math;
 use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 use crate::zkvm::{JoltProverPreprocessing, JoltVerifierPreprocessing};
-use jolt_field::JoltField;
 use num_derive::FromPrimitive;
 use rayon::prelude::*;
 use tracer::emulator::memory::Memory;

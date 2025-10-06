@@ -4,7 +4,7 @@
 // Wikipedia reference: augmented matrix: https://en.wikipedia.org/wiki/Augmented_matrix
 // Wikipedia reference: algorithm: https://en.wikipedia.org/wiki/Gaussian_elimination
 
-use jolt_field::JoltField;
+use crate::field::JoltField;
 
 pub fn gaussian_elimination<F: JoltField>(matrix: &mut [Vec<F>]) -> Vec<F> {
     let size = matrix.len();

@@ -1,6 +1,5 @@
-use crate::zkvm::instruction::LookupQuery;
+use crate::{field::JoltField, zkvm::instruction::LookupQuery};
 use common::constants::XLEN;
-use jolt_field::JoltField;
 use rand::prelude::*;
 use tracer::instruction::{RISCVCycle, RISCVInstruction};
 

@@ -1,10 +1,10 @@
-use jolt_field::JoltField;
 use rayon::prelude::*;
 use std::{iter::zip, mem, sync::Arc};
 
 use allocative::Allocative;
 
 use crate::{
+    field::JoltField,
     poly::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},

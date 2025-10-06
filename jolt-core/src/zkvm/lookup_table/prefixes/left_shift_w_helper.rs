@@ -1,6 +1,5 @@
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
-use crate::utils::lookup_bits::LookupBits;
-use jolt_field::JoltField;
+use crate::{field::JoltField, utils::lookup_bits::LookupBits};
 
 /// Computes 2^(y.leading_ones()) for j >= XLEN
 pub enum LeftShiftWHelperPrefix<const XLEN: usize> {}

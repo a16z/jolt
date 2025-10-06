@@ -44,7 +44,7 @@ prover = [
 # This is for building jolt-core without prover capabilities, e.g. for recursion
 # jolt-core needs std and rayon to compile, so these are the minimal set of features.
 minimal = ["ark-ec/std", "ark-ff/std", "ark-std/std", "ark-ff/asm", "rayon"]
-allocative = ["dep:inferno", "jolt-field/allocative"]
+allocative = ["dep:inferno"]
 test_incremental = []
 
 [dependencies]
@@ -94,7 +94,6 @@ dory.workspace = true
 lazy_static.workspace = true
 allocative.workspace = true
 inferno = { workspace = true, optional = true }
-jolt-field.workspace = true
 jolt-platform = { workspace = true, features = ["std"] }
 jolt-inlines-sha2 = { workspace = true, features = ["host"], optional = true }
 jolt-inlines-keccak256 = { workspace = true, features = [
