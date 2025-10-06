@@ -7,7 +7,6 @@ use std::{
 #[cfg(test)]
 use crate::poly::commitment::dory::DoryGlobals;
 use crate::{
-    field::JoltField,
     poly::{
         commitment::commitment_scheme::CommitmentScheme, opening_proof::ProverOpeningAccumulator,
     },
@@ -23,6 +22,7 @@ use crate::{
 use ark_bn254::Fr;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::jolt_device::MemoryLayout;
+use jolt_field::JoltField;
 use tracer::{instruction::Instruction, JoltDevice};
 
 pub mod bytecode;

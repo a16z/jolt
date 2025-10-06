@@ -3,7 +3,6 @@ use std::sync::{Arc, RwLock};
 use allocative::Allocative;
 use num::Integer;
 
-use crate::field::JoltField;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::prefix_suffix::{
     CachedPolynomial, Prefix, PrefixCheckpoints, PrefixPolynomial, PrefixRegistry,
@@ -12,6 +11,7 @@ use crate::poly::prefix_suffix::{
 use crate::utils::lookup_bits::LookupBits;
 use crate::utils::math::Math;
 use crate::utils::uninterleave_bits;
+use jolt_field::JoltField;
 
 use super::multilinear_polynomial::{BindingOrder, PolynomialBinding, PolynomialEvaluation};
 
@@ -446,7 +446,7 @@ mod tests {
         let mut rng = test_rng();
         let mut identity_poly: IdentityPolynomial<Fr> = IdentityPolynomial::new(NUM_VARS);
         let mut reference_poly: MultilinearPolynomial<Fr> =
-            MultilinearPolynomial::from((0..(1 << NUM_VARS)).map(|i| i as u32).collect::<Vec<_>>());
+            MultilinearPolynomial::from_u32_coeffs((0..(1 << NUM_VARS)).collect());
 
         for j in 0..reference_poly.len() / 2 {
             let identity_poly_evals =

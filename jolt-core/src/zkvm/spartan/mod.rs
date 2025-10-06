@@ -1,7 +1,6 @@
 use std::sync::Arc;
 use tracing::{span, Level};
 
-use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::opening_proof::{OpeningPoint, SumcheckId};
@@ -17,6 +16,7 @@ use crate::zkvm::r1cs::key::UniformSpartanKey;
 use crate::zkvm::spartan::inner::InnerSumcheck;
 use crate::zkvm::spartan::pc::PCSumcheck;
 use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
+use jolt_field::JoltField;
 
 use crate::transcripts::Transcript;
 

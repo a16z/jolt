@@ -2,10 +2,11 @@
 //! https://eprint.iacr.org/2024/1210.pdf
 
 use allocative::Allocative;
+use jolt_field::JoltField;
 
 use super::dense_mlpoly::DensePolynomial;
 use super::multilinear_polynomial::BindingOrder;
-use crate::{field::JoltField, poly::eq_poly::EqPolynomial};
+use crate::poly::eq_poly::EqPolynomial;
 
 #[derive(Debug, Clone, PartialEq, Allocative)]
 /// A struct holding the equality polynomial evaluations for use in sum-check, when incorporating

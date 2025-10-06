@@ -1,7 +1,9 @@
+use crate::utils::lookup_bits::LookupBits;
 use crate::zkvm::instruction_lookups::read_raf_checking::current_suffix_len;
-use crate::{field::JoltField, utils::lookup_bits::LookupBits};
 
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
+
+use jolt_field::JoltField;
 
 pub enum AndnPrefix<const XLEN: usize> {}
 

@@ -5,7 +5,6 @@ use std::vec;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::{
-    field::JoltField,
     poly::commitment::commitment_scheme::CommitmentScheme,
     subprotocols::sumcheck::SumcheckInstance,
     transcripts::Transcript,
@@ -27,6 +26,7 @@ use common::{
     constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS},
     jolt_device::MemoryLayout,
 };
+use jolt_field::JoltField;
 use rayon::prelude::*;
 
 pub mod booleanity;

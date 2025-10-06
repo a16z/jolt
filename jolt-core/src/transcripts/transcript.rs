@@ -1,6 +1,6 @@
-use crate::field::JoltField;
 use ark_ec::CurveGroup;
 use ark_serialize::CanonicalSerialize;
+use jolt_field::JoltField;
 use std::borrow::Borrow;
 
 pub trait Transcript: Default + Clone + Sync + Send + 'static {

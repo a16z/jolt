@@ -3,7 +3,6 @@ use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::zkvm::dag::state_manager::StateManager;
 use crate::zkvm::witness::VirtualPolynomial;
 use crate::{
-    field::{JoltField, OptimizedMul},
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
@@ -20,6 +19,7 @@ use allocative::Allocative;
 use allocative::FlameGraphBuilder;
 use common::constants::REGISTER_COUNT;
 use fixedbitset::FixedBitSet;
+use jolt_field::{JoltField, OptimizedMul};
 use rayon::prelude::*;
 use std::{cell::RefCell, rc::Rc};
 use tracer::instruction::Cycle;

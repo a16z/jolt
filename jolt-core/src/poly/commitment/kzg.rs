@@ -1,4 +1,3 @@
-use crate::field::JoltField;
 use crate::msm::VariableBaseMSM;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::unipoly::UniPoly;
@@ -8,6 +7,7 @@ use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
 use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{One, UniformRand, Zero};
+use jolt_field::JoltField;
 use rand_core::{CryptoRng, RngCore};
 use rayon::prelude::*;
 use std::borrow::Borrow;

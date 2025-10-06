@@ -1,7 +1,7 @@
 use super::transcript::Transcript;
-use crate::field::JoltField;
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_serialize::CanonicalSerialize;
+use jolt_field::JoltField;
 use sha3::{Digest, Keccak256};
 use std::borrow::Borrow;
 

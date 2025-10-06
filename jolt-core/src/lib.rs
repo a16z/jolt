@@ -11,7 +11,6 @@
 #[cfg(feature = "host")]
 pub mod host;
 
-pub mod field;
 pub mod guest;
 pub mod msm;
 pub mod poly;

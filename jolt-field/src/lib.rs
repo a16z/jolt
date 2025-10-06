@@ -1,12 +1,9 @@
 use ark_ff::biginteger::S224;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use num_traits::{One, Zero};
 use std::fmt::{Debug, Display};
 use std::hash::Hash;
 use std::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub, SubAssign};
-
-#[cfg(feature = "allocative")]
-use allocative::Allocative;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 pub trait FieldOps<Rhs = Self, Output = Self>:
     Add<Rhs, Output = Output>
@@ -206,9 +203,9 @@ pub trait FmaddTrunc {
 }
 
 #[cfg(feature = "allocative")]
-pub trait MaybeAllocative: Allocative {}
+pub trait MaybeAllocative: allocative::Allocative {}
 #[cfg(feature = "allocative")]
-impl<T: Allocative> MaybeAllocative for T {}
+impl<T: allocative::Allocative> MaybeAllocative for T {}
 #[cfg(not(feature = "allocative"))]
 pub trait MaybeAllocative {}
 #[cfg(not(feature = "allocative"))]
@@ -255,4 +252,5 @@ where
 }
 
 pub mod ark;
+pub mod counters;
 pub mod tracked_ark;

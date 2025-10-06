@@ -9,7 +9,6 @@ use crate::zkvm::dag::state_manager::StateManager;
 use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 
 use crate::{
-    field::JoltField,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
@@ -27,6 +26,7 @@ use crate::{
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
+use jolt_field::JoltField;
 use rayon::prelude::*;
 use tracer::instruction::Cycle;
 

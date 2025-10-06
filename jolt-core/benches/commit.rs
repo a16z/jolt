@@ -12,8 +12,8 @@ fn benchmark_dory_dense(c: &mut Criterion, name: &str, k: usize, t: usize) {
     let mut rng = ChaCha20Rng::seed_from_u64(111111u64);
 
     // Generate leaves with percentage of ones
-    let coeffs: Vec<u64> = (0..t).map(|_| rng.next_u64()).collect();
-    let poly = MultilinearPolynomial::from(coeffs);
+    let coeffs = (0..t).map(|_| rng.next_u64()).collect();
+    let poly = MultilinearPolynomial::from_u64_coeffs(coeffs);
 
     c.bench_function(&format!("{name} Dory commit_rows"), |b| {
         b.iter(|| {

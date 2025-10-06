@@ -5,10 +5,10 @@
 //! and provide better performance in the prover's hot path.
 
 use super::inputs::JoltR1CSInputs;
-use crate::field::JoltField;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::utils::small_scalar::SmallScalar;
 use ark_ff::biginteger::I8OrI96;
+use jolt_field::JoltField;
 
 /// Helper for JoltR1CSInputs to get indices
 impl JoltR1CSInputs {

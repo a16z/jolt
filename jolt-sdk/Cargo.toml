@@ -19,6 +19,7 @@ default = ["jolt-platform/random"]
 host = [
     "jolt-core/default",
     "jolt-platform/std",
+    "dep:jolt-field",
     "dep:tracer",
     "dep:common",
     "dep:ark-ec",
@@ -35,6 +36,7 @@ guest-verifier = [
     "dep:tracer",
     "dep:common",
     "dep:ark-bn254",
+    "dep:jolt-field",
     "jolt-core/minimal",
 ]
 malloc-shim = ["jolt-platform/malloc-shim"]
@@ -49,6 +51,7 @@ jolt-sdk-macros.workspace = true
 # Host-only dependencies
 common = { workspace = true, optional = true }
 jolt-core = { workspace = true, default-features = false, optional = true }
+jolt-field = { workspace = true, default-features = false, optional = true }
 tracer = { workspace = true, optional = true }
 rand = { workspace = true, optional = true }
 

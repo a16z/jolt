@@ -1,6 +1,5 @@
 use std::borrow::Borrow;
 
-use crate::field::JoltField;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::unipoly::UniPoly;
 use crate::utils::errors::ProofVerifyError;
@@ -10,6 +9,7 @@ use ark_ec::scalar_mul::variable_base::{
 };
 use ark_ec::{CurveGroup, ScalarMul};
 use ark_ff::biginteger::{S128, S64};
+use jolt_field::JoltField;
 use rayon::prelude::*;
 
 // A very light wrapper around Ark5.0 VariableBaseMSM

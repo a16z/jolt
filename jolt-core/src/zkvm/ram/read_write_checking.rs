@@ -3,7 +3,6 @@ use std::{cell::RefCell, rc::Rc};
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 
 use crate::{
-    field::{JoltField, OptimizedMul},
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
@@ -26,6 +25,7 @@ use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use jolt_field::{JoltField, OptimizedMul};
 use rayon::prelude::*;
 use tracer::instruction::RAMAccess;
 

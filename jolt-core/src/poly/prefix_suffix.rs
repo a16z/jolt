@@ -8,7 +8,6 @@ use rayon::prelude::*;
 use strum::{EnumCount, IntoEnumIterator};
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter as EnumIterMacro};
 
-use crate::field::JoltField;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::multilinear_polynomial::{
     BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
@@ -16,6 +15,7 @@ use crate::poly::multilinear_polynomial::{
 use crate::utils::lookup_bits::LookupBits;
 use crate::utils::math::Math;
 use crate::utils::thread::unsafe_allocate_zero_vec;
+use jolt_field::JoltField;
 
 #[repr(u8)]
 #[derive(Clone, Copy, EnumIterMacro, EnumCountMacro)]

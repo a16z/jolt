@@ -2,10 +2,10 @@ use ark_bn254::Fr;
 use ark_std::test_rng;
 use criterion::{criterion_group, criterion_main, Criterion};
 use jolt_core::{
-    field::JoltField,
     poly::{multilinear_polynomial::MultilinearPolynomial, ra_poly::RaPolynomial},
     subprotocols::mles_product_sum::compute_mles_product_sum,
 };
+use jolt_field::JoltField;
 
 fn bench_mles_product_sum(c: &mut Criterion, n_mle: usize) {
     let rng = &mut test_rng();

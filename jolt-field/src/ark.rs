@@ -1,7 +1,7 @@
+use std::array;
+
 use ark_ff::{prelude::*, BigInt, PrimeField, UniformRand};
 use rayon::prelude::*;
-
-use crate::utils::thread::unsafe_allocate_zero_vec;
 
 use super::{FieldOps, FmaddTrunc, JoltField, MulU64WithCarry};
 
@@ -36,21 +36,14 @@ impl JoltField for ark_bn254::Fr {
 
     fn compute_lookup_tables() -> Self::SmallValueLookupTables {
         // These two lookup tables correspond to the two 16-bit limbs of a u64
-        let mut lookup_tables = [
-            unsafe_allocate_zero_vec(1 << 16),
-            unsafe_allocate_zero_vec(1 << 16),
-        ];
-
-        for i in 0..2 {
+        array::from_fn(|i| {
             let bitshift = 16 * i;
             let unit = <Self as JoltField>::from_u64(1 << bitshift);
-            lookup_tables[i] = (0..(1 << 16))
+            (0..(1 << 16))
                 .into_par_iter()
                 .map(|j| unit * <Self as JoltField>::from_u64(j))
-                .collect();
-        }
-
-        lookup_tables
+                .collect()
+        })
     }
 
     #[inline]
@@ -277,7 +270,7 @@ impl<const N: usize> MulU64WithCarry for BigInt<N> {
 
 #[cfg(test)]
 mod tests {
-    use crate::field::JoltField;
+    use crate::JoltField;
     use ark_bn254::Fr;
     use ark_std::test_rng;
     use ark_std::One;

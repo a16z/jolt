@@ -1,3 +1,4 @@
+use crate::utils::lookup_bits::LookupBits;
 use crate::zkvm::lookup_table::suffixes::change_divisor::ChangeDivisorSuffix;
 use crate::zkvm::lookup_table::suffixes::change_divisor_w::ChangeDivisorWSuffix;
 use crate::zkvm::lookup_table::suffixes::left_shift::LeftShiftSuffix;
@@ -6,10 +7,10 @@ use crate::zkvm::lookup_table::suffixes::left_shift_w_helper::LeftShiftWHelperSu
 use crate::zkvm::lookup_table::suffixes::right_operand::RightOperandSuffix;
 use crate::zkvm::lookup_table::suffixes::right_operand_w::RightOperandWSuffix;
 use crate::zkvm::lookup_table::suffixes::sign_extension_right_operand::SignExtensionRightOperandSuffix;
-use crate::{field::JoltField, utils::lookup_bits::LookupBits};
 use div_by_zero::DivByZeroSuffix;
 use eq::EqSuffix;
 use gt::GreaterThanSuffix;
+use jolt_field::JoltField;
 use left_is_zero::LeftOperandIsZeroSuffix;
 use lsb::LsbSuffix;
 use lt::LessThanSuffix;
