@@ -1,5 +1,5 @@
 use super::{FieldOps, JoltField};
-use crate::counters::{
+use crate::utils::counters::{
     // basic arithmetic
     ADD_COUNT,
     // small-integer and unreduced ops
@@ -28,6 +28,7 @@ use crate::counters::{
     SQUARE_COUNT,
     SUB_COUNT,
 };
+use allocative::Allocative;
 use ark_bn254::Fr;
 use ark_ff::BigInt;
 use ark_ff::UniformRand;
@@ -46,8 +47,7 @@ use std::sync::atomic::Ordering;
 )]
 pub struct TrackedFr(pub ark_bn254::Fr);
 
-#[cfg(feature = "allocative")]
-impl allocative::Allocative for TrackedFr {
+impl Allocative for TrackedFr {
     fn visit<'a, 'b: 'a>(&self, _visitor: &'a mut allocative::Visitor<'b>) {}
 }
 
@@ -448,11 +448,11 @@ impl JoltField for TrackedFr {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::op_ref)]
-    use crate::counters::{
+    use crate::field::tracked_ark::TrackedFr as Fr;
+    use crate::field::{JoltField, OptimizedMul};
+    use crate::utils::counters::{
         get_inverse_count, get_mult_count, reset_inverse_count, reset_mult_count,
     };
-    use crate::tracked_ark::TrackedFr as Fr;
-    use crate::{JoltField, OptimizedMul};
     use std::ops::MulAssign;
 
     #[test]

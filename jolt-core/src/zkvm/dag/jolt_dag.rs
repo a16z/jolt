@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::dory::DoryGlobals;
 use crate::subprotocols::sumcheck::{BatchedSumcheck, SumcheckInstance};
@@ -26,7 +27,6 @@ use crate::zkvm::ProverDebugInfo;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 use anyhow::Context;
-use jolt_field::JoltField;
 use rayon::prelude::*;
 
 pub enum JoltDAG {}

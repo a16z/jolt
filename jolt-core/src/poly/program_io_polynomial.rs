@@ -1,8 +1,8 @@
 use common::constants::RAM_START_ADDRESS;
-use jolt_field::JoltField;
 use tracer::JoltDevice;
 
 use crate::{
+    field::JoltField,
     poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
     zkvm::ram::remap_address,
 };
@@ -66,7 +66,7 @@ impl<F: JoltField> ProgramIOPolynomial<F> {
         }
 
         Self {
-            poly: MultilinearPolynomial::from_u64_coeffs(coeffs),
+            poly: coeffs.into(),
         }
     }
 

@@ -28,10 +28,10 @@
 //! - Only use `U128AndSign` when 128-bit arithmetic is inherently required
 
 use super::inputs::{JoltR1CSInputs, R1CSCycleInputs};
+use crate::field::JoltField;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::zkvm::instruction::CircuitFlags;
 use ark_ff::biginteger::{I8OrI96, S160};
-use jolt_field::JoltField;
 
 pub use super::ops::{Term, LC};
 

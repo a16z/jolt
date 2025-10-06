@@ -1,4 +1,5 @@
 use crate::{
+    field::JoltField,
     utils::{index_to_field_bitvector, interleave_bits, lookup_bits::LookupBits},
     zkvm::lookup_table::{
         prefixes::{PrefixCheckpoint, Prefixes},
@@ -7,7 +8,6 @@ use crate::{
     },
 };
 use common::constants::XLEN;
-use jolt_field::JoltField;
 use num::Integer;
 use rand::prelude::*;
 use strum::{EnumCount, IntoEnumIterator};

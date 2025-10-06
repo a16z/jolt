@@ -1,6 +1,5 @@
-use crate::utils::lookup_bits::LookupBits;
 use crate::zkvm::instruction_lookups::read_raf_checking::current_suffix_len;
-use jolt_field::JoltField;
+use crate::{field::JoltField, utils::lookup_bits::LookupBits};
 
 use super::{PrefixCheckpoint, SparseDensePrefix};
 

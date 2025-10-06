@@ -1,7 +1,7 @@
+use crate::field::JoltField;
 use allocative::Allocative;
 use ark_ff::biginteger::{I8OrI96, S128, S64};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use jolt_field::JoltField;
 
 /// A trait for small scalars ({u/i}{8/16/32/64/128})
 pub trait SmallScalar:

@@ -1,7 +1,7 @@
 use super::PrefixSuffixDecomposition;
+use crate::field::JoltField;
 use crate::utils::uninterleave_bits;
 use crate::zkvm::lookup_table::prefixes::Prefixes;
-use jolt_field::JoltField;
 use serde::{Deserialize, Serialize};
 
 use super::prefixes::PrefixEval;

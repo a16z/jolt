@@ -1,4 +1,3 @@
-use jolt_field::JoltField;
 use serde::{Deserialize, Serialize};
 
 use super::prefixes::{PrefixEval, Prefixes};
@@ -6,7 +5,7 @@ use super::signed_less_than::SignedLessThanTable;
 use super::suffixes::{SuffixEval, Suffixes};
 use super::JoltLookupTable;
 use super::PrefixSuffixDecomposition;
-use crate::utils::uninterleave_bits;
+use crate::{field::JoltField, utils::uninterleave_bits};
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct SignedGreaterThanEqualTable<const XLEN: usize>;

@@ -1,5 +1,5 @@
 use super::PrefixSuffixDecomposition;
-use jolt_field::JoltField;
+use crate::field::JoltField;
 use serde::{Deserialize, Serialize};
 
 use super::prefixes::{PrefixEval, Prefixes};

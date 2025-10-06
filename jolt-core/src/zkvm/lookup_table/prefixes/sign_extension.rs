@@ -1,5 +1,4 @@
-use crate::utils::lookup_bits::LookupBits;
-use jolt_field::JoltField;
+use crate::{field::JoltField, utils::lookup_bits::LookupBits};
 
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 

@@ -1,8 +1,7 @@
 use ark_bn254::Fr;
 use ark_std::test_rng;
 use iai_callgrind::{library_benchmark, library_benchmark_group, main};
-use jolt_core::poly::dense_mlpoly::DensePolynomial;
-use jolt_field::JoltField;
+use jolt_core::{field::JoltField, poly::dense_mlpoly::DensePolynomial};
 use std::hint::black_box;
 
 fn bound_poly_setup<F: JoltField>(size: usize) -> (DensePolynomial<F>, F) {

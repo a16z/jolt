@@ -1,11 +1,11 @@
 use common::constants::XLEN;
-use jolt_field::JoltField;
 use rayon::prelude::*;
 use tracer::instruction::Cycle;
 
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::{
+    field::JoltField,
     poly::{
         commitment::commitment_scheme::CommitmentScheme, eq_poly::EqPolynomial,
         opening_proof::SumcheckId,

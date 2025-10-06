@@ -1,6 +1,5 @@
-use crate::utils::lookup_bits::LookupBits;
+use crate::{field::JoltField, utils::lookup_bits::LookupBits};
 use allocative::Allocative;
-use jolt_field::JoltField;
 use lsb::LsbPrefix;
 use negative_divisor_equals_remainder::NegativeDivisorEqualsRemainderPrefix;
 use negative_divisor_greater_than_remainder::NegativeDivisorGreaterThanRemainderPrefix;

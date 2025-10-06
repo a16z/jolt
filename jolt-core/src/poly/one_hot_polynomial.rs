@@ -4,6 +4,7 @@
 //! in the Twist/Shout PIOP implementations in Jolt.
 
 use super::multilinear_polynomial::BindingOrder;
+use crate::field::JoltField;
 use crate::msm::VariableBaseMSM;
 use crate::poly::commitment::dory::{DoryGlobals, JoltGroupWrapper};
 use crate::poly::dense_mlpoly::DensePolynomial;
@@ -17,7 +18,6 @@ use crate::utils::thread::unsafe_allocate_zero_vec;
 use allocative::Allocative;
 use ark_bn254::{G1Affine, G1Projective};
 use ark_ec::CurveGroup;
-use jolt_field::JoltField;
 use num_traits::Zero;
 use rayon::prelude::*;
 use std::mem;

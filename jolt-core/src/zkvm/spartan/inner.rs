@@ -5,6 +5,7 @@ use std::sync::Arc;
 use allocative::Allocative;
 use tracing::{span, Level};
 
+use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
@@ -19,7 +20,6 @@ use crate::zkvm::dag::state_manager::StateManager;
 use crate::zkvm::r1cs::inputs::{JoltR1CSInputs, ALL_R1CS_INPUTS};
 use crate::zkvm::r1cs::key::UniformSpartanKey;
 use crate::zkvm::witness::VirtualPolynomial;
-use jolt_field::JoltField;
 
 use rayon::prelude::*;
 

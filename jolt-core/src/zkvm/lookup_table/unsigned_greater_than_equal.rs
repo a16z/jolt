@@ -1,4 +1,3 @@
-use jolt_field::JoltField;
 use serde::{Deserialize, Serialize};
 
 use super::{
@@ -7,7 +6,7 @@ use super::{
     unsigned_less_than::UnsignedLessThanTable,
     JoltLookupTable, PrefixSuffixDecomposition,
 };
-use crate::{utils::uninterleave_bits, zkvm::lookup_table::suffixes::Suffixes};
+use crate::{field::JoltField, utils::uninterleave_bits, zkvm::lookup_table::suffixes::Suffixes};
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct UnsignedGreaterThanEqualTable<const XLEN: usize>;
