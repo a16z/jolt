@@ -24,7 +24,7 @@ use ark_std::Zero;
 use jolt_optimizations::ExponentiationSteps;
 use std::{cell::RefCell, rc::Rc};
 
-/// Alias for polynomial coefficients in the BN254 base field / Grumpkin Scalar field
+/// Alias for polynomial coefficients in the BN254 base field
 type PolyCoeffs = Vec<Fq>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

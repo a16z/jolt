@@ -100,6 +100,7 @@ jolt-sdk = { workspace = true, features = ["host"] }
 jolt-core = { workspace = true, features = ["default"] }
 tracer = { workspace = true, features = ["default"] }
 common = { workspace = true, features = ["std"] }
+ark-bn254 = "0.5.0"
 
 [profile.test]
 opt-level = 3
@@ -120,22 +121,22 @@ inherits = "release"
 debug = false
 
 [patch.crates-io]
-jolt-optimizations = { path = "/Users/mgeorghiades/a16z/arkworks-algebra/jolt-optimizations" }
-ark-ff = { path = "/Users/mgeorghiades/a16z/arkworks-algebra/ff" }
-ark-ec = { path = "/Users/mgeorghiades/a16z/arkworks-algebra/ec" }
-ark-serialize = { path = "/Users/mgeorghiades/a16z/arkworks-algebra/serialize" }
-ark-bn254 = { path = "/Users/mgeorghiades/a16z/arkworks-algebra/curves/bn254" }
-ark-grumpkin = { path = "/Users/mgeorghiades/a16z/arkworks-algebra/curves/grumpkin" }
-# dory = { path = "/Users/mgeorghiades/a16z/clean-dory" }
+ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-grumpkin = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 allocative = { git = "https://github.com/facebookexperimental/allocative", rev = "85b773d85d526d068ce94724ff7a7b81203fc95e" }
+jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+dory = { git = "https://github.com/markosg04/dory", branch = "feat/snark-composition" }
 
 [workspace.metadata.cargo-machete]
 ignored = ["jolt-sdk"]
 
 [workspace.dependencies]
 # Cryptography and Math
-ark-bn254 = { version = "0.5.0", default-features = false }
-ark-grumpkin = { version = "0.5.0", default-features = false }
+ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-grumpkin = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout", default-features = false }
 ark-ec = { version = "0.5.0", default-features = false }
 ark-ff = { version = "0.5.0", default-features = false }
 ark-serialize = { version = "0.5.0", default-features = false, features = [
@@ -143,13 +144,11 @@ ark-serialize = { version = "0.5.0", default-features = false, features = [
 ] }
 ark-serialize-derive = { version = "0.5.0", default-features = false }
 ark-std = { version = "0.5.0", default-features = false }
-# jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", branch = "feat/fewer-reductions" }
-jolt-optimizations = { path = "/Users/mgeorghiades/a16z/arkworks-algebra/jolt-optimizations" }
-# dory = { git = "https://github.com/spaceandtimefdn/sxt-dory", branch = "feat/fewer-reductions" }
-dory = { path = "/Users/mgeorghiades/a16z/clean-dory" }
 sha3 = "0.10.8"
 blake2 = "0.10"
 blake3 = { version = "1.5.0" }
+jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+dory = { git = "https://github.com/markosg04/dory", branch = "feat/snark-composition" }
 
 # Core Utilities
 clap = { version = "4.5.4", features = ["derive"] }
