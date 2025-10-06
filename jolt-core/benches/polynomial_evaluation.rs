@@ -1,13 +1,15 @@
 #![allow(clippy::uninlined_format_args)]
 use ark_ff::Zero;
 use ark_std::rand::{rngs::StdRng, Rng, SeedableRng};
-use jolt_core::field::tracked_ark::TrackedFr as Fr;
-use jolt_core::field::JoltField;
-use jolt_core::utils::counters::{get_mult_count, reset_mult_count};
 use jolt_core::{
     poly::eq_poly::EqPolynomial,
     poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
     utils::math::Math,
+};
+use jolt_field::{
+    counters::{get_mult_count, reset_mult_count},
+    tracked_ark::TrackedFr as Fr,
+    JoltField,
 };
 use rayon::prelude::*;
 use std::fs::OpenOptions;

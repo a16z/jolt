@@ -4,8 +4,8 @@ use super::prefixes::PrefixEval;
 use super::suffixes::{SuffixEval, Suffixes};
 use super::JoltLookupTable;
 use super::PrefixSuffixDecomposition;
-use crate::field::JoltField;
 use crate::zkvm::lookup_table::prefixes::Prefixes;
+use jolt_field::JoltField;
 
 /// Pow2W table - computes 2^(x % 32) for VirtualPow2W and VirtualPow2IW instructions
 /// Always uses modulo 32 regardless of XLEN

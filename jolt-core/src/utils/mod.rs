@@ -1,8 +1,7 @@
-use crate::field::JoltField;
+use jolt_field::JoltField;
 
 use rayon::prelude::*;
 
-pub mod counters;
 pub mod errors;
 pub mod expanding_table;
 pub mod gaussian_elimination;

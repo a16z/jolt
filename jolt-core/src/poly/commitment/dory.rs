@@ -3,7 +3,6 @@
 use super::commitment_scheme::CommitmentScheme;
 use crate::transcripts::{AppendToTranscript, Transcript};
 use crate::{
-    field::JoltField,
     msm::VariableBaseMSM,
     poly::multilinear_polynomial::MultilinearPolynomial,
     utils::small_scalar::SmallScalar,
@@ -17,6 +16,7 @@ use ark_ec::{
 use ark_ff::{CyclotomicMultSubgroup, Field, One, PrimeField, UniformRand};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{rand::RngCore, Zero};
+use jolt_field::JoltField;
 use once_cell::sync::OnceCell;
 use rayon::prelude::*;
 use std::{borrow::Borrow, marker::PhantomData};

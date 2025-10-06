@@ -3,12 +3,12 @@ use std::{cell::RefCell, rc::Rc};
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
+use jolt_field::JoltField;
 use rayon::prelude::*;
 
 use super::{D, LOG_K_CHUNK};
 
 use crate::{
-    field::JoltField,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},

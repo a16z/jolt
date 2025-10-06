@@ -1,8 +1,8 @@
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use jolt_field::JoltField;
 use sha3::Sha3_256;
 
 use crate::{
-    field::JoltField,
     poly::eq_poly::EqPolynomial,
     utils::{index_to_field_bitvector, thread::unsafe_allocate_zero_vec},
 };

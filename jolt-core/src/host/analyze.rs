@@ -6,7 +6,7 @@ use tracer::{
     JoltDevice,
 };
 
-use crate::field::JoltField;
+use jolt_field::JoltField;
 
 #[derive(Serialize, Deserialize)]
 pub struct ProgramSummary {

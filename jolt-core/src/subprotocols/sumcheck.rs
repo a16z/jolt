@@ -1,8 +1,6 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::type_complexity)]
 
-use crate::field::JoltField;
-use crate::field::MaybeAllocative;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial};
 use crate::poly::opening_proof::{
@@ -23,6 +21,8 @@ use crate::utils::thread::drop_in_background_thread;
 use crate::zkvm::JoltSharedPreprocessing;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
+use jolt_field::JoltField;
+use jolt_field::MaybeAllocative;
 use tracer::instruction::Cycle;
 
 use ark_serialize::*;

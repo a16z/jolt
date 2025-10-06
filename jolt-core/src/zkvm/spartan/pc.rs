@@ -4,7 +4,6 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 
-use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::eq_poly::EqPlusOnePolynomial;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
@@ -19,6 +18,7 @@ use crate::zkvm::instruction::CircuitFlags;
 use crate::zkvm::r1cs::inputs::generate_pc_noop_witnesses;
 use crate::zkvm::r1cs::key::UniformSpartanKey;
 use crate::zkvm::witness::VirtualPolynomial;
+use jolt_field::JoltField;
 use rayon::prelude::*;
 
 #[derive(Allocative)]

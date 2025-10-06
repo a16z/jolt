@@ -1,7 +1,6 @@
 use std::{cell::RefCell, rc::Rc};
 
 use crate::{
-    field::JoltField,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
@@ -28,6 +27,7 @@ use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 use common::constants::RAM_START_ADDRESS;
+use jolt_field::JoltField;
 use rayon::prelude::*;
 use tracer::JoltDevice;
 
@@ -92,11 +92,11 @@ impl<F: JoltField> OutputSumcheckProverState<F> {
         eq_table.reset(F::one());
 
         Self {
-            val_init: initial_ram_state.into(),
-            val_final: final_ram_state.into(),
-            val_io: val_io.into(),
+            val_init: MultilinearPolynomial::from_u64_coeffs(initial_ram_state),
+            val_final: MultilinearPolynomial::from_u64_coeffs(final_ram_state),
+            val_io: MultilinearPolynomial::from_u64_coeffs(val_io),
             eq_poly: EqPolynomial::evals(r_address).into(),
-            io_mask: io_mask.into(),
+            io_mask: MultilinearPolynomial::from_u8_coeffs(io_mask),
             eq_table,
         }
     }
@@ -455,7 +455,7 @@ impl<F: JoltField> ValFinalSumcheck<F> {
             .r;
 
         let val_init: MultilinearPolynomial<F> =
-            MultilinearPolynomial::from(initial_ram_state.to_vec());
+            MultilinearPolynomial::from_u64_coeffs(initial_ram_state.to_vec());
         let val_init_eval = val_init.evaluate(&r_address);
         let val_final_claim = state_manager
             .get_virtual_polynomial_opening(

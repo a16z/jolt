@@ -1,6 +1,6 @@
 use super::PrefixSuffixDecomposition;
-use crate::field::JoltField;
 use crate::utils::uninterleave_bits;
+use jolt_field::JoltField;
 use serde::{Deserialize, Serialize};
 
 use super::prefixes::{PrefixEval, Prefixes};

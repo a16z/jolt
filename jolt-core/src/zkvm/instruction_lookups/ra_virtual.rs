@@ -3,12 +3,12 @@ use std::{cell::RefCell, rc::Rc, sync::Arc};
 use allocative::Allocative;
 use common::constants::XLEN;
 use itertools::chain;
+use jolt_field::JoltField;
 use rayon::iter::{
     IntoParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelIterator,
 };
 
 use crate::{
-    field::JoltField,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,

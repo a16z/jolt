@@ -1,4 +1,4 @@
-use jolt_core::field::JoltField;
+use jolt_field::JoltField;
 
 const TAB: &str = "  ";
 

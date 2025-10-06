@@ -1,7 +1,6 @@
 use std::{cell::RefCell, rc::Rc};
 
 use crate::{
-    field::JoltField,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
@@ -25,6 +24,7 @@ use crate::{
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
+use jolt_field::JoltField;
 use rayon::prelude::*;
 
 #[derive(Allocative)]
@@ -67,7 +67,7 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
         let (r_address, r_cycle) = r.split_at(K.log_2());
 
         let val_init: MultilinearPolynomial<F> =
-            MultilinearPolynomial::from(initial_ram_state.to_vec());
+            MultilinearPolynomial::from_u64_coeffs(initial_ram_state.to_vec());
         let init_eval = val_init.evaluate(&r_address.r);
 
         // Compute the size-K table storing all eq(r_address, k) evaluations for
@@ -134,7 +134,7 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
         let (r_address, _) = r.split_at(K.log_2());
 
         let val_init: MultilinearPolynomial<F> =
-            MultilinearPolynomial::from(initial_ram_state.to_vec());
+            MultilinearPolynomial::from_u64_coeffs(initial_ram_state.to_vec());
         let init_eval = val_init.evaluate(&r_address.r);
 
         ValEvaluationSumcheck {

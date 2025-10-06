@@ -4,7 +4,6 @@ use super::{
 };
 use crate::subprotocols::sumcheck::process_eq_sumcheck_round;
 use crate::{
-    field::{JoltField, OptimizedMul},
     transcripts::Transcript,
     utils::small_value::accum::{SignedUnreducedAccum, UnreducedProduct},
     utils::{math::Math, small_value::svo_helpers},
@@ -16,6 +15,7 @@ use crate::{
 };
 use allocative::Allocative;
 use ark_ff::biginteger::{I8OrI96, S160};
+use jolt_field::{JoltField, OptimizedMul};
 use num_traits::Zero;
 use rayon::prelude::*;
 use tracer::instruction::Cycle;

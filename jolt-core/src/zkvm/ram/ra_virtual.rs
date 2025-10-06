@@ -12,7 +12,6 @@ use crate::zkvm::witness::{
     compute_d_parameter, CommittedPolynomial, VirtualPolynomial, DTH_ROOT_OF_K,
 };
 use crate::{
-    field::JoltField,
     poly::{
         dense_mlpoly::DensePolynomial,
         eq_poly::EqPolynomial,
@@ -25,6 +24,7 @@ use crate::{
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
+use jolt_field::JoltField;
 use rayon::prelude::*;
 
 #[derive(Allocative)]

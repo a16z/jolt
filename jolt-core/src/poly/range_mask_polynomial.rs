@@ -1,6 +1,7 @@
 use std::marker::PhantomData;
 
-use crate::{field::JoltField, utils::lookup_bits::LookupBits};
+use crate::utils::lookup_bits::LookupBits;
+use jolt_field::JoltField;
 
 pub struct RangeMaskPolynomial<F: JoltField> {
     range_start: u128,

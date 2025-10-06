@@ -3,10 +3,10 @@ use std::{cell::RefCell, rc::Rc};
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
+use jolt_field::JoltField;
 use rayon::prelude::*;
 
 use crate::{
-    field::JoltField,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,

@@ -2,9 +2,9 @@ use std::borrow::Borrow;
 use std::marker::PhantomData;
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use jolt_field::JoltField;
 
 use crate::{
-    field::JoltField,
     poly::multilinear_polynomial::MultilinearPolynomial,
     transcripts::{AppendToTranscript, Transcript},
     utils::errors::ProofVerifyError,

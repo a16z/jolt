@@ -3,6 +3,7 @@
 use allocative::Allocative;
 use common::constants::XLEN;
 use itertools::Itertools;
+use jolt_field::JoltField;
 use once_cell::sync::OnceCell;
 use rayon::prelude::*;
 use std::array;
@@ -14,7 +15,6 @@ use strum::IntoEnumIterator;
 use tracer::instruction::Cycle;
 
 use crate::{
-    field::JoltField,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         multilinear_polynomial::MultilinearPolynomial, one_hot_polynomial::OneHotPolynomial,
@@ -387,39 +387,39 @@ impl CommittedPolynomial {
             match poly {
                 CommittedPolynomial::LeftInstructionInput => {
                     let coeffs = std::mem::take(&mut batch.left_instruction_input);
-                    results.insert(*poly, MultilinearPolynomial::<F>::from(coeffs));
+                    results.insert(*poly, MultilinearPolynomial::<F>::from_u64_coeffs(coeffs));
                 }
                 CommittedPolynomial::RightInstructionInput => {
                     let coeffs = std::mem::take(&mut batch.right_instruction_input);
-                    results.insert(*poly, MultilinearPolynomial::<F>::from(coeffs));
+                    results.insert(*poly, MultilinearPolynomial::<F>::from_i128_coeffs(coeffs));
                 }
                 CommittedPolynomial::Product => {
                     let coeffs = std::mem::take(&mut batch.product);
-                    results.insert(*poly, MultilinearPolynomial::<F>::from(coeffs));
+                    results.insert(*poly, MultilinearPolynomial::<F>::from_s128_coeffs(coeffs));
                 }
                 CommittedPolynomial::WriteLookupOutputToRD => {
                     let coeffs = std::mem::take(&mut batch.write_lookup_output_to_rd);
-                    results.insert(*poly, MultilinearPolynomial::<F>::from(coeffs));
+                    results.insert(*poly, MultilinearPolynomial::<F>::from_u8_coeffs(coeffs));
                 }
                 CommittedPolynomial::WritePCtoRD => {
                     let coeffs = std::mem::take(&mut batch.write_pc_to_rd);
-                    results.insert(*poly, MultilinearPolynomial::<F>::from(coeffs));
+                    results.insert(*poly, MultilinearPolynomial::<F>::from_u8_coeffs(coeffs));
                 }
                 CommittedPolynomial::ShouldBranch => {
                     let coeffs = std::mem::take(&mut batch.should_branch);
-                    results.insert(*poly, MultilinearPolynomial::<F>::from(coeffs));
+                    results.insert(*poly, MultilinearPolynomial::<F>::from_u8_coeffs(coeffs));
                 }
                 CommittedPolynomial::ShouldJump => {
                     let coeffs = std::mem::take(&mut batch.should_jump);
-                    results.insert(*poly, MultilinearPolynomial::<F>::from(coeffs));
+                    results.insert(*poly, MultilinearPolynomial::<F>::from_u8_coeffs(coeffs));
                 }
                 CommittedPolynomial::RdInc => {
                     let coeffs = std::mem::take(&mut batch.rd_inc);
-                    results.insert(*poly, MultilinearPolynomial::<F>::from(coeffs));
+                    results.insert(*poly, MultilinearPolynomial::<F>::from_i128_coeffs(coeffs));
                 }
                 CommittedPolynomial::RamInc => {
                     let coeffs = std::mem::take(&mut batch.ram_inc);
-                    results.insert(*poly, MultilinearPolynomial::<F>::from(coeffs));
+                    results.insert(*poly, MultilinearPolynomial::<F>::from_i128_coeffs(coeffs));
                 }
                 CommittedPolynomial::InstructionRa(i) => {
                     if *i < instruction_lookups::D {
@@ -468,14 +468,14 @@ impl CommittedPolynomial {
                     .par_iter()
                     .map(|cycle| LookupQuery::<XLEN>::to_instruction_inputs(cycle).0)
                     .collect();
-                coeffs.into()
+                MultilinearPolynomial::from_u64_coeffs(coeffs)
             }
             CommittedPolynomial::RightInstructionInput => {
                 let coeffs: Vec<i128> = trace
                     .par_iter()
                     .map(|cycle| LookupQuery::<XLEN>::to_instruction_inputs(cycle).1)
                     .collect();
-                coeffs.into()
+                MultilinearPolynomial::from_i128_coeffs(coeffs)
             }
             CommittedPolynomial::Product => {
                 let coeffs: Vec<S128> = trace
@@ -494,7 +494,7 @@ impl CommittedPolynomial {
                         }
                     })
                     .collect();
-                coeffs.into()
+                MultilinearPolynomial::from_s128_coeffs(coeffs)
             }
             CommittedPolynomial::WriteLookupOutputToRD => {
                 let coeffs: Vec<u8> = trace
@@ -505,7 +505,7 @@ impl CommittedPolynomial {
                         (cycle.rd_write().0) * (flag as u8)
                     })
                     .collect();
-                coeffs.into()
+                MultilinearPolynomial::from_u8_coeffs(coeffs)
             }
             CommittedPolynomial::WritePCtoRD => {
                 let coeffs: Vec<u8> = trace
@@ -515,7 +515,7 @@ impl CommittedPolynomial {
                         (cycle.rd_write().0) * (flag as u8)
                     })
                     .collect();
-                coeffs.into()
+                MultilinearPolynomial::from_u8_coeffs(coeffs)
             }
             CommittedPolynomial::ShouldBranch => {
                 let coeffs: Vec<u8> = trace
@@ -526,7 +526,7 @@ impl CommittedPolynomial {
                         (LookupQuery::<XLEN>::to_lookup_output(cycle) as u8) * is_branch as u8
                     })
                     .collect();
-                coeffs.into()
+                MultilinearPolynomial::from_u8_coeffs(coeffs)
             }
             CommittedPolynomial::ShouldJump => {
                 let coeffs: Vec<u8> = trace
@@ -544,7 +544,7 @@ impl CommittedPolynomial {
                         is_jump as u8 * (1 - is_next_noop as u8)
                     })
                     .collect();
-                coeffs.into()
+                MultilinearPolynomial::from_u8_coeffs(coeffs)
             }
             CommittedPolynomial::BytecodeRa(i) => {
                 let d = preprocessing.shared.bytecode.d;
@@ -592,7 +592,7 @@ impl CommittedPolynomial {
                         post_value as i128 - pre_value as i128
                     })
                     .collect();
-                coeffs.into()
+                MultilinearPolynomial::from_i128_coeffs(coeffs)
             }
             CommittedPolynomial::RamInc => {
                 let coeffs: Vec<i128> = trace
@@ -607,7 +607,7 @@ impl CommittedPolynomial {
                         }
                     })
                     .collect();
-                coeffs.into()
+                MultilinearPolynomial::from_i128_coeffs(coeffs)
             }
             CommittedPolynomial::InstructionRa(i) => {
                 if *i > instruction_lookups::D {

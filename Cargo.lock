@@ -1752,6 +1752,7 @@ dependencies = [
  "indicatif",
  "inferno",
  "itertools 0.10.5",
+ "jolt-field",
  "jolt-inlines-keccak256",
  "jolt-inlines-sha2",
  "jolt-optimizations",
@@ -1783,6 +1784,23 @@ dependencies = [
  "tracing",
  "tracing-chrome",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "jolt-field"
+version = "0.1.0"
+dependencies = [
+ "allocative",
+ "ark-bn254",
+ "ark-ff",
+ "ark-serialize",
+ "ark-std",
+ "lazy_static",
+ "num-traits",
+ "rand 0.8.5",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
+ "rayon",
 ]
 
 [[package]]
@@ -1875,6 +1893,7 @@ dependencies = [
  "common",
  "hex-literal",
  "jolt-core",
+ "jolt-field",
  "jolt-platform",
  "jolt-sdk-macros",
  "postcard",

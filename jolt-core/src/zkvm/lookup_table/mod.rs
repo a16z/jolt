@@ -39,8 +39,8 @@ use virtual_xor_rotw::VirtualXORROTWTable;
 use word_alignment::WordAlignmentTable;
 use xor::XorTable;
 
-use crate::field::JoltField;
 use derive_more::From;
+use jolt_field::JoltField;
 use std::fmt::Debug;
 
 pub trait JoltLookupTable: Clone + Debug + Send + Sync + Serialize {
