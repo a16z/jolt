@@ -98,6 +98,15 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
         transcript: &mut ProofTranscript,
     ) -> Self::Proof;
 
+    fn prove_without_hint<ProofTranscript: Transcript>(
+        setup: &Self::ProverSetup,
+        poly: &MultilinearPolynomial<Self::Field>,
+        opening_point: &[Self::Field],
+        transcript: &mut ProofTranscript,
+    ) -> Self::Proof {
+        unimplemented!()
+    }
+
     /// Verifies a proof of polynomial evaluation at a specific point.
     ///
     /// # Arguments

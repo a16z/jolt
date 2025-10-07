@@ -78,7 +78,7 @@ impl JoltDAG {
         drop(commitments);
 
         // Commit to private input
-        let _private_input_openning_proof_hints = Self::commit_private_input(&mut state_manager);
+        let private_input_opening_proof_hints = Self::commit_private_input(&mut state_manager);
         // Append private input commitment to transcript
         if let Some(private_input_commitment) = state_manager.private_input_commitment.as_ref() {
             transcript
@@ -289,6 +289,7 @@ impl JoltDAG {
             &mut state_manager,
             &preprocessing.generators,
             &transcript,
+            private_input_opening_proof_hints,
         );
 
         let opening_proof = accumulator.borrow_mut().reduce_and_prove(
@@ -581,47 +582,14 @@ impl JoltDAG {
             index += 1;
         }
 
-        // Pad the initial memory state to match Dory's expected matrix dimensions
-        // Dory views polynomials as matrices with fixed dimensions based on its global initialization
-        let num_columns = DoryGlobals::get_num_columns();
-        let num_rows = DoryGlobals::get_max_num_rows();
-        let expected_size = num_columns * num_rows;
-
-        tracing::info!(
-            "Initial state size before padding: {}",
-            initial_memory_state.len()
-        );
-
-        if initial_memory_state.len() < expected_size {
-            initial_memory_state.resize(expected_size, 0u64);
-            tracing::info!(
-                "Padded initial state to size: {}",
-                initial_memory_state.len()
-            );
-        }
-
-        // Create a multilinear polynomial from the padded field elements
         let poly = MultilinearPolynomial::from(initial_memory_state);
-
-        tracing::info!(
-            "Created private input polynomial with {} coefficients (log2({}) = {} variables)",
-            poly.len(),
-            poly.len(),
-            poly.get_num_vars()
-        );
-
-        // Commit to the polynomial using the existing setup that's already configured for Dory
         let (commitment, hint) = PCS::commit(&poly, &preprocessing.generators);
 
-        // Store the polynomial in the prover state for later evaluation
         if let Some(ref mut prover_state) = state_manager.prover_state {
             prover_state.private_input_polynomial = Some(poly);
-            prover_state.private_input_hint = Some(hint.clone());
         }
 
-        // Store the commitment in the state manager for later use in the proof
         state_manager.private_input_commitment = Some(commitment);
-
         Some(hint)
     }
 
@@ -634,10 +602,11 @@ impl JoltDAG {
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         generators: &PCS::ProverSetup,
         transcript: &Rc<RefCell<ProofTranscript>>,
+        private_input_hint: Option<PCS::OpeningProofHint>,
     ) {
         if let Some(ref prover_state) = state_manager.prover_state {
             if let Some(ref private_input_poly) = prover_state.private_input_polynomial {
-                if let Some(ref hint) = prover_state.private_input_hint {
+                if let Some(hint) = private_input_hint {
                     let accumulator = prover_state.accumulator.borrow();
                     let private_input_openings = &accumulator.input_openings;
 
@@ -650,11 +619,10 @@ impl JoltDAG {
                             "Generating private input opening proof for val_evaluation in Stage 5"
                         );
                         let mut transcript_clone = transcript.borrow().clone();
-                        let proof = PCS::prove(
+                        let proof = PCS::prove_without_hint(
                             generators,
                             private_input_poly,
                             point,
-                            hint.clone(),
                             &mut transcript_clone,
                         );
                         state_manager
@@ -673,11 +641,10 @@ impl JoltDAG {
                             "Generating private input opening proof for output_check in Stage 5"
                         );
                         let mut transcript_clone = transcript.borrow().clone();
-                        let proof = PCS::prove(
+                        let proof = PCS::prove_without_hint(
                             generators,
                             private_input_poly,
                             point,
-                            hint.clone(),
                             &mut transcript_clone,
                         );
                         state_manager.proofs.borrow_mut().insert(

@@ -63,31 +63,16 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
         );
         let (r_address, r_cycle) = r.split_at(K.log_2());
 
-        // Compute the evaluation of private input polynomial at r_address
-        let private_input_eval = state_manager
-            .prover_state
-            .as_ref()
-            .and_then(|ps| ps.private_input_polynomial.as_ref())
-            .map(|private_input_poly| {
-                tracing::info!(
-                    "Evaluating private input polynomial: poly has {} vars, r_address has {} vars",
-                    private_input_poly.get_num_vars(),
-                    r_address.r.len()
-                );
-                let eval = private_input_poly.evaluate(&r_address.r);
-                tracing::info!("Private input evaluation at r_address: {:?}", eval);
-                eval
-            });
-
-        if let Some(eval) = private_input_eval {
-            if let Some(ref prover_state) = state_manager.prover_state {
+        // Compute the evaluation of private input polynomial at r_address and append to accumulator
+        state_manager.prover_state.as_ref().and_then(|prover_state| {
+            prover_state.private_input_polynomial.as_ref().map(|poly| {
+                let eval = poly.evaluate(&r_address.r);
                 prover_state
                     .accumulator
                     .borrow_mut()
                     .append_val_eval_opening(eval, r_address.r.clone());
-                tracing::info!("Stored private input opening for val_evaluation");
-            }
-        }
+            })
+        });
 
         let (preprocessing, trace, program_io, _) = state_manager.get_prover_data();
         let memory_layout = &program_io.memory_layout;
@@ -163,34 +148,26 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
         let (r_address, _) = r.split_at(K.log_2());
 
         // Store the opening point for verification if we have private inputs
-        let private_input_eval = if let Some(ref verifier_state) = state_manager.verifier_state {
-            let accumulator = verifier_state.accumulator.borrow();
-            let eval = accumulator.input_openings.val_eval;
-            drop(accumulator);
-
-            if eval.is_some() {
+        let private_input_eval = state_manager.verifier_state.as_ref().and_then(|verifier_state| {
+            let eval = verifier_state.accumulator.borrow().input_openings.val_eval;
+            
+            eval.map(|e| {
                 verifier_state
                     .accumulator
                     .borrow_mut()
                     .set_val_eval_opening(None, Some(r_address.r.clone()));
-                tracing::info!(
-                    "Verifier updated opening point for val_evaluation with evaluation: {:?}",
-                    eval
-                );
-            }
-            eval
-        } else {
-            None
-        };
+                e
+            })
+        });
 
         // Create multilinear polynomials from the split parts
-        let val_right: MultilinearPolynomial<F> =
+        let initial_public_ram_val: MultilinearPolynomial<F> =
             MultilinearPolynomial::from(initial_ram_state.to_vec());
-        let right_eval = val_right.evaluate(&r_address.r);
+        let initial_public_ram_eval = initial_public_ram_val.evaluate(&r_address.r);
 
         ValEvaluationSumcheck {
             claimed_evaluation,
-            init_eval: private_input_eval.unwrap_or(F::zero()) + right_eval,
+            init_eval: private_input_eval.unwrap_or(F::zero()) + initial_public_ram_eval,
             num_rounds: T.log_2(),
             prover_state: None,
             K,

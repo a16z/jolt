@@ -49,7 +49,6 @@ where
     pub final_memory_state: Memory,
     pub accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
     pub private_input_polynomial: Option<MultilinearPolynomial<F>>,
-    pub private_input_hint: Option<PCS::OpeningProofHint>,
 }
 
 pub struct VerifierState<'a, F: JoltField, PCS>
@@ -137,7 +136,6 @@ where
                 final_memory_state,
                 accumulator: opening_accumulator,
                 private_input_polynomial: None,
-                private_input_hint: None,
             }),
             verifier_state: None,
         }
