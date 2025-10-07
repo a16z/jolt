@@ -28,11 +28,14 @@ pub enum ProofKeys {
     Stage3Sumcheck,
     Stage4Sumcheck,
     ReducedOpeningProof,
+    PrivateInputProof,
+    PrivateInputProofOutput,
 }
 
 pub enum ProofData<F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript> {
     SumcheckProof(SumcheckInstanceProof<F, ProofTranscript>),
     ReducedOpeningProof(ReducedOpeningProof<F, PCS, ProofTranscript>),
+    OpeningProof(PCS::Proof),
 }
 
 pub type Proofs<F, PCS, ProofTranscript> = BTreeMap<ProofKeys, ProofData<F, PCS, ProofTranscript>>;
@@ -68,12 +71,6 @@ pub struct StateManager<
     pub proofs: Rc<RefCell<Proofs<F, PCS, ProofTranscript>>>,
     pub commitments: Rc<RefCell<Vec<PCS::Commitment>>>,
     pub private_input_commitment: Option<PCS::Commitment>,
-    pub private_input_evaluation: Option<F>,
-    pub private_input_proof: Option<PCS::Proof>,
-    pub private_input_evaluation_output: Option<F>,
-    pub private_input_proof_output: Option<PCS::Proof>,
-    pub private_input_opening_point: Option<Vec<F>>,
-    pub private_input_opening_point_output: Option<Vec<F>>,
     pub ram_K: usize,
     pub twist_sumcheck_switch_index: usize,
     pub program_io: JoltDevice,
@@ -131,12 +128,6 @@ where
             proofs,
             commitments,
             private_input_commitment: None,
-            private_input_evaluation: None,
-            private_input_proof: None,
-            private_input_evaluation_output: None,
-            private_input_proof_output: None,
-            private_input_opening_point: None,
-            private_input_opening_point_output: None,
             program_io,
             ram_K,
             twist_sumcheck_switch_index,
@@ -173,12 +164,6 @@ where
             proofs,
             commitments,
             private_input_commitment: None,
-            private_input_evaluation: None,
-            private_input_proof: None,
-            private_input_evaluation_output: None,
-            private_input_proof_output: None,
-            private_input_opening_point: None,
-            private_input_opening_point_output: None,
             program_io,
             ram_K,
             twist_sumcheck_switch_index,

@@ -80,11 +80,13 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
             });
 
         if let Some(eval) = private_input_eval {
-            state_manager.private_input_evaluation = Some(eval);
-
-            // Store the opening point for later proof generation in Stage 5
-            state_manager.private_input_opening_point = Some(r_address.r.clone());
-            tracing::info!("Stored private input opening point for later proof generation");
+            if let Some(ref prover_state) = state_manager.prover_state {
+                prover_state
+                    .accumulator
+                    .borrow_mut()
+                    .append_val_eval_opening(eval, r_address.r.clone());
+                tracing::info!("Stored private input opening for val_evaluation");
+            }
         }
 
         let (preprocessing, trace, program_io, _) = state_manager.get_prover_data();
@@ -160,14 +162,26 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
         );
         let (r_address, _) = r.split_at(K.log_2());
 
-        // Store the private input evaluation and opening point for verification if we have private inputs
-        if state_manager.private_input_evaluation.is_some() {
-            state_manager.private_input_opening_point = Some(r_address.r.clone());
-            tracing::info!(
-                "Verifier stored private input evaluation: {:?} and opening point",
-                state_manager.private_input_evaluation
-            );
-        }
+        // Store the opening point for verification if we have private inputs
+        let private_input_eval = if let Some(ref verifier_state) = state_manager.verifier_state {
+            let accumulator = verifier_state.accumulator.borrow();
+            let eval = accumulator.input_openings.val_eval;
+            drop(accumulator);
+
+            if eval.is_some() {
+                verifier_state
+                    .accumulator
+                    .borrow_mut()
+                    .set_val_eval_opening(None, Some(r_address.r.clone()));
+                tracing::info!(
+                    "Verifier updated opening point for val_evaluation with evaluation: {:?}",
+                    eval
+                );
+            }
+            eval
+        } else {
+            None
+        };
 
         // Create multilinear polynomials from the split parts
         let val_right: MultilinearPolynomial<F> =
@@ -176,7 +190,7 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
 
         ValEvaluationSumcheck {
             claimed_evaluation,
-            init_eval: state_manager.private_input_evaluation.unwrap_or(F::zero()) + right_eval,
+            init_eval: private_input_eval.unwrap_or(F::zero()) + right_eval,
             num_rounds: T.log_2(),
             prover_state: None,
             K,

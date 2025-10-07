@@ -420,11 +420,13 @@ impl<F: JoltField> ValFinalSumcheck<F> {
             });
 
         if let Some(eval) = private_input_eval_output {
-            state_manager.private_input_evaluation_output = Some(eval);
-
-            // Store the opening point for later proof generation in Stage 5
-            state_manager.private_input_opening_point_output = Some(r_address.clone());
-            tracing::info!("ValFinalSumcheck: Stored private input opening point for output check for later proof generation");
+            if let Some(ref prover_state) = state_manager.prover_state {
+                prover_state
+                    .accumulator
+                    .borrow_mut()
+                    .append_output_eval_opening(eval, r_address.clone());
+                tracing::info!("ValFinalSumcheck: Stored private input opening for output check");
+            }
         }
 
         // Compute val_init_eval as sum of private and public parts
@@ -506,10 +508,27 @@ impl<F: JoltField> ValFinalSumcheck<F> {
             .r;
 
         // Store the private input opening point for output check verification if we have private inputs
-        if state_manager.private_input_evaluation_output.is_some() {
-            state_manager.private_input_opening_point_output = Some(r_address.clone());
-            tracing::info!("ValFinalSumcheck Verifier: Stored private input evaluation: {:?} and opening point for output check for Stage 5 verification", state_manager.private_input_evaluation_output);
-        }
+        let private_input_eval_output = if let Some(ref verifier_state) =
+            state_manager.verifier_state
+        {
+            let accumulator = verifier_state.accumulator.borrow();
+            let eval = accumulator.input_openings.output_eval;
+            drop(accumulator);
+
+            if eval.is_some() {
+                verifier_state
+                    .accumulator
+                    .borrow_mut()
+                    .set_output_eval_opening(None, Some(r_address.clone()));
+                tracing::info!(
+                    "ValFinalSumcheck Verifier: Updated opening point for output check with evaluation: {:?}",
+                    eval
+                );
+            }
+            eval
+        } else {
+            None
+        };
 
         // Compute the public part of val_init evaluation
         let val_init_public: MultilinearPolynomial<F> =
@@ -517,7 +536,7 @@ impl<F: JoltField> ValFinalSumcheck<F> {
         let public_eval = val_init_public.evaluate(&r_address);
 
         // Combine private and public evaluations
-        let val_init_eval = state_manager.private_input_evaluation_output.unwrap_or(F::zero()) + public_eval;
+        let val_init_eval = private_input_eval_output.unwrap_or(F::zero()) + public_eval;
         tracing::info!(
             "ValFinalSumcheck Verifier: Total val_init evaluation (private + public): {:?}",
             val_init_eval

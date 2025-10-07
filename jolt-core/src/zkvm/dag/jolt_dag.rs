@@ -638,8 +638,14 @@ impl JoltDAG {
         if let Some(ref prover_state) = state_manager.prover_state {
             if let Some(ref private_input_poly) = prover_state.private_input_polynomial {
                 if let Some(ref hint) = prover_state.private_input_hint {
-                    // Generate first proof for val_evaluation
-                    if let Some(ref opening_point) = state_manager.private_input_opening_point {
+                    let accumulator = prover_state.accumulator.borrow();
+                    let private_input_openings = &accumulator.input_openings;
+
+                    // Generate proof for val_evaluation
+                    if let (Some(_eval), Some(point)) = (
+                        private_input_openings.val_eval,
+                        &private_input_openings.val_eval_point,
+                    ) {
                         tracing::info!(
                             "Generating private input opening proof for val_evaluation in Stage 5"
                         );
@@ -647,18 +653,22 @@ impl JoltDAG {
                         let proof = PCS::prove(
                             generators,
                             private_input_poly,
-                            opening_point,
+                            point,
                             hint.clone(),
-                            &mut *transcript.borrow_mut(),
+                            &mut transcript_clone,
                         );
-                        state_manager.private_input_proof = Some(proof);
+                        state_manager
+                            .proofs
+                            .borrow_mut()
+                            .insert(ProofKeys::PrivateInputProof, ProofData::OpeningProof(proof));
                         tracing::info!("Generated private input opening proof for val_evaluation");
                     }
 
-                    // Generate second proof for output_check
-                    if let Some(ref opening_point_output) =
-                        state_manager.private_input_opening_point_output
-                    {
+                    // Generate proof for output_check
+                    if let (Some(_eval), Some(point)) = (
+                        private_input_openings.output_eval,
+                        &private_input_openings.output_eval_point,
+                    ) {
                         tracing::info!(
                             "Generating private input opening proof for output_check in Stage 5"
                         );
@@ -666,11 +676,14 @@ impl JoltDAG {
                         let proof = PCS::prove(
                             generators,
                             private_input_poly,
-                            opening_point_output,
+                            point,
                             hint.clone(),
-                            &mut *transcript.borrow_mut(),
+                            &mut transcript_clone,
                         );
-                        state_manager.private_input_proof_output = Some(proof);
+                        state_manager.proofs.borrow_mut().insert(
+                            ProofKeys::PrivateInputProofOutput,
+                            ProofData::OpeningProof(proof),
+                        );
                         tracing::info!("Generated private input opening proof for output_check");
                     }
                 }
@@ -689,11 +702,19 @@ impl JoltDAG {
         transcript: &Rc<RefCell<ProofTranscript>>,
     ) -> Result<(), anyhow::Error> {
         if let Some(ref private_input_commitment) = state_manager.private_input_commitment {
-            // Verify first proof for val_evaluation
-            if let Some(ref opening_point) = state_manager.private_input_opening_point {
-                if let Some(ref private_input_proof) = state_manager.private_input_proof {
-                    if let Some(ref private_input_evaluation) =
-                        state_manager.private_input_evaluation
+            if let Some(ref verifier_state) = state_manager.verifier_state {
+                let accumulator = verifier_state.accumulator.borrow();
+                let private_input_openings = &accumulator.input_openings;
+
+                // Verify proof for val_evaluation
+                if let (Some(eval), Some(point)) = (
+                    private_input_openings.val_eval,
+                    &private_input_openings.val_eval_point,
+                ) {
+                    if let Some(ProofData::OpeningProof(private_input_proof)) = state_manager
+                        .proofs
+                        .borrow()
+                        .get(&ProofKeys::PrivateInputProof)
                     {
                         tracing::info!(
                             "Verifying private input opening proof for val_evaluation in Stage 5"
@@ -703,9 +724,9 @@ impl JoltDAG {
                         PCS::verify(
                             private_input_proof,
                             verifier_setup,
-                            &mut *transcript.borrow_mut(),
-                            opening_point,
-                            private_input_evaluation,
+                            &mut transcript_clone,
+                            point,
+                            &eval,
                             private_input_commitment,
                         ).map_err(|e| {
                             tracing::error!("Private input opening proof for val_evaluation verification failed: {:?}", e);
@@ -717,16 +738,16 @@ impl JoltDAG {
                         );
                     }
                 }
-            }
 
-            // Verify second proof for output_check
-            if let Some(ref opening_point_output) = state_manager.private_input_opening_point_output
-            {
-                if let Some(ref private_input_proof_output) =
-                    state_manager.private_input_proof_output
-                {
-                    if let Some(ref private_input_evaluation_output) =
-                        state_manager.private_input_evaluation_output
+                // Verify proof for output_check
+                if let (Some(eval), Some(point)) = (
+                    private_input_openings.output_eval,
+                    &private_input_openings.output_eval_point,
+                ) {
+                    if let Some(ProofData::OpeningProof(private_input_proof_output)) = state_manager
+                        .proofs
+                        .borrow()
+                        .get(&ProofKeys::PrivateInputProofOutput)
                     {
                         tracing::info!(
                             "Verifying private input opening proof for output_check in Stage 5"
@@ -736,9 +757,9 @@ impl JoltDAG {
                         PCS::verify(
                             private_input_proof_output,
                             verifier_setup,
-                            &mut *transcript.borrow_mut(),
-                            opening_point_output,
-                            private_input_evaluation_output,
+                            &mut transcript_clone,
+                            point,
+                            &eval,
                             private_input_commitment,
                         ).map_err(|e| {
                             tracing::error!("Private input opening proof for output_check verification failed: {:?}", e);
