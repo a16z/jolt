@@ -6,7 +6,15 @@ import os
 import sys
 import argparse
 from collections import defaultdict
-import plotly.graph_objects as go
+
+try:
+    import plotly.graph_objects as go
+except ImportError:
+    print("Error: plotly is not installed.")
+    print("\nTo install, run one of the following:")
+    print("  pip install plotly")
+    print("  sudo apt-get install python3-plotly")
+    sys.exit(1)
 
 TICK_LABELS = {
     20: "2^20 (1 million)",
