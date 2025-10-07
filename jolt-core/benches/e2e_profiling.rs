@@ -80,7 +80,9 @@ fn plot_from_csv() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
                 }
             }
         } else {
-            eprintln!("Could not read benchmark-runs/timings.csv. Run benchmarks first to generate data.");
+            eprintln!(
+                "Could not read benchmark-runs/timings.csv. Run benchmarks first to generate data."
+            );
         }
     };
 
@@ -355,24 +357,32 @@ pub fn master_benchmark(
 
         println!("\n=== Running benchmark at scale 2^{bench_scale} ===");
         let max_trace_length = 1 << bench_scale;
-        let bench_target = target_trace_size.unwrap_or(((1 << bench_scale) as f64 * SAFETY_MARGIN) as usize);
+        let bench_target =
+            target_trace_size.unwrap_or(((1 << bench_scale) as f64 * SAFETY_MARGIN) as usize);
 
         let display_name = bench_type.to_string();
-        
+
         // Map benchmark type to canonical name + input closure
         let (bench_name, input_fn): (&str, fn(usize) -> Vec<u8>) = match bench_type {
             BenchType::Fibonacci => ("fibonacci", |target| {
-                postcard::to_stdvec(&scale_to_target_ops(target, CYCLES_PER_FIBONACCI_UNIT)).unwrap()
+                postcard::to_stdvec(&scale_to_target_ops(target, CYCLES_PER_FIBONACCI_UNIT))
+                    .unwrap()
             }),
             BenchType::Sha2Chain => ("sha2-chain", |target| {
                 let iterations = scale_to_target_ops(target, CYCLES_PER_SHA256);
-                [postcard::to_stdvec(&[5u8; 32]).unwrap(),
-                 postcard::to_stdvec(&iterations).unwrap()].concat()
+                [
+                    postcard::to_stdvec(&[5u8; 32]).unwrap(),
+                    postcard::to_stdvec(&iterations).unwrap(),
+                ]
+                .concat()
             }),
             BenchType::Sha3Chain => ("sha3-chain", |target| {
                 let iterations = scale_to_target_ops(target, CYCLES_PER_SHA3);
-                [postcard::to_stdvec(&[5u8; 32]).unwrap(),
-                 postcard::to_stdvec(&iterations).unwrap()].concat()
+                [
+                    postcard::to_stdvec(&[5u8; 32]).unwrap(),
+                    postcard::to_stdvec(&iterations).unwrap(),
+                ]
+                .concat()
             }),
             BenchType::BTreeMap => ("btreemap", |target| {
                 postcard::to_stdvec(&scale_to_target_ops(target, CYCLES_PER_BTREEMAP_OP)).unwrap()
@@ -381,7 +391,7 @@ pub fn master_benchmark(
             BenchType::Sha3 => panic!("Use sha3-chain instead"),
             _ => unreachable!("Unsupported benchmark type"),
         };
-        
+
         // Derive names from canonical bench_name
         let guest_name = format!("{bench_name}-guest");
         // Generate input and run benchmark
@@ -394,19 +404,28 @@ pub fn master_benchmark(
             bench_name,
             bench_scale,
         );
-        
+
         println!("  Prover completed in {:.2}s", duration.as_secs_f64());
-        
+
         // Store results
         benchmark_data
             .entry(display_name.clone())
             .or_default()
-            .push((bench_scale, duration.as_secs_f64(), proof_size, proof_size_comp));
-        
+            .push((
+                bench_scale,
+                duration.as_secs_f64(),
+                proof_size,
+                proof_size_comp,
+            ));
+
         // Write CSV
         let summary_line = format!(
             "{},{},{:.2},{},{}\n",
-            bench_name, bench_scale, duration.as_secs_f64(), proof_size, proof_size_comp
+            bench_name,
+            bench_scale,
+            duration.as_secs_f64(),
+            proof_size,
+            proof_size_comp
         );
         if let Err(e) = fs::OpenOptions::new()
             .create(true)

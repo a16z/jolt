@@ -6,9 +6,9 @@ use e2e_profiling::{benchmarks, master_benchmark, BenchType};
 
 use std::any::Any;
 
+use chrono::Local;
 use tracing_chrome::ChromeLayerBuilder;
 use tracing_subscriber::{self, fmt::format::FmtSpan, prelude::*, EnvFilter};
-use chrono::Local;
 
 /// Search for a pattern in a file and display the lines that contain it.
 #[derive(Parser, Debug)]
@@ -103,7 +103,10 @@ fn setup_tracing(formats: Option<Vec<Format>>, trace_name: &str) -> Vec<Box<dyn 
         if format.contains(&Format::Chrome) {
             let trace_file = format!("benchmark-runs/perfetto_traces/{}.json", trace_name);
             std::fs::create_dir_all("benchmark-runs/perfetto_traces").ok();
-            let (chrome_layer, guard) = ChromeLayerBuilder::new().include_args(true).file(trace_file).build();
+            let (chrome_layer, guard) = ChromeLayerBuilder::new()
+                .include_args(true)
+                .file(trace_file)
+                .build();
             layers.push(chrome_layer.boxed());
             guards.push(Box::new(guard));
             tracing::info!("Running tracing-chrome. Files will be saved as trace-<some timestamp>.json and can be viewed in https://ui.perfetto.dev/");
@@ -119,7 +122,7 @@ fn trace(args: ProfileArgs) {
     let timestamp = Local::now().format("%Y%m%d-%H%M");
     let trace_name = format!("{}_{}", bench_name, timestamp);
     let _guards = setup_tracing(args.format, &trace_name);
-    
+
     for (span, bench) in benchmarks(args.name).into_iter() {
         span.in_scope(|| {
             bench();
@@ -132,13 +135,10 @@ fn run_benchmark(args: BenchmarkArgs) {
     let bench_name = normalize_bench_name(&args.name.to_string());
     let trace_name = format!("{}_{}", bench_name, args.scale);
     let _guards = setup_tracing(args.format, &trace_name);
-    
+
     // Call master_benchmark with parameters
-    for (span, bench) in master_benchmark(
-        args.name,
-        args.scale,
-        args.target_trace_size,
-    ).into_iter() {
+    for (span, bench) in master_benchmark(args.name, args.scale, args.target_trace_size).into_iter()
+    {
         span.in_scope(|| {
             bench();
             tracing::info!("Benchmark Complete");
