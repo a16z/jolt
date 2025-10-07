@@ -23,13 +23,15 @@ fn scale_to_target_ops(target_cycles: usize, cycles_per_op: f64) -> u32 {
     std::cmp::max(1, (target_cycles as f64 / cycles_per_op) as u32)
 }
 
-#[derive(Debug, Copy, Clone, clap::ValueEnum)]
+#[derive(Debug, Copy, Clone, clap::ValueEnum, strum_macros::Display)]
 pub enum BenchType {
-    Btreemap,
+    BTreeMap,
     Fibonacci,
     Sha2,
     Sha3,
+    #[strum(serialize = "SHA2 Chain")]
     Sha2Chain,
+    #[strum(serialize = "SHA3 Chain")]
     Sha3Chain,
     MasterBenchmark,
     Plot,
@@ -63,15 +65,8 @@ fn plot_from_csv() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
                         parts[3].parse::<usize>(),
                         parts[4].parse::<usize>(),
                     ) {
-                        let bench_name = match parts[0] {
-                            "fib" => "Fibonacci",
-                            "sha2" | "sha2-chain" => "SHA2-chain",
-                            "sha3" | "sha3-chain" => "SHA3-chain",
-                            "btreemap" => "BTreeMap",
-                            other => other,
-                        };
                         benchmark_data
-                            .entry(bench_name.to_string())
+                            .entry(parts[0].to_string())
                             .or_default()
                             .push((scale, time, proof_size, proof_size_comp));
                     }
@@ -357,11 +352,25 @@ fn master_benchmark() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
             .map(|s| s.to_string())
             .unwrap_or_else(|| "18".to_string())
     });
+    let target_trace_size: Option<usize> = env::var("TARGET_TRACE_SIZE")
+        .ok()
+        .and_then(|s| s.parse().ok());
 
     let bench_scales: Vec<usize> = bench_scales_str
         .split(',')
         .filter_map(|s| s.trim().parse::<usize>().ok())
         .collect();
+    
+    // Helper to parse benchmark type from string
+    fn parse_bench_type(s: &str) -> Option<BenchType> {
+        match s {
+            "fib" | "fibonacci" => Some(BenchType::Fibonacci),
+            "sha2-chain" => Some(BenchType::Sha2Chain),
+            "sha3-chain" => Some(BenchType::Sha3Chain),
+            "btreemap" => Some(BenchType::Btreemap),
+            _ => None,
+        }
+    }
 
     if let Err(e) = fs::create_dir_all("perfetto_traces") {
         eprintln!("Warning: Failed to create perfetto_traces directory: {e}");
@@ -381,15 +390,8 @@ fn master_benchmark() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
                         parts[3].parse::<usize>(),
                         parts[4].parse::<usize>(),
                     ) {
-                        let bench_name = match parts[0] {
-                            "fib" => "Fibonacci",
-                            "sha2" | "sha2-chain" => "SHA2-chain",
-                            "sha3" | "sha3-chain" => "SHA3-chain",
-                            "btreemap" => "BTreeMap",
-                            other => other,
-                        };
                         benchmark_data
-                            .entry(bench_name.to_string())
+                            .entry(parts[0].to_string())
                             .or_default()
                             .push((scale, time, proof_size, proof_size_comp));
                     }
@@ -397,125 +399,84 @@ fn master_benchmark() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
             }
         }
 
-        let benchmarks_to_run = if bench_type == "all" {
-            vec!["fib", "sha2-chain", "sha3-chain", "btreemap"]
+        let benchmarks_to_run: Vec<BenchType> = if bench_type == "all" {
+            vec![BenchType::Fibonacci, BenchType::Sha2Chain, BenchType::Sha3Chain, BenchType::Btreemap]
         } else {
-            vec![bench_type.as_str()]
+            parse_bench_type(&bench_type)
+                .map(|t| vec![t])
+                .unwrap_or_else(|| {
+                    eprintln!("Unknown benchmark type: {}", bench_type);
+                    vec![]
+                })
         };
 
         for bench_scale in bench_scales {
             println!("\n=== Running benchmarks at scale 2^{bench_scale} ===");
             let max_trace_length = 1 << bench_scale;
+            let bench_target = target_trace_size.unwrap_or(((1 << bench_scale) as f64 * SAFETY_MARGIN) as usize);
 
-            for current_bench in &benchmarks_to_run {
-                let (duration, proof_size, proof_size_comp) = match *current_bench {
-                    "fib" => {
-                        println!("Running Fibonacci benchmark at scale 2^{bench_scale}");
-                        let (chrome_layer, _guard) = ChromeLayerBuilder::new()
-                            .file(format!("perfetto_traces/fib_{bench_scale}.json"))
-                            .build();
-                        let subscriber = tracing_subscriber::registry().with(chrome_layer);
-                        let _guard = tracing::subscriber::set_default(subscriber);
-
-                        let fib_input = get_fib_input(bench_scale);
-                        prove_example_with_trace(
-                            "fibonacci-guest",
-                            postcard::to_stdvec(&fib_input).unwrap(),
-                            max_trace_length,
-                            "Fibonacci",
-                            bench_scale,
-                        )
-                    }
-                    "sha2" | "sha2-chain" => {
-                        println!("Running SHA2-chain benchmark at scale 2^{bench_scale}");
-                        let (chrome_layer, _guard) = ChromeLayerBuilder::new()
-                            .file(format!("perfetto_traces/sha2_chain_{bench_scale}.json"))
-                            .build();
-                        let subscriber = tracing_subscriber::registry().with(chrome_layer);
-                        let _guard = tracing::subscriber::set_default(subscriber);
-
-                        let iterations = get_sha2_chain_iterations(bench_scale);
-                        let mut inputs = vec![];
-                        inputs.append(&mut postcard::to_stdvec(&[5u8; 32]).unwrap());
-                        inputs.append(&mut postcard::to_stdvec(&iterations).unwrap());
-                        prove_example_with_trace(
-                            "sha2-chain-guest",
-                            inputs,
-                            max_trace_length,
-                            "SHA2_chain",
-                            bench_scale,
-                        )
-                    }
-                    "sha3" | "sha3-chain" => {
-                        println!("Running SHA3-chain benchmark at scale 2^{bench_scale}");
-                        let (chrome_layer, _guard) = ChromeLayerBuilder::new()
-                            .file(format!("perfetto_traces/sha3_chain_{bench_scale}.json"))
-                            .build();
-                        let subscriber = tracing_subscriber::registry().with(chrome_layer);
-                        let _guard = tracing::subscriber::set_default(subscriber);
-
-                        let iterations = get_sha3_chain_iterations(bench_scale);
-                        let mut inputs = vec![];
-                        inputs.append(&mut postcard::to_stdvec(&[5u8; 32]).unwrap());
-                        inputs.append(&mut postcard::to_stdvec(&iterations).unwrap());
-                        prove_example_with_trace(
-                            "sha3-chain-guest",
-                            inputs,
-                            max_trace_length,
-                            "SHA3_chain",
-                            bench_scale,
-                        )
-                    }
-                    "btreemap" => {
-                        println!("Running BTreeMap benchmark at scale 2^{bench_scale}");
-                        let (chrome_layer, _guard) = ChromeLayerBuilder::new()
-                            .file(format!("perfetto_traces/btreemap_{bench_scale}.json"))
-                            .build();
-                        let subscriber = tracing_subscriber::registry().with(chrome_layer);
-                        let _guard = tracing::subscriber::set_default(subscriber);
-
-                        let btreemap_ops = get_btreemap_ops(bench_scale);
-                        prove_example_with_trace(
-                            "btreemap-guest",
-                            postcard::to_stdvec(&btreemap_ops).unwrap(),
-                            max_trace_length,
-                            "BTreeMap",
-                            bench_scale,
-                        )
-                    }
+            for current_bench_type in &benchmarks_to_run {
+                let display_name = current_bench_type.to_string();
+                
+                // Map benchmark type to canonical name + input closure
+                let (bench_name, input_fn): (&str, fn(usize) -> Vec<u8>) = match *current_bench_type {
+                    BenchType::Fibonacci => ("fibonacci", |target| {
+                        postcard::to_stdvec(&scale_to_target_ops(target, CYCLES_PER_FIBONACCI_UNIT)).unwrap()
+                    }),
+                    BenchType::Sha2Chain => ("sha2-chain", |target| {
+                        let iterations = scale_to_target_ops(target, CYCLES_PER_SHA256);
+                        [postcard::to_stdvec(&[5u8; 32]).unwrap(),
+                         postcard::to_stdvec(&iterations).unwrap()].concat()
+                    }),
+                    BenchType::Sha3Chain => ("sha3-chain", |target| {
+                        let iterations = scale_to_target_ops(target, CYCLES_PER_SHA3);
+                        [postcard::to_stdvec(&[5u8; 32]).unwrap(),
+                         postcard::to_stdvec(&iterations).unwrap()].concat()
+                    }),
+                    BenchType::Btreemap => ("btreemap", |target| {
+                        postcard::to_stdvec(&scale_to_target_ops(target, CYCLES_PER_BTREEMAP_OP)).unwrap()
+                    }),
                     _ => {
-                        eprintln!("Unknown benchmark type: {current_bench}");
+                        eprintln!("Unsupported benchmark type in master_benchmark: {:?}", current_bench_type);
                         continue;
                     }
                 };
-
+                
+                // Derive names from canonical bench_name
+                let guest_name = format!("{bench_name}-guest");
+                let file_name_safe = bench_name.replace('-', "_");
+                let trace_file = format!("perfetto_traces/{}_{}.json", file_name_safe, bench_scale);
+                
+                // Single tracing setup (no duplication!)
+                println!("Running {bench_name} benchmark at scale 2^{bench_scale}");
+                let (chrome_layer, _guard) = ChromeLayerBuilder::new()
+                    .file(&trace_file)
+                    .build();
+                let subscriber = tracing_subscriber::registry().with(chrome_layer);
+                let _guard = tracing::subscriber::set_default(subscriber);
+                
+                // Generate input and run benchmark
+                let input = input_fn(bench_target);
+                let (duration, proof_size, proof_size_comp) = prove_example_with_trace(
+                    &guest_name,
+                    input,
+                    max_trace_length,
+                    bench_name,
+                    bench_scale,
+                );
+                
                 println!("  Prover completed in {:.2}s", duration.as_secs_f64());
-
-                let bench_name = match *current_bench {
-                    "fib" => "Fibonacci",
-                    "sha2" | "sha2-chain" => "SHA2-chain",
-                    "sha3" | "sha3-chain" => "SHA3-chain",
-                    "btreemap" => "BTreeMap",
-                    _ => *current_bench,
-                };
-
+                
+                // Store results
                 benchmark_data
-                    .entry(bench_name.to_string())
+                    .entry(display_name.clone())
                     .or_default()
-                    .push((
-                        bench_scale,
-                        duration.as_secs_f64(),
-                        proof_size,
-                        proof_size_comp,
-                    ));
-
+                    .push((bench_scale, duration.as_secs_f64(), proof_size, proof_size_comp));
+                
+                // Write CSV
                 let summary_line = format!(
                     "{},{},{:.2},{},{}\n",
-                    current_bench,
-                    bench_scale,
-                    duration.as_secs_f64(),
-                    proof_size,
-                    proof_size_comp,
+                    bench_name, bench_scale, duration.as_secs_f64(), proof_size, proof_size_comp
                 );
                 if let Err(e) = fs::OpenOptions::new()
                     .create(true)
