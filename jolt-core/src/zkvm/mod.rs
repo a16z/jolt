@@ -253,7 +253,10 @@ where
 
         // Todo(Omid): Remove:
         let mut outputs = program_io.outputs.clone();
-        outputs.resize(preprocessing.shared.memory_layout.max_output_size as usize, 0);
+        outputs.resize(
+            preprocessing.shared.memory_layout.max_output_size as usize,
+            0,
+        );
         let ret_val = postcard::from_bytes::<[u8; 32]>(&outputs).unwrap();
         println!("Return value is: {}", hex::encode(ret_val));
 

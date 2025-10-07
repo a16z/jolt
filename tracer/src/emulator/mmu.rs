@@ -1226,8 +1226,14 @@ mod test_mmu {
     #[should_panic(expected = "I/O underflow")]
     fn test_io_underflow() {
         let mut mmu = setup_mmu();
-        let private_input_size = mmu.jolt_device.as_ref().unwrap().memory_layout.max_private_input_size;
-        let invalid_addr = mmu.jolt_device.as_ref().unwrap().memory_layout.input_start - 1 - private_input_size;
+        let private_input_size = mmu
+            .jolt_device
+            .as_ref()
+            .unwrap()
+            .memory_layout
+            .max_private_input_size;
+        let invalid_addr =
+            mmu.jolt_device.as_ref().unwrap().memory_layout.input_start - 1 - private_input_size;
         // illegal write to inputs
         mmu.store_bytes(invalid_addr, 0xc50513, 2).unwrap();
     }

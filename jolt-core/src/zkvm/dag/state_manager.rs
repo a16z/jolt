@@ -4,6 +4,7 @@ use std::rc::Rc;
 
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::opening_proof::{
     OpeningPoint, ProverOpeningAccumulator, ReducedOpeningProof, SumcheckId,
     VerifierOpeningAccumulator, BIG_ENDIAN,
@@ -12,7 +13,6 @@ use crate::subprotocols::sumcheck::SumcheckInstanceProof;
 use crate::transcripts::Transcript;
 use crate::utils::math::Math;
 use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
-use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::zkvm::{JoltProverPreprocessing, JoltVerifierPreprocessing};
 use num_derive::FromPrimitive;
 use rayon::prelude::*;
@@ -72,6 +72,8 @@ pub struct StateManager<
     pub private_input_proof: Option<PCS::Proof>,
     pub private_input_evaluation_output: Option<F>,
     pub private_input_proof_output: Option<PCS::Proof>,
+    pub private_input_opening_point: Option<Vec<F>>,
+    pub private_input_opening_point_output: Option<Vec<F>>,
     pub ram_K: usize,
     pub twist_sumcheck_switch_index: usize,
     pub program_io: JoltDevice,
@@ -133,6 +135,8 @@ where
             private_input_proof: None,
             private_input_evaluation_output: None,
             private_input_proof_output: None,
+            private_input_opening_point: None,
+            private_input_opening_point_output: None,
             program_io,
             ram_K,
             twist_sumcheck_switch_index,
@@ -173,6 +177,8 @@ where
             private_input_proof: None,
             private_input_evaluation_output: None,
             private_input_proof_output: None,
+            private_input_opening_point: None,
+            private_input_opening_point_output: None,
             program_io,
             ram_K,
             twist_sumcheck_switch_index,

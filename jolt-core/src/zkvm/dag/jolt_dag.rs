@@ -1,8 +1,11 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::dory::DoryGlobals;
+use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::subprotocols::sumcheck::{BatchedSumcheck, SumcheckInstance};
 use crate::transcripts::Transcript;
 #[cfg(not(target_arch = "wasm32"))]
@@ -28,103 +31,6 @@ use crate::zkvm::ProverDebugInfo;
 use allocative::FlameGraphBuilder;
 use anyhow::Context;
 use rayon::prelude::*;
-use crate::poly::multilinear_polynomial::MultilinearPolynomial;
-use common::jolt_device::JoltDevice;
-
-/// Commits to the private inputs of a JoltDevice using the Dory commitment scheme.
-/// 
-/// This function extracts the private inputs from the JoltDevice, converts them into
-/// a multilinear polynomial, and commits to them using the specified commitment scheme.
-///
-/// # Arguments
-/// * `jolt_device` - The JoltDevice containing the private inputs to commit to
-/// * `setup` - The PCS prover setup
-/// * `ram_K` - The RAM size parameter K (polynomial will have log2(K) variables)
-///
-/// # Returns
-/// A tuple containing:
-/// * The multilinear polynomial of private inputs
-/// * The commitment to the private inputs
-/// * The opening proof hint (for later use in opening proofs)
-fn commit_to_private_inputs<F: JoltField, PCS: CommitmentScheme<Field = F>>(
-    jolt_device: &JoltDevice,
-    setup: &PCS::ProverSetup,
-    ram_K: usize,
-) -> (MultilinearPolynomial<F>, PCS::Commitment, PCS::OpeningProofHint) {
-    tracing::info!("commit_to_private_inputs: ram_K = {}", ram_K);
-    
-    let mut initial_memory_state = vec![0; ram_K];
-
-    let mut index = remap_address(
-        jolt_device.memory_layout.private_input_start,
-        &jolt_device.memory_layout,
-    )
-    .unwrap() as usize;
-    
-    tracing::info!("Private input start index = {}", index);
-    tracing::info!("Private input size = {} bytes", jolt_device.private_inputs.len());
-
-    // Convert input bytes into words and populate
-    // `initial_memory_state` and `final_memory_state`
-    for chunk in jolt_device.private_inputs.chunks(8) {
-        let mut word = [0u8; 8];
-        for (i, byte) in chunk.iter().enumerate() {
-            word[i] = *byte;
-        }
-        let word = u64::from_le_bytes(word);
-        initial_memory_state[index] = word;
-        index += 1;
-    }
-
-    
-    // for chunk in jolt_device.private_inputs.chunks(8) {
-    //     let mut word = [0u8; 8];
-    //     for (i, byte) in chunk.iter().enumerate() {
-    //         word[i] = *byte;
-    //     }
-    //     let word = u64::from_le_bytes(word);
-    //     coeffs.push(F::from_u64(word));
-    // }
-    
-    // // Pad with zeros to reach the required size (K)
-    // // The polynomial needs K coefficients to have log2(K) variables
-    // while coeffs.len() < ram_K {
-    //     coeffs.push(F::zero());
-    // }
-    
-    // // Ensure we don't exceed K
-    // coeffs.truncate(ram_K);
-    
-    // Pad the initial memory state to match Dory's expected matrix dimensions
-    // Dory views polynomials as matrices with fixed dimensions based on its global initialization
-    let num_columns = DoryGlobals::get_num_columns();
-    let num_rows = DoryGlobals::get_max_num_rows();
-    let expected_size = num_columns * num_rows;
-    
-    tracing::info!("Dory expects matrix: {} rows x {} cols = {} total", num_rows, num_columns, expected_size);
-    tracing::info!("Initial state size before padding: {}", initial_memory_state.len());
-    
-    if initial_memory_state.len() < expected_size {
-        initial_memory_state.resize(expected_size, 0u64);
-        tracing::info!("Padded initial state to size: {}", initial_memory_state.len());
-    }
-    
-    // Create a multilinear polynomial from the padded field elements
-    let poly = MultilinearPolynomial::from(initial_memory_state);
-    tracing::info!("Polynomial len: {}, num_vars: {}", poly.len(), poly.get_num_vars());
-    
-    tracing::info!(
-        "Created private input polynomial with {} coefficients (log2({}) = {} variables)",
-        poly.len(),
-        poly.len(),
-        poly.get_num_vars()
-    );
-    
-    // Commit to the polynomial using the existing setup that's already configured for Dory
-    let (commitment, hint) = PCS::commit(&poly, setup);
-    
-    (poly, commitment, hint)
-}
 
 pub enum JoltDAG {}
 
@@ -171,24 +77,14 @@ impl JoltDAG {
         }
         drop(commitments);
 
-        let (preprocessing, _, program_io, _) = state_manager.get_prover_data();
-        let (private_input_poly, private_input_commitment, private_input_hint) = 
-            commit_to_private_inputs::<F, PCS>(program_io, &preprocessing.generators, state_manager.ram_K);
-        
-        // Store the polynomial and hint in the prover state for later evaluation
-        if let Some(ref mut prover_state) = state_manager.prover_state {
-            prover_state.private_input_polynomial = Some(private_input_poly);
-            prover_state.private_input_hint = Some(private_input_hint);
+        // Commit to private input
+        let _private_input_openning_proof_hints = Self::commit_private_input(&mut state_manager);
+        // Append private input commitment to transcript
+        if let Some(private_input_commitment) = state_manager.private_input_commitment.as_ref() {
+            transcript
+                .borrow_mut()
+                .append_serializable(private_input_commitment);
         }
-        
-        // Append the private input commitment to the transcript for Fiat-Shamir
-        state_manager
-            .get_transcript()
-            .borrow_mut()
-            .append_serializable(&private_input_commitment);
-        
-        // Store the commitment in the state manager for later use in the proof
-        state_manager.private_input_commitment = Some(private_input_commitment);
 
         // Stage 1:
         #[cfg(not(target_arch = "wasm32"))]
@@ -387,6 +283,14 @@ impl JoltDAG {
         print_current_memory_usage("Stage 5 baseline");
 
         tracing::info!("Stage 5 proving");
+
+        // Generate private input opening proofs if needed
+        Self::generate_private_input_proofs(
+            &mut state_manager,
+            &preprocessing.generators,
+            &transcript,
+        );
+
         let opening_proof = accumulator.borrow_mut().reduce_and_prove(
             polynomials_map,
             opening_proof_hints,
@@ -453,10 +357,12 @@ impl JoltDAG {
         for commitment in commitments.borrow().iter() {
             transcript.borrow_mut().append_serializable(commitment);
         }
-        
+
         // Append private input commitment to transcript for Fiat-Shamir
         if let Some(ref private_input_commitment) = state_manager.private_input_commitment {
-            transcript.borrow_mut().append_serializable(private_input_commitment);
+            transcript
+                .borrow_mut()
+                .append_serializable(private_input_commitment);
         }
 
         // Stage 1:
@@ -572,6 +478,9 @@ impl JoltDAG {
             _ => panic!("Invalid proof type for stage 4"),
         };
 
+        // Verify private input opening proofs if needed
+        Self::verify_private_input_proofs(&state_manager, &preprocessing.generators, &transcript)?;
+
         let mut commitments_map = HashMap::new();
         for polynomial in AllCommittedPolynomials::iter() {
             commitments_map.insert(
@@ -630,5 +539,220 @@ impl JoltDAG {
         drop_in_background_thread(committed_polys);
 
         Ok(hint_map)
+    }
+
+    fn commit_private_input<
+        'a,
+        F: JoltField,
+        ProofTranscript: Transcript,
+        PCS: CommitmentScheme<Field = F>,
+    >(
+        state_manager: &mut StateManager<'a, F, ProofTranscript, PCS>,
+    ) -> Option<PCS::OpeningProofHint> {
+        let (preprocessing, _, program_io, _) = state_manager.get_prover_data();
+
+        // Check if there are any private inputs
+        if program_io.private_inputs.is_empty() {
+            tracing::info!("No private inputs to commit");
+            return None;
+        }
+
+        let mut initial_memory_state = vec![0; state_manager.ram_K];
+
+        let mut index = remap_address(
+            program_io.memory_layout.private_input_start,
+            &program_io.memory_layout,
+        )
+        .unwrap() as usize;
+
+        tracing::info!(
+            "Private input size = {} bytes",
+            program_io.private_inputs.len()
+        );
+
+        // Convert input bytes into words and populate initial_memory_state
+        for chunk in program_io.private_inputs.chunks(8) {
+            let mut word = [0u8; 8];
+            for (i, byte) in chunk.iter().enumerate() {
+                word[i] = *byte;
+            }
+            let word = u64::from_le_bytes(word);
+            initial_memory_state[index] = word;
+            index += 1;
+        }
+
+        // Pad the initial memory state to match Dory's expected matrix dimensions
+        // Dory views polynomials as matrices with fixed dimensions based on its global initialization
+        let num_columns = DoryGlobals::get_num_columns();
+        let num_rows = DoryGlobals::get_max_num_rows();
+        let expected_size = num_columns * num_rows;
+
+        tracing::info!(
+            "Initial state size before padding: {}",
+            initial_memory_state.len()
+        );
+
+        if initial_memory_state.len() < expected_size {
+            initial_memory_state.resize(expected_size, 0u64);
+            tracing::info!(
+                "Padded initial state to size: {}",
+                initial_memory_state.len()
+            );
+        }
+
+        // Create a multilinear polynomial from the padded field elements
+        let poly = MultilinearPolynomial::from(initial_memory_state);
+
+        tracing::info!(
+            "Created private input polynomial with {} coefficients (log2({}) = {} variables)",
+            poly.len(),
+            poly.len(),
+            poly.get_num_vars()
+        );
+
+        // Commit to the polynomial using the existing setup that's already configured for Dory
+        let (commitment, hint) = PCS::commit(&poly, &preprocessing.generators);
+
+        // Store the polynomial in the prover state for later evaluation
+        if let Some(ref mut prover_state) = state_manager.prover_state {
+            prover_state.private_input_polynomial = Some(poly);
+            prover_state.private_input_hint = Some(hint.clone());
+        }
+
+        // Store the commitment in the state manager for later use in the proof
+        state_manager.private_input_commitment = Some(commitment);
+
+        Some(hint)
+    }
+
+    /// Generate private input opening proofs for val_evaluation and output_check
+    fn generate_private_input_proofs<
+        F: JoltField,
+        ProofTranscript: Transcript,
+        PCS: CommitmentScheme<Field = F>,
+    >(
+        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        generators: &PCS::ProverSetup,
+        transcript: &Rc<RefCell<ProofTranscript>>,
+    ) {
+        if let Some(ref prover_state) = state_manager.prover_state {
+            if let Some(ref private_input_poly) = prover_state.private_input_polynomial {
+                if let Some(ref hint) = prover_state.private_input_hint {
+                    // Generate first proof for val_evaluation
+                    if let Some(ref opening_point) = state_manager.private_input_opening_point {
+                        tracing::info!(
+                            "Generating private input opening proof for val_evaluation in Stage 5"
+                        );
+                        let mut transcript_clone = transcript.borrow().clone();
+                        let proof = PCS::prove(
+                            generators,
+                            private_input_poly,
+                            opening_point,
+                            hint.clone(),
+                            &mut *transcript.borrow_mut(),
+                        );
+                        state_manager.private_input_proof = Some(proof);
+                        tracing::info!("Generated private input opening proof for val_evaluation");
+                    }
+
+                    // Generate second proof for output_check
+                    if let Some(ref opening_point_output) =
+                        state_manager.private_input_opening_point_output
+                    {
+                        tracing::info!(
+                            "Generating private input opening proof for output_check in Stage 5"
+                        );
+                        let mut transcript_clone = transcript.borrow().clone();
+                        let proof = PCS::prove(
+                            generators,
+                            private_input_poly,
+                            opening_point_output,
+                            hint.clone(),
+                            &mut *transcript.borrow_mut(),
+                        );
+                        state_manager.private_input_proof_output = Some(proof);
+                        tracing::info!("Generated private input opening proof for output_check");
+                    }
+                }
+            }
+        }
+    }
+
+    /// Verify private input opening proofs for val_evaluation and output_check
+    fn verify_private_input_proofs<
+        F: JoltField,
+        ProofTranscript: Transcript,
+        PCS: CommitmentScheme<Field = F>,
+    >(
+        state_manager: &StateManager<'_, F, ProofTranscript, PCS>,
+        verifier_setup: &PCS::VerifierSetup,
+        transcript: &Rc<RefCell<ProofTranscript>>,
+    ) -> Result<(), anyhow::Error> {
+        if let Some(ref private_input_commitment) = state_manager.private_input_commitment {
+            // Verify first proof for val_evaluation
+            if let Some(ref opening_point) = state_manager.private_input_opening_point {
+                if let Some(ref private_input_proof) = state_manager.private_input_proof {
+                    if let Some(ref private_input_evaluation) =
+                        state_manager.private_input_evaluation
+                    {
+                        tracing::info!(
+                            "Verifying private input opening proof for val_evaluation in Stage 5"
+                        );
+                        let mut transcript_clone = transcript.borrow().clone();
+
+                        PCS::verify(
+                            private_input_proof,
+                            verifier_setup,
+                            &mut *transcript.borrow_mut(),
+                            opening_point,
+                            private_input_evaluation,
+                            private_input_commitment,
+                        ).map_err(|e| {
+                            tracing::error!("Private input opening proof for val_evaluation verification failed: {:?}", e);
+                            anyhow::anyhow!("Private input opening proof for val_evaluation verification failed: {:?}", e)
+                        })?;
+
+                        tracing::info!(
+                            "Private input opening proof for val_evaluation verified successfully"
+                        );
+                    }
+                }
+            }
+
+            // Verify second proof for output_check
+            if let Some(ref opening_point_output) = state_manager.private_input_opening_point_output
+            {
+                if let Some(ref private_input_proof_output) =
+                    state_manager.private_input_proof_output
+                {
+                    if let Some(ref private_input_evaluation_output) =
+                        state_manager.private_input_evaluation_output
+                    {
+                        tracing::info!(
+                            "Verifying private input opening proof for output_check in Stage 5"
+                        );
+                        let mut transcript_clone = transcript.borrow().clone();
+
+                        PCS::verify(
+                            private_input_proof_output,
+                            verifier_setup,
+                            &mut *transcript.borrow_mut(),
+                            opening_point_output,
+                            private_input_evaluation_output,
+                            private_input_commitment,
+                        ).map_err(|e| {
+                            tracing::error!("Private input opening proof for output_check verification failed: {:?}", e);
+                            anyhow::anyhow!("Private input opening proof for output_check verification failed: {:?}", e)
+                        })?;
+
+                        tracing::info!(
+                            "Private input opening proof for output_check verified successfully"
+                        );
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 }

@@ -88,11 +88,7 @@ pub fn remap_address(address: u64, memory_layout: &MemoryLayout) -> Option<u64> 
         return None;
     }
 
-    // if address < memory_layout.private_input_end {
-    //     return None;
-    // }
-
-    // Handle addresses in the private input region or regular input/output region
+    // Handle addresses in the private input region
     if address >= memory_layout.private_input_start {
         // Remap from the start of the private input region
         Some((address - memory_layout.private_input_start) / 8 + 1)
@@ -237,7 +233,6 @@ impl RamDag {
                 .collect();
             assert_eq!(expected_final_memory_state, final_memory_state);
         }
-        // println!("initial_ram_state prover: {:?}", initial_memory_state.to_vec());
 
         Self {
             initial_memory_state: Some(initial_memory_state),
@@ -269,30 +264,6 @@ impl RamDag {
             index += 1;
         }
 
-        // index = remap_address(
-        //     program_io.memory_layout.private_input_start,
-        //     &program_io.memory_layout,
-        // )
-        // .unwrap() as usize;
-
-        // // Convert input bytes into words and populate
-        // // `initial_memory_state` and `final_memory_state`
-        // for chunk in program_io.private_inputs.chunks(8) {
-        //     let mut word = [0u8; 8];
-        //     for (i, byte) in chunk.iter().enumerate() {
-        //         word[i] = *byte;
-        //     }
-        //     let word = u64::from_le_bytes(word);
-        //     initial_memory_state[index] = word;
-        //     index += 1;
-        // }
-        // println!("Double check private_input len: {}", program_io.private_inputs.len());
-        // // Cheating
-        // initial_memory_state[1] = 434041037028460038;
-        // initial_memory_state[2] = 434041037028460038;
-        // initial_memory_state[3] = 434041037028460038;
-        // initial_memory_state[4] = 434041037028460038;
-
         index = remap_address(
             program_io.memory_layout.input_start,
             &program_io.memory_layout,
@@ -309,7 +280,6 @@ impl RamDag {
             initial_memory_state[index] = word;
             index += 1;
         }
-        // println!("initial_ram_state verifier: {:?}", initial_memory_state.to_vec());
 
         Self {
             initial_memory_state: Some(initial_memory_state),
@@ -402,19 +372,13 @@ where
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F>>> {
-        let private_input_eval = state_manager.private_input_evaluation
-            .expect("Private input evaluation not found in state manager");
         let val_evaluation = ValEvaluationSumcheck::new_verifier(
             self.initial_memory_state.as_ref().unwrap(),
             state_manager,
-            private_input_eval,
         );
-        let private_input_eval_output = state_manager.private_input_evaluation_output
-            .expect("Private input evaluation for output not found in state manager");
         let val_final_evaluation = ValFinalSumcheck::new_verifier(
             self.initial_memory_state.as_ref().unwrap(),
             state_manager,
-            private_input_eval_output,
         );
         let hamming_booleanity = HammingBooleanitySumcheck::new_verifier(state_manager);
 
