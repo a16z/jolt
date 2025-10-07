@@ -146,7 +146,7 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstance<F> for HammingWeightSumcheck<F> {
+impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for HammingWeightSumcheck<F> {
     fn degree(&self) -> usize {
         1
     }
@@ -229,6 +229,7 @@ impl<F: JoltField> SumcheckInstance<F> for HammingWeightSumcheck<F> {
     fn cache_openings_prover(
         &self,
         accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
+        transcript: &mut T,
         r_address: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         let prover_state = self
@@ -248,6 +249,7 @@ impl<F: JoltField> SumcheckInstance<F> for HammingWeightSumcheck<F> {
         );
 
         accumulator.borrow_mut().append_sparse(
+            transcript,
             (0..self.d).map(CommittedPolynomial::RamRa).collect(),
             SumcheckId::RamHammingWeight,
             r_address.r,
@@ -259,6 +261,7 @@ impl<F: JoltField> SumcheckInstance<F> for HammingWeightSumcheck<F> {
     fn cache_openings_verifier(
         &self,
         accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
+        transcript: &mut T,
         r_address: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         let (r_cycle, _) = accumulator.borrow().get_virtual_polynomial_opening(
@@ -269,6 +272,7 @@ impl<F: JoltField> SumcheckInstance<F> for HammingWeightSumcheck<F> {
             OpeningPoint::new([r_address.r.as_slice(), r_cycle.r.as_slice()].concat());
 
         accumulator.borrow_mut().append_sparse(
+            transcript,
             (0..self.d).map(CommittedPolynomial::RamRa).collect(),
             SumcheckId::RamHammingWeight,
             opening_point.r,

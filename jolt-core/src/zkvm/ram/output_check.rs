@@ -167,7 +167,7 @@ impl<F: JoltField> OutputSumcheck<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstance<F> for OutputSumcheck<F> {
+impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for OutputSumcheck<F> {
     fn degree(&self) -> usize {
         3
     }
@@ -301,6 +301,7 @@ impl<F: JoltField> SumcheckInstance<F> for OutputSumcheck<F> {
     fn cache_openings_prover(
         &self,
         accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
+        transcript: &mut T,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         let OutputSumcheckProverState {
@@ -310,12 +311,14 @@ impl<F: JoltField> SumcheckInstance<F> for OutputSumcheck<F> {
         } = self.prover_state.as_ref().unwrap();
 
         accumulator.borrow_mut().append_virtual(
+            transcript,
             VirtualPolynomial::RamValFinal,
             SumcheckId::RamOutputCheck,
             opening_point.clone(),
             val_final.final_sumcheck_claim(),
         );
         accumulator.borrow_mut().append_virtual(
+            transcript,
             VirtualPolynomial::RamValInit,
             SumcheckId::RamOutputCheck,
             opening_point,
@@ -326,14 +329,17 @@ impl<F: JoltField> SumcheckInstance<F> for OutputSumcheck<F> {
     fn cache_openings_verifier(
         &self,
         accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
+        transcript: &mut T,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         accumulator.borrow_mut().append_virtual(
+            transcript,
             VirtualPolynomial::RamValFinal,
             SumcheckId::RamOutputCheck,
             opening_point.clone(),
         );
         accumulator.borrow_mut().append_virtual(
+            transcript,
             VirtualPolynomial::RamValInit,
             SumcheckId::RamOutputCheck,
             opening_point,
@@ -484,7 +490,7 @@ impl<F: JoltField> ValFinalSumcheck<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstance<F> for ValFinalSumcheck<F> {
+impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ValFinalSumcheck<F> {
     fn degree(&self) -> usize {
         2
     }
@@ -559,6 +565,7 @@ impl<F: JoltField> SumcheckInstance<F> for ValFinalSumcheck<F> {
     fn cache_openings_prover(
         &self,
         accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
+        transcript: &mut T,
         r_cycle_prime: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         let ValFinalSumcheckProverState { inc, wa, .. } = self.prover_state.as_ref().unwrap();
@@ -574,12 +581,14 @@ impl<F: JoltField> SumcheckInstance<F> for ValFinalSumcheck<F> {
             OpeningPoint::new([r_address.r.as_slice(), r_cycle_prime.r.as_slice()].concat());
 
         accumulator.borrow_mut().append_dense(
+            transcript,
             vec![CommittedPolynomial::RamInc],
             SumcheckId::RamValFinalEvaluation,
             r_cycle_prime.r,
             &[inc.final_sumcheck_claim()],
         );
         accumulator.borrow_mut().append_virtual(
+            transcript,
             VirtualPolynomial::RamRa,
             SumcheckId::RamValFinalEvaluation,
             wa_opening_point,
@@ -590,6 +599,7 @@ impl<F: JoltField> SumcheckInstance<F> for ValFinalSumcheck<F> {
     fn cache_openings_verifier(
         &self,
         accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
+        transcript: &mut T,
         r_cycle_prime: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         let r_address = accumulator
@@ -603,11 +613,13 @@ impl<F: JoltField> SumcheckInstance<F> for ValFinalSumcheck<F> {
             OpeningPoint::new([r_address.r.as_slice(), r_cycle_prime.r.as_slice()].concat());
 
         accumulator.borrow_mut().append_dense(
+            transcript,
             vec![CommittedPolynomial::RamInc],
             SumcheckId::RamValFinalEvaluation,
             r_cycle_prime.r,
         );
         accumulator.borrow_mut().append_virtual(
+            transcript,
             VirtualPolynomial::RamRa,
             SumcheckId::RamValFinalEvaluation,
             wa_opening_point,

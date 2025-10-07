@@ -141,7 +141,7 @@ impl<F: JoltField> InnerSumcheck<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstance<F> for InnerSumcheck<F> {
+impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for InnerSumcheck<F> {
     fn degree(&self) -> usize {
         2
     }
@@ -270,6 +270,7 @@ impl<F: JoltField> SumcheckInstance<F> for InnerSumcheck<F> {
     fn cache_openings_prover(
         &self,
         _accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
+        _transcript: &mut T,
         _opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         // Nothing to cache
@@ -278,6 +279,7 @@ impl<F: JoltField> SumcheckInstance<F> for InnerSumcheck<F> {
     fn cache_openings_verifier(
         &self,
         _accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
+        _transcript: &mut T,
         _opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         // Nothing to cache

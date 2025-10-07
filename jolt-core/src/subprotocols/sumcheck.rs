@@ -35,7 +35,7 @@ use std::rc::Rc;
 ///
 /// This trait defines the interface needed to participate in the `BatchedSumcheck` protocol,
 /// which reduces verifier cost and proof size by batching multiple sumcheck protocols.
-pub trait SumcheckInstance<F: JoltField>: Send + Sync + MaybeAllocative {
+pub trait SumcheckInstance<F: JoltField, T: Transcript>: Send + Sync + MaybeAllocative {
     /// Returns the maximum degree of the sumcheck polynomial.
     fn degree(&self) -> usize;
 
@@ -73,12 +73,14 @@ pub trait SumcheckInstance<F: JoltField>: Send + Sync + MaybeAllocative {
     fn cache_openings_prover(
         &self,
         accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
+        transcript: &mut T,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     );
 
     fn cache_openings_verifier(
         &self,
         accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
+        transcript: &mut T,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     );
 
@@ -90,7 +92,7 @@ pub enum SingleSumcheck {}
 impl SingleSumcheck {
     /// Proves a single sumcheck instance.
     pub fn prove<F: JoltField, ProofTranscript: Transcript>(
-        sumcheck_instance: &mut dyn SumcheckInstance<F>,
+        sumcheck_instance: &mut dyn SumcheckInstance<F, ProofTranscript>,
         opening_accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F>>>>,
         transcript: &mut ProofTranscript,
     ) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F::Challenge>) {
@@ -99,6 +101,8 @@ impl SingleSumcheck {
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
 
         let mut previous_claim = sumcheck_instance.input_claim();
+        transcript.append_scalar(&previous_claim); // Append input claim
+
         for round in 0..num_rounds {
             let mut univariate_poly_evals =
                 sumcheck_instance.compute_prover_message(round, previous_claim);
@@ -124,6 +128,7 @@ impl SingleSumcheck {
             // opening proof or sumcheck (in the case of virtual polynomials).
             sumcheck_instance.cache_openings_prover(
                 opening_accumulator,
+                transcript,
                 sumcheck_instance.normalize_opening_point(&r_sumcheck),
             );
         }
@@ -133,13 +138,16 @@ impl SingleSumcheck {
 
     /// Verifies a single sumcheck instance.
     pub fn verify<F: JoltField, ProofTranscript: Transcript>(
-        sumcheck_instance: &dyn SumcheckInstance<F>,
+        sumcheck_instance: &dyn SumcheckInstance<F, ProofTranscript>,
         proof: &SumcheckInstanceProof<F, ProofTranscript>,
         opening_accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
         transcript: &mut ProofTranscript,
     ) -> Result<Vec<F::Challenge>, ProofVerifyError> {
+        let input_claim = sumcheck_instance.input_claim();
+        transcript.append_scalar(&input_claim); // Append input claim
+
         let (output_claim, r) = proof.verify(
-            sumcheck_instance.input_claim(),
+            input_claim,
             sumcheck_instance.num_rounds(),
             sumcheck_instance.degree(),
             transcript,
@@ -152,6 +160,7 @@ impl SingleSumcheck {
 
         sumcheck_instance.cache_openings_verifier(
             opening_accumulator.unwrap(),
+            transcript,
             sumcheck_instance.normalize_opening_point(&r),
         );
 
@@ -167,7 +176,7 @@ impl SingleSumcheck {
 pub enum BatchedSumcheck {}
 impl BatchedSumcheck {
     pub fn prove<F: JoltField, ProofTranscript: Transcript>(
-        mut sumcheck_instances: Vec<&mut dyn SumcheckInstance<F>>,
+        mut sumcheck_instances: Vec<&mut dyn SumcheckInstance<F, ProofTranscript>>,
         opening_accumulator: Option<Rc<RefCell<ProverOpeningAccumulator<F>>>>,
         transcript: &mut ProofTranscript,
     ) -> (SumcheckInstanceProof<F, ProofTranscript>, Vec<F::Challenge>) {
@@ -192,9 +201,9 @@ impl BatchedSumcheck {
             .iter()
             .map(|sumcheck| {
                 let num_rounds = sumcheck.num_rounds();
-                sumcheck
-                    .input_claim()
-                    .mul_pow_2(max_num_rounds - num_rounds)
+                let input_claim = sumcheck.input_claim();
+                transcript.append_scalar(&input_claim);
+                input_claim.mul_pow_2(max_num_rounds - num_rounds)
             })
             .collect();
 
@@ -310,6 +319,7 @@ impl BatchedSumcheck {
                 // opening proof or sumcheck (in the case of virtual polynomials).
                 sumcheck.cache_openings_prover(
                     opening_accumulator.clone(),
+                    transcript,
                     sumcheck.normalize_opening_point(r_slice),
                 );
             }
@@ -320,7 +330,7 @@ impl BatchedSumcheck {
 
     pub fn verify<F: JoltField, ProofTranscript: Transcript>(
         proof: &SumcheckInstanceProof<F, ProofTranscript>,
-        sumcheck_instances: Vec<&dyn SumcheckInstance<F>>,
+        sumcheck_instances: Vec<&dyn SumcheckInstance<F, ProofTranscript>>,
         opening_accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
         transcript: &mut ProofTranscript,
     ) -> Result<Vec<F::Challenge>, ProofVerifyError> {
@@ -351,10 +361,9 @@ impl BatchedSumcheck {
             .zip(batching_coeffs.iter())
             .map(|(sumcheck, coeff)| {
                 let num_rounds = sumcheck.num_rounds();
-                sumcheck
-                    .input_claim()
-                    .mul_pow_2(max_num_rounds - num_rounds)
-                    * coeff
+                let input_claim = sumcheck.input_claim();
+                transcript.append_scalar(&input_claim);
+                input_claim.mul_pow_2(max_num_rounds - num_rounds) * coeff
             })
             .sum();
 
@@ -377,6 +386,7 @@ impl BatchedSumcheck {
                     // opening proof or sumcheck (in the case of virtual polynomials).
                     sumcheck.cache_openings_verifier(
                         opening_accumulator.clone(),
+                        transcript,
                         sumcheck.normalize_opening_point(r_slice),
                     );
                 }

@@ -163,7 +163,7 @@ impl<F: JoltField> BooleanityProverState<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
+impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for BooleanitySumcheck<F> {
     fn degree(&self) -> usize {
         3
     }
@@ -305,6 +305,7 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
     fn cache_openings_prover(
         &self,
         accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
+        transcript: &mut T,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         let ps = self.prover_state.as_ref().unwrap();
@@ -312,6 +313,7 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
         let claims: Vec<F> = ps.H.iter().map(|H| H.final_sumcheck_claim()).collect();
 
         accumulator.borrow_mut().append_sparse(
+            transcript,
             (0..self.d).map(CommittedPolynomial::BytecodeRa).collect(),
             SumcheckId::BytecodeBooleanity,
             opening_point.r[..self.log_K_chunk].to_vec(),
@@ -323,9 +325,11 @@ impl<F: JoltField> SumcheckInstance<F> for BooleanitySumcheck<F> {
     fn cache_openings_verifier(
         &self,
         accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
+        transcript: &mut T,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         accumulator.borrow_mut().append_sparse(
+            transcript,
             (0..self.d).map(CommittedPolynomial::BytecodeRa).collect(),
             SumcheckId::BytecodeBooleanity,
             opening_point.r,
