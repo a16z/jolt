@@ -144,9 +144,9 @@ pub fn master_benchmark(
 
         let proving_hz = trace_length as f64 / duration.as_secs_f64();
         println!(
-            "  Prover completed in {:.2}s ({:.1} Hz)",
+            "  Prover completed in {:.2}s ({:.1} kHz)",
             duration.as_secs_f64(),
-            proving_hz
+            proving_hz / 1000.0,
         );
 
         // Write CSV
