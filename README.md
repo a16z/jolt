@@ -103,7 +103,7 @@ You may also enable pprof for detailed CPU profiling:
 
 This will produce a `.pb` profile, which you can view in [pprof](https://github.com/google/pprof):
 
-```go tool pprof -http=:8080 benchmark-runs/pprof/sha3_prove.pb```
+```go tool pprof -http=:8080 target/release/jolt_core benchmark-runs/pprof/sha3_prove.pb```
 
 You may customize the sampling frequency using `PPROF_FREQ` (default: 100).
 
