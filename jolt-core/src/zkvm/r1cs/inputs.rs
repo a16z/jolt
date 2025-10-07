@@ -614,7 +614,6 @@ where
         .zip(right_input.par_iter_mut())
         .zip(trace.par_iter())
         .for_each(|((left, right), cycle)| {
-            // Instruction inputs and product
             (*left, *right) = LookupQuery::<XLEN>::to_instruction_inputs(cycle);
         });
 
