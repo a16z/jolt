@@ -150,6 +150,7 @@ impl<F: JoltField> RaPolynomialRound1<F> {
         self.lookup_indices.len()
     }
 
+    #[tracing::instrument(skip_all, name = "RaPolynomialRound1::bind")]
     fn bind(self, r0: F::Challenge, binding_order: BindingOrder) -> RaPolynomialRound2<F> {
         // Construct lookup tables.
         let eq_0_r0 = EqPolynomial::mle(&[F::zero()], &[r0]);
@@ -195,6 +196,7 @@ impl<F: JoltField> RaPolynomialRound2<F> {
         self.lookup_indices.len() / 2
     }
 
+    #[tracing::instrument(skip_all, name = "RaPolynomialRound2::bind")]
     fn bind(self, r1: F::Challenge, binding_order: BindingOrder) -> RaPolynomialRound3<F> {
         assert_eq!(binding_order, self.binding_order);
         // Construct lookup tables.
@@ -266,6 +268,7 @@ impl<F: JoltField> RaPolynomialRound3<F> {
         self.lookup_indices.len() / 4
     }
 
+    #[tracing::instrument(skip_all, name = "RaPolynomialRound3::bind")]
     fn bind(self, r2: F::Challenge, _binding_order: BindingOrder) -> MultilinearPolynomial<F> {
         // Construct lookup tables.
         let eq_0_r2 = EqPolynomial::mle(&[F::zero()], &[r2]);
