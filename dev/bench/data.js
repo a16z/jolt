@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1759797662718,
+  "lastUpdate": 1759800910979,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -18082,6 +18082,198 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 850056,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "github@randomwalks.xyz",
+            "name": "Ari",
+            "username": "abiswas3"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c5d0eb0a37cbb70fe6f4a8e620c441501e61d5c0",
+          "message": "perf: F::Challenge optimized binding and MLE evals\n\n* feat: small_scalar_binding\n\nOps are generic but associated type was being rv64, so merging\n\n* feat: small_scalar_binding\n\nCode builds.\nNeed to bring changes to transcripts -- and then if all tests pass,\nwe can change call sites\n\n* feat: small_scalar_binding\n\nCode builds.\nNeed to bring changes to transcripts -- and then if all tests pass,\nwe can change call sites\n\n* feat: small_scalar_binding\n\nTranscript tests also pass. Checking allocative\n\n* feat: small_scalar_binding\n\nMultipliplication with native operations is still faster (as expected).\n\n* Merge branch 'feat/rv64' of https://github.com/abiswas3/jolt into feat/rv64-small-binding\n\n* feat: small_binding\n\nnearly all errors are gone.\nI need to comment out the tests to make things pass cos MLE_field is not\nyet written\n\n* feat: small_binding\n\nJust commitments and lookuptables remain.\nOf course mle_field to make_the whole thing work\n\n* feat: small_binding\n\nJust tests and ambiguous challenge type (which I will figure out how to\ndeal with)\n\n* feat: small_binding\n\nIdeally just lookup tables left, and all tests will pass.\nBut that is to be seen\n\n* feat: small_binding\n\nPassing these tests are such a nightmare\n\n* feat: small_binding\n\nBringing in the field versions of mle lookup tables\n\n* feat: small_binding\n\nMLE lookuptable done, but no prefix_field yet\n\n* feat: small_binding\n\nupdate fields and then it's all done\n\n* feat: small_binding\n\nupdate fields and then it's all done\n\n* feat: small_binding\n\nChanged to warns.\n\n* feat: small_binding\n\nAll compiler errors gone!\n\n* feat: small_binding\n\nClippy + Old Benches passing!\n\n* feat: small_binding\n\nClippy + Old Benches passing!\n\n* feat: small_binding\n\nTidying up code structure\n\n* feat: small_binding\n\nReady for PR\n\n* chore: reducing size of diff\n\nThe multiple variants of mle_field and mle_half_and_half are not needed\nit seems. Just tell the rust compiler [X] and [Y] are types that have\nthe a certain property.\n\n* chore: reducing size of diff\n\nTidying up things\n\n1. Removing comments for standard operations\n2. Challenge now implemnents ark_ff::UniformRand\n3. eq_poly mle is generic (the remainder will be generic as well)\n4. benches now use feaures so we don't need to comment out things and\nrun again\n\n* chore: reducing size of diff\n\nTidying up things\n\n1. Removing comments for standard operations\n2. Challenge now implemnents ark_ff::UniformRand\n3. eq_poly mle is generic (the remainder will be generic as well)\n4. benches now use feaures so we don't need to comment out things and\nrun again\n5. Preparing to pull the lastest feat/rv64 with no trait objects and\nmake into generics\n\n* chore: reducing size of diff\n\nPreparing the merge\n\n* chore: reducing size of diff\n\nPreparing the merge\n\n* Merge remote-tracking branch 'upstream/feat/rv64' into feat/rv64-small-binding\n\nMerge seems to be sucessful. These merges can be a bit of a nightmare,\nwith the changeds being so subtle. But i think i've gotten everything\n in.\n\n* chore: reducing diff size\n\nGeneric polynomial evals pass\n\n* chore: reducing diff size\n\nLookuptable MLE generics almost done\n\n* chore: reducing diff size\n\nLookuptable MLE tests errors gone\n\n* chore: reducing diff size\n\nPrefix MLE and Checkpoint erros half gone\n\n* chore: reducing diff size\n\nPrefix MLE and Checkpoint erros 3/4 gone\n\n* chore: reducing diff size\n\nNow all errors seem to be gone. Testing\n\n* chore: reducing diff size\n\nAll tests pass as well.\n\n* chore: reducing diff size\n\nCosmetics -- making sure all trait bounds are consistent\n\n* chore: reducing diff size\n\nAll remnants of field removed!\n\n* chore: reducing diff size\n\nAll remnants of field removed!\n\n* chore: reducing diff size\n\nNearly ready for PR\n\n* optimisation: polynomial batch and single\n\nMore cache-efficient sparsity accounting polynomial evaluations.\n\n* optimisation: polynomial batch and single\n\nAll tests pass. Formatting works. One more review before PR\n\n* optimisation: polynomial batch and single\n\nAddressing Markos stylistic comments\n\n* optimisation: polynomial batch and single\n\nAddressing Markos stylistic comments\n\n* Update jolt-core/src/poly/multilinear_polynomial.rs\n\nCo-authored-by: Markos <53157953+markosg04@users.noreply.github.com>\n\n* Update jolt-core/src/poly/eq_poly.rs\n\nCo-authored-by: Markos <53157953+markosg04@users.noreply.github.com>\n\n* chore: cleaning up comment and formatting\n\n* chore: cleaning up comment and formatting\n\nBenches documented. The theory docs will be updated soon\n\n* chore: cleaning up comment and formatting\n\n1. Removed *r + F::zero() with (*r).into()\n2. Macros for ops generation documented\n3. Cleaner imports for mle in eq_poly\n\n* chore: cleaning up comment and formatting\n\n1. Removed *r + F::zero() with (*r).into()\n2. Macros for ops generation documented\n3. Cleaner imports for mle in eq_poly\n\n* chore: cleaning up comment and formatting\n\n1. Removed *r + F::zero() with (*r).into()\n2. Macros for ops generation documented\n3. Cleaner imports for mle in eq_poly\n4. Making MontU128 the default\n\n* chore: cleaning up comment and formatting\n\n1. Removed *r + F::zero() with (*r).into()\n2. Macros for ops generation documented\n3. Cleaner imports for mle in eq_poly\n4. Making MontU128 the default\n5. Cleaning up all the Challenge::randoms\n\n* Update jolt-core/src/transcripts/blake2b.rs\n\nCo-authored-by: Markos <53157953+markosg04@users.noreply.github.com>\n\n* Update jolt-core/src/subprotocols/mles_product_sum.rs\n\nCo-authored-by: Markos <53157953+markosg04@users.noreply.github.com>\n\n* Update jolt-core/src/subprotocols/mles_product_sum.rs\n\nCo-authored-by: Markos <53157953+markosg04@users.noreply.github.com>\n\n* Update jolt-core/src/subprotocols/mles_product_sum.rs\n\nCo-authored-by: Markos <53157953+markosg04@users.noreply.github.com>\n\n* Update jolt-core/src/field/mod.rs\n\nCo-authored-by: Markos <53157953+markosg04@users.noreply.github.com>\n\n* Update jolt-core/src/field/challenge/mont_ark_u128.rs\n\nCo-authored-by: Markos <53157953+markosg04@users.noreply.github.com>\n\n* Update jolt-core/benches/poly_bench.rs\n\nCo-authored-by: Markos <53157953+markosg04@users.noreply.github.com>\n\n* Update jolt-core/benches/poly_bench.rs\n\nCo-authored-by: Markos <53157953+markosg04@users.noreply.github.com>\n\n* Update jolt-core/benches/poly_bench.rs\n\nCo-authored-by: Markos <53157953+markosg04@users.noreply.github.com>\n\n* chore: renames\n\n* chore: renames\n\n* Update jolt-core/src/field/mod.rs\n\nCo-authored-by: Markos <53157953+markosg04@users.noreply.github.com>\n\n* Update jolt-core/src/field/mod.rs\n\nCo-authored-by: Markos <53157953+markosg04@users.noreply.github.com>\n\n* fix: cargo toml and srs -> urs\n\n---------\n\nCo-authored-by: Ari <software@randomwalks.xyz>\nCo-authored-by: Markos <53157953+markosg04@users.noreply.github.com>\nCo-authored-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\nCo-authored-by: markosg04 <mgeorghiades@a16z.com>",
+          "timestamp": "2025-10-06T17:42:48-07:00",
+          "tree_id": "7801fb28f108d60d24e163910442be2382800b34",
+          "url": "https://github.com/a16z/jolt/commit/c5d0eb0a37cbb70fe6f4a8e620c441501e61d5c0"
+        },
+        "date": 1759800910269,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 788576,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "blake2-ex-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "blake2-ex-mem",
+            "value": 781924,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "blake3-ex-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "blake3-ex-mem",
+            "value": 755648,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 3715716,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 798120,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 777576,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 755884,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 887004,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 861472,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 345008,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 6455152,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 809056,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 760496,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 859040,
             "unit": "KB",
             "extra": ""
           }
