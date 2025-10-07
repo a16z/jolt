@@ -268,7 +268,7 @@ pub struct RaPolynomialRound3<F: JoltField> {
     // Index `x` stores `eq(x, r_address_chunk_i) * eq(11, r0 r1)`.
     F_11: Vec<F>,
     lookup_indices: Arc<Vec<Option<usize>>>,
-    r1: F,
+    r1: F::Challenge,
     binding_order: BindingOrder,
 }
 
@@ -277,7 +277,7 @@ impl<F: JoltField> RaPolynomialRound3<F> {
         self.lookup_indices.len() / 4
     }
 
-    fn bind(self, r2: F, _binding_order: BindingOrder) -> MultilinearPolynomial<F> {
+    fn bind(self, r2: F::Challenge, _binding_order: BindingOrder) -> MultilinearPolynomial<F> {
         // Construct lookup tables.
         let eq_0_r2 = EqPolynomial::mle(&[F::zero()], &[r2]);
         let eq_1_r2 = EqPolynomial::mle(&[F::one()], &[r2]);
