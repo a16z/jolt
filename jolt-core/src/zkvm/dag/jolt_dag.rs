@@ -119,10 +119,11 @@ impl JoltDAG {
             write_flamegraph_svg(flamegraph, "stage2_start_flamechart.svg");
         }
 
-        let stage2_instances_mut: Vec<&mut dyn SumcheckInstance<F>> = stage2_instances
-            .iter_mut()
-            .map(|instance| &mut **instance as &mut dyn SumcheckInstance<F>)
-            .collect();
+        let stage2_instances_mut: Vec<&mut dyn SumcheckInstance<F, ProofTranscript>> =
+            stage2_instances
+                .iter_mut()
+                .map(|instance| &mut **instance as &mut dyn SumcheckInstance<F, ProofTranscript>)
+                .collect();
 
         let transcript = state_manager.get_transcript();
         let accumulator = state_manager.get_prover_accumulator();
@@ -174,10 +175,11 @@ impl JoltDAG {
             write_flamegraph_svg(flamegraph, "stage3_start_flamechart.svg");
         }
 
-        let stage3_instances_mut: Vec<&mut dyn SumcheckInstance<F>> = stage3_instances
-            .iter_mut()
-            .map(|instance| &mut **instance as &mut dyn SumcheckInstance<F>)
-            .collect();
+        let stage3_instances_mut: Vec<&mut dyn SumcheckInstance<F, ProofTranscript>> =
+            stage3_instances
+                .iter_mut()
+                .map(|instance| &mut **instance as &mut dyn SumcheckInstance<F, ProofTranscript>)
+                .collect();
 
         tracing::info!("Stage 3 proving");
         let (stage3_proof, _r_stage3) = BatchedSumcheck::prove(
@@ -226,10 +228,11 @@ impl JoltDAG {
             write_flamegraph_svg(flamegraph, "stage4_start_flamechart.svg");
         }
 
-        let stage4_instances_mut: Vec<&mut dyn SumcheckInstance<F>> = stage4_instances
-            .iter_mut()
-            .map(|instance| &mut **instance as &mut dyn SumcheckInstance<F>)
-            .collect();
+        let stage4_instances_mut: Vec<&mut dyn SumcheckInstance<F, ProofTranscript>> =
+            stage4_instances
+                .iter_mut()
+                .map(|instance| &mut **instance as &mut dyn SumcheckInstance<F, ProofTranscript>)
+                .collect();
 
         tracing::info!("Stage 4 proving");
         let (stage4_proof, _r_stage4) = BatchedSumcheck::prove(
@@ -359,9 +362,9 @@ impl JoltDAG {
             .chain(ram_dag.stage2_verifier_instances(&mut state_manager))
             .chain(lookups_dag.stage2_verifier_instances(&mut state_manager))
             .collect();
-        let stage2_instances_ref: Vec<&dyn SumcheckInstance<F>> = stage2_instances
+        let stage2_instances_ref: Vec<&dyn SumcheckInstance<F, ProofTranscript>> = stage2_instances
             .iter()
-            .map(|instance| &**instance as &dyn SumcheckInstance<F>)
+            .map(|instance| &**instance as &dyn SumcheckInstance<F, ProofTranscript>)
             .collect();
 
         let proofs = state_manager.proofs.borrow();
@@ -392,9 +395,9 @@ impl JoltDAG {
             .chain(lookups_dag.stage3_verifier_instances(&mut state_manager))
             .chain(ram_dag.stage3_verifier_instances(&mut state_manager))
             .collect();
-        let stage3_instances_ref: Vec<&dyn SumcheckInstance<F>> = stage3_instances
+        let stage3_instances_ref: Vec<&dyn SumcheckInstance<F, ProofTranscript>> = stage3_instances
             .iter()
-            .map(|instance| &**instance as &dyn SumcheckInstance<F>)
+            .map(|instance| &**instance as &dyn SumcheckInstance<F, ProofTranscript>)
             .collect();
 
         let proofs = state_manager.proofs.borrow();
@@ -422,9 +425,9 @@ impl JoltDAG {
             .chain(bytecode_dag.stage4_verifier_instances(&mut state_manager))
             .chain(lookups_dag.stage4_verifier_instances(&mut state_manager))
             .collect();
-        let stage4_instances_ref: Vec<&dyn SumcheckInstance<F>> = stage4_instances
+        let stage4_instances_ref: Vec<&dyn SumcheckInstance<F, ProofTranscript>> = stage4_instances
             .iter()
-            .map(|instance| &**instance as &dyn SumcheckInstance<F>)
+            .map(|instance| &**instance as &dyn SumcheckInstance<F, ProofTranscript>)
             .collect();
 
         let proofs = state_manager.proofs.borrow();

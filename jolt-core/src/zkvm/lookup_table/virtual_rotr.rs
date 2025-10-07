@@ -4,7 +4,7 @@ use super::prefixes::PrefixEval;
 use super::suffixes::{SuffixEval, Suffixes};
 use super::JoltLookupTable;
 use super::PrefixSuffixDecomposition;
-use crate::field::JoltField;
+use crate::field::{ChallengeFieldOps, FieldChallengeOps, JoltField};
 use crate::utils::uninterleave_bits;
 use crate::zkvm::lookup_table::prefixes::Prefixes;
 
@@ -30,8 +30,11 @@ impl<const XLEN: usize> JoltLookupTable for VirtualRotrTable<XLEN> {
 
         first_sum + second_sum
     }
-
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+    fn evaluate_mle<F, C>(&self, r: &[C]) -> F
+    where
+        C: ChallengeFieldOps<F>,
+        F: JoltField + FieldChallengeOps<C>,
+    {
         assert_eq!(r.len() % 2, 0, "r must have even length");
         assert_eq!(r.len() / 2, XLEN, "r must have length 2 * XLEN");
 
