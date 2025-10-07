@@ -135,8 +135,8 @@ fn run_benchmark(args: BenchmarkArgs) {
     
     // Call master_benchmark with parameters
     for (span, bench) in master_benchmark(
-        vec![args.name],
-        vec![args.scale],
+        args.name,
+        args.scale,
         args.target_trace_size,
     ).into_iter() {
         span.in_scope(|| {

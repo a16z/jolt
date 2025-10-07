@@ -337,8 +337,8 @@ fn create_proof_size_plot(
 }
 
 pub fn master_benchmark(
-    bench_types: Vec<BenchType>,
-    bench_scales: Vec<usize>,
+    bench_type: BenchType,
+    bench_scale: usize,
     target_trace_size: Option<usize>,
 ) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     // Ensure SHA2 inline library is linked and auto-registered
@@ -374,18 +374,14 @@ pub fn master_benchmark(
             }
         }
 
-        let benchmarks_to_run = bench_types;
+        println!("\n=== Running benchmark at scale 2^{bench_scale} ===");
+        let max_trace_length = 1 << bench_scale;
+        let bench_target = target_trace_size.unwrap_or(((1 << bench_scale) as f64 * SAFETY_MARGIN) as usize);
 
-        for bench_scale in bench_scales {
-            println!("\n=== Running benchmarks at scale 2^{bench_scale} ===");
-            let max_trace_length = 1 << bench_scale;
-            let bench_target = target_trace_size.unwrap_or(((1 << bench_scale) as f64 * SAFETY_MARGIN) as usize);
-
-            for current_bench_type in &benchmarks_to_run {
-                let display_name = current_bench_type.to_string();
-                
-                // Map benchmark type to canonical name + input closure
-                let (bench_name, input_fn): (&str, fn(usize) -> Vec<u8>) = match *current_bench_type {
+        let display_name = bench_type.to_string();
+        
+        // Map benchmark type to canonical name + input closure
+        let (bench_name, input_fn): (&str, fn(usize) -> Vec<u8>) = match bench_type {
                     BenchType::Fibonacci => ("fibonacci", |target| {
                         postcard::to_stdvec(&scale_to_target_ops(target, CYCLES_PER_FIBONACCI_UNIT)).unwrap()
                     }),
@@ -401,48 +397,50 @@ pub fn master_benchmark(
                     }),
                     BenchType::BTreeMap => ("btreemap", |target| {
                         postcard::to_stdvec(&scale_to_target_ops(target, CYCLES_PER_BTREEMAP_OP)).unwrap()
-                    }),
-                    _ => {
-                        eprintln!("Unsupported benchmark type in master_benchmark: {:?}", current_bench_type);
-                        continue;
-                    }
-                };
-                
-                // Derive names from canonical bench_name
-                let guest_name = format!("{bench_name}-guest");
-                // Generate input and run benchmark
-                println!("Running {bench_name} benchmark at scale 2^{bench_scale}");
-                let input = input_fn(bench_target);
-                let (duration, proof_size, proof_size_comp) = prove_example_with_trace(
-                    &guest_name,
-                    input,
-                    max_trace_length,
-                    bench_name,
-                    bench_scale,
-                );
-                
-                println!("  Prover completed in {:.2}s", duration.as_secs_f64());
-                
-                // Store results
-                benchmark_data
-                    .entry(display_name.clone())
-                    .or_default()
-                    .push((bench_scale, duration.as_secs_f64(), proof_size, proof_size_comp));
-                
-                // Write CSV
-                let summary_line = format!(
-                    "{},{},{:.2},{},{}\n",
-                    bench_name, bench_scale, duration.as_secs_f64(), proof_size, proof_size_comp
-                );
-                if let Err(e) = fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open("benchmark-runs/timings.csv")
-                    .and_then(|mut f| f.write_all(summary_line.as_bytes()))
-                {
-                    eprintln!("Failed to write timing: {e}");
-                }
+            }),
+            _ => {
+                eprintln!("Unsupported benchmark type in master_benchmark: {:?}", bench_type);
+                // Return empty task for unsupported types
+                return vec![(
+                    tracing::info_span!("MasterBenchmark"),
+                    Box::new(|| {}) as Box<dyn FnOnce()>,
+                )];
             }
+        };
+        
+        // Derive names from canonical bench_name
+        let guest_name = format!("{bench_name}-guest");
+        // Generate input and run benchmark
+        println!("Running {bench_name} benchmark at scale 2^{bench_scale}");
+        let input = input_fn(bench_target);
+        let (duration, proof_size, proof_size_comp) = prove_example_with_trace(
+            &guest_name,
+            input,
+            max_trace_length,
+            bench_name,
+            bench_scale,
+        );
+        
+        println!("  Prover completed in {:.2}s", duration.as_secs_f64());
+        
+        // Store results
+        benchmark_data
+            .entry(display_name.clone())
+            .or_default()
+            .push((bench_scale, duration.as_secs_f64(), proof_size, proof_size_comp));
+        
+        // Write CSV
+        let summary_line = format!(
+            "{},{},{:.2},{},{}\n",
+            bench_name, bench_scale, duration.as_secs_f64(), proof_size, proof_size_comp
+        );
+        if let Err(e) = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("benchmark-runs/timings.csv")
+            .and_then(|mut f| f.write_all(summary_line.as_bytes()))
+        {
+            eprintln!("Failed to write timing: {e}");
         }
 
         if !benchmark_data.is_empty() {
