@@ -9,6 +9,7 @@ use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::opening_proof::{OpeningId, SumcheckId};
 use crate::utils::small_scalar::SmallScalar;
 use crate::zkvm::instruction::{CircuitFlags, InstructionFlags, LookupQuery, NUM_CIRCUIT_FLAGS};
+use crate::zkvm::spartan::product::VirtualProductType;
 use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 use crate::zkvm::JoltSharedPreprocessing;
 
@@ -618,6 +619,90 @@ where
         });
 
     (left_input.into(), right_input.into())
+}
+
+pub fn generate_virtual_product_witnesses<F>(
+    product_type: VirtualProductType,
+    trace: &[Cycle],
+) -> (
+    MultilinearPolynomial<F>, // Left polynomial
+    MultilinearPolynomial<F>, // Right polynomial
+)
+where
+    F: JoltField,
+{
+    let len = trace.len();
+
+    match product_type {
+        VirtualProductType::Instruction => generate_product_virtualization_witnesses(trace),
+        VirtualProductType::WriteLookupOutputToRD => {
+            let mut rd_addrs: Vec<u8> = vec![0; len];
+            let mut flags: Vec<u8> = vec![0; len];
+
+            rd_addrs
+                .par_iter_mut()
+                .zip(flags.par_iter_mut())
+                .zip(trace.par_iter())
+                .for_each(|((rd, flag), cycle)| {
+                    *rd = cycle.rd_write().0;
+                    *flag = cycle.instruction().circuit_flags()[CircuitFlags::WriteLookupOutputToRD]
+                        as u8;
+                });
+
+            (rd_addrs.into(), flags.into())
+        }
+        VirtualProductType::WritePCtoRD => {
+            let mut rd_addrs: Vec<u8> = vec![0; len];
+            let mut flags: Vec<u8> = vec![0; len];
+
+            rd_addrs
+                .par_iter_mut()
+                .zip(flags.par_iter_mut())
+                .zip(trace.par_iter())
+                .for_each(|((rd, flag), cycle)| {
+                    *rd = cycle.rd_write().0;
+                    *flag = cycle.instruction().circuit_flags()[CircuitFlags::Jump] as u8;
+                });
+
+            (rd_addrs.into(), flags.into())
+        }
+        VirtualProductType::ShouldBranch => {
+            let mut lookup_outputs: Vec<u64> = vec![0; len];
+            let mut flags: Vec<u8> = vec![0; len];
+
+            lookup_outputs
+                .par_iter_mut()
+                .zip(flags.par_iter_mut())
+                .zip(trace.par_iter())
+                .for_each(|((output, flag), cycle)| {
+                    *output = LookupQuery::<XLEN>::to_lookup_output(cycle);
+                    *flag = cycle.instruction().circuit_flags()[CircuitFlags::Branch] as u8;
+                });
+
+            (lookup_outputs.into(), flags.into())
+        }
+        VirtualProductType::ShouldJump => {
+            let mut jump_flags: Vec<u8> = vec![0; len];
+            let mut not_next_noop: Vec<u8> = vec![0; len];
+
+            jump_flags
+                .par_iter_mut()
+                .zip(not_next_noop.par_iter_mut())
+                .enumerate()
+                .for_each(|(i, (jump, not_noop))| {
+                    *jump = trace[i].instruction().circuit_flags()[CircuitFlags::Jump] as u8;
+
+                    let is_next_noop = if i + 1 < len {
+                        trace[i + 1].instruction().circuit_flags()[CircuitFlags::IsNoop] as u8
+                    } else {
+                        1 // Last cycle, treat as if next is NoOp
+                    };
+                    *not_noop = 1 - is_next_noop;
+                });
+
+            (jump_flags.into(), not_next_noop.into())
+        }
+    }
 }
 
 #[cfg(test)]

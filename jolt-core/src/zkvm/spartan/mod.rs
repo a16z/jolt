@@ -325,7 +325,10 @@ where
         */
         let key = self.key.clone();
         let pc_sumcheck = PCSumcheck::<F>::new_prover(state_manager, key);
-        let product_sumcheck = ProductVirtualizationSumcheck::new_prover(state_manager);
+        let product_sumcheck = ProductVirtualizationSumcheck::new_prover(
+            product::VirtualProductType::Instruction,
+            state_manager,
+        );
 
         #[cfg(feature = "allocative")]
         {
@@ -348,7 +351,10 @@ where
         */
         let key = self.key.clone();
         let pc_sumcheck = PCSumcheck::<F>::new_verifier(state_manager, key);
-        let product_sumcheck = ProductVirtualizationSumcheck::new_verifier(state_manager);
+        let product_sumcheck = ProductVirtualizationSumcheck::new_verifier(
+            product::VirtualProductType::Instruction,
+            state_manager,
+        );
 
         vec![Box::new(pc_sumcheck), Box::new(product_sumcheck)]
     }
