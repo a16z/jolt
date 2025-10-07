@@ -29,7 +29,7 @@ use dory::{
     },
     commit,
     curve::G2Cache,
-    evaluate, setup_with_srs_file,
+    evaluate, setup_with_urs_file,
     transcript::Transcript as DoryTranscript,
     verify, DoryProof, DoryProofBuilder, Polynomial as DoryPolynomial, ProverSetup, VerifierSetup,
 };
@@ -1040,8 +1040,8 @@ impl CommitmentScheme for DoryCommitmentScheme {
 
     #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::setup_prover")]
     fn setup_prover(max_num_vars: usize) -> Self::ProverSetup {
-        let srs_file_name = format!("dory_srs_{max_num_vars}_variables.srs");
-        let (mut prover_setup, _) = setup_with_srs_file::<JoltBn254, _>(
+        let srs_file_name = format!("dory_urs_{max_num_vars}_variables.urs");
+        let (mut prover_setup, _) = setup_with_urs_file::<JoltBn254, _>(
             &mut ark_std::rand::thread_rng(),
             max_num_vars,
             Some(&srs_file_name), // Will load if exists, generate and save if not

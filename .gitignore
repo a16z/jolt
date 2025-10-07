@@ -19,6 +19,8 @@ trace-**.json
 
 # SRS files
 *.srs
+# URS files
+*.urs
 
 temp_file
 
