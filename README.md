@@ -83,6 +83,14 @@ Examples in the [`examples`](./examples/) directory can be run using e.g.
 
 ```cargo run --release -p sha2-chain```
 
+## Benchmarks
+
+To reproduce the official benchmarks, run:
+
+```bash
+./scripts/jolt_benchmarks.sh
+```
+
 ## Performance profiling
 
 ### Execution profiling
