@@ -405,7 +405,9 @@ pub fn master_benchmark(
             bench_scale,
         );
 
-        println!("  Prover completed in {:.2}s", duration.as_secs_f64());
+        let trace_length = trace.len();
+        let proving_hz = trace_length as f64 / duration.as_secs_f64();
+        println!("  Prover completed in {:.2}s ({:.1} Hz)", duration.as_secs_f64(), proving_hz);
 
         // Store results
         benchmark_data
@@ -420,10 +422,12 @@ pub fn master_benchmark(
 
         // Write CSV
         let summary_line = format!(
-            "{},{},{:.2},{},{}\n",
+            "{},{},{:.2},{},{:.2},{},{}\n",
             bench_name,
             bench_scale,
             duration.as_secs_f64(),
+            trace_length,
+            proving_hz,
             proof_size,
             proof_size_comp
         );
@@ -442,7 +446,7 @@ pub fn master_benchmark(
             .create(true)
             .append(true)
             .open("benchmark-runs/results/timings.csv")
-            .and_then(|mut f| f.write_all())
+            .and_then(|mut f| f.write_all(summary_line.as_bytes()))
         {
             eprintln!("Failed to write consolidated timing: {e}");
         }

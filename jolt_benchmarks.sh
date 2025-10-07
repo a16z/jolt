@@ -41,12 +41,12 @@ mkdir -p benchmark-runs/results
 
 # Initialize CSV header only if file doesn't exist
 if [ ! -f "benchmark-runs/results/timings.csv" ]; then
-    echo "benchmark_name,scale,prover_time_s,trace_length,proving_hz" >benchmark-runs/results/timings.csv
+    echo "benchmark_name,scale,prover_time_s,trace_length,proving_hz,proof_size,proof_size_compressed" >benchmark-runs/results/timings.csv
 fi
 
 # Build once
 echo "Building jolt-core (release)..."
-cargo build --release -p jolt-core --features monitor
+cargo build --release -p jolt-core
 JOLT_BIN="./target/release/jolt-core"
 
 # Run benchmarks
@@ -58,9 +58,6 @@ for scale in $(seq $MIN_TRACE_LENGTH $MAX_TRACE_LENGTH); do
     for bench in $BENCHMARKS; do
         echo ">>> $bench at scale 2^$scale"
         $JOLT_BIN benchmark --name "$bench" --scale "$scale" --format chrome
-        
-        # Postprocess trace file
-        python3 scripts/benchmark/postprocess.py "benchmark-runs/perfetto_traces/${bench}_${scale}.json" 2>/dev/null || true
     done
     
     echo ""
