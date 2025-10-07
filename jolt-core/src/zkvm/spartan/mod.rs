@@ -16,7 +16,6 @@ use crate::zkvm::r1cs::inputs::{
 use crate::zkvm::r1cs::key::UniformSpartanKey;
 use crate::zkvm::spartan::inner::InnerSumcheck;
 use crate::zkvm::spartan::pc::PCSumcheck;
-use crate::zkvm::spartan::product::ProductVirtualizationSumcheck;
 use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 
 use crate::transcripts::Transcript;
@@ -25,7 +24,6 @@ use crate::subprotocols::sumcheck::{SumcheckInstance, SumcheckInstanceProof};
 
 pub mod inner;
 pub mod pc;
-pub mod product;
 
 pub struct SpartanDag<F: JoltField> {
     /// Cached key to avoid recomputation across stages
@@ -325,18 +323,11 @@ where
         */
         let key = self.key.clone();
         let pc_sumcheck = PCSumcheck::<F>::new_prover(state_manager, key);
-        let product_sumcheck = ProductVirtualizationSumcheck::new_prover(state_manager);
 
         #[cfg(feature = "allocative")]
-        {
-            print_data_structure_heap_usage("Spartan PCSumcheck", &pc_sumcheck);
-            print_data_structure_heap_usage(
-                "Spartan ProductVirtualizationSumcheck",
-                &product_sumcheck,
-            );
-        }
+        print_data_structure_heap_usage("Spartan PCSumcheck", &pc_sumcheck);
 
-        vec![Box::new(pc_sumcheck), Box::new(product_sumcheck)]
+        vec![Box::new(pc_sumcheck)]
     }
 
     fn stage3_verifier_instances(
@@ -348,8 +339,6 @@ where
         */
         let key = self.key.clone();
         let pc_sumcheck = PCSumcheck::<F>::new_verifier(state_manager, key);
-        let product_sumcheck = ProductVirtualizationSumcheck::new_verifier(state_manager);
-
-        vec![Box::new(pc_sumcheck), Box::new(product_sumcheck)]
+        vec![Box::new(pc_sumcheck)]
     }
 }

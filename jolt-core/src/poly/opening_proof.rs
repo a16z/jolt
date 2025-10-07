@@ -142,7 +142,6 @@ pub enum SumcheckId {
     SpartanOuter,
     SpartanInner,
     SpartanShift,
-    ProductVirtualization,
     InstructionBooleanity,
     InstructionHammingWeight,
     InstructionReadRaf,
