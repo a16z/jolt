@@ -595,6 +595,32 @@ where
     (unexpanded_pc.into(), pc.into(), is_noop.into())
 }
 
+#[tracing::instrument(skip_all)]
+pub fn generate_product_virtualization_witnesses<F>(
+    trace: &[Cycle],
+) -> (
+    MultilinearPolynomial<F>, // LeftInstructionInput(t)
+    MultilinearPolynomial<F>, // RightInstructionInput(t)
+)
+where
+    F: JoltField,
+{
+    let len = trace.len();
+    let mut left_input: Vec<u64> = vec![0; len];
+    let mut right_input: Vec<i128> = vec![0; len];
+
+    left_input
+        .par_iter_mut()
+        .zip(right_input.par_iter_mut())
+        .zip(trace.par_iter())
+        .for_each(|((left, right), cycle)| {
+            // Instruction inputs and product
+            (*left, *right) = LookupQuery::<XLEN>::to_instruction_inputs(cycle);
+        });
+
+    (left_input.into(), right_input.into())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
