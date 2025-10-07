@@ -2,12 +2,13 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 
 #[path = "../../benches/e2e_profiling.rs"]
 mod e2e_profiling;
-use e2e_profiling::{benchmarks, BenchType};
+use e2e_profiling::{benchmarks, master_benchmark, BenchType};
 
 use std::any::Any;
 
 use tracing_chrome::ChromeLayerBuilder;
 use tracing_subscriber::{self, fmt::format::FmtSpan, prelude::*, EnvFilter};
+use chrono::Local;
 
 /// Search for a pattern in a file and display the lines that contain it.
 #[derive(Parser, Debug)]
@@ -66,7 +67,11 @@ fn main() {
     }
 }
 
-fn trace(args: ProfileArgs) {
+fn normalize_bench_name(name: &str) -> String {
+    name.to_lowercase().replace(" ", "_")
+}
+
+fn setup_tracing(formats: Option<Vec<Format>>, trace_name: &str) -> Vec<Box<dyn Any>> {
     let mut layers = Vec::new();
 
     let log_layer = tracing_subscriber::fmt::layer()
@@ -82,7 +87,7 @@ fn trace(args: ProfileArgs) {
 
     let mut guards: Vec<Box<dyn Any>> = vec![];
 
-    if let Some(format) = &args.format {
+    if let Some(format) = formats {
         if format.contains(&Format::Default) {
             let collector_layer = tracing_subscriber::fmt::layer()
                 .with_span_events(FmtSpan::CLOSE)
@@ -96,7 +101,9 @@ fn trace(args: ProfileArgs) {
             layers.push(collector_layer);
         }
         if format.contains(&Format::Chrome) {
-            let (chrome_layer, guard) = ChromeLayerBuilder::new().build();
+            let trace_file = format!("benchmark-runs/perfetto_traces/{}.json", trace_name);
+            std::fs::create_dir_all("benchmark-runs/perfetto_traces").ok();
+            let (chrome_layer, guard) = ChromeLayerBuilder::new().include_args(true).file(trace_file).build();
             layers.push(chrome_layer.boxed());
             guards.push(Box::new(guard));
             tracing::info!("Running tracing-chrome. Files will be saved as trace-<some timestamp>.json and can be viewed in https://ui.perfetto.dev/");
@@ -104,8 +111,17 @@ fn trace(args: ProfileArgs) {
     }
 
     tracing_subscriber::registry().with(layers).init();
+    guards
+}
+
+fn trace(args: ProfileArgs) {
+    let bench_name = normalize_bench_name(&args.name.to_string());
+    let timestamp = Local::now().format("%Y%m%d-%H%M");
+    let trace_name = format!("{}_{}", bench_name, timestamp);
+    let _guards = setup_tracing(args.format, &trace_name);
+    
     for (span, bench) in benchmarks(args.name).into_iter() {
-        span.to_owned().in_scope(|| {
+        span.in_scope(|| {
             bench();
             tracing::info!("Bench Complete");
         });
@@ -113,18 +129,19 @@ fn trace(args: ProfileArgs) {
 }
 
 fn run_benchmark(args: BenchmarkArgs) {
-    // For now, bridge to existing env-var-based master_benchmark
-    // Will be improved in later steps
-    std::env::set_var("BENCH_TYPE", format!("{}", args.name).to_lowercase());
-    std::env::set_var("BENCH_SCALE", args.scale.to_string());
-    if let Some(target) = args.target_trace_size {
-        std::env::set_var("TARGET_TRACE_SIZE", target.to_string());
-    }
+    let bench_name = normalize_bench_name(&args.name.to_string());
+    let trace_name = format!("{}_{}", bench_name, args.scale);
+    let _guards = setup_tracing(args.format, &trace_name);
     
-    // Setup tracing with optional custom filename
-    let profile_args = ProfileArgs {
-        format: args.format,
-        name: BenchType::MasterBenchmark,
-    };
-    trace(profile_args);
+    // Call master_benchmark with parameters
+    for (span, bench) in master_benchmark(
+        vec![args.name],
+        vec![args.scale],
+        args.target_trace_size,
+    ).into_iter() {
+        span.in_scope(|| {
+            bench();
+            tracing::info!("Benchmark Complete");
+        });
+    }
 }

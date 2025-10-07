@@ -33,19 +33,17 @@ pub enum BenchType {
     Sha2Chain,
     #[strum(serialize = "SHA3 Chain")]
     Sha3Chain,
-    MasterBenchmark,
     Plot,
 }
 
 pub fn benchmarks(bench_type: BenchType) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     match bench_type {
-        BenchType::Btreemap => btreemap(),
+        BenchType::BTreeMap => btreemap(),
         BenchType::Sha2 => sha2(),
         BenchType::Sha3 => sha3(),
         BenchType::Sha2Chain => sha2_chain(),
         BenchType::Sha3Chain => sha3_chain(),
         BenchType::Fibonacci => fibonacci(),
-        BenchType::MasterBenchmark => master_benchmark(),
         BenchType::Plot => plot_from_csv(),
     }
 }
@@ -55,7 +53,7 @@ fn plot_from_csv() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
         let mut benchmark_data: HashMap<String, Vec<(usize, f64, usize, usize)>> = HashMap::new();
 
         // Load existing data from CSV
-        if let Ok(contents) = fs::read_to_string("perfetto_traces/timings.csv") {
+        if let Ok(contents) = fs::read_to_string("benchmark-runs/timings.csv") {
             for line in contents.lines() {
                 let parts: Vec<&str> = line.split(',').collect();
                 if parts.len() == 5 {
@@ -74,7 +72,7 @@ fn plot_from_csv() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
             }
 
             if benchmark_data.is_empty() {
-                eprintln!("No data found in perfetto_traces/timings.csv");
+                eprintln!("No data found in benchmark-runs/timings.csv");
             } else {
                 println!("Loaded {} benchmark types from CSV", benchmark_data.len());
                 if let Err(e) = create_benchmark_plot(&benchmark_data) {
@@ -85,7 +83,7 @@ fn plot_from_csv() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
                 }
             }
         } else {
-            eprintln!("Could not read perfetto_traces/timings.csv. Run benchmarks first to generate data.");
+            eprintln!("Could not read benchmark-runs/timings.csv. Run benchmarks first to generate data.");
         }
     };
 
@@ -228,7 +226,7 @@ fn create_benchmark_plot(
 
     plot.set_layout(layout);
 
-    let html_path = "perfetto_traces/benchmark_plot.html";
+    let html_path = "benchmark-runs/benchmark_plot.html";
     plot.write_html(html_path);
     println!("Interactive plot saved to {html_path}");
 
@@ -331,56 +329,33 @@ fn create_proof_size_plot(
 
     plot.set_layout(layout);
 
-    let html_path = "perfetto_traces/proof_size_plot.html";
+    let html_path = "benchmark-runs/proof_size_plot.html";
     plot.write_html(html_path);
     println!("Proof size plot saved to {html_path}");
 
     Ok(())
 }
 
-fn master_benchmark() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
+pub fn master_benchmark(
+    bench_types: Vec<BenchType>,
+    bench_scales: Vec<usize>,
+    target_trace_size: Option<usize>,
+) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     // Ensure SHA2 inline library is linked and auto-registered
     #[cfg(feature = "host")]
     extern crate jolt_inlines_sha2;
     #[cfg(feature = "host")]
     extern crate jolt_inlines_keccak256;
-    let bench_type = env::var("BENCH_TYPE").unwrap_or_else(|_| "all".to_string());
-    let bench_scales_str = env::var("BENCH_SCALES").unwrap_or_else(|_| {
-        env::var("BENCH_SCALE")
-            .ok()
-            .and_then(|s| s.parse::<usize>().ok())
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| "18".to_string())
-    });
-    let target_trace_size: Option<usize> = env::var("TARGET_TRACE_SIZE")
-        .ok()
-        .and_then(|s| s.parse().ok());
 
-    let bench_scales: Vec<usize> = bench_scales_str
-        .split(',')
-        .filter_map(|s| s.trim().parse::<usize>().ok())
-        .collect();
-    
-    // Helper to parse benchmark type from string
-    fn parse_bench_type(s: &str) -> Option<BenchType> {
-        match s {
-            "fib" | "fibonacci" => Some(BenchType::Fibonacci),
-            "sha2-chain" => Some(BenchType::Sha2Chain),
-            "sha3-chain" => Some(BenchType::Sha3Chain),
-            "btreemap" => Some(BenchType::Btreemap),
-            _ => None,
-        }
-    }
-
-    if let Err(e) = fs::create_dir_all("perfetto_traces") {
-        eprintln!("Warning: Failed to create perfetto_traces directory: {e}");
+    if let Err(e) = fs::create_dir_all("benchmark-runs") {
+        eprintln!("Warning: Failed to create benchmark-runs directory: {e}");
     }
 
     let task = move || {
         let mut benchmark_data: HashMap<String, Vec<(usize, f64, usize, usize)>> = HashMap::new();
 
         // Load existing data from CSV if available
-        if let Ok(contents) = fs::read_to_string("perfetto_traces/timings.csv") {
+        if let Ok(contents) = fs::read_to_string("benchmark-runs/timings.csv") {
             for line in contents.lines() {
                 let parts: Vec<&str> = line.split(',').collect();
                 if parts.len() == 5 {
@@ -399,16 +374,7 @@ fn master_benchmark() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
             }
         }
 
-        let benchmarks_to_run: Vec<BenchType> = if bench_type == "all" {
-            vec![BenchType::Fibonacci, BenchType::Sha2Chain, BenchType::Sha3Chain, BenchType::Btreemap]
-        } else {
-            parse_bench_type(&bench_type)
-                .map(|t| vec![t])
-                .unwrap_or_else(|| {
-                    eprintln!("Unknown benchmark type: {}", bench_type);
-                    vec![]
-                })
-        };
+        let benchmarks_to_run = bench_types;
 
         for bench_scale in bench_scales {
             println!("\n=== Running benchmarks at scale 2^{bench_scale} ===");
@@ -433,7 +399,7 @@ fn master_benchmark() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
                         [postcard::to_stdvec(&[5u8; 32]).unwrap(),
                          postcard::to_stdvec(&iterations).unwrap()].concat()
                     }),
-                    BenchType::Btreemap => ("btreemap", |target| {
+                    BenchType::BTreeMap => ("btreemap", |target| {
                         postcard::to_stdvec(&scale_to_target_ops(target, CYCLES_PER_BTREEMAP_OP)).unwrap()
                     }),
                     _ => {
@@ -444,18 +410,8 @@ fn master_benchmark() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
                 
                 // Derive names from canonical bench_name
                 let guest_name = format!("{bench_name}-guest");
-                let file_name_safe = bench_name.replace('-', "_");
-                let trace_file = format!("perfetto_traces/{}_{}.json", file_name_safe, bench_scale);
-                
-                // Single tracing setup (no duplication!)
-                println!("Running {bench_name} benchmark at scale 2^{bench_scale}");
-                let (chrome_layer, _guard) = ChromeLayerBuilder::new()
-                    .file(&trace_file)
-                    .build();
-                let subscriber = tracing_subscriber::registry().with(chrome_layer);
-                let _guard = tracing::subscriber::set_default(subscriber);
-                
                 // Generate input and run benchmark
+                println!("Running {bench_name} benchmark at scale 2^{bench_scale}");
                 let input = input_fn(bench_target);
                 let (duration, proof_size, proof_size_comp) = prove_example_with_trace(
                     &guest_name,
@@ -481,7 +437,7 @@ fn master_benchmark() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
                 if let Err(e) = fs::OpenOptions::new()
                     .create(true)
                     .append(true)
-                    .open("perfetto_traces/timings.csv")
+                    .open("benchmark-runs/timings.csv")
                     .and_then(|mut f| f.write_all(summary_line.as_bytes()))
                 {
                     eprintln!("Failed to write timing: {e}");
