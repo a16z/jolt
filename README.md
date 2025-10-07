@@ -97,6 +97,16 @@ Where `--name` can be `sha2`, `sha3`, `sha2-chain`, `fibonacci`, or `btreemap`. 
 
 The above command will output a JSON file in the workspace rootwith a name `trace-<timestamp>.json`, which can be viewed in [Perfetto](https://ui.perfetto.dev/).
 
+You may also enable pprof for detailed CPU profiling:
+
+```cargo run --release --features pprof -p jolt-core profile --name sha3 --format chrome```
+
+This will produce a `.pb` profile, which you can view in [pprof](https://github.com/google/pprof):
+
+```go tool pprof -http=:8080 benchmark-runs/pprof/sha3_prove.pb```
+
+You may customize the sampling frequency using `PPROF_FREQ` (default: 100).
+
 ### Memory profiling
 
 Jolt uses [allocative](https://github.com/facebookexperimental/allocative) for memory profiling.

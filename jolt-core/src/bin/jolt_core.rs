@@ -46,6 +46,10 @@ fn main() {
 }
 
 fn trace(args: ProfileArgs) {
+    if std::env::var("PPROF_PREFIX").is_err() {
+        std::env::set_var("PPROF_PREFIX", format!("benchmark-runs/pprof/{}_", args.name));
+    }
+
     let mut layers = Vec::new();
 
     let log_layer = tracing_subscriber::fmt::layer()
