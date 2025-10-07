@@ -61,8 +61,6 @@ pub enum CommittedPolynomial {
     WritePCtoRD,
     /// Whether the current instruction triggers a branch
     ShouldBranch,
-    /// Whether the current instruction triggers a jump
-    ShouldJump,
     /*  Twist/Shout witnesses */
     /// Inc polynomial for the registers instance of Twist
     RdInc,
@@ -88,7 +86,6 @@ struct WitnessData {
     write_lookup_output_to_rd: Vec<u8>,
     write_pc_to_rd: Vec<u8>,
     should_branch: Vec<u8>,
-    should_jump: Vec<u8>,
     rd_inc: Vec<i128>,
     ram_inc: Vec<i128>,
 
@@ -109,7 +106,6 @@ impl WitnessData {
             write_lookup_output_to_rd: vec![0; trace_len],
             write_pc_to_rd: vec![0; trace_len],
             should_branch: vec![0; trace_len],
-            should_jump: vec![0; trace_len],
             rd_inc: vec![0; trace_len],
             ram_inc: vec![0; trace_len],
 
@@ -129,7 +125,6 @@ impl AllCommittedPolynomials {
             CommittedPolynomial::WriteLookupOutputToRD,
             CommittedPolynomial::WritePCtoRD,
             CommittedPolynomial::ShouldBranch,
-            CommittedPolynomial::ShouldJump,
             CommittedPolynomial::RdInc,
             CommittedPolynomial::RamInc,
             CommittedPolynomial::InstructionRa(0),
@@ -308,15 +303,6 @@ impl CommittedPolynomial {
                 batch_ref.should_branch[i] =
                     (lookup_output as u8) * (circuit_flags[CircuitFlags::Branch as usize] as u8);
 
-                // Handle should_jump
-                let is_jump = circuit_flags[CircuitFlags::Jump] as u8;
-                let is_next_noop = if i + 1 < trace.len() {
-                    trace[i + 1].instruction().circuit_flags()[CircuitFlags::IsNoop] as u8
-                } else {
-                    1 // Last cycle, treat as if next is NoOp
-                };
-                batch_ref.should_jump[i] = is_jump * (1 - is_next_noop);
-
                 batch_ref.rd_inc[i] = post_rd as i128 - pre_rd as i128;
 
                 // RAM inc
@@ -392,10 +378,6 @@ impl CommittedPolynomial {
                 }
                 CommittedPolynomial::ShouldBranch => {
                     let coeffs = std::mem::take(&mut batch.should_branch);
-                    results.insert(*poly, MultilinearPolynomial::<F>::from(coeffs));
-                }
-                CommittedPolynomial::ShouldJump => {
-                    let coeffs = std::mem::take(&mut batch.should_jump);
                     results.insert(*poly, MultilinearPolynomial::<F>::from(coeffs));
                 }
                 CommittedPolynomial::RdInc => {
@@ -490,24 +472,6 @@ impl CommittedPolynomial {
                         let is_branch =
                             cycle.instruction().circuit_flags()[CircuitFlags::Branch as usize];
                         (LookupQuery::<XLEN>::to_lookup_output(cycle) as u8) * is_branch as u8
-                    })
-                    .collect();
-                coeffs.into()
-            }
-            CommittedPolynomial::ShouldJump => {
-                let coeffs: Vec<u8> = trace
-                    .par_iter()
-                    .zip(
-                        trace
-                            .par_iter()
-                            .skip(1)
-                            .chain(rayon::iter::once(&Cycle::NoOp)),
-                    )
-                    .map(|(cycle, next_cycle)| {
-                        let is_jump = cycle.instruction().circuit_flags()[CircuitFlags::Jump];
-                        let is_next_noop =
-                            next_cycle.instruction().circuit_flags()[CircuitFlags::IsNoop];
-                        is_jump as u8 * (1 - is_next_noop as u8)
                     })
                     .collect();
                 coeffs.into()
@@ -612,6 +576,7 @@ pub enum VirtualPolynomial {
     LeftLookupOperand,
     RightLookupOperand,
     Product,
+    ShouldJump,
     Rd,
     Imm,
     Rs1Value,
@@ -650,6 +615,7 @@ pub static ALL_VIRTUAL_POLYNOMIALS: LazyLock<Vec<VirtualPolynomial>> = LazyLock:
         VirtualPolynomial::LeftLookupOperand,
         VirtualPolynomial::RightLookupOperand,
         VirtualPolynomial::Product,
+        VirtualPolynomial::ShouldJump,
         VirtualPolynomial::Rd,
         VirtualPolynomial::Imm,
         VirtualPolynomial::Rs1Value,

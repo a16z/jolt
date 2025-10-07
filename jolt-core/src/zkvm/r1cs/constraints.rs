@@ -122,7 +122,6 @@ pub enum ConstraintName {
     RdWriteEqLookupIfWriteLookupToRd,
     WritePCtoRDDef,
     RdWriteEqPCPlusConstIfWritePCtoRD,
-    ShouldJumpDef,
     NextUnexpPCEqLookupIfShouldJump,
     ShouldBranchDef,
     NextUnexpPCEqPCPlusImmIfShouldBranch,
@@ -274,9 +273,9 @@ macro_rules! r1cs_prod_named {
 }
 
 /// Number of uniform R1CS constraints
-pub const NUM_R1CS_CONSTRAINTS: usize = 26;
+pub const NUM_R1CS_CONSTRAINTS: usize = 25;
 
-/// Static table of all 26 R1CS uniform constraints.
+/// Static table of all 25 R1CS uniform constraints.
 pub static UNIFORM_R1CS: [NamedConstraint; NUM_R1CS_CONSTRAINTS] = [
     // if LeftOperandIsRs1Value { assert!(LeftInstructionInput == Rs1Value) }
     r1cs_eq_conditional!(
@@ -442,12 +441,6 @@ pub static UNIFORM_R1CS: [NamedConstraint; NUM_R1CS_CONSTRAINTS] = [
     // if Jump && !NextIsNoop {
     //     assert!(NextUnexpandedPC == LookupOutput)
     // }
-    r1cs_prod!(
-        name: ConstraintName::ShouldJumpDef,
-        ({ JoltR1CSInputs::OpFlags(CircuitFlags::Jump) })
-            * ({ 1i128 } - { JoltR1CSInputs::NextIsNoop })
-            == ({ JoltR1CSInputs::ShouldJump })
-    ),
     r1cs_eq_conditional!(
         name: ConstraintName::NextUnexpPCEqLookupIfShouldJump,
         if { { JoltR1CSInputs::ShouldJump } }
@@ -565,8 +558,6 @@ pub fn eval_az_by_name<F: JoltField>(c: &NamedConstraint, row: &R1CSCycleInputs)
         N::WritePCtoRDDef => I8OrI96::from_i8(row.rd_addr as i8),
         // Az: WritePCtoRD indicator (0/1)
         N::RdWriteEqPCPlusConstIfWritePCtoRD => I8OrI96::from_i8(row.write_pc_to_rd_addr as i8),
-        // Az: Jump flag (0/1)
-        N::ShouldJumpDef => row.flags[CircuitFlags::Jump].into(),
         // Az: ShouldJump indicator (0/1)
         N::NextUnexpPCEqLookupIfShouldJump => row.should_jump.into(),
         // Az: Branch flag (0/1)
@@ -670,14 +661,6 @@ pub fn eval_bz_by_name<F: JoltField>(c: &NamedConstraint, row: &R1CSCycleInputs)
             S160::from(
                 row.rd_write_value as i128 - (row.unexpanded_pc as i128 + const_term as i128),
             )
-        }
-        N::ShouldJumpDef => {
-            // B: 1 - NextIsNoop (boolean domain)
-            if !row.next_is_noop {
-                S160::one()
-            } else {
-                S160::zero()
-            }
         }
         N::NextUnexpPCEqLookupIfShouldJump => {
             // Note: B uses u64 bit-pattern difference here (matches accessor variant)

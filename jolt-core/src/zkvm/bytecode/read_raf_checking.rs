@@ -269,7 +269,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             ReadCheckingValType::Stage1 => {
                 let gamma_powers = get_gamma_powers(
                     &mut *sm.get_transcript().borrow_mut(),
-                    3 + NUM_CIRCUIT_FLAGS,
+                    3 + NUM_CIRCUIT_FLAGS + 1,
                 );
                 (
                     Self::compute_val_1(sm, &gamma_powers),
@@ -365,6 +365,10 @@ impl<F: JoltField> ReadRafSumcheck<F> {
                     }
                 }
 
+                if flags[CircuitFlags::Jump] {
+                    linear_combination += gamma_powers[3 + NUM_CIRCUIT_FLAGS];
+                }
+
                 linear_combination
             })
             .collect()
@@ -382,19 +386,31 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             sm.get_virtual_polynomial_opening(VirtualPolynomial::Imm, SumcheckId::SpartanOuter);
         let (_, rd_claim) =
             sm.get_virtual_polynomial_opening(VirtualPolynomial::Rd, SumcheckId::SpartanOuter);
-        once(unexpanded_pc_claim)
-            .chain(once(imm_claim))
-            .chain(once(rd_claim))
-            .chain(CircuitFlags::iter().map(|flag| {
-                sm.get_virtual_polynomial_opening(
-                    VirtualPolynomial::OpFlags(flag),
-                    SumcheckId::SpartanOuter,
-                )
-                .1
-            }))
-            .zip(gamma_powers)
-            .map(|(claim, gamma)| claim * gamma)
-            .sum()
+
+        let (_, jump_claim_product) = sm.get_virtual_polynomial_opening(
+            VirtualPolynomial::OpFlags(CircuitFlags::Jump),
+            SumcheckId::ShouldJumpVirtualization,
+        );
+
+        let mut sum = unexpanded_pc_claim * gamma_powers[0]
+            + imm_claim * gamma_powers[1]
+            + rd_claim * gamma_powers[2];
+
+        let mut gamma_idx = 3;
+
+        // Add circuit flag claims from SpartanOuter
+        for flag in CircuitFlags::iter() {
+            let (_, claim) = sm.get_virtual_polynomial_opening(
+                VirtualPolynomial::OpFlags(flag),
+                SumcheckId::SpartanOuter,
+            );
+            sum += claim * gamma_powers[gamma_idx];
+            gamma_idx += 1;
+        }
+
+        sum += jump_claim_product * gamma_powers[gamma_idx];
+
+        sum
     }
 
     /// Returns a vec of evaluations:
