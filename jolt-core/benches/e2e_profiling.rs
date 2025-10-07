@@ -5,11 +5,8 @@ use jolt_core::zkvm::JoltVerifierPreprocessing;
 use jolt_core::zkvm::{Jolt, JoltRV64IMAC};
 use plotly::{Layout, Plot, Scatter};
 use std::collections::HashMap;
-use std::env;
 use std::fs;
 use std::io::Write;
-use tracing_chrome::ChromeLayerBuilder;
-use tracing_subscriber::prelude::*;
 
 // Empirically measured cycles per operation for RV64IMAC
 const CYCLES_PER_SHA256: f64 = 3396.0;
@@ -129,24 +126,6 @@ fn sha3_chain() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     inputs.append(&mut postcard::to_stdvec(&[5u8; 32]).unwrap());
     inputs.append(&mut postcard::to_stdvec(&20u32).unwrap());
     prove_example("sha3-chain-guest", inputs)
-}
-
-fn get_fib_input(scale: usize) -> u32 {
-    let scale_factor = 1 << (scale - 18);
-    20000u32 * scale_factor as u32
-}
-
-fn get_sha2_chain_iterations(scale: usize) -> u32 {
-    70 * (1 << (scale - 18)) as u32
-}
-
-fn get_sha3_chain_iterations(scale: usize) -> u32 {
-    50 * (1 << (scale - 18)) as u32
-}
-
-fn get_btreemap_ops(scale: usize) -> u32 {
-    let scale_factor = 1 << (scale - 18);
-    150u32 * scale_factor as u32
 }
 
 fn create_benchmark_plot(
@@ -382,30 +361,25 @@ pub fn master_benchmark(
         
         // Map benchmark type to canonical name + input closure
         let (bench_name, input_fn): (&str, fn(usize) -> Vec<u8>) = match bench_type {
-                    BenchType::Fibonacci => ("fibonacci", |target| {
-                        postcard::to_stdvec(&scale_to_target_ops(target, CYCLES_PER_FIBONACCI_UNIT)).unwrap()
-                    }),
-                    BenchType::Sha2Chain => ("sha2-chain", |target| {
-                        let iterations = scale_to_target_ops(target, CYCLES_PER_SHA256);
-                        [postcard::to_stdvec(&[5u8; 32]).unwrap(),
-                         postcard::to_stdvec(&iterations).unwrap()].concat()
-                    }),
-                    BenchType::Sha3Chain => ("sha3-chain", |target| {
-                        let iterations = scale_to_target_ops(target, CYCLES_PER_SHA3);
-                        [postcard::to_stdvec(&[5u8; 32]).unwrap(),
-                         postcard::to_stdvec(&iterations).unwrap()].concat()
-                    }),
-                    BenchType::BTreeMap => ("btreemap", |target| {
-                        postcard::to_stdvec(&scale_to_target_ops(target, CYCLES_PER_BTREEMAP_OP)).unwrap()
+            BenchType::Fibonacci => ("fibonacci", |target| {
+                postcard::to_stdvec(&scale_to_target_ops(target, CYCLES_PER_FIBONACCI_UNIT)).unwrap()
             }),
-            _ => {
-                eprintln!("Unsupported benchmark type in master_benchmark: {:?}", bench_type);
-                // Return empty task for unsupported types
-                return vec![(
-                    tracing::info_span!("MasterBenchmark"),
-                    Box::new(|| {}) as Box<dyn FnOnce()>,
-                )];
-            }
+            BenchType::Sha2Chain => ("sha2-chain", |target| {
+                let iterations = scale_to_target_ops(target, CYCLES_PER_SHA256);
+                [postcard::to_stdvec(&[5u8; 32]).unwrap(),
+                 postcard::to_stdvec(&iterations).unwrap()].concat()
+            }),
+            BenchType::Sha3Chain => ("sha3-chain", |target| {
+                let iterations = scale_to_target_ops(target, CYCLES_PER_SHA3);
+                [postcard::to_stdvec(&[5u8; 32]).unwrap(),
+                 postcard::to_stdvec(&iterations).unwrap()].concat()
+            }),
+            BenchType::BTreeMap => ("btreemap", |target| {
+                postcard::to_stdvec(&scale_to_target_ops(target, CYCLES_PER_BTREEMAP_OP)).unwrap()
+            }),
+            BenchType::Sha2 => panic!("Use sha2-chain instead"),
+            BenchType::Sha3 => panic!("Use sha3-chain instead"),
+            _ => unreachable!("Unsupported benchmark type"),
         };
         
         // Derive names from canonical bench_name
