@@ -11,6 +11,18 @@ use std::io::Write;
 use tracing_chrome::ChromeLayerBuilder;
 use tracing_subscriber::prelude::*;
 
+// Empirically measured cycles per operation for RV64IMAC
+const CYCLES_PER_SHA256: f64 = 3396.0;
+const CYCLES_PER_SHA3: f64 = 4330.0;
+const CYCLES_PER_BTREEMAP_OP: f64 = 1550.0;
+const CYCLES_PER_FIBONACCI_UNIT: f64 = 12.0;
+const SAFETY_MARGIN: f64 = 0.9; // Use 90% of max trace capacity
+
+/// Calculate number of operations to target a specific cycle count
+fn scale_to_target_ops(target_cycles: usize, cycles_per_op: f64) -> u32 {
+    std::cmp::max(1, (target_cycles as f64 / cycles_per_op) as u32)
+}
+
 #[derive(Debug, Copy, Clone, clap::ValueEnum)]
 pub enum BenchType {
     Btreemap,
