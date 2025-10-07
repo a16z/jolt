@@ -45,6 +45,7 @@ prover = [
 # jolt-core needs std and rayon to compile, so these are the minimal set of features.
 minimal = ["ark-ec/std", "ark-ff/std", "ark-std/std", "ark-ff/asm", "rayon"]
 allocative = ["dep:inferno"]
+monitor = ["dep:sysinfo"]
 test_incremental = []
 challenge-254-bit = []
 
@@ -101,6 +102,7 @@ jolt-inlines-sha2 = { workspace = true, features = ["host"], optional = true }
 jolt-inlines-keccak256 = { workspace = true, features = [
     "host",
 ], optional = true }
+sysinfo = { version = "0.37", optional = true }
 
 [dev-dependencies]
 criterion.workspace = true

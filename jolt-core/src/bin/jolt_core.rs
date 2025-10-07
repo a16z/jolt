@@ -83,6 +83,19 @@ fn trace(args: ProfileArgs) {
     }
 
     tracing_subscriber::registry().with(layers).init();
+
+    #[cfg(feature = "monitor")]
+    let _monitor = {
+        use jolt_core::utils::monitor::MetricsMonitor;
+        tracing::info!("Starting MetricsMonitor - remember to postprocess the trace with scripts/postprocess_trace.py");
+        MetricsMonitor::start(
+            std::env::var("MONITOR_INTERVAL")
+                .unwrap_or("0.1".to_string())
+                .parse::<f64>()
+                .unwrap(),
+        )
+    };
+
     for (span, bench) in benchmarks(args.name).into_iter() {
         span.to_owned().in_scope(|| {
             bench();
