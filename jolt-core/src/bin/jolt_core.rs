@@ -19,9 +19,10 @@ struct Cli {
 #[derive(Subcommand, Debug)]
 enum Commands {
     Profile(ProfileArgs),
+    Benchmark(BenchmarkArgs),
 }
 
-#[derive(Args, Debug)]
+#[derive(Args, Debug, Clone)]
 struct ProfileArgs {
     /// Output formats
     #[clap(short, long, value_enum)]
@@ -30,6 +31,25 @@ struct ProfileArgs {
     /// Type of benchmark to run
     #[clap(long, value_enum)]
     name: BenchType,
+}
+
+#[derive(Args, Debug)]
+struct BenchmarkArgs {
+    /// Benchmark type
+    #[clap(long, value_enum)]
+    name: BenchType,
+
+    /// Max trace length as 2^scale
+    #[clap(short, long)]
+    scale: usize,
+
+    /// Target specific cycle count (optional, defaults to 90% of 2^scale)
+    #[clap(short, long)]
+    target_trace_size: Option<usize>,
+
+    /// Output formats
+    #[clap(short, long, value_enum)]
+    format: Option<Vec<Format>>,
 }
 
 #[derive(Debug, Clone, ValueEnum, PartialEq)]
@@ -42,6 +62,7 @@ fn main() {
     let cli = Cli::parse();
     match cli.command {
         Commands::Profile(args) => trace(args),
+        Commands::Benchmark(args) => run_benchmark(args),
     }
 }
 
@@ -89,4 +110,21 @@ fn trace(args: ProfileArgs) {
             tracing::info!("Bench Complete");
         });
     }
+}
+
+fn run_benchmark(args: BenchmarkArgs) {
+    // For now, bridge to existing env-var-based master_benchmark
+    // Will be improved in later steps
+    std::env::set_var("BENCH_TYPE", format!("{}", args.name).to_lowercase());
+    std::env::set_var("BENCH_SCALE", args.scale.to_string());
+    if let Some(target) = args.target_trace_size {
+        std::env::set_var("TARGET_TRACE_SIZE", target.to_string());
+    }
+    
+    // Setup tracing with optional custom filename
+    let profile_args = ProfileArgs {
+        format: args.format,
+        name: BenchType::MasterBenchmark,
+    };
+    trace(profile_args);
 }
