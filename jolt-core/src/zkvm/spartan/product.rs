@@ -184,7 +184,7 @@ impl<F: JoltField> SumcheckInstance<F> for ProductVirtualizationSumcheck<F> {
     }
 
     #[tracing::instrument(skip_all, name = "PCSumcheck::bind")]
-    fn bind(&mut self, r_j: F, _round: usize) {
+    fn bind(&mut self, r_j: F::Challenge, _round: usize) {
         let prover_state = self
             .prover_state
             .as_mut()
@@ -208,7 +208,7 @@ impl<F: JoltField> SumcheckInstance<F> for ProductVirtualizationSumcheck<F> {
     fn expected_output_claim(
         &self,
         accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
-        r: &[F],
+        r: &[F::Challenge],
     ) -> F {
         let accumulator = accumulator.as_ref().unwrap().borrow();
 
@@ -232,7 +232,10 @@ impl<F: JoltField> SumcheckInstance<F> for ProductVirtualizationSumcheck<F> {
         eq_eval * left_input_eval * right_input_eval
     }
 
-    fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(
+        &self,
+        opening_point: &[F::Challenge],
+    ) -> OpeningPoint<BIG_ENDIAN, F> {
         OpeningPoint::new(opening_point.iter().rev().copied().collect())
     }
 
