@@ -75,7 +75,7 @@ fn trace(args: ProfileArgs) {
             layers.push(collector_layer);
         }
         if format.contains(&Format::Chrome) {
-            let (chrome_layer, guard) = ChromeLayerBuilder::new().build();
+            let (chrome_layer, guard) = ChromeLayerBuilder::new().include_args(true).build();
             layers.push(chrome_layer.boxed());
             guards.push(Box::new(guard));
             tracing::info!("Running tracing-chrome. Files will be saved as trace-<some timestamp>.json and can be viewed in https://ui.perfetto.dev/");
@@ -87,7 +87,7 @@ fn trace(args: ProfileArgs) {
     #[cfg(feature = "monitor")]
     let _monitor = {
         use jolt_core::utils::monitor::MetricsMonitor;
-        tracing::info!("Starting MetricsMonitor - remember to postprocess the trace with scripts/postprocess_trace.py");
+        tracing::info!("Starting MetricsMonitor - remember to run python3 scripts/postprocess_trace.py trace-*.json");
         MetricsMonitor::start(
             std::env::var("MONITOR_INTERVAL")
                 .unwrap_or("0.1".to_string())

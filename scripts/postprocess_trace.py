@@ -8,8 +8,16 @@ def main():
         sys.exit("Usage: postprocess_trace.py <trace.json> [...]")
     
     for filepath in sys.argv[1:]:
-        with open(filepath) as f:
-            trace = json.load(f)
+        try:
+            with open(filepath) as f:
+                trace = json.load(f)
+        except json.JSONDecodeError as e:
+            print(f"{filepath}: ERROR - Invalid/incomplete JSON at line {e.lineno} column {e.colno}: {e.msg}", file=sys.stderr)
+            print(f"{filepath}: Skipping file (likely incomplete trace from interrupted run)", file=sys.stderr)
+            continue
+        except FileNotFoundError:
+            print(f"{filepath}: ERROR - File not found", file=sys.stderr)
+            continue
         
         events = trace if isinstance(trace, list) else trace.get("traceEvents", [])
         counters = []
