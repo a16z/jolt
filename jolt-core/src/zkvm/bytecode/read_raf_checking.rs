@@ -277,7 +277,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
                 )
             }
             ReadCheckingValType::Stage2 => {
-                let gamma_powers = get_gamma_powers(&mut *sm.get_transcript().borrow_mut(), 3);
+                let gamma_powers = get_gamma_powers(&mut *sm.get_transcript().borrow_mut(), 4);
                 (
                     Self::compute_val_2(sm, &gamma_powers),
                     Self::compute_rv_claim_2(sm, &gamma_powers),
@@ -387,11 +387,6 @@ impl<F: JoltField> ReadRafSumcheck<F> {
         let (_, rd_claim) =
             sm.get_virtual_polynomial_opening(VirtualPolynomial::Rd, SumcheckId::SpartanOuter);
 
-        let (_, jump_claim_product) = sm.get_virtual_polynomial_opening(
-            VirtualPolynomial::OpFlags(CircuitFlags::Jump),
-            SumcheckId::ShouldJumpVirtualization,
-        );
-
         let mut sum = unexpanded_pc_claim * gamma_powers[0]
             + imm_claim * gamma_powers[1]
             + rd_claim * gamma_powers[2];
@@ -408,16 +403,15 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             gamma_idx += 1;
         }
 
-        sum += jump_claim_product * gamma_powers[gamma_idx];
-
         sum
     }
 
     /// Returns a vec of evaluations:
-    ///    Val(k) = rd(k, r_register) + gamma * rs1(k, r_register) + gamma^2 * rs2(k, r_register)
+    ///    Val(k) = rd(k, r_register) + gamma * rs1(k, r_register) + gamma^2 * rs2(k, r_register) + gamma^3 * jump_flag_claim
     /// where rd(k, k') = 1 if the k'th instruction in the bytecode has rd = k'
     /// and analogously for rs1(k, k') and rs2(k, k').
-    /// This particular Val virtualizes claims output by the registers read/write checking sumcheck.
+    /// This particular Val virtualizes claims output by the registers read/write checking sumcheck,
+    /// plus the jump flag claim from ShouldJumpVirtualization.
     fn compute_val_2(
         sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
         gamma_powers: &[F],
@@ -432,19 +426,27 @@ impl<F: JoltField> ReadRafSumcheck<F> {
         let r_register = &r_register[..(REGISTER_COUNT as usize).log_2()];
         let eq_r_register = EqPolynomial::<F>::evals(r_register);
         debug_assert_eq!(eq_r_register.len(), REGISTER_COUNT as usize);
+
+        let (_r_product, jump_flag_claim) = sm.get_virtual_polynomial_opening(
+            VirtualPolynomial::OpFlags(CircuitFlags::Jump),
+            SumcheckId::ShouldJumpVirtualization,
+        );
+
         sm.get_bytecode()
             .par_iter()
-            .map(|instruction| {
+            .enumerate()
+            .map(|(i, instruction)| {
                 let instr = instruction.normalize();
 
-                std::iter::empty()
+                let sum = std::iter::empty()
                     .chain(once(instr.operands.rd))
                     .chain(once(instr.operands.rs1))
                     .chain(once(instr.operands.rs2))
                     .map(|r| eq_r_register[r as usize])
                     .zip(gamma_powers)
                     .map(|(claim, gamma)| claim * gamma)
-                    .sum::<F>()
+                    .sum::<F>();
+                sum + gamma_powers[3] * jump_flag_claim
             })
             .collect()
     }
@@ -453,7 +455,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
         sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
         gamma_powers: &[F],
     ) -> F {
-        std::iter::empty()
+        let mut sum = std::iter::empty()
             .chain(once(VirtualPolynomial::RdWa))
             .chain(once(VirtualPolynomial::Rs1Ra))
             .chain(once(VirtualPolynomial::Rs2Ra))
@@ -463,7 +465,15 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             })
             .zip(gamma_powers)
             .map(|(claim, gamma)| claim * gamma)
-            .sum()
+            .sum::<F>();
+
+        let (_, jump_claim_product) = sm.get_virtual_polynomial_opening(
+            VirtualPolynomial::OpFlags(CircuitFlags::Jump),
+            SumcheckId::ShouldJumpVirtualization,
+        );
+        sum += jump_claim_product * gamma_powers[3];
+
+        sum
     }
 
     /// Returns a vec of evaluations:

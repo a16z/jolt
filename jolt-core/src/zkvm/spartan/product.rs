@@ -187,6 +187,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ProductVirtualizati
     }
 
     fn input_claim(&self) -> F {
+        // println!("ProductVirtualizationSumcheck({:?}) input_claim: {:?}", self.product_type, self.input_claim);
         self.input_claim
     }
 
@@ -352,7 +353,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ProductVirtualizati
         };
 
         let eq_eval = EqPolynomial::mle(&r.iter().rev().copied().collect::<Vec<_>>(), r_cycle);
-        eq_eval * left_input_eval * right_input_eval
+        let expected_claim = eq_eval * left_input_eval * right_input_eval;
+        expected_claim
     }
 
     fn normalize_opening_point(
