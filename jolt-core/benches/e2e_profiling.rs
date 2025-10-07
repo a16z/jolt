@@ -165,9 +165,7 @@ pub fn master_benchmark(
         // Write individual result file for resume detection
         let individual_file = format!("benchmark-runs/results/{bench_name}_{bench_scale}.csv");
         if let Err(e) = fs::write(&individual_file, &summary_line) {
-            eprintln!(
-                "Failed to write individual result file {individual_file}: {e}"
-            );
+            eprintln!("Failed to write individual result file {individual_file}: {e}");
         }
 
         // Also append to consolidated timings file
