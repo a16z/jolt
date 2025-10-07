@@ -26,6 +26,8 @@ python3 scripts/postprocess_trace.py trace-*.json
 
 The postprocessing step converts the metrics into counter tracks for Perfetto.
 
+![metrics-monitor](../../imgs/metrics-monitor.png)
+
 ## Memory profiling
 
 Jolt uses [allocative](https://github.com/facebookexperimental/allocative) for memory profiling.
