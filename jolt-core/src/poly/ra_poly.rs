@@ -12,7 +12,6 @@ use crate::{
         },
     },
     utils::thread::{drop_in_background_thread, unsafe_allocate_zero_vec},
-    zkvm::instruction_lookups::K_CHUNK,
 };
 
 /// Represents the state of an `ra_i` polynomial during the last log(T) sumcheck rounds.
@@ -201,25 +200,15 @@ impl<F: JoltField> RaPolynomialRound2<F> {
         // Construct lookup tables.
         let eq_0_r1 = EqPolynomial::mle(&[F::zero()], &[r1]);
         let eq_1_r1 = EqPolynomial::mle(&[F::one()], &[r1]);
-        let F_00: Vec<F> = unsafe_allocate_zero_vec(K_CHUNK);
-        let F_01: Vec<F> = unsafe_allocate_zero_vec(K_CHUNK);
-        let F_10: Vec<F> = unsafe_allocate_zero_vec(K_CHUNK);
-        let F_11: Vec<F> = unsafe_allocate_zero_vec(K_CHUNK);
+        let mut F_00: Vec<F> = self.F_0.clone();
+        let mut F_01: Vec<F> = self.F_0;
+        let mut F_10: Vec<F> = self.F_1.clone();
+        let mut F_11: Vec<F> = self.F_1;
 
-        (0..K_CHUNK).into_par_iter().for_each(|i| unsafe {
-            let f_00_ptr = F_00.as_ptr() as *mut F;
-            let f_01_ptr = F_01.as_ptr() as *mut F;
-            let f_10_ptr = F_10.as_ptr() as *mut F;
-            let f_11_ptr = F_11.as_ptr() as *mut F;
-
-            *f_00_ptr.add(i) = self.F_0[i] * eq_0_r1;
-            *f_01_ptr.add(i) = self.F_0[i] * eq_1_r1;
-            *f_10_ptr.add(i) = self.F_1[i] * eq_0_r1;
-            *f_11_ptr.add(i) = self.F_1[i] * eq_1_r1;
-        });
-
-        drop_in_background_thread(self.F_0);
-        drop_in_background_thread(self.F_1);
+        F_00.par_iter_mut().for_each(|f| *f *= eq_0_r1);
+        F_01.par_iter_mut().for_each(|f| *f *= eq_1_r1);
+        F_10.par_iter_mut().for_each(|f| *f *= eq_0_r1);
+        F_11.par_iter_mut().for_each(|f| *f *= eq_1_r1);
 
         RaPolynomialRound3 {
             F_00,
@@ -281,34 +270,23 @@ impl<F: JoltField> RaPolynomialRound3<F> {
         // Construct lookup tables.
         let eq_0_r2 = EqPolynomial::mle(&[F::zero()], &[r2]);
         let eq_1_r2 = EqPolynomial::mle(&[F::one()], &[r2]);
-        let F_000: Vec<F> = unsafe_allocate_zero_vec(K_CHUNK);
-        let F_001: Vec<F> = unsafe_allocate_zero_vec(K_CHUNK);
-        let F_010: Vec<F> = unsafe_allocate_zero_vec(K_CHUNK);
-        let F_011: Vec<F> = unsafe_allocate_zero_vec(K_CHUNK);
-        let F_100: Vec<F> = unsafe_allocate_zero_vec(K_CHUNK);
-        let F_101: Vec<F> = unsafe_allocate_zero_vec(K_CHUNK);
-        let F_110: Vec<F> = unsafe_allocate_zero_vec(K_CHUNK);
-        let F_111: Vec<F> = unsafe_allocate_zero_vec(K_CHUNK);
+        let mut F_000: Vec<F> = self.F_00.clone();
+        let mut F_001: Vec<F> = self.F_00;
+        let mut F_010: Vec<F> = self.F_01.clone();
+        let mut F_011: Vec<F> = self.F_01;
+        let mut F_100: Vec<F> = self.F_10.clone();
+        let mut F_101: Vec<F> = self.F_10;
+        let mut F_110: Vec<F> = self.F_11.clone();
+        let mut F_111: Vec<F> = self.F_11;
 
-        (0..K_CHUNK).into_par_iter().for_each(|i| unsafe {
-            let f_000_ptr = F_000.as_ptr() as *mut F;
-            let f_001_ptr = F_001.as_ptr() as *mut F;
-            let f_010_ptr = F_010.as_ptr() as *mut F;
-            let f_011_ptr = F_011.as_ptr() as *mut F;
-            let f_100_ptr = F_100.as_ptr() as *mut F;
-            let f_101_ptr = F_101.as_ptr() as *mut F;
-            let f_110_ptr = F_110.as_ptr() as *mut F;
-            let f_111_ptr = F_111.as_ptr() as *mut F;
-
-            *f_000_ptr.add(i) = self.F_00[i] * eq_0_r2;
-            *f_010_ptr.add(i) = self.F_01[i] * eq_0_r2;
-            *f_100_ptr.add(i) = self.F_10[i] * eq_0_r2;
-            *f_110_ptr.add(i) = self.F_11[i] * eq_0_r2;
-            *f_001_ptr.add(i) = self.F_00[i] * eq_1_r2;
-            *f_011_ptr.add(i) = self.F_01[i] * eq_1_r2;
-            *f_101_ptr.add(i) = self.F_10[i] * eq_1_r2;
-            *f_111_ptr.add(i) = self.F_11[i] * eq_1_r2;
-        });
+        F_000.par_iter_mut().for_each(|f| *f *= eq_0_r2);
+        F_010.par_iter_mut().for_each(|f| *f *= eq_0_r2);
+        F_100.par_iter_mut().for_each(|f| *f *= eq_0_r2);
+        F_110.par_iter_mut().for_each(|f| *f *= eq_0_r2);
+        F_001.par_iter_mut().for_each(|f| *f *= eq_1_r2);
+        F_011.par_iter_mut().for_each(|f| *f *= eq_1_r2);
+        F_101.par_iter_mut().for_each(|f| *f *= eq_1_r2);
+        F_111.par_iter_mut().for_each(|f| *f *= eq_1_r2);
 
         let lookup_indices = &self.lookup_indices;
         let n = lookup_indices.len() / 8;
@@ -355,10 +333,14 @@ impl<F: JoltField> RaPolynomialRound3<F> {
         }
 
         drop_in_background_thread(self.lookup_indices);
-        drop_in_background_thread(self.F_00);
-        drop_in_background_thread(self.F_10);
-        drop_in_background_thread(self.F_01);
-        drop_in_background_thread(self.F_11);
+        drop_in_background_thread(F_000);
+        drop_in_background_thread(F_100);
+        drop_in_background_thread(F_010);
+        drop_in_background_thread(F_110);
+        drop_in_background_thread(F_001);
+        drop_in_background_thread(F_101);
+        drop_in_background_thread(F_011);
+        drop_in_background_thread(F_111);
 
         res.into()
     }
