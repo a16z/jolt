@@ -110,8 +110,6 @@ This will produce a `.pb` profile, which you can view in [pprof](https://github.
 
 ```go tool pprof -http=:8080 target/release/jolt-core benchmark-runs/pprof/sha3_prove.pb```
 
-You may customize the sampling frequency using `PPROF_FREQ` (default: 100).
-
 ### Memory profiling
 
 Jolt uses [allocative](https://github.com/facebookexperimental/allocative) for memory profiling.
