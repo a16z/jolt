@@ -41,7 +41,7 @@ struct BooleanityProverState<F: JoltField> {
     eq_r_address: GruenSplitEqPolynomial<F>,
     eq_r_cycle: GruenSplitEqPolynomial<F>,
     G: [Vec<F>; D],
-    H_indices: [Vec<usize>; D],
+    H_indices: [Vec<Option<usize>>; D],
     H: [RaPolynomial<F>; D],
     F: Vec<F>,
     eq_r_r: F,
@@ -125,12 +125,12 @@ impl<F: JoltField> BooleanityProverState<F> {
         let mut F: Vec<F> = unsafe_allocate_zero_vec(K_CHUNK);
         F[0] = F::one();
 
-        let H_indices: [Vec<usize>; D] = std::array::from_fn(|i| {
+        let H_indices: [Vec<Option<usize>>; D] = std::array::from_fn(|i| {
             trace
                 .par_iter()
                 .map(|cycle| {
                     let lookup_index = LookupQuery::<XLEN>::to_lookup_index(cycle);
-                    ((lookup_index >> (LOG_K_CHUNK * (D - 1 - i))) % K_CHUNK as u128) as usize
+                    Some(((lookup_index >> (LOG_K_CHUNK * (D - 1 - i))) % K_CHUNK as u128) as usize)
                 })
                 .collect()
         });
@@ -193,11 +193,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for BooleanitySumcheck<
                 });
             if round == LOG_K_CHUNK - 1 {
                 ps.eq_r_r = ps.eq_r_address.current_scalar;
-                let F = Arc::new(std::mem::take(&mut ps.F));
+                let F = std::mem::take(&mut ps.F);
                 // Initialize H polynomials
                 ps.H.iter_mut()
                     .zip(std::mem::take(&mut ps.H_indices))
-                    .for_each(|(poly, indices)| *poly = RaPolynomial::new(indices, F.clone()));
+                    .for_each(|(poly, indices)| {
+                        *poly = RaPolynomial::new(Arc::new(indices), F.clone())
+                    });
                 let g: [Vec<F>; D] = std::array::from_fn(|i| std::mem::take(&mut ps.G[i]));
                 drop_in_background_thread(g);
             }

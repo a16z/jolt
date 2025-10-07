@@ -39,7 +39,7 @@ struct BooleanityProverState<F: JoltField> {
     B: MultilinearPolynomial<F>,
     D: MultilinearPolynomial<F>,
     G: Vec<Vec<F>>,
-    pc_by_cycle: Vec<Vec<usize>>,
+    pc_by_cycle: Vec<Vec<Option<usize>>>,
     H: Vec<RaPolynomial<F>>,
     F: Vec<F>,
     eq_r_r: F,
@@ -145,7 +145,7 @@ impl<F: JoltField> BooleanityProverState<F> {
                     .par_iter()
                     .map(|cycle| {
                         let k = preprocessing.get_pc(cycle);
-                        (k >> (log_K_chunk * (d - i - 1))) % K_chunk
+                        Some((k >> (log_K_chunk * (d - i - 1))) % K_chunk)
                     })
                     .collect()
             })
@@ -210,11 +210,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for BooleanitySumcheck<
             if round == self.log_K_chunk - 1 {
                 ps.eq_r_r = ps.B.final_sumcheck_claim();
                 // Initialize H polynomials using RaPolynomial
-                let F = Arc::new(std::mem::take(&mut ps.F));
+                let F = std::mem::take(&mut ps.F);
                 let pc_by_cycle = std::mem::take(&mut ps.pc_by_cycle);
                 ps.H = pc_by_cycle
                     .into_iter()
-                    .map(|pc_indices| RaPolynomial::new(pc_indices, F.clone()))
+                    .map(|pc_indices| RaPolynomial::new(Arc::new(pc_indices), F.clone()))
                     .collect();
                 // Drop G arrays as they're no longer needed
                 let g = std::mem::take(&mut ps.G);

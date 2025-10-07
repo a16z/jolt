@@ -54,12 +54,12 @@ impl<F: JoltField> RaSumcheck<F> {
 
         let (r_address, r_cycle) = r.split_at_r(LOG_K);
 
-        let H_indices: [Vec<usize>; D] = std::array::from_fn(|i| {
+        let H_indices: [Vec<Option<usize>>; D] = std::array::from_fn(|i| {
             trace
                 .par_iter()
                 .map(|cycle| {
                     let lookup_index = LookupQuery::<XLEN>::to_lookup_index(cycle);
-                    ((lookup_index >> (LOG_K_CHUNK * (D - 1 - i))) % K_CHUNK as u128) as usize
+                    Some(((lookup_index >> (LOG_K_CHUNK * (D - 1 - i))) % K_CHUNK as u128) as usize)
                 })
                 .collect()
         });
@@ -69,8 +69,8 @@ impl<F: JoltField> RaSumcheck<F> {
             .enumerate()
             .map(|(i, lookup_indices)| {
                 let r = &r_address[LOG_K_CHUNK * i..LOG_K_CHUNK * (i + 1)];
-                let eq_evals = Arc::new(EqPolynomial::evals(r));
-                RaPolynomial::new(lookup_indices, eq_evals)
+                let eq_evals = EqPolynomial::evals(r);
+                RaPolynomial::new(Arc::new(lookup_indices), eq_evals)
             })
             .collect();
 
