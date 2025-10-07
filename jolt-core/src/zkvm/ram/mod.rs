@@ -378,7 +378,10 @@ where
             self.initial_memory_state.as_ref().unwrap(),
             state_manager,
         );
-        let val_final_evaluation = ValFinalSumcheck::new_prover(state_manager);
+        let val_final_evaluation = ValFinalSumcheck::new_prover(
+            self.initial_memory_state.as_ref().unwrap(),
+            state_manager,
+        );
         let hamming_booleanity = HammingBooleanitySumcheck::new_prover(state_manager);
 
         #[cfg(feature = "allocative")]
@@ -406,9 +409,12 @@ where
             state_manager,
             private_input_eval,
         );
+        let private_input_eval_output = state_manager.private_input_evaluation_output
+            .expect("Private input evaluation for output not found in state manager");
         let val_final_evaluation = ValFinalSumcheck::new_verifier(
             self.initial_memory_state.as_ref().unwrap(),
             state_manager,
+            private_input_eval_output,
         );
         let hamming_booleanity = HammingBooleanitySumcheck::new_verifier(state_manager);
 

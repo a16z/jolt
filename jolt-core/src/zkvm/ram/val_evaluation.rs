@@ -225,35 +225,10 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
         // let init_eval = val_init.evaluate(&r_address.r);
         // println!("Val init is verifier: {}", init_eval);
 
-        // Alternative approach: split initial_ram_state at some index and compute separately
-        let split_index = 32; // You can adjust this split index as needed
-        
-        // Left part: first split_index elements, padded with zeros to maintain original length
-        let mut left_part = vec![0u64; initial_ram_state.len()];
-        left_part[..split_index].copy_from_slice(&initial_ram_state[..split_index]);
-        
-        // Right part: same length as initial_ram_state, but first split_index elements are 0
-        let mut right_part = vec![0u64; initial_ram_state.len()];
-        right_part[split_index..].copy_from_slice(&initial_ram_state[split_index..]);
         
         // Create multilinear polynomials from the split parts
-        let val_left: MultilinearPolynomial<F> = MultilinearPolynomial::from(left_part);
-        let val_right: MultilinearPolynomial<F> = MultilinearPolynomial::from(right_part);
-        
-        // Evaluate each part separately
-        let left_eval = val_left.evaluate(&r_address.r);
+        let val_right: MultilinearPolynomial<F> = MultilinearPolynomial::from(initial_ram_state.to_vec());
         let right_eval = val_right.evaluate(&r_address.r);
-        
-        // Merge the results by adding them (since multilinear polynomial evaluation is linear)
-        let merged_eval = left_eval + right_eval;
-        
-        // Assert that the merged result equals the original evaluation
-        // assert_eq!(
-        //     merged_eval, init_eval,
-        //     "Merged evaluation from split parts should equal the original evaluation"
-        // );
-        println!("Split evaluation verified: left_eval={}, right_eval={}, merged={}", 
-                 left_eval, right_eval, merged_eval);
 
         ValEvaluationSumcheck {
             claimed_evaluation,

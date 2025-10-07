@@ -36,6 +36,8 @@ pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcr
     pub private_input_commitment: PCS::Commitment,
     pub private_input_evaluation: F,
     pub private_input_proof: PCS::Proof,
+    pub private_input_evaluation_output: F,
+    pub private_input_proof_output: PCS::Proof,
     proofs: Proofs<F, PCS, FS>,
     pub trace_length: usize,
     ram_K: usize,
@@ -66,6 +68,10 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
             .serialize_with_mode(&mut writer, compress)?;
         self.private_input_proof
             .serialize_with_mode(&mut writer, compress)?;
+        self.private_input_evaluation_output
+            .serialize_with_mode(&mut writer, compress)?;
+        self.private_input_proof_output
+            .serialize_with_mode(&mut writer, compress)?;
         self.proofs.serialize_with_mode(&mut writer, compress)?;
         self.trace_length
             .serialize_with_mode(&mut writer, compress)?;
@@ -81,6 +87,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
             + self.private_input_commitment.serialized_size(compress)
             + self.private_input_evaluation.serialized_size(compress)
             + self.private_input_proof.serialized_size(compress)
+            + self.private_input_evaluation_output.serialized_size(compress)
+            + self.private_input_proof_output.serialized_size(compress)
             + self.proofs.serialized_size(compress)
             + self.trace_length.serialized_size(compress)
             + self.ram_K.serialized_size(compress)
@@ -126,6 +134,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
             PCS::Commitment::deserialize_with_mode(&mut reader, compress, validate)?;
         let private_input_evaluation = F::deserialize_with_mode(&mut reader, compress, validate)?;
         let private_input_proof = PCS::Proof::deserialize_with_mode(&mut reader, compress, validate)?;
+        let private_input_evaluation_output = F::deserialize_with_mode(&mut reader, compress, validate)?;
+        let private_input_proof_output = PCS::Proof::deserialize_with_mode(&mut reader, compress, validate)?;
         let proofs = Proofs::<F, PCS, FS>::deserialize_with_mode(&mut reader, compress, validate)?;
         let trace_length = usize::deserialize_with_mode(&mut reader, compress, validate)?;
         let twist_sumcheck_switch_index =
@@ -138,6 +148,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
             private_input_commitment,
             private_input_evaluation,
             private_input_proof,
+            private_input_evaluation_output,
+            private_input_proof_output,
             proofs,
             trace_length,
             ram_K,
@@ -162,6 +174,10 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> JoltProof<F
             .expect("Private input evaluation not set");
         let private_input_proof = state_manager.private_input_proof
             .expect("Private input proof not set");
+        let private_input_evaluation_output = state_manager.private_input_evaluation_output
+            .expect("Private input evaluation for output not set");
+        let private_input_proof_output = state_manager.private_input_proof_output
+            .expect("Private input proof for output not set");
 
         Self {
             opening_claims: Claims(openings),
@@ -169,6 +185,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> JoltProof<F
             private_input_commitment,
             private_input_evaluation,
             private_input_proof,
+            private_input_evaluation_output,
+            private_input_proof_output,
             proofs,
             trace_length,
             ram_K,
@@ -191,7 +209,12 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> JoltProof<F
         }
 
         let proofs = Rc::new(RefCell::new(self.proofs));
+        
+        // Include the private_input_commitment in the commitments list
+        // let mut all_commitments = self.commitments;
+        // // all_commitments.push(self.private_input_commitment.clone());
         let commitments = Rc::new(RefCell::new(self.commitments));
+        
         let transcript = Rc::new(RefCell::new(FS::new(b"Jolt")));
 
         StateManager {
@@ -201,6 +224,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> JoltProof<F
             private_input_commitment: Some(self.private_input_commitment),
             private_input_evaluation: Some(self.private_input_evaluation),
             private_input_proof: Some(self.private_input_proof),
+            private_input_evaluation_output: Some(self.private_input_evaluation_output),
+            private_input_proof_output: Some(self.private_input_proof_output),
             program_io,
             ram_K: self.ram_K,
             twist_sumcheck_switch_index: self.twist_sumcheck_switch_index,
