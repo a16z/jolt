@@ -69,7 +69,7 @@ impl Drop for PprofGuard {
                     let mut buf = Vec::new();
                     if p.encode(&mut buf).is_ok() {
                         let _ = std::io::Write::write_all(&mut f, &buf);
-                        println!("Wrote pprof profile to {}", filename);
+                        tracing::info!("Wrote pprof profile to {}", filename);
                     }
                 }
             }
