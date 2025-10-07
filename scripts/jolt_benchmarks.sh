@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Usage: ./jolt_benchmarks.sh [MAX_TRACE_LENGTH] [MIN_TRACE_LENGTH] [--benchmarks "bench1 bench2"] [--resume]
+# Usage: ./jolt_benchmarks.sh [MIN_TRACE_LENGTH] [MAX_TRACE_LENGTH] [--benchmarks "bench1 bench2"] [--resume]
 # Defaults: MAX=21, MIN=18
 # --resume: Skip benchmarks that already exist
 
