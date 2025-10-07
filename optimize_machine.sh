@@ -41,19 +41,34 @@ sysctl -q vm.dirty_background_ratio=5
 echo "==> Turning swap off (reversible with 'swapon -a')"
 swapoff -a || true
 
+echo "==> Configuring memory overcommit for large allocations"
+sysctl -q vm.overcommit_memory=1
+
+echo "==> Raising vm.max_map_count for mapping-heavy workloads"
+sysctl -q vm.max_map_count=1048576
+
 echo "==> Stopping irqbalance to reduce cross-core interrupts (optional)"
 if systemctl list-unit-files | grep -q '^irqbalance\.service'; then
   systemctl stop irqbalance || true
 fi
 
 echo "==> Increasing file descriptor & memlock limits for current shell"
-ulimit -n 1048576 || true
-ulimit -l unlimited 2>/dev/null || true
+ulimit -n 1048576 || echo "Failed to increase ulimit -n to 1048576"
+ulimit -l unlimited 2>/dev/null || echo "Failed to increase ulimit -l to unlimited"
+ulimit -s unlimited 2>/dev/null || echo "Failed to increase ulimit -s to unlimited"
 
 echo "==> Dropping page cache (optional, for clean benchmark runs)"
 # Comment out if you prefer warm cache runs.
 sync
 echo 3 > /proc/sys/vm/drop_caches
+echo
+echo "==> System Info:"
+echo "Max map count: $(cat /proc/sys/vm/max_map_count 2>/dev/null || echo 'N/A')"
+echo "Overcommit memory: $(cat /proc/sys/vm/overcommit_memory 2>/dev/null || echo 'N/A')"
+
+echo
+echo "==> Please run to set the RUST_MIN_STACK for larger trace sizes:"
+echo "  export RUST_MIN_STACK=134217728"
 
 echo "==> Ready-to-run Jolt profiling command:"
 echo
