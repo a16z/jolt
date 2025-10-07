@@ -41,7 +41,6 @@ pub fn benchmarks(bench_type: BenchType) -> Vec<(tracing::Span, Box<dyn FnOnce()
     }
 }
 
-
 fn fibonacci() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     prove_example("fibonacci-guest", postcard::to_stdvec(&400000u32).unwrap())
 }
@@ -80,8 +79,6 @@ fn sha3_chain() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     prove_example("sha3-chain-guest", inputs)
 }
 
-
-
 pub fn master_benchmark(
     bench_type: BenchType,
     bench_scale: usize,
@@ -98,7 +95,6 @@ pub fn master_benchmark(
     }
 
     let task = move || {
-
         println!("\n=== Running benchmark at scale 2^{bench_scale} ===");
         let max_trace_length = 1 << bench_scale;
         let bench_target =
@@ -147,7 +143,11 @@ pub fn master_benchmark(
         );
 
         let proving_hz = trace_length as f64 / duration.as_secs_f64();
-        println!("  Prover completed in {:.2}s ({:.1} Hz)", duration.as_secs_f64(), proving_hz);
+        println!(
+            "  Prover completed in {:.2}s ({:.1} Hz)",
+            duration.as_secs_f64(),
+            proving_hz
+        );
 
         // Write CSV
         let summary_line = format!(
@@ -160,7 +160,7 @@ pub fn master_benchmark(
             proof_size,
             proof_size_comp
         );
-        
+
         // Write individual result file for resume detection
         let individual_file = format!("benchmark-runs/results/{}_{}.csv", bench_name, bench_scale);
         if let Err(e) = fs::write(&individual_file, &summary_line) {
@@ -169,7 +169,7 @@ pub fn master_benchmark(
                 individual_file
             );
         }
-        
+
         // Also append to consolidated timings file
         if let Err(e) = fs::OpenOptions::new()
             .create(true)
@@ -281,5 +281,10 @@ fn prove_example_with_trace(
         verification_result.err()
     );
 
-    (prove_duration, proof_size, proof_size_full_compressed, trace.len())
+    (
+        prove_duration,
+        proof_size,
+        proof_size_full_compressed,
+        trace.len(),
+    )
 }
