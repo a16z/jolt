@@ -79,7 +79,7 @@ impl<F: JoltField> ProductVirtualizationSumcheck<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstance<F> for ProductVirtualizationSumcheck<F> {
+impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ProductVirtualizationSumcheck<F> {
     fn degree(&self) -> usize {
         3
     }
@@ -228,7 +228,7 @@ impl<F: JoltField> SumcheckInstance<F> for ProductVirtualizationSumcheck<F> {
             SumcheckId::ProductVirtualization,
         );
 
-        let eq_eval = EqPolynomial::mle(&self.normalize_opening_point(r).r, r_cycle);
+        let eq_eval = EqPolynomial::mle(&r.iter().rev().copied().collect::<Vec<_>>(), r_cycle);
         eq_eval * left_input_eval * right_input_eval
     }
 
@@ -242,6 +242,7 @@ impl<F: JoltField> SumcheckInstance<F> for ProductVirtualizationSumcheck<F> {
     fn cache_openings_prover(
         &self,
         accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
+        transcript: &mut T,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         let prover_state = self
@@ -253,6 +254,7 @@ impl<F: JoltField> SumcheckInstance<F> for ProductVirtualizationSumcheck<F> {
         let right_input_eval = prover_state.right_input_poly.final_sumcheck_claim();
 
         accumulator.borrow_mut().append_dense(
+            transcript,
             vec![
                 CommittedPolynomial::LeftInstructionInput,
                 CommittedPolynomial::RightInstructionInput,
@@ -266,9 +268,11 @@ impl<F: JoltField> SumcheckInstance<F> for ProductVirtualizationSumcheck<F> {
     fn cache_openings_verifier(
         &self,
         accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
+        transcript: &mut T,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         accumulator.borrow_mut().append_dense(
+            transcript,
             vec![
                 CommittedPolynomial::LeftInstructionInput,
                 CommittedPolynomial::RightInstructionInput,
