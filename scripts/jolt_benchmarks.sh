@@ -5,9 +5,9 @@
 
 set -euo pipefail
 
-# Change to script directory
+# Change to project root directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
+cd "$SCRIPT_DIR/.."
 
 # Default values
 MAX_TRACE_LENGTH=${2:-21}
@@ -70,12 +70,12 @@ echo "Timing summary saved in: benchmark-runs/results/timings.csv"
 echo "================================================"
 
 # Generate summary table
-python3 "$SCRIPT_DIR/benchmark_summary.py" --csv benchmark-runs/results/timings.csv
+python3 scripts/benchmark_summary.py --csv benchmark-runs/results/timings.csv
 
 # Generate interactive plots
 echo ""
 echo "Generating interactive plots..."
-python3 "$SCRIPT_DIR/plot_benchmarks.py" --csv benchmark-runs/results/timings.csv --output-dir benchmark-runs
+python3 scripts/plot_benchmarks.py --csv benchmark-runs/results/timings.csv --output-dir benchmark-runs
 
 echo ""
 echo "Interactive plots saved:"

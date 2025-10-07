@@ -104,8 +104,6 @@ pub fn master_benchmark(
         let bench_target =
             target_trace_size.unwrap_or(((1 << bench_scale) as f64 * SAFETY_MARGIN) as usize);
 
-        let display_name = bench_type.to_string();
-
         // Map benchmark type to canonical name + input closure
         let (bench_name, input_fn): (&str, fn(usize) -> Vec<u8>) = match bench_type {
             BenchType::Fibonacci => ("fibonacci", |target| {
