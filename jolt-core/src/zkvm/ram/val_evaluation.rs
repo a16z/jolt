@@ -64,15 +64,18 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
         let (r_address, r_cycle) = r.split_at(K.log_2());
 
         // Compute the evaluation of private input polynomial at r_address and append to accumulator
-        state_manager.prover_state.as_ref().and_then(|prover_state| {
-            prover_state.private_input_polynomial.as_ref().map(|poly| {
-                let eval = poly.evaluate(&r_address.r);
-                prover_state
-                    .accumulator
-                    .borrow_mut()
-                    .append_val_eval_opening(eval, r_address.r.clone());
-            })
-        });
+        state_manager
+            .prover_state
+            .as_ref()
+            .and_then(|prover_state| {
+                prover_state.private_input_polynomial.as_ref().map(|poly| {
+                    let eval = poly.evaluate(&r_address.r);
+                    prover_state
+                        .accumulator
+                        .borrow_mut()
+                        .append_val_eval_opening(eval, r_address.r.clone());
+                })
+            });
 
         let (preprocessing, trace, program_io, _) = state_manager.get_prover_data();
         let memory_layout = &program_io.memory_layout;
@@ -148,17 +151,20 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
         let (r_address, _) = r.split_at(K.log_2());
 
         // Store the opening point for verification if we have private inputs
-        let private_input_eval = state_manager.verifier_state.as_ref().and_then(|verifier_state| {
-            let eval = verifier_state.accumulator.borrow().input_openings.val_eval;
-            
-            eval.map(|e| {
-                verifier_state
-                    .accumulator
-                    .borrow_mut()
-                    .set_val_eval_opening(None, Some(r_address.r.clone()));
-                e
-            })
-        });
+        let private_input_eval = state_manager
+            .verifier_state
+            .as_ref()
+            .and_then(|verifier_state| {
+                let eval = verifier_state.accumulator.borrow().input_openings.val_eval;
+
+                eval.map(|e| {
+                    verifier_state
+                        .accumulator
+                        .borrow_mut()
+                        .set_val_eval_opening(None, Some(r_address.r.clone()));
+                    e
+                })
+            });
 
         // Create multilinear polynomials from the split parts
         let initial_public_ram_val: MultilinearPolynomial<F> =

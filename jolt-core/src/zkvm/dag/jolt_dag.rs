@@ -78,7 +78,7 @@ impl JoltDAG {
         drop(commitments);
 
         // Commit to private input
-        let private_input_opening_proof_hints = Self::commit_private_input(&mut state_manager);
+        let _private_input_opening_proof_hints = Self::commit_private_input(&mut state_manager);
         // Append private input commitment to transcript
         if let Some(private_input_commitment) = state_manager.private_input_commitment.as_ref() {
             transcript
@@ -285,12 +285,28 @@ impl JoltDAG {
         tracing::info!("Stage 5 proving");
 
         // Generate private input opening proofs if needed
-        Self::generate_private_input_proofs(
-            &mut state_manager,
-            &preprocessing.generators,
-            &transcript,
-            private_input_opening_proof_hints,
-        );
+        if state_manager.private_input_commitment.is_some() {
+            let (val_evaluation_proof, val_final_evaluation_proof) =
+                Self::generate_private_input_proofs(
+                    &mut state_manager,
+                    &preprocessing.generators,
+                    &transcript,
+                );
+
+            val_evaluation_proof.map(|proof| {
+                state_manager
+                    .proofs
+                    .borrow_mut()
+                    .insert(ProofKeys::PrivateInputProof, ProofData::OpeningProof(proof))
+            });
+
+            val_final_evaluation_proof.map(|proof| {
+                state_manager.proofs.borrow_mut().insert(
+                    ProofKeys::PrivateInputProofOutput,
+                    ProofData::OpeningProof(proof),
+                )
+            });
+        }
 
         let opening_proof = accumulator.borrow_mut().reduce_and_prove(
             polynomials_map,
@@ -470,6 +486,16 @@ impl JoltDAG {
         )
         .context("Stage 4")?;
 
+        // Verify private input opening proofs if needed
+        if state_manager.private_input_commitment.is_some() {
+            Self::verify_private_input_proofs(
+                &state_manager,
+                &preprocessing.generators,
+                &transcript,
+            )
+            .context("Stage 5")?;
+        }
+
         // Batch-prove all openings
         let batched_opening_proof = proofs
             .get(&ProofKeys::ReducedOpeningProof)
@@ -478,9 +504,6 @@ impl JoltDAG {
             ProofData::ReducedOpeningProof(proof) => proof,
             _ => panic!("Invalid proof type for stage 4"),
         };
-
-        // Verify private input opening proofs if needed
-        Self::verify_private_input_proofs(&state_manager, &preprocessing.generators, &transcript)?;
 
         let mut commitments_map = HashMap::new();
         for polynomial in AllCommittedPolynomials::iter() {
@@ -566,11 +589,6 @@ impl JoltDAG {
         )
         .unwrap() as usize;
 
-        tracing::info!(
-            "Private input size = {} bytes",
-            program_io.private_inputs.len()
-        );
-
         // Convert input bytes into words and populate initial_memory_state
         for chunk in program_io.private_inputs.chunks(8) {
             let mut word = [0u8; 8];
@@ -602,60 +620,34 @@ impl JoltDAG {
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         generators: &PCS::ProverSetup,
         transcript: &Rc<RefCell<ProofTranscript>>,
-        private_input_hint: Option<PCS::OpeningProofHint>,
-    ) {
-        if let Some(ref prover_state) = state_manager.prover_state {
-            if let Some(ref private_input_poly) = prover_state.private_input_polynomial {
-                if let Some(hint) = private_input_hint {
-                    let accumulator = prover_state.accumulator.borrow();
-                    let private_input_openings = &accumulator.input_openings;
+    ) -> (Option<PCS::Proof>, Option<PCS::Proof>) {
+        let prover_state = state_manager.prover_state.as_ref().unwrap();
+        let private_input_poly = prover_state.private_input_polynomial.as_ref().unwrap();
+        let accumulator = prover_state.accumulator.borrow();
+        let private_input_openings = &accumulator.input_openings;
 
-                    // Generate proof for val_evaluation
-                    if let (Some(_eval), Some(point)) = (
-                        private_input_openings.val_eval,
-                        &private_input_openings.val_eval_point,
-                    ) {
-                        tracing::info!(
-                            "Generating private input opening proof for val_evaluation in Stage 5"
-                        );
-                        let mut transcript_clone = transcript.borrow().clone();
-                        let proof = PCS::prove_without_hint(
-                            generators,
-                            private_input_poly,
-                            point,
-                            &mut transcript_clone,
-                        );
-                        state_manager
-                            .proofs
-                            .borrow_mut()
-                            .insert(ProofKeys::PrivateInputProof, ProofData::OpeningProof(proof));
-                        tracing::info!("Generated private input opening proof for val_evaluation");
-                    }
+        // Generate proof for val_evaluation
+        let val_evaluation_proof = private_input_openings.val_eval_point.as_ref().map(|point| {
+            let mut transcript_clone = transcript.borrow().clone();
+            PCS::prove_without_hint(generators, private_input_poly, point, &mut transcript_clone)
+        });
 
-                    // Generate proof for output_check
-                    if let (Some(_eval), Some(point)) = (
-                        private_input_openings.output_eval,
-                        &private_input_openings.output_eval_point,
-                    ) {
-                        tracing::info!(
-                            "Generating private input opening proof for output_check in Stage 5"
-                        );
-                        let mut transcript_clone = transcript.borrow().clone();
-                        let proof = PCS::prove_without_hint(
-                            generators,
-                            private_input_poly,
-                            point,
-                            &mut transcript_clone,
-                        );
-                        state_manager.proofs.borrow_mut().insert(
-                            ProofKeys::PrivateInputProofOutput,
-                            ProofData::OpeningProof(proof),
-                        );
-                        tracing::info!("Generated private input opening proof for output_check");
-                    }
-                }
-            }
-        }
+        // Generate proof for output_check
+        let val_final_evaluation_proof =
+            private_input_openings
+                .output_eval_point
+                .as_ref()
+                .map(|point| {
+                    let mut transcript_clone = transcript.borrow().clone();
+                    PCS::prove_without_hint(
+                        generators,
+                        private_input_poly,
+                        point,
+                        &mut transcript_clone,
+                    )
+                });
+
+        (val_evaluation_proof, val_final_evaluation_proof)
     }
 
     /// Verify private input opening proofs for val_evaluation and output_check
@@ -668,77 +660,79 @@ impl JoltDAG {
         verifier_setup: &PCS::VerifierSetup,
         transcript: &Rc<RefCell<ProofTranscript>>,
     ) -> Result<(), anyhow::Error> {
-        if let Some(ref private_input_commitment) = state_manager.private_input_commitment {
-            if let Some(ref verifier_state) = state_manager.verifier_state {
-                let accumulator = verifier_state.accumulator.borrow();
-                let private_input_openings = &accumulator.input_openings;
+        let private_input_commitment = state_manager.private_input_commitment.as_ref().unwrap();
+        let verifier_state = state_manager.verifier_state.as_ref().unwrap();
+        let accumulator = verifier_state.accumulator.borrow();
+        let private_input_openings = &accumulator.input_openings;
 
-                // Verify proof for val_evaluation
-                if let (Some(eval), Some(point)) = (
-                    private_input_openings.val_eval,
-                    &private_input_openings.val_eval_point,
-                ) {
-                    if let Some(ProofData::OpeningProof(private_input_proof)) = state_manager
-                        .proofs
-                        .borrow()
-                        .get(&ProofKeys::PrivateInputProof)
-                    {
-                        tracing::info!(
-                            "Verifying private input opening proof for val_evaluation in Stage 5"
-                        );
-                        let mut transcript_clone = transcript.borrow().clone();
-
-                        PCS::verify(
-                            private_input_proof,
-                            verifier_setup,
-                            &mut transcript_clone,
-                            point,
-                            &eval,
-                            private_input_commitment,
-                        ).map_err(|e| {
-                            tracing::error!("Private input opening proof for val_evaluation verification failed: {:?}", e);
-                            anyhow::anyhow!("Private input opening proof for val_evaluation verification failed: {:?}", e)
-                        })?;
-
-                        tracing::info!(
-                            "Private input opening proof for val_evaluation verified successfully"
-                        );
-                    }
+        // Verify proof for val_evaluation
+        if let (Some(eval), Some(point)) = (
+            private_input_openings.val_eval,
+            &private_input_openings.val_eval_point,
+        ) {
+            let private_input_proof = match state_manager
+                .proofs
+                .borrow()
+                .get(&ProofKeys::PrivateInputProof)
+            {
+                Some(ProofData::OpeningProof(proof)) => proof.clone(),
+                _ => {
+                    return Err(anyhow::anyhow!(
+                        "Private input proof for val_evaluation not found"
+                    ))
                 }
+            };
 
-                // Verify proof for output_check
-                if let (Some(eval), Some(point)) = (
-                    private_input_openings.output_eval,
-                    &private_input_openings.output_eval_point,
-                ) {
-                    if let Some(ProofData::OpeningProof(private_input_proof_output)) = state_manager
-                        .proofs
-                        .borrow()
-                        .get(&ProofKeys::PrivateInputProofOutput)
-                    {
-                        tracing::info!(
-                            "Verifying private input opening proof for output_check in Stage 5"
-                        );
-                        let mut transcript_clone = transcript.borrow().clone();
+            let mut transcript_clone = transcript.borrow().clone();
+            PCS::verify(
+                &private_input_proof,
+                verifier_setup,
+                &mut transcript_clone,
+                point,
+                &eval,
+                private_input_commitment,
+            )
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "Private input opening proof for val_evaluation verification failed: {:?}",
+                    e
+                )
+            })?;
+        }
 
-                        PCS::verify(
-                            private_input_proof_output,
-                            verifier_setup,
-                            &mut transcript_clone,
-                            point,
-                            &eval,
-                            private_input_commitment,
-                        ).map_err(|e| {
-                            tracing::error!("Private input opening proof for output_check verification failed: {:?}", e);
-                            anyhow::anyhow!("Private input opening proof for output_check verification failed: {:?}", e)
-                        })?;
-
-                        tracing::info!(
-                            "Private input opening proof for output_check verified successfully"
-                        );
-                    }
+        // Verify proof for output_check
+        if let (Some(eval), Some(point)) = (
+            private_input_openings.output_eval,
+            &private_input_openings.output_eval_point,
+        ) {
+            let private_input_proof_output = match state_manager
+                .proofs
+                .borrow()
+                .get(&ProofKeys::PrivateInputProofOutput)
+            {
+                Some(ProofData::OpeningProof(proof)) => proof.clone(),
+                _ => {
+                    return Err(anyhow::anyhow!(
+                        "Private input proof for output_check not found"
+                    ))
                 }
-            }
+            };
+
+            let mut transcript_clone = transcript.borrow().clone();
+            PCS::verify(
+                &private_input_proof_output,
+                verifier_setup,
+                &mut transcript_clone,
+                point,
+                &eval,
+                private_input_commitment,
+            )
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "Private input opening proof for output_check verification failed: {:?}",
+                    e
+                )
+            })?;
         }
 
         Ok(())

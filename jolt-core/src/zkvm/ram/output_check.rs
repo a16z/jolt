@@ -360,7 +360,6 @@ pub struct ValFinalSumcheck<F: JoltField> {
 impl<F: JoltField> ValFinalSumcheck<F> {
     #[tracing::instrument(skip_all, name = "ValFinalSumcheck::new_prover")]
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
-        initial_ram_state: &[u64],
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
         let (preprocessing, trace, program_io, _) = state_manager.get_prover_data();
@@ -398,22 +397,26 @@ impl<F: JoltField> ValFinalSumcheck<F> {
 
         let inc = CommittedPolynomial::RamInc.generate_witness(preprocessing, trace);
 
-
         // Compute private input evaluation and append to accumulator for output check
-        state_manager.prover_state.as_ref().and_then(|prover_state| {
-            prover_state.private_input_polynomial.as_ref().map(|poly| {
-                let eval = poly.evaluate(&r_address);
-                prover_state
-                    .accumulator
-                    .borrow_mut()
-                    .append_output_eval_opening(eval, r_address.clone());
-            })
-        });
+        state_manager
+            .prover_state
+            .as_ref()
+            .and_then(|prover_state| {
+                prover_state.private_input_polynomial.as_ref().map(|poly| {
+                    let eval = poly.evaluate(&r_address);
+                    prover_state
+                        .accumulator
+                        .borrow_mut()
+                        .append_output_eval_opening(eval, r_address.clone());
+                })
+            });
 
-        // Compute val_init_eval as sum of private and public parts
-        let val_init: MultilinearPolynomial<F> =
-            MultilinearPolynomial::from(initial_ram_state.to_vec());
-        let val_init_eval = val_init.evaluate(&r_address);
+        let val_init_eval = state_manager
+            .get_virtual_polynomial_opening(
+                VirtualPolynomial::RamValInit,
+                SumcheckId::RamOutputCheck,
+            )
+            .1;
         tracing::info!(
             "ValFinalSumcheck: Total val_init evaluation: {:?}",
             val_init_eval
@@ -471,17 +474,25 @@ impl<F: JoltField> ValFinalSumcheck<F> {
             .r;
 
         // Store the private input opening point for output check verification if we have private inputs
-        let private_input_eval_output = state_manager.verifier_state.as_ref().and_then(|verifier_state| {
-            let eval = verifier_state.accumulator.borrow().input_openings.output_eval;
-            
-            eval.map(|e| {
-                verifier_state
-                    .accumulator
-                    .borrow_mut()
-                    .set_output_eval_opening(None, Some(r_address.clone()));
-                e
-            })
-        });
+        let private_input_eval_output =
+            state_manager
+                .verifier_state
+                .as_ref()
+                .and_then(|verifier_state| {
+                    let eval = verifier_state
+                        .accumulator
+                        .borrow()
+                        .input_openings
+                        .output_eval;
+
+                    eval.map(|e| {
+                        verifier_state
+                            .accumulator
+                            .borrow_mut()
+                            .set_output_eval_opening(None, Some(r_address.clone()));
+                        e
+                    })
+                });
 
         // Compute the public part of val_init evaluation
         let val_init_public: MultilinearPolynomial<F> =

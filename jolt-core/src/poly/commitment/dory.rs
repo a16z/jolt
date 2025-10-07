@@ -1125,18 +1125,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
         let sigma = DoryGlobals::get_num_columns().log_2();
         let dory_transcript = JoltToDoryTranscriptRef::<Self::Field, _>::new(transcript);
 
-        // Determine expected number of rows (2^nu) for this evaluation
-        let point_dim = opening_point.len();
-        let nu = if point_dim <= sigma * 2 { sigma } else { point_dim - sigma };
-        let expected_rows = 1 << nu;
-
-        // Pad/truncate the provided row commitments to exactly expected_rows using identity points
-        let mut hint = row_commitments;
-        if hint.len() < expected_rows {
-            hint.resize(expected_rows, JoltGroupWrapper(G1Projective::zero()));
-        } else if hint.len() > expected_rows {
-            hint.truncate(expected_rows);
-        }
+        let hint = row_commitments;
 
         // dory evaluate returns the opening but in this case we don't use it, we pass directly the opening to verify()
         let proof_builder = evaluate::<
@@ -1145,14 +1134,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
             JoltMsmG1,
             JoltMsmG2,
             _,
-        >(
-            poly,
-            Some(hint),
-            &point_dory,
-            sigma,
-            setup,
-            dory_transcript,
-        );
+        >(poly, Some(hint), &point_dory, sigma, setup, dory_transcript);
 
         let dory_proof = proof_builder.build();
 
@@ -1186,14 +1168,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
             JoltMsmG1,
             JoltMsmG2,
             _,
-        >(
-            poly,
-            None,
-            &point_dory,
-            sigma,
-            setup,
-            dory_transcript,
-        );
+        >(poly, None, &point_dory, sigma, setup, dory_transcript);
 
         let dory_proof = proof_builder.build();
 

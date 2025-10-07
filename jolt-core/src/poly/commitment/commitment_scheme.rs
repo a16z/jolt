@@ -99,10 +99,10 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
     ) -> Self::Proof;
 
     fn prove_without_hint<ProofTranscript: Transcript>(
-        setup: &Self::ProverSetup,
-        poly: &MultilinearPolynomial<Self::Field>,
-        opening_point: &[Self::Field],
-        transcript: &mut ProofTranscript,
+        _setup: &Self::ProverSetup,
+        _poly: &MultilinearPolynomial<Self::Field>,
+        _opening_point: &[Self::Field],
+        _transcript: &mut ProofTranscript,
     ) -> Self::Proof {
         unimplemented!()
     }
