@@ -23,8 +23,8 @@ use crate::{
 use ark_bn254::Fr;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::jolt_device::MemoryLayout;
-use tracer::{instruction::Instruction, JoltDevice};
 use std::time::Instant;
+use tracer::{instruction::Instruction, JoltDevice};
 
 pub mod bytecode;
 pub mod dag;
@@ -57,7 +57,8 @@ pub struct PprofGuard;
 impl Drop for PprofGuard {
     fn drop(&mut self) {
         if let Ok(report) = self.guard.report().build() {
-            let prefix = std::env::var("PPROF_PREFIX").unwrap_or_else(|_| String::from("benchmark-runs/pprof/"));
+            let prefix = std::env::var("PPROF_PREFIX")
+                .unwrap_or_else(|_| String::from("benchmark-runs/pprof/"));
             let filename = format!("{}{}.pb", prefix, self.label);
             // Extract directory from prefix for creation
             if let Some(dir) = std::path::Path::new(&filename).parent() {
@@ -84,7 +85,12 @@ macro_rules! pprof_scope {
         {
             Some($crate::zkvm::PprofGuard {
                 guard: pprof::ProfilerGuardBuilder::default()
-                    .frequency(std::env::var("PPROF_FREQ").unwrap_or("100".to_string()).parse::<i32>().unwrap())
+                    .frequency(
+                        std::env::var("PPROF_FREQ")
+                            .unwrap_or("100".to_string())
+                            .parse::<i32>()
+                            .unwrap(),
+                    )
                     .blocklist(&["libc", "libgcc", "pthread", "vdso"])
                     .build()
                     .expect("Failed to initialize profiler"),
@@ -322,7 +328,11 @@ where
             );
             let (proof, debug_info) = JoltDAG::prove(state_manager).ok().unwrap();
             let prove_duration = start.elapsed();
-            tracing::info!("Proved in {:.1}s ({:.1} kHz)", prove_duration.as_secs_f64(), trace_length as f64 / prove_duration.as_secs_f64() / 1000.0);
+            tracing::info!(
+                "Proved in {:.1}s ({:.1} kHz)",
+                prove_duration.as_secs_f64(),
+                trace_length as f64 / prove_duration.as_secs_f64() / 1000.0
+            );
             (proof, debug_info)
         };
 
