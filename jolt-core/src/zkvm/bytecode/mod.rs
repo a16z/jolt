@@ -144,7 +144,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         let (preprocessing, trace, _, _) = sm.get_prover_data();
         let bytecode_preprocessing = &preprocessing.shared.bytecode;
 
-        let r_cycle: Vec<F> = sm
+        let r_cycle: Vec<F::Challenge> = sm
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::UnexpandedPC,
                 SumcheckId::SpartanOuter,

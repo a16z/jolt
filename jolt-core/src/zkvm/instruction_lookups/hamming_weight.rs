@@ -106,7 +106,7 @@ impl<F: JoltField> SumcheckInstance<F> for HammingWeightSumcheck<F> {
     }
 
     #[tracing::instrument(skip_all, name = "InstructionHammingWeight::bind")]
-    fn bind(&mut self, r_j: F, _round: usize) {
+    fn bind(&mut self, r_j: F::Challenge, _round: usize) {
         self.prover_state
             .as_mut()
             .unwrap()
@@ -118,7 +118,7 @@ impl<F: JoltField> SumcheckInstance<F> for HammingWeightSumcheck<F> {
     fn expected_output_claim(
         &self,
         accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
-        _r: &[F],
+        _r: &[F::Challenge],
     ) -> F {
         let ra_claims = (0..D).map(|i| {
             let accumulator = accumulator.as_ref().unwrap();
@@ -138,7 +138,10 @@ impl<F: JoltField> SumcheckInstance<F> for HammingWeightSumcheck<F> {
             .sum()
     }
 
-    fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(
+        &self,
+        opening_point: &[F::Challenge],
+    ) -> OpeningPoint<BIG_ENDIAN, F> {
         OpeningPoint::new(opening_point.iter().rev().copied().collect())
     }
 

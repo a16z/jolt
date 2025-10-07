@@ -70,7 +70,7 @@ impl<F: JoltField> PCSumcheck<F> {
 
         let (r_cycle, _rx_var) = outer_sumcheck_r.split_at(num_cycles_bits);
 
-        let (_, eq_plus_one_r_cycle) = EqPlusOnePolynomial::evals(&r_cycle.r, None);
+        let (_, eq_plus_one_r_cycle) = EqPlusOnePolynomial::<F>::evals(&r_cycle.r, None);
 
         let gamma: F = state_manager.transcript.borrow_mut().challenge_scalar();
         let gamma_squared = gamma.square();
@@ -190,7 +190,7 @@ impl<F: JoltField> SumcheckInstance<F> for PCSumcheck<F> {
     }
 
     #[tracing::instrument(skip_all, name = "PCSumcheck::bind")]
-    fn bind(&mut self, r_j: F, _round: usize) {
+    fn bind(&mut self, r_j: F::Challenge, _round: usize) {
         let prover_state = self
             .prover_state
             .as_mut()
@@ -223,7 +223,7 @@ impl<F: JoltField> SumcheckInstance<F> for PCSumcheck<F> {
     fn expected_output_claim(
         &self,
         accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
-        r: &[F],
+        r: &[F::Challenge],
     ) -> F {
         let accumulator = accumulator.as_ref().unwrap().borrow();
 
@@ -250,7 +250,8 @@ impl<F: JoltField> SumcheckInstance<F> for PCSumcheck<F> {
             + self.gamma * pc_eval_at_shift_r
             + self.gamma_squared * is_noop_eval_at_shift_r;
 
-        let eq_plus_one_shift_sumcheck = EqPlusOnePolynomial::new(r_cycle.to_vec()).evaluate(r);
+        let eq_plus_one_shift_sumcheck =
+            EqPlusOnePolynomial::<F>::new(r_cycle.to_vec()).evaluate(r);
 
         batched_eval_at_shift_r * eq_plus_one_shift_sumcheck
     }
@@ -289,7 +290,10 @@ impl<F: JoltField> SumcheckInstance<F> for PCSumcheck<F> {
         );
     }
 
-    fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(
+        &self,
+        opening_point: &[F::Challenge],
+    ) -> OpeningPoint<BIG_ENDIAN, F> {
         OpeningPoint::new(opening_point.to_vec())
     }
 

@@ -1,4 +1,8 @@
 use super::{FieldOps, JoltField};
+#[cfg(feature = "challenge-254-bit")]
+use crate::field::challenge::Mont254BitChallenge;
+use crate::field::challenge::MontU128Challenge;
+
 use crate::utils::counters::{
     // basic arithmetic
     ADD_COUNT,
@@ -171,11 +175,6 @@ impl PartialEq<Fr> for TrackedFr {
         self.0 == *other
     }
 }
-impl PartialEq<TrackedFr> for Fr {
-    fn eq(&self, other: &TrackedFr) -> bool {
-        *self == other.0
-    }
-}
 
 // Display delegates to Debug or inner Display
 impl fmt::Display for TrackedFr {
@@ -324,6 +323,13 @@ impl JoltField for TrackedFr {
     type Unreduced<const N: usize> = <ark_bn254::Fr as JoltField>::Unreduced<N>;
     type SmallValueLookupTables = <ark_bn254::Fr as JoltField>::SmallValueLookupTables;
 
+    // Default: Use optimized 125-bit MontChallenge
+    #[cfg(not(feature = "challenge-254-bit"))]
+    type Challenge = MontU128Challenge<TrackedFr>;
+
+    // Optional: Use full 254-bit field elements
+    #[cfg(feature = "challenge-254-bit")]
+    type Challenge = Mont254BitChallenge<TrackedFr>;
     fn random<R: rand_core::RngCore>(rng: &mut R) -> Self {
         TrackedFr(<ark_bn254::Fr as JoltField>::random(rng))
     }
@@ -442,6 +448,14 @@ impl JoltField for TrackedFr {
     fn from_barrett_reduce<const N: usize>(unreduced: BigInt<N>) -> Self {
         BARRETT_REDUCE_COUNT.fetch_add(1, Ordering::Relaxed);
         TrackedFr(<Fr as JoltField>::from_barrett_reduce(unreduced))
+    }
+}
+
+impl TrackedFr {
+    #[inline]
+    pub fn mul_hi_bigint_u128(&self, n: [u64; 4]) -> Self {
+        MUL_U128_COUNT.fetch_add(1, Ordering::Relaxed);
+        TrackedFr(self.0.mul_hi_bigint_u128(n))
     }
 }
 

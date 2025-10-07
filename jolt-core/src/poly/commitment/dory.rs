@@ -29,7 +29,7 @@ use dory::{
     },
     commit,
     curve::G2Cache,
-    evaluate, setup_with_srs_file,
+    evaluate, setup_with_urs_file,
     transcript::Transcript as DoryTranscript,
     verify, DoryProof, DoryProofBuilder, Polynomial as DoryPolynomial, ProverSetup, VerifierSetup,
 };
@@ -1029,7 +1029,6 @@ pub struct DoryProofData {
 pub struct DoryBatchedProof {
     proofs: Vec<DoryProofData>,
 }
-
 impl CommitmentScheme for DoryCommitmentScheme {
     type Field = Fr;
     type ProverSetup = ProverSetup<JoltBn254>;
@@ -1041,8 +1040,8 @@ impl CommitmentScheme for DoryCommitmentScheme {
 
     #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::setup_prover")]
     fn setup_prover(max_num_vars: usize) -> Self::ProverSetup {
-        let srs_file_name = format!("dory_srs_{max_num_vars}_variables.srs");
-        let (mut prover_setup, _) = setup_with_srs_file::<JoltBn254, _>(
+        let srs_file_name = format!("dory_urs_{max_num_vars}_variables.urs");
+        let (mut prover_setup, _) = setup_with_urs_file::<JoltBn254, _>(
             &mut ark_std::rand::thread_rng(),
             max_num_vars,
             Some(&srs_file_name), // Will load if exists, generate and save if not
@@ -1111,7 +1110,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
     fn prove<ProofTranscript: Transcript>(
         setup: &Self::ProverSetup,
         poly: &MultilinearPolynomial<Self::Field>,
-        opening_point: &[Self::Field],
+        opening_point: &[<Self::Field as JoltField>::Challenge],
         row_commitments: Self::OpeningProofHint,
         transcript: &mut ProofTranscript,
     ) -> Self::Proof {
@@ -1119,7 +1118,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
         let point_dory: Vec<JoltFieldWrapper<Self::Field>> = opening_point
             .iter()
             .rev()
-            .map(|&p| JoltFieldWrapper(p))
+            .map(|&p| JoltFieldWrapper(p.into()))
             .collect();
 
         let sigma = DoryGlobals::get_num_columns().log_2();
@@ -1154,7 +1153,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
         proof: &Self::Proof,
         setup: &Self::VerifierSetup,
         transcript: &mut ProofTranscript,
-        opening_point: &[Self::Field],
+        opening_point: &[<Self::Field as JoltField>::Challenge],
         opening: &Self::Field,
         commitment: &Self::Commitment,
     ) -> Result<(), ProofVerifyError> {
@@ -1162,7 +1161,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
         let opening_point_dory: Vec<JoltFieldWrapper<Self::Field>> = opening_point
             .iter()
             .rev()
-            .map(|&p| JoltFieldWrapper(p))
+            .map(|&p| JoltFieldWrapper(p.into()))
             .collect();
 
         let claimed_opening = JoltFieldWrapper(*opening);
@@ -1298,7 +1297,9 @@ mod tests {
         );
 
         let mut rng = thread_rng();
-        let opening_point: Vec<Fr> = (0..num_vars).map(|_| Fr::rand(&mut rng)).collect();
+        let opening_point: Vec<<Fr as JoltField>::Challenge> = (0..num_vars)
+            .map(|_| <Fr as JoltField>::Challenge::random(&mut rng))
+            .collect();
 
         let commit_start = Instant::now();
         let (commitment, row_commitments) = DoryCommitmentScheme::commit(&poly, prover_setup);
@@ -1468,7 +1469,9 @@ mod tests {
         let coeffs: Vec<Fr> = (0..num_coeffs).map(|_| Fr::rand(&mut rng)).collect();
         let poly = MultilinearPolynomial::LargeScalars(DensePolynomial::new(coeffs.clone()));
 
-        let opening_point: Vec<Fr> = (0..num_vars).map(|_| Fr::rand(&mut rng)).collect();
+        let opening_point: Vec<<Fr as JoltField>::Challenge> = (0..num_vars)
+            .map(|_| <Fr as JoltField>::Challenge::random(&mut rng))
+            .collect();
 
         let prover_setup = DoryCommitmentScheme::setup_prover(num_vars);
         let verifier_setup = DoryCommitmentScheme::setup_verifier(&prover_setup);
@@ -1512,8 +1515,9 @@ mod tests {
 
         // Test 2: Tamper with the opening point
         {
-            let tampered_opening_point: Vec<Fr> =
-                (0..num_vars).map(|_| Fr::rand(&mut rng)).collect();
+            let tampered_opening_point: Vec<<Fr as JoltField>::Challenge> = (0..num_vars)
+                .map(|_| <Fr as JoltField>::Challenge::random(&mut rng))
+                .collect();
 
             let mut verify_transcript =
                 Blake2bTranscript::new(DoryCommitmentScheme::protocol_name());

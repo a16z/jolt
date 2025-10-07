@@ -32,7 +32,7 @@ use crate::{
 
 #[derive(Allocative)]
 pub struct RaSumcheck<F: JoltField> {
-    r_cycle: Vec<F>,
+    r_cycle: Vec<F::Challenge>,
     input_claim: F,
     prover_state: Option<RaProverState<F>>,
 }
@@ -41,7 +41,7 @@ pub struct RaSumcheck<F: JoltField> {
 pub struct RaProverState<F: JoltField> {
     ra_i_polys: Vec<RaPolynomial<F>>,
     /// Challenges drawn throughout  the sumcheck.
-    r_sumcheck: Vec<F>,
+    r_sumcheck: Vec<F::Challenge>,
 }
 
 impl<F: JoltField> RaSumcheck<F> {
@@ -123,11 +123,11 @@ impl<F: JoltField> SumcheckInstance<F> for RaSumcheck<F> {
         let degree = self.degree();
         debug_assert_eq!(degree, prover_state.ra_i_polys.len() + 1);
         let domain = chain!([0], 2..).map(F::from_u64).take(degree);
-        domain.map(|x| poly.evaluate(&x)).collect()
+        domain.map(|x| poly.evaluate::<F>(&x)).collect()
     }
 
     #[tracing::instrument(skip_all, name = "InstructionRaSumcheck::bind")]
-    fn bind(&mut self, r_j: F, _round: usize) {
+    fn bind(&mut self, r_j: F::Challenge, _round: usize) {
         let prover_state = self
             .prover_state
             .as_mut()
@@ -144,9 +144,9 @@ impl<F: JoltField> SumcheckInstance<F> for RaSumcheck<F> {
     fn expected_output_claim(
         &self,
         opening_accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
-        r: &[F],
+        r: &[F::Challenge],
     ) -> F {
-        let eq_eval = EqPolynomial::mle(&self.r_cycle, r);
+        let eq_eval = EqPolynomial::<F>::mle(&self.r_cycle, r);
         let ra_claim_prod: F = (0..D)
             .map(|i| {
                 let (_, ra_i_claim) = opening_accumulator
@@ -164,7 +164,10 @@ impl<F: JoltField> SumcheckInstance<F> for RaSumcheck<F> {
         eq_eval * ra_claim_prod
     }
 
-    fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(
+        &self,
+        opening_point: &[F::Challenge],
+    ) -> OpeningPoint<BIG_ENDIAN, F> {
         OpeningPoint::new(opening_point.to_vec())
     }
 
@@ -183,7 +186,7 @@ impl<F: JoltField> SumcheckInstance<F> for RaSumcheck<F> {
             SumcheckId::InstructionReadRaf,
         );
 
-        let r_address_chunks: Vec<Vec<F>> = r
+        let r_address_chunks: Vec<Vec<F::Challenge>> = r
             .split_at_r(LOG_K)
             .0
             .chunks(LOG_K_CHUNK)
@@ -212,7 +215,7 @@ impl<F: JoltField> SumcheckInstance<F> for RaSumcheck<F> {
             SumcheckId::InstructionReadRaf,
         );
 
-        let r_address_chunks: Vec<Vec<F>> = r
+        let r_address_chunks: Vec<Vec<F::Challenge>> = r
             .split_at_r(LOG_K)
             .0
             .chunks(LOG_K_CHUNK)
