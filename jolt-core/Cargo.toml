@@ -105,6 +105,7 @@ jolt-inlines-keccak256 = { workspace = true, features = [
 pprof = { version = "0.15", features = [
     "prost-codec",
     "flamegraph",
+    "frame-pointer",
 ], optional = true }
 prost = { version = "0.14", optional = true }
 
