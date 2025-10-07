@@ -427,13 +427,24 @@ pub fn master_benchmark(
             proof_size,
             proof_size_comp
         );
+        
+        // Write individual result file for resume detection
+        let individual_file = format!("benchmark-runs/results/{}_{}.csv", bench_name, bench_scale);
+        if let Err(e) = fs::write(&individual_file, &summary_line) {
+            eprintln!(
+                "Failed to write individual result file {}: {e}",
+                individual_file
+            );
+        }
+        
+        // Also append to consolidated timings file
         if let Err(e) = fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open("benchmark-runs/timings.csv")
-            .and_then(|mut f| f.write_all(summary_line.as_bytes()))
+            .open("benchmark-runs/results/timings.csv")
+            .and_then(|mut f| f.write_all())
         {
-            eprintln!("Failed to write timing: {e}");
+            eprintln!("Failed to write consolidated timing: {e}");
         }
 
         if !benchmark_data.is_empty() {

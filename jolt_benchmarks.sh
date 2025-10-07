@@ -1,56 +1,75 @@
 #!/bin/bash
 
-# Usage: ./run_benchmarks.sh [TRACE_LENGTH]
-# Default TRACE_LENGTH is 24
+# Usage: ./jolt_benchmarks.sh [MAX_TRACE_LENGTH] [MIN_TRACE_LENGTH] [--benchmarks "bench1 bench2"]
+# Defaults: MAX=21, MIN=18
 
-TRACE_LENGTH=${1:-21}
-echo "Running benchmarks with TRACE_LENGTH=$TRACE_LENGTH"
+set -euo pipefail
 
-if [ -d "perfetto_traces" ]; then
-    echo "Clearing existing perfetto_traces directory..."
-    rm -rf perfetto_traces
+# Change to script directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+# Default values
+MAX_TRACE_LENGTH=${1:-21}
+MIN_TRACE_LENGTH=${2:-18}
+BENCHMARKS="fibonacci sha2-chain sha3-chain btreemap"
+
+# Parse optional --benchmarks flag
+shift 2 2>/dev/null || shift $# 2>/dev/null
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --benchmarks)
+            BENCHMARKS="$2"
+            shift 2
+            ;;
+        *)
+            echo "Unknown option: $1"
+            exit 1
+            ;;
+    esac
+done
+
+echo "Running benchmarks with TRACE_LENGTH=$MIN_TRACE_LENGTH..$MAX_TRACE_LENGTH"
+echo "Benchmarks: $BENCHMARKS"
+
+# Set stack size for Rust
+export RUST_MIN_STACK=33554432
+
+# Create output directories
+mkdir -p benchmark-runs/perfetto_traces
+mkdir -p benchmark-runs/results
+
+# Initialize CSV header only if file doesn't exist
+if [ ! -f "benchmark-runs/results/timings.csv" ]; then
+    echo "benchmark_name,scale,prover_time_s,trace_length,proving_hz" >benchmark-runs/results/timings.csv
 fi
 
-mkdir -p perfetto_traces
+# Build once
+echo "Building jolt-core (release)..."
+cargo build --release -p jolt-core --features monitor
+JOLT_BIN="./target/release/jolt-core"
 
-echo "type,scale,time" >perfetto_traces/timings.csv
-
-for scale in $(seq 18 $TRACE_LENGTH); do
+# Run benchmarks
+for scale in $(seq $MIN_TRACE_LENGTH $MAX_TRACE_LENGTH); do
     echo "================================================"
     echo "Running benchmarks at scale 2^$scale"
     echo "================================================"
     
-    # Fibonacci
-    echo ">>> Fibonacci at scale 2^$scale"
-    export BENCH_TYPE=fib
-    export BENCH_SCALE=$scale
-    cargo run --release -p jolt-core -- profile --name master-benchmark --format chrome
-    
-    # # SHA2-chain
-    echo ">>> SHA2-chain at scale 2^$scale"
-    export BENCH_TYPE=sha2-chain
-    export BENCH_SCALE=$scale
-    cargo run --release -p jolt-core -- profile --name master-benchmark --format chrome
-    
-    # SHA3-chain
-    echo ">>> SHA3-chain at scale 2^$scale"
-    export BENCH_TYPE=sha3-chain
-    export BENCH_SCALE=$scale
-    cargo run --release -p jolt-core -- profile --name master-benchmark --format chrome
-    
-    # # BTreeMap
-    echo ">>> BTreeMap at scale 2^$scale"
-    export BENCH_TYPE=btreemap
-    export BENCH_SCALE=$scale
-    cargo run --release -p jolt-core -- profile --name master-benchmark --format chrome
+    for bench in $BENCHMARKS; do
+        echo ">>> $bench at scale 2^$scale"
+        $JOLT_BIN benchmark --name "$bench" --scale "$scale" --format chrome
+        
+        # Postprocess trace file
+        python3 scripts/benchmark/postprocess.py "benchmark-runs/perfetto_traces/${bench}_${scale}.json" 2>/dev/null || true
+    done
     
     echo ""
 done
 
 echo "================================================"
 echo "All benchmarks complete!"
-echo "Chrome trace files saved in: perfetto_traces/"
-echo "Timing summary saved in: perfetto_traces/timings.csv"
+echo "Chrome trace files saved in: benchmark-runs/perfetto_traces/"
+echo "Timing summary saved in: benchmark-runs/results/timings.csv"
 echo "================================================"
 
 # Generate summary table
@@ -64,12 +83,12 @@ print("------|-----------|------------|------------|----------")
 
 # Read timings
 timings = {}
-with open('perfetto_traces/timings.csv', 'r') as f:
+with open('benchmark-runs/results/timings.csv', 'r') as f:
     reader = csv.DictReader(f)
     for row in reader:
         scale = int(row['scale'])
-        bench_type = row['type']
-        time = float(row['time'])
+        bench_type = row['benchmark_name']
+        time = float(row['prover_time_s'])
         if scale not in timings:
             timings[scale] = {}
         timings[scale][bench_type] = time
@@ -77,7 +96,7 @@ with open('perfetto_traces/timings.csv', 'r') as f:
 # Print table
 for scale in sorted(timings.keys()):
     row = timings[scale]
-    fib_time = f"{row.get('fib', 0):.2f}s" if 'fib' in row else "N/A"
+    fib_time = f"{row.get('fibonacci', 0):.2f}s" if 'fibonacci' in row else "N/A"
     sha2_time = f"{row.get('sha2-chain', 0):.2f}s" if 'sha2-chain' in row else "N/A"
     sha3_time = f"{row.get('sha3-chain', 0):.2f}s" if 'sha3-chain' in row else "N/A"
     btree_time = f"{row.get('btreemap', 0):.2f}s" if 'btreemap' in row else "N/A"
