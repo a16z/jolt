@@ -66,9 +66,7 @@ TOTAL_FAILED=0
 
 # Run benchmarks
 for scale in $(seq $MIN_TRACE_LENGTH $MAX_TRACE_LENGTH); do
-    echo "================================================"
-    echo "Running benchmarks at scale 2^$scale"
-    echo "================================================"
+    echo "=== Running benchmarks at scale 2^$scale ==="
     
     for bench in $BENCHMARKS; do
         echo ">>> $bench at scale 2^$scale"
@@ -77,7 +75,7 @@ for scale in $(seq $MIN_TRACE_LENGTH $MAX_TRACE_LENGTH); do
         RESULT_FILE="benchmark-runs/results/${bench}_${scale}.csv"
         if [ "$RESUME" = true ] && [ -f "$RESULT_FILE" ]; then
             echo "  ⏭ Skipping (found $RESULT_FILE)"
-            ((TOTAL_SKIPPED++))
+            ((TOTAL_SKIPPED++)) || true
             continue
         fi
         
@@ -93,9 +91,9 @@ for scale in $(seq $MIN_TRACE_LENGTH $MAX_TRACE_LENGTH); do
             echo "  ❌ FAILED (exit code: $EXIT_CODE)"
             echo "  Command: $CMD"
             FAILED_COMMANDS+=("$CMD")
-            ((TOTAL_FAILED++))
+            ((TOTAL_FAILED++)) || true
         else
-            ((TOTAL_RUN++))
+            ((TOTAL_RUN++)) || true
         fi
         
         echo ""
