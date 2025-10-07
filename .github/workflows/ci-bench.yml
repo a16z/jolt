@@ -34,7 +34,7 @@ jobs:
     - name: Run benchmark
       run: |
         cd examples
-        ./run_benchmarks.sh
+        ./run_ci_benchmarks.sh
         cd ..
 
     - name: Publish benchmark result
