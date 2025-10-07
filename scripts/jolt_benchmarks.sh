@@ -10,8 +10,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 # Default values
-MAX_TRACE_LENGTH=${1:-21}
-MIN_TRACE_LENGTH=${2:-18}
+MAX_TRACE_LENGTH=${2:-21}
+MIN_TRACE_LENGTH=${1:-18}
 BENCHMARKS="fibonacci sha2-chain sha3-chain btreemap"
 
 # Parse optional --benchmarks flag
