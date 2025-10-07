@@ -101,7 +101,7 @@ fn setup_tracing(formats: Option<Vec<Format>>, trace_name: &str) -> Vec<Box<dyn 
             layers.push(collector_layer);
         }
         if format.contains(&Format::Chrome) {
-            let trace_file = format!("benchmark-runs/perfetto_traces/{}.json", trace_name);
+            let trace_file = format!("benchmark-runs/perfetto_traces/{trace_name}.json");
             std::fs::create_dir_all("benchmark-runs/perfetto_traces").ok();
             let (chrome_layer, guard) = ChromeLayerBuilder::new()
                 .include_args(true)
@@ -120,7 +120,7 @@ fn setup_tracing(formats: Option<Vec<Format>>, trace_name: &str) -> Vec<Box<dyn 
 fn trace(args: ProfileArgs) {
     let bench_name = normalize_bench_name(&args.name.to_string());
     let timestamp = Local::now().format("%Y%m%d-%H%M");
-    let trace_name = format!("{}_{}", bench_name, timestamp);
+    let trace_name = format!("{bench_name}_{timestamp}");
     let _guards = setup_tracing(args.format, &trace_name);
 
     for (span, bench) in benchmarks(args.name).into_iter() {
