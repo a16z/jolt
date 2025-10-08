@@ -15,6 +15,19 @@ The above command will output a JSON file in the workspace rootwith a name `trac
 
 ![perfetto](../../imgs/perfetto.png)
 
+### System resource monitoring
+
+To visualize CPU and memory usage alongside the execution trace, enable the `monitor` feature:
+
+```bash
+cargo run --release --features monitor -p jolt-core profile --name sha3 --format chrome
+python3 scripts/postprocess_trace.py trace-*.json
+```
+
+The postprocessing step converts the metrics into counter tracks for Perfetto.
+
+![metrics-monitor](../../imgs/metrics-monitor.png)
+
 ### Fine-grained CPU profiling with pprof
 
 When tracing is insufficiently detailed, you can enable [pprof](https://github.com/google/pprof) for fine-grained CPU profiling. While execution tracing shows you the high-level stages and their durations (based on manually instrumented code), pprof automatically samples your entire program at the function level to capture each function call including in dependencies. This can help reveal performance bottlenecks that tracing might miss, such as unexpected hotspots in serialization, memory allocation, or cryptographic operations.
