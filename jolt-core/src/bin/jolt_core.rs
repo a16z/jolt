@@ -70,7 +70,7 @@ fn setup_tracing(formats: Option<Vec<Format>>, trace_name: &str) -> Vec<Box<dyn 
     if std::env::var("PPROF_PREFIX").is_err() {
         std::env::set_var(
             "PPROF_PREFIX",
-            format!("benchmark-runs/pprof/{}_", trace_name),
+            format!("benchmark-runs/pprof/{trace_name}_"),
         );
     }
 
