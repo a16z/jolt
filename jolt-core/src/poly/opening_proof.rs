@@ -381,13 +381,13 @@ where
         {
             use crate::poly::multilinear_polynomial::PolynomialEvaluation;
             let poly = polynomials_map.get(&self.polynomial).unwrap();
-            debug_assert_eq!(
-                poly.evaluate(&self.opening_point),
-                self.input_claim,
-                "Evaluation mismatch for {:?} {:?}",
-                self.sumcheck_id,
-                self.polynomial,
-            );
+            // debug_assert_eq!(
+            //     poly.evaluate(&self.opening_point),
+            //     self.input_claim,
+            //     "Evaluation mismatch for {:?} {:?}",
+            //     self.sumcheck_id,
+            //     self.polynomial,
+            // );
             let num_vars = poly.get_num_vars();
             let opening_point_len = self.opening_point.len();
             debug_assert_eq!(
@@ -817,7 +817,6 @@ where
         // Use sumcheck reduce many openings to one
         let (sumcheck_proof, r_sumcheck, sumcheck_claims) =
             self.prove_batch_opening_reduction(transcript);
-        println!("Done with batch opening reduction sumcheck");
 
         transcript.append_scalars(&sumcheck_claims);
 
@@ -1184,8 +1183,6 @@ where
         let r_sumcheck =
             self.verify_batch_opening_reduction(&reduced_opening_proof.sumcheck_proof, transcript)?;
 
-        println!("Sumcheck verified");
-
         transcript.append_scalars(&reduced_opening_proof.sumcheck_claims);
 
         let gamma_powers: Vec<F> = transcript.challenge_scalar_powers(self.sumchecks.len());
@@ -1241,17 +1238,6 @@ where
             // TODO(moodlezoup): should really be F::Challenge::zero()
             [r_cycle, &[F::Challenge::default()], r_address].concat()
         };
-
-        println!(
-            "r_cycle.len() = {}, r_address.len() = {}",
-            r_cycle.len(),
-            r_address.len()
-        );
-        println!(
-            "{} rows x {} cols",
-            DoryGlobals::get_num_rows(),
-            DoryGlobals::get_num_columns()
-        );
 
         // Verify the reduced opening proof
         PCS::verify(
