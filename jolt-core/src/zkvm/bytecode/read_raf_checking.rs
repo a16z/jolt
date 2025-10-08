@@ -56,6 +56,8 @@ pub struct ReadRafSumcheck<F: JoltField> {
     gamma: [F; STAGES],
     gamma_cub: F,
     gamma_sqr: F,
+    gamma_four: F,
+    gamma_five: F,
     rv_claim: F,
     log_K_chunk: usize,
     K_chunk: usize,
@@ -73,7 +75,7 @@ enum ReadCheckingValType {
     Stage1,
     /// Jump flag from ShouldJumpVirtualization
     Stage2,
-    /// PCSumcheck, Instruction Lookups (without RegistersValEvaluation)
+    /// PCSumcheck, Instruction Lookups
     Stage3,
     /// Registers from read-write sumcheck (rd, rs1, rs2)
     Stage4,
@@ -238,7 +240,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             .map(|cycle| preprocessing.shared.bytecode.get_pc(cycle))
             .collect();
 
-        let result = Self {
+        Self {
             rv_claim,
             log_K,
             log_K_chunk,
@@ -265,9 +267,9 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             gamma: [F::one(), gamma, gamma_sqr, gamma_cub, gamma_four],
             gamma_sqr,
             gamma_cub,
-        };
-
-        result
+            gamma_four,
+            gamma_five,
+        }
     }
 
     pub fn new_verifier(
@@ -315,6 +317,8 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             gamma: [F::one(), gamma, gamma_sqr, gamma_cub, gamma_four],
             gamma_sqr,
             gamma_cub,
+            gamma_four,
+            gamma_five,
             rv_claim,
             log_K,
             log_K_chunk,
@@ -385,7 +389,6 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             VirtualPolynomial::OpFlags(CircuitFlags::Jump),
             SumcheckId::ShouldJumpVirtualization,
         );
-        // Stage 3: Get r_cycle from PCSumcheck or other stage 3 sumchecks
         let (r_cycle_3, _) = acc.borrow().get_virtual_polynomial_opening(
             VirtualPolynomial::UnexpandedPC,
             SumcheckId::SpartanShift,
@@ -806,8 +809,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
                     // Stage 5: gamma^4 * (Val_5)
                     // Which matches with the input claim:
                     // rv_1 + gamma * rv_2 + gamma^2 * rv_3 + gamma^3 * rv_4 + gamma^4 * rv_5 + gamma^5 * raf_1 + gamma^6 * raf_3
-                    let gamma_five = self.gamma_sqr.square() * self.gamma[1];
-                    let gamma_four = self.gamma_sqr.square();
                     let val_evals = self
                         .val_polys
                         .iter()
@@ -815,7 +816,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
                         .map(|val| val.sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow))
                         // Here are the RAF polynomials and their powers
                         .zip([Some(&int_evals), None, Some(&int_evals), None, None])
-                        .zip([Some(gamma_five), None, Some(gamma_four), None, None])
+                        .zip([Some(self.gamma_five), None, Some(self.gamma_four), None, None])
                         .map(|((val_evals, int_evals), gamma)| {
                             std::array::from_fn::<F, DEGREE, _>(|j| {
                                 val_evals[j]
@@ -973,19 +974,17 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
         // Stage 5: gamma^4 * (Val_5)
         // Which matches with the input claim:
         // rv_1 + gamma * rv_2 + gamma^2 * rv_3 + gamma^3 * rv_4 + gamma^4 * rv_5 + gamma^5 * raf_1 + gamma^4 * raf_3
-        let gamma_five = self.gamma_sqr.square() * self.gamma[1];
-        let gamma_four = self.gamma_sqr.square();
         let val = self
             .val_polys
             .iter()
             .zip(r_cycles.iter())
             .zip(self.gamma.iter())
             .zip([
-                int_poly * gamma_five, // RAF for Stage1
-                F::zero(),             // There's no raf for Stage2
-                int_poly * gamma_four, // RAF for Stage3
-                F::zero(),             // There's no raf for Stage4
-                F::zero(),             // There's no raf for Stage5
+                int_poly * self.gamma_five, // RAF for Stage1
+                F::zero(),                  // There's no raf for Stage2
+                int_poly * self.gamma_four, // RAF for Stage3
+                F::zero(),                  // There's no raf for Stage4
+                F::zero(),                  // There's no raf for Stage5
             ])
             .map(|(((val, r_cycle), gamma), int_poly)| {
                 (val.evaluate(r_address_prime) + int_poly)
@@ -1073,16 +1072,14 @@ impl<F: JoltField> ReadRafSumcheck<F> {
         // Stage 5: gamma^4 * (Val_5)
         // Which matches with the input claim:
         // rv_1 + gamma * rv_2 + gamma^2 * rv_3 + gamma^3 * rv_4 + gamma^4 * rv_5 + gamma^5 * raf_1 + gamma^4 * raf_3
-        let gamma_five = self.gamma_sqr.square() * self.gamma[1];
-        let gamma_four = self.gamma_sqr.square();
         ps.val_gamma = Some(
             self.val_polys
                 .iter()
                 .zip(self.gamma.iter())
                 .zip([
-                    int_poly * gamma_five,
+                    int_poly * self.gamma_five,
                     F::zero(),
-                    int_poly * gamma_four,
+                    int_poly * self.gamma_four,
                     F::zero(),
                     F::zero(),
                 ])

@@ -609,6 +609,7 @@ where
     (left_input.into(), right_input.into())
 }
 
+// TODO(markosg04): we could unify this with the `generate_witness_batch` to avoid a second iteration over T
 pub fn generate_virtual_product_witnesses<F>(
     product_type: VirtualProductType,
     trace: &[Cycle],

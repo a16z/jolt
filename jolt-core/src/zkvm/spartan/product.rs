@@ -34,8 +34,13 @@ pub enum VirtualProductType {
     ShouldJump,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum FactorPolynomials {
+    Committed(CommittedPolynomial, CommittedPolynomial),
+    Virtual(VirtualPolynomial, VirtualPolynomial),
+}
+
 impl VirtualProductType {
-    /// Returns the virtual polynomial corresponding to this product
     pub fn get_virtual_polynomial(&self) -> VirtualPolynomial {
         match self {
             VirtualProductType::Instruction => VirtualPolynomial::Product,
@@ -45,54 +50,27 @@ impl VirtualProductType {
             VirtualProductType::ShouldJump => VirtualPolynomial::ShouldJump,
         }
     }
-    pub fn get_factor_polynomials(
-        &self,
-    ) -> (
-        Option<CommittedPolynomial>,
-        Option<CommittedPolynomial>,
-        Option<VirtualPolynomial>,
-        Option<VirtualPolynomial>,
-    ) {
+    pub fn get_factor_polynomials(&self) -> FactorPolynomials {
         match self {
-            VirtualProductType::Instruction => (
-                Some(CommittedPolynomial::LeftInstructionInput),
-                Some(CommittedPolynomial::RightInstructionInput),
-                None,
-                None,
+            VirtualProductType::Instruction => FactorPolynomials::Committed(
+                CommittedPolynomial::LeftInstructionInput,
+                CommittedPolynomial::RightInstructionInput,
             ),
-            VirtualProductType::WriteLookupOutputToRD => (
-                // rd_addr is VirtualPolynomial::RdWa
-                // WriteLookupOutputToRD_flag is VirtualPolynomial::OpFlags(CircuitFlags::WriteLookupOutputToRD)
-                None,
-                None,
-                Some(VirtualPolynomial::RdWa),
-                Some(VirtualPolynomial::OpFlags(
-                    CircuitFlags::WriteLookupOutputToRD,
-                )),
+            VirtualProductType::WriteLookupOutputToRD => FactorPolynomials::Virtual(
+                VirtualPolynomial::RdWa,
+                VirtualPolynomial::OpFlags(CircuitFlags::WriteLookupOutputToRD),
             ),
-            VirtualProductType::WritePCtoRD => (
-                // rd_addr is VirtualPolynomial::RdWa
-                // Jump_flag is VirtualPolynomial::OpFlags(CircuitFlags::Jump)
-                None,
-                None,
-                Some(VirtualPolynomial::RdWa),
-                Some(VirtualPolynomial::OpFlags(CircuitFlags::Jump)),
+            VirtualProductType::WritePCtoRD => FactorPolynomials::Virtual(
+                VirtualPolynomial::RdWa,
+                VirtualPolynomial::OpFlags(CircuitFlags::Jump),
             ),
-            VirtualProductType::ShouldBranch => (
-                // lookup_output is VirtualPolynomial::LookupOutput
-                // Branch_flag is VirtualPolynomial::OpFlags(CircuitFlags::Branch)
-                None,
-                None,
-                Some(VirtualPolynomial::LookupOutput),
-                Some(VirtualPolynomial::OpFlags(CircuitFlags::Branch)),
+            VirtualProductType::ShouldBranch => FactorPolynomials::Virtual(
+                VirtualPolynomial::LookupOutput,
+                VirtualPolynomial::OpFlags(CircuitFlags::Branch),
             ),
-            VirtualProductType::ShouldJump => (
-                // Jump_flag is VirtualPolynomial::OpFlags(CircuitFlags::Jump)
-                // (1 - NextIsNoop) is derived from VirtualPolynomial::NextIsNoop
-                None,
-                None,
-                Some(VirtualPolynomial::OpFlags(CircuitFlags::Jump)),
-                Some(VirtualPolynomial::NextIsNoop), // Will need special handling for (1 - x)
+            VirtualProductType::ShouldJump => FactorPolynomials::Virtual(
+                VirtualPolynomial::OpFlags(CircuitFlags::Jump),
+                VirtualPolynomial::NextIsNoop,
             ),
         }
     }
@@ -320,40 +298,32 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ProductVirtualizati
         let outer_sumcheck_r = &outer_sumcheck_opening.r;
         let (r_cycle, _) = outer_sumcheck_r.split_at(self.log_T);
 
-        let (left_committed, right_committed, left_virtual, right_virtual) =
-            self.product_type.get_factor_polynomials();
         let sumcheck_id = self.product_type.get_sumcheck_id();
-
-        let left_input_eval = if let Some(left_poly) = left_committed {
-            let (_, eval) = accumulator.get_committed_polynomial_opening(left_poly, sumcheck_id);
-            eval
-        } else if let Some(left_virtual) = left_virtual {
-            let (_, eval) = accumulator.get_virtual_polynomial_opening(left_virtual, sumcheck_id);
-            eval
-        } else {
-            panic!("No left polynomial specified");
-        };
-
-        let right_input_eval = if let Some(right_poly) = right_committed {
-            let (_, eval) = accumulator.get_committed_polynomial_opening(right_poly, sumcheck_id);
-            eval
-        } else if let Some(right_virtual) = right_virtual {
-            let (_, eval) = accumulator.get_virtual_polynomial_opening(right_virtual, sumcheck_id);
-            // Special handling for (1 - NextIsNoop)
-            if matches!(self.product_type, VirtualProductType::ShouldJump)
-                && right_virtual == VirtualPolynomial::NextIsNoop
-            {
-                F::one() - eval
-            } else {
-                eval
+        let (left_input_eval, right_input_eval) = match self.product_type.get_factor_polynomials() {
+            FactorPolynomials::Committed(left_poly, right_poly) => {
+                let (_, left_eval) =
+                    accumulator.get_committed_polynomial_opening(left_poly, sumcheck_id);
+                let (_, right_eval) =
+                    accumulator.get_committed_polynomial_opening(right_poly, sumcheck_id);
+                (left_eval, right_eval)
             }
-        } else {
-            panic!("No right polynomial specified");
+            FactorPolynomials::Virtual(left_virtual, right_virtual) => {
+                let (_, left_eval) =
+                    accumulator.get_virtual_polynomial_opening(left_virtual, sumcheck_id);
+                let (_, mut right_eval) =
+                    accumulator.get_virtual_polynomial_opening(right_virtual, sumcheck_id);
+                // Special case (1 - NextIsNoop) for ShouldJump
+                if matches!(self.product_type, VirtualProductType::ShouldJump)
+                    && right_virtual == VirtualPolynomial::NextIsNoop
+                {
+                    right_eval = F::one() - right_eval;
+                }
+                (left_eval, right_eval)
+            }
         };
 
         let eq_eval = EqPolynomial::mle(&r.iter().rev().copied().collect::<Vec<_>>(), r_cycle);
-        let expected_claim = eq_eval * left_input_eval * right_input_eval;
-        expected_claim
+        eq_eval * left_input_eval * right_input_eval
     }
 
     fn normalize_opening_point(
@@ -375,46 +345,43 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ProductVirtualizati
             .expect("Prover state not initialized");
 
         let left_input_eval = prover_state.left_input_poly.final_sumcheck_claim();
-        let mut right_input_eval = prover_state.right_input_poly.final_sumcheck_claim();
+        let right_input_eval = prover_state.right_input_poly.final_sumcheck_claim();
 
-        let (left_committed, right_committed, left_virtual, right_virtual) =
-            self.product_type.get_factor_polynomials();
         let sumcheck_id = self.product_type.get_sumcheck_id();
-
-        if let (Some(left_poly), Some(right_poly)) = (left_committed, right_committed) {
-            accumulator.borrow_mut().append_dense(
-                transcript,
-                vec![left_poly, right_poly],
-                sumcheck_id,
-                opening_point.r.clone(),
-                &[left_input_eval, right_input_eval],
-            );
-        }
-
-        if let Some(left_virtual) = left_virtual {
-            accumulator.borrow_mut().append_virtual(
-                transcript,
-                left_virtual,
-                sumcheck_id,
-                opening_point.clone(),
-                left_input_eval,
-            );
-        }
-
-        if let Some(right_virtual) = right_virtual {
-            // Special handling for (1 - NextIsNoop) in ShouldJump
-            if matches!(self.product_type, VirtualProductType::ShouldJump)
-                && right_virtual == VirtualPolynomial::NextIsNoop
-            {
-                right_input_eval = F::one() - right_input_eval;
+        match self.product_type.get_factor_polynomials() {
+            FactorPolynomials::Committed(left_poly, right_poly) => {
+                accumulator.borrow_mut().append_dense(
+                    transcript,
+                    vec![left_poly, right_poly],
+                    sumcheck_id,
+                    opening_point.r.clone(),
+                    &[left_input_eval, right_input_eval],
+                );
             }
-            accumulator.borrow_mut().append_virtual(
-                transcript,
-                right_virtual,
-                sumcheck_id,
-                opening_point,
-                right_input_eval,
-            );
+            FactorPolynomials::Virtual(left_virtual, right_virtual) => {
+                accumulator.borrow_mut().append_virtual(
+                    transcript,
+                    left_virtual,
+                    sumcheck_id,
+                    opening_point.clone(),
+                    left_input_eval,
+                );
+                // Special case (1 - NextIsNoop) for ShouldJump
+                let right_eval = if matches!(self.product_type, VirtualProductType::ShouldJump)
+                    && right_virtual == VirtualPolynomial::NextIsNoop
+                {
+                    F::one() - right_input_eval
+                } else {
+                    right_input_eval
+                };
+                accumulator.borrow_mut().append_virtual(
+                    transcript,
+                    right_virtual,
+                    sumcheck_id,
+                    opening_point,
+                    right_eval,
+                );
+            }
         }
     }
 
@@ -424,35 +391,30 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ProductVirtualizati
         transcript: &mut T,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
-        let (left_committed, right_committed, left_virtual, right_virtual) =
-            self.product_type.get_factor_polynomials();
         let sumcheck_id = self.product_type.get_sumcheck_id();
-
-        if let (Some(left_poly), Some(right_poly)) = (left_committed, right_committed) {
-            accumulator.borrow_mut().append_dense(
-                transcript,
-                vec![left_poly, right_poly],
-                sumcheck_id,
-                opening_point.r.clone(),
-            );
-        }
-
-        if let Some(left_virtual) = left_virtual {
-            accumulator.borrow_mut().append_virtual(
-                transcript,
-                left_virtual,
-                sumcheck_id,
-                opening_point.clone(),
-            );
-        }
-
-        if let Some(right_virtual) = right_virtual {
-            accumulator.borrow_mut().append_virtual(
-                transcript,
-                right_virtual,
-                sumcheck_id,
-                opening_point,
-            );
+        match self.product_type.get_factor_polynomials() {
+            FactorPolynomials::Committed(left_poly, right_poly) => {
+                accumulator.borrow_mut().append_dense(
+                    transcript,
+                    vec![left_poly, right_poly],
+                    sumcheck_id,
+                    opening_point.r.clone(),
+                );
+            }
+            FactorPolynomials::Virtual(left_virtual, right_virtual) => {
+                accumulator.borrow_mut().append_virtual(
+                    transcript,
+                    left_virtual,
+                    sumcheck_id,
+                    opening_point.clone(),
+                );
+                accumulator.borrow_mut().append_virtual(
+                    transcript,
+                    right_virtual,
+                    sumcheck_id,
+                    opening_point,
+                );
+            }
         }
     }
 
