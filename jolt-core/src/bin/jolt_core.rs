@@ -39,9 +39,9 @@ struct BenchmarkArgs {
     #[clap(flatten)]
     profile_args: ProfileArgs,
 
-    /// Max trace length as 2^scale
+    /// Max trace length as 2^scale (optional if target-trace-size is provided)
     #[clap(short, long)]
-    scale: usize,
+    scale: Option<usize>,
 
     /// Target specific cycle count (optional, defaults to 90% of 2^scale)
     #[clap(short, long)]
@@ -147,13 +147,22 @@ fn trace(args: ProfileArgs) {
 }
 
 fn run_benchmark(args: BenchmarkArgs) {
+    let scale = match (args.scale, args.target_trace_size) {
+        (Some(s), _) => s,  // Scale provided, use it
+        (None, Some(target)) => target.next_power_of_two().trailing_zeros() as usize,
+        (None, None) => {
+            eprintln!("Error: Must provide either --scale or --target-trace-size");
+            std::process::exit(1);
+        }
+    };
+
     let bench_name = normalize_bench_name(&args.profile_args.name.to_string());
-    let trace_name = format!("{}_{}", bench_name, args.scale);
+    let trace_name = format!("{}_{}", bench_name, scale);
     let _guards = setup_tracing(args.profile_args.format, &trace_name);
 
     // Call master_benchmark with parameters
     for (span, bench) in
-        master_benchmark(args.profile_args.name, args.scale, args.target_trace_size).into_iter()
+        master_benchmark(args.profile_args.name, scale, args.target_trace_size).into_iter()
     {
         span.in_scope(|| {
             bench();
