@@ -330,11 +330,9 @@ pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 40] = [
 
 /// The subset of `ALL_R1CS_INPUTS` that are committed. The rest of
 /// the inputs are virtual polynomials.
-pub const COMMITTED_R1CS_INPUTS: [JoltR1CSInputs; 4] = [
+pub const COMMITTED_R1CS_INPUTS: [JoltR1CSInputs; 2] = [
     JoltR1CSInputs::LeftInstructionInput,
     JoltR1CSInputs::RightInstructionInput,
-    JoltR1CSInputs::WriteLookupOutputToRD,
-    JoltR1CSInputs::WritePCtoRD,
 ];
 
 impl JoltR1CSInputs {
@@ -408,8 +406,6 @@ impl TryFrom<&JoltR1CSInputs> for CommittedPolynomial {
         match input {
             JoltR1CSInputs::LeftInstructionInput => Ok(CommittedPolynomial::LeftInstructionInput),
             JoltR1CSInputs::RightInstructionInput => Ok(CommittedPolynomial::RightInstructionInput),
-            JoltR1CSInputs::WriteLookupOutputToRD => Ok(CommittedPolynomial::WriteLookupOutputToRD),
-            JoltR1CSInputs::WritePCtoRD => Ok(CommittedPolynomial::WritePCtoRD),
             _ => Err("{value} is not a committed polynomial"),
         }
     }
@@ -440,6 +436,8 @@ impl TryFrom<&JoltR1CSInputs> for VirtualPolynomial {
             JoltR1CSInputs::LookupOutput => Ok(VirtualPolynomial::LookupOutput),
             JoltR1CSInputs::ShouldJump => Ok(VirtualPolynomial::ShouldJump),
             JoltR1CSInputs::ShouldBranch => Ok(VirtualPolynomial::ShouldBranch),
+            JoltR1CSInputs::WritePCtoRD => Ok(VirtualPolynomial::WritePCtoRD),
+            JoltR1CSInputs::WriteLookupOutputToRD => Ok(VirtualPolynomial::WriteLookupOutputToRD),
             JoltR1CSInputs::OpFlags(flag) => Ok(VirtualPolynomial::OpFlags(*flag)),
             _ => Err("{value} is not a virtual polynomial"),
         }

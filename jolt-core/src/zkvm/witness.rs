@@ -53,12 +53,6 @@ pub enum CommittedPolynomial {
     /// The "right" input to the current instruction. Typically either the
     /// rs2 value or the immediate value.
     RightInstructionInput,
-    /// Whether the current instruction should write the lookup output to
-    /// the destination register
-    WriteLookupOutputToRD,
-    /// Whether the current instruction should write the program counter to
-    /// the destination register
-    WritePCtoRD,
     /*  Twist/Shout witnesses */
     /// Inc polynomial for the registers instance of Twist
     RdInc,
@@ -81,8 +75,6 @@ struct WitnessData {
     // Simple polynomial coefficients
     left_instruction_input: Vec<u64>,
     right_instruction_input: Vec<i128>,
-    write_lookup_output_to_rd: Vec<u8>,
-    write_pc_to_rd: Vec<u8>,
     rd_inc: Vec<i128>,
     ram_inc: Vec<i128>,
 
@@ -100,8 +92,6 @@ impl WitnessData {
         Self {
             left_instruction_input: vec![0; trace_len],
             right_instruction_input: vec![0; trace_len],
-            write_lookup_output_to_rd: vec![0; trace_len],
-            write_pc_to_rd: vec![0; trace_len],
             rd_inc: vec![0; trace_len],
             ram_inc: vec![0; trace_len],
 
@@ -118,8 +108,6 @@ impl AllCommittedPolynomials {
         let mut polynomials = vec![
             CommittedPolynomial::LeftInstructionInput,
             CommittedPolynomial::RightInstructionInput,
-            CommittedPolynomial::WriteLookupOutputToRD,
-            CommittedPolynomial::WritePCtoRD,
             CommittedPolynomial::RdInc,
             CommittedPolynomial::RamInc,
             CommittedPolynomial::InstructionRa(0),
@@ -288,12 +276,6 @@ impl CommittedPolynomial {
                 batch_ref.left_instruction_input[i] = left;
                 batch_ref.right_instruction_input[i] = right;
 
-                batch_ref.write_lookup_output_to_rd[i] = rd_write_flag
-                    * (circuit_flags[CircuitFlags::WriteLookupOutputToRD as usize] as u8);
-
-                batch_ref.write_pc_to_rd[i] =
-                    rd_write_flag * (circuit_flags[CircuitFlags::Jump as usize] as u8);
-
                 batch_ref.rd_inc[i] = post_rd as i128 - pre_rd as i128;
 
                 // RAM inc
@@ -359,14 +341,6 @@ impl CommittedPolynomial {
                     let coeffs = std::mem::take(&mut batch.right_instruction_input);
                     results.insert(*poly, MultilinearPolynomial::<F>::from(coeffs));
                 }
-                CommittedPolynomial::WriteLookupOutputToRD => {
-                    let coeffs = std::mem::take(&mut batch.write_lookup_output_to_rd);
-                    results.insert(*poly, MultilinearPolynomial::<F>::from(coeffs));
-                }
-                CommittedPolynomial::WritePCtoRD => {
-                    let coeffs = std::mem::take(&mut batch.write_pc_to_rd);
-                    results.insert(*poly, MultilinearPolynomial::<F>::from(coeffs));
-                }
                 CommittedPolynomial::RdInc => {
                     let coeffs = std::mem::take(&mut batch.rd_inc);
                     results.insert(*poly, MultilinearPolynomial::<F>::from(coeffs));
@@ -428,27 +402,6 @@ impl CommittedPolynomial {
                 let coeffs: Vec<i128> = trace
                     .par_iter()
                     .map(|cycle| LookupQuery::<XLEN>::to_instruction_inputs(cycle).1)
-                    .collect();
-                coeffs.into()
-            }
-            CommittedPolynomial::WriteLookupOutputToRD => {
-                let coeffs: Vec<u8> = trace
-                    .par_iter()
-                    .map(|cycle| {
-                        let flag = cycle.instruction().circuit_flags()
-                            [CircuitFlags::WriteLookupOutputToRD as usize];
-                        (cycle.rd_write().0) * (flag as u8)
-                    })
-                    .collect();
-                coeffs.into()
-            }
-            CommittedPolynomial::WritePCtoRD => {
-                let coeffs: Vec<u8> = trace
-                    .par_iter()
-                    .map(|cycle| {
-                        let flag = cycle.instruction().circuit_flags()[CircuitFlags::Jump as usize];
-                        (cycle.rd_write().0) * (flag as u8)
-                    })
                     .collect();
                 coeffs.into()
             }
@@ -554,6 +507,8 @@ pub enum VirtualPolynomial {
     Product,
     ShouldJump,
     ShouldBranch,
+    WritePCtoRD,
+    WriteLookupOutputToRD,
     Rd,
     Imm,
     Rs1Value,
@@ -594,6 +549,8 @@ pub static ALL_VIRTUAL_POLYNOMIALS: LazyLock<Vec<VirtualPolynomial>> = LazyLock:
         VirtualPolynomial::Product,
         VirtualPolynomial::ShouldJump,
         VirtualPolynomial::ShouldBranch,
+        VirtualPolynomial::WritePCtoRD,
+        VirtualPolynomial::WriteLookupOutputToRD,
         VirtualPolynomial::Rd,
         VirtualPolynomial::Imm,
         VirtualPolynomial::Rs1Value,

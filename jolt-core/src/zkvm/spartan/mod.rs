@@ -282,11 +282,13 @@ where
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
-        /* Sumcheck 2: Inner sumcheck + ShouldJump/ShouldBranch product virtualization
+        /* Sumcheck 2: Inner sumcheck + ShouldJump/ShouldBranch/WritePCtoRD/WriteLookupOutputToRD product virtualization
             - Inner sumcheck proves: claim_Az + r * claim_Bz + r^2 * claim_Cz =
                     \sum_y (A_small(rx, y) + r * B_small(rx, y) + r^2 * C_small(rx, y)) * z(y)
             - ShouldJump sumcheck proves: ShouldJump(r_cycle) = Jump_flag(r_cycle) × (1 - NextIsNoop(r_cycle))
             - ShouldBranch sumcheck proves: ShouldBranch(r_cycle) = lookup_output(r_cycle) × Branch_flag(r_cycle)
+            - WritePCtoRD sumcheck proves: WritePCtoRD(r_cycle) = rd_addr(r_cycle) × Jump_flag(r_cycle)
+            - WriteLookupOutputToRD sumcheck proves: WriteLookupOutputToRD(r_cycle) = rd_addr(r_cycle) × WriteLookupOutputToRD_flag(r_cycle)
         */
         let key = self.key.clone();
         let inner_sumcheck = InnerSumcheck::new_prover(state_manager, key);
@@ -301,6 +303,16 @@ where
             state_manager,
         );
 
+        let write_pc_to_rd_sumcheck = ProductVirtualizationSumcheck::new_prover(
+            product::VirtualProductType::WritePCtoRD,
+            state_manager,
+        );
+
+        let write_lookup_output_to_rd_sumcheck = ProductVirtualizationSumcheck::new_prover(
+            product::VirtualProductType::WriteLookupOutputToRD,
+            state_manager,
+        );
+
         #[cfg(feature = "allocative")]
         {
             print_data_structure_heap_usage("Spartan InnerSumcheck", &inner_sumcheck);
@@ -312,12 +324,22 @@ where
                 "Spartan ShouldBranch ProductVirtualizationSumcheck",
                 &should_branch_sumcheck,
             );
+            print_data_structure_heap_usage(
+                "Spartan WritePCtoRD ProductVirtualizationSumcheck",
+                &write_pc_to_rd_sumcheck,
+            );
+            print_data_structure_heap_usage(
+                "Spartan WriteLookupOutputToRD ProductVirtualizationSumcheck",
+                &write_lookup_output_to_rd_sumcheck,
+            );
         }
 
         vec![
             Box::new(inner_sumcheck),
             Box::new(should_jump_sumcheck),
             Box::new(should_branch_sumcheck),
+            Box::new(write_pc_to_rd_sumcheck),
+            Box::new(write_lookup_output_to_rd_sumcheck),
         ]
     }
 
@@ -325,11 +347,13 @@ where
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
-        /* Sumcheck 2: Inner sumcheck + ShouldJump/ShouldBranch product virtualization
+        /* Sumcheck 2: Inner sumcheck + ShouldJump/ShouldBranch/WritePCtoRD/WriteLookupOutputToRD product virtualization
            - Inner sumcheck verifies: claim_Az + r * claim_Bz + r^2 * claim_Cz =
                     (A_small(rx, ry) + r * B_small(rx, ry) + r^2 * C_small(rx, ry)) * z(ry)
            - ShouldJump sumcheck verifies: ShouldJump(r_cycle) = Jump_flag(r_cycle) × (1 - NextIsNoop(r_cycle))
            - ShouldBranch sumcheck verifies: ShouldBranch(r_cycle) = lookup_output(r_cycle) × Branch_flag(r_cycle)
+           - WritePCtoRD sumcheck verifies: WritePCtoRD(r_cycle) = rd_addr(r_cycle) × Jump_flag(r_cycle)
+           - WriteLookupOutputToRD sumcheck verifies: WriteLookupOutputToRD(r_cycle) = rd_addr(r_cycle) × WriteLookupOutputToRD_flag(r_cycle)
         */
         let key = self.key.clone();
         let inner_sumcheck = InnerSumcheck::<F>::new_verifier(state_manager, key);
@@ -344,10 +368,22 @@ where
             state_manager,
         );
 
+        let write_pc_to_rd_sumcheck = ProductVirtualizationSumcheck::new_verifier(
+            product::VirtualProductType::WritePCtoRD,
+            state_manager,
+        );
+
+        let write_lookup_output_to_rd_sumcheck = ProductVirtualizationSumcheck::new_verifier(
+            product::VirtualProductType::WriteLookupOutputToRD,
+            state_manager,
+        );
+
         vec![
             Box::new(inner_sumcheck),
             Box::new(should_jump_sumcheck),
             Box::new(should_branch_sumcheck),
+            Box::new(write_pc_to_rd_sumcheck),
+            Box::new(write_lookup_output_to_rd_sumcheck),
         ]
     }
 

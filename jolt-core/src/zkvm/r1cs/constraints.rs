@@ -118,9 +118,7 @@ pub enum ConstraintName {
     RightLookupEqProductIfMul,
     RightLookupEqRightInputOtherwise,
     AssertLookupOne,
-    WriteLookupOutputToRDDef,
     RdWriteEqLookupIfWriteLookupToRd,
-    WritePCtoRDDef,
     RdWriteEqPCPlusConstIfWritePCtoRD,
     NextUnexpPCEqLookupIfShouldJump,
     NextUnexpPCEqPCPlusImmIfShouldBranch,
@@ -272,9 +270,9 @@ macro_rules! r1cs_prod_named {
 }
 
 /// Number of uniform R1CS constraints
-pub const NUM_R1CS_CONSTRAINTS: usize = 24;
+pub const NUM_R1CS_CONSTRAINTS: usize = 22;
 
-/// Static table of all 24 R1CS uniform constraints.
+/// Static table of all 22 R1CS uniform constraints.
 pub static UNIFORM_R1CS: [NamedConstraint; NUM_R1CS_CONSTRAINTS] = [
     // if LeftOperandIsRs1Value { assert!(LeftInstructionInput == Rs1Value) }
     r1cs_eq_conditional!(
@@ -409,12 +407,7 @@ pub static UNIFORM_R1CS: [NamedConstraint; NUM_R1CS_CONSTRAINTS] = [
     // if Rd != 0 && WriteLookupOutputToRD {
     //     assert!(RdWriteValue == LookupOutput)
     // }
-    r1cs_prod!(
-        name: ConstraintName::WriteLookupOutputToRDDef,
-        ({ JoltR1CSInputs::Rd })
-            * ({ JoltR1CSInputs::OpFlags(CircuitFlags::WriteLookupOutputToRD) })
-            == ({ JoltR1CSInputs::WriteLookupOutputToRD })
-    ),
+    // Note: WriteLookupOutputToRD = Rd * WriteLookupOutputToRD_flag is virtualized via product sumcheck
     r1cs_eq_conditional!(
         name: ConstraintName::RdWriteEqLookupIfWriteLookupToRd,
         if { { JoltR1CSInputs::WriteLookupOutputToRD } }
@@ -427,11 +420,7 @@ pub static UNIFORM_R1CS: [NamedConstraint; NUM_R1CS_CONSTRAINTS] = [
     //          assert!(RdWriteValue == UnexpandedPC + 2)
     //     }
     // }
-    r1cs_prod!(
-        name: ConstraintName::WritePCtoRDDef,
-        ({ JoltR1CSInputs::Rd }) * ({ JoltR1CSInputs::OpFlags(CircuitFlags::Jump) })
-            == ({ JoltR1CSInputs::WritePCtoRD })
-    ),
+    // Note: WritePCtoRD = Rd * Jump is virtualized via product sumcheck
     r1cs_eq_conditional!(
         name: ConstraintName::RdWriteEqPCPlusConstIfWritePCtoRD,
         if { { JoltR1CSInputs::WritePCtoRD } }
@@ -542,15 +531,11 @@ pub fn eval_az_by_name<F: JoltField>(c: &NamedConstraint, row: &R1CSCycleInputs)
         }
         // Az: Assert flag (0/1)
         N::AssertLookupOne => row.flags[CircuitFlags::Assert].into(),
-        // Az: Rd register index (0 disables write)
-        N::WriteLookupOutputToRDDef => I8OrI96::from_i8(row.rd_addr as i8),
+        // Az: WriteLookupOutputToRD indicator (0/1) - virtualized via product sumcheck
         N::RdWriteEqLookupIfWriteLookupToRd => {
-            // Az: WriteLookupOutputToRD indicator (0/1)
             I8OrI96::from_i8(row.write_lookup_output_to_rd_addr as i8)
         }
-        // Az: Rd register index (0 disables write)
-        N::WritePCtoRDDef => I8OrI96::from_i8(row.rd_addr as i8),
-        // Az: WritePCtoRD indicator (0/1)
+        // Az: WritePCtoRD indicator (0/1) - virtualized via product sumcheck
         N::RdWriteEqPCPlusConstIfWritePCtoRD => I8OrI96::from_i8(row.write_pc_to_rd_addr as i8),
         // Az: ShouldJump indicator (0/1)
         N::NextUnexpPCEqLookupIfShouldJump => row.should_jump.into(),
@@ -623,25 +608,9 @@ pub fn eval_bz_by_name<F: JoltField>(c: &NamedConstraint, row: &R1CSCycleInputs)
         }
         // B: LookupOutput - 1 (i128 arithmetic)
         N::AssertLookupOne => S160::from(row.lookup_output as i128 - 1),
-        N::WriteLookupOutputToRDDef => {
-            // B: OpFlags(WriteLookupOutputToRD) (boolean 0/1)
-            if row.flags[CircuitFlags::WriteLookupOutputToRD] {
-                S160::one()
-            } else {
-                S160::zero()
-            }
-        }
         N::RdWriteEqLookupIfWriteLookupToRd => {
             // B: RdWriteValue - LookupOutput (u64 bit-pattern difference)
             S160::from_diff_u64(row.rd_write_value, row.lookup_output)
-        }
-        N::WritePCtoRDDef => {
-            // B: OpFlags(Jump) (boolean 0/1)
-            if row.flags[CircuitFlags::Jump] {
-                S160::one()
-            } else {
-                S160::zero()
-            }
         }
         N::RdWriteEqPCPlusConstIfWritePCtoRD => {
             // B: RdWriteValue - (UnexpandedPC + (4 - 2*IsCompressed)) (i128 arithmetic)

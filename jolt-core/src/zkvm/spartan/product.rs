@@ -39,8 +39,8 @@ impl VirtualProductType {
     pub fn get_virtual_polynomial(&self) -> VirtualPolynomial {
         match self {
             VirtualProductType::Instruction => VirtualPolynomial::Product,
-            VirtualProductType::WriteLookupOutputToRD => VirtualPolynomial::Product, // TODO: Add specific virtual poly
-            VirtualProductType::WritePCtoRD => VirtualPolynomial::Product, // TODO: Add specific virtual poly
+            VirtualProductType::WriteLookupOutputToRD => VirtualPolynomial::WriteLookupOutputToRD,
+            VirtualProductType::WritePCtoRD => VirtualPolynomial::WritePCtoRD,
             VirtualProductType::ShouldBranch => VirtualPolynomial::ShouldBranch,
             VirtualProductType::ShouldJump => VirtualPolynomial::ShouldJump,
         }

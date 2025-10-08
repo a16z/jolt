@@ -344,7 +344,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
                 )
             }
             ReadCheckingValType::Stage2 => {
-                let gamma_powers = get_gamma_powers(&mut *sm.get_transcript().borrow_mut(), 2);
+                let gamma_powers = get_gamma_powers(&mut *sm.get_transcript().borrow_mut(), 6);
                 (
                     Self::compute_val_2(sm, &gamma_powers),
                     Self::compute_rv_claim_2(sm, &gamma_powers),
@@ -515,11 +515,16 @@ impl<F: JoltField> ReadRafSumcheck<F> {
     }
 
     /// Returns a vec of evaluations:
-    ///    Val(k) = jump_flag(k) + gamma * branch_flag(k)
+    ///    Val(k) = jump_flag(k) + gamma * branch_flag(k) + gamma^2 * rd_addr(k) + gamma^3 * jump_flag(k)
+    ///             + gamma^4 * rd_addr(k) + gamma^5 * write_lookup_output_to_rd_flag(k)
     /// where jump_flag(k) = 1 if instruction k is a jump, 0 otherwise
     ///       branch_flag(k) = 1 if instruction k is a branch, 0 otherwise
-    /// This particular Val virtualizes the jump and branch flag claims from
-    /// ShouldJumpVirtualization and ShouldBranchVirtualization.
+    ///       rd_addr(k) = rd address for instruction k
+    ///       write_lookup_output_to_rd_flag(k) = 1 if instruction k writes lookup output to rd, 0 otherwise
+    /// This particular Val virtualizes the flag claims from
+    /// ShouldJumpVirtualization, ShouldBranchVirtualization, WritePCtoRDVirtualization, and WriteLookupOutputToRDVirtualization.
+    /// Note: Jump flag appears twice (gamma^0 for ShouldJump, gamma^3 for WritePCtoRD).
+    /// Note: Rd addr appears twice (gamma^2 for WritePCtoRD, gamma^4 for WriteLookupOutputToRD).
     fn compute_val_2(
         sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
         gamma_powers: &[F],
@@ -528,6 +533,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             .par_iter()
             .map(|instruction| {
                 let flags = instruction.circuit_flags();
+                let instr = instruction.normalize();
                 let jump_val = if flags[CircuitFlags::Jump] {
                     F::one()
                 } else {
@@ -538,7 +544,18 @@ impl<F: JoltField> ReadRafSumcheck<F> {
                 } else {
                     F::zero()
                 };
-                jump_val * gamma_powers[0] + branch_val * gamma_powers[1]
+                let write_lookup_output_to_rd_val = if flags[CircuitFlags::WriteLookupOutputToRD] {
+                    F::one()
+                } else {
+                    F::zero()
+                };
+                let rd_addr_val = F::from_u64(instr.operands.rd as u64);
+                jump_val * gamma_powers[0]
+                    + branch_val * gamma_powers[1]
+                    + rd_addr_val * gamma_powers[2]
+                    + jump_val * gamma_powers[3]
+                    + rd_addr_val * gamma_powers[4]
+                    + write_lookup_output_to_rd_val * gamma_powers[5]
             })
             .collect()
     }
@@ -557,7 +574,32 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             SumcheckId::ShouldBranchVirtualization,
         );
 
-        jump_claim * gamma_powers[0] + branch_claim * gamma_powers[1]
+        let (_, rd_wa_claim_write_pc) = sm.get_virtual_polynomial_opening(
+            VirtualPolynomial::RdWa,
+            SumcheckId::WritePCtoRDVirtualization,
+        );
+
+        let (_, jump_claim_write_pc) = sm.get_virtual_polynomial_opening(
+            VirtualPolynomial::OpFlags(CircuitFlags::Jump),
+            SumcheckId::WritePCtoRDVirtualization,
+        );
+
+        let (_, rd_wa_claim_write_lookup) = sm.get_virtual_polynomial_opening(
+            VirtualPolynomial::RdWa,
+            SumcheckId::WriteLookupOutputToRDVirtualization,
+        );
+
+        let (_, write_lookup_output_to_rd_flag_claim) = sm.get_virtual_polynomial_opening(
+            VirtualPolynomial::OpFlags(CircuitFlags::WriteLookupOutputToRD),
+            SumcheckId::WriteLookupOutputToRDVirtualization,
+        );
+
+        jump_claim * gamma_powers[0]
+            + branch_claim * gamma_powers[1]
+            + rd_wa_claim_write_pc * gamma_powers[2]
+            + jump_claim_write_pc * gamma_powers[3]
+            + rd_wa_claim_write_lookup * gamma_powers[4]
+            + write_lookup_output_to_rd_flag_claim * gamma_powers[5]
     }
 
     /// Returns a vec of evaluations:
