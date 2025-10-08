@@ -501,7 +501,7 @@ impl JoltDAG {
 
         let (commitments, hints): (Vec<PCS::Commitment>, Vec<PCS::OpeningProofHint>) =
             committed_polys
-                .par_iter()
+                .iter()
                 .map(|poly| PCS::commit(poly, &preprocessing.generators))
                 .unzip();
         let mut hint_map = HashMap::with_capacity(committed_polys.len());

@@ -23,6 +23,8 @@ use rayon::prelude::*;
 use std::mem;
 use std::sync::{Arc, RwLock};
 
+use jolt_optimizations::{msm_rows_bucket_projective, SmallRow};
+
 /// Represents a one-hot multilinear polynomial (ra/wa) used
 /// in Twist/Shout. Perhaps somewhat unintuitively, the implementation
 /// in this file is currently only used to compute the Dory
@@ -445,35 +447,57 @@ impl<F: JoltField> OneHotPolynomial<F> {
         let row_len = DoryGlobals::get_num_columns();
         let T = DoryGlobals::get_T();
 
-        assert!(T > num_rows, "T = {T}, why are you doing this",);
+        assert!(T > num_rows, "T = {T}, why are you doing this");
         let cycles_per_row = T / num_rows;
         let K = row_len / cycles_per_row;
+        let use_u16 = row_len <= 65_536;
 
         // Safety: This function is only called with G1Affine
-        let g1_bases = unsafe { std::mem::transmute::<&[G::Affine], &[G1Affine]>(bases) };
+        let g1_bases: &[G1Affine] =
+            unsafe { std::mem::transmute::<&[G::Affine], &[G1Affine]>(bases) };
 
-        let g1_indices: Vec<Vec<usize>> = self
+        let rows_small: Vec<SmallRow> = self
             .nonzero_indices
             .par_chunks(cycles_per_row)
             .map(|row| {
-                row.par_iter()
-                    .enumerate()
-                    .filter_map(|(i, k)| match k {
-                        Some(k) => Some(i * K + k),
-                        None => None,
-                    })
-                    .collect()
+                if use_u16 {
+                    let mut v = unsafe_allocate_zero_vec::<u16>(K);
+                    let mut len = 0;
+                    for (i, kopt) in row.iter().enumerate() {
+                        if let Some(kk) = kopt {
+                            v[len] = (i * K + kk) as u16;
+                            len += 1;
+                        }
+                    }
+                    v.truncate(len);
+                    SmallRow::from_u16(v)
+                } else {
+                    let mut v = unsafe_allocate_zero_vec::<u32>(K);
+                    let mut len = 0;
+                    for (i, kopt) in row.iter().enumerate() {
+                        if let Some(kk) = kopt {
+                            v[len] = (i * K + kk) as u32;
+                            len += 1;
+                        }
+                    }
+                    v.truncate(len);
+                    SmallRow::from_u32(v)
+                }
             })
             .collect();
 
-        let row_commitments_affine =
-            jolt_optimizations::batch_g1_additions_multi(&g1_bases[..row_len], &g1_indices);
-        row_commitments_affine
+        let proj_vec: Vec<G1Projective> = {
+            let _span = tracing::trace_span!("msm_rows_bucket_projective");
+            let _enter = _span.enter();
+            msm_rows_bucket_projective(&g1_bases[..row_len], &rows_small, K as usize)
+        };
+
+        proj_vec
             .into_par_iter()
-            .map(|affine| {
-                // Safety: We know G is G1Projective
+            .map(|p| {
+                // Safety: G is the projective type expected by this call site
                 let projective: G =
-                    unsafe { std::ptr::read(&affine.into() as *const G1Projective as *const G) };
+                    unsafe { std::ptr::read(&p as *const G1Projective as *const G) };
                 JoltGroupWrapper(projective)
             })
             .collect()

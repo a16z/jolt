@@ -125,7 +125,9 @@ ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "de
 ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 ark-grumpkin = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 allocative = { git = "https://github.com/facebookexperimental/allocative", rev = "85b773d85d526d068ce94724ff7a7b81203fc95e" }
-jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+# jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+# jolt-optimizations = { path = "/Users/mgeorghiades/a16z/arkworks-algebra/jolt-optimizations" }
+# /Users/mgeorghiades/a16z/arkworks-algebra/jolt-optimizations
 dory = { git = "https://github.com/markosg04/dory", branch = "dev/twist-shout" }
 
 [workspace.metadata.cargo-machete]
@@ -146,6 +148,7 @@ sha3 = "0.10.8"
 blake2 = "0.10"
 blake3 = { version = "1.5.0" }
 jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+# jolt-optimizations = { path = "/Users/mgeorghiades/a16z/arkworks-algebra/jolt-optimizations" }
 dory = { git = "https://github.com/markosg04/dory", branch = "dev/twist-shout" }
 
 # Core Utilities
