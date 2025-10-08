@@ -111,28 +111,38 @@ impl<F: JoltField> RLCPolynomial<F> {
     /// We do so by computing the row commitments for the individual
     /// polynomials comprising the linear combination, and taking the
     /// linear combination of the resulting commitments.
-    // TODO(moodlezoup): we should be able to cache the row commitments
-    // for each underlying polynomial and take a linear combination of those
+    /// In practice, this function is only used for testing; we compute the
+    /// row commitments for an RLCPolynomial by combining the row commitments
+    /// of the constituent polynomials.
     #[tracing::instrument(skip_all, name = "RLCPolynomial::commit_rows")]
     pub fn commit_rows<G: CurveGroup<ScalarField = F> + VariableBaseMSM>(
         &self,
         bases: &[G::Affine],
     ) -> Vec<JoltGroupWrapper<G>> {
-        let num_rows = DoryGlobals::get_max_num_rows();
+        let num_rows = DoryGlobals::get_num_rows();
         tracing::debug!("Committing to RLC polynomial with {num_rows} rows");
         let row_len = DoryGlobals::get_num_columns();
 
+        let T = DoryGlobals::get_T();
+        assert!(T > num_rows, "T = {T}, why are you doing this",);
+        let cycles_per_row = T / num_rows;
+
         let mut row_commitments = vec![JoltGroupWrapper(G::zero()); num_rows];
 
+        let dense_poly_bases: Vec<_> = bases
+            .iter()
+            .copied()
+            .take(row_len)
+            .step_by(row_len / cycles_per_row)
+            .collect();
         // Compute the row commitments for dense submatrix
         self.dense_rlc
-            .par_chunks(row_len)
+            .par_chunks(cycles_per_row)
             .zip(row_commitments.par_iter_mut())
             .for_each(|(dense_row, commitment)| {
                 let msm_result: G =
-                    VariableBaseMSM::msm_field_elements(&bases[..dense_row.len()], dense_row)
-                        .unwrap();
-                *commitment = JoltGroupWrapper(commitment.0 + msm_result)
+                    VariableBaseMSM::msm_field_elements(&dense_poly_bases, dense_row).unwrap();
+                *commitment = JoltGroupWrapper(msm_result)
             });
 
         // Compute the row commitments for one-hot polynomials
@@ -142,7 +152,6 @@ impl<F: JoltField> RLCPolynomial<F> {
                 _ => panic!("Expected OneHot polynomial in one_hot_rlc"),
             };
 
-            // TODO(moodlezoup): Avoid resize
             new_row_commitments.resize(num_rows, JoltGroupWrapper(G::zero()));
 
             let updated_row_commitments: &mut [G1Projective] = unsafe {
