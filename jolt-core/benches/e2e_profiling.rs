@@ -19,6 +19,7 @@ fn scale_to_target_ops(target_cycles: usize, cycles_per_op: f64) -> u32 {
 }
 
 #[derive(Debug, Copy, Clone, clap::ValueEnum, strum_macros::Display)]
+#[strum(serialize_all = "kebab-case", strum_macros::Display)]
 pub enum BenchType {
     #[value(name = "btreemap")]
     BTreeMap,

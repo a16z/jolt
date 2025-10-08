@@ -72,6 +72,13 @@ fn normalize_bench_name(name: &str) -> String {
 }
 
 fn setup_tracing(formats: Option<Vec<Format>>, trace_name: &str) -> Vec<Box<dyn Any>> {
+    if std::env::var("PPROF_PREFIX").is_err() {
+        std::env::set_var(
+            "PPROF_PREFIX",
+            format!("benchmark-runs/pprof/{}_", args.name),
+        );
+    }
+
     let mut layers = Vec::new();
 
     let log_layer = tracing_subscriber::fmt::layer()
@@ -114,6 +121,19 @@ fn setup_tracing(formats: Option<Vec<Format>>, trace_name: &str) -> Vec<Box<dyn 
     }
 
     tracing_subscriber::registry().with(layers).init();
+
+    #[cfg(feature = "monitor")]
+    guards.push(Box::new({
+        use jolt_core::utils::monitor::MetricsMonitor;
+        tracing::info!("Starting MetricsMonitor - remember to run python3 scripts/postprocess_trace.py trace-*.json");
+        MetricsMonitor::start(
+            std::env::var("MONITOR_INTERVAL")
+                .unwrap_or("0.1".to_string())
+                .parse::<f64>()
+                .unwrap(),
+        )
+    }));
+
     guards
 }
 
