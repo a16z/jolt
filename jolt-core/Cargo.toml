@@ -46,6 +46,7 @@ prover = [
 minimal = ["ark-ec/std", "ark-ff/std", "ark-std/std", "ark-ff/asm", "rayon"]
 allocative = ["dep:inferno"]
 monitor = ["dep:sysinfo"]
+pprof = ["dep:pprof", "dep:prost"]
 test_incremental = []
 challenge-254-bit = []
 
@@ -103,6 +104,12 @@ jolt-inlines-keccak256 = { workspace = true, features = [
     "host",
 ], optional = true }
 sysinfo = { version = "0.37", optional = true }
+pprof = { version = "0.15", features = [
+    "prost-codec",
+    "flamegraph",
+    "frame-pointer",
+], optional = true }
+prost = { version = "0.14", optional = true }
 
 [dev-dependencies]
 criterion.workspace = true
