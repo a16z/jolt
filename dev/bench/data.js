@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1759863125907,
+  "lastUpdate": 1759948593518,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -19234,6 +19234,198 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 871464,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "183745461+danielwlz@users.noreply.github.com",
+            "name": "danielwlz",
+            "username": "danielwlz"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "58cd8e0622839418a181e44e9595658c2909fc7d",
+          "message": "feat: add pprof CPU profiling support (#988)\n\n* feat: add pprof CPU profiling support\n\nAdd feature-gated pprof support for detailed CPU profiling of Jolt proof generation and verification.\n\nFeatures:\n- PprofGuard RAII struct with automatic profile generation on drop\n- pprof_scope! macro for easy integration\n- Automatic file naming based on benchmark name (e.g., sha3_prove.pb)\n- Configurable sampling frequency via PPROF_FREQ env var (default: 100 Hz)\n- Configurable output path prefix via PPROF_PREFIX env var\n  (default: benchmark-runs/pprof/<benchmark>_)\n- Integration points: trace, prove, and verify operations\n- Performance metrics: logs prove duration and throughput (kHz)\n\nUsage:\n  cargo run --release --features pprof -p jolt-core profile --name sha3\n  go tool pprof -http=:8080 benchmark-runs/pprof/sha3_prove.pb\n\nEnvironment variables:\n- PPROF_PREFIX: Output path prefix (default: benchmark-runs/pprof/<benchmark>_)\n  Examples: \"pprof/\" for pprof/prove.pb, \"custom/path/test_\" for custom/path/test_prove.pb\n- PPROF_FREQ: Sampling frequency in Hz (default: 100)\n\nFiles changed:\n- jolt-core/Cargo.toml: Add pprof feature and dependencies\n- jolt-core/src/zkvm/mod.rs: Add PprofGuard, macro, and integration\n- jolt-core/src/bin/jolt_core.rs: Auto-set PPROF_PREFIX from benchmark name\n- jolt-core/benches/e2e_profiling.rs: Add Display derive for BenchType\n- .gitignore: Ignore pprof output files and benchmark-runs/\n- README.md: Document pprof usage with examples\n\n* Enable frame pointer feature for pprof to avoid SIGTRAP on Mac\n\n* Amend println to tracing::info\n\n* Add binary path to go tool pprof command\n\n* Fix typo\n\n* cargo fmt\n\n* Add documentation to jolt book and screenshots",
+          "timestamp": "2025-10-08T13:45:44-04:00",
+          "tree_id": "89c07e076d89b75fdc90b096f551b501a208d90b",
+          "url": "https://github.com/a16z/jolt/commit/58cd8e0622839418a181e44e9595658c2909fc7d"
+        },
+        "date": 1759948592860,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 759936,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "blake2-ex-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "blake2-ex-mem",
+            "value": 759796,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "blake3-ex-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "blake3-ex-mem",
+            "value": 754228,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 3695468,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 757404,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 781600,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 766536,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 857904,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 829956,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 348428,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 6001488,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 784824,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 777560,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 867452,
             "unit": "KB",
             "extra": ""
           }
