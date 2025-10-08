@@ -117,7 +117,7 @@ where
         }
     }
 
-    #[tracing::instrument(skip_all)]
+    // #[tracing::instrument(skip_all)]
     fn msm_field_elements(
         bases: &[Self::MulBase],
         scalars: &[Self::ScalarField],
@@ -126,7 +126,7 @@ where
             .map_err(|_bad_index| ProofVerifyError::KeyLengthError(bases.len(), scalars.len()))
     }
 
-    #[tracing::instrument(skip_all)]
+    // #[tracing::instrument(skip_all)]
     fn msm_u8(bases: &[Self::MulBase], scalars: &[u8]) -> Result<Self, ProofVerifyError> {
         (bases.len() == scalars.len())
             .then(|| {
@@ -140,56 +140,56 @@ where
             .ok_or(ProofVerifyError::KeyLengthError(bases.len(), scalars.len()))
     }
 
-    #[tracing::instrument(skip_all)]
+    // #[tracing::instrument(skip_all)]
     fn msm_u16(bases: &[Self::MulBase], scalars: &[u16]) -> Result<Self, ProofVerifyError> {
         (bases.len() == scalars.len())
             .then(|| msm_u16::<Self>(bases, scalars, true))
             .ok_or(ProofVerifyError::KeyLengthError(bases.len(), scalars.len()))
     }
 
-    #[tracing::instrument(skip_all)]
+    // #[tracing::instrument(skip_all)]
     fn msm_u32(bases: &[Self::MulBase], scalars: &[u32]) -> Result<Self, ProofVerifyError> {
         (bases.len() == scalars.len())
             .then(|| msm_u32::<Self>(bases, scalars, true))
             .ok_or(ProofVerifyError::KeyLengthError(bases.len(), scalars.len()))
     }
 
-    #[tracing::instrument(skip_all)]
+    // #[tracing::instrument(skip_all)]
     fn msm_u64(bases: &[Self::MulBase], scalars: &[u64]) -> Result<Self, ProofVerifyError> {
         (bases.len() == scalars.len())
             .then(|| msm_u64::<Self>(bases, scalars, true))
             .ok_or(ProofVerifyError::KeyLengthError(bases.len(), scalars.len()))
     }
 
-    #[tracing::instrument(skip_all)]
+    // #[tracing::instrument(skip_all)]
     fn msm_u128(bases: &[Self::MulBase], scalars: &[u128]) -> Result<Self, ProofVerifyError> {
         (bases.len() == scalars.len())
             .then(|| msm_u128::<Self>(bases, scalars, true))
             .ok_or(ProofVerifyError::KeyLengthError(bases.len(), scalars.len()))
     }
 
-    #[tracing::instrument(skip_all)]
+    // #[tracing::instrument(skip_all)]
     fn msm_i64(bases: &[Self::MulBase], scalars: &[i64]) -> Result<Self, ProofVerifyError> {
         (bases.len() == scalars.len())
             .then(|| msm_i64::<Self>(bases, scalars, true))
             .ok_or(ProofVerifyError::KeyLengthError(bases.len(), scalars.len()))
     }
 
-    #[tracing::instrument(skip_all)]
+    // #[tracing::instrument(skip_all)]
     fn msm_s64(bases: &[Self::MulBase], scalars: &[S64]) -> Result<Self, ProofVerifyError> {
         (bases.len() == scalars.len())
             .then(|| msm_s64::<Self>(bases, scalars, true))
             .ok_or(ProofVerifyError::KeyLengthError(bases.len(), scalars.len()))
     }
 
-    #[tracing::instrument(skip_all)]
+    // #[tracing::instrument(skip_all)]
     fn msm_i128(bases: &[Self::MulBase], scalars: &[i128]) -> Result<Self, ProofVerifyError> {
         (bases.len() == scalars.len())
             .then(|| msm_i128::<Self>(bases, scalars, true))
             .ok_or(ProofVerifyError::KeyLengthError(bases.len(), scalars.len()))
     }
 
-    #[tracing::instrument(skip_all)]
+    // #[tracing::instrument(skip_all)]
     fn msm_s128(bases: &[Self::MulBase], scalars: &[S128]) -> Result<Self, ProofVerifyError> {
         (bases.len() == scalars.len())
             .then(|| msm_s128::<Self>(bases, scalars, true))
