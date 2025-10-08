@@ -102,6 +102,14 @@ Where `--name` can be `sha2`, `sha3`, `sha2-chain`, `fibonacci`, or `btreemap`. 
 
 The above command will output a JSON file in the workspace rootwith a name `trace-<timestamp>.json`, which can be viewed in [Perfetto](https://ui.perfetto.dev/).
 
+To easily see CPU and memory usage in the trace, you can use `--features monitor` which will log these metrics as tracing events:
+
+```bash
+cargo run --release --features monitor -p jolt-core profile --name sha3 --format chrome
+# Converts counter events into Perfetto counter tracks for easier visualization
+python3 scripts/postprocess_trace.py trace-*.json
+```
+
 You may also enable pprof for detailed CPU profiling:
 
 ```cargo run --release --features pprof -p jolt-core profile --name sha3 --format chrome```
