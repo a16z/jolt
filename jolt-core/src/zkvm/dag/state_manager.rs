@@ -26,6 +26,9 @@ pub enum ProofKeys {
     Stage2Sumcheck,
     Stage3Sumcheck,
     Stage4Sumcheck,
+    Stage5Sumcheck,
+    Stage6Sumcheck,
+    Stage7Sumcheck,
     ReducedOpeningProof,
 }
 
