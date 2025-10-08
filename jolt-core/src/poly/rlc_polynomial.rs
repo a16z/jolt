@@ -119,10 +119,9 @@ impl<F: JoltField> RLCPolynomial<F> {
         &self,
         bases: &[G::Affine],
     ) -> Vec<JoltGroupWrapper<G>> {
-        println!("  Hello from RLC poly");
-        let num_rows = DoryGlobals::get_num_rows();
+        let num_rows = DoryGlobals::get_dimension();
         tracing::debug!("Committing to RLC polynomial with {num_rows} rows");
-        let row_len = DoryGlobals::get_num_columns();
+        let row_len = DoryGlobals::get_dimension();
 
         let T = DoryGlobals::get_T();
         assert!(T > num_rows, "T = {T}, why are you doing this",);
@@ -130,16 +129,13 @@ impl<F: JoltField> RLCPolynomial<F> {
 
         let mut row_commitments = vec![JoltGroupWrapper(G::zero()); num_rows];
 
-        println!("  Init row_commitments");
-
         let dense_poly_bases: Vec<_> = bases
             .iter()
             .take(row_len)
             .step_by(row_len / cycles_per_row)
             .copied()
             .collect();
-        println!("  Collect dense_poly_bases");
-        println!("  dense_poly_bases.len() = {}", dense_poly_bases.len());
+
         // // Compute the row commitments for dense submatrix
         // self.dense_rlc
         //     .par_chunks(cycles_per_row)
@@ -149,8 +145,6 @@ impl<F: JoltField> RLCPolynomial<F> {
         //             VariableBaseMSM::msm_field_elements(&dense_poly_bases, dense_row).unwrap();
         //         *commitment = JoltGroupWrapper(msm_result)
         //     });
-
-        // println!("  Done with dense submatrix");
 
         // Compute the row commitments for one-hot polynomials
         for (coeff, poly) in self.one_hot_rlc.iter() {
@@ -207,8 +201,8 @@ impl<F: JoltField> RLCPolynomial<F> {
         let left_vec: &[F] =
             unsafe { std::slice::from_raw_parts(left_vec.as_ptr() as *const F, left_vec.len()) };
 
-        let num_rows = DoryGlobals::get_num_rows();
-        let row_len = DoryGlobals::get_num_columns();
+        let num_rows = DoryGlobals::get_dimension();
+        let row_len = DoryGlobals::get_dimension();
         let T = DoryGlobals::get_T();
         assert!(T > num_rows, "T = {T}, why are you doing this",);
         let cycles_per_row = T / num_rows;

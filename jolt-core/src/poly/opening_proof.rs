@@ -801,11 +801,6 @@ where
             self.sumchecks.len()
         );
 
-        println!(
-            "{} sumcheck instances in batched opening proof reduction",
-            self.sumchecks.len()
-        );
-
         let total_challenges_needed: usize = self
             .sumchecks
             .iter()
@@ -854,7 +849,6 @@ where
                 let gammas_slice = &all_gammas[offset..offset + num_gammas];
                 sumcheck.prepare_sumcheck(Some(&polynomials), gammas_slice);
             });
-        println!("Done with prepare_sumcheck");
 
         // Drop merged D as they are no longer needed
         self.eq_cycle_map
@@ -866,7 +860,6 @@ where
         // Use sumcheck reduce many openings to one
         let (sumcheck_proof, r_sumcheck, sumcheck_claims) =
             self.prove_batch_opening_reduction(transcript);
-        println!("Done with batch opening reduction sumcheck");
 
         transcript.append_scalars(&sumcheck_claims);
 
@@ -902,8 +895,6 @@ where
                 &coeffs,
             ))
         };
-
-        println!("Done computing joint poly");
 
         // #[cfg(test)]
         // let joint_commitment = PCS::commit(&joint_poly, pcs_setup).0;
@@ -1270,8 +1261,6 @@ where
         let r_sumcheck =
             self.verify_batch_opening_reduction(&reduced_opening_proof.sumcheck_proof, transcript)?;
 
-        println!("Sumcheck verified");
-
         transcript.append_scalars(&reduced_opening_proof.sumcheck_claims);
 
         let gamma: F = transcript.challenge_scalar();
@@ -1335,17 +1324,6 @@ where
             // TODO(moodlezoup): should really be F::Challenge::zero()
             [r_cycle, &[F::Challenge::default()], r_address].concat()
         };
-
-        println!(
-            "r_cycle.len() = {}, r_address.len() = {}",
-            r_cycle.len(),
-            r_address.len()
-        );
-        println!(
-            "{} rows x {} cols",
-            DoryGlobals::get_num_rows(),
-            DoryGlobals::get_num_columns()
-        );
 
         // Verify the reduced opening proof
         PCS::verify(
