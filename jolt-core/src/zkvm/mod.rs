@@ -2,7 +2,7 @@ use std::{
     fs::File,
     io::{Read, Write},
     path::Path,
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 #[cfg(test)]
@@ -263,7 +263,7 @@ where
         JoltProof<F, PCS, FS>,
         JoltDevice,
         Option<ProverDebugInfo<F, FS, PCS>>,
-        Instant,
+        Duration,
     ) {
         use crate::{guest, zkvm::dag::state_manager::StateManager};
         use common::jolt_device::MemoryConfig;
@@ -318,9 +318,7 @@ where
                 .map_or(0, |pos| pos + 1),
         );
 
-        let start = Instant::now();
-
-        let (proof, debug_info) = {
+        let (proof, debug_info, prove_duration) = {
             let _pprof_prove = pprof_scope!("prove");
             let start = Instant::now();
             let state_manager = StateManager::new_prover(
@@ -336,10 +334,10 @@ where
                 prove_duration.as_secs_f64(),
                 trace_length as f64 / prove_duration.as_secs_f64() / 1000.0
             );
-            (proof, debug_info)
+            (proof, debug_info, prove_duration)
         };
 
-        (proof, program_io, debug_info, start)
+        (proof, program_io, debug_info, prove_duration)
     }
 
     #[tracing::instrument(skip_all, name = "Jolt::verify")]
