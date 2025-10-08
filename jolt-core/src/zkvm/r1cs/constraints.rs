@@ -123,7 +123,6 @@ pub enum ConstraintName {
     WritePCtoRDDef,
     RdWriteEqPCPlusConstIfWritePCtoRD,
     NextUnexpPCEqLookupIfShouldJump,
-    ShouldBranchDef,
     NextUnexpPCEqPCPlusImmIfShouldBranch,
     NextUnexpPCUpdateOtherwise,
     NextPCEqPCPlusOneIfInline,
@@ -273,9 +272,9 @@ macro_rules! r1cs_prod_named {
 }
 
 /// Number of uniform R1CS constraints
-pub const NUM_R1CS_CONSTRAINTS: usize = 25;
+pub const NUM_R1CS_CONSTRAINTS: usize = 24;
 
-/// Static table of all 25 R1CS uniform constraints.
+/// Static table of all 24 R1CS uniform constraints.
 pub static UNIFORM_R1CS: [NamedConstraint; NUM_R1CS_CONSTRAINTS] = [
     // if LeftOperandIsRs1Value { assert!(LeftInstructionInput == Rs1Value) }
     r1cs_eq_conditional!(
@@ -449,11 +448,6 @@ pub static UNIFORM_R1CS: [NamedConstraint; NUM_R1CS_CONSTRAINTS] = [
     // if Branch && LookupOutput {
     //     assert!(NextUnexpandedPC == UnexpandedPC + Imm)
     // }
-    r1cs_prod!(
-        name: ConstraintName::ShouldBranchDef,
-        ({ JoltR1CSInputs::OpFlags(CircuitFlags::Branch) }) * ({ JoltR1CSInputs::LookupOutput })
-            == ({ JoltR1CSInputs::ShouldBranch })
-    ),
     r1cs_eq_conditional!(
         name: ConstraintName::NextUnexpPCEqPCPlusImmIfShouldBranch,
         if { { JoltR1CSInputs::ShouldBranch } }
@@ -560,8 +554,6 @@ pub fn eval_az_by_name<F: JoltField>(c: &NamedConstraint, row: &R1CSCycleInputs)
         N::RdWriteEqPCPlusConstIfWritePCtoRD => I8OrI96::from_i8(row.write_pc_to_rd_addr as i8),
         // Az: ShouldJump indicator (0/1)
         N::NextUnexpPCEqLookupIfShouldJump => row.should_jump.into(),
-        // Az: Branch flag (0/1)
-        N::ShouldBranchDef => row.flags[CircuitFlags::Branch].into(),
         // Note: Az uses ShouldBranch in the u64 domain (product Branch * LookupOutput)
         // Az: ShouldBranch indicator (0/1)
         N::NextUnexpPCEqPCPlusImmIfShouldBranch => I8OrI96::from(row.should_branch),
@@ -667,8 +659,6 @@ pub fn eval_bz_by_name<F: JoltField>(c: &NamedConstraint, row: &R1CSCycleInputs)
             // B: NextUnexpandedPC - LookupOutput (i128 arithmetic)
             S160::from_diff_u64(row.next_unexpanded_pc, row.lookup_output)
         }
-        // B: LookupOutput (u64 bit pattern)
-        N::ShouldBranchDef => S160::from(row.lookup_output),
         // B: NextUnexpandedPC - (UnexpandedPC + Imm) (i128 arithmetic)
         N::NextUnexpPCEqPCPlusImmIfShouldBranch => S160::from(
             row.next_unexpanded_pc as i128 - (row.unexpanded_pc as i128 + row.imm.to_i128()),

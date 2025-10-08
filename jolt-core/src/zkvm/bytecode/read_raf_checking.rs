@@ -194,21 +194,12 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             let rv_claims = [rv_claim_1, rv_claim_2, rv_claim_3, rv_claim_4, rv_claim_5];
             let val_evals = [&val_1, &val_2, &val_3, &val_4, &val_5];
             let F_evals = [&F.0, &F.1, &F.2, &F.3, &F.4];
-            let eq_evals_refs = [
-                &eq_evals[0],
-                &eq_evals[1],
-                &eq_evals[2],
-                &eq_evals[3],
-                &eq_evals[4],
-            ];
-
             for i in 0..STAGES {
                 let computed_claim: F = (0..K)
                     .into_par_iter()
                     .map(|k| {
                         let val_k = val_evals[i][k];
                         let F_k = F_evals[i][k];
-                        // let eq_k = eq_evals_refs[i][k];
                         val_k * F_k
                     })
                     .sum();
@@ -353,7 +344,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
                 )
             }
             ReadCheckingValType::Stage2 => {
-                let gamma_powers = get_gamma_powers(&mut *sm.get_transcript().borrow_mut(), 1);
+                let gamma_powers = get_gamma_powers(&mut *sm.get_transcript().borrow_mut(), 2);
                 (
                     Self::compute_val_2(sm, &gamma_powers),
                     Self::compute_rv_claim_2(sm, &gamma_powers),
@@ -524,9 +515,11 @@ impl<F: JoltField> ReadRafSumcheck<F> {
     }
 
     /// Returns a vec of evaluations:
-    ///    Val(k) = jump_flag(k)
+    ///    Val(k) = jump_flag(k) + gamma * branch_flag(k)
     /// where jump_flag(k) = 1 if instruction k is a jump, 0 otherwise
-    /// This particular Val virtualizes the jump flag claim from ShouldJumpVirtualization.
+    ///       branch_flag(k) = 1 if instruction k is a branch, 0 otherwise
+    /// This particular Val virtualizes the jump and branch flag claims from
+    /// ShouldJumpVirtualization and ShouldBranchVirtualization.
     fn compute_val_2(
         sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
         gamma_powers: &[F],
@@ -540,21 +533,31 @@ impl<F: JoltField> ReadRafSumcheck<F> {
                 } else {
                     F::zero()
                 };
-                jump_val * gamma_powers[0]
+                let branch_val = if flags[CircuitFlags::Branch] {
+                    F::one()
+                } else {
+                    F::zero()
+                };
+                jump_val * gamma_powers[0] + branch_val * gamma_powers[1]
             })
             .collect()
     }
 
     fn compute_rv_claim_2(
         sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
-        _gamma_powers: &[F],
+        gamma_powers: &[F],
     ) -> F {
-        let (_, jump_claim_product) = sm.get_virtual_polynomial_opening(
+        let (_, jump_claim) = sm.get_virtual_polynomial_opening(
             VirtualPolynomial::OpFlags(CircuitFlags::Jump),
             SumcheckId::ShouldJumpVirtualization,
         );
 
-        jump_claim_product
+        let (_, branch_claim) = sm.get_virtual_polynomial_opening(
+            VirtualPolynomial::OpFlags(CircuitFlags::Branch),
+            SumcheckId::ShouldBranchVirtualization,
+        );
+
+        jump_claim * gamma_powers[0] + branch_claim * gamma_powers[1]
     }
 
     /// Returns a vec of evaluations:
@@ -763,7 +766,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
                     // rv_1 + gamma * rv_2 + gamma^2 * rv_3 + gamma^3 * rv_4 + gamma^4 * rv_5 + gamma^5 * raf_1 + gamma^6 * raf_3
                     let gamma_five = self.gamma_sqr.square() * self.gamma[1];
                     let gamma_four = self.gamma_sqr.square();
-                    let gamma_six = gamma_five * self.gamma[1];
                     let val_evals = self
                         .val_polys
                         .iter()

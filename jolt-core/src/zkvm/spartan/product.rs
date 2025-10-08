@@ -41,7 +41,7 @@ impl VirtualProductType {
             VirtualProductType::Instruction => VirtualPolynomial::Product,
             VirtualProductType::WriteLookupOutputToRD => VirtualPolynomial::Product, // TODO: Add specific virtual poly
             VirtualProductType::WritePCtoRD => VirtualPolynomial::Product, // TODO: Add specific virtual poly
-            VirtualProductType::ShouldBranch => VirtualPolynomial::Product, // TODO: Add specific virtual poly
+            VirtualProductType::ShouldBranch => VirtualPolynomial::ShouldBranch,
             VirtualProductType::ShouldJump => VirtualPolynomial::ShouldJump,
         }
     }
@@ -187,7 +187,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ProductVirtualizati
     }
 
     fn input_claim(&self) -> F {
-        // println!("ProductVirtualizationSumcheck({:?}) input_claim: {:?}", self.product_type, self.input_claim);
         self.input_claim
     }
 

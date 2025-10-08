@@ -101,6 +101,11 @@ impl<'a, F: JoltField> ReadRafSumcheck<F> {
             VirtualPolynomial::LookupOutput,
             SumcheckId::SpartanOuter,
         );
+        //TODO(markosg04): this is the hard batching
+        // let (_, rv_claim_product) = sm.get_virtual_polynomial_opening(
+        //     VirtualPolynomial::LookupOutput,
+        //     SumcheckId::ShouldBranchVirtualization,
+        // );
         let (_, left_operand_claim) = sm.get_virtual_polynomial_opening(
             VirtualPolynomial::LeftLookupOperand,
             SumcheckId::SpartanOuter,

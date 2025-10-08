@@ -282,16 +282,22 @@ where
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
-        /* Sumcheck 2: Inner sumcheck + ShouldJump product virtualization
+        /* Sumcheck 2: Inner sumcheck + ShouldJump/ShouldBranch product virtualization
             - Inner sumcheck proves: claim_Az + r * claim_Bz + r^2 * claim_Cz =
                     \sum_y (A_small(rx, y) + r * B_small(rx, y) + r^2 * C_small(rx, y)) * z(y)
             - ShouldJump sumcheck proves: ShouldJump(r_cycle) = Jump_flag(r_cycle) × (1 - NextIsNoop(r_cycle))
+            - ShouldBranch sumcheck proves: ShouldBranch(r_cycle) = lookup_output(r_cycle) × Branch_flag(r_cycle)
         */
         let key = self.key.clone();
         let inner_sumcheck = InnerSumcheck::new_prover(state_manager, key);
 
         let should_jump_sumcheck = ProductVirtualizationSumcheck::new_prover(
             product::VirtualProductType::ShouldJump,
+            state_manager,
+        );
+
+        let should_branch_sumcheck = ProductVirtualizationSumcheck::new_prover(
+            product::VirtualProductType::ShouldBranch,
             state_manager,
         );
 
@@ -302,19 +308,28 @@ where
                 "Spartan ShouldJump ProductVirtualizationSumcheck",
                 &should_jump_sumcheck,
             );
+            print_data_structure_heap_usage(
+                "Spartan ShouldBranch ProductVirtualizationSumcheck",
+                &should_branch_sumcheck,
+            );
         }
 
-        vec![Box::new(inner_sumcheck), Box::new(should_jump_sumcheck)]
+        vec![
+            Box::new(inner_sumcheck),
+            Box::new(should_jump_sumcheck),
+            Box::new(should_branch_sumcheck),
+        ]
     }
 
     fn stage2_verifier_instances(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
-        /* Sumcheck 2: Inner sumcheck + ShouldJump product virtualization
+        /* Sumcheck 2: Inner sumcheck + ShouldJump/ShouldBranch product virtualization
            - Inner sumcheck verifies: claim_Az + r * claim_Bz + r^2 * claim_Cz =
                     (A_small(rx, ry) + r * B_small(rx, ry) + r^2 * C_small(rx, ry)) * z(ry)
            - ShouldJump sumcheck verifies: ShouldJump(r_cycle) = Jump_flag(r_cycle) × (1 - NextIsNoop(r_cycle))
+           - ShouldBranch sumcheck verifies: ShouldBranch(r_cycle) = lookup_output(r_cycle) × Branch_flag(r_cycle)
         */
         let key = self.key.clone();
         let inner_sumcheck = InnerSumcheck::<F>::new_verifier(state_manager, key);
@@ -324,7 +339,16 @@ where
             state_manager,
         );
 
-        vec![Box::new(inner_sumcheck), Box::new(should_jump_sumcheck)]
+        let should_branch_sumcheck = ProductVirtualizationSumcheck::new_verifier(
+            product::VirtualProductType::ShouldBranch,
+            state_manager,
+        );
+
+        vec![
+            Box::new(inner_sumcheck),
+            Box::new(should_jump_sumcheck),
+            Box::new(should_branch_sumcheck),
+        ]
     }
 
     fn stage3_prover_instances(
