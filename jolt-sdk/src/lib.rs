@@ -22,9 +22,9 @@ use serde::{Deserialize, Serialize};
 /// # Example
 /// ```rust
 /// #[provable]
-/// fn compute(public_input: u32, private_input: Private<u32>) -> u32 {
-///     // In the function body, private_input is automatically unwrapped
-///     public_input + private_input
+/// fn compute(public_input: u32, advice: Private<u32>) -> u32 {
+///     // In the function body, advice is automatically unwrapped
+///     public_input + advice
 /// }
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

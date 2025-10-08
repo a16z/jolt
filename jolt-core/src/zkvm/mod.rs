@@ -190,7 +190,7 @@ where
         preprocessing: &JoltProverPreprocessing<F, PCS>,
         elf_contents: &[u8],
         inputs: &[u8],
-        private_inputs: &[u8],
+        advice: &[u8],
     ) -> (
         JoltProof<F, PCS, FS>,
         JoltDevice,
@@ -202,7 +202,7 @@ where
         use tracer::instruction::Cycle;
 
         let memory_config = MemoryConfig {
-            max_private_input_size: preprocessing.shared.memory_layout.max_private_input_size,
+            max_advice_size: preprocessing.shared.memory_layout.max_advice_size,
             max_input_size: preprocessing.shared.memory_layout.max_input_size,
             max_output_size: preprocessing.shared.memory_layout.max_output_size,
             stack_size: preprocessing.shared.memory_layout.stack_size,
@@ -211,7 +211,7 @@ where
         };
 
         let (mut trace, final_memory_state, mut program_io) =
-            guest::program::trace(elf_contents, None, inputs, private_inputs, &memory_config);
+            guest::program::trace(elf_contents, None, inputs, advice, &memory_config);
         let num_riscv_cycles: usize = trace
             .par_iter()
             .map(|cycle| {

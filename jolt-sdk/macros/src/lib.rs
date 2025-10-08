@@ -111,8 +111,7 @@ impl MacroBuilder {
         let attributes = parse_attributes(&self.attr);
         let max_input_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_input_size);
         let max_output_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_output_size);
-        let max_private_input_size =
-            proc_macro2::Literal::u64_unsuffixed(attributes.max_private_input_size);
+        let max_advice_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_advice_size);
         let stack_size = proc_macro2::Literal::u64_unsuffixed(attributes.stack_size);
         let memory_size = proc_macro2::Literal::u64_unsuffixed(attributes.memory_size);
 
@@ -126,7 +125,7 @@ impl MacroBuilder {
                 MemoryConfig {
                     max_input_size: #max_input_size,
                     max_output_size: #max_output_size,
-                    max_private_input_size: #max_private_input_size,
+                    max_advice_size: #max_advice_size,
                     stack_size: #stack_size,
                     memory_size: #memory_size,
                     program_size: None,
@@ -143,8 +142,8 @@ impl MacroBuilder {
         // Include both public and private arguments for the prover
         let input_names = self.pub_func_args.iter().clone().map(|(name, _)| name);
         let input_types = self.pub_func_args.iter().clone().map(|(_, ty)| ty);
-        let private_input_names = self.priv_func_args.iter().clone().map(|(name, _)| name);
-        let private_input_types = self.priv_func_args.iter().clone().map(|(_, ty)| ty);
+        let advice_names = self.priv_func_args.iter().clone().map(|(name, _)| name);
+        let advice_types = self.priv_func_args.iter().clone().map(|(_, ty)| ty);
 
         let inputs = &self.func.sig.inputs;
         let prove_fn_name = Ident::new(&format!("prove_{fn_name}"), fn_name.span());
@@ -155,7 +154,7 @@ impl MacroBuilder {
             pub fn #build_prover_fn_name(
                 program: jolt::host::Program,
                 preprocessing: jolt::JoltProverPreprocessing<jolt::F, jolt::PCS>,
-            ) -> impl Fn(#(#input_types),*, #(#private_input_types),*) -> #prove_output_ty + Sync + Send
+            ) -> impl Fn(#(#input_types),*, #(#advice_types),*) -> #prove_output_ty + Sync + Send
             {
                 #imports
                 let program = std::sync::Arc::new(program);
@@ -164,7 +163,7 @@ impl MacroBuilder {
                 let prove_closure = move |#inputs| {
                     let program = (*program).clone();
                     let preprocessing = (*preprocessing).clone();
-                    #prove_fn_name(program, preprocessing, #(#input_names),*, #(#private_input_names),*)
+                    #prove_fn_name(program, preprocessing, #(#input_names),*, #(#advice_names),*)
                 };
 
                 prove_closure
@@ -208,7 +207,7 @@ impl MacroBuilder {
                     let memory_config = MemoryConfig {
                         max_input_size: preprocessing.shared.memory_layout.max_input_size,
                         max_output_size: preprocessing.shared.memory_layout.max_output_size,
-                        max_private_input_size: preprocessing.shared.memory_layout.max_private_input_size,
+                        max_advice_size: preprocessing.shared.memory_layout.max_advice_size,
                         stack_size: preprocessing.shared.memory_layout.stack_size,
                         memory_size: preprocessing.shared.memory_layout.memory_size,
                         program_size: Some(preprocessing.shared.memory_layout.program_size),
@@ -357,8 +356,7 @@ impl MacroBuilder {
         let attributes = parse_attributes(&self.attr);
         let max_input_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_input_size);
         let max_output_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_output_size);
-        let max_private_input_size =
-            proc_macro2::Literal::u64_unsuffixed(attributes.max_private_input_size);
+        let max_advice_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_advice_size);
         let stack_size = proc_macro2::Literal::u64_unsuffixed(attributes.stack_size);
         let memory_size = proc_macro2::Literal::u64_unsuffixed(attributes.memory_size);
         let max_trace_length = proc_macro2::Literal::u64_unsuffixed(attributes.max_trace_length);
@@ -378,7 +376,7 @@ impl MacroBuilder {
                 let memory_config = MemoryConfig {
                     max_input_size: #max_input_size,
                     max_output_size: #max_output_size,
-                    max_private_input_size: #max_private_input_size,
+                    max_advice_size: #max_advice_size,
                     stack_size: #stack_size,
                     memory_size: #memory_size,
                     program_size: Some(program_size),
@@ -403,8 +401,7 @@ impl MacroBuilder {
         let attributes = parse_attributes(&self.attr);
         let max_input_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_input_size);
         let max_output_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_output_size);
-        let max_private_input_size =
-            proc_macro2::Literal::u64_unsuffixed(attributes.max_private_input_size);
+        let max_advice_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_advice_size);
         let stack_size = proc_macro2::Literal::u64_unsuffixed(attributes.stack_size);
         let memory_size = proc_macro2::Literal::u64_unsuffixed(attributes.memory_size);
         let max_trace_length = proc_macro2::Literal::u64_unsuffixed(attributes.max_trace_length);
@@ -424,7 +421,7 @@ impl MacroBuilder {
                 let memory_config = MemoryConfig {
                     max_input_size: #max_input_size,
                     max_output_size: #max_output_size,
-                    max_private_input_size: #max_private_input_size,
+                    max_advice_size: #max_advice_size,
                     stack_size: #stack_size,
                     memory_size: #memory_size,
                     program_size: Some(program_size),
@@ -486,7 +483,7 @@ impl MacroBuilder {
         });
         let set_program_private_args = self.priv_func_args.iter().map(|(name, _)| {
             quote! {
-                private_input_bytes.append(&mut jolt::postcard::to_stdvec(&#name).unwrap())
+                advice_bytes.append(&mut jolt::postcard::to_stdvec(&#name).unwrap())
             }
         });
 
@@ -506,7 +503,7 @@ impl MacroBuilder {
 
                 let mut input_bytes = vec![];
                 #(#set_program_args;)*
-                let mut private_input_bytes = vec![];
+                let mut advice_bytes = vec![];
                 #(#set_program_private_args;)*
 
                 let elf_contents_opt = program.get_elf_contents();
@@ -515,7 +512,7 @@ impl MacroBuilder {
                     &preprocessing,
                     &elf_contents,
                     &input_bytes,
-                    &private_input_bytes,
+                    &advice_bytes,
                 );
 
                 #handle_return
@@ -530,7 +527,7 @@ impl MacroBuilder {
         let memory_layout = MemoryLayout::new(&MemoryConfig {
             max_input_size: attributes.max_input_size,
             max_output_size: attributes.max_output_size,
-            max_private_input_size: attributes.max_private_input_size,
+            max_advice_size: attributes.max_advice_size,
             stack_size: attributes.stack_size,
             memory_size: attributes.memory_size,
             // Not needed for the main function, but we need the io region information from MemoryLayout.
@@ -538,10 +535,10 @@ impl MacroBuilder {
         });
         let input_start = memory_layout.input_start;
         let output_start = memory_layout.output_start;
-        let private_input_start = memory_layout.private_input_start;
+        let advice_start = memory_layout.advice_start;
         let max_input_len = attributes.max_input_size as usize;
         let max_output_len = attributes.max_output_size as usize;
-        let max_private_input_len = attributes.max_private_input_size as usize;
+        let max_advice_len = attributes.max_advice_size as usize;
         let termination_bit = memory_layout.termination as usize;
 
         let get_input_slice = quote! {
@@ -551,10 +548,10 @@ impl MacroBuilder {
             };
         };
 
-        let get_private_input_slice = quote! {
-            let private_input_ptr = #private_input_start as *const u8;
-            let private_input_slice = unsafe {
-                core::slice::from_raw_parts(private_input_ptr, #max_private_input_len)
+        let get_advice_slice = quote! {
+            let advice_ptr = #advice_start as *const u8;
+            let advice_slice = unsafe {
+                core::slice::from_raw_parts(advice_ptr, #max_advice_len)
             };
         };
 
@@ -569,8 +566,8 @@ impl MacroBuilder {
         // Fetch private arguments from the private input slice
         let priv_args_fetch = self.priv_func_args.iter().map(|(name, ty)| {
             quote! {
-                let (#name, private_input_slice) =
-                    jolt::postcard::take_from_bytes::<#ty>(private_input_slice).unwrap();
+                let (#name, advice_slice) =
+                    jolt::postcard::take_from_bytes::<#ty>(advice_slice).unwrap();
             }
         });
 
@@ -616,7 +613,7 @@ impl MacroBuilder {
             pub extern "C" fn main() {
                 let mut offset = 0;
                 #get_input_slice
-                #get_private_input_slice
+                #get_advice_slice
                 #(#pub_args_fetch;)*
                 #(#priv_args_fetch;)*
                 #check_input_len
@@ -747,9 +744,9 @@ impl MacroBuilder {
             program.set_max_output_size(#value);
         });
 
-        let value = attributes.max_private_input_size;
+        let value = attributes.max_advice_size;
         code.push(quote! {
-            program.set_max_private_input_size(#value);
+            program.set_max_advice_size(#value);
         });
 
         quote! {

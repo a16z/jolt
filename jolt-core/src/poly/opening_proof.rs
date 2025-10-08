@@ -167,6 +167,7 @@ pub enum SumcheckId {
 pub enum OpeningId {
     Committed(CommittedPolynomial, SumcheckId),
     Virtual(VirtualPolynomial, SumcheckId),
+    Advice,
 }
 
 pub type Openings<F> = BTreeMap<OpeningId, (OpeningPoint<BIG_ENDIAN, F>, F)>;
@@ -562,17 +563,6 @@ where
     }
 }
 
-/// Simple structure to hold private input openings
-#[derive(Clone, Default, Allocative)]
-pub struct PrivateInputOpenings<F: JoltField> {
-    // For val_evaluation opening
-    pub val_eval: Option<F>,
-    pub val_eval_point: Option<Vec<F>>,
-    // For output_check opening
-    pub output_eval: Option<F>,
-    pub output_eval_point: Option<Vec<F>>,
-}
-
 /// Accumulates openings computed by the prover over the course of Jolt,
 /// so that they can all be reduced to a single opening proof using sumcheck.
 #[derive(Clone, Allocative)]
@@ -582,7 +572,6 @@ where
 {
     pub sumchecks: Vec<OpeningProofReductionSumcheck<F>>,
     pub openings: Openings<F>,
-    pub input_openings: PrivateInputOpenings<F>,
     eq_cycle_map: HashMap<Vec<F>, Arc<RwLock<EqCycleState<F>>>>,
     #[cfg(test)]
     pub appended_virtual_openings: std::rc::Rc<std::cell::RefCell<Vec<OpeningId>>>,
@@ -596,7 +585,6 @@ where
 {
     sumchecks: Vec<OpeningProofReductionSumcheck<F>>,
     pub openings: Openings<F>,
-    pub input_openings: PrivateInputOpenings<F>,
     /// In testing, the Jolt verifier may be provided the prover's openings so that we
     /// can detect any places where the openings don't match up.
     #[cfg(test)]
@@ -635,25 +623,12 @@ where
         Self {
             sumchecks: vec![],
             openings: BTreeMap::new(),
-            input_openings: PrivateInputOpenings::default(),
             eq_cycle_map: HashMap::new(),
             #[cfg(test)]
             appended_virtual_openings: std::rc::Rc::new(std::cell::RefCell::new(vec![])),
             // #[cfg(test)]
             // joint_commitment: None,
         }
-    }
-
-    /// Append a private input opening for val_evaluation
-    pub fn append_val_eval_opening(&mut self, evaluation: F, opening_point: Vec<F>) {
-        self.input_openings.val_eval = Some(evaluation);
-        self.input_openings.val_eval_point = Some(opening_point);
-    }
-
-    /// Append a private input opening for output_check  
-    pub fn append_output_eval_opening(&mut self, evaluation: F, opening_point: Vec<F>) {
-        self.input_openings.output_eval = Some(evaluation);
-        self.input_openings.output_eval_point = Some(opening_point);
     }
 
     pub fn len(&self) -> usize {
@@ -705,6 +680,11 @@ where
             .get(&OpeningId::Committed(polynomial, sumcheck))
             .unwrap_or_else(|| panic!("opening for {sumcheck:?} {polynomial:?} not found"));
         (point.clone(), *claim)
+    }
+
+    pub fn get_advice_openning(&self) -> Option<(OpeningPoint<BIG_ENDIAN, F>, F)> {
+        let (point, claim) = self.openings.get(&OpeningId::Advice)?;
+        Some((point.clone(), *claim))
     }
 
     /// Adds openings to the accumulator. The given `polynomials` are opened at
@@ -795,6 +775,11 @@ where
         self.appended_virtual_openings
             .borrow_mut()
             .push(OpeningId::Virtual(polynomial, sumcheck));
+    }
+
+    pub fn append_advice(&mut self, opening_point: OpeningPoint<BIG_ENDIAN, F>, claim: F) {
+        self.openings
+            .insert(OpeningId::Advice, (opening_point, claim));
     }
 
     /// Reduces the multiple openings accumulated into a single opening proof,
@@ -1021,33 +1006,8 @@ where
         Self {
             sumchecks: vec![],
             openings: BTreeMap::new(),
-            input_openings: PrivateInputOpenings::default(),
             #[cfg(test)]
             prover_opening_accumulator: None,
-        }
-    }
-
-    /// Set the val_evaluation opening (evaluation and/or opening point)
-    pub fn set_val_eval_opening(&mut self, evaluation: Option<F>, opening_point: Option<Vec<F>>) {
-        if let Some(eval) = evaluation {
-            self.input_openings.val_eval = Some(eval);
-        }
-        if let Some(point) = opening_point {
-            self.input_openings.val_eval_point = Some(point);
-        }
-    }
-
-    /// Set the output_check opening (evaluation and/or opening point)
-    pub fn set_output_eval_opening(
-        &mut self,
-        evaluation: Option<F>,
-        opening_point: Option<Vec<F>>,
-    ) {
-        if let Some(eval) = evaluation {
-            self.input_openings.output_eval = Some(eval);
-        }
-        if let Some(point) = opening_point {
-            self.input_openings.output_eval_point = Some(point);
         }
     }
 
@@ -1088,6 +1048,11 @@ where
             .get(&OpeningId::Committed(polynomial, sumcheck))
             .unwrap_or_else(|| panic!("No opening found for {sumcheck:?} {polynomial:?}"));
         (point.clone(), *claim)
+    }
+
+    pub fn get_advice_openning(&self) -> Option<(OpeningPoint<BIG_ENDIAN, F>, F)> {
+        let (point, claim) = self.openings.get(&OpeningId::Advice)?;
+        Some((point.clone(), *claim))
     }
 
     /// Adds openings to the accumulator. The polynomials underlying the given
@@ -1204,6 +1169,19 @@ where
             self.openings.insert(key, (opening_point.clone(), claim));
         } else {
             panic!("Tried to populate opening point for non-existent key: {key:?}");
+        }
+    }
+
+    pub fn append_advice(&mut self, opening_point: OpeningPoint<BIG_ENDIAN, F>) {
+        if let Some((_, claim)) = self.openings.get(&OpeningId::Advice) {
+            let claim = *claim;
+            self.openings
+                .insert(OpeningId::Advice, (opening_point.clone(), claim));
+        } else {
+            panic!(
+                "Tried to populate opening point for non-existent key: {:?}",
+                OpeningId::Advice
+            );
         }
     }
 

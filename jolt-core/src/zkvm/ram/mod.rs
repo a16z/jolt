@@ -6,19 +6,26 @@ use std::vec;
 use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::{
     field::JoltField,
-    poly::commitment::commitment_scheme::CommitmentScheme,
+    poly::{
+        commitment::commitment_scheme::CommitmentScheme,
+        multilinear_polynomial::PolynomialEvaluation, opening_proof::SumcheckId,
+    },
     subprotocols::sumcheck::SumcheckInstance,
     transcripts::Transcript,
-    zkvm::dag::{stage::SumcheckStages, state_manager::StateManager},
-    zkvm::ram::{
-        booleanity::BooleanitySumcheck,
-        hamming_booleanity::HammingBooleanitySumcheck,
-        hamming_weight::HammingWeightSumcheck,
-        output_check::{OutputSumcheck, ValFinalSumcheck},
-        ra_virtual::RaSumcheck,
-        raf_evaluation::RafEvaluationSumcheck,
-        read_write_checking::RamReadWriteChecking,
-        val_evaluation::ValEvaluationSumcheck,
+    utils::math::Math,
+    zkvm::{
+        dag::{stage::SumcheckStages, state_manager::StateManager},
+        ram::{
+            booleanity::BooleanitySumcheck,
+            hamming_booleanity::HammingBooleanitySumcheck,
+            hamming_weight::HammingWeightSumcheck,
+            output_check::{OutputSumcheck, ValFinalSumcheck},
+            ra_virtual::RaSumcheck,
+            raf_evaluation::RafEvaluationSumcheck,
+            read_write_checking::RamReadWriteChecking,
+            val_evaluation::ValEvaluationSumcheck,
+        },
+        witness::VirtualPolynomial,
     },
 };
 
@@ -89,9 +96,9 @@ pub fn remap_address(address: u64, memory_layout: &MemoryLayout) -> Option<u64> 
     }
 
     // Handle addresses in the private input region
-    if address >= memory_layout.private_input_start {
+    if address >= memory_layout.advice_start {
         // Remap from the start of the private input region
-        Some((address - memory_layout.private_input_start) / 8 + 1)
+        Some((address - memory_layout.advice_start) / 8 + 1)
     } else {
         panic!("Unexpected address {address}")
     }
@@ -141,13 +148,13 @@ impl RamDag {
             });
 
         index = remap_address(
-            program_io.memory_layout.private_input_start,
+            program_io.memory_layout.advice_start,
             &program_io.memory_layout,
         )
         .unwrap() as usize;
         // Convert input bytes into words and populate
         // `initial_memory_state` and `final_memory_state`
-        for chunk in program_io.private_inputs.chunks(8) {
+        for chunk in program_io.advice.chunks(8) {
             let mut word = [0u8; 8];
             for (i, byte) in chunk.iter().enumerate() {
                 word[i] = *byte;
@@ -344,6 +351,24 @@ where
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F>>> {
+        let (r, _) = state_manager.get_virtual_polynomial_opening(
+            VirtualPolynomial::RamVal,
+            SumcheckId::RamReadWriteChecking,
+        );
+        let (r_address, _) = r.split_at(state_manager.ram_K.log_2());
+        state_manager
+            .prover_state
+            .as_ref()
+            .and_then(|prover_state| {
+                prover_state.advice_polynomial.as_ref().map(|poly| {
+                    let eval = poly.evaluate(&r_address.r);
+                    prover_state
+                        .accumulator
+                        .borrow_mut()
+                        .append_advice(r_address.clone(), eval);
+                })
+            });
+
         let val_evaluation = ValEvaluationSumcheck::new_prover(
             self.initial_memory_state.as_ref().unwrap(),
             state_manager,

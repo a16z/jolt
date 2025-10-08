@@ -18,7 +18,7 @@ pub struct Program {
     memory_size: u64,
     stack_size: u64,
     max_input_size: u64,
-    max_private_input_size: u64,
+    max_advice_size: u64,
     max_output_size: u64,
     std: bool,
     pub elf: Option<PathBuf>,

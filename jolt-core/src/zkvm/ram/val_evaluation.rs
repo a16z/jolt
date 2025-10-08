@@ -63,29 +63,13 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
         );
         let (r_address, r_cycle) = r.split_at(K.log_2());
 
-        // Compute the evaluation of private input polynomial at r_address and append to accumulator
-        state_manager
-            .prover_state
-            .as_ref()
-            .and_then(|prover_state| {
-                prover_state.private_input_polynomial.as_ref().map(|poly| {
-                    let eval = poly.evaluate(&r_address.r);
-                    prover_state
-                        .accumulator
-                        .borrow_mut()
-                        .append_val_eval_opening(eval, r_address.r.clone());
-                })
-            });
-
         let (preprocessing, trace, program_io, _) = state_manager.get_prover_data();
         let memory_layout = &program_io.memory_layout;
         let T = trace.len();
 
         let val_init: MultilinearPolynomial<F> =
             MultilinearPolynomial::from(initial_ram_state.to_vec());
-        // println!("initial_ram_state prover: {:?}", initial_ram_state.to_vec());
         let init_eval = val_init.evaluate(&r_address.r);
-        println!("Val init is: {}", init_eval);
 
         // Compute the size-K table storing all eq(r_address, k) evaluations for
         // k \in {0, 1}^log(K)
@@ -149,22 +133,33 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
             SumcheckId::RamReadWriteChecking,
         );
         let (r_address, _) = r.split_at(K.log_2());
+        println!("val_evaluation r_address: {:?}", r_address);
 
-        // Store the opening point for verification if we have private inputs
-        let private_input_eval = state_manager
+        let advice_eval = state_manager
             .verifier_state
             .as_ref()
             .and_then(|verifier_state| {
-                let eval = verifier_state.accumulator.borrow().input_openings.val_eval;
-
-                eval.map(|e| {
+                if verifier_state
+                    .accumulator
+                    .borrow()
+                    .get_advice_openning()
+                    .is_some()
+                {
+                    let (_, eval) = verifier_state
+                        .accumulator
+                        .borrow()
+                        .get_advice_openning()
+                        .unwrap();
                     verifier_state
                         .accumulator
                         .borrow_mut()
-                        .set_val_eval_opening(None, Some(r_address.r.clone()));
-                    e
-                })
+                        .append_advice(r_address.clone());
+                    return Some(eval);
+                }
+                return None;
             });
+
+        println!("val_evaluation advice_eval: {:?}", advice_eval);
 
         // Create multilinear polynomials from the split parts
         let initial_public_ram_val: MultilinearPolynomial<F> =
@@ -173,7 +168,7 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
 
         ValEvaluationSumcheck {
             claimed_evaluation,
-            init_eval: private_input_eval.unwrap_or(F::zero()) + initial_public_ram_eval,
+            init_eval: advice_eval.unwrap_or(F::zero()) + initial_public_ram_eval,
             num_rounds: T.log_2(),
             prover_state: None,
             K,

@@ -6,9 +6,8 @@ use crate::host::toolchain::{install_no_std_toolchain, install_toolchain};
 use crate::host::TOOLCHAIN_VERSION;
 use crate::host::{Program, DEFAULT_TARGET_DIR, LINKER_SCRIPT_TEMPLATE};
 use common::constants::{
-    DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE, DEFAULT_MAX_PRIVATE_INPUT_SIZE,
-    DEFAULT_MEMORY_SIZE, DEFAULT_STACK_SIZE, EMULATOR_MEMORY_CAPACITY, RAM_START_ADDRESS,
-    STACK_CANARY_SIZE,
+    DEFAULT_MAX_ADVICE_SIZE, DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE, DEFAULT_MEMORY_SIZE,
+    DEFAULT_STACK_SIZE, EMULATOR_MEMORY_CAPACITY, RAM_START_ADDRESS, STACK_CANARY_SIZE,
 };
 use common::jolt_device::{JoltDevice, MemoryConfig};
 use std::fs::File;
@@ -29,7 +28,7 @@ impl Program {
             memory_size: DEFAULT_MEMORY_SIZE,
             stack_size: DEFAULT_STACK_SIZE,
             max_input_size: DEFAULT_MAX_INPUT_SIZE,
-            max_private_input_size: DEFAULT_MAX_PRIVATE_INPUT_SIZE,
+            max_advice_size: DEFAULT_MAX_ADVICE_SIZE,
             max_output_size: DEFAULT_MAX_OUTPUT_SIZE,
             std: false,
             elf: None,
@@ -48,7 +47,7 @@ impl Program {
         self.set_memory_size(memory_config.memory_size);
         self.set_stack_size(memory_config.stack_size);
         self.set_max_input_size(memory_config.max_input_size);
-        self.set_max_private_input_size(memory_config.max_private_input_size);
+        self.set_max_advice_size(memory_config.max_advice_size);
         self.set_max_output_size(memory_config.max_output_size);
     }
 
@@ -64,8 +63,8 @@ impl Program {
         self.max_input_size = size;
     }
 
-    pub fn set_max_private_input_size(&mut self, size: u64) {
-        self.max_private_input_size = size;
+    pub fn set_max_advice_size(&mut self, size: u64) {
+        self.max_advice_size = size;
     }
 
     pub fn set_max_output_size(&mut self, size: u64) {
@@ -240,11 +239,7 @@ impl Program {
 
     // TODO(moodlezoup): Make this generic over InstructionSet
     #[tracing::instrument(skip_all, name = "Program::trace")]
-    pub fn trace(
-        &mut self,
-        inputs: &[u8],
-        private_inputs: &[u8],
-    ) -> (Vec<Cycle>, Memory, JoltDevice) {
+    pub fn trace(&mut self, inputs: &[u8], advice: &[u8]) -> (Vec<Cycle>, Memory, JoltDevice) {
         self.build(DEFAULT_TARGET_DIR);
         let elf = self.elf.as_ref().unwrap();
         let mut elf_file =
@@ -258,7 +253,7 @@ impl Program {
             memory_size: self.memory_size,
             stack_size: self.stack_size,
             max_input_size: self.max_input_size,
-            max_private_input_size: self.max_private_input_size,
+            max_advice_size: self.max_advice_size,
             max_output_size: self.max_output_size,
             program_size: Some(program_size),
         };
@@ -267,7 +262,7 @@ impl Program {
             &elf_contents,
             self.elf.as_ref(),
             inputs,
-            private_inputs,
+            advice,
             &memory_config,
         )
     }
@@ -286,7 +281,7 @@ impl Program {
             memory_size: self.memory_size,
             stack_size: self.stack_size,
             max_input_size: self.max_input_size,
-            max_private_input_size: self.max_private_input_size,
+            max_advice_size: self.max_advice_size,
             max_output_size: self.max_output_size,
             program_size: Some(program_size),
         };
@@ -301,13 +296,9 @@ impl Program {
         )
     }
 
-    pub fn trace_analyze<F: JoltField>(
-        mut self,
-        inputs: &[u8],
-        private_inputs: &[u8],
-    ) -> ProgramSummary {
+    pub fn trace_analyze<F: JoltField>(mut self, inputs: &[u8], advice: &[u8]) -> ProgramSummary {
         let (bytecode, init_memory_state, _) = self.decode();
-        let (trace, _, io_device) = self.trace(inputs, private_inputs);
+        let (trace, _, io_device) = self.trace(inputs, advice);
 
         ProgramSummary {
             trace,

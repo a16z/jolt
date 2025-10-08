@@ -33,9 +33,7 @@ use crate::{
 pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> {
     opening_claims: Claims<F>,
     commitments: Vec<PCS::Commitment>,
-    pub private_input_commitment: Option<PCS::Commitment>,
-    pub private_input_evaluation: Option<F>,
-    pub private_input_evaluation_output: Option<F>,
+    advice_commitment: Option<PCS::Commitment>,
     proofs: Proofs<F, PCS, FS>,
     pub trace_length: usize,
     ram_K: usize,
@@ -61,11 +59,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
         self.commitments
             .serialize_with_mode(&mut writer, compress)?;
         // Serialize private input fields as Options
-        self.private_input_commitment
-            .serialize_with_mode(&mut writer, compress)?;
-        self.private_input_evaluation
-            .serialize_with_mode(&mut writer, compress)?;
-        self.private_input_evaluation_output
+        self.advice_commitment
             .serialize_with_mode(&mut writer, compress)?;
         self.proofs.serialize_with_mode(&mut writer, compress)?;
         self.trace_length
@@ -79,11 +73,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
     fn serialized_size(&self, compress: Compress) -> usize {
         self.opening_claims.serialized_size(compress)
             + self.commitments.serialized_size(compress)
-            + self.private_input_commitment.serialized_size(compress)
-            + self.private_input_evaluation.serialized_size(compress)
-            + self
-                .private_input_evaluation_output
-                .serialized_size(compress)
+            + self.advice_commitment.serialized_size(compress)
             + self.proofs.serialized_size(compress)
             + self.trace_length.serialized_size(compress)
             + self.ram_K.serialized_size(compress)
@@ -98,8 +88,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> Valid
     fn check(&self) -> Result<(), SerializationError> {
         self.opening_claims.check()?;
         self.commitments.check()?;
-        self.private_input_commitment.check()?;
-        self.private_input_evaluation.check()?;
+        self.advice_commitment.check()?;
         self.proofs.check()?;
         self.trace_length.check()?;
         self.ram_K.check()?;
@@ -125,12 +114,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
         let opening_claims = Claims::deserialize_with_mode(&mut reader, compress, validate)?;
         let commitments =
             Vec::<PCS::Commitment>::deserialize_with_mode(&mut reader, compress, validate)?;
-        let private_input_commitment =
+        let advice_commitment =
             Option::<PCS::Commitment>::deserialize_with_mode(&mut reader, compress, validate)?;
-        let private_input_evaluation =
-            Option::<F>::deserialize_with_mode(&mut reader, compress, validate)?;
-        let private_input_evaluation_output =
-            Option::<F>::deserialize_with_mode(&mut reader, compress, validate)?;
         let proofs = Proofs::<F, PCS, FS>::deserialize_with_mode(&mut reader, compress, validate)?;
         let trace_length = usize::deserialize_with_mode(&mut reader, compress, validate)?;
         let twist_sumcheck_switch_index =
@@ -140,9 +125,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
         Ok(Self {
             opening_claims,
             commitments,
-            private_input_commitment,
-            private_input_evaluation,
-            private_input_evaluation_output,
+            advice_commitment,
             proofs,
             trace_length,
             ram_K,
@@ -161,18 +144,12 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> JoltProof<F
         let trace_length = prover_state.trace.len();
         let ram_K = state_manager.ram_K;
         let twist_sumcheck_switch_index = state_manager.twist_sumcheck_switch_index;
-        let private_input_commitment = state_manager.private_input_commitment;
-
-        let accumulator = prover_state.accumulator.borrow();
-        let private_input_evaluation = accumulator.input_openings.val_eval;
-        let private_input_evaluation_output = accumulator.input_openings.output_eval;
+        let advice_commitment = state_manager.advice_commitment;
 
         Self {
             opening_claims: Claims(openings),
             commitments,
-            private_input_commitment,
-            private_input_evaluation,
-            private_input_evaluation_output,
+            advice_commitment,
             proofs,
             trace_length,
             ram_K,
@@ -196,28 +173,15 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> JoltProof<F
 
         let proofs = Rc::new(RefCell::new(self.proofs));
 
-        // Include the private_input_commitment in the commitments list
-        // let mut all_commitments = self.commitments;
-        // // all_commitments.push(self.private_input_commitment.clone());
         let commitments = Rc::new(RefCell::new(self.commitments));
 
         let transcript = Rc::new(RefCell::new(FS::new(b"Jolt")));
-
-        // Populate the private input openings in the verifier accumulator
-        if let Some(eval) = self.private_input_evaluation {
-            // The opening point will be set later by the verifier
-            opening_accumulator.set_val_eval_opening(Some(eval), None);
-        }
-        if let Some(eval) = self.private_input_evaluation_output {
-            // The opening point will be set later by the verifier
-            opening_accumulator.set_output_eval_opening(Some(eval), None);
-        }
 
         StateManager {
             transcript,
             proofs,
             commitments,
-            private_input_commitment: self.private_input_commitment,
+            advice_commitment: self.advice_commitment,
             program_io,
             ram_K: self.ram_K,
             twist_sumcheck_switch_index: self.twist_sumcheck_switch_index,
@@ -298,6 +262,7 @@ impl CanonicalSerialize for OpeningId {
                 (*sumcheck_id as u8).serialize_with_mode(&mut writer, compress)?;
                 virtual_polynomial.serialize_with_mode(&mut writer, compress)
             }
+            OpeningId::Advice => 2u8.serialize_with_mode(&mut writer, compress),
         }
     }
 
@@ -311,6 +276,7 @@ impl CanonicalSerialize for OpeningId {
                 // +1 for OpeningIdVariant, +1 for sumcheck_id (which is a u8)
                 virtual_polynomial.serialized_size(compress) + 2
             }
+            OpeningId::Advice => 0,
         }
     }
 }
