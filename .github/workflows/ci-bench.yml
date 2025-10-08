@@ -19,31 +19,40 @@ jobs:
     name: Performance benchmarks
     runs-on: ubuntu-24.04
     steps:
-    - uses: actions/checkout@v4
-    - uses: actions-rust-lang/setup-rust-toolchain@v1
-    - uses: actions/cache@v4 # From: https://github.com/actions/cache/blob/main/examples.md#rust---cargo
-      with:
-        path: |
-          ~/.cargo/bin/
-          ~/.cargo/registry/index/
-          ~/.cargo/registry/cache/
-          ~/.cargo/git/db/
-          target/
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions/cache@v4 # From: https://github.com/actions/cache/blob/main/examples.md#rust---cargo
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-    - name: Run benchmark
-      run: |
-        cd examples
-        ./run_ci_benchmarks.sh
-        cd ..
+      - name: Run benchmark
+        run: |
+          cd examples
+          ./run_ci_benchmarks.sh
+          cd ..
 
-    - name: Publish benchmark result
-      uses: benchmark-action/github-action-benchmark@v1
-      with:
-        name: Benchmarks
-        tool: 'customSmallerIsBetter'
-        output-file-path: examples/benchmark_results.json
-        # Access token to deploy GitHub Pages branch
-        github-token: ${{ secrets.GITHUB_TOKEN }}
-        # Push and deploy GitHub pages branch automatically
-        auto-push: true
+      - name: Publish benchmark result
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          name: Benchmarks
+          tool: "customSmallerIsBetter"
+          output-file-path: examples/benchmark_results.json
+          # Access token to deploy GitHub Pages branch
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          # Push and deploy GitHub pages branch automatically
+          auto-push: true
+
+  scaling-benchmarks:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Run scaling benchmarks
+        run: |
+          ./scripts/jolt_benchmarks.sh 18 20
