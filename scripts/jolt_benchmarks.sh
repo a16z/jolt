@@ -127,9 +127,11 @@ fi
 
 # Consolidate results
 echo "benchmark_name,scale,prover_time_s,trace_length,proving_hz,proof_size,proof_size_compressed" > benchmark-runs/results/timings.csv
+
 for csv_file in benchmark-runs/results/*_*.csv; do
-    [ -f "$csv_file" ] && cat "$csv_file" && echo
-done >> benchmark-runs/results/timings.csv
+    [ -f "$csv_file" ] && cat "$csv_file" >> benchmark-runs/results/timings.csv
+done
+
 
 # Generate summary and plots
 if [ -f "benchmark-runs/results/timings.csv" ]; then
