@@ -36,9 +36,8 @@ struct ProfileArgs {
 
 #[derive(Args, Debug)]
 struct BenchmarkArgs {
-    /// Benchmark type
-    #[clap(long, value_enum)]
-    name: BenchType,
+    #[clap(flatten)]
+    profile_args: ProfileArgs,
 
     /// Max trace length as 2^scale
     #[clap(short, long)]
@@ -47,10 +46,6 @@ struct BenchmarkArgs {
     /// Target specific cycle count (optional, defaults to 90% of 2^scale)
     #[clap(short, long)]
     target_trace_size: Option<usize>,
-
-    /// Output formats
-    #[clap(short, long, value_enum)]
-    format: Option<Vec<Format>>,
 }
 
 #[derive(Debug, Clone, ValueEnum, PartialEq)]
@@ -75,7 +70,7 @@ fn setup_tracing(formats: Option<Vec<Format>>, trace_name: &str) -> Vec<Box<dyn 
     if std::env::var("PPROF_PREFIX").is_err() {
         std::env::set_var(
             "PPROF_PREFIX",
-            format!("benchmark-runs/pprof/{}_", args.name),
+            format!("benchmark-runs/pprof/{}_", trace_name),
         );
     }
 
@@ -152,12 +147,12 @@ fn trace(args: ProfileArgs) {
 }
 
 fn run_benchmark(args: BenchmarkArgs) {
-    let bench_name = normalize_bench_name(&args.name.to_string());
+    let bench_name = normalize_bench_name(&args.profile_args.name.to_string());
     let trace_name = format!("{}_{}", bench_name, args.scale);
-    let _guards = setup_tracing(args.format, &trace_name);
+    let _guards = setup_tracing(args.profile_args.format, &trace_name);
 
     // Call master_benchmark with parameters
-    for (span, bench) in master_benchmark(args.name, args.scale, args.target_trace_size).into_iter()
+    for (span, bench) in master_benchmark(args.profile_args.name, args.scale, args.target_trace_size).into_iter()
     {
         span.in_scope(|| {
             bench();
