@@ -119,6 +119,7 @@ impl<F: JoltField> RLCPolynomial<F> {
         &self,
         bases: &[G::Affine],
     ) -> Vec<JoltGroupWrapper<G>> {
+        println!("  Hello from RLC poly");
         let num_rows = DoryGlobals::get_num_rows();
         tracing::debug!("Committing to RLC polynomial with {num_rows} rows");
         let row_len = DoryGlobals::get_num_columns();
@@ -129,21 +130,27 @@ impl<F: JoltField> RLCPolynomial<F> {
 
         let mut row_commitments = vec![JoltGroupWrapper(G::zero()); num_rows];
 
+        println!("  Init row_commitments");
+
         let dense_poly_bases: Vec<_> = bases
             .iter()
-            .copied()
             .take(row_len)
             .step_by(row_len / cycles_per_row)
+            .copied()
             .collect();
-        // Compute the row commitments for dense submatrix
-        self.dense_rlc
-            .par_chunks(cycles_per_row)
-            .zip(row_commitments.par_iter_mut())
-            .for_each(|(dense_row, commitment)| {
-                let msm_result: G =
-                    VariableBaseMSM::msm_field_elements(&dense_poly_bases, dense_row).unwrap();
-                *commitment = JoltGroupWrapper(msm_result)
-            });
+        println!("  Collect dense_poly_bases");
+        println!("  dense_poly_bases.len() = {}", dense_poly_bases.len());
+        // // Compute the row commitments for dense submatrix
+        // self.dense_rlc
+        //     .par_chunks(cycles_per_row)
+        //     .zip(row_commitments.par_iter_mut())
+        //     .for_each(|(dense_row, commitment)| {
+        //         let msm_result: G =
+        //             VariableBaseMSM::msm_field_elements(&dense_poly_bases, dense_row).unwrap();
+        //         *commitment = JoltGroupWrapper(msm_result)
+        //     });
+
+        // println!("  Done with dense submatrix");
 
         // Compute the row commitments for one-hot polynomials
         for (coeff, poly) in self.one_hot_rlc.iter() {
@@ -199,24 +206,31 @@ impl<F: JoltField> RLCPolynomial<F> {
     ) -> Vec<JoltFieldWrapper<F>> {
         let left_vec: &[F] =
             unsafe { std::slice::from_raw_parts(left_vec.as_ptr() as *const F, left_vec.len()) };
-        let num_columns = DoryGlobals::get_num_columns();
+
+        let num_rows = DoryGlobals::get_num_rows();
+        let row_len = DoryGlobals::get_num_columns();
+        let T = DoryGlobals::get_T();
+        assert!(T > num_rows, "T = {T}, why are you doing this",);
+        let cycles_per_row = T / num_rows;
+
+        let mut result: Vec<JoltFieldWrapper<F>> = vec![JoltFieldWrapper(F::zero()); row_len]; // row_len == # columns
 
         // Compute the vector-matrix product for dense submatrix
-        // TODO(moodlezoup): better parallelism
-        let mut result: Vec<_> = (0..num_columns)
-            .into_par_iter()
-            .map(|col_index| {
-                JoltFieldWrapper(
-                    self.dense_rlc
-                        .iter()
-                        .skip(col_index)
-                        .step_by(num_columns)
-                        .zip(left_vec.iter())
-                        .map(|(&a, &b)| -> F { a * b })
-                        .sum::<F>(),
-                )
-            })
-            .collect();
+        result
+            .par_iter_mut()
+            .step_by(row_len / cycles_per_row)
+            .enumerate()
+            .for_each(|(offset, dot_product_result)| {
+                (*dot_product_result).0 = self
+                    .dense_rlc
+                    .par_iter()
+                    .skip(offset)
+                    .step_by(cycles_per_row)
+                    .zip(left_vec.par_iter())
+                    .map(|(&a, &b)| -> F { a * b })
+                    .sum::<F>();
+            });
+
         let result_slice: &mut [F] =
             unsafe { std::slice::from_raw_parts_mut(result.as_mut_ptr() as *mut F, result.len()) };
 
