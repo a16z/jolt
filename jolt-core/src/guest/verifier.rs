@@ -1,4 +1,7 @@
 use crate::field::JoltField;
+#[cfg(not(feature = "streaming"))]
+use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+#[cfg(feature = "streaming")]
 use crate::poly::commitment::commitment_scheme::StreamingCommitmentScheme;
 
 use crate::guest::program::Program;
@@ -30,7 +33,12 @@ pub fn preprocess(
     JoltVerifierPreprocessing::from(&prover_preprocessing)
 }
 
-pub fn verify<F, PCS, FS>(
+pub fn verify<
+    F,
+    #[cfg(feature = "streaming")] PCS: StreamingCommitmentScheme<Field = F>,
+    #[cfg(not(feature = "streaming"))] PCS: CommitmentScheme<Field = F>,
+    FS,
+>(
     inputs_bytes: &[u8],
     outputs_bytes: &[u8],
     proof: JoltProof<F, PCS, FS>,
@@ -38,7 +46,6 @@ pub fn verify<F, PCS, FS>(
 ) -> Result<(), ProofVerifyError>
 where
     F: JoltField,
-    PCS: StreamingCommitmentScheme<Field = F>,
     FS: Transcript,
     JoltRV64IMAC: Jolt<F, PCS, FS>,
 {

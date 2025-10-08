@@ -1,6 +1,8 @@
 #![allow(static_mut_refs)]
 
-use super::commitment_scheme::{CommitmentScheme, StreamingCommitmentScheme};
+use super::commitment_scheme::CommitmentScheme;
+#[cfg(feature = "streaming")]
+use super::commitment_scheme::StreamingCommitmentScheme;
 use crate::transcripts::{AppendToTranscript, Transcript};
 use crate::{
     field::JoltField,
@@ -1253,6 +1255,8 @@ impl CommitmentScheme for DoryCommitmentScheme {
         b"dory_commitment_scheme"
     }
 }
+
+#[cfg(feature = "streaming")]
 #[derive(Clone, Debug)]
 pub struct StreamingDoryCommitment<'a, E: DoryPairing> {
     // Setup
@@ -1262,6 +1266,7 @@ pub struct StreamingDoryCommitment<'a, E: DoryPairing> {
     K: Option<usize>,
 }
 
+#[cfg(feature = "streaming")]
 impl StreamingCommitmentScheme for DoryCommitmentScheme {
     type State<'a> = StreamingDoryCommitment<'a, JoltBn254>;
     type ChunkState = Vec<JoltG1Wrapper>; // A chunk's state is the commitment to the row.

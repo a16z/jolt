@@ -1,5 +1,8 @@
 use super::program::Program;
 use crate::field::JoltField;
+#[cfg(not(feature = "streaming"))]
+use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+#[cfg(feature = "streaming")]
 use crate::poly::commitment::commitment_scheme::StreamingCommitmentScheme;
 use crate::poly::commitment::dory::DoryCommitmentScheme;
 use crate::transcripts::Transcript;
@@ -25,7 +28,12 @@ pub fn preprocess(
 
 #[allow(clippy::type_complexity)]
 #[cfg(feature = "prover")]
-pub fn prove<F, PCS, FS>(
+pub fn prove<
+    F,
+    #[cfg(feature = "streaming")] PCS: StreamingCommitmentScheme<Field = F>,
+    #[cfg(not(feature = "streaming"))] PCS: CommitmentScheme<Field = F>,
+    FS,
+>(
     guest: &Program,
     inputs_bytes: &[u8],
     output_bytes: &mut [u8],
@@ -37,7 +45,6 @@ pub fn prove<F, PCS, FS>(
 )
 where
     F: JoltField,
-    PCS: StreamingCommitmentScheme<Field = F>,
     FS: Transcript,
     JoltRV64IMAC: Jolt<F, PCS, FS>,
 {

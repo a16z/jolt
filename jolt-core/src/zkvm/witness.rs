@@ -13,13 +13,12 @@ use std::sync::LazyLock;
 use strum::IntoEnumIterator;
 use tracer::instruction::Cycle;
 
+use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+#[cfg(feature = "streaming")]
+use crate::poly::commitment::commitment_scheme::StreamingCommitmentScheme;
 use crate::{
     field::JoltField,
-    poly::{
-        commitment::commitment_scheme::{CommitmentScheme, StreamingCommitmentScheme},
-        multilinear_polynomial::MultilinearPolynomial,
-        one_hot_polynomial::OneHotPolynomial,
-    },
+    poly::{multilinear_polynomial::MultilinearPolynomial, one_hot_polynomial::OneHotPolynomial},
     utils::math::Math,
     zkvm::{
         instruction_lookups, lookup_table::LookupTables, ram::remap_address,
@@ -667,6 +666,7 @@ impl CommittedPolynomial {
         }
     }
 
+    #[cfg(feature = "streaming")]
     pub fn generate_witness_and_commit_row<'a, F: JoltField, PCS>(
         &self,
         pcs: &PCS::State<'a>,
