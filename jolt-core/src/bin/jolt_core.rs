@@ -148,7 +148,7 @@ fn trace(args: ProfileArgs) {
 
 fn run_benchmark(args: BenchmarkArgs) {
     let scale = match (args.scale, args.target_trace_size) {
-        (Some(s), _) => s,  // Scale provided, use it
+        (Some(s), _) => s, // Scale provided, use it
         (None, Some(target)) => target.next_power_of_two().trailing_zeros() as usize,
         (None, None) => {
             eprintln!("Error: Must provide either --scale or --target-trace-size");
@@ -157,7 +157,7 @@ fn run_benchmark(args: BenchmarkArgs) {
     };
 
     let bench_name = normalize_bench_name(&args.profile_args.name.to_string());
-    let trace_name = format!("{}_{}", bench_name, scale);
+    let trace_name = format!("{bench_name}_{scale}");
     let _guards = setup_tracing(args.profile_args.format, &trace_name);
 
     // Call master_benchmark with parameters
