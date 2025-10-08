@@ -26,7 +26,7 @@ use crate::{
     },
 };
 
-use super::instruction::{CircuitFlags, InstructionFlags, LookupQuery};
+use super::instruction::{CircuitFlags, LookupQuery};
 
 struct SharedWitnessData(UnsafeCell<WitnessData>);
 unsafe impl Sync for SharedWitnessData {}
@@ -270,8 +270,7 @@ impl CommittedPolynomial {
                 let cycle = &trace[i];
                 let batch_ref = unsafe { &mut *batch_cell.0.get() };
                 let (left, right) = LookupQuery::<XLEN>::to_instruction_inputs(cycle);
-                let circuit_flags = cycle.instruction().circuit_flags();
-                let (rd_write_flag, pre_rd, post_rd) = cycle.rd_write();
+                let (_, pre_rd, post_rd) = cycle.rd_write();
 
                 batch_ref.left_instruction_input[i] = left;
                 batch_ref.right_instruction_input[i] = right;

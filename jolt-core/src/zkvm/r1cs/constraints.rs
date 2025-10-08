@@ -81,9 +81,6 @@ impl LC {
     }
 }
 
-// =============================================================================
-// CONSTRAINT BUILDER FUNCTIONS
-// =============================================================================
 /// Creates: condition * (left - right) == 0
 pub const fn constraint_eq_conditional_lc(condition: LC, left: LC, right: LC) -> Constraint {
     Constraint::new(
@@ -95,10 +92,6 @@ pub const fn constraint_eq_conditional_lc(condition: LC, left: LC, right: LC) ->
         LC::zero(),
     )
 }
-
-// =============================================================================
-// Named constraints with minimal Cz marker
-// =============================================================================
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, strum_macros::EnumIter)]
 pub enum ConstraintName {
@@ -407,7 +400,6 @@ pub static UNIFORM_R1CS: [NamedConstraint; NUM_R1CS_CONSTRAINTS] = [
     // if Rd != 0 && WriteLookupOutputToRD {
     //     assert!(RdWriteValue == LookupOutput)
     // }
-    // Note: WriteLookupOutputToRD = Rd * WriteLookupOutputToRD_flag is virtualized via product sumcheck
     r1cs_eq_conditional!(
         name: ConstraintName::RdWriteEqLookupIfWriteLookupToRd,
         if { { JoltR1CSInputs::WriteLookupOutputToRD } }
@@ -420,7 +412,6 @@ pub static UNIFORM_R1CS: [NamedConstraint; NUM_R1CS_CONSTRAINTS] = [
     //          assert!(RdWriteValue == UnexpandedPC + 2)
     //     }
     // }
-    // Note: WritePCtoRD = Rd * Jump is virtualized via product sumcheck
     r1cs_eq_conditional!(
         name: ConstraintName::RdWriteEqPCPlusConstIfWritePCtoRD,
         if { { JoltR1CSInputs::WritePCtoRD } }
@@ -531,11 +522,11 @@ pub fn eval_az_by_name<F: JoltField>(c: &NamedConstraint, row: &R1CSCycleInputs)
         }
         // Az: Assert flag (0/1)
         N::AssertLookupOne => row.flags[CircuitFlags::Assert].into(),
-        // Az: WriteLookupOutputToRD indicator (0/1) - virtualized via product sumcheck
+        // Az: WriteLookupOutputToRD indicator (0/1)
         N::RdWriteEqLookupIfWriteLookupToRd => {
             I8OrI96::from_i8(row.write_lookup_output_to_rd_addr as i8)
         }
-        // Az: WritePCtoRD indicator (0/1) - virtualized via product sumcheck
+        // Az: WritePCtoRD indicator (0/1)
         N::RdWriteEqPCPlusConstIfWritePCtoRD => I8OrI96::from_i8(row.write_pc_to_rd_addr as i8),
         // Az: ShouldJump indicator (0/1)
         N::NextUnexpPCEqLookupIfShouldJump => row.should_jump.into(),
@@ -653,10 +644,6 @@ pub fn eval_bz_by_name<F: JoltField>(c: &NamedConstraint, row: &R1CSCycleInputs)
         }
     }
 }
-
-// =============================================================================
-// Batch evaluation functions
-// =============================================================================
 
 /// Batched evaluation using a fully materialized R1CS cycle inputs. This avoids any repeated
 /// reads from the trace or bytecode and computes all constraints.

@@ -177,12 +177,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for PCSumcheck<F> {
                     .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
 
                 [
-                    // eval at 0: (UnexpandedPC + γ·PC) · eq(r_cycle) + γ²·(1 - IsNoop) · eq(r_product)
                     (unexpanded_pc_evals[0] + self.gamma * pc_evals[0]) * eq_r_cycle_evals[0]
                         + self.gamma_squared
                             * (F::one() - is_noop_evals[0])
                             * eq_r_product_evals[0],
-                    // eval at 2: (UnexpandedPC + γ·PC) · eq(r_cycle) + γ²·(1 - IsNoop) · eq(r_product)
                     (unexpanded_pc_evals[1] + self.gamma * pc_evals[1]) * eq_r_cycle_evals[1]
                         + self.gamma_squared
                             * (F::one() - is_noop_evals[1])
