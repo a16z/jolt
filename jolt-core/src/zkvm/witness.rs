@@ -189,17 +189,17 @@ impl AllCommittedPolynomials {
     }
 }
 
-// impl Drop for AllCommittedPolynomials {
-//     fn drop(&mut self) {
-//         println!("Uninitializing ALL_COMMITTED_POLYNOMIALS");
-//         unsafe {
-//             ALL_COMMITTED_POLYNOMIALS
-//                 .take()
-//                 .expect("ALL_COMMITTED_POLYNOMIALS is uninitialized");
-//         }
-//     }
-// }
-//
+impl Drop for AllCommittedPolynomials {
+    fn drop(&mut self) {
+        println!("Uninitializing ALL_COMMITTED_POLYNOMIALS");
+        unsafe {
+            ALL_COMMITTED_POLYNOMIALS
+                .take()
+                .expect("ALL_COMMITTED_POLYNOMIALS is uninitialized");
+        }
+    }
+}
+
 impl CommittedPolynomial {
     pub fn len() -> usize {
         unsafe {

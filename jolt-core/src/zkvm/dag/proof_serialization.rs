@@ -62,8 +62,6 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
             .serialize_with_mode(&mut writer, compress)?;
         self.twist_sumcheck_switch_index
             .serialize_with_mode(&mut writer, compress)?;
-
-        // drop(guard);
         Ok(())
     }
     fn serialized_size(&self, compress: Compress) -> usize {
