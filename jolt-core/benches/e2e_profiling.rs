@@ -97,7 +97,6 @@ pub fn master_benchmark(
     }
 
     let task = move || {
-        println!("\n=== Running benchmark at scale 2^{bench_scale} ===");
         let max_trace_length = 1 << bench_scale;
         let bench_target =
             target_trace_size.unwrap_or(((1 << bench_scale) as f64 * SAFETY_MARGIN) as usize);
@@ -131,10 +130,11 @@ pub fn master_benchmark(
             BenchType::Sha3 => panic!("Use sha3-chain instead"),
         };
 
+        tracing::info!("Running {bench_name} benchmark at scale 2^{bench_scale}");
+
         // Derive names from canonical bench_name
         let guest_name = format!("{bench_name}-guest");
         // Generate input and run benchmark
-        println!("Running {bench_name} benchmark at scale 2^{bench_scale}");
         let input = input_fn(bench_target);
         let (duration, proof_size, proof_size_comp, trace_length) = prove_example_with_trace(
             &guest_name,
@@ -146,7 +146,9 @@ pub fn master_benchmark(
 
         let proving_hz = trace_length as f64 / duration.as_secs_f64();
         println!(
-            "  Prover completed in {:.2}s ({:.1} kHz)",
+            "{} (2^{}): Prover completed in {:.2}s ({:.1} kHz)",
+            bench_name,
+            bench_scale,
             duration.as_secs_f64(),
             proving_hz / 1000.0,
         );

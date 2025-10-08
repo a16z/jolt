@@ -68,9 +68,7 @@ TOTAL_FAILED=0
 for scale in $(seq $MIN_TRACE_LENGTH $MAX_TRACE_LENGTH); do
     echo "=== Running benchmarks at scale 2^$scale ==="
     
-    for bench in $BENCHMARKS; do
-        echo ">>> $bench at scale 2^$scale"
-        
+    for bench in $BENCHMARKS; do        
         # Check if we should skip this benchmark (resume mode)
         RESULT_FILE="benchmark-runs/results/${bench}_${scale}.csv"
         if [ "$RESUME" = true ] && [ -f "$RESULT_FILE" ]; then
@@ -95,8 +93,6 @@ for scale in $(seq $MIN_TRACE_LENGTH $MAX_TRACE_LENGTH); do
         else
             ((TOTAL_RUN++)) || true
         fi
-        
-        echo ""
     done
     
     echo ""
