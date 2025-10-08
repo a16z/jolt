@@ -134,7 +134,7 @@ impl AllCommittedPolynomials {
                     .iter()
                     .filter(|p| matches!(p, CommittedPolynomial::BytecodeRa(_)))
                     .count();
-                
+
                 if existing_ram_d == ram_d && existing_bytecode_d == bytecode_d {
                     // Parameters match, reuse existing polynomials
                     return AllCommittedPolynomials();

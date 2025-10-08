@@ -152,7 +152,8 @@ fn run_benchmark(args: BenchmarkArgs) {
     let _guards = setup_tracing(args.profile_args.format, &trace_name);
 
     // Call master_benchmark with parameters
-    for (span, bench) in master_benchmark(args.profile_args.name, args.scale, args.target_trace_size).into_iter()
+    for (span, bench) in
+        master_benchmark(args.profile_args.name, args.scale, args.target_trace_size).into_iter()
     {
         span.in_scope(|| {
             bench();
