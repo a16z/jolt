@@ -276,7 +276,7 @@ where
     fn stage2_prover_instances(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstance<F>>> {
+    ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
         let raf_evaluation = RafEvaluationSumcheck::new_prover(state_manager);
 
         let read_write_checking = RamReadWriteChecking::new_prover(
@@ -307,7 +307,7 @@ where
     fn stage2_verifier_instances(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstance<F>>> {
+    ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
         let raf_evaluation = RafEvaluationSumcheck::new_verifier(state_manager);
         let read_write_checking = RamReadWriteChecking::new_verifier(state_manager);
         let output_check = OutputSumcheck::new_verifier(state_manager);
@@ -322,7 +322,7 @@ where
     fn stage3_prover_instances(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstance<F>>> {
+    ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
         let val_evaluation = ValEvaluationSumcheck::new_prover(
             self.initial_memory_state.as_ref().unwrap(),
             state_manager,
@@ -347,7 +347,7 @@ where
     fn stage3_verifier_instances(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstance<F>>> {
+    ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
         let val_evaluation = ValEvaluationSumcheck::new_verifier(
             self.initial_memory_state.as_ref().unwrap(),
             state_manager,
@@ -368,7 +368,7 @@ where
     fn stage4_prover_instances(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstance<F>>> {
+    ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
         let hamming_weight = HammingWeightSumcheck::new_prover(state_manager);
         let booleanity = BooleanitySumcheck::new_prover(state_manager);
         let ra_virtual = RaSumcheck::new_prover(state_manager);
@@ -390,7 +390,7 @@ where
     fn stage4_verifier_instances(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstance<F>>> {
+    ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
         let hamming_weight = HammingWeightSumcheck::new_verifier(state_manager);
         let booleanity = BooleanitySumcheck::new_verifier(state_manager);
         let ra_virtual = RaSumcheck::new_verifier(state_manager);

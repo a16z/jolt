@@ -15,6 +15,34 @@ The above command will output a JSON file in the workspace rootwith a name `trac
 
 ![perfetto](../../imgs/perfetto.png)
 
+### Fine-grained CPU profiling with pprof
+
+When tracing is insufficiently detailed, you can enable [pprof](https://github.com/google/pprof) for fine-grained CPU profiling. While execution tracing shows you the high-level stages and their durations (based on manually instrumented code), pprof automatically samples your entire program at the function level to capture each function call including in dependencies. This can help reveal performance bottlenecks that tracing might miss, such as unexpected hotspots in serialization, memory allocation, or cryptographic operations.
+
+To enable pprof profiling, add the `--features pprof` flag:
+
+```cargo run --release --features pprof -p jolt-core profile --name sha3 --format chrome```
+
+This will generate multiple `.pb` profile files in `benchmark-runs/pprof/`, one for each major stage.
+
+To view the proving profile in your browser using [pprof](https://github.com/google/pprof), run:
+
+```go tool pprof -http=:8080 target/release/jolt-core benchmark-runs/pprof/sha3_prove.pb```
+
+This will start a web server at `http://localhost:8080` where you can explore:
+
+- **Flame graphs** - Visual representation of call stacks and time spent
+- **Top functions** - List of functions consuming the most CPU time
+- **Source view** - Line-by-line breakdown of CPU usage
+- **Call graph** - Function call relationships
+
+![pprof-top](../../imgs/pprof-top.png)
+![pprof-flamegraph](../../imgs/pprof-flamegraph.png)
+
+You may need to increase the sampling frequency to get a more detailed profile for shorter traces or decrease it for longer tracesto reduce overhead.You may customize the sampling frequency using the `PPROF_FREQ` environment variable (default: 100 Hz):
+
+```PPROF_FREQ=1000 cargo run --release --features pprof -p jolt-core profile --name sha3 --format chrome```
+
 ## Memory profiling
 
 Jolt uses [allocative](https://github.com/facebookexperimental/allocative) for memory profiling.

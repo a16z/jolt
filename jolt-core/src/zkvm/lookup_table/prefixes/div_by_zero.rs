@@ -1,17 +1,24 @@
-use crate::{field::JoltField, utils::lookup_bits::LookupBits};
+use crate::{
+    field::{ChallengeFieldOps, FieldChallengeOps, JoltField},
+    utils::lookup_bits::LookupBits,
+};
 
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 
 pub enum DivByZeroPrefix {}
 
 impl<F: JoltField> SparseDensePrefix<F> for DivByZeroPrefix {
-    fn prefix_mle(
+    fn prefix_mle<C>(
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: Option<F>,
+        r_x: Option<C>,
         c: u32,
         mut b: LookupBits,
         _: usize,
-    ) -> F {
+    ) -> F
+    where
+        C: ChallengeFieldOps<F>,
+        F: FieldChallengeOps<C>,
+    {
         let (divisor, quotient) = b.uninterleave();
         // If low-order bits of divisor are not 0s or low-order bits of quotient are not
         // 1s, short-circuit and return 0.
@@ -32,12 +39,16 @@ impl<F: JoltField> SparseDensePrefix<F> for DivByZeroPrefix {
         result
     }
 
-    fn update_prefix_checkpoint(
+    fn update_prefix_checkpoint<C>(
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: F,
-        r_y: F,
+        r_x: C,
+        r_y: C,
         _: usize,
-    ) -> PrefixCheckpoint<F> {
+    ) -> PrefixCheckpoint<F>
+    where
+        C: ChallengeFieldOps<F>,
+        F: FieldChallengeOps<C>,
+    {
         // checkpoint *= (1 - r_x) * r_y
         let updated = checkpoints[Prefixes::DivByZero].unwrap_or(F::one()) * (F::one() - r_x) * r_y;
         Some(updated).into()

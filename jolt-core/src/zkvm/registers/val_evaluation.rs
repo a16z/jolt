@@ -54,8 +54,8 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
         // The opening point is r_address || r_cycle
         let r_address_len = REGISTER_COUNT.ilog2() as usize;
         let (r_address_slice, r_cycle_slice) = opening_point.split_at(r_address_len);
-        let r_address: Vec<F> = r_address_slice.into();
-        let r_cycle: Vec<F> = r_cycle_slice.into();
+        let r_address: Vec<F::Challenge> = r_address_slice.into();
+        let r_cycle: Vec<F::Challenge> = r_cycle_slice.into();
 
         let inc = CommittedPolynomial::RdInc.generate_witness(preprocessing, trace);
 
@@ -111,7 +111,7 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
+impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ValEvaluationSumcheck<F> {
     fn degree(&self) -> usize {
         3
     }
@@ -169,7 +169,7 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
     }
 
     #[tracing::instrument(skip_all, name = "RegistersValEvaluationSumcheck::bind")]
-    fn bind(&mut self, r_j: F, _round: usize) {
+    fn bind(&mut self, r_j: F::Challenge, _round: usize) {
         if let Some(prover_state) = &mut self.prover_state {
             [
                 &mut prover_state.inc,
@@ -184,7 +184,7 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
     fn expected_output_claim(
         &self,
         accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
-        r: &[F],
+        r: &[F::Challenge],
     ) -> F {
         let accumulator = accumulator.as_ref().unwrap();
         let (opening_point, _) = accumulator.borrow().get_virtual_polynomial_opening(
@@ -215,13 +215,17 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
         inc_claim * wa_claim * lt_eval
     }
 
-    fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(
+        &self,
+        opening_point: &[F::Challenge],
+    ) -> OpeningPoint<BIG_ENDIAN, F> {
         OpeningPoint::new(opening_point.to_vec())
     }
 
     fn cache_openings_prover(
         &self,
         accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
+        transcript: &mut T,
         r_cycle: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         let prover_state = self
@@ -240,6 +244,7 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
 
         // Append claims to accumulator
         accumulator.borrow_mut().append_dense(
+            transcript,
             vec![CommittedPolynomial::RdInc],
             SumcheckId::RegistersValEvaluation,
             r_cycle.r.clone(),
@@ -248,6 +253,7 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
 
         let r = [r_address.r.as_slice(), r_cycle.r.as_slice()].concat();
         accumulator.borrow_mut().append_virtual(
+            transcript,
             VirtualPolynomial::RdWa,
             SumcheckId::RegistersValEvaluation,
             OpeningPoint::new(r),
@@ -258,6 +264,7 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
     fn cache_openings_verifier(
         &self,
         accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
+        transcript: &mut T,
         r_cycle: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         let (opening_point, _) = accumulator.borrow().get_virtual_polynomial_opening(
@@ -268,6 +275,7 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
 
         // Append claims to accumulator
         accumulator.borrow_mut().append_dense(
+            transcript,
             vec![CommittedPolynomial::RdInc],
             SumcheckId::RegistersValEvaluation,
             r_cycle.r.clone(),
@@ -275,6 +283,7 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
 
         let r = [r_address.r.as_slice(), r_cycle.r.as_slice()].concat();
         accumulator.borrow_mut().append_virtual(
+            transcript,
             VirtualPolynomial::RdWa,
             SumcheckId::RegistersValEvaluation,
             OpeningPoint::new(r),

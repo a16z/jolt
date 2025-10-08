@@ -1,4 +1,7 @@
-use crate::{field::JoltField, utils::lookup_bits::LookupBits};
+use crate::{
+    field::{ChallengeFieldOps, FieldChallengeOps, JoltField},
+    utils::lookup_bits::LookupBits,
+};
 use allocative::Allocative;
 use lsb::LsbPrefix;
 use negative_divisor_equals_remainder::NegativeDivisorEqualsRemainderPrefix;
@@ -104,26 +107,31 @@ pub trait SparseDensePrefix<F: JoltField>: 'static + Sync {
     /// The remaining variables of the prefix are captured by `b`. We sum
     /// over these variables as they range over the Boolean hypercube, so
     /// they can be represented by a single bitvector.
-    fn prefix_mle(
+    fn prefix_mle<C>(
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: Option<F>,
+        r_x: Option<C>,
         c: u32,
         b: LookupBits,
         j: usize,
-    ) -> F;
-
+    ) -> F
+    where
+        C: ChallengeFieldOps<F>,
+        F: FieldChallengeOps<C>;
     /// Every two rounds of sumcheck, we update the "checkpoint" value for each
     /// prefix, incorporating the two random challenges `r_x` and `r_y` received
     /// since the last update.
     /// `j` is the sumcheck round index.
     /// A checkpoint update may depend on the values of the other prefix checkpoints,
     /// so we pass in all such `checkpoints` to this function.
-    fn update_prefix_checkpoint(
+    fn update_prefix_checkpoint<C>(
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: F,
-        r_y: F,
+        r_x: C,
+        r_y: C,
         j: usize,
-    ) -> PrefixCheckpoint<F>;
+    ) -> PrefixCheckpoint<F>
+    where
+        C: ChallengeFieldOps<F>,
+        F: FieldChallengeOps<C>;
 }
 
 /// An enum containing all prefixes used by Jolt's instruction lookup tables.
@@ -224,14 +232,18 @@ impl Prefixes {
     /// The remaining variables of the prefix are captured by `b`. We sum
     /// over these variables as they range over the Boolean hypercube, so
     /// they can be represented by a single bitvector.
-    pub fn prefix_mle<const XLEN: usize, F: JoltField>(
+    pub fn prefix_mle<const XLEN: usize, F, C>(
         &self,
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: Option<F>,
+        r_x: Option<C>,
         c: u32,
         b: LookupBits,
         j: usize,
-    ) -> PrefixEval<F> {
+    ) -> PrefixEval<F>
+    where
+        C: ChallengeFieldOps<F>,
+        F: JoltField + FieldChallengeOps<C>,
+    {
         let eval = match self {
             Prefixes::LowerWord => LowerWordPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::LowerHalfWord => {
@@ -326,12 +338,15 @@ impl Prefixes {
     /// since the last update.
     /// This function updates all the prefix checkpoints.
     #[tracing::instrument(skip_all)]
-    pub fn update_checkpoints<const XLEN: usize, F: JoltField>(
+    pub fn update_checkpoints<const XLEN: usize, F, C>(
         checkpoints: &mut [PrefixCheckpoint<F>],
-        r_x: F,
-        r_y: F,
+        r_x: C,
+        r_y: C,
         j: usize,
-    ) {
+    ) where
+        C: ChallengeFieldOps<F>,
+        F: JoltField + FieldChallengeOps<C>,
+    {
         debug_assert_eq!(checkpoints.len(), Self::COUNT);
         let previous_checkpoints = checkpoints.to_vec();
         checkpoints
@@ -339,8 +354,12 @@ impl Prefixes {
             .enumerate()
             .for_each(|(index, new_checkpoint)| {
                 let prefix: Self = FromPrimitive::from_u8(index as u8).unwrap();
-                *new_checkpoint =
-                    prefix.update_prefix_checkpoint::<XLEN, F>(&previous_checkpoints, r_x, r_y, j);
+                *new_checkpoint = prefix.update_prefix_checkpoint::<XLEN, F, C>(
+                    &previous_checkpoints,
+                    r_x,
+                    r_y,
+                    j,
+                );
             });
     }
 
@@ -350,13 +369,17 @@ impl Prefixes {
     /// `j` is the sumcheck round index.
     /// A checkpoint update may depend on the values of the other prefix checkpoints,
     /// so we pass in all such `checkpoints` to this function.
-    fn update_prefix_checkpoint<const XLEN: usize, F: JoltField>(
+    fn update_prefix_checkpoint<const XLEN: usize, F, C>(
         &self,
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: F,
-        r_y: F,
+        r_x: C,
+        r_y: C,
         j: usize,
-    ) -> PrefixCheckpoint<F> {
+    ) -> PrefixCheckpoint<F>
+    where
+        C: ChallengeFieldOps<F>,
+        F: JoltField + FieldChallengeOps<C>,
+    {
         match self {
             Prefixes::LowerWord => {
                 LowerWordPrefix::<XLEN>::update_prefix_checkpoint(checkpoints, r_x, r_y, j)

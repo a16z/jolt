@@ -2,7 +2,7 @@ use std::{
     fs::File,
     io::{Read, Write},
     path::Path,
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 #[cfg(test)]
@@ -36,6 +36,74 @@ pub mod ram;
 pub mod registers;
 pub mod spartan;
 pub mod witness;
+
+// Scoped CPU profiler for performance analysis. Feature-gated by "pprof".
+// Usage: let _guard = pprof_scope!("label");
+//
+// Writes pprof/label.pb on scope exit
+// View with: go tool pprof -http=:8080 pprof/label.pb
+
+// Public type for the profiling guard
+#[cfg(feature = "pprof")]
+pub struct PprofGuard {
+    guard: pprof::ProfilerGuard<'static>,
+    label: &'static str,
+}
+
+#[cfg(not(feature = "pprof"))]
+pub struct PprofGuard;
+
+#[cfg(feature = "pprof")]
+impl Drop for PprofGuard {
+    fn drop(&mut self) {
+        if let Ok(report) = self.guard.report().build() {
+            let prefix = std::env::var("PPROF_PREFIX")
+                .unwrap_or_else(|_| String::from("benchmark-runs/pprof/"));
+            let filename = format!("{}{}.pb", prefix, self.label);
+            // Extract directory from prefix for creation
+            if let Some(dir) = std::path::Path::new(&filename).parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            if let Ok(mut f) = std::fs::File::create(&filename) {
+                use pprof::protos::Message;
+                if let Ok(p) = report.pprof() {
+                    let mut buf = Vec::new();
+                    if p.encode(&mut buf).is_ok() {
+                        let _ = std::io::Write::write_all(&mut f, &buf);
+                        tracing::info!("Wrote pprof profile to {}", filename);
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[macro_export]
+macro_rules! pprof_scope {
+    ($label:expr) => {{
+        #[cfg(feature = "pprof")]
+        {
+            Some($crate::zkvm::PprofGuard {
+                guard: pprof::ProfilerGuardBuilder::default()
+                    .frequency(
+                        std::env::var("PPROF_FREQ")
+                            .unwrap_or("100".to_string())
+                            .parse::<i32>()
+                            .unwrap(),
+                    )
+                    .blocklist(&["libc", "libgcc", "pthread", "vdso"])
+                    .build()
+                    .expect("Failed to initialize profiler"),
+                label: $label,
+            })
+        }
+        #[cfg(not(feature = "pprof"))]
+        None::<$crate::zkvm::PprofGuard>
+    }};
+    () => {
+        pprof_scope!("default");
+    };
+}
 
 #[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct JoltSharedPreprocessing {
@@ -195,7 +263,7 @@ where
         JoltProof<F, PCS, FS>,
         JoltDevice,
         Option<ProverDebugInfo<F, FS, PCS>>,
-        Instant,
+        Duration,
     ) {
         use crate::{guest, zkvm::dag::state_manager::StateManager};
         use common::jolt_device::MemoryConfig;
@@ -210,8 +278,10 @@ where
             program_size: Some(preprocessing.shared.memory_layout.program_size),
         };
 
-        let (mut trace, final_memory_state, mut program_io) =
-            guest::program::trace(elf_contents, None, inputs, &memory_config);
+        let (mut trace, final_memory_state, mut program_io) = {
+            let _pprof_trace = pprof_scope!("trace");
+            guest::program::trace(elf_contents, None, inputs, &memory_config)
+        };
         let num_riscv_cycles: usize = trace
             .par_iter()
             .map(|cycle| {
@@ -235,6 +305,7 @@ where
         );
 
         // Setup trace length and padding
+        let trace_length = trace.len();
         let padded_trace_length = (trace.len() + 1).next_power_of_two();
         trace.resize(padded_trace_length, Cycle::NoOp);
 
@@ -247,13 +318,26 @@ where
                 .map_or(0, |pos| pos + 1),
         );
 
-        let start = Instant::now();
+        let (proof, debug_info, prove_duration) = {
+            let _pprof_prove = pprof_scope!("prove");
+            let start = Instant::now();
+            let state_manager = StateManager::new_prover(
+                preprocessing,
+                trace,
+                program_io.clone(),
+                final_memory_state,
+            );
+            let (proof, debug_info) = JoltDAG::prove(state_manager).ok().unwrap();
+            let prove_duration = start.elapsed();
+            tracing::info!(
+                "Proved in {:.1}s ({:.1} kHz)",
+                prove_duration.as_secs_f64(),
+                trace_length as f64 / prove_duration.as_secs_f64() / 1000.0
+            );
+            (proof, debug_info, prove_duration)
+        };
 
-        let state_manager =
-            StateManager::new_prover(preprocessing, trace, program_io.clone(), final_memory_state);
-        let (proof, debug_info) = JoltDAG::prove(state_manager).ok().unwrap();
-
-        (proof, program_io, debug_info, start)
+        (proof, program_io, debug_info, prove_duration)
     }
 
     #[tracing::instrument(skip_all, name = "Jolt::verify")]
@@ -263,6 +347,8 @@ where
         mut program_io: JoltDevice,
         _debug_info: Option<ProverDebugInfo<F, FS, PCS>>,
     ) -> Result<(), ProofVerifyError> {
+        let _pprof_verify = pprof_scope!("verify");
+
         #[cfg(test)]
         let T = proof.trace_length.next_power_of_two();
         // Need to initialize globals because the verifier computes commitments

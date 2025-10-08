@@ -130,7 +130,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
     pub fn svo_sumcheck_round(
         preprocess: &JoltSharedPreprocessing,
         trace: &[Cycle],
-        tau: &[F],
+        tau: &[F::Challenge],
     ) -> ([F; NUM_ACCUMS_EVAL_ZERO], [F; NUM_ACCUMS_EVAL_INFTY], Self) {
         // Variable layout and binding order (MSB -> LSB):
         // 0 ... (N/2 - l) ... (n_s) ... (N - l) ... (N - i - 1) ... (N - 1)
@@ -452,7 +452,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
         trace: &[Cycle],
         eq_poly: &mut GruenSplitEqPolynomial<F>,
         transcript: &mut ProofTranscript,
-        r_challenges: &mut Vec<F>,
+        r_challenges: &mut Vec<F::Challenge>,
         round_polys: &mut Vec<CompressedUniPoly<F>>,
         claim: &mut F,
     ) {
@@ -464,7 +464,8 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
         let mut r_rev = r_challenges.clone();
         r_rev.reverse();
         // Scale eq(r, y) by R^2 so unreduced fmadd reductions match field semantics
-        let eq_r_evals = EqPolynomial::evals_with_scaling(&r_rev, Some(F::MONTGOMERY_R_SQUARE));
+        let eq_r_evals =
+            EqPolynomial::<F>::evals_with_scaling(&r_rev, Some(F::MONTGOMERY_R_SQUARE));
 
         // Derive partition from current eq_poly lengths and static SVO params
         let padded_num_constraints = self.padded_num_constraints;
@@ -824,7 +825,7 @@ impl<const NUM_SVO_ROUNDS: usize, F: JoltField> SpartanInterleavedPolynomial<NUM
         &mut self,
         eq_poly: &mut GruenSplitEqPolynomial<F>,
         transcript: &mut ProofTranscript,
-        r_challenges: &mut Vec<F>,
+        r_challenges: &mut Vec<F::Challenge>,
         round_polys: &mut Vec<CompressedUniPoly<F>>,
         current_claim: &mut F,
     ) {

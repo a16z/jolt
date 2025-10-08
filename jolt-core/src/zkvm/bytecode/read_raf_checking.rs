@@ -296,7 +296,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
         }
     }
 
-    fn get_r_cycle(acc: &Rc<RefCell<ProverOpeningAccumulator<F>>>) -> [Vec<F>; STAGES] {
+    fn get_r_cycle(acc: &Rc<RefCell<ProverOpeningAccumulator<F>>>) -> [Vec<F::Challenge>; STAGES] {
         let (r_cycle_1, _) = acc
             .borrow()
             .get_virtual_polynomial_opening(VirtualPolynomial::Imm, SumcheckId::SpartanOuter);
@@ -313,7 +313,9 @@ impl<F: JoltField> ReadRafSumcheck<F> {
         [r_cycle_1.r, r_cycle_2.r, r_cycle_3.r]
     }
 
-    fn get_r_cycle_verif(acc: &Rc<RefCell<VerifierOpeningAccumulator<F>>>) -> [Vec<F>; STAGES] {
+    fn get_r_cycle_verif(
+        acc: &Rc<RefCell<VerifierOpeningAccumulator<F>>>,
+    ) -> [Vec<F::Challenge>; STAGES] {
         let (r_cycle_1, _) = acc
             .borrow()
             .get_virtual_polynomial_opening(VirtualPolynomial::Imm, SumcheckId::SpartanOuter);
@@ -412,7 +414,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             .0
             .r;
         let r_register = &r_register[..(REGISTER_COUNT as usize).log_2()];
-        let eq_r_register = EqPolynomial::evals(r_register);
+        let eq_r_register = EqPolynomial::<F>::evals(r_register);
         debug_assert_eq!(eq_r_register.len(), REGISTER_COUNT as usize);
         sm.get_bytecode()
             .par_iter()
@@ -535,7 +537,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
+impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> {
     fn degree(&self) -> usize {
         self.d + 1
     }
@@ -617,7 +619,7 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
 
             univariate_poly_evals.to_vec()
         } else {
-            let degree = self.degree();
+            let degree = <Self as SumcheckInstance<F, T>>::degree(self);
             (0..ps.ra[0].len() / 2)
                 .into_par_iter()
                 .map(|i| {
@@ -667,7 +669,7 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
     }
 
     #[tracing::instrument(skip_all, name = "BytecodeReadRafSumcheck::bind")]
-    fn bind(&mut self, r_j: F, round: usize) {
+    fn bind(&mut self, r_j: F::Challenge, round: usize) {
         let ps = self
             .prover_state
             .as_mut()
@@ -705,12 +707,16 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
     fn expected_output_claim(
         &self,
         accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
-        r: &[F],
+        r: &[F::Challenge],
     ) -> F {
         let accumulator = accumulator.as_ref().unwrap();
         let (r_address_prime, r_cycle_prime) = r.split_at(self.log_K);
         // r_cycle is bound LowToHigh, so reverse
-        let r_cycle_prime = r_cycle_prime.iter().rev().copied().collect::<Vec<F>>();
+        let r_cycle_prime = r_cycle_prime
+            .iter()
+            .rev()
+            .copied()
+            .collect::<Vec<F::Challenge>>();
 
         let int_poly = self.int_poly.evaluate(r_address_prime);
 
@@ -745,7 +751,7 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
             ])
             .map(|(((val, r_cycle), gamma), int_poly)| {
                 (val.evaluate(r_address_prime) + int_poly)
-                    * EqPolynomial::mle(r_cycle, &r_cycle_prime)
+                    * EqPolynomial::<F>::mle(r_cycle, &r_cycle_prime)
                     * gamma
             })
             .sum::<F>();
@@ -753,7 +759,10 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
         ra_claims.fold(val, |running, ra_claim| running * ra_claim)
     }
 
-    fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(
+        &self,
+        opening_point: &[F::Challenge],
+    ) -> OpeningPoint<BIG_ENDIAN, F> {
         let mut r = opening_point.to_vec();
         r[self.log_K..].reverse();
         OpeningPoint::new(r)
@@ -762,6 +771,7 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
     fn cache_openings_prover(
         &self,
         accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
+        transcript: &mut T,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         let ps = self
@@ -773,6 +783,7 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
         for i in 0..self.d {
             let r_address = &r_address.r[self.log_K_chunk * i..self.log_K_chunk * (i + 1)];
             accumulator.borrow_mut().append_sparse(
+                transcript,
                 vec![CommittedPolynomial::BytecodeRa(i)],
                 SumcheckId::BytecodeReadRaf,
                 r_address.to_vec(),
@@ -785,12 +796,14 @@ impl<F: JoltField> SumcheckInstance<F> for ReadRafSumcheck<F> {
     fn cache_openings_verifier(
         &self,
         accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
+        transcript: &mut T,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         let (r_address, r_cycle) = opening_point.split_at(self.log_K);
         (0..self.d).for_each(|i| {
             let r_address = &r_address.r[self.log_K_chunk * i..self.log_K_chunk * (i + 1)];
             accumulator.borrow_mut().append_sparse(
+                transcript,
                 vec![CommittedPolynomial::BytecodeRa(i)],
                 SumcheckId::BytecodeReadRaf,
                 [r_address, &r_cycle.r].concat(),
