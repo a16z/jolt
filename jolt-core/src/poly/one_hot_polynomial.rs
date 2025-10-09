@@ -36,7 +36,7 @@ pub struct OneHotPolynomial<F: JoltField> {
     /// In other words, the raf/waf corresponding to this
     /// ra/wa polynomial.
     /// If empty, this polynomial is 0 for all j.
-    pub nonzero_indices: Arc<Vec<Option<usize>>>,
+    pub nonzero_indices: Arc<Vec<Option<u8>>>,
     /// The number of variables that have been bound over the
     /// course of sumcheck so far.
     num_variables_bound: usize,
@@ -167,7 +167,7 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
                 let mut j = chunk_index * chunk_size;
                 for k in chunk {
                     if let Some(k) = k {
-                        result[*k] += D_coeffs_for_G[j];
+                        result[*k as usize] += D_coeffs_for_G[j];
                     }
                     j += 1;
                 }
@@ -370,7 +370,7 @@ impl<F: JoltField> OneHotPolynomial<F> {
         let mut dense_coeffs: Vec<F> = vec![F::zero(); self.K * T];
         for (t, k) in self.nonzero_indices.iter().enumerate() {
             if let Some(k) = k {
-                dense_coeffs[k * T + t] = F::one();
+                dense_coeffs[*k as usize * T + t] = F::one();
             }
         }
         DensePolynomial::new(dense_coeffs)
@@ -394,7 +394,7 @@ impl<F: JoltField> OneHotPolynomial<F> {
             .sum()
     }
 
-    pub fn from_indices(nonzero_indices: Vec<Option<usize>>, K: usize) -> Self {
+    pub fn from_indices(nonzero_indices: Vec<Option<u8>>, K: usize) -> Self {
         debug_assert_eq!(DoryGlobals::get_T(), nonzero_indices.len());
 
         Self {
@@ -427,7 +427,7 @@ impl<F: JoltField> OneHotPolynomial<F> {
 
                     for (col_index, k) in chunk.iter().enumerate() {
                         if let Some(k) = k {
-                            indices_per_k[*k].push(col_index);
+                            indices_per_k[*k as usize].push(col_index);
                         }
                     }
 
@@ -529,7 +529,7 @@ impl<F: JoltField> OneHotPolynomial<F> {
                     let mut col_dot_product = F::zero();
                     for (row_offset, t) in (col_index..T).step_by(row_len).enumerate() {
                         if let Some(k) = self.nonzero_indices[t] {
-                            let row_index = k * rows_per_k + row_offset;
+                            let row_index = k as usize * rows_per_k + row_offset;
                             col_dot_product += left_vec[row_index];
                         }
                     }
@@ -578,9 +578,10 @@ mod tests {
 
         let mut rng = test_rng();
 
-        let nonzero_indices: Vec<_> = std::iter::repeat_with(|| Some(rng.next_u64() as usize % K))
-            .take(T)
-            .collect();
+        let nonzero_indices: Vec<_> =
+            std::iter::repeat_with(|| Some(rng.next_u64() as u8 % K as u8))
+                .take(T)
+                .collect();
         let one_hot_poly = OneHotPolynomial::<Fr>::from_indices(nonzero_indices, K);
         let mut dense_poly = one_hot_poly.to_dense_poly();
 
@@ -671,9 +672,10 @@ mod tests {
 
         let mut rng = test_rng();
 
-        let nonzero_indices: Vec<_> = std::iter::repeat_with(|| Some(rng.next_u64() as usize % K))
-            .take(T)
-            .collect();
+        let nonzero_indices: Vec<_> =
+            std::iter::repeat_with(|| Some(rng.next_u64() as u8 % K as u8))
+                .take(T)
+                .collect();
         let one_hot_poly = OneHotPolynomial::<Fr>::from_indices(nonzero_indices, K);
         let dense_poly = one_hot_poly.to_dense_poly();
 

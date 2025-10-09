@@ -39,7 +39,7 @@ struct BooleanityProverState<F: JoltField> {
     B: MultilinearPolynomial<F>,
     D: MultilinearPolynomial<F>,
     G: Vec<Vec<F>>,
-    pc_by_cycle: Vec<Vec<Option<usize>>>,
+    pc_by_cycle: Vec<Vec<Option<u8>>>,
     H: Vec<RaPolynomial<F>>,
     F: Vec<F>,
     eq_r_r: F,
@@ -145,7 +145,7 @@ impl<F: JoltField> BooleanityProverState<F> {
                     .par_iter()
                     .map(|cycle| {
                         let k = preprocessing.get_pc(cycle);
-                        Some((k >> (log_K_chunk * (d - i - 1))) % K_chunk)
+                        Some(((k >> (log_K_chunk * (d - i - 1))) % K_chunk) as u8)
                     })
                     .collect()
             })

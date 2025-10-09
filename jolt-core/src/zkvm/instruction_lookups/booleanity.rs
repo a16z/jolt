@@ -41,7 +41,7 @@ struct BooleanityProverState<F: JoltField> {
     eq_r_address: GruenSplitEqPolynomial<F>,
     eq_r_cycle: GruenSplitEqPolynomial<F>,
     G: [Vec<F>; D],
-    H_indices: [Vec<Option<usize>>; D],
+    H_indices: [Vec<Option<u8>>; D],
     H: [RaPolynomial<F>; D],
     F: Vec<F>,
     eq_r_r: F,
@@ -125,12 +125,12 @@ impl<F: JoltField> BooleanityProverState<F> {
         let mut F: Vec<F> = unsafe_allocate_zero_vec(K_CHUNK);
         F[0] = F::one();
 
-        let H_indices: [Vec<Option<usize>>; D] = std::array::from_fn(|i| {
+        let H_indices: [Vec<Option<u8>>; D] = std::array::from_fn(|i| {
             trace
                 .par_iter()
                 .map(|cycle| {
                     let lookup_index = LookupQuery::<XLEN>::to_lookup_index(cycle);
-                    Some(((lookup_index >> (LOG_K_CHUNK * (D - 1 - i))) % K_CHUNK as u128) as usize)
+                    Some(((lookup_index >> (LOG_K_CHUNK * (D - 1 - i))) % K_CHUNK as u128) as u8)
                 })
                 .collect()
         });
