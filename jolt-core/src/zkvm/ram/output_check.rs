@@ -496,9 +496,11 @@ impl<F: JoltField> ValFinalSumcheck<F> {
 
         let val_init_eval = if let Some((point, eval)) = untrusted_advice_opening {
             // The untrusted advice polynomial has fewer variables than the full RAM
-            // We need to scale it by (1-x_0)*(1-x_1)*...*(1-x_{i-1})
+            // We need to scale it by x_0*(1-x_1)*...*(1-x_{i-1})
             // where i = n - m, n is the total number of variables for the full RAM address space
             // and m is the number of variables in the untrusted advice polynomial
+            // The x_0 term selects the second half of memory (index >= 1) since untrusted
+            // advice data starts at index 1 in its polynomial
 
             let num_untrusted_vars = state_manager
                 .verifier_state

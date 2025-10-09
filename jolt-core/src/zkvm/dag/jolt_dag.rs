@@ -84,6 +84,13 @@ impl JoltDAG {
                 .borrow_mut()
                 .append_serializable(state_manager.untrusted_advice_commitment.as_ref().unwrap());
         }
+        // Append trustd_advice commitment to transcript
+        if state_manager.trusted_advice_commitment.is_some() {
+            transcript
+                .borrow_mut()
+                .append_serializable(state_manager.trusted_advice_commitment.as_ref().unwrap());
+        }
+
 
         // Stage 1:
         #[cfg(not(target_arch = "wasm32"))]
@@ -368,12 +375,18 @@ impl JoltDAG {
             transcript.borrow_mut().append_serializable(commitment);
         }
 
-        // Append untrusted advice commitment to transcript
+        // Append trusted/untrusted advice commitment to transcript
         if let Some(ref untrusted_advice_commitment) = state_manager.untrusted_advice_commitment {
             transcript
                 .borrow_mut()
                 .append_serializable(untrusted_advice_commitment);
         }
+        if state_manager.trusted_advice_commitment.is_some() {
+            transcript
+                .borrow_mut()
+                .append_serializable(state_manager.trusted_advice_commitment.as_ref().unwrap());
+        }
+
 
         // Stage 1:
         let (preprocessing, _, trace_length) = state_manager.get_verifier_data();
@@ -573,15 +586,20 @@ impl JoltDAG {
             return None;
         }
 
+        println!("trusted_advice length is: {}", program_io.trusted_advice.len());
+
         let padded_untrusted_advice_len =
             (program_io.untrusted_advice.len().div_ceil(8) + 1).next_power_of_two();
         let mut initial_memory_state = vec![0; padded_untrusted_advice_len];
-        let mut index = remap_address(
+
+        let temp_index = remap_address(
             program_io.memory_layout.untrusted_advice_start,
             &program_io.memory_layout,
-        )
-        .unwrap() as usize;
+        );
+        println!("Index is: {}", temp_index.unwrap());
+        println!("non padded_untrusted_advice_len: {}", program_io.untrusted_advice.len());
 
+        let mut index = 1;
         for chunk in program_io.untrusted_advice.chunks(8) {
             let mut word = [0u8; 8];
             for (i, byte) in chunk.iter().enumerate() {
