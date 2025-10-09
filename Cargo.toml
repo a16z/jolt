@@ -133,7 +133,7 @@ ignored = ["jolt-sdk"]
 
 [workspace.dependencies]
 # Cryptography and Math
-ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout", default-features = false }
 ark-grumpkin = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout", default-features = false }
 ark-ec = { version = "0.5.0", default-features = false }
 ark-ff = { version = "0.5.0", default-features = false }
