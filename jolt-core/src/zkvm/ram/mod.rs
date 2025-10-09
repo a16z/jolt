@@ -354,14 +354,24 @@ where
                     SumcheckId::RamReadWriteChecking,
                 );
                 let (r_address, _) = r.split_at(state_manager.ram_K.log_2());
-                let eval = untrusted_advice_poly.evaluate(&r_address.r);
+                let untrusted_advice_vars = untrusted_advice_poly.get_num_vars();
+                let total_vars = r_address.r.len();
+
+                // Use the last number_of_vals elements for evaluation
+                let eval = untrusted_advice_poly
+                    .evaluate(&r_address.r[total_vars - untrusted_advice_vars..]);
+
+                // Only pass the portion of r_address that was used for evaluation
+                let mut untrusted_advice_point = r_address.clone();
+                untrusted_advice_point.r =
+                    r_address.r[total_vars - untrusted_advice_vars..].to_vec();
 
                 prover_state
                     .accumulator
                     .borrow_mut()
                     .append_untrusted_advice(
                         &mut *state_manager.get_transcript().borrow_mut(),
-                        r_address.clone(),
+                        untrusted_advice_point,
                         eval,
                     );
             }
@@ -400,12 +410,19 @@ where
                 );
                 let (r_address, _) = r.split_at(state_manager.ram_K.log_2());
 
+                let untrusted_advice_vars = verifier_state.untrusted_advice_num_vars.unwrap();
+                let total_vars = r_address.r.len();
+
+                let mut untrusted_advice_point = r_address.clone();
+                untrusted_advice_point.r =
+                    r_address.r[total_vars - untrusted_advice_vars..].to_vec();
+
                 verifier_state
                     .accumulator
                     .borrow_mut()
                     .append_untrusted_advice(
                         &mut *state_manager.transcript.borrow_mut(),
-                        r_address.clone(),
+                        untrusted_advice_point,
                     );
             }
         }
