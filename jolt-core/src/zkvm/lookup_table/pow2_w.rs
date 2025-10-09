@@ -4,7 +4,7 @@ use super::prefixes::PrefixEval;
 use super::suffixes::{SuffixEval, Suffixes};
 use super::JoltLookupTable;
 use super::PrefixSuffixDecomposition;
-use crate::field::JoltField;
+use crate::field::{ChallengeFieldOps, FieldChallengeOps, JoltField};
 use crate::zkvm::lookup_table::prefixes::Prefixes;
 
 /// Pow2W table - computes 2^(x % 32) for VirtualPow2W and VirtualPow2IW instructions
@@ -17,7 +17,11 @@ impl<const XLEN: usize> JoltLookupTable for Pow2WTable<XLEN> {
         1 << (index % 32) as u64
     }
 
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+    fn evaluate_mle<F, C>(&self, r: &[C]) -> F
+    where
+        C: ChallengeFieldOps<F>,
+        F: JoltField + FieldChallengeOps<C>,
+    {
         debug_assert_eq!(r.len(), 2 * XLEN);
         // We only care about the last 5 bits of the second operand (for modulo 32)
         let mut result = F::one();

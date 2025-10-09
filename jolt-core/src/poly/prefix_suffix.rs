@@ -8,7 +8,7 @@ use rayon::prelude::*;
 use strum::{EnumCount, IntoEnumIterator};
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter as EnumIterMacro};
 
-use crate::field::JoltField;
+use crate::field::{ChallengeFieldOps, FieldChallengeOps, JoltField};
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::multilinear_polynomial::{
     BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
@@ -30,7 +30,6 @@ pub type PrefixCheckpoints<F> = [Option<F>; Prefix::COUNT];
 #[derive(Default, Allocative)]
 pub struct PrefixRegistry<F: JoltField> {
     pub checkpoints: PrefixCheckpoints<F>,
-    #[allocative(skip)]
     pub polys: [Option<Arc<RwLock<CachedPolynomial<F>>>>; Prefix::COUNT],
 }
 
@@ -77,18 +76,28 @@ impl<T> IndexMut<Prefix> for [T; Prefix::COUNT] {
     }
 }
 
+#[derive(Allocative)]
 pub struct CachedPolynomial<F: JoltField> {
     pub inner: MultilinearPolynomial<F>,
+    #[allocative(skip)]
     pub sumcheck_evals_cache: Vec<OnceCell<(F, F)>>,
     pub bound_this_round: bool,
 }
 
 impl<F: JoltField> PolynomialEvaluation<F> for CachedPolynomial<F> {
-    fn evaluate(&self, x: &[F]) -> F {
+    fn evaluate<C>(&self, x: &[C]) -> F
+    where
+        C: Copy + Send + Sync + Into<F> + ChallengeFieldOps<F>,
+        F: FieldChallengeOps<C>,
+    {
         self.inner.evaluate(x)
     }
 
-    fn batch_evaluate(_polys: &[&Self], _r: &[F]) -> Vec<F> {
+    fn batch_evaluate<C>(_polys: &[&Self], _r: &[C]) -> Vec<F>
+    where
+        C: Copy + Send + Sync + Into<F>,
+        F: std::ops::Mul<C, Output = F> + std::ops::SubAssign<F>,
+    {
         unimplemented!("Currently unused")
     }
 
@@ -98,14 +107,14 @@ impl<F: JoltField> PolynomialEvaluation<F> for CachedPolynomial<F> {
 }
 
 impl<F: JoltField> PolynomialBinding<F> for CachedPolynomial<F> {
-    fn bind(&mut self, r: F, order: BindingOrder) {
+    fn bind(&mut self, r: F::Challenge, order: BindingOrder) {
         if !self.bound_this_round {
             self.inner.bind(r, order);
             self.bound_this_round = true;
         }
     }
 
-    fn bind_parallel(&mut self, r: F, order: BindingOrder) {
+    fn bind_parallel(&mut self, r: F::Challenge, order: BindingOrder) {
         if !self.bound_this_round {
             self.inner.bind_parallel(r, order);
             self.bound_this_round = true;
@@ -450,7 +459,7 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
         (eval_0, eval_2_right + eval_2_right - eval_2_left)
     }
 
-    pub fn bind(&mut self, r: F) {
+    pub fn bind(&mut self, r: F::Challenge) {
         self.P.par_iter().for_each(|p| {
             if let Some(p) = p {
                 let mut p = p.write().unwrap();
@@ -504,11 +513,10 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
 
 #[cfg(test)]
 pub mod tests {
+    use super::*;
     use ark_bn254::Fr;
     use ark_ff::{AdditiveGroup, Field};
     use ark_std::test_rng;
-
-    use super::*;
 
     pub fn prefix_suffix_decomposition_test<
         const NUM_VARS: usize,
@@ -604,8 +612,8 @@ pub mod tests {
 
                     assert_eq!(direct_eval, eval.1);
                 }
-                let r = Fr::random(&mut rng);
-                rr.push(r);
+                let r = <Fr as JoltField>::Challenge::random(&mut rng);
+                rr.push(r.into());
                 ps.bind(r);
             }
 

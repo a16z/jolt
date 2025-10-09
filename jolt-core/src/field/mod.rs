@@ -1,11 +1,11 @@
+use allocative::Allocative;
 use ark_ff::biginteger::S224;
+use ark_ff::UniformRand;
 use num_traits::{One, Zero};
 use std::fmt::{Debug, Display};
 use std::hash::Hash;
 use std::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub, SubAssign};
 
-#[cfg(feature = "allocative")]
-use allocative::Allocative;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 pub trait FieldOps<Rhs = Self, Output = Self>:
@@ -13,6 +13,67 @@ pub trait FieldOps<Rhs = Self, Output = Self>:
     + Sub<Rhs, Output = Output>
     + Mul<Rhs, Output = Output>
     + Div<Rhs, Output = Output>
+{
+}
+
+pub trait ChallengeFieldOps<F>:
+    Copy
+    + Send
+    + Sync
+    + Into<F>
+    + Add<F, Output = F>
+    + for<'a> Add<&'a F, Output = F>
+    + Sub<F, Output = F>
+    + for<'a> Sub<&'a F, Output = F>
+    + Mul<F, Output = F>
+    + for<'a> Mul<&'a F, Output = F>
+    + Add<Self, Output = F>
+    + for<'a> Add<&'a Self, Output = F>
+    + Sub<Self, Output = F>
+    + for<'a> Sub<&'a Self, Output = F>
+    + Mul<Self, Output = F>
+    + for<'a> Mul<&'a Self, Output = F>
+{
+}
+
+pub trait FieldChallengeOps<C>:
+    Add<C, Output = Self>
+    + for<'a> Add<&'a C, Output = Self>
+    + Sub<C, Output = Self>
+    + for<'a> Sub<&'a C, Output = Self>
+    + Mul<C, Output = Self>
+    + for<'a> Mul<&'a C, Output = Self>
+{
+}
+
+impl<F, C> ChallengeFieldOps<F> for C where
+    C: Copy
+        + Send
+        + Sync
+        + Into<F>
+        + Add<F, Output = F>
+        + for<'a> Add<&'a F, Output = F>
+        + Sub<F, Output = F>
+        + for<'a> Sub<&'a F, Output = F>
+        + Mul<F, Output = F>
+        + for<'a> Mul<&'a F, Output = F>
+        + Add<C, Output = F>
+        + for<'a> Add<&'a C, Output = F>
+        + Sub<C, Output = F>
+        + for<'a> Sub<&'a C, Output = F>
+        + Mul<C, Output = F>
+        + for<'a> Mul<&'a C, Output = F>
+{
+}
+
+impl<F, C> FieldChallengeOps<C> for F where
+    F: JoltField
+        + Add<C, Output = F>
+        + for<'a> Add<&'a C, Output = F>
+        + Sub<C, Output = F>
+        + for<'a> Sub<&'a C, Output = F>
+        + Mul<C, Output = F>
+        + for<'a> Mul<&'a C, Output = F>
 {
 }
 
@@ -42,6 +103,7 @@ pub trait JoltField:
     + CanonicalDeserialize
     + Hash
     + MaybeAllocative
+    + FieldChallengeOps<Self::Challenge>
 {
     /// Number of bytes occupied by a single field element.
     const NUM_BYTES: usize;
@@ -86,6 +148,24 @@ pub trait JoltField:
     /// the arkworks BN254 scalar field requires a conversion into Montgomery form, which naively
     /// requires a field multiplication, but can instead be looked up.
     type SmallValueLookupTables: Clone + Default + CanonicalSerialize + CanonicalDeserialize;
+    type Challenge: 'static
+        + Sized
+        + Copy
+        + Clone
+        + Send
+        + Sync
+        + Debug
+        + Display
+        + Default
+        + Eq
+        + Hash
+        + CanonicalSerialize
+        + CanonicalDeserialize
+        + Allocative
+        + From<u128>
+        + Into<Self>
+        + ChallengeFieldOps<Self>
+        + UniformRand;
 
     fn random<R: rand_core::RngCore>(rng: &mut R) -> Self;
     /// Computes the small-value lookup tables.
@@ -265,4 +345,5 @@ where
 }
 
 pub mod ark;
+pub mod challenge;
 pub mod tracked_ark;

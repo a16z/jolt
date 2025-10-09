@@ -21,7 +21,7 @@ pub fn lookup_table_mle_random_test<F: JoltField, T: JoltLookupTable + Default>(
         let index = rng.gen();
         assert_eq!(
             F::from_u64(T::default().materialize_entry(index)),
-            T::default().evaluate_mle(&index_to_field_bitvector(index, XLEN * 2)),
+            T::default().evaluate_mle::<F, F>(&index_to_field_bitvector(index, XLEN * 2)),
             "MLE did not match materialized table at index {index}",
         );
     }
@@ -32,7 +32,7 @@ pub fn lookup_table_mle_full_hypercube_test<F: JoltField, T: JoltLookupTable + D
     for (i, entry) in materialized.iter().enumerate() {
         assert_eq!(
             F::from_u64(*entry),
-            T::default().evaluate_mle(&index_to_field_bitvector(i as u128, 16)),
+            T::default().evaluate_mle::<F, F>(&index_to_field_bitvector(i as u128, 16)),
             "MLE did not match materialized table at index {i}",
         );
     }
@@ -89,7 +89,7 @@ pub fn prefix_suffix_test<const XLEN: usize, F: JoltField, T: PrefixSuffixDecomp
 
                 let prefix_evals: Vec<_> = Prefixes::iter()
                     .map(|prefix| {
-                        prefix.prefix_mle::<XLEN, F>(&prefix_checkpoints, r_x, c, prefix_bits, j)
+                        prefix.prefix_mle::<XLEN, F, F>(&prefix_checkpoints, r_x, c, prefix_bits, j)
                     })
                     .collect();
 
@@ -109,7 +109,7 @@ pub fn prefix_suffix_test<const XLEN: usize, F: JoltField, T: PrefixSuffixDecomp
                 r.push(F::from_u64(rng.next_u64()));
 
                 if r.len() % 2 == 0 {
-                    Prefixes::update_checkpoints::<XLEN, F>(
+                    Prefixes::update_checkpoints::<XLEN, F, F>(
                         &mut prefix_checkpoints,
                         r[r.len() - 2],
                         r[r.len() - 1],

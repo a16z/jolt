@@ -14,8 +14,8 @@ use crate::{
 pub fn compute_mles_product_sum<F: JoltField>(
     mles: &[RaPolynomial<F>],
     claim: F,
-    r: &[F],
-    r_prime: &[F],
+    r: &[F::Challenge],
+    r_prime: &[F::Challenge],
 ) -> UniPoly<F> {
     // Split Eq poly optimization.
     // See https://eprint.iacr.org/2025/1117.pdf section 5.2.
@@ -290,13 +290,14 @@ fn dbl_assign<F: JoltField>(x: &mut F) {
 
 #[cfg(test)]
 mod tests {
+    use ark_bn254::Fr;
+    use ark_std::UniformRand;
+    use dory::curve::test_rng;
+    use rand::rngs::StdRng;
     use std::array::from_fn;
 
-    use ark_bn254::Fr;
-    use dory::curve::test_rng;
-    use rand::{rngs::StdRng, Rng};
-
     use crate::{
+        field::JoltField,
         poly::{
             dense_mlpoly::DensePolynomial,
             eq_poly::EqPolynomial,
@@ -309,11 +310,14 @@ mod tests {
     #[test]
     fn test_compute_mles_product_sum_with_2_mles() {
         const N_MLE: usize = 2;
-        let rng = &mut test_rng();
-        let r: &[Fr; 1] = &rng.gen();
+        let mut rng = &mut test_rng();
+        let r_whole = [<Fr as JoltField>::Challenge::rand(&mut rng)];
+        let r: &[<Fr as JoltField>::Challenge; 1] = &r_whole;
         let mles: [_; N_MLE] = from_fn(|_| random_mle(1, rng));
         let claim = gen_product_mle(&mles).evaluate(r);
-        let challenge: &[Fr; 1] = &rng.gen();
+
+        let r_whole = [<Fr as JoltField>::Challenge::rand(&mut rng)];
+        let challenge: &[<Fr as JoltField>::Challenge; 1] = &r_whole;
         let mle_challenge_product = mles.iter().map(|p| p.evaluate(challenge)).product::<Fr>();
         let eval = EqPolynomial::mle(challenge, r) * mle_challenge_product;
         let mles = mles.map(RaPolynomial::RoundN);
@@ -326,11 +330,13 @@ mod tests {
     #[test]
     fn test_compute_mles_product_sum_with_4_mles() {
         const N_MLE: usize = 4;
-        let rng = &mut test_rng();
-        let r: &[Fr; 1] = &rng.gen();
+        let mut rng = &mut test_rng();
+        let r_whole = [<Fr as JoltField>::Challenge::random(&mut rng)];
+        let r: &[<Fr as JoltField>::Challenge; 1] = &r_whole;
         let mles: [_; N_MLE] = from_fn(|_| random_mle(1, rng));
         let claim = gen_product_mle(&mles).evaluate(r);
-        let challenge: &[Fr; 1] = &rng.gen();
+        let r_whole = [<Fr as JoltField>::Challenge::rand(&mut rng)];
+        let challenge: &[<Fr as JoltField>::Challenge; 1] = &r_whole;
         let mle_challenge_product = mles.iter().map(|p| p.evaluate(challenge)).product::<Fr>();
         let eval = EqPolynomial::mle(challenge, r) * mle_challenge_product;
         let mles = mles.map(RaPolynomial::RoundN);
@@ -343,11 +349,13 @@ mod tests {
     #[test]
     fn test_compute_mles_product_sum_with_8_mles() {
         const N_MLE: usize = 8;
-        let rng = &mut test_rng();
-        let r: &[Fr; 1] = &rng.gen();
+        let mut rng = &mut test_rng();
+        let r_whole = [<Fr as JoltField>::Challenge::random(&mut rng)];
+        let r: &[<Fr as JoltField>::Challenge; 1] = &r_whole;
         let mles: [_; N_MLE] = from_fn(|_| random_mle(1, rng));
         let claim = gen_product_mle(&mles).evaluate(r);
-        let challenge: &[Fr; 1] = &rng.gen();
+        let r_whole = [<Fr as JoltField>::Challenge::rand(&mut rng)];
+        let challenge: &[<Fr as JoltField>::Challenge; 1] = &r_whole;
         let mle_challenge_product = mles.iter().map(|p| p.evaluate(challenge)).product::<Fr>();
         let eval = EqPolynomial::mle(challenge, r) * mle_challenge_product;
         let mles = mles.map(RaPolynomial::RoundN);
@@ -360,11 +368,13 @@ mod tests {
     #[test]
     fn test_compute_mles_product_sum_with_16_mles() {
         const N_MLE: usize = 16;
-        let rng = &mut test_rng();
-        let r: &[Fr; 1] = &rng.gen();
+        let mut rng = &mut test_rng();
+        let r_whole = [<Fr as JoltField>::Challenge::random(&mut rng)];
+        let r: &[<Fr as JoltField>::Challenge; 1] = &r_whole;
         let mles: [_; N_MLE] = from_fn(|_| random_mle(1, rng));
         let claim = gen_product_mle(&mles).evaluate(r);
-        let challenge: &[Fr; 1] = &rng.gen();
+        let r_whole = [<Fr as JoltField>::Challenge::random(&mut rng)];
+        let challenge: &[<Fr as JoltField>::Challenge; 1] = &r_whole;
         let mle_challenge_product = mles.iter().map(|p| p.evaluate(challenge)).product::<Fr>();
         let eval = EqPolynomial::mle(challenge, r) * mle_challenge_product;
         let mles = mles.map(RaPolynomial::RoundN);

@@ -42,14 +42,14 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
     #[tracing::instrument(skip_all, name = "InstructionHammingWeight::new_prover")]
     pub fn new_prover(
         sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
-        F: [Vec<F>; D],
+        G: [Vec<F>; D],
     ) -> Self {
         let gamma: F = sm.transcript.borrow_mut().challenge_scalar();
         let mut gamma_powers = [F::one(); D];
         for i in 1..D {
             gamma_powers[i] = gamma_powers[i - 1] * gamma;
         }
-        let ra = F
+        let ra = G
             .into_iter()
             .map(MultilinearPolynomial::from)
             .collect::<Vec<_>>()
@@ -76,7 +76,7 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstance<F> for HammingWeightSumcheck<F> {
+impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for HammingWeightSumcheck<F> {
     fn degree(&self) -> usize {
         DEGREE
     }
@@ -111,7 +111,7 @@ impl<F: JoltField> SumcheckInstance<F> for HammingWeightSumcheck<F> {
     }
 
     #[tracing::instrument(skip_all, name = "InstructionHammingWeight::bind")]
-    fn bind(&mut self, r_j: F, _round: usize) {
+    fn bind(&mut self, r_j: F::Challenge, _round: usize) {
         self.prover_state
             .as_mut()
             .unwrap()
@@ -123,7 +123,7 @@ impl<F: JoltField> SumcheckInstance<F> for HammingWeightSumcheck<F> {
     fn expected_output_claim(
         &self,
         accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
-        _r: &[F],
+        _r: &[F::Challenge],
     ) -> F {
         let ra_claims = (0..D).map(|i| {
             let accumulator = accumulator.as_ref().unwrap();
@@ -143,13 +143,17 @@ impl<F: JoltField> SumcheckInstance<F> for HammingWeightSumcheck<F> {
             .sum()
     }
 
-    fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(
+        &self,
+        opening_point: &[F::Challenge],
+    ) -> OpeningPoint<BIG_ENDIAN, F> {
         OpeningPoint::new(opening_point.iter().rev().copied().collect())
     }
 
     fn cache_openings_prover(
         &self,
         accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
+        transcript: &mut T,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         let ps = self.prover_state.as_ref().unwrap();
@@ -167,6 +171,7 @@ impl<F: JoltField> SumcheckInstance<F> for HammingWeightSumcheck<F> {
             .0
             .r;
         accumulator.borrow_mut().append_sparse(
+            transcript,
             (0..D).map(CommittedPolynomial::InstructionRa).collect(),
             SumcheckId::InstructionHammingWeight,
             opening_point.r.to_vec(),
@@ -178,6 +183,7 @@ impl<F: JoltField> SumcheckInstance<F> for HammingWeightSumcheck<F> {
     fn cache_openings_verifier(
         &self,
         accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
+        transcript: &mut T,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         let r_cycle = accumulator
@@ -195,6 +201,7 @@ impl<F: JoltField> SumcheckInstance<F> for HammingWeightSumcheck<F> {
             .chain(r_cycle.iter().cloned())
             .collect::<Vec<_>>();
         accumulator.borrow_mut().append_sparse(
+            transcript,
             (0..D).map(CommittedPolynomial::InstructionRa).collect(),
             SumcheckId::InstructionHammingWeight,
             r,

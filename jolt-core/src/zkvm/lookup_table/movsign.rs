@@ -4,7 +4,10 @@ use super::prefixes::{PrefixEval, Prefixes};
 use super::suffixes::{SuffixEval, Suffixes};
 use super::JoltLookupTable;
 use super::PrefixSuffixDecomposition;
-use crate::field::JoltField;
+use crate::{
+    field::JoltField,
+    zkvm::lookup_table::{ChallengeFieldOps, FieldChallengeOps},
+};
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct MovsignTable<const XLEN: usize>;
@@ -20,7 +23,11 @@ impl<const XLEN: usize> JoltLookupTable for MovsignTable<XLEN> {
         }
     }
 
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+    fn evaluate_mle<F, C>(&self, r: &[C]) -> F
+    where
+        C: ChallengeFieldOps<F>,
+        F: JoltField + FieldChallengeOps<C>,
+    {
         // 2 ^ {XLEN - 1} * x_0
         debug_assert!(r.len() == 2 * XLEN);
 

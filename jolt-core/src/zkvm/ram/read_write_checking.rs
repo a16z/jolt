@@ -826,7 +826,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
         ]
     }
 
-    fn phase1_bind(&mut self, r_j: F, round: usize) {
+    fn phase1_bind(&mut self, r_j: F::Challenge, round: usize) {
         let ReadWriteCheckingProverState {
             I,
             A,
@@ -947,7 +947,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
             let _guard = span.enter();
 
             let eq_evals: Vec<F> =
-                EqPolynomial::evals(&gruens_eq_r_prime.w[..gruens_eq_r_prime.current_index])
+                EqPolynomial::<F>::evals(&gruens_eq_r_prime.w[..gruens_eq_r_prime.current_index])
                     .par_iter()
                     .map(|x| *x * gruens_eq_r_prime.current_scalar)
                     .collect();
@@ -955,7 +955,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
         }
     }
 
-    fn phase2_bind(&mut self, r_j: F) {
+    fn phase2_bind(&mut self, r_j: F::Challenge) {
         let ReadWriteCheckingProverState {
             ra,
             val,
@@ -972,7 +972,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
             .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow));
     }
 
-    fn phase3_bind(&mut self, r_j: F) {
+    fn phase3_bind(&mut self, r_j: F::Challenge) {
         let ReadWriteCheckingProverState { ra, val, .. } = self.prover_state.as_mut().unwrap();
         let ra = ra.as_mut().unwrap();
         let val = val.as_mut().unwrap();
@@ -985,7 +985,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstance<F> for RamReadWriteChecking<F> {
+impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for RamReadWriteChecking<F> {
     fn degree(&self) -> usize {
         3
     }
@@ -1011,7 +1011,7 @@ impl<F: JoltField> SumcheckInstance<F> for RamReadWriteChecking<F> {
     }
 
     #[tracing::instrument(skip_all, name = "RamReadWriteChecking::bind")]
-    fn bind(&mut self, r_j: F, round: usize) {
+    fn bind(&mut self, r_j: F::Challenge, round: usize) {
         let prover_state = self.prover_state.as_ref().unwrap();
         if round < prover_state.chunk_size.log_2() {
             self.phase1_bind(r_j, round);
@@ -1025,7 +1025,7 @@ impl<F: JoltField> SumcheckInstance<F> for RamReadWriteChecking<F> {
     fn expected_output_claim(
         &self,
         accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
-        r: &[F],
+        r: &[F::Challenge],
     ) -> F {
         let r_prime = self.r_prime.as_ref().unwrap();
 
@@ -1054,7 +1054,10 @@ impl<F: JoltField> SumcheckInstance<F> for RamReadWriteChecking<F> {
         eq_eval_cycle * ra_claim * (val_claim + self.gamma * (val_claim + inc_claim))
     }
 
-    fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(
+        &self,
+        opening_point: &[F::Challenge],
+    ) -> OpeningPoint<BIG_ENDIAN, F> {
         // The high-order cycle variables are bound after the switch
         let mut r_cycle = opening_point[self.sumcheck_switch_index..self.T.log_2()].to_vec();
         // First `sumcheck_switch_index` rounds bind cycle variables from low to high
@@ -1068,6 +1071,7 @@ impl<F: JoltField> SumcheckInstance<F> for RamReadWriteChecking<F> {
     fn cache_openings_prover(
         &self,
         accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
+        transcript: &mut T,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         let prover_state = self
@@ -1076,6 +1080,7 @@ impl<F: JoltField> SumcheckInstance<F> for RamReadWriteChecking<F> {
             .expect("Prover state not initialized");
 
         accumulator.borrow_mut().append_virtual(
+            transcript,
             VirtualPolynomial::RamVal,
             SumcheckId::RamReadWriteChecking,
             opening_point.clone(),
@@ -1083,6 +1088,7 @@ impl<F: JoltField> SumcheckInstance<F> for RamReadWriteChecking<F> {
         );
 
         accumulator.borrow_mut().append_virtual(
+            transcript,
             VirtualPolynomial::RamRa,
             SumcheckId::RamReadWriteChecking,
             opening_point.clone(),
@@ -1092,6 +1098,7 @@ impl<F: JoltField> SumcheckInstance<F> for RamReadWriteChecking<F> {
         let (_, r_cycle) = opening_point.split_at(self.K.log_2());
 
         accumulator.borrow_mut().append_dense(
+            transcript,
             vec![CommittedPolynomial::RamInc],
             SumcheckId::RamReadWriteChecking,
             r_cycle.r,
@@ -1102,15 +1109,18 @@ impl<F: JoltField> SumcheckInstance<F> for RamReadWriteChecking<F> {
     fn cache_openings_verifier(
         &self,
         accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
+        transcript: &mut T,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         accumulator.borrow_mut().append_virtual(
+            transcript,
             VirtualPolynomial::RamVal,
             SumcheckId::RamReadWriteChecking,
             opening_point.clone(),
         );
 
         accumulator.borrow_mut().append_virtual(
+            transcript,
             VirtualPolynomial::RamRa,
             SumcheckId::RamReadWriteChecking,
             opening_point.clone(),
@@ -1119,6 +1129,7 @@ impl<F: JoltField> SumcheckInstance<F> for RamReadWriteChecking<F> {
         let (_, r_cycle) = opening_point.split_at(self.K.log_2());
 
         accumulator.borrow_mut().append_dense(
+            transcript,
             vec![CommittedPolynomial::RamInc],
             SumcheckId::RamReadWriteChecking,
             r_cycle.r,

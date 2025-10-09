@@ -41,8 +41,8 @@ pub struct RaProverState<F: JoltField> {
 pub struct RaSumcheck<F: JoltField> {
     gamma: [F; 3],
     /// Random challenge r_cycle
-    r_cycle: [Vec<F>; 3],
-    r_address_chunks: Vec<Vec<F>>,
+    r_cycle: [Vec<F::Challenge>; 3],
+    r_address_chunks: Vec<Vec<F::Challenge>>,
     /// [ra(r_address, r_cycle_val), ra(r_address, r_cycle_rw), ra(r_address, r_cycle_raf)]
     ra_claim: F,
     /// Number of decomposition parts
@@ -100,13 +100,16 @@ impl<F: JoltField> RaSumcheck<F> {
         } else {
             // Pad with zeros
             [
-                &vec![F::zero(); DTH_ROOT_OF_K.log_2() - (r_address.len() % DTH_ROOT_OF_K.log_2())],
+                &vec![
+                    F::Challenge::from(0_u128);
+                    DTH_ROOT_OF_K.log_2() - (r_address.len() % DTH_ROOT_OF_K.log_2())
+                ],
                 r_address,
             ]
             .concat()
         };
         // Split r_address into d chunks of variable sizes
-        let r_address_chunks: Vec<Vec<F>> = r_address
+        let r_address_chunks: Vec<Vec<F::Challenge>> = r_address
             .chunks(DTH_ROOT_OF_K.log_2())
             .map(|chunk| chunk.to_vec())
             .collect();
@@ -125,9 +128,9 @@ impl<F: JoltField> RaSumcheck<F> {
         let gamma = [F::one(), gamma, gamma.square()];
 
         let eq_polys = [
-            &EqPolynomial::evals(r_cycle_val).into(),
-            &EqPolynomial::evals(r_cycle_rw).into(),
-            &EqPolynomial::evals(r_cycle_raf).into(),
+            &EqPolynomial::<F>::evals(r_cycle_val).into(),
+            &EqPolynomial::<F>::evals(r_cycle_rw).into(),
+            &EqPolynomial::<F>::evals(r_cycle_raf).into(),
         ];
 
         let eq_poly =
@@ -221,13 +224,16 @@ impl<F: JoltField> RaSumcheck<F> {
         } else {
             // Pad with zeros
             [
-                &vec![F::zero(); DTH_ROOT_OF_K.log_2() - (r_address.len() % DTH_ROOT_OF_K.log_2())],
+                &vec![
+                    F::Challenge::from(0_u128);
+                    DTH_ROOT_OF_K.log_2() - (r_address.len() % DTH_ROOT_OF_K.log_2())
+                ],
                 r_address,
             ]
             .concat()
         };
         // Split r_address into d chunks of variable sizes
-        let r_address_chunks: Vec<Vec<F>> = r_address
+        let r_address_chunks: Vec<Vec<F::Challenge>> = r_address
             .chunks(DTH_ROOT_OF_K.log_2())
             .map(|chunk| chunk.to_vec())
             .collect();
@@ -258,7 +264,7 @@ impl<F: JoltField> RaSumcheck<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstance<F> for RaSumcheck<F> {
+impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for RaSumcheck<F> {
     fn degree(&self) -> usize {
         self.d + 1
     }
@@ -268,7 +274,7 @@ impl<F: JoltField> SumcheckInstance<F> for RaSumcheck<F> {
     }
 
     #[tracing::instrument(skip_all, name = "RamRaVirtualization::bind")]
-    fn bind(&mut self, r_j: F, _: usize) {
+    fn bind(&mut self, r_j: F::Challenge, _: usize) {
         let prover_state = self
             .prover_state
             .as_mut()
@@ -289,13 +295,13 @@ impl<F: JoltField> SumcheckInstance<F> for RaSumcheck<F> {
     fn expected_output_claim(
         &self,
         accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
-        r: &[F],
+        r: &[F::Challenge],
     ) -> F {
         // we need opposite endian-ness here
         let r_rev: Vec<_> = r.iter().cloned().rev().collect();
-        let eq_eval = self.gamma[0] * EqPolynomial::mle(&self.r_cycle[0], &r_rev)
-            + self.gamma[1] * EqPolynomial::mle(&self.r_cycle[1], &r_rev)
-            + self.gamma[2] * EqPolynomial::mle(&self.r_cycle[2], &r_rev);
+        let eq_eval = self.gamma[0] * EqPolynomial::<F>::mle(&self.r_cycle[0], &r_rev)
+            + self.gamma[1] * EqPolynomial::<F>::mle(&self.r_cycle[1], &r_rev)
+            + self.gamma[2] * EqPolynomial::<F>::mle(&self.r_cycle[2], &r_rev);
 
         // Compute the product of all ra_i evaluations
         let mut product = F::one();
@@ -317,7 +323,7 @@ impl<F: JoltField> SumcheckInstance<F> for RaSumcheck<F> {
             .prover_state
             .as_ref()
             .expect("Prover state not initialized");
-        let degree = <Self as SumcheckInstance<F>>::degree(self);
+        let degree = <Self as SumcheckInstance<F, T>>::degree(self);
         let ra_i_polys = &ps.ra_i_polys;
         let eq_poly = &ps.eq_poly;
 
@@ -360,13 +366,17 @@ impl<F: JoltField> SumcheckInstance<F> for RaSumcheck<F> {
             .collect()
     }
 
-    fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(
+        &self,
+        opening_point: &[F::Challenge],
+    ) -> OpeningPoint<BIG_ENDIAN, F> {
         OpeningPoint::new(opening_point.iter().copied().rev().collect())
     }
 
     fn cache_openings_prover(
         &self,
         accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
+        transcript: &mut T,
         r_cycle: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         let prover_state = self
@@ -377,6 +387,7 @@ impl<F: JoltField> SumcheckInstance<F> for RaSumcheck<F> {
         for i in 0..self.d {
             let claim = prover_state.ra_i_polys[i].final_sumcheck_claim();
             accumulator.borrow_mut().append_sparse(
+                transcript,
                 vec![CommittedPolynomial::RamRa(i)],
                 SumcheckId::RamRaVirtualization,
                 self.r_address_chunks[i].clone(),
@@ -389,12 +400,14 @@ impl<F: JoltField> SumcheckInstance<F> for RaSumcheck<F> {
     fn cache_openings_verifier(
         &self,
         accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
+        transcript: &mut T,
         r_cycle: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         for i in 0..self.d {
             let opening_point =
                 [self.r_address_chunks[i].as_slice(), r_cycle.r.as_slice()].concat();
             accumulator.borrow_mut().append_sparse(
+                transcript,
                 vec![CommittedPolynomial::RamRa(i)],
                 SumcheckId::RamRaVirtualization,
                 opening_point,

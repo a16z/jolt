@@ -84,7 +84,7 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstance<F> for HammingWeightSumcheck<F> {
+impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for HammingWeightSumcheck<F> {
     fn degree(&self) -> usize {
         1
     }
@@ -121,7 +121,7 @@ impl<F: JoltField> SumcheckInstance<F> for HammingWeightSumcheck<F> {
     }
 
     #[tracing::instrument(skip_all, name = "BytecodeHammingWeight::bind")]
-    fn bind(&mut self, r_j: F, _round: usize) {
+    fn bind(&mut self, r_j: F::Challenge, _round: usize) {
         self.prover_state
             .as_mut()
             .unwrap()
@@ -133,7 +133,7 @@ impl<F: JoltField> SumcheckInstance<F> for HammingWeightSumcheck<F> {
     fn expected_output_claim(
         &self,
         opening_accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
-        _r: &[F],
+        _r: &[F::Challenge],
     ) -> F {
         let opening_accumulator = opening_accumulator.as_ref().unwrap();
         self.gamma
@@ -152,13 +152,17 @@ impl<F: JoltField> SumcheckInstance<F> for HammingWeightSumcheck<F> {
             .sum()
     }
 
-    fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(
+        &self,
+        opening_point: &[F::Challenge],
+    ) -> OpeningPoint<BIG_ENDIAN, F> {
         OpeningPoint::new(opening_point.iter().rev().copied().collect())
     }
 
     fn cache_openings_prover(
         &self,
         accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
+        transcript: &mut T,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         let ps = self.prover_state.as_ref().unwrap();
@@ -177,6 +181,7 @@ impl<F: JoltField> SumcheckInstance<F> for HammingWeightSumcheck<F> {
             .map(|ra| ra.final_sumcheck_claim())
             .collect::<Vec<F>>();
         accumulator.borrow_mut().append_sparse(
+            transcript,
             (0..self.d).map(CommittedPolynomial::BytecodeRa).collect(),
             SumcheckId::BytecodeHammingWeight,
             opening_point.r.to_vec(),
@@ -188,6 +193,7 @@ impl<F: JoltField> SumcheckInstance<F> for HammingWeightSumcheck<F> {
     fn cache_openings_verifier(
         &self,
         accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
+        transcript: &mut T,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         let r_cycle = accumulator
@@ -206,6 +212,7 @@ impl<F: JoltField> SumcheckInstance<F> for HammingWeightSumcheck<F> {
             .chain(r_cycle.iter().cloned())
             .collect::<Vec<_>>();
         accumulator.borrow_mut().append_sparse(
+            transcript,
             (0..self.d).map(CommittedPolynomial::BytecodeRa).collect(),
             SumcheckId::BytecodeHammingWeight,
             r,
