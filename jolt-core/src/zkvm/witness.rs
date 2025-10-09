@@ -123,6 +123,27 @@ impl WitnessData {
 pub struct AllCommittedPolynomials();
 impl AllCommittedPolynomials {
     pub fn initialize(ram_d: usize, bytecode_d: usize) -> Self {
+        unsafe {
+            if let Some(existing) = ALL_COMMITTED_POLYNOMIALS.get() {
+                // Check if existing polynomials match requested dimensions
+                let existing_ram_d = existing
+                    .iter()
+                    .filter(|p| matches!(p, CommittedPolynomial::RamRa(_)))
+                    .count();
+                let existing_bytecode_d = existing
+                    .iter()
+                    .filter(|p| matches!(p, CommittedPolynomial::BytecodeRa(_)))
+                    .count();
+
+                if existing_ram_d == ram_d && existing_bytecode_d == bytecode_d {
+                    // Parameters match, reuse existing polynomials
+                    return AllCommittedPolynomials();
+                } else {
+                    // Parameters differ, need to reinitialize
+                    ALL_COMMITTED_POLYNOMIALS.take();
+                }
+            }
+        };
         let mut polynomials = vec![
             CommittedPolynomial::LeftInstructionInput,
             CommittedPolynomial::RightInstructionInput,
@@ -180,16 +201,6 @@ impl AllCommittedPolynomials {
                 .get()
                 .expect("ALL_COMMITTED_POLYNOMIALS is uninitialized")
                 .par_iter()
-        }
-    }
-}
-
-impl Drop for AllCommittedPolynomials {
-    fn drop(&mut self) {
-        unsafe {
-            ALL_COMMITTED_POLYNOMIALS
-                .take()
-                .expect("ALL_COMMITTED_POLYNOMIALS is uninitialized");
         }
     }
 }
