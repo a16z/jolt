@@ -590,7 +590,7 @@ impl JoltDAG {
 
         let padded_untrusted_advice_len =
             (program_io.untrusted_advice.len().div_ceil(8) + 1).next_power_of_two();
-        let mut initial_memory_state = vec![0; padded_untrusted_advice_len];
+        let mut initial_memory_state = vec![0; 512];
 
         let temp_index = remap_address(
             program_io.memory_layout.untrusted_advice_start,

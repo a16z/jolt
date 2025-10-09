@@ -377,7 +377,7 @@ where
 
                 // Use the last number_of_vals elements for evaluation
                 let eval = untrusted_advice_poly
-                    .evaluate(&r_address.r[total_vars - untrusted_advice_vars - 1..total_vars - 2]);
+                    .evaluate(&r_address.r[total_vars - untrusted_advice_vars..]);
 
                 // Only pass the portion of r_address that was used for evaluation
                 let mut untrusted_advice_point = r_address.clone();
@@ -395,25 +395,25 @@ where
             }
         }
 
-        if let Some(prover_state) = state_manager.prover_state.as_ref() {
-            if let Some(trusted_advice_poly) = prover_state.trusted_advice_polynomial.as_ref() {
-                let (r, _) = state_manager.get_virtual_polynomial_opening(
-                    VirtualPolynomial::RamVal,
-                    SumcheckId::RamReadWriteChecking,
-                );
-                let (r_address, _) = r.split_at(state_manager.ram_K.log_2());
-                let eval = trusted_advice_poly.evaluate(&r_address.r);
+        // if let Some(prover_state) = state_manager.prover_state.as_ref() {
+        //     if let Some(trusted_advice_poly) = prover_state.trusted_advice_polynomial.as_ref() {
+        //         let (r, _) = state_manager.get_virtual_polynomial_opening(
+        //             VirtualPolynomial::RamVal,
+        //             SumcheckId::RamReadWriteChecking,
+        //         );
+        //         let (r_address, _) = r.split_at(state_manager.ram_K.log_2());
+        //         let eval = trusted_advice_poly.evaluate(&r_address.r);
 
-                prover_state
-                    .accumulator
-                    .borrow_mut()
-                    .append_trusted_advice(
-                        &mut *state_manager.get_transcript().borrow_mut(),
-                        r_address.clone(),
-                        eval,
-                    );
-            }
-        }
+        //         prover_state
+        //             .accumulator
+        //             .borrow_mut()
+        //             .append_trusted_advice(
+        //                 &mut *state_manager.get_transcript().borrow_mut(),
+        //                 r_address.clone(),
+        //                 eval,
+        //             );
+        //     }
+        // }
 
         let val_evaluation = ValEvaluationSumcheck::new_prover(
             self.initial_memory_state.as_ref().unwrap(),
@@ -449,11 +449,12 @@ where
                 let (r_address, _) = r.split_at(state_manager.ram_K.log_2());
 
                 let untrusted_advice_vars = verifier_state.untrusted_advice_num_vars.unwrap();
+                println!("stage3_verifier: untrusted_advice_vars: {}", untrusted_advice_vars);
                 let total_vars = r_address.r.len();
 
                 let mut untrusted_advice_point = r_address.clone();
                 untrusted_advice_point.r =
-                    r_address.r[total_vars - untrusted_advice_vars - 1..total_vars - 2].to_vec();
+                    r_address.r[total_vars - untrusted_advice_vars..].to_vec();
 
                 verifier_state
                     .accumulator

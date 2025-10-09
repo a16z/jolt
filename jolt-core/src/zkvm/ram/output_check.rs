@@ -510,10 +510,11 @@ impl<F: JoltField> ValFinalSumcheck<F> {
                 .unwrap_or(point.r.len());
             let num_total_vars: usize = state_manager.ram_K.log_2();
             let num_missing_vars = num_total_vars - num_untrusted_vars;
+            println!("ValFinalSumcheck: num_missing_vars: {}", num_missing_vars);
 
             // Calculate scaling factor for the first (missing) variables
-            let mut scaling_factor = F::one();
-            for i in 0..num_missing_vars {
+            let mut scaling_factor = r_address[3].into();
+            for i in 0..num_missing_vars-1 {
                 scaling_factor *= F::one() - r_address[i];
             }
 
