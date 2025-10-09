@@ -67,7 +67,7 @@ impl<F: JoltField> PolynomialBinding<F> for RaPolynomial<F> {
             Self::Round1(mle) => *self = Self::Round2(mem::take(mle).bind(r, order)),
             Self::Round2(mle) => *self = Self::Round3(mem::take(mle).bind(r, order)),
             Self::Round3(mle) => *self = Self::RoundN(mem::take(mle).bind(r, order)),
-            Self::RoundN(mle) => mle.bind(r, order),
+            Self::RoundN(mle) => mle.bind_parallel(r, order),
         };
     }
 
