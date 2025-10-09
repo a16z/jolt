@@ -93,7 +93,7 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
     fn prove<ProofTranscript: Transcript>(
         setup: &Self::ProverSetup,
         poly: &MultilinearPolynomial<Self::Field>,
-        opening_point: &[Self::Field],
+        opening_point: &[<Self::Field as JoltField>::Challenge],
         hint: Self::OpeningProofHint,
         transcript: &mut ProofTranscript,
     ) -> Self::Proof;
@@ -101,7 +101,7 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
     fn prove_without_hint<ProofTranscript: Transcript>(
         _setup: &Self::ProverSetup,
         _poly: &MultilinearPolynomial<Self::Field>,
-        _opening_point: &[Self::Field],
+        _opening_point: &[<Self::Field as JoltField>::Challenge],
         _transcript: &mut ProofTranscript,
     ) -> Self::Proof {
         unimplemented!()
@@ -123,7 +123,7 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
         proof: &Self::Proof,
         setup: &Self::VerifierSetup,
         transcript: &mut ProofTranscript,
-        opening_point: &[Self::Field],
+        opening_point: &[<Self::Field as JoltField>::Challenge],
         opening: &Self::Field,
         commitment: &Self::Commitment,
     ) -> Result<(), ProofVerifyError>;

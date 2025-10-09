@@ -29,7 +29,7 @@ impl<F: JoltField> RaPolynomial<F> {
         lookup_indices: Arc<[LookupBits]>,
         d: usize,
         log_k_chunk: usize,
-        r_address: &[F],
+        r_address: &[F::Challenge],
         i: usize,
     ) -> Self {
         let r = &r_address[log_k_chunk * i..log_k_chunk * (i + 1)];
@@ -58,7 +58,7 @@ impl<F: JoltField> PolynomialBinding<F> for RaPolynomial<F> {
         !matches!(self, Self::Round1(_))
     }
 
-    fn bind(&mut self, r: F, order: BindingOrder) {
+    fn bind(&mut self, r: F::Challenge, order: BindingOrder) {
         assert!(order == BindingOrder::HighToLow);
         match self {
             Self::Round1(mle) => *self = Self::Round2(mem::take(mle).bind(r)),
@@ -67,7 +67,7 @@ impl<F: JoltField> PolynomialBinding<F> for RaPolynomial<F> {
         };
     }
 
-    fn bind_parallel(&mut self, r: F, order: BindingOrder) {
+    fn bind_parallel(&mut self, r: F::Challenge, order: BindingOrder) {
         self.bind(r, order);
     }
 
@@ -92,7 +92,7 @@ pub struct RaPolynomialRound1<F: JoltField> {
 }
 
 impl<F: JoltField> RaPolynomialRound1<F> {
-    fn bind(self, r0: F) -> RaPolynomialRound2<F> {
+    fn bind(self, r0: F::Challenge) -> RaPolynomialRound2<F> {
         // Construct lookup tables.
         let eq_0_r0 = EqPolynomial::mle(&[F::zero()], &[r0]);
         let eq_1_r0 = EqPolynomial::mle(&[F::one()], &[r0]);
@@ -125,7 +125,7 @@ pub struct RaPolynomialRound2<F: JoltField> {
     // Index `x` stores `eq(x, r_address_chunk_i) * eq(1, r0)`.
     F_1: Vec<F>,
     lookup_indices: Arc<[LookupBits]>,
-    r0: F,
+    r0: F::Challenge,
     /// Equals `log_k_chunk * (d - 1 - i)`.   
     shift: usize,
     /// Equals `2^log_k_chunk - 1`.    
@@ -133,7 +133,7 @@ pub struct RaPolynomialRound2<F: JoltField> {
 }
 
 impl<F: JoltField> RaPolynomialRound2<F> {
-    fn bind(self, r1: F) -> MultilinearPolynomial<F> {
+    fn bind(self, r1: F::Challenge) -> MultilinearPolynomial<F> {
         // Construct lookup tables.
         let eq_0_r1 = EqPolynomial::mle(&[F::zero()], &[r1]);
         let eq_1_r1 = EqPolynomial::mle(&[F::one()], &[r1]);

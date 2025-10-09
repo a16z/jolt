@@ -280,7 +280,8 @@ fn collect_guest_proofs(guest: GuestProgram, target_dir: &str, use_embed: bool) 
     info!("Getting ELF contents...");
     let elf_contents = program.get_elf_contents().unwrap();
     info!("Creating guest program...");
-    let guest_prog = jolt_sdk::guest::program::Program::new(&elf_contents, &memory_config);
+    let mut guest_prog = jolt_sdk::guest::program::Program::new(&elf_contents, &memory_config);
+    guest_prog.elf = program.elf;
 
     info!("Preprocessing guest prover...");
     let guest_prover_preprocessing =
@@ -456,6 +457,7 @@ fn run_recursion_proof(
     program.build(target_dir);
     let elf_contents = program.get_elf_contents().unwrap();
     let mut recursion = jolt_sdk::guest::program::Program::new(&elf_contents, &memory_config);
+    recursion.elf = program.elf;
 
     if run_config == RunConfig::Trace || run_config == RunConfig::TraceToFile {
         // shorten the max_trace_length for tracing only. Speeds up setup time for tracing purposes.

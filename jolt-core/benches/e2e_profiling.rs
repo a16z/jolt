@@ -2,7 +2,8 @@ use jolt_core::host;
 use jolt_core::zkvm::JoltVerifierPreprocessing;
 use jolt_core::zkvm::{Jolt, JoltRV64IMAC};
 
-#[derive(Debug, Copy, Clone, clap::ValueEnum)]
+#[derive(Debug, Copy, Clone, clap::ValueEnum, strum_macros::Display)]
+#[strum(serialize_all = "kebab-case")]
 pub enum BenchType {
     Btreemap,
     Fibonacci,

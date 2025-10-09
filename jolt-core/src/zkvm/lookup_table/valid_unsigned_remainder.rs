@@ -4,7 +4,10 @@ use super::prefixes::{PrefixEval, Prefixes};
 use super::suffixes::{SuffixEval, Suffixes};
 use super::JoltLookupTable;
 use super::PrefixSuffixDecomposition;
-use crate::{field::JoltField, utils::uninterleave_bits};
+use crate::{
+    field::{ChallengeFieldOps, FieldChallengeOps, JoltField},
+    utils::uninterleave_bits,
+};
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ValidUnsignedRemainderTable<const XLEN: usize>;
@@ -15,7 +18,11 @@ impl<const XLEN: usize> JoltLookupTable for ValidUnsignedRemainderTable<XLEN> {
         (divisor == 0 || remainder < divisor).into()
     }
 
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+    fn evaluate_mle<F, C>(&self, r: &[C]) -> F
+    where
+        C: ChallengeFieldOps<F>,
+        F: JoltField + FieldChallengeOps<C>,
+    {
         let mut divisor_is_zero = F::one();
         let mut lt = F::zero();
         let mut eq = F::one();
