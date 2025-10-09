@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1760046715090,
+  "lastUpdate": 1760047087853,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -19810,6 +19810,198 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 844756,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "atretyakov@a16z.com",
+            "name": "Andrew Tretyakov",
+            "username": "0xAndoroid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "66ec47903666a59db48ee1d6b9f0e0b61c7e75e2",
+          "message": "feat: benchmark utils (#1000)\n\n* initial master bench\n\n* output summary\n\n* sha bench broken\n\n* put into a bash instead\n\n* jolt benchmark\n\n* only count prover time\n\n* sha -> chain\n\n* rv64bench benchmarks\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\n\n* merge\n\n* single thread?\n\n* enable all benchmarks\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\n\n* continuous graph. Let's make it sawtooth\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\n\n* sawtooth pattern\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\n\n* fix btree bench\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\n\n* fix?\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\n\n* fix all committed polynomials being uninitialized\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\n\n* plot\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\n\n* put the uncompressed in legend\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\n\n* fix scale on mem chart\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\n\n* final plot adjustments\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\n\n* Move remaining benchmarks from src/benches/bench.rs to benches/e2e_profiling.rs\n\n- Moved master_benchmark function and helper functions (get_fib_input, get_sha2_chain_iterations, etc.)\n- Moved plot creation functions (create_benchmark_plot, create_proof_size_plot, plot_from_csv)\n- Moved prove_example_with_trace function\n- Removed shout and twist benchmark functions as they are no longer needed\n- Updated prove API calls to use new signature with elf_contents parameter\n- Fixed all imports and removed unused dependencies\n\n* update scale\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\n\n* update the title of the plot\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\n\n* remove unused file\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\n\n* update title\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\n\n* don't count tracing time\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\n\n* special trace ln calc\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\n\n* add scripts\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\n\n* up singlethreaded number to 2^24\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\n\n* put the command in the numa thing\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\n\n* remove numa from script\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\n\n* add special rust flags\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\n\n* cleanup: benchmark rv64 (#993)\n\n* Step 1: BenchmarkArgs\n\n* Add empirical cycle calculations for iterations\n\n* Refactor master_benchmark to deduplicate code\n\n* Refactor to use arguments instead of env\n\n* Refactor master_benchmark to accept single benchmark type and scale as parameters\n\n* Remove dead code, fix build\n\n* cargo fmt\n\n* Enhance optimize_machine.sh with memory overcommit and max map count settings, improve ulimit error handling, and add system info output\n\n* Add cargo.lock\n\n* Refactor jolt_benchmarks.sh to support variable trace lengths and customizable benchmarks; update output paths and CSV handling for results.\n\n* Fixes per AI\n\n* Move to scripts to directory\n\n* Rename run_benchmarks.sh to avoid ambiguity\n\n* Python scripts to display benchmarks and plot\n\n* Update README\n\n* Clean up plotting script\n\n* Flip args order\n\n* Fix script bug, cleanup unused\n\n* cargo fmt\n\n* Hz -> kHz\n\n* flake8\n\n* Bugfix\n\n* Add resume option to jolt_benchmarks.sh for skipping existing benchmarks, clean up script, error handling\n\n* Fixes and cleanup\n\n* Add error handling for missing plotly dependency in plotting script\n\n* Plotting fixes\n\n* Refactor and cleanup summary generator\n\n* Address outdated comment\n\n* clippy\n\n* cargo fmt\n\n* Ignore benchmark runs\n\n* Fix SDK verifier test regression\n\n* Regenerate Cargo.lock\n\n* Fix regressions\n\n* Fix merge regression\n\n* Fix AllCommittedPolynomials properly\n\n* Apply AI suggestion\n\n* clippy\n\n* cargo fmt\n\n* Clean up output\n\n* Infer scale from max-trace-length if not supplied\n\n* Run scale 18-20 in benchmarks\n\n* fmt, clippy\n\n* Update scripts/jolt_benchmarks.sh\n\nCo-authored-by: graphite-app[bot] <96075541+graphite-app[bot]@users.noreply.github.com>\n\n* Use cache in bench\n\n* Remove from README.md\n\nCo-authored-by: Andrew Tretyakov <andrew@tretyakov.xyz>\n\n* Remove from CI\n\n* Cleanup bash scripts\n\n* Add documentation\n\n---------\n\nCo-authored-by: graphite-app[bot] <96075541+graphite-app[bot]@users.noreply.github.com>\nCo-authored-by: Andrew Tretyakov <andrew@tretyakov.xyz>\n\n* rm plotly\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\n\n---------\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\nCo-authored-by: markosg04 <mgeorghiades@a16z.com>\nCo-authored-by: danielwlz <183745461+danielwlz@users.noreply.github.com>\nCo-authored-by: graphite-app[bot] <96075541+graphite-app[bot]@users.noreply.github.com>",
+          "timestamp": "2025-10-09T17:06:37-04:00",
+          "tree_id": "edf6a3fcf185e0ea466da1a7fe1877cce16a7ec5",
+          "url": "https://github.com/a16z/jolt/commit/66ec47903666a59db48ee1d6b9f0e0b61c7e75e2"
+        },
+        "date": 1760047086918,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 796308,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "blake2-ex-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "blake2-ex-mem",
+            "value": 774624,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "blake3-ex-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "blake3-ex-mem",
+            "value": 799592,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 3685516,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 781300,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 762848,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 756868,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 838856,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 854336,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 349644,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 5570332,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 787052,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 773452,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 845804,
             "unit": "KB",
             "extra": ""
           }
