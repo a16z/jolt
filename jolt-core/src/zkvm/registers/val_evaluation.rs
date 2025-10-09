@@ -1,3 +1,4 @@
+use num_traits::Zero;
 use std::{cell::RefCell, rc::Rc};
 
 use crate::{
@@ -135,7 +136,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ValEvaluationSumche
             .expect("Prover state not initialized");
 
         const DEGREE: usize = 3;
-        let univariate_poly_evals: [F; 3] = (0..prover_state.inc.len() / 2)
+        (0..prover_state.inc.len() / 2)
             .into_par_iter()
             .map(|i| {
                 let inc_evals = prover_state
@@ -149,13 +150,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ValEvaluationSumche
                     .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
 
                 [
-                    inc_evals[0] * wa_evals[0] * lt_evals[0],
-                    inc_evals[1] * wa_evals[1] * lt_evals[1],
-                    inc_evals[2] * wa_evals[2] * lt_evals[2],
+                    (inc_evals[0] * wa_evals[0]).mul_unreduced::<9>(lt_evals[0]),
+                    (inc_evals[1] * wa_evals[1]).mul_unreduced::<9>(lt_evals[1]),
+                    (inc_evals[2] * wa_evals[2]).mul_unreduced::<9>(lt_evals[2]),
                 ]
             })
             .reduce(
-                || [F::zero(); 3],
+                || [F::Unreduced::zero(); DEGREE],
                 |running, new| {
                     [
                         running[0] + new[0],
@@ -163,9 +164,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ValEvaluationSumche
                         running[2] + new[2],
                     ]
                 },
-            );
-
-        univariate_poly_evals.to_vec()
+            )
+            .into_iter()
+            .map(F::from_montgomery_reduce)
+            .collect()
     }
 
     #[tracing::instrument(skip_all, name = "RegistersValEvaluationSumcheck::bind")]

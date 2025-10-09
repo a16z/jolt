@@ -2,6 +2,9 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use num_traits::Zero;
+
+use crate::field::MulTrunc;
 use crate::poly::opening_proof::{
     OpeningPoint, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
 };
@@ -340,7 +343,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
         // EQ(k_m, c)^2 for k_m \in {0, 1} and c \in {0, 2, 3}
         const EQ_KM_C_SQUARED: [[u8; 3]; 2] = [[1, 1, 4], [0, 4, 9]];
 
-        let univariate_poly_evals: [F; 3] = (0..p.B.len() / 2)
+        (0..p.B.len() / 2)
             .into_par_iter()
             .map(|k_prime| {
                 // Get B evaluations at points 0, 2, 3
@@ -378,8 +381,15 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                                     - F::from_i64(EQ_KM_C[k_m][2] as i64)),
                         ]
                     })
+                    .fold_with([F::Unreduced::<5>::zero(); 3], |running, new| {
+                        [
+                            running[0] + new[0].as_unreduced_ref(),
+                            running[1] + new[1].as_unreduced_ref(),
+                            running[2] + new[2].as_unreduced_ref(),
+                        ]
+                    })
                     .reduce(
-                        || [F::zero(); 3],
+                        || [F::Unreduced::zero(); 3],
                         |running, new| {
                             [
                                 running[0] + new[0],
@@ -390,13 +400,13 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                     );
 
                 [
-                    B_evals[0] * inner_sum[0],
-                    B_evals[1] * inner_sum[1],
-                    B_evals[2] * inner_sum[2],
+                    inner_sum[0].mul_trunc::<4, 9>(B_evals[0].as_unreduced_ref()),
+                    inner_sum[1].mul_trunc::<4, 9>(B_evals[1].as_unreduced_ref()),
+                    inner_sum[2].mul_trunc::<4, 9>(B_evals[2].as_unreduced_ref()),
                 ]
             })
             .reduce(
-                || [F::zero(); 3],
+                || [F::Unreduced::zero(); 3],
                 |running, new| {
                     [
                         running[0] + new[0],
@@ -404,16 +414,17 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                         running[2] + new[2],
                     ]
                 },
-            );
-
-        univariate_poly_evals.to_vec()
+            )
+            .into_iter()
+            .map(F::from_montgomery_reduce)
+            .collect()
     }
 
     fn compute_phase2_message(&self, _round: usize) -> Vec<F> {
         let p = self.prover_state.as_ref().unwrap();
         const DEGREE: usize = 3;
 
-        let univariate_poly_evals: [F; 3] = (0..p.D.len() / 2)
+        (0..p.D.len() / 2)
             .into_par_iter()
             .map(|j| {
                 // Get D evaluations at points 0, 2, 3
@@ -441,13 +452,13 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                         });
 
                 [
-                    D_evals[0] * h_evals[0],
-                    D_evals[1] * h_evals[1],
-                    D_evals[2] * h_evals[2],
+                    D_evals[0].mul_unreduced::<9>(h_evals[0]),
+                    D_evals[1].mul_unreduced::<9>(h_evals[1]),
+                    D_evals[2].mul_unreduced::<9>(h_evals[2]),
                 ]
             })
             .reduce(
-                || [F::zero(); 3],
+                || [F::Unreduced::zero(); 3],
                 |running, new| {
                     [
                         running[0] + new[0],
@@ -455,12 +466,9 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                         running[2] + new[2],
                     ]
                 },
-            );
-
-        vec![
-            p.eq_r_r * univariate_poly_evals[0],
-            p.eq_r_r * univariate_poly_evals[1],
-            p.eq_r_r * univariate_poly_evals[2],
-        ]
+            )
+            .into_par_iter()
+            .map(|evals| p.eq_r_r * F::from_montgomery_reduce(evals))
+            .collect()
     }
 }

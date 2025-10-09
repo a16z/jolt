@@ -1,4 +1,6 @@
+use num_traits::Zero;
 use std::cell::RefCell;
+use std::iter::zip;
 use std::rc::Rc;
 
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
@@ -317,22 +319,22 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for RaSumcheck<F> {
 
     #[tracing::instrument(skip_all, name = "RamRaVirtualization::compute_prover_message")]
     fn compute_prover_message(&mut self, _round: usize, _previous_claim: F) -> Vec<F> {
-        let prover_state = self
+        let ps = self
             .prover_state
             .as_ref()
             .expect("Prover state not initialized");
         let degree = <Self as SumcheckInstance<F, T>>::degree(self);
-        let ra_i_polys = &prover_state.ra_i_polys;
-        let eq_poly = &prover_state.eq_poly;
+        let ra_i_polys = &ps.ra_i_polys;
+        let eq_poly = &ps.eq_poly;
 
         // We need to compute evaluations at 0, 2, 3, ..., degree
         // = eq(r_cycle, j) * ∏_{i=0}^{D-1} ra_i(j)
-        let univariate_poly_evals: Vec<F> = (0..ra_i_polys[0].len() / 2)
+        (0..ra_i_polys[0].len() / 2)
             .into_par_iter()
             .map(|i| {
                 let eq_evals = eq_poly.sumcheck_evals(i, degree, BindingOrder::LowToHigh);
 
-                let mut evals = vec![F::zero(); degree];
+                let mut evals = vec![];
 
                 // Firstly compute all ra_i_evals
                 let all_ra_i_evals: Vec<Vec<F>> = ra_i_polys
@@ -341,28 +343,27 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for RaSumcheck<F> {
                     .collect();
 
                 for eval_point in 0..degree {
+                    // Multiply all ra evaluations together in field arithmetic
                     let mut result = eq_evals[eval_point];
-
                     for ra_i_evals in all_ra_i_evals.iter() {
                         result *= ra_i_evals[eval_point];
                     }
-
-                    evals[eval_point] = result;
+                    let unreduced = *result.as_unreduced_ref();
+                    evals.push(unreduced);
                 }
 
                 evals
             })
+            .fold_with(vec![F::Unreduced::<5>::zero(); degree], |running, new| {
+                zip(running, new).map(|(a, b)| a + b).collect()
+            })
             .reduce(
-                || vec![F::zero(); degree],
-                |mut running, new| {
-                    for i in 0..degree {
-                        running[i] += new[i];
-                    }
-                    running
-                },
-            );
-
-        univariate_poly_evals
+                || vec![F::Unreduced::zero(); degree],
+                |running, new| zip(running, new).map(|(a, b)| a + b).collect(),
+            )
+            .into_iter()
+            .map(F::from_barrett_reduce)
+            .collect()
     }
 
     fn normalize_opening_point(

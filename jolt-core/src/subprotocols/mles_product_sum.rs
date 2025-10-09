@@ -1,3 +1,4 @@
+use num_traits::Zero;
 use std::iter::zip;
 
 use rayon::prelude::*;
@@ -26,7 +27,7 @@ pub fn compute_mles_product_sum<F: JoltField>(
     let eq_wr_evals = EqPolynomial::evals_parallel(wr, None);
 
     // Evaluate g(X) / eq(X, r[round]) at [1, 2, ..., |mles| - 1, inf].
-    let sum_evals = eq_wr_evals
+    let sum_evals: Vec<F> = eq_wr_evals
         .par_iter()
         .enumerate()
         .map(|(j_wr, eq_wr_eval)| {
@@ -48,13 +49,26 @@ pub fn compute_mles_product_sum<F: JoltField>(
                 product_eval_univariate(&mle_eval_pairs, &mut partial_evals);
             }
 
-            partial_evals.iter_mut().for_each(|v| *v *= *eq_wr_eval);
             partial_evals
+                .iter()
+                .map(|v| {
+                    let result = *v * *eq_wr_eval;
+                    let unreduced = *result.as_unreduced_ref();
+                    unreduced
+                })
+                .collect()
         })
+        .fold_with(
+            vec![F::Unreduced::<5>::zero(); mles.len()],
+            |running, new: Vec<F::Unreduced<4>>| zip(running, new).map(|(a, b)| a + b).collect(),
+        )
         .reduce(
-            || vec![F::zero(); mles.len()],
-            |a_evals, b_evals| zip(a_evals, b_evals).map(|(a, b)| a + b).collect(),
-        );
+            || vec![F::Unreduced::zero(); mles.len()],
+            |running, new| zip(running, new).map(|(a, b)| a + b).collect(),
+        )
+        .into_iter()
+        .map(F::from_barrett_reduce)
+        .collect();
 
     let round = r_prime.len();
     let eq_eval_at_0 = EqPolynomial::mle(&[F::zero()], &[r[round]]);

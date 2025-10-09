@@ -1,7 +1,9 @@
 use std::{cell::RefCell, rc::Rc};
 
+use num_traits::Zero;
+
 use crate::{
-    field::JoltField,
+    field::{JoltField, MulTrunc},
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
@@ -13,8 +15,10 @@ use crate::{
     subprotocols::sumcheck::SumcheckInstance,
     transcripts::Transcript,
     utils::math::Math,
-    zkvm::dag::state_manager::StateManager,
-    zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
+    zkvm::{
+        dag::state_manager::StateManager,
+        witness::{CommittedPolynomial, VirtualPolynomial},
+    },
 };
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
@@ -95,20 +99,25 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for HammingWeightSumche
 
     #[tracing::instrument(skip_all, name = "BytecodeHammingWeight::compute_prover_message")]
     fn compute_prover_message(&mut self, _round: usize, _previous_claim: F) -> Vec<F> {
-        let prover_state = self.prover_state.as_ref().unwrap();
+        let ps = self.prover_state.as_ref().unwrap();
 
-        vec![prover_state
+        let prover_msg = ps
             .ra
             .par_iter()
             .zip(self.gamma.par_iter())
             .map(|(ra, gamma)| {
-                (0..ra.len() / 2)
+                let ra_sum = (0..ra.len() / 2)
                     .into_par_iter()
                     .map(|i| ra.get_bound_coeff(2 * i))
-                    .sum::<F>()
-                    * gamma
+                    .fold_with(F::Unreduced::<5>::zero(), |running, new| {
+                        running + new.as_unreduced_ref()
+                    })
+                    .reduce(F::Unreduced::zero, |running, new| running + new);
+                ra_sum.mul_trunc::<4, 9>(gamma.as_unreduced_ref())
             })
-            .sum()]
+            .reduce(F::Unreduced::zero, |running, new| running + new);
+
+        vec![F::from_montgomery_reduce(prover_msg)]
     }
 
     #[tracing::instrument(skip_all, name = "BytecodeHammingWeight::bind")]
