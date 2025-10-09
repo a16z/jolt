@@ -1,3 +1,4 @@
+use memory_stats::memory_stats;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
@@ -30,7 +31,7 @@ impl MetricsMonitor {
                     system.refresh_all();
 
                     // Collect metrics
-                    let memory_gb = system.used_memory() as f64 / 1_073_741_824.0;
+                    let memory_gb = memory_stats().unwrap().physical_mem as f64 / 1_073_741_824.0;
                     let cpu_percent = system.global_cpu_usage();
                     let cores_active_avg = cpu_percent / 100.0 * (system.cpus().len() as f32);
                     // Report number of cores with CPU usage > 0.1%
