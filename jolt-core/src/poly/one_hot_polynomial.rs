@@ -23,7 +23,7 @@ use rayon::prelude::*;
 use std::mem;
 use std::sync::{Arc, RwLock};
 
-use jolt_optimizations::msm_rows_sparse_streaming;
+use jolt_optimizations::batch_addition_matrix;
 
 /// Represents a one-hot multilinear polynomial (ra/wa) used
 /// in Twist/Shout. Perhaps somewhat unintuitively, the implementation
@@ -452,24 +452,23 @@ impl<F: JoltField> OneHotPolynomial<F> {
         let proj_vec: Vec<G1Projective> = {
             let _span = tracing::trace_span!("batch_addition");
             let _enter = _span.enter();
-            msm_rows_sparse_streaming(
+            batch_addition_matrix(
                 &g1_bases[..row_len],
                 &self.nonzero_indices,
                 cycles_per_row,
-                K as usize,
+                K,
                 row_len,
             )
         };
-
-        proj_vec
-            .into_par_iter()
-            .map(|p| {
-                // Safety: G is the projective type expected by this call site
-                let projective: G =
-                    unsafe { std::ptr::read(&p as *const G1Projective as *const G) };
-                JoltGroupWrapper(projective)
-            })
-            .collect()
+        // Safety: G is Projective here always.
+        unsafe {
+            std::mem::transmute::<Vec<JoltGroupWrapper<G1Projective>>, Vec<JoltGroupWrapper<G>>>(
+                proj_vec
+                    .into_par_iter()
+                    .map(JoltGroupWrapper)
+                    .collect(),
+            )
+        }
     }
 
     #[tracing::instrument(skip_all, name = "OneHotPolynomial::vector_matrix_product")]

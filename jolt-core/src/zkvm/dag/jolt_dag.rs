@@ -28,7 +28,6 @@ use crate::zkvm::ProverDebugInfo;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 use anyhow::Context;
-use rayon::prelude::*;
 
 pub enum JoltDAG {}
 
