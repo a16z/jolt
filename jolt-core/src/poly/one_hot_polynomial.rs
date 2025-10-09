@@ -547,6 +547,121 @@ impl<F: JoltField> OneHotPolynomial<F> {
         }
     }
 
+    #[tracing::instrument(skip_all, name = "OneHotPolynomial::commit_one_hot_batch")]
+    pub fn commit_one_hot_batch<U, G: CurveGroup<ScalarField = F> + VariableBaseMSM>(
+        one_hot_polys: &[U],
+        bases: &[G::Affine],
+    ) -> Vec<Vec<JoltGroupWrapper<G>>>
+    where
+        U: std::borrow::Borrow<OneHotPolynomial<F>> + Sync,
+    {
+        let row_len = DoryGlobals::get_num_columns();
+        let T = DoryGlobals::get_T();
+        let rows_per_k = T / row_len;
+
+        // Phase 1: Collect all chunks from all polynomials
+        #[derive(Clone)]
+        struct ChunkWork {
+            poly_idx: usize,
+            chunk_idx: usize,
+            chunk_start: usize,
+            chunk_len: usize,
+            K: usize,
+        }
+
+        let all_chunks: Vec<ChunkWork> = one_hot_polys
+            .iter()
+            .enumerate()
+            .flat_map(|(poly_idx, poly)| {
+                let poly = poly.borrow();
+                let num_chunks = poly.nonzero_indices.len().div_ceil(row_len);
+                (0..num_chunks).map(move |chunk_idx| {
+                    let chunk_start = chunk_idx * row_len;
+                    let chunk_len =
+                        std::cmp::min(row_len, poly.nonzero_indices.len() - chunk_start);
+                    ChunkWork {
+                        poly_idx,
+                        chunk_idx,
+                        chunk_start,
+                        chunk_len,
+                        K: poly.K,
+                    }
+                })
+            })
+            .collect();
+
+        // Phase 2: Process all chunks in parallel (flat parallelism)
+        let chunk_results: Vec<_> = all_chunks
+            .par_iter()
+            .map(|work| {
+                let poly = one_hot_polys[work.poly_idx].borrow();
+                let chunk =
+                    &poly.nonzero_indices[work.chunk_start..work.chunk_start + work.chunk_len];
+
+                // Collect indices for each k
+                let mut indices_per_k: Vec<Vec<usize>> = vec![Vec::new(); work.K];
+                for (col_index, k) in chunk.iter().enumerate() {
+                    if let Some(k) = k {
+                        indices_per_k[*k].push(col_index);
+                    }
+                }
+
+                // Safety: This function is only called with G1Affine
+                let g1_bases = unsafe { std::mem::transmute::<&[G::Affine], &[G1Affine]>(bases) };
+
+                // Vectorized batch addition for all k values at once
+                let results =
+                    jolt_optimizations::batch_g1_additions_multi(g1_bases, &indices_per_k);
+
+                // Convert results to row_commitments
+                let mut row_commitments = vec![JoltGroupWrapper(G::zero()); work.K];
+                for (k, result) in results.into_iter().enumerate() {
+                    if !indices_per_k[k].is_empty() {
+                        let sum_projective: G1Projective = result.into();
+                        row_commitments[k].0 = unsafe {
+                            std::ptr::read(&sum_projective as *const G1Projective as *const G)
+                        };
+                    }
+                }
+
+                (work.poly_idx, work.chunk_idx, row_commitments)
+            })
+            .collect();
+
+        // Phase 3: Reassemble results by polynomial
+        let mut poly_results: Vec<Vec<JoltGroupWrapper<G>>> = one_hot_polys
+            .iter()
+            .map(|poly| vec![JoltGroupWrapper(G::zero()); poly.borrow().num_rows()])
+            .collect();
+
+        // Group results by polynomial
+        let mut results_by_poly: Vec<Vec<_>> = vec![Vec::new(); one_hot_polys.len()];
+        for (poly_idx, chunk_idx, commitments) in chunk_results {
+            results_by_poly[poly_idx].push((chunk_idx, commitments));
+        }
+
+        // Scatter into final results (can be done in parallel per polynomial)
+        poly_results
+            .par_iter_mut()
+            .enumerate()
+            .for_each(|(poly_idx, result)| {
+                let poly = &one_hot_polys[poly_idx];
+                let num_rows = poly.borrow().num_rows();
+
+                for (chunk_idx, commitments) in &results_by_poly[poly_idx] {
+                    // Scatter this chunk's results into the output
+                    for (k, commitment) in commitments.iter().enumerate() {
+                        let row_idx = k * rows_per_k + chunk_idx;
+                        if row_idx < num_rows {
+                            result[row_idx] = *commitment;
+                        }
+                    }
+                }
+            });
+
+        poly_results
+    }
+
     #[tracing::instrument(skip_all, name = "OneHotPolynomial::vector_matrix_product")]
     pub fn vector_matrix_product(&self, left_vec: &[F], coeff: F, result: &mut [F]) {
         let T = DoryGlobals::get_T();
