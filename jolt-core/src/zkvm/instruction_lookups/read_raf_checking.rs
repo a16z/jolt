@@ -42,7 +42,6 @@ use crate::{
     },
 };
 
-use itertools::Itertools;
 use rayon::iter::IndexedParallelIterator;
 
 const DEGREE: usize = 3;
@@ -162,103 +161,59 @@ impl<'a, F: JoltField> ReadRafProverState<F> {
             PrefixSuffixDecomposition::new(Box::new(left_operand_poly), LOG_M, LOG_K);
         let identity_ps = PrefixSuffixDecomposition::new(Box::new(identity_poly), LOG_M, LOG_K);
 
-        // Heuristic: number of chunks = next_power_of_two(num_threads) * 4
-        let threads = rayon::current_num_threads();
-        let target_chunks = threads.next_power_of_two().saturating_mul(4);
-        let chunk_size = std::cmp::max(1, trace.len().div_ceil(target_chunks));
         let num_tables = LookupTables::<XLEN>::COUNT;
 
-        struct ChunkAgg<const XLEN: usize> {
-            base: usize,
-            lookup_indices: Vec<LookupBits>,
-            uninterleave: Vec<(usize, LookupBits)>,
-            identity: Vec<(usize, LookupBits)>,
-            by_table: Vec<Vec<(usize, LookupBits)>>,
-            flags: Vec<bool>,
-            tables: Vec<Option<LookupTables<XLEN>>>,
+        struct CycleData<const XLEN: usize> {
+            idx: usize,
+            lookup_index: LookupBits,
+            is_interleaved: bool,
+            table: Option<LookupTables<XLEN>>,
         }
 
-        let chunk_aggs: Vec<ChunkAgg<XLEN>> = trace
-            .par_chunks(chunk_size)
+        let cycle_data: Vec<CycleData<XLEN>> = trace
+            .par_iter()
             .enumerate()
-            .map(|(chunk_idx, chunk)| {
-                let base = chunk_idx * chunk_size;
-                let chunk_len = chunk.len();
-                let mut lookup_indices = Vec::with_capacity(chunk_len);
-                let mut flags = Vec::with_capacity(chunk_len);
-                let mut tables = Vec::with_capacity(chunk_len);
+            .map(|(idx, cycle)| {
+                let bits = LookupBits::new(LookupQuery::<XLEN>::to_lookup_index(cycle), LOG_K);
+                let is_interleaved = cycle
+                    .instruction()
+                    .circuit_flags()
+                    .is_interleaved_operands();
+                let table = cycle.lookup_table();
 
-                let mut uninterleave = Vec::with_capacity(chunk_len / 2 + 1);
-                let mut identity = Vec::with_capacity(chunk_len / 2 + 1);
-                let mut by_table = (0..num_tables)
-                    .map(|_| Vec::with_capacity(chunk_len / num_tables + 1))
-                    .collect::<Vec<_>>();
-
-                for (off, cycle) in chunk.iter().enumerate() {
-                    let idx = base + off;
-                    let bits = LookupBits::new(LookupQuery::<XLEN>::to_lookup_index(cycle), LOG_K);
-                    let is_interleaved = cycle
-                        .instruction()
-                        .circuit_flags()
-                        .is_interleaved_operands();
-                    let table = cycle.lookup_table();
-
-                    if is_interleaved {
-                        uninterleave.push((idx, bits));
-                    } else {
-                        identity.push((idx, bits));
-                    }
-
-                    if let Some(t) = table {
-                        let t_idx = LookupTables::<XLEN>::enum_index(&t);
-                        by_table[t_idx].push((idx, bits));
-                    }
-
-                    lookup_indices.push(bits);
-                    flags.push(is_interleaved);
-                    tables.push(table);
-                }
-
-                ChunkAgg {
-                    base,
-                    lookup_indices,
-                    uninterleave,
-                    identity,
-                    by_table,
-                    flags,
-                    tables,
+                CycleData {
+                    idx,
+                    lookup_index: bits,
+                    is_interleaved,
+                    table,
                 }
             })
             .collect();
 
         let total_len = trace.len();
-        let total_uninterleave: usize = chunk_aggs.iter().map(|a| a.uninterleave.len()).sum();
-        let total_identity: usize = chunk_aggs.iter().map(|a| a.identity.len()).sum();
-        let mut total_by_table = vec![0usize; num_tables];
-        for agg in &chunk_aggs {
-            for t in 0..num_tables {
-                total_by_table[t] += agg.by_table[t].len();
-            }
-        }
-
         let mut lookup_indices = Vec::with_capacity(total_len);
         let mut is_interleaved_operands = Vec::with_capacity(total_len);
         let mut lookup_tables = Vec::with_capacity(total_len);
-        let mut lookup_indices_uninterleave = Vec::with_capacity(total_uninterleave);
-        let mut lookup_indices_identity = Vec::with_capacity(total_identity);
-        let mut lookup_indices_by_table = (0..num_tables)
-            .map(|t| Vec::with_capacity(total_by_table[t]))
-            .collect::<Vec<_>>();
+        let mut lookup_indices_uninterleave = Vec::new();
+        let mut lookup_indices_identity = Vec::new();
+        let mut lookup_indices_by_table: Vec<Vec<(usize, LookupBits)>> =
+            (0..num_tables).map(|_| Vec::new()).collect();
 
-        for agg in chunk_aggs.into_iter().sorted_by_key(|a| a.base) {
-            lookup_indices.extend(agg.lookup_indices);
-            lookup_indices_uninterleave.extend(agg.uninterleave);
-            lookup_indices_identity.extend(agg.identity);
-            for t in 0..num_tables {
-                lookup_indices_by_table[t].extend(agg.by_table[t].iter().copied());
+        for data in &cycle_data {
+            lookup_indices.push(data.lookup_index);
+            is_interleaved_operands.push(data.is_interleaved);
+            lookup_tables.push(data.table);
+
+            if data.is_interleaved {
+                lookup_indices_uninterleave.push((data.idx, data.lookup_index));
+            } else {
+                lookup_indices_identity.push((data.idx, data.lookup_index));
             }
-            is_interleaved_operands.extend(agg.flags);
-            lookup_tables.extend(agg.tables);
+
+            if let Some(t) = data.table {
+                let t_idx = LookupTables::<XLEN>::enum_index(&t);
+                lookup_indices_by_table[t_idx].push((data.idx, data.lookup_index));
+            }
         }
 
         let suffix_polys: Vec<Vec<DensePolynomial<F>>> = LookupTables::<XLEN>::iter()
