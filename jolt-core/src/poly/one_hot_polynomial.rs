@@ -23,7 +23,7 @@ use rayon::prelude::*;
 use std::mem;
 use std::sync::{Arc, RwLock};
 
-use jolt_optimizations::{msm_rows_bucket_projective, SmallRow};
+use jolt_optimizations::msm_rows_sparse_streaming;
 
 /// Represents a one-hot multilinear polynomial (ra/wa) used
 /// in Twist/Shout. Perhaps somewhat unintuitively, the implementation
@@ -450,46 +450,21 @@ impl<F: JoltField> OneHotPolynomial<F> {
         assert!(T > num_rows, "T = {T}, why are you doing this");
         let cycles_per_row = T / num_rows;
         let K = row_len / cycles_per_row;
-        let use_u16 = row_len <= 65_536;
 
         // Safety: This function is only called with G1Affine
         let g1_bases: &[G1Affine] =
             unsafe { std::mem::transmute::<&[G::Affine], &[G1Affine]>(bases) };
 
-        let rows_small: Vec<SmallRow> = self
-            .nonzero_indices
-            .par_chunks(cycles_per_row)
-            .map(|row| {
-                if use_u16 {
-                    let mut v = unsafe_allocate_zero_vec::<u16>(K);
-                    let mut len = 0;
-                    for (i, kopt) in row.iter().enumerate() {
-                        if let Some(kk) = kopt {
-                            v[len] = (i * K + kk) as u16;
-                            len += 1;
-                        }
-                    }
-                    v.truncate(len);
-                    SmallRow::from_u16(v)
-                } else {
-                    let mut v = unsafe_allocate_zero_vec::<u32>(K);
-                    let mut len = 0;
-                    for (i, kopt) in row.iter().enumerate() {
-                        if let Some(kk) = kopt {
-                            v[len] = (i * K + kk) as u32;
-                            len += 1;
-                        }
-                    }
-                    v.truncate(len);
-                    SmallRow::from_u32(v)
-                }
-            })
-            .collect();
-
         let proj_vec: Vec<G1Projective> = {
-            let _span = tracing::trace_span!("msm_rows_bucket_projective");
+            let _span = tracing::trace_span!("batch_addition");
             let _enter = _span.enter();
-            msm_rows_bucket_projective(&g1_bases[..row_len], &rows_small, K as usize)
+            msm_rows_sparse_streaming(
+                &g1_bases[..row_len],
+                &self.nonzero_indices,
+                cycles_per_row,
+                K as usize,
+                row_len,
+            )
         };
 
         proj_vec
