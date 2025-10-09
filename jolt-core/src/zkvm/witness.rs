@@ -231,7 +231,7 @@ impl CommittedPolynomial {
         polynomials: &[CommittedPolynomial],
         preprocessing: &JoltProverPreprocessing<F, PCS>,
         trace: &[Cycle],
-    ) -> std::collections::HashMap<CommittedPolynomial, MultilinearPolynomial<F>>
+    ) -> HashMap<CommittedPolynomial, MultilinearPolynomial<F>>
     where
         F: JoltField,
         PCS: CommitmentScheme<Field = F>,
@@ -269,9 +269,8 @@ impl CommittedPolynomial {
             None
         };
 
-        let instruction_ra_shifts: [usize; instruction_lookups::D] = std::array::from_fn(|i| {
-            instruction_lookups::LOG_K_CHUNK * (instruction_lookups::D - 1 - i)
-        });
+        let instruction_ra_shifts: [usize; instruction_lookups::D] =
+            array::from_fn(|i| instruction_lookups::LOG_K_CHUNK * (instruction_lookups::D - 1 - i));
         let batch_cell = Arc::new(SharedWitnessData(UnsafeCell::new(batch)));
 
         // #SAFETY: Each thread writes to a unique index of a pre-allocated vector
