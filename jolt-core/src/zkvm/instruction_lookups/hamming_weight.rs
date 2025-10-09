@@ -41,14 +41,14 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
     #[tracing::instrument(skip_all, name = "InstructionHammingWeight::new_prover")]
     pub fn new_prover(
         sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
-        F: [Vec<F>; D],
+        G: [Vec<F>; D],
     ) -> Self {
         let gamma: F = sm.transcript.borrow_mut().challenge_scalar();
         let mut gamma_powers = [F::one(); D];
         for i in 1..D {
             gamma_powers[i] = gamma_powers[i - 1] * gamma;
         }
-        let ra = F
+        let ra = G
             .into_iter()
             .map(MultilinearPolynomial::from)
             .collect::<Vec<_>>()
