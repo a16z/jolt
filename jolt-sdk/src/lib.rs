@@ -13,6 +13,33 @@ pub use postcard;
 
 use serde::{Deserialize, Serialize};
 
+/// A wrapper type to mark guest program inputs as trusted_advice.
+#[derive(Debug, Serialize, Deserialize)]
+#[repr(transparent)]
+pub struct TrustedAdvice<T> {
+    value: T,
+}
+
+impl<T> TrustedAdvice<T> {
+    pub fn new(value: T) -> Self {
+        Self { value }
+    }
+}
+
+impl<T> From<T> for TrustedAdvice<T> {
+    fn from(value: T) -> Self {
+        Self::new(value)
+    }
+}
+
+impl<T> core::ops::Deref for TrustedAdvice<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.value
+    }
+}
+
 /// A wrapper type to mark guest program inputs as untrusted_advice.
 #[derive(Debug, Serialize, Deserialize)]
 #[repr(transparent)]

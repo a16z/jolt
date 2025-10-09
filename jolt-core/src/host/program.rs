@@ -7,8 +7,8 @@ use crate::host::TOOLCHAIN_VERSION;
 use crate::host::{Program, DEFAULT_TARGET_DIR, LINKER_SCRIPT_TEMPLATE};
 use common::constants::{
     DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE, DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE,
-    DEFAULT_MEMORY_SIZE, DEFAULT_STACK_SIZE, EMULATOR_MEMORY_CAPACITY, RAM_START_ADDRESS,
-    STACK_CANARY_SIZE,
+    DEFAULT_MAX_TRUSTED_ADVICE_SIZE, DEFAULT_MEMORY_SIZE, DEFAULT_STACK_SIZE, EMULATOR_MEMORY_CAPACITY,
+    RAM_START_ADDRESS, STACK_CANARY_SIZE,
 };
 use common::jolt_device::{JoltDevice, MemoryConfig};
 use std::fs::File;
@@ -30,6 +30,7 @@ impl Program {
             stack_size: DEFAULT_STACK_SIZE,
             max_input_size: DEFAULT_MAX_INPUT_SIZE,
             max_untrusted_advice_size: DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE,
+            max_trusted_advice_size: DEFAULT_MAX_TRUSTED_ADVICE_SIZE,
             max_output_size: DEFAULT_MAX_OUTPUT_SIZE,
             std: false,
             elf: None,
@@ -48,6 +49,7 @@ impl Program {
         self.set_memory_size(memory_config.memory_size);
         self.set_stack_size(memory_config.stack_size);
         self.set_max_input_size(memory_config.max_input_size);
+        self.set_max_trusted_advice_size(memory_config.max_trusted_advice_size);
         self.set_max_untrusted_advice_size(memory_config.max_untrusted_advice_size);
         self.set_max_output_size(memory_config.max_output_size);
     }
@@ -62,6 +64,10 @@ impl Program {
 
     pub fn set_max_input_size(&mut self, size: u64) {
         self.max_input_size = size;
+    }
+
+    pub fn set_max_trusted_advice_size(&mut self, size: u64) {
+        self.max_trusted_advice_size = size;
     }
 
     pub fn set_max_untrusted_advice_size(&mut self, size: u64) {
@@ -244,6 +250,7 @@ impl Program {
         &mut self,
         inputs: &[u8],
         untrusted_advice: &[u8],
+        trusted_advice: &[u8],
     ) -> (Vec<Cycle>, Memory, JoltDevice) {
         self.build(DEFAULT_TARGET_DIR);
         let elf = self.elf.as_ref().unwrap();
@@ -259,6 +266,7 @@ impl Program {
             stack_size: self.stack_size,
             max_input_size: self.max_input_size,
             max_untrusted_advice_size: self.max_untrusted_advice_size,
+            max_trusted_advice_size: self.max_trusted_advice_size,
             max_output_size: self.max_output_size,
             program_size: Some(program_size),
         };
@@ -268,6 +276,7 @@ impl Program {
             self.elf.as_ref(),
             inputs,
             untrusted_advice,
+            trusted_advice,
             &memory_config,
         )
     }
@@ -277,6 +286,7 @@ impl Program {
         &mut self,
         inputs: &[u8],
         untrusted_advice: &[u8],
+        trusted_advice: &[u8],
         trace_file: &PathBuf,
     ) -> (Memory, JoltDevice) {
         self.build(DEFAULT_TARGET_DIR);
@@ -292,6 +302,7 @@ impl Program {
             stack_size: self.stack_size,
             max_input_size: self.max_input_size,
             max_untrusted_advice_size: self.max_untrusted_advice_size,
+            max_trusted_advice_size: self.max_trusted_advice_size,
             max_output_size: self.max_output_size,
             program_size: Some(program_size),
         };
@@ -301,6 +312,7 @@ impl Program {
             self.elf.as_ref(),
             inputs,
             untrusted_advice,
+            trusted_advice,
             &memory_config,
             trace_file,
         )
@@ -310,9 +322,10 @@ impl Program {
         mut self,
         inputs: &[u8],
         untrusted_advice: &[u8],
+        trusted_advice: &[u8],
     ) -> ProgramSummary {
         let (bytecode, init_memory_state, _) = self.decode();
-        let (trace, _, io_device) = self.trace(inputs, untrusted_advice);
+        let (trace, _, io_device) = self.trace(inputs, untrusted_advice, trusted_advice);
 
         ProgramSummary {
             trace,

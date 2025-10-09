@@ -41,12 +41,13 @@ struct MacroBuilder {
     func: ItemFn,
     std: bool,
     pub_func_args: Vec<(Ident, Box<Type>)>,
+    trusted_func_args: Vec<(Ident, Box<Type>)>,
     untrusted_func_args: Vec<(Ident, Box<Type>)>,
 }
 
 impl MacroBuilder {
     fn new(attr: AttributeArgs, func: ItemFn) -> Self {
-        let (pub_func_args, untrusted_func_args) = Self::get_func_args(&func);
+        let (pub_func_args, trusted_func_args, untrusted_func_args) = Self::get_func_args(&func);
         #[cfg(feature = "guest-std")]
         let std = true;
         #[cfg(not(feature = "guest-std"))]
@@ -57,6 +58,7 @@ impl MacroBuilder {
             func,
             std,
             pub_func_args,
+            trusted_func_args,
             untrusted_func_args,
         }
     }
@@ -111,6 +113,8 @@ impl MacroBuilder {
         let attributes = parse_attributes(&self.attr);
         let max_input_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_input_size);
         let max_output_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_output_size);
+        let max_trusted_advice_size =
+            proc_macro2::Literal::u64_unsuffixed(attributes.max_trusted_advice_size);
         let max_untrusted_advice_size =
             proc_macro2::Literal::u64_unsuffixed(attributes.max_untrusted_advice_size);
         let stack_size = proc_macro2::Literal::u64_unsuffixed(attributes.stack_size);
@@ -126,6 +130,7 @@ impl MacroBuilder {
                 MemoryConfig {
                     max_input_size: #max_input_size,
                     max_output_size: #max_output_size,
+                    max_trusted_advice_size: #max_trusted_advice_size,
                     max_untrusted_advice_size: #max_untrusted_advice_size,
                     stack_size: #stack_size,
                     memory_size: #memory_size,
@@ -140,10 +145,11 @@ impl MacroBuilder {
         let build_prover_fn_name = Ident::new(&format!("build_prover_{fn_name}"), fn_name.span());
         let prove_output_ty = self.get_prove_output_type();
 
-        // Include both public and untrusted_advice arguments for the prover
+        // Include public, trusted_advice, and untrusted_advice arguments for the prover
         let all_names: Vec<_> = self
             .pub_func_args
             .iter()
+            .chain(&self.trusted_func_args)
             .chain(&self.untrusted_func_args)
             .map(|(name, _)| name)
             .collect();
@@ -151,6 +157,7 @@ impl MacroBuilder {
         let all_types: Vec<_> = self
             .pub_func_args
             .iter()
+            .chain(&self.trusted_func_args)
             .chain(&self.untrusted_func_args)
             .map(|(_, ty)| ty)
             .collect();
@@ -217,6 +224,7 @@ impl MacroBuilder {
                         max_input_size: preprocessing.shared.memory_layout.max_input_size,
                         max_output_size: preprocessing.shared.memory_layout.max_output_size,
                         max_untrusted_advice_size: preprocessing.shared.memory_layout.max_untrusted_advice_size,
+                        max_trusted_advice_size: preprocessing.shared.memory_layout.max_trusted_advice_size,
                         stack_size: preprocessing.shared.memory_layout.stack_size,
                         memory_size: preprocessing.shared.memory_layout.memory_size,
                         program_size: Some(preprocessing.shared.memory_layout.program_size),
@@ -269,6 +277,11 @@ impl MacroBuilder {
                 untrusted_advice_bytes.append(&mut jolt::postcard::to_stdvec(&#name).unwrap())
             }
         });
+        let set_trusted_advice_args = self.trusted_func_args.iter().map(|(name, _)| {
+            quote! {
+                trusted_advice_bytes.append(&mut jolt::postcard::to_stdvec(&#name).unwrap())
+            }
+        });
 
         quote! {
              #[cfg(not(target_arch = "wasm32"))]
@@ -285,8 +298,10 @@ impl MacroBuilder {
                 #(#set_pub_args;)*
                 let mut untrusted_advice_bytes = vec![];
                 #(#set_untrusted_advice_args;)*
+                let mut trusted_advice_bytes = vec![];
+                #(#set_trusted_advice_args;)*
 
-                program.trace_analyze::<jolt::F>(&input_bytes, &untrusted_advice_bytes)
+                program.trace_analyze::<jolt::F>(&input_bytes, &untrusted_advice_bytes, &trusted_advice_bytes)
              }
         }
     }
@@ -311,6 +326,11 @@ impl MacroBuilder {
                 untrusted_advice_bytes.append(&mut jolt::postcard::to_stdvec(&#name).unwrap())
             }
         });
+        let set_trusted_advice_args = self.trusted_func_args.iter().map(|(name, _)| {
+            quote! {
+                trusted_advice_bytes.append(&mut jolt::postcard::to_stdvec(&#name).unwrap())
+            }
+        });
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #trace_to_file_fn_name(target_dir: &str, #inputs) {
@@ -326,8 +346,10 @@ impl MacroBuilder {
                 #(#set_pub_args;)*
                 let mut untrusted_advice_bytes = vec![];
                 #(#set_untrusted_advice_args;)*
+                let mut trusted_advice_bytes = vec![];
+                #(#set_trusted_advice_args;)*
 
-                program.trace_to_file(&input_bytes, &untrusted_advice_bytes, &path);
+                program.trace_to_file(&input_bytes, &untrusted_advice_bytes, &trusted_advice_bytes, &path);
             }
         }
     }
@@ -369,6 +391,8 @@ impl MacroBuilder {
         let max_output_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_output_size);
         let max_untrusted_advice_size =
             proc_macro2::Literal::u64_unsuffixed(attributes.max_untrusted_advice_size);
+        let max_trusted_advice_size =
+            proc_macro2::Literal::u64_unsuffixed(attributes.max_trusted_advice_size);
         let stack_size = proc_macro2::Literal::u64_unsuffixed(attributes.stack_size);
         let memory_size = proc_macro2::Literal::u64_unsuffixed(attributes.memory_size);
         let max_trace_length = proc_macro2::Literal::u64_unsuffixed(attributes.max_trace_length);
@@ -389,6 +413,7 @@ impl MacroBuilder {
                     max_input_size: #max_input_size,
                     max_output_size: #max_output_size,
                     max_untrusted_advice_size: #max_untrusted_advice_size,
+                    max_trusted_advice_size: #max_trusted_advice_size,
                     stack_size: #stack_size,
                     memory_size: #memory_size,
                     program_size: Some(program_size),
@@ -415,6 +440,8 @@ impl MacroBuilder {
         let max_output_size = proc_macro2::Literal::u64_unsuffixed(attributes.max_output_size);
         let max_untrusted_advice_size =
             proc_macro2::Literal::u64_unsuffixed(attributes.max_untrusted_advice_size);
+        let max_trusted_advice_size =
+            proc_macro2::Literal::u64_unsuffixed(attributes.max_trusted_advice_size);
         let stack_size = proc_macro2::Literal::u64_unsuffixed(attributes.stack_size);
         let memory_size = proc_macro2::Literal::u64_unsuffixed(attributes.memory_size);
         let max_trace_length = proc_macro2::Literal::u64_unsuffixed(attributes.max_trace_length);
@@ -435,6 +462,7 @@ impl MacroBuilder {
                     max_input_size: #max_input_size,
                     max_output_size: #max_output_size,
                     max_untrusted_advice_size: #max_untrusted_advice_size,
+                    max_trusted_advice_size: #max_trusted_advice_size,
                     stack_size: #stack_size,
                     memory_size: #memory_size,
                     program_size: Some(program_size),
@@ -499,6 +527,11 @@ impl MacroBuilder {
                 untrusted_advice_bytes.append(&mut jolt::postcard::to_stdvec(&#name).unwrap())
             }
         });
+        let set_program_trusted_advice_args = self.trusted_func_args.iter().map(|(name, _)| {
+            quote! {
+                trusted_advice_bytes.append(&mut jolt::postcard::to_stdvec(&#name).unwrap())
+            }
+        });
 
         let fn_name = self.get_func_name();
         let inputs = &self.func.sig.inputs;
@@ -518,6 +551,8 @@ impl MacroBuilder {
                 #(#set_program_args;)*
                 let mut untrusted_advice_bytes = vec![];
                 #(#set_program_untrusted_advice_args;)*
+                let mut trusted_advice_bytes = vec![];
+                #(#set_program_trusted_advice_args;)*
 
                 let elf_contents_opt = program.get_elf_contents();
                 let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
@@ -526,6 +561,7 @@ impl MacroBuilder {
                     &elf_contents,
                     &input_bytes,
                     &untrusted_advice_bytes,
+                    &trusted_advice_bytes,
                 );
 
                 #handle_return
@@ -541,6 +577,7 @@ impl MacroBuilder {
             max_input_size: attributes.max_input_size,
             max_output_size: attributes.max_output_size,
             max_untrusted_advice_size: attributes.max_untrusted_advice_size,
+            max_trusted_advice_size: attributes.max_trusted_advice_size,
             stack_size: attributes.stack_size,
             memory_size: attributes.memory_size,
             // Not needed for the main function, but we need the io region information from MemoryLayout.
@@ -549,9 +586,11 @@ impl MacroBuilder {
         let input_start = memory_layout.input_start;
         let output_start = memory_layout.output_start;
         let untrusted_advice_start = memory_layout.untrusted_advice_start;
+        let trusted_advice_start = memory_layout.trusted_advice_start;
         let max_input_len = attributes.max_input_size as usize;
         let max_output_len = attributes.max_output_size as usize;
         let max_untrusted_advice_len = attributes.max_untrusted_advice_size as usize;
+        let max_trusted_advice_len = attributes.max_trusted_advice_size as usize;
         let termination_bit = memory_layout.termination as usize;
 
         let get_input_slice = quote! {
@@ -568,6 +607,13 @@ impl MacroBuilder {
             };
         };
 
+        let get_trusted_advice_slice = quote! {
+            let trusted_advice_ptr = #trusted_advice_start as *const u8;
+            let trusted_advice_slice = unsafe {
+                core::slice::from_raw_parts(trusted_advice_ptr, #max_trusted_advice_len)
+            };
+        };
+
         // Fetch public arguments from the public input slice
         let pub_args_fetch = self.pub_func_args.iter().map(|(name, ty)| {
             quote! {
@@ -581,6 +627,14 @@ impl MacroBuilder {
             quote! {
                 let (#name, untrusted_advice_slice) =
                     jolt::postcard::take_from_bytes::<#ty>(untrusted_advice_slice).unwrap();
+            }
+        });
+
+        // Fetch trusted advice arguments
+        let trusted_advice_args_fetch = self.trusted_func_args.iter().map(|(name, ty)| {
+            quote! {
+                let (#name, trusted_advice_slice) =
+                    jolt::postcard::take_from_bytes::<#ty>(trusted_advice_slice).unwrap();
             }
         });
 
@@ -626,8 +680,10 @@ impl MacroBuilder {
                 let mut offset = 0;
                 #get_input_slice
                 #get_untrusted_advice_slice
+                #get_trusted_advice_slice
                 #(#pub_args_fetch;)*
                 #(#untrusted_advice_args_fetch;)*
+                #(#trusted_advice_args_fetch;)*
                 #check_input_len
                 #block
                 #handle_return
@@ -761,6 +817,11 @@ impl MacroBuilder {
             program.set_max_untrusted_advice_size(#value);
         });
 
+        let value = attributes.max_trusted_advice_size;
+        code.push(quote! {
+            program.set_max_trusted_advice_size(#value);
+        });
+
         quote! {
             #(#code;)*
         }
@@ -790,8 +851,9 @@ impl MacroBuilder {
     }
 
     #[allow(clippy::type_complexity)]
-    fn get_func_args(func: &ItemFn) -> (Vec<(Ident, Box<Type>)>, Vec<(Ident, Box<Type>)>) {
+    fn get_func_args(func: &ItemFn) -> (Vec<(Ident, Box<Type>)>, Vec<(Ident, Box<Type>)>, Vec<(Ident, Box<Type>)>) {
         let mut pub_args = Vec::new();
+        let mut trusted_advice_args = Vec::new();
         let mut untrusted_advice_args = Vec::new();
 
         for arg in &func.sig.inputs {
@@ -800,8 +862,10 @@ impl MacroBuilder {
                     let ident = pat_ident.ident.clone();
                     let arg_type = ty.clone();
 
-                    // Check if the type is wrapped in jolt::UntrustedAdvice<> or UntrustedAdvice<>
-                    if Self::is_private_type(&arg_type) {
+                    // Check if the type is wrapped in jolt::TrustedAdvice<> or jolt::UntrustedAdvice<>
+                    if Self::is_trusted_advice_type(&arg_type) {
+                        trusted_advice_args.push((ident, arg_type));
+                    } else if Self::is_untrusted_advice_type(&arg_type) {
                         untrusted_advice_args.push((ident, arg_type));
                     } else {
                         pub_args.push((ident, arg_type));
@@ -814,13 +878,21 @@ impl MacroBuilder {
             }
         }
 
-        (pub_args, untrusted_advice_args)
+        (pub_args, trusted_advice_args, untrusted_advice_args)
     }
 
-    fn is_private_type(ty: &Type) -> bool {
+    fn is_trusted_advice_type(ty: &Type) -> bool {
         if let Type::Path(type_path) = ty {
             if let Some(last_segment) = type_path.path.segments.last() {
-                // Check for "Private" or path ending in "Private" (e.g., jolt::Private)
+                return last_segment.ident == "TrustedAdvice";
+            }
+        }
+        false
+    }
+    
+    fn is_untrusted_advice_type(ty: &Type) -> bool {
+        if let Type::Path(type_path) = ty {
+            if let Some(last_segment) = type_path.path.segments.last() {
                 return last_segment.ident == "UntrustedAdvice";
             }
         }

@@ -1,4 +1,4 @@
-use jolt_sdk::UntrustedAdvice;
+use jolt_sdk::{TrustedAdvice, UntrustedAdvice};
 use std::time::Instant;
 use tracing::info;
 
@@ -17,9 +17,10 @@ pub fn main() {
 
     let first_input: &[u8] = &[5u8; 32];
     let second_input = [6u8; 32];
+    let third_input = [7u8; 32];
     let now = Instant::now();
     let (output, proof, program_io) =
-        prove_merkle_tree(first_input, UntrustedAdvice::new(second_input));
+        prove_merkle_tree(first_input, TrustedAdvice::new(second_input), UntrustedAdvice::new(third_input));
     info!("Prover runtime: {} s", now.elapsed().as_secs_f64());
     let is_valid = verify_merkle_tree(first_input, output, program_io.panic, proof);
 

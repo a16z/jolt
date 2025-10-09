@@ -58,7 +58,7 @@ fn prove_example(
     let mut tasks = Vec::new();
     let mut program = host::Program::new(example_name);
     let (bytecode, init_memory_state, _) = program.decode();
-    let (trace, _, program_io) = program.trace(&serialized_input, &[]);
+    let (trace, _, program_io) = program.trace(&serialized_input, &[], &[]);
 
     let task = move || {
         let preprocessing = JoltRV64IMAC::prover_preprocess(
@@ -71,7 +71,7 @@ fn prove_example(
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let (jolt_proof, program_io, _) =
-            JoltRV64IMAC::prove(&preprocessing, elf_contents, &serialized_input, &[]);
+            JoltRV64IMAC::prove(&preprocessing, elf_contents, &serialized_input, &[], &[]);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let verification_result =

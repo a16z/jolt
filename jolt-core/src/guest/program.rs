@@ -38,12 +38,14 @@ impl Program {
         &self,
         inputs: &[u8],
         untrusted_advice: &[u8],
+        trusted_advice: &[u8],
     ) -> (Vec<Cycle>, Memory, JoltDevice) {
         trace(
             &self.elf_contents,
             self.elf.as_ref(),
             inputs,
             untrusted_advice,
+            trusted_advice,
             &self.memory_config,
         )
     }
@@ -52,6 +54,7 @@ impl Program {
         &self,
         inputs: &[u8],
         untrusted_advice: &[u8],
+        trusted_advice: &[u8],
         trace_file: &PathBuf,
     ) -> (Memory, JoltDevice) {
         trace_to_file(
@@ -59,6 +62,7 @@ impl Program {
             self.elf.as_ref(),
             inputs,
             untrusted_advice,
+            trusted_advice,
             &self.memory_config,
             trace_file,
         )
@@ -84,6 +88,7 @@ pub fn trace(
     elf_path: Option<&PathBuf>,
     inputs: &[u8],
     untrusted_advice: &[u8],
+    trusted_advice: &[u8],
     memory_config: &MemoryConfig,
 ) -> (Vec<Cycle>, Memory, JoltDevice) {
     let (trace, memory, io_device) = tracer::trace(
@@ -91,6 +96,7 @@ pub fn trace(
         elf_path,
         inputs,
         untrusted_advice,
+        trusted_advice,
         memory_config,
     );
     (trace, memory, io_device)
@@ -101,6 +107,7 @@ pub fn trace_to_file(
     elf_path: Option<&PathBuf>,
     inputs: &[u8],
     untrusted_advice: &[u8],
+    trusted_advice: &[u8],
     memory_config: &MemoryConfig,
     trace_file: &PathBuf,
 ) -> (Memory, JoltDevice) {
@@ -109,6 +116,7 @@ pub fn trace_to_file(
         elf_path,
         inputs,
         untrusted_advice,
+        trusted_advice,
         memory_config,
         trace_file,
     );

@@ -74,6 +74,7 @@ pub fn trace(
     elf_path: Option<&std::path::PathBuf>,
     inputs: &[u8],
     untrusted_advice: &[u8],
+    trusted_advice: &[u8],
     memory_config: &MemoryConfig,
 ) -> (Vec<Cycle>, Memory, JoltDevice) {
     let mut lazy_trace_iter = LazyTraceIterator::new(setup_emulator_with_backtraces(
@@ -81,6 +82,7 @@ pub fn trace(
         elf_path,
         inputs,
         untrusted_advice,
+        trusted_advice,
         memory_config,
     ));
     let trace: Vec<Cycle> = lazy_trace_iter.by_ref().collect();
@@ -95,6 +97,7 @@ pub fn trace_to_file(
     elf_path: Option<&std::path::PathBuf>,
     inputs: &[u8],
     untrusted_advice: &[u8],
+    trusted_advice: &[u8],
     memory_config: &MemoryConfig,
     out_path: &std::path::PathBuf,
 ) -> (Memory, JoltDevice) {
@@ -108,6 +111,7 @@ pub fn trace_to_file(
         elf_path,
         inputs,
         untrusted_advice,
+        trusted_advice,
         memory_config,
     ));
 
@@ -130,6 +134,7 @@ pub fn trace_lazy(
     elf_contents: &[u8],
     elf_path: Option<&std::path::PathBuf>,
     inputs: &[u8],
+    trusted_advice: &[u8],
     untrusted_advice: &[u8],
     memory_config: &MemoryConfig,
 ) -> LazyTraceIterator {
@@ -137,6 +142,7 @@ pub fn trace_lazy(
         elf_contents,
         elf_path,
         inputs,
+        trusted_advice,
         untrusted_advice,
         memory_config,
     ))
@@ -147,6 +153,7 @@ pub fn trace_checkpoints(
     elf_contents: &[u8],
     inputs: &[u8],
     untrusted_advice: &[u8],
+    trusted_advice: &[u8],
     memory_config: &MemoryConfig,
     checkpoint_interval: usize,
 ) -> (Vec<std::iter::Take<LazyTraceIterator>>, JoltDevice) {
@@ -154,6 +161,7 @@ pub fn trace_checkpoints(
         elf_contents,
         inputs,
         untrusted_advice,
+        trusted_advice,
         memory_config,
     ));
     let mut checkpoints = Vec::new();
@@ -186,9 +194,10 @@ fn setup_emulator(
     elf_contents: &[u8],
     inputs: &[u8],
     untrusted_advice: &[u8],
+    trusted_advice: &[u8],
     memory_config: &MemoryConfig,
 ) -> Emulator {
-    setup_emulator_with_backtraces(elf_contents, None, inputs, untrusted_advice, memory_config)
+    setup_emulator_with_backtraces(elf_contents, None, inputs, untrusted_advice, trusted_advice, memory_config)
 }
 
 #[tracing::instrument(skip_all)]
@@ -198,6 +207,7 @@ fn setup_emulator_with_backtraces(
     elf_path: Option<&std::path::PathBuf>,
     inputs: &[u8],
     untrusted_advice: &[u8],
+    trusted_advice: &[u8],
     memory_config: &MemoryConfig,
 ) -> Emulator {
     let term = DefaultTerminal::default();
@@ -206,6 +216,7 @@ fn setup_emulator_with_backtraces(
 
     let mut jolt_device = JoltDevice::new(memory_config);
     jolt_device.inputs = inputs.to_vec();
+    jolt_device.trusted_advice = trusted_advice.to_vec();
     jolt_device.untrusted_advice = untrusted_advice.to_vec();
     emulator.get_mut_cpu().get_mut_mmu().jolt_device = Some(jolt_device);
     if let Some(elf_path) = elf_path {
@@ -884,8 +895,8 @@ mod test {
             program_size: Some(elf.len() as u64),
             ..Default::default()
         };
-        let (execution_trace, _, _) = trace(&elf, None, &INPUTS, &[], &memory_config);
-        let (checkpoints, _) = trace_checkpoints(&elf, &INPUTS, &[], &memory_config, n);
+        let (execution_trace, _, _) = trace(&elf, None, &INPUTS, &[], &[], &memory_config);
+        let (checkpoints, _) = trace_checkpoints(&elf, &INPUTS, &[], &[], &memory_config, n);
         assert_eq!(execution_trace.len(), expected_trace_length);
         assert_eq!(checkpoints.len(), 10);
 
@@ -908,8 +919,8 @@ mod test {
             ..Default::default()
         };
 
-        let (execution_trace, _, _) = trace(&elf, None, &INPUTS, &[], &memory_config);
-        let mut emulator = setup_emulator(&elf, &INPUTS, &[], &memory_config);
+        let (execution_trace, _, _) = trace(&elf, None, &INPUTS, &[], &[], &memory_config);
+        let mut emulator = setup_emulator(&elf, &INPUTS, &[], &[], &memory_config);
         let mut prev_pc: u64 = 0;
         let mut trace = vec![];
         let mut prev_trace_len = 0;
