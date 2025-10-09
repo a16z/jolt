@@ -113,7 +113,7 @@ impl GuestProgram {
                     MemoryConfig {
                         max_input_size: 4096,
                         max_output_size: 4096,
-                        max_advice_size: 0,
+                        max_untrusted_advice_size: 0,
                         memory_size: 33554432,
                         stack_size: 1048576,
                         program_size: None,
@@ -122,7 +122,7 @@ impl GuestProgram {
                     MemoryConfig {
                         max_input_size: 200000,
                         max_output_size: 4096,
-                        max_advice_size: 0,
+                        max_untrusted_advice_size: 0,
                         memory_size: 200000,
                         stack_size: 131072,
                         program_size: None,
@@ -134,7 +134,7 @@ impl GuestProgram {
                     MemoryConfig {
                         max_input_size: 1024,
                         max_output_size: 4096,
-                        max_advice_size: 0,
+                        max_untrusted_advice_size: 0,
                         memory_size: 8192,
                         stack_size: 65536,
                         program_size: None,
@@ -143,7 +143,7 @@ impl GuestProgram {
                     MemoryConfig {
                         max_input_size: 200000,
                         max_output_size: 4096,
-                        max_advice_size: 0,
+                        max_untrusted_advice_size: 0,
                         memory_size: 200000,
                         stack_size: 131072,
                         program_size: None,
@@ -264,7 +264,7 @@ fn collect_guest_proofs(guest: GuestProgram, target_dir: &str, use_embed: bool) 
     let memory_config = MemoryConfig {
         max_input_size: 4096u64,
         max_output_size: 4096u64,
-        max_advice_size: 0u64,
+        max_untrusted_advice_size: 0u64,
         stack_size: 4096u64,
         memory_size: 10240u64,
         program_size: None,
@@ -511,8 +511,11 @@ fn run_recursion_proof(
         }
         RunConfig::TraceToFile => {
             info!("  Trace-only mode: Skipping proof generation and verification. Tracing to file: /tmp/{}.trace", guest.name());
-            let (_, io_device) = recursion
-                .trace_to_file(&input_bytes, &format!("/tmp/{}.trace", guest.name()).into());
+            let (_, io_device) = recursion.trace_to_file(
+                &input_bytes,
+                &[],
+                &format!("/tmp/{}.trace", guest.name()).into(),
+            );
             let rv = postcard::from_bytes::<u32>(&io_device.outputs).unwrap_or(0);
             info!("  Recursion output (trace-only): {rv}");
         }

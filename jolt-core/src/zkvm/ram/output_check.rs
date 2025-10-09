@@ -414,13 +414,6 @@ impl<F: JoltField> ValFinalSumcheck<F> {
 
         let inc = CommittedPolynomial::RamInc.generate_witness(preprocessing, trace);
 
-        let val_init_eval = state_manager
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::RamValInit,
-                SumcheckId::RamOutputCheck,
-            )
-            .1;
-
         // #[cfg(test)]
         // {
         //     let OutputSumcheckProverState {
@@ -442,6 +435,13 @@ impl<F: JoltField> ValFinalSumcheck<F> {
         //         "Val_final(r_address) ≠ Val_init(r_address) + \\sum_j wa(r_address, j) * Inc(j)"
         //     );
         // }
+
+        let val_init_eval = state_manager
+            .get_virtual_polynomial_opening(
+                VirtualPolynomial::RamValInit,
+                SumcheckId::RamOutputCheck,
+            )
+            .1;
         let val_final_claim = state_manager
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::RamValFinal,
@@ -468,52 +468,35 @@ impl<F: JoltField> ValFinalSumcheck<F> {
                 VirtualPolynomial::RamValFinal,
                 SumcheckId::RamOutputCheck,
             )
-            .0;
+            .0
+            .r;
 
         {
-            // We assert that the opening point used to evaluate initial_ram_state here equals to the openning point used to evaluate initial_ram_state in val_evaluation.
-            // The following assertion holds because the way sumchecks are pipelined.
-            // This check is important, because if these two are different, we need to provide two opennings for advice_input_commitment.
+            // Verify that val_evaluation and output_check use the same opening point for initial_ram_state.
+            // This allows us to reuse a single untrusted_advice opening instead of providing two.
             let (r, _) = state_manager.get_virtual_polynomial_opening(
                 VirtualPolynomial::RamVal,
                 SumcheckId::RamReadWriteChecking,
             );
             let (r_address_val_evaluation, _) = r.split_at(state_manager.ram_K.log_2());
-            assert_eq!(r_address_val_evaluation.r, r_address.r);
+            assert_eq!(r_address_val_evaluation.r, r_address);
         }
 
-        // Store the private input opening point for output check verification if we have private inputs
-        let advice_eval_output = state_manager
+        let untrusted_advice_eval = state_manager
             .verifier_state
             .as_ref()
-            .and_then(|verifier_state| {
-                if verifier_state
-                    .accumulator
-                    .borrow()
-                    .get_advice_openning()
-                    .is_some()
-                {
-                    let (_, eval) = verifier_state
-                        .accumulator
-                        .borrow()
-                        .get_advice_openning()
-                        .unwrap();
-                    verifier_state
-                        .accumulator
-                        .borrow_mut()
-                        .append_advice(r_address.clone());
-                    return Some(eval);
-                }
-                None
-            });
+            .unwrap()
+            .accumulator
+            .borrow()
+            .get_untrusted_advice_opening()
+            .map(|(_, eval)| eval);
 
         // Compute the public part of val_init evaluation
         let val_init_public: MultilinearPolynomial<F> =
             MultilinearPolynomial::from(initial_ram_state.to_vec());
-        let public_eval = val_init_public.evaluate(&r_address.r);
 
-        // Combine private and public evaluations
-        let val_init_eval = advice_eval_output.unwrap_or(F::zero()) + public_eval;
+        let val_init_eval =
+            untrusted_advice_eval.unwrap_or(F::zero()) + val_init_public.evaluate(&r_address);
 
         let val_final_claim = state_manager
             .get_virtual_polynomial_opening(

@@ -979,7 +979,7 @@ mod tests {
             };
         let program_io = JoltDevice {
             memory_layout,
-            advice: vec![],
+            untrusted_advice: vec![],
             inputs: vec![],
             outputs: vec![],
             panic: false,

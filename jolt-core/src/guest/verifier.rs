@@ -44,7 +44,7 @@ where
 {
     use common::jolt_device::JoltDevice;
     let memory_config = MemoryConfig {
-        max_advice_size: preprocessing.shared.memory_layout.max_advice_size,
+        max_untrusted_advice_size: preprocessing.shared.memory_layout.max_untrusted_advice_size,
         max_input_size: preprocessing.shared.memory_layout.max_input_size,
         max_output_size: preprocessing.shared.memory_layout.max_output_size,
         stack_size: preprocessing.shared.memory_layout.stack_size,

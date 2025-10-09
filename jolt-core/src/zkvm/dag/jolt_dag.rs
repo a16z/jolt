@@ -76,13 +76,13 @@ impl JoltDAG {
         }
         drop(commitments);
 
-        // Commit to advice and append the commitment to transcript
-        if !state_manager.program_io.advice.is_empty() {
-            let _advice_opening_proof_hints = Self::commit_advice(&mut state_manager);
-            // Append advice commitment to transcript
+        // Commit to untrusted_advice and append the commitment to transcript
+        if !state_manager.program_io.untrusted_advice.is_empty() {
+            let _untrusted_advice_opening_proof_hints =
+                Self::commit_untrusted_advice(&mut state_manager);
             transcript
                 .borrow_mut()
-                .append_serializable(state_manager.advice_commitment.as_ref().unwrap());
+                .append_serializable(state_manager.untrusted_advice_commitment.as_ref().unwrap());
         }
 
         // Stage 1:
@@ -286,17 +286,18 @@ impl JoltDAG {
 
         tracing::info!("Stage 5 proving");
 
-        // Generate advice opening proofs if needed
-        if !state_manager.program_io.advice.is_empty() {
-            let proof = Self::generate_advice_proofs(
+        // Generate untrusted_advice opening proofs
+        if !state_manager.program_io.untrusted_advice.is_empty() {
+            // Todo(omid): Remove transcript clone
+            let proof = Self::generate_untrusted_advice_proof(
                 &mut state_manager,
                 &preprocessing.generators,
                 transcript.borrow().clone(),
             );
-            state_manager
-                .proofs
-                .borrow_mut()
-                .insert(ProofKeys::AdviceProof, ProofData::OpeningProof(proof));
+            state_manager.proofs.borrow_mut().insert(
+                ProofKeys::UntrustedAdviceProof,
+                ProofData::OpeningProof(proof),
+            );
         }
 
         let opening_proof = accumulator.borrow_mut().reduce_and_prove(
@@ -367,11 +368,11 @@ impl JoltDAG {
             transcript.borrow_mut().append_serializable(commitment);
         }
 
-        // Append advice commitment to transcript
-        if let Some(ref advice_commitment) = state_manager.advice_commitment {
+        // Append untrusted advice commitment to transcript
+        if let Some(ref untrusted_advice_commitment) = state_manager.untrusted_advice_commitment {
             transcript
                 .borrow_mut()
-                .append_serializable(advice_commitment);
+                .append_serializable(untrusted_advice_commitment);
         }
 
         // Stage 1:
@@ -478,15 +479,15 @@ impl JoltDAG {
         )
         .context("Stage 4")?;
 
-        // Verify advice opening proofs
-        if state_manager.advice_commitment.is_some() {
+        // Verify untrusted_advice opening proofs
+        if state_manager.untrusted_advice_commitment.is_some() {
             // Todo(omid): Remove transcript clone
-            Self::verify_advice_proofs(
+            Self::verify_untrusted_advice_proofs(
                 &state_manager,
                 &preprocessing.generators,
                 transcript.borrow().clone(),
             )
-            .context("Stage 5.1")?;
+            .context("Stage 5")?;
         }
 
         // Batch-prove all openings
@@ -558,7 +559,7 @@ impl JoltDAG {
         Ok(hint_map)
     }
 
-    fn commit_advice<
+    fn commit_untrusted_advice<
         'a,
         F: JoltField,
         ProofTranscript: Transcript,
@@ -568,20 +569,18 @@ impl JoltDAG {
     ) -> Option<PCS::OpeningProofHint> {
         let (preprocessing, _, program_io, _) = state_manager.get_prover_data();
 
-        if program_io.advice.is_empty() {
+        if program_io.untrusted_advice.is_empty() {
             return None;
         }
 
         let mut initial_memory_state = vec![0; state_manager.ram_K];
-
         let mut index = remap_address(
-            program_io.memory_layout.advice_start,
+            program_io.memory_layout.untrusted_advice_start,
             &program_io.memory_layout,
         )
         .unwrap() as usize;
 
-        // Convert input bytes into words and populate initial_memory_state
-        for chunk in program_io.advice.chunks(8) {
+        for chunk in program_io.untrusted_advice.chunks(8) {
             let mut word = [0u8; 8];
             for (i, byte) in chunk.iter().enumerate() {
                 word[i] = *byte;
@@ -595,15 +594,14 @@ impl JoltDAG {
         let (commitment, hint) = PCS::commit(&poly, &preprocessing.generators);
 
         if let Some(ref mut prover_state) = state_manager.prover_state {
-            prover_state.advice_polynomial = Some(poly);
+            prover_state.untrusted_advice_polynomial = Some(poly);
         }
 
-        state_manager.advice_commitment = Some(commitment);
+        state_manager.untrusted_advice_commitment = Some(commitment);
         Some(hint)
     }
 
-    /// Generate private input opening proofs for val_evaluation and output_check
-    fn generate_advice_proofs<
+    fn generate_untrusted_advice_proof<
         F: JoltField,
         ProofTranscript: Transcript,
         PCS: CommitmentScheme<Field = F>,
@@ -613,15 +611,13 @@ impl JoltDAG {
         mut transcript: ProofTranscript,
     ) -> PCS::Proof {
         let prover_state = state_manager.prover_state.as_ref().unwrap();
-        let advice_poly = prover_state.advice_polynomial.as_ref().unwrap();
+        let untrusted_advice_poly = prover_state.untrusted_advice_polynomial.as_ref().unwrap();
         let accumulator = state_manager.get_prover_accumulator();
-        let (point, _) = accumulator.borrow().get_advice_openning().unwrap();
-
-        PCS::prove_without_hint(generators, advice_poly, &point.r, &mut transcript)
+        let (point, _) = accumulator.borrow().get_untrusted_advice_opening().unwrap();
+        PCS::prove_without_hint(generators, untrusted_advice_poly, &point.r, &mut transcript)
     }
 
-    /// Verify private input opening proofs for val_evaluation and output_check
-    fn verify_advice_proofs<
+    fn verify_untrusted_advice_proofs<
         F: JoltField,
         ProofTranscript: Transcript,
         PCS: CommitmentScheme<Field = F>,
@@ -630,17 +626,18 @@ impl JoltDAG {
         verifier_setup: &PCS::VerifierSetup,
         mut transcript: ProofTranscript,
     ) -> Result<(), anyhow::Error> {
-        let advice_commitment = state_manager.advice_commitment.as_ref().unwrap();
+        let untrusted_advice_commitment =
+            state_manager.untrusted_advice_commitment.as_ref().unwrap();
         let accumulator = state_manager.get_verifier_accumulator();
 
-        let (point, eval) = accumulator.borrow().get_advice_openning().unwrap();
-        let proof = match state_manager.proofs.borrow().get(&ProofKeys::AdviceProof) {
+        let (point, eval) = accumulator.borrow().get_untrusted_advice_opening().unwrap();
+        let proof = match state_manager
+            .proofs
+            .borrow()
+            .get(&ProofKeys::UntrustedAdviceProof)
+        {
             Some(ProofData::OpeningProof(proof)) => proof.clone(),
-            _ => {
-                return Err(anyhow::anyhow!(
-                    "Private input proof for val_evaluation not found"
-                ))
-            }
+            _ => return Err(anyhow::anyhow!("Untrusted advice proof not found")),
         };
 
         PCS::verify(
@@ -649,12 +646,10 @@ impl JoltDAG {
             &mut transcript,
             &point.r,
             &eval,
-            advice_commitment,
+            untrusted_advice_commitment,
         )
         .map_err(|e| {
-            anyhow::anyhow!(
-                "Private input opening proof for val_evaluation verification failed: {e:?}"
-            )
+            anyhow::anyhow!("Untrusted advice opening proof verification failed: {e:?}")
         })?;
 
         Ok(())

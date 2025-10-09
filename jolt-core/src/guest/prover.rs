@@ -28,7 +28,7 @@ pub fn preprocess(
 pub fn prove<F, PCS, FS>(
     guest: &Program,
     inputs_bytes: &[u8],
-    advice_bytes: &[u8],
+    untrusted_advice_bytes: &[u8],
     output_bytes: &mut [u8],
     preprocessing: &JoltProverPreprocessing<F, PCS>,
 ) -> (
@@ -46,7 +46,7 @@ where
         preprocessing,
         &guest.elf_contents,
         inputs_bytes,
-        advice_bytes,
+        untrusted_advice_bytes,
     );
     output_bytes[..io_device.outputs.len()].copy_from_slice(&io_device.outputs);
     (proof, io_device, debug_info)

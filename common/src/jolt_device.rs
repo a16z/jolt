@@ -7,8 +7,8 @@ use alloc::vec::Vec;
 use std::vec::Vec;
 
 use crate::constants::{
-    DEFAULT_MAX_ADVICE_SIZE, DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE, DEFAULT_MEMORY_SIZE,
-    DEFAULT_STACK_SIZE, RAM_START_ADDRESS,
+    DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE, DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE,
+    DEFAULT_MEMORY_SIZE, DEFAULT_STACK_SIZE, RAM_START_ADDRESS,
 };
 
 #[allow(clippy::too_long_first_doc_paragraph)]
@@ -28,7 +28,7 @@ use crate::constants::{
 )]
 pub struct JoltDevice {
     pub inputs: Vec<u8>,
-    pub advice: Vec<u8>,
+    pub untrusted_advice: Vec<u8>,
     pub outputs: Vec<u8>,
     pub panic: bool,
     pub memory_layout: MemoryLayout,
@@ -38,7 +38,7 @@ impl JoltDevice {
     pub fn new(memory_config: &MemoryConfig) -> Self {
         Self {
             inputs: Vec::new(),
-            advice: Vec::new(),
+            untrusted_advice: Vec::new(),
             outputs: Vec::new(),
             panic: false,
             memory_layout: MemoryLayout::new(memory_config),
@@ -57,12 +57,12 @@ impl JoltDevice {
             } else {
                 self.inputs[internal_address]
             }
-        } else if self.is_advice(address) {
-            let internal_address = self.convert_private_read_address(address);
-            if self.advice.len() <= internal_address {
+        } else if self.is_untrusted_advice(address) {
+            let internal_address = self.convert_untrusted_advice_read_address(address);
+            if self.untrusted_advice.len() <= internal_address {
                 0
             } else {
-                self.advice[internal_address]
+                self.untrusted_advice[internal_address]
             }
         } else if self.is_output(address) {
             let internal_address = self.convert_write_address(address);
@@ -100,8 +100,9 @@ impl JoltDevice {
         address >= self.memory_layout.input_start && address < self.memory_layout.input_end
     }
 
-    pub fn is_advice(&self, address: u64) -> bool {
-        address >= self.memory_layout.advice_start && address < self.memory_layout.advice_end
+    pub fn is_untrusted_advice(&self, address: u64) -> bool {
+        address >= self.memory_layout.untrusted_advice_start
+            && address < self.memory_layout.untrusted_advice_end
     }
 
     pub fn is_output(&self, address: u64) -> bool {
@@ -120,8 +121,8 @@ impl JoltDevice {
         (address - self.memory_layout.input_start) as usize
     }
 
-    fn convert_private_read_address(&self, address: u64) -> usize {
-        (address - self.memory_layout.advice_start) as usize
+    fn convert_untrusted_advice_read_address(&self, address: u64) -> usize {
+        (address - self.memory_layout.untrusted_advice_start) as usize
     }
 
     fn convert_write_address(&self, address: u64) -> usize {
@@ -132,7 +133,7 @@ impl JoltDevice {
 #[derive(Debug, Copy, Clone)]
 pub struct MemoryConfig {
     pub max_input_size: u64,
-    pub max_advice_size: u64,
+    pub max_untrusted_advice_size: u64,
     pub max_output_size: u64,
     pub stack_size: u64,
     pub memory_size: u64,
@@ -143,7 +144,7 @@ impl Default for MemoryConfig {
     fn default() -> Self {
         Self {
             max_input_size: DEFAULT_MAX_INPUT_SIZE,
-            max_advice_size: DEFAULT_MAX_ADVICE_SIZE,
+            max_untrusted_advice_size: DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE,
             max_output_size: DEFAULT_MAX_OUTPUT_SIZE,
             stack_size: DEFAULT_STACK_SIZE,
             memory_size: DEFAULT_MEMORY_SIZE,
@@ -158,11 +159,11 @@ impl Default for MemoryConfig {
 pub struct MemoryLayout {
     /// The total size of the elf's sections, including the .text, .data, .rodata, and .bss sections.
     pub program_size: u64,
-    pub max_advice_size: u64,
+    pub max_untrusted_advice_size: u64,
+    pub untrusted_advice_start: u64,
+    pub untrusted_advice_end: u64,
     pub max_input_size: u64,
     pub max_output_size: u64,
-    pub advice_start: u64,
-    pub advice_end: u64,
     pub input_start: u64,
     pub input_end: u64,
     pub output_start: u64,
@@ -185,8 +186,16 @@ impl core::fmt::Debug for MemoryLayout {
         f.debug_struct("MemoryLayout")
             .field("program_size", &self.program_size)
             .field("max_input_size", &self.max_input_size)
-            .field("max_advice_size", &self.max_advice_size)
+            .field("max_untrusted_advice_size", &self.max_untrusted_advice_size)
             .field("max_output_size", &self.max_output_size)
+            .field(
+                "untrusted_advice_start",
+                &format_args!("{:#X}", self.untrusted_advice_start),
+            )
+            .field(
+                "untrusted_advice_end",
+                &format_args!("{:#X}", self.untrusted_advice_end),
+            )
             .field("input_start", &format_args!("{:#X}", self.input_start))
             .field("input_end", &format_args!("{:#X}", self.input_end))
             .field("output_start", &format_args!("{:#X}", self.output_start))
@@ -223,7 +232,7 @@ impl MemoryLayout {
             }
         } // Must be 8-byte aligned
 
-        let max_advice_size = align_up(config.max_advice_size, 8);
+        let max_untrusted_advice_size = align_up(config.max_untrusted_advice_size, 8);
         let max_input_size = align_up(config.max_input_size, 8);
         let max_output_size = align_up(config.max_output_size, 8);
         let stack_size = align_up(config.stack_size, 8);
@@ -232,7 +241,7 @@ impl MemoryLayout {
         // Adds 16 to account for panic bit and termination bit
         // (they each occupy one full 8-byte word)
         let io_region_bytes = max_input_size
-            .checked_add(max_advice_size)
+            .checked_add(max_untrusted_advice_size)
             .and_then(|s| s.checked_add(max_output_size))
             .and_then(|s| s.checked_add(16))
             .expect("I/O region size overflow");
@@ -246,14 +255,14 @@ impl MemoryLayout {
             .checked_mul(8)
             .expect("I/O region byte count overflow");
 
-        let advice_start = RAM_START_ADDRESS
+        let untrusted_advice_start = RAM_START_ADDRESS
             .checked_sub(io_bytes)
             .expect("I/O region exceeds RAM_START_ADDRESS");
-        let advice_end = advice_start
-            .checked_add(max_advice_size)
-            .expect("advice_end overflow");
+        let untrusted_advice_end = untrusted_advice_start
+            .checked_add(max_untrusted_advice_size)
+            .expect("untrusted_advice_end overflow");
 
-        let input_start = advice_end;
+        let input_start = untrusted_advice_end;
         let input_end = input_start
             .checked_add(max_input_size)
             .expect("input_end overflow");
@@ -282,11 +291,11 @@ impl MemoryLayout {
 
         Self {
             program_size,
-            max_advice_size,
+            max_untrusted_advice_size,
             max_input_size,
             max_output_size,
-            advice_start,
-            advice_end,
+            untrusted_advice_start,
+            untrusted_advice_end,
             input_start,
             input_end,
             output_start,

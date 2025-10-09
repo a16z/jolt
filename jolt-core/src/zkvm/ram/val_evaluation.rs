@@ -55,6 +55,9 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
         initial_ram_state: &[u64],
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
+        let (preprocessing, trace, program_io, _) = state_manager.get_prover_data();
+        let memory_layout = &program_io.memory_layout;
+        let T = trace.len();
         let K = state_manager.ram_K;
 
         let (r, claimed_evaluation) = state_manager.get_virtual_polynomial_opening(
@@ -62,10 +65,6 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
             SumcheckId::RamReadWriteChecking,
         );
         let (r_address, r_cycle) = r.split_at(K.log_2());
-
-        let (preprocessing, trace, program_io, _) = state_manager.get_prover_data();
-        let memory_layout = &program_io.memory_layout;
-        let T = trace.len();
 
         let val_init: MultilinearPolynomial<F> =
             MultilinearPolynomial::from(initial_ram_state.to_vec());
@@ -134,38 +133,25 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
         );
         let (r_address, _) = r.split_at(K.log_2());
 
-        let advice_eval = state_manager
+        let untrusted_advice_eval = state_manager
             .verifier_state
             .as_ref()
-            .and_then(|verifier_state| {
-                if verifier_state
-                    .accumulator
-                    .borrow()
-                    .get_advice_openning()
-                    .is_some()
-                {
-                    let (_, eval) = verifier_state
-                        .accumulator
-                        .borrow()
-                        .get_advice_openning()
-                        .unwrap();
-                    verifier_state
-                        .accumulator
-                        .borrow_mut()
-                        .append_advice(r_address.clone());
-                    return Some(eval);
-                }
-                None
-            });
+            .unwrap()
+            .accumulator
+            .borrow()
+            .get_untrusted_advice_opening()
+            .map(|(_, eval)| eval);
 
-        // Create multilinear polynomials from the split parts
-        let initial_public_ram_val: MultilinearPolynomial<F> =
+        // Compute the public part of val_init evaluation
+        let val_init_public: MultilinearPolynomial<F> =
             MultilinearPolynomial::from(initial_ram_state.to_vec());
-        let initial_public_ram_eval = initial_public_ram_val.evaluate(&r_address.r);
+
+        let init_eval =
+            untrusted_advice_eval.unwrap_or(F::zero()) + val_init_public.evaluate(&r_address.r);
 
         ValEvaluationSumcheck {
             claimed_evaluation,
-            init_eval: advice_eval.unwrap_or(F::zero()) + initial_public_ram_eval,
+            init_eval,
             num_rounds: T.log_2(),
             prover_state: None,
             K,

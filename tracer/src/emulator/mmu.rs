@@ -173,7 +173,7 @@ impl Mmu {
                 "I/O overflow: Attempted to {verb} 0x{ea:X}. Out of bounds.\n{layout:#?}",
             );
             assert!(
-                ea >= layout.advice_start,
+                ea >= layout.untrusted_advice_start,
                 "I/O underflow: Attempted to {verb} 0x{ea:X}. Out of bounds.\n{layout:#?}",
             );
 
@@ -186,7 +186,7 @@ impl Mmu {
             } else {
                 // loads also from input
                 jolt_device.is_input(ea)
-                    || jolt_device.is_advice(ea)
+                    || jolt_device.is_untrusted_advice(ea)
                     || jolt_device.is_output(ea)
                     || jolt_device.is_panic(ea)
                     || jolt_device.is_termination(ea)
@@ -503,7 +503,7 @@ impl Mmu {
                 _ => {
                     if let Some(jolt_device) = self.jolt_device.as_ref() {
                         if jolt_device.is_input(effective_address)
-                            || jolt_device.is_advice(effective_address)
+                            || jolt_device.is_untrusted_advice(effective_address)
                             || jolt_device.is_output(effective_address)
                             || jolt_device.is_panic(effective_address)
                             || jolt_device.is_termination(effective_address)
@@ -1226,14 +1226,14 @@ mod test_mmu {
     #[should_panic(expected = "I/O underflow")]
     fn test_io_underflow() {
         let mut mmu = setup_mmu();
-        let advice_size = mmu
+        let untrusted_advice_size = mmu
             .jolt_device
             .as_ref()
             .unwrap()
             .memory_layout
-            .max_advice_size;
+            .max_untrusted_advice_size;
         let invalid_addr =
-            mmu.jolt_device.as_ref().unwrap().memory_layout.input_start - 1 - advice_size;
+            mmu.jolt_device.as_ref().unwrap().memory_layout.input_start - 1 - untrusted_advice_size;
         // illegal write to inputs
         mmu.store_bytes(invalid_addr, 0xc50513, 2).unwrap();
     }

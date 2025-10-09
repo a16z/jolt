@@ -95,10 +95,8 @@ pub fn remap_address(address: u64, memory_layout: &MemoryLayout) -> Option<u64> 
         return None;
     }
 
-    // Handle addresses in the private input region
-    if address >= memory_layout.advice_start {
-        // Remap from the start of the private input region
-        Some((address - memory_layout.advice_start) / 8 + 1)
+    if address >= memory_layout.untrusted_advice_start {
+        Some((address - memory_layout.untrusted_advice_start) / 8 + 1)
     } else {
         panic!("Unexpected address {address}")
     }
@@ -148,13 +146,11 @@ impl RamDag {
             });
 
         index = remap_address(
-            program_io.memory_layout.advice_start,
+            program_io.memory_layout.untrusted_advice_start,
             &program_io.memory_layout,
         )
         .unwrap() as usize;
-        // Convert input bytes into words and populate
-        // `initial_memory_state` and `final_memory_state`
-        for chunk in program_io.advice.chunks(8) {
+        for chunk in program_io.untrusted_advice.chunks(8) {
             let mut word = [0u8; 8];
             for (i, byte) in chunk.iter().enumerate() {
                 word[i] = *byte;
@@ -351,23 +347,25 @@ where
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
-        let (r, _) = state_manager.get_virtual_polynomial_opening(
-            VirtualPolynomial::RamVal,
-            SumcheckId::RamReadWriteChecking,
-        );
-        let (r_address, _) = r.split_at(state_manager.ram_K.log_2());
-        state_manager
-            .prover_state
-            .as_ref()
-            .and_then(|prover_state| {
-                prover_state.advice_polynomial.as_ref().map(|poly| {
-                    let eval = poly.evaluate(&r_address.r);
-                    prover_state
-                        .accumulator
-                        .borrow_mut()
-                        .append_advice(r_address.clone(), eval);
-                })
-            });
+        if let Some(prover_state) = state_manager.prover_state.as_ref() {
+            if let Some(untrusted_advice_poly) = prover_state.untrusted_advice_polynomial.as_ref() {
+                let (r, _) = state_manager.get_virtual_polynomial_opening(
+                    VirtualPolynomial::RamVal,
+                    SumcheckId::RamReadWriteChecking,
+                );
+                let (r_address, _) = r.split_at(state_manager.ram_K.log_2());
+                let eval = untrusted_advice_poly.evaluate(&r_address.r);
+
+                prover_state
+                    .accumulator
+                    .borrow_mut()
+                    .append_untrusted_advice(
+                        &mut *state_manager.get_transcript().borrow_mut(),
+                        r_address.clone(),
+                        eval,
+                    );
+            }
+        }
 
         let val_evaluation = ValEvaluationSumcheck::new_prover(
             self.initial_memory_state.as_ref().unwrap(),
@@ -394,6 +392,24 @@ where
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
+        if state_manager.untrusted_advice_commitment.is_some() {
+            if let Some(verifier_state) = state_manager.verifier_state.as_ref() {
+                let (r, _) = state_manager.get_virtual_polynomial_opening(
+                    VirtualPolynomial::RamVal,
+                    SumcheckId::RamReadWriteChecking,
+                );
+                let (r_address, _) = r.split_at(state_manager.ram_K.log_2());
+
+                verifier_state
+                    .accumulator
+                    .borrow_mut()
+                    .append_untrusted_advice(
+                        &mut *state_manager.transcript.borrow_mut(),
+                        r_address.clone(),
+                    );
+            }
+        }
+
         let val_evaluation = ValEvaluationSumcheck::new_verifier(
             self.initial_memory_state.as_ref().unwrap(),
             state_manager,

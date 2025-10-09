@@ -1124,8 +1124,6 @@ impl CommitmentScheme for DoryCommitmentScheme {
         let sigma = DoryGlobals::get_num_columns().log_2();
         let dory_transcript = JoltToDoryTranscriptRef::<Self::Field, _>::new(transcript);
 
-        let hint = row_commitments;
-
         // dory evaluate returns the opening but in this case we don't use it, we pass directly the opening to verify()
         let proof_builder = evaluate::<
             JoltBn254,
@@ -1133,7 +1131,14 @@ impl CommitmentScheme for DoryCommitmentScheme {
             JoltMsmG1,
             JoltMsmG2,
             _,
-        >(poly, Some(hint), &point_dory, sigma, setup, dory_transcript);
+        >(
+            poly,
+            Some(row_commitments),
+            &point_dory,
+            sigma,
+            setup,
+            dory_transcript,
+        );
 
         let dory_proof = proof_builder.build();
 

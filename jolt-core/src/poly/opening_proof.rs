@@ -168,7 +168,7 @@ pub enum SumcheckId {
 pub enum OpeningId {
     Committed(CommittedPolynomial, SumcheckId),
     Virtual(VirtualPolynomial, SumcheckId),
-    Advice,
+    UntrustedAdvice,
 }
 
 pub type Openings<F> = BTreeMap<OpeningId, (OpeningPoint<BIG_ENDIAN, F>, F)>;
@@ -685,8 +685,8 @@ where
         (point.clone(), *claim)
     }
 
-    pub fn get_advice_openning(&self) -> Option<(OpeningPoint<BIG_ENDIAN, F>, F)> {
-        let (point, claim) = self.openings.get(&OpeningId::Advice)?;
+    pub fn get_untrusted_advice_opening(&self) -> Option<(OpeningPoint<BIG_ENDIAN, F>, F)> {
+        let (point, claim) = self.openings.get(&OpeningId::UntrustedAdvice)?;
         Some((point.clone(), *claim))
     }
 
@@ -788,9 +788,15 @@ where
             .push(OpeningId::Virtual(polynomial, sumcheck));
     }
 
-    pub fn append_advice(&mut self, opening_point: OpeningPoint<BIG_ENDIAN, F>, claim: F) {
+    pub fn append_untrusted_advice<T: Transcript>(
+        &mut self,
+        transcript: &mut T,
+        opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        claim: F,
+    ) {
+        transcript.append_scalar(&claim);
         self.openings
-            .insert(OpeningId::Advice, (opening_point, claim));
+            .insert(OpeningId::UntrustedAdvice, (opening_point, claim));
     }
 
     /// Reduces the multiple openings accumulated into a single opening proof,
@@ -1065,8 +1071,8 @@ where
         (point.clone(), *claim)
     }
 
-    pub fn get_advice_openning(&self) -> Option<(OpeningPoint<BIG_ENDIAN, F>, F)> {
-        let (point, claim) = self.openings.get(&OpeningId::Advice)?;
+    pub fn get_untrusted_advice_opening(&self) -> Option<(OpeningPoint<BIG_ENDIAN, F>, F)> {
+        let (point, claim) = self.openings.get(&OpeningId::UntrustedAdvice)?;
         Some((point.clone(), *claim))
     }
 
@@ -1193,15 +1199,20 @@ where
         }
     }
 
-    pub fn append_advice(&mut self, opening_point: OpeningPoint<BIG_ENDIAN, F>) {
-        if let Some((_, claim)) = self.openings.get(&OpeningId::Advice) {
+    pub fn append_untrusted_advice<T: Transcript>(
+        &mut self,
+        transcript: &mut T,
+        opening_point: OpeningPoint<BIG_ENDIAN, F>,
+    ) {
+        if let Some((_, claim)) = self.openings.get(&OpeningId::UntrustedAdvice) {
+            transcript.append_scalar(claim);
             let claim = *claim;
             self.openings
-                .insert(OpeningId::Advice, (opening_point.clone(), claim));
+                .insert(OpeningId::UntrustedAdvice, (opening_point.clone(), claim));
         } else {
             panic!(
                 "Tried to populate opening point for non-existent key: {:?}",
-                OpeningId::Advice
+                OpeningId::UntrustedAdvice
             );
         }
     }

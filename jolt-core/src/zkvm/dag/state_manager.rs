@@ -28,7 +28,7 @@ pub enum ProofKeys {
     Stage3Sumcheck,
     Stage4Sumcheck,
     ReducedOpeningProof,
-    AdviceProof,
+    UntrustedAdviceProof,
 }
 
 pub enum ProofData<F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript> {
@@ -47,7 +47,7 @@ where
     pub trace: Vec<Cycle>,
     pub final_memory_state: Memory,
     pub accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
-    pub advice_polynomial: Option<MultilinearPolynomial<F>>,
+    pub untrusted_advice_polynomial: Option<MultilinearPolynomial<F>>,
 }
 
 pub struct VerifierState<'a, F: JoltField, PCS>
@@ -68,7 +68,7 @@ pub struct StateManager<
     pub transcript: Rc<RefCell<ProofTranscript>>,
     pub proofs: Rc<RefCell<Proofs<F, PCS, ProofTranscript>>>,
     pub commitments: Rc<RefCell<Vec<PCS::Commitment>>>,
-    pub advice_commitment: Option<PCS::Commitment>,
+    pub untrusted_advice_commitment: Option<PCS::Commitment>,
     pub ram_K: usize,
     pub twist_sumcheck_switch_index: usize,
     pub program_io: JoltDevice,
@@ -125,7 +125,7 @@ where
             transcript,
             proofs,
             commitments,
-            advice_commitment: None,
+            untrusted_advice_commitment: None,
             program_io,
             ram_K,
             twist_sumcheck_switch_index,
@@ -134,7 +134,7 @@ where
                 trace,
                 final_memory_state,
                 accumulator: opening_accumulator,
-                advice_polynomial: None,
+                untrusted_advice_polynomial: None,
             }),
             verifier_state: None,
         }
@@ -160,7 +160,7 @@ where
             transcript,
             proofs,
             commitments,
-            advice_commitment: None,
+            untrusted_advice_commitment: None,
             program_io,
             ram_K,
             twist_sumcheck_switch_index,
