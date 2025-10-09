@@ -596,8 +596,6 @@ impl JoltDAG {
             program_io.memory_layout.untrusted_advice_start,
             &program_io.memory_layout,
         );
-        println!("Index is: {}", temp_index.unwrap());
-        println!("non padded_untrusted_advice_len: {}", program_io.untrusted_advice.len());
 
         let mut index = 1;
         for chunk in program_io.untrusted_advice.chunks(8) {
