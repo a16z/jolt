@@ -46,12 +46,12 @@ impl<F: JoltField> HammingBooleanitySumcheck<F> {
             .par_iter()
             .map(|cycle| {
                 if cycle.ram_access().address() == 0 {
-                    F::zero()
+                    0
                 } else {
-                    F::one()
+                    1
                 }
             })
-            .collect::<Vec<F>>();
+            .collect::<Vec<u8>>();
         let H = MultilinearPolynomial::from(H);
 
         let (r_cycle, _) = sm.get_virtual_polynomial_opening(
