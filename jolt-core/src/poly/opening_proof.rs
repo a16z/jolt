@@ -143,6 +143,7 @@ pub enum SumcheckId {
     SpartanInner,
     SpartanShift,
     ProductVirtualization,
+    InstructionInputVirtualization,
     WriteLookupOutputToRDVirtualization,
     WritePCtoRDVirtualization,
     ShouldBranchVirtualization,

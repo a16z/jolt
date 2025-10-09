@@ -263,52 +263,10 @@ macro_rules! r1cs_prod_named {
 }
 
 /// Number of uniform R1CS constraints
-pub const NUM_R1CS_CONSTRAINTS: usize = 22;
+pub const NUM_R1CS_CONSTRAINTS: usize = 16;
 
-/// Static table of all 22 R1CS uniform constraints.
+/// Static table of all R1CS uniform constraints.
 pub static UNIFORM_R1CS: [NamedConstraint; NUM_R1CS_CONSTRAINTS] = [
-    // if LeftOperandIsRs1Value { assert!(LeftInstructionInput == Rs1Value) }
-    r1cs_eq_conditional!(
-        name: ConstraintName::LeftInputEqRs1,
-        if { { JoltR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsRs1Value) } }
-        => ( { JoltR1CSInputs::LeftInstructionInput } ) == ( { JoltR1CSInputs::Rs1Value } )
-    ),
-    // if LeftOperandIsPC { assert!(LeftInstructionInput == UnexpandedPC) }
-    r1cs_eq_conditional!(
-        name: ConstraintName::LeftInputEqPC,
-        if { { JoltR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsPC) } }
-        => ( { JoltR1CSInputs::LeftInstructionInput } ) == ( { JoltR1CSInputs::UnexpandedPC } )
-    ),
-    // if !(LeftOperandIsRs1Value || LeftOperandIsPC)  {
-    //     assert!(LeftInstructionInput == 0)
-    // }
-    // Note that LeftOperandIsRs1Value and LeftOperandIsPC are mutually exclusive flags
-    r1cs_eq_conditional!(
-        name: ConstraintName::LeftInputZeroOtherwise,
-        if { { 1i128 } - { JoltR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsRs1Value) } - { JoltR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsPC) } }
-        => ( { JoltR1CSInputs::LeftInstructionInput } ) == ( { 0i128 } )
-    ),
-    // if RightOperandIsRs2Value { assert!(RightInstructionInput == Rs2Value) }
-    r1cs_eq_conditional!(
-        name: ConstraintName::RightInputEqRs2,
-        if { { JoltR1CSInputs::OpFlags(CircuitFlags::RightOperandIsRs2Value) } }
-        => ( { JoltR1CSInputs::RightInstructionInput } ) == ( { JoltR1CSInputs::Rs2Value } )
-    ),
-    // if RightOperandIsImm { assert!(RightInstructionInput == Imm) }
-    r1cs_eq_conditional!(
-        name: ConstraintName::RightInputEqImm,
-        if { { JoltR1CSInputs::OpFlags(CircuitFlags::RightOperandIsImm) } }
-        => ( { JoltR1CSInputs::RightInstructionInput } ) == ( { JoltR1CSInputs::Imm } )
-    ),
-    // if !(RightOperandIsRs2Value || RightOperandIsImm)  {
-    //     assert!(RightInstructionInput == 0)
-    // }
-    // Note that RightOperandIsRs2Value and RightOperandIsImm are mutually exclusive flags
-    r1cs_eq_conditional!(
-        name: ConstraintName::RightInputZeroOtherwise,
-        if { { 1i128 } - { JoltR1CSInputs::OpFlags(CircuitFlags::RightOperandIsRs2Value) } - { JoltR1CSInputs::OpFlags(CircuitFlags::RightOperandIsImm) } }
-        => ( { JoltR1CSInputs::RightInstructionInput } ) == ( { 0i128 } )
-    ),
     // if Load || Store {
     //     assert!(RamAddress == Rs1Value + Imm)
     // } else {

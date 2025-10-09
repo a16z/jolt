@@ -4,6 +4,7 @@ use std::ops::{AddAssign, Index, IndexMut, Mul, MulAssign, Sub};
 
 use crate::transcripts::{AppendToTranscript, Transcript};
 use crate::utils::gaussian_elimination::gaussian_elimination;
+use allocative::Allocative;
 use ark_serialize::*;
 use rand_core::{CryptoRng, RngCore};
 use rayon::prelude::*;
@@ -13,7 +14,7 @@ use crate::utils::small_scalar::SmallScalar;
 
 // ax^2 + bx + c stored as vec![c,b,a]
 // ax^3 + bx^2 + cx + d stored as vec![d,c,b,a]
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Allocative)]
 pub struct UniPoly<F> {
     pub coeffs: Vec<F>,
 }
