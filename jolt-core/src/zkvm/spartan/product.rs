@@ -14,9 +14,79 @@ use crate::subprotocols::sumcheck::SumcheckInstance;
 use crate::transcripts::Transcript;
 use crate::utils::math::Math;
 use crate::zkvm::dag::state_manager::StateManager;
-use crate::zkvm::r1cs::inputs::generate_product_virtualization_witnesses;
+use crate::zkvm::instruction::CircuitFlags;
+use crate::zkvm::r1cs::inputs::generate_virtual_product_witnesses;
 use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 use rayon::prelude::*;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[cfg_attr(feature = "allocative", derive(Allocative))]
+pub enum VirtualProductType {
+    /// LeftInstructionInput × RightInstructionInput
+    Instruction,
+    /// rd_addr × WriteLookupOutputToRD_flag
+    WriteLookupOutputToRD,
+    /// rd_addr × Jump_flag
+    WritePCtoRD,
+    /// lookup_output × Branch_flag
+    ShouldBranch,
+    /// Jump_flag × (1 - NextIsNoop)
+    ShouldJump,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum FactorPolynomials {
+    Committed(CommittedPolynomial, CommittedPolynomial),
+    Virtual(VirtualPolynomial, VirtualPolynomial),
+}
+
+impl VirtualProductType {
+    pub fn get_virtual_polynomial(&self) -> VirtualPolynomial {
+        match self {
+            VirtualProductType::Instruction => VirtualPolynomial::Product,
+            VirtualProductType::WriteLookupOutputToRD => VirtualPolynomial::WriteLookupOutputToRD,
+            VirtualProductType::WritePCtoRD => VirtualPolynomial::WritePCtoRD,
+            VirtualProductType::ShouldBranch => VirtualPolynomial::ShouldBranch,
+            VirtualProductType::ShouldJump => VirtualPolynomial::ShouldJump,
+        }
+    }
+    pub fn get_factor_polynomials(&self) -> FactorPolynomials {
+        match self {
+            VirtualProductType::Instruction => FactorPolynomials::Committed(
+                CommittedPolynomial::LeftInstructionInput,
+                CommittedPolynomial::RightInstructionInput,
+            ),
+            VirtualProductType::WriteLookupOutputToRD => FactorPolynomials::Virtual(
+                VirtualPolynomial::RdWa,
+                VirtualPolynomial::OpFlags(CircuitFlags::WriteLookupOutputToRD),
+            ),
+            VirtualProductType::WritePCtoRD => FactorPolynomials::Virtual(
+                VirtualPolynomial::RdWa,
+                VirtualPolynomial::OpFlags(CircuitFlags::Jump),
+            ),
+            VirtualProductType::ShouldBranch => FactorPolynomials::Virtual(
+                VirtualPolynomial::LookupOutput,
+                VirtualPolynomial::OpFlags(CircuitFlags::Branch),
+            ),
+            VirtualProductType::ShouldJump => FactorPolynomials::Virtual(
+                VirtualPolynomial::OpFlags(CircuitFlags::Jump),
+                VirtualPolynomial::NextIsNoop,
+            ),
+        }
+    }
+
+    pub fn get_sumcheck_id(&self) -> SumcheckId {
+        match self {
+            VirtualProductType::Instruction => SumcheckId::ProductVirtualization,
+            VirtualProductType::WriteLookupOutputToRD => {
+                SumcheckId::WriteLookupOutputToRDVirtualization
+            }
+            VirtualProductType::WritePCtoRD => SumcheckId::WritePCtoRDVirtualization,
+            VirtualProductType::ShouldBranch => SumcheckId::ShouldBranchVirtualization,
+            VirtualProductType::ShouldJump => SumcheckId::ShouldJumpVirtualization,
+        }
+    }
+}
 
 #[derive(Allocative)]
 struct ProductVirtualizationSumcheckProverState<F: JoltField> {
@@ -27,6 +97,8 @@ struct ProductVirtualizationSumcheckProverState<F: JoltField> {
 
 #[derive(Allocative)]
 pub struct ProductVirtualizationSumcheck<F: JoltField> {
+    #[allocative(skip)]
+    product_type: VirtualProductType,
     input_claim: F,
     log_T: usize,
     prover_state: Option<ProductVirtualizationSumcheckProverState<F>>,
@@ -35,22 +107,24 @@ pub struct ProductVirtualizationSumcheck<F: JoltField> {
 impl<F: JoltField> ProductVirtualizationSumcheck<F> {
     #[tracing::instrument(skip_all, name = "ProductVirtualizationSumcheck::new_prover")]
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
+        product_type: VirtualProductType,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
         let (_, trace, _, _) = state_manager.get_prover_data();
 
-        // Stream once to generate LeftInstructionInput and RightInstructionInput witnesses
-        let (left_input_poly, right_input_poly) = generate_product_virtualization_witnesses(trace);
+        let (left_input_poly, right_input_poly) =
+            generate_virtual_product_witnesses(product_type, trace);
 
-        // Get opening_point and claim from accumulator
         let accumulator = state_manager.get_prover_accumulator();
+        let virtual_poly = product_type.get_virtual_polynomial();
         let (outer_sumcheck_r, input_claim) = accumulator
             .borrow()
-            .get_virtual_polynomial_opening(VirtualPolynomial::Product, SumcheckId::SpartanOuter);
+            .get_virtual_polynomial_opening(virtual_poly, SumcheckId::SpartanOuter);
 
         let (r_cycle, _rx_var) = outer_sumcheck_r.split_at(trace.len().log_2());
 
         Self {
+            product_type,
             input_claim,
             log_T: r_cycle.len(),
             prover_state: Some(ProductVirtualizationSumcheckProverState {
@@ -62,16 +136,18 @@ impl<F: JoltField> ProductVirtualizationSumcheck<F> {
     }
 
     pub fn new_verifier<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
+        product_type: VirtualProductType,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
         let accumulator = state_manager.get_verifier_accumulator();
-        // Get the Product claim from the accumulator
+        let virtual_poly = product_type.get_virtual_polynomial();
         let (_, input_claim) = accumulator
             .borrow()
-            .get_virtual_polynomial_opening(VirtualPolynomial::Product, SumcheckId::SpartanOuter);
+            .get_virtual_polynomial_opening(virtual_poly, SumcheckId::SpartanOuter);
         let (_, _, T) = state_manager.get_verifier_data();
 
         Self {
+            product_type,
             input_claim,
             prover_state: None,
             log_T: T.log_2(),
@@ -92,7 +168,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ProductVirtualizati
         self.input_claim
     }
 
-    #[tracing::instrument(skip_all, name = "PCSumcheck::compute_prover_message")]
+    #[tracing::instrument(
+        skip_all,
+        name = "ProductVirtualizationSumcheck::compute_prover_message"
+    )]
     fn compute_prover_message(&mut self, _round: usize, previous_claim: F) -> Vec<F> {
         let prover_state = self
             .prover_state
@@ -183,7 +262,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ProductVirtualizati
             .to_vec()
     }
 
-    #[tracing::instrument(skip_all, name = "PCSumcheck::bind")]
+    #[tracing::instrument(skip_all, name = "ProductVirtualizationSumcheck::bind")]
     fn bind(&mut self, r_j: F::Challenge, _round: usize) {
         let prover_state = self
             .prover_state
@@ -213,20 +292,35 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ProductVirtualizati
         let accumulator = accumulator.as_ref().unwrap().borrow();
 
         // Get r_cycle from the SpartanOuter sumcheck opening point
-        let (outer_sumcheck_opening, _) = accumulator
-            .get_virtual_polynomial_opening(VirtualPolynomial::Product, SumcheckId::SpartanOuter);
+        let virtual_poly = self.product_type.get_virtual_polynomial();
+        let (outer_sumcheck_opening, _) =
+            accumulator.get_virtual_polynomial_opening(virtual_poly, SumcheckId::SpartanOuter);
         let outer_sumcheck_r = &outer_sumcheck_opening.r;
         let (r_cycle, _) = outer_sumcheck_r.split_at(self.log_T);
 
-        // Get the instruction input evaluations from the accumulator
-        let (_, left_input_eval) = accumulator.get_committed_polynomial_opening(
-            CommittedPolynomial::LeftInstructionInput,
-            SumcheckId::ProductVirtualization,
-        );
-        let (_, right_input_eval) = accumulator.get_committed_polynomial_opening(
-            CommittedPolynomial::RightInstructionInput,
-            SumcheckId::ProductVirtualization,
-        );
+        let sumcheck_id = self.product_type.get_sumcheck_id();
+        let (left_input_eval, right_input_eval) = match self.product_type.get_factor_polynomials() {
+            FactorPolynomials::Committed(left_poly, right_poly) => {
+                let (_, left_eval) =
+                    accumulator.get_committed_polynomial_opening(left_poly, sumcheck_id);
+                let (_, right_eval) =
+                    accumulator.get_committed_polynomial_opening(right_poly, sumcheck_id);
+                (left_eval, right_eval)
+            }
+            FactorPolynomials::Virtual(left_virtual, right_virtual) => {
+                let (_, left_eval) =
+                    accumulator.get_virtual_polynomial_opening(left_virtual, sumcheck_id);
+                let (_, mut right_eval) =
+                    accumulator.get_virtual_polynomial_opening(right_virtual, sumcheck_id);
+                // Special case (1 - NextIsNoop) for ShouldJump
+                if matches!(self.product_type, VirtualProductType::ShouldJump)
+                    && right_virtual == VirtualPolynomial::NextIsNoop
+                {
+                    right_eval = F::one() - right_eval;
+                }
+                (left_eval, right_eval)
+            }
+        };
 
         let eq_eval = EqPolynomial::mle(&r.iter().rev().copied().collect::<Vec<_>>(), r_cycle);
         eq_eval * left_input_eval * right_input_eval
@@ -253,16 +347,42 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ProductVirtualizati
         let left_input_eval = prover_state.left_input_poly.final_sumcheck_claim();
         let right_input_eval = prover_state.right_input_poly.final_sumcheck_claim();
 
-        accumulator.borrow_mut().append_dense(
-            transcript,
-            vec![
-                CommittedPolynomial::LeftInstructionInput,
-                CommittedPolynomial::RightInstructionInput,
-            ],
-            SumcheckId::ProductVirtualization,
-            opening_point.r,
-            &[left_input_eval, right_input_eval],
-        );
+        let sumcheck_id = self.product_type.get_sumcheck_id();
+        match self.product_type.get_factor_polynomials() {
+            FactorPolynomials::Committed(left_poly, right_poly) => {
+                accumulator.borrow_mut().append_dense(
+                    transcript,
+                    vec![left_poly, right_poly],
+                    sumcheck_id,
+                    opening_point.r.clone(),
+                    &[left_input_eval, right_input_eval],
+                );
+            }
+            FactorPolynomials::Virtual(left_virtual, right_virtual) => {
+                accumulator.borrow_mut().append_virtual(
+                    transcript,
+                    left_virtual,
+                    sumcheck_id,
+                    opening_point.clone(),
+                    left_input_eval,
+                );
+                // Special case (1 - NextIsNoop) for ShouldJump
+                let right_eval = if matches!(self.product_type, VirtualProductType::ShouldJump)
+                    && right_virtual == VirtualPolynomial::NextIsNoop
+                {
+                    F::one() - right_input_eval
+                } else {
+                    right_input_eval
+                };
+                accumulator.borrow_mut().append_virtual(
+                    transcript,
+                    right_virtual,
+                    sumcheck_id,
+                    opening_point,
+                    right_eval,
+                );
+            }
+        }
     }
 
     fn cache_openings_verifier(
@@ -271,15 +391,31 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ProductVirtualizati
         transcript: &mut T,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
-        accumulator.borrow_mut().append_dense(
-            transcript,
-            vec![
-                CommittedPolynomial::LeftInstructionInput,
-                CommittedPolynomial::RightInstructionInput,
-            ],
-            SumcheckId::ProductVirtualization,
-            opening_point.r,
-        );
+        let sumcheck_id = self.product_type.get_sumcheck_id();
+        match self.product_type.get_factor_polynomials() {
+            FactorPolynomials::Committed(left_poly, right_poly) => {
+                accumulator.borrow_mut().append_dense(
+                    transcript,
+                    vec![left_poly, right_poly],
+                    sumcheck_id,
+                    opening_point.r.clone(),
+                );
+            }
+            FactorPolynomials::Virtual(left_virtual, right_virtual) => {
+                accumulator.borrow_mut().append_virtual(
+                    transcript,
+                    left_virtual,
+                    sumcheck_id,
+                    opening_point.clone(),
+                );
+                accumulator.borrow_mut().append_virtual(
+                    transcript,
+                    right_virtual,
+                    sumcheck_id,
+                    opening_point,
+                );
+            }
+        }
     }
 
     #[cfg(feature = "allocative")]

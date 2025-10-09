@@ -137,7 +137,7 @@ pub struct BytecodeDag {}
 impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStages<F, T, PCS>
     for BytecodeDag
 {
-    fn stage4_prover_instances(
+    fn stage6_prover_instances(
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, T>>> {
@@ -173,7 +173,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         ]
     }
 
-    fn stage4_verifier_instances(
+    fn stage6_verifier_instances(
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, T>>> {

@@ -81,9 +81,6 @@ impl LC {
     }
 }
 
-// =============================================================================
-// CONSTRAINT BUILDER FUNCTIONS
-// =============================================================================
 /// Creates: condition * (left - right) == 0
 pub const fn constraint_eq_conditional_lc(condition: LC, left: LC, right: LC) -> Constraint {
     Constraint::new(
@@ -95,10 +92,6 @@ pub const fn constraint_eq_conditional_lc(condition: LC, left: LC, right: LC) ->
         LC::zero(),
     )
 }
-
-// =============================================================================
-// Named constraints with minimal Cz marker
-// =============================================================================
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, strum_macros::EnumIter)]
 pub enum ConstraintName {
@@ -118,13 +111,9 @@ pub enum ConstraintName {
     RightLookupEqProductIfMul,
     RightLookupEqRightInputOtherwise,
     AssertLookupOne,
-    WriteLookupOutputToRDDef,
     RdWriteEqLookupIfWriteLookupToRd,
-    WritePCtoRDDef,
     RdWriteEqPCPlusConstIfWritePCtoRD,
-    ShouldJumpDef,
     NextUnexpPCEqLookupIfShouldJump,
-    ShouldBranchDef,
     NextUnexpPCEqPCPlusImmIfShouldBranch,
     NextUnexpPCUpdateOtherwise,
     NextPCEqPCPlusOneIfInline,
@@ -274,9 +263,9 @@ macro_rules! r1cs_prod_named {
 }
 
 /// Number of uniform R1CS constraints
-pub const NUM_R1CS_CONSTRAINTS: usize = 26;
+pub const NUM_R1CS_CONSTRAINTS: usize = 22;
 
-/// Static table of all 26 R1CS uniform constraints.
+/// Static table of all 22 R1CS uniform constraints.
 pub static UNIFORM_R1CS: [NamedConstraint; NUM_R1CS_CONSTRAINTS] = [
     // if LeftOperandIsRs1Value { assert!(LeftInstructionInput == Rs1Value) }
     r1cs_eq_conditional!(
@@ -411,12 +400,6 @@ pub static UNIFORM_R1CS: [NamedConstraint; NUM_R1CS_CONSTRAINTS] = [
     // if Rd != 0 && WriteLookupOutputToRD {
     //     assert!(RdWriteValue == LookupOutput)
     // }
-    r1cs_prod!(
-        name: ConstraintName::WriteLookupOutputToRDDef,
-        ({ JoltR1CSInputs::Rd })
-            * ({ JoltR1CSInputs::OpFlags(CircuitFlags::WriteLookupOutputToRD) })
-            == ({ JoltR1CSInputs::WriteLookupOutputToRD })
-    ),
     r1cs_eq_conditional!(
         name: ConstraintName::RdWriteEqLookupIfWriteLookupToRd,
         if { { JoltR1CSInputs::WriteLookupOutputToRD } }
@@ -429,11 +412,6 @@ pub static UNIFORM_R1CS: [NamedConstraint; NUM_R1CS_CONSTRAINTS] = [
     //          assert!(RdWriteValue == UnexpandedPC + 2)
     //     }
     // }
-    r1cs_prod!(
-        name: ConstraintName::WritePCtoRDDef,
-        ({ JoltR1CSInputs::Rd }) * ({ JoltR1CSInputs::OpFlags(CircuitFlags::Jump) })
-            == ({ JoltR1CSInputs::WritePCtoRD })
-    ),
     r1cs_eq_conditional!(
         name: ConstraintName::RdWriteEqPCPlusConstIfWritePCtoRD,
         if { { JoltR1CSInputs::WritePCtoRD } }
@@ -442,12 +420,6 @@ pub static UNIFORM_R1CS: [NamedConstraint; NUM_R1CS_CONSTRAINTS] = [
     // if Jump && !NextIsNoop {
     //     assert!(NextUnexpandedPC == LookupOutput)
     // }
-    r1cs_prod!(
-        name: ConstraintName::ShouldJumpDef,
-        ({ JoltR1CSInputs::OpFlags(CircuitFlags::Jump) })
-            * ({ 1i128 } - { JoltR1CSInputs::NextIsNoop })
-            == ({ JoltR1CSInputs::ShouldJump })
-    ),
     r1cs_eq_conditional!(
         name: ConstraintName::NextUnexpPCEqLookupIfShouldJump,
         if { { JoltR1CSInputs::ShouldJump } }
@@ -456,11 +428,6 @@ pub static UNIFORM_R1CS: [NamedConstraint; NUM_R1CS_CONSTRAINTS] = [
     // if Branch && LookupOutput {
     //     assert!(NextUnexpandedPC == UnexpandedPC + Imm)
     // }
-    r1cs_prod!(
-        name: ConstraintName::ShouldBranchDef,
-        ({ JoltR1CSInputs::OpFlags(CircuitFlags::Branch) }) * ({ JoltR1CSInputs::LookupOutput })
-            == ({ JoltR1CSInputs::ShouldBranch })
-    ),
     r1cs_eq_conditional!(
         name: ConstraintName::NextUnexpPCEqPCPlusImmIfShouldBranch,
         if { { JoltR1CSInputs::ShouldBranch } }
@@ -555,22 +522,14 @@ pub fn eval_az_by_name<F: JoltField>(c: &NamedConstraint, row: &R1CSCycleInputs)
         }
         // Az: Assert flag (0/1)
         N::AssertLookupOne => row.flags[CircuitFlags::Assert].into(),
-        // Az: Rd register index (0 disables write)
-        N::WriteLookupOutputToRDDef => I8OrI96::from_i8(row.rd_addr as i8),
+        // Az: WriteLookupOutputToRD indicator (0/1)
         N::RdWriteEqLookupIfWriteLookupToRd => {
-            // Az: WriteLookupOutputToRD indicator (0/1)
             I8OrI96::from_i8(row.write_lookup_output_to_rd_addr as i8)
         }
-        // Az: Rd register index (0 disables write)
-        N::WritePCtoRDDef => I8OrI96::from_i8(row.rd_addr as i8),
         // Az: WritePCtoRD indicator (0/1)
         N::RdWriteEqPCPlusConstIfWritePCtoRD => I8OrI96::from_i8(row.write_pc_to_rd_addr as i8),
-        // Az: Jump flag (0/1)
-        N::ShouldJumpDef => row.flags[CircuitFlags::Jump].into(),
         // Az: ShouldJump indicator (0/1)
         N::NextUnexpPCEqLookupIfShouldJump => row.should_jump.into(),
-        // Az: Branch flag (0/1)
-        N::ShouldBranchDef => row.flags[CircuitFlags::Branch].into(),
         // Note: Az uses ShouldBranch in the u64 domain (product Branch * LookupOutput)
         // Az: ShouldBranch indicator (0/1)
         N::NextUnexpPCEqPCPlusImmIfShouldBranch => I8OrI96::from(row.should_branch),
@@ -640,25 +599,9 @@ pub fn eval_bz_by_name<F: JoltField>(c: &NamedConstraint, row: &R1CSCycleInputs)
         }
         // B: LookupOutput - 1 (i128 arithmetic)
         N::AssertLookupOne => S160::from(row.lookup_output as i128 - 1),
-        N::WriteLookupOutputToRDDef => {
-            // B: OpFlags(WriteLookupOutputToRD) (boolean 0/1)
-            if row.flags[CircuitFlags::WriteLookupOutputToRD] {
-                S160::one()
-            } else {
-                S160::zero()
-            }
-        }
         N::RdWriteEqLookupIfWriteLookupToRd => {
             // B: RdWriteValue - LookupOutput (u64 bit-pattern difference)
             S160::from_diff_u64(row.rd_write_value, row.lookup_output)
-        }
-        N::WritePCtoRDDef => {
-            // B: OpFlags(Jump) (boolean 0/1)
-            if row.flags[CircuitFlags::Jump] {
-                S160::one()
-            } else {
-                S160::zero()
-            }
         }
         N::RdWriteEqPCPlusConstIfWritePCtoRD => {
             // B: RdWriteValue - (UnexpandedPC + (4 - 2*IsCompressed)) (i128 arithmetic)
@@ -671,21 +614,11 @@ pub fn eval_bz_by_name<F: JoltField>(c: &NamedConstraint, row: &R1CSCycleInputs)
                 row.rd_write_value as i128 - (row.unexpanded_pc as i128 + const_term as i128),
             )
         }
-        N::ShouldJumpDef => {
-            // B: 1 - NextIsNoop (boolean domain)
-            if !row.next_is_noop {
-                S160::one()
-            } else {
-                S160::zero()
-            }
-        }
         N::NextUnexpPCEqLookupIfShouldJump => {
             // Note: B uses u64 bit-pattern difference here (matches accessor variant)
             // B: NextUnexpandedPC - LookupOutput (i128 arithmetic)
             S160::from_diff_u64(row.next_unexpanded_pc, row.lookup_output)
         }
-        // B: LookupOutput (u64 bit pattern)
-        N::ShouldBranchDef => S160::from(row.lookup_output),
         // B: NextUnexpandedPC - (UnexpandedPC + Imm) (i128 arithmetic)
         N::NextUnexpPCEqPCPlusImmIfShouldBranch => S160::from(
             row.next_unexpanded_pc as i128 - (row.unexpanded_pc as i128 + row.imm.to_i128()),
@@ -711,10 +644,6 @@ pub fn eval_bz_by_name<F: JoltField>(c: &NamedConstraint, row: &R1CSCycleInputs)
         }
     }
 }
-
-// =============================================================================
-// Batch evaluation functions
-// =============================================================================
 
 /// Batched evaluation using a fully materialized R1CS cycle inputs. This avoids any repeated
 /// reads from the trace or bytecode and computes all constraints.
