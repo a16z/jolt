@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1760047325408,
+  "lastUpdate": 1760048131737,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -20194,6 +20194,198 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 867644,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "atretyakov@a16z.com",
+            "name": "Andrew Tretyakov",
+            "username": "0xAndoroid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "10ba26fa779aba860f5ce8b83e1a8ae3d76bebf9",
+          "message": "feat: delayed reduction for all sumchecks (#976)\n\n* feat: delayed reduction for bytecode sumchecks\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\n\n* feat: optimize instruction_lookups sumchecks with delayed reduction\n\n* feat: optimize registers val_evaluation sumcheck with delayed reduction\n\n* feat: optimize RAM sumchecks with delayed reduction\n\n* feat: optimize more RAM sumchecks with delayed reduction\n\n* feat: optimize RAM hamming_booleanity sumcheck with delayed reduction\n\n* chore: cleanup\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\n\n* feat: optimize init_suffix_polys in the instructions read-raf\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\n\n* perf: optimize instruction_lookups/booleanity with delayed reduction\n\nApply delayed reduction patterns from bytecode/booleanity:\n- Use fold_with with F::Unreduced<5> accumulation in phase1\n- Apply mul_trunc<4, 9> for multiplication with B_evals\n- Use mul_unreduced<9> for D_evals multiplication in phase2\n- Minimize Montgomery reductions throughout compute_prover_message\n\n* perf: optimize RAM booleanity with delayed reduction\n\nFixed the delayed reduction pattern by properly handling gamma powers\naccumulation inside the inner loop to avoid incorrect use of\nfrom_montgomery_reduce on Unreduced<5> types. Now uses mul_trunc\nfor final multiplication similar to instruction_lookups pattern.\n\n* perf: keep RAM booleanity sumcheck optimized with barrett_reduce for 5-limb values\n\n- RAM booleanity: Use F::from_barrett_reduce for Unreduced<5> values\n- Keeps gamma multiplication outside inner loop to avoid additional field muls\n- RAM ra_virtual left unoptimized due to variable-length multiplication chain\n\n* perf: optimize RAM ra_virtual sumcheck with delayed reduction\n\n- Multiply all ra evaluations in field arithmetic first\n- Convert to Unreduced<5> for accumulation\n- Use barrett_reduce for final reduction from 5 limbs\n- Properly handles generic field types using Zero trait\n\n* perf: optimize instructions ra_virtual sumcheck with delayed reduction\n\n- Optimize compute_mles_product_sum to use delayed reduction\n- Multiply in field arithmetic first, then convert to Unreduced<5>\n- Accumulate as Unreduced<5> in parallel reduction\n- Use barrett_reduce for final conversion from 5 limbs\n\n* chore: cleanup\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\n\n* perf: optimize registers read-write checking with delayed reduction\n\n- Apply delayed reduction to both E_in bound and unbound branches\n- Use mul_unreduced<9> for eq_r_prime_eval and E_out_eval multiplications\n- Accumulate as Unreduced<9> and use montgomery_reduce for final conversion\n- Consistent optimization pattern across all branches\n\n* perf: optimize read-write checking for registers\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\n\n---------\n\nSigned-off-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>",
+          "timestamp": "2025-10-09T17:22:37-04:00",
+          "tree_id": "3ee3f722ec8a133d34780bd5bb25180ff79201bf",
+          "url": "https://github.com/a16z/jolt/commit/10ba26fa779aba860f5ce8b83e1a8ae3d76bebf9"
+        },
+        "date": 1760048130361,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 972572,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "blake2-ex-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "blake2-ex-mem",
+            "value": 956020,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "blake3-ex-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "blake3-ex-mem",
+            "value": 992564,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 3516260,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 975040,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 995164,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 948792,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 1083368,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 1059660,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 345540,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 6299148,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 972616,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 998516,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 1048720,
             "unit": "KB",
             "extra": ""
           }
