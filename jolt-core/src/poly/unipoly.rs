@@ -1,9 +1,11 @@
 use crate::field::{ChallengeFieldOps, FieldChallengeOps, JoltField};
 use std::cmp::Ordering;
-use std::ops::{AddAssign, Index, IndexMut, Mul, MulAssign, Sub};
+use std::iter::zip;
+use std::ops::{Add, AddAssign, Index, IndexMut, Mul, MulAssign, Sub};
 
 use crate::transcripts::{AppendToTranscript, Transcript};
 use crate::utils::gaussian_elimination::gaussian_elimination;
+use allocative::Allocative;
 use ark_serialize::*;
 use rand_core::{CryptoRng, RngCore};
 use rayon::prelude::*;
@@ -13,7 +15,7 @@ use crate::utils::small_scalar::SmallScalar;
 
 // ax^2 + bx + c stored as vec![c,b,a]
 // ax^3 + bx^2 + cx + d stored as vec![d,c,b,a]
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Allocative)]
 pub struct UniPoly<F> {
     pub coeffs: Vec<F>,
 }
@@ -307,6 +309,17 @@ impl<F: JoltField> AddAssign<&Self> for UniPoly<F> {
             self.coeffs
                 .extend(rhs.coeffs[self.coeffs.len()..].iter().cloned());
         }
+    }
+}
+
+impl<F: JoltField> Add<Self> for &UniPoly<F> {
+    type Output = UniPoly<F>;
+
+    fn add(self, rhs: Self) -> UniPoly<F> {
+        let mut res = vec![F::zero(); self.coeffs.len().max(rhs.coeffs.len())];
+        zip(&mut res, &self.coeffs).for_each(|(res, v)| *res += *v);
+        zip(&mut res, &rhs.coeffs).for_each(|(res, v)| *res += *v);
+        UniPoly::from_coeff(res)
     }
 }
 

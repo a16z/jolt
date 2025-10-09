@@ -357,7 +357,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             ReadCheckingValType::Stage3 => {
                 let gamma_powers = get_gamma_powers(
                     &mut *sm.get_transcript().borrow_mut(),
-                    4 + NUM_LOOKUP_TABLES,
+                    8 + NUM_LOOKUP_TABLES,
                 );
                 (
                     Self::compute_val_3(sm, &gamma_powers),
@@ -606,7 +606,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
     }
 
     /// Returns a vec of evaluations:
-    ///    Val(k) = unexpanded_pc(k) + gamma * instr_raf_flag(k)
+    ///    Val(k) = imm(k) + gamma * unexpanded_pc(k)
     ///             + gamma^2 * lookup_table_flag[0](k)
     ///             + gamma^3 * lookup_table_flag[1](k) + ...
     /// This particular Val virtualizes claims output by the PCSumcheck
@@ -621,20 +621,32 @@ impl<F: JoltField> ReadRafSumcheck<F> {
                 let instr = instruction.normalize();
                 let flags = instruction.circuit_flags();
                 let unexpanded_pc = instr.address;
+                let imm = instr.operands.imm;
 
-                let mut linear_combination: F = F::zero();
-
-                linear_combination += F::from_u64(unexpanded_pc as u64);
+                let mut linear_combination: F = F::from_i128(imm);
+                linear_combination += gamma_powers[1].mul_u64(unexpanded_pc as u64);
+                if flags[CircuitFlags::LeftOperandIsRs1Value] {
+                    linear_combination += gamma_powers[2];
+                }
+                if flags[CircuitFlags::LeftOperandIsPC] {
+                    linear_combination += gamma_powers[3];
+                }
+                if flags[CircuitFlags::RightOperandIsRs2Value] {
+                    linear_combination += gamma_powers[4];
+                }
+                if flags[CircuitFlags::RightOperandIsImm] {
+                    linear_combination += gamma_powers[5];
+                }
                 if flags[CircuitFlags::IsNoop] {
-                    linear_combination += gamma_powers[1];
+                    linear_combination += gamma_powers[6];
                 }
                 if !flags.is_interleaved_operands() {
-                    linear_combination += gamma_powers[2];
+                    linear_combination += gamma_powers[7];
                 }
 
                 if let Some(table) = instruction.lookup_table() {
                     let table_index = LookupTables::enum_index(&table);
-                    linear_combination += gamma_powers[3 + table_index];
+                    linear_combination += gamma_powers[8 + table_index];
                 }
 
                 linear_combination
@@ -646,9 +658,39 @@ impl<F: JoltField> ReadRafSumcheck<F> {
         sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
         gamma_powers: &[F],
     ) -> F {
-        let (_, unexpanded_pc_claim) = sm.get_virtual_polynomial_opening(
+        let (_, imm_claim) = sm.get_virtual_polynomial_opening(
+            VirtualPolynomial::Imm,
+            SumcheckId::RightInstructionInputVirtualization,
+        );
+        let (_, spartan_shift_unexpanded_pc_claim) = sm.get_virtual_polynomial_opening(
             VirtualPolynomial::UnexpandedPC,
             SumcheckId::SpartanShift,
+        );
+        let (_, left_instruction_input_unexpanded_pc_claim) = sm.get_virtual_polynomial_opening(
+            VirtualPolynomial::UnexpandedPC,
+            SumcheckId::LeftInstructionInputVirtualization,
+        );
+        // Check the claims match.
+        assert_eq!(
+            spartan_shift_unexpanded_pc_claim,
+            left_instruction_input_unexpanded_pc_claim
+        );
+        let unexpanded_pc_claim = spartan_shift_unexpanded_pc_claim;
+        let (_, left_instruction_input_is_rs1_value_claim) = sm.get_virtual_polynomial_opening(
+            VirtualPolynomial::OpFlags(CircuitFlags::LeftOperandIsRs1Value),
+            SumcheckId::LeftInstructionInputVirtualization,
+        );
+        let (_, left_instruction_input_is_pc_claim) = sm.get_virtual_polynomial_opening(
+            VirtualPolynomial::OpFlags(CircuitFlags::LeftOperandIsPC),
+            SumcheckId::LeftInstructionInputVirtualization,
+        );
+        let (_, right_instruction_input_is_rs2_value_claim) = sm.get_virtual_polynomial_opening(
+            VirtualPolynomial::OpFlags(CircuitFlags::RightOperandIsRs2Value),
+            SumcheckId::RightInstructionInputVirtualization,
+        );
+        let (_, right_instruction_input_is_imm_claim) = sm.get_virtual_polynomial_opening(
+            VirtualPolynomial::OpFlags(CircuitFlags::RightOperandIsImm),
+            SumcheckId::RightInstructionInputVirtualization,
         );
         let (_, is_noop_claim) = sm.get_virtual_polynomial_opening(
             VirtualPolynomial::OpFlags(CircuitFlags::IsNoop),
@@ -658,20 +700,28 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             VirtualPolynomial::InstructionRafFlag,
             SumcheckId::InstructionReadRaf,
         );
-        std::iter::empty()
-            .chain(once(unexpanded_pc_claim))
-            .chain(once(is_noop_claim))
-            .chain(once(raf_flag_claim))
-            .chain((0..LookupTables::<XLEN>::COUNT).map(|i| {
-                sm.get_virtual_polynomial_opening(
-                    VirtualPolynomial::LookupTableFlag(i),
-                    SumcheckId::InstructionReadRaf,
-                )
-                .1
-            }))
-            .zip(gamma_powers)
-            .map(|(claim, gamma)| claim * gamma)
-            .sum()
+
+        [
+            imm_claim,
+            unexpanded_pc_claim,
+            left_instruction_input_is_rs1_value_claim,
+            left_instruction_input_is_pc_claim,
+            right_instruction_input_is_rs2_value_claim,
+            right_instruction_input_is_imm_claim,
+            is_noop_claim,
+            raf_flag_claim,
+        ]
+        .into_iter()
+        .chain((0..LookupTables::<XLEN>::COUNT).map(|i| {
+            sm.get_virtual_polynomial_opening(
+                VirtualPolynomial::LookupTableFlag(i),
+                SumcheckId::InstructionReadRaf,
+            )
+            .1
+        }))
+        .zip(gamma_powers)
+        .map(|(claim, gamma)| claim * gamma)
+        .sum()
     }
 
     /// Returns a vec of evaluations:
