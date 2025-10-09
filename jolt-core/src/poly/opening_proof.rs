@@ -37,7 +37,6 @@ use crate::{
     field::JoltField,
     poly::{
         commitment::dory::DoryGlobals,
-        multilinear_polynomial::PolynomialEvaluation,
         one_hot_polynomial::{EqAddressState, EqCycleState, OneHotPolynomialProverOpening},
     },
     subprotocols::sumcheck::{BatchedSumcheck, SumcheckInstance, SumcheckInstanceProof},

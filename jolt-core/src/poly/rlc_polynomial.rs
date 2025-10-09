@@ -215,7 +215,7 @@ impl<F: JoltField> RLCPolynomial<F> {
             .step_by(row_len / cycles_per_row)
             .enumerate()
             .for_each(|(offset, dot_product_result)| {
-                (*dot_product_result).0 = self
+                dot_product_result.0 = self
                     .dense_rlc
                     .par_iter()
                     .skip(offset)
