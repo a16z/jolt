@@ -193,14 +193,18 @@ impl<'a, F: JoltField> ReadRafProverState<F> {
             .collect();
 
         // Since cycle_data preserves order, we can extract the vectors directly
-        let lookup_indices: Vec<LookupBits> =
-            cycle_data.iter().map(|data| data.lookup_index).collect();
+        let lookup_indices: Vec<LookupBits> = cycle_data
+            .par_iter()
+            .map(|data| data.lookup_index)
+            .collect();
 
-        let is_interleaved_operands: Vec<bool> =
-            cycle_data.iter().map(|data| data.is_interleaved).collect();
+        let is_interleaved_operands: Vec<bool> = cycle_data
+            .par_iter()
+            .map(|data| data.is_interleaved)
+            .collect();
 
         let lookup_tables: Vec<Option<LookupTables<XLEN>>> =
-            cycle_data.iter().map(|data| data.table).collect();
+            cycle_data.par_iter().map(|data| data.table).collect();
 
         // Collect interleaved and identity indices
         let (lookup_indices_uninterleave, lookup_indices_identity): (Vec<_>, Vec<_>) =
@@ -212,11 +216,8 @@ impl<'a, F: JoltField> ReadRafProverState<F> {
                 }
             });
 
-        // Build lookup_indices_by_table
-        let mut lookup_indices_by_table: Vec<Vec<(usize, LookupBits)>> =
-            (0..num_tables).map(|_| Vec::new()).collect();
-
-        cycle_data
+        // Build lookup_indices_by_table fully in parallel
+        let lookup_indices_by_table: Vec<Vec<(usize, LookupBits)>> = cycle_data
             .par_iter()
             .filter_map(|data| {
                 data.table.map(|t| {
@@ -224,11 +225,22 @@ impl<'a, F: JoltField> ReadRafProverState<F> {
                     (t_idx, (data.idx, data.lookup_index))
                 })
             })
-            .collect::<Vec<_>>()
-            .into_iter()
-            .for_each(|(t_idx, entry)| {
-                lookup_indices_by_table[t_idx].push(entry);
-            });
+            .fold(
+                || (0..num_tables).map(|_| Vec::new()).collect::<Vec<_>>(),
+                |mut acc, (t_idx, entry)| {
+                    acc[t_idx].push(entry);
+                    acc
+                },
+            )
+            .reduce(
+                || (0..num_tables).map(|_| Vec::new()).collect::<Vec<_>>(),
+                |mut acc, mut local| {
+                    for (acc_table, local_table) in acc.iter_mut().zip(local.iter_mut()) {
+                        acc_table.append(local_table);
+                    }
+                    acc
+                },
+            );
         drop_in_background_thread(cycle_data);
 
         let suffix_polys: Vec<Vec<DensePolynomial<F>>> = LookupTables::<XLEN>::iter()
