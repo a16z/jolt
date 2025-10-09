@@ -95,8 +95,8 @@ pub fn remap_address(address: u64, memory_layout: &MemoryLayout) -> Option<u64> 
         return None;
     }
 
-    if address >= memory_layout.untrusted_advice_start {
-        Some((address - memory_layout.untrusted_advice_start) / 8 + 1)
+    if address >= memory_layout.trusted_advice_start {
+        Some((address - memory_layout.trusted_advice_start) / 8 + 1)
     } else {
         panic!("Unexpected address {address}")
     }
@@ -144,6 +144,22 @@ impl RamDag {
             .for_each(|(k, word)| {
                 *word = final_memory.read_doubleword(8 * k as u64);
             });
+
+        index = remap_address(
+            program_io.memory_layout.trusted_advice_start,
+            &program_io.memory_layout,
+        )
+        .unwrap() as usize;
+        for chunk in program_io.trusted_advice.chunks(8) {
+            let mut word = [0u8; 8];
+            for (i, byte) in chunk.iter().enumerate() {
+                word[i] = *byte;
+            }
+            let word = u64::from_le_bytes(word);
+            initial_memory_state[index] = word;
+            final_memory_state[index] = word;
+            index += 1;
+        }
 
         index = remap_address(
             program_io.memory_layout.untrusted_advice_start,
@@ -360,6 +376,26 @@ where
                     .accumulator
                     .borrow_mut()
                     .append_untrusted_advice(
+                        &mut *state_manager.get_transcript().borrow_mut(),
+                        r_address.clone(),
+                        eval,
+                    );
+            }
+        }
+
+        if let Some(prover_state) = state_manager.prover_state.as_ref() {
+            if let Some(trusted_advice_poly) = prover_state.trusted_advice_polynomial.as_ref() {
+                let (r, _) = state_manager.get_virtual_polynomial_opening(
+                    VirtualPolynomial::RamVal,
+                    SumcheckId::RamReadWriteChecking,
+                );
+                let (r_address, _) = r.split_at(state_manager.ram_K.log_2());
+                let eval = trusted_advice_poly.evaluate(&r_address.r);
+
+                prover_state
+                    .accumulator
+                    .borrow_mut()
+                    .append_trusted_advice(
                         &mut *state_manager.get_transcript().borrow_mut(),
                         r_address.clone(),
                         eval,

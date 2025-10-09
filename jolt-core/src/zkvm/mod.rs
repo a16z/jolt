@@ -261,6 +261,7 @@ where
         inputs: &[u8],
         untrusted_advice: &[u8],
         trusted_advice: &[u8],
+        trusted_advice_commitment: Option<<PCS as CommitmentScheme>::Commitment>
     ) -> (
         JoltProof<F, PCS, FS>,
         JoltDevice,
@@ -328,6 +329,7 @@ where
                 preprocessing,
                 trace,
                 program_io.clone(),
+                trusted_advice_commitment,
                 final_memory_state,
             );
             let (proof, debug_info) = JoltDAG::prove(state_manager).ok().unwrap();
@@ -348,6 +350,7 @@ where
         preprocessing: &JoltVerifierPreprocessing<F, PCS>,
         proof: JoltProof<F, PCS, FS>,
         mut program_io: JoltDevice,
+        trusted_advice_commitment: Option<<PCS as CommitmentScheme>::Commitment>,
         _debug_info: Option<ProverDebugInfo<F, FS, PCS>>,
     ) -> Result<(), ProofVerifyError> {
         let _pprof_verify = pprof_scope!("verify");
@@ -379,7 +382,8 @@ where
                 .map_or(0, |pos| pos + 1),
         );
 
-        let state_manager = proof.to_verifier_state_manager(preprocessing, program_io);
+        let mut state_manager = proof.to_verifier_state_manager(preprocessing, program_io);
+        state_manager.trusted_advice_commitment = trusted_advice_commitment;
 
         #[cfg(test)]
         {
@@ -489,11 +493,11 @@ mod tests {
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let (jolt_proof, io_device, debug_info) =
-            JoltRV64IMACMockPCS::prove(&preprocessing, elf_contents, &inputs, &[], &[]);
+            JoltRV64IMACMockPCS::prove(&preprocessing, elf_contents, &inputs, &[], &[], None);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let verification_result =
-            JoltRV64IMACMockPCS::verify(&verifier_preprocessing, jolt_proof, io_device, debug_info);
+            JoltRV64IMACMockPCS::verify(&verifier_preprocessing, jolt_proof, io_device, None, debug_info);
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",
@@ -518,11 +522,11 @@ mod tests {
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let (jolt_proof, io_device, debug_info) =
-            JoltRV64IMAC::prove(&preprocessing, elf_contents, &inputs, &[], &[]);
+            JoltRV64IMAC::prove(&preprocessing, elf_contents, &inputs, &[], &[], None);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let verification_result =
-            JoltRV64IMAC::verify(&verifier_preprocessing, jolt_proof, io_device, debug_info);
+            JoltRV64IMAC::verify(&verifier_preprocessing, jolt_proof, io_device, None, debug_info);
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",
@@ -553,13 +557,14 @@ mod tests {
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let (jolt_proof, io_device, debug_info) =
-            JoltRV64IMAC::prove(&preprocessing, elf_contents, &inputs, &[], &[]);
+            JoltRV64IMAC::prove(&preprocessing, elf_contents, &inputs, &[], &[], None);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let verification_result = JoltRV64IMAC::verify(
             &verifier_preprocessing,
             jolt_proof,
             io_device.clone(),
+            None,
             debug_info,
         );
         assert!(
@@ -602,13 +607,14 @@ mod tests {
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let (jolt_proof, io_device, debug_info) =
-            JoltRV64IMAC::prove(&preprocessing, elf_contents, &inputs, &[], &[]);
+            JoltRV64IMAC::prove(&preprocessing, elf_contents, &inputs, &[], &[], None);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let verification_result = JoltRV64IMAC::verify(
             &verifier_preprocessing,
             jolt_proof,
             io_device.clone(),
+            None,
             debug_info,
         );
         assert!(
@@ -644,11 +650,11 @@ mod tests {
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let (jolt_proof, io_device, debug_info) =
-            JoltRV64IMAC::prove(&preprocessing, elf_contents, &[], &[], &[]);
+            JoltRV64IMAC::prove(&preprocessing, elf_contents, &[], &[], &[], None);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let verification_result =
-            JoltRV64IMAC::verify(&verifier_preprocessing, jolt_proof, io_device, debug_info);
+            JoltRV64IMAC::verify(&verifier_preprocessing, jolt_proof, io_device, None, debug_info);
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",
@@ -673,11 +679,11 @@ mod tests {
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let (jolt_proof, io_device, debug_info) =
-            JoltRV64IMAC::prove(&preprocessing, elf_contents, &inputs, &[], &[]);
+            JoltRV64IMAC::prove(&preprocessing, elf_contents, &inputs, &[], &[], None);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let verification_result =
-            JoltRV64IMAC::verify(&verifier_preprocessing, jolt_proof, io_device, debug_info);
+            JoltRV64IMAC::verify(&verifier_preprocessing, jolt_proof, io_device, None, debug_info);
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",
@@ -702,11 +708,11 @@ mod tests {
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let (jolt_proof, io_device, debug_info) =
-            JoltRV64IMAC::prove(&preprocessing, elf_contents, &[50], &[], &[]);
+            JoltRV64IMAC::prove(&preprocessing, elf_contents, &[50], &[], &[], None);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let verification_result =
-            JoltRV64IMAC::verify(&verifier_preprocessing, jolt_proof, io_device, debug_info);
+            JoltRV64IMAC::verify(&verifier_preprocessing, jolt_proof, io_device, None, debug_info);
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",

@@ -169,6 +169,7 @@ pub enum OpeningId {
     Committed(CommittedPolynomial, SumcheckId),
     Virtual(VirtualPolynomial, SumcheckId),
     UntrustedAdvice,
+    TrustedAdvice,
 }
 
 pub type Openings<F> = BTreeMap<OpeningId, (OpeningPoint<BIG_ENDIAN, F>, F)>;
@@ -690,6 +691,11 @@ where
         Some((point.clone(), *claim))
     }
 
+    pub fn get_trusted_advice_opening(&self) -> Option<(OpeningPoint<BIG_ENDIAN, F>, F)> {
+        let (point, claim) = self.openings.get(&OpeningId::TrustedAdvice)?;
+        Some((point.clone(), *claim))
+    }
+
     /// Adds openings to the accumulator. The given `polynomials` are opened at
     /// `opening_point`, yielding the claimed evaluations `claims`.
     /// Multiple polynomials opened at a single point are batched into a single
@@ -797,6 +803,17 @@ where
         transcript.append_scalar(&claim);
         self.openings
             .insert(OpeningId::UntrustedAdvice, (opening_point, claim));
+    }
+
+    pub fn append_trusted_advice<T: Transcript>(
+        &mut self,
+        transcript: &mut T,
+        opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        claim: F,
+    ) {
+        transcript.append_scalar(&claim);
+        self.openings
+            .insert(OpeningId::TrustedAdvice, (opening_point, claim));
     }
 
     /// Reduces the multiple openings accumulated into a single opening proof,

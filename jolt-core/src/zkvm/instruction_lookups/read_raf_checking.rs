@@ -991,6 +991,7 @@ mod tests {
             &prover_preprocessing,
             trace.clone(),
             program_io.clone(),
+            None,
             final_memory_state,
         );
         let mut verifier_sm = StateManager::<'_, Fr, Blake2bTranscript, _>::new_verifier(

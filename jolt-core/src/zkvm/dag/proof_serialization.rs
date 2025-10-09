@@ -181,6 +181,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> JoltProof<F
             proofs,
             commitments,
             untrusted_advice_commitment: self.untrusted_advice_commitment,
+            trusted_advice_commitment: None,
             program_io,
             ram_K: self.ram_K,
             twist_sumcheck_switch_index: self.twist_sumcheck_switch_index,
@@ -262,6 +263,7 @@ impl CanonicalSerialize for OpeningId {
                 virtual_polynomial.serialize_with_mode(&mut writer, compress)
             }
             OpeningId::UntrustedAdvice => 2u8.serialize_with_mode(&mut writer, compress),
+            OpeningId::TrustedAdvice => 3u8.serialize_with_mode(&mut writer, compress),
         }
     }
 
@@ -276,6 +278,7 @@ impl CanonicalSerialize for OpeningId {
                 virtual_polynomial.serialized_size(compress) + 2
             }
             OpeningId::UntrustedAdvice => 1,
+            OpeningId::TrustedAdvice => 1,
         }
     }
 }
@@ -312,6 +315,7 @@ impl CanonicalDeserialize for OpeningId {
                 ))
             }
             2 => Ok(OpeningId::UntrustedAdvice),
+            3 => Ok(OpeningId::TrustedAdvice),
             _ => Err(SerializationError::InvalidData),
         }
     }

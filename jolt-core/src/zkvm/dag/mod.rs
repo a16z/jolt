@@ -50,6 +50,7 @@ mod tests {
             &preprocessing,
             trace,
             program_io.clone(),
+            None,
             final_memory_state,
         );
         let (proof, _) = JoltDAG::prove(state_manager).ok().unwrap();
@@ -57,7 +58,7 @@ mod tests {
         let verifier_preprocessing =
             JoltVerifierPreprocessing::<Fr, DoryCommitmentScheme>::from(&preprocessing);
         let _verification_result =
-            JoltRV64IMAC::verify(&verifier_preprocessing, proof, program_io, None);
+            JoltRV64IMAC::verify(&verifier_preprocessing, proof, program_io, None, None);
     }
 
     #[test]
@@ -100,6 +101,7 @@ mod tests {
             &preprocessing,
             trace,
             program_io.clone(),
+            None,
             final_memory_state,
         );
         let (proof, _) = JoltDAG::prove(state_manager).ok().unwrap();
@@ -107,6 +109,6 @@ mod tests {
         let verifier_preprocessing =
             JoltVerifierPreprocessing::<Fr, DoryCommitmentScheme>::from(&preprocessing);
         let _verification_result =
-            JoltRV64IMAC::verify(&verifier_preprocessing, proof, program_io, None);
+            JoltRV64IMAC::verify(&verifier_preprocessing, proof, program_io, None, None);
     }
 }

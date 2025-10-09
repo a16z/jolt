@@ -325,6 +325,7 @@ fn collect_guest_proofs(guest: GuestProgram, target_dir: &str, use_embed: bool) 
             &input_bytes,
             &[],
             &[],
+            None,
             &mut output_bytes,
             &guest_prover_preprocessing,
         );
@@ -341,6 +342,7 @@ fn collect_guest_proofs(guest: GuestProgram, target_dir: &str, use_embed: bool) 
         info!("  Verifying...");
         let is_valid = jolt_sdk::guest::verifier::verify(
             &input_bytes,
+            None,
             &output_bytes,
             proof,
             &guest_verifier_preprocessing,
@@ -496,11 +498,13 @@ fn run_recursion_proof(
                 &input_bytes,
                 &[],
                 &[],
+                None,
                 &mut output_bytes,
                 &recursion_prover_preprocessing,
             );
             let is_valid = jolt_sdk::guest::verifier::verify(
                 &input_bytes,
+                None,
                 &output_bytes,
                 proof,
                 &recursion_verifier_preprocessing,

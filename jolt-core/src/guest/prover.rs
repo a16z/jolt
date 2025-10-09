@@ -30,6 +30,7 @@ pub fn prove<F, PCS, FS>(
     inputs_bytes: &[u8],
     untrusted_advice_bytes: &[u8],
     trusted_advice_bytes: &[u8],
+    trusted_advice_commitment: Option<<PCS as CommitmentScheme>::Commitment>,
     output_bytes: &mut [u8],
     preprocessing: &JoltProverPreprocessing<F, PCS>,
 ) -> (
@@ -49,6 +50,7 @@ where
         inputs_bytes,
         untrusted_advice_bytes,
         trusted_advice_bytes,
+        trusted_advice_commitment,
     );
     output_bytes[..io_device.outputs.len()].copy_from_slice(&io_device.outputs);
     (proof, io_device, debug_info)

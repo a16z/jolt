@@ -235,7 +235,7 @@ impl MacroBuilder {
                     io_device.outputs.append(&mut jolt::postcard::to_stdvec(&output).unwrap());
                     io_device.panic = panic;
 
-                    JoltRV64IMAC::verify(&preprocessing, proof, io_device, None).is_ok()
+                    JoltRV64IMAC::verify(&preprocessing, proof, io_device, None, None).is_ok()
                 };
 
                 verify_closure
@@ -562,6 +562,7 @@ impl MacroBuilder {
                     &input_bytes,
                     &untrusted_advice_bytes,
                     &trusted_advice_bytes,
+                    None,
                 );
 
                 #handle_return

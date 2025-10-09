@@ -71,11 +71,11 @@ fn prove_example(
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
         let (jolt_proof, program_io, _) =
-            JoltRV64IMAC::prove(&preprocessing, elf_contents, &serialized_input, &[], &[]);
+            JoltRV64IMAC::prove(&preprocessing, elf_contents, &serialized_input, &[], &[], None);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let verification_result =
-            JoltRV64IMAC::verify(&verifier_preprocessing, jolt_proof, program_io, None);
+            JoltRV64IMAC::verify(&verifier_preprocessing, jolt_proof, program_io, None, None);
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",

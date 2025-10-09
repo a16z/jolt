@@ -32,6 +32,7 @@ pub fn preprocess(
 
 pub fn verify<F, PCS, FS>(
     inputs_bytes: &[u8],
+    trusted_advice_commitment: Option<<PCS as CommitmentScheme>::Commitment>,
     outputs_bytes: &[u8],
     proof: JoltProof<F, PCS, FS>,
     preprocessing: &JoltVerifierPreprocessing<F, PCS>,
@@ -57,5 +58,5 @@ where
     io_device.inputs = inputs_bytes.to_vec();
     io_device.outputs = outputs_bytes.to_vec();
 
-    JoltRV64IMAC::verify(preprocessing, proof, io_device, None)
+    JoltRV64IMAC::verify(preprocessing, proof, io_device, trusted_advice_commitment, None)
 }

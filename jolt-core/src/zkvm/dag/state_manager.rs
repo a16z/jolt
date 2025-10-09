@@ -29,6 +29,7 @@ pub enum ProofKeys {
     Stage4Sumcheck,
     ReducedOpeningProof,
     UntrustedAdviceProof,
+    TrustedAdviceProof,
 }
 
 pub enum ProofData<F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript> {
@@ -48,6 +49,7 @@ where
     pub final_memory_state: Memory,
     pub accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
     pub untrusted_advice_polynomial: Option<MultilinearPolynomial<F>>,
+    pub trusted_advice_polynomial: Option<MultilinearPolynomial<F>>,
 }
 
 pub struct VerifierState<'a, F: JoltField, PCS>
@@ -69,6 +71,7 @@ pub struct StateManager<
     pub proofs: Rc<RefCell<Proofs<F, PCS, ProofTranscript>>>,
     pub commitments: Rc<RefCell<Vec<PCS::Commitment>>>,
     pub untrusted_advice_commitment: Option<PCS::Commitment>,
+    pub trusted_advice_commitment: Option<PCS::Commitment>,
     pub ram_K: usize,
     pub twist_sumcheck_switch_index: usize,
     pub program_io: JoltDevice,
@@ -86,6 +89,7 @@ where
         preprocessing: &'a JoltProverPreprocessing<F, PCS>,
         trace: Vec<Cycle>,
         program_io: JoltDevice,
+        trusted_advice_commitment: Option<PCS::Commitment>,
         final_memory_state: Memory,
     ) -> Self {
         let opening_accumulator = ProverOpeningAccumulator::new();
@@ -126,6 +130,7 @@ where
             proofs,
             commitments,
             untrusted_advice_commitment: None,
+            trusted_advice_commitment: trusted_advice_commitment,
             program_io,
             ram_K,
             twist_sumcheck_switch_index,
@@ -135,6 +140,7 @@ where
                 final_memory_state,
                 accumulator: opening_accumulator,
                 untrusted_advice_polynomial: None,
+                trusted_advice_polynomial: None,
             }),
             verifier_state: None,
         }
@@ -161,6 +167,7 @@ where
             proofs,
             commitments,
             untrusted_advice_commitment: None,
+            trusted_advice_commitment: None,
             program_io,
             ram_K,
             twist_sumcheck_switch_index,
