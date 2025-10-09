@@ -1,6 +1,4 @@
-use std::cell::RefCell;
 use std::collections::HashMap;
-use std::rc::Rc;
 
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
@@ -289,9 +287,8 @@ impl JoltDAG {
             let proof = Self::generate_advice_proofs(
                 &mut state_manager,
                 &preprocessing.generators,
-                &transcript,
+                transcript.borrow().clone(),
             );
-            transcript.borrow_mut().append_serializable(&proof);
             state_manager
                 .proofs
                 .borrow_mut()
@@ -478,14 +475,13 @@ impl JoltDAG {
 
         // Verify advice opening proofs
         if state_manager.advice_commitment.is_some() {
-            Self::verify_advice_proofs(&state_manager, &preprocessing.generators, &transcript)
-                .context("Stage 5")?;
-
-            let proofs = state_manager.proofs.borrow();
-            if let Some(ProofData::OpeningProof(proof)) = proofs.get(&ProofKeys::AdviceProof) {
-                transcript.borrow_mut().append_serializable(proof);
-            }
-            drop(proofs);
+            // Todo(omid): Remove transcript clone
+            Self::verify_advice_proofs(
+                &state_manager,
+                &preprocessing.generators,
+                transcript.borrow().clone(),
+            )
+            .context("Stage 5.1")?;
         }
 
         // Batch-prove all openings
@@ -567,7 +563,6 @@ impl JoltDAG {
     ) -> Option<PCS::OpeningProofHint> {
         let (preprocessing, _, program_io, _) = state_manager.get_prover_data();
 
-        // Check if there are any private inputs
         if program_io.advice.is_empty() {
             return None;
         }
@@ -610,18 +605,14 @@ impl JoltDAG {
     >(
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         generators: &PCS::ProverSetup,
-        transcript: &Rc<RefCell<ProofTranscript>>,
+        mut transcript: ProofTranscript,
     ) -> PCS::Proof {
         let prover_state = state_manager.prover_state.as_ref().unwrap();
         let advice_poly = prover_state.advice_polynomial.as_ref().unwrap();
         let accumulator = state_manager.get_prover_accumulator();
         let (point, _) = accumulator.borrow().get_advice_openning().unwrap();
 
-        let mut transcript_fork = transcript.borrow().clone();
-        let val_evaluation_proof =
-            PCS::prove_without_hint(generators, advice_poly, &point.r, &mut transcript_fork);
-
-        val_evaluation_proof
+        PCS::prove_without_hint(generators, advice_poly, &point.r, &mut transcript)
     }
 
     /// Verify private input opening proofs for val_evaluation and output_check
@@ -632,15 +623,12 @@ impl JoltDAG {
     >(
         state_manager: &StateManager<'_, F, ProofTranscript, PCS>,
         verifier_setup: &PCS::VerifierSetup,
-        transcript: &Rc<RefCell<ProofTranscript>>,
+        mut transcript: ProofTranscript,
     ) -> Result<(), anyhow::Error> {
         let advice_commitment = state_manager.advice_commitment.as_ref().unwrap();
         let accumulator = state_manager.get_verifier_accumulator();
 
         let (point, eval) = accumulator.borrow().get_advice_openning().unwrap();
-        // Verify proof for val_evaluation
-        // advice_openings is a tuple (OpeningPoint, F) where the first element is the point
-        // and the second element is the evaluation
         let proof = match state_manager.proofs.borrow().get(&ProofKeys::AdviceProof) {
             Some(ProofData::OpeningProof(proof)) => proof.clone(),
             _ => {
@@ -650,13 +638,10 @@ impl JoltDAG {
             }
         };
 
-        // For independent proofs, we must use transcript clones to ensure each verification
-        // starts from the same transcript state. This matches the prover's approach.
-        let mut transcript_fork = transcript.borrow().clone();
         PCS::verify(
             &proof,
             verifier_setup,
-            &mut transcript_fork,
+            &mut transcript,
             &point.r,
             &eval,
             advice_commitment,

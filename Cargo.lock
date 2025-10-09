@@ -2067,6 +2067,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "merkle-tree"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "jolt-inlines-sha2",
+ "jolt-sdk",
+ "merkle-tree-guest",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "merkle-tree-guest"
+version = "0.1.0"
+dependencies = [
+ "jolt-inlines-sha2",
+ "jolt-sdk",
+]
+
+[[package]]
 name = "mime"
 version = "0.3.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"

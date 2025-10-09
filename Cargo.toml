@@ -73,6 +73,8 @@ members = [
     "examples/random/guest",
     "examples/malloc",
     "examples/malloc/guest",
+    "examples/merkle-tree",
+    "examples/merkle-tree/guest",
 ]
 
 [features]

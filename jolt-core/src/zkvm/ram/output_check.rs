@@ -491,13 +491,8 @@ impl<F: JoltField> ValFinalSumcheck<F> {
                         .append_advice(r_address.clone());
                     return Some(eval);
                 }
-                return None;
+                None
             });
-
-        println!(
-            "val_final_sumcheck advice_eval_output: {:?}",
-            advice_eval_output
-        );
 
         // Compute the public part of val_init evaluation
         let val_init_public: MultilinearPolynomial<F> =

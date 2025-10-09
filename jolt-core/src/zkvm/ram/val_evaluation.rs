@@ -133,7 +133,6 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
             SumcheckId::RamReadWriteChecking,
         );
         let (r_address, _) = r.split_at(K.log_2());
-        println!("val_evaluation r_address: {:?}", r_address);
 
         let advice_eval = state_manager
             .verifier_state
@@ -156,10 +155,8 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
                         .append_advice(r_address.clone());
                     return Some(eval);
                 }
-                return None;
+                None
             });
-
-        println!("val_evaluation advice_eval: {:?}", advice_eval);
 
         // Create multilinear polynomials from the split parts
         let initial_public_ram_val: MultilinearPolynomial<F> =
