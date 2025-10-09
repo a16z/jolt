@@ -125,7 +125,8 @@ if [ ${#FAILED_COMMANDS[@]} -gt 0 ]; then
 fi
 
 
-# Consolidate results
+# Consolidate results again to ensure files are concluded
+# This is helpful when running benchmarks in parallel on a cluster with a shared filesystem.
 echo "benchmark_name,scale,prover_time_s,trace_length,proving_hz,proof_size,proof_size_compressed" > benchmark-runs/results/timings.csv
 
 for csv_file in benchmark-runs/results/*_*.csv; do
