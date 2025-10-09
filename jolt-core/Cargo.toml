@@ -99,7 +99,6 @@ dory.workspace = true
 lazy_static.workspace = true
 allocative.workspace = true
 inferno = { workspace = true, optional = true }
-plotly.workspace = true
 jolt-platform = { workspace = true, features = ["std"] }
 jolt-inlines-sha2 = { workspace = true, features = ["host"], optional = true }
 jolt-inlines-keccak256 = { workspace = true, features = [

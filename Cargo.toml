@@ -229,7 +229,6 @@ spinners = { version = "4.1.1", default-features = false }
 criterion = { version = "0.5.1", features = ["html_reports"] }
 iai-callgrind = "0.10.2"
 serial_test = "3.2.0"
-plotly = "0.13"
 
 # Internal dependencies
 common = { path = "./common", default-features = false }
