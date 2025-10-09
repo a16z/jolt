@@ -28,8 +28,10 @@ use crate::{
     subprotocols::sumcheck::SumcheckInstance,
     transcripts::Transcript,
     utils::{
-        expanding_table::ExpandingTable, lookup_bits::LookupBits, math::Math,
-        thread::unsafe_allocate_zero_vec,
+        expanding_table::ExpandingTable,
+        lookup_bits::LookupBits,
+        math::Math,
+        thread::{drop_in_background_thread, unsafe_allocate_zero_vec},
     },
     zkvm::{
         dag::state_manager::StateManager,
@@ -42,7 +44,7 @@ use crate::{
     },
 };
 
-use rayon::iter::IndexedParallelIterator;
+use rayon::iter::{IndexedParallelIterator, ParallelIterator};
 
 const DEGREE: usize = 3;
 
@@ -190,31 +192,44 @@ impl<'a, F: JoltField> ReadRafProverState<F> {
             })
             .collect();
 
-        let total_len = trace.len();
-        let mut lookup_indices = Vec::with_capacity(total_len);
-        let mut is_interleaved_operands = Vec::with_capacity(total_len);
-        let mut lookup_tables = Vec::with_capacity(total_len);
-        let mut lookup_indices_uninterleave = Vec::new();
-        let mut lookup_indices_identity = Vec::new();
+        // Since cycle_data preserves order, we can extract the vectors directly
+        let lookup_indices: Vec<LookupBits> =
+            cycle_data.iter().map(|data| data.lookup_index).collect();
+
+        let is_interleaved_operands: Vec<bool> =
+            cycle_data.iter().map(|data| data.is_interleaved).collect();
+
+        let lookup_tables: Vec<Option<LookupTables<XLEN>>> =
+            cycle_data.iter().map(|data| data.table).collect();
+
+        // Collect interleaved and identity indices
+        let (lookup_indices_uninterleave, lookup_indices_identity): (Vec<_>, Vec<_>) =
+            cycle_data.par_iter().partition_map(|data| {
+                if data.is_interleaved {
+                    rayon::iter::Either::Left((data.idx, data.lookup_index))
+                } else {
+                    rayon::iter::Either::Right((data.idx, data.lookup_index))
+                }
+            });
+
+        // Build lookup_indices_by_table
         let mut lookup_indices_by_table: Vec<Vec<(usize, LookupBits)>> =
             (0..num_tables).map(|_| Vec::new()).collect();
 
-        for data in &cycle_data {
-            lookup_indices.push(data.lookup_index);
-            is_interleaved_operands.push(data.is_interleaved);
-            lookup_tables.push(data.table);
-
-            if data.is_interleaved {
-                lookup_indices_uninterleave.push((data.idx, data.lookup_index));
-            } else {
-                lookup_indices_identity.push((data.idx, data.lookup_index));
-            }
-
-            if let Some(t) = data.table {
-                let t_idx = LookupTables::<XLEN>::enum_index(&t);
-                lookup_indices_by_table[t_idx].push((data.idx, data.lookup_index));
-            }
-        }
+        cycle_data
+            .par_iter()
+            .filter_map(|data| {
+                data.table.map(|t| {
+                    let t_idx = LookupTables::<XLEN>::enum_index(&t);
+                    (t_idx, (data.idx, data.lookup_index))
+                })
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .for_each(|(t_idx, entry)| {
+                lookup_indices_by_table[t_idx].push(entry);
+            });
+        drop_in_background_thread(cycle_data);
 
         let suffix_polys: Vec<Vec<DensePolynomial<F>>> = LookupTables::<XLEN>::iter()
             .collect::<Vec<_>>()
