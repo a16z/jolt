@@ -40,6 +40,10 @@ impl<F: JoltField> ExpandingTable<F> {
         self.len = 1;
     }
 
+    pub fn clone_values(&self) -> Vec<F> {
+        self.values[..self.len].to_vec()
+    }
+
     /// Updates this table (expanding it by a factor of 2) to incorporate
     /// the new random challenge `r_j`.
     #[tracing::instrument(skip_all, name = "ExpandingTable::update")]

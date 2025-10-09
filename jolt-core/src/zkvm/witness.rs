@@ -79,9 +79,9 @@ struct WitnessData {
     ram_inc: Vec<i128>,
 
     // One-hot polynomial indices
-    instruction_ra: [Vec<Option<usize>>; instruction_lookups::D],
-    bytecode_ra: Vec<Vec<Option<usize>>>,
-    ram_ra: Vec<Vec<Option<usize>>>,
+    instruction_ra: [Vec<Option<u8>>; instruction_lookups::D],
+    bytecode_ra: Vec<Vec<Option<u8>>>,
+    ram_ra: Vec<Vec<Option<u8>>>,
 }
 
 unsafe impl Send for WitnessData {}
@@ -105,6 +105,27 @@ impl WitnessData {
 pub struct AllCommittedPolynomials();
 impl AllCommittedPolynomials {
     pub fn initialize(ram_d: usize, bytecode_d: usize) -> Self {
+        unsafe {
+            if let Some(existing) = ALL_COMMITTED_POLYNOMIALS.get() {
+                // Check if existing polynomials match requested dimensions
+                let existing_ram_d = existing
+                    .iter()
+                    .filter(|p| matches!(p, CommittedPolynomial::RamRa(_)))
+                    .count();
+                let existing_bytecode_d = existing
+                    .iter()
+                    .filter(|p| matches!(p, CommittedPolynomial::BytecodeRa(_)))
+                    .count();
+
+                if existing_ram_d == ram_d && existing_bytecode_d == bytecode_d {
+                    // Parameters match, reuse existing polynomials
+                    return AllCommittedPolynomials();
+                } else {
+                    // Parameters differ, need to reinitialize
+                    ALL_COMMITTED_POLYNOMIALS.take();
+                }
+            }
+        };
         let mut polynomials = vec![
             CommittedPolynomial::LeftInstructionInput,
             CommittedPolynomial::RightInstructionInput,
@@ -158,16 +179,6 @@ impl AllCommittedPolynomials {
                 .get()
                 .expect("ALL_COMMITTED_POLYNOMIALS is uninitialized")
                 .par_iter()
-        }
-    }
-}
-
-impl Drop for AllCommittedPolynomials {
-    fn drop(&mut self) {
-        unsafe {
-            ALL_COMMITTED_POLYNOMIALS
-                .take()
-                .expect("ALL_COMMITTED_POLYNOMIALS is uninitialized");
         }
     }
 }
@@ -291,7 +302,7 @@ impl CommittedPolynomial {
                 for j in 0..instruction_lookups::D {
                     let k = (lookup_index >> instruction_ra_shifts[j])
                         % instruction_lookups::K_CHUNK as u128;
-                    batch_ref.instruction_ra[j][i] = Some(k as usize);
+                    batch_ref.instruction_ra[j][i] = Some(k as u8);
                 }
 
                 // BytecodeRa indices
@@ -300,7 +311,7 @@ impl CommittedPolynomial {
 
                     for j in 0..bytecode_d {
                         let index = (pc >> (log_K_chunk * (d - 1 - j))) % K_chunk;
-                        batch_ref.bytecode_ra[j][i] = Some(index);
+                        batch_ref.bytecode_ra[j][i] = Some(index as u8);
                     }
                 }
 
@@ -313,7 +324,8 @@ impl CommittedPolynomial {
 
                     for j in 0..ram_d {
                         let index = address_opt.map(|address| {
-                            (address as usize >> (dth_log * (ram_d - 1 - j))) % DTH_ROOT_OF_K
+                            ((address as usize >> (dth_log * (ram_d - 1 - j))) % DTH_ROOT_OF_K)
+                                as u8
                         });
                         batch_ref.ram_ra[j][i] = index;
                     }
@@ -416,7 +428,7 @@ impl CommittedPolynomial {
                     .par_iter()
                     .map(|cycle| {
                         let pc = preprocessing.shared.bytecode.get_pc(cycle);
-                        Some((pc >> (log_K_chunk * (d - 1 - i))) % K_chunk)
+                        Some(((pc >> (log_K_chunk * (d - 1 - i))) % K_chunk) as u8)
                     })
                     .collect();
                 MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(addresses, K_chunk))
@@ -432,8 +444,8 @@ impl CommittedPolynomial {
                             &preprocessing.shared.memory_layout,
                         )
                         .map(|address| {
-                            (address as usize >> (DTH_ROOT_OF_K.log_2() * (d - 1 - i)))
-                                % DTH_ROOT_OF_K
+                            ((address as usize >> (DTH_ROOT_OF_K.log_2() * (d - 1 - i)))
+                                % DTH_ROOT_OF_K) as u8
                         })
                     })
                     .collect();
@@ -479,7 +491,7 @@ impl CommittedPolynomial {
                             >> (instruction_lookups::LOG_K_CHUNK
                                 * (instruction_lookups::D - 1 - i)))
                             % instruction_lookups::K_CHUNK as u128;
-                        Some(k as usize)
+                        Some(k as u8)
                     })
                     .collect();
                 MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(

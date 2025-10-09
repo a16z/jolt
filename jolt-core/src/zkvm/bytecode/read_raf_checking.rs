@@ -1,5 +1,7 @@
 use std::{cell::RefCell, iter::once, rc::Rc};
 
+use num_traits::Zero;
+
 use crate::{
     field::JoltField,
     poly::{
@@ -790,7 +792,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
         if round < self.log_K {
             const DEGREE: usize = 2;
 
-            let univariate_poly_evals: [F; DEGREE] = (0..self.val_polys[0].len() / 2)
+            (0..self.val_polys[0].len() / 2)
                 .into_par_iter()
                 .map(|i| {
                     let ra_evals = ps.F.iter().map(|poly| {
@@ -831,9 +833,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
                         .zip(val_evals)
                         .zip(self.gamma.iter())
                         .map(|((ra_evals, val_evals), gamma)| {
-                            std::array::from_fn(|j| ra_evals[j] * val_evals[j] * gamma)
+                            std::array::from_fn::<F::Unreduced<9>, DEGREE, _>(|j| {
+                                let val_gamma = val_evals[j] * gamma;
+                                ra_evals[j].mul_unreduced::<9>(val_gamma)
+                            })
                         })
-                        .fold([F::zero(); DEGREE], |mut running, new: [F; DEGREE]| {
+                        .fold([F::Unreduced::zero(); DEGREE], |mut running, new| {
                             for i in 0..DEGREE {
                                 running[i] += new[i];
                             }
@@ -841,16 +846,17 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
                         })
                 })
                 .reduce(
-                    || [F::zero(); DEGREE],
+                    || [F::Unreduced::zero(); DEGREE],
                     |mut running, new| {
                         for i in 0..DEGREE {
                             running[i] += new[i];
                         }
                         running
                     },
-                );
-
-            univariate_poly_evals.to_vec()
+                )
+                .into_iter()
+                .map(F::from_montgomery_reduce)
+                .collect()
         } else {
             let degree = <Self as SumcheckInstance<F, T>>::degree(self);
             (0..ps.ra[0].len() / 2)
@@ -882,15 +888,21 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
                             },
                         );
 
-                    ra_evals.fold(eq_times_val, |mut running: Vec<F>, new: Vec<F>| {
+                    let ra_evals = ra_evals.fold(vec![F::one(); degree], |mut running, new| {
                         for i in 0..degree {
                             running[i] *= new[i];
                         }
                         running
-                    })
+                    });
+
+                    ra_evals
+                        .into_iter()
+                        .zip(eq_times_val)
+                        .map(|(ra, eq)| ra.mul_unreduced::<9>(eq))
+                        .collect::<Vec<_>>()
                 })
                 .reduce(
-                    || vec![F::zero(); degree],
+                    || vec![F::Unreduced::zero(); degree],
                     |mut running, new| {
                         for i in 0..degree {
                             running[i] += new[i];
@@ -898,6 +910,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
                         running
                     },
                 )
+                .into_iter()
+                .map(F::from_montgomery_reduce)
+                .collect()
         }
     }
 
