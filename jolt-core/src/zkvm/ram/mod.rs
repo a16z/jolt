@@ -370,6 +370,10 @@ where
                     SumcheckId::RamReadWriteChecking,
                 );
                 let (r_address, _) = r.split_at(state_manager.ram_K.log_2());
+
+                let advice_size = state_manager.program_io.memory_layout.max_trusted_advice_size + state_manager.program_io.memory_layout.max_untrusted_advice_size;
+                println!("num variables for advice: {}", advice_size);
+
                 let untrusted_advice_vars = untrusted_advice_poly.get_num_vars();
                 let total_vars = r_address.r.len();
                 println!("total vars: {}", r_address.r.len());
