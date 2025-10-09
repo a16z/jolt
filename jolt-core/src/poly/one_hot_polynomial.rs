@@ -461,7 +461,7 @@ impl<F: JoltField> OneHotPolynomial<F> {
             .par_chunks(cycles_per_row)
             .map(|row| {
                 if use_u16 {
-                    let mut v = unsafe_allocate_zero_vec::<u16>(K);
+                    let mut v = unsafe_allocate_zero_vec::<u16>(cycles_per_row);
                     let mut len = 0;
                     for (i, kopt) in row.iter().enumerate() {
                         if let Some(kk) = kopt {
@@ -472,7 +472,7 @@ impl<F: JoltField> OneHotPolynomial<F> {
                     v.truncate(len);
                     SmallRow::from_u16(v)
                 } else {
-                    let mut v = unsafe_allocate_zero_vec::<u32>(K);
+                    let mut v = unsafe_allocate_zero_vec::<u32>(cycles_per_row);
                     let mut len = 0;
                     for (i, kopt) in row.iter().enumerate() {
                         if let Some(kk) = kopt {
