@@ -157,14 +157,20 @@ impl<'a, F: JoltField> ReadRafProverState<F> {
         let right_operand_poly = OperandPolynomial::new(LOG_K, OperandSide::Right);
         let left_operand_poly = OperandPolynomial::new(LOG_K, OperandSide::Left);
         let identity_poly = IdentityPolynomial::new(LOG_K);
+        let span = tracing::span!(tracing::Level::INFO, "Init PrefixSuffixDecomposition");
+        let _guard = span.enter();
         let right_operand_ps =
             PrefixSuffixDecomposition::new(Box::new(right_operand_poly), LOG_M, LOG_K);
         let left_operand_ps =
             PrefixSuffixDecomposition::new(Box::new(left_operand_poly), LOG_M, LOG_K);
         let identity_ps = PrefixSuffixDecomposition::new(Box::new(identity_poly), LOG_M, LOG_K);
+        drop(_guard);
+        drop(span);
 
         let num_tables = LookupTables::<XLEN>::COUNT;
 
+        let span = tracing::span!(tracing::Level::INFO, "Build cycle_data");
+        let _guard = span.enter();
         struct CycleData<const XLEN: usize> {
             idx: usize,
             lookup_index: LookupBits,
@@ -191,7 +197,11 @@ impl<'a, F: JoltField> ReadRafProverState<F> {
                 }
             })
             .collect();
+        drop(_guard);
+        drop(span);
 
+        let span = tracing::span!(tracing::Level::INFO, "Extract vectors");
+        let _guard = span.enter();
         // Since cycle_data preserves order, we can extract the vectors directly
         let lookup_indices: Vec<LookupBits> = cycle_data
             .par_iter()
@@ -242,6 +252,8 @@ impl<'a, F: JoltField> ReadRafProverState<F> {
                 },
             );
         drop_in_background_thread(cycle_data);
+        drop(_guard);
+        drop(span);
 
         let suffix_polys: Vec<Vec<DensePolynomial<F>>> = LookupTables::<XLEN>::iter()
             .collect::<Vec<_>>()
