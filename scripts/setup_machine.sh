@@ -1,4 +1,5 @@
 #!/bin/bash
+# Setup script for benchmarking
 
 # System updates
 sudo apt update && sudo apt upgrade -y
@@ -10,7 +11,7 @@ sudo apt autoclean
 sudo apt install -y build-essential curl wget git vim nano
 sudo apt install -y software-properties-common apt-transport-https ca-certificates gnupg lsb-release
 sudo apt install -y gcc g++ make cmake pkg-config libssl-dev
-sudo apt install -y python3 python3-pip python3-dev
+sudo apt install -y python3 python3-pip python3-dev python3-plotly
 sudo apt install -y zip unzip tar gzip bzip2 xz-utils
 sudo apt install -y htop neofetch tree ncdu
 sudo apt install -y net-tools openssh-server ufw fail2ban
@@ -35,5 +36,3 @@ sudo timedatectl set-timezone UTC
 # Enable unattended security updates
 sudo apt install -y unattended-upgrades
 sudo dpkg-reconfigure -plow unattended-upgrades
-
-

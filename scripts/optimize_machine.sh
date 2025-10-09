@@ -1,7 +1,8 @@
+#!/bin/bash
+# Optimize machine for Jolt benchmarks
+#
 # Fast system-level tuning for zkVM benchmarks on Ubuntu 24 + AMD Threadripper.
-# Run this whole script (ideally with sudo). It sets performance governor,
-# enables THP, reduces I/O jitter, tames background services, and shows how to
-# pin your run to a NUMA node and specific cores.
+# It sets performance governor, enables THP, reduces I/O jitter, and tames background services.
 
 set -euo pipefail
 
