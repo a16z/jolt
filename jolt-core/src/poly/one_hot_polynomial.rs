@@ -24,6 +24,8 @@ use rayon::prelude::*;
 use std::mem;
 use std::sync::{Arc, RwLock};
 
+use jolt_optimizations::batch_addition_matrix_u8;
+
 /// Represents a one-hot multilinear polynomial (ra/wa) used
 /// in Twist/Shout. Perhaps somewhat unintuitively, the implementation
 /// in this file is currently only used to compute the Dory
@@ -405,38 +407,31 @@ impl<F: JoltField> OneHotPolynomial<F> {
         let row_len = DoryGlobals::get_dimension();
         let T = DoryGlobals::get_T();
 
-        assert!(T > num_rows, "T = {T}, why are you doing this",);
+        assert!(T > num_rows, "T = {T}, why are you doing this");
         let cycles_per_row = T / num_rows;
         let K = row_len / cycles_per_row;
 
         // Safety: This function is only called with G1Affine
-        let g1_bases = unsafe { std::mem::transmute::<&[G::Affine], &[G1Affine]>(bases) };
+        let g1_bases: &[G1Affine] =
+            unsafe { std::mem::transmute::<&[G::Affine], &[G1Affine]>(bases) };
 
-        let g1_indices: Vec<Vec<usize>> = self
-            .nonzero_indices
-            .par_chunks(cycles_per_row)
-            .map(|row| {
-                row.par_iter()
-                    .enumerate()
-                    .filter_map(|(i, k)| match k {
-                        Some(k) => Some(i * K + *k as usize),
-                        None => None,
-                    })
-                    .collect()
-            })
-            .collect();
-
-        let row_commitments_affine =
-            jolt_optimizations::batch_g1_additions_multi(&g1_bases[..row_len], &g1_indices);
-        row_commitments_affine
-            .into_par_iter()
-            .map(|affine| {
-                // Safety: We know G is G1Projective
-                let projective: G =
-                    unsafe { std::ptr::read(&affine.into() as *const G1Projective as *const G) };
-                JoltGroupWrapper(projective)
-            })
-            .collect()
+        let proj_vec: Vec<G1Projective> = {
+            let _span = tracing::trace_span!("batch_addition");
+            let _enter = _span.enter();
+            batch_addition_matrix_u8(
+                &g1_bases[..row_len],
+                self.nonzero_indices.as_ref(),
+                cycles_per_row,
+                K,
+                row_len,
+            )
+        };
+        // Safety: G is Projective here always.
+        unsafe {
+            std::mem::transmute::<Vec<JoltGroupWrapper<G1Projective>>, Vec<JoltGroupWrapper<G>>>(
+                proj_vec.into_par_iter().map(JoltGroupWrapper).collect(),
+            )
+        }
     }
 
     #[tracing::instrument(skip_all, name = "OneHotPolynomial::commit_one_hot_batch")]

@@ -123,6 +123,7 @@ ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist
 ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 allocative = { git = "https://github.com/facebookexperimental/allocative", rev = "85b773d85d526d068ce94724ff7a7b81203fc95e" }
+dory = { git = "https://github.com/markosg04/dory", branch = "dev/twist-shout" }
 
 [workspace.metadata.cargo-machete]
 ignored = ["jolt-sdk"]
