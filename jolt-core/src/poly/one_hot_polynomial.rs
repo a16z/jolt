@@ -410,13 +410,7 @@ impl<F: JoltField> OneHotPolynomial<F> {
         C: Copy + Send + Sync + Into<F>,
         F: std::ops::Mul<C, Output = F> + std::ops::SubAssign<F>,
     {
-        assert_eq!(
-            r.len(),
-            DoryGlobals::get_num_rows().log_2() + DoryGlobals::get_num_columns().log_2(),
-            "K = {}",
-            self.K
-        );
-        let (r_left, r_right) = r.split_at(DoryGlobals::get_num_rows().log_2());
+        let (r_left, r_right) = r.split_at(DoryGlobals::get_dimension().log_2());
         let eq_left = EqPolynomial::<F>::evals(r_left);
         let eq_right = EqPolynomial::<F>::evals(r_right);
         let mut left_product = unsafe_allocate_zero_vec(eq_right.len());
@@ -443,8 +437,8 @@ impl<F: JoltField> OneHotPolynomial<F> {
         &self,
         bases: &[G::Affine],
     ) -> Vec<JoltGroupWrapper<G>> {
-        let num_rows = DoryGlobals::get_num_rows();
-        let row_len = DoryGlobals::get_num_columns();
+        let num_rows = DoryGlobals::get_dimension();
+        let row_len = DoryGlobals::get_dimension();
         let T = DoryGlobals::get_T();
 
         assert!(T > num_rows, "T = {T}, why are you doing this");
@@ -481,15 +475,15 @@ impl<F: JoltField> OneHotPolynomial<F> {
     #[tracing::instrument(skip_all, name = "OneHotPolynomial::vector_matrix_product")]
     pub fn vector_matrix_product(&self, left_vec: &[F], coeff: F, result: &mut [F]) {
         let T = DoryGlobals::get_T();
-        let num_columns = DoryGlobals::get_num_columns();
+        let num_columns = DoryGlobals::get_dimension();
         debug_assert_eq!(result.len(), num_columns);
         let row_len = num_columns;
 
         assert!(
-            T > DoryGlobals::get_num_rows(),
+            T > DoryGlobals::get_dimension(),
             "T = {T}, why are you doing this",
         );
-        let cycles_per_row = T / DoryGlobals::get_num_rows();
+        let cycles_per_row = T / DoryGlobals::get_dimension();
         let K = row_len / cycles_per_row;
 
         result

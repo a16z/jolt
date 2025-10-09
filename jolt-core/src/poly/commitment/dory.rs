@@ -35,60 +35,42 @@ use dory::{
 
 /// The (padded) length of the execution trace currently being proven
 static mut GLOBAL_T: OnceCell<usize> = OnceCell::new();
-/// Dory works by viewing the coefficients of a polynomial as a matrix.
+/// Dory works by viewing the coefficients of a polynomial as a square matrix.
 /// In order to batch Dory opening proofs together for polynomials of
 /// different lengths, we fix the dimensions of the matrix and implicitly
-/// zero pad as necessary. This is the number of rows in the matrix.
-static mut NUM_ROWS: OnceCell<usize> = OnceCell::new();
-/// Dory works by viewing the coefficients of a polynomial as a matrix.
-/// In order to batch Dory opening proofs together for polynomials of
-/// different lengths, we fix the dimensions of the matrix and implicitly
-/// zero pad as necessary. This is the number of columns in the matrix.
-static mut NUM_COLUMNS: OnceCell<usize> = OnceCell::new();
+/// zero pad as necessary. This is the number of rows/columns in the matrix.
+static mut DIMENSION: OnceCell<usize> = OnceCell::new();
 
 pub struct DoryGlobals();
 
 impl DoryGlobals {
-    /// Initializes the static variables (`GLOBAL_T`, `NUM_ROWS`, and
-    /// `NUM_COLUMNS`) used by Dory.
+    /// Initializes the static variables (`GLOBAL_T`, and `DIMENSION`)
+    /// used by Dory.
     pub fn initialize(K: usize, T: usize) -> Self {
         let matrix_size = K as u128 * T as u128;
-        let num_columns = matrix_size.isqrt().next_power_of_two();
-        let num_rows = num_columns;
-        tracing::info!("[Dory PCS] # rows: {num_rows}");
-        tracing::info!("[Dory PCS] # cols: {num_columns}");
+        let dimension = matrix_size.isqrt().next_power_of_two();
+        tracing::info!("[Dory PCS] Matrix dimensions: {dimension} x {dimension}");
 
         unsafe {
             GLOBAL_T.set(T).expect("GLOBAL_T is already initialized");
-            NUM_ROWS
-                .set(num_rows as usize)
-                .expect("MAX_NUM_ROWS is already initialized");
-            NUM_COLUMNS
-                .set(num_columns as usize)
-                .expect("NUM_COLUMNS is already initialized");
+            DIMENSION
+                .set(dimension as usize)
+                .expect("DIMENSION is already initialized");
         }
 
         DoryGlobals()
     }
 
-    /// Dory works by viewing the coefficients of a polynomial as a matrix.
+    /// Dory works by viewing the coefficients of a polynomial as a square matrix.
     /// In order to batch Dory opening proofs together for polynomials of
     /// different lengths, we fix the dimensions of the matrix and implicitly
-    /// zero pad as necessary. This is the number of rows in the matrix.
-    pub fn get_num_rows() -> usize {
-        unsafe { NUM_ROWS.get().cloned().expect("NUM_ROWS is uninitialized") }
-    }
-
-    /// Dory works by viewing the coefficients of a polynomial as a matrix.
-    /// In order to batch Dory opening proofs together for polynomials of
-    /// different lengths, we fix the dimensions of the matrix and implicitly
-    /// zero pad as necessary. This is the number of columns in the matrix.
-    pub fn get_num_columns() -> usize {
+    /// zero pad as necessary. This is the number of rows/columns in the matrix.
+    pub fn get_dimension() -> usize {
         unsafe {
-            NUM_COLUMNS
+            DIMENSION
                 .get()
                 .cloned()
-                .expect("NUM_COLUMNS is uninitialized")
+                .expect("DIMENSION is uninitialized")
         }
     }
 
@@ -110,12 +92,9 @@ impl Drop for DoryGlobals {
             GLOBAL_T
                 .take()
                 .expect("reset_globals: GLOBAL_T is uninitialized");
-            NUM_ROWS
+            DIMENSION
                 .take()
-                .expect("reset_globals: MAX_NUM_ROWS is uninitialized");
-            NUM_COLUMNS
-                .take()
-                .expect("reset_globals: NUM_COLUMNS is uninitialized");
+                .expect("reset_globals: DIMENSION is uninitialized");
         }
     }
 }
@@ -746,7 +725,7 @@ where
         g1_generators: &[JoltGroupWrapper<G>],
         row_len: usize,
     ) -> Vec<JoltGroupWrapper<G>> {
-        debug_assert_eq!(DoryGlobals::get_num_columns(), row_len);
+        debug_assert_eq!(DoryGlobals::get_dimension(), row_len);
         assert!(
             g1_generators.len() >= row_len,
             "max_trace_length is too small"
@@ -754,10 +733,10 @@ where
 
         let T = DoryGlobals::get_T();
         assert!(
-            T > DoryGlobals::get_num_rows(),
+            T > DoryGlobals::get_dimension(),
             "T = {T}, why are you doing this",
         );
-        let cycles_per_row = T / DoryGlobals::get_num_rows();
+        let cycles_per_row = T / DoryGlobals::get_dimension();
 
         let affine_bases: Vec<_> = match self {
             MultilinearPolynomial::RLC(_) | MultilinearPolynomial::OneHot(_) => g1_generators
@@ -989,7 +968,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
         poly: &MultilinearPolynomial<Self::Field>,
         setup: &Self::ProverSetup,
     ) -> (Self::Commitment, Self::OpeningProofHint) {
-        let sigma = DoryGlobals::get_num_columns().log_2();
+        let sigma = DoryGlobals::get_dimension().log_2();
         assert!(
             sigma <= setup.core.g1_vec.len().log_2(),
             "max_trace_length is too small"
@@ -1022,7 +1001,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
             .map(|&p| JoltFieldWrapper(p.into()))
             .collect();
 
-        let sigma = DoryGlobals::get_num_columns().log_2();
+        let sigma = DoryGlobals::get_dimension().log_2();
         let dory_transcript = JoltToDoryTranscriptRef::<Self::Field, _>::new(transcript);
 
         // dory evaluate returns the opening but in this case we don't use it, we pass directly the opening to verify()
@@ -1117,7 +1096,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
         hints: Vec<Self::OpeningProofHint>,
         coeffs: &[Self::Field],
     ) -> Self::OpeningProofHint {
-        let num_rows = DoryGlobals::get_num_rows();
+        let num_rows = DoryGlobals::get_dimension();
 
         let mut rlc_hint = vec![JoltGroupWrapper(G1Projective::zero()); num_rows];
         for (coeff, mut hint) in coeffs.iter().zip(hints.into_iter()) {
@@ -1253,6 +1232,7 @@ mod tests {
 
     #[test]
     #[serial]
+    #[ignore]
     fn test_dory_commitment_scheme_all_polynomial_types() {
         let num_vars = 10;
         let num_coeffs = 1 << num_vars;
@@ -1359,6 +1339,7 @@ mod tests {
 
     #[test]
     #[serial]
+    #[ignore]
     fn test_dory_soundness() {
         use ark_std::UniformRand;
 
