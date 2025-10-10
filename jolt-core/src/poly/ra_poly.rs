@@ -18,16 +18,16 @@ use crate::{
 ///
 /// The first two rounds are specialized to reduce the amount of allocated memory.
 #[derive(Allocative, Clone, Debug, PartialEq)]
-pub enum RaPolynomial<F: JoltField> {
+pub enum RaPolynomial<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: JoltField> {
     None,
-    Round1(RaPolynomialRound1<F>),
-    Round2(RaPolynomialRound2<F>),
-    Round3(RaPolynomialRound3<F>),
+    Round1(RaPolynomialRound1<I, F>),
+    Round2(RaPolynomialRound2<I, F>),
+    Round3(RaPolynomialRound3<I, F>),
     RoundN(MultilinearPolynomial<F>),
 }
 
-impl<F: JoltField> RaPolynomial<F> {
-    pub fn new(lookup_indices: Arc<Vec<Option<u8>>>, eq_evals: Vec<F>) -> Self {
+impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: JoltField> RaPolynomial<I, F> {
+    pub fn new(lookup_indices: Arc<Vec<Option<I>>>, eq_evals: Vec<F>) -> Self {
         Self::Round1(RaPolynomialRound1 {
             F: eq_evals,
             lookup_indices,
@@ -56,7 +56,9 @@ impl<F: JoltField> RaPolynomial<F> {
     }
 }
 
-impl<F: JoltField> PolynomialBinding<F> for RaPolynomial<F> {
+impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: JoltField> PolynomialBinding<F>
+    for RaPolynomial<I, F>
+{
     fn is_bound(&self) -> bool {
         !matches!(self, Self::Round1(_))
     }
@@ -83,7 +85,9 @@ impl<F: JoltField> PolynomialBinding<F> for RaPolynomial<F> {
     }
 }
 
-impl<F: JoltField> PolynomialEvaluation<F> for RaPolynomial<F> {
+impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: JoltField> PolynomialEvaluation<F>
+    for RaPolynomial<I, F>
+{
     fn evaluate<C>(&self, _r: &[C]) -> F
     where
         C: Copy + Send + Sync + Into<F> + ChallengeFieldOps<F>,
@@ -139,19 +143,22 @@ impl<F: JoltField> PolynomialEvaluation<F> for RaPolynomial<F> {
 
 /// Represents MLE `ra_i` during the 1st round of the last log(T) sumcheck rounds.
 #[derive(Allocative, Default, Clone, Debug, PartialEq)]
-pub struct RaPolynomialRound1<F: JoltField> {
+pub struct RaPolynomialRound1<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: JoltField>
+{
     // Index `x` stores `eq(x, r)`.
     F: Vec<F>,
-    lookup_indices: Arc<Vec<Option<u8>>>,
+    lookup_indices: Arc<Vec<Option<I>>>,
 }
 
-impl<F: JoltField> RaPolynomialRound1<F> {
+impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: JoltField>
+    RaPolynomialRound1<I, F>
+{
     fn len(&self) -> usize {
         self.lookup_indices.len()
     }
 
     #[tracing::instrument(skip_all, name = "RaPolynomialRound1::bind")]
-    fn bind(self, r0: F::Challenge, binding_order: BindingOrder) -> RaPolynomialRound2<F> {
+    fn bind(self, r0: F::Challenge, binding_order: BindingOrder) -> RaPolynomialRound2<I, F> {
         // Construct lookup tables.
         let eq_0_r0 = EqPolynomial::mle(&[F::zero()], &[r0]);
         let eq_1_r0 = EqPolynomial::mle(&[F::one()], &[r0]);
@@ -173,7 +180,7 @@ impl<F: JoltField> RaPolynomialRound1<F> {
         self.lookup_indices
             .get(j)
             .expect("j out of bounds")
-            .map_or(F::zero(), |i| self.F[i as usize])
+            .map_or(F::zero(), |i| self.F[i.into()])
     }
 }
 
@@ -181,23 +188,26 @@ impl<F: JoltField> RaPolynomialRound1<F> {
 ///
 /// i.e. represents MLE `ra_i(r, r0, x)`
 #[derive(Allocative, Default, Clone, Debug, PartialEq)]
-pub struct RaPolynomialRound2<F: JoltField> {
+pub struct RaPolynomialRound2<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: JoltField>
+{
     // Index `x` stores `eq(x, r_address_chunk_i) * eq(0, r0)`.
     F_0: Vec<F>,
     // Index `x` stores `eq(x, r_address_chunk_i) * eq(1, r0)`.
     F_1: Vec<F>,
-    lookup_indices: Arc<Vec<Option<u8>>>,
+    lookup_indices: Arc<Vec<Option<I>>>,
     r0: F::Challenge,
     binding_order: BindingOrder,
 }
 
-impl<F: JoltField> RaPolynomialRound2<F> {
+impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: JoltField>
+    RaPolynomialRound2<I, F>
+{
     fn len(&self) -> usize {
         self.lookup_indices.len() / 2
     }
 
     #[tracing::instrument(skip_all, name = "RaPolynomialRound2::bind")]
-    fn bind(self, r1: F::Challenge, binding_order: BindingOrder) -> RaPolynomialRound3<F> {
+    fn bind(self, r1: F::Challenge, binding_order: BindingOrder) -> RaPolynomialRound3<I, F> {
         assert_eq!(binding_order, self.binding_order);
         // Construct lookup tables.
         let eq_0_r1 = EqPolynomial::mle(&[F::zero()], &[r1]);
@@ -228,16 +238,15 @@ impl<F: JoltField> RaPolynomialRound2<F> {
         let mid = self.lookup_indices.len() / 2;
         match self.binding_order {
             BindingOrder::HighToLow => {
-                let H_0 = self.lookup_indices[j].map_or(F::zero(), |i| self.F_0[i as usize]);
-                let H_1 = self.lookup_indices[mid + j].map_or(F::zero(), |i| self.F_1[i as usize]);
+                let H_0 = self.lookup_indices[j].map_or(F::zero(), |i| self.F_0[i.into()]);
+                let H_1 = self.lookup_indices[mid + j].map_or(F::zero(), |i| self.F_1[i.into()]);
                 // Compute ra_i(r, r0, j) = eq(0, r0) * ra_i(r, 0, j) +
                 //                          eq(1, r0) * ra_i(r, 1, j)
                 H_0 + H_1
             }
             BindingOrder::LowToHigh => {
-                let H_0 = self.lookup_indices[2 * j].map_or(F::zero(), |i| self.F_0[i as usize]);
-                let H_1 =
-                    self.lookup_indices[2 * j + 1].map_or(F::zero(), |i| self.F_1[i as usize]);
+                let H_0 = self.lookup_indices[2 * j].map_or(F::zero(), |i| self.F_0[i.into()]);
+                let H_1 = self.lookup_indices[2 * j + 1].map_or(F::zero(), |i| self.F_1[i.into()]);
                 // Compute ra_i(r, r0, j) = eq(0, r0) * ra_i(r, 0, j) +
                 //                          eq(1, r0) * ra_i(r, 1, j)
                 H_0 + H_1
@@ -250,7 +259,8 @@ impl<F: JoltField> RaPolynomialRound2<F> {
 ///
 /// i.e. represents MLE `ra_i(r, r0, x)`
 #[derive(Allocative, Default, Clone, Debug, PartialEq)]
-pub struct RaPolynomialRound3<F: JoltField> {
+pub struct RaPolynomialRound3<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: JoltField>
+{
     // Index `x` stores `eq(x, r_address_chunk_i) * eq(00, r0 r1)`.
     F_00: Vec<F>,
     // Index `x` stores `eq(x, r_address_chunk_i) * eq(01, r0 r1)`.
@@ -259,12 +269,14 @@ pub struct RaPolynomialRound3<F: JoltField> {
     F_10: Vec<F>,
     // Index `x` stores `eq(x, r_address_chunk_i) * eq(11, r0 r1)`.
     F_11: Vec<F>,
-    lookup_indices: Arc<Vec<Option<u8>>>,
+    lookup_indices: Arc<Vec<Option<I>>>,
     r1: F::Challenge,
     binding_order: BindingOrder,
 }
 
-impl<F: JoltField> RaPolynomialRound3<F> {
+impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: JoltField>
+    RaPolynomialRound3<I, F>
+{
     fn len(&self) -> usize {
         self.lookup_indices.len() / 4
     }
@@ -304,21 +316,21 @@ impl<F: JoltField> RaPolynomialRound3<F> {
                 res.par_chunks_mut(chunk_size).enumerate().for_each(
                     |(chunk_index, evals_chunk)| {
                         for (j, eval) in zip(chunk_index * chunk_size.., evals_chunk) {
-                            let H_000 = lookup_indices[j].map_or(F::zero(), |i| F_000[i as usize]);
+                            let H_000 = lookup_indices[j].map_or(F::zero(), |i| F_000[i.into()]);
                             let H_001 =
-                                lookup_indices[j + n].map_or(F::zero(), |i| F_001[i as usize]);
+                                lookup_indices[j + n].map_or(F::zero(), |i| F_001[i.into()]);
                             let H_010 =
-                                lookup_indices[j + n * 2].map_or(F::zero(), |i| F_010[i as usize]);
+                                lookup_indices[j + n * 2].map_or(F::zero(), |i| F_010[i.into()]);
                             let H_011 =
-                                lookup_indices[j + n * 3].map_or(F::zero(), |i| F_011[i as usize]);
+                                lookup_indices[j + n * 3].map_or(F::zero(), |i| F_011[i.into()]);
                             let H_100 =
-                                lookup_indices[j + n * 4].map_or(F::zero(), |i| F_100[i as usize]);
+                                lookup_indices[j + n * 4].map_or(F::zero(), |i| F_100[i.into()]);
                             let H_101 =
-                                lookup_indices[j + n * 5].map_or(F::zero(), |i| F_101[i as usize]);
+                                lookup_indices[j + n * 5].map_or(F::zero(), |i| F_101[i.into()]);
                             let H_110 =
-                                lookup_indices[j + n * 6].map_or(F::zero(), |i| F_110[i as usize]);
+                                lookup_indices[j + n * 6].map_or(F::zero(), |i| F_110[i.into()]);
                             let H_111 =
-                                lookup_indices[j + n * 7].map_or(F::zero(), |i| F_111[i as usize]);
+                                lookup_indices[j + n * 7].map_or(F::zero(), |i| F_111[i.into()]);
                             *eval = H_000 + H_010 + H_100 + H_110 + H_001 + H_011 + H_101 + H_111;
                         }
                     },
@@ -329,21 +341,21 @@ impl<F: JoltField> RaPolynomialRound3<F> {
                     |(chunk_index, evals_chunk)| {
                         for (j, eval) in zip(chunk_index * chunk_size.., evals_chunk) {
                             let H_000 =
-                                lookup_indices[8 * j].map_or(F::zero(), |i| F_000[i as usize]);
+                                lookup_indices[8 * j].map_or(F::zero(), |i| F_000[i.into()]);
                             let H_100 =
-                                lookup_indices[8 * j + 1].map_or(F::zero(), |i| F_100[i as usize]);
+                                lookup_indices[8 * j + 1].map_or(F::zero(), |i| F_100[i.into()]);
                             let H_010 =
-                                lookup_indices[8 * j + 2].map_or(F::zero(), |i| F_010[i as usize]);
+                                lookup_indices[8 * j + 2].map_or(F::zero(), |i| F_010[i.into()]);
                             let H_110 =
-                                lookup_indices[8 * j + 3].map_or(F::zero(), |i| F_110[i as usize]);
+                                lookup_indices[8 * j + 3].map_or(F::zero(), |i| F_110[i.into()]);
                             let H_001 =
-                                lookup_indices[8 * j + 4].map_or(F::zero(), |i| F_001[i as usize]);
+                                lookup_indices[8 * j + 4].map_or(F::zero(), |i| F_001[i.into()]);
                             let H_101 =
-                                lookup_indices[8 * j + 5].map_or(F::zero(), |i| F_101[i as usize]);
+                                lookup_indices[8 * j + 5].map_or(F::zero(), |i| F_101[i.into()]);
                             let H_011 =
-                                lookup_indices[8 * j + 6].map_or(F::zero(), |i| F_011[i as usize]);
+                                lookup_indices[8 * j + 6].map_or(F::zero(), |i| F_011[i.into()]);
                             let H_111 =
-                                lookup_indices[8 * j + 7].map_or(F::zero(), |i| F_111[i as usize]);
+                                lookup_indices[8 * j + 7].map_or(F::zero(), |i| F_111[i.into()]);
                             *eval = H_000 + H_010 + H_100 + H_110 + H_001 + H_011 + H_101 + H_111;
                         }
                     },
@@ -369,22 +381,22 @@ impl<F: JoltField> RaPolynomialRound3<F> {
         match self.binding_order {
             BindingOrder::HighToLow => {
                 let n = self.lookup_indices.len() / 4;
-                let H_00 = self.lookup_indices[j].map_or(F::zero(), |i| self.F_00[i as usize]);
-                let H_01 = self.lookup_indices[j + n].map_or(F::zero(), |i| self.F_01[i as usize]);
+                let H_00 = self.lookup_indices[j].map_or(F::zero(), |i| self.F_00[i.into()]);
+                let H_01 = self.lookup_indices[j + n].map_or(F::zero(), |i| self.F_01[i.into()]);
                 let H_10 =
-                    self.lookup_indices[j + n * 2].map_or(F::zero(), |i| self.F_10[i as usize]);
+                    self.lookup_indices[j + n * 2].map_or(F::zero(), |i| self.F_10[i.into()]);
                 let H_11 =
-                    self.lookup_indices[j + n * 3].map_or(F::zero(), |i| self.F_11[i as usize]);
+                    self.lookup_indices[j + n * 3].map_or(F::zero(), |i| self.F_11[i.into()]);
                 H_00 + H_10 + H_01 + H_11
             }
             BindingOrder::LowToHigh => {
-                let H_00 = self.lookup_indices[4 * j].map_or(F::zero(), |i| self.F_00[i as usize]);
+                let H_00 = self.lookup_indices[4 * j].map_or(F::zero(), |i| self.F_00[i.into()]);
                 let H_10 =
-                    self.lookup_indices[4 * j + 1].map_or(F::zero(), |i| self.F_10[i as usize]);
+                    self.lookup_indices[4 * j + 1].map_or(F::zero(), |i| self.F_10[i.into()]);
                 let H_01 =
-                    self.lookup_indices[4 * j + 2].map_or(F::zero(), |i| self.F_01[i as usize]);
+                    self.lookup_indices[4 * j + 2].map_or(F::zero(), |i| self.F_01[i.into()]);
                 let H_11 =
-                    self.lookup_indices[4 * j + 3].map_or(F::zero(), |i| self.F_11[i as usize]);
+                    self.lookup_indices[4 * j + 3].map_or(F::zero(), |i| self.F_11[i.into()]);
                 H_00 + H_10 + H_01 + H_11
             }
         }

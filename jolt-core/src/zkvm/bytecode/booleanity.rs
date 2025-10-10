@@ -43,7 +43,7 @@ struct BooleanityProverState<F: JoltField> {
     D: MultilinearPolynomial<F>,
     G: Vec<Vec<F>>,
     pc_by_cycle: Vec<Vec<Option<u8>>>,
-    H: Vec<RaPolynomial<F>>,
+    H: Vec<RaPolynomial<u8, F>>,
     F: Vec<F>,
     eq_r_r: F,
 }

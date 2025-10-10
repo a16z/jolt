@@ -43,7 +43,7 @@ struct BooleanityProverState<F: JoltField> {
     eq_r_cycle: GruenSplitEqPolynomial<F>,
     G: [Vec<F>; D],
     H_indices: [Vec<Option<u8>>; D],
-    H: [RaPolynomial<F>; D],
+    H: [RaPolynomial<u8, F>; D],
     F: Vec<F>,
     eq_r_r: F,
     /// First element of r_cycle_prime

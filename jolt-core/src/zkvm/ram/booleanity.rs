@@ -42,7 +42,7 @@ struct BooleanityProverState<F: JoltField> {
     /// eq(r_cycle, j) - using Gruen optimization
     D: GruenSplitEqPolynomial<F>,
     /// ra(r'_address, j)
-    H: Vec<RaPolynomial<F>>,
+    H: Vec<RaPolynomial<u8, F>>,
     /// eq(r_address, r'_address)
     eq_r_r: F,
 }
