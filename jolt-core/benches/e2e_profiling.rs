@@ -68,7 +68,11 @@ fn sha2_chain() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     use jolt_inlines_sha2 as _;
     let mut inputs = vec![];
     inputs.append(&mut postcard::to_stdvec(&[5u8; 32]).unwrap());
-    inputs.append(&mut postcard::to_stdvec(&4480u32).unwrap());
+    let iters = scale_to_target_ops(
+        ((1 << 24) as f64 * SAFETY_MARGIN) as usize,
+        CYCLES_PER_SHA256,
+    );
+    inputs.append(&mut postcard::to_stdvec(&iters).unwrap());
     prove_example("sha2-chain-guest", inputs)
 }
 
@@ -196,13 +200,15 @@ fn prove_example(
     let mut program = host::Program::new(example_name);
     let (bytecode, init_memory_state, _) = program.decode();
     let (trace, _, program_io) = program.trace(&serialized_input);
+    let padded_trace_len = (trace.len() + 1).next_power_of_two();
+    drop(trace);
 
     let task = move || {
         let preprocessing = JoltRV64IMAC::prover_preprocess(
-            bytecode.clone(),
+            bytecode,
             program_io.memory_layout.clone(),
             init_memory_state,
-            (trace.len() + 1).next_power_of_two(),
+            padded_trace_len,
         );
 
         let elf_contents_opt = program.get_elf_contents();
