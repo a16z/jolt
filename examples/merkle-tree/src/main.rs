@@ -12,17 +12,14 @@ pub fn main() {
     let verifier_preprocessing =
         guest::verifier_preprocessing_from_prover_merkle_tree(&prover_preprocessing);
 
-    // Generate commitment to trusted advice
     let first_input: &[u8] = &[5u8; 32];
     let second_input = [6u8; 32];
     let third_input = [7u8; 32];
 
-    // TODO(Omid): Dory setup parameters are trace-length dependent.
-    // The following requires a separate setup instance.
-    // let (trusted_advice_commitment, _hint) = guest::commit_trusted_advice_merkle_tree(
-    //     TrustedAdvice::new(second_input),
-    //     &prover_preprocessing,
-    // );
+    let (trusted_advice_commitment, _hint) = guest::commit_trusted_advice_merkle_tree(
+        TrustedAdvice::new(second_input),
+        &prover_preprocessing,
+    );
 
     let prove_merkle_tree = guest::build_prover_merkle_tree(program, prover_preprocessing.clone());
     let verify_merkle_tree = guest::build_verifier_merkle_tree(verifier_preprocessing);
@@ -32,18 +29,16 @@ pub fn main() {
         first_input,
         TrustedAdvice::new(second_input),
         UntrustedAdvice::new(third_input),
-        // trusted_advice_commitment.clone(),
-        None,
+        trusted_advice_commitment.clone(),
     );
     info!("Prover runtime: {} s", now.elapsed().as_secs_f64());
 
-    // Pass only the first input and commitment to the verifier
+    // Pass only the first input and trusted_advice commitment to the verifier
     let is_valid = verify_merkle_tree(
         first_input,
         output,
         program_io.panic,
-        // trusted_advice_commitment.clone(),
-        None,
+        trusted_advice_commitment.clone(),
         proof,
     );
 

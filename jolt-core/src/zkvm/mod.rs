@@ -358,7 +358,7 @@ where
         preprocessing: &JoltVerifierPreprocessing<F, PCS>,
         proof: JoltProof<F, PCS, FS>,
         mut program_io: JoltDevice,
-        _trusted_advice_commitment: Option<<PCS as CommitmentScheme>::Commitment>,
+        trusted_advice_commitment: Option<<PCS as CommitmentScheme>::Commitment>,
         _debug_info: Option<ProverDebugInfo<F, FS, PCS>>,
     ) -> Result<(), ProofVerifyError> {
         let _pprof_verify = pprof_scope!("verify");
@@ -390,8 +390,8 @@ where
                 .map_or(0, |pos| pos + 1),
         );
 
-        let state_manager = proof.to_verifier_state_manager(preprocessing, program_io);
-        // state_manager.trusted_advice_commitment = trusted_advice_commitment;
+        let mut state_manager = proof.to_verifier_state_manager(preprocessing, program_io);
+        state_manager.trusted_advice_commitment = trusted_advice_commitment;
 
         #[cfg(test)]
         {

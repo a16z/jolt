@@ -610,6 +610,9 @@ impl MacroBuilder {
                     index += 1;
                 }
 
+                // Initialize Dory globals with specified parameters
+                let _guard = jolt::DoryGlobals::initialize(1, max_trusted_advice_size as usize / 8);
+
                 let poly = MultilinearPolynomial::<jolt::F>::from(initial_memory_state);
                 let (commitment, hint) = jolt::PCS::commit(&poly, &preprocessing.generators);
 
