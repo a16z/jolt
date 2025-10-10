@@ -58,5 +58,11 @@ where
     io_device.inputs = inputs_bytes.to_vec();
     io_device.outputs = outputs_bytes.to_vec();
 
-    JoltRV64IMAC::verify(preprocessing, proof, io_device, trusted_advice_commitment, None)
+    JoltRV64IMAC::verify(
+        preprocessing,
+        proof,
+        io_device,
+        trusted_advice_commitment,
+        None,
+    )
 }

@@ -5,10 +5,11 @@ use std::vec;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::{
-    field::JoltField,
+    field::{self, JoltField},
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
-        multilinear_polynomial::PolynomialEvaluation, opening_proof::SumcheckId,
+        multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
+        opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN},
     },
     subprotocols::sumcheck::SumcheckInstance,
     transcripts::Transcript,
@@ -307,6 +308,216 @@ impl RamDag {
     }
 }
 
+/// Accumulates advice polynomials (trusted and untrusted) into the prover's accumulator.
+pub fn prover_accumulate_advice<F, ProofTranscript, PCS>(
+    state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+) where
+    F: JoltField,
+    ProofTranscript: Transcript,
+    PCS: CommitmentScheme<Field = F>,
+{
+    let prover_state = state_manager
+        .prover_state
+        .as_ref()
+        .expect("prover_state must be present when accumulating advice");
+
+    let accumulate_closure = |advice_poly: &MultilinearPolynomial<F>, max_advice_size: usize| {
+        let (r, _) = state_manager.get_virtual_polynomial_opening(
+            VirtualPolynomial::RamVal,
+            SumcheckId::RamReadWriteChecking,
+        );
+        let (r_address, _) = r.split_at(state_manager.ram_K.log_2());
+
+        let total_variables = state_manager.ram_K.log_2();
+        let advice_variables = (max_advice_size / 8).next_power_of_two().log_2();
+
+        // Use the last number_of_vals elements for evaluation
+        let eval = advice_poly.evaluate(&r_address.r[total_variables - advice_variables..]);
+
+        let mut advice_point = r_address.clone();
+        advice_point.r = r_address.r[total_variables - advice_variables..].to_vec();
+        (advice_point, eval)
+    };
+
+    if let Some(untrusted_advice_poly) = &prover_state.untrusted_advice_polynomial {
+        let (point, eval) = accumulate_closure(
+            untrusted_advice_poly,
+            state_manager
+                .program_io
+                .memory_layout
+                .max_untrusted_advice_size as usize,
+        );
+
+        prover_state
+            .accumulator
+            .borrow_mut()
+            .append_untrusted_advice(
+                &mut *state_manager.get_transcript().borrow_mut(),
+                point,
+                eval,
+            );
+    }
+
+    if let Some(trusted_advice_poly) = &prover_state.trusted_advice_polynomial {
+        let (point, eval) = accumulate_closure(
+            trusted_advice_poly,
+            state_manager
+                .program_io
+                .memory_layout
+                .max_trusted_advice_size as usize,
+        );
+
+        prover_state.accumulator.borrow_mut().append_trusted_advice(
+            &mut *state_manager.get_transcript().borrow_mut(),
+            point,
+            eval,
+        );
+    }
+}
+
+/// Accumulates advice commitments into the verifier's accumulator.
+pub fn verifier_accumulate_advice<F, ProofTranscript, PCS>(
+    state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+) where
+    F: JoltField,
+    ProofTranscript: Transcript,
+    PCS: CommitmentScheme<Field = F>,
+{
+    let verifier_state = state_manager
+        .verifier_state
+        .as_ref()
+        .expect("verifier_state must be present when accumulating advice");
+
+    let get_advice_point = |max_advice_size: usize| {
+        let (r, _) = state_manager.get_virtual_polynomial_opening(
+            VirtualPolynomial::RamVal,
+            SumcheckId::RamReadWriteChecking,
+        );
+        let (r_address, _) = r.split_at(state_manager.ram_K.log_2());
+
+        let total_vars = r_address.r.len();
+        let advice_variables = (max_advice_size / 8).next_power_of_two().log_2();
+
+        let mut advice_point = r_address.clone();
+        advice_point.r = r_address.r[total_vars - advice_variables..].to_vec();
+        advice_point
+    };
+
+    if state_manager.untrusted_advice_commitment.is_some() {
+        let point = get_advice_point(
+            state_manager
+                .program_io
+                .memory_layout
+                .max_untrusted_advice_size as usize,
+        );
+
+        verifier_state
+            .accumulator
+            .borrow_mut()
+            .append_untrusted_advice(&mut *state_manager.transcript.borrow_mut(), point);
+    }
+
+    if state_manager.trusted_advice_commitment.is_some() {
+        let point = get_advice_point(
+            state_manager
+                .program_io
+                .memory_layout
+                .max_trusted_advice_size as usize,
+        );
+
+        verifier_state
+            .accumulator
+            .borrow_mut()
+            .append_trusted_advice(&mut *state_manager.transcript.borrow_mut(), point);
+    }
+}
+
+/// Calculates how advice inputs contribute to the evaluation of initial_ram_state at a given random point.
+///
+/// ## Example with Two Commitments:
+///
+/// Consider an 8192-element initial_ram_state (l=13) with two advice commitments:
+///
+/// ### trusted_advice: Block size 1024, starting at index 0
+/// - **Parameters**:
+///   - l = 13 (total memory has 2^13 = 8192 elements)
+///   - B1 = 1024 -> b1 = 10 (block has 2^10 elements)
+///   - Selector variables: d1 = 13 - 10 = 3 (uses x1, x2, x3)
+///   - Starting index: 0
+///
+/// - **Binary Prefix**:
+///   - Index 0 in 13-bit binary: 0000000000000
+///   - Prefix (first d1 = 3 bits): 000
+///
+/// - **Selector Polynomial**:
+///   - (1 - x1)(1 - x2)(1 - x3)
+///   - This evaluates to 1 when x1 = x2 = x3 = 0, selecting the region starting at 0
+///
+/// ### untrusted_advice: Block size 512, starting at index 1024
+/// - **Parameters**:
+///   - l = 13
+///   - B2 = 512 -> b2 = 9 (block has 2^9 elements)
+///   - Selector variables: d2 = 13 - 9 = 4 (uses x1, x2, x3, x4)
+///   - Starting index: 1024
+///
+/// - **Binary Prefix**:
+///   - Index 1024 in 13-bit binary: 0010000000000
+///   - Prefix (first d2 = 4 bits): 0010
+///
+/// - **Selector Polynomial**:
+///   - (1 - x1)(1 - x2)x3(1 - x4)
+///   - This evaluates to 1 when x1 = 0, x2 = 0, x3 = 1, x4 = 0, selecting the region at 1024
+///
+/// # Parameters
+///
+/// * `advice_opening` - Optional tuple of opening point and evaluation at that point
+/// * `advice_num_vars` - Number of variables in the advice polynomial (b in the explanation)
+/// * `advice_start` - Starting index of the advice block in memory
+/// * `memory_layout` - Memory layout for address remapping
+/// * `r_address` - Challenge points from verifier (used for selector polynomial evaluation)
+/// * `total_memory_vars` - Total number of variables for the entire memory space (l in the explanation)
+///
+/// # Returns
+///
+/// The scaled evaluation: `eval * scaling_factor`, where the scaling factor is the selector polynomial
+/// evaluated at the challenge point. Returns zero if no advice opening is provided.
+pub fn calculate_advice_memory_evaluation<F: JoltField>(
+    advice_opening: Option<(OpeningPoint<BIG_ENDIAN, F>, F)>,
+    advice_num_vars: usize,
+    advice_start: u64,
+    memory_layout: &MemoryLayout,
+    r_address: &[<F as field::JoltField>::Challenge],
+    total_memory_vars: usize,
+) -> F {
+    if let Some((_, eval)) = advice_opening {
+        let num_missing_vars = total_memory_vars - advice_num_vars;
+
+        let index = remap_address(advice_start, memory_layout).unwrap();
+        let mut scaling_factor = F::one();
+
+        // Convert index to binary representation with total_memory_vars bits.
+        // For example, if index=5 and total_memory_vars=4, we get [0,1,0,1].
+        let index_binary: Vec<bool> = (0..total_memory_vars)
+            .rev()
+            .map(|i| (index >> i) & 1 == 1)
+            .collect();
+
+        let selector_bits = &index_binary[0..num_missing_vars];
+
+        // Each bit determines whether to use r[i] (bit=1) or (1-r[i]) (bit=0).
+        for (i, &bit) in selector_bits.iter().enumerate() {
+            scaling_factor *= if bit {
+                r_address[i].into()
+            } else {
+                F::one() - r_address[i]
+            };
+        }
+        eval * scaling_factor
+    } else {
+        F::zero()
+    }
+}
+
 impl<F, ProofTranscript, PCS> SumcheckStages<F, ProofTranscript, PCS> for RamDag
 where
     F: JoltField,
@@ -363,97 +574,8 @@ where
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
-        if let Some(prover_state) = state_manager.prover_state.as_ref() {
-            if let Some(untrusted_advice_poly) = prover_state.untrusted_advice_polynomial.as_ref() {
-                let (r, _) = state_manager.get_virtual_polynomial_opening(
-                    VirtualPolynomial::RamVal,
-                    SumcheckId::RamReadWriteChecking,
-                );
-                let (r_address, _) = r.split_at(state_manager.ram_K.log_2());
-
-                let memory_variables = state_manager.ram_K.log_2();
-                let untrusted_advice_variables = (state_manager.program_io.memory_layout.max_untrusted_advice_size as usize / 8).next_power_of_two().log_2();
-                let selector_variables = memory_variables - untrusted_advice_variables;
-                
-                println!("Debug: memory_variables = {}", memory_variables);
-                println!("Debug: untrusted_advice_variables = {}", untrusted_advice_variables);
-                println!("Debug: selector_variables = {}", selector_variables);
-                println!("Debug: untrusted_advice_start address = 0x{:x}", state_manager.program_io.memory_layout.untrusted_advice_start);
-                
-                let index_opt = remap_address(
-                    state_manager.program_io.memory_layout.untrusted_advice_start,
-                    &state_manager.program_io.memory_layout,
-                );
-                
-                // Handle the Option<u64> from remap_address
-                if let Some(index) = index_opt {
-                    println!("Debug: index (decimal) = {}", index);
-                    println!("Debug: index (binary) = {:0width$b}", index, width = memory_variables);
-                    
-                    // Extract the selector bits (MSBs) from the index
-                    // Right shift by untrusted_advice_variables to get the selector_variables MSBs
-                    let selector_bits = index >> untrusted_advice_variables;
-                    println!("Debug: selector_bits (decimal) = {}", selector_bits);
-                    println!("Debug: selector_bits (binary) = {:0width$b}", selector_bits, width = selector_variables);
-                    
-                    // Optional: Create a binary representation for visualization/debugging
-                    // This creates a vector of bits with memory_variables length
-                    let index_binary: Vec<bool> = (0..memory_variables)
-                        .rev()
-                        .map(|i| (index >> i) & 1 == 1)
-                        .collect();
-                    
-                    // Extract just the selector_variables MSBs as a slice
-                    let selector_msb_bits = &index_binary[0..selector_variables as usize];
-                    
-                    println!("Debug: index_binary (full) = {:?}", index_binary);
-                    println!("Debug: selector_msb_bits (MSBs) = {:?}", selector_msb_bits);
-                } else {
-                    println!("Debug: remap_address returned None for untrusted_advice_start");
-                }
-
-                let untrusted_advice_vars = untrusted_advice_poly.get_num_vars();
-                let total_vars = r_address.r.len();
-
-                // Use the last number_of_vals elements for evaluation
-                let eval = untrusted_advice_poly
-                    .evaluate(&r_address.r[memory_variables - untrusted_advice_variables..]);
-
-                // Only pass the portion of r_address that was used for evaluation
-                let mut untrusted_advice_point = r_address.clone();
-                untrusted_advice_point.r =
-                    r_address.r[memory_variables - untrusted_advice_variables..].to_vec();
-
-                prover_state
-                    .accumulator
-                    .borrow_mut()
-                    .append_untrusted_advice(
-                        &mut *state_manager.get_transcript().borrow_mut(),
-                        untrusted_advice_point,
-                        eval,
-                    );
-            }
-        }
-
-        // if let Some(prover_state) = state_manager.prover_state.as_ref() {
-        //     if let Some(trusted_advice_poly) = prover_state.trusted_advice_polynomial.as_ref() {
-        //         let (r, _) = state_manager.get_virtual_polynomial_opening(
-        //             VirtualPolynomial::RamVal,
-        //             SumcheckId::RamReadWriteChecking,
-        //         );
-        //         let (r_address, _) = r.split_at(state_manager.ram_K.log_2());
-        //         let eval = trusted_advice_poly.evaluate(&r_address.r);
-
-        //         prover_state
-        //             .accumulator
-        //             .borrow_mut()
-        //             .append_trusted_advice(
-        //                 &mut *state_manager.get_transcript().borrow_mut(),
-        //                 r_address.clone(),
-        //                 eval,
-        //             );
-        //     }
-        // }
+        // Accumulate advice polynomials if present
+        prover_accumulate_advice(state_manager);
 
         let val_evaluation = ValEvaluationSumcheck::new_prover(
             self.initial_memory_state.as_ref().unwrap(),
@@ -480,31 +602,8 @@ where
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
-        if state_manager.untrusted_advice_commitment.is_some() {
-            if let Some(verifier_state) = state_manager.verifier_state.as_ref() {
-                let (r, _) = state_manager.get_virtual_polynomial_opening(
-                    VirtualPolynomial::RamVal,
-                    SumcheckId::RamReadWriteChecking,
-                );
-                let (r_address, _) = r.split_at(state_manager.ram_K.log_2());
-
-                let untrusted_advice_vars = verifier_state.untrusted_advice_num_vars.unwrap();
-                let total_vars = r_address.r.len();
-                let untrusted_advice_variables = (state_manager.program_io.memory_layout.max_untrusted_advice_size as usize / 8).next_power_of_two().log_2();
-
-                let mut untrusted_advice_point = r_address.clone();
-                untrusted_advice_point.r =
-                    r_address.r[total_vars - untrusted_advice_variables..].to_vec();
-
-                verifier_state
-                    .accumulator
-                    .borrow_mut()
-                    .append_untrusted_advice(
-                        &mut *state_manager.transcript.borrow_mut(),
-                        untrusted_advice_point,
-                    );
-            }
-        }
+        // Accumulate advice commitments if present
+        verifier_accumulate_advice(state_manager);
 
         let val_evaluation = ValEvaluationSumcheck::new_verifier(
             self.initial_memory_state.as_ref().unwrap(),

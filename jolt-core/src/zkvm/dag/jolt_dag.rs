@@ -18,7 +18,7 @@ use crate::zkvm::dag::proof_serialization::JoltProof;
 use crate::zkvm::dag::stage::SumcheckStages;
 use crate::zkvm::dag::state_manager::{ProofData, ProofKeys, StateManager};
 use crate::zkvm::instruction_lookups::LookupsDag;
-use crate::zkvm::ram::{remap_address, RamDag};
+use crate::zkvm::ram::RamDag;
 use crate::zkvm::registers::RegistersDag;
 use crate::zkvm::spartan::SpartanDag;
 use crate::zkvm::witness::{
@@ -84,13 +84,15 @@ impl JoltDAG {
                 .borrow_mut()
                 .append_serializable(state_manager.untrusted_advice_commitment.as_ref().unwrap());
         }
-        // Append trustd_advice commitment to transcript
-        if state_manager.trusted_advice_commitment.is_some() {
+        // Commit to trusted_advice and append the commitment to transcript
+        // Todo(Omid): trusted_advice commitment should be an input to the prove() method.
+        if !state_manager.program_io.trusted_advice.is_empty() {
+            let _trusted_advice_opening_proof_hints =
+                Self::commit_trusted_advice(&mut state_manager);
             transcript
                 .borrow_mut()
                 .append_serializable(state_manager.trusted_advice_commitment.as_ref().unwrap());
         }
-
 
         // Stage 1:
         #[cfg(not(target_arch = "wasm32"))]
@@ -307,6 +309,20 @@ impl JoltDAG {
             );
         }
 
+        // Generate trusted_advice opening proofs
+        if !state_manager.program_io.trusted_advice.is_empty() {
+            // Todo(omid): Remove transcript clone
+            let proof = Self::generate_trusted_advice_proof(
+                &mut state_manager,
+                &preprocessing.generators,
+                transcript.borrow().clone(),
+            );
+            state_manager.proofs.borrow_mut().insert(
+                ProofKeys::TrustedAdviceProof,
+                ProofData::OpeningProof(proof),
+            );
+        }
+
         let opening_proof = accumulator.borrow_mut().reduce_and_prove(
             polynomials_map,
             opening_proof_hints,
@@ -375,18 +391,18 @@ impl JoltDAG {
             transcript.borrow_mut().append_serializable(commitment);
         }
 
-        // Append trusted/untrusted advice commitment to transcript
+        // Append untrusted advice commitment to transcript
         if let Some(ref untrusted_advice_commitment) = state_manager.untrusted_advice_commitment {
             transcript
                 .borrow_mut()
                 .append_serializable(untrusted_advice_commitment);
         }
-        if state_manager.trusted_advice_commitment.is_some() {
+        // Append trusted advice commitment to transcript
+        if let Some(ref trusted_advice_commitment) = state_manager.trusted_advice_commitment {
             transcript
                 .borrow_mut()
-                .append_serializable(state_manager.trusted_advice_commitment.as_ref().unwrap());
+                .append_serializable(trusted_advice_commitment);
         }
-
 
         // Stage 1:
         let (preprocessing, _, trace_length) = state_manager.get_verifier_data();
@@ -503,6 +519,17 @@ impl JoltDAG {
             .context("Stage 5")?;
         }
 
+        // Verify trusted_advice opening proofs
+        if state_manager.trusted_advice_commitment.is_some() {
+            // Todo(omid): Remove transcript clone
+            Self::verify_trusted_advice_proofs(
+                &state_manager,
+                &preprocessing.generators,
+                transcript.borrow().clone(),
+            )
+            .context("Stage 5")?;
+        }
+
         // Batch-prove all openings
         let batched_opening_proof = proofs
             .get(&ProofKeys::ReducedOpeningProof)
@@ -586,16 +613,8 @@ impl JoltDAG {
             return None;
         }
 
-        println!("trusted_advice length is: {}", program_io.trusted_advice.len());
-
-        let padded_untrusted_advice_len =
-            (program_io.untrusted_advice.len().div_ceil(8) + 1).next_power_of_two();
-        let mut initial_memory_state = vec![0; 512];
-
-        let temp_index = remap_address(
-            program_io.memory_layout.untrusted_advice_start,
-            &program_io.memory_layout,
-        );
+        let mut initial_memory_state =
+            vec![0; program_io.memory_layout.max_untrusted_advice_size as usize / 8];
 
         let mut index = 1;
         for chunk in program_io.untrusted_advice.chunks(8) {
@@ -619,6 +638,45 @@ impl JoltDAG {
         Some(hint)
     }
 
+    fn commit_trusted_advice<
+        'a,
+        F: JoltField,
+        ProofTranscript: Transcript,
+        PCS: CommitmentScheme<Field = F>,
+    >(
+        state_manager: &mut StateManager<'a, F, ProofTranscript, PCS>,
+    ) -> Option<PCS::OpeningProofHint> {
+        let (preprocessing, _, program_io, _) = state_manager.get_prover_data();
+
+        if program_io.trusted_advice.is_empty() {
+            return None;
+        }
+
+        let mut initial_memory_state =
+            vec![0; program_io.memory_layout.max_trusted_advice_size as usize / 8];
+
+        let mut index = 1;
+        for chunk in program_io.trusted_advice.chunks(8) {
+            let mut word = [0u8; 8];
+            for (i, byte) in chunk.iter().enumerate() {
+                word[i] = *byte;
+            }
+            let word = u64::from_le_bytes(word);
+            initial_memory_state[index] = word;
+            index += 1;
+        }
+
+        let poly = MultilinearPolynomial::from(initial_memory_state);
+        let (commitment, hint) = PCS::commit(&poly, &preprocessing.generators);
+
+        if let Some(ref mut prover_state) = state_manager.prover_state {
+            prover_state.trusted_advice_polynomial = Some(poly);
+        }
+
+        state_manager.trusted_advice_commitment = Some(commitment);
+        Some(hint)
+    }
+
     fn generate_untrusted_advice_proof<
         F: JoltField,
         ProofTranscript: Transcript,
@@ -633,6 +691,22 @@ impl JoltDAG {
         let accumulator = state_manager.get_prover_accumulator();
         let (point, _) = accumulator.borrow().get_untrusted_advice_opening().unwrap();
         PCS::prove_without_hint(generators, untrusted_advice_poly, &point.r, &mut transcript)
+    }
+
+    fn generate_trusted_advice_proof<
+        F: JoltField,
+        ProofTranscript: Transcript,
+        PCS: CommitmentScheme<Field = F>,
+    >(
+        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        generators: &PCS::ProverSetup,
+        mut transcript: ProofTranscript,
+    ) -> PCS::Proof {
+        let prover_state = state_manager.prover_state.as_ref().unwrap();
+        let trusted_advice_poly = prover_state.trusted_advice_polynomial.as_ref().unwrap();
+        let accumulator = state_manager.get_prover_accumulator();
+        let (point, _) = accumulator.borrow().get_trusted_advice_opening().unwrap();
+        PCS::prove_without_hint(generators, trusted_advice_poly, &point.r, &mut transcript)
     }
 
     fn verify_untrusted_advice_proofs<
@@ -669,6 +743,41 @@ impl JoltDAG {
         .map_err(|e| {
             anyhow::anyhow!("Untrusted advice opening proof verification failed: {e:?}")
         })?;
+
+        Ok(())
+    }
+
+    fn verify_trusted_advice_proofs<
+        F: JoltField,
+        ProofTranscript: Transcript,
+        PCS: CommitmentScheme<Field = F>,
+    >(
+        state_manager: &StateManager<'_, F, ProofTranscript, PCS>,
+        verifier_setup: &PCS::VerifierSetup,
+        mut transcript: ProofTranscript,
+    ) -> Result<(), anyhow::Error> {
+        let trusted_advice_commitment = state_manager.trusted_advice_commitment.as_ref().unwrap();
+        let accumulator = state_manager.get_verifier_accumulator();
+
+        let (point, eval) = accumulator.borrow().get_trusted_advice_opening().unwrap();
+        let proof = match state_manager
+            .proofs
+            .borrow()
+            .get(&ProofKeys::TrustedAdviceProof)
+        {
+            Some(ProofData::OpeningProof(proof)) => proof.clone(),
+            _ => return Err(anyhow::anyhow!("Trusted advice proof not found")),
+        };
+
+        PCS::verify(
+            &proof,
+            verifier_setup,
+            &mut transcript,
+            &point.r,
+            &eval,
+            trusted_advice_commitment,
+        )
+        .map_err(|e| anyhow::anyhow!("Trusted advice opening proof verification failed: {e:?}"))?;
 
         Ok(())
     }

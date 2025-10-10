@@ -59,7 +59,6 @@ where
     pub preprocessing: &'a JoltVerifierPreprocessing<F, PCS>,
     pub trace_length: usize,
     pub accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
-    pub untrusted_advice_num_vars: Option<usize>,
 }
 
 pub struct StateManager<
@@ -131,7 +130,7 @@ where
             proofs,
             commitments,
             untrusted_advice_commitment: None,
-            trusted_advice_commitment: trusted_advice_commitment,
+            trusted_advice_commitment,
             program_io,
             ram_K,
             twist_sumcheck_switch_index,
@@ -177,7 +176,6 @@ where
                 preprocessing,
                 trace_length,
                 accumulator: opening_accumulator,
-                untrusted_advice_num_vars: None,
             }),
         }
     }

@@ -461,7 +461,7 @@ impl<F: JoltField> ValFinalSumcheck<F> {
         initial_ram_state: &[u64],
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
-        let (_, _, T) = state_manager.get_verifier_data();
+        let (_, program_io, T) = state_manager.get_verifier_data();
 
         let r_address = state_manager
             .get_virtual_polynomial_opening(
@@ -482,47 +482,39 @@ impl<F: JoltField> ValFinalSumcheck<F> {
             assert_eq!(r_address_val_evaluation.r, r_address);
         }
 
-        let untrusted_advice_opening = state_manager
-            .verifier_state
-            .as_ref()
-            .unwrap()
-            .accumulator
-            .borrow()
-            .get_untrusted_advice_opening();
+        let accumulator = state_manager.get_verifier_accumulator();
+        let total_memory_vars = state_manager.ram_K.log_2();
+
+        let untrusted_advice_contribution = super::calculate_advice_memory_evaluation(
+            accumulator.borrow().get_untrusted_advice_opening(),
+            (program_io.memory_layout.max_untrusted_advice_size as usize / 8)
+                .next_power_of_two()
+                .log_2(),
+            program_io.memory_layout.untrusted_advice_start,
+            &program_io.memory_layout,
+            &r_address,
+            total_memory_vars,
+        );
+
+        let trusted_advice_contribution = super::calculate_advice_memory_evaluation(
+            accumulator.borrow().get_trusted_advice_opening(),
+            (program_io.memory_layout.max_trusted_advice_size as usize / 8)
+                .next_power_of_two()
+                .log_2(),
+            program_io.memory_layout.trusted_advice_start,
+            &program_io.memory_layout,
+            &r_address,
+            total_memory_vars,
+        );
 
         // Compute the public part of val_init evaluation
         let val_init_public: MultilinearPolynomial<F> =
             MultilinearPolynomial::from(initial_ram_state.to_vec());
 
-        let val_init_eval = if let Some((point, eval)) = untrusted_advice_opening {
-            // The untrusted advice polynomial has fewer variables than the full RAM
-            // We need to scale it by x_0*(1-x_1)*...*(1-x_{i-1})
-            // where i = n - m, n is the total number of variables for the full RAM address space
-            // and m is the number of variables in the untrusted advice polynomial
-            // The x_0 term selects the second half of memory (index >= 1) since untrusted
-            // advice data starts at index 1 in its polynomial
-
-            let num_untrusted_vars = state_manager
-                .verifier_state
-                .as_ref()
-                .unwrap()
-                .untrusted_advice_num_vars
-                .unwrap_or(point.r.len());
-            let num_total_vars: usize = state_manager.ram_K.log_2();
-            let num_missing_vars = num_total_vars - num_untrusted_vars;
-            println!("ValFinalSumcheck: num_missing_vars: {}", num_missing_vars);
-
-            // Calculate scaling factor for the first (missing) variables
-            let mut scaling_factor = r_address[3].into();
-            for i in 0..num_missing_vars-1 {
-                scaling_factor *= F::one() - r_address[i];
-            }
-
-            // Scale the untrusted advice evaluation and add the public part
-            eval * scaling_factor + val_init_public.evaluate(&r_address)
-        } else {
-            val_init_public.evaluate(&r_address)
-        };
+        // Combine all contributions: untrusted + trusted + public
+        let val_init_eval = untrusted_advice_contribution
+            + trusted_advice_contribution
+            + val_init_public.evaluate(&r_address);
 
         let val_final_claim = state_manager
             .get_virtual_polynomial_opening(

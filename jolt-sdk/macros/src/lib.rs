@@ -73,6 +73,7 @@ impl MacroBuilder {
         let preprocess_prover_fn = self.make_preprocess_prover_func();
         let preprocess_verifier_fn = self.make_preprocess_verifier_func();
         let verifier_preprocess_from_prover_fn = self.make_preprocess_from_prover_func();
+        let commit_trusted_advice_fn = self.make_commit_trusted_advice_func();
         let prove_fn = self.make_prove_func();
 
         let attributes = parse_attributes(&self.attr);
@@ -102,6 +103,7 @@ impl MacroBuilder {
             #preprocess_prover_fn
             #preprocess_verifier_fn
             #verifier_preprocess_from_prover_fn
+            #commit_trusted_advice_fn
             #prove_fn
             #main_fn
         }
@@ -162,25 +164,50 @@ impl MacroBuilder {
             .map(|(_, ty)| ty)
             .collect();
 
-        let inputs = &self.func.sig.inputs;
+        let inputs_vec: Vec<_> = self.func.sig.inputs.iter().collect();
+        let inputs = quote! { #(#inputs_vec),* };
         let prove_fn_name = Ident::new(&format!("prove_{fn_name}"), fn_name.span());
         let imports = self.make_imports();
+
+        let has_trusted_advice = !self.trusted_func_args.is_empty();
+
+        let commitment_param_in_closure = if has_trusted_advice {
+            quote! { , trusted_advice_commitment: Option<<jolt::PCS as jolt::CommitmentScheme>::Commitment> }
+        } else {
+            quote! {}
+        };
+
+        let commitment_arg_in_call = if has_trusted_advice {
+            quote! { , trusted_advice_commitment }
+        } else {
+            quote! {}
+        };
+
+        let return_type = if has_trusted_advice {
+            quote! {
+                impl Fn(#(#all_types),*, Option<<jolt::PCS as jolt::CommitmentScheme>::Commitment>) -> #prove_output_ty + Sync + Send
+            }
+        } else {
+            quote! {
+                impl Fn(#(#all_types),*) -> #prove_output_ty + Sync + Send
+            }
+        };
 
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #build_prover_fn_name(
                 program: jolt::host::Program,
                 preprocessing: jolt::JoltProverPreprocessing<jolt::F, jolt::PCS>,
-            ) -> impl Fn(#(#all_types),*) -> #prove_output_ty + Sync + Send
+            ) -> #return_type
             {
                 #imports
                 let program = std::sync::Arc::new(program);
                 let preprocessing = std::sync::Arc::new(preprocessing);
 
-                let prove_closure = move |#inputs| {
+                let prove_closure = move |#inputs #commitment_param_in_closure| {
                     let program = (*program).clone();
                     let preprocessing = (*preprocessing).clone();
-                    #prove_fn_name(program, preprocessing, #(#all_names),*)
+                    #prove_fn_name(program, preprocessing, #(#all_names),* #commitment_arg_in_call)
                 };
 
                 prove_closure
@@ -198,7 +225,6 @@ impl MacroBuilder {
             ReturnType::Default => syn::parse_quote!(()),
             ReturnType::Type(_, ty) => syn::parse_quote!((#ty)),
         };
-        // Only use public inputs for the verifier
         let public_inputs = self.pub_func_args.iter().map(|(name, ty)| {
             quote! { #name: #ty }
         });
@@ -209,16 +235,36 @@ impl MacroBuilder {
             }
         });
 
+        let has_trusted_advice = !self.trusted_func_args.is_empty();
+
+        let commitment_param_in_signature = if has_trusted_advice {
+            quote! { Option<<jolt::PCS as jolt::CommitmentScheme>::Commitment>, }
+        } else {
+            quote! {}
+        };
+
+        let commitment_param_in_closure = if has_trusted_advice {
+            quote! { trusted_advice_commitment: Option<<jolt::PCS as jolt::CommitmentScheme>::Commitment>, }
+        } else {
+            quote! {}
+        };
+
+        let commitment_arg_in_verify = if has_trusted_advice {
+            quote! { trusted_advice_commitment }
+        } else {
+            quote! { None }
+        };
+
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #build_verifier_fn_name(
                 preprocessing: jolt::JoltVerifierPreprocessing<jolt::F, jolt::PCS>,
-            ) -> impl Fn(#(#input_types ,)* #output_type, bool, jolt::RV64IMACJoltProof) -> bool + Sync + Send
+            ) -> impl Fn(#(#input_types ,)* #output_type, bool, #commitment_param_in_signature jolt::RV64IMACJoltProof) -> bool + Sync + Send
             {
                 #imports
                 let preprocessing = std::sync::Arc::new(preprocessing);
 
-                let verify_closure = move |#(#public_inputs,)* output, panic, proof: jolt::RV64IMACJoltProof| {
+                let verify_closure = move |#(#public_inputs,)* output, panic, #commitment_param_in_closure proof: jolt::RV64IMACJoltProof| {
                     let preprocessing = (*preprocessing).clone();
                     let memory_config = MemoryConfig {
                         max_input_size: preprocessing.shared.memory_layout.max_input_size,
@@ -235,7 +281,7 @@ impl MacroBuilder {
                     io_device.outputs.append(&mut jolt::postcard::to_stdvec(&output).unwrap());
                     io_device.panic = panic;
 
-                    JoltRV64IMAC::verify(&preprocessing, proof, io_device, None, None).is_ok()
+                    JoltRV64IMAC::verify(&preprocessing, proof, io_device, #commitment_arg_in_verify, None).is_ok()
                 };
 
                 verify_closure
@@ -315,7 +361,8 @@ impl MacroBuilder {
         let fn_name = self.get_func_name();
         let fn_name_str = fn_name.to_string();
         let trace_to_file_fn_name = Ident::new(&format!("trace_{fn_name}_to_file"), fn_name.span());
-        let inputs = &self.func.sig.inputs;
+        let inputs_vec: Vec<_> = self.func.sig.inputs.iter().collect();
+        let inputs = quote! { #(#inputs_vec),* };
         let set_pub_args = self.pub_func_args.iter().map(|(name, _)| {
             quote! {
                 input_bytes.append(&mut jolt::postcard::to_stdvec(&#name).unwrap())
@@ -503,6 +550,74 @@ impl MacroBuilder {
         }
     }
 
+    fn make_commit_trusted_advice_func(&self) -> TokenStream2 {
+        let fn_name = self.get_func_name();
+        let commit_fn_name =
+            Ident::new(&format!("commit_trusted_advice_{fn_name}"), fn_name.span());
+        let imports = self.make_imports();
+
+        // If there are no trusted advice arguments, return None values
+        if self.trusted_func_args.is_empty() {
+            return quote! {
+                #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
+                pub fn #commit_fn_name(
+                    _preprocessing: &jolt::JoltProverPreprocessing<jolt::F, jolt::PCS>,
+                ) -> (Option<<jolt::PCS as jolt::CommitmentScheme>::Commitment>,
+                      Option<<jolt::PCS as jolt::CommitmentScheme>::OpeningProofHint>)
+                {
+                    (None, None)
+                }
+            };
+        }
+
+        let trusted_advice_inputs = self.trusted_func_args.iter().map(|(name, ty)| {
+            quote! { #name: #ty }
+        });
+
+        let set_trusted_advice_args = self.trusted_func_args.iter().map(|(name, _)| {
+            quote! {
+                trusted_advice_bytes.append(&mut jolt::postcard::to_stdvec(&#name).unwrap())
+            }
+        });
+
+        quote! {
+            #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
+            pub fn #commit_fn_name(
+                #(#trusted_advice_inputs,)*
+                preprocessing: &jolt::JoltProverPreprocessing<jolt::F, jolt::PCS>,
+            ) -> (Option<<jolt::PCS as jolt::CommitmentScheme>::Commitment>,
+                  Option<<jolt::PCS as jolt::CommitmentScheme>::OpeningProofHint>)
+            {
+                #imports
+                use jolt::CommitmentScheme;
+                use jolt::MultilinearPolynomial;
+
+                let mut trusted_advice_bytes = vec![];
+                #(#set_trusted_advice_args;)*
+
+                let max_trusted_advice_size = preprocessing.shared.memory_layout.max_trusted_advice_size;
+
+                let mut initial_memory_state = vec![0u64; (max_trusted_advice_size as usize) / 8];
+
+                let mut index = 1;
+                for chunk in trusted_advice_bytes.chunks(8) {
+                    let mut word = [0u8; 8];
+                    for (i, byte) in chunk.iter().enumerate() {
+                        word[i] = *byte;
+                    }
+                    let word = u64::from_le_bytes(word);
+                    initial_memory_state[index] = word;
+                    index += 1;
+                }
+
+                let poly = MultilinearPolynomial::<jolt::F>::from(initial_memory_state);
+                let (commitment, hint) = jolt::PCS::commit(&poly, &preprocessing.generators);
+
+                (Some(commitment), Some(hint))
+            }
+        }
+    }
+
     fn make_prove_func(&self) -> TokenStream2 {
         let prove_output_ty = self.get_prove_output_type();
 
@@ -534,16 +649,33 @@ impl MacroBuilder {
         });
 
         let fn_name = self.get_func_name();
-        let inputs = &self.func.sig.inputs;
+        let inputs_vec: Vec<_> = self.func.sig.inputs.iter().collect();
+        let inputs = quote! { #(#inputs_vec),* };
         let imports = self.make_imports();
 
         let prove_fn_name = syn::Ident::new(&format!("prove_{fn_name}"), fn_name.span());
+
+        let has_trusted_advice = !self.trusted_func_args.is_empty();
+
+        let commitment_param = if has_trusted_advice {
+            quote! { , trusted_advice_commitment: Option<<jolt::PCS as jolt::CommitmentScheme>::Commitment> }
+        } else {
+            quote! {}
+        };
+
+        let commitment_arg = if has_trusted_advice {
+            quote! { trusted_advice_commitment }
+        } else {
+            quote! { None }
+        };
+
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #prove_fn_name(
                 mut program: jolt::host::Program,
                 preprocessing: jolt::JoltProverPreprocessing<jolt::F, jolt::PCS>,
                 #inputs
+                #commitment_param
             ) -> #prove_output_ty {
                 #imports
 
@@ -562,7 +694,7 @@ impl MacroBuilder {
                     &input_bytes,
                     &untrusted_advice_bytes,
                     &trusted_advice_bytes,
-                    None,
+                    #commitment_arg,
                 );
 
                 #handle_return
@@ -615,7 +747,6 @@ impl MacroBuilder {
             };
         };
 
-        // Fetch public arguments from the public input slice
         let pub_args_fetch = self.pub_func_args.iter().map(|(name, ty)| {
             quote! {
                 let (#name, input_slice) =
@@ -623,7 +754,6 @@ impl MacroBuilder {
             }
         });
 
-        // Fetch untrusted advice arguments
         let untrusted_advice_args_fetch = self.untrusted_func_args.iter().map(|(name, ty)| {
             quote! {
                 let (#name, untrusted_advice_slice) =
@@ -631,7 +761,6 @@ impl MacroBuilder {
             }
         });
 
-        // Fetch trusted advice arguments
         let trusted_advice_args_fetch = self.trusted_func_args.iter().map(|(name, ty)| {
             quote! {
                 let (#name, trusted_advice_slice) =
@@ -852,7 +981,13 @@ impl MacroBuilder {
     }
 
     #[allow(clippy::type_complexity)]
-    fn get_func_args(func: &ItemFn) -> (Vec<(Ident, Box<Type>)>, Vec<(Ident, Box<Type>)>, Vec<(Ident, Box<Type>)>) {
+    fn get_func_args(
+        func: &ItemFn,
+    ) -> (
+        Vec<(Ident, Box<Type>)>,
+        Vec<(Ident, Box<Type>)>,
+        Vec<(Ident, Box<Type>)>,
+    ) {
         let mut pub_args = Vec::new();
         let mut trusted_advice_args = Vec::new();
         let mut untrusted_advice_args = Vec::new();
@@ -890,7 +1025,7 @@ impl MacroBuilder {
         }
         false
     }
-    
+
     fn is_untrusted_advice_type(ty: &Type) -> bool {
         if let Type::Path(type_path) = ty {
             if let Some(last_segment) = type_path.path.segments.last() {

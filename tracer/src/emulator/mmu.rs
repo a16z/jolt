@@ -1240,8 +1240,10 @@ mod test_mmu {
             .unwrap()
             .memory_layout
             .max_untrusted_advice_size;
-        let invalid_addr =
-            mmu.jolt_device.as_ref().unwrap().memory_layout.input_start - 1 - trusted_advice_size - untrusted_advice_size;
+        let invalid_addr = mmu.jolt_device.as_ref().unwrap().memory_layout.input_start
+            - 1
+            - trusted_advice_size
+            - untrusted_advice_size;
         // illegal write to inputs
         mmu.store_bytes(invalid_addr, 0xc50513, 2).unwrap();
     }

@@ -1093,6 +1093,11 @@ where
         Some((point.clone(), *claim))
     }
 
+    pub fn get_trusted_advice_opening(&self) -> Option<(OpeningPoint<BIG_ENDIAN, F>, F)> {
+        let (point, claim) = self.openings.get(&OpeningId::TrustedAdvice)?;
+        Some((point.clone(), *claim))
+    }
+
     /// Adds openings to the accumulator. The polynomials underlying the given
     /// `commitments` are opened at `opening_point`, yielding the claimed evaluations
     /// `claims`.
@@ -1230,6 +1235,24 @@ where
             panic!(
                 "Tried to populate opening point for non-existent key: {:?}",
                 OpeningId::UntrustedAdvice
+            );
+        }
+    }
+
+    pub fn append_trusted_advice<T: Transcript>(
+        &mut self,
+        transcript: &mut T,
+        opening_point: OpeningPoint<BIG_ENDIAN, F>,
+    ) {
+        if let Some((_, claim)) = self.openings.get(&OpeningId::TrustedAdvice) {
+            transcript.append_scalar(claim);
+            let claim = *claim;
+            self.openings
+                .insert(OpeningId::TrustedAdvice, (opening_point.clone(), claim));
+        } else {
+            panic!(
+                "Tried to populate opening point for non-existent key: {:?}",
+                OpeningId::TrustedAdvice
             );
         }
     }

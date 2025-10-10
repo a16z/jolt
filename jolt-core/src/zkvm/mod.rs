@@ -261,7 +261,7 @@ where
         inputs: &[u8],
         untrusted_advice: &[u8],
         trusted_advice: &[u8],
-        trusted_advice_commitment: Option<<PCS as CommitmentScheme>::Commitment>
+        trusted_advice_commitment: Option<<PCS as CommitmentScheme>::Commitment>,
     ) -> (
         JoltProof<F, PCS, FS>,
         JoltDevice,
@@ -284,7 +284,14 @@ where
 
         let (mut trace, final_memory_state, mut program_io) = {
             let _pprof_trace = pprof_scope!("trace");
-            guest::program::trace(elf_contents, None, inputs, untrusted_advice, trusted_advice, &memory_config)
+            guest::program::trace(
+                elf_contents,
+                None,
+                inputs,
+                untrusted_advice,
+                trusted_advice,
+                &memory_config,
+            )
         };
         let num_riscv_cycles: usize = trace
             .par_iter()
@@ -350,7 +357,7 @@ where
         preprocessing: &JoltVerifierPreprocessing<F, PCS>,
         proof: JoltProof<F, PCS, FS>,
         mut program_io: JoltDevice,
-        trusted_advice_commitment: Option<<PCS as CommitmentScheme>::Commitment>,
+        _trusted_advice_commitment: Option<<PCS as CommitmentScheme>::Commitment>,
         _debug_info: Option<ProverDebugInfo<F, FS, PCS>>,
     ) -> Result<(), ProofVerifyError> {
         let _pprof_verify = pprof_scope!("verify");
@@ -382,8 +389,8 @@ where
                 .map_or(0, |pos| pos + 1),
         );
 
-        let mut state_manager = proof.to_verifier_state_manager(preprocessing, program_io);
-        state_manager.trusted_advice_commitment = trusted_advice_commitment;
+        let state_manager = proof.to_verifier_state_manager(preprocessing, program_io);
+        // state_manager.trusted_advice_commitment = trusted_advice_commitment;
 
         #[cfg(test)]
         {
@@ -496,8 +503,13 @@ mod tests {
             JoltRV64IMACMockPCS::prove(&preprocessing, elf_contents, &inputs, &[], &[], None);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
-        let verification_result =
-            JoltRV64IMACMockPCS::verify(&verifier_preprocessing, jolt_proof, io_device, None, debug_info);
+        let verification_result = JoltRV64IMACMockPCS::verify(
+            &verifier_preprocessing,
+            jolt_proof,
+            io_device,
+            None,
+            debug_info,
+        );
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",
@@ -525,8 +537,13 @@ mod tests {
             JoltRV64IMAC::prove(&preprocessing, elf_contents, &inputs, &[], &[], None);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
-        let verification_result =
-            JoltRV64IMAC::verify(&verifier_preprocessing, jolt_proof, io_device, None, debug_info);
+        let verification_result = JoltRV64IMAC::verify(
+            &verifier_preprocessing,
+            jolt_proof,
+            io_device,
+            None,
+            debug_info,
+        );
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",
@@ -653,8 +670,13 @@ mod tests {
             JoltRV64IMAC::prove(&preprocessing, elf_contents, &[], &[], &[], None);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
-        let verification_result =
-            JoltRV64IMAC::verify(&verifier_preprocessing, jolt_proof, io_device, None, debug_info);
+        let verification_result = JoltRV64IMAC::verify(
+            &verifier_preprocessing,
+            jolt_proof,
+            io_device,
+            None,
+            debug_info,
+        );
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",
@@ -682,8 +704,13 @@ mod tests {
             JoltRV64IMAC::prove(&preprocessing, elf_contents, &inputs, &[], &[], None);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
-        let verification_result =
-            JoltRV64IMAC::verify(&verifier_preprocessing, jolt_proof, io_device, None, debug_info);
+        let verification_result = JoltRV64IMAC::verify(
+            &verifier_preprocessing,
+            jolt_proof,
+            io_device,
+            None,
+            debug_info,
+        );
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",
@@ -711,8 +738,13 @@ mod tests {
             JoltRV64IMAC::prove(&preprocessing, elf_contents, &[50], &[], &[], None);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
-        let verification_result =
-            JoltRV64IMAC::verify(&verifier_preprocessing, jolt_proof, io_device, None, debug_info);
+        let verification_result = JoltRV64IMAC::verify(
+            &verifier_preprocessing,
+            jolt_proof,
+            io_device,
+            None,
+            debug_info,
+        );
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",

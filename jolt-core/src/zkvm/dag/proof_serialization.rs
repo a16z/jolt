@@ -34,7 +34,7 @@ pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcr
     opening_claims: Claims<F>,
     commitments: Vec<PCS::Commitment>,
     untrusted_advice_commitment: Option<PCS::Commitment>,
-    untrusted_advice_num_vars: Option<usize>,
+    trusted_advice_commitment: Option<PCS::Commitment>,
     proofs: Proofs<F, PCS, FS>,
     pub trace_length: usize,
     ram_K: usize,
@@ -61,7 +61,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
             .serialize_with_mode(&mut writer, compress)?;
         self.untrusted_advice_commitment
             .serialize_with_mode(&mut writer, compress)?;
-        self.untrusted_advice_num_vars
+        self.trusted_advice_commitment
             .serialize_with_mode(&mut writer, compress)?;
         self.proofs.serialize_with_mode(&mut writer, compress)?;
         self.trace_length
@@ -76,7 +76,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
         self.opening_claims.serialized_size(compress)
             + self.commitments.serialized_size(compress)
             + self.untrusted_advice_commitment.serialized_size(compress)
-            + self.untrusted_advice_num_vars.serialized_size(compress)
+            + self.trusted_advice_commitment.serialized_size(compress)
             + self.proofs.serialized_size(compress)
             + self.trace_length.serialized_size(compress)
             + self.ram_K.serialized_size(compress)
@@ -119,8 +119,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
             Vec::<PCS::Commitment>::deserialize_with_mode(&mut reader, compress, validate)?;
         let untrusted_advice_commitment =
             Option::<PCS::Commitment>::deserialize_with_mode(&mut reader, compress, validate)?;
-        let untrusted_advice_num_vars =
-            Option::<usize>::deserialize_with_mode(&mut reader, compress, validate)?;
+        let trusted_advice_commitment =
+            Option::<PCS::Commitment>::deserialize_with_mode(&mut reader, compress, validate)?;
         let proofs = Proofs::<F, PCS, FS>::deserialize_with_mode(&mut reader, compress, validate)?;
         let trace_length = usize::deserialize_with_mode(&mut reader, compress, validate)?;
         let twist_sumcheck_switch_index =
@@ -131,7 +131,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
             opening_claims,
             commitments,
             untrusted_advice_commitment,
-            untrusted_advice_num_vars,
+            trusted_advice_commitment,
             proofs,
             trace_length,
             ram_K,
@@ -151,16 +151,13 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> JoltProof<F
         let ram_K = state_manager.ram_K;
         let twist_sumcheck_switch_index = state_manager.twist_sumcheck_switch_index;
         let untrusted_advice_commitment = state_manager.untrusted_advice_commitment;
-        let untrusted_advice_num_vars = prover_state
-            .untrusted_advice_polynomial
-            .as_ref()
-            .map(|poly| poly.get_num_vars());
+        let trusted_advice_commitment = state_manager.trusted_advice_commitment;
 
         Self {
             opening_claims: Claims(openings),
             commitments,
             untrusted_advice_commitment,
-            untrusted_advice_num_vars,
+            trusted_advice_commitment,
             proofs,
             trace_length,
             ram_K,
@@ -193,7 +190,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> JoltProof<F
             proofs,
             commitments,
             untrusted_advice_commitment: self.untrusted_advice_commitment,
-            trusted_advice_commitment: None,
+            trusted_advice_commitment: self.trusted_advice_commitment,
             program_io,
             ram_K: self.ram_K,
             twist_sumcheck_switch_index: self.twist_sumcheck_switch_index,
@@ -202,7 +199,6 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> JoltProof<F
                 preprocessing,
                 trace_length: self.trace_length,
                 accumulator: Rc::new(RefCell::new(opening_accumulator)),
-                untrusted_advice_num_vars: self.untrusted_advice_num_vars,
             }),
         }
     }

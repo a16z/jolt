@@ -197,7 +197,14 @@ fn setup_emulator(
     trusted_advice: &[u8],
     memory_config: &MemoryConfig,
 ) -> Emulator {
-    setup_emulator_with_backtraces(elf_contents, None, inputs, untrusted_advice, trusted_advice, memory_config)
+    setup_emulator_with_backtraces(
+        elf_contents,
+        None,
+        inputs,
+        untrusted_advice,
+        trusted_advice,
+        memory_config,
+    )
 }
 
 #[tracing::instrument(skip_all)]
