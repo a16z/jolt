@@ -568,7 +568,7 @@ impl<F: JoltField> OneHotPolynomial<F> {
                 let mut indices_per_k: Vec<Vec<usize>> = vec![Vec::new(); work.K];
                 for (col_index, k) in chunk.iter().enumerate() {
                     if let Some(k) = k {
-                        indices_per_k[*k].push(col_index);
+                        indices_per_k[*k as usize].push(col_index);
                     }
                 }
 
