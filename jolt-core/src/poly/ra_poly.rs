@@ -61,7 +61,11 @@ impl<F: JoltField> PolynomialBinding<F> for RaPolynomial<F> {
         !matches!(self, Self::Round1(_))
     }
 
-    fn bind(&mut self, r: F::Challenge, order: BindingOrder) {
+    fn bind(&mut self, _r: F::Challenge, _order: BindingOrder) {
+        unimplemented!()
+    }
+
+    fn bind_parallel(&mut self, r: F::Challenge, order: BindingOrder) {
         match self {
             Self::None => panic!("RaPolynomial::bind called on None"),
             Self::Round1(mle) => *self = Self::Round2(mem::take(mle).bind(r, order)),
@@ -69,10 +73,6 @@ impl<F: JoltField> PolynomialBinding<F> for RaPolynomial<F> {
             Self::Round3(mle) => *self = Self::RoundN(mem::take(mle).bind(r, order)),
             Self::RoundN(mle) => mle.bind_parallel(r, order),
         };
-    }
-
-    fn bind_parallel(&mut self, r: F::Challenge, order: BindingOrder) {
-        self.bind(r, order);
     }
 
     fn final_sumcheck_claim(&self) -> F {
