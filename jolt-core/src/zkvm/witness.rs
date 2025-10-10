@@ -46,13 +46,6 @@ pub fn compute_d_parameter(K: usize) -> usize {
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Allocative)]
 pub enum CommittedPolynomial {
-    /* R1CS aux variables */
-    /// The "left" input to the current instruction. Typically either the
-    /// rs1 value or the current program counter.
-    LeftInstructionInput,
-    /// The "right" input to the current instruction. Typically either the
-    /// rs2 value or the immediate value.
-    RightInstructionInput,
     /*  Twist/Shout witnesses */
     /// Inc polynomial for the registers instance of Twist
     RdInc,
@@ -106,8 +99,6 @@ pub struct AllCommittedPolynomials();
 impl AllCommittedPolynomials {
     pub fn initialize(ram_d: usize, bytecode_d: usize) -> Self {
         let mut polynomials = vec![
-            CommittedPolynomial::LeftInstructionInput,
-            CommittedPolynomial::RightInstructionInput,
             CommittedPolynomial::RdInc,
             CommittedPolynomial::RamInc,
             CommittedPolynomial::InstructionRa(0),
@@ -332,14 +323,6 @@ impl CommittedPolynomial {
 
         for poly in polynomials {
             match poly {
-                CommittedPolynomial::LeftInstructionInput => {
-                    let coeffs = std::mem::take(&mut batch.left_instruction_input);
-                    results.insert(*poly, MultilinearPolynomial::<F>::from(coeffs));
-                }
-                CommittedPolynomial::RightInstructionInput => {
-                    let coeffs = std::mem::take(&mut batch.right_instruction_input);
-                    results.insert(*poly, MultilinearPolynomial::<F>::from(coeffs));
-                }
                 CommittedPolynomial::RdInc => {
                     let coeffs = std::mem::take(&mut batch.rd_inc);
                     results.insert(*poly, MultilinearPolynomial::<F>::from(coeffs));
@@ -390,20 +373,6 @@ impl CommittedPolynomial {
         PCS: CommitmentScheme<Field = F>,
     {
         match self {
-            CommittedPolynomial::LeftInstructionInput => {
-                let coeffs: Vec<u64> = trace
-                    .par_iter()
-                    .map(|cycle| LookupQuery::<XLEN>::to_instruction_inputs(cycle).0)
-                    .collect();
-                coeffs.into()
-            }
-            CommittedPolynomial::RightInstructionInput => {
-                let coeffs: Vec<i128> = trace
-                    .par_iter()
-                    .map(|cycle| LookupQuery::<XLEN>::to_instruction_inputs(cycle).1)
-                    .collect();
-                coeffs.into()
-            }
             CommittedPolynomial::BytecodeRa(i) => {
                 let d = preprocessing.shared.bytecode.d;
                 let log_K = preprocessing.shared.bytecode.code_size.log_2();
@@ -503,6 +472,8 @@ pub enum VirtualPolynomial {
     NextIsNoop,
     LeftLookupOperand,
     RightLookupOperand,
+    LeftInstructionInput,
+    RightInstructionInput,
     Product,
     ShouldJump,
     ShouldBranch,
