@@ -2031,6 +2031,7 @@ dependencies = [
  "jolt-sdk-macros",
  "postcard",
  "rand 0.8.5",
+ "serde",
  "tracer",
 ]
 
@@ -2213,6 +2214,26 @@ checksum = "c73f5c649995a115e1a0220b35e4df0a1294500477f97a91d0660fb5abeb574a"
 dependencies = [
  "libc",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "merkle-tree"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "jolt-inlines-sha2",
+ "jolt-sdk",
+ "merkle-tree-guest",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "merkle-tree-guest"
+version = "0.1.0"
+dependencies = [
+ "jolt-inlines-sha2",
+ "jolt-sdk",
 ]
 
 [[package]]

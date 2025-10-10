@@ -1,0 +1,11 @@
+[package]
+name = "merkle-tree-guest"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+guest = []
+
+[dependencies]
+jolt = { package = "jolt-sdk", path = "../../../jolt-sdk", features = [] }
+jolt-inlines-sha2 = { package = "jolt-inlines-sha2", path = "../../../jolt-inlines/sha2" }

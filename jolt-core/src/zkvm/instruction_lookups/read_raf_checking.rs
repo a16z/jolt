@@ -1024,6 +1024,8 @@ mod tests {
             };
         let program_io = JoltDevice {
             memory_layout,
+            untrusted_advice: vec![],
+            trusted_advice: vec![],
             inputs: vec![],
             outputs: vec![],
             panic: false,
@@ -1034,6 +1036,7 @@ mod tests {
             &prover_preprocessing,
             trace.clone(),
             program_io.clone(),
+            None,
             final_memory_state,
         );
         let mut verifier_sm = StateManager::<'_, Fr, Blake2bTranscript, _>::new_verifier(

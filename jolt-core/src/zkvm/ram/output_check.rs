@@ -466,7 +466,7 @@ impl<F: JoltField> ValFinalSumcheck<F> {
         initial_ram_state: &[u64],
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
-        let (_, _, T) = state_manager.get_verifier_data();
+        let (_, program_io, T) = state_manager.get_verifier_data();
 
         let r_address = state_manager
             .get_virtual_polynomial_opening(
@@ -476,9 +476,51 @@ impl<F: JoltField> ValFinalSumcheck<F> {
             .0
             .r;
 
-        let val_init: MultilinearPolynomial<F> =
+        {
+            // Verify that val_evaluation and output_check use the same opening point for initial_ram_state.
+            // This allows us to reuse a single untrusted_advice opening instead of providing two.
+            let (r, _) = state_manager.get_virtual_polynomial_opening(
+                VirtualPolynomial::RamVal,
+                SumcheckId::RamReadWriteChecking,
+            );
+            let (r_address_val_evaluation, _) = r.split_at(state_manager.ram_K.log_2());
+            assert_eq!(r_address_val_evaluation.r, r_address);
+        }
+
+        let accumulator = state_manager.get_verifier_accumulator();
+        let total_memory_vars = state_manager.ram_K.log_2();
+
+        let untrusted_advice_contribution = super::calculate_advice_memory_evaluation(
+            accumulator.borrow().get_untrusted_advice_opening(),
+            (program_io.memory_layout.max_untrusted_advice_size as usize / 8)
+                .next_power_of_two()
+                .log_2(),
+            program_io.memory_layout.untrusted_advice_start,
+            &program_io.memory_layout,
+            &r_address,
+            total_memory_vars,
+        );
+
+        let trusted_advice_contribution = super::calculate_advice_memory_evaluation(
+            accumulator.borrow().get_trusted_advice_opening(),
+            (program_io.memory_layout.max_trusted_advice_size as usize / 8)
+                .next_power_of_two()
+                .log_2(),
+            program_io.memory_layout.trusted_advice_start,
+            &program_io.memory_layout,
+            &r_address,
+            total_memory_vars,
+        );
+
+        // Compute the public part of val_init evaluation
+        let val_init_public: MultilinearPolynomial<F> =
             MultilinearPolynomial::from(initial_ram_state.to_vec());
-        let val_init_eval = val_init.evaluate(&r_address);
+
+        // Combine all contributions: untrusted + trusted + public
+        let val_init_eval = untrusted_advice_contribution
+            + trusted_advice_contribution
+            + val_init_public.evaluate(&r_address);
+
         let val_final_claim = state_manager
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::RamValFinal,

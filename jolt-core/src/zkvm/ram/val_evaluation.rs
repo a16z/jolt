@@ -126,7 +126,7 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
         initial_ram_state: &[u64],
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
-        let (_, _, T) = state_manager.get_verifier_data();
+        let (_, program_io, T) = state_manager.get_verifier_data();
         let K = state_manager.ram_K;
 
         let (r, claimed_evaluation) = state_manager.get_virtual_polynomial_opening(
@@ -135,9 +135,40 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
         );
         let (r_address, _) = r.split_at(K.log_2());
 
-        let val_init: MultilinearPolynomial<F> =
+        let accumulator = state_manager.get_verifier_accumulator();
+        let total_memory_vars = K.log_2();
+
+        // Calculate untrusted advice contribution
+        let untrusted_contribution = super::calculate_advice_memory_evaluation(
+            accumulator.borrow().get_untrusted_advice_opening(),
+            (program_io.memory_layout.max_untrusted_advice_size as usize / 8)
+                .next_power_of_two()
+                .log_2(),
+            program_io.memory_layout.untrusted_advice_start,
+            &program_io.memory_layout,
+            &r_address.r,
+            total_memory_vars,
+        );
+
+        // Calculate trusted advice contribution
+        let trusted_contribution = super::calculate_advice_memory_evaluation(
+            accumulator.borrow().get_trusted_advice_opening(),
+            (program_io.memory_layout.max_trusted_advice_size as usize / 8)
+                .next_power_of_two()
+                .log_2(),
+            program_io.memory_layout.trusted_advice_start,
+            &program_io.memory_layout,
+            &r_address.r,
+            total_memory_vars,
+        );
+
+        // Compute the public part of val_init evaluation
+        let val_init_public: MultilinearPolynomial<F> =
             MultilinearPolynomial::from(initial_ram_state.to_vec());
-        let init_eval = val_init.evaluate(&r_address.r);
+
+        // Combine all contributions: untrusted + trusted + public
+        let init_eval =
+            untrusted_contribution + trusted_contribution + val_init_public.evaluate(&r_address.r);
 
         ValEvaluationSumcheck {
             claimed_evaluation,

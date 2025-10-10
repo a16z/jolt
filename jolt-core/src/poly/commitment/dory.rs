@@ -1175,6 +1175,40 @@ impl CommitmentScheme for DoryCommitmentScheme {
         }
     }
 
+    #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::prove_without_hint")]
+    fn prove_without_hint<ProofTranscript: Transcript>(
+        setup: &Self::ProverSetup,
+        poly: &MultilinearPolynomial<Self::Field>,
+        opening_point: &[<Self::Field as JoltField>::Challenge],
+        transcript: &mut ProofTranscript,
+    ) -> Self::Proof {
+        // Dory uses the opposite endian-ness as Jolt
+        let point_dory: Vec<JoltFieldWrapper<Self::Field>> = opening_point
+            .iter()
+            .rev()
+            .map(|&p| JoltFieldWrapper(p.into()))
+            .collect();
+
+        let sigma = DoryGlobals::get_num_columns().log_2();
+        let dory_transcript = JoltToDoryTranscriptRef::<Self::Field, _>::new(transcript);
+
+        // dory evaluate returns the opening but in this case we don't use it, we pass directly the opening to verify()
+        let proof_builder = evaluate::<
+            JoltBn254,
+            JoltToDoryTranscriptRef<'_, Self::Field, ProofTranscript>,
+            JoltMsmG1,
+            JoltMsmG2,
+            _,
+        >(poly, None, &point_dory, sigma, setup, dory_transcript);
+
+        let dory_proof = proof_builder.build();
+
+        DoryProofData {
+            sigma,
+            dory_proof_data: dory_proof,
+        }
+    }
+
     #[tracing::instrument(skip_all, name = "DoryCommitmentScheme::verify")]
     fn verify<ProofTranscript: Transcript>(
         proof: &Self::Proof,

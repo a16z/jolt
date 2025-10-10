@@ -202,7 +202,7 @@ fn prove_example(
     let mut tasks = Vec::new();
     let mut program = host::Program::new(example_name);
     let (bytecode, init_memory_state, _) = program.decode();
-    let (trace, _, program_io) = program.trace(&serialized_input);
+    let (trace, _, program_io) = program.trace(&serialized_input, &[], &[]);
     let padded_trace_len = (trace.len() + 1).next_power_of_two();
     drop(trace);
 
@@ -216,12 +216,18 @@ fn prove_example(
 
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-        let (jolt_proof, program_io, _, _) =
-            JoltRV64IMAC::prove(&preprocessing, elf_contents, &serialized_input);
+        let (jolt_proof, program_io, _, _) = JoltRV64IMAC::prove(
+            &preprocessing,
+            elf_contents,
+            &serialized_input,
+            &[],
+            &[],
+            None,
+        );
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let verification_result =
-            JoltRV64IMAC::verify(&verifier_preprocessing, jolt_proof, program_io, None);
+            JoltRV64IMAC::verify(&verifier_preprocessing, jolt_proof, program_io, None, None);
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",
@@ -246,7 +252,7 @@ fn prove_example_with_trace(
 ) -> (std::time::Duration, usize, usize, usize) {
     let mut program = host::Program::new(example_name);
     let (bytecode, init_memory_state, _) = program.decode();
-    let (trace, _, program_io) = program.trace(&serialized_input);
+    let (trace, _, program_io) = program.trace(&serialized_input, &[], &[]);
 
     assert!(
         trace.len().next_power_of_two() <= max_trace_length,
@@ -264,8 +270,16 @@ fn prove_example_with_trace(
     let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
 
     let span = tracing::info_span!("E2E");
-    let (jolt_proof, program_io, _, prove_duration) =
-        span.in_scope(|| JoltRV64IMAC::prove(&preprocessing, elf_contents, &serialized_input));
+    let (jolt_proof, program_io, _, prove_duration) = span.in_scope(|| {
+        JoltRV64IMAC::prove(
+            &preprocessing,
+            elf_contents,
+            &serialized_input,
+            &[],
+            &[],
+            None,
+        )
+    });
     let proof_size = jolt_proof.serialized_size(ark_serialize::Compress::Yes);
     let proof_size_full_compressed = proof_size
         - jolt_proof.proofs[&ProofKeys::ReducedOpeningProof]
@@ -283,7 +297,7 @@ fn prove_example_with_trace(
 
     let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
     let verification_result =
-        JoltRV64IMAC::verify(&verifier_preprocessing, jolt_proof, program_io, None);
+        JoltRV64IMAC::verify(&verifier_preprocessing, jolt_proof, program_io, None, None);
     assert!(
         verification_result.is_ok(),
         "Verification failed with error: {:?}",
