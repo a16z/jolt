@@ -12,7 +12,7 @@ use crate::{
 ///
 /// Note `claim` should equal `g(0) + g(1)`.
 pub fn compute_mles_product_sum<F: JoltField>(
-    mles: &[RaPolynomial<F>],
+    mles: &[RaPolynomial<u8, F>],
     claim: F,
     r: &[F::Challenge],
     r_prime: &[F::Challenge],

@@ -2,12 +2,14 @@ use num_traits::Zero;
 use std::cell::RefCell;
 use std::iter::zip;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::poly::opening_proof::{
     OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
 };
+use crate::poly::ra_poly::RaPolynomial;
 use crate::zkvm::dag::state_manager::StateManager;
 use crate::zkvm::ram::remap_address;
 use crate::zkvm::witness::{
@@ -32,7 +34,7 @@ use rayon::prelude::*;
 #[derive(Allocative)]
 pub struct RaProverState<F: JoltField> {
     /// `ra` polys to be constructed based addresses
-    ra_i_polys: Vec<MultilinearPolynomial<F>>,
+    ra_i_polys: Vec<RaPolynomial<u8, F>>,
     /// eq poly
     eq_poly: MultilinearPolynomial<F>,
 }
@@ -139,27 +141,28 @@ impl<F: JoltField> RaSumcheck<F> {
         let combined_ra_claim =
             gamma[0] * ra_claim_val + gamma[1] * ra_claim_rw + gamma[2] * ra_claim_raf;
 
-        let ra_i_polys: Vec<MultilinearPolynomial<F>> = (0..d)
+        let ra_i_polys: Vec<RaPolynomial<u8, F>> = (0..d)
             .into_par_iter()
-            .map(|i| {
-                let ra_i: Vec<F> = trace
+            .zip(eq_tables.into_par_iter())
+            .map(|(i, eq_table)| {
+                let ra_i_indices: Vec<Option<u8>> = trace
                     .par_iter()
                     .map(|cycle| {
                         remap_address(
                             cycle.ram_access().address() as u64,
                             &preprocessing.shared.memory_layout,
                         )
-                        .map_or(F::zero(), |address| {
+                        .map(|address| {
                             // For each address, add eq_r_cycle[j] to each corresponding chunk
                             // This maintains the property that sum of all ra values for an address equals 1
                             let address_i = (address >> (DTH_ROOT_OF_K.log_2() * (d - 1 - i)))
                                 % DTH_ROOT_OF_K as u64;
 
-                            eq_tables[i][address_i as usize]
+                            address_i as u8
                         })
                     })
                     .collect();
-                ra_i.into()
+                RaPolynomial::new(Arc::new(ra_i_indices), eq_table)
             })
             .collect();
 

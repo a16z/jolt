@@ -1,5 +1,5 @@
 use num_traits::Zero;
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 use crate::{
     field::JoltField,
@@ -13,6 +13,7 @@ use crate::{
             OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator,
             BIG_ENDIAN,
         },
+        ra_poly::RaPolynomial,
     },
     subprotocols::sumcheck::SumcheckInstance,
     transcripts::Transcript,
@@ -31,7 +32,7 @@ use rayon::prelude::*;
 #[derive(Allocative)]
 pub struct ValEvaluationProverState<F: JoltField> {
     inc: MultilinearPolynomial<F>,
-    wa: MultilinearPolynomial<F>,
+    wa: RaPolynomial<usize, F>,
     lt: MultilinearPolynomial<F>,
 }
 
@@ -79,14 +80,14 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
         let _guard = span.enter();
 
         // Compute the wa polynomial using the above table
-        let wa: Vec<F> = trace
+        let wa_indices: Vec<Option<usize>> = trace
             .par_iter()
             .map(|cycle| {
                 remap_address(cycle.ram_access().address() as u64, memory_layout)
-                    .map_or(F::zero(), |k| eq_r_address[k as usize])
+                    .map(|k| k as usize)
             })
             .collect();
-        let wa = MultilinearPolynomial::from(wa);
+        let wa = RaPolynomial::new(Arc::new(wa_indices), eq_r_address);
 
         drop(_guard);
         drop(span);
@@ -175,9 +176,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ValEvaluationSumche
                 let inc_evals = ps
                     .inc
                     .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
-                let wa_evals = ps
-                    .wa
-                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
+                let wa_evals = ps.wa.sumcheck_evals(i, DEGREE, BindingOrder::HighToLow);
                 let lt_evals = ps
                     .lt
                     .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
@@ -206,13 +205,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ValEvaluationSumche
     #[tracing::instrument(skip_all, name = "RamValEvaluationSumcheck::bind")]
     fn bind(&mut self, r_j: F::Challenge, _round: usize) {
         if let Some(prover_state) = &mut self.prover_state {
-            [
-                &mut prover_state.inc,
-                &mut prover_state.wa,
-                &mut prover_state.lt,
-            ]
-            .par_iter_mut()
-            .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow));
+            [&mut prover_state.inc, &mut prover_state.lt]
+                .par_iter_mut()
+                .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow));
+            prover_state.wa.bind_parallel(r_j, BindingOrder::HighToLow);
         }
     }
 
