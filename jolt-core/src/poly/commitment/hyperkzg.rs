@@ -455,14 +455,17 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "HyperKZG::batch_commit")]
-    fn batch_commit<U>(polys: &[U], gens: &Self::ProverSetup) -> Vec<Self::Commitment>
+    fn batch_commit<U>(
+        polys: &[U],
+        gens: &Self::ProverSetup,
+    ) -> Vec<(Self::Commitment, Self::OpeningProofHint)>
     where
         U: Borrow<MultilinearPolynomial<Self::Field>> + Sync,
     {
         UnivariateKZG::commit_batch(&gens.kzg_pk, polys)
             .unwrap()
             .into_par_iter()
-            .map(|c| HyperKZGCommitment(c))
+            .map(|c| (HyperKZGCommitment(c), ()))
             .collect()
     }
 

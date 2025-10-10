@@ -27,7 +27,6 @@ use crate::zkvm::ProverDebugInfo;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 use anyhow::Context;
-use rayon::prelude::*;
 
 pub enum JoltDAG {}
 
@@ -480,30 +479,32 @@ impl JoltDAG {
     // Prover utility to commit to all the polynomials for the PCS
     #[tracing::instrument(skip_all)]
     fn generate_and_commit_polynomials<
-        'a,
         F: JoltField,
         ProofTranscript: Transcript,
         PCS: CommitmentScheme<Field = F>,
     >(
-        prover_state_manager: &mut StateManager<'a, F, ProofTranscript, PCS>,
+        prover_state_manager: &mut StateManager<F, ProofTranscript, PCS>,
     ) -> Result<HashMap<CommittedPolynomial, PCS::OpeningProofHint>, anyhow::Error> {
         let (preprocessing, trace, _program_io, _final_memory_state) =
             prover_state_manager.get_prover_data();
 
-        let mut all_polys = CommittedPolynomial::generate_witness_batch(
-            &AllCommittedPolynomials::iter().copied().collect::<Vec<_>>(),
-            preprocessing,
-            trace,
-        );
+        let polys = AllCommittedPolynomials::iter().copied().collect::<Vec<_>>();
+        let mut all_polys =
+            CommittedPolynomial::generate_witness_batch(&polys, preprocessing, trace);
+
         let committed_polys: Vec<_> = AllCommittedPolynomials::iter()
             .filter_map(|poly| all_polys.remove(poly))
             .collect();
 
+        let span = tracing::span!(tracing::Level::INFO, "commit to polynomials");
+        let _guard = span.enter();
+
+        let commit_results = PCS::batch_commit(&committed_polys, &preprocessing.generators);
+
         let (commitments, hints): (Vec<PCS::Commitment>, Vec<PCS::OpeningProofHint>) =
-            committed_polys
-                .par_iter()
-                .map(|poly| PCS::commit(poly, &preprocessing.generators))
-                .unzip();
+            commit_results.into_iter().unzip();
+        drop(_guard);
+        drop(span);
         let mut hint_map = HashMap::with_capacity(committed_polys.len());
         for (poly, hint) in AllCommittedPolynomials::iter().zip(hints) {
             hint_map.insert(*poly, hint);

@@ -124,6 +124,9 @@ pub fn display_panic_backtrace(emulator_state: &EmulatorState) {
 
     if call_stack.is_empty() || emulator_state.elf_path.is_none() {
         println!("  <no backtrace available>");
+        println!(
+            "note: run `trace_and_analyze` with `JOLT_BACKTRACE=1` environment variable to enable backtraces"
+        );
         return;
     }
 
