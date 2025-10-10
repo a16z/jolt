@@ -171,7 +171,7 @@ checksum = "a23eb6b1614318a8071c9b2521f36b424b2c83db5eb3a0fead4a6c0809af6e61"
 [[package]]
 name = "ark-bn254"
 version = "0.5.0-alpha.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#209b1a4f53068b3d820c2ff1a89012419de3eb5d"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#2b22f4959e89bd0656f4f261c3a854c29b87a7da"
 dependencies = [
  "ark-ec",
  "ark-ff",
@@ -181,7 +181,7 @@ dependencies = [
 [[package]]
 name = "ark-ec"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#209b1a4f53068b3d820c2ff1a89012419de3eb5d"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#2b22f4959e89bd0656f4f261c3a854c29b87a7da"
 dependencies = [
  "ahash",
  "ark-ff",
@@ -202,7 +202,7 @@ dependencies = [
 [[package]]
 name = "ark-ff"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#209b1a4f53068b3d820c2ff1a89012419de3eb5d"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#2b22f4959e89bd0656f4f261c3a854c29b87a7da"
 dependencies = [
  "allocative",
  "ark-ff-asm",
@@ -223,7 +223,7 @@ dependencies = [
 [[package]]
 name = "ark-ff-asm"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#209b1a4f53068b3d820c2ff1a89012419de3eb5d"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#2b22f4959e89bd0656f4f261c3a854c29b87a7da"
 dependencies = [
  "quote",
  "syn 2.0.106",
@@ -232,7 +232,7 @@ dependencies = [
 [[package]]
 name = "ark-ff-macros"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#209b1a4f53068b3d820c2ff1a89012419de3eb5d"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#2b22f4959e89bd0656f4f261c3a854c29b87a7da"
 dependencies = [
  "num-bigint",
  "num-traits",
@@ -244,7 +244,7 @@ dependencies = [
 [[package]]
 name = "ark-grumpkin"
 version = "0.5.0-alpha.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#209b1a4f53068b3d820c2ff1a89012419de3eb5d"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#2b22f4959e89bd0656f4f261c3a854c29b87a7da"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -255,7 +255,7 @@ dependencies = [
 [[package]]
 name = "ark-poly"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#209b1a4f53068b3d820c2ff1a89012419de3eb5d"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#2b22f4959e89bd0656f4f261c3a854c29b87a7da"
 dependencies = [
  "ahash",
  "ark-ff",
@@ -269,7 +269,7 @@ dependencies = [
 [[package]]
 name = "ark-serialize"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#209b1a4f53068b3d820c2ff1a89012419de3eb5d"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#2b22f4959e89bd0656f4f261c3a854c29b87a7da"
 dependencies = [
  "ark-serialize-derive 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
  "ark-std",
@@ -293,7 +293,7 @@ dependencies = [
 [[package]]
 name = "ark-serialize-derive"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#209b1a4f53068b3d820c2ff1a89012419de3eb5d"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#2b22f4959e89bd0656f4f261c3a854c29b87a7da"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -938,7 +938,7 @@ dependencies = [
 [[package]]
 name = "dory"
 version = "1.0.0"
-source = "git+https://github.com/markosg04/dory?branch=dev%2Ftwist-shout#c047854b447a8bddb4a7c279849b31d364aeef98"
+source = "git+https://github.com/markosg04/dory?branch=dev%2Ftwist-shout#c6dff3f5819ad59287f705dfabf141af6fbba393"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -1994,7 +1994,7 @@ dependencies = [
 [[package]]
 name = "jolt-optimizations"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#209b1a4f53068b3d820c2ff1a89012419de3eb5d"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#2b22f4959e89bd0656f4f261c3a854c29b87a7da"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -2078,9 +2078,9 @@ checksum = "830d08ce1d1d941e6b30645f1a0eb5643013d835ce3779a5fc208261dbe10f55"
 
 [[package]]
 name = "libc"
-version = "0.2.176"
+version = "0.2.177"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "58f929b4d672ea937a23a1ab494143d968337a5f47e56d0815df1e0890ddf174"
+checksum = "2874a2af47a2325c2001a6e6fad9b16a53b802102b528163885171cf92b15976"
 
 [[package]]
 name = "libloading"
@@ -3601,9 +3601,9 @@ dependencies = [
 
 [[package]]
 name = "stable_deref_trait"
-version = "1.2.0"
+version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a8f112729512f8e442d81f95a8a7ddf2b7c6b8a1a6f509a95864142b30cab2d3"
+checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
 name = "stdlib"

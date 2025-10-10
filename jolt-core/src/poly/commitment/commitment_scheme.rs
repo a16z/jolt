@@ -57,7 +57,10 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
     ///
     /// # Returns
     /// A vector of commitments, one for each input polynomial
-    fn batch_commit<U>(polys: &[U], gens: &Self::ProverSetup) -> Vec<Self::Commitment>
+    fn batch_commit<U>(
+        polys: &[U],
+        gens: &Self::ProverSetup,
+    ) -> Vec<(Self::Commitment, Self::OpeningProofHint)>
     where
         U: Borrow<MultilinearPolynomial<Self::Field>> + Sync;
 
