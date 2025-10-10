@@ -134,16 +134,16 @@ pub fn trace_lazy(
     elf_contents: &[u8],
     elf_path: Option<&std::path::PathBuf>,
     inputs: &[u8],
-    trusted_advice: &[u8],
     untrusted_advice: &[u8],
+    trusted_advice: &[u8],
     memory_config: &MemoryConfig,
 ) -> LazyTraceIterator {
     LazyTraceIterator::new(setup_emulator_with_backtraces(
         elf_contents,
         elf_path,
         inputs,
-        trusted_advice,
         untrusted_advice,
+        trusted_advice,
         memory_config,
     ))
 }

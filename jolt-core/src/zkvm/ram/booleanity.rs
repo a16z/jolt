@@ -1,6 +1,7 @@
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
+use num_traits::Zero;
 use rayon::prelude::*;
 use std::{cell::RefCell, rc::Rc};
 
@@ -437,21 +438,35 @@ impl<F: JoltField> BooleanitySumcheck<F> {
 
                                 [eval_0, eval_infty]
                             })
+                            .fold_with([F::Unreduced::<5>::zero(); DEGREE - 1], |running, new| {
+                                [
+                                    running[0] + new[0].as_unreduced_ref(),
+                                    running[1] + new[1].as_unreduced_ref(),
+                                ]
+                            })
                             .reduce(
-                                || [F::zero(); DEGREE - 1],
+                                || [F::Unreduced::zero(); DEGREE - 1],
                                 |running, new| [running[0] + new[0], running[1] + new[1]],
                             );
 
-                        coeffs[0] += self.gamma_powers[i] * inner_sum[0];
-                        coeffs[1] += self.gamma_powers[i] * inner_sum[1];
+                        coeffs[0] += self.gamma_powers[i] * F::from_barrett_reduce(inner_sum[0]);
+                        coeffs[1] += self.gamma_powers[i] * F::from_barrett_reduce(inner_sum[1]);
                     }
 
-                    [B_eval * coeffs[0], B_eval * coeffs[1]]
+                    [
+                        B_eval.mul_unreduced::<9>(coeffs[0]),
+                        B_eval.mul_unreduced::<9>(coeffs[1]),
+                    ]
                 })
                 .reduce(
-                    || [F::zero(); DEGREE - 1],
+                    || [F::Unreduced::zero(); DEGREE - 1],
                     |running, new| [running[0] + new[0], running[1] + new[1]],
                 )
+                .into_iter()
+                .map(F::from_montgomery_reduce)
+                .collect::<Vec<_>>()
+                .try_into()
+                .unwrap()
         } else {
             // E_in has not been fully bound
             let num_x_in_bits = B.E_in_current_len().log_2();
@@ -490,28 +505,50 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                                         };
                                         [eval_0, eval_infty]
                                     })
+                                    .fold_with(
+                                        [F::Unreduced::<5>::zero(); DEGREE - 1],
+                                        |running, new| {
+                                            [
+                                                running[0] + new[0].as_unreduced_ref(),
+                                                running[1] + new[1].as_unreduced_ref(),
+                                            ]
+                                        },
+                                    )
                                     .reduce(
-                                        || [F::zero(); DEGREE - 1],
+                                        || [F::Unreduced::zero(); DEGREE - 1],
                                         |running, new| [running[0] + new[0], running[1] + new[1]],
                                     );
 
-                                coeffs[0] += self.gamma_powers[i] * inner_sum[0];
-                                coeffs[1] += self.gamma_powers[i] * inner_sum[1];
+                                coeffs[0] +=
+                                    self.gamma_powers[i] * F::from_barrett_reduce(inner_sum[0]);
+                                coeffs[1] +=
+                                    self.gamma_powers[i] * F::from_barrett_reduce(inner_sum[1]);
                             }
 
-                            [B_E_in_eval * coeffs[0], B_E_in_eval * coeffs[1]]
+                            [
+                                B_E_in_eval.mul_unreduced::<9>(coeffs[0]),
+                                B_E_in_eval.mul_unreduced::<9>(coeffs[1]),
+                            ]
                         })
                         .reduce(
-                            || [F::zero(); DEGREE - 1],
+                            || [F::Unreduced::zero(); DEGREE - 1],
                             |running, new| [running[0] + new[0], running[1] + new[1]],
                         );
 
-                    [B_E_out_eval * chunk_evals[0], B_E_out_eval * chunk_evals[1]]
+                    [
+                        B_E_out_eval.mul_unreduced::<9>(F::from_montgomery_reduce(chunk_evals[0])),
+                        B_E_out_eval.mul_unreduced::<9>(F::from_montgomery_reduce(chunk_evals[1])),
+                    ]
                 })
                 .reduce(
-                    || [F::zero(); DEGREE - 1],
+                    || [F::Unreduced::zero(); DEGREE - 1],
                     |running, new| [running[0] + new[0], running[1] + new[1]],
                 )
+                .into_iter()
+                .map(F::from_montgomery_reduce)
+                .collect::<Vec<_>>()
+                .try_into()
+                .unwrap()
         };
 
         // Use Gruen optimization to get cubic evaluations from quadratic coefficients
@@ -530,7 +567,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
         let D = &prover_state.D;
 
         // Compute quadratic coefficients
-        let quadratic_coeffs: [F; DEGREE - 1] = if D.E_in_current_len() == 1 {
+        let quadratic_coeffs = if D.E_in_current_len() == 1 {
             // E_in is fully bound
             (0..D.len() / 2)
                 .into_par_iter()
@@ -552,10 +589,13 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                         coeffs[1] += self.gamma_powers[i] * b.square(); // Quadratic coefficient of h^2 - h
                     }
 
-                    [D_eval * coeffs[0], D_eval * coeffs[1]]
+                    [
+                        D_eval.mul_unreduced::<9>(coeffs[0]),
+                        D_eval.mul_unreduced::<9>(coeffs[1]),
+                    ]
                 })
                 .reduce(
-                    || [F::zero(); DEGREE - 1],
+                    || [F::Unreduced::zero(); DEGREE - 1],
                     |running, new| [running[0] + new[0], running[1] + new[1]],
                 )
         } else {
@@ -593,27 +633,39 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                             }
 
                             // Inner D contribution
-                            [D_E_in_eval * coeffs[0], D_E_in_eval * coeffs[1]]
+                            [
+                                D_E_in_eval.mul_unreduced::<9>(coeffs[0]),
+                                D_E_in_eval.mul_unreduced::<9>(coeffs[1]),
+                            ]
                         })
                         .reduce(
-                            || [F::zero(); DEGREE - 1],
+                            || [F::Unreduced::zero(); DEGREE - 1],
                             |running, new| [running[0] + new[0], running[1] + new[1]],
                         );
 
                     // Outer D contribution
-                    [D_E_out_eval * chunk_evals[0], D_E_out_eval * chunk_evals[1]]
+                    [
+                        D_E_out_eval.mul_unreduced::<9>(F::from_montgomery_reduce(chunk_evals[0])),
+                        D_E_out_eval.mul_unreduced::<9>(F::from_montgomery_reduce(chunk_evals[1])),
+                    ]
                 })
                 .reduce(
-                    || [F::zero(); DEGREE - 1],
+                    || [F::Unreduced::zero(); DEGREE - 1],
                     |running, new| [running[0] + new[0], running[1] + new[1]],
                 )
         };
+
+        // Convert from Unreduced to F for the quadratic coefficients
+        let quadratic_coeffs_f: [F; DEGREE - 1] = [
+            F::from_montgomery_reduce(quadratic_coeffs[0]),
+            F::from_montgomery_reduce(quadratic_coeffs[1]),
+        ];
 
         // Adjust the previous claim by dividing out eq_r_r
         let adjusted_claim = previous_claim / prover_state.eq_r_r;
 
         let gruen_evals =
-            D.gruen_evals_deg_3(quadratic_coeffs[0], quadratic_coeffs[1], adjusted_claim);
+            D.gruen_evals_deg_3(quadratic_coeffs_f[0], quadratic_coeffs_f[1], adjusted_claim);
 
         vec![
             prover_state.eq_r_r * gruen_evals[0],

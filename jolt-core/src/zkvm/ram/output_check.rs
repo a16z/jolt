@@ -1,3 +1,4 @@
+use num_traits::Zero;
 use std::{cell::RefCell, rc::Rc};
 
 use crate::{
@@ -191,7 +192,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for OutputSumcheck<F> {
             ..
         } = self.prover_state.as_ref().unwrap();
 
-        let univariate_poly_evals: [F; DEGREE] = (0..eq_poly.len() / 2)
+        (0..eq_poly.len() / 2)
             .into_par_iter()
             .map(|k| {
                 let eq_evals = eq_poly.sumcheck_evals_array::<DEGREE>(k, BindingOrder::HighToLow);
@@ -202,13 +203,16 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for OutputSumcheck<F> {
                 let val_io_evals =
                     val_io.sumcheck_evals_array::<DEGREE>(k, BindingOrder::HighToLow);
                 [
-                    eq_evals[0] * io_mask_evals[0] * (val_final_evals[0] - val_io_evals[0]),
-                    eq_evals[1] * io_mask_evals[1] * (val_final_evals[1] - val_io_evals[1]),
-                    eq_evals[2] * io_mask_evals[2] * (val_final_evals[2] - val_io_evals[2]),
+                    (eq_evals[0] * io_mask_evals[0])
+                        .mul_unreduced::<9>(val_final_evals[0] - val_io_evals[0]),
+                    (eq_evals[1] * io_mask_evals[1])
+                        .mul_unreduced::<9>(val_final_evals[1] - val_io_evals[1]),
+                    (eq_evals[2] * io_mask_evals[2])
+                        .mul_unreduced::<9>(val_final_evals[2] - val_io_evals[2]),
                 ]
             })
             .reduce(
-                || [F::zero(); DEGREE],
+                || [F::Unreduced::zero(); DEGREE],
                 |running, new| {
                     [
                         running[0] + new[0],
@@ -216,9 +220,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for OutputSumcheck<F> {
                         running[2] + new[2],
                     ]
                 },
-            );
-
-        univariate_poly_evals.to_vec()
+            )
+            .into_iter()
+            .map(F::from_montgomery_reduce)
+            .collect()
     }
 
     #[tracing::instrument(skip_all, name = "OutputSumcheck::bind")]
@@ -551,19 +556,23 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ValFinalSumcheck<F>
 
         let ValFinalSumcheckProverState { inc, wa, .. } = self.prover_state.as_ref().unwrap();
 
-        let univariate_poly_evals: [F; DEGREE] = (0..inc.len() / 2)
+        (0..inc.len() / 2)
             .into_par_iter()
             .map(|j| {
                 let inc_evals = inc.sumcheck_evals_array::<DEGREE>(j, BindingOrder::HighToLow);
                 let wa_evals = wa.sumcheck_evals_array::<DEGREE>(j, BindingOrder::HighToLow);
-                [inc_evals[0] * wa_evals[0], inc_evals[1] * wa_evals[1]]
+                [
+                    inc_evals[0].mul_unreduced::<9>(wa_evals[0]),
+                    inc_evals[1].mul_unreduced::<9>(wa_evals[1]),
+                ]
             })
             .reduce(
-                || [F::zero(); DEGREE],
+                || [F::Unreduced::zero(); DEGREE],
                 |running, new| [running[0] + new[0], running[1] + new[1]],
-            );
-
-        univariate_poly_evals.to_vec()
+            )
+            .into_iter()
+            .map(F::from_montgomery_reduce)
+            .collect()
     }
 
     #[tracing::instrument(skip_all, name = "ValFinalSumcheck::bind")]

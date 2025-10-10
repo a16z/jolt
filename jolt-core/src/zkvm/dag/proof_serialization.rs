@@ -32,10 +32,10 @@ use crate::{
 
 pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> {
     opening_claims: Claims<F>,
-    commitments: Vec<PCS::Commitment>,
+    pub commitments: Vec<PCS::Commitment>,
+    pub proofs: Proofs<F, PCS, FS>,
     untrusted_advice_commitment: Option<PCS::Commitment>,
     trusted_advice_commitment: Option<PCS::Commitment>,
-    proofs: Proofs<F, PCS, FS>,
     pub trace_length: usize,
     ram_K: usize,
     bytecode_d: usize,
@@ -54,7 +54,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
         self.ram_K.serialize_with_mode(&mut writer, compress)?;
         self.bytecode_d.serialize_with_mode(&mut writer, compress)?;
         // ensure that all committed polys are set up before serializing proofs
-        let guard = AllCommittedPolynomials::initialize(self.ram_K, self.bytecode_d);
+        let _guard = AllCommittedPolynomials::initialize(self.ram_K, self.bytecode_d);
         self.opening_claims
             .serialize_with_mode(&mut writer, compress)?;
         self.commitments
@@ -68,8 +68,6 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
             .serialize_with_mode(&mut writer, compress)?;
         self.twist_sumcheck_switch_index
             .serialize_with_mode(&mut writer, compress)?;
-
-        drop(guard);
         Ok(())
     }
     fn serialized_size(&self, compress: Compress) -> usize {
@@ -113,7 +111,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
         let bytecode_d = usize::deserialize_with_mode(&mut reader, compress, validate)?;
 
         // ensure that all committed polys are set up before deserializing proofs
-        let guard = AllCommittedPolynomials::initialize(ram_K, bytecode_d);
+        let _guard = AllCommittedPolynomials::initialize(ram_K, bytecode_d);
         let opening_claims = Claims::deserialize_with_mode(&mut reader, compress, validate)?;
         let commitments =
             Vec::<PCS::Commitment>::deserialize_with_mode(&mut reader, compress, validate)?;
@@ -125,7 +123,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
         let trace_length = usize::deserialize_with_mode(&mut reader, compress, validate)?;
         let twist_sumcheck_switch_index =
             usize::deserialize_with_mode(&mut reader, compress, validate)?;
-        drop(guard);
+        // drop(guard);
 
         Ok(Self {
             opening_claims,

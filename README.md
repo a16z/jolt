@@ -107,7 +107,7 @@ To easily see CPU and memory usage in the trace, you can use `--features monitor
 ```bash
 cargo run --release --features monitor -p jolt-core profile --name sha3 --format chrome
 # Converts counter events into Perfetto counter tracks for easier visualization
-python3 scripts/postprocess_trace.py trace-*.json
+python3 scripts/postprocess_trace.py benchmark-runs/perfetto_traces/*.json
 ```
 
 You may also enable pprof for detailed CPU profiling:

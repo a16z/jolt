@@ -2,22 +2,24 @@ use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 use common::constants::XLEN;
+use num_traits::Zero;
 use rayon::prelude::*;
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, rc::Rc, sync::Arc};
 use tracer::instruction::Cycle;
 
 use super::{D, K_CHUNK, LOG_K_CHUNK};
 
 use crate::{
-    field::JoltField,
+    field::{JoltField, MulTrunc},
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
-        multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
+        multilinear_polynomial::{BindingOrder, PolynomialBinding},
         opening_proof::{
             OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator,
             BIG_ENDIAN,
         },
+        ra_poly::RaPolynomial,
         split_eq_poly::GruenSplitEqPolynomial,
     },
     subprotocols::sumcheck::SumcheckInstance,
@@ -40,8 +42,8 @@ struct BooleanityProverState<F: JoltField> {
     eq_r_address: GruenSplitEqPolynomial<F>,
     eq_r_cycle: GruenSplitEqPolynomial<F>,
     G: [Vec<F>; D],
-    H_indices: [Vec<usize>; D],
-    H: [MultilinearPolynomial<F>; D],
+    H_indices: [Vec<Option<u8>>; D],
+    H: [RaPolynomial<F>; D],
     F: Vec<F>,
     eq_r_r: F,
     /// First element of r_cycle_prime
@@ -124,12 +126,12 @@ impl<F: JoltField> BooleanityProverState<F> {
         let mut F: Vec<F> = unsafe_allocate_zero_vec(K_CHUNK);
         F[0] = F::one();
 
-        let H_indices: [Vec<usize>; D] = std::array::from_fn(|i| {
+        let H_indices: [Vec<Option<u8>>; D] = std::array::from_fn(|i| {
             trace
                 .par_iter()
                 .map(|cycle| {
                     let lookup_index = LookupQuery::<XLEN>::to_lookup_index(cycle);
-                    ((lookup_index >> (LOG_K_CHUNK * (D - 1 - i))) % K_CHUNK as u128) as usize
+                    Some(((lookup_index >> (LOG_K_CHUNK * (D - 1 - i))) % K_CHUNK as u128) as u8)
                 })
                 .collect()
         });
@@ -139,7 +141,7 @@ impl<F: JoltField> BooleanityProverState<F> {
             eq_r_cycle: GruenSplitEqPolynomial::new(r_cycle, BindingOrder::LowToHigh),
             G,
             H_indices,
-            H: std::array::from_fn(|_| MultilinearPolynomial::from(vec![F::zero()])),
+            H: std::array::from_fn(|_| RaPolynomial::None),
             F,
             eq_r_r: F::zero(),
             r_cycle_prime: None,
@@ -192,52 +194,21 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for BooleanitySumcheck<
                 });
             if round == LOG_K_CHUNK - 1 {
                 ps.eq_r_r = ps.eq_r_address.current_scalar;
+                let F = std::mem::take(&mut ps.F);
+                // Initialize H polynomials
+                ps.H.iter_mut()
+                    .zip(std::mem::take(&mut ps.H_indices))
+                    .for_each(|(poly, indices)| {
+                        *poly = RaPolynomial::new(Arc::new(indices), F.clone())
+                    });
+                let g: [Vec<F>; D] = std::array::from_fn(|i| std::mem::take(&mut ps.G[i]));
+                drop_in_background_thread(g);
             }
         } else {
             // Phase 2: Bind D and H
             ps.eq_r_cycle.bind(r_j);
-            // For the first two rounds we are using F to compute prover message to save space
-            // After second round we are constructing H from F
-            // See section 6.2.2 of Twist & Shout paper
-            if round == LOG_K_CHUNK {
-                ps.r_cycle_prime = Some(r_j);
-            } else if round == LOG_K_CHUNK + 1 {
-                // Initialize H from binding F
-                let h_indices = std::mem::take(&mut ps.H_indices);
-                let T_div_4 = h_indices[0].len() / 4;
-                let r_j_prev = ps.r_cycle_prime.unwrap();
-                ps.H = h_indices
-                    .iter()
-                    .map(|h_indices| {
-                        (0..T_div_4)
-                            .into_par_iter()
-                            .map(|j| {
-                                // H[i] = F[H_indices[2i]] + r_prev * (F[H_indices[2i+1]] - F[H_indices[2i]])
-                                let h_0 = ps.F[h_indices[4 * j]]
-                                    + r_j_prev
-                                        * (ps.F[h_indices[4 * j + 1]] - ps.F[h_indices[4 * j]]);
-                                let h_1 = ps.F[h_indices[4 * j + 2]]
-                                    + r_j_prev
-                                        * (ps.F[h_indices[4 * j + 3]] - ps.F[h_indices[4 * j + 2]]);
-                                h_0 + r_j * (h_1 - h_0)
-                            })
-                            .collect::<Vec<F>>()
-                            .into()
-                    })
-                    .collect::<Vec<_>>()
-                    .try_into()
-                    .unwrap();
-                // Drop G arrays, F array, and remaining H_indices as they're no longer needed in phase 2
-                // Replace G with empty vectors
-                drop_in_background_thread(h_indices);
-                let f = std::mem::take(&mut ps.F);
-                drop_in_background_thread(f);
-                let g: [Vec<F>; D] = std::array::from_fn(|i| std::mem::take(&mut ps.G[i]));
-                drop_in_background_thread(g);
-            } else {
-                ps.H.par_iter_mut()
-                    .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh));
-            }
+            ps.H.par_iter_mut()
+                .for_each(|poly| poly.bind(r_j, BindingOrder::LowToHigh));
         }
     }
 
@@ -376,17 +347,31 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                             };
                             [eval_0, eval_infty]
                         })
+                        .fold_with([F::Unreduced::<5>::zero(); DEGREE - 1], |running, new| {
+                            [
+                                running[0] + new[0].as_unreduced_ref(),
+                                running[1] + new[1].as_unreduced_ref(),
+                            ]
+                        })
                         .reduce(
-                            || [F::zero(); DEGREE - 1],
+                            || [F::Unreduced::zero(); DEGREE - 1],
                             |running, new| [running[0] + new[0], running[1] + new[1]],
                         );
 
-                    [B_eval * inner_sum[0], B_eval * inner_sum[1]]
+                    [
+                        inner_sum[0].mul_trunc::<4, 9>(B_eval.as_unreduced_ref()),
+                        inner_sum[1].mul_trunc::<4, 9>(B_eval.as_unreduced_ref()),
+                    ]
                 })
                 .reduce(
-                    || [F::zero(); DEGREE - 1],
+                    || [F::Unreduced::zero(); DEGREE - 1],
                     |running, new| [running[0] + new[0], running[1] + new[1]],
                 )
+                .into_iter()
+                .map(F::from_montgomery_reduce)
+                .collect::<Vec<_>>()
+                .try_into()
+                .unwrap()
         } else {
             // E_in has not been fully bound
             let num_x_in_bits = B.E_in_current_len().log_2();
@@ -428,24 +413,44 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                                     };
                                     [eval_0, eval_infty]
                                 })
+                                .fold_with(
+                                    [F::Unreduced::<5>::zero(); DEGREE - 1],
+                                    |running, new| {
+                                        [
+                                            running[0] + new[0].as_unreduced_ref(),
+                                            running[1] + new[1].as_unreduced_ref(),
+                                        ]
+                                    },
+                                )
                                 .reduce(
-                                    || [F::zero(); DEGREE - 1],
+                                    || [F::Unreduced::zero(); DEGREE - 1],
                                     |running, new| [running[0] + new[0], running[1] + new[1]],
                                 );
 
-                            [B_E_in_eval * inner_sum[0], B_E_in_eval * inner_sum[1]]
+                            [
+                                inner_sum[0].mul_trunc::<4, 9>(B_E_in_eval.as_unreduced_ref()),
+                                inner_sum[1].mul_trunc::<4, 9>(B_E_in_eval.as_unreduced_ref()),
+                            ]
                         })
                         .reduce(
-                            || [F::zero(); DEGREE - 1],
+                            || [F::Unreduced::zero(); DEGREE - 1],
                             |running, new| [running[0] + new[0], running[1] + new[1]],
                         );
 
-                    [B_E_out_eval * chunk_evals[0], B_E_out_eval * chunk_evals[1]]
+                    [
+                        B_E_out_eval.mul_unreduced::<9>(F::from_montgomery_reduce(chunk_evals[0])),
+                        B_E_out_eval.mul_unreduced::<9>(F::from_montgomery_reduce(chunk_evals[1])),
+                    ]
                 })
                 .reduce(
-                    || [F::zero(); DEGREE - 1],
+                    || [F::Unreduced::zero(); DEGREE - 1],
                     |running, new| [running[0] + new[0], running[1] + new[1]],
                 )
+                .into_iter()
+                .map(F::from_montgomery_reduce)
+                .collect::<Vec<_>>()
+                .try_into()
+                .unwrap()
         };
 
         // Use Gruen optimization to get cubic evaluations from quadratic coefficients
@@ -453,70 +458,39 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             .to_vec()
     }
 
-    fn compute_phase2_message(&self, round: usize, previous_claim: F) -> Vec<F> {
+    fn compute_phase2_message(&self, _round: usize, previous_claim: F) -> Vec<F> {
         let p = self.prover_state.as_ref().unwrap();
         let D_poly = &p.eq_r_cycle;
-        let ra_evals = |j: usize| -> [F; 2] {
-            if round == LOG_K_CHUNK {
-                p.H_indices
-                    .iter()
-                    .zip(self.gamma.iter())
-                    .map(|(h_indices, gamma)| {
-                        let h_0 = p.F[h_indices[2 * j]];
-                        let h_1 = p.F[h_indices[2 * j + 1]];
-                        let b = h_1 - h_0;
-                        [(h_0.square() - h_0) * gamma, b.square() * gamma]
-                    })
-                    .fold([F::zero(); 2], |running, new| {
-                        [running[0] + new[0], running[1] + new[1]]
-                    })
-            } else if round == LOG_K_CHUNK + 1 {
-                let r_j_prev = p.r_cycle_prime.unwrap();
-                p.H_indices
-                    .iter()
-                    .zip(self.gamma.iter())
-                    .map(|(h_indices, gamma)| {
-                        // H[i] = F[H_indices[2i]] + r_prev * (F[H_indices[2i+1]] - F[H_indices[2i]])
-                        let h_0 = p.F[h_indices[4 * j]]
-                            + r_j_prev * (p.F[h_indices[4 * j + 1]] - p.F[h_indices[4 * j]]);
-                        let h_1 = p.F[h_indices[4 * j + 2]]
-                            + r_j_prev * (p.F[h_indices[4 * j + 3]] - p.F[h_indices[4 * j + 2]]);
-                        let b = h_1 - h_0;
-                        [(h_0.square() - h_0) * gamma, b.square() * gamma]
-                    })
-                    .fold([F::zero(); 2], |running, new| {
-                        [running[0] + new[0], running[1] + new[1]]
-                    })
-            } else {
-                p.H.iter()
-                    .zip(self.gamma.iter())
-                    .map(|(h, gamma)| {
-                        let h_0 = h.get_bound_coeff(2 * j);
-                        let h_1 = h.get_bound_coeff(2 * j + 1);
-                        // Linear coefficient of h
-                        let b = h_1 - h_0;
-                        // For c = 0: h(0)^2 - h(0)
-                        // For quadratic coefficient: b^2 where b = h(1) - h(0) is the linear coefficient
-                        [(h_0.square() - h_0) * gamma, b.square() * gamma]
-                    })
-                    .fold([F::zero(); 2], |running, new| {
-                        [running[0] + new[0], running[1] + new[1]]
-                    })
-            }
-        };
 
-        let quadratic_coeffs: [F; DEGREE - 1] = if D_poly.E_in_current_len() == 1 {
+        let quadratic_coeffs = if D_poly.E_in_current_len() == 1 {
             // E_in is fully bound
             (0..D_poly.len() / 2)
                 .into_par_iter()
                 .map(|j_prime| {
                     let D_eval = D_poly.E_out_current()[j_prime];
-                    let coeffs = ra_evals(j_prime);
+                    let coeffs =
+                        p.H.iter()
+                            .zip(self.gamma.iter())
+                            .map(|(h, gamma)| {
+                                let h_0 = h.get_bound_coeff(2 * j_prime);
+                                let h_1 = h.get_bound_coeff(2 * j_prime + 1);
+                                // Linear coefficient of h
+                                let b = h_1 - h_0;
+                                // For c = 0: h(0)^2 - h(0)
+                                // For quadratic coefficient: b^2 where b = h(1) - h(0) is the linear coefficient
+                                [(h_0.square() - h_0) * gamma, b.square() * gamma]
+                            })
+                            .fold([F::zero(); 2], |running, new: [F; 2]| {
+                                [running[0] + new[0], running[1] + new[1]]
+                            });
 
-                    [D_eval * coeffs[0], D_eval * coeffs[1]]
+                    [
+                        D_eval.mul_unreduced::<9>(coeffs[0]),
+                        D_eval.mul_unreduced::<9>(coeffs[1]),
+                    ]
                 })
                 .reduce(
-                    || [F::zero(); DEGREE - 1],
+                    || [F::Unreduced::zero(); DEGREE - 1],
                     |running, new| [running[0] + new[0], running[1] + new[1]],
                 )
         } else {
@@ -537,28 +511,54 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                         .map(|j_prime| {
                             let x_in = j_prime & x_bitmask;
                             let D_E_in_eval = D_poly.E_in_current()[x_in];
-                            let coeffs = ra_evals(*j_prime);
+                            let coeffs =
+                                p.H.iter()
+                                    .zip(self.gamma.iter())
+                                    .map(|(h, gamma)| {
+                                        let h_0 = h.get_bound_coeff(2 * j_prime);
+                                        let h_1 = h.get_bound_coeff(2 * j_prime + 1);
+                                        // Linear coefficient of h
+                                        let b = h_1 - h_0;
+                                        // For c = 0: h(0)^2 - h(0)
+                                        // For quadratic coefficient: b^2 where b = h(1) - h(0) is the linear coefficient
+                                        [(h_0.square() - h_0) * gamma, b.square() * gamma]
+                                    })
+                                    .fold([F::zero(); 2], |running, new: [F; 2]| {
+                                        [running[0] + new[0], running[1] + new[1]]
+                                    });
 
-                            [D_E_in_eval * coeffs[0], D_E_in_eval * coeffs[1]]
+                            [
+                                D_E_in_eval.mul_unreduced::<9>(coeffs[0]),
+                                D_E_in_eval.mul_unreduced::<9>(coeffs[1]),
+                            ]
                         })
                         .reduce(
-                            || [F::zero(); DEGREE - 1],
+                            || [F::Unreduced::zero(); DEGREE - 1],
                             |running, new| [running[0] + new[0], running[1] + new[1]],
                         );
 
-                    [D_E_out_eval * chunk_evals[0], D_E_out_eval * chunk_evals[1]]
+                    [
+                        D_E_out_eval.mul_unreduced::<9>(F::from_montgomery_reduce(chunk_evals[0])),
+                        D_E_out_eval.mul_unreduced::<9>(F::from_montgomery_reduce(chunk_evals[1])),
+                    ]
                 })
                 .reduce(
-                    || [F::zero(); DEGREE - 1],
+                    || [F::Unreduced::zero(); DEGREE - 1],
                     |running, new| [running[0] + new[0], running[1] + new[1]],
                 )
         };
+
+        // Convert from Unreduced to F for the quadratic coefficients
+        let quadratic_coeffs_f: [F; DEGREE - 1] = [
+            F::from_montgomery_reduce(quadratic_coeffs[0]),
+            F::from_montgomery_reduce(quadratic_coeffs[1]),
+        ];
 
         // Adjust the previous claim by dividing out eq_r_r
         let adjusted_claim = previous_claim / p.eq_r_r;
 
         let gruen_evals =
-            D_poly.gruen_evals_deg_3(quadratic_coeffs[0], quadratic_coeffs[1], adjusted_claim);
+            D_poly.gruen_evals_deg_3(quadratic_coeffs_f[0], quadratic_coeffs_f[1], adjusted_claim);
         vec![
             p.eq_r_r * gruen_evals[0],
             p.eq_r_r * gruen_evals[1],

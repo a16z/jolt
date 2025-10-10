@@ -30,7 +30,6 @@ pub type PrefixCheckpoints<F> = [Option<F>; Prefix::COUNT];
 #[derive(Default, Allocative)]
 pub struct PrefixRegistry<F: JoltField> {
     pub checkpoints: PrefixCheckpoints<F>,
-    #[allocative(skip)]
     pub polys: [Option<Arc<RwLock<CachedPolynomial<F>>>>; Prefix::COUNT],
 }
 
@@ -77,8 +76,10 @@ impl<T> IndexMut<Prefix> for [T; Prefix::COUNT] {
     }
 }
 
+#[derive(Allocative)]
 pub struct CachedPolynomial<F: JoltField> {
     pub inner: MultilinearPolynomial<F>,
+    #[allocative(skip)]
     pub sumcheck_evals_cache: Vec<OnceCell<(F, F)>>,
     pub bound_this_round: bool,
 }

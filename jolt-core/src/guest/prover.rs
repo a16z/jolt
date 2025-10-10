@@ -44,7 +44,7 @@ where
     FS: Transcript,
     JoltRV64IMAC: Jolt<F, PCS, FS>,
 {
-    let (proof, io_device, debug_info) = JoltRV64IMAC::prove(
+    let (proof, io_device, debug_info, _) = JoltRV64IMAC::prove(
         preprocessing,
         &guest.elf_contents,
         inputs_bytes,

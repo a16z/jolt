@@ -2,6 +2,7 @@ use super::{FieldOps, FmaddTrunc, JoltField, MulU64WithCarry};
 #[cfg(feature = "challenge-254-bit")]
 use crate::field::challenge::Mont254BitChallenge;
 use crate::field::challenge::MontU128Challenge;
+use crate::field::MulTrunc;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use ark_ff::{prelude::*, BigInt, PrimeField, UniformRand};
 use rayon::prelude::*;
@@ -273,6 +274,15 @@ impl<const N: usize> FmaddTrunc for BigInt<N> {
         acc: &mut Self::Acc<P>,
     ) {
         self.fmadd_trunc(other, acc)
+    }
+}
+
+impl<const N: usize> MulTrunc for BigInt<N> {
+    type Other<const M: usize> = BigInt<M>;
+    type Output<const P: usize> = BigInt<P>;
+
+    fn mul_trunc<const M: usize, const P: usize>(&self, other: &Self::Other<M>) -> Self::Output<P> {
+        self.mul_trunc(other)
     }
 }
 

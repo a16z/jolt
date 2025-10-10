@@ -2,6 +2,7 @@ use std::{
     fs::File,
     io::{Read, Write},
     path::Path,
+    time::{Duration, Instant},
 };
 
 #[cfg(test)]
@@ -23,7 +24,6 @@ use crate::{
 use ark_bn254::Fr;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::jolt_device::MemoryLayout;
-use std::time::Instant;
 use tracer::{instruction::Instruction, JoltDevice};
 
 pub mod bytecode;
@@ -266,6 +266,7 @@ where
         JoltProof<F, PCS, FS>,
         JoltDevice,
         Option<ProverDebugInfo<F, FS, PCS>>,
+        Duration,
     ) {
         use crate::{guest, zkvm::dag::state_manager::StateManager};
         use common::jolt_device::MemoryConfig;
@@ -329,7 +330,7 @@ where
                 .map_or(0, |pos| pos + 1),
         );
 
-        let (proof, debug_info) = {
+        let (proof, debug_info, prove_duration) = {
             let _pprof_prove = pprof_scope!("prove");
             let start = Instant::now();
             let state_manager = StateManager::new_prover(
@@ -346,10 +347,10 @@ where
                 prove_duration.as_secs_f64(),
                 trace_length as f64 / prove_duration.as_secs_f64() / 1000.0
             );
-            (proof, debug_info)
+            (proof, debug_info, prove_duration)
         };
 
-        (proof, program_io, debug_info)
+        (proof, program_io, debug_info, prove_duration)
     }
 
     #[tracing::instrument(skip_all, name = "Jolt::verify")]
@@ -499,7 +500,7 @@ mod tests {
         );
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-        let (jolt_proof, io_device, debug_info) =
+        let (jolt_proof, io_device, debug_info, _) =
             JoltRV64IMACMockPCS::prove(&preprocessing, elf_contents, &inputs, &[], &[], None);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
@@ -533,7 +534,7 @@ mod tests {
         );
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-        let (jolt_proof, io_device, debug_info) =
+        let (jolt_proof, io_device, debug_info, _) =
             JoltRV64IMAC::prove(&preprocessing, elf_contents, &inputs, &[], &[], None);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
@@ -573,7 +574,7 @@ mod tests {
         );
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-        let (jolt_proof, io_device, debug_info) =
+        let (jolt_proof, io_device, debug_info, _) =
             JoltRV64IMAC::prove(&preprocessing, elf_contents, &inputs, &[], &[], None);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
@@ -623,7 +624,7 @@ mod tests {
         );
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-        let (jolt_proof, io_device, debug_info) =
+        let (jolt_proof, io_device, debug_info, _) =
             JoltRV64IMAC::prove(&preprocessing, elf_contents, &inputs, &[], &[], None);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
@@ -666,7 +667,7 @@ mod tests {
         );
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-        let (jolt_proof, io_device, debug_info) =
+        let (jolt_proof, io_device, debug_info, _) =
             JoltRV64IMAC::prove(&preprocessing, elf_contents, &[], &[], &[], None);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
@@ -700,7 +701,7 @@ mod tests {
         );
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-        let (jolt_proof, io_device, debug_info) =
+        let (jolt_proof, io_device, debug_info, _) =
             JoltRV64IMAC::prove(&preprocessing, elf_contents, &inputs, &[], &[], None);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
@@ -734,7 +735,7 @@ mod tests {
         );
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-        let (jolt_proof, io_device, debug_info) =
+        let (jolt_proof, io_device, debug_info, _) =
             JoltRV64IMAC::prove(&preprocessing, elf_contents, &[50], &[], &[], None);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
