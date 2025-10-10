@@ -298,11 +298,10 @@ impl JoltDAG {
         if !state_manager.program_io.untrusted_advice.is_empty()
             || !state_manager.program_io.trusted_advice.is_empty()
         {
-            // Todo(omid): Remove transcript clone
             let proof = Self::batch_proof_advice(
                 &mut state_manager,
                 &preprocessing.generators,
-                transcript.borrow().clone(),
+                &mut *transcript.borrow_mut(),
             );
             state_manager.proofs.borrow_mut().insert(
                 ProofKeys::BatchedAdviceProof,
@@ -498,11 +497,10 @@ impl JoltDAG {
         if state_manager.untrusted_advice_commitment.is_some()
             || state_manager.trusted_advice_commitment.is_some()
         {
-            // Todo(omid): Remove transcript clone
             Self::batch_verify_advice(
                 &state_manager,
                 &preprocessing.generators,
-                transcript.borrow().clone(),
+                &mut *transcript.borrow_mut(),
             )
             .context("Stage 5")?;
         }
@@ -661,7 +659,7 @@ impl JoltDAG {
     >(
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         generators: &PCS::ProverSetup,
-        mut transcript: ProofTranscript,
+        transcript: &mut ProofTranscript,
     ) -> PCS::Proof {
         let prover_state = state_manager.prover_state.as_ref().unwrap();
         let untrusted_advice_poly = prover_state.untrusted_advice_polynomial.as_ref();
@@ -693,17 +691,17 @@ impl JoltDAG {
                     ),
                 );
 
-                PCS::prove_without_hint(generators, &combined_poly, &point.r, &mut transcript)
+                PCS::prove_without_hint(generators, &combined_poly, &point.r, transcript)
             }
             (Some(untrusted), None) => {
                 let accumulator = state_manager.get_prover_accumulator();
                 let (point, _) = accumulator.borrow().get_untrusted_advice_opening().unwrap();
-                PCS::prove_without_hint(generators, untrusted, &point.r, &mut transcript)
+                PCS::prove_without_hint(generators, untrusted, &point.r, transcript)
             }
             (None, Some(trusted)) => {
                 let accumulator = state_manager.get_prover_accumulator();
                 let (point, _) = accumulator.borrow().get_trusted_advice_opening().unwrap();
-                PCS::prove_without_hint(generators, trusted, &point.r, &mut transcript)
+                PCS::prove_without_hint(generators, trusted, &point.r, transcript)
             }
             (None, None) => {
                 panic!("batch_proof_advice called with no advice polynomials")
@@ -718,7 +716,7 @@ impl JoltDAG {
     >(
         state_manager: &StateManager<'_, F, ProofTranscript, PCS>,
         verifier_setup: &PCS::VerifierSetup,
-        mut transcript: ProofTranscript,
+        transcript: &mut ProofTranscript,
     ) -> Result<(), anyhow::Error> {
         let untrusted_advice_commitment = state_manager.untrusted_advice_commitment.as_ref();
         let trusted_advice_commitment = state_manager.trusted_advice_commitment.as_ref();
@@ -752,7 +750,7 @@ impl JoltDAG {
                 PCS::verify(
                     &proof,
                     verifier_setup,
-                    &mut transcript,
+                    transcript,
                     &untrusted_point.r,
                     &combined_eval,
                     &combined_commitment,
@@ -777,7 +775,7 @@ impl JoltDAG {
                 PCS::verify(
                     &proof,
                     verifier_setup,
-                    &mut transcript,
+                    transcript,
                     &point.r,
                     &eval,
                     untrusted_comm,
@@ -802,7 +800,7 @@ impl JoltDAG {
                 PCS::verify(
                     &proof,
                     verifier_setup,
-                    &mut transcript,
+                    transcript,
                     &point.r,
                     &eval,
                     trusted_comm,
