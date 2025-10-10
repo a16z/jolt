@@ -60,7 +60,7 @@ fn benchmark_dory_mixed_batch(c: &mut Criterion, name: &str, k: usize, t: usize)
     let polys = (0..num_polys)
         .map(|_| {
             let one_hot = rng.gen_ratio(4, 5);
-            return if one_hot {
+            if one_hot {
                 let mut one_hot_coeffs = vec![0u64; t];
                 let one_idx: usize = rng.gen_range(0..t);
                 one_hot_coeffs[one_idx] = 1;
@@ -68,7 +68,7 @@ fn benchmark_dory_mixed_batch(c: &mut Criterion, name: &str, k: usize, t: usize)
             } else {
                 let coeffs: Vec<u64> = (0..t).map(|_| rng.next_u64()).collect();
                 MultilinearPolynomial::from(coeffs)
-            };
+            }
         })
         .collect::<Vec<_>>();
 
