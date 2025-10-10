@@ -371,22 +371,58 @@ where
                 );
                 let (r_address, _) = r.split_at(state_manager.ram_K.log_2());
 
-                let advice_size = state_manager.program_io.memory_layout.max_trusted_advice_size + state_manager.program_io.memory_layout.max_untrusted_advice_size;
-                println!("num variables for advice: {}", advice_size);
+                let memory_variables = state_manager.ram_K.log_2();
+                let untrusted_advice_variables = (state_manager.program_io.memory_layout.max_untrusted_advice_size as usize / 8).next_power_of_two().log_2();
+                let selector_variables = memory_variables - untrusted_advice_variables;
+                
+                println!("Debug: memory_variables = {}", memory_variables);
+                println!("Debug: untrusted_advice_variables = {}", untrusted_advice_variables);
+                println!("Debug: selector_variables = {}", selector_variables);
+                println!("Debug: untrusted_advice_start address = 0x{:x}", state_manager.program_io.memory_layout.untrusted_advice_start);
+                
+                let index_opt = remap_address(
+                    state_manager.program_io.memory_layout.untrusted_advice_start,
+                    &state_manager.program_io.memory_layout,
+                );
+                
+                // Handle the Option<u64> from remap_address
+                if let Some(index) = index_opt {
+                    println!("Debug: index (decimal) = {}", index);
+                    println!("Debug: index (binary) = {:0width$b}", index, width = memory_variables);
+                    
+                    // Extract the selector bits (MSBs) from the index
+                    // Right shift by untrusted_advice_variables to get the selector_variables MSBs
+                    let selector_bits = index >> untrusted_advice_variables;
+                    println!("Debug: selector_bits (decimal) = {}", selector_bits);
+                    println!("Debug: selector_bits (binary) = {:0width$b}", selector_bits, width = selector_variables);
+                    
+                    // Optional: Create a binary representation for visualization/debugging
+                    // This creates a vector of bits with memory_variables length
+                    let index_binary: Vec<bool> = (0..memory_variables)
+                        .rev()
+                        .map(|i| (index >> i) & 1 == 1)
+                        .collect();
+                    
+                    // Extract just the selector_variables MSBs as a slice
+                    let selector_msb_bits = &index_binary[0..selector_variables as usize];
+                    
+                    println!("Debug: index_binary (full) = {:?}", index_binary);
+                    println!("Debug: selector_msb_bits (MSBs) = {:?}", selector_msb_bits);
+                } else {
+                    println!("Debug: remap_address returned None for untrusted_advice_start");
+                }
 
                 let untrusted_advice_vars = untrusted_advice_poly.get_num_vars();
                 let total_vars = r_address.r.len();
-                println!("total vars: {}", r_address.r.len());
-                println!("untrusted_advice vars: {}", untrusted_advice_poly.get_num_vars());
 
                 // Use the last number_of_vals elements for evaluation
                 let eval = untrusted_advice_poly
-                    .evaluate(&r_address.r[total_vars - untrusted_advice_vars..]);
+                    .evaluate(&r_address.r[memory_variables - untrusted_advice_variables..]);
 
                 // Only pass the portion of r_address that was used for evaluation
                 let mut untrusted_advice_point = r_address.clone();
                 untrusted_advice_point.r =
-                    r_address.r[total_vars - untrusted_advice_vars..].to_vec();
+                    r_address.r[memory_variables - untrusted_advice_variables..].to_vec();
 
                 prover_state
                     .accumulator
@@ -453,12 +489,12 @@ where
                 let (r_address, _) = r.split_at(state_manager.ram_K.log_2());
 
                 let untrusted_advice_vars = verifier_state.untrusted_advice_num_vars.unwrap();
-                println!("stage3_verifier: untrusted_advice_vars: {}", untrusted_advice_vars);
                 let total_vars = r_address.r.len();
+                let untrusted_advice_variables = (state_manager.program_io.memory_layout.max_untrusted_advice_size as usize / 8).next_power_of_two().log_2();
 
                 let mut untrusted_advice_point = r_address.clone();
                 untrusted_advice_point.r =
-                    r_address.r[total_vars - untrusted_advice_vars..].to_vec();
+                    r_address.r[total_vars - untrusted_advice_variables..].to_vec();
 
                 verifier_state
                     .accumulator
