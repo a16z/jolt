@@ -4,8 +4,9 @@ use strum::IntoEnumIterator as _;
 use crate::{
     modules::{AsModule, Module},
     util::{indent, ZkLeanReprField},
-    MleAst,
+    DefaultMleAst,
 };
+
 
 /// Wrapper around a JoltInstruction
 // TODO: Can we tie the WORD_SIZE to the JoltParameterSet somehow? Seem hard w/o const generic
@@ -39,20 +40,7 @@ impl<const WORD_SIZE: usize> ZkLeanLookupTable<WORD_SIZE> {
     }
 
     pub fn iter() -> impl Iterator<Item = Self> {
-        LookupTables::<WORD_SIZE>::iter().filter_map(|lt| match lt {
-            // XXX Temporarily disabled. Too many nodes.
-            // See https://gitlab-ext.galois.com/jb4/jolt-fork/-/issues/14
-            LookupTables::SignedGreaterThanEqual(_) => None,
-            LookupTables::UnsignedGreaterThanEqual(_) => None,
-            LookupTables::SignedLessThan(_) => None,
-            LookupTables::UnsignedLessThan(_) => None,
-            LookupTables::LessThanEqual(_) => None,
-            LookupTables::ValidSignedRemainder(_) => None,
-            LookupTables::ValidUnsignedRemainder(_) => None,
-            LookupTables::Equal(_) => None,
-            LookupTables::NotEqual(_) => None,
-            _ => Some(lt.into()),
-        })
+        LookupTables::<WORD_SIZE>::iter().map(Self::from)
     }
 
     /// Pretty print an instruction as a ZkLean `ComposedLookupTable`.
@@ -96,7 +84,7 @@ impl<const WORD_SIZE: usize> ZkLeanLookupTables<WORD_SIZE> {
         indent_level: usize,
     ) -> std::io::Result<()> {
         for instruction in &self.instructions {
-            instruction.zklean_pretty_print::<MleAst<5400>>(f, indent_level)?;
+            instruction.zklean_pretty_print::<DefaultMleAst>(f, indent_level)?;
         }
         Ok(())
     }
@@ -129,7 +117,7 @@ mod test {
     use proptest::{collection::vec, prelude::*};
 
     type RefField = ark_bn254::Fr;
-    type TestField = crate::mle_ast::MleAst<5400>;
+    type TestField = crate::mle_ast::DefaultMleAst;
 
     const WORD_SIZE: usize = 32;
 
