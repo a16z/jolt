@@ -17,7 +17,7 @@ pub fn main() {
     let second_input = [6u8; 32];
     let third_input = [7u8; 32];
 
-    // TODO(Omid): Dory setup parameters are trace-length dependent. 
+    // TODO(Omid): Dory setup parameters are trace-length dependent.
     // The following requires a separate setup instance.
     // let (trusted_advice_commitment, _hint) = guest::commit_trusted_advice_merkle_tree(
     //     TrustedAdvice::new(second_input),
