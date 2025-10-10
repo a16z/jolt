@@ -938,7 +938,7 @@ dependencies = [
 [[package]]
 name = "dory"
 version = "1.0.0"
-source = "git+https://github.com/markosg04/dory?branch=dev%2Ftwist-shout#c047854b447a8bddb4a7c279849b31d364aeef98"
+source = "git+https://github.com/markosg04/dory?branch=dev%2Ftwist-shout#c6dff3f5819ad59287f705dfabf141af6fbba393"
 dependencies = [
  "ark-bn254",
  "ark-ec",

@@ -499,7 +499,7 @@ impl<F: JoltField> OneHotPolynomial<F> {
                 let mut indices_per_k: Vec<Vec<usize>> = vec![Vec::new(); work.K];
                 for (col_index, k) in chunk.iter().enumerate() {
                     if let Some(k) = k {
-                        indices_per_k[*k].push(col_index);
+                        indices_per_k[*k as usize].push(col_index);
                     }
                 }
 
@@ -528,7 +528,7 @@ impl<F: JoltField> OneHotPolynomial<F> {
         // Phase 3: Reassemble results by polynomial
         let mut poly_results: Vec<Vec<JoltGroupWrapper<G>>> = one_hot_polys
             .iter()
-            .map(|poly| vec![JoltGroupWrapper(G::zero()); poly.borrow().num_rows()])
+            .map(|poly| vec![JoltGroupWrapper(G::zero()); DoryGlobals::get_num_rows()])
             .collect();
 
         // Group results by polynomial
@@ -543,7 +543,7 @@ impl<F: JoltField> OneHotPolynomial<F> {
             .enumerate()
             .for_each(|(poly_idx, result)| {
                 let poly = &one_hot_polys[poly_idx];
-                let num_rows = poly.borrow().num_rows();
+                let num_rows = DoryGlobals::get_num_rows();
 
                 for (chunk_idx, commitments) in &results_by_poly[poly_idx] {
                     // Scatter this chunk's results into the output

@@ -604,7 +604,7 @@ impl JoltDAG {
         .context("Stage 6")?;
 
         // Batch-prove all openings (Stage 7)
-`        let batched_opening_proof = proofs
+        let batched_opening_proof = proofs
             .get(&ProofKeys::ReducedOpeningProof)
             .expect("Reduced opening proof not found");
         let batched_opening_proof = match batched_opening_proof {
