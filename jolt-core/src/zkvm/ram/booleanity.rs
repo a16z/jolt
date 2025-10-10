@@ -3,18 +3,19 @@ use allocative::Allocative;
 use allocative::FlameGraphBuilder;
 use num_traits::Zero;
 use rayon::prelude::*;
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 use crate::{
     field::JoltField,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
-        multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
+        multilinear_polynomial::{BindingOrder, PolynomialBinding},
         opening_proof::{
             OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator,
             BIG_ENDIAN,
         },
+        ra_poly::RaPolynomial,
         split_eq_poly::GruenSplitEqPolynomial,
     },
     subprotocols::sumcheck::SumcheckInstance,
@@ -41,7 +42,7 @@ struct BooleanityProverState<F: JoltField> {
     /// eq(r_cycle, j) - using Gruen optimization
     D: GruenSplitEqPolynomial<F>,
     /// ra(r'_address, j)
-    H: Vec<MultilinearPolynomial<F>>,
+    H: Vec<RaPolynomial<u8, F>>,
     /// eq(r_address, r'_address)
     eq_r_r: F,
 }
@@ -230,17 +231,17 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for BooleanitySumcheck<
 
     #[tracing::instrument(skip_all, name = "RamBooleanitySumcheck::bind")]
     fn bind(&mut self, r_j: F::Challenge, round: usize) {
-        let prover_state = self
+        let ps = self
             .prover_state
             .as_mut()
             .expect("Prover state not initialized");
 
         if round < DTH_ROOT_OF_K.log_2() {
             // Phase 1: Bind B and update F
-            prover_state.B.bind(r_j);
+            ps.B.bind(r_j);
 
             // Update F for this round (see Equation 55)
-            let (F_left, F_right) = prover_state.F.split_at_mut(1 << round);
+            let (F_left, F_right) = ps.F.split_at_mut(1 << round);
             F_left
                 .par_iter_mut()
                 .zip(F_right.par_iter_mut())
@@ -251,7 +252,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for BooleanitySumcheck<
 
             // If transitioning to phase 2, prepare H polynomials
             if round == DTH_ROOT_OF_K.log_2() - 1 {
-                prover_state.eq_r_r = prover_state.B.current_scalar;
+                ps.eq_r_r = ps.B.current_scalar;
 
                 // Compute H polynomials for each decomposed part
                 let addresses = &self.addresses;
@@ -259,28 +260,27 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for BooleanitySumcheck<
                 let mut H_polys = Vec::with_capacity(self.d);
 
                 for i in 0..self.d {
-                    let H_vec: Vec<F> = addresses
+                    let H_indices: Vec<Option<u8>> = addresses
                         .par_iter()
                         .map(|address_opt| {
-                            address_opt.map_or(F::zero(), |address| {
-                                // Get i-th address chunk
+                            address_opt.map(|address| {
                                 let address_i = (address
                                     >> (DTH_ROOT_OF_K.log_2() * (self.d - 1 - i)))
                                     % DTH_ROOT_OF_K as u64;
-                                prover_state.F[address_i as usize]
+                                address_i as u8
                             })
                         })
                         .collect();
-                    H_polys.push(MultilinearPolynomial::from(H_vec));
+                    H_polys.push(RaPolynomial::new(Arc::new(H_indices), ps.F.clone()));
                 }
 
-                prover_state.H = H_polys;
+                ps.H = H_polys;
 
                 // Drop G arrays and F array as they're no longer needed in phase 2
-                let g = std::mem::take(&mut prover_state.G);
+                let g = std::mem::take(&mut ps.G);
                 drop_in_background_thread(g);
 
-                let f = std::mem::take(&mut prover_state.F);
+                let f = std::mem::take(&mut ps.F);
                 drop_in_background_thread(f);
 
                 // Drop addresses as it's no longer needed in phase 2
@@ -291,11 +291,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for BooleanitySumcheck<
             // Phase 2: Bind D and all H polynomials
 
             // Bind D and all H polynomials
-            prover_state.D.bind(r_j);
-            prover_state
-                .H
-                .par_iter_mut()
-                .for_each(|h_poly| h_poly.bind_parallel(r_j, BindingOrder::LowToHigh));
+            ps.D.bind(r_j);
+            ps.H.par_iter_mut()
+                .for_each(|h| h.bind_parallel(r_j, BindingOrder::LowToHigh));
         }
 
         self.current_round += 1;

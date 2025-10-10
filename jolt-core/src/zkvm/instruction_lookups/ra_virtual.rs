@@ -35,7 +35,7 @@ pub struct RaSumcheck<F: JoltField> {
 
 #[derive(Allocative)]
 pub struct RaProverState<F: JoltField> {
-    ra_i_polys: Vec<RaPolynomial<F>>,
+    ra_i_polys: Vec<RaPolynomial<u8, F>>,
     /// Challenges drawn throughout  the sumcheck.
     r_sumcheck: Vec<F::Challenge>,
 }

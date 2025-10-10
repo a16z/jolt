@@ -1,4 +1,4 @@
-use std::{cell::RefCell, iter::once, rc::Rc};
+use std::{cell::RefCell, iter::once, rc::Rc, sync::Arc};
 
 use num_traits::Zero;
 
@@ -15,6 +15,7 @@ use crate::{
             OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator,
             BIG_ENDIAN,
         },
+        ra_poly::RaPolynomial,
     },
     subprotocols::sumcheck::SumcheckInstance,
     transcripts::Transcript,
@@ -46,7 +47,7 @@ const STAGES: usize = 3;
 #[derive(Allocative)]
 struct ReadCheckingProverState<F: JoltField> {
     F: [MultilinearPolynomial<F>; STAGES],
-    ra: Vec<MultilinearPolynomial<F>>,
+    ra: Vec<RaPolynomial<u8, F>>,
     v: Vec<ExpandingTable<F>>,
     eq_polys: [MultilinearPolynomial<F>; STAGES],
     val_gamma: Option<[F; STAGES]>,
@@ -714,7 +715,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
         } else {
             ps.ra
                 .par_iter_mut()
-                .chain(ps.eq_polys.par_iter_mut())
+                .for_each(|ra| ra.bind_parallel(r_j, BindingOrder::LowToHigh));
+            ps.eq_polys
+                .par_iter_mut()
                 .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh));
         }
     }
@@ -866,15 +869,15 @@ impl<F: JoltField> ReadRafSumcheck<F> {
         ps.v.par_iter()
             .enumerate()
             .map(|(i, v)| {
-                let ra_i: Vec<F> = ps
+                let ra_i: Vec<Option<u8>> = ps
                     .pc
                     .par_iter()
                     .map(|k| {
                         let k = (k >> (self.log_K_chunk * (self.d - i - 1))) % self.K_chunk;
-                        v[k]
+                        Some(k as u8)
                     })
                     .collect();
-                MultilinearPolynomial::from(ra_i)
+                RaPolynomial::new(Arc::new(ra_i), v.clone_values())
             })
             .collect::<Vec<_>>()
             .into_iter()

@@ -43,7 +43,7 @@ struct BooleanityProverState<F: JoltField> {
     eq_r_cycle: GruenSplitEqPolynomial<F>,
     G: [Vec<F>; D],
     H_indices: [Vec<Option<u8>>; D],
-    H: [RaPolynomial<F>; D],
+    H: [RaPolynomial<u8, F>; D],
     F: Vec<F>,
     eq_r_r: F,
     /// First element of r_cycle_prime
@@ -208,7 +208,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for BooleanitySumcheck<
             // Phase 2: Bind D and H
             ps.eq_r_cycle.bind(r_j);
             ps.H.par_iter_mut()
-                .for_each(|poly| poly.bind(r_j, BindingOrder::LowToHigh));
+                .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh));
         }
     }
 

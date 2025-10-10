@@ -43,7 +43,7 @@ pub struct OneHotPolynomial<F: JoltField> {
     /// The array described in Section 6.3 of the Twist/Shout paper.
     G: Vec<F>,
     /// The array described in Section 6.3 of the Twist/Shout paper.
-    H: Arc<RwLock<RaPolynomial<F>>>,
+    H: Arc<RwLock<RaPolynomial<u8, F>>>,
 }
 
 impl<F: JoltField> PartialEq for OneHotPolynomial<F> {

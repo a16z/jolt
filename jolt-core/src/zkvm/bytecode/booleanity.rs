@@ -43,7 +43,7 @@ struct BooleanityProverState<F: JoltField> {
     D: MultilinearPolynomial<F>,
     G: Vec<Vec<F>>,
     pc_by_cycle: Vec<Vec<Option<u8>>>,
-    H: Vec<RaPolynomial<F>>,
+    H: Vec<RaPolynomial<u8, F>>,
     F: Vec<F>,
     eq_r_r: F,
 }
@@ -227,7 +227,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for BooleanitySumcheck<
             // Phase 2: Bind D and H
             ps.D.bind_parallel(r_j, BindingOrder::LowToHigh);
             ps.H.par_iter_mut()
-                .for_each(|poly| poly.bind(r_j, BindingOrder::LowToHigh));
+                .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh));
         }
     }
 
