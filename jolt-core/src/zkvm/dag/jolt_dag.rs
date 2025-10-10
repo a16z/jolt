@@ -700,18 +700,20 @@ impl JoltDAG {
                     indices.len()
                 );
 
-                let group_results: Vec<_> = indices
-                    .iter() // TODO(markosg04) to par_iter or not to par_iter
-                    .map(|&idx| {
-                        let poly = &committed_polys[idx];
-                        let (commitment, hint) = PCS::commit(poly, &preprocessing.generators);
-                        (idx, commitment, hint)
-                    })
+                // Collect polynomials for this group
+                let group_polys: Vec<_> = indices
+                    .iter()
+                    .map(|&idx| &committed_polys[idx])
                     .collect();
 
-                for (idx, commitment, hint) in group_results {
-                    all_commitments[idx] = Some(commitment);
-                    all_hints[idx] = Some(hint);
+                // Batch commit all polynomials in this group
+                let batch_results = PCS::batch_commit(&group_polys, &preprocessing.generators);
+
+                // Map results back to original indices
+                for (i, &idx) in indices.iter().enumerate() {
+                    let (commitment, hint) = &batch_results[i];
+                    all_commitments[idx] = Some(commitment.clone());
+                    all_hints[idx] = Some(hint.clone());
                 }
             }
         }
