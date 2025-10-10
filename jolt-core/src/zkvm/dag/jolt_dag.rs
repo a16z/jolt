@@ -656,10 +656,69 @@ impl JoltDAG {
         let span = tracing::span!(tracing::Level::INFO, "commit to polynomials");
         let _guard = span.enter();
 
-        let commit_results = PCS::batch_commit(&committed_polys, &preprocessing.generators);
+        // Group polynomial indices by MSM type for more uniform parallel workloads
+        let mut batch_addition_indices = Vec::new();
+        let mut field_msm_indices = Vec::new();
+        let mut small_unsigned_indices = Vec::new();
+        let mut signed_indices = Vec::new();
 
-        let (commitments, hints): (Vec<PCS::Commitment>, Vec<PCS::OpeningProofHint>) =
-            commit_results.into_iter().unzip();
+        for (idx, poly) in committed_polys.iter().enumerate() {
+            match poly {
+                MultilinearPolynomial::OneHot(_) => batch_addition_indices.push(idx),
+
+                MultilinearPolynomial::LargeScalars(_) | MultilinearPolynomial::RLC(_) => {
+                    field_msm_indices.push(idx)
+                }
+
+                MultilinearPolynomial::U8Scalars(_)
+                | MultilinearPolynomial::U16Scalars(_)
+                | MultilinearPolynomial::U32Scalars(_)
+                | MultilinearPolynomial::U64Scalars(_)
+                | MultilinearPolynomial::U128Scalars(_) => small_unsigned_indices.push(idx),
+
+                MultilinearPolynomial::I64Scalars(_)
+                | MultilinearPolynomial::I128Scalars(_)
+                | MultilinearPolynomial::S128Scalars(_) => signed_indices.push(idx),
+            }
+        }
+
+        let mut all_commitments = vec![None; committed_polys.len()];
+        let mut all_hints = vec![None; committed_polys.len()];
+
+        let groups = [
+            ("batch_addition", batch_addition_indices),
+            ("small_unsigned", small_unsigned_indices),
+            ("signed", signed_indices),
+            ("field_msm", field_msm_indices),
+        ];
+
+        for (group_name, indices) in groups {
+            if !indices.is_empty() {
+                tracing::info!(
+                    "Processing {} group with {} polynomials",
+                    group_name,
+                    indices.len()
+                );
+
+                let group_results: Vec<_> = indices
+                    .iter() // TODO(markosg04) to par_iter or not to par_iter
+                    .map(|&idx| {
+                        let poly = &committed_polys[idx];
+                        let (commitment, hint) = PCS::commit(poly, &preprocessing.generators);
+                        (idx, commitment, hint)
+                    })
+                    .collect();
+
+                for (idx, commitment, hint) in group_results {
+                    all_commitments[idx] = Some(commitment);
+                    all_hints[idx] = Some(hint);
+                }
+            }
+        }
+
+        let commitments: Vec<_> = all_commitments.into_iter().map(|c| c.unwrap()).collect();
+        let hints: Vec<_> = all_hints.into_iter().map(|h| h.unwrap()).collect();
+
         drop(_guard);
         drop(span);
         let mut hint_map = HashMap::with_capacity(committed_polys.len());
