@@ -242,7 +242,6 @@ impl<F: JoltField> LagrangePolynomial<F> {
     /// **Constraint**: we assume N <= 20 for now
     #[inline]
     pub fn interpolate_coeffs<const N: usize>(values: &[F; N]) -> [F; N] {
-        debug_assert!(N <= 20, "N={N} exceeds maximum safe value 20");
         debug_assert!(N > 0, "N must be positive");
         let d = N - 1;
         let start: i64 = -((d / 2) as i64);

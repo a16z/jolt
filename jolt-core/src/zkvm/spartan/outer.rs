@@ -187,11 +187,16 @@ impl<F: JoltField> OuterSumcheck<F> {
         tau: &[F],
         transcript: &mut ProofTranscript,
     ) -> (OuterSumcheckProof<F, ProofTranscript>, Vec<F>, [F; 3]) {
+        // Assert that the number of rounds is equal to the number of cycle variables plus two
+        // (one for univariate skip of degree ~13-15, and one for the streaming round)
+        debug_assert_eq!(num_rounds, trace.len().next_power_of_two().log_2() + 2);
+
         let mut r = Vec::new();
 
         let mut outer_sumcheck = Self::initialize(tau);
 
         let extended_evals = outer_sumcheck.compute_univariate_skip_evals(preprocessing, trace);
+
         #[cfg(feature = "allocative")]
         {
             print_data_structure_heap_usage("OuterSumcheck", &outer_sumcheck);
@@ -207,8 +212,10 @@ impl<F: JoltField> OuterSumcheck<F> {
             &mut r,
         );
 
+        // Begin the remaining rounds
         let mut polys: Vec<CompressedUniPoly<F>> = Vec::new();
 
+        // First, we stream through the last constraint variable
         outer_sumcheck.streaming_sumcheck_round(
             preprocessing,
             trace,
@@ -217,7 +224,8 @@ impl<F: JoltField> OuterSumcheck<F> {
             &mut polys,
         );
 
-        for _ in 2..num_rounds {
+        // Then we do linear time algorithm for the remaining cycle variables
+        for _ in 0..num_rounds - 2 {
             outer_sumcheck.remaining_sumcheck_round(transcript, &mut r, &mut polys);
         }
 
@@ -255,7 +263,7 @@ impl<F: JoltField> OuterSumcheck<F> {
         target_shifts[12] = (-13) - start;
         let coeffs_per_j: [[i32; UNIVARIATE_SKIP_DOMAIN_SIZE]; UNIVARIATE_SKIP_DEGREE] =
             core::array::from_fn(|j| {
-                LagrangeHelper::shift_coeffs_i32::<{ UNIVARIATE_SKIP_DOMAIN_SIZE }>(
+                LagrangeHelper::shift_coeffs_i32::<UNIVARIATE_SKIP_DOMAIN_SIZE>(
                     target_shifts[j],
                 )
             });
@@ -290,8 +298,8 @@ impl<F: JoltField> OuterSumcheck<F> {
                     [F::zero(); UNIVARIATE_SKIP_DEGREE];
 
                 for x_out_val in x_out_start..x_out_end {
-                    let mut inner_acc: [F; UNIVARIATE_SKIP_DEGREE] =
-                        [F::zero(); UNIVARIATE_SKIP_DEGREE];
+                    let mut inner_acc: [<F as JoltField>::Unreduced::<9>; UNIVARIATE_SKIP_DEGREE] =
+                        [<F as JoltField>::Unreduced::<9>::zero(); UNIVARIATE_SKIP_DEGREE];
 
                     for x_in_val in 0..num_x_in_vals {
                         let current_step_idx = (x_out_val << iter_num_x_in_vars) | x_in_val;
@@ -344,7 +352,7 @@ impl<F: JoltField> OuterSumcheck<F> {
                                 let bz_f = s160_to_field::<F>(&bz1_s160[i]);
                                 bz1_ext += bz_f.mul_i64(c);
                             }
-                            inner_acc[j] += e_in * (az1_ext * bz1_ext);
+                            inner_acc[j] += e_in.mul_unreduced::<9>(az1_ext * bz1_ext);
 
                             // Group 2: (Σ c_i * Az2[i])*(Σ c_i * Bz2[i]) - (Σ c_i * Cz2[i])
                             let mut az2_ext = F::zero();
@@ -362,14 +370,15 @@ impl<F: JoltField> OuterSumcheck<F> {
                                 let cz_f = s160_to_field::<F>(&cz2_s160_padded[i]);
                                 cz2_ext += cz_f.mul_i64(c);
                             }
-                            inner_acc[j] += e_in * (az2_ext * bz2_ext - cz2_ext);
+                            inner_acc[j] += e_in.mul_unreduced::<9>(az2_ext * bz2_ext - cz2_ext);
                         }
                     }
                     let e_out = self.split_eq_poly.E_out_current()[x_out_val];
 
-                    // Apply e_out once for this x_out
+                    // Apply e_out once per x_out after reducing
                     for j in 0..UNIVARIATE_SKIP_DEGREE {
-                        acc_field[j] += e_out * inner_acc[j];
+                        let reduced = F::from_montgomery_reduce::<9>(inner_acc[j]);
+                        acc_field[j] += e_out * reduced;
                     }
                 }
 
