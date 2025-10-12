@@ -8,7 +8,7 @@ use super::prefixes::PrefixEval;
 use super::suffixes::{SuffixEval, Suffixes};
 use super::JoltLookupTable;
 use super::PrefixSuffixDecomposition;
-use crate::field::JoltField;
+use crate::field::{ChallengeFieldOps, FieldChallengeOps, JoltField};
 use crate::zkvm::lookup_table::prefixes::Prefixes;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
@@ -18,12 +18,19 @@ impl<const XLEN: usize> JoltLookupTable for VirtualRev8WTable<XLEN> {
     fn materialize_entry(&self, index: u128) -> u64 {
         rev8w(index as u64)
     }
-
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+    fn evaluate_mle<F, C>(&self, r: &[C]) -> F
+    where
+        C: ChallengeFieldOps<F>,
+        F: JoltField + FieldChallengeOps<C>,
+    {
         let mut bits = r.iter().rev();
         let mut bytes = iter::from_fn(|| {
             let bit_chunk = (&mut bits).take(8).enumerate();
-            Some(bit_chunk.map(|(i, b)| b.mul_u64(1 << i)).sum::<F>())
+            Some(
+                bit_chunk
+                    .map(|(i, b)| Into::<F>::into(*b).mul_u64(1 << i))
+                    .sum::<F>(),
+            )
         });
 
         // Reverse the bytes in each 32-bit word. i.e.

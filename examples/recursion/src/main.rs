@@ -113,6 +113,8 @@ impl GuestProgram {
                     MemoryConfig {
                         max_input_size: 4096,
                         max_output_size: 4096,
+                        max_untrusted_advice_size: 0,
+                        max_trusted_advice_size: 0,
                         memory_size: 33554432,
                         stack_size: 1048576,
                         program_size: None,
@@ -121,6 +123,8 @@ impl GuestProgram {
                     MemoryConfig {
                         max_input_size: 200000,
                         max_output_size: 4096,
+                        max_untrusted_advice_size: 0,
+                        max_trusted_advice_size: 0,
                         memory_size: 200000,
                         stack_size: 131072,
                         program_size: None,
@@ -132,6 +136,8 @@ impl GuestProgram {
                     MemoryConfig {
                         max_input_size: 1024,
                         max_output_size: 4096,
+                        max_untrusted_advice_size: 0,
+                        max_trusted_advice_size: 0,
                         memory_size: 8192,
                         stack_size: 65536,
                         program_size: None,
@@ -140,6 +146,8 @@ impl GuestProgram {
                     MemoryConfig {
                         max_input_size: 200000,
                         max_output_size: 4096,
+                        max_untrusted_advice_size: 0,
+                        max_trusted_advice_size: 0,
                         memory_size: 200000,
                         stack_size: 131072,
                         program_size: None,
@@ -260,6 +268,8 @@ fn collect_guest_proofs(guest: GuestProgram, target_dir: &str, use_embed: bool) 
     let memory_config = MemoryConfig {
         max_input_size: 4096u64,
         max_output_size: 4096u64,
+        max_untrusted_advice_size: 0u64,
+        max_trusted_advice_size: 0u64,
         stack_size: 4096u64,
         memory_size: 10240u64,
         program_size: None,
@@ -275,7 +285,8 @@ fn collect_guest_proofs(guest: GuestProgram, target_dir: &str, use_embed: bool) 
     info!("Getting ELF contents...");
     let elf_contents = program.get_elf_contents().unwrap();
     info!("Creating guest program...");
-    let guest_prog = jolt_sdk::guest::program::Program::new(&elf_contents, &memory_config);
+    let mut guest_prog = jolt_sdk::guest::program::Program::new(&elf_contents, &memory_config);
+    guest_prog.elf = program.elf;
 
     info!("Preprocessing guest prover...");
     let guest_prover_preprocessing =
@@ -312,6 +323,9 @@ fn collect_guest_proofs(guest: GuestProgram, target_dir: &str, use_embed: bool) 
         let (proof, io_device, _debug) = jolt_sdk::guest::prover::prove(
             &guest_prog,
             &input_bytes,
+            &[],
+            &[],
+            None,
             &mut output_bytes,
             &guest_prover_preprocessing,
         );
@@ -328,6 +342,7 @@ fn collect_guest_proofs(guest: GuestProgram, target_dir: &str, use_embed: bool) 
         info!("  Verifying...");
         let is_valid = jolt_sdk::guest::verifier::verify(
             &input_bytes,
+            None,
             &output_bytes,
             proof,
             &guest_verifier_preprocessing,
@@ -450,6 +465,7 @@ fn run_recursion_proof(
     program.build(target_dir);
     let elf_contents = program.get_elf_contents().unwrap();
     let mut recursion = jolt_sdk::guest::program::Program::new(&elf_contents, &memory_config);
+    recursion.elf = program.elf;
 
     if run_config == RunConfig::Trace || run_config == RunConfig::TraceToFile {
         // shorten the max_trace_length for tracing only. Speeds up setup time for tracing purposes.
@@ -480,11 +496,15 @@ fn run_recursion_proof(
             let (proof, _io_device, _debug) = jolt_sdk::guest::prover::prove(
                 &recursion,
                 &input_bytes,
+                &[],
+                &[],
+                None,
                 &mut output_bytes,
                 &recursion_prover_preprocessing,
             );
             let is_valid = jolt_sdk::guest::verifier::verify(
                 &input_bytes,
+                None,
                 &output_bytes,
                 proof,
                 &recursion_verifier_preprocessing,
@@ -496,14 +516,18 @@ fn run_recursion_proof(
         }
         RunConfig::Trace => {
             info!("  Trace-only mode: Skipping proof generation and verification.");
-            let (_, _, io_device) = recursion.trace(&input_bytes);
+            let (_, _, io_device) = recursion.trace(&input_bytes, &[], &[]);
             let rv = postcard::from_bytes::<u32>(&io_device.outputs).unwrap_or(0);
             info!("  Recursion output (trace-only): {rv}");
         }
         RunConfig::TraceToFile => {
             info!("  Trace-only mode: Skipping proof generation and verification. Tracing to file: /tmp/{}.trace", guest.name());
-            let (_, io_device) = recursion
-                .trace_to_file(&input_bytes, &format!("/tmp/{}.trace", guest.name()).into());
+            let (_, io_device) = recursion.trace_to_file(
+                &input_bytes,
+                &[],
+                &[],
+                &format!("/tmp/{}.trace", guest.name()).into(),
+            );
             let rv = postcard::from_bytes::<u32>(&io_device.outputs).unwrap_or(0);
             info!("  Recursion output (trace-only): {rv}");
         }

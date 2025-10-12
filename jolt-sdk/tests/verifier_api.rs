@@ -14,7 +14,7 @@ mod tests {
             common::jolt_device::JoltDevice::from_file("tests/fixtures/fib_io_device.bin").unwrap();
         let start = std::time::Instant::now();
         println!("Verifying proof...");
-        let verifier = JoltRV64IMAC::verify(&preprocessing, proof, device, None);
+        let verifier = JoltRV64IMAC::verify(&preprocessing, proof, device, None, None);
         let duration = start.elapsed();
         println!("Verification took: {} ms", duration.as_millis());
         assert!(verifier.is_ok(), "Verifier failed: {:?}", verifier.err());

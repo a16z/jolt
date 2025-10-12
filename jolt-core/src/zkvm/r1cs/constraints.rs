@@ -115,7 +115,6 @@ pub enum ConstraintName {
     LeftLookupZeroUnlessAddSubMul,
     RightLookupAdd,
     RightLookupSub,
-    ProductDef,
     RightLookupEqProductIfMul,
     RightLookupEqRightInputOtherwise,
     AssertLookupOne,
@@ -276,20 +275,19 @@ macro_rules! r1cs_prod_named {
 
 // Constants to be used in Spartan
 
-/// Number of R1CS constraints
-pub const NUM_R1CS_CONSTRAINTS: usize = 27;
+/// Number of uniform R1CS constraints
+pub const NUM_R1CS_CONSTRAINTS: usize = 26;
 
 /// Degree of univariate skip, defined to be `(NUM_R1CS_CONSTRAINTS - 1) / 2`
 pub const UNIVARIATE_SKIP_DEGREE: usize = (NUM_R1CS_CONSTRAINTS - 1) / 2;
 
 /// Domain size of univariate skip, defined to be `UNIVARIATE_SKIP_DEGREE + 1`.
 /// Recall that this domain will be symmetric around 0, i.e. `[-floor(D/2), ..., 0, ..., ceil(D/2)]`
-pub const UNIVARIATE_SKIP_DOMAIN_SIZE: usize = UNIVARIATE_SKIP_DEGREE + 1;
+pub const UNIVARIATE_SKIP_DOMAIN_SIZE: usize = UNIVARIATE_SKIP_DEGREE + 1; // 13 when NUM_R1CS_CONSTRAINTS=26
 
 /// Number of remaining R1CS constraints in the second group, defined to be `NUM_R1CS_CONSTRAINTS - UNIVARIATE_SKIP_DOMAIN_SIZE`.
-/// This is the same as `UNIVARIATE_SKIP_DOMAIN_SIZE` if `NUM_R1CS_CONSTRAINTS` is even, otherwise it is `UNIVARIATE_SKIP_DOMAIN_SIZE - 1`.
 pub const NUM_REMAINING_R1CS_CONSTRAINTS: usize =
-    NUM_R1CS_CONSTRAINTS - UNIVARIATE_SKIP_DOMAIN_SIZE;
+    NUM_R1CS_CONSTRAINTS - UNIVARIATE_SKIP_DOMAIN_SIZE; // 13 when NUM_R1CS_CONSTRAINTS=26
 
 /// Extended domain size of univariate skip, defined to be `2 * UNIVARIATE_SKIP_DEGREE + 1`.
 /// Recall that this domain will be symmetric around 0, i.e. `[-D, ..., 0, ..., D]`
@@ -299,7 +297,7 @@ pub const UNIVARIATE_SKIP_EXTENDED_DOMAIN_SIZE: usize = 2 * UNIVARIATE_SKIP_DEGR
 /// This is because `s_1(X) = lagrange_poly(X) * t1(X)`, where t1(X) has degree `2 * UNIVARIATE_SKIP_DEGREE` and lagrange_poly(X) has degree `UNIVARIATE_SKIP_DEGREE`.
 pub const FIRST_ROUND_POLY_NUM_COEFFS: usize = 3 * UNIVARIATE_SKIP_DEGREE + 1;
 
-/// Static table of all 27 R1CS uniform constraints.
+/// Static table of all 26 R1CS uniform constraints.
 pub static UNIFORM_R1CS: [NamedConstraint; NUM_R1CS_CONSTRAINTS] = [
     // if LeftOperandIsRs1Value { assert!(LeftInstructionInput == Rs1Value) }
     r1cs_eq_conditional!(
@@ -408,14 +406,6 @@ pub static UNIFORM_R1CS: [NamedConstraint; NUM_R1CS_CONSTRAINTS] = [
         name: ConstraintName::RightLookupSub,
         if { { JoltR1CSInputs::OpFlags(CircuitFlags::SubtractOperands) } }
         => ( { JoltR1CSInputs::RightLookupOperand } ) == ( { JoltR1CSInputs::LeftInstructionInput } - { JoltR1CSInputs::RightInstructionInput } + { 0x10000000000000000i128 } )
-    ),
-    // if MultiplyOperands {
-    //     assert!(RightLookupOperand == Rs1Value * Rs2Value)
-    // }
-    r1cs_prod!(
-        name: ConstraintName::ProductDef,
-        ({ JoltR1CSInputs::LeftInstructionInput }) * ({ JoltR1CSInputs::RightInstructionInput })
-            == ({ JoltR1CSInputs::Product })
     ),
     r1cs_eq_conditional!(
         name: ConstraintName::RightLookupEqProductIfMul,
@@ -625,7 +615,6 @@ pub const UNIFORM_R1CS_FIRST_GROUP_NAMES: [ConstraintName; UNIVARIATE_SKIP_DOMAI
     ConstraintName::RightLookupSub,
     ConstraintName::AssertLookupOne,
     ConstraintName::NextUnexpPCEqLookupIfShouldJump,
-    ConstraintName::NextPCEqPCPlusOneIfInline,
 ];
 
 /// UNIFORM_R1CS_SECOND_GROUP_NAMES: computed complement of `UNIFORM_R1CS_FIRST_GROUP_NAMES`
@@ -688,8 +677,6 @@ pub fn eval_az_by_name(c: &NamedConstraint, row: &R1CSCycleInputs) -> I8OrI96 {
         N::RightLookupAdd => row.flags[CircuitFlags::AddOperands].into(),
         // Az: SubtractOperands flag (0/1)
         N::RightLookupSub => row.flags[CircuitFlags::SubtractOperands].into(),
-        // Use unsigned left operand (bit pattern) to match Product witness convention
-        N::ProductDef => I8OrI96::from(row.left_input),
         // Az: MultiplyOperands flag (0/1)
         N::RightLookupEqProductIfMul => row.flags[CircuitFlags::MultiplyOperands].into(),
         N::RightLookupEqRightInputOtherwise => {
@@ -778,8 +765,6 @@ pub fn eval_bz_by_name(c: &NamedConstraint, row: &R1CSCycleInputs) -> S160 {
                 (row.left_input as i128) - row.right_input.to_i128() + (1i128 << 64);
             S160::from(row.right_lookup) - S160::from(expected_i128)
         }
-        // B: RightInstructionInput (exact signed value as i128)
-        N::ProductDef => S160::from(row.right_input),
         N::RightLookupEqProductIfMul => {
             // B: RightLookupOperand - Product with full 128-bit semantics
             S160::from(row.right_lookup) - S160::from(row.product)
@@ -896,7 +881,7 @@ pub fn eval_cz_by_name(c: &NamedConstraint, row: &R1CSCycleInputs) -> S160 {
 /// Evaluate Az for the first group as booleans in the group order (length 14).
 /// Booleans are derived from the same semantics as `eval_az_by_name`, with non-zero selectors
 /// interpreted as true.
-pub fn eval_az_first_group(row: &R1CSCycleInputs) -> [bool; 14] {
+pub fn eval_az_first_group(row: &R1CSCycleInputs) -> [bool; 13] {
     // Order matches UNIFORM_R1CS_FIRST_GROUP_NAMES
     let result = [
         row.flags[CircuitFlags::LeftOperandIsRs1Value],
@@ -914,7 +899,6 @@ pub fn eval_az_first_group(row: &R1CSCycleInputs) -> [bool; 14] {
         row.flags[CircuitFlags::SubtractOperands],
         row.flags[CircuitFlags::Assert],
         row.should_jump,
-        row.flags[CircuitFlags::InlineSequenceInstruction],
     ];
     #[cfg(test)]
     {
@@ -940,8 +924,8 @@ pub fn eval_az_first_group(row: &R1CSCycleInputs) -> [bool; 14] {
 
 /// Evaluate Bz for the first group as S160 in the group order (length 14),
 /// using the same semantics as `eval_bz_by_name`.
-pub fn eval_bz_first_group(row: &R1CSCycleInputs) -> [S160; 14] {
-    let mut out: [S160; 14] = [S160::zero(); 14];
+pub fn eval_bz_first_group(row: &R1CSCycleInputs) -> [S160; 13] {
+    let mut out: [S160; 13] = [S160::zero(); 13];
     let mut i = 0;
     while i < UNIFORM_R1CS_FIRST_GROUP.len() {
         out[i] = eval_bz_by_name(&UNIFORM_R1CS_FIRST_GROUP[i], row);

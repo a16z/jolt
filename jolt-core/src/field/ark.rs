@@ -1,9 +1,11 @@
+use super::{FieldOps, FmaddTrunc, JoltField, MulU64WithCarry};
+#[cfg(feature = "challenge-254-bit")]
+use crate::field::challenge::Mont254BitChallenge;
+use crate::field::challenge::MontU128Challenge;
+use crate::field::MulTrunc;
+use crate::utils::thread::unsafe_allocate_zero_vec;
 use ark_ff::{prelude::*, BigInt, PrimeField, UniformRand};
 use rayon::prelude::*;
-
-use crate::utils::thread::unsafe_allocate_zero_vec;
-
-use super::{FieldOps, FmaddTrunc, JoltField, MulU64WithCarry};
 
 impl FieldOps for ark_bn254::Fr {}
 impl FieldOps<&ark_bn254::Fr, ark_bn254::Fr> for &ark_bn254::Fr {}
@@ -29,6 +31,14 @@ impl JoltField for ark_bn254::Fr {
     };
     type Unreduced<const N: usize> = BigInt<N>;
     type SmallValueLookupTables = [Vec<Self>; 2];
+
+    // Default: Use optimized 125-bit MontChallenge
+    #[cfg(not(feature = "challenge-254-bit"))]
+    type Challenge = MontU128Challenge<ark_bn254::Fr>;
+
+    // Optional: Use full 254-bit field elements
+    #[cfg(feature = "challenge-254-bit")]
+    type Challenge = Mont254BitChallenge<ark_bn254::Fr>;
 
     fn random<R: rand_core::RngCore>(rng: &mut R) -> Self {
         <Self as UniformRand>::rand(rng)
@@ -264,6 +274,15 @@ impl<const N: usize> FmaddTrunc for BigInt<N> {
         acc: &mut Self::Acc<P>,
     ) {
         self.fmadd_trunc(other, acc)
+    }
+}
+
+impl<const N: usize> MulTrunc for BigInt<N> {
+    type Other<const M: usize> = BigInt<M>;
+    type Output<const P: usize> = BigInt<P>;
+
+    fn mul_trunc<const M: usize, const P: usize>(&self, other: &Self::Other<M>) -> Self::Output<P> {
+        self.mul_trunc(other)
     }
 }
 

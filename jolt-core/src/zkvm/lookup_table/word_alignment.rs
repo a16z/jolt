@@ -4,7 +4,7 @@ use super::prefixes::PrefixEval;
 use super::suffixes::{SuffixEval, Suffixes};
 use super::JoltLookupTable;
 use super::PrefixSuffixDecomposition;
-use crate::field::JoltField;
+use crate::field::{ChallengeFieldOps, FieldChallengeOps, JoltField};
 use crate::zkvm::lookup_table::prefixes::Prefixes;
 
 /// (address, offset)
@@ -15,8 +15,11 @@ impl<const XLEN: usize> JoltLookupTable for WordAlignmentTable<XLEN> {
     fn materialize_entry(&self, index: u128) -> u64 {
         index.is_multiple_of(4).into()
     }
-
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+    fn evaluate_mle<F, C>(&self, r: &[C]) -> F
+    where
+        C: ChallengeFieldOps<F>,
+        F: JoltField + FieldChallengeOps<C>,
+    {
         // The two least significant bits should be 0 for word alignment
         let lsb0 = r[r.len() - 1];
         let lsb1 = r[r.len() - 2];

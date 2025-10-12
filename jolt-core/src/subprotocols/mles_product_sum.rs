@@ -1,22 +1,21 @@
+use num_traits::Zero;
 use std::iter::zip;
 
-use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
+use rayon::prelude::*;
 
 use crate::{
     field::{JoltField, MulU64WithCarry},
-    poly::{
-        eq_poly::EqPolynomial, multilinear_polynomial::MultilinearPolynomial, unipoly::UniPoly,
-    },
+    poly::{eq_poly::EqPolynomial, ra_poly::RaPolynomial, unipoly::UniPoly},
 };
 
 /// Computes the univariate polynomial `g(X) = sum_j eq((r', X, j), r) * prod_i mle_i(X, j)`.
 ///
 /// Note `claim` should equal `g(0) + g(1)`.
 pub fn compute_mles_product_sum<F: JoltField>(
-    mles: &[MultilinearPolynomial<F>],
+    mles: &[RaPolynomial<u8, F>],
     claim: F,
-    r: &[F],
-    r_prime: &[F],
+    r: &[F::Challenge],
+    r_prime: &[F::Challenge],
 ) -> UniPoly<F> {
     // Split Eq poly optimization.
     // See https://eprint.iacr.org/2025/1117.pdf section 5.2.
@@ -28,7 +27,7 @@ pub fn compute_mles_product_sum<F: JoltField>(
     let eq_wr_evals = EqPolynomial::evals_parallel(wr, None);
 
     // Evaluate g(X) / eq(X, r[round]) at [1, 2, ..., |mles| - 1, inf].
-    let sum_evals = eq_wr_evals
+    let sum_evals: Vec<F> = eq_wr_evals
         .par_iter()
         .enumerate()
         .map(|(j_wr, eq_wr_eval)| {
@@ -50,13 +49,26 @@ pub fn compute_mles_product_sum<F: JoltField>(
                 product_eval_univariate(&mle_eval_pairs, &mut partial_evals);
             }
 
-            partial_evals.iter_mut().for_each(|v| *v *= *eq_wr_eval);
             partial_evals
+                .iter()
+                .map(|v| {
+                    let result = *v * *eq_wr_eval;
+                    let unreduced = *result.as_unreduced_ref();
+                    unreduced
+                })
+                .collect()
         })
+        .fold_with(
+            vec![F::Unreduced::<5>::zero(); mles.len()],
+            |running, new: Vec<F::Unreduced<4>>| zip(running, new).map(|(a, b)| a + b).collect(),
+        )
         .reduce(
-            || vec![F::zero(); mles.len()],
-            |a_evals, b_evals| zip(a_evals, b_evals).map(|(a, b)| a + b).collect(),
-        );
+            || vec![F::Unreduced::zero(); mles.len()],
+            |running, new| zip(running, new).map(|(a, b)| a + b).collect(),
+        )
+        .into_iter()
+        .map(F::from_barrett_reduce)
+        .collect();
 
     let round = r_prime.len();
     let eq_eval_at_0 = EqPolynomial::mle(&[F::zero()], &[r[round]]);
@@ -278,17 +290,19 @@ fn dbl_assign<F: JoltField>(x: &mut F) {
 
 #[cfg(test)]
 mod tests {
+    use ark_bn254::Fr;
+    use ark_std::UniformRand;
+    use dory::curve::test_rng;
+    use rand::rngs::StdRng;
     use std::array::from_fn;
 
-    use ark_bn254::Fr;
-    use dory::curve::test_rng;
-    use rand::{rngs::StdRng, Rng};
-
     use crate::{
+        field::JoltField,
         poly::{
             dense_mlpoly::DensePolynomial,
             eq_poly::EqPolynomial,
             multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
+            ra_poly::RaPolynomial,
         },
         subprotocols::mles_product_sum::compute_mles_product_sum,
     };
@@ -296,13 +310,17 @@ mod tests {
     #[test]
     fn test_compute_mles_product_sum_with_2_mles() {
         const N_MLE: usize = 2;
-        let rng = &mut test_rng();
-        let r: &[Fr; 1] = &rng.gen();
+        let mut rng = &mut test_rng();
+        let r_whole = [<Fr as JoltField>::Challenge::rand(&mut rng)];
+        let r: &[<Fr as JoltField>::Challenge; 1] = &r_whole;
         let mles: [_; N_MLE] = from_fn(|_| random_mle(1, rng));
         let claim = gen_product_mle(&mles).evaluate(r);
-        let challenge: &[Fr; 1] = &rng.gen();
+
+        let r_whole = [<Fr as JoltField>::Challenge::rand(&mut rng)];
+        let challenge: &[<Fr as JoltField>::Challenge; 1] = &r_whole;
         let mle_challenge_product = mles.iter().map(|p| p.evaluate(challenge)).product::<Fr>();
         let eval = EqPolynomial::mle(challenge, r) * mle_challenge_product;
+        let mles = mles.map(RaPolynomial::RoundN);
 
         let sum_poly = compute_mles_product_sum(&mles, claim, r, &[]);
 
@@ -312,13 +330,16 @@ mod tests {
     #[test]
     fn test_compute_mles_product_sum_with_4_mles() {
         const N_MLE: usize = 4;
-        let rng = &mut test_rng();
-        let r: &[Fr; 1] = &rng.gen();
+        let mut rng = &mut test_rng();
+        let r_whole = [<Fr as JoltField>::Challenge::random(&mut rng)];
+        let r: &[<Fr as JoltField>::Challenge; 1] = &r_whole;
         let mles: [_; N_MLE] = from_fn(|_| random_mle(1, rng));
         let claim = gen_product_mle(&mles).evaluate(r);
-        let challenge: &[Fr; 1] = &rng.gen();
+        let r_whole = [<Fr as JoltField>::Challenge::rand(&mut rng)];
+        let challenge: &[<Fr as JoltField>::Challenge; 1] = &r_whole;
         let mle_challenge_product = mles.iter().map(|p| p.evaluate(challenge)).product::<Fr>();
         let eval = EqPolynomial::mle(challenge, r) * mle_challenge_product;
+        let mles = mles.map(RaPolynomial::RoundN);
 
         let sum_poly = compute_mles_product_sum(&mles, claim, r, &[]);
 
@@ -328,13 +349,16 @@ mod tests {
     #[test]
     fn test_compute_mles_product_sum_with_8_mles() {
         const N_MLE: usize = 8;
-        let rng = &mut test_rng();
-        let r: &[Fr; 1] = &rng.gen();
+        let mut rng = &mut test_rng();
+        let r_whole = [<Fr as JoltField>::Challenge::random(&mut rng)];
+        let r: &[<Fr as JoltField>::Challenge; 1] = &r_whole;
         let mles: [_; N_MLE] = from_fn(|_| random_mle(1, rng));
         let claim = gen_product_mle(&mles).evaluate(r);
-        let challenge: &[Fr; 1] = &rng.gen();
+        let r_whole = [<Fr as JoltField>::Challenge::rand(&mut rng)];
+        let challenge: &[<Fr as JoltField>::Challenge; 1] = &r_whole;
         let mle_challenge_product = mles.iter().map(|p| p.evaluate(challenge)).product::<Fr>();
         let eval = EqPolynomial::mle(challenge, r) * mle_challenge_product;
+        let mles = mles.map(RaPolynomial::RoundN);
 
         let sum_poly = compute_mles_product_sum(&mles, claim, r, &[]);
 
@@ -344,13 +368,16 @@ mod tests {
     #[test]
     fn test_compute_mles_product_sum_with_16_mles() {
         const N_MLE: usize = 16;
-        let rng = &mut test_rng();
-        let r: &[Fr; 1] = &rng.gen();
+        let mut rng = &mut test_rng();
+        let r_whole = [<Fr as JoltField>::Challenge::random(&mut rng)];
+        let r: &[<Fr as JoltField>::Challenge; 1] = &r_whole;
         let mles: [_; N_MLE] = from_fn(|_| random_mle(1, rng));
         let claim = gen_product_mle(&mles).evaluate(r);
-        let challenge: &[Fr; 1] = &rng.gen();
+        let r_whole = [<Fr as JoltField>::Challenge::random(&mut rng)];
+        let challenge: &[<Fr as JoltField>::Challenge; 1] = &r_whole;
         let mle_challenge_product = mles.iter().map(|p| p.evaluate(challenge)).product::<Fr>();
         let eval = EqPolynomial::mle(challenge, r) * mle_challenge_product;
+        let mles = mles.map(RaPolynomial::RoundN);
 
         let sum_poly = compute_mles_product_sum(&mles, claim, r, &[]);
 

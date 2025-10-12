@@ -8,6 +8,12 @@
 *.txt
 .DS_Store
 
+pprof/
+# pprof files
+*.pb
+
+benchmark-runs/
+
 # flamegraphs
 **/*.svg
 
@@ -19,6 +25,8 @@ trace-**.json
 
 # SRS files
 *.srs
+# URS files
+*.urs
 
 temp_file
 
@@ -46,8 +54,14 @@ bin/act
 # Inline Traces
 *.joltinline
 
+# Benchmark runs and profiling
+benchmark-runs/
+/perfetto_traces/
+*.pb
+
 # verifier test fixtures
 jolt-sdk/tests/fixtures
 jolt-sdk/tests/fib_io_device_bytes.rs
 jolt-sdk/tests/fib_proof_bytes.rs
 jolt-sdk/tests/jolt_verifier_preprocessing_bytes.rs
+

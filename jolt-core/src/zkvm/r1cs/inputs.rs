@@ -332,10 +332,9 @@ pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 41] = [
 
 /// The subset of `ALL_R1CS_INPUTS` that are committed. The rest of
 /// the inputs are virtual polynomials.
-pub const COMMITTED_R1CS_INPUTS: [JoltR1CSInputs; 7] = [
+pub const COMMITTED_R1CS_INPUTS: [JoltR1CSInputs; 6] = [
     JoltR1CSInputs::LeftInstructionInput,
     JoltR1CSInputs::RightInstructionInput,
-    JoltR1CSInputs::Product,
     JoltR1CSInputs::WriteLookupOutputToRD,
     JoltR1CSInputs::WritePCtoRD,
     JoltR1CSInputs::ShouldBranch,
@@ -414,7 +413,6 @@ impl TryFrom<&JoltR1CSInputs> for CommittedPolynomial {
         match input {
             JoltR1CSInputs::LeftInstructionInput => Ok(CommittedPolynomial::LeftInstructionInput),
             JoltR1CSInputs::RightInstructionInput => Ok(CommittedPolynomial::RightInstructionInput),
-            JoltR1CSInputs::Product => Ok(CommittedPolynomial::Product),
             JoltR1CSInputs::WriteLookupOutputToRD => Ok(CommittedPolynomial::WriteLookupOutputToRD),
             JoltR1CSInputs::WritePCtoRD => Ok(CommittedPolynomial::WritePCtoRD),
             JoltR1CSInputs::ShouldBranch => Ok(CommittedPolynomial::ShouldBranch),
@@ -443,6 +441,7 @@ impl TryFrom<&JoltR1CSInputs> for VirtualPolynomial {
             JoltR1CSInputs::RamWriteValue => Ok(VirtualPolynomial::RamWriteValue),
             JoltR1CSInputs::LeftLookupOperand => Ok(VirtualPolynomial::LeftLookupOperand),
             JoltR1CSInputs::RightLookupOperand => Ok(VirtualPolynomial::RightLookupOperand),
+            JoltR1CSInputs::Product => Ok(VirtualPolynomial::Product),
             JoltR1CSInputs::NextUnexpandedPC => Ok(VirtualPolynomial::NextUnexpandedPC),
             JoltR1CSInputs::NextPC => Ok(VirtualPolynomial::NextPC),
             JoltR1CSInputs::NextIsNoop => Ok(VirtualPolynomial::NextIsNoop),
@@ -476,7 +475,7 @@ impl TryFrom<&JoltR1CSInputs> for OpeningId {
 pub fn compute_claimed_witness_evals<F: JoltField>(
     preprocessing: &JoltSharedPreprocessing,
     trace: &[Cycle],
-    r_cycle: &[F],
+    r_cycle: &[F::Challenge],
 ) -> Vec<F> {
     // Implement double-sum semantics: sum_{x1} eq1[x1] * (sum_{x2} eq2[x2] * term(x1||x2))
     let m = r_cycle.len() / 2;
@@ -594,6 +593,31 @@ where
         });
 
     (unexpanded_pc.into(), pc.into(), is_noop.into())
+}
+
+#[tracing::instrument(skip_all)]
+pub fn generate_product_virtualization_witnesses<F>(
+    trace: &[Cycle],
+) -> (
+    MultilinearPolynomial<F>, // LeftInstructionInput(t)
+    MultilinearPolynomial<F>, // RightInstructionInput(t)
+)
+where
+    F: JoltField,
+{
+    let len = trace.len();
+    let mut left_input: Vec<u64> = vec![0; len];
+    let mut right_input: Vec<i128> = vec![0; len];
+
+    left_input
+        .par_iter_mut()
+        .zip(right_input.par_iter_mut())
+        .zip(trace.par_iter())
+        .for_each(|((left, right), cycle)| {
+            (*left, *right) = LookupQuery::<XLEN>::to_instruction_inputs(cycle);
+        });
+
+    (left_input.into(), right_input.into())
 }
 
 #[cfg(test)]

@@ -39,6 +39,7 @@ pub struct InnerSumcheck<F: JoltField> {
 }
 
 impl<F: JoltField> InnerSumcheck<F> {
+    #[tracing::instrument(skip_all, name = "InnerSumcheck::new_prover")]
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         key: Arc<UniformSpartanKey<F>>,
@@ -140,7 +141,7 @@ impl<F: JoltField> InnerSumcheck<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstance<F> for InnerSumcheck<F> {
+impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for InnerSumcheck<F> {
     fn degree(&self) -> usize {
         2
     }
@@ -196,7 +197,7 @@ impl<F: JoltField> SumcheckInstance<F> for InnerSumcheck<F> {
     }
 
     #[tracing::instrument(skip_all, name = "InnerSumcheck::bind")]
-    fn bind(&mut self, r_j: F, _round: usize) {
+    fn bind(&mut self, r_j: F::Challenge, _round: usize) {
         let prover_state = self
             .prover_state
             .as_mut()
@@ -220,7 +221,7 @@ impl<F: JoltField> SumcheckInstance<F> for InnerSumcheck<F> {
     fn expected_output_claim(
         &self,
         accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
-        r: &[F],
+        r: &[F::Challenge],
     ) -> F {
         let key = self.key.as_ref().expect("Key not initialized");
 
@@ -259,13 +260,17 @@ impl<F: JoltField> SumcheckInstance<F> for InnerSumcheck<F> {
         left_expected * eval_z
     }
 
-    fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(
+        &self,
+        opening_point: &[F::Challenge],
+    ) -> OpeningPoint<BIG_ENDIAN, F> {
         OpeningPoint::new(opening_point.to_vec())
     }
 
     fn cache_openings_prover(
         &self,
         _accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
+        _transcript: &mut T,
         _opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         // Nothing to cache
@@ -274,6 +279,7 @@ impl<F: JoltField> SumcheckInstance<F> for InnerSumcheck<F> {
     fn cache_openings_verifier(
         &self,
         _accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
+        _transcript: &mut T,
         _opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         // Nothing to cache

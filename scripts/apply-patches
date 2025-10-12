@@ -6,4 +6,4 @@ echo "Applying patch to directory: $RISCV_CONFIG_PARENT" && \
 patch -d "$RISCV_CONFIG_PARENT" -N -p2 --fuzz=3 < patches/fix-isa-regex.patch
 
 # Apply patch to riscv-arch-test
-patch -d third-party/riscv-arch-test/ -N -p1 --fuzz=3 < patches/fix-misalign.patch
+patch -d third-party/riscv-arch-test/ -N -p1 --fuzz=3 < patches/fix-c-extension-privilege-tests.patch

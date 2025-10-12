@@ -1,21 +1,27 @@
-use std::{cell::RefCell, rc::Rc};
+use num_traits::Zero;
+use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 use crate::{
     field::JoltField,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
-        multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
+        multilinear_polynomial::{
+            BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
+        },
         opening_proof::{
             OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator,
             BIG_ENDIAN,
         },
+        ra_poly::RaPolynomial,
     },
     subprotocols::sumcheck::SumcheckInstance,
     transcripts::Transcript,
     utils::{math::Math, thread::unsafe_allocate_zero_vec},
-    zkvm::dag::state_manager::StateManager,
-    zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
+    zkvm::{
+        dag::state_manager::StateManager,
+        witness::{CommittedPolynomial, VirtualPolynomial},
+    },
 };
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
@@ -26,7 +32,7 @@ use rayon::prelude::*;
 #[derive(Allocative)]
 pub struct ValEvaluationProverState<F: JoltField> {
     pub inc: MultilinearPolynomial<F>,
-    pub wa: MultilinearPolynomial<F>,
+    pub wa: RaPolynomial<u8, F>,
     pub lt: MultilinearPolynomial<F>,
 }
 
@@ -38,6 +44,7 @@ pub(crate) struct ValEvaluationSumcheck<F: JoltField> {
 }
 
 impl<F: JoltField> ValEvaluationSumcheck<F> {
+    #[tracing::instrument(skip_all, name = "RegistersValEvaluationSumcheck::new_prover")]
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
@@ -53,20 +60,20 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
         // The opening point is r_address || r_cycle
         let r_address_len = REGISTER_COUNT.ilog2() as usize;
         let (r_address_slice, r_cycle_slice) = opening_point.split_at(r_address_len);
-        let r_address: Vec<F> = r_address_slice.into();
-        let r_cycle: Vec<F> = r_cycle_slice.into();
+        let r_address: Vec<F::Challenge> = r_address_slice.into();
+        let r_cycle: Vec<F::Challenge> = r_cycle_slice.into();
 
         let inc = CommittedPolynomial::RdInc.generate_witness(preprocessing, trace);
 
         let eq_r_address = EqPolynomial::evals(&r_address);
-        let wa: Vec<F> = trace
+        let wa: Vec<Option<u8>> = trace
             .par_iter()
             .map(|cycle| {
                 let instr = cycle.instruction().normalize();
-                eq_r_address[instr.operands.rd as usize]
+                Some(instr.operands.rd)
             })
             .collect();
-        let wa = MultilinearPolynomial::from(wa);
+        let wa = RaPolynomial::new(Arc::new(wa), eq_r_address);
 
         let T = trace.len();
         let mut lt: Vec<F> = unsafe_allocate_zero_vec(T);
@@ -110,7 +117,7 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
+impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ValEvaluationSumcheck<F> {
     fn degree(&self) -> usize {
         3
     }
@@ -134,7 +141,7 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
             .expect("Prover state not initialized");
 
         const DEGREE: usize = 3;
-        let univariate_poly_evals: [F; 3] = (0..prover_state.inc.len() / 2)
+        (0..prover_state.inc.len() / 2)
             .into_par_iter()
             .map(|i| {
                 let inc_evals = prover_state
@@ -142,19 +149,19 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
                     .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
                 let wa_evals = prover_state
                     .wa
-                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
+                    .sumcheck_evals(i, DEGREE, BindingOrder::HighToLow);
                 let lt_evals = prover_state
                     .lt
                     .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
 
                 [
-                    inc_evals[0] * wa_evals[0] * lt_evals[0],
-                    inc_evals[1] * wa_evals[1] * lt_evals[1],
-                    inc_evals[2] * wa_evals[2] * lt_evals[2],
+                    (inc_evals[0] * wa_evals[0]).mul_unreduced::<9>(lt_evals[0]),
+                    (inc_evals[1] * wa_evals[1]).mul_unreduced::<9>(lt_evals[1]),
+                    (inc_evals[2] * wa_evals[2]).mul_unreduced::<9>(lt_evals[2]),
                 ]
             })
             .reduce(
-                || [F::zero(); 3],
+                || [F::Unreduced::zero(); DEGREE],
                 |running, new| {
                     [
                         running[0] + new[0],
@@ -162,28 +169,26 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
                         running[2] + new[2],
                     ]
                 },
-            );
-
-        univariate_poly_evals.to_vec()
+            )
+            .into_iter()
+            .map(F::from_montgomery_reduce)
+            .collect()
     }
 
     #[tracing::instrument(skip_all, name = "RegistersValEvaluationSumcheck::bind")]
-    fn bind(&mut self, r_j: F, _round: usize) {
+    fn bind(&mut self, r_j: F::Challenge, _round: usize) {
         if let Some(prover_state) = &mut self.prover_state {
-            [
-                &mut prover_state.inc,
-                &mut prover_state.wa,
-                &mut prover_state.lt,
-            ]
-            .par_iter_mut()
-            .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow));
+            [&mut prover_state.inc, &mut prover_state.lt]
+                .par_iter_mut()
+                .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow));
+            prover_state.wa.bind_parallel(r_j, BindingOrder::HighToLow);
         }
     }
 
     fn expected_output_claim(
         &self,
         accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
-        r: &[F],
+        r: &[F::Challenge],
     ) -> F {
         let accumulator = accumulator.as_ref().unwrap();
         let (opening_point, _) = accumulator.borrow().get_virtual_polynomial_opening(
@@ -214,13 +219,17 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
         inc_claim * wa_claim * lt_eval
     }
 
-    fn normalize_opening_point(&self, opening_point: &[F]) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(
+        &self,
+        opening_point: &[F::Challenge],
+    ) -> OpeningPoint<BIG_ENDIAN, F> {
         OpeningPoint::new(opening_point.to_vec())
     }
 
     fn cache_openings_prover(
         &self,
         accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
+        transcript: &mut T,
         r_cycle: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         let prover_state = self
@@ -239,6 +248,7 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
 
         // Append claims to accumulator
         accumulator.borrow_mut().append_dense(
+            transcript,
             vec![CommittedPolynomial::RdInc],
             SumcheckId::RegistersValEvaluation,
             r_cycle.r.clone(),
@@ -247,6 +257,7 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
 
         let r = [r_address.r.as_slice(), r_cycle.r.as_slice()].concat();
         accumulator.borrow_mut().append_virtual(
+            transcript,
             VirtualPolynomial::RdWa,
             SumcheckId::RegistersValEvaluation,
             OpeningPoint::new(r),
@@ -257,6 +268,7 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
     fn cache_openings_verifier(
         &self,
         accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
+        transcript: &mut T,
         r_cycle: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         let (opening_point, _) = accumulator.borrow().get_virtual_polynomial_opening(
@@ -267,6 +279,7 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
 
         // Append claims to accumulator
         accumulator.borrow_mut().append_dense(
+            transcript,
             vec![CommittedPolynomial::RdInc],
             SumcheckId::RegistersValEvaluation,
             r_cycle.r.clone(),
@@ -274,6 +287,7 @@ impl<F: JoltField> SumcheckInstance<F> for ValEvaluationSumcheck<F> {
 
         let r = [r_address.r.as_slice(), r_cycle.r.as_slice()].concat();
         accumulator.borrow_mut().append_virtual(
+            transcript,
             VirtualPolynomial::RdWa,
             SumcheckId::RegistersValEvaluation,
             OpeningPoint::new(r),

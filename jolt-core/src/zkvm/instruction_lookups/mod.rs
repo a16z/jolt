@@ -49,7 +49,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
     fn stage2_prover_instances(
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstance<F>>> {
+    ) -> Vec<Box<dyn SumcheckInstance<F, T>>> {
         let (_, trace, _, _) = sm.get_prover_data();
         let r_cycle = sm
             .get_virtual_polynomial_opening(
@@ -81,7 +81,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
     fn stage2_verifier_instances(
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstance<F>>> {
+    ) -> Vec<Box<dyn SumcheckInstance<F, T>>> {
         let booleanity = BooleanitySumcheck::new_verifier(sm);
 
         vec![Box::new(booleanity)]
@@ -90,7 +90,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
     fn stage3_prover_instances(
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstance<F>>> {
+    ) -> Vec<Box<dyn SumcheckInstance<F, T>>> {
         let read_raf = ReadRafSumcheck::new_prover(sm, self.eq_r_cycle.take().unwrap());
         let hamming_weight = HammingWeightSumcheck::new_prover(sm, self.G.take().unwrap());
 
@@ -109,7 +109,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
     fn stage3_verifier_instances(
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstance<F>>> {
+    ) -> Vec<Box<dyn SumcheckInstance<F, T>>> {
         let read_raf = ReadRafSumcheck::new_verifier(sm);
         let hamming_weight = HammingWeightSumcheck::new_verifier(sm);
 
@@ -119,7 +119,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
     fn stage4_prover_instances(
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstance<F>>> {
+    ) -> Vec<Box<dyn SumcheckInstance<F, T>>> {
         let ra_virtual = RaSumcheck::new_prover(sm);
 
         #[cfg(feature = "allocative")]
@@ -136,7 +136,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
     fn stage4_verifier_instances(
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstance<F>>> {
+    ) -> Vec<Box<dyn SumcheckInstance<F, T>>> {
         let ra_virtual = RaSumcheck::new_verifier(sm);
 
         vec![Box::new(ra_virtual)]

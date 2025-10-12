@@ -16,13 +16,15 @@ pub const DEFAULT_MEMORY_SIZE: u64 = 32 * 1024 * 1024;
 pub const DEFAULT_STACK_SIZE: u64 = 4096;
 // 64 byte stack canary. 4 word protection for 32-bit and 2 word for 64-bit
 pub const STACK_CANARY_SIZE: u64 = 128;
+pub const DEFAULT_MAX_TRUSTED_ADVICE_SIZE: u64 = 4096;
+pub const DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE: u64 = 4096;
 pub const DEFAULT_MAX_INPUT_SIZE: u64 = 4096;
 pub const DEFAULT_MAX_OUTPUT_SIZE: u64 = 4096;
 pub const DEFAULT_MAX_TRACE_LENGTH: u64 = 1 << 24;
 
 // Layout of the witness (where || denotes concatenation):
-//     inputs || outputs || panic || termination || padding || RAM
+//     trusted_advice || untrusted_advice || inputs || outputs || panic || termination || padding || RAM
 // Layout of VM memory:
-//     peripheral devices || inputs || outputs || panic || termination || padding || RAM
+//     peripheral devices || trusted_advice || untrusted_advice || inputs || outputs || panic || termination || padding || RAM
 // Notably, we want to be able to map the VM memory address space to witness indices
 // using a constant shift, namely (RAM_WITNESS_OFFSET + RAM_START_ADDRESS)

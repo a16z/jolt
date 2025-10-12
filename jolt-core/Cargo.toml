@@ -45,10 +45,14 @@ prover = [
 # jolt-core needs std and rayon to compile, so these are the minimal set of features.
 minimal = ["ark-ec/std", "ark-ff/std", "ark-std/std", "ark-ff/asm", "rayon"]
 allocative = ["dep:inferno"]
+monitor = ["dep:sysinfo"]
+pprof = ["dep:pprof", "dep:prost"]
 test_incremental = []
+challenge-254-bit = []
 
 [dependencies]
 ark-bn254.workspace = true
+ark-grumpkin.workspace = true
 jolt-optimizations.workspace = true
 ark-ec.workspace = true
 ark-ff.workspace = true
@@ -70,6 +74,7 @@ rayon = { workspace = true, optional = true }
 serde = { workspace = true, default-features = false }
 sha3.workspace = true
 blake2.workspace = true
+chrono.workspace = true
 strum.workspace = true
 strum_macros.workspace = true
 thiserror.workspace = true
@@ -99,6 +104,13 @@ jolt-inlines-sha2 = { workspace = true, features = ["host"], optional = true }
 jolt-inlines-keccak256 = { workspace = true, features = [
     "host",
 ], optional = true }
+sysinfo = { version = "0.37", optional = true }
+pprof = { version = "0.15", features = [
+    "prost-codec",
+    "flamegraph",
+    "frame-pointer",
+], optional = true }
+prost = { version = "0.14", optional = true }
 
 [dev-dependencies]
 criterion.workspace = true
@@ -133,7 +145,11 @@ name = "poly_bench"
 harness = false
 
 [[bench]]
-name = "compact_poly_bench"
+name = "polynomial_evaluation"
+harness = false
+
+[[bench]]
+name = "challenge_mult_performance"
 harness = false
 
 [lib]
