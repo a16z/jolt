@@ -71,7 +71,7 @@ $$
 so we can drop $c_2$ to only use $c_0$ and $c_1$ to represent $\tilde{\beta}$.
 
 ## Compression
-For compressing a pairing value $a^{\frac{q^{12} - 1}{r}}$, fist compute $f = a^{\Phi_6(q^2)}$, then compress $f$ to two $\mathbb{F}_{q^2}$ elements as in the previous section. 
+For compressing a pairing value $a^{\frac{q^{12} - 1}{r}}$, first compute $f = a^{\Phi_6(q^2)}$, then compress $f$ to two $\mathbb{F}_{q^2}$ elements as in the previous section. 
 
 
 ## Decompression
