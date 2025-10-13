@@ -88,15 +88,14 @@ impl RISCVTrace for AMOMAXD {
         let v_rd = allocator.allocate();
         let v_sel_rs2 = allocator.allocate();
         let v_sel_rd = allocator.allocate();
-        let v_tmp = allocator.allocate();
 
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
         asm.emit_ld::<LD>(*v_rd, self.operands.rs1, 0);
         asm.emit_r::<SLT>(*v_sel_rs2, *v_rd, self.operands.rs2);
         asm.emit_i::<XORI>(*v_sel_rd, *v_sel_rs2, 1);
         asm.emit_r::<MUL>(*v_rs2, *v_sel_rs2, self.operands.rs2);
-        asm.emit_r::<MUL>(*v_tmp, *v_sel_rd, *v_rd);
-        asm.emit_r::<ADD>(*v_rs2, *v_tmp, *v_rs2);
+        asm.emit_r::<MUL>(*v_sel_rd, *v_sel_rd, *v_rd);
+        asm.emit_r::<ADD>(*v_rs2, *v_sel_rd, *v_rs2);
         asm.emit_s::<SD>(self.operands.rs1, *v_rs2, 0);
         asm.emit_i::<VirtualMove>(self.operands.rd, *v_rd, 0);
         asm.finalize()

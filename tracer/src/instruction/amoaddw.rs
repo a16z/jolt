@@ -89,28 +89,18 @@ impl RISCVTrace for AMOADDW {
             }
             Xlen::Bit64 => {
                 let v_mask = allocator.allocate();
-                let v_dword_address = allocator.allocate();
                 let v_dword = allocator.allocate();
-                let v_word = allocator.allocate();
                 let v_shift = allocator.allocate();
 
-                amo_pre64(
-                    &mut asm,
-                    self.operands.rs1,
-                    *v_rd,
-                    *v_dword_address,
-                    *v_dword,
-                    *v_shift,
-                );
+                amo_pre64(&mut asm, self.operands.rs1, *v_rd, *v_dword, *v_shift);
                 asm.emit_r::<ADD>(*v_rs2, *v_rd, self.operands.rs2);
                 amo_post64(
                     &mut asm,
+                    self.operands.rs1,
                     *v_rs2,
-                    *v_dword_address,
                     *v_dword,
                     *v_shift,
                     *v_mask,
-                    *v_word,
                     self.operands.rd,
                     *v_rd,
                 );
