@@ -56,13 +56,16 @@ where
         (MockCommitment::default(), ())
     }
 
-    fn batch_commit<P>(polys: &[P], gens: &Self::ProverSetup) -> Vec<Self::Commitment>
+    fn batch_commit<P>(
+        polys: &[P],
+        gens: &Self::ProverSetup,
+    ) -> Vec<(Self::Commitment, Self::OpeningProofHint)>
     where
         P: Borrow<MultilinearPolynomial<Self::Field>>,
     {
         polys
             .iter()
-            .map(|poly| Self::commit(poly.borrow(), gens).0)
+            .map(|poly| (Self::commit(poly.borrow(), gens).0, ()))
             .collect()
     }
 

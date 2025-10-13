@@ -173,6 +173,8 @@ pub enum SumcheckId {
 pub enum OpeningId {
     Committed(CommittedPolynomial, SumcheckId),
     Virtual(VirtualPolynomial, SumcheckId),
+    UntrustedAdvice,
+    TrustedAdvice,
 }
 
 pub type Openings<F> = BTreeMap<OpeningId, (OpeningPoint<BIG_ENDIAN, F>, F)>;
@@ -689,6 +691,16 @@ where
         (point.clone(), *claim)
     }
 
+    pub fn get_untrusted_advice_opening(&self) -> Option<(OpeningPoint<BIG_ENDIAN, F>, F)> {
+        let (point, claim) = self.openings.get(&OpeningId::UntrustedAdvice)?;
+        Some((point.clone(), *claim))
+    }
+
+    pub fn get_trusted_advice_opening(&self) -> Option<(OpeningPoint<BIG_ENDIAN, F>, F)> {
+        let (point, claim) = self.openings.get(&OpeningId::TrustedAdvice)?;
+        Some((point.clone(), *claim))
+    }
+
     /// Adds openings to the accumulator. The given `polynomials` are opened at
     /// `opening_point`, yielding the claimed evaluations `claims`.
     /// Multiple polynomials opened at a single point are batched into a single
@@ -785,6 +797,28 @@ where
         self.appended_virtual_openings
             .borrow_mut()
             .push(OpeningId::Virtual(polynomial, sumcheck));
+    }
+
+    pub fn append_untrusted_advice<T: Transcript>(
+        &mut self,
+        transcript: &mut T,
+        opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        claim: F,
+    ) {
+        transcript.append_scalar(&claim);
+        self.openings
+            .insert(OpeningId::UntrustedAdvice, (opening_point, claim));
+    }
+
+    pub fn append_trusted_advice<T: Transcript>(
+        &mut self,
+        transcript: &mut T,
+        opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        claim: F,
+    ) {
+        transcript.append_scalar(&claim);
+        self.openings
+            .insert(OpeningId::TrustedAdvice, (opening_point, claim));
     }
 
     /// Reduces the multiple openings accumulated into a single opening proof,
@@ -1059,6 +1093,16 @@ where
         (point.clone(), *claim)
     }
 
+    pub fn get_untrusted_advice_opening(&self) -> Option<(OpeningPoint<BIG_ENDIAN, F>, F)> {
+        let (point, claim) = self.openings.get(&OpeningId::UntrustedAdvice)?;
+        Some((point.clone(), *claim))
+    }
+
+    pub fn get_trusted_advice_opening(&self) -> Option<(OpeningPoint<BIG_ENDIAN, F>, F)> {
+        let (point, claim) = self.openings.get(&OpeningId::TrustedAdvice)?;
+        Some((point.clone(), *claim))
+    }
+
     /// Adds openings to the accumulator. The polynomials underlying the given
     /// `commitments` are opened at `opening_point`, yielding the claimed evaluations
     /// `claims`.
@@ -1179,6 +1223,42 @@ where
             self.openings.insert(key, (opening_point.clone(), claim));
         } else {
             panic!("Tried to populate opening point for non-existent key: {key:?}");
+        }
+    }
+
+    pub fn append_untrusted_advice<T: Transcript>(
+        &mut self,
+        transcript: &mut T,
+        opening_point: OpeningPoint<BIG_ENDIAN, F>,
+    ) {
+        if let Some((_, claim)) = self.openings.get(&OpeningId::UntrustedAdvice) {
+            transcript.append_scalar(claim);
+            let claim = *claim;
+            self.openings
+                .insert(OpeningId::UntrustedAdvice, (opening_point.clone(), claim));
+        } else {
+            panic!(
+                "Tried to populate opening point for non-existent key: {:?}",
+                OpeningId::UntrustedAdvice
+            );
+        }
+    }
+
+    pub fn append_trusted_advice<T: Transcript>(
+        &mut self,
+        transcript: &mut T,
+        opening_point: OpeningPoint<BIG_ENDIAN, F>,
+    ) {
+        if let Some((_, claim)) = self.openings.get(&OpeningId::TrustedAdvice) {
+            transcript.append_scalar(claim);
+            let claim = *claim;
+            self.openings
+                .insert(OpeningId::TrustedAdvice, (opening_point.clone(), claim));
+        } else {
+            panic!(
+                "Tried to populate opening point for non-existent key: {:?}",
+                OpeningId::TrustedAdvice
+            );
         }
     }
 

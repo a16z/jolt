@@ -22,7 +22,7 @@ mod tests {
         let mut program = host::Program::new("fibonacci-guest");
         let (bytecode, init_memory_state, _) = program.decode();
         let inputs = postcard::to_stdvec(&9u8).unwrap();
-        let (mut trace, final_memory_state, mut program_io) = program.trace(&inputs);
+        let (mut trace, final_memory_state, mut program_io) = program.trace(&inputs, &[], &[]);
         trace.truncate(100);
         program_io.outputs[0] = 0; // change the output to 0
 
@@ -50,6 +50,7 @@ mod tests {
             &preprocessing,
             trace,
             program_io.clone(),
+            None,
             final_memory_state,
         );
         let (proof, _) = JoltDAG::prove(state_manager).ok().unwrap();
@@ -57,7 +58,7 @@ mod tests {
         let verifier_preprocessing =
             JoltVerifierPreprocessing::<Fr, DoryCommitmentScheme>::from(&preprocessing);
         let _verification_result =
-            JoltRV64IMAC::verify(&verifier_preprocessing, proof, program_io, None);
+            JoltRV64IMAC::verify(&verifier_preprocessing, proof, program_io, None, None);
     }
 
     #[test]
@@ -67,7 +68,7 @@ mod tests {
         let mut program = host::Program::new("fibonacci-guest");
         let inputs = postcard::to_stdvec(&1u8).unwrap();
         let (bytecode, init_memory_state, _) = program.decode();
-        let (mut trace, final_memory_state, mut program_io) = program.trace(&inputs);
+        let (mut trace, final_memory_state, mut program_io) = program.trace(&inputs, &[], &[]);
 
         // Since the preprocessing is done with the original memory layout, the verifier should fail
         let preprocessing = JoltRV64IMAC::prover_preprocess(
@@ -100,6 +101,7 @@ mod tests {
             &preprocessing,
             trace,
             program_io.clone(),
+            None,
             final_memory_state,
         );
         let (proof, _) = JoltDAG::prove(state_manager).ok().unwrap();
@@ -107,6 +109,6 @@ mod tests {
         let verifier_preprocessing =
             JoltVerifierPreprocessing::<Fr, DoryCommitmentScheme>::from(&preprocessing);
         let _verification_result =
-            JoltRV64IMAC::verify(&verifier_preprocessing, proof, program_io, None);
+            JoltRV64IMAC::verify(&verifier_preprocessing, proof, program_io, None, None);
     }
 }

@@ -48,7 +48,7 @@ fn verify(bytes: &[u8]) -> u32 {
         end_cycle_tracking("deserialize device");
 
         start_cycle_tracking("verification");
-        let is_valid = JoltRV64IMAC::verify(&verifier_preprocessing, proof, device, None).is_ok();
+        let is_valid = JoltRV64IMAC::verify(&verifier_preprocessing, proof, device, None, None).is_ok();
         end_cycle_tracking("verification");
         all_valid = all_valid && is_valid;
     }

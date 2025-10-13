@@ -12,3 +12,8 @@ pub use jolt_core::zkvm::{
     dag::proof_serialization::JoltProof, Jolt, JoltProverPreprocessing, JoltRV64IMAC,
     JoltVerifierPreprocessing, RV64IMACJoltProof, Serializable,
 };
+
+// Re-exports needed by the provable macro
+pub use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
+pub use jolt_core::poly::commitment::dory::DoryGlobals;
+pub use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;

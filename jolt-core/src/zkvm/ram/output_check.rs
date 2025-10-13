@@ -1,3 +1,4 @@
+use num_traits::Zero;
 use std::{cell::RefCell, rc::Rc};
 
 use crate::{
@@ -191,7 +192,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for OutputSumcheck<F> {
             ..
         } = self.prover_state.as_ref().unwrap();
 
-        let univariate_poly_evals: [F; DEGREE] = (0..eq_poly.len() / 2)
+        (0..eq_poly.len() / 2)
             .into_par_iter()
             .map(|k| {
                 let eq_evals = eq_poly.sumcheck_evals_array::<DEGREE>(k, BindingOrder::HighToLow);
@@ -202,13 +203,16 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for OutputSumcheck<F> {
                 let val_io_evals =
                     val_io.sumcheck_evals_array::<DEGREE>(k, BindingOrder::HighToLow);
                 [
-                    eq_evals[0] * io_mask_evals[0] * (val_final_evals[0] - val_io_evals[0]),
-                    eq_evals[1] * io_mask_evals[1] * (val_final_evals[1] - val_io_evals[1]),
-                    eq_evals[2] * io_mask_evals[2] * (val_final_evals[2] - val_io_evals[2]),
+                    (eq_evals[0] * io_mask_evals[0])
+                        .mul_unreduced::<9>(val_final_evals[0] - val_io_evals[0]),
+                    (eq_evals[1] * io_mask_evals[1])
+                        .mul_unreduced::<9>(val_final_evals[1] - val_io_evals[1]),
+                    (eq_evals[2] * io_mask_evals[2])
+                        .mul_unreduced::<9>(val_final_evals[2] - val_io_evals[2]),
                 ]
             })
             .reduce(
-                || [F::zero(); DEGREE],
+                || [F::Unreduced::zero(); DEGREE],
                 |running, new| {
                     [
                         running[0] + new[0],
@@ -216,9 +220,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for OutputSumcheck<F> {
                         running[2] + new[2],
                     ]
                 },
-            );
-
-        univariate_poly_evals.to_vec()
+            )
+            .into_iter()
+            .map(F::from_montgomery_reduce)
+            .collect()
     }
 
     #[tracing::instrument(skip_all, name = "OutputSumcheck::bind")]
@@ -461,7 +466,7 @@ impl<F: JoltField> ValFinalSumcheck<F> {
         initial_ram_state: &[u64],
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
-        let (_, _, T) = state_manager.get_verifier_data();
+        let (_, program_io, T) = state_manager.get_verifier_data();
 
         let r_address = state_manager
             .get_virtual_polynomial_opening(
@@ -471,9 +476,51 @@ impl<F: JoltField> ValFinalSumcheck<F> {
             .0
             .r;
 
-        let val_init: MultilinearPolynomial<F> =
+        {
+            // Verify that val_evaluation and output_check use the same opening point for initial_ram_state.
+            // This allows us to reuse a single untrusted_advice opening instead of providing two.
+            let (r, _) = state_manager.get_virtual_polynomial_opening(
+                VirtualPolynomial::RamVal,
+                SumcheckId::RamReadWriteChecking,
+            );
+            let (r_address_val_evaluation, _) = r.split_at(state_manager.ram_K.log_2());
+            assert_eq!(r_address_val_evaluation.r, r_address);
+        }
+
+        let accumulator = state_manager.get_verifier_accumulator();
+        let total_memory_vars = state_manager.ram_K.log_2();
+
+        let untrusted_advice_contribution = super::calculate_advice_memory_evaluation(
+            accumulator.borrow().get_untrusted_advice_opening(),
+            (program_io.memory_layout.max_untrusted_advice_size as usize / 8)
+                .next_power_of_two()
+                .log_2(),
+            program_io.memory_layout.untrusted_advice_start,
+            &program_io.memory_layout,
+            &r_address,
+            total_memory_vars,
+        );
+
+        let trusted_advice_contribution = super::calculate_advice_memory_evaluation(
+            accumulator.borrow().get_trusted_advice_opening(),
+            (program_io.memory_layout.max_trusted_advice_size as usize / 8)
+                .next_power_of_two()
+                .log_2(),
+            program_io.memory_layout.trusted_advice_start,
+            &program_io.memory_layout,
+            &r_address,
+            total_memory_vars,
+        );
+
+        // Compute the public part of val_init evaluation
+        let val_init_public: MultilinearPolynomial<F> =
             MultilinearPolynomial::from(initial_ram_state.to_vec());
-        let val_init_eval = val_init.evaluate(&r_address);
+
+        // Combine all contributions: untrusted + trusted + public
+        let val_init_eval = untrusted_advice_contribution
+            + trusted_advice_contribution
+            + val_init_public.evaluate(&r_address);
+
         let val_final_claim = state_manager
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::RamValFinal,
@@ -509,19 +556,23 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ValFinalSumcheck<F>
 
         let ValFinalSumcheckProverState { inc, wa, .. } = self.prover_state.as_ref().unwrap();
 
-        let univariate_poly_evals: [F; DEGREE] = (0..inc.len() / 2)
+        (0..inc.len() / 2)
             .into_par_iter()
             .map(|j| {
                 let inc_evals = inc.sumcheck_evals_array::<DEGREE>(j, BindingOrder::HighToLow);
                 let wa_evals = wa.sumcheck_evals_array::<DEGREE>(j, BindingOrder::HighToLow);
-                [inc_evals[0] * wa_evals[0], inc_evals[1] * wa_evals[1]]
+                [
+                    inc_evals[0].mul_unreduced::<9>(wa_evals[0]),
+                    inc_evals[1].mul_unreduced::<9>(wa_evals[1]),
+                ]
             })
             .reduce(
-                || [F::zero(); DEGREE],
+                || [F::Unreduced::zero(); DEGREE],
                 |running, new| [running[0] + new[0], running[1] + new[1]],
-            );
-
-        univariate_poly_evals.to_vec()
+            )
+            .into_iter()
+            .map(F::from_montgomery_reduce)
+            .collect()
     }
 
     #[tracing::instrument(skip_all, name = "ValFinalSumcheck::bind")]

@@ -1,4 +1,5 @@
-use std::{cell::RefCell, rc::Rc};
+use num_traits::Zero;
+use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 use crate::{
     field::JoltField,
@@ -12,6 +13,7 @@ use crate::{
             OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator,
             BIG_ENDIAN,
         },
+        ra_poly::RaPolynomial,
     },
     subprotocols::sumcheck::SumcheckInstance,
     transcripts::Transcript,
@@ -30,7 +32,7 @@ use rayon::prelude::*;
 #[derive(Allocative)]
 pub struct ValEvaluationProverState<F: JoltField> {
     inc: MultilinearPolynomial<F>,
-    wa: MultilinearPolynomial<F>,
+    wa: RaPolynomial<usize, F>,
     lt: MultilinearPolynomial<F>,
 }
 
@@ -78,14 +80,14 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
         let _guard = span.enter();
 
         // Compute the wa polynomial using the above table
-        let wa: Vec<F> = trace
+        let wa_indices: Vec<Option<usize>> = trace
             .par_iter()
             .map(|cycle| {
                 remap_address(cycle.ram_access().address() as u64, memory_layout)
-                    .map_or(F::zero(), |k| eq_r_address[k as usize])
+                    .map(|k| k as usize)
             })
             .collect();
-        let wa = MultilinearPolynomial::from(wa);
+        let wa = RaPolynomial::new(Arc::new(wa_indices), eq_r_address);
 
         drop(_guard);
         drop(span);
@@ -124,7 +126,7 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
         initial_ram_state: &[u64],
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
-        let (_, _, T) = state_manager.get_verifier_data();
+        let (_, program_io, T) = state_manager.get_verifier_data();
         let K = state_manager.ram_K;
 
         let (r, claimed_evaluation) = state_manager.get_virtual_polynomial_opening(
@@ -133,9 +135,40 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
         );
         let (r_address, _) = r.split_at(K.log_2());
 
-        let val_init: MultilinearPolynomial<F> =
+        let accumulator = state_manager.get_verifier_accumulator();
+        let total_memory_vars = K.log_2();
+
+        // Calculate untrusted advice contribution
+        let untrusted_contribution = super::calculate_advice_memory_evaluation(
+            accumulator.borrow().get_untrusted_advice_opening(),
+            (program_io.memory_layout.max_untrusted_advice_size as usize / 8)
+                .next_power_of_two()
+                .log_2(),
+            program_io.memory_layout.untrusted_advice_start,
+            &program_io.memory_layout,
+            &r_address.r,
+            total_memory_vars,
+        );
+
+        // Calculate trusted advice contribution
+        let trusted_contribution = super::calculate_advice_memory_evaluation(
+            accumulator.borrow().get_trusted_advice_opening(),
+            (program_io.memory_layout.max_trusted_advice_size as usize / 8)
+                .next_power_of_two()
+                .log_2(),
+            program_io.memory_layout.trusted_advice_start,
+            &program_io.memory_layout,
+            &r_address.r,
+            total_memory_vars,
+        );
+
+        // Compute the public part of val_init evaluation
+        let val_init_public: MultilinearPolynomial<F> =
             MultilinearPolynomial::from(initial_ram_state.to_vec());
-        let init_eval = val_init.evaluate(&r_address.r);
+
+        // Combine all contributions: untrusted + trusted + public
+        let init_eval =
+            untrusted_contribution + trusted_contribution + val_init_public.evaluate(&r_address.r);
 
         ValEvaluationSumcheck {
             claimed_evaluation,
@@ -162,33 +195,31 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ValEvaluationSumche
 
     #[tracing::instrument(skip_all, name = "RamValEvaluationSumcheck::compute_prover_message")]
     fn compute_prover_message(&mut self, _round: usize, _previous_claim: F) -> Vec<F> {
-        let prover_state = self
+        let ps = self
             .prover_state
             .as_ref()
             .expect("Prover state not initialized");
 
         const DEGREE: usize = 3;
-        let univariate_poly_evals: [F; 3] = (0..prover_state.inc.len() / 2)
+        (0..ps.inc.len() / 2)
             .into_par_iter()
             .map(|i| {
-                let inc_evals = prover_state
+                let inc_evals = ps
                     .inc
                     .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
-                let wa_evals = prover_state
-                    .wa
-                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
-                let lt_evals = prover_state
+                let wa_evals = ps.wa.sumcheck_evals(i, DEGREE, BindingOrder::HighToLow);
+                let lt_evals = ps
                     .lt
                     .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
 
                 [
-                    inc_evals[0] * wa_evals[0] * lt_evals[0],
-                    inc_evals[1] * wa_evals[1] * lt_evals[1],
-                    inc_evals[2] * wa_evals[2] * lt_evals[2],
+                    (inc_evals[0] * wa_evals[0]).mul_unreduced::<9>(lt_evals[0]),
+                    (inc_evals[1] * wa_evals[1]).mul_unreduced::<9>(lt_evals[1]),
+                    (inc_evals[2] * wa_evals[2]).mul_unreduced::<9>(lt_evals[2]),
                 ]
             })
             .reduce(
-                || [F::zero(); 3],
+                || [F::Unreduced::zero(); DEGREE],
                 |running, new| {
                     [
                         running[0] + new[0],
@@ -196,21 +227,19 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ValEvaluationSumche
                         running[2] + new[2],
                     ]
                 },
-            );
-
-        univariate_poly_evals.to_vec()
+            )
+            .into_iter()
+            .map(F::from_montgomery_reduce)
+            .collect()
     }
 
     #[tracing::instrument(skip_all, name = "RamValEvaluationSumcheck::bind")]
     fn bind(&mut self, r_j: F::Challenge, _round: usize) {
         if let Some(prover_state) = &mut self.prover_state {
-            [
-                &mut prover_state.inc,
-                &mut prover_state.wa,
-                &mut prover_state.lt,
-            ]
-            .par_iter_mut()
-            .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow));
+            [&mut prover_state.inc, &mut prover_state.lt]
+                .par_iter_mut()
+                .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow));
+            prover_state.wa.bind_parallel(r_j, BindingOrder::HighToLow);
         }
     }
 

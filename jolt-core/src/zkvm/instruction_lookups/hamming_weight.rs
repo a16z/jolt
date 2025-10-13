@@ -3,12 +3,13 @@ use std::{cell::RefCell, rc::Rc};
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
+use num_traits::Zero;
 use rayon::prelude::*;
 
 use super::{D, LOG_K_CHUNK};
 
 use crate::{
-    field::JoltField,
+    field::{JoltField, MulTrunc},
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
@@ -41,14 +42,14 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
     #[tracing::instrument(skip_all, name = "InstructionHammingWeight::new_prover")]
     pub fn new_prover(
         sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
-        F: [Vec<F>; D],
+        G: [Vec<F>; D],
     ) -> Self {
         let gamma: F = sm.transcript.borrow_mut().challenge_scalar();
         let mut gamma_powers = [F::one(); D];
         for i in 1..D {
             gamma_powers[i] = gamma_powers[i - 1] * gamma;
         }
-        let ra = F
+        let ra = G
             .into_iter()
             .map(MultilinearPolynomial::from)
             .collect::<Vec<_>>()
@@ -91,18 +92,22 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for HammingWeightSumche
     #[tracing::instrument(skip_all, name = "InstructionHammingWeight::compute_prover_message")]
     fn compute_prover_message(&mut self, _round: usize, _previous_claim: F) -> Vec<F> {
         let prover_state = self.prover_state.as_ref().unwrap();
-        vec![prover_state
+        let result = prover_state
             .ra
             .iter()
             .zip(self.gamma.iter())
             .map(|(ra, gamma)| {
-                (0..ra.len() / 2)
+                let ra_sum = (0..ra.len() / 2)
                     .into_par_iter()
                     .map(|i| ra.get_bound_coeff(2 * i))
-                    .sum::<F>()
-                    * gamma
+                    .fold_with(F::Unreduced::<5>::zero(), |running, new| {
+                        running + new.as_unreduced_ref()
+                    })
+                    .reduce(F::Unreduced::zero, |running, new| running + new);
+                ra_sum.mul_trunc::<4, 9>(gamma.as_unreduced_ref())
             })
-            .sum()]
+            .fold(F::Unreduced::<9>::zero(), |running, new| running + new);
+        vec![F::from_montgomery_reduce(result)]
     }
 
     #[tracing::instrument(skip_all, name = "InstructionHammingWeight::bind")]

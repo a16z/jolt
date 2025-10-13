@@ -2,6 +2,7 @@ use std::{
     fs::File,
     io::{Read, Write},
     path::Path,
+    time::{Duration, Instant},
 };
 
 #[cfg(test)]
@@ -35,6 +36,74 @@ pub mod ram;
 pub mod registers;
 pub mod spartan;
 pub mod witness;
+
+// Scoped CPU profiler for performance analysis. Feature-gated by "pprof".
+// Usage: let _guard = pprof_scope!("label");
+//
+// Writes pprof/label.pb on scope exit
+// View with: go tool pprof -http=:8080 pprof/label.pb
+
+// Public type for the profiling guard
+#[cfg(feature = "pprof")]
+pub struct PprofGuard {
+    guard: pprof::ProfilerGuard<'static>,
+    label: &'static str,
+}
+
+#[cfg(not(feature = "pprof"))]
+pub struct PprofGuard;
+
+#[cfg(feature = "pprof")]
+impl Drop for PprofGuard {
+    fn drop(&mut self) {
+        if let Ok(report) = self.guard.report().build() {
+            let prefix = std::env::var("PPROF_PREFIX")
+                .unwrap_or_else(|_| String::from("benchmark-runs/pprof/"));
+            let filename = format!("{}{}.pb", prefix, self.label);
+            // Extract directory from prefix for creation
+            if let Some(dir) = std::path::Path::new(&filename).parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            if let Ok(mut f) = std::fs::File::create(&filename) {
+                use pprof::protos::Message;
+                if let Ok(p) = report.pprof() {
+                    let mut buf = Vec::new();
+                    if p.encode(&mut buf).is_ok() {
+                        let _ = std::io::Write::write_all(&mut f, &buf);
+                        tracing::info!("Wrote pprof profile to {}", filename);
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[macro_export]
+macro_rules! pprof_scope {
+    ($label:expr) => {{
+        #[cfg(feature = "pprof")]
+        {
+            Some($crate::zkvm::PprofGuard {
+                guard: pprof::ProfilerGuardBuilder::default()
+                    .frequency(
+                        std::env::var("PPROF_FREQ")
+                            .unwrap_or("100".to_string())
+                            .parse::<i32>()
+                            .unwrap(),
+                    )
+                    .blocklist(&["libc", "libgcc", "pthread", "vdso"])
+                    .build()
+                    .expect("Failed to initialize profiler"),
+                label: $label,
+            })
+        }
+        #[cfg(not(feature = "pprof"))]
+        None::<$crate::zkvm::PprofGuard>
+    }};
+    () => {
+        pprof_scope!("default");
+    };
+}
 
 #[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct JoltSharedPreprocessing {
@@ -190,10 +259,14 @@ where
         preprocessing: &JoltProverPreprocessing<F, PCS>,
         elf_contents: &[u8],
         inputs: &[u8],
+        untrusted_advice: &[u8],
+        trusted_advice: &[u8],
+        trusted_advice_commitment: Option<<PCS as CommitmentScheme>::Commitment>,
     ) -> (
         JoltProof<F, PCS, FS>,
         JoltDevice,
         Option<ProverDebugInfo<F, FS, PCS>>,
+        Duration,
     ) {
         use crate::{guest, zkvm::dag::state_manager::StateManager};
         use common::jolt_device::MemoryConfig;
@@ -201,6 +274,8 @@ where
         use tracer::instruction::Cycle;
 
         let memory_config = MemoryConfig {
+            max_untrusted_advice_size: preprocessing.shared.memory_layout.max_untrusted_advice_size,
+            max_trusted_advice_size: preprocessing.shared.memory_layout.max_trusted_advice_size,
             max_input_size: preprocessing.shared.memory_layout.max_input_size,
             max_output_size: preprocessing.shared.memory_layout.max_output_size,
             stack_size: preprocessing.shared.memory_layout.stack_size,
@@ -208,8 +283,17 @@ where
             program_size: Some(preprocessing.shared.memory_layout.program_size),
         };
 
-        let (mut trace, final_memory_state, mut program_io) =
-            guest::program::trace(elf_contents, None, inputs, &memory_config);
+        let (mut trace, final_memory_state, mut program_io) = {
+            let _pprof_trace = pprof_scope!("trace");
+            guest::program::trace(
+                elf_contents,
+                None,
+                inputs,
+                untrusted_advice,
+                trusted_advice,
+                &memory_config,
+            )
+        };
         let num_riscv_cycles: usize = trace
             .par_iter()
             .map(|cycle| {
@@ -233,6 +317,7 @@ where
         );
 
         // Setup trace length and padding
+        let trace_length = trace.len();
         let padded_trace_length = (trace.len() + 1).next_power_of_two();
         trace.resize(padded_trace_length, Cycle::NoOp);
 
@@ -245,11 +330,27 @@ where
                 .map_or(0, |pos| pos + 1),
         );
 
-        let state_manager =
-            StateManager::new_prover(preprocessing, trace, program_io.clone(), final_memory_state);
-        let (proof, debug_info) = JoltDAG::prove(state_manager).ok().unwrap();
+        let (proof, debug_info, prove_duration) = {
+            let _pprof_prove = pprof_scope!("prove");
+            let start = Instant::now();
+            let state_manager = StateManager::new_prover(
+                preprocessing,
+                trace,
+                program_io.clone(),
+                trusted_advice_commitment,
+                final_memory_state,
+            );
+            let (proof, debug_info) = JoltDAG::prove(state_manager).ok().unwrap();
+            let prove_duration = start.elapsed();
+            tracing::info!(
+                "Proved in {:.1}s ({:.1} kHz)",
+                prove_duration.as_secs_f64(),
+                trace_length as f64 / prove_duration.as_secs_f64() / 1000.0
+            );
+            (proof, debug_info, prove_duration)
+        };
 
-        (proof, program_io, debug_info)
+        (proof, program_io, debug_info, prove_duration)
     }
 
     #[tracing::instrument(skip_all, name = "Jolt::verify")]
@@ -257,8 +358,11 @@ where
         preprocessing: &JoltVerifierPreprocessing<F, PCS>,
         proof: JoltProof<F, PCS, FS>,
         mut program_io: JoltDevice,
+        trusted_advice_commitment: Option<<PCS as CommitmentScheme>::Commitment>,
         _debug_info: Option<ProverDebugInfo<F, FS, PCS>>,
     ) -> Result<(), ProofVerifyError> {
+        let _pprof_verify = pprof_scope!("verify");
+
         #[cfg(test)]
         let T = proof.trace_length.next_power_of_two();
         // Need to initialize globals because the verifier computes commitments
@@ -286,7 +390,8 @@ where
                 .map_or(0, |pos| pos + 1),
         );
 
-        let state_manager = proof.to_verifier_state_manager(preprocessing, program_io);
+        let mut state_manager = proof.to_verifier_state_manager(preprocessing, program_io);
+        state_manager.trusted_advice_commitment = trusted_advice_commitment;
 
         #[cfg(test)]
         {
@@ -385,7 +490,7 @@ mod tests {
         let mut program = host::Program::new("fibonacci-guest");
         let inputs = postcard::to_stdvec(&9u32).unwrap();
         let (bytecode, init_memory_state, _) = program.decode();
-        let (_, _, io_device) = program.trace(&inputs);
+        let (_, _, io_device) = program.trace(&inputs, &[], &[]);
 
         let preprocessing = JoltRV64IMACMockPCS::prover_preprocess(
             bytecode.clone(),
@@ -395,12 +500,17 @@ mod tests {
         );
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-        let (jolt_proof, io_device, debug_info) =
-            JoltRV64IMACMockPCS::prove(&preprocessing, elf_contents, &inputs);
+        let (jolt_proof, io_device, debug_info, _) =
+            JoltRV64IMACMockPCS::prove(&preprocessing, elf_contents, &inputs, &[], &[], None);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
-        let verification_result =
-            JoltRV64IMACMockPCS::verify(&verifier_preprocessing, jolt_proof, io_device, debug_info);
+        let verification_result = JoltRV64IMACMockPCS::verify(
+            &verifier_preprocessing,
+            jolt_proof,
+            io_device,
+            None,
+            debug_info,
+        );
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",
@@ -414,7 +524,7 @@ mod tests {
         let mut program = host::Program::new("fibonacci-guest");
         let inputs = postcard::to_stdvec(&100u32).unwrap();
         let (bytecode, init_memory_state, _) = program.decode();
-        let (_, _, io_device) = program.trace(&inputs);
+        let (_, _, io_device) = program.trace(&inputs, &[], &[]);
 
         let preprocessing = JoltRV64IMAC::prover_preprocess(
             bytecode.clone(),
@@ -424,12 +534,17 @@ mod tests {
         );
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-        let (jolt_proof, io_device, debug_info) =
-            JoltRV64IMAC::prove(&preprocessing, elf_contents, &inputs);
+        let (jolt_proof, io_device, debug_info, _) =
+            JoltRV64IMAC::prove(&preprocessing, elf_contents, &inputs, &[], &[], None);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
-        let verification_result =
-            JoltRV64IMAC::verify(&verifier_preprocessing, jolt_proof, io_device, debug_info);
+        let verification_result = JoltRV64IMAC::verify(
+            &verifier_preprocessing,
+            jolt_proof,
+            io_device,
+            None,
+            debug_info,
+        );
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",
@@ -449,7 +564,7 @@ mod tests {
         let mut program = host::Program::new("sha3-guest");
         let (bytecode, init_memory_state, _) = program.decode();
         let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
-        let (_, _, io_device) = program.trace(&inputs);
+        let (_, _, io_device) = program.trace(&inputs, &[], &[]);
 
         let preprocessing = JoltRV64IMAC::prover_preprocess(
             bytecode.clone(),
@@ -459,14 +574,15 @@ mod tests {
         );
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-        let (jolt_proof, io_device, debug_info) =
-            JoltRV64IMAC::prove(&preprocessing, elf_contents, &inputs);
+        let (jolt_proof, io_device, debug_info, _) =
+            JoltRV64IMAC::prove(&preprocessing, elf_contents, &inputs, &[], &[], None);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let verification_result = JoltRV64IMAC::verify(
             &verifier_preprocessing,
             jolt_proof,
             io_device.clone(),
+            None,
             debug_info,
         );
         assert!(
@@ -498,7 +614,7 @@ mod tests {
         let mut program = host::Program::new("sha2-guest");
         let (bytecode, init_memory_state, _) = program.decode();
         let inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
-        let (_, _, io_device) = program.trace(&inputs);
+        let (_, _, io_device) = program.trace(&inputs, &[], &[]);
 
         let preprocessing = JoltRV64IMAC::prover_preprocess(
             bytecode.clone(),
@@ -508,14 +624,15 @@ mod tests {
         );
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-        let (jolt_proof, io_device, debug_info) =
-            JoltRV64IMAC::prove(&preprocessing, elf_contents, &inputs);
+        let (jolt_proof, io_device, debug_info, _) =
+            JoltRV64IMAC::prove(&preprocessing, elf_contents, &inputs, &[], &[], None);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
         let verification_result = JoltRV64IMAC::verify(
             &verifier_preprocessing,
             jolt_proof,
             io_device.clone(),
+            None,
             debug_info,
         );
         assert!(
@@ -540,7 +657,7 @@ mod tests {
     fn memory_ops_e2e_dory() {
         let mut program = host::Program::new("memory-ops-guest");
         let (bytecode, init_memory_state, _) = program.decode();
-        let (_, _, io_device) = program.trace(&[]);
+        let (_, _, io_device) = program.trace(&[], &[], &[]);
 
         let preprocessing = JoltRV64IMAC::prover_preprocess(
             bytecode.clone(),
@@ -550,12 +667,17 @@ mod tests {
         );
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-        let (jolt_proof, io_device, debug_info) =
-            JoltRV64IMAC::prove(&preprocessing, elf_contents, &[]);
+        let (jolt_proof, io_device, debug_info, _) =
+            JoltRV64IMAC::prove(&preprocessing, elf_contents, &[], &[], &[], None);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
-        let verification_result =
-            JoltRV64IMAC::verify(&verifier_preprocessing, jolt_proof, io_device, debug_info);
+        let verification_result = JoltRV64IMAC::verify(
+            &verifier_preprocessing,
+            jolt_proof,
+            io_device,
+            None,
+            debug_info,
+        );
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",
@@ -569,7 +691,7 @@ mod tests {
         let mut program = host::Program::new("btreemap-guest");
         let (bytecode, init_memory_state, _) = program.decode();
         let inputs = postcard::to_stdvec(&50u32).unwrap();
-        let (_, _, io_device) = program.trace(&inputs);
+        let (_, _, io_device) = program.trace(&inputs, &[], &[]);
 
         let preprocessing = JoltRV64IMAC::prover_preprocess(
             bytecode.clone(),
@@ -579,12 +701,17 @@ mod tests {
         );
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-        let (jolt_proof, io_device, debug_info) =
-            JoltRV64IMAC::prove(&preprocessing, elf_contents, &inputs);
+        let (jolt_proof, io_device, debug_info, _) =
+            JoltRV64IMAC::prove(&preprocessing, elf_contents, &inputs, &[], &[], None);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
-        let verification_result =
-            JoltRV64IMAC::verify(&verifier_preprocessing, jolt_proof, io_device, debug_info);
+        let verification_result = JoltRV64IMAC::verify(
+            &verifier_preprocessing,
+            jolt_proof,
+            io_device,
+            None,
+            debug_info,
+        );
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",
@@ -598,7 +725,7 @@ mod tests {
         let mut program = host::Program::new("muldiv-guest");
         let (bytecode, init_memory_state, _) = program.decode();
         let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).unwrap();
-        let (_, _, io_device) = program.trace(&inputs);
+        let (_, _, io_device) = program.trace(&inputs, &[], &[]);
 
         let preprocessing = JoltRV64IMAC::prover_preprocess(
             bytecode.clone(),
@@ -608,12 +735,17 @@ mod tests {
         );
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-        let (jolt_proof, io_device, debug_info) =
-            JoltRV64IMAC::prove(&preprocessing, elf_contents, &[50]);
+        let (jolt_proof, io_device, debug_info, _) =
+            JoltRV64IMAC::prove(&preprocessing, elf_contents, &[50], &[], &[], None);
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
-        let verification_result =
-            JoltRV64IMAC::verify(&verifier_preprocessing, jolt_proof, io_device, debug_info);
+        let verification_result = JoltRV64IMAC::verify(
+            &verifier_preprocessing,
+            jolt_proof,
+            io_device,
+            None,
+            debug_info,
+        );
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",
