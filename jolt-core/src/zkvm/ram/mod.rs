@@ -582,19 +582,16 @@ where
             state_manager,
         );
         let val_final_evaluation = ValFinalSumcheck::new_prover(state_manager);
-        let hamming_booleanity = HammingBooleanitySumcheck::new_prover(state_manager);
 
         #[cfg(feature = "allocative")]
         {
             print_data_structure_heap_usage("RAM ValEvaluationSumcheck", &val_evaluation);
             print_data_structure_heap_usage("RAM ValFinalSumcheck", &val_final_evaluation);
-            print_data_structure_heap_usage("RAM HammingBooleanitySumcheck", &hamming_booleanity);
         }
 
         vec![
             Box::new(val_evaluation),
             Box::new(val_final_evaluation),
-            Box::new(hamming_booleanity),
         ]
     }
 
@@ -613,12 +610,10 @@ where
             self.initial_memory_state.as_ref().unwrap(),
             state_manager,
         );
-        let hamming_booleanity = HammingBooleanitySumcheck::new_verifier(state_manager);
 
         vec![
             Box::new(val_evaluation),
             Box::new(val_final_evaluation),
-            Box::new(hamming_booleanity),
         ]
     }
 
@@ -626,19 +621,16 @@ where
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
-        let hamming_weight = HammingWeightSumcheck::new_prover(state_manager);
         let booleanity = BooleanitySumcheck::new_prover(state_manager);
         let ra_virtual = RaSumcheck::new_prover(state_manager);
 
         #[cfg(feature = "allocative")]
         {
-            print_data_structure_heap_usage("RAM HammingWeightSumcheck", &hamming_weight);
             print_data_structure_heap_usage("RAM BooleanitySumcheck", &booleanity);
             print_data_structure_heap_usage("RAM RASumcheck", &ra_virtual);
         }
 
         vec![
-            Box::new(hamming_weight),
             Box::new(booleanity),
             Box::new(ra_virtual),
         ]
@@ -648,14 +640,58 @@ where
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
-        let hamming_weight = HammingWeightSumcheck::new_verifier(state_manager);
         let booleanity = BooleanitySumcheck::new_verifier(state_manager);
         let ra_virtual = RaSumcheck::new_verifier(state_manager);
 
         vec![
-            Box::new(hamming_weight),
             Box::new(booleanity),
             Box::new(ra_virtual),
         ]
+    }
+
+    fn stage5_prover_instances(
+        &mut self,
+        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+    ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
+        let hamming_booleanity = HammingBooleanitySumcheck::new_prover(state_manager);
+
+        #[cfg(feature = "allocative")]
+        {
+            print_data_structure_heap_usage("RAM HammingBooleanitySumcheck", &hamming_booleanity);
+        }
+
+        vec![Box::new(hamming_booleanity)]
+    }
+
+    fn stage5_verifier_instances(
+        &mut self,
+        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+    ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
+        let hamming_booleanity = HammingBooleanitySumcheck::new_verifier(state_manager);
+
+        vec![Box::new(hamming_booleanity)]
+    }
+
+    fn stage6_prover_instances(
+        &mut self,
+        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+    ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
+        let hamming_weight = HammingWeightSumcheck::new_prover(state_manager);
+
+        #[cfg(feature = "allocative")]
+        {
+            print_data_structure_heap_usage("RAM HammingWeightSumcheck", &hamming_weight);
+        }
+
+        vec![Box::new(hamming_weight)]
+    }
+
+    fn stage6_verifier_instances(
+        &mut self,
+        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+    ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
+        let hamming_weight = HammingWeightSumcheck::new_verifier(state_manager);
+
+        vec![Box::new(hamming_weight)]
     }
 }

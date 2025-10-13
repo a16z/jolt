@@ -140,6 +140,7 @@ impl JoltDAG {
             .chain(registers_dag.stage2_prover_instances(&mut state_manager))
             .chain(ram_dag.stage2_prover_instances(&mut state_manager))
             .chain(lookups_dag.stage2_prover_instances(&mut state_manager))
+            .chain(bytecode_dag.stage2_prover_instances(&mut state_manager))
             .collect();
 
         #[cfg(feature = "allocative")]
@@ -248,7 +249,6 @@ impl JoltDAG {
         let mut stage4_instances: Vec<_> = std::iter::empty()
             .chain(registers_dag.stage4_prover_instances(&mut state_manager))
             .chain(ram_dag.stage4_prover_instances(&mut state_manager))
-            .chain(lookups_dag.stage4_prover_instances(&mut state_manager))
             .collect();
 
         #[cfg(feature = "allocative")]
@@ -300,6 +300,8 @@ impl JoltDAG {
 
         let mut stage5_instances: Vec<_> = std::iter::empty()
             .chain(registers_dag.stage5_prover_instances(&mut state_manager))
+            .chain(ram_dag.stage5_prover_instances(&mut state_manager))
+            .chain(lookups_dag.stage5_prover_instances(&mut state_manager))
             .collect();
 
         #[cfg(feature = "allocative")]
@@ -351,6 +353,8 @@ impl JoltDAG {
 
         let mut stage6_instances: Vec<_> = std::iter::empty()
             .chain(bytecode_dag.stage6_prover_instances(&mut state_manager))
+            .chain(ram_dag.stage6_prover_instances(&mut state_manager))
+            .chain(lookups_dag.stage6_prover_instances(&mut state_manager))
             .collect();
 
         #[cfg(feature = "allocative")]
@@ -534,6 +538,7 @@ impl JoltDAG {
             .chain(spartan_dag.stage2_verifier_instances(&mut state_manager))
             .chain(ram_dag.stage2_verifier_instances(&mut state_manager))
             .chain(lookups_dag.stage2_verifier_instances(&mut state_manager))
+            .chain(bytecode_dag.stage2_verifier_instances(&mut state_manager))
             .collect();
         let stage2_instances_ref: Vec<&dyn SumcheckInstance<F, ProofTranscript>> = stage2_instances
             .iter()
@@ -595,7 +600,6 @@ impl JoltDAG {
         let stage4_instances: Vec<_> = std::iter::empty()
             .chain(registers_dag.stage4_verifier_instances(&mut state_manager))
             .chain(ram_dag.stage4_verifier_instances(&mut state_manager))
-            .chain(lookups_dag.stage4_verifier_instances(&mut state_manager))
             .collect();
         let stage4_instances_ref: Vec<&dyn SumcheckInstance<F, ProofTranscript>> = stage4_instances
             .iter()
@@ -624,6 +628,8 @@ impl JoltDAG {
         // Stage 5:
         let stage5_instances: Vec<_> = std::iter::empty()
             .chain(registers_dag.stage5_verifier_instances(&mut state_manager))
+            .chain(ram_dag.stage5_verifier_instances(&mut state_manager))
+            .chain(lookups_dag.stage5_verifier_instances(&mut state_manager))
             .collect();
         let stage5_instances_ref: Vec<&dyn SumcheckInstance<F, ProofTranscript>> = stage5_instances
             .iter()
@@ -652,6 +658,8 @@ impl JoltDAG {
         // Stage 6:
         let stage6_instances: Vec<_> = std::iter::empty()
             .chain(bytecode_dag.stage6_verifier_instances(&mut state_manager))
+            .chain(ram_dag.stage6_verifier_instances(&mut state_manager))
+            .chain(lookups_dag.stage6_verifier_instances(&mut state_manager))
             .collect();
         let stage6_instances_ref: Vec<&dyn SumcheckInstance<F, ProofTranscript>> = stage6_instances
             .iter()
