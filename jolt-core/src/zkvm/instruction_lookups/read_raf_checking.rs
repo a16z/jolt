@@ -850,11 +850,11 @@ impl<F: JoltField> ReadRafSumcheck<F> {
         [
             F::from_montgomery_reduce(
                 left_0.mul_trunc::<4, 9>(self.gamma_sqr.as_unreduced_ref())
-                    + right_0.mul_trunc::<4, 9>(gamma_cub.as_unreduced_ref())
+                    + right_0.mul_trunc::<4, 9>(gamma_cub.as_unreduced_ref()),
             ),
             F::from_montgomery_reduce(
                 left_2.mul_trunc::<4, 9>(self.gamma_sqr.as_unreduced_ref())
-                    + right_2.mul_trunc::<4, 9>(gamma_cub.as_unreduced_ref())
+                    + right_2.mul_trunc::<4, 9>(gamma_cub.as_unreduced_ref()),
             ),
         ]
     }

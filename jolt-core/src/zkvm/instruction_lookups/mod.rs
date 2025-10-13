@@ -91,32 +91,66 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, T>>> {
-        let read_raf = ReadRafSumcheck::new_prover(sm, self.eq_r_cycle.take().unwrap());
         let hamming_weight = HammingWeightSumcheck::new_prover(sm, self.G.take().unwrap());
 
         #[cfg(feature = "allocative")]
         {
-            print_data_structure_heap_usage("Instruction execution ReadRafSumcheck", &read_raf);
             print_data_structure_heap_usage(
                 "Instruction execution HammingWeightSumcheck",
                 &hamming_weight,
             );
         }
 
-        vec![Box::new(read_raf), Box::new(hamming_weight)]
+        vec![Box::new(hamming_weight)]
     }
 
     fn stage3_verifier_instances(
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, T>>> {
-        let read_raf = ReadRafSumcheck::new_verifier(sm);
         let hamming_weight = HammingWeightSumcheck::new_verifier(sm);
 
-        vec![Box::new(read_raf), Box::new(hamming_weight)]
+        vec![Box::new(hamming_weight)]
     }
 
     fn stage4_prover_instances(
+        &mut self,
+        _sm: &mut StateManager<'_, F, T, PCS>,
+    ) -> Vec<Box<dyn SumcheckInstance<F, T>>> {
+        vec![]
+    }
+
+    fn stage4_verifier_instances(
+        &mut self,
+        _sm: &mut StateManager<'_, F, T, PCS>,
+    ) -> Vec<Box<dyn SumcheckInstance<F, T>>> {
+        vec![]
+    }
+
+    fn stage5_prover_instances(
+        &mut self,
+        sm: &mut StateManager<'_, F, T, PCS>,
+    ) -> Vec<Box<dyn SumcheckInstance<F, T>>> {
+        let read_raf = ReadRafSumcheck::new_prover(sm, self.eq_r_cycle.take().unwrap());
+
+        #[cfg(feature = "allocative")]
+        {
+            print_data_structure_heap_usage("Instruction execution ReadRafSumcheck", &read_raf);
+        }
+
+        vec![Box::new(read_raf)]
+    }
+
+    fn stage5_verifier_instances(
+        &mut self,
+        sm: &mut StateManager<'_, F, T, PCS>,
+    ) -> Vec<Box<dyn SumcheckInstance<F, T>>> {
+        let read_raf = ReadRafSumcheck::new_verifier(sm);
+
+        vec![Box::new(read_raf)]
+    }
+
+    fn stage6_prover_instances(
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, T>>> {
@@ -133,7 +167,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         vec![Box::new(ra_virtual)]
     }
 
-    fn stage4_verifier_instances(
+    fn stage6_verifier_instances(
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, T>>> {
