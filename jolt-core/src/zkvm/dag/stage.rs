@@ -10,35 +10,36 @@ pub trait SumcheckStages<
     PCS: CommitmentScheme<Field = F>,
 >: Send + Sync
 {
-    // Stage 1: Spartan outer sumcheck and other independent sumchecks
-    fn stage1_prover_instances(
-        &mut self,
-        _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
-        vec![]
-    }
-
-    fn stage1_verifier_instances(
-        &mut self,
-        _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
-        vec![]
-    }
-
-    // Legacy interface - kept for backward compatibility
-    // New implementations should use stage1_prover_instances/stage1_verifier_instances
-    fn stage1_prove(
+    /// Stage 1a: Univariate skip first-round
+    fn stage1_first_round_prove(
         &mut self,
         _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Result<(), anyhow::Error> {
         Ok(())
     }
 
-    fn stage1_verify(
+    /// Stage 1a: Univariate skip first-round verification
+    fn stage1_first_round_verify(
         &mut self,
         _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Result<(), anyhow::Error> {
         Ok(())
+    }
+
+    /// Stage 1b: Other sumchecks (outer-remaining + extras) as batchable instances
+    fn stage1_remainder_prover_instances(
+        &mut self,
+        _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+    ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
+        vec![]
+    }
+
+    /// Stage 1b: Other sumchecks (outer-remaining + extras) as batchable instances
+    fn stage1_remainder_verifier_instances(
+        &mut self,
+        _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+    ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
+        vec![]
     }
 
     // Stages 2-5 return sumcheck instances that will be batched together

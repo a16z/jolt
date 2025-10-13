@@ -9,7 +9,7 @@ use crate::poly::opening_proof::{
     OpeningPoint, ProverOpeningAccumulator, ReducedOpeningProof, SumcheckId,
     VerifierOpeningAccumulator, BIG_ENDIAN,
 };
-use crate::subprotocols::sumcheck::{SumcheckInstanceProof, UniSkipFirstRound, UniSkipSumcheckProof};
+use crate::subprotocols::sumcheck::{SumcheckInstanceProof, UniSkipFirstRound};
 use crate::transcripts::Transcript;
 use crate::utils::math::Math;
 use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
@@ -23,6 +23,7 @@ use tracer::JoltDevice;
 #[derive(PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, FromPrimitive)]
 #[repr(u8)]
 pub enum ProofKeys {
+    Stage1UniSkipFirstRound,
     Stage1Sumcheck,
     Stage2Sumcheck,
     Stage3Sumcheck,
@@ -36,11 +37,7 @@ pub enum ProofData<F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscri
     SumcheckProof(SumcheckInstanceProof<F, ProofTranscript>),
     ReducedOpeningProof(ReducedOpeningProof<F, PCS, ProofTranscript>),
     OpeningProof(PCS::Proof),
-    UniSkipSumcheckProof(UniSkipSumcheckProof<F, ProofTranscript>),
-    Stage1Combined {
-        first_round: UniSkipFirstRound<F, ProofTranscript>,
-        batched_remainder: SumcheckInstanceProof<F, ProofTranscript>,
-    },
+    UniSkipFirstRound(UniSkipFirstRound<F, ProofTranscript>),
 }
 
 pub type Proofs<F, PCS, ProofTranscript> = BTreeMap<ProofKeys, ProofData<F, PCS, ProofTranscript>>;

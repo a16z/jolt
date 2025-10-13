@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::subprotocols::sumcheck::UniSkipFirstRound;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::zkvm::dag::stage::SumcheckStages;
@@ -9,17 +10,15 @@ use crate::zkvm::dag::state_manager::{ProofData, ProofKeys, StateManager};
 use crate::zkvm::r1cs::key::UniformSpartanKey;
 use crate::zkvm::spartan::inner::InnerSumcheck;
 use crate::zkvm::spartan::outer::{OuterRemainingSumcheck, OuterSumcheck, SpartanInterleavedPoly};
-use crate::subprotocols::sumcheck::{BatchedSumcheck, UniSkipFirstRound};
 use crate::zkvm::spartan::pc::PCSumcheck;
 use crate::zkvm::spartan::product::ProductVirtualizationSumcheck;
 
 use crate::transcripts::Transcript;
 
-use crate::subprotocols::sumcheck::SumcheckInstance;
-use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::poly::multilinear_polynomial::BindingOrder;
+use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
+use crate::subprotocols::sumcheck::SumcheckInstance;
 use crate::zkvm::r1cs::constraints::{FIRST_ROUND_POLY_NUM_COEFFS, UNIVARIATE_SKIP_DOMAIN_SIZE};
-use tracer::instruction::Cycle;
 
 pub mod inner;
 pub mod outer;
@@ -29,13 +28,32 @@ pub mod product;
 pub struct SpartanDag<F: JoltField> {
     /// Cached key to avoid recomputation across stages
     key: Arc<UniformSpartanKey<F>>,
+    /// Cached state for Stage 1 uniskip remainder (prover)
+    stage1_prover_state: Option<SpartanStage1ProverState<F>>,
+    /// Cached state for Stage 1 uniskip remainder (verifier)
+    stage1_verifier_state: Option<SpartanStage1VerifierState<F>>,
 }
 
 impl<F: JoltField> SpartanDag<F> {
     pub fn new<ProofTranscript: Transcript>(padded_trace_length: usize) -> Self {
         let key = Arc::new(UniformSpartanKey::new(padded_trace_length));
-        Self { key }
+        Self { key, stage1_prover_state: None, stage1_verifier_state: None }
     }
+}
+
+struct SpartanStage1ProverState<F: JoltField> {
+    claim_after_first: F,
+    split_eq_poly: GruenSplitEqPolynomial<F>,
+    interleaved_poly: SpartanInterleavedPoly<F>,
+    r0: F::Challenge,
+    total_rounds_remainder: usize,
+}
+
+struct SpartanStage1VerifierState<F: JoltField> {
+    claim_after_first: F,
+    r0: F::Challenge,
+    tau: Vec<<F as JoltField>::Challenge>,
+    total_rounds_remainder: usize,
 }
 
 impl<F, ProofTranscript, PCS> SumcheckStages<F, ProofTranscript, PCS> for SpartanDag<F>
@@ -45,42 +63,18 @@ where
     PCS: CommitmentScheme<Field = F>,
 {
     // Stage 1: Outer sumcheck (via legacy prove/verify) + additional sumchecks (via instances)
-    // The outer sumcheck uses UniSkipSumcheck and must be handled specially via stage1_prove/verify.
-    // Additional sumchecks (e.g. HammingWeightSumcheck) can be added via stage1_*_instances.
-    
-    fn stage1_prover_instances(
-        &mut self,
-        _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
-        // Stage 1 extras (e.g. HammingWeightSumcheck) can be returned here in the future.
-        // The Outer sumcheck is handled directly in stage1_prove via OuterSumcheck::prove_with_state_manager.
-        vec![]
-    }
 
-    fn stage1_verifier_instances(
-        &mut self,
-        _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
-        // For verification, we don't actually need to create instances since we already have the proof
-        // The verification is handled directly in stage1_verify by calling SingleSumcheck::verify
-        // This method exists for consistency with the trait but returns empty for stage 1
-        vec![]
-    }
-
-    fn stage1_prove(
+    fn stage1_first_round_prove(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Result<(), anyhow::Error> {
-        // Stage 1: Uni-skip only, then batch OuterRemaining + extras
+        // Stage 1a: Uni-skip first round only
         let key = self.key.clone();
         let num_rounds_x = key.num_rows_bits();
 
-        // Gather any extra Stage 1 instances first (avoids mutable borrow conflicts later)
-        let mut extras = self.stage1_prover_instances(state_manager);
-
         // Capture transcript and accumulator handles up-front to avoid borrowing state_manager later
         let transcript_rc = state_manager.get_transcript();
-        let accumulator = state_manager.get_prover_accumulator();
+        let _accumulator = state_manager.get_prover_accumulator();
 
         let tau: Vec<F::Challenge> = transcript_rc
             .borrow_mut()
@@ -102,66 +96,45 @@ where
         split_eq_poly = split_eq;
         interleaved_poly = inter_poly;
 
-        // Prove batched remainder inside a narrow scope to drop borrows before storing proofs
-        let batched_proof = {
-            let (preprocessing, trace, _, _) = state_manager.get_prover_data();
-            let mut outer_remaining = OuterRemainingSumcheck::new_prover(
-                claim_after_first,
-                &preprocessing.shared,
-                trace,
-                split_eq_poly,
-                interleaved_poly,
-                r0,
-                num_rounds_x - 1,
-            );
+        // Store first round
+        state_manager
+            .proofs
+            .borrow_mut()
+            .insert(ProofKeys::Stage1UniSkipFirstRound, ProofData::UniSkipFirstRound(UniSkipFirstRound::new(first_poly)));
 
-            let mut instances: Vec<&mut dyn SumcheckInstance<F, ProofTranscript>> = Vec::new();
-            instances.push(&mut outer_remaining);
-            for inst in extras.iter_mut() {
-                instances.push(&mut **inst);
-            }
-
-            let (batched_proof, _r_batched) = BatchedSumcheck::prove::<F, ProofTranscript>(
-                instances,
-                Some(accumulator.clone()),
-                &mut *transcript_rc.borrow_mut(),
-            );
-            batched_proof
-        };
-
-        // Now store under existing Stage1Sumcheck as a combined payload
-        state_manager.proofs.borrow_mut().insert(
-            ProofKeys::Stage1Sumcheck,
-            ProofData::Stage1Combined {
-                first_round: UniSkipFirstRound::new(first_poly),
-                batched_remainder: batched_proof,
-            },
-        );
+        // Cache remainder construction state for instances method
+        self.stage1_prover_state = Some(SpartanStage1ProverState {
+            claim_after_first,
+            split_eq_poly,
+            interleaved_poly,
+            r0,
+            total_rounds_remainder: num_rounds_x - 1,
+        });
 
         Ok(())
     }
 
-    fn stage1_verify(
+    fn stage1_first_round_verify(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Result<(), anyhow::Error> {
         let key = self.key.clone();
         let num_rounds_x = key.num_rows_bits();
 
-        let (preprocessing, _, _trace_length) = state_manager.get_verifier_data();
         let tau: Vec<F::Challenge> = state_manager
             .transcript
             .borrow_mut()
             .challenge_vector_optimized::<F>(num_rounds_x);
 
-        // Fetch combined Stage 1 and verify only first round to get r0 and claim
-        let (first_round, batched_remainder_cloned) = {
+        // Load first round
+        let first_round = {
             let proofs = state_manager.proofs.borrow();
-            match proofs.get(&ProofKeys::Stage1Sumcheck).expect("missing Stage1Sumcheck") {
-                ProofData::Stage1Combined { first_round, batched_remainder } => {
-                    (first_round.clone(), batched_remainder.clone())
-                }
-                _ => panic!("unexpected proof type for Stage1Sumcheck"),
+            match proofs
+                .get(&ProofKeys::Stage1UniSkipFirstRound)
+                .expect("missing Stage1UniSkipFirstRound")
+            {
+                ProofData::UniSkipFirstRound(fr) => fr.clone(),
+                _ => panic!("unexpected proof type for Stage1UniSkipFirstRound"),
             }
         };
 
@@ -172,40 +145,62 @@ where
             )
             .map_err(|_| anyhow::anyhow!("UniSkip first-round verification failed"))?;
 
-        // Build outer_remaining verifier instance
-        let dummy_trace: Vec<Cycle> = vec![];
-        let outer_remaining = OuterRemainingSumcheck::new_verifier(
+        // Cache info needed to build verifier-side remainder instance later
+        self.stage1_verifier_state = Some(SpartanStage1VerifierState {
             claim_after_first,
-            &preprocessing.shared,
-            &dummy_trace,
-            GruenSplitEqPolynomial::new(&tau[0..tau.len() - 1], BindingOrder::LowToHigh),
-            SpartanInterleavedPoly::new(),
             r0,
-            num_rounds_x - 1,
-            tau.clone(),
-        );
-
-        // Collect any extra verifier instances
-        let extras = self.stage1_verifier_instances(state_manager);
-        let instances: Vec<&dyn SumcheckInstance<F, ProofTranscript>> = {
-            let mut v: Vec<&dyn SumcheckInstance<F, ProofTranscript>> = Vec::new();
-            v.push(&outer_remaining);
-            for inst in extras.iter() {
-                v.push(&**inst);
-            }
-            v
-        };
-
-        let opening_accumulator = state_manager.get_verifier_accumulator();
-        let _r = BatchedSumcheck::verify::<F, ProofTranscript>(
-            &batched_remainder_cloned,
-            instances,
-            Some(opening_accumulator.clone()),
-            &mut *state_manager.transcript.borrow_mut(),
-        )?;
+            tau: tau.clone(),
+            total_rounds_remainder: num_rounds_x - 1,
+        });
 
         Ok(())
     }
+
+
+    fn stage1_remainder_prover_instances(
+        &mut self,
+        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+    ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
+        // Stage 1 remainder: outer-remaining + extras.
+        let mut instances: Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> = Vec::new();
+        if let Some(st) = self.stage1_prover_state.take() {
+            let (preprocessing, trace, _, _) = state_manager.get_prover_data();
+            let outer_remaining = OuterRemainingSumcheck::new_prover(
+                st.claim_after_first,
+                &preprocessing.shared,
+                trace,
+                st.split_eq_poly,
+                st.interleaved_poly,
+                st.r0,
+                st.total_rounds_remainder,
+            );
+            instances.push(Box::new(outer_remaining));
+        }
+        // TODO: append extras when available
+        instances
+    }
+
+    fn stage1_remainder_verifier_instances(
+        &mut self,
+        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+    ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
+        // Stage 1 remainder: outer-remaining + extras (verifier side).
+        let mut instances: Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> = Vec::new();
+        if let Some(st) = self.stage1_verifier_state.take() {
+            let outer_remaining = OuterRemainingSumcheck::new_verifier(
+                st.claim_after_first,
+                GruenSplitEqPolynomial::new(&st.tau[0..st.tau.len() - 1], BindingOrder::LowToHigh),
+                SpartanInterleavedPoly::new(),
+                st.r0,
+                st.total_rounds_remainder,
+                st.tau,
+            );
+            instances.push(Box::new(outer_remaining));
+        }
+        // TODO: append extras when available
+        instances
+    }
+
 
     fn stage2_prover_instances(
         &mut self,

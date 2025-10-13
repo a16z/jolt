@@ -121,10 +121,35 @@ impl JoltDAG {
         let mut ram_dag = RamDag::new_prover(&state_manager);
         let mut bytecode_dag = BytecodeDag::default();
 
-        tracing::info!("Stage 1 proving");
+        tracing::info!("Stage 1 proving (univariate skip first round)");
         spartan_dag
-            .stage1_prove(&mut state_manager)
-            .context("Stage 1")?;
+            .stage1_first_round_prove(&mut state_manager)
+            .context("Stage 1 univariate skip first round")?;
+
+        // Batch the stage1 remainder instances (outer-remaining + extras)
+        let mut remainder_instances: Vec<_> = spartan_dag
+            .stage1_remainder_prover_instances(&mut state_manager)
+            .into_iter()
+            .collect();
+        let remainder_instances_mut: Vec<&mut dyn SumcheckInstance<F, ProofTranscript>> =
+            remainder_instances
+                .iter_mut()
+                .map(|instance| &mut **instance as &mut dyn SumcheckInstance<F, ProofTranscript>)
+                .collect();
+
+        let transcript = state_manager.get_transcript();
+        let accumulator = state_manager.get_prover_accumulator();
+        tracing::info!("Stage 1 proving (remainder batch)");
+        let (stage1_remainder_proof, _r_stage1) = BatchedSumcheck::prove(
+            remainder_instances_mut,
+            Some(accumulator.clone()),
+            &mut *transcript.borrow_mut(),
+        );
+
+        state_manager.proofs.borrow_mut().insert(
+            ProofKeys::Stage1Sumcheck,
+            ProofData::SumcheckProof(stage1_remainder_proof),
+        );
 
         drop(_guard);
         drop(span);
@@ -424,8 +449,37 @@ impl JoltDAG {
         let mut ram_dag = RamDag::new_verifier(&state_manager);
         let mut bytecode_dag = BytecodeDag::default();
         spartan_dag
-            .stage1_verify(&mut state_manager)
-            .context("Stage 1")?;
+            .stage1_first_round_verify(&mut state_manager)
+            .context("Stage 1 univariate skip first round")?;
+
+        let stage1_remainder_instances: Vec<_> = spartan_dag
+            .stage1_remainder_verifier_instances(&mut state_manager)
+            .into_iter()
+            .collect();
+        let stage1_remainder_instances_ref: Vec<&dyn SumcheckInstance<F, ProofTranscript>> =
+            stage1_remainder_instances
+                .iter()
+                .map(|instance| &**instance as &dyn SumcheckInstance<F, ProofTranscript>)
+                .collect();
+
+        let proofs = state_manager.proofs.borrow();
+        let stage1_remainder_proof = proofs
+            .get(&ProofKeys::Stage1Sumcheck)
+            .expect("Stage 1 remainder proof not found");
+        let stage1_remainder_proof = match stage1_remainder_proof {
+            ProofData::SumcheckProof(proof) => proof,
+            _ => panic!("Invalid proof type for stage 1 remainder"),
+        };
+
+        let transcript = state_manager.get_transcript();
+        let opening_accumulator = state_manager.get_verifier_accumulator();
+        let _r_stage1 = BatchedSumcheck::verify(
+            stage1_remainder_proof,
+            stage1_remainder_instances_ref,
+            Some(opening_accumulator.clone()),
+            &mut *transcript.borrow_mut(),
+        )
+        .context("Stage 1 remainder")?;
 
         // Stage 2:
         let stage2_instances: Vec<_> = std::iter::empty()

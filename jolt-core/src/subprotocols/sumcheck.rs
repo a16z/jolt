@@ -455,6 +455,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
     }
 }
 
+/// The sumcheck proof for the univariate skip optimization (usually the first round)
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
 pub struct UniSkipFirstRound<F: JoltField, ProofTranscript: Transcript> {
     pub first_poly: UniPoly<F>,
@@ -463,7 +464,10 @@ pub struct UniSkipFirstRound<F: JoltField, ProofTranscript: Transcript> {
 
 impl<F: JoltField, ProofTranscript: Transcript> UniSkipFirstRound<F, ProofTranscript> {
     pub fn new(first_poly: UniPoly<F>) -> Self {
-        Self { first_poly, _marker: PhantomData }
+        Self {
+            first_poly,
+            _marker: PhantomData,
+        }
     }
 
     /// Verify only the univariate-skip first round.
@@ -502,88 +506,5 @@ impl<F: JoltField, ProofTranscript: Transcript> UniSkipFirstRound<F, ProofTransc
         }
 
         Ok((r0, next_claim))
-    }
-}
-
-#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
-/// The proof format for sumcheck with univariate skip optimization.
-/// This is different from the generic `SumcheckInstanceProof` since we apply univariate skip,
-/// which means the first round needs to be handled differently.
-pub struct UniSkipSumcheckProof<F: JoltField, ProofTranscript: Transcript> {
-    /// The first polynomial (of high degree) from the univariate skip.
-    /// We send the whole polynomial for easier verification (only one extra field element)
-    pub first_poly: UniPoly<F>,
-    /// The remaining polynomials from the second round onwards.
-    pub remaining_proof: SumcheckInstanceProof<F, ProofTranscript>,
-}
-
-impl<F: JoltField, ProofTranscript: Transcript> UniSkipSumcheckProof<F, ProofTranscript> {
-    pub fn new(
-        first_poly: UniPoly<F>,
-        remaining_polys: Vec<CompressedUniPoly<F>>,
-    ) -> UniSkipSumcheckProof<F, ProofTranscript> {
-        UniSkipSumcheckProof {
-            first_poly,
-            remaining_proof: SumcheckInstanceProof::new(remaining_polys),
-        }
-    }
-
-    /// Verify this sumcheck proof given that the first variable has higher degree than the rest.
-    /// (which happens during Spartan's outer sumcheck with univariate skip)
-    /// Note: Verification does not execute the final check of sumcheck protocol: g_v(r_v) = oracle_g(r),
-    /// as the oracle is not passed in. Expected that the caller will implement.
-    ///
-    /// Params
-    /// - `const N`: the first degree plus one (e.g. the size of the first evaluation domain)
-    /// - `const FIRST_ROUND_POLY_NUM_COEFFS`: the number of coefficients in the first round polynomial
-    /// - `num_rounds`: Number of rounds of sumcheck, or number of variables to bind
-    /// - `degree_bound_first`: Maximum allowed degree of the first univariate polynomial
-    /// - `degree_bound_rest`: Maximum allowed degree of the rest of the univariate polynomials
-    /// - `transcript`: Fiat-shamir transcript
-    ///
-    /// Returns (e, r)
-    /// - `e`: Claimed evaluation at random point
-    /// - `r`: Evaluation point
-    pub fn verify<const N: usize, const FIRST_ROUND_POLY_NUM_COEFFS: usize>(
-        &self,
-        num_rounds: usize,
-        degree_bound_first: usize,
-        degree_bound_rest: usize,
-        transcript: &mut ProofTranscript,
-    ) -> Result<(F, Vec<F::Challenge>), ProofVerifyError> {
-        let mut r: Vec<F::Challenge> = Vec::new();
-
-        // verify that there is a univariate polynomial for each round
-        assert_eq!(self.remaining_proof.compressed_polys.len() + 1, num_rounds);
-
-        // verification for the first round
-        if self.first_poly.degree() > degree_bound_first {
-            return Err(ProofVerifyError::InvalidInputLength(
-                degree_bound_first,
-                self.first_poly.degree(),
-            ));
-        }
-        self.first_poly.append_to_transcript(transcript);
-        let r_0 = transcript.challenge_scalar_optimized::<F>();
-        r.push(r_0);
-        // First round: send all coeffs; check symmetric-domain sum is zero (initial claim),
-        // then set next claim to s1(r_0). Use i128 power sums up to degree 39 over the 14-window.
-        let (ok, next_claim) = self
-            .first_poly
-            .check_sum_evals_and_set_new_claim::<N, FIRST_ROUND_POLY_NUM_COEFFS>(&F::zero(), &r_0);
-        if !ok {
-            return Err(ProofVerifyError::SumcheckVerificationError);
-        }
-
-        let (e, r_rest) = self.remaining_proof.verify(
-            next_claim,
-            num_rounds - 1,
-            degree_bound_rest,
-            transcript,
-        )?;
-
-        r.extend(r_rest);
-
-        Ok((e, r))
     }
 }
