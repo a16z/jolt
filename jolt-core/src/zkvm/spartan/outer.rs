@@ -78,12 +78,12 @@ pub struct OuterSumcheck<F: JoltField> {
     // The split-eq polynomial to be used through the sumcheck rounds
     split_eq_poly: GruenSplitEqPolynomial<F>,
     // The last of tau vector, used for univariate skip
-    tau_high: F,
+    tau_high: F::Challenge,
 }
 
 impl<F: JoltField> OuterSumcheck<F> {
     // Initialize a Spartan outer sumcheck instance given the tau vector
-    pub fn initialize(tau: &[F]) -> Self {
+    pub fn initialize(tau: &[F::Challenge]) -> Self {
         let tau_low = &tau[0..tau.len() - 1];
         Self {
             claim: F::zero(),
@@ -98,7 +98,7 @@ impl<F: JoltField> OuterSumcheck<F> {
         preprocessing: &JoltSharedPreprocessing,
         trace: &[Cycle],
         num_rounds: usize,
-        tau: &[F],
+        tau: &[F::Challenge],
         transcript: &mut ProofTranscript,
     ) -> (UniSkipSumcheckProof<F, ProofTranscript>, Vec<F>, [F; 3]) {
         // Assert that the number of rounds is equal to the number of cycle variables plus two
@@ -326,7 +326,7 @@ impl<F: JoltField> OuterSumcheck<F> {
         &mut self,
         extended_evals: &[F; UNIVARIATE_SKIP_DEGREE],
         transcript: &mut ProofTranscript,
-        r: &mut Vec<F>,
+        r: &mut Vec<F::Challenge>,
     ) -> UniPoly<F> {
         // Map the 13 interleaved extended evals into the full symmetric domain of size 27: Z in [-13..13]
         let mut t1_vals: [F; 2 * UNIVARIATE_SKIP_DEGREE + 1] =
@@ -352,7 +352,7 @@ impl<F: JoltField> OuterSumcheck<F> {
         // Build lagrange_poly(Z) coefficients of degree 13 from basis values at tau_high over base window [-6..7]
         // TODO: can build this directly
         let lagrange_poly_values =
-            LagrangePolynomial::evals::<UNIVARIATE_SKIP_DOMAIN_SIZE>(&self.tau_high);
+            LagrangePolynomial::<F>::evals::<F::Challenge, UNIVARIATE_SKIP_DOMAIN_SIZE>(&self.tau_high);
         let lagrange_poly_coeffs = LagrangePolynomial::interpolate_coeffs::<
             UNIVARIATE_SKIP_DOMAIN_SIZE,
         >(&lagrange_poly_values);
@@ -369,7 +369,7 @@ impl<F: JoltField> OuterSumcheck<F> {
         // Append full s1 poly (send all coeffs), derive r0, set claim (do NOT bind eq_poly yet)
         let s1_poly = UniPoly::from_coeff(s1_coeffs.to_vec());
         s1_poly.append_to_transcript(transcript);
-        let r0: F = transcript.challenge_scalar();
+        let r0: F::Challenge = transcript.challenge_scalar_optimized();
         r.push(r0);
         self.claim = UniPoly::eval_with_coeffs(&s1_coeffs, &r0);
         s1_poly
@@ -409,12 +409,12 @@ impl<F: JoltField> OuterSumcheck<F> {
         preprocess: &JoltSharedPreprocessing,
         trace: &[Cycle],
         transcript: &mut ProofTranscript,
-        r_challenge: &mut Vec<F>, // Only one challenge right now
+        r_challenge: &mut Vec<F::Challenge>, // Only one challenge right now
         round_polys: &mut Vec<CompressedUniPoly<F>>,
     ) {
         // Lagrange basis over the univariate-skip domain (size 14)
         let lagrange_evals_r =
-            LagrangePolynomial::evals::<UNIVARIATE_SKIP_DOMAIN_SIZE>(&r_challenge[0]);
+            LagrangePolynomial::<F>::evals::<F::Challenge, UNIVARIATE_SKIP_DOMAIN_SIZE>(&r_challenge[0]);
 
         let eq_poly = &mut self.split_eq_poly;
 
@@ -659,7 +659,7 @@ impl<F: JoltField> OuterSumcheck<F> {
     pub fn remaining_sumcheck_round<ProofTranscript: Transcript>(
         &mut self,
         transcript: &mut ProofTranscript,
-        r_challenges: &mut Vec<F>,
+        r_challenges: &mut Vec<F::Challenge>,
         round_polys: &mut Vec<CompressedUniPoly<F>>,
     ) {
         // Precompute chunk ranges once to avoid recomputing block size and chunks across phases
@@ -885,7 +885,7 @@ impl<F: JoltField> OuterSumcheck<F> {
         polys: &mut Vec<CompressedUniPoly<F>>,
         r: &mut Vec<F::Challenge>,
         transcript: &mut ProofTranscript,
-    ) -> F {
+    ) -> F::Challenge {
         let eq_poly = &mut self.split_eq_poly;
         let claim = &mut self.claim;
         let scalar_times_w_i = eq_poly.current_scalar * eq_poly.w[eq_poly.current_index - 1];

@@ -1,6 +1,6 @@
 use crate::field::JoltField;
 use std::marker::PhantomData;
-use std::ops::{Add, Mul};
+use std::ops::{Add, Sub, Mul};
 
 /// Lagrange polynomials over zero-centered, symmetric, consecutive-integer domain, i.e.
 /// grids like [-6, -5, ..., 6, 7].
@@ -20,7 +20,11 @@ impl<F: JoltField> LagrangePolynomial<F> {
     /// - Distances `r - x_i` are inverted via prefix/suffix products (one inversion total).
     /// - One final inversion for normalization. Total: 3 inversions. Stack-only, early-exit if `r` hits a node.
     #[inline]
-    pub fn evaluate<const N: usize>(values: &[F; N], r: &F) -> F {
+    pub fn evaluate<C, const N: usize>(values: &[F; N], r: &C) -> F
+    where
+        C: Copy + Send + Sync + Sub<F, Output = F>,
+        F: Mul<C, Output = F>,
+    {
         debug_assert!(N > 0, "N must be positive");
         debug_assert!(N <= 20, "evaluate intended for small N (<= 20)");
         let d = N - 1;
@@ -108,7 +112,11 @@ impl<F: JoltField> LagrangePolynomial<F> {
     ///
     /// **Constraint**: N <= 20 (all we need for now)
     #[inline]
-    pub fn evals<const N: usize>(r: &F) -> [F; N] {
+    pub fn evals<C, const N: usize>(r: &C) -> [F; N]
+    where
+        C: Copy + Send + Sync + Sub<F, Output = F>,
+        F: Mul<C, Output = F>,
+    {
         debug_assert!(
             N <= 20,
             "N cannot be greater than 20 for current implementation"
@@ -203,7 +211,11 @@ impl<F: JoltField> LagrangePolynomial<F> {
     /// Compute evaluations of the interpolated polynomial at multiple points.
     /// Input: `values` on symmetric grid, `points` to evaluate at.
     /// Returns: `[p(points[0]), p(points[1]), ...]`.
-    pub fn evaluate_many<const N: usize>(values: &[F; N], points: &[F]) -> Vec<F> {
+    pub fn evaluate_many<C, const N: usize>(values: &[F; N], points: &[C]) -> Vec<F>
+    where
+        C: Copy + Send + Sync + Sub<F, Output = F>,
+        F: Mul<C, Output = F>,
+    {
         if points.is_empty() {
             return Vec::new();
         }
@@ -218,7 +230,7 @@ impl<F: JoltField> LagrangePolynomial<F> {
                     // Horner's method: p(r) = c_0 + r*(c_1 + r*(c_2 + ... + r*c_{n-1}))
                     let mut result = coeffs[N - 1];
                     for i in (0..N - 1).rev() {
-                        result = result * r + coeffs[i];
+                        result = result * *r + coeffs[i];
                     }
                     result
                 })
@@ -228,7 +240,7 @@ impl<F: JoltField> LagrangePolynomial<F> {
             points
                 .iter()
                 .map(|r| {
-                    let basis = Self::evals::<N>(r);
+                    let basis = Self::evals::<C, N>(r);
                     values.iter().zip(basis.iter()).map(|(v, b)| *v * b).sum()
                 })
                 .collect()
