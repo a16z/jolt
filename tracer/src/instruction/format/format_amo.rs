@@ -10,7 +10,7 @@ use super::{
 /// Uses the same format as FormatR but with a custom RegisterState that
 /// constrains rs1 to be a valid memory address for testing
 #[derive(Default, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct FormatRAMO {
+pub struct FormatAMO {
     pub rd: u8,
     pub rs1: u8,
     pub rs2: u8,
@@ -58,11 +58,11 @@ impl InstructionRegisterState for RegisterStateFormatRAMO {
     }
 }
 
-impl InstructionFormat for FormatRAMO {
+impl InstructionFormat for FormatAMO {
     type RegisterState = RegisterStateFormatRAMO;
 
     fn parse(word: u32) -> Self {
-        FormatRAMO {
+        FormatAMO {
             rd: ((word >> 7) & 0x1f) as u8,   // [11:7]
             rs1: ((word >> 15) & 0x1f) as u8, // [19:15]
             rs2: ((word >> 20) & 0x1f) as u8, // [24:20]
@@ -92,7 +92,7 @@ impl InstructionFormat for FormatRAMO {
     }
 }
 
-impl From<NormalizedOperands> for FormatRAMO {
+impl From<NormalizedOperands> for FormatAMO {
     fn from(operands: NormalizedOperands) -> Self {
         Self {
             rd: operands.rd,
@@ -102,8 +102,8 @@ impl From<NormalizedOperands> for FormatRAMO {
     }
 }
 
-impl From<FormatRAMO> for NormalizedOperands {
-    fn from(format: FormatRAMO) -> Self {
+impl From<FormatAMO> for NormalizedOperands {
+    fn from(format: FormatAMO) -> Self {
         Self {
             rd: format.rd,
             rs1: format.rs1,

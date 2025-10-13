@@ -2,6 +2,7 @@ use crate::emulator::cpu::{Cpu, Xlen};
 use serde::{de::DeserializeOwned, Serialize};
 use std::fmt::Debug;
 
+pub mod format_amo;
 pub mod format_assert_align;
 pub mod format_b;
 pub mod format_i;
@@ -9,7 +10,6 @@ pub mod format_inline;
 pub mod format_j;
 pub mod format_load;
 pub mod format_r;
-pub mod format_r_amo;
 pub mod format_s;
 pub mod format_u;
 pub mod format_virtual_right_shift_i;
