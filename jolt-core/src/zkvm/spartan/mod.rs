@@ -1,28 +1,25 @@
 use std::sync::Arc;
-use tracing::{span, Level};
 
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::eq_poly::EqPolynomial;
-use crate::poly::opening_proof::{OpeningPoint, SumcheckId};
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::zkvm::dag::stage::SumcheckStages;
 use crate::zkvm::dag::state_manager::{ProofData, ProofKeys, StateManager};
-use crate::zkvm::r1cs::constraints::{FIRST_ROUND_POLY_NUM_COEFFS, UNIVARIATE_SKIP_DOMAIN_SIZE};
-use crate::zkvm::r1cs::inputs::{
-    compute_claimed_witness_evals, ALL_R1CS_INPUTS, COMMITTED_R1CS_INPUTS,
-};
 use crate::zkvm::r1cs::key::UniformSpartanKey;
 use crate::zkvm::spartan::inner::InnerSumcheck;
-use crate::zkvm::spartan::outer::OuterSumcheck;
+use crate::zkvm::spartan::outer::{OuterRemainingSumcheck, OuterSumcheck, SpartanInterleavedPoly};
+use crate::subprotocols::sumcheck::{BatchedSumcheck, UniSkipFirstRound};
 use crate::zkvm::spartan::pc::PCSumcheck;
 use crate::zkvm::spartan::product::ProductVirtualizationSumcheck;
-use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 
 use crate::transcripts::Transcript;
 
 use crate::subprotocols::sumcheck::SumcheckInstance;
+use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
+use crate::poly::multilinear_polynomial::BindingOrder;
+use crate::zkvm::r1cs::constraints::{FIRST_ROUND_POLY_NUM_COEFFS, UNIVARIATE_SKIP_DOMAIN_SIZE};
+use tracer::instruction::Cycle;
 
 pub mod inner;
 pub mod outer;
@@ -47,120 +44,99 @@ where
     ProofTranscript: Transcript,
     PCS: CommitmentScheme<Field = F>,
 {
+    // Stage 1: Outer sumcheck (via legacy prove/verify) + additional sumchecks (via instances)
+    // The outer sumcheck uses UniSkipSumcheck and must be handled specially via stage1_prove/verify.
+    // Additional sumchecks (e.g. HammingWeightSumcheck) can be added via stage1_*_instances.
+    
+    fn stage1_prover_instances(
+        &mut self,
+        _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+    ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
+        // Stage 1 extras (e.g. HammingWeightSumcheck) can be returned here in the future.
+        // The Outer sumcheck is handled directly in stage1_prove via OuterSumcheck::prove_with_state_manager.
+        vec![]
+    }
+
+    fn stage1_verifier_instances(
+        &mut self,
+        _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+    ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
+        // For verification, we don't actually need to create instances since we already have the proof
+        // The verification is handled directly in stage1_verify by calling SingleSumcheck::verify
+        // This method exists for consistency with the trait but returns empty for stage 1
+        vec![]
+    }
+
     fn stage1_prove(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Result<(), anyhow::Error> {
-        /* Sumcheck 1: Outer sumcheck
-           Proves: \sum_x eq(tau, x) * (Az(x) * Bz(x) - Cz(x)) = 0
-
-           The matrices A, B, C have a block-diagonal structure with repeated blocks
-           A_small, B_small, C_small corresponding to the uniform constraints.
-        */
-        let (preprocessing, trace, _program_io, _final_memory_state) =
-            state_manager.get_prover_data();
-
+        // Stage 1: Uni-skip only, then batch OuterRemaining + extras
         let key = self.key.clone();
-
         let num_rounds_x = key.num_rows_bits();
 
-        let tau: Vec<F::Challenge> = state_manager
-            .transcript
+        // Gather any extra Stage 1 instances first (avoids mutable borrow conflicts later)
+        let mut extras = self.stage1_prover_instances(state_manager);
+
+        // Capture transcript and accumulator handles up-front to avoid borrowing state_manager later
+        let transcript_rc = state_manager.get_transcript();
+        let accumulator = state_manager.get_prover_accumulator();
+
+        let tau: Vec<F::Challenge> = transcript_rc
             .borrow_mut()
             .challenge_vector_optimized::<F>(num_rounds_x);
 
-        let transcript = &mut *state_manager.transcript.borrow_mut();
-        let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) =
-            OuterSumcheck::prove::<ProofTranscript>(
+        // Uni-skip first round
+        let (first_poly, r0, claim_after_first, split_eq_poly, interleaved_poly);
+        // Uni-skip round
+        let (preprocessing, trace, _, _) = state_manager.get_prover_data();
+        let (fp, r0_, claim1, split_eq, inter_poly) = OuterSumcheck::prove_univariate_skip_round(
+            &preprocessing.shared,
+            trace,
+            &tau,
+            &mut *transcript_rc.borrow_mut(),
+        );
+        first_poly = fp;
+        r0 = r0_;
+        claim_after_first = claim1;
+        split_eq_poly = split_eq;
+        interleaved_poly = inter_poly;
+
+        // Prove batched remainder inside a narrow scope to drop borrows before storing proofs
+        let batched_proof = {
+            let (preprocessing, trace, _, _) = state_manager.get_prover_data();
+            let mut outer_remaining = OuterRemainingSumcheck::new_prover(
+                claim_after_first,
                 &preprocessing.shared,
                 trace,
-                num_rounds_x,
-                &tau,
-                transcript,
+                split_eq_poly,
+                interleaved_poly,
+                r0,
+                num_rounds_x - 1,
             );
 
-        let outer_sumcheck_r: Vec<F::Challenge> = outer_sumcheck_r.into_iter().rev().collect();
+            let mut instances: Vec<&mut dyn SumcheckInstance<F, ProofTranscript>> = Vec::new();
+            instances.push(&mut outer_remaining);
+            for inst in extras.iter_mut() {
+                instances.push(&mut **inst);
+            }
 
-        ProofTranscript::append_scalars(
-            &mut *state_manager.transcript.borrow_mut(),
-            &outer_sumcheck_claims,
-        );
-
-        // Store Az, Bz, Cz claims with the outer sumcheck point
-        let accumulator = state_manager.get_prover_accumulator();
-        accumulator.borrow_mut().append_virtual(
-            transcript,
-            VirtualPolynomial::SpartanAz,
-            SumcheckId::SpartanOuter,
-            OpeningPoint::new(outer_sumcheck_r.clone()),
-            outer_sumcheck_claims[0],
-        );
-        accumulator.borrow_mut().append_virtual(
-            transcript,
-            VirtualPolynomial::SpartanBz,
-            SumcheckId::SpartanOuter,
-            OpeningPoint::new(outer_sumcheck_r.clone()),
-            outer_sumcheck_claims[1],
-        );
-        accumulator.borrow_mut().append_virtual(
-            transcript,
-            VirtualPolynomial::SpartanCz,
-            SumcheckId::SpartanOuter,
-            OpeningPoint::new(outer_sumcheck_r.clone()),
-            outer_sumcheck_claims[2],
-        );
-
-        // Append the outer sumcheck proof to the state manager
-        state_manager.proofs.borrow_mut().insert(
-            ProofKeys::Stage1Sumcheck,
-            ProofData::UniSkipSumcheckProof(outer_sumcheck_proof),
-        );
-
-        let num_cycles = key.num_steps;
-        let num_cycles_bits = num_cycles.ilog2() as usize;
-
-        let (r_cycle, _rx_var) = outer_sumcheck_r.split_at(num_cycles_bits);
-
-        // Compute claimed witness evals at r_cycle via streaming (fast)
-        let claimed_witness_evals = {
-            let _guard = span!(Level::INFO, "claimed_witness_evals_fast").entered();
-            compute_claimed_witness_evals::<F>(&preprocessing.shared, trace, r_cycle)
+            let (batched_proof, _r_batched) = BatchedSumcheck::prove::<F, ProofTranscript>(
+                instances,
+                Some(accumulator.clone()),
+                &mut *transcript_rc.borrow_mut(),
+            );
+            batched_proof
         };
 
-        // Only non-virtual (i.e. committed) polynomials' openings are
-        // proven using the PCS opening proof, which we add for future opening proof here
-        let committed_polys: Vec<_> = COMMITTED_R1CS_INPUTS
-            .iter()
-            .map(|input| CommittedPolynomial::try_from(input).ok().unwrap())
-            .collect();
-        let committed_poly_claims: Vec<_> = COMMITTED_R1CS_INPUTS
-            .iter()
-            .map(|input| claimed_witness_evals[input.to_index()])
-            .collect();
-
-        let accumulator = state_manager.get_prover_accumulator();
-        accumulator.borrow_mut().append_dense(
-            transcript,
-            committed_polys,
-            SumcheckId::SpartanOuter,
-            r_cycle.to_vec(),
-            &committed_poly_claims,
+        // Now store under existing Stage1Sumcheck as a combined payload
+        state_manager.proofs.borrow_mut().insert(
+            ProofKeys::Stage1Sumcheck,
+            ProofData::Stage1Combined {
+                first_round: UniSkipFirstRound::new(first_poly),
+                batched_remainder: batched_proof,
+            },
         );
-
-        // Add virtual polynomial evaluations to the accumulator
-        // These are needed by the verifier for future sumchecks and are not part of the PCS opening proof
-        for (input, eval) in ALL_R1CS_INPUTS.iter().zip(claimed_witness_evals.iter()) {
-            // Skip if it's a committed input (already added above)
-            if !COMMITTED_R1CS_INPUTS.contains(input) {
-                accumulator.borrow_mut().append_virtual(
-                    transcript,
-                    VirtualPolynomial::try_from(input).ok().unwrap(),
-                    SumcheckId::SpartanOuter,
-                    OpeningPoint::new(r_cycle.to_vec()),
-                    *eval,
-                );
-            }
-        }
 
         Ok(())
     }
@@ -170,131 +146,63 @@ where
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Result<(), anyhow::Error> {
         let key = self.key.clone();
-
         let num_rounds_x = key.num_rows_bits();
 
-        let tau: Vec<F> = state_manager
+        let (preprocessing, _, _trace_length) = state_manager.get_verifier_data();
+        let tau: Vec<F::Challenge> = state_manager
             .transcript
             .borrow_mut()
-            .challenge_vector(num_rounds_x);
+            .challenge_vector_optimized::<F>(num_rounds_x);
 
-        // Get the outer sumcheck proof
-        let proofs = state_manager.proofs.borrow();
-        let proof_data = {
-            proofs
-                .get(&ProofKeys::Stage1Sumcheck)
-                .expect("Outer sumcheck proof not found")
-        };
-
-        let outer_sumcheck_proof = match proof_data {
-            ProofData::UniSkipSumcheckProof(proof) => proof,
-            _ => panic!("Invalid proof data type"),
-        };
-
-        // Get the claims:
-        let accumulator = state_manager.get_verifier_accumulator();
-        let accumulator_ref = accumulator.borrow();
-        let (_, claim_Az) = accumulator_ref
-            .get_virtual_polynomial_opening(VirtualPolynomial::SpartanAz, SumcheckId::SpartanOuter);
-        let (_, claim_Bz) = accumulator_ref
-            .get_virtual_polynomial_opening(VirtualPolynomial::SpartanBz, SumcheckId::SpartanOuter);
-        let (_, claim_Cz) = accumulator_ref
-            .get_virtual_polynomial_opening(VirtualPolynomial::SpartanCz, SumcheckId::SpartanOuter);
-        drop(accumulator_ref);
-        let outer_sumcheck_claims = [claim_Az, claim_Bz, claim_Cz];
-
-        let transcript: &mut ProofTranscript = &mut state_manager.transcript.borrow_mut();
-
-        // Run the main sumcheck verifier:
-        let (claim_outer_final, outer_sumcheck_r_original) = {
-            let transcript = &mut state_manager.transcript.borrow_mut();
-            // The outer sumcheck has to be verified with an altered verifier, which takes
-            // into account the univariate skip and does a high-degree interpolation in the first round
-            match outer_sumcheck_proof
-                .verify::<UNIVARIATE_SKIP_DOMAIN_SIZE, FIRST_ROUND_POLY_NUM_COEFFS>(
-                    num_rounds_x,
-                    FIRST_ROUND_POLY_NUM_COEFFS - 1,
-                    3,
-                    transcript,
-                ) {
-                Ok(result) => result,
-                Err(_) => return Err(anyhow::anyhow!("Outer sumcheck verification failed")),
+        // Fetch combined Stage 1 and verify only first round to get r0 and claim
+        let (first_round, batched_remainder_cloned) = {
+            let proofs = state_manager.proofs.borrow();
+            match proofs.get(&ProofKeys::Stage1Sumcheck).expect("missing Stage1Sumcheck") {
+                ProofData::Stage1Combined { first_round, batched_remainder } => {
+                    (first_round.clone(), batched_remainder.clone())
+                }
+                _ => panic!("unexpected proof type for Stage1Sumcheck"),
             }
         };
 
-        // Outer sumcheck is bound from the top, reverse the challenge
-        // TODO(markosg04): Make use of Endianness here?
-        let outer_sumcheck_r_reversed: Vec<F::Challenge> =
-            outer_sumcheck_r_original.iter().rev().cloned().collect();
-        let opening_point = OpeningPoint::new(outer_sumcheck_r_reversed.clone());
+        let (r0, claim_after_first) = first_round
+            .verify::<UNIVARIATE_SKIP_DOMAIN_SIZE, FIRST_ROUND_POLY_NUM_COEFFS>(
+                FIRST_ROUND_POLY_NUM_COEFFS - 1,
+                &mut *state_manager.transcript.borrow_mut(),
+            )
+            .map_err(|_| anyhow::anyhow!("UniSkip first-round verification failed"))?;
 
-        // Populate the opening points for Az, Bz, Cz claims now that we have outer_sumcheck_r
-        // Note that the inner sumcheck will handle this opening point differently than other sumchecks,
-        // due to univariate skip (first degree is higher)
-        // There is NO other sumcheck instance that requires the high-degree part of the opening point
-        // (since it is confined to the R1CS constraint part, not the cycle part)
-        accumulator.borrow_mut().append_virtual(
-            transcript,
-            VirtualPolynomial::SpartanAz,
-            SumcheckId::SpartanOuter,
-            opening_point.clone(),
-        );
-        accumulator.borrow_mut().append_virtual(
-            transcript,
-            VirtualPolynomial::SpartanBz,
-            SumcheckId::SpartanOuter,
-            opening_point.clone(),
-        );
-        accumulator.borrow_mut().append_virtual(
-            transcript,
-            VirtualPolynomial::SpartanCz,
-            SumcheckId::SpartanOuter,
-            opening_point.clone(),
+        // Build outer_remaining verifier instance
+        let dummy_trace: Vec<Cycle> = vec![];
+        let outer_remaining = OuterRemainingSumcheck::new_verifier(
+            claim_after_first,
+            &preprocessing.shared,
+            &dummy_trace,
+            GruenSplitEqPolynomial::new(&tau[0..tau.len() - 1], BindingOrder::LowToHigh),
+            SpartanInterleavedPoly::new(),
+            r0,
+            num_rounds_x - 1,
+            tau.clone(),
         );
 
-        let tau_bound_rx = EqPolynomial::mle(&tau, &outer_sumcheck_r_reversed);
-        let claim_outer_final_expected = tau_bound_rx * (claim_Az * claim_Bz - claim_Cz);
-        if claim_outer_final != claim_outer_final_expected {
-            return Err(anyhow::anyhow!("Invalid outer sumcheck claim"));
-        }
-
-        ProofTranscript::append_scalars(
-            &mut state_manager.transcript.borrow_mut(),
-            &outer_sumcheck_claims[..],
-        );
-
-        // Add the commitments to verifier accumulator
-        let num_cycles = key.num_steps;
-        let num_cycles_bits = num_cycles.ilog2() as usize;
-
-        let (r_cycle, _rx_var) = outer_sumcheck_r_reversed.split_at(num_cycles_bits);
-
-        let accumulator = state_manager.get_verifier_accumulator();
-
-        // Only non-virtual (i.e. committed) polynomials' openings are
-        // proven using the PCS opening proof, which we add for future opening proof here
-        let committed_polys: Vec<_> = COMMITTED_R1CS_INPUTS
-            .iter()
-            .map(|input| CommittedPolynomial::try_from(input).ok().unwrap())
-            .collect();
-        accumulator.borrow_mut().append_dense(
-            transcript,
-            committed_polys,
-            SumcheckId::SpartanOuter,
-            r_cycle.to_vec(),
-        );
-
-        ALL_R1CS_INPUTS.iter().for_each(|input| {
-            // Skip if it's a committed input (already added above)
-            if !COMMITTED_R1CS_INPUTS.contains(input) {
-                accumulator.borrow_mut().append_virtual(
-                    transcript,
-                    VirtualPolynomial::try_from(input).ok().unwrap(),
-                    SumcheckId::SpartanOuter,
-                    OpeningPoint::new(r_cycle.to_vec()),
-                );
+        // Collect any extra verifier instances
+        let extras = self.stage1_verifier_instances(state_manager);
+        let instances: Vec<&dyn SumcheckInstance<F, ProofTranscript>> = {
+            let mut v: Vec<&dyn SumcheckInstance<F, ProofTranscript>> = Vec::new();
+            v.push(&outer_remaining);
+            for inst in extras.iter() {
+                v.push(&**inst);
             }
-        });
+            v
+        };
+
+        let opening_accumulator = state_manager.get_verifier_accumulator();
+        let _r = BatchedSumcheck::verify::<F, ProofTranscript>(
+            &batched_remainder_cloned,
+            instances,
+            Some(opening_accumulator.clone()),
+            &mut *state_manager.transcript.borrow_mut(),
+        )?;
 
         Ok(())
     }

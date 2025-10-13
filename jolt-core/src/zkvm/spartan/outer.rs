@@ -5,6 +5,7 @@ use ark_ff::biginteger::S160;
 use ark_std::Zero;
 use rayon::prelude::*;
 use tracer::instruction::Cycle;
+use std::sync::Arc;
 
 use crate::field::{JoltField, OptimizedMul};
 use crate::poly::lagrange_poly::{LagrangeHelper, LagrangePolynomial};
@@ -12,15 +13,26 @@ use crate::poly::multilinear_polynomial::BindingOrder;
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::sumcheck::{SingleSumcheck, SumcheckInstance, UniSkipSumcheckProof};
+use crate::poly::eq_poly::EqPolynomial;
 use crate::transcripts::{AppendToTranscript, Transcript};
 use crate::utils::math::Math;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
 // use crate::utils::thread::drop_in_background_thread;
+use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::opening_proof::BIG_ENDIAN;
+use crate::poly::opening_proof::{
+    OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator,
+};
 use crate::utils::univariate_skip::accum::s160_to_field;
+use crate::utils::univariate_skip::accum::{accs160_fmadd_s160, accs160_new, accs160_reduce};
 use crate::utils::univariate_skip::{
     compute_az_r_group0, compute_az_r_group1, compute_bz_r_group0, compute_bz_r_group1,
     compute_cz_r_group1,
+};
+use crate::zkvm::dag::state_manager::{ProofData, ProofKeys, StateManager};
+use crate::zkvm::r1cs::inputs::{
+    compute_claimed_witness_evals, ALL_R1CS_INPUTS, COMMITTED_R1CS_INPUTS,
 };
 use crate::zkvm::r1cs::{
     constraints::{
@@ -30,9 +42,8 @@ use crate::zkvm::r1cs::{
     },
     inputs::R1CSCycleInputs,
 };
+use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 use crate::zkvm::JoltSharedPreprocessing;
-use crate::poly::opening_proof::BIG_ENDIAN;
-use crate::poly::opening_proof::{OpeningPoint, ProverOpeningAccumulator, VerifierOpeningAccumulator};
 
 #[derive(Default, Debug, Clone, Copy, PartialEq)]
 pub struct SparseCoefficient<T> {
@@ -84,7 +95,7 @@ pub struct OuterSumcheck<F: JoltField> {
 }
 
 impl<F: JoltField> OuterSumcheck<F> {
-    // Initialize a Spartan outer sumcheck instance given the tau vector
+    /// Initialize a Spartan outer sumcheck instance given the tau vector
     pub fn initialize(tau: &[F::Challenge]) -> Self {
         let tau_low = &tau[0..tau.len() - 1];
         Self {
@@ -93,6 +104,65 @@ impl<F: JoltField> OuterSumcheck<F> {
             split_eq_poly: GruenSplitEqPolynomial::new(tau_low, BindingOrder::LowToHigh),
             tau_high: tau[tau.len() - 1],
         }
+    }
+
+    /// Perform only the univariate skip round and return the state needed for remaining rounds
+    #[tracing::instrument(skip_all, name = "OuterSumcheck::prove_univariate_skip_round")]
+    pub fn prove_univariate_skip_round<ProofTranscript: Transcript>(
+        preprocessing: &JoltSharedPreprocessing,
+        trace: &[Cycle],
+        tau: &[F::Challenge],
+        transcript: &mut ProofTranscript,
+    ) -> (
+        UniPoly<F>,                // first polynomial
+        F::Challenge,              // r[0]
+        F,                         // claim after first round
+        GruenSplitEqPolynomial<F>, // split_eq_poly
+        SpartanInterleavedPoly<F>, // interleaved_poly
+    ) {
+        let mut outer_sumcheck = Self::initialize(tau);
+        let extended_evals = outer_sumcheck.compute_univariate_skip_evals(preprocessing, trace);
+
+        let mut r = Vec::new();
+        let first_poly = outer_sumcheck.process_first_round_from_extended_evals(
+            &extended_evals,
+            transcript,
+            &mut r,
+        );
+
+        (
+            first_poly,
+            r[0],
+            outer_sumcheck.claim,
+            outer_sumcheck.split_eq_poly,
+            outer_sumcheck.interleaved_poly,
+        )
+    }
+
+    /// Create a new prover instance from StateManager, extracting necessary data and challenges
+    #[tracing::instrument(skip_all, name = "OuterSumcheck::new_prover")]
+    pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
+        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        num_rounds_x: usize,
+    ) -> Self {
+        let tau: Vec<F::Challenge> = state_manager
+            .transcript
+            .borrow_mut()
+            .challenge_vector_optimized::<F>(num_rounds_x);
+        Self::initialize(&tau)
+    }
+
+    /// Create a new verifier instance from StateManager, extracting necessary challenges  
+    #[tracing::instrument(skip_all, name = "OuterSumcheck::new_verifier")]
+    pub fn new_verifier<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
+        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        num_rounds_x: usize,
+    ) -> (Self, Vec<F::Challenge>) {
+        let tau: Vec<F::Challenge> = state_manager
+            .transcript
+            .borrow_mut()
+            .challenge_vector_optimized::<F>(num_rounds_x);
+        (Self::initialize(&tau), tau)
     }
 
     #[tracing::instrument(skip_all, name = "OuterSumcheck::prove")]
@@ -143,11 +213,8 @@ impl<F: JoltField> OuterSumcheck<F> {
             r[0],
             remaining_rounds,
         );
-        let (remaining_proof, r_rest) = SingleSumcheck::prove::<F, ProofTranscript>(
-            &mut instance,
-            None,
-            transcript,
-        );
+        let (remaining_proof, r_rest) =
+            SingleSumcheck::prove::<F, ProofTranscript>(&mut instance, None, transcript);
         r.extend(r_rest.into_iter());
 
         (
@@ -157,6 +224,273 @@ impl<F: JoltField> OuterSumcheck<F> {
         )
     }
 
+    /// Prove the outer sumcheck using StateManager, handling proof storage and accumulator updates
+    #[tracing::instrument(skip_all, name = "OuterSumcheck::prove_with_state_manager")]
+    pub fn prove_with_state_manager<
+        ProofTranscript: Transcript,
+        PCS: CommitmentScheme<Field = F>,
+    >(
+        self,
+        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        num_rounds_x: usize,
+        tau: &[F::Challenge],
+    ) {
+        let (preprocessing, trace, _program_io, _final_memory_state) =
+            state_manager.get_prover_data();
+
+        let transcript = &mut *state_manager.transcript.borrow_mut();
+        let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) =
+            Self::prove::<ProofTranscript>(
+                &preprocessing.shared,
+                trace,
+                num_rounds_x,
+                tau,
+                transcript,
+            );
+
+        let outer_sumcheck_r: Vec<F::Challenge> = outer_sumcheck_r.into_iter().rev().collect();
+
+        ProofTranscript::append_scalars(
+            &mut *state_manager.transcript.borrow_mut(),
+            &outer_sumcheck_claims,
+        );
+
+        // Store Az, Bz, Cz claims with the outer sumcheck point
+        let accumulator = state_manager.get_prover_accumulator();
+        accumulator.borrow_mut().append_virtual(
+            transcript,
+            VirtualPolynomial::SpartanAz,
+            SumcheckId::SpartanOuter,
+            OpeningPoint::new(outer_sumcheck_r.clone()),
+            outer_sumcheck_claims[0],
+        );
+        accumulator.borrow_mut().append_virtual(
+            transcript,
+            VirtualPolynomial::SpartanBz,
+            SumcheckId::SpartanOuter,
+            OpeningPoint::new(outer_sumcheck_r.clone()),
+            outer_sumcheck_claims[1],
+        );
+        accumulator.borrow_mut().append_virtual(
+            transcript,
+            VirtualPolynomial::SpartanCz,
+            SumcheckId::SpartanOuter,
+            OpeningPoint::new(outer_sumcheck_r.clone()),
+            outer_sumcheck_claims[2],
+        );
+
+        // Append the outer sumcheck proof to the state manager
+        state_manager.proofs.borrow_mut().insert(
+            ProofKeys::Stage1Sumcheck,
+            ProofData::UniSkipSumcheckProof(outer_sumcheck_proof),
+        );
+
+        // Extract num_cycles from the key (we need a way to get this - for now use trace length)
+        let num_cycles = trace.len().next_power_of_two();
+        let num_cycles_bits = num_cycles.ilog2() as usize;
+
+        let (r_cycle, _rx_var) = outer_sumcheck_r.split_at(num_cycles_bits);
+
+        // Compute claimed witness evals at r_cycle via streaming (fast)
+        let claimed_witness_evals = {
+            use tracing::{span, Level};
+            let _guard = span!(Level::INFO, "claimed_witness_evals_fast").entered();
+            compute_claimed_witness_evals::<F>(&preprocessing.shared, trace, r_cycle)
+        };
+
+        // Only non-virtual (i.e. committed) polynomials' openings are
+        // proven using the PCS opening proof, which we add for future opening proof here
+        let committed_polys: Vec<_> = COMMITTED_R1CS_INPUTS
+            .iter()
+            .map(|input| CommittedPolynomial::try_from(input).ok().unwrap())
+            .collect();
+        let committed_poly_claims: Vec<_> = COMMITTED_R1CS_INPUTS
+            .iter()
+            .map(|input| claimed_witness_evals[input.to_index()])
+            .collect();
+
+        let accumulator = state_manager.get_prover_accumulator();
+        accumulator.borrow_mut().append_dense(
+            transcript,
+            committed_polys,
+            SumcheckId::SpartanOuter,
+            r_cycle.to_vec(),
+            &committed_poly_claims,
+        );
+
+        // Add virtual polynomial evaluations to the accumulator
+        // These are needed by the verifier for future sumchecks and are not part of the PCS opening proof
+        for (input, eval) in ALL_R1CS_INPUTS.iter().zip(claimed_witness_evals.iter()) {
+            // Skip if it's a committed input (already added above)
+            if !COMMITTED_R1CS_INPUTS.contains(input) {
+                accumulator.borrow_mut().append_virtual(
+                    transcript,
+                    VirtualPolynomial::try_from(input).ok().unwrap(),
+                    SumcheckId::SpartanOuter,
+                    OpeningPoint::new(r_cycle.to_vec()),
+                    *eval,
+                );
+            }
+        }
+    }
+
+    /// Verify only the univariate skip round and return state for remaining rounds
+    #[tracing::instrument(skip_all, name = "OuterSumcheck::verify_univariate_skip_round")]
+    pub fn verify_univariate_skip_round<ProofTranscript: Transcript>(
+        first_poly: &UniPoly<F>,
+        _tau_high: &F::Challenge,
+        transcript: &mut ProofTranscript,
+    ) -> Result<(F::Challenge, F), anyhow::Error> {
+        // Verify the first polynomial and derive r0
+        first_poly.append_to_transcript(transcript);
+        let r0: F::Challenge = transcript.challenge_scalar_optimized::<F>();
+
+        // Compute the claim after first round
+        let claim = first_poly.evaluate(&r0);
+
+        Ok((r0, claim))
+    }
+
+    /// Verify the outer sumcheck using StateManager, handling accumulator updates
+    #[tracing::instrument(skip_all, name = "OuterSumcheck::verify_with_state_manager")]
+    pub fn verify_with_state_manager<
+        ProofTranscript: Transcript,
+        PCS: CommitmentScheme<Field = F>,
+    >(
+        self,
+        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        num_rounds_x: usize,
+        tau: Vec<F::Challenge>,
+    ) -> Result<(), anyhow::Error> {
+        use crate::poly::eq_poly::EqPolynomial;
+        use crate::zkvm::r1cs::constraints::{
+            FIRST_ROUND_POLY_NUM_COEFFS, UNIVARIATE_SKIP_DOMAIN_SIZE,
+        };
+
+        // Get the outer sumcheck proof
+        let proofs = state_manager.proofs.borrow();
+        let proof_data = {
+            proofs
+                .get(&ProofKeys::Stage1Sumcheck)
+                .expect("Outer sumcheck proof not found")
+        };
+
+        let outer_sumcheck_proof = match proof_data {
+            ProofData::UniSkipSumcheckProof(proof) => proof,
+            _ => panic!("Invalid proof data type"),
+        };
+
+        // Get the claims:
+        let accumulator = state_manager.get_verifier_accumulator();
+        let accumulator_ref = accumulator.borrow();
+        let (_, claim_Az) = accumulator_ref
+            .get_virtual_polynomial_opening(VirtualPolynomial::SpartanAz, SumcheckId::SpartanOuter);
+        let (_, claim_Bz) = accumulator_ref
+            .get_virtual_polynomial_opening(VirtualPolynomial::SpartanBz, SumcheckId::SpartanOuter);
+        let (_, claim_Cz) = accumulator_ref
+            .get_virtual_polynomial_opening(VirtualPolynomial::SpartanCz, SumcheckId::SpartanOuter);
+        drop(accumulator_ref);
+        let outer_sumcheck_claims = [claim_Az, claim_Bz, claim_Cz];
+
+        let transcript: &mut ProofTranscript = &mut state_manager.transcript.borrow_mut();
+
+        // Run the main sumcheck verifier:
+        let (claim_outer_final, outer_sumcheck_r_original) = {
+            let transcript = &mut state_manager.transcript.borrow_mut();
+            // The outer sumcheck has to be verified with an altered verifier, which takes
+            // into account the univariate skip and does a high-degree interpolation in the first round
+            match outer_sumcheck_proof
+                .verify::<UNIVARIATE_SKIP_DOMAIN_SIZE, FIRST_ROUND_POLY_NUM_COEFFS>(
+                    num_rounds_x,
+                    FIRST_ROUND_POLY_NUM_COEFFS - 1,
+                    3,
+                    transcript,
+                ) {
+                Ok(result) => result,
+                Err(_) => return Err(anyhow::anyhow!("Outer sumcheck verification failed")),
+            }
+        };
+
+        // Outer sumcheck is bound from the top, reverse the challenge
+        let outer_sumcheck_r_reversed: Vec<F::Challenge> =
+            outer_sumcheck_r_original.iter().rev().cloned().collect();
+        let opening_point = OpeningPoint::new(outer_sumcheck_r_reversed.clone());
+
+        // Populate the opening points for Az, Bz, Cz claims now that we have outer_sumcheck_r
+        // Note that the inner sumcheck will handle this opening point differently than other sumchecks,
+        // due to univariate skip (first degree is higher)
+        // There is NO other sumcheck instance that requires the high-degree part of the opening point
+        // (since it is confined to the R1CS constraint part, not the cycle part)
+        accumulator.borrow_mut().append_virtual(
+            transcript,
+            VirtualPolynomial::SpartanAz,
+            SumcheckId::SpartanOuter,
+            opening_point.clone(),
+        );
+        accumulator.borrow_mut().append_virtual(
+            transcript,
+            VirtualPolynomial::SpartanBz,
+            SumcheckId::SpartanOuter,
+            opening_point.clone(),
+        );
+        accumulator.borrow_mut().append_virtual(
+            transcript,
+            VirtualPolynomial::SpartanCz,
+            SumcheckId::SpartanOuter,
+            opening_point.clone(),
+        );
+
+        let tau_bound_rx = EqPolynomial::mle(&tau, &outer_sumcheck_r_reversed);
+        let claim_outer_final_expected = tau_bound_rx * (claim_Az * claim_Bz - claim_Cz);
+        if claim_outer_final != claim_outer_final_expected {
+            return Err(anyhow::anyhow!("Invalid outer sumcheck claim"));
+        }
+
+        ProofTranscript::append_scalars(
+            &mut state_manager.transcript.borrow_mut(),
+            &outer_sumcheck_claims[..],
+        );
+
+        // Add the commitments to verifier accumulator
+        // Extract num_cycles from trace_length
+        let (_, _, trace_length) = state_manager.get_verifier_data();
+        let num_cycles = trace_length.next_power_of_two();
+        let num_cycles_bits = num_cycles.ilog2() as usize;
+
+        let (r_cycle, _rx_var) = outer_sumcheck_r_reversed.split_at(num_cycles_bits);
+
+        let accumulator = state_manager.get_verifier_accumulator();
+
+        // Only non-virtual (i.e. committed) polynomials' openings are
+        // proven using the PCS opening proof, which we add for future opening proof here
+        let committed_polys: Vec<_> = COMMITTED_R1CS_INPUTS
+            .iter()
+            .map(|input| CommittedPolynomial::try_from(input).ok().unwrap())
+            .collect();
+        accumulator.borrow_mut().append_dense(
+            transcript,
+            committed_polys,
+            SumcheckId::SpartanOuter,
+            r_cycle.to_vec(),
+        );
+
+        ALL_R1CS_INPUTS.iter().for_each(|input| {
+            // Skip if it's a committed input (already added above)
+            if !COMMITTED_R1CS_INPUTS.contains(input) {
+                accumulator.borrow_mut().append_virtual(
+                    transcript,
+                    VirtualPolynomial::try_from(input).ok().unwrap(),
+                    SumcheckId::SpartanOuter,
+                    OpeningPoint::new(r_cycle.to_vec()),
+                );
+            }
+        });
+
+        Ok(())
+    }
+}
+
+impl<F: JoltField> OuterSumcheck<F> {
     /// Compute the list of Z targets in the extended domain that are outside the base window.
     /// The extended domain is [-D, ..., D] where D = UNIVARIATE_SKIP_DEGREE.
     /// The base window has size UNIVARIATE_SKIP_DOMAIN_SIZE and spans [base_left, base_right].
@@ -275,11 +609,11 @@ impl<F: JoltField> OuterSumcheck<F> {
                             self.split_eq_poly.E_in_current()[x_in_val]
                         };
 
-                        // First group (14 eq-conditional, Cz=0): Az bool, Bz S160
+                        // First group (UNIVARIATE_SKIP_DOMAIN_SIZE eq-conditional, Cz=0): Az bool, Bz S160
                         let az1_bool = eval_az_first_group(&row_inputs);
                         let bz1_s160 = eval_bz_first_group(&row_inputs);
 
-                        // Second group (13 + pad): Az i128, Bz/Cz S160
+                        // Second group (NUM_REMAINING_R1CS_CONSTRAINTS + pad): Az i128, Bz/Cz S160
                         let az2_i96 = eval_az_second_group(&row_inputs);
                         let bz2 = eval_bz_second_group(&row_inputs);
                         let cz2 = eval_cz_second_group(&row_inputs);
@@ -301,37 +635,38 @@ impl<F: JoltField> OuterSumcheck<F> {
                             let coeffs = &coeffs_per_j[j];
 
                             // Group 1: (Σ c_i * Az1[i]) * (Σ c_i * Bz1[i])
-                            let mut az1_ext = F::zero();
-                            let mut bz1_ext = F::zero();
+                            // Optimize: accumulate az1 as i64 sum; accumulate bz1 via 7-limb fmadd and reduce once
+                            let mut az1_csum: i64 = 0;
+                            let mut bz1_acc = accs160_new::<F>();
                             for i in 0..UNIVARIATE_SKIP_DOMAIN_SIZE {
                                 let c = coeffs[i] as i64;
                                 if c == 0 {
                                     continue;
                                 }
-                                if az1_bool[i] {
-                                    az1_ext += F::from_i64(c);
-                                }
-                                let bz_f = s160_to_field::<F>(&bz1_s160[i]);
-                                bz1_ext += bz_f.mul_i64(c);
+                                if az1_bool[i] { az1_csum += c; }
+                                accs160_fmadd_s160(&mut bz1_acc, &F::from_i64(c), bz1_s160[i]);
                             }
+                            let az1_ext = F::from_i64(az1_csum);
+                            let bz1_ext = accs160_reduce(&bz1_acc);
                             inner_acc[j] += e_in.mul_unreduced::<9>(az1_ext * bz1_ext);
 
                             // Group 2: (Σ c_i * Az2[i])*(Σ c_i * Bz2[i]) - (Σ c_i * Cz2[i])
-                            let mut az2_ext = F::zero();
-                            let mut bz2_ext = F::zero();
-                            let mut cz2_ext = F::zero();
+                            // Optimize: accumulate az2 as i128 sum and convert once; bz2/cz2 via 7-limb fmadd
+                            let mut az2_sum: i128 = 0;
+                            let mut bz2_acc = accs160_new::<F>();
+                            let mut cz2_acc = accs160_new::<F>();
                             for i in 0..UNIVARIATE_SKIP_DOMAIN_SIZE {
                                 let c = coeffs[i] as i64;
                                 if c == 0 {
                                     continue;
                                 }
-                                let az_f = F::from_i128(az2_i128_padded[i]);
-                                az2_ext += az_f.mul_i64(c);
-                                let bz_f = s160_to_field::<F>(&bz2_s160_padded[i]);
-                                bz2_ext += bz_f.mul_i64(c);
-                                let cz_f = s160_to_field::<F>(&cz2_s160_padded[i]);
-                                cz2_ext += cz_f.mul_i64(c);
+                                az2_sum += az2_i128_padded[i] * (c as i128);
+                                accs160_fmadd_s160(&mut bz2_acc, &F::from_i64(c), bz2_s160_padded[i]);
+                                accs160_fmadd_s160(&mut cz2_acc, &F::from_i64(c), cz2_s160_padded[i]);
                             }
+                            let az2_ext = F::from_i128(az2_sum);
+                            let bz2_ext = accs160_reduce(&bz2_acc);
+                            let cz2_ext = accs160_reduce(&cz2_acc);
                             inner_acc[j] += e_in.mul_unreduced::<9>(az2_ext * bz2_ext - cz2_ext);
                         }
                     }
@@ -422,7 +757,6 @@ impl<F: JoltField> OuterSumcheck<F> {
         s1_poly
     }
 
-
     /// Computes contiguous index ranges that emulate `par_chunk_by` grouping by `index / block_size`.
     /// Each range [start, end) contains coefficients belonging to the same block bucket.
     fn compute_block_ranges<T>(
@@ -490,21 +824,23 @@ impl<F: JoltField> OuterSumcheck<F> {
 /// SumcheckInstance for Spartan outer rounds after the univariate-skip first round.
 /// Round 0 in this instance corresponds to the "streaming" round; subsequent rounds
 /// use the remaining linear-time algorithm over cycle variables.
-struct OuterRemainingSumcheck<'a, F: JoltField> {
-    input_claim: F,
-    interleaved_poly: SpartanInterleavedPoly<F>,
-    split_eq_poly: GruenSplitEqPolynomial<F>,
-    preprocess: &'a JoltSharedPreprocessing,
-    trace: &'a [Cycle],
-    r0_uniskip: F::Challenge,
-    total_rounds: usize,
+pub struct OuterRemainingSumcheck<F: JoltField> {
+    pub input_claim: F,
+    pub interleaved_poly: SpartanInterleavedPoly<F>,
+    pub split_eq_poly: GruenSplitEqPolynomial<F>,
+    pub preprocess: Arc<JoltSharedPreprocessing>,
+    pub trace: Arc<Vec<Cycle>>,
+    pub r0_uniskip: F::Challenge,
+    pub total_rounds: usize,
+    /// Only used by verifier to compute expected_output_claim
+    pub tau: Option<Vec<F::Challenge>>, 
 }
 
-impl<'a, F: JoltField> OuterRemainingSumcheck<'a, F> {
+impl<F: JoltField> OuterRemainingSumcheck<F> {
     pub fn new_prover(
         input_claim: F,
-        preprocess: &'a JoltSharedPreprocessing,
-        trace: &'a [Cycle],
+        preprocess: &JoltSharedPreprocessing,
+        trace: &[Cycle],
         split_eq_poly: GruenSplitEqPolynomial<F>,
         interleaved_poly: SpartanInterleavedPoly<F>,
         r0_uniskip: F::Challenge,
@@ -514,10 +850,33 @@ impl<'a, F: JoltField> OuterRemainingSumcheck<'a, F> {
             input_claim,
             interleaved_poly,
             split_eq_poly,
-            preprocess,
-            trace,
+            preprocess: Arc::new(preprocess.clone()),
+            trace: Arc::new(trace.to_vec()),
             r0_uniskip,
             total_rounds,
+            tau: None,
+        }
+    }
+
+    pub fn new_verifier(
+        input_claim: F,
+        preprocess: &crate::zkvm::JoltSharedPreprocessing,
+        trace: &[Cycle],
+        split_eq_poly: GruenSplitEqPolynomial<F>,
+        interleaved_poly: SpartanInterleavedPoly<F>,
+        r0_uniskip: F::Challenge,
+        total_rounds: usize,
+        tau: Vec<F::Challenge>,
+    ) -> Self {
+        Self {
+            input_claim,
+            interleaved_poly,
+            split_eq_poly,
+            preprocess: Arc::new(preprocess.clone()),
+            trace: Arc::new(trace.to_vec()),
+            r0_uniskip,
+            total_rounds,
+            tau: Some(tau),
         }
     }
 
@@ -568,9 +927,10 @@ impl<'a, F: JoltField> OuterRemainingSumcheck<'a, F> {
     #[inline]
     fn streaming_quadratic_evals(&self) -> (F, F) {
         // Lagrange basis over the univariate-skip domain at r0
-        let lagrange_evals_r = LagrangePolynomial::<F>::evals::<F::Challenge, UNIVARIATE_SKIP_DOMAIN_SIZE>(
-            &self.r0_uniskip,
-        );
+        let lagrange_evals_r = LagrangePolynomial::<F>::evals::<
+            F::Challenge,
+            UNIVARIATE_SKIP_DOMAIN_SIZE,
+        >(&self.r0_uniskip);
 
         let eq_poly = &self.split_eq_poly;
         let num_x_out_vals = eq_poly.E_out_current_len();
@@ -611,8 +971,8 @@ impl<'a, F: JoltField> OuterRemainingSumcheck<'a, F> {
                         let current_step_idx = (x_out_val << iter_num_x_in_vars) | x_in_val;
 
                         let row_inputs = R1CSCycleInputs::from_trace::<F>(
-                            self.preprocess,
-                            self.trace,
+                            self.preprocess.as_ref(),
+                            self.trace.as_slice(),
                             current_step_idx,
                         );
 
@@ -687,7 +1047,10 @@ impl<'a, F: JoltField> OuterRemainingSumcheck<'a, F> {
                 .len()
                 .div_ceil(rayon::current_num_threads())
                 .next_multiple_of(6);
-            OuterSumcheck::<F>::compute_block_ranges(&self.interleaved_poly.bound_coeffs, block_size)
+            OuterSumcheck::<F>::compute_block_ranges(
+                &self.interleaved_poly.bound_coeffs,
+                block_size,
+            )
         };
 
         if eq_poly.E_in_current_len() == 1 {
@@ -715,11 +1078,15 @@ impl<'a, F: JoltField> OuterRemainingSumcheck<'a, F> {
 
                             (
                                 eq_evals.mul_0_optimized(az.0.mul_0_optimized(bz.0) - cz0),
-                                eq_evals.mul_0_optimized(az_eval_infty.mul_0_optimized(bz_eval_infty)),
+                                eq_evals
+                                    .mul_0_optimized(az_eval_infty.mul_0_optimized(bz_eval_infty)),
                             )
                         })
                 })
-                .reduce(|| (F::zero(), F::zero()), |sum, evals| (sum.0 + evals.0, sum.1 + evals.1))
+                .reduce(
+                    || (F::zero(), F::zero()),
+                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1),
+                )
         } else {
             let num_x1_bits = eq_poly.E_in_current_len().log_2();
             let x1_bitmask = (1 << num_x1_bits) - 1;
@@ -761,8 +1128,10 @@ impl<'a, F: JoltField> OuterRemainingSumcheck<'a, F> {
                         let az_eval_infty = az.1 - az.0;
                         let bz_eval_infty = bz.1 - bz.0;
 
-                        inner_sums.0 += E_in_evals.mul_unreduced::<9>(az.0.mul_0_optimized(bz.0) - cz0);
-                        inner_sums.1 += E_in_evals.mul_unreduced::<9>(az_eval_infty.mul_0_optimized(bz_eval_infty));
+                        inner_sums.0 +=
+                            E_in_evals.mul_unreduced::<9>(az.0.mul_0_optimized(bz.0) - cz0);
+                        inner_sums.1 += E_in_evals
+                            .mul_unreduced::<9>(az_eval_infty.mul_0_optimized(bz_eval_infty));
                     }
 
                     let reduced0 = F::from_montgomery_reduce::<9>(inner_sums.0);
@@ -772,7 +1141,10 @@ impl<'a, F: JoltField> OuterRemainingSumcheck<'a, F> {
 
                     (eval_point_0, eval_point_infty)
                 })
-                .reduce(|| (F::zero(), F::zero()), |sum, evals| (sum.0 + evals.0, sum.1 + evals.1))
+                .reduce(
+                    || (F::zero(), F::zero()),
+                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1),
+                )
         }
     }
 
@@ -783,24 +1155,35 @@ impl<'a, F: JoltField> OuterRemainingSumcheck<'a, F> {
     /// at 0 + eval at ∞). We then bind these bound coeffs with r_i for the next round.
     fn bind_streaming_round(&mut self, r_i: F::Challenge) {
         // Lagrange basis over the univariate-skip domain at r0
-        let lagrange_evals_r = LagrangePolynomial::<F>::evals::<F::Challenge, UNIVARIATE_SKIP_DOMAIN_SIZE>(
-            &self.r0_uniskip,
-        );
+        let lagrange_evals_r = LagrangePolynomial::<F>::evals::<
+            F::Challenge,
+            UNIVARIATE_SKIP_DOMAIN_SIZE,
+        >(&self.r0_uniskip);
         let eq_poly = &mut self.split_eq_poly;
         let num_x_out_vals = eq_poly.E_out_current_len();
         let num_x_in_vals = eq_poly.E_in_current_len();
-        let iter_num_x_in_vars = if num_x_in_vals > 0 { num_x_in_vals.log_2() } else { 0 };
+        let iter_num_x_in_vars = if num_x_in_vals > 0 {
+            num_x_in_vals.log_2()
+        } else {
+            0
+        };
 
         // Build bound6_at_r sparsely
         let mut bound6_at_r: Vec<SparseCoefficient<F>> = Vec::new();
-        let mut reserve = num_x_out_vals.saturating_mul(core::cmp::max(1, num_x_in_vals)).saturating_mul(4);
+        let mut reserve = num_x_out_vals
+            .saturating_mul(core::cmp::max(1, num_x_in_vals))
+            .saturating_mul(4);
         reserve = reserve.max(1024);
         bound6_at_r.reserve(reserve);
 
         for x_out_val in 0..num_x_out_vals {
             for x_in_val in 0..num_x_in_vals {
                 let current_step_idx = (x_out_val << iter_num_x_in_vars) | x_in_val;
-                let row_inputs = R1CSCycleInputs::from_trace::<F>(self.preprocess, self.trace, current_step_idx);
+                let row_inputs = R1CSCycleInputs::from_trace::<F>(
+                    self.preprocess.as_ref(),
+                    self.trace.as_slice(),
+                    current_step_idx,
+                );
                 let az0 = compute_az_r_group0(&row_inputs, &lagrange_evals_r[..]);
                 let bz0 = compute_bz_r_group0(&row_inputs, &lagrange_evals_r[..]);
                 let az1 = compute_az_r_group1(&row_inputs, &lagrange_evals_r[..]);
@@ -808,11 +1191,21 @@ impl<'a, F: JoltField> OuterRemainingSumcheck<'a, F> {
                 let cz1 = compute_cz_r_group1(&row_inputs, &lagrange_evals_r[..]);
 
                 let block_id = current_step_idx;
-                if !az0.is_zero() { bound6_at_r.push((6 * block_id, az0).into()); }
-                if !bz0.is_zero() { bound6_at_r.push((6 * block_id + 1, bz0).into()); }
-                if !az1.is_zero() { bound6_at_r.push((6 * block_id + 3, az1).into()); }
-                if !bz1.is_zero() { bound6_at_r.push((6 * block_id + 4, bz1).into()); }
-                if !cz1.is_zero() { bound6_at_r.push((6 * block_id + 5, cz1).into()); }
+                if !az0.is_zero() {
+                    bound6_at_r.push((6 * block_id, az0).into());
+                }
+                if !bz0.is_zero() {
+                    bound6_at_r.push((6 * block_id + 1, bz0).into());
+                }
+                if !az1.is_zero() {
+                    bound6_at_r.push((6 * block_id + 3, az1).into());
+                }
+                if !bz1.is_zero() {
+                    bound6_at_r.push((6 * block_id + 4, bz1).into());
+                }
+                if !cz1.is_zero() {
+                    bound6_at_r.push((6 * block_id + 5, cz1).into());
+                }
             }
         }
 
@@ -826,13 +1219,19 @@ impl<'a, F: JoltField> OuterRemainingSumcheck<'a, F> {
                 .binding_scratch_space
                 .reserve_exact(total_len - self.interleaved_poly.binding_scratch_space.capacity());
         }
-        unsafe { self.interleaved_poly.binding_scratch_space.set_len(total_len); }
+        unsafe {
+            self.interleaved_poly
+                .binding_scratch_space
+                .set_len(total_len);
+        }
 
         // Partition scratch and bind per block with r_i
         let mut output_index = 0usize;
         let out_slice = self.interleaved_poly.binding_scratch_space.as_mut_slice();
         for block6 in bound6_at_r.chunk_by(|a, b| a.index / 6 == b.index / 6) {
-            if block6.is_empty() { continue; }
+            if block6.is_empty() {
+                continue;
+            }
             let blk = block6[0].index / 6;
             let mut az0 = F::zero();
             let mut bz0 = F::zero();
@@ -845,19 +1244,43 @@ impl<'a, F: JoltField> OuterRemainingSumcheck<'a, F> {
             let mut has_cz = false;
             for c in block6 {
                 match c.index % 6 {
-                    0 => { az0 = c.value; has_az = true; }
-                    1 => { bz0 = c.value; has_bz = true; }
-                    2 => { cz0 = c.value; has_cz = true; }
-                    3 => { az1 = c.value; has_az = true; }
-                    4 => { bz1 = c.value; has_bz = true; }
-                    5 => { cz1 = c.value; has_cz = true; }
+                    0 => {
+                        az0 = c.value;
+                        has_az = true;
+                    }
+                    1 => {
+                        bz0 = c.value;
+                        has_bz = true;
+                    }
+                    2 => {
+                        cz0 = c.value;
+                        has_cz = true;
+                    }
+                    3 => {
+                        az1 = c.value;
+                        has_az = true;
+                    }
+                    4 => {
+                        bz1 = c.value;
+                        has_bz = true;
+                    }
+                    5 => {
+                        cz1 = c.value;
+                        has_cz = true;
+                    }
                     _ => {}
                 }
             }
             let azb = az0 + r_i * (az1 - az0);
-            if has_az { out_slice[output_index] = (3 * blk, azb).into(); output_index += 1; }
+            if has_az {
+                out_slice[output_index] = (3 * blk, azb).into();
+                output_index += 1;
+            }
             let bzb = bz0 + r_i * (bz1 - bz0);
-            if has_bz { out_slice[output_index] = (3 * blk + 1, bzb).into(); output_index += 1; }
+            if has_bz {
+                out_slice[output_index] = (3 * blk + 1, bzb).into();
+                output_index += 1;
+            }
             if has_cz {
                 let czb = cz0 + r_i * (cz1 - cz0);
                 out_slice[output_index] = (3 * blk + 2, czb).into();
@@ -888,12 +1311,18 @@ impl<'a, F: JoltField> OuterRemainingSumcheck<'a, F> {
     }
 }
 
-impl<'a, F: JoltField, T: Transcript> SumcheckInstance<F, T> for OuterRemainingSumcheck<'a, F> {
-    fn degree(&self) -> usize { 3 }
+impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for OuterRemainingSumcheck<F> {
+    fn degree(&self) -> usize {
+        3
+    }
 
-    fn num_rounds(&self) -> usize { self.total_rounds - 1 /* exclude first already handled? */ + 1 }
+    fn num_rounds(&self) -> usize {
+        self.total_rounds - 1 /* exclude first already handled? */ + 1
+    }
 
-    fn input_claim(&self) -> F { self.input_claim }
+    fn input_claim(&self) -> F {
+        self.input_claim
+    }
 
     fn compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F> {
         let (t0, t_inf) = if round == 0 {
@@ -901,8 +1330,13 @@ impl<'a, F: JoltField, T: Transcript> SumcheckInstance<F, T> for OuterRemainingS
         } else {
             self.remaining_quadratic_evals()
         };
-        let cubic = Self::build_cubic_from_quadratic(&self.split_eq_poly, t0, t_inf, previous_claim);
-        vec![cubic.evaluate::<F>(&F::zero()), cubic.evaluate::<F>(&F::from_u64(2)), cubic.evaluate::<F>(&F::from_u64(3))]
+        let cubic =
+            Self::build_cubic_from_quadratic(&self.split_eq_poly, t0, t_inf, previous_claim);
+        vec![
+            cubic.evaluate::<F>(&F::zero()),
+            cubic.evaluate::<F>(&F::from_u64(2)),
+            cubic.evaluate::<F>(&F::from_u64(3)),
+        ]
     }
 
     fn bind(&mut self, r_j: F::Challenge, round: usize) {
@@ -916,21 +1350,31 @@ impl<'a, F: JoltField, T: Transcript> SumcheckInstance<F, T> for OuterRemainingS
                 .len()
                 .div_ceil(rayon::current_num_threads())
                 .next_multiple_of(6);
-            let chunk_ranges = OuterSumcheck::<F>::compute_block_ranges(&self.interleaved_poly.bound_coeffs, block_size);
+            let chunk_ranges = OuterSumcheck::<F>::compute_block_ranges(
+                &self.interleaved_poly.bound_coeffs,
+                block_size,
+            );
 
             let output_sizes: Vec<_> = chunk_ranges
                 .par_iter()
                 .map(|&(start, end)| {
-                    OuterSumcheck::<F>::binding_output_length(&self.interleaved_poly.bound_coeffs[start..end])
+                    OuterSumcheck::<F>::binding_output_length(
+                        &self.interleaved_poly.bound_coeffs[start..end],
+                    )
                 })
                 .collect();
             let total_output_len = output_sizes.iter().sum();
             if self.interleaved_poly.binding_scratch_space.is_empty() {
                 self.interleaved_poly.binding_scratch_space = Vec::with_capacity(total_output_len);
             }
-            unsafe { self.interleaved_poly.binding_scratch_space.set_len(total_output_len); }
+            unsafe {
+                self.interleaved_poly
+                    .binding_scratch_space
+                    .set_len(total_output_len);
+            }
 
-            let mut output_slices: Vec<&mut [SparseCoefficient<F>]> = Vec::with_capacity(chunk_ranges.len());
+            let mut output_slices: Vec<&mut [SparseCoefficient<F>]> =
+                Vec::with_capacity(chunk_ranges.len());
             let mut remainder = self.interleaved_poly.binding_scratch_space.as_mut_slice();
             for slice_len in output_sizes {
                 let (first, second) = remainder.split_at_mut(slice_len);
@@ -961,18 +1405,30 @@ impl<'a, F: JoltField, T: Transcript> SumcheckInstance<F, T> for OuterRemainingS
                             }
                         }
                         if az_coeff != (None, None) {
-                            let (low, high) = (az_coeff.0.unwrap_or(F::zero()), az_coeff.1.unwrap_or(F::zero()));
-                            output_slice[output_index] = (3 * block_index, low + r_j * (high - low)).into();
+                            let (low, high) = (
+                                az_coeff.0.unwrap_or(F::zero()),
+                                az_coeff.1.unwrap_or(F::zero()),
+                            );
+                            output_slice[output_index] =
+                                (3 * block_index, low + r_j * (high - low)).into();
                             output_index += 1;
                         }
                         if bz_coeff != (None, None) {
-                            let (low, high) = (bz_coeff.0.unwrap_or(F::zero()), bz_coeff.1.unwrap_or(F::zero()));
-                            output_slice[output_index] = (3 * block_index + 1, low + r_j * (high - low)).into();
+                            let (low, high) = (
+                                bz_coeff.0.unwrap_or(F::zero()),
+                                bz_coeff.1.unwrap_or(F::zero()),
+                            );
+                            output_slice[output_index] =
+                                (3 * block_index + 1, low + r_j * (high - low)).into();
                             output_index += 1;
                         }
                         if cz_coeff != (None, None) {
-                            let (low, high) = (cz_coeff.0.unwrap_or(F::zero()), cz_coeff.1.unwrap_or(F::zero()));
-                            output_slice[output_index] = (3 * block_index + 2, low + r_j * (high - low)).into();
+                            let (low, high) = (
+                                cz_coeff.0.unwrap_or(F::zero()),
+                                cz_coeff.1.unwrap_or(F::zero()),
+                            );
+                            output_slice[output_index] =
+                                (3 * block_index + 2, low + r_j * (high - low)).into();
                             output_index += 1;
                         }
                     }
@@ -991,28 +1447,162 @@ impl<'a, F: JoltField, T: Transcript> SumcheckInstance<F, T> for OuterRemainingS
 
     fn expected_output_claim(
         &self,
-        _accumulator: Option<std::rc::Rc<std::cell::RefCell<VerifierOpeningAccumulator<F>>>>,
-        _r: &[F::Challenge],
+        accumulator: Option<std::rc::Rc<std::cell::RefCell<VerifierOpeningAccumulator<F>>>>,
+        r_tail: &[F::Challenge],
     ) -> F {
-        // Not used by outer (custom UniSkip verifier); return zero to avoid misuse.
-        F::zero()
+        let tau = self
+            .tau
+            .as_ref()
+            .expect("Verifier tau not set in OuterRemainingSumcheck");
+
+        // Reconstruct full r = [r0] + r_tail, then reverse (outer is bound from the top)
+        let mut r_full: Vec<F::Challenge> = Vec::with_capacity(1 + r_tail.len());
+        r_full.push(self.r0_uniskip);
+        r_full.extend_from_slice(r_tail);
+        let r_reversed: Vec<F::Challenge> = r_full.into_iter().rev().collect();
+
+        let acc_cell = accumulator.as_ref().expect("accumulator required");
+        let acc_ref = acc_cell.borrow();
+        let (_, claim_Az) = acc_ref
+            .get_virtual_polynomial_opening(VirtualPolynomial::SpartanAz, SumcheckId::SpartanOuter);
+        let (_, claim_Bz) = acc_ref
+            .get_virtual_polynomial_opening(VirtualPolynomial::SpartanBz, SumcheckId::SpartanOuter);
+        let (_, claim_Cz) = acc_ref
+            .get_virtual_polynomial_opening(VirtualPolynomial::SpartanCz, SumcheckId::SpartanOuter);
+
+        let tau_bound_rx = EqPolynomial::mle(tau, &r_reversed);
+        tau_bound_rx * (claim_Az * claim_Bz - claim_Cz)
     }
 
-    fn normalize_opening_point(&self, opening_point: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
-        OpeningPoint::new(opening_point.to_vec())
+    fn normalize_opening_point(
+        &self,
+        r_tail: &[F::Challenge],
+    ) -> OpeningPoint<BIG_ENDIAN, F> {
+        // Construct full r and reverse to match outer convention
+        let mut r_full: Vec<F::Challenge> = Vec::with_capacity(1 + r_tail.len());
+        r_full.push(self.r0_uniskip);
+        r_full.extend_from_slice(r_tail);
+        let r_reversed: Vec<F::Challenge> = r_full.into_iter().rev().collect();
+        OpeningPoint::new(r_reversed)
     }
 
     fn cache_openings_prover(
         &self,
-        _accumulator: std::rc::Rc<std::cell::RefCell<ProverOpeningAccumulator<F>>>,
-        _transcript: &mut T,
-        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
-    ) {}
+        accumulator: std::rc::Rc<std::cell::RefCell<ProverOpeningAccumulator<F>>>,
+        transcript: &mut T,
+        opening_point: OpeningPoint<BIG_ENDIAN, F>,
+    ) {
+        // Append Az, Bz, Cz claims and corresponding opening point
+        let claims = self.final_sumcheck_evals();
+        <T as crate::transcripts::Transcript>::append_scalars(transcript, &claims);
+        let mut acc = accumulator.borrow_mut();
+        acc.append_virtual(
+            transcript,
+            VirtualPolynomial::SpartanAz,
+            SumcheckId::SpartanOuter,
+            opening_point.clone(),
+            claims[0],
+        );
+        acc.append_virtual(
+            transcript,
+            VirtualPolynomial::SpartanBz,
+            SumcheckId::SpartanOuter,
+            opening_point.clone(),
+            claims[1],
+        );
+        acc.append_virtual(
+            transcript,
+            VirtualPolynomial::SpartanCz,
+            SumcheckId::SpartanOuter,
+            opening_point.clone(),
+            claims[2],
+        );
+
+        // Handle witness openings at r_cycle
+        let num_cycles = self.trace.len().next_power_of_two();
+        let num_cycles_bits = num_cycles.ilog2() as usize;
+        let r_rev = opening_point.r.clone();
+        let (r_cycle, _rx_var) = r_rev.split_at(num_cycles_bits);
+
+        // Compute claimed witness evals and append commitments and virtuals
+        let claimed_witness_evals = compute_claimed_witness_evals::<F>(&self.preprocess, &self.trace, r_cycle);
+        let committed_polys: Vec<_> = COMMITTED_R1CS_INPUTS
+            .iter()
+            .map(|input| CommittedPolynomial::try_from(input).ok().unwrap())
+            .collect();
+        let committed_poly_claims: Vec<_> = COMMITTED_R1CS_INPUTS
+            .iter()
+            .map(|input| claimed_witness_evals[input.to_index()])
+            .collect();
+        acc.append_dense(
+            transcript,
+            committed_polys,
+            SumcheckId::SpartanOuter,
+            r_cycle.to_vec(),
+            &committed_poly_claims,
+        );
+        for (input, eval) in ALL_R1CS_INPUTS.iter().zip(claimed_witness_evals.iter()) {
+            if !COMMITTED_R1CS_INPUTS.contains(input) {
+                acc.append_virtual(
+                    transcript,
+                    VirtualPolynomial::try_from(input).ok().unwrap(),
+                    SumcheckId::SpartanOuter,
+                    OpeningPoint::new(r_cycle.to_vec()),
+                    *eval,
+                );
+            }
+        }
+    }
 
     fn cache_openings_verifier(
         &self,
-        _accumulator: std::rc::Rc<std::cell::RefCell<VerifierOpeningAccumulator<F>>>,
-        _transcript: &mut T,
-        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
-    ) {}
+        accumulator: std::rc::Rc<std::cell::RefCell<VerifierOpeningAccumulator<F>>>,
+        transcript: &mut T,
+        opening_point: OpeningPoint<BIG_ENDIAN, F>,
+    ) {
+        let mut acc = accumulator.borrow_mut();
+        // Populate Az, Bz, Cz openings at the full outer opening point
+        acc.append_virtual(
+            transcript,
+            VirtualPolynomial::SpartanAz,
+            SumcheckId::SpartanOuter,
+            opening_point.clone(),
+        );
+        acc.append_virtual(
+            transcript,
+            VirtualPolynomial::SpartanBz,
+            SumcheckId::SpartanOuter,
+            opening_point.clone(),
+        );
+        acc.append_virtual(
+            transcript,
+            VirtualPolynomial::SpartanCz,
+            SumcheckId::SpartanOuter,
+            opening_point.clone(),
+        );
+
+        // Append witness openings at r_cycle (no claims at verifier)
+        let num_cycles_bits = self.split_eq_poly.E_out_current_len().ilog2() as usize;
+        let (r_cycle, _rx_var) = opening_point.r.split_at(num_cycles_bits);
+        let committed_polys: Vec<_> = COMMITTED_R1CS_INPUTS
+            .iter()
+            .map(|input| CommittedPolynomial::try_from(input).ok().unwrap())
+            .collect();
+        acc.append_dense(
+            transcript,
+            committed_polys,
+            SumcheckId::SpartanOuter,
+            r_cycle.to_vec(),
+        );
+        ALL_R1CS_INPUTS.iter().for_each(|input| {
+            if !COMMITTED_R1CS_INPUTS.contains(input) {
+                acc.append_virtual(
+                    transcript,
+                    VirtualPolynomial::try_from(input).ok().unwrap(),
+                    SumcheckId::SpartanOuter,
+                    OpeningPoint::new(r_cycle.to_vec()),
+                );
+            }
+        });
+    }
 }

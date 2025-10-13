@@ -10,7 +10,23 @@ pub trait SumcheckStages<
     PCS: CommitmentScheme<Field = F>,
 >: Send + Sync
 {
-    // Stage 1 is special case of outer sumcheck from spartan
+    // Stage 1: Spartan outer sumcheck and other independent sumchecks
+    fn stage1_prover_instances(
+        &mut self,
+        _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+    ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
+        vec![]
+    }
+
+    fn stage1_verifier_instances(
+        &mut self,
+        _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+    ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
+        vec![]
+    }
+
+    // Legacy interface - kept for backward compatibility
+    // New implementations should use stage1_prover_instances/stage1_verifier_instances
     fn stage1_prove(
         &mut self,
         _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,

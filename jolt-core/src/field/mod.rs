@@ -127,6 +127,7 @@ pub trait JoltField:
         + From<S224>
         + Zero
         + FmaddTrunc<Other<2> = Self::Unreduced<2>, Acc<8> = Self::Unreduced<8>>
+        + FmaddTrunc<Other<3> = Self::Unreduced<3>, Acc<7> = Self::Unreduced<7>>
         + FmaddTrunc<Other<3> = Self::Unreduced<3>, Acc<8> = Self::Unreduced<8>>
         + FmaddTrunc<Other<4> = Self::Unreduced<4>, Acc<8> = Self::Unreduced<8>>
         + MulTrunc<Other<4> = Self::Unreduced<4>, Output<9> = Self::Unreduced<9>>

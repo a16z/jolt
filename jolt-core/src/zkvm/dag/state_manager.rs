@@ -9,7 +9,7 @@ use crate::poly::opening_proof::{
     OpeningPoint, ProverOpeningAccumulator, ReducedOpeningProof, SumcheckId,
     VerifierOpeningAccumulator, BIG_ENDIAN,
 };
-use crate::subprotocols::sumcheck::{SumcheckInstanceProof, UniSkipSumcheckProof};
+use crate::subprotocols::sumcheck::{SumcheckInstanceProof, UniSkipFirstRound, UniSkipSumcheckProof};
 use crate::transcripts::Transcript;
 use crate::utils::math::Math;
 use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
@@ -37,6 +37,10 @@ pub enum ProofData<F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscri
     ReducedOpeningProof(ReducedOpeningProof<F, PCS, ProofTranscript>),
     OpeningProof(PCS::Proof),
     UniSkipSumcheckProof(UniSkipSumcheckProof<F, ProofTranscript>),
+    Stage1Combined {
+        first_round: UniSkipFirstRound<F, ProofTranscript>,
+        batched_remainder: SumcheckInstanceProof<F, ProofTranscript>,
+    },
 }
 
 pub type Proofs<F, PCS, ProofTranscript> = BTreeMap<ProofKeys, ProofData<F, PCS, ProofTranscript>>;

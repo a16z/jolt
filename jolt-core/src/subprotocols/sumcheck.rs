@@ -456,6 +456,56 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
+pub struct UniSkipFirstRound<F: JoltField, ProofTranscript: Transcript> {
+    pub first_poly: UniPoly<F>,
+    _marker: PhantomData<ProofTranscript>,
+}
+
+impl<F: JoltField, ProofTranscript: Transcript> UniSkipFirstRound<F, ProofTranscript> {
+    pub fn new(first_poly: UniPoly<F>) -> Self {
+        Self { first_poly, _marker: PhantomData }
+    }
+
+    /// Verify only the univariate-skip first round.
+    ///
+    /// Params
+    /// - `const N`: the first degree plus one (e.g. the size of the first evaluation domain)
+    /// - `const FIRST_ROUND_POLY_NUM_COEFFS`: number of coefficients in the first-round polynomial
+    /// - `degree_bound_first`: Maximum allowed degree of the first univariate polynomial
+    /// - `transcript`: Fiat-Shamir transcript
+    ///
+    /// Returns `(r0, next_claim)` where `r0` is the verifier challenge for the first round
+    /// and `next_claim` is the claimed evaluation at `r0` to be used by remaining rounds.
+    pub fn verify<const N: usize, const FIRST_ROUND_POLY_NUM_COEFFS: usize>(
+        &self,
+        degree_bound_first: usize,
+        transcript: &mut ProofTranscript,
+    ) -> Result<(F::Challenge, F), ProofVerifyError> {
+        // Degree check for the high-degree first polynomial
+        if self.first_poly.degree() > degree_bound_first {
+            return Err(ProofVerifyError::InvalidInputLength(
+                degree_bound_first,
+                self.first_poly.degree(),
+            ));
+        }
+
+        // Append full polynomial and derive r0
+        self.first_poly.append_to_transcript(transcript);
+        let r0 = transcript.challenge_scalar_optimized::<F>();
+
+        // Check symmetric-domain sum equals zero (initial claim), and compute next claim s1(r0)
+        let (ok, next_claim) = self
+            .first_poly
+            .check_sum_evals_and_set_new_claim::<N, FIRST_ROUND_POLY_NUM_COEFFS>(&F::zero(), &r0);
+        if !ok {
+            return Err(ProofVerifyError::SumcheckVerificationError);
+        }
+
+        Ok((r0, next_claim))
+    }
+}
+
+#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
 /// The proof format for sumcheck with univariate skip optimization.
 /// This is different from the generic `SumcheckInstanceProof` since we apply univariate skip,
 /// which means the first round needs to be handled differently.

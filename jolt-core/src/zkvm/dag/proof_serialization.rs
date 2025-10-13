@@ -21,7 +21,7 @@ use crate::{
             VerifierOpeningAccumulator,
         },
     },
-    subprotocols::sumcheck::SumcheckInstanceProof,
+    subprotocols::sumcheck::{SumcheckInstanceProof, UniSkipFirstRound},
     transcripts::Transcript,
     zkvm::{
         dag::state_manager::{ProofData, ProofKeys, Proofs, StateManager, VerifierState},
@@ -437,6 +437,11 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
                 3u8.serialize_with_mode(&mut writer, compress)?;
                 proof.serialize_with_mode(&mut writer, compress)
             }
+            ProofData::Stage1Combined { first_round, batched_remainder } => {
+                4u8.serialize_with_mode(&mut writer, compress)?;
+                first_round.serialize_with_mode(&mut writer, compress)?;
+                batched_remainder.serialize_with_mode(&mut writer, compress)
+            }
         }
     }
 
@@ -446,6 +451,9 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
             ProofData::ReducedOpeningProof(proof) => proof.serialized_size(compress),
             ProofData::OpeningProof(proof) => proof.serialized_size(compress),
             ProofData::UniSkipSumcheckProof(proof) => proof.serialized_size(compress),
+            ProofData::Stage1Combined { first_round, batched_remainder } => {
+                first_round.serialized_size(compress) + batched_remainder.serialized_size(compress)
+            }
         }
     }
 }
@@ -481,6 +489,19 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
             2 => {
                 let proof = PCS::Proof::deserialize_with_mode(&mut reader, compress, validate)?;
                 Ok(ProofData::OpeningProof(proof))
+            }
+            3 => {
+                let proof = <crate::subprotocols::sumcheck::UniSkipSumcheckProof<F, FS> as ark_serialize::CanonicalDeserialize>::deserialize_with_mode(
+                    &mut reader,
+                    compress,
+                    validate,
+                )?;
+                Ok(ProofData::UniSkipSumcheckProof(proof))
+            }
+            4 => {
+                let first_round = UniSkipFirstRound::deserialize_with_mode(&mut reader, compress, validate)?;
+                let batched_remainder = SumcheckInstanceProof::deserialize_with_mode(&mut reader, compress, validate)?;
+                Ok(ProofData::Stage1Combined { first_round, batched_remainder })
             }
             _ => Err(SerializationError::InvalidData),
         }
