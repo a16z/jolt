@@ -433,6 +433,10 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
                 2u8.serialize_with_mode(&mut writer, compress)?;
                 proof.serialize_with_mode(&mut writer, compress)
             }
+            ProofData::OuterSumcheckProof(proof) => {
+                3u8.serialize_with_mode(&mut writer, compress)?;
+                proof.serialize_with_mode(&mut writer, compress)
+            }
         }
     }
 
@@ -441,6 +445,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
             ProofData::SumcheckProof(proof) => proof.serialized_size(compress),
             ProofData::ReducedOpeningProof(proof) => proof.serialized_size(compress),
             ProofData::OpeningProof(proof) => proof.serialized_size(compress),
+            ProofData::OuterSumcheckProof(proof) => proof.serialized_size(compress),
         }
     }
 }

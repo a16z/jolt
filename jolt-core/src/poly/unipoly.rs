@@ -317,7 +317,7 @@ impl<F: JoltField> UniPoly<F> {
     pub fn check_sum_evals_and_set_new_claim<const N: usize, const OUT_LEN: usize>(
         &self,
         claim: &F,
-        x: &F,
+        x: &F::Challenge,
     ) -> (bool, F) {
         // Relaxed: compute Σ_{t in symmetric N-window} s(t) via i128 power sums up to deg(s)
         debug_assert_eq!(self.degree() + 1, OUT_LEN);

@@ -9,10 +9,9 @@ use crate::poly::opening_proof::{
     OpeningPoint, ProverOpeningAccumulator, ReducedOpeningProof, SumcheckId,
     VerifierOpeningAccumulator, BIG_ENDIAN,
 };
-use crate::subprotocols::sumcheck::SumcheckInstanceProof;
+use crate::subprotocols::sumcheck::{SumcheckInstanceProof, UniSkipSumcheckProof};
 use crate::transcripts::Transcript;
 use crate::utils::math::Math;
-use crate::zkvm::spartan::outer::OuterSumcheckProof;
 use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 use crate::zkvm::{JoltProverPreprocessing, JoltVerifierPreprocessing};
 use num_derive::FromPrimitive;
@@ -35,7 +34,7 @@ pub enum ProofKeys {
 
 pub enum ProofData<F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript> {
     SumcheckProof(SumcheckInstanceProof<F, ProofTranscript>),
-    OuterSumcheckProof(OuterSumcheckProof<F, ProofTranscript>),
+    OuterSumcheckProof(UniSkipSumcheckProof<F, ProofTranscript>),
     ReducedOpeningProof(ReducedOpeningProof<F, PCS, ProofTranscript>),
     OpeningProof(PCS::Proof),
 }

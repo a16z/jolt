@@ -1,9 +1,8 @@
 use allocative::Allocative;
-use ark_std::Zero;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 use ark_ff::biginteger::S160;
-use ark_serialize::*;
+use ark_std::Zero;
 use rayon::prelude::*;
 use tracer::instruction::Cycle;
 
@@ -12,7 +11,7 @@ use crate::poly::lagrange_poly::{LagrangeHelper, LagrangePolynomial};
 use crate::poly::multilinear_polynomial::BindingOrder;
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
-use crate::subprotocols::sumcheck::SumcheckInstanceProof;
+use crate::subprotocols::sumcheck::UniSkipSumcheckProof;
 use crate::transcripts::{AppendToTranscript, Transcript};
 use crate::utils::math::Math;
 #[cfg(feature = "allocative")]
@@ -31,92 +30,7 @@ use crate::zkvm::r1cs::{
     },
     inputs::R1CSCycleInputs,
 };
-use crate::zkvm::{JoltSharedPreprocessing, ProofVerifyError};
-
-#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
-/// The proof format for Spartan's outer sumcheck.
-/// This is different from the generic `SumcheckInstanceProof` since we apply univariate skip to the
-/// outer sumcheck, which means the first round needs to be handled differently.
-pub struct OuterSumcheckProof<F: JoltField, ProofTranscript: Transcript> {
-    /// The first polynomial (of high degree) from the univariate skip.
-    /// We send the whole polynomial for easier verification (only one extra field element)
-    pub first_poly: UniPoly<F>,
-    /// The remaining polynomials from the second round onwards.
-    pub remaining_proof: SumcheckInstanceProof<F, ProofTranscript>,
-}
-
-impl<F: JoltField, ProofTranscript: Transcript> OuterSumcheckProof<F, ProofTranscript> {
-    pub fn new(
-        first_poly: UniPoly<F>,
-        remaining_polys: Vec<CompressedUniPoly<F>>,
-    ) -> OuterSumcheckProof<F, ProofTranscript> {
-        OuterSumcheckProof {
-            first_poly,
-            remaining_proof: SumcheckInstanceProof::new(remaining_polys),
-        }
-    }
-
-    /// Verify this sumcheck proof given that the first variable has higher degree than the rest.
-    /// (which happens during Spartan's outer sumcheck with univariate skip)
-    /// Note: Verification does not execute the final check of sumcheck protocol: g_v(r_v) = oracle_g(r),
-    /// as the oracle is not passed in. Expected that the caller will implement.
-    ///
-    /// Params
-    /// - `const N`: the first degree plus one (e.g. the size of the first evaluation domain)
-    /// - `num_rounds`: Number of rounds of sumcheck, or number of variables to bind
-    /// - `degree_bound_first`: Maximum allowed degree of the first univariate polynomial
-    /// - `degree_bound_rest`: Maximum allowed degree of the rest of the univariate polynomials
-    /// - `transcript`: Fiat-shamir transcript
-    ///
-    /// Returns (e, r)
-    /// - `e`: Claimed evaluation at random point
-    /// - `r`: Evaluation point
-    pub fn verify<const N: usize>(
-        &self,
-        num_rounds: usize,
-        degree_bound_first: usize,
-        degree_bound_rest: usize,
-        transcript: &mut ProofTranscript,
-    ) -> Result<(F, Vec<F>), ProofVerifyError> {
-        let mut r: Vec<F> = Vec::new();
-
-        // verify that there is a univariate polynomial for each round
-        assert_eq!(self.remaining_proof.compressed_polys.len() + 1, num_rounds);
-
-        // verification for the first round
-        if self.first_poly.degree() > degree_bound_first {
-            return Err(ProofVerifyError::InvalidInputLength(
-                degree_bound_first,
-                self.first_poly.degree(),
-            ));
-        }
-        self.first_poly.append_to_transcript(transcript);
-        let r_0 = transcript.challenge_scalar();
-        r.push(r_0);
-        // First round: send all coeffs; check symmetric-domain sum is zero (initial claim),
-        // then set next claim to s1(r_0). Use i128 power sums up to degree 39 over the 14-window.
-        let (ok, next_claim) = self
-            .first_poly
-            .check_sum_evals_and_set_new_claim::<UNIVARIATE_SKIP_DOMAIN_SIZE, FIRST_ROUND_POLY_NUM_COEFFS>(
-                &F::zero(),
-                &r_0,
-            );
-        if !ok {
-            return Err(ProofVerifyError::SumcheckVerificationError);
-        }
-
-        let (e, r_rest) = self.remaining_proof.verify(
-            next_claim,
-            num_rounds - 1,
-            degree_bound_rest,
-            transcript,
-        )?;
-
-        r.extend(r_rest);
-
-        Ok((e, r))
-    }
-}
+use crate::zkvm::JoltSharedPreprocessing;
 
 #[derive(Default, Debug, Clone, Copy, PartialEq)]
 pub struct SparseCoefficient<T> {
@@ -186,7 +100,7 @@ impl<F: JoltField> OuterSumcheck<F> {
         num_rounds: usize,
         tau: &[F],
         transcript: &mut ProofTranscript,
-    ) -> (OuterSumcheckProof<F, ProofTranscript>, Vec<F>, [F; 3]) {
+    ) -> (UniSkipSumcheckProof<F, ProofTranscript>, Vec<F>, [F; 3]) {
         // Assert that the number of rounds is equal to the number of cycle variables plus two
         // (one for univariate skip of degree ~13-15, and one for the streaming round)
         debug_assert_eq!(num_rounds, trace.len().next_power_of_two().log_2() + 2);
@@ -230,7 +144,7 @@ impl<F: JoltField> OuterSumcheck<F> {
         }
 
         (
-            OuterSumcheckProof::new(first_poly, polys),
+            UniSkipSumcheckProof::new(first_poly, polys),
             r,
             outer_sumcheck.final_sumcheck_evals(),
         )
@@ -263,9 +177,7 @@ impl<F: JoltField> OuterSumcheck<F> {
         target_shifts[12] = (-13) - start;
         let coeffs_per_j: [[i32; UNIVARIATE_SKIP_DOMAIN_SIZE]; UNIVARIATE_SKIP_DEGREE] =
             core::array::from_fn(|j| {
-                LagrangeHelper::shift_coeffs_i32::<UNIVARIATE_SKIP_DOMAIN_SIZE>(
-                    target_shifts[j],
-                )
+                LagrangeHelper::shift_coeffs_i32::<UNIVARIATE_SKIP_DOMAIN_SIZE>(target_shifts[j])
             });
 
         let num_x_out_vals = self.split_eq_poly.E_out_current_len();
@@ -298,7 +210,7 @@ impl<F: JoltField> OuterSumcheck<F> {
                     [F::zero(); UNIVARIATE_SKIP_DEGREE];
 
                 for x_out_val in x_out_start..x_out_end {
-                    let mut inner_acc: [<F as JoltField>::Unreduced::<9>; UNIVARIATE_SKIP_DEGREE] =
+                    let mut inner_acc: [<F as JoltField>::Unreduced<9>; UNIVARIATE_SKIP_DEGREE] =
                         [<F as JoltField>::Unreduced::<9>::zero(); UNIVARIATE_SKIP_DEGREE];
 
                     for x_in_val in 0..num_x_in_vals {
@@ -805,8 +717,8 @@ impl<F: JoltField> OuterSumcheck<F> {
                 .par_iter()
                 .map(|&(start, end)| {
                     let chunk = &self.interleaved_poly.bound_coeffs[start..end];
-            let mut eval_point_0 = F::zero();
-            let mut eval_point_infty = F::zero();
+                    let mut eval_point_0 = F::zero();
+                    let mut eval_point_infty = F::zero();
 
                     let mut inner_sums = (F::Unreduced::<9>::zero(), F::Unreduced::<9>::zero());
                     let mut prev_x2 = 0;
@@ -820,8 +732,7 @@ impl<F: JoltField> OuterSumcheck<F> {
                         if x2 != prev_x2 {
                             let reduced0 = F::from_montgomery_reduce::<9>(inner_sums.0);
                             let reducedInf = F::from_montgomery_reduce::<9>(inner_sums.1);
-                            eval_point_0 +=
-                                self.split_eq_poly.E_out_current()[prev_x2] * reduced0;
+                            eval_point_0 += self.split_eq_poly.E_out_current()[prev_x2] * reduced0;
                             eval_point_infty +=
                                 self.split_eq_poly.E_out_current()[prev_x2] * reducedInf;
 
@@ -841,12 +752,10 @@ impl<F: JoltField> OuterSumcheck<F> {
                         let az_eval_infty = az.1 - az.0;
                         let bz_eval_infty = bz.1 - bz.0;
 
-                        inner_sums.0 += E_in_evals.mul_unreduced::<9>(
-                            az.0.mul_0_optimized(bz.0) - cz0,
-                        );
-                        inner_sums.1 += E_in_evals.mul_unreduced::<9>(
-                            az_eval_infty.mul_0_optimized(bz_eval_infty),
-                        );
+                        inner_sums.0 +=
+                            E_in_evals.mul_unreduced::<9>(az.0.mul_0_optimized(bz.0) - cz0);
+                        inner_sums.1 += E_in_evals
+                            .mul_unreduced::<9>(az_eval_infty.mul_0_optimized(bz_eval_infty));
                     }
 
                     let reduced0 = F::from_montgomery_reduce::<9>(inner_sums.0);
@@ -974,7 +883,7 @@ impl<F: JoltField> OuterSumcheck<F> {
         &mut self,
         quadratic_evals: (F, F), // (t_i(0), t_i(infty))
         polys: &mut Vec<CompressedUniPoly<F>>,
-        r: &mut Vec<F>,
+        r: &mut Vec<F::Challenge>,
         transcript: &mut ProofTranscript,
     ) -> F {
         let eq_poly = &mut self.split_eq_poly;
@@ -997,7 +906,7 @@ impl<F: JoltField> OuterSumcheck<F> {
         compressed_poly.append_to_transcript(transcript);
 
         // Derive challenge
-        let r_i: F = transcript.challenge_scalar();
+        let r_i = transcript.challenge_scalar_optimized();
         r.push(r_i);
         polys.push(compressed_poly);
 

@@ -857,8 +857,6 @@ pub fn eval_cz_by_name(c: &NamedConstraint, row: &R1CSCycleInputs) -> S160 {
         N::LeftLookupZeroUnlessAddSubMul => {
             S160::from_diff_u64(row.left_lookup, row.left_input)
         }
-        // Cz: Product (product: c = result)
-        N::ProductDef => S160::from(row.product),
         // Cz: WriteLookupOutputToRD (Rd * WriteLookupOutputToRD flag) (product: c = result)
         N::WriteLookupOutputToRDDef => S160::from(row.write_lookup_output_to_rd_addr as u64),
         // Cz: WritePCtoRD (Rd * Jump) (product: c = result)

@@ -172,7 +172,7 @@ impl<F: JoltField> UniformSpartanKey<F> {
     pub fn evaluate_z_mle_with_segment_evals(
         &self,
         segment_evals: &[F],
-        r: &[F],
+        r: &[F::Challenge],
         with_const: bool,
     ) -> F {
         assert_eq!(Self::num_vars(), segment_evals.len());
@@ -182,14 +182,15 @@ impl<F: JoltField> UniformSpartanKey<F> {
         let num_vars = self.num_vars_uniform_padded();
         let var_bits = num_vars.log_2();
 
-        let eq_ry_var = EqPolynomial::evals(r);
+        let eq_ry_var = EqPolynomial::<F>::evals(r);
         let eval_variables: F = (0..Self::num_vars())
             .map(|var_index| eq_ry_var[var_index] * segment_evals[var_index])
             .sum();
 
         // Evaluate at the constant position if it exists within the padded space
         let const_eval = if Self::num_vars() < num_vars && with_const {
-            let const_position_bits = index_to_field_bitvector(Self::num_vars() as u128, var_bits);
+            let const_position_bits: Vec<F> =
+                index_to_field_bitvector(Self::num_vars() as u128, var_bits);
             EqPolynomial::mle(r, &const_position_bits)
         } else {
             F::zero()
@@ -199,17 +200,29 @@ impl<F: JoltField> UniformSpartanKey<F> {
     }
 
     /// Evaluate uniform matrix A at a specific point (rx_constr, ry_var)
-    pub fn evaluate_uniform_a_at_point(&self, rx_constr: &[F], ry_var: &[F]) -> F {
+    pub fn evaluate_uniform_a_at_point(
+        &self,
+        rx_constr: &[F::Challenge],
+        ry_var: &[F::Challenge],
+    ) -> F {
         self.evaluate_uniform_matrix_at_point(|row| &row.a, rx_constr, ry_var)
     }
 
     /// Evaluate uniform matrix B at a specific point (rx_constr, ry_var)
-    pub fn evaluate_uniform_b_at_point(&self, rx_constr: &[F], ry_var: &[F]) -> F {
+    pub fn evaluate_uniform_b_at_point(
+        &self,
+        rx_constr: &[F::Challenge],
+        ry_var: &[F::Challenge],
+    ) -> F {
         self.evaluate_uniform_matrix_at_point(|row| &row.b, rx_constr, ry_var)
     }
 
     /// Evaluate uniform matrix C at a specific point (rx_constr, ry_var)
-    pub fn evaluate_uniform_c_at_point(&self, rx_constr: &[F], ry_var: &[F]) -> F {
+    pub fn evaluate_uniform_c_at_point(
+        &self,
+        rx_constr: &[F::Challenge],
+        ry_var: &[F::Challenge],
+    ) -> F {
         self.evaluate_uniform_matrix_at_point(|row| &row.c, rx_constr, ry_var)
     }
 
@@ -220,8 +233,8 @@ impl<F: JoltField> UniformSpartanKey<F> {
     fn evaluate_uniform_matrix_at_point(
         &self,
         select: impl Fn(&Constraint) -> &LC,
-        rx_constr: &[F],
-        ry_var: &[F],
+        rx_constr: &[F::Challenge],
+        ry_var: &[F::Challenge],
     ) -> F {
         // Row axis: r_constr = [r0, r_stream]; use Lagrange basis for first-round (size 14)
         // and linear blend for the two groups using r_stream
@@ -233,7 +246,7 @@ impl<F: JoltField> UniformSpartanKey<F> {
         let lag_basis = LagrangePolynomial::evals::<UNIVARIATE_SKIP_DOMAIN_SIZE>(&r0);
 
         // Column axis: standard eq basis over variables
-        let eq_ry = EqPolynomial::evals(ry_var);
+        let eq_ry = EqPolynomial::<F>::evals(ry_var);
 
         let num_vars = JoltR1CSInputs::num_inputs();
         debug_assert!(num_vars < eq_ry.len());
