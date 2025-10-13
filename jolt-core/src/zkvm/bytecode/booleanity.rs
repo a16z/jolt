@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use num_traits::Zero;
 
-use crate::field::MulTrunc;
+// MulTrunc no longer used after split-eq conversion
 use crate::poly::opening_proof::{
     OpeningPoint, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
 };
@@ -17,7 +17,7 @@ use crate::{
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
-        multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
+        multilinear_polynomial::{BindingOrder, PolynomialBinding},
         opening_proof::ProverOpeningAccumulator,
         ra_poly::RaPolynomial,
         split_eq_poly::GruenSplitEqPolynomial,
