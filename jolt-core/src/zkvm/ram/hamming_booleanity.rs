@@ -120,7 +120,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for HammingBooleanitySu
                         eq_eval.mul_unreduced::<9>(e),
                     ]
                 })
-                .reduce(|| [<F as JoltField>::Unreduced::<9>::zero(); 2], |a, b| [a[0] + b[0], a[1] + b[1]])
+                .reduce(
+                    || [<F as JoltField>::Unreduced::<9>::zero(); 2],
+                    |a, b| [a[0] + b[0], a[1] + b[1]],
+                )
         } else {
             let num_x_in_bits = eq.E_in_current_len().log_2();
             let chunk_size = 1 << num_x_in_bits;
@@ -147,7 +150,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for HammingBooleanitySu
                                 E_in_eval.mul_unreduced::<9>(e),
                             ]
                         })
-                        .reduce(|| [<F as JoltField>::Unreduced::<9>::zero(); 2], |a, b| [a[0] + b[0], a[1] + b[1]]);
+                        .reduce(
+                            || [<F as JoltField>::Unreduced::<9>::zero(); 2],
+                            |a, b| [a[0] + b[0], a[1] + b[1]],
+                        );
 
                     // Reduce inner then scale by E_out in unreduced domain
                     let inner_c0 = F::from_montgomery_reduce(inner_unr[0]);
@@ -157,7 +163,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for HammingBooleanitySu
                         E_out_eval.mul_unreduced::<9>(inner_e),
                     ]
                 })
-                .reduce(|| [<F as JoltField>::Unreduced::<9>::zero(); 2], |a, b| [a[0] + b[0], a[1] + b[1]])
+                .reduce(
+                    || [<F as JoltField>::Unreduced::<9>::zero(); 2],
+                    |a, b| [a[0] + b[0], a[1] + b[1]],
+                )
         };
 
         let c0 = F::from_montgomery_reduce(coeffs_unr[0]);

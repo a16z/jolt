@@ -156,7 +156,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         let F_1 = compute_ra_evals(bytecode_preprocessing, trace, &E_1);
 
         let read_raf = ReadRafSumcheck::new_prover(sm);
-        let booleanity = BooleanitySumcheck::new_prover(sm, E_1, F_1.clone());
+        let booleanity = BooleanitySumcheck::new_prover(sm, r_cycle, F_1.clone());
         let hamming_weight = HammingWeightSumcheck::new_prover(sm, F_1);
 
         #[cfg(feature = "allocative")]
