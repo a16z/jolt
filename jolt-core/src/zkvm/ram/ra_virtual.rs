@@ -5,11 +5,11 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::poly::opening_proof::{
     OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
 };
 use crate::poly::ra_poly::RaPolynomial;
+use crate::poly::PolynomialEvaluation;
 use crate::zkvm::dag::state_manager::StateManager;
 use crate::zkvm::ram::remap_address;
 use crate::zkvm::witness::{
@@ -18,9 +18,8 @@ use crate::zkvm::witness::{
 use crate::{
     field::JoltField,
     poly::{
-        dense_mlpoly::DensePolynomial,
-        eq_poly::EqPolynomial,
-        multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
+        dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial,
+        multilinear_polynomial::MultilinearPolynomial, BindingOrder, PolynomialBinding,
     },
     subprotocols::sumcheck::SumcheckInstance,
     transcripts::Transcript,
@@ -284,11 +283,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for RaSumcheck<F> {
             .expect("Prover state not initialized");
 
         for ra_i in prover_state.ra_i_polys.iter_mut() {
-            ra_i.bind_parallel(r_j, BindingOrder::LowToHigh);
+            ra_i.bind(r_j, BindingOrder::LowToHigh);
         }
-        prover_state
-            .eq_poly
-            .bind_parallel(r_j, BindingOrder::LowToHigh);
+        prover_state.eq_poly.bind(r_j, BindingOrder::LowToHigh);
     }
 
     fn input_claim(&self) -> F {

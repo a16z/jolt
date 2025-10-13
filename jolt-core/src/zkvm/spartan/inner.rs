@@ -8,11 +8,12 @@ use tracing::{span, Level};
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::dense_mlpoly::DensePolynomial;
-use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
+use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::opening_proof::{
     OpeningId, OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator,
     BIG_ENDIAN,
 };
+use crate::poly::{BindingOrder, PolynomialBinding};
 use crate::subprotocols::sumcheck::SumcheckInstance;
 use crate::transcripts::Transcript;
 use crate::utils::math::Math;
@@ -208,13 +209,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for InnerSumcheck<F> {
             || {
                 prover_state
                     .poly_abc_small
-                    .bind_parallel(r_j, BindingOrder::HighToLow)
+                    .bind(r_j, BindingOrder::HighToLow)
             },
-            || {
-                prover_state
-                    .poly_z
-                    .bind_parallel(r_j, BindingOrder::HighToLow)
-            },
+            || prover_state.poly_z.bind(r_j, BindingOrder::HighToLow),
         );
     }
 

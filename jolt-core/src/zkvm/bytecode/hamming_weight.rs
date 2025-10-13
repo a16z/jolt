@@ -6,11 +6,12 @@ use crate::{
     field::{JoltField, MulTrunc},
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
-        multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
+        multilinear_polynomial::MultilinearPolynomial,
         opening_proof::{
             OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator,
             BIG_ENDIAN,
         },
+        BindingOrder, PolynomialBinding,
     },
     subprotocols::sumcheck::SumcheckInstance,
     transcripts::Transcript,
@@ -127,7 +128,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for HammingWeightSumche
             .unwrap()
             .ra
             .par_iter_mut()
-            .for_each(|ra| ra.bind_parallel(r_j, BindingOrder::LowToHigh))
+            .for_each(|ra| ra.bind(r_j, BindingOrder::LowToHigh))
     }
 
     fn expected_output_claim(

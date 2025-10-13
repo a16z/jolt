@@ -13,7 +13,7 @@ use crate::utils::lookup_bits::LookupBits;
 use crate::utils::math::Math;
 use crate::utils::uninterleave_bits;
 
-use super::multilinear_polynomial::{BindingOrder, PolynomialBinding, PolynomialEvaluation};
+use super::{BindingOrder, PolynomialBinding, PolynomialEvaluation};
 
 #[derive(Clone, Debug, Allocative)]
 pub struct IdentityPolynomial<F: JoltField> {
@@ -50,11 +50,6 @@ impl<F: JoltField> PolynomialBinding<F> for IdentityPolynomial<F> {
             }
         }
         self.num_bound_vars += 1;
-    }
-
-    fn bind_parallel(&mut self, r: F::Challenge, order: BindingOrder) {
-        // Binding is constant time, no parallelism necessary
-        self.bind(r, order);
     }
 
     fn final_sumcheck_claim(&self) -> F {
@@ -220,11 +215,6 @@ impl<F: JoltField> PolynomialBinding<F> for OperandPolynomial<F> {
             self.bound_value += r.into();
         }
         self.num_bound_vars += 1;
-    }
-
-    fn bind_parallel(&mut self, r: F::Challenge, order: BindingOrder) {
-        // Binding is constant time, no parallelism necessary
-        self.bind(r, order);
     }
 
     fn final_sumcheck_claim(&self) -> F {
@@ -420,11 +410,6 @@ impl<F: JoltField> PolynomialBinding<F> for UnmapRamAddressPolynomial<F> {
 
     fn bind(&mut self, r: F::Challenge, order: BindingOrder) {
         self.int_poly.bind(r, order);
-    }
-
-    fn bind_parallel(&mut self, r: F::Challenge, order: BindingOrder) {
-        // Binding is constant time, no parallelism necessary
-        self.bind(r, order);
     }
 
     fn final_sumcheck_claim(&self) -> F {

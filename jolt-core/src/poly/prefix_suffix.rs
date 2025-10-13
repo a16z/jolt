@@ -10,9 +10,8 @@ use strum_macros::{EnumCount as EnumCountMacro, EnumIter as EnumIterMacro};
 
 use crate::field::{ChallengeFieldOps, FieldChallengeOps, JoltField};
 use crate::poly::dense_mlpoly::DensePolynomial;
-use crate::poly::multilinear_polynomial::{
-    BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
-};
+use crate::poly::multilinear_polynomial::MultilinearPolynomial;
+use crate::poly::{BindingOrder, PolynomialBinding, PolynomialEvaluation};
 use crate::utils::lookup_bits::LookupBits;
 use crate::utils::math::Math;
 use crate::utils::thread::unsafe_allocate_zero_vec;
@@ -110,13 +109,6 @@ impl<F: JoltField> PolynomialBinding<F> for CachedPolynomial<F> {
     fn bind(&mut self, r: F::Challenge, order: BindingOrder) {
         if !self.bound_this_round {
             self.inner.bind(r, order);
-            self.bound_this_round = true;
-        }
-    }
-
-    fn bind_parallel(&mut self, r: F::Challenge, order: BindingOrder) {
-        if !self.bound_this_round {
-            self.inner.bind_parallel(r, order);
             self.bound_this_round = true;
         }
     }
@@ -463,11 +455,11 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
         self.P.par_iter().for_each(|p| {
             if let Some(p) = p {
                 let mut p = p.write().unwrap();
-                p.bind_parallel(r, BindingOrder::HighToLow);
+                p.bind(r, BindingOrder::HighToLow);
             }
         });
         self.Q.par_iter_mut().for_each(|poly| {
-            poly.bind_parallel(r, BindingOrder::HighToLow);
+            poly.bind(r, BindingOrder::HighToLow);
         });
         self.next_round();
     }

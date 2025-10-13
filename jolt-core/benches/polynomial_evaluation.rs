@@ -9,7 +9,7 @@ use ark_ff::Zero;
 use ark_std::rand::{rngs::StdRng, Rng, SeedableRng};
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use jolt_core::{field::tracked_ark::TrackedFr as Fr, poly::dense_mlpoly::DensePolynomial};
-use jolt_core::{field::JoltField, poly::multilinear_polynomial::PolynomialEvaluation};
+use jolt_core::{field::JoltField, poly::PolynomialEvaluation};
 use jolt_core::{poly::eq_poly::EqPolynomial, utils::math::Math};
 use rayon::prelude::*;
 

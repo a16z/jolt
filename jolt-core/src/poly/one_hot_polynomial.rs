@@ -3,15 +3,16 @@
 //! `opening_proof.rs`. In particular, this implementation is _not_ used
 //! in the Twist/Shout PIOP implementations in Jolt.
 
-use super::multilinear_polynomial::BindingOrder;
+use super::BindingOrder;
 use crate::field::JoltField;
 use crate::msm::VariableBaseMSM;
 use crate::poly::commitment::dory::{DoryGlobals, JoltGroupWrapper};
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
-use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialBinding};
+use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::ra_poly::RaPolynomial;
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
+use crate::poly::PolynomialBinding;
 use crate::utils::expanding_table::ExpandingTable;
 use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
@@ -302,9 +303,7 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
         // Bind shared state if not already bound
         if num_variables_bound <= round {
             if round < polynomial.K.log_2() {
-                shared_eq_address
-                    .B
-                    .bind_parallel(r, BindingOrder::HighToLow);
+                shared_eq_address.B.bind(r, BindingOrder::HighToLow);
                 shared_eq_address.F.update(r);
                 shared_eq_address.num_variables_bound += 1;
             } else {
@@ -329,7 +328,7 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
             // Bind H for subsequent T rounds
             let mut H = polynomial.H.write().unwrap();
             if H.len().log_2() == self.log_T + polynomial.K.log_2() - round {
-                H.bind_parallel(r, BindingOrder::HighToLow);
+                H.bind(r, BindingOrder::HighToLow);
             }
         }
     }
@@ -753,8 +752,8 @@ mod tests {
             previous_claim = univariate_poly.evaluate(&r);
 
             one_hot_opening.bind(r, round);
-            dense_poly.bind_parallel(r, BindingOrder::HighToLow);
-            eq.bind_parallel(r, BindingOrder::HighToLow);
+            dense_poly.bind(r, BindingOrder::HighToLow);
+            eq.bind(r, BindingOrder::HighToLow);
         }
         assert_eq!(
             one_hot_opening.final_sumcheck_claim(),

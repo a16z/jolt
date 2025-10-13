@@ -4,7 +4,7 @@
 use allocative::Allocative;
 
 use super::dense_mlpoly::DensePolynomial;
-use super::multilinear_polynomial::BindingOrder;
+use super::BindingOrder;
 use crate::{field::JoltField, poly::eq_poly::EqPolynomial};
 
 #[derive(Debug, Clone, PartialEq, Allocative)]
@@ -383,7 +383,7 @@ mod tests {
 
         for _ in 0..NUM_VARS {
             let r = <Fr as JoltField>::Challenge::random(&mut rng);
-            regular_eq.bound_poly_var_bot(&r);
+            regular_eq.bound_poly_var_bot_01_optimized(&r);
             split_eq.bind(r);
 
             let merged = split_eq.merge();
@@ -409,7 +409,7 @@ mod tests {
         // Bind with same random values, but regular_eq uses top and split uses new high-to-low
         for _ in 0..NUM_VARS {
             let r = <Fr as JoltField>::Challenge::random(&mut rng);
-            regular_eq.bound_poly_var_top(&r);
+            regular_eq.bound_poly_var_top_zero_optimized(&r);
             split_eq_high_to_low.bind(r);
             let merged = split_eq_high_to_low.merge();
 

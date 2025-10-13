@@ -18,14 +18,13 @@ use crate::{
         dense_mlpoly::DensePolynomial,
         eq_poly::EqPolynomial,
         identity_poly::{IdentityPolynomial, OperandPolynomial, OperandSide},
-        multilinear_polynomial::{
-            BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
-        },
+        multilinear_polynomial::MultilinearPolynomial,
         opening_proof::{
             OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator,
             BIG_ENDIAN,
         },
         prefix_suffix::{Prefix, PrefixRegistry, PrefixSuffixDecomposition},
+        BindingOrder, PolynomialBinding, PolynomialEvaluation,
     },
     subprotocols::sumcheck::SumcheckInstance,
     transcripts::Transcript,
@@ -365,7 +364,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
                     ps.suffix_polys.par_iter_mut().for_each(|polys| {
                         polys
                             .par_iter_mut()
-                            .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow))
+                            .for_each(|poly| poly.bind(r_j, BindingOrder::HighToLow))
                     });
                 });
                 s.spawn(|_| ps.identity_ps.bind(r_j));
@@ -407,7 +406,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
             ]
             .par_iter_mut()
             .for_each(|poly| {
-                poly.bind_parallel(r_j, BindingOrder::HighToLow);
+                poly.bind(r_j, BindingOrder::HighToLow);
             });
         }
     }

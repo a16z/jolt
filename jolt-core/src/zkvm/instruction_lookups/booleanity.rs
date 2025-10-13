@@ -14,13 +14,13 @@ use crate::{
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
-        multilinear_polynomial::{BindingOrder, PolynomialBinding},
         opening_proof::{
             OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator,
             BIG_ENDIAN,
         },
         ra_poly::RaPolynomial,
         split_eq_poly::GruenSplitEqPolynomial,
+        BindingOrder, PolynomialBinding,
     },
     subprotocols::sumcheck::SumcheckInstance,
     transcripts::Transcript,
@@ -208,7 +208,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for BooleanitySumcheck<
             // Phase 2: Bind D and H
             ps.eq_r_cycle.bind(r_j);
             ps.H.par_iter_mut()
-                .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh));
+                .for_each(|poly| poly.bind(r_j, BindingOrder::LowToHigh));
         }
     }
 

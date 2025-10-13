@@ -6,14 +6,13 @@ use crate::{
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
-        multilinear_polynomial::{
-            BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
-        },
+        multilinear_polynomial::MultilinearPolynomial,
         opening_proof::{
             OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator,
             BIG_ENDIAN,
         },
         ra_poly::RaPolynomial,
+        BindingOrder, PolynomialBinding, PolynomialEvaluation,
     },
     subprotocols::sumcheck::SumcheckInstance,
     transcripts::Transcript,
@@ -238,8 +237,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ValEvaluationSumche
         if let Some(prover_state) = &mut self.prover_state {
             [&mut prover_state.inc, &mut prover_state.lt]
                 .par_iter_mut()
-                .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow));
-            prover_state.wa.bind_parallel(r_j, BindingOrder::HighToLow);
+                .for_each(|poly| poly.bind(r_j, BindingOrder::HighToLow));
+            prover_state.wa.bind(r_j, BindingOrder::HighToLow);
         }
     }
 

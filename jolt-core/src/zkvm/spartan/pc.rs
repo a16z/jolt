@@ -7,10 +7,11 @@ use allocative::Allocative;
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::eq_poly::EqPlusOnePolynomial;
-use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
+use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::opening_proof::{
     OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
 };
+use crate::poly::{BindingOrder, PolynomialBinding};
 use crate::subprotocols::sumcheck::SumcheckInstance;
 use crate::transcripts::Transcript;
 use crate::utils::math::Math;
@@ -200,22 +201,14 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for PCSumcheck<F> {
             s.spawn(|_| {
                 prover_state
                     .unexpanded_pc_poly
-                    .bind_parallel(r_j, BindingOrder::HighToLow)
+                    .bind(r_j, BindingOrder::HighToLow)
             });
-            s.spawn(|_| {
-                prover_state
-                    .pc_poly
-                    .bind_parallel(r_j, BindingOrder::HighToLow)
-            });
-            s.spawn(|_| {
-                prover_state
-                    .is_noop_poly
-                    .bind_parallel(r_j, BindingOrder::HighToLow)
-            });
+            s.spawn(|_| prover_state.pc_poly.bind(r_j, BindingOrder::HighToLow));
+            s.spawn(|_| prover_state.is_noop_poly.bind(r_j, BindingOrder::HighToLow));
             s.spawn(|_| {
                 prover_state
                     .eq_plus_one_poly
-                    .bind_parallel(r_j, BindingOrder::HighToLow)
+                    .bind(r_j, BindingOrder::HighToLow)
             });
         });
     }
