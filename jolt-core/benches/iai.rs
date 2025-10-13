@@ -26,7 +26,7 @@ fn eval_poly_setup<F: JoltField>(size: usize) -> (DensePolynomial<F>, Vec<F::Cha
 #[bench::long(bound_poly_setup::<Fr>(4096))]
 fn bench_polynomial_binding<F: JoltField>(input: (DensePolynomial<F>, F::Challenge)) {
     let (mut poly, val) = input;
-    poly.bound_poly_var_top(&val);
+    poly.bound_poly_var_top_zero_optimized(&val);
 }
 
 #[library_benchmark]

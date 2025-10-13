@@ -114,13 +114,6 @@ impl<F: JoltField> PolynomialBinding<F> for CachedPolynomial<F> {
         }
     }
 
-    fn bind_parallel(&mut self, r: F::Challenge, order: BindingOrder) {
-        if !self.bound_this_round {
-            self.inner.bind_parallel(r, order);
-            self.bound_this_round = true;
-        }
-    }
-
     fn final_sumcheck_claim(&self) -> F {
         self.inner.final_sumcheck_claim()
     }
@@ -463,11 +456,11 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
         self.P.par_iter().for_each(|p| {
             if let Some(p) = p {
                 let mut p = p.write().unwrap();
-                p.bind_parallel(r, BindingOrder::HighToLow);
+                p.bind(r, BindingOrder::HighToLow);
             }
         });
         self.Q.par_iter_mut().for_each(|poly| {
-            poly.bind_parallel(r, BindingOrder::HighToLow);
+            poly.bind(r, BindingOrder::HighToLow);
         });
         self.next_round();
     }

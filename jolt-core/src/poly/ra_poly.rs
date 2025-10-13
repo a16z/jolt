@@ -63,17 +63,13 @@ impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: JoltField> Poly
         !matches!(self, Self::Round1(_))
     }
 
-    fn bind(&mut self, _r: F::Challenge, _order: BindingOrder) {
-        unimplemented!()
-    }
-
-    fn bind_parallel(&mut self, r: F::Challenge, order: BindingOrder) {
+    fn bind(&mut self, r: F::Challenge, order: BindingOrder) {
         match self {
             Self::None => panic!("RaPolynomial::bind called on None"),
             Self::Round1(mle) => *self = Self::Round2(mem::take(mle).bind(r, order)),
             Self::Round2(mle) => *self = Self::Round3(mem::take(mle).bind(r, order)),
             Self::Round3(mle) => *self = Self::RoundN(mem::take(mle).bind(r, order)),
-            Self::RoundN(mle) => mle.bind_parallel(r, order),
+            Self::RoundN(mle) => mle.bind(r, order),
         };
     }
 

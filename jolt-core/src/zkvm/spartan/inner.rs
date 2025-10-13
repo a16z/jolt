@@ -208,13 +208,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for InnerSumcheck<F> {
             || {
                 prover_state
                     .poly_abc_small
-                    .bind_parallel(r_j, BindingOrder::HighToLow)
+                    .bind(r_j, BindingOrder::HighToLow)
             },
-            || {
-                prover_state
-                    .poly_z
-                    .bind_parallel(r_j, BindingOrder::HighToLow)
-            },
+            || prover_state.poly_z.bind(r_j, BindingOrder::HighToLow),
         );
     }
 

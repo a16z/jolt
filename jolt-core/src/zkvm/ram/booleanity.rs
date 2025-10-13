@@ -293,7 +293,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for BooleanitySumcheck<
             // Bind D and all H polynomials
             ps.D.bind(r_j);
             ps.H.par_iter_mut()
-                .for_each(|h| h.bind_parallel(r_j, BindingOrder::LowToHigh));
+                .for_each(|h| h.bind(r_j, BindingOrder::LowToHigh));
         }
 
         self.current_round += 1;

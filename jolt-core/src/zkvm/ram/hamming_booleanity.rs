@@ -148,7 +148,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for HammingBooleanitySu
     fn bind(&mut self, r_j: F::Challenge, _round: usize) {
         let ps = self.prover_state.as_mut().unwrap();
         ps.eq_r_cycle.bind(r_j);
-        ps.H.bind_parallel(r_j, BindingOrder::LowToHigh);
+        ps.H.bind(r_j, BindingOrder::LowToHigh);
     }
 
     fn expected_output_claim(

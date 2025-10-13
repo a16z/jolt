@@ -284,11 +284,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for RaSumcheck<F> {
             .expect("Prover state not initialized");
 
         for ra_i in prover_state.ra_i_polys.iter_mut() {
-            ra_i.bind_parallel(r_j, BindingOrder::LowToHigh);
+            ra_i.bind(r_j, BindingOrder::LowToHigh);
         }
-        prover_state
-            .eq_poly
-            .bind_parallel(r_j, BindingOrder::LowToHigh);
+        prover_state.eq_poly.bind(r_j, BindingOrder::LowToHigh);
     }
 
     fn input_claim(&self) -> F {

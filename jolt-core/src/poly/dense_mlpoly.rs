@@ -73,28 +73,9 @@ impl<F: JoltField> DensePolynomial<F> {
 
     pub fn bind(&mut self, r: F::Challenge, order: BindingOrder) {
         match order {
-            BindingOrder::LowToHigh => self.bound_poly_var_bot(&r),
-            BindingOrder::HighToLow => self.bound_poly_var_top(&r),
-        }
-    }
-
-    pub fn bind_parallel(&mut self, r: F::Challenge, order: BindingOrder) {
-        match order {
             BindingOrder::LowToHigh => self.bound_poly_var_bot_01_optimized(&r),
             BindingOrder::HighToLow => self.bound_poly_var_top_zero_optimized(&r),
         }
-    }
-
-    pub fn bound_poly_var_top(&mut self, r: &F::Challenge) {
-        let n = self.len() / 2;
-        let (left, right) = self.Z.split_at_mut(n);
-
-        left.iter_mut().zip(right.iter()).for_each(|(a, b)| {
-            *a += *r * (*b - *a);
-        });
-
-        self.num_vars -= 1;
-        self.len = n;
     }
 
     pub fn bound_poly_var_top_many_ones(&mut self, r: &F::Challenge) {
@@ -200,18 +181,6 @@ impl<F: JoltField> DensePolynomial<F> {
             Z: new_evals,
             binding_scratch_space: None,
         }
-    }
-
-    /// Note: does not truncate
-    #[tracing::instrument(skip_all)]
-    pub fn bound_poly_var_bot(&mut self, r: &F::Challenge) {
-        let n = self.len() / 2;
-        for i in 0..n {
-            self.Z[i] = self.Z[2 * i] + *r * (self.Z[2 * i + 1] - self.Z[2 * i]);
-        }
-
-        self.num_vars -= 1;
-        self.len = n;
     }
 
     pub fn bound_poly_var_bot_01_optimized(&mut self, r: &F::Challenge) {

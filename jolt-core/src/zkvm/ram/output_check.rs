@@ -243,7 +243,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for OutputSumcheck<F> {
         // because we'll need Val_init(r) in `ValFinalSumcheck`
         [val_init, val_final, val_io, eq_poly, io_mask]
             .into_par_iter()
-            .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow));
+            .for_each(|poly| poly.bind(r_j, BindingOrder::HighToLow));
         eq_table.update(r_j);
     }
 
@@ -579,8 +579,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ValFinalSumcheck<F>
     fn bind(&mut self, r_j: F::Challenge, _: usize) {
         let ValFinalSumcheckProverState { inc, wa, .. } = self.prover_state.as_mut().unwrap();
         rayon::join(
-            || inc.bind_parallel(r_j, BindingOrder::HighToLow),
-            || wa.bind_parallel(r_j, BindingOrder::HighToLow),
+            || inc.bind(r_j, BindingOrder::HighToLow),
+            || wa.bind(r_j, BindingOrder::HighToLow),
         );
     }
 

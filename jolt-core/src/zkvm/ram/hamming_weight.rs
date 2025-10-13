@@ -192,7 +192,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for HammingWeightSumche
             prover_state
                 .ra
                 .par_iter_mut()
-                .for_each(|ra_poly| ra_poly.bind_parallel(r_j, BindingOrder::LowToHigh));
+                .for_each(|ra_poly| ra_poly.bind(r_j, BindingOrder::LowToHigh));
         }
     }
 

@@ -177,12 +177,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for RafEvaluationSumche
     fn bind(&mut self, r_j: F::Challenge, _round: usize) {
         if let Some(prover_state) = &mut self.prover_state {
             rayon::join(
-                || prover_state.ra.bind_parallel(r_j, BindingOrder::HighToLow),
-                || {
-                    prover_state
-                        .unmap
-                        .bind_parallel(r_j, BindingOrder::HighToLow)
-                },
+                || prover_state.ra.bind(r_j, BindingOrder::HighToLow),
+                || prover_state.unmap.bind(r_j, BindingOrder::HighToLow),
             );
         }
     }

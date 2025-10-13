@@ -200,22 +200,14 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for PCSumcheck<F> {
             s.spawn(|_| {
                 prover_state
                     .unexpanded_pc_poly
-                    .bind_parallel(r_j, BindingOrder::HighToLow)
+                    .bind(r_j, BindingOrder::HighToLow)
             });
-            s.spawn(|_| {
-                prover_state
-                    .pc_poly
-                    .bind_parallel(r_j, BindingOrder::HighToLow)
-            });
-            s.spawn(|_| {
-                prover_state
-                    .is_noop_poly
-                    .bind_parallel(r_j, BindingOrder::HighToLow)
-            });
+            s.spawn(|_| prover_state.pc_poly.bind(r_j, BindingOrder::HighToLow));
+            s.spawn(|_| prover_state.is_noop_poly.bind(r_j, BindingOrder::HighToLow));
             s.spawn(|_| {
                 prover_state
                     .eq_plus_one_poly
-                    .bind_parallel(r_j, BindingOrder::HighToLow)
+                    .bind(r_j, BindingOrder::HighToLow)
             });
         });
     }

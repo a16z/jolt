@@ -195,12 +195,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ProductVirtualizati
             || {
                 prover_state
                     .left_input_poly
-                    .bind_parallel(r_j, BindingOrder::LowToHigh)
+                    .bind(r_j, BindingOrder::LowToHigh)
             },
             || {
                 prover_state
                     .right_input_poly
-                    .bind_parallel(r_j, BindingOrder::LowToHigh)
+                    .bind(r_j, BindingOrder::LowToHigh)
             },
         );
     }

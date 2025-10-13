@@ -197,7 +197,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for BooleanitySumcheck<
 
         if round < self.log_K_chunk {
             // Phase 1: Bind B and update F
-            ps.B.bind_parallel(r_j, BindingOrder::LowToHigh);
+            ps.B.bind(r_j, BindingOrder::LowToHigh);
 
             // Update F for this round (see Equation 55)
             let (F_left, F_right) = ps.F.split_at_mut(1 << round);
@@ -225,9 +225,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for BooleanitySumcheck<
             }
         } else {
             // Phase 2: Bind D and H
-            ps.D.bind_parallel(r_j, BindingOrder::LowToHigh);
+            ps.D.bind(r_j, BindingOrder::LowToHigh);
             ps.H.par_iter_mut()
-                .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh));
+                .for_each(|poly| poly.bind(r_j, BindingOrder::LowToHigh));
         }
     }
 

@@ -365,7 +365,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
                     ps.suffix_polys.par_iter_mut().for_each(|polys| {
                         polys
                             .par_iter_mut()
-                            .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow))
+                            .for_each(|poly| poly.bind(r_j, BindingOrder::HighToLow))
                     });
                 });
                 s.spawn(|_| ps.identity_ps.bind(r_j));
@@ -407,7 +407,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
             ]
             .par_iter_mut()
             .for_each(|poly| {
-                poly.bind_parallel(r_j, BindingOrder::HighToLow);
+                poly.bind(r_j, BindingOrder::HighToLow);
             });
         }
     }

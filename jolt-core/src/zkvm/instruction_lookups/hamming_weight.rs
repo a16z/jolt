@@ -117,7 +117,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for HammingWeightSumche
             .unwrap()
             .ra
             .par_iter_mut()
-            .for_each(|ra| ra.bind_parallel(r_j, BindingOrder::LowToHigh))
+            .for_each(|ra| ra.bind(r_j, BindingOrder::LowToHigh))
     }
 
     fn expected_output_claim(

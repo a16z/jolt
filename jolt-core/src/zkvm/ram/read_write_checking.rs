@@ -880,7 +880,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
         drop(inner_span);
 
         gruens_eq_r_prime.bind(r_j);
-        inc_cycle.bind_parallel(r_j, BindingOrder::LowToHigh);
+        inc_cycle.bind(r_j, BindingOrder::LowToHigh);
 
         let inner_span = tracing::span!(tracing::Level::INFO, "Update A");
         let _inner_guard = inner_span.enter();
@@ -969,7 +969,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
 
         [ra, val, inc_cycle, eq_r_prime]
             .into_par_iter()
-            .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow));
+            .for_each(|poly| poly.bind(r_j, BindingOrder::HighToLow));
     }
 
     fn phase3_bind(&mut self, r_j: F::Challenge) {
@@ -981,7 +981,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
         // variables, so they are not bound here
         [ra, val]
             .into_par_iter()
-            .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow));
+            .for_each(|poly| poly.bind(r_j, BindingOrder::HighToLow));
     }
 }
 

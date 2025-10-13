@@ -141,7 +141,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for RaSumcheck<F> {
         prover_state
             .ra_i_polys
             .par_iter_mut()
-            .for_each(|p| p.bind_parallel(r_j, BindingOrder::HighToLow));
+            .for_each(|p| p.bind(r_j, BindingOrder::HighToLow));
 
         prover_state.r_sumcheck.push(r_j);
     }

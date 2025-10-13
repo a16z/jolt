@@ -38,7 +38,7 @@ fn benchmark_dense<F: JoltField>(c: &mut Criterion, num_vars: usize) {
                 },
                 |(mut poly, r)| {
                     for r_i in r.iter() {
-                        poly.bound_poly_var_top(r_i);
+                        poly.bound_poly_var_top_zero_optimized(r_i);
                         criterion::black_box(());
                     }
                 },
@@ -71,7 +71,7 @@ fn benchmark_dense_batch<F: JoltField>(c: &mut Criterion, num_vars: usize, batch
                     for r_i in r.iter() {
                         polys
                             .par_iter_mut()
-                            .for_each(|poly| poly.bound_poly_var_bot(r_i));
+                            .for_each(|poly| poly.bound_poly_var_bot_01_optimized(r_i));
                     }
                 },
             );
@@ -101,39 +101,9 @@ fn benchmark_compact<F: JoltField>(
                 },
                 |(mut poly, r)| {
                     r.into_iter().for_each(|r_i| {
-                        poly.bind_parallel(r_i, binding_order);
+                        poly.bind(r_i, binding_order);
                         criterion::black_box(());
                     });
-                },
-            );
-        },
-    );
-}
-
-fn benchmark_dense_parallel<F: JoltField>(
-    c: &mut Criterion,
-    num_vars: usize,
-    binding_order: BindingOrder,
-) {
-    c.bench_function(
-        &format!("DensePolynomial::bind_parallel {num_vars} variables {binding_order:?}"),
-        |b| {
-            b.iter_with_setup(
-                || {
-                    let mut rng = test_rng();
-                    let coeffs = random_dense_coeffs::<F>(&mut rng, num_vars);
-                    let poly = DensePolynomial::new(coeffs);
-                    let r: Vec<F::Challenge> =
-                        std::iter::repeat_with(|| F::Challenge::rand(&mut rng))
-                            .take(num_vars)
-                            .collect();
-                    (poly, r)
-                },
-                |(mut poly, r)| {
-                    for r_i in r {
-                        poly.bind_parallel(r_i, binding_order);
-                        criterion::black_box(());
-                    }
                 },
             );
         },
@@ -153,14 +123,6 @@ fn main() {
     benchmark_dense_batch::<Fr>(&mut criterion, 20, 8);
     benchmark_dense_batch::<Fr>(&mut criterion, 20, 16);
     benchmark_dense_batch::<Fr>(&mut criterion, 20, 32);
-
-    benchmark_dense_parallel::<Fr>(&mut criterion, 22, BindingOrder::LowToHigh);
-    benchmark_dense_parallel::<Fr>(&mut criterion, 24, BindingOrder::LowToHigh);
-    benchmark_dense_parallel::<Fr>(&mut criterion, 26, BindingOrder::LowToHigh);
-
-    benchmark_dense_parallel::<Fr>(&mut criterion, 22, BindingOrder::HighToLow);
-    benchmark_dense_parallel::<Fr>(&mut criterion, 24, BindingOrder::HighToLow);
-    benchmark_dense_parallel::<Fr>(&mut criterion, 26, BindingOrder::HighToLow);
 
     benchmark_compact::<Fr>(&mut criterion, 22, BindingOrder::LowToHigh);
     benchmark_compact::<Fr>(&mut criterion, 24, BindingOrder::LowToHigh);

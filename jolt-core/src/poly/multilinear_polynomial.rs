@@ -509,9 +509,6 @@ pub trait PolynomialBinding<F: JoltField> {
     fn is_bound(&self) -> bool;
     /// Binds the polynomial to a random field element `r`.
     fn bind(&mut self, r: F::Challenge, order: BindingOrder);
-    /// Binds the polynomial to a random field element `r`, parallelizing
-    /// by coefficient.
-    fn bind_parallel(&mut self, r: F::Challenge, order: BindingOrder);
     /// Returns the final sumcheck claim about the polynomial.
     fn final_sumcheck_claim(&self) -> F;
 }
@@ -565,21 +562,6 @@ impl<F: JoltField> PolynomialBinding<F> for MultilinearPolynomial<F> {
             MultilinearPolynomial::I64Scalars(poly) => poly.bind(r, order),
             MultilinearPolynomial::I128Scalars(poly) => poly.bind(r, order),
             MultilinearPolynomial::U128Scalars(poly) => poly.bind(r, order),
-            _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
-        }
-    }
-
-    #[tracing::instrument(skip_all, name = "MultilinearPolynomial::bind_parallel")]
-    fn bind_parallel(&mut self, r: F::Challenge, order: BindingOrder) {
-        match self {
-            MultilinearPolynomial::LargeScalars(poly) => poly.bind_parallel(r, order),
-            MultilinearPolynomial::U8Scalars(poly) => poly.bind_parallel(r, order),
-            MultilinearPolynomial::U16Scalars(poly) => poly.bind_parallel(r, order),
-            MultilinearPolynomial::U32Scalars(poly) => poly.bind_parallel(r, order),
-            MultilinearPolynomial::U64Scalars(poly) => poly.bind_parallel(r, order),
-            MultilinearPolynomial::I64Scalars(poly) => poly.bind_parallel(r, order),
-            MultilinearPolynomial::I128Scalars(poly) => poly.bind_parallel(r, order),
-            MultilinearPolynomial::U128Scalars(poly) => poly.bind_parallel(r, order),
             _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
         }
     }

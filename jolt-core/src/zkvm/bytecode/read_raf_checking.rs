@@ -696,14 +696,14 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
                 s.spawn(|_| {
                     self.val_polys
                         .par_iter_mut()
-                        .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow))
+                        .for_each(|poly| poly.bind(r_j, BindingOrder::HighToLow))
                 });
                 s.spawn(|_| {
-                    self.int_poly.bind_parallel(r_j, BindingOrder::HighToLow);
+                    self.int_poly.bind(r_j, BindingOrder::HighToLow);
                 });
                 s.spawn(|_| {
                     ps.F.par_iter_mut()
-                        .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow));
+                        .for_each(|poly| poly.bind(r_j, BindingOrder::HighToLow));
                 });
                 s.spawn(|_| {
                     ps.v[round / self.log_K_chunk].update(r_j);
@@ -715,10 +715,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
         } else {
             ps.ra
                 .par_iter_mut()
-                .for_each(|ra| ra.bind_parallel(r_j, BindingOrder::LowToHigh));
+                .for_each(|ra| ra.bind(r_j, BindingOrder::LowToHigh));
             ps.eq_polys
                 .par_iter_mut()
-                .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh));
+                .for_each(|poly| poly.bind(r_j, BindingOrder::LowToHigh));
         }
     }
 

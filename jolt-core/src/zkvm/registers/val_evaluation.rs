@@ -180,8 +180,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ValEvaluationSumche
         if let Some(prover_state) = &mut self.prover_state {
             [&mut prover_state.inc, &mut prover_state.lt]
                 .par_iter_mut()
-                .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow));
-            prover_state.wa.bind_parallel(r_j, BindingOrder::HighToLow);
+                .for_each(|poly| poly.bind(r_j, BindingOrder::HighToLow));
+            prover_state.wa.bind(r_j, BindingOrder::HighToLow);
         }
     }
 

@@ -271,7 +271,7 @@ impl<F: JoltField> DensePolynomialProverOpening<F> {
         self.polynomial
             .as_mut()
             .unwrap()
-            .bind_parallel(r_j, BindingOrder::HighToLow);
+            .bind(r_j, BindingOrder::HighToLow);
     }
 
     fn final_sumcheck_claim(&self) -> F {
