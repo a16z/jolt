@@ -75,6 +75,8 @@ members = [
     "examples/malloc/guest",
     "examples/merkle-tree",
     "examples/merkle-tree/guest",
+    "examples/compressed",
+    "examples/compressed/guest",
 ]
 
 [features]
