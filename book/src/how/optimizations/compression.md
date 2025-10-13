@@ -25,7 +25,7 @@ and
 $$\mathbb{F}_{q^{12}} = \mathbb{F}_{q^6}(\xi^{\frac{1}{2}}) = \mathbb{F}_{q^6}(\sigma),$$
 where $\tau = \xi^{\frac{1}{3}}$ and $\sigma = \xi^{\frac{1}{2}}$.
 
-It turns out that for each element $f \in \mathbb{F}_{q^{12}}$, the power $f^{\Psi_6(q^2)}$ can be writen as 
+It turns out that for each element $f \in \mathbb{F}_{q^{12}}$, the power $f^{\Psi_6(q^2)}$ can be written as 
 
 $$
 f^{\Psi_6(q^2)} = \frac{b + \sigma}{b - \sigma},
