@@ -4,11 +4,11 @@ use std::rc::Rc;
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::eq_poly::EqPolynomial;
-use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
 use crate::poly::opening_proof::{
     OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
 };
+use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::subprotocols::sumcheck::SumcheckInstance;
 use crate::transcripts::Transcript;
 use crate::utils::math::Math;
@@ -112,10 +112,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for HammingBooleanitySu
                     let delta = h1 - h0;
                     [eq_eval * (h0.square() - h0), eq_eval * delta.square()]
                 })
-                .reduce(
-                    || [F::zero(); 2],
-                    |a, b| [a[0] + b[0], a[1] + b[1]],
-                )
+                .reduce(|| [F::zero(); 2], |a, b| [a[0] + b[0], a[1] + b[1]])
         } else {
             let num_x_in_bits = eq.E_in_current_len().log_2();
             let chunk_size = 1 << num_x_in_bits;
@@ -143,7 +140,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for HammingBooleanitySu
                 .reduce(|| [F::zero(); 2], |a, b| [a[0] + b[0], a[1] + b[1]])
         };
 
-        eq.gruen_evals_deg_3(coeffs[0], coeffs[1], previous_claim).to_vec()
+        eq.gruen_evals_deg_3(coeffs[0], coeffs[1], previous_claim)
+            .to_vec()
     }
 
     #[tracing::instrument(skip_all, name = "RamHammingBooleanitySumcheck::bind")]
