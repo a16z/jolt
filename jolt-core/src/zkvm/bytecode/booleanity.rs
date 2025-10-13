@@ -35,24 +35,46 @@ use allocative::FlameGraphBuilder;
 use rayon::prelude::*;
 use tracer::instruction::Cycle;
 
+// Bytecode booleanity sumcheck
+//
+// Proves a zero-check of the form
+//   0 = Σ_k Σ_j eq(r_address, k) · eq(r_cycle, j) · (Σ_{i=0}^{d-1} γ^i · (H_i(k, j)^2 − H_i(k, j)))
+// where:
+// - r_address are the address-chunk variables bound in phase 1
+// - r_cycle are the time/cycle variables bound in phase 2
+// - H_i is the routing/selection indicator for the i-th address chunk (boolean per point)
+
 #[derive(Allocative)]
 struct BooleanityProverState<F: JoltField> {
+    /// B: split-eq over address-chunk variables (phase 1, LowToHigh).
     B: GruenSplitEqPolynomial<F>,
+    /// D: split-eq over time/cycle variables (phase 2, LowToHigh).
     D: GruenSplitEqPolynomial<F>,
+    /// G[i]: pre-aggregated routing mass per address chunk i (Σ_j eq(r_cycle,j)·1[chunk_i(PC(j))]).
     G: Vec<Vec<F>>,
+    /// pc_by_cycle[i][j]: address-chunk index for chunk i at cycle j (to build H[i]).
     pc_by_cycle: Vec<Vec<Option<u8>>>,
+    /// H[i]: RaPolynomial for routing indicator H_i(k,j) over address chunk i.
     H: Vec<RaPolynomial<u8, F>>,
+    /// F: eq-prefix weights for address binding (A/F array reused to build H).
     F: Vec<F>,
+    /// eq_r_r: scalar eq(r_address, r_address′) after phase 1 collapse.
     eq_r_r: F,
 }
 
 #[derive(Allocative)]
 pub struct BooleanitySumcheck<F: JoltField> {
+    /// gamma: powers of batching challenge γ (length d).
     gamma: Vec<F>,
+    /// d: number of address chunks in the decomposition.
     d: usize,
+    /// log_T: number of time/cycle variables.
     log_T: usize,
+    /// log_K_chunk: number of address-chunk variables per chunk.
     log_K_chunk: usize,
+    /// prover_state: prover-side working state for both phases.
     prover_state: Option<BooleanityProverState<F>>,
+    /// r_address: address binding point (for endianness and output claim).
     r_address: Vec<F::Challenge>,
 }
 
