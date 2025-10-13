@@ -4,7 +4,6 @@ use std::sync::Arc;
 
 use num_traits::Zero;
 
-// MulTrunc no longer used after split-eq conversion
 use crate::poly::opening_proof::{
     OpeningPoint, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
 };
