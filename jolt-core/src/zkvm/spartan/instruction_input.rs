@@ -58,12 +58,11 @@ impl<F: JoltField> InstructionInputSumcheck<F> {
     ) -> Self {
         // Get claimed samples.
         let accumulator = state_manager.get_prover_accumulator();
-        let (r_outer, left_claim_stage_1) = accumulator.borrow().get_virtual_polynomial_opening(
-            VirtualPolynomial::LeftInstructionInput,
-            SumcheckId::SpartanOuter,
-        );
-        let (_, trace, _, _) = state_manager.get_prover_data();
-        let (r_cycle_stage_1, _) = r_outer.split_at(trace.len().log_2());
+        let (r_cycle_stage_1, left_claim_stage_1) =
+            accumulator.borrow().get_virtual_polynomial_opening(
+                VirtualPolynomial::LeftInstructionInput,
+                SumcheckId::SpartanOuter,
+            );
         let (_, right_claim_stage_1) = accumulator.borrow().get_virtual_polynomial_opening(
             VirtualPolynomial::RightInstructionInput,
             SumcheckId::SpartanOuter,
@@ -85,6 +84,7 @@ impl<F: JoltField> InstructionInputSumcheck<F> {
         let input_sample_stage_1 = (r_cycle_stage_1, claim_stage_1);
         let input_sample_stage_2 = (r_cycle_stage_2, claim_stage_2);
 
+        let (_, trace, _, _) = state_manager.get_prover_data();
         let prover_state = ProverState::gen(trace, &input_sample_stage_1, &input_sample_stage_2);
 
         Self {
@@ -160,11 +160,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for InstructionInputSum
 
         let out_len = out_evals_r_cycle_stage_1.len();
         let in_len = in_evals_r_cycle_stage_1.len();
-        let in_n_vars = in_len.ilog2();
+        let out_n_vars = out_len.ilog2();
         let half_n = state.rs1_value_poly.len() / 2;
 
         let [eval_at_0_for_stage_1, eval_at_inf_for_stage_1, eval_at_0_for_stage_2, eval_at_inf_for_stage_2] =
-            (0..out_len)
+            (0..in_len)
                 .into_par_iter()
                 .map(|j_hi| {
                     let mut eval_at_0_for_stage_1 = F::zero();
@@ -172,8 +172,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for InstructionInputSum
                     let mut eval_at_0_for_stage_2 = F::zero();
                     let mut eval_at_inf_for_stage_2 = F::zero();
 
-                    for j_lo in 0..in_len {
-                        let j = j_lo + (j_hi << in_n_vars);
+                    for j_lo in 0..out_len {
+                        let j = j_lo + (j_hi << out_n_vars);
 
                         // Eval RightInstructionInputIsRs2(x) at (r', {0, 1, inf}, j).
                         let right_is_rs2_at_0_j = state.right_is_rs2_poly.get_bound_coeff(j);
@@ -232,19 +232,19 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for InstructionInputSum
 
                         // Eval Input(x) = RightInstructionInput(x) + gamma * LeftInstructionInput(x) at (r', {0, inf}, j).
                         let input_at_0_j = right_at_0_j + self.gamma * left_at_0_j;
-                        let input_at_j_inf = right_at_inf_j + self.gamma * left_at_inf_j;
+                        let input_at_inf_j = right_at_inf_j + self.gamma * left_at_inf_j;
 
-                        eval_at_0_for_stage_1 += in_evals_r_cycle_stage_1[j_lo] * input_at_0_j;
-                        eval_at_inf_for_stage_1 += in_evals_r_cycle_stage_1[j_lo] * input_at_j_inf;
-                        eval_at_0_for_stage_2 += in_evals_r_cycle_stage_2[j_lo] * input_at_0_j;
-                        eval_at_inf_for_stage_2 += in_evals_r_cycle_stage_2[j_lo] * input_at_j_inf;
+                        eval_at_0_for_stage_1 += out_evals_r_cycle_stage_1[j_lo] * input_at_0_j;
+                        eval_at_inf_for_stage_1 += out_evals_r_cycle_stage_1[j_lo] * input_at_inf_j;
+                        eval_at_0_for_stage_2 += out_evals_r_cycle_stage_2[j_lo] * input_at_0_j;
+                        eval_at_inf_for_stage_2 += out_evals_r_cycle_stage_2[j_lo] * input_at_inf_j;
                     }
 
                     [
-                        out_evals_r_cycle_stage_1[j_hi] * eval_at_0_for_stage_1,
-                        out_evals_r_cycle_stage_1[j_hi] * eval_at_inf_for_stage_1,
-                        out_evals_r_cycle_stage_2[j_hi] * eval_at_0_for_stage_2,
-                        out_evals_r_cycle_stage_2[j_hi] * eval_at_inf_for_stage_2,
+                        in_evals_r_cycle_stage_1[j_hi] * eval_at_0_for_stage_1,
+                        in_evals_r_cycle_stage_1[j_hi] * eval_at_inf_for_stage_1,
+                        in_evals_r_cycle_stage_2[j_hi] * eval_at_0_for_stage_2,
+                        in_evals_r_cycle_stage_2[j_hi] * eval_at_inf_for_stage_2,
                     ]
                 })
                 .reduce(|| [F::zero(); 4], |a, b| array::from_fn(|i| a[i] + b[i]));
@@ -444,7 +444,19 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for InstructionInputSum
         );
         accumulator.append_virtual(
             transcript,
+            VirtualPolynomial::Rs1Value,
+            SumcheckId::InstructionInputVirtualization,
+            r.clone(),
+        );
+        accumulator.append_virtual(
+            transcript,
             VirtualPolynomial::OpFlags(CircuitFlags::LeftOperandIsPC),
+            SumcheckId::InstructionInputVirtualization,
+            r.clone(),
+        );
+        accumulator.append_virtual(
+            transcript,
+            VirtualPolynomial::UnexpandedPC,
             SumcheckId::InstructionInputVirtualization,
             r.clone(),
         );
@@ -456,25 +468,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for InstructionInputSum
         );
         accumulator.append_virtual(
             transcript,
-            VirtualPolynomial::OpFlags(CircuitFlags::RightOperandIsImm),
-            SumcheckId::InstructionInputVirtualization,
-            r.clone(),
-        );
-        accumulator.append_virtual(
-            transcript,
-            VirtualPolynomial::Rs1Value,
-            SumcheckId::InstructionInputVirtualization,
-            r.clone(),
-        );
-        accumulator.append_virtual(
-            transcript,
             VirtualPolynomial::Rs2Value,
             SumcheckId::InstructionInputVirtualization,
             r.clone(),
         );
         accumulator.append_virtual(
             transcript,
-            VirtualPolynomial::UnexpandedPC,
+            VirtualPolynomial::OpFlags(CircuitFlags::RightOperandIsImm),
             SumcheckId::InstructionInputVirtualization,
             r.clone(),
         );
