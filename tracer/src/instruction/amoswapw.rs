@@ -8,13 +8,13 @@ use crate::{
     emulator::cpu::{Cpu, Xlen},
 };
 
-use super::{format::format_r::FormatR, Cycle, Instruction, RISCVInstruction, RISCVTrace};
+use super::{format::format_amo::FormatAMO, Cycle, Instruction, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name   = AMOSWAPW,
     mask   = 0xf800707f,
     match  = 0x0800202f,
-    format = FormatR,
+    format = FormatAMO,
     ram    = ()
 );
 
@@ -95,26 +95,29 @@ impl RISCVTrace for AMOSWAPW {
             }
             Xlen::Bit64 => {
                 let v_mask = allocator.allocate();
-                let v_dword_address = allocator.allocate();
                 let v_dword = allocator.allocate();
-                let v_word = allocator.allocate();
                 let v_shift = allocator.allocate();
                 let v_rd = allocator.allocate();
                 let mut asm =
                     InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
                 asm.emit_halign::<super::virtual_assert_word_alignment::VirtualAssertWordAlignment>(self.operands.rs1, 0);
-                asm.emit_i::<super::andi::ANDI>(*v_dword_address, self.operands.rs1, -8i64 as u64);
-                asm.emit_ld::<super::ld::LD>(*v_dword, *v_dword_address, 0);
+                // Use v_shift temporarily to hold aligned address
+                asm.emit_i::<super::andi::ANDI>(*v_shift, self.operands.rs1, -8i64 as u64);
+                asm.emit_ld::<super::ld::LD>(*v_dword, *v_shift, 0);
+                // Now compute actual shift value
                 asm.emit_i::<super::slli::SLLI>(*v_shift, self.operands.rs1, 3);
                 asm.emit_r::<super::srl::SRL>(*v_rd, *v_dword, *v_shift);
                 asm.emit_i::<super::ori::ORI>(*v_mask, 0, -1i64 as u64);
                 asm.emit_i::<super::srli::SRLI>(*v_mask, *v_mask, 32);
                 asm.emit_r::<super::sll::SLL>(*v_mask, *v_mask, *v_shift);
-                asm.emit_r::<super::sll::SLL>(*v_word, self.operands.rs2, *v_shift);
-                asm.emit_r::<super::xor::XOR>(*v_word, *v_dword, *v_word);
-                asm.emit_r::<super::and::AND>(*v_word, *v_word, *v_mask);
-                asm.emit_r::<super::xor::XOR>(*v_dword, *v_dword, *v_word);
-                asm.emit_s::<super::sd::SD>(*v_dword_address, *v_dword, 0);
+                // Reuse v_shift as temporary for shifted rs2
+                asm.emit_r::<super::sll::SLL>(*v_shift, self.operands.rs2, *v_shift);
+                asm.emit_r::<super::xor::XOR>(*v_shift, *v_dword, *v_shift);
+                asm.emit_r::<super::and::AND>(*v_shift, *v_shift, *v_mask);
+                asm.emit_r::<super::xor::XOR>(*v_dword, *v_dword, *v_shift);
+                // Recompute aligned address for store
+                asm.emit_i::<super::andi::ANDI>(*v_mask, self.operands.rs1, -8i64 as u64);
+                asm.emit_s::<super::sd::SD>(*v_mask, *v_dword, 0);
                 asm.emit_i::<super::virtual_sign_extend_word::VirtualSignExtendWord>(
                     self.operands.rd,
                     *v_rd,
