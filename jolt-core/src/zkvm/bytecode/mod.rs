@@ -201,10 +201,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
             print_data_structure_heap_usage("Bytecode HammingWeightSumcheck", &hamming_weight);
         }
 
-        vec![
-            Box::new(read_raf),
-            Box::new(hamming_weight),
-        ]
+        vec![Box::new(read_raf), Box::new(hamming_weight)]
     }
 
     fn stage6_verifier_instances(
@@ -214,10 +211,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         let read_checking = ReadRafSumcheck::new_verifier(sm);
         let hamming_weight = HammingWeightSumcheck::new_verifier(sm);
 
-        vec![
-            Box::new(read_checking),
-            Box::new(hamming_weight),
-        ]
+        vec![Box::new(read_checking), Box::new(hamming_weight)]
     }
 }
 

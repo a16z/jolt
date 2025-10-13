@@ -589,10 +589,7 @@ where
             print_data_structure_heap_usage("RAM ValFinalSumcheck", &val_final_evaluation);
         }
 
-        vec![
-            Box::new(val_evaluation),
-            Box::new(val_final_evaluation),
-        ]
+        vec![Box::new(val_evaluation), Box::new(val_final_evaluation)]
     }
 
     fn stage3_verifier_instances(
@@ -611,10 +608,7 @@ where
             state_manager,
         );
 
-        vec![
-            Box::new(val_evaluation),
-            Box::new(val_final_evaluation),
-        ]
+        vec![Box::new(val_evaluation), Box::new(val_final_evaluation)]
     }
 
     fn stage4_prover_instances(
@@ -630,10 +624,7 @@ where
             print_data_structure_heap_usage("RAM RASumcheck", &ra_virtual);
         }
 
-        vec![
-            Box::new(booleanity),
-            Box::new(ra_virtual),
-        ]
+        vec![Box::new(booleanity), Box::new(ra_virtual)]
     }
 
     fn stage4_verifier_instances(
@@ -643,10 +634,7 @@ where
         let booleanity = BooleanitySumcheck::new_verifier(state_manager);
         let ra_virtual = RaSumcheck::new_verifier(state_manager);
 
-        vec![
-            Box::new(booleanity),
-            Box::new(ra_virtual),
-        ]
+        vec![Box::new(booleanity), Box::new(ra_virtual)]
     }
 
     fn stage5_prover_instances(
