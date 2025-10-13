@@ -49,7 +49,7 @@ $$
 where $\tilde{a} = \frac{a_0}{a_1}$ and the second equality follows since the $q^2$-power map generates the Galois group of the quadratic extension $\mathbb{F}_{q^{2}}(\sigma)/\mathbb{F}_{q^2}$ inside $\mathbb{F}_{q^{12}}$, so in particular $\sigma^{q^2} = -\sigma$. Hence
 
 $$
-(f^{q^6 - 1})^{q^2 + 1} = \frac{\tilde{a} - \sigma}{\tilde{a} + \sigma}(\frac{\tilde{a} - \sigma}{\tilde{a} + \sigma})^{q^2} = \frac{\tilde{a} - \sigma}{\tilde{a}^{q^2} + \sigma}(\frac{\tilde{a}^{q^2} + \sigma}{\tilde{a} - \sigma}) = \frac{\tilde{a} - \sigma}{\tilde{a}^{q^2} + \sigma}(\frac{-\tilde{a}^{q^2} - \sigma}{-\tilde{a} + \sigma}),
+(f^{q^6 - 1})^{q^2 + 1} = \frac{\tilde{a} - \sigma}{\tilde{a} + \sigma}(\frac{\tilde{a} - \sigma}{\tilde{a} + \sigma})^{q^2} = \frac{\tilde{a} - \sigma}{\tilde{a}^{q^2} + \sigma}(\frac{\tilde{a}^{q^2} + \sigma}{\tilde{a} - \sigma}) = \frac{\tilde{a} - \sigma}{\tilde{a}^{q^2} + \sigma}\frac{-\tilde{a}^{q^2} - \sigma}{-\tilde{a} + \sigma},
 $$
 which simplifies to 
 $$
