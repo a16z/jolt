@@ -18,14 +18,13 @@ use crate::{
         dense_mlpoly::DensePolynomial,
         eq_poly::EqPolynomial,
         identity_poly::{IdentityPolynomial, OperandPolynomial, OperandSide},
-        multilinear_polynomial::{
-            BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
-        },
+        multilinear_polynomial::MultilinearPolynomial,
         opening_proof::{
             OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator,
             BIG_ENDIAN,
         },
         prefix_suffix::{Prefix, PrefixRegistry, PrefixSuffixDecomposition},
+        BindingOrder, PolynomialBinding, PolynomialEvaluation,
     },
     subprotocols::sumcheck::SumcheckInstance,
     transcripts::Transcript,

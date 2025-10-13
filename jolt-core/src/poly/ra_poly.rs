@@ -6,10 +6,8 @@ use allocative::Allocative;
 use crate::{
     field::{ChallengeFieldOps, FieldChallengeOps, JoltField},
     poly::{
-        eq_poly::EqPolynomial,
-        multilinear_polynomial::{
-            BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
-        },
+        eq_poly::EqPolynomial, multilinear_polynomial::MultilinearPolynomial, BindingOrder,
+        PolynomialBinding, PolynomialEvaluation,
     },
     utils::thread::{drop_in_background_thread, unsafe_allocate_zero_vec},
 };

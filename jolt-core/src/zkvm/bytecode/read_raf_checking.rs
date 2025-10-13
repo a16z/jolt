@@ -8,14 +8,13 @@ use crate::{
         commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
         identity_poly::IdentityPolynomial,
-        multilinear_polynomial::{
-            BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
-        },
+        multilinear_polynomial::MultilinearPolynomial,
         opening_proof::{
             OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator,
             BIG_ENDIAN,
         },
         ra_poly::RaPolynomial,
+        BindingOrder, PolynomialBinding, PolynomialEvaluation,
     },
     subprotocols::sumcheck::SumcheckInstance,
     transcripts::Transcript,

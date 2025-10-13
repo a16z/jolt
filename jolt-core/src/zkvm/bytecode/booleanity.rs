@@ -15,13 +15,9 @@ use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 use crate::{
     field::JoltField,
     poly::{
-        commitment::commitment_scheme::CommitmentScheme,
-        eq_poly::EqPolynomial,
-        multilinear_polynomial::{
-            BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
-        },
-        opening_proof::ProverOpeningAccumulator,
-        ra_poly::RaPolynomial,
+        commitment::commitment_scheme::CommitmentScheme, eq_poly::EqPolynomial,
+        multilinear_polynomial::MultilinearPolynomial, opening_proof::ProverOpeningAccumulator,
+        ra_poly::RaPolynomial, BindingOrder, PolynomialBinding, PolynomialEvaluation,
     },
     subprotocols::sumcheck::SumcheckInstance,
     transcripts::Transcript,

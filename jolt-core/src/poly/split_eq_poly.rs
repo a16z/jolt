@@ -4,7 +4,7 @@
 use allocative::Allocative;
 
 use super::dense_mlpoly::DensePolynomial;
-use super::multilinear_polynomial::BindingOrder;
+use super::BindingOrder;
 use crate::{field::JoltField, poly::eq_poly::EqPolynomial};
 
 #[derive(Debug, Clone, PartialEq, Allocative)]

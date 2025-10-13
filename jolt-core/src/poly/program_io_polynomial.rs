@@ -3,7 +3,7 @@ use tracer::JoltDevice;
 
 use crate::{
     field::JoltField,
-    poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
+    poly::{multilinear_polynomial::MultilinearPolynomial, PolynomialEvaluation},
     zkvm::ram::remap_address,
 };
 

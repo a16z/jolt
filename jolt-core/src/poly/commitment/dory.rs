@@ -1324,7 +1324,7 @@ mod tests {
     use super::*;
     use crate::poly::compact_polynomial::CompactPolynomial;
     use crate::poly::dense_mlpoly::DensePolynomial;
-    use crate::poly::multilinear_polynomial::PolynomialEvaluation;
+    use crate::poly::PolynomialEvaluation;
     use crate::transcripts::Blake2bTranscript;
     use ark_std::rand::thread_rng;
     use ark_std::UniformRand;

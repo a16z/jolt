@@ -21,20 +21,18 @@ use std::{
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 use super::{
-    commitment::commitment_scheme::CommitmentScheme,
-    dense_mlpoly::DensePolynomial,
-    eq_poly::EqPolynomial,
-    multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
-    rlc_polynomial::RLCPolynomial,
-    split_eq_poly::GruenSplitEqPolynomial,
+    commitment::commitment_scheme::CommitmentScheme, dense_mlpoly::DensePolynomial,
+    eq_poly::EqPolynomial, multilinear_polynomial::MultilinearPolynomial,
+    rlc_polynomial::RLCPolynomial, split_eq_poly::GruenSplitEqPolynomial, BindingOrder,
+    PolynomialBinding,
 };
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::{
     field::JoltField,
     poly::{
-        multilinear_polynomial::PolynomialEvaluation,
         one_hot_polynomial::{EqAddressState, EqCycleState, OneHotPolynomialProverOpening},
+        PolynomialEvaluation,
     },
     subprotocols::sumcheck::{BatchedSumcheck, SumcheckInstance, SumcheckInstanceProof},
     transcripts::Transcript,
@@ -378,7 +376,7 @@ where
     ) {
         #[cfg(test)]
         {
-            use crate::poly::multilinear_polynomial::PolynomialEvaluation;
+            use crate::poly::PolynomialEvaluation;
 
             if let Some(polynomials_map) = polynomials_map {
                 for (label, claim) in self.polynomials.iter().zip(self.input_claims.iter()) {

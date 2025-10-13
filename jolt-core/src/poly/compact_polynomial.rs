@@ -8,7 +8,7 @@ use rayon::prelude::*;
 use std::cmp::Ordering;
 use std::ops::Index;
 
-use super::multilinear_polynomial::{BindingOrder, PolynomialBinding};
+use super::{BindingOrder, PolynomialBinding};
 
 /// Compact polynomials are used to store coefficients of small scalars.
 /// They have two representations:

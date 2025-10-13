@@ -1,6 +1,6 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::uninlined_format_args)]
-use crate::poly::multilinear_polynomial::PolynomialEvaluation;
+use crate::poly::PolynomialEvaluation;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::utils::{compute_dotproduct, compute_dotproduct_low_optimized};
 use crate::{field::ChallengeFieldOps, poly::eq_poly::EqPolynomial};
@@ -14,7 +14,7 @@ use core::ops::Index;
 use rand_core::{CryptoRng, RngCore};
 use rayon::prelude::*;
 
-use super::multilinear_polynomial::{BindingOrder, MultilinearPolynomial};
+use super::{multilinear_polynomial::MultilinearPolynomial, BindingOrder};
 
 #[derive(Default, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize, Allocative)]
 pub struct DensePolynomial<F: JoltField> {

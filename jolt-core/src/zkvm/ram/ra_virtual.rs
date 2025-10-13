@@ -5,11 +5,11 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::poly::opening_proof::{
     OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
 };
 use crate::poly::ra_poly::RaPolynomial;
+use crate::poly::PolynomialEvaluation;
 use crate::zkvm::dag::state_manager::StateManager;
 use crate::zkvm::ram::remap_address;
 use crate::zkvm::witness::{
@@ -18,9 +18,8 @@ use crate::zkvm::witness::{
 use crate::{
     field::JoltField,
     poly::{
-        dense_mlpoly::DensePolynomial,
-        eq_poly::EqPolynomial,
-        multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
+        dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial,
+        multilinear_polynomial::MultilinearPolynomial, BindingOrder, PolynomialBinding,
     },
     subprotocols::sumcheck::SumcheckInstance,
     transcripts::Transcript,

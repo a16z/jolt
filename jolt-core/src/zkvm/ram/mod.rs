@@ -8,8 +8,9 @@ use crate::{
     field::{self, JoltField},
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
-        multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
+        multilinear_polynomial::MultilinearPolynomial,
         opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN},
+        PolynomialEvaluation,
     },
     subprotocols::sumcheck::SumcheckInstance,
     transcripts::Transcript,

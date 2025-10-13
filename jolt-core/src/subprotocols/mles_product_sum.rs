@@ -299,10 +299,9 @@ mod tests {
     use crate::{
         field::JoltField,
         poly::{
-            dense_mlpoly::DensePolynomial,
-            eq_poly::EqPolynomial,
-            multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
-            ra_poly::RaPolynomial,
+            dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial,
+            multilinear_polynomial::MultilinearPolynomial, ra_poly::RaPolynomial,
+            PolynomialEvaluation,
         },
         subprotocols::mles_product_sum::compute_mles_product_sum,
     };

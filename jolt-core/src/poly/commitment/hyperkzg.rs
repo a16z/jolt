@@ -13,8 +13,9 @@ use super::{
     kzg::{KZGProverKey, KZGVerifierKey, UnivariateKZG},
 };
 use crate::field::JoltField;
-use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
+use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::rlc_polynomial::RLCPolynomial;
+use crate::poly::PolynomialEvaluation;
 use crate::{
     msm::VariableBaseMSM,
     poly::{commitment::kzg::SRS, dense_mlpoly::DensePolynomial, unipoly::UniPoly},

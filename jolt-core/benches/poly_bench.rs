@@ -3,7 +3,7 @@ use ark_bn254::Fr;
 use criterion::{criterion_group, criterion_main, Criterion};
 use dory::arithmetic::Field;
 use jolt_core::{
-    poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
+    poly::{multilinear_polynomial::MultilinearPolynomial, PolynomialEvaluation},
     utils::math::Math,
 };
 use rand_chacha::ChaCha20Rng;

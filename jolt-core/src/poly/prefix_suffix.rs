@@ -10,9 +10,8 @@ use strum_macros::{EnumCount as EnumCountMacro, EnumIter as EnumIterMacro};
 
 use crate::field::{ChallengeFieldOps, FieldChallengeOps, JoltField};
 use crate::poly::dense_mlpoly::DensePolynomial;
-use crate::poly::multilinear_polynomial::{
-    BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
-};
+use crate::poly::multilinear_polynomial::MultilinearPolynomial;
+use crate::poly::{BindingOrder, PolynomialBinding, PolynomialEvaluation};
 use crate::utils::lookup_bits::LookupBits;
 use crate::utils::math::Math;
 use crate::utils::thread::unsafe_allocate_zero_vec;
