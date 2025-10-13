@@ -44,10 +44,7 @@ pub fn benchmarks(bench_type: BenchType) -> Vec<(tracing::Span, Box<dyn FnOnce()
 }
 
 fn fibonacci() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
-    prove_example(
-        "fibonacci-guest",
-        postcard::to_stdvec(&20_00000u32).unwrap(),
-    )
+    prove_example("fibonacci-guest", postcard::to_stdvec(&400000u32).unwrap())
 }
 
 fn sha2() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
