@@ -113,7 +113,7 @@ where
         // Append the outer sumcheck proof to the state manager
         state_manager.proofs.borrow_mut().insert(
             ProofKeys::Stage1Sumcheck,
-            ProofData::OuterSumcheckProof(outer_sumcheck_proof),
+            ProofData::UniSkipSumcheckProof(outer_sumcheck_proof),
         );
 
         let num_cycles = key.num_steps;
@@ -187,7 +187,7 @@ where
         };
 
         let outer_sumcheck_proof = match proof_data {
-            ProofData::OuterSumcheckProof(proof) => proof,
+            ProofData::UniSkipSumcheckProof(proof) => proof,
             _ => panic!("Invalid proof data type"),
         };
 
@@ -203,7 +203,7 @@ where
         drop(accumulator_ref);
         let outer_sumcheck_claims = [claim_Az, claim_Bz, claim_Cz];
 
-        let transcript: &mut ProofTranscript = &mut *state_manager.transcript.borrow_mut();
+        let transcript: &mut ProofTranscript = &mut state_manager.transcript.borrow_mut();
 
         // Run the main sumcheck verifier:
         let (claim_outer_final, outer_sumcheck_r_original) = {
@@ -346,6 +346,7 @@ where
         */
         let key = self.key.clone();
         let pc_sumcheck = PCSumcheck::<F>::new_prover(state_manager, key);
+        /* Also performs the product virtualization sumcheck */
         let product_sumcheck = ProductVirtualizationSumcheck::new_prover(state_manager);
 
         #[cfg(feature = "allocative")]
@@ -369,6 +370,7 @@ where
         */
         let key = self.key.clone();
         let pc_sumcheck = PCSumcheck::<F>::new_verifier(state_manager, key);
+        /* Also verifies the product virtualization sumcheck */
         let product_sumcheck = ProductVirtualizationSumcheck::new_verifier(state_manager);
 
         vec![Box::new(pc_sumcheck), Box::new(product_sumcheck)]

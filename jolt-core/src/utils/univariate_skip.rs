@@ -1,10 +1,18 @@
-// Small Value Optimization (SVO) helpers for Spartan first sum-check,
-// using univariate skip instead of round batching / compression
+use crate::field::JoltField;
+// use crate::utils::compute_dotproduct; // no longer used after switching to unreduced accumulators
+use crate::utils::univariate_skip::accum::{SignedAcc5, SignedAcc6, SignedAccS160};
+use crate::zkvm::r1cs::constraints::{
+    eval_az_first_group, eval_az_second_group, eval_bz_first_group, eval_bz_second_group,
+    eval_cz_second_group, NUM_REMAINING_R1CS_CONSTRAINTS, UNIVARIATE_SKIP_DOMAIN_SIZE,
+};
+use crate::zkvm::r1cs::inputs::R1CSCycleInputs;
 
-// Accumulation primitives for SVO (only field conversion currently used)
+// NEW! Univariate skip based SVO
+
+// Accumulation primitives for SVO (unreduced accumulation + final reduction)
 pub mod accum {
-    use crate::field::JoltField;
-    use ark_ff::biginteger::S160;
+    use crate::field::{FmaddTrunc, JoltField};
+    use ark_ff::biginteger::{I8OrI96, S160};
 
     /// Local helper to convert `S160` to field without using `.to_field()`
     #[inline]
@@ -23,154 +31,219 @@ pub mod accum {
             -acc
         }
     }
-}
 
-// (imports added when wiring pipeline)
-use crate::field::JoltField;
-use crate::utils::compute_dotproduct;
-use crate::utils::univariate_skip::accum::s160_to_field;
-use crate::zkvm::r1cs::constraints::{
-    eval_az_first_group, eval_az_second_group, eval_bz_first_group, eval_bz_second_group,
-    eval_cz_second_group,
-};
-use crate::zkvm::r1cs::inputs::R1CSCycleInputs;
-
-// NEW! Univariate skip based SVO
-
-// Currently we have 27 constraints. Let's pad that to 28.
-// We want to run invariate skip for first degree 13 (so 14 terms).
-// This means we only need to compute the univariate interpolation for two batches.
-
-// For the first batch, we can put in all the "nice" constraints.
-// There should be 14 eq-conditional constraints where Az is boolean, Bz is small (u64?)
-// and Cz is zero.
-// The other 14 constraints go to the rest.
-
-// More details: all but 7 are eq conditional, meaning Cz is zero.
-// Can put off all 7 of them into one block of 14
-// extended Az * extended Bz still fits in 4 limbs of u64 + sign
-
-// For the first "nice" half, we can make Az fit in i32, Bz fit in i128 (with plenty of bits leftover)
-
-// For the second half, we can make Az fit in i128, Bz fit in S160, and Cz?
-// Note: there are only some "big" constraints in Az & Bz.
-// We can put them to the rear end since the Lagrange coeffs are smaller
-
-// To be clear, a degree-13 extrapolation would start with the domain:
-// -6, -5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5, 6, 7
-
-// and then extend this out to 13 extended evals
-// -13, -12, -11, -10, -9, -8, -7, ...
-// ..., 8, 9, 10, 11, 12, 13
-
-// Okay great. Now what?
-// These are the Lagrange coeff for degree-13 interpolation over 14 consecutive values:
-// [1, 13, 78, 286, 715, 1287, 1716] x 2, reversed, with alternating sign
-// [1, -13, 78, -286, 715, -1287, 1716, -1716, 1287, -715, 286, -78, 13, -1]
-// Meaning that:
-// a(n + 14) = 13 * (a(n + 13) - a(n + 1)) + 78 * (...) + ...
-// can batch things
-
-// So only 6 mults per ..., and 13 adds, per each degree-13 interpolation
-// (very cheap)
-// Should have specialized i128 * i32 mults? or at least S160 * i32 mults
-// For S160, what if we do mult with u32 + flip sign?
-
-// Okay, also need to think a bit about streaming round:
-// recall, we compute {Az/Bz/Cz}(r, {0, 1}, x') for every x', where r is a single field element
-// but of degree 13
-
-// So it looks like:
-// {Az/Bz/Cz}(r, {0, 1}, x') = \sum_{y} lagrange_y(r) * {Az/Bz/Cz}(y, {0, 1}, x')
-
-// So this is still the field * small that we care about. Takes tiny bit more time to compute
-// lagrange_y(r) for all y.
-
-// Okay, so for the first half, things are still super nice:
-// - For Az, since it is binary, no field mult! only field adds, can delay reduction (1-step Barrett)
-// - For Bz, it's just field * i128, do delayed reduction with 2-step Barrett on positive & negative parts
-// (can we do better? probably. Just need to learn how signed Barrett reduction works)
-// - For Cz, it's all zero. No work to be done!
-
-// For the second half (you get the point), things are still pretty nice as well:
-// Az is i128
-// Bz/Cz are both S160
-
-#[inline]
-pub const fn pow(base: usize, exp: usize) -> usize {
-    let mut res = 1;
-    let mut i = 0;
-    while i < exp {
-        res *= base;
-        i += 1;
+    /// Signed accumulator for boolean-weighted field sums using 5-limb Barrett reduction
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct SignedAcc5<F: JoltField> {
+        pub pos: <F as JoltField>::Unreduced<5>,
+        pub neg: <F as JoltField>::Unreduced<5>,
     }
-    res
+
+    impl<F: JoltField> Default for SignedAcc5<F> {
+        fn default() -> Self {
+            Self {
+                pos: <F as JoltField>::Unreduced::<5>::from([0u64; 5]),
+                neg: <F as JoltField>::Unreduced::<5>::from([0u64; 5]),
+            }
+        }
+    }
+
+    impl<F: JoltField> SignedAcc5<F> {
+        #[inline(always)]
+        pub fn new() -> Self {
+            Self::default()
+        }
+
+        /// Add a field element to the positive accumulator
+        #[inline(always)]
+        pub fn add_field(&mut self, val: &F) {
+            self.pos += *val.as_unreduced_ref();
+        }
+
+        /// Add a signed 64-bit multiple of a field element
+        #[inline(always)]
+        pub fn add_field_scaled_i64(&mut self, val: &F, c: i64) {
+            if c == 0 {
+                return;
+            }
+            let abs = c.unsigned_abs() as u64;
+            let term = (*val).mul_u64_unreduced(abs);
+            if c > 0 {
+                self.pos += term;
+            } else {
+                self.neg += term;
+            }
+        }
+
+        /// Convenience: add signed integer multiples of 1
+        #[inline(always)]
+        pub fn add_i64(&mut self, c: i64) {
+            self.add_field_scaled_i64(&F::one(), c)
+        }
+
+        /// Reduce accumulated value to a field element (pos - neg) via Barrett
+        #[inline(always)]
+        pub fn reduce_barrett(&self) -> F {
+            F::from_barrett_reduce(self.pos) - F::from_barrett_reduce(self.neg)
+        }
+    }
+
+    /// Signed accumulator for field * I8OrI96 using 6-limb Barrett reduction
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct SignedAcc6<F: JoltField> {
+        pub pos: <F as JoltField>::Unreduced<6>,
+        pub neg: <F as JoltField>::Unreduced<6>,
+    }
+
+    impl<F: JoltField> Default for SignedAcc6<F> {
+        fn default() -> Self {
+            Self {
+                pos: <F as JoltField>::Unreduced::<6>::from([0u64; 6]),
+                neg: <F as JoltField>::Unreduced::<6>::from([0u64; 6]),
+            }
+        }
+    }
+
+    impl<F: JoltField> SignedAcc6<F> {
+        #[inline(always)]
+        pub fn new() -> Self {
+            Self::default()
+        }
+
+        /// fmadd with I8OrI96 by converting to i128 and using mul_u128_unreduced (6 limbs)
+        #[inline(always)]
+        pub fn fmadd_i8ori96(&mut self, field: &F, az: I8OrI96) {
+            let v = az.to_i128();
+            if v == 0 {
+                return;
+            }
+            let abs = v.unsigned_abs();
+            let term = (*field).mul_u128_unreduced(abs);
+            if v > 0 {
+                self.pos += term;
+            } else {
+                self.neg += term;
+            }
+        }
+
+        #[inline(always)]
+        pub fn reduce_barrett(&self) -> F {
+            F::from_barrett_reduce(self.pos) - F::from_barrett_reduce(self.neg)
+        }
+    }
+
+    /// Signed accumulator for field * S160 using 3-limb fmadd into 8-limb accumulators
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct SignedAccS160<F: JoltField> {
+        pub pos: <F as JoltField>::Unreduced<8>,
+        pub neg: <F as JoltField>::Unreduced<8>,
+    }
+
+    impl<F: JoltField> Default for SignedAccS160<F> {
+        fn default() -> Self {
+            Self {
+                pos: <F as JoltField>::Unreduced::<8>::from([0u64; 8]),
+                neg: <F as JoltField>::Unreduced::<8>::from([0u64; 8]),
+            }
+        }
+    }
+
+    impl<F: JoltField> SignedAccS160<F> {
+        #[inline(always)]
+        pub fn new() -> Self {
+            Self::default()
+        }
+
+        /// fmadd with S160 (3-limb magnitude) using fmadd_trunc into 8-limb accumulators
+        #[inline(always)]
+        pub fn fmadd_s160(&mut self, field: &F, bz: S160) {
+            if bz.is_zero() {
+                return;
+            }
+            let lo = bz.magnitude_lo();
+            let hi = bz.magnitude_hi() as u64;
+            let mag = <F as JoltField>::Unreduced::from([lo[0], lo[1], hi]);
+            let field_bigint = field.as_unreduced_ref();
+            if bz.is_positive() {
+                field_bigint.fmadd_trunc::<3, 8>(&mag, &mut self.pos);
+            } else {
+                field_bigint.fmadd_trunc::<3, 8>(&mag, &mut self.neg);
+            }
+        }
+
+        #[inline(always)]
+        pub fn reduce_montgomery(&self) -> F {
+            F::from_montgomery_reduce(self.pos) - F::from_montgomery_reduce(self.neg)
+        }
+    }
 }
 
 // TODO: better handling of these compute az/bz/cz at r functions
 
 #[inline]
 pub fn compute_az_r_group0<F: JoltField>(row: &R1CSCycleInputs, lagrange_evals_r: &[F]) -> F {
-    // Group 0 Az are booleans; convert to field and inner product with Lagrange evals
+    // Group 0 Az are booleans; accumulate field elements unreduced, then Barrett-reduce
     let az_flags = eval_az_first_group(row);
-    let mut az_field: [F; 14] = [F::zero(); 14];
+    let mut acc = SignedAcc5::<F>::new();
     let mut i = 0;
-    while i < 14 {
-        az_field[i] = if az_flags[i] { F::one() } else { F::zero() };
+    while i < UNIVARIATE_SKIP_DOMAIN_SIZE {
+        if az_flags[i] {
+            acc.add_field(&lagrange_evals_r[i]);
+        }
         i += 1;
     }
-    compute_dotproduct(&az_field, &lagrange_evals_r[..14])
+    acc.reduce_barrett()
 }
 
 #[inline]
 pub fn compute_bz_r_group0<F: JoltField>(row: &R1CSCycleInputs, lagrange_evals_r: &[F]) -> F {
-    // Group 0 Bz are i128 semantics; convert and inner product
+    // Group 0 Bz are S160; accumulate field * S160 unreduced, then reduce once
     let bz_vals = eval_bz_first_group(row);
-    let mut bz_field: [F; 14] = [F::zero(); 14];
+    let mut acc = SignedAccS160::<F>::new();
     let mut i = 0;
-    while i < 14 {
-        bz_field[i] = s160_to_field::<F>(&bz_vals[i]);
+    while i < UNIVARIATE_SKIP_DOMAIN_SIZE {
+        acc.fmadd_s160(&lagrange_evals_r[i], bz_vals[i]);
         i += 1;
     }
-    compute_dotproduct(&bz_field, &lagrange_evals_r[..14])
+    acc.reduce_montgomery()
 }
 
 #[inline]
 pub fn compute_az_r_group1<F: JoltField>(row: &R1CSCycleInputs, lagrange_evals_r: &[F]) -> F {
-    // Group 1 Az are I8OrI96; use SmallScalar::to_field via explicit loop
+    // Group 1 Az are I8OrI96; accumulate field * i128 (converted) unreduced, then Barrett-reduce
     let az_vals = eval_az_second_group(row);
-    let mut az_field: [F; 13] = [F::zero(); 13];
+    let mut acc = SignedAcc6::<F>::new();
     let mut i = 0;
-    while i < 13 {
-        az_field[i] = crate::utils::small_scalar::SmallScalar::to_field::<F>(az_vals[i]);
+    while i < NUM_REMAINING_R1CS_CONSTRAINTS {
+        acc.fmadd_i8ori96(&lagrange_evals_r[i], az_vals[i]);
         i += 1;
     }
-    compute_dotproduct(&az_field, &lagrange_evals_r[..13])
+    acc.reduce_barrett()
 }
 
 #[inline]
 pub fn compute_bz_r_group1<F: JoltField>(row: &R1CSCycleInputs, lagrange_evals_r: &[F]) -> F {
-    // Group 1 Bz are S160; convert to field via helper
+    // Group 1 Bz are S160; accumulate field * S160 unreduced, then reduce once
     let bz_vals = eval_bz_second_group(row);
-    let mut bz_field: [F; 13] = [F::zero(); 13];
+    let mut acc = SignedAccS160::<F>::new();
     let mut i = 0;
-    while i < 13 {
-        bz_field[i] = s160_to_field::<F>(&bz_vals[i]);
+    while i < NUM_REMAINING_R1CS_CONSTRAINTS {
+        acc.fmadd_s160(&lagrange_evals_r[i], bz_vals[i]);
         i += 1;
     }
-    compute_dotproduct(&bz_field, &lagrange_evals_r[..13])
+    acc.reduce_montgomery()
 }
 
 #[inline]
 pub fn compute_cz_r_group1<F: JoltField>(row: &R1CSCycleInputs, lagrange_evals_r: &[F]) -> F {
     let cz_vals = eval_cz_second_group(row);
-    let mut cz_field: [F; 13] = [F::zero(); 13];
+    let mut acc = SignedAccS160::<F>::new();
     let mut i = 0;
-    while i < 13 {
-        cz_field[i] = s160_to_field::<F>(&cz_vals[i]);
+    while i < NUM_REMAINING_R1CS_CONSTRAINTS {
+        acc.fmadd_s160(&lagrange_evals_r[i], cz_vals[i]);
         i += 1;
     }
-    compute_dotproduct(&cz_field, &lagrange_evals_r[..13])
+    acc.reduce_montgomery()
 }
 
 #[cfg(test)]
