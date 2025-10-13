@@ -201,13 +201,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for BooleanitySumcheck<
     }
 
     #[tracing::instrument(skip_all, name = "BytecodeBooleanitySumcheck::compute_prover_message")]
-    fn compute_prover_message(&mut self, round: usize, _previous_claim: F) -> Vec<F> {
+    fn compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F> {
         if round < self.log_K_chunk {
             // Phase 1: First log(K_chunk) rounds
-            self.compute_phase1_message(round)
+            self.compute_phase1_message(round, previous_claim)
         } else {
             // Phase 2: Last log(T) rounds
-            self.compute_phase2_message(round)
+            self.compute_phase2_message(round, previous_claim)
         }
     }
 
@@ -341,7 +341,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for BooleanitySumcheck<
 }
 
 impl<F: JoltField> BooleanitySumcheck<F> {
-    fn compute_phase1_message(&self, round: usize) -> Vec<F> {
+    fn compute_phase1_message(&self, round: usize, previous_claim: F) -> Vec<F> {
         let p = self.prover_state.as_ref().unwrap();
         let m = round + 1;
         const DEGREE: usize = 3;
@@ -508,11 +508,11 @@ impl<F: JoltField> BooleanitySumcheck<F> {
         };
 
         // Use Gruen optimization to get cubic evaluations from quadratic coefficients
-        B.gruen_evals_deg_3(quadratic_coeffs[0], quadratic_coeffs[1], F::zero())
+        B.gruen_evals_deg_3(quadratic_coeffs[0], quadratic_coeffs[1], previous_claim)
             .to_vec()
     }
 
-    fn compute_phase2_message(&self, _round: usize) -> Vec<F> {
+    fn compute_phase2_message(&self, _round: usize, previous_claim: F) -> Vec<F> {
         let p = self.prover_state.as_ref().unwrap();
         const DEGREE: usize = 3;
 
@@ -604,8 +604,8 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             F::from_montgomery_reduce(quadratic_coeffs[1]),
         ];
 
-        // previous_claim is s(0)+s(1); we adjust by eq_r_r
-        let adjusted_claim = F::zero();
+        // previous_claim is s(0)+s(1) of the scaled polynomial; divide out eq_r_r to get inner claim
+        let adjusted_claim = previous_claim * p.eq_r_r.inverse().unwrap();
         let gruen_evals =
             D_poly.gruen_evals_deg_3(quadratic_coeffs_f[0], quadratic_coeffs_f[1], adjusted_claim);
         vec![
