@@ -1,6 +1,8 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use num_traits::Zero;
+
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::eq_poly::EqPolynomial;
@@ -102,7 +104,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for HammingBooleanitySu
         let eq = &p.eq_r_cycle;
         let H = &p.H;
 
-        let coeffs: [F; 2] = if eq.E_in_current_len() == 1 {
+        // Accumulate constant (c0) and quadratic (e) coefficients in unreduced form
+        let coeffs_unr: [F::Unreduced<9>; 2] = if eq.E_in_current_len() == 1 {
             (0..eq.len() / 2)
                 .into_par_iter()
                 .map(|j| {
@@ -110,9 +113,17 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for HammingBooleanitySu
                     let h0 = H.get_bound_coeff(2 * j);
                     let h1 = H.get_bound_coeff(2 * j + 1);
                     let delta = h1 - h0;
-                    [eq_eval * (h0.square() - h0), eq_eval * delta.square()]
+                    let c0 = h0.square() - h0;
+                    let e = delta.square();
+                    [
+                        eq_eval.mul_unreduced::<9>(c0),
+                        eq_eval.mul_unreduced::<9>(e),
+                    ]
                 })
-                .reduce(|| [F::zero(); 2], |a, b| [a[0] + b[0], a[1] + b[1]])
+                .reduce(
+                    || [<F as JoltField>::Unreduced::<9>::zero(); 2],
+                    |a, b| [a[0] + b[0], a[1] + b[1]],
+                )
         } else {
             let num_x_in_bits = eq.E_in_current_len().log_2();
             let chunk_size = 1 << num_x_in_bits;
@@ -123,7 +134,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for HammingBooleanitySu
                 .enumerate()
                 .map(|(x_out, chunk)| {
                     let E_out_eval = eq.E_out_current()[x_out];
-                    let inner = chunk
+                    let inner_unr: [F::Unreduced<9>; 2] = chunk
                         .par_iter()
                         .map(|j| {
                             let j = *j;
@@ -132,16 +143,35 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for HammingBooleanitySu
                             let h0 = H.get_bound_coeff(2 * j);
                             let h1 = H.get_bound_coeff(2 * j + 1);
                             let delta = h1 - h0;
-                            [E_in_eval * (h0.square() - h0), E_in_eval * delta.square()]
+                            let c0 = h0.square() - h0;
+                            let e = delta.square();
+                            [
+                                E_in_eval.mul_unreduced::<9>(c0),
+                                E_in_eval.mul_unreduced::<9>(e),
+                            ]
                         })
-                        .reduce(|| [F::zero(); 2], |a, b| [a[0] + b[0], a[1] + b[1]]);
-                    [E_out_eval * inner[0], E_out_eval * inner[1]]
+                        .reduce(
+                            || [<F as JoltField>::Unreduced::<9>::zero(); 2],
+                            |a, b| [a[0] + b[0], a[1] + b[1]],
+                        );
+
+                    // Reduce inner then scale by E_out in unreduced domain
+                    let inner_c0 = F::from_montgomery_reduce(inner_unr[0]);
+                    let inner_e = F::from_montgomery_reduce(inner_unr[1]);
+                    [
+                        E_out_eval.mul_unreduced::<9>(inner_c0),
+                        E_out_eval.mul_unreduced::<9>(inner_e),
+                    ]
                 })
-                .reduce(|| [F::zero(); 2], |a, b| [a[0] + b[0], a[1] + b[1]])
+                .reduce(
+                    || [<F as JoltField>::Unreduced::<9>::zero(); 2],
+                    |a, b| [a[0] + b[0], a[1] + b[1]],
+                )
         };
 
-        eq.gruen_evals_deg_3(coeffs[0], coeffs[1], previous_claim)
-            .to_vec()
+        let c0 = F::from_montgomery_reduce(coeffs_unr[0]);
+        let e = F::from_montgomery_reduce(coeffs_unr[1]);
+        eq.gruen_evals_deg_3(c0, e, previous_claim).to_vec()
     }
 
     #[tracing::instrument(skip_all, name = "RamHammingBooleanitySumcheck::bind")]
