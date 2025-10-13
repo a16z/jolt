@@ -1,6 +1,6 @@
 use crate::field::JoltField;
 use std::marker::PhantomData;
-use std::ops::{Add, Sub, Mul};
+use std::ops::{Add, Mul, Sub};
 
 /// Lagrange polynomials over zero-centered, symmetric, consecutive-integer domain, i.e.
 /// grids like [-6, -5, ..., 6, 7].

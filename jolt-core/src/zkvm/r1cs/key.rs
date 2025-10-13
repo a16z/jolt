@@ -120,13 +120,15 @@ impl<F: JoltField> UniformSpartanKey<F> {
     /// This function only handles uniform constraints, ignoring cross-step constraints
     /// Returns evaluations for each y_var
     #[tracing::instrument(skip_all, name = "UniformSpartanKey::evaluate_small_matrix_rlc")]
-    pub fn evaluate_small_matrix_rlc(&self, r_constr: &[F::Challenge], r_rlc: F::Challenge) -> Vec<F> {
+    pub fn evaluate_small_matrix_rlc(&self, r_constr: &[F::Challenge], r_rlc: F) -> Vec<F> {
         // With univariate skip, `r_constr` consists of two challenges:
         // - r_constr[0]: challenge for the univariate-skip round (handled elsewhere)
         // - r_constr[1]: challenge for the streaming round that mixes the two groups
         assert_eq!(r_constr.len(), 2);
 
-        let lag_evals = LagrangePolynomial::<F>::evals::<F::Challenge, UNIVARIATE_SKIP_DOMAIN_SIZE>(&r_constr[0]);
+        let lag_evals = LagrangePolynomial::<F>::evals::<F::Challenge, UNIVARIATE_SKIP_DOMAIN_SIZE>(
+            &r_constr[0],
+        );
 
         let r_stream = r_constr[1];
         let w_group0 = F::one() - r_stream; // weight for first group
@@ -137,7 +139,7 @@ impl<F: JoltField> UniformSpartanKey<F> {
 
         // Allocate output vector and precompute rlc powers
         let mut evals = unsafe_allocate_zero_vec(num_vars_padded);
-        let r_sq = r_rlc.square();
+        let r_sq = r_rlc * r_rlc;
 
         // Accumulate using explicit FIRST and SECOND groups
         // First group weighted by (1 - r_stream)
@@ -243,7 +245,8 @@ impl<F: JoltField> UniformSpartanKey<F> {
         let r_stream = rx_constr[1];
 
         // Lagrange basis over 14-node symmetric domain for first-round rows
-        let lag_basis = LagrangePolynomial::<F>::evals::<F::Challenge, UNIVARIATE_SKIP_DOMAIN_SIZE>(&r0);
+        let lag_basis =
+            LagrangePolynomial::<F>::evals::<F::Challenge, UNIVARIATE_SKIP_DOMAIN_SIZE>(&r0);
 
         // Column axis: standard eq basis over variables
         let eq_ry = EqPolynomial::<F>::evals(ry_var);

@@ -64,10 +64,10 @@ where
 
         let num_rounds_x = key.num_rows_bits();
 
-        let tau: Vec<F> = state_manager
+        let tau: Vec<F::Challenge> = state_manager
             .transcript
             .borrow_mut()
-            .challenge_vector(num_rounds_x);
+            .challenge_vector_optimized::<F>(num_rounds_x);
 
         let transcript = &mut *state_manager.transcript.borrow_mut();
         let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) =
@@ -76,10 +76,10 @@ where
                 trace,
                 num_rounds_x,
                 &tau,
-                &mut state_manager.transcript.borrow_mut(),
+                transcript,
             );
 
-        let outer_sumcheck_r: Vec<F> = outer_sumcheck_r.into_iter().rev().collect();
+        let outer_sumcheck_r: Vec<F::Challenge> = outer_sumcheck_r.into_iter().rev().collect();
 
         ProofTranscript::append_scalars(
             &mut *state_manager.transcript.borrow_mut(),

@@ -100,7 +100,11 @@ impl<F: JoltField> OuterSumcheck<F> {
         num_rounds: usize,
         tau: &[F::Challenge],
         transcript: &mut ProofTranscript,
-    ) -> (UniSkipSumcheckProof<F, ProofTranscript>, Vec<F>, [F; 3]) {
+    ) -> (
+        UniSkipSumcheckProof<F, ProofTranscript>,
+        Vec<F::Challenge>,
+        [F; 3],
+    ) {
         // Assert that the number of rounds is equal to the number of cycle variables plus two
         // (one for univariate skip of degree ~13-15, and one for the streaming round)
         debug_assert_eq!(num_rounds, trace.len().next_power_of_two().log_2() + 2);
@@ -351,8 +355,10 @@ impl<F: JoltField> OuterSumcheck<F> {
 
         // Build lagrange_poly(Z) coefficients of degree 13 from basis values at tau_high over base window [-6..7]
         // TODO: can build this directly
-        let lagrange_poly_values =
-            LagrangePolynomial::<F>::evals::<F::Challenge, UNIVARIATE_SKIP_DOMAIN_SIZE>(&self.tau_high);
+        let lagrange_poly_values = LagrangePolynomial::<F>::evals::<
+            F::Challenge,
+            UNIVARIATE_SKIP_DOMAIN_SIZE,
+        >(&self.tau_high);
         let lagrange_poly_coeffs = LagrangePolynomial::interpolate_coeffs::<
             UNIVARIATE_SKIP_DOMAIN_SIZE,
         >(&lagrange_poly_values);
@@ -369,7 +375,7 @@ impl<F: JoltField> OuterSumcheck<F> {
         // Append full s1 poly (send all coeffs), derive r0, set claim (do NOT bind eq_poly yet)
         let s1_poly = UniPoly::from_coeff(s1_coeffs.to_vec());
         s1_poly.append_to_transcript(transcript);
-        let r0: F::Challenge = transcript.challenge_scalar_optimized();
+        let r0: F::Challenge = transcript.challenge_scalar_optimized::<F>();
         r.push(r0);
         self.claim = UniPoly::eval_with_coeffs(&s1_coeffs, &r0);
         s1_poly
@@ -413,8 +419,10 @@ impl<F: JoltField> OuterSumcheck<F> {
         round_polys: &mut Vec<CompressedUniPoly<F>>,
     ) {
         // Lagrange basis over the univariate-skip domain (size 14)
-        let lagrange_evals_r =
-            LagrangePolynomial::<F>::evals::<F::Challenge, UNIVARIATE_SKIP_DOMAIN_SIZE>(&r_challenge[0]);
+        let lagrange_evals_r = LagrangePolynomial::<F>::evals::<
+            F::Challenge,
+            UNIVARIATE_SKIP_DOMAIN_SIZE,
+        >(&r_challenge[0]);
 
         let eq_poly = &mut self.split_eq_poly;
 
@@ -906,7 +914,7 @@ impl<F: JoltField> OuterSumcheck<F> {
         compressed_poly.append_to_transcript(transcript);
 
         // Derive challenge
-        let r_i = transcript.challenge_scalar_optimized();
+        let r_i = transcript.challenge_scalar_optimized::<F>();
         r.push(r_i);
         polys.push(compressed_poly);
 
