@@ -9,6 +9,7 @@ pub mod format_inline;
 pub mod format_j;
 pub mod format_load;
 pub mod format_r;
+pub mod format_r_amo;
 pub mod format_s;
 pub mod format_u;
 pub mod format_virtual_right_shift_i;

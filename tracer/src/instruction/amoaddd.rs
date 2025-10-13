@@ -13,13 +13,13 @@ use crate::{
     emulator::cpu::{Cpu, Xlen},
 };
 
-use super::{format::format_r::FormatR, Cycle, RISCVInstruction, RISCVTrace};
+use super::{format::format_r_amo::FormatRAMO, Cycle, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name   = AMOADDD,
     mask   = 0xf800707f,
     match  = 0x0000302f,
-    format = FormatR,
+    format = FormatRAMO,
     ram    = ()
 );
 

@@ -8,13 +8,13 @@ use crate::{
     emulator::cpu::{Cpu, Xlen},
 };
 
-use super::{format::format_r::FormatR, Cycle, Instruction, RISCVInstruction, RISCVTrace};
+use super::{format::format_r_amo::FormatRAMO, Cycle, Instruction, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name   = AMOSWAPW,
     mask   = 0xf800707f,
     match  = 0x0800202f,
-    format = FormatR,
+    format = FormatRAMO,
     ram    = ()
 );
 
