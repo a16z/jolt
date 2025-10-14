@@ -2,14 +2,14 @@ use std::sync::Arc;
 
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::subprotocols::sumcheck::UniSkipFirstRound;
+use crate::subprotocols::sumcheck::prove_uniskip_round;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::zkvm::dag::stage::SumcheckStages;
 use crate::zkvm::dag::state_manager::{ProofData, ProofKeys, StateManager};
 use crate::zkvm::r1cs::key::UniformSpartanKey;
 use crate::zkvm::spartan::inner::InnerSumcheck;
-use crate::zkvm::spartan::outer::{OuterRemainingSumcheck, OuterSumcheck, SpartanInterleavedPoly};
+use crate::zkvm::spartan::outer::{OuterRemainingSumcheck, OuterUniSkipInstance, SpartanInterleavedPoly};
 use crate::zkvm::spartan::pc::PCSumcheck;
 use crate::zkvm::spartan::product::ProductVirtualizationSumcheck;
 
@@ -35,7 +35,7 @@ pub struct SpartanDag<F: JoltField> {
 }
 
 impl<F: JoltField> SpartanDag<F> {
-    pub fn new<ProofTranscript: Transcript>(padded_trace_length: usize) -> Self {
+    pub fn new(padded_trace_length: usize) -> Self {
         let key = Arc::new(UniformSpartanKey::new(padded_trace_length));
         Self { key, stage1_prover_state: None, stage1_verifier_state: None }
     }
@@ -43,9 +43,8 @@ impl<F: JoltField> SpartanDag<F> {
 
 struct SpartanStage1ProverState<F: JoltField> {
     claim_after_first: F,
-    split_eq_poly: GruenSplitEqPolynomial<F>,
-    interleaved_poly: SpartanInterleavedPoly<F>,
     r0: F::Challenge,
+    split_eq_poly: GruenSplitEqPolynomial<F>,
     total_rounds_remainder: usize,
 }
 
@@ -62,7 +61,9 @@ where
     ProofTranscript: Transcript,
     PCS: CommitmentScheme<Field = F>,
 {
-    // Stage 1: Outer sumcheck (via legacy prove/verify) + additional sumchecks (via instances)
+    // Stage 1: Outer sumcheck with first round as univariate skip, and remaining rounds as a
+    // batched sumcheck instance (currently only the remaining outer sumcheck rounds, but could be
+    // extended to include other sumchecks)
 
     fn stage1_first_round_prove(
         &mut self,
@@ -80,34 +81,31 @@ where
             .borrow_mut()
             .challenge_vector_optimized::<F>(num_rounds_x);
 
-        // Uni-skip first round
-        let (first_poly, r0, claim_after_first, split_eq_poly, interleaved_poly);
-        // Uni-skip round
+        // Uni-skip first round using canonical instance + helper
         let (preprocessing, trace, _, _) = state_manager.get_prover_data();
-        let (fp, r0_, claim1, split_eq, inter_poly) = OuterSumcheck::prove_univariate_skip_round(
+        let mut uniskip_instance = OuterUniSkipInstance::<F>::new(
             &preprocessing.shared,
             trace,
             &tau,
+        );
+        let (first_round_proof, r0, claim_after_first) = prove_uniskip_round::<F, ProofTranscript, _>(
+            &mut uniskip_instance,
             &mut *transcript_rc.borrow_mut(),
         );
-        first_poly = fp;
-        r0 = r0_;
-        claim_after_first = claim1;
-        split_eq_poly = split_eq;
-        interleaved_poly = inter_poly;
+        let tau_low: Vec<F::Challenge> = tau[0..tau.len() - 1].to_vec();
+        let split_eq_poly = GruenSplitEqPolynomial::new(&tau_low, BindingOrder::LowToHigh);
 
         // Store first round
         state_manager
             .proofs
             .borrow_mut()
-            .insert(ProofKeys::Stage1UniSkipFirstRound, ProofData::UniSkipFirstRound(UniSkipFirstRound::new(first_poly)));
+            .insert(ProofKeys::Stage1UniSkipFirstRoundProof, ProofData::UniSkipFirstRoundProof(first_round_proof));
 
         // Cache remainder construction state for instances method
         self.stage1_prover_state = Some(SpartanStage1ProverState {
             claim_after_first,
-            split_eq_poly,
-            interleaved_poly,
             r0,
+            split_eq_poly,
             total_rounds_remainder: num_rounds_x - 1,
         });
 
@@ -130,11 +128,11 @@ where
         let first_round = {
             let proofs = state_manager.proofs.borrow();
             match proofs
-                .get(&ProofKeys::Stage1UniSkipFirstRound)
-                .expect("missing Stage1UniSkipFirstRound")
+                .get(&ProofKeys::Stage1UniSkipFirstRoundProof)
+                .expect("missing Stage1UniSkipFirstRoundProof")
             {
-                ProofData::UniSkipFirstRound(fr) => fr.clone(),
-                _ => panic!("unexpected proof type for Stage1UniSkipFirstRound"),
+                ProofData::UniSkipFirstRoundProof(fr) => fr.clone(),
+                _ => panic!("unexpected proof type for Stage1UniSkipFirstRoundProof"),
             }
         };
 
@@ -164,15 +162,16 @@ where
         // Stage 1 remainder: outer-remaining + extras.
         let mut instances: Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> = Vec::new();
         if let Some(st) = self.stage1_prover_state.take() {
+            let num_cycles_bits = self.key.num_steps.ilog2() as usize;
             let (preprocessing, trace, _, _) = state_manager.get_prover_data();
             let outer_remaining = OuterRemainingSumcheck::new_prover(
                 st.claim_after_first,
                 &preprocessing.shared,
                 trace,
                 st.split_eq_poly,
-                st.interleaved_poly,
                 st.r0,
                 st.total_rounds_remainder,
+                num_cycles_bits,
             );
             instances.push(Box::new(outer_remaining));
         }
@@ -182,11 +181,12 @@ where
 
     fn stage1_remainder_verifier_instances(
         &mut self,
-        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
         // Stage 1 remainder: outer-remaining + extras (verifier side).
         let mut instances: Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> = Vec::new();
         if let Some(st) = self.stage1_verifier_state.take() {
+            let num_cycles_bits = self.key.num_steps.ilog2() as usize;
             let outer_remaining = OuterRemainingSumcheck::new_verifier(
                 st.claim_after_first,
                 GruenSplitEqPolynomial::new(&st.tau[0..st.tau.len() - 1], BindingOrder::LowToHigh),
@@ -194,6 +194,7 @@ where
                 st.r0,
                 st.total_rounds_remainder,
                 st.tau,
+                num_cycles_bits,
             );
             instances.push(Box::new(outer_remaining));
         }

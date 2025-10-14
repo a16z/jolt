@@ -115,7 +115,7 @@ impl JoltDAG {
 
         let (_, trace, _, _) = state_manager.get_prover_data();
         let padded_trace_length = trace.len().next_power_of_two();
-        let mut spartan_dag = SpartanDag::<F>::new::<ProofTranscript>(padded_trace_length);
+        let mut spartan_dag = SpartanDag::<F>::new(padded_trace_length);
         let mut lookups_dag = LookupsDag::default();
         let mut registers_dag = RegistersDag::default();
         let mut ram_dag = RamDag::new_prover(&state_manager);
@@ -441,9 +441,11 @@ impl JoltDAG {
         }
 
         // Stage 1:
-        let (preprocessing, _, trace_length) = state_manager.get_verifier_data();
-        let padded_trace_length = trace_length.next_power_of_two();
-        let mut spartan_dag = SpartanDag::<F>::new::<ProofTranscript>(padded_trace_length);
+        let padded_trace_length = {
+            let (_, _, trace_length) = state_manager.get_verifier_data();
+            trace_length.next_power_of_two()
+        };
+        let mut spartan_dag = SpartanDag::<F>::new(padded_trace_length);
         let mut lookups_dag = LookupsDag::default();
         let mut registers_dag = RegistersDag::default();
         let mut ram_dag = RamDag::new_verifier(&state_manager);
@@ -480,6 +482,9 @@ impl JoltDAG {
             &mut *transcript.borrow_mut(),
         )
         .context("Stage 1 remainder")?;
+
+        // Release immutable borrow of proofs before taking &mut state_manager below
+        drop(proofs);
 
         // Stage 2:
         let stage2_instances: Vec<_> = std::iter::empty()
@@ -572,6 +577,9 @@ impl JoltDAG {
             &mut *transcript.borrow_mut(),
         )
         .context("Stage 4")?;
+
+        // Re-acquire verifier preprocessing when needed, to avoid holding immutable borrows across &mut uses
+        let (preprocessing, _, _) = state_manager.get_verifier_data();
 
         // Verify trusted_advice opening proofs
         if state_manager.trusted_advice_commitment.is_some() {

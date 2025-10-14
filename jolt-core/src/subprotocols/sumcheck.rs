@@ -455,17 +455,54 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
     }
 }
 
-/// The sumcheck proof for the univariate skip optimization (usually the first round)
+/// Trait for a single-round instance of univariate skip
+/// We make a number of assumptions for the usage of this trait currently:
+/// 1. There is only one univariate skip round, which happens at the beginning of a sumcheck stage
+/// 2. We do not bind anything after this round. Instead during the remaining sumcheck, we
+///   will stream from the trace again to initialize.
+/// 3. We assume that the domain is symmetric around zero, and the prover sends the entire
+///   (univariate) polynomial for this round
+pub trait UniSkipFirstRoundInstance<F: JoltField, T: Transcript>: Send + Sync + MaybeAllocative {
+    /// The degree of the sum-check
+    const DEGREE_BOUND: usize;
+
+    /// The domain size of the sum-check. Canonically instantiated to the domain
+    /// [-floor(DOMAIN_SIZE/2), ceil(DOMAIN_SIZE)/2]
+    const DOMAIN_SIZE: usize;
+
+    /// Returns the initial claim of this univariate skip round, i.e.
+    /// input_claim = \sum_{-floor(S/2) <= z <= ceil(S/2)} \sum_{x \in \{0, 1}^n} P(z, x)
+    /// where S = DOMAIN_SIZE
+    fn input_claim(&self) -> F;
+
+    /// Computes the full univariate polynomial to be sent in the uni-skip round.
+    /// Returns a degree-bounded `UniPoly` with exactly `DEGREE_BOUND + 1` coefficients.
+    fn compute_poly(&mut self) -> UniPoly<F>;
+
+    /// Computes the expected output claim given the verifier's challenges.
+    /// This is used to verify the univariate skip round
+    fn output_claim(
+        &self,
+        r: &[F::Challenge],
+    ) -> F;
+
+    // TODO: add flamegraph support
+    // #[cfg(feature = "allocative")]
+    // fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder);
+}
+
+/// The sumcheck proof for a univariate skip round
+/// Consists of the (single) univariate polynomial sent in that round, no omission of any coefficient
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
-pub struct UniSkipFirstRound<F: JoltField, ProofTranscript: Transcript> {
-    pub first_poly: UniPoly<F>,
+pub struct UniSkipFirstRoundProof<F: JoltField, ProofTranscript: Transcript> {
+    pub uni_poly: UniPoly<F>,
     _marker: PhantomData<ProofTranscript>,
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> UniSkipFirstRound<F, ProofTranscript> {
-    pub fn new(first_poly: UniPoly<F>) -> Self {
+impl<F: JoltField, ProofTranscript: Transcript> UniSkipFirstRoundProof<F, ProofTranscript> {
+    pub fn new(uni_poly: UniPoly<F>) -> Self {
         Self {
-            first_poly,
+            uni_poly,
             _marker: PhantomData,
         }
     }
@@ -486,20 +523,20 @@ impl<F: JoltField, ProofTranscript: Transcript> UniSkipFirstRound<F, ProofTransc
         transcript: &mut ProofTranscript,
     ) -> Result<(F::Challenge, F), ProofVerifyError> {
         // Degree check for the high-degree first polynomial
-        if self.first_poly.degree() > degree_bound_first {
+        if self.uni_poly.degree() > degree_bound_first {
             return Err(ProofVerifyError::InvalidInputLength(
                 degree_bound_first,
-                self.first_poly.degree(),
+                self.uni_poly.degree(),
             ));
         }
 
         // Append full polynomial and derive r0
-        self.first_poly.append_to_transcript(transcript);
+        self.uni_poly.append_to_transcript(transcript);
         let r0 = transcript.challenge_scalar_optimized::<F>();
 
         // Check symmetric-domain sum equals zero (initial claim), and compute next claim s1(r0)
         let (ok, next_claim) = self
-            .first_poly
+            .uni_poly
             .check_sum_evals_and_set_new_claim::<N, FIRST_ROUND_POLY_NUM_COEFFS>(&F::zero(), &r0);
         if !ok {
             return Err(ProofVerifyError::SumcheckVerificationError);
@@ -507,4 +544,19 @@ impl<F: JoltField, ProofTranscript: Transcript> UniSkipFirstRound<F, ProofTransc
 
         Ok((r0, next_claim))
     }
+}
+
+/// Prove-only helper for a uni-skip first round instance.
+/// Produces the proof object, the uni-skip challenge r0, and the next claim s1(r0).
+pub fn prove_uniskip_round<F: JoltField, ProofTranscript: Transcript, I: UniSkipFirstRoundInstance<F, ProofTranscript>>(
+    instance: &mut I,
+    transcript: &mut ProofTranscript,
+) -> (UniSkipFirstRoundProof<F, ProofTranscript>, F::Challenge, F) {
+    let uni_poly = instance.compute_poly();
+    // Append full polynomial and derive r0
+    uni_poly.append_to_transcript(transcript);
+    let r0: F::Challenge = transcript.challenge_scalar_optimized::<F>();
+    // Evaluate next claim at r0
+    let next_claim = uni_poly.evaluate::<F::Challenge>(&r0);
+    (UniSkipFirstRoundProof::new(uni_poly), r0, next_claim)
 }

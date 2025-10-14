@@ -364,30 +364,28 @@ impl LagrangeHelper {
         res as u64
     }
 
+    /// Factorial in u64 for small n (valid up to n = 20).
+    #[inline]
+    pub const fn fact(n: usize) -> u64 {
+        let mut acc: u64 = 1;
+        let mut i: usize = 2;
+        while i <= n {
+            acc = acc * (i as u64);
+            i += 1;
+        }
+        acc
+    }
+
     /// Precomputed `[0!, 1!, ..., 20!]` as u64. All entries fit in u64.
-    pub const FACT_U64_0_TO_20: [u64; 21] = [
-        1,
-        1,
-        2,
-        6,
-        24,
-        120,
-        720,
-        5040,
-        40320,
-        362880,
-        3628800,
-        39916800,
-        479001600,
-        6227020800,
-        87178291200,
-        1307674368000,
-        20922789888000,
-        355687428096000,
-        6402373705728000,
-        121645100408832000,
-        2432902008176640000,
-    ];
+    pub const FACT_U64_0_TO_20: [u64; 21] = {
+        let mut out = [0u64; 21];
+        let mut i: usize = 0;
+        while i <= 20 {
+            out[i] = Self::fact(i);
+            i += 1;
+        }
+        out
+    };
 
     /// Returns `[den[0], ..., den[N-1]]` as i64 where den[i] = (-1)^{N-1-i} * i! * (N-1-i)!
     /// Constraint: N <= 20
@@ -671,13 +669,13 @@ impl LagrangeHelper {
     }
 }
 
-/// Specialized optimizations for degree-13 Lagrange polynomials.
+/// Specialized optimizations for degree-12 Lagrange polynomials.
 /// Kept separate for performance-critical paths in univariate skip.
-/// NOTE: if we add more constraints in the future, we will need to change this to degree 14, 15, etc.
+/// NOTE: if we add more constraints in the future, we will need to change this to degree 13, 14, etc.
 /// But no other changes should be needed.
-pub struct Degree13Lagrange;
+pub struct Degree12Lagrange;
 
-impl Degree13Lagrange {
+impl Degree12Lagrange {
     /// Build the full row [C(n,0), C(n,1), ..., C(n,n)] as an array of length N = n+1.
     const fn row_const<const N: usize>() -> [u64; N] {
         // N must be at least 1 (so n = N-1 is valid). Our usages satisfy this.
@@ -691,39 +689,38 @@ impl Degree13Lagrange {
         out
     }
 
-    /// Precomputed binomial row C(14,k) for recurrence over N=14 window.
-    pub const BINOMIAL_ROW_14: [u64; 15] = Self::row_const::<15>();
+    /// Precomputed binomial row C(13,k) for recurrence over N=13 window.
+    pub const BINOMIAL_ROW_13: [u64; 14] = Self::row_const::<14>();
 
-    /// Precomputed Lagrange coefficients for common degree-13 evaluation points
-    pub const AT_NEG7: [i32; 14] = LagrangeHelper::shift_coeffs_i32::<14>(-1);
-    pub const AT_NEG8: [i32; 14] = LagrangeHelper::shift_coeffs_i32::<14>(-2);
-    pub const AT_NEG9: [i32; 14] = LagrangeHelper::shift_coeffs_i32::<14>(-3);
-    pub const AT_NEG10: [i32; 14] = LagrangeHelper::shift_coeffs_i32::<14>(-4);
-    pub const AT_NEG11: [i32; 14] = LagrangeHelper::shift_coeffs_i32::<14>(-5);
-    pub const AT_NEG12: [i32; 14] = LagrangeHelper::shift_coeffs_i32::<14>(-6);
-    pub const AT_NEG13: [i32; 14] = LagrangeHelper::shift_coeffs_i32::<14>(-7);
-    pub const AT_9: [i32; 14] = LagrangeHelper::shift_coeffs_i32::<14>(15);
-    pub const AT_10: [i32; 14] = LagrangeHelper::shift_coeffs_i32::<14>(16);
-    pub const AT_11: [i32; 14] = LagrangeHelper::shift_coeffs_i32::<14>(17);
-    pub const AT_12: [i32; 14] = LagrangeHelper::shift_coeffs_i32::<14>(18);
-    pub const AT_13: [i32; 14] = LagrangeHelper::shift_coeffs_i32::<14>(19);
+    /// Precomputed Lagrange coefficients for common degree-12 evaluation points
+    pub const AT_NEG7: [i32; 13] = LagrangeHelper::shift_coeffs_i32::<13>(-1);
+    pub const AT_NEG8: [i32; 13] = LagrangeHelper::shift_coeffs_i32::<13>(-2);
+    pub const AT_NEG9: [i32; 13] = LagrangeHelper::shift_coeffs_i32::<13>(-3);
+    pub const AT_NEG10: [i32; 13] = LagrangeHelper::shift_coeffs_i32::<13>(-4);
+    pub const AT_NEG11: [i32; 13] = LagrangeHelper::shift_coeffs_i32::<13>(-5);
+    pub const AT_NEG12: [i32; 13] = LagrangeHelper::shift_coeffs_i32::<13>(-6);
+    pub const AT_8: [i32; 13] = LagrangeHelper::shift_coeffs_i32::<13>(14);
+    pub const AT_9: [i32; 13] = LagrangeHelper::shift_coeffs_i32::<13>(15);
+    pub const AT_10: [i32; 13] = LagrangeHelper::shift_coeffs_i32::<13>(16);
+    pub const AT_11: [i32; 13] = LagrangeHelper::shift_coeffs_i32::<13>(17);
+    pub const AT_12: [i32; 13] = LagrangeHelper::shift_coeffs_i32::<13>(18);
 
     /// Fast extension for boolean evaluations (returns i32 for exact arithmetic).
     #[inline]
-    pub fn extend_bool_evals(base_evals: &[bool; 14]) -> [i32; 13] {
-        let c = &Self::BINOMIAL_ROW_14;
+    pub fn extend_bool_evals(base_evals: &[bool; 13]) -> [i32; 12] {
+        let c = &Self::BINOMIAL_ROW_13;
 
         // Current windows for left/backward and right/forward stepping
-        let mut left_w: [i32; 14] = [0; 14];
-        let mut right_w: [i32; 14] = [0; 14];
-        for i in 0..14 {
+        let mut left_w: [i32; 13] = [0; 13];
+        let mut right_w: [i32; 13] = [0; 13];
+        for i in 0..13 {
             let v = if base_evals[i] { 1 } else { 0 };
             left_w[i] = v;
             right_w[i] = v;
         }
 
         // p(x-1) using N=14 backward recurrence with explicit signs
-        let prev_left = |w: &[i32; 14]| -> i32 {
+        let prev_left = |w: &[i32; 13]| -> i32 {
             let c1 = c[1] as i32;
             let c2 = c[2] as i32;
             let c3 = c[3] as i32;
@@ -737,7 +734,6 @@ impl Degree13Lagrange {
             let c11 = c[11] as i32;
             let c12 = c[12] as i32;
             let c13 = c[13] as i32;
-            let c14 = c[14] as i32;
             c1 * w[0] - c2 * w[1] + c3 * w[2] - c4 * w[3] + c5 * w[4] - c6 * w[5] + c7 * w[6]
                 - c8 * w[7]
                 + c9 * w[8]
@@ -745,11 +741,10 @@ impl Degree13Lagrange {
                 + c11 * w[10]
                 - c12 * w[11]
                 + c13 * w[12]
-                - c14 * w[13]
         };
 
         // p(x+14) using N=14 forward recurrence grouped like ex8/ex16
-        let next_right = |w: &[i32; 14]| -> i32 {
+        let next_right = |w: &[i32; 13]| -> i32 {
             let c0 = c[0] as i32;
             let c1 = c[1] as i32;
             let c2 = c[2] as i32;
@@ -757,24 +752,22 @@ impl Degree13Lagrange {
             let c4 = c[4] as i32;
             let c5 = c[5] as i32;
             let c6 = c[6] as i32;
-            let c7 = c[7] as i32;
-            let sp1 = w[1] + w[13];
-            let sp3 = w[3] + w[11];
-            let sp5 = w[5] + w[9];
-            let sn2 = w[2] + w[12];
-            let sn4 = w[4] + w[10];
-            let sn6 = w[6] + w[8];
-            c1 * sp1 + c3 * sp3 + c5 * sp5 + c7 * w[7] - c0 * w[0] - c2 * sn2 - c4 * sn4 - c6 * sn6
+            let sp1 = w[1] + w[12];
+            let sp3 = w[3] + w[10];
+            let sp5 = w[5] + w[8];
+            let sn2 = w[2] + w[11];
+            let sn4 = w[4] + w[9];
+            c1 * sp1 + c3 * sp3 + c5 * sp5 - c0 * w[0] - c2 * sn2 - c4 * sn4 - c6 * w[6]
         };
 
-        let mut out: [i32; 13] = [0; 13];
-        // Produce 6 interleaved pairs, then one final left value
+        let mut out: [i32; 12] = [0; 12];
+        // Produce 6 interleaved pairs
         for i in 0..6 {
             // left: x -> x-1
             let l = prev_left(&left_w);
             out[2 * i] = l;
             // shift left window right and insert new left at position 0
-            for k in (1..14).rev() {
+            for k in (1..13).rev() {
                 left_w[k] = left_w[k - 1];
             }
             left_w[0] = l;
@@ -783,29 +776,26 @@ impl Degree13Lagrange {
             let r = next_right(&right_w);
             out[2 * i + 1] = r;
             // shift right window left and append new right at the end
-            for k in 0..13 {
+            for k in 0..12 {
                 right_w[k] = right_w[k + 1];
             }
-            right_w[13] = r;
+            right_w[12] = r;
         }
-        // Final left value (-13)
-        let l_last = prev_left(&left_w);
-        out[12] = l_last;
 
         out
     }
 
     /// Fast extension for i128 evaluations.
     #[inline]
-    pub fn extend_i128_evals(base_evals: &[i128; 14]) -> [i128; 13] {
-        let c = &Self::BINOMIAL_ROW_14;
+    pub fn extend_i128_evals(base_evals: &[i128; 13]) -> [i128; 12] {
+        let c = &Self::BINOMIAL_ROW_13;
 
-        let mut left_w = [0; 14];
+        let mut left_w = [0; 13];
         left_w.copy_from_slice(base_evals);
-        let mut right_w = [0; 14];
+        let mut right_w = [0; 13];
         right_w.copy_from_slice(base_evals);
 
-        let prev_left = |w: &[i128; 14]| -> i128 {
+        let prev_left = |w: &[i128; 13]| -> i128 {
             let c1 = c[1] as i128;
             let c2 = c[2] as i128;
             let c3 = c[3] as i128;
@@ -819,7 +809,6 @@ impl Degree13Lagrange {
             let c11 = c[11] as i128;
             let c12 = c[12] as i128;
             let c13 = c[13] as i128;
-            let c14 = c[14] as i128;
             c1 * w[0] - c2 * w[1] + c3 * w[2] - c4 * w[3] + c5 * w[4] - c6 * w[5] + c7 * w[6]
                 - c8 * w[7]
                 + c9 * w[8]
@@ -827,10 +816,9 @@ impl Degree13Lagrange {
                 + c11 * w[10]
                 - c12 * w[11]
                 + c13 * w[12]
-                - c14 * w[13]
         };
 
-        let next_right = |w: &[i128; 14]| -> i128 {
+        let next_right = |w: &[i128; 13]| -> i128 {
             let c0 = c[0] as i128;
             let c1 = c[1] as i128;
             let c2 = c[2] as i128;
@@ -838,34 +826,30 @@ impl Degree13Lagrange {
             let c4 = c[4] as i128;
             let c5 = c[5] as i128;
             let c6 = c[6] as i128;
-            let c7 = c[7] as i128;
-            let sp1 = w[1] + w[13];
-            let sp3 = w[3] + w[11];
-            let sp5 = w[5] + w[9];
-            let sn2 = w[2] + w[12];
-            let sn4 = w[4] + w[10];
-            let sn6 = w[6] + w[8];
-            c1 * sp1 + c3 * sp3 + c5 * sp5 + c7 * w[7] - c0 * w[0] - c2 * sn2 - c4 * sn4 - c6 * sn6
+            let sp1 = w[1] + w[12];
+            let sp3 = w[3] + w[10];
+            let sp5 = w[5] + w[8];
+            let sn2 = w[2] + w[11];
+            let sn4 = w[4] + w[9];
+            c1 * sp1 + c3 * sp3 + c5 * sp5 - c0 * w[0] - c2 * sn2 - c4 * sn4 - c6 * w[6]
         };
 
-        let mut out: [i128; 13] = [0; 13];
+        let mut out: [i128; 12] = [0; 12];
         for i in 0..6 {
             let l = prev_left(&left_w);
             out[2 * i] = l;
-            for k in (1..14).rev() {
+            for k in (1..13).rev() {
                 left_w[k] = left_w[k - 1];
             }
             left_w[0] = l;
 
             let r = next_right(&right_w);
             out[2 * i + 1] = r;
-            for k in 0..13 {
+            for k in 0..12 {
                 right_w[k] = right_w[k + 1];
             }
-            right_w[13] = r;
+            right_w[12] = r;
         }
-        let l_last = prev_left(&left_w);
-        out[12] = l_last;
         out
     }
 }
