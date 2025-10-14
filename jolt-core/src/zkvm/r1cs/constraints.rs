@@ -95,12 +95,6 @@ pub const fn constraint_eq_conditional_lc(condition: LC, left: LC, right: LC) ->
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, strum_macros::EnumIter)]
 pub enum ConstraintName {
-    LeftInputEqRs1,
-    LeftInputEqPC,
-    LeftInputZeroOtherwise,
-    RightInputEqRs2,
-    RightInputEqImm,
-    RightInputZeroOtherwise,
     RamAddrEqRs1PlusImmIfLoadStore,
     RamReadEqRamWriteIfLoad,
     RamReadEqRdWriteIfLoad,
@@ -424,28 +418,6 @@ pub static UNIFORM_R1CS: [NamedConstraint; NUM_R1CS_CONSTRAINTS] = [
 pub fn eval_az_by_name<F: JoltField>(c: &NamedConstraint, row: &R1CSCycleInputs) -> I8OrI96 {
     use ConstraintName as N;
     match c.name {
-        // Az: LeftOperandIsRs1Value flag (0/1)
-        N::LeftInputEqRs1 => row.flags[CircuitFlags::LeftOperandIsRs1Value].into(),
-        // Az: LeftOperandIsPC flag (0/1)
-        N::LeftInputEqPC => row.flags[CircuitFlags::LeftOperandIsPC].into(),
-        N::LeftInputZeroOtherwise => {
-            // NOTE: relies on exclusivity of these circuit flags (validated in tests):
-            // return 1 only if neither flag is set
-            let f1 = row.flags[CircuitFlags::LeftOperandIsRs1Value];
-            let f2 = row.flags[CircuitFlags::LeftOperandIsPC];
-            (!(f1 || f2)).into()
-        }
-        // Az: RightOperandIsRs2Value flag (0/1)
-        N::RightInputEqRs2 => row.flags[CircuitFlags::RightOperandIsRs2Value].into(),
-        // Az: RightOperandIsImm flag (0/1)
-        N::RightInputEqImm => row.flags[CircuitFlags::RightOperandIsImm].into(),
-        N::RightInputZeroOtherwise => {
-            // NOTE: relies on exclusivity of these circuit flags (validated in tests):
-            // return 1 only if neither flag is set
-            let f1 = row.flags[CircuitFlags::RightOperandIsRs2Value];
-            let f2 = row.flags[CircuitFlags::RightOperandIsImm];
-            (!(f1 || f2)).into()
-        }
         N::RamAddrEqRs1PlusImmIfLoadStore => {
             // Az: Load OR Store flag (0/1)
             (row.flags[CircuitFlags::Load] || row.flags[CircuitFlags::Store]).into()
@@ -507,18 +479,6 @@ pub fn eval_az_by_name<F: JoltField>(c: &NamedConstraint, row: &R1CSCycleInputs)
 pub fn eval_bz_by_name<F: JoltField>(c: &NamedConstraint, row: &R1CSCycleInputs) -> S160 {
     use ConstraintName as N;
     match c.name {
-        // B: LeftInstructionInput - Rs1Value (signed-magnitude over u64 bit patterns)
-        N::LeftInputEqRs1 => S160::from_diff_u64(row.left_input, row.rs1_read_value),
-        // B: LeftInstructionInput - UnexpandedPC (signed-magnitude over u64 bit patterns)
-        N::LeftInputEqPC => S160::from_diff_u64(row.left_input, row.unexpanded_pc),
-        // B: LeftInstructionInput - 0 (u64 bit pattern)
-        N::LeftInputZeroOtherwise => S160::from_diff_u64(row.left_input, 0),
-        // B: RightInstructionInput - Rs2Value (i128 arithmetic)
-        N::RightInputEqRs2 => S160::from(row.right_input) - S160::from(row.rs2_read_value),
-        // B: RightInstructionInput - Imm (i128 arithmetic)
-        N::RightInputEqImm => S160::from(row.right_input) - S160::from(row.imm),
-        // B: RightInstructionInput - 0 (i128 arithmetic)
-        N::RightInputZeroOtherwise => S160::from(row.right_input),
         N::RamAddrEqRs1PlusImmIfLoadStore => {
             // B: (Rs1Value + Imm) - 0 (true_val - false_val from if-else)
             if row.imm.is_positive {

@@ -950,6 +950,7 @@ mod tests {
     use super::*;
     use crate::subprotocols::sumcheck::BatchedSumcheck;
     use crate::transcripts::Blake2bTranscript;
+    use crate::zkvm::instruction::CircuitFlags;
     use crate::{
         poly::commitment::mock::MockCommitScheme,
         zkvm::{
@@ -1100,11 +1101,23 @@ mod tests {
             .transcript
             .borrow_mut()
             .challenge_vector_optimized::<Fr>(LOG_T);
-        let eq_r_cycle = EqPolynomial::evals(&r_cycle);
+        let eq_r_cycle = EqPolynomial::<Fr>::evals(&r_cycle);
+
+        // Get r_cycle_branch for ShouldBranchVirtualization
+        let r_cycle_branch: Vec<<Fr as JoltField>::Challenge> = prover_sm
+            .transcript
+            .borrow_mut()
+            .challenge_vector_optimized::<Fr>(LOG_T);
+        let _r_cycle_branch: Vec<<Fr as JoltField>::Challenge> = verifier_sm
+            .transcript
+            .borrow_mut()
+            .challenge_vector_optimized::<Fr>(LOG_T);
+        let eq_r_cycle_branch = EqPolynomial::<Fr>::evals(&r_cycle_branch);
 
         let mut rv_claim = Fr::zero();
         let mut left_operand_claim = Fr::zero();
         let mut right_operand_claim = Fr::zero();
+        let mut rv_claim_branch = Fr::zero();
 
         for (i, cycle) in trace.iter().enumerate() {
             let lookup_index = LookupQuery::<XLEN>::to_lookup_index(cycle);
@@ -1112,7 +1125,14 @@ mod tests {
             if let Some(table) = table {
                 rv_claim +=
                     JoltField::mul_u64(&eq_r_cycle[i], table.materialize_entry(lookup_index));
+
+                rv_claim_branch += JoltField::mul_u64(
+                    &eq_r_cycle_branch[i],
+                    table.materialize_entry(lookup_index),
+                );
             }
+
+            // Compute left and right operand claims
             let (lo, ro) = LookupQuery::<XLEN>::to_lookup_operands(cycle);
             left_operand_claim += JoltField::mul_u64(&eq_r_cycle[i], lo);
             right_operand_claim += JoltField::mul_u128(&eq_r_cycle[i], ro);
@@ -1139,6 +1159,14 @@ mod tests {
             SumcheckId::SpartanOuter,
             OpeningPoint::new(r_cycle.clone()),
             right_operand_claim,
+        );
+        // Add ShouldBranchVirtualization opening
+        prover_accumulator.borrow_mut().append_virtual(
+            prover_sm.transcript.borrow_mut().deref_mut(),
+            VirtualPolynomial::LookupOutput,
+            SumcheckId::ShouldBranchVirtualization,
+            OpeningPoint::new(r_cycle_branch.clone()),
+            rv_claim_branch,
         );
 
         let mut prover_sumcheck = ReadRafSumcheck::new_prover(&mut prover_sm, eq_r_cycle);
@@ -1183,6 +1211,13 @@ mod tests {
             VirtualPolynomial::RightLookupOperand,
             SumcheckId::SpartanOuter,
             OpeningPoint::new(r_cycle.clone()),
+        );
+        // Add ShouldBranchVirtualization opening
+        verifier_accumulator.borrow_mut().append_virtual(
+            verifier_sm.transcript.borrow_mut().deref_mut(),
+            VirtualPolynomial::LookupOutput,
+            SumcheckId::ShouldBranchVirtualization,
+            OpeningPoint::new(r_cycle_branch.clone()),
         );
 
         let mut verifier_sumcheck = ReadRafSumcheck::new_verifier(&mut verifier_sm);
