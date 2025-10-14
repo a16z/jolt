@@ -155,7 +155,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
 
         let F_1 = compute_ra_evals(bytecode_preprocessing, trace, &E_1);
 
-        let booleanity = BooleanitySumcheck::new_prover(sm, E_1, F_1);
+        let booleanity = BooleanitySumcheck::new_prover(sm, r_cycle, F_1);
 
         #[cfg(feature = "allocative")]
         {

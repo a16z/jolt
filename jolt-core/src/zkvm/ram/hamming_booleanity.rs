@@ -1,6 +1,7 @@
-use num_traits::Zero;
 use std::cell::RefCell;
 use std::rc::Rc;
+
+use num_traits::Zero;
 
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
@@ -9,6 +10,7 @@ use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, P
 use crate::poly::opening_proof::{
     OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
 };
+use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::subprotocols::sumcheck::SumcheckInstance;
 use crate::transcripts::Transcript;
 use crate::utils::math::Math;
@@ -23,7 +25,7 @@ const DEGREE: usize = 3;
 
 #[derive(Allocative)]
 struct HammingBooleanityProverState<F: JoltField> {
-    eq_r_cycle: MultilinearPolynomial<F>,
+    eq_r_cycle: GruenSplitEqPolynomial<F>,
     H: MultilinearPolynomial<F>,
 }
 
@@ -60,7 +62,7 @@ impl<F: JoltField> HammingBooleanitySumcheck<F> {
             SumcheckId::SpartanOuter,
         );
 
-        let eq_r_cycle = MultilinearPolynomial::from(EqPolynomial::<F>::evals(&r_cycle.r));
+        let eq_r_cycle = GruenSplitEqPolynomial::new(&r_cycle.r, BindingOrder::LowToHigh);
 
         Self {
             prover_state: Some(HammingBooleanityProverState { eq_r_cycle, H }),
@@ -97,52 +99,86 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for HammingBooleanitySu
         skip_all,
         name = "RamHammingBooleanitySumcheck::compute_prover_message"
     )]
-    fn compute_prover_message(&mut self, _round: usize, _previous_claim: F) -> Vec<F> {
+    fn compute_prover_message(&mut self, _round: usize, previous_claim: F) -> Vec<F> {
         let p = self.prover_state.as_ref().unwrap();
+        let eq = &p.eq_r_cycle;
+        let H = &p.H;
 
-        (0..p.eq_r_cycle.len() / 2)
-            .into_par_iter()
-            .map(|i| {
-                let eq_evals = p
-                    .eq_r_cycle
-                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::LowToHigh);
-                let H_evals =
-                    p.H.sumcheck_evals_array::<DEGREE>(i, BindingOrder::LowToHigh);
-
-                let evals = [
-                    H_evals[0].square() - H_evals[0],
-                    H_evals[1].square() - H_evals[1],
-                    H_evals[2].square() - H_evals[2],
-                ];
-
-                [
-                    eq_evals[0].mul_unreduced::<9>(evals[0]),
-                    eq_evals[1].mul_unreduced::<9>(evals[1]),
-                    eq_evals[2].mul_unreduced::<9>(evals[2]),
-                ]
-            })
-            .reduce(
-                || [F::Unreduced::zero(); DEGREE],
-                |running, new| {
+        // Accumulate constant (c0) and quadratic (e) coefficients in unreduced form
+        let coeffs_unr: [F::Unreduced<9>; 2] = if eq.E_in_current_len() == 1 {
+            (0..eq.len() / 2)
+                .into_par_iter()
+                .map(|j| {
+                    let eq_eval = eq.E_out_current()[j];
+                    let h0 = H.get_bound_coeff(2 * j);
+                    let h1 = H.get_bound_coeff(2 * j + 1);
+                    let delta = h1 - h0;
+                    let c0 = h0.square() - h0;
+                    let e = delta.square();
                     [
-                        running[0] + new[0],
-                        running[1] + new[1],
-                        running[2] + new[2],
+                        eq_eval.mul_unreduced::<9>(c0),
+                        eq_eval.mul_unreduced::<9>(e),
                     ]
-                },
-            )
-            .into_iter()
-            .map(F::from_montgomery_reduce)
-            .collect()
+                })
+                .reduce(
+                    || [<F as JoltField>::Unreduced::<9>::zero(); 2],
+                    |a, b| [a[0] + b[0], a[1] + b[1]],
+                )
+        } else {
+            let num_x_in_bits = eq.E_in_current_len().log_2();
+            let chunk_size = 1 << num_x_in_bits;
+            let x_bitmask = chunk_size - 1;
+            (0..eq.len() / 2)
+                .collect::<Vec<_>>()
+                .par_chunks(chunk_size)
+                .enumerate()
+                .map(|(x_out, chunk)| {
+                    let E_out_eval = eq.E_out_current()[x_out];
+                    let inner_unr: [F::Unreduced<9>; 2] = chunk
+                        .par_iter()
+                        .map(|j| {
+                            let j = *j;
+                            let x_in = j & x_bitmask;
+                            let E_in_eval = eq.E_in_current()[x_in];
+                            let h0 = H.get_bound_coeff(2 * j);
+                            let h1 = H.get_bound_coeff(2 * j + 1);
+                            let delta = h1 - h0;
+                            let c0 = h0.square() - h0;
+                            let e = delta.square();
+                            [
+                                E_in_eval.mul_unreduced::<9>(c0),
+                                E_in_eval.mul_unreduced::<9>(e),
+                            ]
+                        })
+                        .reduce(
+                            || [<F as JoltField>::Unreduced::<9>::zero(); 2],
+                            |a, b| [a[0] + b[0], a[1] + b[1]],
+                        );
+
+                    // Reduce inner then scale by E_out in unreduced domain
+                    let inner_c0 = F::from_montgomery_reduce(inner_unr[0]);
+                    let inner_e = F::from_montgomery_reduce(inner_unr[1]);
+                    [
+                        E_out_eval.mul_unreduced::<9>(inner_c0),
+                        E_out_eval.mul_unreduced::<9>(inner_e),
+                    ]
+                })
+                .reduce(
+                    || [<F as JoltField>::Unreduced::<9>::zero(); 2],
+                    |a, b| [a[0] + b[0], a[1] + b[1]],
+                )
+        };
+
+        let c0 = F::from_montgomery_reduce(coeffs_unr[0]);
+        let e = F::from_montgomery_reduce(coeffs_unr[1]);
+        eq.gruen_evals_deg_3(c0, e, previous_claim).to_vec()
     }
 
     #[tracing::instrument(skip_all, name = "RamHammingBooleanitySumcheck::bind")]
     fn bind(&mut self, r_j: F::Challenge, _round: usize) {
         let ps = self.prover_state.as_mut().unwrap();
-        rayon::join(
-            || ps.eq_r_cycle.bind_parallel(r_j, BindingOrder::LowToHigh),
-            || ps.H.bind_parallel(r_j, BindingOrder::LowToHigh),
-        );
+        ps.eq_r_cycle.bind(r_j);
+        ps.H.bind_parallel(r_j, BindingOrder::LowToHigh);
     }
 
     fn expected_output_claim(

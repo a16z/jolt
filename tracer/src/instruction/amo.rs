@@ -16,17 +16,12 @@ use super::xor::XOR;
 
 use crate::utils::inline_helpers::InstrAssembler;
 
-pub fn amo_pre64(
-    asm: &mut InstrAssembler,
-    rs1: u8,
-    v_rd: u8,
-    v_dword_address: u8,
-    v_dword: u8,
-    v_shift: u8,
-) {
+pub fn amo_pre64(asm: &mut InstrAssembler, rs1: u8, v_rd: u8, v_dword: u8, v_shift: u8) {
     asm.emit_halign::<VirtualAssertWordAlignment>(rs1, 0);
-    asm.emit_i::<ANDI>(v_dword_address, rs1, -8i64 as u64);
-    asm.emit_ld::<LD>(v_dword, v_dword_address, 0);
+    // Use v_shift temporarily to hold aligned address
+    asm.emit_i::<ANDI>(v_shift, rs1, -8i64 as u64);
+    asm.emit_ld::<LD>(v_dword, v_shift, 0);
+    // Now compute the actual shift value
     asm.emit_i::<SLLI>(v_shift, rs1, 3);
     asm.emit_r::<SRL>(v_rd, v_dword, v_shift);
 }
@@ -34,23 +29,25 @@ pub fn amo_pre64(
 #[allow(clippy::too_many_arguments)]
 pub fn amo_post64(
     asm: &mut InstrAssembler,
+    rs1: u8,
     rs2: u8,
-    v_dword_address: u8,
     v_dword: u8,
     v_shift: u8,
     v_mask: u8,
-    v_word: u8,
     rd: u8,
     v_rd: u8,
 ) {
     asm.emit_i::<ORI>(v_mask, 0, -1i64 as u64);
     asm.emit_i::<SRLI>(v_mask, v_mask, 32);
     asm.emit_r::<SLL>(v_mask, v_mask, v_shift);
-    asm.emit_r::<SLL>(v_word, rs2, v_shift);
-    asm.emit_r::<XOR>(v_word, v_dword, v_word);
-    asm.emit_r::<AND>(v_word, v_word, v_mask);
-    asm.emit_r::<XOR>(v_dword, v_dword, v_word);
-    asm.emit_s::<SD>(v_dword_address, v_dword, 0);
+    // Use v_shift as temporary after it's been used for shifting
+    asm.emit_r::<SLL>(v_shift, rs2, v_shift);
+    asm.emit_r::<XOR>(v_shift, v_dword, v_shift);
+    asm.emit_r::<AND>(v_shift, v_shift, v_mask);
+    asm.emit_r::<XOR>(v_dword, v_dword, v_shift);
+    // Recompute aligned address for store
+    asm.emit_i::<ANDI>(v_mask, rs1, -8i64 as u64);
+    asm.emit_s::<SD>(v_mask, v_dword, 0);
     asm.emit_i::<VirtualSignExtendWord>(rd, v_rd, 0);
 }
 

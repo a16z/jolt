@@ -79,11 +79,11 @@ enum ReadCheckingValType {
     Stage1,
     /// Jump flag from ShouldJumpVirtualization
     Stage2,
-    /// PCSumcheck, Instruction Lookups
+    /// PCSumcheck
     Stage3,
     /// Registers from read-write sumcheck (rd, rs1, rs2)
     Stage4,
-    /// Registers val evaluation sumcheck
+    /// Registers val evaluation sumcheck and Instruction Lookups
     Stage5,
 }
 
@@ -359,10 +359,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
                 )
             }
             ReadCheckingValType::Stage3 => {
-                let gamma_powers = get_gamma_powers(
-                    &mut *sm.get_transcript().borrow_mut(),
-                    8 + NUM_LOOKUP_TABLES,
-                );
+                let gamma_powers = get_gamma_powers(&mut *sm.get_transcript().borrow_mut(), 7);
                 (
                     Self::compute_val_3(sm, &gamma_powers),
                     Self::compute_rv_claim_3(sm, &gamma_powers),
@@ -376,7 +373,10 @@ impl<F: JoltField> ReadRafSumcheck<F> {
                 )
             }
             ReadCheckingValType::Stage5 => {
-                let gamma_powers = get_gamma_powers(&mut *sm.get_transcript().borrow_mut(), 3);
+                let gamma_powers = get_gamma_powers(
+                    &mut *sm.get_transcript().borrow_mut(),
+                    2 + NUM_LOOKUP_TABLES,
+                );
                 (
                     Self::compute_val_5(sm, &gamma_powers),
                     Self::compute_rv_claim_5(sm, &gamma_powers),
@@ -611,10 +611,9 @@ impl<F: JoltField> ReadRafSumcheck<F> {
 
     /// Returns a vec of evaluations:
     ///    Val(k) = imm(k) + gamma * unexpanded_pc(k)
-    ///             + gamma^2 * lookup_table_flag[0](k)
-    ///             + gamma^3 * lookup_table_flag[1](k) + ...
-    /// This particular Val virtualizes claims output by the PCSumcheck
-    /// and the instruction lookups sumcheck (but NOT registers val evaluation).
+    ///             + gamma^2 * left_operand_is_rs1_value(k)
+    ///             + gamma^3 * left_operand_is_pc(k) + ...
+    /// This particular Val virtualizes claims output by the PCSumcheck.
     fn compute_val_3(
         sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
         gamma_powers: &[F],
@@ -629,6 +628,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
 
                 let mut linear_combination: F = F::from_i128(imm);
                 linear_combination += gamma_powers[1].mul_u64(unexpanded_pc as u64);
+
                 if flags[CircuitFlags::LeftOperandIsRs1Value] {
                     linear_combination += gamma_powers[2];
                 }
@@ -643,14 +643,6 @@ impl<F: JoltField> ReadRafSumcheck<F> {
                 }
                 if flags[CircuitFlags::IsNoop] {
                     linear_combination += gamma_powers[6];
-                }
-                if !flags.is_interleaved_operands() {
-                    linear_combination += gamma_powers[7];
-                }
-
-                if let Some(table) = instruction.lookup_table() {
-                    let table_index = LookupTables::enum_index(&table);
-                    linear_combination += gamma_powers[8 + table_index];
                 }
 
                 linear_combination
@@ -674,11 +666,12 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             VirtualPolynomial::UnexpandedPC,
             SumcheckId::InstructionInputVirtualization,
         );
-        // Check the claims match.
+
         assert_eq!(
             spartan_shift_unexpanded_pc_claim,
             instruction_input_unexpanded_pc_claim
         );
+
         let unexpanded_pc_claim = spartan_shift_unexpanded_pc_claim;
         let (_, left_is_rs1_claim) = sm.get_virtual_polynomial_opening(
             VirtualPolynomial::OpFlags(CircuitFlags::LeftOperandIsRs1Value),
@@ -700,10 +693,6 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             VirtualPolynomial::OpFlags(CircuitFlags::IsNoop),
             SumcheckId::SpartanShift,
         );
-        let (_, raf_flag_claim) = sm.get_virtual_polynomial_opening(
-            VirtualPolynomial::InstructionRafFlag,
-            SumcheckId::InstructionReadRaf,
-        );
 
         [
             imm_claim,
@@ -713,16 +702,8 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             right_is_rs2_claim,
             right_is_imm_claim,
             is_noop_claim,
-            raf_flag_claim,
         ]
         .into_iter()
-        .chain((0..LookupTables::<XLEN>::COUNT).map(|i| {
-            sm.get_virtual_polynomial_opening(
-                VirtualPolynomial::LookupTableFlag(i),
-                SumcheckId::InstructionReadRaf,
-            )
-            .1
-        }))
         .zip_eq(gamma_powers)
         .map(|(claim, gamma)| claim * gamma)
         .sum()
@@ -783,12 +764,15 @@ impl<F: JoltField> ReadRafSumcheck<F> {
     }
 
     /// Returns a vec of evaluations:
-    ///    Val(k) = rd(k, r_register)
+    ///    Val(k) = rd(k, r_register) + gamma * raf_flag(k)
+    ///             + gamma^2 * lookup_table_flag[0](k) + gamma^3 * lookup_table_flag[1](k) + ...
     /// where rd(k, k') = 1 if the k'th instruction in the bytecode has rd = k'
-    /// This particular Val virtualizes the claim output by the registers val-evaluation sumcheck.
+    /// and raf_flag(k) = 1 if instruction k is NOT interleaved operands
+    /// This particular Val virtualizes the claim output by the registers val-evaluation sumcheck
+    /// and the instruction lookups sumcheck.
     fn compute_val_5(
         sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
-        _gamma_powers: &[F],
+        gamma_powers: &[F],
     ) -> Vec<F> {
         let r_register = sm
             .get_virtual_polynomial_opening(
@@ -805,20 +789,50 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             .par_iter()
             .map(|instruction| {
                 let instr = instruction.normalize();
-                eq_r_register[instr.operands.rd as usize]
+                let flags = instruction.circuit_flags();
+                let mut linear_combination = eq_r_register[instr.operands.rd as usize];
+
+                if !flags.is_interleaved_operands() {
+                    linear_combination += gamma_powers[1];
+                }
+
+                if let Some(table) = instruction.lookup_table() {
+                    let table_index = LookupTables::enum_index(&table);
+                    linear_combination += gamma_powers[2 + table_index];
+                }
+
+                linear_combination
             })
             .collect()
     }
 
     fn compute_rv_claim_5(
         sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
-        _gamma_powers: &[F],
+        gamma_powers: &[F],
     ) -> F {
         let (_, rd_wa_claim) = sm.get_virtual_polynomial_opening(
             VirtualPolynomial::RdWa,
             SumcheckId::RegistersValEvaluation,
         );
-        rd_wa_claim
+
+        let (_, raf_flag_claim) = sm.get_virtual_polynomial_opening(
+            VirtualPolynomial::InstructionRafFlag,
+            SumcheckId::InstructionReadRaf,
+        );
+
+        let mut sum = rd_wa_claim * gamma_powers[0];
+        sum += raf_flag_claim * gamma_powers[1];
+
+        // Add lookup table flag claims from InstructionReadRaf
+        for i in 0..LookupTables::<XLEN>::COUNT {
+            let (_, claim) = sm.get_virtual_polynomial_opening(
+                VirtualPolynomial::LookupTableFlag(i),
+                SumcheckId::InstructionReadRaf,
+            );
+            sum += claim * gamma_powers[2 + i];
+        }
+
+        sum
     }
 }
 
