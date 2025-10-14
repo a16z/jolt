@@ -527,6 +527,8 @@ pub static ALL_VIRTUAL_POLYNOMIALS: LazyLock<Vec<VirtualPolynomial>> = LazyLock:
         VirtualPolynomial::NextIsNoop,
         VirtualPolynomial::LeftLookupOperand,
         VirtualPolynomial::RightLookupOperand,
+        VirtualPolynomial::LeftInstructionInput,
+        VirtualPolynomial::RightInstructionInput,
         VirtualPolynomial::Product,
         VirtualPolynomial::ShouldJump,
         VirtualPolynomial::ShouldBranch,
