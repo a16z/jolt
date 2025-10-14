@@ -1,8 +1,9 @@
+use crate::zkvm::instruction::{InstructionFlags, NUM_INSTRUCTION_FLAGS};
 use tracer::instruction::{virtual_pow2i::VirtualPow2I, RISCVCycle};
 
 use crate::zkvm::lookup_table::{pow2::Pow2Table, LookupTables};
 
-use super::{CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS};
+use super::{CircuitFlags, Flags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS};
 
 impl<const XLEN: usize> InstructionLookup<XLEN> for VirtualPow2I {
     fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
@@ -10,10 +11,9 @@ impl<const XLEN: usize> InstructionLookup<XLEN> for VirtualPow2I {
     }
 }
 
-impl InstructionFlags for VirtualPow2I {
+impl Flags for VirtualPow2I {
     fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
         let mut flags = [false; NUM_CIRCUIT_FLAGS];
-        flags[CircuitFlags::RightOperandIsImm as usize] = self.inline_sequence_remaining.is_some();
         flags[CircuitFlags::AddOperands as usize] = true;
         flags[CircuitFlags::WriteLookupOutputToRD as usize] = true;
         flags[CircuitFlags::InlineSequenceInstruction as usize] =
@@ -21,6 +21,12 @@ impl InstructionFlags for VirtualPow2I {
         flags[CircuitFlags::DoNotUpdateUnexpandedPC as usize] =
             self.inline_sequence_remaining.unwrap_or(0) != 0;
         flags[CircuitFlags::IsCompressed as usize] = self.is_compressed;
+        flags
+    }
+
+    fn instruction_flags(&self) -> [bool; NUM_INSTRUCTION_FLAGS] {
+        let mut flags = [false; NUM_INSTRUCTION_FLAGS];
+        flags[InstructionFlags::RightOperandIsImm as usize] = true;
         flags
     }
 }

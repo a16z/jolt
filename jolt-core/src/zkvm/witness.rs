@@ -13,6 +13,7 @@ use std::sync::LazyLock;
 use strum::IntoEnumIterator;
 use tracer::instruction::Cycle;
 
+use crate::zkvm::instruction::InstructionFlags;
 use crate::{
     field::JoltField,
     poly::{
@@ -512,6 +513,7 @@ pub enum VirtualPolynomial {
     RamValFinal,
     RamHammingWeight,
     OpFlags(CircuitFlags),
+    InstructionFlags(InstructionFlags),
     LookupTableFlag(usize),
 }
 
@@ -558,6 +560,9 @@ pub static ALL_VIRTUAL_POLYNOMIALS: LazyLock<Vec<VirtualPolynomial>> = LazyLock:
     ];
     for flag in CircuitFlags::iter() {
         polynomials.push(VirtualPolynomial::OpFlags(flag));
+    }
+    for flag in InstructionFlags::iter() {
+        polynomials.push(VirtualPolynomial::InstructionFlags(flag));
     }
     for table in LookupTables::iter() {
         polynomials.push(VirtualPolynomial::LookupTableFlag(

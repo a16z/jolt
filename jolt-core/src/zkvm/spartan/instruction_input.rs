@@ -22,7 +22,7 @@ use crate::{
     utils::math::Math,
     zkvm::{
         dag::state_manager::StateManager,
-        instruction::{CircuitFlags, InstructionFlags},
+        instruction::{Flags, InstructionFlags},
         witness::VirtualPolynomial,
     },
 };
@@ -319,7 +319,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for InstructionInputSum
             SumcheckId::InstructionInputVirtualization,
         );
         let (_, left_is_rs1_eval) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::OpFlags(CircuitFlags::LeftOperandIsRs1Value),
+            VirtualPolynomial::InstructionFlags(InstructionFlags::LeftOperandIsRs1Value),
             SumcheckId::InstructionInputVirtualization,
         );
         let (_, unexpanded_pc_eval) = accumulator.get_virtual_polynomial_opening(
@@ -327,7 +327,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for InstructionInputSum
             SumcheckId::InstructionInputVirtualization,
         );
         let (_, left_is_pc_eval) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::OpFlags(CircuitFlags::LeftOperandIsPC),
+            VirtualPolynomial::InstructionFlags(InstructionFlags::LeftOperandIsPC),
             SumcheckId::InstructionInputVirtualization,
         );
         let (_, rs2_value_eval) = accumulator.get_virtual_polynomial_opening(
@@ -335,7 +335,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for InstructionInputSum
             SumcheckId::InstructionInputVirtualization,
         );
         let (_, right_is_rs2_eval) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::OpFlags(CircuitFlags::RightOperandIsRs2Value),
+            VirtualPolynomial::InstructionFlags(InstructionFlags::RightOperandIsRs2Value),
             SumcheckId::InstructionInputVirtualization,
         );
         let (_, imm_eval) = accumulator.get_virtual_polynomial_opening(
@@ -343,7 +343,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for InstructionInputSum
             SumcheckId::InstructionInputVirtualization,
         );
         let (_, right_is_imm_eval) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::OpFlags(CircuitFlags::RightOperandIsImm),
+            VirtualPolynomial::InstructionFlags(InstructionFlags::RightOperandIsImm),
             SumcheckId::InstructionInputVirtualization,
         );
 
@@ -373,7 +373,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for InstructionInputSum
         let mut accumulator = accumulator.borrow_mut();
         accumulator.append_virtual(
             transcript,
-            VirtualPolynomial::OpFlags(CircuitFlags::LeftOperandIsRs1Value),
+            VirtualPolynomial::InstructionFlags(InstructionFlags::LeftOperandIsRs1Value),
             SumcheckId::InstructionInputVirtualization,
             r.clone(),
             state.left_is_rs1_poly.final_sumcheck_claim(),
@@ -387,7 +387,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for InstructionInputSum
         );
         accumulator.append_virtual(
             transcript,
-            VirtualPolynomial::OpFlags(CircuitFlags::LeftOperandIsPC),
+            VirtualPolynomial::InstructionFlags(InstructionFlags::LeftOperandIsPC),
             SumcheckId::InstructionInputVirtualization,
             r.clone(),
             state.left_is_pc_poly.final_sumcheck_claim(),
@@ -401,7 +401,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for InstructionInputSum
         );
         accumulator.append_virtual(
             transcript,
-            VirtualPolynomial::OpFlags(CircuitFlags::RightOperandIsRs2Value),
+            VirtualPolynomial::InstructionFlags(InstructionFlags::RightOperandIsRs2Value),
             SumcheckId::InstructionInputVirtualization,
             r.clone(),
             state.right_is_rs2_poly.final_sumcheck_claim(),
@@ -415,7 +415,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for InstructionInputSum
         );
         accumulator.append_virtual(
             transcript,
-            VirtualPolynomial::OpFlags(CircuitFlags::RightOperandIsImm),
+            VirtualPolynomial::InstructionFlags(InstructionFlags::RightOperandIsImm),
             SumcheckId::InstructionInputVirtualization,
             r.clone(),
             state.right_is_imm_poly.final_sumcheck_claim(),
@@ -438,7 +438,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for InstructionInputSum
         let mut accumulator = accumulator.borrow_mut();
         accumulator.append_virtual(
             transcript,
-            VirtualPolynomial::OpFlags(CircuitFlags::LeftOperandIsRs1Value),
+            VirtualPolynomial::InstructionFlags(InstructionFlags::LeftOperandIsRs1Value),
             SumcheckId::InstructionInputVirtualization,
             r.clone(),
         );
@@ -450,7 +450,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for InstructionInputSum
         );
         accumulator.append_virtual(
             transcript,
-            VirtualPolynomial::OpFlags(CircuitFlags::LeftOperandIsPC),
+            VirtualPolynomial::InstructionFlags(InstructionFlags::LeftOperandIsPC),
             SumcheckId::InstructionInputVirtualization,
             r.clone(),
         );
@@ -462,7 +462,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for InstructionInputSum
         );
         accumulator.append_virtual(
             transcript,
-            VirtualPolynomial::OpFlags(CircuitFlags::RightOperandIsRs2Value),
+            VirtualPolynomial::InstructionFlags(InstructionFlags::RightOperandIsRs2Value),
             SumcheckId::InstructionInputVirtualization,
             r.clone(),
         );
@@ -474,7 +474,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for InstructionInputSum
         );
         accumulator.append_virtual(
             transcript,
-            VirtualPolynomial::OpFlags(CircuitFlags::RightOperandIsImm),
+            VirtualPolynomial::InstructionFlags(InstructionFlags::RightOperandIsImm),
             SumcheckId::InstructionInputVirtualization,
             r.clone(),
         );
@@ -551,11 +551,11 @@ impl<F: JoltField> ProverState<F> {
                 )| {
                     let instruction = cycle.instruction();
                     let instruction_norm = instruction.normalize();
-                    let flags = instruction.circuit_flags();
-                    *left_is_rs1_eval = flags[CircuitFlags::LeftOperandIsRs1Value].into();
-                    *left_is_pc_eval = flags[CircuitFlags::LeftOperandIsPC].into();
-                    *right_is_rs2_eval = flags[CircuitFlags::RightOperandIsRs2Value].into();
-                    *right_is_imm_eval = flags[CircuitFlags::RightOperandIsImm].into();
+                    let flags = instruction.instruction_flags();
+                    *left_is_rs1_eval = flags[InstructionFlags::LeftOperandIsRs1Value].into();
+                    *left_is_pc_eval = flags[InstructionFlags::LeftOperandIsPC].into();
+                    *right_is_rs2_eval = flags[InstructionFlags::RightOperandIsRs2Value].into();
+                    *right_is_imm_eval = flags[InstructionFlags::RightOperandIsImm].into();
                     *rs1_value_eval = cycle.rs1_read().1;
                     *rs2_value_eval = cycle.rs2_read().1;
                     *imm_eval = instruction_norm.operands.imm;

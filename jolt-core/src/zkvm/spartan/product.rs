@@ -14,7 +14,7 @@ use crate::subprotocols::sumcheck::SumcheckInstance;
 use crate::transcripts::Transcript;
 use crate::utils::math::Math;
 use crate::zkvm::dag::state_manager::StateManager;
-use crate::zkvm::instruction::CircuitFlags;
+use crate::zkvm::instruction::{CircuitFlags, InstructionFlags};
 use crate::zkvm::r1cs::inputs::generate_virtual_product_witnesses;
 use crate::zkvm::witness::VirtualPolynomial;
 use rayon::prelude::*;
@@ -63,7 +63,7 @@ impl VirtualProductType {
             ),
             VirtualProductType::ShouldBranch => FactorPolynomials(
                 VirtualPolynomial::LookupOutput,
-                VirtualPolynomial::OpFlags(CircuitFlags::Branch),
+                VirtualPolynomial::InstructionFlags(InstructionFlags::Branch),
             ),
             VirtualProductType::ShouldJump => FactorPolynomials(
                 VirtualPolynomial::OpFlags(CircuitFlags::Jump),

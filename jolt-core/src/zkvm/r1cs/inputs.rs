@@ -8,7 +8,9 @@ use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::opening_proof::{OpeningId, SumcheckId};
 use crate::utils::small_scalar::SmallScalar;
-use crate::zkvm::instruction::{CircuitFlags, InstructionFlags, LookupQuery, NUM_CIRCUIT_FLAGS};
+use crate::zkvm::instruction::{
+    CircuitFlags, Flags, InstructionFlags, LookupQuery, NUM_CIRCUIT_FLAGS,
+};
 use crate::zkvm::spartan::product::VirtualProductType;
 use crate::zkvm::witness::VirtualPolynomial;
 use crate::zkvm::JoltSharedPreprocessing;
@@ -101,6 +103,7 @@ impl R1CSCycleInputs {
         let cycle = &trace[t];
         let instr = cycle.instruction();
         let flags_view = instr.circuit_flags();
+        let instruction_flags = instr.instruction_flags();
         let norm = instr.normalize();
 
         // Next-cycle context
@@ -169,12 +172,12 @@ impl R1CSCycleInputs {
             flags[flag] = flags_view[flag];
         }
         let next_is_noop = if let Some(nc) = next_cycle {
-            nc.instruction().circuit_flags()[CircuitFlags::IsNoop]
+            nc.instruction().instruction_flags()[InstructionFlags::IsNoop]
         } else {
             false
         };
         let should_jump = flags_view[CircuitFlags::Jump] && !next_is_noop;
-        let should_branch = if flags_view[CircuitFlags::Branch] {
+        let should_branch = if instruction_flags[InstructionFlags::Branch] {
             lookup_output
         } else {
             0u64
@@ -236,7 +239,6 @@ impl R1CSCycleInputs {
             JoltR1CSInputs::ShouldBranch => self.should_branch.to_field(),
             JoltR1CSInputs::PC => self.pc.to_field(),
             JoltR1CSInputs::UnexpandedPC => self.unexpanded_pc.to_field(),
-            JoltR1CSInputs::Rd => (self.rd_addr as u64).to_field(),
             JoltR1CSInputs::Imm => F::from_i128(self.imm.to_i128()),
             JoltR1CSInputs::RamAddress => self.ram_addr.to_field(),
             JoltR1CSInputs::Rs1Value => self.rs1_read_value.to_field(),
@@ -259,7 +261,6 @@ impl R1CSCycleInputs {
 pub enum JoltR1CSInputs {
     PC,                    // Virtual (bytecode raf)
     UnexpandedPC,          // Virtual (bytecode rv)
-    Rd,                    // Virtual (bytecode rv)
     Imm,                   // Virtual (bytecode rv)
     RamAddress,            // Virtual (RAM raf)
     Rs1Value,              // Virtual (registers rv)
@@ -272,20 +273,20 @@ pub enum JoltR1CSInputs {
     LeftLookupOperand,     // Virtual (instruction raf)
     RightLookupOperand,    // Virtual (instruction raf)
     Product,               // LeftInstructionOperand * RightInstructionOperand
-    WriteLookupOutputToRD,
-    WritePCtoRD,
-    ShouldBranch,
-    NextUnexpandedPC, // Virtual (spartan shift sumcheck)
-    NextPC,           // Virtual (spartan shift sumcheck)
-    LookupOutput,     // Virtual (instruction rv)
-    ShouldJump,
+    WriteLookupOutputToRD, // Virtual (product sumcheck)
+    WritePCtoRD,           // Virtual (product sumcheck)
+    ShouldBranch,          // Virtual (product sumcheck)
+    NextUnexpandedPC,      // Virtual (spartan shift sumcheck)
+    NextPC,                // Virtual (spartan shift sumcheck)
+    LookupOutput,          // Virtual (instruction rv)
+    ShouldJump,            // Virtual (product sumcheck)
     OpFlags(CircuitFlags),
 }
 
 const NUM_R1CS_INPUTS: usize = ALL_R1CS_INPUTS.len();
 /// This const serves to define a canonical ordering over inputs (and thus indices
 /// for each input). This is needed for sumcheck.
-pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 40] = [
+pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 33] = [
     JoltR1CSInputs::LeftInstructionInput,
     JoltR1CSInputs::RightInstructionInput,
     JoltR1CSInputs::Product,
@@ -294,7 +295,6 @@ pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 40] = [
     JoltR1CSInputs::ShouldBranch,
     JoltR1CSInputs::PC,
     JoltR1CSInputs::UnexpandedPC,
-    JoltR1CSInputs::Rd,
     JoltR1CSInputs::Imm,
     JoltR1CSInputs::RamAddress,
     JoltR1CSInputs::Rs1Value,
@@ -308,23 +308,17 @@ pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 40] = [
     JoltR1CSInputs::NextPC,
     JoltR1CSInputs::LookupOutput,
     JoltR1CSInputs::ShouldJump,
-    JoltR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsRs1Value),
-    JoltR1CSInputs::OpFlags(CircuitFlags::RightOperandIsRs2Value),
-    JoltR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsPC),
-    JoltR1CSInputs::OpFlags(CircuitFlags::RightOperandIsImm),
     JoltR1CSInputs::OpFlags(CircuitFlags::AddOperands),
     JoltR1CSInputs::OpFlags(CircuitFlags::SubtractOperands),
     JoltR1CSInputs::OpFlags(CircuitFlags::MultiplyOperands),
     JoltR1CSInputs::OpFlags(CircuitFlags::Load),
     JoltR1CSInputs::OpFlags(CircuitFlags::Store),
     JoltR1CSInputs::OpFlags(CircuitFlags::Jump),
-    JoltR1CSInputs::OpFlags(CircuitFlags::Branch),
     JoltR1CSInputs::OpFlags(CircuitFlags::WriteLookupOutputToRD),
     JoltR1CSInputs::OpFlags(CircuitFlags::InlineSequenceInstruction),
     JoltR1CSInputs::OpFlags(CircuitFlags::Assert),
     JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC),
     JoltR1CSInputs::OpFlags(CircuitFlags::Advice),
-    JoltR1CSInputs::OpFlags(CircuitFlags::IsNoop),
     JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed),
 ];
 
@@ -354,38 +348,31 @@ impl JoltR1CSInputs {
             JoltR1CSInputs::ShouldBranch => 5,
             JoltR1CSInputs::PC => 6,
             JoltR1CSInputs::UnexpandedPC => 7,
-            JoltR1CSInputs::Rd => 8,
-            JoltR1CSInputs::Imm => 9,
-            JoltR1CSInputs::RamAddress => 10,
-            JoltR1CSInputs::Rs1Value => 11,
-            JoltR1CSInputs::Rs2Value => 12,
-            JoltR1CSInputs::RdWriteValue => 13,
-            JoltR1CSInputs::RamReadValue => 14,
-            JoltR1CSInputs::RamWriteValue => 15,
-            JoltR1CSInputs::LeftLookupOperand => 16,
-            JoltR1CSInputs::RightLookupOperand => 17,
-            JoltR1CSInputs::NextUnexpandedPC => 18,
-            JoltR1CSInputs::NextPC => 19,
-            JoltR1CSInputs::LookupOutput => 20,
-            JoltR1CSInputs::ShouldJump => 21,
-            JoltR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsRs1Value) => 22,
-            JoltR1CSInputs::OpFlags(CircuitFlags::RightOperandIsRs2Value) => 23,
-            JoltR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsPC) => 24,
-            JoltR1CSInputs::OpFlags(CircuitFlags::RightOperandIsImm) => 25,
-            JoltR1CSInputs::OpFlags(CircuitFlags::AddOperands) => 26,
-            JoltR1CSInputs::OpFlags(CircuitFlags::SubtractOperands) => 27,
-            JoltR1CSInputs::OpFlags(CircuitFlags::MultiplyOperands) => 28,
-            JoltR1CSInputs::OpFlags(CircuitFlags::Load) => 29,
-            JoltR1CSInputs::OpFlags(CircuitFlags::Store) => 30,
-            JoltR1CSInputs::OpFlags(CircuitFlags::Jump) => 31,
-            JoltR1CSInputs::OpFlags(CircuitFlags::Branch) => 32,
-            JoltR1CSInputs::OpFlags(CircuitFlags::WriteLookupOutputToRD) => 33,
-            JoltR1CSInputs::OpFlags(CircuitFlags::InlineSequenceInstruction) => 34,
-            JoltR1CSInputs::OpFlags(CircuitFlags::Assert) => 35,
-            JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC) => 36,
-            JoltR1CSInputs::OpFlags(CircuitFlags::Advice) => 37,
-            JoltR1CSInputs::OpFlags(CircuitFlags::IsNoop) => 38,
-            JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed) => 39,
+            JoltR1CSInputs::Imm => 8,
+            JoltR1CSInputs::RamAddress => 9,
+            JoltR1CSInputs::Rs1Value => 10,
+            JoltR1CSInputs::Rs2Value => 11,
+            JoltR1CSInputs::RdWriteValue => 12,
+            JoltR1CSInputs::RamReadValue => 13,
+            JoltR1CSInputs::RamWriteValue => 14,
+            JoltR1CSInputs::LeftLookupOperand => 15,
+            JoltR1CSInputs::RightLookupOperand => 16,
+            JoltR1CSInputs::NextUnexpandedPC => 17,
+            JoltR1CSInputs::NextPC => 18,
+            JoltR1CSInputs::LookupOutput => 19,
+            JoltR1CSInputs::ShouldJump => 20,
+            JoltR1CSInputs::OpFlags(CircuitFlags::AddOperands) => 21,
+            JoltR1CSInputs::OpFlags(CircuitFlags::SubtractOperands) => 22,
+            JoltR1CSInputs::OpFlags(CircuitFlags::MultiplyOperands) => 23,
+            JoltR1CSInputs::OpFlags(CircuitFlags::Load) => 24,
+            JoltR1CSInputs::OpFlags(CircuitFlags::Store) => 25,
+            JoltR1CSInputs::OpFlags(CircuitFlags::Jump) => 26,
+            JoltR1CSInputs::OpFlags(CircuitFlags::WriteLookupOutputToRD) => 27,
+            JoltR1CSInputs::OpFlags(CircuitFlags::InlineSequenceInstruction) => 28,
+            JoltR1CSInputs::OpFlags(CircuitFlags::Assert) => 29,
+            JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC) => 30,
+            JoltR1CSInputs::OpFlags(CircuitFlags::Advice) => 31,
+            JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed) => 32,
         }
     }
 }
@@ -395,7 +382,6 @@ impl From<&JoltR1CSInputs> for VirtualPolynomial {
         match input {
             JoltR1CSInputs::PC => VirtualPolynomial::PC,
             JoltR1CSInputs::UnexpandedPC => VirtualPolynomial::UnexpandedPC,
-            JoltR1CSInputs::Rd => VirtualPolynomial::Rd,
             JoltR1CSInputs::Imm => VirtualPolynomial::Imm,
             JoltR1CSInputs::RamAddress => VirtualPolynomial::RamAddress,
             JoltR1CSInputs::Rs1Value => VirtualPolynomial::Rs1Value,
@@ -470,7 +456,6 @@ pub fn compute_claimed_witness_evals<F: JoltField>(
                 inner[JoltR1CSInputs::PC.to_index()] += row.pc.field_mul(eq2_val);
                 inner[JoltR1CSInputs::UnexpandedPC.to_index()] +=
                     row.unexpanded_pc.field_mul(eq2_val);
-                inner[JoltR1CSInputs::Rd.to_index()] += row.rd_addr.field_mul(eq2_val);
                 inner[JoltR1CSInputs::Imm.to_index()] += row.imm.to_i128().field_mul(eq2_val);
                 inner[JoltR1CSInputs::RamAddress.to_index()] += row.ram_addr.field_mul(eq2_val);
                 inner[JoltR1CSInputs::Rs1Value.to_index()] += row.rs1_read_value.field_mul(eq2_val);
@@ -545,7 +530,7 @@ where
         .for_each(|(((u, p), n), cycle)| {
             *u = cycle.instruction().normalize().address as u64;
             *p = preprocessing.bytecode.get_pc(cycle) as u64;
-            *n = cycle.instruction().circuit_flags()[CircuitFlags::IsNoop] as u8;
+            *n = cycle.instruction().instruction_flags()[InstructionFlags::IsNoop] as u8;
         });
 
     (unexpanded_pc.into(), pc.into(), is_noop.into())
@@ -632,7 +617,7 @@ where
                 .zip(trace.par_iter())
                 .for_each(|((output, flag), cycle)| {
                     *output = LookupQuery::<XLEN>::to_lookup_output(cycle);
-                    *flag = cycle.instruction().circuit_flags()[CircuitFlags::Branch] as u8;
+                    *flag = cycle.instruction().instruction_flags()[InstructionFlags::Branch] as u8;
                 });
 
             (lookup_outputs.into(), flags.into())
@@ -649,7 +634,8 @@ where
                     *jump = trace[i].instruction().circuit_flags()[CircuitFlags::Jump] as u8;
 
                     let is_next_noop = if i + 1 < len {
-                        trace[i + 1].instruction().circuit_flags()[CircuitFlags::IsNoop] as u8
+                        trace[i + 1].instruction().instruction_flags()[InstructionFlags::IsNoop]
+                            as u8
                     } else {
                         1 // Last cycle, treat as if next is NoOp
                     };
@@ -685,7 +671,6 @@ mod tests {
             match (self, other) {
                 (JoltR1CSInputs::PC, JoltR1CSInputs::PC) => true,
                 (JoltR1CSInputs::UnexpandedPC, JoltR1CSInputs::UnexpandedPC) => true,
-                (JoltR1CSInputs::Rd, JoltR1CSInputs::Rd) => true,
                 (JoltR1CSInputs::Imm, JoltR1CSInputs::Imm) => true,
                 (JoltR1CSInputs::RamAddress, JoltR1CSInputs::RamAddress) => true,
                 (JoltR1CSInputs::Rs1Value, JoltR1CSInputs::Rs1Value) => true,
@@ -722,18 +707,7 @@ mod tests {
         const fn const_eq_circuit_flags(&self, flag1: CircuitFlags, flag2: CircuitFlags) -> bool {
             matches!(
                 (flag1, flag2),
-                (
-                    CircuitFlags::LeftOperandIsRs1Value,
-                    CircuitFlags::LeftOperandIsRs1Value
-                ) | (
-                    CircuitFlags::RightOperandIsRs2Value,
-                    CircuitFlags::RightOperandIsRs2Value
-                ) | (CircuitFlags::LeftOperandIsPC, CircuitFlags::LeftOperandIsPC)
-                    | (
-                        CircuitFlags::RightOperandIsImm,
-                        CircuitFlags::RightOperandIsImm
-                    )
-                    | (CircuitFlags::AddOperands, CircuitFlags::AddOperands)
+                (CircuitFlags::AddOperands, CircuitFlags::AddOperands)
                     | (
                         CircuitFlags::SubtractOperands,
                         CircuitFlags::SubtractOperands
@@ -745,7 +719,6 @@ mod tests {
                     | (CircuitFlags::Load, CircuitFlags::Load)
                     | (CircuitFlags::Store, CircuitFlags::Store)
                     | (CircuitFlags::Jump, CircuitFlags::Jump)
-                    | (CircuitFlags::Branch, CircuitFlags::Branch)
                     | (
                         CircuitFlags::WriteLookupOutputToRD,
                         CircuitFlags::WriteLookupOutputToRD
@@ -760,7 +733,6 @@ mod tests {
                         CircuitFlags::DoNotUpdateUnexpandedPC
                     )
                     | (CircuitFlags::Advice, CircuitFlags::Advice)
-                    | (CircuitFlags::IsNoop, CircuitFlags::IsNoop)
                     | (CircuitFlags::IsCompressed, CircuitFlags::IsCompressed)
             )
         }

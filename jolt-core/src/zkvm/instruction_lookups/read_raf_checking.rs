@@ -37,7 +37,7 @@ use crate::{
     },
     zkvm::{
         dag::state_manager::StateManager,
-        instruction::{InstructionFlags, InstructionLookup, InterleavedBitsMarker, LookupQuery},
+        instruction::{Flags, InstructionLookup, InterleavedBitsMarker, LookupQuery},
         lookup_table::{
             prefixes::{PrefixCheckpoint, PrefixEval, Prefixes},
             LookupTables,

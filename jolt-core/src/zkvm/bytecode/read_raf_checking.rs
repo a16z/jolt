@@ -26,7 +26,7 @@ use crate::{
     zkvm::{
         dag::state_manager::StateManager,
         instruction::{
-            CircuitFlags, InstructionFlags, InstructionLookup, InterleavedBitsMarker,
+            CircuitFlags, Flags, InstructionFlags, InstructionLookup, InterleavedBitsMarker,
             NUM_CIRCUIT_FLAGS,
         },
         lookup_table::{LookupTables, NUM_LOOKUP_TABLES},
@@ -342,7 +342,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             ReadCheckingValType::Stage1 => {
                 let gamma_powers = get_gamma_powers(
                     &mut *sm.get_transcript().borrow_mut(),
-                    3 + NUM_CIRCUIT_FLAGS,
+                    2 + NUM_CIRCUIT_FLAGS,
                 );
                 (
                     Self::compute_val_1(sm, &gamma_powers),
@@ -469,14 +469,13 @@ impl<F: JoltField> ReadRafSumcheck<F> {
                 let mut linear_combination = F::zero();
                 linear_combination += F::from_u64(unexpanded_pc as u64);
                 linear_combination += operands.imm.field_mul(gamma_powers[1]);
-                linear_combination += (operands.rd as u64).field_mul(gamma_powers[2]);
                 let flags = instruction.circuit_flags();
                 // sanity check
                 assert!(
                     !flags[CircuitFlags::IsCompressed]
                         || !flags[CircuitFlags::DoNotUpdateUnexpandedPC]
                 );
-                for (flag, gamma_power) in flags.iter().zip(gamma_powers[3..].iter()) {
+                for (flag, gamma_power) in flags.iter().zip(gamma_powers[2..].iter()) {
                     if *flag {
                         linear_combination += *gamma_power;
                     }
@@ -497,8 +496,6 @@ impl<F: JoltField> ReadRafSumcheck<F> {
         );
         let (_, imm_claim) =
             sm.get_virtual_polynomial_opening(VirtualPolynomial::Imm, SumcheckId::SpartanOuter);
-        let (_, rd_claim) =
-            sm.get_virtual_polynomial_opening(VirtualPolynomial::Rd, SumcheckId::SpartanOuter);
 
         let circuit_flag_claims: Vec<F> = CircuitFlags::iter()
             .map(|flag| {
@@ -512,7 +509,6 @@ impl<F: JoltField> ReadRafSumcheck<F> {
 
         std::iter::once(unexpanded_pc_claim)
             .chain(std::iter::once(imm_claim))
-            .chain(std::iter::once(rd_claim))
             .chain(circuit_flag_claims)
             .zip_eq(gamma_powers)
             .map(|(claim, gamma)| claim * gamma)
@@ -538,6 +534,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             .par_iter()
             .map(|instruction| {
                 let flags = instruction.circuit_flags();
+                let instr_flags = instruction.instruction_flags();
                 let instr = instruction.normalize();
                 let mut linear_combination = F::zero();
 
@@ -545,7 +542,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
                     linear_combination += gamma_powers[0];
                     linear_combination += gamma_powers[3];
                 }
-                if flags[CircuitFlags::Branch] {
+                if instr_flags[InstructionFlags::Branch] {
                     linear_combination += gamma_powers[1];
                 }
                 let rd_addr_val = F::from_u64(instr.operands.rd as u64);
@@ -569,7 +566,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             SumcheckId::ShouldJumpVirtualization,
         );
         let (_, branch_claim) = sm.get_virtual_polynomial_opening(
-            VirtualPolynomial::OpFlags(CircuitFlags::Branch),
+            VirtualPolynomial::InstructionFlags(InstructionFlags::Branch),
             SumcheckId::ShouldBranchVirtualization,
         );
         let (_, rd_wa_claim_write_pc) = sm.get_virtual_polynomial_opening(
@@ -616,26 +613,26 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             .par_iter()
             .map(|instruction| {
                 let instr = instruction.normalize();
-                let flags = instruction.circuit_flags();
+                let flags = instruction.instruction_flags();
                 let unexpanded_pc = instr.address;
                 let imm = instr.operands.imm;
 
                 let mut linear_combination: F = F::from_i128(imm);
                 linear_combination += gamma_powers[1].mul_u64(unexpanded_pc as u64);
 
-                if flags[CircuitFlags::LeftOperandIsRs1Value] {
+                if flags[InstructionFlags::LeftOperandIsRs1Value] {
                     linear_combination += gamma_powers[2];
                 }
-                if flags[CircuitFlags::LeftOperandIsPC] {
+                if flags[InstructionFlags::LeftOperandIsPC] {
                     linear_combination += gamma_powers[3];
                 }
-                if flags[CircuitFlags::RightOperandIsRs2Value] {
+                if flags[InstructionFlags::RightOperandIsRs2Value] {
                     linear_combination += gamma_powers[4];
                 }
-                if flags[CircuitFlags::RightOperandIsImm] {
+                if flags[InstructionFlags::RightOperandIsImm] {
                     linear_combination += gamma_powers[5];
                 }
-                if flags[CircuitFlags::IsNoop] {
+                if flags[InstructionFlags::IsNoop] {
                     linear_combination += gamma_powers[6];
                 }
 
@@ -668,23 +665,23 @@ impl<F: JoltField> ReadRafSumcheck<F> {
 
         let unexpanded_pc_claim = spartan_shift_unexpanded_pc_claim;
         let (_, left_is_rs1_claim) = sm.get_virtual_polynomial_opening(
-            VirtualPolynomial::OpFlags(CircuitFlags::LeftOperandIsRs1Value),
+            VirtualPolynomial::InstructionFlags(InstructionFlags::LeftOperandIsRs1Value),
             SumcheckId::InstructionInputVirtualization,
         );
         let (_, left_is_pc_claim) = sm.get_virtual_polynomial_opening(
-            VirtualPolynomial::OpFlags(CircuitFlags::LeftOperandIsPC),
+            VirtualPolynomial::InstructionFlags(InstructionFlags::LeftOperandIsPC),
             SumcheckId::InstructionInputVirtualization,
         );
         let (_, right_is_rs2_claim) = sm.get_virtual_polynomial_opening(
-            VirtualPolynomial::OpFlags(CircuitFlags::RightOperandIsRs2Value),
+            VirtualPolynomial::InstructionFlags(InstructionFlags::RightOperandIsRs2Value),
             SumcheckId::InstructionInputVirtualization,
         );
         let (_, right_is_imm_claim) = sm.get_virtual_polynomial_opening(
-            VirtualPolynomial::OpFlags(CircuitFlags::RightOperandIsImm),
+            VirtualPolynomial::InstructionFlags(InstructionFlags::RightOperandIsImm),
             SumcheckId::InstructionInputVirtualization,
         );
         let (_, is_noop_claim) = sm.get_virtual_polynomial_opening(
-            VirtualPolynomial::OpFlags(CircuitFlags::IsNoop),
+            VirtualPolynomial::InstructionFlags(InstructionFlags::IsNoop),
             SumcheckId::SpartanShift,
         );
 

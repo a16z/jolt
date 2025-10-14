@@ -1,3 +1,4 @@
+use crate::zkvm::instruction::{InstructionFlags, NUM_INSTRUCTION_FLAGS};
 use tracer::instruction::{
     virtual_xor_rot::{VirtualXORROT16, VirtualXORROT24, VirtualXORROT32, VirtualXORROT63},
     RISCVCycle,
@@ -5,7 +6,7 @@ use tracer::instruction::{
 
 use crate::zkvm::lookup_table::{virtual_xor_rot::VirtualXORROTTable, LookupTables};
 
-use super::{CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS};
+use super::{CircuitFlags, Flags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS};
 
 // Macro to implement traits for each specific rotation value
 macro_rules! impl_virtual_xor_rot {
@@ -16,17 +17,22 @@ macro_rules! impl_virtual_xor_rot {
             }
         }
 
-        impl InstructionFlags for $type {
+        impl Flags for $type {
             fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
                 let mut flags = [false; NUM_CIRCUIT_FLAGS];
-                flags[CircuitFlags::LeftOperandIsRs1Value as usize] = true;
-                flags[CircuitFlags::RightOperandIsRs2Value as usize] = true;
                 flags[CircuitFlags::WriteLookupOutputToRD as usize] = true;
                 flags[CircuitFlags::InlineSequenceInstruction as usize] =
                     self.inline_sequence_remaining.is_some();
                 flags[CircuitFlags::DoNotUpdateUnexpandedPC as usize] =
                     self.inline_sequence_remaining.unwrap_or(0) != 0;
                 flags[CircuitFlags::IsCompressed as usize] = self.is_compressed;
+                flags
+            }
+
+            fn instruction_flags(&self) -> [bool; NUM_INSTRUCTION_FLAGS] {
+                let mut flags = [false; NUM_INSTRUCTION_FLAGS];
+                flags[InstructionFlags::LeftOperandIsRs1Value as usize] = true;
+                flags[InstructionFlags::RightOperandIsRs2Value as usize] = true;
                 flags
             }
         }
