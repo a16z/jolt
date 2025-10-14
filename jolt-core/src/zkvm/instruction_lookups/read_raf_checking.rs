@@ -48,6 +48,28 @@ use crate::{
 
 use rayon::iter::{IndexedParallelIterator, ParallelIterator};
 
+// Instruction Lookups Read+RAF sumcheck
+//
+// Proves an address-and-cycle routed aggregation equality of the form:
+//   Σ_{a ∈ {0,1}^{log K}} Σ_{c ∈ {0,1}^{log T}}
+//     EQ(r_addr, a) · EQ(r_cycle, c) · RA(a, c) · V(a)
+//   = rv_claim + γ · left_operand_claim + γ^2 · right_operand_claim,
+// where RA(a, c) := 1[lookup_address(c) = a] routes cycle c to address a.
+//
+// The per-address value V(a) is defined as:
+//   V(a) = Σ_t flag_t · Table_t(a)
+//          + (1 - raf_flag) · (γ · Left(a) + γ^2 · Right(a))
+//          + raf_flag · γ^2 · Int(a)
+//
+// This combines two independent components:
+//   1. Table lookups: Σ_t flag_t · Table_t(a) - the instruction lookup table value at address a
+//   2. Operand lookups: One of two cases based on raf_flag:
+//      - If raf_flag = 0 (interleaved operands): γ · Left(a) + γ^2 · Right(a)
+//      - If raf_flag = 1 (identity lookups): γ^2 · Int(a)
+//
+// These components are summed because both table lookups AND operand lookups happen 
+// for each instruction cycle - they are not mutually exclusive.
+
 const DEGREE: usize = 3;
 
 #[derive(Allocative)]
