@@ -41,16 +41,61 @@ use rayon::prelude::*;
 use strum::{EnumCount, IntoEnumIterator};
 use tracer::instruction::NormalizedInstruction;
 
+// Bytecode Read+RAF sumcheck
+//
+// Proves an address-and-cycle routed aggregation equality of the form
+//   Σ_{a ∈ {0,1}^{log K}} Σ_{c ∈ {0,1}^{log T}}
+//     EQ(r_address, a) · PC_routing(a, c) ·
+//       [ (Val_1(a) + γ^3·Int(a)) · EQ(r_cycle_1, c)         // Spartan outer: instructions & immediates
+//       + γ · Val_2(a) · EQ(r_cycle_2, c)                    // Register read-write checking
+//       + γ^2 · (Val_3(a) + γ^2·Int(a)) · EQ(r_cycle_3, c) ] // Register val eval & instruction lookups
+//   = rv_claim,
+// where PC_routing(a, c) := Π_{i=0}^{d-1} 1[chunk_i(PC(c)) = chunk_i(a)] routes cycle c to address PC(c).
+//
+// Expanded statement:
+// Let K = 2^{log K}, T = 2^{log T}. For address a = (a_0..a_{logK-1}) ∈ {0,1}^{logK} and cycle c = (c_0..c_{logT-1}) ∈ {0,1}^{logT}:
+//
+//   Σ_{a} Σ_{c}  EQ_addr(r_addr, a) · [Π_{i=0}^{d-1} 1[chunk_i(PC(c)) = chunk_i(a)]] ·
+//                 ( (Val1(a) + γ^3·Int(a)) · EQ_cyc1(r_cyc1, c)
+//                   + γ · Val2(a) · EQ_cyc2(r_cyc2, c)
+//                   + γ^2 · (Val3(a) + γ^2·Int(a)) · EQ_cyc3(r_cyc3, c) )
+// =  Σ_{c} EQ_cyc1(r_cyc1, c) · Val1(PC(c))
+//   + γ · Σ_{c} EQ_cyc2(r_cyc2, c) · Val2(PC(c))
+//   + γ^2 · Σ_{c} EQ_cyc3(r_cyc3, c) · Val3(PC(c))
+//   + γ^3 · Σ_{c} EQ_cyc1(r_cyc1, c) · Int(PC(c))
+//   + γ^4 · Σ_{c} EQ_shift(r_shift, c) · Int(PC(c+1))
+//
+// where:
+//   EQ_addr(r_addr, a)   = Π_{j=0}^{logK-1} (1 - r_addr[j] - a_j + 2·r_addr[j]·a_j)
+//   EQ_cycℓ(r_cycℓ, c)   = Π_{t=0}^{logT-1} (1 - r_cycℓ[t] - c_t + 2·r_cycℓ[t]·c_t),  for ℓ ∈ {1,2,3}
+//   EQ_shift(r_shift, c) = Π_{t=0}^{logT-1} (1 - r_shift[t] - c_t + 2·r_shift[t]·c_t)  (the Spartan-Shift cycle EQ)
+//   chunk_i(a)           = integer formed by the i-th address chunk bits of a (K^{1/d}-ary digit)
+//   Int(a)               = Σ_{j=0}^{logK-1} 2^j · a_j
+//   Val1(a)              = unexpanded_pc(a) + γ·imm(a) + γ^2·rd(a) + Σ_{j} γ^{3+j} · flag_j(a)
+//   Val2(a)              = rd(a, r_reg) + γ·rs1(a, r_reg) + γ^2·rs2(a, r_reg)
+//   Val3(a)              = rd(a, r_reg) + γ·unexpanded_pc(a) + γ^2·is_noop(a) + γ^3·is_not_interleaved(a)
+//                          + Σ_{t=0}^{L-1} γ^{4+t} · table_flag_t(a)
+
 /// Number of batched read-checking sumchecks bespokely
 const STAGES: usize = 3;
 
 #[derive(Allocative)]
 struct ReadCheckingProverState<F: JoltField> {
+    /// F_s[k] := Σ_j EQ(r_cycle_s, j) · 1[PC(j) = k]. Pre-aggregated routing mass over
+    /// addresses for stage s (phase 1).
     F: [MultilinearPolynomial<F>; STAGES],
+    /// ra_i(k,j) := 1[chunk_i(PC(j)) = chunk_i(k)]. Per-chunk routing indicators (RaPolynomial)
+    /// constructed at the phase switch; Π_i ra_i(k,j) = 1[PC(j) = k].
     ra: Vec<RaPolynomial<u8, F>>,
+    /// v_i[u] := prefix-weight for chunk i at index u (ExpandingTable). Used to accumulate routing
+    /// mass during phase 1 address binding.
     v: Vec<ExpandingTable<F>>,
+    /// EQ_s(j) := eq(r_cycle_s, j). Cycle EQ MLEs for stages s = 1..3 (phase 2).
     eq_polys: [MultilinearPolynomial<F>; STAGES],
+    /// val_gamma[s] := (Val_s(r_address) + RAF_aug_s(r_address)) · γ^{s-1}. Per-stage scalars after
+    /// phase 1 (used in phase 2).
     val_gamma: Option<[F; STAGES]>,
+    /// program counter index per cycle j, used to form routing polynomials.
     pc: Vec<usize>,
 }
 
