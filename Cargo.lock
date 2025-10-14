@@ -31,7 +31,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5a15f179cd60c4584b8a8c596927aadc462e27f2ca70c04e0071964a73ba7a75"
 dependencies = [
  "cfg-if",
- "getrandom 0.3.3",
+ "getrandom 0.3.4",
  "once_cell",
  "version_check",
  "zerocopy",
@@ -171,7 +171,7 @@ checksum = "a23eb6b1614318a8071c9b2521f36b424b2c83db5eb3a0fead4a6c0809af6e61"
 [[package]]
 name = "ark-bn254"
 version = "0.5.0-alpha.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#bc8b274d14dbccd67edc5d3723e8294c5bbbf1a7"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#89de836189930abeeb97bba744ee243548d897b6"
 dependencies = [
  "ark-ec",
  "ark-ff",
@@ -181,7 +181,7 @@ dependencies = [
 [[package]]
 name = "ark-ec"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#bc8b274d14dbccd67edc5d3723e8294c5bbbf1a7"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#89de836189930abeeb97bba744ee243548d897b6"
 dependencies = [
  "ahash",
  "ark-ff",
@@ -202,7 +202,7 @@ dependencies = [
 [[package]]
 name = "ark-ff"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#bc8b274d14dbccd67edc5d3723e8294c5bbbf1a7"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#89de836189930abeeb97bba744ee243548d897b6"
 dependencies = [
  "allocative",
  "ark-ff-asm",
@@ -223,7 +223,7 @@ dependencies = [
 [[package]]
 name = "ark-ff-asm"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#bc8b274d14dbccd67edc5d3723e8294c5bbbf1a7"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#89de836189930abeeb97bba744ee243548d897b6"
 dependencies = [
  "quote",
  "syn 2.0.106",
@@ -232,7 +232,7 @@ dependencies = [
 [[package]]
 name = "ark-ff-macros"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#bc8b274d14dbccd67edc5d3723e8294c5bbbf1a7"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#89de836189930abeeb97bba744ee243548d897b6"
 dependencies = [
  "num-bigint",
  "num-traits",
@@ -244,7 +244,7 @@ dependencies = [
 [[package]]
 name = "ark-grumpkin"
 version = "0.5.0-alpha.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#bc8b274d14dbccd67edc5d3723e8294c5bbbf1a7"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#89de836189930abeeb97bba744ee243548d897b6"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -255,7 +255,7 @@ dependencies = [
 [[package]]
 name = "ark-poly"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#bc8b274d14dbccd67edc5d3723e8294c5bbbf1a7"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#89de836189930abeeb97bba744ee243548d897b6"
 dependencies = [
  "ahash",
  "ark-ff",
@@ -269,7 +269,7 @@ dependencies = [
 [[package]]
 name = "ark-serialize"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#bc8b274d14dbccd67edc5d3723e8294c5bbbf1a7"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#89de836189930abeeb97bba744ee243548d897b6"
 dependencies = [
  "ark-serialize-derive 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
  "ark-std",
@@ -293,7 +293,7 @@ dependencies = [
 [[package]]
 name = "ark-serialize-derive"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#bc8b274d14dbccd67edc5d3723e8294c5bbbf1a7"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#89de836189930abeeb97bba744ee243548d897b6"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1288,21 +1288,21 @@ dependencies = [
  "cfg-if",
  "js-sys",
  "libc",
- "wasi 0.11.1+wasi-snapshot-preview1",
+ "wasi",
  "wasm-bindgen",
 ]
 
 [[package]]
 name = "getrandom"
-version = "0.3.3"
+version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "26145e563e54f2cadc477553f1ec5ee650b00862f0a58bcd12cbdc5f0ea2d2f4"
+checksum = "899def5c37c4fd7b2664648c28120ecec138e4d395b459e5ca34f9cce2dd77fd"
 dependencies = [
  "cfg-if",
  "js-sys",
  "libc",
  "r-efi",
- "wasi 0.14.7+wasi-0.2.4",
+ "wasip2",
  "wasm-bindgen",
 ]
 
@@ -1343,9 +1343,9 @@ dependencies = [
 
 [[package]]
 name = "half"
-version = "2.7.0"
+version = "2.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e54c115d4f30f52c67202f079c5f9d8b49db4691f460fdb0b4c2e838261b2ba5"
+checksum = "6ea2d84b969582b4b1864a92dc5d27cd2b77b622a8d79306834f1be5ba20d84b"
 dependencies = [
  "cfg-if",
  "crunchy",
@@ -1769,17 +1769,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "io-uring"
-version = "0.7.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "046fa2d4d00aea763528b4950358d0ead425372445dc8ff86312b3c69ff7727b"
-dependencies = [
- "bitflags 2.9.4",
- "cfg-if",
- "libc",
-]
-
-[[package]]
 name = "ipnet"
 version = "2.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1994,7 +1983,7 @@ dependencies = [
 [[package]]
 name = "jolt-optimizations"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#bc8b274d14dbccd67edc5d3723e8294c5bbbf1a7"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#89de836189930abeeb97bba744ee243548d897b6"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -2014,7 +2003,7 @@ name = "jolt-platform"
 version = "0.1.0"
 dependencies = [
  "getrandom 0.2.16",
- "getrandom 0.3.3",
+ "getrandom 0.3.4",
  "rand 0.8.5",
 ]
 
@@ -2265,7 +2254,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "78bed444cc8a2160f01cbcf811ef18cac863ad68ae8ca62092e8db51d51c761c"
 dependencies = [
  "libc",
- "wasi 0.11.1+wasi-snapshot-preview1",
+ "wasi",
  "windows-sys 0.59.0",
 ]
 
@@ -2954,7 +2943,7 @@ version = "0.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "99d9a13982dcf210057a8a78572b2217b667c3beacbf3a0d8b454f6f82837d38"
 dependencies = [
- "getrandom 0.3.3",
+ "getrandom 0.3.4",
 ]
 
 [[package]]
@@ -3809,7 +3798,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2d31c77bdf42a745371d260a26ca7163f1e0924b64afa0b688e61b5a9fa02f16"
 dependencies = [
  "fastrand",
- "getrandom 0.3.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.2",
  "windows-sys 0.61.2",
@@ -3886,19 +3875,16 @@ dependencies = [
 
 [[package]]
 name = "tokio"
-version = "1.47.1"
+version = "1.48.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "89e49afdadebb872d3145a5638b59eb0691ea23e46ca484037cfab3b76b95038"
+checksum = "ff360e02eab121e0bc37a2d3b4d4dc622e6eda3a8e5253d5435ecf5bd4c68408"
 dependencies = [
- "backtrace",
  "bytes",
- "io-uring",
  "libc",
  "mio",
  "pin-project-lite",
- "slab",
  "socket2",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4218,15 +4204,6 @@ name = "wasi"
 version = "0.11.1+wasi-snapshot-preview1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ccf3ec651a847eb01de73ccad15eb7d99f80485de043efb2f370cd654f4ea44b"
-
-[[package]]
-name = "wasi"
-version = "0.14.7+wasi-0.2.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "883478de20367e224c0090af9cf5f9fa85bed63a95c1abf3afc5c083ebc06e8c"
-dependencies = [
- "wasip2",
-]
 
 [[package]]
 name = "wasip2"

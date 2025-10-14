@@ -17,7 +17,9 @@ use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use allocative::Allocative;
+use ark_bn254::g1::Config as G1Config;
 use ark_bn254::{G1Affine, G1Projective};
+use ark_ec::models::short_weierstrass::Bucket;
 use ark_ec::CurveGroup;
 use num_traits::Zero;
 use rayon::prelude::*;
@@ -418,41 +420,62 @@ impl<F: JoltField> OneHotPolynomial<F> {
         let rows_per_k = T / row_len;
         if rows_per_k >= rayon::current_num_threads() {
             // This is the typical case (T >> K)
+            #[inline(always)]
+            fn ilp_from_k(k: usize) -> usize {
+                match k {
+                    0..=64 => 2,
+                    65..=256 => 4,
+                    257..=1024 => 6,
+                    _ => 8,
+                }
+            }
+
+            let ilp = ilp_from_k(self.K);
 
             let chunk_commitments: Vec<Vec<_>> = self
                 .nonzero_indices
                 .par_chunks(row_len)
                 .map(|chunk| {
-                    // Collect indices for each k
-                    let mut indices_per_k: Vec<Vec<usize>> = vec![Vec::new(); self.K];
-
-                    for (col_index, k) in chunk.iter().enumerate() {
-                        if let Some(k) = k {
-                            indices_per_k[*k as usize].push(col_index);
-                        }
-                    }
+                    let _span = tracing::span!(tracing::Level::DEBUG, "batch_addition").entered();
 
                     // Safety: This function is only called with G1Affine
                     let g1_bases =
                         unsafe { std::mem::transmute::<&[G::Affine], &[G1Affine]>(bases) };
 
-                    // Vectorized batch addition for all k values at once
-                    let results =
-                        jolt_optimizations::batch_g1_additions_multi(g1_bases, &indices_per_k);
+                    // Use Bucket (XYZZ) coordinates
+                    let mut accumulators: Vec<Bucket<G1Config>> =
+                        vec![Bucket::<G1Config>::ZERO; self.K];
 
-                    // Convert results to row_commitments
-                    let mut row_commitments = vec![JoltGroupWrapper(G::zero()); self.K];
-                    for (k, result) in results.into_iter().enumerate() {
-                        if !indices_per_k[k].is_empty() {
-                            let sum_projective: G1Projective = result.into();
-                            // Safety: We know G is G1Projective
-                            row_commitments[k].0 = unsafe {
-                                std::ptr::read(&sum_projective as *const G1Projective as *const G)
-                            };
+                    let chunk_exact = chunk.len() - (chunk.len() % ilp);
+                    let mut i = 0;
+                    while i < chunk_exact {
+                        for offset in 0..ilp {
+                            if let Some(k) = chunk[i + offset] {
+                                accumulators[k as usize] += g1_bases[i + offset];
+                            }
+                        }
+                        i += ilp;
+                    }
+
+                    // Handle remainder
+                    for col_index in i..chunk.len() {
+                        if let Some(k) = chunk[col_index] {
+                            accumulators[k as usize] += g1_bases[col_index];
                         }
                     }
 
-                    row_commitments
+                    // Convert Bucket to projective
+                    accumulators
+                        .into_iter()
+                        .map(|acc| {
+                            let sum_projective: G1Projective = acc.into();
+                            // Safety: We know G is G1Projective
+                            let result = unsafe {
+                                std::ptr::read(&sum_projective as *const G1Projective as *const G)
+                            };
+                            JoltGroupWrapper(result)
+                        })
+                        .collect()
                 })
                 .collect();
             let mut result = vec![JoltGroupWrapper(G::zero()); num_rows];
@@ -467,49 +490,40 @@ impl<F: JoltField> OneHotPolynomial<F> {
 
             result
         } else {
-            let num_chunks = rayon::current_num_threads().next_power_of_two();
-            let chunk_size = std::cmp::max(1, num_rows / num_chunks);
+            // This is the case when K >> T
 
-            // Iterate over chunks of contiguous rows in parallel
-            let mut result: Vec<JoltGroupWrapper<G>> = vec![JoltGroupWrapper(G::zero()); num_rows];
-
-            // First, collect indices for each row
-            let mut row_indices: Vec<Vec<usize>> = vec![Vec::new(); num_rows];
-
-            for (t, k) in self.nonzero_indices.iter().enumerate() {
-                if let Some(k) = k {
-                    let global_index = *k as u64 * T as u64 + t as u64;
-                    let row_index = (global_index / row_len as u64) as usize;
-                    let col_index = (global_index % row_len as u64) as usize;
-                    row_indices[row_index].push(col_index);
-                }
-            }
-
-            // Process rows in parallel chunks
             // Safety: This function is only called with G1Affine
             let g1_bases = unsafe { std::mem::transmute::<&[G::Affine], &[G1Affine]>(bases) };
 
-            result
-                .par_chunks_mut(chunk_size)
-                .zip(row_indices.par_chunks(chunk_size))
-                .for_each(|(result_chunk, indices_chunk)| {
-                    let results =
-                        jolt_optimizations::batch_g1_additions_multi(g1_bases, indices_chunk);
+            // Process rows in parallel with Bucket accumulation
+            (0..num_rows)
+                .into_par_iter()
+                .map(|row_index| {
+                    let _span = tracing::span!(tracing::Level::DEBUG, "batch_addition").entered();
 
-                    for (row_result, (indices, result)) in result_chunk
-                        .iter_mut()
-                        .zip(indices_chunk.iter().zip(results.into_iter()))
-                    {
-                        if !indices.is_empty() {
-                            let sum_projective: G1Projective = result.into();
-                            // Safety: We know G is G1Projective
-                            row_result.0 = unsafe {
-                                std::ptr::read(&sum_projective as *const G1Projective as *const G)
-                            };
+                    let mut acc = Bucket::<G1Config>::ZERO;
+
+                    // Find all nonzero_indices that contribute to this row
+                    for (t, k) in self.nonzero_indices.iter().enumerate() {
+                        if let Some(k) = k {
+                            let global_index = *k as u64 * T as u64 + t as u64;
+                            let current_row_index = (global_index / row_len as u64) as usize;
+
+                            if current_row_index == row_index {
+                                let col_index = (global_index % row_len as u64) as usize;
+                                acc += g1_bases[col_index];
+                            }
                         }
                     }
-                });
-            result
+
+                    let sum_projective: G1Projective = acc.into();
+                    // Safety: We know G is G1Projective
+                    let result = unsafe {
+                        std::ptr::read(&sum_projective as *const G1Projective as *const G)
+                    };
+                    JoltGroupWrapper(result)
+                })
+                .collect()
         }
     }
 
@@ -560,35 +574,63 @@ impl<F: JoltField> OneHotPolynomial<F> {
         let chunk_results: Vec<_> = all_chunks
             .par_iter()
             .map(|work| {
+                let _span = tracing::span!(tracing::Level::DEBUG, "batch_addition").entered();
+
+                #[inline(always)]
+                fn ilp_from_k(k: usize) -> usize {
+                    match k {
+                        0..=64 => 2,
+                        65..=256 => 4,
+                        257..=1024 => 6,
+                        _ => 8,
+                    }
+                }
+
                 let poly = one_hot_polys[work.poly_idx].borrow();
                 let chunk =
                     &poly.nonzero_indices[work.chunk_start..work.chunk_start + work.chunk_len];
 
-                // Collect indices for each k
-                let mut indices_per_k: Vec<Vec<usize>> = vec![Vec::new(); work.K];
-                for (col_index, k) in chunk.iter().enumerate() {
-                    if let Some(k) = k {
-                        indices_per_k[*k as usize].push(col_index);
-                    }
-                }
+                let ilp = ilp_from_k(work.K);
 
                 // Safety: This function is only called with G1Affine
                 let g1_bases = unsafe { std::mem::transmute::<&[G::Affine], &[G1Affine]>(bases) };
 
-                // Vectorized batch addition for all k values at once
-                let results =
-                    jolt_optimizations::batch_g1_additions_multi(g1_bases, &indices_per_k);
+                // Use Bucket (XYZZ) coordinates with ILP-tuned accumulation
+                let mut accumulators: Vec<Bucket<G1Config>> =
+                    vec![Bucket::<G1Config>::ZERO; work.K];
 
-                // Convert results to row_commitments
-                let mut row_commitments = vec![JoltGroupWrapper(G::zero()); work.K];
-                for (k, result) in results.into_iter().enumerate() {
-                    if !indices_per_k[k].is_empty() {
-                        let sum_projective: G1Projective = result.into();
-                        row_commitments[k].0 = unsafe {
-                            std::ptr::read(&sum_projective as *const G1Projective as *const G)
-                        };
+                // Process chunk with ILP tuning
+                let chunk_exact = chunk.len() - (chunk.len() % ilp);
+                let mut i = 0;
+                while i < chunk_exact {
+                    // Unrolled loop based on ILP
+                    for offset in 0..ilp {
+                        if let Some(k) = chunk[i + offset] {
+                            accumulators[k as usize] += g1_bases[i + offset];
+                        }
+                    }
+                    i += ilp;
+                }
+
+                // Handle remainder
+                for col_index in i..chunk.len() {
+                    if let Some(k) = chunk[col_index] {
+                        accumulators[k as usize] += g1_bases[col_index];
                     }
                 }
+
+                // Convert Bucket to projective
+                let row_commitments: Vec<_> = accumulators
+                    .into_iter()
+                    .map(|acc| {
+                        let sum_projective: G1Projective = acc.into();
+                        // Safety: We know G is G1Projective
+                        let result = unsafe {
+                            std::ptr::read(&sum_projective as *const G1Projective as *const G)
+                        };
+                        JoltGroupWrapper(result)
+                    })
+                    .collect();
 
                 (work.poly_idx, work.chunk_idx, row_commitments)
             })
