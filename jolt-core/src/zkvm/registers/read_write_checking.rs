@@ -843,11 +843,11 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
             eval_at_inf_for_stage_3,
             *prev_claim_stage_3,
         );
-        *prev_round_poly_stage_1 = Some(poly_from_evals_and_hint(
+        *prev_round_poly_stage_1 = Some(UniPoly::from_even_evals_and_hint(
             *prev_claim_stage_1,
             &univariate_evals_stage_1,
         ));
-        *prev_round_poly_stage_3 = Some(poly_from_evals_and_hint(
+        *prev_round_poly_stage_3 = Some(UniPoly::from_even_evals_and_hint(
             *prev_claim_stage_3,
             &univariate_evals_stage_3,
         ));
@@ -1540,12 +1540,4 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for RegistersReadWriteC
     fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
         flamegraph.visit_root(self);
     }
-}
-
-/// Interpolate a polynomial `p(x)` from its evaluations at the points `0, 2, ..., degree-1` and a `hint = p(0) + p(1)`.
-fn poly_from_evals_and_hint<F: JoltField>(hint: F, evals: &[F]) -> UniPoly<F> {
-    let mut evals = evals.to_vec();
-    let eval_at_1 = hint - evals[0];
-    evals.insert(1, eval_at_1);
-    UniPoly::from_evals(&evals)
 }

@@ -113,20 +113,6 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         vec![Box::new(hamming_weight)]
     }
 
-    fn stage4_prover_instances(
-        &mut self,
-        _sm: &mut StateManager<'_, F, T, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstance<F, T>>> {
-        vec![]
-    }
-
-    fn stage4_verifier_instances(
-        &mut self,
-        _sm: &mut StateManager<'_, F, T, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstance<F, T>>> {
-        vec![]
-    }
-
     fn stage5_prover_instances(
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,

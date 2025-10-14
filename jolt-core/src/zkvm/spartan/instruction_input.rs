@@ -259,11 +259,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for InstructionInputSum
             eval_at_inf_for_stage_2,
             state.prev_claim_stage_2,
         );
-        state.prev_round_poly_stage_1 = Some(poly_from_evals_and_hint(
+        state.prev_round_poly_stage_1 = Some(UniPoly::from_even_evals_and_hint(
             state.prev_claim_stage_1,
             &univariate_evals_stage_1,
         ));
-        state.prev_round_poly_stage_2 = Some(poly_from_evals_and_hint(
+        state.prev_round_poly_stage_2 = Some(UniPoly::from_even_evals_and_hint(
             state.prev_claim_stage_2,
             &univariate_evals_stage_2,
         ));
@@ -585,12 +585,4 @@ impl<F: JoltField> ProverState<F> {
             prev_round_poly_stage_2: None,
         }
     }
-}
-
-/// Interpolate a polynomial `p(x)` from its evaluations at the points `0, 2, ..., degree-1` and a `hint = p(0) + p(1)`.
-fn poly_from_evals_and_hint<F: JoltField>(hint: F, evals: &[F]) -> UniPoly<F> {
-    let mut evals = evals.to_vec();
-    let eval_at_1 = hint - evals[0];
-    evals.insert(1, eval_at_1);
-    UniPoly::from_evals(&evals)
 }

@@ -206,10 +206,6 @@ macro_rules! r1cs_prod {
     }};
 }
 
-// ==========================
-// Named macro variants
-// ==========================
-
 #[macro_export]
 macro_rules! r1cs_eq_named {
     (name: $nm:expr, if { $($cond:tt)* } => ( $($left:tt)* ) == ( $($right:tt)* ) ) => {{

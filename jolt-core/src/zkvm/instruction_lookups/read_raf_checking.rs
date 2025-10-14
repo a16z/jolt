@@ -1102,7 +1102,6 @@ mod tests {
             .challenge_vector_optimized::<Fr>(LOG_T);
         let eq_r_cycle = EqPolynomial::<Fr>::evals(&r_cycle);
 
-        // Get r_cycle_branch for ShouldBranchVirtualization
         let r_cycle_branch: Vec<<Fr as JoltField>::Challenge> = prover_sm
             .transcript
             .borrow_mut()
@@ -1159,7 +1158,6 @@ mod tests {
             OpeningPoint::new(r_cycle.clone()),
             right_operand_claim,
         );
-        // Add ShouldBranchVirtualization opening
         prover_accumulator.borrow_mut().append_virtual(
             prover_sm.transcript.borrow_mut().deref_mut(),
             VirtualPolynomial::LookupOutput,
@@ -1211,7 +1209,6 @@ mod tests {
             SumcheckId::SpartanOuter,
             OpeningPoint::new(r_cycle.clone()),
         );
-        // Add ShouldBranchVirtualization opening
         verifier_accumulator.borrow_mut().append_virtual(
             verifier_sm.transcript.borrow_mut().deref_mut(),
             VirtualPolynomial::LookupOutput,
