@@ -343,9 +343,10 @@ where
             let (proof, debug_info) = JoltDAG::prove(state_manager).ok().unwrap();
             let prove_duration = start.elapsed();
             tracing::info!(
-                "Proved in {:.1}s ({:.1} kHz)",
+                "Proved in {:.1}s ({:.1} kHz / padded {:.1} kHz)",
                 prove_duration.as_secs_f64(),
-                trace_length as f64 / prove_duration.as_secs_f64() / 1000.0
+                trace_length as f64 / prove_duration.as_secs_f64() / 1000.0,
+                padded_trace_length as f64 / prove_duration.as_secs_f64() / 1000.0,
             );
             (proof, debug_info, prove_duration)
         };
