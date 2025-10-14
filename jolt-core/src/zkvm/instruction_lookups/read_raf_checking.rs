@@ -52,25 +52,32 @@ const DEGREE: usize = 3;
 
 #[derive(Allocative)]
 struct ReadRafProverState<F: JoltField> {
-    ra_acc: Option<Vec<F>>,
     ra: Option<MultilinearPolynomial<F>>,
     r: Vec<F::Challenge>,
 
+    // 17/32 T
     lookup_indices: Vec<LookupBits>,
+    // T/4
     lookup_indices_by_table: Vec<Vec<usize>>,
+    // T/4
     lookup_indices_uninterleave: Vec<usize>,
     lookup_indices_identity: Vec<usize>,
+    // T/32
     is_interleaved_operands: Vec<bool>,
     #[allocative(skip)]
     lookup_tables: Vec<Option<LookupTables<XLEN>>>,
 
     prefix_checkpoints: Vec<PrefixCheckpoint<F>>,
     suffix_polys: Vec<Vec<DensePolynomial<F>>>,
-    v: ExpandingTable<F>,
+    v: [ExpandingTable<F>; PHASES],
+    // T
     u_evals_rv: Vec<F>,
+    // T
     u_evals_raf: Vec<F>,
+    // T
     // eq(r_cycle, j) + gamma * eq(r_cycle_branch, j)
     eq_r_cycle_rv: MultilinearPolynomial<F>,
+    // T
     // eq(r_cycle, j)
     eq_r_cycle_raf: MultilinearPolynomial<F>,
 
@@ -79,7 +86,9 @@ struct ReadRafProverState<F: JoltField> {
     left_operand_ps: PrefixSuffixDecomposition<F, 2>,
     identity_ps: PrefixSuffixDecomposition<F, 2>,
 
+    // T
     combined_val_polynomial: Option<MultilinearPolynomial<F>>,
+    // T
     combined_raf_val_polynomial: Option<MultilinearPolynomial<F>>,
 }
 
@@ -281,7 +290,6 @@ impl<'a, F: JoltField> ReadRafProverState<F> {
 
         ReadRafProverState {
             r: Vec::with_capacity(log_T + LOG_K),
-            ra_acc: None,
             ra: None,
             lookup_tables,
             lookup_indices,
@@ -291,7 +299,7 @@ impl<'a, F: JoltField> ReadRafProverState<F> {
             is_interleaved_operands,
             prefix_checkpoints: vec![None.into(); Prefixes::COUNT],
             suffix_polys,
-            v: ExpandingTable::new(M),
+            v: std::array::from_fn(|_| ExpandingTable::new(M)),
             u_evals_rv: eq_r_cycle_rv.clone(),
             u_evals_raf: eq_r_cycle.clone(),
             eq_r_cycle_rv: MultilinearPolynomial::from(eq_r_cycle_rv),
@@ -326,11 +334,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
             // Phase 1: First log(K) rounds
             self.compute_prefix_suffix_prover_message(round).to_vec()
         } else {
-            if ps.ra.is_none() {
-                let ra_acc = ps.ra_acc.take().unwrap();
-                ps.ra = Some(MultilinearPolynomial::from(ra_acc));
-            }
-
             (0..ps.eq_r_cycle_rv.len() / 2)
                 .into_par_iter()
                 .map(|i| {
@@ -382,6 +385,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
         let ps = self.prover_state.as_mut().unwrap();
         ps.r.push(r_j);
         if round < LOG_K {
+            let phase = round / LOG_M;
             rayon::scope(|s| {
                 s.spawn(|_| {
                     ps.suffix_polys.par_iter_mut().for_each(|polys| {
@@ -393,7 +397,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
                 s.spawn(|_| ps.identity_ps.bind(r_j));
                 s.spawn(|_| ps.right_operand_ps.bind(r_j));
                 s.spawn(|_| ps.left_operand_ps.bind(r_j));
-                s.spawn(|_| ps.v.update(r_j));
+                s.spawn(|_| ps.v[phase].update(r_j));
             });
             {
                 if ps.r.len().is_multiple_of(2) {
@@ -408,10 +412,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
 
             // check if this is the last round in the phase
             if (round + 1).is_multiple_of(LOG_M) {
-                let phase = round / LOG_M;
-                ps.cache_phase(phase);
-                // if not last phase, init next phase
+                ps.prefix_registry.update_checkpoints();
                 if phase != PHASES - 1 {
+                    // if not last phase, init next phase
                     ps.init_phase(phase + 1);
                 }
             }
@@ -625,8 +628,8 @@ impl<F: JoltField> ReadRafProverState<F> {
                 .for_each(|((k, u), u_raf)| {
                     let (prefix, _) = k.split((PHASES - phase) * LOG_M);
                     let k_bound: usize = prefix % M;
-                    *u *= self.v[k_bound];
-                    *u_raf *= self.v[k_bound];
+                    *u *= self.v[phase - 1][k_bound];
+                    *u_raf *= self.v[phase - 1][k_bound];
                 });
         }
 
@@ -656,7 +659,7 @@ impl<F: JoltField> ReadRafProverState<F> {
         self.right_operand_ps.init_P(&mut self.prefix_registry);
         self.left_operand_ps.init_P(&mut self.prefix_registry);
 
-        self.v.reset(F::one());
+        self.v[phase].reset(F::one());
     }
 
     #[tracing::instrument(skip_all, name = "InstructionReadRafProverState::init_suffix_polys")]
@@ -728,37 +731,34 @@ impl<F: JoltField> ReadRafProverState<F> {
             });
     }
 
-    /// To be called at the end of each phase, after binding is done
-    #[tracing::instrument(skip_all, name = "InstructionReadRafProverState::cache_phase")]
-    fn cache_phase(&mut self, phase: usize) {
-        if let Some(ra_acc) = self.ra_acc.as_mut() {
-            ra_acc
-                .par_iter_mut()
-                .zip(self.lookup_indices.par_iter())
-                .for_each(|(ra, k)| {
-                    let (prefix, _) = k.split((PHASES - 1 - phase) * LOG_M);
-                    let k_bound: usize = prefix % M;
-                    *ra *= self.v[k_bound]
-                });
-        } else {
-            let ra = self
-                .lookup_indices
-                .par_iter()
-                .map(|k| {
-                    let (prefix, _) = k.split((PHASES - 1 - phase) * LOG_M);
-                    let k_bound: usize = prefix % M;
-                    self.v[k_bound]
-                })
-                .collect::<Vec<F>>();
-            self.ra_acc = Some(ra);
-        }
-
-        self.prefix_registry.update_checkpoints();
-    }
-
     /// To be called before the last log(T) rounds
     #[tracing::instrument(skip_all, name = "InstructionReadRafProverState::init_log_t_rounds")]
     fn init_log_t_rounds(&mut self, gamma: F, gamma_sqr: F) {
+        // Drop stuff that's no longer needed
+        drop_in_background_thread((
+            std::mem::take(&mut self.u_evals_raf),
+            std::mem::take(&mut self.u_evals_rv),
+            std::mem::take(&mut self.lookup_indices_uninterleave),
+        ));
+
+        // Materialize ra polynomial
+        let ra: Vec<_> = self
+            .lookup_indices
+            .par_iter()
+            .map(|k| {
+                (0..PHASES)
+                    .map(|phase| {
+                        let (prefix, _) = k.split((PHASES - 1 - phase) * LOG_M);
+                        let k_bound: usize = prefix % M;
+                        self.v[phase][k_bound]
+                    })
+                    .product::<F>()
+            })
+            .collect();
+        self.ra = Some(ra.into());
+
+        drop_in_background_thread(std::mem::take(&mut self.v));
+
         let prefixes: Vec<PrefixEval<F>> = std::mem::take(&mut self.prefix_checkpoints)
             .into_iter()
             .map(|checkpoint| checkpoint.unwrap())
