@@ -4,21 +4,25 @@ use core::hint::black_box;
 
 use jolt::{end_cycle_tracking, start_cycle_tracking};
 
-use sha2::{self as sha2_reference, Digest};
-use jolt_inlines_sha2 as sha2_inline;
-use sha3 as keccak_reference;
-use jolt_inlines_keccak256 as keccak_inline;
 use blake2 as blake2_reference;
-use jolt_inlines_blake2 as blake2_inline;
 use blake3 as blake3_reference;
+use jolt_inlines_blake2 as blake2_inline;
 use jolt_inlines_blake3 as blake3_inline;
+use jolt_inlines_keccak256 as keccak_inline;
+use jolt_inlines_sha2 as sha2_inline;
+use sha2::{self as sha2_reference, Digest};
+use sha3 as keccak_reference;
 
 const INPUT_SIZE: usize = 32_768;
 const BLAKE3_INPUT_SIZE: usize = 64;
 
-#[jolt::provable(max_output_size= 4096, memory_size= 33554432, stack_size=10485760, max_trace_length = 20553600)]
+#[jolt::provable(
+    max_output_size = 4096,
+    memory_size = 33554432,
+    stack_size = 10485760,
+    max_trace_length = 20553600
+)]
 fn hashbench() -> [u8; 32] {
-    // Run all 8 benchmarks
     benchmark_sha2_reference();
     benchmark_sha2_inline();
     benchmark_keccak_reference();
@@ -27,7 +31,7 @@ fn hashbench() -> [u8; 32] {
     benchmark_blake2_inline();
     benchmark_blake3_reference();
     benchmark_blake3_inline();
-    
+
     return [0; 32];
 }
 
@@ -36,13 +40,11 @@ fn hashbench() -> [u8; 32] {
 fn assign_random_looking_values(array: &mut [u8], seed: u32) {
     const A: u32 = 1664525;
     const C: u32 = 1013904223;
-    
     let mut state = seed;
-    
-    for i in 0..array.len() {
+    for item in array {
         state = state.wrapping_mul(A).wrapping_add(C);
         let value = (state ^ (state >> 16)) as u8;
-        array[i] = value;
+        *item = value;
     }
 }
 

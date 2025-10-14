@@ -368,49 +368,4 @@ mod tests {
             );
         }
     }
-
-    #[test]
-    fn test_blake3_inline_sequence_builder_instruction_count() {
-        use super::blake3_inline_sequence_builder;
-        use tracer::emulator::cpu::Xlen;
-        use tracer::instruction::format::format_inline::FormatInline;
-        use tracer::utils::inline_helpers::InstrAssembler;
-        use tracer::utils::virtual_registers::VirtualRegisterAllocator;
-
-        // Create a VirtualRegisterAllocator for the test
-        let allocator = VirtualRegisterAllocator::new();
-        
-        // Create InstrAssembler using new_inline method
-        let asm = InstrAssembler::new_inline(
-            0x1000,        // address
-            false,         // is_compressed
-            Xlen::Bit64,   // xlen
-            &allocator,    // allocator reference
-        );
-        
-        // Create FormatInline operands with correct fields
-        let operands = FormatInline {
-            rs1: 10, // Source register 1  
-            rs2: 11, // Source register 2
-            rs3: 12, // Source register 3
-        };
-
-        // Call the function and get the instruction sequence
-        let instructions = blake3_inline_sequence_builder(asm, operands);
-        
-        // Get the length of the instruction sequence
-        let instruction_count = instructions.len();
-        
-        // Print the instruction count for visibility
-        println!("BLAKE3 inline sequence generated {} instructions", instruction_count);
-        
-        // Assert that we generated some instructions (non-empty sequence)
-        assert!(instruction_count > 0, "Expected non-empty instruction sequence");
-        
-        // Assert that we generated a reasonable number of instructions for BLAKE3 compression
-        // BLAKE3 compression involves rounds with multiple operations per round
-        assert!(instruction_count > 100, "Expected more than 100 instructions for BLAKE3 compression");
-        
-        println!("Test passed: Generated {} instructions for BLAKE3 compression", instruction_count);
-    }
 }

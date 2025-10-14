@@ -40,15 +40,16 @@ impl Blake3 {
         if input_len == 0 {
             return;
         }
-        
+
         let remaining_capacity = BLOCK_INPUT_SIZE_IN_BYTES - self.buffer_len;
-        
+
         // Check if we have enough space for the entire input
         if input_len > remaining_capacity {
-            panic!("Buffer overflow: trying to add {} bytes but only {} bytes remaining", 
-                   input_len, remaining_capacity);
+            panic!(
+                "Buffer overflow: trying to add {input_len} bytes but only {remaining_capacity} bytes remaining"
+            );
         }
-        
+
         // Safety: We've already verified that:
         // 1. input_len <= remaining_capacity
         // 2. Both source and destination pointers are valid
@@ -59,7 +60,7 @@ impl Blake3 {
                 input_len,
             );
         }
-        
+
         self.buffer_len += input_len;
     }
 
@@ -76,7 +77,7 @@ impl Blake3 {
                 );
             }
         }
-        
+
         // Process final block
         compression_caller(
             &mut self.h,
@@ -89,9 +90,13 @@ impl Blake3 {
         // Safety: [u32; 8] and [u8; 32] have identical size (32 bytes)
         #[cfg(target_endian = "little")]
         {
-            unsafe { core::mem::transmute::<[u32; CHAINING_VALUE_LEN], [u8; OUTPUT_SIZE_IN_BYTES]>(self.h) }
+            unsafe {
+                core::mem::transmute::<[u32; CHAINING_VALUE_LEN], [u8; OUTPUT_SIZE_IN_BYTES]>(
+                    self.h,
+                )
+            }
         }
-        
+
         #[cfg(target_endian = "big")]
         {
             // For big-endian, convert each u32 to little-endian bytes
@@ -149,7 +154,7 @@ fn compression_caller(
 ) {
     let mut message = [0u32; MSG_BLOCK_LEN + COUNTER_LEN + 2];
     debug_assert_eq!(message_block.len(), BLOCK_INPUT_SIZE_IN_BYTES);
-    
+
     #[cfg(target_endian = "little")]
     unsafe {
         // Direct memory copy on little-endian
@@ -159,7 +164,7 @@ fn compression_caller(
             MSG_BLOCK_LEN,
         );
     }
-    
+
     #[cfg(target_endian = "big")]
     {
         // For big-endian, we need to convert each u32

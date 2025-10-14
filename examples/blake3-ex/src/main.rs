@@ -15,7 +15,6 @@ pub fn main() {
     let verify_blake3 = guest::build_verifier_blake3(verifier_preprocessing);
 
     let input: &[u8] = &[5u8; 64];
-    
     let now = Instant::now();
     let (output, proof, program_io) = prove_blake3(input);
     info!("Prover runtime: {} s", now.elapsed().as_secs_f64());
