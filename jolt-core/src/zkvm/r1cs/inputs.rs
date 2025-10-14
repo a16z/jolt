@@ -8,8 +8,11 @@ use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::opening_proof::{OpeningId, SumcheckId};
 use crate::utils::small_scalar::SmallScalar;
-use crate::zkvm::instruction::{CircuitFlags, InstructionFlags, LookupQuery, NUM_CIRCUIT_FLAGS};
-use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
+use crate::zkvm::instruction::{
+    CircuitFlags, Flags, InstructionFlags, LookupQuery, NUM_CIRCUIT_FLAGS,
+};
+use crate::zkvm::spartan::product::VirtualProductType;
+use crate::zkvm::witness::VirtualPolynomial;
 use crate::zkvm::JoltSharedPreprocessing;
 
 use crate::field::JoltField;
@@ -100,6 +103,7 @@ impl R1CSCycleInputs {
         let cycle = &trace[t];
         let instr = cycle.instruction();
         let flags_view = instr.circuit_flags();
+        let instruction_flags = instr.instruction_flags();
         let norm = instr.normalize();
 
         // Next-cycle context
@@ -168,12 +172,12 @@ impl R1CSCycleInputs {
             flags[flag] = flags_view[flag];
         }
         let next_is_noop = if let Some(nc) = next_cycle {
-            nc.instruction().circuit_flags()[CircuitFlags::IsNoop]
+            nc.instruction().instruction_flags()[InstructionFlags::IsNoop]
         } else {
             false
         };
         let should_jump = flags_view[CircuitFlags::Jump] && !next_is_noop;
-        let should_branch = if flags_view[CircuitFlags::Branch] {
+        let should_branch = if instruction_flags[InstructionFlags::Branch] {
             lookup_output
         } else {
             0u64
@@ -235,7 +239,6 @@ impl R1CSCycleInputs {
             JoltR1CSInputs::ShouldBranch => self.should_branch.to_field(),
             JoltR1CSInputs::PC => self.pc.to_field(),
             JoltR1CSInputs::UnexpandedPC => self.unexpanded_pc.to_field(),
-            JoltR1CSInputs::Rd => (self.rd_addr as u64).to_field(),
             JoltR1CSInputs::Imm => F::from_i128(self.imm.to_i128()),
             JoltR1CSInputs::RamAddress => self.ram_addr.to_field(),
             JoltR1CSInputs::Rs1Value => self.rs1_read_value.to_field(),
@@ -248,7 +251,6 @@ impl R1CSCycleInputs {
             JoltR1CSInputs::NextUnexpandedPC => self.next_unexpanded_pc.to_field(),
             JoltR1CSInputs::NextPC => self.next_pc.to_field(),
             JoltR1CSInputs::LookupOutput => self.lookup_output.to_field(),
-            JoltR1CSInputs::NextIsNoop => F::from_bool(self.next_is_noop),
             JoltR1CSInputs::ShouldJump => F::from_bool(self.should_jump),
             JoltR1CSInputs::OpFlags(flag) => F::from_bool(self.flags[flag]),
         }
@@ -259,7 +261,6 @@ impl R1CSCycleInputs {
 pub enum JoltR1CSInputs {
     PC,                    // Virtual (bytecode raf)
     UnexpandedPC,          // Virtual (bytecode rv)
-    Rd,                    // Virtual (bytecode rv)
     Imm,                   // Virtual (bytecode rv)
     RamAddress,            // Virtual (RAM raf)
     Rs1Value,              // Virtual (registers rv)
@@ -272,21 +273,20 @@ pub enum JoltR1CSInputs {
     LeftLookupOperand,     // Virtual (instruction raf)
     RightLookupOperand,    // Virtual (instruction raf)
     Product,               // LeftInstructionOperand * RightInstructionOperand
-    WriteLookupOutputToRD,
-    WritePCtoRD,
-    ShouldBranch,
-    NextUnexpandedPC, // Virtual (spartan shift sumcheck)
-    NextPC,           // Virtual (spartan shift sumcheck)
-    LookupOutput,     // Virtual (instruction rv)
-    NextIsNoop,       // Virtual (spartan shift sumcheck)
-    ShouldJump,
+    WriteLookupOutputToRD, // Virtual (product sumcheck)
+    WritePCtoRD,           // Virtual (product sumcheck)
+    ShouldBranch,          // Virtual (product sumcheck)
+    NextUnexpandedPC,      // Virtual (spartan shift sumcheck)
+    NextPC,                // Virtual (spartan shift sumcheck)
+    LookupOutput,          // Virtual (instruction rv)
+    ShouldJump,            // Virtual (product sumcheck)
     OpFlags(CircuitFlags),
 }
 
 const NUM_R1CS_INPUTS: usize = ALL_R1CS_INPUTS.len();
 /// This const serves to define a canonical ordering over inputs (and thus indices
 /// for each input). This is needed for sumcheck.
-pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 41] = [
+pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 33] = [
     JoltR1CSInputs::LeftInstructionInput,
     JoltR1CSInputs::RightInstructionInput,
     JoltR1CSInputs::Product,
@@ -295,7 +295,6 @@ pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 41] = [
     JoltR1CSInputs::ShouldBranch,
     JoltR1CSInputs::PC,
     JoltR1CSInputs::UnexpandedPC,
-    JoltR1CSInputs::Rd,
     JoltR1CSInputs::Imm,
     JoltR1CSInputs::RamAddress,
     JoltR1CSInputs::Rs1Value,
@@ -308,37 +307,19 @@ pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 41] = [
     JoltR1CSInputs::NextUnexpandedPC,
     JoltR1CSInputs::NextPC,
     JoltR1CSInputs::LookupOutput,
-    JoltR1CSInputs::NextIsNoop,
     JoltR1CSInputs::ShouldJump,
-    JoltR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsRs1Value),
-    JoltR1CSInputs::OpFlags(CircuitFlags::RightOperandIsRs2Value),
-    JoltR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsPC),
-    JoltR1CSInputs::OpFlags(CircuitFlags::RightOperandIsImm),
     JoltR1CSInputs::OpFlags(CircuitFlags::AddOperands),
     JoltR1CSInputs::OpFlags(CircuitFlags::SubtractOperands),
     JoltR1CSInputs::OpFlags(CircuitFlags::MultiplyOperands),
     JoltR1CSInputs::OpFlags(CircuitFlags::Load),
     JoltR1CSInputs::OpFlags(CircuitFlags::Store),
     JoltR1CSInputs::OpFlags(CircuitFlags::Jump),
-    JoltR1CSInputs::OpFlags(CircuitFlags::Branch),
     JoltR1CSInputs::OpFlags(CircuitFlags::WriteLookupOutputToRD),
     JoltR1CSInputs::OpFlags(CircuitFlags::InlineSequenceInstruction),
     JoltR1CSInputs::OpFlags(CircuitFlags::Assert),
     JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC),
     JoltR1CSInputs::OpFlags(CircuitFlags::Advice),
-    JoltR1CSInputs::OpFlags(CircuitFlags::IsNoop),
     JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed),
-];
-
-/// The subset of `ALL_R1CS_INPUTS` that are committed. The rest of
-/// the inputs are virtual polynomials.
-pub const COMMITTED_R1CS_INPUTS: [JoltR1CSInputs; 6] = [
-    JoltR1CSInputs::LeftInstructionInput,
-    JoltR1CSInputs::RightInstructionInput,
-    JoltR1CSInputs::WriteLookupOutputToRD,
-    JoltR1CSInputs::WritePCtoRD,
-    JoltR1CSInputs::ShouldBranch,
-    JoltR1CSInputs::ShouldJump,
 ];
 
 impl JoltR1CSInputs {
@@ -367,104 +348,68 @@ impl JoltR1CSInputs {
             JoltR1CSInputs::ShouldBranch => 5,
             JoltR1CSInputs::PC => 6,
             JoltR1CSInputs::UnexpandedPC => 7,
-            JoltR1CSInputs::Rd => 8,
-            JoltR1CSInputs::Imm => 9,
-            JoltR1CSInputs::RamAddress => 10,
-            JoltR1CSInputs::Rs1Value => 11,
-            JoltR1CSInputs::Rs2Value => 12,
-            JoltR1CSInputs::RdWriteValue => 13,
-            JoltR1CSInputs::RamReadValue => 14,
-            JoltR1CSInputs::RamWriteValue => 15,
-            JoltR1CSInputs::LeftLookupOperand => 16,
-            JoltR1CSInputs::RightLookupOperand => 17,
-            JoltR1CSInputs::NextUnexpandedPC => 18,
-            JoltR1CSInputs::NextPC => 19,
-            JoltR1CSInputs::LookupOutput => 20,
-            JoltR1CSInputs::NextIsNoop => 21,
-            JoltR1CSInputs::ShouldJump => 22,
-            JoltR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsRs1Value) => 23,
-            JoltR1CSInputs::OpFlags(CircuitFlags::RightOperandIsRs2Value) => 24,
-            JoltR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsPC) => 25,
-            JoltR1CSInputs::OpFlags(CircuitFlags::RightOperandIsImm) => 26,
-            JoltR1CSInputs::OpFlags(CircuitFlags::AddOperands) => 27,
-            JoltR1CSInputs::OpFlags(CircuitFlags::SubtractOperands) => 28,
-            JoltR1CSInputs::OpFlags(CircuitFlags::MultiplyOperands) => 29,
-            JoltR1CSInputs::OpFlags(CircuitFlags::Load) => 30,
-            JoltR1CSInputs::OpFlags(CircuitFlags::Store) => 31,
-            JoltR1CSInputs::OpFlags(CircuitFlags::Jump) => 32,
-            JoltR1CSInputs::OpFlags(CircuitFlags::Branch) => 33,
-            JoltR1CSInputs::OpFlags(CircuitFlags::WriteLookupOutputToRD) => 34,
-            JoltR1CSInputs::OpFlags(CircuitFlags::InlineSequenceInstruction) => 35,
-            JoltR1CSInputs::OpFlags(CircuitFlags::Assert) => 36,
-            JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC) => 37,
-            JoltR1CSInputs::OpFlags(CircuitFlags::Advice) => 38,
-            JoltR1CSInputs::OpFlags(CircuitFlags::IsNoop) => 39,
-            JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed) => 40,
+            JoltR1CSInputs::Imm => 8,
+            JoltR1CSInputs::RamAddress => 9,
+            JoltR1CSInputs::Rs1Value => 10,
+            JoltR1CSInputs::Rs2Value => 11,
+            JoltR1CSInputs::RdWriteValue => 12,
+            JoltR1CSInputs::RamReadValue => 13,
+            JoltR1CSInputs::RamWriteValue => 14,
+            JoltR1CSInputs::LeftLookupOperand => 15,
+            JoltR1CSInputs::RightLookupOperand => 16,
+            JoltR1CSInputs::NextUnexpandedPC => 17,
+            JoltR1CSInputs::NextPC => 18,
+            JoltR1CSInputs::LookupOutput => 19,
+            JoltR1CSInputs::ShouldJump => 20,
+            JoltR1CSInputs::OpFlags(CircuitFlags::AddOperands) => 21,
+            JoltR1CSInputs::OpFlags(CircuitFlags::SubtractOperands) => 22,
+            JoltR1CSInputs::OpFlags(CircuitFlags::MultiplyOperands) => 23,
+            JoltR1CSInputs::OpFlags(CircuitFlags::Load) => 24,
+            JoltR1CSInputs::OpFlags(CircuitFlags::Store) => 25,
+            JoltR1CSInputs::OpFlags(CircuitFlags::Jump) => 26,
+            JoltR1CSInputs::OpFlags(CircuitFlags::WriteLookupOutputToRD) => 27,
+            JoltR1CSInputs::OpFlags(CircuitFlags::InlineSequenceInstruction) => 28,
+            JoltR1CSInputs::OpFlags(CircuitFlags::Assert) => 29,
+            JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC) => 30,
+            JoltR1CSInputs::OpFlags(CircuitFlags::Advice) => 31,
+            JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed) => 32,
         }
     }
 }
 
-/// Converts a JoltR1CSInputs to a CommittedPolynomial if the input represents a committed
-/// polynomial, and returns an error otherwise.
-impl TryFrom<&JoltR1CSInputs> for CommittedPolynomial {
-    type Error = &'static str;
-
-    fn try_from(input: &JoltR1CSInputs) -> Result<Self, Self::Error> {
+impl From<&JoltR1CSInputs> for VirtualPolynomial {
+    fn from(input: &JoltR1CSInputs) -> Self {
         match input {
-            JoltR1CSInputs::LeftInstructionInput => Ok(CommittedPolynomial::LeftInstructionInput),
-            JoltR1CSInputs::RightInstructionInput => Ok(CommittedPolynomial::RightInstructionInput),
-            JoltR1CSInputs::WriteLookupOutputToRD => Ok(CommittedPolynomial::WriteLookupOutputToRD),
-            JoltR1CSInputs::WritePCtoRD => Ok(CommittedPolynomial::WritePCtoRD),
-            JoltR1CSInputs::ShouldBranch => Ok(CommittedPolynomial::ShouldBranch),
-            JoltR1CSInputs::ShouldJump => Ok(CommittedPolynomial::ShouldJump),
-            _ => Err("{value} is not a committed polynomial"),
+            JoltR1CSInputs::PC => VirtualPolynomial::PC,
+            JoltR1CSInputs::UnexpandedPC => VirtualPolynomial::UnexpandedPC,
+            JoltR1CSInputs::Imm => VirtualPolynomial::Imm,
+            JoltR1CSInputs::RamAddress => VirtualPolynomial::RamAddress,
+            JoltR1CSInputs::Rs1Value => VirtualPolynomial::Rs1Value,
+            JoltR1CSInputs::Rs2Value => VirtualPolynomial::Rs2Value,
+            JoltR1CSInputs::RdWriteValue => VirtualPolynomial::RdWriteValue,
+            JoltR1CSInputs::RamReadValue => VirtualPolynomial::RamReadValue,
+            JoltR1CSInputs::RamWriteValue => VirtualPolynomial::RamWriteValue,
+            JoltR1CSInputs::LeftLookupOperand => VirtualPolynomial::LeftLookupOperand,
+            JoltR1CSInputs::RightLookupOperand => VirtualPolynomial::RightLookupOperand,
+            JoltR1CSInputs::Product => VirtualPolynomial::Product,
+            JoltR1CSInputs::NextUnexpandedPC => VirtualPolynomial::NextUnexpandedPC,
+            JoltR1CSInputs::NextPC => VirtualPolynomial::NextPC,
+            JoltR1CSInputs::LookupOutput => VirtualPolynomial::LookupOutput,
+            JoltR1CSInputs::ShouldJump => VirtualPolynomial::ShouldJump,
+            JoltR1CSInputs::ShouldBranch => VirtualPolynomial::ShouldBranch,
+            JoltR1CSInputs::WritePCtoRD => VirtualPolynomial::WritePCtoRD,
+            JoltR1CSInputs::WriteLookupOutputToRD => VirtualPolynomial::WriteLookupOutputToRD,
+            JoltR1CSInputs::OpFlags(flag) => VirtualPolynomial::OpFlags(*flag),
+            JoltR1CSInputs::LeftInstructionInput => VirtualPolynomial::LeftInstructionInput,
+            JoltR1CSInputs::RightInstructionInput => VirtualPolynomial::RightInstructionInput,
         }
     }
 }
 
-/// Converts a JoltR1CSInputs to a VirtualPolynomial if the input represents a virtual polynomial,
-/// and returns an error otherwise.
-impl TryFrom<&JoltR1CSInputs> for VirtualPolynomial {
-    type Error = &'static str;
-
-    fn try_from(input: &JoltR1CSInputs) -> Result<Self, Self::Error> {
-        match input {
-            JoltR1CSInputs::PC => Ok(VirtualPolynomial::PC),
-            JoltR1CSInputs::UnexpandedPC => Ok(VirtualPolynomial::UnexpandedPC),
-            JoltR1CSInputs::Rd => Ok(VirtualPolynomial::Rd),
-            JoltR1CSInputs::Imm => Ok(VirtualPolynomial::Imm),
-            JoltR1CSInputs::RamAddress => Ok(VirtualPolynomial::RamAddress),
-            JoltR1CSInputs::Rs1Value => Ok(VirtualPolynomial::Rs1Value),
-            JoltR1CSInputs::Rs2Value => Ok(VirtualPolynomial::Rs2Value),
-            JoltR1CSInputs::RdWriteValue => Ok(VirtualPolynomial::RdWriteValue),
-            JoltR1CSInputs::RamReadValue => Ok(VirtualPolynomial::RamReadValue),
-            JoltR1CSInputs::RamWriteValue => Ok(VirtualPolynomial::RamWriteValue),
-            JoltR1CSInputs::LeftLookupOperand => Ok(VirtualPolynomial::LeftLookupOperand),
-            JoltR1CSInputs::RightLookupOperand => Ok(VirtualPolynomial::RightLookupOperand),
-            JoltR1CSInputs::Product => Ok(VirtualPolynomial::Product),
-            JoltR1CSInputs::NextUnexpandedPC => Ok(VirtualPolynomial::NextUnexpandedPC),
-            JoltR1CSInputs::NextPC => Ok(VirtualPolynomial::NextPC),
-            JoltR1CSInputs::NextIsNoop => Ok(VirtualPolynomial::NextIsNoop),
-            JoltR1CSInputs::LookupOutput => Ok(VirtualPolynomial::LookupOutput),
-            JoltR1CSInputs::OpFlags(flag) => Ok(VirtualPolynomial::OpFlags(*flag)),
-            _ => Err("{value} is not a virtual polynomial"),
-        }
-    }
-}
-
-/// Converts a JoltR1CSInputs to an OpeningId by determining if it is a virtual or committed
-/// polynomial, returning an error otherwise.
-impl TryFrom<&JoltR1CSInputs> for OpeningId {
-    type Error = &'static str;
-
-    fn try_from(input: &JoltR1CSInputs) -> Result<Self, Self::Error> {
-        if let Ok(poly) = VirtualPolynomial::try_from(input) {
-            Ok(OpeningId::Virtual(poly, SumcheckId::SpartanOuter))
-        } else if let Ok(poly) = CommittedPolynomial::try_from(input) {
-            Ok(OpeningId::Committed(poly, SumcheckId::SpartanOuter))
-        } else {
-            Err("Could not map {value} to an OpeningId")
-        }
+impl From<&JoltR1CSInputs> for OpeningId {
+    fn from(input: &JoltR1CSInputs) -> Self {
+        let poly = VirtualPolynomial::from(input);
+        OpeningId::Virtual(poly, SumcheckId::SpartanOuter)
     }
 }
 
@@ -511,7 +456,6 @@ pub fn compute_claimed_witness_evals<F: JoltField>(
                 inner[JoltR1CSInputs::PC.to_index()] += row.pc.field_mul(eq2_val);
                 inner[JoltR1CSInputs::UnexpandedPC.to_index()] +=
                     row.unexpanded_pc.field_mul(eq2_val);
-                inner[JoltR1CSInputs::Rd.to_index()] += row.rd_addr.field_mul(eq2_val);
                 inner[JoltR1CSInputs::Imm.to_index()] += row.imm.to_i128().field_mul(eq2_val);
                 inner[JoltR1CSInputs::RamAddress.to_index()] += row.ram_addr.field_mul(eq2_val);
                 inner[JoltR1CSInputs::Rs1Value.to_index()] += row.rs1_read_value.field_mul(eq2_val);
@@ -531,9 +475,6 @@ pub fn compute_claimed_witness_evals<F: JoltField>(
                 inner[JoltR1CSInputs::NextPC.to_index()] += row.next_pc.field_mul(eq2_val);
                 inner[JoltR1CSInputs::LookupOutput.to_index()] +=
                     row.lookup_output.field_mul(eq2_val);
-                if row.next_is_noop {
-                    inner[JoltR1CSInputs::NextIsNoop.to_index()] += eq2_val;
-                }
                 if row.should_jump {
                     inner[JoltR1CSInputs::ShouldJump.to_index()] += eq2_val;
                 }
@@ -589,7 +530,7 @@ where
         .for_each(|(((u, p), n), cycle)| {
             *u = cycle.instruction().normalize().address as u64;
             *p = preprocessing.bytecode.get_pc(cycle) as u64;
-            *n = cycle.instruction().circuit_flags()[CircuitFlags::IsNoop] as u8;
+            *n = cycle.instruction().instruction_flags()[InstructionFlags::IsNoop] as u8;
         });
 
     (unexpanded_pc.into(), pc.into(), is_noop.into())
@@ -620,6 +561,92 @@ where
     (left_input.into(), right_input.into())
 }
 
+// TODO(markosg04): we could unify this with the `generate_witness_batch` to avoid a second iteration over T
+pub fn generate_virtual_product_witnesses<F>(
+    product_type: VirtualProductType,
+    trace: &[Cycle],
+) -> (
+    MultilinearPolynomial<F>, // Left polynomial
+    MultilinearPolynomial<F>, // Right polynomial
+)
+where
+    F: JoltField,
+{
+    let len = trace.len();
+
+    match product_type {
+        VirtualProductType::Instruction => generate_product_virtualization_witnesses(trace),
+        VirtualProductType::WriteLookupOutputToRD => {
+            let mut rd_addrs: Vec<u8> = vec![0; len];
+            let mut flags: Vec<u8> = vec![0; len];
+
+            rd_addrs
+                .par_iter_mut()
+                .zip(flags.par_iter_mut())
+                .zip(trace.par_iter())
+                .for_each(|((rd, flag), cycle)| {
+                    *rd = cycle.rd_write().0;
+                    *flag = cycle.instruction().circuit_flags()[CircuitFlags::WriteLookupOutputToRD]
+                        as u8;
+                });
+
+            (rd_addrs.into(), flags.into())
+        }
+        VirtualProductType::WritePCtoRD => {
+            let mut rd_addrs: Vec<u8> = vec![0; len];
+            let mut flags: Vec<u8> = vec![0; len];
+
+            rd_addrs
+                .par_iter_mut()
+                .zip(flags.par_iter_mut())
+                .zip(trace.par_iter())
+                .for_each(|((rd, flag), cycle)| {
+                    *rd = cycle.rd_write().0;
+                    *flag = cycle.instruction().circuit_flags()[CircuitFlags::Jump] as u8;
+                });
+
+            (rd_addrs.into(), flags.into())
+        }
+        VirtualProductType::ShouldBranch => {
+            let mut lookup_outputs: Vec<u64> = vec![0; len];
+            let mut flags: Vec<u8> = vec![0; len];
+
+            lookup_outputs
+                .par_iter_mut()
+                .zip(flags.par_iter_mut())
+                .zip(trace.par_iter())
+                .for_each(|((output, flag), cycle)| {
+                    *output = LookupQuery::<XLEN>::to_lookup_output(cycle);
+                    *flag = cycle.instruction().instruction_flags()[InstructionFlags::Branch] as u8;
+                });
+
+            (lookup_outputs.into(), flags.into())
+        }
+        VirtualProductType::ShouldJump => {
+            let mut jump_flags: Vec<u8> = vec![0; len];
+            let mut not_next_noop: Vec<u8> = vec![0; len];
+
+            jump_flags
+                .par_iter_mut()
+                .zip(not_next_noop.par_iter_mut())
+                .enumerate()
+                .for_each(|(i, (jump, not_noop))| {
+                    *jump = trace[i].instruction().circuit_flags()[CircuitFlags::Jump] as u8;
+
+                    let is_next_noop = if i + 1 < len {
+                        trace[i + 1].instruction().instruction_flags()[InstructionFlags::IsNoop]
+                            as u8
+                    } else {
+                        1 // Last cycle, treat as if next is NoOp
+                    };
+                    *not_noop = 1 - is_next_noop;
+                });
+
+            (jump_flags.into(), not_next_noop.into())
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -644,7 +671,6 @@ mod tests {
             match (self, other) {
                 (JoltR1CSInputs::PC, JoltR1CSInputs::PC) => true,
                 (JoltR1CSInputs::UnexpandedPC, JoltR1CSInputs::UnexpandedPC) => true,
-                (JoltR1CSInputs::Rd, JoltR1CSInputs::Rd) => true,
                 (JoltR1CSInputs::Imm, JoltR1CSInputs::Imm) => true,
                 (JoltR1CSInputs::RamAddress, JoltR1CSInputs::RamAddress) => true,
                 (JoltR1CSInputs::Rs1Value, JoltR1CSInputs::Rs1Value) => true,
@@ -669,7 +695,6 @@ mod tests {
                 (JoltR1CSInputs::NextUnexpandedPC, JoltR1CSInputs::NextUnexpandedPC) => true,
                 (JoltR1CSInputs::NextPC, JoltR1CSInputs::NextPC) => true,
                 (JoltR1CSInputs::LookupOutput, JoltR1CSInputs::LookupOutput) => true,
-                (JoltR1CSInputs::NextIsNoop, JoltR1CSInputs::NextIsNoop) => true,
                 (JoltR1CSInputs::ShouldJump, JoltR1CSInputs::ShouldJump) => true,
                 (JoltR1CSInputs::OpFlags(flag1), JoltR1CSInputs::OpFlags(flag2)) => {
                     self.const_eq_circuit_flags(*flag1, *flag2)
@@ -682,18 +707,7 @@ mod tests {
         const fn const_eq_circuit_flags(&self, flag1: CircuitFlags, flag2: CircuitFlags) -> bool {
             matches!(
                 (flag1, flag2),
-                (
-                    CircuitFlags::LeftOperandIsRs1Value,
-                    CircuitFlags::LeftOperandIsRs1Value
-                ) | (
-                    CircuitFlags::RightOperandIsRs2Value,
-                    CircuitFlags::RightOperandIsRs2Value
-                ) | (CircuitFlags::LeftOperandIsPC, CircuitFlags::LeftOperandIsPC)
-                    | (
-                        CircuitFlags::RightOperandIsImm,
-                        CircuitFlags::RightOperandIsImm
-                    )
-                    | (CircuitFlags::AddOperands, CircuitFlags::AddOperands)
+                (CircuitFlags::AddOperands, CircuitFlags::AddOperands)
                     | (
                         CircuitFlags::SubtractOperands,
                         CircuitFlags::SubtractOperands
@@ -705,7 +719,6 @@ mod tests {
                     | (CircuitFlags::Load, CircuitFlags::Load)
                     | (CircuitFlags::Store, CircuitFlags::Store)
                     | (CircuitFlags::Jump, CircuitFlags::Jump)
-                    | (CircuitFlags::Branch, CircuitFlags::Branch)
                     | (
                         CircuitFlags::WriteLookupOutputToRD,
                         CircuitFlags::WriteLookupOutputToRD
@@ -720,7 +733,6 @@ mod tests {
                         CircuitFlags::DoNotUpdateUnexpandedPC
                     )
                     | (CircuitFlags::Advice, CircuitFlags::Advice)
-                    | (CircuitFlags::IsNoop, CircuitFlags::IsNoop)
                     | (CircuitFlags::IsCompressed, CircuitFlags::IsCompressed)
             )
         }

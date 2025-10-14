@@ -1,8 +1,9 @@
+use crate::zkvm::instruction::{InstructionFlags, NUM_INSTRUCTION_FLAGS};
 use crate::zkvm::lookup_table::LookupTables;
 use crate::zkvm::{instruction::LookupQuery, lookup_table::range_check::RangeCheckTable};
 use tracer::instruction::{addi::ADDI, RISCVCycle};
 
-use super::{CircuitFlags, InstructionFlags, InstructionLookup, NUM_CIRCUIT_FLAGS};
+use super::{CircuitFlags, Flags, InstructionLookup, NUM_CIRCUIT_FLAGS};
 
 impl<const XLEN: usize> InstructionLookup<XLEN> for ADDI {
     fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
@@ -10,18 +11,23 @@ impl<const XLEN: usize> InstructionLookup<XLEN> for ADDI {
     }
 }
 
-impl InstructionFlags for ADDI {
+impl Flags for ADDI {
     fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
         let mut flags = [false; NUM_CIRCUIT_FLAGS];
         flags[CircuitFlags::AddOperands as usize] = true;
-        flags[CircuitFlags::LeftOperandIsRs1Value as usize] = true;
-        flags[CircuitFlags::RightOperandIsImm as usize] = true;
         flags[CircuitFlags::WriteLookupOutputToRD as usize] = true;
         flags[CircuitFlags::InlineSequenceInstruction as usize] =
             self.inline_sequence_remaining.is_some();
         flags[CircuitFlags::DoNotUpdateUnexpandedPC as usize] =
             self.inline_sequence_remaining.unwrap_or(0) != 0;
         flags[CircuitFlags::IsCompressed as usize] = self.is_compressed;
+        flags
+    }
+
+    fn instruction_flags(&self) -> [bool; NUM_INSTRUCTION_FLAGS] {
+        let mut flags = [false; NUM_INSTRUCTION_FLAGS];
+        flags[InstructionFlags::LeftOperandIsRs1Value as usize] = true;
+        flags[InstructionFlags::RightOperandIsImm as usize] = true;
         flags
     }
 }
