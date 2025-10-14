@@ -57,9 +57,9 @@ struct ReadRafProverState<F: JoltField> {
     r: Vec<F::Challenge>,
 
     lookup_indices: Vec<LookupBits>,
-    lookup_indices_by_table: Vec<Vec<(usize, LookupBits)>>,
-    lookup_indices_uninterleave: Vec<(usize, LookupBits)>,
-    lookup_indices_identity: Vec<(usize, LookupBits)>,
+    lookup_indices_by_table: Vec<Vec<usize>>,
+    lookup_indices_uninterleave: Vec<usize>,
+    lookup_indices_identity: Vec<usize>,
     is_interleaved_operands: Vec<bool>,
     #[allocative(skip)]
     lookup_tables: Vec<Option<LookupTables<XLEN>>>,
@@ -232,15 +232,15 @@ impl<'a, F: JoltField> ReadRafProverState<F> {
         let (lookup_indices_uninterleave, lookup_indices_identity): (Vec<_>, Vec<_>) =
             cycle_data.par_iter().partition_map(|data| {
                 if data.is_interleaved {
-                    rayon::iter::Either::Left((data.idx, data.lookup_index))
+                    rayon::iter::Either::Left(data.idx)
                 } else {
-                    rayon::iter::Either::Right((data.idx, data.lookup_index))
+                    rayon::iter::Either::Right(data.idx)
                 }
             });
 
         // Build lookup_indices_by_table fully in parallel
         // Create a vector for each table in parallel
-        let lookup_indices_by_table: Vec<Vec<(usize, LookupBits)>> = (0..num_tables)
+        let lookup_indices_by_table: Vec<Vec<usize>> = (0..num_tables)
             .into_par_iter()
             .map(|t_idx| {
                 // Each table gets its own parallel collection
@@ -248,7 +248,7 @@ impl<'a, F: JoltField> ReadRafProverState<F> {
                 table_vec.par_extend(cycle_data.par_iter().filter_map(|data| {
                     data.table.and_then(|t| {
                         if LookupTables::<XLEN>::enum_index(&t) == t_idx {
-                            Some((data.idx, data.lookup_index))
+                            Some(data.idx)
                         } else {
                             None
                         }
@@ -537,7 +537,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
             .map(|table_lookups| {
                 table_lookups
                     .iter()
-                    .map(|(j, _)| eq_r_cycle_prime[*j])
+                    .map(|j| eq_r_cycle_prime[*j])
                     .sum::<F>()
             })
             .collect::<Vec<F>>();
@@ -561,7 +561,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
         let raf_flag_claim = ps
             .lookup_indices_identity
             .par_iter()
-            .map(|(j, _)| eq_r_cycle_prime[*j])
+            .map(|j| eq_r_cycle_prime[*j])
             .sum::<F>();
         accumulator.borrow_mut().append_virtual(
             transcript,
@@ -638,11 +638,15 @@ impl<F: JoltField> ReadRafProverState<F> {
                     &mut self.right_operand_ps,
                     &self.u_evals_raf,
                     &self.lookup_indices_uninterleave,
+                    &self.lookup_indices,
                 )
             });
             s.spawn(|_| {
-                self.identity_ps
-                    .init_Q(&self.u_evals_raf, &self.lookup_indices_identity)
+                self.identity_ps.init_Q(
+                    &self.u_evals_raf,
+                    &self.lookup_indices_identity,
+                    &self.lookup_indices,
+                )
             });
         });
 
@@ -672,7 +676,8 @@ impl<F: JoltField> ReadRafProverState<F> {
                         let mut chunk_result: Vec<Vec<F::Unreduced<6>>> =
                             vec![unsafe_allocate_zero_vec(M); suffixes.len()];
 
-                        for (j, k) in chunk {
+                        for j in chunk {
+                            let k = self.lookup_indices[*j];
                             let (prefix_bits, suffix_bits) = k.split((PHASES - 1 - phase) * LOG_M);
                             for (suffix, result) in suffixes.iter().zip(chunk_result.iter_mut()) {
                                 let t = suffix.suffix_mle::<XLEN>(suffix_bits);
