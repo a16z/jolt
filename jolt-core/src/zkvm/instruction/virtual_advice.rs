@@ -1,8 +1,9 @@
+use crate::zkvm::instruction::NUM_INSTRUCTION_FLAGS;
 use tracer::instruction::{virtual_advice::VirtualAdvice, RISCVCycle};
 
 use crate::zkvm::lookup_table::{range_check::RangeCheckTable, LookupTables};
 
-use super::{CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS};
+use super::{CircuitFlags, Flags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS};
 
 impl<const XLEN: usize> InstructionLookup<XLEN> for VirtualAdvice {
     fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
@@ -10,7 +11,7 @@ impl<const XLEN: usize> InstructionLookup<XLEN> for VirtualAdvice {
     }
 }
 
-impl InstructionFlags for VirtualAdvice {
+impl Flags for VirtualAdvice {
     fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
         let mut flags = [false; NUM_CIRCUIT_FLAGS];
         flags[CircuitFlags::Advice as usize] = true;
@@ -21,6 +22,10 @@ impl InstructionFlags for VirtualAdvice {
             self.inline_sequence_remaining.unwrap_or(0) != 0;
         flags[CircuitFlags::IsCompressed as usize] = self.is_compressed;
         flags
+    }
+
+    fn instruction_flags(&self) -> [bool; NUM_INSTRUCTION_FLAGS] {
+        [false; NUM_INSTRUCTION_FLAGS]
     }
 }
 
