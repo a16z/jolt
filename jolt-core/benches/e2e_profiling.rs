@@ -149,12 +149,14 @@ pub fn master_benchmark(
         );
 
         let proving_hz = trace_length as f64 / duration.as_secs_f64();
+        let padded_proving_hz = trace_length.next_power_of_two() as f64 / duration.as_secs_f64();
         println!(
-            "{} (2^{}): Prover completed in {:.2}s ({:.1} kHz)",
+            "{} (2^{}): Prover completed in {:.2}s ({:.1} kHz / padded {:.1} kHz)",
             bench_name,
             bench_scale,
             duration.as_secs_f64(),
             proving_hz / 1000.0,
+            padded_proving_hz / 1000.0,
         );
 
         // Write CSV
@@ -163,8 +165,8 @@ pub fn master_benchmark(
             bench_name,
             bench_scale,
             duration.as_secs_f64(),
-            trace_length,
-            proving_hz,
+            trace_length.next_power_of_two(),
+            padded_proving_hz,
             proof_size,
             proof_size_comp
         );
