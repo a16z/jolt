@@ -14,7 +14,14 @@ pub fn main() {
     let prove_blake3 = guest::build_prover_blake3(program, prover_preprocessing);
     let verify_blake3 = guest::build_verifier_blake3(verifier_preprocessing);
 
-    let input: &[u8] = &[5u8; 32];
+    let input: &[u8] = &[5u8; 64];
+    // Unoptimized Version
+    // "blake3_digest": 971 RV64IMAC cycles, 3607 virtual cycles   32 bytes
+    // "blake3_digest": 1227 RV64IMAC cycles, 4087 virtual cycles  64 bytes
+
+    // Optimized Version
+    // "blake3_digest": 638 RV64IMAC cycles, 2381 virtual cycles
+    // "blake3_digest": 559 RV64IMAC cycles, 1966 virtual cycles
     let now = Instant::now();
     let (output, proof, program_io) = prove_blake3(input);
     info!("Prover runtime: {} s", now.elapsed().as_secs_f64());
