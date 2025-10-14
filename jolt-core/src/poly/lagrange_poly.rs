@@ -1,6 +1,6 @@
 use crate::field::JoltField;
 use std::marker::PhantomData;
-use std::ops::{Add, Mul, Sub};
+use std::ops::{Mul, Sub};
 
 /// Lagrange polynomials over zero-centered, symmetric, consecutive-integer domain, i.e.
 /// grids like [-6, -5, ..., 6, 7].
@@ -485,102 +485,7 @@ impl LagrangeHelper {
         out
     }
 
-    // ===== Extension and extrapolation utilities =====
-
-    /// Extrapolate the next value p(x+n) from n consecutive values p(x), p(x+1), ..., p(x+n-1).
-    #[inline]
-    pub fn extrapolate_next<F: JoltField>(prev: &[F]) -> F {
-        let n = prev.len();
-        let mut acc = F::zero();
-        for i in 0..n {
-            let c = Self::binomial_coeff(n, i);
-            let coef = F::from_u64(c);
-            let term = prev[i] * coef;
-            if ((n - 1 - i) & 1) == 1 {
-                acc -= term;
-            } else {
-                acc += term;
-            }
-        }
-        acc
-    }
-
-    /// Compute p(x-1) from a length-N window [p(x), p(x+1), ..., p(x+N-1)].
-    #[inline]
-    pub fn backward_step<const N: usize, F: JoltField>(window: &[F; N]) -> F {
-        let mut acc = F::zero();
-        for j in 0..N {
-            let c = Self::binomial_coeff(N, j + 1);
-            let coef = F::from_u64(c);
-            let term = window[j] * coef;
-            if (j & 1) == 1 {
-                acc -= term;
-            } else {
-                acc += term;
-            }
-        }
-        acc
-    }
-
-    /// Extend consecutive symmetric window by N new values (alternating left/right).
-    #[inline]
-    pub fn extend_consecutive_symmetric<const N: usize, F: JoltField>(base: &[F; N]) -> [F; N] {
-        debug_assert!(N >= 1 && (N % 2 == 1));
-
-        // Build forward-difference diagonal at left edge (i = 0): diffs[k] = Δ^k f(0), k=1..N-1
-        let mut work = *base;
-        let mut diffs = [F::zero(); N];
-        for k in 1..N {
-            for i in 0..(N - k) {
-                work[i] = work[i + 1] - work[i];
-            }
-            diffs[k] = work[0];
-        }
-
-        // Left-side extension: step N_left = (N+1)/2 times backwards
-        let left_cnt = N.div_ceil(2);
-        let mut out = [F::zero(); N];
-        let mut left_d = diffs;
-        let mut left_anchor = base[0];
-        let mut left_vals = [F::zero(); N];
-        for s in 0..left_cnt {
-            // Backward update of differences: d_k <- d_k - d_{k+1}
-            for k in (1..(N - 1)).rev() {
-                left_d[k] -= left_d[k + 1];
-            }
-            left_anchor -= left_d[1];
-            left_vals[s] = left_anchor;
-        }
-
-        // Right-side extension: first advance differences to the right boundary (i = N-1)
-        let right_cnt = N / 2;
-        let mut right_d = diffs;
-        for _ in 0..(N - 1) {
-            for k in (1..(N - 1)).rev() {
-                right_d[k] += right_d[k + 1];
-            }
-        }
-        let mut right_anchor = base[N - 1];
-        let mut right_vals = [F::zero(); N];
-        for s in 0..right_cnt {
-            right_anchor += right_d[1];
-            right_vals[s] = right_anchor;
-            for k in (1..(N - 1)).rev() {
-                right_d[k] += right_d[k + 1];
-            }
-        }
-
-        // Interleave: [-1, N, -2, N+1, ...]
-        for i in 0..right_cnt {
-            out[2 * i] = left_vals[i];
-            out[2 * i + 1] = right_vals[i];
-        }
-        if left_cnt > right_cnt {
-            out[2 * right_cnt] = left_vals[right_cnt];
-        }
-        out
-    }
-
+    // ===== Const-time power sums over symmetric integer window =====
     /// Const power sums over a symmetric integer window, up to an arbitrary degree, as i128.
     ///
     /// Domain: WINDOW_N consecutive integers centered at 0: t = start..start+WINDOW_N-1,
@@ -615,241 +520,320 @@ impl LagrangeHelper {
         sums
     }
 
-    /// Extend evaluations from symmetric base window by D points using integer coefficients.
-    /// Input: `base_evals[i] = p(start + i)` where `start = -floor(D/2)`, `N = D+1`.
-    /// Output: extended evaluations of length D at points outside the base window.
-    #[inline]
-    pub fn extend_evals_symmetric<const D: usize, const N: usize, T>(base_evals: &[T; N]) -> [T; D]
-    where
-        T: Copy + Add<Output = T> + Mul<i32, Output = T> + Default,
-    {
-        debug_assert!(N == D + 1);
-        let d_i64: i64 = D as i64;
-        let start: i64 = -((D / 2) as i64);
-
-        // Split negative/positive counts relative to the base window
-        let neg_cnt: usize = (d_i64 + start) as usize; // number of points in [-D .. start-1]
-        let pos_cnt: usize = D - neg_cnt; // number of points in [start+D+1 .. D]
-
-        let mut out: [T; D] = [Default::default(); D];
-
-        // Negative side: t in [-D .. start-1]
-        let mut j: usize = 0;
-        while j < neg_cnt {
-            let t = -d_i64 + (j as i64);
-            let shift = t - start; // evaluate g(shift) where g(i) = p(start + i)
-            let coeffs = Self::shift_coeffs_i32::<N>(shift);
-            let mut acc: T = Default::default();
-            let mut i = 0usize;
-            while i < N {
-                acc = acc + (base_evals[i] * coeffs[i]);
-                i += 1;
-            }
-            out[j] = acc;
-            j += 1;
-        }
-
-        // Positive side: t in [start+D+1 .. D]
-        let mut k: usize = 0;
-        while k < pos_cnt {
-            let t = start + d_i64 + 1 + (k as i64);
-            let shift = t - start;
-            let coeffs = Self::shift_coeffs_i32::<N>(shift);
-            let mut acc: T = Default::default();
-            let mut i = 0usize;
-            while i < N {
-                acc = acc + (base_evals[i] * coeffs[i]);
-                i += 1;
-            }
-            out[neg_cnt + k] = acc;
-            k += 1;
-        }
-
-        out
-    }
 }
 
-/// Specialized optimizations for degree-12 Lagrange polynomials.
-/// Kept separate for performance-critical paths in univariate skip.
-/// NOTE: if we add more constraints in the future, we will need to change this to degree 13, 14, etc.
-/// But no other changes should be needed.
-pub struct Degree12Lagrange;
+#[cfg(test)]
+mod tests {
+    use super::{LagrangeHelper, LagrangePolynomial};
+    use crate::ark_bn254::Fr as F;
+    use crate::field::JoltField;
 
-impl Degree12Lagrange {
-    /// Build the full row [C(n,0), C(n,1), ..., C(n,n)] as an array of length N = n+1.
-    const fn row_const<const N: usize>() -> [u64; N] {
-        // N must be at least 1 (so n = N-1 is valid). Our usages satisfy this.
-        let n = N - 1;
-        let mut out = [0u64; N];
-        let mut i = 0usize;
-        while i < N {
-            out[i] = LagrangeHelper::binomial_coeff(n, i);
-            i += 1;
-        }
-        out
+    fn grid_nodes<const N: usize>() -> [F; N] {
+        let d = N - 1;
+        let start: i64 = -((d / 2) as i64);
+        core::array::from_fn(|i| F::from_i64(start + i as i64))
     }
 
-    /// Precomputed binomial row C(13,k) for recurrence over N=13 window.
-    pub const BINOMIAL_ROW_13: [u64; 14] = Self::row_const::<14>();
-
-    /// Precomputed Lagrange coefficients for common degree-12 evaluation points
-    pub const AT_NEG7: [i32; 13] = LagrangeHelper::shift_coeffs_i32::<13>(-1);
-    pub const AT_NEG8: [i32; 13] = LagrangeHelper::shift_coeffs_i32::<13>(-2);
-    pub const AT_NEG9: [i32; 13] = LagrangeHelper::shift_coeffs_i32::<13>(-3);
-    pub const AT_NEG10: [i32; 13] = LagrangeHelper::shift_coeffs_i32::<13>(-4);
-    pub const AT_NEG11: [i32; 13] = LagrangeHelper::shift_coeffs_i32::<13>(-5);
-    pub const AT_NEG12: [i32; 13] = LagrangeHelper::shift_coeffs_i32::<13>(-6);
-    pub const AT_8: [i32; 13] = LagrangeHelper::shift_coeffs_i32::<13>(14);
-    pub const AT_9: [i32; 13] = LagrangeHelper::shift_coeffs_i32::<13>(15);
-    pub const AT_10: [i32; 13] = LagrangeHelper::shift_coeffs_i32::<13>(16);
-    pub const AT_11: [i32; 13] = LagrangeHelper::shift_coeffs_i32::<13>(17);
-    pub const AT_12: [i32; 13] = LagrangeHelper::shift_coeffs_i32::<13>(18);
-
-    /// Fast extension for boolean evaluations (returns i32 for exact arithmetic).
-    #[inline]
-    pub fn extend_bool_evals(base_evals: &[bool; 13]) -> [i32; 12] {
-        let c = &Self::BINOMIAL_ROW_13;
-
-        // Current windows for left/backward and right/forward stepping
-        let mut left_w: [i32; 13] = [0; 13];
-        let mut right_w: [i32; 13] = [0; 13];
-        for i in 0..13 {
-            let v = if base_evals[i] { 1 } else { 0 };
-            left_w[i] = v;
-            right_w[i] = v;
+    fn pow_u64(mut base: F, mut exp: u64) -> F {
+        if exp == 0 { return F::from_u64(1); }
+        let mut acc = F::from_u64(1);
+        while exp > 0 {
+            if (exp & 1) == 1 { acc *= base; }
+            base = base * base;
+            exp >>= 1;
         }
-
-        // p(x-1) using N=14 backward recurrence with explicit signs
-        let prev_left = |w: &[i32; 13]| -> i32 {
-            let c1 = c[1] as i32;
-            let c2 = c[2] as i32;
-            let c3 = c[3] as i32;
-            let c4 = c[4] as i32;
-            let c5 = c[5] as i32;
-            let c6 = c[6] as i32;
-            let c7 = c[7] as i32;
-            let c8 = c[8] as i32;
-            let c9 = c[9] as i32;
-            let c10 = c[10] as i32;
-            let c11 = c[11] as i32;
-            let c12 = c[12] as i32;
-            let c13 = c[13] as i32;
-            c1 * w[0] - c2 * w[1] + c3 * w[2] - c4 * w[3] + c5 * w[4] - c6 * w[5] + c7 * w[6]
-                - c8 * w[7]
-                + c9 * w[8]
-                - c10 * w[9]
-                + c11 * w[10]
-                - c12 * w[11]
-                + c13 * w[12]
-        };
-
-        // p(x+14) using N=14 forward recurrence grouped like ex8/ex16
-        let next_right = |w: &[i32; 13]| -> i32 {
-            let c0 = c[0] as i32;
-            let c1 = c[1] as i32;
-            let c2 = c[2] as i32;
-            let c3 = c[3] as i32;
-            let c4 = c[4] as i32;
-            let c5 = c[5] as i32;
-            let c6 = c[6] as i32;
-            let sp1 = w[1] + w[12];
-            let sp3 = w[3] + w[10];
-            let sp5 = w[5] + w[8];
-            let sn2 = w[2] + w[11];
-            let sn4 = w[4] + w[9];
-            c1 * sp1 + c3 * sp3 + c5 * sp5 - c0 * w[0] - c2 * sn2 - c4 * sn4 - c6 * w[6]
-        };
-
-        let mut out: [i32; 12] = [0; 12];
-        // Produce 6 interleaved pairs
-        for i in 0..6 {
-            // left: x -> x-1
-            let l = prev_left(&left_w);
-            out[2 * i] = l;
-            // shift left window right and insert new left at position 0
-            for k in (1..13).rev() {
-                left_w[k] = left_w[k - 1];
-            }
-            left_w[0] = l;
-
-            // right: x+13 -> x+14
-            let r = next_right(&right_w);
-            out[2 * i + 1] = r;
-            // shift right window left and append new right at the end
-            for k in 0..12 {
-                right_w[k] = right_w[k + 1];
-            }
-            right_w[12] = r;
-        }
-
-        out
+        acc
     }
 
-    /// Fast extension for i128 evaluations.
-    #[inline]
-    pub fn extend_i128_evals(base_evals: &[i128; 13]) -> [i128; 12] {
-        let c = &Self::BINOMIAL_ROW_13;
-
-        let mut left_w = [0; 13];
-        left_w.copy_from_slice(base_evals);
-        let mut right_w = [0; 13];
-        right_w.copy_from_slice(base_evals);
-
-        let prev_left = |w: &[i128; 13]| -> i128 {
-            let c1 = c[1] as i128;
-            let c2 = c[2] as i128;
-            let c3 = c[3] as i128;
-            let c4 = c[4] as i128;
-            let c5 = c[5] as i128;
-            let c6 = c[6] as i128;
-            let c7 = c[7] as i128;
-            let c8 = c[8] as i128;
-            let c9 = c[9] as i128;
-            let c10 = c[10] as i128;
-            let c11 = c[11] as i128;
-            let c12 = c[12] as i128;
-            let c13 = c[13] as i128;
-            c1 * w[0] - c2 * w[1] + c3 * w[2] - c4 * w[3] + c5 * w[4] - c6 * w[5] + c7 * w[6]
-                - c8 * w[7]
-                + c9 * w[8]
-                - c10 * w[9]
-                + c11 * w[10]
-                - c12 * w[11]
-                + c13 * w[12]
-        };
-
-        let next_right = |w: &[i128; 13]| -> i128 {
-            let c0 = c[0] as i128;
-            let c1 = c[1] as i128;
-            let c2 = c[2] as i128;
-            let c3 = c[3] as i128;
-            let c4 = c[4] as i128;
-            let c5 = c[5] as i128;
-            let c6 = c[6] as i128;
-            let sp1 = w[1] + w[12];
-            let sp3 = w[3] + w[10];
-            let sp5 = w[5] + w[8];
-            let sn2 = w[2] + w[11];
-            let sn4 = w[4] + w[9];
-            c1 * sp1 + c3 * sp3 + c5 * sp5 - c0 * w[0] - c2 * sn2 - c4 * sn4 - c6 * w[6]
-        };
-
-        let mut out: [i128; 12] = [0; 12];
-        for i in 0..6 {
-            let l = prev_left(&left_w);
-            out[2 * i] = l;
-            for k in (1..13).rev() {
-                left_w[k] = left_w[k - 1];
-            }
-            left_w[0] = l;
-
-            let r = next_right(&right_w);
-            out[2 * i + 1] = r;
-            for k in 0..12 {
-                right_w[k] = right_w[k + 1];
-            }
-            right_w[12] = r;
+    fn eval_poly(coeffs: &[F], r: F) -> F {
+        // Horner
+        let mut acc = F::from_u64(0);
+        for &c in coeffs.iter().rev() {
+            acc = acc * r + c;
         }
-        out
+        acc
+    }
+
+    #[test]
+    fn closed_form_n1() {
+        const N: usize = 1;
+        let values = [F::from_u64(7)];
+        for k in 0..5u64 {
+            let r = F::from_u64(k);
+            let l = LagrangePolynomial::<F>::evals::<F, N>(&r);
+            assert_eq!(l[0], F::from_u64(1));
+            let v = LagrangePolynomial::<F>::evaluate::<F, N>(&values, &r);
+            assert_eq!(v, values[0]);
+        }
+    }
+
+    #[test]
+    fn closed_form_n2() {
+        // grid {0,1}: L0(r)=1-r, L1(r)=r
+        const N: usize = 2;
+        let nodes = grid_nodes::<N>();
+        for k in 0..7u64 {
+            let r = F::from_u64(k);
+            let [l0, l1] = LagrangePolynomial::<F>::evals::<F, N>(&r);
+            let l0_cf = F::from_u64(1) - r;
+            let l1_cf = r;
+            assert_eq!(l0, l0_cf);
+            assert_eq!(l1, l1_cf);
+            // early exit at nodes
+            let vals = [F::from_u64(3), F::from_u64(5)];
+            for i in 0..N {
+                let ri = nodes[i];
+                let v = LagrangePolynomial::<F>::evaluate::<F, N>(&vals, &ri);
+                assert_eq!(v, vals[i]);
+            }
+        }
+    }
+
+    #[test]
+    fn closed_form_n3() {
+        // grid {-1,0,1}: L0(r)=r(r-1)/2, L1(r)=1-r^2, L2(r)=r(r+1)/2
+        const N: usize = 3;
+        let nodes = grid_nodes::<N>();
+        let two_inv = F::from_u64(2).inverse().unwrap();
+        for k in 0..7u64 {
+            let r = F::from_u64(k as u64) - F::from_u64(1); // covers negatives around nodes
+            let [l0, l1, l2] = LagrangePolynomial::<F>::evals::<F, N>(&r);
+            let l0_cf = (r * (r - F::from_u64(1))) * two_inv;
+            let l1_cf = F::from_u64(1) - r * r;
+            let l2_cf = (r * (r + F::from_u64(1))) * two_inv;
+            assert_eq!(l0, l0_cf);
+            assert_eq!(l1, l1_cf);
+            assert_eq!(l2, l2_cf);
+
+            // early exit at nodes
+            let vals = [F::from_u64(11), F::from_u64(13), F::from_u64(17)];
+            for i in 0..N {
+                let ri = nodes[i];
+                let v = LagrangePolynomial::<F>::evaluate::<F, N>(&vals, &ri);
+                assert_eq!(v, vals[i]);
+            }
+        }
+    }
+
+    #[test]
+    fn basis_properties_and_monomials() {
+        // N set
+        let ns = [1usize, 2, 3, 4, 5, 8, 11, 20];
+        for &n in &ns {
+            // partition of unity and delta at nodes
+            let nodes: Vec<F> = {
+                let d = n - 1;
+                let start: i64 = -((d / 2) as i64);
+                (0..n).map(|i| F::from_i64(start + i as i64)).collect()
+            };
+
+            // integers in [-3..3]
+            for t in -3..=3 {
+                let r = F::from_i64(t);
+                let basis = match n {
+                    1 => LagrangePolynomial::<F>::evals::<F, 1>(&r).to_vec(),
+                    2 => LagrangePolynomial::<F>::evals::<F, 2>(&r).to_vec(),
+                    3 => LagrangePolynomial::<F>::evals::<F, 3>(&r).to_vec(),
+                    4 => LagrangePolynomial::<F>::evals::<F, 4>(&r).to_vec(),
+                    5 => LagrangePolynomial::<F>::evals::<F, 5>(&r).to_vec(),
+                    8 => LagrangePolynomial::<F>::evals::<F, 8>(&r).to_vec(),
+                    11 => LagrangePolynomial::<F>::evals::<F, 11>(&r).to_vec(),
+                    20 => LagrangePolynomial::<F>::evals::<F, 20>(&r).to_vec(),
+                    _ => unreachable!(),
+                };
+                let sum: F = basis.iter().copied().sum();
+                assert_eq!(sum, F::from_u64(1));
+            }
+
+            // delta at nodes
+            for (i, &xi) in nodes.iter().enumerate() {
+                let basis = match n {
+                    1 => LagrangePolynomial::<F>::evals::<F, 1>(&xi).to_vec(),
+                    2 => LagrangePolynomial::<F>::evals::<F, 2>(&xi).to_vec(),
+                    3 => LagrangePolynomial::<F>::evals::<F, 3>(&xi).to_vec(),
+                    4 => LagrangePolynomial::<F>::evals::<F, 4>(&xi).to_vec(),
+                    5 => LagrangePolynomial::<F>::evals::<F, 5>(&xi).to_vec(),
+                    8 => LagrangePolynomial::<F>::evals::<F, 8>(&xi).to_vec(),
+                    11 => LagrangePolynomial::<F>::evals::<F, 11>(&xi).to_vec(),
+                    20 => LagrangePolynomial::<F>::evals::<F, 20>(&xi).to_vec(),
+                    _ => unreachable!(),
+                };
+                for (j, &bj) in basis.iter().enumerate() {
+                    if i == j { assert_eq!(bj, F::from_u64(1)); }
+                    else { assert_eq!(bj, F::from_u64(0)); }
+                }
+            }
+
+            // monomial reproduction
+            for m in 0..n {
+                let d = n - 1;
+                let start: i64 = -((d / 2) as i64);
+                let mut vals_vec = Vec::with_capacity(n);
+                for i in 0..n {
+                    let xi = F::from_i64(start + i as i64);
+                    vals_vec.push(pow_u64(xi, m as u64));
+                }
+                for t in -2..=2 {
+                    let r = F::from_i64(t);
+                    let lhs = match n {
+                        1 => LagrangePolynomial::<F>::evaluate::<F, 1>(&vals_vec.clone().try_into().unwrap(), &r),
+                        2 => LagrangePolynomial::<F>::evaluate::<F, 2>(&vals_vec.clone().try_into().unwrap(), &r),
+                        3 => LagrangePolynomial::<F>::evaluate::<F, 3>(&vals_vec.clone().try_into().unwrap(), &r),
+                        4 => LagrangePolynomial::<F>::evaluate::<F, 4>(&vals_vec.clone().try_into().unwrap(), &r),
+                        5 => LagrangePolynomial::<F>::evaluate::<F, 5>(&vals_vec.clone().try_into().unwrap(), &r),
+                        8 => LagrangePolynomial::<F>::evaluate::<F, 8>(&vals_vec.clone().try_into().unwrap(), &r),
+                        11 => LagrangePolynomial::<F>::evaluate::<F, 11>(&vals_vec.clone().try_into().unwrap(), &r),
+                        20 => LagrangePolynomial::<F>::evaluate::<F, 20>(&vals_vec.clone().try_into().unwrap(), &r),
+                        _ => unreachable!(),
+                    };
+                    let rhs = pow_u64(r, m as u64);
+                    assert_eq!(lhs, rhs);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn evaluate_many_matches_pointwise() {
+        const N: usize = 7;
+        // p(x) = 3 + 5x + 2x^2
+        let coeffs = [F::from_u64(3), F::from_u64(5), F::from_u64(2), F::from_u64(0), F::from_u64(0), F::from_u64(0), F::from_u64(0)];
+        let d = N - 1;
+        let start: i64 = -((d / 2) as i64);
+        let values: [F; N] = core::array::from_fn(|i| {
+            let xi = F::from_i64(start + i as i64);
+            eval_poly(&coeffs, xi)
+        });
+
+        let points_small: Vec<F> = (-2..=2).map(F::from_i64).collect();
+        let out_small = LagrangePolynomial::<F>::evaluate_many::<F, N>(&values, &points_small);
+        let chk_small: Vec<F> = points_small.iter().map(|&r| eval_poly(&coeffs, r)).collect();
+        assert_eq!(out_small, chk_small);
+
+        let points_large: Vec<F> = (-8..=8).map(F::from_i64).collect();
+        let out_large = LagrangePolynomial::<F>::evaluate_many::<F, N>(&values, &points_large);
+        let chk_large: Vec<F> = points_large.iter().map(|&r| eval_poly(&coeffs, r)).collect();
+        assert_eq!(out_large, chk_large);
+    }
+
+    #[test]
+    fn interpolate_roundtrip_and_monomials() {
+        const N: usize = 9;
+        let coeffs: [F; N] = [ F::from_u64(1), F::from_u64(2), F::from_u64(3), F::from_u64(4), F::from_u64(5), F::from_u64(6), F::from_u64(7), F::from_u64(8), F::from_u64(9) ];
+        let d = N - 1;
+        let start: i64 = -((d / 2) as i64);
+        let values: [F; N] = core::array::from_fn(|i| {
+            let xi = F::from_i64(start + i as i64);
+            eval_poly(&coeffs, xi)
+        });
+        let rec = LagrangePolynomial::<F>::interpolate_coeffs::<N>(&values);
+        assert_eq!(rec, coeffs);
+
+        for m in 0..N {
+            let values_m: [F; N] = core::array::from_fn(|i| {
+                let xi = F::from_i64(start + i as i64);
+                pow_u64(xi, m as u64)
+            });
+            let rec_m = LagrangePolynomial::<F>::interpolate_coeffs::<N>(&values_m);
+            for j in 0..N {
+                if j == m { assert_eq!(rec_m[j], F::from_u64(1)); }
+                else { assert_eq!(rec_m[j], F::from_u64(0)); }
+            }
+        }
+    }
+
+    #[test]
+    fn shift_coeffs_match_shifted_eval() {
+        const N: usize = 7;
+        // p(x) = 2 - 3x + x^3
+        let coeffs = [
+            F::from_u64(2),
+            F::from_i64(-3),
+            F::from_u64(0),
+            F::from_u64(1),
+            F::from_u64(0),
+            F::from_u64(0),
+            F::from_u64(0),
+        ];
+        let base_values: [F; N] = core::array::from_fn(|i| {
+            let xi = F::from_i64(i as i64);
+            eval_poly(&coeffs, xi)
+        });
+
+        for shift in -10..=10 {
+            let coeffs_i32 = LagrangeHelper::shift_coeffs_i32::<N>(shift);
+            let mut acc = F::from_u64(0);
+            for i in 0..N {
+                let c = F::from_i64(coeffs_i32[i] as i64);
+                acc += base_values[i] * c;
+            }
+            let rhs = eval_poly(&coeffs, F::from_i64(shift));
+            assert_eq!(acc, rhs);
+        }
+    }
+
+    #[test]
+    fn integer_helpers_and_power_sums() {
+        // factorial and binomial
+        let fact = |n: usize| -> u64 { (1..=n as u64).product::<u64>().max(1) };
+        for n in 0..=12usize {
+            assert_eq!(LagrangeHelper::fact(n), fact(n));
+            for k in 0..=n {
+                let mut num: u128 = 1;
+                let mut den: u128 = 1;
+                for j in 0..k { num *= (n - j) as u128; den *= (j + 1) as u128; }
+                let b = (num / den) as u64;
+                assert_eq!(LagrangeHelper::binomial_coeff(n, k), b);
+            }
+        }
+
+        // den_row_i64 checks for fixed sizes
+        fn check_den_row<const N: usize>() {
+            let den = LagrangeHelper::den_row_i64::<N>();
+            for i in 0..N {
+                let sign = if ((N - 1 - i) & 1) == 1 { -1i64 } else { 1i64 };
+                let expected = (LagrangeHelper::fact(i) as i128
+                    * LagrangeHelper::fact(N - 1 - i) as i128
+                    * sign as i128) as i64;
+                assert_eq!(den[i], expected);
+            }
+        }
+        check_den_row::<1>();
+        check_den_row::<2>();
+        check_den_row::<3>();
+        check_den_row::<5>();
+        check_den_row::<8>();
+        check_den_row::<11>();
+        check_den_row::<20>();
+
+        for k in 0..=8usize {
+            for t in -5..=5 {
+                let lhs = LagrangeHelper::generalized_binomial(t, k);
+                let rhs = if t >= 0 {
+                    let tt = t as usize; if k > tt { 0 } else { LagrangeHelper::binomial_coeff(tt, k) as i128 }
+                } else {
+                    let sign = if (k & 1) == 1 { -1i128 } else { 1i128 };
+                    let tt = (-t) as i64 + (k as i64) - 1;
+                    let mut num: i128 = 1; let mut den: i128 = 1;
+                    for j in 0..k { num *= tt as i128 - j as i128; den *= (j + 1) as i128; }
+                    sign * (num / den)
+                };
+                assert_eq!(lhs, rhs);
+            }
+        }
+
+        const WINDOW_N: usize = 7; // odd
+        const OUT_LEN: usize = 6;
+        let sums = LagrangeHelper::power_sums::<WINDOW_N, OUT_LEN>();
+        let d = WINDOW_N - 1;
+        let start: i64 = -((d / 2) as i64);
+        let mut naive = [0i128; OUT_LEN];
+        for j in 0..WINDOW_N {
+            let t = (start + j as i64) as i128;
+            let mut pow = 1i128; // t^0
+            for k in 0..OUT_LEN { naive[k] += pow; pow = pow * t; }
+        }
+        assert_eq!(sums, naive);
+        for k in (1..OUT_LEN).step_by(2) { assert_eq!(sums[k], 0); }
     }
 }

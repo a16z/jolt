@@ -28,27 +28,18 @@ pub mod product;
 pub struct SpartanDag<F: JoltField> {
     /// Cached key to avoid recomputation across stages
     key: Arc<UniformSpartanKey<F>>,
-    /// Cached state for Stage 1 uniskip remainder (prover)
-    stage1_prover_state: Option<SpartanStage1ProverState<F>>,
-    /// Cached state for Stage 1 uniskip remainder (verifier)
-    stage1_verifier_state: Option<SpartanStage1VerifierState<F>>,
+    /// Stage 1 handoff state from univariate skip first round (shared by prover and verifier)
+    stage1_state: Option<Stage1State<F>>,
 }
 
 impl<F: JoltField> SpartanDag<F> {
     pub fn new(padded_trace_length: usize) -> Self {
         let key = Arc::new(UniformSpartanKey::new(padded_trace_length));
-        Self { key, stage1_prover_state: None, stage1_verifier_state: None }
+        Self { key, stage1_state: None }
     }
 }
 
-struct SpartanStage1ProverState<F: JoltField> {
-    claim_after_first: F,
-    r0: F::Challenge,
-    split_eq_poly: GruenSplitEqPolynomial<F>,
-    total_rounds_remainder: usize,
-}
-
-struct SpartanStage1VerifierState<F: JoltField> {
+struct Stage1State<F: JoltField> {
     claim_after_first: F,
     r0: F::Challenge,
     tau: Vec<<F as JoltField>::Challenge>,
@@ -92,8 +83,6 @@ where
             &mut uniskip_instance,
             &mut *transcript_rc.borrow_mut(),
         );
-        let tau_low: Vec<F::Challenge> = tau[0..tau.len() - 1].to_vec();
-        let split_eq_poly = GruenSplitEqPolynomial::new(&tau_low, BindingOrder::LowToHigh);
 
         // Store first round
         state_manager
@@ -102,10 +91,10 @@ where
             .insert(ProofKeys::Stage1UniSkipFirstRoundProof, ProofData::UniSkipFirstRoundProof(first_round_proof));
 
         // Cache remainder construction state for instances method
-        self.stage1_prover_state = Some(SpartanStage1ProverState {
+        self.stage1_state = Some(Stage1State {
             claim_after_first,
             r0,
-            split_eq_poly,
+            tau,
             total_rounds_remainder: num_rounds_x - 1,
         });
 
@@ -144,7 +133,7 @@ where
             .map_err(|_| anyhow::anyhow!("UniSkip first-round verification failed"))?;
 
         // Cache info needed to build verifier-side remainder instance later
-        self.stage1_verifier_state = Some(SpartanStage1VerifierState {
+        self.stage1_state = Some(Stage1State {
             claim_after_first,
             r0,
             tau: tau.clone(),
@@ -161,14 +150,13 @@ where
     ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
         // Stage 1 remainder: outer-remaining + extras.
         let mut instances: Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> = Vec::new();
-        if let Some(st) = self.stage1_prover_state.take() {
+        if let Some(st) = self.stage1_state.take() {
             let num_cycles_bits = self.key.num_steps.ilog2() as usize;
-            let (preprocessing, trace, _, _) = state_manager.get_prover_data();
+            let tau_low: Vec<F::Challenge> = st.tau[0..st.tau.len() - 1].to_vec();
             let outer_remaining = OuterRemainingSumcheck::new_prover(
+                state_manager,
                 st.claim_after_first,
-                &preprocessing.shared,
-                trace,
-                st.split_eq_poly,
+                &tau_low,
                 st.r0,
                 st.total_rounds_remainder,
                 num_cycles_bits,
@@ -185,7 +173,7 @@ where
     ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
         // Stage 1 remainder: outer-remaining + extras (verifier side).
         let mut instances: Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> = Vec::new();
-        if let Some(st) = self.stage1_verifier_state.take() {
+        if let Some(st) = self.stage1_state.take() {
             let num_cycles_bits = self.key.num_steps.ilog2() as usize;
             let outer_remaining = OuterRemainingSumcheck::new_verifier(
                 st.claim_after_first,

@@ -600,7 +600,7 @@ const fn complement_first_group_names() -> [ConstraintName; 13] {
 /// - Az is a boolean selector (flag-derived or derived boolean)
 /// - Bz is a S160
 ///
-/// Selection policy: the first 14 matching constraints in `UNIFORM_R1CS`, order-preserving.
+/// Selection policy: the matching constraints in `UNIFORM_R1CS`, order-preserving.
 pub const UNIFORM_R1CS_FIRST_GROUP_NAMES: [ConstraintName; UNIVARIATE_SKIP_DOMAIN_SIZE] = [
     ConstraintName::LeftInputEqRs1,
     ConstraintName::LeftInputEqPC,

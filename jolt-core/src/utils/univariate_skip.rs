@@ -1,5 +1,4 @@
 use crate::field::JoltField;
-// use crate::utils::compute_dotproduct; // no longer used after switching to unreduced accumulators
 use crate::utils::univariate_skip::accum::{
     acc5_add_field, acc5_new, acc5_reduce, acc6_fmadd_i8ori96, acc6_new, acc6_reduce,
     accs160_fmadd_s160, accs160_new, accs160_reduce, Acc5, Acc6, AccS160,
@@ -10,9 +9,7 @@ use crate::zkvm::r1cs::constraints::{
 };
 use crate::zkvm::r1cs::inputs::R1CSCycleInputs;
 
-// NEW! Univariate skip based SVO
-
-// Accumulation primitives for SVO (unreduced accumulation + final reduction)
+// Accumulation primitives (unreduced (signed) accumulation + final reduction)
 pub mod accum {
     use crate::field::{FmaddTrunc, JoltField};
     use ark_ff::biginteger::{I8OrI96, S160};
@@ -126,7 +123,10 @@ pub mod accum {
     }
 }
 
-// TODO: better handling of these compute az/bz/cz at r functions
+#[inline]
+fn debug_enabled() -> bool {
+    std::env::var("JOLT_DEBUG_OUTER").is_ok()
+}
 
 #[inline]
 pub fn compute_az_r_group0<F: JoltField>(row: &R1CSCycleInputs, lagrange_evals_r: &[F]) -> F {
@@ -140,7 +140,12 @@ pub fn compute_az_r_group0<F: JoltField>(row: &R1CSCycleInputs, lagrange_evals_r
         }
         i += 1;
     }
-    acc5_reduce(&acc)
+    let out = acc5_reduce(&acc);
+    if debug_enabled() {
+        let sum: F = lagrange_evals_r.iter().copied().take(UNIVARIATE_SKIP_DOMAIN_SIZE).sum();
+        eprintln!("[uniskip] az_group0: sum L_i(r)={}, out={}", sum, out);
+    }
+    out
 }
 
 #[inline]
@@ -153,7 +158,11 @@ pub fn compute_bz_r_group0<F: JoltField>(row: &R1CSCycleInputs, lagrange_evals_r
         accs160_fmadd_s160(&mut acc, &lagrange_evals_r[i], bz_vals[i]);
         i += 1;
     }
-    accs160_reduce(&acc)
+    let out = accs160_reduce(&acc);
+    if debug_enabled() {
+        eprintln!("[uniskip] bz_group0: out={}", out);
+    }
+    out
 }
 
 #[inline]
@@ -166,7 +175,11 @@ pub fn compute_az_r_group1<F: JoltField>(row: &R1CSCycleInputs, lagrange_evals_r
         acc6_fmadd_i8ori96(&mut acc, &lagrange_evals_r[i], az_vals[i]);
         i += 1;
     }
-    acc6_reduce(&acc)
+    let out = acc6_reduce(&acc);
+    if debug_enabled() {
+        eprintln!("[uniskip] az_group1: out={}", out);
+    }
+    out
 }
 
 #[inline]
@@ -179,7 +192,11 @@ pub fn compute_bz_r_group1<F: JoltField>(row: &R1CSCycleInputs, lagrange_evals_r
         accs160_fmadd_s160(&mut acc, &lagrange_evals_r[i], bz_vals[i]);
         i += 1;
     }
-    accs160_reduce(&acc)
+    let out = accs160_reduce(&acc);
+    if debug_enabled() {
+        eprintln!("[uniskip] bz_group1: out={}", out);
+    }
+    out
 }
 
 #[inline]
@@ -191,7 +208,11 @@ pub fn compute_cz_r_group1<F: JoltField>(row: &R1CSCycleInputs, lagrange_evals_r
         accs160_fmadd_s160(&mut acc, &lagrange_evals_r[i], cz_vals[i]);
         i += 1;
     }
-    accs160_reduce(&acc)
+    let out = accs160_reduce(&acc);
+    if debug_enabled() {
+        eprintln!("[uniskip] cz_group1: out={}", out);
+    }
+    out
 }
 
 #[cfg(test)]
