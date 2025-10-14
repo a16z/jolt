@@ -1353,6 +1353,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "hash-bench"
+version = "0.1.0"
+dependencies = [
+ "hashbench-guest",
+ "hex",
+ "jolt-inlines-blake2",
+ "jolt-inlines-blake3",
+ "jolt-inlines-keccak256",
+ "jolt-inlines-sha2",
+ "jolt-sdk",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "hashbench-guest"
+version = "0.1.0"
+dependencies = [
+ "blake2",
+ "blake3",
+ "jolt-inlines-blake2",
+ "jolt-inlines-blake3",
+ "jolt-inlines-keccak256",
+ "jolt-inlines-sha2",
+ "jolt-sdk",
+ "sha2",
+ "sha3",
+]
+
+[[package]]
 name = "hashbrown"
 version = "0.14.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
