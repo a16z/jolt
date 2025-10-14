@@ -25,11 +25,15 @@ pub enum Prefix {
     Identity,
 }
 
+/// Array storing prefix polynomial evaluations, indexed by Prefix enum variants.
 pub type PrefixCheckpoints<F> = [Option<F>; Prefix::COUNT];
 
 #[derive(Default, Allocative)]
+/// Registry storing prefix polynomial evaluations at r_prefix for all prefix types.
 pub struct PrefixRegistry<F: JoltField> {
+    /// checkpoints[i] = P_i(r_prefix) where P_i is the i-th prefix polynomial evaluation.
     pub checkpoints: PrefixCheckpoints<F>,
+    /// Cached polynomial representations for potential reuse across decompositions.
     pub polys: [Option<Arc<RwLock<CachedPolynomial<F>>>>; Prefix::COUNT],
 }
 
@@ -195,15 +199,23 @@ pub trait PrefixSuffixPolynomial<F: JoltField, const ORDER: usize> {
 }
 
 #[derive(Allocative)]
+/// Decomposes a polynomial f(x) = Σ_i P_i(x_prefix)·Q_i(x_suffix) for efficient sumcheck evaluation.
 pub struct PrefixSuffixDecomposition<F: JoltField, const ORDER: usize> {
     #[allocative(skip)]
+    /// Original polynomial to decompose (e.g., OperandPolynomial, IdentityPolynomial).
     poly: Box<dyn PrefixSuffixPolynomial<F, ORDER> + Send + Sync>,
     #[allocative(skip)]
+    /// P[i] = prefix polynomial i, computed from registry and cached for reuse.
     P: [Option<Arc<RwLock<CachedPolynomial<F>>>>; ORDER],
+    /// Q[i] = suffix polynomial i, recomputed each phase from trace indices.
     Q: [DensePolynomial<F>; ORDER],
+    /// Number of variables per chunk (typically LOG_M).
     chunk_len: usize,
+    /// Total number of variables (typically LOG_K).
     total_len: usize,
+    /// Current phase in multi-phase decomposition.
     phase: usize,
+    /// Current round within phase.
     round: usize,
 }
 

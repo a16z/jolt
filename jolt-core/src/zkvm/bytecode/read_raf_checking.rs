@@ -447,7 +447,8 @@ impl<F: JoltField> ReadRafSumcheck<F> {
 
     /// Returns a vec of evaluations:
     ///    Val(k) = rd(k, r_register) + gamma * rs1(k, r_register) + gamma^2 * rs2(k, r_register)
-    /// where rd(k, k') = 1 if the k'th instruction in the bytecode has rd = k'
+    /// where rd, rs1, rs2 are MLEs of the corresponding indicator functions (1 on matching {0,1}-points),
+    /// e.g., rd(k,k') = 1 if the k'th instruction has rd=k' on the Boolean hypercube
     /// and analogously for rs1(k, k') and rs2(k, k').
     /// This particular Val virtualizes claims output by the registers read/write checking sumcheck.
     fn compute_val_2(

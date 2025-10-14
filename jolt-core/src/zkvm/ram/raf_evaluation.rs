@@ -27,6 +27,15 @@ use crate::{
     zkvm::{ram::remap_address, witness::VirtualPolynomial},
 };
 
+// RAM RAF evaluation sumcheck
+//
+// Proves the relation:
+//   Σ_{k=0}^{K-1} ra(k) ⋅ unmap(k) = raf_claim,
+// where:
+// - ra(k) = Σ_j eq(r_cycle, j) ⋅ 1[address(j) = k] aggregates access counts per address k.
+// - unmap(k) converts the remapped address k back to its original address.
+// - raf_claim is the claimed sum of unmapped addresses over the trace from the Spartan outer sumcheck.
+
 #[derive(Allocative)]
 pub struct RafEvaluationProverState<F: JoltField> {
     /// The ra polynomial

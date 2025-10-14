@@ -67,36 +67,56 @@ use rayon::iter::{IndexedParallelIterator, ParallelIterator};
 //      - If raf_flag = 0 (interleaved operands): γ · Left(a) + γ^2 · Right(a)
 //      - If raf_flag = 1 (identity lookups): γ^2 · Int(a)
 //
-// These components are summed because both table lookups AND operand lookups happen 
+// These components are summed because both table lookups AND operand lookups happen
 // for each instruction cycle - they are not mutually exclusive.
 
 const DEGREE: usize = 3;
 
 #[derive(Allocative)]
 struct ReadRafProverState<F: JoltField> {
+    /// ra_acc[c] = Π_{i<phase} v[prefix_i(lookup_address(c))]. Becomes RA after phase 1.
     ra_acc: Option<Vec<F>>,
+    /// RA(a, c) = 1[lookup_address(c) = a]. Materialized from ra_acc at phase boundary.
     ra: Option<MultilinearPolynomial<F>>,
+    /// Sumcheck challenges, first LOG_K address bits then log_T cycle bits.
     r: Vec<F::Challenge>,
 
+    /// lookup_indices[c] = lookup_address(c) as LookupBits. Primary cycle indexing.
     lookup_indices: Vec<LookupBits>,
+    /// Pre-sorted: {(c, addr) : table(c) = t}. Avoids enumeration during suffix computation.
     lookup_indices_by_table: Vec<Vec<(usize, LookupBits)>>,
+    /// {(c, addr) : is_interleaved_operands(c) = true}. Drives operand Q initialization.
     lookup_indices_uninterleave: Vec<(usize, LookupBits)>,
+    /// {(c, addr) : is_interleaved_operands(c) = false}. Drives identity Q initialization.
     lookup_indices_identity: Vec<(usize, LookupBits)>,
+    /// is_interleaved_operands[c] controls V(a): true → γ·Left + γ²·Right, false → γ²·Int.
     is_interleaved_operands: Vec<bool>,
+    /// lookup_tables[c] = table used at cycle c. Consumed at phase switch.
     #[allocative(skip)]
     lookup_tables: Vec<Option<LookupTables<XLEN>>>,
 
+    /// stores the prefix MLE cached after binding each pair of address variables
+    /// (i.e., every two rounds, incorporating r_x and r_y).
     prefix_checkpoints: Vec<PrefixCheckpoint<F>>,
+    /// suffix_polys[t][s] = Σ_c u_evals[c]·suffix_s(addr_suffix(c)) where table(c)=t.
     suffix_polys: Vec<Vec<DensePolynomial<F>>>,
+    /// v[u] = eq(r_addr[0..i-1], u). Reset for each phase
     v: ExpandingTable<F>,
+    /// u_evals[c] = eq(r_cycle, c)·Π_{i<phase} v[prefix_i(addr(c))]. Condensation buffer.
     u_evals: Vec<F>,
+    /// eq(r_cycle, c). Pre-computed before phase 1; bound High→Low in phase 2 to match cycle sumcheck order.
     eq_r_cycle: MultilinearPolynomial<F>,
 
+    /// Registry tracking P(r_prefix) evaluations across all prefix types.
     prefix_registry: PrefixRegistry<F>,
+    /// Right(a) = Σ_{i: rs2(i)=a} 2^i. Split at LOG_M for prefix-suffix decomposition.
     right_operand_ps: PrefixSuffixDecomposition<F, 2>,
+    /// Left(a) = Σ_{i: rs1(i)=a} 2^i. Shares uninterleave indices with right_operand_ps.
     left_operand_ps: PrefixSuffixDecomposition<F, 2>,
+    /// Int(a) = Σ_{j=0}^{log K-1} 2^j·a_j. Identity polynomial for RAF.
     identity_ps: PrefixSuffixDecomposition<F, 2>,
 
+    /// V(a) = Σ_t flag_t·Table_t(a) + operand_contribution(a). Computed after phase 1.
     combined_val_polynomial: Option<MultilinearPolynomial<F>>,
 }
 

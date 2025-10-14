@@ -193,6 +193,7 @@ impl<F: JoltField> EqPolynomial<F> {
     }
 }
 
+/// Multilinear extension for the relation y = x + 1 over bitstrings (no wrap-around; big-endian inputs).
 pub struct EqPlusOnePolynomial<F: JoltField> {
     x: Vec<F::Challenge>,
 }

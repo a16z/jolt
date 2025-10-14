@@ -31,6 +31,18 @@ use allocative::Allocative;
 use allocative::FlameGraphBuilder;
 use rayon::prelude::*;
 
+// RAM read-access (RA) virtualization sumcheck
+//
+// Proves the identity at the verifier's random cycle point r:
+//
+//   (eq(r_cycle_val, r) + γ·eq(r_cycle_rw, r) + γ²·eq(r_cycle_raf, r))
+//     ⋅ Π_{i=0}^{d−1} ra_i(r_{address,i}, r)
+//   = ra_claim_val + γ·ra_claim_rw + γ²·ra_claim_raf,
+//
+// where:
+// - ra_i are MLEs of chunk-wise access indicators (1 on matching {0,1}-points),
+//   with r_address split into chunks r_{address,i}.
+
 #[derive(Allocative)]
 pub struct RaProverState<F: JoltField> {
     /// `ra` polys to be constructed based addresses
