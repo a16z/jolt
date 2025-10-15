@@ -519,7 +519,6 @@ impl LagrangeHelper {
         }
         sums
     }
-
 }
 
 #[cfg(test)]
@@ -535,10 +534,14 @@ mod tests {
     }
 
     fn pow_u64(mut base: F, mut exp: u64) -> F {
-        if exp == 0 { return F::from_u64(1); }
+        if exp == 0 {
+            return F::from_u64(1);
+        }
         let mut acc = F::from_u64(1);
         while exp > 0 {
-            if (exp & 1) == 1 { acc *= base; }
+            if (exp & 1) == 1 {
+                acc *= base;
+            }
             base = base * base;
             exp >>= 1;
         }
@@ -659,8 +662,11 @@ mod tests {
                     _ => unreachable!(),
                 };
                 for (j, &bj) in basis.iter().enumerate() {
-                    if i == j { assert_eq!(bj, F::from_u64(1)); }
-                    else { assert_eq!(bj, F::from_u64(0)); }
+                    if i == j {
+                        assert_eq!(bj, F::from_u64(1));
+                    } else {
+                        assert_eq!(bj, F::from_u64(0));
+                    }
                 }
             }
 
@@ -676,14 +682,38 @@ mod tests {
                 for t in -2..=2 {
                     let r = F::from_i64(t);
                     let lhs = match n {
-                        1 => LagrangePolynomial::<F>::evaluate::<F, 1>(&vals_vec.clone().try_into().unwrap(), &r),
-                        2 => LagrangePolynomial::<F>::evaluate::<F, 2>(&vals_vec.clone().try_into().unwrap(), &r),
-                        3 => LagrangePolynomial::<F>::evaluate::<F, 3>(&vals_vec.clone().try_into().unwrap(), &r),
-                        4 => LagrangePolynomial::<F>::evaluate::<F, 4>(&vals_vec.clone().try_into().unwrap(), &r),
-                        5 => LagrangePolynomial::<F>::evaluate::<F, 5>(&vals_vec.clone().try_into().unwrap(), &r),
-                        8 => LagrangePolynomial::<F>::evaluate::<F, 8>(&vals_vec.clone().try_into().unwrap(), &r),
-                        11 => LagrangePolynomial::<F>::evaluate::<F, 11>(&vals_vec.clone().try_into().unwrap(), &r),
-                        20 => LagrangePolynomial::<F>::evaluate::<F, 20>(&vals_vec.clone().try_into().unwrap(), &r),
+                        1 => LagrangePolynomial::<F>::evaluate::<F, 1>(
+                            &vals_vec.clone().try_into().unwrap(),
+                            &r,
+                        ),
+                        2 => LagrangePolynomial::<F>::evaluate::<F, 2>(
+                            &vals_vec.clone().try_into().unwrap(),
+                            &r,
+                        ),
+                        3 => LagrangePolynomial::<F>::evaluate::<F, 3>(
+                            &vals_vec.clone().try_into().unwrap(),
+                            &r,
+                        ),
+                        4 => LagrangePolynomial::<F>::evaluate::<F, 4>(
+                            &vals_vec.clone().try_into().unwrap(),
+                            &r,
+                        ),
+                        5 => LagrangePolynomial::<F>::evaluate::<F, 5>(
+                            &vals_vec.clone().try_into().unwrap(),
+                            &r,
+                        ),
+                        8 => LagrangePolynomial::<F>::evaluate::<F, 8>(
+                            &vals_vec.clone().try_into().unwrap(),
+                            &r,
+                        ),
+                        11 => LagrangePolynomial::<F>::evaluate::<F, 11>(
+                            &vals_vec.clone().try_into().unwrap(),
+                            &r,
+                        ),
+                        20 => LagrangePolynomial::<F>::evaluate::<F, 20>(
+                            &vals_vec.clone().try_into().unwrap(),
+                            &r,
+                        ),
                         _ => unreachable!(),
                     };
                     let rhs = pow_u64(r, m as u64);
@@ -697,7 +727,15 @@ mod tests {
     fn evaluate_many_matches_pointwise() {
         const N: usize = 7;
         // p(x) = 3 + 5x + 2x^2
-        let coeffs = [F::from_u64(3), F::from_u64(5), F::from_u64(2), F::from_u64(0), F::from_u64(0), F::from_u64(0), F::from_u64(0)];
+        let coeffs = [
+            F::from_u64(3),
+            F::from_u64(5),
+            F::from_u64(2),
+            F::from_u64(0),
+            F::from_u64(0),
+            F::from_u64(0),
+            F::from_u64(0),
+        ];
         let d = N - 1;
         let start: i64 = -((d / 2) as i64);
         let values: [F; N] = core::array::from_fn(|i| {
@@ -707,19 +745,35 @@ mod tests {
 
         let points_small: Vec<F> = (-2..=2).map(F::from_i64).collect();
         let out_small = LagrangePolynomial::<F>::evaluate_many::<F, N>(&values, &points_small);
-        let chk_small: Vec<F> = points_small.iter().map(|&r| eval_poly(&coeffs, r)).collect();
+        let chk_small: Vec<F> = points_small
+            .iter()
+            .map(|&r| eval_poly(&coeffs, r))
+            .collect();
         assert_eq!(out_small, chk_small);
 
         let points_large: Vec<F> = (-8..=8).map(F::from_i64).collect();
         let out_large = LagrangePolynomial::<F>::evaluate_many::<F, N>(&values, &points_large);
-        let chk_large: Vec<F> = points_large.iter().map(|&r| eval_poly(&coeffs, r)).collect();
+        let chk_large: Vec<F> = points_large
+            .iter()
+            .map(|&r| eval_poly(&coeffs, r))
+            .collect();
         assert_eq!(out_large, chk_large);
     }
 
     #[test]
     fn interpolate_roundtrip_and_monomials() {
         const N: usize = 9;
-        let coeffs: [F; N] = [ F::from_u64(1), F::from_u64(2), F::from_u64(3), F::from_u64(4), F::from_u64(5), F::from_u64(6), F::from_u64(7), F::from_u64(8), F::from_u64(9) ];
+        let coeffs: [F; N] = [
+            F::from_u64(1),
+            F::from_u64(2),
+            F::from_u64(3),
+            F::from_u64(4),
+            F::from_u64(5),
+            F::from_u64(6),
+            F::from_u64(7),
+            F::from_u64(8),
+            F::from_u64(9),
+        ];
         let d = N - 1;
         let start: i64 = -((d / 2) as i64);
         let values: [F; N] = core::array::from_fn(|i| {
@@ -736,8 +790,11 @@ mod tests {
             });
             let rec_m = LagrangePolynomial::<F>::interpolate_coeffs::<N>(&values_m);
             for j in 0..N {
-                if j == m { assert_eq!(rec_m[j], F::from_u64(1)); }
-                else { assert_eq!(rec_m[j], F::from_u64(0)); }
+                if j == m {
+                    assert_eq!(rec_m[j], F::from_u64(1));
+                } else {
+                    assert_eq!(rec_m[j], F::from_u64(0));
+                }
             }
         }
     }
@@ -781,7 +838,10 @@ mod tests {
             for k in 0..=n {
                 let mut num: u128 = 1;
                 let mut den: u128 = 1;
-                for j in 0..k { num *= (n - j) as u128; den *= (j + 1) as u128; }
+                for j in 0..k {
+                    num *= (n - j) as u128;
+                    den *= (j + 1) as u128;
+                }
                 let b = (num / den) as u64;
                 assert_eq!(LagrangeHelper::binomial_coeff(n, k), b);
             }
@@ -810,12 +870,21 @@ mod tests {
             for t in -5..=5 {
                 let lhs = LagrangeHelper::generalized_binomial(t, k);
                 let rhs = if t >= 0 {
-                    let tt = t as usize; if k > tt { 0 } else { LagrangeHelper::binomial_coeff(tt, k) as i128 }
+                    let tt = t as usize;
+                    if k > tt {
+                        0
+                    } else {
+                        LagrangeHelper::binomial_coeff(tt, k) as i128
+                    }
                 } else {
                     let sign = if (k & 1) == 1 { -1i128 } else { 1i128 };
                     let tt = (-t) as i64 + (k as i64) - 1;
-                    let mut num: i128 = 1; let mut den: i128 = 1;
-                    for j in 0..k { num *= tt as i128 - j as i128; den *= (j + 1) as i128; }
+                    let mut num: i128 = 1;
+                    let mut den: i128 = 1;
+                    for j in 0..k {
+                        num *= tt as i128 - j as i128;
+                        den *= (j + 1) as i128;
+                    }
                     sign * (num / den)
                 };
                 assert_eq!(lhs, rhs);
@@ -831,9 +900,14 @@ mod tests {
         for j in 0..WINDOW_N {
             let t = (start + j as i64) as i128;
             let mut pow = 1i128; // t^0
-            for k in 0..OUT_LEN { naive[k] += pow; pow = pow * t; }
+            for k in 0..OUT_LEN {
+                naive[k] += pow;
+                pow = pow * t;
+            }
         }
         assert_eq!(sums, naive);
-        for k in (1..OUT_LEN).step_by(2) { assert_eq!(sums[k], 0); }
+        for k in (1..OUT_LEN).step_by(2) {
+            assert_eq!(sums[k], 0);
+        }
     }
 }

@@ -33,7 +33,10 @@ pub struct SpartanDag<F: JoltField> {
 impl<F: JoltField> SpartanDag<F> {
     pub fn new(padded_trace_length: usize) -> Self {
         let key = Arc::new(UniformSpartanKey::new(padded_trace_length));
-        Self { key, stage1_state: None }
+        Self {
+            key,
+            stage1_state: None,
+        }
     }
 }
 
@@ -72,21 +75,18 @@ where
 
         // Uni-skip first round using canonical instance + helper
         let (preprocessing, trace, _, _) = state_manager.get_prover_data();
-        let mut uniskip_instance = OuterUniSkipInstance::<F>::new(
-            &preprocessing.shared,
-            trace,
-            &tau,
-        );
+        let mut uniskip_instance =
+            OuterUniSkipInstance::<F>::new(&preprocessing.shared, trace, &tau);
         let (first_round_proof, r0, claim_after_first) = prove_uniskip_round::<F, ProofTranscript, _>(
             &mut uniskip_instance,
             &mut *transcript_rc.borrow_mut(),
         );
 
         // Store first round
-        state_manager
-            .proofs
-            .borrow_mut()
-            .insert(ProofKeys::Stage1UniSkipFirstRoundProof, ProofData::UniSkipFirstRoundProof(first_round_proof));
+        state_manager.proofs.borrow_mut().insert(
+            ProofKeys::Stage1UniSkipFirstRoundProof,
+            ProofData::UniSkipFirstRoundProof(first_round_proof),
+        );
 
         // Cache remainder construction state for instances method
         self.stage1_state = Some(Stage1State {
@@ -141,7 +141,6 @@ where
         Ok(())
     }
 
-
     fn stage1_remainder_prover_instances(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
@@ -185,7 +184,6 @@ where
         // TODO: append extras when available
         instances
     }
-
 
     fn stage2_prover_instances(
         &mut self,

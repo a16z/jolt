@@ -462,7 +462,9 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
 ///   will stream from the trace again to initialize.
 /// 3. We assume that the domain is symmetric around zero, and the prover sends the entire
 ///   (univariate) polynomial for this round
-pub trait UniSkipFirstRoundInstance<F: JoltField, T: Transcript>: Send + Sync + MaybeAllocative {
+pub trait UniSkipFirstRoundInstance<F: JoltField, T: Transcript>:
+    Send + Sync + MaybeAllocative
+{
     /// The degree of the sum-check
     const DEGREE_BOUND: usize;
 
@@ -481,10 +483,7 @@ pub trait UniSkipFirstRoundInstance<F: JoltField, T: Transcript>: Send + Sync + 
 
     /// Computes the expected output claim given the verifier's challenges.
     /// This is used to verify the univariate skip round
-    fn output_claim(
-        &self,
-        r: &[F::Challenge],
-    ) -> F;
+    fn output_claim(&self, r: &[F::Challenge]) -> F;
 
     // TODO: add flamegraph support
     // #[cfg(feature = "allocative")]
@@ -548,7 +547,11 @@ impl<F: JoltField, ProofTranscript: Transcript> UniSkipFirstRoundProof<F, ProofT
 
 /// Prove-only helper for a uni-skip first round instance.
 /// Produces the proof object, the uni-skip challenge r0, and the next claim s1(r0).
-pub fn prove_uniskip_round<F: JoltField, ProofTranscript: Transcript, I: UniSkipFirstRoundInstance<F, ProofTranscript>>(
+pub fn prove_uniskip_round<
+    F: JoltField,
+    ProofTranscript: Transcript,
+    I: UniSkipFirstRoundInstance<F, ProofTranscript>,
+>(
     instance: &mut I,
     transcript: &mut ProofTranscript,
 ) -> (UniSkipFirstRoundProof<F, ProofTranscript>, F::Challenge, F) {
