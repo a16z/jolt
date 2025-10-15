@@ -388,25 +388,25 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
                     }
 
                     [
-                        in_evals_spartan[j_hi] * eval_at_0_spartan,
-                        in_evals_spartan[j_hi] * eval_at_inf_spartan,
-                        in_evals_branch[j_hi] * eval_at_0_branch,
-                        in_evals_branch[j_hi] * eval_at_inf_branch,
+                        in_evals_spartan[j_hi].mul_unreduced::<9>(eval_at_0_spartan),
+                        in_evals_spartan[j_hi].mul_unreduced::<9>(eval_at_inf_spartan),
+                        in_evals_branch[j_hi].mul_unreduced::<9>(eval_at_0_branch),
+                        in_evals_branch[j_hi].mul_unreduced::<9>(eval_at_inf_branch),
                     ]
                 })
                 .reduce(
-                    || [F::zero(); 4],
+                    || [F::Unreduced::zero(); 4],
                     |a, b| std::array::from_fn(|i| a[i] + b[i]),
                 );
 
             let univariate_evals_spartan = ps.eq_r_spartan.gruen_evals_deg_3(
-                eval_at_0_spartan,
-                eval_at_inf_spartan,
+                F::from_montgomery_reduce(eval_at_0_spartan),
+                F::from_montgomery_reduce(eval_at_inf_spartan),
                 ps.prev_claim_spartan.unwrap(),
             );
             let univariate_evals_branch = ps.eq_r_branch.gruen_evals_deg_3(
-                eval_at_0_branch,
-                eval_at_inf_branch,
+                F::from_montgomery_reduce(eval_at_0_branch),
+                F::from_montgomery_reduce(eval_at_inf_branch),
                 ps.prev_claim_branch.unwrap(),
             );
 
