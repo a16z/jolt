@@ -75,9 +75,7 @@ where
             .challenge_vector_optimized::<F>(num_rounds_x);
 
         // Uni-skip first round using canonical instance + helper
-        let (preprocessing, trace, _, _) = state_manager.get_prover_data();
-        let mut uniskip_instance =
-            OuterUniSkipInstance::<F>::new(&preprocessing.shared, trace, &tau);
+        let mut uniskip_instance = OuterUniSkipInstance::<F>::new_prover(state_manager, &tau);
         let (first_round_proof, r0, claim_after_first) = prove_uniskip_round::<F, ProofTranscript, _>(
             &mut uniskip_instance,
             &mut *transcript_rc.borrow_mut(),
