@@ -81,3 +81,37 @@ $$
 f^{\Psi_6(q^2)} = \frac{\tilde{\beta} - \sigma}{\tilde{\beta} + \sigma}.
 $$
 This recovers the original pairing value.
+
+# Implementation Detail
+
+## Basis choice
+In Arkworks, for optimizing field operations, the field $\mathbb{F}_{q^{12}}$ is represented as the field extension $\mathbb{F}_{q^2}(\tau, \sigma^{\frac{1}{3}}) = \mathbb{F}_{q^2}(\sigma^{\frac{1}{3}})$ instead of $\mathbb{F}_{q^2}(\tau, \sigma)$, where recall that $\tau = \xi^{\frac{1}{3}}$ and $\sigma = \xi^{\frac{1}{2}}$, where $\xi \in \mathbb{F}_{q^2}$ is a sextic non-residue. The $q^2$-power map no longer maps $\sigma^{\frac{1}{3}}$ to $-\sigma^{\frac{1}{3}}$, so naively applying the formula in the previous section on the generator $\sigma^{\frac{1}{3}}$ will cause problems. Fortunately, we can fix this easily by doing a change of basis before compression and after decompression. 
+
+Consider 
+
+$$
+a + b\sigma = a + (b\sigma^{\frac{2}{3}})\sigma^{\frac{1}{3}} = a + (b\tau)\sigma^{\frac{1}{3}}
+$$
+
+and hence 
+
+$$
+a + b\sigma^{\frac{1}{3}} = a + (b\tau^{-1})\sigma,
+$$
+
+where $a$, $b$, and $\tau$ all are elements of $\mathbb{F}_{q^6} = $\mathbb{F}_{q^2}(\tau)$. To convert between elements in $\mathbb{F}_{q^{12}}$ written in $\mathbb{F}_{q^6}$-bases $(1, \sigma)$ and $(1, \sigma^{\frac{1}{3}})$, it suffices to do a multiplication or a division by $\tau$, and we shall see this can be implemented entirely in $\mathbb{F}_{q^2}$ arithmetic.
+
+Indeed, write $b = c_0 + c_1\tau + c_2\tau^2$, where $c_i \in \mathbb{F}_{q^2}$, we have $
+
+$$
+b\tau = c_2\xi + c_0\tau + c_1\tau^2,
+$$
+
+and
+
+$$
+b\tau^{-1} = c_1 + c_2\tau + c_0\xi^{-1}\tau^2,
+$$
+which gives the coressponding conversion formulae.
+
+
