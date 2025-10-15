@@ -343,7 +343,7 @@ impl<F: JoltField> UniPoly<F> {
 
         // Horner evaluation at x
         let value = self.evaluate(x);
-        println!("value: {:?}", value);
+        println!("value: {value:?}");
         (ok, value)
     }
 }

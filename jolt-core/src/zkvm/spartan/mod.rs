@@ -20,8 +20,8 @@ use crate::subprotocols::sumcheck::SumcheckInstance;
 use crate::zkvm::r1cs::constraints::{FIRST_ROUND_POLY_NUM_COEFFS, UNIVARIATE_SKIP_DOMAIN_SIZE};
 
 pub mod inner;
-pub mod outer;
 pub mod instruction_input;
+pub mod outer;
 pub mod pc;
 pub mod product;
 pub struct SpartanDag<F: JoltField> {

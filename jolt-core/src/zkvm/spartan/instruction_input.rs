@@ -43,7 +43,7 @@ use crate::{
 /// Note:
 /// - `r_cycle_stage_1` is the randomness from the log(T) rounds of Spartan outer sumcheck (stage 1).
 /// - `r_cycle_stage_2` is the randomness from instruction product sumcheck (stage 2).
-/// 
+///
 /// TODO: do 3 round compression SVO on each of the 8 multilinears, then bind directly
 #[derive(Allocative)]
 pub struct InstructionInputSumcheck<F: JoltField> {

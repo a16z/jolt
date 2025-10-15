@@ -370,7 +370,7 @@ impl LagrangeHelper {
         let mut acc: u64 = 1;
         let mut i: usize = 2;
         while i <= n {
-            acc = acc * (i as u64);
+            acc *= i as u64;
             i += 1;
         }
         acc

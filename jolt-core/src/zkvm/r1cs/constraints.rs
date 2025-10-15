@@ -121,7 +121,6 @@ pub struct NamedConstraint {
     pub cons: Constraint,
 }
 
-
 /// r1cs_eq_conditional!: verbose, condition-first equality constraint
 ///
 /// Usage: `r1cs_eq_conditional!(name: ConstraintName::Foo, if { COND } => { LEFT } == { RIGHT });`
@@ -369,7 +368,10 @@ pub const fn filter_uniform_r1cs<const N: usize>(
     names: &[ConstraintName; N],
 ) -> [NamedConstraint; N] {
     // Initialize with a dummy; will be overwritten for all positions 0..N-1
-    let dummy = NamedConstraint { name: ConstraintName::RamReadEqRamWriteIfLoad, cons: Constraint::new(LC::zero(), LC::zero(), LC::zero()) };
+    let dummy = NamedConstraint {
+        name: ConstraintName::RamReadEqRamWriteIfLoad,
+        cons: Constraint::new(LC::zero(), LC::zero(), LC::zero()),
+    };
     let mut out: [NamedConstraint; N] = [dummy; N];
 
     let mut o = 0;
@@ -526,7 +528,6 @@ pub fn eval_az_by_name(c: &NamedConstraint, row: &R1CSCycleInputs) -> I8OrI96 {
 pub fn eval_bz_by_name(c: &NamedConstraint, row: &R1CSCycleInputs) -> S160 {
     use ConstraintName as N;
     match c.name {
-        
         N::RamAddrEqRs1PlusImmIfLoadStore => {
             // B: RamAddress - (Rs1Value + Imm) (i128 arithmetic)
             let expected: i128 = if row.imm.is_positive {
@@ -643,26 +644,26 @@ pub fn eval_az_bz_batch_from_row(
 pub fn eval_az_first_group(row: &R1CSCycleInputs) -> [bool; UNIVARIATE_SKIP_DOMAIN_SIZE] {
     // Order matches UNIFORM_R1CS_FIRST_GROUP_NAMES (now 9 entries)
     [
-        row.flags[CircuitFlags::Load],                 // RamReadEqRamWriteIfLoad
-        row.flags[CircuitFlags::Load],                 // RamReadEqRdWriteIfLoad
-        row.flags[CircuitFlags::Store],                // Rs2EqRamWriteIfStore
-        row.flags[CircuitFlags::AddOperands],          // RightLookupAdd
-        row.flags[CircuitFlags::SubtractOperands],     // RightLookupSub
-        row.flags[CircuitFlags::Assert],               // AssertLookupOne
-        row.should_jump,                               // NextUnexpPCEqLookupIfShouldJump
+        row.flags[CircuitFlags::Load],             // RamReadEqRamWriteIfLoad
+        row.flags[CircuitFlags::Load],             // RamReadEqRdWriteIfLoad
+        row.flags[CircuitFlags::Store],            // Rs2EqRamWriteIfStore
+        row.flags[CircuitFlags::AddOperands],      // RightLookupAdd
+        row.flags[CircuitFlags::SubtractOperands], // RightLookupSub
+        row.flags[CircuitFlags::Assert],           // AssertLookupOne
+        row.should_jump,                           // NextUnexpPCEqLookupIfShouldJump
         {
             let add = row.flags[CircuitFlags::AddOperands];
             let sub = row.flags[CircuitFlags::SubtractOperands];
             let mul = row.flags[CircuitFlags::MultiplyOperands];
             let adv = row.flags[CircuitFlags::Advice];
             !(add || sub || mul || adv)
-        },                                             // RightLookupEqRightInputOtherwise
+        }, // RightLookupEqRightInputOtherwise
         {
             let add = row.flags[CircuitFlags::AddOperands];
             let sub = row.flags[CircuitFlags::SubtractOperands];
             let mul = row.flags[CircuitFlags::MultiplyOperands];
             !(add || sub || mul)
-        },                                             // LeftLookupEqLeftInputOtherwise
+        }, // LeftLookupEqLeftInputOtherwise
     ]
 }
 

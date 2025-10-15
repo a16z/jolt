@@ -459,9 +459,9 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
 /// We make a number of assumptions for the usage of this trait currently:
 /// 1. There is only one univariate skip round, which happens at the beginning of a sumcheck stage
 /// 2. We do not bind anything after this round. Instead during the remaining sumcheck, we
-///   will stream from the trace again to initialize.
+///    will stream from the trace again to initialize.
 /// 3. We assume that the domain is symmetric around zero, and the prover sends the entire
-///   (univariate) polynomial for this round
+///    (univariate) polynomial for this round
 pub trait UniSkipFirstRoundInstance<F: JoltField, T: Transcript>:
     Send + Sync + MaybeAllocative
 {

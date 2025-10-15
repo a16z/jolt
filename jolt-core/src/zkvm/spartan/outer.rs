@@ -31,14 +31,12 @@ use crate::utils::univariate_skip::{
     compute_az_r_group0, compute_az_r_group1, compute_bz_r_group0, compute_bz_r_group1,
 };
 use crate::zkvm::dag::state_manager::StateManager;
-use crate::zkvm::r1cs::inputs::{
-    compute_claimed_witness_evals, ALL_R1CS_INPUTS
-};
+use crate::zkvm::r1cs::inputs::{compute_claimed_witness_evals, ALL_R1CS_INPUTS};
 use crate::zkvm::r1cs::{
     constraints::{
         eval_az_first_group, eval_az_second_group, eval_bz_first_group, eval_bz_second_group,
-        FIRST_ROUND_POLY_NUM_COEFFS, UNIVARIATE_SKIP_DEGREE,
-        UNIVARIATE_SKIP_DOMAIN_SIZE, UNIVARIATE_SKIP_EXTENDED_DOMAIN_SIZE,
+        FIRST_ROUND_POLY_NUM_COEFFS, UNIVARIATE_SKIP_DEGREE, UNIVARIATE_SKIP_DOMAIN_SIZE,
+        UNIVARIATE_SKIP_EXTENDED_DOMAIN_SIZE,
     },
     inputs::R1CSCycleInputs,
 };
@@ -222,7 +220,7 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
                     for x_in_val in 0..num_x_in_vals {
                         let current_step_idx = (x_out_val << iter_num_x_in_vars) | x_in_val;
                         let row_inputs = R1CSCycleInputs::from_trace::<F>(
-                            &*self.preprocess,
+                            &self.preprocess,
                             self.trace.as_slice(),
                             current_step_idx,
                         );
@@ -245,7 +243,6 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
                         for i in 0..UNIVARIATE_SKIP_DOMAIN_SIZE {
                             az2_i128_padded[i] = az2_i96[i].to_i128();
                             bz2_s160_padded[i] = bz2[i];
-                            // no Cz term
                         }
 
                         for j in 0..UNIVARIATE_SKIP_DEGREE {
@@ -317,7 +314,7 @@ impl<F: JoltField, T: Transcript> UniSkipFirstRoundInstance<F, T> for OuterUniSk
         println!("tau: {:?}", self.tau);
         let split_eq = GruenSplitEqPolynomial::<F>::new(tau_low, BindingOrder::LowToHigh);
         let extended = self.compute_univariate_skip_extended_evals(&split_eq);
-        println!("extended: {:?}", extended);
+        println!("extended: {extended:?}");
 
         // Rebuild s1(Z) without side effects on transcript
         let mut t1_vals: [F; 2 * UNIVARIATE_SKIP_DEGREE + 1] =
@@ -332,7 +329,7 @@ impl<F: JoltField, T: Transcript> UniSkipFirstRoundInstance<F, T> for OuterUniSk
         let t1_coeffs = LagrangePolynomial::<F>::interpolate_coeffs::<
             UNIVARIATE_SKIP_EXTENDED_DOMAIN_SIZE,
         >(&t1_vals);
-        println!("t1_coeffs: {:?}", t1_coeffs);
+        println!("t1_coeffs: {t1_coeffs:?}");
 
         let tau_high = self.tau[self.tau.len() - 1];
         let lagrange_poly_values =
@@ -349,7 +346,7 @@ impl<F: JoltField, T: Transcript> UniSkipFirstRoundInstance<F, T> for OuterUniSk
             }
         }
 
-        println!("s1_coeffs: {:?}", s1_coeffs);
+        println!("s1_coeffs: {s1_coeffs:?}");
 
         UniPoly::from_coeff(s1_coeffs.to_vec())
     }
@@ -807,10 +804,10 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
     pub fn final_sumcheck_evals(&self) -> [F; 2] {
         let ps = self.prover_state.as_ref();
         let az0 = ps
-            .and_then(|s| if s.az.len() > 0 { Some(s.az[0]) } else { None })
+            .and_then(|s| if !s.az.is_empty() { Some(s.az[0]) } else { None })
             .unwrap_or(F::zero());
         let bz0 = ps
-            .and_then(|s| if s.bz.len() > 0 { Some(s.bz[0]) } else { None })
+            .and_then(|s| if !s.bz.is_empty() { Some(s.bz[0]) } else { None })
             .unwrap_or(F::zero());
         [az0, bz0]
     }
@@ -943,7 +940,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for OuterRemainingSumch
         for (i, input) in ALL_R1CS_INPUTS.iter().enumerate() {
             acc.append_virtual(
                 transcript,
-                VirtualPolynomial::try_from(input).ok().unwrap(),
+                VirtualPolynomial::from(input),
                 SumcheckId::SpartanOuter,
                 OpeningPoint::new(r_cycle.to_vec()),
                 claimed_witness_evals[i],
@@ -977,7 +974,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for OuterRemainingSumch
         ALL_R1CS_INPUTS.iter().for_each(|input| {
             acc.append_virtual(
                 transcript,
-                VirtualPolynomial::try_from(input).ok().unwrap(),
+                VirtualPolynomial::from(input),
                 SumcheckId::SpartanOuter,
                 OpeningPoint::new(r_cycle.to_vec()),
             );
