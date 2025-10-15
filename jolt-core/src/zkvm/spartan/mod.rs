@@ -24,7 +24,6 @@ pub mod outer;
 pub mod instruction_input;
 pub mod pc;
 pub mod product;
-
 pub struct SpartanDag<F: JoltField> {
     /// Cached key to avoid recomputation across stages
     key: Arc<UniformSpartanKey<F>>,

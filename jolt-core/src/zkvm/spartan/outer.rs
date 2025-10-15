@@ -243,7 +243,7 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
                         let bz1_s160 = eval_bz_first_group(&row_inputs);
                         let az2_i96 = eval_az_second_group(&row_inputs);
                         let bz2 = eval_bz_second_group(&row_inputs);
-                        let cz2: [S160; 8] = [0, 8];
+                        let cz2: [S160; 8] = [S160::from(0i128); 8];
                         // eval_cz_second_group(&row_inputs);
 
                         let mut az2_i128_padded: [i128; UNIVARIATE_SKIP_DOMAIN_SIZE] =
