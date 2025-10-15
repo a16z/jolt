@@ -187,7 +187,9 @@ pub enum Prefixes {
 }
 
 #[derive(Clone, Copy, Allocative)]
+/// Wrapper for prefix polynomial evaluations, used for type safety in prefix operations.
 pub struct PrefixEval<F>(F);
+/// Optional prefix evaluation cached after each pair of address-binding rounds (r_x, r_y).
 pub type PrefixCheckpoint<F: JoltField> = PrefixEval<Option<F>>;
 
 impl<F: Display> Display for PrefixEval<F> {

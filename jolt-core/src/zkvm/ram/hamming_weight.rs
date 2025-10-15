@@ -27,6 +27,15 @@ use crate::{
     },
 };
 
+// RAM Hamming weight sumcheck
+//
+// Proves the batched equality:
+//   Σ_{i=0}^{d−1} γ^i ⋅ (Σ_k ra_i(k)) = (Σ_{i=0}^{d−1} γ^i) ⋅ H_claim,
+// where:
+// - ra_i(k) = Σ_j eq(r_cycle, j) ⋅ 1[chunk_i(address(j)) = k].
+// - H_claim is the claimed evaluation from the RAM Hamming booleanity sumcheck at r_cycle.
+// - γ is a random challenge with powers used for batching.
+
 #[derive(Allocative)]
 pub struct HammingWeightProverState<F: JoltField> {
     ra: Vec<MultilinearPolynomial<F>>,

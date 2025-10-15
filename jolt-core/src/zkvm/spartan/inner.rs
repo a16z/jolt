@@ -23,6 +23,20 @@ use crate::zkvm::witness::VirtualPolynomial;
 
 use rayon::prelude::*;
 
+// Spartan inner sumcheck
+//
+// Proves the following identity at the verifier's challenge point r:
+//   (A_small(rx, r) + γ·B_small(rx, r) + γ²·C_small(rx, r)) ⋅ z(r)
+//   = Az(r) + γ·Bz(r) + γ²·Cz(r),
+//
+// where:
+// - A_small, B_small, C_small: MLEs of the uniform A, B, C matrices evaluated at (rx, r)
+// - z: MLE of the witness vector evaluated at r
+// - Az(r), Bz(r), Cz(r): outer sumcheck claims for A·z, B·z, C·z at the same opening point
+// - rx: non-cycle coordinates from the Spartan outer sumcheck opening point
+// - r: current inner sumcheck challenge vector
+// - γ: batching scalar drawn from the transcript
+
 #[derive(Allocative)]
 struct InnerSumcheckProverState<F: JoltField> {
     poly_abc_small: MultilinearPolynomial<F>,
