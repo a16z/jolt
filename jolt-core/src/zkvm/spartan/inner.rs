@@ -92,9 +92,7 @@ impl<F: JoltField> InnerSumcheck<F> {
             .for_each(|(r1cs_input, dest)| {
                 let accumulator = state_manager.get_prover_accumulator();
                 let accumulator = accumulator.borrow();
-                let key = OpeningId::try_from(&r1cs_input).expect(
-                    "Failed to map R1CS input to OpeningId (neither virtual nor committed)",
-                );
+                let key = OpeningId::from(&r1cs_input);
                 let (_, claim) = accumulator
                     .openings
                     .get(&key)
@@ -253,7 +251,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for InnerSumcheck<F> {
             .map(|r1cs_input| {
                 let (_, claim) = accumulator
                     .openings
-                    .get(&OpeningId::try_from(&r1cs_input).ok().unwrap())
+                    .get(&OpeningId::from(&r1cs_input))
                     .unwrap();
                 *claim
             })

@@ -140,6 +140,7 @@ impl JoltDAG {
             .chain(registers_dag.stage2_prover_instances(&mut state_manager))
             .chain(ram_dag.stage2_prover_instances(&mut state_manager))
             .chain(lookups_dag.stage2_prover_instances(&mut state_manager))
+            .chain(bytecode_dag.stage2_prover_instances(&mut state_manager))
             .collect();
 
         #[cfg(feature = "allocative")]
@@ -246,9 +247,8 @@ impl JoltDAG {
         let _guard = span.enter();
 
         let mut stage4_instances: Vec<_> = std::iter::empty()
+            .chain(registers_dag.stage4_prover_instances(&mut state_manager))
             .chain(ram_dag.stage4_prover_instances(&mut state_manager))
-            .chain(bytecode_dag.stage4_prover_instances(&mut state_manager))
-            .chain(lookups_dag.stage4_prover_instances(&mut state_manager))
             .collect();
 
         #[cfg(feature = "allocative")]
@@ -292,7 +292,113 @@ impl JoltDAG {
         drop(_guard);
         drop(span);
 
-        // Batch-prove all openings
+        // Stage 5:
+        #[cfg(not(target_arch = "wasm32"))]
+        print_current_memory_usage("Stage 5 baseline");
+        let span = tracing::span!(tracing::Level::INFO, "Stage 5 sumchecks");
+        let _guard = span.enter();
+
+        let mut stage5_instances: Vec<_> = std::iter::empty()
+            .chain(registers_dag.stage5_prover_instances(&mut state_manager))
+            .chain(ram_dag.stage5_prover_instances(&mut state_manager))
+            .chain(lookups_dag.stage5_prover_instances(&mut state_manager))
+            .collect();
+
+        #[cfg(feature = "allocative")]
+        {
+            let mut flamegraph = FlameGraphBuilder::default();
+            for sumcheck in stage5_instances.iter() {
+                sumcheck.update_flamegraph(&mut flamegraph);
+            }
+            write_flamegraph_svg(flamegraph, "stage5_start_flamechart.svg");
+        }
+
+        let stage5_instances_mut: Vec<&mut dyn SumcheckInstance<F, ProofTranscript>> =
+            stage5_instances
+                .iter_mut()
+                .map(|instance| &mut **instance as &mut dyn SumcheckInstance<F, ProofTranscript>)
+                .collect();
+
+        tracing::info!("Stage 5 proving");
+        let (stage5_proof, _r_stage5) = BatchedSumcheck::prove(
+            stage5_instances_mut,
+            Some(accumulator.clone()),
+            &mut *transcript.borrow_mut(),
+        );
+
+        state_manager.proofs.borrow_mut().insert(
+            ProofKeys::Stage5Sumcheck,
+            ProofData::SumcheckProof(stage5_proof),
+        );
+
+        #[cfg(feature = "allocative")]
+        {
+            let mut flamegraph = FlameGraphBuilder::default();
+            for sumcheck in stage5_instances.iter() {
+                sumcheck.update_flamegraph(&mut flamegraph);
+            }
+            write_flamegraph_svg(flamegraph, "stage5_end_flamechart.svg");
+        }
+
+        drop_in_background_thread(stage5_instances);
+
+        drop(_guard);
+        drop(span);
+
+        // Stage 6:
+        #[cfg(not(target_arch = "wasm32"))]
+        print_current_memory_usage("Stage 6 baseline");
+        let span = tracing::span!(tracing::Level::INFO, "Stage 6 sumchecks");
+        let _guard = span.enter();
+
+        let mut stage6_instances: Vec<_> = std::iter::empty()
+            .chain(bytecode_dag.stage6_prover_instances(&mut state_manager))
+            .chain(ram_dag.stage6_prover_instances(&mut state_manager))
+            .chain(lookups_dag.stage6_prover_instances(&mut state_manager))
+            .collect();
+
+        #[cfg(feature = "allocative")]
+        {
+            let mut flamegraph = FlameGraphBuilder::default();
+            for sumcheck in stage6_instances.iter() {
+                sumcheck.update_flamegraph(&mut flamegraph);
+            }
+            write_flamegraph_svg(flamegraph, "stage6_start_flamechart.svg");
+        }
+
+        let stage6_instances_mut: Vec<&mut dyn SumcheckInstance<F, ProofTranscript>> =
+            stage6_instances
+                .iter_mut()
+                .map(|instance| &mut **instance as &mut dyn SumcheckInstance<F, ProofTranscript>)
+                .collect();
+
+        tracing::info!("Stage 6 proving");
+        let (stage6_proof, _r_stage6) = BatchedSumcheck::prove(
+            stage6_instances_mut,
+            Some(accumulator.clone()),
+            &mut *transcript.borrow_mut(),
+        );
+
+        state_manager.proofs.borrow_mut().insert(
+            ProofKeys::Stage6Sumcheck,
+            ProofData::SumcheckProof(stage6_proof),
+        );
+
+        #[cfg(feature = "allocative")]
+        {
+            let mut flamegraph = FlameGraphBuilder::default();
+            for sumcheck in stage6_instances.iter() {
+                sumcheck.update_flamegraph(&mut flamegraph);
+            }
+            write_flamegraph_svg(flamegraph, "stage6_end_flamechart.svg");
+        }
+
+        drop_in_background_thread(stage6_instances);
+
+        drop(_guard);
+        drop(span);
+
+        // Batch-prove all openings (Stage 7)
         let (_, trace, _, _) = state_manager.get_prover_data();
 
         let all_polys: Vec<CommittedPolynomial> =
@@ -304,9 +410,9 @@ impl JoltDAG {
         print_data_structure_heap_usage("Committed polynomials map", &polynomials_map);
 
         #[cfg(not(target_arch = "wasm32"))]
-        print_current_memory_usage("Stage 5 baseline");
+        print_current_memory_usage("Stage 7 baseline");
 
-        tracing::info!("Stage 5 proving");
+        tracing::info!("Stage 7 proving");
 
         // Generate trusted_advice opening proofs
         if !state_manager.program_io.trusted_advice.is_empty() {
@@ -430,9 +536,9 @@ impl JoltDAG {
         // Stage 2:
         let stage2_instances: Vec<_> = std::iter::empty()
             .chain(spartan_dag.stage2_verifier_instances(&mut state_manager))
-            .chain(registers_dag.stage2_verifier_instances(&mut state_manager))
             .chain(ram_dag.stage2_verifier_instances(&mut state_manager))
             .chain(lookups_dag.stage2_verifier_instances(&mut state_manager))
+            .chain(bytecode_dag.stage2_verifier_instances(&mut state_manager))
             .collect();
         let stage2_instances_ref: Vec<&dyn SumcheckInstance<F, ProofTranscript>> = stage2_instances
             .iter()
@@ -463,7 +569,6 @@ impl JoltDAG {
         // Stage 3:
         let stage3_instances: Vec<_> = std::iter::empty()
             .chain(spartan_dag.stage3_verifier_instances(&mut state_manager))
-            .chain(registers_dag.stage3_verifier_instances(&mut state_manager))
             .chain(lookups_dag.stage3_verifier_instances(&mut state_manager))
             .chain(ram_dag.stage3_verifier_instances(&mut state_manager))
             .collect();
@@ -493,9 +598,8 @@ impl JoltDAG {
 
         // Stage 4:
         let stage4_instances: Vec<_> = std::iter::empty()
+            .chain(registers_dag.stage4_verifier_instances(&mut state_manager))
             .chain(ram_dag.stage4_verifier_instances(&mut state_manager))
-            .chain(bytecode_dag.stage4_verifier_instances(&mut state_manager))
-            .chain(lookups_dag.stage4_verifier_instances(&mut state_manager))
             .collect();
         let stage4_instances_ref: Vec<&dyn SumcheckInstance<F, ProofTranscript>> = stage4_instances
             .iter()
@@ -519,6 +623,66 @@ impl JoltDAG {
         )
         .context("Stage 4")?;
 
+        drop(proofs);
+
+        // Stage 5:
+        let stage5_instances: Vec<_> = std::iter::empty()
+            .chain(registers_dag.stage5_verifier_instances(&mut state_manager))
+            .chain(ram_dag.stage5_verifier_instances(&mut state_manager))
+            .chain(lookups_dag.stage5_verifier_instances(&mut state_manager))
+            .collect();
+        let stage5_instances_ref: Vec<&dyn SumcheckInstance<F, ProofTranscript>> = stage5_instances
+            .iter()
+            .map(|instance| &**instance as &dyn SumcheckInstance<F, ProofTranscript>)
+            .collect();
+
+        let proofs = state_manager.proofs.borrow();
+        let stage5_proof_data = proofs
+            .get(&ProofKeys::Stage5Sumcheck)
+            .expect("Stage 5 sumcheck proof not found");
+        let stage5_proof = match stage5_proof_data {
+            ProofData::SumcheckProof(proof) => proof,
+            _ => panic!("Invalid proof type for stage 5"),
+        };
+
+        let _r_stage5 = BatchedSumcheck::verify(
+            stage5_proof,
+            stage5_instances_ref,
+            Some(opening_accumulator.clone()),
+            &mut *transcript.borrow_mut(),
+        )
+        .context("Stage 5")?;
+
+        drop(proofs);
+
+        // Stage 6:
+        let stage6_instances: Vec<_> = std::iter::empty()
+            .chain(bytecode_dag.stage6_verifier_instances(&mut state_manager))
+            .chain(ram_dag.stage6_verifier_instances(&mut state_manager))
+            .chain(lookups_dag.stage6_verifier_instances(&mut state_manager))
+            .collect();
+        let stage6_instances_ref: Vec<&dyn SumcheckInstance<F, ProofTranscript>> = stage6_instances
+            .iter()
+            .map(|instance| &**instance as &dyn SumcheckInstance<F, ProofTranscript>)
+            .collect();
+
+        let proofs = state_manager.proofs.borrow();
+        let stage6_proof_data = proofs
+            .get(&ProofKeys::Stage6Sumcheck)
+            .expect("Stage 6 sumcheck proof not found");
+        let stage6_proof = match stage6_proof_data {
+            ProofData::SumcheckProof(proof) => proof,
+            _ => panic!("Invalid proof type for stage 6"),
+        };
+
+        let _r_stage6 = BatchedSumcheck::verify(
+            stage6_proof,
+            stage6_instances_ref,
+            Some(opening_accumulator.clone()),
+            &mut *transcript.borrow_mut(),
+        )
+        .context("Stage 6")?;
+
         // Verify trusted_advice opening proofs
         if state_manager.trusted_advice_commitment.is_some() {
             Self::verify_trusted_advice_proofs(
@@ -526,7 +690,7 @@ impl JoltDAG {
                 &preprocessing.generators,
                 &mut *transcript.borrow_mut(),
             )
-            .context("Stage 5")?;
+            .context("Trusted advice proofs")?;
         }
 
         // Verify untrusted_advice opening proofs
@@ -536,16 +700,16 @@ impl JoltDAG {
                 &preprocessing.generators,
                 &mut *transcript.borrow_mut(),
             )
-            .context("Stage 5")?;
+            .context("Untrusted advice proofs")?;
         }
 
-        // Batch-prove all openings
+        // Batch-prove all openings (Stage 7)
         let batched_opening_proof = proofs
             .get(&ProofKeys::ReducedOpeningProof)
             .expect("Reduced opening proof not found");
         let batched_opening_proof = match batched_opening_proof {
             ProofData::ReducedOpeningProof(proof) => proof,
-            _ => panic!("Invalid proof type for stage 4"),
+            _ => panic!("Invalid proof type for opening reduction"),
         };
 
         let mut commitments_map = HashMap::new();
@@ -564,7 +728,7 @@ impl JoltDAG {
                 batched_opening_proof,
                 &mut *transcript.borrow_mut(),
             )
-            .context("Stage 5")?;
+            .context("Stage 7")?;
 
         Ok(())
     }

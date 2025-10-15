@@ -1,8 +1,9 @@
+use crate::zkvm::instruction::{InstructionFlags, NUM_INSTRUCTION_FLAGS};
 use tracer::instruction::{bne::BNE, RISCVCycle};
 
 use crate::zkvm::lookup_table::{not_equal::NotEqualTable, LookupTables};
 
-use super::{CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS};
+use super::{CircuitFlags, Flags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS};
 
 impl<const XLEN: usize> InstructionLookup<XLEN> for BNE {
     fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
@@ -10,17 +11,22 @@ impl<const XLEN: usize> InstructionLookup<XLEN> for BNE {
     }
 }
 
-impl InstructionFlags for BNE {
+impl Flags for BNE {
     fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
         let mut flags = [false; NUM_CIRCUIT_FLAGS];
-        flags[CircuitFlags::LeftOperandIsRs1Value as usize] = true;
-        flags[CircuitFlags::RightOperandIsRs2Value as usize] = true;
-        flags[CircuitFlags::Branch as usize] = true;
         flags[CircuitFlags::InlineSequenceInstruction as usize] =
             self.inline_sequence_remaining.is_some();
         flags[CircuitFlags::DoNotUpdateUnexpandedPC as usize] =
             self.inline_sequence_remaining.unwrap_or(0) != 0;
         flags[CircuitFlags::IsCompressed as usize] = self.is_compressed;
+        flags
+    }
+
+    fn instruction_flags(&self) -> [bool; NUM_INSTRUCTION_FLAGS] {
+        let mut flags = [false; NUM_INSTRUCTION_FLAGS];
+        flags[InstructionFlags::LeftOperandIsRs1Value] = true;
+        flags[InstructionFlags::RightOperandIsRs2Value] = true;
+        flags[InstructionFlags::Branch] = true;
         flags
     }
 }

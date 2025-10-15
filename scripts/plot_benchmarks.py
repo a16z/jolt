@@ -21,7 +21,9 @@ TICK_LABELS = {
     24: "2^24 (16.8 million)",
     26: "2^26 (67 million)",
     27: "2^27 (134 million)",
-    28: "2^28 (268 million)"
+    28: "2^28 (268 million)",
+    29: "2^29 (537 million)",
+    30: "2^30 (1 billion)"
 }
 
 COLORS = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd"]

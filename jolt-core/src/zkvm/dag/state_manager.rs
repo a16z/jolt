@@ -27,9 +27,11 @@ pub enum ProofKeys {
     Stage2Sumcheck,
     Stage3Sumcheck,
     Stage4Sumcheck,
-    ReducedOpeningProof,
+    Stage5Sumcheck,
+    Stage6Sumcheck,
     TrustedAdviceProof,
     UntrustedAdviceProof,
+    ReducedOpeningProof, // Implicitly Stage 7
 }
 
 pub enum ProofData<F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript> {
