@@ -84,6 +84,7 @@ struct OuterUniSkipProverState<F: JoltField> {
 }
 
 impl<F: JoltField> OuterUniSkipInstance<F> {
+    #[tracing::instrument(skip_all, name = "OuterUniSkipInstance::new_prover")]
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         tau: &[F::Challenge],
@@ -92,7 +93,7 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
         let tau_low = &tau[0..tau.len() - 1];
         let split_eq = GruenSplitEqPolynomial::<F>::new(tau_low, BindingOrder::LowToHigh);
         let extended =
-            Self::compute_univariate_skip_extended_evals(&split_eq, &preprocessing.shared, trace);
+            Self::compute_univariate_skip_extended_evals(&preprocessing.shared, trace, &split_eq);
         Self {
             tau: tau.to_vec(),
             prover_state: Some(OuterUniSkipProverState {
@@ -152,14 +153,10 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
         targets
     }
 
-    #[tracing::instrument(
-        skip_all,
-        name = "OuterUniSkipInstance::compute_univariate_skip_extended_evals"
-    )]
     fn compute_univariate_skip_extended_evals(
-        split_eq: &GruenSplitEqPolynomial<F>,
         preprocess: &JoltSharedPreprocessing,
         trace: &[Cycle],
+        split_eq: &GruenSplitEqPolynomial<F>,
     ) -> [F; UNIVARIATE_SKIP_DEGREE] {
         // Precompute Lagrange coefficient vectors for target Z values outside the base window
         let base_left: i64 = -((UNIVARIATE_SKIP_DOMAIN_SIZE as i64 - 1) / 2);
@@ -171,6 +168,19 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
             core::array::from_fn(|j| {
                 LagrangeHelper::shift_coeffs_i32::<UNIVARIATE_SKIP_DOMAIN_SIZE>(target_shifts[j])
             });
+
+        // Debug printing for verification of targets and shift coeffs
+        println!(
+            "OuterUniSkip targets and base_left: targets={targets:?}, base_left={base_left}"
+        );
+        for j in 0..UNIVARIATE_SKIP_DEGREE {
+            println!(
+                "OuterUniSkip coeffs for target: target={}, shift={}, coeffs={:?}",
+                targets[j],
+                target_shifts[j],
+                coeffs_per_j[j]
+            );
+        }
 
         let num_x_out_vals = split_eq.E_out_current_len();
         let num_x_in_vals = split_eq.E_in_current_len();
@@ -253,8 +263,7 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
                                     sum_c_az0_i64 += c;
                                 }
                                 // accumulate sum of c_i * Bz0_i (over all i) in 6-limb accumulator
-                                let term = (c as i128)
-                                    .saturating_mul(bz0_i128[i]);
+                                let term = (c as i128).saturating_mul(bz0_i128[i]);
                                 acc6_fmadd_i128(&mut sum_c_bz0_acc6, &F::one(), term);
                             }
                             let sum_c_bz0: F = acc6_reduce::<F>(&sum_c_bz0_acc6);
@@ -412,6 +421,79 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
         let split_eq_poly: GruenSplitEqPolynomial<F> =
             GruenSplitEqPolynomial::<F>::new(tau_low, BindingOrder::LowToHigh);
 
+        let streaming_cache = Self::compute_streaming_round_cache(
+            &preprocessing.shared,
+            trace,
+            &split_eq_poly,
+            r0_uniskip,
+        );
+
+        Self {
+            input_claim,
+            r0_uniskip,
+            total_rounds,
+            tau: None,
+            num_cycles_bits,
+            prover_state: Some(OuterProverState {
+                split_eq_poly,
+                preprocess: Arc::new(preprocessing.shared.clone()),
+                trace: Arc::new(trace.to_vec()),
+                az: DensePolynomial::default(),
+                bz: DensePolynomial::default(),
+                streaming_cache: Some(streaming_cache),
+            }),
+        }
+    }
+
+    pub fn new_verifier(
+        input_claim: F,
+        r0_uniskip: F::Challenge,
+        total_rounds: usize,
+        tau: Vec<F::Challenge>,
+        num_cycles_bits: usize,
+    ) -> Self {
+        Self {
+            input_claim,
+            r0_uniskip,
+            total_rounds,
+            tau: Some(tau),
+            num_cycles_bits,
+            prover_state: None,
+        }
+    }
+
+    /// Compute the quadratic evaluations for the streaming round (right after univariate skip).
+    ///
+    /// This uses the streaming algorithm to compute the sum-check polynomial for the round
+    /// right after the univariate skip round.
+    ///
+    /// Recall that we need to compute
+    ///
+    /// `t_i(0) = \sum_{x_out} E_out[x_out] \sum_{x_in} E_in[x_in] * (unbound_coeffs_a(x_out, x_in,
+    /// 0, r) * unbound_coeffs_b(x_out, x_in, 0, r) - unbound_coeffs_c(x_out, x_in, 0, r))`
+    ///
+    /// and
+    ///
+    /// `t_i(∞) = \sum_{x_out} E_out[x_out] \sum_{x_in} E_in[x_in] * (unbound_coeffs_a(x_out,
+    /// x_in, ∞, r) * unbound_coeffs_b(x_out, x_in, ∞, r))`
+    ///
+    /// Here the "_a,b,c" subscript indicates the coefficients of `unbound_coeffs` corresponding to
+    /// Az, Bz, Cz respectively. Note that we index with x_out being the MSB here.
+    ///
+    /// Importantly, since the eval at `r` is not cached, we will need to recompute it via another
+    /// sum
+    ///
+    /// `unbound_coeffs_{a,b,c}(x_out, x_in, {0,∞}, r) = \sum_{y in D} eq(r, y) *
+    /// unbound_coeffs_{a,b,c}(x_out, x_in, {0,∞}, y)`
+    ///
+    /// (and the eval at ∞ is computed as (eval at 1) - (eval at 0))
+    #[inline]
+    fn compute_streaming_round_cache(
+        preprocess: &JoltSharedPreprocessing,
+        trace: &[Cycle],
+        split_eq_poly: &GruenSplitEqPolynomial<F>,
+        r0_uniskip: F::Challenge,
+    ) -> StreamingRoundCache<F> {
         // Prepare streaming round cache: compute t0, t_inf and dense per-block arrays at y=r0
         let lagrange_evals_r = LagrangePolynomial::<F>::evals::<
             F::Challenge,
@@ -476,11 +558,8 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
                     let mut inner_sum_inf = F::Unreduced::<9>::zero();
                     for x_in_val in 0..num_x_in_vals {
                         let current_step_idx = (x_out_val << iter_num_x_in_vars) | x_in_val;
-                        let row_inputs = R1CSCycleInputs::from_trace::<F>(
-                            &preprocessing.shared,
-                            trace,
-                            current_step_idx,
-                        );
+                        let row_inputs =
+                            R1CSCycleInputs::from_trace::<F>(preprocess, trace, current_step_idx);
                         let az0 = compute_az_r_group0(&row_inputs, &lagrange_evals_r[..]);
                         let bz0 = compute_bz_r_group0(&row_inputs, &lagrange_evals_r[..]);
                         let az1 = compute_az_r_group1(&row_inputs, &lagrange_evals_r[..]);
@@ -542,194 +621,93 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
             bz_hi[dst_base..dst_end].copy_from_slice(&chunk.bz_hi);
         }
 
-        let streaming_cache = StreamingRoundCache {
+        StreamingRoundCache {
             t0: t0_acc,
             t_inf: t_inf_acc,
             az_lo,
             az_hi,
             bz_lo,
             bz_hi,
-        };
-
-        Self {
-            input_claim,
-            r0_uniskip,
-            total_rounds,
-            tau: None,
-            num_cycles_bits,
-            prover_state: Some(OuterProverState {
-                split_eq_poly,
-                preprocess: Arc::new(preprocessing.shared.clone()),
-                trace: Arc::new(trace.to_vec()),
-                az: DensePolynomial::default(),
-                bz: DensePolynomial::default(),
-                streaming_cache: Some(streaming_cache),
-            }),
         }
     }
 
-    pub fn new_verifier(
-        input_claim: F,
-        r0_uniskip: F::Challenge,
-        total_rounds: usize,
-        tau: Vec<F::Challenge>,
-        num_cycles_bits: usize,
-    ) -> Self {
-        Self {
-            input_claim,
-            r0_uniskip,
-            total_rounds,
-            tau: Some(tau),
-            num_cycles_bits,
-            prover_state: None,
-        }
-    }
-
-    #[inline]
-    fn build_cubic_from_quadratic(
-        eq_poly: &GruenSplitEqPolynomial<F>,
-        t0: F,
-        t_inf: F,
-        previous_claim: F,
-    ) -> UniPoly<F> {
-        let scalar_times_w_i = eq_poly.current_scalar * eq_poly.w[eq_poly.current_index - 1];
-        UniPoly::from_linear_times_quadratic_with_hint(
-            [
-                eq_poly.current_scalar - scalar_times_w_i,
-                scalar_times_w_i + scalar_times_w_i - eq_poly.current_scalar,
-            ],
-            t0,
-            t_inf,
-            previous_claim,
-        )
-    }
-
-    /// Compute the quadratic evaluations for the streaming round (right after univariate skip).
+    /// Bind the streaming round after deriving the first challenge r_0.
     ///
-    /// This uses the streaming algorithm to compute the sum-check polynomial for the round
-    /// right after the univariate skip round.
-    ///
-    /// Recall that we need to compute
-    ///
-    /// `t_i(0) = \sum_{x_out} E_out[x_out] \sum_{x_in} E_in[x_in] * (unbound_coeffs_a(x_out, x_in,
-    /// 0, r) * unbound_coeffs_b(x_out, x_in, 0, r) - unbound_coeffs_c(x_out, x_in, 0, r))`
-    ///
-    /// and
-    ///
-    /// `t_i(∞) = \sum_{x_out} E_out[x_out] \sum_{x_in} E_in[x_in] * (unbound_coeffs_a(x_out,
-    /// x_in, ∞, r) * unbound_coeffs_b(x_out, x_in, ∞, r))`
-    ///
-    /// Here the "_a,b,c" subscript indicates the coefficients of `unbound_coeffs` corresponding to
-    /// Az, Bz, Cz respectively. Note that we index with x_out being the MSB here.
-    ///
-    /// Importantly, since the eval at `r` is not cached, we will need to recompute it via another
-    /// sum
-    ///
-    /// `unbound_coeffs_{a,b,c}(x_out, x_in, {0,∞}, r) = \sum_{y in D} eq(r, y) *
-    /// unbound_coeffs_{a,b,c}(x_out, x_in, {0,∞}, y)`
-    ///
-    /// (and the eval at ∞ is computed as (eval at 1) - (eval at 0))
-    #[inline]
-    fn streaming_quadratic_evals(&self) -> (F, F) {
-        // Lagrange basis over the univariate-skip domain at r0
-        let lagrange_evals_r = LagrangePolynomial::<F>::evals::<
-            F::Challenge,
-            UNIVARIATE_SKIP_DOMAIN_SIZE,
-        >(&self.r0_uniskip);
-
-        let ps = self
-            .prover_state
-            .as_ref()
-            .expect("prover state missing for streaming_quadratic_evals");
-        let eq_poly = &ps.split_eq_poly;
-        let num_x_out_vals = eq_poly.E_out_current_len();
-        let num_x_in_vals = eq_poly.E_in_current_len();
-        debug_assert!(
-            num_x_out_vals > 0,
-            "E_out_current_len() must be > 0 for outer streaming evals"
-        );
-
-        let num_parallel_chunks = if num_x_out_vals > 0 {
-            core::cmp::min(
-                num_x_out_vals,
-                rayon::current_num_threads().next_power_of_two() * 8,
-            )
-        } else {
-            1
-        };
-        let x_out_chunk_size = if num_x_out_vals > 0 {
-            core::cmp::max(1, num_x_out_vals.div_ceil(num_parallel_chunks))
-        } else {
-            0
-        };
-        let iter_num_x_in_vars = if num_x_in_vals > 0 {
-            num_x_in_vals.log_2()
-        } else {
-            0
-        };
-
-        let results: (F, F) = (0..num_parallel_chunks)
-            .into_par_iter()
-            .map(|chunk_idx| {
-                let x_out_start = chunk_idx * x_out_chunk_size;
-                let x_out_end = core::cmp::min((chunk_idx + 1) * x_out_chunk_size, num_x_out_vals);
-                let mut task_sum0 = F::zero();
-                let mut task_sumInf = F::zero();
-
-                for x_out_val in x_out_start..x_out_end {
-                    let mut inner_sum0 = F::Unreduced::<9>::zero();
-                    let mut inner_sumInf = F::Unreduced::<9>::zero();
-
-                    for x_in_val in 0..num_x_in_vals {
-                        let current_step_idx = (x_out_val << iter_num_x_in_vars) | x_in_val;
-
-                        let row_inputs = R1CSCycleInputs::from_trace::<F>(
-                            &ps.preprocess,
-                            ps.trace.as_slice(),
-                            current_step_idx,
-                        );
-
-                        // reduce to field values at y=r for both x_next
-                        let az0 = compute_az_r_group0(&row_inputs, &lagrange_evals_r[..]);
-                        let bz0 = compute_bz_r_group0(&row_inputs, &lagrange_evals_r[..]);
-                        let az1 = compute_az_r_group1(&row_inputs, &lagrange_evals_r[..]);
-                        let bz1 = compute_bz_r_group1(&row_inputs, &lagrange_evals_r[..]);
-                        // cz1 only affects evaluation used later during binding, not t(0)/t(∞)
-                        // let cz1 = compute_cz_r_group1(&row_inputs, &lagrange_evals_r[..]);
-
-                        // sumcheck contributions
-                        let p0 = az0 * bz0;
-                        let slope = (az1 - az0) * (bz1 - bz0);
-
-                        // e_in per x_in
-                        let e_in = if num_x_in_vals == 0 {
-                            F::one()
-                        } else if num_x_in_vals == 1 {
-                            eq_poly.E_in_current()[0]
-                        } else {
-                            eq_poly.E_in_current()[x_in_val]
-                        };
-
-                        inner_sum0 += e_in.mul_unreduced::<9>(p0);
-                        inner_sumInf += e_in.mul_unreduced::<9>(slope);
-                    }
-
-                    let e_out = if num_x_out_vals > 0 {
-                        eq_poly.E_out_current()[x_out_val]
-                    } else {
-                        F::zero()
-                    };
-
-                    let reduced0 = F::from_montgomery_reduce::<9>(inner_sum0);
-                    let reducedInf = F::from_montgomery_reduce::<9>(inner_sumInf);
-                    task_sum0 += e_out * reduced0;
-                    task_sumInf += e_out * reducedInf;
+    /// As we compute each `{a/b/c}(x_out, x_in, {0,∞}, r)`, we will
+    /// store them in `bound_coeffs` in sparse format (the eval at 1 will be eval
+    /// at 0 + eval at ∞). We then bind these bound coeffs with r_i for the next round.
+    fn bind_streaming_round(&mut self, r_0: F::Challenge) {
+        // Build dense bound arrays from streaming cache, or recompute on the fly
+        if let Some(ps) = self.prover_state.as_mut() {
+            if let Some(cache) = ps.streaming_cache.take() {
+                let groups = cache.az_lo.len();
+                let mut az_bound: Vec<F> = vec![F::zero(); groups];
+                let mut bz_bound: Vec<F> = vec![F::zero(); groups];
+                // Parallelize by x_out chunks; build local buffers, then assemble sequentially
+                let num_x_out_vals = ps.split_eq_poly.E_out_current_len();
+                let num_x_in_vals = ps.split_eq_poly.E_in_current_len();
+                let chunk_threads = if num_x_out_vals > 0 {
+                    core::cmp::min(
+                        num_x_out_vals,
+                        rayon::current_num_threads().next_power_of_two() * 8,
+                    )
+                } else {
+                    1
+                };
+                let chunk_size = if num_x_out_vals > 0 {
+                    core::cmp::max(1, num_x_out_vals.div_ceil(chunk_threads))
+                } else {
+                    0
+                };
+                struct BoundChunk<F: JoltField> {
+                    base: usize,
+                    az: Vec<F>,
+                    bz: Vec<F>,
                 }
-
-                (task_sum0, task_sumInf)
-            })
-            .reduce(|| (F::zero(), F::zero()), |a, b| (a.0 + b.0, a.1 + b.1));
-        results
+                let chunks: Vec<BoundChunk<F>> = (0..chunk_threads)
+                    .into_par_iter()
+                    .map(|chunk_idx| {
+                        let x_out_start = chunk_idx * chunk_size;
+                        if x_out_start >= num_x_out_vals {
+                            return BoundChunk {
+                                base: 0,
+                                az: Vec::new(),
+                                bz: Vec::new(),
+                            };
+                        }
+                        let x_out_end = core::cmp::min(x_out_start + chunk_size, num_x_out_vals);
+                        let local_len = (x_out_end - x_out_start).saturating_mul(num_x_in_vals);
+                        let mut local_az: Vec<F> = Vec::with_capacity(local_len);
+                        let mut local_bz: Vec<F> = Vec::with_capacity(local_len);
+                        for xo in x_out_start..x_out_end {
+                            for xi in 0..num_x_in_vals {
+                                let idx = xo * num_x_in_vals + xi;
+                                let az0 = cache.az_lo[idx];
+                                let az1 = cache.az_hi[idx];
+                                let bz0 = cache.bz_lo[idx];
+                                let bz1 = cache.bz_hi[idx];
+                                local_az.push(az0 + r_0 * (az1 - az0));
+                                local_bz.push(bz0 + r_0 * (bz1 - bz0));
+                            }
+                        }
+                        BoundChunk {
+                            base: x_out_start * num_x_in_vals,
+                            az: local_az,
+                            bz: local_bz,
+                        }
+                    })
+                    .collect();
+                for c in &chunks {
+                    let end = c.base + c.az.len();
+                    az_bound[c.base..end].copy_from_slice(&c.az);
+                    bz_bound[c.base..end].copy_from_slice(&c.bz);
+                }
+                ps.az = DensePolynomial::new(az_bound);
+                ps.bz = DensePolynomial::new(bz_bound);
+                return;
+            }
+        }
+        panic!("Streaming cache missing; fallback path removed as unreachable");
     }
 
     /// Compute the polynomial for each of the remaining rounds, using the
@@ -799,160 +777,6 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
         }
     }
 
-    /// Bind the streaming round after deriving challenge r_i.
-    ///
-    /// As we compute each `{a/b/c}(x_out, x_in, {0,∞}, r)`, we will
-    /// store them in `bound_coeffs` in sparse format (the eval at 1 will be eval
-    /// at 0 + eval at ∞). We then bind these bound coeffs with r_i for the next round.
-    fn bind_streaming_round(&mut self, r_i: F::Challenge) {
-        // Build dense bound arrays from streaming cache, or recompute on the fly
-        if let Some(ps) = self.prover_state.as_mut() {
-            if let Some(cache) = ps.streaming_cache.take() {
-                let groups = cache.az_lo.len();
-                let mut az_bound: Vec<F> = vec![F::zero(); groups];
-                let mut bz_bound: Vec<F> = vec![F::zero(); groups];
-                // Parallelize by x_out chunks; build local buffers, then assemble sequentially
-                let num_x_out_vals = ps.split_eq_poly.E_out_current_len();
-                let num_x_in_vals = ps.split_eq_poly.E_in_current_len();
-                let chunk_threads = if num_x_out_vals > 0 {
-                    core::cmp::min(
-                        num_x_out_vals,
-                        rayon::current_num_threads().next_power_of_two() * 8,
-                    )
-                } else {
-                    1
-                };
-                let chunk_size = if num_x_out_vals > 0 {
-                    core::cmp::max(1, num_x_out_vals.div_ceil(chunk_threads))
-                } else {
-                    0
-                };
-                struct BoundChunk<F: JoltField> {
-                    base: usize,
-                    az: Vec<F>,
-                    bz: Vec<F>,
-                }
-                let chunks: Vec<BoundChunk<F>> = (0..chunk_threads)
-                    .into_par_iter()
-                    .map(|chunk_idx| {
-                        let x_out_start = chunk_idx * chunk_size;
-                        if x_out_start >= num_x_out_vals {
-                            return BoundChunk {
-                                base: 0,
-                                az: Vec::new(),
-                                bz: Vec::new(),
-                            };
-                        }
-                        let x_out_end = core::cmp::min(x_out_start + chunk_size, num_x_out_vals);
-                        let local_len = (x_out_end - x_out_start).saturating_mul(num_x_in_vals);
-                        let mut local_az: Vec<F> = Vec::with_capacity(local_len);
-                        let mut local_bz: Vec<F> = Vec::with_capacity(local_len);
-                        for xo in x_out_start..x_out_end {
-                            for xi in 0..num_x_in_vals {
-                                let idx = xo * num_x_in_vals + xi;
-                                let az0 = cache.az_lo[idx];
-                                let az1 = cache.az_hi[idx];
-                                let bz0 = cache.bz_lo[idx];
-                                let bz1 = cache.bz_hi[idx];
-                                local_az.push(az0 + r_i * (az1 - az0));
-                                local_bz.push(bz0 + r_i * (bz1 - bz0));
-                            }
-                        }
-                        BoundChunk {
-                            base: x_out_start * num_x_in_vals,
-                            az: local_az,
-                            bz: local_bz,
-                        }
-                    })
-                    .collect();
-                for c in &chunks {
-                    let end = c.base + c.az.len();
-                    az_bound[c.base..end].copy_from_slice(&c.az);
-                    bz_bound[c.base..end].copy_from_slice(&c.bz);
-                }
-                ps.az = DensePolynomial::new(az_bound);
-                ps.bz = DensePolynomial::new(bz_bound);
-                return;
-            }
-        }
-        // Fallback: recompute the per-block values and bind
-        let lagrange_evals_r = LagrangePolynomial::<F>::evals::<
-            F::Challenge,
-            UNIVARIATE_SKIP_DOMAIN_SIZE,
-        >(&self.r0_uniskip);
-        let ps = self.prover_state.as_ref().expect("prover state missing");
-        let eq_poly = &ps.split_eq_poly;
-        let num_x_out_vals = eq_poly.E_out_current_len();
-        let num_x_in_vals = eq_poly.E_in_current_len();
-        let iter_num_x_in_vars = if num_x_in_vals > 0 {
-            num_x_in_vals.log_2()
-        } else {
-            0
-        };
-        let groups_exact = num_x_out_vals.saturating_mul(num_x_in_vals);
-        let mut az_bound: Vec<F> = vec![F::zero(); groups_exact];
-        let mut bz_bound: Vec<F> = vec![F::zero(); groups_exact];
-        let num_parallel_chunks = if num_x_out_vals > 0 {
-            core::cmp::min(
-                num_x_out_vals,
-                rayon::current_num_threads().next_power_of_two() * 8,
-            )
-        } else {
-            1
-        };
-        let x_out_chunk_size = if num_x_out_vals > 0 {
-            core::cmp::max(1, num_x_out_vals.div_ceil(num_parallel_chunks))
-        } else {
-            0
-        };
-        struct FallbackChunk<F: JoltField> {
-            base: usize,
-            az: Vec<F>,
-            bz: Vec<F>,
-        }
-        let fallback_chunks: Vec<FallbackChunk<F>> = (0..num_parallel_chunks)
-            .into_par_iter()
-            .map(|chunk_idx| {
-                let x_out_start = chunk_idx * x_out_chunk_size;
-                let x_out_end = core::cmp::min((chunk_idx + 1) * x_out_chunk_size, num_x_out_vals);
-                let local_len = (x_out_end - x_out_start).saturating_mul(num_x_in_vals);
-                let mut local_az: Vec<F> = Vec::with_capacity(local_len);
-                let mut local_bz: Vec<F> = Vec::with_capacity(local_len);
-                for x_out_val in x_out_start..x_out_end {
-                    for x_in_val in 0..num_x_in_vals {
-                        let current_step_idx = (x_out_val << iter_num_x_in_vars) | x_in_val;
-                        let ps_inner = self.prover_state.as_ref().expect("prover state missing");
-                        let row_inputs = R1CSCycleInputs::from_trace::<F>(
-                            &ps_inner.preprocess,
-                            ps_inner.trace.as_slice(),
-                            current_step_idx,
-                        );
-                        let az0 = compute_az_r_group0(&row_inputs, &lagrange_evals_r[..]);
-                        let bz0 = compute_bz_r_group0(&row_inputs, &lagrange_evals_r[..]);
-                        let az1 = compute_az_r_group1(&row_inputs, &lagrange_evals_r[..]);
-                        let bz1 = compute_bz_r_group1(&row_inputs, &lagrange_evals_r[..]);
-                        local_az.push(az0 + r_i * (az1 - az0));
-                        local_bz.push(bz0 + r_i * (bz1 - bz0));
-                    }
-                }
-                FallbackChunk {
-                    base: x_out_start * num_x_in_vals,
-                    az: local_az,
-                    bz: local_bz,
-                }
-            })
-            .collect();
-        for c in &fallback_chunks {
-            let end = c.base + c.az.len();
-            az_bound[c.base..end].copy_from_slice(&c.az);
-            bz_bound[c.base..end].copy_from_slice(&c.bz);
-        }
-        if let Some(ps) = self.prover_state.as_mut() {
-            ps.az = DensePolynomial::new(az_bound);
-            ps.bz = DensePolynomial::new(bz_bound);
-        }
-    }
-
     pub fn final_sumcheck_evals(&self) -> [F; 2] {
         let ps = self.prover_state.as_ref();
         let az0 = ps
@@ -983,7 +807,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for OuterRemainingSumch
     }
 
     fn num_rounds(&self) -> usize {
-        self.total_rounds - 1 /* exclude first already handled? */ + 1
+        self.total_rounds
     }
 
     fn input_claim(&self) -> F {
@@ -993,28 +817,21 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for OuterRemainingSumch
     fn compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F> {
         let (t0, t_inf) = if round == 0 {
             let ps = self.prover_state.as_ref().expect("prover state missing");
-            if let Some(cache) = ps.streaming_cache.as_ref() {
-                (cache.t0, cache.t_inf)
-            } else {
-                self.streaming_quadratic_evals()
-            }
+            let cache = ps
+                .streaming_cache
+                .as_ref()
+                .expect("streaming cache missing in round 0");
+            (cache.t0, cache.t_inf)
         } else {
             self.remaining_quadratic_evals()
         };
-        let cubic = Self::build_cubic_from_quadratic(
-            &self
-                .prover_state
-                .as_ref()
-                .expect("prover state missing")
-                .split_eq_poly,
-            t0,
-            t_inf,
-            previous_claim,
-        );
-        let m0 = cubic.evaluate::<F>(&F::zero());
-        let m2 = cubic.evaluate::<F>(&F::from_u64(2));
-        let m3 = cubic.evaluate::<F>(&F::from_u64(3));
-        vec![m0, m2, m3]
+        let eq_poly = &self
+            .prover_state
+            .as_ref()
+            .expect("prover state missing")
+            .split_eq_poly;
+        let evals = eq_poly.gruen_evals_deg_3(t0, t_inf, previous_claim);
+        vec![evals[0], evals[1], evals[2]]
     }
 
     fn bind(&mut self, r_j: F::Challenge, round: usize) {
@@ -1058,7 +875,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for OuterRemainingSumch
             .get_virtual_polynomial_opening(VirtualPolynomial::SpartanBz, SumcheckId::SpartanOuter);
 
         let tau_bound_rx = EqPolynomial::mle(tau, &r_reversed);
-        tau_bound_rx * (claim_Az * claim_Bz)
+        tau_bound_rx * claim_Az * claim_Bz
     }
 
     fn normalize_opening_point(&self, r_tail: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {

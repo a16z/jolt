@@ -1,9 +1,3 @@
-#![allow(
-    clippy::len_without_is_empty,
-    clippy::type_complexity,
-    clippy::too_many_arguments
-)]
-
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::opening_proof::{OpeningId, SumcheckId};
@@ -26,44 +20,45 @@ use strum::IntoEnumIterator;
 
 /// Fully materialized, typed view of all R1CS inputs for a single row (cycle).
 /// Filled once and reused to evaluate all constraints without re-reading the trace.
-/// Total size: 224 bytes, alignment: 16 bytes
+/// Total size: 208 bytes, alignment: 16 bytes
 #[derive(Clone, Debug)]
 pub struct R1CSCycleInputs {
-    /// Left instruction input as a u64 bit-pattern.
-    /// Typically `Rs1Value` or the current `UnexpandedPC`, depending on `CircuitFlags`.
-    pub left_input: u64,
-    /// Right instruction input as signed-magnitude `S64`.
-    /// Typically `Imm` or `Rs2Value` with exact integer semantics.
-    pub right_input: S64,
-    /// Signed-magnitude `S128` product consistent with the `Product` witness.
-    /// Computed from `left_input` × `right_input` using the same truncation semantics as the witness.
-    pub product: S128,
-
-    /// Left lookup operand (u64) for the instruction lookup query.
-    /// Matches `LeftLookupOperand` virtual polynomial semantics.
-    pub left_lookup: u64,
+    // 16-byte aligned first to minimize padding
     /// Right lookup operand (u128) for the instruction lookup query.
     /// Full-width integer encoding used by add/sub/mul/advice cases.
     pub right_lookup: u128,
+
+    // Next largest-by-size, 8-byte alignment group
+    /// Signed-magnitude `S128` product consistent with the `Product` witness.
+    /// Computed from `left_input` × `right_input` using the same truncation semantics as the witness.
+    pub product: S128,
+    /// Right instruction input as signed-magnitude `S64`.
+    /// Typically `Imm` or `Rs2Value` with exact integer semantics.
+    pub right_input: S64,
+    /// Immediate operand as signed-magnitude `S64`.
+    pub imm: S64,
+
+    // 8-byte scalars
+    /// Left instruction input as a u64 bit-pattern.
+    /// Typically `Rs1Value` or the current `UnexpandedPC`, depending on `CircuitFlags`.
+    pub left_input: u64,
+    /// Left lookup operand (u64) for the instruction lookup query.
+    /// Matches `LeftLookupOperand` virtual polynomial semantics.
+    pub left_lookup: u64,
     /// Instruction lookup output (u64) for this cycle.
     pub lookup_output: u64,
-
-    /// Destination register index (Rd).
-    pub rd_addr: u8,
     /// Value read from Rs1 in this cycle.
     pub rs1_read_value: u64,
     /// Value read from Rs2 in this cycle.
     pub rs2_read_value: u64,
     /// Value written to Rd in this cycle.
     pub rd_write_value: u64,
-
     /// RAM address accessed this cycle.
     pub ram_addr: u64,
     /// RAM read value for `Read`, pre-write value for `Write`, or 0 for `NoOp`.
     pub ram_read_value: u64,
     /// RAM write value: equals read value for `Read`, post-write value for `Write`, or 0 for `NoOp`.
     pub ram_write_value: u64,
-
     /// Expanded PC used by bytecode instance.
     pub pc: u64,
     /// Expanded PC for next cycle, or 0 if this is the last cycle in the domain.
@@ -73,8 +68,14 @@ pub struct R1CSCycleInputs {
     /// Unexpanded PC for next cycle, or 0 if this is the last cycle in the domain.
     pub next_unexpanded_pc: u64,
 
-    /// Immediate operand as signed-magnitude `S64`.
-    pub imm: S64,
+    // 1-byte fields last to pack tightly
+    /// Destination register index (Rd).
+    pub rd_addr: u8,
+
+    /// Rd index if `WriteLookupOutputToRD`, else 0 (u8 domain used as selector).
+    pub write_lookup_output_to_rd_addr: u8,
+    /// Rd index if `Jump`, else 0 (u8 domain used as selector).
+    pub write_pc_to_rd_addr: u8,
 
     /// Per-instruction circuit flags indexed by `CircuitFlags`.
     pub flags: [bool; NUM_CIRCUIT_FLAGS],
@@ -85,11 +86,6 @@ pub struct R1CSCycleInputs {
     pub should_jump: bool,
     /// Derived: `Branch && (LookupOutput == 1)`.
     pub should_branch: bool,
-
-    /// Rd index if `WriteLookupOutputToRD`, else 0 (u8 domain used as selector).
-    pub write_lookup_output_to_rd_addr: u8,
-    /// Rd index if `Jump`, else 0 (u8 domain used as selector).
-    pub write_pc_to_rd_addr: u8,
 }
 
 impl R1CSCycleInputs {
@@ -750,5 +746,12 @@ mod tests {
                 var.find_index_via_array_search()
             );
         }
+    }
+
+    #[test]
+    fn r1cs_cycle_inputs_size_and_alignment() {
+        use core::mem::{align_of, size_of};
+        assert_eq!(align_of::<R1CSCycleInputs>(), 16, "unexpected alignment");
+        assert_eq!(size_of::<R1CSCycleInputs>(), 208, "unexpected size");
     }
 }
