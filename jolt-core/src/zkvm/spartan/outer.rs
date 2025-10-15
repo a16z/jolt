@@ -23,7 +23,9 @@ use crate::transcripts::Transcript;
 use crate::utils::math::Math;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
-use crate::utils::univariate_skip::accum::{accs160_fmadd_s160, accs160_new, accs160_reduce};
+use crate::utils::univariate_skip::accum::{
+    acc6_fmadd_i128, acc6_new, acc6_reduce, accs160_fmadd_s160, accs160_new, accs160_reduce,
+};
 use crate::utils::univariate_skip::{
     compute_az_r_group0, compute_az_r_group1, compute_bz_r_group0, compute_bz_r_group1,
 };
@@ -219,61 +221,62 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
                         };
 
                         let az0_bool = eval_az_first_group(&row_inputs);
-                        let bz0_s160 = eval_bz_first_group(&row_inputs);
-                        let az1_i96 = eval_az_second_group(&row_inputs);
+                        let bz0_i128 = eval_bz_first_group(&row_inputs);
+                        let az1_u8 = eval_az_second_group(&row_inputs);
                         let bz1 = eval_bz_second_group(&row_inputs);
 
                         let g2_len = core::cmp::min(
                             NUM_REMAINING_R1CS_CONSTRAINTS,
                             UNIVARIATE_SKIP_DOMAIN_SIZE,
                         );
-                        let mut az1_i128_padded: [i128; UNIVARIATE_SKIP_DOMAIN_SIZE] =
+                        let mut az1_i32_padded: [i32; UNIVARIATE_SKIP_DOMAIN_SIZE] =
                             [0; UNIVARIATE_SKIP_DOMAIN_SIZE];
                         let mut bz1_s160_padded: [S160; UNIVARIATE_SKIP_DOMAIN_SIZE] =
                             [S160::from(0i128); UNIVARIATE_SKIP_DOMAIN_SIZE];
                         for i in 0..g2_len {
-                            az1_i128_padded[i] = az1_i96[i].to_i128();
+                            az1_i32_padded[i] = az1_u8[i] as i32;
                             bz1_s160_padded[i] = bz1[i];
                         }
 
                         for j in 0..UNIVARIATE_SKIP_DEGREE {
                             let coeffs = &coeffs_per_j[j];
                             // Group 0: (sum_i (Az0_i ? c_i : 0)) * (sum_i c_i * Bz0_i)
-                            let mut sum_c_bz0_acc = accs160_new::<F>();
+                            let mut sum_c_bz0_acc6 = acc6_new::<F>();
                             let mut sum_c_az0_i64: i64 = 0;
                             for i in 0..UNIVARIATE_SKIP_DOMAIN_SIZE {
                                 let c = coeffs[i] as i64;
                                 if c == 0 {
                                     continue;
                                 }
-                                let cF = F::from_i64(c);
                                 // accumulate sum of c_i for which Az0 is true in i64
                                 if az0_bool[i] {
                                     sum_c_az0_i64 += c;
                                 }
-                                // accumulate sum of c_i * Bz0_i (over all i)
-                                accs160_fmadd_s160(&mut sum_c_bz0_acc, &cF, bz0_s160[i]);
+                                // accumulate sum of c_i * Bz0_i (over all i) in 6-limb accumulator
+                                let term = (c as i128)
+                                    .saturating_mul(bz0_i128[i]);
+                                acc6_fmadd_i128(&mut sum_c_bz0_acc6, &F::one(), term);
                             }
-                            let sum_c_bz0: F = accs160_reduce::<F>(&sum_c_bz0_acc);
+                            let sum_c_bz0: F = acc6_reduce::<F>(&sum_c_bz0_acc6);
                             let sum_c_az0: F = F::from_i64(sum_c_az0_i64);
                             let g0_term = sum_c_az0 * sum_c_bz0;
                             inner_acc[j] += e_in.mul_unreduced::<9>(g0_term);
 
                             // Group 1: (sum_i c_i * Az1_i) * (\sum_i c_i * Bz1_i)
                             let mut sum_c_bz1_acc = accs160_new::<F>();
-                            let mut sum_c_az1_i128: i128 = 0;
+                            let mut sum_c_az1_i64: i64 = 0;
                             for i in 0..UNIVARIATE_SKIP_DOMAIN_SIZE {
                                 let c = coeffs[i] as i64;
                                 if c == 0 {
                                     continue;
                                 }
                                 let cF = F::from_i64(c);
-                                let az1_i = az1_i128_padded[i];
-                                sum_c_az1_i128 += (c as i128) * az1_i;
+                                let az1_i = az1_i32_padded[i] as i64;
+                                sum_c_az1_i64 += c * az1_i;
                                 accs160_fmadd_s160(&mut sum_c_bz1_acc, &cF, bz1_s160_padded[i]);
                             }
                             let sum_c_bz1: F = accs160_reduce::<F>(&sum_c_bz1_acc);
-                            let sum_c_az1: F = F::from_i128(sum_c_az1_i128);
+                            let sum_c_az1: F = F::from_i64(sum_c_az1_i64);
                             let g1_term = sum_c_az1 * sum_c_bz1;
                             inner_acc[j] += e_in.mul_unreduced::<9>(g1_term);
                         }

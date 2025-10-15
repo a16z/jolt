@@ -31,7 +31,7 @@ use super::inputs::{JoltR1CSInputs, R1CSCycleInputs};
 use crate::field::JoltField;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::zkvm::instruction::CircuitFlags;
-use ark_ff::biginteger::{I8OrI96, S160};
+use ark_ff::biginteger::S160;
 
 pub use super::ops::{Term, LC};
 
@@ -422,25 +422,24 @@ const fn complement_first_group_names() -> [ConstraintName; NUM_REMAINING_R1CS_C
     out
 }
 
-/// UNIFORM_R1CS_FIRST_GROUP_NAMES: 14 boolean-guarded equality constraints with Cz=Zero
+/// UNIFORM_R1CS_FIRST_GROUP_NAMES: 9 boolean-guarded equality constraints with Cz=Zero
 /// and Bz bounded in i128 under `R1CSCycleInputs` semantics (u64 values and S64 immediates).
 ///
 /// Rationale (documented here rather than in the identifier):
-/// - Cz is always zero (all are eq-conditional constraints)
 /// - Az is a boolean selector (flag-derived or derived boolean)
 /// - Bz is a S160
 ///
 /// Selection policy: the matching constraints in `UNIFORM_R1CS`, order-preserving.
 pub const UNIFORM_R1CS_FIRST_GROUP_NAMES: [ConstraintName; UNIVARIATE_SKIP_DOMAIN_SIZE] = [
+    ConstraintName::RamAddrEqZeroIfNotLoadStore,
     ConstraintName::RamReadEqRamWriteIfLoad,
     ConstraintName::RamReadEqRdWriteIfLoad,
     ConstraintName::Rs2EqRamWriteIfStore,
-    ConstraintName::RightLookupAdd,
-    ConstraintName::RightLookupSub,
+    ConstraintName::LeftLookupZeroUnlessAddSubMul,
+    ConstraintName::LeftLookupEqLeftInputOtherwise,
     ConstraintName::AssertLookupOne,
     ConstraintName::NextUnexpPCEqLookupIfShouldJump,
-    ConstraintName::RightLookupEqRightInputOtherwise,
-    ConstraintName::LeftLookupEqLeftInputOtherwise,
+    ConstraintName::NextPCEqPCPlusOneIfInline,
 ];
 
 /// UNIFORM_R1CS_SECOND_GROUP_NAMES: computed complement of `UNIFORM_R1CS_FIRST_GROUP_NAMES`
@@ -456,240 +455,121 @@ pub static UNIFORM_R1CS_FIRST_GROUP: [NamedConstraint; UNIVARIATE_SKIP_DOMAIN_SI
 pub static UNIFORM_R1CS_SECOND_GROUP: [NamedConstraint; NUM_REMAINING_R1CS_CONSTRAINTS] =
     filter_uniform_r1cs(&UNIFORM_R1CS_SECOND_GROUP_NAMES);
 
-/// Evaluate Az by name using a fully materialized R1CS cycle inputs
-pub fn eval_az_by_name(c: &NamedConstraint, row: &R1CSCycleInputs) -> I8OrI96 {
-    use ConstraintName as N;
-    match c.name {
-        N::RamAddrEqRs1PlusImmIfLoadStore => {
-            // Az: Load OR Store flag (0/1)
-            (row.flags[CircuitFlags::Load] || row.flags[CircuitFlags::Store]).into()
-        }
-        N::RamAddrEqZeroIfNotLoadStore => {
-            let cond = !(row.flags[CircuitFlags::Load] || row.flags[CircuitFlags::Store]);
-            I8OrI96::from(cond)
-        }
-        // Az: Load flag (0/1)
-        N::RamReadEqRamWriteIfLoad => row.flags[CircuitFlags::Load].into(),
-        // Az: Load flag (0/1)
-        N::RamReadEqRdWriteIfLoad => row.flags[CircuitFlags::Load].into(),
-        // Az: Store flag (0/1)
-        N::Rs2EqRamWriteIfStore => row.flags[CircuitFlags::Store].into(),
-        N::LeftLookupZeroUnlessAddSubMul => {
-            // NOTE: these are exclusive circuit flags (validated in tests)
-            let add = row.flags[CircuitFlags::AddOperands];
-            let sub = row.flags[CircuitFlags::SubtractOperands];
-            let mul = row.flags[CircuitFlags::MultiplyOperands];
-            (add || sub || mul).into()
-        }
-        N::LeftLookupEqLeftInputOtherwise => {
-            let add = row.flags[CircuitFlags::AddOperands];
-            let sub = row.flags[CircuitFlags::SubtractOperands];
-            let mul = row.flags[CircuitFlags::MultiplyOperands];
-            (!(add || sub || mul)).into()
-        }
-        // Az: AddOperands flag (0/1)
-        N::RightLookupAdd => row.flags[CircuitFlags::AddOperands].into(),
-        // Az: SubtractOperands flag (0/1)
-        N::RightLookupSub => row.flags[CircuitFlags::SubtractOperands].into(),
-        // Az: MultiplyOperands flag (0/1)
-        N::RightLookupEqProductIfMul => row.flags[CircuitFlags::MultiplyOperands].into(),
-        N::RightLookupEqRightInputOtherwise => {
-            // NOTE: relies on exclusivity of circuit flags (validated in tests):
-            // return 1 only if none of add/sub/mul/adv is set
-            let add = row.flags[CircuitFlags::AddOperands];
-            let sub = row.flags[CircuitFlags::SubtractOperands];
-            let mul = row.flags[CircuitFlags::MultiplyOperands];
-            let adv = row.flags[CircuitFlags::Advice];
-            (!(add || sub || mul || adv)).into()
-        }
-        // Az: Assert flag (0/1)
-        N::AssertLookupOne => row.flags[CircuitFlags::Assert].into(),
-        // Az: WriteLookupOutputToRD indicator (0/1)
-        N::RdWriteEqLookupIfWriteLookupToRd => {
-            I8OrI96::from_i8(row.write_lookup_output_to_rd_addr as i8)
-        }
-        // Az: WritePCtoRD indicator (0/1)
-        N::RdWriteEqPCPlusConstIfWritePCtoRD => I8OrI96::from_i8(row.write_pc_to_rd_addr as i8),
-        // Az: ShouldJump indicator (0/1)
-        N::NextUnexpPCEqLookupIfShouldJump => row.should_jump.into(),
-        // Note: Az uses ShouldBranch in the u64 domain (product Branch * LookupOutput)
-        // Az: ShouldBranch indicator (0/1)
-        N::NextUnexpPCEqPCPlusImmIfShouldBranch => I8OrI96::from(row.should_branch),
-        N::NextUnexpPCUpdateOtherwise => {
-            // Az encodes 1 - ShouldBranch - Jump = (1 - Jump) - ShouldBranch.
-            let jump = row.flags[CircuitFlags::Jump];
-            let not_jump: i128 = if jump { 0 } else { 1 };
-            let diff = not_jump - (row.should_branch as i128);
-            I8OrI96::from(diff)
-        }
-        // Az: InlineSequenceInstruction flag (0/1)
-        N::NextPCEqPCPlusOneIfInline => row.flags[CircuitFlags::InlineSequenceInstruction].into(),
-    }
-}
-
-/// Evaluate Bz by name using a fully materialized R1CS cycle inputs
-pub fn eval_bz_by_name(c: &NamedConstraint, row: &R1CSCycleInputs) -> S160 {
-    use ConstraintName as N;
-    match c.name {
-        N::RamAddrEqRs1PlusImmIfLoadStore => {
-            // B: RamAddress - (Rs1Value + Imm) (i128 arithmetic)
-            let expected: i128 = if row.imm.is_positive {
-                (row.rs1_read_value as u128 + row.imm.magnitude_as_u64() as u128) as i128
-            } else {
-                row.rs1_read_value as i128 - row.imm.magnitude_as_u64() as i128
-            };
-            S160::from(row.ram_addr as i128 - expected)
-        }
-        N::RamAddrEqZeroIfNotLoadStore => {
-            // B: RamAddress - 0
-            S160::from(row.ram_addr)
-        }
-        // B: RamReadValue - RamWriteValue (u64 bit-pattern difference)
-        N::RamReadEqRamWriteIfLoad => S160::from_diff_u64(row.ram_read_value, row.ram_write_value),
-        // B: RamReadValue - RdWriteValue (u64 bit-pattern difference)
-        N::RamReadEqRdWriteIfLoad => S160::from_diff_u64(row.ram_read_value, row.rd_write_value),
-        // B: Rs2Value - RamWriteValue (u64 bit-pattern difference)
-        N::Rs2EqRamWriteIfStore => S160::from_diff_u64(row.rs2_read_value, row.ram_write_value),
-        // B: LeftLookupOperand - 0
-        N::LeftLookupZeroUnlessAddSubMul => S160::from(row.left_lookup),
-        N::LeftLookupEqLeftInputOtherwise => {
-            // B: LeftLookupOperand - LeftInstructionInput
-            S160::from(row.left_lookup) - S160::from(row.left_input)
-        }
-        N::RightLookupAdd => {
-            // B: RightLookupOperand - (LeftInstructionInput + RightInstructionInput) with full-width integer semantics
-            let expected_i128 = (row.left_input as i128) + row.right_input.to_i128();
-            S160::from(row.right_lookup) - S160::from(expected_i128)
-        }
-        N::RightLookupSub => {
-            // B: RightLookupOperand - (LeftInstructionInput - RightInstructionInput + 2^64)
-            // with full-width integer semantics (matches the +2^64 in the uniform constraint)
-            let expected_i128 =
-                (row.left_input as i128) - row.right_input.to_i128() + (1i128 << 64);
-            S160::from(row.right_lookup) - S160::from(expected_i128)
-        }
-        N::RightLookupEqProductIfMul => {
-            // B: RightLookupOperand - Product with full 128-bit semantics
-            S160::from(row.right_lookup) - S160::from(row.product)
-        }
-        N::RightLookupEqRightInputOtherwise => {
-            // B: RightLookupOperand - RightInstructionInput with exact integer semantics
-            S160::from(row.right_lookup) - S160::from(row.right_input)
-        }
-        // B: LookupOutput - 1 (i128 arithmetic)
-        N::AssertLookupOne => S160::from(row.lookup_output as i128 - 1),
-        N::RdWriteEqLookupIfWriteLookupToRd => {
-            // B: RdWriteValue - LookupOutput (u64 bit-pattern difference)
-            S160::from_diff_u64(row.rd_write_value, row.lookup_output)
-        }
-        N::RdWriteEqPCPlusConstIfWritePCtoRD => {
-            // B: RdWriteValue - (UnexpandedPC + (4 - 2*IsCompressed)) (i128 arithmetic)
-            let const_term = 4 - if row.flags[CircuitFlags::IsCompressed] {
-                2
-            } else {
-                0
-            };
-            S160::from(
-                row.rd_write_value as i128 - (row.unexpanded_pc as i128 + const_term as i128),
-            )
-        }
-        N::NextUnexpPCEqLookupIfShouldJump => {
-            // Note: B uses u64 bit-pattern difference here
-            // B: NextUnexpandedPC - LookupOutput (i128 arithmetic)
-            S160::from_diff_u64(row.next_unexpanded_pc, row.lookup_output)
-        }
-        // B: NextUnexpandedPC - (UnexpandedPC + Imm) (i128 arithmetic)
-        N::NextUnexpPCEqPCPlusImmIfShouldBranch => S160::from(
-            row.next_unexpanded_pc as i128 - (row.unexpanded_pc as i128 + row.imm.to_i128()),
-        ),
-        N::NextUnexpPCUpdateOtherwise => {
-            // B: NextUnexpandedPC - target, where target = UnexpandedPC + 4 - 4*DoNotUpdateUnexpandedPC - 2*IsCompressed (i128 arithmetic)
-            let const_term =
-                4 - if row.flags[CircuitFlags::DoNotUpdateUnexpandedPC] {
-                    4
-                } else {
-                    0
-                } - if row.flags[CircuitFlags::IsCompressed] {
-                    2
-                } else {
-                    0
-                };
-            let target = row.unexpanded_pc as i128 + const_term;
-            S160::from(row.next_unexpanded_pc as i128 - target)
-        }
-        N::NextPCEqPCPlusOneIfInline => {
-            // B: NextPC - (PC + 1) (i128 arithmetic)
-            S160::from(row.next_pc as i128 - (row.pc as i128 + 1))
-        }
-    }
-}
-
-/// Batched evaluation using a fully materialized R1CS cycle inputs. This avoids any repeated
-/// reads from the trace or bytecode and computes all constraints.
-pub fn eval_az_bz_batch_from_row(
-    constraints: &[NamedConstraint],
-    row: &R1CSCycleInputs,
-    az_output: &mut [I8OrI96],
-    bz_output: &mut [S160],
-) {
-    assert_eq!(constraints.len(), az_output.len());
-    assert_eq!(constraints.len(), bz_output.len());
-    for (i, constraint) in constraints.iter().enumerate() {
-        az_output[i] = eval_az_by_name(constraint, row);
-        bz_output[i] = eval_bz_by_name(constraint, row);
-    }
-}
-
-/// Evaluate Cz by name using a fully materialized R1CS cycle inputs
 /// Evaluate Az for the first group as booleans in the group order (length UNIVARIATE_SKIP_DOMAIN_SIZE).
 /// Booleans are derived from the same semantics as `eval_az_by_name`, with non-zero selectors
 /// interpreted as true.
 pub fn eval_az_first_group(row: &R1CSCycleInputs) -> [bool; UNIVARIATE_SKIP_DOMAIN_SIZE] {
     // Order matches UNIFORM_R1CS_FIRST_GROUP_NAMES (now 9 entries)
+    let flags = &row.flags;
+    let ld = flags[CircuitFlags::Load];
+    let st = flags[CircuitFlags::Store];
+    let add = flags[CircuitFlags::AddOperands];
+    let sub = flags[CircuitFlags::SubtractOperands];
+    let mul = flags[CircuitFlags::MultiplyOperands];
+    let assert_flag = flags[CircuitFlags::Assert];
+    let inline_seq = flags[CircuitFlags::InlineSequenceInstruction];
+
     [
-        row.flags[CircuitFlags::Load],             // RamReadEqRamWriteIfLoad
-        row.flags[CircuitFlags::Load],             // RamReadEqRdWriteIfLoad
-        row.flags[CircuitFlags::Store],            // Rs2EqRamWriteIfStore
-        row.flags[CircuitFlags::AddOperands],      // RightLookupAdd
-        row.flags[CircuitFlags::SubtractOperands], // RightLookupSub
-        row.flags[CircuitFlags::Assert],           // AssertLookupOne
-        row.should_jump,                           // NextUnexpPCEqLookupIfShouldJump
-        {
-            let add = row.flags[CircuitFlags::AddOperands];
-            let sub = row.flags[CircuitFlags::SubtractOperands];
-            let mul = row.flags[CircuitFlags::MultiplyOperands];
-            let adv = row.flags[CircuitFlags::Advice];
-            !(add || sub || mul || adv)
-        }, // RightLookupEqRightInputOtherwise
-        {
-            let add = row.flags[CircuitFlags::AddOperands];
-            let sub = row.flags[CircuitFlags::SubtractOperands];
-            let mul = row.flags[CircuitFlags::MultiplyOperands];
-            !(add || sub || mul)
-        }, // LeftLookupEqLeftInputOtherwise
+        // RamAddrEqZeroIfNotLoadStore
+        !(ld || st),
+        // RamReadEqRamWriteIfLoad
+        ld,
+        // RamReadEqRdWriteIfLoad
+        ld,
+        // Rs2EqRamWriteIfStore
+        st,
+        // LeftLookupZeroUnlessAddSubMul
+        add || sub || mul,
+        // LeftLookupEqLeftInputOtherwise
+        !(add || sub || mul),
+        // AssertLookupOne
+        assert_flag,
+        // NextUnexpPCEqLookupIfShouldJump
+        row.should_jump,
+        // NextPCEqPCPlusOneIfInline
+        inline_seq,
     ]
 }
 
-/// Evaluate Bz for the first group as S160 in the group order (length UNIVARIATE_SKIP_DOMAIN_SIZE),
-/// using the same semantics as `eval_bz_by_name`.
-pub fn eval_bz_first_group(row: &R1CSCycleInputs) -> [S160; UNIVARIATE_SKIP_DOMAIN_SIZE] {
-    let mut out: [S160; UNIVARIATE_SKIP_DOMAIN_SIZE] = [S160::zero(); UNIVARIATE_SKIP_DOMAIN_SIZE];
-    let mut i = 0;
-    while i < UNIFORM_R1CS_FIRST_GROUP.len() {
-        out[i] = eval_bz_by_name(&UNIFORM_R1CS_FIRST_GROUP[i], row);
-        i += 1;
-    }
-    out
+/// Evaluate Bz for the first group as i128 in the group order (length UNIVARIATE_SKIP_DOMAIN_SIZE),
+/// using semantics equivalent to `eval_bz_by_name` (after upcasting to S160).
+pub fn eval_bz_first_group(row: &R1CSCycleInputs) -> [i128; UNIVARIATE_SKIP_DOMAIN_SIZE] {
+    let left_lookup = row.left_lookup as i128;
+    let left_input = row.left_input as i128;
+    let ram_read = row.ram_read_value as i128;
+    let ram_write = row.ram_write_value as i128;
+    let rd_write = row.rd_write_value as i128;
+    let rs2 = row.rs2_read_value as i128;
+    let ram_addr = row.ram_addr as i128;
+    let lookup_out = row.lookup_output as i128;
+    let next_unexp_pc = row.next_unexpanded_pc as i128;
+    let pc = row.pc as i128;
+    let next_pc = row.next_pc as i128;
+
+    [
+        // RamAddrEqZeroIfNotLoadStore: RamAddress - 0
+        ram_addr,
+        // RamReadEqRamWriteIfLoad: RamReadValue - RamWriteValue
+        ram_read - ram_write,
+        // RamReadEqRdWriteIfLoad: RamReadValue - RdWriteValue
+        ram_read - rd_write,
+        // Rs2EqRamWriteIfStore: Rs2Value - RamWriteValue
+        rs2 - ram_write,
+        // LeftLookupZeroUnlessAddSubMul: LeftLookupOperand - 0
+        left_lookup,
+        // LeftLookupEqLeftInputOtherwise: LeftLookupOperand - LeftInstructionInput
+        left_lookup - left_input,
+        // AssertLookupOne: LookupOutput - 1
+        lookup_out - 1,
+        // NextUnexpPCEqLookupIfShouldJump: NextUnexpandedPC - LookupOutput
+        next_unexp_pc - lookup_out,
+        // NextPCEqPCPlusOneIfInline: NextPC - (PC + 1)
+        next_pc - (pc + 1),
+    ]
 }
 
 /// Evaluate Az for the second group in group order, using the same small-scalar
 /// semantics as `eval_az_by_name`.
-pub fn eval_az_second_group(row: &R1CSCycleInputs) -> [I8OrI96; NUM_REMAINING_R1CS_CONSTRAINTS] {
-    let mut out: [I8OrI96; NUM_REMAINING_R1CS_CONSTRAINTS] =
-        [I8OrI96::zero(); NUM_REMAINING_R1CS_CONSTRAINTS];
+pub fn eval_az_second_group(row: &R1CSCycleInputs) -> [u8; NUM_REMAINING_R1CS_CONSTRAINTS] {
+    use ConstraintName as N;
+    let flags = &row.flags;
+    let add = flags[CircuitFlags::AddOperands] as u8;
+    let sub = flags[CircuitFlags::SubtractOperands] as u8;
+    let mul = flags[CircuitFlags::MultiplyOperands] as u8;
+    let _adv = flags[CircuitFlags::Advice] as u8;
+
+    let mut out: [u8; NUM_REMAINING_R1CS_CONSTRAINTS] = [0u8; NUM_REMAINING_R1CS_CONSTRAINTS];
     let mut i = 0;
     while i < UNIFORM_R1CS_SECOND_GROUP.len() {
-        out[i] = eval_az_by_name(&UNIFORM_R1CS_SECOND_GROUP[i], row);
+        let name = UNIFORM_R1CS_SECOND_GROUP[i].name;
+        out[i] = match name {
+            N::RamAddrEqRs1PlusImmIfLoadStore => (flags[CircuitFlags::Load] || flags[CircuitFlags::Store]) as u8,
+            N::RamAddrEqZeroIfNotLoadStore => (!(flags[CircuitFlags::Load] || flags[CircuitFlags::Store])) as u8,
+            N::RamReadEqRamWriteIfLoad => flags[CircuitFlags::Load] as u8,
+            N::RamReadEqRdWriteIfLoad => flags[CircuitFlags::Load] as u8,
+            N::Rs2EqRamWriteIfStore => flags[CircuitFlags::Store] as u8,
+            N::LeftLookupZeroUnlessAddSubMul => add | sub | mul,
+            N::LeftLookupEqLeftInputOtherwise => !(flags[CircuitFlags::AddOperands]
+                || flags[CircuitFlags::SubtractOperands]
+                || flags[CircuitFlags::MultiplyOperands]) as u8,
+            N::RightLookupAdd => flags[CircuitFlags::AddOperands] as u8,
+            N::RightLookupSub => flags[CircuitFlags::SubtractOperands] as u8,
+            N::RightLookupEqProductIfMul => flags[CircuitFlags::MultiplyOperands] as u8,
+            N::RightLookupEqRightInputOtherwise => !(flags[CircuitFlags::AddOperands]
+                || flags[CircuitFlags::SubtractOperands]
+                || flags[CircuitFlags::MultiplyOperands]
+                || flags[CircuitFlags::Advice]) as u8,
+            N::AssertLookupOne => flags[CircuitFlags::Assert] as u8,
+            N::RdWriteEqLookupIfWriteLookupToRd => row.write_lookup_output_to_rd_addr,
+            N::RdWriteEqPCPlusConstIfWritePCtoRD => row.write_pc_to_rd_addr,
+            N::NextUnexpPCEqLookupIfShouldJump => row.should_jump as u8,
+            N::NextUnexpPCEqPCPlusImmIfShouldBranch => row.should_branch as u8,
+            N::NextUnexpPCUpdateOtherwise => {
+                let jump = flags[CircuitFlags::Jump] as u8;
+                1u8.wrapping_sub(jump).wrapping_sub(row.should_branch as u8)
+            }
+            N::NextPCEqPCPlusOneIfInline => flags[CircuitFlags::InlineSequenceInstruction] as u8,
+        };
         i += 1;
     }
     out
@@ -698,11 +578,72 @@ pub fn eval_az_second_group(row: &R1CSCycleInputs) -> [I8OrI96; NUM_REMAINING_R1
 /// Evaluate Bz for the second group in group order, using the same small-scalar
 /// semantics as `eval_bz_by_name`.
 pub fn eval_bz_second_group(row: &R1CSCycleInputs) -> [S160; NUM_REMAINING_R1CS_CONSTRAINTS] {
+    use ConstraintName as N;
     let mut out: [S160; NUM_REMAINING_R1CS_CONSTRAINTS] =
         [S160::zero(); NUM_REMAINING_R1CS_CONSTRAINTS];
     let mut i = 0;
     while i < UNIFORM_R1CS_SECOND_GROUP.len() {
-        out[i] = eval_bz_by_name(&UNIFORM_R1CS_SECOND_GROUP[i], row);
+        let name = UNIFORM_R1CS_SECOND_GROUP[i].name;
+        out[i] = match name {
+            N::RamAddrEqRs1PlusImmIfLoadStore => {
+                let expected: i128 = if row.imm.is_positive {
+                    (row.rs1_read_value as u128 + row.imm.magnitude_as_u64() as u128) as i128
+                } else {
+                    row.rs1_read_value as i128 - row.imm.magnitude_as_u64() as i128
+                };
+                S160::from(row.ram_addr as i128 - expected)
+            }
+            N::RamAddrEqZeroIfNotLoadStore => S160::from(row.ram_addr),
+            N::RamReadEqRamWriteIfLoad =>
+                S160::from_diff_u64(row.ram_read_value, row.ram_write_value),
+            N::RamReadEqRdWriteIfLoad =>
+                S160::from_diff_u64(row.ram_read_value, row.rd_write_value),
+            N::Rs2EqRamWriteIfStore =>
+                S160::from_diff_u64(row.rs2_read_value, row.ram_write_value),
+            N::LeftLookupZeroUnlessAddSubMul => S160::from(row.left_lookup),
+            N::LeftLookupEqLeftInputOtherwise => {
+                S160::from(row.left_lookup) - S160::from(row.left_input)
+            }
+            N::RightLookupAdd => {
+                let expected_i128 = (row.left_input as i128) + row.right_input.to_i128();
+                S160::from(row.right_lookup) - S160::from(expected_i128)
+            }
+            N::RightLookupSub => {
+                let expected_i128 =
+                    (row.left_input as i128) - row.right_input.to_i128() + (1i128 << 64);
+                S160::from(row.right_lookup) - S160::from(expected_i128)
+            }
+            N::RightLookupEqProductIfMul => {
+                S160::from(row.right_lookup) - S160::from(row.product)
+            }
+            N::RightLookupEqRightInputOtherwise => {
+                S160::from(row.right_lookup) - S160::from(row.right_input)
+            }
+            N::AssertLookupOne => S160::from(row.lookup_output as i128 - 1),
+            N::RdWriteEqLookupIfWriteLookupToRd =>
+                S160::from_diff_u64(row.rd_write_value, row.lookup_output),
+            N::RdWriteEqPCPlusConstIfWritePCtoRD => {
+                let const_term = 4 - if row.flags[CircuitFlags::IsCompressed] { 2 } else { 0 };
+                S160::from(
+                    row.rd_write_value as i128
+                        - (row.unexpanded_pc as i128 + const_term as i128),
+                )
+            }
+            N::NextUnexpPCEqLookupIfShouldJump =>
+                S160::from_diff_u64(row.next_unexpanded_pc, row.lookup_output),
+            N::NextUnexpPCEqPCPlusImmIfShouldBranch => S160::from(
+                row.next_unexpanded_pc as i128 - (row.unexpanded_pc as i128 + row.imm.to_i128()),
+            ),
+            N::NextUnexpPCUpdateOtherwise => {
+                let const_term = 4
+                    - if row.flags[CircuitFlags::DoNotUpdateUnexpandedPC] { 4 } else { 0 }
+                    - if row.flags[CircuitFlags::IsCompressed] { 2 } else { 0 };
+                let target = row.unexpanded_pc as i128 + const_term;
+                S160::from(row.next_unexpanded_pc as i128 - target)
+            }
+            N::NextPCEqPCPlusOneIfInline =>
+                S160::from(row.next_pc as i128 - (row.pc as i128 + 1)),
+        };
         i += 1;
     }
     out

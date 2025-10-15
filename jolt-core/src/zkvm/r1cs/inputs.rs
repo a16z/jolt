@@ -26,7 +26,7 @@ use strum::IntoEnumIterator;
 
 /// Fully materialized, typed view of all R1CS inputs for a single row (cycle).
 /// Filled once and reused to evaluate all constraints without re-reading the trace.
-/// Total size: 208 bytes, alignment: 16 bytes
+/// Total size: 224 bytes, alignment: 16 bytes
 #[derive(Clone, Debug)]
 pub struct R1CSCycleInputs {
     /// Left instruction input as a u64 bit-pattern.
@@ -83,8 +83,8 @@ pub struct R1CSCycleInputs {
 
     /// Derived: `Jump && !NextIsNoop`.
     pub should_jump: bool,
-    /// Derived: `LookupOutput` if `Branch`, else 0.
-    pub should_branch: u64,
+    /// Derived: `Branch && (LookupOutput == 1)`.
+    pub should_branch: bool,
 
     /// Rd index if `WriteLookupOutputToRD`, else 0 (u8 domain used as selector).
     pub write_lookup_output_to_rd_addr: u8,
@@ -177,11 +177,7 @@ impl R1CSCycleInputs {
             false
         };
         let should_jump = flags_view[CircuitFlags::Jump] && !next_is_noop;
-        let should_branch = if instruction_flags[InstructionFlags::Branch] {
-            lookup_output
-        } else {
-            0u64
-        };
+        let should_branch = instruction_flags[InstructionFlags::Branch] && (lookup_output == 1);
 
         // Write-to-Rd selectors (masked by flags)
         let write_lookup_output_to_rd_addr = if flags_view[CircuitFlags::WriteLookupOutputToRD] {
@@ -236,7 +232,7 @@ impl R1CSCycleInputs {
                 (self.write_lookup_output_to_rd_addr as u64).to_field()
             }
             JoltR1CSInputs::WritePCtoRD => (self.write_pc_to_rd_addr as u64).to_field(),
-            JoltR1CSInputs::ShouldBranch => self.should_branch.to_field(),
+            JoltR1CSInputs::ShouldBranch => F::from_bool(self.should_branch),
             JoltR1CSInputs::PC => self.pc.to_field(),
             JoltR1CSInputs::UnexpandedPC => self.unexpanded_pc.to_field(),
             JoltR1CSInputs::Imm => F::from_i128(self.imm.to_i128()),
@@ -451,8 +447,9 @@ pub fn compute_claimed_witness_evals<F: JoltField>(
                     row.write_lookup_output_to_rd_addr.field_mul(eq2_val);
                 inner[JoltR1CSInputs::WritePCtoRD.to_index()] +=
                     row.write_pc_to_rd_addr.field_mul(eq2_val);
-                inner[JoltR1CSInputs::ShouldBranch.to_index()] +=
-                    row.should_branch.field_mul(eq2_val);
+                if row.should_branch {
+                    inner[JoltR1CSInputs::ShouldBranch.to_index()] += eq2_val;
+                }
                 inner[JoltR1CSInputs::PC.to_index()] += row.pc.field_mul(eq2_val);
                 inner[JoltR1CSInputs::UnexpandedPC.to_index()] +=
                     row.unexpanded_pc.field_mul(eq2_val);

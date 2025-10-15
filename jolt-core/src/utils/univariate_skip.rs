@@ -1,6 +1,6 @@
 use crate::field::JoltField;
 use crate::utils::univariate_skip::accum::{
-    acc5_add_field, acc5_new, acc5_reduce, acc6_fmadd_i8ori96, acc6_new, acc6_reduce,
+    acc5_add_field, acc5_new, acc5_reduce, acc6_fmadd_i128, acc6_new, acc6_reduce,
     accs160_fmadd_s160, accs160_new, accs160_reduce, Acc5, Acc6, AccS160,
 };
 use crate::zkvm::r1cs::constraints::{
@@ -86,6 +86,21 @@ pub mod accum {
         F::from_barrett_reduce(acc.0) - F::from_barrett_reduce(acc.1)
     }
 
+    /// fmadd with i128 using mul_u128_unreduced (6 limbs) for signed accumulation
+    #[inline(always)]
+    pub fn acc6_fmadd_i128<F: JoltField>(acc: &mut Acc6<F>, field: &F, v: i128) {
+        if v == 0 {
+            return;
+        }
+        let abs = v.unsigned_abs();
+        let term = (*field).mul_u128_unreduced(abs);
+        if v > 0 {
+            acc.0 += term;
+        } else {
+            acc.1 += term;
+        }
+    }
+
     // Accumulator for field * S160 using 3-limb fmadd into 7-limb accumulators
     // Use the implementor-associated Acc<7> type to match fmadd_trunc binding exactly.
     // Reduce with Barrett to avoid Montgomery factors.
@@ -140,25 +155,26 @@ pub fn compute_az_r_group0<F: JoltField>(row: &R1CSCycleInputs, lagrange_evals_r
 
 #[inline]
 pub fn compute_bz_r_group0<F: JoltField>(row: &R1CSCycleInputs, lagrange_evals_r: &[F]) -> F {
-    // Group 0 Bz are S160; accumulate field * S160 unreduced, then reduce once
+    // Group 0 Bz are i128; accumulate field * i128 (converted) unreduced, then Barrett-reduce
     let bz_vals = eval_bz_first_group(row);
-    let mut acc: AccS160<F> = accs160_new::<F>();
+    let mut acc: Acc6<F> = acc6_new::<F>();
     let mut i = 0;
     while i < UNIVARIATE_SKIP_DOMAIN_SIZE {
-        accs160_fmadd_s160(&mut acc, &lagrange_evals_r[i], bz_vals[i]);
+        acc6_fmadd_i128(&mut acc, &lagrange_evals_r[i], bz_vals[i]);
         i += 1;
     }
-    accs160_reduce(&acc)
+    acc6_reduce(&acc)
 }
 
 #[inline]
 pub fn compute_az_r_group1<F: JoltField>(row: &R1CSCycleInputs, lagrange_evals_r: &[F]) -> F {
-    // Group 1 Az are I8OrI96; accumulate field * i128 (converted) unreduced, then Barrett-reduce
-    let az_vals = eval_az_second_group(row);
+    // Group 1 Az are u8 (nonnegative); accumulate field * i32 unreduced, then Barrett-reduce
+    let az_vals_u8 = eval_az_second_group(row);
     let mut acc: Acc6<F> = acc6_new::<F>();
     let mut i = 0;
     while i < NUM_REMAINING_R1CS_CONSTRAINTS {
-        acc6_fmadd_i8ori96(&mut acc, &lagrange_evals_r[i], az_vals[i]);
+        let v_i32: i128 = (az_vals_u8[i] as i32) as i128;
+        acc6_fmadd_i128(&mut acc, &lagrange_evals_r[i], v_i32);
         i += 1;
     }
     acc6_reduce(&acc)

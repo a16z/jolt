@@ -109,4 +109,26 @@ mod flags {
             }
         }
     }
+
+    #[test]
+    fn branch_lookup_output_is_boolean() {
+        use crate::zkvm::instruction::LookupQuery;
+        use common::constants::XLEN;
+
+        for cycle in Cycle::iter() {
+            if let Cycle::INLINE(_) = cycle {
+                continue;
+            }
+            let instr = cycle.instruction();
+            if let Ok(instr_flags) = panic::catch_unwind(|| instr.instruction_flags()) {
+                if instr_flags[InstructionFlags::Branch] {
+                    let out = LookupQuery::<XLEN>::to_lookup_output(&cycle);
+                    assert!(
+                        out == 0 || out == 1,
+                        "Branch lookup output not boolean for {instr:?}: got {out}",
+                    );
+                }
+            }
+        }
+    }
 }
