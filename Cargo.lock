@@ -410,26 +410,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "blake2-ex"
-version = "0.1.0"
-dependencies = [
- "blake2-guest",
- "hex",
- "jolt-inlines-blake2",
- "jolt-sdk",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "blake2-guest"
-version = "0.1.0"
-dependencies = [
- "jolt-inlines-blake2",
- "jolt-sdk",
-]
-
-[[package]]
 name = "blake3"
 version = "1.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -440,26 +420,6 @@ dependencies = [
  "cc",
  "cfg-if",
  "constant_time_eq",
-]
-
-[[package]]
-name = "blake3-ex"
-version = "0.1.0"
-dependencies = [
- "blake3-guest",
- "hex",
- "jolt-inlines-blake3",
- "jolt-sdk",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "blake3-guest"
-version = "0.1.0"
-dependencies = [
- "jolt-inlines-blake3",
- "jolt-sdk",
 ]
 
 [[package]]
