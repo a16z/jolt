@@ -49,7 +49,10 @@ impl<F: JoltField> InnerSumcheck<F> {
         let num_cycles_bits = num_cycles.ilog2() as usize;
 
         // Get gamma challenge for batching
-        let gamma: F = state_manager.transcript.borrow_mut().challenge_scalar();
+        let gamma: F::Challenge = state_manager
+            .transcript
+            .borrow_mut()
+            .challenge_scalar_optimized::<F>();
 
         // Get opening_point and claims from accumulator (Az, Bz all have the same point)
         let (outer_sumcheck_r, claim_Az) = state_manager
@@ -121,7 +124,10 @@ impl<F: JoltField> InnerSumcheck<F> {
         drop(accumulator_ref);
 
         // Get gamma challenge for batching
-        let gamma: F::Challenge = state_manager.transcript.borrow_mut().challenge_scalar_optimized();
+        let gamma: F::Challenge = state_manager
+            .transcript
+            .borrow_mut()
+            .challenge_scalar_optimized::<F>();
 
         // Compute joint claim
         let input_claim = claim_Az + gamma * claim_Bz;
@@ -240,14 +246,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for InnerSumcheck<F> {
             .collect();
 
         // The verifier needs to compute:
-        // (A_small(rx, ry) + r * B_small(rx, ry) + r^2 * C_small(rx, ry)) * z(ry)
+        // (A_small(rx_var, r) + gamma * B_small(rx_var, r)) * z(r)
 
-        // Evaluate uniform matrices A_small, B_small, C_small at point (rx_var, ry_var)
+        // Evaluate uniform matrices A_small and B_small at point (rx_var, r)
         let eval_a = key.evaluate_uniform_a_at_point(rx_var, r);
         let eval_b = key.evaluate_uniform_b_at_point(rx_var, r);
-        let eval_c = key.evaluate_uniform_c_at_point(rx_var, r);
 
-        let left_expected = eval_a + self.gamma * eval_b + self.gamma.square() * eval_c;
+        let left_expected = eval_a + self.gamma * eval_b;
 
         // Evaluate z(ry)
         let eval_z = key.evaluate_z_mle_with_segment_evals(&claimed_witness_evals, r, true);

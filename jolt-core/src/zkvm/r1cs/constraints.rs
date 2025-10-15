@@ -257,6 +257,9 @@ pub static UNIFORM_R1CS: [NamedConstraint; NUM_R1CS_CONSTRAINTS] = [
         if { { JoltR1CSInputs::OpFlags(CircuitFlags::SubtractOperands) } }
         => ( { JoltR1CSInputs::RightLookupOperand } ) == ( { JoltR1CSInputs::LeftInstructionInput } - { JoltR1CSInputs::RightInstructionInput } + { 0x10000000000000000i128 } )
     ),
+    // If MultiplyOperands {
+    //     assert!(RightLookupOperand == Product)
+    // }
     r1cs_eq_conditional!(
         name: ConstraintName::RightLookupEqProductIfMul,
         if { { JoltR1CSInputs::OpFlags(CircuitFlags::MultiplyOperands) } }

@@ -7,10 +7,15 @@ use std::sync::Arc;
 use tracer::instruction::Cycle;
 
 use crate::field::{JoltField, OptimizedMul};
+use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::lagrange_poly::{LagrangeHelper, LagrangePolynomial};
 use crate::poly::multilinear_polynomial::BindingOrder;
+use crate::poly::opening_proof::BIG_ENDIAN;
+use crate::poly::opening_proof::{
+    OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator,
+};
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::sumcheck::{SumcheckInstance, UniSkipFirstRoundInstance};
@@ -18,14 +23,7 @@ use crate::transcripts::Transcript;
 use crate::utils::math::Math;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
-use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::opening_proof::BIG_ENDIAN;
-use crate::poly::opening_proof::{
-    OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator,
-};
-use crate::utils::univariate_skip::accum::{
-    accs160_fmadd_s160, accs160_new, accs160_reduce,
-};
+use crate::utils::univariate_skip::accum::{accs160_fmadd_s160, accs160_new, accs160_reduce};
 use crate::utils::univariate_skip::{
     compute_az_r_group0, compute_az_r_group1, compute_bz_r_group0, compute_bz_r_group1,
 };
@@ -91,11 +89,8 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
         let (preprocessing, trace, _program_io, _final_mem) = state_manager.get_prover_data();
         let tau_low = &tau[0..tau.len() - 1];
         let split_eq = GruenSplitEqPolynomial::<F>::new(tau_low, BindingOrder::LowToHigh);
-        let extended = Self::compute_univariate_skip_extended_evals(
-            &split_eq,
-            &preprocessing.shared,
-            trace,
-        );
+        let extended =
+            Self::compute_univariate_skip_extended_evals(&split_eq, &preprocessing.shared, trace);
         Self {
             tau: tau.to_vec(),
             prover_state: Some(OuterUniSkipProverState {
@@ -177,7 +172,10 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
 
         let num_x_out_vals = split_eq.E_out_current_len();
         let num_x_in_vals = split_eq.E_in_current_len();
-        debug_assert!(num_x_out_vals > 0, "E_out_current_len() must be > 0 for outer uni-skip");
+        debug_assert!(
+            num_x_out_vals > 0,
+            "E_out_current_len() must be > 0 for outer uni-skip"
+        );
         let num_parallel_chunks = if num_x_out_vals > 0 {
             core::cmp::min(
                 num_x_out_vals,
@@ -211,11 +209,8 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
                     let effective_num_x_in = if num_x_in_vals == 0 { 1 } else { num_x_in_vals };
                     for x_in_val in 0..effective_num_x_in {
                         let current_step_idx = (x_out_val << iter_num_x_in_vars) | x_in_val;
-                        let row_inputs = R1CSCycleInputs::from_trace::<F>(
-                            preprocess,
-                            trace,
-                            current_step_idx,
-                        );
+                        let row_inputs =
+                            R1CSCycleInputs::from_trace::<F>(preprocess, trace, current_step_idx);
 
                         let e_in = if num_x_in_vals == 0 {
                             F::one()
@@ -427,7 +422,10 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
         } else {
             0
         };
-        debug_assert!(num_x_out_vals > 0, "E_out_current_len() must be > 0 for outer streaming cache");
+        debug_assert!(
+            num_x_out_vals > 0,
+            "E_out_current_len() must be > 0 for outer streaming cache"
+        );
 
         let groups_exact = num_x_out_vals.saturating_mul(num_x_in_vals);
 
@@ -643,7 +641,10 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
         let eq_poly = &ps.split_eq_poly;
         let num_x_out_vals = eq_poly.E_out_current_len();
         let num_x_in_vals = eq_poly.E_in_current_len();
-        debug_assert!(num_x_out_vals > 0, "E_out_current_len() must be > 0 for outer streaming evals");
+        debug_assert!(
+            num_x_out_vals > 0,
+            "E_out_current_len() must be > 0 for outer streaming evals"
+        );
 
         let num_parallel_chunks = if num_x_out_vals > 0 {
             core::cmp::min(
@@ -833,7 +834,11 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
                     .map(|chunk_idx| {
                         let x_out_start = chunk_idx * chunk_size;
                         if x_out_start >= num_x_out_vals {
-                            return BoundChunk { base: 0, az: Vec::new(), bz: Vec::new() };
+                            return BoundChunk {
+                                base: 0,
+                                az: Vec::new(),
+                                bz: Vec::new(),
+                            };
                         }
                         let x_out_end = core::cmp::min(x_out_start + chunk_size, num_x_out_vals);
                         let local_len = (x_out_end - x_out_start).saturating_mul(num_x_in_vals);
@@ -850,7 +855,11 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
                                 local_bz.push(bz0 + r_i * (bz1 - bz0));
                             }
                         }
-                        BoundChunk { base: x_out_start * num_x_in_vals, az: local_az, bz: local_bz }
+                        BoundChunk {
+                            base: x_out_start * num_x_in_vals,
+                            az: local_az,
+                            bz: local_bz,
+                        }
                     })
                     .collect();
                 for c in &chunks {
@@ -893,7 +902,11 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
         } else {
             0
         };
-        struct FallbackChunk<F: JoltField> { base: usize, az: Vec<F>, bz: Vec<F> }
+        struct FallbackChunk<F: JoltField> {
+            base: usize,
+            az: Vec<F>,
+            bz: Vec<F>,
+        }
         let fallback_chunks: Vec<FallbackChunk<F>> = (0..num_parallel_chunks)
             .into_par_iter()
             .map(|chunk_idx| {
@@ -919,7 +932,11 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
                         local_bz.push(bz0 + r_i * (bz1 - bz0));
                     }
                 }
-                FallbackChunk { base: x_out_start * num_x_in_vals, az: local_az, bz: local_bz }
+                FallbackChunk {
+                    base: x_out_start * num_x_in_vals,
+                    az: local_az,
+                    bz: local_bz,
+                }
             })
             .collect();
         for c in &fallback_chunks {
@@ -936,10 +953,22 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
     pub fn final_sumcheck_evals(&self) -> [F; 2] {
         let ps = self.prover_state.as_ref();
         let az0 = ps
-            .and_then(|s| if !s.az.is_empty() { Some(s.az[0]) } else { None })
+            .and_then(|s| {
+                if !s.az.is_empty() {
+                    Some(s.az[0])
+                } else {
+                    None
+                }
+            })
             .unwrap_or(F::zero());
         let bz0 = ps
-            .and_then(|s| if !s.bz.is_empty() { Some(s.bz[0]) } else { None })
+            .and_then(|s| {
+                if !s.bz.is_empty() {
+                    Some(s.bz[0])
+                } else {
+                    None
+                }
+            })
             .unwrap_or(F::zero());
         [az0, bz0]
     }

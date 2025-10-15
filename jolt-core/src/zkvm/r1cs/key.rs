@@ -120,7 +120,11 @@ impl<F: JoltField> UniformSpartanKey<F> {
     /// This function only handles uniform constraints, ignoring cross-step constraints
     /// Returns evaluations for each y_var
     #[tracing::instrument(skip_all, name = "UniformSpartanKey::evaluate_small_matrix_rlc")]
-    pub fn evaluate_small_matrix_rlc(&self, r_constr: &[F::Challenge], r_rlc: F) -> Vec<F> {
+    pub fn evaluate_small_matrix_rlc(
+        &self,
+        r_constr: &[F::Challenge],
+        r_rlc: F::Challenge,
+    ) -> Vec<F> {
         // With univariate skip, `r_constr` consists of two challenges:
         // - r_constr[0]: challenge for the univariate-skip round (handled elsewhere)
         // - r_constr[1]: challenge for the streaming round that mixes the two groups
