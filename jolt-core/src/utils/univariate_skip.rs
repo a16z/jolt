@@ -5,7 +5,7 @@ use crate::utils::univariate_skip::accum::{
 };
 use crate::zkvm::r1cs::constraints::{
     eval_az_first_group, eval_az_second_group, eval_bz_first_group, eval_bz_second_group,
-    eval_cz_second_group, NUM_REMAINING_R1CS_CONSTRAINTS, UNIVARIATE_SKIP_DOMAIN_SIZE,
+    NUM_REMAINING_R1CS_CONSTRAINTS, UNIVARIATE_SKIP_DOMAIN_SIZE,
 };
 use crate::zkvm::r1cs::inputs::R1CSCycleInputs;
 
@@ -172,18 +172,6 @@ pub fn compute_bz_r_group1<F: JoltField>(row: &R1CSCycleInputs, lagrange_evals_r
     let mut i = 0;
     while i < NUM_REMAINING_R1CS_CONSTRAINTS {
         accs160_fmadd_s160(&mut acc, &lagrange_evals_r[i], bz_vals[i]);
-        i += 1;
-    }
-    accs160_reduce(&acc)
-}
-
-#[inline]
-pub fn compute_cz_r_group1<F: JoltField>(row: &R1CSCycleInputs, lagrange_evals_r: &[F]) -> F {
-    let cz_vals = eval_cz_second_group(row);
-    let mut acc: AccS160<F> = accs160_new::<F>();
-    let mut i = 0;
-    while i < NUM_REMAINING_R1CS_CONSTRAINTS {
-        accs160_fmadd_s160(&mut acc, &lagrange_evals_r[i], cz_vals[i]);
         i += 1;
     }
     accs160_reduce(&acc)

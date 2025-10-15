@@ -29,7 +29,6 @@ use crate::utils::univariate_skip::accum::{
 };
 use crate::utils::univariate_skip::{
     compute_az_r_group0, compute_az_r_group1, compute_bz_r_group0, compute_bz_r_group1,
-    compute_cz_r_group1,
 };
 use crate::zkvm::dag::state_manager::StateManager;
 use crate::zkvm::r1cs::inputs::{
@@ -46,24 +45,25 @@ use crate::zkvm::r1cs::{
 use crate::zkvm::witness::VirtualPolynomial;
 use crate::zkvm::JoltSharedPreprocessing;
 
-// Spartan Outer sumcheck (with univariate-skip first round on Z)
+// Spartan Outer sumcheck
+// (with univariate-skip first round on Z, and no Cz term given all eq conditional constraints)
 //
 // We define a univariate in Z first-round polynomial
 //   s1(Z) := L_Z(τ_high) · Σ_{x_out ∈ {0,1}^{m_out}} Σ_{x_in ∈ {0,1}^{m_in}}
 //              E_out(r_out, x_out) · E_in(r_in, x_in) ·
-//              [ Az(x_out, x_in, Z) · Bz(x_out, x_in, Z) − Cz(x_out, x_in, Z) ],
+//              [ Az(x_out, x_in, Z) · Bz(x_out, x_in, Z) ],
 // where L_Z(τ_high) is the Lagrange basis polynomial over the univariate-skip
-// base domain evaluated at τ_high, and Az(·,·,Z), Bz(·,·,Z), Cz(·,·,Z) are the
+// base domain evaluated at τ_high, and Az(·,·,Z), Bz(·,·,Z) are the
 // per-row univariate polynomials in Z induced by the R1CS row (split into two
-// internal groups in code, but algebraically composing to Az·Bz − Cz at Z).
-// The prover sends s1(Z) via univariate-skip by evaluating t1(Z) := Σ Σ E_out·E_in·(Az·Bz−Cz)
+// internal groups in code, but algebraically composing to Az·Bz at Z).
+// The prover sends s1(Z) via univariate-skip by evaluating t1(Z) := Σ Σ E_out·E_in·(Az·Bz)
 // on an extended grid Z ∈ {−D..D} outside the base window, interpolating t1,
 // multiplying by L_Z(τ_high) to obtain s1, and the verifier samples r0.
 //
 // Subsequent outer rounds bind the cycle variables r_tail = (r1, r2, …) using
 // a streaming first cycle-bit round followed by linear-time rounds:
 //   • Streaming round (after r0): compute
-//       t(0)  = Σ_{x_out} E_out · Σ_{x_in} E_in · (Az(0)·Bz(0) − Cz(0))
+//       t(0)  = Σ_{x_out} E_out · Σ_{x_in} E_in · (Az(0)·Bz(0))
 //       t(∞)  = Σ_{x_out} E_out · Σ_{x_in} E_in · ((Az(1)−Az(0))·(Bz(1)−Bz(0)))
 //     send a cubic built from these endpoints, and bind cached coefficients by r1.
 //   • Remaining rounds: reuse bound coefficients to compute the same endpoints
@@ -71,13 +71,7 @@ use crate::zkvm::JoltSharedPreprocessing;
 //
 // Final check (verifier): with r = [r0 || r_tail] and outer binding order from
 // the top, evaluate Eq_τ(τ, r) and verify
-//   Eq_τ(τ, r) · (Az(r) · Bz(r) − Cz(r)).
-//
-// Notation and layout:
-// - E_out/E_in are the split-eq factors from GruenSplitEqPolynomial (LowToHigh).
-// - D = UNIVARIATE_SKIP_DEGREE; base = UNIVARIATE_SKIP_DOMAIN_SIZE.
-// - Coefficients are interleaved per (x_out, x_in) in blocks of 6:
-//   [Az(0), Bz(0), Cz(0), Az(1), Bz(1), Cz(1)].
+//   Eq_τ(τ, r) · (Az(r) · Bz(r)).
 
 /// Uni-skip instance for Spartan outer sumcheck, computing the first-round polynomial only.
 pub struct OuterUniSkipInstance<F: JoltField> {
@@ -213,7 +207,7 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
             0
         };
 
-        let mut extended: [F; UNIVARIATE_SKIP_DEGREE] = (0..num_parallel_chunks)
+        let extended: [F; UNIVARIATE_SKIP_DEGREE] = (0..num_parallel_chunks)
             .into_par_iter()
             .map(|chunk_idx| {
                 let x_out_start = chunk_idx * x_out_chunk_size;
@@ -243,19 +237,15 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
                         let bz1_s160 = eval_bz_first_group(&row_inputs);
                         let az2_i96 = eval_az_second_group(&row_inputs);
                         let bz2 = eval_bz_second_group(&row_inputs);
-                        let cz2: [S160; 8] = [S160::from(0i128); 8];
-                        // eval_cz_second_group(&row_inputs);
 
                         let mut az2_i128_padded: [i128; UNIVARIATE_SKIP_DOMAIN_SIZE] =
                             [0; UNIVARIATE_SKIP_DOMAIN_SIZE];
                         let mut bz2_s160_padded: [S160; UNIVARIATE_SKIP_DOMAIN_SIZE] =
                             [S160::from(0i128); UNIVARIATE_SKIP_DOMAIN_SIZE];
-                        let mut cz2_s160_padded: [S160; UNIVARIATE_SKIP_DOMAIN_SIZE] =
-                            [S160::from(0i128); UNIVARIATE_SKIP_DOMAIN_SIZE];
                         for i in 0..UNIVARIATE_SKIP_DOMAIN_SIZE {
                             az2_i128_padded[i] = az2_i96[i].to_i128();
                             bz2_s160_padded[i] = bz2[i];
-                            cz2_s160_padded[i] = cz2[i];
+                            // no Cz term
                         }
 
                         for j in 0..UNIVARIATE_SKIP_DEGREE {
@@ -272,7 +262,7 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
                             let bz1_ext: F = accs160_reduce::<F>(&bz1_acc);
                             inner_acc[j] += e_in.mul_unreduced::<9>(bz1_ext);
 
-                            // Group 1: sum_i c_i * (Az2_i * Bz2_i - Cz2_i)
+                            // Group 1: sum_i c_i * (Az2_i * Bz2_i)
                             for i in 0..UNIVARIATE_SKIP_DOMAIN_SIZE {
                                 let c = coeffs[i] as i64;
                                 if c == 0 {
@@ -281,8 +271,7 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
                                 let cF = F::from_i64(c);
                                 let az2 = F::from_i128(az2_i128_padded[i]);
                                 let bz2 = s160_to_field::<F>(&bz2_s160_padded[i]);
-                                let cz2 = s160_to_field::<F>(&cz2_s160_padded[i]);
-                                let term = az2 * bz2 - cz2;
+                                let term = az2 * bz2;
                                 inner_acc[j] += e_in.mul_unreduced::<9>(term * cF);
                             }
                         }
@@ -380,8 +369,6 @@ pub struct StreamingRoundCache<F: JoltField> {
     pub az_hi: Vec<F>,
     pub bz_lo: Vec<F>,
     pub bz_hi: Vec<F>,
-    /// Cz only contributes for x_next=1 in our construction
-    pub cz_hi: Vec<F>,
 }
 
 #[derive(Clone, Debug)]
@@ -391,7 +378,6 @@ pub struct OuterProverState<F: JoltField> {
     pub trace: Arc<Vec<Cycle>>,
     pub az: DensePolynomial<F>,
     pub bz: DensePolynomial<F>,
-    pub cz: DensePolynomial<F>,
     pub streaming_cache: Option<StreamingRoundCache<F>>,
 }
 
@@ -443,7 +429,6 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
         let mut az_hi: Vec<F> = Vec::with_capacity(groups);
         let mut bz_lo: Vec<F> = Vec::with_capacity(groups);
         let mut bz_hi: Vec<F> = Vec::with_capacity(groups);
-        let mut cz_hi: Vec<F> = Vec::with_capacity(groups);
 
         let mut t0_acc = F::zero();
         let mut t_inf_acc = F::zero();
@@ -465,7 +450,6 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
                 let bz0 = compute_bz_r_group0(&row_inputs, &lagrange_evals_r[..]);
                 let az1 = compute_az_r_group1(&row_inputs, &lagrange_evals_r[..]);
                 let bz1 = compute_bz_r_group1(&row_inputs, &lagrange_evals_r[..]);
-                let cz1 = compute_cz_r_group1(&row_inputs, &lagrange_evals_r[..]);
 
                 // sumcheck contributions
                 let p0 = az0 * bz0;
@@ -488,7 +472,6 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
                 bz_lo.push(bz0);
                 az_hi.push(az1);
                 bz_hi.push(bz1);
-                cz_hi.push(cz1); // cz at x_next=0 is zero
             }
 
             let e_out = if num_x_out_vals > 0 {
@@ -509,7 +492,6 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
             az_hi,
             bz_lo,
             bz_hi,
-            cz_hi,
         };
 
         Self {
@@ -524,7 +506,6 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
                 trace: Arc::new(trace.to_vec()),
                 az: DensePolynomial::default(),
                 bz: DensePolynomial::default(),
-                cz: DensePolynomial::default(),
                 streaming_cache: Some(streaming_cache),
             }),
         }
@@ -715,7 +696,6 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
 
         let n = ps.az.len();
         debug_assert_eq!(n, ps.bz.len());
-        debug_assert_eq!(n, ps.cz.len());
         if eq_poly.E_in_current_len() == 1 {
             // groups are pairs (0,1)
             let groups = n / 2;
@@ -726,9 +706,8 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
                     let az1 = ps.az[2 * g + 1];
                     let bz0 = ps.bz[2 * g];
                     let bz1 = ps.bz[2 * g + 1];
-                    let cz0 = ps.cz[2 * g];
                     let eq = eq_poly.E_out_current()[g];
-                    let t0 = eq * (az0.mul_0_optimized(bz0) - cz0);
+                    let t0 = eq * (az0.mul_0_optimized(bz0));
                     let tinf = eq * ((az1 - az0).mul_0_optimized(bz1 - bz0));
                     (t0, tinf)
                 })
@@ -748,9 +727,8 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
                         let az1 = ps.az[2 * g + 1];
                         let bz0 = ps.bz[2 * g];
                         let bz1 = ps.bz[2 * g + 1];
-                        let cz0 = ps.cz[2 * g];
                         let e_in = eq_poly.E_in_current()[x1];
-                        inner0 += e_in * (az0.mul_0_optimized(bz0) - cz0);
+                        inner0 += e_in * (az0.mul_0_optimized(bz0));
                         inner_inf += e_in * ((az1 - az0).mul_0_optimized(bz1 - bz0));
                     }
                     let e_out = eq_poly.E_out_current()[x2];
@@ -772,20 +750,16 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
                 let groups = cache.az_lo.len();
                 let mut az_bound: Vec<F> = Vec::with_capacity(groups);
                 let mut bz_bound: Vec<F> = Vec::with_capacity(groups);
-                let mut cz_bound: Vec<F> = Vec::with_capacity(groups);
                 for g in 0..groups {
                     let az0 = cache.az_lo[g];
                     let az1 = cache.az_hi[g];
                     let bz0 = cache.bz_lo[g];
                     let bz1 = cache.bz_hi[g];
-                    let cz1 = cache.cz_hi[g];
                     az_bound.push(az0 + r_i * (az1 - az0));
                     bz_bound.push(bz0 + r_i * (bz1 - bz0));
-                    cz_bound.push(r_i * cz1); // cz0 = 0
                 }
                 ps.az = DensePolynomial::new(az_bound);
                 ps.bz = DensePolynomial::new(bz_bound);
-                ps.cz = DensePolynomial::new(cz_bound);
                 return;
             }
         }
@@ -807,7 +781,6 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
         let groups = num_x_out_vals.saturating_mul(core::cmp::max(1, num_x_in_vals));
         let mut az_bound: Vec<F> = Vec::with_capacity(groups);
         let mut bz_bound: Vec<F> = Vec::with_capacity(groups);
-        let mut cz_bound: Vec<F> = Vec::with_capacity(groups);
         for x_out_val in 0..num_x_out_vals {
             for x_in_val in 0..num_x_in_vals {
                 let current_step_idx = (x_out_val << iter_num_x_in_vars) | x_in_val;
@@ -821,20 +794,17 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
                 let bz0 = compute_bz_r_group0(&row_inputs, &lagrange_evals_r[..]);
                 let az1 = compute_az_r_group1(&row_inputs, &lagrange_evals_r[..]);
                 let bz1 = compute_bz_r_group1(&row_inputs, &lagrange_evals_r[..]);
-                let cz1 = compute_cz_r_group1(&row_inputs, &lagrange_evals_r[..]);
                 az_bound.push(az0 + r_i * (az1 - az0));
                 bz_bound.push(bz0 + r_i * (bz1 - bz0));
-                cz_bound.push(r_i * cz1);
             }
         }
         if let Some(ps) = self.prover_state.as_mut() {
             ps.az = DensePolynomial::new(az_bound);
             ps.bz = DensePolynomial::new(bz_bound);
-            ps.cz = DensePolynomial::new(cz_bound);
         }
     }
 
-    pub fn final_sumcheck_evals(&self) -> [F; 3] {
+    pub fn final_sumcheck_evals(&self) -> [F; 2] {
         let ps = self.prover_state.as_ref();
         let az0 = ps
             .and_then(|s| if s.az.len() > 0 { Some(s.az[0]) } else { None })
@@ -842,10 +812,7 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
         let bz0 = ps
             .and_then(|s| if s.bz.len() > 0 { Some(s.bz[0]) } else { None })
             .unwrap_or(F::zero());
-        let cz0 = ps
-            .and_then(|s| if s.cz.len() > 0 { Some(s.cz[0]) } else { None })
-            .unwrap_or(F::zero());
-        [az0, bz0, cz0]
+        [az0, bz0]
     }
 }
 
@@ -896,7 +863,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for OuterRemainingSumch
             let ps = self.prover_state.as_mut().expect("prover state missing");
             ps.az.bind_parallel(r_j, BindingOrder::LowToHigh);
             ps.bz.bind_parallel(r_j, BindingOrder::LowToHigh);
-            ps.cz.bind_parallel(r_j, BindingOrder::LowToHigh);
         }
 
         // Bind eq_poly for next round
@@ -929,11 +895,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for OuterRemainingSumch
             .get_virtual_polynomial_opening(VirtualPolynomial::SpartanAz, SumcheckId::SpartanOuter);
         let (_, claim_Bz) = acc_ref
             .get_virtual_polynomial_opening(VirtualPolynomial::SpartanBz, SumcheckId::SpartanOuter);
-        let (_, claim_Cz) = acc_ref
-            .get_virtual_polynomial_opening(VirtualPolynomial::SpartanCz, SumcheckId::SpartanOuter);
 
         let tau_bound_rx = EqPolynomial::mle(tau, &r_reversed);
-        tau_bound_rx * (claim_Az * claim_Bz - claim_Cz)
+        tau_bound_rx * (claim_Az * claim_Bz)
     }
 
     fn normalize_opening_point(&self, r_tail: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
@@ -951,7 +915,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for OuterRemainingSumch
         transcript: &mut T,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
-        // Append Az, Bz, Cz claims and corresponding opening point
+        // Append Az, Bz claims and corresponding opening point
         let claims = self.final_sumcheck_evals();
         let mut acc = accumulator.borrow_mut();
         acc.append_virtual(
@@ -967,13 +931,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for OuterRemainingSumch
             SumcheckId::SpartanOuter,
             opening_point.clone(),
             claims[1],
-        );
-        acc.append_virtual(
-            transcript,
-            VirtualPolynomial::SpartanCz,
-            SumcheckId::SpartanOuter,
-            opening_point.clone(),
-            claims[2],
         );
 
         // Handle witness openings at r_cycle (use consistent split length)
@@ -1001,7 +958,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for OuterRemainingSumch
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         let mut acc = accumulator.borrow_mut();
-        // Populate Az, Bz, Cz openings at the full outer opening point
+        // Populate Az, Bz openings at the full outer opening point
         acc.append_virtual(
             transcript,
             VirtualPolynomial::SpartanAz,
@@ -1011,12 +968,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for OuterRemainingSumch
         acc.append_virtual(
             transcript,
             VirtualPolynomial::SpartanBz,
-            SumcheckId::SpartanOuter,
-            opening_point.clone(),
-        );
-        acc.append_virtual(
-            transcript,
-            VirtualPolynomial::SpartanCz,
             SumcheckId::SpartanOuter,
             opening_point.clone(),
         );
