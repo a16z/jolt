@@ -539,7 +539,7 @@ impl<F: JoltField, ProofTranscript: Transcript> UniSkipFirstRoundProof<F, ProofT
             .uni_poly
             .check_sum_evals_and_set_new_claim::<N, FIRST_ROUND_POLY_NUM_COEFFS>(&F::zero(), &r0);
         if !ok {
-            return Err(ProofVerifyError::SumcheckVerificationError);
+            return Err(ProofVerifyError::UniSkipVerificationError);
         }
 
         Ok((r0, next_claim))

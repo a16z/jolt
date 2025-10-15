@@ -9,14 +9,12 @@ use crate::zkvm::dag::stage::SumcheckStages;
 use crate::zkvm::dag::state_manager::{ProofData, ProofKeys, StateManager};
 use crate::zkvm::r1cs::key::UniformSpartanKey;
 use crate::zkvm::spartan::inner::InnerSumcheck;
-use crate::zkvm::spartan::outer::{OuterRemainingSumcheck, OuterUniSkipInstance, SpartanInterleavedPoly};
+use crate::zkvm::spartan::outer::{OuterRemainingSumcheck, OuterUniSkipInstance};
 use crate::zkvm::spartan::pc::PCSumcheck;
 use crate::zkvm::spartan::product::ProductVirtualizationSumcheck;
 
 use crate::transcripts::Transcript;
 
-use crate::poly::multilinear_polynomial::BindingOrder;
-use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::subprotocols::sumcheck::SumcheckInstance;
 use crate::zkvm::r1cs::constraints::{FIRST_ROUND_POLY_NUM_COEFFS, UNIVARIATE_SKIP_DOMAIN_SIZE};
 
@@ -177,8 +175,6 @@ where
             let num_cycles_bits = self.key.num_steps.ilog2() as usize;
             let outer_remaining = OuterRemainingSumcheck::new_verifier(
                 st.claim_after_first,
-                GruenSplitEqPolynomial::new(&st.tau[0..st.tau.len() - 1], BindingOrder::LowToHigh),
-                SpartanInterleavedPoly::new(),
                 st.r0,
                 st.total_rounds_remainder,
                 st.tau,

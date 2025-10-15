@@ -124,11 +124,6 @@ pub mod accum {
 }
 
 #[inline]
-fn debug_enabled() -> bool {
-    std::env::var("JOLT_DEBUG_OUTER").is_ok()
-}
-
-#[inline]
 pub fn compute_az_r_group0<F: JoltField>(row: &R1CSCycleInputs, lagrange_evals_r: &[F]) -> F {
     // Group 0 Az are booleans; accumulate field elements unreduced, then Barrett-reduce
     let az_flags = eval_az_first_group(row);
@@ -140,12 +135,7 @@ pub fn compute_az_r_group0<F: JoltField>(row: &R1CSCycleInputs, lagrange_evals_r
         }
         i += 1;
     }
-    let out = acc5_reduce(&acc);
-    if debug_enabled() {
-        let sum: F = lagrange_evals_r.iter().copied().take(UNIVARIATE_SKIP_DOMAIN_SIZE).sum();
-        eprintln!("[uniskip] az_group0: sum L_i(r)={}, out={}", sum, out);
-    }
-    out
+    acc5_reduce(&acc)
 }
 
 #[inline]
@@ -158,11 +148,7 @@ pub fn compute_bz_r_group0<F: JoltField>(row: &R1CSCycleInputs, lagrange_evals_r
         accs160_fmadd_s160(&mut acc, &lagrange_evals_r[i], bz_vals[i]);
         i += 1;
     }
-    let out = accs160_reduce(&acc);
-    if debug_enabled() {
-        eprintln!("[uniskip] bz_group0: out={}", out);
-    }
-    out
+    accs160_reduce(&acc)
 }
 
 #[inline]
@@ -175,11 +161,7 @@ pub fn compute_az_r_group1<F: JoltField>(row: &R1CSCycleInputs, lagrange_evals_r
         acc6_fmadd_i8ori96(&mut acc, &lagrange_evals_r[i], az_vals[i]);
         i += 1;
     }
-    let out = acc6_reduce(&acc);
-    if debug_enabled() {
-        eprintln!("[uniskip] az_group1: out={}", out);
-    }
-    out
+    acc6_reduce(&acc)
 }
 
 #[inline]
@@ -192,11 +174,7 @@ pub fn compute_bz_r_group1<F: JoltField>(row: &R1CSCycleInputs, lagrange_evals_r
         accs160_fmadd_s160(&mut acc, &lagrange_evals_r[i], bz_vals[i]);
         i += 1;
     }
-    let out = accs160_reduce(&acc);
-    if debug_enabled() {
-        eprintln!("[uniskip] bz_group1: out={}", out);
-    }
-    out
+    accs160_reduce(&acc)
 }
 
 #[inline]
@@ -208,11 +186,7 @@ pub fn compute_cz_r_group1<F: JoltField>(row: &R1CSCycleInputs, lagrange_evals_r
         accs160_fmadd_s160(&mut acc, &lagrange_evals_r[i], cz_vals[i]);
         i += 1;
     }
-    let out = accs160_reduce(&acc);
-    if debug_enabled() {
-        eprintln!("[uniskip] cz_group1: out={}", out);
-    }
-    out
+    accs160_reduce(&acc)
 }
 
 #[cfg(test)]
