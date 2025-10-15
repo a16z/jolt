@@ -42,6 +42,22 @@ pub trait SumcheckStages<
         vec![]
     }
 
+    /// Stage 2a: Optional univariate skip first-round (default no-op)
+    fn stage2_first_round_prove(
+        &mut self,
+        _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+    ) -> Result<(), anyhow::Error> {
+        Ok(())
+    }
+
+    /// Stage 2a: Optional univariate skip first-round verification (default no-op)
+    fn stage2_first_round_verify(
+        &mut self,
+        _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+    ) -> Result<(), anyhow::Error> {
+        Ok(())
+    }
+
     // Stages 2-5 return sumcheck instances that will be batched together
     fn stage2_prover_instances(
         &mut self,

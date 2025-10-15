@@ -138,8 +138,15 @@ impl SingleSumcheck {
             transcript,
         )?;
 
-        if output_claim != sumcheck_instance.expected_output_claim(opening_accumulator.clone(), &r)
-        {
+        let expected = sumcheck_instance.expected_output_claim(opening_accumulator.clone(), &r);
+        if output_claim != expected {
+            println!(
+                "Sumcheck verify mismatch: output_claim={}, expected_output_claim={}, rounds={}, degree_bound={}",
+                output_claim,
+                expected,
+                sumcheck_instance.num_rounds(),
+                sumcheck_instance.degree()
+            );
             return Err(ProofVerifyError::SumcheckVerificationError);
         }
 

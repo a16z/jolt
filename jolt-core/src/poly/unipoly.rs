@@ -336,14 +336,12 @@ impl<F: JoltField> UniPoly<F> {
         // Check domain sum Σ_j a_j * S_j == claim
         let mut sum = F::zero();
         for (j, coeff) in self.coeffs.iter().enumerate() {
-            println!("coeff: {:?}, power_sums[j]: {:?}", coeff, power_sums[j]);
             sum += coeff.mul_i128(power_sums[j]);
         }
         let ok = sum == *claim;
 
         // Horner evaluation at x
         let value = self.evaluate(x);
-        println!("value: {value:?}");
         (ok, value)
     }
 }

@@ -10,7 +10,8 @@ use crate::poly::opening_proof::{
     OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
 };
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
-use crate::subprotocols::sumcheck::SumcheckInstance;
+use crate::poly::unipoly::UniPoly;
+use crate::subprotocols::sumcheck::{SumcheckInstance, UniSkipFirstRoundInstance};
 use crate::transcripts::Transcript;
 use crate::utils::math::Math;
 use crate::zkvm::dag::state_manager::StateManager;
@@ -382,5 +383,179 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ProductVirtualizati
     #[cfg(feature = "allocative")]
     fn update_flamegraph(&self, flamegraph: &mut allocative::FlameGraphBuilder) {
         flamegraph.visit_root(self);
+    }
+}
+
+// Also the domain size
+const NUM_PRODUCT_VIRTUAL: usize = 5;
+const PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE: usize = NUM_PRODUCT_VIRTUAL - 1;
+const PRODUCT_VIRTUAL_UNIVARIATE_SKIP_EXTENDED_DOMAIN_SIZE: usize =
+    2 * PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE + 1;
+
+/// Uni-skip instance for Spartan outer sumcheck, computing the first-round polynomial only.
+pub struct ProductVirtualUniSkipInstance<F: JoltField> {
+    tau: Vec<F::Challenge>,
+    /// Prover-only state (None on verifier)
+    prover_state: Option<ProductVirtualUniSkipProverState<F>>,
+}
+
+#[derive(Clone, Debug)]
+struct ProductVirtualUniSkipProverState<F: JoltField> {
+    /// Evaluations of t1(Z) at the extended univariate-skip targets (outside base window)
+    extended_evals: [F; PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE],
+}
+
+impl<F: JoltField> ProductVirtualUniSkipInstance<F> {
+    #[tracing::instrument(skip_all, name = "ProductVirtualUniSkipInstance::new_prover")]
+    pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
+        _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        _tau: &[F::Challenge],
+    ) -> Self {
+        todo!()
+    }
+
+    pub fn new_verifier(_tau: &[F::Challenge]) -> Self {
+        todo!()
+    }
+
+    #[inline]
+    fn univariate_skip_targets() -> [i64; PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE] {
+        todo!()
+    }
+
+    fn compute_univariate_skip_extended_evals(
+        _tau: &[F::Challenge],
+    ) -> [F; PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE] {
+        todo!()
+    }
+}
+
+impl<F: JoltField, T: Transcript> UniSkipFirstRoundInstance<F, T>
+    for ProductVirtualUniSkipInstance<F>
+{
+    const DEGREE_BOUND: usize = PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE;
+    const DOMAIN_SIZE: usize = NUM_PRODUCT_VIRTUAL;
+
+    fn input_claim(&self) -> F {
+        todo!()
+    }
+
+    fn compute_poly(&mut self) -> UniPoly<F> {
+        todo!()
+    }
+
+    fn output_claim(&self, _r: &[F::Challenge]) -> F {
+        todo!()
+    }
+}
+
+/// Remaining rounds for Product Virtualization after the univariate-skip first round.
+/// Mirrors the structure of `OuterRemainingSumcheck` with product-virtualization-specific wiring.
+pub struct ProductVirtualRemainder<F: JoltField> {
+    pub input_claim: F,
+    pub r0_uniskip: F::Challenge,
+    pub total_rounds: usize,
+    /// Optional verifier-only state (e.g., tau vector when needed on verifier)
+    pub tau: Option<Vec<F::Challenge>>,
+    /// Prover-only state (None on verifier)
+    pub prover_state: Option<ProductVirtualRemainderProverState<F>>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ProductVirtualRemainderProverState<F: JoltField> {
+    // Intentionally empty for stubbing; fill with product-virtualization state as needed
+    _phantom: core::marker::PhantomData<F>,
+}
+
+impl<F: JoltField> ProductVirtualRemainder<F> {
+    #[tracing::instrument(skip_all, name = "ProductVirtualRemainder::new_prover")]
+    pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
+        _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        _input_claim: F,
+        _r0_uniskip: F::Challenge,
+        _total_rounds: usize,
+    ) -> Self {
+        todo!()
+    }
+
+    pub fn new_verifier(
+        _input_claim: F,
+        _r0_uniskip: F::Challenge,
+        _total_rounds: usize,
+        _tau: Vec<F::Challenge>,
+    ) -> Self {
+        todo!()
+    }
+
+    /// Optional helper to compute any per-round cached values immediately after uni-skip.
+    fn compute_streaming_round_cache(&self) {
+        todo!()
+    }
+
+    /// Optional helper to bind the first remaining round using cached values.
+    fn bind_streaming_round(&mut self, _r_0: F::Challenge) {
+        todo!()
+    }
+
+    /// Compute the quadratic endpoints for remaining rounds.
+    fn remaining_quadratic_evals(&self) -> (F, F) {
+        todo!()
+    }
+
+    /// Returns final per-virtual-polynomial evaluations needed for openings.
+    pub fn final_sumcheck_evals(&self) -> [F; 2] {
+        todo!()
+    }
+}
+
+impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ProductVirtualRemainder<F> {
+    fn degree(&self) -> usize {
+        3
+    }
+
+    fn num_rounds(&self) -> usize {
+        self.total_rounds
+    }
+
+    fn input_claim(&self) -> F {
+        self.input_claim
+    }
+
+    fn compute_prover_message(&mut self, _round: usize, _previous_claim: F) -> Vec<F> {
+        todo!()
+    }
+
+    fn bind(&mut self, _r_j: F::Challenge, _round: usize) {
+        todo!()
+    }
+
+    fn expected_output_claim(
+        &self,
+        _accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
+        _r_tail: &[F::Challenge],
+    ) -> F {
+        todo!()
+    }
+
+    fn normalize_opening_point(&self, _r_tail: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
+        todo!()
+    }
+
+    fn cache_openings_prover(
+        &self,
+        _accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
+        _transcript: &mut T,
+        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
+    ) {
+        todo!()
+    }
+
+    fn cache_openings_verifier(
+        &self,
+        _accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
+        _transcript: &mut T,
+        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
+    ) {
+        todo!()
     }
 }

@@ -830,6 +830,52 @@ mod tests {
     }
 
     #[test]
+    fn shift_coeffs_match_shifted_eval_n9() {
+        // Match the univariate-skip setting: N = 9, start = -4, targets outside [-4..4]
+        const N: usize = 9;
+        // p(x) = 2 - 3x + x^3 (same cubic as above, padded with zeros)
+        let coeffs = [
+            F::from_u64(2),
+            F::from_i64(-3),
+            F::from_u64(0),
+            F::from_u64(1),
+            F::from_u64(0),
+            F::from_u64(0),
+            F::from_u64(0),
+            F::from_u64(0),
+            F::from_u64(0),
+        ];
+
+        let d = N - 1;
+        let start: i64 = -((d / 2) as i64); // -4
+        // Base window values p(start + i)
+        let base_values: [F; N] = core::array::from_fn(|i| {
+            let xi = F::from_i64(start + i as i64);
+            eval_poly(&coeffs, xi)
+        });
+
+        // Check targets z in [-8..-5] and [5..8]
+        for z in -8..=-5 {
+            let shift = z - start; // matches helper contract p(shift) over indices i=0..N-1
+            let coeffs_i32 = LagrangeHelper::shift_coeffs_i32::<N>(shift);
+            let lhs = (0..N)
+                .map(|i| base_values[i] * F::from_i64(coeffs_i32[i] as i64))
+                .sum::<F>();
+            let rhs = eval_poly(&coeffs, F::from_i64(z));
+            assert_eq!(lhs, rhs);
+        }
+        for z in 5..=8 {
+            let shift = z - start;
+            let coeffs_i32 = LagrangeHelper::shift_coeffs_i32::<N>(shift);
+            let lhs = (0..N)
+                .map(|i| base_values[i] * F::from_i64(coeffs_i32[i] as i64))
+                .sum::<F>();
+            let rhs = eval_poly(&coeffs, F::from_i64(z));
+            assert_eq!(lhs, rhs);
+        }
+    }
+
+    #[test]
     fn integer_helpers_and_power_sums() {
         // factorial and binomial
         let fact = |n: usize| -> u64 { (1..=n as u64).product::<u64>().max(1) };
