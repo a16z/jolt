@@ -137,7 +137,44 @@ pub struct BytecodeDag {}
 impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStages<F, T, PCS>
     for BytecodeDag
 {
-    fn stage4_prover_instances(
+    fn stage2_prover_instances(
+        &mut self,
+        sm: &mut StateManager<'_, F, T, PCS>,
+    ) -> Vec<Box<dyn SumcheckInstance<F, T>>> {
+        let (preprocessing, trace, _, _) = sm.get_prover_data();
+        let bytecode_preprocessing = &preprocessing.shared.bytecode;
+
+        let r_cycle: Vec<F::Challenge> = sm
+            .get_virtual_polynomial_opening(
+                VirtualPolynomial::UnexpandedPC,
+                SumcheckId::SpartanOuter,
+            )
+            .0
+            .r;
+        let E_1: Vec<F> = EqPolynomial::evals(&r_cycle);
+
+        let F_1 = compute_ra_evals(bytecode_preprocessing, trace, &E_1);
+
+        let booleanity = BooleanitySumcheck::new_prover(sm, r_cycle, F_1);
+
+        #[cfg(feature = "allocative")]
+        {
+            print_data_structure_heap_usage("Bytecode BooleanitySumcheck", &booleanity);
+        }
+
+        vec![Box::new(booleanity)]
+    }
+
+    fn stage2_verifier_instances(
+        &mut self,
+        sm: &mut StateManager<'_, F, T, PCS>,
+    ) -> Vec<Box<dyn SumcheckInstance<F, T>>> {
+        let booleanity = BooleanitySumcheck::new_verifier(sm);
+
+        vec![Box::new(booleanity)]
+    }
+
+    fn stage6_prover_instances(
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, T>>> {
@@ -156,36 +193,25 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         let F_1 = compute_ra_evals(bytecode_preprocessing, trace, &E_1);
 
         let read_raf = ReadRafSumcheck::new_prover(sm);
-        let booleanity = BooleanitySumcheck::new_prover(sm, E_1, F_1.clone());
         let hamming_weight = HammingWeightSumcheck::new_prover(sm, F_1);
 
         #[cfg(feature = "allocative")]
         {
             print_data_structure_heap_usage("Bytecode ReadRafSumcheck", &read_raf);
-            print_data_structure_heap_usage("Bytecode BooleanitySumcheck", &booleanity);
             print_data_structure_heap_usage("Bytecode HammingWeightSumcheck", &hamming_weight);
         }
 
-        vec![
-            Box::new(read_raf),
-            Box::new(booleanity),
-            Box::new(hamming_weight),
-        ]
+        vec![Box::new(read_raf), Box::new(hamming_weight)]
     }
 
-    fn stage4_verifier_instances(
+    fn stage6_verifier_instances(
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, T>>> {
         let read_checking = ReadRafSumcheck::new_verifier(sm);
-        let booleanity = BooleanitySumcheck::new_verifier(sm);
         let hamming_weight = HammingWeightSumcheck::new_verifier(sm);
 
-        vec![
-            Box::new(read_checking),
-            Box::new(booleanity),
-            Box::new(hamming_weight),
-        ]
+        vec![Box::new(read_checking), Box::new(hamming_weight)]
     }
 }
 

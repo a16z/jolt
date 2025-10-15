@@ -43,6 +43,8 @@ fi
 
 # Set stack size for Rust
 export RUST_MIN_STACK=33554432
+export RUSTFLAGS="-C target-cpu=native -C opt-level=3 -C codegen-units=1 -C embed-bitcode=yes"
+export RUST_LOG="info"
 
 # Create output directories
 mkdir -p benchmark-runs/perfetto_traces

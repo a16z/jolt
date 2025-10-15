@@ -13,6 +13,7 @@ use std::sync::LazyLock;
 use strum::IntoEnumIterator;
 use tracer::instruction::Cycle;
 
+use crate::zkvm::instruction::InstructionFlags;
 use crate::{
     field::JoltField,
     poly::{
@@ -26,7 +27,7 @@ use crate::{
     },
 };
 
-use super::instruction::{CircuitFlags, InstructionFlags, LookupQuery};
+use super::instruction::{CircuitFlags, LookupQuery};
 
 struct SharedWitnessData(UnsafeCell<WitnessData>);
 unsafe impl Sync for SharedWitnessData {}
@@ -46,23 +47,6 @@ pub fn compute_d_parameter(K: usize) -> usize {
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Allocative)]
 pub enum CommittedPolynomial {
-    /* R1CS aux variables */
-    /// The "left" input to the current instruction. Typically either the
-    /// rs1 value or the current program counter.
-    LeftInstructionInput,
-    /// The "right" input to the current instruction. Typically either the
-    /// rs2 value or the immediate value.
-    RightInstructionInput,
-    /// Whether the current instruction should write the lookup output to
-    /// the destination register
-    WriteLookupOutputToRD,
-    /// Whether the current instruction should write the program counter to
-    /// the destination register
-    WritePCtoRD,
-    /// Whether the current instruction triggers a branch
-    ShouldBranch,
-    /// Whether the current instruction triggers a jump
-    ShouldJump,
     /*  Twist/Shout witnesses */
     /// Inc polynomial for the registers instance of Twist
     RdInc,
@@ -85,10 +69,6 @@ struct WitnessData {
     // Simple polynomial coefficients
     left_instruction_input: Vec<u64>,
     right_instruction_input: Vec<i128>,
-    write_lookup_output_to_rd: Vec<u8>,
-    write_pc_to_rd: Vec<u8>,
-    should_branch: Vec<u8>,
-    should_jump: Vec<u8>,
     rd_inc: Vec<i128>,
     ram_inc: Vec<i128>,
 
@@ -106,10 +86,6 @@ impl WitnessData {
         Self {
             left_instruction_input: vec![0; trace_len],
             right_instruction_input: vec![0; trace_len],
-            write_lookup_output_to_rd: vec![0; trace_len],
-            write_pc_to_rd: vec![0; trace_len],
-            should_branch: vec![0; trace_len],
-            should_jump: vec![0; trace_len],
             rd_inc: vec![0; trace_len],
             ram_inc: vec![0; trace_len],
 
@@ -145,12 +121,6 @@ impl AllCommittedPolynomials {
             }
         };
         let mut polynomials = vec![
-            CommittedPolynomial::LeftInstructionInput,
-            CommittedPolynomial::RightInstructionInput,
-            CommittedPolynomial::WriteLookupOutputToRD,
-            CommittedPolynomial::WritePCtoRD,
-            CommittedPolynomial::ShouldBranch,
-            CommittedPolynomial::ShouldJump,
             CommittedPolynomial::RdInc,
             CommittedPolynomial::RamInc,
             CommittedPolynomial::InstructionRa(0),
@@ -302,30 +272,10 @@ impl CommittedPolynomial {
                 let cycle = &trace[i];
                 let batch_ref = unsafe { &mut *batch_cell.0.get() };
                 let (left, right) = LookupQuery::<XLEN>::to_instruction_inputs(cycle);
-                let circuit_flags = cycle.instruction().circuit_flags();
-                let (rd_write_flag, pre_rd, post_rd) = cycle.rd_write();
-                let lookup_output = LookupQuery::<XLEN>::to_lookup_output(cycle);
+                let (_, pre_rd, post_rd) = cycle.rd_write();
 
                 batch_ref.left_instruction_input[i] = left;
                 batch_ref.right_instruction_input[i] = right;
-
-                batch_ref.write_lookup_output_to_rd[i] = rd_write_flag
-                    * (circuit_flags[CircuitFlags::WriteLookupOutputToRD as usize] as u8);
-
-                batch_ref.write_pc_to_rd[i] =
-                    rd_write_flag * (circuit_flags[CircuitFlags::Jump as usize] as u8);
-
-                batch_ref.should_branch[i] =
-                    (lookup_output as u8) * (circuit_flags[CircuitFlags::Branch as usize] as u8);
-
-                // Handle should_jump
-                let is_jump = circuit_flags[CircuitFlags::Jump] as u8;
-                let is_next_noop = if i + 1 < trace.len() {
-                    trace[i + 1].instruction().circuit_flags()[CircuitFlags::IsNoop] as u8
-                } else {
-                    1 // Last cycle, treat as if next is NoOp
-                };
-                batch_ref.should_jump[i] = is_jump * (1 - is_next_noop);
 
                 batch_ref.rd_inc[i] = post_rd as i128 - pre_rd as i128;
 
@@ -385,30 +335,6 @@ impl CommittedPolynomial {
 
         for poly in polynomials {
             match poly {
-                CommittedPolynomial::LeftInstructionInput => {
-                    let coeffs = std::mem::take(&mut batch.left_instruction_input);
-                    results.insert(*poly, MultilinearPolynomial::<F>::from(coeffs));
-                }
-                CommittedPolynomial::RightInstructionInput => {
-                    let coeffs = std::mem::take(&mut batch.right_instruction_input);
-                    results.insert(*poly, MultilinearPolynomial::<F>::from(coeffs));
-                }
-                CommittedPolynomial::WriteLookupOutputToRD => {
-                    let coeffs = std::mem::take(&mut batch.write_lookup_output_to_rd);
-                    results.insert(*poly, MultilinearPolynomial::<F>::from(coeffs));
-                }
-                CommittedPolynomial::WritePCtoRD => {
-                    let coeffs = std::mem::take(&mut batch.write_pc_to_rd);
-                    results.insert(*poly, MultilinearPolynomial::<F>::from(coeffs));
-                }
-                CommittedPolynomial::ShouldBranch => {
-                    let coeffs = std::mem::take(&mut batch.should_branch);
-                    results.insert(*poly, MultilinearPolynomial::<F>::from(coeffs));
-                }
-                CommittedPolynomial::ShouldJump => {
-                    let coeffs = std::mem::take(&mut batch.should_jump);
-                    results.insert(*poly, MultilinearPolynomial::<F>::from(coeffs));
-                }
                 CommittedPolynomial::RdInc => {
                     let coeffs = std::mem::take(&mut batch.rd_inc);
                     results.insert(*poly, MultilinearPolynomial::<F>::from(coeffs));
@@ -459,70 +385,6 @@ impl CommittedPolynomial {
         PCS: CommitmentScheme<Field = F>,
     {
         match self {
-            CommittedPolynomial::LeftInstructionInput => {
-                let coeffs: Vec<u64> = trace
-                    .par_iter()
-                    .map(|cycle| LookupQuery::<XLEN>::to_instruction_inputs(cycle).0)
-                    .collect();
-                coeffs.into()
-            }
-            CommittedPolynomial::RightInstructionInput => {
-                let coeffs: Vec<i128> = trace
-                    .par_iter()
-                    .map(|cycle| LookupQuery::<XLEN>::to_instruction_inputs(cycle).1)
-                    .collect();
-                coeffs.into()
-            }
-            CommittedPolynomial::WriteLookupOutputToRD => {
-                let coeffs: Vec<u8> = trace
-                    .par_iter()
-                    .map(|cycle| {
-                        let flag = cycle.instruction().circuit_flags()
-                            [CircuitFlags::WriteLookupOutputToRD as usize];
-                        (cycle.rd_write().0) * (flag as u8)
-                    })
-                    .collect();
-                coeffs.into()
-            }
-            CommittedPolynomial::WritePCtoRD => {
-                let coeffs: Vec<u8> = trace
-                    .par_iter()
-                    .map(|cycle| {
-                        let flag = cycle.instruction().circuit_flags()[CircuitFlags::Jump as usize];
-                        (cycle.rd_write().0) * (flag as u8)
-                    })
-                    .collect();
-                coeffs.into()
-            }
-            CommittedPolynomial::ShouldBranch => {
-                let coeffs: Vec<u8> = trace
-                    .par_iter()
-                    .map(|cycle| {
-                        let is_branch =
-                            cycle.instruction().circuit_flags()[CircuitFlags::Branch as usize];
-                        (LookupQuery::<XLEN>::to_lookup_output(cycle) as u8) * is_branch as u8
-                    })
-                    .collect();
-                coeffs.into()
-            }
-            CommittedPolynomial::ShouldJump => {
-                let coeffs: Vec<u8> = trace
-                    .par_iter()
-                    .zip(
-                        trace
-                            .par_iter()
-                            .skip(1)
-                            .chain(rayon::iter::once(&Cycle::NoOp)),
-                    )
-                    .map(|(cycle, next_cycle)| {
-                        let is_jump = cycle.instruction().circuit_flags()[CircuitFlags::Jump];
-                        let is_next_noop =
-                            next_cycle.instruction().circuit_flags()[CircuitFlags::IsNoop];
-                        is_jump as u8 * (1 - is_next_noop as u8)
-                    })
-                    .collect();
-                coeffs.into()
-            }
             CommittedPolynomial::BytecodeRa(i) => {
                 let d = preprocessing.shared.bytecode.d;
                 let log_K = preprocessing.shared.bytecode.code_size.log_2();
@@ -622,7 +484,13 @@ pub enum VirtualPolynomial {
     NextIsNoop,
     LeftLookupOperand,
     RightLookupOperand,
+    LeftInstructionInput,
+    RightInstructionInput,
     Product,
+    ShouldJump,
+    ShouldBranch,
+    WritePCtoRD,
+    WriteLookupOutputToRD,
     Rd,
     Imm,
     Rs1Value,
@@ -645,6 +513,7 @@ pub enum VirtualPolynomial {
     RamValFinal,
     RamHammingWeight,
     OpFlags(CircuitFlags),
+    InstructionFlags(InstructionFlags),
     LookupTableFlag(usize),
 }
 
@@ -660,7 +529,13 @@ pub static ALL_VIRTUAL_POLYNOMIALS: LazyLock<Vec<VirtualPolynomial>> = LazyLock:
         VirtualPolynomial::NextIsNoop,
         VirtualPolynomial::LeftLookupOperand,
         VirtualPolynomial::RightLookupOperand,
+        VirtualPolynomial::LeftInstructionInput,
+        VirtualPolynomial::RightInstructionInput,
         VirtualPolynomial::Product,
+        VirtualPolynomial::ShouldJump,
+        VirtualPolynomial::ShouldBranch,
+        VirtualPolynomial::WritePCtoRD,
+        VirtualPolynomial::WriteLookupOutputToRD,
         VirtualPolynomial::Rd,
         VirtualPolynomial::Imm,
         VirtualPolynomial::Rs1Value,
@@ -685,6 +560,9 @@ pub static ALL_VIRTUAL_POLYNOMIALS: LazyLock<Vec<VirtualPolynomial>> = LazyLock:
     ];
     for flag in CircuitFlags::iter() {
         polynomials.push(VirtualPolynomial::OpFlags(flag));
+    }
+    for flag in InstructionFlags::iter() {
+        polynomials.push(VirtualPolynomial::InstructionFlags(flag));
     }
     for table in LookupTables::iter() {
         polynomials.push(VirtualPolynomial::LookupTableFlag(

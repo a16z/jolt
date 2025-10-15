@@ -5,6 +5,7 @@ use std::ops::{AddAssign, Index, IndexMut, Mul, MulAssign, Sub};
 use crate::poly::lagrange_poly::LagrangeHelper;
 use crate::transcripts::{AppendToTranscript, Transcript};
 use crate::utils::gaussian_elimination::gaussian_elimination;
+use allocative::Allocative;
 use ark_serialize::*;
 use rand_core::{CryptoRng, RngCore};
 use rayon::prelude::*;
@@ -14,7 +15,7 @@ use crate::utils::small_scalar::SmallScalar;
 
 // ax^2 + bx + c stored as vec![c,b,a]
 // ax^3 + bx^2 + cx + d stored as vec![d,c,b,a]
-#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone, PartialEq)]
+#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone, PartialEq, Allocative)]
 pub struct UniPoly<F: CanonicalSerialize + CanonicalDeserialize> {
     pub coeffs: Vec<F>,
 }
@@ -36,6 +37,15 @@ impl<F: JoltField> UniPoly<F> {
         UniPoly {
             coeffs: Self::vandermonde_interpolation(evals),
         }
+    }
+
+    /// Interpolate a polynomial `p(x)` from its evaluations at even points `0, 2, ..., 2(n-1)`
+    /// and a hint `p(0) + p(1)`.
+    pub fn from_even_evals_and_hint(hint: F, evals: &[F]) -> Self {
+        let mut evals = evals.to_vec();
+        let eval_at_1 = hint - evals[0];
+        evals.insert(1, eval_at_1);
+        Self::from_evals(&evals)
     }
 
     /// Interpolates a polynomial from its evaluations on `[0, 1, ..., degree - 1, inf]`.

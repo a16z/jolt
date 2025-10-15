@@ -33,17 +33,17 @@ use crate::utils::univariate_skip::{
 };
 use crate::zkvm::dag::state_manager::StateManager;
 use crate::zkvm::r1cs::inputs::{
-    compute_claimed_witness_evals, ALL_R1CS_INPUTS, COMMITTED_R1CS_INPUTS,
+    compute_claimed_witness_evals, ALL_R1CS_INPUTS
 };
 use crate::zkvm::r1cs::{
     constraints::{
         eval_az_first_group, eval_az_second_group, eval_bz_first_group, eval_bz_second_group,
-        eval_cz_second_group, FIRST_ROUND_POLY_NUM_COEFFS, UNIVARIATE_SKIP_DEGREE,
+        FIRST_ROUND_POLY_NUM_COEFFS, UNIVARIATE_SKIP_DEGREE,
         UNIVARIATE_SKIP_DOMAIN_SIZE, UNIVARIATE_SKIP_EXTENDED_DOMAIN_SIZE,
     },
     inputs::R1CSCycleInputs,
 };
-use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
+use crate::zkvm::witness::VirtualPolynomial;
 use crate::zkvm::JoltSharedPreprocessing;
 
 // Spartan Outer sumcheck (with univariate-skip first round on Z)
@@ -243,7 +243,8 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
                         let bz1_s160 = eval_bz_first_group(&row_inputs);
                         let az2_i96 = eval_az_second_group(&row_inputs);
                         let bz2 = eval_bz_second_group(&row_inputs);
-                        let cz2 = eval_cz_second_group(&row_inputs);
+                        let cz2: [S160; 8] = [0, 8];
+                        // eval_cz_second_group(&row_inputs);
 
                         let mut az2_i128_padded: [i128; UNIVARIATE_SKIP_DOMAIN_SIZE] =
                             [0; UNIVARIATE_SKIP_DOMAIN_SIZE];
@@ -978,35 +979,18 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for OuterRemainingSumch
         // Handle witness openings at r_cycle (use consistent split length)
         let (r_cycle, _rx_var) = opening_point.r.split_at(self.num_cycles_bits);
 
-        // Compute claimed witness evals and append commitments and virtuals
+        // Compute claimed witness evals and append virtual openings for all R1CS inputs
         let ps = self.prover_state.as_ref().expect("prover state missing");
         let claimed_witness_evals =
             compute_claimed_witness_evals::<F>(&ps.preprocess, ps.trace.as_slice(), r_cycle);
-        let committed_polys: Vec<_> = COMMITTED_R1CS_INPUTS
-            .iter()
-            .map(|input| CommittedPolynomial::try_from(input).ok().unwrap())
-            .collect();
-        let committed_poly_claims: Vec<_> = COMMITTED_R1CS_INPUTS
-            .iter()
-            .map(|input| claimed_witness_evals[input.to_index()])
-            .collect();
-        acc.append_dense(
-            transcript,
-            committed_polys,
-            SumcheckId::SpartanOuter,
-            r_cycle.to_vec(),
-            &committed_poly_claims,
-        );
-        for (input, eval) in ALL_R1CS_INPUTS.iter().zip(claimed_witness_evals.iter()) {
-            if !COMMITTED_R1CS_INPUTS.contains(input) {
-                acc.append_virtual(
-                    transcript,
-                    VirtualPolynomial::try_from(input).ok().unwrap(),
-                    SumcheckId::SpartanOuter,
-                    OpeningPoint::new(r_cycle.to_vec()),
-                    *eval,
-                );
-            }
+        for (i, input) in ALL_R1CS_INPUTS.iter().enumerate() {
+            acc.append_virtual(
+                transcript,
+                VirtualPolynomial::try_from(input).ok().unwrap(),
+                SumcheckId::SpartanOuter,
+                OpeningPoint::new(r_cycle.to_vec()),
+                claimed_witness_evals[i],
+            );
         }
     }
 
@@ -1037,27 +1021,15 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for OuterRemainingSumch
             opening_point.clone(),
         );
 
-        // Append witness openings at r_cycle (no claims at verifier)
+        // Append witness openings at r_cycle (no claims at verifier) for all R1CS inputs
         let (r_cycle, _rx_var) = opening_point.r.split_at(self.num_cycles_bits);
-        let committed_polys: Vec<_> = COMMITTED_R1CS_INPUTS
-            .iter()
-            .map(|input| CommittedPolynomial::try_from(input).ok().unwrap())
-            .collect();
-        acc.append_dense(
-            transcript,
-            committed_polys,
-            SumcheckId::SpartanOuter,
-            r_cycle.to_vec(),
-        );
         ALL_R1CS_INPUTS.iter().for_each(|input| {
-            if !COMMITTED_R1CS_INPUTS.contains(input) {
-                acc.append_virtual(
-                    transcript,
-                    VirtualPolynomial::try_from(input).ok().unwrap(),
-                    SumcheckId::SpartanOuter,
-                    OpeningPoint::new(r_cycle.to_vec()),
-                );
-            }
+            acc.append_virtual(
+                transcript,
+                VirtualPolynomial::try_from(input).ok().unwrap(),
+                SumcheckId::SpartanOuter,
+                OpeningPoint::new(r_cycle.to_vec()),
+            );
         });
     }
 }

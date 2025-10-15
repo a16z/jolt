@@ -1,10 +1,11 @@
+use crate::zkvm::instruction::{InstructionFlags, NUM_INSTRUCTION_FLAGS};
 use tracer::instruction::{virtual_assert_lte::VirtualAssertLTE, RISCVCycle};
 
 use crate::zkvm::lookup_table::{
     unsigned_less_than_equal::UnsignedLessThanEqualTable, LookupTables,
 };
 
-use super::{CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS};
+use super::{CircuitFlags, Flags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS};
 
 impl<const XLEN: usize> InstructionLookup<XLEN> for VirtualAssertLTE {
     fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
@@ -12,17 +13,22 @@ impl<const XLEN: usize> InstructionLookup<XLEN> for VirtualAssertLTE {
     }
 }
 
-impl InstructionFlags for VirtualAssertLTE {
+impl Flags for VirtualAssertLTE {
     fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
         let mut flags = [false; NUM_CIRCUIT_FLAGS];
         flags[CircuitFlags::Assert as usize] = true;
-        flags[CircuitFlags::LeftOperandIsRs1Value as usize] = true;
-        flags[CircuitFlags::RightOperandIsRs2Value as usize] = true;
         flags[CircuitFlags::InlineSequenceInstruction as usize] =
             self.inline_sequence_remaining.is_some();
         flags[CircuitFlags::DoNotUpdateUnexpandedPC as usize] =
             self.inline_sequence_remaining.unwrap_or(0) != 0;
         flags[CircuitFlags::IsCompressed as usize] = self.is_compressed;
+        flags
+    }
+
+    fn instruction_flags(&self) -> [bool; NUM_INSTRUCTION_FLAGS] {
+        let mut flags = [false; NUM_INSTRUCTION_FLAGS];
+        flags[InstructionFlags::LeftOperandIsRs1Value as usize] = true;
+        flags[InstructionFlags::RightOperandIsRs2Value as usize] = true;
         flags
     }
 }

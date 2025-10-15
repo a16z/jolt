@@ -10,13 +10,13 @@ use crate::{
     emulator::cpu::{Cpu, Xlen},
 };
 
-use super::{format::format_r::FormatR, Cycle, RISCVInstruction, RISCVTrace};
+use super::{format::format_amo::FormatAMO, Cycle, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name   = AMOORW,
     mask   = 0xf800707f,
     match  = 0x4000202f,
-    format = FormatR,
+    format = FormatAMO,
     ram    = ()
 );
 
@@ -95,28 +95,18 @@ impl RISCVTrace for AMOORW {
             }
             Xlen::Bit64 => {
                 let v_mask = allocator.allocate();
-                let v_dword_address = allocator.allocate();
                 let v_dword = allocator.allocate();
-                let v_word = allocator.allocate();
                 let v_shift = allocator.allocate();
 
-                amo_pre64(
-                    &mut asm,
-                    self.operands.rs1,
-                    *v_rd,
-                    *v_dword_address,
-                    *v_dword,
-                    *v_shift,
-                );
+                amo_pre64(&mut asm, self.operands.rs1, *v_rd, *v_dword, *v_shift);
                 asm.emit_r::<OR>(*v_rs2, *v_rd, self.operands.rs2);
                 amo_post64(
                     &mut asm,
+                    self.operands.rs1,
                     *v_rs2,
-                    *v_dword_address,
                     *v_dword,
                     *v_shift,
                     *v_mask,
-                    *v_word,
                     self.operands.rd,
                     *v_rd,
                 );

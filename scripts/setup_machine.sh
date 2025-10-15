@@ -22,6 +22,14 @@ source "$HOME/.cargo/env"
 rustup default stable
 rustup component add rustfmt clippy rust-src
 
+# Install bottom (system monitoring tool)
+curl -LO https://github.com/ClementTsang/bottom/releases/download/0.11.2/bottom_0.11.2-1_amd64.deb
+sudo dpkg -i bottom_0.11.2-1_amd64.deb
+rm bottom_0.11.2-1_amd64.deb
+
+# Install zellij (terminal workspace/multiplexer)
+cargo install --locked zellij
+
 # Set up firewall (basic)
 sudo ufw allow OpenSSH
 sudo ufw --force enable
