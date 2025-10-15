@@ -165,7 +165,7 @@ impl<J: JoltParameterSet> ZkLeanInstruction<J> {
             .lookup_table()
             .map(|t| ZkLeanLookupTable::from(t).name())
         {
-            None => String::from("panic! \"No lookup table for this instruction\""),
+            None => String::from("sorry /-No lookup table for this instruction-/"),
             Some(t) => format!("{t} : Vector f {num_variables} -> f"),
         };
         let circuit_flags = CircuitFlags::iter()
