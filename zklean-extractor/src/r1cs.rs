@@ -108,7 +108,7 @@ impl<J: JoltParameterSet> ZkLeanR1CSConstraints<J> {
         ))?;
         indent_level += 1;
         for Constraint { a, b, c } in &self.uniform_constraints {
-            f.write_fmt(format_args!("{}constrainR1CS\n", indent(indent_level),))?;
+            f.write_fmt(format_args!("{}ZKBuilder.constrainR1CS\n", indent(indent_level),))?;
             indent_level += 1;
             f.write_fmt(format_args!(
                 "{}{}\n",
