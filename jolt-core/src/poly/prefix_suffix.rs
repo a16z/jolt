@@ -261,7 +261,7 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
     /// Read more about prefix-suffix argument in Appendix A of the paper
     /// https://eprint.iacr.org/2025/611.pdf
     #[tracing::instrument(skip_all, name = "PrefixSuffix::init_Q")]
-    pub fn init_Q(&mut self, u_evals: &[F], indices: &[(usize, LookupBits)]) {
+    pub fn init_Q(&mut self, u_evals: &[F], indices: &[usize], lookup_bits: &[LookupBits]) {
         let poly_len = self.chunk_len.pow2();
         let suffix_len = self.suffix_len();
         let suffixes = self.poly.suffixes();
@@ -275,7 +275,8 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
                 let mut chunk_result: [Vec<F::Unreduced<7>>; ORDER] =
                     std::array::from_fn(|_| unsafe_allocate_zero_vec(poly_len));
 
-                for (j, k) in chunk {
+                for j in chunk {
+                    let k = lookup_bits[*j];
                     let (prefix_bits, suffix_bits) = k.split(suffix_len);
                     for (suffix, result) in suffixes.iter().zip(chunk_result.iter_mut()) {
                         let t = suffix.suffix_mle(suffix_bits);
@@ -321,7 +322,8 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
         left: &mut PrefixSuffixDecomposition<F, ORDER>,
         right: &mut PrefixSuffixDecomposition<F, ORDER>,
         u_evals: &[F],
-        indices: &[(usize, LookupBits)],
+        indices: &[usize],
+        lookup_bits: &[LookupBits],
     ) {
         debug_assert_eq!(left.chunk_len, right.chunk_len);
         debug_assert_eq!(left.total_len, right.total_len);
@@ -343,7 +345,8 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
                 let mut chunk_right: [Vec<F::Unreduced<7>>; ORDER] =
                     std::array::from_fn(|_| unsafe_allocate_zero_vec(poly_len));
 
-                for (j, k) in chunk {
+                for j in chunk {
+                    let k = lookup_bits[*j];
                     let (prefix_bits, suffix_bits) = k.split(suffix_len);
 
                     // Left accumulators
@@ -538,9 +541,9 @@ pub mod tests {
         let mut prefix_registry = PrefixRegistry::new();
         let mut ps = PrefixSuffixDecomposition::new(Box::new(poly.clone()), PREFIX_LEN, NUM_VARS);
 
-        let indices = (0..(1 << NUM_VARS))
+        let indices: Vec<_> = (0..(1 << NUM_VARS)).collect();
+        let lookup_bits = (0..(1 << NUM_VARS))
             .map(|i| LookupBits::new(i, NUM_VARS))
-            .enumerate()
             .collect::<Vec<_>>();
 
         let mut rr = vec![];
@@ -551,6 +554,7 @@ pub mod tests {
                     .map(|_| Fr::ONE)
                     .collect::<Vec<_>>(),
                 &indices,
+                &lookup_bits,
             );
 
             for round in (0..PREFIX_LEN).rev() {

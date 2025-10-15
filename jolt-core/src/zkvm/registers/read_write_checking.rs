@@ -843,11 +843,11 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
             eval_at_inf_for_stage_3,
             *prev_claim_stage_3,
         );
-        *prev_round_poly_stage_1 = Some(UniPoly::from_even_evals_and_hint(
+        *prev_round_poly_stage_1 = Some(UniPoly::from_evals_and_hint(
             *prev_claim_stage_1,
             &univariate_evals_stage_1,
         ));
-        *prev_round_poly_stage_3 = Some(UniPoly::from_even_evals_and_hint(
+        *prev_round_poly_stage_3 = Some(UniPoly::from_evals_and_hint(
             *prev_claim_stage_3,
             &univariate_evals_stage_3,
         ));
