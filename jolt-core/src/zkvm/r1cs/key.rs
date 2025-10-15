@@ -139,7 +139,6 @@ impl<F: JoltField> UniformSpartanKey<F> {
 
         // Allocate output vector and precompute rlc powers
         let mut evals = unsafe_allocate_zero_vec(num_vars_padded);
-        let r_sq = r_rlc * r_rlc;
 
         // Accumulate using explicit FIRST and SECOND groups
         // First group weighted by (1 - r_stream)
@@ -149,8 +148,6 @@ impl<F: JoltField> UniformSpartanKey<F> {
             row.a.accumulate_evaluations(&mut evals, wr, num_vars);
             row.b
                 .accumulate_evaluations(&mut evals, wr * r_rlc, num_vars);
-            row.c
-                .accumulate_evaluations(&mut evals, wr * r_sq, num_vars);
         }
         // Second group weighted by r_stream
         for (i, row_named) in UNIFORM_R1CS_SECOND_GROUP.iter().enumerate() {
@@ -159,8 +156,6 @@ impl<F: JoltField> UniformSpartanKey<F> {
             row.a.accumulate_evaluations(&mut evals, wr, num_vars);
             row.b
                 .accumulate_evaluations(&mut evals, wr * r_rlc, num_vars);
-            row.c
-                .accumulate_evaluations(&mut evals, wr * r_sq, num_vars);
         }
 
         evals
@@ -283,7 +278,6 @@ impl<F: JoltField> UniformSpartanKey<F> {
     /// - for each row in UNIFORM_R1CS:
     ///   - tag 'A' | row.a terms (sorted by input_index asc) + const term
     ///   - tag 'B' | row.b terms (sorted by input_index asc) + const term
-    ///   - tag 'C' | row.c terms (sorted by input_index asc) + const term
     fn digest(num_steps: usize) -> F {
         let mut bytes: Vec<u8> = Vec::new();
         bytes.extend_from_slice(b"JOLT_UNIFORM_R1CS");
@@ -296,7 +290,6 @@ impl<F: JoltField> UniformSpartanKey<F> {
             let row = &row_named.cons;
             row.a.serialize_canonical(b'A', &mut bytes);
             row.b.serialize_canonical(b'B', &mut bytes);
-            row.c.serialize_canonical(b'C', &mut bytes);
         }
 
         let mut hasher = Sha3_256::new();

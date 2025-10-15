@@ -35,7 +35,7 @@ pub struct InnerSumcheck<F: JoltField> {
     prover_state: Option<InnerSumcheckProverState<F>>,
     #[allocative(skip)]
     key: Option<Arc<UniformSpartanKey<F>>>,
-    gamma: F,
+    gamma: F::Challenge,
 }
 
 impl<F: JoltField> InnerSumcheck<F> {
@@ -51,19 +51,17 @@ impl<F: JoltField> InnerSumcheck<F> {
         // Get gamma challenge for batching
         let gamma: F = state_manager.transcript.borrow_mut().challenge_scalar();
 
-        // Get opening_point and claims from accumulator (Az, Bz, Cz all have the same point)
+        // Get opening_point and claims from accumulator (Az, Bz all have the same point)
         let (outer_sumcheck_r, claim_Az) = state_manager
             .get_virtual_polynomial_opening(VirtualPolynomial::SpartanAz, SumcheckId::SpartanOuter);
         let (_, claim_Bz) = state_manager
             .get_virtual_polynomial_opening(VirtualPolynomial::SpartanBz, SumcheckId::SpartanOuter);
-        let (_, claim_Cz) = state_manager
-            .get_virtual_polynomial_opening(VirtualPolynomial::SpartanCz, SumcheckId::SpartanOuter);
 
         let (_r_cycle, rx_var) = outer_sumcheck_r.r.split_at(num_cycles_bits);
 
-        let claim_inner_joint = claim_Az + gamma * claim_Bz + gamma.square() * claim_Cz;
+        let claim_inner_joint = claim_Az + gamma * claim_Bz;
 
-        // Evaluate A_small, B_small, C_small combined with RLC at point rx_var
+        // Evaluate A_small, B_small combined with RLC at point rx_var
         let poly_abc_small = DensePolynomial::new(key.evaluate_small_matrix_rlc(rx_var, gamma));
 
         let span = span!(Level::INFO, "binding_z_second_sumcheck");
@@ -120,15 +118,13 @@ impl<F: JoltField> InnerSumcheck<F> {
             .get_virtual_polynomial_opening(VirtualPolynomial::SpartanAz, SumcheckId::SpartanOuter);
         let (_, claim_Bz) = accumulator_ref
             .get_virtual_polynomial_opening(VirtualPolynomial::SpartanBz, SumcheckId::SpartanOuter);
-        let (_, claim_Cz) = accumulator_ref
-            .get_virtual_polynomial_opening(VirtualPolynomial::SpartanCz, SumcheckId::SpartanOuter);
         drop(accumulator_ref);
 
         // Get gamma challenge for batching
-        let gamma: F = state_manager.transcript.borrow_mut().challenge_scalar();
+        let gamma: F::Challenge = state_manager.transcript.borrow_mut().challenge_scalar_optimized();
 
         // Compute joint claim
-        let input_claim = claim_Az + gamma * claim_Bz + gamma.square() * claim_Cz;
+        let input_claim = claim_Az + gamma * claim_Bz;
 
         Self {
             input_claim,
