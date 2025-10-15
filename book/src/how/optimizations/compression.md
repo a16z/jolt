@@ -112,6 +112,6 @@ and
 $$
 b\tau^{-1} = c_1 + c_2\tau + c_0\xi^{-1}\tau^2,
 $$
-which gives the coressponding conversion formulae.
+which gives the corresponding conversion formulae.
 
 
