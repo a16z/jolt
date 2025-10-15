@@ -28,7 +28,7 @@ impl<const WORD_SIZE: usize> ZkLeanLookupTable<WORD_SIZE> {
         let name = <&'static str>::from(&self.lookup_table);
         let word_size = WORD_SIZE;
 
-        format!("{name}_{word_size}")
+        format!("{name}_{word_size}_lookup_table")
     }
 
     pub fn evaluate_mle<F: ZkLeanReprField>(&self, reg_name: char) -> F {
@@ -66,12 +66,12 @@ impl<const WORD_SIZE: usize> ZkLeanLookupTable<WORD_SIZE> {
         let mle = self.evaluate_mle::<F>('x').as_computation();
 
         f.write_fmt(format_args!(
-            "{}def {name} [Field f] : LookupTable f {num_variables} :=\n",
+            "{}def {name} [Field f] (x : Vector f {num_variables}) : f :=\n",
             indent(indent_level),
         ))?;
         indent_level += 1;
         f.write_fmt(format_args!(
-            "{}lookupTableFromMLE (fun x => {mle})\n",
+            "{}{mle}\n",
             indent(indent_level),
         ))?;
 

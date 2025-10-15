@@ -183,7 +183,7 @@ fn pretty_print_term(
     match (coeff, var) {
         (0, _) => None,
         (1, Some(var)) => Some(format!("{inputs_struct}.{var}").to_string()),
-        (_, Some(var)) => Some(format!("{coeff}*{inputs_struct}.{var}").to_string()),
+        (_, Some(var)) => Some(format!("({coeff}*{inputs_struct}.{var})").to_string()),
         (_, None) => Some(format!("{coeff}").to_string()),
     }
 }

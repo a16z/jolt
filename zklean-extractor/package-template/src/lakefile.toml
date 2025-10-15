@@ -7,5 +7,5 @@ name = "Jolt"
 [[require]]
 name = "zkLean"
 git = "https://github.com/GaloisInc/zk-lean.git"
-rev = "a061e494e4fc204e300ef72c1a4097826c4d192f"
+rev = "8c461198e19cd419f3854c59d6e266bb19adb2af"
 subDir = "src"
