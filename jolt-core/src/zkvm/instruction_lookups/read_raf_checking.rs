@@ -53,13 +53,14 @@ use rayon::iter::{IndexedParallelIterator, ParallelIterator};
 // Proves an address-and-cycle routed aggregation equality of the form:
 //   Σ_{a ∈ {0,1}^{log K}} Σ_{c ∈ {0,1}^{log T}}
 //     EQ(r_addr, a) · EQ(r_cycle, c) · RA(a, c) · V(a)
-//   = rv_claim + γ · left_operand_claim + γ^2 · right_operand_claim,
+//   = rv_claim + γ² · (left_operand_claim + γ · right_operand_claim),
 // where RA(a, c) := 1[lookup_address(c) = a] routes cycle c to address a.
+// rv uses EQ(r_cycle, c) + γ·EQ(r_cycle_branch, c); raf uses EQ(r_cycle, c).
 //
 // The per-address value V(a) is defined as:
 //   V(a) = Σ_t flag_t · Table_t(a)
-//          + (1 - raf_flag) · (γ · Left(a) + γ^2 · Right(a))
-//          + raf_flag · γ^2 · Int(a)
+//          + (1 - raf_flag) · (γ² · Left(a) + γ³ · Right(a))
+//          + raf_flag · γ³ · Int(a)
 //
 // This combines two independent components:
 //   1. Table lookups: Σ_t flag_t · Table_t(a) - the instruction lookup table value at address a
@@ -74,7 +75,7 @@ const DEGREE: usize = 3;
 
 #[derive(Allocative)]
 struct ReadRafProverState<F: JoltField> {
-    /// ra_acc[c] = Π_{i<phase} v[prefix_i(lookup_address(c))]. Becomes RA after phase 1.
+    /// ra_acc[c] = Π_{i<phase} v[prefix_i(lookup_address(c))]. Materializes to RA after all address rounds.
     ra_acc: Option<Vec<F>>,
     /// RA(a, c) = 1[lookup_address(c) = a]. Materialized from ra_acc at phase boundary.
     ra: Option<MultilinearPolynomial<F>>,
@@ -89,7 +90,7 @@ struct ReadRafProverState<F: JoltField> {
     lookup_indices_uninterleave: Vec<(usize, LookupBits)>,
     /// {(c, addr) : is_interleaved_operands(c) = false}. Drives identity Q initialization.
     lookup_indices_identity: Vec<(usize, LookupBits)>,
-    /// is_interleaved_operands[c] controls V(a): true → γ·Left + γ²·Right, false → γ²·Int.
+    /// is_interleaved_operands[c] controls RAF contribution weights: true → γ²·Left + γ³·Right; false → γ³·Int.
     is_interleaved_operands: Vec<bool>,
     /// lookup_tables[c] = table used at cycle c. Consumed at phase switch.
     #[allocative(skip)]
@@ -98,7 +99,7 @@ struct ReadRafProverState<F: JoltField> {
     /// stores the prefix MLE cached after binding each pair of address variables
     /// (i.e., every two rounds, incorporating r_x and r_y).
     prefix_checkpoints: Vec<PrefixCheckpoint<F>>,
-    /// suffix_polys[t][s] = Σ_c u_evals[c]·suffix_s(addr_suffix(c)) where table(c)=t.
+    /// suffix_polys[t][s] = Σ_c u_evals_rv[c]·suffix_s(addr_suffix(c)) where table(c)=t.
     suffix_polys: Vec<Vec<DensePolynomial<F>>>,
     /// v[u] = eq(r_addr[0..i-1], u). Reset for each phase
     v: ExpandingTable<F>,
@@ -124,7 +125,7 @@ struct ReadRafProverState<F: JoltField> {
     /// Int(a) = Σ_{j=0}^{log K-1} 2^j·a_j. Identity polynomial for RAF.
     identity_ps: PrefixSuffixDecomposition<F, 2>,
 
-    /// V(a) = Σ_t flag_t·Table_t(a) + operand_contribution(a). Computed after phase 1.
+    /// V(a) = Σ_t flag_t·Table_t(a). Computed after address rounds; operands are separate.
     combined_val_polynomial: Option<MultilinearPolynomial<F>>,
     combined_raf_val_polynomial: Option<MultilinearPolynomial<F>>,
 }
