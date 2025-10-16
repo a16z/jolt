@@ -134,6 +134,7 @@ pub struct INLINE {
     pub operands: FormatInline,
     /// Tracks remaining virtual instructions (used by tracer)
     pub inline_sequence_remaining: Option<u16>,
+    pub is_first_in_sequence: bool,
     pub is_compressed: bool,
 }
 
@@ -156,6 +157,7 @@ impl RISCVInstruction for INLINE {
             address,
             operands: FormatInline::parse(word),
             inline_sequence_remaining: None,
+            is_first_in_sequence: false,
             is_compressed,
         }
     }
@@ -171,6 +173,7 @@ impl RISCVInstruction for INLINE {
             address: rng.next_u64(),
             operands: FormatInline::random(rng),
             inline_sequence_remaining: None,
+            is_first_in_sequence: false,
             is_compressed: false,
         }
     }
@@ -247,6 +250,7 @@ impl From<INLINE> for NormalizedInstruction {
             address: instr.address as usize,
             operands: instr.operands.into(),
             inline_sequence_remaining: instr.inline_sequence_remaining,
+            is_first_in_sequence: instr.is_first_in_sequence,
             is_compressed: instr.is_compressed,
         }
     }

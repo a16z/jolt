@@ -12,6 +12,7 @@ macro_rules! declare_riscv_instr {
             pub address: u64,
             pub operands: $format,
             pub inline_sequence_remaining: Option<u16>,
+            pub is_first_in_sequence: bool,
             /// Set if instruction is C-Type
             pub is_compressed: bool,
         }
@@ -45,6 +46,7 @@ macro_rules! declare_riscv_instr {
                         word,
                     ),
                     inline_sequence_remaining: None,
+                    is_first_in_sequence: false,
                     is_compressed: compressed,
                 }
             }
@@ -57,6 +59,7 @@ macro_rules! declare_riscv_instr {
                         rng,
                     ),
                     inline_sequence_remaining: None,
+                    is_first_in_sequence: false,
                     is_compressed: false,
                 }
             }
@@ -72,6 +75,7 @@ macro_rules! declare_riscv_instr {
                     address: ni.address as u64,
                     operands: ni.operands.into(),
                     inline_sequence_remaining: None,
+                    is_first_in_sequence: false,
                     is_compressed: ni.is_compressed,
                 }
             }
@@ -84,6 +88,7 @@ macro_rules! declare_riscv_instr {
                     operands: instr.operands.into(),
                     is_compressed: instr.is_compressed,
                     inline_sequence_remaining: instr.inline_sequence_remaining,
+                    is_first_in_sequence: instr.is_first_in_sequence,
                 }
             }
         }

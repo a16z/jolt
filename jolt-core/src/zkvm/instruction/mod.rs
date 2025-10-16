@@ -69,6 +69,8 @@ pub enum CircuitFlags {
     Advice,
     /// Is a compressed instruction (i.e. increase UnexpandedPc by 2 only)
     IsCompressed,
+    /// Is instruction the first in a virtual sequence
+    IsFirstInSequence,
 }
 
 /// Boolean flags that are not part of Jolt's R1CS constraints

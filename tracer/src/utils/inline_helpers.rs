@@ -129,6 +129,7 @@ impl InstrAssembler {
     pub(crate) fn finalize(mut self) -> Vec<Instruction> {
         let len = self.sequence.len();
         for (i, instr) in self.sequence.iter_mut().enumerate() {
+            instr.set_is_first_in_sequence(i == 0);
             instr.set_inline_sequence_remaining(Some((len - i - 1) as u16));
         }
         self.sequence
@@ -195,6 +196,7 @@ impl InstrAssembler {
                 imm: 0,
             },
             is_compressed: false,
+            is_first_in_sequence: false,
             inline_sequence_remaining: Some(0),
         }));
     }
@@ -219,6 +221,7 @@ impl InstrAssembler {
                 imm: imm as i128,
             },
             is_compressed: false,
+            is_first_in_sequence: false,
             inline_sequence_remaining: Some(0),
         }));
     }
@@ -243,6 +246,7 @@ impl InstrAssembler {
                 imm: imm as i128,
             },
             is_compressed: false,
+            is_first_in_sequence: false,
             inline_sequence_remaining: Some(0),
         }));
     }
@@ -267,6 +271,7 @@ impl InstrAssembler {
                 imm: imm as i128,
             },
             is_compressed: false,
+            is_first_in_sequence: false,
             inline_sequence_remaining: Some(0),
         }));
     }
@@ -291,6 +296,7 @@ impl InstrAssembler {
                 imm: imm as i128,
             },
             is_compressed: false,
+            is_first_in_sequence: false,
             inline_sequence_remaining: Some(0),
         }));
     }
@@ -311,6 +317,7 @@ impl InstrAssembler {
                 imm: imm as i128,
             },
             is_compressed: false,
+            is_first_in_sequence: false,
             inline_sequence_remaining: Some(0),
         }));
     }
@@ -331,6 +338,7 @@ impl InstrAssembler {
                 imm: imm as i128,
             },
             is_compressed: false,
+            is_first_in_sequence: false,
             inline_sequence_remaining: Some(0),
         }));
     }
@@ -355,6 +363,7 @@ impl InstrAssembler {
                 imm: imm as i128,
             },
             is_compressed: false,
+            is_first_in_sequence: false,
             inline_sequence_remaining: Some(0),
         }));
     }
@@ -379,6 +388,7 @@ impl InstrAssembler {
                 imm: 0,
             },
             is_compressed: false,
+            is_first_in_sequence: false,
             inline_sequence_remaining: Some(0),
         }));
     }
@@ -402,6 +412,7 @@ impl InstrAssembler {
                 imm: imm as i128,
             },
             is_compressed: false,
+            is_first_in_sequence: false,
             inline_sequence_remaining: Some(0),
         }));
     }

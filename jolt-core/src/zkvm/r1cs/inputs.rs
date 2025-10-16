@@ -286,7 +286,7 @@ pub enum JoltR1CSInputs {
 const NUM_R1CS_INPUTS: usize = ALL_R1CS_INPUTS.len();
 /// This const serves to define a canonical ordering over inputs (and thus indices
 /// for each input). This is needed for sumcheck.
-pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 33] = [
+pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 34] = [
     JoltR1CSInputs::LeftInstructionInput,
     JoltR1CSInputs::RightInstructionInput,
     JoltR1CSInputs::Product,
@@ -320,6 +320,7 @@ pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 33] = [
     JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC),
     JoltR1CSInputs::OpFlags(CircuitFlags::Advice),
     JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed),
+    JoltR1CSInputs::OpFlags(CircuitFlags::IsFirstInSequence),
 ];
 
 impl JoltR1CSInputs {
@@ -373,6 +374,7 @@ impl JoltR1CSInputs {
             JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC) => 30,
             JoltR1CSInputs::OpFlags(CircuitFlags::Advice) => 31,
             JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed) => 32,
+            JoltR1CSInputs::OpFlags(CircuitFlags::IsFirstInSequence) => 33,
         }
     }
 }
@@ -734,6 +736,10 @@ mod tests {
                     )
                     | (CircuitFlags::Advice, CircuitFlags::Advice)
                     | (CircuitFlags::IsCompressed, CircuitFlags::IsCompressed)
+                    | (
+                        CircuitFlags::IsFirstInSequence,
+                        CircuitFlags::IsFirstInSequence
+                    )
             )
         }
     }

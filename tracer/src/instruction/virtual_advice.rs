@@ -15,6 +15,7 @@ pub struct VirtualAdvice {
     /// `inline_sequence_remaining` will be Some(0); if this is the penultimate instruction
     /// in the sequence, `inline_sequence_remaining` will be Some(1); etc.
     pub inline_sequence_remaining: Option<u16>,
+    pub is_first_in_sequence: bool,
     pub advice: u64,
     pub is_compressed: bool,
 }
@@ -43,6 +44,7 @@ impl RISCVInstruction for VirtualAdvice {
             operands: FormatJ::random(rng),
             advice: rng.next_u64(),
             inline_sequence_remaining: None,
+            is_first_in_sequence: false,
             is_compressed: false,
         }
     }
@@ -59,6 +61,7 @@ impl From<NormalizedInstruction> for VirtualAdvice {
             operands: ni.operands.into(),
             advice: 0,
             inline_sequence_remaining: ni.inline_sequence_remaining,
+            is_first_in_sequence: ni.is_first_in_sequence,
             is_compressed: ni.is_compressed,
         }
     }
@@ -70,6 +73,7 @@ impl From<VirtualAdvice> for NormalizedInstruction {
             address: val.address as usize,
             operands: val.operands.into(),
             is_compressed: val.is_compressed,
+            is_first_in_sequence: val.is_first_in_sequence,
             inline_sequence_remaining: val.inline_sequence_remaining,
         }
     }

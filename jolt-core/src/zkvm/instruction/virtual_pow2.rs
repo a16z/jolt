@@ -20,6 +20,7 @@ impl Flags for VirtualPow2 {
             self.inline_sequence_remaining.is_some();
         flags[CircuitFlags::DoNotUpdateUnexpandedPC as usize] =
             self.inline_sequence_remaining.unwrap_or(0) != 0;
+        flags[CircuitFlags::IsFirstInSequence as usize] = self.is_first_in_sequence;
         flags[CircuitFlags::IsCompressed as usize] = self.is_compressed;
         flags
     }
