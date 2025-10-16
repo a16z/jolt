@@ -6,8 +6,8 @@ use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
-use crate::poly::lagrange_poly::LagrangeHelper;
-use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
+use crate::poly::lagrange_poly::{LagrangeHelper, LagrangePolynomial};
+use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation};
 use crate::poly::opening_proof::{
     OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
 };
@@ -22,6 +22,9 @@ use crate::zkvm::instruction::{CircuitFlags, InstructionFlags};
 use crate::zkvm::r1cs::inputs::generate_virtual_product_witnesses;
 use crate::zkvm::witness::VirtualPolynomial;
 use rayon::prelude::*;
+use std::sync::Arc;
+use tracer::instruction::Cycle;
+use crate::zkvm::JoltSharedPreprocessing;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[cfg_attr(feature = "allocative", derive(Allocative))]
@@ -568,59 +571,335 @@ impl<F: JoltField, T: Transcript> UniSkipFirstRoundInstance<F, T>
 /// Remaining rounds for Product Virtualization after the univariate-skip first round.
 /// Mirrors the structure of `OuterRemainingSumcheck` with product-virtualization-specific wiring.
 pub struct ProductVirtualRemainder<F: JoltField> {
-    pub input_claim: F,
+    /// Number of cycle bits to bind in this remainder (equals log2(T))
+    pub num_cycles_bits: usize,
+    /// The univariate-skip first round challenge r0
     pub r0_uniskip: F::Challenge,
-    pub total_rounds: usize,
-    /// Optional verifier-only state (e.g., tau vector when needed on verifier)
-    pub tau: Option<Vec<F::Challenge>>,
+    /// Claim after the univariate-skip first round, updated every round
+    pub input_claim: F,
+    /// The tau vector (length 1 + num_cycles_bits), available to prover and verifier
+    pub tau: Vec<F::Challenge>, 
     /// Prover-only state (None on verifier)
-    pub prover_state: Option<ProductVirtualRemainderProverState<F>>,
+    pub prover_state: Option<ProductVirtualProverState<F>>, 
 }
 
 #[derive(Clone, Debug)]
-pub struct ProductVirtualRemainderProverState<F: JoltField> {
-    left: DensePolynomial<F>,
-    right: DensePolynomial<F>,
+pub struct ProductVirtualStreamingCache<F: JoltField> {
+    pub t0: F,
+    pub t_inf: F,
+    pub left_lo: Vec<F>,
+    pub left_hi: Vec<F>,
+    pub right_lo: Vec<F>,
+    pub right_hi: Vec<F>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ProductVirtualProverState<F: JoltField> {
+    pub split_eq_poly: GruenSplitEqPolynomial<F>,
+    pub preprocess: Arc<JoltSharedPreprocessing>,
+    pub trace: Arc<Vec<Cycle>>, 
+    pub left: DensePolynomial<F>,
+    pub right: DensePolynomial<F>,
+    pub streaming_cache: Option<ProductVirtualStreamingCache<F>>, 
 }
 
 impl<F: JoltField> ProductVirtualRemainder<F> {
     #[tracing::instrument(skip_all, name = "ProductVirtualRemainder::new_prover")]
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
-        _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-        _input_claim: F,
-        _r0_uniskip: F::Challenge,
-        _total_rounds: usize,
+        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        input_claim: F,
+        r0_uniskip: F::Challenge,
+        tau: &[F::Challenge],
     ) -> Self {
-        todo!()
+        let (preprocessing, trace, _program_io, _final_mem) = state_manager.get_prover_data();
+        let num_cycles_bits = trace.len().log_2();
+
+        // Build split-eq over cycle variables (no extra scaling needed here)
+        let r_cycle = {
+            let acc = state_manager.get_prover_accumulator();
+            // Retrieve any outer-opened VP; use Product for consistency
+            let (outer_opening, _) = acc
+                .borrow()
+                .get_virtual_polynomial_opening(VirtualPolynomial::Product, SumcheckId::SpartanOuter);
+            let (r_cycle, _rx) = outer_opening.r.split_at(num_cycles_bits);
+            r_cycle.to_vec()
+        };
+        let split_eq_poly = GruenSplitEqPolynomial::new(&r_cycle, BindingOrder::LowToHigh);
+
+        // Compute Lagrange weights at r0 for fusing the 5 product types
+        let weights = LagrangePolynomial::<F>::evals::<F::Challenge, PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE>(&r0_uniskip);
+
+        let streaming_cache = Self::compute_streaming_round_cache(trace, &weights, &split_eq_poly);
+
+        Self {
+            num_cycles_bits,
+            r0_uniskip,
+            input_claim,
+            tau: tau.to_vec(),
+            prover_state: Some(ProductVirtualProverState {
+                split_eq_poly,
+                preprocess: Arc::new(preprocessing.shared.clone()),
+                trace: Arc::new(trace.to_vec()),
+                left: DensePolynomial::default(),
+                right: DensePolynomial::default(),
+                streaming_cache: Some(streaming_cache),
+            }),
+        }
     }
 
     pub fn new_verifier(
-        _input_claim: F,
-        _r0_uniskip: F::Challenge,
-        _total_rounds: usize,
-        _tau: Vec<F::Challenge>,
+        input_claim: F,
+        r0_uniskip: F::Challenge,
+        num_cycles_bits: usize,
+        tau: Vec<F::Challenge>,
     ) -> Self {
-        todo!()
+        Self {
+            num_cycles_bits,
+            r0_uniskip,
+            input_claim,
+            tau,
+            prover_state: None,
+        }
     }
 
     /// Optional helper to compute any per-round cached values immediately after uni-skip.
-    fn compute_streaming_round_cache(&self) {
-        todo!()
+    fn compute_streaming_round_cache(
+        trace: &[Cycle],
+        weights_at_r0: &[F; PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE],
+        split_eq_poly: &GruenSplitEqPolynomial<F>,
+    ) -> ProductVirtualStreamingCache<F> {
+        // Build witness polynomials for the five product types
+        let product_types = [
+            VirtualProductType::Instruction,
+            VirtualProductType::WriteLookupOutputToRD,
+            VirtualProductType::WritePCtoRD,
+            VirtualProductType::ShouldBranch,
+            VirtualProductType::ShouldJump,
+        ];
+        let witnesses: Vec<(MultilinearPolynomial<F>, MultilinearPolynomial<F>)> = product_types
+            .iter()
+            .map(|pt| generate_virtual_product_witnesses::<F>(*pt, trace))
+            .collect();
+
+        let num_x_out_vals = split_eq_poly.E_out_current_len();
+        let num_x_in_vals = split_eq_poly.E_in_current_len();
+        let iter_num_x_in_vars = num_x_in_vals.log_2();
+
+        let num_parallel_chunks = if num_x_out_vals > 0 {
+            core::cmp::min(
+                num_x_out_vals,
+                rayon::current_num_threads().next_power_of_two() * 8,
+            )
+        } else {
+            1
+        };
+        let x_out_chunk_size = if num_x_out_vals > 0 {
+            core::cmp::max(1, num_x_out_vals.div_ceil(num_parallel_chunks))
+        } else {
+            0
+        };
+
+        struct ChunkOut<F: JoltField> {
+            base: usize,
+            len: usize,
+            left_lo: Vec<F>,
+            left_hi: Vec<F>,
+            right_lo: Vec<F>,
+            right_hi: Vec<F>,
+            sum0: F,
+            sum_inf: F,
+        }
+
+        let chunk_results: Vec<ChunkOut<F>> = (0..num_parallel_chunks)
+            .into_par_iter()
+            .map(|chunk_idx| {
+                let x_out_start = chunk_idx * x_out_chunk_size;
+                let x_out_end = core::cmp::min((chunk_idx + 1) * x_out_chunk_size, num_x_out_vals);
+                let chunk_width = x_out_end.saturating_sub(x_out_start);
+                let local_len = chunk_width.saturating_mul(num_x_in_vals);
+                let mut local_left_lo: Vec<F> = Vec::with_capacity(local_len);
+                let mut local_left_hi: Vec<F> = Vec::with_capacity(local_len);
+                let mut local_right_lo: Vec<F> = Vec::with_capacity(local_len);
+                let mut local_right_hi: Vec<F> = Vec::with_capacity(local_len);
+
+                let mut task_sum0 = F::zero();
+                let mut task_sum_inf = F::zero();
+                for x_out_val in x_out_start..x_out_end {
+                    let mut inner0 = F::zero();
+                    let mut inner_inf = F::zero();
+                    for x_in_val in 0..num_x_in_vals {
+                        let current_step_idx = (x_out_val << iter_num_x_in_vars) | x_in_val;
+
+                        // Compute fused left/right at 0 and 1 for this group
+                        let mut left0 = F::zero();
+                        let mut left1 = F::zero();
+                        let mut right0 = F::zero();
+                        let mut right1 = F::zero();
+                        for (i, (l, r)) in witnesses.iter().enumerate() {
+                            let l0_i = l.get_bound_coeff(2 * current_step_idx);
+                            let l1_i = l.get_bound_coeff(2 * current_step_idx + 1);
+                            let mut r0_i = r.get_bound_coeff(2 * current_step_idx);
+                            let mut r1_i = r.get_bound_coeff(2 * current_step_idx + 1);
+                            // ShouldJump: use (1 - NextIsNoop)
+                            if product_types[i] == VirtualProductType::ShouldJump {
+                                r0_i = F::one() - r0_i;
+                                r1_i = F::one() - r1_i;
+                            }
+                            let w = weights_at_r0[i];
+                            left0 += w * l0_i;
+                            left1 += w * l1_i;
+                            right0 += w * r0_i;
+                            right1 += w * r1_i;
+                        }
+
+                        let e_in = if num_x_in_vals == 0 {
+                            F::one()
+                        } else if num_x_in_vals == 1 {
+                            split_eq_poly.E_in_current()[0]
+                        } else {
+                            split_eq_poly.E_in_current()[x_in_val]
+                        };
+                        inner0 += e_in * left0 * right0;
+                        inner_inf += e_in * (left1 - left0) * (right1 - right0);
+                        local_left_lo.push(left0);
+                        local_right_lo.push(right0);
+                        local_left_hi.push(left1);
+                        local_right_hi.push(right1);
+                    }
+                    let e_out = if num_x_out_vals > 0 {
+                        split_eq_poly.E_out_current()[x_out_val]
+                    } else {
+                        F::zero()
+                    };
+                    task_sum0 += e_out * inner0;
+                    task_sum_inf += e_out * inner_inf;
+                }
+                ChunkOut {
+                    base: x_out_start.saturating_mul(num_x_in_vals),
+                    len: local_left_lo.len(),
+                    left_lo: local_left_lo,
+                    left_hi: local_left_hi,
+                    right_lo: local_right_lo,
+                    right_hi: local_right_hi,
+                    sum0: task_sum0,
+                    sum_inf: task_sum_inf,
+                }
+            })
+            .collect();
+
+        let groups_exact = num_x_out_vals.saturating_mul(num_x_in_vals);
+        let mut left_lo: Vec<F> = Vec::with_capacity(groups_exact);
+        let mut left_hi: Vec<F> = Vec::with_capacity(groups_exact);
+        let mut right_lo: Vec<F> = Vec::with_capacity(groups_exact);
+        let mut right_hi: Vec<F> = Vec::with_capacity(groups_exact);
+        left_lo.resize(groups_exact, F::zero());
+        left_hi.resize(groups_exact, F::zero());
+        right_lo.resize(groups_exact, F::zero());
+        right_hi.resize(groups_exact, F::zero());
+        let mut t0_acc = F::zero();
+        let mut t_inf_acc = F::zero();
+        for chunk in &chunk_results {
+            t0_acc += chunk.sum0;
+            t_inf_acc += chunk.sum_inf;
+            let dst_base = chunk.base;
+            let dst_end = dst_base + chunk.len;
+            left_lo[dst_base..dst_end].copy_from_slice(&chunk.left_lo);
+            left_hi[dst_base..dst_end].copy_from_slice(&chunk.left_hi);
+            right_lo[dst_base..dst_end].copy_from_slice(&chunk.right_lo);
+            right_hi[dst_base..dst_end].copy_from_slice(&chunk.right_hi);
+        }
+
+        ProductVirtualStreamingCache {
+            t0: t0_acc,
+            t_inf: t_inf_acc,
+            left_lo,
+            left_hi,
+            right_lo,
+            right_hi,
+        }
     }
 
     /// Optional helper to bind the first remaining round using cached values.
-    fn bind_streaming_round(&mut self, _r_0: F::Challenge) {
-        todo!()
+    fn bind_streaming_round(&mut self, r_0: F::Challenge) {
+        if let Some(ps) = self.prover_state.as_mut() {
+            if let Some(cache) = ps.streaming_cache.take() {
+                let groups = cache.left_lo.len();
+                let mut left_bound: Vec<F> = Vec::with_capacity(groups);
+                let mut right_bound: Vec<F> = Vec::with_capacity(groups);
+                for idx in 0..groups {
+                    let l0 = cache.left_lo[idx];
+                    let l1 = cache.left_hi[idx];
+                    let r0 = cache.right_lo[idx];
+                    let r1 = cache.right_hi[idx];
+                    left_bound.push(l0 + r_0 * (l1 - l0));
+                    right_bound.push(r0 + r_0 * (r1 - r0));
+                }
+                ps.left = DensePolynomial::new(left_bound);
+                ps.right = DensePolynomial::new(right_bound);
+                return;
+            }
+        }
+        panic!("Streaming cache missing; cannot bind first round");
     }
 
     /// Compute the quadratic endpoints for remaining rounds.
     fn remaining_quadratic_evals(&self) -> (F, F) {
-        todo!()
+        let ps = self.prover_state.as_ref().expect("prover state missing");
+        let eq_poly = &ps.split_eq_poly;
+
+        let n = ps.left.len();
+        debug_assert_eq!(n, ps.right.len());
+        if eq_poly.E_in_current_len() == 1 {
+            let groups = n / 2;
+            (0..groups)
+                .into_par_iter()
+                .map(|g| {
+                    let l0 = ps.left[2 * g];
+                    let l1 = ps.left[2 * g + 1];
+                    let r0 = ps.right[2 * g];
+                    let r1 = ps.right[2 * g + 1];
+                    let eq = eq_poly.E_out_current()[g];
+                    let t0 = eq * l0 * r0;
+                    let tinf = eq * (l1 - l0) * (r1 - r0);
+                    (t0, tinf)
+                })
+                .reduce(|| (F::zero(), F::zero()), |a, b| (a.0 + b.0, a.1 + b.1))
+        } else {
+            let num_x1_bits = eq_poly.E_in_current_len().log_2();
+            let x1_len = eq_poly.E_in_current_len();
+            let x2_len = eq_poly.E_out_current_len();
+            (0..x2_len)
+                .into_par_iter()
+                .map(|x2| {
+                    let mut inner0 = F::zero();
+                    let mut inner_inf = F::zero();
+                    for x1 in 0..x1_len {
+                        let g = (x2 << num_x1_bits) | x1;
+                        let l0 = ps.left[2 * g];
+                        let l1 = ps.left[2 * g + 1];
+                        let r0 = ps.right[2 * g];
+                        let r1 = ps.right[2 * g + 1];
+                        let e_in = eq_poly.E_in_current()[x1];
+                        inner0 += e_in * l0 * r0;
+                        inner_inf += e_in * (l1 - l0) * (r1 - r0);
+                    }
+                    let e_out = eq_poly.E_out_current()[x2];
+                    (e_out * inner0, e_out * inner_inf)
+                })
+                .reduce(|| (F::zero(), F::zero()), |a, b| (a.0 + b.0, a.1 + b.1))
+        }
     }
 
     /// Returns final per-virtual-polynomial evaluations needed for openings.
     pub fn final_sumcheck_evals(&self) -> [F; 2] {
-        todo!()
+        let ps_opt = self.prover_state.as_ref();
+        let l0 = ps_opt
+            .and_then(|s| if !s.left.is_empty() { Some(s.left[0]) } else { None })
+            .unwrap_or(F::zero());
+        let r0 = ps_opt
+            .and_then(|s| if !s.right.is_empty() { Some(s.right[0]) } else { None })
+            .unwrap_or(F::zero());
+        [l0, r0]
     }
 }
 
@@ -630,48 +909,161 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ProductVirtualRemai
     }
 
     fn num_rounds(&self) -> usize {
-        self.total_rounds
+        self.num_cycles_bits
     }
 
     fn input_claim(&self) -> F {
         self.input_claim
     }
 
-    fn compute_prover_message(&mut self, _round: usize, _previous_claim: F) -> Vec<F> {
-        todo!()
+    fn compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F> {
+        let (t0, t_inf) = if round == 0 {
+            let ps = self.prover_state.as_ref().expect("prover state missing");
+            let cache = ps
+                .streaming_cache
+                .as_ref()
+                .expect("streaming cache missing in round 0");
+            (cache.t0, cache.t_inf)
+        } else {
+            self.remaining_quadratic_evals()
+        };
+        let eq_poly = &self
+            .prover_state
+            .as_ref()
+            .expect("prover state missing")
+            .split_eq_poly;
+        let evals = eq_poly.gruen_evals_deg_3(t0, t_inf, previous_claim);
+        vec![evals[0], evals[1], evals[2]]
     }
 
-    fn bind(&mut self, _r_j: F::Challenge, _round: usize) {
-        todo!()
+    fn bind(&mut self, r_j: F::Challenge, round: usize) {
+        if round == 0 {
+            self.bind_streaming_round(r_j);
+        } else {
+            let ps = self.prover_state.as_mut().expect("prover state missing");
+            ps.left.bind_parallel(r_j, BindingOrder::LowToHigh);
+            ps.right.bind_parallel(r_j, BindingOrder::LowToHigh);
+        }
+
+        // Bind eq_poly for next round
+        self.prover_state
+            .as_mut()
+            .expect("prover state missing")
+            .split_eq_poly
+            .bind(r_j);
     }
 
     fn expected_output_claim(
         &self,
-        _accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
-        _r_tail: &[F::Challenge],
+        accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
+        r_tail: &[F::Challenge],
     ) -> F {
-        todo!()
+        let acc = accumulator.as_ref().expect("accumulator required").borrow();
+
+        // Lagrange weights at r0
+        let w = LagrangePolynomial::<F>::evals::<F::Challenge, PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE>(&self.r0_uniskip);
+
+        // Per-type evals at fused SumcheckId
+        let product_types = [
+            VirtualProductType::Instruction,
+            VirtualProductType::WriteLookupOutputToRD,
+            VirtualProductType::WritePCtoRD,
+            VirtualProductType::ShouldBranch,
+            VirtualProductType::ShouldJump,
+        ];
+        let mut left_eval = F::zero();
+        let mut right_eval = F::zero();
+        for (i, pt) in product_types.iter().enumerate() {
+            let FactorPolynomials(lp, rp) = pt.get_factor_polynomials();
+            let (_, le) = acc.get_virtual_polynomial_opening(lp, SumcheckId::ProductVirtualizationFused);
+            let (_, mut re) = acc.get_virtual_polynomial_opening(rp, SumcheckId::ProductVirtualizationFused);
+            if matches!(pt, VirtualProductType::ShouldJump) {
+                re = F::one() - re;
+            }
+            left_eval += w[i] * le;
+            right_eval += w[i] * re;
+        }
+
+        // Multiply by L(τ_high, r0) and Eq(τ_low, r_tail^rev), matching outer
+        let tau_high = &self.tau[self.tau.len() - 1];
+        let tau_high_bound_r0 = LagrangePolynomial::<F>::lagrange_kernel::<
+            F::Challenge,
+            PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
+        >(tau_high, &self.r0_uniskip);
+        let tau_low = &self.tau[..self.tau.len() - 1];
+        let r_tail_reversed: Vec<F::Challenge> = r_tail.iter().rev().copied().collect();
+        let tau_bound_r_tail_reversed = EqPolynomial::mle(tau_low, &r_tail_reversed);
+
+        tau_high_bound_r0 * tau_bound_r_tail_reversed * left_eval * right_eval
     }
 
-    fn normalize_opening_point(&self, _r_tail: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
-        todo!()
+    fn normalize_opening_point(&self, r_tail: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
+        let mut r_full: Vec<F::Challenge> = Vec::with_capacity(1 + r_tail.len());
+        r_full.push(self.r0_uniskip);
+        r_full.extend_from_slice(r_tail);
+        let r_reversed: Vec<F::Challenge> = r_full.into_iter().rev().collect();
+        OpeningPoint::new(r_reversed)
     }
 
     fn cache_openings_prover(
         &self,
-        _accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
-        _transcript: &mut T,
-        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
+        transcript: &mut T,
+        opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
-        todo!()
+        // Append 10 virtual openings (5 left, 5 right) under fused ID at r_cycle
+        let (r_cycle, _) = opening_point.r.split_at(self.num_cycles_bits);
+        let r_cycle_op = OpeningPoint::new(r_cycle.to_vec());
+
+        // Rebuild per-type witness polynomials ephemerally and evaluate at r_cycle
+        let trace = {
+            let ps = self.prover_state.as_ref().expect("prover state missing");
+            ps.trace.clone()
+        };
+        let product_types = [
+            VirtualProductType::Instruction,
+            VirtualProductType::WriteLookupOutputToRD,
+            VirtualProductType::WritePCtoRD,
+            VirtualProductType::ShouldBranch,
+            VirtualProductType::ShouldJump,
+        ];
+        for pt in product_types.iter() {
+            let (l, r) = generate_virtual_product_witnesses::<F>(*pt, &trace);
+            let FactorPolynomials(lp, rp) = pt.get_factor_polynomials();
+
+            // Evaluate bound polynomials at r_cycle and append claims
+            let le = MultilinearPolynomial::<F>::evaluate(&l, &r_cycle[..]);
+            let mut re = MultilinearPolynomial::<F>::evaluate(&r, &r_cycle[..]);
+            if matches!(pt, VirtualProductType::ShouldJump) {
+                re = F::one() - re;
+            }
+            let mut acc = accumulator.borrow_mut();
+            acc.append_virtual(transcript, lp, SumcheckId::ProductVirtualizationFused, r_cycle_op.clone(), le);
+            acc.append_virtual(transcript, rp, SumcheckId::ProductVirtualizationFused, r_cycle_op.clone(), re);
+        }
     }
 
     fn cache_openings_verifier(
         &self,
-        _accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
-        _transcript: &mut T,
-        _opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
+        transcript: &mut T,
+        opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
-        todo!()
+        // Append the same 10 virtual openings (no claims) under fused ID at r_cycle
+        let (r_cycle, _) = opening_point.r.split_at(self.num_cycles_bits);
+        let r_cycle_op = OpeningPoint::new(r_cycle.to_vec());
+        let product_types = [
+            VirtualProductType::Instruction,
+            VirtualProductType::WriteLookupOutputToRD,
+            VirtualProductType::WritePCtoRD,
+            VirtualProductType::ShouldBranch,
+            VirtualProductType::ShouldJump,
+        ];
+        let mut acc = accumulator.borrow_mut();
+        for pt in product_types.iter() {
+            let FactorPolynomials(lp, rp) = pt.get_factor_polynomials();
+            acc.append_virtual(transcript, lp, SumcheckId::ProductVirtualizationFused, r_cycle_op.clone());
+            acc.append_virtual(transcript, rp, SumcheckId::ProductVirtualizationFused, r_cycle_op.clone());
+        }
     }
 }

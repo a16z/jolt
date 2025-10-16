@@ -44,7 +44,7 @@ use rayon::prelude::*;
 ///   - eval_b = evaluate_uniform_b_at_point(rx_constr, r),
 ///   - eval_z = evaluate_z_mle_with_segment_evals(segment_evals, r, true),
 ///     where `segment_evals` are the cached witness openings at `r_cycle` from the outer stage.
-/// 
+///
 /// Then `expected = (eval_a + γ·eval_b) · eval_z`, and accept iff output_claim == expected.
 
 #[derive(Allocative)]
