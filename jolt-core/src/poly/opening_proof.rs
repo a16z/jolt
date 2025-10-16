@@ -998,7 +998,7 @@ where
             print_data_structure_heap_usage("Opening accumulator", &(*self));
             let mut flamegraph = FlameGraphBuilder::default();
             flamegraph.visit_root(&(*self));
-            write_flamegraph_svg(flamegraph, "stage5_start_flamechart.svg");
+            write_flamegraph_svg(flamegraph, "stage7_start_flamechart.svg");
         }
 
         let instances: Vec<&mut dyn SumcheckInstance<F, ProofTranscript>> = self
@@ -1016,7 +1016,7 @@ where
         {
             let mut flamegraph = FlameGraphBuilder::default();
             flamegraph.visit_root(&(*self));
-            write_flamegraph_svg(flamegraph, "stage5_end_flamechart.svg");
+            write_flamegraph_svg(flamegraph, "stage7_end_flamechart.svg");
         }
 
         let claims: Vec<_> = self
