@@ -368,51 +368,49 @@ where
     #[tracing::instrument(skip_all, name = "OpeningProofReductionSumcheck::prepare_sumcheck")]
     fn prepare_sumcheck(
         &mut self,
-        polynomials_map: Option<&HashMap<CommittedPolynomial, MultilinearPolynomial<F>>>,
+        polynomials_map: &HashMap<CommittedPolynomial, MultilinearPolynomial<F>>,
+        shared_dense_polynomials: &HashMap<
+            CommittedPolynomial,
+            Arc<RwLock<SharedDensePolynomial<F>>>,
+        >,
     ) {
         #[cfg(test)]
         {
             use crate::poly::multilinear_polynomial::PolynomialEvaluation;
-            if let Some(polynomials_map) = polynomials_map {
-                let poly = polynomials_map.get(&self.polynomial).unwrap();
-                debug_assert_eq!(
-                    poly.evaluate(&self.opening_point),
-                    self.input_claim,
-                    "Evaluation mismatch for {:?} {:?}",
-                    self.sumcheck_id,
-                    self.polynomial,
-                );
-            }
-        }
-
-        if let Some(prover_state) = self.prover_state.as_mut() {
-            let polynomials_map = polynomials_map.unwrap();
             let poly = polynomials_map.get(&self.polynomial).unwrap();
+            debug_assert_eq!(
+                poly.evaluate(&self.opening_point),
+                self.input_claim,
+                "Evaluation mismatch for {:?} {:?}",
+                self.sumcheck_id,
+                self.polynomial,
+            );
             let num_vars = poly.get_num_vars();
             let opening_point_len = self.opening_point.len();
             debug_assert_eq!(
-                    num_vars,
-                    opening_point_len,
-                    "{:?} has {num_vars} variables but opening point from {:?} has length {opening_point_len}",
-                    self.polynomial,
-                    self.sumcheck_id,
-                );
-
-            match prover_state {
-                ProverOpening::Dense(opening) => {
-                    opening.polynomial = Some(Arc::new(RwLock::new(SharedDensePolynomial::new(
-                        poly.clone(),
-                    ))))
-                }
-                ProverOpening::OneHot(opening) => {
-                    if let MultilinearPolynomial::OneHot(one_hot) = poly {
-                        opening.initialize(one_hot.clone());
-                    } else {
-                        panic!("Unexpected non-one-hot polynomial")
-                    }
-                }
-            };
+                        num_vars,
+                        opening_point_len,
+                        "{:?} has {num_vars} variables but opening point from {:?} has length {opening_point_len}",
+                        self.polynomial,
+                        self.sumcheck_id,
+                    );
         }
+
+        let prover_state = self.prover_state.as_mut().unwrap();
+        match prover_state {
+            ProverOpening::Dense(opening) => {
+                let poly = shared_dense_polynomials.get(&self.polynomial).unwrap();
+                opening.polynomial = Some(poly.clone());
+            }
+            ProverOpening::OneHot(opening) => {
+                let poly = polynomials_map.get(&self.polynomial).unwrap();
+                if let MultilinearPolynomial::OneHot(one_hot) = poly {
+                    opening.initialize(one_hot.clone());
+                } else {
+                    panic!("Unexpected non-one-hot polynomial")
+                }
+            }
+        };
     }
 
     fn cache_sumcheck_claim(&mut self) {
@@ -511,7 +509,7 @@ where
 {
     pub sumchecks: Vec<OpeningProofReductionSumcheck<F>>,
     pub openings: Openings<F>,
-    // dense_polynomial_map: HashMap<CommittedPolynomial, Arc<RwLock<SharedDensePolynomial<F>>>>,
+    dense_polynomial_map: HashMap<CommittedPolynomial, Arc<RwLock<SharedDensePolynomial<F>>>>,
     eq_cycle_map: HashMap<Vec<F::Challenge>, Arc<RwLock<EqCycleState<F>>>>,
     #[cfg(test)]
     pub appended_virtual_openings: std::rc::Rc<std::cell::RefCell<Vec<OpeningId>>>,
@@ -564,7 +562,7 @@ where
             sumchecks: vec![],
             openings: BTreeMap::new(),
             eq_cycle_map: HashMap::new(),
-            // dense_polynomial_map: HashMap::new(),
+            dense_polynomial_map: HashMap::new(),
             #[cfg(test)]
             appended_virtual_openings: std::rc::Rc::new(std::cell::RefCell::new(vec![])),
             // #[cfg(test)]
@@ -691,7 +689,7 @@ where
         let shared_eq_cycle = self
             .eq_cycle_map
             .entry(r_cycle.clone())
-            .or_insert_with(|| Arc::new(RwLock::new(EqCycleState::new(&r_cycle))));
+            .or_insert(Arc::new(RwLock::new(EqCycleState::new(&r_cycle))));
 
         // Add openings to map
         for (label, claim) in polynomials.iter().zip(claims.iter()) {
@@ -782,8 +780,24 @@ where
             .par_iter_mut()
             .for_each(|(_, eq_cycle)| eq_cycle.write().unwrap().merge_D());
 
+        // Populate dense_polynomial_map
+        for sumcheck in self.sumchecks.iter() {
+            let prover_state = sumcheck.prover_state.as_ref().unwrap();
+            if let ProverOpening::Dense(_) = prover_state {
+                // If not already in `dense_polynomial_map`, create shared polynomial
+                // and insert it into the map.
+                if !self.dense_polynomial_map.contains_key(&sumcheck.polynomial) {
+                    let poly = polynomials.get(&sumcheck.polynomial).unwrap().clone();
+                    self.dense_polynomial_map.insert(
+                        sumcheck.polynomial,
+                        Arc::new(RwLock::new(SharedDensePolynomial::new(poly))),
+                    );
+                }
+            }
+        }
+
         self.sumchecks.par_iter_mut().for_each(|sumcheck| {
-            sumcheck.prepare_sumcheck(Some(&polynomials));
+            sumcheck.prepare_sumcheck(&polynomials, &self.dense_polynomial_map);
         });
 
         // Drop merged D as they are no longer needed
@@ -1135,10 +1149,6 @@ where
         if let Some(prover_openings) = &self.prover_opening_accumulator {
             assert_eq!(prover_openings.len(), self.len());
         }
-
-        self.sumchecks.par_iter_mut().for_each(|sumcheck| {
-            sumcheck.prepare_sumcheck(None);
-        });
 
         let num_sumcheck_rounds = self
             .sumchecks
