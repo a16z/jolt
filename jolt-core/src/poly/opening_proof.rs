@@ -22,20 +22,15 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 use super::{
     commitment::commitment_scheme::CommitmentScheme,
-    dense_mlpoly::DensePolynomial,
     eq_poly::EqPolynomial,
     multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
     rlc_polynomial::RLCPolynomial,
-    split_eq_poly::GruenSplitEqPolynomial,
 };
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::{
     field::JoltField,
-    poly::{
-        multilinear_polynomial::PolynomialEvaluation,
-        one_hot_polynomial::{EqAddressState, EqCycleState, OneHotPolynomialProverOpening},
-    },
+    poly::one_hot_polynomial::{EqAddressState, EqCycleState, OneHotPolynomialProverOpening},
     subprotocols::sumcheck::{BatchedSumcheck, SumcheckInstance, SumcheckInstanceProof},
     transcripts::Transcript,
     utils::{errors::ProofVerifyError, math::Math},
@@ -179,6 +174,22 @@ pub enum OpeningId {
 
 pub type Openings<F> = BTreeMap<OpeningId, (OpeningPoint<BIG_ENDIAN, F>, F)>;
 
+#[derive(Clone, Debug, Allocative)]
+pub struct SharedDensePolynomial<F: JoltField> {
+    pub poly: MultilinearPolynomial<F>,
+    /// The number of variables that have been bound during sumcheck so far
+    pub num_variables_bound: usize,
+}
+
+impl<F: JoltField> SharedDensePolynomial<F> {
+    fn new(poly: MultilinearPolynomial<F>) -> Self {
+        Self {
+            poly,
+            num_variables_bound: 0,
+        }
+    }
+}
+
 /// An opening (of a dense polynomial) computed by the prover.
 ///
 /// May be a batched opening, where multiple dense polynomials opened
@@ -190,7 +201,7 @@ pub type Openings<F> = BTreeMap<OpeningId, (OpeningPoint<BIG_ENDIAN, F>, F)>;
 pub struct DensePolynomialProverOpening<F: JoltField> {
     /// The polynomial being opened. May be a random linear combination
     /// of multiple polynomials all being opened at the same point.
-    pub polynomial: Option<MultilinearPolynomial<F>>, // TODO: Option<Arc<RwLock<SharedPolynomial<F>>>>
+    pub polynomial: Option<Arc<RwLock<SharedDensePolynomial<F>>>>,
     /// The multilinear extension EQ(x, opening_point). This is typically
     /// an intermediate value used to compute `claim`, but is also used in
     /// the `ProverOpeningAccumulator::prove_batch_opening_reduction` sumcheck.
@@ -204,7 +215,8 @@ impl<F: JoltField> DensePolynomialProverOpening<F> {
     )]
     fn compute_prover_message(&mut self, _round: usize, previous_claim: F) -> Vec<F> {
         let shared_eq = self.eq_poly.read().unwrap();
-        let polynomial = self.polynomial.as_ref().unwrap();
+        let polynomial_ref = self.polynomial.as_ref().unwrap();
+        let polynomial = &polynomial_ref.read().unwrap().poly;
         let gruen_eq = &shared_eq.D;
 
         // Compute q(0) = sum of polynomial(i) * eq(r, i) for i in [0, mle_half)
@@ -258,14 +270,17 @@ impl<F: JoltField> DensePolynomialProverOpening<F> {
             shared_eq.num_variables_bound += 1;
         }
 
-        self.polynomial
-            .as_mut()
-            .unwrap()
-            .bind_parallel(r_j, BindingOrder::HighToLow);
+        let shared_poly_ref = self.polynomial.as_mut().unwrap();
+        let mut shared_poly = shared_poly_ref.write().unwrap();
+        if shared_poly.num_variables_bound <= round {
+            shared_poly.poly.bind_parallel(r_j, BindingOrder::HighToLow);
+            shared_poly.num_variables_bound += 1;
+        }
     }
 
     fn final_sumcheck_claim(&self) -> F {
-        self.polynomial.as_ref().unwrap().final_sumcheck_claim()
+        let poly_ref = self.polynomial.as_ref().unwrap();
+        poly_ref.read().unwrap().poly.final_sumcheck_claim()
     }
 }
 
@@ -383,63 +398,10 @@ where
             }
         }
 
-        if self.polynomials.len() > 1 {
-            assert_eq!(
-                gammas.len(),
-                self.polynomials.len(),
-                "Expected {} gammas but got {}",
-                self.polynomials.len(),
-                gammas.len()
-            );
-            self.rlc_coeffs = gammas.to_vec();
-        } else {
-            assert_eq!(gammas.len(), 1, "Expected 1 gamma but got {}", gammas.len());
-            self.rlc_coeffs = vec![F::one()];
-        }
+        assert_eq!(gammas.len(), 1, "Expected 1 gamma but got {}", gammas.len());
+        self.rlc_coeffs = vec![F::one()];
 
-        if self.polynomials.len() > 1 {
-            let reduced_claim = self
-                .rlc_coeffs
-                .par_iter()
-                .zip(self.input_claims.par_iter())
-                .map(|(gamma, claim)| *gamma * claim)
-                .sum();
-            self.input_claims = vec![reduced_claim];
-
-            if let Some(prover_state) = self.prover_state.as_mut() {
-                let polynomials_map = polynomials_map.unwrap();
-
-                let polynomials: Vec<&MultilinearPolynomial<F>> = self
-                    .polynomials
-                    .par_iter()
-                    .map(|label| polynomials_map.get(label).unwrap())
-                    .collect();
-
-                let result =
-                    DensePolynomial::linear_combination(polynomials.as_ref(), &self.rlc_coeffs);
-
-                let rlc_poly = MultilinearPolynomial::from(result.Z);
-
-                debug_assert_eq!(rlc_poly.evaluate(&self.opening_point), reduced_claim);
-                let num_vars = rlc_poly.get_num_vars();
-
-                let opening_point_len = self.opening_point.len();
-                debug_assert_eq!(
-                    num_vars,
-                    opening_point_len,
-                    "{:?} have {num_vars} variables each but opening point from {:?} has length {opening_point_len}",
-                    self.polynomials,
-                    self.sumcheck_id,
-                );
-
-                match prover_state {
-                    ProverOpening::Dense(opening) => opening.polynomial = Some(rlc_poly),
-                    ProverOpening::OneHot(_) => {
-                        panic!("Unexpected one-hot opening")
-                    }
-                };
-            }
-        } else if let Some(prover_state) = self.prover_state.as_mut() {
+        if let Some(prover_state) = self.prover_state.as_mut() {
             let polynomials_map = polynomials_map.unwrap();
             let poly = polynomials_map.get(&self.polynomials[0]).unwrap();
             let num_vars = poly.get_num_vars();
@@ -453,7 +415,11 @@ where
                 );
 
             match prover_state {
-                ProverOpening::Dense(opening) => opening.polynomial = Some(poly.clone()),
+                ProverOpening::Dense(opening) => {
+                    opening.polynomial = Some(Arc::new(RwLock::new(SharedDensePolynomial::new(
+                        poly.clone(),
+                    ))))
+                }
                 ProverOpening::OneHot(opening) => {
                     if let MultilinearPolynomial::OneHot(one_hot) = poly {
                         opening.initialize(one_hot.clone());
