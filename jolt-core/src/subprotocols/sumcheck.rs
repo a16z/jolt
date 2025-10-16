@@ -488,10 +488,6 @@ pub trait UniSkipFirstRoundInstance<F: JoltField, T: Transcript>:
     /// Returns a degree-bounded `UniPoly` with exactly `DEGREE_BOUND + 1` coefficients.
     fn compute_poly(&mut self) -> UniPoly<F>;
 
-    /// Computes the expected output claim given the verifier's challenges.
-    /// This is used to verify the univariate skip round
-    fn output_claim(&self, r: &[F::Challenge]) -> F;
-
     // TODO: add flamegraph support
     // #[cfg(feature = "allocative")]
     // fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder);

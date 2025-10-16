@@ -546,7 +546,7 @@ impl JoltDAG {
                 .append_serializable(trusted_advice_commitment);
         }
 
-        // Stage 1:
+        // Initialize Dags
         let padded_trace_length = {
             let (_, _, trace_length) = state_manager.get_verifier_data();
             trace_length.next_power_of_two()
@@ -556,6 +556,8 @@ impl JoltDAG {
         let mut registers_dag = RegistersDag::default();
         let mut ram_dag = RamDag::new_verifier(&state_manager);
         let mut bytecode_dag = BytecodeDag::default();
+
+        // Stage 1:
         spartan_dag
             .stage1_first_round_verify(&mut state_manager)
             .context("Stage 1 univariate skip first round")?;

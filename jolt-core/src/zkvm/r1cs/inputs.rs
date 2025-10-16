@@ -467,9 +467,7 @@ impl ProductCycleInputs {
         // Next-is-noop and its complement (1 - NextIsNoop)
         let not_next_noop = {
             let is_next_noop = if t + 1 < len {
-                trace[t + 1]
-                    .instruction()
-                    .instruction_flags()[InstructionFlags::IsNoop]
+                trace[t + 1].instruction().instruction_flags()[InstructionFlags::IsNoop]
             } else {
                 true // Treat last cycle as if next is NoOp
             };
@@ -651,12 +649,15 @@ pub fn compute_claimed_product_evals<F: JoltField>(
             }
             inner
         })
-        .reduce(|| [F::zero(); 10], |mut acc, item| {
-            for i in 0..10 {
-                acc[i] += item[i];
-            }
-            acc
-        })
+        .reduce(
+            || [F::zero(); 10],
+            |mut acc, item| {
+                for i in 0..10 {
+                    acc[i] += item[i];
+                }
+                acc
+            },
+        )
 }
 
 /// Single-pass generation of UnexpandedPC(t), PC(t), and IsNoop(t) witnesses.

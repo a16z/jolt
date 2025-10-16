@@ -4,6 +4,7 @@ use std::rc::Rc;
 
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
 use crate::poly::opening_proof::{
@@ -443,10 +444,6 @@ impl<F: JoltField, T: Transcript> UniSkipFirstRoundInstance<F, T>
     fn compute_poly(&mut self) -> UniPoly<F> {
         todo!()
     }
-
-    fn output_claim(&self, _r: &[F::Challenge]) -> F {
-        todo!()
-    }
 }
 
 /// Remaining rounds for Product Virtualization after the univariate-skip first round.
@@ -463,8 +460,8 @@ pub struct ProductVirtualRemainder<F: JoltField> {
 
 #[derive(Clone, Debug)]
 pub struct ProductVirtualRemainderProverState<F: JoltField> {
-    // Intentionally empty for stubbing; fill with product-virtualization state as needed
-    _phantom: core::marker::PhantomData<F>,
+    left: DensePolynomial<F>,
+    right: DensePolynomial<F>,
 }
 
 impl<F: JoltField> ProductVirtualRemainder<F> {

@@ -6,15 +6,14 @@ use rayon::prelude::*;
 use std::sync::Arc;
 use tracer::instruction::Cycle;
 
-use crate::field::{JoltField, OptimizedMul};
+use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::lagrange_poly::{LagrangeHelper, LagrangePolynomial};
 use crate::poly::multilinear_polynomial::BindingOrder;
-use crate::poly::opening_proof::BIG_ENDIAN;
 use crate::poly::opening_proof::{
-    OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator,
+    OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
 };
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::poly::unipoly::UniPoly;
@@ -23,21 +22,21 @@ use crate::transcripts::Transcript;
 use crate::utils::math::Math;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
-use crate::utils::univariate_skip::accum::{
-    acc6_fmadd_i128, acc6_new, acc6_reduce, accs160_fmadd_s160, accs160_new, accs160_reduce,
-};
+use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::utils::univariate_skip::{
+    accum::{
+        acc6_fmadd_i128, acc6_new, acc6_reduce, accs160_fmadd_s160, accs160_new, accs160_reduce,
+    },
     compute_az_r_group0, compute_az_r_group1, compute_bz_r_group0, compute_bz_r_group1,
 };
 use crate::zkvm::dag::state_manager::StateManager;
-use crate::zkvm::r1cs::inputs::{compute_claimed_witness_evals, ALL_R1CS_INPUTS};
 use crate::zkvm::r1cs::{
     constraints::{
         eval_az_first_group, eval_az_second_group, eval_bz_first_group, eval_bz_second_group,
         FIRST_ROUND_POLY_NUM_COEFFS, NUM_REMAINING_R1CS_CONSTRAINTS, UNIVARIATE_SKIP_DEGREE,
         UNIVARIATE_SKIP_DOMAIN_SIZE, UNIVARIATE_SKIP_EXTENDED_DOMAIN_SIZE,
     },
-    inputs::R1CSCycleInputs,
+    inputs::{compute_claimed_witness_evals, R1CSCycleInputs, ALL_R1CS_INPUTS},
 };
 use crate::zkvm::witness::VirtualPolynomial;
 use crate::zkvm::JoltSharedPreprocessing;
@@ -46,16 +45,16 @@ use crate::zkvm::JoltSharedPreprocessing;
 // (with univariate-skip first round on Z, and no Cz term given all eq conditional constraints)
 //
 // We define a univariate in Z first-round polynomial
-//   s1(Z) := L_Z(τ_high) · Σ_{x_out ∈ {0,1}^{m_out}} Σ_{x_in ∈ {0,1}^{m_in}}
+//   s1(Y) := L(τ_high, Y) · Σ_{x_out ∈ {0,1}^{m_out}} Σ_{x_in ∈ {0,1}^{m_in}}
 //              E_out(r_out, x_out) · E_in(r_in, x_in) ·
-//              [ Az(x_out, x_in, Z) · Bz(x_out, x_in, Z) ],
-// where L_Z(τ_high) is the Lagrange basis polynomial over the univariate-skip
-// base domain evaluated at τ_high, and Az(·,·,Z), Bz(·,·,Z) are the
-// per-row univariate polynomials in Z induced by the R1CS row (split into two
-// internal groups in code, but algebraically composing to Az·Bz at Z).
-// The prover sends s1(Z) via univariate-skip by evaluating t1(Z) := Σ Σ E_out·E_in·(Az·Bz)
-// on an extended grid Z ∈ {−D..D} outside the base window, interpolating t1,
-// multiplying by L_Z(τ_high) to obtain s1, and the verifier samples r0.
+//              [ Az(x_out, x_in, Y) · Bz(x_out, x_in, Y) ],
+// where L(τ_high, Y) is the Lagrange basis polynomial over the univariate-skip
+// base domain evaluated at τ_high, and Az(·,·,Y), Bz(·,·,Y) are the
+// per-row univariate polynomials in Y induced by the R1CS row (split into two
+// internal groups in code, but algebraically composing to Az·Bz at Y).
+// The prover sends s1(Y) via univariate-skip by evaluating t1(Y) := Σ Σ E_out·E_in·(Az·Bz)
+// on an extended grid Y ∈ {−D..D} outside the base window, interpolating t1,
+// multiplying by L(τ_high, Y) to obtain s1, and the verifier samples r0.
 //
 // Subsequent outer rounds bind the cycle variables r_tail = (r1, r2, …) using
 // a streaming first cycle-bit round followed by linear-time rounds:
@@ -155,10 +154,24 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
         targets
     }
 
+    /// Compute the extended evaluations of the univariate skip polynomial, i.e.
+    ///
+    /// t_1(y) = \sum_{x_out} eq(tau_out, x_out) * \sum_{x_in} eq(tau_in, x_in) * Az(x_out, x_in, y) * Bz(x_out, x_in, y)
+    ///
+    /// for all y in the extended domain {−D..D} outside the base window
+    /// (inside the base window, we have t_1(y) = 0)
+    ///
+    /// Note that the last of the x_in variables corresponds to the group index of the constraints
+    /// (since we split the constraints in half, and y ranges over the number of constraints in each group)
+    ///
+    /// So we actually need to be careful and compute
+    ///
+    /// \sum_{x_in'} eq(tau_in, (x_in', 0)) * Az(x_out, x_in', 0, y) * Bz(x_out, x_in', 0, y)
+    ///     + eq(tau_in, (x_in', 1)) * Az(x_out, x_in', 1, y) * Bz(x_out, x_in', 1, y)
     fn compute_univariate_skip_extended_evals(
         preprocess: &JoltSharedPreprocessing,
         trace: &[Cycle],
-        tau: &[F::Challenge],
+        tau_low: &[F::Challenge],
     ) -> [F; UNIVARIATE_SKIP_DEGREE] {
         // Precompute Lagrange coefficient vectors for target Z values outside the base window
         let base_left: i64 = -((UNIVARIATE_SKIP_DOMAIN_SIZE as i64 - 1) / 2);
@@ -171,55 +184,35 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
                 LagrangeHelper::shift_coeffs_i32::<UNIVARIATE_SKIP_DOMAIN_SIZE>(target_shifts[j])
             });
 
-        // Debug printing for verification of targets and shift coeffs
-        println!(
-            "OuterUniSkip targets and base_left: targets={targets:?}, base_left={base_left}"
-        );
-        for j in 0..UNIVARIATE_SKIP_DEGREE {
-            println!(
-                "OuterUniSkip coeffs for target: target={}, shift={}, coeffs={:?}",
-                targets[j],
-                target_shifts[j],
-                coeffs_per_j[j]
-            );
-        }
-
-        let m = tau.len() / 2;
-        let (w_out, w_in) = tau.split_at(m);
+        let m = tau_low.len() / 2;
+        let (tau_out, tau_in) = tau_low.split_at(m);
         let (E_out, E_in) = rayon::join(
-            || EqPolynomial::evals(w_out),
-            || EqPolynomial::evals(w_in),
+            || EqPolynomial::evals(tau_out),
+            || EqPolynomial::evals(tau_in),
         );
 
         let num_x_out_vals = E_out.len();
         let num_x_in_vals = E_in.len();
-
-        println!("OuterUniSkip: E_out_len={}, E_in_len={}", num_x_out_vals, num_x_in_vals);
-        debug_assert!(
-            num_x_out_vals > 0,
-            "E_out must be > 0 for outer uni-skip"
+        assert!(
+            num_x_in_vals >= 2,
+            "univariate skip expects at least 2 x_in values (last bit is group index)"
         );
+        // The last x_in bit is the group selector: even indices -> group 0, odd -> group 1
+        let num_x_in_half = num_x_in_vals >> 1;
 
-        let num_parallel_chunks = if num_x_out_vals > 0 {
-            core::cmp::min(
-                num_x_out_vals,
-                rayon::current_num_threads().next_power_of_two() * 8,
-            )
-        } else {
-            1
-        };
+        let num_parallel_chunks = core::cmp::min(
+            num_x_out_vals,
+            rayon::current_num_threads().next_power_of_two() * 8,
+        );
         let x_out_chunk_size = if num_x_out_vals > 0 {
             core::cmp::max(1, num_x_out_vals.div_ceil(num_parallel_chunks))
         } else {
             0
         };
-        let iter_num_x_in_vars = if num_x_in_vals > 0 {
-            num_x_in_vals.log_2()
-        } else {
-            0
-        };
+        let iter_num_x_in_vars = num_x_in_vals.log_2();
+        let iter_num_x_in_prime_vars = iter_num_x_in_vars - 1; // ignore last bit (group index)
 
-        let extended: [F; UNIVARIATE_SKIP_DEGREE] = (0..num_parallel_chunks)
+        (0..num_parallel_chunks)
             .into_par_iter()
             .map(|chunk_idx| {
                 let x_out_start = chunk_idx * x_out_chunk_size;
@@ -230,20 +223,45 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
                 for x_out_val in x_out_start..x_out_end {
                     let mut inner_acc: [<F as JoltField>::Unreduced<9>; UNIVARIATE_SKIP_DEGREE] =
                         [<F as JoltField>::Unreduced::<9>::zero(); UNIVARIATE_SKIP_DEGREE];
-                    let effective_num_x_in = if num_x_in_vals == 0 { 1 } else { num_x_in_vals };
-                    for x_in_val in 0..effective_num_x_in {
-                        let current_step_idx = (x_out_val << iter_num_x_in_vars) | x_in_val;
+                    for x_in_prime in 0..num_x_in_half {
+                        // Materialize row once for both groups (ignores last bit)
+                        let base_step_idx = (x_out_val << iter_num_x_in_prime_vars) | x_in_prime;
                         let row_inputs =
-                            R1CSCycleInputs::from_trace::<F>(preprocess, trace, current_step_idx);
+                            R1CSCycleInputs::from_trace::<F>(preprocess, trace, base_step_idx);
 
-                        let e_in = if num_x_in_vals == 0 {
-                            F::one()
-                        } else {
-                            E_in[x_in_val]
-                        };
+                        // Group 0 (even index)
+                        let x_in_even = x_in_prime << 1;
+                        let e_in_even = E_in[x_in_even];
 
                         let az0_bool = eval_az_first_group(&row_inputs);
                         let bz0_i128 = eval_bz_first_group(&row_inputs);
+
+                        for j in 0..UNIVARIATE_SKIP_DEGREE {
+                            let coeffs = &coeffs_per_j[j];
+                            // (sum_i (Az0_i ? c_i : 0)) * (sum_i c_i * Bz0_i)
+                            let mut sum_c_bz0_acc6 = acc6_new::<F>();
+                            let mut sum_c_az0_i64: i64 = 0;
+                            for i in 0..UNIVARIATE_SKIP_DOMAIN_SIZE {
+                                let c = coeffs[i] as i64;
+                                if c == 0 {
+                                    continue;
+                                }
+                                if az0_bool[i] {
+                                    sum_c_az0_i64 += c;
+                                }
+                                let term = (c as i128).saturating_mul(bz0_i128[i]);
+                                acc6_fmadd_i128(&mut sum_c_bz0_acc6, &F::one(), term);
+                            }
+                            let sum_c_bz0: F = acc6_reduce::<F>(&sum_c_bz0_acc6);
+                            let sum_c_az0: F = F::from_i64(sum_c_az0_i64);
+                            let g0_term = sum_c_az0 * sum_c_bz0;
+                            inner_acc[j] += e_in_even.mul_unreduced::<9>(g0_term);
+                        }
+
+                        // Group 1 (odd index) using same row inputs
+                        let x_in_odd = x_in_even + 1;
+                        let e_in_odd = E_in[x_in_odd];
+
                         let az1_u8 = eval_az_second_group(&row_inputs);
                         let bz1 = eval_bz_second_group(&row_inputs);
 
@@ -262,28 +280,7 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
 
                         for j in 0..UNIVARIATE_SKIP_DEGREE {
                             let coeffs = &coeffs_per_j[j];
-                            // Group 0: (sum_i (Az0_i ? c_i : 0)) * (sum_i c_i * Bz0_i)
-                            let mut sum_c_bz0_acc6 = acc6_new::<F>();
-                            let mut sum_c_az0_i64: i64 = 0;
-                            for i in 0..UNIVARIATE_SKIP_DOMAIN_SIZE {
-                                let c = coeffs[i] as i64;
-                                if c == 0 {
-                                    continue;
-                                }
-                                // accumulate sum of c_i for which Az0 is true in i64
-                                if az0_bool[i] {
-                                    sum_c_az0_i64 += c;
-                                }
-                                // accumulate sum of c_i * Bz0_i (over all i) in 6-limb accumulator
-                                let term = (c as i128).saturating_mul(bz0_i128[i]);
-                                acc6_fmadd_i128(&mut sum_c_bz0_acc6, &F::one(), term);
-                            }
-                            let sum_c_bz0: F = acc6_reduce::<F>(&sum_c_bz0_acc6);
-                            let sum_c_az0: F = F::from_i64(sum_c_az0_i64);
-                            let g0_term = sum_c_az0 * sum_c_bz0;
-                            inner_acc[j] += e_in.mul_unreduced::<9>(g0_term);
-
-                            // Group 1: (sum_i c_i * Az1_i) * (\sum_i c_i * Bz1_i)
+                            // (sum_i c_i * Az1_i) * (sum_i c_i * Bz1_i)
                             let mut sum_c_bz1_acc = accs160_new::<F>();
                             let mut sum_c_az1_i64: i64 = 0;
                             for i in 0..UNIVARIATE_SKIP_DOMAIN_SIZE {
@@ -299,14 +296,10 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
                             let sum_c_bz1: F = accs160_reduce::<F>(&sum_c_bz1_acc);
                             let sum_c_az1: F = F::from_i64(sum_c_az1_i64);
                             let g1_term = sum_c_az1 * sum_c_bz1;
-                            inner_acc[j] += e_in.mul_unreduced::<9>(g1_term);
+                            inner_acc[j] += e_in_odd.mul_unreduced::<9>(g1_term);
                         }
                     }
-                    let e_out = if num_x_out_vals > 0 {
-                        E_out[x_out_val]
-                    } else {
-                        F::zero()
-                    };
+                    let e_out = E_out[x_out_val];
                     for j in 0..UNIVARIATE_SKIP_DEGREE {
                         let reduced = F::from_montgomery_reduce::<9>(inner_acc[j]);
                         acc_field[j] += e_out * reduced;
@@ -322,76 +315,7 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
                     }
                     a
                 },
-            );
-
-        // Always-on diagnostics and cross-checks
-        println!(
-            "OuterUniSkip: E_out_current_len={}, E_in_current_len={}, iter_num_x_in_vars={}",
-            num_x_out_vals, num_x_in_vals, iter_num_x_in_vars
-        );
-        let show_in = core::cmp::min(2, num_x_in_vals);
-        for xi in 0..show_in {
-            let idx = (0 << iter_num_x_in_vars) | xi;
-            println!("OuterUniSkip: current_step_idx(x_out=0, x_in={}) = {}", xi, idx);
-        }
-
-        // Recompute reference t1(z) for first two targets using direct Lagrange over base window
-        // to validate shift-coeff usage and index mapping.
-        let num_samples = core::cmp::min(2, UNIVARIATE_SKIP_DEGREE);
-        let mut ref_vals: [F; 2] = [F::zero(); 2];
-        for k in 0..num_samples {
-            let z = targets[k];
-            let basis = LagrangePolynomial::<F>::evals::<F, UNIVARIATE_SKIP_DOMAIN_SIZE>(&F::from_i64(z));
-            let mut acc = F::zero();
-            for x_out_val in 0..num_x_out_vals {
-                let effective_num_x_in = if num_x_in_vals == 0 { 1 } else { num_x_in_vals };
-                let e_out = if num_x_out_vals > 0 {
-                    E_out[x_out_val]
-                } else {
-                    F::zero()
-                };
-                for x_in_val in 0..effective_num_x_in {
-                    let current_step_idx = (x_out_val << iter_num_x_in_vars) | x_in_val;
-                    let row_inputs = R1CSCycleInputs::from_trace::<F>(preprocess, trace, current_step_idx);
-                    let az0_bool = eval_az_first_group(&row_inputs);
-                    let bz0_i128 = eval_bz_first_group(&row_inputs);
-                    let az1_u8 = eval_az_second_group(&row_inputs);
-                    let bz1_s160 = eval_bz_second_group(&row_inputs);
-                    // Evaluate groups at z via basis over base window
-                    let mut az0_z = F::zero();
-                    let mut bz0_z = F::zero();
-                    let mut az1_z = F::zero();
-                    let mut bz1_z = F::zero();
-                    let g2_len = core::cmp::min(NUM_REMAINING_R1CS_CONSTRAINTS, UNIVARIATE_SKIP_DOMAIN_SIZE);
-                    for i in 0..UNIVARIATE_SKIP_DOMAIN_SIZE {
-                        let bi = basis[i];
-                        if az0_bool[i] {
-                            az0_z += bi;
-                        }
-                        bz0_z += bi * F::from_i128(bz0_i128[i]);
-                        if i < g2_len {
-                            az1_z += bi * F::from_i64(az1_u8[i] as i64);
-                            bz1_z += bi * crate::utils::univariate_skip::accum::s160_to_field::<F>(&bz1_s160[i]);
-                        }
-                    }
-                    let e_in = if num_x_in_vals == 0 {
-                        F::one()
-                    } else {
-                        E_in[x_in_val]
-                    };
-                    acc += e_out * e_in * (az0_z * bz0_z + az1_z * bz1_z);
-                }
-            }
-            ref_vals[k] = acc;
-        }
-        if num_samples >= 1 {
-            debug_assert_eq!(extended[0], ref_vals[0], "OuterUniSkip: extended[0] mismatch");
-        }
-        if num_samples >= 2 {
-            debug_assert_eq!(extended[1], ref_vals[1], "OuterUniSkip: extended[1] mismatch");
-        }
-
-        extended
+            )
     }
 }
 
@@ -443,22 +367,7 @@ impl<F: JoltField, T: Transcript> UniSkipFirstRoundInstance<F, T> for OuterUniSk
 
         let poly = UniPoly::from_coeff(s1_coeffs.to_vec());
 
-        // Always-on check: s1(z) equals L_Z(tau_high) * t1(z) at sample z
-        // Evaluate at non-negative challenge points (0, 1, 2) to avoid sign constructors
-        let sample_points_c: [F::Challenge; 3] = [0u128.into(), 1u128.into(), 2u128.into()];
-        for zc in &sample_points_c {
-            let s1_eval = UniPoly::<F>::eval_with_coeffs(&poly.coeffs, zc);
-            let lz_eval = UniPoly::<F>::eval_with_coeffs(&lagrange_poly_coeffs, zc);
-            let t1_eval = UniPoly::<F>::eval_with_coeffs(&t1_coeffs, zc);
-            debug_assert_eq!(s1_eval, lz_eval * t1_eval, "s1(z) != L(z)*t1(z) at z");
-        }
-
         poly
-    }
-
-    fn output_claim(&self, _r: &[F::Challenge]) -> F {
-        // Not used by Spartan outer at this stage; verifier computes s1(r) directly from transcript
-        F::zero()
     }
 }
 
@@ -487,13 +396,15 @@ pub struct OuterProverState<F: JoltField> {
 /// Round 0 in this instance corresponds to the "streaming" round; subsequent rounds
 /// use the remaining linear-time algorithm over cycle variables.
 pub struct OuterRemainingSumcheck<F: JoltField> {
-    pub input_claim: F,
-    pub r0_uniskip: F::Challenge,
-    pub total_rounds: usize,
-    /// Only used by verifier to compute expected_output_claim
-    pub tau: Option<Vec<F::Challenge>>,
     /// Number of cycle bits for splitting opening points (consistent across prover/verifier)
+    /// Total number of rounds is `1 + num_cycles_bits`
     pub num_cycles_bits: usize,
+    /// The tau vector (length `2 + num_cycles_bits`, sampled at the beginning for Lagrange + eq poly)
+    pub tau: Vec<F::Challenge>,
+    /// The univariate-skip first round challenge
+    pub r0_uniskip: F::Challenge,
+    /// Claim after the univariate-skip first round, updated every round
+    pub input_claim: F,
     /// Prover-only state (None on verifier)
     pub prover_state: Option<OuterProverState<F>>,
 }
@@ -502,29 +413,42 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
     #[tracing::instrument(skip_all, name = "OuterRemainingSumcheck::new_prover")]
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-        input_claim: F,
-        tau_low: &[F::Challenge],
-        r0_uniskip: F::Challenge,
-        total_rounds: usize,
         num_cycles_bits: usize,
+        tau: &[F::Challenge],
+        r0_uniskip: F::Challenge,
+        input_claim: F,
     ) -> Self {
         let (preprocessing, trace, _program_io, _final_mem) = state_manager.get_prover_data();
+
+        let lagrange_evals_r = LagrangePolynomial::<F>::evals::<
+            F::Challenge,
+            UNIVARIATE_SKIP_DOMAIN_SIZE,
+        >(&r0_uniskip);
+
+        let tau_high = tau[tau.len() - 1];
+        let tau_low = &tau[..tau.len() - 1];
+
+        let lagrange_tau_r0 = LagrangePolynomial::<F>::lagrange_kernel::<F::Challenge, UNIVARIATE_SKIP_DOMAIN_SIZE>(&r0_uniskip, &tau_high);
+
         let split_eq_poly: GruenSplitEqPolynomial<F> =
-            GruenSplitEqPolynomial::<F>::new(tau_low, BindingOrder::LowToHigh);
+            GruenSplitEqPolynomial::<F>::new_with_scaling(
+                tau_low,
+                BindingOrder::LowToHigh,
+                Some(lagrange_tau_r0),
+            );
 
         let streaming_cache = Self::compute_streaming_round_cache(
             &preprocessing.shared,
             trace,
+            &lagrange_evals_r,
             &split_eq_poly,
-            r0_uniskip,
         );
 
         Self {
-            input_claim,
-            r0_uniskip,
-            total_rounds,
-            tau: None,
             num_cycles_bits,
+            tau: tau.to_vec(),
+            r0_uniskip,
+            input_claim,
             prover_state: Some(OuterProverState {
                 split_eq_poly,
                 preprocess: Arc::new(preprocessing.shared.clone()),
@@ -537,18 +461,16 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
     }
 
     pub fn new_verifier(
-        input_claim: F,
-        r0_uniskip: F::Challenge,
-        total_rounds: usize,
-        tau: Vec<F::Challenge>,
         num_cycles_bits: usize,
+        tau: Vec<F::Challenge>,
+        r0_uniskip: F::Challenge,
+        input_claim: F,
     ) -> Self {
         Self {
-            input_claim,
-            r0_uniskip,
-            total_rounds,
-            tau: Some(tau),
             num_cycles_bits,
+            tau,
+            r0_uniskip,
+            input_claim,
             prover_state: None,
         }
     }
@@ -582,28 +504,20 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
     fn compute_streaming_round_cache(
         preprocess: &JoltSharedPreprocessing,
         trace: &[Cycle],
+        lagrange_evals_r: &[F; UNIVARIATE_SKIP_DOMAIN_SIZE],
         split_eq_poly: &GruenSplitEqPolynomial<F>,
-        r0_uniskip: F::Challenge,
     ) -> StreamingRoundCache<F> {
-        // Prepare streaming round cache: compute t0, t_inf and dense per-block arrays at y=r0
-        let lagrange_evals_r = LagrangePolynomial::<F>::evals::<
-            F::Challenge,
-            UNIVARIATE_SKIP_DOMAIN_SIZE,
-        >(&r0_uniskip);
-
         let num_x_out_vals = split_eq_poly.E_out_current_len();
         let num_x_in_vals = split_eq_poly.E_in_current_len();
-        let iter_num_x_in_vars = if num_x_in_vals > 0 {
-            num_x_in_vals.log_2()
-        } else {
-            0
-        };
+        let iter_num_x_in_vars = num_x_in_vals.log_2();
         debug_assert!(
             num_x_out_vals > 0,
             "E_out_current_len() must be > 0 for outer streaming cache"
         );
 
-        let groups_exact = num_x_out_vals.saturating_mul(num_x_in_vals);
+        let groups_exact = num_x_out_vals
+            .checked_mul(num_x_in_vals)
+            .expect("overflow computing groups_exact");
 
         let num_parallel_chunks = if num_x_out_vals > 0 {
             core::cmp::min(
@@ -676,8 +590,8 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
                     } else {
                         F::zero()
                     };
-                    let reduced0 = F::from_montgomery_reduce::<9>(inner_sum0);
-                    let reduced_inf = F::from_montgomery_reduce::<9>(inner_sum_inf);
+                    let reduced0 = F::from_barrett_reduce::<9>(inner_sum0);
+                    let reduced_inf = F::from_barrett_reduce::<9>(inner_sum_inf);
                     task_sum0 += e_out * reduced0;
                     task_sum_inf += e_out * reduced_inf;
                 }
@@ -695,10 +609,10 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
             .collect();
 
         // Assemble global buffers and sums
-        let mut az_lo: Vec<F> = vec![F::zero(); groups_exact];
-        let mut az_hi: Vec<F> = vec![F::zero(); groups_exact];
-        let mut bz_lo: Vec<F> = vec![F::zero(); groups_exact];
-        let mut bz_hi: Vec<F> = vec![F::zero(); groups_exact];
+        let mut az_lo: Vec<F> = unsafe_allocate_zero_vec(groups_exact);
+        let mut az_hi: Vec<F> = unsafe_allocate_zero_vec(groups_exact);
+        let mut bz_lo: Vec<F> = unsafe_allocate_zero_vec(groups_exact);
+        let mut bz_hi: Vec<F> = unsafe_allocate_zero_vec(groups_exact);
         let mut t0_acc = F::zero();
         let mut t_inf_acc = F::zero();
         for chunk in &chunk_results {
@@ -712,60 +626,14 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
             bz_hi[dst_base..dst_end].copy_from_slice(&chunk.bz_hi);
         }
 
-        // Diagnostics and sequential recomputation check
-        println!(
-            "StreamingCache: E_out_current_len={}, E_in_current_len={}, iter_num_x_in_vars={}",
-            num_x_out_vals, num_x_in_vals, iter_num_x_in_vars
-        );
-        let show_in = core::cmp::min(2, num_x_in_vals);
-        for xi in 0..show_in {
-            let idx = (0 << iter_num_x_in_vars) | xi;
-            println!(
-                "StreamingCache: current_step_idx(x_out=0, x_in={}) = {}",
-                xi, idx
-            );
+        StreamingRoundCache {
+            t0: t0_acc,
+            t_inf: t_inf_acc,
+            az_lo,
+            az_hi,
+            bz_lo,
+            bz_hi,
         }
-
-        // Sequential reference recomputation
-        let mut t0_seq = F::zero();
-        let mut t_inf_seq = F::zero();
-        for x_out_val in 0..num_x_out_vals {
-            let mut inner0 = F::Unreduced::<9>::zero();
-            let mut inner_inf = F::Unreduced::<9>::zero();
-            for x_in_val in 0..num_x_in_vals {
-                let current_step_idx = (x_out_val << iter_num_x_in_vars) | x_in_val;
-                let row_inputs =
-                    R1CSCycleInputs::from_trace::<F>(preprocess, trace, current_step_idx);
-                let az0 = compute_az_r_group0(&row_inputs, &lagrange_evals_r[..]);
-                let bz0 = compute_bz_r_group0(&row_inputs, &lagrange_evals_r[..]);
-                let az1 = compute_az_r_group1(&row_inputs, &lagrange_evals_r[..]);
-                let bz1 = compute_bz_r_group1(&row_inputs, &lagrange_evals_r[..]);
-                let p0 = az0 * bz0;
-                let slope = (az1 - az0) * (bz1 - bz0);
-                let e_in = if num_x_in_vals == 0 {
-                    F::one()
-                } else if num_x_in_vals == 1 {
-                    split_eq_poly.E_in_current()[0]
-                } else {
-                    split_eq_poly.E_in_current()[x_in_val]
-                };
-                inner0 += e_in.mul_unreduced::<9>(p0);
-                inner_inf += e_in.mul_unreduced::<9>(slope);
-            }
-            let e_out = if num_x_out_vals > 0 {
-                split_eq_poly.E_out_current()[x_out_val]
-            } else {
-                F::zero()
-            };
-            let reduced0 = F::from_montgomery_reduce::<9>(inner0);
-            let reduced_inf = F::from_montgomery_reduce::<9>(inner_inf);
-            t0_seq += e_out * reduced0;
-            t_inf_seq += e_out * reduced_inf;
-        }
-        debug_assert_eq!(t0_acc, t0_seq, "StreamingCache: t0 mismatch");
-        debug_assert_eq!(t_inf_acc, t_inf_seq, "StreamingCache: t_inf mismatch");
-
-        StreamingRoundCache { t0: t0_acc, t_inf: t_inf_acc, az_lo, az_hi, bz_lo, bz_hi }
     }
 
     /// Bind the streaming round after deriving the first challenge r_0.
@@ -778,8 +646,8 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
         if let Some(ps) = self.prover_state.as_mut() {
             if let Some(cache) = ps.streaming_cache.take() {
                 let groups = cache.az_lo.len();
-                let mut az_bound: Vec<F> = vec![F::zero(); groups];
-                let mut bz_bound: Vec<F> = vec![F::zero(); groups];
+                let mut az_bound: Vec<F> = unsafe_allocate_zero_vec(groups);
+                let mut bz_bound: Vec<F> = unsafe_allocate_zero_vec(groups);
                 // Parallelize by x_out chunks; build local buffers, then assemble sequentially
                 let num_x_out_vals = ps.split_eq_poly.E_out_current_len();
                 let num_x_in_vals = ps.split_eq_poly.E_in_current_len();
@@ -883,8 +751,8 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
                     let bz0 = ps.bz[2 * g];
                     let bz1 = ps.bz[2 * g + 1];
                     let eq = eq_poly.E_out_current()[g];
-                    let t0 = eq * (az0.mul_0_optimized(bz0));
-                    let tinf = eq * ((az1 - az0).mul_0_optimized(bz1 - bz0));
+                    let t0 = eq * az0 * bz0;
+                    let tinf = eq * (az1 - az0) * (bz1 - bz0);
                     (t0, tinf)
                 })
                 .reduce(|| (F::zero(), F::zero()), |a, b| (a.0 + b.0, a.1 + b.1))
@@ -904,8 +772,8 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
                         let bz0 = ps.bz[2 * g];
                         let bz1 = ps.bz[2 * g + 1];
                         let e_in = eq_poly.E_in_current()[x1];
-                        inner0 += e_in * (az0.mul_0_optimized(bz0));
-                        inner_inf += e_in * ((az1 - az0).mul_0_optimized(bz1 - bz0));
+                        inner0 += e_in * az0 * bz0;
+                        inner_inf += e_in * (az1 - az0) * (bz1 - bz0);
                     }
                     let e_out = eq_poly.E_out_current()[x2];
                     (e_out * inner0, e_out * inner_inf)
@@ -916,27 +784,6 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
 
     pub fn final_sumcheck_evals(&self) -> [F; 2] {
         let ps = self.prover_state.as_ref();
-        if let Some(state) = ps {
-            let eq = &state.split_eq_poly;
-            let e_out_len = eq.E_out_current_len();
-            let e_in_len = eq.E_in_current_len();
-            let merged = eq.merge();
-            println!(
-                "OuterRemainingSumcheck: split-eq status: E_out_len={}, E_in_len={}, merged_len={}, merged_num_vars={}",
-                e_out_len,
-                e_in_len,
-                merged.len(),
-                merged.get_num_vars()
-            );
-            // Fully bound criterion: merged eq has zero variables (length 1 is expected)
-            debug_assert_eq!(
-                merged.get_num_vars(),
-                0,
-                "split-eq not fully bound at final_sumcheck_evals: merged_num_vars != 0 (E_out_len={}, E_in_len={})",
-                e_out_len,
-                e_in_len
-            );
-        }
         let az0 = ps
             .and_then(|s| {
                 if !s.az.is_empty() {
@@ -965,7 +812,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for OuterRemainingSumch
     }
 
     fn num_rounds(&self) -> usize {
-        self.total_rounds
+        1 + self.num_cycles_bits
     }
 
     fn input_claim(&self) -> F {
@@ -1014,16 +861,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for OuterRemainingSumch
         accumulator: Option<std::rc::Rc<std::cell::RefCell<VerifierOpeningAccumulator<F>>>>,
         r_tail: &[F::Challenge],
     ) -> F {
-        let tau = self
-            .tau
-            .as_ref()
-            .expect("Verifier tau not set in OuterRemainingSumcheck");
-
         // Reconstruct full r = [r0] + r_tail, then reverse (outer is bound from the top)
         let mut r_full: Vec<F::Challenge> = Vec::with_capacity(1 + r_tail.len());
         r_full.push(self.r0_uniskip);
         r_full.extend_from_slice(r_tail);
         let r_reversed: Vec<F::Challenge> = r_full.into_iter().rev().collect();
+
+        let r_tail_reversed: Vec<F::Challenge> = r_tail.iter().rev().copied().collect();
 
         let acc_cell = accumulator.as_ref().expect("accumulator required");
         let acc_ref = acc_cell.borrow();
@@ -1032,13 +876,21 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for OuterRemainingSumch
         let (_, claim_Bz) = acc_ref
             .get_virtual_polynomial_opening(VirtualPolynomial::SpartanBz, SumcheckId::SpartanOuter);
 
-        // After the uni-skip first round, the Z dimension (corresponding to tau_high/r0) is handled
-        // separately via L_Z(tau_high). The remainder sumcheck should use Eq over tau_low only.
-        debug_assert!(tau.len() >= 1 && r_reversed.len() >= 1);
-        let tau_low = &tau[..tau.len() - 1];
-        let r_no_z = &r_reversed[..r_reversed.len() - 1];
-        let tau_bound_rx = EqPolynomial::mle(tau_low, r_no_z);
-        tau_bound_rx * claim_Az * claim_Bz
+        // After the uni-skip first round, the Y dimension (corresponding to tau_high/r0) is handled
+        // separately via L_Y(tau_high). The remainder sumcheck should use Eq over tau_low only.
+        debug_assert!(self.tau.len() >= 1 && r_reversed.len() >= 1);
+
+        let tau_high = &self.tau[self.tau.len() - 1];
+        let tau_high_bound_r0 = LagrangePolynomial::<F>::lagrange_kernel::<
+            F::Challenge,
+            UNIVARIATE_SKIP_DOMAIN_SIZE,
+        >(tau_high, &self.r0_uniskip);
+
+        let tau_low = &self.tau[..self.tau.len() - 1];
+        // let r_no_y = &r_reversed[..r_reversed.len() - 1];
+        let tau_bound_rx = EqPolynomial::mle(tau_low, &r_tail_reversed);
+
+        tau_high_bound_r0 * tau_bound_rx * claim_Az * claim_Bz
     }
 
     fn normalize_opening_point(&self, r_tail: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {

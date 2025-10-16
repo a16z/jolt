@@ -9,70 +9,131 @@ use std::ops::{Mul, Sub};
 pub struct LagrangePolynomial<F: JoltField>(PhantomData<F>);
 
 impl<F: JoltField> LagrangePolynomial<F> {
-    /// Evaluate a Lagrange-interpolated polynomial at point `r` given values on symmetric grid.
-    /// Input: `values[i] = p(start + i)` where `start = -floor((N-1)/2)`.
-    /// Returns: `p(r)` using the barycentric formula specialized to unit-spaced nodes.
-    ///
-    /// Implementation notes:
-    /// - Barycentric weights use unit-spacing form: `w_i = (-1)^{N-1-i} / (i!(N-1-i)!)`.
-    /// - Factorials are computed in native u64 once; denominators are converted to the field and batch-inverted
-    ///   via prefix/suffix products (one inversion total). This avoids building inverse-factorials in the field.
-    /// - Distances `r - x_i` are inverted via prefix/suffix products (one inversion total).
-    /// - One final inversion for normalization. Total: 3 inversions. Stack-only, early-exit if `r` hits a node.
-    #[inline]
-    pub fn evaluate<C, const N: usize>(values: &[F; N], r: &C) -> F
+    /// Univariate Lagrange kernel on the symmetric integer grid.
+    /// Computes K(x, y) = Σ_i L_i(x) · L_i(y), where {L_i} are Lagrange basis
+    /// polynomials for nodes start..start+N-1 with start = -floor((N-1)/2).
+    /// Returns 1 if x and y coincide at the same node, else 0 at nodes; otherwise
+    /// the barycentric kernel value. Constraint: N <= 20.
+    pub fn lagrange_kernel<C, const N: usize>(x: &C, y: &C) -> F
     where
         C: Copy + Send + Sync + Sub<F, Output = F>,
         F: Mul<C, Output = F>,
     {
         debug_assert!(N > 0, "N must be positive");
-        debug_assert!(N <= 20, "evaluate intended for small N (<= 20)");
+        debug_assert!(N <= 20, "lagrange_kernel intended for small N (<= 20)");
+        // Grid nodes are consecutive integers centered at 0:
+        // x_i = start + i where start = -floor((N-1)/2)
         let d = N - 1;
         let start: i64 = -((d / 2) as i64);
 
-        // Build distances d_i = r - x_i with x_i = start + i, early-exiting if r hits a node.
+        // Distances to nodes for x and y; detect on-node early exits
+        let mut dists_x = [F::zero(); N];
+        let mut dists_y = [F::zero(); N];
+        let mut base_x = *x - F::from_i64(start);
+        let mut base_y = *y - F::from_i64(start);
+        let one = F::one();
+        let mut ix: Option<usize> = None;
+        let mut iy: Option<usize> = None;
+        let mut i: usize = 0;
+        while i < N {
+            let dx = base_x;
+            let dy = base_y;
+            if dx == F::zero() {
+                ix = Some(i);
+            }
+            if dy == F::zero() {
+                iy = Some(i);
+            }
+            dists_x[i] = dx;
+            dists_y[i] = dy;
+            base_x -= one;
+            base_y -= one;
+            i += 1;
+        }
+
+        // If both points are at nodes, equality is Kronecker delta
+        if let (Some(ix), Some(iy)) = (ix, iy) {
+            return if ix == iy { F::one() } else { F::zero() };
+        }
+
+        // Precompute inverse denominators (shared helper)
+        let inv_denom = Self::inv_denom::<N>();
+
+        // If exactly one is at a node, say x at node i, then result is L_i(y)
+        if let Some(ix) = ix {
+            // Compute L_i(y) via barycentric terms
+            let (terms_y, sum_y) = Self::bary_terms_from_dists::<N>(&dists_y, &inv_denom);
+            return terms_y[ix] * sum_y.inverse().unwrap();
+        }
+
+        if let Some(iy) = iy {
+            // Symmetric: result is L_iy(x)
+            // Symmetric: compute L_iy(x)
+            let (terms_x, sum_x) = Self::bary_terms_from_dists::<N>(&dists_x, &inv_denom);
+            return terms_x[iy] * sum_x.inverse().unwrap();
+        }
+
+        // General case: fused kernel
+        // Use shared barycentric terms for x and y, then combine
+        let (terms_x, s_x) = Self::bary_terms_from_dists::<N>(&dists_x, &inv_denom);
+        let (terms_y, s_y) = Self::bary_terms_from_dists::<N>(&dists_y, &inv_denom);
+        let mut num = F::zero();
+        let mut i = 0usize;
+        while i < N {
+            num += terms_x[i] * terms_y[i];
+            i += 1;
+        }
+
+        // eq(x,y) = num / (Sx * Sy)
+        let inv_den = (s_x * s_y).inverse().unwrap();
+        num * inv_den
+    }
+
+    /// Start of the symmetric integer grid.
+    /// Formula: start = −⌊(N−1)/2⌋.
+    #[inline]
+    fn start_i64<const N: usize>() -> i64 {
+        let d = N - 1;
+        -((d / 2) as i64)
+    }
+
+    /// Distances to grid nodes.
+    /// Grid nodes: xᵢ = start + i. Returns ([dᵢ], hit) where dᵢ = r − xᵢ and
+    /// hit = Some(i) if dᵢ = 0.
+    #[inline]
+    fn distances<C, const N: usize>(r: &C) -> ([F; N], Option<usize>)
+    where
+        C: Copy + Sub<F, Output = F>,
+    {
+        let start = Self::start_i64::<N>();
         let mut dists = [F::zero(); N];
         let mut base = *r - F::from_i64(start);
         let one = F::one();
+        let mut hit: Option<usize> = None;
         let mut i: usize = 0;
         while i < N {
             let di = base;
             if di == F::zero() {
-                // r equals x_i, return p(r) = values[i]
-                return values[i];
+                hit = Some(i);
             }
             dists[i] = di;
-            base -= one; // decrement by 1 each step
+            base -= one;
             i += 1;
         }
+        (dists, hit)
+    }
 
-        // Prefix products (excluding i) and total product
-        let mut prefix = [F::one(); N];
-        i = 1;
-        while i < N {
-            prefix[i] = prefix[i - 1] * dists[i - 1];
-            i += 1;
-        }
-        let inv_prod = (prefix[N - 1] * dists[N - 1]).inverse().unwrap();
-
-        // Suffix products (excluding i)
-        let mut suffix = [F::one(); N];
-        let mut j: isize = (N as isize) - 2;
-        while j >= 0 {
-            let u = j as usize;
-            suffix[u] = suffix[u + 1] * dists[u + 1];
-            j -= 1;
-        }
-
-        // Build denominators denom_i = i! * (N-1-i)!; pull signed values and convert once to field
+    /// Inverse denominators for barycentric weights.
+    /// Weights: wᵢ = (−1)^(N−1−i) / (i! · (N−1−i)!). Returns [wᵢ].
+    #[inline]
+    fn inv_denom<const N: usize>() -> [F; N] {
         let den_i64 = LagrangeHelper::den_row_i64::<N>();
         let mut denom = [F::zero(); N];
-        i = 0;
+        let mut i = 0usize;
         while i < N {
             denom[i] = F::from_i64(den_i64[i]);
             i += 1;
         }
-        // batch invert denom -> inv_denom using left prefixes and a single inversion
         let mut left = [F::one(); N];
         i = 1;
         while i < N {
@@ -89,21 +150,71 @@ impl<F: JoltField> LagrangePolynomial<F> {
             right *= denom[u];
             t -= 1;
         }
+        inv_denom
+    }
 
-        // Accumulate numerator and denominator of barycentric form: term_i = w_i/(r-x_i)
-        let mut num = F::zero();
-        let mut den_sum = F::zero();
-        i = 0;
+    /// Unnormalized barycentric terms and their sum.
+    /// Given [dᵢ] and [wᵢ]: termᵢ = wᵢ / dᵢ, S = Σᵢ termᵢ.
+    /// Normalized basis: Lᵢ(r) = termᵢ / S.
+    #[inline]
+    fn bary_terms_from_dists<const N: usize>(dists: &[F; N], inv_denom: &[F; N]) -> ([F; N], F) {
+        // prefix/suffix and total inverse product for 1/(r - x_i)
+        let mut prefix = [F::one(); N];
+        let mut i = 1usize;
         while i < N {
-            let w = inv_denom[i];
-            let inv_di = prefix[i] * suffix[i] * inv_prod;
-            let term = w * inv_di;
-            den_sum += term;
-            num += values[i] * term;
+            prefix[i] = prefix[i - 1] * dists[i - 1];
             i += 1;
         }
-        let inv_den_sum = den_sum.inverse().unwrap();
-        num * inv_den_sum
+        let inv_prod = (prefix[N - 1] * dists[N - 1]).inverse().unwrap();
+
+        let mut suffix = [F::one(); N];
+        let mut j: isize = (N as isize) - 2;
+        while j >= 0 {
+            let u = j as usize;
+            suffix[u] = suffix[u + 1] * dists[u + 1];
+            j -= 1;
+        }
+
+        let mut terms = [F::zero(); N];
+        let mut sum = F::zero();
+        i = 0;
+        while i < N {
+            let inv_di = prefix[i] * suffix[i] * inv_prod;
+            let term = inv_denom[i] * inv_di;
+            terms[i] = term;
+            sum += term;
+            i += 1;
+        }
+        (terms, sum)
+    }
+
+    /// Evaluate p(r) from values on the symmetric grid using barycentric Lagrange.
+    /// Nodes: xᵢ = start + i, with start = −⌊(N−1)/2⌋. Weights: wᵢ = (−1)^(N−1−i)/(i!·(N−1−i)!).
+    /// Basis: Lᵢ(r) = (wᵢ/(r−xᵢ)) / Σⱼ (wⱼ/(r−xⱼ)).
+    /// Value: p(r) = Σᵢ Lᵢ(r)·values[i]. If r = x_k, p(r) = values[k].
+    /// Uses prefix/suffix products and batch inversion (≈3 field inversions total).
+    #[inline]
+    pub fn evaluate<C, const N: usize>(values: &[F; N], r: &C) -> F
+    where
+        C: Copy + Send + Sync + Sub<F, Output = F>,
+        F: Mul<C, Output = F>,
+    {
+        debug_assert!(N > 0, "N must be positive");
+        debug_assert!(N <= 20, "evaluate intended for small N (<= 20)");
+        let (dists, hit) = Self::distances::<C, N>(r);
+        if let Some(i) = hit {
+            return values[i];
+        }
+        let inv_denom = Self::inv_denom::<N>();
+        let (terms, sum) = Self::bary_terms_from_dists::<N>(&dists, &inv_denom);
+        let inv_sum = sum.inverse().unwrap();
+        let mut num = F::zero();
+        let mut i = 0usize;
+        while i < N {
+            num += values[i] * terms[i];
+            i += 1;
+        }
+        num * inv_sum
     }
 
     /// Compute all Lagrange basis polynomial values `[L_i(r)]` at point `r` for symmetric grid of size `N`.
@@ -111,7 +222,6 @@ impl<F: JoltField> LagrangePolynomial<F> {
     /// Returns: `[L_0(r), L_1(r), ..., L_{N-1}(r)]` such that `p(r) = sum_i L_i(r) * p(x_i)`.
     ///
     /// **Constraint**: N <= 20 (all we need for now)
-    #[inline]
     pub fn evals<C, const N: usize>(r: &C) -> [F; N]
     where
         C: Copy + Send + Sync + Sub<F, Output = F>,
@@ -122,90 +232,22 @@ impl<F: JoltField> LagrangePolynomial<F> {
             "N cannot be greater than 20 for current implementation"
         );
         debug_assert!(N > 0, "N must be positive");
-        let d = N - 1;
-        let start: i64 = -((d / 2) as i64);
-
-        // Build distances d_i = r - x_i with x_i = start + i, early-out with one-hot basis
-        let mut dists = [F::zero(); N];
-        let mut base = *r - F::from_i64(start);
-        let one = F::one();
+        let (dists, hit) = Self::distances::<C, N>(r);
+        if let Some(i) = hit {
+            let mut out = [F::zero(); N];
+            out[i] = F::one();
+            return out;
+        }
+        let inv_denom = Self::inv_denom::<N>();
+        let (terms, sum) = Self::bary_terms_from_dists::<N>(&dists, &inv_denom);
+        let inv_sum = sum.inverse().unwrap();
+        let mut out = [F::zero(); N];
         let mut i = 0usize;
         while i < N {
-            let di = base;
-            if di == F::zero() {
-                let mut out = [F::zero(); N];
-                out[i] = F::one();
-                return out;
-            }
-            dists[i] = di;
-            base -= one;
+            out[i] = terms[i] * inv_sum;
             i += 1;
         }
-
-        // Prefix products (excluding i) and total product
-        let mut prefix = [F::one(); N];
-        i = 1;
-        while i < N {
-            prefix[i] = prefix[i - 1] * dists[i - 1];
-            i += 1;
-        }
-        let inv_prod = (prefix[N - 1] * dists[N - 1]).inverse().unwrap();
-
-        // Suffix products (excluding i)
-        let mut suffix = [F::one(); N];
-        let mut j: isize = (N as isize) - 2;
-        while j >= 0 {
-            let u = j as usize;
-            suffix[u] = suffix[u + 1] * dists[u + 1];
-            j -= 1;
-        }
-
-        // Build denominators denom_i = i! * (N-1-i)!; pull signed values and convert once to field
-        let den_i64 = LagrangeHelper::den_row_i64::<N>();
-        let mut denom = [F::zero(); N];
-        i = 0;
-        while i < N {
-            denom[i] = F::from_i64(den_i64[i]);
-            i += 1;
-        }
-        // batch invert denom -> inv_denom using left prefixes and a single inversion
-        let mut left = [F::one(); N];
-        i = 1;
-        while i < N {
-            left[i] = left[i - 1] * denom[i - 1];
-            i += 1;
-        }
-        let inv_total = (left[N - 1] * denom[N - 1]).inverse().unwrap();
-        let mut inv_denom = [F::zero(); N];
-        let mut right = F::one();
-        let mut t: isize = (N as isize) - 1;
-        while t >= 0 {
-            let u = t as usize;
-            inv_denom[u] = left[u] * right * inv_total;
-            right *= denom[u];
-            t -= 1;
-        }
-
-        // Unnormalized basis terms and their sum using inv_den[i] as weights
-        let mut tmp = [F::zero(); N];
-        let mut sum = F::zero();
-        i = 0;
-        while i < N {
-            let w = inv_denom[i];
-            let inv_di = prefix[i] * suffix[i] * inv_prod;
-            let term = w * inv_di;
-            tmp[i] = term;
-            sum += term;
-            i += 1;
-        }
-        let inv_sum = sum.inverse().unwrap();
-        let mut outv = [F::zero(); N];
-        i = 0;
-        while i < N {
-            outv[i] = tmp[i] * inv_sum;
-            i += 1;
-        }
-        outv
+        out
     }
 
     /// Compute evaluations of the interpolated polynomial at multiple points.
@@ -761,6 +803,38 @@ mod tests {
     }
 
     #[test]
+    fn lagrange_kernel_matches_evals_and_nodes() {
+        fn check_kernel_for<const N: usize>() {
+            for r_int in -2..=2 {
+                for s_int in -2..=2 {
+                    let r = F::from_i64(r_int);
+                    let s = F::from_i64(s_int);
+                    let k = LagrangePolynomial::<F>::lagrange_kernel::<F, N>(&r, &s);
+                    let br = LagrangePolynomial::<F>::evals::<F, N>(&r);
+                    let bs = LagrangePolynomial::<F>::evals::<F, N>(&s);
+                    let mut dot = F::from_u64(0);
+                    for i in 0..N { dot += br[i] * bs[i]; }
+                    assert_eq!(k, dot);
+                    let ks = LagrangePolynomial::<F>::lagrange_kernel::<F, N>(&s, &r);
+                    assert_eq!(k, ks);
+                }
+            }
+            let nodes = grid_nodes::<N>();
+            for i in 0..N { for j in 0..N {
+                let k = LagrangePolynomial::<F>::lagrange_kernel::<F, N>(&nodes[i], &nodes[j]);
+                if i == j { assert_eq!(k, F::from_u64(1)); } else { assert_eq!(k, F::from_u64(0)); }
+            }}
+        }
+
+        check_kernel_for::<1>();
+        check_kernel_for::<2>();
+        check_kernel_for::<3>();
+        check_kernel_for::<8>();
+        check_kernel_for::<11>();
+        check_kernel_for::<20>();
+    }
+
+    #[test]
     fn interpolate_roundtrip_and_monomials() {
         const N: usize = 9;
         let coeffs: [F; N] = [
@@ -848,7 +922,7 @@ mod tests {
 
         let d = N - 1;
         let start: i64 = -((d / 2) as i64); // -4
-        // Base window values p(start + i)
+                                            // Base window values p(start + i)
         let base_values: [F; N] = core::array::from_fn(|i| {
             let xi = F::from_i64(start + i as i64);
             eval_poly(&coeffs, xi)

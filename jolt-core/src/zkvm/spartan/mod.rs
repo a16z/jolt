@@ -45,7 +45,6 @@ struct Stage1State<F: JoltField> {
     claim_after_first: F,
     r0: F::Challenge,
     tau: Vec<<F as JoltField>::Challenge>,
-    total_rounds_remainder: usize,
 }
 
 impl<F, ProofTranscript, PCS> SumcheckStages<F, ProofTranscript, PCS> for SpartanDag<F>
@@ -64,21 +63,21 @@ where
     ) -> Result<(), anyhow::Error> {
         // Stage 1a: Uni-skip first round only
         let key = self.key.clone();
-        let num_rounds_x = key.num_rows_bits();
+        let num_rounds_x: usize = key.num_rows_bits();
 
         // Capture transcript and accumulator handles up-front to avoid borrowing state_manager later
-        let transcript_rc = state_manager.get_transcript();
-        let _accumulator = state_manager.get_prover_accumulator();
+        let transcript = state_manager.get_transcript();
 
-        let tau: Vec<F::Challenge> = transcript_rc
+        let tau: Vec<F::Challenge> = transcript
             .borrow_mut()
             .challenge_vector_optimized::<F>(num_rounds_x);
 
         // Uni-skip first round using canonical instance + helper
         let mut uniskip_instance = OuterUniSkipInstance::<F>::new_prover(state_manager, &tau);
+
         let (first_round_proof, r0, claim_after_first) = prove_uniskip_round::<F, ProofTranscript, _>(
             &mut uniskip_instance,
-            &mut *transcript_rc.borrow_mut(),
+            &mut *transcript.borrow_mut(),
         );
 
         // Store first round
@@ -92,7 +91,6 @@ where
             claim_after_first,
             r0,
             tau,
-            total_rounds_remainder: num_rounds_x - 1,
         });
 
         Ok(())
@@ -122,6 +120,9 @@ where
             }
         };
 
+        // print the first round proof uni poly
+        println!("First round proof uni poly: {:?}", first_round.uni_poly);
+
         let (r0, claim_after_first) = first_round
             .verify::<UNIVARIATE_SKIP_DOMAIN_SIZE, FIRST_ROUND_POLY_NUM_COEFFS>(
                 FIRST_ROUND_POLY_NUM_COEFFS - 1,
@@ -133,9 +134,10 @@ where
         self.stage1_state = Some(Stage1State {
             claim_after_first,
             r0,
-            tau: tau.clone(),
-            total_rounds_remainder: num_rounds_x - 1,
+            tau,
         });
+
+        println!("Uni skip verified! Output claim: {:?}, r0: {:?}", claim_after_first, r0);
 
         Ok(())
     }
@@ -148,14 +150,12 @@ where
         let mut instances: Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> = Vec::new();
         if let Some(st) = self.stage1_state.take() {
             let num_cycles_bits = self.key.num_steps.ilog2() as usize;
-            let tau_low: Vec<F::Challenge> = st.tau[0..st.tau.len() - 1].to_vec();
             let outer_remaining = OuterRemainingSumcheck::new_prover(
                 state_manager,
-                st.claim_after_first,
-                &tau_low,
-                st.r0,
-                st.total_rounds_remainder,
                 num_cycles_bits,
+                &st.tau,
+                st.r0,
+                st.claim_after_first,
             );
             instances.push(Box::new(outer_remaining));
         }
@@ -172,11 +172,10 @@ where
         if let Some(st) = self.stage1_state.take() {
             let num_cycles_bits = self.key.num_steps.ilog2() as usize;
             let outer_remaining = OuterRemainingSumcheck::new_verifier(
-                st.claim_after_first,
-                st.r0,
-                st.total_rounds_remainder,
-                st.tau,
                 num_cycles_bits,
+                st.tau,
+                st.r0,
+                st.claim_after_first,
             );
             instances.push(Box::new(outer_remaining));
         }
