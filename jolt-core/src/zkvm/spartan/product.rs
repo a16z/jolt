@@ -7,7 +7,9 @@ use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::lagrange_poly::{LagrangeHelper, LagrangePolynomial};
-use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation};
+use crate::poly::multilinear_polynomial::{
+    BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
+};
 use crate::poly::opening_proof::{
     OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
 };
@@ -21,10 +23,10 @@ use crate::zkvm::dag::state_manager::StateManager;
 use crate::zkvm::instruction::{CircuitFlags, InstructionFlags};
 use crate::zkvm::r1cs::inputs::generate_virtual_product_witnesses;
 use crate::zkvm::witness::VirtualPolynomial;
+use crate::zkvm::JoltSharedPreprocessing;
 use rayon::prelude::*;
 use std::sync::Arc;
 use tracer::instruction::Cycle;
-use crate::zkvm::JoltSharedPreprocessing;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[cfg_attr(feature = "allocative", derive(Allocative))]
@@ -578,9 +580,9 @@ pub struct ProductVirtualRemainder<F: JoltField> {
     /// Claim after the univariate-skip first round, updated every round
     pub input_claim: F,
     /// The tau vector (length 1 + num_cycles_bits), available to prover and verifier
-    pub tau: Vec<F::Challenge>, 
+    pub tau: Vec<F::Challenge>,
     /// Prover-only state (None on verifier)
-    pub prover_state: Option<ProductVirtualProverState<F>>, 
+    pub prover_state: Option<ProductVirtualProverState<F>>,
 }
 
 #[derive(Clone, Debug)]
@@ -597,10 +599,10 @@ pub struct ProductVirtualStreamingCache<F: JoltField> {
 pub struct ProductVirtualProverState<F: JoltField> {
     pub split_eq_poly: GruenSplitEqPolynomial<F>,
     pub preprocess: Arc<JoltSharedPreprocessing>,
-    pub trace: Arc<Vec<Cycle>>, 
+    pub trace: Arc<Vec<Cycle>>,
     pub left: DensePolynomial<F>,
     pub right: DensePolynomial<F>,
-    pub streaming_cache: Option<ProductVirtualStreamingCache<F>>, 
+    pub streaming_cache: Option<ProductVirtualStreamingCache<F>>,
 }
 
 impl<F: JoltField> ProductVirtualRemainder<F> {
@@ -618,16 +620,20 @@ impl<F: JoltField> ProductVirtualRemainder<F> {
         let r_cycle = {
             let acc = state_manager.get_prover_accumulator();
             // Retrieve any outer-opened VP; use Product for consistency
-            let (outer_opening, _) = acc
-                .borrow()
-                .get_virtual_polynomial_opening(VirtualPolynomial::Product, SumcheckId::SpartanOuter);
+            let (outer_opening, _) = acc.borrow().get_virtual_polynomial_opening(
+                VirtualPolynomial::Product,
+                SumcheckId::SpartanOuter,
+            );
             let (r_cycle, _rx) = outer_opening.r.split_at(num_cycles_bits);
             r_cycle.to_vec()
         };
         let split_eq_poly = GruenSplitEqPolynomial::new(&r_cycle, BindingOrder::LowToHigh);
 
         // Compute Lagrange weights at r0 for fusing the 5 product types
-        let weights = LagrangePolynomial::<F>::evals::<F::Challenge, PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE>(&r0_uniskip);
+        let weights = LagrangePolynomial::<F>::evals::<
+            F::Challenge,
+            PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
+        >(&r0_uniskip);
 
         let streaming_cache = Self::compute_streaming_round_cache(trace, &weights, &split_eq_poly);
 
@@ -894,10 +900,22 @@ impl<F: JoltField> ProductVirtualRemainder<F> {
     pub fn final_sumcheck_evals(&self) -> [F; 2] {
         let ps_opt = self.prover_state.as_ref();
         let l0 = ps_opt
-            .and_then(|s| if !s.left.is_empty() { Some(s.left[0]) } else { None })
+            .and_then(|s| {
+                if !s.left.is_empty() {
+                    Some(s.left[0])
+                } else {
+                    None
+                }
+            })
             .unwrap_or(F::zero());
         let r0 = ps_opt
-            .and_then(|s| if !s.right.is_empty() { Some(s.right[0]) } else { None })
+            .and_then(|s| {
+                if !s.right.is_empty() {
+                    Some(s.right[0])
+                } else {
+                    None
+                }
+            })
             .unwrap_or(F::zero());
         [l0, r0]
     }
@@ -961,7 +979,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ProductVirtualRemai
         let acc = accumulator.as_ref().expect("accumulator required").borrow();
 
         // Lagrange weights at r0
-        let w = LagrangePolynomial::<F>::evals::<F::Challenge, PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE>(&self.r0_uniskip);
+        let w = LagrangePolynomial::<F>::evals::<
+            F::Challenge,
+            PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
+        >(&self.r0_uniskip);
 
         // Per-type evals at fused SumcheckId
         let product_types = [
@@ -975,8 +996,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ProductVirtualRemai
         let mut right_eval = F::zero();
         for (i, pt) in product_types.iter().enumerate() {
             let FactorPolynomials(lp, rp) = pt.get_factor_polynomials();
-            let (_, le) = acc.get_virtual_polynomial_opening(lp, SumcheckId::ProductVirtualizationFused);
-            let (_, mut re) = acc.get_virtual_polynomial_opening(rp, SumcheckId::ProductVirtualizationFused);
+            let (_, le) =
+                acc.get_virtual_polynomial_opening(lp, SumcheckId::ProductVirtualizationFused);
+            let (_, mut re) =
+                acc.get_virtual_polynomial_opening(rp, SumcheckId::ProductVirtualizationFused);
             if matches!(pt, VirtualProductType::ShouldJump) {
                 re = F::one() - re;
             }
@@ -1032,14 +1055,26 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ProductVirtualRemai
             let FactorPolynomials(lp, rp) = pt.get_factor_polynomials();
 
             // Evaluate bound polynomials at r_cycle and append claims
-            let le = MultilinearPolynomial::<F>::evaluate(&l, &r_cycle[..]);
-            let mut re = MultilinearPolynomial::<F>::evaluate(&r, &r_cycle[..]);
+            let le = MultilinearPolynomial::<F>::evaluate(&l, &r_cycle);
+            let mut re = MultilinearPolynomial::<F>::evaluate(&r, &r_cycle);
             if matches!(pt, VirtualProductType::ShouldJump) {
                 re = F::one() - re;
             }
             let mut acc = accumulator.borrow_mut();
-            acc.append_virtual(transcript, lp, SumcheckId::ProductVirtualizationFused, r_cycle_op.clone(), le);
-            acc.append_virtual(transcript, rp, SumcheckId::ProductVirtualizationFused, r_cycle_op.clone(), re);
+            acc.append_virtual(
+                transcript,
+                lp,
+                SumcheckId::ProductVirtualizationFused,
+                r_cycle_op.clone(),
+                le,
+            );
+            acc.append_virtual(
+                transcript,
+                rp,
+                SumcheckId::ProductVirtualizationFused,
+                r_cycle_op.clone(),
+                re,
+            );
         }
     }
 
@@ -1062,8 +1097,18 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ProductVirtualRemai
         let mut acc = accumulator.borrow_mut();
         for pt in product_types.iter() {
             let FactorPolynomials(lp, rp) = pt.get_factor_polynomials();
-            acc.append_virtual(transcript, lp, SumcheckId::ProductVirtualizationFused, r_cycle_op.clone());
-            acc.append_virtual(transcript, rp, SumcheckId::ProductVirtualizationFused, r_cycle_op.clone());
+            acc.append_virtual(
+                transcript,
+                lp,
+                SumcheckId::ProductVirtualizationFused,
+                r_cycle_op.clone(),
+            );
+            acc.append_virtual(
+                transcript,
+                rp,
+                SumcheckId::ProductVirtualizationFused,
+                r_cycle_op.clone(),
+            );
         }
     }
 }
