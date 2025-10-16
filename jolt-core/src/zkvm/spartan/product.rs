@@ -21,8 +21,6 @@ use crate::zkvm::r1cs::inputs::generate_virtual_product_witnesses;
 use crate::zkvm::witness::VirtualPolynomial;
 use rayon::prelude::*;
 
-// TODO: apply univariate skip first round to fuse all 5 sumchecks into one
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[cfg_attr(feature = "allocative", derive(Allocative))]
 pub enum VirtualProductType {
@@ -387,13 +385,34 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ProductVirtualizati
     }
 }
 
-// Also the domain size
+// NEW: univariate skip for product virtualization, fusing 5 sumchecks into one and reducing memory usage
+// Eventually will supersede the above (old) implementation.
+// For now limit the addition logic to this file (and maybe helper files like univariate_skip.rs and inputs.rs).
+
+// Idea: we define a "combined" left and right polynomial
+// Left(x, y) = \sum_i L(y, i) * Left_i(x),
+// Right(x, y) = \sum_i R(y, i) * Right_i(x),
+// where Left_i(x) = one of the five left polynomials, Right_i(x) = one of the five right polynomials
+// Indexing is over i \in {-2, -1, 0, 1, 2}, though this gets mapped to the 0th, 1st, ..., 4th polynomial
+//
+// We also need to define the combined claim:
+// claim(y) = \sum_i L(y, i) * claim_i,
+// where claim_i is the claim of the i-th product virtualization sumcheck
+//
+// The product virtualization sumcheck is then:
+// \sum_y L(tau_high, y) * \sum_x eq(tau_low, x) * Left(x, y) * Right(x, y)
+//   = claim(tau_high)
+
+
+// First, we define our constants
+
 const NUM_PRODUCT_VIRTUAL: usize = 5;
+const PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE: usize = NUM_PRODUCT_VIRTUAL;
 const PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE: usize = NUM_PRODUCT_VIRTUAL - 1;
 const PRODUCT_VIRTUAL_UNIVARIATE_SKIP_EXTENDED_DOMAIN_SIZE: usize =
     2 * PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE + 1;
 
-/// Uni-skip instance for Spartan outer sumcheck, computing the first-round polynomial only.
+/// Uni-skip instance for product virtualization, computing the first-round polynomial only.
 pub struct ProductVirtualUniSkipInstance<F: JoltField> {
     tau: Vec<F::Challenge>,
     /// Prover-only state (None on verifier)

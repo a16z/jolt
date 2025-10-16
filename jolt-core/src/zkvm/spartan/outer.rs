@@ -482,22 +482,22 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
     ///
     /// Recall that we need to compute
     ///
-    /// `t_i(0) = \sum_{x_out} E_out[x_out] \sum_{x_in} E_in[x_in] * (unbound_coeffs_a(x_out, x_in,
-    /// 0, r) * unbound_coeffs_b(x_out, x_in, 0, r) - unbound_coeffs_c(x_out, x_in, 0, r))`
+    /// `t_i(0) = \sum_{x_out} E_out[x_out] \sum_{x_in} E_in[x_in] *
+    ///       unbound_coeffs_a(x_out, x_in, 0, r) * unbound_coeffs_b(x_out, x_in, 0, r)`
     ///
     /// and
     ///
     /// `t_i(∞) = \sum_{x_out} E_out[x_out] \sum_{x_in} E_in[x_in] * (unbound_coeffs_a(x_out,
     /// x_in, ∞, r) * unbound_coeffs_b(x_out, x_in, ∞, r))`
     ///
-    /// Here the "_a,b,c" subscript indicates the coefficients of `unbound_coeffs` corresponding to
-    /// Az, Bz, Cz respectively. Note that we index with x_out being the MSB here.
+    /// Here the "_a,b" subscript indicates the coefficients of `unbound_coeffs` corresponding to
+    /// Az and Bz respectively. Note that we index with x_out being the MSB here.
     ///
     /// Importantly, since the eval at `r` is not cached, we will need to recompute it via another
     /// sum
     ///
-    /// `unbound_coeffs_{a,b,c}(x_out, x_in, {0,∞}, r) = \sum_{y in D} eq(r, y) *
-    /// unbound_coeffs_{a,b,c}(x_out, x_in, {0,∞}, y)`
+    /// `unbound_coeffs_{a,b}(x_out, x_in, {0,∞}, r) = \sum_{y in D} Lagrange(r, y) *
+    /// unbound_coeffs_{a,b}(x_out, x_in, {0,∞}, y)`
     ///
     /// (and the eval at ∞ is computed as (eval at 1) - (eval at 0))
     #[inline]
@@ -590,8 +590,8 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
                     } else {
                         F::zero()
                     };
-                    let reduced0 = F::from_barrett_reduce::<9>(inner_sum0);
-                    let reduced_inf = F::from_barrett_reduce::<9>(inner_sum_inf);
+                    let reduced0 = F::from_montgomery_reduce::<9>(inner_sum0);
+                    let reduced_inf = F::from_montgomery_reduce::<9>(inner_sum_inf);
                     task_sum0 += e_out * reduced0;
                     task_sum_inf += e_out * reduced_inf;
                 }
@@ -861,24 +861,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for OuterRemainingSumch
         accumulator: Option<std::rc::Rc<std::cell::RefCell<VerifierOpeningAccumulator<F>>>>,
         r_tail: &[F::Challenge],
     ) -> F {
-        // Reconstruct full r = [r0] + r_tail, then reverse (outer is bound from the top)
-        let mut r_full: Vec<F::Challenge> = Vec::with_capacity(1 + r_tail.len());
-        r_full.push(self.r0_uniskip);
-        r_full.extend_from_slice(r_tail);
-        let r_reversed: Vec<F::Challenge> = r_full.into_iter().rev().collect();
-
-        let r_tail_reversed: Vec<F::Challenge> = r_tail.iter().rev().copied().collect();
-
         let acc_cell = accumulator.as_ref().expect("accumulator required");
         let acc_ref = acc_cell.borrow();
         let (_, claim_Az) = acc_ref
             .get_virtual_polynomial_opening(VirtualPolynomial::SpartanAz, SumcheckId::SpartanOuter);
         let (_, claim_Bz) = acc_ref
             .get_virtual_polynomial_opening(VirtualPolynomial::SpartanBz, SumcheckId::SpartanOuter);
-
-        // After the uni-skip first round, the Y dimension (corresponding to tau_high/r0) is handled
-        // separately via L_Y(tau_high). The remainder sumcheck should use Eq over tau_low only.
-        debug_assert!(self.tau.len() >= 1 && r_reversed.len() >= 1);
 
         let tau_high = &self.tau[self.tau.len() - 1];
         let tau_high_bound_r0 = LagrangePolynomial::<F>::lagrange_kernel::<
@@ -887,10 +875,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for OuterRemainingSumch
         >(tau_high, &self.r0_uniskip);
 
         let tau_low = &self.tau[..self.tau.len() - 1];
-        // let r_no_y = &r_reversed[..r_reversed.len() - 1];
-        let tau_bound_rx = EqPolynomial::mle(tau_low, &r_tail_reversed);
+        let r_tail_reversed: Vec<F::Challenge> = r_tail.iter().rev().copied().collect();
+        let tau_bound_r_tail_reversed = EqPolynomial::mle(tau_low, &r_tail_reversed);
 
-        tau_high_bound_r0 * tau_bound_rx * claim_Az * claim_Bz
+        tau_high_bound_r0 * tau_bound_r_tail_reversed * claim_Az * claim_Bz
     }
 
     fn normalize_opening_point(&self, r_tail: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {

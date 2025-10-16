@@ -48,12 +48,12 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
                 let (_, wprime) = w.split_last().unwrap();
                 let (w_out, w_in) = wprime.split_at(m);
                 let (E_out_vec, E_in_vec) = rayon::join(
-                    || EqPolynomial::evals_serial_cached(w_out, scaling_factor),
-                    || EqPolynomial::evals_serial_cached(w_in, scaling_factor),
+                    || EqPolynomial::evals_cached(w_out),
+                    || EqPolynomial::evals_cached(w_in),
                 );
                 Self {
                     current_index: w.len(),
-                    current_scalar: F::one(),
+                    current_scalar: scaling_factor.unwrap_or(F::one()),
                     w: w.to_vec(),
                     E_in_vec,
                     E_out_vec,
@@ -68,13 +68,13 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
                 let m = w.len() / 2;
                 let (w_in, w_out) = wprime.split_at(m);
                 let (E_in_vec, E_out_vec) = rayon::join(
-                    || EqPolynomial::evals_serial_cached_rev(w_in, scaling_factor),
-                    || EqPolynomial::evals_serial_cached_rev(w_out, scaling_factor),
+                    || EqPolynomial::evals_cached_rev(w_in),
+                    || EqPolynomial::evals_cached_rev(w_out),
                 );
 
                 Self {
                     current_index: 0, // Start from 0 for high-to-low up to w.len() - 1
-                    current_scalar: F::one(),
+                    current_scalar: scaling_factor.unwrap_or(F::one()),
                     w: w.to_vec(),
                     E_in_vec,
                     E_out_vec,

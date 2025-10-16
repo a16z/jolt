@@ -120,9 +120,6 @@ where
             }
         };
 
-        // print the first round proof uni poly
-        println!("First round proof uni poly: {:?}", first_round.uni_poly);
-
         let (r0, claim_after_first) = first_round
             .verify::<UNIVARIATE_SKIP_DOMAIN_SIZE, FIRST_ROUND_POLY_NUM_COEFFS>(
                 FIRST_ROUND_POLY_NUM_COEFFS - 1,
@@ -136,8 +133,6 @@ where
             r0,
             tau,
         });
-
-        println!("Uni skip verified! Output claim: {:?}, r0: {:?}", claim_after_first, r0);
 
         Ok(())
     }
