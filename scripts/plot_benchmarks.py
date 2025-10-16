@@ -131,7 +131,12 @@ def create_size_plot(data, output_path):
 
     tick_scales = sorted(all_scales)
     tick_vals = [2**n / 1e6 for n in tick_scales]
-    tick_labels = [TICK_LABELS.get(n, f"2^{n}") for n in tick_scales]
+    # Hide labels for specific powers: 2^19, 2^20, 2^21, 2^22, 2^23, 2^24
+    hidden_powers = {19, 20, 21, 22, 23, 24}
+    tick_labels = [
+        "" if n in hidden_powers else TICK_LABELS.get(n, f"2^{n}")
+        for n in tick_scales
+    ]
 
     fig.update_layout(
         title="Jolt zkVM Proof Size",

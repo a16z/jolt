@@ -39,9 +39,9 @@ impl<F: JoltField> UniPoly<F> {
         }
     }
 
-    /// Interpolate a polynomial `p(x)` from its evaluations at even points `0, 2, ..., 2(n-1)`
+    /// Interpolate a polynomial `p(x)` from its evaluations at even points `0, 2, 3, ..., n-1`
     /// and a hint `p(0) + p(1)`.
-    pub fn from_even_evals_and_hint(hint: F, evals: &[F]) -> Self {
+    pub fn from_evals_and_hint(hint: F, evals: &[F]) -> Self {
         let mut evals = evals.to_vec();
         let eval_at_1 = hint - evals[0];
         evals.insert(1, eval_at_1);

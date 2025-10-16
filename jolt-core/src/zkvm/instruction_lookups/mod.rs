@@ -40,7 +40,6 @@ pub const K_CHUNK: usize = 1 << LOG_K_CHUNK;
 #[derive(Default)]
 pub struct LookupsDag<F: JoltField> {
     G: Option<[Vec<F>; D]>,
-    eq_r_cycle: Option<Vec<F>>,
 }
 
 impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStages<F, T, PCS>
@@ -61,8 +60,6 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
             .clone();
         let eq_r_cycle = EqPolynomial::evals(&r_cycle);
         let F = compute_ra_evals(trace, &eq_r_cycle);
-
-        self.eq_r_cycle = Some(eq_r_cycle);
         self.G = Some(F.clone());
 
         let booleanity = BooleanitySumcheck::new_prover(sm, F);
@@ -117,7 +114,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, T>>> {
-        let read_raf = ReadRafSumcheck::new_prover(sm, self.eq_r_cycle.take().unwrap());
+        let read_raf = ReadRafSumcheck::new_prover(sm);
 
         #[cfg(feature = "allocative")]
         {

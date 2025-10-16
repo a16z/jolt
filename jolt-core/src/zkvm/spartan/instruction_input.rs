@@ -261,11 +261,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for InstructionInputSum
             eval_at_inf_for_stage_2,
             state.prev_claim_stage_2,
         );
-        state.prev_round_poly_stage_1 = Some(UniPoly::from_even_evals_and_hint(
+        state.prev_round_poly_stage_1 = Some(UniPoly::from_evals_and_hint(
             state.prev_claim_stage_1,
             &univariate_evals_stage_1,
         ));
-        state.prev_round_poly_stage_2 = Some(UniPoly::from_even_evals_and_hint(
+        state.prev_round_poly_stage_2 = Some(UniPoly::from_evals_and_hint(
             state.prev_claim_stage_2,
             &univariate_evals_stage_2,
         ));
