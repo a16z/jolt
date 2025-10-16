@@ -255,7 +255,7 @@ impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: JoltField>
     }
 }
 
-/// Represents `ra_i` during the 3nd of the last log(T) sumcheck rounds.
+/// Represents `ra_i` during the 3rd of the last log(T) sumcheck rounds.
 ///
 /// i.e. represents MLE `ra_i(r, r0, x)`
 #[derive(Allocative, Default, Clone, Debug, PartialEq)]

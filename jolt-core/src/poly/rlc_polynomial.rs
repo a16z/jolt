@@ -19,7 +19,7 @@ pub struct RLCPolynomial<F: JoltField> {
     /// Random linear combination of dense (i.e. length T) polynomials.
     pub dense_rlc: Vec<F>,
     /// Random linear combination of one-hot polynomials (length T x K
-    /// for some K). Instead of pre-emptively combining these polynomials,
+    /// for some K). Instead of preemptively combining these polynomials,
     /// as we do for `dense_rlc`, we store a vector of (coefficient, polynomial)
     /// pairs and lazily handle the linear combination in `commit_rows`
     /// and `vector_matrix_product`.
