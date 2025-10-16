@@ -166,6 +166,11 @@ impl<J: JoltParameterSet> ZkLeanInstruction<J> {
             .map(|t| ZkLeanLookupTable::from(t).name())
         {
             None => String::from("sorry /-No lookup table for this instruction-/"),
+            // XXX: This case can be removed once
+            // https://gitlab-ext.galois.com/jb4/jolt-fork/-/merge_requests/23 is merged.
+            Some(t) if !ZkLeanLookupTable::<32>::iter().any(|s| s.name() == t) => {
+                format!("sorry /-{t} currently unsupported by MleAst data structure-/")
+            }
             Some(t) => format!("{t} : Vector f {num_variables} -> f"),
         };
         let circuit_flags = CircuitFlags::iter()
