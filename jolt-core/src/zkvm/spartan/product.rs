@@ -6,6 +6,7 @@ use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
+use crate::poly::lagrange_poly::LagrangeHelper;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
 use crate::poly::opening_proof::{
     OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
@@ -15,6 +16,7 @@ use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::sumcheck::{SumcheckInstance, UniSkipFirstRoundInstance};
 use crate::transcripts::Transcript;
 use crate::utils::math::Math;
+use crate::utils::univariate_skip::{build_uniskip_first_round_poly, uniskip_targets};
 use crate::zkvm::dag::state_manager::StateManager;
 use crate::zkvm::instruction::{CircuitFlags, InstructionFlags};
 use crate::zkvm::r1cs::inputs::generate_virtual_product_witnesses;
@@ -403,7 +405,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ProductVirtualizati
 // \sum_y L(tau_high, y) * \sum_x eq(tau_low, x) * Left(x, y) * Right(x, y)
 //   = claim(tau_high)
 
-
 // First, we define our constants
 
 const NUM_PRODUCT_VIRTUAL: usize = 5;
@@ -411,6 +412,8 @@ const PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE: usize = NUM_PRODUCT_VIRTUAL;
 const PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE: usize = NUM_PRODUCT_VIRTUAL - 1;
 const PRODUCT_VIRTUAL_UNIVARIATE_SKIP_EXTENDED_DOMAIN_SIZE: usize =
     2 * PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE + 1;
+const PRODUCT_VIRTUAL_FIRST_ROUND_POLY_NUM_COEFFS: usize =
+    3 * PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE + 1;
 
 /// Uni-skip instance for product virtualization, computing the first-round polynomial only.
 pub struct ProductVirtualUniSkipInstance<F: JoltField> {
@@ -428,40 +431,137 @@ struct ProductVirtualUniSkipProverState<F: JoltField> {
 impl<F: JoltField> ProductVirtualUniSkipInstance<F> {
     #[tracing::instrument(skip_all, name = "ProductVirtualUniSkipInstance::new_prover")]
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
-        _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-        _tau: &[F::Challenge],
+        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        tau: &[F::Challenge],
     ) -> Self {
-        todo!()
+        let (_preprocessing, trace, _program_io, _final_mem) = state_manager.get_prover_data();
+
+        let tau_low = &tau[..tau.len() - 1];
+        let extended = Self::compute_univariate_skip_extended_evals(trace, tau_low);
+
+        Self {
+            tau: tau.to_vec(),
+            prover_state: Some(ProductVirtualUniSkipProverState {
+                extended_evals: extended,
+            }),
+        }
     }
 
-    pub fn new_verifier(_tau: &[F::Challenge]) -> Self {
-        todo!()
-    }
-
-    #[inline]
-    fn univariate_skip_targets() -> [i64; PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE] {
-        todo!()
+    pub fn new_verifier(tau: &[F::Challenge]) -> Self {
+        Self {
+            tau: tau.to_vec(),
+            prover_state: None,
+        }
     }
 
     fn compute_univariate_skip_extended_evals(
-        _tau: &[F::Challenge],
+        trace: &[tracer::instruction::Cycle],
+        tau_low: &[F::Challenge],
     ) -> [F; PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE] {
-        todo!()
+        // Build five (left, right) polynomials in the specified order
+        let product_types = [
+            VirtualProductType::Instruction,
+            VirtualProductType::WriteLookupOutputToRD,
+            VirtualProductType::WritePCtoRD,
+            VirtualProductType::ShouldBranch,
+            VirtualProductType::ShouldJump,
+        ];
+
+        let witnesses: Vec<(MultilinearPolynomial<F>, MultilinearPolynomial<F>)> = product_types
+            .iter()
+            .map(|pt| generate_virtual_product_witnesses::<F>(*pt, trace))
+            .collect();
+
+        // Eq table over cycle variables
+        let eq = EqPolynomial::evals(tau_low);
+        let t_len = eq.len();
+
+        // Precompute M[i][j] = Σ_x eq[x] * left_i[x] * right_j[x]
+        let mut M: [[F; NUM_PRODUCT_VIRTUAL]; NUM_PRODUCT_VIRTUAL] =
+            [[F::zero(); NUM_PRODUCT_VIRTUAL]; NUM_PRODUCT_VIRTUAL];
+
+        for x in 0..t_len {
+            let e = eq[x];
+            // Cache left/right values at x for all i
+            let mut left_vals: [F; NUM_PRODUCT_VIRTUAL] = [F::zero(); NUM_PRODUCT_VIRTUAL];
+            let mut right_vals: [F; NUM_PRODUCT_VIRTUAL] = [F::zero(); NUM_PRODUCT_VIRTUAL];
+            for (i, (l, r)) in witnesses.iter().enumerate() {
+                left_vals[i] = l.get_coeff(x);
+                right_vals[i] = r.get_coeff(x);
+            }
+            for i in 0..NUM_PRODUCT_VIRTUAL {
+                let li = left_vals[i];
+                for j in 0..NUM_PRODUCT_VIRTUAL {
+                    let rj = right_vals[j];
+                    M[i][j] += e * li * rj;
+                }
+            }
+        }
+
+        // Compute t1(z) for extended domain targets outside base window using c^T M c
+        let base_left: i64 = -((PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE as i64 - 1) / 2);
+        let targets = uniskip_targets::<
+            PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
+            PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE,
+        >();
+        let mut out: [F; PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE] =
+            [F::zero(); PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE];
+
+        for (idx, &z) in targets.iter().enumerate() {
+            let shift = z - base_left;
+            let coeffs_i32 = LagrangeHelper::shift_coeffs_i32::<
+                PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
+            >(shift);
+            let mut c: [F; NUM_PRODUCT_VIRTUAL] = [F::zero(); NUM_PRODUCT_VIRTUAL];
+            for i in 0..NUM_PRODUCT_VIRTUAL {
+                c[i] = F::from_i64(coeffs_i32[i] as i64);
+            }
+
+            // Compute c^T M c
+            let mut acc = F::zero();
+            for i in 0..NUM_PRODUCT_VIRTUAL {
+                let ci = c[i];
+                let mut row_acc = F::zero();
+                for j in 0..NUM_PRODUCT_VIRTUAL {
+                    row_acc += M[i][j] * c[j];
+                }
+                acc += ci * row_acc;
+            }
+            out[idx] = acc;
+        }
+
+        out
     }
 }
 
 impl<F: JoltField, T: Transcript> UniSkipFirstRoundInstance<F, T>
     for ProductVirtualUniSkipInstance<F>
 {
-    const DEGREE_BOUND: usize = PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE;
+    const DEGREE_BOUND: usize = PRODUCT_VIRTUAL_FIRST_ROUND_POLY_NUM_COEFFS - 1;
     const DOMAIN_SIZE: usize = NUM_PRODUCT_VIRTUAL;
 
     fn input_claim(&self) -> F {
-        todo!()
+        F::zero()
     }
 
     fn compute_poly(&mut self) -> UniPoly<F> {
-        todo!()
+        // Load extended univariate-skip evaluations from prover state (prover only)
+        let extended = if let Some(ps) = &self.prover_state {
+            ps.extended_evals
+        } else {
+            [F::zero(); PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE]
+        };
+
+        let tau_high = self.tau[self.tau.len() - 1];
+
+        // Compute the univariate-skip first round polynomial s1(Y) = L(τ_high, Y) · t1(Y)
+        build_uniskip_first_round_poly::<
+            F,
+            PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
+            PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE,
+            PRODUCT_VIRTUAL_UNIVARIATE_SKIP_EXTENDED_DOMAIN_SIZE,
+            PRODUCT_VIRTUAL_FIRST_ROUND_POLY_NUM_COEFFS,
+        >(&extended, tau_high)
     }
 }
 

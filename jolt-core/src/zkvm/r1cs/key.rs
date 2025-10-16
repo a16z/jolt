@@ -125,16 +125,15 @@ impl<F: JoltField> UniformSpartanKey<F> {
         r_constr: &[F::Challenge],
         r_rlc: F::Challenge,
     ) -> Vec<F> {
-        // With univariate skip, `r_constr` consists of two challenges:
-        // - r_constr[0]: challenge for the univariate-skip round (handled elsewhere)
-        // - r_constr[1]: challenge for the streaming round that mixes the two groups
+        // With univariate skip, `r_constr` consists of two challenges in the canonical order:
+        // - r_constr[0] = r_stream: selector for the second (odd) group in the row split
+        // - r_constr[1] = r0:       challenge for the univariate-skip first-round (Lagrange basis)
         assert_eq!(r_constr.len(), 2);
 
+        let r_stream = r_constr[0];
         let lag_evals = LagrangePolynomial::<F>::evals::<F::Challenge, UNIVARIATE_SKIP_DOMAIN_SIZE>(
-            &r_constr[0],
+            &r_constr[1],
         );
-
-        let r_stream = r_constr[1];
         let w_group0 = F::one() - r_stream; // weight for first group
         let w_group1 = r_stream; // weight for second group
 
@@ -237,13 +236,14 @@ impl<F: JoltField> UniformSpartanKey<F> {
         rx_constr: &[F::Challenge],
         ry_var: &[F::Challenge],
     ) -> F {
-        // Row axis: r_constr = [r0, r_stream]; use Lagrange basis for first-round (size 14)
+        // Row axis: r_constr = [r_stream, r0]; use Lagrange basis for first-round
+        // (half the number of R1CS constraints)
         // and linear blend for the two groups using r_stream
         debug_assert!(rx_constr.len() >= 2);
-        let r0 = rx_constr[0];
-        let r_stream = rx_constr[1];
+        let r_stream = rx_constr[0];
+        let r0 = rx_constr[1];
 
-        // Lagrange basis over 14-node symmetric domain for first-round rows
+        // Lagrange basis over symmetric domain for first-round rows
         let lag_basis =
             LagrangePolynomial::<F>::evals::<F::Challenge, UNIVARIATE_SKIP_DOMAIN_SIZE>(&r0);
 

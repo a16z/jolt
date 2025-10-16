@@ -27,7 +27,8 @@ use crate::utils::univariate_skip::{
     accum::{
         acc6_fmadd_i128, acc6_new, acc6_reduce, accs160_fmadd_s160, accs160_new, accs160_reduce,
     },
-    compute_az_r_group0, compute_az_r_group1, compute_bz_r_group0, compute_bz_r_group1,
+    build_uniskip_first_round_poly, compute_az_r_group0, compute_az_r_group1, compute_bz_r_group0,
+    compute_bz_r_group1, uniskip_targets,
 };
 use crate::zkvm::dag::state_manager::StateManager;
 use crate::zkvm::r1cs::{
@@ -93,7 +94,7 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
         let tau_low = &tau[0..tau.len() - 1];
 
         let extended =
-            Self::compute_univariate_skip_extended_evals(&preprocessing.shared, trace, &tau_low);
+            Self::compute_univariate_skip_extended_evals(&preprocessing.shared, trace, tau_low);
 
         Self {
             tau: tau.to_vec(),
@@ -110,49 +111,7 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
         }
     }
 
-    #[inline]
-    fn univariate_skip_targets() -> [i64; UNIVARIATE_SKIP_DEGREE] {
-        let d: i64 = UNIVARIATE_SKIP_DEGREE as i64;
-        let ext_left: i64 = -d;
-        let ext_right: i64 = d;
-        let base_left: i64 = -((UNIVARIATE_SKIP_DOMAIN_SIZE as i64 - 1) / 2);
-        let base_right: i64 = base_left + (UNIVARIATE_SKIP_DOMAIN_SIZE as i64) - 1;
-
-        let mut targets: [i64; UNIVARIATE_SKIP_DEGREE] = [0; UNIVARIATE_SKIP_DEGREE];
-        let mut idx = 0usize;
-        let mut n = base_left - 1; // first index just left of the base window
-        let mut p = base_right + 1; // first index just right of the base window
-
-        // Interleave negatives and positives while both sides have items
-        while n >= ext_left && p <= ext_right && idx < UNIVARIATE_SKIP_DEGREE {
-            targets[idx] = n;
-            idx += 1;
-            if idx >= UNIVARIATE_SKIP_DEGREE {
-                break;
-            }
-            targets[idx] = p;
-            idx += 1;
-            n -= 1;
-            p += 1;
-        }
-
-        // Append any remaining on the left side
-        while idx < UNIVARIATE_SKIP_DEGREE && n >= ext_left {
-            targets[idx] = n;
-            idx += 1;
-            n -= 1;
-        }
-
-        // Append any remaining on the right side
-        while idx < UNIVARIATE_SKIP_DEGREE && p <= ext_right {
-            targets[idx] = p;
-            idx += 1;
-            p += 1;
-        }
-
-        debug_assert_eq!(idx, UNIVARIATE_SKIP_DEGREE);
-        targets
-    }
+    // local univariate_skip_targets removed in favor of utils::univariate_skip::uniskip_targets
 
     /// Compute the extended evaluations of the univariate skip polynomial, i.e.
     ///
@@ -175,7 +134,8 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
     ) -> [F; UNIVARIATE_SKIP_DEGREE] {
         // Precompute Lagrange coefficient vectors for target Z values outside the base window
         let base_left: i64 = -((UNIVARIATE_SKIP_DOMAIN_SIZE as i64 - 1) / 2);
-        let targets: [i64; UNIVARIATE_SKIP_DEGREE] = Self::univariate_skip_targets();
+        let targets: [i64; UNIVARIATE_SKIP_DEGREE] =
+            uniskip_targets::<UNIVARIATE_SKIP_DOMAIN_SIZE, UNIVARIATE_SKIP_DEGREE>();
 
         let target_shifts: [i64; UNIVARIATE_SKIP_DEGREE] =
             core::array::from_fn(|j| targets[j] - base_left);
@@ -329,45 +289,18 @@ impl<F: JoltField, T: Transcript> UniSkipFirstRoundInstance<F, T> for OuterUniSk
 
     fn compute_poly(&mut self) -> UniPoly<F> {
         // Load extended univariate-skip evaluations from prover state
-        let extended = if let Some(ps) = &self.prover_state {
-            ps.extended_evals
-        } else {
-            // Verifier does not need to compute the polynomial here in this design,
-            // but to satisfy trait, return a zero polynomial of the correct size
-            [F::zero(); UNIVARIATE_SKIP_DEGREE]
-        };
+        let extended = self.prover_state.as_ref().unwrap().extended_evals;
 
-        // Rebuild s1(Z) without side effects on transcript
-        let mut t1_vals: [F; 2 * UNIVARIATE_SKIP_DEGREE + 1] =
-            [F::zero(); 2 * UNIVARIATE_SKIP_DEGREE + 1];
-        let targets: [i64; UNIVARIATE_SKIP_DEGREE] = Self::univariate_skip_targets();
-        for (idx, &val) in extended.iter().enumerate() {
-            let z = targets[idx];
-            let pos = (z + (UNIVARIATE_SKIP_DEGREE as i64)) as usize;
-            t1_vals[pos] = val;
-        }
-
-        let t1_coeffs = LagrangePolynomial::<F>::interpolate_coeffs::<
-            UNIVARIATE_SKIP_EXTENDED_DOMAIN_SIZE,
-        >(&t1_vals);
         let tau_high = self.tau[self.tau.len() - 1];
-        let lagrange_poly_values =
-            LagrangePolynomial::<F>::evals::<F::Challenge, UNIVARIATE_SKIP_DOMAIN_SIZE>(&tau_high);
-        let lagrange_poly_coeffs = LagrangePolynomial::interpolate_coeffs::<
+
+        // Compute the univariate-skip first round polynomial s1(Y) = L(τ_high, Y) · t1(Y)
+        build_uniskip_first_round_poly::<
+            F,
             UNIVARIATE_SKIP_DOMAIN_SIZE,
-        >(&lagrange_poly_values);
-
-        let mut s1_coeffs: [F; FIRST_ROUND_POLY_NUM_COEFFS] =
-            [F::zero(); FIRST_ROUND_POLY_NUM_COEFFS];
-        for (i, &a) in lagrange_poly_coeffs.iter().enumerate() {
-            for (j, &b) in t1_coeffs.iter().enumerate() {
-                s1_coeffs[i + j] += a * b;
-            }
-        }
-
-        let poly = UniPoly::from_coeff(s1_coeffs.to_vec());
-
-        poly
+            UNIVARIATE_SKIP_DEGREE,
+            UNIVARIATE_SKIP_EXTENDED_DOMAIN_SIZE,
+            FIRST_ROUND_POLY_NUM_COEFFS,
+        >(&extended, tau_high)
     }
 }
 
@@ -428,7 +361,10 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
         let tau_high = tau[tau.len() - 1];
         let tau_low = &tau[..tau.len() - 1];
 
-        let lagrange_tau_r0 = LagrangePolynomial::<F>::lagrange_kernel::<F::Challenge, UNIVARIATE_SKIP_DOMAIN_SIZE>(&r0_uniskip, &tau_high);
+        let lagrange_tau_r0 = LagrangePolynomial::<F>::lagrange_kernel::<
+            F::Challenge,
+            UNIVARIATE_SKIP_DOMAIN_SIZE,
+        >(&r0_uniskip, &tau_high);
 
         let split_eq_poly: GruenSplitEqPolynomial<F> =
             GruenSplitEqPolynomial::<F>::new_with_scaling(

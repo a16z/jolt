@@ -667,10 +667,6 @@ pub fn eval_bz_second_group(row: &R1CSCycleInputs) -> [S160; NUM_REMAINING_R1CS_
     out
 }
 
-/// Evaluate Cz for the second group in group order.
-/// Returns S160 values only for constraints whose Cz is non-zero; returns zero for the rest.
-// (intentionally no Cz second-group evaluator; Cz is not needed for the groups interface)
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -683,5 +679,41 @@ mod tests {
         let array_order: Vec<ConstraintName> = UNIFORM_R1CS.iter().map(|nc| nc.name).collect();
         assert_eq!(array_order.len(), NUM_R1CS_CONSTRAINTS);
         assert_eq!(enum_order, array_order);
+    }
+
+    /// Test that all Cz terms in UNIFORM_R1CS are zero.
+    /// We currently only use conditional equality constraints
+    /// of the form Az * Bz = 0, which means Cz must be identically zero.
+    #[test]
+    fn all_cz_terms_are_zero() {
+        for (i, named_constraint) in UNIFORM_R1CS.iter().enumerate() {
+            let c = &named_constraint.cons.c;
+
+            // Check that the C LC is structurally Zero
+            assert!(
+                matches!(c, LC::Zero),
+                "Constraint {} ({:?}) has non-zero Cz: the C term must be LC::Zero but got {:?}",
+                i,
+                named_constraint.name,
+                c
+            );
+
+            // Double-check: verify it has no terms and no constant
+            assert_eq!(
+                c.num_terms(),
+                0,
+                "Constraint {} ({:?}) has {} terms in Cz, expected 0",
+                i,
+                named_constraint.name,
+                c.num_terms()
+            );
+
+            assert!(
+                c.const_term().is_none(),
+                "Constraint {} ({:?}) has a constant term in Cz, expected None",
+                i,
+                named_constraint.name
+            );
+        }
     }
 }

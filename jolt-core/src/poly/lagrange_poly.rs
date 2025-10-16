@@ -813,17 +813,25 @@ mod tests {
                     let br = LagrangePolynomial::<F>::evals::<F, N>(&r);
                     let bs = LagrangePolynomial::<F>::evals::<F, N>(&s);
                     let mut dot = F::from_u64(0);
-                    for i in 0..N { dot += br[i] * bs[i]; }
+                    for i in 0..N {
+                        dot += br[i] * bs[i];
+                    }
                     assert_eq!(k, dot);
                     let ks = LagrangePolynomial::<F>::lagrange_kernel::<F, N>(&s, &r);
                     assert_eq!(k, ks);
                 }
             }
             let nodes = grid_nodes::<N>();
-            for i in 0..N { for j in 0..N {
-                let k = LagrangePolynomial::<F>::lagrange_kernel::<F, N>(&nodes[i], &nodes[j]);
-                if i == j { assert_eq!(k, F::from_u64(1)); } else { assert_eq!(k, F::from_u64(0)); }
-            }}
+            for i in 0..N {
+                for j in 0..N {
+                    let k = LagrangePolynomial::<F>::lagrange_kernel::<F, N>(&nodes[i], &nodes[j]);
+                    if i == j {
+                        assert_eq!(k, F::from_u64(1));
+                    } else {
+                        assert_eq!(k, F::from_u64(0));
+                    }
+                }
+            }
         }
 
         check_kernel_for::<1>();

@@ -23,6 +23,30 @@ use crate::zkvm::witness::VirtualPolynomial;
 
 use rayon::prelude::*;
 
+/// Inner Spartan sumcheck
+///
+/// This instance proves, for a fixed row opening point `rx_constr = [r_stream, r0]` supplied by the
+/// outer stage, the column product identity over the uniform variables
+/// `u` of length `log2(num_vars_uniform_padded)`.
+///
+/// Initial claim (start of sumcheck):
+///
+///   Σ_u ( A_small(rx_constr, u) + γ·B_small(rx_constr, u) ) · z(u)
+///   = Az_claim + γ·Bz_claim.
+///
+/// After `m = log2(num_vars_uniform_padded)` rounds with bound point `r ∈ F^m`, the
+/// sumcheck output claim must equal
+///
+///   ( A_small(rx_constr, r) + γ·B_small(rx_constr, r) ) · z(r).
+///
+/// Final check (verifier): compute
+///   - eval_a = evaluate_uniform_a_at_point(rx_constr, r),
+///   - eval_b = evaluate_uniform_b_at_point(rx_constr, r),
+///   - eval_z = evaluate_z_mle_with_segment_evals(segment_evals, r, true),
+///     where `segment_evals` are the cached witness openings at `r_cycle` from the outer stage.
+/// 
+/// Then `expected = (eval_a + γ·eval_b) · eval_z`, and accept iff output_claim == expected.
+
 #[derive(Allocative)]
 struct InnerSumcheckProverState<F: JoltField> {
     poly_abc_small: MultilinearPolynomial<F>,
@@ -232,6 +256,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for InnerSumcheck<F> {
             .get_virtual_polynomial_opening(VirtualPolynomial::SpartanAz, SumcheckId::SpartanOuter);
         let num_cycles_bits = key.num_steps.log_2();
         let (_r_cycle, rx_var) = outer_sumcheck_opening.r.split_at(num_cycles_bits);
+
+        // assert rx var is of length 2
+        assert_eq!(rx_var.len(), 2);
 
         // Pull claimed witness evaluations from the accumulator
         let claimed_witness_evals: Vec<F> = ALL_R1CS_INPUTS

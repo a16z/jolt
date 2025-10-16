@@ -547,10 +547,8 @@ impl JoltDAG {
         }
 
         // Initialize Dags
-        let padded_trace_length = {
-            let (_, _, trace_length) = state_manager.get_verifier_data();
-            trace_length.next_power_of_two()
-        };
+        let (preprocessing, _, trace_length) = state_manager.get_verifier_data();
+        let padded_trace_length = trace_length.next_power_of_two();
         let mut spartan_dag = SpartanDag::<F>::new(padded_trace_length);
         let mut lookups_dag = LookupsDag::default();
         let mut registers_dag = RegistersDag::default();
@@ -684,68 +682,6 @@ impl JoltDAG {
         )
         .context("Stage 4")?;
 
-        drop(proofs);
-
-        // Stage 5:
-        let stage5_instances: Vec<_> = std::iter::empty()
-            .chain(registers_dag.stage5_verifier_instances(&mut state_manager))
-            .chain(ram_dag.stage5_verifier_instances(&mut state_manager))
-            .chain(lookups_dag.stage5_verifier_instances(&mut state_manager))
-            .collect();
-        let stage5_instances_ref: Vec<&dyn SumcheckInstance<F, ProofTranscript>> = stage5_instances
-            .iter()
-            .map(|instance| &**instance as &dyn SumcheckInstance<F, ProofTranscript>)
-            .collect();
-
-        let proofs = state_manager.proofs.borrow();
-        let stage5_proof_data = proofs
-            .get(&ProofKeys::Stage5Sumcheck)
-            .expect("Stage 5 sumcheck proof not found");
-        let stage5_proof = match stage5_proof_data {
-            ProofData::SumcheckProof(proof) => proof,
-            _ => panic!("Invalid proof type for stage 5"),
-        };
-
-        let _r_stage5 = BatchedSumcheck::verify(
-            stage5_proof,
-            stage5_instances_ref,
-            Some(opening_accumulator.clone()),
-            &mut *transcript.borrow_mut(),
-        )
-        .context("Stage 5")?;
-
-        drop(proofs);
-
-        // Stage 6:
-        let stage6_instances: Vec<_> = std::iter::empty()
-            .chain(bytecode_dag.stage6_verifier_instances(&mut state_manager))
-            .chain(ram_dag.stage6_verifier_instances(&mut state_manager))
-            .chain(lookups_dag.stage6_verifier_instances(&mut state_manager))
-            .collect();
-        let stage6_instances_ref: Vec<&dyn SumcheckInstance<F, ProofTranscript>> = stage6_instances
-            .iter()
-            .map(|instance| &**instance as &dyn SumcheckInstance<F, ProofTranscript>)
-            .collect();
-
-        let proofs = state_manager.proofs.borrow();
-        let stage6_proof_data = proofs
-            .get(&ProofKeys::Stage6Sumcheck)
-            .expect("Stage 6 sumcheck proof not found");
-        let stage6_proof = match stage6_proof_data {
-            ProofData::SumcheckProof(proof) => proof,
-            _ => panic!("Invalid proof type for stage 6"),
-        };
-
-        let _r_stage6 = BatchedSumcheck::verify(
-            stage6_proof,
-            stage6_instances_ref,
-            Some(opening_accumulator.clone()),
-            &mut *transcript.borrow_mut(),
-        )
-        .context("Stage 6")?;
-
-        // Re-acquire verifier preprocessing when needed before advice proofs to avoid borrow issues
-        let (preprocessing, _, _) = state_manager.get_verifier_data();
         drop(proofs);
 
         // Stage 5:

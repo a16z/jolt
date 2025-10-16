@@ -383,13 +383,6 @@ impl BatchedSumcheck {
             .sum();
 
         if output_claim != expected_output_claim {
-            println!(
-                "Batched sumcheck verify mismatch: output_claim={}, expected_output_claim={}, rounds={}, degree_bound={}",
-                output_claim,
-                expected_output_claim,
-                max_num_rounds,
-                max_degree
-            );
             return Err(ProofVerifyError::SumcheckVerificationError);
         }
 
