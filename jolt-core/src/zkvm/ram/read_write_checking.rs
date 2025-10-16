@@ -1102,10 +1102,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for RamReadWriteCheckin
 
         accumulator.borrow_mut().append_dense(
             transcript,
-            vec![CommittedPolynomial::RamInc],
+            CommittedPolynomial::RamInc,
             SumcheckId::RamReadWriteChecking,
             r_cycle.r,
-            &[prover_state.inc_cycle.final_sumcheck_claim()],
+            prover_state.inc_cycle.final_sumcheck_claim(),
         );
     }
 
@@ -1133,7 +1133,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for RamReadWriteCheckin
 
         accumulator.borrow_mut().append_dense(
             transcript,
-            vec![CommittedPolynomial::RamInc],
+            CommittedPolynomial::RamInc,
             SumcheckId::RamReadWriteChecking,
             r_cycle.r,
         );

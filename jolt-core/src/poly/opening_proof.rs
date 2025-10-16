@@ -179,21 +179,6 @@ pub enum OpeningId {
 
 pub type Openings<F> = BTreeMap<OpeningId, (OpeningPoint<BIG_ENDIAN, F>, F)>;
 
-#[derive(Allocative)]
-pub struct SharedEqPolynomial<F: JoltField> {
-    num_variables_bound: usize,
-    eq_poly: GruenSplitEqPolynomial<F>,
-}
-
-impl<F: JoltField> SharedEqPolynomial<F> {
-    fn new_gruen(opening_point: &[F::Challenge]) -> Self {
-        Self {
-            eq_poly: GruenSplitEqPolynomial::new(opening_point, BindingOrder::HighToLow),
-            num_variables_bound: 0,
-        }
-    }
-}
-
 /// An opening (of a dense polynomial) computed by the prover.
 ///
 /// May be a batched opening, where multiple dense polynomials opened
@@ -205,11 +190,11 @@ impl<F: JoltField> SharedEqPolynomial<F> {
 pub struct DensePolynomialProverOpening<F: JoltField> {
     /// The polynomial being opened. May be a random linear combination
     /// of multiple polynomials all being opened at the same point.
-    pub polynomial: Option<MultilinearPolynomial<F>>,
+    pub polynomial: Option<MultilinearPolynomial<F>>, // TODO: Option<Arc<RwLock<SharedPolynomial<F>>>>
     /// The multilinear extension EQ(x, opening_point). This is typically
     /// an intermediate value used to compute `claim`, but is also used in
     /// the `ProverOpeningAccumulator::prove_batch_opening_reduction` sumcheck.
-    pub eq_poly: Arc<RwLock<SharedEqPolynomial<F>>>,
+    pub eq_poly: Arc<RwLock<EqCycleState<F>>>,
 }
 
 impl<F: JoltField> DensePolynomialProverOpening<F> {
@@ -220,7 +205,7 @@ impl<F: JoltField> DensePolynomialProverOpening<F> {
     fn compute_prover_message(&mut self, _round: usize, previous_claim: F) -> Vec<F> {
         let shared_eq = self.eq_poly.read().unwrap();
         let polynomial = self.polynomial.as_ref().unwrap();
-        let gruen_eq = &shared_eq.eq_poly;
+        let gruen_eq = &shared_eq.D;
 
         // Compute q(0) = sum of polynomial(i) * eq(r, i) for i in [0, mle_half)
         let mle_half = polynomial.len() / 2;
@@ -269,7 +254,7 @@ impl<F: JoltField> DensePolynomialProverOpening<F> {
     fn bind(&mut self, r_j: F::Challenge, round: usize) {
         let mut shared_eq = self.eq_poly.write().unwrap();
         if shared_eq.num_variables_bound <= round {
-            shared_eq.eq_poly.bind(r_j);
+            shared_eq.D.bind(r_j);
             shared_eq.num_variables_bound += 1;
         }
 
@@ -312,20 +297,20 @@ where
     F: JoltField,
 {
     fn new_prover_instance_dense(
-        polynomials: Vec<CommittedPolynomial>,
+        polynomial: CommittedPolynomial,
         sumcheck_id: SumcheckId,
-        eq_poly: Arc<RwLock<SharedEqPolynomial<F>>>,
+        eq_poly: Arc<RwLock<EqCycleState<F>>>,
         opening_point: Vec<F::Challenge>,
-        claims: Vec<F>,
+        claim: F,
     ) -> Self {
         let opening = DensePolynomialProverOpening {
             polynomial: None, // Defer initialization until opening proof reduction sumcheck
             eq_poly,
         };
         Self {
-            polynomials,
+            polynomials: vec![polynomial],
             sumcheck_id,
-            input_claims: claims,
+            input_claims: vec![claim],
             rlc_coeffs: vec![], // Populated later
             prover_state: Some(opening.into()),
             opening_point,
@@ -581,6 +566,7 @@ where
 {
     pub sumchecks: Vec<OpeningProofReductionSumcheck<F>>,
     pub openings: Openings<F>,
+    // dense_polynomial_map: HashMap<CommittedPolynomial, Arc<RwLock<SharedDensePolynomial<F>>>>,
     eq_cycle_map: HashMap<Vec<F::Challenge>, Arc<RwLock<EqCycleState<F>>>>,
     #[cfg(test)]
     pub appended_virtual_openings: std::rc::Rc<std::cell::RefCell<Vec<OpeningId>>>,
@@ -633,6 +619,7 @@ where
             sumchecks: vec![],
             openings: BTreeMap::new(),
             eq_cycle_map: HashMap::new(),
+            // dense_polynomial_map: HashMap::new(),
             #[cfg(test)]
             appended_virtual_openings: std::rc::Rc::new(std::cell::RefCell::new(vec![])),
             // #[cfg(test)]
@@ -701,39 +688,41 @@ where
         Some((point.clone(), *claim))
     }
 
-    /// Adds openings to the accumulator. The given `polynomials` are opened at
-    /// `opening_point`, yielding the claimed evaluations `claims`.
-    /// Multiple polynomials opened at a single point are batched into a single
-    /// polynomial opened at the same point.
+    /// Adds an opening of a dense polynomial to the accumulator.
+    /// The given `polynomial` is opened at `opening_point`, yielding the claimed
+    /// evaluation `claim`.
     #[tracing::instrument(skip_all, name = "ProverOpeningAccumulator::append_dense")]
     pub fn append_dense<T: Transcript>(
         &mut self,
         transcript: &mut T,
-        polynomials: Vec<CommittedPolynomial>,
+        polynomial: CommittedPolynomial,
         sumcheck: SumcheckId,
         opening_point: Vec<F::Challenge>,
-        claims: &[F],
+        claim: F,
     ) {
-        transcript.append_scalars(claims);
-        assert_eq!(polynomials.len(), claims.len());
+        transcript.append_scalar(&claim);
 
-        // Use Gruen optimization for the eq polynomial
-        let shared_eq = Arc::new(RwLock::new(SharedEqPolynomial::new_gruen(&opening_point)));
+        let shared_eq = self
+            .eq_cycle_map
+            .entry(opening_point.clone())
+            .or_insert_with(|| Arc::new(RwLock::new(EqCycleState::new(&opening_point))));
 
-        // Add openings to map
-        for (label, claim) in polynomials.iter().zip(claims.iter()) {
-            let opening_point_struct = OpeningPoint::<BIG_ENDIAN, F>::new(opening_point.clone());
-            let key = OpeningId::Committed(*label, sumcheck);
-            self.openings
-                .insert(key, (opening_point_struct.clone(), *claim));
-        }
+        // Add opening to map
+        let key = OpeningId::Committed(polynomial, sumcheck);
+        self.openings.insert(
+            key,
+            (
+                OpeningPoint::<BIG_ENDIAN, F>::new(opening_point.clone()),
+                claim,
+            ),
+        );
 
         let sumcheck = OpeningProofReductionSumcheck::new_prover_instance_dense(
-            polynomials,
+            polynomial,
             sumcheck,
-            shared_eq,
+            shared_eq.clone(),
             opening_point,
-            claims.to_vec(),
+            claim,
         );
         self.sumchecks.push(sumcheck);
     }
@@ -1103,17 +1092,12 @@ where
         Some((point.clone(), *claim))
     }
 
-    /// Adds openings to the accumulator. The polynomials underlying the given
-    /// `commitments` are opened at `opening_point`, yielding the claimed evaluations
-    /// `claims`.
-    /// Multiple polynomials opened at a single point can be batched into a single
-    /// polynomial opened at the same point. This function performs the verifier side
-    /// of this batching by homomorphically combining the commitments before appending
-    /// to `self.openings`.
+    /// Adds an opening of a dense polynomial the accumulator.
+    /// The given `polynomial` is opened at `opening_point`.
     pub fn append_dense<T: Transcript>(
         &mut self,
         transcript: &mut T,
-        polynomials: Vec<CommittedPolynomial>,
+        polynomial: CommittedPolynomial,
         sumcheck: SumcheckId,
         opening_point: Vec<F::Challenge>,
     ) {
@@ -1128,30 +1112,21 @@ where
                 prover_opening.opening_point, opening_point,
                 "opening point mismatch"
             );
-            assert_eq!(
-                prover_opening.polynomials.len(),
-                polynomials.len(),
-                "batch size mismatch"
-            );
         }
 
-        let claims: Vec<F> = polynomials
-            .iter()
-            .map(|poly| {
-                self.openings
-                    .get(&OpeningId::Committed(*poly, sumcheck))
-                    .unwrap()
-                    .1
-            })
-            .collect();
-        transcript.append_scalars(&claims);
+        let claim = self
+            .openings
+            .get(&OpeningId::Committed(polynomial, sumcheck))
+            .unwrap()
+            .1;
+        transcript.append_scalar(&claim);
 
         self.sumchecks
             .push(OpeningProofReductionSumcheck::new_verifier_instance(
-                polynomials,
+                vec![polynomial],
                 sumcheck,
                 opening_point,
-                claims,
+                vec![claim],
             ));
     }
 
