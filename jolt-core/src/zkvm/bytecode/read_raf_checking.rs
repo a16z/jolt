@@ -73,7 +73,7 @@ pub struct ReadRafSumcheck<F: JoltField> {
 enum ReadCheckingValType {
     /// Spartan outer sumcheck
     Stage1,
-    /// Jump flag from ShouldJumpVirtualization
+    /// Jump flag from ProductVirtualization
     Stage2,
     /// PCSumcheck
     Stage3,
@@ -389,7 +389,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             .get_virtual_polynomial_opening(VirtualPolynomial::Imm, SumcheckId::SpartanOuter);
         let (r_cycle_2, _) = acc.borrow().get_virtual_polynomial_opening(
             VirtualPolynomial::OpFlags(CircuitFlags::Jump),
-            SumcheckId::ShouldJumpVirtualization,
+            SumcheckId::ProductVirtualization,
         );
         let (r_cycle_3, _) = acc.borrow().get_virtual_polynomial_opening(
             VirtualPolynomial::UnexpandedPC,
@@ -422,7 +422,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             .get_virtual_polynomial_opening(VirtualPolynomial::Imm, SumcheckId::SpartanOuter);
         let (r, _) = acc.borrow().get_virtual_polynomial_opening(
             VirtualPolynomial::OpFlags(CircuitFlags::Jump),
-            SumcheckId::ShouldJumpVirtualization,
+            SumcheckId::ProductVirtualization,
         );
         let r_cycle_2 = r.r;
         // Stage 3: Get r_cycle from PCSumcheck or other stage 3 sumchecks
@@ -523,7 +523,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
     ///       rd_addr(k) = rd address for instruction k
     ///       write_lookup_output_to_rd_flag(k) = 1 if instruction k writes lookup output to rd, 0 otherwise
     /// This particular Val virtualizes the flag claims from
-    /// ShouldJumpVirtualization, ShouldBranchVirtualization, WritePCtoRDVirtualization, and WriteLookupOutputToRDVirtualization.
+    /// ProductVirtualization, ShouldBranchVirtualization, WritePCtoRDVirtualization, and WriteLookupOutputToRDVirtualization.
     /// Note: Jump flag appears twice (gamma^0 for ShouldJump, gamma^3 for WritePCtoRD).
     /// Note: Rd addr appears twice (gamma^2 for WritePCtoRD, gamma^4 for WriteLookupOutputToRD).
     fn compute_val_2(
@@ -563,27 +563,27 @@ impl<F: JoltField> ReadRafSumcheck<F> {
     ) -> F {
         let (_, jump_claim) = sm.get_virtual_polynomial_opening(
             VirtualPolynomial::OpFlags(CircuitFlags::Jump),
-            SumcheckId::ShouldJumpVirtualization,
+            SumcheckId::ProductVirtualization,
         );
         let (_, branch_claim) = sm.get_virtual_polynomial_opening(
             VirtualPolynomial::InstructionFlags(InstructionFlags::Branch),
-            SumcheckId::ShouldBranchVirtualization,
+            SumcheckId::ProductVirtualization,
         );
         let (_, rd_wa_claim_write_pc) = sm.get_virtual_polynomial_opening(
             VirtualPolynomial::RdWa,
-            SumcheckId::WritePCtoRDVirtualization,
+            SumcheckId::ProductVirtualization,
         );
         let (_, jump_claim_write_pc) = sm.get_virtual_polynomial_opening(
             VirtualPolynomial::OpFlags(CircuitFlags::Jump),
-            SumcheckId::WritePCtoRDVirtualization,
+            SumcheckId::ProductVirtualization,
         );
         let (_, rd_wa_claim_write_lookup) = sm.get_virtual_polynomial_opening(
             VirtualPolynomial::RdWa,
-            SumcheckId::WriteLookupOutputToRDVirtualization,
+            SumcheckId::ProductVirtualization,
         );
         let (_, write_lookup_output_to_rd_flag_claim) = sm.get_virtual_polynomial_opening(
             VirtualPolynomial::OpFlags(CircuitFlags::WriteLookupOutputToRD),
-            SumcheckId::WriteLookupOutputToRDVirtualization,
+            SumcheckId::ProductVirtualization,
         );
 
         [

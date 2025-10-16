@@ -12,7 +12,11 @@ use crate::zkvm::r1cs::key::UniformSpartanKey;
 use crate::zkvm::spartan::inner::InnerSumcheck;
 use crate::zkvm::spartan::outer::{OuterRemainingSumcheck, OuterUniSkipInstance};
 use crate::zkvm::spartan::pc::PCSumcheck;
-use crate::zkvm::spartan::product::ProductVirtualizationSumcheck;
+use crate::zkvm::spartan::product::{
+    ProductVirtualRemainder, ProductVirtualUniSkipInstance,
+    PRODUCT_VIRTUAL_FIRST_ROUND_POLY_NUM_COEFFS, PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
+};
+use crate::subprotocols::univariate_skip::UniSkipState;
 
 use crate::transcripts::Transcript;
 
@@ -24,11 +28,13 @@ pub mod instruction_input;
 pub mod outer;
 pub mod pc;
 pub mod product;
+
 pub struct SpartanDag<F: JoltField> {
     /// Cached key to avoid recomputation across stages
     key: Arc<UniformSpartanKey<F>>,
-    /// Stage 1 handoff state from univariate skip first round (shared by prover and verifier)
-    stage1_state: Option<Stage1State<F>>,
+    /// Handoff state from univariate skip first round (shared by prover and verifier)
+    /// This is first used in stage 1 and then reused in stage 2
+    uni_skip_state: Option<UniSkipState<F>>,
 }
 
 impl<F: JoltField> SpartanDag<F> {
@@ -36,15 +42,9 @@ impl<F: JoltField> SpartanDag<F> {
         let key = Arc::new(UniformSpartanKey::new(padded_trace_length));
         Self {
             key,
-            stage1_state: None,
+            uni_skip_state: None,
         }
     }
-}
-
-struct Stage1State<F: JoltField> {
-    claim_after_first: F,
-    r0: F::Challenge,
-    tau: Vec<<F as JoltField>::Challenge>,
 }
 
 impl<F, ProofTranscript, PCS> SumcheckStages<F, ProofTranscript, PCS> for SpartanDag<F>
@@ -57,7 +57,7 @@ where
     // batched sumcheck instance (currently only the remaining outer sumcheck rounds, but could be
     // extended to include other sumchecks)
 
-    fn stage1_first_round_prove(
+    fn stage1_prover_uni_skip(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Result<(), anyhow::Error> {
@@ -87,7 +87,7 @@ where
         );
 
         // Cache remainder construction state for instances method
-        self.stage1_state = Some(Stage1State {
+        self.uni_skip_state = Some(UniSkipState {
             claim_after_first,
             r0,
             tau,
@@ -96,7 +96,7 @@ where
         Ok(())
     }
 
-    fn stage1_first_round_verify(
+    fn stage1_verifier_uni_skip(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Result<(), anyhow::Error> {
@@ -128,7 +128,7 @@ where
             .map_err(|_| anyhow::anyhow!("UniSkip first-round verification failed"))?;
 
         // Cache info needed to build verifier-side remainder instance later
-        self.stage1_state = Some(Stage1State {
+        self.uni_skip_state = Some(UniSkipState {
             claim_after_first,
             r0,
             tau,
@@ -137,170 +137,173 @@ where
         Ok(())
     }
 
-    fn stage1_remainder_prover_instances(
+    fn stage1_prover_instances(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
         // Stage 1 remainder: outer-remaining + extras.
         let mut instances: Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> = Vec::new();
-        if let Some(st) = self.stage1_state.take() {
+        if let Some(st) = self.uni_skip_state.take() {
             let num_cycles_bits = self.key.num_steps.ilog2() as usize;
-            let outer_remaining = OuterRemainingSumcheck::new_prover(
-                state_manager,
-                num_cycles_bits,
-                &st.tau,
-                st.r0,
-                st.claim_after_first,
-            );
+            let outer_remaining = OuterRemainingSumcheck::new_prover(state_manager, num_cycles_bits, &st);
             instances.push(Box::new(outer_remaining));
         }
         // TODO: append extras when available
         instances
     }
 
-    fn stage1_remainder_verifier_instances(
+    fn stage1_verifier_instances(
         &mut self,
         _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
         // Stage 1 remainder: outer-remaining + extras (verifier side).
         let mut instances: Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> = Vec::new();
-        if let Some(st) = self.stage1_state.take() {
+        if let Some(st) = self.uni_skip_state.take() {
             let num_cycles_bits = self.key.num_steps.ilog2() as usize;
-            let outer_remaining = OuterRemainingSumcheck::new_verifier(
-                num_cycles_bits,
-                st.tau,
-                st.r0,
-                st.claim_after_first,
-            );
+            let outer_remaining = OuterRemainingSumcheck::new_verifier(num_cycles_bits, st);
             instances.push(Box::new(outer_remaining));
         }
         // TODO: append extras when available
         instances
+    }
+
+    /* Sumcheck 2: Inner sumcheck + Product Virtualization
+        This stage proves two things in parallel:
+        1) Inner sumcheck: claim_Az + r * claim_Bz = sum_y (A_small(rx, y) + r * B_small(rx, y)) * z(y)
+        2) Product virtualization (single protocol):
+           - Univariate-skip first round over a size-5 domain Y to compress five product constraints
+           - A remainder sumcheck over cycle variables that binds one Left/Right pair defined by
+             Lagrange weights at r0
+
+        Notation (for product virtualization):
+        • Variables: r = (r0, r_tail), where r0 is the uni-skip challenge and r_tail are cycle bits;
+          τ = (τ_low, τ_high) with τ_low the cycle eq point and τ_high the uni-skip binding point.
+        • Lagrange weights: w_i = L_i(r0), i ∈ {0..4}, on the size-5 base domain.
+        • Five product terms P_i(x) over cycle assignment x:
+          P0(x) = LeftInstructionInput(x) * RightInstructionInput(x)
+          P1(x) = RdWa(x) * OpFlags_WriteLookupOutputToRD(x)
+          P2(x) = RdWa(x) * OpFlags_Jump(x)
+          P3(x) = LookupOutput(x) * InstructionFlags_Branch(x)
+          P4(x) = OpFlags_Jump(x) * (1 - NextIsNoop(x))
+        • Weighted Left/Right:
+          Left(x)  = Σ_i w_i · Left_i(x)
+          Right(x) = Σ_i w_i · Right_i^eff(x)  (with Right_4^eff(x) = 1 - NextIsNoop(x))
+
+        Prover sends:
+        - Uni-skip first round s1(Y) = L(τ_high, Y) · t1(Y)
+        - Remainder rounds binding r_tail with a degree-3 sumcheck whose endpoints depend on
+          Left/Right as defined above.
+
+        Verifier checks:
+        - L(τ_high, r0) · Eq(τ_low, r_tail^rev) · Left(r_cycle) · Right(r_cycle), where r_cycle = r_tail.
+    */
+
+    fn stage2_first_round_prove(
+        &mut self,
+        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+    ) -> Result<(), anyhow::Error> {
+        // Univariate-skip first round for product virtualization (Stage 2a)
+        let key = self.key.clone();
+        let num_rounds: usize = key.num_cycle_vars() + 1; // + 1 for the initial univariate skip
+        let transcript = state_manager.get_transcript();
+        let tau: Vec<F::Challenge> = transcript
+            .borrow_mut()
+            .challenge_vector_optimized::<F>(num_rounds);
+
+        let mut uniskip_instance = ProductVirtualUniSkipInstance::<F>::new_prover(state_manager, &tau);
+        let (first_round_proof, r0, claim_after_first) = prove_uniskip_round::<
+            F,
+            ProofTranscript,
+            ProductVirtualUniSkipInstance<F>,
+        >(&mut uniskip_instance, &mut *transcript.borrow_mut());
+
+        state_manager.proofs.borrow_mut().insert(
+            ProofKeys::Stage2Sumcheck,
+            ProofData::UniSkipFirstRoundProof(first_round_proof),
+        );
+
+        self.uni_skip_state = Some(UniSkipState { claim_after_first, r0, tau });
+        Ok(())
+    }
+    
+        /* Sumcheck 2: Inner sumcheck + Product Virtualization
+           Verification perspective.
+           1) Inner sumcheck: verify claim_Az + r * claim_Bz = (A_small(rx, ry) + r * B_small(rx, ry)) * z(ry)
+
+           2) Product virtualization (single protocol): define the five product terms and weights as above,
+              with w_i = L_i(r0). Let
+                Left(r_cycle)  = Σ_i w_i · Left_i(r_cycle)
+                Right(r_cycle) = Σ_i w_i · Right_i^eff(r_cycle)  (Right_4^eff = 1 - NextIsNoop)
+              Then verify that the uni-skip + remainder messages imply the final claim
+                L(τ_high, r0) · Eq(τ_low, r_tail^rev) · Left(r_cycle) · Right(r_cycle).
+        */
+
+    fn stage2_first_round_verify(
+        &mut self,
+        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+    ) -> Result<(), anyhow::Error> {
+        let key = self.key.clone();
+        let num_rounds: usize = key.num_cycle_vars() + 1; // + 1 for the initial univariate skip
+        let tau: Vec<F::Challenge> = state_manager
+            .transcript
+            .borrow_mut()
+            .challenge_vector_optimized::<F>(num_rounds);
+
+        let first_round = {
+            let proofs = state_manager.proofs.borrow();
+            match proofs
+                .get(&ProofKeys::Stage2Sumcheck)
+                .expect("missing Stage2Sumcheck")
+            {
+                ProofData::UniSkipFirstRoundProof(fr) => fr.clone(),
+                _ => panic!("unexpected proof type for Stage2Sumcheck"),
+            }
+        };
+
+        let (r0, claim_after_first) = first_round
+            .verify::<PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE, PRODUCT_VIRTUAL_FIRST_ROUND_POLY_NUM_COEFFS>(
+                PRODUCT_VIRTUAL_FIRST_ROUND_POLY_NUM_COEFFS - 1,
+                &mut *state_manager.transcript.borrow_mut(),
+            )
+            .map_err(|_| anyhow::anyhow!("ProductVirtual uni-skip first-round verification failed"))?;
+
+        self.uni_skip_state = Some(UniSkipState { claim_after_first, r0, tau });
+        Ok(())
     }
 
     fn stage2_prover_instances(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
-        /* Sumcheck 2: Inner sumcheck + ShouldJump/ShouldBranch/WritePCtoRD/WriteLookupOutputToRD product virtualization
-            - Inner sumcheck proves: claim_Az + r * claim_Bz + r^2 * claim_Cz =
-                    \sum_y (A_small(rx, y) + r * B_small(rx, y) + r^2 * C_small(rx, y)) * z(y)
-            - ShouldJump sumcheck proves: ShouldJump(r_cycle) = Jump_flag(r_cycle) × (1 - NextIsNoop(r_cycle))
-            - ShouldBranch sumcheck proves: ShouldBranch(r_cycle) = lookup_output(r_cycle) × Branch_flag(r_cycle)
-            - WritePCtoRD sumcheck proves: WritePCtoRD(r_cycle) = rd_addr(r_cycle) × Jump_flag(r_cycle)
-            - WriteLookupOutputToRD sumcheck proves: WriteLookupOutputToRD(r_cycle) = rd_addr(r_cycle) × WriteLookupOutputToRD_flag(r_cycle)
-        */
+        // Sumcheck 2: Inner sumcheck + Product Virtualization remainder
         let key = self.key.clone();
         let inner_sumcheck = InnerSumcheck::new_prover(state_manager, key);
 
-        let should_jump_sumcheck = ProductVirtualizationSumcheck::new_prover(
-            product::VirtualProductType::ShouldJump,
-            state_manager,
-        );
+        let st = self
+            .uni_skip_state
+            .take()
+            .expect("stage2_first_round_prove must run before stage2_prover_instances");
+        let product_virtual_remainder = ProductVirtualRemainder::new_prover(state_manager, &st);
 
-        let should_branch_sumcheck = ProductVirtualizationSumcheck::new_prover(
-            product::VirtualProductType::ShouldBranch,
-            state_manager,
-        );
-
-        let write_pc_to_rd_sumcheck = ProductVirtualizationSumcheck::new_prover(
-            product::VirtualProductType::WritePCtoRD,
-            state_manager,
-        );
-
-        let write_lookup_output_to_rd_sumcheck = ProductVirtualizationSumcheck::new_prover(
-            product::VirtualProductType::WriteLookupOutputToRD,
-            state_manager,
-        );
-
-        let product_sumcheck = ProductVirtualizationSumcheck::new_prover(
-            product::VirtualProductType::Instruction,
-            state_manager,
-        );
-
-        #[cfg(feature = "allocative")]
-        {
-            print_data_structure_heap_usage("Spartan InnerSumcheck", &inner_sumcheck);
-            print_data_structure_heap_usage(
-                "Spartan ShouldJump ProductVirtualizationSumcheck",
-                &should_jump_sumcheck,
-            );
-            print_data_structure_heap_usage(
-                "Spartan ShouldBranch ProductVirtualizationSumcheck",
-                &should_branch_sumcheck,
-            );
-            print_data_structure_heap_usage(
-                "Spartan WritePCtoRD ProductVirtualizationSumcheck",
-                &write_pc_to_rd_sumcheck,
-            );
-            print_data_structure_heap_usage(
-                "Spartan WriteLookupOutputToRD ProductVirtualizationSumcheck",
-                &write_lookup_output_to_rd_sumcheck,
-            );
-            print_data_structure_heap_usage(
-                "Spartan ProductVirtualizationSumcheck",
-                &product_sumcheck,
-            );
-        }
-
-        vec![
-            Box::new(inner_sumcheck),
-            Box::new(should_jump_sumcheck),
-            Box::new(should_branch_sumcheck),
-            Box::new(write_pc_to_rd_sumcheck),
-            Box::new(write_lookup_output_to_rd_sumcheck),
-            Box::new(product_sumcheck),
-        ]
+        vec![Box::new(inner_sumcheck), Box::new(product_virtual_remainder)]
     }
 
     fn stage2_verifier_instances(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
-        /* Sumcheck 2: Inner sumcheck + ShouldJump/ShouldBranch/WritePCtoRD/WriteLookupOutputToRD product virtualization
-           - Inner sumcheck verifies: claim_Az + r * claim_Bz + r^2 * claim_Cz =
-                    (A_small(rx, ry) + r * B_small(rx, ry) + r^2 * C_small(rx, ry)) * z(ry)
-           - ShouldJump sumcheck verifies: ShouldJump(r_cycle) = Jump_flag(r_cycle) × (1 - NextIsNoop(r_cycle))
-           - ShouldBranch sumcheck verifies: ShouldBranch(r_cycle) = lookup_output(r_cycle) × Branch_flag(r_cycle)
-           - WritePCtoRD sumcheck verifies: WritePCtoRD(r_cycle) = rd_addr(r_cycle) × Jump_flag(r_cycle)
-           - WriteLookupOutputToRD sumcheck verifies: WriteLookupOutputToRD(r_cycle) = rd_addr(r_cycle) × WriteLookupOutputToRD_flag(r_cycle)
-        */
+        // Sumcheck 2: Inner sumcheck + Product Virtualization remainder (verifier)
         let key = self.key.clone();
         let inner_sumcheck = InnerSumcheck::<F>::new_verifier(state_manager, key);
 
-        let should_jump_sumcheck = ProductVirtualizationSumcheck::new_verifier(
-            product::VirtualProductType::ShouldJump,
-            state_manager,
-        );
+        let st = self
+            .uni_skip_state
+            .take()
+            .expect("stage2_first_round_verify must run before stage2_verifier_instances");
+        let num_cycles_bits = self.key.num_steps.ilog2() as usize;
+        let product_virtual_remainder = ProductVirtualRemainder::new_verifier(num_cycles_bits, st);
 
-        let should_branch_sumcheck = ProductVirtualizationSumcheck::new_verifier(
-            product::VirtualProductType::ShouldBranch,
-            state_manager,
-        );
-
-        let write_pc_to_rd_sumcheck = ProductVirtualizationSumcheck::new_verifier(
-            product::VirtualProductType::WritePCtoRD,
-            state_manager,
-        );
-
-        let write_lookup_output_to_rd_sumcheck = ProductVirtualizationSumcheck::new_verifier(
-            product::VirtualProductType::WriteLookupOutputToRD,
-            state_manager,
-        );
-
-        let product_sumcheck = ProductVirtualizationSumcheck::new_verifier(
-            product::VirtualProductType::Instruction,
-            state_manager,
-        );
-
-        vec![
-            Box::new(inner_sumcheck),
-            Box::new(should_jump_sumcheck),
-            Box::new(should_branch_sumcheck),
-            Box::new(write_pc_to_rd_sumcheck),
-            Box::new(write_lookup_output_to_rd_sumcheck),
-            Box::new(product_sumcheck),
-        ]
+        vec![Box::new(inner_sumcheck), Box::new(product_virtual_remainder)]
     }
 
     fn stage3_prover_instances(

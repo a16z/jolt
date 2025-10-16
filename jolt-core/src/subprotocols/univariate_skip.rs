@@ -1,7 +1,7 @@
 use crate::field::JoltField;
 use crate::poly::lagrange_poly::LagrangePolynomial;
 use crate::poly::unipoly::UniPoly;
-use crate::utils::univariate_skip::accum::{
+use crate::subprotocols::univariate_skip::accum::{
     acc5_add_field, acc5_new, acc5_reduce, acc6_fmadd_i128, acc6_new, acc6_reduce,
     accs160_fmadd_s160, accs160_new, accs160_reduce, Acc5, Acc6, AccS160,
 };
@@ -10,6 +10,17 @@ use crate::zkvm::r1cs::constraints::{
     NUM_REMAINING_R1CS_CONSTRAINTS, UNIVARIATE_SKIP_DOMAIN_SIZE,
 };
 use crate::zkvm::r1cs::inputs::R1CSCycleInputs;
+
+/// Shared handoff state from a univariate-skip first round.
+///
+/// This bundles the claim after s1, the uni-skip challenge r0, and the tau vector
+/// used to parameterize the Lagrange kernel and cycle eq polynomial.
+#[derive(Clone, Debug)]
+pub struct UniSkipState<F: JoltField> {
+    pub claim_after_first: F,
+    pub r0: F::Challenge,
+    pub tau: Vec<F::Challenge>,
+}
 
 // Accumulation primitives (unreduced (signed) accumulation + final reduction)
 pub mod accum {
@@ -292,54 +303,4 @@ pub fn build_uniskip_first_round_poly<
     }
 
     UniPoly::from_coeff(s1_coeffs.to_vec())
-}
-
-#[cfg(test)]
-mod tests {
-    use ark_ff::biginteger::{I8OrI96, S160};
-    use rand::Rng;
-
-    #[allow(dead_code)]
-    fn random_az_value<R: Rng>(rng: &mut R) -> I8OrI96 {
-        match rng.gen_range(0..5) {
-            0 => I8OrI96::from_i8(rng.gen()),
-            1 => I8OrI96::from_i8(0), // zero
-            2 => I8OrI96::from_i8(1), // one
-            3 => I8OrI96::from_i128(rng.gen::<i64>() as i128),
-            4 => {
-                // Bounded 90-bit magnitude to ensure it always fits in I8OrI96,
-                // and give headroom so differences during extension remain within 96 bits.
-                const BITS: u32 = 90;
-                let mask: u128 = if BITS == 128 {
-                    u128::MAX
-                } else {
-                    (1u128 << BITS) - 1
-                };
-                let mag = (rng.gen::<u128>() & mask) as i128;
-                let val = if rng.gen::<bool>() { mag } else { -mag };
-                I8OrI96::from_i128(val)
-            }
-            _ => unreachable!(),
-        }
-    }
-
-    #[allow(dead_code)]
-    fn random_bz_value<R: Rng>(rng: &mut R) -> S160 {
-        match rng.gen_range(0..4) {
-            0 => S160::from(0i128),
-            1 => S160::from(1i128),
-            2 => S160::from(rng.gen::<i64>() as i128),
-            3 => {
-                // Bounded 156-bit magnitude to avoid overflow when summing up to 8 terms
-                // during ternary extension (N<=3 => 2^N <= 8).
-                // Use 120-bit cap to stay safely within S160 even after up to 8-term sums.
-                const BITS: u32 = 120;
-                let mask: u128 = (1u128 << BITS) - 1;
-                let mag = (rng.gen::<u128>() & mask) as i128;
-                let val = if rng.gen::<bool>() { mag } else { -mag };
-                S160::from(val)
-            }
-            _ => unreachable!(),
-        }
-    }
 }

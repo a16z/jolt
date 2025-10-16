@@ -123,12 +123,12 @@ impl JoltDAG {
 
         tracing::info!("Stage 1 proving (univariate skip first round)");
         spartan_dag
-            .stage1_first_round_prove(&mut state_manager)
+            .stage1_prover_uni_skip(&mut state_manager)
             .context("Stage 1 univariate skip first round")?;
 
         // Batch the stage1 remainder instances (outer-remaining + extras)
         let mut remainder_instances: Vec<_> = spartan_dag
-            .stage1_remainder_prover_instances(&mut state_manager)
+            .stage1_prover_instances(&mut state_manager)
             .into_iter()
             .collect();
         let remainder_instances_mut: Vec<&mut dyn SumcheckInstance<F, ProofTranscript>> =
@@ -557,11 +557,11 @@ impl JoltDAG {
 
         // Stage 1:
         spartan_dag
-            .stage1_first_round_verify(&mut state_manager)
+            .stage1_verifier_uni_skip(&mut state_manager)
             .context("Stage 1 univariate skip first round")?;
 
         let stage1_remainder_instances: Vec<_> = spartan_dag
-            .stage1_remainder_verifier_instances(&mut state_manager)
+            .stage1_verifier_instances(&mut state_manager)
             .into_iter()
             .collect();
         let stage1_remainder_instances_ref: Vec<&dyn SumcheckInstance<F, ProofTranscript>> =

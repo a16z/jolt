@@ -109,11 +109,15 @@ impl<F: JoltField> UniformSpartanKey<F> {
         Self::num_vars().next_power_of_two()
     }
 
+    /// Number of cycle variables, e.g. number of bits needed to represent all cycles in the trace
+    pub fn num_cycle_vars(&self) -> usize {
+        self.num_steps.next_power_of_two().log_2()
+    }
+
     /// Number of bits needed for all rows.
     /// With univariate skip, this is the number of cycle variables plus two (one for univariate skip of degree ~13-15, and one for the streaming round)
     pub fn num_rows_bits(&self) -> usize {
-        let num_cycle_vars = self.num_steps.next_power_of_two().log_2();
-        num_cycle_vars + 2
+        self.num_cycle_vars() + 2
     }
 
     /// Evaluate the RLC of A_small, B_small, C_small matrices at (r_constr, y_var)
