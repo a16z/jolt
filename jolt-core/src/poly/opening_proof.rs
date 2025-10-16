@@ -786,13 +786,12 @@ where
             if let ProverOpening::Dense(_) = prover_state {
                 // If not already in `dense_polynomial_map`, create shared polynomial
                 // and insert it into the map.
-                if !self.dense_polynomial_map.contains_key(&sumcheck.polynomial) {
-                    let poly = polynomials.get(&sumcheck.polynomial).unwrap().clone();
-                    self.dense_polynomial_map.insert(
-                        sumcheck.polynomial,
-                        Arc::new(RwLock::new(SharedDensePolynomial::new(poly))),
-                    );
-                }
+                self.dense_polynomial_map
+                    .entry(sumcheck.polynomial)
+                    .or_insert_with(|| {
+                        let poly = polynomials.get(&sumcheck.polynomial).unwrap().clone();
+                        Arc::new(RwLock::new(SharedDensePolynomial::new(poly)))
+                    });
             }
         }
 
@@ -838,8 +837,8 @@ where
             ));
 
             let hints: Vec<PCS::OpeningProofHint> = rlc_map
-                .into_iter()
-                .map(|(k, _)| opening_hints.remove(&k).unwrap())
+                .into_keys()
+                .map(|k| opening_hints.remove(&k).unwrap())
                 .collect();
             debug_assert!(
                 opening_hints.is_empty(),

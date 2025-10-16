@@ -1052,7 +1052,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
             ])
             .map(|(((val, r_cycle), gamma), int_poly)| {
                 (val.evaluate(r_address_prime) + int_poly)
-                    * EqPolynomial::<F>::mle(r_cycle, &r_cycle_prime)
+                    * EqPolynomial::<F>::mle(r_cycle, r_cycle_prime)
                     * gamma
             })
             .sum::<F>();
