@@ -296,13 +296,11 @@ where
     F: JoltField,
 {
     prover_state: Option<ProverOpening<F>>,
-    /// Represents the polynomial(s) opened. May be a random linear combination
-    /// of multiple polynomials, all being opened at the same point.
-    polynomials: Vec<CommittedPolynomial>,
+    /// Represents the polynomial opened.
+    polynomial: CommittedPolynomial,
     /// The ID of the sumcheck these openings originated from
     sumcheck_id: SumcheckId,
-    rlc_coeffs: Vec<F>,
-    input_claims: Vec<F>,
+    input_claim: F,
     opening_point: Vec<F::Challenge>,
     sumcheck_claim: Option<F>,
 }
@@ -323,10 +321,9 @@ where
             eq_poly,
         };
         Self {
-            polynomials: vec![polynomial],
+            polynomial,
             sumcheck_id,
-            input_claims: vec![claim],
-            rlc_coeffs: vec![], // Populated later
+            input_claim: claim,
             prover_state: Some(opening.into()),
             opening_point,
             sumcheck_claim: None,
@@ -343,10 +340,9 @@ where
     ) -> Self {
         let opening = OneHotPolynomialProverOpening::new(eq_address, eq_cycle);
         Self {
-            polynomials: vec![polynomial],
+            polynomial,
             sumcheck_id,
-            input_claims: vec![claim],
-            rlc_coeffs: vec![F::one()],
+            input_claim: claim,
             prover_state: Some(opening.into()),
             opening_point,
             sumcheck_claim: None,
@@ -354,21 +350,15 @@ where
     }
 
     fn new_verifier_instance(
-        polynomials: Vec<CommittedPolynomial>,
+        polynomial: CommittedPolynomial,
         sumcheck_id: SumcheckId,
         opening_point: Vec<F::Challenge>,
-        claims: Vec<F>,
+        claim: F,
     ) -> Self {
-        let rlc_coeffs = if polynomials.len() == 1 {
-            vec![F::one()]
-        } else {
-            vec![] // Will be populated later
-        };
         Self {
-            polynomials,
+            polynomial,
             sumcheck_id,
-            input_claims: claims,
-            rlc_coeffs,
+            input_claim: claim,
             prover_state: None,
             opening_point,
             sumcheck_claim: None,
@@ -379,38 +369,32 @@ where
     fn prepare_sumcheck(
         &mut self,
         polynomials_map: Option<&HashMap<CommittedPolynomial, MultilinearPolynomial<F>>>,
-        gammas: &[F],
     ) {
         #[cfg(test)]
         {
             use crate::poly::multilinear_polynomial::PolynomialEvaluation;
-
             if let Some(polynomials_map) = polynomials_map {
-                for (label, claim) in self.polynomials.iter().zip(self.input_claims.iter()) {
-                    let poly = polynomials_map.get(label).unwrap();
-                    debug_assert_eq!(
-                        poly.evaluate(&self.opening_point),
-                        *claim,
-                        "Evaluation mismatch for {:?} {label:?}",
-                        self.sumcheck_id
-                    );
-                }
+                let poly = polynomials_map.get(&self.polynomial).unwrap();
+                debug_assert_eq!(
+                    poly.evaluate(&self.opening_point),
+                    self.input_claim,
+                    "Evaluation mismatch for {:?} {:?}",
+                    self.sumcheck_id,
+                    self.polynomial,
+                );
             }
         }
 
-        assert_eq!(gammas.len(), 1, "Expected 1 gamma but got {}", gammas.len());
-        self.rlc_coeffs = vec![F::one()];
-
         if let Some(prover_state) = self.prover_state.as_mut() {
             let polynomials_map = polynomials_map.unwrap();
-            let poly = polynomials_map.get(&self.polynomials[0]).unwrap();
+            let poly = polynomials_map.get(&self.polynomial).unwrap();
             let num_vars = poly.get_num_vars();
             let opening_point_len = self.opening_point.len();
             debug_assert_eq!(
                     num_vars,
                     opening_point_len,
                     "{:?} has {num_vars} variables but opening point from {:?} has length {opening_point_len}",
-                    self.polynomials[0],
+                    self.polynomial,
                     self.sumcheck_id,
                 );
 
@@ -459,12 +443,7 @@ where
     }
 
     fn input_claim(&self) -> F {
-        assert_eq!(
-            self.input_claims.len(),
-            1,
-            "Input claims should have been reduced by now"
-        );
-        self.input_claims[0]
+        self.input_claim
     }
 
     fn compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F> {
@@ -791,20 +770,6 @@ where
             self.sumchecks.len()
         );
 
-        let total_challenges_needed: usize = self
-            .sumchecks
-            .iter()
-            .map(|sumcheck| {
-                if sumcheck.polynomials.len() > 1 {
-                    sumcheck.polynomials.len()
-                } else {
-                    1
-                }
-            })
-            .sum();
-
-        let all_gammas: Vec<F> = transcript.challenge_vector(total_challenges_needed);
-
         let prepare_span = tracing::span!(
             tracing::Level::INFO,
             "prepare_all_sumchecks",
@@ -817,28 +782,9 @@ where
             .par_iter_mut()
             .for_each(|(_, eq_cycle)| eq_cycle.write().unwrap().merge_D());
 
-        let mut gamma_offsets = vec![0];
-        for sumcheck in self.sumchecks.iter() {
-            let num_gammas = if sumcheck.polynomials.len() > 1 {
-                sumcheck.polynomials.len()
-            } else {
-                1
-            };
-            gamma_offsets.push(gamma_offsets.last().unwrap() + num_gammas);
-        }
-
-        self.sumchecks
-            .par_iter_mut()
-            .zip(gamma_offsets.par_iter())
-            .for_each(|(sumcheck, &offset)| {
-                let num_gammas = if sumcheck.polynomials.len() > 1 {
-                    sumcheck.polynomials.len()
-                } else {
-                    1
-                };
-                let gammas_slice = &all_gammas[offset..offset + num_gammas];
-                sumcheck.prepare_sumcheck(Some(&polynomials), gammas_slice);
-            });
+        self.sumchecks.par_iter_mut().for_each(|sumcheck| {
+            sumcheck.prepare_sumcheck(Some(&polynomials));
+        });
 
         // Drop merged D as they are no longer needed
         self.eq_cycle_map
@@ -853,70 +799,48 @@ where
 
         transcript.append_scalars(&sumcheck_claims);
 
-        let gamma: F = transcript.challenge_scalar();
-        let mut gamma_powers = vec![F::one()];
-        for i in 1..self.sumchecks.len() {
-            gamma_powers.push(gamma_powers[i - 1] * gamma);
-        }
+        let gamma_powers: Vec<F> = transcript.challenge_scalar_powers(self.sumchecks.len());
 
         // Combines the individual polynomials into the RLC that will be used for the
         // batched opening proof.
-        let joint_poly = {
+        let (joint_poly, hint) = {
             let mut rlc_map = BTreeMap::new();
             for (gamma, sumcheck) in gamma_powers.iter().zip(self.sumchecks.iter()) {
-                for (coeff, polynomial) in
-                    sumcheck.rlc_coeffs.iter().zip(sumcheck.polynomials.iter())
-                {
-                    if let Some(value) = rlc_map.get_mut(&polynomial) {
-                        *value += *coeff * gamma;
-                    } else {
-                        rlc_map.insert(polynomial, *coeff * gamma);
-                    }
+                if let Some(value) = rlc_map.get_mut(&sumcheck.polynomial) {
+                    *value += *gamma;
+                } else {
+                    rlc_map.insert(sumcheck.polynomial, *gamma);
                 }
             }
 
             let (coeffs, polynomials): (Vec<F>, Vec<MultilinearPolynomial<F>>) = rlc_map
-                .into_iter()
+                .iter()
                 .map(|(k, v)| (v, polynomials.remove(k).unwrap()))
                 .unzip();
 
-            MultilinearPolynomial::RLC(RLCPolynomial::linear_combination(
+            let joint_poly = MultilinearPolynomial::RLC(RLCPolynomial::linear_combination(
                 polynomials.into_iter().map(Arc::new).collect(),
                 &coeffs,
-            ))
-        };
+            ));
 
-        #[cfg(test)]
-        let joint_commitment = PCS::commit(&joint_poly, pcs_setup).0;
-
-        // Compute the opening proof hint for the reduced opening by homomorphically combining
-        // the hints for the individual sumchecks.
-        let hint = {
-            let mut rlc_map = BTreeMap::new();
-            for (gamma, sumcheck) in gamma_powers.iter().zip(self.sumchecks.iter()) {
-                for (coeff, polynomial) in
-                    sumcheck.rlc_coeffs.iter().zip(sumcheck.polynomials.iter())
-                {
-                    if let Some(value) = rlc_map.get_mut(&polynomial) {
-                        *value += *coeff * gamma;
-                    } else {
-                        rlc_map.insert(polynomial, *coeff * gamma);
-                    }
-                }
-            }
-
-            let (coeffs, hints): (Vec<F>, Vec<PCS::OpeningProofHint>) = rlc_map
+            let hints: Vec<PCS::OpeningProofHint> = rlc_map
                 .into_iter()
-                .map(|(k, v)| (v, opening_hints.remove(k).unwrap()))
-                .unzip();
+                .map(|(k, _)| opening_hints.remove(&k).unwrap())
+                .collect();
             debug_assert!(
                 opening_hints.is_empty(),
                 "Commitments to {:?} are not used",
                 opening_hints.keys()
             );
+            // Compute the opening proof hint for the reduced opening by homomorphically combining
+            // the hints for the individual sumchecks.
+            let hint = PCS::combine_hints(hints, &coeffs);
 
-            PCS::combine_hints(hints, &coeffs)
+            (joint_poly, hint)
         };
+
+        #[cfg(test)]
+        let joint_commitment = PCS::commit(&joint_poly, pcs_setup).0;
 
         // Reduced opening proof
         let joint_opening_proof = PCS::prove(pcs_setup, &joint_poly, &r_sumcheck, hint, transcript);
@@ -1089,10 +1013,10 @@ where
 
         self.sumchecks
             .push(OpeningProofReductionSumcheck::new_verifier_instance(
-                vec![polynomial],
+                polynomial,
                 sumcheck,
                 opening_point,
-                vec![claim],
+                claim,
             ));
     }
 
@@ -1117,14 +1041,9 @@ where
                 let prover_opening = &self.prover_opening_accumulator.as_ref().unwrap().sumchecks
                     [self.sumchecks.len()];
                 assert_eq!(
-                    (prover_opening.polynomials[0], prover_opening.sumcheck_id),
+                    (prover_opening.polynomial, prover_opening.sumcheck_id),
                     (label, sumcheck),
                     "Polynomial mismatch"
-                );
-                assert_eq!(
-                    prover_opening.polynomials.len(),
-                    1,
-                    "batch size mismatch for {sumcheck:?} {label:?}"
                 );
                 assert_eq!(
                     prover_opening.opening_point, opening_point,
@@ -1141,10 +1060,10 @@ where
 
             self.sumchecks
                 .push(OpeningProofReductionSumcheck::new_verifier_instance(
-                    vec![label],
+                    label,
                     sumcheck,
                     opening_point.clone(),
-                    vec![claim],
+                    claim,
                 ));
         }
     }
@@ -1217,42 +1136,9 @@ where
             assert_eq!(prover_openings.len(), self.len());
         }
 
-        let total_challenges_needed: usize = self
-            .sumchecks
-            .iter()
-            .map(|sumcheck| {
-                if sumcheck.polynomials.len() > 1 {
-                    sumcheck.polynomials.len()
-                } else {
-                    1
-                }
-            })
-            .sum();
-
-        let all_gammas: Vec<F> = transcript.challenge_vector(total_challenges_needed);
-
-        let mut gamma_offsets = vec![0];
-        for sumcheck in self.sumchecks.iter() {
-            let num_gammas = if sumcheck.polynomials.len() > 1 {
-                sumcheck.polynomials.len()
-            } else {
-                1
-            };
-            gamma_offsets.push(gamma_offsets.last().unwrap() + num_gammas);
-        }
-
-        self.sumchecks
-            .par_iter_mut()
-            .zip(gamma_offsets.par_iter())
-            .for_each(|(sumcheck, &offset)| {
-                let num_gammas = if sumcheck.polynomials.len() > 1 {
-                    sumcheck.polynomials.len()
-                } else {
-                    1
-                };
-                let gammas_slice = &all_gammas[offset..offset + num_gammas];
-                sumcheck.prepare_sumcheck(None, gammas_slice);
-            });
+        self.sumchecks.par_iter_mut().for_each(|sumcheck| {
+            sumcheck.prepare_sumcheck(None);
+        });
 
         let num_sumcheck_rounds = self
             .sumchecks
@@ -1272,31 +1158,23 @@ where
 
         transcript.append_scalars(&reduced_opening_proof.sumcheck_claims);
 
-        let gamma: F = transcript.challenge_scalar();
-        let mut gamma_powers = vec![F::one()];
-        for i in 1..self.sumchecks.len() {
-            gamma_powers.push(gamma_powers[i - 1] * gamma);
-        }
+        let gamma_powers: Vec<F> = transcript.challenge_scalar_powers(self.sumchecks.len());
 
         // Compute the commitment for the reduced opening proof by homomorphically combining
         // the commitments of the individual polynomials.
         let joint_commitment = {
             let mut rlc_map = HashMap::new();
             for (gamma, sumcheck) in gamma_powers.iter().zip(self.sumchecks.iter()) {
-                for (coeff, polynomial) in
-                    sumcheck.rlc_coeffs.iter().zip(sumcheck.polynomials.iter())
-                {
-                    if let Some(value) = rlc_map.get_mut(&polynomial) {
-                        *value += *coeff * gamma;
-                    } else {
-                        rlc_map.insert(polynomial, *coeff * gamma);
-                    }
+                if let Some(value) = rlc_map.get_mut(&sumcheck.polynomial) {
+                    *value += *gamma;
+                } else {
+                    rlc_map.insert(sumcheck.polynomial, *gamma);
                 }
             }
 
             let (coeffs, commitments): (Vec<F>, Vec<PCS::Commitment>) = rlc_map
                 .into_iter()
-                .map(|(k, v)| (v, commitment_map.remove(k).unwrap()))
+                .map(|(k, v)| (v, commitment_map.remove(&k).unwrap()))
                 .unzip();
             debug_assert!(commitment_map.is_empty(), "Every commitment should be used");
 
