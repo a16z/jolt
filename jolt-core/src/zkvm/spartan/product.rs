@@ -7,16 +7,20 @@ use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::lagrange_poly::{LagrangeHelper, LagrangePolynomial};
-use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialEvaluation};
+use crate::poly::multilinear_polynomial::{
+    BindingOrder, MultilinearPolynomial, PolynomialEvaluation,
+};
 use crate::poly::opening_proof::{
     OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
 };
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::sumcheck::{SumcheckInstance, UniSkipFirstRoundInstance};
+use crate::subprotocols::univariate_skip::{
+    build_uniskip_first_round_poly, uniskip_targets, UniSkipState,
+};
 use crate::transcripts::Transcript;
 use crate::utils::math::Math;
-use crate::subprotocols::univariate_skip::{build_uniskip_first_round_poly, uniskip_targets, UniSkipState};
 use crate::zkvm::dag::state_manager::StateManager;
 use crate::zkvm::instruction::{CircuitFlags, InstructionFlags};
 use crate::zkvm::r1cs::inputs::generate_virtual_product_witnesses;
@@ -339,10 +343,7 @@ impl<F: JoltField> ProductVirtualRemainder<F> {
         }
     }
 
-    pub fn new_verifier(
-        num_cycles_bits: usize,
-        uni: UniSkipState<F>,
-    ) -> Self {
+    pub fn new_verifier(num_cycles_bits: usize, uni: UniSkipState<F>) -> Self {
         Self {
             num_cycles_bits,
             r0_uniskip: uni.r0,
@@ -680,8 +681,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ProductVirtualRemai
         let mut right_eval = F::zero();
         for (i, pt) in product_types.iter().enumerate() {
             let FactorPolynomials(lp, rp) = pt.get_factor_polynomials();
-            let (_, le) =
-                acc.get_virtual_polynomial_opening(lp, SumcheckId::ProductVirtualization);
+            let (_, le) = acc.get_virtual_polynomial_opening(lp, SumcheckId::ProductVirtualization);
             let (_, mut re) =
                 acc.get_virtual_polynomial_opening(rp, SumcheckId::ProductVirtualization);
             if matches!(pt, VirtualProductType::ShouldJump) {
@@ -739,8 +739,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ProductVirtualRemai
             let FactorPolynomials(lp, rp) = pt.get_factor_polynomials();
 
             // Evaluate bound polynomials at r_cycle and append claims
-            let le = MultilinearPolynomial::<F>::evaluate(&l, &r_cycle);
-            let mut re = MultilinearPolynomial::<F>::evaluate(&r, &r_cycle);
+            let le = MultilinearPolynomial::<F>::evaluate(&l, r_cycle);
+            let mut re = MultilinearPolynomial::<F>::evaluate(&r, r_cycle);
             if matches!(pt, VirtualProductType::ShouldJump) {
                 re = F::one() - re;
             }

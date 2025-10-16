@@ -4,6 +4,7 @@ use std::sync::Arc;
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::subprotocols::sumcheck::prove_uniskip_round;
+use crate::subprotocols::univariate_skip::UniSkipState;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::zkvm::dag::stage::SumcheckStages;
@@ -16,7 +17,6 @@ use crate::zkvm::spartan::product::{
     ProductVirtualRemainder, ProductVirtualUniSkipInstance,
     PRODUCT_VIRTUAL_FIRST_ROUND_POLY_NUM_COEFFS, PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
 };
-use crate::subprotocols::univariate_skip::UniSkipState;
 
 use crate::transcripts::Transcript;
 
@@ -145,7 +145,8 @@ where
         let mut instances: Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> = Vec::new();
         if let Some(st) = self.uni_skip_state.take() {
             let num_cycles_bits = self.key.num_steps.ilog2() as usize;
-            let outer_remaining = OuterRemainingSumcheck::new_prover(state_manager, num_cycles_bits, &st);
+            let outer_remaining =
+                OuterRemainingSumcheck::new_prover(state_manager, num_cycles_bits, &st);
             instances.push(Box::new(outer_remaining));
         }
         // TODO: append extras when available
@@ -210,33 +211,38 @@ where
             .borrow_mut()
             .challenge_vector_optimized::<F>(num_rounds);
 
-        let mut uniskip_instance = ProductVirtualUniSkipInstance::<F>::new_prover(state_manager, &tau);
-        let (first_round_proof, r0, claim_after_first) = prove_uniskip_round::<
-            F,
-            ProofTranscript,
-            ProductVirtualUniSkipInstance<F>,
-        >(&mut uniskip_instance, &mut *transcript.borrow_mut());
+        let mut uniskip_instance =
+            ProductVirtualUniSkipInstance::<F>::new_prover(state_manager, &tau);
+        let (first_round_proof, r0, claim_after_first) =
+            prove_uniskip_round::<F, ProofTranscript, ProductVirtualUniSkipInstance<F>>(
+                &mut uniskip_instance,
+                &mut *transcript.borrow_mut(),
+            );
 
         state_manager.proofs.borrow_mut().insert(
             ProofKeys::Stage2Sumcheck,
             ProofData::UniSkipFirstRoundProof(first_round_proof),
         );
 
-        self.uni_skip_state = Some(UniSkipState { claim_after_first, r0, tau });
+        self.uni_skip_state = Some(UniSkipState {
+            claim_after_first,
+            r0,
+            tau,
+        });
         Ok(())
     }
-    
-        /* Sumcheck 2: Inner sumcheck + Product Virtualization
-           Verification perspective.
-           1) Inner sumcheck: verify claim_Az + r * claim_Bz = (A_small(rx, ry) + r * B_small(rx, ry)) * z(ry)
 
-           2) Product virtualization (single protocol): define the five product terms and weights as above,
-              with w_i = L_i(r0). Let
-                Left(r_cycle)  = Σ_i w_i · Left_i(r_cycle)
-                Right(r_cycle) = Σ_i w_i · Right_i^eff(r_cycle)  (Right_4^eff = 1 - NextIsNoop)
-              Then verify that the uni-skip + remainder messages imply the final claim
-                L(τ_high, r0) · Eq(τ_low, r_tail^rev) · Left(r_cycle) · Right(r_cycle).
-        */
+    /* Sumcheck 2: Inner sumcheck + Product Virtualization
+       Verification perspective.
+       1) Inner sumcheck: verify claim_Az + r * claim_Bz = (A_small(rx, ry) + r * B_small(rx, ry)) * z(ry)
+
+       2) Product virtualization (single protocol): define the five product terms and weights as above,
+          with w_i = L_i(r0). Let
+            Left(r_cycle)  = Σ_i w_i · Left_i(r_cycle)
+            Right(r_cycle) = Σ_i w_i · Right_i^eff(r_cycle)  (Right_4^eff = 1 - NextIsNoop)
+          Then verify that the uni-skip + remainder messages imply the final claim
+            L(τ_high, r0) · Eq(τ_low, r_tail^rev) · Left(r_cycle) · Right(r_cycle).
+    */
 
     fn stage2_first_round_verify(
         &mut self,
@@ -267,7 +273,11 @@ where
             )
             .map_err(|_| anyhow::anyhow!("ProductVirtual uni-skip first-round verification failed"))?;
 
-        self.uni_skip_state = Some(UniSkipState { claim_after_first, r0, tau });
+        self.uni_skip_state = Some(UniSkipState {
+            claim_after_first,
+            r0,
+            tau,
+        });
         Ok(())
     }
 
@@ -285,7 +295,10 @@ where
             .expect("stage2_first_round_prove must run before stage2_prover_instances");
         let product_virtual_remainder = ProductVirtualRemainder::new_prover(state_manager, &st);
 
-        vec![Box::new(inner_sumcheck), Box::new(product_virtual_remainder)]
+        vec![
+            Box::new(inner_sumcheck),
+            Box::new(product_virtual_remainder),
+        ]
     }
 
     fn stage2_verifier_instances(
@@ -303,7 +316,10 @@ where
         let num_cycles_bits = self.key.num_steps.ilog2() as usize;
         let product_virtual_remainder = ProductVirtualRemainder::new_verifier(num_cycles_bits, st);
 
-        vec![Box::new(inner_sumcheck), Box::new(product_virtual_remainder)]
+        vec![
+            Box::new(inner_sumcheck),
+            Box::new(product_virtual_remainder),
+        ]
     }
 
     fn stage3_prover_instances(

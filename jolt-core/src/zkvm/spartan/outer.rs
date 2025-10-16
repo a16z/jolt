@@ -18,19 +18,18 @@ use crate::poly::opening_proof::{
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::sumcheck::{SumcheckInstance, UniSkipFirstRoundInstance};
-use crate::transcripts::Transcript;
-use crate::utils::math::Math;
-#[cfg(feature = "allocative")]
-use crate::utils::profiling::print_data_structure_heap_usage;
-use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::subprotocols::univariate_skip::{
     accum::{
         acc6_fmadd_i128, acc6_new, acc6_reduce, accs160_fmadd_s160, accs160_new, accs160_reduce,
     },
     build_uniskip_first_round_poly, compute_az_r_group0, compute_az_r_group1, compute_bz_r_group0,
-    compute_bz_r_group1, uniskip_targets,
-    UniSkipState
+    compute_bz_r_group1, uniskip_targets, UniSkipState,
 };
+use crate::transcripts::Transcript;
+use crate::utils::math::Math;
+#[cfg(feature = "allocative")]
+use crate::utils::profiling::print_data_structure_heap_usage;
+use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::zkvm::dag::state_manager::StateManager;
 use crate::zkvm::r1cs::{
     constraints::{
@@ -350,10 +349,8 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
     ) -> Self {
         let (preprocessing, trace, _program_io, _final_mem) = state_manager.get_prover_data();
 
-        let lagrange_evals_r = LagrangePolynomial::<F>::evals::<
-            F::Challenge,
-            UNIVARIATE_SKIP_DOMAIN_SIZE,
-        >(&uni.r0);
+        let lagrange_evals_r =
+            LagrangePolynomial::<F>::evals::<F::Challenge, UNIVARIATE_SKIP_DOMAIN_SIZE>(&uni.r0);
 
         let tau_high = uni.tau[uni.tau.len() - 1];
         let tau_low = &uni.tau[..uni.tau.len() - 1];
@@ -393,10 +390,7 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
         }
     }
 
-    pub fn new_verifier(
-        num_cycles_bits: usize,
-        uni: UniSkipState<F>,
-    ) -> Self {
+    pub fn new_verifier(num_cycles_bits: usize, uni: UniSkipState<F>) -> Self {
         Self {
             num_cycles_bits,
             tau: uni.tau,
