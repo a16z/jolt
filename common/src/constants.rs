@@ -23,8 +23,8 @@ pub const DEFAULT_MAX_OUTPUT_SIZE: u64 = 4096;
 pub const DEFAULT_MAX_TRACE_LENGTH: u64 = 1 << 24;
 
 // Layout of the witness (where || denotes concatenation):
-//     trusted_advice || untrusted_advice || inputs || outputs || panic || termination || padding || RAM
+//     advice || inputs || outputs || panic || termination || padding || RAM
 // Layout of VM memory:
-//     peripheral devices || trusted_advice || untrusted_advice || inputs || outputs || panic || termination || padding || RAM
+//     peripheral devices || advice || inputs || outputs || panic || termination || padding || RAM
 // Notably, we want to be able to map the VM memory address space to witness indices
 // using a constant shift, namely (RAM_WITNESS_OFFSET + RAM_START_ADDRESS)

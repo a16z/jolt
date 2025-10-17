@@ -96,12 +96,13 @@ impl<F: JoltField> RafEvaluationSumcheck<F> {
                 },
             );
         let ra = MultilinearPolynomial::from(ra_evals);
-        let unmap = UnmapRamAddressPolynomial::new(K.log_2(), memory_layout.trusted_advice_start);
+        let lowest_memory_address = memory_layout.get_lowest_address();
+        let unmap = UnmapRamAddressPolynomial::new(K.log_2(), lowest_memory_address);
 
         Self {
             input_claim: raf_claim,
             log_K: K.log_2(),
-            start_address: memory_layout.trusted_advice_start,
+            start_address: lowest_memory_address,
             prover_state: Some(RafEvaluationProverState { ra, unmap }),
             cached_claim: None,
         }
@@ -122,7 +123,7 @@ impl<F: JoltField> RafEvaluationSumcheck<F> {
         Self {
             input_claim: raf_claim,
             log_K: K.log_2(),
-            start_address: program_io.memory_layout.trusted_advice_start,
+            start_address: program_io.memory_layout.get_lowest_address(),
             prover_state: None,
             cached_claim: Some(ra_claim),
         }
