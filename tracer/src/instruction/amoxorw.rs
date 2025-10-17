@@ -1,10 +1,8 @@
 use serde::{Deserialize, Serialize};
 
-use super::lw::LW;
-use super::sw::SW;
-use super::virtual_move::VirtualMove;
 use super::xor::XOR;
 use super::Instruction;
+use crate::instruction::amo::{amo_post32, amo_post64, amo_pre32, amo_pre64};
 use crate::utils::inline_helpers::InstrAssembler;
 use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use crate::{
@@ -60,19 +58,6 @@ impl RISCVTrace for AMOXORW {
     /// the memory address in rs1, performs a bitwise XOR with the lower 32 bits of rs2,
     /// stores the result back to memory, and returns the original value sign-extended in rd.
     ///
-    /// Implementation note:
-    /// Unlike other AMO.W instructions, this uses direct LW/SW instructions rather than
-    /// amo_pre/post helpers. This simplified approach works because:
-    /// - The zkVM handles word-alignment internally
-    /// - Single-threaded execution guarantees atomicity
-    /// - No need for complex bit manipulation within doublewords
-    ///
-    /// The bitwise XOR operation is commonly used for:
-    /// - Toggling flags or status bits atomically
-    /// - Implementing spinlocks with toggle semantics
-    /// - Checksum and parity calculations
-    /// - Lock-free state machines with reversible transitions
-    ///
     /// Return value handling:
     /// - The original 32-bit value is sign-extended to XLEN bits
     /// - Consistent behavior across different XLEN implementations
@@ -86,14 +71,37 @@ impl RISCVTrace for AMOXORW {
         allocator: &VirtualRegisterAllocator,
         xlen: Xlen,
     ) -> Vec<Instruction> {
-        let v_rs2 = allocator.allocate();
         let v_rd = allocator.allocate();
+        let v_rs2 = allocator.allocate();
 
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
-        asm.emit_ld::<LW>(*v_rd, self.operands.rs1, 0);
-        asm.emit_r::<XOR>(*v_rs2, *v_rd, self.operands.rs2);
-        asm.emit_s::<SW>(self.operands.rs1, *v_rs2, 0);
-        asm.emit_i::<VirtualMove>(self.operands.rd, *v_rd, 0);
+
+        match xlen {
+            Xlen::Bit32 => {
+                amo_pre32(&mut asm, self.operands.rs1, *v_rd);
+                asm.emit_r::<XOR>(*v_rs2, *v_rd, self.operands.rs2);
+                amo_post32(&mut asm, *v_rs2, self.operands.rs1, self.operands.rd, *v_rd);
+            }
+            Xlen::Bit64 => {
+                let v_mask = allocator.allocate();
+                let v_dword = allocator.allocate();
+                let v_shift = allocator.allocate();
+
+                amo_pre64(&mut asm, self.operands.rs1, *v_rd, *v_dword, *v_shift);
+                asm.emit_r::<XOR>(*v_rs2, *v_rd, self.operands.rs2);
+                amo_post64(
+                    &mut asm,
+                    self.operands.rs1,
+                    *v_rs2,
+                    *v_dword,
+                    *v_shift,
+                    *v_mask,
+                    self.operands.rd,
+                    *v_rd,
+                );
+            }
+        }
+
         asm.finalize()
     }
 }
