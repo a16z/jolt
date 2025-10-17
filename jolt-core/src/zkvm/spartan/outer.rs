@@ -17,10 +17,10 @@ use crate::poly::opening_proof::{
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::sumcheck::{SumcheckInstance, UniSkipFirstRoundInstance};
+use crate::utils::accumulation::{
+    acc6s_fmadd_i128, acc6s_new, acc6s_reduce, acc7s_fmadd_s160, acc7s_new, acc7s_reduce,
+};
 use crate::subprotocols::univariate_skip::{
-    accum::{
-        acc6s_fmadd_i128, acc6s_new, acc6s_reduce, accs160s_fmadd_s160, accs160s_new, accs160s_reduce,
-    },
     build_uniskip_first_round_poly, compute_az_r_group0, compute_az_r_group1, compute_bz_r_group0,
     compute_bz_r_group1, uniskip_targets, UniSkipState,
 };
@@ -243,7 +243,7 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
                         for j in 0..UNIVARIATE_SKIP_DEGREE {
                             let coeffs = &coeffs_per_j[j];
                             // (sum_i c_i * Az1_i) * (sum_i c_i * Bz1_i)
-                            let mut sum_c_bz1_acc = accs160s_new::<F>();
+                            let mut sum_c_bz1_acc = acc7s_new::<F>();
                             let mut sum_c_az1_i64: i64 = 0;
                             for i in 0..UNIVARIATE_SKIP_DOMAIN_SIZE {
                                 let c = coeffs[i] as i64;
@@ -253,9 +253,12 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
                                 let cF = F::from_i64(c);
                                 let az1_i = az1_i32_padded[i] as i64;
                                 sum_c_az1_i64 += c * az1_i;
-                                accs160s_fmadd_s160(&mut sum_c_bz1_acc, &cF, bz1_s160_padded[i]);
+                                acc7s_fmadd_s160(&mut sum_c_bz1_acc, &cF, bz1_s160_padded[i]);
                             }
-                            let sum_c_bz1: F = accs160s_reduce::<F>(&sum_c_bz1_acc);
+                            // TODO: multiply first to get to 4-limb signed, then multiply again
+                            // with e_in_odd, and finally Montgomery reduce
+                            // (will need to offset by F::MONTGOMERY_R_SQUARE factor)
+                            let sum_c_bz1: F = acc7s_reduce::<F>(&sum_c_bz1_acc);
                             let sum_c_az1: F = F::from_i64(sum_c_az1_i64);
                             let g1_term = sum_c_az1 * sum_c_bz1;
                             inner_acc[j] += e_in_odd.mul_unreduced::<9>(g1_term);

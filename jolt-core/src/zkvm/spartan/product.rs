@@ -90,8 +90,6 @@ impl VirtualProductType {
 }
 
 // Product virtualization with univariate skip, fusing 5 product claims into one and reducing memory usage
-// Eventually will supersede the above (old) implementation.
-// For now limit the addition logic to this file (and maybe helper files like univariate_skip.rs and inputs.rs).
 
 // Idea: we define a "combined" left and right polynomial
 // Left(x, y) = \sum_i L(y, i) * Left_i(x),

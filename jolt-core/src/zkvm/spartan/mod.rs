@@ -250,7 +250,7 @@ where
        Verification perspective.
        1) Inner sumcheck: verify claim_Az + r * claim_Bz = (A_small(rx, ry) + r * B_small(rx, ry)) * z(ry)
 
-       2) Product virtualization (single protocol): define the five product terms and weights as above,
+       2) Product virtualization: define the five product terms and weights as above,
           with w_i = L_i(r0). Let
             Left(r_cycle)  = Σ_i w_i · Left_i(r_cycle)
             Right(r_cycle) = Σ_i w_i · Right_i^eff(r_cycle)  (Right_4^eff = 1 - NextIsNoop)

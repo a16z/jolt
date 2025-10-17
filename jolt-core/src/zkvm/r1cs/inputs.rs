@@ -9,9 +9,9 @@ use crate::zkvm::instruction::{
 use crate::zkvm::spartan::product::VirtualProductType;
 use crate::zkvm::witness::VirtualPolynomial;
 use crate::zkvm::JoltSharedPreprocessing;
-use crate::subprotocols::univariate_skip::accum::{
+use crate::utils::accumulation::{
     acc5u_add_field, acc5u_fmadd_u64, acc5u_new, acc5u_reduce, acc6s_fmadd_i128, acc6s_new,
-    acc6s_reduce, acc6u_fmadd_u64, acc6u_new, acc6u_reduce, acc7s_fmadd_i128, acc7s_new,
+    acc6s_reduce, acc6u_fmadd_u64, acc6u_new, acc6u_reduce, acc7s_fmadd_s128, acc7s_new,
     acc7s_reduce, acc7u_fmadd_u128, acc7u_new, acc7u_reduce,
 };
 
@@ -521,7 +521,6 @@ pub fn compute_claimed_r1cs_input_evals<F: JoltField>(
             let mut acc_product = acc7s_new::<F>();
             let mut acc_wl_left = acc5u_new::<F>();
             let mut acc_wp_left = acc5u_new::<F>();
-            // ShouldBranch is a boolean input; no separate left accumulator here
             let mut acc_pc = acc6u_new::<F>();
             let mut acc_unexpanded_pc = acc6u_new::<F>();
             let mut acc_imm = acc6s_new::<F>();
@@ -537,11 +536,10 @@ pub fn compute_claimed_r1cs_input_evals<F: JoltField>(
             let mut acc_next_pc = acc6u_new::<F>();
             let mut acc_lookup_output = acc6u_new::<F>();
             let mut acc_sj_flag = acc5u_new::<F>();
-            let _acc_wl_right = acc5u_new::<F>();
-            let _acc_wp_right = acc5u_new::<F>();
             let mut acc_sb_right = acc5u_new::<F>();
             let mut acc_flags: Vec<F::Unreduced<5>> =
                 (0..NUM_CIRCUIT_FLAGS).map(|_| acc5u_new::<F>()).collect();
+
             for x2 in 0..eq_two.len() {
                 let e_in = eq_two[x2];
                 let idx = x1 * eq_two.len() + x2;
@@ -549,11 +547,7 @@ pub fn compute_claimed_r1cs_input_evals<F: JoltField>(
 
                 acc6u_fmadd_u64(&mut acc_left_input, &e_in, row.left_input);
                 acc6s_fmadd_i128(&mut acc_right_input, &e_in, row.right_input.to_i128());
-                acc7s_fmadd_i128(
-                    &mut acc_product,
-                    &e_in,
-                    (row.left_input as i128) * row.right_input.to_i128(),
-                );
+                acc7s_fmadd_s128(&mut acc_product, &e_in, row.product);
 
                 acc5u_fmadd_u64(&mut acc_wl_left, &e_in, row.write_lookup_output_to_rd_addr as u64);
                 acc5u_fmadd_u64(&mut acc_wp_left, &e_in, row.write_pc_to_rd_addr as u64);

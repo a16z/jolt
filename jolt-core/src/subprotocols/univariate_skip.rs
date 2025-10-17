@@ -6,6 +6,7 @@ use crate::zkvm::r1cs::constraints::{
     NUM_REMAINING_R1CS_CONSTRAINTS, UNIVARIATE_SKIP_DOMAIN_SIZE,
 };
 use crate::zkvm::r1cs::inputs::R1CSCycleInputs;
+use crate::utils::accumulation as accum;
 
 /// Shared handoff state from a univariate-skip first round.
 ///
@@ -18,225 +19,6 @@ pub struct UniSkipState<F: JoltField> {
     pub tau: Vec<F::Challenge>,
 }
 
-// Accumulation primitives (unreduced (signed) accumulation + final reduction)
-pub mod accum {
-    use crate::field::{FmaddTrunc, JoltField};
-    use ark_ff::biginteger::{I8OrI96, S160};
-
-    /// Local helper to convert `S160` to field without using `.to_field()`
-    #[inline]
-    pub fn s160_to_field<F: JoltField>(bz: &S160) -> F {
-        if bz.is_zero() {
-            return F::zero();
-        }
-        let lo = bz.magnitude_lo();
-        let hi = bz.magnitude_hi() as u64;
-        let r64 = F::from_u128(1u128 << 64);
-        let r128 = r64 * r64;
-        let acc = F::from_u64(lo[0]) + F::from_u64(lo[1]) * r64 + F::from_u64(hi) * r128;
-        if bz.is_positive() {
-            acc
-        } else {
-            -acc
-        }
-    }
-
-    // Unsigned accumulator for small integer-weighted field sums using 5-limb Barrett reduction
-    // For u32/u8 inputs and boolean weights (0/1), a positive accumulator suffices.
-    pub type Acc5Unsigned<F> = <F as JoltField>::Unreduced<5>;
-
-    #[inline(always)]
-    pub fn acc5u_new<F: JoltField>() -> Acc5Unsigned<F> {
-        <F as JoltField>::Unreduced::<5>::from([0u64; 5])
-    }
-
-    #[inline(always)]
-    pub fn acc5u_add_field<F: JoltField>(acc: &mut Acc5Unsigned<F>, val: &F) {
-        *acc += *val.as_unreduced_ref();
-    }
-
-    /// fmadd with u64 into a 5-limb unsigned accumulator (safe for u32/u8 domains)
-    #[inline(always)]
-    pub fn acc5u_fmadd_u64<F: JoltField>(acc: &mut Acc5Unsigned<F>, field: &F, v: u64) {
-        if v == 0 {
-            return;
-        }
-        *acc += (*field).mul_u64_unreduced(v);
-    }
-
-    #[inline(always)]
-    pub fn acc5u_reduce<F: JoltField>(acc: &Acc5Unsigned<F>) -> F {
-        F::from_barrett_reduce(*acc)
-    }
-
-    // Signed accumulator for field * I8OrI96 using 6-limb Barrett reduction
-    pub type Acc6Signed<F> = (
-        <F as JoltField>::Unreduced<6>,
-        <F as JoltField>::Unreduced<6>,
-    );
-    // Unsigned accumulator using 6 limbs (safe for u64 domains)
-    pub type Acc6Unsigned<F> = <F as JoltField>::Unreduced<6>;
-
-    #[inline(always)]
-    pub fn acc6s_new<F: JoltField>() -> Acc6Signed<F> {
-        (
-            <F as JoltField>::Unreduced::<6>::from([0u64; 6]),
-            <F as JoltField>::Unreduced::<6>::from([0u64; 6]),
-        )
-    }
-
-    #[inline(always)]
-    pub fn acc6u_new<F: JoltField>() -> Acc6Unsigned<F> {
-        <F as JoltField>::Unreduced::<6>::from([0u64; 6])
-    }
-
-    /// fmadd with I8OrI96 by converting to i128 and using mul_u128_unreduced (6 limbs)
-    #[inline(always)]
-    pub fn acc6s_fmadd_i8ori96<F: JoltField>(acc: &mut Acc6Signed<F>, field: &F, az: I8OrI96) {
-        let v = az.to_i128();
-        if v == 0 {
-            return;
-        }
-        let abs = v.unsigned_abs();
-        let term = (*field).mul_u128_unreduced(abs);
-        if v > 0 {
-            acc.0 += term;
-        } else {
-            acc.1 += term;
-        }
-    }
-
-    #[inline(always)]
-    pub fn acc6s_reduce<F: JoltField>(acc: &Acc6Signed<F>) -> F {
-        F::from_barrett_reduce(acc.0) - F::from_barrett_reduce(acc.1)
-    }
-
-    /// fmadd with u64 into a 6-limb unsigned accumulator
-    #[inline(always)]
-    pub fn acc6u_fmadd_u64<F: JoltField>(acc: &mut Acc6Unsigned<F>, field: &F, v: u64) {
-        if v == 0 {
-            return;
-        }
-        *acc += (*field).mul_u64_unreduced(v);
-    }
-
-    #[inline(always)]
-    pub fn acc6u_reduce<F: JoltField>(acc: &Acc6Unsigned<F>) -> F {
-        F::from_barrett_reduce(*acc)
-    }
-
-    /// fmadd with i128 using mul_u128_unreduced (6 limbs) for signed accumulation
-    #[inline(always)]
-    pub fn acc6s_fmadd_i128<F: JoltField>(acc: &mut Acc6Signed<F>, field: &F, v: i128) {
-        if v == 0 {
-            return;
-        }
-        let abs = v.unsigned_abs();
-        let term = (*field).mul_u128_unreduced(abs);
-        if v > 0 {
-            acc.0 += term;
-        } else {
-            acc.1 += term;
-        }
-    }
-
-    // Accumulator for field * S160 using 3-limb fmadd into 7-limb accumulators (signed)
-    // Use the implementor-associated Acc<7> type to match fmadd_trunc binding exactly.
-    // Reduce with Barrett to avoid Montgomery factors.
-    type Acc7<F> = <<F as JoltField>::Unreduced<4> as FmaddTrunc>::Acc<7>;
-    pub type AccS160Signed<F> = (Acc7<F>, Acc7<F>);
-
-    // Unsigned accumulator for field * u128 using 2-limb fmadd into 7-limb accumulator
-    pub type Acc7u<F> = Acc7<F>;
-
-    #[inline(always)]
-    pub fn accs160s_new<F: JoltField>() -> AccS160Signed<F> {
-        (
-            <F as JoltField>::Unreduced::<7>::from([0u64; 7]),
-            <F as JoltField>::Unreduced::<7>::from([0u64; 7]),
-        )
-    }
-
-    #[inline(always)]
-    pub fn acc7u_new<F: JoltField>() -> Acc7u<F> {
-        <F as JoltField>::Unreduced::<7>::from([0u64; 7])
-    }
-
-    /// fmadd with S160 (3-limb magnitude) using fmadd_trunc into 7-limb accumulators
-    #[inline(always)]
-    pub fn accs160s_fmadd_s160<F: JoltField>(acc: &mut AccS160Signed<F>, field: &F, bz: S160) {
-        if bz.is_zero() {
-            return;
-        }
-        let lo = bz.magnitude_lo();
-        let hi = bz.magnitude_hi() as u64;
-        let mag = <F as JoltField>::Unreduced::from([lo[0], lo[1], hi]);
-        let field_bigint = field.as_unreduced_ref();
-        if bz.is_positive() {
-            field_bigint.fmadd_trunc::<3, 7>(&mag, &mut acc.0);
-        } else {
-            field_bigint.fmadd_trunc::<3, 7>(&mag, &mut acc.1);
-        }
-    }
-
-    #[inline(always)]
-    pub fn accs160s_reduce<F: JoltField>(acc: &AccS160Signed<F>) -> F {
-        F::from_barrett_reduce(acc.0) - F::from_barrett_reduce(acc.1)
-    }
-
-    /// fmadd with u128 (unsigned) using 2-limb fmadd into a 7-limb accumulator
-    #[inline(always)]
-    pub fn acc7u_fmadd_u128<F: JoltField>(acc: &mut Acc7u<F>, field: &F, v: u128) {
-        if v == 0 {
-            return;
-        }
-        let lo = v as u64;
-        let hi = (v >> 64) as u64;
-        let mag = <F as JoltField>::Unreduced::from([lo, hi]);
-        field
-            .as_unreduced_ref()
-            .fmadd_trunc::<2, 7>(&mag, acc);
-    }
-
-    #[inline(always)]
-    pub fn acc7u_reduce<F: JoltField>(acc: &Acc7u<F>) -> F {
-        F::from_barrett_reduce(*acc)
-    }
-
-    // Signed accumulator for field * i128 using 7-limb accumulators (two 7-limb buffers)
-    pub type Acc7Signed<F> = (Acc7<F>, Acc7<F>);
-
-    #[inline(always)]
-    pub fn acc7s_new<F: JoltField>() -> Acc7Signed<F> {
-        (
-            <F as JoltField>::Unreduced::<7>::from([0u64; 7]),
-            <F as JoltField>::Unreduced::<7>::from([0u64; 7]),
-        )
-    }
-
-    /// fmadd with i128 using 2-limb fmadd_trunc into 7-limb signed accumulators
-    #[inline(always)]
-    pub fn acc7s_fmadd_i128<F: JoltField>(acc: &mut Acc7Signed<F>, field: &F, v: i128) {
-        if v == 0 {
-            return;
-        }
-        let abs = v.unsigned_abs();
-        let lo = abs as u64;
-        let hi = (abs >> 64) as u64;
-        let mag = <F as JoltField>::Unreduced::from([lo, hi]);
-        let field_bigint = field.as_unreduced_ref();
-        if v > 0 {
-            field_bigint.fmadd_trunc::<2, 7>(&mag, &mut acc.0);
-        } else {
-            field_bigint.fmadd_trunc::<2, 7>(&mag, &mut acc.1);
-        }
-    }
-
-    #[inline(always)]
-    pub fn acc7s_reduce<F: JoltField>(acc: &Acc7Signed<F>) -> F {
-        F::from_barrett_reduce(acc.0) - F::from_barrett_reduce(acc.1)
-    }
-}
 
 #[inline]
 pub fn compute_az_r_group0<F: JoltField>(row: &R1CSCycleInputs, lagrange_evals_r: &[F]) -> F {
@@ -282,15 +64,15 @@ pub fn compute_az_r_group1<F: JoltField>(row: &R1CSCycleInputs, lagrange_evals_r
 
 #[inline]
 pub fn compute_bz_r_group1<F: JoltField>(row: &R1CSCycleInputs, lagrange_evals_r: &[F]) -> F {
-    // Group 1 Bz are S160; accumulate field * S160 unreduced, then reduce once
+    // Group 1 Bz are S160; accumulate field * S160 in 7-limb signed accumulators, then Barrett-reduce once
     let bz_vals = eval_bz_second_group(row);
-    let mut acc: accum::AccS160Signed<F> = accum::accs160s_new::<F>();
+    let mut acc: accum::Acc7Signed<F> = accum::acc7s_new::<F>();
     let mut i = 0;
     while i < NUM_REMAINING_R1CS_CONSTRAINTS {
-        accum::accs160s_fmadd_s160(&mut acc, &lagrange_evals_r[i], bz_vals[i]);
+        accum::acc7s_fmadd_s160(&mut acc, &lagrange_evals_r[i], bz_vals[i]);
         i += 1;
     }
-    accum::accs160s_reduce(&acc)
+    accum::acc7s_reduce(&acc)
 }
 
 /// Returns the interleaved symmetric univariate-skip target indices outside the base window.
