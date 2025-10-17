@@ -86,7 +86,7 @@ enum ReadCheckingValType {
     Stage1,
     /// Jump flag from ShouldJumpVirtualization
     Stage2,
-    /// PCSumcheck
+    /// ShiftSumcheck
     Stage3,
     /// Registers from read-write sumcheck (rd, rs1, rs2)
     Stage4,
@@ -398,7 +398,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             SumcheckId::ShouldJumpVirtualization,
         );
         let r_cycle_2 = r.r;
-        // Stage 3: Get r_cycle from PCSumcheck or other stage 3 sumchecks
+        // Stage 3: Get r_cycle from ShiftSumcheck or other stage 3 sumchecks
         let (r_cycle_3, _) = acc.borrow().get_virtual_polynomial_opening(
             VirtualPolynomial::UnexpandedPC,
             SumcheckId::SpartanShift,
@@ -577,7 +577,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
     ///    Val(k) = imm(k) + gamma * unexpanded_pc(k)
     ///             + gamma^2 * left_operand_is_rs1_value(k)
     ///             + gamma^3 * left_operand_is_pc(k) + ...
-    /// This particular Val virtualizes claims output by the PCSumcheck.
+    /// This particular Val virtualizes claims output by the ShiftSumcheck.
     fn compute_val_3(
         sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
         gamma_powers: &[F],

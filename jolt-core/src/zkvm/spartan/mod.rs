@@ -14,8 +14,8 @@ use crate::zkvm::dag::state_manager::{ProofData, ProofKeys, StateManager};
 use crate::zkvm::r1cs::inputs::{compute_claimed_witness_evals, ALL_R1CS_INPUTS};
 use crate::zkvm::r1cs::key::UniformSpartanKey;
 use crate::zkvm::spartan::inner::InnerSumcheck;
-use crate::zkvm::spartan::pc::PCSumcheck;
 use crate::zkvm::spartan::product::ProductVirtualizationSumcheck;
+use crate::zkvm::spartan::shift::ShiftSumcheck;
 use crate::zkvm::witness::VirtualPolynomial;
 
 use crate::transcripts::Transcript;
@@ -24,8 +24,8 @@ use crate::subprotocols::sumcheck::{SumcheckInstance, SumcheckInstanceProof};
 
 pub mod inner;
 pub mod instruction_input;
-pub mod pc;
 pub mod product;
+pub mod shift;
 
 pub struct SpartanDag<F: JoltField> {
     /// Cached key to avoid recomputation across stages
@@ -377,12 +377,12 @@ where
             2. NextPC(r_cycle) = \sum_t PC(t) * eq_plus_one(r_cycle, t)
         */
         let key = self.key.clone();
-        let pc_sumcheck = PCSumcheck::<F>::new_prover(state_manager, key);
+        let pc_sumcheck = ShiftSumcheck::<F>::new_prover(state_manager, key);
         let instruction_input_sumcheck = InstructionInputSumcheck::new_prover(state_manager);
 
         #[cfg(feature = "allocative")]
         {
-            print_data_structure_heap_usage("Spartan PCSumcheck", &pc_sumcheck);
+            print_data_structure_heap_usage("Spartan ShiftSumcheck", &pc_sumcheck);
             print_data_structure_heap_usage(
                 "InstructionInputSumcheck",
                 &instruction_input_sumcheck,
@@ -400,7 +400,7 @@ where
            Verifies the batched constraint for both NextUnexpandedPC and NextPC
         */
         let key = self.key.clone();
-        let pc_sumcheck = PCSumcheck::<F>::new_verifier(state_manager, key);
+        let pc_sumcheck = ShiftSumcheck::<F>::new_verifier(state_manager, key);
         let instruction_input_sumcheck = InstructionInputSumcheck::new_verifier(state_manager);
         vec![Box::new(pc_sumcheck), Box::new(instruction_input_sumcheck)]
     }

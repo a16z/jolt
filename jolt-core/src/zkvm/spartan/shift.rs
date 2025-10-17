@@ -22,7 +22,7 @@ use crate::zkvm::witness::VirtualPolynomial;
 use rayon::prelude::*;
 
 #[derive(Allocative)]
-struct PCSumcheckProverState<F: JoltField> {
+struct ShiftSumcheckProverState<F: JoltField> {
     unexpanded_pc_poly: MultilinearPolynomial<F>,
     pc_poly: MultilinearPolynomial<F>,
     is_noop_poly: MultilinearPolynomial<F>,
@@ -31,16 +31,16 @@ struct PCSumcheckProverState<F: JoltField> {
 }
 
 #[derive(Allocative)]
-pub struct PCSumcheck<F: JoltField> {
+pub struct ShiftSumcheck<F: JoltField> {
     input_claim: F,
     gamma: F,
     gamma_squared: F,
     log_T: usize,
-    prover_state: Option<PCSumcheckProverState<F>>,
+    prover_state: Option<ShiftSumcheckProverState<F>>,
 }
 
-impl<F: JoltField> PCSumcheck<F> {
-    #[tracing::instrument(skip_all, name = "PCSumcheck::new_prover")]
+impl<F: JoltField> ShiftSumcheck<F> {
+    #[tracing::instrument(skip_all, name = "ShiftSumcheck::new_prover")]
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         key: Arc<UniformSpartanKey<F>>,
@@ -87,7 +87,7 @@ impl<F: JoltField> PCSumcheck<F> {
         Self {
             input_claim,
             log_T: r_cycle.len(),
-            prover_state: Some(PCSumcheckProverState {
+            prover_state: Some(ShiftSumcheckProverState {
                 unexpanded_pc_poly,
                 pc_poly,
                 is_noop_poly,
@@ -136,7 +136,7 @@ impl<F: JoltField> PCSumcheck<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for PCSumcheck<F> {
+impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ShiftSumcheck<F> {
     fn degree(&self) -> usize {
         2
     }
@@ -149,7 +149,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for PCSumcheck<F> {
         self.input_claim
     }
 
-    #[tracing::instrument(skip_all, name = "PCSumcheck::compute_prover_message")]
+    #[tracing::instrument(skip_all, name = "ShiftSumcheck::compute_prover_message")]
     fn compute_prover_message(&mut self, _round: usize, _previous_claim: F) -> Vec<F> {
         let prover_state = self
             .prover_state
@@ -200,7 +200,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for PCSumcheck<F> {
         univariate_poly_evals.into()
     }
 
-    #[tracing::instrument(skip_all, name = "PCSumcheck::bind")]
+    #[tracing::instrument(skip_all, name = "ShiftSumcheck::bind")]
     fn bind(&mut self, r_j: F::Challenge, _round: usize) {
         let prover_state = self
             .prover_state
