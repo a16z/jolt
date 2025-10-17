@@ -536,8 +536,7 @@ pub fn compute_claimed_witness_evals<F: JoltField>(
         .to_vec()
 }
 
-/// Single-pass generation of UnexpandedPC(t), PC(t), and IsNoop(t) witnesses.
-/// Reduces traversals from three to one for stage-3 PC sumcheck inputs.
+/// Generates witnesses for the shift sumcheck with a single pass over the trace.
 #[tracing::instrument(skip_all)]
 pub fn generate_shift_sumcheck_witnesses<F>(
     preprocessing: &JoltSharedPreprocessing,

@@ -587,7 +587,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             .map(|instruction| {
                 let instr = instruction.normalize();
                 let instr_flags = instruction.instruction_flags();
-                let circuit_flgas = instruction.circuit_flags();
+                let circuit_flags = instruction.circuit_flags();
                 let unexpanded_pc = instr.address;
                 let imm = instr.operands.imm;
 
@@ -609,10 +609,10 @@ impl<F: JoltField> ReadRafSumcheck<F> {
                 if instr_flags[InstructionFlags::IsNoop] {
                     linear_combination += gamma_powers[6];
                 }
-                if circuit_flgas[CircuitFlags::VirtualInstruction] {
+                if circuit_flags[CircuitFlags::VirtualInstruction] {
                     linear_combination += gamma_powers[7];
                 }
-                if circuit_flgas[CircuitFlags::IsFirstInSequence] {
+                if circuit_flags[CircuitFlags::IsFirstInSequence] {
                     linear_combination += gamma_powers[8];
                 }
 
