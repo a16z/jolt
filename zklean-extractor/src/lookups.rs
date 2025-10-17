@@ -29,7 +29,7 @@ impl<const WORD_SIZE: usize> ZkLeanLookupTable<WORD_SIZE> {
         let name = <&'static str>::from(&self.lookup_table);
         let word_size = WORD_SIZE;
 
-        format!("{name}_{word_size}")
+        format!("{name}_{word_size}_lookup_table")
     }
 
     pub fn evaluate_mle<F: ZkLeanReprField>(&self, reg_name: char) -> F {
@@ -54,12 +54,12 @@ impl<const WORD_SIZE: usize> ZkLeanLookupTable<WORD_SIZE> {
         let mle = self.evaluate_mle::<F>('x').as_computation();
 
         f.write_fmt(format_args!(
-            "{}def {name} [Field f] : LookupTable f {num_variables} :=\n",
+            "{}def {name} [Field f] (x : Vector f {num_variables}) : f :=\n",
             indent(indent_level),
         ))?;
         indent_level += 1;
         f.write_fmt(format_args!(
-            "{}lookupTableFromMLE (fun x => {mle})\n",
+            "{}{mle}\n",
             indent(indent_level),
         ))?;
 
@@ -83,6 +83,11 @@ impl<const WORD_SIZE: usize> ZkLeanLookupTables<WORD_SIZE> {
         f: &mut impl std::io::Write,
         indent_level: usize,
     ) -> std::io::Result<()> {
+        // This is needed because the MLEs are too large for Lean to process within its standard
+        // `maxHeartbeats` time (= 200_000).
+        let lean4_max_heartbeats = 4_000_000;
+        write!(f, "set_option maxHeartbeats {lean4_max_heartbeats}\n\n")?;
+
         for instruction in &self.instructions {
             instruction.zklean_pretty_print::<DefaultMleAst>(f, indent_level)?;
         }
