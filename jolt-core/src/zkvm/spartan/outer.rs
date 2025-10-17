@@ -19,7 +19,7 @@ use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::sumcheck::{SumcheckInstance, UniSkipFirstRoundInstance};
 use crate::subprotocols::univariate_skip::{
     accum::{
-        acc6_fmadd_i128, acc6_new, acc6_reduce, accs160_fmadd_s160, accs160_new, accs160_reduce,
+        acc6s_fmadd_i128, acc6s_new, acc6s_reduce, accs160s_fmadd_s160, accs160s_new, accs160s_reduce,
     },
     build_uniskip_first_round_poly, compute_az_r_group0, compute_az_r_group1, compute_bz_r_group0,
     compute_bz_r_group1, uniskip_targets, UniSkipState,
@@ -36,7 +36,7 @@ use crate::zkvm::r1cs::{
         FIRST_ROUND_POLY_NUM_COEFFS, NUM_REMAINING_R1CS_CONSTRAINTS, UNIVARIATE_SKIP_DEGREE,
         UNIVARIATE_SKIP_DOMAIN_SIZE, UNIVARIATE_SKIP_EXTENDED_DOMAIN_SIZE,
     },
-    inputs::{compute_claimed_witness_evals, R1CSCycleInputs, ALL_R1CS_INPUTS},
+    inputs::{compute_claimed_r1cs_input_evals, R1CSCycleInputs, ALL_R1CS_INPUTS},
 };
 use crate::zkvm::witness::VirtualPolynomial;
 use crate::zkvm::JoltSharedPreprocessing;
@@ -201,7 +201,7 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
                         for j in 0..UNIVARIATE_SKIP_DEGREE {
                             let coeffs = &coeffs_per_j[j];
                             // (sum_i (Az0_i ? c_i : 0)) * (sum_i c_i * Bz0_i)
-                            let mut sum_c_bz0_acc6 = acc6_new::<F>();
+                            let mut sum_c_bz0_acc6 = acc6s_new::<F>();
                             let mut sum_c_az0_i64: i64 = 0;
                             for i in 0..UNIVARIATE_SKIP_DOMAIN_SIZE {
                                 let c = coeffs[i] as i64;
@@ -212,9 +212,9 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
                                     sum_c_az0_i64 += c;
                                 }
                                 let term = (c as i128).saturating_mul(bz0_i128[i]);
-                                acc6_fmadd_i128(&mut sum_c_bz0_acc6, &F::one(), term);
+                                acc6s_fmadd_i128(&mut sum_c_bz0_acc6, &F::one(), term);
                             }
-                            let sum_c_bz0: F = acc6_reduce::<F>(&sum_c_bz0_acc6);
+                            let sum_c_bz0: F = acc6s_reduce::<F>(&sum_c_bz0_acc6);
                             let sum_c_az0: F = F::from_i64(sum_c_az0_i64);
                             let g0_term = sum_c_az0 * sum_c_bz0;
                             inner_acc[j] += e_in_even.mul_unreduced::<9>(g0_term);
@@ -243,7 +243,7 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
                         for j in 0..UNIVARIATE_SKIP_DEGREE {
                             let coeffs = &coeffs_per_j[j];
                             // (sum_i c_i * Az1_i) * (sum_i c_i * Bz1_i)
-                            let mut sum_c_bz1_acc = accs160_new::<F>();
+                            let mut sum_c_bz1_acc = accs160s_new::<F>();
                             let mut sum_c_az1_i64: i64 = 0;
                             for i in 0..UNIVARIATE_SKIP_DOMAIN_SIZE {
                                 let c = coeffs[i] as i64;
@@ -253,9 +253,9 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
                                 let cF = F::from_i64(c);
                                 let az1_i = az1_i32_padded[i] as i64;
                                 sum_c_az1_i64 += c * az1_i;
-                                accs160_fmadd_s160(&mut sum_c_bz1_acc, &cF, bz1_s160_padded[i]);
+                                accs160s_fmadd_s160(&mut sum_c_bz1_acc, &cF, bz1_s160_padded[i]);
                             }
-                            let sum_c_bz1: F = accs160_reduce::<F>(&sum_c_bz1_acc);
+                            let sum_c_bz1: F = accs160s_reduce::<F>(&sum_c_bz1_acc);
                             let sum_c_az1: F = F::from_i64(sum_c_az1_i64);
                             let g1_term = sum_c_az1 * sum_c_bz1;
                             inner_acc[j] += e_in_odd.mul_unreduced::<9>(g1_term);
@@ -476,8 +476,8 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
             az_hi: Vec<F>,
             bz_lo: Vec<F>,
             bz_hi: Vec<F>,
-            sum0: F,
-            sum_inf: F,
+            sum0_unr: F::Unreduced<9>,
+            sum_inf_unr: F::Unreduced<9>,
         }
 
         let chunk_results: Vec<ChunkOut<F>> = (0..num_parallel_chunks)
@@ -487,13 +487,14 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
                 let x_out_end = core::cmp::min((chunk_idx + 1) * x_out_chunk_size, num_x_out_vals);
                 let chunk_width = x_out_end.saturating_sub(x_out_start);
                 let local_len = chunk_width.saturating_mul(num_x_in_vals);
-                let mut local_az_lo: Vec<F> = Vec::with_capacity(local_len);
-                let mut local_az_hi: Vec<F> = Vec::with_capacity(local_len);
-                let mut local_bz_lo: Vec<F> = Vec::with_capacity(local_len);
-                let mut local_bz_hi: Vec<F> = Vec::with_capacity(local_len);
+                let mut local_az_lo: Vec<F> = unsafe_allocate_zero_vec(local_len);
+                let mut local_az_hi: Vec<F> = unsafe_allocate_zero_vec(local_len);
+                let mut local_bz_lo: Vec<F> = unsafe_allocate_zero_vec(local_len);
+                let mut local_bz_hi: Vec<F> = unsafe_allocate_zero_vec(local_len);
 
-                let mut task_sum0 = F::zero();
-                let mut task_sum_inf = F::zero();
+                let mut task_sum0 = F::Unreduced::<9>::zero();
+                let mut task_sum_inf = F::Unreduced::<9>::zero();
+                let mut local_idx = 0usize;
                 for x_out_val in x_out_start..x_out_end {
                     let mut inner_sum0 = F::Unreduced::<9>::zero();
                     let mut inner_sum_inf = F::Unreduced::<9>::zero();
@@ -516,10 +517,11 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
                         };
                         inner_sum0 += e_in.mul_unreduced::<9>(p0);
                         inner_sum_inf += e_in.mul_unreduced::<9>(slope);
-                        local_az_lo.push(az0);
-                        local_bz_lo.push(bz0);
-                        local_az_hi.push(az1);
-                        local_bz_hi.push(bz1);
+                        local_az_lo[local_idx] = az0;
+                        local_bz_lo[local_idx] = bz0;
+                        local_az_hi[local_idx] = az1;
+                        local_bz_hi[local_idx] = bz1;
+                        local_idx += 1;
                     }
                     let e_out = if num_x_out_vals > 0 {
                         split_eq_poly.E_out_current()[x_out_val]
@@ -528,8 +530,8 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
                     };
                     let reduced0 = F::from_montgomery_reduce::<9>(inner_sum0);
                     let reduced_inf = F::from_montgomery_reduce::<9>(inner_sum_inf);
-                    task_sum0 += e_out * reduced0;
-                    task_sum_inf += e_out * reduced_inf;
+                    task_sum0 += e_out.mul_unreduced::<9>(reduced0);
+                    task_sum_inf += e_out.mul_unreduced::<9>(reduced_inf);
                 }
                 ChunkOut {
                     base: x_out_start.saturating_mul(num_x_in_vals),
@@ -538,8 +540,8 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
                     az_hi: local_az_hi,
                     bz_lo: local_bz_lo,
                     bz_hi: local_bz_hi,
-                    sum0: task_sum0,
-                    sum_inf: task_sum_inf,
+                    sum0_unr: task_sum0,
+                    sum_inf_unr: task_sum_inf,
                 }
             })
             .collect();
@@ -549,11 +551,11 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
         let mut az_hi: Vec<F> = unsafe_allocate_zero_vec(groups_exact);
         let mut bz_lo: Vec<F> = unsafe_allocate_zero_vec(groups_exact);
         let mut bz_hi: Vec<F> = unsafe_allocate_zero_vec(groups_exact);
-        let mut t0_acc = F::zero();
-        let mut t_inf_acc = F::zero();
+        let mut t0_acc_unr = F::Unreduced::<9>::zero();
+        let mut t_inf_acc_unr = F::Unreduced::<9>::zero();
         for chunk in &chunk_results {
-            t0_acc += chunk.sum0;
-            t_inf_acc += chunk.sum_inf;
+            t0_acc_unr += chunk.sum0_unr;
+            t_inf_acc_unr += chunk.sum_inf_unr;
             let dst_base = chunk.base;
             let dst_end = dst_base + chunk.len;
             az_lo[dst_base..dst_end].copy_from_slice(&chunk.az_lo);
@@ -563,8 +565,8 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
         }
 
         StreamingRoundCache {
-            t0: t0_acc,
-            t_inf: t_inf_acc,
+            t0: F::from_montgomery_reduce::<9>(t0_acc_unr),
+            t_inf: F::from_montgomery_reduce::<9>(t_inf_acc_unr),
             az_lo,
             az_hi,
             bz_lo,
@@ -878,7 +880,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for OuterRemainingSumch
         // Compute claimed witness evals and append virtual openings for all R1CS inputs
         let ps = self.prover_state.as_ref().expect("prover state missing");
         let claimed_witness_evals =
-            compute_claimed_witness_evals::<F>(&ps.preprocess, ps.trace.as_slice(), r_cycle);
+            compute_claimed_r1cs_input_evals::<F>(&ps.preprocess, ps.trace.as_slice(), r_cycle);
         for (i, input) in ALL_R1CS_INPUTS.iter().enumerate() {
             acc.append_virtual(
                 transcript,

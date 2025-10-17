@@ -1,6 +1,7 @@
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::opening_proof::{OpeningId, SumcheckId};
+#[cfg(test)]
 use crate::utils::small_scalar::SmallScalar;
 use crate::zkvm::instruction::{
     CircuitFlags, Flags, InstructionFlags, LookupQuery, NUM_CIRCUIT_FLAGS,
@@ -8,8 +9,14 @@ use crate::zkvm::instruction::{
 use crate::zkvm::spartan::product::VirtualProductType;
 use crate::zkvm::witness::VirtualPolynomial;
 use crate::zkvm::JoltSharedPreprocessing;
+use crate::subprotocols::univariate_skip::accum::{
+    acc5u_add_field, acc5u_fmadd_u64, acc5u_new, acc5u_reduce, acc6s_fmadd_i128, acc6s_new,
+    acc6s_reduce, acc6u_fmadd_u64, acc6u_new, acc6u_reduce, acc7s_fmadd_i128, acc7s_new,
+    acc7s_reduce, acc7u_fmadd_u128, acc7u_new, acc7u_reduce,
+};
 
 use crate::field::JoltField;
+use ark_std::Zero;
 use ark_ff::biginteger::{S128, S64};
 use common::constants::XLEN;
 use rayon::prelude::*;
@@ -247,7 +254,7 @@ pub struct R1CSCycleInputs {
 
 impl R1CSCycleInputs {
     /// Build directly from the execution trace and preprocessing,
-    /// mirroring the optimized semantics used in `compute_claimed_witness_evals`.
+    /// mirroring the optimized semantics used in `compute_claimed_r1cs_input_evals`.
     pub fn from_trace<F>(preprocessing: &JoltSharedPreprocessing, trace: &[Cycle], t: usize) -> Self
     where
         F: JoltField,
@@ -452,7 +459,7 @@ impl ProductCycleInputs {
         let instruction_flags = instr.instruction_flags();
 
         // Instruction inputs
-        let (left_input, right_i128) = LookupQuery::<XLEN>::to_instruction_inputs(cycle);
+        let (left_input, right_input) = LookupQuery::<XLEN>::to_instruction_inputs(cycle);
 
         // Lookup output
         let lookup_output = LookupQuery::<XLEN>::to_lookup_output(cycle);
@@ -478,8 +485,8 @@ impl ProductCycleInputs {
         let write_lookup_output_to_rd_flag = flags_view[CircuitFlags::WriteLookupOutputToRD];
 
         Self {
-            instruction_right_input: right_i128,
             instruction_left_input: left_input,
+            instruction_right_input: right_input,
             write_lookup_output_to_rd_rd_addr: rd_addr,
             write_lookup_output_to_rd_flag,
             write_pc_to_rd_rd_addr: rd_addr,
@@ -493,93 +500,135 @@ impl ProductCycleInputs {
 }
 /// Compute `z(r_cycle) = Σ_t eq(r_cycle, t) * P_i(t)` for all inputs i, without
 /// materializing P_i. Returns `[P_0(r_cycle), P_1(r_cycle), ...]` in input order.
-/// TODO: use delayed reduction while computing the sum
 #[tracing::instrument(skip_all)]
-pub fn compute_claimed_witness_evals<F: JoltField>(
+pub fn compute_claimed_r1cs_input_evals<F: JoltField>(
     preprocessing: &JoltSharedPreprocessing,
     trace: &[Cycle],
     r_cycle: &[F::Challenge],
 ) -> Vec<F> {
-    // Implement double-sum semantics: sum_{x1} eq1[x1] * (sum_{x2} eq2[x2] * term(x1||x2))
+    // Double-sum with delayed reduction using typed accumulators per input
     let m = r_cycle.len() / 2;
     let (r2, r1) = r_cycle.split_at(m);
     let (eq_one, eq_two) = rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
 
-    (0..eq_one.len())
+    let total_unr: [F::Unreduced<9>; NUM_R1CS_INPUTS] = (0..eq_one.len())
         .into_par_iter()
         .map(|x1| {
             let eq1_val = eq_one[x1];
-
-            // Inner serial accumulation over x2: accumulate eq2[x2] * P_i(row)
-            let mut inner = [F::zero(); NUM_R1CS_INPUTS];
+            // Accumulators ordered by category
+            let mut acc_left_input = acc6u_new::<F>();
+            let mut acc_right_input = acc6s_new::<F>();
+            let mut acc_product = acc7s_new::<F>();
+            let mut acc_wl_left = acc5u_new::<F>();
+            let mut acc_wp_left = acc5u_new::<F>();
+            // ShouldBranch is a boolean input; no separate left accumulator here
+            let mut acc_pc = acc6u_new::<F>();
+            let mut acc_unexpanded_pc = acc6u_new::<F>();
+            let mut acc_imm = acc6s_new::<F>();
+            let mut acc_ram_address = acc6u_new::<F>();
+            let mut acc_rs1_value = acc6u_new::<F>();
+            let mut acc_rs2_value = acc6u_new::<F>();
+            let mut acc_rd_write_value = acc6u_new::<F>();
+            let mut acc_ram_read_value = acc6u_new::<F>();
+            let mut acc_ram_write_value = acc6u_new::<F>();
+            let mut acc_left_lookup_operand = acc6u_new::<F>();
+            let mut acc_right_lookup_operand = acc7u_new::<F>();
+            let mut acc_next_unexpanded_pc = acc6u_new::<F>();
+            let mut acc_next_pc = acc6u_new::<F>();
+            let mut acc_lookup_output = acc6u_new::<F>();
+            let mut acc_sj_flag = acc5u_new::<F>();
+            let _acc_wl_right = acc5u_new::<F>();
+            let _acc_wp_right = acc5u_new::<F>();
+            let mut acc_sb_right = acc5u_new::<F>();
+            let mut acc_flags: Vec<F::Unreduced<5>> =
+                (0..NUM_CIRCUIT_FLAGS).map(|_| acc5u_new::<F>()).collect();
             for x2 in 0..eq_two.len() {
-                let eq2_val = eq_two[x2];
+                let e_in = eq_two[x2];
                 let idx = x1 * eq_two.len() + x2;
-
-                // Materialize row directly from trace and preprocessing
                 let row = R1CSCycleInputs::from_trace::<F>(preprocessing, trace, idx);
 
-                // Accumulate directly from materialized row using field_mul on raw values
-                inner[JoltR1CSInputs::LeftInstructionInput.to_index()] +=
-                    row.left_input.field_mul(eq2_val);
-                inner[JoltR1CSInputs::RightInstructionInput.to_index()] +=
-                    row.right_input.field_mul(eq2_val);
-                inner[JoltR1CSInputs::Product.to_index()] += row.product.field_mul(eq2_val);
-                inner[JoltR1CSInputs::WriteLookupOutputToRD.to_index()] +=
-                    row.write_lookup_output_to_rd_addr.field_mul(eq2_val);
-                inner[JoltR1CSInputs::WritePCtoRD.to_index()] +=
-                    row.write_pc_to_rd_addr.field_mul(eq2_val);
+                acc6u_fmadd_u64(&mut acc_left_input, &e_in, row.left_input);
+                acc6s_fmadd_i128(&mut acc_right_input, &e_in, row.right_input.to_i128());
+                acc7s_fmadd_i128(
+                    &mut acc_product,
+                    &e_in,
+                    (row.left_input as i128) * row.right_input.to_i128(),
+                );
+
+                acc5u_fmadd_u64(&mut acc_wl_left, &e_in, row.write_lookup_output_to_rd_addr as u64);
+                acc5u_fmadd_u64(&mut acc_wp_left, &e_in, row.write_pc_to_rd_addr as u64);
                 if row.should_branch {
-                    inner[JoltR1CSInputs::ShouldBranch.to_index()] += eq2_val;
+                    acc5u_add_field(&mut acc_sb_right, &e_in);
                 }
-                inner[JoltR1CSInputs::PC.to_index()] += row.pc.field_mul(eq2_val);
-                inner[JoltR1CSInputs::UnexpandedPC.to_index()] +=
-                    row.unexpanded_pc.field_mul(eq2_val);
-                inner[JoltR1CSInputs::Imm.to_index()] += row.imm.to_i128().field_mul(eq2_val);
-                inner[JoltR1CSInputs::RamAddress.to_index()] += row.ram_addr.field_mul(eq2_val);
-                inner[JoltR1CSInputs::Rs1Value.to_index()] += row.rs1_read_value.field_mul(eq2_val);
-                inner[JoltR1CSInputs::Rs2Value.to_index()] += row.rs2_read_value.field_mul(eq2_val);
-                inner[JoltR1CSInputs::RdWriteValue.to_index()] +=
-                    row.rd_write_value.field_mul(eq2_val);
-                inner[JoltR1CSInputs::RamReadValue.to_index()] +=
-                    row.ram_read_value.field_mul(eq2_val);
-                inner[JoltR1CSInputs::RamWriteValue.to_index()] +=
-                    row.ram_write_value.field_mul(eq2_val);
-                inner[JoltR1CSInputs::LeftLookupOperand.to_index()] +=
-                    row.left_lookup.field_mul(eq2_val);
-                inner[JoltR1CSInputs::RightLookupOperand.to_index()] +=
-                    row.right_lookup.field_mul(eq2_val);
-                inner[JoltR1CSInputs::NextUnexpandedPC.to_index()] +=
-                    row.next_unexpanded_pc.field_mul(eq2_val);
-                inner[JoltR1CSInputs::NextPC.to_index()] += row.next_pc.field_mul(eq2_val);
-                inner[JoltR1CSInputs::LookupOutput.to_index()] +=
-                    row.lookup_output.field_mul(eq2_val);
-                if row.should_jump {
-                    inner[JoltR1CSInputs::ShouldJump.to_index()] += eq2_val;
-                }
+
+                acc6u_fmadd_u64(&mut acc_pc, &e_in, row.pc);
+                acc6u_fmadd_u64(&mut acc_unexpanded_pc, &e_in, row.unexpanded_pc);
+                acc6s_fmadd_i128(&mut acc_imm, &e_in, row.imm.to_i128());
+                acc6u_fmadd_u64(&mut acc_ram_address, &e_in, row.ram_addr);
+                acc6u_fmadd_u64(&mut acc_rs1_value, &e_in, row.rs1_read_value);
+                acc6u_fmadd_u64(&mut acc_rs2_value, &e_in, row.rs2_read_value);
+                acc6u_fmadd_u64(&mut acc_rd_write_value, &e_in, row.rd_write_value);
+                acc6u_fmadd_u64(&mut acc_ram_read_value, &e_in, row.ram_read_value);
+                acc6u_fmadd_u64(&mut acc_ram_write_value, &e_in, row.ram_write_value);
+                acc6u_fmadd_u64(&mut acc_left_lookup_operand, &e_in, row.left_lookup);
+                acc7u_fmadd_u128(&mut acc_right_lookup_operand, &e_in, row.right_lookup);
+                acc6u_fmadd_u64(&mut acc_next_unexpanded_pc, &e_in, row.next_unexpanded_pc);
+                acc6u_fmadd_u64(&mut acc_next_pc, &e_in, row.next_pc);
+                acc6u_fmadd_u64(&mut acc_lookup_output, &e_in, row.lookup_output);
+                if row.should_jump { acc5u_add_field(&mut acc_sj_flag, &e_in); }
                 for flag in CircuitFlags::iter() {
                     if row.flags[flag] {
-                        inner[JoltR1CSInputs::OpFlags(flag).to_index()] += eq2_val;
+                        let idx = flag as usize;
+                        acc5u_add_field(&mut acc_flags[idx], &e_in);
                     }
                 }
             }
 
-            // Now multiply accumulated inner sums by eq1[x1]
-            for i in 0..NUM_R1CS_INPUTS {
-                inner[i] *= eq1_val;
+            // Reduce per-input and apply E_out unreduced
+            let mut out_unr: [F::Unreduced<9>; NUM_R1CS_INPUTS] = [F::Unreduced::<9>::zero(); NUM_R1CS_INPUTS];
+            out_unr[JoltR1CSInputs::LeftInstructionInput.to_index()] = eq1_val.mul_unreduced::<9>(acc6u_reduce::<F>(&acc_left_input));
+            out_unr[JoltR1CSInputs::RightInstructionInput.to_index()] = eq1_val.mul_unreduced::<9>(acc6s_reduce::<F>(&acc_right_input));
+            out_unr[JoltR1CSInputs::Product.to_index()] = eq1_val.mul_unreduced::<9>(acc7s_reduce::<F>(&acc_product));
+            out_unr[JoltR1CSInputs::WriteLookupOutputToRD.to_index()] = eq1_val.mul_unreduced::<9>(acc5u_reduce::<F>(&acc_wl_left));
+            out_unr[JoltR1CSInputs::WritePCtoRD.to_index()] = eq1_val.mul_unreduced::<9>(acc5u_reduce::<F>(&acc_wp_left));
+            out_unr[JoltR1CSInputs::ShouldBranch.to_index()] =
+                eq1_val.mul_unreduced::<9>(acc5u_reduce::<F>(&acc_sb_right));
+            out_unr[JoltR1CSInputs::PC.to_index()] = eq1_val.mul_unreduced::<9>(acc6u_reduce::<F>(&acc_pc));
+            out_unr[JoltR1CSInputs::UnexpandedPC.to_index()] = eq1_val.mul_unreduced::<9>(acc6u_reduce::<F>(&acc_unexpanded_pc));
+            out_unr[JoltR1CSInputs::Imm.to_index()] = eq1_val.mul_unreduced::<9>(acc6s_reduce::<F>(&acc_imm));
+            out_unr[JoltR1CSInputs::RamAddress.to_index()] = eq1_val.mul_unreduced::<9>(acc6u_reduce::<F>(&acc_ram_address));
+            out_unr[JoltR1CSInputs::Rs1Value.to_index()] = eq1_val.mul_unreduced::<9>(acc6u_reduce::<F>(&acc_rs1_value));
+            out_unr[JoltR1CSInputs::Rs2Value.to_index()] = eq1_val.mul_unreduced::<9>(acc6u_reduce::<F>(&acc_rs2_value));
+            out_unr[JoltR1CSInputs::RdWriteValue.to_index()] = eq1_val.mul_unreduced::<9>(acc6u_reduce::<F>(&acc_rd_write_value));
+            out_unr[JoltR1CSInputs::RamReadValue.to_index()] = eq1_val.mul_unreduced::<9>(acc6u_reduce::<F>(&acc_ram_read_value));
+            out_unr[JoltR1CSInputs::RamWriteValue.to_index()] = eq1_val.mul_unreduced::<9>(acc6u_reduce::<F>(&acc_ram_write_value));
+            out_unr[JoltR1CSInputs::LeftLookupOperand.to_index()] = eq1_val.mul_unreduced::<9>(acc6u_reduce::<F>(&acc_left_lookup_operand));
+            out_unr[JoltR1CSInputs::RightLookupOperand.to_index()] = eq1_val.mul_unreduced::<9>(acc7u_reduce::<F>(&acc_right_lookup_operand));
+            out_unr[JoltR1CSInputs::NextUnexpandedPC.to_index()] = eq1_val.mul_unreduced::<9>(acc6u_reduce::<F>(&acc_next_unexpanded_pc));
+            out_unr[JoltR1CSInputs::NextPC.to_index()] = eq1_val.mul_unreduced::<9>(acc6u_reduce::<F>(&acc_next_pc));
+            out_unr[JoltR1CSInputs::LookupOutput.to_index()] = eq1_val.mul_unreduced::<9>(acc6u_reduce::<F>(&acc_lookup_output));
+            out_unr[JoltR1CSInputs::ShouldJump.to_index()] = eq1_val.mul_unreduced::<9>(acc5u_reduce::<F>(&acc_sj_flag));
+            for flag in CircuitFlags::iter() {
+                let idx = JoltR1CSInputs::OpFlags(flag).to_index();
+                let f_idx = flag as usize;
+                out_unr[idx] = eq1_val.mul_unreduced::<9>(acc5u_reduce::<F>(&acc_flags[f_idx]));
             }
-            inner
+            out_unr
         })
         .reduce(
-            || [F::zero(); NUM_R1CS_INPUTS],
+            || [F::Unreduced::<9>::zero(); NUM_R1CS_INPUTS],
             |mut acc, item| {
                 for i in 0..NUM_R1CS_INPUTS {
                     acc[i] += item[i];
                 }
                 acc
             },
-        )
-        .to_vec()
+        );
+
+    // Final Montgomery reduce per entry
+    (0..NUM_R1CS_INPUTS)
+        .map(|i| F::from_montgomery_reduce::<9>(total_unr[i]))
+        .collect()
 }
 
 /// Compute z(r_cycle) for the 10 product-virtualization inputs (left/right for each product).
@@ -590,7 +639,7 @@ pub fn compute_claimed_witness_evals<F: JoltField>(
 /// 6: ShouldBranch.left(lookup_output), 7: ShouldBranch.right(branch_flag),
 /// 8: ShouldJump.left(jump_flag), 9: ShouldJump.right(1 - NextIsNoop)
 #[tracing::instrument(skip_all)]
-pub fn compute_claimed_product_evals<F: JoltField>(
+pub fn compute_claimed_product_virtual_evals<F: JoltField>(
     trace: &[Cycle],
     r_cycle: &[F::Challenge],
 ) -> [F; 10] {
@@ -598,66 +647,108 @@ pub fn compute_claimed_product_evals<F: JoltField>(
     let (r2, r1) = r_cycle.split_at(m);
     let (eq_one, eq_two) = rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
 
-    (0..eq_one.len())
+    let eq_two_len = eq_two.len();
+
+    let totals_unr: [F::Unreduced<9>; 10] = (0..eq_one.len())
         .into_par_iter()
         .map(|x1| {
             let eq1_val = eq_one[x1];
 
-            // Inner serial accumulation over x2
-            let mut inner = [F::zero(); 10];
-            for x2 in 0..eq_two.len() {
-                let eq2_val = eq_two[x2];
-                let idx = x1 * eq_two.len() + x2;
+            // Instruction: (left u64, right i128)
+            let mut acc_inst_left = acc6u_new::<F>();
+            let mut acc_inst_right = acc6s_new::<F>();
+            // WriteLookupOutputToRD: (left u8, right bool)
+            let mut acc_wl_left = acc5u_new::<F>();
+            let mut acc_wl_right = acc5u_new::<F>();
+            // WritePCtoRD: (left u8, right bool)
+            let mut acc_wp_left = acc5u_new::<F>();
+            let mut acc_wp_right = acc5u_new::<F>();
+            // ShouldBranch: (left u64, right bool)
+            let mut acc_sb_left = acc6u_new::<F>();
+            let mut acc_sb_right = acc5u_new::<F>();
+            // ShouldJump: (left bool, right bool)
+            let mut acc_sj_left = acc5u_new::<F>();
+            let mut acc_sj_right = acc5u_new::<F>();
 
-                // Materialize product-cycle row
+            for x2 in 0..eq_two_len {
+                let e_in = eq_two[x2];
+                let idx = x1 * eq_two_len + x2;
                 let row = ProductCycleInputs::from_trace::<F>(trace, idx);
 
-                // Instruction (u64, i128)
-                inner[0] += row.instruction_left_input.field_mul(eq2_val);
-                inner[1] += F::from_i128(row.instruction_right_input) * eq2_val;
+                // Instruction: (u64, i128)
+                acc6u_fmadd_u64(&mut acc_inst_left, &e_in, row.instruction_left_input);
+                acc6s_fmadd_i128(&mut acc_inst_right, &e_in, row.instruction_right_input);
 
-                // WriteLookupOutputToRD (u8, bool)
-                inner[2] += row.write_lookup_output_to_rd_rd_addr.field_mul(eq2_val);
+                // WriteLookupOutputToRD: (u8, bool)
+                acc5u_fmadd_u64(
+                    &mut acc_wl_left,
+                    &e_in,
+                    row.write_lookup_output_to_rd_rd_addr as u64,
+                );
                 if row.write_lookup_output_to_rd_flag {
-                    inner[3] += eq2_val;
+                    acc5u_add_field(&mut acc_wl_right, &e_in);
                 }
 
-                // WritePCtoRD (u8, bool)
-                inner[4] += row.write_pc_to_rd_rd_addr.field_mul(eq2_val);
+                // WritePCtoRD: (u8, bool)
+                acc5u_fmadd_u64(
+                    &mut acc_wp_left,
+                    &e_in,
+                    row.write_pc_to_rd_rd_addr as u64,
+                );
                 if row.write_pc_to_rd_flag {
-                    inner[5] += eq2_val;
+                    acc5u_add_field(&mut acc_wp_right, &e_in);
                 }
 
-                // ShouldBranch (u64, u8)
-                inner[6] += row.should_branch_lookup_output.field_mul(eq2_val);
+                // ShouldBranch: (u64, bool)
+                acc6u_fmadd_u64(
+                    &mut acc_sb_left,
+                    &e_in,
+                    row.should_branch_lookup_output,
+                );
                 if row.should_branch_flag {
-                    inner[7] += eq2_val;
+                    acc5u_add_field(&mut acc_sb_right, &e_in);
                 }
 
-                // ShouldJump (u8, u8)
+                // ShouldJump: (bool, bool)
                 if row.should_jump_flag {
-                    inner[8] += eq2_val;
+                    acc5u_add_field(&mut acc_sj_left, &e_in);
                 }
                 if row.not_next_noop {
-                    inner[9] += eq2_val;
+                    acc5u_add_field(&mut acc_sj_right, &e_in);
                 }
             }
 
-            // Multiply accumulated inner sums by eq1[x1]
-            for i in 0..10 {
-                inner[i] *= eq1_val;
-            }
-            inner
+            // Reduce per-output and apply E_out unreduced
+            let mut out_unr = [F::Unreduced::<9>::zero(); 10];
+            out_unr[0] = eq1_val.mul_unreduced::<9>(acc6u_reduce::<F>(&acc_inst_left));
+            out_unr[1] = eq1_val.mul_unreduced::<9>(acc6s_reduce::<F>(&acc_inst_right));
+            out_unr[2] = eq1_val.mul_unreduced::<9>(acc5u_reduce::<F>(&acc_wl_left));
+            out_unr[3] = eq1_val.mul_unreduced::<9>(acc5u_reduce::<F>(&acc_wl_right));
+            out_unr[4] = eq1_val.mul_unreduced::<9>(acc5u_reduce::<F>(&acc_wp_left));
+            out_unr[5] = eq1_val.mul_unreduced::<9>(acc5u_reduce::<F>(&acc_wp_right));
+            out_unr[6] = eq1_val.mul_unreduced::<9>(acc6u_reduce::<F>(&acc_sb_left));
+            out_unr[7] = eq1_val.mul_unreduced::<9>(acc5u_reduce::<F>(&acc_sb_right));
+            out_unr[8] = eq1_val.mul_unreduced::<9>(acc5u_reduce::<F>(&acc_sj_left));
+            out_unr[9] = eq1_val.mul_unreduced::<9>(acc5u_reduce::<F>(&acc_sj_right));
+
+            out_unr
         })
         .reduce(
-            || [F::zero(); 10],
+            || [F::Unreduced::<9>::zero(); 10],
             |mut acc, item| {
                 for i in 0..10 {
                     acc[i] += item[i];
                 }
                 acc
             },
-        )
+        );
+
+    // Final reduce
+    let mut out: [F; 10] = [F::zero(); 10];
+    for i in 0..10 {
+        out[i] = F::from_montgomery_reduce::<9>(totals_unr[i]);
+    }
+    out
 }
 
 /// Single-pass generation of UnexpandedPC(t), PC(t), and IsNoop(t) witnesses.
@@ -693,31 +784,6 @@ where
     (unexpanded_pc.into(), pc.into(), is_noop.into())
 }
 
-#[tracing::instrument(skip_all)]
-pub fn generate_product_virtualization_witnesses<F>(
-    trace: &[Cycle],
-) -> (
-    MultilinearPolynomial<F>, // LeftInstructionInput(t)
-    MultilinearPolynomial<F>, // RightInstructionInput(t)
-)
-where
-    F: JoltField,
-{
-    let len = trace.len();
-    let mut left_input: Vec<u64> = vec![0; len];
-    let mut right_input: Vec<i128> = vec![0; len];
-
-    left_input
-        .par_iter_mut()
-        .zip(right_input.par_iter_mut())
-        .zip(trace.par_iter())
-        .for_each(|((left, right), cycle)| {
-            (*left, *right) = LookupQuery::<XLEN>::to_instruction_inputs(cycle);
-        });
-
-    (left_input.into(), right_input.into())
-}
-
 // TODO(markosg04): we could unify this with the `generate_witness_batch` to avoid a second iteration over T
 pub fn generate_virtual_product_witnesses<F>(
     product_type: VirtualProductType,
@@ -732,7 +798,20 @@ where
     let len = trace.len();
 
     match product_type {
-        VirtualProductType::Instruction => generate_product_virtualization_witnesses(trace),
+        VirtualProductType::Instruction => {
+            let mut left_input: Vec<u64> = vec![0; len];
+            let mut right_input: Vec<i128> = vec![0; len];
+        
+            left_input
+                .par_iter_mut()
+                .zip(right_input.par_iter_mut())
+                .zip(trace.par_iter())
+                .for_each(|((left, right), cycle)| {
+                    (*left, *right) = LookupQuery::<XLEN>::to_instruction_inputs(cycle);
+                });
+        
+            (left_input.into(), right_input.into())
+        },
         VirtualProductType::WriteLookupOutputToRD => {
             let mut rd_addrs: Vec<u8> = vec![0; len];
             let mut flags: Vec<u8> = vec![0; len];

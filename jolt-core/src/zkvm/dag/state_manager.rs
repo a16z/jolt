@@ -23,8 +23,9 @@ use tracer::JoltDevice;
 #[derive(PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, FromPrimitive)]
 #[repr(u8)]
 pub enum ProofKeys {
-    Stage1UniSkipFirstRoundProof,
+    Stage1UniSkipFirstRound,
     Stage1Sumcheck,
+    Stage2UniSkipFirstRound,
     Stage2Sumcheck,
     Stage3Sumcheck,
     Stage4Sumcheck,

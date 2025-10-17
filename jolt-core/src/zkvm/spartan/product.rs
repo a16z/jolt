@@ -10,9 +10,7 @@ use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::lagrange_poly::{LagrangeHelper, LagrangePolynomial};
-use crate::poly::multilinear_polynomial::{
-    BindingOrder, MultilinearPolynomial, PolynomialEvaluation,
-};
+use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial};
 use crate::poly::opening_proof::{
     OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
 };
@@ -29,7 +27,9 @@ use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::zkvm::dag::state_manager::StateManager;
 use crate::zkvm::instruction::{CircuitFlags, InstructionFlags};
-use crate::zkvm::r1cs::inputs::{generate_virtual_product_witnesses, ProductCycleInputs};
+use crate::zkvm::r1cs::inputs::{
+    compute_claimed_product_virtual_evals, generate_virtual_product_witnesses, ProductCycleInputs,
+};
 use crate::zkvm::witness::VirtualPolynomial;
 use crate::zkvm::JoltSharedPreprocessing;
 use rayon::prelude::*;
@@ -157,15 +157,15 @@ impl<F: JoltField> ProductVirtualUniSkipInstance<F> {
             base_evals[i] = eval;
         }
 
+        println!("base_evals: {:?}", base_evals);
+
         let tau_low = &tau[..tau.len() - 1];
-        let extended = Self::compute_univariate_skip_extended_evals(trace, tau_low);
+        let extended_evals = Self::compute_univariate_skip_extended_evals(trace, tau_low);
 
         let instance = Self {
             tau: tau.to_vec(),
             base_evals,
-            prover_state: Some(ProductVirtualUniSkipProverState {
-                extended_evals: extended,
-            }),
+            prover_state: Some(ProductVirtualUniSkipProverState { extended_evals }),
         };
 
         #[cfg(feature = "allocative")]
@@ -186,7 +186,11 @@ impl<F: JoltField> ProductVirtualUniSkipInstance<F> {
                 .get_virtual_polynomial_opening(vp, SumcheckId::SpartanOuter);
             base_evals[i] = eval;
         }
-        Self { tau: tau.to_vec(), base_evals, prover_state: None }
+        Self {
+            tau: tau.to_vec(),
+            base_evals,
+            prover_state: None,
+        }
     }
 
     /// Compute the extended-domain evaluations t1(z) for univariate-skip (outside base window).
@@ -220,7 +224,7 @@ impl<F: JoltField> ProductVirtualUniSkipInstance<F> {
     /// - Apply the split-Eq weights E_out and E_in exactly as in outer.rs and sum over x.
     /// - Return t1(z) for all extended targets in the order of uniskip_targets.
     fn compute_univariate_skip_extended_evals(
-        trace: &[tracer::instruction::Cycle],
+        trace: &[Cycle],
         tau_low: &[F::Challenge],
     ) -> [F; PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE] {
         // Split-Eq over cycle variables
@@ -385,6 +389,18 @@ impl<F: JoltField, T: Transcript> UniSkipFirstRoundInstance<F, T>
 
         let tau_high = self.tau[self.tau.len() - 1];
 
+        #[cfg(debug_assertions)]
+        {
+            let w_dbg = LagrangePolynomial::<F>::evals::<
+                F::Challenge,
+                PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
+            >(&tau_high);
+            eprintln!(
+                "[pv-uniskip] base_evals={:?} w_at_tau_high={:?}",
+                base, w_dbg
+            );
+        }
+
         // Compute the univariate-skip first round polynomial s1(Y) = L(τ_high, Y) · t1(Y)
         build_uniskip_first_round_poly::<
             F,
@@ -444,8 +460,10 @@ impl<F: JoltField> ProductVirtualRemainder<F> {
     ) -> Self {
         let (preprocessing, trace, _program_io, _final_mem) = state_manager.get_prover_data();
 
-        let lagrange_evals_r =
-            LagrangePolynomial::<F>::evals::<F::Challenge, PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE>(&uni.r0);
+        let lagrange_evals_r = LagrangePolynomial::<F>::evals::<
+            F::Challenge,
+            PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
+        >(&uni.r0);
 
         let tau_high = uni.tau[uni.tau.len() - 1];
         let tau_low = &uni.tau[..uni.tau.len() - 1];
@@ -462,11 +480,8 @@ impl<F: JoltField> ProductVirtualRemainder<F> {
                 Some(lagrange_tau_r0),
             );
 
-        let streaming_cache = Self::compute_streaming_round_cache(
-            trace,
-            &lagrange_evals_r,
-            &split_eq_poly,
-        );
+        let streaming_cache =
+            Self::compute_streaming_round_cache(trace, &lagrange_evals_r, &split_eq_poly);
 
         Self {
             num_cycle_vars,
@@ -510,7 +525,7 @@ impl<F: JoltField> ProductVirtualRemainder<F> {
     /// - We follow outer’s delayed-reduction pattern across x_in to reduce modular reductions.
     fn compute_streaming_round_cache(
         trace: &[Cycle],
-        weights_at_r0: &[F; PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE],
+        weights_at_r0: &[F; NUM_PRODUCT_VIRTUAL],
         split_eq_poly: &GruenSplitEqPolynomial<F>,
     ) -> ProductVirtualStreamingCache<F> {
         // Build witness polynomials for the five product types
@@ -545,8 +560,8 @@ impl<F: JoltField> ProductVirtualRemainder<F> {
             left_hi: Vec<F>,
             right_lo: Vec<F>,
             right_hi: Vec<F>,
-            sum0: F,
-            sum_inf: F,
+            sum0_unr: F::Unreduced<9>,
+            sum_inf_unr: F::Unreduced<9>,
         }
 
         let chunk_results: Vec<ChunkOut<F>> = (0..num_parallel_chunks)
@@ -556,13 +571,14 @@ impl<F: JoltField> ProductVirtualRemainder<F> {
                 let x_out_end = core::cmp::min((chunk_idx + 1) * x_out_chunk_size, num_x_out_vals);
                 let chunk_width = x_out_end.saturating_sub(x_out_start);
                 let local_len = chunk_width.saturating_mul(num_x_in_vals);
-                let mut local_left_lo: Vec<F> = Vec::with_capacity(local_len);
-                let mut local_left_hi: Vec<F> = Vec::with_capacity(local_len);
-                let mut local_right_lo: Vec<F> = Vec::with_capacity(local_len);
-                let mut local_right_hi: Vec<F> = Vec::with_capacity(local_len);
+                let mut local_left_lo: Vec<F> = unsafe_allocate_zero_vec(local_len);
+                let mut local_left_hi: Vec<F> = unsafe_allocate_zero_vec(local_len);
+                let mut local_right_lo: Vec<F> = unsafe_allocate_zero_vec(local_len);
+                let mut local_right_hi: Vec<F> = unsafe_allocate_zero_vec(local_len);
 
-                let mut task_sum0 = F::zero();
-                let mut task_sum_inf = F::zero();
+                let mut task_sum0 = F::Unreduced::<9>::zero();
+                let mut task_sum_inf = F::Unreduced::<9>::zero();
+                let mut local_idx = 0usize;
                 for x_out_val in x_out_start..x_out_end {
                     let mut inner0 = F::Unreduced::<9>::zero();
                     let mut inner_inf = F::Unreduced::<9>::zero();
@@ -602,10 +618,11 @@ impl<F: JoltField> ProductVirtualRemainder<F> {
                         let slope = (left1 - left0) * (right1 - right0);
                         inner0 += e_in.mul_unreduced::<9>(p0);
                         inner_inf += e_in.mul_unreduced::<9>(slope);
-                        local_left_lo.push(left0);
-                        local_right_lo.push(right0);
-                        local_left_hi.push(left1);
-                        local_right_hi.push(right1);
+                        local_left_lo[local_idx] = left0;
+                        local_right_lo[local_idx] = right0;
+                        local_left_hi[local_idx] = left1;
+                        local_right_hi[local_idx] = right1;
+                        local_idx += 1;
                     }
                     let e_out = if num_x_out_vals > 0 {
                         split_eq_poly.E_out_current()[x_out_val]
@@ -614,8 +631,8 @@ impl<F: JoltField> ProductVirtualRemainder<F> {
                     };
                     let reduced0 = F::from_montgomery_reduce::<9>(inner0);
                     let reduced_inf = F::from_montgomery_reduce::<9>(inner_inf);
-                    task_sum0 += e_out * reduced0;
-                    task_sum_inf += e_out * reduced_inf;
+                    task_sum0 += e_out.mul_unreduced::<9>(reduced0);
+                    task_sum_inf += e_out.mul_unreduced::<9>(reduced_inf);
                 }
                 ChunkOut {
                     base: x_out_start.saturating_mul(num_x_in_vals),
@@ -624,8 +641,8 @@ impl<F: JoltField> ProductVirtualRemainder<F> {
                     left_hi: local_left_hi,
                     right_lo: local_right_lo,
                     right_hi: local_right_hi,
-                    sum0: task_sum0,
-                    sum_inf: task_sum_inf,
+                    sum0_unr: task_sum0,
+                    sum_inf_unr: task_sum_inf,
                 }
             })
             .collect();
@@ -635,11 +652,11 @@ impl<F: JoltField> ProductVirtualRemainder<F> {
         let mut left_hi: Vec<F> = unsafe_allocate_zero_vec(groups_exact);
         let mut right_lo: Vec<F> = unsafe_allocate_zero_vec(groups_exact);
         let mut right_hi: Vec<F> = unsafe_allocate_zero_vec(groups_exact);
-        let mut t0_acc = F::zero();
-        let mut t_inf_acc = F::zero();
+        let mut t0_acc_unr = F::Unreduced::<9>::zero();
+        let mut t_inf_acc_unr = F::Unreduced::<9>::zero();
         for chunk in &chunk_results {
-            t0_acc += chunk.sum0;
-            t_inf_acc += chunk.sum_inf;
+            t0_acc_unr += chunk.sum0_unr;
+            t_inf_acc_unr += chunk.sum_inf_unr;
             let dst_base = chunk.base;
             let dst_end = dst_base + chunk.len;
             left_lo[dst_base..dst_end].copy_from_slice(&chunk.left_lo);
@@ -649,8 +666,8 @@ impl<F: JoltField> ProductVirtualRemainder<F> {
         }
 
         ProductVirtualStreamingCache {
-            t0: t0_acc,
-            t_inf: t_inf_acc,
+            t0: F::from_montgomery_reduce::<9>(t0_acc_unr),
+            t_inf: F::from_montgomery_reduce::<9>(t_inf_acc_unr),
             left_lo,
             left_hi,
             right_lo,
@@ -715,7 +732,11 @@ impl<F: JoltField> ProductVirtualRemainder<F> {
                                 local_right.push(r0 + r_0 * (r1 - r0));
                             }
                         }
-                        BoundChunk { base: x_out_start * num_x_in_vals, left: local_left, right: local_right }
+                        BoundChunk {
+                            base: x_out_start * num_x_in_vals,
+                            left: local_left,
+                            right: local_right,
+                        }
                     })
                     .collect();
 
@@ -834,7 +855,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ProductVirtualRemai
     }
 
     fn num_rounds(&self) -> usize {
-        1 + self.num_cycle_vars
+        self.num_cycle_vars
     }
 
     fn input_claim(&self) -> F {
@@ -906,7 +927,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ProductVirtualRemai
             right_eval += w[i] * re;
         }
 
-        // Multiply by L(τ_high, r0) and Eq(τ_low, r_tail^rev), matching outer
+        // Multiply by L(τ_high, r0) and Eq(τ_low, r_tail^rev)
         let tau_high = &self.tau[self.tau.len() - 1];
         let tau_high_bound_r0 = LagrangePolynomial::<F>::lagrange_kernel::<
             F::Challenge,
@@ -920,10 +941,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ProductVirtualRemai
     }
 
     fn normalize_opening_point(&self, r_tail: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
-        let mut r_full: Vec<F::Challenge> = Vec::with_capacity(1 + r_tail.len());
-        r_full.push(self.r0_uniskip);
-        r_full.extend_from_slice(r_tail);
-        let r_reversed: Vec<F::Challenge> = r_full.into_iter().rev().collect();
+        // Reverse the challenge (since we bind in small endian), then return
+        // Note: we do not need to append the univariate skip challenge
+        let r_reversed: Vec<F::Challenge> = r_tail.iter().rev().copied().collect();
         OpeningPoint::new(r_reversed)
     }
 
@@ -937,35 +957,31 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ProductVirtualRemai
         let (r_cycle, _) = opening_point.r.split_at(self.num_cycle_vars);
         let r_cycle_op = OpeningPoint::new(r_cycle.to_vec());
 
-        // Rebuild per-type witness polynomials ephemerally and evaluate at r_cycle
-        let trace = {
+        // Compute claimed product-virtual evaluations at r_cycle in one pass
+        let claims = {
             let ps = self.prover_state.as_ref().expect("prover state missing");
-            ps.trace.clone()
+            compute_claimed_product_virtual_evals::<F>(&ps.trace, r_cycle)
         };
-        for pt in VirtualProductType::iter() {
-            let (l, r) = generate_virtual_product_witnesses::<F>(pt, &trace);
-            let FactorPolynomials(lp, rp) = pt.get_factor_polynomials();
 
-            // Evaluate bound polynomials at r_cycle and append claims
-            let le = MultilinearPolynomial::<F>::evaluate(&l, r_cycle);
-            let mut re = MultilinearPolynomial::<F>::evaluate(&r, r_cycle);
-            if matches!(pt, VirtualProductType::ShouldJump) {
-                re = F::one() - re;
-            }
+        // Map claims to virtual polynomials in the enum order
+        for (i, pt) in VirtualProductType::iter().enumerate() {
+            let FactorPolynomials(lp, rp) = pt.get_factor_polynomials();
+            let left_claim = claims[2 * i];
+            let right_claim = claims[2 * i + 1];
             let mut acc = accumulator.borrow_mut();
             acc.append_virtual(
                 transcript,
                 lp,
                 SumcheckId::ProductVirtualization,
                 r_cycle_op.clone(),
-                le,
+                left_claim,
             );
             acc.append_virtual(
                 transcript,
                 rp,
                 SumcheckId::ProductVirtualization,
                 r_cycle_op.clone(),
-                re,
+                right_claim,
             );
         }
     }
@@ -976,9 +992,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ProductVirtualRemai
         transcript: &mut T,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
-        // Append the same 10 virtual openings (no claims) under fused ID at r_cycle
-        let (r_cycle, _) = opening_point.r.split_at(self.num_cycle_vars);
-        let r_cycle_op = OpeningPoint::new(r_cycle.to_vec());
+        // Append the same 10 virtual openings (no claims) under fused ID at opening point
         let mut acc = accumulator.borrow_mut();
         for pt in VirtualProductType::iter() {
             let FactorPolynomials(lp, rp) = pt.get_factor_polynomials();
@@ -986,13 +1000,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ProductVirtualRemai
                 transcript,
                 lp,
                 SumcheckId::ProductVirtualization,
-                r_cycle_op.clone(),
+                opening_point.clone(),
             );
             acc.append_virtual(
                 transcript,
                 rp,
                 SumcheckId::ProductVirtualization,
-                r_cycle_op.clone(),
+                opening_point.clone(),
             );
         }
     }

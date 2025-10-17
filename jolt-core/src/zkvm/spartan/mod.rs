@@ -86,7 +86,7 @@ where
 
         // Store first round
         state_manager.proofs.borrow_mut().insert(
-            ProofKeys::Stage1UniSkipFirstRoundProof,
+            ProofKeys::Stage1UniSkipFirstRound,
             ProofData::UniSkipFirstRoundProof(first_round_proof),
         );
 
@@ -116,11 +116,11 @@ where
         let first_round = {
             let proofs = state_manager.proofs.borrow();
             match proofs
-                .get(&ProofKeys::Stage1UniSkipFirstRoundProof)
-                .expect("missing Stage1UniSkipFirstRoundProof")
+                .get(&ProofKeys::Stage1UniSkipFirstRound)
+                .expect("missing Stage1UniSkipFirstRound")
             {
                 ProofData::UniSkipFirstRoundProof(fr) => fr.clone(),
-                _ => panic!("unexpected proof type for Stage1UniSkipFirstRoundProof"),
+                _ => panic!("unexpected proof type for Stage1UniSkipFirstRound"),
             }
         };
 
@@ -234,7 +234,7 @@ where
             );
 
         state_manager.proofs.borrow_mut().insert(
-            ProofKeys::Stage2Sumcheck,
+            ProofKeys::Stage2UniSkipFirstRound,
             ProofData::UniSkipFirstRoundProof(first_round_proof),
         );
 
@@ -284,11 +284,11 @@ where
         let first_round = {
             let proofs = state_manager.proofs.borrow();
             match proofs
-                .get(&ProofKeys::Stage2Sumcheck)
-                .expect("missing Stage2Sumcheck")
+                .get(&ProofKeys::Stage2UniSkipFirstRound)
+                .expect("missing Stage2UniSkipFirstRound")
             {
                 ProofData::UniSkipFirstRoundProof(fr) => fr.clone(),
-                _ => panic!("unexpected proof type for Stage2Sumcheck"),
+                _ => panic!("unexpected proof type for Stage2UniSkipFirstRound"),
             }
         };
 
@@ -320,7 +320,8 @@ where
             .take()
             .expect("stage2_prover_uni_skip must run before stage2_prover_instances");
         let num_cycle_vars = self.key.num_cycle_vars();
-        let product_virtual_remainder = ProductVirtualRemainder::new_prover(state_manager, num_cycle_vars, &st);
+        let product_virtual_remainder =
+            ProductVirtualRemainder::new_prover(state_manager, num_cycle_vars, &st);
 
         vec![
             Box::new(inner_sumcheck),
