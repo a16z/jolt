@@ -1520,7 +1520,7 @@ mod tests {
     // Check that the size of Cycle is as expected.
     fn rv32im_cycle_size() {
         let size = size_of::<Cycle>();
-        let expected = 80;
+        let expected = 96;
         assert_eq!(
             size, expected,
             "Cycle size should be {expected} bytes, but is {size} bytes"
