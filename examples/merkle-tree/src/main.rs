@@ -48,6 +48,3 @@ pub fn main() {
     info!("output: {}", hex::encode(output));
     info!("valid: {is_valid}");
 }
-
-// b4370f3a0b3d38a87a6c4c4609e783b3ccb71c301ff8540df7ddc84232bb16d7
-// b4370f3a0b3d38a87a6c4c4609e783b3ccb71c301ff8540df7ddc84232bb16d7
