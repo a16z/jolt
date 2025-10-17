@@ -2,23 +2,40 @@
 
 use core::ops::Deref;
 
+/// Computes the Merkle root of a 4-leaf tree
+///
+/// Tree structure:
+///        root
+///       /    \
+///     h01    h23
+///    /  \   /  \
+///   h0  h1 h2  h3
+///   |   |  |   |
+///  l1  l2  l3  l4
 #[jolt::provable(memory_size = 10240, max_trace_length = 65536)]
 fn merkle_tree(
-    first_input: &[u8],
-    second_input: jolt::TrustedAdvice<[u8; 32]>,
-    third_input: jolt::UntrustedAdvice<[u8; 32]>,
+    leaf1: &[u8],
+    leaf2: jolt::TrustedAdvice<[u8; 32]>,
+    leaf3: jolt::TrustedAdvice<[u8; 32]>,
+    leaf4: jolt::UntrustedAdvice<[u8; 32]>,
 ) -> [u8; 32] {
-    // Compute hash of first input
-    let hash1 = jolt_inlines_sha2::Sha256::digest(first_input);
-    let hash2 = jolt_inlines_sha2::Sha256::digest(second_input.deref());
-    let hash3 = jolt_inlines_sha2::Sha256::digest(third_input.deref());
+    let h0 = jolt_inlines_sha2::Sha256::digest(leaf1);
+    let h1 = jolt_inlines_sha2::Sha256::digest(leaf2.deref());
+    let h2 = jolt_inlines_sha2::Sha256::digest(leaf3.deref());
+    let h3 = jolt_inlines_sha2::Sha256::digest(leaf4.deref());
 
-    // Concatenate all three hashes
-    let mut concatenated = [0u8; 96];
-    concatenated[..32].copy_from_slice(&hash1);
-    concatenated[32..64].copy_from_slice(&hash2);
-    concatenated[64..].copy_from_slice(&hash3);
+    let mut pair_01 = [0u8; 64];
+    pair_01[..32].copy_from_slice(&h0);
+    pair_01[32..].copy_from_slice(&h1);
+    let h01 = jolt_inlines_sha2::Sha256::digest(&pair_01);
 
-    // Hash the concatenated result and return
-    jolt_inlines_sha2::Sha256::digest(&concatenated)
+    let mut pair_23 = [0u8; 64];
+    pair_23[..32].copy_from_slice(&h2);
+    pair_23[32..].copy_from_slice(&h3);
+    let h23 = jolt_inlines_sha2::Sha256::digest(&pair_23);
+
+    let mut root_pair = [0u8; 64];
+    root_pair[..32].copy_from_slice(&h01);
+    root_pair[32..].copy_from_slice(&h23);
+    jolt_inlines_sha2::Sha256::digest(&root_pair)
 }
