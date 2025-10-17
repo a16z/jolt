@@ -658,7 +658,7 @@ pub fn compute_claimed_r1cs_input_evals<F: JoltField>(
 /// 2: WriteLookupOutputToRD.left(rd_addr), 3: WriteLookupOutputToRD.right(flag),
 /// 4: WritePCtoRD.left(rd_addr), 5: WritePCtoRD.right(jump_flag),
 /// 6: ShouldBranch.left(lookup_output), 7: ShouldBranch.right(branch_flag),
-/// 8: ShouldJump.left(jump_flag), 9: ShouldJump.right(1 - NextIsNoop)
+/// 8: ShouldJump.left(jump_flag), 9: 1 - ShouldJump.right (NextIsNoop)
 #[tracing::instrument(skip_all)]
 pub fn compute_claimed_product_virtual_evals<F: JoltField>(
     trace: &[Cycle],
@@ -726,7 +726,7 @@ pub fn compute_claimed_product_virtual_evals<F: JoltField>(
                 if row.should_jump_flag {
                     acc5u_add_field(&mut acc_sj_left, &e_in);
                 }
-                if row.not_next_noop {
+                if !row.not_next_noop {
                     acc5u_add_field(&mut acc_sj_right, &e_in);
                 }
             }

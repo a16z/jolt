@@ -597,13 +597,9 @@ impl<F: JoltField> ProductVirtualRemainder<F> {
                         for (i, (l, r)) in witnesses.iter().enumerate() {
                             let l0_i = l.get_bound_coeff(2 * current_step_idx);
                             let l1_i = l.get_bound_coeff(2 * current_step_idx + 1);
-                            let mut r0_i = r.get_bound_coeff(2 * current_step_idx);
-                            let mut r1_i = r.get_bound_coeff(2 * current_step_idx + 1);
-                            // ShouldJump: use (1 - NextIsNoop)
-                            if product_types[i] == VirtualProductType::ShouldJump {
-                                r0_i = F::one() - r0_i;
-                                r1_i = F::one() - r1_i;
-                            }
+                            let r0_i = r.get_bound_coeff(2 * current_step_idx);
+                            let r1_i = r.get_bound_coeff(2 * current_step_idx + 1);
+
                             let w = weights_at_r0[i];
                             left0 += w * l0_i;
                             left1 += w * l1_i;
@@ -679,7 +675,6 @@ impl<F: JoltField> ProductVirtualRemainder<F> {
         }
     }
 
-    /// Optional helper to bind the first remaining round using cached values.
     fn bind_streaming_round(&mut self, r_0: F::Challenge) {
         if let Some(ps) = self.prover_state.as_mut() {
             if let Some(cache) = ps.streaming_cache.take() {
@@ -957,14 +952,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ProductVirtualRemai
         transcript: &mut T,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
-        // Append 10 virtual openings (5 left, 5 right) under fused ID at r_cycle
-        let (r_cycle, _) = opening_point.r.split_at(self.num_cycle_vars);
-        let r_cycle_op = OpeningPoint::new(r_cycle.to_vec());
+        // Append 10 virtual openings (5 left, 5 right) under fused ID at opening_point
 
-        // Compute claimed product-virtual evaluations at r_cycle in one pass
+        // Compute claimed product-virtual evaluations at opening_point.r in one pass
         let claims = {
             let ps = self.prover_state.as_ref().expect("prover state missing");
-            compute_claimed_product_virtual_evals::<F>(&ps.trace, r_cycle)
+            compute_claimed_product_virtual_evals::<F>(&ps.trace, opening_point.r.as_slice())
         };
 
         // Map claims to virtual polynomials in the enum order
@@ -977,14 +970,14 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ProductVirtualRemai
                 transcript,
                 lp,
                 SumcheckId::ProductVirtualization,
-                r_cycle_op.clone(),
+                opening_point.clone(),
                 left_claim,
             );
             acc.append_virtual(
                 transcript,
                 rp,
                 SumcheckId::ProductVirtualization,
-                r_cycle_op.clone(),
+                opening_point.clone(),
                 right_claim,
             );
         }
