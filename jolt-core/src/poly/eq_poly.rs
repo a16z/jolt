@@ -92,7 +92,7 @@ impl<F: JoltField> EqPolynomial<F> {
     ///     scaling_factor * eq(r, x) for all x in {0, 1}^n
     /// serially. More efficient for short `r`.
     #[inline]
-    fn evals_serial<C>(r: &[C], scaling_factor: Option<F>) -> Vec<F>
+    pub fn evals_serial<C>(r: &[C], scaling_factor: Option<F>) -> Vec<F>
     where
         C: Copy + Send + Sync + Into<F>,
         F: std::ops::Mul<C, Output = F> + std::ops::SubAssign<F>,
