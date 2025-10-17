@@ -96,6 +96,8 @@ impl Program {
                 "-C".to_string(),
                 format!("link-arg=-T{}", self.linker_path()),
                 "-C".to_string(),
+                "target-feature=-c".to_string(),
+                "-C".to_string(),
                 "passes=lower-atomic".to_string(),
                 "-C".to_string(),
                 "panic=abort".to_string(),
