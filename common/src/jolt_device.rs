@@ -334,11 +334,7 @@ impl MemoryLayout {
             (trusted_start, trusted_end, untrusted_start, untrusted_end)
         };
 
-        let input_start = if max_trusted_advice_size >= max_untrusted_advice_size {
-            untrusted_advice_end
-        } else {
-            trusted_advice_end
-        };
+        let input_start = std::cmp::max(untrusted_advice_end, trusted_advice_end);
         let input_end = input_start
             .checked_add(max_input_size)
             .expect("input_end overflow");
