@@ -314,7 +314,8 @@ impl From<()> for RAMAccess {
 pub struct NormalizedInstruction {
     pub address: usize,
     pub operands: NormalizedOperands,
-    pub inline_sequence_remaining: Option<u16>,
+    pub virtual_sequence_remaining: Option<u16>,
+    pub is_first_in_sequence: bool,
     pub is_compressed: bool,
 }
 
@@ -524,14 +525,25 @@ macro_rules! define_rv32im_enums {
                 }
             }
 
-            pub fn set_inline_sequence_remaining(&mut self, remaining: Option<u16>) {
+            pub fn set_virtual_sequence_remaining(&mut self, remaining: Option<u16>) {
                 match self {
                     Instruction::NoOp => (),
                     Instruction::UNIMPL => (),
                     $(
-                        Instruction::$instr(instr) => {instr.inline_sequence_remaining = remaining;}
+                        Instruction::$instr(instr) => {instr.virtual_sequence_remaining = remaining;}
                     )*
-                    Instruction::INLINE(instr) => {instr.inline_sequence_remaining = remaining;}
+                    Instruction::INLINE(instr) => {instr.virtual_sequence_remaining = remaining;}
+                }
+            }
+
+            pub fn set_is_first_in_sequence(&mut self, is_first: bool) {
+                match self {
+                    Instruction::NoOp => (),
+                    Instruction::UNIMPL => (),
+                    $(
+                        Instruction::$instr(instr) => {instr.is_first_in_sequence = is_first;}
+                    )*
+                    Instruction::INLINE(instr) => {instr.is_first_in_sequence = is_first;}
                 }
             }
 
@@ -556,14 +568,16 @@ macro_rules! define_rv32im_enums {
                         Instruction::$instr(instr) => NormalizedInstruction {
                             address: instr.address as usize,
                             operands: instr.operands.into(),
-                            inline_sequence_remaining: instr.inline_sequence_remaining,
+                            virtual_sequence_remaining: instr.virtual_sequence_remaining,
+                            is_first_in_sequence: instr.is_first_in_sequence,
                             is_compressed: instr.is_compressed,
                         },
                     )*
                     Instruction::INLINE(instr) => NormalizedInstruction {
                         address: instr.address as usize,
                         operands: instr.operands.into(),
-                        inline_sequence_remaining: instr.inline_sequence_remaining,
+                        virtual_sequence_remaining: instr.virtual_sequence_remaining,
+                        is_first_in_sequence: instr.is_first_in_sequence,
                         is_compressed: instr.is_compressed,
                     },
                 }
@@ -653,7 +667,7 @@ impl Instruction {
             return false;
         }
 
-        match self.normalize().inline_sequence_remaining {
+        match self.normalize().virtual_sequence_remaining {
             None => true,     // ordinary instruction
             Some(0) => true,  // "anchor" of a inline sequence
             Some(_) => false, // helper within the sequence
@@ -1506,7 +1520,7 @@ mod tests {
     // Check that the size of Cycle is as expected.
     fn rv32im_cycle_size() {
         let size = size_of::<Cycle>();
-        let expected = 80;
+        let expected = 96;
         assert_eq!(
             size, expected,
             "Cycle size should be {expected} bytes, but is {size} bytes"
