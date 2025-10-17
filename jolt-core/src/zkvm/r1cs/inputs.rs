@@ -539,13 +539,15 @@ pub fn compute_claimed_witness_evals<F: JoltField>(
 /// Single-pass generation of UnexpandedPC(t), PC(t), and IsNoop(t) witnesses.
 /// Reduces traversals from three to one for stage-3 PC sumcheck inputs.
 #[tracing::instrument(skip_all)]
-pub fn generate_pc_noop_witnesses<F>(
+pub fn generate_shift_sumcheck_witnesses<F>(
     preprocessing: &JoltSharedPreprocessing,
     trace: &[Cycle],
 ) -> (
     MultilinearPolynomial<F>, // UnexpandedPC(t)
     MultilinearPolynomial<F>, // PC(t)
     MultilinearPolynomial<F>, // IsNoop(t)
+    MultilinearPolynomial<F>, // IsVirtual(t)
+    MultilinearPolynomial<F>, // IsFirstInSequence(t)
 )
 where
     F: JoltField,
@@ -554,19 +556,33 @@ where
     let mut unexpanded_pc: Vec<u64> = vec![0; len];
     let mut pc: Vec<u64> = vec![0; len];
     let mut is_noop: Vec<u8> = vec![0; len];
+    let mut is_virtual: Vec<u8> = vec![0; len];
+    let mut is_first_in_sequence: Vec<u8> = vec![0; len];
 
-    unexpanded_pc
-        .par_iter_mut()
-        .zip(pc.par_iter_mut())
-        .zip(is_noop.par_iter_mut())
-        .zip(trace.par_iter())
-        .for_each(|(((u, p), n), cycle)| {
+    (
+        &mut unexpanded_pc,
+        &mut pc,
+        &mut is_noop,
+        &mut is_virtual,
+        &mut is_first_in_sequence,
+        trace,
+    )
+        .into_par_iter()
+        .for_each(|(u, p, n, v, f, cycle)| {
             *u = cycle.instruction().normalize().address as u64;
             *p = preprocessing.bytecode.get_pc(cycle) as u64;
             *n = cycle.instruction().instruction_flags()[InstructionFlags::IsNoop] as u8;
+            *v = cycle.instruction().circuit_flags()[CircuitFlags::VirtualInstruction] as u8;
+            *f = cycle.instruction().circuit_flags()[CircuitFlags::IsFirstInSequence] as u8;
         });
 
-    (unexpanded_pc.into(), pc.into(), is_noop.into())
+    (
+        unexpanded_pc.into(),
+        pc.into(),
+        is_noop.into(),
+        is_virtual.into(),
+        is_first_in_sequence.into(),
+    )
 }
 
 #[tracing::instrument(skip_all)]
