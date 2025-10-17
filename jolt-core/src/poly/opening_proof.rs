@@ -721,9 +721,14 @@ where
         claim: F,
     ) {
         transcript.append_scalar(&claim);
-        self.openings.insert(
-            OpeningId::Virtual(polynomial, sumcheck),
-            (opening_point, claim),
+        assert!(
+            self.openings
+                .insert(
+                    OpeningId::Virtual(polynomial, sumcheck),
+                    (opening_point, claim),
+                )
+                .is_none(),
+            "Key ({polynomial:?}, {sumcheck:?}) is already in opening map"
         );
         #[cfg(test)]
         self.appended_virtual_openings

@@ -328,7 +328,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
                 )
             }
             ReadCheckingValType::Stage3 => {
-                let gamma_powers = get_gamma_powers(&mut *sm.get_transcript().borrow_mut(), 7);
+                let gamma_powers = get_gamma_powers(&mut *sm.get_transcript().borrow_mut(), 9);
                 (
                     Self::compute_val_3(sm, &gamma_powers),
                     Self::compute_rv_claim_3(sm, &gamma_powers),
@@ -586,27 +586,34 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             .par_iter()
             .map(|instruction| {
                 let instr = instruction.normalize();
-                let flags = instruction.instruction_flags();
+                let instr_flags = instruction.instruction_flags();
+                let circuit_flgas = instruction.circuit_flags();
                 let unexpanded_pc = instr.address;
                 let imm = instr.operands.imm;
 
                 let mut linear_combination: F = F::from_i128(imm);
                 linear_combination += gamma_powers[1].mul_u64(unexpanded_pc as u64);
 
-                if flags[InstructionFlags::LeftOperandIsRs1Value] {
+                if instr_flags[InstructionFlags::LeftOperandIsRs1Value] {
                     linear_combination += gamma_powers[2];
                 }
-                if flags[InstructionFlags::LeftOperandIsPC] {
+                if instr_flags[InstructionFlags::LeftOperandIsPC] {
                     linear_combination += gamma_powers[3];
                 }
-                if flags[InstructionFlags::RightOperandIsRs2Value] {
+                if instr_flags[InstructionFlags::RightOperandIsRs2Value] {
                     linear_combination += gamma_powers[4];
                 }
-                if flags[InstructionFlags::RightOperandIsImm] {
+                if instr_flags[InstructionFlags::RightOperandIsImm] {
                     linear_combination += gamma_powers[5];
                 }
-                if flags[InstructionFlags::IsNoop] {
+                if instr_flags[InstructionFlags::IsNoop] {
                     linear_combination += gamma_powers[6];
+                }
+                if circuit_flgas[CircuitFlags::VirtualInstruction] {
+                    linear_combination += gamma_powers[7];
+                }
+                if circuit_flgas[CircuitFlags::IsFirstInSequence] {
+                    linear_combination += gamma_powers[8];
                 }
 
                 linear_combination
@@ -657,6 +664,14 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             VirtualPolynomial::InstructionFlags(InstructionFlags::IsNoop),
             SumcheckId::SpartanShift,
         );
+        let (_, is_virtual_claim) = sm.get_virtual_polynomial_opening(
+            VirtualPolynomial::OpFlags(CircuitFlags::VirtualInstruction),
+            SumcheckId::SpartanShift,
+        );
+        let (_, is_first_in_sequence_claim) = sm.get_virtual_polynomial_opening(
+            VirtualPolynomial::OpFlags(CircuitFlags::IsFirstInSequence),
+            SumcheckId::SpartanShift,
+        );
 
         [
             imm_claim,
@@ -666,6 +681,8 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             right_is_rs2_claim,
             right_is_imm_claim,
             is_noop_claim,
+            is_virtual_claim,
+            is_first_in_sequence_claim,
         ]
         .into_iter()
         .zip_eq(gamma_powers)
