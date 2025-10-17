@@ -1,0 +1,11 @@
+[package]
+name = "atomic-guest"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+guest = []
+
+[dependencies]
+jolt = { package = "jolt-sdk", path = "../../../jolt-sdk" }
+portable-atomic = { version = "1.0", default-features = false }
