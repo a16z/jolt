@@ -10,10 +10,10 @@ use tracer::instruction::RV32IMInstruction;
 use crate::{
     constants::JoltParameterSet,
     lookups::ZkLeanLookupTable,
+    mle_ast::DefaultMleAst,
     modules::{AsModule, Module},
     r1cs::input_to_field_name,
     util::{indent, ZkLeanReprField},
-    MleAst,
 };
 
 /// Represents how an instructions operands should be combined into a single vector.
@@ -219,7 +219,7 @@ impl<J: JoltParameterSet> ZkLeanInstructions<J> {
         indent_level: usize,
     ) -> std::io::Result<()> {
         for instruction in &self.instructions {
-            instruction.zklean_pretty_print::<MleAst<5400>>(f, indent_level)?;
+            instruction.zklean_pretty_print::<DefaultMleAst>(f, indent_level)?;
         }
         Ok(())
     }
