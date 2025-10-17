@@ -1,16 +1,14 @@
-use common::constants::virtual_register_index;
-use serde::{Deserialize, Serialize};
-
+use crate::utils::inline_helpers::InstrAssembler;
+use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use crate::{
     declare_riscv_instr,
     emulator::cpu::{Cpu, Xlen},
 };
+use serde::{Deserialize, Serialize};
 
 use super::{
-    format::{format_i::FormatI, format_r::FormatR, InstructionFormat},
-    mul::MUL,
-    virtual_pow2::VirtualPow2,
-    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction, VirtualInstructionSequence,
+    format::format_r::FormatR, mul::MUL, virtual_pow2::VirtualPow2, Cycle, Instruction,
+    RISCVInstruction, RISCVTrace,
 };
 
 declare_riscv_instr!(
@@ -35,47 +33,25 @@ impl SLL {
 }
 
 impl RISCVTrace for SLL {
-    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let virtual_sequence = self.virtual_sequence();
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
+        let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
-        for instr in virtual_sequence {
-            // In each iteration, create a new Option containing a re-borrowed reference
+        for instr in inline_sequence {
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
-}
 
-impl VirtualInstructionSequence for SLL {
-    fn virtual_sequence(&self) -> Vec<RV32IMInstruction> {
-        // Virtual registers used in sequence
-        let v_pow2 = virtual_register_index(6);
+    /// SLL shifts left by multiplying by 2^shift_amount.
+    fn inline_sequence(
+        &self,
+        allocator: &VirtualRegisterAllocator,
+        xlen: Xlen,
+    ) -> Vec<Instruction> {
+        let v_pow2 = allocator.allocate();
 
-        let mut virtual_sequence_remaining = self.virtual_sequence_remaining.unwrap_or(1);
-        let mut sequence = vec![];
-
-        let pow2 = RV32IMInstruction::VirtualPow2(VirtualPow2 {
-            address: self.address,
-            operands: FormatI {
-                rd: v_pow2,
-                rs1: self.operands.rs2,
-                imm: 0,
-            },
-            virtual_sequence_remaining: Some(virtual_sequence_remaining),
-        });
-        sequence.push(pow2);
-        virtual_sequence_remaining -= 1;
-
-        let mul = RV32IMInstruction::MUL(MUL {
-            address: self.address,
-            operands: FormatR {
-                rd: self.operands.rd,
-                rs1: self.operands.rs1,
-                rs2: v_pow2,
-            },
-            virtual_sequence_remaining: Some(virtual_sequence_remaining),
-        });
-        sequence.push(mul);
-
-        sequence
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
+        asm.emit_i::<VirtualPow2>(*v_pow2, self.operands.rs2, 0);
+        asm.emit_r::<MUL>(self.operands.rd, self.operands.rs1, *v_pow2);
+        asm.finalize()
     }
 }

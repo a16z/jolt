@@ -5,30 +5,36 @@ use super::signed_less_than::SignedLessThanTable;
 use super::suffixes::{SuffixEval, Suffixes};
 use super::JoltLookupTable;
 use super::PrefixSuffixDecomposition;
-use crate::{field::JoltField, utils::uninterleave_bits};
+use crate::{
+    field::{ChallengeFieldOps, FieldChallengeOps, JoltField},
+    utils::uninterleave_bits,
+};
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct SignedGreaterThanEqualTable<const WORD_SIZE: usize>;
+pub struct SignedGreaterThanEqualTable<const XLEN: usize>;
 
-impl<const WORD_SIZE: usize> JoltLookupTable for SignedGreaterThanEqualTable<WORD_SIZE> {
-    fn materialize_entry(&self, index: u64) -> u64 {
+impl<const XLEN: usize> JoltLookupTable for SignedGreaterThanEqualTable<XLEN> {
+    fn materialize_entry(&self, index: u128) -> u64 {
         let (x, y) = uninterleave_bits(index);
-        match WORD_SIZE {
+        match XLEN {
             #[cfg(test)]
             8 => (x as i8 >= y as i8).into(),
             32 => (x as i32 >= y as i32).into(),
-            _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
+            64 => (x as i64 >= y as i64).into(),
+            _ => panic!("{XLEN}-bit word size is unsupported"),
         }
     }
 
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
-        F::one() - SignedLessThanTable::<WORD_SIZE>.evaluate_mle(r)
+    fn evaluate_mle<F, C>(&self, r: &[C]) -> F
+    where
+        C: ChallengeFieldOps<F>,
+        F: JoltField + FieldChallengeOps<C>,
+    {
+        F::one() - SignedLessThanTable::<XLEN>.evaluate_mle(r)
     }
 }
 
-impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE>
-    for SignedGreaterThanEqualTable<WORD_SIZE>
-{
+impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for SignedGreaterThanEqualTable<XLEN> {
     fn suffixes(&self) -> Vec<Suffixes> {
         vec![Suffixes::One, Suffixes::LessThan]
     }
@@ -51,6 +57,7 @@ mod test {
     use crate::zkvm::lookup_table::test::{
         lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
     };
+    use common::constants::XLEN;
 
     use super::SignedGreaterThanEqualTable;
 
@@ -61,11 +68,11 @@ mod test {
 
     #[test]
     fn mle_random() {
-        lookup_table_mle_random_test::<Fr, SignedGreaterThanEqualTable<32>>();
+        lookup_table_mle_random_test::<Fr, SignedGreaterThanEqualTable<XLEN>>();
     }
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<Fr, SignedGreaterThanEqualTable<32>>();
+        prefix_suffix_test::<XLEN, Fr, SignedGreaterThanEqualTable<XLEN>>();
     }
 }

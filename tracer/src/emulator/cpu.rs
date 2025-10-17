@@ -1,5 +1,3 @@
-#![allow(clippy::useless_format, clippy::type_complexity, dead_code)]
-
 #[cfg(feature = "std")]
 extern crate fnv;
 
@@ -7,21 +5,30 @@ extern crate fnv;
 use self::fnv::FnvHashMap;
 #[cfg(not(feature = "std"))]
 use alloc::collections::btree_map::BTreeMap as FnvHashMap;
-use core::convert::TryInto;
+use common::constants::REGISTER_COUNT;
+use tracing::{info, warn};
 
-use crate::instruction::{RV32IMCycle, RV32IMInstruction};
+use crate::instruction::{uncompress_instruction, Cycle, Instruction};
+use crate::utils::virtual_registers::VirtualRegisterAllocator;
 
 use super::mmu::{AddressingMode, Mmu};
 use super::terminal::Terminal;
 
+use crate::instruction::format::NormalizedOperands;
+use crate::utils::panic::CallFrame;
+#[cfg(not(feature = "std"))]
+use alloc::collections::VecDeque;
 #[cfg(not(feature = "std"))]
 use alloc::{boxed::Box, format, rc::Rc, string::String, vec::Vec};
 use jolt_platform::{
     JOLT_CYCLE_MARKER_END, JOLT_CYCLE_MARKER_START, JOLT_CYCLE_TRACK_ECALL_NUM,
     JOLT_PRINT_ECALL_NUM, JOLT_PRINT_LINE, JOLT_PRINT_STRING,
 };
+#[cfg(feature = "std")]
+use std::collections::VecDeque;
 
 const CSR_CAPACITY: usize = 4096;
+const MAX_CALL_STACK_DEPTH: usize = 32;
 
 const CSR_USTATUS_ADDRESS: u16 = 0x000;
 const CSR_FFLAGS_ADDRESS: u16 = 0x001;
@@ -44,6 +51,7 @@ const CSR_SEPC_ADDRESS: u16 = 0x141;
 const CSR_SCAUSE_ADDRESS: u16 = 0x142;
 const CSR_STVAL_ADDRESS: u16 = 0x143;
 const CSR_SIP_ADDRESS: u16 = 0x144;
+#[allow(dead_code)]
 const CSR_SATP_ADDRESS: u16 = 0x180;
 const CSR_MSTATUS_ADDRESS: u16 = 0x300;
 const CSR_MISA_ADDRESS: u16 = 0x301;
@@ -88,7 +96,8 @@ pub struct Cpu {
     wfi: bool,
     // using only lower 32bits of x, pc, and csr registers
     // for 32-bit mode
-    pub x: [i64; 64],
+    pub x: [i64; REGISTER_COUNT as usize],
+    #[allow(dead_code)]
     f: [f64; 32],
     pub(crate) pc: u64,
     csr: [u64; CSR_CAPACITY],
@@ -97,20 +106,22 @@ pub struct Cpu {
     is_reservation_set: bool,
     _dump_flag: bool,
     unsigned_data_mask: u64,
-    // pub trace: Vec<RV32IMCycle>,
+    // pub trace: Vec<Cycle>,
     pub trace_len: usize,
-    executed_instrs: u64, // “real” RV32IM cycles
+    executed_instrs: u64, // “real” RV64IMAC cycles
     active_markers: FnvHashMap<u32, ActiveMarker>,
+    pub vr_allocator: VirtualRegisterAllocator,
+    /// Call stack tracking (circular buffer)
+    call_stack: VecDeque<CallFrame>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Xlen {
     Bit32,
     Bit64, // @TODO: Support Bit128
 }
 
 #[derive(Clone)]
-#[allow(dead_code)]
 pub enum PrivilegeMode {
     User,
     Supervisor,
@@ -124,7 +135,6 @@ pub struct Trap {
     pub value: u64, // Trap type specific value
 }
 
-#[allow(dead_code)]
 #[derive(Debug)]
 pub enum TrapType {
     InstructionAddressMisaligned,
@@ -252,7 +262,7 @@ impl Cpu {
             xlen: Xlen::Bit64,
             privilege_mode: PrivilegeMode::Machine,
             wfi: false,
-            x: [0; 64],
+            x: [0; REGISTER_COUNT as usize],
             f: [0.0; 32],
             pc: 0,
             csr: [0; CSR_CAPACITY],
@@ -265,6 +275,8 @@ impl Cpu {
             trace_len: 0,
             executed_instrs: 0,
             active_markers: FnvHashMap::default(),
+            vr_allocator: VirtualRegisterAllocator::new(),
+            call_stack: VecDeque::with_capacity(MAX_CALL_STACK_DEPTH),
         };
         // cpu.x[0xb] = 0x1020; // I don't know why but Linux boot seems to require this initialization
         cpu.write_csr_raw(CSR_MISA_ADDRESS, 0x800000008014312f);
@@ -290,12 +302,12 @@ impl Cpu {
     /// # Arguments
     /// * `xlen`
     pub fn update_xlen(&mut self, xlen: Xlen) {
-        self.xlen = xlen.clone();
+        self.xlen = xlen;
         self.unsigned_data_mask = match xlen {
             Xlen::Bit32 => 0xffffffff,
             Xlen::Bit64 => 0xffffffffffffffff,
         };
-        self.mmu.update_xlen(xlen.clone());
+        self.mmu.update_xlen(xlen);
     }
 
     /// Reads integer register content
@@ -336,7 +348,7 @@ impl Cpu {
     }
 
     /// Runs program one cycle. Fetch, decode, and execution are completed in a cycle so far.
-    pub fn tick(&mut self, trace: Option<&mut Vec<RV32IMCycle>>) {
+    pub fn tick(&mut self, trace: Option<&mut Vec<Cycle>>) {
         let instruction_address = self.pc;
         match self.tick_operate(trace) {
             Ok(()) => {}
@@ -353,7 +365,7 @@ impl Cpu {
     }
 
     // @TODO: Rename?
-    fn tick_operate(&mut self, trace: Option<&mut Vec<RV32IMCycle>>) -> Result<(), Trap> {
+    fn tick_operate(&mut self, trace: Option<&mut Vec<Cycle>>) -> Result<(), Trap> {
         if self.wfi {
             if (self.read_csr_raw(CSR_MIE_ADDRESS) & self.read_csr_raw(CSR_MIP_ADDRESS)) != 0 {
                 self.wfi = false;
@@ -363,25 +375,31 @@ impl Cpu {
 
         let original_word = self.fetch()?;
         let instruction_address = normalize_u64(self.pc, &self.xlen);
-        let word = match (original_word & 0x3) == 0x3 {
-            true => {
+        let is_compressed = (original_word & 0x3) != 0x3;
+        let word = match is_compressed {
+            false => {
                 self.pc = self.pc.wrapping_add(4); // 32-bit length non-compressed instruction
                 original_word
             }
-            false => {
+            true => {
                 self.pc = self.pc.wrapping_add(2); // 16-bit length compressed instruction
-                self.uncompress(original_word & 0xffff)
+                uncompress_instruction(original_word & 0xffff, self.xlen)
             }
         };
 
-        let instr = RV32IMInstruction::decode(word, instruction_address)
-            .ok()
-            .unwrap();
+        let instr = Instruction::decode(word, instruction_address, is_compressed)
+            .unwrap_or_else(|e| {
+                panic!(
+                    "Failed to decode instruction: word=0x{word:08x}, address=0x{instruction_address:x}, compressed={is_compressed}: {e}"
+                )
+            });
 
         if trace.is_none() {
             instr.execute(self);
+            self.trace_len += 1;
         } else {
             instr.trace(self, trace);
+            self.trace_len += instr.inline_sequence(&self.vr_allocator, self.xlen).len();
         }
 
         // check if current instruction is real or not for cycle profiling
@@ -760,11 +778,13 @@ impl Cpu {
         Ok(word)
     }
 
+    #[allow(dead_code)]
     fn has_csr_access_privilege(&self, address: u16) -> bool {
         let privilege = (address >> 8) & 0x3; // the lowest privilege level that can access the CSR
         privilege as u8 <= get_privilege_encoding(&self.privilege_mode)
     }
 
+    #[allow(dead_code)]
     fn read_csr(&mut self, address: u16) -> Result<u64, Trap> {
         match self.has_csr_access_privilege(address) {
             true => Ok(self.read_csr_raw(address)),
@@ -775,6 +795,7 @@ impl Cpu {
         }
     }
 
+    #[allow(dead_code)]
     fn write_csr(&mut self, address: u16, value: u64) -> Result<(), Trap> {
         match self.has_csr_access_privilege(address) {
             true => {
@@ -857,6 +878,7 @@ impl Cpu {
         self.csr[CSR_FCSR_ADDRESS as usize] |= 0x10;
     }
 
+    #[allow(dead_code)]
     fn set_fcsr_dz(&mut self) {
         self.csr[CSR_FCSR_ADDRESS as usize] |= 0x8;
     }
@@ -873,6 +895,7 @@ impl Cpu {
         self.csr[CSR_FCSR_ADDRESS as usize] |= 0x1;
     }
 
+    #[allow(dead_code)]
     fn update_addressing_mode(&mut self, value: u64) {
         let addressing_mode = match self.xlen {
             Xlen::Bit32 => match value & 0x80000000 {
@@ -885,7 +908,7 @@ impl Cpu {
                 9 => AddressingMode::SV48,
                 _ => {
                     #[cfg(feature = "std")]
-                    println!("Unknown addressing_mode {:x}", value >> 60);
+                    tracing::error!("Unknown addressing_mode {:x}", value >> 60);
                     panic!();
                 }
             },
@@ -919,580 +942,6 @@ impl Cpu {
         }
     }
 
-    // @TODO: Optimize
-    fn uncompress(&self, halfword: u32) -> u32 {
-        let op = halfword & 0x3; // [1:0]
-        let funct3 = (halfword >> 13) & 0x7; // [15:13]
-
-        match op {
-            0 => match funct3 {
-                0 => {
-                    // C.ADDI4SPN
-                    // addi rd+8, x2, nzuimm
-                    let rd = (halfword >> 2) & 0x7; // [4:2]
-                    let nzuimm = ((halfword >> 7) & 0x30) | // nzuimm[5:4] <= [12:11]
-                        ((halfword >> 1) & 0x3c0) | // nzuimm{9:6] <= [10:7]
-                        ((halfword >> 4) & 0x4) | // nzuimm[2] <= [6]
-                        ((halfword >> 2) & 0x8); // nzuimm[3] <= [5]
-                                                 // nzuimm == 0 is reserved instruction
-                    if nzuimm != 0 {
-                        return (nzuimm << 20) | (2 << 15) | ((rd + 8) << 7) | 0x13;
-                    }
-                }
-                1 => {
-                    // @TODO: Support C.LQ for 128-bit
-                    // C.FLD for 32, 64-bit
-                    // fld rd+8, offset(rs1+8)
-                    let rd = (halfword >> 2) & 0x7; // [4:2]
-                    let rs1 = (halfword >> 7) & 0x7; // [9:7]
-                    let offset = ((halfword >> 7) & 0x38) | // offset[5:3] <= [12:10]
-                        ((halfword << 1) & 0xc0); // offset[7:6] <= [6:5]
-                    return (offset << 20) | ((rs1 + 8) << 15) | (3 << 12) | ((rd + 8) << 7) | 0x7;
-                }
-                2 => {
-                    // C.LW
-                    // lw rd+8, offset(rs1+8)
-                    let rs1 = (halfword >> 7) & 0x7; // [9:7]
-                    let rd = (halfword >> 2) & 0x7; // [4:2]
-                    let offset = ((halfword >> 7) & 0x38) | // offset[5:3] <= [12:10]
-                        ((halfword >> 4) & 0x4) | // offset[2] <= [6]
-                        ((halfword << 1) & 0x40); // offset[6] <= [5]
-                    return (offset << 20) | ((rs1 + 8) << 15) | (2 << 12) | ((rd + 8) << 7) | 0x3;
-                }
-                3 => {
-                    // @TODO: Support C.FLW in 32-bit mode
-                    // C.LD in 64-bit mode
-                    // ld rd+8, offset(rs1+8)
-                    let rs1 = (halfword >> 7) & 0x7; // [9:7]
-                    let rd = (halfword >> 2) & 0x7; // [4:2]
-                    let offset = ((halfword >> 7) & 0x38) | // offset[5:3] <= [12:10]
-                        ((halfword << 1) & 0xc0); // offset[7:6] <= [6:5]
-                    return (offset << 20) | ((rs1 + 8) << 15) | (3 << 12) | ((rd + 8) << 7) | 0x3;
-                }
-                4 => {
-                    // Reserved
-                }
-                5 => {
-                    // C.FSD
-                    // fsd rs2+8, offset(rs1+8)
-                    let rs1 = (halfword >> 7) & 0x7; // [9:7]
-                    let rs2 = (halfword >> 2) & 0x7; // [4:2]
-                    let offset = ((halfword >> 7) & 0x38) | // uimm[5:3] <= [12:10]
-                        ((halfword << 1) & 0xc0); // uimm[7:6] <= [6:5]
-                    let imm11_5 = (offset >> 5) & 0x7f;
-                    let imm4_0 = offset & 0x1f;
-                    return (imm11_5 << 25)
-                        | ((rs2 + 8) << 20)
-                        | ((rs1 + 8) << 15)
-                        | (3 << 12)
-                        | (imm4_0 << 7)
-                        | 0x27;
-                }
-                6 => {
-                    // C.SW
-                    // sw rs2+8, offset(rs1+8)
-                    let rs1 = (halfword >> 7) & 0x7; // [9:7]
-                    let rs2 = (halfword >> 2) & 0x7; // [4:2]
-                    let offset = ((halfword >> 7) & 0x38) | // offset[5:3] <= [12:10]
-                        ((halfword << 1) & 0x40) | // offset[6] <= [5]
-                        ((halfword >> 4) & 0x4); // offset[2] <= [6]
-                    let imm11_5 = (offset >> 5) & 0x7f;
-                    let imm4_0 = offset & 0x1f;
-                    return (imm11_5 << 25)
-                        | ((rs2 + 8) << 20)
-                        | ((rs1 + 8) << 15)
-                        | (2 << 12)
-                        | (imm4_0 << 7)
-                        | 0x23;
-                }
-                7 => {
-                    // @TODO: Support C.FSW in 32-bit mode
-                    // C.SD
-                    // sd rs2+8, offset(rs1+8)
-                    let rs1 = (halfword >> 7) & 0x7; // [9:7]
-                    let rs2 = (halfword >> 2) & 0x7; // [4:2]
-                    let offset = ((halfword >> 7) & 0x38) | // uimm[5:3] <= [12:10]
-                        ((halfword << 1) & 0xc0); // uimm[7:6] <= [6:5]
-                    let imm11_5 = (offset >> 5) & 0x7f;
-                    let imm4_0 = offset & 0x1f;
-                    return (imm11_5 << 25)
-                        | ((rs2 + 8) << 20)
-                        | ((rs1 + 8) << 15)
-                        | (3 << 12)
-                        | (imm4_0 << 7)
-                        | 0x23;
-                }
-                _ => {} // Not happens
-            },
-            1 => {
-                match funct3 {
-                    0 => {
-                        // C.ADDI
-                        let r = (halfword >> 7) & 0x1f; // [11:7]
-                        let imm = match halfword & 0x1000 {
-                            0x1000 => 0xffffffc0,
-                            _ => 0
-                        } | // imm[31:6] <= [12]
-                        ((halfword >> 7) & 0x20) | // imm[5] <= [12]
-                        ((halfword >> 2) & 0x1f); // imm[4:0] <= [6:2]
-
-                        match (r, imm) {
-                            (0, 0) => {
-                                // NOP
-                                return 0x13;
-                            }
-                            (0, _) => {
-                                // HINT
-                                return 0x13;
-                            }
-                            (_, 0) => {
-                                // HINT
-                                return 0x13;
-                            }
-                            (_, _) => {
-                                return (imm << 20) | (r << 15) | (r << 7) | 0x13;
-                            }
-                        }
-                    }
-                    1 => {
-                        match self.xlen {
-                            Xlen::Bit32 => {
-                                // C.JAL (RV32C only)
-                                // jal x1, offset
-                                let offset = match halfword & 0x1000 {
-                                    0x1000 => 0xfffff000,
-                                    _ => 0
-                                } | // offset[31:12] <= [12]
-                                ((halfword >> 1) & 0x800) | // offset[11] <= [12]
-                                ((halfword >> 7) & 0x10) | // offset[4] <= [11]
-                                ((halfword >> 1) & 0x300) | // offset[9:8] <= [10:9]
-                                ((halfword << 2) & 0x400) | // offset[10] <= [8]
-                                ((halfword >> 1) & 0x40) | // offset[6] <= [7]
-                                ((halfword << 1) & 0x80) | // offset[7] <= [6]
-                                ((halfword >> 2) & 0xe) | // offset[3:1] <= [5:3]
-                                ((halfword << 3) & 0x20); // offset[5] <= [2]
-                                let imm = ((offset >> 1) & 0x80000) | // imm[19] <= offset[20]
-                                    ((offset << 8) & 0x7fe00) | // imm[18:9] <= offset[10:1]
-                                    ((offset >> 3) & 0x100) | // imm[8] <= offset[11]
-                                    ((offset >> 12) & 0xff); // imm[7:0] <= offset[19:12]
-                                return (imm << 12) | (1 << 7) | 0x6f;
-                            }
-                            Xlen::Bit64 => {
-                                // C.ADDIW (RV64C only)
-                                let r = (halfword >> 7) & 0x1f;
-                                let imm = match halfword & 0x1000 {
-                            0x1000 => 0xffffffc0,
-                            _ => 0
-                        } | // imm[31:6] <= [12]
-                        ((halfword >> 7) & 0x20) | // imm[5] <= [12]
-                        ((halfword >> 2) & 0x1f); // imm[4:0] <= [6:2]
-                                if r == 0 {
-                                    // Reserved
-                                } else if imm == 0 {
-                                    // sext.w rd
-                                    return (r << 15) | (r << 7) | 0x1b;
-                                } else {
-                                    // addiw r, r, imm
-                                    return (imm << 20) | (r << 15) | (r << 7) | 0x1b;
-                                }
-                            }
-                        }
-                    }
-                    2 => {
-                        // C.LI
-                        let r = (halfword >> 7) & 0x1f;
-                        let imm = match halfword & 0x1000 {
-                            0x1000 => 0xffffffc0,
-                            _ => 0
-                        } | // imm[31:6] <= [12]
-                        ((halfword >> 7) & 0x20) | // imm[5] <= [12]
-                        ((halfword >> 2) & 0x1f); // imm[4:0] <= [6:2]
-                        if r != 0 {
-                            // addi rd, x0, imm
-                            return (imm << 20) | (r << 7) | 0x13;
-                        } else {
-                            // HINT
-                            return 0x13;
-                        }
-                    }
-                    3 => {
-                        let r = (halfword >> 7) & 0x1f; // [11:7]
-                        if r == 2 {
-                            // C.ADDI16SP
-                            // addi r, r, nzimm
-                            let imm = match halfword & 0x1000 {
-                                0x1000 => 0xfffffc00,
-                                _ => 0
-                            } | // imm[31:10] <= [12]
-                            ((halfword >> 3) & 0x200) | // imm[9] <= [12]
-                            ((halfword >> 2) & 0x10) | // imm[4] <= [6]
-                            ((halfword << 1) & 0x40) | // imm[6] <= [5]
-                            ((halfword << 4) & 0x180) | // imm[8:7] <= [4:3]
-                            ((halfword << 3) & 0x20); // imm[5] <= [2]
-                            if imm != 0 {
-                                return (imm << 20) | (r << 15) | (r << 7) | 0x13;
-                            }
-                            // imm == 0 is for reserved instruction
-                        }
-                        if r != 0 && r != 2 {
-                            // C.LUI
-                            // lui r, nzimm
-                            let nzimm = match halfword & 0x1000 {
-                                0x1000 => 0xfffc0000,
-                                _ => 0
-                            } | // nzimm[31:18] <= [12]
-                            ((halfword << 5) & 0x20000) | // nzimm[17] <= [12]
-                            ((halfword << 10) & 0x1f000); // nzimm[16:12] <= [6:2]
-                            if nzimm != 0 {
-                                return nzimm | (r << 7) | 0x37;
-                            }
-                            // nzimm == 0 is for reserved instruction
-                        }
-                        if r == 0 {
-                            // NOP
-                            return 0x13;
-                        }
-                    }
-                    4 => {
-                        let funct2 = (halfword >> 10) & 0x3; // [11:10]
-                        match funct2 {
-                            0 => {
-                                // C.SRLI
-                                // c.srli rs1+8, rs1+8, shamt
-                                let shamt = ((halfword >> 7) & 0x20) | // shamt[5] <= [12]
-                                    ((halfword >> 2) & 0x1f); // shamt[4:0] <= [6:2]
-                                let rs1 = (halfword >> 7) & 0x7; // [9:7]
-                                return (shamt << 20)
-                                    | ((rs1 + 8) << 15)
-                                    | (5 << 12)
-                                    | ((rs1 + 8) << 7)
-                                    | 0x13;
-                            }
-                            1 => {
-                                // C.SRAI
-                                // srai rs1+8, rs1+8, shamt
-                                let shamt = ((halfword >> 7) & 0x20) | // shamt[5] <= [12]
-                                    ((halfword >> 2) & 0x1f); // shamt[4:0] <= [6:2]
-                                let rs1 = (halfword >> 7) & 0x7; // [9:7]
-                                return (0x20 << 25)
-                                    | (shamt << 20)
-                                    | ((rs1 + 8) << 15)
-                                    | (5 << 12)
-                                    | ((rs1 + 8) << 7)
-                                    | 0x13;
-                            }
-                            2 => {
-                                // C.ANDI
-                                // andi, r+8, r+8, imm
-                                let r = (halfword >> 7) & 0x7; // [9:7]
-                                let imm = match halfword & 0x1000 {
-                                    0x1000 => 0xffffffc0,
-                                    _ => 0
-                                } | // imm[31:6] <= [12]
-                                ((halfword >> 7) & 0x20) | // imm[5] <= [12]
-                                ((halfword >> 2) & 0x1f); // imm[4:0] <= [6:2]
-                                return (imm << 20)
-                                    | ((r + 8) << 15)
-                                    | (7 << 12)
-                                    | ((r + 8) << 7)
-                                    | 0x13;
-                            }
-                            3 => {
-                                let funct1 = (halfword >> 12) & 1; // [12]
-                                let funct2_2 = (halfword >> 5) & 0x3; // [6:5]
-                                let rs1 = (halfword >> 7) & 0x7;
-                                let rs2 = (halfword >> 2) & 0x7;
-                                match funct1 {
-                                    0 => match funct2_2 {
-                                        0 => {
-                                            // C.SUB
-                                            // sub rs1+8, rs1+8, rs2+8
-                                            return (0x20 << 25)
-                                                | ((rs2 + 8) << 20)
-                                                | ((rs1 + 8) << 15)
-                                                | ((rs1 + 8) << 7)
-                                                | 0x33;
-                                        }
-                                        1 => {
-                                            // C.XOR
-                                            // xor rs1+8, rs1+8, rs2+8
-                                            return ((rs2 + 8) << 20)
-                                                | ((rs1 + 8) << 15)
-                                                | (4 << 12)
-                                                | ((rs1 + 8) << 7)
-                                                | 0x33;
-                                        }
-                                        2 => {
-                                            // C.OR
-                                            // or rs1+8, rs1+8, rs2+8
-                                            return ((rs2 + 8) << 20)
-                                                | ((rs1 + 8) << 15)
-                                                | (6 << 12)
-                                                | ((rs1 + 8) << 7)
-                                                | 0x33;
-                                        }
-                                        3 => {
-                                            // C.AND
-                                            // and rs1+8, rs1+8, rs2+8
-                                            return ((rs2 + 8) << 20)
-                                                | ((rs1 + 8) << 15)
-                                                | (7 << 12)
-                                                | ((rs1 + 8) << 7)
-                                                | 0x33;
-                                        }
-                                        _ => {} // Not happens
-                                    },
-                                    1 => match funct2_2 {
-                                        0 => {
-                                            // C.SUBW
-                                            // subw r1+8, r1+8, r2+8
-                                            return (0x20 << 25)
-                                                | ((rs2 + 8) << 20)
-                                                | ((rs1 + 8) << 15)
-                                                | ((rs1 + 8) << 7)
-                                                | 0x3b;
-                                        }
-                                        1 => {
-                                            // C.ADDW
-                                            // addw r1+8, r1+8, r2+8
-                                            return ((rs2 + 8) << 20)
-                                                | ((rs1 + 8) << 15)
-                                                | ((rs1 + 8) << 7)
-                                                | 0x3b;
-                                        }
-                                        2 => {
-                                            // Reserved
-                                        }
-                                        3 => {
-                                            // Reserved
-                                        }
-                                        _ => {} // Not happens
-                                    },
-                                    _ => {} // No happens
-                                };
-                            }
-                            _ => {} // not happens
-                        };
-                    }
-                    5 => {
-                        // C.J
-                        // jal x0, imm
-                        let offset = match halfword & 0x1000 {
-                                0x1000 => 0xfffff000,
-                                _ => 0
-                            } | // offset[31:12] <= [12]
-                            ((halfword >> 1) & 0x800) | // offset[11] <= [12]
-                            ((halfword >> 7) & 0x10) | // offset[4] <= [11]
-                            ((halfword >> 1) & 0x300) | // offset[9:8] <= [10:9]
-                            ((halfword << 2) & 0x400) | // offset[10] <= [8]
-                            ((halfword >> 1) & 0x40) | // offset[6] <= [7]
-                            ((halfword << 1) & 0x80) | // offset[7] <= [6]
-                            ((halfword >> 2) & 0xe) | // offset[3:1] <= [5:3]
-                            ((halfword << 3) & 0x20); // offset[5] <= [2]
-                        let imm = ((offset >> 1) & 0x80000) | // imm[19] <= offset[20]
-                            ((offset << 8) & 0x7fe00) | // imm[18:9] <= offset[10:1]
-                            ((offset >> 3) & 0x100) | // imm[8] <= offset[11]
-                            ((offset >> 12) & 0xff); // imm[7:0] <= offset[19:12]
-                        return (imm << 12) | 0x6f;
-                    }
-                    6 => {
-                        // C.BEQZ
-                        // beq r+8, x0, offset
-                        let r = (halfword >> 7) & 0x7;
-                        let offset = match halfword & 0x1000 {
-                                0x1000 => 0xfffffe00,
-                                _ => 0
-                            } | // offset[31:9] <= [12]
-                            ((halfword >> 4) & 0x100) | // offset[8] <= [12]
-                            ((halfword >> 7) & 0x18) | // offset[4:3] <= [11:10]
-                            ((halfword << 1) & 0xc0) | // offset[7:6] <= [6:5]
-                            ((halfword >> 2) & 0x6) | // offset[2:1] <= [4:3]
-                            ((halfword << 3) & 0x20); // offset[5] <= [2]
-                        let imm2 = ((offset >> 6) & 0x40) | // imm2[6] <= [12]
-                            ((offset >> 5) & 0x3f); // imm2[5:0] <= [10:5]
-                        let imm1 = (offset & 0x1e) | // imm1[4:1] <= [4:1]
-                            ((offset >> 11) & 0x1); // imm1[0] <= [11]
-                        return (imm2 << 25) | ((r + 8) << 20) | (imm1 << 7) | 0x63;
-                    }
-                    7 => {
-                        // C.BNEZ
-                        // bne r+8, x0, offset
-                        let r = (halfword >> 7) & 0x7;
-                        let offset = match halfword & 0x1000 {
-                                0x1000 => 0xfffffe00,
-                                _ => 0
-                            } | // offset[31:9] <= [12]
-                            ((halfword >> 4) & 0x100) | // offset[8] <= [12]
-                            ((halfword >> 7) & 0x18) | // offset[4:3] <= [11:10]
-                            ((halfword << 1) & 0xc0) | // offset[7:6] <= [6:5]
-                            ((halfword >> 2) & 0x6) | // offset[2:1] <= [4:3]
-                            ((halfword << 3) & 0x20); // offset[5] <= [2]
-                        let imm2 = ((offset >> 6) & 0x40) | // imm2[6] <= [12]
-                            ((offset >> 5) & 0x3f); // imm2[5:0] <= [10:5]
-                        let imm1 = (offset & 0x1e) | // imm1[4:1] <= [4:1]
-                            ((offset >> 11) & 0x1); // imm1[0] <= [11]
-                        return (imm2 << 25) | ((r + 8) << 20) | (1 << 12) | (imm1 << 7) | 0x63;
-                    }
-                    _ => {} // No happens
-                };
-            }
-            2 => {
-                match funct3 {
-                    0 => {
-                        // C.SLLI
-                        // slli r, r, shamt
-                        let r = (halfword >> 7) & 0x1f;
-                        let shamt = ((halfword >> 7) & 0x20) | // imm[5] <= [12]
-                            ((halfword >> 2) & 0x1f); // imm[4:0] <= [6:2]
-                        if r != 0 {
-                            return (shamt << 20) | (r << 15) | (1 << 12) | (r << 7) | 0x13;
-                        }
-                        // r == 0 is reserved instruction?
-                    }
-                    1 => {
-                        // C.FLDSP
-                        // fld rd, offset(x2)
-                        let rd = (halfword >> 7) & 0x1f;
-                        let offset = ((halfword >> 7) & 0x20) | // offset[5] <= [12]
-                            ((halfword >> 2) & 0x18) | // offset[4:3] <= [6:5]
-                            ((halfword << 4) & 0x1c0); // offset[8:6] <= [4:2]
-                        if rd != 0 {
-                            return (offset << 20) | (2 << 15) | (3 << 12) | (rd << 7) | 0x7;
-                        }
-                        // rd == 0 is reserved instruction
-                    }
-                    2 => {
-                        // C.LWSP
-                        // lw r, offset(x2)
-                        let r = (halfword >> 7) & 0x1f;
-                        let offset = ((halfword >> 7) & 0x20) | // offset[5] <= [12]
-                            ((halfword >> 2) & 0x1c) | // offset[4:2] <= [6:4]
-                            ((halfword << 4) & 0xc0); // offset[7:6] <= [3:2]
-                        if r != 0 {
-                            return (offset << 20) | (2 << 15) | (2 << 12) | (r << 7) | 0x3;
-                        }
-                        // r == 0 is reserved instruction
-                    }
-                    3 => {
-                        // @TODO: Support C.FLWSP in 32-bit mode
-                        // C.LDSP
-                        // ld rd, offset(x2)
-                        let rd = (halfword >> 7) & 0x1f;
-                        let offset = ((halfword >> 7) & 0x20) | // offset[5] <= [12]
-                            ((halfword >> 2) & 0x18) | // offset[4:3] <= [6:5]
-                            ((halfword << 4) & 0x1c0); // offset[8:6] <= [4:2]
-                        if rd != 0 {
-                            return (offset << 20) | (2 << 15) | (3 << 12) | (rd << 7) | 0x3;
-                        }
-                        // rd == 0 is reserved instruction
-                    }
-                    4 => {
-                        let funct1 = (halfword >> 12) & 1; // [12]
-                        let rs1 = (halfword >> 7) & 0x1f; // [11:7]
-                        let rs2 = (halfword >> 2) & 0x1f; // [6:2]
-                        match funct1 {
-                            0 => {
-                                // C.MV
-                                match (rs1, rs2) {
-                                    (0, 0) => {
-                                        // Reserved
-                                    }
-                                    (r, 0) if r != 0 => {
-                                        // C.JR: jalr x0, 0(rs1)
-                                        return (rs1 << 15) | 0x67;
-                                    }
-                                    (0, r2) if r2 != 0 => {
-                                        // HINT
-                                        return 0x13;
-                                    }
-                                    (rd, rs2) => {
-                                        // add rd, x0, rs2
-                                        return (rs2 << 20) | (rd << 7) | 0x33;
-                                    }
-                                }
-                            }
-                            1 => {
-                                // C.ADD
-                                match (rs1, rs2) {
-                                    (0, 0) => {
-                                        // C.EBREAK
-                                        // ebreak
-                                        return 0x00100073;
-                                    }
-                                    (rs1, 0) if rs1 != 0 => {
-                                        // C.JALR
-                                        // jalr x1, 0(rs1)
-                                        return (rs1 << 15) | (1 << 7) | 0x67;
-                                    }
-                                    (0, rs2) if rs2 != 0 => {
-                                        // HINT
-                                        return 0x13;
-                                    }
-                                    (rs1, rs2) => {
-                                        // C.ADD
-                                        // add rs1, rs1, rs2
-                                        return (rs2 << 20) | (rs1 << 15) | (rs1 << 7) | 0x33;
-                                    }
-                                }
-                            }
-                            _ => {} // Not happens
-                        };
-                    }
-                    5 => {
-                        // @TODO: Implement
-                        // C.FSDSP
-                        // fsd rs2, offset(x2)
-                        let rs2 = (halfword >> 2) & 0x1f; // [6:2]
-                        let offset = ((halfword >> 7) & 0x38) | // offset[5:3] <= [12:10]
-                            ((halfword >> 1) & 0x1c0); // offset[8:6] <= [9:7]
-                        let imm11_5 = (offset >> 5) & 0x3f;
-                        let imm4_0 = offset & 0x1f;
-                        return (imm11_5 << 25)
-                            | (rs2 << 20)
-                            | (2 << 15)
-                            | (3 << 12)
-                            | (imm4_0 << 7)
-                            | 0x27;
-                    }
-                    6 => {
-                        // C.SWSP
-                        // sw rs2, offset(x2)
-                        let rs2 = (halfword >> 2) & 0x1f; // [6:2]
-                        let offset = ((halfword >> 7) & 0x3c) | // offset[5:2] <= [12:9]
-                            ((halfword >> 1) & 0xc0); // offset[7:6] <= [8:7]
-                        let imm11_5 = (offset >> 5) & 0x3f;
-                        let imm4_0 = offset & 0x1f;
-                        return (imm11_5 << 25)
-                            | (rs2 << 20)
-                            | (2 << 15)
-                            | (2 << 12)
-                            | (imm4_0 << 7)
-                            | 0x23;
-                    }
-                    7 => {
-                        // @TODO: Support C.FSWSP in 32-bit mode
-                        // C.SDSP
-                        // sd rs, offset(x2)
-                        let rs2 = (halfword >> 2) & 0x1f; // [6:2]
-                        let offset = ((halfword >> 7) & 0x38) | // offset[5:3] <= [12:10]
-                            ((halfword >> 1) & 0x1c0); // offset[8:6] <= [9:7]
-                        let imm11_5 = (offset >> 5) & 0x3f;
-                        let imm4_0 = offset & 0x1f;
-                        return (imm11_5 << 25)
-                            | (rs2 << 20)
-                            | (2 << 15)
-                            | (3 << 12)
-                            | (imm4_0 << 7)
-                            | 0x23;
-                    }
-                    _ => {} // Not happens
-                };
-            }
-            _ => {} // Not happens
-        };
-        0xffffffff // Return invalid value
-    }
-
     /// Disassembles an instruction pointed by Program Counter.
     pub fn disassemble_next_instruction(&mut self) -> String {
         // @TODO: Fetching can make a side effect,
@@ -1506,15 +955,16 @@ impl Cpu {
             }
         };
 
-        let word = match (original_word & 0x3) == 0x3 {
-            true => original_word,
-            false => {
+        let is_compressed = (original_word & 0x3) != 0x3;
+        let word = match is_compressed {
+            false => original_word,
+            true => {
                 original_word &= 0xffff;
-                self.uncompress(original_word)
+                uncompress_instruction(original_word, self.xlen)
             }
         };
 
-        let inst = match RV32IMInstruction::decode(word, self.pc) {
+        let inst = match Instruction::decode(word, self.pc, is_compressed) {
             Ok(inst) => inst,
             Err(e) => {
                 return format!(
@@ -1527,7 +977,7 @@ impl Cpu {
         let name: &'static str = inst.into();
         let mut s = format!("PC:{:016x} ", self.unsigned_data(self.pc as i64));
         s += &format!("{original_word:08x} ");
-        s += &format!("{name}");
+        s += name;
         // s += &format!("{}", (inst.disassemble)(self, word, self.pc, true));
         s
     }
@@ -1548,7 +998,7 @@ impl Cpu {
                     .values()
                     .any(|marker| marker.label == label);
                 if duplicate {
-                    println!("Warning: Marker with label '{}' is already active", &label);
+                    warn!("Marker with label '{}' is already active", &label);
                 }
 
                 self.active_markers.insert(
@@ -1565,14 +1015,12 @@ impl Cpu {
                 if let Some(mark) = self.active_markers.remove(&ptr) {
                     let real = self.executed_instrs - mark.start_instrs;
                     let virt = self.trace_len - mark.start_trace_len;
-                    println!(
-                        "\"{}\": {} RV32IM cycles, {} virtual cycles",
+                    info!(
+                        "\"{}\": {} RV64IMAC cycles, {} virtual cycles",
                         mark.label, real, virt
                     );
                 } else {
-                    println!(
-                        "Warning: Attempt to end a marker (ptr: 0x{ptr:x}) that was never started"
-                    );
+                    warn!("Attempt to end a marker (ptr: 0x{ptr:x}) that was never started");
                 }
             }
             _ => {
@@ -1604,18 +1052,40 @@ impl Cpu {
         }
         Ok(String::from_utf8_lossy(&bytes).into_owned())
     }
+
+    /// Track a function call (JAL/JALR instruction that saves callsite information)
+    /// Optimized for minimal overhead - just append to a circular buffer (VecDeque)
+    #[inline]
+    pub fn track_call(&mut self, return_address: u64, operands: NormalizedOperands) {
+        // Simple circular buffer - if full, overwrite oldest
+        if self.call_stack.len() >= MAX_CALL_STACK_DEPTH {
+            self.call_stack.pop_front();
+        }
+
+        self.call_stack.push_back(CallFrame {
+            call_site: return_address,
+            x: self.x,
+            operands,
+            cycle_count: self.trace_len,
+        });
+    }
+
+    /// Get the current call stack (for displaying on panic)
+    pub fn get_call_stack(&self) -> &VecDeque<CallFrame> {
+        &self.call_stack
+    }
 }
 
 impl Drop for Cpu {
     fn drop(&mut self) {
         if !self.active_markers.is_empty() {
-            println!(
+            warn!(
                 "Warning: Found {} unclosed cycle tracking marker(s):",
                 self.active_markers.len()
             );
             for (ptr, marker) in &self.active_markers {
-                println!(
-                    "  - '{}' (at ptr: 0x{:x}), started at {} RV32IM cycles",
+                warn!(
+                    "  - '{}' (at ptr: 0x{:x}), started at {} RV64IMAC cycles",
                     marker.label, ptr, marker.start_instrs
                 );
             }
@@ -1623,7 +1093,8 @@ impl Drop for Cpu {
     }
 }
 
-fn get_register_name(num: usize) -> &'static str {
+#[allow(dead_code)]
+pub fn get_register_name(num: usize) -> &'static str {
     match num {
         0 => "zero",
         1 => "ra",
@@ -1666,10 +1137,6 @@ fn normalize_u64(value: u64, width: &Xlen) -> u64 {
         Xlen::Bit32 => value as u32 as u64,
         Xlen::Bit64 => value,
     }
-}
-
-fn normalize_register(value: usize) -> u64 {
-    value.try_into().unwrap()
 }
 
 #[cfg(test)]
@@ -1960,7 +1427,7 @@ mod test_cpu {
     }
 
     #[test]
-    fn hardocded_zero() {
+    fn hardcoded_zero() {
         let mut cpu = create_cpu();
         cpu.get_mut_mmu().init_memory(9);
         cpu.update_pc(DRAM_BASE);

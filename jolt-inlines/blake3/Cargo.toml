@@ -1,0 +1,22 @@
+[package]
+name = "jolt-inlines-blake3"
+version = "0.1.0"
+edition = "2021"
+description = "BLAKE3 inline implementations for Jolt VM"
+license = "MIT"
+homepage = "https://github.com/a16z/jolt/README.md"
+repository = "https://github.com/a16z/jolt"
+
+[features]
+default = []
+host = ["dep:ctor", "dep:tracer"]
+
+[dependencies]
+ctor = { workspace = true, optional = true }
+tracer = { workspace = true, optional = true, features = ["std"] }
+
+[dev-dependencies]
+blake3.workspace = true
+hex-literal.workspace = true
+rand.workspace = true
+tracer = { workspace = true, features = ["std", "test-utils"] }

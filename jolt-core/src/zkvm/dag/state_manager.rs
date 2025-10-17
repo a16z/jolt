@@ -4,6 +4,7 @@ use std::rc::Rc;
 
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::opening_proof::{
     OpeningPoint, ProverOpeningAccumulator, ReducedOpeningProof, SumcheckId,
     VerifierOpeningAccumulator, BIG_ENDIAN,
@@ -16,7 +17,7 @@ use crate::zkvm::{JoltProverPreprocessing, JoltVerifierPreprocessing};
 use num_derive::FromPrimitive;
 use rayon::prelude::*;
 use tracer::emulator::memory::Memory;
-use tracer::instruction::{RV32IMCycle, RV32IMInstruction};
+use tracer::instruction::{Cycle, Instruction};
 use tracer::JoltDevice;
 
 #[derive(PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, FromPrimitive)]
@@ -26,12 +27,17 @@ pub enum ProofKeys {
     Stage2Sumcheck,
     Stage3Sumcheck,
     Stage4Sumcheck,
-    ReducedOpeningProof,
+    Stage5Sumcheck,
+    Stage6Sumcheck,
+    TrustedAdviceProof,
+    UntrustedAdviceProof,
+    ReducedOpeningProof, // Implicitly Stage 7
 }
 
 pub enum ProofData<F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript> {
     SumcheckProof(SumcheckInstanceProof<F, ProofTranscript>),
     ReducedOpeningProof(ReducedOpeningProof<F, PCS, ProofTranscript>),
+    OpeningProof(PCS::Proof),
 }
 
 pub type Proofs<F, PCS, ProofTranscript> = BTreeMap<ProofKeys, ProofData<F, PCS, ProofTranscript>>;
@@ -41,9 +47,11 @@ where
     PCS: CommitmentScheme<Field = F>,
 {
     pub preprocessing: &'a JoltProverPreprocessing<F, PCS>,
-    pub trace: Vec<RV32IMCycle>,
+    pub trace: Vec<Cycle>,
     pub final_memory_state: Memory,
     pub accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
+    pub untrusted_advice_polynomial: Option<MultilinearPolynomial<F>>,
+    pub trusted_advice_polynomial: Option<MultilinearPolynomial<F>>,
 }
 
 pub struct VerifierState<'a, F: JoltField, PCS>
@@ -64,6 +72,8 @@ pub struct StateManager<
     pub transcript: Rc<RefCell<ProofTranscript>>,
     pub proofs: Rc<RefCell<Proofs<F, PCS, ProofTranscript>>>,
     pub commitments: Rc<RefCell<Vec<PCS::Commitment>>>,
+    pub untrusted_advice_commitment: Option<PCS::Commitment>,
+    pub trusted_advice_commitment: Option<PCS::Commitment>,
     pub ram_K: usize,
     pub twist_sumcheck_switch_index: usize,
     pub program_io: JoltDevice,
@@ -79,8 +89,9 @@ where
 {
     pub fn new_prover(
         preprocessing: &'a JoltProverPreprocessing<F, PCS>,
-        trace: Vec<RV32IMCycle>,
+        trace: Vec<Cycle>,
         program_io: JoltDevice,
+        trusted_advice_commitment: Option<PCS::Commitment>,
         final_memory_state: Memory,
     ) -> Self {
         let opening_accumulator = ProverOpeningAccumulator::new();
@@ -120,6 +131,8 @@ where
             transcript,
             proofs,
             commitments,
+            untrusted_advice_commitment: None,
+            trusted_advice_commitment,
             program_io,
             ram_K,
             twist_sumcheck_switch_index,
@@ -128,6 +141,8 @@ where
                 trace,
                 final_memory_state,
                 accumulator: opening_accumulator,
+                untrusted_advice_polynomial: None,
+                trusted_advice_polynomial: None,
             }),
             verifier_state: None,
         }
@@ -153,6 +168,8 @@ where
             transcript,
             proofs,
             commitments,
+            untrusted_advice_commitment: None,
+            trusted_advice_commitment: None,
             program_io,
             ram_K,
             twist_sumcheck_switch_index,
@@ -169,7 +186,7 @@ where
         &self,
     ) -> (
         &'a JoltProverPreprocessing<F, PCS>,
-        &Vec<RV32IMCycle>,
+        &Vec<Cycle>,
         &JoltDevice,
         &Memory,
     ) {
@@ -197,7 +214,7 @@ where
         }
     }
 
-    pub fn get_bytecode(&self) -> &[RV32IMInstruction] {
+    pub fn get_bytecode(&self) -> &[Instruction] {
         if let Some(ref verifier_state) = self.verifier_state {
             &verifier_state.preprocessing.shared.bytecode.bytecode
         } else if let Some(ref prover_state) = self.prover_state {

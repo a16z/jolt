@@ -2,7 +2,7 @@
 set -euo pipefail
 
 echo "Generating fixtures files..."
-cargo run --release -p fibonacci -- --save
+cargo run --profile build-fast -p fibonacci -- --save
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FIXTURE_DIR=$SCRIPT_DIR/fixtures

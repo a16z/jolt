@@ -6,7 +6,7 @@ use crate::poly::commitment::dory::DoryCommitmentScheme;
 use crate::transcripts::Transcript;
 use crate::utils::errors::ProofVerifyError;
 use crate::zkvm::dag::proof_serialization::JoltProof;
-use crate::zkvm::{Jolt, JoltRV32IM, JoltVerifierPreprocessing};
+use crate::zkvm::{Jolt, JoltRV64IMAC, JoltVerifierPreprocessing};
 use common::jolt_device::MemoryConfig;
 use common::jolt_device::MemoryLayout;
 
@@ -20,7 +20,7 @@ pub fn preprocess(
     memory_config.program_size = Some(program_size);
     let memory_layout = MemoryLayout::new(&memory_config);
 
-    let prover_preprocessing = JoltRV32IM::prover_preprocess(
+    let prover_preprocessing = JoltRV64IMAC::prover_preprocess(
         bytecode.to_vec(),
         memory_layout,
         memory_init.to_vec(),
@@ -32,6 +32,7 @@ pub fn preprocess(
 
 pub fn verify<F, PCS, FS>(
     inputs_bytes: &[u8],
+    trusted_advice_commitment: Option<<PCS as CommitmentScheme>::Commitment>,
     outputs_bytes: &[u8],
     proof: JoltProof<F, PCS, FS>,
     preprocessing: &JoltVerifierPreprocessing<F, PCS>,
@@ -40,10 +41,12 @@ where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
     FS: Transcript,
-    JoltRV32IM: Jolt<F, PCS, FS>,
+    JoltRV64IMAC: Jolt<F, PCS, FS>,
 {
     use common::jolt_device::JoltDevice;
     let memory_config = MemoryConfig {
+        max_untrusted_advice_size: preprocessing.shared.memory_layout.max_untrusted_advice_size,
+        max_trusted_advice_size: preprocessing.shared.memory_layout.max_trusted_advice_size,
         max_input_size: preprocessing.shared.memory_layout.max_input_size,
         max_output_size: preprocessing.shared.memory_layout.max_output_size,
         stack_size: preprocessing.shared.memory_layout.stack_size,
@@ -55,5 +58,11 @@ where
     io_device.inputs = inputs_bytes.to_vec();
     io_device.outputs = outputs_bytes.to_vec();
 
-    JoltRV32IM::verify(preprocessing, proof, io_device, None)
+    JoltRV64IMAC::verify(
+        preprocessing,
+        proof,
+        io_device,
+        trusted_advice_commitment,
+        None,
+    )
 }

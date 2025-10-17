@@ -10,6 +10,7 @@ use crate::poly::commitment::dory::{DoryGlobals, JoltGroupWrapper};
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialBinding};
+use crate::poly::ra_poly::RaPolynomial;
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::utils::expanding_table::ExpandingTable;
 use crate::utils::math::Math;
@@ -18,6 +19,7 @@ use crate::utils::thread::unsafe_allocate_zero_vec;
 use allocative::Allocative;
 use ark_bn254::{G1Affine, G1Projective};
 use ark_ec::CurveGroup;
+use num_traits::Zero;
 use rayon::prelude::*;
 use std::mem;
 use std::sync::{Arc, RwLock};
@@ -26,7 +28,7 @@ use std::sync::{Arc, RwLock};
 /// in Twist/Shout. Perhaps somewhat unintuitively, the implementation
 /// in this file is currently only used to compute the Dory
 /// commitment and in the opening proof reduction sumcheck.
-#[derive(Clone, Debug, PartialEq, Allocative)]
+#[derive(Clone, Debug, Allocative)]
 pub struct OneHotPolynomial<F: JoltField> {
     /// The size of the "address" space for this polynomial.
     pub K: usize,
@@ -34,33 +36,32 @@ pub struct OneHotPolynomial<F: JoltField> {
     /// In other words, the raf/waf corresponding to this
     /// ra/wa polynomial.
     /// If empty, this polynomial is 0 for all j.
-    pub nonzero_indices: Vec<Option<usize>>,
+    pub nonzero_indices: Arc<Vec<Option<u8>>>,
     /// The number of variables that have been bound over the
     /// course of sumcheck so far.
     num_variables_bound: usize,
     /// The array described in Section 6.3 of the Twist/Shout paper.
     G: Vec<F>,
     /// The array described in Section 6.3 of the Twist/Shout paper.
-    H: DensePolynomial<F>,
+    H: Arc<RwLock<RaPolynomial<u8, F>>>,
 }
 
-/// State related to the EQ(k, j) term appearing in the opening
+impl<F: JoltField> PartialEq for OneHotPolynomial<F> {
+    fn eq(&self, other: &Self) -> bool {
+        self.K == other.K
+            && self.nonzero_indices == other.nonzero_indices
+            && self.num_variables_bound == other.num_variables_bound
+            && self.G == other.G
+            && *self.H.read().unwrap() == *other.H.read().unwrap()
+    }
+}
+
+/// State related to the address variable (i.e. k) terms appearing in the opening
 /// proof reduction sumcheck.
-///
-/// The opening proof reduction sumcheck is a batched sumcheck where
-/// each sumcheck instance in the batch corresponds to one opening.
-/// The sumcheck instance for a one-hot polynomial opening has the form
-///   \sum eq(k, r_address) * eq(j, r_cycle) * ra(k, j)
-/// so we use a simplified version of the prover algorithm for the
-/// Booleanity sumcheck described in Section 6.3 of the Twist/Shout paper.
 #[derive(Clone, Debug, Allocative)]
-pub struct OneHotSumcheckState<F: JoltField> {
+pub struct EqAddressState<F: JoltField> {
     /// B stores eq(r, k), see Equation (53)
     pub B: MultilinearPolynomial<F>,
-    /// D stores eq(r', j), see Equation (54) but with Gruen X Dao-Thaler optimizations
-    pub D: GruenSplitEqPolynomial<F>,
-    /// Pre-computed merged D coefficients for G computation
-    pub D_coeffs_for_G: Vec<F>,
     /// F will maintain an array that, at the end of sumcheck round m, has size 2^m
     /// and stores all 2^m values eq((k_1, ..., k_m), (r_1, ..., r_m))
     pub F: ExpandingTable<F>,
@@ -68,47 +69,85 @@ pub struct OneHotSumcheckState<F: JoltField> {
     pub num_variables_bound: usize,
 }
 
-impl<F: JoltField> OneHotSumcheckState<F> {
-    #[tracing::instrument(skip_all, name = "OneHotSumcheckState::new")]
-    pub fn new(r_address: &[F], r_cycle: &[F]) -> Self {
+/// State related to the cycle variable (i.e. j) terms appearing in the opening
+/// proof reduction sumcheck.
+#[derive(Clone, Debug, Allocative)]
+pub struct EqCycleState<F: JoltField> {
+    /// D stores eq(r', j), see Equation (54) but with Gruen X Dao-Thaler optimizations
+    pub D: GruenSplitEqPolynomial<F>,
+    /// Merged D polynomial, used to compute G
+    pub merged_D: Option<DensePolynomial<F>>,
+    /// The number of variables that have been bound during sumcheck so far
+    pub num_variables_bound: usize,
+}
+
+impl<F: JoltField> EqAddressState<F> {
+    #[tracing::instrument(skip_all, name = "EqAddressState::new")]
+    pub fn new(r_address: &[F::Challenge]) -> Self {
         let K = 1 << r_address.len();
         // F will maintain an array that, at the end of sumcheck round m, has size 2^m
         // and stores all 2^m values eq((k_1, ..., k_m), (r_1, ..., r_m))
         // See Equation (55)
         let mut F = ExpandingTable::new(K);
         F.reset(F::one());
-        let D = GruenSplitEqPolynomial::new(r_cycle, BindingOrder::HighToLow);
-        let D_coeffs_for_G = D.merge().Z;
+
         Self {
-            B: MultilinearPolynomial::from(EqPolynomial::evals(r_address)),
-            D,
-            D_coeffs_for_G,
+            B: MultilinearPolynomial::from(EqPolynomial::<F>::evals(r_address)),
             F,
             num_variables_bound: 0,
         }
     }
 }
 
+impl<F: JoltField> EqCycleState<F> {
+    #[tracing::instrument(skip_all, name = "EqCycleState::new")]
+    pub fn new(r_cycle: &[F::Challenge]) -> Self {
+        let D = GruenSplitEqPolynomial::new(r_cycle, BindingOrder::HighToLow);
+        Self {
+            D,
+            merged_D: None,
+            num_variables_bound: 0,
+        }
+    }
+
+    pub fn merge_D(&mut self) {
+        self.merged_D = Some(self.D.merge());
+    }
+
+    pub fn drop_merged_D(&mut self) {
+        let merged_D = std::mem::take(&mut self.merged_D);
+        drop_in_background_thread(merged_D);
+    }
+}
+
+/// The opening proof reduction sumcheck is a batched sumcheck where
+/// each sumcheck instance in the batch corresponds to one opening.
+/// The sumcheck instance for a one-hot polynomial opening has the form
+///   \sum eq(k, r_address) * eq(j, r_cycle) * ra(k, j)
+/// so we use a simplified version of the prover algorithm for the
+/// Booleanity sumcheck described in Section 6.3 of the Twist/Shout paper.
 #[derive(Clone, Allocative)]
 pub struct OneHotPolynomialProverOpening<F: JoltField> {
+    pub log_T: usize,
     pub polynomial: OneHotPolynomial<F>,
-    pub eq_state: Arc<RwLock<OneHotSumcheckState<F>>>,
+    pub eq_address_state: Arc<RwLock<EqAddressState<F>>>,
+    pub eq_cycle_state: Arc<RwLock<EqCycleState<F>>>,
 }
 
 impl<F: JoltField> OneHotPolynomialProverOpening<F> {
     #[tracing::instrument(skip_all, name = "OneHotPolynomialProverOpening::new")]
-    pub fn new(eq_state: Arc<RwLock<OneHotSumcheckState<F>>>) -> Self {
+    pub fn new(
+        eq_address_state: Arc<RwLock<EqAddressState<F>>>,
+        eq_cycle_state: Arc<RwLock<EqCycleState<F>>>,
+    ) -> Self {
         Self {
-            polynomial: OneHotPolynomial {
-                K: 1,
-                nonzero_indices: vec![],
-                num_variables_bound: 0,
-                G: vec![],
-                H: DensePolynomial::new(vec![F::zero()]),
-            },
-            eq_state,
+            log_T: 0,
+            polynomial: OneHotPolynomial::default(),
+            eq_address_state,
+            eq_cycle_state,
         }
     }
+
     #[tracing::instrument(skip_all, name = "OneHotPolynomialProverOpening::initialize")]
     pub fn initialize(&mut self, mut polynomial: OneHotPolynomial<F>) {
         let nonzero_indices = &polynomial.nonzero_indices;
@@ -116,8 +155,8 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
         let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
         let chunk_size = (T / num_chunks).max(1);
 
-        let eq = self.eq_state.read().unwrap();
-        let D_coeffs_for_G = &eq.D_coeffs_for_G;
+        let eq = self.eq_cycle_state.read().unwrap();
+        let D_coeffs_for_G = &eq.merged_D.as_ref().unwrap();
 
         // Compute G as described in Section 6.3
         let G = nonzero_indices
@@ -128,7 +167,7 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
                 let mut j = chunk_index * chunk_size;
                 for k in chunk {
                     if let Some(k) = k {
-                        result[*k] += D_coeffs_for_G[j];
+                        result[*k as usize] += D_coeffs_for_G[j];
                     }
                     j += 1;
                 }
@@ -147,6 +186,7 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
 
         polynomial.G = G;
         self.polynomial = polynomial;
+        self.log_T = T.log_2();
     }
 
     #[tracing::instrument(
@@ -154,16 +194,17 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
         name = "OneHotPolynomialProverOpening::compute_prover_message"
     )]
     pub fn compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F> {
-        let shared_eq = self.eq_state.read().unwrap();
+        let shared_eq_address = self.eq_address_state.read().unwrap();
+        let shared_eq_cycle = self.eq_cycle_state.read().unwrap();
         let polynomial = &self.polynomial;
 
         if round < polynomial.K.log_2() {
             let num_unbound_address_variables = polynomial.K.log_2() - round;
-            let B = &shared_eq.B;
-            let F = &shared_eq.F;
+            let B = &shared_eq_address.B;
+            let F = &shared_eq_address.F;
             let G = &polynomial.G;
 
-            let univariate_poly_evals: [F; 2] = (0..B.len() / 2)
+            let unreduced_univariate_poly_evals = (0..B.len() / 2)
                 .into_par_iter()
                 .map(|k_prime| {
                     let B_evals = B.sumcheck_evals_array::<2>(k_prime, BindingOrder::HighToLow);
@@ -190,45 +231,52 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
                             |running, new| [running[0] + new[0], running[1] + new[1]],
                         );
 
-                    [B_evals[0] * inner_sum[0], B_evals[1] * inner_sum[1]]
+                    [
+                        B_evals[0].mul_unreduced::<9>(inner_sum[0]),
+                        B_evals[1].mul_unreduced::<9>(inner_sum[1]),
+                    ]
                 })
                 .reduce(
-                    || [F::zero(); 2],
+                    || [F::Unreduced::<9>::zero(); 2],
                     |running, new| [running[0] + new[0], running[1] + new[1]],
                 );
 
-            univariate_poly_evals.to_vec()
+            unreduced_univariate_poly_evals
+                .into_iter()
+                .map(|evals| F::from_montgomery_reduce(evals))
+                .collect()
         } else {
             // T-variable rounds
-            let B = &shared_eq.B;
-            let d_gruen = &shared_eq.D;
+            let B = &shared_eq_address.B;
+            let d_gruen = &shared_eq_cycle.D;
             let eq_r_address_claim = B.final_sumcheck_claim();
-
-            // Retrieve ra(j , r') for first round using F, and H otherwise
-            let ra_eval = |j: usize| -> F {
-                if round == polynomial.K.log_2() {
-                    polynomial.nonzero_indices[j].map_or(F::zero(), |k| shared_eq.F[k])
-                } else {
-                    polynomial.H.Z[j]
-                }
-            };
+            let H = &polynomial.H.read().unwrap();
 
             let gruen_eval_0 = if d_gruen.E_in_current_len() == 1 {
-                (0..d_gruen.len() / 2)
+                let unreduced_gruen_eval_0 = (0..d_gruen.len() / 2)
                     .into_par_iter()
-                    .map(|j| d_gruen.E_out_current()[j] * ra_eval(j))
-                    .sum()
+                    .map(|j| d_gruen.E_out_current()[j].mul_unreduced::<9>(H.get_bound_coeff(j)))
+                    .reduce(F::Unreduced::<9>::zero, |running, new| running + new);
+                F::from_montgomery_reduce(unreduced_gruen_eval_0)
             } else {
-                let num_x_out_bits = d_gruen.E_out_current_len().log_2();
                 let d_e_in = d_gruen.E_in_current();
                 let d_e_out = d_gruen.E_out_current();
+                let num_x_in = d_gruen.E_in_current_len();
+                let num_x_out = d_gruen.E_out_current_len();
+                let num_x_out_bits = num_x_out.log_2();
 
-                (0..d_gruen.len() / 2)
+                (0..num_x_in)
                     .into_par_iter()
-                    .map(|j| {
-                        let x_out = j & ((1 << num_x_out_bits) - 1);
-                        let x_in = j >> num_x_out_bits;
-                        d_e_in[x_in] * d_e_out[x_out] * ra_eval(j)
+                    .map(|x_in| {
+                        let unreduced_inner_sum = (0..num_x_out)
+                            .into_par_iter()
+                            .map(|x_out| {
+                                let j = (x_in << num_x_out_bits) | x_out;
+                                d_e_out[x_out].mul_unreduced::<9>(H.get_bound_coeff(j))
+                            })
+                            .reduce(F::Unreduced::<9>::zero, |running, new| running + new);
+                        let inner_sum = F::from_montgomery_reduce(unreduced_inner_sum);
+                        d_e_in[x_in] * inner_sum
                     })
                     .sum()
             };
@@ -244,52 +292,50 @@ impl<F: JoltField> OneHotPolynomialProverOpening<F> {
     }
 
     #[tracing::instrument(skip_all, name = "OneHotPolynomialProverOpening::bind")]
-    pub fn bind(&mut self, r: F, round: usize) {
-        let mut shared_eq = self.eq_state.write().unwrap();
+    pub fn bind(&mut self, r: F::Challenge, round: usize) {
+        let mut shared_eq_address = self.eq_address_state.write().unwrap();
+        let mut shared_eq_cycle = self.eq_cycle_state.write().unwrap();
         let polynomial = &mut self.polynomial;
-        let num_variables_bound = shared_eq.num_variables_bound;
+        let num_variables_bound =
+            shared_eq_address.num_variables_bound + shared_eq_cycle.num_variables_bound;
 
         // Bind shared state if not already bound
         if num_variables_bound <= round {
             if round < polynomial.K.log_2() {
-                shared_eq.B.bind_parallel(r, BindingOrder::HighToLow);
-                shared_eq.F.update(r);
+                shared_eq_address
+                    .B
+                    .bind_parallel(r, BindingOrder::HighToLow);
+                shared_eq_address.F.update(r);
+                shared_eq_address.num_variables_bound += 1;
             } else {
-                shared_eq.D.bind(r);
+                shared_eq_cycle.D.bind(r);
+                shared_eq_cycle.num_variables_bound += 1;
             }
-            shared_eq.num_variables_bound += 1;
         }
 
-        // For the first log T round we want to use F still
-        if round == polynomial.K.log_2() {
-            let F = &shared_eq.F;
+        // For the first two log T rounds we want to use F still
+        if round == polynomial.K.log_2() - 1 {
             let nonzero_indices = &polynomial.nonzero_indices;
-            let half_T = nonzero_indices.len() / 2;
 
-            // Initialize H by binding F values
-            polynomial.H = DensePolynomial::new(
-                (0..half_T)
-                    .into_par_iter()
-                    .map(|j| {
-                        let h_0 = nonzero_indices[j].map_or(F::zero(), |k| F[k]);
-                        let h_1 = nonzero_indices[j + half_T].map_or(F::zero(), |k| F[k]);
-                        h_0 + r * (h_1 - h_0)
-                    })
-                    .collect(),
-            );
+            let mut lock = polynomial.H.write().unwrap();
+            if matches!(*lock, RaPolynomial::None) {
+                *lock =
+                    RaPolynomial::new(nonzero_indices.clone(), shared_eq_address.F.clone_values());
+            }
 
             let g = mem::take(&mut polynomial.G);
             drop_in_background_thread(g);
-            let d_coeffs = mem::take(&mut shared_eq.D_coeffs_for_G);
-            drop_in_background_thread(d_coeffs);
-        } else if round > polynomial.K.log_2() {
+        } else if round >= polynomial.K.log_2() {
             // Bind H for subsequent T rounds
-            polynomial.H.bind_parallel(r, BindingOrder::HighToLow);
+            let mut H = polynomial.H.write().unwrap();
+            if H.len().log_2() == self.log_T + polynomial.K.log_2() - round {
+                H.bind_parallel(r, BindingOrder::HighToLow);
+            }
         }
     }
 
     pub fn final_sumcheck_claim(&self) -> F {
-        self.polynomial.H.Z[0]
+        self.polynomial.H.read().unwrap().final_sumcheck_claim()
     }
 }
 
@@ -297,10 +343,10 @@ impl<F: JoltField> Default for OneHotPolynomial<F> {
     fn default() -> Self {
         Self {
             K: 1,
-            nonzero_indices: vec![],
+            nonzero_indices: Arc::new(vec![]),
             num_variables_bound: 0,
             G: vec![],
-            H: DensePolynomial::new(vec![F::zero()]),
+            H: Arc::new(RwLock::new(RaPolynomial::None)),
         }
     }
 }
@@ -324,17 +370,21 @@ impl<F: JoltField> OneHotPolynomial<F> {
         let mut dense_coeffs: Vec<F> = vec![F::zero(); self.K * T];
         for (t, k) in self.nonzero_indices.iter().enumerate() {
             if let Some(k) = k {
-                dense_coeffs[k * T + t] = F::one();
+                dense_coeffs[*k as usize * T + t] = F::one();
             }
         }
         DensePolynomial::new(dense_coeffs)
     }
 
-    pub fn evaluate(&self, r: &[F]) -> F {
+    pub fn evaluate<C>(&self, r: &[C]) -> F
+    where
+        C: Copy + Send + Sync + Into<F>,
+        F: std::ops::Mul<C, Output = F> + std::ops::SubAssign<F>,
+    {
         assert_eq!(r.len(), self.get_num_vars());
         let (r_left, r_right) = r.split_at(self.num_rows().log_2());
-        let eq_left = EqPolynomial::evals(r_left);
-        let eq_right = EqPolynomial::evals(r_right);
+        let eq_left = EqPolynomial::<F>::evals(r_left);
+        let eq_right = EqPolynomial::<F>::evals(r_right);
         let mut left_product = unsafe_allocate_zero_vec(eq_right.len());
         self.vector_matrix_product(&eq_left, F::one(), &mut left_product);
         left_product
@@ -344,15 +394,14 @@ impl<F: JoltField> OneHotPolynomial<F> {
             .sum()
     }
 
-    pub fn from_indices(nonzero_indices: Vec<Option<usize>>, K: usize) -> Self {
+    pub fn from_indices(nonzero_indices: Vec<Option<u8>>, K: usize) -> Self {
         debug_assert_eq!(DoryGlobals::get_T(), nonzero_indices.len());
+        assert!(K <= 1 << 8, "K must be <= 256 for index to fit into u8");
 
         Self {
             K,
-            nonzero_indices,
-            num_variables_bound: 0,
-            G: vec![],
-            H: DensePolynomial::new(vec![F::zero()]),
+            nonzero_indices: Arc::new(nonzero_indices),
+            ..Default::default()
         }
     }
 
@@ -362,7 +411,7 @@ impl<F: JoltField> OneHotPolynomial<F> {
         bases: &[G::Affine],
     ) -> Vec<JoltGroupWrapper<G>> {
         let num_rows = self.num_rows();
-        println!("Committing to one-hot polynomial with {num_rows} rows");
+        tracing::debug!("Committing to one-hot polynomial with {num_rows} rows");
         let row_len = DoryGlobals::get_num_columns();
         let T = DoryGlobals::get_T();
 
@@ -379,7 +428,7 @@ impl<F: JoltField> OneHotPolynomial<F> {
 
                     for (col_index, k) in chunk.iter().enumerate() {
                         if let Some(k) = k {
-                            indices_per_k[*k].push(col_index);
+                            indices_per_k[*k as usize].push(col_index);
                         }
                     }
 
@@ -464,6 +513,121 @@ impl<F: JoltField> OneHotPolynomial<F> {
         }
     }
 
+    #[tracing::instrument(skip_all, name = "OneHotPolynomial::commit_one_hot_batch")]
+    pub fn commit_one_hot_batch<U, G: CurveGroup<ScalarField = F> + VariableBaseMSM>(
+        one_hot_polys: &[U],
+        bases: &[G::Affine],
+    ) -> Vec<Vec<JoltGroupWrapper<G>>>
+    where
+        U: std::borrow::Borrow<OneHotPolynomial<F>> + Sync,
+    {
+        let row_len = DoryGlobals::get_num_columns();
+        let T = DoryGlobals::get_T();
+        let rows_per_k = T / row_len;
+
+        // Phase 1: Collect all chunks from all polynomials
+        #[derive(Clone)]
+        struct ChunkWork {
+            poly_idx: usize,
+            chunk_idx: usize,
+            chunk_start: usize,
+            chunk_len: usize,
+            K: usize,
+        }
+
+        let all_chunks: Vec<ChunkWork> = one_hot_polys
+            .iter()
+            .enumerate()
+            .flat_map(|(poly_idx, poly)| {
+                let poly = poly.borrow();
+                let num_chunks = poly.nonzero_indices.len().div_ceil(row_len);
+                (0..num_chunks).map(move |chunk_idx| {
+                    let chunk_start = chunk_idx * row_len;
+                    let chunk_len =
+                        std::cmp::min(row_len, poly.nonzero_indices.len() - chunk_start);
+                    ChunkWork {
+                        poly_idx,
+                        chunk_idx,
+                        chunk_start,
+                        chunk_len,
+                        K: poly.K,
+                    }
+                })
+            })
+            .collect();
+
+        // Phase 2: Process all chunks in parallel (flat parallelism)
+        let chunk_results: Vec<_> = all_chunks
+            .par_iter()
+            .map(|work| {
+                let poly = one_hot_polys[work.poly_idx].borrow();
+                let chunk =
+                    &poly.nonzero_indices[work.chunk_start..work.chunk_start + work.chunk_len];
+
+                // Collect indices for each k
+                let mut indices_per_k: Vec<Vec<usize>> = vec![Vec::new(); work.K];
+                for (col_index, k) in chunk.iter().enumerate() {
+                    if let Some(k) = k {
+                        indices_per_k[*k as usize].push(col_index);
+                    }
+                }
+
+                // Safety: This function is only called with G1Affine
+                let g1_bases = unsafe { std::mem::transmute::<&[G::Affine], &[G1Affine]>(bases) };
+
+                // Vectorized batch addition for all k values at once
+                let results =
+                    jolt_optimizations::batch_g1_additions_multi(g1_bases, &indices_per_k);
+
+                // Convert results to row_commitments
+                let mut row_commitments = vec![JoltGroupWrapper(G::zero()); work.K];
+                for (k, result) in results.into_iter().enumerate() {
+                    if !indices_per_k[k].is_empty() {
+                        let sum_projective: G1Projective = result.into();
+                        row_commitments[k].0 = unsafe {
+                            std::ptr::read(&sum_projective as *const G1Projective as *const G)
+                        };
+                    }
+                }
+
+                (work.poly_idx, work.chunk_idx, row_commitments)
+            })
+            .collect();
+
+        // Phase 3: Reassemble results by polynomial
+        let mut poly_results: Vec<Vec<JoltGroupWrapper<G>>> = one_hot_polys
+            .iter()
+            .map(|poly| vec![JoltGroupWrapper(G::zero()); poly.borrow().num_rows()])
+            .collect();
+
+        // Group results by polynomial
+        let mut results_by_poly: Vec<Vec<_>> = vec![Vec::new(); one_hot_polys.len()];
+        for (poly_idx, chunk_idx, commitments) in chunk_results {
+            results_by_poly[poly_idx].push((chunk_idx, commitments));
+        }
+
+        // Scatter into final results (can be done in parallel per polynomial)
+        poly_results
+            .par_iter_mut()
+            .enumerate()
+            .for_each(|(poly_idx, result)| {
+                let poly = &one_hot_polys[poly_idx];
+                let num_rows = poly.borrow().num_rows();
+
+                for (chunk_idx, commitments) in &results_by_poly[poly_idx] {
+                    // Scatter this chunk's results into the output
+                    for (k, commitment) in commitments.iter().enumerate() {
+                        let row_idx = k * rows_per_k + chunk_idx;
+                        if row_idx < num_rows {
+                            result[row_idx] = *commitment;
+                        }
+                    }
+                }
+            });
+
+        poly_results
+    }
+
     #[tracing::instrument(skip_all, name = "OneHotPolynomial::vector_matrix_product")]
     pub fn vector_matrix_product(&self, left_vec: &[F], coeff: F, result: &mut [F]) {
         let T = DoryGlobals::get_T();
@@ -481,7 +645,7 @@ impl<F: JoltField> OneHotPolynomial<F> {
                     let mut col_dot_product = F::zero();
                     for (row_offset, t) in (col_index..T).step_by(row_len).enumerate() {
                         if let Some(k) = self.nonzero_indices[t] {
-                            let row_index = k * rows_per_k + row_offset;
+                            let row_index = k as usize * rows_per_k + row_offset;
                             col_dot_product += left_vec[row_index];
                         }
                     }
@@ -530,26 +694,32 @@ mod tests {
 
         let mut rng = test_rng();
 
-        let nonzero_indices: Vec<_> = std::iter::repeat_with(|| Some(rng.next_u64() as usize % K))
-            .take(T)
-            .collect();
+        let nonzero_indices: Vec<_> =
+            std::iter::repeat_with(|| Some(rng.next_u64() as u8 % K as u8))
+                .take(T)
+                .collect();
         let one_hot_poly = OneHotPolynomial::<Fr>::from_indices(nonzero_indices, K);
         let mut dense_poly = one_hot_poly.to_dense_poly();
 
-        let r_address: Vec<Fr> = std::iter::repeat_with(|| Fr::random(&mut rng))
+        let r_address = std::iter::repeat_with(|| <Fr as JoltField>::Challenge::random(&mut rng))
             .take(LOG_K)
-            .collect();
-        let r_cycle: Vec<Fr> = std::iter::repeat_with(|| Fr::random(&mut rng))
+            .collect::<Vec<_>>();
+        let r_cycle = std::iter::repeat_with(|| <Fr as JoltField>::Challenge::random(&mut rng))
             .take(LOG_T)
-            .collect();
+            .collect::<Vec<_>>();
 
-        let one_hot_sumcheck_state = OneHotSumcheckState::new(&r_address, &r_cycle);
-        let mut one_hot_opening =
-            OneHotPolynomialProverOpening::new(Arc::new(RwLock::new(one_hot_sumcheck_state)));
+        let eq_address_state = EqAddressState::new(&r_address);
+        let mut eq_cycle_state = EqCycleState::new(&r_cycle);
+        eq_cycle_state.merge_D();
+
+        let mut one_hot_opening = OneHotPolynomialProverOpening::new(
+            Arc::new(RwLock::new(eq_address_state)),
+            Arc::new(RwLock::new(eq_cycle_state)),
+        );
         one_hot_opening.initialize(one_hot_poly.clone());
 
         let r_concat = [r_address.as_slice(), r_cycle.as_slice()].concat();
-        let mut eq = DensePolynomial::new(EqPolynomial::evals(&r_concat));
+        let mut eq = DensePolynomial::new(EqPolynomial::<Fr>::evals(&r_concat));
 
         // Compute the initial input claim
         let input_claim: Fr = (0..dense_poly.len()).map(|i| dense_poly[i] * eq[i]).sum();
@@ -574,7 +744,7 @@ mod tests {
                 "round {round} prover message mismatch"
             );
 
-            let r = Fr::random(&mut rng);
+            let r = <Fr as JoltField>::Challenge::random(&mut rng);
 
             // Update previous_claim by evaluating the univariate polynomial at r
             let eval_at_1 = previous_claim - expected_message[0];
@@ -618,15 +788,17 @@ mod tests {
 
         let mut rng = test_rng();
 
-        let nonzero_indices: Vec<_> = std::iter::repeat_with(|| Some(rng.next_u64() as usize % K))
-            .take(T)
-            .collect();
+        let nonzero_indices: Vec<_> =
+            std::iter::repeat_with(|| Some(rng.next_u64() as u8 % K as u8))
+                .take(T)
+                .collect();
         let one_hot_poly = OneHotPolynomial::<Fr>::from_indices(nonzero_indices, K);
         let dense_poly = one_hot_poly.to_dense_poly();
 
-        let r: Vec<Fr> = std::iter::repeat_with(|| Fr::random(&mut rng))
-            .take(LOG_K + LOG_T)
-            .collect();
+        let r: Vec<<Fr as JoltField>::Challenge> =
+            std::iter::repeat_with(|| <Fr as JoltField>::Challenge::random(&mut rng))
+                .take(LOG_K + LOG_T)
+                .collect();
 
         assert_eq!(one_hot_poly.evaluate(&r), dense_poly.evaluate(&r));
     }

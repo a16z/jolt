@@ -5,18 +5,14 @@ use crate::{
     emulator::cpu::{Cpu, Xlen},
 };
 
-use super::{
-    format::{format_i::FormatI, InstructionFormat},
-    RISCVInstruction, RISCVTrace,
-};
+use super::{format::format_i::FormatI, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name = VirtualPow2,
     mask = 0,
     match = 0,
     format = FormatI,
-    ram = (),
-    is_virtual = true
+    ram = ()
 );
 
 impl VirtualPow2 {

@@ -1,17 +1,25 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{declare_riscv_instr, emulator::cpu::Cpu};
+use super::add::ADD;
+use super::ld::LD;
+use super::sd::SD;
+use super::virtual_move::VirtualMove;
+use super::Instruction;
+use crate::utils::inline_helpers::InstrAssembler;
 
-use super::{
-    format::{format_r::FormatR, InstructionFormat},
-    RISCVInstruction, RISCVTrace,
+use crate::utils::virtual_registers::VirtualRegisterAllocator;
+use crate::{
+    declare_riscv_instr,
+    emulator::cpu::{Cpu, Xlen},
 };
+
+use super::{format::format_amo::FormatAMO, Cycle, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name   = AMOADDD,
     mask   = 0xf800707f,
     match  = 0x0000302f,
-    format = FormatR,
+    format = FormatAMO,
     ram    = ()
 );
 
@@ -38,4 +46,29 @@ impl AMOADDD {
     }
 }
 
-impl RISCVTrace for AMOADDD {}
+impl RISCVTrace for AMOADDD {
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
+        let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
+        let mut trace = trace;
+        for instr in inline_sequence {
+            instr.trace(cpu, trace.as_deref_mut());
+        }
+    }
+
+    /// AMOADD.D atomically adds rs2 to a memory location and returns the original value.
+    fn inline_sequence(
+        &self,
+        allocator: &VirtualRegisterAllocator,
+        xlen: Xlen,
+    ) -> Vec<Instruction> {
+        let v_rs2 = allocator.allocate();
+        let v_rd = allocator.allocate();
+
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
+        asm.emit_ld::<LD>(*v_rd, self.operands.rs1, 0);
+        asm.emit_r::<ADD>(*v_rs2, *v_rd, self.operands.rs2);
+        asm.emit_s::<SD>(self.operands.rs1, *v_rs2, 0);
+        asm.emit_i::<VirtualMove>(self.operands.rd, *v_rd, 0);
+        asm.finalize()
+    }
+}

@@ -2,10 +2,11 @@
 //! https://eprint.iacr.org/2024/1210.pdf
 
 use allocative::Allocative;
+use rayon::prelude::*;
 
 use super::dense_mlpoly::DensePolynomial;
 use super::multilinear_polynomial::BindingOrder;
-use crate::{field::JoltField, poly::eq_poly::EqPolynomial};
+use crate::{field::JoltField, poly::eq_poly::EqPolynomial, utils::math::Math};
 
 #[derive(Debug, Clone, PartialEq, Allocative)]
 /// A struct holding the equality polynomial evaluations for use in sum-check, when incorporating
@@ -20,10 +21,10 @@ use crate::{field::JoltField, poly::eq_poly::EqPolynomial};
 ///   1}^{n/2 - i - 1}]`; else `E_in_vec` is empty
 ///
 /// Implements both LowToHigh ordering and HighToLow ordering.
-pub struct GruenSplitEqPolynomial<F> {
+pub struct GruenSplitEqPolynomial<F: JoltField> {
     pub(crate) current_index: usize,
     pub(crate) current_scalar: F,
-    pub(crate) w: Vec<F>,
+    pub(crate) w: Vec<F::Challenge>,
     pub(crate) E_in_vec: Vec<Vec<F>>,
     pub(crate) E_out_vec: Vec<Vec<F>>,
     pub(crate) binding_order: BindingOrder,
@@ -31,7 +32,7 @@ pub struct GruenSplitEqPolynomial<F> {
 
 impl<F: JoltField> GruenSplitEqPolynomial<F> {
     #[tracing::instrument(skip_all, name = "GruenSplitEqPolynomial::new")]
-    pub fn new(w: &[F], binding_order: BindingOrder) -> Self {
+    pub fn new(w: &[F::Challenge], binding_order: BindingOrder) -> Self {
         match binding_order {
             BindingOrder::LowToHigh => {
                 let m = w.len() / 2;
@@ -100,10 +101,11 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
     /// Note the differences between this and the `new` constructor: this is specialized for the
     /// small value optimization.
     pub fn new_for_small_value(
-        w: &[F],
+        w: &[F::Challenge],
         num_x_out_vars: usize,
         num_x_in_vars: usize,
         num_small_value_rounds: usize,
+        scaling_factor: Option<F>,
     ) -> Self {
         // Split w into the slices: (l = num_small_value_rounds)
         // (n/2 - l) ..... (n - l)
@@ -124,7 +126,7 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         let split_point_x_out = num_x_out_vars;
         let split_point_x_in = split_point_x_out + num_x_in_vars;
 
-        let w_E_in_vars: Vec<F> = w[split_point_x_out..split_point_x_in].to_vec();
+        let w_E_in_vars: Vec<F::Challenge> = w[split_point_x_out..split_point_x_in].to_vec();
 
         // Determine the end index for the suffix part of w_E_out_vars
         let suffix_slice_end = if num_small_value_rounds == 0 {
@@ -135,16 +137,18 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
 
         let num_actual_suffix_vars = suffix_slice_end.saturating_sub(split_point_x_in);
 
-        let mut w_E_out_vars: Vec<F> = Vec::with_capacity(num_x_out_vars + num_actual_suffix_vars);
+        let mut w_E_out_vars: Vec<F::Challenge> =
+            Vec::with_capacity(num_x_out_vars + num_actual_suffix_vars);
         w_E_out_vars.extend_from_slice(&w[0..split_point_x_out]);
         if split_point_x_in < suffix_slice_end {
             // Add suffix only if range is valid and non-empty
             w_E_out_vars.extend_from_slice(&w[split_point_x_in..suffix_slice_end]);
         }
 
+        // Do not scale E_in; we correct the typed unreduced accumulation with inv(K) after reduction.
         let (mut E_out_vec, E_in) = rayon::join(
             || EqPolynomial::evals_cached(&w_E_out_vars),
-            || EqPolynomial::evals(&w_E_in_vars),
+            || EqPolynomial::evals_with_scaling(&w_E_in_vars, scaling_factor),
         );
 
         // Take only the first `num_small_value_rounds` vectors from E_out_vec (after reversing)
@@ -192,7 +196,7 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
     }
 
     #[tracing::instrument(skip_all, name = "GruenSplitEqPolynomial::bind")]
-    pub fn bind(&mut self, r: F) {
+    pub fn bind(&mut self, r: F::Challenge) {
         match self.binding_order {
             BindingOrder::LowToHigh => {
                 // multiply `current_scalar` by `eq(w[i], r) = (1 - w[i]) * (1 - r) + w[i] * r`
@@ -239,15 +243,12 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
     /// - c, the constant term of q
     /// - e, the quadratic term of q
     /// - the previous round claim, s(0) + s(1)
-    ///
-    /// important: This assumes `LowToHigh` ordering (as used in the stage 5 batching sumcheck)
     pub fn gruen_evals_deg_3(
         &self,
         q_constant: F,
         q_quadratic_coeff: F,
         s_0_plus_s_1: F,
     ) -> [F; 3] {
-        assert_eq!(self.binding_order, BindingOrder::LowToHigh);
         // We want to compute the evaluations of the cubic polynomial s(X) = l(X) * q(X), where
         // l is linear, and q is quadratic, at the points {0, 2, 3}.
         //
@@ -260,7 +261,11 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         // and e, but not d. We compute s by first computing l and q at points 2 and 3.
 
         // Evaluations of the linear polynomial
-        let eq_eval_1 = self.current_scalar * self.w[self.current_index - 1];
+        let eq_eval_1 = self.current_scalar
+            * match self.binding_order {
+                BindingOrder::LowToHigh => self.w[self.current_index - 1],
+                BindingOrder::HighToLow => self.w[self.current_index],
+            };
         let eq_eval_0 = self.current_scalar - eq_eval_1;
         let eq_m = eq_eval_1 - eq_eval_0;
         let eq_eval_2 = eq_eval_1 + eq_m;
@@ -354,8 +359,66 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         self.current_scalar
     }
 
-    pub fn get_current_w(&self) -> F {
-        self.w[self.current_index - 1]
+    pub fn get_current_w(&self) -> F::Challenge {
+        match self.binding_order {
+            BindingOrder::LowToHigh => self.w[self.current_index - 1],
+            BindingOrder::HighToLow => self.w[self.current_index],
+        }
+    }
+
+    /// Emulates the behavior of EqPolynomial::evals(&self.w).par_iter().enumerate()
+    /// Only works if `self.binding_order` is `BindingOrder::LowToHigh`.
+    /// For the high-to-low version, see `par_iter_high_to_low`.
+    pub fn par_iter_low_to_high(&self) -> impl ParallelIterator<Item = (usize, F)> + use<'_, F> {
+        assert_eq!(self.binding_order, BindingOrder::LowToHigh);
+        assert_eq!(
+            self.current_index,
+            self.w.len(),
+            "par_iter_low_to_high only supports unbound polynomials"
+        );
+
+        let E_in = self.E_in_current();
+        let x_in_bits = E_in.len().log_2();
+        let E_out = self.E_out_current();
+        let w_current = self.get_current_w();
+        E_out.par_iter().enumerate().flat_map(move |(x_out, high)| {
+            E_in.par_iter().enumerate().flat_map(move |(x_in, low)| {
+                let high_low = *high * low;
+                let eval_1 = high_low * w_current;
+                let eval_0 = high_low - eval_1;
+                let index = (x_out << (x_in_bits + 1)) + (x_in << 1);
+                [(index, eval_0), (index + 1, eval_1)]
+            })
+        })
+    }
+
+    /// Emulates the behavior of EqPolynomial::evals(&self.w).par_iter().enumerate()
+    /// Only works if `self.binding_order` is `BindingOrder::HighToLow`.
+    /// For the low-to-high version, see `par_iter_low_to_high`.
+    pub fn par_iter_high_to_low(&self) -> impl ParallelIterator<Item = (usize, F)> + use<'_, F> {
+        assert_eq!(self.binding_order, BindingOrder::HighToLow);
+        assert_eq!(
+            self.current_index, 0,
+            "par_iter_high_to_low only supports unbound polynomials"
+        );
+
+        let E_in = self.E_in_current();
+        let x_in_bits = E_in.len().log_2();
+        let E_out = self.E_out_current();
+        let x_out_bits = E_out.len().log_2();
+        let w_current = self.get_current_w();
+        [F::one() - w_current, w_current.into()]
+            .into_par_iter()
+            .enumerate()
+            .flat_map(move |(msb, eq_msb)| {
+                E_in.par_iter().enumerate().flat_map(move |(x_in, high)| {
+                    E_out.par_iter().enumerate().map(move |(x_out, low)| {
+                        let index =
+                            (msb << (x_in_bits + x_out_bits)) + (x_in << x_out_bits) + x_out;
+                        (index, eq_msb * high * low)
+                    })
+                })
+            })
     }
 }
 
@@ -369,16 +432,17 @@ mod tests {
     fn bind_low_high() {
         const NUM_VARS: usize = 10;
         let mut rng = test_rng();
-        let w: Vec<Fr> = std::iter::repeat_with(|| Fr::random(&mut rng))
-            .take(NUM_VARS)
-            .collect();
+        let w: Vec<<Fr as JoltField>::Challenge> =
+            std::iter::repeat_with(|| <Fr as JoltField>::Challenge::random(&mut rng))
+                .take(NUM_VARS)
+                .collect();
 
-        let mut regular_eq = DensePolynomial::new(EqPolynomial::evals(&w));
+        let mut regular_eq = DensePolynomial::<Fr>::new(EqPolynomial::evals(&w));
         let mut split_eq = GruenSplitEqPolynomial::new(&w, BindingOrder::LowToHigh);
         assert_eq!(regular_eq, split_eq.merge());
 
         for _ in 0..NUM_VARS {
-            let r = Fr::random(&mut rng);
+            let r = <Fr as JoltField>::Challenge::random(&mut rng);
             regular_eq.bound_poly_var_bot(&r);
             split_eq.bind(r);
 
@@ -391,11 +455,12 @@ mod tests {
     fn bind_high_low() {
         const NUM_VARS: usize = 10;
         let mut rng = test_rng();
-        let w: Vec<Fr> = std::iter::repeat_with(|| Fr::random(&mut rng))
-            .take(NUM_VARS)
-            .collect();
+        let w: Vec<<Fr as JoltField>::Challenge> =
+            std::iter::repeat_with(|| <Fr as JoltField>::Challenge::random(&mut rng))
+                .take(NUM_VARS)
+                .collect();
 
-        let mut regular_eq = DensePolynomial::new(EqPolynomial::evals(&w));
+        let mut regular_eq = DensePolynomial::<Fr>::new(EqPolynomial::evals(&w));
         let mut split_eq_high_to_low = GruenSplitEqPolynomial::new(&w, BindingOrder::HighToLow);
 
         // Verify they start equal
@@ -403,7 +468,7 @@ mod tests {
 
         // Bind with same random values, but regular_eq uses top and split uses new high-to-low
         for _ in 0..NUM_VARS {
-            let r = Fr::random(&mut rng);
+            let r = <Fr as JoltField>::Challenge::random(&mut rng);
             regular_eq.bound_poly_var_top(&r);
             split_eq_high_to_low.bind(r);
             let merged = split_eq_high_to_low.merge();
@@ -420,20 +485,27 @@ mod tests {
 
         // Test case 1: Standard setup
         let num_x_out_vars_1 = 2; // Example split for x_out part
-        let w1: Vec<Fr> = (0..N).map(|i| Fr::from(i as u64)).collect(); // Use predictable values
+        let w1: Vec<<Fr as JoltField>::Challenge> = (0..N)
+            .map(|i| <Fr as JoltField>::Challenge::from(i as u128))
+            .collect(); // Use predictable values
 
         let num_x_in_vars_1 = N - num_x_out_vars_1 - L0;
-        let split_eq1 =
-            GruenSplitEqPolynomial::new_for_small_value(&w1, num_x_out_vars_1, num_x_in_vars_1, L0);
+        let split_eq1 = GruenSplitEqPolynomial::<Fr>::new_for_small_value(
+            &w1,
+            num_x_out_vars_1,
+            num_x_in_vars_1,
+            L0,
+            None,
+        );
 
         // Verify split points and variable slices
         let split_point1_expected1 = num_x_out_vars_1; // Should be 2
         let split_point_x_in_expected1 = num_x_out_vars_1 + num_x_in_vars_1;
         assert_eq!(split_eq1.current_index, split_point1_expected1); // repurposed current_index
 
-        let w_E_in_vars_expected1: Vec<Fr> =
+        let w_E_in_vars_expected1: Vec<<Fr as JoltField>::Challenge> =
             w1[split_point1_expected1..split_point_x_in_expected1].to_vec(); // w[2..7] = [2,3,4,5,6]
-        let mut w_E_out_vars_expected1: Vec<Fr> = Vec::new();
+        let mut w_E_out_vars_expected1: Vec<<Fr as JoltField>::Challenge> = Vec::new();
         w_E_out_vars_expected1.extend_from_slice(&w1[0..split_point1_expected1]); // w[0..2] = [0,1]
                                                                                   // Suffix slice is w[split_point_x_in .. N-1] = w[7..9] for N=10, L0=3.
         if split_point_x_in_expected1 < N - 1 {
@@ -480,34 +552,87 @@ mod tests {
 
         // Test case 2: Edge case L0 = 0
         let num_x_out_vars_2 = N / 2; // Max possible value for num_x_out_vars if num_x_in_vars is also N/2 and L0=0
-        let w2: Vec<Fr> = (0..N).map(|_| Fr::random(&mut rng)).collect();
+        let w2: Vec<<Fr as JoltField>::Challenge> = (0..N)
+            .map(|_| <Fr as JoltField>::Challenge::random(&mut rng))
+            .collect();
         let num_x_in_vars_2 = N - num_x_out_vars_2; // L0 is 0
-        let split_eq2 =
-            GruenSplitEqPolynomial::new_for_small_value(&w2, num_x_out_vars_2, num_x_in_vars_2, 0);
+        let split_eq2 = GruenSplitEqPolynomial::<Fr>::new_for_small_value(
+            &w2,
+            num_x_out_vars_2,
+            num_x_in_vars_2,
+            0,
+            None,
+        );
         assert_eq!(split_eq2.E_out_vec.len(), 0);
         assert_eq!(split_eq2.E_in_vec.len(), 1); // E_in should cover w[N/2 .. N/2 + num_x_in_vars_2 -1]
         let split_point1_expected2 = num_x_out_vars_2;
         let split_point_x_in_expected2 = num_x_out_vars_2 + num_x_in_vars_2;
-        let w_E_in_vars_expected2: Vec<Fr> =
+        let w_E_in_vars_expected2: Vec<<Fr as JoltField>::Challenge> =
             w2[split_point1_expected2..split_point_x_in_expected2].to_vec();
         assert!(w_E_in_vars_expected2.len() == num_x_in_vars_2);
         let expected_E_in2 = EqPolynomial::evals(&w_E_in_vars_expected2); // evals of N/2 vars
         assert_eq!(split_eq2.E_in_vec[0], expected_E_in2);
 
         // Test case 3: Panic case N = 0
-        let w3: Vec<Fr> = vec![];
+        let w3: Vec<<Fr as JoltField>::Challenge> = vec![];
         let l0_3 = 0;
         let num_x_out_vars_3 = 0;
         let n3 = w3.len();
         let num_x_in_vars_3 = n3 - num_x_out_vars_3 - l0_3; // 0 - 0 - 0 = 0
         let result3 = std::panic::catch_unwind(|| {
-            GruenSplitEqPolynomial::new_for_small_value(
+            GruenSplitEqPolynomial::<Fr>::new_for_small_value(
                 &w3,
                 num_x_out_vars_3,
                 num_x_in_vars_3,
                 l0_3,
+                None,
             );
         });
         assert!(result3.is_err());
+    }
+
+    #[test]
+    fn par_iter_low_to_high() {
+        const NUM_VARS: usize = 10;
+        let mut rng = test_rng();
+        let w: Vec<<Fr as JoltField>::Challenge> =
+            std::iter::repeat_with(|| <Fr as JoltField>::Challenge::random(&mut rng))
+                .take(NUM_VARS)
+                .collect();
+
+        let split_eq: GruenSplitEqPolynomial<Fr> =
+            GruenSplitEqPolynomial::new(&w, BindingOrder::LowToHigh);
+        let regular_eq = DensePolynomial::<Fr>::new(EqPolynomial::evals(&w));
+        let indices: Vec<_> = split_eq.par_iter_low_to_high().map(|(i, _)| i).collect();
+        let coeffs: Vec<_> = split_eq
+            .par_iter_low_to_high()
+            .map(|(_, coeff)| coeff)
+            .collect();
+
+        assert_eq!(indices, (0..indices.len()).collect::<Vec<_>>());
+        assert_eq!(regular_eq.Z, coeffs);
+    }
+
+    #[test]
+    fn par_iter_high_to_low() {
+        const NUM_VARS: usize = 10;
+        let mut rng = test_rng();
+        let w: Vec<<Fr as JoltField>::Challenge> =
+            std::iter::repeat_with(|| <Fr as JoltField>::Challenge::random(&mut rng))
+                .take(NUM_VARS)
+                .collect();
+
+        let split_eq: GruenSplitEqPolynomial<Fr> =
+            GruenSplitEqPolynomial::new(&w, BindingOrder::HighToLow);
+        let regular_eq = DensePolynomial::<Fr>::new(EqPolynomial::evals(&w));
+
+        let indices: Vec<_> = split_eq.par_iter_high_to_low().map(|(i, _)| i).collect();
+        let coeffs: Vec<_> = split_eq
+            .par_iter_high_to_low()
+            .map(|(_, coeff)| coeff)
+            .collect();
+
+        assert_eq!(indices, (0..indices.len()).collect::<Vec<_>>());
+        assert_eq!(regular_eq.Z, coeffs);
     }
 }

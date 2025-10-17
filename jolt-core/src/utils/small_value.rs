@@ -1,18 +1,134 @@
 // Small Value Optimization (SVO) helpers for Spartan first sum-check
 
-use crate::field::{JoltField, OptimizedMulI128};
+use crate::field::JoltField;
 
-/// Number of rounds to use for small value optimization.
-/// Testing & estimation shows that 3 rounds is the best tradeoff
-/// It may be 4 rounds when we switch to streaming
-pub const NUM_SVO_ROUNDS: usize = 3;
+// Accumulation primitives for SVO (moved from zkvm/r1cs/types.rs)
+pub mod accum {
+    use crate::field::{FmaddTrunc, JoltField};
+    use ark_ff::biginteger::{I8OrI96, S160, S224};
+    use num_traits::Zero;
+
+    /// Final unreduced product after multiplying by a 256-bit field element (512-bit unsigned)
+    pub type UnreducedProduct<F> = <F as JoltField>::Unreduced<8>;
+
+    /// Fused multiply-add into unreduced accumulators.
+    #[inline(always)]
+    pub fn fmadd_unreduced<F: JoltField>(
+        pos_acc: &mut UnreducedProduct<F>,
+        neg_acc: &mut UnreducedProduct<F>,
+        field: &F,
+        product: S224,
+    ) {
+        let field_bigint = field.as_unreduced_ref();
+        if !product.is_zero() {
+            let mag = F::Unreduced::<4>::from(product);
+            let acc = if product.is_positive() {
+                pos_acc
+            } else {
+                neg_acc
+            };
+            field_bigint.fmadd_trunc::<4, 8>(&mag, acc);
+        }
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct SignedUnreducedAccum<F: JoltField> {
+        pub pos: UnreducedProduct<F>,
+        pub neg: UnreducedProduct<F>,
+    }
+
+    impl<F: JoltField> Default for SignedUnreducedAccum<F> {
+        fn default() -> Self {
+            Self {
+                pos: UnreducedProduct::<F>::zero(),
+                neg: UnreducedProduct::<F>::zero(),
+            }
+        }
+    }
+
+    impl<F: JoltField> SignedUnreducedAccum<F> {
+        #[inline(always)]
+        pub fn new() -> Self {
+            Self::default()
+        }
+
+        #[inline(always)]
+        pub fn clear(&mut self) {
+            self.pos = UnreducedProduct::<F>::zero();
+            self.neg = UnreducedProduct::<F>::zero();
+        }
+
+        /// fmadd with an `I8OrI96` (signed, up to 2 limbs)
+        #[inline(always)]
+        pub fn fmadd_az(&mut self, field: &F, az: I8OrI96) {
+            let field_bigint = field.as_unreduced_ref();
+            let v = az.to_i128();
+            if v != 0 {
+                let abs = v.unsigned_abs();
+                let mag = F::Unreduced::<2>::from(abs);
+                let acc = if v >= 0 { &mut self.pos } else { &mut self.neg };
+                field_bigint.fmadd_trunc::<2, 8>(&mag, acc);
+            }
+        }
+
+        /// fmadd with a `S160` (signed, up to 3 limbs)
+        #[inline(always)]
+        pub fn fmadd_bz(&mut self, field: &F, bz: S160) {
+            let field_bigint = field.as_unreduced_ref();
+            if !bz.is_zero() {
+                let lo = bz.magnitude_lo();
+                let hi = bz.magnitude_hi() as u64;
+                let mag = F::Unreduced::from([lo[0], lo[1], hi]);
+                let acc = if bz.is_positive() {
+                    &mut self.pos
+                } else {
+                    &mut self.neg
+                };
+                field_bigint.fmadd_trunc::<3, 8>(&mag, acc);
+            }
+        }
+
+        /// fmadd with an Az×Bz product value (1..=4 limbs)
+        #[inline(always)]
+        pub fn fmadd_prod(&mut self, field: &F, product: S224) {
+            fmadd_unreduced(&mut self.pos, &mut self.neg, field, product)
+        }
+
+        /// Reduce accumulated value to a field element (pos - neg)
+        #[inline(always)]
+        pub fn reduce_to_field(&self) -> F {
+            F::from_montgomery_reduce(self.pos) - F::from_montgomery_reduce(self.neg)
+        }
+    }
+
+    /// Local helper to convert `S160` to field without using `.to_field()`
+    /// Used for testing purpose only
+    #[cfg(test)]
+    pub fn s160_to_field<F: JoltField>(bz: &S160) -> F {
+        if bz.is_zero() {
+            return F::zero();
+        }
+        let lo = bz.magnitude_lo();
+        let hi = bz.magnitude_hi() as u64;
+        let r64 = F::from_u128(1u128 << 64);
+        let r128 = r64 * r64;
+        let acc = F::from_u64(lo[0]) + r64.mul_u64(lo[1]) + r128.mul_u64(hi);
+        if bz.is_positive() {
+            acc
+        } else {
+            -acc
+        }
+    }
+}
 
 pub mod svo_helpers {
+    use super::accum::{fmadd_unreduced, UnreducedProduct};
     use super::*;
     use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
     use crate::poly::unipoly::CompressedUniPoly;
     use crate::subprotocols::sumcheck::process_eq_sumcheck_round;
     use crate::transcripts::Transcript;
+    use ark_ff::biginteger::{I8OrI96, S160};
 
     // SVOEvalPoint enum definition
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -132,6 +248,43 @@ pub mod svo_helpers {
         map
     }
 
+    /// Returns the list of global ternary indices `k` for all non-binary points,
+    /// in the same deterministic MSB-first order as `build_y_ext_code_map`.
+    /// Size `M` must be exactly `num_non_binary_points(N)`.
+    pub const fn build_non_binary_k_list<const N: usize, const M: usize>() -> [usize; M] {
+        let mut out = [0usize; M];
+        let mut out_idx = 0usize;
+
+        if N == 0 {
+            return out;
+        }
+
+        let num_total_ternary_points = pow(3, N);
+        let mut k = 0usize;
+        while k < num_total_ternary_points {
+            // Check if any ternary digit (base-3) equals 2 (Infinity)
+            let mut temp_k = k;
+            let mut is_non_binary = false;
+            let mut i = 0usize;
+            while i < N {
+                if temp_k % 3 == 2 {
+                    is_non_binary = true;
+                    break;
+                }
+                temp_k /= 3;
+                i += 1;
+            }
+
+            if is_non_binary && out_idx < M {
+                out[out_idx] = k;
+                out_idx += 1;
+            }
+
+            k += 1;
+        }
+        out
+    }
+
     pub const fn v_coords_to_base3_idx(v_coords_lsb_y_ext_order: &[SVOEvalPoint]) -> usize {
         let mut idx = 0;
         let mut current_power_of_3 = 1;
@@ -242,384 +395,6 @@ pub mod svo_helpers {
         v_config.contains(&2)
     }
 
-    pub fn compute_and_update_tA_inplace_generic<const NUM_SVO_ROUNDS: usize, F: JoltField>(
-        binary_az_evals: &[i128],
-        binary_bz_evals: &[i128],
-        e_in_val: &F,
-        temp_tA: &mut [F],
-    ) {
-        match NUM_SVO_ROUNDS {
-            1 => {
-                compute_and_update_tA_inplace_1(binary_az_evals, binary_bz_evals, e_in_val, temp_tA)
-            }
-            2 => {
-                compute_and_update_tA_inplace_2(binary_az_evals, binary_bz_evals, e_in_val, temp_tA)
-            }
-            3 => {
-                compute_and_update_tA_inplace_3(binary_az_evals, binary_bz_evals, e_in_val, temp_tA)
-            }
-            // 81 - 16 = 65 non-binary points
-            4 => compute_and_update_tA_inplace::<4, 65, 81, F>(
-                binary_az_evals,
-                binary_bz_evals,
-                e_in_val,
-                temp_tA,
-            ),
-            _ => {
-                panic!("Unsupported number of SVO rounds: {NUM_SVO_ROUNDS}");
-            }
-        }
-    }
-
-    /// Special case when `num_svo_rounds == 1`
-    /// In this case, we know that there is 3 - 2 = 1 temp_tA accumulator,
-    /// corresponding to temp_tA(infty), which should be updated via
-    /// temp_tA[infty] += e_in_val * (az[1] - az[0]) * (bz[1] - bz[0])
-    #[inline]
-    pub fn compute_and_update_tA_inplace_1<F: JoltField>(
-        binary_az_evals: &[i128],
-        binary_bz_evals: &[i128],
-        e_in_val: &F,
-        temp_tA: &mut [F],
-    ) {
-        debug_assert!(binary_az_evals.len() == 2);
-        debug_assert!(binary_bz_evals.len() == 2);
-        debug_assert!(temp_tA.len() == 1);
-        let az_I = binary_az_evals[1] - binary_az_evals[0];
-        if az_I != 0 {
-            let bz_I = binary_bz_evals[1] - binary_bz_evals[0];
-            if bz_I != 0 {
-                let product_i128 = az_I
-                    .checked_mul(bz_I)
-                    .expect("Az_I*Bz_I product overflow i128");
-                temp_tA[0] += e_in_val.mul_i128(product_i128);
-            }
-        }
-    }
-
-    /// Special case when `num_svo_rounds == 2`
-    /// In this case, we know that there are 4 binary evals of Az and Bz,
-    /// corresponding to (0,0) => 0, (0,1) => 1, (1,0) => 2, (1,1) => 3. (i.e. big endian, TODO: double-check this)
-    ///
-    /// There are 9 - 4 = 5 temp_tA accumulators, with the following logic (in this order 0 => 4 indexing):
-    /// temp_tA[0,∞] += e_in_val * (az[0,1] - az[0,0]) * (bz[0,1] - bz[0,0])
-    /// temp_tA[1,∞] += e_in_val * (az[1,1] - az[1,0]) * (bz[1,1] - bz[1,0])
-    /// temp_tA[∞,0] += e_in_val * (az[1,0] - az[0,0]) * (bz[1,0] - bz[0,0])
-    /// temp_tA[∞,1] += e_in_val * (az[1,1] - az[0,1]) * (bz[1,1] - bz[0,1])
-    /// temp_tA[∞,∞] += e_in_val * (az[1,∞] - az[0,∞]) * (bz[1,∞] - bz[0,∞])
-    #[inline]
-    pub fn compute_and_update_tA_inplace_2<F: JoltField>(
-        binary_az_evals: &[i128],
-        binary_bz_evals: &[i128],
-        e_in_val: &F,
-        temp_tA: &mut [F],
-    ) {
-        debug_assert!(binary_az_evals.len() == 4);
-        debug_assert!(binary_bz_evals.len() == 4);
-        debug_assert!(temp_tA.len() == 5);
-        // Binary evaluations: (Y0,Y1) -> index Y0*2 + Y1
-        let az00 = binary_az_evals[0];
-        let bz00 = binary_bz_evals[0]; // Y0=0, Y1=0
-        let az01 = binary_az_evals[1];
-        let bz01 = binary_bz_evals[1]; // Y0=0, Y1=1
-        let az10 = binary_az_evals[2];
-        let bz10 = binary_bz_evals[2]; // Y0=1, Y1=0
-        let az11 = binary_az_evals[3];
-        let bz11 = binary_bz_evals[3]; // Y0=1, Y1=1
-
-        // Extended evaluations (points with at least one I)
-        // temp_tA indices follow the order: (0,I), (1,I), (I,0), (I,1), (I,I)
-
-        // 1. Point (0,I) -> temp_tA[0]
-        let az_0I = az01 - az00;
-        let bz_0I = bz01 - bz00;
-        if az_0I != 0 && bz_0I != 0 {
-            let prod_0I = az_0I
-                .checked_mul(bz_0I)
-                .expect("Product overflow for (0,I)");
-            temp_tA[0] += e_in_val.mul_i128(prod_0I);
-        }
-
-        // 2. Point (1,I) -> temp_tA[1]
-        let az_1I = az11 - az10;
-        let bz_1I = bz11 - bz10;
-        if az_1I != 0 && bz_1I != 0 {
-            let prod_1I = az_1I
-                .checked_mul(bz_1I)
-                .expect("Product overflow for (1,I)");
-            temp_tA[1] += e_in_val.mul_i128(prod_1I);
-        }
-
-        // 3. Point (I,0) -> temp_tA[2]
-        let az_I0 = az10 - az00;
-        if az_I0 != 0 {
-            let bz_I0 = bz10 - bz00;
-            if bz_I0 != 0 {
-                let prod_I0 = az_I0
-                    .checked_mul(bz_I0)
-                    .expect("Product overflow for (I,0)");
-                temp_tA[2] += e_in_val.mul_i128(prod_I0);
-            }
-        }
-
-        // 4. Point (I,1) -> temp_tA[3]
-        let az_I1 = az11 - az01;
-        if az_I1 != 0 {
-            let bz_I1 = bz11 - bz01;
-            if bz_I1 != 0 {
-                let prod_I1 = az_I1
-                    .checked_mul(bz_I1)
-                    .expect("Product overflow for (I,1)");
-                temp_tA[3] += e_in_val.mul_i128(prod_I1);
-            }
-        }
-
-        // 5. Point (I,I) -> temp_tA[4]
-        let az_II = az_1I - az_0I;
-        if az_II != 0 {
-            let bz_II = bz_1I - bz_0I;
-            if bz_II != 0 {
-                let prod_II = az_II
-                    .checked_mul(bz_II)
-                    .expect("Product overflow for (I,I)");
-                // At this point, pretty unlikely for prod_II to be 1
-                temp_tA[4] += e_in_val.mul_i128(prod_II);
-            }
-        }
-    }
-
-    /// Special case when `num_svo_rounds == 3`
-    /// In this case, we know that there are 8 binary evals of Az and Bz,
-    /// corresponding to (0,0,0) => 0, (0,0,1) => 1, (0,1,0) => 2, (0,1,1) => 3, (1,0,0) => 4,
-    /// (1,0,1) => 5, (1,1,0) => 6, (1,1,1) => 7.
-    ///
-    /// There are 27 - 8 = 19 temp_tA accumulators, with the following logic:
-    /// (listed in increasing order, when considering ∞ as 2 and going from MSB to LSB)
-    ///
-    /// temp_tA[0,0,∞] += e_in_val * (az[0,0,1] - az[0,0,0]) * (bz[0,0,1] - bz[0,0,0])
-    /// temp_tA[0,1,∞] += e_in_val * (az[0,1,1] - az[0,1,0]) * (bz[0,1,1] - bz[0,1,0])
-    /// temp_tA[0,∞,0] += e_in_val * (az[0,1,0] - az[0,0,0]) * (bz[0,1,0] - bz[0,0,0])
-    /// temp_tA[0,∞,1] += e_in_val * (az[0,1,1] - az[0,0,1]) * (bz[0,1,1] - bz[0,0,1])
-    /// temp_tA[0,∞,∞] += e_in_val * (az[0,1,∞] - az[0,0,∞]) * (bz[0,1,∞] - bz[0,0,∞])
-    ///
-    /// temp_tA[1,0,∞] += e_in_val * (az[1,0,1] - az[1,0,0]) * (bz[1,0,1] - bz[1,0,0])
-    /// temp_tA[1,1,∞] += e_in_val * (az[1,1,1] - az[1,1,0]) * (bz[1,1,1] - bz[1,1,0])
-    /// temp_tA[1,∞,0] += e_in_val * (az[1,1,0] - az[1,0,0]) * (bz[1,1,0] - bz[1,0,0])
-    /// temp_tA[1,∞,1] += e_in_val * (az[1,1,0] - az[1,0,0]) * (bz[1,1,0] - bz[1,0,0])
-    /// temp_tA[1,∞,∞] += e_in_val * (az[1,1,∞] - az[1,0,∞]) * (bz[1,1,∞] - bz[1,0,∞])
-    ///
-    /// temp_tA[∞,0,0] += e_in_val * (az[1,0,0] - az[0,0,0]) * (bz[1,0,0] - bz[0,0,0])
-    /// temp_tA[∞,0,1] += e_in_val * (az[1,0,1] - az[0,0,1]) * (bz[1,0,1] - bz[0,0,1])
-    /// temp_tA[∞,0,∞] += e_in_val * (az[1,0,∞] - az[0,0,∞]) * (bz[1,0,∞] - bz[0,0,∞])
-    /// temp_tA[∞,1,0] += e_in_val * (az[1,1,0] - az[0,1,0]) * (bz[1,1,0] - bz[0,1,0])
-    /// temp_tA[∞,1,1] += e_in_val * (az[1,1,1] - az[0,1,1]) * (bz[1,1,1] - bz[0,1,1])
-    /// temp_tA[∞,1,∞] += e_in_val * (az[1,1,∞] - az[0,1,∞]) * (bz[1,1,∞] - bz[0,1,∞])
-    /// temp_tA[∞,∞,0] += e_in_val * (az[1,∞,0] - az[0,∞,0]) * (bz[1,∞,0] - bz[0,∞,0])
-    /// temp_tA[∞,∞,1] += e_in_val * (az[1,∞,1] - az[0,∞,1]) * (bz[1,∞,1] - bz[0,∞,1])
-    /// temp_tA[∞,∞,∞] += e_in_val * (az[1,∞,∞] - az[0,∞,∞]) * (bz[1,∞,∞] - bz[0,∞,∞])
-    ///
-    #[inline]
-    pub fn compute_and_update_tA_inplace_3<F: JoltField>(
-        binary_az_evals: &[i128],
-        binary_bz_evals: &[i128],
-        e_in_val: &F,
-        temp_tA: &mut [F],
-    ) {
-        debug_assert!(binary_az_evals.len() == 8);
-        debug_assert!(binary_bz_evals.len() == 8);
-        debug_assert!(temp_tA.len() == 19);
-
-        // Binary evaluations (Y0,Y1,Y2) -> index Y0*4 + Y1*2 + Y2
-        let az000 = binary_az_evals[0];
-        let bz000 = binary_bz_evals[0];
-        let az001 = binary_az_evals[1];
-        let bz001 = binary_bz_evals[1];
-        let az010 = binary_az_evals[2];
-        let bz010 = binary_bz_evals[2];
-        let az011 = binary_az_evals[3];
-        let bz011 = binary_bz_evals[3];
-        let az100 = binary_az_evals[4];
-        let bz100 = binary_bz_evals[4];
-        let az101 = binary_az_evals[5];
-        let bz101 = binary_bz_evals[5];
-        let az110 = binary_az_evals[6];
-        let bz110 = binary_bz_evals[6];
-        let az111 = binary_az_evals[7];
-        let bz111 = binary_bz_evals[7];
-
-        // Populate temp_tA in lexicographical MSB-first order
-        // Z=0, O=1, I=2 for Y_i
-
-        // Point (0,0,I) -> temp_tA[0]
-        let az_00I = az001 - az000;
-        let bz_00I = bz001 - bz000;
-        if az_00I != 0 && bz_00I != 0 {
-            let prod = az_00I.checked_mul(bz_00I).expect("Prod overflow");
-            // Test `mul_i128_1_optimized`
-            temp_tA[0] += e_in_val.mul_i128_1_optimized(prod);
-        }
-
-        // Point (0,1,I) -> temp_tA[1]
-        let az_01I = az011 - az010;
-        let bz_01I = bz011 - bz010;
-        if az_01I != 0 && bz_01I != 0 {
-            let prod = az_01I.checked_mul(bz_01I).expect("Prod overflow");
-            temp_tA[1] += e_in_val.mul_i128(prod);
-        }
-
-        // Point (0,I,0) -> temp_tA[2]
-        let az_0I0 = az010 - az000;
-        let bz_0I0 = bz010 - bz000;
-        if az_0I0 != 0 && bz_0I0 != 0 {
-            let prod = az_0I0.checked_mul(bz_0I0).expect("Prod overflow");
-            temp_tA[2] += e_in_val.mul_i128(prod);
-        }
-
-        // Point (0,I,1) -> temp_tA[3]
-        let az_0I1 = az011 - az001;
-        let bz_0I1 = bz011 - bz001;
-        if az_0I1 != 0 && bz_0I1 != 0 {
-            let prod = az_0I1.checked_mul(bz_0I1).expect("Prod overflow");
-            temp_tA[3] += e_in_val.mul_i128(prod);
-        }
-
-        // Point (0,I,I) -> temp_tA[4]
-        let az_0II = az_01I - az_00I;
-        let bz_0II = bz_01I - bz_00I; // Need to compute this outside for III term
-        if az_0II != 0 && bz_0II != 0 {
-            let prod = az_0II.checked_mul(bz_0II).expect("Prod overflow");
-            temp_tA[4] += e_in_val.mul_i128(prod);
-        }
-
-        // Point (1,0,I) -> temp_tA[5]
-        let az_10I = az101 - az100;
-        let bz_10I = bz101 - bz100;
-        if az_10I != 0 && bz_10I != 0 {
-            let prod = az_10I.checked_mul(bz_10I).expect("Prod overflow");
-            temp_tA[5] += e_in_val.mul_i128(prod);
-        }
-
-        // Point (1,1,I) -> temp_tA[6]
-        let az_11I = az111 - az110;
-        let bz_11I = bz111 - bz110;
-        if az_11I != 0 && bz_11I != 0 {
-            let prod = az_11I.checked_mul(bz_11I).expect("Prod overflow");
-            temp_tA[6] += e_in_val.mul_i128(prod);
-        }
-
-        // Point (1,I,0) -> temp_tA[7]
-        let az_1I0 = az110 - az100;
-        let bz_1I0 = bz110 - bz100;
-        if az_1I0 != 0 && bz_1I0 != 0 {
-            let prod = az_1I0.checked_mul(bz_1I0).expect("Prod overflow");
-            temp_tA[7] += e_in_val.mul_i128(prod);
-        }
-
-        // Point (1,I,1) -> temp_tA[8]
-        let az_1I1 = az111 - az101;
-        let bz_1I1 = bz111 - bz101;
-        if az_1I1 != 0 && bz_1I1 != 0 {
-            let prod = az_1I1.checked_mul(bz_1I1).expect("Prod overflow");
-            temp_tA[8] += e_in_val.mul_i128(prod);
-        }
-
-        // Point (1,I,I) -> temp_tA[9]
-        let az_1II = az_11I - az_10I;
-        let bz_1II = bz_11I - bz_10I; // Need to compute this outside for III term
-        if az_1II != 0 && bz_1II != 0 {
-            let prod = az_1II.checked_mul(bz_1II).expect("Prod overflow");
-            temp_tA[9] += e_in_val.mul_i128(prod);
-        }
-
-        // Point (I,0,0) -> temp_tA[10]
-        let az_I00 = az100 - az000;
-        let bz_I00 = bz100 - bz000;
-        if az_I00 != 0 && bz_I00 != 0 {
-            let prod = az_I00.checked_mul(bz_I00).expect("Prod overflow");
-            temp_tA[10] += e_in_val.mul_i128(prod);
-        }
-
-        // Point (I,0,1) -> temp_tA[11]
-        let az_I01 = az101 - az001;
-        let bz_I01 = bz101 - bz001;
-        if az_I01 != 0 && bz_I01 != 0 {
-            let prod = az_I01.checked_mul(bz_I01).expect("Prod overflow");
-            temp_tA[11] += e_in_val.mul_i128(prod);
-        }
-
-        // Point (I,0,I) -> temp_tA[12]
-        let az_I0I = az_I01 - az_I00; // Uses precomputed az_I01, az_I00
-        if az_I0I != 0 {
-            let bz_I0I = bz_I01 - bz_I00; // Uses precomputed bz_I01, bz_I00
-            if bz_I0I != 0 {
-                let prod = az_I0I.checked_mul(bz_I0I).expect("Prod overflow");
-                temp_tA[12] += e_in_val.mul_i128(prod);
-            }
-        }
-
-        // Point (I,1,0) -> temp_tA[13]
-        let az_I10 = az110 - az010;
-        let bz_I10 = bz110 - bz010;
-        if az_I10 != 0 && bz_I10 != 0 {
-            let prod = az_I10.checked_mul(bz_I10).expect("Prod overflow");
-            temp_tA[13] += e_in_val.mul_i128(prod);
-        }
-
-        // Point (I,1,1) -> temp_tA[14]
-        let az_I11 = az111 - az011;
-        let bz_I11 = bz111 - bz011;
-        if az_I11 != 0 && bz_I11 != 0 {
-            let prod = az_I11.checked_mul(bz_I11).expect("Prod overflow");
-            temp_tA[14] += e_in_val.mul_i128(prod);
-        }
-
-        // Point (I,1,I) -> temp_tA[15]
-        let az_I1I = az_I11 - az_I10; // Uses precomputed az_I11, az_I10
-        if az_I1I != 0 {
-            let bz_I1I = bz_I11 - bz_I10; // Uses precomputed bz_I11, bz_I10
-            if bz_I1I != 0 {
-                let prod = az_I1I.checked_mul(bz_I1I).expect("Prod overflow");
-                temp_tA[15] += e_in_val.mul_i128(prod);
-            }
-        }
-
-        // Point (I,I,0) -> temp_tA[16]
-        let az_II0 = az_1I0 - az_0I0; // Uses precomputed az_1I0, az_0I0
-        if az_II0 != 0 {
-            let bz_II0 = bz_1I0 - bz_0I0; // Uses precomputed bz_1I0, bz_0I0
-            if bz_II0 != 0 {
-                let prod = az_II0.checked_mul(bz_II0).expect("Prod overflow");
-                temp_tA[16] += e_in_val.mul_i128(prod);
-            }
-        }
-
-        // Point (I,I,1) -> temp_tA[17]
-        let az_II1 = az_1I1 - az_0I1; // Uses precomputed az_1I1, az_0I1
-        if az_II1 != 0 {
-            let bz_II1 = bz_1I1 - bz_0I1; // Uses precomputed bz_1I1, bz_0I1
-            if bz_II1 != 0 {
-                let prod = az_II1.checked_mul(bz_II1).expect("Prod overflow");
-                temp_tA[17] += e_in_val.mul_i128(prod);
-            }
-        }
-
-        // Point (I,I,I) -> temp_tA[18]
-        // az_III depends on az_1II and az_0II.
-        // az_1II was computed for temp_tA[9]
-        // az_0II was computed for temp_tA[4]
-        let az_III = az_1II - az_0II;
-        if az_III != 0 {
-            // bz_III depends on bz_1II and bz_0II.
-            // bz_1II was computed for temp_tA[9]
-            // bz_0II was computed for temp_tA[4]
-            let bz_III = bz_1II - bz_0II;
-            if bz_III != 0 {
-                let prod = az_III.checked_mul(bz_III).expect("Prod overflow");
-                temp_tA[18] += e_in_val.mul_i128(prod);
-            }
-        }
-    }
-
     /// Converts MSB-first SVOEvalPoint coordinates to their global ternary index k.
     /// k = sum_{i=0}^{N-1} val(coords_msb[i]) * 3^(N-1-i)
     pub const fn svo_coords_msb_to_k_ternary_idx<const N: usize>(
@@ -643,157 +418,451 @@ pub mod svo_helpers {
         k_val
     }
 
-    /// Recursive helper to compute extended polynomial evaluations.
-    /// Uses memoization to store intermediate results.
-    fn get_extended_eval<const N: usize, const NUM_TERN_PTS: usize>(
-        k_target: usize,
-        binary_evals_input: &[i128],
-        memoized_evals: &mut [Option<i128>; NUM_TERN_PTS], // Using array for memoization table
-        ternary_point_info_table: &[TernaryPointInfo<N>; NUM_TERN_PTS],
-    ) -> i128 {
-        if let Some(val) = memoized_evals[k_target] {
-            return val;
-        }
-
-        let point_info = ternary_point_info_table[k_target]; // This is a copy, which is fine for this small struct
-        let result = if point_info.is_binary {
-            binary_evals_input[point_info.binary_eval_idx]
-        } else {
-            // These recursive calls must use the same memoization table and info table
-            let eval_at_1 = get_extended_eval(
-                point_info.k_val_at_one,
-                binary_evals_input,
-                memoized_evals,
-                ternary_point_info_table,
-            );
-            let eval_at_0 = get_extended_eval(
-                point_info.k_val_at_zero,
-                binary_evals_input,
-                memoized_evals,
-                ternary_point_info_table,
-            );
-            eval_at_1 - eval_at_0
-        };
-
-        memoized_evals[k_target] = Some(result);
-        result
-    }
-
-    /// Performs in-place multilinear extension on ternary evaluation vectors
-    /// and updates the temporary accumulator `temp_tA` with the product contribution.
-    /// This is the generic version with no bound on num_svo_rounds.
-    /// TODO: optimize this further
+    /// Generic version for arbitrary NUM_SVO_ROUNDS
+    /// NOTE: testing shows about 2x slowdown over hard-coded versions for NUM_SVO_ROUNDS = 1, 2, 3
+    /// We keep this for reference and testing
     #[inline]
-    pub fn compute_and_update_tA_inplace<
+    pub fn compute_and_update_tA_inplace_const<
         const NUM_SVO_ROUNDS: usize,
         const M_NON_BINARY_POINTS_CONST: usize, // num_non_binary_points(NUM_SVO_ROUNDS)
         const NUM_TERNARY_POINTS_CONST: usize,  // pow(3, NUM_SVO_ROUNDS)
         F: JoltField,
     >(
-        binary_az_evals_input: &[i128], // Source of 2^N binary evals for Az
-        binary_bz_evals_input: &[i128], // Source of 2^N binary evals for Bz
+        binary_az_evals_input: &[I8OrI96], // 2^N Az at binary points
+        binary_bz_evals_input: &[S160],    // 2^N Bz at binary points
         e_in_val: &F,
-        temp_tA: &mut [F], // Target for M_NON_BINARY_POINTS_CONST non-binary extended products
+        tA_pos_acc: &mut [UnreducedProduct<F>],
+        tA_neg_acc: &mut [UnreducedProduct<F>],
     ) {
         if NUM_SVO_ROUNDS == 0 {
-            debug_assert!(
-                temp_tA.is_empty(),
-                "temp_tA should be empty for 0 SVO rounds"
-            );
-            // M_NON_BINARY_POINTS_CONST would be 0, NUM_TERNARY_POINTS_CONST would be 1.
-            // The loops below would not run.
+            debug_assert!(binary_az_evals_input.is_empty());
+            debug_assert!(binary_bz_evals_input.is_empty());
+            debug_assert!(tA_pos_acc.is_empty());
+            debug_assert!(tA_neg_acc.is_empty());
             return;
         }
 
-        // Verify consistency of const generic arguments with NUM_SVO_ROUNDS
+        // Sanity: consts must match the chosen NUM_SVO_ROUNDS
         debug_assert_eq!(
             M_NON_BINARY_POINTS_CONST,
-            num_non_binary_points(NUM_SVO_ROUNDS),
-            "M_NON_BINARY_POINTS_CONST mismatch"
+            num_non_binary_points(NUM_SVO_ROUNDS)
         );
-        debug_assert_eq!(
-            NUM_TERNARY_POINTS_CONST,
-            pow(3, NUM_SVO_ROUNDS),
-            "NUM_TERNARY_POINTS_CONST mismatch"
-        );
+        debug_assert_eq!(NUM_TERNARY_POINTS_CONST, pow(3, NUM_SVO_ROUNDS));
 
-        let num_binary_points = 1 << NUM_SVO_ROUNDS;
-        // temp_tA length is M_NON_BINARY_POINTS_CONST
+        let num_binary_points = 1usize << NUM_SVO_ROUNDS;
+        debug_assert_eq!(binary_az_evals_input.len(), num_binary_points);
+        debug_assert_eq!(binary_bz_evals_input.len(), num_binary_points);
+        debug_assert_eq!(tA_pos_acc.len(), M_NON_BINARY_POINTS_CONST);
+        debug_assert_eq!(tA_neg_acc.len(), M_NON_BINARY_POINTS_CONST);
 
-        debug_assert_eq!(
-            binary_az_evals_input.len(),
-            num_binary_points,
-            "binary_az_evals_input length mismatch"
-        );
-        debug_assert_eq!(
-            binary_bz_evals_input.len(),
-            num_binary_points,
-            "binary_bz_evals_input length mismatch"
-        );
-        debug_assert_eq!(
-            temp_tA.len(),
-            M_NON_BINARY_POINTS_CONST, // temp_tA stores only non-binary point contributions
-            "temp_tA length mismatch with M_NON_BINARY_POINTS_CONST"
-        );
-
-        // This table contains info for ALL 3^N points, used by the recursive helper.
+        // Precompute ternary point info (const-evaluable, but bind as local)
         let ternary_point_info_table: [TernaryPointInfo<NUM_SVO_ROUNDS>; NUM_TERNARY_POINTS_CONST] =
             precompute_ternary_point_infos::<NUM_SVO_ROUNDS, NUM_TERNARY_POINTS_CONST>();
 
-        // Memoization tables for all 3^N points.
-        // Initialize with a value that signifies "not computed yet".
-        // Using array for memoization tables.
-        let mut memoized_az_evals: [Option<i128>; NUM_TERNARY_POINTS_CONST] =
+        // Memo tables (const-size arrays)
+        let mut memoized_az_evals: [Option<I8OrI96>; NUM_TERNARY_POINTS_CONST] =
             [None; NUM_TERNARY_POINTS_CONST];
-        let mut memoized_bz_evals: [Option<i128>; NUM_TERNARY_POINTS_CONST] =
+        let mut memoized_bz_evals: [Option<S160>; NUM_TERNARY_POINTS_CONST] =
             [None; NUM_TERNARY_POINTS_CONST];
 
-        // Get the map of non-binary points. The order here dictates temp_tA indexing.
-        let y_ext_code_map_non_binary: [[SVOEvalPoint; NUM_SVO_ROUNDS]; M_NON_BINARY_POINTS_CONST] =
-            build_y_ext_code_map::<NUM_SVO_ROUNDS, M_NON_BINARY_POINTS_CONST>();
+        // Recursive helper: Az extension at ternary index k with memoization
+        #[inline]
+        fn get_az_ext_const<const N: usize, const NUM_TERN: usize>(
+            k: usize,
+            bin: &[I8OrI96],
+            memo: &mut [Option<I8OrI96>; NUM_TERN],
+            info: &[TernaryPointInfo<N>; NUM_TERN],
+        ) -> I8OrI96 {
+            if let Some(v) = memo[k] {
+                return v;
+            }
+            let out = if info[k].is_binary {
+                bin[info[k].binary_eval_idx]
+            } else {
+                let e1 = get_az_ext_const::<N, NUM_TERN>(info[k].k_val_at_one, bin, memo, info);
+                let e0 = get_az_ext_const::<N, NUM_TERN>(info[k].k_val_at_zero, bin, memo, info);
+                e1 - e0
+            };
+            memo[k] = Some(out);
+            out
+        }
+
+        // Recursive helper: Bz extension at ternary index k with memoization
+        #[inline]
+        fn get_bz_ext_const<const N: usize, const NUM_TERN: usize>(
+            k: usize,
+            bin: &[S160],
+            memo: &mut [Option<S160>; NUM_TERN],
+            info: &[TernaryPointInfo<N>; NUM_TERN],
+        ) -> S160 {
+            if let Some(v) = memo[k] {
+                return v;
+            }
+            let out = if info[k].is_binary {
+                bin[info[k].binary_eval_idx]
+            } else {
+                let e1 = get_bz_ext_const::<N, NUM_TERN>(info[k].k_val_at_one, bin, memo, info);
+                let e0 = get_bz_ext_const::<N, NUM_TERN>(info[k].k_val_at_zero, bin, memo, info);
+                e1 - e0
+            };
+            memo[k] = Some(out);
+            out
+        }
+
+        // Iterate non-binary points via their global k indices in deterministic MSB-first order
+        let non_binary_k_list: [usize; M_NON_BINARY_POINTS_CONST] =
+            build_non_binary_k_list::<NUM_SVO_ROUNDS, M_NON_BINARY_POINTS_CONST>();
 
         for i_temp_tA in 0..M_NON_BINARY_POINTS_CONST {
-            let current_y_ext_coords_msb: &[SVOEvalPoint; NUM_SVO_ROUNDS] =
-                &y_ext_code_map_non_binary[i_temp_tA];
+            let k_target = non_binary_k_list[i_temp_tA];
 
-            // Convert the MSB coordinates of the current non-binary point to its global k_ternary_idx
-            let k_target_idx =
-                svo_coords_msb_to_k_ternary_idx::<NUM_SVO_ROUNDS>(current_y_ext_coords_msb);
+            debug_assert!(k_target < NUM_TERNARY_POINTS_CONST);
+            debug_assert!(!ternary_point_info_table[k_target].is_binary);
 
-            // Sanity check: the k_target_idx must be non-binary.
-            // The ternary_point_info_table can be indexed by k_target_idx.
-            debug_assert!(
-                k_target_idx < NUM_TERNARY_POINTS_CONST,
-                "k_target_idx out of bounds for ternary_point_info_table"
-            );
-            debug_assert!(
-                !ternary_point_info_table[k_target_idx].is_binary,
-                "Target for temp_tA[{i_temp_tA}] (k={k_target_idx}) is unexpectedly binary."
-            );
-
-            let az_val = get_extended_eval::<NUM_SVO_ROUNDS, NUM_TERNARY_POINTS_CONST>(
-                k_target_idx,
+            let az_ext = get_az_ext_const::<NUM_SVO_ROUNDS, NUM_TERNARY_POINTS_CONST>(
+                k_target,
                 binary_az_evals_input,
                 &mut memoized_az_evals,
                 &ternary_point_info_table,
             );
 
-            if az_val != 0 {
-                let bz_val = get_extended_eval::<NUM_SVO_ROUNDS, NUM_TERNARY_POINTS_CONST>(
-                    k_target_idx,
-                    binary_bz_evals_input,
-                    &mut memoized_bz_evals,
-                    &ternary_point_info_table,
-                );
+            // `az_ext` is likely to be zero
+            if az_ext.is_zero() {
+                continue;
+            }
 
-                if bz_val != 0 {
-                    let product = az_val
-                        .checked_mul(bz_val)
-                        .expect("Extended Az*Bz product overflow i128");
-                    // Note: temp_tA is indexed by `i_temp_tA` which is the iteration order
-                    // of non-binary points from build_y_ext_code_map.
-                    temp_tA[i_temp_tA] += e_in_val.mul_i128(product);
-                }
+            let bz_ext = get_bz_ext_const::<NUM_SVO_ROUNDS, NUM_TERNARY_POINTS_CONST>(
+                k_target,
+                binary_bz_evals_input,
+                &mut memoized_bz_evals,
+                &ternary_point_info_table,
+            );
+
+            // No need for this - `bz_ext` is less likely to be zero than `az_ext`
+            // if bz_ext.is_zero() { continue; }
+
+            let prod = az_ext * bz_ext;
+            fmadd_unreduced::<F>(
+                &mut tA_pos_acc[i_temp_tA],
+                &mut tA_neg_acc[i_temp_tA],
+                e_in_val,
+                prod,
+            );
+        }
+    }
+
+    /// Specialized small-value kernel when `NUM_SVO_ROUNDS == 2`.
+    /// Updates 5 non-binary accumulators corresponding to:
+    /// (0,I), (1,I), (I,0), (I,1), (I,I) in this order.
+    #[inline]
+    pub fn compute_and_update_tA_inplace_2<F: JoltField>(
+        binary_az_evals: &[I8OrI96],
+        binary_bz_evals: &[S160],
+        e_in_val: &F,
+        tA_pos_acc: &mut [UnreducedProduct<F>],
+        tA_neg_acc: &mut [UnreducedProduct<F>],
+    ) {
+        debug_assert!(binary_az_evals.len() == 4);
+        debug_assert!(binary_bz_evals.len() == 4);
+        debug_assert!(tA_pos_acc.len() == 5 && tA_neg_acc.len() == 5);
+
+        // Binary evaluations (Y0,Y1) -> index Y0*2 + Y1
+        let az00 = binary_az_evals[0];
+        let bz00 = binary_bz_evals[0];
+        let az01 = binary_az_evals[1];
+        let bz01 = binary_bz_evals[1];
+        let az10 = binary_az_evals[2];
+        let bz10 = binary_bz_evals[2];
+        let az11 = binary_az_evals[3];
+        let bz11 = binary_bz_evals[3];
+
+        // Precompute first-order diffs
+        let az_0i = az01 - az00;
+        let bz_0i = bz01 - bz00;
+        let az_1i = az11 - az10;
+        let bz_1i = bz11 - bz10;
+        let az_i0 = az10 - az00;
+        let bz_i0 = bz10 - bz00;
+        let az_i1 = az11 - az01;
+        let bz_i1 = bz11 - bz01;
+
+        // 1. (0,I) -> tA[0]
+        if !az_0i.is_zero() && !bz_0i.is_zero() {
+            let prod = az_0i * bz_0i;
+            fmadd_unreduced::<F>(&mut tA_pos_acc[0], &mut tA_neg_acc[0], e_in_val, prod);
+        }
+
+        // 2. (1,I) -> tA[1]
+        if !az_1i.is_zero() && !bz_1i.is_zero() {
+            let prod = az_1i * bz_1i;
+            fmadd_unreduced::<F>(&mut tA_pos_acc[1], &mut tA_neg_acc[1], e_in_val, prod);
+        }
+
+        // 3. (I,0) -> tA[2]
+        if !az_i0.is_zero() && !bz_i0.is_zero() {
+            let prod = az_i0 * bz_i0;
+            fmadd_unreduced::<F>(&mut tA_pos_acc[2], &mut tA_neg_acc[2], e_in_val, prod);
+        }
+
+        // 4. (I,1) -> tA[3]
+        if !az_i1.is_zero() && !bz_i1.is_zero() {
+            let prod = az_i1 * bz_i1;
+            fmadd_unreduced::<F>(&mut tA_pos_acc[3], &mut tA_neg_acc[3], e_in_val, prod);
+        }
+
+        // 5. (I,I) -> tA[4]
+        let az_ii = az_1i - az_0i;
+        let bz_ii = bz_1i - bz_0i;
+        if !az_ii.is_zero() && !bz_ii.is_zero() {
+            let prod = az_ii * bz_ii;
+            fmadd_unreduced::<F>(&mut tA_pos_acc[4], &mut tA_neg_acc[4], e_in_val, prod);
+        }
+    }
+
+    /// Specialized small-value kernel when `NUM_SVO_ROUNDS == 3`.
+    /// Updates 19 non-binary accumulators in the same order as the field version.
+    #[inline]
+    pub fn compute_and_update_tA_inplace_3<F: JoltField>(
+        binary_az_evals: &[I8OrI96],
+        binary_bz_evals: &[S160],
+        e_in_val: &F,
+        tA_pos_acc: &mut [UnreducedProduct<F>],
+        tA_neg_acc: &mut [UnreducedProduct<F>],
+    ) {
+        debug_assert!(binary_az_evals.len() == 8);
+        debug_assert!(binary_bz_evals.len() == 8);
+        debug_assert!(tA_pos_acc.len() == 19 && tA_neg_acc.len() == 19);
+
+        // Binary evaluations (Y0,Y1,Y2) -> index Y0*4 + Y1*2 + Y2
+        let az000 = binary_az_evals[0];
+        let bz000 = binary_bz_evals[0];
+        let az001 = binary_az_evals[1];
+        let bz001 = binary_bz_evals[1];
+        let az010 = binary_az_evals[2];
+        let bz010 = binary_bz_evals[2];
+        let az011 = binary_az_evals[3];
+        let bz011 = binary_bz_evals[3];
+        let az100 = binary_az_evals[4];
+        let bz100 = binary_bz_evals[4];
+        let az101 = binary_az_evals[5];
+        let bz101 = binary_bz_evals[5];
+        let az110 = binary_az_evals[6];
+        let bz110 = binary_bz_evals[6];
+        let az111 = binary_az_evals[7];
+        let bz111 = binary_bz_evals[7];
+
+        // Precompute diffs used multiple times
+        let az_00i = az001 - az000;
+        let bz_00i = bz001 - bz000;
+        if !az_00i.is_zero() && !bz_00i.is_zero() {
+            let prod = az_00i * bz_00i;
+            fmadd_unreduced::<F>(&mut tA_pos_acc[0], &mut tA_neg_acc[0], e_in_val, prod);
+        }
+
+        let az_01i = az011 - az010;
+        let bz_01i = bz011 - bz010;
+        if !az_01i.is_zero() && !bz_01i.is_zero() {
+            let prod = az_01i * bz_01i;
+            fmadd_unreduced::<F>(&mut tA_pos_acc[1], &mut tA_neg_acc[1], e_in_val, prod);
+        }
+
+        let az_0i0 = az010 - az000;
+        let bz_0i0 = bz010 - bz000;
+        if !az_0i0.is_zero() && !bz_0i0.is_zero() {
+            let prod = az_0i0 * bz_0i0;
+            fmadd_unreduced::<F>(&mut tA_pos_acc[2], &mut tA_neg_acc[2], e_in_val, prod);
+        }
+
+        let az_0i1 = az011 - az001;
+        let bz_0i1 = bz011 - bz001;
+        if !az_0i1.is_zero() && !bz_0i1.is_zero() {
+            let prod = az_0i1 * bz_0i1;
+            fmadd_unreduced::<F>(&mut tA_pos_acc[3], &mut tA_neg_acc[3], e_in_val, prod);
+        }
+
+        let az_0ii = az_01i - az_00i;
+        let bz_0ii = bz_01i - bz_00i;
+        if !az_0ii.is_zero() && !bz_0ii.is_zero() {
+            let prod = az_0ii * bz_0ii;
+            fmadd_unreduced::<F>(&mut tA_pos_acc[4], &mut tA_neg_acc[4], e_in_val, prod);
+        }
+
+        let az_10i = az101 - az100;
+        let bz_10i = bz101 - bz100;
+        if !az_10i.is_zero() && !bz_10i.is_zero() {
+            let prod = az_10i * bz_10i;
+            fmadd_unreduced::<F>(&mut tA_pos_acc[5], &mut tA_neg_acc[5], e_in_val, prod);
+        }
+
+        let az_11i = az111 - az110;
+        let bz_11i = bz111 - bz110;
+        if !az_11i.is_zero() && !bz_11i.is_zero() {
+            let prod = az_11i * bz_11i;
+            fmadd_unreduced::<F>(&mut tA_pos_acc[6], &mut tA_neg_acc[6], e_in_val, prod);
+        }
+
+        let az_1i0 = az110 - az100;
+        let bz_1i0 = bz110 - bz100;
+        if !az_1i0.is_zero() && !bz_1i0.is_zero() {
+            let prod = az_1i0 * bz_1i0;
+            fmadd_unreduced::<F>(&mut tA_pos_acc[7], &mut tA_neg_acc[7], e_in_val, prod);
+        }
+
+        let az_1i1 = az111 - az101;
+        let bz_1i1 = bz111 - bz101;
+        if !az_1i1.is_zero() && !bz_1i1.is_zero() {
+            let prod = az_1i1 * bz_1i1;
+            fmadd_unreduced::<F>(&mut tA_pos_acc[8], &mut tA_neg_acc[8], e_in_val, prod);
+        }
+
+        let az_1ii = az_11i - az_10i;
+        let bz_1ii = bz_11i - bz_10i;
+        if !az_1ii.is_zero() && !bz_1ii.is_zero() {
+            let prod = az_1ii * bz_1ii;
+            fmadd_unreduced::<F>(&mut tA_pos_acc[9], &mut tA_neg_acc[9], e_in_val, prod);
+        }
+
+        let az_i00 = az100 - az000;
+        let bz_i00 = bz100 - bz000;
+        if !az_i00.is_zero() && !bz_i00.is_zero() {
+            let prod = az_i00 * bz_i00;
+            fmadd_unreduced::<F>(&mut tA_pos_acc[10], &mut tA_neg_acc[10], e_in_val, prod);
+        }
+
+        let az_i01 = az101 - az001;
+        let bz_i01 = bz101 - bz001;
+        if !az_i01.is_zero() && !bz_i01.is_zero() {
+            let prod = az_i01 * bz_i01;
+            fmadd_unreduced::<F>(&mut tA_pos_acc[11], &mut tA_neg_acc[11], e_in_val, prod);
+        }
+
+        let az_i0i = az_i01 - az_i00;
+        let bz_i0i = bz_i01 - bz_i00;
+        if !az_i0i.is_zero() && !bz_i0i.is_zero() {
+            let prod = az_i0i * bz_i0i;
+            fmadd_unreduced::<F>(&mut tA_pos_acc[12], &mut tA_neg_acc[12], e_in_val, prod);
+        }
+
+        let az_i10 = az110 - az010;
+        let bz_i10 = bz110 - bz010;
+        if !az_i10.is_zero() && !bz_i10.is_zero() {
+            let prod = az_i10 * bz_i10;
+            fmadd_unreduced::<F>(&mut tA_pos_acc[13], &mut tA_neg_acc[13], e_in_val, prod);
+        }
+
+        let az_i11 = az111 - az011;
+        let bz_i11 = bz111 - bz011;
+        if !az_i11.is_zero() && !bz_i11.is_zero() {
+            let prod = az_i11 * bz_i11;
+            fmadd_unreduced::<F>(&mut tA_pos_acc[14], &mut tA_neg_acc[14], e_in_val, prod);
+        }
+
+        let az_i1i = az_i11 - az_i10;
+        let bz_i1i = bz_i11 - bz_i10;
+        if !az_i1i.is_zero() && !bz_i1i.is_zero() {
+            let prod = az_i1i * bz_i1i;
+            fmadd_unreduced::<F>(&mut tA_pos_acc[15], &mut tA_neg_acc[15], e_in_val, prod);
+        }
+
+        let az_ii0 = az_1i0 - az_0i0;
+        let bz_ii0 = bz_1i0 - bz_0i0;
+        if !az_ii0.is_zero() && !bz_ii0.is_zero() {
+            let prod = az_ii0 * bz_ii0;
+            fmadd_unreduced::<F>(&mut tA_pos_acc[16], &mut tA_neg_acc[16], e_in_val, prod);
+        }
+
+        let az_ii1 = az_1i1 - az_0i1;
+        let bz_ii1 = bz_1i1 - bz_0i1;
+        if !az_ii1.is_zero() && !bz_ii1.is_zero() {
+            let prod = az_ii1 * bz_ii1;
+            fmadd_unreduced::<F>(&mut tA_pos_acc[17], &mut tA_neg_acc[17], e_in_val, prod);
+        }
+
+        let az_iii = az_1ii - az_0ii;
+        let bz_iii = bz_1ii - bz_0ii;
+        if !az_iii.is_zero() && !bz_iii.is_zero() {
+            let prod = az_iii * bz_iii;
+            fmadd_unreduced::<F>(&mut tA_pos_acc[18], &mut tA_neg_acc[18], e_in_val, prod);
+        }
+    }
+
+    /// Dispatch wrapper for the typed small-value kernel using const generics.
+    /// Supports NUM_SVO_ROUNDS in [0..=5].
+    #[inline]
+    pub fn compute_and_update_tA_inplace<const NUM_SVO_ROUNDS: usize, F: JoltField>(
+        binary_az_evals: &[I8OrI96],
+        binary_bz_evals: &[S160],
+        e_in_val: &F,
+        tA_pos_acc: &mut [UnreducedProduct<F>],
+        tA_neg_acc: &mut [UnreducedProduct<F>],
+    ) {
+        match NUM_SVO_ROUNDS {
+            0 => {
+                debug_assert!(binary_az_evals.is_empty());
+                debug_assert!(binary_bz_evals.is_empty());
+                debug_assert!(tA_pos_acc.is_empty());
+                debug_assert!(tA_neg_acc.is_empty());
+            }
+            1 => compute_and_update_tA_inplace_const::<1, 1, 3, F>(
+                binary_az_evals,
+                binary_bz_evals,
+                e_in_val,
+                tA_pos_acc,
+                tA_neg_acc,
+            ),
+            2 => compute_and_update_tA_inplace_2::<F>(
+                binary_az_evals,
+                binary_bz_evals,
+                e_in_val,
+                tA_pos_acc,
+                tA_neg_acc,
+            ),
+            3 => compute_and_update_tA_inplace_3::<F>(
+                binary_az_evals,
+                binary_bz_evals,
+                e_in_val,
+                tA_pos_acc,
+                tA_neg_acc,
+            ),
+            4 => compute_and_update_tA_inplace_const::<4, 65, 81, F>(
+                binary_az_evals,
+                binary_bz_evals,
+                e_in_val,
+                tA_pos_acc,
+                tA_neg_acc,
+            ),
+            5 => compute_and_update_tA_inplace_const::<5, 211, 243, F>(
+                binary_az_evals,
+                binary_bz_evals,
+                e_in_val,
+                tA_pos_acc,
+                tA_neg_acc,
+            ),
+            _ => panic!("Unsupported NUM_SVO_ROUNDS: {NUM_SVO_ROUNDS}"),
+        }
+    }
+
+    /// Specialized small-value kernel when `NUM_SVO_ROUNDS == 1`.
+    /// Updates a single non-binary accumulator corresponding to (u=∞).
+    #[inline]
+    pub fn compute_and_update_tA_inplace_1<F: JoltField>(
+        binary_az_evals: &[I8OrI96],
+        binary_bz_evals: &[S160],
+        e_in_val: &F,
+        tA_pos_acc: &mut [UnreducedProduct<F>],
+        tA_neg_acc: &mut [UnreducedProduct<F>],
+    ) {
+        debug_assert!(binary_az_evals.len() == 2);
+        debug_assert!(binary_bz_evals.len() == 2);
+        debug_assert!(tA_pos_acc.len() == 1);
+        debug_assert!(tA_neg_acc.len() == 1);
+
+        let az_I = binary_az_evals[1] - binary_az_evals[0];
+        if !az_I.is_zero() {
+            let bz_I = binary_bz_evals[1] - binary_bz_evals[0];
+            if !bz_I.is_zero() {
+                let prod = az_I * bz_I;
+                fmadd_unreduced::<F>(&mut tA_pos_acc[0], &mut tA_neg_acc[0], e_in_val, prod);
             }
         }
     }
@@ -807,6 +876,13 @@ pub mod svo_helpers {
         accums_infty: &mut [F],
     ) {
         match NUM_SVO_ROUNDS {
+            0 => {
+                // No SVO rounds to process, tA_accums should be empty
+                debug_assert!(
+                    tA_accums.is_empty(),
+                    "tA_accums should be empty for 0 SVO rounds"
+                );
+            }
             1 => distribute_tA_to_svo_accumulators_1(
                 tA_accums,
                 x_out_val,
@@ -1144,7 +1220,6 @@ pub mod svo_helpers {
                 accums_infty.is_empty(),
                 "accums_infty should be empty for N=0"
             );
-            return;
         }
 
         // Assert that the provided M_NON_BINARY_POINTS is correct.
@@ -1274,7 +1349,7 @@ pub mod svo_helpers {
     >(
         accums_zero: &[F],
         accums_infty: &[F],
-        r_challenges: &mut Vec<F>,
+        r_challenges: &mut Vec<F::Challenge>,
         round_polys: &mut Vec<CompressedUniPoly<F>>,
         claim: &mut F,
         transcript: &mut ProofTranscript,
@@ -1356,7 +1431,7 @@ pub mod svo_helpers {
                 transcript,
             );
 
-            let lagrange_coeffs_r_i = [F::one() - r_i, r_i, r_i * (r_i - F::one())];
+            let lagrange_coeffs_r_i: [F; 3] = [F::one() - r_i, r_i.into(), r_i * (r_i - F::one())];
 
             if i < NUM_SVO_ROUNDS.saturating_sub(1) {
                 lagrange_coeffs = lagrange_coeffs_r_i
@@ -1524,310 +1599,175 @@ pub mod svo_helpers {
 
 #[cfg(test)]
 mod tests {
-    use super::svo_helpers::*;
-    use ark_bn254::Fr as TestField;
-    use ark_ff::Zero;
+    use super::accum::UnreducedProduct;
+    use super::svo_helpers::{
+        compute_and_update_tA_inplace, compute_and_update_tA_inplace_1,
+        compute_and_update_tA_inplace_2, compute_and_update_tA_inplace_3,
+        compute_and_update_tA_inplace_const,
+    };
 
-    fn test_consistency_for_num_rounds(num_svo_rounds: usize) {
-        let num_binary_points = 1 << num_svo_rounds;
-        let num_temp_tA = num_non_trivial_ternary_points(num_svo_rounds);
+    use crate::{field::JoltField, poly::eq_poly::EqPolynomial};
+    use ark_bn254::Fr;
+    use ark_ff::biginteger::{I8OrI96, S160};
+    use rand::{Rng, SeedableRng};
+    use rand_chacha::ChaCha20Rng;
 
-        // Test with non-zero patterned data
-        let binary_az_evals: Vec<i128> = (0..num_binary_points)
-            .map(|i| (i + 1) as i128 * 2)
+    fn random_az_value<R: Rng>(rng: &mut R) -> I8OrI96 {
+        match rng.gen_range(0..5) {
+            0 => I8OrI96::from_i8(rng.gen()),
+            1 => I8OrI96::from_i8(0), // zero
+            2 => I8OrI96::from_i8(1), // one
+            3 => I8OrI96::from_i128(rng.gen::<i64>() as i128),
+            4 => {
+                // Bounded 90-bit magnitude to ensure it always fits in I8OrI96,
+                // and give headroom so differences during extension remain within 96 bits.
+                const BITS: u32 = 90;
+                let mask: u128 = if BITS == 128 {
+                    u128::MAX
+                } else {
+                    (1u128 << BITS) - 1
+                };
+                let mag = (rng.gen::<u128>() & mask) as i128;
+                let val = if rng.gen::<bool>() { mag } else { -mag };
+                I8OrI96::from_i128(val)
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    fn random_bz_value<R: Rng>(rng: &mut R) -> S160 {
+        match rng.gen_range(0..4) {
+            0 => S160::from(0i128),
+            1 => S160::from(1i128),
+            2 => S160::from(rng.gen::<i64>() as i128),
+            3 => {
+                // Bounded 156-bit magnitude to avoid overflow when summing up to 8 terms
+                // during ternary extension (N<=3 => 2^N <= 8).
+                // Use 120-bit cap to stay safely within S160 even after up to 8-term sums.
+                const BITS: u32 = 120;
+                let mask: u128 = (1u128 << BITS) - 1;
+                let mag = (rng.gen::<u128>() & mask) as i128;
+                let val = if rng.gen::<bool>() { mag } else { -mag };
+                S160::from(val)
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    /// Consistency check: hardcoded vs generic small value compute and update tA in place
+    fn run_svo_hardcoded_vs_generic_consistency_check<const NUM_SVO_ROUNDS: usize>(
+        rng: &mut ChaCha20Rng,
+    ) {
+        let num_vars = NUM_SVO_ROUNDS;
+        if num_vars == 0 {
+            return;
+        }
+        let num_non_trivial = 3_usize.pow(num_vars as u32) - 2_usize.pow(num_vars as u32);
+
+        let r: Vec<<Fr as JoltField>::Challenge> = (0..num_vars)
+            .map(|_| <Fr as JoltField>::Challenge::from(rng.gen::<u128>()))
             .collect();
-        let binary_bz_evals: Vec<i128> = (0..num_binary_points)
-            .map(|i| (i + 2) as i128 * 3)
+        let e_in_val: Vec<Fr> = EqPolynomial::evals(&r);
+
+        let num_binary_points = 1 << num_vars;
+
+        // Create random binary evaluations
+        let binary_az_vals: Vec<I8OrI96> = (0..num_binary_points)
+            .map(|_| random_az_value(rng))
             .collect();
-        let e_in_val = TestField::from(10u64);
+        let binary_bz_vals: Vec<S160> = (0..num_binary_points)
+            .map(|_| random_bz_value(rng))
+            .collect();
 
-        let mut temp_tA_new = vec![TestField::zero(); num_temp_tA];
-        let mut temp_tA_old = vec![TestField::zero(); num_temp_tA];
-
-        // Call the new general function (the one being tested)
-        match num_svo_rounds {
-            1 => compute_and_update_tA_inplace::<1, 1, 3, TestField>(
-                &binary_az_evals,
-                &binary_bz_evals,
-                &e_in_val,
-                &mut temp_tA_new,
-            ),
-            2 => compute_and_update_tA_inplace::<2, 5, 9, TestField>(
-                &binary_az_evals,
-                &binary_bz_evals,
-                &e_in_val,
-                &mut temp_tA_new,
-            ),
-            3 => compute_and_update_tA_inplace::<3, 19, 27, TestField>(
-                &binary_az_evals,
-                &binary_bz_evals,
-                &e_in_val,
-                &mut temp_tA_new,
-            ),
-            _ => panic!("Unsupported NUM_SVO_ROUNDS for this consistency test structure"),
-        }
-
-        // Call the old hardcoded function
-        match num_svo_rounds {
-            1 => compute_and_update_tA_inplace_1(
-                &binary_az_evals,
-                &binary_bz_evals,
-                &e_in_val,
-                &mut temp_tA_old,
-            ),
-            2 => compute_and_update_tA_inplace_2(
-                &binary_az_evals,
-                &binary_bz_evals,
-                &e_in_val,
-                &mut temp_tA_old,
-            ),
-            3 => compute_and_update_tA_inplace_3(
-                &binary_az_evals,
-                &binary_bz_evals,
-                &e_in_val,
-                &mut temp_tA_old,
-            ),
-            _ => panic!("Unsupported NUM_SVO_ROUNDS for this consistency test structure"),
-        }
-        assert_eq!(
-            temp_tA_new, temp_tA_old,
-            "Mismatch for NUM_SVO_ROUNDS = {num_svo_rounds} with patterned data"
+        // Generic small value path (produces Montgomery-form Fr elements after reduction)
+        let mut ta_pos_acc_generic = vec![UnreducedProduct::<Fr>::zero(); num_non_trivial];
+        let mut ta_neg_acc_generic = vec![UnreducedProduct::<Fr>::zero(); num_non_trivial];
+        compute_and_update_tA_inplace::<NUM_SVO_ROUNDS, Fr>(
+            &binary_az_vals,
+            &binary_bz_vals,
+            &e_in_val[0], // Use first element
+            &mut ta_pos_acc_generic,
+            &mut ta_neg_acc_generic,
         );
 
-        // Test with all zeros for binary evals
-        let binary_az_evals_zeros: Vec<i128> = vec![0; num_binary_points];
-        let binary_bz_evals_zeros: Vec<i128> = vec![0; num_binary_points];
-        let mut temp_tA_new_zeros = vec![TestField::zero(); num_temp_tA];
-        let mut temp_tA_old_zeros = vec![TestField::zero(); num_temp_tA];
+        // Hardcoded small value path - call the hardcoded versions directly
+        let mut ta_pos_acc_hardcoded = vec![UnreducedProduct::<Fr>::zero(); num_non_trivial];
+        let mut ta_neg_acc_hardcoded = vec![UnreducedProduct::<Fr>::zero(); num_non_trivial];
 
-        match num_svo_rounds {
-            1 => compute_and_update_tA_inplace::<1, 1, 3, TestField>(
-                &binary_az_evals_zeros,
-                &binary_bz_evals_zeros,
-                &e_in_val,
-                &mut temp_tA_new_zeros,
+        // Call the hardcoded versions directly based on NUM_SVO_ROUNDS
+        match NUM_SVO_ROUNDS {
+            1 => compute_and_update_tA_inplace_1::<Fr>(
+                &binary_az_vals,
+                &binary_bz_vals,
+                &e_in_val[0],
+                &mut ta_pos_acc_hardcoded,
+                &mut ta_neg_acc_hardcoded,
             ),
-            2 => compute_and_update_tA_inplace::<2, 5, 9, TestField>(
-                &binary_az_evals_zeros,
-                &binary_bz_evals_zeros,
-                &e_in_val,
-                &mut temp_tA_new_zeros,
+            2 => compute_and_update_tA_inplace_2::<Fr>(
+                &binary_az_vals,
+                &binary_bz_vals,
+                &e_in_val[0],
+                &mut ta_pos_acc_hardcoded,
+                &mut ta_neg_acc_hardcoded,
             ),
-            3 => compute_and_update_tA_inplace::<3, 19, 27, TestField>(
-                &binary_az_evals_zeros,
-                &binary_bz_evals_zeros,
-                &e_in_val,
-                &mut temp_tA_new_zeros,
+            3 => compute_and_update_tA_inplace_3::<Fr>(
+                &binary_az_vals,
+                &binary_bz_vals,
+                &e_in_val[0],
+                &mut ta_pos_acc_hardcoded,
+                &mut ta_neg_acc_hardcoded,
             ),
-            _ => panic!("Unsupported NUM_SVO_ROUNDS for this consistency test structure"),
+            4 => {
+                // For NUM_SVO_ROUNDS == 4, use the const generic version
+                compute_and_update_tA_inplace_const::<4, 65, 81, Fr>(
+                    &binary_az_vals,
+                    &binary_bz_vals,
+                    &e_in_val[0],
+                    &mut ta_pos_acc_hardcoded,
+                    &mut ta_neg_acc_hardcoded,
+                );
+            }
+            5 => {
+                // For NUM_SVO_ROUNDS == 5, use the const generic version
+                compute_and_update_tA_inplace_const::<5, 211, 243, Fr>(
+                    &binary_az_vals,
+                    &binary_bz_vals,
+                    &e_in_val[0],
+                    &mut ta_pos_acc_hardcoded,
+                    &mut ta_neg_acc_hardcoded,
+                );
+            }
+            _ => {
+                panic!(
+                    "Unsupported NUM_SVO_ROUNDS for hardcoded consistency check: {NUM_SVO_ROUNDS}"
+                );
+            }
         }
 
-        match num_svo_rounds {
-            1 => compute_and_update_tA_inplace_1(
-                &binary_az_evals_zeros,
-                &binary_bz_evals_zeros,
-                &e_in_val,
-                &mut temp_tA_old_zeros,
-            ),
-            2 => compute_and_update_tA_inplace_2(
-                &binary_az_evals_zeros,
-                &binary_bz_evals_zeros,
-                &e_in_val,
-                &mut temp_tA_old_zeros,
-            ),
-            3 => compute_and_update_tA_inplace_3(
-                &binary_az_evals_zeros,
-                &binary_bz_evals_zeros,
-                &e_in_val,
-                &mut temp_tA_old_zeros,
-            ),
-            _ => panic!("Unsupported NUM_SVO_ROUNDS for this consistency test structure"),
-        }
-        assert_eq!(
-            temp_tA_new_zeros, temp_tA_old_zeros,
-            "Mismatch for NUM_SVO_ROUNDS = {num_svo_rounds} with zero data"
-        );
+        // Compare results
+        for i in 0..num_non_trivial {
+            let generic_pos = Fr::montgomery_reduce_2n::<8>(ta_pos_acc_generic[i]);
+            let generic_neg = Fr::montgomery_reduce_2n::<8>(ta_neg_acc_generic[i]);
+            let generic_result = generic_pos - generic_neg;
 
-        // Test with e_in_val = 0
-        let e_in_val_zero = TestField::zero();
-        let mut temp_tA_new_zero_e = vec![TestField::zero(); num_temp_tA];
-        let mut temp_tA_old_zero_e = vec![TestField::zero(); num_temp_tA];
+            let hardcoded_pos = Fr::montgomery_reduce_2n::<8>(ta_pos_acc_hardcoded[i]);
+            let hardcoded_neg = Fr::montgomery_reduce_2n::<8>(ta_neg_acc_hardcoded[i]);
+            let hardcoded_result = hardcoded_pos - hardcoded_neg;
 
-        match num_svo_rounds {
-            1 => compute_and_update_tA_inplace::<1, 1, 3, TestField>(
-                &binary_az_evals,
-                &binary_bz_evals,
-                &e_in_val_zero,
-                &mut temp_tA_new_zero_e,
-            ),
-            2 => compute_and_update_tA_inplace::<2, 5, 9, TestField>(
-                &binary_az_evals,
-                &binary_bz_evals,
-                &e_in_val_zero,
-                &mut temp_tA_new_zero_e,
-            ),
-            3 => compute_and_update_tA_inplace::<3, 19, 27, TestField>(
-                &binary_az_evals,
-                &binary_bz_evals,
-                &e_in_val_zero,
-                &mut temp_tA_new_zero_e,
-            ),
-            _ => panic!("Unsupported NUM_SVO_ROUNDS for this consistency test structure"),
-        }
-
-        match num_svo_rounds {
-            1 => compute_and_update_tA_inplace_1(
-                &binary_az_evals,
-                &binary_bz_evals,
-                &e_in_val_zero,
-                &mut temp_tA_old_zero_e,
-            ),
-            2 => compute_and_update_tA_inplace_2(
-                &binary_az_evals,
-                &binary_bz_evals,
-                &e_in_val_zero,
-                &mut temp_tA_old_zero_e,
-            ),
-            3 => compute_and_update_tA_inplace_3(
-                &binary_az_evals,
-                &binary_bz_evals,
-                &e_in_val_zero,
-                &mut temp_tA_old_zero_e,
-            ),
-            _ => panic!("Unsupported NUM_SVO_ROUNDS for this consistency test structure"),
-        }
-        assert_eq!(
-            temp_tA_new_zero_e, temp_tA_old_zero_e,
-            "Mismatch for NUM_SVO_ROUNDS = {num_svo_rounds} with zero e_in_val"
-        );
-        for val in temp_tA_new_zero_e {
-            // Confirm they are all zero
-            assert!(
-                val.is_zero(),
-                "temp_tA should be all zeros if e_in_val is zero"
+            assert_eq!(
+                generic_result, hardcoded_result,
+                "Hardcoded vs Generic small value mismatch for NUM_SVO_ROUNDS={NUM_SVO_ROUNDS} at index {i}"
             );
         }
     }
 
     #[test]
-    fn test_compute_and_update_tA_inplace_vs_hardcoded_1() {
-        test_consistency_for_num_rounds(1);
-    }
-
-    #[test]
-    fn test_compute_and_update_tA_inplace_vs_hardcoded_2() {
-        test_consistency_for_num_rounds(2);
-    }
-
-    #[test]
-    fn test_compute_and_update_tA_inplace_vs_hardcoded_3() {
-        test_consistency_for_num_rounds(3);
-    }
-
-    // --- Tests for distribute_tA_to_svo_accumulators ---
-
-    fn test_distribute_consistency(num_svo_rounds: usize) {
-        let num_tA = num_non_trivial_ternary_points(num_svo_rounds);
-        let tA_accums: Vec<TestField> = (0..num_tA)
-            .map(|i| TestField::from((i + 1) as u64 * 100))
-            .collect();
-
-        let x_out_val = 1; // Arbitrary x_out_val for testing E_out_vec indexing
-
-        let mut E_out_vec: Vec<Vec<TestField>> = Vec::with_capacity(num_svo_rounds);
-        for s_e in 0..num_svo_rounds {
-            let num_suffix_vars = num_svo_rounds.saturating_sub(s_e + 1);
-            let num_e_entries_for_x_out = 1 << num_suffix_vars;
-            let total_e_entries = (x_out_val + 10) * num_e_entries_for_x_out;
-            let mut e_s: Vec<TestField> = Vec::with_capacity(total_e_entries);
-            for i in 0..total_e_entries {
-                e_s.push(TestField::from((s_e + 1) as u64 * 10 + (i + 1) as u64));
-            }
-            E_out_vec.push(e_s);
-        }
-
-        let num_zero = num_accums_eval_zero(num_svo_rounds);
-        let num_infty = num_accums_eval_infty(num_svo_rounds);
-
-        let mut accums_zero_new = vec![TestField::zero(); num_zero];
-        let mut accums_infty_new = vec![TestField::zero(); num_infty];
-        let mut accums_zero_old = vec![TestField::zero(); num_zero];
-        let mut accums_infty_old = vec![TestField::zero(); num_infty];
-
-        match num_svo_rounds {
-            1 => {
-                distribute_tA_to_svo_accumulators::<1, 1, TestField>(
-                    &tA_accums,
-                    x_out_val,
-                    &E_out_vec,
-                    &mut accums_zero_new,
-                    &mut accums_infty_new,
-                );
-                distribute_tA_to_svo_accumulators_1(
-                    &tA_accums,
-                    x_out_val,
-                    &E_out_vec,
-                    &mut accums_zero_old,
-                    &mut accums_infty_old,
-                );
-            }
-            2 => {
-                distribute_tA_to_svo_accumulators::<2, 5, TestField>(
-                    &tA_accums,
-                    x_out_val,
-                    &E_out_vec,
-                    &mut accums_zero_new,
-                    &mut accums_infty_new,
-                );
-                distribute_tA_to_svo_accumulators_2(
-                    &tA_accums,
-                    x_out_val,
-                    &E_out_vec,
-                    &mut accums_zero_old,
-                    &mut accums_infty_old,
-                );
-            }
-            3 => {
-                distribute_tA_to_svo_accumulators::<3, 19, TestField>(
-                    &tA_accums,
-                    x_out_val,
-                    &E_out_vec,
-                    &mut accums_zero_new,
-                    &mut accums_infty_new,
-                );
-                distribute_tA_to_svo_accumulators_3(
-                    &tA_accums,
-                    x_out_val,
-                    &E_out_vec,
-                    &mut accums_zero_old,
-                    &mut accums_infty_old,
-                );
-            }
-            _ => panic!("Unsupported NUM_SVO_ROUNDS for distribute consistency test"),
-        }
-
-        assert_eq!(
-            accums_zero_new, accums_zero_old,
-            "accums_zero mismatch for N={num_svo_rounds}"
-        );
-        assert_eq!(
-            accums_infty_new, accums_infty_old,
-            "accums_infty mismatch for N={num_svo_rounds}"
-        );
-    }
-
-    #[test]
-    fn test_distribute_tA_vs_hardcoded_1() {
-        test_distribute_consistency(1);
-    }
-
-    #[test]
-    fn test_distribute_tA_vs_hardcoded_2() {
-        test_distribute_consistency(2);
-    }
-
-    #[test]
-    fn test_distribute_tA_vs_hardcoded_3() {
-        test_distribute_consistency(3);
+    fn test_svo_hardcoded_vs_generic_consistency() {
+        let mut rng = ChaCha20Rng::from_seed([42u8; 32]);
+        run_svo_hardcoded_vs_generic_consistency_check::<1>(&mut rng);
+        run_svo_hardcoded_vs_generic_consistency_check::<2>(&mut rng);
+        run_svo_hardcoded_vs_generic_consistency_check::<3>(&mut rng);
+        run_svo_hardcoded_vs_generic_consistency_check::<4>(&mut rng);
+        run_svo_hardcoded_vs_generic_consistency_check::<5>(&mut rng);
     }
 }

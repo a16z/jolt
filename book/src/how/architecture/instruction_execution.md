@@ -5,7 +5,7 @@ This is primarily achieved through the [Shout](../twist-shout.md#shout) lookup a
 
 ## Large Lookup Tables and Prefix-Suffix Sumcheck
 
-The Shout instance for instruction execution must query a massive lookup table -- effectively of size $2^{64}$, since the lookup query is constructed from two 32-bit operands.
+The Shout instance for instruction execution must query a massive lookup table -- effectively of size $2^{128}$, since the lookup query is constructed from two 64-bit operands.
 This $K >> T$ parameter regime is discussed in the Twist and Shout paper (Section 7), which proposes the use of sparse-dense sumcheck.
 However, upon implementation it became clear that sparse-dense sumcheck did not generalize well to the full RISC-V instruction set.
 
@@ -32,22 +32,22 @@ $$
 
 You can think of $k_\text{prefix}$ and $k_\text{suffix}$ as the high-order and low-order "bits" of $k$, respectively, obtained by splitting $k$ at some partition index. The `PrefixSuffixDecomposition` trait specifies which prefix/suffix MLEs to evaluate and how to combine them.
 
-We will split $k$ four times at four different indices, and these will induce the four **phases** of the prefix-suffix sumcheck. Each of the four phases encompasses 16 rounds of sumcheck (i.e. 16 of the address variables $k$), so together they comprise the first $\log K = 64$ rounds of the read-checking sumcheck.
+We will split $k$ eight times at eight different indices, and these will induce the eight **phases** of the prefix-suffix sumcheck. Each of the eight phases encompasses 16 rounds of sumcheck (i.e. 16 of the address variables $k$), so together they comprise the first $\log K = 128$ rounds of the read-checking sumcheck.
 
 Given our prefix-suffix decomposition of $\widetilde{\textsf{Val}}$, we can rewrite our read-checking sumcheck as follows:
 
 $$
-\widetilde{\textsf{rv}}(r_\text{cycle}) = \sum_{k_\text{prefix} \in \{0, 1\}^{16}, k_\text{suffix} \in \{0, 1\}^{48}, j \in \{0, 1\}^{\log(T)}} \widetilde{\textsf{eq}}(r_\text{cycle}, j) \cdot \widetilde{\textsf{ra}}(k_\text{prefix}, k_\text{suffix}, j) \cdot \sum_{(\textsf{prefix}, \textsf{suffix})} \widetilde{\textsf{prefix}}(k_\text{prefix}) \cdot \widetilde{\textsf{suffix}}(k_\text{suffix})
+\widetilde{\textsf{rv}}(r_\text{cycle}) = \sum_{k_\text{prefix} \in \{0, 1\}^{16}, k_\text{suffix} \in \{0, 1\}^{112}, j \in \{0, 1\}^{\log(T)}} \widetilde{\textsf{eq}}(r_\text{cycle}, j) \cdot \widetilde{\textsf{ra}}(k_\text{prefix}, k_\text{suffix}, j) \cdot \sum_{(\textsf{prefix}, \textsf{suffix})} \widetilde{\textsf{prefix}}(k_\text{prefix}) \cdot \widetilde{\textsf{suffix}}(k_\text{suffix})
 $$
 
 Note that we have replaced $\prod_{i=1}^d \widetilde{\textsf{ra}}_i(k_i, j)$ with just $\widetilde{\textsf{ra}}$. Since $\prod_{i=1}^d \widetilde{\textsf{ra}}_i(k_i, j)$ is degree 1 in each $k$ variable, we will treat it as a single multilinear polynomial while we're binding those variables (the first $\log K$ rounds).
-The equation as written above depicts the first phase, where $k_\text{prefix}$ is the first 16 variables of $k$, and $k_\text{suffix}$ is the last 48 variables of $k$.
+The equation as written above depicts the first phase, where $k_\text{prefix}$ is the first 16 variables of $k$, and $k_\text{suffix}$ is the last 112 variables of $k$.
 
 Rearranging the terms in the sum, we have:
 
 $$
 \widetilde{\textsf{rv}}(r_\text{cycle}) = \sum_{k_\text{prefix} \in \{0, 1\}^{16}}
-\sum_{(\textsf{prefix}, \textsf{suffix})} \widetilde{\textsf{prefix}}(k_\text{prefix}) \cdot \left(\sum_{k_\text{suffix} \in \{0, 1\}^{48}, j \in \{0, 1\}^{\log T}}\widetilde{\textsf{ra}}(k_\text{prefix}, k_\text{suffix}, j) \cdot \widetilde{\textsf{eq}}(r_\text{cycle}, j) \cdot \widetilde{\textsf{suffix}}(k_\text{suffix}) \right)
+\sum_{(\textsf{prefix}, \textsf{suffix})} \widetilde{\textsf{prefix}}(k_\text{prefix}) \cdot \left(\sum_{k_\text{suffix} \in \{0, 1\}^{112}, j \in \{0, 1\}^{\log T}}\widetilde{\textsf{ra}}(k_\text{prefix}, k_\text{suffix}, j) \cdot \widetilde{\textsf{eq}}(r_\text{cycle}, j) \cdot \widetilde{\textsf{suffix}}(k_\text{suffix}) \right)
 $$
 
 Note that the summand is degree 2 in $k_\text{prefix}$, the variables being bound in the first phase:
@@ -59,7 +59,7 @@ Written in this way, it becomes clear that we can treat the first 16 rounds as a
 If we can efficiently compute the $2^{16}$ coefficients of each mulitlinear term, the rest of this mini-sumcheck is efficient. Each evaluation of $\widetilde{\textsf{prefix}}(k_\text{prefix})$ can be computed in constant time, so that leaves the parenthesized term:
 
 $$
-\left(\sum_{k_\text{suffix} \in \{0, 1\}^{48}, j \in \{0, 1\}^{\log T}}\widetilde{\textsf{ra}}(k_\text{prefix}, k_\text{suffix}, j) \cdot \widetilde{\textsf{eq}}(r_\text{cycle}, j) \cdot \widetilde{\textsf{suffix}}(k_\text{suffix}) \right)
+\left(\sum_{k_\text{suffix} \in \{0, 1\}^{112}, j \in \{0, 1\}^{\log T}}\widetilde{\textsf{ra}}(k_\text{prefix}, k_\text{suffix}, j) \cdot \widetilde{\textsf{eq}}(r_\text{cycle}, j) \cdot \widetilde{\textsf{suffix}}(k_\text{suffix}) \right)
 $$
 
 This can be computed in $\Theta(T)$: since $\widetilde{\textsf{ra}}$ is one-hot, we can do a single iteration over $j \in \{0, 1\}^{\log T}$ and only compute the terms of the sum where $\widetilde{\textsf{ra}}(k_\text{prefix}, k_\text{suffix}, j) = 1$.
@@ -70,10 +70,10 @@ We will need to use a new sumcheck expression for the next phase:
 
 $$
 \widetilde{\textsf{rv}}(r_\text{cycle}) = \sum_{k_\text{prefix} \in \{0, 1\}^{16}}
-\sum_{(\textsf{prefix}, \textsf{suffix})} \widetilde{\textsf{prefix}}(r^{(1)}, k_\text{prefix}) \cdot \left(\sum_{k_\text{suffix} \in \{0, 1\}^{32}, j \in \{0, 1\}^{\log T}}\widetilde{\textsf{ra}}(r^{(1)}, k_\text{prefix}, k_\text{suffix}, j) \cdot \widetilde{\textsf{eq}}(r_\text{cycle}, j) \cdot \widetilde{\textsf{suffix}}(k_\text{suffix}) \right)
+\sum_{(\textsf{prefix}, \textsf{suffix})} \widetilde{\textsf{prefix}}(r^{(1)}, k_\text{prefix}) \cdot \left(\sum_{k_\text{suffix} \in \{0, 1\}^{96}, j \in \{0, 1\}^{\log T}}\widetilde{\textsf{ra}}(r^{(1)}, k_\text{prefix}, k_\text{suffix}, j) \cdot \widetilde{\textsf{eq}}(r_\text{cycle}, j) \cdot \widetilde{\textsf{suffix}}(k_\text{suffix}) \right)
 $$
 
-Now $r^{(1)} \in \mathbb{F}^{16}$ are random values that the first 16 variables were bound to, and $k_\text{prefix}$ are the _next_ 16 variables of $k$. Meanwhile, $k_\text{suffix}$ now represents the last _32_ variables of $k$.
+Now $r^{(1)} \in \mathbb{F}^{16}$ are random values that the first 16 variables were bound to, and $k_\text{prefix}$ are the _next_ 16 variables of $k$. Meanwhile, $k_\text{suffix}$ now represents the last _96_ variables of $k$.
 
 This complicates things slightly, but the algorithm follows the same blueprint as in phase 1. This is a sumcheck over the 16 $k_\text{prefix}$ variables, and there are two multilinear terms. We can still compute each evaluation of $\widetilde{\textsf{prefix}}(r^{(1)}, k_\text{prefix})$ in constant time, and we can still compute the parenthesized term in $\Theta(T)$ time (observe that there is exactly one non-zero coefficient of $\widetilde{\textsf{ra}}(r^{(1)}, k_\text{prefix}, k_\text{suffix}, j)$ per cycle $j$).
 
@@ -132,32 +132,32 @@ Intuitively, the lookup index must be crafted from the bits of `x` and `y`.
 A first attempt might be to simply concatenate the bits of `x` and `y`, i.e.:
 
 $$
-(k_1, k_2, \dots, k_{64}) = (x_1, x_2, \dots, x_{32}, y_1, y_2, \dots, y_{32})
+(k_1, k_2, \dots, k_{128}) = (x_1, x_2, \dots, x_{64}, y_1, y_2, \dots, y_{64})
 $$
 
 Unfortunately, there is no apparent way for this formulation to satisfy prefix-suffix structure.
 Instead we will *interleave* the bits of `x` and `y`, i.e.
 
 $$
-(k_1, k_2, \dots, k_{64}) = (x_1, y_1, x_2, y_2, \dots, x_{32}, y_{32})
+(k_1, k_2, \dots, k_{128}) = (x_1, y_1, x_2, y_2, \dots, x_{64}, y_{64})
 $$
 
 With this formulation, the prefix-suffix structure is easily apparent. Suppose the prefix-suffix split index is 16, so:
 
 $$
-k_\text{prefix} = (x_1, y_1, x_2, y_2, \dots, x_8, y_8) \\
-k_\text{suffix} = (x_9, y_9, x_{10}, y_{10}, \dots, x_{32}, y_{32})
+k_\text{prefix} = (x_1, y_1, x_2, y_2, \dots, x_{8}, y_{8}) \\
+k_\text{suffix} = (x_{9}, y_{9}, x_{10}, y_{10}, \dots, x_{64}, y_{64})
 $$
 
 Then `XOR x y` has the following prefix-suffix decomposition:
 
 $$
 \widetilde{\textsf{Val}}_{\texttt{XOR}}(k_\text{prefix}, k_\text{suffix}) = \widetilde{\textsf{prefix}}_{\texttt{XOR}}(k_\text{prefix}) + \widetilde{\textsf{suffix}}_{\texttt{XOR}}(k_\text{suffix}) \\
-\widetilde{\textsf{prefix}}_{\texttt{XOR}}(k_\text{prefix}) = 2^{31} \cdot \left( x_1 + y_1 - 2x_1 y_1 \right) + 2^{31} \cdot \left( x_2 + y_2 - 2x_2 y_2 \right) + \dots + 2^{24} \cdot \left( x_8 + y_8 - 2x_8 y_8 \right) \\
-\widetilde{\textsf{suffix}}_{\texttt{XOR}}(k_\text{prefix}) = 2^{23} \cdot \left( x_9 + y_9 - 2x_9 y_9 \right) + 2^{22} \cdot \left( x_{10} + y_{10} - 2x_{10} y_{10} \right) + \dots + 2^0 \cdot \left( x_{32} + y_{32} - 2x_{32} y_{32} \right)
+\widetilde{\textsf{prefix}}_{\texttt{XOR}}(k_\text{prefix}) = 2^{63} \cdot \left( x_1 + y_1 - 2x_1 y_1 \right) + 2^{62} \cdot \left( x_2 + y_2 - 2x_2 y_2 \right) + \dots + 2^{56} \cdot \left( x_{8} + y_{8} - 2x_{8} y_{8} \right) \\
+\widetilde{\textsf{suffix}}_{\texttt{XOR}}(k_\text{suffix}) = 2^{55} \cdot \left( x_{9} + y_{9} - 2x_{9} y_{9} \right) + 2^{54} \cdot \left( x_{10} + y_{10} - 2x_{10} y_{10} \right) + \dots + 2^0 \cdot \left( x_{64} + y_{64} - 2x_{64} y_{64} \right)
 $$
 
-By inspection, $\widetilde{\textsf{prefix}}_{\texttt{XOR}}(k_\text{prefix})$ effectively computes the 8-bit `XOR` of the high-order bits of `x` and `y`, while $\widetilde{\textsf{suffix}}_{\texttt{XOR}}$ computes the 24-bit `XOR` of the low-order bits of `x` and `y`.
+By inspection, $\widetilde{\textsf{prefix}}_{\texttt{XOR}}(k_\text{prefix})$ effectively computes the 8-bit `XOR` of the high-order bits of `x` and `y`, while $\widetilde{\textsf{suffix}}_{\texttt{XOR}}$ computes the 56-bit `XOR` of the low-order bits of `x` and `y`.
 Then the full result `XOR x y` is obtained by concatenating (adding) the two results.
 
 Now that we've confirmed that we have something with prefix-suffix structure, we can write down the $\widetilde{\textsf{raf}}$-evaluation sumcheck expression.
@@ -185,7 +185,7 @@ In this case, the lookup index corresponds to the (single) value `y` being range
 Instead, we just have:
 
 $$
-(k_1, k_2, \dots, k_{64}) = (0, 0, \dots, 0, y_1 y_2, \dots, y_{32})
+(k_1, k_2, \dots, k_{128}) = (0, 0, \dots, 0, y_1 y_2, \dots, y_{64})
 $$
 
 In this case, we have the following sumchecks:
@@ -224,7 +224,7 @@ Due to their similarities, we batch the read-checking and these $\widetilde{\tex
 
 ### ra virtualization
 
-The lookup tables used for instruction execution are of size $K = 2^{64}$, so we set $d = 8$ as our decomposition parameter such that $K^{1/d} = 2^8$.
+The lookup tables used for instruction execution are of size $K = 2^{128}$, so we set $d = 16$ as our decomposition parameter such that $K^{1/d} = 2^8$.
 
 Similar to the [RAM](./ram.md#ra-virtualization) Twist instance, we opt to **virtualize** the $\widetilde{\textsf{ra}}$ polynomial.
 In other words, Jolt simply carries out the read checking and $\widetilde{\textsf{raf}}$ evaluation sumchecks *as if* $d = 1$.
@@ -237,7 +237,7 @@ $$
 \widetilde{\textsf{ra}}(r, r') = \sum_{j \in \{0, 1\}^{\log(T)}} \widetilde{\textsf{eq}}(r', j) \cdot \left( \prod_{i=1}^d \widetilde{\textsf{ra}}_i(r_i, j) \right)
 $$
 
-Since the degree of this sumcheck is $d + 1 = 9$, using the standard linear-time sumcheck prover algorithm would make this sumcheck relatively slow.
+Since the degree of this sumcheck is $d + 1 = 17$, using the standard linear-time sumcheck prover algorithm would make this sumcheck relatively slow.
 However, we employ optimizations specific to high-degree sumchecks, adapting techniques from the [Karatsuba](https://en.wikipedia.org/wiki/Karatsuba_algorithm) and [Toom-Cook](https://en.wikipedia.org/wiki/Toom%E2%80%93Cook_multiplication) multiplication algorithms.
 
 ### One-hot checks
