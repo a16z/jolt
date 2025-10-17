@@ -111,6 +111,7 @@ pub enum ConstraintName {
     NextUnexpPCEqPCPlusImmIfShouldBranch,
     NextUnexpPCUpdateOtherwise,
     NextPCEqPCPlusOneIfInline,
+    MustStartSequenceFromBeginning,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -408,6 +409,14 @@ pub static UNIFORM_R1CS: [NamedConstraint; NUM_R1CS_CONSTRAINTS] = [
         if { { JoltR1CSInputs::OpFlags(CircuitFlags::VirtualInstruction) } }
         => ( { JoltR1CSInputs::NextPC } ) == ( { JoltR1CSInputs::PC } + { 1i128 } )
     ),
+    // if NextIsVirtual && !NextIsFirstInSequence {
+    //     assert!(DoNotUpdateUnexpandedPC == 1)
+    // }
+    r1cs_eq_conditional!(
+        name: ConstraintName::MustStartSequenceFromBeginning,
+        if { { JoltR1CSInputs::NextIsVirtual } - { JoltR1CSInputs::NextIsFirstInSequence }  }
+        => ( { JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC) } ) == ( { 1 } )
+    ),
 ];
 
 /// Evaluate Az by name using a fully materialized R1CS cycle inputs
@@ -468,6 +477,10 @@ pub fn eval_az_by_name<F: JoltField>(c: &NamedConstraint, row: &R1CSCycleInputs)
         }
         // Az: VirtualInstruction flag (0/1)
         N::NextPCEqPCPlusOneIfInline => row.flags[CircuitFlags::VirtualInstruction].into(),
+        // Az: Next instruction is virtual but not the first in its sequence
+        N::MustStartSequenceFromBeginning => {
+            (row.next_is_virtual && !row.next_is_first_in_sequence).into()
+        }
     }
 }
 
@@ -555,6 +568,9 @@ pub fn eval_bz_by_name<F: JoltField>(c: &NamedConstraint, row: &R1CSCycleInputs)
         N::NextPCEqPCPlusOneIfInline => {
             // B: NextPC - (PC + 1) (i128 arithmetic)
             S160::from(row.next_pc as i128 - (row.pc as i128 + 1))
+        }
+        N::MustStartSequenceFromBeginning => {
+            S160::from(row.flags[CircuitFlags::DoNotUpdateUnexpandedPC] as i128 - 1)
         }
     }
 }
