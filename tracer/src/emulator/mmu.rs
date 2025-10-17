@@ -173,7 +173,7 @@ impl Mmu {
                 "I/O overflow: Attempted to {verb} 0x{ea:X}. Out of bounds.\n{layout:#?}",
             );
             assert!(
-                ea >= layout.trusted_advice_start,
+                ea >= layout.get_lowest_address(),
                 "I/O underflow: Attempted to {verb} 0x{ea:X}. Out of bounds.\n{layout:#?}",
             );
 

@@ -96,8 +96,9 @@ pub fn remap_address(address: u64, memory_layout: &MemoryLayout) -> Option<u64> 
         return None;
     }
 
-    if address >= memory_layout.trusted_advice_start {
-        Some((address - memory_layout.trusted_advice_start) / 8 + 1)
+    let lowest_address = memory_layout.get_lowest_address();
+    if address >= lowest_address {
+        Some((address - lowest_address) / 8 + 1)
     } else {
         panic!("Unexpected address {address}")
     }
