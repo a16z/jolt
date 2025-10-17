@@ -160,6 +160,11 @@ impl JoltDAG {
         let span = tracing::span!(tracing::Level::INFO, "Stage 2 sumchecks");
         let _guard = span.enter();
 
+        // Stage 2a: Prove univariate-skip first round for product virtualization
+        spartan_dag
+            .stage2_prover_uni_skip(&mut state_manager)
+            .context("Stage 2 univariate skip first round")?;
+
         let mut stage2_instances: Vec<_> = std::iter::empty()
             .chain(spartan_dag.stage2_prover_instances(&mut state_manager))
             .chain(registers_dag.stage2_prover_instances(&mut state_manager))
@@ -594,7 +599,13 @@ impl JoltDAG {
 
         // Stage 2:
         let stage2_instances: Vec<_> = std::iter::empty()
-            .chain(spartan_dag.stage2_verifier_instances(&mut state_manager))
+            .chain({
+                // Stage 2a: Verify univariate-skip first round for product virtualization
+                spartan_dag
+                    .stage2_verifier_uni_skip(&mut state_manager)
+                    .context("Stage 2 univariate skip first round")?;
+                spartan_dag.stage2_verifier_instances(&mut state_manager)
+            })
             .chain(ram_dag.stage2_verifier_instances(&mut state_manager))
             .chain(lookups_dag.stage2_verifier_instances(&mut state_manager))
             .chain(bytecode_dag.stage2_verifier_instances(&mut state_manager))

@@ -254,7 +254,7 @@ pub fn uniskip_targets<const DOMAIN_SIZE: usize, const DEGREE: usize>() -> [i64;
     targets
 }
 
-/// Builds the uni-skip first-round polynomial s1 from extended evaluations of t1.
+/// Builds the uni-skip first-round polynomial s1 from base and extended evaluations of t1.
 ///
 /// SPECIFIC: This helper targets the setting where s1(Y) = L(τ_high, Y) · t1(Y), with L the
 /// degree-(DOMAIN_SIZE-1) Lagrange kernel over the base window and t1 a univariate of degree
@@ -262,9 +262,14 @@ pub fn uniskip_targets<const DOMAIN_SIZE: usize, const DEGREE: usize>() -> [i64;
 /// Consequently, the resulting s1 has degree at most 3·DEGREE (NUM_COEFFS = 3·DEGREE + 1).
 ///
 /// Inputs:
+/// - base_evals: t1 evaluated on the base window (symmetric grid of size DOMAIN_SIZE).
 /// - extended_evals: t1 evaluated on the extended symmetric grid outside the base window,
 ///   in the order given by `uniskip_targets::<DOMAIN_SIZE, DEGREE>()`.
 /// - tau_high: the challenge used in the Lagrange kernel L(τ_high, ·) over the base window.
+///
+/// Generic parameters:
+/// - BASE_EVALS_ARE_ZERO: const bool optimization flag. When true, skips filling base_evals
+///   (assumes they are all zero), saving a loop iteration.
 ///
 /// Returns: UniPoly s1 with exactly NUM_COEFFS coefficients.
 #[inline]
@@ -274,7 +279,9 @@ pub fn build_uniskip_first_round_poly<
     const DEGREE: usize,
     const EXTENDED_SIZE: usize,
     const NUM_COEFFS: usize,
+    const BASE_EVALS_ARE_ZERO: bool,
 >(
+    base_evals: &[F; DOMAIN_SIZE],
     extended_evals: &[F; DEGREE],
     tau_high: F::Challenge,
 ) -> UniPoly<F> {
@@ -284,6 +291,18 @@ pub fn build_uniskip_first_round_poly<
     // Rebuild t1 on the full extended symmetric window
     let targets: [i64; DEGREE] = uniskip_targets::<DOMAIN_SIZE, DEGREE>();
     let mut t1_vals: [F; EXTENDED_SIZE] = [F::zero(); EXTENDED_SIZE];
+
+    // Fill in base window evaluations (skip if all zero)
+    if !BASE_EVALS_ARE_ZERO {
+        let base_left: i64 = -((DOMAIN_SIZE as i64 - 1) / 2);
+        for (i, &val) in base_evals.iter().enumerate() {
+            let z = base_left + (i as i64);
+            let pos = (z + (DEGREE as i64)) as usize;
+            t1_vals[pos] = val;
+        }
+    }
+
+    // Fill in extended evaluations (outside base window)
     for (idx, &val) in extended_evals.iter().enumerate() {
         let z = targets[idx];
         let pos = (z + (DEGREE as i64)) as usize;

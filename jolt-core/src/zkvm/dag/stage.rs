@@ -43,7 +43,7 @@ pub trait SumcheckStages<
     }
 
     /// Stage 2a: Prove first round of product virtualization sum-check with univariate skip
-    fn stage2_first_round_prove(
+    fn stage2_prover_uni_skip(
         &mut self,
         _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Result<(), anyhow::Error> {
@@ -51,7 +51,7 @@ pub trait SumcheckStages<
     }
 
     /// Stage 2a: Verify first round of product virtualization sum-check with univariate skip
-    fn stage2_first_round_verify(
+    fn stage2_verifier_uni_skip(
         &mut self,
         _state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Result<(), anyhow::Error> {

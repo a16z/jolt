@@ -33,7 +33,7 @@ impl<F: JoltField> LagrangePolynomial<F> {
         let mut base_y = *y - F::from_i64(start);
         let one = F::one();
         let mut ix: Option<usize> = None;
-        let mut iy: Option<usize> = None;
+        let mut it: Option<usize> = None;
         let mut i: usize = 0;
         while i < N {
             let dx = base_x;
@@ -42,7 +42,7 @@ impl<F: JoltField> LagrangePolynomial<F> {
                 ix = Some(i);
             }
             if dy == F::zero() {
-                iy = Some(i);
+                it = Some(i);
             }
             dists_x[i] = dx;
             dists_y[i] = dy;
@@ -52,8 +52,8 @@ impl<F: JoltField> LagrangePolynomial<F> {
         }
 
         // If both points are at nodes, equality is Kronecker delta
-        if let (Some(ix), Some(iy)) = (ix, iy) {
-            return if ix == iy { F::one() } else { F::zero() };
+        if let (Some(ix), Some(it)) = (ix, it) {
+            return if ix == it { F::one() } else { F::zero() };
         }
 
         // Precompute inverse denominators (shared helper)
@@ -66,11 +66,11 @@ impl<F: JoltField> LagrangePolynomial<F> {
             return terms_y[ix] * sum_y.inverse().unwrap();
         }
 
-        if let Some(iy) = iy {
-            // Symmetric: result is L_iy(x)
-            // Symmetric: compute L_iy(x)
+        if let Some(it) = it {
+            // Symmetric: result is L_it(x)
+            // Symmetric: compute L_it(x)
             let (terms_x, sum_x) = Self::bary_terms_from_dists::<N>(&dists_x, &inv_denom);
-            return terms_x[iy] * sum_x.inverse().unwrap();
+            return terms_x[it] * sum_x.inverse().unwrap();
         }
 
         // General case: fused kernel

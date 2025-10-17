@@ -1,5 +1,4 @@
-#[cfg(feature = "allocative")]
-use allocative::FlameGraphBuilder;
+use allocative::Allocative;
 use ark_ff::biginteger::S160;
 use ark_std::Zero;
 use rayon::prelude::*;
@@ -71,13 +70,14 @@ use crate::zkvm::JoltSharedPreprocessing;
 //   Eq_τ(τ, r) · (Az(r) · Bz(r)).
 
 /// Uni-skip instance for Spartan outer sumcheck, computing the first-round polynomial only.
+#[derive(Allocative)]
 pub struct OuterUniSkipInstance<F: JoltField> {
     tau: Vec<F::Challenge>,
     /// Prover-only state (None on verifier)
     prover_state: Option<OuterUniSkipProverState<F>>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Allocative)]
 struct OuterUniSkipProverState<F: JoltField> {
     /// Evaluations of t1(Z) at the extended univariate-skip targets (outside base window)
     extended_evals: [F; UNIVARIATE_SKIP_DEGREE],
@@ -96,12 +96,16 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
         let extended =
             Self::compute_univariate_skip_extended_evals(&preprocessing.shared, trace, tau_low);
 
-        Self {
+        let instance = Self {
             tau: tau.to_vec(),
             prover_state: Some(OuterUniSkipProverState {
                 extended_evals: extended,
             }),
-        }
+        };
+
+        #[cfg(feature = "allocative")]
+        print_data_structure_heap_usage("OuterUniSkipInstance", &instance);
+        instance
     }
 
     pub fn new_verifier(tau: &[F::Challenge]) -> Self {
@@ -291,6 +295,9 @@ impl<F: JoltField, T: Transcript> UniSkipFirstRoundInstance<F, T> for OuterUniSk
 
         let tau_high = self.tau[self.tau.len() - 1];
 
+        // For outer sumcheck, base evaluations are all zero (no base claims)
+        let base_evals: [F; UNIVARIATE_SKIP_DOMAIN_SIZE] = [F::zero(); UNIVARIATE_SKIP_DOMAIN_SIZE];
+
         // Compute the univariate-skip first round polynomial s1(Y) = L(τ_high, Y) · t1(Y)
         build_uniskip_first_round_poly::<
             F,
@@ -298,11 +305,12 @@ impl<F: JoltField, T: Transcript> UniSkipFirstRoundInstance<F, T> for OuterUniSk
             UNIVARIATE_SKIP_DEGREE,
             UNIVARIATE_SKIP_EXTENDED_DOMAIN_SIZE,
             FIRST_ROUND_POLY_NUM_COEFFS,
-        >(&extended, tau_high)
+            true, // base evals are all zero
+        >(&base_evals, &extended, tau_high)
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Allocative)]
 pub struct StreamingRoundCache<F: JoltField> {
     pub t0: F,
     pub t_inf: F,
@@ -313,11 +321,13 @@ pub struct StreamingRoundCache<F: JoltField> {
     pub bz_hi: Vec<F>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Allocative)]
 pub struct OuterProverState<F: JoltField> {
-    pub split_eq_poly: GruenSplitEqPolynomial<F>,
+    #[allocative(skip)]
     pub preprocess: Arc<JoltSharedPreprocessing>,
+    #[allocative(skip)]
     pub trace: Arc<Vec<Cycle>>,
+    pub split_eq_poly: GruenSplitEqPolynomial<F>,
     pub az: DensePolynomial<F>,
     pub bz: DensePolynomial<F>,
     pub streaming_cache: Option<StreamingRoundCache<F>>,
@@ -326,6 +336,7 @@ pub struct OuterProverState<F: JoltField> {
 /// SumcheckInstance for Spartan outer rounds after the univariate-skip first round.
 /// Round 0 in this instance corresponds to the "streaming" round; subsequent rounds
 /// use the remaining linear-time algorithm over cycle variables.
+#[derive(Allocative)]
 pub struct OuterRemainingSumcheck<F: JoltField> {
     /// Number of cycle bits for splitting opening points (consistent across prover/verifier)
     /// Total number of rounds is `1 + num_cycles_bits`
@@ -668,7 +679,7 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
         if eq_poly.E_in_current_len() == 1 {
             // groups are pairs (0,1)
             let groups = n / 2;
-            (0..groups)
+            let (t0_unr, tinf_unr) = (0..groups)
                 .into_par_iter()
                 .map(|g| {
                     let az0 = ps.az[2 * g];
@@ -676,20 +687,29 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
                     let bz0 = ps.bz[2 * g];
                     let bz1 = ps.bz[2 * g + 1];
                     let eq = eq_poly.E_out_current()[g];
-                    let t0 = eq * az0 * bz0;
-                    let tinf = eq * (az1 - az0) * (bz1 - bz0);
-                    (t0, tinf)
+                    let p0 = az0 * bz0;
+                    let slope = (az1 - az0) * (bz1 - bz0);
+                    let t0_unr = eq.mul_unreduced::<9>(p0);
+                    let tinf_unr = eq.mul_unreduced::<9>(slope);
+                    (t0_unr, tinf_unr)
                 })
-                .reduce(|| (F::zero(), F::zero()), |a, b| (a.0 + b.0, a.1 + b.1))
+                .reduce(
+                    || (F::Unreduced::<9>::zero(), F::Unreduced::<9>::zero()),
+                    |a, b| (a.0 + b.0, a.1 + b.1),
+                );
+            (
+                F::from_montgomery_reduce::<9>(t0_unr),
+                F::from_montgomery_reduce::<9>(tinf_unr),
+            )
         } else {
             let num_x1_bits = eq_poly.E_in_current_len().log_2();
             let x1_len = eq_poly.E_in_current_len();
             let x2_len = eq_poly.E_out_current_len();
-            (0..x2_len)
+            let (sum0_unr, suminf_unr) = (0..x2_len)
                 .into_par_iter()
                 .map(|x2| {
-                    let mut inner0 = F::zero();
-                    let mut inner_inf = F::zero();
+                    let mut inner0_unr = F::Unreduced::<9>::zero();
+                    let mut inner_inf_unr = F::Unreduced::<9>::zero();
                     for x1 in 0..x1_len {
                         let g = (x2 << num_x1_bits) | x1;
                         let az0 = ps.az[2 * g];
@@ -697,13 +717,26 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
                         let bz0 = ps.bz[2 * g];
                         let bz1 = ps.bz[2 * g + 1];
                         let e_in = eq_poly.E_in_current()[x1];
-                        inner0 += e_in * az0 * bz0;
-                        inner_inf += e_in * (az1 - az0) * (bz1 - bz0);
+                        let p0 = az0 * bz0;
+                        let slope = (az1 - az0) * (bz1 - bz0);
+                        inner0_unr += e_in.mul_unreduced::<9>(p0);
+                        inner_inf_unr += e_in.mul_unreduced::<9>(slope);
                     }
                     let e_out = eq_poly.E_out_current()[x2];
-                    (e_out * inner0, e_out * inner_inf)
+                    let inner0_red = F::from_montgomery_reduce::<9>(inner0_unr);
+                    let inner_inf_red = F::from_montgomery_reduce::<9>(inner_inf_unr);
+                    let t0_unr = e_out.mul_unreduced::<9>(inner0_red);
+                    let tinf_unr = e_out.mul_unreduced::<9>(inner_inf_red);
+                    (t0_unr, tinf_unr)
                 })
-                .reduce(|| (F::zero(), F::zero()), |a, b| (a.0 + b.0, a.1 + b.1))
+                .reduce(
+                    || (F::Unreduced::<9>::zero(), F::Unreduced::<9>::zero()),
+                    |a, b| (a.0 + b.0, a.1 + b.1),
+                );
+            (
+                F::from_montgomery_reduce::<9>(sum0_unr),
+                F::from_montgomery_reduce::<9>(suminf_unr),
+            )
         }
     }
 
@@ -888,5 +921,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for OuterRemainingSumch
                 OpeningPoint::new(r_cycle.to_vec()),
             );
         });
+    }
+
+    #[cfg(feature = "allocative")]
+    fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
+        flamegraph.visit_root(self);
     }
 }

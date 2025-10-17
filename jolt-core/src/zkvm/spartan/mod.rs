@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::opening_proof::SumcheckId;
 use crate::subprotocols::sumcheck::prove_uniskip_round;
 use crate::subprotocols::univariate_skip::UniSkipState;
 #[cfg(feature = "allocative")]
@@ -17,6 +18,7 @@ use crate::zkvm::spartan::product::{
     ProductVirtualRemainder, ProductVirtualUniSkipInstance,
     PRODUCT_VIRTUAL_FIRST_ROUND_POLY_NUM_COEFFS, PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
 };
+use crate::zkvm::witness::VirtualPolynomial;
 
 use crate::transcripts::Transcript;
 
@@ -33,6 +35,8 @@ pub struct SpartanDag<F: JoltField> {
     /// Cached key to avoid recomputation across stages
     key: Arc<UniformSpartanKey<F>>,
     /// Handoff state from univariate skip first round (shared by prover and verifier)
+    /// Consists of the `tau` vector for Lagrange / eq evals, the claim from univariate skip round,
+    /// and the challenge r0 from the univariate skip round
     /// This is first used in stage 1 and then reused in stage 2
     uni_skip_state: Option<UniSkipState<F>>,
 }
@@ -144,9 +148,8 @@ where
         // Stage 1 remainder: outer-remaining + extras.
         let mut instances: Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> = Vec::new();
         if let Some(st) = self.uni_skip_state.take() {
-            let num_cycles_bits = self.key.num_steps.ilog2() as usize;
             let outer_remaining =
-                OuterRemainingSumcheck::new_prover(state_manager, num_cycles_bits, &st);
+                OuterRemainingSumcheck::new_prover(state_manager, self.key.num_cycle_vars(), &st);
             instances.push(Box::new(outer_remaining));
         }
         // TODO: append extras when available
@@ -199,17 +202,28 @@ where
         - L(τ_high, r0) · Eq(τ_low, r_tail^rev) · Left(r_cycle) · Right(r_cycle), where r_cycle = r_tail.
     */
 
-    fn stage2_first_round_prove(
+    fn stage2_prover_uni_skip(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Result<(), anyhow::Error> {
         // Univariate-skip first round for product virtualization (Stage 2a)
-        let key = self.key.clone();
-        let num_rounds: usize = key.num_cycle_vars() + 1; // + 1 for the initial univariate skip
+        let num_cycle_vars: usize = self.key.num_cycle_vars();
         let transcript = state_manager.get_transcript();
-        let tau: Vec<F::Challenge> = transcript
-            .borrow_mut()
-            .challenge_vector_optimized::<F>(num_rounds);
+
+        // Reuse r_cycle from Stage 1 (Spartan outer) for τ_low, and sample a single τ_high
+        let r_cycle: Vec<F::Challenge> = {
+            let acc = state_manager.get_prover_accumulator();
+            let (outer_opening, _eval) = acc.borrow().get_virtual_polynomial_opening(
+                VirtualPolynomial::Product,
+                SumcheckId::SpartanOuter,
+            );
+            // Outer stored only r_cycle for these witness openings
+            outer_opening.r
+        };
+        debug_assert_eq!(r_cycle.len(), num_cycle_vars);
+        let tau_high: F::Challenge = transcript.borrow_mut().challenge_scalar_optimized::<F>();
+        let mut tau: Vec<F::Challenge> = r_cycle;
+        tau.push(tau_high);
 
         let mut uniskip_instance =
             ProductVirtualUniSkipInstance::<F>::new_prover(state_manager, &tau);
@@ -244,16 +258,28 @@ where
             L(τ_high, r0) · Eq(τ_low, r_tail^rev) · Left(r_cycle) · Right(r_cycle).
     */
 
-    fn stage2_first_round_verify(
+    fn stage2_verifier_uni_skip(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Result<(), anyhow::Error> {
-        let key = self.key.clone();
-        let num_rounds: usize = key.num_cycle_vars() + 1; // + 1 for the initial univariate skip
-        let tau: Vec<F::Challenge> = state_manager
+        let num_cycle_vars: usize = self.key.num_cycle_vars();
+
+        // Reuse r_cycle from Stage 1 (Spartan outer) for τ_low, and sample a single τ_high
+        let r_cycle: Vec<F::Challenge> = {
+            let acc = state_manager.get_verifier_accumulator();
+            let (outer_opening, _eval) = acc.borrow().get_virtual_polynomial_opening(
+                VirtualPolynomial::Product,
+                SumcheckId::SpartanOuter,
+            );
+            outer_opening.r
+        };
+        debug_assert_eq!(r_cycle.len(), num_cycle_vars);
+        let tau_high: F::Challenge = state_manager
             .transcript
             .borrow_mut()
-            .challenge_vector_optimized::<F>(num_rounds);
+            .challenge_scalar_optimized::<F>();
+        let mut tau: Vec<F::Challenge> = r_cycle;
+        tau.push(tau_high);
 
         let first_round = {
             let proofs = state_manager.proofs.borrow();
@@ -292,8 +318,9 @@ where
         let st = self
             .uni_skip_state
             .take()
-            .expect("stage2_first_round_prove must run before stage2_prover_instances");
-        let product_virtual_remainder = ProductVirtualRemainder::new_prover(state_manager, &st);
+            .expect("stage2_prover_uni_skip must run before stage2_prover_instances");
+        let num_cycle_vars = self.key.num_cycle_vars();
+        let product_virtual_remainder = ProductVirtualRemainder::new_prover(state_manager, num_cycle_vars, &st);
 
         vec![
             Box::new(inner_sumcheck),
@@ -306,15 +333,14 @@ where
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
         // Sumcheck 2: Inner sumcheck + Product Virtualization remainder (verifier)
-        let key = self.key.clone();
-        let inner_sumcheck = InnerSumcheck::<F>::new_verifier(state_manager, key);
+        let num_cycle_vars = self.key.num_cycle_vars();
+        let inner_sumcheck = InnerSumcheck::<F>::new_verifier(state_manager, self.key.clone());
 
         let st = self
             .uni_skip_state
             .take()
-            .expect("stage2_first_round_verify must run before stage2_verifier_instances");
-        let num_cycles_bits = self.key.num_steps.ilog2() as usize;
-        let product_virtual_remainder = ProductVirtualRemainder::new_verifier(num_cycles_bits, st);
+            .expect("stage2_verifier_uni_skip must run before stage2_verifier_instances");
+        let product_virtual_remainder = ProductVirtualRemainder::new_verifier(num_cycle_vars, st);
 
         vec![
             Box::new(inner_sumcheck),
