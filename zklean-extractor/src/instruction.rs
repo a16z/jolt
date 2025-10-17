@@ -158,14 +158,20 @@ impl<J: JoltParameterSet> ZkLeanInstruction<J> {
         mut indent_level: usize,
     ) -> std::io::Result<()> {
         let name = self.name();
+        let num_variables = 2 * J::WORD_SIZE;
         let interleaving = self.interleaving;
         let lookup_table = match self
             .instruction
             .lookup_table()
             .map(|t| ZkLeanLookupTable::from(t).name())
         {
-            None => String::from("none"),
-            Some(t) => format!("(some {t})"),
+            None => String::from("sorry /-No lookup table for this instruction-/"),
+            // XXX: This case can be removed once
+            // https://gitlab-ext.galois.com/jb4/jolt-fork/-/merge_requests/23 is merged.
+            Some(t) if !ZkLeanLookupTable::<32>::iter().any(|s| s.name() == t) => {
+                format!("sorry /-{t} currently unsupported by MleAst data structure-/")
+            }
+            Some(t) => format!("{t} : Vector f {num_variables} -> f"),
         };
         let circuit_flags = CircuitFlags::iter()
             .filter_map(|f| {
@@ -179,16 +185,16 @@ impl<J: JoltParameterSet> ZkLeanInstruction<J> {
             .join(", ");
 
         f.write_fmt(format_args!(
-            "{}def {name} [Field f] : Instruction f :=\n",
+            "{}def {name} [Field f] : LookupTableMLE f {num_variables} :=\n",
             indent(indent_level),
         ))?;
         indent_level += 1;
         f.write_fmt(format_args!(
-            "{}instructionFromMLE {interleaving} {lookup_table}\n",
+            "{}-- Circuit flags: {circuit_flags}\n",
             indent(indent_level),
         ))?;
         f.write_fmt(format_args!(
-            "{}-- Circuit flags: {circuit_flags}\n",
+            "{}LookupTableMLE.mk Interleaving.{interleaving} ({lookup_table})\n",
             indent(indent_level),
         ))?;
 
