@@ -515,6 +515,7 @@ impl<F: JoltField, ProofTranscript: Transcript> UniSkipFirstRoundProof<F, ProofT
     pub fn verify<const N: usize, const FIRST_ROUND_POLY_NUM_COEFFS: usize>(
         &self,
         degree_bound_first: usize,
+        claim: F,
         transcript: &mut ProofTranscript,
     ) -> Result<(F::Challenge, F), ProofVerifyError> {
         // Degree check for the high-degree first polynomial
@@ -532,7 +533,7 @@ impl<F: JoltField, ProofTranscript: Transcript> UniSkipFirstRoundProof<F, ProofT
         // Check symmetric-domain sum equals zero (initial claim), and compute next claim s1(r0)
         let (ok, next_claim) = self
             .uni_poly
-            .check_sum_evals_and_set_new_claim::<N, FIRST_ROUND_POLY_NUM_COEFFS>(&F::zero(), &r0);
+            .check_sum_evals_and_set_new_claim::<N, FIRST_ROUND_POLY_NUM_COEFFS>(&claim, &r0);
         if !ok {
             return Err(ProofVerifyError::UniSkipVerificationError);
         }

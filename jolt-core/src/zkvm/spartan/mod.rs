@@ -4,7 +4,7 @@ use std::sync::Arc;
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::opening_proof::SumcheckId;
-use crate::subprotocols::sumcheck::prove_uniskip_round;
+use crate::subprotocols::sumcheck::{prove_uniskip_round, UniSkipFirstRoundInstance};
 use crate::subprotocols::univariate_skip::UniSkipState;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
@@ -124,9 +124,16 @@ where
             }
         };
 
+        // Mirror single-sumcheck wiring: build the instance to fetch its input claim
+        let uniskip_instance = OuterUniSkipInstance::<F>::new_verifier(&tau);
+        let input_claim = <OuterUniSkipInstance<F> as UniSkipFirstRoundInstance<
+            F,
+            ProofTranscript,
+        >>::input_claim(&uniskip_instance);
         let (r0, claim_after_first) = first_round
             .verify::<UNIVARIATE_SKIP_DOMAIN_SIZE, FIRST_ROUND_POLY_NUM_COEFFS>(
                 FIRST_ROUND_POLY_NUM_COEFFS - 1,
+                input_claim,
                 &mut *state_manager.transcript.borrow_mut(),
             )
             .map_err(|_| anyhow::anyhow!("UniSkip first-round verification failed"))?;
@@ -292,9 +299,17 @@ where
             }
         };
 
+        // Mirror single-sumcheck wiring: build the ProductVirtual uni-skip instance to get input claim
+        let uniskip_instance =
+            ProductVirtualUniSkipInstance::<F>::new_verifier(state_manager, &tau);
+        let input_claim = <ProductVirtualUniSkipInstance<F> as UniSkipFirstRoundInstance<
+            F,
+            ProofTranscript,
+        >>::input_claim(&uniskip_instance);
         let (r0, claim_after_first) = first_round
             .verify::<PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE, PRODUCT_VIRTUAL_FIRST_ROUND_POLY_NUM_COEFFS>(
                 PRODUCT_VIRTUAL_FIRST_ROUND_POLY_NUM_COEFFS - 1,
+                input_claim,
                 &mut *state_manager.transcript.borrow_mut(),
             )
             .map_err(|_| anyhow::anyhow!("ProductVirtual uni-skip first-round verification failed"))?;

@@ -2,11 +2,11 @@ use crate::field::{ChallengeFieldOps, JoltField};
 
 use rayon::prelude::*;
 
+pub mod accumulation;
 pub mod counters;
 pub mod errors;
 pub mod expanding_table;
 pub mod gaussian_elimination;
-pub mod accumulation;
 pub mod lookup_bits;
 pub mod math;
 #[cfg(feature = "monitor")]

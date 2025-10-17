@@ -17,14 +17,14 @@ use crate::poly::opening_proof::{
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::sumcheck::{SumcheckInstance, UniSkipFirstRoundInstance};
-use crate::utils::accumulation::{
-    acc6s_fmadd_i128, acc6s_new, acc6s_reduce, acc7s_fmadd_s160, acc7s_new, acc7s_reduce,
-};
 use crate::subprotocols::univariate_skip::{
     build_uniskip_first_round_poly, compute_az_r_group0, compute_az_r_group1, compute_bz_r_group0,
     compute_bz_r_group1, uniskip_targets, UniSkipState,
 };
 use crate::transcripts::Transcript;
+use crate::utils::accumulation::{
+    acc6s_fmadd_i128, acc6s_new, acc6s_reduce, acc7s_fmadd_s160, acc7s_new, acc7s_reduce,
+};
 use crate::utils::math::Math;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;

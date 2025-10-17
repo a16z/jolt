@@ -141,9 +141,7 @@ pub fn acc7u_fmadd_u128<F: JoltField>(acc: &mut Acc7Unsigned<F>, field: &F, v: u
     let lo = v as u64;
     let hi = (v >> 64) as u64;
     let mag = <F as JoltField>::Unreduced::from([lo, hi]);
-    field
-        .as_unreduced_ref()
-        .fmadd_trunc::<2, 7>(&mag, acc);
+    field.as_unreduced_ref().fmadd_trunc::<2, 7>(&mag, acc);
 }
 
 #[inline(always)]
@@ -240,7 +238,11 @@ pub fn fmadd_unreduced<F: JoltField>(
     let field_bigint = field.as_unreduced_ref();
     if !product.is_zero() {
         let mag = F::Unreduced::<4>::from(product);
-        let acc = if product.is_positive() { pos_acc } else { neg_acc };
+        let acc = if product.is_positive() {
+            pos_acc
+        } else {
+            neg_acc
+        };
         field_bigint.fmadd_trunc::<4, 8>(&mag, acc);
     }
 }

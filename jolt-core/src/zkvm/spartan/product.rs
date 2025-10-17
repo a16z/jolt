@@ -119,7 +119,7 @@ pub struct ProductVirtualUniSkipInstance<F: JoltField> {
     /// τ = [τ_low || τ_high]
     /// - τ_low: the cycle-point r_cycle carried from Spartan outer (length = num_cycle_vars)
     /// - τ_high: the univariate-skip binding point sampled for the size-5 domain (length = 1)
-    /// Ordering matches outer: variables are MSB→LSB with τ_high last
+    ///   Ordering matches outer: variables are MSB→LSB with τ_high last
     tau: Vec<F::Challenge>,
     /// Base evaluations (claims) for the five product terms at the base domain
     /// Order: [Product, WriteLookupOutputToRD, WritePCtoRD, ShouldBranch, ShouldJump]
@@ -154,8 +154,6 @@ impl<F: JoltField> ProductVirtualUniSkipInstance<F> {
                 .get_virtual_polynomial_opening(vp, SumcheckId::SpartanOuter);
             base_evals[i] = eval;
         }
-
-        println!("base_evals: {:?}", base_evals);
 
         let tau_low = &tau[..tau.len() - 1];
         let extended_evals = Self::compute_univariate_skip_extended_evals(trace, tau_low);
@@ -197,15 +195,15 @@ impl<F: JoltField> ProductVirtualUniSkipInstance<F> {
     /// - Split τ_low into (τ_out, τ_in) with m = |τ_low|/2. Precompute
     ///   E_out = EqPolynomial::evals(τ_out), E_in = EqPolynomial::evals(τ_in).
     /// - For each z target, compute
-    ///     t1(z) = Σ_{x_out} E_out[x_out] · Σ_{x_in} E_in[x_in] · left_z(x) · right_z(x),
+    ///   t1(z) = Σ_{x_out} E_out[x_out] · Σ_{x_in} E_in[x_in] · left_z(x) · right_z(x),
     ///   where x is the concatenation of (x_out || x_in) in MSB→LSB order.
     ///
     /// Lagrange fusion per target z on extended window {−4,−3,3,4}:
     /// - Compute c[0..4] = LagrangeHelper::shift_coeffs_i32(shift(z)) using the same shifted-kernel
     ///   as outer.rs (indices correspond to the 5 base points).
     /// - Define fused values at this z by linearly combining the 5 product witnesses with c:
-    ///     left_z(x)  = Σ_i c[i] · Left_i(x)
-    ///     right_z(x) = Σ_i c[i] · Right_i^eff(x)
+    ///   left_z(x)  = Σ_i c[i] · Left_i(x)
+    ///   right_z(x) = Σ_i c[i] · Right_i^eff(x)
     ///   with Right_4^eff(x) = 1 − NextIsNoop(x) for the ShouldJump term only.
     ///
     /// Small-value lifting rules for integer accumulation before converting to the field:
@@ -269,8 +267,9 @@ impl<F: JoltField> ProductVirtualUniSkipInstance<F> {
             .map(|chunk_idx| {
                 let x_out_start = chunk_idx * x_out_chunk_size;
                 let x_out_end = core::cmp::min((chunk_idx + 1) * x_out_chunk_size, num_x_out_vals);
-                let mut local_acc: [F; PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE] =
-                    [F::zero(); PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE];
+                // Delayed reduction across x_out as well: accumulate e_out * inner in unreduced form
+                let mut local_acc_unr: [F::Unreduced<9>; PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE] =
+                    [F::Unreduced::<9>::zero(); PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE];
 
                 for x_out_val in x_out_start..x_out_end {
                     let e_out = E_out[x_out_val];
@@ -294,52 +293,71 @@ impl<F: JoltField> ProductVirtualUniSkipInstance<F> {
                         for j in 0..PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE {
                             let c = &coeffs_per_j[j];
 
-                            // Weighted per-product left components (i128)
+                            // Declare per-product weighted components upfront
                             let mut left_w: [i128; NUM_PRODUCT_VIRTUAL] = [0; NUM_PRODUCT_VIRTUAL];
-                            left_w[0] = (c[0] as i128) * (row.instruction_left_input as i128); // u64 -> i128
-                            left_w[1] = (c[1] as i128)
-                                * (row.write_lookup_output_to_rd_rd_addr as i32 as i128); // u8 -> i32 -> i128
-                            left_w[2] =
-                                (c[2] as i128) * (row.write_pc_to_rd_rd_addr as i32 as i128); // u8 -> i32 -> i128
-                            left_w[3] = (c[3] as i128) * (row.should_branch_lookup_output as i128); // u64 -> i128
-                            left_w[4] = (c[4] as i128)
-                                * (if row.should_jump_flag { 1i32 } else { 0i32 } as i128); // bool/u8 -> i32 -> i128
-
-                            // Weighted per-product right components with Right_4^eff (i128)
                             let mut right_w: [i128; NUM_PRODUCT_VIRTUAL] = [0; NUM_PRODUCT_VIRTUAL];
-                            right_w[0] = (c[0] as i128) * row.instruction_right_input; // S64 -> i128
+
+                            // Instruction: LeftInstructionInput × RightInstructionInput
+                            // left: u64 -> i128; right: S64 -> i128
+                            left_w[0] = (c[0] as i128) * (row.instruction_left_input as i128);
+                            right_w[0] = (c[0] as i128) * row.instruction_right_input;
+
+                            // WriteLookupOutputToRD: rd_addr × WriteLookupOutputToRD_flag
+                            // left: u8 -> i32 -> i128; right: bool/u8 -> i32 -> i128
+                            left_w[1] = (c[1] as i128)
+                                * (row.write_lookup_output_to_rd_rd_addr as i32 as i128);
                             right_w[1] = (c[1] as i128)
                                 * (if row.write_lookup_output_to_rd_flag {
                                     1i32
                                 } else {
                                     0i32
-                                } as i128); // bool/u8 -> i32 -> i128
-                            right_w[2] = (c[2] as i128)
-                                * (if row.write_pc_to_rd_flag { 1i32 } else { 0i32 } as i128); // bool/u8 -> i32 -> i128
-                            right_w[3] = (c[3] as i128)
-                                * (if row.should_branch_flag { 1i32 } else { 0i32 } as i128); // bool/u8 -> i32 -> i128
-                            right_w[4] = (c[4] as i128)
-                                * (if row.not_next_noop { 1i32 } else { 0i32 } as i128); // (1-NextIsNoop) -> i32 -> i128
+                                } as i128);
 
-                            // Convert per-product to field once and fuse by summing over i
-                            let mut left_sum = F::zero();
-                            let mut right_sum = F::zero();
+                            // WritePCtoRD: rd_addr × Jump_flag
+                            // left: u8 -> i32 -> i128; right: bool/u8 -> i32 -> i128
+                            left_w[2] =
+                                (c[2] as i128) * (row.write_pc_to_rd_rd_addr as i32 as i128);
+                            right_w[2] = (c[2] as i128)
+                                * (if row.should_jump_flag { 1i32 } else { 0i32 } as i128);
+
+                            // ShouldBranch: lookup_output × Branch_flag
+                            // left: u64 -> i128; right: bool/u8 -> i32 -> i128
+                            left_w[3] = (c[3] as i128) * (row.should_branch_lookup_output as i128);
+                            right_w[3] = (c[3] as i128)
+                                * (if row.should_branch_flag { 1i32 } else { 0i32 } as i128);
+
+                            // ShouldJump: Jump_flag × (1 − NextIsNoop)
+                            // left: bool/u8 -> i32 -> i128; right: bool/u8 -> i32 -> i128
+                            left_w[4] = (c[4] as i128)
+                                * (if row.should_jump_flag { 1i32 } else { 0i32 } as i128);
+                            right_w[4] = (c[4] as i128)
+                                * (if row.not_next_noop { 1i32 } else { 0i32 } as i128);
+
+                            // Fuse by summing over i in i128 and multiply via field × i128
+                            let mut left_sum_i128: i128 = 0;
+                            let mut right_sum_i128: i128 = 0;
                             for i in 0..NUM_PRODUCT_VIRTUAL {
-                                left_sum += F::from_i128(left_w[i]);
-                                right_sum += F::from_i128(right_w[i]);
+                                left_sum_i128 += left_w[i];
+                                right_sum_i128 += right_w[i];
                             }
                             // Delayed reduction: multiply by E_in unreduced, reduce later, then apply E_out
-                            let prod = left_sum * right_sum;
+                            let prod = F::from_i128(left_sum_i128).mul_i128(right_sum_i128);
                             inner_acc[j] += e_in.mul_unreduced::<9>(prod);
                         }
                     }
                     // Reduce inner accumulators and apply E_out
                     for j in 0..PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE {
                         let reduced = F::from_montgomery_reduce::<9>(inner_acc[j]);
-                        local_acc[j] += e_out * reduced;
+                        local_acc_unr[j] += e_out.mul_unreduced::<9>(reduced);
                     }
                 }
 
+                // Reduce once per target for this chunk
+                let mut local_acc: [F; PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE] =
+                    [F::zero(); PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE];
+                for j in 0..PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE {
+                    local_acc[j] = F::from_montgomery_reduce::<9>(local_acc_unr[j]);
+                }
                 local_acc
             })
             .reduce(
@@ -386,18 +404,6 @@ impl<F: JoltField, T: Transcript> UniSkipFirstRoundInstance<F, T>
         };
 
         let tau_high = self.tau[self.tau.len() - 1];
-
-        #[cfg(debug_assertions)]
-        {
-            let w_dbg = LagrangePolynomial::<F>::evals::<
-                F::Challenge,
-                PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
-            >(&tau_high);
-            eprintln!(
-                "[pv-uniskip] base_evals={:?} w_at_tau_high={:?}",
-                base, w_dbg
-            );
-        }
 
         // Compute the univariate-skip first round polynomial s1(Y) = L(τ_high, Y) · t1(Y)
         build_uniskip_first_round_poly::<

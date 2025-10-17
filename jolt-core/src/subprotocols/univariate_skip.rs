@@ -1,12 +1,12 @@
 use crate::field::JoltField;
 use crate::poly::lagrange_poly::LagrangePolynomial;
 use crate::poly::unipoly::UniPoly;
+use crate::utils::accumulation as accum;
 use crate::zkvm::r1cs::constraints::{
     eval_az_first_group, eval_az_second_group, eval_bz_first_group, eval_bz_second_group,
     NUM_REMAINING_R1CS_CONSTRAINTS, UNIVARIATE_SKIP_DOMAIN_SIZE,
 };
 use crate::zkvm::r1cs::inputs::R1CSCycleInputs;
-use crate::utils::accumulation as accum;
 
 /// Shared handoff state from a univariate-skip first round.
 ///
@@ -18,7 +18,6 @@ pub struct UniSkipState<F: JoltField> {
     pub r0: F::Challenge,
     pub tau: Vec<F::Challenge>,
 }
-
 
 #[inline]
 pub fn compute_az_r_group0<F: JoltField>(row: &R1CSCycleInputs, lagrange_evals_r: &[F]) -> F {

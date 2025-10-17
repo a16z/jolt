@@ -2,10 +2,10 @@
 /// (both for small value optimization at the beginning and also for streaming)
 use crate::field::JoltField;
 
-use crate::utils::accumulation::{fmadd_unreduced, Acc8SignedWord};
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::poly::unipoly::CompressedUniPoly;
 use crate::transcripts::Transcript;
+use crate::utils::accumulation::{fmadd_unreduced, Acc8SignedWord};
 use ark_ff::biginteger::{I8OrI96, S160};
 
 // SVOEvalPoint enum definition
@@ -193,9 +193,7 @@ pub const fn v_coords_has_infinity(v_coords_lsb_y_ext_order: &[SVOEvalPoint]) ->
     false
 }
 
-pub const fn v_coords_to_non_binary_base3_idx(
-    v_coords_lsb_y_ext_order: &[SVOEvalPoint],
-) -> usize {
+pub const fn v_coords_to_non_binary_base3_idx(v_coords_lsb_y_ext_order: &[SVOEvalPoint]) -> usize {
     let num_v_vars = v_coords_lsb_y_ext_order.len();
     if num_v_vars == 0 {
         return 0;
@@ -309,8 +307,8 @@ pub fn compute_and_update_tA_inplace_const<
     binary_az_evals_input: &[I8OrI96], // 2^N Az at binary points
     binary_bz_evals_input: &[S160],    // 2^N Bz at binary points
     e_in_val: &F,
-        tA_pos_acc: &mut [Acc8SignedWord<F>],
-        tA_neg_acc: &mut [Acc8SignedWord<F>],
+    tA_pos_acc: &mut [Acc8SignedWord<F>],
+    tA_neg_acc: &mut [Acc8SignedWord<F>],
 ) {
     if NUM_SVO_ROUNDS == 0 {
         debug_assert!(binary_az_evals_input.is_empty());
@@ -437,8 +435,8 @@ pub fn compute_and_update_tA_inplace_2<F: JoltField>(
     binary_az_evals: &[I8OrI96],
     binary_bz_evals: &[S160],
     e_in_val: &F,
-        tA_pos_acc: &mut [Acc8SignedWord<F>],
-        tA_neg_acc: &mut [Acc8SignedWord<F>],
+    tA_pos_acc: &mut [Acc8SignedWord<F>],
+    tA_neg_acc: &mut [Acc8SignedWord<F>],
 ) {
     debug_assert!(binary_az_evals.len() == 4);
     debug_assert!(binary_bz_evals.len() == 4);
@@ -504,8 +502,8 @@ pub fn compute_and_update_tA_inplace_3<F: JoltField>(
     binary_az_evals: &[I8OrI96],
     binary_bz_evals: &[S160],
     e_in_val: &F,
-        tA_pos_acc: &mut [Acc8SignedWord<F>],
-        tA_neg_acc: &mut [Acc8SignedWord<F>],
+    tA_pos_acc: &mut [Acc8SignedWord<F>],
+    tA_neg_acc: &mut [Acc8SignedWord<F>],
 ) {
     debug_assert!(binary_az_evals.len() == 8);
     debug_assert!(binary_bz_evals.len() == 8);
@@ -671,8 +669,8 @@ pub fn compute_and_update_tA_inplace<const NUM_SVO_ROUNDS: usize, F: JoltField>(
     binary_az_evals: &[I8OrI96],
     binary_bz_evals: &[S160],
     e_in_val: &F,
-        tA_pos_acc: &mut [Acc8SignedWord<F>],
-        tA_neg_acc: &mut [Acc8SignedWord<F>],
+    tA_pos_acc: &mut [Acc8SignedWord<F>],
+    tA_neg_acc: &mut [Acc8SignedWord<F>],
 ) {
     match NUM_SVO_ROUNDS {
         0 => {
@@ -755,8 +753,8 @@ pub fn process_svo_sumcheck_rounds<
 >(
     accums_zero: &[F],
     accums_infty: &[F],
-    _r_challenges: &mut Vec<F::Challenge>,
-    _round_polys: &mut Vec<CompressedUniPoly<F>>,
+    _r_challenges: &mut [F::Challenge],
+    _round_polys: &mut [CompressedUniPoly<F>],
     _claim: &mut F,
     _transcript: &mut ProofTranscript,
     _eq_poly: &mut GruenSplitEqPolynomial<F>,
@@ -791,8 +789,8 @@ pub fn process_svo_sumcheck_rounds<
         if num_accs_infty_curr_round > 0
             && current_acc_infty_offset + num_accs_infty_curr_round <= accums_infty.len()
         {
-            let accums_infty_slice = &accums_infty[current_acc_infty_offset
-                ..current_acc_infty_offset + num_accs_infty_curr_round];
+            let accums_infty_slice = &accums_infty
+                [current_acc_infty_offset..current_acc_infty_offset + num_accs_infty_curr_round];
             for k in 0..num_lagrange_coeffs_for_round {
                 if k < accums_infty_slice.len() && k < lagrange_coeffs.len() {
                     quadratic_eval_infty += accums_infty_slice[k] * lagrange_coeffs[k];
@@ -820,8 +818,8 @@ pub fn process_svo_sumcheck_rounds<
                     && non_binary_v_config_counter < accums_zero_slice.len()
                     && k_global < lagrange_coeffs.len()
                 {
-                    quadratic_eval_0 += accums_zero_slice[non_binary_v_config_counter]
-                        * lagrange_coeffs[k_global];
+                    quadratic_eval_0 +=
+                        accums_zero_slice[non_binary_v_config_counter] * lagrange_coeffs[k_global];
                     non_binary_v_config_counter += 1;
                 }
             }
@@ -840,7 +838,7 @@ pub fn process_svo_sumcheck_rounds<
         // Stub for now
         let r_i = F::zero();
 
-        let lagrange_coeffs_r_i: [F; 3] = [F::one() - r_i, r_i.into(), r_i * (r_i - F::one())];
+        let lagrange_coeffs_r_i: [F; 3] = [F::one() - r_i, r_i, r_i * (r_i - F::one())];
 
         if i < NUM_SVO_ROUNDS.saturating_sub(1) {
             lagrange_coeffs = lagrange_coeffs_r_i
@@ -902,10 +900,8 @@ pub const fn get_msb_ternary_digits<const N: usize>(k: usize) -> [u8; N] {
     digits
 }
 
-pub const fn precompute_ternary_point_infos<
-    const N: usize,
-    const NUM_TERNARY_POINTS_VAL: usize,
->() -> [TernaryPointInfo<N>; NUM_TERNARY_POINTS_VAL] {
+pub const fn precompute_ternary_point_infos<const N: usize, const NUM_TERNARY_POINTS_VAL: usize>(
+) -> [TernaryPointInfo<N>; NUM_TERNARY_POINTS_VAL] {
     if N == 0 {
         // NUM_TERNARY_POINTS_VAL should be 1 in this case (pow(3,0)=1)
         // An empty array cannot be returned if NUM_TERNARY_POINTS_VAL is > 0.
@@ -1087,8 +1083,10 @@ mod tests {
             .collect();
 
         // Generic small value path (produces Montgomery-form Fr elements after reduction)
-        let mut ta_pos_acc_generic = vec![<Fr as JoltField>::Unreduced::<8>::from([0u64; 8]); num_non_trivial];
-        let mut ta_neg_acc_generic = vec![<Fr as JoltField>::Unreduced::<8>::from([0u64; 8]); num_non_trivial];
+        let mut ta_pos_acc_generic =
+            vec![<Fr as JoltField>::Unreduced::<8>::from([0u64; 8]); num_non_trivial];
+        let mut ta_neg_acc_generic =
+            vec![<Fr as JoltField>::Unreduced::<8>::from([0u64; 8]); num_non_trivial];
         compute_and_update_tA_inplace::<NUM_SVO_ROUNDS, Fr>(
             &binary_az_vals,
             &binary_bz_vals,
@@ -1098,8 +1096,10 @@ mod tests {
         );
 
         // Hardcoded small value path - call the hardcoded versions directly
-        let mut ta_pos_acc_hardcoded = vec![<Fr as JoltField>::Unreduced::<8>::from([0u64; 8]); num_non_trivial];
-        let mut ta_neg_acc_hardcoded = vec![<Fr as JoltField>::Unreduced::<8>::from([0u64; 8]); num_non_trivial];
+        let mut ta_pos_acc_hardcoded =
+            vec![<Fr as JoltField>::Unreduced::<8>::from([0u64; 8]); num_non_trivial];
+        let mut ta_neg_acc_hardcoded =
+            vec![<Fr as JoltField>::Unreduced::<8>::from([0u64; 8]); num_non_trivial];
 
         // Call the hardcoded versions directly based on NUM_SVO_ROUNDS
         match NUM_SVO_ROUNDS {
