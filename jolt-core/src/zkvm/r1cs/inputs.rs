@@ -315,7 +315,7 @@ pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 34] = [
     JoltR1CSInputs::OpFlags(CircuitFlags::Store),
     JoltR1CSInputs::OpFlags(CircuitFlags::Jump),
     JoltR1CSInputs::OpFlags(CircuitFlags::WriteLookupOutputToRD),
-    JoltR1CSInputs::OpFlags(CircuitFlags::InlineSequenceInstruction),
+    JoltR1CSInputs::OpFlags(CircuitFlags::VirtualInstruction),
     JoltR1CSInputs::OpFlags(CircuitFlags::Assert),
     JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC),
     JoltR1CSInputs::OpFlags(CircuitFlags::Advice),
@@ -369,7 +369,7 @@ impl JoltR1CSInputs {
             JoltR1CSInputs::OpFlags(CircuitFlags::Store) => 25,
             JoltR1CSInputs::OpFlags(CircuitFlags::Jump) => 26,
             JoltR1CSInputs::OpFlags(CircuitFlags::WriteLookupOutputToRD) => 27,
-            JoltR1CSInputs::OpFlags(CircuitFlags::InlineSequenceInstruction) => 28,
+            JoltR1CSInputs::OpFlags(CircuitFlags::VirtualInstruction) => 28,
             JoltR1CSInputs::OpFlags(CircuitFlags::Assert) => 29,
             JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC) => 30,
             JoltR1CSInputs::OpFlags(CircuitFlags::Advice) => 31,
@@ -726,8 +726,8 @@ mod tests {
                         CircuitFlags::WriteLookupOutputToRD
                     )
                     | (
-                        CircuitFlags::InlineSequenceInstruction,
-                        CircuitFlags::InlineSequenceInstruction
+                        CircuitFlags::VirtualInstruction,
+                        CircuitFlags::VirtualInstruction
                     )
                     | (CircuitFlags::Assert, CircuitFlags::Assert)
                     | (

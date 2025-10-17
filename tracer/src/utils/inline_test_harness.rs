@@ -264,7 +264,7 @@ impl InlineTestHarness {
             opcode,
             funct3,
             funct7,
-            inline_sequence_remaining: None,
+            virtual_sequence_remaining: None,
             is_first_in_sequence: false,
             is_compressed: false,
         }

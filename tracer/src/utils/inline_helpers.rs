@@ -124,13 +124,13 @@ impl InstrAssembler {
         }
     }
 
-    /// Finalize the instruction buffer: back-fill `inline_sequence_remaining`
+    /// Finalize the instruction buffer: back-fill `virtual_sequence_remaining`
     /// and return ownership of the underlying `Vec`.
     pub(crate) fn finalize(mut self) -> Vec<Instruction> {
         let len = self.sequence.len();
         for (i, instr) in self.sequence.iter_mut().enumerate() {
             instr.set_is_first_in_sequence(i == 0);
-            instr.set_inline_sequence_remaining(Some((len - i - 1) as u16));
+            instr.set_virtual_sequence_remaining(Some((len - i - 1) as u16));
         }
         self.sequence
             .last_mut()
@@ -197,7 +197,7 @@ impl InstrAssembler {
             },
             is_compressed: false,
             is_first_in_sequence: false,
-            inline_sequence_remaining: Some(0),
+            virtual_sequence_remaining: Some(0),
         }));
     }
 
@@ -222,7 +222,7 @@ impl InstrAssembler {
             },
             is_compressed: false,
             is_first_in_sequence: false,
-            inline_sequence_remaining: Some(0),
+            virtual_sequence_remaining: Some(0),
         }));
     }
 
@@ -247,7 +247,7 @@ impl InstrAssembler {
             },
             is_compressed: false,
             is_first_in_sequence: false,
-            inline_sequence_remaining: Some(0),
+            virtual_sequence_remaining: Some(0),
         }));
     }
 
@@ -272,7 +272,7 @@ impl InstrAssembler {
             },
             is_compressed: false,
             is_first_in_sequence: false,
-            inline_sequence_remaining: Some(0),
+            virtual_sequence_remaining: Some(0),
         }));
     }
 
@@ -297,7 +297,7 @@ impl InstrAssembler {
             },
             is_compressed: false,
             is_first_in_sequence: false,
-            inline_sequence_remaining: Some(0),
+            virtual_sequence_remaining: Some(0),
         }));
     }
 
@@ -318,7 +318,7 @@ impl InstrAssembler {
             },
             is_compressed: false,
             is_first_in_sequence: false,
-            inline_sequence_remaining: Some(0),
+            virtual_sequence_remaining: Some(0),
         }));
     }
 
@@ -339,7 +339,7 @@ impl InstrAssembler {
             },
             is_compressed: false,
             is_first_in_sequence: false,
-            inline_sequence_remaining: Some(0),
+            virtual_sequence_remaining: Some(0),
         }));
     }
 
@@ -364,7 +364,7 @@ impl InstrAssembler {
             },
             is_compressed: false,
             is_first_in_sequence: false,
-            inline_sequence_remaining: Some(0),
+            virtual_sequence_remaining: Some(0),
         }));
     }
 
@@ -389,7 +389,7 @@ impl InstrAssembler {
             },
             is_compressed: false,
             is_first_in_sequence: false,
-            inline_sequence_remaining: Some(0),
+            virtual_sequence_remaining: Some(0),
         }));
     }
 
@@ -413,7 +413,7 @@ impl InstrAssembler {
             },
             is_compressed: false,
             is_first_in_sequence: false,
-            inline_sequence_remaining: Some(0),
+            virtual_sequence_remaining: Some(0),
         }));
     }
 

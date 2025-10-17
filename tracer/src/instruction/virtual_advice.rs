@@ -9,12 +9,12 @@ use super::{format::format_j::FormatJ, RISCVInstruction, RISCVTrace};
 pub struct VirtualAdvice {
     pub address: u64,
     pub operands: FormatJ,
-    /// If this instruction is part of a "inline sequence" (see Section 6.2 of the
+    /// If this instruction is part of a "virtual sequence" (see Section 6.2 of the
     /// Jolt paper), then this contains the number of virtual instructions after this
     /// one in the sequence. I.e. if this is the last instruction in the sequence,
-    /// `inline_sequence_remaining` will be Some(0); if this is the penultimate instruction
-    /// in the sequence, `inline_sequence_remaining` will be Some(1); etc.
-    pub inline_sequence_remaining: Option<u16>,
+    /// `virtual_sequence_remaining` will be Some(0); if this is the penultimate instruction
+    /// in the sequence, `virtual_sequence_remaining` will be Some(1); etc.
+    pub virtual_sequence_remaining: Option<u16>,
     pub is_first_in_sequence: bool,
     pub advice: u64,
     pub is_compressed: bool,
@@ -43,7 +43,7 @@ impl RISCVInstruction for VirtualAdvice {
             address: rng.next_u64(),
             operands: FormatJ::random(rng),
             advice: rng.next_u64(),
-            inline_sequence_remaining: None,
+            virtual_sequence_remaining: None,
             is_first_in_sequence: false,
             is_compressed: false,
         }
@@ -60,7 +60,7 @@ impl From<NormalizedInstruction> for VirtualAdvice {
             address: ni.address as u64,
             operands: ni.operands.into(),
             advice: 0,
-            inline_sequence_remaining: ni.inline_sequence_remaining,
+            virtual_sequence_remaining: ni.virtual_sequence_remaining,
             is_first_in_sequence: ni.is_first_in_sequence,
             is_compressed: ni.is_compressed,
         }
@@ -74,7 +74,7 @@ impl From<VirtualAdvice> for NormalizedInstruction {
             operands: val.operands.into(),
             is_compressed: val.is_compressed,
             is_first_in_sequence: val.is_first_in_sequence,
-            inline_sequence_remaining: val.inline_sequence_remaining,
+            virtual_sequence_remaining: val.virtual_sequence_remaining,
         }
     }
 }
