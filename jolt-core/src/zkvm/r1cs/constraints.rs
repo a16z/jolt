@@ -9,7 +9,6 @@
 //! 1. Add a new variant to `ConstraintName` enum
 //! 2. Add the constraint to `UNIFORM_R1CS` array using appropriate macro
 //! 3. Optionally (but encouraged) add custom evaluators in `eval_az_by_name` and `eval_bz_by_name`
-//! 4. Update `NUM_R1CS_CONSTRAINTS`
 //!
 //! ## Removing a constraint
 //!
@@ -17,7 +16,6 @@
 //! 1. Remove the constraint from `UNIFORM_R1CS` array
 //! 2. Remove the corresponding variant from `ConstraintName` enum
 //! 3. Remove any custom evaluator from `eval_az_bz_by_name`
-//! 4. Update `NUM_R1CS_CONSTRAINTS`
 //!
 //! ## Custom evaluators
 //!
@@ -32,6 +30,8 @@ use crate::field::JoltField;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::zkvm::instruction::CircuitFlags;
 use ark_ff::biginteger::{I8OrI96, S160};
+use strum::EnumCount;
+use strum_macros::{EnumCount, EnumIter};
 
 pub use super::ops::{Term, LC};
 
@@ -93,7 +93,7 @@ pub const fn constraint_eq_conditional_lc(condition: LC, left: LC, right: LC) ->
     )
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, strum_macros::EnumIter)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, EnumCount, EnumIter)]
 pub enum ConstraintName {
     RamAddrEqRs1PlusImmIfLoadStore,
     RamReadEqRamWriteIfLoad,
@@ -111,6 +111,7 @@ pub enum ConstraintName {
     NextUnexpPCEqPCPlusImmIfShouldBranch,
     NextUnexpPCUpdateOtherwise,
     NextPCEqPCPlusOneIfInline,
+    MustStartSequenceFromBeginning,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -253,7 +254,7 @@ macro_rules! r1cs_prod_named {
 }
 
 /// Number of uniform R1CS constraints
-pub const NUM_R1CS_CONSTRAINTS: usize = 16;
+pub const NUM_R1CS_CONSTRAINTS: usize = ConstraintName::COUNT;
 
 /// Static table of all R1CS uniform constraints.
 pub static UNIFORM_R1CS: [NamedConstraint; NUM_R1CS_CONSTRAINTS] = [
@@ -405,8 +406,16 @@ pub static UNIFORM_R1CS: [NamedConstraint; NUM_R1CS_CONSTRAINTS] = [
     // }
     r1cs_eq_conditional!(
         name: ConstraintName::NextPCEqPCPlusOneIfInline,
-        if { { JoltR1CSInputs::OpFlags(CircuitFlags::InlineSequenceInstruction) } }
+        if { { JoltR1CSInputs::OpFlags(CircuitFlags::VirtualInstruction) } }
         => ( { JoltR1CSInputs::NextPC } ) == ( { JoltR1CSInputs::PC } + { 1i128 } )
+    ),
+    // if NextIsVirtual && !NextIsFirstInSequence {
+    //     assert!(DoNotUpdateUnexpandedPC == 1)
+    // }
+    r1cs_eq_conditional!(
+        name: ConstraintName::MustStartSequenceFromBeginning,
+        if { { JoltR1CSInputs::NextIsVirtual } - { JoltR1CSInputs::NextIsFirstInSequence }  }
+        => ( { JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC) } ) == ( { 1 } )
     ),
 ];
 
@@ -466,8 +475,12 @@ pub fn eval_az_by_name<F: JoltField>(c: &NamedConstraint, row: &R1CSCycleInputs)
             let diff = not_jump - (row.should_branch as i128);
             I8OrI96::from(diff)
         }
-        // Az: InlineSequenceInstruction flag (0/1)
-        N::NextPCEqPCPlusOneIfInline => row.flags[CircuitFlags::InlineSequenceInstruction].into(),
+        // Az: VirtualInstruction flag (0/1)
+        N::NextPCEqPCPlusOneIfInline => row.flags[CircuitFlags::VirtualInstruction].into(),
+        // Az: Next instruction is virtual but not the first in its sequence
+        N::MustStartSequenceFromBeginning => {
+            (row.next_is_virtual && !row.next_is_first_in_sequence).into()
+        }
     }
 }
 
@@ -555,6 +568,9 @@ pub fn eval_bz_by_name<F: JoltField>(c: &NamedConstraint, row: &R1CSCycleInputs)
         N::NextPCEqPCPlusOneIfInline => {
             // B: NextPC - (PC + 1) (i128 arithmetic)
             S160::from(row.next_pc as i128 - (row.pc as i128 + 1))
+        }
+        N::MustStartSequenceFromBeginning => {
+            S160::from(row.flags[CircuitFlags::DoNotUpdateUnexpandedPC] as i128 - 1)
         }
     }
 }

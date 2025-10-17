@@ -18,10 +18,11 @@ impl Flags for VirtualAssertHalfwordAlignment {
         let mut flags = [false; NUM_CIRCUIT_FLAGS];
         flags[CircuitFlags::Assert as usize] = true;
         flags[CircuitFlags::AddOperands as usize] = true;
-        flags[CircuitFlags::InlineSequenceInstruction as usize] =
-            self.inline_sequence_remaining.is_some();
+        flags[CircuitFlags::VirtualInstruction as usize] =
+            self.virtual_sequence_remaining.is_some();
         flags[CircuitFlags::DoNotUpdateUnexpandedPC as usize] =
-            self.inline_sequence_remaining.unwrap_or(0) != 0;
+            self.virtual_sequence_remaining.unwrap_or(0) != 0;
+        flags[CircuitFlags::IsFirstInSequence as usize] = self.is_first_in_sequence;
         flags[CircuitFlags::IsCompressed as usize] = self.is_compressed;
         flags
     }

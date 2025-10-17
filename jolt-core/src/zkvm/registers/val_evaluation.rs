@@ -249,10 +249,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ValEvaluationSumche
         // Append claims to accumulator
         accumulator.borrow_mut().append_dense(
             transcript,
-            vec![CommittedPolynomial::RdInc],
+            CommittedPolynomial::RdInc,
             SumcheckId::RegistersValEvaluation,
             r_cycle.r.clone(),
-            &[inc_claim],
+            inc_claim,
         );
 
         let r = [r_address.r.as_slice(), r_cycle.r.as_slice()].concat();
@@ -280,7 +280,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ValEvaluationSumche
         // Append claims to accumulator
         accumulator.borrow_mut().append_dense(
             transcript,
-            vec![CommittedPolynomial::RdInc],
+            CommittedPolynomial::RdInc,
             SumcheckId::RegistersValEvaluation,
             r_cycle.r.clone(),
         );

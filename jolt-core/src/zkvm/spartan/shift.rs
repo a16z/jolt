@@ -15,32 +15,33 @@ use crate::subprotocols::sumcheck::SumcheckInstance;
 use crate::transcripts::Transcript;
 use crate::utils::math::Math;
 use crate::zkvm::dag::state_manager::StateManager;
-use crate::zkvm::instruction::InstructionFlags;
-use crate::zkvm::r1cs::inputs::generate_pc_noop_witnesses;
+use crate::zkvm::instruction::{CircuitFlags, InstructionFlags};
+use crate::zkvm::r1cs::inputs::generate_shift_sumcheck_witnesses;
 use crate::zkvm::r1cs::key::UniformSpartanKey;
 use crate::zkvm::witness::VirtualPolynomial;
 use rayon::prelude::*;
 
 #[derive(Allocative)]
-struct PCSumcheckProverState<F: JoltField> {
+struct ShiftSumcheckProverState<F: JoltField> {
     unexpanded_pc_poly: MultilinearPolynomial<F>,
     pc_poly: MultilinearPolynomial<F>,
+    is_virtual_poly: MultilinearPolynomial<F>,
+    is_first_in_sequence_poly: MultilinearPolynomial<F>,
     is_noop_poly: MultilinearPolynomial<F>,
     eq_plus_one_r_cycle: MultilinearPolynomial<F>,
     eq_plus_one_r_product: MultilinearPolynomial<F>,
 }
 
 #[derive(Allocative)]
-pub struct PCSumcheck<F: JoltField> {
+pub struct ShiftSumcheck<F: JoltField> {
     input_claim: F,
-    gamma: F,
-    gamma_squared: F,
+    gamma_powers: [F; 5],
     log_T: usize,
-    prover_state: Option<PCSumcheckProverState<F>>,
+    prover_state: Option<ShiftSumcheckProverState<F>>,
 }
 
-impl<F: JoltField> PCSumcheck<F> {
-    #[tracing::instrument(skip_all, name = "PCSumcheck::new_prover")]
+impl<F: JoltField> ShiftSumcheck<F> {
+    #[tracing::instrument(skip_all, name = "ShiftSumcheck::new_prover")]
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         key: Arc<UniformSpartanKey<F>>,
@@ -49,8 +50,8 @@ impl<F: JoltField> PCSumcheck<F> {
             state_manager.get_prover_data();
 
         // Stream once to generate PC, UnexpandedPC and IsNoop witnesses
-        let (unexpanded_pc_poly, pc_poly, is_noop_poly) =
-            generate_pc_noop_witnesses(&preprocessing.shared, trace);
+        let (unexpanded_pc_poly, pc_poly, is_noop_poly, is_virtual_poly, is_first_in_sequence_poly) =
+            generate_shift_sumcheck_witnesses(&preprocessing.shared, trace);
 
         let num_cycles = key.num_steps;
         let num_cycles_bits = num_cycles.ilog2() as usize;
@@ -64,6 +65,15 @@ impl<F: JoltField> PCSumcheck<F> {
             VirtualPolynomial::NextUnexpandedPC,
             SumcheckId::SpartanOuter,
         );
+        let (_, next_is_virtual_eval) = accumulator.borrow().get_virtual_polynomial_opening(
+            VirtualPolynomial::NextIsVirtual,
+            SumcheckId::SpartanOuter,
+        );
+        let (_, next_is_first_in_sequence_eval) =
+            accumulator.borrow().get_virtual_polynomial_opening(
+                VirtualPolynomial::NextIsFirstInSequence,
+                SumcheckId::SpartanOuter,
+            );
 
         let (product_sumcheck_r, next_is_noop_eval) =
             accumulator.borrow().get_virtual_polynomial_opening(
@@ -77,25 +87,36 @@ impl<F: JoltField> PCSumcheck<F> {
         let (_, eq_plus_one_r_cycle) = EqPlusOnePolynomial::<F>::evals(&r_cycle.r, None);
         let (_, eq_plus_one_r_product) = EqPlusOnePolynomial::<F>::evals(&r_product.r, None);
 
-        let gamma: F = state_manager.transcript.borrow_mut().challenge_scalar();
-        let gamma_squared = gamma.square();
+        let gamma_powers: Vec<F> = state_manager
+            .transcript
+            .borrow_mut()
+            .challenge_scalar_powers(5);
 
-        let input_claim = next_unexpanded_pc_eval
-            + gamma * next_pc_eval
-            + gamma_squared * (F::one() - next_is_noop_eval);
+        let input_claim = [
+            next_unexpanded_pc_eval,
+            next_pc_eval,
+            next_is_virtual_eval,
+            next_is_first_in_sequence_eval,
+            F::one() - next_is_noop_eval,
+        ]
+        .iter()
+        .zip(gamma_powers.iter())
+        .map(|(eval, gamma)| *gamma * eval)
+        .sum();
 
         Self {
             input_claim,
             log_T: r_cycle.len(),
-            prover_state: Some(PCSumcheckProverState {
+            prover_state: Some(ShiftSumcheckProverState {
                 unexpanded_pc_poly,
                 pc_poly,
+                is_virtual_poly,
+                is_first_in_sequence_poly,
                 is_noop_poly,
                 eq_plus_one_r_cycle: MultilinearPolynomial::from(eq_plus_one_r_cycle),
                 eq_plus_one_r_product: MultilinearPolynomial::from(eq_plus_one_r_product),
             }),
-            gamma,
-            gamma_squared,
+            gamma_powers: gamma_powers.try_into().unwrap(),
         }
     }
 
@@ -103,9 +124,11 @@ impl<F: JoltField> PCSumcheck<F> {
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         key: Arc<UniformSpartanKey<F>>,
     ) -> Self {
-        // Get batching challenge for combining NextUnexpandedPC and NextPC
-        let gamma: F = state_manager.transcript.borrow_mut().challenge_scalar();
-        let gamma_squared = gamma.square();
+        // Get batching challenge for combining claims
+        let gamma_powers: Vec<F> = state_manager
+            .transcript
+            .borrow_mut()
+            .challenge_scalar_powers(5);
 
         // Get the Next* evaluations from the accumulator
         let accumulator = state_manager.get_verifier_accumulator();
@@ -116,27 +139,43 @@ impl<F: JoltField> PCSumcheck<F> {
             VirtualPolynomial::NextUnexpandedPC,
             SumcheckId::SpartanOuter,
         );
+        let (_, next_is_virtual_eval) = accumulator.borrow().get_virtual_polynomial_opening(
+            VirtualPolynomial::NextIsVirtual,
+            SumcheckId::SpartanOuter,
+        );
+        let (_, next_is_first_in_sequence_eval) =
+            accumulator.borrow().get_virtual_polynomial_opening(
+                VirtualPolynomial::NextIsFirstInSequence,
+                SumcheckId::SpartanOuter,
+            );
         let (_, next_is_noop_eval) = accumulator.borrow().get_virtual_polynomial_opening(
             VirtualPolynomial::NextIsNoop,
             SumcheckId::ShouldJumpVirtualization,
         );
 
-        let input_claim = next_unexpanded_pc_eval
-            + gamma * next_pc_eval
-            + gamma_squared * (F::one() - next_is_noop_eval);
+        let input_claim = [
+            next_unexpanded_pc_eval,
+            next_pc_eval,
+            next_is_virtual_eval,
+            next_is_first_in_sequence_eval,
+            F::one() - next_is_noop_eval,
+        ]
+        .iter()
+        .zip(gamma_powers.iter())
+        .map(|(eval, gamma)| *gamma * eval)
+        .sum();
         let log_T = key.num_steps.log_2();
 
         Self {
             input_claim,
             prover_state: None,
             log_T,
-            gamma,
-            gamma_squared,
+            gamma_powers: gamma_powers.try_into().unwrap(),
         }
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for PCSumcheck<F> {
+impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ShiftSumcheck<F> {
     fn degree(&self) -> usize {
         2
     }
@@ -149,7 +188,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for PCSumcheck<F> {
         self.input_claim
     }
 
-    #[tracing::instrument(skip_all, name = "PCSumcheck::compute_prover_message")]
+    #[tracing::instrument(skip_all, name = "ShiftSumcheck::compute_prover_message")]
     fn compute_prover_message(&mut self, _round: usize, _previous_claim: F) -> Vec<F> {
         let prover_state = self
             .prover_state
@@ -166,6 +205,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for PCSumcheck<F> {
                 let pc_evals = prover_state
                     .pc_poly
                     .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
+                let virtual_evals = prover_state
+                    .is_virtual_poly
+                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
+                let first_in_sequence_evals = prover_state
+                    .is_first_in_sequence_poly
+                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
                 let eq_r_cycle_evals = prover_state
                     .eq_plus_one_r_cycle
                     .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
@@ -176,16 +221,22 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for PCSumcheck<F> {
                     .is_noop_poly
                     .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
 
-                [
-                    (unexpanded_pc_evals[0] + self.gamma * pc_evals[0]) * eq_r_cycle_evals[0]
-                        + self.gamma_squared
-                            * (F::one() - is_noop_evals[0])
-                            * eq_r_product_evals[0],
-                    (unexpanded_pc_evals[1] + self.gamma * pc_evals[1]) * eq_r_cycle_evals[1]
-                        + self.gamma_squared
-                            * (F::one() - is_noop_evals[1])
-                            * eq_r_product_evals[1],
-                ]
+                std::array::from_fn(|i| {
+                    [
+                        unexpanded_pc_evals,
+                        pc_evals,
+                        virtual_evals,
+                        first_in_sequence_evals,
+                    ]
+                    .iter()
+                    .zip(self.gamma_powers.iter())
+                    .map(|(evals, gamma)| evals[i] * gamma)
+                    .sum::<F>()
+                        * eq_r_cycle_evals[i]
+                        + self.gamma_powers[4]
+                            * (F::one() - is_noop_evals[i])
+                            * eq_r_product_evals[i]
+                })
             })
             .reduce(
                 || [F::zero(); DEGREE],
@@ -200,7 +251,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for PCSumcheck<F> {
         univariate_poly_evals.into()
     }
 
-    #[tracing::instrument(skip_all, name = "PCSumcheck::bind")]
+    #[tracing::instrument(skip_all, name = "ShiftSumcheck::bind")]
     fn bind(&mut self, r_j: F::Challenge, _round: usize) {
         let prover_state = self
             .prover_state
@@ -216,6 +267,16 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for PCSumcheck<F> {
             s.spawn(|_| {
                 prover_state
                     .pc_poly
+                    .bind_parallel(r_j, BindingOrder::HighToLow)
+            });
+            s.spawn(|_| {
+                prover_state
+                    .is_virtual_poly
+                    .bind_parallel(r_j, BindingOrder::HighToLow)
+            });
+            s.spawn(|_| {
+                prover_state
+                    .is_first_in_sequence_poly
                     .bind_parallel(r_j, BindingOrder::HighToLow)
             });
             s.spawn(|_| {
@@ -258,13 +319,21 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for PCSumcheck<F> {
         let (r_product, _) = product_sumcheck_r.split_at(num_cycles_bits);
 
         // Get the shift evaluations from the accumulator
-        let (_, unexpanded_pc_eval_at_shift_r) = accumulator.get_virtual_polynomial_opening(
+        let (_, unexpanded_pc_claim) = accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::UnexpandedPC,
             SumcheckId::SpartanShift,
         );
-        let (_, pc_eval_at_shift_r) = accumulator
+        let (_, pc_claim) = accumulator
             .get_virtual_polynomial_opening(VirtualPolynomial::PC, SumcheckId::SpartanShift);
-        let (_, is_noop_eval_at_shift_r) = accumulator.get_virtual_polynomial_opening(
+        let (_, is_virtual_claim) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::OpFlags(CircuitFlags::VirtualInstruction),
+            SumcheckId::SpartanShift,
+        );
+        let (_, is_first_in_sequence_claim) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::OpFlags(CircuitFlags::IsFirstInSequence),
+            SumcheckId::SpartanShift,
+        );
+        let (_, is_noop_claim) = accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::InstructionFlags(InstructionFlags::IsNoop),
             SumcheckId::SpartanShift,
         );
@@ -274,11 +343,18 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for PCSumcheck<F> {
         let eq_plus_one_r_product_at_shift =
             EqPlusOnePolynomial::<F>::new(r_product.to_vec()).evaluate(r);
 
-        (unexpanded_pc_eval_at_shift_r + self.gamma * pc_eval_at_shift_r)
+        [
+            unexpanded_pc_claim,
+            pc_claim,
+            is_virtual_claim,
+            is_first_in_sequence_claim,
+        ]
+        .iter()
+        .zip(self.gamma_powers.iter())
+        .map(|(eval, gamma)| *gamma * eval)
+        .sum::<F>()
             * eq_plus_one_r_cycle_at_shift
-            + self.gamma_squared
-                * (F::one() - is_noop_eval_at_shift_r)
-                * eq_plus_one_r_product_at_shift
+            + self.gamma_powers[4] * (F::one() - is_noop_claim) * eq_plus_one_r_product_at_shift
     }
 
     fn cache_openings_prover(
@@ -294,6 +370,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for PCSumcheck<F> {
 
         let unexpanded_pc_eval = prover_state.unexpanded_pc_poly.final_sumcheck_claim();
         let pc_eval = prover_state.pc_poly.final_sumcheck_claim();
+        let is_virtual_eval = prover_state.is_virtual_poly.final_sumcheck_claim();
+        let is_first_in_sequence_eval = prover_state
+            .is_first_in_sequence_poly
+            .final_sumcheck_claim();
         let is_noop_eval = prover_state.is_noop_poly.final_sumcheck_claim();
 
         accumulator.borrow_mut().append_virtual(
@@ -309,6 +389,20 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for PCSumcheck<F> {
             SumcheckId::SpartanShift,
             opening_point.clone(),
             pc_eval,
+        );
+        accumulator.borrow_mut().append_virtual(
+            transcript,
+            VirtualPolynomial::OpFlags(CircuitFlags::VirtualInstruction),
+            SumcheckId::SpartanShift,
+            opening_point.clone(),
+            is_virtual_eval,
+        );
+        accumulator.borrow_mut().append_virtual(
+            transcript,
+            VirtualPolynomial::OpFlags(CircuitFlags::IsFirstInSequence),
+            SumcheckId::SpartanShift,
+            opening_point.clone(),
+            is_first_in_sequence_eval,
         );
         accumulator.borrow_mut().append_virtual(
             transcript,
@@ -341,6 +435,18 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for PCSumcheck<F> {
         accumulator.borrow_mut().append_virtual(
             transcript,
             VirtualPolynomial::PC,
+            SumcheckId::SpartanShift,
+            opening_point.clone(),
+        );
+        accumulator.borrow_mut().append_virtual(
+            transcript,
+            VirtualPolynomial::OpFlags(CircuitFlags::VirtualInstruction),
+            SumcheckId::SpartanShift,
+            opening_point.clone(),
+        );
+        accumulator.borrow_mut().append_virtual(
+            transcript,
+            VirtualPolynomial::OpFlags(CircuitFlags::IsFirstInSequence),
             SumcheckId::SpartanShift,
             opening_point.clone(),
         );

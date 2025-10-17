@@ -38,7 +38,7 @@ struct DataBuffers<F: JoltField> {
     /// Contains
     ///     Val(k, j', 0, ..., 0)
     /// as we iterate over rows j' \in {0, 1}^(log(T) - i)
-    val_j_0: [F; K],
+    val_j_0: [u64; K],
     /// `val_j_r[0]` contains
     ///     Val(k, j'', 0, r_i, ..., r_1)
     /// `val_j_r[1]` contains
@@ -67,9 +67,9 @@ struct DataBuffers<F: JoltField> {
 struct ReadWriteCheckingProverState<F: JoltField> {
     addresses: Vec<(u8, u8, u8)>,
     chunk_size: usize,
-    val_checkpoints: Vec<F>,
+    val_checkpoints: Vec<u64>,
     data_buffers: Vec<DataBuffers<F>>,
-    I: Vec<Vec<(usize, u8, F, F)>>,
+    I: Vec<Vec<(usize, u8, F, i128)>>,
     A: Vec<F>,
     gruen_eq_r_cycle_stage_1: GruenSplitEqPolynomial<F>,
     gruen_eq_r_cycle_stage_3: GruenSplitEqPolynomial<F>,
@@ -135,7 +135,7 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
         // TODO(moodlezoup): could potentially generate these checkpoints in the tracer
         // Generate checkpoints as a flat vector because it will be turned into the
         // materialized Val polynomial after the first half of sumcheck.
-        let mut val_checkpoints: Vec<F> = unsafe_allocate_zero_vec(K * num_chunks);
+        let mut val_checkpoints: Vec<u64> = vec![0; K * num_chunks];
         val_checkpoints
             .par_chunks_mut(K)
             .zip(checkpoints.into_par_iter())
@@ -143,7 +143,7 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
                 val_checkpoint
                     .iter_mut()
                     .zip(checkpoint.iter())
-                    .for_each(|(dest, src)| *dest = F::from_i128(*src))
+                    .for_each(|(dest, src)| *dest = *src as u64)
             });
 
         drop(_guard);
@@ -164,7 +164,7 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
         let _guard = span.enter();
 
         // Data structure described in Equation (72)
-        let I: Vec<Vec<(usize, u8, F, F)>> = trace
+        let I: Vec<Vec<(usize, u8, F, i128)>> = trace
             .par_chunks(chunk_size)
             .enumerate()
             .map(|(chunk_index, trace_chunk)| {
@@ -175,7 +175,7 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
                     .map(|cycle| {
                         let (k, pre_value, post_value) = cycle.rd_write();
                         let increment = post_value as i128 - pre_value as i128;
-                        let inc = (j, k, F::zero(), F::from_i128(increment));
+                        let inc = (j, k, F::zero(), increment);
                         j += 1;
                         inc
                     })
@@ -196,7 +196,7 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
         let data_buffers: Vec<DataBuffers<F>> = (0..num_chunks)
             .into_par_iter()
             .map(|_| DataBuffers {
-                val_j_0: [F::zero(); K],
+                val_j_0: [0; K],
                 val_j_r: [[F::zero(); K], [F::zero(); K]],
                 rs1_ra: [[F::zero(); K], [F::zero(); K]],
                 rs2_ra: [[F::zero(); K], [F::zero(); K]],
@@ -460,30 +460,32 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
                             }
 
                             for k in dirty_indices.ones() {
-                                val_j_r[0][k] = val_j_0[k];
+                                val_j_r[0][k] = F::from_u64(val_j_0[k]);
                             }
                             let mut inc_iter = inc_chunk.iter().peekable();
 
                             // First of the two rows
                             loop {
                                 let (row, col, inc_lt, inc) = inc_iter.next().unwrap();
+                                let col = *col as usize;
                                 debug_assert_eq!(*row, j_prime);
-                                val_j_r[0][*col as usize] += *inc_lt;
-                                val_j_0[*col as usize] += *inc;
+                                val_j_r[0][col] += *inc_lt;
+                                val_j_0[col] = (val_j_0[col] as i128 + inc) as u64;
                                 if inc_iter.peek().unwrap().0 != j_prime {
                                     break;
                                 }
                             }
                             for k in dirty_indices.ones() {
-                                val_j_r[1][k] = val_j_0[k];
+                                val_j_r[1][k] = F::from_u64(val_j_0[k]);
                             }
 
                             // Second of the two rows
                             for inc in inc_iter {
                                 let (row, col, inc_lt, inc) = *inc;
+                                let col = col as usize;
                                 debug_assert_eq!(row, j_prime + 1);
-                                val_j_r[1][col as usize] += inc_lt;
-                                val_j_0[col as usize] += inc;
+                                val_j_r[1][col] += inc_lt;
+                                val_j_0[col] = (val_j_0[col] as i128 + inc) as u64;
                             }
 
                             let eq_r_cycle_stage_1_eval =
@@ -664,30 +666,32 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
                             }
 
                             for k in dirty_indices.ones() {
-                                val_j_r[0][k] = val_j_0[k];
+                                val_j_r[0][k] = F::from_u64(val_j_0[k]);
                             }
                             let mut inc_iter = inc_chunk.iter().peekable();
 
                             // First of the two rows
                             loop {
                                 let (row, col, inc_lt, inc) = inc_iter.next().unwrap();
+                                let col = *col as usize;
                                 debug_assert_eq!(*row, j_prime);
-                                val_j_r[0][*col as usize] += *inc_lt;
-                                val_j_0[*col as usize] += *inc;
+                                val_j_r[0][col] += *inc_lt;
+                                val_j_0[col] = (val_j_0[col] as i128 + inc) as u64;
                                 if inc_iter.peek().unwrap().0 != j_prime {
                                     break;
                                 }
                             }
                             for k in dirty_indices.ones() {
-                                val_j_r[1][k] = val_j_0[k];
+                                val_j_r[1][k] = F::from_u64(val_j_0[k]);
                             }
 
                             // Second of the two rows
                             for inc in inc_iter {
                                 let (row, col, inc_lt, inc) = *inc;
+                                let col = col as usize;
                                 debug_assert_eq!(row, j_prime + 1);
-                                val_j_r[1][col as usize] += inc_lt;
-                                val_j_0[col as usize] += inc;
+                                val_j_r[1][col] += inc_lt;
+                                val_j_0[col] = (val_j_0[col] as i128 + inc) as u64;
                             }
 
                             let x_in = (j_prime / 2) & x_bitmask;
@@ -1138,7 +1142,7 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
                 // First time this k has been encountered
                 let bound_value = if j_prime.is_multiple_of(2) {
                     // (1 - r_j) * inc_lt + r_j * inc
-                    inc_lt + r_j * (inc - inc_lt)
+                    inc_lt + r_j * (F::from_i128(inc) - inc_lt)
                 } else {
                     r_j * inc_lt
                 };
@@ -1247,7 +1251,10 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
             let span = tracing::span!(tracing::Level::INFO, "Materialize Val polynomial");
             let _guard = span.enter();
 
-            let mut val_evals: Vec<F> = std::mem::take(val_checkpoints);
+            let mut val_evals: Vec<F> = val_checkpoints
+                .into_par_iter()
+                .map(|checkpoint| F::from_u64(*checkpoint))
+                .collect();
             val_evals
                 .par_chunks_mut(K)
                 .zip(I.into_par_iter())
@@ -1487,10 +1494,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for RegistersReadWriteC
 
         accumulator.borrow_mut().append_dense(
             transcript,
-            vec![CommittedPolynomial::RdInc],
+            CommittedPolynomial::RdInc,
             SumcheckId::RegistersReadWriteChecking,
             r_cycle.r,
-            &[inc_claim],
+            inc_claim,
         );
     }
 
@@ -1530,7 +1537,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for RegistersReadWriteC
 
         accumulator.borrow_mut().append_dense(
             transcript,
-            vec![CommittedPolynomial::RdInc],
+            CommittedPolynomial::RdInc,
             SumcheckId::RegistersReadWriteChecking,
             r_cycle.r,
         );

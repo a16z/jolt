@@ -65,7 +65,7 @@ impl BytecodePreprocessing {
         }
         let instr = cycle.instruction().normalize();
         self.pc_map
-            .get_pc(instr.address, instr.inline_sequence_remaining.unwrap_or(0))
+            .get_pc(instr.address, instr.virtual_sequence_remaining.unwrap_or(0))
     }
 }
 
@@ -101,7 +101,7 @@ impl BytecodePCMapper {
             }
             last_pc += 1;
             if let Some((_, max_sequence)) = indices.get(Self::get_index(instr.address)).unwrap() {
-                if instr.inline_sequence_remaining.unwrap_or(0) >= *max_sequence {
+                if instr.virtual_sequence_remaining.unwrap_or(0) >= *max_sequence {
                     panic!(
                         "Bytecode has non-decreasing inline sequences at index {}",
                         Self::get_index(instr.address)
@@ -109,19 +109,19 @@ impl BytecodePCMapper {
                 }
             } else {
                 indices[Self::get_index(instr.address)] =
-                    Some((last_pc, instr.inline_sequence_remaining.unwrap_or(0)));
+                    Some((last_pc, instr.virtual_sequence_remaining.unwrap_or(0)));
             }
         });
         Self { indices }
     }
 
-    pub fn get_pc(&self, address: usize, inline_sequence_remaining: u16) -> usize {
+    pub fn get_pc(&self, address: usize, virtual_sequence_remaining: u16) -> usize {
         let (base_pc, max_inline_seq) = self
             .indices
             .get(Self::get_index(address))
             .unwrap()
             .expect("PC for address not found");
-        base_pc + (max_inline_seq - inline_sequence_remaining) as usize
+        base_pc + (max_inline_seq - virtual_sequence_remaining) as usize
     }
 
     pub const fn get_index(address: usize) -> usize {
