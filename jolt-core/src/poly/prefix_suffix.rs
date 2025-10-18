@@ -1,3 +1,5 @@
+#![allow(clippy::type_complexity)]
+
 use std::ops::{Index, IndexMut};
 use std::sync::{Arc, RwLock};
 
@@ -192,6 +194,363 @@ pub trait PrefixSuffixPolynomial<F: JoltField, const ORDER: usize> {
         prefix_registry: &mut PrefixRegistry<F>,
     ) -> [Option<Arc<RwLock<CachedPolynomial<F>>>>; ORDER];
     fn suffixes(&self) -> [Box<dyn SuffixPolynomial<F> + Sync>; ORDER];
+}
+
+// =========================
+// Dynamic, field-valued variant (no 0/1 restriction)
+// =========================
+
+#[derive(Default, Allocative)]
+pub struct DynamicPrefixRegistry<F: JoltField> {
+    pub checkpoints: Vec<Option<F>>, // per-term checkpoints
+    pub polys: Vec<Option<Arc<RwLock<CachedPolynomial<F>>>>>,
+}
+
+impl<F: JoltField> DynamicPrefixRegistry<F> {
+    pub fn new(order: usize) -> Self {
+        Self {
+            checkpoints: vec![None; order],
+            polys: vec![None; order],
+        }
+    }
+
+    pub fn update_checkpoints(&mut self) {
+        for (chkpt, poly) in self.checkpoints.iter_mut().zip(self.polys.iter_mut()) {
+            if let Some(p) = poly.as_ref() {
+                *chkpt = Some(p.read().unwrap().final_sumcheck_claim());
+            }
+            *poly = None;
+        }
+    }
+}
+
+pub trait PrefixSuffixPolynomialFieldDyn<F: JoltField>: Send + Sync {
+    fn order(&self) -> usize;
+    /// Build current-phase prefixes (length equals current chunk length)
+    fn prefixes(
+        &self,
+        chunk_len: usize,
+        phase: usize,
+        prefix_registry: &mut DynamicPrefixRegistry<F>,
+    ) -> Vec<Option<Arc<RwLock<CachedPolynomial<F>>>>>;
+
+    /// Evaluate suffix for term k on the provided suffix bits (field-valued)
+    fn suffix_eval(&self, k: usize, suffix: LookupBits) -> F;
+}
+
+#[derive(Allocative)]
+pub struct PrefixSuffixDecompositionFieldDyn<F: JoltField> {
+    #[allocative(skip)]
+    poly: Box<dyn PrefixSuffixPolynomialFieldDyn<F> + Send + Sync>,
+    #[allocative(skip)]
+    P: Vec<Option<Arc<RwLock<CachedPolynomial<F>>>>>, // per-term, current-phase prefixes
+    Q: Vec<DensePolynomial<F>>, // per-term, current-phase Q polynomials
+    // Two-phase control
+    first_chunk_len: usize,
+    second_chunk_len: usize,
+    total_len: usize,
+    phase: usize, // 0 or 1
+    rounds_done: usize,
+}
+
+impl<F: JoltField> PrefixSuffixDecompositionFieldDyn<F> {
+    pub fn new(
+        poly: Box<dyn PrefixSuffixPolynomialFieldDyn<F> + Send + Sync>,
+        cutoff: usize,
+        total_len: usize,
+    ) -> Self {
+        assert!(cutoff > 0 && cutoff < total_len);
+        let order = poly.order();
+        Self {
+            poly,
+            P: std::iter::repeat_with(|| None).take(order).collect(),
+            Q: std::iter::repeat_with(DensePolynomial::default)
+                .take(order)
+                .collect(),
+            first_chunk_len: cutoff,
+            second_chunk_len: total_len - cutoff,
+            total_len,
+            phase: 0,
+            rounds_done: 0,
+        }
+    }
+
+    #[inline(always)]
+    fn current_chunk_len(&self) -> usize {
+        if self.phase == 0 {
+            self.first_chunk_len
+        } else {
+            self.second_chunk_len
+        }
+    }
+
+    #[inline(always)]
+    pub fn suffix_len(&self) -> usize {
+        // Variables after the current chunk start
+        let prefix_len = if self.phase == 0 {
+            self.first_chunk_len
+        } else {
+            self.total_len
+        };
+        self.total_len - prefix_len
+    }
+
+    pub fn init_P(&mut self, prefix_registry: &mut DynamicPrefixRegistry<F>) {
+        self.P = self
+            .poly
+            .prefixes(self.current_chunk_len(), self.phase, prefix_registry);
+    }
+
+    #[tracing::instrument(skip_all, name = "PrefixSuffixFieldDyn::init_Q")]
+    pub fn init_Q(&mut self, u_evals: &[F], indices: &[usize], lookup_bits: &[LookupBits]) {
+        let poly_len = self.current_chunk_len().pow2();
+        let order = self.poly.order();
+        let suffix_len = self.suffix_len();
+
+        let num_chunks = rayon::current_num_threads().next_power_of_two();
+        let chunk_size = (indices.len() / num_chunks).max(1);
+
+        let new_Q: Vec<Vec<F::Unreduced<9>>> = indices
+            .par_chunks(chunk_size)
+            .map(|chunk| {
+                let mut chunk_result: Vec<Vec<F::Unreduced<9>>> = (0..order)
+                    .map(|_| unsafe_allocate_zero_vec(poly_len))
+                    .collect();
+
+                for j in chunk {
+                    let k = lookup_bits[*j];
+                    let (prefix_bits, suffix_bits) = k.split(suffix_len);
+                    for term_k in 0..order {
+                        let t_val = self.poly.suffix_eval(term_k, suffix_bits);
+                        if !t_val.is_zero() {
+                            if let Some(u) = u_evals.get(*j) {
+                                chunk_result[term_k][prefix_bits % poly_len] +=
+                                    u.mul_unreduced::<9>(t_val);
+                            }
+                        }
+                    }
+                }
+
+                chunk_result
+            })
+            .reduce(
+                || {
+                    (0..order)
+                        .map(|_| unsafe_allocate_zero_vec(poly_len))
+                        .collect()
+                },
+                |mut acc, new| {
+                    for (acc_i, new_i) in acc.iter_mut().zip(new.iter()) {
+                        for (acc_coeff, new_coeff) in acc_i.iter_mut().zip(new_i.iter()) {
+                            *acc_coeff += new_coeff;
+                        }
+                    }
+                    acc
+                },
+            );
+
+        // Reduce to field and store
+        self.Q = new_Q
+            .into_iter()
+            .map(|coeffs| {
+                let mut reduced: Vec<F> = unsafe_allocate_zero_vec(poly_len);
+                for (src, dst) in coeffs.into_iter().zip(reduced.iter_mut()) {
+                    *dst = F::from_montgomery_reduce(src);
+                }
+                DensePolynomial::new(reduced)
+            })
+            .collect();
+    }
+
+    #[tracing::instrument(skip_all)]
+    pub fn init_Q_dual(
+        left: &mut PrefixSuffixDecompositionFieldDyn<F>,
+        right: &mut PrefixSuffixDecompositionFieldDyn<F>,
+        u_left: &[F],
+        u_right: &[F],
+        indices: &[usize],
+        lookup_bits: &[LookupBits],
+    ) {
+        debug_assert_eq!(left.current_chunk_len(), right.current_chunk_len());
+        debug_assert_eq!(left.total_len, right.total_len);
+        debug_assert_eq!(left.phase, right.phase);
+
+        let poly_len = left.current_chunk_len().pow2();
+        let order_left = left.poly.order();
+        let order_right = right.poly.order();
+        let suffix_len = left.suffix_len();
+
+        let num_chunks = rayon::current_num_threads().next_power_of_two();
+        let chunk_size = (indices.len() / num_chunks).max(1);
+
+        let (new_left, new_right): (Vec<Vec<F::Unreduced<9>>>, Vec<Vec<F::Unreduced<9>>>) = indices
+            .par_chunks(chunk_size)
+            .map(|chunk| {
+                let mut chunk_left: Vec<Vec<F::Unreduced<9>>> = (0..order_left)
+                    .map(|_| unsafe_allocate_zero_vec(poly_len))
+                    .collect();
+                let mut chunk_right: Vec<Vec<F::Unreduced<9>>> = (0..order_right)
+                    .map(|_| unsafe_allocate_zero_vec(poly_len))
+                    .collect();
+
+                for j in chunk {
+                    let k = lookup_bits[*j];
+                    let (prefix_bits, suffix_bits) = k.split(suffix_len);
+
+                    // Left terms
+                    for term_k in 0..order_left {
+                        let t_val = left.poly.suffix_eval(term_k, suffix_bits);
+                        if !t_val.is_zero() {
+                            if let Some(u) = u_left.get(*j) {
+                                chunk_left[term_k][prefix_bits % poly_len] +=
+                                    u.mul_unreduced::<9>(t_val);
+                            }
+                        }
+                    }
+
+                    // Right terms
+                    for term_k in 0..order_right {
+                        let t_val = right.poly.suffix_eval(term_k, suffix_bits);
+                        if !t_val.is_zero() {
+                            if let Some(u) = u_right.get(*j) {
+                                chunk_right[term_k][prefix_bits % poly_len] +=
+                                    u.mul_unreduced::<9>(t_val);
+                            }
+                        }
+                    }
+                }
+
+                (chunk_left, chunk_right)
+            })
+            .reduce(
+                || {
+                    (
+                        (0..order_left)
+                            .map(|_| unsafe_allocate_zero_vec(poly_len))
+                            .collect(),
+                        (0..order_right)
+                            .map(|_| unsafe_allocate_zero_vec(poly_len))
+                            .collect(),
+                    )
+                },
+                |(mut acc_l, mut acc_r), (new_l, new_r)| {
+                    for (acc_i, new_i) in acc_l.iter_mut().zip(new_l.iter()) {
+                        for (acc_coeff, new_coeff) in acc_i.iter_mut().zip(new_i.iter()) {
+                            *acc_coeff += new_coeff;
+                        }
+                    }
+                    for (acc_i, new_i) in acc_r.iter_mut().zip(new_r.iter()) {
+                        for (acc_coeff, new_coeff) in acc_i.iter_mut().zip(new_i.iter()) {
+                            *acc_coeff += new_coeff;
+                        }
+                    }
+                    (acc_l, acc_r)
+                },
+            );
+
+        left.Q = new_left
+            .into_iter()
+            .map(|coeffs| {
+                let mut reduced: Vec<F> = unsafe_allocate_zero_vec(poly_len);
+                for (src, dst) in coeffs.into_iter().zip(reduced.iter_mut()) {
+                    *dst = F::from_montgomery_reduce(src);
+                }
+                DensePolynomial::new(reduced)
+            })
+            .collect();
+        right.Q = new_right
+            .into_iter()
+            .map(|coeffs| {
+                let mut reduced: Vec<F> = unsafe_allocate_zero_vec(poly_len);
+                for (src, dst) in coeffs.into_iter().zip(reduced.iter_mut()) {
+                    *dst = F::from_montgomery_reduce(src);
+                }
+                DensePolynomial::new(reduced)
+            })
+            .collect();
+    }
+
+    /// Returns evaluation at 0 and 2 at index
+    pub fn sumcheck_evals(&self, index: usize) -> (F, F) {
+        let len = self.Q.first().map(|q| q.len()).unwrap_or(0);
+        let (eval_0, eval_2_left, eval_2_right) = self
+            .P
+            .par_iter()
+            .zip(self.Q.par_iter())
+            .map(|(p, q)| {
+                let p_evals = if let Some(p) = p {
+                    // one for registry and one for self
+                    let use_cache = Arc::strong_count(p) > 2;
+                    let p = p.read().unwrap();
+                    let p_evals =
+                        p.cached_sumcheck_evals(index, 2, BindingOrder::HighToLow, use_cache);
+                    drop(p);
+                    p_evals
+                } else {
+                    // Prefixes are just constant 1, 1 if it's none
+                    (F::one(), F::one())
+                };
+                let q_left = q[index];
+                let q_right = q[index + len / 2];
+                (
+                    p_evals.0.mul_unreduced::<9>(q_left),  // prefix(0) * suffix(0)
+                    p_evals.1.mul_unreduced::<9>(q_left),  // prefix(2) * suffix(0)
+                    p_evals.1.mul_unreduced::<9>(q_right), // prefix(2) * suffix(1)
+                )
+            })
+            .reduce(
+                || {
+                    (
+                        F::Unreduced::<9>::zero(),
+                        F::Unreduced::<9>::zero(),
+                        F::Unreduced::<9>::zero(),
+                    )
+                },
+                |running, new| (running.0 + new.0, running.1 + new.1, running.2 + new.2),
+            );
+        let eval_0 = F::from_montgomery_reduce(eval_0);
+        let eval_2_right = F::from_montgomery_reduce(eval_2_right);
+        let eval_2_left = F::from_montgomery_reduce(eval_2_left);
+        (eval_0, eval_2_right + eval_2_right - eval_2_left)
+    }
+
+    pub fn bind(&mut self, r: F::Challenge) {
+        self.P.par_iter().for_each(|p| {
+            if let Some(p) = p {
+                // one for registry and one for self
+                let use_cache = Arc::strong_count(p) > 2;
+                let mut p = p.write().unwrap();
+                p.bind_parallel(r, BindingOrder::HighToLow);
+                p.clear_cache(use_cache);
+            }
+        });
+        self.Q.par_iter_mut().for_each(|poly| {
+            poly.bind_parallel(r, BindingOrder::HighToLow);
+        });
+        self.rounds_done += 1;
+        // Transition to phase 1 after binding first chunk
+        if self.phase == 0 && self.rounds_done == self.first_chunk_len {
+            self.phase = 1;
+        }
+    }
+
+    pub fn final_sumcheck_claim(&self) -> F {
+        self.P
+            .par_iter()
+            .map(|p| {
+                if let Some(p) = p {
+                    let p = p.read().unwrap();
+                    p.final_sumcheck_claim()
+                } else {
+                    F::one()
+                }
+            })
+            .sum()
+    }
+
+    pub fn Q_len(&self) -> usize {
+        self.Q.first().map(|q| q.len()).unwrap_or(0)
+    }
 }
 
 #[derive(Allocative)]

@@ -6,13 +6,16 @@ use allocative::Allocative;
 
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::eq_plus_one_poly::EqPlusOnePS;
 use crate::poly::eq_poly::EqPlusOnePolynomial;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
 use crate::poly::opening_proof::{
     OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
 };
+use crate::poly::prefix_suffix::{DynamicPrefixRegistry, PrefixSuffixDecompositionFieldDyn};
 use crate::subprotocols::sumcheck::SumcheckInstance;
 use crate::transcripts::Transcript;
+use crate::utils::lookup_bits::LookupBits;
 use crate::utils::math::Math;
 use crate::zkvm::dag::state_manager::StateManager;
 use crate::zkvm::instruction::{CircuitFlags, InstructionFlags};
@@ -28,8 +31,13 @@ struct ShiftSumcheckProverState<F: JoltField> {
     is_virtual_poly: MultilinearPolynomial<F>,
     is_first_in_sequence_poly: MultilinearPolynomial<F>,
     is_noop_poly: MultilinearPolynomial<F>,
-    eq_plus_one_r_cycle: MultilinearPolynomial<F>,
-    eq_plus_one_r_product: MultilinearPolynomial<F>,
+    // Dynamic field-valued prefix–suffix decompositions for EqPlusOne terms
+    ps_cycle: PrefixSuffixDecompositionFieldDyn<F>,
+    ps_product: PrefixSuffixDecompositionFieldDyn<F>,
+    reg_cycle: DynamicPrefixRegistry<F>,
+    reg_product: DynamicPrefixRegistry<F>,
+    indices: Vec<usize>,
+    lookup_bits: Vec<LookupBits>,
 }
 
 #[derive(Allocative)]
@@ -84,13 +92,55 @@ impl<F: JoltField> ShiftSumcheck<F> {
         let (r_cycle, _rx_var) = outer_sumcheck_r.split_at(num_cycles_bits);
         let (r_product, _) = product_sumcheck_r.split_at(num_cycles_bits);
 
-        let (_, eq_plus_one_r_cycle) = EqPlusOnePolynomial::<F>::evals(&r_cycle.r, None);
-        let (_, eq_plus_one_r_product) = EqPlusOnePolynomial::<F>::evals(&r_product.r, None);
+        // Build dynamic field-valued prefix–suffix decompositions for EqPlusOne terms
+        let ell = num_cycles_bits;
+        let cutoff = ell.div_ceil(2);
+        let eqps_cycle = EqPlusOnePS::<F>::new(r_cycle.r.clone(), ell, cutoff);
+        let eqps_product = EqPlusOnePS::<F>::new(r_product.r.clone(), ell, cutoff);
+        let mut reg_cycle = DynamicPrefixRegistry::new(eqps_cycle.order());
+        let mut reg_product = DynamicPrefixRegistry::new(eqps_product.order());
+        let mut ps_cycle =
+            PrefixSuffixDecompositionFieldDyn::new(Box::new(eqps_cycle), cutoff, ell);
+        let mut ps_product =
+            PrefixSuffixDecompositionFieldDyn::new(Box::new(eqps_product), cutoff, ell);
 
+        // Precompute index helpers once for full domain
+        let t = 1usize << ell;
+        let indices: Vec<usize> = (0..t).collect();
+        let lookup_bits: Vec<LookupBits> =
+            (0..t).map(|i| LookupBits::new(i as u128, ell)).collect();
+
+        // Stage 0: build P and Q for both decompositions in one pass
+        ps_cycle.init_P(&mut reg_cycle);
+        ps_product.init_P(&mut reg_product);
+
+        // Get batching challenge for combining claims (gamma powers) before using them
         let gamma_powers: Vec<F> = state_manager
             .transcript
             .borrow_mut()
             .challenge_scalar_powers(5);
+
+        let gamma = &gamma_powers; // [F; 5]
+        let u_evals: Vec<F> = (0..t)
+            .map(|i| {
+                gamma[0] * unexpanded_pc_poly.get_coeff(i)
+                    + gamma[1] * pc_poly.get_coeff(i)
+                    + gamma[2] * is_virtual_poly.get_coeff(i)
+                    + gamma[3] * is_first_in_sequence_poly.get_coeff(i)
+            })
+            .collect();
+        let v_evals: Vec<F> = (0..t)
+            .map(|i| gamma[4] * (F::one() - is_noop_poly.get_coeff(i)))
+            .collect();
+
+        PrefixSuffixDecompositionFieldDyn::init_Q_dual(
+            &mut ps_cycle,
+            &mut ps_product,
+            &u_evals,
+            &v_evals,
+            &indices,
+            &lookup_bits,
+        );
 
         let input_claim = [
             next_unexpanded_pc_eval,
@@ -113,8 +163,12 @@ impl<F: JoltField> ShiftSumcheck<F> {
                 is_virtual_poly,
                 is_first_in_sequence_poly,
                 is_noop_poly,
-                eq_plus_one_r_cycle: MultilinearPolynomial::from(eq_plus_one_r_cycle),
-                eq_plus_one_r_product: MultilinearPolynomial::from(eq_plus_one_r_product),
+                ps_cycle,
+                ps_product,
+                reg_cycle,
+                reg_product,
+                indices,
+                lookup_bits,
             }),
             gamma_powers: gamma_powers.try_into().unwrap(),
         }
@@ -199,51 +253,15 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ShiftSumcheck<F> {
         let univariate_poly_evals: [F; DEGREE] = (0..prover_state.unexpanded_pc_poly.len() / 2)
             .into_par_iter()
             .map(|i| {
-                let unexpanded_pc_evals = prover_state
-                    .unexpanded_pc_poly
-                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
-                let pc_evals = prover_state
-                    .pc_poly
-                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
-                let virtual_evals = prover_state
-                    .is_virtual_poly
-                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
-                let first_in_sequence_evals = prover_state
-                    .is_first_in_sequence_poly
-                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
-                let eq_r_cycle_evals = prover_state
-                    .eq_plus_one_r_cycle
-                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
-                let eq_r_product_evals = prover_state
-                    .eq_plus_one_r_product
-                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
-                let is_noop_evals = prover_state
-                    .is_noop_poly
-                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
-
-                std::array::from_fn(|i| {
-                    [
-                        unexpanded_pc_evals,
-                        pc_evals,
-                        virtual_evals,
-                        first_in_sequence_evals,
-                    ]
-                    .iter()
-                    .zip(self.gamma_powers.iter())
-                    .map(|(evals, gamma)| evals[i] * gamma)
-                    .sum::<F>()
-                        * eq_r_cycle_evals[i]
-                        + self.gamma_powers[4]
-                            * (F::one() - is_noop_evals[i])
-                            * eq_r_product_evals[i]
-                })
+                let (c0, c2) = prover_state.ps_cycle.sumcheck_evals(i);
+                let (p0, p2) = prover_state.ps_product.sumcheck_evals(i);
+                [c0 + p0, c2 + p2]
             })
             .reduce(
                 || [F::zero(); DEGREE],
                 |mut running, new| {
-                    for i in 0..DEGREE {
-                        running[i] += new[i];
-                    }
+                    running[0] += new[0];
+                    running[1] += new[1];
                     running
                 },
             );
@@ -284,17 +302,50 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ShiftSumcheck<F> {
                     .is_noop_poly
                     .bind_parallel(r_j, BindingOrder::HighToLow)
             });
-            s.spawn(|_| {
-                prover_state
-                    .eq_plus_one_r_cycle
-                    .bind_parallel(r_j, BindingOrder::HighToLow)
-            });
-            s.spawn(|_| {
-                prover_state
-                    .eq_plus_one_r_product
-                    .bind_parallel(r_j, BindingOrder::HighToLow)
-            });
+            s.spawn(|_| prover_state.ps_cycle.bind(r_j));
+            s.spawn(|_| prover_state.ps_product.bind(r_j));
         });
+
+        // Stage boundary: after cutoff rounds, rebuild Q for next phase
+        // We detect by comparing current bound length vs original
+        let current_len = prover_state.unexpanded_pc_poly.len();
+        let remaining_rounds = current_len.log_2();
+        let total_rounds = self.log_T;
+        let cutoff = total_rounds.div_ceil(2);
+        // When we've finished binding the first `cutoff` variables, remaining_rounds == total_rounds - cutoff
+        if remaining_rounds + cutoff == total_rounds && remaining_rounds != total_rounds {
+            prover_state.reg_cycle.update_checkpoints();
+            prover_state.reg_product.update_checkpoints();
+            prover_state.ps_cycle.init_P(&mut prover_state.reg_cycle);
+            prover_state
+                .ps_product
+                .init_P(&mut prover_state.reg_product);
+
+            let t_next = prover_state.unexpanded_pc_poly.len();
+            let u_evals: Vec<F> = (0..t_next)
+                .map(|i| {
+                    self.gamma_powers[0] * prover_state.unexpanded_pc_poly.get_bound_coeff(i)
+                        + self.gamma_powers[1] * prover_state.pc_poly.get_bound_coeff(i)
+                        + self.gamma_powers[2] * prover_state.is_virtual_poly.get_bound_coeff(i)
+                        + self.gamma_powers[3]
+                            * prover_state.is_first_in_sequence_poly.get_bound_coeff(i)
+                })
+                .collect();
+            let v_evals: Vec<F> = (0..t_next)
+                .map(|i| {
+                    self.gamma_powers[4] * (F::one() - prover_state.is_noop_poly.get_bound_coeff(i))
+                })
+                .collect();
+
+            PrefixSuffixDecompositionFieldDyn::init_Q_dual(
+                &mut prover_state.ps_cycle,
+                &mut prover_state.ps_product,
+                &u_evals,
+                &v_evals,
+                &prover_state.indices,
+                &prover_state.lookup_bits,
+            );
+        }
     }
 
     fn expected_output_claim(
