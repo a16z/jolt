@@ -51,7 +51,7 @@
 use super::inputs::{JoltR1CSInputs, R1CSCycleInputs};
 use crate::field::{AccumulateInPlace, JoltField};
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
-use crate::utils::accumulation::{Acc5U, Acc6S, Acc6U, Acc7S};
+use crate::utils::accumulation::{Acc5U, Acc6S, Acc7S};
 use crate::zkvm::instruction::CircuitFlags;
 use ark_ff::biginteger::S160;
 use strum::EnumCount;
@@ -709,7 +709,7 @@ pub fn compute_bz_r_group0<F: JoltField>(row: &R1CSCycleInputs, lagrange_evals_r
 pub fn compute_az_r_group1<F: JoltField>(row: &R1CSCycleInputs, lagrange_evals_r: &[F]) -> F {
     // Group 1 Az are u8 (nonnegative); accumulate field * i32 unreduced, then Barrett-reduce
     let az_vals_u8 = eval_az_second_group(row);
-    let mut acc: Acc6U<F> = Acc6U::new();
+    let mut acc: Acc5U<F> = Acc5U::new();
     let mut i = 0;
     while i < NUM_REMAINING_R1CS_CONSTRAINTS {
         acc.fmadd(&lagrange_evals_r[i], &az_vals_u8[i]);

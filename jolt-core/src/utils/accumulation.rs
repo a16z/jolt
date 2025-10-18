@@ -88,6 +88,25 @@ impl<F: JoltField> AccumulateInPlace<F, bool> for Acc5U<F> {
     }
 }
 
+impl<F: JoltField> AccumulateInPlace<F, u8> for Acc5U<F> {
+    #[inline(always)]
+    fn fmadd(&mut self, field: &F, other: &u8) {
+        let v = *other as u64;
+        if v == 0 {
+            return;
+        }
+        self.word += (*field).mul_u64_unreduced(v);
+    }
+    #[inline(always)]
+    fn reduce(&self) -> F {
+        Acc5U::<F>::reduce(self)
+    }
+    #[inline(always)]
+    fn combine(&mut self, other: &Self) {
+        self.word += other.word;
+    }
+}
+
 // ------------------------------
 // New wrappers for 6-limb accumulators
 // ------------------------------
@@ -128,26 +147,6 @@ impl<F: JoltField> AccumulateInPlace<F, u64> for Acc6U<F> {
             return;
         }
         self.word += (*field).mul_u64_unreduced(*other);
-    }
-    #[inline(always)]
-    fn reduce(&self) -> F {
-        Acc6U::<F>::reduce(self)
-    }
-    #[inline(always)]
-    fn combine(&mut self, other: &Self) {
-        self.word += other.word;
-    }
-}
-
-// Support small unsigned magnitudes for Az group (u8)
-impl<F: JoltField> AccumulateInPlace<F, u8> for Acc6U<F> {
-    #[inline(always)]
-    fn fmadd(&mut self, field: &F, other: &u8) {
-        let v = *other as u64;
-        if v == 0 {
-            return;
-        }
-        self.word += (*field).mul_u64_unreduced(v);
     }
     #[inline(always)]
     fn reduce(&self) -> F {

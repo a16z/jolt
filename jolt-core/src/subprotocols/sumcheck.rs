@@ -233,21 +233,7 @@ impl BatchedSumcheck {
                         let mut univariate_poly_evals =
                             sumcheck.compute_prover_message(round - offset, *previous_claim);
                         univariate_poly_evals.insert(1, *previous_claim - univariate_poly_evals[0]);
-                        let poly = UniPoly::from_evals(&univariate_poly_evals);
-                        #[cfg(debug_assertions)]
-                        {
-                            // Verify per-instance sumcheck invariant H(0)+H(1)=previous_claim
-                            let h0 = poly.evaluate::<F>(&F::zero());
-                            let h1 = poly.evaluate::<F>(&F::one());
-                            debug_assert!(
-                                h0 + h1 == *previous_claim,
-                                "BatchedSumcheck prove: round {round}: H(0)+H(1) mismatch: {} + {} != {}",
-                                h0,
-                                h1,
-                                *previous_claim
-                            );
-                        }
-                        poly
+                        UniPoly::from_evals(&univariate_poly_evals)
                     }
                 })
                 .collect();
@@ -398,24 +384,6 @@ impl BatchedSumcheck {
             .sum();
 
         if output_claim != expected_output_claim {
-            println!(
-                "BatchedSumcheck verify failed: num_instances={}, max_rounds={}, max_degree={}",
-                sumcheck_instances.len(),
-                max_num_rounds,
-                max_degree,
-            );
-
-            // Per-instance diagnostics (avoid printing field elements to keep generic bounds minimal)
-            for (idx, instance) in sumcheck_instances.iter().enumerate() {
-                let nr = instance.num_rounds();
-                let deg = instance.degree();
-                let r_slice_len = r_sumcheck[max_num_rounds - nr..].len();
-                println!(
-                    "  [instance #{idx}] rounds={}, degree={}, r_slice_len={}",
-                    nr, deg, r_slice_len
-                );
-            }
-
             return Err(ProofVerifyError::SumcheckVerificationError);
         }
 
