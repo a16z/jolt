@@ -884,6 +884,15 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for OuterRemainingSumch
         let ps = self.prover_state.as_ref().expect("prover state missing");
         let claimed_witness_evals =
             compute_claimed_r1cs_input_evals::<F>(&ps.preprocess, ps.trace.as_slice(), r_cycle);
+
+        #[cfg(test)]
+        {
+            // TODO: check that the claimed witness evals are correct wrt the final sumcheck evals
+            // of Az and Bz
+            // Recall: Az(r) = \sum_{y} L(r_uniskip, y) * \sum_{x} Eq(r_stream, x) * Az(r_cycle, x, y)
+            // where r = (r_cycle, r_stream, r_uniskip)
+            // and so Az(r_cycle, x, y) = R1CS-input-corresponding-to-(x,y)(r_cycle)
+        }
         for (i, input) in ALL_R1CS_INPUTS.iter().enumerate() {
             acc.append_virtual(
                 transcript,

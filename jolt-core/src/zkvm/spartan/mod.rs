@@ -15,7 +15,7 @@ use crate::zkvm::spartan::inner::InnerSumcheck;
 use crate::zkvm::spartan::outer::{OuterRemainingSumcheck, OuterUniSkipInstance};
 use crate::zkvm::spartan::pc::PCSumcheck;
 use crate::zkvm::spartan::product::{
-    ProductVirtualRemainder, ProductVirtualUniSkipInstance,
+    ProductFactorsOrderCheck, ProductVirtualRemainder, ProductVirtualUniSkipInstance,
     PRODUCT_VIRTUAL_FIRST_ROUND_POLY_NUM_COEFFS, PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
 };
 use crate::zkvm::witness::VirtualPolynomial;
@@ -379,6 +379,7 @@ where
         let key = self.key.clone();
         let pc_sumcheck = PCSumcheck::<F>::new_prover(state_manager, key);
         let instruction_input_sumcheck = InstructionInputSumcheck::new_prover(state_manager);
+        let product_factors_order_check = ProductFactorsOrderCheck::new_prover(state_manager);
 
         #[cfg(feature = "allocative")]
         {
@@ -387,9 +388,17 @@ where
                 "InstructionInputSumcheck",
                 &instruction_input_sumcheck,
             );
+            print_data_structure_heap_usage(
+                "ProductFactorsOrderCheck",
+                &product_factors_order_check,
+            );
         }
 
-        vec![Box::new(pc_sumcheck), Box::new(instruction_input_sumcheck)]
+        vec![
+            Box::new(pc_sumcheck),
+            Box::new(instruction_input_sumcheck),
+            Box::new(product_factors_order_check),
+        ]
     }
 
     fn stage3_verifier_instances(
@@ -402,6 +411,11 @@ where
         let key = self.key.clone();
         let pc_sumcheck = PCSumcheck::<F>::new_verifier(state_manager, key);
         let instruction_input_sumcheck = InstructionInputSumcheck::new_verifier(state_manager);
-        vec![Box::new(pc_sumcheck), Box::new(instruction_input_sumcheck)]
+        let product_factors_order_check = ProductFactorsOrderCheck::new_verifier(state_manager);
+        vec![
+            Box::new(pc_sumcheck),
+            Box::new(instruction_input_sumcheck),
+            Box::new(product_factors_order_check),
+        ]
     }
 }

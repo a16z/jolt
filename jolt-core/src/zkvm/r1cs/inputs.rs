@@ -182,6 +182,122 @@ impl From<&JoltR1CSInputs> for OpeningId {
     }
 }
 
+/// Canonical, de-duplicated list of product-virtual factor polynomials used by
+/// the Product Virtualization stage (in stable order).
+/// Order:
+/// 0: LeftInstructionInput, 1: RightInstructionInput,
+/// 2: RdWa, 3: OpFlags(WriteLookupOutputToRD), 4: OpFlags(Jump),
+/// 5: LookupOutput, 6: InstructionFlags(Branch), 7: NextIsNoop
+pub const PRODUCT_UNIQUE_FACTOR_VIRTUALS: [VirtualPolynomial; 8] = [
+    VirtualPolynomial::LeftInstructionInput,
+    VirtualPolynomial::RightInstructionInput,
+    VirtualPolynomial::RdWa,
+    VirtualPolynomial::OpFlags(CircuitFlags::WriteLookupOutputToRD),
+    VirtualPolynomial::OpFlags(CircuitFlags::Jump),
+    VirtualPolynomial::LookupOutput,
+    VirtualPolynomial::InstructionFlags(InstructionFlags::Branch),
+    VirtualPolynomial::NextIsNoop,
+];
+
+/// Compute z(r_cycle) for the 8 de-duplicated factor polynomials used by Product Virtualization.
+/// Order of outputs matches PRODUCT_UNIQUE_FACTOR_VIRTUALS:
+/// 0: LeftInstructionInput (u64)
+/// 1: RightInstructionInput (i128)
+/// 2: RdWa (u8)
+/// 3: OpFlags(WriteLookupOutputToRD) (bool)
+/// 4: OpFlags(Jump) (bool)
+/// 5: LookupOutput (u64)
+/// 6: InstructionFlags(Branch) (bool)
+/// 7: NextIsNoop (bool)
+#[tracing::instrument(skip_all)]
+pub fn compute_claimed_product_factor_evals<F: JoltField>(
+    trace: &[Cycle],
+    r_cycle: &[F::Challenge],
+) -> [F; 8] {
+    let m = r_cycle.len() / 2;
+    let (r2, r1) = r_cycle.split_at(m);
+    let (eq_one, eq_two) = rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
+
+    let eq_two_len = eq_two.len();
+
+    let totals_unr: [F::Unreduced<9>; 8] = (0..eq_one.len())
+        .into_par_iter()
+        .map(|x1| {
+            let eq1_val = eq_one[x1];
+
+            // Accumulators for 8 outputs
+            let mut acc_left_u64 = acc6u_new::<F>();
+            let mut acc_right_i128 = acc6s_new::<F>();
+            let mut acc_rd_u8 = acc5u_new::<F>();
+            let mut acc_wl_flag = acc5u_new::<F>();
+            let mut acc_jump_flag = acc5u_new::<F>();
+            let mut acc_lookup_output = acc6u_new::<F>();
+            let mut acc_branch_flag = acc5u_new::<F>();
+            let mut acc_next_is_noop = acc5u_new::<F>();
+
+            for x2 in 0..eq_two_len {
+                let e_in = eq_two[x2];
+                let idx = x1 * eq_two_len + x2;
+                let row = ProductCycleInputs::from_trace::<F>(trace, idx);
+
+                // 0: LeftInstructionInput (u64)
+                acc6u_fmadd_u64(&mut acc_left_u64, &e_in, row.instruction_left_input);
+                // 1: RightInstructionInput (i128)
+                acc6s_fmadd_i128(&mut acc_right_i128, &e_in, row.instruction_right_input);
+                // 2: RdWa (u8) – either rd field is fine
+                acc5u_fmadd_u64(
+                    &mut acc_rd_u8,
+                    &e_in,
+                    row.write_lookup_output_to_rd_rd_addr as u64,
+                );
+                // 3: OpFlags(WriteLookupOutputToRD) (bool)
+                if row.write_lookup_output_to_rd_flag {
+                    acc5u_add_field(&mut acc_wl_flag, &e_in);
+                }
+                // 4: OpFlags(Jump) (bool)
+                if row.should_jump_flag {
+                    acc5u_add_field(&mut acc_jump_flag, &e_in);
+                }
+                // 5: LookupOutput (u64)
+                acc6u_fmadd_u64(
+                    &mut acc_lookup_output,
+                    &e_in,
+                    row.should_branch_lookup_output,
+                );
+                // 6: InstructionFlags(Branch) (bool)
+                if row.should_branch_flag {
+                    acc5u_add_field(&mut acc_branch_flag, &e_in);
+                }
+                // 7: NextIsNoop (bool) = !not_next_noop
+                if !row.not_next_noop {
+                    acc5u_add_field(&mut acc_next_is_noop, &e_in);
+                }
+            }
+
+            let mut out_unr = [F::Unreduced::<9>::zero(); 8];
+            out_unr[0] = eq1_val.mul_unreduced::<9>(acc6u_reduce::<F>(&acc_left_u64));
+            out_unr[1] = eq1_val.mul_unreduced::<9>(acc6s_reduce::<F>(&acc_right_i128));
+            out_unr[2] = eq1_val.mul_unreduced::<9>(acc5u_reduce::<F>(&acc_rd_u8));
+            out_unr[3] = eq1_val.mul_unreduced::<9>(acc5u_reduce::<F>(&acc_wl_flag));
+            out_unr[4] = eq1_val.mul_unreduced::<9>(acc5u_reduce::<F>(&acc_jump_flag));
+            out_unr[5] = eq1_val.mul_unreduced::<9>(acc6u_reduce::<F>(&acc_lookup_output));
+            out_unr[6] = eq1_val.mul_unreduced::<9>(acc5u_reduce::<F>(&acc_branch_flag));
+            out_unr[7] = eq1_val.mul_unreduced::<9>(acc5u_reduce::<F>(&acc_next_is_noop));
+            out_unr
+        })
+        .reduce(
+            || [F::Unreduced::<9>::zero(); 8],
+            |mut acc, item| {
+                for i in 0..8 {
+                    acc[i] += item[i];
+                }
+                acc
+            },
+        );
+
+    core::array::from_fn(|i| F::from_montgomery_reduce::<9>(totals_unr[i]))
+}
+
 /// Fully materialized, typed view of all R1CS inputs for a single row (cycle).
 /// Filled once and reused to evaluate all constraints without re-reading the trace.
 /// Total size: 208 bytes, alignment: 16 bytes
@@ -476,7 +592,7 @@ impl ProductCycleInputs {
             let is_next_noop = if t + 1 < len {
                 trace[t + 1].instruction().instruction_flags()[InstructionFlags::IsNoop]
             } else {
-                true // Treat last cycle as if next is NoOp
+                false // Last cycle: source of truth sets NextIsNoop = false
             };
             !is_next_noop
         };
@@ -505,7 +621,7 @@ pub fn compute_claimed_r1cs_input_evals<F: JoltField>(
     preprocessing: &JoltSharedPreprocessing,
     trace: &[Cycle],
     r_cycle: &[F::Challenge],
-) -> Vec<F> {
+) -> [F; NUM_R1CS_INPUTS] {
     // Double-sum with delayed reduction using typed accumulators per input
     let m = r_cycle.len() / 2;
     let (r2, r1) = r_cycle.split_at(m);
@@ -646,122 +762,8 @@ pub fn compute_claimed_r1cs_input_evals<F: JoltField>(
             },
         );
 
-    // Final Montgomery reduce per entry
-    (0..NUM_R1CS_INPUTS)
-        .map(|i| F::from_montgomery_reduce::<9>(total_unr[i]))
-        .collect()
-}
-
-/// Compute z(r_cycle) for the 10 product-virtualization inputs (left/right for each product).
-/// Order of outputs:
-/// 0: Instruction.left, 1: Instruction.right,
-/// 2: WriteLookupOutputToRD.left(rd_addr), 3: WriteLookupOutputToRD.right(flag),
-/// 4: WritePCtoRD.left(rd_addr), 5: WritePCtoRD.right(jump_flag),
-/// 6: ShouldBranch.left(lookup_output), 7: ShouldBranch.right(branch_flag),
-/// 8: ShouldJump.left(jump_flag), 9: 1 - ShouldJump.right (NextIsNoop)
-#[tracing::instrument(skip_all)]
-pub fn compute_claimed_product_virtual_evals<F: JoltField>(
-    trace: &[Cycle],
-    r_cycle: &[F::Challenge],
-) -> [F; 10] {
-    let m = r_cycle.len() / 2;
-    let (r2, r1) = r_cycle.split_at(m);
-    let (eq_one, eq_two) = rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
-
-    let eq_two_len = eq_two.len();
-
-    let totals_unr: [F::Unreduced<9>; 10] = (0..eq_one.len())
-        .into_par_iter()
-        .map(|x1| {
-            let eq1_val = eq_one[x1];
-
-            // Instruction: (left u64, right i128)
-            let mut acc_inst_left = acc6u_new::<F>();
-            let mut acc_inst_right = acc6s_new::<F>();
-            // WriteLookupOutputToRD: (left u8, right bool)
-            let mut acc_wl_left = acc5u_new::<F>();
-            let mut acc_wl_right = acc5u_new::<F>();
-            // WritePCtoRD: (left u8, right bool)
-            let mut acc_wp_left = acc5u_new::<F>();
-            let mut acc_wp_right = acc5u_new::<F>();
-            // ShouldBranch: (left u64, right bool)
-            let mut acc_sb_left = acc6u_new::<F>();
-            let mut acc_sb_right = acc5u_new::<F>();
-            // ShouldJump: (left bool, right bool)
-            let mut acc_sj_left = acc5u_new::<F>();
-            let mut acc_sj_right = acc5u_new::<F>();
-
-            for x2 in 0..eq_two_len {
-                let e_in = eq_two[x2];
-                let idx = x1 * eq_two_len + x2;
-                let row = ProductCycleInputs::from_trace::<F>(trace, idx);
-
-                // Instruction: (u64, i128)
-                acc6u_fmadd_u64(&mut acc_inst_left, &e_in, row.instruction_left_input);
-                acc6s_fmadd_i128(&mut acc_inst_right, &e_in, row.instruction_right_input);
-
-                // WriteLookupOutputToRD: (u8, bool)
-                acc5u_fmadd_u64(
-                    &mut acc_wl_left,
-                    &e_in,
-                    row.write_lookup_output_to_rd_rd_addr as u64,
-                );
-                if row.write_lookup_output_to_rd_flag {
-                    acc5u_add_field(&mut acc_wl_right, &e_in);
-                }
-
-                // WritePCtoRD: (u8, bool)
-                acc5u_fmadd_u64(&mut acc_wp_left, &e_in, row.write_pc_to_rd_rd_addr as u64);
-                if row.write_pc_to_rd_flag {
-                    acc5u_add_field(&mut acc_wp_right, &e_in);
-                }
-
-                // ShouldBranch: (u64, bool)
-                acc6u_fmadd_u64(&mut acc_sb_left, &e_in, row.should_branch_lookup_output);
-                if row.should_branch_flag {
-                    acc5u_add_field(&mut acc_sb_right, &e_in);
-                }
-
-                // ShouldJump: (bool, bool)
-                if row.should_jump_flag {
-                    acc5u_add_field(&mut acc_sj_left, &e_in);
-                }
-                if !row.not_next_noop {
-                    acc5u_add_field(&mut acc_sj_right, &e_in);
-                }
-            }
-
-            // Reduce per-output and apply E_out unreduced
-            let mut out_unr = [F::Unreduced::<9>::zero(); 10];
-            out_unr[0] = eq1_val.mul_unreduced::<9>(acc6u_reduce::<F>(&acc_inst_left));
-            out_unr[1] = eq1_val.mul_unreduced::<9>(acc6s_reduce::<F>(&acc_inst_right));
-            out_unr[2] = eq1_val.mul_unreduced::<9>(acc5u_reduce::<F>(&acc_wl_left));
-            out_unr[3] = eq1_val.mul_unreduced::<9>(acc5u_reduce::<F>(&acc_wl_right));
-            out_unr[4] = eq1_val.mul_unreduced::<9>(acc5u_reduce::<F>(&acc_wp_left));
-            out_unr[5] = eq1_val.mul_unreduced::<9>(acc5u_reduce::<F>(&acc_wp_right));
-            out_unr[6] = eq1_val.mul_unreduced::<9>(acc6u_reduce::<F>(&acc_sb_left));
-            out_unr[7] = eq1_val.mul_unreduced::<9>(acc5u_reduce::<F>(&acc_sb_right));
-            out_unr[8] = eq1_val.mul_unreduced::<9>(acc5u_reduce::<F>(&acc_sj_left));
-            out_unr[9] = eq1_val.mul_unreduced::<9>(acc5u_reduce::<F>(&acc_sj_right));
-
-            out_unr
-        })
-        .reduce(
-            || [F::Unreduced::<9>::zero(); 10],
-            |mut acc, item| {
-                for i in 0..10 {
-                    acc[i] += item[i];
-                }
-                acc
-            },
-        );
-
-    // Final reduce
-    let mut out: [F; 10] = [F::zero(); 10];
-    for i in 0..10 {
-        out[i] = F::from_montgomery_reduce::<9>(totals_unr[i]);
-    }
-    out
+    // Final Montgomery reduce per entry (fixed-size array)
+    core::array::from_fn(|i| F::from_montgomery_reduce::<9>(total_unr[i]))
 }
 
 /// Single-pass generation of UnexpandedPC(t), PC(t), and IsNoop(t) witnesses.
@@ -886,7 +888,7 @@ where
                         trace[i + 1].instruction().instruction_flags()[InstructionFlags::IsNoop]
                             as u8
                     } else {
-                        1 // Last cycle, treat as if next is NoOp
+                        0 // Last cycle, next is NOT NoOp (there is no next)
                     };
                     *not_noop = 1 - is_next_noop;
                 });

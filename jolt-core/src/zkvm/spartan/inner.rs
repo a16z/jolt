@@ -34,6 +34,7 @@ use rayon::prelude::*;
 ///   Σ_u ( A_small(rx_constr, u) + γ·B_small(rx_constr, u) ) · z(u)
 ///   = Az_claim + γ·Bz_claim.
 ///
+/// where z(u) = u-th-R1CS-input-MLE(r_cycle_stage_1) (with a possible final u for constant term).
 /// After `m = log2(num_vars_uniform_padded)` rounds with bound point `r ∈ F^m`, the
 /// sumcheck output claim must equal
 ///
