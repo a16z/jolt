@@ -99,9 +99,9 @@ $$
 a + b\sigma^{\frac{1}{3}} = a + (b\tau^{-1})\sigma,
 $$
 
-where $a$, $b$, and $\tau$ all are elements of $\mathbb{F}_{q^6} = $\mathbb{F}_{q^2}(\tau)$. To convert between elements in $\mathbb{F}_{q^{12}}$ written in $\mathbb{F}_{q^6}$-bases $(1, \sigma)$ and $(1, \sigma^{\frac{1}{3}})$, it suffices to do a multiplication or a division by $\tau$, and we shall see this can be implemented entirely in $\mathbb{F}_{q^2}$ arithmetic.
+where $a$, $b$, and $\tau$ all are elements of $\mathbb{F}_{q^6} = \mathbb{F}_{q^2}(\tau)$. To convert between elements in $\mathbb{F}_{q^{12}}$ written in $\mathbb{F}_{q^6}$-bases $(1, \sigma)$ and $(1, \sigma^{\frac{1}{3}})$, it suffices to do a multiplication or a division by $\tau$, and we shall see this can be implemented entirely in $\mathbb{F}_{q^2}$ arithmetic.
 
-Indeed, write $b = c_0 + c_1\tau + c_2\tau^2$, where $c_i \in \mathbb{F}_{q^2}$, we have $
+Indeed, write $b = c_0 + c_1\tau + c_2\tau^2$, where $c_i \in \mathbb{F}_{q^2}$, we have
 
 $$
 b\tau = c_2\xi + c_0\tau + c_1\tau^2,
@@ -112,6 +112,36 @@ and
 $$
 b\tau^{-1} = c_1 + c_2\tau + c_0\xi^{-1}\tau^2,
 $$
-which gives the corresponding conversion formulae.
+which gives the corresponding conversion formulae. This is implemented as follows.
 
+```rust
+#[inline]
+pub fn fq12_to_compressible_fq12(value: Fq12) -> CompressibleFq12 {
+    // Divide by the generator of Fq6
+    let new_c1 = Fq6 {
+        c0: value.c1.c1,
+        c1: value.c1.c2,
+        c2: value.c1.c0 * Fq6Config::NONRESIDUE.inverse().unwrap(),
+    };
 
+    CompressibleFq12 {
+        c0: value.c0,
+        c1: new_c1,
+    }
+}
+
+#[inline]
+pub fn compressible_fq12_to_fq12(value: CompressibleFq12) -> Fq12 {
+    // Multiply by the generator of Fq6
+    let new_c1 = Fq6 {
+        c0: value.c1.c2 * Fq6Config::NONRESIDUE,
+        c1: value.c1.c0,
+        c2: value.c1.c1,
+    };
+
+    Fq12 {
+        c0: value.c0,
+        c1: new_c1,
+    }
+}
+```
