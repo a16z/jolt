@@ -19,10 +19,8 @@ use crate::subprotocols::univariate_skip::{
     build_uniskip_first_round_poly, uniskip_targets, UniSkipState,
 };
 use crate::transcripts::Transcript;
-use crate::utils::accumulation::{
-    acc6s_fmadd_i128, acc6s_new, acc6s_reduce, acc6u_fmadd_u64, acc6u_new, acc6u_reduce,
-    acc8s_fmadd_s256, Acc8Signed,
-};
+use crate::utils::accumulation::{Acc6S, Acc6U, acc8s_fmadd_s256, Acc8Signed};
+use crate::field::AccumulateInPlace;
 use crate::utils::math::Math;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
@@ -34,7 +32,7 @@ use crate::zkvm::r1cs::inputs::{
 };
 use crate::zkvm::witness::VirtualPolynomial;
 use crate::zkvm::JoltSharedPreprocessing;
-use ark_ff::biginteger::{S128 as S128_SB, S256 as S256_SB};
+use ark_ff::biginteger::S128;
 use rayon::prelude::*;
 use std::sync::Arc;
 use tracer::instruction::Cycle;
@@ -301,9 +299,9 @@ impl<F: JoltField> ProductVirtualUniSkipInstance<F> {
                                 right_sum_i128 += right_w[i];
                             }
                             // Compute S256 = S128 × S128
-                            let left_s128 = S128_SB::from_i128(left_sum_i128);
-                            let right_s128 = S128_SB::from_i128(right_sum_i128);
-                            let prod_s256: S256_SB = left_s128.mul_trunc::<2, 4>(&right_s128);
+                            let left_s128 = S128::from_i128(left_sum_i128);
+                            let right_s128 = S128::from_i128(right_sum_i128);
+                            let prod_s256 = left_s128.mul_trunc::<2, 4>(&right_s128);
 
                             // Fold e_in into signed 8-limb accumulator for this j
                             acc8s_fmadd_s256(&mut inner_acc[j], &e_in, prod_s256);
@@ -582,35 +580,35 @@ impl<F: JoltField> ProductVirtualRemainder<F> {
                         // Fused left/right using small-value accumulators
                         // Note: left accum is unsigned, right accum is signed (due to right instruction input)
                         // When accumulating with positive term, just needs to update the positive part of the signed accum
-                        let mut left0_acc = acc6u_new::<F>();
-                        let mut right0_acc = acc6s_new::<F>();
-                        acc6u_fmadd_u64(&mut left0_acc, &weights_at_r0[0], row_lo.instruction_left_input);
-                        acc6u_fmadd_u64(&mut left0_acc, &weights_at_r0[1], row_lo.rd_addr as u64);
-                        acc6u_fmadd_u64(&mut left0_acc, &weights_at_r0[2], row_lo.rd_addr as u64);
-                        acc6u_fmadd_u64(&mut left0_acc, &weights_at_r0[3], row_lo.should_branch_lookup_output);
-                        if row_lo.jump_flag { left0_acc += *weights_at_r0[4].as_unreduced_ref(); }
-                        acc6s_fmadd_i128(&mut right0_acc, &weights_at_r0[0], row_lo.instruction_right_input);
-                        if row_lo.write_lookup_output_to_rd_flag { right0_acc.0 += *weights_at_r0[1].as_unreduced_ref(); }
-                        if row_lo.jump_flag { right0_acc.0 += *weights_at_r0[2].as_unreduced_ref(); }
-                        if row_lo.should_branch_flag { right0_acc.0 += *weights_at_r0[3].as_unreduced_ref(); }
-                        if row_lo.not_next_noop { right0_acc.0 += *weights_at_r0[4].as_unreduced_ref(); }
-                        let left0 = acc6u_reduce::<F>(&left0_acc);
-                        let right0 = acc6s_reduce::<F>(&right0_acc);
+                        let mut left0_acc: Acc6U<F> = Acc6U::new();
+                        let mut right0_acc: Acc6S<F> = Acc6S::new();
+                        left0_acc.fmadd(&weights_at_r0[0], &row_lo.instruction_left_input);
+                        left0_acc.fmadd(&weights_at_r0[1], &(row_lo.rd_addr as u64));
+                        left0_acc.fmadd(&weights_at_r0[2], &(row_lo.rd_addr as u64));
+                        left0_acc.fmadd(&weights_at_r0[3], &row_lo.should_branch_lookup_output);
+                        if row_lo.jump_flag { left0_acc.fmadd(&weights_at_r0[4], &1u64); }
+                        right0_acc.fmadd(&weights_at_r0[0], &row_lo.instruction_right_input);
+                        if row_lo.write_lookup_output_to_rd_flag { right0_acc.fmadd(&weights_at_r0[1], &1i128); }
+                        if row_lo.jump_flag { right0_acc.fmadd(&weights_at_r0[2], &1i128); }
+                        if row_lo.should_branch_flag { right0_acc.fmadd(&weights_at_r0[3], &1i128); }
+                        if row_lo.not_next_noop { right0_acc.fmadd(&weights_at_r0[4], &1i128); }
+                        let left0 = left0_acc.reduce();
+                        let right0 = right0_acc.reduce();
 
-                        let mut left1_acc = acc6u_new::<F>();
-                        let mut right1_acc = acc6s_new::<F>();
-                        acc6u_fmadd_u64(&mut left1_acc, &weights_at_r0[0], row_hi.instruction_left_input);
-                        acc6u_fmadd_u64(&mut left1_acc, &weights_at_r0[1], row_hi.rd_addr as u64);
-                        acc6u_fmadd_u64(&mut left1_acc, &weights_at_r0[2], row_hi.rd_addr as u64);
-                        acc6u_fmadd_u64(&mut left1_acc, &weights_at_r0[3], row_hi.should_branch_lookup_output);
-                        if row_hi.jump_flag { left1_acc += *weights_at_r0[4].as_unreduced_ref(); }
-                        acc6s_fmadd_i128(&mut right1_acc, &weights_at_r0[0], row_hi.instruction_right_input);
-                        if row_hi.write_lookup_output_to_rd_flag { right1_acc.0 += *weights_at_r0[1].as_unreduced_ref(); }
-                        if row_hi.jump_flag { right1_acc.0 += *weights_at_r0[2].as_unreduced_ref(); }
-                        if row_hi.should_branch_flag { right1_acc.0 += *weights_at_r0[3].as_unreduced_ref(); }
-                        if row_hi.not_next_noop { right1_acc.0 += *weights_at_r0[4].as_unreduced_ref(); }
-                        let left1 = acc6u_reduce::<F>(&left1_acc);
-                        let right1 = acc6s_reduce::<F>(&right1_acc);
+                        let mut left1_acc: Acc6U<F> = Acc6U::new();
+                        let mut right1_acc: Acc6S<F> = Acc6S::new();
+                        left1_acc.fmadd(&weights_at_r0[0], &row_hi.instruction_left_input);
+                        left1_acc.fmadd(&weights_at_r0[1], &(row_hi.rd_addr as u64));
+                        left1_acc.fmadd(&weights_at_r0[2], &(row_hi.rd_addr as u64));
+                        left1_acc.fmadd(&weights_at_r0[3], &row_hi.should_branch_lookup_output);
+                        if row_hi.jump_flag { left1_acc.fmadd(&weights_at_r0[4], &1u64); }
+                        right1_acc.fmadd(&weights_at_r0[0], &row_hi.instruction_right_input);
+                        if row_hi.write_lookup_output_to_rd_flag { right1_acc.fmadd(&weights_at_r0[1], &1i128); }
+                        if row_hi.jump_flag { right1_acc.fmadd(&weights_at_r0[2], &1i128); }
+                        if row_hi.should_branch_flag { right1_acc.fmadd(&weights_at_r0[3], &1i128); }
+                        if row_hi.not_next_noop { right1_acc.fmadd(&weights_at_r0[4], &1i128); }
+                        let left1 = left1_acc.reduce();
+                        let right1 = right1_acc.reduce();
 
                         let e_in = if num_x_in_vals == 0 {
                             F::one()
@@ -979,7 +977,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ProductVirtualRemai
         );
 
         // Append the 8 unique factor openings in canonical order
-        let mut acc = accumulator.borrow_mut();
         for (i, vp) in PRODUCT_UNIQUE_FACTOR_VIRTUALS.iter().enumerate() {
             acc.append_virtual(
                 transcript,

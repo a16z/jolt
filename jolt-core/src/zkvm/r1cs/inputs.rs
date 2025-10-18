@@ -1,11 +1,7 @@
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::opening_proof::{OpeningId, SumcheckId};
-use crate::utils::accumulation::{
-    acc5u_add_field, acc5u_fmadd_u64, acc5u_new, acc5u_reduce, acc6s_fmadd_i128, acc6s_new,
-    acc6s_reduce, acc6u_fmadd_u64, acc6u_new, acc6u_reduce, acc7s_fmadd_s128, acc7s_new,
-    acc7s_reduce, acc7u_fmadd_u128, acc7u_new, acc7u_reduce,
-};
+use crate::utils::accumulation::{Acc5U, Acc6S, Acc6U, Acc7S, Acc7U};
 #[cfg(test)]
 use crate::utils::small_scalar::SmallScalar;
 use crate::zkvm::instruction::{
@@ -14,7 +10,7 @@ use crate::zkvm::instruction::{
 use crate::zkvm::witness::VirtualPolynomial;
 use crate::zkvm::JoltSharedPreprocessing;
 
-use crate::field::JoltField;
+use crate::field::{AccumulateInPlace, JoltField};
 use ark_ff::biginteger::{S128, S64};
 use ark_std::Zero;
 use common::constants::XLEN;
@@ -455,31 +451,31 @@ pub fn compute_claimed_r1cs_input_evals<F: JoltField>(
         .map(|x1| {
             let eq1_val = eq_one[x1];
 
-            let mut acc_left_input = acc6u_new::<F>();
-            let mut acc_right_input = acc6s_new::<F>();
-            let mut acc_product = acc7s_new::<F>();
-            let mut acc_wl_left = acc5u_new::<F>();
-            let mut acc_wp_left = acc5u_new::<F>();
-            let mut acc_sb_right = acc5u_new::<F>();
-            let mut acc_pc = acc6u_new::<F>();
-            let mut acc_unexpanded_pc = acc6u_new::<F>();
-            let mut acc_imm = acc6s_new::<F>();
-            let mut acc_ram_address = acc6u_new::<F>();
-            let mut acc_rs1_value = acc6u_new::<F>();
-            let mut acc_rs2_value = acc6u_new::<F>();
-            let mut acc_rd_write_value = acc6u_new::<F>();
-            let mut acc_ram_read_value = acc6u_new::<F>();
-            let mut acc_ram_write_value = acc6u_new::<F>();
-            let mut acc_left_lookup_operand = acc6u_new::<F>();
-            let mut acc_right_lookup_operand = acc7u_new::<F>();
-            let mut acc_next_unexpanded_pc = acc6u_new::<F>();
-            let mut acc_next_pc = acc6u_new::<F>();
-            let mut acc_lookup_output = acc6u_new::<F>();
-            let mut acc_sj_flag = acc5u_new::<F>();
-            let mut acc_next_is_virtual = acc5u_new::<F>();
-            let mut acc_next_is_first_in_sequence = acc5u_new::<F>();
-            let mut acc_flags: Vec<F::Unreduced<5>> =
-                (0..NUM_CIRCUIT_FLAGS).map(|_| acc5u_new::<F>()).collect();
+            let mut acc_left_input: Acc6U<F> = Acc6U::new();
+            let mut acc_right_input: Acc6S<F> = Acc6S::new();
+            let mut acc_product: Acc7S<F> = Acc7S::new();
+            let mut acc_wl_left: Acc5U<F> = Acc5U::new();
+            let mut acc_wp_left: Acc5U<F> = Acc5U::new();
+            let mut acc_sb_right: Acc5U<F> = Acc5U::new();
+            let mut acc_pc: Acc6U<F> = Acc6U::new();
+            let mut acc_unexpanded_pc: Acc6U<F> = Acc6U::new();
+            let mut acc_imm: Acc6S<F> = Acc6S::new();
+            let mut acc_ram_address: Acc6U<F> = Acc6U::new();
+            let mut acc_rs1_value: Acc6U<F> = Acc6U::new();
+            let mut acc_rs2_value: Acc6U<F> = Acc6U::new();
+            let mut acc_rd_write_value: Acc6U<F> = Acc6U::new();
+            let mut acc_ram_read_value: Acc6U<F> = Acc6U::new();
+            let mut acc_ram_write_value: Acc6U<F> = Acc6U::new();
+            let mut acc_left_lookup_operand: Acc6U<F> = Acc6U::new();
+            let mut acc_right_lookup_operand: Acc7U<F> = Acc7U::new();
+            let mut acc_next_unexpanded_pc: Acc6U<F> = Acc6U::new();
+            let mut acc_next_pc: Acc6U<F> = Acc6U::new();
+            let mut acc_lookup_output: Acc6U<F> = Acc6U::new();
+            let mut acc_sj_flag: Acc5U<F> = Acc5U::new();
+            let mut acc_next_is_virtual: Acc5U<F> = Acc5U::new();
+            let mut acc_next_is_first_in_sequence: Acc5U<F> = Acc5U::new();
+            let mut acc_flags: Vec<Acc5U<F>> =
+                (0..NUM_CIRCUIT_FLAGS).map(|_| Acc5U::new()).collect();
 
             let eq_two_len = eq_two.len();
             for x2 in 0..eq_two_len {
@@ -487,47 +483,43 @@ pub fn compute_claimed_r1cs_input_evals<F: JoltField>(
                 let idx = x1 * eq_two_len + x2;
                 let row = R1CSCycleInputs::from_trace::<F>(preprocessing, trace, idx);
 
-                acc6u_fmadd_u64(&mut acc_left_input, &e_in, row.left_input);
-                acc6s_fmadd_i128(&mut acc_right_input, &e_in, row.right_input.to_i128());
-                acc7s_fmadd_s128(&mut acc_product, &e_in, row.product);
+                acc_left_input.fmadd(&e_in, &row.left_input);
+                acc_right_input.fmadd(&e_in, &row.right_input.to_i128());
+                acc_product.fmadd(&e_in, &row.product);
 
-                acc5u_fmadd_u64(
-                    &mut acc_wl_left,
-                    &e_in,
-                    row.write_lookup_output_to_rd_addr as u64,
-                );
-                acc5u_fmadd_u64(&mut acc_wp_left, &e_in, row.write_pc_to_rd_addr as u64);
+                acc_wl_left.fmadd(&e_in, &(row.write_lookup_output_to_rd_addr as u64));
+                acc_wp_left.fmadd(&e_in, &(row.write_pc_to_rd_addr as u64));
                 if row.should_branch {
-                    acc5u_add_field(&mut acc_sb_right, &e_in);
+                    acc_sb_right.fmadd(&F::one(), &e_in);
                 }
 
-                acc6u_fmadd_u64(&mut acc_pc, &e_in, row.pc);
-                acc6u_fmadd_u64(&mut acc_unexpanded_pc, &e_in, row.unexpanded_pc);
-                acc6s_fmadd_i128(&mut acc_imm, &e_in, row.imm.to_i128());
-                acc6u_fmadd_u64(&mut acc_ram_address, &e_in, row.ram_addr);
-                acc6u_fmadd_u64(&mut acc_rs1_value, &e_in, row.rs1_read_value);
-                acc6u_fmadd_u64(&mut acc_rs2_value, &e_in, row.rs2_read_value);
-                acc6u_fmadd_u64(&mut acc_rd_write_value, &e_in, row.rd_write_value);
-                acc6u_fmadd_u64(&mut acc_ram_read_value, &e_in, row.ram_read_value);
-                acc6u_fmadd_u64(&mut acc_ram_write_value, &e_in, row.ram_write_value);
-                acc6u_fmadd_u64(&mut acc_left_lookup_operand, &e_in, row.left_lookup);
-                acc7u_fmadd_u128(&mut acc_right_lookup_operand, &e_in, row.right_lookup);
-                acc6u_fmadd_u64(&mut acc_next_unexpanded_pc, &e_in, row.next_unexpanded_pc);
-                acc6u_fmadd_u64(&mut acc_next_pc, &e_in, row.next_pc);
-                acc6u_fmadd_u64(&mut acc_lookup_output, &e_in, row.lookup_output);
+                acc_pc.fmadd(&e_in, &row.pc);
+                acc_unexpanded_pc.fmadd(&e_in, &row.unexpanded_pc);
+                acc_imm.fmadd(&e_in, &row.imm.to_i128());
+                acc_ram_address.fmadd(&e_in, &row.ram_addr);
+                acc_rs1_value.fmadd(&e_in, &row.rs1_read_value);
+                acc_rs2_value.fmadd(&e_in, &row.rs2_read_value);
+                acc_rd_write_value.fmadd(&e_in, &row.rd_write_value);
+                acc_ram_read_value.fmadd(&e_in, &row.ram_read_value);
+                acc_ram_write_value.fmadd(&e_in, &row.ram_write_value);
+                acc_left_lookup_operand.fmadd(&e_in, &row.left_lookup);
+                acc_right_lookup_operand.fmadd(&e_in, &row.right_lookup);
+                acc_next_unexpanded_pc.fmadd(&e_in, &row.next_unexpanded_pc);
+                acc_next_pc.fmadd(&e_in, &row.next_pc);
+                acc_lookup_output.fmadd(&e_in, &row.lookup_output);
                 if row.should_jump {
-                    acc5u_add_field(&mut acc_sj_flag, &e_in);
+                    acc_sj_flag.fmadd(&F::one(), &e_in);
                 }
                 if row.next_is_virtual {
-                    acc5u_add_field(&mut acc_next_is_virtual, &e_in);
+                    acc_next_is_virtual.fmadd(&F::one(), &e_in);
                 }
                 if row.next_is_first_in_sequence {
-                    acc5u_add_field(&mut acc_next_is_first_in_sequence, &e_in);
+                    acc_next_is_first_in_sequence.fmadd(&F::one(), &e_in);
                 }
                 for flag in CircuitFlags::iter() {
                     if row.flags[flag] {
                         let idx = flag as usize;
-                        acc5u_add_field(&mut acc_flags[idx], &e_in);
+                        acc_flags[idx].fmadd(&F::one(), &e_in);
                     }
                 }
             }
@@ -535,55 +527,55 @@ pub fn compute_claimed_r1cs_input_evals<F: JoltField>(
             let mut out_unr: [F::Unreduced<9>; NUM_R1CS_INPUTS] =
                 [F::Unreduced::<9>::zero(); NUM_R1CS_INPUTS];
             out_unr[JoltR1CSInputs::LeftInstructionInput.to_index()] =
-                eq1_val.mul_unreduced::<9>(acc6u_reduce::<F>(&acc_left_input));
+                eq1_val.mul_unreduced::<9>(acc_left_input.reduce());
             out_unr[JoltR1CSInputs::RightInstructionInput.to_index()] =
-                eq1_val.mul_unreduced::<9>(acc6s_reduce::<F>(&acc_right_input));
+                eq1_val.mul_unreduced::<9>(acc_right_input.reduce());
             out_unr[JoltR1CSInputs::Product.to_index()] =
-                eq1_val.mul_unreduced::<9>(acc7s_reduce::<F>(&acc_product));
+                eq1_val.mul_unreduced::<9>(acc_product.reduce());
             out_unr[JoltR1CSInputs::WriteLookupOutputToRD.to_index()] =
-                eq1_val.mul_unreduced::<9>(acc5u_reduce::<F>(&acc_wl_left));
+                eq1_val.mul_unreduced::<9>(acc_wl_left.reduce());
             out_unr[JoltR1CSInputs::WritePCtoRD.to_index()] =
-                eq1_val.mul_unreduced::<9>(acc5u_reduce::<F>(&acc_wp_left));
+                eq1_val.mul_unreduced::<9>(acc_wp_left.reduce());
             out_unr[JoltR1CSInputs::ShouldBranch.to_index()] =
-                eq1_val.mul_unreduced::<9>(acc5u_reduce::<F>(&acc_sb_right));
+                eq1_val.mul_unreduced::<9>(acc_sb_right.reduce());
             out_unr[JoltR1CSInputs::PC.to_index()] =
-                eq1_val.mul_unreduced::<9>(acc6u_reduce::<F>(&acc_pc));
+                eq1_val.mul_unreduced::<9>(acc_pc.reduce());
             out_unr[JoltR1CSInputs::UnexpandedPC.to_index()] =
-                eq1_val.mul_unreduced::<9>(acc6u_reduce::<F>(&acc_unexpanded_pc));
+                eq1_val.mul_unreduced::<9>(acc_unexpanded_pc.reduce());
             out_unr[JoltR1CSInputs::Imm.to_index()] =
-                eq1_val.mul_unreduced::<9>(acc6s_reduce::<F>(&acc_imm));
+                eq1_val.mul_unreduced::<9>(acc_imm.reduce());
             out_unr[JoltR1CSInputs::RamAddress.to_index()] =
-                eq1_val.mul_unreduced::<9>(acc6u_reduce::<F>(&acc_ram_address));
+                eq1_val.mul_unreduced::<9>(acc_ram_address.reduce());
             out_unr[JoltR1CSInputs::Rs1Value.to_index()] =
-                eq1_val.mul_unreduced::<9>(acc6u_reduce::<F>(&acc_rs1_value));
+                eq1_val.mul_unreduced::<9>(acc_rs1_value.reduce());
             out_unr[JoltR1CSInputs::Rs2Value.to_index()] =
-                eq1_val.mul_unreduced::<9>(acc6u_reduce::<F>(&acc_rs2_value));
+                eq1_val.mul_unreduced::<9>(acc_rs2_value.reduce());
             out_unr[JoltR1CSInputs::RdWriteValue.to_index()] =
-                eq1_val.mul_unreduced::<9>(acc6u_reduce::<F>(&acc_rd_write_value));
+                eq1_val.mul_unreduced::<9>(acc_rd_write_value.reduce());
             out_unr[JoltR1CSInputs::RamReadValue.to_index()] =
-                eq1_val.mul_unreduced::<9>(acc6u_reduce::<F>(&acc_ram_read_value));
+                eq1_val.mul_unreduced::<9>(acc_ram_read_value.reduce());
             out_unr[JoltR1CSInputs::RamWriteValue.to_index()] =
-                eq1_val.mul_unreduced::<9>(acc6u_reduce::<F>(&acc_ram_write_value));
+                eq1_val.mul_unreduced::<9>(acc_ram_write_value.reduce());
             out_unr[JoltR1CSInputs::LeftLookupOperand.to_index()] =
-                eq1_val.mul_unreduced::<9>(acc6u_reduce::<F>(&acc_left_lookup_operand));
+                eq1_val.mul_unreduced::<9>(acc_left_lookup_operand.reduce());
             out_unr[JoltR1CSInputs::RightLookupOperand.to_index()] =
-                eq1_val.mul_unreduced::<9>(acc7u_reduce::<F>(&acc_right_lookup_operand));
+                eq1_val.mul_unreduced::<9>(acc_right_lookup_operand.reduce());
             out_unr[JoltR1CSInputs::NextUnexpandedPC.to_index()] =
-                eq1_val.mul_unreduced::<9>(acc6u_reduce::<F>(&acc_next_unexpanded_pc));
+                eq1_val.mul_unreduced::<9>(acc_next_unexpanded_pc.reduce());
             out_unr[JoltR1CSInputs::NextPC.to_index()] =
-                eq1_val.mul_unreduced::<9>(acc6u_reduce::<F>(&acc_next_pc));
+                eq1_val.mul_unreduced::<9>(acc_next_pc.reduce());
             out_unr[JoltR1CSInputs::LookupOutput.to_index()] =
-                eq1_val.mul_unreduced::<9>(acc6u_reduce::<F>(&acc_lookup_output));
+                eq1_val.mul_unreduced::<9>(acc_lookup_output.reduce());
             out_unr[JoltR1CSInputs::ShouldJump.to_index()] =
-                eq1_val.mul_unreduced::<9>(acc5u_reduce::<F>(&acc_sj_flag));
+                eq1_val.mul_unreduced::<9>(acc_sj_flag.reduce());
             out_unr[JoltR1CSInputs::NextIsVirtual.to_index()] =
-                eq1_val.mul_unreduced::<9>(acc5u_reduce::<F>(&acc_next_is_virtual));
+                eq1_val.mul_unreduced::<9>(acc_next_is_virtual.reduce());
             out_unr[JoltR1CSInputs::NextIsFirstInSequence.to_index()] =
-                eq1_val.mul_unreduced::<9>(acc5u_reduce::<F>(&acc_next_is_first_in_sequence));
+                eq1_val.mul_unreduced::<9>(acc_next_is_first_in_sequence.reduce());
             for flag in CircuitFlags::iter() {
                 let idx = JoltR1CSInputs::OpFlags(flag).to_index();
                 let f_idx = flag as usize;
-                out_unr[idx] = eq1_val.mul_unreduced::<9>(acc5u_reduce::<F>(&acc_flags[f_idx]));
+                out_unr[idx] = eq1_val.mul_unreduced::<9>(acc_flags[f_idx].reduce());
             }
             out_unr
         })
@@ -775,14 +767,14 @@ pub fn compute_claimed_product_factor_evals<F: JoltField>(
             let eq1_val = eq_one[x1];
 
             // Accumulators for 8 outputs
-            let mut acc_left_u64 = acc6u_new::<F>();
-            let mut acc_right_i128 = acc6s_new::<F>();
-            let mut acc_rd_u8 = acc5u_new::<F>();
-            let mut acc_wl_flag = acc5u_new::<F>();
-            let mut acc_jump_flag = acc5u_new::<F>();
-            let mut acc_lookup_output = acc6u_new::<F>();
-            let mut acc_branch_flag = acc5u_new::<F>();
-            let mut acc_next_is_noop = acc5u_new::<F>();
+            let mut acc_left_u64: Acc6U<F> = Acc6U::new();
+            let mut acc_right_i128: Acc6S<F> = Acc6S::new();
+            let mut acc_rd_u8: Acc5U<F> = Acc5U::new();
+            let mut acc_wl_flag: Acc5U<F> = Acc5U::new();
+            let mut acc_jump_flag: Acc5U<F> = Acc5U::new();
+            let mut acc_lookup_output: Acc6U<F> = Acc6U::new();
+            let mut acc_branch_flag: Acc5U<F> = Acc5U::new();
+            let mut acc_next_is_noop: Acc5U<F> = Acc5U::new();
 
             for x2 in 0..eq_two_len {
                 let e_in = eq_two[x2];
@@ -790,44 +782,40 @@ pub fn compute_claimed_product_factor_evals<F: JoltField>(
                 let row = ProductCycleInputs::from_trace::<F>(trace, idx);
 
                 // 0: LeftInstructionInput (u64)
-                acc6u_fmadd_u64(&mut acc_left_u64, &e_in, row.instruction_left_input);
+                acc_left_u64.fmadd(&e_in, &row.instruction_left_input);
                 // 1: RightInstructionInput (i128)
-                acc6s_fmadd_i128(&mut acc_right_i128, &e_in, row.instruction_right_input);
+                acc_right_i128.fmadd(&e_in, &row.instruction_right_input);
                 // 2: RdWa (u8)
-                acc5u_fmadd_u64(&mut acc_rd_u8, &e_in, row.rd_addr as u64);
+                acc_rd_u8.fmadd(&e_in, &(row.rd_addr as u64));
                 // 3: OpFlags(WriteLookupOutputToRD) (bool)
                 if row.write_lookup_output_to_rd_flag {
-                    acc5u_add_field(&mut acc_wl_flag, &e_in);
+                    acc_wl_flag.fmadd(&F::one(), &e_in);
                 }
                 // 4: OpFlags(Jump) (bool)
                 if row.jump_flag {
-                    acc5u_add_field(&mut acc_jump_flag, &e_in);
+                    acc_jump_flag.fmadd(&F::one(), &e_in);
                 }
                 // 5: LookupOutput (u64)
-                acc6u_fmadd_u64(
-                    &mut acc_lookup_output,
-                    &e_in,
-                    row.should_branch_lookup_output,
-                );
+                acc_lookup_output.fmadd(&e_in, &row.should_branch_lookup_output);
                 // 6: InstructionFlags(Branch) (bool)
                 if row.should_branch_flag {
-                    acc5u_add_field(&mut acc_branch_flag, &e_in);
+                    acc_branch_flag.fmadd(&F::one(), &e_in);
                 }
                 // 7: NextIsNoop (bool) = !not_next_noop
                 if !row.not_next_noop {
-                    acc5u_add_field(&mut acc_next_is_noop, &e_in);
+                    acc_next_is_noop.fmadd(&F::one(), &e_in);
                 }
             }
 
             let mut out_unr = [F::Unreduced::<9>::zero(); 8];
-            out_unr[0] = eq1_val.mul_unreduced::<9>(acc6u_reduce::<F>(&acc_left_u64));
-            out_unr[1] = eq1_val.mul_unreduced::<9>(acc6s_reduce::<F>(&acc_right_i128));
-            out_unr[2] = eq1_val.mul_unreduced::<9>(acc5u_reduce::<F>(&acc_rd_u8));
-            out_unr[3] = eq1_val.mul_unreduced::<9>(acc5u_reduce::<F>(&acc_wl_flag));
-            out_unr[4] = eq1_val.mul_unreduced::<9>(acc5u_reduce::<F>(&acc_jump_flag));
-            out_unr[5] = eq1_val.mul_unreduced::<9>(acc6u_reduce::<F>(&acc_lookup_output));
-            out_unr[6] = eq1_val.mul_unreduced::<9>(acc5u_reduce::<F>(&acc_branch_flag));
-            out_unr[7] = eq1_val.mul_unreduced::<9>(acc5u_reduce::<F>(&acc_next_is_noop));
+            out_unr[0] = eq1_val.mul_unreduced::<9>(acc_left_u64.reduce());
+            out_unr[1] = eq1_val.mul_unreduced::<9>(acc_right_i128.reduce());
+            out_unr[2] = eq1_val.mul_unreduced::<9>(acc_rd_u8.reduce());
+            out_unr[3] = eq1_val.mul_unreduced::<9>(acc_wl_flag.reduce());
+            out_unr[4] = eq1_val.mul_unreduced::<9>(acc_jump_flag.reduce());
+            out_unr[5] = eq1_val.mul_unreduced::<9>(acc_lookup_output.reduce());
+            out_unr[6] = eq1_val.mul_unreduced::<9>(acc_branch_flag.reduce());
+            out_unr[7] = eq1_val.mul_unreduced::<9>(acc_next_is_noop.reduce());
             out_unr
         })
         .reduce(

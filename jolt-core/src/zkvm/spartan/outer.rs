@@ -5,7 +5,7 @@ use rayon::prelude::*;
 use std::sync::Arc;
 use tracer::instruction::Cycle;
 
-use crate::field::JoltField;
+use crate::field::{AccumulateInPlace, JoltField};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
@@ -22,7 +22,7 @@ use crate::subprotocols::univariate_skip::{
     compute_bz_r_group1, uniskip_targets, UniSkipState,
 };
 use crate::transcripts::Transcript;
-use crate::utils::accumulation::{acc7s_fmadd_s192, acc7s_new, acc7s_reduce, Acc7Signed};
+use crate::utils::accumulation::Acc7S;
 use crate::utils::math::Math;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
@@ -181,8 +181,8 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
                     [F::zero(); UNIVARIATE_SKIP_DEGREE];
 
                 for x_out_val in x_out_start..x_out_end {
-                    let mut inner_acc: [Acc7Signed<F>;
-                        UNIVARIATE_SKIP_DEGREE] = [acc7s_new::<F>(); UNIVARIATE_SKIP_DEGREE];
+                    let mut inner_acc: [Acc7S<F>;
+                        UNIVARIATE_SKIP_DEGREE] = [Acc7S::<F>::new(); UNIVARIATE_SKIP_DEGREE];
                     for x_in_prime in 0..num_x_in_half {
                         // Materialize row once for both groups (ignores last bit)
                         let base_step_idx = (x_out_val << iter_num_x_in_prime_vars) | x_in_prime;
@@ -218,7 +218,7 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
                             let prod_s192 = sum_az0_s64.mul_trunc::<2, 3>(&sum_c_bz0_s128);
 
                             // Fold E_in (even) into 7-limb signed accumulator for this j
-                            acc7s_fmadd_s192(&mut inner_acc[j], &e_in_even, prod_s192);
+                            inner_acc[j].fmadd(&e_in_even, &prod_s192);
                         }
 
                         // Group 1 (odd index) using same row inputs
@@ -261,12 +261,12 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
                             let prod_s192 = sum_az1_s64.mul_trunc::<3, 3>(&sum_bz1_s192);
 
                             // Fold E_in (odd) into 7-limb signed accumulator for this j
-                            acc7s_fmadd_s192(&mut inner_acc[j], &e_in_odd, prod_s192);
+                            inner_acc[j].fmadd(&e_in_odd, &prod_s192);
                         }
                     }
                     let e_out = E_out[x_out_val];
                     for j in 0..UNIVARIATE_SKIP_DEGREE {
-                        let reduced = acc7s_reduce::<F>(&inner_acc[j]);
+                        let reduced = inner_acc[j].reduce();
                         acc_field[j] += e_out * reduced;
                     }
                 }
