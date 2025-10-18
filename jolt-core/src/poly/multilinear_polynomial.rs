@@ -19,6 +19,7 @@ use crate::field::JoltField;
 #[derive(Clone, Debug, EnumIter, PartialEq, Allocative)]
 pub enum MultilinearPolynomial<F: JoltField> {
     LargeScalars(DensePolynomial<F>),
+    BoolScalars(CompactPolynomial<bool, F>),
     U8Scalars(CompactPolynomial<u8, F>),
     U16Scalars(CompactPolynomial<u16, F>),
     U32Scalars(CompactPolynomial<u32, F>),
@@ -80,6 +81,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
     pub fn original_len(&self) -> usize {
         match self {
             MultilinearPolynomial::LargeScalars(poly) => poly.Z.len(),
+            MultilinearPolynomial::BoolScalars(poly) => poly.coeffs.len(),
             MultilinearPolynomial::U8Scalars(poly) => poly.coeffs.len(),
             MultilinearPolynomial::U16Scalars(poly) => poly.coeffs.len(),
             MultilinearPolynomial::U32Scalars(poly) => poly.coeffs.len(),
@@ -96,6 +98,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
     pub fn len(&self) -> usize {
         match self {
             MultilinearPolynomial::LargeScalars(poly) => poly.len(),
+            MultilinearPolynomial::BoolScalars(poly) => poly.len(),
             MultilinearPolynomial::U8Scalars(poly) => poly.len(),
             MultilinearPolynomial::U16Scalars(poly) => poly.len(),
             MultilinearPolynomial::U32Scalars(poly) => poly.len(),
@@ -111,6 +114,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
     pub fn get_num_vars(&self) -> usize {
         match self {
             MultilinearPolynomial::LargeScalars(poly) => poly.get_num_vars(),
+            MultilinearPolynomial::BoolScalars(poly) => poly.get_num_vars(),
             MultilinearPolynomial::U8Scalars(poly) => poly.get_num_vars(),
             MultilinearPolynomial::U16Scalars(poly) => poly.get_num_vars(),
             MultilinearPolynomial::U32Scalars(poly) => poly.get_num_vars(),
@@ -128,6 +132,9 @@ impl<F: JoltField> MultilinearPolynomial<F> {
     pub fn get_coeff(&self, index: usize) -> F {
         match self {
             MultilinearPolynomial::LargeScalars(poly) => poly[index],
+            MultilinearPolynomial::BoolScalars(poly) => {
+                if poly.coeffs[index] { F::one() } else { F::zero() }
+            }
             MultilinearPolynomial::U8Scalars(poly) => F::from_u8(poly.coeffs[index]),
             MultilinearPolynomial::U16Scalars(poly) => F::from_u16(poly.coeffs[index]),
             MultilinearPolynomial::U32Scalars(poly) => F::from_u32(poly.coeffs[index]),
@@ -144,6 +151,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
     /// Panics if the polynomial is a large-scalar polynomial.
     pub fn get_coeff_i64(&self, index: usize) -> i64 {
         match self {
+            MultilinearPolynomial::BoolScalars(poly) => if poly.coeffs[index] { 1i64 } else { 0i64 },
             MultilinearPolynomial::U8Scalars(poly) => i64::from(poly.coeffs[index]),
             MultilinearPolynomial::U16Scalars(poly) => i64::from(poly.coeffs[index]),
             MultilinearPolynomial::U32Scalars(poly) => i64::from(poly.coeffs[index]),
@@ -159,6 +167,7 @@ impl<F: JoltField> MultilinearPolynomial<F> {
     /// Panics if the polynomial is a large-scalar polynomial.
     pub fn get_coeff_i128(&self, index: usize) -> i128 {
         match self {
+            MultilinearPolynomial::BoolScalars(poly) => if poly.coeffs[index] { 1i128 } else { 0i128 },
             MultilinearPolynomial::U8Scalars(poly) => i128::from(poly.coeffs[index]),
             MultilinearPolynomial::U16Scalars(poly) => i128::from(poly.coeffs[index]),
             MultilinearPolynomial::U32Scalars(poly) => i128::from(poly.coeffs[index]),
@@ -176,6 +185,13 @@ impl<F: JoltField> MultilinearPolynomial<F> {
     pub fn get_bound_coeff(&self, index: usize) -> F {
         match self {
             MultilinearPolynomial::LargeScalars(poly) => poly[index],
+            MultilinearPolynomial::BoolScalars(poly) => {
+                if poly.is_bound() {
+                    poly.bound_coeffs[index]
+                } else {
+                    if poly.coeffs[index] { F::one() } else { F::zero() }
+                }
+            }
             MultilinearPolynomial::U8Scalars(poly) => {
                 if poly.is_bound() {
                     poly.bound_coeffs[index]
@@ -261,6 +277,12 @@ impl<F: JoltField> MultilinearPolynomial<F> {
     pub fn dot_product(&self, other: &[F]) -> F {
         match self {
             MultilinearPolynomial::LargeScalars(poly) => compute_dotproduct(&poly.Z, other),
+            MultilinearPolynomial::BoolScalars(poly) => poly
+                .coeffs
+                .par_iter()
+                .zip_eq(other.par_iter())
+                .map(|(a, b)| a.field_mul(*b))
+                .sum(),
             MultilinearPolynomial::U8Scalars(poly) => poly
                 .coeffs
                 .par_iter()
@@ -360,6 +382,13 @@ impl<F: JoltField> From<Vec<F>> for MultilinearPolynomial<F> {
     }
 }
 
+impl<F: JoltField> From<Vec<bool>> for MultilinearPolynomial<F> {
+    fn from(coeffs: Vec<bool>) -> Self {
+        let poly = CompactPolynomial::from_coeffs(coeffs);
+        Self::BoolScalars(poly)
+    }
+}
+
 impl<F: JoltField> From<Vec<u8>> for MultilinearPolynomial<F> {
     fn from(coeffs: Vec<u8>) -> Self {
         let poly = CompactPolynomial::from_coeffs(coeffs);
@@ -433,6 +462,17 @@ impl<'a, F: JoltField> TryFrom<&'a MultilinearPolynomial<F>> for &'a CompactPoly
     fn try_from(poly: &'a MultilinearPolynomial<F>) -> Result<Self, Self::Error> {
         match poly {
             MultilinearPolynomial::U8Scalars(poly) => Ok(poly),
+            _ => Err(()),
+        }
+    }
+}
+
+impl<'a, F: JoltField> TryFrom<&'a MultilinearPolynomial<F>> for &'a CompactPolynomial<bool, F> {
+    type Error = (); // TODO(moodlezoup)
+
+    fn try_from(poly: &'a MultilinearPolynomial<F>) -> Result<Self, Self::Error> {
+        match poly {
+            MultilinearPolynomial::BoolScalars(poly) => Ok(poly),
             _ => Err(()),
         }
     }
@@ -543,6 +583,7 @@ impl<F: JoltField> PolynomialBinding<F> for MultilinearPolynomial<F> {
     fn is_bound(&self) -> bool {
         match self {
             MultilinearPolynomial::LargeScalars(poly) => poly.is_bound(),
+            MultilinearPolynomial::BoolScalars(poly) => poly.is_bound(),
             MultilinearPolynomial::U8Scalars(poly) => poly.is_bound(),
             MultilinearPolynomial::U16Scalars(poly) => poly.is_bound(),
             MultilinearPolynomial::U32Scalars(poly) => poly.is_bound(),
@@ -558,6 +599,7 @@ impl<F: JoltField> PolynomialBinding<F> for MultilinearPolynomial<F> {
     fn bind(&mut self, r: F::Challenge, order: BindingOrder) {
         match self {
             MultilinearPolynomial::LargeScalars(poly) => poly.bind(r, order),
+            MultilinearPolynomial::BoolScalars(poly) => poly.bind(r, order),
             MultilinearPolynomial::U8Scalars(poly) => poly.bind(r, order),
             MultilinearPolynomial::U16Scalars(poly) => poly.bind(r, order),
             MultilinearPolynomial::U32Scalars(poly) => poly.bind(r, order),
@@ -573,6 +615,7 @@ impl<F: JoltField> PolynomialBinding<F> for MultilinearPolynomial<F> {
     fn bind_parallel(&mut self, r: F::Challenge, order: BindingOrder) {
         match self {
             MultilinearPolynomial::LargeScalars(poly) => poly.bind_parallel(r, order),
+            MultilinearPolynomial::BoolScalars(poly) => poly.bind_parallel(r, order),
             MultilinearPolynomial::U8Scalars(poly) => poly.bind_parallel(r, order),
             MultilinearPolynomial::U16Scalars(poly) => poly.bind_parallel(r, order),
             MultilinearPolynomial::U32Scalars(poly) => poly.bind_parallel(r, order),
@@ -590,6 +633,7 @@ impl<F: JoltField> PolynomialBinding<F> for MultilinearPolynomial<F> {
                 assert_eq!(poly.len(), 1);
                 poly.Z[0]
             }
+            MultilinearPolynomial::BoolScalars(poly) => poly.final_sumcheck_claim(),
             MultilinearPolynomial::U8Scalars(poly) => poly.final_sumcheck_claim(),
             MultilinearPolynomial::U16Scalars(poly) => poly.final_sumcheck_claim(),
             MultilinearPolynomial::U32Scalars(poly) => poly.final_sumcheck_claim(),
@@ -611,6 +655,14 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
     {
         match self {
             MultilinearPolynomial::LargeScalars(poly) => {
+                let m = r.len() / 2;
+                let (r2, r1) = r.split_at(m);
+                let (eq_one, eq_two) =
+                    rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
+
+                poly.split_eq_evaluate(r.len(), &eq_one, &eq_two)
+            }
+            MultilinearPolynomial::BoolScalars(poly) => {
                 let m = r.len() / 2;
                 let (r2, r1) = r.split_at(m);
                 let (eq_one, eq_two) =
