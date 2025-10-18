@@ -59,8 +59,8 @@ pub enum CircuitFlags {
     Jump,
     /// 1 if the lookup output is to be stored in `rd` at the end of the step.
     WriteLookupOutputToRD,
-    /// 1 if the instruction is "inline", as defined in Section 6.1 of the Jolt paper.
-    InlineSequenceInstruction,
+    /// 1 if the instruction is "virtual", as defined in Section 6.1 of the Jolt paper.
+    VirtualInstruction,
     /// 1 if the instruction is an assert, as defined in Section 6.1.1 of the Jolt paper.
     Assert,
     /// Used in inline sequences; the program counter should be the same for the full sequence.
@@ -69,6 +69,8 @@ pub enum CircuitFlags {
     Advice,
     /// Is a compressed instruction (i.e. increase UnexpandedPc by 2 only)
     IsCompressed,
+    /// Is instruction the first in a virtual sequence
+    IsFirstInSequence,
 }
 
 /// Boolean flags that are not part of Jolt's R1CS constraints

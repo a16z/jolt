@@ -633,10 +633,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ValFinalSumcheck<F>
 
         accumulator.borrow_mut().append_dense(
             transcript,
-            vec![CommittedPolynomial::RamInc],
+            CommittedPolynomial::RamInc,
             SumcheckId::RamValFinalEvaluation,
             r_cycle_prime.r,
-            &[inc.final_sumcheck_claim()],
+            inc.final_sumcheck_claim(),
         );
         accumulator.borrow_mut().append_virtual(
             transcript,
@@ -665,7 +665,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ValFinalSumcheck<F>
 
         accumulator.borrow_mut().append_dense(
             transcript,
-            vec![CommittedPolynomial::RamInc],
+            CommittedPolynomial::RamInc,
             SumcheckId::RamValFinalEvaluation,
             r_cycle_prime.r,
         );

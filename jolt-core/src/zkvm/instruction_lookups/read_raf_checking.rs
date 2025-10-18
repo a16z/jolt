@@ -590,7 +590,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
             .par_iter()
             .map(|table_lookups| {
                 table_lookups
-                    .iter()
+                    .par_iter()
                     .map(|j| eq_r_cycle_prime[*j])
                     .sum::<F>()
             })

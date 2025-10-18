@@ -1,4 +1,10 @@
-use std::{cell::RefCell, iter::once, rc::Rc, sync::Arc};
+use std::{
+    array,
+    cell::RefCell,
+    iter::{once, zip},
+    rc::Rc,
+    sync::Arc,
+};
 
 use num_traits::Zero;
 
@@ -16,8 +22,10 @@ use crate::{
             BIG_ENDIAN,
         },
         ra_poly::RaPolynomial,
+        split_eq_poly::GruenSplitEqPolynomial,
+        unipoly::UniPoly,
     },
-    subprotocols::sumcheck::SumcheckInstance,
+    subprotocols::{mles_product_sum::product_eval_univariate_assign, sumcheck::SumcheckInstance},
     transcripts::Transcript,
     utils::{
         expanding_table::ExpandingTable, math::Math, small_scalar::SmallScalar,
@@ -37,27 +45,30 @@ use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 use common::constants::{REGISTER_COUNT, XLEN};
-use itertools::Itertools;
+use itertools::{chain, zip_eq, Itertools};
 use rayon::prelude::*;
 use strum::{EnumCount, IntoEnumIterator};
 use tracer::instruction::NormalizedInstruction;
 
 /// Number of batched read-checking sumchecks bespokely
-const STAGES: usize = 5;
+const N_STAGES: usize = 5;
 
 #[derive(Allocative)]
 struct ReadCheckingProverState<F: JoltField> {
-    F: [MultilinearPolynomial<F>; STAGES],
+    F: [MultilinearPolynomial<F>; N_STAGES],
     ra: Vec<RaPolynomial<u8, F>>,
     v: Vec<ExpandingTable<F>>,
-    eq_polys: [MultilinearPolynomial<F>; STAGES],
-    val_gamma: Option<[F; STAGES]>,
+    gruen_eq_polys: [GruenSplitEqPolynomial<F>; N_STAGES],
+    prev_round_claims: [F; N_STAGES],
+    prev_round_polys: Option<[UniPoly<F>; N_STAGES]>,
+    bound_val_evals: Option<[F; N_STAGES]>,
     pc: Vec<usize>,
 }
 
 #[derive(Allocative)]
 pub struct ReadRafSumcheck<F: JoltField> {
-    gamma: Vec<F>,
+    /// Index `i` stores `gamma^i`.
+    gamma_powers: Vec<F>,
     rv_claim: F,
     log_K_chunk: usize,
     K_chunk: usize,
@@ -65,7 +76,7 @@ pub struct ReadRafSumcheck<F: JoltField> {
     log_T: usize,
     d: usize,
     prover_state: Option<ReadCheckingProverState<F>>,
-    val_polys: [MultilinearPolynomial<F>; STAGES],
+    val_polys: [MultilinearPolynomial<F>; N_STAGES],
     int_poly: IdentityPolynomial<F>,
 }
 
@@ -75,7 +86,7 @@ enum ReadCheckingValType {
     Stage1,
     /// Jump flag from ProductVirtualization
     Stage2,
-    /// PCSumcheck
+    /// ShiftSumcheck
     Stage3,
     /// Registers from read-write sumcheck (rd, rs1, rs2)
     Stage4,
@@ -94,10 +105,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
         let log_T = sm.get_prover_data().1.len().log_2();
         let log_K_chunk = log_K.div_ceil(d);
         let K_chunk = 1 << log_K_chunk;
-        let gamma_base: F = sm.transcript.borrow_mut().challenge_scalar();
-        let gamma = std::iter::successors(Some(F::one()), |&prev| Some(prev * gamma_base))
-            .take(7)
-            .collect::<Vec<_>>();
+        let gamma_powers = sm.transcript.borrow_mut().challenge_scalar_powers(7);
 
         let (val_1, rv_claim_1) = Self::compute_val_rv(sm, ReadCheckingValType::Stage1);
         let (val_2, rv_claim_2) = Self::compute_val_rv(sm, ReadCheckingValType::Stage2);
@@ -112,86 +120,58 @@ impl<F: JoltField> ReadRafSumcheck<F> {
         let int_poly = IdentityPolynomial::<F>::new(log_K);
         let (preprocessing, trace, _, _) = sm.get_prover_data();
 
-        let rv_claim = [
-            rv_claim_1,
+        let claim_per_stage = [
+            rv_claim_1 + gamma_powers[5] * raf_claim,
             rv_claim_2,
-            rv_claim_3,
+            rv_claim_3 + gamma_powers[4] * raf_shift_claim,
             rv_claim_4,
             rv_claim_5,
-            raf_claim,
-            raf_shift_claim,
-        ]
-        .iter()
-        .zip(&gamma)
-        .map(|(claim, g)| *claim * g)
-        .sum();
-
-        let eq_evals = [
-            EqPolynomial::evals(&r_cycles[0]),
-            EqPolynomial::evals(&r_cycles[1]),
-            EqPolynomial::evals(&r_cycles[2]),
-            EqPolynomial::evals(&r_cycles[3]),
-            EqPolynomial::evals(&r_cycles[4]),
         ];
 
-        let T = trace.len();
-        let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
-        let chunk_size = (T / num_chunks).max(1);
+        let rv_claim = zip(claim_per_stage, &gamma_powers)
+            .map(|(c, g)| c * g)
+            .sum();
+
+        // Make each chunk len ~2x bytecode len to prevent allocating too much memory.
+        let chunk_n_vars = K.log_2() + 1;
+        let chunk_size = 1 << chunk_n_vars;
+        let prefix_n_vars = r_cycles[0].len().saturating_sub(chunk_n_vars);
+        let eq_prefix_evals = r_cycles
+            .each_ref()
+            .map(|r| EqPolynomial::evals(&r[..prefix_n_vars]));
 
         let F = trace
             .par_chunks(chunk_size)
             .enumerate()
             .map(|(chunk_index, trace_chunk)| {
-                let mut result_1: Vec<F> = unsafe_allocate_zero_vec(K);
-                let mut result_2: Vec<F> = unsafe_allocate_zero_vec(K);
-                let mut result_3: Vec<F> = unsafe_allocate_zero_vec(K);
-                let mut result_4: Vec<F> = unsafe_allocate_zero_vec(K);
-                let mut result_5: Vec<F> = unsafe_allocate_zero_vec(K);
-                let mut j = chunk_index * chunk_size;
-                for cycle in trace_chunk {
+                // Generate all eq(r_cycles[stage], (chunk_index, j)).
+                let eq_evals: [_; N_STAGES] = array::from_fn(|i| {
+                    let prefix_eval = Some(eq_prefix_evals[i][chunk_index]);
+                    let r_suffix = &r_cycles[i][prefix_n_vars..];
+                    EqPolynomial::evals_serial(r_suffix, prefix_eval)
+                });
+
+                let mut res_per_stage: [_; N_STAGES] =
+                    array::from_fn(|_| unsafe_allocate_zero_vec::<F>(K));
+
+                for (j, cycle) in trace_chunk.iter().enumerate() {
                     let pc = preprocessing.shared.bytecode.get_pc(cycle);
-                    result_1[pc] += eq_evals[0][j];
-                    result_2[pc] += eq_evals[1][j];
-                    result_3[pc] += eq_evals[2][j];
-                    result_4[pc] += eq_evals[3][j];
-                    result_5[pc] += eq_evals[4][j];
-                    j += 1;
+                    for stage in 0..N_STAGES {
+                        res_per_stage[stage][pc] += eq_evals[stage][j]
+                    }
                 }
-                (result_1, result_2, result_3, result_4, result_5)
+
+                res_per_stage
             })
             .reduce(
-                || {
-                    (
-                        unsafe_allocate_zero_vec(K),
-                        unsafe_allocate_zero_vec(K),
-                        unsafe_allocate_zero_vec(K),
-                        unsafe_allocate_zero_vec(K),
-                        unsafe_allocate_zero_vec(K),
-                    )
-                },
-                |(mut running_1, mut running_2, mut running_3, mut running_4, mut running_5),
-                 (new_1, new_2, new_3, new_4, new_5)| {
-                    running_1
-                        .par_iter_mut()
-                        .zip(new_1.into_par_iter())
-                        .for_each(|(x, y)| *x += y);
-                    running_2
-                        .par_iter_mut()
-                        .zip(new_2.into_par_iter())
-                        .for_each(|(x, y)| *x += y);
-                    running_3
-                        .par_iter_mut()
-                        .zip(new_3.into_par_iter())
-                        .for_each(|(x, y)| *x += y);
-                    running_4
-                        .par_iter_mut()
-                        .zip(new_4.into_par_iter())
-                        .for_each(|(x, y)| *x += y);
-                    running_5
-                        .par_iter_mut()
-                        .zip(new_5.into_par_iter())
-                        .for_each(|(x, y)| *x += y);
-                    (running_1, running_2, running_3, running_4, running_5)
+                || array::from_fn(|_| unsafe_allocate_zero_vec(K)),
+                |mut a, b| {
+                    for stage in 0..N_STAGES {
+                        (&mut a[stage], &b[stage])
+                            .into_par_iter()
+                            .for_each(|(a, b)| *a += *b)
+                    }
+                    a
                 },
             );
 
@@ -200,13 +180,12 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             // Verify that for each stage i: sum(val_i[k] * F_i[k] * eq_i[k]) = rv_claim_i
             let rv_claims = [rv_claim_1, rv_claim_2, rv_claim_3, rv_claim_4, rv_claim_5];
             let val_evals = [&val_1, &val_2, &val_3, &val_4, &val_5];
-            let F_evals = [&F.0, &F.1, &F.2, &F.3, &F.4];
-            for i in 0..STAGES {
+            for i in 0..N_STAGES {
                 let computed_claim: F = (0..K)
                     .into_par_iter()
                     .map(|k| {
                         let val_k = val_evals[i][k];
-                        let F_k = F_evals[i][k];
+                        let F_k = F[i][k];
                         val_k * F_k
                     })
                     .sum();
@@ -221,19 +200,10 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             }
         }
 
-        let eq_polys = eq_evals
-            .into_iter()
-            .map(MultilinearPolynomial::from)
-            .collect::<Vec<_>>()
-            .try_into()
-            .unwrap();
-        let F = [
-            MultilinearPolynomial::from(F.0),
-            MultilinearPolynomial::from(F.1),
-            MultilinearPolynomial::from(F.2),
-            MultilinearPolynomial::from(F.3),
-            MultilinearPolynomial::from(F.4),
-        ];
+        let F = F.map(MultilinearPolynomial::from);
+
+        let gruen_eq_polys =
+            r_cycles.map(|r| GruenSplitEqPolynomial::new(&r, BindingOrder::LowToHigh));
 
         let mut v = (0..d)
             .map(|_| ExpandingTable::new(K_chunk))
@@ -256,8 +226,11 @@ impl<F: JoltField> ReadRafSumcheck<F> {
                 F,
                 ra: Vec::with_capacity(d),
                 v,
-                eq_polys,
-                val_gamma: None,
+                // eq_polys,
+                gruen_eq_polys,
+                prev_round_claims: claim_per_stage,
+                prev_round_polys: None,
+                bound_val_evals: None,
                 pc,
             }),
             val_polys: [
@@ -268,8 +241,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
                 MultilinearPolynomial::from(val_5),
             ],
             int_poly,
-            // r_cycles: [r_cycle_1, r_cycle_2, r_cycle_3, r_cycle_4, r_cycle_5],
-            gamma,
+            gamma_powers,
         }
     }
 
@@ -282,7 +254,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
         let log_T = sm.get_verifier_data().2.log_2();
         let log_K_chunk = log_K.div_ceil(d);
         let gamma_base: F = sm.transcript.borrow_mut().challenge_scalar();
-        let gamma = std::iter::successors(Some(F::one()), |&prev| Some(prev * gamma_base))
+        let gamma_powers = std::iter::successors(Some(F::one()), |&prev| Some(prev * gamma_base))
             .take(7)
             .collect::<Vec<_>>();
 
@@ -315,12 +287,12 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             raf_shift_claim,
         ]
         .iter()
-        .zip(&gamma)
+        .zip(&gamma_powers)
         .map(|(claim, g)| *claim * g)
         .sum();
 
         Self {
-            gamma,
+            gamma_powers,
             rv_claim,
             log_K,
             log_K_chunk,
@@ -330,7 +302,6 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             prover_state: None,
             val_polys,
             int_poly,
-            // r_cycles: [r_cycle_1, r_cycle_2, r_cycle_3, r_cycle_4, r_cycle_5],
         }
     }
 
@@ -357,7 +328,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
                 )
             }
             ReadCheckingValType::Stage3 => {
-                let gamma_powers = get_gamma_powers(&mut *sm.get_transcript().borrow_mut(), 7);
+                let gamma_powers = get_gamma_powers(&mut *sm.get_transcript().borrow_mut(), 9);
                 (
                     Self::compute_val_3(sm, &gamma_powers),
                     Self::compute_rv_claim_3(sm, &gamma_powers),
@@ -383,7 +354,9 @@ impl<F: JoltField> ReadRafSumcheck<F> {
         }
     }
 
-    fn get_r_cycle(acc: &Rc<RefCell<ProverOpeningAccumulator<F>>>) -> [Vec<F::Challenge>; STAGES] {
+    fn get_r_cycle(
+        acc: &Rc<RefCell<ProverOpeningAccumulator<F>>>,
+    ) -> [Vec<F::Challenge>; N_STAGES] {
         let (r_cycle_1, _) = acc
             .borrow()
             .get_virtual_polynomial_opening(VirtualPolynomial::Imm, SumcheckId::SpartanOuter);
@@ -416,7 +389,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
 
     fn get_r_cycle_verif(
         acc: &Rc<RefCell<VerifierOpeningAccumulator<F>>>,
-    ) -> [Vec<F::Challenge>; STAGES] {
+    ) -> [Vec<F::Challenge>; N_STAGES] {
         let (r_cycle_1, _) = acc
             .borrow()
             .get_virtual_polynomial_opening(VirtualPolynomial::Imm, SumcheckId::SpartanOuter);
@@ -425,7 +398,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             SumcheckId::ProductVirtualization,
         );
         let r_cycle_2 = r.r;
-        // Stage 3: Get r_cycle from PCSumcheck or other stage 3 sumchecks
+        // Stage 3: Get r_cycle from ShiftSumcheck or other stage 3 sumchecks
         let (r_cycle_3, _) = acc.borrow().get_virtual_polynomial_opening(
             VirtualPolynomial::UnexpandedPC,
             SumcheckId::SpartanShift,
@@ -604,7 +577,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
     ///    Val(k) = imm(k) + gamma * unexpanded_pc(k)
     ///             + gamma^2 * left_operand_is_rs1_value(k)
     ///             + gamma^3 * left_operand_is_pc(k) + ...
-    /// This particular Val virtualizes claims output by the PCSumcheck.
+    /// This particular Val virtualizes claims output by the ShiftSumcheck.
     fn compute_val_3(
         sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
         gamma_powers: &[F],
@@ -613,27 +586,34 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             .par_iter()
             .map(|instruction| {
                 let instr = instruction.normalize();
-                let flags = instruction.instruction_flags();
+                let instr_flags = instruction.instruction_flags();
+                let circuit_flags = instruction.circuit_flags();
                 let unexpanded_pc = instr.address;
                 let imm = instr.operands.imm;
 
                 let mut linear_combination: F = F::from_i128(imm);
                 linear_combination += gamma_powers[1].mul_u64(unexpanded_pc as u64);
 
-                if flags[InstructionFlags::LeftOperandIsRs1Value] {
+                if instr_flags[InstructionFlags::LeftOperandIsRs1Value] {
                     linear_combination += gamma_powers[2];
                 }
-                if flags[InstructionFlags::LeftOperandIsPC] {
+                if instr_flags[InstructionFlags::LeftOperandIsPC] {
                     linear_combination += gamma_powers[3];
                 }
-                if flags[InstructionFlags::RightOperandIsRs2Value] {
+                if instr_flags[InstructionFlags::RightOperandIsRs2Value] {
                     linear_combination += gamma_powers[4];
                 }
-                if flags[InstructionFlags::RightOperandIsImm] {
+                if instr_flags[InstructionFlags::RightOperandIsImm] {
                     linear_combination += gamma_powers[5];
                 }
-                if flags[InstructionFlags::IsNoop] {
+                if instr_flags[InstructionFlags::IsNoop] {
                     linear_combination += gamma_powers[6];
+                }
+                if circuit_flags[CircuitFlags::VirtualInstruction] {
+                    linear_combination += gamma_powers[7];
+                }
+                if circuit_flags[CircuitFlags::IsFirstInSequence] {
+                    linear_combination += gamma_powers[8];
                 }
 
                 linear_combination
@@ -684,6 +664,14 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             VirtualPolynomial::InstructionFlags(InstructionFlags::IsNoop),
             SumcheckId::SpartanShift,
         );
+        let (_, is_virtual_claim) = sm.get_virtual_polynomial_opening(
+            VirtualPolynomial::OpFlags(CircuitFlags::VirtualInstruction),
+            SumcheckId::SpartanShift,
+        );
+        let (_, is_first_in_sequence_claim) = sm.get_virtual_polynomial_opening(
+            VirtualPolynomial::OpFlags(CircuitFlags::IsFirstInSequence),
+            SumcheckId::SpartanShift,
+        );
 
         [
             imm_claim,
@@ -693,6 +681,8 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             right_is_rs2_claim,
             right_is_imm_claim,
             is_noop_claim,
+            is_virtual_claim,
+            is_first_in_sequence_claim,
         ]
         .into_iter()
         .zip_eq(gamma_powers)
@@ -842,40 +832,41 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
 
     #[tracing::instrument(skip_all, name = "BytecodeReadRafSumcheck::compute_prover_message")]
     fn compute_prover_message(&mut self, round: usize, _previous_claim: F) -> Vec<F> {
-        let ps = self
-            .prover_state
-            .as_ref()
-            .expect("Prover state not initialized");
         if round < self.log_K {
             const DEGREE: usize = 2;
 
-            (0..self.val_polys[0].len() / 2)
+            let ps = self.prover_state.as_mut().unwrap();
+
+            // Evaluation at [0, 2] for each stage.
+            let eval_per_stage: [[F; DEGREE]; N_STAGES] = (0..self.val_polys[0].len() / 2)
                 .into_par_iter()
                 .map(|i| {
-                    let ra_evals = ps.F.iter().map(|poly| {
+                    let ra_evals = ps.F.each_ref().map(|poly| {
                         poly.sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow)
                     });
+
                     let int_evals =
                         self.int_poly
                             .sumcheck_evals(i, DEGREE, BindingOrder::HighToLow);
+
                     // We have a separate Val polynomial for each stage
                     // Additionally, for stages 1 and 3 we have an Int polynomial for RAF
                     // So we would have:
-                    // Stage 1: gamma^0 * (Val_1 + gamma^5 * Int)
-                    // Stage 2: gamma^1 * (Val_2)
-                    // Stage 3: gamma^2 * (Val_3 + gamma^4 * Int)
-                    // Stage 4: gamma^3 * (Val_4)
-                    // Stage 5: gamma^4 * (Val_5)
+                    // Stage 1: Val_1 + gamma^5 * Int
+                    // Stage 2: Val_2
+                    // Stage 3: Val_3 + gamma^4 * Int
+                    // Stage 4: Val_4
+                    // Stage 5: Val_5
                     // Which matches with the input claim:
                     // rv_1 + gamma * rv_2 + gamma^2 * rv_3 + gamma^3 * rv_4 + gamma^4 * rv_5 + gamma^5 * raf_1 + gamma^6 * raf_3
-                    let val_evals = self
+                    let mut val_evals = self
                         .val_polys
                         .iter()
                         // Val polynomials
                         .map(|val| val.sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow))
                         // Here are the RAF polynomials and their powers
                         .zip([Some(&int_evals), None, Some(&int_evals), None, None])
-                        .zip([Some(self.gamma[5]), None, Some(self.gamma[4]), None, None])
+                        .zip([Some(self.gamma_powers[5]), None, Some(self.gamma_powers[4]), None, None])
                         .map(|((val_evals, int_evals), gamma)| {
                             std::array::from_fn::<F, DEGREE, _>(|j| {
                                 val_evals[j]
@@ -885,91 +876,105 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
                             })
                         });
 
-                    // Compute ra * val * gamma, and sum together
-                    ra_evals
-                        .zip(val_evals)
-                        .zip(self.gamma.iter())
-                        .map(|((ra_evals, val_evals), gamma)| {
-                            std::array::from_fn::<F::Unreduced<9>, DEGREE, _>(|j| {
-                                let val_gamma = val_evals[j] * gamma;
-                                ra_evals[j].mul_unreduced::<9>(val_gamma)
-                            })
-                        })
-                        .fold([F::Unreduced::zero(); DEGREE], |mut running, new| {
-                            for i in 0..DEGREE {
-                                running[i] += new[i];
-                            }
-                            running
-                        })
+                    array::from_fn(|stage| {
+                        let [ra_at_0, ra_at_2] = ra_evals[stage];
+                        let [val_at_0, val_at_2] = val_evals.next().unwrap();
+                        [ra_at_0 * val_at_0, ra_at_2 * val_at_2]
+                    })
                 })
                 .reduce(
-                    || [F::Unreduced::zero(); DEGREE],
-                    |mut running, new| {
-                        for i in 0..DEGREE {
-                            running[i] += new[i];
-                        }
-                        running
-                    },
-                )
-                .into_iter()
-                .map(F::from_montgomery_reduce)
-                .collect()
+                    || [[F::zero(); DEGREE]; N_STAGES],
+                    |a, b| array::from_fn(|i| array::from_fn(|j| a[i][j] + b[i][j])),
+                );
+
+            let mut round_polys: [_; N_STAGES] = array::from_fn(|_| UniPoly::zero());
+            let mut agg_round_poly = UniPoly::zero();
+
+            for (stage, evals) in eval_per_stage.into_iter().enumerate() {
+                let [eval_at_0, eval_at_2] = evals;
+                let eval_at_1 = ps.prev_round_claims[stage] - eval_at_0;
+                let round_poly = UniPoly::from_evals(&[eval_at_0, eval_at_1, eval_at_2]);
+                agg_round_poly += &(&round_poly * &self.gamma_powers[stage]);
+                round_polys[stage] = round_poly;
+            }
+
+            ps.prev_round_polys = Some(round_polys);
+
+            vec![
+                agg_round_poly.eval_at_zero(),
+                agg_round_poly.evaluate::<F>(&F::from_u8(2)),
+            ]
         } else {
             let degree = <Self as SumcheckInstance<F, T>>::degree(self);
-            (0..ps.ra[0].len() / 2)
+            let ps = self.prover_state.as_mut().unwrap();
+
+            let out_len = ps.gruen_eq_polys[0].E_out_current().len();
+            let in_len = ps.gruen_eq_polys[0].E_in_current().len();
+            let in_n_vars = in_len.log_2();
+
+            // Evaluations on [1, ..., degree - 2, inf] (for each stage).
+            let mut evals_per_stage: [Vec<F>; N_STAGES] = (0..out_len)
                 .into_par_iter()
-                .map(|i| {
-                    let eq_evals = ps
-                        .eq_polys
-                        .iter()
-                        .map(|eq| eq.sumcheck_evals(i, degree, BindingOrder::LowToHigh));
-                    let ra_evals = ps
-                        .ra
-                        .iter()
-                        .map(|ra| ra.sumcheck_evals(i, degree, BindingOrder::LowToHigh));
-                    let eq_times_val = eq_evals
-                        .zip(ps.val_gamma.as_ref().unwrap().iter())
-                        .map(|(eq_evals, val_evals)| {
-                            eq_evals
-                                .into_iter()
-                                .map(|eq_eval| eq_eval * val_evals)
-                                .collect()
-                        })
-                        .fold(
-                            vec![F::zero(); degree],
-                            |mut running: Vec<F>, new: Vec<F>| {
-                                for i in 0..degree {
-                                    running[i] += new[i];
-                                }
-                                running
-                            },
-                        );
+                .map(|j_hi| {
+                    let mut ra_eval_pairs = vec![(F::zero(), F::zero()); ps.ra.len()];
+                    let mut ra_prod_evals = vec![F::zero(); degree - 1];
+                    let mut evals_per_stage: [_; N_STAGES] =
+                        array::from_fn(|_| vec![F::Unreduced::zero(); degree - 1]);
 
-                    let ra_evals = ra_evals.fold(vec![F::one(); degree], |mut running, new| {
-                        for i in 0..degree {
-                            running[i] *= new[i];
+                    for j_lo in 0..in_len {
+                        let j = j_lo + (j_hi << in_n_vars);
+
+                        for (i, ra_i) in ps.ra.iter().enumerate() {
+                            // TODO: Improve memory access.
+                            let ra_i_eval_at_j_0 = ra_i.get_bound_coeff(j * 2);
+                            let ra_i_eval_at_j_1 = ra_i.get_bound_coeff(j * 2 + 1);
+                            ra_eval_pairs[i] = (ra_i_eval_at_j_0, ra_i_eval_at_j_1);
                         }
-                        running
-                    });
+                        // Eval prod_i ra_i(x).
+                        product_eval_univariate_assign(&ra_eval_pairs, &mut ra_prod_evals);
 
-                    ra_evals
-                        .into_iter()
-                        .zip(eq_times_val)
-                        .map(|(ra, eq)| ra.mul_unreduced::<9>(eq))
-                        .collect::<Vec<_>>()
+                        for stage in 0..N_STAGES {
+                            let eq_out_eval = ps.gruen_eq_polys[stage].E_in_current()[j_lo];
+                            for i in 0..degree - 1 {
+                                evals_per_stage[stage][i] +=
+                                    eq_out_eval.mul_unreduced::<9>(ra_prod_evals[i]);
+                            }
+                        }
+                    }
+
+                    array::from_fn(|stage| {
+                        let eq_in_eval = ps.gruen_eq_polys[stage].E_out_current()[j_hi];
+                        evals_per_stage[stage]
+                            .iter()
+                            .map(|v| eq_in_eval * F::from_montgomery_reduce(*v))
+                            .collect()
+                    })
                 })
                 .reduce(
-                    || vec![F::Unreduced::zero(); degree],
-                    |mut running, new| {
-                        for i in 0..degree {
-                            running[i] += new[i];
-                        }
-                        running
-                    },
-                )
-                .into_iter()
-                .map(F::from_montgomery_reduce)
-                .collect()
+                    || array::from_fn(|_| vec![F::zero(); degree - 1]),
+                    |a, b| array::from_fn(|i| zip_eq(&a[i], &b[i]).map(|(a, b)| *a + *b).collect()),
+                );
+            // Multiply by bound values.
+            let bound_val_evals = ps.bound_val_evals.as_ref().unwrap();
+            for (stage, evals) in evals_per_stage.iter_mut().enumerate() {
+                evals.iter_mut().for_each(|v| *v *= bound_val_evals[stage]);
+            }
+
+            let mut round_polys: [_; N_STAGES] = array::from_fn(|_| UniPoly::zero());
+            let mut agg_round_poly = UniPoly::zero();
+
+            // Obtain round poly for each stage and perform RLC.
+            for (stage, evals) in evals_per_stage.iter().enumerate() {
+                let claim = ps.prev_round_claims[stage];
+                let round_poly = ps.gruen_eq_polys[stage].compute_round_poly(evals, claim);
+                agg_round_poly += &(&round_poly * &self.gamma_powers[stage]);
+                round_polys[stage] = round_poly;
+            }
+
+            ps.prev_round_polys = Some(round_polys);
+
+            let domain = chain!([0], 2..).take(degree).map(F::from_u64);
+            domain.map(|x| agg_round_poly.evaluate::<F>(&x)).collect()
         }
     }
 
@@ -979,6 +984,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
             .prover_state
             .as_mut()
             .expect("Prover state not initialized");
+
+        if let Some(prev_round_polys) = ps.prev_round_polys.take() {
+            ps.prev_round_claims = prev_round_polys.map(|poly| poly.evaluate(&r_j));
+        }
 
         if round < self.log_K {
             rayon::scope(|s| {
@@ -1005,9 +1014,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
             ps.ra
                 .par_iter_mut()
                 .for_each(|ra| ra.bind_parallel(r_j, BindingOrder::LowToHigh));
-            ps.eq_polys
-                .par_iter_mut()
-                .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh));
+            ps.gruen_eq_polys.iter_mut().for_each(|poly| poly.bind(r_j));
         }
     }
 
@@ -1052,13 +1059,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
             .val_polys
             .iter()
             .zip(r_cycles.iter())
-            .zip(self.gamma.iter())
+            .zip(self.gamma_powers.iter())
             .zip([
-                int_poly * self.gamma[5], // RAF for Stage1
-                F::zero(),                // There's no raf for Stage2
-                int_poly * self.gamma[4], // RAF for Stage3
-                F::zero(),                // There's no raf for Stage4
-                F::zero(),                // There's no raf for Stage5
+                int_poly * self.gamma_powers[5], // RAF for Stage1
+                F::zero(),                       // There's no raf for Stage2
+                int_poly * self.gamma_powers[4], // RAF for Stage3
+                F::zero(),                       // There's no raf for Stage4
+                F::zero(),                       // There's no raf for Stage5
             ])
             .map(|(((val, r_cycle), gamma), int_poly)| {
                 (val.evaluate(r_address_prime) + int_poly)
@@ -1146,18 +1153,17 @@ impl<F: JoltField> ReadRafSumcheck<F> {
         // Stage 5: gamma^4 * (Val_5)
         // Which matches with the input claim:
         // rv_1 + gamma * rv_2 + gamma^2 * rv_3 + gamma^3 * rv_4 + gamma^4 * rv_5 + gamma^5 * raf_1 + gamma^4 * raf_3
-        ps.val_gamma = Some(
+        ps.bound_val_evals = Some(
             self.val_polys
                 .iter()
-                .zip(self.gamma.iter())
                 .zip([
-                    int_poly * self.gamma[5],
+                    int_poly * self.gamma_powers[5],
                     F::zero(),
-                    int_poly * self.gamma[4],
+                    int_poly * self.gamma_powers[4],
                     F::zero(),
                     F::zero(),
                 ])
-                .map(|((poly, gamma), int_poly)| (poly.final_sumcheck_claim() + int_poly) * gamma)
+                .map(|(poly, int_poly)| poly.final_sumcheck_claim() + int_poly)
                 .collect::<Vec<F>>()
                 .try_into()
                 .unwrap(),
@@ -1191,4 +1197,37 @@ fn get_gamma_powers<F: JoltField>(transcript: &mut impl Transcript, amount: usiz
         gamma_powers.push(gamma * gamma_powers.last().unwrap());
     }
     gamma_powers
+}
+
+impl<F: JoltField> GruenSplitEqPolynomial<F> {
+    // TODO: Consider moving to splie_eq_poly.rs if gets used elsewhere.
+    /// Compute the sumcheck round polynomial `s(X) = l(X) * q(X)`, where `l(X)` is
+    /// the current (linear) eq polynomial and we are given the following:
+    /// - `evals` equal to `[q(1), q(2), ..., q(deg(q) - 1), q(inf)]`
+    /// - the previous round claim `s(0) + s(1)`.
+    fn compute_round_poly(&self, q_evals: &[F], s_0_plus_s_1: F) -> UniPoly<F> {
+        let r_round = match self.binding_order {
+            BindingOrder::LowToHigh => self.w[self.current_index - 1],
+            BindingOrder::HighToLow => self.w[self.current_index],
+        };
+
+        // Interpolate q.
+        let l_at_0 = self.current_scalar * EqPolynomial::mle(&[F::zero()], &[r_round]);
+        let l_at_1 = self.current_scalar * EqPolynomial::mle(&[F::one()], &[r_round]);
+        let q_at_0 = (s_0_plus_s_1 - l_at_1 * q_evals[0]) / l_at_0;
+        let mut q_evals = q_evals.to_vec();
+        q_evals.insert(0, q_at_0);
+        let q = UniPoly::from_evals_toom(&q_evals);
+
+        // Multiply q by l(X) = c0 + Xc1.
+        let l_c0 = l_at_0;
+        let l_c1 = l_at_1 - l_at_0;
+        let mut s_coeffs = vec![F::zero(); q.coeffs.len() + 1];
+        for (i, q_ci) in q.coeffs.into_iter().enumerate() {
+            s_coeffs[i] += q_ci * l_c0;
+            s_coeffs[i + 1] += q_ci * l_c1;
+        }
+
+        UniPoly::from_coeff(s_coeffs)
+    }
 }

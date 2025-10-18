@@ -2,4 +2,4 @@
 #![no_main]
 
 #[allow(unused_imports)]
-use blake2_guest::*;
+use hashbench_guest::*;
