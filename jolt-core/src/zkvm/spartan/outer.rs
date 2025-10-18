@@ -1,5 +1,5 @@
 use allocative::Allocative;
-use ark_ff::biginteger::S160;
+use ark_ff::biginteger::{S128, S160, S192, S64};
 use ark_std::Zero;
 use rayon::prelude::*;
 use std::sync::Arc;
@@ -22,9 +22,7 @@ use crate::subprotocols::univariate_skip::{
     compute_bz_r_group1, uniskip_targets, UniSkipState,
 };
 use crate::transcripts::Transcript;
-use crate::utils::accumulation::{
-    acc6s_fmadd_i128, acc6s_new, acc6s_reduce, acc7s_fmadd_s160, acc7s_new, acc7s_reduce,
-};
+use crate::utils::accumulation::{acc7s_fmadd_s192, acc7s_new, acc7s_reduce, Acc7Signed};
 use crate::utils::math::Math;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
@@ -183,8 +181,8 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
                     [F::zero(); UNIVARIATE_SKIP_DEGREE];
 
                 for x_out_val in x_out_start..x_out_end {
-                    let mut inner_acc: [<F as JoltField>::Unreduced<9>; UNIVARIATE_SKIP_DEGREE] =
-                        [<F as JoltField>::Unreduced::<9>::zero(); UNIVARIATE_SKIP_DEGREE];
+                    let mut inner_acc: [Acc7Signed<F>;
+                        UNIVARIATE_SKIP_DEGREE] = [acc7s_new::<F>(); UNIVARIATE_SKIP_DEGREE];
                     for x_in_prime in 0..num_x_in_half {
                         // Materialize row once for both groups (ignores last bit)
                         let base_step_idx = (x_out_val << iter_num_x_in_prime_vars) | x_in_prime;
@@ -201,23 +199,26 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
                         for j in 0..UNIVARIATE_SKIP_DEGREE {
                             let coeffs = &coeffs_per_j[j];
                             // (sum_i (Az0_i ? c_i : 0)) * (sum_i c_i * Bz0_i)
-                            let mut sum_c_bz0_acc6 = acc6s_new::<F>();
                             let mut sum_c_az0_i64: i64 = 0;
+                            let mut sum_c_bz0_s128 = S128::from(0i128);
                             for i in 0..UNIVARIATE_SKIP_DOMAIN_SIZE {
                                 let c = coeffs[i] as i64;
-                                if c == 0 {
-                                    continue;
-                                }
+
                                 if az0_bool[i] {
                                     sum_c_az0_i64 += c;
                                 }
-                                let term = (c as i128).saturating_mul(bz0_i128[i]);
-                                acc6s_fmadd_i128(&mut sum_c_bz0_acc6, &F::one(), term);
+                                // sum_c_bz0 += c * bz0_i128[i] in signed bigints (S64 * S128 -> S128)
+                                let c_s64 = S64::from_i64(c);
+                                let bz_i = S128::from_i128(bz0_i128[i]);
+                                let term = c_s64.mul_trunc::<2, 2>(&bz_i); // S128
+                                sum_c_bz0_s128 += term;
                             }
-                            let sum_c_bz0: F = acc6s_reduce::<F>(&sum_c_bz0_acc6);
-                            let sum_c_az0: F = F::from_i64(sum_c_az0_i64);
-                            let g0_term = sum_c_az0 * sum_c_bz0;
-                            inner_acc[j] += e_in_even.mul_unreduced::<9>(g0_term);
+                            // Product-of-sums in bigints: S64 * S128 -> S192
+                            let sum_az0_s64 = S64::from_i64(sum_c_az0_i64);
+                            let prod_s192 = sum_az0_s64.mul_trunc::<2, 3>(&sum_c_bz0_s128);
+
+                            // Fold E_in (even) into 7-limb signed accumulator for this j
+                            acc7s_fmadd_s192(&mut inner_acc[j], &e_in_even, prod_s192);
                         }
 
                         // Group 1 (odd index) using same row inputs
@@ -243,30 +244,29 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
                         for j in 0..UNIVARIATE_SKIP_DEGREE {
                             let coeffs = &coeffs_per_j[j];
                             // (sum_i c_i * Az1_i) * (sum_i c_i * Bz1_i)
-                            let mut sum_c_bz1_acc = acc7s_new::<F>();
                             let mut sum_c_az1_i64: i64 = 0;
+                            let mut sum_bz1_s160 = S160::from(0i128);
                             for i in 0..UNIVARIATE_SKIP_DOMAIN_SIZE {
                                 let c = coeffs[i] as i64;
-                                if c == 0 {
-                                    continue;
-                                }
-                                let cF = F::from_i64(c);
+
                                 let az1_i = az1_i32_padded[i] as i64;
-                                sum_c_az1_i64 += c * az1_i;
-                                acc7s_fmadd_s160(&mut sum_c_bz1_acc, &cF, bz1_s160_padded[i]);
+                                sum_c_az1_i64 += c.saturating_mul(az1_i);
+                                let c_s160 = S160::from(c);
+                                let term: S160 = (&c_s160) * (&bz1_s160_padded[i]);
+                                sum_bz1_s160 += term;
                             }
-                            // TODO: multiply first to get to 4-limb signed, then multiply again
-                            // with e_in_odd, and finally Montgomery reduce
-                            // (will need to offset by F::MONTGOMERY_R_SQUARE factor)
-                            let sum_c_bz1: F = acc7s_reduce::<F>(&sum_c_bz1_acc);
-                            let sum_c_az1: F = F::from_i64(sum_c_az1_i64);
-                            let g1_term = sum_c_az1 * sum_c_bz1;
-                            inner_acc[j] += e_in_odd.mul_unreduced::<9>(g1_term);
+                            // Convert S160 -> S192 once outside summation, then S64 * S192 -> S192
+                            let sum_bz1_s192: S192 = sum_bz1_s160.to_signed_bigint_nplus1::<3>();
+                            let sum_az1_s64 = S64::from_i64(sum_c_az1_i64);
+                            let prod_s192 = sum_az1_s64.mul_trunc::<3, 3>(&sum_bz1_s192);
+
+                            // Fold E_in (odd) into 7-limb signed accumulator for this j
+                            acc7s_fmadd_s192(&mut inner_acc[j], &e_in_odd, prod_s192);
                         }
                     }
                     let e_out = E_out[x_out_val];
                     for j in 0..UNIVARIATE_SKIP_DEGREE {
-                        let reduced = F::from_montgomery_reduce::<9>(inner_acc[j]);
+                        let reduced = acc7s_reduce::<F>(&inner_acc[j]);
                         acc_field[j] += e_out * reduced;
                     }
                 }

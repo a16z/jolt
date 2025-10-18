@@ -1,5 +1,4 @@
 use allocative::Allocative;
-use ark_ff::biginteger::S224;
 use ark_ff::UniformRand;
 use num_traits::{One, Zero};
 use std::fmt::{Debug, Display};
@@ -124,7 +123,6 @@ pub trait JoltField:
         + PartialEq
         + From<u128>
         + From<[u64; N]>
-        + From<S224>
         + Zero
         + FmaddTrunc<Other<2> = Self::Unreduced<2>, Acc<8> = Self::Unreduced<8>>
         + FmaddTrunc<Other<3> = Self::Unreduced<3>, Acc<7> = Self::Unreduced<7>>

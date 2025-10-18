@@ -1,9 +1,3 @@
-#![allow(
-    clippy::len_without_is_empty,
-    clippy::type_complexity,
-    clippy::too_many_arguments
-)]
-
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::opening_proof::{OpeningId, SumcheckId};
@@ -17,7 +11,6 @@ use crate::utils::small_scalar::SmallScalar;
 use crate::zkvm::instruction::{
     CircuitFlags, Flags, InstructionFlags, LookupQuery, NUM_CIRCUIT_FLAGS,
 };
-use crate::zkvm::spartan::product::VirtualProductType;
 use crate::zkvm::witness::VirtualPolynomial;
 use crate::zkvm::JoltSharedPreprocessing;
 
@@ -657,104 +650,6 @@ where
     )
 }
 
-// TODO(markosg04): we could unify this with the `generate_witness_batch` to avoid a second iteration over T
-pub fn generate_virtual_product_witnesses<F>(
-    product_type: VirtualProductType,
-    trace: &[Cycle],
-) -> (
-    MultilinearPolynomial<F>, // Left polynomial
-    MultilinearPolynomial<F>, // Right polynomial
-)
-where
-    F: JoltField,
-{
-    let len = trace.len();
-
-    match product_type {
-        VirtualProductType::Instruction => {
-            let mut left_input: Vec<u64> = vec![0; len];
-            let mut right_input: Vec<i128> = vec![0; len];
-
-            left_input
-                .par_iter_mut()
-                .zip(right_input.par_iter_mut())
-                .zip(trace.par_iter())
-                .for_each(|((left, right), cycle)| {
-                    (*left, *right) = LookupQuery::<XLEN>::to_instruction_inputs(cycle);
-                });
-
-            (left_input.into(), right_input.into())
-        }
-        VirtualProductType::WriteLookupOutputToRD => {
-            let mut rd_addrs: Vec<u8> = vec![0; len];
-            let mut flags: Vec<u8> = vec![0; len];
-
-            rd_addrs
-                .par_iter_mut()
-                .zip(flags.par_iter_mut())
-                .zip(trace.par_iter())
-                .for_each(|((rd, flag), cycle)| {
-                    *rd = cycle.rd_write().0;
-                    *flag = cycle.instruction().circuit_flags()[CircuitFlags::WriteLookupOutputToRD]
-                        as u8;
-                });
-
-            (rd_addrs.into(), flags.into())
-        }
-        VirtualProductType::WritePCtoRD => {
-            let mut rd_addrs: Vec<u8> = vec![0; len];
-            let mut flags: Vec<u8> = vec![0; len];
-
-            rd_addrs
-                .par_iter_mut()
-                .zip(flags.par_iter_mut())
-                .zip(trace.par_iter())
-                .for_each(|((rd, flag), cycle)| {
-                    *rd = cycle.rd_write().0;
-                    *flag = cycle.instruction().circuit_flags()[CircuitFlags::Jump] as u8;
-                });
-
-            (rd_addrs.into(), flags.into())
-        }
-        VirtualProductType::ShouldBranch => {
-            let mut lookup_outputs: Vec<u64> = vec![0; len];
-            let mut flags: Vec<u8> = vec![0; len];
-
-            lookup_outputs
-                .par_iter_mut()
-                .zip(flags.par_iter_mut())
-                .zip(trace.par_iter())
-                .for_each(|((output, flag), cycle)| {
-                    *output = LookupQuery::<XLEN>::to_lookup_output(cycle);
-                    *flag = cycle.instruction().instruction_flags()[InstructionFlags::Branch] as u8;
-                });
-
-            (lookup_outputs.into(), flags.into())
-        }
-        VirtualProductType::ShouldJump => {
-            let mut jump_flags: Vec<u8> = vec![0; len];
-            let mut not_next_noop: Vec<u8> = vec![0; len];
-
-            jump_flags
-                .par_iter_mut()
-                .zip(not_next_noop.par_iter_mut())
-                .enumerate()
-                .for_each(|(i, (jump, not_noop))| {
-                    *jump = trace[i].instruction().circuit_flags()[CircuitFlags::Jump] as u8;
-
-                    let is_next_noop = if i + 1 < len {
-                        trace[i + 1].instruction().instruction_flags()[InstructionFlags::IsNoop]
-                            as u8
-                    } else {
-                        0 // Last cycle, next is NOT NoOp (there is no next)
-                    };
-                    *not_noop = 1 - is_next_noop;
-                });
-
-            (jump_flags.into(), not_next_noop.into())
-        }
-    }
-}
 
 /// Canonical, de-duplicated list of product-virtual factor polynomials used by
 /// the Product Virtualization stage (in stable order).
@@ -788,19 +683,15 @@ pub struct ProductCycleInputs {
     pub should_branch_lookup_output: u64,
 
     // 1-byte fields
-    /// WriteLookupOutputToRD: RdWa × WriteLookupOutputToRD_flag (left side)
-    pub write_lookup_output_to_rd_rd_addr: u8,
-    /// WritePCtoRD: RdWa × Jump_flag (left side)
-    pub write_pc_to_rd_rd_addr: u8,
+    /// Rd address used by both WriteLookupOutputToRD and WritePCtoRD left factors
+    pub rd_addr: u8,
 
     /// WriteLookupOutputToRD right flag (boolean)
     pub write_lookup_output_to_rd_flag: bool,
-    /// WritePCtoRD right flag (boolean)
-    pub write_pc_to_rd_flag: bool,
+    /// Jump flag used by both WritePCtoRD (right) and ShouldJump (left)
+    pub jump_flag: bool,
     /// ShouldBranch right flag (boolean)
     pub should_branch_flag: bool,
-    /// ShouldJump left flag (Jump)
-    pub should_jump_flag: bool,
     /// ShouldJump right flag (1 - NextIsNoop)
     pub not_next_noop: bool,
 }
@@ -847,13 +738,11 @@ impl ProductCycleInputs {
         Self {
             instruction_left_input: left_input,
             instruction_right_input: right_input,
-            write_lookup_output_to_rd_rd_addr: rd_addr,
+            rd_addr,
             write_lookup_output_to_rd_flag,
-            write_pc_to_rd_rd_addr: rd_addr,
-            write_pc_to_rd_flag: jump_flag,
             should_branch_lookup_output: lookup_output,
             should_branch_flag: branch_flag,
-            should_jump_flag: jump_flag,
+            jump_flag,
             not_next_noop,
         }
     }
@@ -904,18 +793,14 @@ pub fn compute_claimed_product_factor_evals<F: JoltField>(
                 acc6u_fmadd_u64(&mut acc_left_u64, &e_in, row.instruction_left_input);
                 // 1: RightInstructionInput (i128)
                 acc6s_fmadd_i128(&mut acc_right_i128, &e_in, row.instruction_right_input);
-                // 2: RdWa (u8) – either rd field is fine
-                acc5u_fmadd_u64(
-                    &mut acc_rd_u8,
-                    &e_in,
-                    row.write_lookup_output_to_rd_rd_addr as u64,
-                );
+                // 2: RdWa (u8)
+                acc5u_fmadd_u64(&mut acc_rd_u8, &e_in, row.rd_addr as u64);
                 // 3: OpFlags(WriteLookupOutputToRD) (bool)
                 if row.write_lookup_output_to_rd_flag {
                     acc5u_add_field(&mut acc_wl_flag, &e_in);
                 }
                 // 4: OpFlags(Jump) (bool)
-                if row.should_jump_flag {
+                if row.jump_flag {
                     acc5u_add_field(&mut acc_jump_flag, &e_in);
                 }
                 // 5: LookupOutput (u64)

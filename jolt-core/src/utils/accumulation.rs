@@ -1,5 +1,5 @@
 use crate::field::{FmaddTrunc, JoltField};
-use ark_ff::biginteger::{I8OrI96, S128, S160, S224};
+use ark_ff::biginteger::{I8OrI96, S128, S160, S192, S256};
 
 /// Local helper to convert `S160` to field without using `.to_field()`
 #[inline]
@@ -217,6 +217,22 @@ pub fn acc7s_fmadd_s128<F: JoltField>(acc: &mut Acc7Signed<F>, field: &F, v: S12
     }
 }
 
+/// fmadd with S192 (3-limb signed magnitude) using fmadd_trunc into 7-limb signed accumulators
+#[inline(always)]
+pub fn acc7s_fmadd_s192<F: JoltField>(acc: &mut Acc7Signed<F>, field: &F, v: S192) {
+    if v.magnitude_limbs() == [0u64; 3] {
+        return;
+    }
+    let limbs = v.magnitude_limbs(); // [lo, mid, hi]
+    let mag = <F as JoltField>::Unreduced::from([limbs[0], limbs[1], limbs[2]]);
+    let field_bigint = field.as_unreduced_ref();
+    if v.sign() {
+        field_bigint.fmadd_trunc::<3, 7>(&mag, &mut acc.0);
+    } else {
+        field_bigint.fmadd_trunc::<3, 7>(&mag, &mut acc.1);
+    }
+}
+
 // ------------------------------
 // 8-limb Montgomery accumulators (Signed Acc8) for SVO / round-compression
 // NOTE: reduce_to_field uses Montgomery reduction (faster than Barrett) and yields
@@ -226,26 +242,6 @@ pub fn acc7s_fmadd_s128<F: JoltField>(acc: &mut Acc7Signed<F>, field: &F, v: S12
 
 /// Unsigned 8-limb accumulator word used by Acc8Signed
 pub type Acc8SignedWord<F> = <F as JoltField>::Unreduced<8>;
-
-/// Fused multiply-add into unreduced accumulators (signed: pos/neg).
-#[inline(always)]
-pub fn fmadd_unreduced<F: JoltField>(
-    pos_acc: &mut Acc8SignedWord<F>,
-    neg_acc: &mut Acc8SignedWord<F>,
-    field: &F,
-    product: S224,
-) {
-    let field_bigint = field.as_unreduced_ref();
-    if !product.is_zero() {
-        let mag = F::Unreduced::<4>::from(product);
-        let acc = if product.is_positive() {
-            pos_acc
-        } else {
-            neg_acc
-        };
-        field_bigint.fmadd_trunc::<4, 8>(&mag, acc);
-    }
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Acc8Signed<F: JoltField> {
@@ -304,12 +300,6 @@ impl<F: JoltField> Acc8Signed<F> {
         }
     }
 
-    /// fmadd with an Az×Bz product value (1..=4 limbs)
-    #[inline(always)]
-    pub fn fmadd_prod(&mut self, field: &F, product: S224) {
-        fmadd_unreduced(&mut self.pos, &mut self.neg, field, product)
-    }
-
     /// fmadd with s128 (alias to i128) using 2-limb fmadd_trunc into 8-limb signed accumulators
     #[inline(always)]
     pub fn fmadd_s128(&mut self, field: &F, v: i128) {
@@ -330,5 +320,21 @@ impl<F: JoltField> Acc8Signed<F> {
     #[inline(always)]
     pub fn reduce_to_field(&self) -> F {
         F::from_montgomery_reduce(self.pos) - F::from_montgomery_reduce(self.neg)
+    }
+}
+
+/// fmadd with S256 (4-limb signed magnitude) into 8-limb signed accumulators
+#[inline(always)]
+pub fn acc8s_fmadd_s256<F: JoltField>(acc: &mut Acc8Signed<F>, field: &F, v: S256) {
+    if v.magnitude_limbs() == [0u64; 4] {
+        return;
+    }
+    let limbs = v.magnitude_limbs(); // [l0, l1, l2, l3]
+    let mag = <F as JoltField>::Unreduced::from([limbs[0], limbs[1], limbs[2], limbs[3]]);
+    let field_bigint = field.as_unreduced_ref();
+    if v.sign() {
+        field_bigint.fmadd_trunc::<4, 8>(&mag, &mut acc.pos);
+    } else {
+        field_bigint.fmadd_trunc::<4, 8>(&mag, &mut acc.neg);
     }
 }
