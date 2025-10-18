@@ -84,7 +84,10 @@ fn fmadd_unreduced<F: JoltField>(
     field: &F,
     prod: S256,
 ) {
-    let mut acc = Acc8Signed::<F> { pos: *pos, neg: *neg };
+    let mut acc = Acc8Signed::<F> {
+        pos: *pos,
+        neg: *neg,
+    };
     acc8s_fmadd_s256(&mut acc, field, prod);
     *pos = acc.pos;
     *neg = acc.neg;
@@ -479,25 +482,45 @@ pub fn compute_and_update_tA_inplace_2<F: JoltField>(
     // 1. (0,I) -> tA[0]
     if !az_0i.is_zero() && !bz_0i.is_zero() {
         let prod = az_0i * bz_0i;
-        fmadd_unreduced::<F>(&mut tA_pos_acc[0], &mut tA_neg_acc[0], e_in_val, prod.to_signed_bigint_nplus1::<4>());
+        fmadd_unreduced::<F>(
+            &mut tA_pos_acc[0],
+            &mut tA_neg_acc[0],
+            e_in_val,
+            prod.to_signed_bigint_nplus1::<4>(),
+        );
     }
 
     // 2. (1,I) -> tA[1]
     if !az_1i.is_zero() && !bz_1i.is_zero() {
         let prod = az_1i * bz_1i;
-        fmadd_unreduced::<F>(&mut tA_pos_acc[1], &mut tA_neg_acc[1], e_in_val, prod.to_signed_bigint_nplus1::<4>());
+        fmadd_unreduced::<F>(
+            &mut tA_pos_acc[1],
+            &mut tA_neg_acc[1],
+            e_in_val,
+            prod.to_signed_bigint_nplus1::<4>(),
+        );
     }
 
     // 3. (I,0) -> tA[2]
     if !az_i0.is_zero() && !bz_i0.is_zero() {
         let prod = az_i0 * bz_i0;
-        fmadd_unreduced::<F>(&mut tA_pos_acc[2], &mut tA_neg_acc[2], e_in_val, prod.to_signed_bigint_nplus1::<4>());
+        fmadd_unreduced::<F>(
+            &mut tA_pos_acc[2],
+            &mut tA_neg_acc[2],
+            e_in_val,
+            prod.to_signed_bigint_nplus1::<4>(),
+        );
     }
 
     // 4. (I,1) -> tA[3]
     if !az_i1.is_zero() && !bz_i1.is_zero() {
         let prod = az_i1 * bz_i1;
-        fmadd_unreduced::<F>(&mut tA_pos_acc[3], &mut tA_neg_acc[3], e_in_val, prod.to_signed_bigint_nplus1::<4>());
+        fmadd_unreduced::<F>(
+            &mut tA_pos_acc[3],
+            &mut tA_neg_acc[3],
+            e_in_val,
+            prod.to_signed_bigint_nplus1::<4>(),
+        );
     }
 
     // 5. (I,I) -> tA[4]
@@ -505,7 +528,12 @@ pub fn compute_and_update_tA_inplace_2<F: JoltField>(
     let bz_ii = bz_1i - bz_0i;
     if !az_ii.is_zero() && !bz_ii.is_zero() {
         let prod = az_ii * bz_ii;
-        fmadd_unreduced::<F>(&mut tA_pos_acc[4], &mut tA_neg_acc[4], e_in_val, prod.to_signed_bigint_nplus1::<4>());
+        fmadd_unreduced::<F>(
+            &mut tA_pos_acc[4],
+            &mut tA_neg_acc[4],
+            e_in_val,
+            prod.to_signed_bigint_nplus1::<4>(),
+        );
     }
 }
 
@@ -546,133 +574,228 @@ pub fn compute_and_update_tA_inplace_3<F: JoltField>(
     let bz_00i = bz001 - bz000;
     if !az_00i.is_zero() && !bz_00i.is_zero() {
         let prod = az_00i * bz_00i;
-        fmadd_unreduced::<F>(&mut tA_pos_acc[0], &mut tA_neg_acc[0], e_in_val, prod.to_signed_bigint_nplus1::<4>());
+        fmadd_unreduced::<F>(
+            &mut tA_pos_acc[0],
+            &mut tA_neg_acc[0],
+            e_in_val,
+            prod.to_signed_bigint_nplus1::<4>(),
+        );
     }
 
     let az_01i = az011 - az010;
     let bz_01i = bz011 - bz010;
     if !az_01i.is_zero() && !bz_01i.is_zero() {
         let prod = az_01i * bz_01i;
-        fmadd_unreduced::<F>(&mut tA_pos_acc[1], &mut tA_neg_acc[1], e_in_val, prod.to_signed_bigint_nplus1::<4>());
+        fmadd_unreduced::<F>(
+            &mut tA_pos_acc[1],
+            &mut tA_neg_acc[1],
+            e_in_val,
+            prod.to_signed_bigint_nplus1::<4>(),
+        );
     }
 
     let az_0i0 = az010 - az000;
     let bz_0i0 = bz010 - bz000;
     if !az_0i0.is_zero() && !bz_0i0.is_zero() {
         let prod = az_0i0 * bz_0i0;
-        fmadd_unreduced::<F>(&mut tA_pos_acc[2], &mut tA_neg_acc[2], e_in_val, prod.to_signed_bigint_nplus1::<4>());
+        fmadd_unreduced::<F>(
+            &mut tA_pos_acc[2],
+            &mut tA_neg_acc[2],
+            e_in_val,
+            prod.to_signed_bigint_nplus1::<4>(),
+        );
     }
 
     let az_0i1 = az011 - az001;
     let bz_0i1 = bz011 - bz001;
     if !az_0i1.is_zero() && !bz_0i1.is_zero() {
         let prod = az_0i1 * bz_0i1;
-        fmadd_unreduced::<F>(&mut tA_pos_acc[3], &mut tA_neg_acc[3], e_in_val, prod.to_signed_bigint_nplus1::<4>());
+        fmadd_unreduced::<F>(
+            &mut tA_pos_acc[3],
+            &mut tA_neg_acc[3],
+            e_in_val,
+            prod.to_signed_bigint_nplus1::<4>(),
+        );
     }
 
     let az_0ii = az_01i - az_00i;
     let bz_0ii = bz_01i - bz_00i;
     if !az_0ii.is_zero() && !bz_0ii.is_zero() {
         let prod = az_0ii * bz_0ii;
-        fmadd_unreduced::<F>(&mut tA_pos_acc[4], &mut tA_neg_acc[4], e_in_val, prod.to_signed_bigint_nplus1::<4>());
+        fmadd_unreduced::<F>(
+            &mut tA_pos_acc[4],
+            &mut tA_neg_acc[4],
+            e_in_val,
+            prod.to_signed_bigint_nplus1::<4>(),
+        );
     }
 
     let az_10i = az101 - az100;
     let bz_10i = bz101 - bz100;
     if !az_10i.is_zero() && !bz_10i.is_zero() {
         let prod = az_10i * bz_10i;
-        fmadd_unreduced::<F>(&mut tA_pos_acc[5], &mut tA_neg_acc[5], e_in_val, prod.to_signed_bigint_nplus1::<4>());
+        fmadd_unreduced::<F>(
+            &mut tA_pos_acc[5],
+            &mut tA_neg_acc[5],
+            e_in_val,
+            prod.to_signed_bigint_nplus1::<4>(),
+        );
     }
 
     let az_11i = az111 - az110;
     let bz_11i = bz111 - bz110;
     if !az_11i.is_zero() && !bz_11i.is_zero() {
         let prod = az_11i * bz_11i;
-        fmadd_unreduced::<F>(&mut tA_pos_acc[6], &mut tA_neg_acc[6], e_in_val, prod.to_signed_bigint_nplus1::<4>());
+        fmadd_unreduced::<F>(
+            &mut tA_pos_acc[6],
+            &mut tA_neg_acc[6],
+            e_in_val,
+            prod.to_signed_bigint_nplus1::<4>(),
+        );
     }
 
     let az_1i0 = az110 - az100;
     let bz_1i0 = bz110 - bz100;
     if !az_1i0.is_zero() && !bz_1i0.is_zero() {
         let prod = az_1i0 * bz_1i0;
-        fmadd_unreduced::<F>(&mut tA_pos_acc[7], &mut tA_neg_acc[7], e_in_val, prod.to_signed_bigint_nplus1::<4>());
+        fmadd_unreduced::<F>(
+            &mut tA_pos_acc[7],
+            &mut tA_neg_acc[7],
+            e_in_val,
+            prod.to_signed_bigint_nplus1::<4>(),
+        );
     }
 
     let az_1i1 = az111 - az101;
     let bz_1i1 = bz111 - bz101;
     if !az_1i1.is_zero() && !bz_1i1.is_zero() {
         let prod = az_1i1 * bz_1i1;
-        fmadd_unreduced::<F>(&mut tA_pos_acc[8], &mut tA_neg_acc[8], e_in_val, prod.to_signed_bigint_nplus1::<4>());
+        fmadd_unreduced::<F>(
+            &mut tA_pos_acc[8],
+            &mut tA_neg_acc[8],
+            e_in_val,
+            prod.to_signed_bigint_nplus1::<4>(),
+        );
     }
 
     let az_1ii = az_11i - az_10i;
     let bz_1ii = bz_11i - bz_10i;
     if !az_1ii.is_zero() && !bz_1ii.is_zero() {
         let prod = az_1ii * bz_1ii;
-        fmadd_unreduced::<F>(&mut tA_pos_acc[9], &mut tA_neg_acc[9], e_in_val, prod.to_signed_bigint_nplus1::<4>());
+        fmadd_unreduced::<F>(
+            &mut tA_pos_acc[9],
+            &mut tA_neg_acc[9],
+            e_in_val,
+            prod.to_signed_bigint_nplus1::<4>(),
+        );
     }
 
     let az_i00 = az100 - az000;
     let bz_i00 = bz100 - bz000;
     if !az_i00.is_zero() && !bz_i00.is_zero() {
         let prod = az_i00 * bz_i00;
-        fmadd_unreduced::<F>(&mut tA_pos_acc[10], &mut tA_neg_acc[10], e_in_val, prod.to_signed_bigint_nplus1::<4>());
+        fmadd_unreduced::<F>(
+            &mut tA_pos_acc[10],
+            &mut tA_neg_acc[10],
+            e_in_val,
+            prod.to_signed_bigint_nplus1::<4>(),
+        );
     }
 
     let az_i01 = az101 - az001;
     let bz_i01 = bz101 - bz001;
     if !az_i01.is_zero() && !bz_i01.is_zero() {
         let prod = az_i01 * bz_i01;
-        fmadd_unreduced::<F>(&mut tA_pos_acc[11], &mut tA_neg_acc[11], e_in_val, prod.to_signed_bigint_nplus1::<4>());
+        fmadd_unreduced::<F>(
+            &mut tA_pos_acc[11],
+            &mut tA_neg_acc[11],
+            e_in_val,
+            prod.to_signed_bigint_nplus1::<4>(),
+        );
     }
 
     let az_i0i = az_i01 - az_i00;
     let bz_i0i = bz_i01 - bz_i00;
     if !az_i0i.is_zero() && !bz_i0i.is_zero() {
         let prod = az_i0i * bz_i0i;
-        fmadd_unreduced::<F>(&mut tA_pos_acc[12], &mut tA_neg_acc[12], e_in_val, prod.to_signed_bigint_nplus1::<4>());
+        fmadd_unreduced::<F>(
+            &mut tA_pos_acc[12],
+            &mut tA_neg_acc[12],
+            e_in_val,
+            prod.to_signed_bigint_nplus1::<4>(),
+        );
     }
 
     let az_i10 = az110 - az010;
     let bz_i10 = bz110 - bz010;
     if !az_i10.is_zero() && !bz_i10.is_zero() {
         let prod = az_i10 * bz_i10;
-        fmadd_unreduced::<F>(&mut tA_pos_acc[13], &mut tA_neg_acc[13], e_in_val, prod.to_signed_bigint_nplus1::<4>());
+        fmadd_unreduced::<F>(
+            &mut tA_pos_acc[13],
+            &mut tA_neg_acc[13],
+            e_in_val,
+            prod.to_signed_bigint_nplus1::<4>(),
+        );
     }
 
     let az_i11 = az111 - az011;
     let bz_i11 = bz111 - bz011;
     if !az_i11.is_zero() && !bz_i11.is_zero() {
         let prod = az_i11 * bz_i11;
-        fmadd_unreduced::<F>(&mut tA_pos_acc[14], &mut tA_neg_acc[14], e_in_val, prod.to_signed_bigint_nplus1::<4>());
+        fmadd_unreduced::<F>(
+            &mut tA_pos_acc[14],
+            &mut tA_neg_acc[14],
+            e_in_val,
+            prod.to_signed_bigint_nplus1::<4>(),
+        );
     }
 
     let az_i1i = az_i11 - az_i10;
     let bz_i1i = bz_i11 - bz_i10;
     if !az_i1i.is_zero() && !bz_i1i.is_zero() {
         let prod = az_i1i * bz_i1i;
-        fmadd_unreduced::<F>(&mut tA_pos_acc[15], &mut tA_neg_acc[15], e_in_val, prod.to_signed_bigint_nplus1::<4>());
+        fmadd_unreduced::<F>(
+            &mut tA_pos_acc[15],
+            &mut tA_neg_acc[15],
+            e_in_val,
+            prod.to_signed_bigint_nplus1::<4>(),
+        );
     }
 
     let az_ii0 = az_1i0 - az_0i0;
     let bz_ii0 = bz_1i0 - bz_0i0;
     if !az_ii0.is_zero() && !bz_ii0.is_zero() {
         let prod = az_ii0 * bz_ii0;
-        fmadd_unreduced::<F>(&mut tA_pos_acc[16], &mut tA_neg_acc[16], e_in_val, prod.to_signed_bigint_nplus1::<4>());
+        fmadd_unreduced::<F>(
+            &mut tA_pos_acc[16],
+            &mut tA_neg_acc[16],
+            e_in_val,
+            prod.to_signed_bigint_nplus1::<4>(),
+        );
     }
 
     let az_ii1 = az_1i1 - az_0i1;
     let bz_ii1 = bz_1i1 - bz_0i1;
     if !az_ii1.is_zero() && !bz_ii1.is_zero() {
         let prod = az_ii1 * bz_ii1;
-        fmadd_unreduced::<F>(&mut tA_pos_acc[17], &mut tA_neg_acc[17], e_in_val, prod.to_signed_bigint_nplus1::<4>());
+        fmadd_unreduced::<F>(
+            &mut tA_pos_acc[17],
+            &mut tA_neg_acc[17],
+            e_in_val,
+            prod.to_signed_bigint_nplus1::<4>(),
+        );
     }
 
     let az_iii = az_1ii - az_0ii;
     let bz_iii = bz_1ii - bz_0ii;
     if !az_iii.is_zero() && !bz_iii.is_zero() {
         let prod = az_iii * bz_iii;
-        fmadd_unreduced::<F>(&mut tA_pos_acc[18], &mut tA_neg_acc[18], e_in_val, prod.to_signed_bigint_nplus1::<4>());
+        fmadd_unreduced::<F>(
+            &mut tA_pos_acc[18],
+            &mut tA_neg_acc[18],
+            e_in_val,
+            prod.to_signed_bigint_nplus1::<4>(),
+        );
     }
 }
 
@@ -752,7 +875,12 @@ pub fn compute_and_update_tA_inplace_1<F: JoltField>(
         let bz_I = binary_bz_evals[1] - binary_bz_evals[0];
         if !bz_I.is_zero() {
             let prod = az_I * bz_I;
-            fmadd_unreduced::<F>(&mut tA_pos_acc[0], &mut tA_neg_acc[0], e_in_val, prod.to_signed_bigint_nplus1::<4>());
+            fmadd_unreduced::<F>(
+                &mut tA_pos_acc[0],
+                &mut tA_neg_acc[0],
+                e_in_val,
+                prod.to_signed_bigint_nplus1::<4>(),
+            );
         }
     }
 }

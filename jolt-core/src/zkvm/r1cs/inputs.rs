@@ -175,7 +175,7 @@ impl R1CSCycleInputs {
         let next_is_noop = if let Some(nc) = next_cycle {
             nc.instruction().instruction_flags()[InstructionFlags::IsNoop]
         } else {
-            false
+            false // There is no next cycle, so cannot be a noop
         };
         let should_jump = flags_view[CircuitFlags::Jump] && !next_is_noop;
         let should_branch = instruction_flags[InstructionFlags::Branch] && (lookup_output == 1);
@@ -538,12 +538,10 @@ pub fn compute_claimed_r1cs_input_evals<F: JoltField>(
                 eq1_val.mul_unreduced::<9>(acc_wp_left.reduce());
             out_unr[JoltR1CSInputs::ShouldBranch.to_index()] =
                 eq1_val.mul_unreduced::<9>(acc_sb_right.reduce());
-            out_unr[JoltR1CSInputs::PC.to_index()] =
-                eq1_val.mul_unreduced::<9>(acc_pc.reduce());
+            out_unr[JoltR1CSInputs::PC.to_index()] = eq1_val.mul_unreduced::<9>(acc_pc.reduce());
             out_unr[JoltR1CSInputs::UnexpandedPC.to_index()] =
                 eq1_val.mul_unreduced::<9>(acc_unexpanded_pc.reduce());
-            out_unr[JoltR1CSInputs::Imm.to_index()] =
-                eq1_val.mul_unreduced::<9>(acc_imm.reduce());
+            out_unr[JoltR1CSInputs::Imm.to_index()] = eq1_val.mul_unreduced::<9>(acc_imm.reduce());
             out_unr[JoltR1CSInputs::RamAddress.to_index()] =
                 eq1_val.mul_unreduced::<9>(acc_ram_address.reduce());
             out_unr[JoltR1CSInputs::Rs1Value.to_index()] =
@@ -642,7 +640,6 @@ where
     )
 }
 
-
 /// Canonical, de-duplicated list of product-virtual factor polynomials used by
 /// the Product Virtualization stage (in stable order).
 /// Order:
@@ -716,12 +713,12 @@ impl ProductCycleInputs {
 
         // Next-is-noop and its complement (1 - NextIsNoop)
         let not_next_noop = {
-            let is_next_noop = if t + 1 < len {
+            let next_is_noop = if t + 1 < len {
                 trace[t + 1].instruction().instruction_flags()[InstructionFlags::IsNoop]
             } else {
-                false // Last cycle: source of truth sets NextIsNoop = false
+                false // There is no next cycle, so cannot be a noop
             };
-            !is_next_noop
+            !next_is_noop
         };
 
         // WriteLookupOutputToRD flag

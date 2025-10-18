@@ -3,6 +3,7 @@ use ark_std::Zero;
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use crate::field::AccumulateInPlace;
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::dense_mlpoly::DensePolynomial;
@@ -19,8 +20,7 @@ use crate::subprotocols::univariate_skip::{
     build_uniskip_first_round_poly, uniskip_targets, UniSkipState,
 };
 use crate::transcripts::Transcript;
-use crate::utils::accumulation::{Acc6S, Acc6U, acc8s_fmadd_s256, Acc8Signed};
-use crate::field::AccumulateInPlace;
+use crate::utils::accumulation::{acc8s_fmadd_s256, Acc6S, Acc6U, Acc8Signed};
 use crate::utils::math::Math;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
@@ -55,17 +55,14 @@ use tracer::instruction::Cycle;
 ///
 /// Final claim is:
 /// L(tau_high, r0) * Eq(tau_low, r_tail^rev) * Left(r_tail, r0) * Right(r_tail, r0)
-/// 
+///
 /// After this, we also need to check the consistency of the Left and Right evaluations with the
 /// claimed evaluations of the factor polynomials. This is done in the ProductVirtualInner sumcheck.
-/// 
+///
 /// TODO (Quang): this is essentially Spartan with non-zero claims. We should unify this with Spartan outer/inner.
 /// Only complication is to generalize the splitting strategy
-/// (i.e. Spartan outer currently does uni skip for half of the constraints)
-/// One option is to split the Spartan constraint into groups of size that can be entirely handled
-/// by univariate skip in one shot. This means executing Spartan outer two times, once on each group
-/// (as currently). This should not lead to much overhead, besides perhaps streaming from trace twice
-/// (can be fixed with stream fusion in the future)
+/// (i.e. Spartan outer currently does uni skip for half of the constraints,
+/// whereas here we do it for all of them)
 
 /// Fixed list of product virtual polynomials, in canonical order
 pub const PRODUCT_VIRTUAL_TERMS: [VirtualPolynomial; NUM_PRODUCT_VIRTUAL] = [
@@ -159,7 +156,7 @@ impl<F: JoltField> ProductVirtualUniSkipInstance<F> {
     }
 
     /// Compute the extended-domain evaluations t1(z) for univariate-skip (outside base window).
-    /// 
+    ///
     /// - For each z target, compute
     ///   t1(z) = Σ_{x_out} E_out[x_out] · Σ_{x_in} E_in[x_in] · left_z(x) · right_z(x),
     ///   where x is the concatenation of (x_out || x_in) in MSB→LSB order.
@@ -524,48 +521,28 @@ impl<F: JoltField> ProductVirtualRemainder<F> {
         let num_x_out_vals = split_eq_poly.E_out_current_len();
         let num_x_in_vals = split_eq_poly.E_in_current_len();
         let iter_num_x_in_vars = num_x_in_vals.log_2();
+        let groups_exact = num_x_out_vals
+            .checked_mul(num_x_in_vals)
+            .expect("overflow computing groups_exact");
 
-        let num_parallel_chunks = if num_x_out_vals > 0 {
-            core::cmp::min(
-                num_x_out_vals,
-                rayon::current_num_threads().next_power_of_two() * 8,
-            )
-        } else {
-            1
-        };
-        let x_out_chunk_size = if num_x_out_vals > 0 {
-            core::cmp::max(1, num_x_out_vals.div_ceil(num_parallel_chunks))
-        } else {
-            0
-        };
+        // Preallocate global buffers once
+        let mut left_lo: Vec<F> = unsafe_allocate_zero_vec(groups_exact);
+        let mut left_hi: Vec<F> = unsafe_allocate_zero_vec(groups_exact);
+        let mut right_lo: Vec<F> = unsafe_allocate_zero_vec(groups_exact);
+        let mut right_hi: Vec<F> = unsafe_allocate_zero_vec(groups_exact);
 
-        struct ChunkOut<F: JoltField> {
-            base: usize,
-            len: usize,
-            left_lo: Vec<F>,
-            left_hi: Vec<F>,
-            right_lo: Vec<F>,
-            right_hi: Vec<F>,
-            sum0_unr: F::Unreduced<9>,
-            sum_inf_unr: F::Unreduced<9>,
-        }
-
-        let chunk_results: Vec<ChunkOut<F>> = (0..num_parallel_chunks)
-            .into_par_iter()
-            .map(|chunk_idx| {
-                let x_out_start = chunk_idx * x_out_chunk_size;
-                let x_out_end = core::cmp::min((chunk_idx + 1) * x_out_chunk_size, num_x_out_vals);
-                let chunk_width = x_out_end.saturating_sub(x_out_start);
-                let local_len = chunk_width.saturating_mul(num_x_in_vals);
-                let mut local_left_lo: Vec<F> = unsafe_allocate_zero_vec(local_len);
-                let mut local_left_hi: Vec<F> = unsafe_allocate_zero_vec(local_len);
-                let mut local_right_lo: Vec<F> = unsafe_allocate_zero_vec(local_len);
-                let mut local_right_hi: Vec<F> = unsafe_allocate_zero_vec(local_len);
-
-                let mut task_sum0 = F::Unreduced::<9>::zero();
-                let mut task_sum_inf = F::Unreduced::<9>::zero();
-                let mut local_idx = 0usize;
-                for x_out_val in x_out_start..x_out_end {
+        // Parallel over x_out by chunking in lockstep; each chunk has size num_x_in_vals
+        let (t0_acc_unr, t_inf_acc_unr) = left_lo
+            .par_chunks_mut(num_x_in_vals)
+            .zip(left_hi.par_chunks_mut(num_x_in_vals))
+            .zip(right_lo.par_chunks_mut(num_x_in_vals))
+            .zip(right_hi.par_chunks_mut(num_x_in_vals))
+            .enumerate()
+            .map(
+                |(
+                    x_out_val,
+                    (((left_lo_chunk, left_hi_chunk), right_lo_chunk), right_hi_chunk),
+                )| {
                     let mut inner0 = F::Unreduced::<9>::zero();
                     let mut inner_inf = F::Unreduced::<9>::zero();
                     for x_in_val in 0..num_x_in_vals {
@@ -578,20 +555,28 @@ impl<F: JoltField> ProductVirtualRemainder<F> {
                         let row_hi = ProductCycleInputs::from_trace::<F>(trace, idx_hi);
 
                         // Fused left/right using small-value accumulators
-                        // Note: left accum is unsigned, right accum is signed (due to right instruction input)
-                        // When accumulating with positive term, just needs to update the positive part of the signed accum
                         let mut left0_acc: Acc6U<F> = Acc6U::new();
                         let mut right0_acc: Acc6S<F> = Acc6S::new();
                         left0_acc.fmadd(&weights_at_r0[0], &row_lo.instruction_left_input);
                         left0_acc.fmadd(&weights_at_r0[1], &(row_lo.rd_addr as u64));
                         left0_acc.fmadd(&weights_at_r0[2], &(row_lo.rd_addr as u64));
                         left0_acc.fmadd(&weights_at_r0[3], &row_lo.should_branch_lookup_output);
-                        if row_lo.jump_flag { left0_acc.fmadd(&weights_at_r0[4], &1u64); }
+                        if row_lo.jump_flag {
+                            left0_acc.fmadd(&weights_at_r0[4], &1u64);
+                        }
                         right0_acc.fmadd(&weights_at_r0[0], &row_lo.instruction_right_input);
-                        if row_lo.write_lookup_output_to_rd_flag { right0_acc.fmadd(&weights_at_r0[1], &1i128); }
-                        if row_lo.jump_flag { right0_acc.fmadd(&weights_at_r0[2], &1i128); }
-                        if row_lo.should_branch_flag { right0_acc.fmadd(&weights_at_r0[3], &1i128); }
-                        if row_lo.not_next_noop { right0_acc.fmadd(&weights_at_r0[4], &1i128); }
+                        if row_lo.write_lookup_output_to_rd_flag {
+                            right0_acc.fmadd(&weights_at_r0[1], &1i128);
+                        }
+                        if row_lo.jump_flag {
+                            right0_acc.fmadd(&weights_at_r0[2], &1i128);
+                        }
+                        if row_lo.should_branch_flag {
+                            right0_acc.fmadd(&weights_at_r0[3], &1i128);
+                        }
+                        if row_lo.not_next_noop {
+                            right0_acc.fmadd(&weights_at_r0[4], &1i128);
+                        }
                         let left0 = left0_acc.reduce();
                         let right0 = right0_acc.reduce();
 
@@ -601,18 +586,26 @@ impl<F: JoltField> ProductVirtualRemainder<F> {
                         left1_acc.fmadd(&weights_at_r0[1], &(row_hi.rd_addr as u64));
                         left1_acc.fmadd(&weights_at_r0[2], &(row_hi.rd_addr as u64));
                         left1_acc.fmadd(&weights_at_r0[3], &row_hi.should_branch_lookup_output);
-                        if row_hi.jump_flag { left1_acc.fmadd(&weights_at_r0[4], &1u64); }
+                        if row_hi.jump_flag {
+                            left1_acc.fmadd(&weights_at_r0[4], &1u64);
+                        }
                         right1_acc.fmadd(&weights_at_r0[0], &row_hi.instruction_right_input);
-                        if row_hi.write_lookup_output_to_rd_flag { right1_acc.fmadd(&weights_at_r0[1], &1i128); }
-                        if row_hi.jump_flag { right1_acc.fmadd(&weights_at_r0[2], &1i128); }
-                        if row_hi.should_branch_flag { right1_acc.fmadd(&weights_at_r0[3], &1i128); }
-                        if row_hi.not_next_noop { right1_acc.fmadd(&weights_at_r0[4], &1i128); }
+                        if row_hi.write_lookup_output_to_rd_flag {
+                            right1_acc.fmadd(&weights_at_r0[1], &1i128);
+                        }
+                        if row_hi.jump_flag {
+                            right1_acc.fmadd(&weights_at_r0[2], &1i128);
+                        }
+                        if row_hi.should_branch_flag {
+                            right1_acc.fmadd(&weights_at_r0[3], &1i128);
+                        }
+                        if row_hi.not_next_noop {
+                            right1_acc.fmadd(&weights_at_r0[4], &1i128);
+                        }
                         let left1 = left1_acc.reduce();
                         let right1 = right1_acc.reduce();
 
-                        let e_in = if num_x_in_vals == 0 {
-                            F::one()
-                        } else if num_x_in_vals == 1 {
+                        let e_in = if num_x_in_vals == 1 {
                             split_eq_poly.E_in_current()[0]
                         } else {
                             split_eq_poly.E_in_current()[x_in_val]
@@ -621,52 +614,24 @@ impl<F: JoltField> ProductVirtualRemainder<F> {
                         let slope = (left1 - left0) * (right1 - right0);
                         inner0 += e_in.mul_unreduced::<9>(p0);
                         inner_inf += e_in.mul_unreduced::<9>(slope);
-                        local_left_lo[local_idx] = left0;
-                        local_right_lo[local_idx] = right0;
-                        local_left_hi[local_idx] = left1;
-                        local_right_hi[local_idx] = right1;
-                        local_idx += 1;
+                        left_lo_chunk[x_in_val] = left0;
+                        right_lo_chunk[x_in_val] = right0;
+                        left_hi_chunk[x_in_val] = left1;
+                        right_hi_chunk[x_in_val] = right1;
                     }
-                    let e_out = if num_x_out_vals > 0 {
-                        split_eq_poly.E_out_current()[x_out_val]
-                    } else {
-                        F::zero()
-                    };
+                    let e_out = split_eq_poly.E_out_current()[x_out_val];
                     let reduced0 = F::from_montgomery_reduce::<9>(inner0);
                     let reduced_inf = F::from_montgomery_reduce::<9>(inner_inf);
-                    task_sum0 += e_out.mul_unreduced::<9>(reduced0);
-                    task_sum_inf += e_out.mul_unreduced::<9>(reduced_inf);
-                }
-                ChunkOut {
-                    base: x_out_start.saturating_mul(num_x_in_vals),
-                    len: local_left_lo.len(),
-                    left_lo: local_left_lo,
-                    left_hi: local_left_hi,
-                    right_lo: local_right_lo,
-                    right_hi: local_right_hi,
-                    sum0_unr: task_sum0,
-                    sum_inf_unr: task_sum_inf,
-                }
-            })
-            .collect();
-
-        let groups_exact = num_x_out_vals.saturating_mul(num_x_in_vals);
-        let mut left_lo: Vec<F> = unsafe_allocate_zero_vec(groups_exact);
-        let mut left_hi: Vec<F> = unsafe_allocate_zero_vec(groups_exact);
-        let mut right_lo: Vec<F> = unsafe_allocate_zero_vec(groups_exact);
-        let mut right_hi: Vec<F> = unsafe_allocate_zero_vec(groups_exact);
-        let mut t0_acc_unr = F::Unreduced::<9>::zero();
-        let mut t_inf_acc_unr = F::Unreduced::<9>::zero();
-        for chunk in &chunk_results {
-            t0_acc_unr += chunk.sum0_unr;
-            t_inf_acc_unr += chunk.sum_inf_unr;
-            let dst_base = chunk.base;
-            let dst_end = dst_base + chunk.len;
-            left_lo[dst_base..dst_end].copy_from_slice(&chunk.left_lo);
-            left_hi[dst_base..dst_end].copy_from_slice(&chunk.left_hi);
-            right_lo[dst_base..dst_end].copy_from_slice(&chunk.right_lo);
-            right_hi[dst_base..dst_end].copy_from_slice(&chunk.right_hi);
-        }
+                    (
+                        e_out.mul_unreduced::<9>(reduced0),
+                        e_out.mul_unreduced::<9>(reduced_inf),
+                    )
+                },
+            )
+            .reduce(
+                || (F::Unreduced::<9>::zero(), F::Unreduced::<9>::zero()),
+                |a, b| (a.0 + b.0, a.1 + b.1),
+            );
 
         ProductVirtualStreamingCache {
             t0: F::from_montgomery_reduce::<9>(t0_acc_unr),
@@ -1029,16 +994,16 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ProductVirtualRemai
 
 /// Zero-round check to check that the final claimed evals of the fused left & right product terms
 /// are the same as the linear combination of the individual claimed evals of the unique factors.
-/// 
+///
 /// This is essentially Spartan inner sumcheck, but we check the claim without any sumcheck
 /// because we can.
-/// 
+///
 /// To be precise, the relation to be checked is:
 /// fused_left_claim = sum_i lagrange_coeffs[i] * left_factor_claim[i], AND
 /// fused_right_claim = sum_i lagrange_coeffs[i] * right_factor_claim[i]
-/// 
+///
 /// (batched together by a gamma challenge)
-/// 
+///
 /// where the factor are determined according to the virtual polynomials
 /// (i.e. a single ShouldJump claimed eval participates in two (right) factor claim)
 #[derive(Allocative)]
@@ -1068,9 +1033,16 @@ impl<F: JoltField> ProductVirtualInner<F> {
             VirtualPolynomial::FusedProductRight,
             SumcheckId::ProductVirtualization,
         );
-        let r0 = *pt_left.r.last().expect("ProductVirtualInner requires r0 in opening point");
+        let r0 = *pt_left
+            .r
+            .last()
+            .expect("ProductVirtualInner requires r0 in opening point");
         let claim = fused_left + gamma * fused_right;
-        Self { claim, r0_uniskip: r0, gamma }
+        Self {
+            claim,
+            r0_uniskip: r0,
+            gamma,
+        }
     }
 
     pub fn new_verifier<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
@@ -1090,9 +1062,16 @@ impl<F: JoltField> ProductVirtualInner<F> {
             VirtualPolynomial::FusedProductRight,
             SumcheckId::ProductVirtualization,
         );
-        let r0 = *pt_left.r.last().expect("ProductVirtualInner requires r0 in opening point");
+        let r0 = *pt_left
+            .r
+            .last()
+            .expect("ProductVirtualInner requires r0 in opening point");
         let claim = fused_left + gamma * fused_right;
-        Self { claim, r0_uniskip: r0, gamma }
+        Self {
+            claim,
+            r0_uniskip: r0,
+            gamma,
+        }
     }
 }
 
@@ -1104,7 +1083,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ProductVirtualInner
     fn num_rounds(&self) -> usize {
         0
     }
-    fn input_claim(&self) -> F { self.claim }
+    fn input_claim(&self) -> F {
+        self.claim
+    }
     fn compute_prover_message(&mut self, _round: usize, _previous_claim: F) -> Vec<F> {
         Vec::new()
     }
@@ -1172,11 +1153,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ProductVirtualInner
             .1;
 
         // TODO: make this logic less brittle
-        let left_sum = w[0] * l_inst
-            + w[1] * rd_wa
-            + w[2] * rd_wa
-            + w[3] * lookup_out
-            + w[4] * j_flag;
+        let left_sum =
+            w[0] * l_inst + w[1] * rd_wa + w[2] * rd_wa + w[3] * lookup_out + w[4] * j_flag;
         let right_sum = w[0] * r_inst
             + w[1] * wl_flag
             + w[2] * j_flag

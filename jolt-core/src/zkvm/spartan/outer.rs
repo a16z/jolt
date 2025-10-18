@@ -181,8 +181,8 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
                     [F::zero(); UNIVARIATE_SKIP_DEGREE];
 
                 for x_out_val in x_out_start..x_out_end {
-                    let mut inner_acc: [Acc7S<F>;
-                        UNIVARIATE_SKIP_DEGREE] = [Acc7S::<F>::new(); UNIVARIATE_SKIP_DEGREE];
+                    let mut inner_acc: [Acc7S<F>; UNIVARIATE_SKIP_DEGREE] =
+                        [Acc7S::<F>::new(); UNIVARIATE_SKIP_DEGREE];
                     for x_in_prime in 0..num_x_in_half {
                         // Materialize row once for both groups (ignores last bit)
                         let base_step_idx = (x_out_val << iter_num_x_in_prime_vars) | x_in_prime;
@@ -458,47 +458,26 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
             .checked_mul(num_x_in_vals)
             .expect("overflow computing groups_exact");
 
-        let num_parallel_chunks = if num_x_out_vals > 0 {
-            core::cmp::min(
-                num_x_out_vals,
-                rayon::current_num_threads().next_power_of_two() * 8,
-            )
-        } else {
-            1
-        };
-        let x_out_chunk_size = if num_x_out_vals > 0 {
-            core::cmp::max(1, num_x_out_vals.div_ceil(num_parallel_chunks))
-        } else {
-            0
-        };
+        // Preallocate global buffers once
+        let mut az_lo: Vec<F> = unsafe_allocate_zero_vec(groups_exact);
+        let mut az_hi: Vec<F> = unsafe_allocate_zero_vec(groups_exact);
+        let mut bz_lo: Vec<F> = unsafe_allocate_zero_vec(groups_exact);
+        let mut bz_hi: Vec<F> = unsafe_allocate_zero_vec(groups_exact);
 
-        struct ChunkOut<F: JoltField> {
-            base: usize,
-            len: usize,
-            az_lo: Vec<F>,
-            az_hi: Vec<F>,
-            bz_lo: Vec<F>,
-            bz_hi: Vec<F>,
-            sum0_unr: F::Unreduced<9>,
-            sum_inf_unr: F::Unreduced<9>,
-        }
+        let _num_parallel_chunks = core::cmp::min(
+            num_x_out_vals,
+            rayon::current_num_threads().next_power_of_two() * 8,
+        );
 
-        let chunk_results: Vec<ChunkOut<F>> = (0..num_parallel_chunks)
-            .into_par_iter()
-            .map(|chunk_idx| {
-                let x_out_start = chunk_idx * x_out_chunk_size;
-                let x_out_end = core::cmp::min((chunk_idx + 1) * x_out_chunk_size, num_x_out_vals);
-                let chunk_width = x_out_end.saturating_sub(x_out_start);
-                let local_len = chunk_width.saturating_mul(num_x_in_vals);
-                let mut local_az_lo: Vec<F> = unsafe_allocate_zero_vec(local_len);
-                let mut local_az_hi: Vec<F> = unsafe_allocate_zero_vec(local_len);
-                let mut local_bz_lo: Vec<F> = unsafe_allocate_zero_vec(local_len);
-                let mut local_bz_hi: Vec<F> = unsafe_allocate_zero_vec(local_len);
-
-                let mut task_sum0 = F::Unreduced::<9>::zero();
-                let mut task_sum_inf = F::Unreduced::<9>::zero();
-                let mut local_idx = 0usize;
-                for x_out_val in x_out_start..x_out_end {
+        // Parallel over x_out groups by mut-chunking all four buffers in lockstep
+        let (t0_acc_unr, t_inf_acc_unr) = az_lo
+            .par_chunks_mut(num_x_in_vals)
+            .zip(az_hi.par_chunks_mut(num_x_in_vals))
+            .zip(bz_lo.par_chunks_mut(num_x_in_vals))
+            .zip(bz_hi.par_chunks_mut(num_x_in_vals))
+            .enumerate()
+            .map(
+                |(x_out_val, (((az_lo_chunk, az_hi_chunk), bz_lo_chunk), bz_hi_chunk))| {
                     let mut inner_sum0 = F::Unreduced::<9>::zero();
                     let mut inner_sum_inf = F::Unreduced::<9>::zero();
                     for x_in_val in 0..num_x_in_vals {
@@ -511,61 +490,31 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
                         let bz1 = compute_bz_r_group1(&row_inputs, &lagrange_evals_r[..]);
                         let p0 = az0 * bz0;
                         let slope = (az1 - az0) * (bz1 - bz0);
-                        let e_in = if num_x_in_vals == 0 {
-                            F::one()
-                        } else if num_x_in_vals == 1 {
+                        let e_in = if num_x_in_vals == 1 {
                             split_eq_poly.E_in_current()[0]
                         } else {
                             split_eq_poly.E_in_current()[x_in_val]
                         };
                         inner_sum0 += e_in.mul_unreduced::<9>(p0);
                         inner_sum_inf += e_in.mul_unreduced::<9>(slope);
-                        local_az_lo[local_idx] = az0;
-                        local_bz_lo[local_idx] = bz0;
-                        local_az_hi[local_idx] = az1;
-                        local_bz_hi[local_idx] = bz1;
-                        local_idx += 1;
+                        az_lo_chunk[x_in_val] = az0;
+                        bz_lo_chunk[x_in_val] = bz0;
+                        az_hi_chunk[x_in_val] = az1;
+                        bz_hi_chunk[x_in_val] = bz1;
                     }
-                    let e_out = if num_x_out_vals > 0 {
-                        split_eq_poly.E_out_current()[x_out_val]
-                    } else {
-                        F::zero()
-                    };
+                    let e_out = split_eq_poly.E_out_current()[x_out_val];
                     let reduced0 = F::from_montgomery_reduce::<9>(inner_sum0);
                     let reduced_inf = F::from_montgomery_reduce::<9>(inner_sum_inf);
-                    task_sum0 += e_out.mul_unreduced::<9>(reduced0);
-                    task_sum_inf += e_out.mul_unreduced::<9>(reduced_inf);
-                }
-                ChunkOut {
-                    base: x_out_start.saturating_mul(num_x_in_vals),
-                    len: local_az_lo.len(),
-                    az_lo: local_az_lo,
-                    az_hi: local_az_hi,
-                    bz_lo: local_bz_lo,
-                    bz_hi: local_bz_hi,
-                    sum0_unr: task_sum0,
-                    sum_inf_unr: task_sum_inf,
-                }
-            })
-            .collect();
-
-        // Assemble global buffers and sums
-        let mut az_lo: Vec<F> = unsafe_allocate_zero_vec(groups_exact);
-        let mut az_hi: Vec<F> = unsafe_allocate_zero_vec(groups_exact);
-        let mut bz_lo: Vec<F> = unsafe_allocate_zero_vec(groups_exact);
-        let mut bz_hi: Vec<F> = unsafe_allocate_zero_vec(groups_exact);
-        let mut t0_acc_unr = F::Unreduced::<9>::zero();
-        let mut t_inf_acc_unr = F::Unreduced::<9>::zero();
-        for chunk in &chunk_results {
-            t0_acc_unr += chunk.sum0_unr;
-            t_inf_acc_unr += chunk.sum_inf_unr;
-            let dst_base = chunk.base;
-            let dst_end = dst_base + chunk.len;
-            az_lo[dst_base..dst_end].copy_from_slice(&chunk.az_lo);
-            az_hi[dst_base..dst_end].copy_from_slice(&chunk.az_hi);
-            bz_lo[dst_base..dst_end].copy_from_slice(&chunk.bz_lo);
-            bz_hi[dst_base..dst_end].copy_from_slice(&chunk.bz_hi);
-        }
+                    (
+                        e_out.mul_unreduced::<9>(reduced0),
+                        e_out.mul_unreduced::<9>(reduced_inf),
+                    )
+                },
+            )
+            .reduce(
+                || (F::Unreduced::<9>::zero(), F::Unreduced::<9>::zero()),
+                |a, b| (a.0 + b.0, a.1 + b.1),
+            );
 
         StreamingRoundCache {
             t0: F::from_montgomery_reduce::<9>(t0_acc_unr),

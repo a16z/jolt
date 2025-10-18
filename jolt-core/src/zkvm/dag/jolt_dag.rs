@@ -598,14 +598,14 @@ impl JoltDAG {
         drop(proofs);
 
         // Stage 2:
+        // Stage 2a: Verify univariate-skip first round for product virtualization
+        spartan_dag
+            .stage2_verifier_uni_skip(&mut state_manager)
+            .context("Stage 2 univariate skip first round")?;
+
         let stage2_instances: Vec<_> = std::iter::empty()
-            .chain({
-                // Stage 2a: Verify univariate-skip first round for product virtualization
-                spartan_dag
-                    .stage2_verifier_uni_skip(&mut state_manager)
-                    .context("Stage 2 univariate skip first round")?;
-                spartan_dag.stage2_verifier_instances(&mut state_manager)
-            })
+            .chain(spartan_dag.stage2_verifier_instances(&mut state_manager))
+            .chain(registers_dag.stage2_verifier_instances(&mut state_manager))
             .chain(ram_dag.stage2_verifier_instances(&mut state_manager))
             .chain(lookups_dag.stage2_verifier_instances(&mut state_manager))
             .chain(bytecode_dag.stage2_verifier_instances(&mut state_manager))

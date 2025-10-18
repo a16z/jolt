@@ -1,13 +1,13 @@
-use crate::field::JoltField;
 use crate::field::AccumulateInPlace;
+use crate::field::JoltField;
 use crate::poly::lagrange_poly::LagrangePolynomial;
 use crate::poly::unipoly::UniPoly;
+use crate::utils::accumulation::{Acc5U, Acc6S, Acc6U, Acc7S};
 use crate::zkvm::r1cs::constraints::{
     eval_az_first_group, eval_az_second_group, eval_bz_first_group, eval_bz_second_group,
     NUM_REMAINING_R1CS_CONSTRAINTS, UNIVARIATE_SKIP_DOMAIN_SIZE,
 };
 use crate::zkvm::r1cs::inputs::R1CSCycleInputs;
-use crate::utils::accumulation::{Acc5U, Acc6S, Acc6U, Acc7S};
 
 /// Shared handoff state from a univariate-skip first round.
 ///

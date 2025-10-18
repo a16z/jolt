@@ -324,7 +324,7 @@ where
         let key = self.key.clone();
         let shift_sumcheck = ShiftSumcheck::<F>::new_prover(state_manager, key);
         let instruction_input_sumcheck = InstructionInputSumcheck::new_prover(state_manager);
-        let product_factors_order_check = ProductVirtualInner::new_prover(state_manager);
+        let product_virtual_claim_check = ProductVirtualInner::new_prover(state_manager);
 
         #[cfg(feature = "allocative")]
         {
@@ -338,7 +338,7 @@ where
         vec![
             Box::new(shift_sumcheck),
             Box::new(instruction_input_sumcheck),
-            Box::new(product_factors_order_check),
+            Box::new(product_virtual_claim_check),
         ]
     }
 
@@ -352,11 +352,11 @@ where
         let key = self.key.clone();
         let shift_sumcheck = ShiftSumcheck::<F>::new_verifier(state_manager, key);
         let instruction_input_sumcheck = InstructionInputSumcheck::new_verifier(state_manager);
-        let product_factors_order_check = ProductVirtualInner::new_verifier(state_manager);
+        let product_virtual_claim_check = ProductVirtualInner::new_verifier(state_manager);
         vec![
             Box::new(shift_sumcheck),
             Box::new(instruction_input_sumcheck),
-            Box::new(product_factors_order_check),
+            Box::new(product_virtual_claim_check),
         ]
     }
 }
