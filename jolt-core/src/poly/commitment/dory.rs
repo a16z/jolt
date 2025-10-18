@@ -1369,6 +1369,7 @@ mod tests {
         let num_vars = poly.get_num_vars();
         let num_coeffs = match &poly {
             MultilinearPolynomial::LargeScalars(dense) => dense.Z.len(),
+            MultilinearPolynomial::BoolScalars(compact) => compact.coeffs.len(),
             MultilinearPolynomial::U8Scalars(compact) => compact.coeffs.len(),
             MultilinearPolynomial::U16Scalars(compact) => compact.coeffs.len(),
             MultilinearPolynomial::U32Scalars(compact) => compact.coeffs.len(),

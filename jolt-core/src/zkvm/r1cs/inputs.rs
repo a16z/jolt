@@ -613,9 +613,9 @@ where
     let len = trace.len();
     let mut unexpanded_pc: Vec<u64> = vec![0; len];
     let mut pc: Vec<u64> = vec![0; len];
-    let mut is_noop: Vec<u8> = vec![0; len];
-    let mut is_virtual: Vec<u8> = vec![0; len];
-    let mut is_first_in_sequence: Vec<u8> = vec![0; len];
+    let mut is_noop: Vec<bool> = vec![false; len];
+    let mut is_virtual: Vec<bool> = vec![false; len];
+    let mut is_first_in_sequence: Vec<bool> = vec![false; len];
 
     (
         &mut unexpanded_pc,
@@ -629,9 +629,9 @@ where
         .for_each(|(u, p, n, v, f, cycle)| {
             *u = cycle.instruction().normalize().address as u64;
             *p = preprocessing.bytecode.get_pc(cycle) as u64;
-            *n = cycle.instruction().instruction_flags()[InstructionFlags::IsNoop] as u8;
-            *v = cycle.instruction().circuit_flags()[CircuitFlags::VirtualInstruction] as u8;
-            *f = cycle.instruction().circuit_flags()[CircuitFlags::IsFirstInSequence] as u8;
+            *n = cycle.instruction().instruction_flags()[InstructionFlags::IsNoop];
+            *v = cycle.instruction().circuit_flags()[CircuitFlags::VirtualInstruction];
+            *f = cycle.instruction().circuit_flags()[CircuitFlags::IsFirstInSequence];
         });
 
     (
