@@ -28,6 +28,7 @@
         - [Inlines](./how/optimizations/inlines.md)
         - [Small value optimizations](./how/optimizations/small-value.md)
         - [EQ optimizations](./how/optimizations/eq.md)
+        - [Torus compression](./how/optimizations/compression.md)
     - [Appendix](./how/appendix/appendix.md)
         - [Terminology and nomenclature](./how/appendix/terminology.md)
         - [Multilinear extensions](./how/appendix/multilinear-extensions.md)
