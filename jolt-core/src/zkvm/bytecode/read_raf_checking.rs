@@ -321,7 +321,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
                 )
             }
             ReadCheckingValType::Stage2 => {
-                let gamma_powers = get_gamma_powers(&mut *sm.get_transcript().borrow_mut(), 6);
+                let gamma_powers = get_gamma_powers(&mut *sm.get_transcript().borrow_mut(), 4);
                 (
                     Self::compute_val_2(sm, &gamma_powers),
                     Self::compute_rv_claim_2(sm, &gamma_powers),
@@ -488,17 +488,16 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             .sum()
     }
 
-    /// Returns a vec of evaluations:
-    ///    Val(k) = jump_flag(k) + gamma * branch_flag(k) + gamma^2 * rd_addr(k) + gamma^3 * jump_flag(k)
-    ///             + gamma^4 * rd_addr(k) + gamma^5 * write_lookup_output_to_rd_flag(k)
-    /// where jump_flag(k) = 1 if instruction k is a jump, 0 otherwise
-    ///       branch_flag(k) = 1 if instruction k is a branch, 0 otherwise
-    ///       rd_addr(k) = rd address for instruction k
-    ///       write_lookup_output_to_rd_flag(k) = 1 if instruction k writes lookup output to rd, 0 otherwise
-    /// This particular Val virtualizes the flag claims from
-    /// ProductVirtualization, ShouldBranchVirtualization, WritePCtoRDVirtualization, and WriteLookupOutputToRDVirtualization.
-    /// Note: Jump flag appears twice (gamma^0 for ShouldJump, gamma^3 for WritePCtoRD).
-    /// Note: Rd addr appears twice (gamma^2 for WritePCtoRD, gamma^4 for WriteLookupOutputToRD).
+    /// Returns a vec of evaluations (de-duplicated factors after product virtualization):
+    ///    Val(k) = jump_flag(k)
+    ///             + gamma * branch_flag(k)
+    ///             + gamma^2 * rd_addr(k)
+    ///             + gamma^3 * write_lookup_output_to_rd_flag(k)
+    /// where jump_flag(k) = 1 if instruction k is a jump, 0 otherwise;
+    ///       branch_flag(k) = 1 if instruction k is a branch, 0 otherwise;
+    ///       rd_addr(k) is the rd address for instruction k;
+    ///       write_lookup_output_to_rd_flag(k) = 1 if instruction k writes lookup output to rd, 0 otherwise.
+    /// This Val matches the fused product sumcheck.
     fn compute_val_2(
         sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
         gamma_powers: &[F],
@@ -513,16 +512,14 @@ impl<F: JoltField> ReadRafSumcheck<F> {
 
                 if flags[CircuitFlags::Jump] {
                     linear_combination += gamma_powers[0];
-                    linear_combination += gamma_powers[3];
                 }
                 if instr_flags[InstructionFlags::Branch] {
                     linear_combination += gamma_powers[1];
                 }
                 let rd_addr_val = F::from_u64(instr.operands.rd as u64);
                 linear_combination += rd_addr_val * gamma_powers[2];
-                linear_combination += rd_addr_val * gamma_powers[4];
                 if flags[CircuitFlags::WriteLookupOutputToRD] {
-                    linear_combination += gamma_powers[5];
+                    linear_combination += gamma_powers[3];
                 }
 
                 linear_combination
@@ -542,15 +539,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             VirtualPolynomial::InstructionFlags(InstructionFlags::Branch),
             SumcheckId::ProductVirtualization,
         );
-        let (_, rd_wa_claim_write_pc) = sm.get_virtual_polynomial_opening(
-            VirtualPolynomial::RdWa,
-            SumcheckId::ProductVirtualization,
-        );
-        let (_, jump_claim_write_pc) = sm.get_virtual_polynomial_opening(
-            VirtualPolynomial::OpFlags(CircuitFlags::Jump),
-            SumcheckId::ProductVirtualization,
-        );
-        let (_, rd_wa_claim_write_lookup) = sm.get_virtual_polynomial_opening(
+        let (_, rd_wa_claim) = sm.get_virtual_polynomial_opening(
             VirtualPolynomial::RdWa,
             SumcheckId::ProductVirtualization,
         );
@@ -562,9 +551,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
         [
             jump_claim,
             branch_claim,
-            rd_wa_claim_write_pc,
-            jump_claim_write_pc,
-            rd_wa_claim_write_lookup,
+            rd_wa_claim,
             write_lookup_output_to_rd_flag_claim,
         ]
         .into_iter()
