@@ -1,29 +1,52 @@
-//! Compile-time constant R1CS constraints
+//! Compile-time constant R1CS constraints with grouped evaluation
 //!
 //! This module provides a static, compile-time representation of R1CS constraints
-//! to replace the dynamic constraint building in the prover's hot path.
+//! and evaluates them in two groups optimized for the univariate-skip protocol.
+//! Group 0 and Group 1 are evaluated separately and then folded via Lagrange
+//! weights using fused accumulators.
+//!
+//! - Group 0 (first group) contains `UNIVARIATE_SKIP_DOMAIN_SIZE = ceil(N/2)`
+//!   constraints. Its `Az` are booleans and its `Bz` fit in `i128`.
+//! - Group 1 (second group) is the complement of Group 0. Its `Az` are `u8`
+//!   and its `Bz` use `S160` for wider arithmetic.
+//!
+//! Grouped evaluation entry points:
+//! - `eval_az_first_group` -> `[bool; UNIVARIATE_SKIP_DOMAIN_SIZE]`
+//! - `eval_bz_first_group` -> `[i128; UNIVARIATE_SKIP_DOMAIN_SIZE]`
+//! - `eval_az_second_group` -> `[u8; NUM_REMAINING_R1CS_CONSTRAINTS]`
+//! - `eval_bz_second_group` -> `[S160; NUM_REMAINING_R1CS_CONSTRAINTS]`
+//! - `compute_az_r_group0/group1` and `compute_bz_r_group0/group1` fold these
+//!   vectors against Lagrange weights at the evaluation point `r` using
+//!   specialized fused accumulators with a single Barrett reduction at the end.
 //!
 //! ## Adding a new constraint
 //!
-//! To add a new R1CS constraint:
-//! 1. Add a new variant to `ConstraintName` enum
-//! 2. Add the constraint to `UNIFORM_R1CS` array using appropriate macro
-//! 3. Add custom evaluators for grouped Az/Bz
+//! 1. Add a new variant to `ConstraintName` (maintain the same order as `UNIFORM_R1CS`).
+//! 2. Add the constraint to `UNIFORM_R1CS` using the appropriate macro.
+//! 3. Assign the constraint to a group:
+//!    - Put its name in `UNIFORM_R1CS_FIRST_GROUP_NAMES` if it fits Group 0
+//!      characteristics (boolean guards, ~64-bit differences in `Bz`).
+//!    - Otherwise it will appear in Group 1 automatically as the complement.
+//! 4. Maintain the grouping invariant: the first group must contain exactly
+//!    `UNIVARIATE_SKIP_DOMAIN_SIZE = ceil(NUM_R1CS_CONSTRAINTS/2)` constraints,
+//!    so the first group never has fewer elements than the second.
 //!
 //! ## Removing a constraint
 //!
-//! To remove an R1CS constraint:
-//! 1. Remove the constraint from `UNIFORM_R1CS` array
-//! 2. Remove the corresponding variant from `ConstraintName` enum
-//! 3. Remove any custom evaluator from `eval_az_bz_by_name`
+//! 1. Remove it from `UNIFORM_R1CS`.
+//! 2. Remove the corresponding variant from `ConstraintName`.
+//! 3. If present, remove its name from `UNIFORM_R1CS_FIRST_GROUP_NAMES`.
+//! 4. Re-check that `UNIFORM_R1CS_FIRST_GROUP_NAMES.len()` equals
+//!    `UNIVARIATE_SKIP_DOMAIN_SIZE` after the change; adjust the first group
+//!    selection to satisfy the invariant that the first group is never smaller
+//!    than the second.
 //!
-//! ## Custom evaluators
+//! ## Grouping guidance
 //!
-//! Custom evaluators provide optimized Az/Bz evaluation
-//! using `SmallScalar` types to avoid field conversions. They should:
-//! - Use appropriate `I8OrI96` variants (prefer `Bool` or `I8` for flags/small sums)
-//! - Use appropriate `S160` variants (prefer `U64AndSign` for u64-u64 diffs)
-//! - Only use `U128AndSign` when 128-bit arithmetic is inherently required
+//! - Prefer Group 0 for boolean `Az` and `Bz` that can be expressed as `i128`.
+//! - Prefer Group 1 for constraints whose `Az` are small nonnegative integers
+//!   and whose `Bz` require wider arithmetic (`S160`).
+//! - This split minimizes conversions and maximizes accumulator efficiency.
 
 use super::inputs::{JoltR1CSInputs, R1CSCycleInputs};
 use crate::field::{AccumulateInPlace, JoltField};

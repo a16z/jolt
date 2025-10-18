@@ -121,6 +121,7 @@ pub trait JoltField:
         + Default
         + Eq
         + PartialEq
+        + Ord
         + From<u128>
         + From<[u64; N]>
         + Zero
@@ -134,13 +135,17 @@ pub trait JoltField:
         + Add<Self::Unreduced<4>, Output = Self::Unreduced<N>>
         + for<'a> Add<&'a Self::Unreduced<N>, Output = Self::Unreduced<N>>
         + for<'a> Add<&'a Self::Unreduced<4>, Output = Self::Unreduced<N>>
+        + Sub<Output = Self::Unreduced<N>>
+        + for<'a> Sub<&'a Self::Unreduced<N>, Output = Self::Unreduced<N>>
         + AddAssign
         + for<'a> AddAssign<&'a Self::Unreduced<N>>
         + AddAssign<Self::Unreduced<4>>
         + AddAssign<Self::Unreduced<5>>
         + AddAssign<Self::Unreduced<6>>
         + AddAssign<Self::Unreduced<7>>
-        + AddAssign<Self::Unreduced<8>>;
+        + AddAssign<Self::Unreduced<8>>
+        + SubAssign
+        + for<'a> SubAssign<&'a Self::Unreduced<N>>;
 
     /// An implementation of `JoltField` may use some precomputed lookup tables to speed up the
     /// conversion of small primitive integers (e.g. `u16` values) into field elements. For example,

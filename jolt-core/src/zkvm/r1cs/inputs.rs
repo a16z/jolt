@@ -592,18 +592,21 @@ pub fn compute_claimed_r1cs_input_evals<F: JoltField>(
     arr.to_vec()
 }
 
-/// Generates witnesses for the shift sumcheck with a single pass over the trace.
-#[tracing::instrument(skip_all)]
-pub fn generate_shift_sumcheck_witnesses<F>(
-    preprocessing: &JoltSharedPreprocessing,
-    trace: &[Cycle],
-) -> (
+/// Compact alias for the five shift-sumcheck witness polynomials
+pub type ShiftSumcheckWitnesses<F> = (
     MultilinearPolynomial<F>, // UnexpandedPC(t)
     MultilinearPolynomial<F>, // PC(t)
     MultilinearPolynomial<F>, // IsNoop(t)
     MultilinearPolynomial<F>, // IsVirtual(t)
     MultilinearPolynomial<F>, // IsFirstInSequence(t)
-)
+);
+
+/// Generates witnesses for the shift sumcheck with a single pass over the trace.
+#[tracing::instrument(skip_all)]
+pub fn generate_shift_sumcheck_witnesses<F>(
+    preprocessing: &JoltSharedPreprocessing,
+    trace: &[Cycle],
+) -> ShiftSumcheckWitnesses<F>
 where
     F: JoltField,
 {

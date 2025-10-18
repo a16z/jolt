@@ -228,7 +228,11 @@ impl<F: JoltField> Acc6S<F> {
     }
     #[inline(always)]
     pub fn reduce(&self) -> F {
-        F::from_barrett_reduce(self.pos) - F::from_barrett_reduce(self.neg)
+        if self.pos >= self.neg {
+            F::from_barrett_reduce(self.pos - self.neg)
+        } else {
+            -F::from_barrett_reduce(self.neg - self.pos)
+        }
     }
 }
 
@@ -403,7 +407,11 @@ impl<F: JoltField> Acc7S<F> {
     }
     #[inline(always)]
     pub fn reduce(&self) -> F {
-        F::from_barrett_reduce(self.pos) - F::from_barrett_reduce(self.neg)
+        if self.pos >= self.neg {
+            F::from_barrett_reduce(self.pos - self.neg)
+        } else {
+            -F::from_barrett_reduce(self.neg - self.pos)
+        }
     }
 }
 
@@ -554,7 +562,11 @@ impl<F: JoltField> DeferredProducts<F, S160> for Acc7S<F> {
     }
     #[inline(always)]
     fn reduce(sum: &Self::Word) -> F {
-        F::from_barrett_reduce(sum.0) - F::from_barrett_reduce(sum.1)
+        if sum.0 >= sum.1 {
+            F::from_barrett_reduce(sum.0 - sum.1)
+        } else {
+            -F::from_barrett_reduce(sum.1 - sum.0)
+        }
     }
 }
 
@@ -596,7 +608,11 @@ impl<F: JoltField> DeferredProducts<F, S192> for Acc7S<F> {
     }
     #[inline(always)]
     fn reduce(sum: &Self::Word) -> F {
-        F::from_barrett_reduce(sum.0) - F::from_barrett_reduce(sum.1)
+        if sum.0 >= sum.1 {
+            F::from_barrett_reduce(sum.0 - sum.1)
+        } else {
+            -F::from_barrett_reduce(sum.1 - sum.0)
+        }
     }
 }
 
@@ -637,36 +653,6 @@ impl<F: JoltField> Acc8Signed<F> {
         self.neg = <F as JoltField>::Unreduced::<8>::from([0u64; 8]);
     }
 
-    /// fmadd with an `I8OrI96` (signed, up to 2 limbs)
-    #[inline(always)]
-    pub fn fmadd_az(&mut self, field: &F, az: I8OrI96) {
-        let field_bigint = field.as_unreduced_ref();
-        let v = az.to_i128();
-        if v != 0 {
-            let abs = v.unsigned_abs();
-            let mag = F::Unreduced::<2>::from(abs);
-            let acc = if v >= 0 { &mut self.pos } else { &mut self.neg };
-            field_bigint.fmadd_trunc::<2, 8>(&mag, acc);
-        }
-    }
-
-    /// fmadd with a `S160` (signed, up to 3 limbs)
-    #[inline(always)]
-    pub fn fmadd_bz(&mut self, field: &F, bz: S160) {
-        let field_bigint = field.as_unreduced_ref();
-        if !bz.is_zero() {
-            let lo = bz.magnitude_lo();
-            let hi = bz.magnitude_hi() as u64;
-            let mag = F::Unreduced::from([lo[0], lo[1], hi]);
-            let acc = if bz.is_positive() {
-                &mut self.pos
-            } else {
-                &mut self.neg
-            };
-            field_bigint.fmadd_trunc::<3, 8>(&mag, acc);
-        }
-    }
-
     /// fmadd with s128 (alias to i128) using 2-limb fmadd_trunc into 8-limb signed accumulators
     #[inline(always)]
     pub fn fmadd_s128(&mut self, field: &F, v: i128) {
@@ -686,7 +672,11 @@ impl<F: JoltField> Acc8Signed<F> {
     /// Reduce accumulated value to a field element (pos - neg) using Montgomery reduction.
     #[inline(always)]
     pub fn reduce_to_field(&self) -> F {
-        F::from_montgomery_reduce(self.pos) - F::from_montgomery_reduce(self.neg)
+        if self.pos >= self.neg {
+            F::from_montgomery_reduce(self.pos - self.neg)
+        } else {
+            -F::from_montgomery_reduce(self.neg - self.pos)
+        }
     }
 }
 

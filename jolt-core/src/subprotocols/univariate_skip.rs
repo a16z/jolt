@@ -1,6 +1,8 @@
 use crate::field::JoltField;
 use crate::poly::lagrange_poly::LagrangePolynomial;
 use crate::poly::unipoly::UniPoly;
+use crate::subprotocols::sumcheck::{UniSkipFirstRoundInstance, UniSkipFirstRoundProof};
+use crate::transcripts::{AppendToTranscript, Transcript};
 
 /// Shared handoff state from a univariate-skip first round.
 ///
@@ -129,4 +131,23 @@ pub fn build_uniskip_first_round_poly<
     }
 
     UniPoly::from_coeff(s1_coeffs.to_vec())
+}
+
+/// Prove-only helper for a uni-skip first round instance.
+/// Produces the proof object, the uni-skip challenge r0, and the next claim s1(r0).
+pub fn prove_uniskip_round<
+    F: JoltField,
+    ProofTranscript: Transcript,
+    I: UniSkipFirstRoundInstance<F, ProofTranscript>,
+>(
+    instance: &mut I,
+    transcript: &mut ProofTranscript,
+) -> (UniSkipFirstRoundProof<F, ProofTranscript>, F::Challenge, F) {
+    let uni_poly = instance.compute_poly();
+    // Append full polynomial and derive r0
+    uni_poly.append_to_transcript(transcript);
+    let r0: F::Challenge = transcript.challenge_scalar_optimized::<F>();
+    // Evaluate next claim at r0
+    let next_claim = uni_poly.evaluate::<F::Challenge>(&r0);
+    (UniSkipFirstRoundProof::new(uni_poly), r0, next_claim)
 }

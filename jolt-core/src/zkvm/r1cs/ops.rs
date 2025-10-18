@@ -149,7 +149,7 @@ impl LC {
         let (mut out_terms, mut out_len, mut out_const) = Self::decompose(self);
         let (rhs_terms, rhs_len, rhs_const) = Self::decompose(other);
 
-        out_const = out_const + rhs_const;
+        out_const += rhs_const;
 
         let mut i = 0usize;
         while i < rhs_len {

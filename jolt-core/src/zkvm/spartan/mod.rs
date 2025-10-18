@@ -1,30 +1,27 @@
-use instruction_input::InstructionInputSumcheck;
 use std::sync::Arc;
-// use tracing::{span, Level};
 
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::opening_proof::SumcheckId;
-use crate::subprotocols::sumcheck::{prove_uniskip_round, UniSkipFirstRoundInstance};
-use crate::subprotocols::univariate_skip::UniSkipState;
+use crate::subprotocols::sumcheck::{SumcheckInstance, UniSkipFirstRoundInstance};
+use crate::subprotocols::univariate_skip::{prove_uniskip_round, UniSkipState};
+use crate::transcripts::Transcript;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::zkvm::dag::stage::SumcheckStages;
 use crate::zkvm::dag::state_manager::{ProofData, ProofKeys, StateManager};
+use crate::zkvm::r1cs::constraints::{FIRST_ROUND_POLY_NUM_COEFFS, UNIVARIATE_SKIP_DOMAIN_SIZE};
 use crate::zkvm::r1cs::key::UniformSpartanKey;
-use crate::zkvm::spartan::inner::InnerSumcheck;
-use crate::zkvm::spartan::outer::{OuterRemainingSumcheck, OuterUniSkipInstance};
-use crate::zkvm::spartan::product::{
+use crate::zkvm::witness::VirtualPolynomial;
+
+use inner::InnerSumcheck;
+use instruction_input::InstructionInputSumcheck;
+use outer::{OuterRemainingSumcheck, OuterUniSkipInstance};
+use product::{
     ProductVirtualInner, ProductVirtualRemainder, ProductVirtualUniSkipInstance,
     PRODUCT_VIRTUAL_FIRST_ROUND_POLY_NUM_COEFFS, PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
 };
-use crate::zkvm::spartan::shift::ShiftSumcheck;
-use crate::zkvm::witness::VirtualPolynomial;
-
-use crate::transcripts::Transcript;
-
-use crate::subprotocols::sumcheck::SumcheckInstance;
-use crate::zkvm::r1cs::constraints::{FIRST_ROUND_POLY_NUM_COEFFS, UNIVARIATE_SKIP_DOMAIN_SIZE};
+use shift::ShiftSumcheck;
 
 pub mod inner;
 pub mod instruction_input;

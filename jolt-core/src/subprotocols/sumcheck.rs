@@ -89,6 +89,8 @@ impl SingleSumcheck {
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
 
         let mut previous_claim = sumcheck_instance.input_claim();
+        transcript.append_scalar(&previous_claim); // Append input claim
+
         for round in 0..num_rounds {
             let mut univariate_poly_evals =
                 sumcheck_instance.compute_prover_message(round, previous_claim);
@@ -214,8 +216,7 @@ impl BatchedSumcheck {
             let univariate_polys: Vec<UniPoly<F>> = sumcheck_instances
                 .iter_mut()
                 .zip(individual_claims.iter())
-                .enumerate()
-                .map(|(idx, (sumcheck, previous_claim))| {
+                .map(|(sumcheck, previous_claim)| {
                     let num_rounds = sumcheck.num_rounds();
                     if remaining_rounds > num_rounds {
                         // We haven't gotten to this sumcheck's variables yet, so
@@ -240,7 +241,7 @@ impl BatchedSumcheck {
                             let h1 = poly.evaluate::<F>(&F::one());
                             debug_assert!(
                                 h0 + h1 == *previous_claim,
-                                "BatchedSumcheck prove: round {round}, instance {idx}: H(0)+H(1) mismatch: {} + {} != {}",
+                                "BatchedSumcheck prove: round {round}: H(0)+H(1) mismatch: {} + {} != {}",
                                 h0,
                                 h1,
                                 *previous_claim
@@ -397,6 +398,24 @@ impl BatchedSumcheck {
             .sum();
 
         if output_claim != expected_output_claim {
+            println!(
+                "BatchedSumcheck verify failed: num_instances={}, max_rounds={}, max_degree={}",
+                sumcheck_instances.len(),
+                max_num_rounds,
+                max_degree,
+            );
+
+            // Per-instance diagnostics (avoid printing field elements to keep generic bounds minimal)
+            for (idx, instance) in sumcheck_instances.iter().enumerate() {
+                let nr = instance.num_rounds();
+                let deg = instance.degree();
+                let r_slice_len = r_sumcheck[max_num_rounds - nr..].len();
+                println!(
+                    "  [instance #{idx}] rounds={}, degree={}, r_slice_len={}",
+                    nr, deg, r_slice_len
+                );
+            }
+
             return Err(ProofVerifyError::SumcheckVerificationError);
         }
 
@@ -554,23 +573,4 @@ impl<F: JoltField, ProofTranscript: Transcript> UniSkipFirstRoundProof<F, ProofT
 
         Ok((r0, next_claim))
     }
-}
-
-/// Prove-only helper for a uni-skip first round instance.
-/// Produces the proof object, the uni-skip challenge r0, and the next claim s1(r0).
-pub fn prove_uniskip_round<
-    F: JoltField,
-    ProofTranscript: Transcript,
-    I: UniSkipFirstRoundInstance<F, ProofTranscript>,
->(
-    instance: &mut I,
-    transcript: &mut ProofTranscript,
-) -> (UniSkipFirstRoundProof<F, ProofTranscript>, F::Challenge, F) {
-    let uni_poly = instance.compute_poly();
-    // Append full polynomial and derive r0
-    uni_poly.append_to_transcript(transcript);
-    let r0: F::Challenge = transcript.challenge_scalar_optimized::<F>();
-    // Evaluate next claim at r0
-    let next_claim = uni_poly.evaluate::<F::Challenge>(&r0);
-    (UniSkipFirstRoundProof::new(uni_poly), r0, next_claim)
 }

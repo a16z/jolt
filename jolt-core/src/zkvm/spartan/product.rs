@@ -63,7 +63,6 @@ use tracer::instruction::Cycle;
 /// Only complication is to generalize the splitting strategy
 /// (i.e. Spartan outer currently does uni skip for half of the constraints,
 /// whereas here we do it for all of them)
-
 /// Fixed list of product virtual polynomials, in canonical order
 pub const PRODUCT_VIRTUAL_TERMS: [VirtualPolynomial; NUM_PRODUCT_VIRTUAL] = [
     VirtualPolynomial::Product,               // Instruction
@@ -304,7 +303,8 @@ impl<F: JoltField> ProductVirtualUniSkipInstance<F> {
                             acc8s_fmadd_s256(&mut inner_acc[j], &e_in, prod_s256);
                         }
                     }
-                    // Reduce inner accumulators (pos-neg Montgomery) and apply E_out
+                    // Reduce inner accumulators (pos-neg Montgomery) and multiply by E_out
+                    // NOTE: needs a R^2 correction factor, applied when initializing E_out
                     for j in 0..PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE {
                         let reduced = inner_acc[j].reduce_to_field();
                         local_acc_unr[j] += e_out.mul_unreduced::<9>(reduced);
