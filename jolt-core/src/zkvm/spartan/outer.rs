@@ -18,8 +18,7 @@ use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::sumcheck::{SumcheckInstance, UniSkipFirstRoundInstance};
 use crate::subprotocols::univariate_skip::{
-    build_uniskip_first_round_poly, compute_az_r_group0, compute_az_r_group1, compute_bz_r_group0,
-    compute_bz_r_group1, uniskip_targets, UniSkipState,
+    build_uniskip_first_round_poly, uniskip_targets, UniSkipState,
 };
 use crate::transcripts::Transcript;
 use crate::utils::accumulation::Acc7S;
@@ -30,6 +29,7 @@ use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::zkvm::dag::state_manager::StateManager;
 use crate::zkvm::r1cs::{
     constraints::{
+        compute_az_r_group0, compute_az_r_group1, compute_bz_r_group0, compute_bz_r_group1,
         eval_az_first_group, eval_az_second_group, eval_bz_first_group, eval_bz_second_group,
         FIRST_ROUND_POLY_NUM_COEFFS, NUM_REMAINING_R1CS_CONSTRAINTS, UNIVARIATE_SKIP_DEGREE,
         UNIVARIATE_SKIP_DOMAIN_SIZE, UNIVARIATE_SKIP_EXTENDED_DOMAIN_SIZE,
@@ -532,77 +532,35 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
     /// store them in `bound_coeffs` in sparse format (the eval at 1 will be eval
     /// at 0 + eval at ∞). We then bind these bound coeffs with r_i for the next round.
     fn bind_streaming_round(&mut self, r_0: F::Challenge) {
-        // Build dense bound arrays from streaming cache, or recompute on the fly
         if let Some(ps) = self.prover_state.as_mut() {
             if let Some(cache) = ps.streaming_cache.take() {
                 let groups = cache.az_lo.len();
                 let mut az_bound: Vec<F> = unsafe_allocate_zero_vec(groups);
                 let mut bz_bound: Vec<F> = unsafe_allocate_zero_vec(groups);
-                // Parallelize by x_out chunks; build local buffers, then assemble sequentially
-                let num_x_out_vals = ps.split_eq_poly.E_out_current_len();
                 let num_x_in_vals = ps.split_eq_poly.E_in_current_len();
-                let chunk_threads = if num_x_out_vals > 0 {
-                    core::cmp::min(
-                        num_x_out_vals,
-                        rayon::current_num_threads().next_power_of_two() * 8,
-                    )
-                } else {
-                    1
-                };
-                let chunk_size = if num_x_out_vals > 0 {
-                    core::cmp::max(1, num_x_out_vals.div_ceil(chunk_threads))
-                } else {
-                    0
-                };
-                struct BoundChunk<F: JoltField> {
-                    base: usize,
-                    az: Vec<F>,
-                    bz: Vec<F>,
-                }
-                let chunks: Vec<BoundChunk<F>> = (0..chunk_threads)
-                    .into_par_iter()
-                    .map(|chunk_idx| {
-                        let x_out_start = chunk_idx * chunk_size;
-                        if x_out_start >= num_x_out_vals {
-                            return BoundChunk {
-                                base: 0,
-                                az: Vec::new(),
-                                bz: Vec::new(),
-                            };
+
+                // Parallelize over x_out by chunking destination slices
+                az_bound
+                    .par_chunks_mut(num_x_in_vals)
+                    .zip(bz_bound.par_chunks_mut(num_x_in_vals))
+                    .enumerate()
+                    .for_each(|(xo, (az_chunk, bz_chunk))| {
+                        for xi in 0..num_x_in_vals {
+                            let idx = xo * num_x_in_vals + xi;
+                            let az0 = cache.az_lo[idx];
+                            let az1 = cache.az_hi[idx];
+                            let bz0 = cache.bz_lo[idx];
+                            let bz1 = cache.bz_hi[idx];
+                            az_chunk[xi] = az0 + r_0 * (az1 - az0);
+                            bz_chunk[xi] = bz0 + r_0 * (bz1 - bz0);
                         }
-                        let x_out_end = core::cmp::min(x_out_start + chunk_size, num_x_out_vals);
-                        let local_len = (x_out_end - x_out_start).saturating_mul(num_x_in_vals);
-                        let mut local_az: Vec<F> = Vec::with_capacity(local_len);
-                        let mut local_bz: Vec<F> = Vec::with_capacity(local_len);
-                        for xo in x_out_start..x_out_end {
-                            for xi in 0..num_x_in_vals {
-                                let idx = xo * num_x_in_vals + xi;
-                                let az0 = cache.az_lo[idx];
-                                let az1 = cache.az_hi[idx];
-                                let bz0 = cache.bz_lo[idx];
-                                let bz1 = cache.bz_hi[idx];
-                                local_az.push(az0 + r_0 * (az1 - az0));
-                                local_bz.push(bz0 + r_0 * (bz1 - bz0));
-                            }
-                        }
-                        BoundChunk {
-                            base: x_out_start * num_x_in_vals,
-                            az: local_az,
-                            bz: local_bz,
-                        }
-                    })
-                    .collect();
-                for c in &chunks {
-                    let end = c.base + c.az.len();
-                    az_bound[c.base..end].copy_from_slice(&c.az);
-                    bz_bound[c.base..end].copy_from_slice(&c.bz);
-                }
+                    });
                 ps.az = DensePolynomial::new(az_bound);
                 ps.bz = DensePolynomial::new(bz_bound);
                 return;
             }
         }
-        panic!("Streaming cache missing; fallback path removed as unreachable");
+        panic!("Streaming cache missing");
     }
 
     /// Compute the polynomial for each of the remaining rounds, using the

@@ -649,69 +649,24 @@ impl<F: JoltField> ProductVirtualRemainder<F> {
                 let groups = cache.left_lo.len();
                 let mut left_bound: Vec<F> = unsafe_allocate_zero_vec(groups);
                 let mut right_bound: Vec<F> = unsafe_allocate_zero_vec(groups);
-
-                // Parallelize by x_out chunks to mirror outer binding performance
-                let num_x_out_vals = ps.split_eq_poly.E_out_current_len();
                 let num_x_in_vals = ps.split_eq_poly.E_in_current_len();
-                let chunk_threads = if num_x_out_vals > 0 {
-                    core::cmp::min(
-                        num_x_out_vals,
-                        rayon::current_num_threads().next_power_of_two() * 8,
-                    )
-                } else {
-                    1
-                };
-                let chunk_size = if num_x_out_vals > 0 {
-                    core::cmp::max(1, num_x_out_vals.div_ceil(chunk_threads))
-                } else {
-                    0
-                };
 
-                struct BoundChunk<F: JoltField> {
-                    base: usize,
-                    left: Vec<F>,
-                    right: Vec<F>,
-                }
-
-                let chunks: Vec<BoundChunk<F>> = (0..chunk_threads)
-                    .into_par_iter()
-                    .map(|chunk_idx| {
-                        let x_out_start = chunk_idx * chunk_size;
-                        if x_out_start >= num_x_out_vals {
-                            return BoundChunk {
-                                base: 0,
-                                left: Vec::new(),
-                                right: Vec::new(),
-                            };
+                // Parallelize over x_out by chunking destination slices
+                left_bound
+                    .par_chunks_mut(num_x_in_vals)
+                    .zip(right_bound.par_chunks_mut(num_x_in_vals))
+                    .enumerate()
+                    .for_each(|(xo, (l_chunk, r_chunk))| {
+                        for xi in 0..num_x_in_vals {
+                            let idx = xo * num_x_in_vals + xi;
+                            let l0 = cache.left_lo[idx];
+                            let l1 = cache.left_hi[idx];
+                            let r0 = cache.right_lo[idx];
+                            let r1 = cache.right_hi[idx];
+                            l_chunk[xi] = l0 + r_0 * (l1 - l0);
+                            r_chunk[xi] = r0 + r_0 * (r1 - r0);
                         }
-                        let x_out_end = core::cmp::min(x_out_start + chunk_size, num_x_out_vals);
-                        let local_len = (x_out_end - x_out_start).saturating_mul(num_x_in_vals);
-                        let mut local_left: Vec<F> = Vec::with_capacity(local_len);
-                        let mut local_right: Vec<F> = Vec::with_capacity(local_len);
-                        for xo in x_out_start..x_out_end {
-                            for xi in 0..num_x_in_vals {
-                                let idx = xo * num_x_in_vals + xi;
-                                let l0 = cache.left_lo[idx];
-                                let l1 = cache.left_hi[idx];
-                                let r0 = cache.right_lo[idx];
-                                let r1 = cache.right_hi[idx];
-                                local_left.push(l0 + r_0 * (l1 - l0));
-                                local_right.push(r0 + r_0 * (r1 - r0));
-                            }
-                        }
-                        BoundChunk {
-                            base: x_out_start * num_x_in_vals,
-                            left: local_left,
-                            right: local_right,
-                        }
-                    })
-                    .collect();
-
-                for c in &chunks {
-                    let end = c.base + c.left.len();
-                    left_bound[c.base..end].copy_from_slice(&c.left);
-                    right_bound[c.base..end].copy_from_slice(&c.right);
-                }
+                    });
 
                 ps.left = DensePolynomial::new(left_bound);
                 ps.right = DensePolynomial::new(right_bound);

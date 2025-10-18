@@ -1,13 +1,6 @@
-use crate::field::AccumulateInPlace;
 use crate::field::JoltField;
 use crate::poly::lagrange_poly::LagrangePolynomial;
 use crate::poly::unipoly::UniPoly;
-use crate::utils::accumulation::{Acc5U, Acc6S, Acc6U, Acc7S};
-use crate::zkvm::r1cs::constraints::{
-    eval_az_first_group, eval_az_second_group, eval_bz_first_group, eval_bz_second_group,
-    NUM_REMAINING_R1CS_CONSTRAINTS, UNIVARIATE_SKIP_DOMAIN_SIZE,
-};
-use crate::zkvm::r1cs::inputs::R1CSCycleInputs;
 
 /// Shared handoff state from a univariate-skip first round.
 ///
@@ -18,58 +11,6 @@ pub struct UniSkipState<F: JoltField> {
     pub claim_after_first: F,
     pub r0: F::Challenge,
     pub tau: Vec<F::Challenge>,
-}
-
-#[inline]
-pub fn compute_az_r_group0<F: JoltField>(row: &R1CSCycleInputs, lagrange_evals_r: &[F]) -> F {
-    // Group 0 Az are booleans; accumulate field elements unreduced, then Barrett-reduce
-    let az_flags = eval_az_first_group(row);
-    let mut acc: Acc5U<F> = Acc5U::new();
-    let mut i = 0;
-    while i < UNIVARIATE_SKIP_DOMAIN_SIZE {
-        acc.fmadd(&lagrange_evals_r[i], &az_flags[i]);
-        i += 1;
-    }
-    acc.reduce()
-}
-
-#[inline]
-pub fn compute_bz_r_group0<F: JoltField>(row: &R1CSCycleInputs, lagrange_evals_r: &[F]) -> F {
-    // Group 0 Bz are i128; accumulate field * i128 (converted) unreduced, then Barrett-reduce
-    let bz_vals = eval_bz_first_group(row);
-    let mut acc: Acc6S<F> = Acc6S::new();
-    let mut i = 0;
-    while i < UNIVARIATE_SKIP_DOMAIN_SIZE {
-        acc.fmadd(&lagrange_evals_r[i], &bz_vals[i]);
-        i += 1;
-    }
-    acc.reduce()
-}
-
-#[inline]
-pub fn compute_az_r_group1<F: JoltField>(row: &R1CSCycleInputs, lagrange_evals_r: &[F]) -> F {
-    // Group 1 Az are u8 (nonnegative); accumulate field * i32 unreduced, then Barrett-reduce
-    let az_vals_u8 = eval_az_second_group(row);
-    let mut acc: Acc6U<F> = Acc6U::new();
-    let mut i = 0;
-    while i < NUM_REMAINING_R1CS_CONSTRAINTS {
-        acc.fmadd(&lagrange_evals_r[i], &az_vals_u8[i]);
-        i += 1;
-    }
-    acc.reduce()
-}
-
-#[inline]
-pub fn compute_bz_r_group1<F: JoltField>(row: &R1CSCycleInputs, lagrange_evals_r: &[F]) -> F {
-    // Group 1 Bz are S160; accumulate field * S160 in 7-limb signed accumulators, then Barrett-reduce once
-    let bz_vals = eval_bz_second_group(row);
-    let mut acc: Acc7S<F> = Acc7S::new();
-    let mut i = 0;
-    while i < NUM_REMAINING_R1CS_CONSTRAINTS {
-        acc.fmadd(&lagrange_evals_r[i], &bz_vals[i]);
-        i += 1;
-    }
-    acc.reduce()
 }
 
 /// Returns the interleaved symmetric univariate-skip target indices outside the base window.
