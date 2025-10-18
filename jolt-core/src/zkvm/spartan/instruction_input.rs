@@ -519,10 +519,10 @@ impl<F: JoltField> ProverState<F> {
         sample_stage_2: &(OpeningPoint<BIG_ENDIAN, F>, F),
     ) -> Self {
         // Compute MLEs.
-        let mut left_is_rs1_poly = vec![0u8; trace.len()];
-        let mut left_is_pc_poly = vec![0u8; trace.len()];
-        let mut right_is_rs2_poly = vec![0u8; trace.len()];
-        let mut right_is_imm_poly = vec![0u8; trace.len()];
+        let mut left_is_rs1_poly = vec![false; trace.len()];
+        let mut left_is_pc_poly = vec![false; trace.len()];
+        let mut right_is_rs2_poly = vec![false; trace.len()];
+        let mut right_is_imm_poly = vec![false; trace.len()];
         let mut rs1_value_poly = vec![0; trace.len()];
         let mut rs2_value_poly = vec![0; trace.len()];
         let mut imm_poly = vec![0; trace.len()];
@@ -554,10 +554,10 @@ impl<F: JoltField> ProverState<F> {
                     let instruction = cycle.instruction();
                     let instruction_norm = instruction.normalize();
                     let flags = instruction.instruction_flags();
-                    *left_is_rs1_eval = flags[InstructionFlags::LeftOperandIsRs1Value].into();
-                    *left_is_pc_eval = flags[InstructionFlags::LeftOperandIsPC].into();
-                    *right_is_rs2_eval = flags[InstructionFlags::RightOperandIsRs2Value].into();
-                    *right_is_imm_eval = flags[InstructionFlags::RightOperandIsImm].into();
+                    *left_is_rs1_eval = flags[InstructionFlags::LeftOperandIsRs1Value];
+                    *left_is_pc_eval = flags[InstructionFlags::LeftOperandIsPC];
+                    *right_is_rs2_eval = flags[InstructionFlags::RightOperandIsRs2Value];
+                    *right_is_imm_eval = flags[InstructionFlags::RightOperandIsImm];
                     *rs1_value_eval = cycle.rs1_read().1;
                     *rs2_value_eval = cycle.rs2_read().1;
                     *imm_eval = instruction_norm.operands.imm;
