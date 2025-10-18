@@ -12,8 +12,6 @@ use crate::utils::errors::ProofVerifyError;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::utils::profiling::print_current_memory_usage;
 #[cfg(feature = "allocative")]
-use crate::utils::profiling::print_data_structure_heap_usage;
-#[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 
 use ark_serialize::*;
@@ -131,15 +129,17 @@ impl SingleSumcheck {
         opening_accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
         transcript: &mut ProofTranscript,
     ) -> Result<Vec<F::Challenge>, ProofVerifyError> {
+        let input_claim = sumcheck_instance.input_claim();
+        transcript.append_scalar(&input_claim); // Append input claim
         let (output_claim, r) = proof.verify(
-            sumcheck_instance.input_claim(),
+            input_claim,
             sumcheck_instance.num_rounds(),
             sumcheck_instance.degree(),
             transcript,
         )?;
 
-        let expected = sumcheck_instance.expected_output_claim(opening_accumulator.clone(), &r);
-        if output_claim != expected {
+        if output_claim != sumcheck_instance.expected_output_claim(opening_accumulator.clone(), &r)
+        {
             return Err(ProofVerifyError::SumcheckVerificationError);
         }
 
@@ -186,9 +186,9 @@ impl BatchedSumcheck {
             .iter()
             .map(|sumcheck| {
                 let num_rounds = sumcheck.num_rounds();
-                sumcheck
-                    .input_claim()
-                    .mul_pow_2(max_num_rounds - num_rounds)
+                let input_claim = sumcheck.input_claim();
+                transcript.append_scalar(&input_claim);
+                input_claim.mul_pow_2(max_num_rounds - num_rounds)
             })
             .collect();
 
@@ -214,7 +214,8 @@ impl BatchedSumcheck {
             let univariate_polys: Vec<UniPoly<F>> = sumcheck_instances
                 .iter_mut()
                 .zip(individual_claims.iter())
-                .map(|(sumcheck, previous_claim)| {
+                .enumerate()
+                .map(|(idx, (sumcheck, previous_claim))| {
                     let num_rounds = sumcheck.num_rounds();
                     if remaining_rounds > num_rounds {
                         // We haven't gotten to this sumcheck's variables yet, so
@@ -231,7 +232,21 @@ impl BatchedSumcheck {
                         let mut univariate_poly_evals =
                             sumcheck.compute_prover_message(round - offset, *previous_claim);
                         univariate_poly_evals.insert(1, *previous_claim - univariate_poly_evals[0]);
-                        UniPoly::from_evals(&univariate_poly_evals)
+                        let poly = UniPoly::from_evals(&univariate_poly_evals);
+                        #[cfg(debug_assertions)]
+                        {
+                            // Verify per-instance sumcheck invariant H(0)+H(1)=previous_claim
+                            let h0 = poly.evaluate::<F>(&F::zero());
+                            let h1 = poly.evaluate::<F>(&F::one());
+                            debug_assert!(
+                                h0 + h1 == *previous_claim,
+                                "BatchedSumcheck prove: round {round}, instance {idx}: H(0)+H(1) mismatch: {} + {} != {}",
+                                h0,
+                                h1,
+                                *previous_claim
+                            );
+                        }
+                        poly
                     }
                 })
                 .collect();
@@ -346,10 +361,9 @@ impl BatchedSumcheck {
             .zip(batching_coeffs.iter())
             .map(|(sumcheck, coeff)| {
                 let num_rounds = sumcheck.num_rounds();
-                sumcheck
-                    .input_claim()
-                    .mul_pow_2(max_num_rounds - num_rounds)
-                    * coeff
+                let input_claim = sumcheck.input_claim();
+                transcript.append_scalar(&input_claim);
+                input_claim.mul_pow_2(max_num_rounds - num_rounds) * coeff
             })
             .sum();
 
