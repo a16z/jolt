@@ -1,3 +1,49 @@
+/*
+ShiftSumcheck: claim and proving strategy
+
+Let T = 2^ell be the number of cycles (ell = log_2 T). We define two EqPlusOne kernels over the
+cycle index y ∈ {0,1}^ell:
+  EQP_c(y) = EqPlusOne(y; r_cycle)      // r_cycle = outer Spartan sumcheck opening bits (big-endian)
+  EQP_p(y) = EqPlusOne(y; r_product)    // r_product = ShouldJump virtualization opening bits
+
+We combine five per-cycle witness polynomials with batching scalars γ^i (i = 0..4):
+  U(y)  = γ^0·UnexpandedPC(y) + γ^1·PC(y) + γ^2·IsVirtual(y) + γ^3·IsFirstInSequence(y)
+  V(y)  = γ^4·(1 − IsNoop(y))
+
+Target polynomial for this sumcheck over the cycle variables y is:
+  F(y) = U(y)·EQP_c(y) + V(y)·EQP_p(y)
+
+The sumcheck claim equals the value obtained when all y-variables are successively bound by the
+verifier’s challenges r = (r_0, …, r_{ell−1}) (HighToLow). Algebraically, the initial claim equals
+the “shifted” evaluations provided by the outer protocols via the EqPlusOne kernel identity:
+  ∑_{y∈{0,1}^ell} U(y)·EqPlusOne(y; r_cycle) = U(r_cycle + 1)
+  ∑_{y∈{0,1}^ell} V(y)·EqPlusOne(y; r_product) = V(r_product + 1)
+
+Accordingly, the input_claim we commit to is:
+  input_claim = (γ^0·NextUnexpandedPC + γ^1·NextPC + γ^2·NextIsVirtual + γ^3·NextIsFirstInSequence)
+                + γ^4·(1 − NextIsNoop)
+where the Next* evaluations are taken from the appropriate accumulators at the outer points.
+
+Prover strategy
+We build two dynamic, field-valued prefix–suffix decompositions (PS) of EqPlusOne(y; x) with x set
+to r_cycle and r_product, respectively. Each PS splits the ell variables into two chunks:
+  - Phase 0 (first_chunk_len = ceil(ell/2)): build P_0[x] over the first chunk and Q_0[x] by
+    summing U (or V) against the suffix MLE over the remaining variables.
+  - After binding the first chunk, rebuild P_1[x] over the second chunk and Q_1[x] with the bound
+    witnesses (no suffix left in this phase).
+
+At every round j we emit degree-2 univariate evaluations g_j(0), g_j(2) by aggregating, over terms
+in the EqPlusOne expansion, the product of the current prefix univariate evaluations and the
+appropriate left/right halves of Q. We do this independently for cycle and product PS, and sum the
+results to obtain F’s prover message.
+
+Verifier strategy
+The verifier recomputes the expected folded claim at the end using:
+  (γ^0·UnexpandedPC + γ^1·PC + γ^2·IsVirtual + γ^3·IsFirstInSequence)·EqPlusOne(r; r_cycle)
+  + γ^4·(1 − IsNoop)·EqPlusOne(r; r_product)
+with the same γ^i and r taken from this sumcheck’s transcript. Equality holds when all rounds are
+consistent.
+*/
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -250,7 +296,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ShiftSumcheck<F> {
             .expect("Prover state not initialized");
         const DEGREE: usize = 2;
 
-        let univariate_poly_evals: [F; DEGREE] = (0..prover_state.unexpanded_pc_poly.len() / 2)
+        // Iterate over the current prefix-suffix domain size, not the raw witness size.
+        debug_assert_eq!(prover_state.ps_cycle.Q_len(), prover_state.ps_product.Q_len());
+        let q_half_len = core::cmp::min(
+            prover_state.ps_cycle.Q_len(),
+            prover_state.ps_product.Q_len(),
+        ) / 2;
+        let univariate_poly_evals: [F; DEGREE] = (0..q_half_len)
             .into_par_iter()
             .map(|i| {
                 let (c0, c2) = prover_state.ps_cycle.sumcheck_evals(i);
@@ -276,6 +328,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ShiftSumcheck<F> {
             .as_mut()
             .expect("Prover state not initialized");
 
+        let prev_len = prover_state.ps_cycle.Q_len();
         rayon::scope(|s| {
             s.spawn(|_| {
                 prover_state
@@ -306,14 +359,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ShiftSumcheck<F> {
             s.spawn(|_| prover_state.ps_product.bind(r_j));
         });
 
-        // Stage boundary: after cutoff rounds, rebuild Q for next phase
-        // We detect by comparing current bound length vs original
-        let current_len = prover_state.unexpanded_pc_poly.len();
-        let remaining_rounds = current_len.log_2();
+        // Stage boundary: after finishing the first chunk, rebuild P and Q for next phase.
+        // Detect when Q shrinks from 2 -> 1 and there is a remaining second chunk.
+        let current_len = prover_state.ps_cycle.Q_len();
         let total_rounds = self.log_T;
         let cutoff = total_rounds.div_ceil(2);
-        // When we've finished binding the first `cutoff` variables, remaining_rounds == total_rounds - cutoff
-        if remaining_rounds + cutoff == total_rounds && remaining_rounds != total_rounds {
+        let rem = total_rounds - cutoff;
+        if prev_len == 2 && current_len == 1 && rem > 0 {
             prover_state.reg_cycle.update_checkpoints();
             prover_state.reg_product.update_checkpoints();
             prover_state.ps_cycle.init_P(&mut prover_state.reg_cycle);

@@ -56,6 +56,9 @@ impl<F: JoltField> PrefixSuffixPolynomialFieldDyn<F> for EqPlusOnePS<F> {
         self.ell
     }
 
+    /// Build per-term prefix polynomials for the current phase and chunk length.
+    /// Each returned entry corresponds to the prefix contribution of a single k term
+    /// in the EqPlusOne(y; x) decomposition, evaluated over the current chunk's variables.
     fn prefixes(
         &self,
         chunk_len: usize,
@@ -109,6 +112,8 @@ impl<F: JoltField> PrefixSuffixPolynomialFieldDyn<F> for EqPlusOnePS<F> {
             .collect()
     }
 
+    /// Evaluate the suffix contribution for term k on the provided suffix bits.
+    /// The suffix covers variables strictly after the current cutoff (MSB indexing).
     fn suffix_eval(&self, k_lsb: usize, suffix: LookupBits) -> F {
         let m_flip = self.msb_flip_index(k_lsb);
         let m_len = suffix.len();
@@ -138,5 +143,217 @@ impl<F: JoltField> PrefixSuffixPolynomialFieldDyn<F> for EqPlusOnePS<F> {
             }
         }
         acc
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ark_bn254::Fr;
+    use ark_ff::{AdditiveGroup, Field};
+    
+    use ark_std::test_rng;
+
+    use crate::poly::prefix_suffix::PrefixSuffixDecompositionFieldDyn;
+
+    // Evaluate the EqPlusOne MLE at arbitrary field point y (big-endian),
+    // using the field-cast version of x provided in tests.
+    fn eq_plus_one_mle_field<G: JoltField>(x_field: &[G], y_field: &[G]) -> G {
+        let l = x_field.len();
+        debug_assert_eq!(y_field.len(), l);
+
+        let one = G::from_u64(1);
+        let zero = G::from_u64(0);
+        let mut acc_sum = zero;
+        for k in 0..l {
+            // Lower bits: product over i in [0..k) of x[i_lsb] * (1 - y[i_lsb]) in big-endian
+            let mut lower = one;
+            for i in 0..k {
+                let xi = x_field[l - 1 - i];
+                let yi = y_field[l - 1 - i];
+                lower *= xi * (one - yi);
+                if lower.is_zero() {
+                    break;
+                }
+            }
+
+            // k-th bit: (1 - x_k) * y_k
+            let xk = x_field[l - 1 - k];
+            let yk = y_field[l - 1 - k];
+            let kth = (one - xk) * yk;
+            if kth.is_zero() {
+                // Early skip; keeps branches similar to production path
+                continue;
+            }
+
+            // Higher bits: eq(x_i, y_i) for i in (k+1..l)
+            let mut higher = one;
+            for i in (k + 1)..l {
+                let xi = x_field[l - 1 - i];
+                let yi = y_field[l - 1 - i];
+                let eq_term = xi * yi + (one - xi) * (one - yi);
+                higher *= eq_term;
+                if higher.is_zero() {
+                    break;
+                }
+            }
+
+            acc_sum += lower * kth * higher;
+        }
+        acc_sum
+    }
+
+    #[test]
+    fn test_eq_plus_one_ps_field_dyn_matches_direct_evals() {
+        let mut rng = test_rng();
+
+        // Try a few sizes and random parameters
+        for ell in 3..9 {
+            for cutoff in 1..ell {
+                // Random big-endian x bits as challenges
+                let x_bits: Vec<<Fr as JoltField>::Challenge> = (0..ell)
+                    .map(|_| <Fr as JoltField>::Challenge::random(&mut rng))
+                    .collect();
+
+                // Build dynamic prefix–suffix decomposition for EqPlusOne(y; x)
+                let ps_poly = EqPlusOnePS::<Fr>::new(x_bits.clone(), ell, cutoff);
+                let mut ps = PrefixSuffixDecompositionFieldDyn::new(
+                    Box::new(ps_poly),
+                    cutoff,
+                    ell,
+                );
+                let mut prefix_registry = DynamicPrefixRegistry::<Fr>::new(ell);
+
+                // Precompute lookup structures once
+                let indices: Vec<usize> = (0..(1usize << ell)).collect();
+                let lookup_bits: Vec<LookupBits> = (0..(1u128 << ell))
+                    .map(|i| LookupBits::new(i, ell))
+                    .collect();
+
+                // Keep track of previously bound r values (as field elements)
+                let mut rr_field: Vec<Fr> = Vec::new();
+
+                // Phase 0
+                {
+                    ps.init_P(&mut prefix_registry);
+                    let suffix_len = ps.suffix_len();
+                    let u_evals = vec![Fr::ONE; 1usize << suffix_len];
+                    ps.init_Q(&u_evals, &indices, &lookup_bits);
+
+                    for round in (0..cutoff).rev() {
+                        let max_b = 1usize << round;
+                        for b in 0..max_b {
+                            // eval at t = 0
+                            let mut y_prefix_0 = rr_field.clone();
+                            y_prefix_0.push(Fr::ZERO);
+                            for i in (0..round).rev() {
+                                let bit = if ((b >> i) & 1) == 1 { Fr::ONE } else { Fr::ZERO };
+                                y_prefix_0.push(bit);
+                            }
+
+                            // Sum over all suffix assignments
+                            let mut direct_0 = Fr::ZERO;
+                            for s in 0..(1usize << suffix_len) {
+                                let mut y = y_prefix_0.clone();
+                                for j in (0..suffix_len).rev() {
+                                    let bit = if ((s >> j) & 1) == 1 { Fr::ONE } else { Fr::ZERO };
+                                    y.push(bit);
+                                }
+                                let x_field: Vec<Fr> = x_bits.iter().map(|c| (*c).into()).collect();
+                                direct_0 += eq_plus_one_mle_field::<Fr>(&x_field, &y);
+                            }
+
+                            // eval at t = 1 (for computing value at 2 via interpolation)
+                            let mut y_prefix_1 = rr_field.clone();
+                            y_prefix_1.push(Fr::ONE);
+                            for i in (0..round).rev() {
+                                let bit = if ((b >> i) & 1) == 1 { Fr::ONE } else { Fr::ZERO };
+                                y_prefix_1.push(bit);
+                            }
+                            let mut direct_1 = Fr::ZERO;
+                            for s in 0..(1usize << suffix_len) {
+                                let mut y = y_prefix_1.clone();
+                                for j in (0..suffix_len).rev() {
+                                    let bit = if ((s >> j) & 1) == 1 { Fr::ONE } else { Fr::ZERO };
+                                    y.push(bit);
+                                }
+                                let x_field: Vec<Fr> = x_bits.iter().map(|c| (*c).into()).collect();
+                                direct_1 += eq_plus_one_mle_field::<Fr>(&x_field, &y);
+                            }
+
+                            // eval at t = 2
+                            let mut y_prefix_2 = rr_field.clone();
+                            y_prefix_2.push(Fr::ONE + Fr::ONE);
+                            for i in (0..round).rev() {
+                                let bit = if ((b >> i) & 1) == 1 { Fr::ONE } else { Fr::ZERO };
+                                y_prefix_2.push(bit);
+                            }
+                            // For degree-2 polynomial in t, f(2) = 2*f(1) - f(0)
+                            let direct_2 = direct_1 + direct_1 - direct_0;
+
+                            let (eval_0, eval_2) = ps.sumcheck_evals(b);
+                            assert_eq!(direct_0, eval_0);
+                            assert_eq!(direct_2, eval_2);
+                        }
+
+                        // Bind next challenge r
+                        let r_chal = <Fr as JoltField>::Challenge::random(&mut rng);
+                        let r_field: Fr = r_chal.into();
+                        rr_field.push(r_field);
+                        ps.bind(r_chal);
+                    }
+
+                    prefix_registry.update_checkpoints();
+                }
+
+                // Phase 1 (remaining variables)
+                let rem = ell - cutoff;
+                if rem > 0 {
+                    ps.init_P(&mut prefix_registry);
+                    let suffix_len = ps.suffix_len();
+                    debug_assert_eq!(suffix_len, 0);
+                    let u_evals = vec![Fr::ONE; 1usize << suffix_len];
+                    ps.init_Q(&u_evals, &indices, &lookup_bits);
+
+                    for round in (0..rem).rev() {
+                        let max_b = 1usize << round;
+                        for b in 0..max_b {
+                            // t = 0
+                            let mut y_prefix_0 = rr_field.clone();
+                            y_prefix_0.push(Fr::ZERO);
+                            for i in (0..round).rev() {
+                                let bit = if ((b >> i) & 1) == 1 { Fr::ONE } else { Fr::ZERO };
+                                y_prefix_0.push(bit);
+                            }
+                            let x_field: Vec<Fr> = x_bits.iter().map(|c| (*c).into()).collect();
+                            let direct_0 = eq_plus_one_mle_field::<Fr>(&x_field, &y_prefix_0);
+
+                            // t = 1
+                            let mut y_prefix_1 = rr_field.clone();
+                            y_prefix_1.push(Fr::ONE);
+                            for i in (0..round).rev() {
+                                let bit = if ((b >> i) & 1) == 1 { Fr::ONE } else { Fr::ZERO };
+                                y_prefix_1.push(bit);
+                            }
+                            // f(2) = 2*f(1) - f(0)
+                            let direct_2 = {
+                                let f1 = eq_plus_one_mle_field::<Fr>(&x_field, &y_prefix_1);
+                                f1 + f1 - direct_0
+                            };
+
+                            let (eval_0, eval_2) = ps.sumcheck_evals(b);
+                            assert_eq!(direct_0, eval_0);
+                            assert_eq!(direct_2, eval_2);
+                        }
+
+                        // Bind next challenge r
+                        let r_chal = <Fr as JoltField>::Challenge::random(&mut rng);
+                        let r_field: Fr = r_chal.into();
+                        rr_field.push(r_field);
+                        ps.bind(r_chal);
+                    }
+                }
+            }
+        }
     }
 }
