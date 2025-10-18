@@ -25,6 +25,8 @@ use crate::utils::accumulation::Acc7S;
 use crate::utils::math::Math;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
+#[cfg(feature = "allocative")]
+use allocative::FlameGraphBuilder;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::zkvm::dag::state_manager::StateManager;
 use crate::zkvm::r1cs::{
@@ -490,11 +492,7 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
                         let bz1 = compute_bz_r_group1(&row_inputs, &lagrange_evals_r[..]);
                         let p0 = az0 * bz0;
                         let slope = (az1 - az0) * (bz1 - bz0);
-                        let e_in = if num_x_in_vals == 1 {
-                            split_eq_poly.E_in_current()[0]
-                        } else {
-                            split_eq_poly.E_in_current()[x_in_val]
-                        };
+                        let e_in = split_eq_poly.E_in_current()[x_in_val];
                         inner_sum0 += e_in.mul_unreduced::<9>(p0);
                         inner_sum_inf += e_in.mul_unreduced::<9>(slope);
                         az_lo_chunk[x_in_val] = az0;
@@ -538,6 +536,7 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
                 let mut az_bound: Vec<F> = unsafe_allocate_zero_vec(groups);
                 let mut bz_bound: Vec<F> = unsafe_allocate_zero_vec(groups);
                 let num_x_in_vals = ps.split_eq_poly.E_in_current_len();
+                let iter_num_x_in_vars = num_x_in_vals.log_2();
 
                 // Parallelize over x_out by chunking destination slices
                 az_bound
@@ -546,7 +545,7 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
                     .enumerate()
                     .for_each(|(xo, (az_chunk, bz_chunk))| {
                         for xi in 0..num_x_in_vals {
-                            let idx = xo * num_x_in_vals + xi;
+                            let idx = xo << iter_num_x_in_vars | xi;
                             let az0 = cache.az_lo[idx];
                             let az1 = cache.az_hi[idx];
                             let bz0 = cache.bz_lo[idx];

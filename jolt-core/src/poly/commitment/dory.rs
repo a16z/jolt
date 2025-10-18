@@ -782,9 +782,7 @@ where
                 .par_chunks(row_len)
                 .map(|row| {
                     let row_u8: Vec<u8> = row.iter().map(|&b| if b { 1u8 } else { 0u8 }).collect();
-                    JoltGroupWrapper(
-                        VariableBaseMSM::msm_u8(&bases[..row.len()], &row_u8).unwrap(),
-                    )
+                    JoltGroupWrapper(VariableBaseMSM::msm_u8(&bases[..row.len()], &row_u8).unwrap())
                 })
                 .collect(),
             MultilinearPolynomial::U8Scalars(poly) => poly

@@ -133,7 +133,11 @@ impl<F: JoltField> MultilinearPolynomial<F> {
         match self {
             MultilinearPolynomial::LargeScalars(poly) => poly[index],
             MultilinearPolynomial::BoolScalars(poly) => {
-                if poly.coeffs[index] { F::one() } else { F::zero() }
+                if poly.coeffs[index] {
+                    F::one()
+                } else {
+                    F::zero()
+                }
             }
             MultilinearPolynomial::U8Scalars(poly) => F::from_u8(poly.coeffs[index]),
             MultilinearPolynomial::U16Scalars(poly) => F::from_u16(poly.coeffs[index]),
@@ -151,7 +155,13 @@ impl<F: JoltField> MultilinearPolynomial<F> {
     /// Panics if the polynomial is a large-scalar polynomial.
     pub fn get_coeff_i64(&self, index: usize) -> i64 {
         match self {
-            MultilinearPolynomial::BoolScalars(poly) => if poly.coeffs[index] { 1i64 } else { 0i64 },
+            MultilinearPolynomial::BoolScalars(poly) => {
+                if poly.coeffs[index] {
+                    1i64
+                } else {
+                    0i64
+                }
+            }
             MultilinearPolynomial::U8Scalars(poly) => i64::from(poly.coeffs[index]),
             MultilinearPolynomial::U16Scalars(poly) => i64::from(poly.coeffs[index]),
             MultilinearPolynomial::U32Scalars(poly) => i64::from(poly.coeffs[index]),
@@ -167,7 +177,13 @@ impl<F: JoltField> MultilinearPolynomial<F> {
     /// Panics if the polynomial is a large-scalar polynomial.
     pub fn get_coeff_i128(&self, index: usize) -> i128 {
         match self {
-            MultilinearPolynomial::BoolScalars(poly) => if poly.coeffs[index] { 1i128 } else { 0i128 },
+            MultilinearPolynomial::BoolScalars(poly) => {
+                if poly.coeffs[index] {
+                    1i128
+                } else {
+                    0i128
+                }
+            }
             MultilinearPolynomial::U8Scalars(poly) => i128::from(poly.coeffs[index]),
             MultilinearPolynomial::U16Scalars(poly) => i128::from(poly.coeffs[index]),
             MultilinearPolynomial::U32Scalars(poly) => i128::from(poly.coeffs[index]),
@@ -189,7 +205,11 @@ impl<F: JoltField> MultilinearPolynomial<F> {
                 if poly.is_bound() {
                     poly.bound_coeffs[index]
                 } else {
-                    if poly.coeffs[index] { F::one() } else { F::zero() }
+                    if poly.coeffs[index] {
+                        F::one()
+                    } else {
+                        F::zero()
+                    }
                 }
             }
             MultilinearPolynomial::U8Scalars(poly) => {
