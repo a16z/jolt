@@ -8,7 +8,6 @@ use super::inputs::JoltR1CSInputs;
 use crate::field::JoltField;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::utils::small_scalar::SmallScalar;
-use ark_ff::biginteger::I8OrI96;
 
 /// Helper for JoltR1CSInputs to get indices
 impl JoltR1CSInputs {
@@ -22,21 +21,13 @@ impl JoltR1CSInputs {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Term {
     pub input_index: usize,
-    pub coeff: I8OrI96,
+    pub coeff: i128,
 }
 
 impl Term {
     /// Create a new term with given input index and coefficient.
-    pub const fn new(input_index: usize, coeff: I8OrI96) -> Self {
+    pub const fn new(input_index: usize, coeff: i128) -> Self {
         Self { input_index, coeff }
-    }
-
-    /// Create a new term with given input index and i128 coefficient.
-    pub const fn new_i128(input_index: usize, coeff: i128) -> Self {
-        Self {
-            input_index,
-            coeff: I8OrI96::from_i128(coeff),
-        }
     }
 
     /// Format term for pretty printing (test only).
@@ -45,7 +36,7 @@ impl Term {
         use super::inputs::JoltR1CSInputs;
         use std::fmt::Write;
 
-        let coeff_i128 = self.coeff.to_i128();
+        let coeff_i128 = self.coeff;
         if coeff_i128 == 1 {
             write!(f, "{:?}", JoltR1CSInputs::from_index(self.input_index))
         } else if coeff_i128 == -1 {
@@ -65,17 +56,17 @@ impl Term {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LC {
     Zero,
-    Const(I8OrI96),
+    Const(i128),
     Terms1([Term; 1]),
     Terms2([Term; 2]),
     Terms3([Term; 3]),
     Terms4([Term; 4]),
     Terms5([Term; 5]),
-    Terms1Const([Term; 1], I8OrI96),
-    Terms2Const([Term; 2], I8OrI96),
-    Terms3Const([Term; 3], I8OrI96),
-    Terms4Const([Term; 4], I8OrI96),
-    Terms5Const([Term; 5], I8OrI96),
+    Terms1Const([Term; 1], i128),
+    Terms2Const([Term; 2], i128),
+    Terms3Const([Term; 3], i128),
+    Terms4Const([Term; 4], i128),
+    Terms5Const([Term; 5], i128),
 }
 
 impl LC {
@@ -83,29 +74,25 @@ impl LC {
         LC::Zero
     }
 
-    pub const fn constant(value: I8OrI96) -> Self {
+    pub const fn constant(value: i128) -> Self {
         LC::Const(value)
     }
 
-    pub const fn constant_i128(value: i128) -> Self {
-        LC::Const(I8OrI96::from_i128(value))
-    }
-
-    pub const fn single_term(input_index: usize, coeff: I8OrI96) -> Self {
+    pub const fn single_term(input_index: usize, coeff: i128) -> Self {
         LC::Terms1([Term::new(input_index, coeff)])
     }
 
     pub const fn single_term_i128(input_index: usize, coeff: i128) -> Self {
-        LC::Terms1([Term::new_i128(input_index, coeff)])
+        LC::Terms1([Term::new(input_index, coeff)])
     }
 
     /// Create an LC from a single input with unit coefficient.
     pub const fn from_input(inp: JoltR1CSInputs) -> LC {
-        LC::single_term(inp.idx(), I8OrI96::one())
+        LC::single_term(inp.idx(), 1)
     }
 
     /// Create an LC from a single input with explicit coefficient.
-    pub const fn from_input_with_coeff(inp: JoltR1CSInputs, coeff: I8OrI96) -> LC {
+    pub const fn from_input_with_coeff(inp: JoltR1CSInputs, coeff: i128) -> LC {
         LC::single_term(inp.idx(), coeff)
     }
 
@@ -115,13 +102,8 @@ impl LC {
     }
 
     /// Create a constant LC.
-    pub const fn from_const(k: I8OrI96) -> LC {
+    pub const fn from_const(k: i128) -> LC {
         LC::constant(k)
-    }
-
-    /// Create a constant LC from i128.
-    pub const fn from_const_i128(k: i128) -> LC {
-        LC::constant_i128(k)
     }
 
     // =========================
@@ -149,7 +131,7 @@ impl LC {
         }
     }
 
-    pub const fn const_term(&self) -> Option<I8OrI96> {
+    pub const fn const_term(&self) -> Option<i128> {
         match self {
             LC::Zero => None,
             LC::Const(c) => Some(*c),
@@ -167,7 +149,7 @@ impl LC {
         let (mut out_terms, mut out_len, mut out_const) = Self::decompose(self);
         let (rhs_terms, rhs_len, rhs_const) = Self::decompose(other);
 
-        out_const = out_const.add(rhs_const);
+        out_const = out_const + rhs_const;
 
         let mut i = 0usize;
         while i < rhs_len {
@@ -177,8 +159,8 @@ impl LC {
             let mut j = 0usize;
             while j < out_len {
                 if out_terms[j].input_index == term.input_index {
-                    let new_coeff = out_terms[j].coeff.add(term.coeff);
-                    if new_coeff.is_zero() {
+                    let new_coeff = out_terms[j].coeff + term.coeff;
+                    if new_coeff == 0 {
                         if out_len > 0 {
                             out_len -= 1;
                             out_terms[j] = out_terms[out_len];
@@ -207,17 +189,17 @@ impl LC {
 
     /// Capacity-checked subtraction. Returns None if term capacity would be exceeded.
     pub const fn checked_sub(self, other: LC) -> Option<LC> {
-        self.checked_add(other.mul_by_const(I8OrI96::from_i128(-1)))
+        self.checked_add(other.mul_by_const(-1))
     }
 
     /// Capacity-checked add-constant. Returns None if term capacity would be exceeded.
-    pub const fn checked_add_const(self, k: I8OrI96) -> Option<LC> {
+    pub const fn checked_add_const(self, k: i128) -> Option<LC> {
         self.checked_add(LC::Const(k))
     }
 
     /// Capacity-checked add-constant from i128. Returns None if term capacity would be exceeded.
     pub const fn checked_add_const_i128(self, k: i128) -> Option<LC> {
-        self.checked_add(LC::Const(I8OrI96::from_i128(k)))
+        self.checked_add(LC::Const(k))
     }
 
     /// Addition that falls back to zero LC if capacity would be exceeded.
@@ -237,7 +219,7 @@ impl LC {
     }
 
     /// Add constant that falls back to zero LC if capacity would be exceeded.
-    pub const fn add_const_or_zero(self, k: I8OrI96) -> LC {
+    pub const fn add_const_or_zero(self, k: i128) -> LC {
         match self.checked_add_const(k) {
             Some(lc) => lc,
             None => LC::zero(),
@@ -254,17 +236,17 @@ impl LC {
 
     /// Negate this LC (multiply by -1).
     pub const fn neg(self) -> LC {
-        self.mul_by_const(I8OrI96::from_i128(-1))
+        self.mul_by_const(-1)
     }
 
     /// Break a LC into (terms, len, const)
-    const fn decompose(lc: LC) -> ([Term; 5], usize, I8OrI96) {
+    const fn decompose(lc: LC) -> ([Term; 5], usize, i128) {
         let mut terms = [Term {
             input_index: 0,
-            coeff: I8OrI96::zero(),
+            coeff: 0,
         }; 5];
         let mut len = 0usize;
-        let mut c = I8OrI96::zero();
+        let mut c: i128 = 0;
         match lc {
             LC::Zero => {}
             LC::Const(k) => {
@@ -340,8 +322,8 @@ impl LC {
     }
 
     /// Compose a LC from (terms, len, const)
-    const fn compose(terms: &[Term; 5], len: usize, c: I8OrI96) -> LC {
-        match (len, c.is_zero()) {
+    const fn compose(terms: &[Term; 5], len: usize, c: i128) -> LC {
+        match (len, c == 0) {
             (0, true) => LC::Zero,
             (0, false) => LC::Const(c),
             (1, true) => LC::Terms1([terms[0]]),
@@ -359,77 +341,77 @@ impl LC {
     }
 
     /// Multiply this LC by a constant
-    pub const fn mul_by_const(self, multiplier: I8OrI96) -> LC {
+    pub const fn mul_by_const(self, multiplier: i128) -> LC {
         match self {
             LC::Zero => LC::Zero,
-            LC::Const(c) => LC::Const(c.mul(multiplier)),
-            LC::Terms1([t1]) => LC::Terms1([Term::new(t1.input_index, t1.coeff.mul(multiplier))]),
+            LC::Const(c) => LC::Const(c * multiplier),
+            LC::Terms1([t1]) => LC::Terms1([Term::new(t1.input_index, t1.coeff * multiplier)]),
             LC::Terms2([t1, t2]) => LC::Terms2([
-                Term::new(t1.input_index, t1.coeff.mul(multiplier)),
-                Term::new(t2.input_index, t2.coeff.mul(multiplier)),
+                Term::new(t1.input_index, t1.coeff * multiplier),
+                Term::new(t2.input_index, t2.coeff * multiplier),
             ]),
             LC::Terms3([t1, t2, t3]) => LC::Terms3([
-                Term::new(t1.input_index, t1.coeff.mul(multiplier)),
-                Term::new(t2.input_index, t2.coeff.mul(multiplier)),
-                Term::new(t3.input_index, t3.coeff.mul(multiplier)),
+                Term::new(t1.input_index, t1.coeff * multiplier),
+                Term::new(t2.input_index, t2.coeff * multiplier),
+                Term::new(t3.input_index, t3.coeff * multiplier),
             ]),
             LC::Terms4([t1, t2, t3, t4]) => LC::Terms4([
-                Term::new(t1.input_index, t1.coeff.mul(multiplier)),
-                Term::new(t2.input_index, t2.coeff.mul(multiplier)),
-                Term::new(t3.input_index, t3.coeff.mul(multiplier)),
-                Term::new(t4.input_index, t4.coeff.mul(multiplier)),
+                Term::new(t1.input_index, t1.coeff * multiplier),
+                Term::new(t2.input_index, t2.coeff * multiplier),
+                Term::new(t3.input_index, t3.coeff * multiplier),
+                Term::new(t4.input_index, t4.coeff * multiplier),
             ]),
             LC::Terms5([t1, t2, t3, t4, t5]) => LC::Terms5([
-                Term::new(t1.input_index, t1.coeff.mul(multiplier)),
-                Term::new(t2.input_index, t2.coeff.mul(multiplier)),
-                Term::new(t3.input_index, t3.coeff.mul(multiplier)),
-                Term::new(t4.input_index, t4.coeff.mul(multiplier)),
-                Term::new(t5.input_index, t5.coeff.mul(multiplier)),
+                Term::new(t1.input_index, t1.coeff * multiplier),
+                Term::new(t2.input_index, t2.coeff * multiplier),
+                Term::new(t3.input_index, t3.coeff * multiplier),
+                Term::new(t4.input_index, t4.coeff * multiplier),
+                Term::new(t5.input_index, t5.coeff * multiplier),
             ]),
             LC::Terms1Const([t1], c) => LC::Terms1Const(
-                [Term::new(t1.input_index, t1.coeff.mul(multiplier))],
-                c.mul(multiplier),
+                [Term::new(t1.input_index, t1.coeff * multiplier)],
+                c * multiplier,
             ),
             LC::Terms2Const([t1, t2], c) => LC::Terms2Const(
                 [
-                    Term::new(t1.input_index, t1.coeff.mul(multiplier)),
-                    Term::new(t2.input_index, t2.coeff.mul(multiplier)),
+                    Term::new(t1.input_index, t1.coeff * multiplier),
+                    Term::new(t2.input_index, t2.coeff * multiplier),
                 ],
-                c.mul(multiplier),
+                c * multiplier,
             ),
             LC::Terms3Const([t1, t2, t3], c) => LC::Terms3Const(
                 [
-                    Term::new(t1.input_index, t1.coeff.mul(multiplier)),
-                    Term::new(t2.input_index, t2.coeff.mul(multiplier)),
-                    Term::new(t3.input_index, t3.coeff.mul(multiplier)),
+                    Term::new(t1.input_index, t1.coeff * multiplier),
+                    Term::new(t2.input_index, t2.coeff * multiplier),
+                    Term::new(t3.input_index, t3.coeff * multiplier),
                 ],
-                c.mul(multiplier),
+                c * multiplier,
             ),
             LC::Terms4Const([t1, t2, t3, t4], c) => LC::Terms4Const(
                 [
-                    Term::new(t1.input_index, t1.coeff.mul(multiplier)),
-                    Term::new(t2.input_index, t2.coeff.mul(multiplier)),
-                    Term::new(t3.input_index, t3.coeff.mul(multiplier)),
-                    Term::new(t4.input_index, t4.coeff.mul(multiplier)),
+                    Term::new(t1.input_index, t1.coeff * multiplier),
+                    Term::new(t2.input_index, t2.coeff * multiplier),
+                    Term::new(t3.input_index, t3.coeff * multiplier),
+                    Term::new(t4.input_index, t4.coeff * multiplier),
                 ],
-                c.mul(multiplier),
+                c * multiplier,
             ),
             LC::Terms5Const([t1, t2, t3, t4, t5], c) => LC::Terms5Const(
                 [
-                    Term::new(t1.input_index, t1.coeff.mul(multiplier)),
-                    Term::new(t2.input_index, t2.coeff.mul(multiplier)),
-                    Term::new(t3.input_index, t3.coeff.mul(multiplier)),
-                    Term::new(t4.input_index, t4.coeff.mul(multiplier)),
-                    Term::new(t5.input_index, t5.coeff.mul(multiplier)),
+                    Term::new(t1.input_index, t1.coeff * multiplier),
+                    Term::new(t2.input_index, t2.coeff * multiplier),
+                    Term::new(t3.input_index, t3.coeff * multiplier),
+                    Term::new(t4.input_index, t4.coeff * multiplier),
+                    Term::new(t5.input_index, t5.coeff * multiplier),
                 ],
-                c.mul(multiplier),
+                c * multiplier,
             ),
         }
     }
 
     /// Multiply this LC by an i128 constant
     pub const fn mul_by_const_i128(self, multiplier: i128) -> LC {
-        self.mul_by_const(I8OrI96::from_i128(multiplier))
+        self.mul_by_const(multiplier)
     }
 
     /// Evaluate this linear combination at a specific row in the witness polynomials
@@ -538,7 +520,7 @@ impl LC {
         bytes.push(tag);
 
         // Collect variable terms and sort by input index for deterministic ordering
-        let mut terms: Vec<(u32, I8OrI96)> = Vec::new();
+        let mut terms: Vec<(u32, i128)> = Vec::new();
         let term_count = self.num_terms();
         let mut i = 0usize;
         while i < term_count {
@@ -554,14 +536,14 @@ impl LC {
         bytes.push(terms.len() as u8);
         for (idx, coeff) in terms.into_iter() {
             bytes.extend_from_slice(&idx.to_be_bytes());
-            bytes.extend_from_slice(&coeff.to_i128().to_le_bytes());
+            bytes.extend_from_slice(&coeff.to_le_bytes());
         }
 
         // constant term marker + value
         match self.const_term() {
             Some(c) => {
                 bytes.push(1u8);
-                bytes.extend_from_slice(&c.to_i128().to_le_bytes());
+                bytes.extend_from_slice(&c.to_le_bytes());
             }
             None => bytes.push(0u8),
         }
@@ -587,7 +569,7 @@ impl LC {
     /// Iterate variable terms (input_index, coeff) without allocations.
     /// Order is not guaranteed except that it is consistent with this LC's internal storage.
     #[inline(always)]
-    pub fn for_each_term(&self, mut f: impl FnMut(usize, I8OrI96)) {
+    pub fn for_each_term(&self, mut f: impl FnMut(usize, i128)) {
         match self {
             LC::Zero | LC::Const(_) => {}
             LC::Terms1([t1]) | LC::Terms1Const([t1], _) => f(t1.input_index, t1.coeff),
@@ -623,7 +605,7 @@ impl LC {
 
         match self {
             LC::Zero => write!(f, "0"),
-            LC::Const(c) => write!(f, "{}", c.to_i128()),
+            LC::Const(c) => write!(f, "{}", c),
             _ => {
                 let num_terms = self.num_terms();
                 let has_const = self.const_term().is_some();
@@ -638,18 +620,15 @@ impl LC {
                 // Write variable terms
                 for i in 0..num_terms {
                     if let Some(term) = self.term(i) {
-                        if term.coeff.to_i128() == 0 {
+                        if term.coeff == 0 {
                             continue;
                         }
 
                         if written_terms > 0 {
-                            if term.coeff.to_i128() < 0 {
+                            if term.coeff < 0 {
                                 write!(f, " - ")?;
                                 // Create a term with positive coefficient for display
-                                let display_term = Term::new(
-                                    term.input_index,
-                                    I8OrI96::from_i128(-term.coeff.to_i128()),
-                                );
+                                let display_term = Term::new(term.input_index, -term.coeff);
                                 display_term.pretty_fmt(f)?;
                             } else {
                                 write!(f, " + ")?;
@@ -664,7 +643,7 @@ impl LC {
 
                 // Write constant term
                 if let Some(c) = self.const_term() {
-                    let c_i128 = c.to_i128();
+                    let c_i128 = c;
                     if c_i128 != 0 {
                         if written_terms > 0 {
                             if c_i128 < 0 {
@@ -717,7 +696,7 @@ macro_rules! lc {
 		$crate::lc!(@acc $crate::zkvm::r1cs::ops::LC::from_input_with_coeff_i128($e, $k) ; $($rest)* )
 	};
 	( { $k:literal } $( $rest:tt )* ) => {
-		$crate::lc!(@acc $crate::zkvm::r1cs::ops::LC::from_const_i128($k) ; $($rest)* )
+		$crate::lc!(@acc $crate::zkvm::r1cs::ops::LC::from_const($k) ; $($rest)* )
 	};
 	( { $e:expr } $( $rest:tt )* ) => {
 		$crate::lc!(@acc $crate::zkvm::r1cs::ops::LC::from_input($e) ; $($rest)* )

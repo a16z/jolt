@@ -108,7 +108,7 @@ impl<'a, F: JoltField> ReadRafSumcheck<F> {
         let gamma: F = sm.transcript.borrow_mut().challenge_scalar();
         let (r_branch, rv_claim_branch) = sm.get_virtual_polynomial_opening(
             VirtualPolynomial::LookupOutput,
-            SumcheckId::ShouldBranchVirtualization,
+            SumcheckId::ProductVirtualization,
         );
         let (r_spartan, rv_claim_spartan) = sm.get_virtual_polynomial_opening(
             VirtualPolynomial::LookupOutput,
@@ -147,7 +147,7 @@ impl<'a, F: JoltField> ReadRafSumcheck<F> {
         );
         let (_, rv_claim_branch) = sm.get_virtual_polynomial_opening(
             VirtualPolynomial::LookupOutput,
-            SumcheckId::ShouldBranchVirtualization,
+            SumcheckId::ProductVirtualization,
         );
         let (_, left_operand_claim) = sm.get_virtual_polynomial_opening(
             VirtualPolynomial::LeftLookupOperand,
@@ -518,7 +518,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
             .borrow()
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::LookupOutput,
-                SumcheckId::ShouldBranchVirtualization,
+                SumcheckId::ProductVirtualization,
             )
             .0
             .r;
@@ -1259,7 +1259,7 @@ mod tests {
         prover_accumulator.borrow_mut().append_virtual(
             prover_sm.transcript.borrow_mut().deref_mut(),
             VirtualPolynomial::LookupOutput,
-            SumcheckId::ShouldBranchVirtualization,
+            SumcheckId::ProductVirtualization,
             OpeningPoint::new(r_cycle_branch.clone()),
             rv_claim_branch,
         );
@@ -1310,7 +1310,7 @@ mod tests {
         verifier_accumulator.borrow_mut().append_virtual(
             verifier_sm.transcript.borrow_mut().deref_mut(),
             VirtualPolynomial::LookupOutput,
-            SumcheckId::ShouldBranchVirtualization,
+            SumcheckId::ProductVirtualization,
             OpeningPoint::new(r_cycle_branch.clone()),
         );
 

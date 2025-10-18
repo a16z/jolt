@@ -2,6 +2,7 @@ use crate::field::{ChallengeFieldOps, JoltField};
 
 use rayon::prelude::*;
 
+pub mod accumulation;
 pub mod counters;
 pub mod errors;
 pub mod expanding_table;
@@ -12,7 +13,6 @@ pub mod math;
 pub mod monitor;
 pub mod profiling;
 pub mod small_scalar;
-pub mod small_value;
 pub mod thread;
 /// Macros that determine the optimal iterator type based on the feature flags.
 ///

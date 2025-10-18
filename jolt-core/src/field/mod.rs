@@ -1,5 +1,4 @@
 use allocative::Allocative;
-use ark_ff::biginteger::S224;
 use ark_ff::UniformRand;
 use num_traits::{One, Zero};
 use std::fmt::{Debug, Display};
@@ -124,9 +123,9 @@ pub trait JoltField:
         + PartialEq
         + From<u128>
         + From<[u64; N]>
-        + From<S224>
         + Zero
         + FmaddTrunc<Other<2> = Self::Unreduced<2>, Acc<8> = Self::Unreduced<8>>
+        + FmaddTrunc<Other<3> = Self::Unreduced<3>, Acc<7> = Self::Unreduced<7>>
         + FmaddTrunc<Other<3> = Self::Unreduced<3>, Acc<8> = Self::Unreduced<8>>
         + FmaddTrunc<Other<4> = Self::Unreduced<4>, Acc<8> = Self::Unreduced<8>>
         + MulTrunc<Other<4> = Self::Unreduced<4>, Output<9> = Self::Unreduced<9>>
@@ -347,3 +346,40 @@ where
 pub mod ark;
 pub mod challenge;
 pub mod tracked_ark;
+
+// ------------------------------
+// Generic accumulation interfaces (no implementations here)
+// ------------------------------
+// See utils/accumulation.rs for concrete instances over Unreduced<N> words and signed pairs.
+
+/// In-place accumulation: mutate an accumulator A with fused multiply-adds and reduce at the end.
+pub trait AccumulateInPlace<F: JoltField, O>: Sized {
+    /// Perform acc += field * other (in the appropriate unreduced representation for A).
+    fn fmadd(&mut self, field: &F, other: &O);
+
+    /// Reduce the accumulator to a canonical field element.
+    fn reduce(&self) -> F;
+
+    /// Optionally combine another accumulator of the same type into self.
+    fn combine(&mut self, _other: &Self) {
+        // default: no-op; concrete impls may override
+    }
+}
+
+/// Deferred accumulation: produce per-term product words, add them together, and reduce once.
+pub trait DeferredProducts<F: JoltField, O> {
+    /// Unreduced product representation (e.g., Unreduced<N> or a signed pair of them).
+    type Word;
+
+    /// Compute the unreduced product word corresponding to field * other.
+    fn product(field: &F, other: &O) -> Self::Word;
+
+    /// Return the additive identity for Word (used for thread-local accumulation buffers).
+    fn zero() -> Self::Word;
+
+    /// In-place addition on Word (monoid operation for parallel folds).
+    fn add_in_place(sum: &mut Self::Word, add: &Self::Word);
+
+    /// Reduce a (possibly large) sum of Word into a canonical field element.
+    fn reduce(sum: &Self::Word) -> F;
+}

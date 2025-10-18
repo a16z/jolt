@@ -115,16 +115,41 @@ impl JoltDAG {
 
         let (_, trace, _, _) = state_manager.get_prover_data();
         let padded_trace_length = trace.len().next_power_of_two();
-        let mut spartan_dag = SpartanDag::<F>::new::<ProofTranscript>(padded_trace_length);
+        let mut spartan_dag = SpartanDag::<F>::new(padded_trace_length);
         let mut lookups_dag = LookupsDag::default();
         let mut registers_dag = RegistersDag::default();
         let mut ram_dag = RamDag::new_prover(&state_manager);
         let mut bytecode_dag = BytecodeDag::default();
 
-        tracing::info!("Stage 1 proving");
+        tracing::info!("Stage 1 proving (univariate skip first round)");
         spartan_dag
-            .stage1_prove(&mut state_manager)
-            .context("Stage 1")?;
+            .stage1_prover_uni_skip(&mut state_manager)
+            .context("Stage 1 univariate skip first round")?;
+
+        // Batch the stage1 remainder instances (outer-remaining + extras)
+        let mut remainder_instances: Vec<_> = spartan_dag
+            .stage1_prover_instances(&mut state_manager)
+            .into_iter()
+            .collect();
+        let remainder_instances_mut: Vec<&mut dyn SumcheckInstance<F, ProofTranscript>> =
+            remainder_instances
+                .iter_mut()
+                .map(|instance| &mut **instance as &mut dyn SumcheckInstance<F, ProofTranscript>)
+                .collect();
+
+        let transcript = state_manager.get_transcript();
+        let accumulator = state_manager.get_prover_accumulator();
+        tracing::info!("Stage 1 proving (remainder batch)");
+        let (stage1_remainder_proof, _r_stage1) = BatchedSumcheck::prove(
+            remainder_instances_mut,
+            Some(accumulator.clone()),
+            &mut *transcript.borrow_mut(),
+        );
+
+        state_manager.proofs.borrow_mut().insert(
+            ProofKeys::Stage1Sumcheck,
+            ProofData::SumcheckProof(stage1_remainder_proof),
+        );
 
         drop(_guard);
         drop(span);
@@ -134,6 +159,11 @@ impl JoltDAG {
         print_current_memory_usage("Stage 2 baseline");
         let span = tracing::span!(tracing::Level::INFO, "Stage 2 sumchecks");
         let _guard = span.enter();
+
+        // Stage 2a: Prove univariate-skip first round for product virtualization
+        spartan_dag
+            .stage2_prover_uni_skip(&mut state_manager)
+            .context("Stage 2 univariate skip first round")?;
 
         let mut stage2_instances: Vec<_> = std::iter::empty()
             .chain(spartan_dag.stage2_prover_instances(&mut state_manager))
@@ -521,21 +551,61 @@ impl JoltDAG {
                 .append_serializable(trusted_advice_commitment);
         }
 
-        // Stage 1:
+        // Initialize Dags
         let (preprocessing, _, trace_length) = state_manager.get_verifier_data();
         let padded_trace_length = trace_length.next_power_of_two();
-        let mut spartan_dag = SpartanDag::<F>::new::<ProofTranscript>(padded_trace_length);
+        let mut spartan_dag = SpartanDag::<F>::new(padded_trace_length);
         let mut lookups_dag = LookupsDag::default();
         let mut registers_dag = RegistersDag::default();
         let mut ram_dag = RamDag::new_verifier(&state_manager);
         let mut bytecode_dag = BytecodeDag::default();
+
+        // Stage 1:
         spartan_dag
-            .stage1_verify(&mut state_manager)
-            .context("Stage 1")?;
+            .stage1_verifier_uni_skip(&mut state_manager)
+            .context("Stage 1 univariate skip first round")?;
+
+        let stage1_remainder_instances: Vec<_> = spartan_dag
+            .stage1_verifier_instances(&mut state_manager)
+            .into_iter()
+            .collect();
+        let stage1_remainder_instances_ref: Vec<&dyn SumcheckInstance<F, ProofTranscript>> =
+            stage1_remainder_instances
+                .iter()
+                .map(|instance| &**instance as &dyn SumcheckInstance<F, ProofTranscript>)
+                .collect();
+
+        let proofs = state_manager.proofs.borrow();
+        let stage1_remainder_proof = proofs
+            .get(&ProofKeys::Stage1Sumcheck)
+            .expect("Stage 1 remainder proof not found");
+        let stage1_remainder_proof = match stage1_remainder_proof {
+            ProofData::SumcheckProof(proof) => proof,
+            _ => panic!("Invalid proof type for stage 1 remainder"),
+        };
+
+        let transcript = state_manager.get_transcript();
+        let opening_accumulator = state_manager.get_verifier_accumulator();
+        let _r_stage1 = BatchedSumcheck::verify(
+            stage1_remainder_proof,
+            stage1_remainder_instances_ref,
+            Some(opening_accumulator.clone()),
+            &mut *transcript.borrow_mut(),
+        )
+        .context("Stage 1 remainder")?;
+
+        // Release immutable borrow of proofs before taking &mut state_manager below
+        drop(proofs);
 
         // Stage 2:
+        // Stage 2a: Verify univariate-skip first round for product virtualization
+        spartan_dag
+            .stage2_verifier_uni_skip(&mut state_manager)
+            .context("Stage 2 univariate skip first round")?;
+
         let stage2_instances: Vec<_> = std::iter::empty()
             .chain(spartan_dag.stage2_verifier_instances(&mut state_manager))
+            .chain(registers_dag.stage2_verifier_instances(&mut state_manager))
             .chain(ram_dag.stage2_verifier_instances(&mut state_manager))
             .chain(lookups_dag.stage2_verifier_instances(&mut state_manager))
             .chain(bytecode_dag.stage2_verifier_instances(&mut state_manager))
