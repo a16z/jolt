@@ -336,12 +336,6 @@ pub static UNIFORM_R1CS: [NamedConstraint; NUM_R1CS_CONSTRAINTS] = [
     ),
 ];
 
-/// Evaluate Az by name using a fully materialized R1CS cycle inputs
-// Removed: eval_az_by_name
-
-/// Evaluate Bz by name using a fully materialized R1CS cycle inputs
-// Removed: eval_bz_by_name
-
 // =============================================================================
 // Univariate skip constants and grouped views
 // =============================================================================
@@ -429,7 +423,7 @@ const fn complement_first_group_names() -> [ConstraintName; NUM_REMAINING_R1CS_C
     out
 }
 
-/// First group: 10 boolean-guarded eq constraints
+/// First group: 10 boolean-guarded eq constraints, where Bz is around 64 bits
 pub const UNIFORM_R1CS_FIRST_GROUP_NAMES: [ConstraintName; UNIVARIATE_SKIP_DOMAIN_SIZE] = [
     ConstraintName::RamAddrEqZeroIfNotLoadStore,
     ConstraintName::RamReadEqRamWriteIfLoad,
@@ -444,12 +438,15 @@ pub const UNIFORM_R1CS_FIRST_GROUP_NAMES: [ConstraintName; UNIVARIATE_SKIP_DOMAI
 ];
 
 /// Second group: complement of first within UNIFORM_R1CS
+/// Here, Az may be u8, and Bz may be around 128 bits
 pub const UNIFORM_R1CS_SECOND_GROUP_NAMES: [ConstraintName; NUM_REMAINING_R1CS_CONSTRAINTS] =
     complement_first_group_names();
 
+/// First group: 10 boolean-guarded eq constraints, where Bz is around 64 bits
 pub static UNIFORM_R1CS_FIRST_GROUP: [NamedConstraint; UNIVARIATE_SKIP_DOMAIN_SIZE] =
     filter_uniform_r1cs(&UNIFORM_R1CS_FIRST_GROUP_NAMES);
 
+/// Second group: complement of first within UNIFORM_R1CS, where Az may be u8 and Bz may be around 128 bits
 pub static UNIFORM_R1CS_SECOND_GROUP: [NamedConstraint; NUM_REMAINING_R1CS_CONSTRAINTS] =
     filter_uniform_r1cs(&UNIFORM_R1CS_SECOND_GROUP_NAMES);
 
@@ -529,10 +526,12 @@ pub fn eval_az_second_group(row: &R1CSCycleInputs) -> [u8; NUM_REMAINING_R1CS_CO
     while i < UNIFORM_R1CS_SECOND_GROUP.len() {
         let name = UNIFORM_R1CS_SECOND_GROUP[i].name;
         out[i] = match name {
-            N::RamAddrEqRs1PlusImmIfLoadStore =>
-                (flags[CircuitFlags::Load] || flags[CircuitFlags::Store]) as u8,
-            N::RamAddrEqZeroIfNotLoadStore =>
-                (!(flags[CircuitFlags::Load] || flags[CircuitFlags::Store])) as u8,
+            N::RamAddrEqRs1PlusImmIfLoadStore => {
+                (flags[CircuitFlags::Load] || flags[CircuitFlags::Store]) as u8
+            }
+            N::RamAddrEqZeroIfNotLoadStore => {
+                (!(flags[CircuitFlags::Load] || flags[CircuitFlags::Store])) as u8
+            }
             N::RamReadEqRamWriteIfLoad => flags[CircuitFlags::Load] as u8,
             N::RamReadEqRdWriteIfLoad => flags[CircuitFlags::Load] as u8,
             N::Rs2EqRamWriteIfStore => flags[CircuitFlags::Store] as u8,
@@ -615,7 +614,11 @@ pub fn eval_bz_second_group(row: &R1CSCycleInputs) -> [S160; NUM_REMAINING_R1CS_
                 S160::from_diff_u64(row.rd_write_value, row.lookup_output)
             }
             N::RdWriteEqPCPlusConstIfWritePCtoRD => {
-                let const_term = 4 - if row.flags[CircuitFlags::IsCompressed] { 2 } else { 0 };
+                let const_term = 4 - if row.flags[CircuitFlags::IsCompressed] {
+                    2
+                } else {
+                    0
+                };
                 S160::from(
                     row.rd_write_value as i128 - (row.unexpanded_pc as i128 + const_term as i128),
                 )
@@ -627,9 +630,16 @@ pub fn eval_bz_second_group(row: &R1CSCycleInputs) -> [S160; NUM_REMAINING_R1CS_
                 row.next_unexpanded_pc as i128 - (row.unexpanded_pc as i128 + row.imm.to_i128()),
             ),
             N::NextUnexpPCUpdateOtherwise => {
-                let const_term = 4
-                    - if row.flags[CircuitFlags::DoNotUpdateUnexpandedPC] { 4 } else { 0 }
-                    - if row.flags[CircuitFlags::IsCompressed] { 2 } else { 0 };
+                let const_term =
+                    4 - if row.flags[CircuitFlags::DoNotUpdateUnexpandedPC] {
+                        4
+                    } else {
+                        0
+                    } - if row.flags[CircuitFlags::IsCompressed] {
+                        2
+                    } else {
+                        0
+                    };
                 let target = row.unexpanded_pc as i128 + const_term;
                 S160::from(row.next_unexpanded_pc as i128 - target)
             }

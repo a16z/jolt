@@ -585,8 +585,8 @@ pub fn compute_claimed_r1cs_input_evals<F: JoltField>(
                 eq1_val.mul_unreduced::<9>(acc5u_reduce::<F>(&acc_sj_flag));
             out_unr[JoltR1CSInputs::NextIsVirtual.to_index()] =
                 eq1_val.mul_unreduced::<9>(acc5u_reduce::<F>(&acc_next_is_virtual));
-            out_unr[JoltR1CSInputs::NextIsFirstInSequence.to_index()] = eq1_val
-                .mul_unreduced::<9>(acc5u_reduce::<F>(&acc_next_is_first_in_sequence));
+            out_unr[JoltR1CSInputs::NextIsFirstInSequence.to_index()] =
+                eq1_val.mul_unreduced::<9>(acc5u_reduce::<F>(&acc_next_is_first_in_sequence));
             for flag in CircuitFlags::iter() {
                 let idx = JoltR1CSInputs::OpFlags(flag).to_index();
                 let f_idx = flag as usize;
@@ -657,31 +657,6 @@ where
     )
 }
 
-#[tracing::instrument(skip_all)]
-pub fn generate_product_virtualization_witnesses<F>(
-    trace: &[Cycle],
-) -> (
-    MultilinearPolynomial<F>, // LeftInstructionInput(t)
-    MultilinearPolynomial<F>, // RightInstructionInput(t)
-)
-where
-    F: JoltField,
-{
-    let len = trace.len();
-    let mut left_input: Vec<u64> = vec![0; len];
-            let mut right_input: Vec<i128> = vec![0; len];
-
-    left_input
-        .par_iter_mut()
-        .zip(right_input.par_iter_mut())
-        .zip(trace.par_iter())
-        .for_each(|((left, right), cycle)| {
-            (*left, *right) = LookupQuery::<XLEN>::to_instruction_inputs(cycle);
-        });
-
-            (left_input.into(), right_input.into())
-}
-
 // TODO(markosg04): we could unify this with the `generate_witness_batch` to avoid a second iteration over T
 pub fn generate_virtual_product_witnesses<F>(
     product_type: VirtualProductType,
@@ -696,7 +671,20 @@ where
     let len = trace.len();
 
     match product_type {
-        VirtualProductType::Instruction => generate_product_virtualization_witnesses(trace),
+        VirtualProductType::Instruction => {
+            let mut left_input: Vec<u64> = vec![0; len];
+            let mut right_input: Vec<i128> = vec![0; len];
+
+            left_input
+                .par_iter_mut()
+                .zip(right_input.par_iter_mut())
+                .zip(trace.par_iter())
+                .for_each(|((left, right), cycle)| {
+                    (*left, *right) = LookupQuery::<XLEN>::to_instruction_inputs(cycle);
+                });
+
+            (left_input.into(), right_input.into())
+        }
         VirtualProductType::WriteLookupOutputToRD => {
             let mut rd_addrs: Vec<u8> = vec![0; len];
             let mut flags: Vec<u8> = vec![0; len];

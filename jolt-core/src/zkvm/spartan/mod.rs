@@ -74,11 +74,10 @@ where
 
         // Prove uni-skip first round
         let mut uniskip_instance = OuterUniSkipInstance::<F>::new_prover(state_manager, &tau);
-        let (first_round_proof, r0, claim_after_first) =
-            prove_uniskip_round::<F, ProofTranscript, _>(
-                &mut uniskip_instance,
-                &mut *transcript.borrow_mut(),
-            );
+        let (first_round_proof, r0, claim_after_first) = prove_uniskip_round::<F, ProofTranscript, _>(
+            &mut uniskip_instance,
+            &mut *transcript.borrow_mut(),
+        );
 
         // Store proof and handoff state
         state_manager.proofs.borrow_mut().insert(
@@ -86,7 +85,11 @@ where
             ProofData::UniSkipFirstRoundProof(first_round_proof),
         );
 
-        self.uni_skip_state = Some(UniSkipState { claim_after_first, r0, tau });
+        self.uni_skip_state = Some(UniSkipState {
+            claim_after_first,
+            r0,
+            tau,
+        });
 
         Ok(())
     }
@@ -128,7 +131,11 @@ where
             )
             .map_err(|_| anyhow::anyhow!("UniSkip first-round verification failed"))?;
 
-        self.uni_skip_state = Some(UniSkipState { claim_after_first, r0, tau });
+        self.uni_skip_state = Some(UniSkipState {
+            claim_after_first,
+            r0,
+            tau,
+        });
 
         Ok(())
     }
@@ -172,12 +179,10 @@ where
         // Reuse r_cycle from Stage 1 (outer) for τ_low, and sample τ_high
         let r_cycle: Vec<F::Challenge> = {
             let acc = state_manager.get_prover_accumulator();
-            let (outer_opening, _eval) = acc
-                .borrow()
-                .get_virtual_polynomial_opening(
-                    VirtualPolynomial::Product,
-                    SumcheckId::SpartanOuter,
-                );
+            let (outer_opening, _eval) = acc.borrow().get_virtual_polynomial_opening(
+                VirtualPolynomial::Product,
+                SumcheckId::SpartanOuter,
+            );
             outer_opening.r
         };
         debug_assert_eq!(r_cycle.len(), num_cycle_vars);
@@ -198,7 +203,11 @@ where
             ProofData::UniSkipFirstRoundProof(first_round_proof),
         );
 
-        self.uni_skip_state = Some(UniSkipState { claim_after_first, r0, tau });
+        self.uni_skip_state = Some(UniSkipState {
+            claim_after_first,
+            r0,
+            tau,
+        });
         Ok(())
     }
 
@@ -211,12 +220,10 @@ where
         // Reuse r_cycle from Stage 1 (outer) for τ_low, and sample τ_high
         let r_cycle: Vec<F::Challenge> = {
             let acc = state_manager.get_verifier_accumulator();
-            let (outer_opening, _eval) = acc
-                .borrow()
-                .get_virtual_polynomial_opening(
-                    VirtualPolynomial::Product,
-                    SumcheckId::SpartanOuter,
-                );
+            let (outer_opening, _eval) = acc.borrow().get_virtual_polynomial_opening(
+                VirtualPolynomial::Product,
+                SumcheckId::SpartanOuter,
+            );
             outer_opening.r
         };
         debug_assert_eq!(r_cycle.len(), num_cycle_vars);
@@ -252,7 +259,11 @@ where
             )
             .map_err(|_| anyhow::anyhow!("ProductVirtual uni-skip first-round verification failed"))?;
 
-        self.uni_skip_state = Some(UniSkipState { claim_after_first, r0, tau });
+        self.uni_skip_state = Some(UniSkipState {
+            claim_after_first,
+            r0,
+            tau,
+        });
         Ok(())
     }
 
@@ -272,7 +283,10 @@ where
         let product_virtual_remainder =
             ProductVirtualRemainder::new_prover(state_manager, num_cycle_vars, &st);
 
-        vec![Box::new(inner_sumcheck), Box::new(product_virtual_remainder)]
+        vec![
+            Box::new(inner_sumcheck),
+            Box::new(product_virtual_remainder),
+        ]
     }
 
     fn stage2_verifier_instances(
@@ -289,7 +303,10 @@ where
             .expect("stage2_verifier_uni_skip must run before stage2_verifier_instances");
         let product_virtual_remainder = ProductVirtualRemainder::new_verifier(num_cycle_vars, st);
 
-        vec![Box::new(inner_sumcheck), Box::new(product_virtual_remainder)]
+        vec![
+            Box::new(inner_sumcheck),
+            Box::new(product_virtual_remainder),
+        ]
     }
 
     fn stage3_prover_instances(
