@@ -516,10 +516,8 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                                         |running, new| [running[0] + new[0], running[1] + new[1]],
                                     );
 
-                                coeffs[0] +=
-                                    self.gamma[i] * F::from_barrett_reduce(inner_sum[0]);
-                                coeffs[1] +=
-                                    self.gamma[i] * F::from_barrett_reduce(inner_sum[1]);
+                                coeffs[0] += self.gamma[i] * F::from_barrett_reduce(inner_sum[0]);
+                                coeffs[1] += self.gamma[i] * F::from_barrett_reduce(inner_sum[1]);
                             }
 
                             [
