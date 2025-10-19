@@ -72,37 +72,6 @@ impl Constraint {
     pub const fn new(a: LC, b: LC) -> Self {
         Self { a, b }
     }
-
-    /// Evaluate this constraint at a specific row in the witness polynomials
-    /// Returns (a_eval, b_eval) tuple
-    #[inline]
-    pub fn evaluate_row<F: JoltField>(
-        &self,
-        flattened_polynomials: &[MultilinearPolynomial<F>],
-        row: usize,
-    ) -> (F, F) {
-        let a_eval = self.a.evaluate_row(flattened_polynomials, row);
-        let b_eval = self.b.evaluate_row(flattened_polynomials, row);
-        (a_eval, b_eval)
-    }
-}
-
-impl LC {
-    /// Evaluate this LC given the inputs for a R1CS cycle, using field semantics, only for testing
-    #[cfg(test)]
-    pub fn evaluate_row_with<F: JoltField>(&self, inputs: &R1CSCycleInputs) -> F {
-        let mut result = F::zero();
-        self.for_each_term(|input_index, coeff| {
-            result += crate::utils::small_scalar::SmallScalar::field_mul(
-                &coeff,
-                inputs.to_field::<F>(JoltR1CSInputs::from_index(input_index)),
-            );
-        });
-        if let Some(c) = self.const_term() {
-            result += crate::utils::small_scalar::SmallScalar::to_field::<F>(c);
-        }
-        result
-    }
 }
 
 /// Creates: condition * (left - right) == 0

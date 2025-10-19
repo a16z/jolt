@@ -2,8 +2,6 @@ use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::opening_proof::{OpeningId, SumcheckId};
 use crate::utils::accumulation::{Acc5U, Acc6S, Acc6U, Acc7S, Acc7U};
-// #[cfg(test)]
-use crate::utils::small_scalar::SmallScalar;
 use crate::zkvm::instruction::{
     CircuitFlags, Flags, InstructionFlags, LookupQuery, NUM_CIRCUIT_FLAGS,
 };
@@ -229,41 +227,6 @@ impl R1CSCycleInputs {
             write_pc_to_rd_addr,
             next_is_virtual,
             next_is_first_in_sequence,
-        }
-    }
-
-    /// Get field value for a specific input index (only for testing)
-    #[cfg(test)]
-    pub fn to_field<F: JoltField>(&self, input_index: JoltR1CSInputs) -> F {
-        match input_index {
-            JoltR1CSInputs::LeftInstructionInput => self.left_input.to_field(),
-            JoltR1CSInputs::RightInstructionInput => F::from_i128(self.right_input.to_i128()),
-            JoltR1CSInputs::Product => {
-                F::from_i128(self.right_input.to_i128()).mul_u64(self.left_input)
-            }
-            JoltR1CSInputs::WriteLookupOutputToRD => {
-                (self.write_lookup_output_to_rd_addr as u64).to_field()
-            }
-            JoltR1CSInputs::WritePCtoRD => (self.write_pc_to_rd_addr as u64).to_field(),
-            JoltR1CSInputs::ShouldBranch => self.should_branch.to_field(),
-            JoltR1CSInputs::PC => self.pc.to_field(),
-            JoltR1CSInputs::UnexpandedPC => self.unexpanded_pc.to_field(),
-            JoltR1CSInputs::Imm => F::from_i128(self.imm.to_i128()),
-            JoltR1CSInputs::RamAddress => self.ram_addr.to_field(),
-            JoltR1CSInputs::Rs1Value => self.rs1_read_value.to_field(),
-            JoltR1CSInputs::Rs2Value => self.rs2_read_value.to_field(),
-            JoltR1CSInputs::RdWriteValue => self.rd_write_value.to_field(),
-            JoltR1CSInputs::RamReadValue => self.ram_read_value.to_field(),
-            JoltR1CSInputs::RamWriteValue => self.ram_write_value.to_field(),
-            JoltR1CSInputs::LeftLookupOperand => self.left_lookup.to_field(),
-            JoltR1CSInputs::RightLookupOperand => self.right_lookup.to_field(),
-            JoltR1CSInputs::NextUnexpandedPC => self.next_unexpanded_pc.to_field(),
-            JoltR1CSInputs::NextPC => self.next_pc.to_field(),
-            JoltR1CSInputs::LookupOutput => self.lookup_output.to_field(),
-            JoltR1CSInputs::ShouldJump => F::from_bool(self.should_jump),
-            JoltR1CSInputs::NextIsVirtual => F::from_bool(self.next_is_virtual),
-            JoltR1CSInputs::NextIsFirstInSequence => F::from_bool(self.next_is_first_in_sequence),
-            JoltR1CSInputs::OpFlags(flag) => F::from_bool(self.flags[flag]),
         }
     }
 }
