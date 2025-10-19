@@ -641,7 +641,7 @@ mod tests {
         let nodes = grid_nodes::<N>();
         let two_inv = F::from_u64(2).inverse().unwrap();
         for k in 0..7u64 {
-            let r = F::from_u64(k as u64) - F::from_u64(1); // covers negatives around nodes
+            let r = F::from_u64(k) - F::from_u64(1); // covers negatives around nodes
             let [l0, l1, l2] = LagrangePolynomial::<F>::evals::<F, N>(&r);
             let l0_cf = (r * (r - F::from_u64(1))) * two_inv;
             let l1_cf = F::from_u64(1) - r * r;
@@ -1006,7 +1006,7 @@ mod tests {
                     }
                 } else {
                     let sign = if (k & 1) == 1 { -1i128 } else { 1i128 };
-                    let tt = (-t) as i64 + (k as i64) - 1;
+                    let tt = (-t) + (k as i64) - 1;
                     let mut num: i128 = 1;
                     let mut den: i128 = 1;
                     for j in 0..k {
@@ -1030,7 +1030,7 @@ mod tests {
             let mut pow = 1i128; // t^0
             for k in 0..OUT_LEN {
                 naive[k] += pow;
-                pow = pow * t;
+                pow *= t;
             }
         }
         assert_eq!(sums, naive);
