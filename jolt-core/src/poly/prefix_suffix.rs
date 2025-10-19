@@ -200,6 +200,18 @@ pub trait PrefixSuffixPolynomial<F: JoltField, const ORDER: usize> {
 // Dynamic, field-valued variant (no 0/1 restriction)
 // =========================
 
+/// Registry for the dynamic, field-valued prefix–suffix decomposition.
+///
+/// Stores per-term prefix polynomials for the current phase (P) and the
+/// per-term checkpoints (final prefix claims) to carry multiplicative
+/// contributions across phases.
+///
+/// Notes:
+/// - Two-phase only: used with `PrefixSuffixDecompositionFieldDyn`, which
+///   splits variables into exactly two chunks (phase 0 and phase 1).
+/// - No deduplication: identical per-term prefixes/suffixes (e.g., in EqPlusOne
+///   for terms sharing the same side of the cutoff) are not deduplicated; each
+///   term has its own entry.
 #[derive(Default, Allocative)]
 pub struct DynamicPrefixRegistry<F: JoltField> {
     pub checkpoints: Vec<Option<F>>, // per-term checkpoints
@@ -207,6 +219,7 @@ pub struct DynamicPrefixRegistry<F: JoltField> {
 }
 
 impl<F: JoltField> DynamicPrefixRegistry<F> {
+    /// Creates a new registry for `order` terms (one entry per term).
     pub fn new(order: usize) -> Self {
         Self {
             checkpoints: vec![None; order],
@@ -214,6 +227,8 @@ impl<F: JoltField> DynamicPrefixRegistry<F> {
         }
     }
 
+    /// Stores each term's final prefix claim into `checkpoints` and clears
+    /// the cached prefix polynomials for the next phase.
     pub fn update_checkpoints(&mut self) {
         for (chkpt, poly) in self.checkpoints.iter_mut().zip(self.polys.iter_mut()) {
             if let Some(p) = poly.as_ref() {
@@ -224,9 +239,20 @@ impl<F: JoltField> DynamicPrefixRegistry<F> {
     }
 }
 
+/// Dynamic, field-valued prefix–suffix interface.
+///
+/// Implementors provide per-term prefix polynomials for the current phase and a
+/// method to evaluate the per-term suffix factor on given suffix bits.
+///
+/// Conventions: two-phase only (phase ∈ {0,1}), with HighToLow (MSB→LSB) binding.
+/// No term deduplication is performed by the framework.
 pub trait PrefixSuffixPolynomialFieldDyn<F: JoltField>: Send + Sync {
+    /// Number of terms k in the decomposition.
     fn order(&self) -> usize;
-    /// Build current-phase prefixes (length equals current chunk length)
+    /// Builds the per-term prefix polynomials for the current phase.
+    /// - `chunk_len`: number of variables in this phase
+    /// - `phase`: 0 for the first chunk, 1 for the second
+    /// - `prefix_registry`: contains per-term checkpoints to scale prefixes
     fn prefixes(
         &self,
         chunk_len: usize,
@@ -234,10 +260,20 @@ pub trait PrefixSuffixPolynomialFieldDyn<F: JoltField>: Send + Sync {
         prefix_registry: &mut DynamicPrefixRegistry<F>,
     ) -> Vec<Option<Arc<RwLock<CachedPolynomial<F>>>>>;
 
-    /// Evaluate suffix for term k on the provided suffix bits (field-valued)
+    /// Evaluates the suffix factor for term `k` on given suffix bits.
     fn suffix_eval(&self, k: usize, suffix: LookupBits) -> F;
 }
 
+/// Two-phase dynamic prefix–suffix decomposition driver.
+///
+/// Orchestrates sumcheck over a function of the form
+///   g(x) = ∑_i P_i(x_prefix) · Q_i(x_prefix),
+/// where Q_i pre-aggregates the witness against the suffix factors.
+///
+/// Notes:
+/// - Two-phase only: variables are split into exactly two chunks
+///   (`first_chunk_len`, `second_chunk_len`).
+/// - No deduplication of identical per-term prefixes/suffixes.
 #[derive(Allocative)]
 pub struct PrefixSuffixDecompositionFieldDyn<F: JoltField> {
     #[allocative(skip)]
@@ -254,6 +290,10 @@ pub struct PrefixSuffixDecompositionFieldDyn<F: JoltField> {
 }
 
 impl<F: JoltField> PrefixSuffixDecompositionFieldDyn<F> {
+    /// Constructs a two-phase dynamic prefix–suffix decomposition.
+    /// - `poly`: per-term prefix/suffix provider
+    /// - `cutoff`: number of variables in phase 0 (MSB side)
+    /// - `total_len`: total number of variables
     pub fn new(
         poly: Box<dyn PrefixSuffixPolynomialFieldDyn<F> + Send + Sync>,
         cutoff: usize,
@@ -284,6 +324,7 @@ impl<F: JoltField> PrefixSuffixDecompositionFieldDyn<F> {
         }
     }
 
+    /// Returns the number of variables remaining after the current phase's prefix.
     #[inline(always)]
     pub fn suffix_len(&self) -> usize {
         // Variables after the current chunk start
@@ -295,12 +336,19 @@ impl<F: JoltField> PrefixSuffixDecompositionFieldDyn<F> {
         self.total_len - prefix_len
     }
 
+    /// Builds per-term prefix polynomials P for the current phase.
+    /// If checkpoints from a previous phase exist, prefixes are scaled accordingly.
     pub fn init_P(&mut self, prefix_registry: &mut DynamicPrefixRegistry<F>) {
         self.P = self
             .poly
             .prefixes(self.current_chunk_len(), self.phase, prefix_registry);
     }
 
+    /// Builds per-term Q polynomials by streaming over the full domain once and
+    /// accumulating u(prefix||suffix)·suffix_i(suffix) into Q_i[prefix].
+    ///
+    /// `u_evals` supplies u over the same `indices` domain; `lookup_bits` carries
+    /// the bit decomposition to split into (prefix, suffix).
     #[tracing::instrument(skip_all, name = "PrefixSuffixFieldDyn::init_Q")]
     pub fn init_Q(&mut self, u_evals: &[F], indices: &[usize], lookup_bits: &[LookupBits]) {
         let poly_len = self.current_chunk_len().pow2();
@@ -362,6 +410,7 @@ impl<F: JoltField> PrefixSuffixDecompositionFieldDyn<F> {
             .collect();
     }
 
+    /// Fused initialization of Q for two decompositions in a single pass over `indices`.
     #[tracing::instrument(skip_all)]
     pub fn init_Q_dual(
         left: &mut PrefixSuffixDecompositionFieldDyn<F>,
@@ -448,6 +497,7 @@ impl<F: JoltField> PrefixSuffixDecompositionFieldDyn<F> {
                 },
             );
 
+        // Reduce to field for left
         left.Q = new_left
             .into_iter()
             .map(|coeffs| {
@@ -458,6 +508,7 @@ impl<F: JoltField> PrefixSuffixDecompositionFieldDyn<F> {
                 DensePolynomial::new(reduced)
             })
             .collect();
+        // Reduce to field for right
         right.Q = new_right
             .into_iter()
             .map(|coeffs| {
@@ -470,7 +521,10 @@ impl<F: JoltField> PrefixSuffixDecompositionFieldDyn<F> {
             .collect();
     }
 
-    /// Returns evaluation at 0 and 2 at index
+    /// Returns the prover's univariate evaluations at t=0 and t=2 for `index`.
+    ///
+    /// For degree-2 products g(t) = P(t)·Q(t) with linear P, Q, we return
+    /// g(0) = P(0)·Q(0) and g(2) = P(2)·(2·Q(1) − Q(0)).
     pub fn sumcheck_evals(&self, index: usize) -> (F, F) {
         let len = self.Q.first().map(|q| q.len()).unwrap_or(0);
         let (eval_0, eval_2_left, eval_2_right) = self
@@ -492,12 +546,12 @@ impl<F: JoltField> PrefixSuffixDecompositionFieldDyn<F> {
                 };
                 let q_left = q[index];
                 let q_right = q[index + len / 2];
-                // We need g(0) = P(0)*S0, g(1) = P(1)*S1, so g(2) = 2*g(1) - g(0)
-                // Accumulate three unreduced sums: eval_0_sum = P(0)*S0, left_sum = P(0)*S0, right_sum = P(1)*S1
+                // We need g(0) = P(0)*Q(0). For t=2, use g(2) = P(2) * (2*Q(1) - Q(0))
+                // Accumulate: eval_0_sum = P(0)*Q(0), left_2_sum = P(2)*Q(0), right_2_sum = P(2)*Q(1)
                 (
-                    p_evals.0.mul_unreduced::<9>(q_left),  // eval_0_sum = P(0) * S0
-                    p_evals.0.mul_unreduced::<9>(q_left),  // left_sum = P(0) * S0
-                    p_evals.1.mul_unreduced::<9>(q_right), // right_sum = P(1) * S1
+                    p_evals.0.mul_unreduced::<9>(q_left),  // eval_0_sum = P(0) * Q(0)
+                    p_evals.1.mul_unreduced::<9>(q_left),  // left_2_sum = P(2) * Q(0)
+                    p_evals.1.mul_unreduced::<9>(q_right), // right_2_sum = P(2) * Q(1)
                 )
             })
             .reduce(
@@ -513,11 +567,12 @@ impl<F: JoltField> PrefixSuffixDecompositionFieldDyn<F> {
         let eval_0 = F::from_montgomery_reduce(eval_0);
         let eval_2_right = F::from_montgomery_reduce(eval_2_right);
         let eval_2_left = F::from_montgomery_reduce(eval_2_left);
-        // For a function linear in t: f(2) = 2*f(1) - f(0)
-        // f(1) uses right half (t=1), f(0) uses left half (t=0)
+        // g(2) = P(2) * (2*Q(1) - Q(0))
         (eval_0, eval_2_right + eval_2_right - eval_2_left)
     }
 
+    /// Binds the current variable (MSB-first) with challenge `r`, reducing the
+    /// dimension of both P and Q. After `first_chunk_len` binds, advances to phase 1.
     pub fn bind(&mut self, r: F::Challenge) {
         self.P.par_iter().for_each(|p| {
             if let Some(p) = p {
@@ -538,6 +593,8 @@ impl<F: JoltField> PrefixSuffixDecompositionFieldDyn<F> {
         }
     }
 
+    /// Sums per-term final prefix claims; used for carrying state or verification
+    /// outside this driver. Does not include Q.
     pub fn final_sumcheck_claim(&self) -> F {
         self.P
             .par_iter()
@@ -552,6 +609,7 @@ impl<F: JoltField> PrefixSuffixDecompositionFieldDyn<F> {
             .sum()
     }
 
+    /// Current length of Q arrays (useful for selecting indices per round).
     pub fn Q_len(&self) -> usize {
         self.Q.first().map(|q| q.len()).unwrap_or(0)
     }

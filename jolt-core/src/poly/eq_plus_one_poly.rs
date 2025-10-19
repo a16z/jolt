@@ -9,6 +9,10 @@ use crate::poly::prefix_suffix::{
 };
 use crate::utils::{lookup_bits::LookupBits, math::Math, thread::unsafe_allocate_zero_vec};
 
+
+/// EqPlusOnePolynomial is a polynomial that evaluates to 1 if y = x + 1 for x in the range [0... 2^l-2].
+/// That is, it ignores the case where x is all 1s, outputting 0.
+/// Assumes x and y are provided big-endian.
 pub struct EqPlusOnePolynomial<F: JoltField> {
     x: Vec<F::Challenge>,
 }
@@ -18,9 +22,22 @@ impl<F: JoltField> EqPlusOnePolynomial<F> {
         EqPlusOnePolynomial { x }
     }
 
-    /* This MLE is 1 if y = x + 1 for x in the range [0... 2^l-2].
-    That is, it ignores the case where x is all 1s, outputting 0.
-    Assumes x and y are provided big-endian. */
+    /// The MLE of EqPlusOne is:
+    /// 
+    /// ∑_{m=0}^{l-1} [ (∏_{j=0}^{m-1} eq(x[j], y[j])) * flip(x[m], y[m]) * (∏_{j=m+1}^{l-1} carry(x[j], y[j])) ]
+    /// where eq(x, y) = x * y + (1 - x) * (1 - y),
+    /// flip(x, y) = (1 - x) * y,
+    /// and carry(x, y) = x * (1 - y).
+    /// 
+    /// The intuition is that to have y = x + 1 (both in big-endian form):
+    /// - the runs of 1s at the least-significant end of x are changed to 0s in y,
+    /// - the following 0 bit of x is flipped to 1 in y, and
+    /// - the remaining higher bits are the same in x and y.
+    /// 
+    /// The flip index k is the index of the bit that is flipped from 0 in x to 1 in y.
+    /// This also explains that when x is all 1s, there is no flip index, and the MLE is 0 for all y.
+    /// 
+    /// Example: x = 10011 => y = 10100 has flip index 2.
     pub fn evaluate(&self, y: &[F::Challenge]) -> F {
         let l = self.x.len();
         let x = &self.x;
@@ -49,6 +66,7 @@ impl<F: JoltField> EqPlusOnePolynomial<F> {
             .sum()
     }
 
+    /// Computes the table of coefficients: `{eq_plus_one(r, x) for all x in {0, 1}^l}`
     #[tracing::instrument(skip_all, "EqPlusOnePolynomial::evals")]
     pub fn evals(r: &[F::Challenge], scaling_factor: Option<F>) -> (Vec<F>, Vec<F>) {
         let ell = r.len();
@@ -95,20 +113,35 @@ impl<F: JoltField> EqPlusOnePolynomial<F> {
     }
 }
 
-/// Field-valued prefix–suffix construction for EqPlusOne(y; x)
-/// x is the challenge (sorted big-endian): x[0] is MSB, x[ell-1] is LSB
+/// Prefix–suffix decomposition for EqPlusOne(r, y)
+/// r is the challenge, and y is the variable to be decomposed (big-endian): y[0] is MSB, y[ell-1] is LSB
+/// 
+/// Recall that such a decomposition (for cutoff c) is a k-tuple of multilinear polynomials
+/// (prefix_i, suffix_i) for i=0..k, such that:
+/// EqPlusOne(r, (y_0, ..., y_{n-1})) = ∑_{i=0}^{k-1} prefix_i(y_0, ..., y_{c-1}) * suffix_i(y_c, ..., y_{n-1})
+/// 
+/// In this case, we can pick k = n and cut the term-wise product at the cutoff c. For each flip index i,
+/// the full term is (∏_{j<i} eq(r_j, y_j)) * flip(r_i, y_i) * (∏_{j>i} carry(r_j, y_j)). We split this as:
+/// 
+/// prefix_i(y_0, ..., y_{c-1}) = (∏_{j<i,\ j<c} eq(r_j, y_j)) * (flip(r_i, y_i) if i<c else 1) * (∏_{j>i,\ j<c} carry(r_j, y_j)),
+/// 
+/// and
+/// 
+/// suffix_i(y_c, ..., y_{n-1}) = (∏_{j<i,\ j≥c} eq(r_j, y_j)) * (flip(r_i, y_i) if i≥c else 1) * (∏_{j>i,\ j≥c} carry(r_j, y_j)).
+/// 
+/// Note that the prefixes from i=c..n are the same, and the suffixes from i=0..c are the same.
 #[derive(Allocative)]
 pub struct EqPlusOnePS<F: JoltField> {
-    x: Vec<F::Challenge>,
+    r: Vec<F::Challenge>,
     ell: usize,
     cutoff: usize,
 }
 
 impl<F: JoltField> EqPlusOnePS<F> {
-    pub fn new(x: Vec<F::Challenge>, ell: usize, cutoff: usize) -> Self {
-        debug_assert_eq!(x.len(), ell);
+    pub fn new(r: Vec<F::Challenge>, ell: usize, cutoff: usize) -> Self {
+        debug_assert_eq!(r.len(), ell);
         Self {
-            x,
+            r,
             ell,
             cutoff,
         }
@@ -165,7 +198,7 @@ impl<F: JoltField> PrefixSuffixPolynomialFieldDyn<F> for EqPlusOnePS<F> {
                             let m = start + off; // absolute MSB index
                             let y_bit = Self::y_prefix_bit(idx, off, chunk_len);
                             let y = if y_bit { F::one() } else { F::zero() };
-                            let x = self.x[m]; // MSB index m
+                            let x = self.r[m]; // MSB index m
                             let term = if m < m_flip {
                                 // eq: x*y + (1-x)*(1-y)
                                 x * y + (F::one() - x) * (F::one() - y)
@@ -222,7 +255,7 @@ impl<F: JoltField> PrefixSuffixPolynomialFieldDyn<F> for EqPlusOnePS<F> {
             let m = self.cutoff + j_msb;
             let bit = ((bits_val >> (m_len - 1 - j_msb)) & 1) == 1;
             let y = if bit { F::one() } else { F::zero() };
-            let x = self.x[m];
+            let x = self.r[m];
             let term = if m < m_flip {
                 x * y + (F::one() - x) * (F::one() - y)
             } else if m == m_flip {
