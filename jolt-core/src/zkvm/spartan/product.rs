@@ -970,6 +970,7 @@ pub struct ProductVirtualInner<F: JoltField> {
 }
 
 impl<F: JoltField> ProductVirtualInner<F> {
+    #[tracing::instrument(skip_all, name = "ProductVirtualInner::new_prover")]
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
