@@ -351,6 +351,7 @@ impl<F: JoltField, T: Transcript> UniSkipFirstRoundInstance<F, T>
         acc
     }
 
+    #[tracing::instrument(skip_all, name = "ProductVirtualUniSkipInstance::compute_poly")]
     fn compute_poly(&mut self) -> UniPoly<F> {
         // Load base evals from shared instance and extended from prover state
         let base = self.base_evals;
@@ -782,6 +783,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ProductVirtualRemai
         self.input_claim
     }
 
+    #[tracing::instrument(skip_all, name = "ProductVirtualRemainder::compute_prover_message")]
     fn compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F> {
         let (t0, t_inf) = if round == 0 {
             let ps = self.prover_state.as_ref().expect("prover state missing");
@@ -802,6 +804,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ProductVirtualRemai
         vec![evals[0], evals[1], evals[2]]
     }
 
+    #[tracing::instrument(skip_all, name = "ProductVirtualRemainder::bind")]
     fn bind(&mut self, r_j: F::Challenge, round: usize) {
         if round == 0 {
             self.bind_streaming_round(r_j);

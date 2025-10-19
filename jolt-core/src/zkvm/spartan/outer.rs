@@ -318,6 +318,7 @@ impl<F: JoltField, T: Transcript> UniSkipFirstRoundInstance<F, T> for OuterUniSk
         F::zero()
     }
 
+    #[tracing::instrument(skip_all, name = "OuterUniSkipInstance::compute_poly")]
     fn compute_poly(&mut self) -> UniPoly<F> {
         // Load extended univariate-skip evaluations from prover state
         let extended = self.prover_state.as_ref().unwrap().extended_evals;
@@ -712,6 +713,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for OuterRemainingSumch
         self.input_claim
     }
 
+    #[tracing::instrument(skip_all, name = "OuterRemainingSumcheck::compute_prover_message")]
     fn compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F> {
         let (t0, t_inf) = if round == 0 {
             let ps = self.prover_state.as_ref().expect("prover state missing");
@@ -732,6 +734,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for OuterRemainingSumch
         vec![evals[0], evals[1], evals[2]]
     }
 
+    #[tracing::instrument(skip_all, name = "OuterRemainingSumcheck::bind")]
     fn bind(&mut self, r_j: F::Challenge, round: usize) {
         if round == 0 {
             self.bind_streaming_round(r_j);
