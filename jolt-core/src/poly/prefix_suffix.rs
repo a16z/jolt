@@ -492,10 +492,12 @@ impl<F: JoltField> PrefixSuffixDecompositionFieldDyn<F> {
                 };
                 let q_left = q[index];
                 let q_right = q[index + len / 2];
+                // We need g(0) = P(0)*S0, g(1) = P(1)*S1, so g(2) = 2*g(1) - g(0)
+                // Accumulate three unreduced sums: eval_0_sum = P(0)*S0, left_sum = P(0)*S0, right_sum = P(1)*S1
                 (
-                    p_evals.0.mul_unreduced::<9>(q_left),  // prefix(0) * suffix(0)
-                    p_evals.1.mul_unreduced::<9>(q_left),  // prefix(2) * suffix(0)
-                    p_evals.1.mul_unreduced::<9>(q_right), // prefix(2) * suffix(1)
+                    p_evals.0.mul_unreduced::<9>(q_left),  // eval_0_sum = P(0) * S0
+                    p_evals.0.mul_unreduced::<9>(q_left),  // left_sum = P(0) * S0
+                    p_evals.1.mul_unreduced::<9>(q_right), // right_sum = P(1) * S1
                 )
             })
             .reduce(
@@ -511,6 +513,8 @@ impl<F: JoltField> PrefixSuffixDecompositionFieldDyn<F> {
         let eval_0 = F::from_montgomery_reduce(eval_0);
         let eval_2_right = F::from_montgomery_reduce(eval_2_right);
         let eval_2_left = F::from_montgomery_reduce(eval_2_left);
+        // For a function linear in t: f(2) = 2*f(1) - f(0)
+        // f(1) uses right half (t=1), f(0) uses left half (t=0)
         (eval_0, eval_2_right + eval_2_right - eval_2_left)
     }
 

@@ -685,7 +685,7 @@ where
                         trace[i + 1].instruction().instruction_flags()[InstructionFlags::IsNoop]
                             as u8
                     } else {
-                        1 // Last cycle, treat as if next is NoOp
+                        1 // Last cycle, treat as if next is NoOp (for shift sumcheck)
                     };
                     *not_noop = 1 - is_next_noop;
                 });

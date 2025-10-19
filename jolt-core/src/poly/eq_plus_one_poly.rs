@@ -7,28 +7,110 @@ use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::prefix_suffix::{
     CachedPolynomial, DynamicPrefixRegistry, PrefixSuffixPolynomialFieldDyn,
 };
-use crate::utils::lookup_bits::LookupBits;
+use crate::utils::{lookup_bits::LookupBits, math::Math, thread::unsafe_allocate_zero_vec};
+
+pub struct EqPlusOnePolynomial<F: JoltField> {
+    x: Vec<F::Challenge>,
+}
+
+impl<F: JoltField> EqPlusOnePolynomial<F> {
+    pub fn new(x: Vec<F::Challenge>) -> Self {
+        EqPlusOnePolynomial { x }
+    }
+
+    /* This MLE is 1 if y = x + 1 for x in the range [0... 2^l-2].
+    That is, it ignores the case where x is all 1s, outputting 0.
+    Assumes x and y are provided big-endian. */
+    pub fn evaluate(&self, y: &[F::Challenge]) -> F {
+        let l = self.x.len();
+        let x = &self.x;
+        assert!(y.len() == l);
+
+        /* If y+1 = x, then the two bit vectors are of the following form.
+            Let k be the longest suffix of 1s in x.
+            In y, those k bits are 0.
+            Then, the next bit in x is 0 and the next bit in y is 1.
+            The remaining higher bits are the same in x and y.
+        */
+        (0..l)
+            .into_par_iter()
+            .map(|k| {
+                let lower_bits_product = (0..k)
+                    .map(|i| x[l - 1 - i] * (F::one() - y[l - 1 - i]))
+                    .product::<F>();
+                let kth_bit_product = (F::one() - x[l - 1 - k]) * y[l - 1 - k];
+                let higher_bits_product = ((k + 1)..l)
+                    .map(|i| {
+                        x[l - 1 - i] * y[l - 1 - i] + (F::one() - x[l - 1 - i]) * (F::one() - y[l - 1 - i])
+                    })
+                    .product::<F>();
+                lower_bits_product * kth_bit_product * higher_bits_product
+            })
+            .sum()
+    }
+
+    #[tracing::instrument(skip_all, "EqPlusOnePolynomial::evals")]
+    pub fn evals(r: &[F::Challenge], scaling_factor: Option<F>) -> (Vec<F>, Vec<F>) {
+        let ell = r.len();
+        let mut eq_evals: Vec<F> = unsafe_allocate_zero_vec(ell.pow2());
+        eq_evals[0] = scaling_factor.unwrap_or(F::one());
+        let mut eq_plus_one_evals: Vec<F> = unsafe_allocate_zero_vec(ell.pow2());
+
+        // i indicates the LENGTH of the prefix of r for which the eq_table is calculated
+        let eq_evals_helper = |eq_evals: &mut Vec<F>, r: &[F::Challenge], i: usize| {
+            debug_assert!(i != 0);
+            let step = 1 << (ell - i); // step = (full / size)/2
+
+            let mut selected: Vec<_> = eq_evals.par_iter_mut().step_by(step).collect();
+
+            selected.par_chunks_mut(2).for_each(|chunk| {
+                *chunk[1] = *chunk[0] * r[i - 1];
+                *chunk[0] -= *chunk[1];
+            });
+        };
+
+        for i in 0..ell {
+            let step = 1 << (ell - i);
+            let half_step = step / 2;
+
+            let mut r_lower_product = F::one();
+            for &x in r.iter().skip(i + 1) {
+                r_lower_product = r_lower_product * x; // To get the benefits of multiplication
+            }
+            r_lower_product *= F::one() - r[i];
+
+            eq_plus_one_evals
+                .par_iter_mut()
+                .enumerate()
+                .skip(half_step)
+                .step_by(step)
+                .for_each(|(index, v)| {
+                    *v = eq_evals[index - half_step] * r_lower_product;
+                });
+
+            eq_evals_helper(&mut eq_evals, r, i + 1);
+        }
+
+        (eq_evals, eq_plus_one_evals)
+    }
+}
 
 /// Field-valued prefix–suffix construction for EqPlusOne(y; x)
-/// x_bits are big-endian challenges: x_bits[0] is MSB, x_bits[ell-1] is LSB
+/// x is the challenge (sorted big-endian): x[0] is MSB, x[ell-1] is LSB
 #[derive(Allocative)]
 pub struct EqPlusOnePS<F: JoltField> {
-    x_bits: Vec<F::Challenge>,
+    x: Vec<F::Challenge>,
     ell: usize,
     cutoff: usize,
-    // Cached field versions of x for convenience
-    x_field: Vec<F>,
 }
 
 impl<F: JoltField> EqPlusOnePS<F> {
-    pub fn new(x_bits: Vec<F::Challenge>, ell: usize, cutoff: usize) -> Self {
-        debug_assert_eq!(x_bits.len(), ell);
-        let x_field = x_bits.iter().map(|c| (*c).into()).collect();
+    pub fn new(x: Vec<F::Challenge>, ell: usize, cutoff: usize) -> Self {
+        debug_assert_eq!(x.len(), ell);
         Self {
-            x_bits,
+            x,
             ell,
             cutoff,
-            x_field,
         }
     }
 
@@ -63,7 +145,7 @@ impl<F: JoltField> PrefixSuffixPolynomialFieldDyn<F> for EqPlusOnePS<F> {
         &self,
         chunk_len: usize,
         phase: usize,
-        _prefix_registry: &mut DynamicPrefixRegistry<F>,
+        prefix_registry: &mut DynamicPrefixRegistry<F>,
     ) -> Vec<Option<Arc<RwLock<CachedPolynomial<F>>>>> {
         let order = self.order();
         let poly_len = 1usize << chunk_len;
@@ -83,7 +165,7 @@ impl<F: JoltField> PrefixSuffixPolynomialFieldDyn<F> for EqPlusOnePS<F> {
                             let m = start + off; // absolute MSB index
                             let y_bit = Self::ypref_bit(idx, off, chunk_len);
                             let y = if y_bit { F::one() } else { F::zero() };
-                            let x = self.x_field[m]; // MSB index m
+                            let x = self.x[m]; // MSB index m
                             let term = if m < m_flip {
                                 // eq: x*y + (1-x)*(1-y)
                                 x * y + (F::one() - x) * (F::one() - y)
@@ -103,7 +185,18 @@ impl<F: JoltField> PrefixSuffixPolynomialFieldDyn<F> for EqPlusOnePS<F> {
                     })
                     .collect();
 
-                let inner: MultilinearPolynomial<F> = MultilinearPolynomial::from(evals);
+                // Scale by prior-phase checkpoint to carry over prefix contribution
+                let scaled_evals = if phase == 0 {
+                    evals
+                } else {
+                    let scale = prefix_registry.checkpoints[k_lsb].unwrap_or(F::one());
+                    evals
+                        .into_par_iter()
+                        .map(|v| v * scale)
+                        .collect()
+                };
+
+                let inner: MultilinearPolynomial<F> = MultilinearPolynomial::from(scaled_evals);
                 Some(Arc::new(RwLock::new(CachedPolynomial::new(
                     inner,
                     cache_capacity,
@@ -129,7 +222,7 @@ impl<F: JoltField> PrefixSuffixPolynomialFieldDyn<F> for EqPlusOnePS<F> {
             let m = self.cutoff + j_msb;
             let bit = ((bits_val >> (m_len - 1 - j_msb)) & 1) == 1;
             let y = if bit { F::one() } else { F::zero() };
-            let x = self.x_field[m];
+            let x = self.x[m];
             let term = if m < m_flip {
                 x * y + (F::one() - x) * (F::one() - y)
             } else if m == m_flip {
@@ -151,7 +244,7 @@ mod tests {
     use super::*;
     use ark_bn254::Fr;
     use ark_ff::{AdditiveGroup, Field};
-    
+
     use ark_std::test_rng;
 
     use crate::poly::prefix_suffix::PrefixSuffixDecompositionFieldDyn;
@@ -217,11 +310,7 @@ mod tests {
 
                 // Build dynamic prefix–suffix decomposition for EqPlusOne(y; x)
                 let ps_poly = EqPlusOnePS::<Fr>::new(x_bits.clone(), ell, cutoff);
-                let mut ps = PrefixSuffixDecompositionFieldDyn::new(
-                    Box::new(ps_poly),
-                    cutoff,
-                    ell,
-                );
+                let mut ps = PrefixSuffixDecompositionFieldDyn::new(Box::new(ps_poly), cutoff, ell);
                 let mut prefix_registry = DynamicPrefixRegistry::<Fr>::new(ell);
 
                 // Precompute lookup structures once
@@ -237,7 +326,7 @@ mod tests {
                 {
                     ps.init_P(&mut prefix_registry);
                     let suffix_len = ps.suffix_len();
-                    let u_evals = vec![Fr::ONE; 1usize << suffix_len];
+                    let u_evals = vec![Fr::ONE; 1usize << ell];
                     ps.init_Q(&u_evals, &indices, &lookup_bits);
 
                     for round in (0..cutoff).rev() {
@@ -247,7 +336,11 @@ mod tests {
                             let mut y_prefix_0 = rr_field.clone();
                             y_prefix_0.push(Fr::ZERO);
                             for i in (0..round).rev() {
-                                let bit = if ((b >> i) & 1) == 1 { Fr::ONE } else { Fr::ZERO };
+                                let bit = if ((b >> i) & 1) == 1 {
+                                    Fr::ONE
+                                } else {
+                                    Fr::ZERO
+                                };
                                 y_prefix_0.push(bit);
                             }
 
@@ -256,7 +349,11 @@ mod tests {
                             for s in 0..(1usize << suffix_len) {
                                 let mut y = y_prefix_0.clone();
                                 for j in (0..suffix_len).rev() {
-                                    let bit = if ((s >> j) & 1) == 1 { Fr::ONE } else { Fr::ZERO };
+                                    let bit = if ((s >> j) & 1) == 1 {
+                                        Fr::ONE
+                                    } else {
+                                        Fr::ZERO
+                                    };
                                     y.push(bit);
                                 }
                                 let x_field: Vec<Fr> = x_bits.iter().map(|c| (*c).into()).collect();
@@ -267,14 +364,22 @@ mod tests {
                             let mut y_prefix_1 = rr_field.clone();
                             y_prefix_1.push(Fr::ONE);
                             for i in (0..round).rev() {
-                                let bit = if ((b >> i) & 1) == 1 { Fr::ONE } else { Fr::ZERO };
+                                let bit = if ((b >> i) & 1) == 1 {
+                                    Fr::ONE
+                                } else {
+                                    Fr::ZERO
+                                };
                                 y_prefix_1.push(bit);
                             }
                             let mut direct_1 = Fr::ZERO;
                             for s in 0..(1usize << suffix_len) {
                                 let mut y = y_prefix_1.clone();
                                 for j in (0..suffix_len).rev() {
-                                    let bit = if ((s >> j) & 1) == 1 { Fr::ONE } else { Fr::ZERO };
+                                    let bit = if ((s >> j) & 1) == 1 {
+                                        Fr::ONE
+                                    } else {
+                                        Fr::ZERO
+                                    };
                                     y.push(bit);
                                 }
                                 let x_field: Vec<Fr> = x_bits.iter().map(|c| (*c).into()).collect();
@@ -285,7 +390,11 @@ mod tests {
                             let mut y_prefix_2 = rr_field.clone();
                             y_prefix_2.push(Fr::ONE + Fr::ONE);
                             for i in (0..round).rev() {
-                                let bit = if ((b >> i) & 1) == 1 { Fr::ONE } else { Fr::ZERO };
+                                let bit = if ((b >> i) & 1) == 1 {
+                                    Fr::ONE
+                                } else {
+                                    Fr::ZERO
+                                };
                                 y_prefix_2.push(bit);
                             }
                             // For degree-2 polynomial in t, f(2) = 2*f(1) - f(0)
@@ -312,7 +421,7 @@ mod tests {
                     ps.init_P(&mut prefix_registry);
                     let suffix_len = ps.suffix_len();
                     debug_assert_eq!(suffix_len, 0);
-                    let u_evals = vec![Fr::ONE; 1usize << suffix_len];
+                    let u_evals = vec![Fr::ONE; 1usize << ell];
                     ps.init_Q(&u_evals, &indices, &lookup_bits);
 
                     for round in (0..rem).rev() {
@@ -322,7 +431,11 @@ mod tests {
                             let mut y_prefix_0 = rr_field.clone();
                             y_prefix_0.push(Fr::ZERO);
                             for i in (0..round).rev() {
-                                let bit = if ((b >> i) & 1) == 1 { Fr::ONE } else { Fr::ZERO };
+                                let bit = if ((b >> i) & 1) == 1 {
+                                    Fr::ONE
+                                } else {
+                                    Fr::ZERO
+                                };
                                 y_prefix_0.push(bit);
                             }
                             let x_field: Vec<Fr> = x_bits.iter().map(|c| (*c).into()).collect();
@@ -332,7 +445,11 @@ mod tests {
                             let mut y_prefix_1 = rr_field.clone();
                             y_prefix_1.push(Fr::ONE);
                             for i in (0..round).rev() {
-                                let bit = if ((b >> i) & 1) == 1 { Fr::ONE } else { Fr::ZERO };
+                                let bit = if ((b >> i) & 1) == 1 {
+                                    Fr::ONE
+                                } else {
+                                    Fr::ZERO
+                                };
                                 y_prefix_1.push(bit);
                             }
                             // f(2) = 2*f(1) - f(0)
