@@ -231,31 +231,32 @@ impl R1CSCycleInputs {
     }
 }
 
+/// Inputs to the Spartan outer sumcheck. All is virtual, each produce a claim for later stages
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum JoltR1CSInputs {
-    PC,                    // Virtual (bytecode raf)
-    UnexpandedPC,          // Virtual (bytecode rv)
-    Imm,                   // Virtual (bytecode rv)
-    RamAddress,            // Virtual (RAM raf)
-    Rs1Value,              // Virtual (registers rv)
-    Rs2Value,              // Virtual (registers rv)
-    RdWriteValue,          // Virtual (registers wv)
-    RamReadValue,          // Virtual (RAM rv)
-    RamWriteValue,         // Virtual (RAM wv)
-    LeftInstructionInput,  // to_lookup_query -> to_instruction_operands
-    RightInstructionInput, // to_lookup_query -> to_instruction_operands
-    LeftLookupOperand,     // Virtual (instruction raf)
-    RightLookupOperand,    // Virtual (instruction raf)
-    Product,               // LeftInstructionOperand * RightInstructionOperand
-    WriteLookupOutputToRD, // Virtual (product sumcheck)
-    WritePCtoRD,           // Virtual (product sumcheck)
-    ShouldBranch,          // Virtual (product sumcheck)
-    NextUnexpandedPC,      // Virtual (shift sumcheck)
-    NextPC,                // Virtual (shift sumcheck)
-    NextIsVirtual,         // Virtual (shift sumcheck)
-    NextIsFirstInSequence, // Virtual (shift sumcheck)
-    LookupOutput,          // Virtual (instruction rv)
-    ShouldJump,            // Virtual (product sumcheck)
+    PC,                    // (bytecode raf)
+    UnexpandedPC,          // (bytecode rv)
+    Imm,                   // (bytecode rv)
+    RamAddress,            // (RAM raf)
+    Rs1Value,              // (registers rv)
+    Rs2Value,              // (registers rv)
+    RdWriteValue,          // (registers wv)
+    RamReadValue,          // (RAM rv)
+    RamWriteValue,         // (RAM wv)
+    LeftInstructionInput,  // (instruction input)
+    RightInstructionInput, // (instruction input)
+    LeftLookupOperand,     // (instruction raf)
+    RightLookupOperand,    // (instruction raf)
+    Product,               // (product virtualization)
+    WriteLookupOutputToRD, // (product virtualization)
+    WritePCtoRD,           // (product virtualization)
+    ShouldBranch,          // (product virtualization)
+    NextUnexpandedPC,      // (shift sumcheck)
+    NextPC,                // (shift sumcheck)
+    NextIsVirtual,         // (shift sumcheck)
+    NextIsFirstInSequence, // (shift sumcheck)
+    LookupOutput,          // (instruction rv)
+    ShouldJump,            // (product virtualization)
     OpFlags(CircuitFlags),
 }
 
