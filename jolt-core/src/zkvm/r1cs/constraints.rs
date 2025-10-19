@@ -50,7 +50,6 @@
 
 use super::inputs::{JoltR1CSInputs, R1CSCycleInputs};
 use crate::field::{AccumulateInPlace, JoltField};
-use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::utils::accumulation::{Acc5U, Acc6S, Acc7S};
 use crate::zkvm::instruction::CircuitFlags;
 use ark_ff::biginteger::S160;
