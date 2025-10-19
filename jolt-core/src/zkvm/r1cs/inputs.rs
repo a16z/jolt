@@ -536,6 +536,74 @@ pub fn compute_claimed_witness_evals<F: JoltField>(
         .to_vec()
 }
 
+/// Computes the five shift-sumcheck virtual openings at an arbitrary challenge point r.
+/// Returns (UnexpandedPC(r), PC(r), IsVirtual(r), IsFirstInSequence(r), IsNoop(r)).
+///
+/// This mirrors the streaming approach of `compute_claimed_witness_evals`, but
+/// only accumulates the five values needed by the Shift sumcheck, avoiding
+/// materializing any multilinear polynomials.
+#[tracing::instrument(skip_all)]
+pub fn compute_shift_openings_at_point<F: JoltField>(
+    preprocessing: &JoltSharedPreprocessing,
+    trace: &[Cycle],
+    r_cycle: &[F::Challenge],
+) -> (F, F, F, F, F) {
+    let m = r_cycle.len() / 2;
+    let (r2, r1) = r_cycle.split_at(m);
+    let (eq_one, eq_two) = rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
+
+    let [unexpanded_pc, pc, is_virtual, is_first, is_noop] = (0..eq_one.len())
+        .into_par_iter()
+        .map(|x1| {
+            let eq1_val = eq_one[x1];
+            let mut inner_unexpanded_pc = F::zero();
+            let mut inner_pc = F::zero();
+            let mut inner_is_virtual = F::zero();
+            let mut inner_is_first = F::zero();
+            let mut inner_is_noop = F::zero();
+
+            for x2 in 0..eq_two.len() {
+                let eq2_val = eq_two[x2];
+                let idx = x1 * eq_two.len() + x2;
+
+                // Current-cycle view
+                let cycle = &trace[idx];
+                let flags_view = cycle.instruction().circuit_flags();
+                let instr_flags = cycle.instruction().instruction_flags();
+
+                // PCs
+                inner_unexpanded_pc += (cycle.instruction().normalize().address as u64)
+                    .field_mul(eq2_val);
+                inner_pc += (preprocessing.bytecode.get_pc(cycle) as u64).field_mul(eq2_val);
+
+                // Flags (current cycle)
+                if flags_view[CircuitFlags::VirtualInstruction] {
+                    inner_is_virtual += eq2_val;
+                }
+                if flags_view[CircuitFlags::IsFirstInSequence] {
+                    inner_is_first += eq2_val;
+                }
+                if instr_flags[InstructionFlags::IsNoop] {
+                    inner_is_noop += eq2_val;
+                }
+            }
+
+            [
+                inner_unexpanded_pc * eq1_val,
+                inner_pc * eq1_val,
+                inner_is_virtual * eq1_val,
+                inner_is_first * eq1_val,
+                inner_is_noop * eq1_val,
+            ]
+        })
+        .reduce(
+            || [F::zero(); 5],
+            |a, b| [a[0] + b[0], a[1] + b[1], a[2] + b[2], a[3] + b[3], a[4] + b[4]],
+        );
+
+    (unexpanded_pc, pc, is_virtual, is_first, is_noop)
+}
+
 /// Generates witnesses for the shift sumcheck with a single pass over the trace.
 #[tracing::instrument(skip_all)]
 pub fn generate_shift_sumcheck_witnesses<F>(

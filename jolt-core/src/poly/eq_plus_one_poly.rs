@@ -126,7 +126,7 @@ impl<F: JoltField> EqPlusOnePS<F> {
     }
 
     #[inline(always)]
-    fn ypref_bit(idx: usize, msb_pos: usize, cutoff: usize) -> bool {
+    fn y_prefix_bit(idx: usize, msb_pos: usize, cutoff: usize) -> bool {
         // idx ranges over 0..2^cutoff, interpret as cutoff-bit big-endian
         // bit at MSB position m maps to bit (cutoff - 1 - m)
         ((idx >> (cutoff - 1 - msb_pos)) & 1) == 1
@@ -163,7 +163,7 @@ impl<F: JoltField> PrefixSuffixPolynomialFieldDyn<F> for EqPlusOnePS<F> {
                         let mut acc = F::one();
                         for off in 0..chunk_len {
                             let m = start + off; // absolute MSB index
-                            let y_bit = Self::ypref_bit(idx, off, chunk_len);
+                            let y_bit = Self::y_prefix_bit(idx, off, chunk_len);
                             let y = if y_bit { F::one() } else { F::zero() };
                             let x = self.x[m]; // MSB index m
                             let term = if m < m_flip {

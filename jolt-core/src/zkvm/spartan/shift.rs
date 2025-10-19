@@ -54,9 +54,6 @@ use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::eq_plus_one_poly::{EqPlusOnePolynomial, EqPlusOnePS};
 use crate::poly::eq_poly::EqPolynomial;
-use crate::poly::multilinear_polynomial::{
-    BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
-};
 use crate::poly::opening_proof::{
     OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
 };
@@ -67,18 +64,20 @@ use crate::utils::lookup_bits::LookupBits;
 use crate::utils::math::Math;
 use crate::zkvm::dag::state_manager::StateManager;
 use crate::zkvm::instruction::{CircuitFlags, InstructionFlags};
-use crate::zkvm::r1cs::inputs::generate_shift_sumcheck_witnesses;
+use crate::zkvm::r1cs::inputs::{compute_shift_openings_at_point, generate_shift_sumcheck_witnesses};
 use crate::zkvm::r1cs::key::UniformSpartanKey;
 use crate::zkvm::witness::VirtualPolynomial;
+use crate::zkvm::JoltSharedPreprocessing;
+use tracer::instruction::Cycle;
+
 use rayon::prelude::*;
 
 #[derive(Allocative)]
 struct ShiftSumcheckProverState<F: JoltField> {
-    unexpanded_pc_poly: MultilinearPolynomial<F>,
-    pc_poly: MultilinearPolynomial<F>,
-    is_virtual_poly: MultilinearPolynomial<F>,
-    is_first_in_sequence_poly: MultilinearPolynomial<F>,
-    is_noop_poly: MultilinearPolynomial<F>,
+    #[allocative(skip)]
+    pub preprocess: Arc<JoltSharedPreprocessing>,
+    #[allocative(skip)]
+    pub trace: Arc<Vec<Cycle>>,
     // Precomputed combined witness weights per cycle for phase 0 (length 2^ell)
     u_evals_full: Vec<F>,
     v_evals_full: Vec<F>,
@@ -115,9 +114,9 @@ impl<F: JoltField> ShiftSumcheck<F> {
         let (preprocessing, trace, _program_io, _final_memory_state) =
             state_manager.get_prover_data();
 
-        // Stream once to generate PC, UnexpandedPC and IsNoop witnesses
+        // Stream once to generate PC, UnexpandedPC and flags witnesses
         let (unexpanded_pc_poly, pc_poly, is_noop_poly, is_virtual_poly, is_first_in_sequence_poly) =
-            generate_shift_sumcheck_witnesses(&preprocessing.shared, trace);
+            generate_shift_sumcheck_witnesses::<F>(&preprocessing.shared, &trace);
 
         let num_cycles = key.num_steps;
         let num_cycles_bits = num_cycles.ilog2() as usize;
@@ -191,17 +190,31 @@ impl<F: JoltField> ShiftSumcheck<F> {
             .borrow_mut()
             .challenge_scalar_powers(5);
 
+        // Materialize base arrays (drop ML polys from state after use)
+        let mut unexpanded_pc_vec = Vec::with_capacity(t);
+        let mut pc_vec = Vec::with_capacity(t);
+        let mut is_virtual_vec = Vec::with_capacity(t);
+        let mut is_first_in_sequence_vec = Vec::with_capacity(t);
+        let mut is_noop_vec = Vec::with_capacity(t);
+        for i in 0..t {
+            unexpanded_pc_vec.push(unexpanded_pc_poly.get_coeff(i));
+            pc_vec.push(pc_poly.get_coeff(i));
+            is_virtual_vec.push(is_virtual_poly.get_coeff(i));
+            is_first_in_sequence_vec.push(is_first_in_sequence_poly.get_coeff(i));
+            is_noop_vec.push(is_noop_poly.get_coeff(i));
+        }
+
         let gamma = &gamma_powers; // [F; 5]
         let u_evals: Vec<F> = (0..t)
             .map(|i| {
-                gamma[0] * unexpanded_pc_poly.get_coeff(i)
-                    + gamma[1] * pc_poly.get_coeff(i)
-                    + gamma[2] * is_virtual_poly.get_coeff(i)
-                    + gamma[3] * is_first_in_sequence_poly.get_coeff(i)
+                gamma[0] * unexpanded_pc_vec[i]
+                    + gamma[1] * pc_vec[i]
+                    + gamma[2] * is_virtual_vec[i]
+                    + gamma[3] * is_first_in_sequence_vec[i]
             })
             .collect();
         let v_evals: Vec<F> = (0..t)
-            .map(|i| gamma[4] * (F::one() - is_noop_poly.get_coeff(i)))
+            .map(|i| gamma[4] * (F::one() - is_noop_vec[i]))
             .collect();
 
         PrefixSuffixDecompositionFieldDyn::init_Q_dual(
@@ -245,13 +258,10 @@ impl<F: JoltField> ShiftSumcheck<F> {
             input_claim,
             log_T: r_cycle.len(),
             prover_state: Some(ShiftSumcheckProverState {
-                unexpanded_pc_poly,
-                pc_poly,
-                is_virtual_poly,
-                is_first_in_sequence_poly,
-                is_noop_poly,
-                u_evals_full: u_evals.clone(),
-                v_evals_full: v_evals.clone(),
+                preprocess: Arc::new(preprocessing.shared.clone()),
+                trace: Arc::new(trace.to_vec()),
+                u_evals_full: u_evals,
+                v_evals_full: v_evals,
                 ps_cycle,
                 ps_product,
                 reg_cycle,
@@ -418,14 +428,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ShiftSumcheck<F> {
                 .par_iter()
                 .for_each(|&i| {
                     let k = prover_state.lookup_bits_full[i];
-                    let (prefix_bits, suffix_bits) = k.split(suffix_len);
-                    let p: usize = prefix_bits.into();
-                    let s: usize = suffix_bits.into();
-                    let weight = eq_prefix[p];
-                    // Accumulate unreduced, then finalize; field ops should be fine here
-                    // Use fetch_add-ish pattern via Mutex-free approach by chunking; but for simplicity, do serial reduce per thread
-                    // We'll fall back to serial here to avoid races
-                    // NOTE: small overhead acceptable once per sumcheck
+                    let _ = k.split(suffix_len);
+                    // parallel stub suppressed; serial accumulation follows
                 });
 
             // Serial accumulation to keep correctness and simplicity
@@ -433,10 +437,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ShiftSumcheck<F> {
                 let k = prover_state.lookup_bits_full[i];
                 let (prefix_bits, suffix_bits) = k.split(suffix_len);
                 let p: usize = prefix_bits.into();
-                let s: usize = suffix_bits.into();
+                let sfx: usize = suffix_bits.into();
                 let w = eq_prefix[p];
-                u_evals[s] += w * prover_state.u_evals_full[i];
-                v_evals[s] += w * prover_state.v_evals_full[i];
+                u_evals[sfx] += w * prover_state.u_evals_full[i];
+                v_evals[sfx] += w * prover_state.v_evals_full[i];
             }
 
             PrefixSuffixDecompositionFieldDyn::init_Q_dual(
@@ -521,13 +525,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ShiftSumcheck<F> {
             .as_ref()
             .expect("Prover state not initialized");
 
-        let unexpanded_pc_eval = prover_state.unexpanded_pc_poly.final_sumcheck_claim();
-        let pc_eval = prover_state.pc_poly.final_sumcheck_claim();
-        let is_virtual_eval = prover_state.is_virtual_poly.final_sumcheck_claim();
-        let is_first_in_sequence_eval = prover_state
-            .is_first_in_sequence_poly
-            .final_sumcheck_claim();
-        let is_noop_eval = prover_state.is_noop_poly.final_sumcheck_claim();
+        let (unexpanded_pc_eval, pc_eval, is_virtual_eval, is_first_in_sequence_eval, is_noop_eval) = compute_shift_openings_at_point(&prover_state.preprocess, &prover_state.trace, &opening_point.r);
 
         accumulator.borrow_mut().append_virtual(
             transcript,
