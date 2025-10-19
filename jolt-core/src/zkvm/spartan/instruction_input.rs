@@ -49,7 +49,7 @@ use crate::{
 pub struct InstructionInputSumcheck<F: JoltField> {
     input_sample_stage_1: (OpeningPoint<BIG_ENDIAN, F>, F),
     input_sample_stage_2: (OpeningPoint<BIG_ENDIAN, F>, F),
-    prover_state: Option<ProverState<F>>,
+    prover_state: Option<InstructionInputProverState<F>>,
     gamma: F,
 }
 
@@ -87,7 +87,8 @@ impl<F: JoltField> InstructionInputSumcheck<F> {
         let input_sample_stage_2 = (r_cycle_stage_2, claim_stage_2);
 
         let (_, trace, _, _) = state_manager.get_prover_data();
-        let prover_state = ProverState::gen(trace, &input_sample_stage_1, &input_sample_stage_2);
+        let prover_state =
+            InstructionInputProverState::gen(trace, &input_sample_stage_1, &input_sample_stage_2);
 
         Self {
             input_sample_stage_1,
@@ -276,7 +277,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for InstructionInputSum
 
     #[tracing::instrument(skip_all, name = "InstructionInputSumcheck::bind")]
     fn bind(&mut self, r_j: F::Challenge, _round: usize) {
-        let ProverState {
+        let InstructionInputProverState {
             left_is_rs1_poly,
             left_is_pc_poly,
             right_is_rs2_poly,
@@ -495,7 +496,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for InstructionInputSum
 }
 
 #[derive(Allocative)]
-struct ProverState<F: JoltField> {
+struct InstructionInputProverState<F: JoltField> {
     left_is_rs1_poly: MultilinearPolynomial<F>,
     left_is_pc_poly: MultilinearPolynomial<F>,
     right_is_rs2_poly: MultilinearPolynomial<F>,
@@ -512,7 +513,7 @@ struct ProverState<F: JoltField> {
     prev_round_poly_stage_2: Option<UniPoly<F>>,
 }
 
-impl<F: JoltField> ProverState<F> {
+impl<F: JoltField> InstructionInputProverState<F> {
     fn gen(
         trace: &[Cycle],
         sample_stage_1: &(OpeningPoint<BIG_ENDIAN, F>, F),
