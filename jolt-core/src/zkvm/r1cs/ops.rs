@@ -605,7 +605,7 @@ impl LC {
 
         match self {
             LC::Zero => write!(f, "0"),
-            LC::Const(c) => write!(f, "{}", c),
+            LC::Const(c) => write!(f, "{c}"),
             _ => {
                 let num_terms = self.num_terms();
                 let has_const = self.const_term().is_some();
