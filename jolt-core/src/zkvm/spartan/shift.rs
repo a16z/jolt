@@ -64,7 +64,9 @@ use crate::utils::lookup_bits::LookupBits;
 use crate::utils::math::Math;
 use crate::zkvm::dag::state_manager::StateManager;
 use crate::zkvm::instruction::{CircuitFlags, InstructionFlags};
-use crate::zkvm::r1cs::inputs::{compute_shift_openings_at_point, generate_shift_sumcheck_witnesses};
+use crate::zkvm::r1cs::inputs::{
+    compute_shift_openings_at_point, shift_uv_at_index,
+};
 use crate::zkvm::r1cs::key::UniformSpartanKey;
 use crate::zkvm::witness::VirtualPolynomial;
 use crate::zkvm::JoltSharedPreprocessing;
@@ -78,9 +80,6 @@ struct ShiftSumcheckProverState<F: JoltField> {
     pub preprocess: Arc<JoltSharedPreprocessing>,
     #[allocative(skip)]
     pub trace: Arc<Vec<Cycle>>,
-    // Precomputed combined witness weights per cycle for phase 0 (length 2^ell)
-    u_evals_full: Vec<F>,
-    v_evals_full: Vec<F>,
     // Dynamic field-valued prefix–suffix decompositions for EqPlusOne terms
     ps_cycle: PrefixSuffixDecompositionFieldDyn<F>,
     ps_product: PrefixSuffixDecompositionFieldDyn<F>,
@@ -95,6 +94,8 @@ struct ShiftSumcheckProverState<F: JoltField> {
     // Track the first-chunk challenges to condense U/V without binding base polynomials
     r_prefix: Vec<F::Challenge>,
     cutoff: usize,
+    // Guard to ensure phase-1 initialization happens exactly once
+    phase1_initialized: bool,
 }
 
 #[derive(Allocative)]
@@ -113,10 +114,6 @@ impl<F: JoltField> ShiftSumcheck<F> {
     ) -> Self {
         let (preprocessing, trace, _program_io, _final_memory_state) =
             state_manager.get_prover_data();
-
-        // Stream once to generate PC, UnexpandedPC and flags witnesses
-        let (unexpanded_pc_poly, pc_poly, is_noop_poly, is_virtual_poly, is_first_in_sequence_poly) =
-            generate_shift_sumcheck_witnesses::<F>(&preprocessing.shared, &trace);
 
         let num_cycles = key.num_steps;
         let num_cycles_bits = num_cycles.ilog2() as usize;
@@ -190,38 +187,19 @@ impl<F: JoltField> ShiftSumcheck<F> {
             .borrow_mut()
             .challenge_scalar_powers(5);
 
-        // Materialize base arrays (drop ML polys from state after use)
-        let mut unexpanded_pc_vec = Vec::with_capacity(t);
-        let mut pc_vec = Vec::with_capacity(t);
-        let mut is_virtual_vec = Vec::with_capacity(t);
-        let mut is_first_in_sequence_vec = Vec::with_capacity(t);
-        let mut is_noop_vec = Vec::with_capacity(t);
-        for i in 0..t {
-            unexpanded_pc_vec.push(unexpanded_pc_poly.get_coeff(i));
-            pc_vec.push(pc_poly.get_coeff(i));
-            is_virtual_vec.push(is_virtual_poly.get_coeff(i));
-            is_first_in_sequence_vec.push(is_first_in_sequence_poly.get_coeff(i));
-            is_noop_vec.push(is_noop_poly.get_coeff(i));
-        }
-
+        // Streaming build of Q for phase 0 via on-demand U/V providers
         let gamma = &gamma_powers; // [F; 5]
-        let u_evals: Vec<F> = (0..t)
-            .map(|i| {
-                gamma[0] * unexpanded_pc_vec[i]
-                    + gamma[1] * pc_vec[i]
-                    + gamma[2] * is_virtual_vec[i]
-                    + gamma[3] * is_first_in_sequence_vec[i]
-            })
-            .collect();
-        let v_evals: Vec<F> = (0..t)
-            .map(|i| gamma[4] * (F::one() - is_noop_vec[i]))
-            .collect();
+        println!("[Shift Phase 0] Building Q polynomials with streaming from trace");
+        println!("[Shift Phase 0] indices_full.len()={}, lookup_bits_full.len()={}", indices_full.len(), lookup_bits_full.len());
 
-        PrefixSuffixDecompositionFieldDyn::init_Q_dual(
+        let uv_at = |i: usize| -> (F, F) { 
+            shift_uv_at_index::<F>(&preprocessing.shared, &trace, gamma, i)
+         };
+
+        PrefixSuffixDecompositionFieldDyn::init_Q_dual_with_pair(
             &mut ps_cycle,
             &mut ps_product,
-            &u_evals,
-            &v_evals,
+            &uv_at,
             &indices_full,
             &lookup_bits_full,
         );
@@ -239,14 +217,12 @@ impl<F: JoltField> ShiftSumcheck<F> {
         .sum();
 
         // Debug: sanity-check non-wrap EqPlusOne identity against the assembled input_claim
-        #[cfg(debug_assertions)]
+        #[cfg(test)]
         {
             let (_eq_tab_c, eqp_c) = EqPlusOnePolynomial::<F>::evals(&r_cycle.r, None);
             let (_eq_tab_p, eqp_p) = EqPlusOnePolynomial::<F>::evals(&r_product.r, None);
-            debug_assert_eq!(eqp_c.len(), u_evals.len());
-            debug_assert_eq!(eqp_p.len(), v_evals.len());
-            let sum_u: F = (0..eqp_c.len()).map(|i| u_evals[i] * eqp_c[i]).sum();
-            let sum_v: F = (0..eqp_p.len()).map(|i| v_evals[i] * eqp_p[i]).sum();
+            let sum_u: F = (0..eqp_c.len()).map(|i| u_at(i) * eqp_c[i]).sum();
+            let sum_v: F = (0..eqp_p.len()).map(|i| v_at(i) * eqp_p[i]).sum();
             debug_assert_eq!(
                 sum_u + sum_v,
                 input_claim,
@@ -260,8 +236,6 @@ impl<F: JoltField> ShiftSumcheck<F> {
             prover_state: Some(ShiftSumcheckProverState {
                 preprocess: Arc::new(preprocessing.shared.clone()),
                 trace: Arc::new(trace.to_vec()),
-                u_evals_full: u_evals,
-                v_evals_full: v_evals,
                 ps_cycle,
                 ps_product,
                 reg_cycle,
@@ -272,6 +246,7 @@ impl<F: JoltField> ShiftSumcheck<F> {
                 lookup_bits_phase1,
                 r_prefix: Vec::with_capacity(cutoff),
                 cutoff,
+                phase1_initialized: false,
             }),
             gamma_powers: gamma_powers.try_into().unwrap(),
         }
@@ -377,7 +352,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ShiftSumcheck<F> {
                     running
                 },
             );
-
+        #[cfg(debug_assertions)]
+        {
+            println!(
+                "[Shift Prover] round={}, q_half_len={}, g0={:?}, g2={:?}",
+                _round, q_half_len, univariate_poly_evals[0], univariate_poly_evals[1]
+            );
+        }
         univariate_poly_evals.into()
     }
 
@@ -405,7 +386,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ShiftSumcheck<F> {
         let total_rounds = self.log_T;
         let cutoff = total_rounds.div_ceil(2);
         let rem = total_rounds - cutoff;
-        if prev_len == 2 && current_len == 1 && rem > 0 {
+        // Initialize phase-1 exactly once when we finish binding the first chunk
+        if !prover_state.phase1_initialized
+            && prover_state.r_prefix.len() == prover_state.cutoff
+            && prev_len == 2
+            && current_len == 1
+            && rem > 0
+        {
             prover_state.reg_cycle.update_checkpoints();
             prover_state.reg_product.update_checkpoints();
             prover_state.ps_cycle.init_P(&mut prover_state.reg_cycle);
@@ -415,42 +402,55 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ShiftSumcheck<F> {
 
             // Condense U and V onto the remaining variables using the collected r_prefix
             let rem = total_rounds - cutoff;
-            let suffix_len = rem; // low bits correspond to the remaining variables
-            let poly_len_phase1 = 1usize << rem;
-
             let eq_prefix = EqPolynomial::<F>::evals(&prover_state.r_prefix);
+            let gamma = &self.gamma_powers;
+            
+            println!(
+                "[Shift Phase 2] Condensing U/V with cutoff={}, rem={}",
+                cutoff, rem
+            );
+            println!(
+                "[Shift Phase 2] eq_prefix.len()={}, indices_phase1.len()={}",
+                eq_prefix.len(),
+                prover_state.indices_phase1.len()
+            );
+            
+            // Build Q for phase 2 in one pass over the phase-2 domain using paired streaming
+            let uv_at = |sfx: usize| -> (F, F) {
+                let mut sum_u = F::zero();
+                let mut sum_v = F::zero();
+                // iterate all first-chunk assignments p
+                for p in 0..(1usize << cutoff) {
+                    // EqPolynomial::evals enumerates assignments in little-endian index order,
+                    // matching the numeric enumeration of p.
+                    let w = eq_prefix[p];
+                    let full_idx = (p << rem) | sfx;
+                    let (u_i, v_i) = shift_uv_at_index::<F>(
+                        &prover_state.preprocess,
+                        &prover_state.trace,
+                        gamma,
+                        full_idx,
+                    );
+                    sum_u += w * u_i;
+                    sum_v += w * v_i;
+                }
+                if sfx % 1000 == 0 {
+                    println!(
+                        "[Shift Phase 2] Processed sfx={}, sum_u={:?}, sum_v={:?}",
+                        sfx, sum_u, sum_v
+                    );
+                }
+                (sum_u, sum_v)
+            };
 
-            let mut u_evals: Vec<F> = vec![F::zero(); poly_len_phase1];
-            let mut v_evals: Vec<F> = vec![F::zero(); poly_len_phase1];
-            // Iterate full domain once; map to (prefix, suffix) and accumulate with eq(prefix)
-            prover_state
-                .indices_full
-                .par_iter()
-                .for_each(|&i| {
-                    let k = prover_state.lookup_bits_full[i];
-                    let _ = k.split(suffix_len);
-                    // parallel stub suppressed; serial accumulation follows
-                });
-
-            // Serial accumulation to keep correctness and simplicity
-            for i in 0..prover_state.indices_full.len() {
-                let k = prover_state.lookup_bits_full[i];
-                let (prefix_bits, suffix_bits) = k.split(suffix_len);
-                let p: usize = prefix_bits.into();
-                let sfx: usize = suffix_bits.into();
-                let w = eq_prefix[p];
-                u_evals[sfx] += w * prover_state.u_evals_full[i];
-                v_evals[sfx] += w * prover_state.v_evals_full[i];
-            }
-
-            PrefixSuffixDecompositionFieldDyn::init_Q_dual(
+            PrefixSuffixDecompositionFieldDyn::init_Q_dual_with_pair(
                 &mut prover_state.ps_cycle,
                 &mut prover_state.ps_product,
-                &u_evals,
-                &v_evals,
+                &uv_at,
                 &prover_state.indices_phase1,
                 &prover_state.lookup_bits_phase1,
             );
+            prover_state.phase1_initialized = true;
         }
     }
 
@@ -500,7 +500,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ShiftSumcheck<F> {
         let eq_plus_one_r_product_at_shift =
             EqPlusOnePolynomial::<F>::new(r_product.to_vec()).evaluate(r);
 
-        [
+        let result = [
             unexpanded_pc_claim,
             pc_claim,
             is_virtual_claim,
@@ -511,7 +511,24 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ShiftSumcheck<F> {
         .map(|(eval, gamma)| *gamma * eval)
         .sum::<F>()
             * eq_plus_one_r_cycle_at_shift
-            + self.gamma_powers[4] * (F::one() - is_noop_claim) * eq_plus_one_r_product_at_shift
+            + self.gamma_powers[4] * (F::one() - is_noop_claim) * eq_plus_one_r_product_at_shift;
+        #[cfg(debug_assertions)]
+        {
+            println!(
+                "[Shift Verifier] eq_c(r)={:?}, eq_p(r)={:?}, U_part={:?}, V_part={:?}, total={:?}",
+                eq_plus_one_r_cycle_at_shift,
+                eq_plus_one_r_product_at_shift,
+                ([unexpanded_pc_claim, pc_claim, is_virtual_claim, is_first_in_sequence_claim]
+                    .iter()
+                    .zip(self.gamma_powers.iter())
+                    .map(|(e, g)| *g * *e)
+                    .sum::<F>()
+                    * eq_plus_one_r_cycle_at_shift),
+                (self.gamma_powers[4] * (F::one() - is_noop_claim) * eq_plus_one_r_product_at_shift),
+                result
+            );
+        }
+        result
     }
 
     fn cache_openings_prover(

@@ -359,8 +359,9 @@ mod tests {
                 {
                     ps.init_P(&mut prefix_registry);
                     let suffix_len = ps.suffix_len();
-                    let u_evals = vec![Fr::ONE; 1usize << ell];
-                    ps.init_Q(&u_evals, &indices, &lookup_bits);
+                    // Initialize Q with constant-one u
+                    let u: Vec<Fr> = vec![Fr::ONE; 1usize << ell];
+                    ps.init_Q(&u, &indices, &lookup_bits);
 
                     for round in (0..cutoff).rev() {
                         let max_b = 1usize << round;
@@ -454,8 +455,8 @@ mod tests {
                     ps.init_P(&mut prefix_registry);
                     let suffix_len = ps.suffix_len();
                     debug_assert_eq!(suffix_len, 0);
-                    let u_evals = vec![Fr::ONE; 1usize << ell];
-                    ps.init_Q(&u_evals, &indices, &lookup_bits);
+                    let u: Vec<Fr> = vec![Fr::ONE; 1usize << ell];
+                    ps.init_Q(&u, &indices, &lookup_bits);
 
                     for round in (0..rem).rev() {
                         let max_b = 1usize << round;

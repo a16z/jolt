@@ -442,6 +442,50 @@ impl From<&JoltR1CSInputs> for OpeningId {
     }
 }
 
+/// Streaming accessor for Shift sumcheck per-index witnesses.
+/// Returns gamma-weighted U(i) and V(i) directly from the trace at index `idx`:
+///   U(i) = γ0·UnexpandedPC(i) + γ1·PC(i) + γ2·IsVirtual(i) + γ3·IsFirstInSequence(i)
+///   V(i) = γ4·(1 − IsNoop(i))
+#[tracing::instrument(skip_all)]
+pub fn shift_uv_at_index<F: JoltField>(
+    preprocessing: &JoltSharedPreprocessing,
+    trace: &[Cycle],
+    gamma: &[F],
+    idx: usize,
+) -> (F, F) {
+    let cycle = &trace[idx];
+    // PCs
+    let unexpanded_pc = cycle.instruction().normalize().address as u64;
+    let pc = preprocessing.bytecode.get_pc(cycle) as u64;
+
+    // Flags
+    let flags_view = cycle.instruction().circuit_flags();
+    let instr_flags = cycle.instruction().instruction_flags();
+    let is_virtual_f = if flags_view[CircuitFlags::VirtualInstruction] {
+        F::one()
+    } else {
+        F::zero()
+    };
+    let is_first_f = if flags_view[CircuitFlags::IsFirstInSequence] {
+        F::one()
+    } else {
+        F::zero()
+    };
+    let is_noop_f = if instr_flags[InstructionFlags::IsNoop] {
+        F::one()
+    } else {
+        F::zero()
+    };
+
+    // gamma-weighted combinations
+    let u = gamma[0] * unexpanded_pc.to_field::<F>()
+        + gamma[1] * pc.to_field::<F>()
+        + gamma[2] * is_virtual_f
+        + gamma[3] * is_first_f;
+    let v = gamma[4] * (F::one() - is_noop_f);
+    (u, v)
+}
+
 /// Compute `z(r_cycle) = Σ_t eq(r_cycle, t) * P_i(t)` for all inputs i, without
 /// materializing P_i. Returns `[P_0(r_cycle), P_1(r_cycle), ...]` in input order.
 /// TODO: use delayed reduction while computing the sum

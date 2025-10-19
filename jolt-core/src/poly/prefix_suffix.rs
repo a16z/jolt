@@ -382,11 +382,7 @@ impl<F: JoltField> PrefixSuffixDecompositionFieldDyn<F> {
                 chunk_result
             })
             .reduce(
-                || {
-                    (0..order)
-                        .map(|_| unsafe_allocate_zero_vec(poly_len))
-                        .collect()
-                },
+                || (0..order).map(|_| unsafe_allocate_zero_vec(poly_len)).collect(),
                 |mut acc, new| {
                     for (acc_i, new_i) in acc.iter_mut().zip(new.iter()) {
                         for (acc_coeff, new_coeff) in acc_i.iter_mut().zip(new_i.iter()) {
@@ -409,6 +405,8 @@ impl<F: JoltField> PrefixSuffixDecompositionFieldDyn<F> {
             })
             .collect();
     }
+
+    // init_Q_with removed: use init_Q_dual_with_pair for paired streaming
 
     /// Fused initialization of Q for two decompositions in a single pass over `indices`.
     #[tracing::instrument(skip_all)]
@@ -509,6 +507,224 @@ impl<F: JoltField> PrefixSuffixDecompositionFieldDyn<F> {
             })
             .collect();
         // Reduce to field for right
+        right.Q = new_right
+            .into_iter()
+            .map(|coeffs| {
+                let mut reduced: Vec<F> = unsafe_allocate_zero_vec(poly_len);
+                for (src, dst) in coeffs.into_iter().zip(reduced.iter_mut()) {
+                    *dst = F::from_montgomery_reduce(src);
+                }
+                DensePolynomial::new(reduced)
+            })
+            .collect();
+    }
+
+    /// Streaming variant: builds Q for two decompositions using on-demand u providers.
+    pub fn init_Q_dual_with<U, V>(
+        left: &mut PrefixSuffixDecompositionFieldDyn<F>,
+        right: &mut PrefixSuffixDecompositionFieldDyn<F>,
+        u_left_at: &U,
+        u_right_at: &V,
+        indices: &[usize],
+        lookup_bits: &[LookupBits],
+    )
+    where
+        U: Fn(usize) -> F + Sync,
+        V: Fn(usize) -> F + Sync,
+    {
+        debug_assert_eq!(left.current_chunk_len(), right.current_chunk_len());
+        debug_assert_eq!(left.total_len, right.total_len);
+        debug_assert_eq!(left.phase, right.phase);
+
+        let poly_len = left.current_chunk_len().pow2();
+        let order_left = left.poly.order();
+        let order_right = right.poly.order();
+        let suffix_len = left.suffix_len();
+
+        let num_chunks = rayon::current_num_threads().next_power_of_two();
+        let chunk_size = (indices.len() / num_chunks).max(1);
+
+        let (new_left, new_right): (Vec<Vec<F::Unreduced<9>>>, Vec<Vec<F::Unreduced<9>>>) = indices
+            .par_chunks(chunk_size)
+            .map(|chunk| {
+                let mut chunk_left: Vec<Vec<F::Unreduced<9>>> = (0..order_left)
+                    .map(|_| unsafe_allocate_zero_vec(poly_len))
+                    .collect();
+                let mut chunk_right: Vec<Vec<F::Unreduced<9>>> = (0..order_right)
+                    .map(|_| unsafe_allocate_zero_vec(poly_len))
+                    .collect();
+
+                for j in chunk {
+                    let k = lookup_bits[*j];
+                    let (prefix_bits, suffix_bits) = k.split(suffix_len);
+
+                    // Left terms
+                    for term_k in 0..order_left {
+                        let t_val = left.poly.suffix_eval(term_k, suffix_bits);
+                        if !t_val.is_zero() {
+                            let u = u_left_at(*j);
+                            chunk_left[term_k][prefix_bits % poly_len] +=
+                                u.mul_unreduced::<9>(t_val);
+                        }
+                    }
+
+                    // Right terms
+                    for term_k in 0..order_right {
+                        let t_val = right.poly.suffix_eval(term_k, suffix_bits);
+                        if !t_val.is_zero() {
+                            let u = u_right_at(*j);
+                            chunk_right[term_k][prefix_bits % poly_len] +=
+                                u.mul_unreduced::<9>(t_val);
+                        }
+                    }
+                }
+
+                (chunk_left, chunk_right)
+            })
+            .reduce(
+                || {
+                    (
+                        (0..order_left)
+                            .map(|_| unsafe_allocate_zero_vec(poly_len))
+                            .collect(),
+                        (0..order_right)
+                            .map(|_| unsafe_allocate_zero_vec(poly_len))
+                            .collect(),
+                    )
+                },
+                |(mut acc_l, mut acc_r), (new_l, new_r)| {
+                    for (acc_i, new_i) in acc_l.iter_mut().zip(new_l.iter()) {
+                        for (acc_coeff, new_coeff) in acc_i.iter_mut().zip(new_i.iter()) {
+                            *acc_coeff += new_coeff;
+                        }
+                    }
+                    for (acc_i, new_i) in acc_r.iter_mut().zip(new_r.iter()) {
+                        for (acc_coeff, new_coeff) in acc_i.iter_mut().zip(new_i.iter()) {
+                            *acc_coeff += new_coeff;
+                        }
+                    }
+                    (acc_l, acc_r)
+                },
+            );
+
+        left.Q = new_left
+            .into_iter()
+            .map(|coeffs| {
+                let mut reduced: Vec<F> = unsafe_allocate_zero_vec(poly_len);
+                for (src, dst) in coeffs.into_iter().zip(reduced.iter_mut()) {
+                    *dst = F::from_montgomery_reduce(src);
+                }
+                DensePolynomial::new(reduced)
+            })
+            .collect();
+        right.Q = new_right
+            .into_iter()
+            .map(|coeffs| {
+                let mut reduced: Vec<F> = unsafe_allocate_zero_vec(poly_len);
+                for (src, dst) in coeffs.into_iter().zip(reduced.iter_mut()) {
+                    *dst = F::from_montgomery_reduce(src);
+                }
+                DensePolynomial::new(reduced)
+            })
+            .collect();
+    }
+
+    /// Streaming variant: builds Q for two decompositions using a single provider that
+    /// returns both left and right values per index in one call.
+    pub fn init_Q_dual_with_pair<U>(
+        left: &mut PrefixSuffixDecompositionFieldDyn<F>,
+        right: &mut PrefixSuffixDecompositionFieldDyn<F>,
+        uv_at: &U,
+        indices: &[usize],
+        lookup_bits: &[LookupBits],
+    )
+    where
+        U: Fn(usize) -> (F, F) + Sync,
+    {
+        debug_assert_eq!(left.current_chunk_len(), right.current_chunk_len());
+        debug_assert_eq!(left.total_len, right.total_len);
+        debug_assert_eq!(left.phase, right.phase);
+
+        let poly_len = left.current_chunk_len().pow2();
+        let order_left = left.poly.order();
+        let order_right = right.poly.order();
+        let suffix_len = left.suffix_len();
+
+        let num_chunks = rayon::current_num_threads().next_power_of_two();
+        let chunk_size = (indices.len() / num_chunks).max(1);
+
+        let (new_left, new_right): (Vec<Vec<F::Unreduced<9>>>, Vec<Vec<F::Unreduced<9>>>) = indices
+            .par_chunks(chunk_size)
+            .map(|chunk| {
+                let mut chunk_left: Vec<Vec<F::Unreduced<9>>> = (0..order_left)
+                    .map(|_| unsafe_allocate_zero_vec(poly_len))
+                    .collect();
+                let mut chunk_right: Vec<Vec<F::Unreduced<9>>> = (0..order_right)
+                    .map(|_| unsafe_allocate_zero_vec(poly_len))
+                    .collect();
+
+                for j in chunk {
+                    let k = lookup_bits[*j];
+                    let (prefix_bits, suffix_bits) = k.split(suffix_len);
+                    let (u_left_val, u_right_val) = uv_at(*j);
+
+                    // Left terms
+                    for term_k in 0..order_left {
+                        let t_val = left.poly.suffix_eval(term_k, suffix_bits);
+                        if !t_val.is_zero() {
+                            chunk_left[term_k][prefix_bits % poly_len] +=
+                                u_left_val.mul_unreduced::<9>(t_val);
+                        }
+                    }
+
+                    // Right terms
+                    for term_k in 0..order_right {
+                        let t_val = right.poly.suffix_eval(term_k, suffix_bits);
+                        if !t_val.is_zero() {
+                            chunk_right[term_k][prefix_bits % poly_len] +=
+                                u_right_val.mul_unreduced::<9>(t_val);
+                        }
+                    }
+                }
+
+                (chunk_left, chunk_right)
+            })
+            .reduce(
+                || {
+                    (
+                        (0..order_left)
+                            .map(|_| unsafe_allocate_zero_vec(poly_len))
+                            .collect(),
+                        (0..order_right)
+                            .map(|_| unsafe_allocate_zero_vec(poly_len))
+                            .collect(),
+                    )
+                },
+                |(mut acc_l, mut acc_r), (new_l, new_r)| {
+                    for (acc_i, new_i) in acc_l.iter_mut().zip(new_l.iter()) {
+                        for (acc_coeff, new_coeff) in acc_i.iter_mut().zip(new_i.iter()) {
+                            *acc_coeff += new_coeff;
+                        }
+                    }
+                    for (acc_i, new_i) in acc_r.iter_mut().zip(new_r.iter()) {
+                        for (acc_coeff, new_coeff) in acc_i.iter_mut().zip(new_i.iter()) {
+                            *acc_coeff += new_coeff;
+                        }
+                    }
+                    (acc_l, acc_r)
+                },
+            );
+
+        left.Q = new_left
+            .into_iter()
+            .map(|coeffs| {
+                let mut reduced: Vec<F> = unsafe_allocate_zero_vec(poly_len);
+                for (src, dst) in coeffs.into_iter().zip(reduced.iter_mut()) {
+                    *dst = F::from_montgomery_reduce(src);
+                }
+                DensePolynomial::new(reduced)
+            })
+            .collect();
         right.Q = new_right
             .into_iter()
             .map(|coeffs| {
@@ -681,7 +897,7 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
     /// Q array is defined as Q[x] = \sum_{y \in {0, 1}^m} u(x || y) * suffix(y)
     /// Read more about prefix-suffix argument in Appendix A of the paper
     /// https://eprint.iacr.org/2025/611.pdf
-    #[tracing::instrument(skip_all, name = "PrefixSuffix::init_Q")]
+    #[allow(dead_code)]
     pub fn init_Q(&mut self, u_evals: &[F], indices: &[usize], lookup_bits: &[LookupBits]) {
         let poly_len = self.chunk_len.pow2();
         let suffix_len = self.suffix_len();
