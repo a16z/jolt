@@ -206,12 +206,10 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
                         #[cfg(test)]
                         {
                             // Test that az * bz = 0 for first group
-                            debug_assert!(
-                                az0_bool
-                                    .iter()
-                                    .zip(bz0_i128.iter())
-                                    .all(|(az, bz)| !(*az) || *bz == 0)
-                            );
+                            debug_assert!(az0_bool
+                                .iter()
+                                .zip(bz0_i128.iter())
+                                .all(|(az, bz)| !(*az) || *bz == 0));
                         }
 
                         for j in 0..UNIVARIATE_SKIP_DEGREE {
@@ -247,12 +245,10 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
                         #[cfg(test)]
                         {
                             // Test that az * bz = 0 for second group
-                            debug_assert!(
-                                az1_u8
-                                    .iter()
-                                    .zip(bz1.iter())
-                                    .all(|(az, bz)| *az == 0u8 || bz.is_zero())
-                            );
+                            debug_assert!(az1_u8
+                                .iter()
+                                .zip(bz1.iter())
+                                .all(|(az, bz)| *az == 0u8 || bz.is_zero()));
                         }
 
                         let g2_len = core::cmp::min(
