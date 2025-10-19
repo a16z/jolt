@@ -732,8 +732,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for OuterRemainingSumch
             self.bind_streaming_round(r_j);
         } else {
             let ps = self.prover_state.as_mut().expect("prover state missing");
-            ps.az.bind_parallel(r_j, BindingOrder::LowToHigh);
-            ps.bz.bind_parallel(r_j, BindingOrder::LowToHigh);
+            rayon::join(
+                || ps.az.bind_parallel(r_j, BindingOrder::LowToHigh),
+                || ps.bz.bind_parallel(r_j, BindingOrder::LowToHigh),
+            );
         }
 
         // Bind eq_poly for next round

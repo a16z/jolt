@@ -132,6 +132,26 @@ impl<F: JoltField> AccumulateInPlace<F, u64> for Acc6U<F> {
     }
 }
 
+// Support u8 values for Acc6U: multiply field by u8
+impl<F: JoltField> AccumulateInPlace<F, u8> for Acc6U<F> {
+    #[inline(always)]
+    fn fmadd(&mut self, field: &F, other: &u8) {
+        let v = *other as u64;
+        if v == 0 {
+            return;
+        }
+        self.word += (*field).mul_u64_unreduced(v);
+    }
+    #[inline(always)]
+    fn reduce(&self) -> F {
+        Acc6U::<F>::reduce(self)
+    }
+    #[inline(always)]
+    fn combine(&mut self, other: &Self) {
+        self.word += other.word;
+    }
+}
+
 // Support bool flags for Acc6U: add field if true
 impl<F: JoltField> AccumulateInPlace<F, bool> for Acc6U<F> {
     #[inline(always)]
@@ -274,6 +294,27 @@ impl<F: JoltField> AccumulateInPlace<F, bool> for Acc6S<F> {
             // add to positive accumulator
             self.pos += *field.as_unreduced_ref();
         }
+    }
+    #[inline(always)]
+    fn reduce(&self) -> F {
+        Acc6S::<F>::reduce(self)
+    }
+    #[inline(always)]
+    fn combine(&mut self, other: &Self) {
+        self.pos += other.pos;
+        self.neg += other.neg;
+    }
+}
+
+// Support u8 values for Acc6S: treat as positive integer
+impl<F: JoltField> AccumulateInPlace<F, u8> for Acc6S<F> {
+    #[inline(always)]
+    fn fmadd(&mut self, field: &F, other: &u8) {
+        let v = *other as u64;
+        if v == 0 {
+            return;
+        }
+        self.pos += (*field).mul_u64_unreduced(v);
     }
     #[inline(always)]
     fn reduce(&self) -> F {

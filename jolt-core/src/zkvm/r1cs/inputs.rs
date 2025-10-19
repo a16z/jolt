@@ -694,6 +694,30 @@ impl ProductCycleInputs {
             not_next_noop,
         }
     }
+
+    /// Compute both fused left and right factors at r and return as a pair (left, right).
+    ///
+    /// Expected order of weights:
+    /// [Instruction, WriteLookupOutputToRD, WritePCtoRD, ShouldBranch, ShouldJump]
+    pub fn compute_left_right_at_r<F: JoltField>(&self, weights_at_r0: &[F]) -> (F, F) {
+        // Left: u64/u8/bool
+        let mut left_acc: Acc6U<F> = Acc6U::new();
+        left_acc.fmadd(&weights_at_r0[0], &self.instruction_left_input);
+        left_acc.fmadd(&weights_at_r0[1], &self.rd_addr);
+        left_acc.fmadd(&weights_at_r0[2], &self.rd_addr);
+        left_acc.fmadd(&weights_at_r0[3], &self.should_branch_lookup_output);
+        left_acc.fmadd(&weights_at_r0[4], &self.jump_flag);
+
+        // Right: i128/bool
+        let mut right_acc: Acc6S<F> = Acc6S::new();
+        right_acc.fmadd(&weights_at_r0[0], &self.instruction_right_input);
+        right_acc.fmadd(&weights_at_r0[1], &self.write_lookup_output_to_rd_flag);
+        right_acc.fmadd(&weights_at_r0[2], &self.jump_flag);
+        right_acc.fmadd(&weights_at_r0[3], &self.should_branch_flag);
+        right_acc.fmadd(&weights_at_r0[4], &self.not_next_noop);
+
+        (left_acc.reduce(), right_acc.reduce())
+    }
 }
 
 /// Compute z(r_cycle) for the 8 de-duplicated factor polynomials used by Product Virtualization.

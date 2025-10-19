@@ -3,7 +3,6 @@ use ark_std::Zero;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::field::AccumulateInPlace;
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::dense_mlpoly::DensePolynomial;
@@ -20,7 +19,7 @@ use crate::subprotocols::univariate_skip::{
     build_uniskip_first_round_poly, uniskip_targets, UniSkipState,
 };
 use crate::transcripts::Transcript;
-use crate::utils::accumulation::{acc8s_fmadd_s256, Acc6S, Acc6U, Acc8Signed};
+use crate::utils::accumulation::{acc8s_fmadd_s256, Acc8Signed};
 use crate::utils::math::Math;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
@@ -553,56 +552,10 @@ impl<F: JoltField> ProductVirtualRemainder<F> {
                         let row_lo = ProductCycleInputs::from_trace::<F>(trace, idx_lo);
                         let row_hi = ProductCycleInputs::from_trace::<F>(trace, idx_hi);
 
-                        // Fused left/right using small-value accumulators
-                        let mut left0_acc: Acc6U<F> = Acc6U::new();
-                        let mut right0_acc: Acc6S<F> = Acc6S::new();
-                        left0_acc.fmadd(&weights_at_r0[0], &row_lo.instruction_left_input);
-                        left0_acc.fmadd(&weights_at_r0[1], &(row_lo.rd_addr as u64));
-                        left0_acc.fmadd(&weights_at_r0[2], &(row_lo.rd_addr as u64));
-                        left0_acc.fmadd(&weights_at_r0[3], &row_lo.should_branch_lookup_output);
-                        if row_lo.jump_flag {
-                            left0_acc.fmadd(&weights_at_r0[4], &1u64);
-                        }
-                        right0_acc.fmadd(&weights_at_r0[0], &row_lo.instruction_right_input);
-                        if row_lo.write_lookup_output_to_rd_flag {
-                            right0_acc.fmadd(&weights_at_r0[1], &1i128);
-                        }
-                        if row_lo.jump_flag {
-                            right0_acc.fmadd(&weights_at_r0[2], &1i128);
-                        }
-                        if row_lo.should_branch_flag {
-                            right0_acc.fmadd(&weights_at_r0[3], &1i128);
-                        }
-                        if row_lo.not_next_noop {
-                            right0_acc.fmadd(&weights_at_r0[4], &1i128);
-                        }
-                        let left0 = left0_acc.reduce();
-                        let right0 = right0_acc.reduce();
-
-                        let mut left1_acc: Acc6U<F> = Acc6U::new();
-                        let mut right1_acc: Acc6S<F> = Acc6S::new();
-                        left1_acc.fmadd(&weights_at_r0[0], &row_hi.instruction_left_input);
-                        left1_acc.fmadd(&weights_at_r0[1], &(row_hi.rd_addr as u64));
-                        left1_acc.fmadd(&weights_at_r0[2], &(row_hi.rd_addr as u64));
-                        left1_acc.fmadd(&weights_at_r0[3], &row_hi.should_branch_lookup_output);
-                        if row_hi.jump_flag {
-                            left1_acc.fmadd(&weights_at_r0[4], &1u64);
-                        }
-                        right1_acc.fmadd(&weights_at_r0[0], &row_hi.instruction_right_input);
-                        if row_hi.write_lookup_output_to_rd_flag {
-                            right1_acc.fmadd(&weights_at_r0[1], &1i128);
-                        }
-                        if row_hi.jump_flag {
-                            right1_acc.fmadd(&weights_at_r0[2], &1i128);
-                        }
-                        if row_hi.should_branch_flag {
-                            right1_acc.fmadd(&weights_at_r0[3], &1i128);
-                        }
-                        if row_hi.not_next_noop {
-                            right1_acc.fmadd(&weights_at_r0[4], &1i128);
-                        }
-                        let left1 = left1_acc.reduce();
-                        let right1 = right1_acc.reduce();
+                        let (left0, right0) =
+                            row_lo.compute_left_right_at_r::<F>(&weights_at_r0[..]);
+                        let (left1, right1) =
+                            row_hi.compute_left_right_at_r::<F>(&weights_at_r0[..]);
 
                         let e_in = if num_x_in_vals == 1 {
                             split_eq_poly.E_in_current()[0]
@@ -810,8 +763,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ProductVirtualRemai
             self.bind_streaming_round(r_j);
         } else {
             let ps = self.prover_state.as_mut().expect("prover state missing");
-            ps.left.bind_parallel(r_j, BindingOrder::LowToHigh);
-            ps.right.bind_parallel(r_j, BindingOrder::LowToHigh);
+            rayon::join(
+                || ps.left.bind_parallel(r_j, BindingOrder::LowToHigh),
+                || ps.right.bind_parallel(r_j, BindingOrder::LowToHigh),
+            );
         }
 
         // Bind eq_poly for next round
