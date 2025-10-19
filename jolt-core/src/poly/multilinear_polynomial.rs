@@ -204,12 +204,10 @@ impl<F: JoltField> MultilinearPolynomial<F> {
             MultilinearPolynomial::BoolScalars(poly) => {
                 if poly.is_bound() {
                     poly.bound_coeffs[index]
+                } else if poly.coeffs[index] {
+                    F::one()
                 } else {
-                    if poly.coeffs[index] {
-                        F::one()
-                    } else {
-                        F::zero()
-                    }
+                    F::zero()
                 }
             }
             MultilinearPolynomial::U8Scalars(poly) => {

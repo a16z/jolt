@@ -1,9 +1,6 @@
 use crate::field::{AccumulateInPlace, DeferredProducts, FmaddTrunc, JoltField};
 use ark_ff::biginteger::{I8OrI96, S128, S160, S192, S256};
-
-// ------------------------------
-// Wrapper structs (Phase 1): Acc5U/Acc6U/Acc6S/Acc7U/Acc7S
-// ------------------------------
+use ark_std::Zero;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Acc5U<F: JoltField> {
@@ -28,40 +25,6 @@ impl<F: JoltField> Acc5U<F> {
     #[inline(always)]
     pub fn reduce(&self) -> F {
         F::from_barrett_reduce(self.word)
-    }
-}
-
-impl<F: JoltField> AccumulateInPlace<F, u64> for Acc5U<F> {
-    #[inline(always)]
-    fn fmadd(&mut self, field: &F, other: &u64) {
-        if *other == 0 {
-            return;
-        }
-        self.word += (*field).mul_u64_unreduced(*other);
-    }
-    #[inline(always)]
-    fn reduce(&self) -> F {
-        Acc5U::<F>::reduce(self)
-    }
-    #[inline(always)]
-    fn combine(&mut self, other: &Self) {
-        self.word += other.word;
-    }
-}
-
-// Allow adding raw field elements (matches acc5u_add_field shim semantics)
-impl<F: JoltField> AccumulateInPlace<F, F> for Acc5U<F> {
-    #[inline(always)]
-    fn fmadd(&mut self, _field: &F, other: &F) {
-        self.word += *other.as_unreduced_ref();
-    }
-    #[inline(always)]
-    fn reduce(&self) -> F {
-        Acc5U::<F>::reduce(self)
-    }
-    #[inline(always)]
-    fn combine(&mut self, other: &Self) {
-        self.word += other.word;
     }
 }
 
@@ -91,6 +54,25 @@ impl<F: JoltField> AccumulateInPlace<F, u8> for Acc5U<F> {
             return;
         }
         self.word += (*field).mul_u64_unreduced(v);
+    }
+    #[inline(always)]
+    fn reduce(&self) -> F {
+        Acc5U::<F>::reduce(self)
+    }
+    #[inline(always)]
+    fn combine(&mut self, other: &Self) {
+        self.word += other.word;
+    }
+}
+
+/// Should only be invoked when there is no chance of overflow
+impl<F: JoltField> AccumulateInPlace<F, u64> for Acc5U<F> {
+    #[inline(always)]
+    fn fmadd(&mut self, field: &F, other: &u64) {
+        if *other == 0 {
+            return;
+        }
+        self.word += (*field).mul_u64_unreduced(*other);
     }
     #[inline(always)]
     fn reduce(&self) -> F {
@@ -420,14 +402,10 @@ impl<F: JoltField> AccumulateInPlace<F, i128> for Acc7S<F> {
             return;
         }
         let abs = v.unsigned_abs();
-        let lo = abs as u64;
-        let hi = (abs >> 64) as u64;
-        let mag = <F as JoltField>::Unreduced::from([lo, hi]);
-        let field_bigint = field.as_unreduced_ref();
         if v > 0 {
-            field_bigint.fmadd_trunc::<2, 7>(&mag, &mut self.pos);
+            self.pos += field.mul_u128_unreduced(abs);
         } else {
-            field_bigint.fmadd_trunc::<2, 7>(&mag, &mut self.neg);
+            self.neg += field.mul_u128_unreduced(abs);
         }
     }
     #[inline(always)]
@@ -444,16 +422,15 @@ impl<F: JoltField> AccumulateInPlace<F, i128> for Acc7S<F> {
 impl<F: JoltField> AccumulateInPlace<F, S128> for Acc7S<F> {
     #[inline(always)]
     fn fmadd(&mut self, field: &F, other: &S128) {
-        if other.magnitude_limbs() == [0u64; 2] {
+        if other.is_zero() {
             return;
         }
-        let limbs = other.magnitude_limbs();
-        let mag = <F as JoltField>::Unreduced::from([limbs[0], limbs[1]]);
-        let field_bigint = field.as_unreduced_ref();
-        if other.sign() {
-            field_bigint.fmadd_trunc::<2, 7>(&mag, &mut self.pos);
+        let limbs = other.magnitude_as_u128();
+        let result = field.mul_u128_unreduced(limbs);
+        if other.is_positive {
+            self.pos += result;
         } else {
-            field_bigint.fmadd_trunc::<2, 7>(&mag, &mut self.neg);
+            self.neg += result;
         }
     }
     #[inline(always)]
@@ -662,19 +639,17 @@ impl<F: JoltField> Acc8Signed<F> {
         Self::default()
     }
 
-    /// fmadd with s128 (alias to i128) using 2-limb fmadd_trunc into 8-limb signed accumulators
     #[inline(always)]
-    pub fn fmadd_s128(&mut self, field: &F, v: i128) {
-        if v == 0 {
+    pub fn fmadd_s128(&mut self, field: &F, v: S128) {
+        if v.is_zero() {
             return;
         }
-        let abs = v.unsigned_abs();
-        let mag = F::Unreduced::<2>::from(abs);
-        let field_bigint = field.as_unreduced_ref();
-        if v > 0 {
-            field_bigint.fmadd_trunc::<2, 8>(&mag, &mut self.pos);
+        let limbs = v.magnitude_as_u128();
+        let result = field.mul_u128_unreduced(limbs);
+        if v.is_positive {
+            self.pos += result;
         } else {
-            field_bigint.fmadd_trunc::<2, 8>(&mag, &mut self.neg);
+            self.neg += result;
         }
     }
 

@@ -41,6 +41,11 @@ use crate::zkvm::JoltSharedPreprocessing;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 
+#[cfg(test)]
+use crate::zkvm::r1cs::constraints::{UNIFORM_R1CS_FIRST_GROUP, UNIFORM_R1CS_SECOND_GROUP};
+#[cfg(test)]
+use crate::zkvm::r1cs::inputs::JoltR1CSInputs;
+
 // Spartan Outer sumcheck
 // (with univariate-skip first round on Z, and no Cz term given all eq conditional constraints)
 //
@@ -221,10 +226,8 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
                                 if az0_bool[i] {
                                     sum_c_az0_i64 += c;
                                 }
-                                // sum_c_bz0 += c * bz0_i128[i] in signed bigints (S64 * S128 -> S128)
-                                let c_s64 = S64::from_i64(c);
-                                let bz_i = S128::from_i128(bz0_i128[i]);
-                                let term = c_s64.mul_trunc::<2, 2>(&bz_i); // S128
+                                // sum_c_bz0 += c * bz0_i128[i] in signed bigints (mul in i128 -> S128)
+                                let term = S128::from_i128(c as i128 * bz0_i128[i]);
                                 sum_c_bz0_s128 += term;
                             }
                             // Product-of-sums in bigints: S64 * S128 -> S192
@@ -490,11 +493,6 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
         let mut az_hi: Vec<F> = unsafe_allocate_zero_vec(groups_exact);
         let mut bz_lo: Vec<F> = unsafe_allocate_zero_vec(groups_exact);
         let mut bz_hi: Vec<F> = unsafe_allocate_zero_vec(groups_exact);
-
-        let _num_parallel_chunks = core::cmp::min(
-            num_x_out_vals,
-            rayon::current_num_threads().next_power_of_two() * 8,
-        );
 
         // Parallel over x_out groups by mut-chunking all four buffers in lockstep
         let (t0_acc_unr, t_inf_acc_unr) = az_lo
@@ -816,33 +814,24 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for OuterRemainingSumch
         // Compute claimed witness evals and append virtual openings for all R1CS inputs
         let ps = self.prover_state.as_ref().expect("prover state missing");
         let claimed_witness_evals =
-            compute_claimed_r1cs_input_evals::<F>(&ps.preprocess, ps.trace.as_slice(), r_cycle);
+            compute_claimed_r1cs_input_evals::<F>(&ps.preprocess, &ps.trace, r_cycle);
 
         #[cfg(test)]
         {
             // Recompute Az,Bz at the final opening point USING ONLY the claimed witness MLEs z(r_cycle),
             // then compare to the prover's final Az,Bz claims. This validates the consistency wiring
             // between the outer sumcheck and the witness openings.
-            use crate::poly::lagrange_poly::LagrangePolynomial;
-            use crate::zkvm::r1cs::constraints::{
-                UNIFORM_R1CS_FIRST_GROUP, UNIFORM_R1CS_SECOND_GROUP, UNIVARIATE_SKIP_DOMAIN_SIZE,
-            };
-            use crate::zkvm::r1cs::inputs::JoltR1CSInputs;
 
             // Prover's final Az,Bz claims (after all bindings)
             let claims = self.final_sumcheck_evals();
 
             // Extract streaming-round challenge r_stream from the opening point tail (after r_cycle)
             let (_, rx_tail) = opening_point.r.split_at(self.num_cycles_bits);
-            assert!(
-                !rx_tail.is_empty(),
-                "expected streaming-round challenge present in opening point"
-            );
             let r_stream = rx_tail[0];
 
             // Build z(r_cycle) vector extended with a trailing 1 for the constant column
             let const_col = JoltR1CSInputs::num_inputs();
-            let mut z_cycle_ext = claimed_witness_evals.clone();
+            let mut z_cycle_ext = claimed_witness_evals.to_vec();
             z_cycle_ext.push(F::one());
 
             // Lagrange weights over the univariate-skip base domain at r0
@@ -878,12 +867,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for OuterRemainingSumch
 
             assert_eq!(
                 az_final, claims[0],
-                "Az final eval mismatch vs claims: recomputed={} claimed={}",
+                "Az final eval mismatch vs claims from evaluating R1CS inputs at r_cycle: recomputed={} claimed={}",
                 az_final, claims[0]
             );
             assert_eq!(
                 bz_final, claims[1],
-                "Bz final eval mismatch vs claims: recomputed={} claimed={}",
+                "Bz final eval mismatch vs claims from evaluating R1CS inputs at r_cycle: recomputed={} claimed={}",
                 bz_final, claims[1]
             );
         }

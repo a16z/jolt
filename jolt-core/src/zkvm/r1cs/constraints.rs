@@ -64,26 +64,26 @@ pub use super::ops::{Term, LC};
 pub struct Constraint {
     pub a: LC,
     pub b: LC,
-    pub c: LC,
+    // No c needed for now, all eq-conditional constraints
+    // pub c: LC,
 }
 
 impl Constraint {
-    pub const fn new(a: LC, b: LC, c: LC) -> Self {
-        Self { a, b, c }
+    pub const fn new(a: LC, b: LC) -> Self {
+        Self { a, b }
     }
 
     /// Evaluate this constraint at a specific row in the witness polynomials
-    /// Returns (a_eval, b_eval, c_eval) tuple
+    /// Returns (a_eval, b_eval) tuple
     #[inline]
     pub fn evaluate_row<F: JoltField>(
         &self,
         flattened_polynomials: &[MultilinearPolynomial<F>],
         row: usize,
-    ) -> (F, F, F) {
+    ) -> (F, F) {
         let a_eval = self.a.evaluate_row(flattened_polynomials, row);
         let b_eval = self.b.evaluate_row(flattened_polynomials, row);
-        let c_eval = self.c.evaluate_row(flattened_polynomials, row);
-        (a_eval, b_eval, c_eval)
+        (a_eval, b_eval)
     }
 }
 
@@ -113,7 +113,6 @@ pub const fn constraint_eq_conditional_lc(condition: LC, left: LC, right: LC) ->
             Some(b) => b,
             None => LC::zero(),
         },
-        LC::zero(),
     )
 }
 
@@ -144,31 +143,6 @@ pub enum ConstraintName {
 pub struct NamedConstraint {
     pub name: ConstraintName,
     pub cons: Constraint,
-}
-
-/// Creates: left * right == result
-pub const fn constraint_prod_lc(left: LC, right: LC, result: LC) -> Constraint {
-    Constraint::new(left, right, result)
-}
-
-/// Creates: condition * (true_val - false_val) == (result - false_val)
-pub const fn constraint_if_else_lc(
-    condition: LC,
-    true_val: LC,
-    false_val: LC,
-    result: LC,
-) -> Constraint {
-    Constraint::new(
-        condition,
-        match true_val.checked_sub(false_val) {
-            Some(b) => b,
-            None => LC::zero(),
-        },
-        match result.checked_sub(false_val) {
-            Some(c) => c,
-            None => LC::zero(),
-        },
-    )
 }
 
 /// r1cs_eq_conditional!: verbose, condition-first equality constraint
@@ -399,7 +373,7 @@ pub const fn filter_uniform_r1cs<const N: usize>(
 ) -> [NamedConstraint; N] {
     let dummy = NamedConstraint {
         name: ConstraintName::RamReadEqRamWriteIfLoad,
-        cons: Constraint::new(LC::zero(), LC::zero(), LC::zero()),
+        cons: Constraint::new(LC::zero(), LC::zero()),
     };
     let mut out: [NamedConstraint; N] = [dummy; N];
 
@@ -581,7 +555,15 @@ pub fn eval_az_second_group(row: &R1CSCycleInputs) -> [u8; NUM_REMAINING_R1CS_CO
             N::NextUnexpPCEqPCPlusImmIfShouldBranch => row.should_branch as u8,
             N::NextUnexpPCUpdateOtherwise => {
                 let jump = flags[CircuitFlags::Jump] as u8;
-                1u8.wrapping_sub(jump).wrapping_sub(row.should_branch as u8)
+                let should_branch = row.should_branch as u8;
+                #[cfg(test)]
+                {
+                    // panic if both jump and should_branch are set
+                    if jump + should_branch > 1 {
+                        panic!("jump and should_branch are both set");
+                    }
+                }
+                1u8.wrapping_sub(jump).wrapping_sub(should_branch)
             }
             N::NextPCEqPCPlusOneIfInline => flags[CircuitFlags::VirtualInstruction] as u8,
             N::MustStartSequenceFromBeginning => 0u8,
@@ -707,7 +689,7 @@ pub fn compute_bz_r_group0<F: JoltField>(row: &R1CSCycleInputs, lagrange_evals_r
 
 #[inline]
 pub fn compute_az_r_group1<F: JoltField>(row: &R1CSCycleInputs, lagrange_evals_r: &[F]) -> F {
-    // Group 1 Az are u8 (nonnegative); accumulate field * i32 unreduced, then Barrett-reduce
+    // Group 1 Az are u8 (nonnegative); accumulate field * u8 unreduced, then Barrett-reduce
     let az_vals_u8 = eval_az_second_group(row);
     let mut acc: Acc5U<F> = Acc5U::new();
     let mut i = 0;
@@ -743,41 +725,5 @@ mod tests {
         let array_order: Vec<ConstraintName> = UNIFORM_R1CS.iter().map(|nc| nc.name).collect();
         assert_eq!(array_order.len(), NUM_R1CS_CONSTRAINTS);
         assert_eq!(enum_order, array_order);
-    }
-
-    /// Test that all Cz terms in UNIFORM_R1CS are zero.
-    /// We currently only use conditional equality constraints
-    /// of the form Az * Bz = 0, which means Cz must be identically zero.
-    #[test]
-    fn all_cz_terms_are_zero() {
-        for (i, named_constraint) in UNIFORM_R1CS.iter().enumerate() {
-            let c = &named_constraint.cons.c;
-
-            // Check that the C LC is structurally Zero
-            assert!(
-                matches!(c, LC::Zero),
-                "Constraint {} ({:?}) has non-zero Cz: the C term must be LC::Zero but got {:?}",
-                i,
-                named_constraint.name,
-                c
-            );
-
-            // Double-check: verify it has no terms and no constant
-            assert_eq!(
-                c.num_terms(),
-                0,
-                "Constraint {} ({:?}) has {} terms in Cz, expected 0",
-                i,
-                named_constraint.name,
-                c.num_terms()
-            );
-
-            assert!(
-                c.const_term().is_none(),
-                "Constraint {} ({:?}) has a constant term in Cz, expected None",
-                i,
-                named_constraint.name
-            );
-        }
     }
 }

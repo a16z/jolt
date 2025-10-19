@@ -441,16 +441,21 @@ pub fn compute_claimed_r1cs_input_evals<F: JoltField>(
     preprocessing: &JoltSharedPreprocessing,
     trace: &[Cycle],
     r_cycle: &[F::Challenge],
-) -> Vec<F> {
+) -> [F; NUM_R1CS_INPUTS] {
     let m = r_cycle.len() / 2;
     let (r2, r1) = r_cycle.split_at(m);
     let (eq_one, eq_two) = rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
 
-    let totals_unr: [F::Unreduced<9>; NUM_R1CS_INPUTS] = (0..eq_one.len())
+    (0..eq_one.len())
         .into_par_iter()
         .map(|x1| {
             let eq1_val = eq_one[x1];
 
+            // (DON'T DELETE) Accumulators for each input
+            // If bool or u8 => 5 limbs unsigned
+            // If u64 => 6 limbs unsigned
+            // If i128 => 6 limbs signed
+            // If S128 => 7 limbs signed
             let mut acc_left_input: Acc6U<F> = Acc6U::new();
             let mut acc_right_input: Acc6S<F> = Acc6S::new();
             let mut acc_product: Acc7S<F> = Acc7S::new();
@@ -489,9 +494,7 @@ pub fn compute_claimed_r1cs_input_evals<F: JoltField>(
 
                 acc_wl_left.fmadd(&e_in, &(row.write_lookup_output_to_rd_addr as u64));
                 acc_wp_left.fmadd(&e_in, &(row.write_pc_to_rd_addr as u64));
-                if row.should_branch {
-                    acc_sb_right.fmadd(&F::one(), &e_in);
-                }
+                acc_sb_right.fmadd(&e_in, &row.should_branch);
 
                 acc_pc.fmadd(&e_in, &row.pc);
                 acc_unexpanded_pc.fmadd(&e_in, &row.unexpanded_pc);
@@ -507,20 +510,11 @@ pub fn compute_claimed_r1cs_input_evals<F: JoltField>(
                 acc_next_unexpanded_pc.fmadd(&e_in, &row.next_unexpanded_pc);
                 acc_next_pc.fmadd(&e_in, &row.next_pc);
                 acc_lookup_output.fmadd(&e_in, &row.lookup_output);
-                if row.should_jump {
-                    acc_sj_flag.fmadd(&F::one(), &e_in);
-                }
-                if row.next_is_virtual {
-                    acc_next_is_virtual.fmadd(&F::one(), &e_in);
-                }
-                if row.next_is_first_in_sequence {
-                    acc_next_is_first_in_sequence.fmadd(&F::one(), &e_in);
-                }
+                acc_sj_flag.fmadd(&e_in, &row.should_jump);
+                acc_next_is_virtual.fmadd(&e_in, &row.next_is_virtual);
+                acc_next_is_first_in_sequence.fmadd(&e_in, &row.next_is_first_in_sequence);
                 for flag in CircuitFlags::iter() {
-                    if row.flags[flag] {
-                        let idx = flag as usize;
-                        acc_flags[idx].fmadd(&F::one(), &e_in);
-                    }
+                    acc_flags[flag as usize].fmadd(&e_in, &row.flags[flag as usize]);
                 }
             }
 
@@ -585,11 +579,8 @@ pub fn compute_claimed_r1cs_input_evals<F: JoltField>(
                 }
                 acc
             },
-        );
-
-    let arr: [F; NUM_R1CS_INPUTS] =
-        core::array::from_fn(|i| F::from_montgomery_reduce::<9>(totals_unr[i]));
-    arr.to_vec()
+        )
+        .map(|unr| F::from_montgomery_reduce::<9>(unr))
 }
 
 /// Compact alias for the five shift-sumcheck witness polynomials
@@ -716,12 +707,13 @@ impl ProductCycleInputs {
 
         // Next-is-noop and its complement (1 - NextIsNoop)
         let not_next_noop = {
-            let next_is_noop = if t + 1 < len {
-                trace[t + 1].instruction().instruction_flags()[InstructionFlags::IsNoop]
+            if t + 1 < len {
+                !trace[t + 1].instruction().instruction_flags()[InstructionFlags::IsNoop]
             } else {
-                false // There is no next cycle, so cannot be a noop
-            };
-            !next_is_noop
+                // Needs final not_next_noop to be false for the shift sumcheck
+                // (since EqPlusOne does not do overflow)
+                false
+            }
         };
 
         // WriteLookupOutputToRD flag
@@ -788,23 +780,15 @@ pub fn compute_claimed_product_factor_evals<F: JoltField>(
                 // 2: RdWa (u8)
                 acc_rd_u8.fmadd(&e_in, &(row.rd_addr as u64));
                 // 3: OpFlags(WriteLookupOutputToRD) (bool)
-                if row.write_lookup_output_to_rd_flag {
-                    acc_wl_flag.fmadd(&F::one(), &e_in);
-                }
+                acc_wl_flag.fmadd(&e_in, &row.write_lookup_output_to_rd_flag);
                 // 4: OpFlags(Jump) (bool)
-                if row.jump_flag {
-                    acc_jump_flag.fmadd(&F::one(), &e_in);
-                }
+                acc_jump_flag.fmadd(&e_in, &row.jump_flag);
                 // 5: LookupOutput (u64)
                 acc_lookup_output.fmadd(&e_in, &row.should_branch_lookup_output);
                 // 6: InstructionFlags(Branch) (bool)
-                if row.should_branch_flag {
-                    acc_branch_flag.fmadd(&F::one(), &e_in);
-                }
+                acc_branch_flag.fmadd(&e_in, &row.should_branch_flag);
                 // 7: NextIsNoop (bool) = !not_next_noop
-                if !row.not_next_noop {
-                    acc_next_is_noop.fmadd(&F::one(), &e_in);
-                }
+                acc_next_is_noop.fmadd(&e_in, &(!row.not_next_noop));
             }
 
             let mut out_unr = [F::Unreduced::<9>::zero(); 8];
