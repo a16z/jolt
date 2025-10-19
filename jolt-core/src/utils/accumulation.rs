@@ -339,12 +339,7 @@ impl<F: JoltField> AccumulateInPlace<F, u128> for Acc7U<F> {
         if *other == 0 {
             return;
         }
-        let lo = *other as u64;
-        let hi = (*other >> 64) as u64;
-        let mag = <F as JoltField>::Unreduced::from([lo, hi]);
-        field
-            .as_unreduced_ref()
-            .fmadd_trunc::<2, 7>(&mag, &mut self.word);
+        self.word += field.mul_u128_unreduced(*other);
     }
     #[inline(always)]
     fn reduce(&self) -> F {
