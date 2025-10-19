@@ -217,9 +217,18 @@ impl<F: JoltField> Acc6S<F> {
     }
     #[inline(always)]
     pub fn reduce(&self) -> F {
-        let pos = F::from_barrett_reduce(self.pos);
-        let neg = F::from_barrett_reduce(self.neg);
-        pos - neg
+        let result = if self.pos >= self.neg {
+            F::from_barrett_reduce(self.pos - self.neg)
+        } else {
+            -F::from_barrett_reduce(self.neg - self.pos)
+        };
+        #[cfg(test)]
+        {
+            let pos = F::from_barrett_reduce(self.pos);
+            let neg = F::from_barrett_reduce(self.neg);
+            debug_assert_eq!(result, pos - neg);
+        }
+        result
     }
 }
 
@@ -388,9 +397,18 @@ impl<F: JoltField> Acc7S<F> {
     }
     #[inline(always)]
     pub fn reduce(&self) -> F {
-        let pos = F::from_barrett_reduce(self.pos);
-        let neg = F::from_barrett_reduce(self.neg);
-        pos - neg
+        let result = if self.pos >= self.neg {
+            F::from_barrett_reduce(self.pos - self.neg)
+        } else {
+            -F::from_barrett_reduce(self.neg - self.pos)
+        };
+        #[cfg(test)]
+        {
+            let pos = F::from_barrett_reduce(self.pos);
+            let neg = F::from_barrett_reduce(self.neg);
+            debug_assert_eq!(result, pos - neg);
+        }
+        result
     }
 }
 
@@ -541,9 +559,18 @@ impl<F: JoltField> DeferredProducts<F, S160> for Acc7S<F> {
     }
     #[inline(always)]
     fn reduce(sum: &Self::Word) -> F {
-        let pos = F::from_barrett_reduce(sum.0);
-        let neg = F::from_barrett_reduce(sum.1);
-        pos - neg
+        let result = if sum.0 >= sum.1 {
+            F::from_barrett_reduce(sum.0 - sum.1)
+        } else {
+            -F::from_barrett_reduce(sum.1 - sum.0)
+        };
+        #[cfg(test)]
+        {
+            let pos = F::from_barrett_reduce(sum.0);
+            let neg = F::from_barrett_reduce(sum.1);
+            debug_assert_eq!(result, pos - neg);
+        }
+        result
     }
 }
 
@@ -585,9 +612,18 @@ impl<F: JoltField> DeferredProducts<F, S192> for Acc7S<F> {
     }
     #[inline(always)]
     fn reduce(sum: &Self::Word) -> F {
-        let pos = F::from_barrett_reduce(sum.0);
-        let neg = F::from_barrett_reduce(sum.1);
-        pos - neg
+        let result = if sum.0 >= sum.1 {
+            F::from_barrett_reduce(sum.0 - sum.1)
+        } else {
+            -F::from_barrett_reduce(sum.1 - sum.0)
+        };
+        #[cfg(test)]
+        {
+            let pos = F::from_barrett_reduce(sum.0);
+            let neg = F::from_barrett_reduce(sum.1);
+            debug_assert_eq!(result, pos - neg);
+        }
+        result
     }
 }
 
@@ -645,9 +681,18 @@ impl<F: JoltField> Acc8Signed<F> {
     /// Reduce accumulated value to a field element (pos - neg) using Montgomery reduction.
     #[inline(always)]
     pub fn reduce_to_field(&self) -> F {
-        let pos = F::from_montgomery_reduce(self.pos);
-        let neg = F::from_montgomery_reduce(self.neg);
-        pos - neg
+        let result = if self.pos >= self.neg {
+            F::from_montgomery_reduce(self.pos - self.neg)
+        } else {
+            -F::from_montgomery_reduce(self.neg - self.pos)
+        };
+        #[cfg(test)]
+        {
+            let pos = F::from_montgomery_reduce(self.pos);
+            let neg = F::from_montgomery_reduce(self.neg);
+            debug_assert_eq!(result, pos - neg);
+        }
+        result
     }
 }
 
