@@ -233,9 +233,7 @@ impl<F: JoltField> ProductVirtualUniSkipInstance<F> {
                     let mut inner_acc: [Acc8Signed<F>; PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE] =
                         [Acc8Signed::<F>::new(); PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE];
                     for x_in_val in 0..num_x_in_vals {
-                        let e_in = if num_x_in_vals == 0 {
-                            F::one()
-                        } else if num_x_in_vals == 1 {
+                        let e_in = if num_x_in_vals == 1 {
                             E_in[0]
                         } else {
                             E_in[x_in_val]

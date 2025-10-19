@@ -25,8 +25,6 @@ use crate::utils::accumulation::Acc7S;
 use crate::utils::math::Math;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
-#[cfg(feature = "allocative")]
-use allocative::FlameGraphBuilder;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::zkvm::dag::state_manager::StateManager;
 use crate::zkvm::r1cs::{
@@ -40,6 +38,8 @@ use crate::zkvm::r1cs::{
 };
 use crate::zkvm::witness::VirtualPolynomial;
 use crate::zkvm::JoltSharedPreprocessing;
+#[cfg(feature = "allocative")]
+use allocative::FlameGraphBuilder;
 
 // Spartan Outer sumcheck
 // (with univariate-skip first round on Z, and no Cz term given all eq conditional constraints)
@@ -198,6 +198,18 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
                         let az0_bool = eval_az_first_group(&row_inputs);
                         let bz0_i128 = eval_bz_first_group(&row_inputs);
 
+                        #[cfg(test)]
+                        {
+                            // Test that az * bz = 0 for first group
+                            debug_assert_eq!(
+                                az0_bool
+                                    .iter()
+                                    .zip(bz0_i128.iter())
+                                    .all(|(az, bz)| *az == false || *bz == 0),
+                                true
+                            );
+                        }
+
                         for j in 0..UNIVARIATE_SKIP_DEGREE {
                             let coeffs = &coeffs_per_j[j];
                             // (sum_i (Az0_i ? c_i : 0)) * (sum_i c_i * Bz0_i)
@@ -229,6 +241,18 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
 
                         let az1_u8 = eval_az_second_group(&row_inputs);
                         let bz1 = eval_bz_second_group(&row_inputs);
+
+                        #[cfg(test)]
+                        {
+                            // Test that az * bz = 0 for second group
+                            debug_assert_eq!(
+                                az1_u8
+                                    .iter()
+                                    .zip(bz1.iter())
+                                    .all(|(az, bz)| *az == 0u8 || bz.is_zero()),
+                                true
+                            );
+                        }
 
                         let g2_len = core::cmp::min(
                             NUM_REMAINING_R1CS_CONSTRAINTS,
@@ -793,12 +817,74 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for OuterRemainingSumch
 
         #[cfg(test)]
         {
-            // TODO: check that the claimed witness evals are correct wrt the final sumcheck evals
-            // of Az and Bz
-            // Recall: Az(r) = \sum_{y} L(r_uniskip, y) * \sum_{x} Eq(r_stream, x) * Az(r_cycle, x, y)
-            // where r = (r_cycle, r_stream, r_uniskip)
-            // and so Az(r_cycle, x, y) = R1CS-input-corresponding-to-(x,y)(r_cycle)
+            // Recompute Az,Bz at the final opening point USING ONLY the claimed witness MLEs z(r_cycle),
+            // then compare to the prover's final Az,Bz claims. This validates the consistency wiring
+            // between the outer sumcheck and the witness openings.
+            use crate::poly::lagrange_poly::LagrangePolynomial;
+            use crate::zkvm::r1cs::constraints::{
+                UNIFORM_R1CS_FIRST_GROUP, UNIFORM_R1CS_SECOND_GROUP, UNIVARIATE_SKIP_DOMAIN_SIZE,
+            };
+            use crate::zkvm::r1cs::inputs::JoltR1CSInputs;
+
+            // Prover's final Az,Bz claims (after all bindings)
+            let claims = self.final_sumcheck_evals();
+
+            // Extract streaming-round challenge r_stream from the opening point tail (after r_cycle)
+            let (_, rx_tail) = opening_point.r.split_at(self.num_cycles_bits);
+            assert!(
+                !rx_tail.is_empty(),
+                "expected streaming-round challenge present in opening point"
+            );
+            let r_stream = rx_tail[0];
+
+            // Build z(r_cycle) vector extended with a trailing 1 for the constant column
+            let const_col = JoltR1CSInputs::num_inputs();
+            let mut z_cycle_ext = claimed_witness_evals.clone();
+            z_cycle_ext.push(F::one());
+
+            // Lagrange weights over the univariate-skip base domain at r0
+            let w = LagrangePolynomial::<F>::evals::<F::Challenge, UNIVARIATE_SKIP_DOMAIN_SIZE>(
+                &self.r0_uniskip,
+            );
+
+            // Group 0 fused Az,Bz via dot product of LC with z(r_cycle)
+            let mut az_g0 = F::zero();
+            let mut bz_g0 = F::zero();
+            for i in 0..UNIFORM_R1CS_FIRST_GROUP.len() {
+                let lc_a = &UNIFORM_R1CS_FIRST_GROUP[i].cons.a;
+                let lc_b = &UNIFORM_R1CS_FIRST_GROUP[i].cons.b;
+                az_g0 += w[i] * lc_a.dot_eq_ry::<F>(&z_cycle_ext, const_col);
+                bz_g0 += w[i] * lc_b.dot_eq_ry::<F>(&z_cycle_ext, const_col);
+            }
+
+            // Group 1 fused Az,Bz (use same Lagrange weights order as construction)
+            let mut az_g1 = F::zero();
+            let mut bz_g1 = F::zero();
+            let g2_len =
+                core::cmp::min(UNIFORM_R1CS_SECOND_GROUP.len(), UNIVARIATE_SKIP_DOMAIN_SIZE);
+            for i in 0..g2_len {
+                let lc_a = &UNIFORM_R1CS_SECOND_GROUP[i].cons.a;
+                let lc_b = &UNIFORM_R1CS_SECOND_GROUP[i].cons.b;
+                az_g1 += w[i] * lc_a.dot_eq_ry::<F>(&z_cycle_ext, const_col);
+                bz_g1 += w[i] * lc_b.dot_eq_ry::<F>(&z_cycle_ext, const_col);
+            }
+
+            // Bind by r_stream to match the outer streaming combination used for final Az,Bz
+            let az_final = az_g0 + r_stream * (az_g1 - az_g0);
+            let bz_final = bz_g0 + r_stream * (bz_g1 - bz_g0);
+
+            assert_eq!(
+                az_final, claims[0],
+                "Az final eval mismatch vs claims: recomputed={} claimed={}",
+                az_final, claims[0]
+            );
+            assert_eq!(
+                bz_final, claims[1],
+                "Bz final eval mismatch vs claims: recomputed={} claimed={}",
+                bz_final, claims[1]
+            );
         }
+
         for (i, input) in ALL_R1CS_INPUTS.iter().enumerate() {
             acc.append_virtual(
                 transcript,

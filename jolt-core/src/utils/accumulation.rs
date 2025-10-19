@@ -26,11 +26,6 @@ impl<F: JoltField> Acc5U<F> {
     }
 
     #[inline(always)]
-    pub fn clear(&mut self) {
-        self.word = <F as JoltField>::Unreduced::<5>::from([0u64; 5]);
-    }
-
-    #[inline(always)]
     pub fn reduce(&self) -> F {
         F::from_barrett_reduce(self.word)
     }
@@ -130,10 +125,7 @@ impl<F: JoltField> Acc6U<F> {
     pub fn new() -> Self {
         Self::default()
     }
-    #[inline(always)]
-    pub fn clear(&mut self) {
-        self.word = <F as JoltField>::Unreduced::<6>::from([0u64; 6]);
-    }
+
     #[inline(always)]
     pub fn reduce(&self) -> F {
         F::from_barrett_reduce(self.word)
@@ -177,17 +169,20 @@ impl<F: JoltField> AccumulateInPlace<F, bool> for Acc6U<F> {
 }
 
 impl<F: JoltField> DeferredProducts<F, u64> for Acc6U<F> {
-    type Word = <F as JoltField>::Unreduced<5>;
+    /// Use a 6-limb word for safer accumulation of many terms.
+    /// This avoids potential overflow when summing multiple 5-limb products.
+    type Word = <F as JoltField>::Unreduced<6>;
     #[inline(always)]
     fn product(field: &F, other: &u64) -> Self::Word {
         if *other == 0 {
-            return <F as JoltField>::Unreduced::<5>::from([0u64; 5]);
+            return <F as JoltField>::Unreduced::<6>::from([0u64; 6]);
         }
-        (*field).mul_u64_unreduced(*other)
+        // TODO: make this more efficient?
+        (*field).mul_u128_unreduced(*other as u128)
     }
     #[inline(always)]
     fn zero() -> Self::Word {
-        <F as JoltField>::Unreduced::<5>::from([0u64; 5])
+        <F as JoltField>::Unreduced::<6>::from([0u64; 6])
     }
     #[inline(always)]
     fn add_in_place(sum: &mut Self::Word, add: &Self::Word) {
@@ -221,17 +216,10 @@ impl<F: JoltField> Acc6S<F> {
         Self::default()
     }
     #[inline(always)]
-    pub fn clear(&mut self) {
-        self.pos = <F as JoltField>::Unreduced::<6>::from([0u64; 6]);
-        self.neg = <F as JoltField>::Unreduced::<6>::from([0u64; 6]);
-    }
-    #[inline(always)]
     pub fn reduce(&self) -> F {
-        if self.pos >= self.neg {
-            F::from_barrett_reduce(self.pos - self.neg)
-        } else {
-            -F::from_barrett_reduce(self.neg - self.pos)
-        }
+        let pos = F::from_barrett_reduce(self.pos);
+        let neg = F::from_barrett_reduce(self.neg);
+        pos - neg
     }
 }
 
@@ -325,6 +313,9 @@ pub type Acc7Signed<F> = (Acc7<F>, Acc7<F>);
 // Legacy Acc7S helpers removed; use Acc7S wrapper.
 
 // New 7-limb wrappers
+// Safety: 7-limb accumulators rely on fmadd_trunc performing bounded modular folding
+// across the number of fmadd operations used in call sites (outer uniskip extended evals).
+// If this invariant changes, widen to 8 limbs or insert periodic reductions.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Acc7U<F: JoltField> {
@@ -344,10 +335,6 @@ impl<F: JoltField> Acc7U<F> {
     #[inline(always)]
     pub fn new() -> Self {
         Self::default()
-    }
-    #[inline(always)]
-    pub fn clear(&mut self) {
-        self.word = <F as JoltField>::Unreduced::<7>::from([0u64; 7]);
     }
     #[inline(always)]
     pub fn reduce(&self) -> F {
@@ -400,17 +387,10 @@ impl<F: JoltField> Acc7S<F> {
         Self::default()
     }
     #[inline(always)]
-    pub fn clear(&mut self) {
-        self.pos = <F as JoltField>::Unreduced::<7>::from([0u64; 7]);
-        self.neg = <F as JoltField>::Unreduced::<7>::from([0u64; 7]);
-    }
-    #[inline(always)]
     pub fn reduce(&self) -> F {
-        if self.pos >= self.neg {
-            F::from_barrett_reduce(self.pos - self.neg)
-        } else {
-            -F::from_barrett_reduce(self.neg - self.pos)
-        }
+        let pos = F::from_barrett_reduce(self.pos);
+        let neg = F::from_barrett_reduce(self.neg);
+        pos - neg
     }
 }
 
@@ -561,11 +541,9 @@ impl<F: JoltField> DeferredProducts<F, S160> for Acc7S<F> {
     }
     #[inline(always)]
     fn reduce(sum: &Self::Word) -> F {
-        if sum.0 >= sum.1 {
-            F::from_barrett_reduce(sum.0 - sum.1)
-        } else {
-            -F::from_barrett_reduce(sum.1 - sum.0)
-        }
+        let pos = F::from_barrett_reduce(sum.0);
+        let neg = F::from_barrett_reduce(sum.1);
+        pos - neg
     }
 }
 
@@ -607,19 +585,21 @@ impl<F: JoltField> DeferredProducts<F, S192> for Acc7S<F> {
     }
     #[inline(always)]
     fn reduce(sum: &Self::Word) -> F {
-        if sum.0 >= sum.1 {
-            F::from_barrett_reduce(sum.0 - sum.1)
-        } else {
-            -F::from_barrett_reduce(sum.1 - sum.0)
-        }
+        let pos = F::from_barrett_reduce(sum.0);
+        let neg = F::from_barrett_reduce(sum.1);
+        pos - neg
     }
 }
 
 // ------------------------------
 // 8-limb Montgomery accumulators (Signed Acc8) for SVO / round-compression
-// NOTE: reduce_to_field uses Montgomery reduction (faster than Barrett) and yields
-// Montgomery-form field elements. Callers must account for the Montgomery factor
-// (e.g., multiply by F::MONTGOMERY_R_SQUARE elsewhere if converting conventions).
+// NOTE:
+// - reduce_to_field uses Montgomery reduction (faster than Barrett) and yields
+//   Montgomery-form field elements. Callers must account for the Montgomery factor
+//   (e.g., multiply by F::MONTGOMERY_R_SQUARE elsewhere if converting conventions).
+// - Accumulator safety: fmadd_trunc performs bounded modular folding. Ensure the
+//   number of fmadd calls per accumulator instance matches the bounds guaranteed
+//   by the implementation; otherwise periodically reduce and re-accumulate.
 // ------------------------------
 
 /// Unsigned 8-limb accumulator word used by Acc8Signed
@@ -646,12 +626,6 @@ impl<F: JoltField> Acc8Signed<F> {
         Self::default()
     }
 
-    #[inline(always)]
-    pub fn clear(&mut self) {
-        self.pos = <F as JoltField>::Unreduced::<8>::from([0u64; 8]);
-        self.neg = <F as JoltField>::Unreduced::<8>::from([0u64; 8]);
-    }
-
     /// fmadd with s128 (alias to i128) using 2-limb fmadd_trunc into 8-limb signed accumulators
     #[inline(always)]
     pub fn fmadd_s128(&mut self, field: &F, v: i128) {
@@ -671,11 +645,9 @@ impl<F: JoltField> Acc8Signed<F> {
     /// Reduce accumulated value to a field element (pos - neg) using Montgomery reduction.
     #[inline(always)]
     pub fn reduce_to_field(&self) -> F {
-        if self.pos >= self.neg {
-            F::from_montgomery_reduce(self.pos - self.neg)
-        } else {
-            -F::from_montgomery_reduce(self.neg - self.pos)
-        }
+        let pos = F::from_montgomery_reduce(self.pos);
+        let neg = F::from_montgomery_reduce(self.neg);
+        pos - neg
     }
 }
 

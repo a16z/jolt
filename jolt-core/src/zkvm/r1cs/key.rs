@@ -221,15 +221,6 @@ impl<F: JoltField> UniformSpartanKey<F> {
         self.evaluate_uniform_matrix_at_point(|row| &row.b, rx_constr, ry_var)
     }
 
-    /// Evaluate uniform matrix C at a specific point (rx_constr, ry_var)
-    pub fn evaluate_uniform_c_at_point(
-        &self,
-        rx_constr: &[F::Challenge],
-        ry_var: &[F::Challenge],
-    ) -> F {
-        self.evaluate_uniform_matrix_at_point(|row| &row.c, rx_constr, ry_var)
-    }
-
     /// Helper function to evaluate a uniform matrix at a specific point
     /// Uses univariate-skip semantics on the row axis: split rows into two groups,
     /// weight them by (1 - r_stream) and r_stream respectively, and use Lagrange basis
