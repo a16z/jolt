@@ -179,17 +179,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ark-bn254"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d69eab57e8d2663efa5c63135b2af4f396d66424f88954c21104125ab6b3e6bc"
-dependencies = [
- "ark-ec",
- "ark-ff",
- "ark-std",
-]
-
-[[package]]
 name = "ark-ec"
 version = "0.5.0"
 source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#bc8b274d14dbccd67edc5d3723e8294c5bbbf1a7"
@@ -257,7 +246,7 @@ name = "ark-grumpkin"
 version = "0.5.0-alpha.0"
 source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#bc8b274d14dbccd67edc5d3723e8294c5bbbf1a7"
 dependencies = [
- "ark-bn254 0.5.0-alpha.0",
+ "ark-bn254",
  "ark-ec",
  "ark-ff",
  "ark-std",
@@ -1000,7 +989,7 @@ name = "dory"
 version = "1.0.0"
 source = "git+https://github.com/markosg04/dory?branch=dev%2Ftwist-shout#c6dff3f5819ad59287f705dfabf141af6fbba393"
 dependencies = [
- "ark-bn254 0.5.0-alpha.0",
+ "ark-bn254",
  "ark-ec",
  "ark-ff",
  "ark-serialize",
@@ -1938,7 +1927,7 @@ version = "0.1.0"
 dependencies = [
  "allocative",
  "anyhow",
- "ark-bn254 0.5.0-alpha.0",
+ "ark-bn254",
  "ark-ec",
  "ark-ff",
  "ark-grumpkin",
@@ -2056,7 +2045,7 @@ name = "jolt-optimizations"
 version = "0.5.0"
 source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#bc8b274d14dbccd67edc5d3723e8294c5bbbf1a7"
 dependencies = [
- "ark-bn254 0.5.0-alpha.0",
+ "ark-bn254",
  "ark-ec",
  "ark-ff",
  "ark-serialize",
@@ -2082,7 +2071,7 @@ dependencies = [
 name = "jolt-sdk"
 version = "0.1.0"
 dependencies = [
- "ark-bn254 0.5.0-alpha.0",
+ "ark-bn254",
  "ark-ec",
  "common",
  "hex-literal",
@@ -5083,7 +5072,9 @@ dependencies = [
 name = "zklean-extractor"
 version = "0.1.0"
 dependencies = [
- "ark-bn254 0.5.0",
+ "allocative",
+ "ark-bn254",
+ "ark-ff",
  "ark-serialize",
  "ark-std",
  "build-fs-tree",
