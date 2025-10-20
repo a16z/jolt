@@ -1,11 +1,11 @@
 use jolt_core::zkvm::{
     instruction::{
-        CircuitFlags, InstructionFlags as _, InstructionLookup as _, InterleavedBitsMarker as _,
+        CircuitFlags, Flags as _, InstructionLookup as _, InterleavedBitsMarker as _,
     },
     r1cs::inputs::JoltR1CSInputs,
 };
 use strum::IntoEnumIterator as _;
-use tracer::instruction::RV32IMInstruction;
+use tracer::instruction::Instruction;
 
 use crate::{
     constants::JoltParameterSet,
@@ -29,7 +29,7 @@ pub enum OperandInterleaving {
 
 impl OperandInterleaving {
     /// Extract the operand interleaving for an instruction
-    fn instruction_interleaving(instr: &RV32IMInstruction) -> Self {
+    fn instruction_interleaving(instr: &Instruction) -> Self {
         if instr.circuit_flags().is_interleaved_operands() {
             Self::Interleaved
         } else {
@@ -51,13 +51,13 @@ impl std::fmt::Display for OperandInterleaving {
 // TODO: Make this generic over the instruction set
 #[derive(Debug, Clone)]
 pub struct ZkLeanInstruction<J> {
-    instruction: tracer::instruction::RV32IMInstruction,
+    instruction: tracer::instruction::Instruction,
     interleaving: OperandInterleaving,
     phantom: std::marker::PhantomData<J>,
 }
 
-impl<J> From<RV32IMInstruction> for ZkLeanInstruction<J> {
-    fn from(value: RV32IMInstruction) -> Self {
+impl<J> From<Instruction> for ZkLeanInstruction<J> {
+    fn from(value: Instruction) -> Self {
         let interleaving = OperandInterleaving::instruction_interleaving(&value);
 
         Self {
@@ -77,75 +77,78 @@ impl<J: JoltParameterSet> ZkLeanInstruction<J> {
     }
 
     pub fn iter() -> impl Iterator<Item = Self> {
-        RV32IMInstruction::iter().filter_map(|instr| match instr {
-            RV32IMInstruction::NoOp | RV32IMInstruction::UNIMPL
+        Instruction::iter().filter_map(|instr| match instr {
+            Instruction::NoOp | Instruction::UNIMPL
                 // Inline sequences
-                | RV32IMInstruction::DIV(_)
-                | RV32IMInstruction::DIVU(_)
-                | RV32IMInstruction::LB(_)
-                | RV32IMInstruction::LBU(_)
-                | RV32IMInstruction::LH(_)
-                | RV32IMInstruction::LHU(_)
-                | RV32IMInstruction::MULH(_)
-                | RV32IMInstruction::MULHSU(_)
-                | RV32IMInstruction::REM(_)
-                | RV32IMInstruction::REMU(_)
-                | RV32IMInstruction::SB(_)
-                | RV32IMInstruction::SH(_)
-                | RV32IMInstruction::SLL(_)
-                | RV32IMInstruction::SLLI(_)
-                | RV32IMInstruction::SRA(_)
-                | RV32IMInstruction::SRAI(_)
-                | RV32IMInstruction::SRL(_)
-                | RV32IMInstruction::SRLI(_)
-                | RV32IMInstruction::INLINE(_)
+                | Instruction::DIV(_)
+                | Instruction::DIVU(_)
+                | Instruction::LB(_)
+                | Instruction::LBU(_)
+                | Instruction::LH(_)
+                | Instruction::LHU(_)
+                | Instruction::MULH(_)
+                | Instruction::MULHSU(_)
+                | Instruction::REM(_)
+                | Instruction::REMU(_)
+                | Instruction::SB(_)
+                | Instruction::SH(_)
+                | Instruction::SLL(_)
+                | Instruction::SLLI(_)
+                | Instruction::SRA(_)
+                | Instruction::SRAI(_)
+                | Instruction::SRL(_)
+                | Instruction::SRLI(_)
+                | Instruction::INLINE(_)
+                // ???
+                | Instruction::LW(_)
+                | Instruction::SW(_)
+                | Instruction::VirtualLW(_)
+                | Instruction::VirtualSW(_)
 
                 // RV64I
-                | RV32IMInstruction::ADDIW(_)
-                | RV32IMInstruction::SLLIW(_)
-                | RV32IMInstruction::SRLIW(_)
-                | RV32IMInstruction::SRAIW(_)
-                | RV32IMInstruction::ADDW(_)
-                | RV32IMInstruction::SUBW(_)
-                | RV32IMInstruction::SLLW(_)
-                | RV32IMInstruction::SRLW(_)
-                | RV32IMInstruction::SRAW(_)
-                | RV32IMInstruction::LWU(_)
-                | RV32IMInstruction::LD(_)
-                | RV32IMInstruction::SD(_)
+                | Instruction::ADDIW(_)
+                | Instruction::SLLIW(_)
+                | Instruction::SRLIW(_)
+                | Instruction::SRAIW(_)
+                | Instruction::ADDW(_)
+                | Instruction::SUBW(_)
+                | Instruction::SLLW(_)
+                | Instruction::SRLW(_)
+                | Instruction::SRAW(_)
+                | Instruction::LWU(_)
 
                 // RV64M
-                | RV32IMInstruction::DIVUW(_)
-                | RV32IMInstruction::DIVW(_)
-                | RV32IMInstruction::MULW(_)
-                | RV32IMInstruction::REMUW(_)
-                | RV32IMInstruction::REMW(_)
+                | Instruction::DIVUW(_)
+                | Instruction::DIVW(_)
+                | Instruction::MULW(_)
+                | Instruction::REMUW(_)
+                | Instruction::REMW(_)
 
                 // RV32A
-                | RV32IMInstruction::LRW(_)
-                | RV32IMInstruction::SCW(_)
-                | RV32IMInstruction::AMOSWAPW(_)
-                | RV32IMInstruction::AMOADDW(_)
-                | RV32IMInstruction::AMOANDW(_)
-                | RV32IMInstruction::AMOORW(_)
-                | RV32IMInstruction::AMOXORW(_)
-                | RV32IMInstruction::AMOMINW(_)
-                | RV32IMInstruction::AMOMAXW(_)
-                | RV32IMInstruction::AMOMINUW(_)
-                | RV32IMInstruction::AMOMAXUW(_)
+                | Instruction::LRW(_)
+                | Instruction::SCW(_)
+                | Instruction::AMOSWAPW(_)
+                | Instruction::AMOADDW(_)
+                | Instruction::AMOANDW(_)
+                | Instruction::AMOORW(_)
+                | Instruction::AMOXORW(_)
+                | Instruction::AMOMINW(_)
+                | Instruction::AMOMAXW(_)
+                | Instruction::AMOMINUW(_)
+                | Instruction::AMOMAXUW(_)
 
                 // RV64A
-                | RV32IMInstruction::LRD(_)
-                | RV32IMInstruction::SCD(_)
-                | RV32IMInstruction::AMOSWAPD(_)
-                | RV32IMInstruction::AMOADDD(_)
-                | RV32IMInstruction::AMOANDD(_)
-                | RV32IMInstruction::AMOORD(_)
-                | RV32IMInstruction::AMOXORD(_)
-                | RV32IMInstruction::AMOMIND(_)
-                | RV32IMInstruction::AMOMAXD(_)
-                | RV32IMInstruction::AMOMINUD(_)
-                | RV32IMInstruction::AMOMAXUD(_)
+                | Instruction::LRD(_)
+                | Instruction::SCD(_)
+                | Instruction::AMOSWAPD(_)
+                | Instruction::AMOADDD(_)
+                | Instruction::AMOANDD(_)
+                | Instruction::AMOORD(_)
+                | Instruction::AMOXORD(_)
+                | Instruction::AMOMIND(_)
+                | Instruction::AMOMAXD(_)
+                | Instruction::AMOMINUD(_)
+                | Instruction::AMOMAXUD(_)
                 => None,
             _ => Some(Self::from(instr)),
         })

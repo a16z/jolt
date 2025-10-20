@@ -36,7 +36,7 @@ impl<const WORD_SIZE: usize> ZkLeanLookupTable<WORD_SIZE> {
         let num_variables = 2 * WORD_SIZE;
         let reg = F::register(reg_name, num_variables);
 
-        self.lookup_table.evaluate_mle::<F>(&reg)
+        self.lookup_table.evaluate_mle::<F, F>(&reg)
     }
 
     pub fn iter() -> impl Iterator<Item = Self> {
