@@ -571,28 +571,12 @@ where
         ]
     }
 
-    fn stage3_prover_instances(
+    fn stage4_prover_instances(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
         // Accumulate advice polynomials if present
         prover_accumulate_advice(state_manager);
-        vec![]
-    }
-
-    fn stage3_verifier_instances(
-        &mut self,
-        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
-        // Accumulate advice commitments if present
-        verifier_accumulate_advice(state_manager);
-        vec![]
-    }
-
-    fn stage4_prover_instances(
-        &mut self,
-        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
         let booleanity = BooleanitySumcheck::new_prover(state_manager);
         let val_evaluation = ValEvaluationSumcheck::new_prover(
             self.initial_memory_state.as_ref().unwrap(),
@@ -618,6 +602,8 @@ where
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
+        // Accumulate advice commitments if present
+        verifier_accumulate_advice(state_manager);
         let booleanity = BooleanitySumcheck::new_verifier(state_manager);
         let val_evaluation = ValEvaluationSumcheck::new_verifier(
             self.initial_memory_state.as_ref().unwrap(),

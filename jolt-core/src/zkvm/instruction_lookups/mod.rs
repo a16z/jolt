@@ -45,22 +45,6 @@ pub struct LookupsDag<F: JoltField> {
 impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStages<F, T, PCS>
     for LookupsDag<F>
 {
-    fn stage2_prover_instances(
-        &mut self,
-        _sm: &mut StateManager<'_, F, T, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstance<F, T>>> {
-        // Moved Instruction Booleanity to Stage 6
-        vec![]
-    }
-
-    fn stage2_verifier_instances(
-        &mut self,
-        _sm: &mut StateManager<'_, F, T, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstance<F, T>>> {
-        // Moved Instruction Booleanity to Stage 6
-        vec![]
-    }
-
     fn stage3_prover_instances(
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
