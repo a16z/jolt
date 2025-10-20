@@ -222,10 +222,13 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
 
                                 if az0_bool[i] {
                                     sum_c_az0_i64 += c;
+                                    // Optimization: if az is non-zero then bz must be zero
+                                    // so we can skip the bz multiplication
+                                } else {
+                                    // sum_c_bz0 += c * bz0_i128[i] in signed bigints (mul in i128 -> S128)
+                                    let term = S128::from_i128(c as i128 * bz0_i128[i]);
+                                    sum_c_bz0_s128 += term;
                                 }
-                                // sum_c_bz0 += c * bz0_i128[i] in signed bigints (mul in i128 -> S128)
-                                let term = S128::from_i128(c as i128 * bz0_i128[i]);
-                                sum_c_bz0_s128 += term;
                             }
                             // Product-of-sums in bigints: S64 * S128 -> S192
                             let sum_az0_s64 = S64::from_i64(sum_c_az0_i64);
@@ -255,12 +258,12 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
                             NUM_REMAINING_R1CS_CONSTRAINTS,
                             UNIVARIATE_SKIP_DOMAIN_SIZE,
                         );
-                        let mut az1_i32_padded: [i32; UNIVARIATE_SKIP_DOMAIN_SIZE] =
+                        let mut az1_u8_padded: [u8; UNIVARIATE_SKIP_DOMAIN_SIZE] =
                             [0; UNIVARIATE_SKIP_DOMAIN_SIZE];
                         let mut bz1_s160_padded: [S160; UNIVARIATE_SKIP_DOMAIN_SIZE] =
                             [S160::from(0i128); UNIVARIATE_SKIP_DOMAIN_SIZE];
                         for i in 0..g2_len {
-                            az1_i32_padded[i] = az1_u8[i] as i32;
+                            az1_u8_padded[i] = az1_u8[i];
                             bz1_s160_padded[i] = bz1[i];
                         }
 
@@ -272,11 +275,16 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
                             for i in 0..UNIVARIATE_SKIP_DOMAIN_SIZE {
                                 let c = coeffs[i] as i64;
 
-                                let az1_i = az1_i32_padded[i] as i64;
-                                sum_c_az1_i64 += c.saturating_mul(az1_i);
-                                let c_s160 = S160::from(c);
-                                let term: S160 = (&c_s160) * (&bz1_s160_padded[i]);
-                                sum_bz1_s160 += term;
+                                if az1_u8_padded[i] != 0 {
+                                    let az1_i = az1_u8_padded[i] as i64;
+                                    sum_c_az1_i64 += c.saturating_mul(az1_i);
+                                    // Optimization: if az is non-zero then bz must be zero
+                                    // so we can skip the bz multiplication
+                                } else {
+                                    let c_s160 = S160::from(c);
+                                    let term: S160 = (&c_s160) * (&bz1_s160_padded[i]);
+                                    sum_bz1_s160 += term;
+                                }
                             }
                             // Convert S160 -> S192 once outside summation, then S64 * S192 -> S192
                             let sum_bz1_s192: S192 = sum_bz1_s160.to_signed_bigint_nplus1::<3>();
