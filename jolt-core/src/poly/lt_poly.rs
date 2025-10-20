@@ -30,13 +30,31 @@ impl<F: JoltField> LtPolynomial<F> {
         }
     }
 
-    pub fn bind_high_to_low(&mut self, r_j: F::Challenge) {
+    pub fn bind(&mut self, r_j: F::Challenge, bind_order: BindingOrder) {
+        match bind_order {
+            BindingOrder::HighToLow => self.bind_high_to_low(r_j),
+            BindingOrder::LowToHigh => self.bind_low_to_high(r_j),
+        }
+    }
+
+    fn bind_high_to_low(&mut self, r_j: F::Challenge) {
         let n_hi_vars = self.lt_hi.get_num_vars();
         if n_hi_vars != 0 {
             self.lt_hi.bind_parallel(r_j, BindingOrder::HighToLow);
             self.eq_hi.bind_parallel(r_j, BindingOrder::HighToLow);
         } else {
             self.lt_lo.bind_parallel(r_j, BindingOrder::HighToLow);
+            self.n_lo_vars -= 1;
+        }
+    }
+
+    fn bind_low_to_high(&mut self, r_j: F::Challenge) {
+        if self.n_lo_vars != 0 {
+            self.lt_lo.bind_parallel(r_j, BindingOrder::LowToHigh);
+            self.n_lo_vars -= 1;
+        } else {
+            self.lt_hi.bind_parallel(r_j, BindingOrder::LowToHigh);
+            self.eq_hi.bind_parallel(r_j, BindingOrder::LowToHigh);
         }
     }
 
@@ -60,4 +78,57 @@ fn lt_evals<F: JoltField>(r: &OpeningPoint<BIG_ENDIAN, F>) -> Vec<F> {
         });
     }
     evals
+}
+
+#[cfg(test)]
+mod tests {
+    use ark_bn254::Fr;
+
+    use crate::{
+        field::challenge::MontU128Challenge,
+        poly::{
+            multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialEvaluation},
+            opening_proof::{OpeningPoint, BIG_ENDIAN},
+        },
+    };
+
+    use super::{lt_evals, LtPolynomial};
+
+    #[test]
+    fn test_bind_low_to_high_works() {
+        let r_cycle = OpeningPoint::new([9, 5, 7, 1].map(MontU128Challenge::from).to_vec());
+        let mut lt_poly = LtPolynomial::<Fr>::new(&r_cycle);
+        let lt_poly_gt: MultilinearPolynomial<Fr> = lt_evals(&r_cycle).into();
+        let r0 = MontU128Challenge::from(2);
+        let r1 = MontU128Challenge::from(6);
+        let r2 = MontU128Challenge::from(3);
+        let r3 = MontU128Challenge::from(9);
+        let r = OpeningPoint::<BIG_ENDIAN, Fr>::new(vec![r3, r2, r1, r0]);
+
+        lt_poly.bind(r0, BindingOrder::LowToHigh);
+        lt_poly.bind(r1, BindingOrder::LowToHigh);
+        lt_poly.bind(r2, BindingOrder::LowToHigh);
+        lt_poly.bind(r3, BindingOrder::LowToHigh);
+
+        assert_eq!(lt_poly.get_bound_coeff(0), lt_poly_gt.evaluate(&r.r));
+    }
+
+    #[test]
+    fn test_bind_high_to_low_works() {
+        let r_cycle = OpeningPoint::new([9, 5, 7, 1].map(MontU128Challenge::from).to_vec());
+        let mut lt_poly = LtPolynomial::<Fr>::new(&r_cycle);
+        let lt_poly_gt: MultilinearPolynomial<Fr> = lt_evals(&r_cycle).into();
+        let r0 = MontU128Challenge::from(2);
+        let r1 = MontU128Challenge::from(6);
+        let r2 = MontU128Challenge::from(3);
+        let r3 = MontU128Challenge::from(9);
+        let r = OpeningPoint::<BIG_ENDIAN, Fr>::new(vec![r0, r1, r2, r3]);
+
+        lt_poly.bind(r0, BindingOrder::HighToLow);
+        lt_poly.bind(r1, BindingOrder::HighToLow);
+        lt_poly.bind(r2, BindingOrder::HighToLow);
+        lt_poly.bind(r3, BindingOrder::HighToLow);
+
+        assert_eq!(lt_poly.get_bound_coeff(0), lt_poly_gt.evaluate(&r.r));
+    }
 }
