@@ -23,7 +23,7 @@ pub struct UniSkipState<F: JoltField> {
 /// Targets are the extended points z ∈ {−DEGREE..−1} ∪ {1..DEGREE}, interleaved as
 /// [start-1, end+1, start-2, end+2, ...] until DEGREE points are produced.
 #[inline]
-pub fn uniskip_targets<const DOMAIN_SIZE: usize, const DEGREE: usize>() -> [i64; DEGREE] {
+pub const fn uniskip_targets<const DOMAIN_SIZE: usize, const DEGREE: usize>() -> [i64; DEGREE] {
     let d: i64 = DEGREE as i64;
     let ext_left: i64 = -d;
     let ext_right: i64 = d;
@@ -59,7 +59,6 @@ pub fn uniskip_targets<const DOMAIN_SIZE: usize, const DEGREE: usize>() -> [i64;
         p += 1;
     }
 
-    debug_assert_eq!(idx, DEGREE);
     targets
 }
 
