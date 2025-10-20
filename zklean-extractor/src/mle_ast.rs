@@ -366,6 +366,12 @@ impl std::ops::AddAssign for MleAst {
     }
 }
 
+impl<'a> std::ops::AddAssign<&'a Self> for MleAst {
+    fn add_assign(&mut self, rhs: &'a Self) {
+        self.binop(Node::Add, rhs);
+    }
+}
+
 impl std::ops::SubAssign for MleAst {
     fn sub_assign(&mut self, rhs: Self) {
         self.binop(Node::Sub, &rhs);
@@ -422,13 +428,87 @@ impl std::hash::Hash for MleAst {
     }
 }
 
+impl From<u128> for MleAst {
+    fn from(value: u128) -> Self {
+        Self::from_u128(value)
+    }
+}
+
+impl allocative::Allocative for MleAst {
+    fn visit<'a, 'b: 'a>(&self, _visitor: &'a mut allocative::Visitor<'b>) {
+        unimplemented!("Not needed for constructing ASTs");
+    }
+}
+
+impl ark_std::rand::prelude::Distribution<MleAst> for ark_std::rand::distributions::Standard {
+    fn sample<R: ark_std::rand::Rng + ?Sized>(&self, _rng: &mut R) -> MleAst {
+        unimplemented!("Not needed for constructing ASTs");
+    }
+}
+
+impl jolt_core::field::MulTrunc for MleAst {
+    type Other<const M: usize> = Self;
+
+    type Output<const P: usize> = Self;
+
+    fn mul_trunc<const M: usize, const P: usize>(&self, other: &Self::Other<M>) -> Self::Output<P> {
+        *self * other
+    }
+}
+
+impl jolt_core::field::FmaddTrunc for MleAst {
+    type Other<const M: usize> = Self;
+
+    type Acc<const P: usize> = Self;
+
+    fn fmadd_trunc<const M: usize, const P: usize>(
+        &self,
+        _other: &Self::Other<M>,
+        _acc: &mut Self::Acc<P>,
+    ) {
+        unimplemented!("Not needed for constructing ASTs");
+    }
+}
+
+impl jolt_core::field::MulU64WithCarry for MleAst {
+    type Output<const NPLUS1: usize> = Self;
+
+    fn mul_u64_w_carry<const NPLUS1: usize>(&self, _other: u64) -> Self::Output<NPLUS1> {
+        unimplemented!("Not needed for constructing ASTs");
+    }
+}
+
+impl From<ark_ff::biginteger::signed_hi_32::SignedBigIntHi32<3>> for MleAst {
+    fn from(_value: ark_ff::biginteger::signed_hi_32::SignedBigIntHi32<3>) -> Self {
+        unimplemented!("Not needed for constructing ASTs");
+    }
+}
+
+impl<const N: usize> From<[u64; N]> for MleAst {
+    fn from(_value: [u64; N]) -> Self {
+        unimplemented!("Not needed for constructing ASTs");
+    }
+}
+
 impl JoltField for MleAst {
     const NUM_BYTES: usize = 0;
+
+    const MONTGOMERY_R: Self = todo!();
+
+    const MONTGOMERY_R_SQUARE: Self = todo!();
+
+    type Unreduced<const N: usize> = Self;
+
+    type Challenge = Self;
 
     type SmallValueLookupTables = ();
 
     fn random<R: rand_core::RngCore>(_rng: &mut R) -> Self {
         unimplemented!("Not needed for constructing ASTs");
+    }
+
+    fn from_bool(val: bool) -> Self {
+        Self::new_scalar(val as Scalar)
     }
 
     fn from_u8(n: u8) -> Self {
@@ -451,8 +531,12 @@ impl JoltField for MleAst {
         Self::new_scalar(n as Scalar)
     }
 
+    fn from_u128(n: u128) -> Self {
+        Self::new_scalar(n as Scalar)
+    }
+
     fn from_i128(n: i128) -> Self {
-        Self::new_scalar(n)
+        Self::new_scalar(n as Scalar)
     }
 
     fn square(&self) -> Self {
@@ -471,6 +555,30 @@ impl JoltField for MleAst {
             res.unop(Node::Inv);
             Some(res)
         }
+    }
+
+    fn as_unreduced_ref(&self) -> &Self::Unreduced<4> {
+        self
+    }
+
+    fn mul_unreduced<const N: usize>(self, other: Self) -> Self::Unreduced<N> {
+        self * other
+    }
+
+    fn mul_u64_unreduced(self, other: u64) -> Self::Unreduced<5> {
+        self * Self::from_u64(other)
+    }
+
+    fn mul_u128_unreduced(self, other: u128) -> Self::Unreduced<6> {
+        self * Self::from_u128(other)
+    }
+
+    fn from_montgomery_reduce<const N: usize>(unreduced: Self::Unreduced<N>) -> Self {
+        unreduced
+    }
+
+    fn from_barrett_reduce<const N: usize>(unreduced: Self::Unreduced<N>) -> Self {
+        unreduced
     }
 }
 
