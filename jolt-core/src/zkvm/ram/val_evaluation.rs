@@ -1,5 +1,6 @@
+use itertools::chain;
 use num_traits::Zero;
-use std::{cell::RefCell, rc::Rc, sync::Arc};
+use std::{array, cell::RefCell, iter::zip, rc::Rc, sync::Arc};
 
 use crate::{
     field::JoltField,
@@ -14,10 +15,11 @@ use crate::{
             BIG_ENDIAN,
         },
         ra_poly::RaPolynomial,
+        unipoly::UniPoly,
     },
     subprotocols::sumcheck::SumcheckInstance,
     transcripts::Transcript,
-    utils::{math::Math, thread::unsafe_allocate_zero_vec},
+    utils::math::Math,
     zkvm::{
         dag::state_manager::StateManager,
         ram::remap_address,
@@ -33,7 +35,7 @@ use rayon::prelude::*;
 pub struct ValEvaluationProverState<F: JoltField> {
     inc: MultilinearPolynomial<F>,
     wa: RaPolynomial<usize, F>,
-    lt: MultilinearPolynomial<F>,
+    lt: LtPolynomial<F>,
 }
 
 /// Val-evaluation sumcheck for RAM
@@ -93,25 +95,7 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
         drop(span);
 
         let inc = CommittedPolynomial::RamInc.generate_witness(preprocessing, trace);
-
-        let span = tracing::span!(tracing::Level::INFO, "compute LT(j, r_cycle)");
-        let _guard = span.enter();
-
-        let mut lt: Vec<F> = unsafe_allocate_zero_vec(T);
-        for (i, r) in r_cycle.r.iter().rev().enumerate() {
-            let (evals_left, evals_right) = lt.split_at_mut(1 << i);
-            evals_left
-                .par_iter_mut()
-                .zip(evals_right.par_iter_mut())
-                .for_each(|(x, y)| {
-                    *y = *x * r;
-                    *x += *r - *y;
-                });
-        }
-        let lt = MultilinearPolynomial::from(lt);
-
-        drop(_guard);
-        drop(span);
+        let lt = LtPolynomial::new(&r_cycle);
 
         ValEvaluationSumcheck {
             claimed_evaluation,
@@ -194,52 +178,56 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ValEvaluationSumche
     }
 
     #[tracing::instrument(skip_all, name = "RamValEvaluationSumcheck::compute_prover_message")]
-    fn compute_prover_message(&mut self, _round: usize, _previous_claim: F) -> Vec<F> {
+    fn compute_prover_message(&mut self, _round: usize, previous_claim: F) -> Vec<F> {
+        const DEGREE: usize = 3;
+
         let ps = self
             .prover_state
             .as_ref()
             .expect("Prover state not initialized");
 
-        const DEGREE: usize = 3;
-        (0..ps.inc.len() / 2)
-            .into_par_iter()
-            .map(|i| {
-                let inc_evals = ps
-                    .inc
-                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
-                let wa_evals = ps.wa.sumcheck_evals(i, DEGREE, BindingOrder::HighToLow);
-                let lt_evals = ps
-                    .lt
-                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
+        let half_n = ps.inc.len() / 2;
 
+        let [eval_at_1, eval_at_2, eval_at_inf] = (0..ps.inc.len() / 2)
+            .into_par_iter()
+            .map(|j| {
+                let inc_at_1_j = ps.inc.get_bound_coeff(j + half_n);
+                let inc_at_inf_j = inc_at_1_j - ps.inc.get_bound_coeff(j);
+                let inc_at_2_j = inc_at_1_j + inc_at_inf_j;
+
+                let wa_at_1_j = ps.wa.get_bound_coeff(j + half_n);
+                let wa_at_inf_j = wa_at_1_j - ps.wa.get_bound_coeff(j);
+                let wa_at_2_j = wa_at_1_j + wa_at_inf_j;
+
+                let lt_at_1_j = ps.lt.get_bound_coeff(j + half_n);
+                let lt_at_inf_j = lt_at_1_j - ps.lt.get_bound_coeff(j);
+                let lt_at_2_j = lt_at_1_j + lt_at_inf_j;
+
+                // Eval inc * wa * lt.
                 [
-                    (inc_evals[0] * wa_evals[0]).mul_unreduced::<9>(lt_evals[0]),
-                    (inc_evals[1] * wa_evals[1]).mul_unreduced::<9>(lt_evals[1]),
-                    (inc_evals[2] * wa_evals[2]).mul_unreduced::<9>(lt_evals[2]),
+                    (inc_at_1_j * wa_at_1_j).mul_unreduced::<9>(lt_at_1_j),
+                    (inc_at_2_j * wa_at_2_j).mul_unreduced::<9>(lt_at_2_j),
+                    (inc_at_inf_j * wa_at_inf_j).mul_unreduced::<9>(lt_at_inf_j),
                 ]
             })
             .reduce(
                 || [F::Unreduced::zero(); DEGREE],
-                |running, new| {
-                    [
-                        running[0] + new[0],
-                        running[1] + new[1],
-                        running[2] + new[2],
-                    ]
-                },
+                |a, b| array::from_fn(|i| a[i] + b[i]),
             )
-            .into_iter()
-            .map(F::from_montgomery_reduce)
-            .collect()
+            .map(F::from_montgomery_reduce);
+
+        let eval_at_0 = previous_claim - eval_at_1;
+        let poly = UniPoly::from_evals_toom(&[eval_at_0, eval_at_1, eval_at_2, eval_at_inf]);
+        let domain = chain!([0], 2..).take(DEGREE).map(F::from_u64);
+        domain.map(|x| poly.evaluate::<F>(&x)).collect()
     }
 
     #[tracing::instrument(skip_all, name = "RamValEvaluationSumcheck::bind")]
     fn bind(&mut self, r_j: F::Challenge, _round: usize) {
         if let Some(prover_state) = &mut self.prover_state {
-            [&mut prover_state.inc, &mut prover_state.lt]
-                .par_iter_mut()
-                .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow));
+            prover_state.inc.bind_parallel(r_j, BindingOrder::HighToLow);
             prover_state.wa.bind_parallel(r_j, BindingOrder::HighToLow);
+            prover_state.lt.bind_high_to_low(r_j);
         }
     }
 
@@ -353,4 +341,55 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ValEvaluationSumche
     fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
         flamegraph.visit_root(self);
     }
+}
+
+#[derive(Allocative)]
+struct LtPolynomial<F: JoltField> {
+    lt_lo: MultilinearPolynomial<F>,
+    lt_hi: MultilinearPolynomial<F>,
+    eq_hi: MultilinearPolynomial<F>,
+    n_lo_vars: usize,
+}
+
+impl<F: JoltField> LtPolynomial<F> {
+    pub fn new(r_cycle: &OpeningPoint<BIG_ENDIAN, F>) -> Self {
+        let (r_hi, r_lo) = r_cycle.split_at(r_cycle.len() / 2);
+        Self {
+            lt_lo: MultilinearPolynomial::from(lt_evals::<F>(&r_lo)),
+            lt_hi: MultilinearPolynomial::from(lt_evals::<F>(&r_hi)),
+            eq_hi: MultilinearPolynomial::from(EqPolynomial::<F>::evals(&r_hi.r)),
+            n_lo_vars: r_lo.len(),
+        }
+    }
+
+    fn bind_high_to_low(&mut self, r_j: F::Challenge) {
+        let n_hi_vars = self.lt_hi.get_num_vars();
+        if n_hi_vars != 0 {
+            self.lt_hi.bind_parallel(r_j, BindingOrder::HighToLow);
+            self.eq_hi.bind_parallel(r_j, BindingOrder::HighToLow);
+        } else {
+            self.lt_lo.bind_parallel(r_j, BindingOrder::HighToLow);
+        }
+    }
+
+    fn get_bound_coeff(&self, i: usize) -> F {
+        let i_hi = i >> self.n_lo_vars;
+        let i_lo = i & ((1 << self.n_lo_vars) - 1);
+        // LT(i) = LT_hi(i_hi) + EQ_hi(i_hi) * LT_lo(i_lo)
+        self.lt_hi.get_bound_coeff(i_hi)
+            + self.eq_hi.get_bound_coeff(i_hi) * self.lt_lo.get_bound_coeff(i_lo)
+    }
+}
+
+/// Evaluates `LT(r, j)` for all `j` in the hypercube.
+fn lt_evals<F: JoltField>(r: &OpeningPoint<BIG_ENDIAN, F>) -> Vec<F> {
+    let mut evals: Vec<F> = vec![F::zero(); 1 << r.len()];
+    for (i, r) in r.r.iter().rev().enumerate() {
+        let (evals_left, evals_right) = evals.split_at_mut(1 << i);
+        zip(evals_left, evals_right).for_each(|(x, y)| {
+            *y = *x * r;
+            *x += *r - *y;
+        });
+    }
+    evals
 }
