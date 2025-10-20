@@ -84,7 +84,11 @@ impl<F: JoltField> EqPolynomial<F> {
     }
 
     /// Same as evals_cached but for high-to-low (reverse) binding order
-    pub fn evals_cached_rev(r: &[F::Challenge]) -> Vec<Vec<F>> {
+    pub fn evals_cached_rev<C>(r: &[C]) -> Vec<Vec<F>>
+    where
+        C: Copy + Send + Sync + Into<F>,
+        F: std::ops::Mul<C, Output = F> + std::ops::SubAssign<F>,
+    {
         Self::evals_serial_cached_rev(r, None)
     }
 
@@ -139,7 +143,11 @@ impl<F: JoltField> EqPolynomial<F> {
         evals
     }
     /// evals_serial_cached but for "high to low" ordering, used specifically in the Gruen x Dao Thaler optimization.
-    fn evals_serial_cached_rev(r: &[F::Challenge], scaling_factor: Option<F>) -> Vec<Vec<F>> {
+    fn evals_serial_cached_rev<C>(r: &[C], scaling_factor: Option<F>) -> Vec<Vec<F>>
+    where
+        C: Copy + Send + Sync + Into<F>,
+        F: std::ops::Mul<C, Output = F> + std::ops::SubAssign<F>,
+    {
         let rev_r = r.iter().rev().collect::<Vec<_>>();
         let mut evals: Vec<Vec<F>> = (0..r.len() + 1)
             .map(|i| vec![scaling_factor.unwrap_or(F::one()); 1 << i])

@@ -1,16 +1,20 @@
+use std::array;
 use std::cell::RefCell;
+use std::iter::zip;
 use std::rc::Rc;
 use std::sync::Arc;
 
 use allocative::Allocative;
 
-use crate::field::JoltField;
+use crate::field::{ChallengeFieldOps, JoltField};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::eq_poly::EqPlusOnePolynomial;
+use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
 use crate::poly::opening_proof::{
     OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
 };
+use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
+use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::sumcheck::SumcheckInstance;
 use crate::transcripts::Transcript;
 use crate::utils::math::Math;
@@ -28,8 +32,12 @@ struct ShiftSumcheckProverState<F: JoltField> {
     is_virtual_poly: MultilinearPolynomial<F>,
     is_first_in_sequence_poly: MultilinearPolynomial<F>,
     is_noop_poly: MultilinearPolynomial<F>,
-    eq_plus_one_r_cycle: MultilinearPolynomial<F>,
-    eq_plus_one_r_product: MultilinearPolynomial<F>,
+    gruen_eq_r_cycle_plus_one: GruenSplitEqPolynomial<F>,
+    gruen_eq_r_product_plus_one: GruenSplitEqPolynomial<F>,
+    prev_claim_r_cycle: F,
+    prev_claim_r_product: F,
+    prev_round_poly_r_cycle: Option<UniPoly<F>>,
+    prev_round_poly_r_product: Option<UniPoly<F>>,
 }
 
 #[derive(Allocative)]
@@ -84,25 +92,24 @@ impl<F: JoltField> ShiftSumcheck<F> {
         let (r_cycle, _rx_var) = outer_sumcheck_r.split_at(num_cycles_bits);
         let (r_product, _) = product_sumcheck_r.split_at(num_cycles_bits);
 
-        let (_, eq_plus_one_r_cycle) = EqPlusOnePolynomial::<F>::evals(&r_cycle.r, None);
-        let (_, eq_plus_one_r_product) = EqPlusOnePolynomial::<F>::evals(&r_product.r, None);
+        let gruen_eq_r_cycle_plus_one =
+            GruenSplitEqPolynomial::new(&r_plus_1(&r_cycle.r), BindingOrder::HighToLow);
+        let gruen_eq_r_product_plus_one =
+            GruenSplitEqPolynomial::new(&r_plus_1(&r_product.r), BindingOrder::HighToLow);
 
         let gamma_powers: Vec<F> = state_manager
             .transcript
             .borrow_mut()
             .challenge_scalar_powers(5);
 
-        let input_claim = [
-            next_unexpanded_pc_eval,
-            next_pc_eval,
-            next_is_virtual_eval,
-            next_is_first_in_sequence_eval,
-            F::one() - next_is_noop_eval,
-        ]
-        .iter()
-        .zip(gamma_powers.iter())
-        .map(|(eval, gamma)| *gamma * eval)
-        .sum();
+        let prev_claim_r_cycle = next_unexpanded_pc_eval
+            + gamma_powers[1] * next_pc_eval
+            + gamma_powers[2] * next_is_virtual_eval
+            + gamma_powers[3] * next_is_first_in_sequence_eval;
+
+        let prev_claim_r_product = F::one() - next_is_noop_eval;
+
+        let input_claim = prev_claim_r_cycle + gamma_powers[4] * prev_claim_r_product;
 
         Self {
             input_claim,
@@ -113,8 +120,12 @@ impl<F: JoltField> ShiftSumcheck<F> {
                 is_virtual_poly,
                 is_first_in_sequence_poly,
                 is_noop_poly,
-                eq_plus_one_r_cycle: MultilinearPolynomial::from(eq_plus_one_r_cycle),
-                eq_plus_one_r_product: MultilinearPolynomial::from(eq_plus_one_r_product),
+                gruen_eq_r_cycle_plus_one,
+                gruen_eq_r_product_plus_one,
+                prev_claim_r_cycle,
+                prev_claim_r_product,
+                prev_round_poly_r_cycle: None,
+                prev_round_poly_r_product: None,
             }),
             gamma_powers: gamma_powers.try_into().unwrap(),
         }
@@ -190,111 +201,103 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ShiftSumcheck<F> {
 
     #[tracing::instrument(skip_all, name = "ShiftSumcheck::compute_prover_message")]
     fn compute_prover_message(&mut self, _round: usize, _previous_claim: F) -> Vec<F> {
-        let prover_state = self
-            .prover_state
-            .as_ref()
-            .expect("Prover state not initialized");
-        const DEGREE: usize = 2;
+        let state = self.prover_state.as_mut().unwrap();
+        let in_evals_r_cycle_plus_1 = state.gruen_eq_r_cycle_plus_one.E_in_current();
+        let in_evals_r_product_plus_1 = state.gruen_eq_r_product_plus_one.E_in_current();
+        let out_evals_r_cycle_plus_1 = state.gruen_eq_r_cycle_plus_one.E_out_current();
+        let out_evals_r_product_plus_1 = state.gruen_eq_r_product_plus_one.E_out_current();
 
-        let univariate_poly_evals: [F; DEGREE] = (0..prover_state.unexpanded_pc_poly.len() / 2)
+        let out_len = out_evals_r_cycle_plus_1.len();
+        let in_len = in_evals_r_cycle_plus_1.len();
+        let out_n_vars = out_len.ilog2();
+
+        let [eval_at_0_for_r_cycle, eval_at_0_for_r_product]: [F; 2] = (0..in_len)
             .into_par_iter()
-            .map(|i| {
-                let unexpanded_pc_evals = prover_state
-                    .unexpanded_pc_poly
-                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
-                let pc_evals = prover_state
-                    .pc_poly
-                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
-                let virtual_evals = prover_state
-                    .is_virtual_poly
-                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
-                let first_in_sequence_evals = prover_state
-                    .is_first_in_sequence_poly
-                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
-                let eq_r_cycle_evals = prover_state
-                    .eq_plus_one_r_cycle
-                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
-                let eq_r_product_evals = prover_state
-                    .eq_plus_one_r_product
-                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
-                let is_noop_evals = prover_state
-                    .is_noop_poly
-                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
+            .map(|j_hi| {
+                let mut eval_at_0_for_r_cycle = F::zero();
+                let mut eval_at_0_for_r_product = F::zero();
 
-                std::array::from_fn(|i| {
-                    [
-                        unexpanded_pc_evals,
-                        pc_evals,
-                        virtual_evals,
-                        first_in_sequence_evals,
-                    ]
-                    .iter()
-                    .zip(self.gamma_powers.iter())
-                    .map(|(evals, gamma)| evals[i] * gamma)
-                    .sum::<F>()
-                        * eq_r_cycle_evals[i]
-                        + self.gamma_powers[4]
-                            * (F::one() - is_noop_evals[i])
-                            * eq_r_product_evals[i]
-                })
+                for j_lo in 0..out_len {
+                    let j = j_lo + (j_hi << out_n_vars);
+
+                    // Eval UnexpandedPc(x) at (r', 0, j).
+                    let unexpanded_pc_at_0_j = state.unexpanded_pc_poly.get_bound_coeff(j);
+
+                    // Eval Pc(x) at (r', 0, j).
+                    let pc_at_0_j = state.pc_poly.get_bound_coeff(j);
+
+                    // Eval IsVirtual(x) at (r', 0, j).
+                    let is_virtual_at_0_j = state.is_virtual_poly.get_bound_coeff(j);
+
+                    // Eval IsFirstInSequence(x) at (r', 0, j).
+                    let is_first_in_sequence_at_0_j =
+                        state.is_first_in_sequence_poly.get_bound_coeff(j);
+
+                    // Eval IsNoOp(x) at (r', 0, j).
+                    let is_noop_at_0_j = state.is_noop_poly.get_bound_coeff(j);
+
+                    let [_, g1, g2, g3, _] = self.gamma_powers;
+                    eval_at_0_for_r_cycle += out_evals_r_cycle_plus_1[j_lo]
+                        * (unexpanded_pc_at_0_j
+                            + g1 * pc_at_0_j
+                            + g2 * is_virtual_at_0_j
+                            + g3 * is_first_in_sequence_at_0_j);
+                    eval_at_0_for_r_product +=
+                        out_evals_r_product_plus_1[j_lo] * (F::one() - is_noop_at_0_j);
+                }
+
+                [
+                    in_evals_r_cycle_plus_1[j_hi] * eval_at_0_for_r_cycle,
+                    in_evals_r_product_plus_1[j_hi] * eval_at_0_for_r_product,
+                ]
             })
-            .reduce(
-                || [F::zero(); DEGREE],
-                |mut running, new| {
-                    for i in 0..DEGREE {
-                        running[i] += new[i];
-                    }
-                    running
-                },
-            );
+            .reduce(|| [F::zero(); 2], |a, b| array::from_fn(|i| a[i] + b[i]));
 
-        univariate_poly_evals.into()
+        let univariate_evals_r_cycle = state
+            .gruen_eq_r_cycle_plus_one
+            .gruen_evals_deg_2(eval_at_0_for_r_cycle, state.prev_claim_r_cycle);
+        let univariate_evals_r_product = state
+            .gruen_eq_r_product_plus_one
+            .gruen_evals_deg_2(eval_at_0_for_r_product, state.prev_claim_r_product);
+        state.prev_round_poly_r_cycle = Some(UniPoly::from_evals_and_hint(
+            state.prev_claim_r_cycle,
+            &univariate_evals_r_cycle,
+        ));
+        state.prev_round_poly_r_product = Some(UniPoly::from_evals_and_hint(
+            state.prev_claim_r_product,
+            &univariate_evals_r_product,
+        ));
+        zip(univariate_evals_r_cycle, univariate_evals_r_product)
+            .map(|(eval_r_cycle, eval_r_product)| {
+                eval_r_cycle + self.gamma_powers[4] * eval_r_product
+            })
+            .collect()
     }
 
     #[tracing::instrument(skip_all, name = "ShiftSumcheck::bind")]
     fn bind(&mut self, r_j: F::Challenge, _round: usize) {
-        let prover_state = self
-            .prover_state
-            .as_mut()
-            .expect("Prover state not initialized");
-
-        rayon::scope(|s| {
-            s.spawn(|_| {
-                prover_state
-                    .unexpanded_pc_poly
-                    .bind_parallel(r_j, BindingOrder::HighToLow)
-            });
-            s.spawn(|_| {
-                prover_state
-                    .pc_poly
-                    .bind_parallel(r_j, BindingOrder::HighToLow)
-            });
-            s.spawn(|_| {
-                prover_state
-                    .is_virtual_poly
-                    .bind_parallel(r_j, BindingOrder::HighToLow)
-            });
-            s.spawn(|_| {
-                prover_state
-                    .is_first_in_sequence_poly
-                    .bind_parallel(r_j, BindingOrder::HighToLow)
-            });
-            s.spawn(|_| {
-                prover_state
-                    .is_noop_poly
-                    .bind_parallel(r_j, BindingOrder::HighToLow)
-            });
-            s.spawn(|_| {
-                prover_state
-                    .eq_plus_one_r_cycle
-                    .bind_parallel(r_j, BindingOrder::HighToLow)
-            });
-            s.spawn(|_| {
-                prover_state
-                    .eq_plus_one_r_product
-                    .bind_parallel(r_j, BindingOrder::HighToLow)
-            });
-        });
+        let ShiftSumcheckProverState {
+            unexpanded_pc_poly,
+            pc_poly,
+            is_virtual_poly,
+            is_first_in_sequence_poly,
+            is_noop_poly,
+            gruen_eq_r_cycle_plus_one,
+            gruen_eq_r_product_plus_one,
+            prev_claim_r_cycle,
+            prev_claim_r_product,
+            prev_round_poly_r_cycle,
+            prev_round_poly_r_product,
+        } = self.prover_state.as_mut().unwrap();
+        unexpanded_pc_poly.bind_parallel(r_j, BindingOrder::HighToLow);
+        pc_poly.bind_parallel(r_j, BindingOrder::HighToLow);
+        is_virtual_poly.bind_parallel(r_j, BindingOrder::HighToLow);
+        is_first_in_sequence_poly.bind_parallel(r_j, BindingOrder::HighToLow);
+        is_noop_poly.bind_parallel(r_j, BindingOrder::HighToLow);
+        gruen_eq_r_cycle_plus_one.bind(r_j);
+        gruen_eq_r_product_plus_one.bind(r_j);
+        *prev_claim_r_cycle = prev_round_poly_r_cycle.take().unwrap().evaluate(&r_j);
+        *prev_claim_r_product = prev_round_poly_r_product.take().unwrap().evaluate(&r_j);
     }
 
     fn expected_output_claim(
@@ -338,10 +341,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ShiftSumcheck<F> {
             SumcheckId::SpartanShift,
         );
 
-        let eq_plus_one_r_cycle_at_shift =
-            EqPlusOnePolynomial::<F>::new(r_cycle.to_vec()).evaluate(r);
-        let eq_plus_one_r_product_at_shift =
-            EqPlusOnePolynomial::<F>::new(r_product.to_vec()).evaluate(r);
+        let r_cycle_prime = r_plus_1(&r_cycle);
+        let r_product_prime = r_plus_1(&r_product);
+        let eq_r_cycle_prime_eval = EqPolynomial::mle(&r_cycle_prime, &r);
+        let eq_r_prouct_prime_eval = EqPolynomial::mle(&r_product_prime, &r);
 
         [
             unexpanded_pc_claim,
@@ -353,8 +356,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ShiftSumcheck<F> {
         .zip(self.gamma_powers.iter())
         .map(|(eval, gamma)| *gamma * eval)
         .sum::<F>()
-            * eq_plus_one_r_cycle_at_shift
-            + self.gamma_powers[4] * (F::one() - is_noop_claim) * eq_plus_one_r_product_at_shift
+            * eq_r_cycle_prime_eval
+            + self.gamma_powers[4] * (F::one() - is_noop_claim) * eq_r_prouct_prime_eval
     }
 
     fn cache_openings_prover(
@@ -462,4 +465,24 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ShiftSumcheck<F> {
     fn update_flamegraph(&self, flamegraph: &mut allocative::FlameGraphBuilder) {
         flamegraph.visit_root(self);
     }
+}
+
+/// Computes r + 1.
+///
+/// `r` should be in big-endian.
+fn r_plus_1<F: JoltField, C: ChallengeFieldOps<F>>(r: &[C]) -> Vec<F> {
+    let mut r_prime = Vec::new();
+    let mut carry = F::one();
+
+    for &r_i in r.iter().rev() {
+        let carry_xor_r_i = r_i + carry - r_i * carry * F::from_u8(2);
+        let carry_and_r_i = r_i * carry;
+        r_prime.push(carry_xor_r_i);
+        carry = carry_and_r_i;
+    }
+
+    // Put in big-endian.
+    r_prime.reverse();
+
+    r_prime
 }

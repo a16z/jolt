@@ -1,12 +1,18 @@
 //! Implements the Dao-Thaler + Gruen optimization for EQ polynomial evaluations
 //! https://eprint.iacr.org/2024/1210.pdf
 
+use std::ops::Mul;
+
 use allocative::Allocative;
 use rayon::prelude::*;
 
 use super::dense_mlpoly::DensePolynomial;
 use super::multilinear_polynomial::BindingOrder;
-use crate::{field::JoltField, poly::eq_poly::EqPolynomial, utils::math::Math};
+use crate::{
+    field::{ChallengeFieldOps, JoltField},
+    poly::eq_poly::EqPolynomial,
+    utils::math::Math,
+};
 
 #[derive(Debug, Clone, PartialEq, Allocative)]
 /// A struct holding the equality polynomial evaluations for use in sum-check, when incorporating
@@ -24,7 +30,7 @@ use crate::{field::JoltField, poly::eq_poly::EqPolynomial, utils::math::Math};
 pub struct GruenSplitEqPolynomial<F: JoltField> {
     pub(crate) current_index: usize,
     pub(crate) current_scalar: F,
-    pub(crate) w: Vec<F::Challenge>,
+    pub(crate) w: Vec<F>,
     pub(crate) E_in_vec: Vec<Vec<F>>,
     pub(crate) E_out_vec: Vec<Vec<F>>,
     pub(crate) binding_order: BindingOrder,
@@ -32,7 +38,10 @@ pub struct GruenSplitEqPolynomial<F: JoltField> {
 
 impl<F: JoltField> GruenSplitEqPolynomial<F> {
     #[tracing::instrument(skip_all, name = "GruenSplitEqPolynomial::new")]
-    pub fn new(w: &[F::Challenge], binding_order: BindingOrder) -> Self {
+    pub fn new<C: ChallengeFieldOps<F>>(w: &[C], binding_order: BindingOrder) -> Self
+    where
+        F: Mul<C, Output = F>,
+    {
         match binding_order {
             BindingOrder::LowToHigh => {
                 let m = w.len() / 2;
@@ -51,7 +60,7 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
                 Self {
                     current_index: w.len(),
                     current_scalar: F::one(),
-                    w: w.to_vec(),
+                    w: w.iter().map(|&v| v.into()).collect(),
                     E_in_vec,
                     E_out_vec,
                     binding_order,
@@ -72,7 +81,7 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
                 Self {
                     current_index: 0, // Start from 0 for high-to-low up to w.len() - 1
                     current_scalar: F::one(),
-                    w: w.to_vec(),
+                    w: w.iter().map(|&v| v.into()).collect(),
                     E_in_vec,
                     E_out_vec,
                     binding_order,
@@ -159,7 +168,7 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         Self {
             current_index: num_x_out_vars,
             current_scalar: F::one(),
-            w: w.to_vec(),
+            w: w.iter().map(|&v| v.into()).collect(),
             E_in_vec: vec![E_in],
             E_out_vec,
             binding_order: BindingOrder::LowToHigh, // Small value optimization is always low-to-high
@@ -359,7 +368,7 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         self.current_scalar
     }
 
-    pub fn get_current_w(&self) -> F::Challenge {
+    pub fn get_current_w(&self) -> F {
         match self.binding_order {
             BindingOrder::LowToHigh => self.w[self.current_index - 1],
             BindingOrder::HighToLow => self.w[self.current_index],
