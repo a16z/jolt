@@ -28,7 +28,6 @@ impl<F: JoltField> Acc5U<F> {
     }
 }
 
-// Allow adding a boolean flag: add `field` iff flag is true
 impl<F: JoltField> AccumulateInPlace<F, bool> for Acc5U<F> {
     #[inline(always)]
     fn fmadd(&mut self, field: &F, other: &bool) {
@@ -132,7 +131,6 @@ impl<F: JoltField> AccumulateInPlace<F, u64> for Acc6U<F> {
     }
 }
 
-// Support u8 values for Acc6U: multiply field by u8
 impl<F: JoltField> AccumulateInPlace<F, u8> for Acc6U<F> {
     #[inline(always)]
     fn fmadd(&mut self, field: &F, other: &u8) {
@@ -152,7 +150,6 @@ impl<F: JoltField> AccumulateInPlace<F, u8> for Acc6U<F> {
     }
 }
 
-// Support bool flags for Acc6U: add field if true
 impl<F: JoltField> AccumulateInPlace<F, bool> for Acc6U<F> {
     #[inline(always)]
     fn fmadd(&mut self, field: &F, other: &bool) {
@@ -234,12 +231,10 @@ impl<F: JoltField> AccumulateInPlace<F, i128> for Acc6S<F> {
     }
 }
 
-// Support bool flags for Acc6S: add +field when true
 impl<F: JoltField> AccumulateInPlace<F, bool> for Acc6S<F> {
     #[inline(always)]
     fn fmadd(&mut self, field: &F, other: &bool) {
         if *other {
-            // add to positive accumulator
             self.pos += *field.as_unreduced_ref();
         }
     }
@@ -254,7 +249,6 @@ impl<F: JoltField> AccumulateInPlace<F, bool> for Acc6S<F> {
     }
 }
 
-// Support u8 values for Acc6S: treat as positive integer
 impl<F: JoltField> AccumulateInPlace<F, u8> for Acc6S<F> {
     #[inline(always)]
     fn fmadd(&mut self, field: &F, other: &u8) {
@@ -279,23 +273,14 @@ impl<F: JoltField> AccumulateInPlace<F, u8> for Acc6S<F> {
 // 7-limb fmadd_trunc accumulators (Barrett reduce)
 // ------------------------------
 
-/// Use the implementor-associated Acc<7> type to match fmadd_trunc binding exactly.
 type Acc7<F> = <<F as JoltField>::Unreduced<4> as FmaddTrunc>::Acc<7>;
-/// Unsigned accumulator for field * u128 using 2-limb fmadd into 7-limb accumulator
-pub type Acc7Unsigned<F> = Acc7<F>;
-
-// Legacy Acc7U helpers removed; use Acc7U wrapper.
 
 /// Signed accumulator for field products using 7-limb accumulators (two 7-limb buffers)
-/// Supports fmadd for both i128 and S160 magnitudes.
 pub type Acc7Signed<F> = (Acc7<F>, Acc7<F>);
 
-// Legacy Acc7S helpers removed; use Acc7S wrapper.
-
-// New 7-limb wrappers
 // Safety: 7-limb accumulators rely on fmadd_trunc performing bounded modular folding
 // across the number of fmadd operations used in call sites (outer uniskip extended evals).
-// If this invariant changes, widen to 8 limbs or insert periodic reductions.
+// If this invariant changes, widen to 8 limbs.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Acc7U<F: JoltField> {
@@ -492,7 +477,6 @@ impl<F: JoltField> AccumulateInPlace<F, S192> for Acc7S<F> {
 //   by the implementation; otherwise periodically reduce and re-accumulate.
 // ------------------------------
 
-/// Unsigned 8-limb accumulator word used by Acc8Signed
 pub type Acc8SignedAccumulator<F> = <F as JoltField>::Unreduced<8>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -548,7 +532,6 @@ impl<F: JoltField> Acc8Signed<F> {
     }
 }
 
-/// fmadd with S256 (4-limb signed magnitude) into 8-limb signed accumulators
 #[inline(always)]
 pub fn acc8s_fmadd_s256<F: JoltField>(acc: &mut Acc8Signed<F>, field: &F, v: S256) {
     if v.magnitude_limbs() == [0u64; 4] {

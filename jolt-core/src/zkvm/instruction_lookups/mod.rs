@@ -49,22 +49,10 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, T>>> {
-        // Ensure G is available even if Stage 2 no longer sets it
-        let G = if let Some(G) = self.G.take() {
-            G
-        } else {
-            let (_, trace, _, _) = sm.get_prover_data();
-            let r_cycle = sm
-                .get_virtual_polynomial_opening(
-                    VirtualPolynomial::LookupOutput,
-                    SumcheckId::SpartanOuter,
-                )
-                .0
-                .r
-                .clone();
-            let eq_r_cycle = EqPolynomial::evals(&r_cycle);
-            compute_ra_evals(trace, &eq_r_cycle)
-        };
+        let G = self
+            .G
+            .take()
+            .expect("G must be set before stage3_prover_instances");
         let hamming_weight = HammingWeightSumcheck::new_prover(sm, G);
 
         #[cfg(feature = "allocative")]
@@ -115,7 +103,6 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         sm: &mut StateManager<'_, F, T, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, T>>> {
         let ra_virtual = RaSumcheck::new_prover(sm);
-        // Move Booleanity to Stage 6
         let (_, trace, _, _) = sm.get_prover_data();
         let r_cycle = sm
             .get_virtual_polynomial_opening(
