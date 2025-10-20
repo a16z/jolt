@@ -368,24 +368,7 @@ pub trait AccumulateInPlace<F: JoltField, O>: Sized {
 
     /// Optionally combine another accumulator of the same type into self.
     fn combine(&mut self, _other: &Self) {
-        // default: no-op; concrete impls may override
+        // default: unimplemented; concrete impls may override
+        unreachable!("combine is not implemented");
     }
-}
-
-/// Deferred accumulation: produce per-term product words, add them together, and reduce once.
-pub trait DeferredProducts<F: JoltField, O> {
-    /// Unreduced product representation (e.g., Unreduced<N> or a signed pair of them).
-    type Accumulator;
-
-    /// Compute the unreduced product word corresponding to field * other.
-    fn product(field: &F, other: &O) -> Self::Accumulator;
-
-    /// Return the additive identity for Accumulator (used for thread-local accumulation buffers).
-    fn zero() -> Self::Accumulator;
-
-    /// In-place addition on Accumulator (monoid operation for parallel folds).
-    fn add_in_place(sum: &mut Self::Accumulator, add: &Self::Accumulator);
-
-    /// Reduce a (possibly large) sum of Accumulator into a canonical field element.
-    fn reduce(sum: &Self::Accumulator) -> F;
 }

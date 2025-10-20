@@ -1,4 +1,4 @@
-use crate::field::{AccumulateInPlace, DeferredProducts, FmaddTrunc, JoltField};
+use crate::field::{AccumulateInPlace, FmaddTrunc, JoltField};
 use ark_ff::biginteger::{S128, S160, S192, S256};
 use ark_std::Zero;
 
@@ -167,32 +167,6 @@ impl<F: JoltField> AccumulateInPlace<F, bool> for Acc6U<F> {
     #[inline(always)]
     fn combine(&mut self, other: &Self) {
         self.word += other.word;
-    }
-}
-
-impl<F: JoltField> DeferredProducts<F, u64> for Acc6U<F> {
-    /// Use a 6-limb word for safer accumulation of many terms.
-    /// This avoids potential overflow when summing multiple 5-limb products.
-    type Accumulator = <F as JoltField>::Unreduced<6>;
-    #[inline(always)]
-    fn product(field: &F, other: &u64) -> Self::Accumulator {
-        if *other == 0 {
-            return <F as JoltField>::Unreduced::<6>::from([0u64; 6]);
-        }
-        // TODO: make this more efficient?
-        (*field).mul_u128_unreduced(*other as u128)
-    }
-    #[inline(always)]
-    fn zero() -> Self::Accumulator {
-        <F as JoltField>::Unreduced::<6>::from([0u64; 6])
-    }
-    #[inline(always)]
-    fn add_in_place(sum: &mut Self::Accumulator, add: &Self::Accumulator) {
-        *sum += *add;
-    }
-    #[inline(always)]
-    fn reduce(sum: &Self::Accumulator) -> F {
-        F::from_barrett_reduce(*sum)
     }
 }
 
@@ -504,113 +478,6 @@ impl<F: JoltField> AccumulateInPlace<F, S192> for Acc7S<F> {
     fn combine(&mut self, other: &Self) {
         self.pos += other.pos;
         self.neg += other.neg;
-    }
-}
-
-impl<F: JoltField> DeferredProducts<F, S160> for Acc7S<F> {
-    type Accumulator = (
-        <F as JoltField>::Unreduced<7>,
-        <F as JoltField>::Unreduced<7>,
-    );
-    #[inline(always)]
-    fn product(field: &F, other: &S160) -> Self::Accumulator {
-        if other.is_zero() {
-            return (
-                <F as JoltField>::Unreduced::<7>::from([0u64; 7]),
-                <F as JoltField>::Unreduced::<7>::from([0u64; 7]),
-            );
-        }
-        let lo = other.magnitude_lo();
-        let hi = other.magnitude_hi() as u64;
-        let mag = <F as JoltField>::Unreduced::from([lo[0], lo[1], hi]);
-        let mut pos = <F as JoltField>::Unreduced::<7>::from([0u64; 7]);
-        let mut neg = <F as JoltField>::Unreduced::<7>::from([0u64; 7]);
-        if other.is_positive() {
-            field.as_unreduced_ref().fmadd_trunc::<3, 7>(&mag, &mut pos);
-        } else {
-            field.as_unreduced_ref().fmadd_trunc::<3, 7>(&mag, &mut neg);
-        }
-        (pos, neg)
-    }
-    #[inline(always)]
-    fn zero() -> Self::Accumulator {
-        (
-            <F as JoltField>::Unreduced::<7>::from([0u64; 7]),
-            <F as JoltField>::Unreduced::<7>::from([0u64; 7]),
-        )
-    }
-    #[inline(always)]
-    fn add_in_place(sum: &mut Self::Accumulator, add: &Self::Accumulator) {
-        sum.0 += add.0;
-        sum.1 += add.1;
-    }
-    #[inline(always)]
-    fn reduce(sum: &Self::Accumulator) -> F {
-        let result = if sum.0 >= sum.1 {
-            F::from_barrett_reduce(sum.0 - sum.1)
-        } else {
-            -F::from_barrett_reduce(sum.1 - sum.0)
-        };
-        #[cfg(test)]
-        {
-            let pos = F::from_barrett_reduce(sum.0);
-            let neg = F::from_barrett_reduce(sum.1);
-            debug_assert_eq!(result, pos - neg);
-        }
-        result
-    }
-}
-
-impl<F: JoltField> DeferredProducts<F, S192> for Acc7S<F> {
-    type Accumulator = (
-        <F as JoltField>::Unreduced<7>,
-        <F as JoltField>::Unreduced<7>,
-    );
-    #[inline(always)]
-    fn product(field: &F, other: &S192) -> Self::Accumulator {
-        if other.magnitude_limbs() == [0u64; 3] {
-            return (
-                <F as JoltField>::Unreduced::<7>::from([0u64; 7]),
-                <F as JoltField>::Unreduced::<7>::from([0u64; 7]),
-            );
-        }
-        let limbs = other.magnitude_limbs();
-        let mag = <F as JoltField>::Unreduced::from([limbs[0], limbs[1], limbs[2]]);
-        let mut pos = <F as JoltField>::Unreduced::<7>::from([0u64; 7]);
-        let mut neg = <F as JoltField>::Unreduced::<7>::from([0u64; 7]);
-        if other.sign() {
-            field.as_unreduced_ref().fmadd_trunc::<3, 7>(&mag, &mut pos);
-        } else {
-            field.as_unreduced_ref().fmadd_trunc::<3, 7>(&mag, &mut neg);
-        }
-        (pos, neg)
-    }
-    #[inline(always)]
-    fn zero() -> Self::Accumulator {
-        (
-            <F as JoltField>::Unreduced::<7>::from([0u64; 7]),
-            <F as JoltField>::Unreduced::<7>::from([0u64; 7]),
-        )
-    }
-    #[inline(always)]
-    fn add_in_place(sum: &mut Self::Accumulator, add: &Self::Accumulator) {
-        sum.0 += add.0;
-        sum.1 += add.1;
-    }
-    #[inline(always)]
-    fn reduce(sum: &Self::Accumulator) -> F {
-        let result = if sum.0 >= sum.1 {
-            F::from_barrett_reduce(sum.0 - sum.1)
-        } else {
-            -F::from_barrett_reduce(sum.1 - sum.0)
-        };
-        #[cfg(test)]
-        {
-            let pos = F::from_barrett_reduce(sum.0);
-            let neg = F::from_barrett_reduce(sum.1);
-            debug_assert_eq!(result, pos - neg);
-        }
-        result
     }
 }
 
