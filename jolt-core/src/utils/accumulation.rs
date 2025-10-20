@@ -1,5 +1,5 @@
 use crate::field::{AccumulateInPlace, DeferredProducts, FmaddTrunc, JoltField};
-use ark_ff::biginteger::{I8OrI96, S128, S160, S192, S256};
+use ark_ff::biginteger::{S128, S160, S192, S256};
 use ark_std::Zero;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -238,32 +238,6 @@ impl<F: JoltField> AccumulateInPlace<F, i128> for Acc6S<F> {
     #[inline(always)]
     fn fmadd(&mut self, field: &F, other: &i128) {
         let v = *other;
-        if v == 0 {
-            return;
-        }
-        let abs = v.unsigned_abs();
-        let term = (*field).mul_u128_unreduced(abs);
-        if v > 0 {
-            self.pos += term;
-        } else {
-            self.neg += term;
-        }
-    }
-    #[inline(always)]
-    fn reduce(&self) -> F {
-        Acc6S::<F>::reduce(self)
-    }
-    #[inline(always)]
-    fn combine(&mut self, other: &Self) {
-        self.pos += other.pos;
-        self.neg += other.neg;
-    }
-}
-
-impl<F: JoltField> AccumulateInPlace<F, I8OrI96> for Acc6S<F> {
-    #[inline(always)]
-    fn fmadd(&mut self, field: &F, other: &I8OrI96) {
-        let v = other.to_i128();
         if v == 0 {
             return;
         }
