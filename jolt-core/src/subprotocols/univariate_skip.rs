@@ -70,14 +70,11 @@ pub const fn uniskip_targets<const DOMAIN_SIZE: usize, const DEGREE: usize>() ->
 /// Consequently, the resulting s1 has degree at most 3·DEGREE (NUM_COEFFS = 3·DEGREE + 1).
 ///
 /// Inputs:
-/// - base_evals: t1 evaluated on the base window (symmetric grid of size DOMAIN_SIZE).
+/// - base_evals: optional t1 evaluations on the base window (symmetric grid of size DOMAIN_SIZE).
+///   When `None`, base evaluations are treated as all zeros.
 /// - extended_evals: t1 evaluated on the extended symmetric grid outside the base window,
 ///   in the order given by `uniskip_targets::<DOMAIN_SIZE, DEGREE>()`.
 /// - tau_high: the challenge used in the Lagrange kernel L(τ_high, ·) over the base window.
-///
-/// Generic parameters:
-/// - BASE_EVALS_ARE_ZERO: const bool optimization flag. When true, skips filling base_evals
-///   (assumes they are all zero), saving a loop iteration.
 ///
 /// Returns: UniPoly s1 with exactly NUM_COEFFS coefficients.
 #[inline]
@@ -87,9 +84,8 @@ pub fn build_uniskip_first_round_poly<
     const DEGREE: usize,
     const EXTENDED_SIZE: usize,
     const NUM_COEFFS: usize,
-    const BASE_EVALS_ARE_ZERO: bool,
 >(
-    base_evals: &[F; DOMAIN_SIZE],
+    base_evals: Option<&[F; DOMAIN_SIZE]>,
     extended_evals: &[F; DEGREE],
     tau_high: F::Challenge,
 ) -> UniPoly<F> {
@@ -100,10 +96,10 @@ pub fn build_uniskip_first_round_poly<
     let targets: [i64; DEGREE] = uniskip_targets::<DOMAIN_SIZE, DEGREE>();
     let mut t1_vals: [F; EXTENDED_SIZE] = [F::zero(); EXTENDED_SIZE];
 
-    // Fill in base window evaluations (skip if all zero)
-    if !BASE_EVALS_ARE_ZERO {
+    // Fill in base window evaluations when provided (otherwise treated as zeros)
+    if let Some(base) = base_evals {
         let base_left: i64 = -((DOMAIN_SIZE as i64 - 1) / 2);
-        for (i, &val) in base_evals.iter().enumerate() {
+        for (i, &val) in base.iter().enumerate() {
             let z = base_left + (i as i64);
             let pos = (z + (DEGREE as i64)) as usize;
             t1_vals[pos] = val;

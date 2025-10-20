@@ -262,10 +262,9 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
                             [0; UNIVARIATE_SKIP_DOMAIN_SIZE];
                         let mut bz1_s160_padded: [S160; UNIVARIATE_SKIP_DOMAIN_SIZE] =
                             [S160::from(0i128); UNIVARIATE_SKIP_DOMAIN_SIZE];
-                        for i in 0..g2_len {
-                            az1_u8_padded[i] = az1_u8[i];
-                            bz1_s160_padded[i] = bz1[i];
-                        }
+                        
+                        az1_u8_padded[..g2_len].copy_from_slice(&az1_u8[..g2_len]);
+                        bz1_s160_padded[..g2_len].copy_from_slice(&bz1[..g2_len]);
 
                         for j in 0..UNIVARIATE_SKIP_DEGREE {
                             let coeffs = &coeffs_per_j[j];
@@ -330,9 +329,6 @@ impl<F: JoltField, T: Transcript> UniSkipFirstRoundInstance<F, T> for OuterUniSk
 
         let tau_high = self.tau[self.tau.len() - 1];
 
-        // For outer sumcheck, base evaluations are all zero (no base claims)
-        let base_evals: [F; UNIVARIATE_SKIP_DOMAIN_SIZE] = [F::zero(); UNIVARIATE_SKIP_DOMAIN_SIZE];
-
         // Compute the univariate-skip first round polynomial s1(Y) = L(τ_high, Y) · t1(Y)
         build_uniskip_first_round_poly::<
             F,
@@ -340,8 +336,7 @@ impl<F: JoltField, T: Transcript> UniSkipFirstRoundInstance<F, T> for OuterUniSk
             UNIVARIATE_SKIP_DEGREE,
             UNIVARIATE_SKIP_EXTENDED_DOMAIN_SIZE,
             FIRST_ROUND_POLY_NUM_COEFFS,
-            true, // base evals are all zero
-        >(&base_evals, &extended, tau_high)
+        >(None, &extended, tau_high)
     }
 }
 

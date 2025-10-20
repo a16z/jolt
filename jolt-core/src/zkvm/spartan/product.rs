@@ -369,8 +369,7 @@ impl<F: JoltField, T: Transcript> UniSkipFirstRoundInstance<F, T>
             PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE,
             PRODUCT_VIRTUAL_UNIVARIATE_SKIP_EXTENDED_DOMAIN_SIZE,
             PRODUCT_VIRTUAL_FIRST_ROUND_POLY_NUM_COEFFS,
-            false, // base evals are non-zero (product claims from outer sumcheck)
-        >(&base, &extended, tau_high)
+        >(Some(&base), &extended, tau_high)
     }
 }
 
