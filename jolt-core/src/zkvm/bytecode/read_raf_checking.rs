@@ -606,7 +606,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
                 if instr_flags[InstructionFlags::RightOperandIsImm] {
                     linear_combination += gamma_powers[5];
                 }
-                if instr_flags[InstructionFlags::IsNoop] {
+                if circuit_flags[CircuitFlags::IsNoop] {
                     linear_combination += gamma_powers[6];
                 }
                 if circuit_flags[CircuitFlags::VirtualInstruction] {
@@ -661,7 +661,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             SumcheckId::InstructionInputVirtualization,
         );
         let (_, is_noop_claim) = sm.get_virtual_polynomial_opening(
-            VirtualPolynomial::InstructionFlags(InstructionFlags::IsNoop),
+            VirtualPolynomial::OpFlags(CircuitFlags::IsNoop),
             SumcheckId::SpartanShift,
         );
         let (_, is_virtual_claim) = sm.get_virtual_polynomial_opening(

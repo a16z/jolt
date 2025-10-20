@@ -19,7 +19,7 @@ use crate::subprotocols::sumcheck::SumcheckInstance;
 use crate::transcripts::Transcript;
 use crate::utils::math::Math;
 use crate::zkvm::dag::state_manager::StateManager;
-use crate::zkvm::instruction::{CircuitFlags, InstructionFlags};
+use crate::zkvm::instruction::CircuitFlags;
 use crate::zkvm::r1cs::inputs::generate_shift_sumcheck_witnesses;
 use crate::zkvm::r1cs::key::UniformSpartanKey;
 use crate::zkvm::witness::VirtualPolynomial;
@@ -337,7 +337,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ShiftSumcheck<F> {
             SumcheckId::SpartanShift,
         );
         let (_, is_noop_claim) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::InstructionFlags(InstructionFlags::IsNoop),
+            VirtualPolynomial::OpFlags(CircuitFlags::IsNoop),
             SumcheckId::SpartanShift,
         );
 
@@ -409,7 +409,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ShiftSumcheck<F> {
         );
         accumulator.borrow_mut().append_virtual(
             transcript,
-            VirtualPolynomial::InstructionFlags(InstructionFlags::IsNoop),
+            VirtualPolynomial::OpFlags(CircuitFlags::IsNoop),
             SumcheckId::SpartanShift,
             opening_point,
             is_noop_eval,
@@ -455,7 +455,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ShiftSumcheck<F> {
         );
         accumulator.borrow_mut().append_virtual(
             transcript,
-            VirtualPolynomial::InstructionFlags(InstructionFlags::IsNoop),
+            VirtualPolynomial::OpFlags(CircuitFlags::IsNoop),
             SumcheckId::SpartanShift,
             opening_point,
         );

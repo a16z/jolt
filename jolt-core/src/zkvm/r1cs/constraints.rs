@@ -395,7 +395,7 @@ pub static UNIFORM_R1CS: [NamedConstraint; NUM_R1CS_CONSTRAINTS] = [
     // And that DoNotUpdatePC and isCompressed are mutually exclusive
     r1cs_eq_conditional!(
         name: ConstraintName::NextUnexpPCUpdateOtherwise,
-        if { { 1i128 } - { JoltR1CSInputs::ShouldBranch } - { JoltR1CSInputs::OpFlags(CircuitFlags::Jump) } }
+        if { { 1i128 } - { JoltR1CSInputs::ShouldBranch } - { JoltR1CSInputs::OpFlags(CircuitFlags::Jump) } - { JoltR1CSInputs::OpFlags(CircuitFlags::IsNoop) } }
         => ( { JoltR1CSInputs::NextUnexpandedPC } )
            == ( { JoltR1CSInputs::UnexpandedPC } + { 4i128 }
                 - { 4 * JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC) }
@@ -472,7 +472,8 @@ pub fn eval_az_by_name<F: JoltField>(c: &NamedConstraint, row: &R1CSCycleInputs)
             // Az encodes 1 - ShouldBranch - Jump = (1 - Jump) - ShouldBranch.
             let jump = row.flags[CircuitFlags::Jump];
             let not_jump: i128 = if jump { 0 } else { 1 };
-            let diff = not_jump - (row.should_branch as i128);
+            let is_noop = row.flags[CircuitFlags::IsNoop];
+            let diff = not_jump - (row.should_branch as i128) - (is_noop as i128);
             I8OrI96::from(diff)
         }
         // Az: VirtualInstruction flag (0/1)

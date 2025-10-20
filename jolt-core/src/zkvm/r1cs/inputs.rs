@@ -113,9 +113,9 @@ impl R1CSCycleInputs {
 
         // Next-cycle context
         let next_cycle = if t + 1 < len {
-            Some(&trace[t + 1])
+            &trace[t + 1]
         } else {
-            None
+            &trace[0]
         };
 
         // Instruction inputs and product
@@ -150,17 +150,9 @@ impl R1CSCycleInputs {
 
         // PCs
         let pc = preprocessing.bytecode.get_pc(cycle) as u64;
-        let next_pc = if let Some(nc) = next_cycle {
-            preprocessing.bytecode.get_pc(nc) as u64
-        } else {
-            0u64
-        };
+        let next_pc = preprocessing.bytecode.get_pc(next_cycle) as u64;
         let unexpanded_pc = norm.address as u64;
-        let next_unexpanded_pc = if let Some(nc) = next_cycle {
-            nc.instruction().normalize().address as u64
-        } else {
-            0u64
-        };
+        let next_unexpanded_pc = next_cycle.instruction().normalize().address as u64;
 
         // Immediate
         let imm_i128 = norm.operands.imm;
@@ -176,11 +168,7 @@ impl R1CSCycleInputs {
         for flag in CircuitFlags::iter() {
             flags[flag] = flags_view[flag];
         }
-        let next_is_noop = if let Some(nc) = next_cycle {
-            nc.instruction().instruction_flags()[InstructionFlags::IsNoop]
-        } else {
-            false
-        };
+        let next_is_noop = next_cycle.instruction().circuit_flags()[CircuitFlags::IsNoop];
         let should_jump = flags_view[CircuitFlags::Jump] && !next_is_noop;
         let should_branch = if instruction_flags[InstructionFlags::Branch] {
             lookup_output
@@ -200,14 +188,12 @@ impl R1CSCycleInputs {
             0
         };
 
-        let (next_is_virtual, next_is_first_in_sequence) = if let Some(nc) = next_cycle {
-            let flags = nc.instruction().circuit_flags();
+        let (next_is_virtual, next_is_first_in_sequence) = {
+            let flags = next_cycle.instruction().circuit_flags();
             (
                 flags[CircuitFlags::VirtualInstruction],
                 flags[CircuitFlags::IsFirstInSequence],
             )
-        } else {
-            (false, false)
         };
 
         Self {
@@ -307,7 +293,7 @@ pub enum JoltR1CSInputs {
 const NUM_R1CS_INPUTS: usize = ALL_R1CS_INPUTS.len();
 /// This const serves to define a canonical ordering over inputs (and thus indices
 /// for each input). This is needed for sumcheck.
-pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 36] = [
+pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 37] = [
     JoltR1CSInputs::LeftInstructionInput,
     JoltR1CSInputs::RightInstructionInput,
     JoltR1CSInputs::Product,
@@ -344,6 +330,7 @@ pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 36] = [
     JoltR1CSInputs::OpFlags(CircuitFlags::Advice),
     JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed),
     JoltR1CSInputs::OpFlags(CircuitFlags::IsFirstInSequence),
+    JoltR1CSInputs::OpFlags(CircuitFlags::IsNoop),
 ];
 
 impl JoltR1CSInputs {
@@ -400,6 +387,7 @@ impl JoltR1CSInputs {
             JoltR1CSInputs::OpFlags(CircuitFlags::Advice) => 33,
             JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed) => 34,
             JoltR1CSInputs::OpFlags(CircuitFlags::IsFirstInSequence) => 35,
+            JoltR1CSInputs::OpFlags(CircuitFlags::IsNoop) => 36,
         }
     }
 }
@@ -570,7 +558,7 @@ where
         .for_each(|(u, p, n, v, f, cycle)| {
             *u = cycle.instruction().normalize().address as u64;
             *p = preprocessing.bytecode.get_pc(cycle) as u64;
-            *n = cycle.instruction().instruction_flags()[InstructionFlags::IsNoop] as u8;
+            *n = cycle.instruction().circuit_flags()[CircuitFlags::IsNoop] as u8;
             *v = cycle.instruction().circuit_flags()[CircuitFlags::VirtualInstruction] as u8;
             *f = cycle.instruction().circuit_flags()[CircuitFlags::IsFirstInSequence] as u8;
         });
@@ -682,10 +670,9 @@ where
                     *jump = trace[i].instruction().circuit_flags()[CircuitFlags::Jump] as u8;
 
                     let is_next_noop = if i + 1 < len {
-                        trace[i + 1].instruction().instruction_flags()[InstructionFlags::IsNoop]
-                            as u8
+                        trace[i + 1].instruction().circuit_flags()[CircuitFlags::IsNoop] as u8
                     } else {
-                        1 // Last cycle, treat as if next is NoOp
+                        trace[0].instruction().circuit_flags()[CircuitFlags::IsNoop] as u8
                     };
                     *not_noop = 1 - is_next_noop;
                 });

@@ -71,6 +71,8 @@ pub enum CircuitFlags {
     IsCompressed,
     /// Is instruction the first in a virtual sequence
     IsFirstInSequence,
+    /// Is noop instruction
+    IsNoop,
 }
 
 /// Boolean flags that are not part of Jolt's R1CS constraints
@@ -88,8 +90,6 @@ pub enum InstructionFlags {
     RightOperandIsRs2Value,
     /// 1 if the instruction is a branch (i.e. `BEQ`, `BNE`, etc.)
     Branch,
-    /// Is noop instruction
-    IsNoop,
 }
 
 pub const NUM_CIRCUIT_FLAGS: usize = CircuitFlags::COUNT;
@@ -162,6 +162,7 @@ macro_rules! define_rv32im_trait_impls {
                     Instruction::NoOp => {
                         let mut flags = [false; NUM_CIRCUIT_FLAGS];
                         flags[CircuitFlags::DoNotUpdateUnexpandedPC] = true;
+                        flags[CircuitFlags::IsNoop] = true;
                         flags
                     },
                     $(
@@ -175,9 +176,7 @@ macro_rules! define_rv32im_trait_impls {
             fn instruction_flags(&self) -> [bool; NUM_INSTRUCTION_FLAGS] {
                 match self {
                     Instruction::NoOp => {
-                        let mut flags = [false; NUM_INSTRUCTION_FLAGS];
-                        flags[InstructionFlags::IsNoop] = true;
-                        flags
+                        [false; NUM_INSTRUCTION_FLAGS]
                     },
                     $(
                         Instruction::$instr(instr) => instr.instruction_flags(),
