@@ -2,7 +2,7 @@
 
 We implement a torus-based compression method to compress an output of the pairing computation for the BN254 curve (viewed as an element in a degree 12 extension $\mathbb{F}_{q^{12}}$ over the base prime field $\mathbb{F}_q$) to two elements in a degree 2 sub-extension over the same prime field, thus achieving a threefold compression ratio with no information loss. In other words, the decompressed value recovers exactly the pairing value computed without compression.
 
-Recall that the pairing computation follows two steps - the Miller loop and the final exponentiation. The compression method requires only making changes to the final exponentation step. The compression overhead turns out to be insignificant for applications in Jolt.
+Recall that the pairing computation follows two steps - the Miller loop and the final exponentiation. The compression method requires only making changes to the final exponentiation step. The compression overhead turns out to be insignificant for applications in Jolt.
 
 # Methodology 
 The pairing output has the form $f^{\frac{q^{12}-1}{r}}$, where $f \in \mathbb{F}_{q^{12}}$ is the output from the Miller loop, and $r$ is an integer such that the pairing inputs are $r$-torsion points on the BN254 curve defined over some finite extension of $\mathbb{F}_q$ - in other words, the $r^{\text{th}}$ power vanishes. We can write
