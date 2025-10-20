@@ -262,7 +262,7 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
                             [0; UNIVARIATE_SKIP_DOMAIN_SIZE];
                         let mut bz1_s160_padded: [S160; UNIVARIATE_SKIP_DOMAIN_SIZE] =
                             [S160::from(0i128); UNIVARIATE_SKIP_DOMAIN_SIZE];
-                        
+
                         az1_u8_padded[..g2_len].copy_from_slice(&az1_u8[..g2_len]);
                         bz1_s160_padded[..g2_len].copy_from_slice(&bz1[..g2_len]);
 
