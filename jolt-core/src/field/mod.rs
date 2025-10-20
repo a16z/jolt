@@ -353,11 +353,6 @@ pub mod ark;
 pub mod challenge;
 pub mod tracked_ark;
 
-// ------------------------------
-// Generic accumulation interfaces (no implementations here)
-// ------------------------------
-// See utils/accumulation.rs for concrete instances over Unreduced<N> words and signed pairs.
-
 /// In-place accumulation: mutate an accumulator A with fused multiply-adds and reduce at the end.
 pub trait AccumulateInPlace<F: JoltField, O>: Sized {
     /// Perform acc += field * other (in the appropriate unreduced representation for A).
