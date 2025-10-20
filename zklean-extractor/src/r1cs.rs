@@ -1,8 +1,7 @@
 use jolt_core::zkvm::r1cs::{
-    builder::{Constraint, R1CSBuilder},
-    constraints::R1CSConstraints,
+    constraints::{Constraint, NamedConstraint, UNIFORM_R1CS},
     inputs::{JoltR1CSInputs, ALL_R1CS_INPUTS},
-    ops::{Term, Variable, LC},
+    ops::{Term, LC},
 };
 use regex::{NoExpand, Regex};
 
@@ -12,28 +11,16 @@ use crate::{
     util::indent,
 };
 
-type F = ark_bn254::Fr;
-type CS = jolt_core::zkvm::r1cs::constraints::JoltRV32IMConstraints;
-
 pub struct ZkLeanR1CSConstraints<J> {
     inputs: Vec<JoltR1CSInputs>,
-    uniform_constraints: Vec<Constraint>,
+    uniform_constraints: Vec<NamedConstraint>,
     phantom: std::marker::PhantomData<J>,
 }
 
 impl<J: JoltParameterSet> ZkLeanR1CSConstraints<J> {
     pub fn extract() -> Self {
         let inputs = ALL_R1CS_INPUTS.to_vec();
-
-        // XXX Make max input/output sizes configurable?
-        let uniform_constraints = {
-            // XXX Or should this be `CombinedUniformBuilder`? It seems to add a usize for how many
-            // times to "repeat" the constraints. Not sure if we need that.
-            let mut r1cs_builder = R1CSBuilder::new();
-            <CS as R1CSConstraints<F>>::uniform_constraints(&mut r1cs_builder);
-
-            r1cs_builder.get_constraints()
-        };
+        let uniform_constraints = UNIFORM_R1CS.to_vec();
 
         Self {
             inputs,
@@ -107,7 +94,11 @@ impl<J: JoltParameterSet> ZkLeanR1CSConstraints<J> {
                 indent(indent_level),
         ))?;
         indent_level += 1;
-        for Constraint { a, b, c } in &self.uniform_constraints {
+        for constraint in &self.uniform_constraints {
+            let Constraint { a, b, c } = &constraint.cons;
+            let name = format!("{:?}", constraint.name);
+
+            f.write_fmt(format_args!("{}-- {name}\n", indent(indent_level)))?;
             f.write_fmt(format_args!("{}ZKBuilder.constrainR1CS\n", indent(indent_level),))?;
             indent_level += 1;
             f.write_fmt(format_args!(
@@ -172,28 +163,26 @@ fn input_index_to_field_name(index: usize) -> String {
 
 fn pretty_print_term(
     inputs_struct: &str,
-    Term(var, coeff): &Term,
-) -> Option<String> {
-    let var = match *var {
-        Variable::Input(index) => {
-            Some(input_index_to_field_name(index))
-        }
-        Variable::Constant => None,
-    };
-    match (coeff, var) {
-        (0, _) => None,
-        (1, Some(var)) => Some(format!("{inputs_struct}.{var}").to_string()),
-        (_, Some(var)) => Some(format!("({coeff}*{inputs_struct}.{var})").to_string()),
-        (_, None) => Some(format!("{coeff}").to_string()),
+    Term { input_index, coeff }: &Term,
+) -> String {
+    let var = input_index_to_field_name(*input_index);
+    match coeff.to_i128() {
+        1 => format!("{inputs_struct}.{var}").to_string(),
+        c => format!("({c}*{inputs_struct}.{var})").to_string(),
     }
 }
 
 fn pretty_print_lc(inputs_struct: &str, lc: &LC) -> String {
-    let terms = lc
-        .terms()
+    let (var_terms, len, const_term) = LC::decompose(*lc);
+    let const_term = match const_term.to_i128() {
+        0 => None,
+        c => Some(format!("{c}").to_string()),
+    };
+    let var_terms = var_terms[..len]
         .iter()
-        .filter_map(|term| pretty_print_term(inputs_struct, term))
-        .collect::<Vec<_>>();
+        .map(|t| pretty_print_term(inputs_struct, t));
+    let terms = const_term.into_iter().chain(var_terms).collect::<Vec<_>>();
+
     match terms.len() {
         0 => "0".to_string(),
         1 => terms[0].clone(),

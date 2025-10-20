@@ -258,7 +258,7 @@ impl LC {
     }
 
     /// Break a LC into (terms, len, const)
-    const fn decompose(lc: LC) -> ([Term; 5], usize, I8OrI96) {
+    pub const fn decompose(lc: LC) -> ([Term; 5], usize, I8OrI96) {
         let mut terms = [Term {
             input_index: 0,
             coeff: I8OrI96::zero(),
