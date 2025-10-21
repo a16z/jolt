@@ -1,7 +1,4 @@
 use crate::emulator::cpu::Cpu;
-use common::constants::REGISTER_COUNT;
-use rand::rngs::StdRng;
-use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
@@ -25,10 +22,15 @@ pub struct RegisterStateFormatLoad {
 }
 
 impl InstructionRegisterState for RegisterStateFormatLoad {
-    fn random(rng: &mut StdRng) -> Self {
+    #[cfg(any(feature = "test-utils", test))]
+    fn random(rng: &mut rand::rngs::StdRng) -> Self {
+        use crate::instruction::test::{DRAM_BASE, TEST_MEMORY_CAPACITY};
+        use rand::RngCore;
+        // Use a smaller range to avoid issues with boundaries
+        let max_offset = (TEST_MEMORY_CAPACITY / 2).min(0x10000);
         Self {
             rd: (rng.next_u64(), rng.next_u64()),
-            rs1: rng.next_u64(),
+            rs1: DRAM_BASE + (rng.next_u64() % max_offset),
         }
     }
 
@@ -68,19 +70,37 @@ impl InstructionFormat for FormatLoad {
         state.rd.1 = normalize_register_value(cpu.x[self.rd as usize], &cpu.xlen);
     }
 
-    fn random(rng: &mut StdRng) -> Self {
+    #[cfg(any(feature = "test-utils", test))]
+    fn random(rng: &mut rand::rngs::StdRng) -> Self {
+        use common::constants::RISCV_REGISTER_COUNT;
+        use rand::RngCore;
         Self {
-            imm: rng.next_u64() as i64,
-            rd: (rng.next_u64() as u8 % REGISTER_COUNT),
-            rs1: (rng.next_u64() as u8 % REGISTER_COUNT),
+            // Keep imm small to avoid going out of bounds when added to rs1
+            imm: (rng.next_u64() as i64 % 256) - 128, // Range: [-128, 127]
+            rd: (rng.next_u64() as u8 % RISCV_REGISTER_COUNT),
+            // rs1 should never be 0 for memory operations (x0 is hardwired to 0)
+            rs1: 1 + (rng.next_u64() as u8 % (RISCV_REGISTER_COUNT - 1)),
         }
     }
-    fn normalize(&self) -> NormalizedOperands {
-        NormalizedOperands {
-            rs1: self.rs1,
+}
+
+impl From<NormalizedOperands> for FormatLoad {
+    fn from(operands: NormalizedOperands) -> Self {
+        Self {
+            rd: operands.rd,
+            rs1: operands.rs1,
+            imm: operands.imm as i64,
+        }
+    }
+}
+
+impl From<FormatLoad> for NormalizedOperands {
+    fn from(format: FormatLoad) -> Self {
+        Self {
+            rd: format.rd,
+            rs1: format.rs1,
             rs2: 0,
-            rd: self.rd,
-            imm: self.imm,
+            imm: format.imm as i128,
         }
     }
 }

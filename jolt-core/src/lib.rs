@@ -9,9 +9,6 @@
 #![allow(clippy::too_long_first_doc_paragraph)]
 
 #[cfg(feature = "host")]
-pub mod benches;
-
-#[cfg(feature = "host")]
 pub mod host;
 
 pub mod field;
@@ -22,3 +19,4 @@ pub mod subprotocols;
 pub mod transcripts;
 pub mod utils;
 pub mod zkvm;
+pub use ark_bn254;

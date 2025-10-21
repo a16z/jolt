@@ -1,5 +1,5 @@
 use super::PrefixSuffixDecomposition;
-use crate::field::JoltField;
+use crate::field::{ChallengeFieldOps, FieldChallengeOps, JoltField};
 use serde::{Deserialize, Serialize};
 
 use super::prefixes::{PrefixEval, Prefixes};
@@ -7,24 +7,27 @@ use super::suffixes::{SuffixEval, Suffixes};
 use super::JoltLookupTable;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct SubTable<const WORD_SIZE: usize>;
+pub struct SubTable<const XLEN: usize>;
 
-impl<const WORD_SIZE: usize> JoltLookupTable for SubTable<WORD_SIZE> {
-    fn materialize_entry(&self, index: u64) -> u64 {
-        index % (1 << WORD_SIZE)
+impl<const XLEN: usize> JoltLookupTable for SubTable<XLEN> {
+    fn materialize_entry(&self, index: u128) -> u64 {
+        (index % (1u128 << XLEN)) as u64
     }
-
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
-        debug_assert_eq!(r.len(), 2 * WORD_SIZE);
+    fn evaluate_mle<F, C>(&self, r: &[C]) -> F
+    where
+        C: ChallengeFieldOps<F>,
+        F: JoltField + FieldChallengeOps<C>,
+    {
+        debug_assert_eq!(r.len(), 2 * XLEN);
         let mut result = F::zero();
-        for i in 0..WORD_SIZE {
-            result += F::from_u64(1 << (WORD_SIZE - 1 - i)) * r[WORD_SIZE + i];
+        for i in 0..XLEN {
+            result += F::from_u64(1 << (XLEN - 1 - i)) * r[XLEN + i];
         }
         result
     }
 }
 
-impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE> for SubTable<WORD_SIZE> {
+impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for SubTable<XLEN> {
     fn suffixes(&self) -> Vec<Suffixes> {
         vec![Suffixes::One, Suffixes::LowerWord]
     }
@@ -43,12 +46,13 @@ mod test {
     use crate::zkvm::lookup_table::test::{
         lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
     };
+    use common::constants::XLEN;
 
     use super::SubTable;
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<Fr, SubTable<32>>();
+        prefix_suffix_test::<XLEN, Fr, SubTable<XLEN>>();
     }
 
     #[test]
@@ -58,6 +62,6 @@ mod test {
 
     #[test]
     fn mle_random() {
-        lookup_table_mle_random_test::<Fr, SubTable<32>>();
+        lookup_table_mle_random_test::<Fr, SubTable<XLEN>>();
     }
 }

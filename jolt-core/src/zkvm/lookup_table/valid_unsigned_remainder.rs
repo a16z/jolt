@@ -4,23 +4,30 @@ use super::prefixes::{PrefixEval, Prefixes};
 use super::suffixes::{SuffixEval, Suffixes};
 use super::JoltLookupTable;
 use super::PrefixSuffixDecomposition;
-use crate::{field::JoltField, utils::uninterleave_bits};
+use crate::{
+    field::{ChallengeFieldOps, FieldChallengeOps, JoltField},
+    utils::uninterleave_bits,
+};
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct ValidUnsignedRemainderTable<const WORD_SIZE: usize>;
+pub struct ValidUnsignedRemainderTable<const XLEN: usize>;
 
-impl<const WORD_SIZE: usize> JoltLookupTable for ValidUnsignedRemainderTable<WORD_SIZE> {
-    fn materialize_entry(&self, index: u64) -> u64 {
+impl<const XLEN: usize> JoltLookupTable for ValidUnsignedRemainderTable<XLEN> {
+    fn materialize_entry(&self, index: u128) -> u64 {
         let (remainder, divisor) = uninterleave_bits(index);
         (divisor == 0 || remainder < divisor).into()
     }
 
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+    fn evaluate_mle<F, C>(&self, r: &[C]) -> F
+    where
+        C: ChallengeFieldOps<F>,
+        F: JoltField + FieldChallengeOps<C>,
+    {
         let mut divisor_is_zero = F::one();
         let mut lt = F::zero();
         let mut eq = F::one();
 
-        for i in 0..WORD_SIZE {
+        for i in 0..XLEN {
             let x_i = r[2 * i];
             let y_i = r[2 * i + 1];
             divisor_is_zero *= F::one() - y_i;
@@ -32,9 +39,7 @@ impl<const WORD_SIZE: usize> JoltLookupTable for ValidUnsignedRemainderTable<WOR
     }
 }
 
-impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE>
-    for ValidUnsignedRemainderTable<WORD_SIZE>
-{
+impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for ValidUnsignedRemainderTable<XLEN> {
     fn suffixes(&self) -> Vec<Suffixes> {
         vec![
             Suffixes::One,
@@ -60,6 +65,7 @@ mod test {
     use crate::zkvm::lookup_table::test::{
         lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
     };
+    use common::constants::XLEN;
 
     use super::ValidUnsignedRemainderTable;
 
@@ -70,11 +76,11 @@ mod test {
 
     #[test]
     fn mle_random() {
-        lookup_table_mle_random_test::<Fr, ValidUnsignedRemainderTable<32>>();
+        lookup_table_mle_random_test::<Fr, ValidUnsignedRemainderTable<XLEN>>();
     }
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<Fr, ValidUnsignedRemainderTable<32>>();
+        prefix_suffix_test::<XLEN, Fr, ValidUnsignedRemainderTable<XLEN>>();
     }
 }

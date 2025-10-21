@@ -1,26 +1,23 @@
+use crate::utils::inline_helpers::InstrAssembler;
 use serde::{Deserialize, Serialize};
 
 use crate::declare_riscv_instr;
-use crate::emulator::cpu::Cpu;
+use crate::emulator::cpu::{Cpu, Xlen};
 
 use super::andi::ANDI;
 use super::format::format_load::FormatLoad;
-use super::format::format_r::FormatR;
-use super::format::format_virtual_halfword_alignment::HalfwordAlignFormat;
-use super::lw::LW;
+use super::ld::LD;
 use super::sll::SLL;
 use super::slli::SLLI;
 use super::srli::SRLI;
 use super::virtual_assert_halfword_alignment::VirtualAssertHalfwordAlignment;
+use super::virtual_lw::VirtualLW;
 use super::xori::XORI;
-use super::{addi::ADDI, RV32IMInstruction};
-use super::{RAMRead, VirtualInstructionSequence};
-use common::constants::virtual_register_index;
+use super::RAMRead;
+use super::{addi::ADDI, Instruction};
+use crate::utils::virtual_registers::VirtualRegisterAllocator;
 
-use super::{
-    format::{format_i::FormatI, InstructionFormat},
-    RISCVInstruction, RISCVTrace, RV32IMCycle,
-};
+use super::{Cycle, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name   = LHU,
@@ -46,113 +43,87 @@ impl LHU {
 }
 
 impl RISCVTrace for LHU {
-    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let virtual_sequence = self.virtual_sequence();
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
+        let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
-        for instr in virtual_sequence {
-            // In each iteration, create a new Option containing a re-borrowed reference
+        for instr in inline_sequence {
             instr.trace(cpu, trace.as_deref_mut());
+        }
+    }
+
+    /// Load unsigned halfword without sign extension.
+    ///
+    /// LHU loads a 16-bit value from memory at address rs1+imm and zero-extends
+    /// it to the full register width. Since zkVM uses word-aligned memory:
+    /// 1. Assert halfword alignment of the source address
+    /// 2. Load the aligned word/doubleword containing the halfword
+    /// 3. Shift halfword to the high bits
+    /// 4. Logical right shift to extract and zero-extend
+    ///
+    /// Differs from LH only in using logical (not arithmetic) right shift.
+    fn inline_sequence(
+        &self,
+        allocator: &VirtualRegisterAllocator,
+        xlen: Xlen,
+    ) -> Vec<Instruction> {
+        match xlen {
+            Xlen::Bit32 => self.inline_sequence_32(allocator),
+            Xlen::Bit64 => self.inline_sequence_64(allocator),
         }
     }
 }
 
-impl VirtualInstructionSequence for LHU {
-    fn virtual_sequence(&self) -> Vec<RV32IMInstruction> {
+impl LHU {
+    /// 32-bit implementation of load unsigned halfword.
+    ///
+    /// Algorithm:
+    /// 1. Assert halfword alignment
+    /// 2. Align address to 4-byte boundary
+    /// 3. Load word containing the halfword
+    /// 4. XOR with 2 to get opposite halfword position
+    /// 5. Shift halfword to bits [31:16]
+    /// 6. Logical right shift by 16 to zero-extend
+    fn inline_sequence_32(&self, allocator: &VirtualRegisterAllocator) -> Vec<Instruction> {
         // Virtual registers used in sequence
-        let v_address = virtual_register_index(0);
-        let v_word_address = virtual_register_index(1);
-        let v_word = virtual_register_index(2);
-        let v_shift = virtual_register_index(3);
+        let v_address = allocator.allocate();
+        let v_word_address = allocator.allocate();
+        let v_word = allocator.allocate();
+        let v_shift = allocator.allocate();
 
-        let mut sequence = vec![];
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit32, allocator);
+        asm.emit_halign::<VirtualAssertHalfwordAlignment>(self.operands.rs1, self.operands.imm);
+        asm.emit_i::<ADDI>(*v_address, self.operands.rs1, self.operands.imm as u64);
+        asm.emit_i::<ANDI>(*v_word_address, *v_address, -4i64 as u64);
+        asm.emit_i::<VirtualLW>(*v_word, *v_word_address, 0);
+        asm.emit_i::<XORI>(*v_shift, *v_address, 2);
+        asm.emit_i::<SLLI>(*v_shift, *v_shift, 3);
+        asm.emit_r::<SLL>(self.operands.rd, *v_word, *v_shift);
+        asm.emit_i::<SRLI>(self.operands.rd, self.operands.rd, 16);
+        asm.finalize()
+    }
 
-        let assert_alignment = VirtualAssertHalfwordAlignment {
-            address: self.address,
-            operands: HalfwordAlignFormat {
-                rs1: self.operands.rs1,
-                imm: self.operands.imm,
-            },
-            virtual_sequence_remaining: Some(8),
-        };
-        sequence.push(assert_alignment.into());
+    /// 64-bit implementation of load unsigned halfword.
+    ///
+    /// Similar to 32-bit but handles 4 halfword positions:
+    /// 1. XOR with 6 for position calculation
+    /// 2. Shift halfword to bits [63:48]
+    /// 3. Logical right shift by 48 to zero-extend
+    fn inline_sequence_64(&self, allocator: &VirtualRegisterAllocator) -> Vec<Instruction> {
+        // Virtual registers used in sequence
+        let v_address = allocator.allocate();
+        let v_dword_address = allocator.allocate();
+        let v_dword = allocator.allocate();
+        let v_shift = allocator.allocate();
 
-        let add = ADDI {
-            address: self.address,
-            operands: FormatI {
-                rd: v_address,
-                rs1: self.operands.rs1,
-                imm: self.operands.imm as u32 as u64, // TODO(moodlezoup): this only works for Xlen = 32
-            },
-            virtual_sequence_remaining: Some(7),
-        };
-        sequence.push(add.into());
-
-        let andi = ANDI {
-            address: self.address,
-            operands: FormatI {
-                rd: v_word_address,
-                rs1: v_address,
-                imm: -4i64 as u32 as u64, // TODO(moodlezoup): this only works for Xlen = 32
-            },
-            virtual_sequence_remaining: Some(6),
-        };
-        sequence.push(andi.into());
-
-        let lw = LW {
-            address: self.address,
-            operands: FormatLoad {
-                rd: v_word,
-                rs1: v_word_address,
-                imm: 0,
-            },
-            virtual_sequence_remaining: Some(5),
-        };
-        sequence.push(lw.into());
-
-        let xori = XORI {
-            address: self.address,
-            operands: FormatI {
-                rd: v_shift,
-                rs1: v_address,
-                imm: 2,
-            },
-            virtual_sequence_remaining: Some(4),
-        };
-        sequence.push(xori.into());
-
-        let slli = SLLI {
-            address: self.address,
-            operands: FormatI {
-                rd: v_shift,
-                rs1: v_shift,
-                imm: 3,
-            },
-            virtual_sequence_remaining: Some(3),
-        };
-        sequence.extend(slli.virtual_sequence());
-
-        let sll = SLL {
-            address: self.address,
-            operands: FormatR {
-                rd: self.operands.rd,
-                rs1: v_word,
-                rs2: v_shift,
-            },
-            virtual_sequence_remaining: Some(2),
-        };
-        sequence.extend(sll.virtual_sequence());
-
-        let srli = SRLI {
-            address: self.address,
-            operands: FormatI {
-                rd: self.operands.rd,
-                rs1: self.operands.rd,
-                imm: 16,
-            },
-            virtual_sequence_remaining: Some(0),
-        };
-        sequence.extend(srli.virtual_sequence());
-
-        sequence
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit64, allocator);
+        asm.emit_halign::<VirtualAssertHalfwordAlignment>(self.operands.rs1, self.operands.imm);
+        asm.emit_i::<ADDI>(*v_address, self.operands.rs1, self.operands.imm as u64);
+        asm.emit_i::<ANDI>(*v_dword_address, *v_address, -8i64 as u64);
+        asm.emit_ld::<LD>(*v_dword, *v_dword_address, 0);
+        asm.emit_i::<XORI>(*v_shift, *v_address, 6);
+        asm.emit_i::<SLLI>(*v_shift, *v_shift, 3);
+        asm.emit_r::<SLL>(self.operands.rd, *v_dword, *v_shift);
+        asm.emit_i::<SRLI>(self.operands.rd, self.operands.rd, 48);
+        asm.finalize()
     }
 }

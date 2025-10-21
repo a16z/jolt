@@ -1,4 +1,7 @@
-use crate::{field::JoltField, utils::lookup_bits::LookupBits};
+use crate::{
+    field::{ChallengeFieldOps, FieldChallengeOps, JoltField},
+    utils::lookup_bits::LookupBits,
+};
 
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 
@@ -9,13 +12,17 @@ use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 pub enum RightShiftPrefix {}
 
 impl<F: JoltField> SparseDensePrefix<F> for RightShiftPrefix {
-    fn prefix_mle(
+    fn prefix_mle<C>(
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: Option<F>,
+        r_x: Option<C>,
         c: u32,
         mut b: LookupBits,
         _: usize,
-    ) -> F {
+    ) -> F
+    where
+        C: ChallengeFieldOps<F>,
+        F: FieldChallengeOps<C>,
+    {
         let mut result = checkpoints[Prefixes::RightShift].unwrap_or(F::zero());
         if let Some(r_x) = r_x {
             result *= F::from_u32(1 + c);
@@ -32,12 +39,16 @@ impl<F: JoltField> SparseDensePrefix<F> for RightShiftPrefix {
         result
     }
 
-    fn update_prefix_checkpoint(
+    fn update_prefix_checkpoint<C>(
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: F,
-        r_y: F,
+        r_x: C,
+        r_y: C,
         _: usize,
-    ) -> PrefixCheckpoint<F> {
+    ) -> PrefixCheckpoint<F>
+    where
+        C: ChallengeFieldOps<F>,
+        F: FieldChallengeOps<C>,
+    {
         let mut updated = checkpoints[Prefixes::RightShift].unwrap_or(F::zero());
         updated *= F::one() + r_y;
         updated += r_x * r_y;

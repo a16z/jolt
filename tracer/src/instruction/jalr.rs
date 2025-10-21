@@ -1,11 +1,8 @@
 use serde::{Deserialize, Serialize};
 
+use super::{format::format_i::FormatI, RISCVInstruction, RISCVTrace};
+use crate::instruction::format::NormalizedOperands;
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
-
-use super::{
-    format::{format_i::FormatI, InstructionFormat},
-    RISCVInstruction, RISCVTrace,
-};
 
 declare_riscv_instr!(
     name   = JALR,
@@ -22,6 +19,10 @@ impl JALR {
             .wrapping_add(self.operands.imm as i32 as u64))
             & !1;
         if self.operands.rd != 0 {
+            // Skip returns (rd=0) and non-standard link registers
+            if self.operands.rd == 1 {
+                cpu.track_call(self.address, NormalizedOperands::from(self.operands));
+            }
             cpu.x[self.operands.rd as usize] = tmp;
         }
     }

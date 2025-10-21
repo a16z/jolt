@@ -8,7 +8,7 @@ use std::{
     time::Instant,
 };
 
-// batches of size 5M (~400MB) RV32IMCycles (80 bytes each)
+// batches of size 5M (~400MB) Cycles (80 bytes each)
 const BATCH_SIZE: usize = 5_000_000;
 // total memory usage of the channel is BATCH * CHANNEL_DEPTH = ~2 GB
 const CHANNEL_DEPTH: usize = 64;
@@ -27,7 +27,7 @@ pub struct TraceWriterConfig {
 }
 
 impl Default for TraceWriterConfig {
-    /// Defaults were chosen to prefer performance on a M4 Max for traces containing RV32IMCycle
+    /// Defaults were chosen to prefer performance on a M4 Max for traces containing Cycle
     fn default() -> Self {
         Self {
             batch_size: BATCH_SIZE,

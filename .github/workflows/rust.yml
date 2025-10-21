@@ -32,8 +32,10 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           components: clippy
-      - name: cargo clippy
-        run: cargo clippy --all --features allocative
+      - name: cargo clippy --features allocative,host
+        run: cargo clippy --all --all-targets --features allocative,host
+      - name: cargo clippy --no-default-features
+        run: cargo clippy --all --all-targets --no-default-features
 
   machete:
     runs-on: ubuntu-latest
@@ -52,10 +54,11 @@ jobs:
         run: rustup target add wasm32-unknown-unknown
       - name: Build Wasm
         working-directory: ./jolt-core
-        run: cargo build --release --target wasm32-unknown-unknown
+        run: RUSTFLAGS='--cfg getrandom_backend="wasm_js"' cargo build --release --target wasm32-unknown-unknown
 
   test-core:
     runs-on: ubuntu-latest
+    name: Test jolt-core
     steps:
       - uses: actions/checkout@v5
       - uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -95,25 +98,64 @@ jobs:
         working-directory: ./sample_project
         run: cargo run --release
 
+  test-inlines:
+    name: Test inlines
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+      - name: Discover inline crates
+        id: discover_inlines
+        shell: bash
+        run: |
+          set -euo pipefail
+          pkgs=$(cargo metadata --format-version=1 --no-deps \
+                   | jq -r '.packages[].name' \
+                   | grep '^jolt-inlines-' \
+                   | tr '\n' ' ')
+          echo "Found inline crates: $pkgs"
+          echo "pkgs=$pkgs" >> "$GITHUB_OUTPUT"
+      - name: Test each inline crate (host)
+        shell: bash
+        run: |
+          set -euo pipefail
+          for pkg in ${{ steps.discover_inlines.outputs.pkgs }}; do
+            cargo nextest run --features host -p "$pkg"
+          done
+
   test-sdk-verifier:
     name: Jolt SDK Verifier Tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
       - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Cache Jolt RISC-V Rust toolchain
+        uses: actions/cache@v4
+        with:
+          key: jolt-rust-toolchain-${{hashFiles('guest-toolchain-tag')}}
+          path: ~/.jolt
       - name: Install Jolt RISC-V Rust toolchain
         run: cargo run install-toolchain
       - name: Install nextest
         uses: taiki-e/install-action@nextest
+      - name: Generate test fixtures
+        run: bash jolt-sdk/tests/gen-fixtures.sh
       - name: Run SDK verifier tests
         run: cargo nextest run --release -p jolt-sdk --features host
 
   test-tracer:
-    name: Jolt Tracer Tests
     runs-on: ubuntu-latest
+    name: Test tracer
     steps:
       - uses: actions/checkout@v5
       - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Cache Jolt RISC-V Rust toolchain
+        uses: actions/cache@v4
+        with:
+          key: jolt-rust-toolchain-${{hashFiles('guest-toolchain-tag')}}
+          path: ~/.jolt
       - name: Install Jolt RISC-V Rust toolchain
         run: cargo run install-toolchain
       - name: Install nextest

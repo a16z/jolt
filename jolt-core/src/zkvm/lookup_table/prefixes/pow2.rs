@@ -1,36 +1,43 @@
-use crate::utils::math::Math;
 use crate::zkvm::instruction_lookups::read_raf_checking::current_suffix_len;
 use crate::{field::JoltField, utils::lookup_bits::LookupBits};
+use crate::{
+    field::{ChallengeFieldOps, FieldChallengeOps},
+    utils::math::Math,
+};
 
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 
-pub enum Pow2Prefix<const WORD_SIZE: usize> {}
+pub enum Pow2Prefix<const XLEN: usize> {}
 
-impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F> for Pow2Prefix<WORD_SIZE> {
-    fn prefix_mle(
+impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for Pow2Prefix<XLEN> {
+    fn prefix_mle<C>(
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: Option<F>,
+        r_x: Option<C>,
         c: u32,
         b: LookupBits,
         j: usize,
-    ) -> F {
-        if current_suffix_len(2 * WORD_SIZE, j) != 0 {
+    ) -> F
+    where
+        C: ChallengeFieldOps<F>,
+        F: FieldChallengeOps<C>,
+    {
+        if current_suffix_len(j) != 0 {
             // Handled by suffix
             return F::one();
         }
 
-        // Shift amount is the last WORD_SIZE bits of b
-        if b.len() >= WORD_SIZE.log_2() {
-            return F::from_u64(1 << (b % WORD_SIZE));
+        // Shift amount is the last XLEN bits of b
+        if b.len() >= XLEN.log_2() {
+            return F::from_u64(1 << (b % XLEN));
         }
 
-        let mut result = F::from_u64(1 << (b % WORD_SIZE));
+        let mut result = F::from_u64(1 << (b % XLEN));
         let mut num_bits = b.len();
-        let mut shift = 1 << (1 << num_bits);
-        result *= F::from_u32(1 + (shift - 1) * c);
+        let mut shift = 1u64 << (1u64 << num_bits);
+        result *= F::from_u64(1 + (shift - 1) * c as u64);
 
         // Shift amount is [c, b]
-        if b.len() == WORD_SIZE.log_2() - 1 {
+        if b.len() == XLEN.log_2() - 1 {
             return result;
         }
 
@@ -38,35 +45,39 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F> for Pow2Prefix<W
         num_bits += 1;
         shift = 1 << (1 << num_bits);
         if let Some(r_x) = r_x {
-            result *= F::one() + F::from_u32(shift - 1) * r_x;
+            result *= F::one() + F::from_u64(shift - 1) * r_x;
         }
 
         result *= checkpoints[Prefixes::Pow2].unwrap_or(F::one());
         result
     }
 
-    fn update_prefix_checkpoint(
+    fn update_prefix_checkpoint<C>(
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: F,
-        r_y: F,
+        r_x: C,
+        r_y: C,
         j: usize,
-    ) -> PrefixCheckpoint<F> {
-        if current_suffix_len(2 * WORD_SIZE, j) != 0 {
+    ) -> PrefixCheckpoint<F>
+    where
+        C: ChallengeFieldOps<F>,
+        F: FieldChallengeOps<C>,
+    {
+        if current_suffix_len(j) != 0 {
             return Some(F::one()).into();
         }
 
         // r_y is the highest bit of the shift amount
-        if j == 2 * WORD_SIZE - WORD_SIZE.log_2() {
-            let shift = 1 << (WORD_SIZE / 2);
+        if j == 2 * XLEN - XLEN.log_2() {
+            let shift = 1 << (XLEN / 2);
             return Some(F::one() + F::from_u64(shift - 1) * r_y).into();
         }
 
         // r_x and r_y are bits in the shift amount
-        if 2 * WORD_SIZE - j < WORD_SIZE.log_2() {
+        if 2 * XLEN - j < XLEN.log_2() {
             let mut checkpoint = checkpoints[Prefixes::Pow2].unwrap();
-            let shift = 1 << (1 << (2 * WORD_SIZE - j));
+            let shift = 1 << (1 << (2 * XLEN - j));
             checkpoint *= F::one() + F::from_u64(shift - 1) * r_x;
-            let shift = 1 << (1 << (2 * WORD_SIZE - j - 1));
+            let shift = 1 << (1 << (2 * XLEN - j - 1));
             checkpoint *= F::one() + F::from_u64(shift - 1) * r_y;
             return Some(checkpoint).into();
         }
