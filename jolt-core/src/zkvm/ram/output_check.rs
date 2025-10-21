@@ -82,11 +82,11 @@ impl<F: JoltField> OutputSumcheckProverState<F> {
             .zip(final_ram_state[io_start..io_end].par_iter())
             .for_each(|(dest, src)| *dest = *src);
 
-        // Compute io_mask by setting the relevant coefficients to 1
-        let mut io_mask = vec![0u8; K];
+        // Compute io_mask by setting the relevant coefficients to true
+        let mut io_mask = vec![false; K];
         io_mask[io_start..io_end]
             .par_iter_mut()
-            .for_each(|k| *k = 1);
+            .for_each(|k| *k = true);
 
         // Initialize the EQ table
         let mut eq_table = ExpandingTable::new(K);

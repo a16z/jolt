@@ -45,50 +45,27 @@ pub struct LookupsDag<F: JoltField> {
 impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStages<F, T, PCS>
     for LookupsDag<F>
 {
-    fn stage2_prover_instances(
-        &mut self,
-        sm: &mut StateManager<'_, F, T, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstance<F, T>>> {
-        let (_, trace, _, _) = sm.get_prover_data();
-        let r_cycle = sm
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::LookupOutput,
-                SumcheckId::SpartanOuter,
-            )
-            .0
-            .r
-            .clone();
-        let eq_r_cycle = EqPolynomial::evals(&r_cycle);
-        let F = compute_ra_evals(trace, &eq_r_cycle);
-        self.G = Some(F.clone());
-
-        let booleanity = BooleanitySumcheck::new_prover(sm, F);
-
-        #[cfg(feature = "allocative")]
-        {
-            print_data_structure_heap_usage(
-                "Instruction execution BooleanitySumcheck",
-                &booleanity,
-            );
-        }
-
-        vec![Box::new(booleanity)]
-    }
-
-    fn stage2_verifier_instances(
-        &mut self,
-        sm: &mut StateManager<'_, F, T, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstance<F, T>>> {
-        let booleanity = BooleanitySumcheck::new_verifier(sm);
-
-        vec![Box::new(booleanity)]
-    }
-
     fn stage3_prover_instances(
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, T>>> {
-        let hamming_weight = HammingWeightSumcheck::new_prover(sm, self.G.take().unwrap());
+        // Ensure G is available even if an earlier stage did not set it
+        let G = if let Some(G) = self.G.take() {
+            G
+        } else {
+            let (_, trace, _, _) = sm.get_prover_data();
+            let r_cycle = sm
+                .get_virtual_polynomial_opening(
+                    VirtualPolynomial::LookupOutput,
+                    SumcheckId::SpartanOuter,
+                )
+                .0
+                .r
+                .clone();
+            let eq_r_cycle = EqPolynomial::evals(&r_cycle);
+            compute_ra_evals(trace, &eq_r_cycle)
+        };
+        let hamming_weight = HammingWeightSumcheck::new_prover(sm, G);
 
         #[cfg(feature = "allocative")]
         {
@@ -138,6 +115,18 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         sm: &mut StateManager<'_, F, T, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, T>>> {
         let ra_virtual = RaSumcheck::new_prover(sm);
+        let (_, trace, _, _) = sm.get_prover_data();
+        let r_cycle = sm
+            .get_virtual_polynomial_opening(
+                VirtualPolynomial::LookupOutput,
+                SumcheckId::SpartanOuter,
+            )
+            .0
+            .r
+            .clone();
+        let eq_r_cycle = EqPolynomial::evals(&r_cycle);
+        let F = compute_ra_evals(trace, &eq_r_cycle);
+        let booleanity = BooleanitySumcheck::new_prover(sm, F);
 
         #[cfg(feature = "allocative")]
         {
@@ -145,9 +134,13 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
                 "Instruction execution RAVirtual sumcheck",
                 &ra_virtual,
             );
+            print_data_structure_heap_usage(
+                "Instruction execution BooleanitySumcheck",
+                &booleanity,
+            );
         }
 
-        vec![Box::new(ra_virtual)]
+        vec![Box::new(ra_virtual), Box::new(booleanity)]
     }
 
     fn stage6_verifier_instances(
@@ -155,8 +148,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         sm: &mut StateManager<'_, F, T, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, T>>> {
         let ra_virtual = RaSumcheck::new_verifier(sm);
-
-        vec![Box::new(ra_virtual)]
+        let booleanity = BooleanitySumcheck::new_verifier(sm);
+        vec![Box::new(ra_virtual), Box::new(booleanity)]
     }
 }
 
