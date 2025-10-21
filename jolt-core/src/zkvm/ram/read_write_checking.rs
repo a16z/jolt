@@ -990,7 +990,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for RamReadWriteCheckin
         self.K.log_2() + self.T.log_2()
     }
 
-    fn input_claim(&self) -> F {
+    fn input_claim(&self, _acc: &dyn OpeningAccumulator<F>) -> F {
         self.rv_claim + self.gamma * self.wv_claim
     }
 

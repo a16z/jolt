@@ -143,7 +143,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for InstructionInputSum
         self.input_sample_stage_1.0.len() // = log(T)
     }
 
-    fn input_claim(&self) -> F {
+    fn input_claim(&self, _acc: &dyn OpeningAccumulator<F>) -> F {
         self.input_sample_stage_1.1 + self.gamma.square() * self.input_sample_stage_2.1
     }
 

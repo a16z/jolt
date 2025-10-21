@@ -707,7 +707,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for OuterRemainingSumch
         1 + self.num_cycles_bits
     }
 
-    fn input_claim(&self) -> F {
+    fn input_claim(&self, _acc: &dyn OpeningAccumulator<F>) -> F {
         self.input_claim
     }
 

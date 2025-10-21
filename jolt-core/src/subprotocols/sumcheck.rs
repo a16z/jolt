@@ -3,6 +3,7 @@
 
 use crate::field::JoltField;
 use crate::field::MaybeAllocative;
+use crate::poly::opening_proof::OpeningAccumulator;
 use crate::poly::opening_proof::{
     OpeningPoint, ProverOpeningAccumulator, VerifierOpeningAccumulator, BIG_ENDIAN,
 };
@@ -32,7 +33,7 @@ pub trait SumcheckInstance<F: JoltField, T: Transcript>: Send + Sync + MaybeAllo
 
     /// Returns the initial claim of this sumcheck instance, i.e.
     /// input_claim = \sum_{x \in \{0, 1}^N} P(x)
-    fn input_claim(&self) -> F; // TODO(moodlezoup): maybe pass this an Option<Rc<RefCell<ProverOpeningAccumulator<F>>>>
+    fn input_claim(&self, acc: &dyn OpeningAccumulator<F>) -> F;
 
     /// Computes the prover's message for a specific round of the sumcheck protocol.
     /// Returns the evaluations of the sumcheck polynomial at 0, 2, 3, ..., degree.
@@ -88,7 +89,8 @@ impl SingleSumcheck {
         let mut r_sumcheck: Vec<F::Challenge> = Vec::with_capacity(num_rounds);
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
 
-        let mut previous_claim = sumcheck_instance.input_claim();
+        let mut previous_claim =
+            sumcheck_instance.input_claim(&*opening_accumulator.as_ref().unwrap().borrow());
         transcript.append_scalar(&previous_claim); // Append input claim
 
         for round in 0..num_rounds {
@@ -131,7 +133,8 @@ impl SingleSumcheck {
         opening_accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
         transcript: &mut ProofTranscript,
     ) -> Result<Vec<F::Challenge>, ProofVerifyError> {
-        let input_claim = sumcheck_instance.input_claim();
+        let input_claim =
+            sumcheck_instance.input_claim(&*opening_accumulator.as_ref().unwrap().borrow());
         transcript.append_scalar(&input_claim); // Append input claim
         let (output_claim, r) = proof.verify(
             input_claim,
@@ -188,7 +191,8 @@ impl BatchedSumcheck {
             .iter()
             .map(|sumcheck| {
                 let num_rounds = sumcheck.num_rounds();
-                let input_claim = sumcheck.input_claim();
+                let input_claim =
+                    sumcheck.input_claim(&*opening_accumulator.as_ref().unwrap().borrow());
                 transcript.append_scalar(&input_claim);
                 input_claim.mul_pow_2(max_num_rounds - num_rounds)
             })
@@ -224,7 +228,7 @@ impl BatchedSumcheck {
                         // the input claim, scaled by a power of 2.
                         let num_rounds = sumcheck.num_rounds();
                         let scaled_input_claim = sumcheck
-                            .input_claim()
+                            .input_claim(&*opening_accumulator.as_ref().unwrap().borrow())
                             .mul_pow_2(remaining_rounds - num_rounds - 1);
                         // Constant polynomial
                         UniPoly::from_coeff(vec![scaled_input_claim])
@@ -348,7 +352,8 @@ impl BatchedSumcheck {
             .zip(batching_coeffs.iter())
             .map(|(sumcheck, coeff)| {
                 let num_rounds = sumcheck.num_rounds();
-                let input_claim = sumcheck.input_claim();
+                let input_claim =
+                    sumcheck.input_claim(&*opening_accumulator.as_ref().unwrap().borrow());
                 transcript.append_scalar(&input_claim);
                 input_claim.mul_pow_2(max_num_rounds - num_rounds) * coeff
             })

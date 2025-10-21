@@ -331,7 +331,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
         LOG_K + self.log_T
     }
 
-    fn input_claim(&self) -> F {
+    fn input_claim(&self, _acc: &dyn OpeningAccumulator<F>) -> F {
         self.rv_claim + self.gamma_sqr * self.raf_claim
     }
 

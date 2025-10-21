@@ -111,7 +111,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for RaSumcheck<F> {
         self.r_cycle.len()
     }
 
-    fn input_claim(&self) -> F {
+    fn input_claim(&self, _acc: &dyn OpeningAccumulator<F>) -> F {
         self.input_claim
     }
 

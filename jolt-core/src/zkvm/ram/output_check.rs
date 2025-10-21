@@ -177,7 +177,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for OutputSumcheck<F> {
         self.K.log_2()
     }
 
-    fn input_claim(&self) -> F {
+    fn input_claim(&self, _acc: &dyn OpeningAccumulator<F>) -> F {
         F::zero()
     }
 
@@ -546,7 +546,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ValFinalSumcheck<F>
         self.T.log_2()
     }
 
-    fn input_claim(&self) -> F {
+    fn input_claim(&self, _acc: &dyn OpeningAccumulator<F>) -> F {
         self.val_final_claim - self.val_init_eval
     }
 

@@ -729,7 +729,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ProductVirtualRemai
         self.num_cycle_vars
     }
 
-    fn input_claim(&self) -> F {
+    fn input_claim(&self, _acc: &dyn OpeningAccumulator<F>) -> F {
         self.input_claim
     }
 
@@ -990,7 +990,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ProductVirtualInner
     fn num_rounds(&self) -> usize {
         0
     }
-    fn input_claim(&self) -> F {
+    fn input_claim(&self, _acc: &dyn OpeningAccumulator<F>) -> F {
         self.claim
     }
     fn compute_prover_message(&mut self, _round: usize, _previous_claim: F) -> Vec<F> {
