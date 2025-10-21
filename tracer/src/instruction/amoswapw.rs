@@ -1,5 +1,20 @@
 use serde::{Deserialize, Serialize};
 
+use crate::instruction::addi::ADDI;
+use crate::instruction::and::AND;
+use crate::instruction::andi::ANDI;
+use crate::instruction::ld::LD;
+use crate::instruction::ori::ORI;
+use crate::instruction::sd::SD;
+use crate::instruction::sll::SLL;
+use crate::instruction::slli::SLLI;
+use crate::instruction::srl::SRL;
+use crate::instruction::srli::SRLI;
+use crate::instruction::virtual_assert_word_alignment::VirtualAssertWordAlignment;
+use crate::instruction::virtual_lw::VirtualLW;
+use crate::instruction::virtual_sign_extend_word::VirtualSignExtendWord;
+use crate::instruction::virtual_sw::VirtualSW;
+use crate::instruction::xor::XOR;
 use crate::utils::inline_helpers::InstrAssembler;
 use crate::utils::virtual_registers::VirtualRegisterAllocator;
 
@@ -88,9 +103,9 @@ impl RISCVTrace for AMOSWAPW {
                 let mut asm =
                     InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
                 asm.emit_halign::<super::virtual_assert_word_alignment::VirtualAssertWordAlignment>(self.operands.rs1, 0);
-                asm.emit_i::<super::virtual_lw::VirtualLW>(*v_rd, self.operands.rs1, 0);
-                asm.emit_s::<super::virtual_sw::VirtualSW>(self.operands.rs1, self.operands.rs2, 0);
-                asm.emit_i::<super::virtual_move::VirtualMove>(self.operands.rd, *v_rd, 0);
+                asm.emit_i::<VirtualLW>(*v_rd, self.operands.rs1, 0);
+                asm.emit_s::<VirtualSW>(self.operands.rs1, self.operands.rs2, 0);
+                asm.emit_i::<ADDI>(self.operands.rd, *v_rd, 0);
                 asm.finalize()
             }
             Xlen::Bit64 => {
@@ -100,29 +115,25 @@ impl RISCVTrace for AMOSWAPW {
                 let v_rd = allocator.allocate();
                 let mut asm =
                     InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
-                asm.emit_halign::<super::virtual_assert_word_alignment::VirtualAssertWordAlignment>(self.operands.rs1, 0);
+                asm.emit_halign::<VirtualAssertWordAlignment>(self.operands.rs1, 0);
                 // Use v_shift temporarily to hold aligned address
-                asm.emit_i::<super::andi::ANDI>(*v_shift, self.operands.rs1, -8i64 as u64);
-                asm.emit_ld::<super::ld::LD>(*v_dword, *v_shift, 0);
+                asm.emit_i::<ANDI>(*v_shift, self.operands.rs1, -8i64 as u64);
+                asm.emit_ld::<LD>(*v_dword, *v_shift, 0);
                 // Now compute actual shift value
-                asm.emit_i::<super::slli::SLLI>(*v_shift, self.operands.rs1, 3);
-                asm.emit_r::<super::srl::SRL>(*v_rd, *v_dword, *v_shift);
-                asm.emit_i::<super::ori::ORI>(*v_mask, 0, -1i64 as u64);
-                asm.emit_i::<super::srli::SRLI>(*v_mask, *v_mask, 32);
-                asm.emit_r::<super::sll::SLL>(*v_mask, *v_mask, *v_shift);
+                asm.emit_i::<SLLI>(*v_shift, self.operands.rs1, 3);
+                asm.emit_r::<SRL>(*v_rd, *v_dword, *v_shift);
+                asm.emit_i::<ORI>(*v_mask, 0, -1i64 as u64);
+                asm.emit_i::<SRLI>(*v_mask, *v_mask, 32);
+                asm.emit_r::<SLL>(*v_mask, *v_mask, *v_shift);
                 // Reuse v_shift as temporary for shifted rs2
-                asm.emit_r::<super::sll::SLL>(*v_shift, self.operands.rs2, *v_shift);
-                asm.emit_r::<super::xor::XOR>(*v_shift, *v_dword, *v_shift);
-                asm.emit_r::<super::and::AND>(*v_shift, *v_shift, *v_mask);
-                asm.emit_r::<super::xor::XOR>(*v_dword, *v_dword, *v_shift);
+                asm.emit_r::<SLL>(*v_shift, self.operands.rs2, *v_shift);
+                asm.emit_r::<AND>(*v_shift, *v_dword, *v_shift);
+                asm.emit_r::<AND>(*v_shift, *v_shift, *v_mask);
+                asm.emit_r::<XOR>(*v_dword, *v_dword, *v_shift);
                 // Recompute aligned address for store
-                asm.emit_i::<super::andi::ANDI>(*v_mask, self.operands.rs1, -8i64 as u64);
-                asm.emit_s::<super::sd::SD>(*v_mask, *v_dword, 0);
-                asm.emit_i::<super::virtual_sign_extend_word::VirtualSignExtendWord>(
-                    self.operands.rd,
-                    *v_rd,
-                    0,
-                );
+                asm.emit_i::<ANDI>(*v_mask, self.operands.rs1, -8i64 as u64);
+                asm.emit_s::<SD>(*v_mask, *v_dword, 0);
+                asm.emit_i::<VirtualSignExtendWord>(self.operands.rd, *v_rd, 0);
                 asm.finalize()
             }
         }

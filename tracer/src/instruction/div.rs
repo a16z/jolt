@@ -1,3 +1,4 @@
+use crate::instruction::addi::ADDI;
 use crate::instruction::sub::SUB;
 use crate::instruction::virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder;
 use crate::instruction::xor::XOR;
@@ -14,8 +15,7 @@ use crate::{
 use super::{
     add::ADD, format::format_r::FormatR, mul::MUL, virtual_advice::VirtualAdvice,
     virtual_assert_eq::VirtualAssertEQ, virtual_assert_valid_div0::VirtualAssertValidDiv0,
-    virtual_change_divisor::VirtualChangeDivisor, virtual_move::VirtualMove, Cycle, Instruction,
-    RISCVInstruction, RISCVTrace,
+    virtual_change_divisor::VirtualChangeDivisor, Cycle, Instruction, RISCVInstruction, RISCVTrace,
 };
 
 declare_riscv_instr!(
@@ -154,7 +154,7 @@ impl RISCVTrace for DIV {
         asm.emit_b::<VirtualAssertValidUnsignedRemainder>(*a3, *t3, 0);
 
         // Move quotient to destination register
-        asm.emit_i::<VirtualMove>(self.operands.rd, *a2, 0);
+        asm.emit_i::<ADDI>(self.operands.rd, *a2, 0);
         asm.finalize()
     }
 }

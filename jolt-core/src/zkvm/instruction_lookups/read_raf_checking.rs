@@ -1115,7 +1115,6 @@ mod tests {
             Cycle::VirtualAssertLTE(cycle) => cycle.random(rng).into(),
             Cycle::VirtualAssertValidDiv0(cycle) => cycle.random(rng).into(),
             Cycle::VirtualAssertValidUnsignedRemainder(cycle) => cycle.random(rng).into(),
-            Cycle::VirtualMove(cycle) => cycle.random(rng).into(),
             Cycle::VirtualMovsign(cycle) => cycle.random(rng).into(),
             Cycle::VirtualMULI(cycle) => cycle.random(rng).into(),
             Cycle::VirtualPow2(cycle) => cycle.random(rng).into(),
@@ -1514,11 +1513,6 @@ mod tests {
         test_read_raf_sumcheck(Some(Cycle::VirtualAssertValidUnsignedRemainder(
             Default::default(),
         )));
-    }
-
-    #[test]
-    fn test_move() {
-        test_read_raf_sumcheck(Some(Cycle::VirtualMove(Default::default())));
     }
 
     #[test]

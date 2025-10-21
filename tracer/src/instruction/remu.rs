@@ -1,5 +1,5 @@
-use crate::utils::inline_helpers::InstrAssembler;
 use crate::utils::virtual_registers::VirtualRegisterAllocator;
+use crate::{instruction::addi::ADDI, utils::inline_helpers::InstrAssembler};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -10,8 +10,8 @@ use crate::{
 use super::{
     add::ADD, format::format_r::FormatR, mul::MUL, virtual_advice::VirtualAdvice,
     virtual_assert_eq::VirtualAssertEQ,
-    virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder,
-    virtual_move::VirtualMove, Cycle, Instruction, RISCVInstruction, RISCVTrace,
+    virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder, Cycle,
+    Instruction, RISCVInstruction, RISCVTrace,
 };
 
 declare_riscv_instr!(
@@ -108,7 +108,7 @@ impl RISCVTrace for REMU {
         asm.emit_b::<VirtualAssertValidUnsignedRemainder>(*a3, a1, 0);
 
         // Move remainder to destination
-        asm.emit_i::<VirtualMove>(self.operands.rd, *a3, 0);
+        asm.emit_i::<ADDI>(self.operands.rd, *a3, 0);
         asm.finalize()
     }
 }
