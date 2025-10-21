@@ -3,7 +3,7 @@ use ark_std::Zero;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::field::{FMAdd, JoltField};
+use crate::field::{MontgomeryReduce, FMAdd, JoltField};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
@@ -231,7 +231,7 @@ impl<F: JoltField> ProductVirtualUniSkipInstance<F> {
                     let e_out = E_out[x_out_val];
                     // Accumulate across x_in using 8-limb signed accumulators per j
                     let mut inner_acc: [Acc8S<F>; PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE] =
-                        [Acc8S::<F>::new(); PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE];
+                        [Acc8S::<F>::default(); PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE];
                     for x_in_val in 0..num_x_in_vals {
                         let e_in = if num_x_in_vals == 1 {
                             E_in[0]
@@ -304,7 +304,7 @@ impl<F: JoltField> ProductVirtualUniSkipInstance<F> {
                     // Reduce inner accumulators (pos-neg Montgomery) and multiply by E_out
                     // NOTE: needs a R^2 correction factor, applied when initializing E_out
                     for j in 0..PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE {
-                        let reduced = inner_acc[j].reduce();
+                        let reduced = inner_acc[j].montgomery_reduce();
                         local_acc_unr[j] += e_out.mul_unreduced::<9>(reduced);
                     }
                 }

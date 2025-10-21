@@ -299,12 +299,12 @@ pub trait FMAdd<Left, Right>: Sized {
 
 /// Trait for accumulators that finish with Barrett reduction to a field element
 pub trait BarrettReduce<F: JoltField> {
-    fn reduce(&self) -> F;
+    fn barrett_reduce(&self) -> F;
 }
 
 /// Trait for accumulators that finish with Montgomery reduction to a field element
 pub trait MontgomeryReduce<F: JoltField> {
-    fn reduce(&self) -> F;
+    fn montgomery_reduce(&self) -> F;
 }
 
 #[cfg(feature = "allocative")]

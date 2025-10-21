@@ -5,7 +5,7 @@ use rayon::prelude::*;
 use std::sync::Arc;
 use tracer::instruction::Cycle;
 
-use crate::field::{FMAdd, JoltField};
+use crate::field::{MontgomeryReduce, FMAdd, JoltField};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
@@ -194,12 +194,12 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
             .map(|chunk_idx| {
                 let x_out_start = chunk_idx * x_out_chunk_size;
                 let x_out_end = core::cmp::min((chunk_idx + 1) * x_out_chunk_size, num_x_out_vals);
-                let mut acc_field: [F; UNIVARIATE_SKIP_DEGREE] =
-                    [F::zero(); UNIVARIATE_SKIP_DEGREE];
+                let mut acc_unreduced: [F::Unreduced<9>; UNIVARIATE_SKIP_DEGREE] =
+                    [F::Unreduced::<9>::zero(); UNIVARIATE_SKIP_DEGREE];
 
                 for x_out_val in x_out_start..x_out_end {
                     let mut inner_acc: [Acc8S<F>; UNIVARIATE_SKIP_DEGREE] =
-                        [Acc8S::<F>::new(); UNIVARIATE_SKIP_DEGREE];
+                        [Acc8S::<F>::default(); UNIVARIATE_SKIP_DEGREE];
                     for x_in_prime in 0..num_x_in_half {
                         // Materialize row once for both groups (ignores last bit)
                         let base_step_idx = (x_out_val << iter_num_x_in_prime_vars) | x_in_prime;
@@ -232,14 +232,14 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
                     }
                     let e_out = E_out[x_out_val];
                     for j in 0..UNIVARIATE_SKIP_DEGREE {
-                        let reduced = inner_acc[j].reduce();
-                        acc_field[j] += e_out * reduced;
+                        let reduced = inner_acc[j].montgomery_reduce();
+                        acc_unreduced[j] += e_out.mul_unreduced::<9>(reduced);
                     }
                 }
-                acc_field
+                acc_unreduced
             })
             .reduce(
-                || [F::zero(); UNIVARIATE_SKIP_DEGREE],
+                || [F::Unreduced::<9>::zero(); UNIVARIATE_SKIP_DEGREE],
                 |mut a, b| {
                     for j in 0..UNIVARIATE_SKIP_DEGREE {
                         a[j] += b[j];
@@ -247,6 +247,7 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
                     a
                 },
             )
+            .map(F::from_montgomery_reduce::<9>)
     }
 }
 

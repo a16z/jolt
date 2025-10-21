@@ -1,7 +1,25 @@
 //! R1CS evaluation utilities: grouped Az/Bz evaluators and Lagrange-folded helpers
+//!
+//! This module contains the runtime evaluation semantics for the uniform R1CS
+//! constraints declared in `r1cs::constraints`.
+//!
+//! What lives here:
+//! - Typed guard/magnitude structs for each group: `AzFirstGroup`, `BzFirstGroup`,
+//!   `AzSecondGroup`, `BzSecondGroup`.
+//! - Typed evaluator wrappers: `R1CSFirstGroup` and `R1CSSecondGroup` with
+//!   `eval_az`, `eval_bz`, `az_at_r`, `bz_at_r`, and helper fold functions for
+//!   Lagrange-window accumulation.
+//!
+//! What does NOT live here:
+//! - The definition of constraints and grouping metadata (see `r1cs::constraints`).
+//!
+//! When adding/removing constraints:
+//! - Update `r1cs::constraints` for the new constraint and its group assignment.
+//! - If guard/magnitude shapes change for either group, update the corresponding
+//!   `Az*/Bz*` structs and evaluator logic here to remain consistent.
 
 use super::inputs::R1CSCycleInputs;
-use crate::field::{FMAdd, JoltField};
+use crate::field::{BarrettReduce, FMAdd, JoltField};
 use crate::utils::accumulation::{Acc5U, Acc6S, Acc7S, S128Sum};
 use crate::zkvm::instruction::CircuitFlags;
 use ark_ff::biginteger::{S64, S128, S160, S192};
@@ -134,7 +152,7 @@ impl<'a, F: JoltField> R1CSFirstGroup<'a, F> {
     #[inline]
     pub fn az_at_r(&self, w: &[F; UNIVARIATE_SKIP_DOMAIN_SIZE]) -> F {
         let az = self.eval_az();
-        let mut acc: Acc5U<F> = Acc5U::new();
+        let mut acc: Acc5U<F> = Acc5U::default();
         acc.fmadd(&w[0], &az.ram_addr_eq_zero_if_not_load_store);
         acc.fmadd(&w[1], &az.ram_read_eq_ram_write_if_load);
         acc.fmadd(&w[2], &az.ram_read_eq_rd_write_if_load);
@@ -145,13 +163,13 @@ impl<'a, F: JoltField> R1CSFirstGroup<'a, F> {
         acc.fmadd(&w[7], &az.next_unexp_pc_eq_lookup_if_should_jump);
         acc.fmadd(&w[8], &az.next_pc_eq_pc_plus_one_if_inline);
         acc.fmadd(&w[9], &az.must_start_sequence_from_beginning);
-        acc.reduce()
+        acc.barrett_reduce()
     }
 
     #[inline]
     pub fn bz_at_r(&self, w: &[F; UNIVARIATE_SKIP_DOMAIN_SIZE]) -> F {
         let bz = self.eval_bz();
-        let mut acc: Acc6S<F> = Acc6S::new();
+        let mut acc: Acc6S<F> = Acc6S::default();
         acc.fmadd(&w[0], &bz.ram_addr);
         acc.fmadd(&w[1], &bz.ram_read_minus_ram_write);
         acc.fmadd(&w[2], &bz.ram_read_minus_rd_write);
@@ -162,7 +180,7 @@ impl<'a, F: JoltField> R1CSFirstGroup<'a, F> {
         acc.fmadd(&w[7], &bz.next_unexp_pc_minus_lookup_output);
         acc.fmadd(&w[8], &bz.next_pc_minus_pc_plus_one);
         acc.fmadd(&w[9], &bz.do_not_update_unexpanded_pc_minus_one);
-        acc.reduce()
+        acc.barrett_reduce()
     }
 
     #[inline]
@@ -175,7 +193,7 @@ impl<'a, F: JoltField> R1CSFirstGroup<'a, F> {
         let bz = self.eval_bz();
 
         let mut sum_c_az_i32: i32 = 0;
-        let mut sum_bz: S128Sum = S128Sum::new();
+        let mut sum_bz: S128Sum = S128Sum::default();
 
         // 0: RamAddrEqZeroIfNotLoadStore — RamAddress == 0 when !(Load || Store)
         let c0_i32 = coeffs_i32[0];
@@ -392,7 +410,7 @@ impl<'a, F: JoltField> R1CSSecondGroup<'a, F> {
     pub fn az_at_r(&self, _w: &[F; UNIVARIATE_SKIP_DOMAIN_SIZE]) -> F {
         let w = _w;
         let az = self.eval_az();
-        let mut acc: Acc5U<F> = Acc5U::new();
+        let mut acc: Acc5U<F> = Acc5U::default();
         acc.fmadd(&w[0], &az.ram_addr_eq_rs1_plus_imm_if_load_store);
         acc.fmadd(&w[1], &az.right_lookup_add);
         acc.fmadd(&w[2], &az.right_lookup_sub);
@@ -402,14 +420,14 @@ impl<'a, F: JoltField> R1CSSecondGroup<'a, F> {
         acc.fmadd(&w[6], &az.rd_write_eq_pc_plus_const_if_write_pc_to_rd);
         acc.fmadd(&w[7], &az.next_unexp_pc_eq_pc_plus_imm_if_should_branch);
         acc.fmadd(&w[8], &az.next_unexp_pc_update_otherwise);
-        acc.reduce()
+        acc.barrett_reduce()
     }
 
     #[inline]
     pub fn bz_at_r(&self, _w: &[F; UNIVARIATE_SKIP_DOMAIN_SIZE]) -> F {
         let w = _w;
         let bz = self.eval_bz();
-        let mut acc: Acc7S<F> = Acc7S::new();
+        let mut acc: Acc7S<F> = Acc7S::default();
         acc.fmadd(&w[0], &bz.ram_addr_minus_rs1_plus_imm);
         acc.fmadd(&w[1], &bz.right_lookup_minus_add_result);
         acc.fmadd(&w[2], &bz.right_lookup_minus_sub_result);
@@ -419,7 +437,7 @@ impl<'a, F: JoltField> R1CSSecondGroup<'a, F> {
         acc.fmadd(&w[6], &bz.rd_write_minus_pc_plus_const);
         acc.fmadd(&w[7], &bz.next_unexp_pc_minus_pc_plus_imm);
         acc.fmadd(&w[8], &bz.next_unexp_pc_minus_expected);
-        acc.reduce()
+        acc.barrett_reduce()
     }
 
     #[inline]

@@ -1,35 +1,33 @@
-//! Compile-time constant R1CS constraints with grouped evaluation
+//! Compile-time constant R1CS constraints and grouping metadata
 //!
-//! This module provides a static, compile-time representation of R1CS constraints
-//! and evaluates them in two groups optimized for the univariate-skip protocol.
-//! Group 0 and Group 1 are evaluated separately and then folded via Lagrange
-//! weights using fused accumulators.
+//! This module defines the static, compile-time representation of all uniform
+//! R1CS constraints used by the zkVM, along with constants and tables that split
+//! the constraints into two groups optimized for the univariate-skip protocol.
 //!
+//! Evaluation logic (how `Az`/`Bz` are computed and folded) now lives in
+//! `r1cs::evaluation`. Use the typed evaluators `R1CSFirstGroup` and
+//! `R1CSSecondGroup` in that module to compute guards/magnitudes and to fold
+//! them against window weights.
+//!
+//! Grouping overview:
 //! - Group 0 (first group) contains `UNIVARIATE_SKIP_DOMAIN_SIZE = ceil(N/2)`
-//!   constraints. Its `Az` are booleans and its `Bz` fit in `i128`.
-//! - Group 1 (second group) is the complement of Group 0. Its `Az` are `u8`
-//!   and its `Bz` use `S160` for wider arithmetic.
-//!
-//! Grouped evaluation entry points:
-//! - `eval_az_first_group` -> `[bool; UNIVARIATE_SKIP_DOMAIN_SIZE]`
-//! - `eval_bz_first_group` -> `[i128; UNIVARIATE_SKIP_DOMAIN_SIZE]`
-//! - `eval_az_second_group` -> `[u8; NUM_REMAINING_R1CS_CONSTRAINTS]`
-//! - `eval_bz_second_group` -> `[S160; NUM_REMAINING_R1CS_CONSTRAINTS]`
-//! - `compute_az_r_group0/group1` and `compute_bz_r_group0/group1` fold these
-//!   vectors against Lagrange weights at the evaluation point `r` using
-//!   specialized fused accumulators with a single Barrett reduction at the end.
+//!   constraints with boolean `Az` and small-width `Bz`.
+//! - Group 1 (second group) is the complement with nonnegative `Az` (e.g. `u8`)
+//!   and wider `Bz` arithmetic.
 //!
 //! ## Adding a new constraint
 //!
-//! 1. Add a new variant to `ConstraintName` (maintain the same order as `UNIFORM_R1CS`).
-//! 2. Add the constraint to `UNIFORM_R1CS` using the appropriate macro.
+//! 1. Add a new variant to `ConstraintName` (keep the same order as `UNIFORM_R1CS`).
+//! 2. Add the constraint to `UNIFORM_R1CS` using the `r1cs_eq_conditional!` macro.
 //! 3. Assign the constraint to a group:
-//!    - Put its name in `UNIFORM_R1CS_FIRST_GROUP_NAMES` if it fits Group 0
-//!      characteristics (boolean guards, ~64-bit differences in `Bz`).
+//!    - Put its name in `UNIFORM_R1CS_FIRST_GROUP_NAMES` if it matches Group 0
+//!      characteristics (boolean guards, ~64-bit `Bz`).
 //!    - Otherwise it will appear in Group 1 automatically as the complement.
-//! 4. Maintain the grouping invariant: the first group must contain exactly
-//!    `UNIVARIATE_SKIP_DOMAIN_SIZE = ceil(NUM_R1CS_CONSTRAINTS/2)` constraints,
-//!    so the first group never has fewer elements than the second.
+//! 4. Maintain the grouping invariant: `UNIFORM_R1CS_FIRST_GROUP_NAMES.len()` must equal
+//!    `UNIVARIATE_SKIP_DOMAIN_SIZE = ceil(NUM_R1CS_CONSTRAINTS/2)`; the first group is
+//!    never smaller than the second.
+//! 5. If the new constraint changes the shapes of guards/magnitudes, update the
+//!    evaluators in `r1cs::evaluation` accordingly (`Az*/Bz*` structs and methods).
 //!
 //! ## Removing a constraint
 //!
@@ -38,14 +36,15 @@
 //! 3. If present, remove its name from `UNIFORM_R1CS_FIRST_GROUP_NAMES`.
 //! 4. Re-check that `UNIFORM_R1CS_FIRST_GROUP_NAMES.len()` equals
 //!    `UNIVARIATE_SKIP_DOMAIN_SIZE` after the change; adjust the first group
-//!    selection to satisfy the invariant that the first group is never smaller
+//!    selection to preserve the invariant that the first group is never smaller
 //!    than the second.
+//! 5. If evaluation shapes are affected, update `r1cs::evaluation`.
 //!
 //! ## Grouping guidance
 //!
-//! - Prefer Group 0 for boolean `Az` and `Bz` that can be expressed as `i128`.
-//! - Prefer Group 1 for constraints whose `Az` are small nonnegative integers
-//!   and whose `Bz` require wider arithmetic (`S160`).
+//! - Prefer Group 0 for boolean `Az` and `Bz` that can be represented in ~64 bits.
+//! - Prefer Group 1 when `Az` are small nonnegative integers and `Bz` require
+//!   wider arithmetic.
 //! - This split minimizes conversions and maximizes accumulator efficiency.
 
 use super::inputs::JoltR1CSInputs;

@@ -17,21 +17,12 @@ impl<F: JoltField> Default for Acc5U<F> {
 }
 
 impl<F: JoltField> Acc5U<F> {
-    #[inline(always)]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    #[inline(always)]
-    pub fn reduce(&self) -> F {
-        F::from_barrett_reduce(self.word)
-    }
 }
 
 impl<F: JoltField> BarrettReduce<F> for Acc5U<F> {
     #[inline(always)]
-    fn reduce(&self) -> F {
-        Acc5U::<F>::reduce(self)
+    fn barrett_reduce(&self) -> F {
+        F::from_barrett_reduce::<5>(self.word)
     }
 }
 
@@ -85,15 +76,6 @@ impl<F: JoltField> Default for Acc6U<F> {
 }
 
 impl<F: JoltField> Acc6U<F> {
-    #[inline(always)]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    #[inline(always)]
-    pub fn reduce(&self) -> F {
-        F::from_barrett_reduce(self.word)
-    }
 }
 
 impl<F: JoltField> FMAdd<F, u64> for Acc6U<F> {
@@ -128,8 +110,8 @@ impl<F: JoltField> FMAdd<F, bool> for Acc6U<F> {
 
 impl<F: JoltField> BarrettReduce<F> for Acc6U<F> {
     #[inline(always)]
-    fn reduce(&self) -> F {
-        Acc6U::<F>::reduce(self)
+    fn barrett_reduce(&self) -> F {
+        F::from_barrett_reduce::<6>(self.word)
     }
 }
 
@@ -150,25 +132,6 @@ impl<F: JoltField> Default for Acc6S<F> {
 }
 
 impl<F: JoltField> Acc6S<F> {
-    #[inline(always)]
-    pub fn new() -> Self {
-        Self::default()
-    }
-    #[inline(always)]
-    pub fn reduce(&self) -> F {
-        let result = if self.pos >= self.neg {
-            F::from_barrett_reduce(self.pos - self.neg)
-        } else {
-            -F::from_barrett_reduce(self.neg - self.pos)
-        };
-        #[cfg(test)]
-        {
-            let pos = F::from_barrett_reduce(self.pos);
-            let neg = F::from_barrett_reduce(self.neg);
-            debug_assert_eq!(result, pos - neg);
-        }
-        result
-    }
 }
 
 impl<F: JoltField> FMAdd<F, i128> for Acc6S<F> {
@@ -237,8 +200,19 @@ impl<F: JoltField> FMAdd<F, S64> for Acc6S<F> {
 
 impl<F: JoltField> BarrettReduce<F> for Acc6S<F> {
     #[inline(always)]
-    fn reduce(&self) -> F {
-        Acc6S::<F>::reduce(self)
+    fn barrett_reduce(&self) -> F {
+        let result = if self.pos >= self.neg {
+            F::from_barrett_reduce::<6>(self.pos - self.neg)
+        } else {
+            -F::from_barrett_reduce::<6>(self.neg - self.pos)
+        };
+        #[cfg(test)]
+        {
+            let pos = F::from_barrett_reduce(self.pos);
+            let neg = F::from_barrett_reduce(self.neg);
+            debug_assert_eq!(result, pos - neg);
+        }
+        result
     }
 }
 
@@ -270,14 +244,6 @@ impl<F: JoltField> Default for Acc7U<F> {
 }
 
 impl<F: JoltField> Acc7U<F> {
-    #[inline(always)]
-    pub fn new() -> Self {
-        Self::default()
-    }
-    #[inline(always)]
-    pub fn reduce(&self) -> F {
-        F::from_barrett_reduce(self.word)
-    }
 }
 
 impl<F: JoltField> FMAdd<F, u128> for Acc7U<F> {
@@ -292,8 +258,8 @@ impl<F: JoltField> FMAdd<F, u128> for Acc7U<F> {
 
 impl<F: JoltField> BarrettReduce<F> for Acc7U<F> {
     #[inline(always)]
-    fn reduce(&self) -> F {
-        Acc7U::<F>::reduce(self)
+    fn barrett_reduce(&self) -> F {
+        F::from_barrett_reduce::<7>(self.word)
     }
 }
 
@@ -314,25 +280,6 @@ impl<F: JoltField> Default for Acc7S<F> {
 }
 
 impl<F: JoltField> Acc7S<F> {
-    #[inline(always)]
-    pub fn new() -> Self {
-        Self::default()
-    }
-    #[inline(always)]
-    pub fn reduce(&self) -> F {
-        let result = if self.pos >= self.neg {
-            F::from_barrett_reduce(self.pos - self.neg)
-        } else {
-            -F::from_barrett_reduce(self.neg - self.pos)
-        };
-        #[cfg(test)]
-        {
-            let pos = F::from_barrett_reduce(self.pos);
-            let neg = F::from_barrett_reduce(self.neg);
-            debug_assert_eq!(result, pos - neg);
-        }
-        result
-    }
 }
 
 impl<F: JoltField> FMAdd<F, i128> for Acc7S<F> {
@@ -430,8 +377,19 @@ impl<F: JoltField> FMAdd<F, S64> for Acc7S<F> {
 
 impl<F: JoltField> BarrettReduce<F> for Acc7S<F> {
     #[inline(always)]
-    fn reduce(&self) -> F {
-        Acc7S::<F>::reduce(self)
+    fn barrett_reduce(&self) -> F {
+        let result = if self.pos >= self.neg {
+            F::from_barrett_reduce::<7>(self.pos - self.neg)
+        } else {
+            F::from_barrett_reduce::<7>(self.neg - self.pos)
+        };
+        #[cfg(test)]
+        {
+            let pos = F::from_barrett_reduce(self.pos);
+            let neg = F::from_barrett_reduce(self.neg);
+            debug_assert_eq!(result, pos - neg);
+        }
+        result
     }
 }
 
@@ -459,14 +417,6 @@ impl<F: JoltField> Default for Acc8U<F> {
 }
 
 impl<F: JoltField> Acc8U<F> {
-    #[inline(always)]
-    pub fn new() -> Self {
-        Self::default()
-    }
-    #[inline(always)]
-    pub fn reduce(&self) -> F {
-        F::from_montgomery_reduce(self.word)
-    }
 }
 
 impl<F: JoltField> FMAdd<F, u128> for Acc8U<F> {
@@ -511,8 +461,8 @@ impl<F: JoltField> FMAdd<F, bool> for Acc8U<F> {
 
 impl<F: JoltField> MontgomeryReduce<F> for Acc8U<F> {
     #[inline(always)]
-    fn reduce(&self) -> F {
-        Acc8U::<F>::reduce(self)
+    fn montgomery_reduce(&self) -> F {
+        F::from_montgomery_reduce::<8>(self.word)
     }
 }
 
@@ -608,25 +558,6 @@ impl<F: JoltField> Default for Acc8S<F> {
 }
 
 impl<F: JoltField> Acc8S<F> {
-    #[inline(always)]
-    pub fn new() -> Self {
-        Self::default()
-    }
-    #[inline(always)]
-    pub fn reduce(&self) -> F {
-        let result = if self.pos >= self.neg {
-            F::from_montgomery_reduce(self.pos - self.neg)
-        } else {
-            -F::from_montgomery_reduce(self.neg - self.pos)
-        };
-        #[cfg(test)]
-        {
-            let pos = F::from_montgomery_reduce(self.pos);
-            let neg = F::from_montgomery_reduce(self.neg);
-            debug_assert_eq!(result, pos - neg);
-        }
-        result
-    }
 }
 
 impl<F: JoltField> FMAdd<F, S128> for Acc8S<F> {
@@ -691,7 +622,18 @@ impl<F: JoltField> FMAdd<F, S256> for Acc8S<F> {
 
 impl<F: JoltField> MontgomeryReduce<F> for Acc8S<F> {
     #[inline(always)]
-    fn reduce(&self) -> F {
-        Acc8S::<F>::reduce(self)
+    fn montgomery_reduce(&self) -> F {
+        let result = if self.pos >= self.neg {
+            F::from_montgomery_reduce::<8>(self.pos - self.neg)
+        } else {
+            F::from_montgomery_reduce::<8>(self.neg - self.pos)
+        };
+        #[cfg(test)]
+        {
+            let pos = F::from_montgomery_reduce(self.pos);
+            let neg = F::from_montgomery_reduce(self.neg);
+            debug_assert_eq!(result, pos - neg);
+        }
+        result
     }
 }
