@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1760992771876,
+  "lastUpdate": 1761015833861,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -24598,6 +24598,186 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 1069016,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "qvd@andrew.cmu.edu",
+            "name": "Quang Dao",
+            "username": "quangvdao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8487e42d662dd4a19e5d8e6ac37f804f29d49cdd",
+          "message": "feat: Univariate skip for Spartan (#971)\n\n* add interpolation stuff\n\n* delete old svo stuff to make way for univariate skip\n\n* delete old spartan quadratic, move outer sumcheck to separate file\n\n* consolidate (split) eq poly\n\n* name changes, merge all to spartan/outer\n\n* fixing stuff\n\n* reorg + more progress\n\n* reorged outer sumcheck proof\n\n* update first round verify univariate skip\n\n* more chnages\n\n* updated r1cs key evaluations\n\n* more changes + fmt + clippy\n\n* some small fixes, tests still fail\n\n* small fixes\n\n* fix verification\n\n* Merge upstream/main into univariate-skip per policy: upstream OpeningProof + 26 constraints; keep branch changes elsewhere; delete interleaved poly and small_value; resolve conflicts\n\n* fixing challenge change\n\n* finish porting challenge\n\n* fixed all errors\n\n* more changes & refactor\n\n* refactor, WIP\n\n* more progress with new staging\n\n* fleshed out uni skip interface, but verification still fails (for remaining sumcheck)\n\n* more refactoring\n\n* added uni skip error enum, reworked to dense az/bz/cz\n\n* WIP, prepare for merge from main\n\n* small fix\n\n* move all constraints to eq-cond, remove all Cz contributions\n\n* fmt + clippy\n\n* parallelize collection of bound az/bz\n\n* fix uni skip logic, more removal of cz\n\n* move NOTICE to spartan folder, small fixes\n\n* further tightening the constraints\n\n* more cleanup\n\n* WIP, starting on uni skip for product virtual\n\n* more progress but still not done\n\n* finally fixed outer sumcheck!\n\n* IT WORKS!!!!\n\n* initial impl of product with uni skip\n\n* fmt + clippy\n\n* fully replaced old product virtualization\n\n* clippy + fmt\n\n* update on product virtualization\n\n* more progress, still debugging\n\n* refactored accumulation primitives\n\n* debugged succesffully the stage 2 uni skip round\n\n* small stuff\n\n* readded append transcript for sumcheck input claim\n\n* fix product sumcheck\n\n* fixed errors from merge\n\n* change coeff type to i128 in ops\n\n* small cleanup\n\n* fix bytecode read raf checking for fused product virtual\n\n* changes to product & cleanup\n\n* reworked accumulation API\n\n* found the damn error\n\n* more shuffling around\n\n* bunch of changes, move booleanity stage 2 => stage 6\n\n* add bool variant to multilinear polynomial\n\n* convert some u8 multilinear to bool multilinear\n\n* two more places to turn u8 into bool for multilinear\n\n* small changes\n\n* fmt + clippy\n\n* final commit for the day...\n\n* add cfg test to signed reduce\n\n* add tracing spans\n\n* another one\n\n* FOUND AND FIX THE BUG!!!\n\n* clippy\n\n* fmt\n\n* fixed another accumulation bug\n\n* clippy\n\n* another one\n\n* docstring\n\n* clippy\n\n* efficiency improvements\n\n* small change: optimized gamma in booleanity\n\n* fmt\n\n* move RAM stuff from stage 3 to stage 4\n\n* cleanup, remove round compression\n\n* addressed mzhu's comments\n\n* delete deferred products as they are not used\n\n* add if-else\n\n* Update jolt-core/src/field/mod.rs\n\nCo-authored-by: Markos <53157953+markosg04@users.noreply.github.com>\n\n* small fix to uniskip_targets\n\n* cleanup\n\n* change build uniskip first round to have option base\n\n* fmt\n\n* revert G\n\n---------\n\nCo-authored-by: Markos <53157953+markosg04@users.noreply.github.com>",
+          "timestamp": "2025-10-20T22:09:55-04:00",
+          "tree_id": "c8b56740c43802fd4a48008cd096186b51600633",
+          "url": "https://github.com/a16z/jolt/commit/8487e42d662dd4a19e5d8e6ac37f804f29d49cdd"
+        },
+        "date": 1761015833110,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 971844,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 3432188,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 960300,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 939644,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 1280544,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 951936,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 1064072,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 1036400,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 346560,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 4782648,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 978672,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 981692,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 1077652,
             "unit": "KB",
             "extra": ""
           }
