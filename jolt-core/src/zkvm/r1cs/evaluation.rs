@@ -22,7 +22,7 @@ use super::inputs::R1CSCycleInputs;
 use crate::field::{BarrettReduce, FMAdd, JoltField};
 use crate::utils::accumulation::{Acc5U, Acc6S, Acc7S, S128Sum};
 use crate::zkvm::instruction::CircuitFlags;
-use ark_ff::biginteger::{S64, S128, S160, S192};
+use ark_ff::biginteger::{S128, S160, S192, S64};
 
 use super::constraints::UNIVARIATE_SKIP_DOMAIN_SIZE;
 
@@ -37,29 +37,29 @@ fn s64_from_diff_u64s(a: u64, b: u64) -> S64 {
 #[derive(Clone, Copy, Debug)]
 pub struct AzFirstGroup {
     pub ram_addr_eq_zero_if_not_load_store: bool, // !(Load || Store)
-    pub ram_read_eq_ram_write_if_load: bool, // Load
-    pub ram_read_eq_rd_write_if_load: bool, // Load
-    pub rs2_eq_ram_write_if_store: bool, // Store
+    pub ram_read_eq_ram_write_if_load: bool,      // Load
+    pub ram_read_eq_rd_write_if_load: bool,       // Load
+    pub rs2_eq_ram_write_if_store: bool,          // Store
     pub left_lookup_zero_unless_add_sub_mul: bool, // Add || Sub || Mul
     pub left_lookup_eq_left_input_otherwise: bool, // !(Add || Sub || Mul)
-    pub assert_lookup_one: bool, // Assert
+    pub assert_lookup_one: bool,                  // Assert
     pub next_unexp_pc_eq_lookup_if_should_jump: bool, // ShouldJump
-    pub next_pc_eq_pc_plus_one_if_inline: bool, // VirtualInstruction
+    pub next_pc_eq_pc_plus_one_if_inline: bool,   // VirtualInstruction
     pub must_start_sequence_from_beginning: bool, // NextIsVirtual && !NextIsFirstInSequence
 }
 
 /// Magnitudes for the first group (kept small: bool/u64/S64)
 #[derive(Clone, Copy, Debug)]
 pub struct BzFirstGroup {
-    pub ram_addr: u64, // RamAddress - 0
-    pub ram_read_minus_ram_write: S64, // RamRead - RamWrite
-    pub ram_read_minus_rd_write: S64, // RamRead - RdWrite
-    pub rs2_minus_ram_write: S64, // Rs2 - RamWrite
-    pub left_lookup: u64, // LeftLookup - 0
-    pub left_lookup_minus_left_input: S64, // LeftLookup - LeftInstructionInput
-    pub lookup_output_minus_one: S64, // LookupOutput - 1
-    pub next_unexp_pc_minus_lookup_output: S64, // NextUnexpandedPC - LookupOutput
-    pub next_pc_minus_pc_plus_one: S64, // NextPC - (PC + 1)
+    pub ram_addr: u64,                               // RamAddress - 0
+    pub ram_read_minus_ram_write: S64,               // RamRead - RamWrite
+    pub ram_read_minus_rd_write: S64,                // RamRead - RdWrite
+    pub rs2_minus_ram_write: S64,                    // Rs2 - RamWrite
+    pub left_lookup: u64,                            // LeftLookup - 0
+    pub left_lookup_minus_left_input: S64,           // LeftLookup - LeftInstructionInput
+    pub lookup_output_minus_one: S64,                // LookupOutput - 1
+    pub next_unexp_pc_minus_lookup_output: S64,      // NextUnexpandedPC - LookupOutput
+    pub next_pc_minus_pc_plus_one: S64,              // NextPC - (PC + 1)
     pub do_not_update_unexpanded_pc_minus_one: bool, // 1 - DoNotUpdateUnexpandedPC
 }
 
@@ -67,14 +67,14 @@ pub struct BzFirstGroup {
 #[derive(Clone, Copy, Debug)]
 pub struct AzSecondGroup {
     pub ram_addr_eq_rs1_plus_imm_if_load_store: bool, // Load || Store
-    pub right_lookup_add: bool, // Add
-    pub right_lookup_sub: bool, // Sub
-    pub right_lookup_eq_product_if_mul: bool, // Mul
-    pub right_lookup_eq_right_input_otherwise: bool, // !(Add || Sub || Mul || Advice)
+    pub right_lookup_add: bool,                       // Add
+    pub right_lookup_sub: bool,                       // Sub
+    pub right_lookup_eq_product_if_mul: bool,         // Mul
+    pub right_lookup_eq_right_input_otherwise: bool,  // !(Add || Sub || Mul || Advice)
     pub rd_write_eq_lookup_if_write_lookup_to_rd: u8, // write_lookup_output_to_rd_addr (Rd != 0)
     pub rd_write_eq_pc_plus_const_if_write_pc_to_rd: u8, // write_pc_to_rd_addr (Rd != 0)
     pub next_unexp_pc_eq_pc_plus_imm_if_should_branch: bool, // ShouldBranch
-    pub next_unexp_pc_update_otherwise: bool, // !(Jump || ShouldBranch)
+    pub next_unexp_pc_update_otherwise: bool,         // !(Jump || ShouldBranch)
 }
 
 /// Magnitudes for the second group (mixed precision up to S160)
@@ -83,7 +83,7 @@ pub struct BzSecondGroup {
     pub ram_addr_minus_rs1_plus_imm: i128, // RamAddress - (Rs1 + Imm)
     pub right_lookup_minus_add_result: S160, // RightLookup - (Left + Right)
     pub right_lookup_minus_sub_result: S160, // RightLookup - (Left - Right + 2^64)
-    pub right_lookup_minus_product: S160, // RightLookup - Product
+    pub right_lookup_minus_product: S160,  // RightLookup - Product
     pub right_lookup_minus_right_input: S160, // RightLookup - RightInput
     pub rd_write_minus_lookup_output: S64, // RdWrite - LookupOutput
     pub rd_write_minus_pc_plus_const: i128, // RdWrite - (UnexpandedPC + const)
@@ -128,8 +128,8 @@ impl<'a, F: JoltField> R1CSFirstGroup<'a, F> {
             assert_lookup_one: assert_flag,
             next_unexp_pc_eq_lookup_if_should_jump: self.row.should_jump,
             next_pc_eq_pc_plus_one_if_inline: inline_seq,
-            must_start_sequence_from_beginning:
-                self.row.next_is_virtual && !self.row.next_is_first_in_sequence,
+            must_start_sequence_from_beginning: self.row.next_is_virtual
+                && !self.row.next_is_first_in_sequence,
         }
     }
 
@@ -137,15 +137,34 @@ impl<'a, F: JoltField> R1CSFirstGroup<'a, F> {
     pub fn eval_bz(&self) -> BzFirstGroup {
         BzFirstGroup {
             ram_addr: self.row.ram_addr,
-            ram_read_minus_ram_write: s64_from_diff_u64s(self.row.ram_read_value, self.row.ram_write_value),
-            ram_read_minus_rd_write: s64_from_diff_u64s(self.row.ram_read_value, self.row.rd_write_value),
-            rs2_minus_ram_write: s64_from_diff_u64s(self.row.rs2_read_value, self.row.ram_write_value),
+            ram_read_minus_ram_write: s64_from_diff_u64s(
+                self.row.ram_read_value,
+                self.row.ram_write_value,
+            ),
+            ram_read_minus_rd_write: s64_from_diff_u64s(
+                self.row.ram_read_value,
+                self.row.rd_write_value,
+            ),
+            rs2_minus_ram_write: s64_from_diff_u64s(
+                self.row.rs2_read_value,
+                self.row.ram_write_value,
+            ),
             left_lookup: self.row.left_lookup,
-            left_lookup_minus_left_input: s64_from_diff_u64s(self.row.left_lookup, self.row.left_input),
+            left_lookup_minus_left_input: s64_from_diff_u64s(
+                self.row.left_lookup,
+                self.row.left_input,
+            ),
             lookup_output_minus_one: s64_from_diff_u64s(self.row.lookup_output, 1),
-            next_unexp_pc_minus_lookup_output: s64_from_diff_u64s(self.row.next_unexpanded_pc, self.row.lookup_output),
-            next_pc_minus_pc_plus_one: s64_from_diff_u64s(self.row.next_pc, self.row.pc.wrapping_add(1)),
-            do_not_update_unexpanded_pc_minus_one: !self.row.flags[CircuitFlags::DoNotUpdateUnexpandedPC],
+            next_unexp_pc_minus_lookup_output: s64_from_diff_u64s(
+                self.row.next_unexpanded_pc,
+                self.row.lookup_output,
+            ),
+            next_pc_minus_pc_plus_one: s64_from_diff_u64s(
+                self.row.next_pc,
+                self.row.pc.wrapping_add(1),
+            ),
+            do_not_update_unexpanded_pc_minus_one: !self.row.flags
+                [CircuitFlags::DoNotUpdateUnexpandedPC],
         }
     }
 
@@ -297,15 +316,29 @@ impl<'a, F: JoltField> R1CSFirstGroup<'a, F> {
         let az = self.eval_az();
         let bz = self.eval_bz();
         debug_assert!((!az.ram_addr_eq_zero_if_not_load_store) || bz.ram_addr == 0);
-        debug_assert!((!az.ram_read_eq_ram_write_if_load) || bz.ram_read_minus_ram_write.to_i128() == 0);
-        debug_assert!((!az.ram_read_eq_rd_write_if_load) || bz.ram_read_minus_rd_write.to_i128() == 0);
+        debug_assert!(
+            (!az.ram_read_eq_ram_write_if_load) || bz.ram_read_minus_ram_write.to_i128() == 0
+        );
+        debug_assert!(
+            (!az.ram_read_eq_rd_write_if_load) || bz.ram_read_minus_rd_write.to_i128() == 0
+        );
         debug_assert!((!az.rs2_eq_ram_write_if_store) || bz.rs2_minus_ram_write.to_i128() == 0);
         debug_assert!((!az.left_lookup_zero_unless_add_sub_mul) || bz.left_lookup == 0);
-        debug_assert!((!az.left_lookup_eq_left_input_otherwise) || bz.left_lookup_minus_left_input.to_i128() == 0);
+        debug_assert!(
+            (!az.left_lookup_eq_left_input_otherwise)
+                || bz.left_lookup_minus_left_input.to_i128() == 0
+        );
         debug_assert!((!az.assert_lookup_one) || bz.lookup_output_minus_one.to_i128() == 0);
-        debug_assert!((!az.next_unexp_pc_eq_lookup_if_should_jump) || bz.next_unexp_pc_minus_lookup_output.to_i128() == 0);
-        debug_assert!((!az.next_pc_eq_pc_plus_one_if_inline) || bz.next_pc_minus_pc_plus_one.to_i128() == 0);
-        debug_assert!((!az.must_start_sequence_from_beginning) || bz.do_not_update_unexpanded_pc_minus_one);
+        debug_assert!(
+            (!az.next_unexp_pc_eq_lookup_if_should_jump)
+                || bz.next_unexp_pc_minus_lookup_output.to_i128() == 0
+        );
+        debug_assert!(
+            (!az.next_pc_eq_pc_plus_one_if_inline) || bz.next_pc_minus_pc_plus_one.to_i128() == 0
+        );
+        debug_assert!(
+            (!az.must_start_sequence_from_beginning) || bz.do_not_update_unexpanded_pc_minus_one
+        );
     }
 }
 
@@ -328,11 +361,10 @@ impl<'a, F: JoltField> R1CSSecondGroup<'a, F> {
     #[inline]
     pub fn eval_az(&self) -> AzSecondGroup {
         let flags = &self.row.flags;
-        let not_add_sub_mul_advice =
-            !(flags[CircuitFlags::AddOperands]
-                || flags[CircuitFlags::SubtractOperands]
-                || flags[CircuitFlags::MultiplyOperands]
-                || flags[CircuitFlags::Advice]);
+        let not_add_sub_mul_advice = !(flags[CircuitFlags::AddOperands]
+            || flags[CircuitFlags::SubtractOperands]
+            || flags[CircuitFlags::MultiplyOperands]
+            || flags[CircuitFlags::Advice]);
         let next_update_otherwise = {
             let jump = flags[CircuitFlags::Jump];
             let should_branch = self.row.should_branch;
@@ -340,8 +372,8 @@ impl<'a, F: JoltField> R1CSSecondGroup<'a, F> {
         };
 
         AzSecondGroup {
-            ram_addr_eq_rs1_plus_imm_if_load_store:
-                (flags[CircuitFlags::Load] || flags[CircuitFlags::Store]),
+            ram_addr_eq_rs1_plus_imm_if_load_store: (flags[CircuitFlags::Load]
+                || flags[CircuitFlags::Store]),
             right_lookup_add: flags[CircuitFlags::AddOperands],
             right_lookup_sub: flags[CircuitFlags::SubtractOperands],
             right_lookup_eq_product_if_mul: flags[CircuitFlags::MultiplyOperands],
@@ -365,9 +397,8 @@ impl<'a, F: JoltField> R1CSSecondGroup<'a, F> {
 
         // RightLookupAdd / Sub / Product / RightInput
         let right_add_expected = (self.row.left_input as i128) + self.row.right_input.to_i128();
-        let right_sub_expected = (self.row.left_input as i128)
-            - self.row.right_input.to_i128()
-            + (1i128 << 64);
+        let right_sub_expected =
+            (self.row.left_input as i128) - self.row.right_input.to_i128() + (1i128 << 64);
 
         let right_lookup_minus_add_result =
             S160::from(self.row.right_lookup) - S160::from(right_add_expected);
@@ -379,17 +410,29 @@ impl<'a, F: JoltField> R1CSSecondGroup<'a, F> {
             S160::from(self.row.right_lookup) - S160::from(self.row.right_input);
 
         // Rd write checks (fit in i64 range by construction)
-        let rd_write_minus_lookup_output = s64_from_diff_u64s(self.row.rd_write_value, self.row.lookup_output);
-        let const_term = 4 - if self.row.flags[CircuitFlags::IsCompressed] { 2 } else { 0 };
+        let rd_write_minus_lookup_output =
+            s64_from_diff_u64s(self.row.rd_write_value, self.row.lookup_output);
+        let const_term = 4 - if self.row.flags[CircuitFlags::IsCompressed] {
+            2
+        } else {
+            0
+        };
         let rd_write_minus_pc_plus_const = (self.row.rd_write_value as i128)
             - ((self.row.unexpanded_pc as i128) + (const_term as i128));
 
         // Next unexpanded PC checks
         let next_unexp_pc_minus_pc_plus_imm = (self.row.next_unexpanded_pc as i128)
             - (self.row.unexpanded_pc as i128 + self.row.imm.to_i128());
-        let const_term_next = 4
-            - if self.row.flags[CircuitFlags::DoNotUpdateUnexpandedPC] { 4 } else { 0 }
-            - if self.row.flags[CircuitFlags::IsCompressed] { 2 } else { 0 };
+        let const_term_next =
+            4 - if self.row.flags[CircuitFlags::DoNotUpdateUnexpandedPC] {
+                4
+            } else {
+                0
+            } - if self.row.flags[CircuitFlags::IsCompressed] {
+                2
+            } else {
+                0
+            };
         let target_next = self.row.unexpanded_pc as i128 + const_term_next;
         let next_unexp_pc_minus_expected = self.row.next_unexpanded_pc as i128 - target_next;
 
@@ -468,7 +511,11 @@ impl<'a, F: JoltField> R1CSSecondGroup<'a, F> {
         if az.ram_addr_eq_rs1_plus_imm_if_load_store {
             sum_c_az_i64 += c0;
         } else {
-            fmadd_bz(&mut sum_bz_s160, c0, S160::from(bz.ram_addr_minus_rs1_plus_imm));
+            fmadd_bz(
+                &mut sum_bz_s160,
+                c0,
+                S160::from(bz.ram_addr_minus_rs1_plus_imm),
+            );
         }
 
         // 1: Add, Bz = right_lookup - (left + right)
@@ -509,7 +556,11 @@ impl<'a, F: JoltField> R1CSSecondGroup<'a, F> {
         if az5 != 0 {
             sum_c_az_i64 += c5.saturating_mul(az5);
         } else {
-            fmadd_bz(&mut sum_bz_s160, c5, S160::from(bz.rd_write_minus_lookup_output.to_i128()));
+            fmadd_bz(
+                &mut sum_bz_s160,
+                c5,
+                S160::from(bz.rd_write_minus_lookup_output.to_i128()),
+            );
         }
 
         // 6: rd_write_eq_pc_plus_const_if_write_pc_to_rd (u8), Bz = rd_write - (pc + const)
@@ -518,7 +569,11 @@ impl<'a, F: JoltField> R1CSSecondGroup<'a, F> {
         if az6 != 0 {
             sum_c_az_i64 += c6.saturating_mul(az6);
         } else {
-            fmadd_bz(&mut sum_bz_s160, c6, S160::from(bz.rd_write_minus_pc_plus_const));
+            fmadd_bz(
+                &mut sum_bz_s160,
+                c6,
+                S160::from(bz.rd_write_minus_pc_plus_const),
+            );
         }
 
         // 7: ShouldBranch (bool), Bz = next_unexp_pc - (pc + imm)
@@ -526,7 +581,11 @@ impl<'a, F: JoltField> R1CSSecondGroup<'a, F> {
         if az.next_unexp_pc_eq_pc_plus_imm_if_should_branch {
             sum_c_az_i64 += c7;
         } else {
-            fmadd_bz(&mut sum_bz_s160, c7, S160::from(bz.next_unexp_pc_minus_pc_plus_imm));
+            fmadd_bz(
+                &mut sum_bz_s160,
+                c7,
+                S160::from(bz.next_unexp_pc_minus_pc_plus_imm),
+            );
         }
 
         // 8: !(Jump||ShouldBranch) (bool), Bz = next_unexp_pc - expected
@@ -534,7 +593,11 @@ impl<'a, F: JoltField> R1CSSecondGroup<'a, F> {
         if az.next_unexp_pc_update_otherwise {
             sum_c_az_i64 += c8;
         } else {
-            fmadd_bz(&mut sum_bz_s160, c8, S160::from(bz.next_unexp_pc_minus_expected));
+            fmadd_bz(
+                &mut sum_bz_s160,
+                c8,
+                S160::from(bz.next_unexp_pc_minus_expected),
+            );
         }
 
         let sum_bz_s192: S192 = sum_bz_s160.to_signed_bigint_nplus1::<3>();
@@ -547,14 +610,30 @@ impl<'a, F: JoltField> R1CSSecondGroup<'a, F> {
     pub fn debug_assert_zero_when_guarded(&self) {
         let az = self.eval_az();
         let bz = self.eval_bz();
-        debug_assert!((!az.ram_addr_eq_rs1_plus_imm_if_load_store) || bz.ram_addr_minus_rs1_plus_imm == 0i128);
+        debug_assert!(
+            (!az.ram_addr_eq_rs1_plus_imm_if_load_store) || bz.ram_addr_minus_rs1_plus_imm == 0i128
+        );
         debug_assert!((!az.right_lookup_add) || bz.right_lookup_minus_add_result.is_zero());
         debug_assert!((!az.right_lookup_sub) || bz.right_lookup_minus_sub_result.is_zero());
-        debug_assert!((!az.right_lookup_eq_product_if_mul) || bz.right_lookup_minus_product.is_zero());
-        debug_assert!((!az.right_lookup_eq_right_input_otherwise) || bz.right_lookup_minus_right_input.is_zero());
-        debug_assert!((az.rd_write_eq_lookup_if_write_lookup_to_rd == 0) || bz.rd_write_minus_lookup_output.to_i128() == 0);
-        debug_assert!((az.rd_write_eq_pc_plus_const_if_write_pc_to_rd == 0) || bz.rd_write_minus_pc_plus_const == 0);
-        debug_assert!((!az.next_unexp_pc_eq_pc_plus_imm_if_should_branch) || bz.next_unexp_pc_minus_pc_plus_imm == 0);
+        debug_assert!(
+            (!az.right_lookup_eq_product_if_mul) || bz.right_lookup_minus_product.is_zero()
+        );
+        debug_assert!(
+            (!az.right_lookup_eq_right_input_otherwise)
+                || bz.right_lookup_minus_right_input.is_zero()
+        );
+        debug_assert!(
+            (az.rd_write_eq_lookup_if_write_lookup_to_rd == 0)
+                || bz.rd_write_minus_lookup_output.to_i128() == 0
+        );
+        debug_assert!(
+            (az.rd_write_eq_pc_plus_const_if_write_pc_to_rd == 0)
+                || bz.rd_write_minus_pc_plus_const == 0
+        );
+        debug_assert!(
+            (!az.next_unexp_pc_eq_pc_plus_imm_if_should_branch)
+                || bz.next_unexp_pc_minus_pc_plus_imm == 0
+        );
         debug_assert!((!az.next_unexp_pc_update_otherwise) || bz.next_unexp_pc_minus_expected == 0);
     }
 }

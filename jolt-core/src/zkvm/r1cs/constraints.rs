@@ -413,7 +413,6 @@ pub static UNIFORM_R1CS_FIRST_GROUP: [NamedConstraint; UNIVARIATE_SKIP_DOMAIN_SI
 pub static UNIFORM_R1CS_SECOND_GROUP: [NamedConstraint; NUM_REMAINING_R1CS_CONSTRAINTS] =
     filter_uniform_r1cs(&UNIFORM_R1CS_SECOND_GROUP_NAMES);
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

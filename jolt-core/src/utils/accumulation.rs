@@ -1,5 +1,5 @@
-use crate::field::{BarrettReduce, FMAdd, MulTrunc, JoltField, MontgomeryReduce};
-use ark_ff::biginteger::{S64, S128, S160, S192, S256};
+use crate::field::{BarrettReduce, FMAdd, JoltField, MontgomeryReduce, MulTrunc};
+use ark_ff::biginteger::{S128, S160, S192, S256, S64};
 use ark_std::Zero;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -16,8 +16,7 @@ impl<F: JoltField> Default for Acc5U<F> {
     }
 }
 
-impl<F: JoltField> Acc5U<F> {
-}
+impl<F: JoltField> Acc5U<F> {}
 
 impl<F: JoltField> BarrettReduce<F> for Acc5U<F> {
     #[inline(always)]
@@ -75,8 +74,7 @@ impl<F: JoltField> Default for Acc6U<F> {
     }
 }
 
-impl<F: JoltField> Acc6U<F> {
-}
+impl<F: JoltField> Acc6U<F> {}
 
 impl<F: JoltField> FMAdd<F, u64> for Acc6U<F> {
     #[inline(always)]
@@ -131,8 +129,7 @@ impl<F: JoltField> Default for Acc6S<F> {
     }
 }
 
-impl<F: JoltField> Acc6S<F> {
-}
+impl<F: JoltField> Acc6S<F> {}
 
 impl<F: JoltField> FMAdd<F, i128> for Acc6S<F> {
     #[inline(always)]
@@ -243,8 +240,7 @@ impl<F: JoltField> Default for Acc7U<F> {
     }
 }
 
-impl<F: JoltField> Acc7U<F> {
-}
+impl<F: JoltField> Acc7U<F> {}
 
 impl<F: JoltField> FMAdd<F, u128> for Acc7U<F> {
     #[inline(always)]
@@ -279,8 +275,7 @@ impl<F: JoltField> Default for Acc7S<F> {
     }
 }
 
-impl<F: JoltField> Acc7S<F> {
-}
+impl<F: JoltField> Acc7S<F> {}
 
 impl<F: JoltField> FMAdd<F, i128> for Acc7S<F> {
     #[inline(always)]
@@ -324,15 +319,11 @@ impl<F: JoltField> FMAdd<F, S160> for Acc7S<F> {
             <F as JoltField>::Unreduced::from(other.magnitude_as_bigint_nplus1());
         let field_bigint: &<F as JoltField>::Unreduced<4> = field.as_unreduced_ref();
         if other.is_positive() {
-            self.pos += <
-                <F as JoltField>::Unreduced<4>
-                as MulTrunc
-            >::mul_trunc::<3, 7>(field_bigint, &mag);
+            self.pos +=
+                <<F as JoltField>::Unreduced<4> as MulTrunc>::mul_trunc::<3, 7>(field_bigint, &mag);
         } else {
-            self.neg += <
-                <F as JoltField>::Unreduced<4>
-                as MulTrunc
-            >::mul_trunc::<3, 7>(field_bigint, &mag);
+            self.neg +=
+                <<F as JoltField>::Unreduced<4> as MulTrunc>::mul_trunc::<3, 7>(field_bigint, &mag);
         }
     }
 }
@@ -343,18 +334,15 @@ impl<F: JoltField> FMAdd<F, S192> for Acc7S<F> {
         if other.magnitude_limbs() == [0u64; 3] {
             return;
         }
-        let mag: <F as JoltField>::Unreduced<3> = <F as JoltField>::Unreduced::from(other.magnitude);
+        let mag: <F as JoltField>::Unreduced<3> =
+            <F as JoltField>::Unreduced::from(other.magnitude);
         let field_bigint: &<F as JoltField>::Unreduced<4> = field.as_unreduced_ref();
         if other.sign() {
-            self.pos += <
-                <F as JoltField>::Unreduced<4>
-                as MulTrunc
-            >::mul_trunc::<3, 7>(field_bigint, &mag);
+            self.pos +=
+                <<F as JoltField>::Unreduced<4> as MulTrunc>::mul_trunc::<3, 7>(field_bigint, &mag);
         } else {
-            self.neg += <
-                <F as JoltField>::Unreduced<4>
-                as MulTrunc
-            >::mul_trunc::<3, 7>(field_bigint, &mag);
+            self.neg +=
+                <<F as JoltField>::Unreduced<4> as MulTrunc>::mul_trunc::<3, 7>(field_bigint, &mag);
         }
     }
 }
@@ -416,8 +404,7 @@ impl<F: JoltField> Default for Acc8U<F> {
     }
 }
 
-impl<F: JoltField> Acc8U<F> {
-}
+impl<F: JoltField> Acc8U<F> {}
 
 impl<F: JoltField> FMAdd<F, u128> for Acc8U<F> {
     #[inline(always)]
@@ -515,7 +502,9 @@ pub struct S128Sum {
 impl S128Sum {
     #[inline(always)]
     pub fn new() -> Self {
-        Self { sum: S128::from(0i128) }
+        Self {
+            sum: S128::from(0i128),
+        }
     }
 }
 
@@ -557,8 +546,7 @@ impl<F: JoltField> Default for Acc8S<F> {
     }
 }
 
-impl<F: JoltField> Acc8S<F> {
-}
+impl<F: JoltField> Acc8S<F> {}
 
 impl<F: JoltField> FMAdd<F, S128> for Acc8S<F> {
     #[inline(always)]
@@ -582,18 +570,15 @@ impl<F: JoltField> FMAdd<F, S192> for Acc8S<F> {
         if other.magnitude_limbs() == [0u64; 3] {
             return;
         }
-        let mag: <F as JoltField>::Unreduced<3> = <F as JoltField>::Unreduced::from(other.magnitude);
+        let mag: <F as JoltField>::Unreduced<3> =
+            <F as JoltField>::Unreduced::from(other.magnitude);
         let field_bigint: &<F as JoltField>::Unreduced<4> = field.as_unreduced_ref();
         if other.sign() {
-            self.pos += <
-                <F as JoltField>::Unreduced<4>
-                as MulTrunc
-            >::mul_trunc::<3, 8>(field_bigint, &mag);
+            self.pos +=
+                <<F as JoltField>::Unreduced<4> as MulTrunc>::mul_trunc::<3, 8>(field_bigint, &mag);
         } else {
-            self.neg += <
-                <F as JoltField>::Unreduced<4>
-                as MulTrunc
-            >::mul_trunc::<3, 8>(field_bigint, &mag);
+            self.neg +=
+                <<F as JoltField>::Unreduced<4> as MulTrunc>::mul_trunc::<3, 8>(field_bigint, &mag);
         }
     }
 }
@@ -604,18 +589,15 @@ impl<F: JoltField> FMAdd<F, S256> for Acc8S<F> {
         if other.magnitude_limbs() == [0u64; 4] {
             return;
         }
-        let mag: <F as JoltField>::Unreduced<4> = <F as JoltField>::Unreduced::from(other.magnitude);
+        let mag: <F as JoltField>::Unreduced<4> =
+            <F as JoltField>::Unreduced::from(other.magnitude);
         let field_bigint: &<F as JoltField>::Unreduced<4> = field.as_unreduced_ref();
         if other.sign() {
-            self.pos += <
-                <F as JoltField>::Unreduced<4>
-                as MulTrunc
-            >::mul_trunc::<4, 8>(field_bigint, &mag);
+            self.pos +=
+                <<F as JoltField>::Unreduced<4> as MulTrunc>::mul_trunc::<4, 8>(field_bigint, &mag);
         } else {
-            self.neg += <
-                <F as JoltField>::Unreduced<4>
-                as MulTrunc
-            >::mul_trunc::<4, 8>(field_bigint, &mag);
+            self.neg +=
+                <<F as JoltField>::Unreduced<4> as MulTrunc>::mul_trunc::<4, 8>(field_bigint, &mag);
         }
     }
 }

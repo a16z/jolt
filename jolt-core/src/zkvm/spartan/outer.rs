@@ -5,7 +5,7 @@ use rayon::prelude::*;
 use std::sync::Arc;
 use tracer::instruction::Cycle;
 
-use crate::field::{MontgomeryReduce, FMAdd, JoltField};
+use crate::field::{FMAdd, JoltField, MontgomeryReduce};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
@@ -29,8 +29,7 @@ use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::zkvm::dag::state_manager::StateManager;
 use crate::zkvm::r1cs::{
     constraints::{
-        FIRST_ROUND_POLY_NUM_COEFFS,
-        UNIVARIATE_SKIP_DEGREE, UNIVARIATE_SKIP_DOMAIN_SIZE,
+        FIRST_ROUND_POLY_NUM_COEFFS, UNIVARIATE_SKIP_DEGREE, UNIVARIATE_SKIP_DOMAIN_SIZE,
         UNIVARIATE_SKIP_EXTENDED_DOMAIN_SIZE,
     },
     evaluation::{R1CSFirstGroup, R1CSSecondGroup},

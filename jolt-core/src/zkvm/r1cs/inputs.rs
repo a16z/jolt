@@ -496,10 +496,12 @@ pub fn compute_claimed_r1cs_input_evals<F: JoltField>(
                 eq1_val.mul_unreduced::<9>(acc_wp_left.barrett_reduce());
             out_unr[JoltR1CSInputs::ShouldBranch.to_index()] =
                 eq1_val.mul_unreduced::<9>(acc_sb_right.barrett_reduce());
-            out_unr[JoltR1CSInputs::PC.to_index()] = eq1_val.mul_unreduced::<9>(acc_pc.barrett_reduce());
+            out_unr[JoltR1CSInputs::PC.to_index()] =
+                eq1_val.mul_unreduced::<9>(acc_pc.barrett_reduce());
             out_unr[JoltR1CSInputs::UnexpandedPC.to_index()] =
                 eq1_val.mul_unreduced::<9>(acc_unexpanded_pc.barrett_reduce());
-            out_unr[JoltR1CSInputs::Imm.to_index()] = eq1_val.mul_unreduced::<9>(acc_imm.barrett_reduce());
+            out_unr[JoltR1CSInputs::Imm.to_index()] =
+                eq1_val.mul_unreduced::<9>(acc_imm.barrett_reduce());
             out_unr[JoltR1CSInputs::RamAddress.to_index()] =
                 eq1_val.mul_unreduced::<9>(acc_ram_address.barrett_reduce());
             out_unr[JoltR1CSInputs::Rs1Value.to_index()] =
