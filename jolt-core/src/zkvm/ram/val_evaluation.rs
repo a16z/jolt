@@ -42,8 +42,6 @@ pub struct ValEvaluationProverState<F: JoltField> {
 /// Val-evaluation sumcheck for RAM
 #[derive(Allocative)]
 pub struct ValEvaluationSumcheck<F: JoltField> {
-    /// Initial claim value
-    claimed_evaluation: F,
     /// Initial evaluation to subtract (for RAM)
     init_eval: F,
     /// log T
@@ -65,7 +63,7 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
         let T = trace.len();
         let K = state_manager.ram_K;
 
-        let (r, claimed_evaluation) = state_manager.get_virtual_polynomial_opening(
+        let (r, _) = state_manager.get_virtual_polynomial_opening(
             VirtualPolynomial::RamVal,
             SumcheckId::RamReadWriteChecking,
         );
@@ -99,7 +97,6 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
         let lt = LtPolynomial::new(&r_cycle);
 
         ValEvaluationSumcheck {
-            claimed_evaluation,
             init_eval,
             num_rounds: T.log_2(),
             prover_state: Some(ValEvaluationProverState { inc, wa, lt }),
@@ -114,7 +111,7 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
         let (_, program_io, T) = state_manager.get_verifier_data();
         let K = state_manager.ram_K;
 
-        let (r, claimed_evaluation) = state_manager.get_virtual_polynomial_opening(
+        let (r, _) = state_manager.get_virtual_polynomial_opening(
             VirtualPolynomial::RamVal,
             SumcheckId::RamReadWriteChecking,
         );
@@ -156,7 +153,6 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
             untrusted_contribution + trusted_contribution + val_init_public.evaluate(&r_address.r);
 
         ValEvaluationSumcheck {
-            claimed_evaluation,
             init_eval,
             num_rounds: T.log_2(),
             prover_state: None,
@@ -174,8 +170,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ValEvaluationSumche
         self.num_rounds
     }
 
-    fn input_claim(&self, _acc: Option<&RefCell<dyn OpeningAccumulator<F>>>) -> F {
-        self.claimed_evaluation - self.init_eval
+    fn input_claim(&self, acc: Option<&RefCell<dyn OpeningAccumulator<F>>>) -> F {
+        let (_, claimed_evaluation) = acc.unwrap().borrow().get_virtual_polynomial_opening(
+            VirtualPolynomial::RamVal,
+            SumcheckId::RamReadWriteChecking,
+        );
+        claimed_evaluation - self.init_eval
     }
 
     #[tracing::instrument(skip_all, name = "RamValEvaluationSumcheck::compute_prover_message")]

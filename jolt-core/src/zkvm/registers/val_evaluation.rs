@@ -39,7 +39,6 @@ pub struct ValEvaluationProverState<F: JoltField> {
 
 #[derive(Allocative)]
 pub(crate) struct ValEvaluationSumcheck<F: JoltField> {
-    pub input_claim: F,
     pub num_rounds: usize,
     pub prover_state: Option<ValEvaluationProverState<F>>,
 }
@@ -51,8 +50,7 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
     ) -> Self {
         let (preprocessing, trace, _, _) = state_manager.get_prover_data();
 
-        // Get val_claim from the accumulator (from stage 2 RegistersReadWriteChecking)
-        let (opening_point, val_claim) = state_manager.get_virtual_polynomial_opening(
+        let (opening_point, _) = state_manager.get_virtual_polynomial_opening(
             VirtualPolynomial::RegistersVal,
             SumcheckId::RegistersReadWriteChecking,
         );
@@ -76,7 +74,6 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
 
         let num_rounds = r_cycle.len().pow2().log_2();
         Self {
-            input_claim: val_claim,
             num_rounds,
             prover_state: Some(ValEvaluationProverState { inc, wa, lt }),
         }
@@ -87,14 +84,7 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
     ) -> Self {
         let (_, _, trace_length) = state_manager.get_verifier_data();
 
-        // Get val_claim from the accumulator (from stage 2 RegistersReadWriteChecking)
-        let (_, val_claim) = state_manager.get_virtual_polynomial_opening(
-            VirtualPolynomial::RegistersVal,
-            SumcheckId::RegistersReadWriteChecking,
-        );
-
         Self {
-            input_claim: val_claim,
             num_rounds: trace_length.log_2(),
             prover_state: None,
         }
@@ -110,8 +100,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ValEvaluationSumche
         self.num_rounds
     }
 
-    fn input_claim(&self, _acc: Option<&RefCell<dyn OpeningAccumulator<F>>>) -> F {
-        self.input_claim
+    fn input_claim(&self, acc: Option<&RefCell<dyn OpeningAccumulator<F>>>) -> F {
+        let (_, val_claim) = acc.unwrap().borrow().get_virtual_polynomial_opening(
+            VirtualPolynomial::RegistersVal,
+            SumcheckId::RegistersReadWriteChecking,
+        );
+        val_claim
     }
 
     #[tracing::instrument(
