@@ -3,7 +3,7 @@ use ark_std::Zero;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::field::JoltField;
+use crate::field::{AccumulateInPlace, JoltField};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
@@ -19,7 +19,7 @@ use crate::subprotocols::univariate_skip::{
     build_uniskip_first_round_poly, uniskip_targets, UniSkipState,
 };
 use crate::transcripts::Transcript;
-use crate::utils::accumulation::{acc8s_fmadd_s256, Acc8Signed};
+use crate::utils::accumulation::Acc8S;
 use crate::utils::math::Math;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
@@ -181,7 +181,8 @@ impl<F: JoltField> ProductVirtualUniSkipInstance<F> {
         let m = tau_low.len() / 2;
         let (tau_out, tau_in) = tau_low.split_at(m);
         // Compute the split eq polynomial, one scaled by R^2 in order to balance against
-        // Montgomery (not Barrett) reduction later on in signed accumulation of e_in * (left * right)
+        // Montgomery (not Barrett) reduction later on in 8-limb signed accumulation
+        // of e_in * (left * right)
         let (E_out, E_in) = rayon::join(
             || EqPolynomial::evals_with_scaling(tau_out, Some(F::MONTGOMERY_R_SQUARE)),
             || EqPolynomial::evals(tau_in),
@@ -229,8 +230,8 @@ impl<F: JoltField> ProductVirtualUniSkipInstance<F> {
                 for x_out_val in x_out_start..x_out_end {
                     let e_out = E_out[x_out_val];
                     // Accumulate across x_in using 8-limb signed accumulators per j
-                    let mut inner_acc: [Acc8Signed<F>; PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE] =
-                        [Acc8Signed::<F>::new(); PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE];
+                    let mut inner_acc: [Acc8S<F>; PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE] =
+                        [Acc8S::<F>::new(); PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE];
                     for x_in_val in 0..num_x_in_vals {
                         let e_in = if num_x_in_vals == 1 {
                             E_in[0]
@@ -297,13 +298,13 @@ impl<F: JoltField> ProductVirtualUniSkipInstance<F> {
                             let prod_s256 = left_s128.mul_trunc::<2, 4>(&right_s128);
 
                             // Fold e_in into signed 8-limb accumulator for this j
-                            acc8s_fmadd_s256(&mut inner_acc[j], &e_in, prod_s256);
+                            inner_acc[j].fmadd(&e_in, &prod_s256);
                         }
                     }
                     // Reduce inner accumulators (pos-neg Montgomery) and multiply by E_out
                     // NOTE: needs a R^2 correction factor, applied when initializing E_out
                     for j in 0..PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE {
-                        let reduced = inner_acc[j].reduce_to_field();
+                        let reduced = inner_acc[j].reduce();
                         local_acc_unr[j] += e_out.mul_unreduced::<9>(reduced);
                     }
                 }

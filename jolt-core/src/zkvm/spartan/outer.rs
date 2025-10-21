@@ -21,7 +21,7 @@ use crate::subprotocols::univariate_skip::{
     build_uniskip_first_round_poly, uniskip_targets, UniSkipState,
 };
 use crate::transcripts::Transcript;
-use crate::utils::accumulation::Acc7S;
+use crate::utils::accumulation::Acc8S;
 use crate::utils::math::Math;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
@@ -153,8 +153,11 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
 
         let m = tau_low.len() / 2;
         let (tau_out, tau_in) = tau_low.split_at(m);
+        // Compute the split eq polynomial, one scaled by R^2 in order to balance against
+        // Montgomery (not Barrett) reduction later on in 8-limb signed accumulation
+        // of e_in * (az * bz)
         let (E_out, E_in) = rayon::join(
-            || EqPolynomial::evals(tau_out),
+            || EqPolynomial::evals_with_scaling(tau_out, Some(F::MONTGOMERY_R_SQUARE)),
             || EqPolynomial::evals(tau_in),
         );
 
@@ -188,8 +191,8 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
                     [F::zero(); UNIVARIATE_SKIP_DEGREE];
 
                 for x_out_val in x_out_start..x_out_end {
-                    let mut inner_acc: [Acc7S<F>; UNIVARIATE_SKIP_DEGREE] =
-                        [Acc7S::<F>::new(); UNIVARIATE_SKIP_DEGREE];
+                    let mut inner_acc: [Acc8S<F>; UNIVARIATE_SKIP_DEGREE] =
+                        [Acc8S::<F>::new(); UNIVARIATE_SKIP_DEGREE];
                     for x_in_prime in 0..num_x_in_half {
                         // Materialize row once for both groups (ignores last bit)
                         let base_step_idx = (x_out_val << iter_num_x_in_prime_vars) | x_in_prime;
@@ -270,7 +273,7 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
                             let coeffs = &coeffs_per_j[j];
                             // (sum_i c_i * Az1_i) * (sum_i c_i * Bz1_i)
                             let mut sum_c_az1_i64: i64 = 0;
-                            let mut sum_bz1_s160 = S160::from(0i128);
+                            let mut sum_bz1_s192 = S192::from(0i128);
                             for i in 0..UNIVARIATE_SKIP_DOMAIN_SIZE {
                                 let c = coeffs[i] as i64;
 
@@ -280,18 +283,17 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
                                     // Optimization: if az is non-zero then bz must be zero
                                     // so we can skip the bz multiplication
                                 } else {
-                                    let c_s160 = S160::from(c);
-                                    let term: S160 = (&c_s160) * (&bz1_s160_padded[i]);
-                                    sum_bz1_s160 += term;
+                                    let term: S192 = S192::from(c)
+                                        * bz1_s160_padded[i].to_signed_bigint_nplus1::<3>();
+                                    sum_bz1_s192 += term;
                                 }
                             }
                             // Convert S160 -> S192 once outside summation, then S64 * S192 -> S192
-                            let sum_bz1_s192: S192 = sum_bz1_s160.to_signed_bigint_nplus1::<3>();
                             let sum_az1_s64 = S64::from_i64(sum_c_az1_i64);
-                            let prod_s192 = sum_az1_s64.mul_trunc::<3, 3>(&sum_bz1_s192);
+                            let prod_s256 = sum_az1_s64.mul_trunc::<3, 4>(&sum_bz1_s192);
 
                             // Fold E_in (odd) into 7-limb signed accumulator for this j
-                            inner_acc[j].fmadd(&e_in_odd, &prod_s192);
+                            inner_acc[j].fmadd(&e_in_odd, &prod_s256);
                         }
                     }
                     let e_out = E_out[x_out_val];
