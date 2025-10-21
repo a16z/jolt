@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
@@ -50,7 +51,7 @@ where
     PCS: CommitmentScheme<Field = F>,
 {
     pub preprocessing: &'a JoltProverPreprocessing<F, PCS>,
-    pub trace: Vec<Cycle>,
+    pub trace: Arc<Vec<Cycle>>,
     pub final_memory_state: Memory,
     pub accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
     pub untrusted_advice_polynomial: Option<MultilinearPolynomial<F>>,
@@ -141,7 +142,7 @@ where
             twist_sumcheck_switch_index,
             prover_state: Some(ProverState {
                 preprocessing,
-                trace,
+                trace: Arc::new(trace),
                 final_memory_state,
                 accumulator: opening_accumulator,
                 untrusted_advice_polynomial: None,
@@ -200,6 +201,14 @@ where
                 &self.program_io,
                 &prover_state.final_memory_state,
             )
+        } else {
+            panic!("Prover state not initialized");
+        }
+    }
+
+    pub fn get_trace_arc(&self) -> Arc<Vec<Cycle>> {
+        if let Some(ref prover_state) = self.prover_state {
+            prover_state.trace.clone()
         } else {
             panic!("Prover state not initialized");
         }
