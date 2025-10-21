@@ -104,7 +104,6 @@ use virtual_assert_word_alignment::VirtualAssertWordAlignment;
 use virtual_change_divisor::VirtualChangeDivisor;
 use virtual_change_divisor_w::VirtualChangeDivisorW;
 use virtual_lw::VirtualLW;
-use virtual_move::VirtualMove;
 use virtual_movsign::VirtualMovsign;
 use virtual_muli::VirtualMULI;
 use virtual_pow2::VirtualPow2;
@@ -236,7 +235,6 @@ pub mod virtual_assert_word_alignment;
 pub mod virtual_change_divisor;
 pub mod virtual_change_divisor_w;
 pub mod virtual_lw;
-pub mod virtual_move;
 pub mod virtual_movsign;
 pub mod virtual_muli;
 pub mod virtual_pow2;
@@ -605,7 +603,7 @@ define_rv32im_enums! {
         VirtualAssertValidDiv0, VirtualAssertValidUnsignedRemainder, VirtualAssertMulUNoOverflow,
         VirtualChangeDivisor, VirtualChangeDivisorW, VirtualLW,VirtualSW, VirtualZeroExtendWord,
         VirtualSignExtendWord,VirtualPow2W, VirtualPow2IW,
-        VirtualMove, VirtualMovsign, VirtualMULI, VirtualPow2, VirtualPow2I, VirtualRev8W, VirtualROTRI,
+        VirtualMovsign, VirtualMULI, VirtualPow2, VirtualPow2I, VirtualRev8W, VirtualROTRI,
         VirtualROTRIW,
         VirtualShiftRightBitmask, VirtualShiftRightBitmaskI,
         VirtualSRA, VirtualSRAI, VirtualSRL, VirtualSRLI,

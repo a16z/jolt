@@ -459,83 +459,6 @@ pub struct Acc8S<F: JoltField> {
     pub neg: <F as JoltField>::Unreduced<8>,
 }
 
-// ------------------------------
-// Small-integer fused multiply-add helpers (no field type F)
-// ------------------------------
-
-#[inline(always)]
-pub fn fmadd_i32_s64(sum: &mut S128, c: i32, v: S64) {
-    if c == 0 {
-        return;
-    }
-    let limbs = v.magnitude_as_u64();
-    if limbs == 0 {
-        return;
-    }
-    let mag = (limbs as u128) * (c.unsigned_abs() as u128);
-    let mut signed = mag as i128;
-    if v.is_positive != (c >= 0) {
-        signed = -signed;
-    }
-    *sum += S128::from_i128(signed);
-}
-
-#[inline(always)]
-pub fn fmadd_i32_u64(sum: &mut S128, c: i32, v: u64) {
-    if c == 0 || v == 0 {
-        return;
-    }
-    let mag = (v as u128) * (c.unsigned_abs() as u128);
-    let signed = if c >= 0 { mag as i128 } else { -(mag as i128) };
-    *sum += S128::from_i128(signed);
-}
-
-// ------------------------------
-// Pure-trait accumulator for S128 sums driven by cz (S128) and small others
-// ------------------------------
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub struct S128Sum {
-    pub sum: S128,
-}
-
-impl S128Sum {
-    #[inline(always)]
-    pub fn new() -> Self {
-        Self {
-            sum: S128::from(0i128),
-        }
-    }
-}
-
-impl FMAdd<S128, S64> for S128Sum {
-    #[inline(always)]
-    fn fmadd(&mut self, field: &S128, other: &S64) {
-        if other.is_zero() {
-            return;
-        }
-        // Compute signed product: (cz as i128) * (sign(other) * |other|)
-        let cz_i128 = field.magnitude_as_u128() as i128 * if field.is_positive { 1 } else { -1 };
-        let v_mag = other.magnitude_as_u64() as i128;
-        let v_signed = if other.is_positive { v_mag } else { -v_mag };
-        let prod = cz_i128 * v_signed;
-        self.sum += S128::from_i128(prod);
-    }
-}
-
-impl FMAdd<S128, u64> for S128Sum {
-    #[inline(always)]
-    fn fmadd(&mut self, field: &S128, other: &u64) {
-        if *other == 0 {
-            return;
-        }
-        let cz_i128 = field.magnitude_as_u128() as i128 * if field.is_positive { 1 } else { -1 };
-        let v_i128 = *other as i128; // non-negative
-        let prod = cz_i128 * v_i128;
-        self.sum += S128::from_i128(prod);
-    }
-}
-
 impl<F: JoltField> Default for Acc8S<F> {
     #[inline(always)]
     fn default() -> Self {
@@ -617,5 +540,82 @@ impl<F: JoltField> MontgomeryReduce<F> for Acc8S<F> {
             debug_assert_eq!(result, pos - neg);
         }
         result
+    }
+}
+
+// ------------------------------
+// Small-integer fused multiply-add helpers (no field type F)
+// ------------------------------
+
+#[inline(always)]
+pub fn fmadd_i32_s64(sum: &mut S128, c: i32, v: S64) {
+    if c == 0 {
+        return;
+    }
+    let limbs = v.magnitude_as_u64();
+    if limbs == 0 {
+        return;
+    }
+    let mag = (limbs as u128) * (c.unsigned_abs() as u128);
+    let mut signed = mag as i128;
+    if v.is_positive != (c >= 0) {
+        signed = -signed;
+    }
+    *sum += S128::from_i128(signed);
+}
+
+#[inline(always)]
+pub fn fmadd_i32_u64(sum: &mut S128, c: i32, v: u64) {
+    if c == 0 || v == 0 {
+        return;
+    }
+    let mag = (v as u128) * (c.unsigned_abs() as u128);
+    let signed = if c >= 0 { mag as i128 } else { -(mag as i128) };
+    *sum += S128::from_i128(signed);
+}
+
+// ------------------------------
+// Pure-trait accumulator for S128 sums driven by cz (S128) and small others
+// ------------------------------
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct S128Sum {
+    pub sum: S128,
+}
+
+impl S128Sum {
+    #[inline(always)]
+    pub fn new() -> Self {
+        Self {
+            sum: S128::from(0i128),
+        }
+    }
+}
+
+impl FMAdd<S128, S64> for S128Sum {
+    #[inline(always)]
+    fn fmadd(&mut self, field: &S128, other: &S64) {
+        if other.is_zero() {
+            return;
+        }
+        // Compute signed product: (cz as i128) * (sign(other) * |other|)
+        let cz_i128 = field.magnitude_as_u128() as i128 * if field.is_positive { 1 } else { -1 };
+        let v_mag = other.magnitude_as_u64() as i128;
+        let v_signed = if other.is_positive { v_mag } else { -v_mag };
+        let prod = cz_i128 * v_signed;
+        self.sum += S128::from_i128(prod);
+    }
+}
+
+impl FMAdd<S128, u64> for S128Sum {
+    #[inline(always)]
+    fn fmadd(&mut self, field: &S128, other: &u64) {
+        if *other == 0 {
+            return;
+        }
+        let cz_i128 = field.magnitude_as_u128() as i128 * if field.is_positive { 1 } else { -1 };
+        let v_i128 = *other as i128; // non-negative
+        let prod = cz_i128 * v_i128;
+        self.sum += S128::from_i128(prod);
     }
 }
