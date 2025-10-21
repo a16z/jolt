@@ -127,7 +127,7 @@ impl RISCVTrace for AMOSWAPW {
                 asm.emit_r::<SLL>(*v_mask, *v_mask, *v_shift);
                 // Reuse v_shift as temporary for shifted rs2
                 asm.emit_r::<SLL>(*v_shift, self.operands.rs2, *v_shift);
-                asm.emit_r::<AND>(*v_shift, *v_dword, *v_shift);
+                asm.emit_r::<XOR>(*v_shift, *v_dword, *v_shift);
                 asm.emit_r::<AND>(*v_shift, *v_shift, *v_mask);
                 asm.emit_r::<XOR>(*v_dword, *v_dword, *v_shift);
                 // Recompute aligned address for store
