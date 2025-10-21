@@ -166,7 +166,6 @@ impl Keccak256 {
         }
         self.buffer_len = 0;
     }
-
 }
 
 impl Default for Keccak256 {
