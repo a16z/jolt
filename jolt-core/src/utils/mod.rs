@@ -1,16 +1,18 @@
-use crate::field::JoltField;
+use crate::field::{ChallengeFieldOps, JoltField};
 
 use rayon::prelude::*;
 
+pub mod accumulation;
 pub mod counters;
 pub mod errors;
 pub mod expanding_table;
 pub mod gaussian_elimination;
 pub mod lookup_bits;
 pub mod math;
+#[cfg(feature = "monitor")]
+pub mod monitor;
 pub mod profiling;
 pub mod small_scalar;
-pub mod small_value;
 pub mod thread;
 /// Macros that determine the optimal iterator type based on the feature flags.
 ///
@@ -89,7 +91,10 @@ macro_rules! join_conditional {
 /// assert_eq!(index_to_field_bitvector::<Fr>(1, 3), vec![zero, zero, one]);
 /// assert_eq!(index_to_field_bitvector::<Fr>(1, 7), vec![zero, zero, zero, zero, zero, zero, one]);
 /// ```
-pub fn index_to_field_bitvector<F: JoltField>(value: u128, bits: usize) -> Vec<F> {
+pub fn index_to_field_bitvector<F: JoltField + ChallengeFieldOps<F>>(
+    value: u128,
+    bits: usize,
+) -> Vec<F> {
     if bits != 128 {
         assert!(value < 1u128 << bits);
     }

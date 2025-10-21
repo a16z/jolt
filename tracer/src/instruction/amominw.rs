@@ -4,7 +4,6 @@ use super::add::ADD;
 use super::amo::{amo_post32, amo_post64, amo_pre32, amo_pre64};
 use super::mul::MUL;
 use super::slt::SLT;
-use super::virtual_move::VirtualMove;
 use super::virtual_sign_extend_word::VirtualSignExtendWord;
 use super::xori::XORI;
 use super::Instruction;
@@ -15,13 +14,13 @@ use crate::{
     emulator::cpu::{Cpu, Xlen},
 };
 
-use super::{format::format_r::FormatR, Cycle, RISCVInstruction, RISCVTrace};
+use super::{format::format_amo::FormatAMO, Cycle, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name   = AMOMINW,
     mask   = 0xf800707f,
     match  = 0x8000202f,
-    format = FormatR,
+    format = FormatAMO,
     ram    = ()
 );
 
@@ -80,56 +79,54 @@ impl RISCVTrace for AMOMINW {
         allocator: &VirtualRegisterAllocator,
         xlen: Xlen,
     ) -> Vec<Instruction> {
-        let v_rd = allocator.allocate();
-        let v_rs2 = allocator.allocate();
-        let v_sel_rs2 = allocator.allocate();
-        let v_sel_rd = allocator.allocate();
-        let v_tmp = allocator.allocate();
-
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
 
         match xlen {
             Xlen::Bit32 => {
+                let v_rd = allocator.allocate();
+                let v_rs2 = allocator.allocate();
+                let v_sel_rs2 = allocator.allocate();
+                let v_sel_rd = allocator.allocate();
                 amo_pre32(&mut asm, self.operands.rs1, *v_rd);
-                asm.emit_i::<VirtualMove>(*v_rs2, self.operands.rs2, 0);
-                asm.emit_i::<VirtualMove>(*v_tmp, *v_rd, 0);
-                asm.emit_r::<SLT>(*v_sel_rs2, *v_rs2, *v_tmp);
+                asm.emit_r::<SLT>(*v_sel_rs2, self.operands.rs2, *v_rd);
                 asm.emit_i::<XORI>(*v_sel_rd, *v_sel_rs2, 1);
                 asm.emit_r::<MUL>(*v_rs2, *v_sel_rs2, self.operands.rs2);
-                asm.emit_r::<MUL>(*v_tmp, *v_sel_rd, *v_rd);
-                asm.emit_r::<ADD>(*v_rs2, *v_tmp, *v_rs2);
+                asm.emit_r::<MUL>(*v_sel_rd, *v_sel_rd, *v_rd);
+                asm.emit_r::<ADD>(*v_rs2, *v_sel_rd, *v_rs2);
                 amo_post32(&mut asm, *v_rs2, self.operands.rs1, self.operands.rd, *v_rd);
             }
             Xlen::Bit64 => {
-                let v_mask = allocator.allocate();
-                let v_dword_address = allocator.allocate();
+                let v_rd = allocator.allocate();
                 let v_dword = allocator.allocate();
-                let v_word = allocator.allocate();
                 let v_shift = allocator.allocate();
 
-                amo_pre64(
-                    &mut asm,
-                    self.operands.rs1,
-                    *v_rd,
-                    *v_dword_address,
-                    *v_dword,
-                    *v_shift,
-                );
+                amo_pre64(&mut asm, self.operands.rs1, *v_rd, *v_dword, *v_shift);
+
+                let v_rs2 = allocator.allocate();
+                let v_sel_rs2 = allocator.allocate();
+                let v_sel_rd = allocator.allocate();
+                let v_mask = allocator.allocate();
+                // Sign-extend rs2 into v_rs2
                 asm.emit_i::<VirtualSignExtendWord>(*v_rs2, self.operands.rs2, 0);
-                asm.emit_i::<VirtualSignExtendWord>(*v_tmp, *v_rd, 0);
-                asm.emit_r::<SLT>(*v_sel_rs2, *v_rs2, *v_tmp);
+                // Sign-extend v_rd in place into v_sel_rd (temporarily)
+                asm.emit_i::<VirtualSignExtendWord>(*v_sel_rd, *v_rd, 0);
+                // Compare: v_rs2 < v_sel_rd (sign-extended v_rd)
+                asm.emit_r::<SLT>(*v_sel_rs2, *v_rs2, *v_sel_rd);
+                // Invert selector to get selector for v_rd
                 asm.emit_i::<XORI>(*v_sel_rd, *v_sel_rs2, 1);
+                // Select minimum using multiplication
                 asm.emit_r::<MUL>(*v_rs2, *v_sel_rs2, self.operands.rs2);
-                asm.emit_r::<MUL>(*v_tmp, *v_sel_rd, *v_rd);
-                asm.emit_r::<ADD>(*v_rs2, *v_tmp, *v_rs2);
+                asm.emit_r::<MUL>(*v_sel_rd, *v_sel_rd, *v_rd);
+                asm.emit_r::<ADD>(*v_rs2, *v_sel_rd, *v_rs2);
+                drop(v_sel_rd);
+                drop(v_sel_rs2);
                 amo_post64(
                     &mut asm,
+                    self.operands.rs1,
                     *v_rs2,
-                    *v_dword_address,
                     *v_dword,
                     *v_shift,
                     *v_mask,
-                    *v_word,
                     self.operands.rd,
                     *v_rd,
                 );

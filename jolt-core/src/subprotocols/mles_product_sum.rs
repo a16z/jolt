@@ -1,68 +1,78 @@
+use num_traits::Zero;
 use std::iter::zip;
 
-use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
+use rayon::prelude::*;
 
 use crate::{
-    field::JoltField,
-    poly::{
-        eq_poly::EqPolynomial, multilinear_polynomial::MultilinearPolynomial, unipoly::UniPoly,
-    },
+    field::{JoltField, MulU64WithCarry},
+    poly::{eq_poly::EqPolynomial, ra_poly::RaPolynomial, unipoly::UniPoly},
 };
 
-/// Computes the univariate polynomial `g(X) = sum_j correction_factor * eq((X, j), r) * prod_i mle_i(X, j)`.
+/// Computes the univariate polynomial `g(X) = sum_j eq((r', X, j), r) * prod_i mle_i(X, j)`.
 ///
-/// Inputs:
-/// - `claim` should equal `g(0) + g(1)`.
-/// - `eq_evals[j]` should store `eq(j, r[1..])`.
-/// - `r0` should equal `r[0]`.
+/// Note `claim` should equal `g(0) + g(1)`.
 pub fn compute_mles_product_sum<F: JoltField>(
-    mles: &[MultilinearPolynomial<F>],
+    mles: &[RaPolynomial<u8, F>],
     claim: F,
-    r0: F,
-    eq_evals: &[F],
-    correction_factor: F,
-    log_sum_n_terms: u32,
+    r: &[F::Challenge],
+    r_prime: &[F::Challenge],
 ) -> UniPoly<F> {
-    let sum_n_terms = 1 << log_sum_n_terms;
+    // Split Eq poly optimization.
+    // See https://eprint.iacr.org/2025/1117.pdf section 5.2.
+    // TODO: Consider refactoring GruenSplitEqPolynomial and integrating here.
+    let w = &r[r_prime.len() + 1..];
+    let (wr, wl) = w.split_at(w.len() / 2);
+    let eq_constant_factor = EqPolynomial::mle(r_prime, &r[..r_prime.len()]);
+    let eq_wl_evals = EqPolynomial::evals_parallel(wl, Some(eq_constant_factor));
+    let eq_wr_evals = EqPolynomial::evals_parallel(wr, None);
 
-    let chunk_size = 512;
+    // Evaluate g(X) / eq(X, r[round]) at [1, 2, ..., |mles| - 1, inf].
+    let sum_evals: Vec<F> = eq_wr_evals
+        .par_iter()
+        .enumerate()
+        .map(|(j_wr, eq_wr_eval)| {
+            let mut partial_evals = vec![F::zero(); mles.len()];
+            let mut mle_eval_pairs = vec![(F::zero(), F::zero()); mles.len()];
 
-    // Evaluate sum_j eq(j, r[1..]) * prod_i mle_i(X, j) at [1, 2, ..., |mles| - 1, inf].
-    let mut sum_evals = (0..sum_n_terms)
-        .into_par_iter()
-        .chunks(chunk_size)
-        .map(|j_chunk| {
-            let mut sums = vec![F::zero(); mles.len()];
-            let mut mle_eval_pair_vec = vec![(F::zero(), F::zero()); mles.len()];
+            for (j_wl, &eq_wl_eval) in eq_wl_evals.iter().enumerate() {
+                let j = j_wl + (j_wr << wl.len());
 
-            for j in j_chunk {
                 for (i, mle) in mles.iter().enumerate() {
+                    // TODO: Improve memory access.
                     let mle_eval_at_0_j = mle.get_bound_coeff(j);
-                    let mle_eval_at_1_j = mle.get_bound_coeff(j + sum_n_terms);
-                    mle_eval_pair_vec[i] = (mle_eval_at_0_j, mle_eval_at_1_j);
+                    let mle_eval_at_1_j = mle.get_bound_coeff(j + (1 << w.len()));
+                    mle_eval_pairs[i] = (mle_eval_at_0_j, mle_eval_at_1_j);
                 }
 
-                let eq_eval_at_j_r = eq_evals[j];
-                mle_eval_pair_vec[0].0 *= eq_eval_at_j_r;
-                mle_eval_pair_vec[0].1 *= eq_eval_at_j_r;
-
-                product_eval_univariate(&mle_eval_pair_vec, &mut sums);
+                mle_eval_pairs[0].0 *= eq_wl_eval;
+                mle_eval_pairs[0].1 *= eq_wl_eval;
+                product_eval_univariate_accumulate(&mle_eval_pairs, &mut partial_evals);
             }
 
-            sums
+            partial_evals
+                .iter()
+                .map(|v| {
+                    let result = *v * *eq_wr_eval;
+                    let unreduced = *result.as_unreduced_ref();
+                    unreduced
+                })
+                .collect()
         })
+        .fold_with(
+            vec![F::Unreduced::<5>::zero(); mles.len()],
+            |running, new: Vec<F::Unreduced<4>>| zip(running, new).map(|(a, b)| a + b).collect(),
+        )
         .reduce(
-            || vec![F::zero(); mles.len()],
-            |sums_a, sums_b| zip(sums_a, sums_b).map(|(a, b)| a + b).collect(),
-        );
+            || vec![F::Unreduced::zero(); mles.len()],
+            |running, new| zip(running, new).map(|(a, b)| a + b).collect(),
+        )
+        .into_iter()
+        .map(F::from_barrett_reduce)
+        .collect();
 
-    // Apply correction factor.
-    sum_evals
-        .iter_mut()
-        .for_each(|eval| *eval *= correction_factor);
-
-    let eq_eval_at_0 = EqPolynomial::mle(&[F::zero()], &[r0]);
-    let eq_eval_at_1 = EqPolynomial::mle(&[F::one()], &[r0]);
+    let round = r_prime.len();
+    let eq_eval_at_0 = EqPolynomial::mle(&[F::zero()], &[r[round]]);
+    let eq_eval_at_1 = EqPolynomial::mle(&[F::one()], &[r[round]]);
 
     // Obtain the eval at 0 from the claim.
     let eval_at_1 = sum_evals[0];
@@ -72,10 +82,10 @@ pub fn compute_mles_product_sum<F: JoltField>(
     let toom_evals = [&[eval_at_0], &*sum_evals].concat();
     let tmp_coeffs = UniPoly::from_evals_toom(&toom_evals).coeffs;
 
-    // Add in the missing eq(X, r[0]) factor.
-    // Note eq(X, r[0]) = (1 - r[0]) + (2r[0] - 1)X.
-    let constant_coeff = F::one() - r0;
-    let x_coeff = r0 + r0 - F::one();
+    // Add in the missing eq(X, r[round]) factor.
+    // Note eq(X, r[round]) = (1 - r[round]) + (2r[round] - 1)X.
+    let constant_coeff = F::one() - r[round];
+    let x_coeff = r[round] + r[round] - F::one();
     let mut coeffs = vec![F::zero(); tmp_coeffs.len() + 1];
     for (i, coeff) in tmp_coeffs.into_iter().enumerate() {
         coeffs[i] += coeff * constant_coeff;
@@ -92,12 +102,30 @@ pub fn compute_mles_product_sum<F: JoltField>(
 /// Inputs:
 /// - `pairs[j] = (p_j(0), p_j(1))`
 /// - `sums`: accumulator with layout `[1, 2, ..., D - 1, ∞]`
-fn product_eval_univariate<F: JoltField>(pairs: &[(F, F)], sums: &mut [F]) {
+fn product_eval_univariate_accumulate<F: JoltField>(pairs: &[(F, F)], sums: &mut [F]) {
     match pairs.len() {
-        2 => eval_inter2_final_accumulate(pairs.try_into().unwrap(), sums),
-        4 => eval_inter4_final_accumulate(pairs.try_into().unwrap(), sums),
-        8 => eval_inter8_final_accumulate(pairs.try_into().unwrap(), sums),
-        16 => eval_inter16_final_accumulate(pairs.try_into().unwrap(), sums),
+        2 => eval_inter2_final_op(pairs.try_into().unwrap(), sums, F::add_assign),
+        4 => eval_inter4_final_op(pairs.try_into().unwrap(), sums, F::add_assign),
+        8 => eval_inter8_final_op(pairs.try_into().unwrap(), sums, F::add_assign),
+        16 => eval_inter16_final_op(pairs.try_into().unwrap(), sums, F::add_assign),
+        _ => unimplemented!(),
+    }
+}
+
+/// Computes the product of `D` linear polynomials on `U_D = [1, 2, ..., D - 1, ∞]`.
+///
+/// The evaluations on `U_D` are assigned to `evals`.
+///
+/// Inputs:
+/// - `pairs[j] = (p_j(0), p_j(1))`
+/// - `evals`: output slice with layout `[1, 2, ..., D - 1, ∞]`
+pub fn product_eval_univariate_assign<F: JoltField>(pairs: &[(F, F)], evals: &mut [F]) {
+    match pairs.len() {
+        2 => eval_inter2_final_op(pairs.try_into().unwrap(), evals, assign),
+        3 => eval_inter3_final_op(pairs.try_into().unwrap(), evals, assign),
+        4 => eval_inter4_final_op(pairs.try_into().unwrap(), evals, assign),
+        8 => eval_inter8_final_op(pairs.try_into().unwrap(), evals, assign),
+        16 => eval_inter16_final_op(pairs.try_into().unwrap(), evals, assign),
         _ => unimplemented!(),
     }
 }
@@ -113,9 +141,23 @@ fn eval_inter2<F: JoltField>((p0, p1): (F, F), (q0, q1): (F, F)) -> (F, F, F) {
     (r1, r2, r_inf)
 }
 
-pub fn eval_inter2_final_accumulate<F: JoltField>(pairs: &[(F, F); 2], sums: &mut [F]) {
-    sums[0] += pairs[0].1 * pairs[1].1; // 1
-    sums[1] += (pairs[0].1 - pairs[0].0) * (pairs[1].1 - pairs[1].0); // ∞
+fn eval_inter2_final_op<F: JoltField>(p: &[(F, F); 2], outputs: &mut [F], op: impl Fn(&mut F, F)) {
+    op(&mut outputs[0], p[0].1 * p[1].1); // 1
+    op(&mut outputs[1], (p[0].1 - p[0].0) * (p[1].1 - p[1].0)); // ∞
+}
+
+fn eval_inter3_final_op<F: JoltField>(
+    pairs: &[(F, F); 3],
+    outputs: &mut [F],
+    op: impl Fn(&mut F, F),
+) {
+    let (a1, a2, a_inf) = eval_inter2(pairs[0], pairs[1]);
+    let (b0, b1) = pairs[2];
+    let b_inf = b1 - b0;
+    let b2 = b1 + b_inf;
+    op(&mut outputs[0], a1 * b1);
+    op(&mut outputs[1], a2 * b2);
+    op(&mut outputs[2], a_inf * b_inf);
 }
 
 fn eval_inter4<F: JoltField>(p: [(F, F); 4]) -> (F, F, F, F, F) {
@@ -128,15 +170,15 @@ fn eval_inter4<F: JoltField>(p: [(F, F); 4]) -> (F, F, F, F, F) {
     (a1 * b1, a2 * b2, a3 * b3, a4 * b4, a_inf * b_inf)
 }
 
-fn eval_inter4_final_accumulate<F: JoltField>(p: &[(F, F); 4], sums: &mut [F]) {
+fn eval_inter4_final_op<F: JoltField>(p: &[(F, F); 4], outputs: &mut [F], op: impl Fn(&mut F, F)) {
     let (a1, a2, a_inf) = eval_inter2(p[0], p[1]);
     let a3 = ex2(&[a1, a2], &a_inf);
     let (b1, b2, b_inf) = eval_inter2(p[2], p[3]);
     let b3 = ex2(&[b1, b2], &b_inf);
-    sums[0] += a1 * b1; // 1
-    sums[1] += a2 * b2; // 2
-    sums[2] += a3 * b3; // 3
-    sums[3] += a_inf * b_inf; // ∞
+    op(&mut outputs[0], a1 * b1); // 1
+    op(&mut outputs[1], a2 * b2); // 2
+    op(&mut outputs[2], a3 * b3); // 3
+    op(&mut outputs[3], a_inf * b_inf); // ∞
 }
 
 fn eval_inter8<F: JoltField>(p: [(F, F); 8]) -> [F; 9] {
@@ -164,7 +206,7 @@ fn eval_inter8<F: JoltField>(p: [(F, F); 8]) -> [F; 9] {
     ]
 }
 
-fn eval_inter8_final_accumulate<F: JoltField>(p: &[(F, F); 8], sums: &mut [F]) {
+fn eval_inter8_final_op<F: JoltField>(p: &[(F, F); 8], outputs: &mut [F], op: impl Fn(&mut F, F)) {
     #[inline]
     fn batch_helper<F: JoltField>(f0: F, f1: F, f2: F, f3: F, f_inf: F) -> (F, F, F) {
         let f_inf6 = f_inf.mul_u64(6);
@@ -177,18 +219,21 @@ fn eval_inter8_final_accumulate<F: JoltField>(p: &[(F, F); 8], sums: &mut [F]) {
     let (b1, b2, b3, b4, b_inf) = eval_inter4(unsafe { *(p[4..8].as_ptr() as *const [(F, F); 4]) });
     let (b5, b6, b7) = batch_helper(b1, b2, b3, b4, b_inf);
 
-    sums[0] += a1 * b1;
-    sums[1] += a2 * b2;
-    sums[2] += a3 * b3;
-    sums[3] += a4 * b4;
-    sums[4] += a5 * b5;
-    sums[5] += a6 * b6;
-    sums[6] += a7 * b7;
-    sums[7] += a_inf * b_inf;
+    op(&mut outputs[0], a1 * b1);
+    op(&mut outputs[1], a2 * b2);
+    op(&mut outputs[2], a3 * b3);
+    op(&mut outputs[3], a4 * b4);
+    op(&mut outputs[4], a5 * b5);
+    op(&mut outputs[5], a6 * b6);
+    op(&mut outputs[6], a7 * b7);
+    op(&mut outputs[7], a_inf * b_inf);
 }
 
-#[inline(always)]
-fn eval_inter16_final_accumulate<F: JoltField>(p: &[(F, F); 16], sums: &mut [F]) {
+fn eval_inter16_final_op<F: JoltField>(
+    p: &[(F, F); 16],
+    outputs: &mut [F],
+    op: impl Fn(&mut F, F),
+) {
     #[inline]
     fn batch_helper<F: JoltField>(vals: &[F; 9]) -> [F; 16] {
         let mut f = [F::zero(); 16]; // f[1, ..., 15, inf]
@@ -207,7 +252,7 @@ fn eval_inter16_final_accumulate<F: JoltField>(p: &[(F, F); 16], sums: &mut [F])
     // Include all entries [1..15, inf]
     for i in 0..16 {
         av[i] *= bv[i];
-        sums[i] += av[i];
+        op(&mut outputs[i], av[i]);
     }
 }
 
@@ -251,17 +296,22 @@ fn ex4_2<F: JoltField>(f: &[F; 4], f_inf6: &F) -> (F, F) {
 
 #[inline(always)]
 fn ex8<F: JoltField>(f: &[F; 8], f_inf40320: F) -> F {
-    let a1 = f[1] + f[7];
-    let a2 = f[3] + f[5];
-    let n1 = f[2] + f[6];
-    let n2 = f[4];
-    let n3 = f[0];
-    F::linear_combination_i64(
-        &[(a1, 8), (a2, 56)],
-        &[(n1, 28), (n2, 70)],
-        &[f_inf40320], // positive add terms
-        &[n3],         // negative add terms
-    )
+    // P(9) from f[i]=P(i+1): 8(f[1]+f[7]) + 56(f[3]+f[5]) - 28(f[2]+f[6]) - 70 f[4] - f[0] + f_inf40320
+    let a1: F::Unreduced<4> = *f[1].as_unreduced_ref() + f[7].as_unreduced_ref();
+    let mut pos_acc: F::Unreduced<5> = a1.mul_u64_w_carry::<5>(8);
+    let a2: F::Unreduced<4> = *f[3].as_unreduced_ref() + f[5].as_unreduced_ref();
+    pos_acc += a2.mul_u64_w_carry::<5>(56);
+    pos_acc += f_inf40320.mul_u64_unreduced(1);
+
+    let n1: F::Unreduced<4> = *f[2].as_unreduced_ref() + f[6].as_unreduced_ref();
+    let mut neg_acc: F::Unreduced<5> = n1.mul_u64_w_carry::<5>(28);
+    neg_acc += f[4].as_unreduced_ref().mul_u64_w_carry::<5>(70);
+    neg_acc += f[0].mul_u64_unreduced(1);
+
+    let reduced_pos = F::from_barrett_reduce(pos_acc);
+    let reduced_neg = F::from_barrett_reduce(neg_acc);
+
+    reduced_pos - reduced_neg
 }
 
 #[inline]
@@ -273,19 +323,25 @@ fn dbl_assign<F: JoltField>(x: &mut F) {
     *x += *x;
 }
 
+fn assign<T: Sized>(dst: &mut T, src: T) {
+    *dst = src;
+}
+
 #[cfg(test)]
 mod tests {
+    use ark_bn254::Fr;
+    use ark_std::UniformRand;
+    use dory::curve::test_rng;
+    use rand::rngs::StdRng;
     use std::array::from_fn;
 
-    use ark_bn254::Fr;
-    use dory::curve::test_rng;
-    use rand::{rngs::StdRng, Rng};
-
     use crate::{
+        field::JoltField,
         poly::{
             dense_mlpoly::DensePolynomial,
             eq_poly::EqPolynomial,
             multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
+            ra_poly::RaPolynomial,
         },
         subprotocols::mles_product_sum::compute_mles_product_sum,
     };
@@ -293,101 +349,78 @@ mod tests {
     #[test]
     fn test_compute_mles_product_sum_with_2_mles() {
         const N_MLE: usize = 2;
-        let rng = &mut test_rng();
-        let r: &[Fr; 1] = &rng.gen();
+        let mut rng = &mut test_rng();
+        let r_whole = [<Fr as JoltField>::Challenge::rand(&mut rng)];
+        let r: &[<Fr as JoltField>::Challenge; 1] = &r_whole;
         let mles: [_; N_MLE] = from_fn(|_| random_mle(1, rng));
-        let correction_factor = rng.gen();
-        let claim = correction_factor * gen_product_mle(&mles).evaluate(r);
-        let r_prime: &[Fr; 1] = &rng.gen();
-        let mle_challenge_product = mles.iter().map(|mle| mle.evaluate(r_prime)).product::<Fr>();
-        let eval = correction_factor * EqPolynomial::mle(r_prime, r) * mle_challenge_product;
-        let log_sum_n_terms = 0;
+        let claim = gen_product_mle(&mles).evaluate(r);
 
-        let sum_poly = compute_mles_product_sum(
-            &mles,
-            claim,
-            r[0],
-            &EqPolynomial::evals(&[]),
-            correction_factor,
-            log_sum_n_terms,
-        );
+        let r_whole = [<Fr as JoltField>::Challenge::rand(&mut rng)];
+        let challenge: &[<Fr as JoltField>::Challenge; 1] = &r_whole;
+        let mle_challenge_product = mles.iter().map(|p| p.evaluate(challenge)).product::<Fr>();
+        let eval = EqPolynomial::mle(challenge, r) * mle_challenge_product;
+        let mles = mles.map(RaPolynomial::RoundN);
 
-        assert_eq!(eval, sum_poly.evaluate(&r_prime[0]));
+        let sum_poly = compute_mles_product_sum(&mles, claim, r, &[]);
+
+        assert_eq!(eval, sum_poly.evaluate(&challenge[0]));
     }
 
     #[test]
     fn test_compute_mles_product_sum_with_4_mles() {
         const N_MLE: usize = 4;
-        let rng = &mut test_rng();
-        let r: &[Fr; 1] = &rng.gen();
+        let mut rng = &mut test_rng();
+        let r_whole = [<Fr as JoltField>::Challenge::random(&mut rng)];
+        let r: &[<Fr as JoltField>::Challenge; 1] = &r_whole;
         let mles: [_; N_MLE] = from_fn(|_| random_mle(1, rng));
-        let correction_factor = rng.gen();
-        let claim = correction_factor * gen_product_mle(&mles).evaluate(r);
-        let r_prime: &[Fr; 1] = &rng.gen();
-        let mle_challenge_product = mles.iter().map(|mle| mle.evaluate(r_prime)).product::<Fr>();
-        let eval = correction_factor * EqPolynomial::mle(r_prime, r) * mle_challenge_product;
-        let log_sum_n_terms = 0;
+        let claim = gen_product_mle(&mles).evaluate(r);
+        let r_whole = [<Fr as JoltField>::Challenge::rand(&mut rng)];
+        let challenge: &[<Fr as JoltField>::Challenge; 1] = &r_whole;
+        let mle_challenge_product = mles.iter().map(|p| p.evaluate(challenge)).product::<Fr>();
+        let eval = EqPolynomial::mle(challenge, r) * mle_challenge_product;
+        let mles = mles.map(RaPolynomial::RoundN);
 
-        let sum_poly = compute_mles_product_sum(
-            &mles,
-            claim,
-            r[0],
-            &EqPolynomial::evals(&[]),
-            correction_factor,
-            log_sum_n_terms,
-        );
+        let sum_poly = compute_mles_product_sum(&mles, claim, r, &[]);
 
-        assert_eq!(eval, sum_poly.evaluate(&r_prime[0]));
+        assert_eq!(eval, sum_poly.evaluate(&challenge[0]));
     }
 
     #[test]
     fn test_compute_mles_product_sum_with_8_mles() {
         const N_MLE: usize = 8;
-        let rng = &mut test_rng();
-        let r: &[Fr; 1] = &rng.gen();
+        let mut rng = &mut test_rng();
+        let r_whole = [<Fr as JoltField>::Challenge::random(&mut rng)];
+        let r: &[<Fr as JoltField>::Challenge; 1] = &r_whole;
         let mles: [_; N_MLE] = from_fn(|_| random_mle(1, rng));
-        let correction_factor = rng.gen();
-        let claim = correction_factor * gen_product_mle(&mles).evaluate(r);
-        let r_prime: &[Fr; 1] = &rng.gen();
-        let mle_challenge_product = mles.iter().map(|mle| mle.evaluate(r_prime)).product::<Fr>();
-        let eval = correction_factor * EqPolynomial::mle(r_prime, r) * mle_challenge_product;
-        let log_sum_n_terms = 0;
+        let claim = gen_product_mle(&mles).evaluate(r);
+        let r_whole = [<Fr as JoltField>::Challenge::rand(&mut rng)];
+        let challenge: &[<Fr as JoltField>::Challenge; 1] = &r_whole;
+        let mle_challenge_product = mles.iter().map(|p| p.evaluate(challenge)).product::<Fr>();
+        let eval = EqPolynomial::mle(challenge, r) * mle_challenge_product;
+        let mles = mles.map(RaPolynomial::RoundN);
 
-        let sum_poly = compute_mles_product_sum(
-            &mles,
-            claim,
-            r[0],
-            &EqPolynomial::evals(&[]),
-            correction_factor,
-            log_sum_n_terms,
-        );
+        let sum_poly = compute_mles_product_sum(&mles, claim, r, &[]);
 
-        assert_eq!(eval, sum_poly.evaluate(&r_prime[0]));
+        assert_eq!(eval, sum_poly.evaluate(&challenge[0]));
     }
 
     #[test]
     fn test_compute_mles_product_sum_with_16_mles() {
         const N_MLE: usize = 16;
-        let rng = &mut test_rng();
-        let r: &[Fr; 1] = &rng.gen();
+        let mut rng = &mut test_rng();
+        let r_whole = [<Fr as JoltField>::Challenge::random(&mut rng)];
+        let r: &[<Fr as JoltField>::Challenge; 1] = &r_whole;
         let mles: [_; N_MLE] = from_fn(|_| random_mle(1, rng));
-        let correction_factor = rng.gen();
-        let claim = correction_factor * gen_product_mle(&mles).evaluate(r);
-        let r_prime: &[Fr; 1] = &rng.gen();
-        let mle_challenge_product = mles.iter().map(|mle| mle.evaluate(r_prime)).product::<Fr>();
-        let eval = correction_factor * EqPolynomial::mle(r_prime, r) * mle_challenge_product;
-        let log_sum_n_terms = 0;
+        let claim = gen_product_mle(&mles).evaluate(r);
+        let r_whole = [<Fr as JoltField>::Challenge::random(&mut rng)];
+        let challenge: &[<Fr as JoltField>::Challenge; 1] = &r_whole;
+        let mle_challenge_product = mles.iter().map(|p| p.evaluate(challenge)).product::<Fr>();
+        let eval = EqPolynomial::mle(challenge, r) * mle_challenge_product;
+        let mles = mles.map(RaPolynomial::RoundN);
 
-        let sum_poly = compute_mles_product_sum(
-            &mles,
-            claim,
-            r[0],
-            &EqPolynomial::evals(&[]),
-            correction_factor,
-            log_sum_n_terms,
-        );
+        let sum_poly = compute_mles_product_sum(&mles, claim, r, &[]);
 
-        assert_eq!(eval, sum_poly.evaluate(&r_prime[0]));
+        assert_eq!(eval, sum_poly.evaluate(&challenge[0]));
     }
 
     fn random_mle(n_vars: usize, rng: &mut StdRng) -> MultilinearPolynomial<Fr> {

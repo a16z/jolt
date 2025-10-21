@@ -35,20 +35,35 @@ impl Program {
     }
 
     /// Trace the program execution with given inputs
-    pub fn trace(&self, inputs: &[u8]) -> (LazyTraceIterator, Vec<Cycle>, Memory, JoltDevice) {
+    pub fn trace(
+        &self,
+        inputs: &[u8],
+        untrusted_advice: &[u8],
+        trusted_advice: &[u8],
+    ) -> (LazyTraceIterator, Vec<Cycle>, Memory, JoltDevice) {
         trace(
             &self.elf_contents,
             self.elf.as_ref(),
             inputs,
+            untrusted_advice,
+            trusted_advice,
             &self.memory_config,
         )
     }
 
-    pub fn trace_to_file(&self, inputs: &[u8], trace_file: &PathBuf) -> (Memory, JoltDevice) {
+    pub fn trace_to_file(
+        &self,
+        inputs: &[u8],
+        untrusted_advice: &[u8],
+        trusted_advice: &[u8],
+        trace_file: &PathBuf,
+    ) -> (Memory, JoltDevice) {
         trace_to_file(
             &self.elf_contents,
             self.elf.as_ref(),
             inputs,
+            untrusted_advice,
+            trusted_advice,
             &self.memory_config,
             trace_file,
         )
@@ -73,10 +88,18 @@ pub fn trace(
     elf_contents: &[u8],
     elf_path: Option<&PathBuf>,
     inputs: &[u8],
+    untrusted_advice: &[u8],
+    trusted_advice: &[u8],
     memory_config: &MemoryConfig,
 ) -> (LazyTraceIterator, Vec<Cycle>, Memory, JoltDevice) {
-    let (lazy_trace, trace, memory, io_device) =
-        tracer::trace(elf_contents, elf_path, inputs, memory_config);
+    let (lazy_trace, trace, memory, io_device) = tracer::trace(
+        elf_contents,
+        elf_path,
+        inputs,
+        untrusted_advice,
+        trusted_advice,
+        memory_config,
+    );
     (lazy_trace, trace, memory, io_device)
 }
 
@@ -84,10 +107,19 @@ pub fn trace_to_file(
     elf_contents: &[u8],
     elf_path: Option<&PathBuf>,
     inputs: &[u8],
+    untrusted_advice: &[u8],
+    trusted_advice: &[u8],
     memory_config: &MemoryConfig,
     trace_file: &PathBuf,
 ) -> (Memory, JoltDevice) {
-    let (memory, io_device) =
-        tracer::trace_to_file(elf_contents, elf_path, inputs, memory_config, trace_file);
+    let (memory, io_device) = tracer::trace_to_file(
+        elf_contents,
+        elf_path,
+        inputs,
+        untrusted_advice,
+        trusted_advice,
+        memory_config,
+        trace_file,
+    );
     (memory, io_device)
 }

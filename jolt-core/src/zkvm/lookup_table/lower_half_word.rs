@@ -1,5 +1,5 @@
 use super::PrefixSuffixDecomposition;
-use crate::field::JoltField;
+use crate::field::{ChallengeFieldOps, FieldChallengeOps, JoltField};
 use serde::{Deserialize, Serialize};
 
 use super::prefixes::{PrefixEval, Prefixes};
@@ -18,8 +18,11 @@ impl<const XLEN: usize> JoltLookupTable for LowerHalfWordTable<XLEN> {
         let half_word_size = XLEN / 2;
         (index % (1u128 << half_word_size)) as u64
     }
-
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+    fn evaluate_mle<F, C>(&self, r: &[C]) -> F
+    where
+        C: ChallengeFieldOps<F>,
+        F: JoltField + FieldChallengeOps<C>,
+    {
         debug_assert_eq!(r.len(), 2 * XLEN);
         let half_word_size = XLEN / 2;
         let mut result = F::zero();

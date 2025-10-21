@@ -1,8 +1,9 @@
+use crate::zkvm::instruction::NUM_INSTRUCTION_FLAGS;
 use tracer::instruction::{sd::SD, RISCVCycle};
 
 use crate::zkvm::lookup_table::LookupTables;
 
-use super::{CircuitFlags, InstructionFlags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS};
+use super::{CircuitFlags, Flags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS};
 
 impl<const XLEN: usize> InstructionLookup<XLEN> for SD {
     fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
@@ -10,16 +11,21 @@ impl<const XLEN: usize> InstructionLookup<XLEN> for SD {
     }
 }
 
-impl InstructionFlags for SD {
+impl Flags for SD {
     fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
         let mut flags = [false; NUM_CIRCUIT_FLAGS];
         flags[CircuitFlags::Store as usize] = true;
-        flags[CircuitFlags::InlineSequenceInstruction as usize] =
-            self.inline_sequence_remaining.is_some();
+        flags[CircuitFlags::VirtualInstruction as usize] =
+            self.virtual_sequence_remaining.is_some();
         flags[CircuitFlags::DoNotUpdateUnexpandedPC as usize] =
-            self.inline_sequence_remaining.unwrap_or(0) != 0;
+            self.virtual_sequence_remaining.unwrap_or(0) != 0;
+        flags[CircuitFlags::IsFirstInSequence as usize] = self.is_first_in_sequence;
         flags[CircuitFlags::IsCompressed as usize] = self.is_compressed;
         flags
+    }
+
+    fn instruction_flags(&self) -> [bool; NUM_INSTRUCTION_FLAGS] {
+        [false; NUM_INSTRUCTION_FLAGS]
     }
 }
 

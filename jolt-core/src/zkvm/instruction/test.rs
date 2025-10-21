@@ -27,8 +27,11 @@ where
 
 /// Test that certain combinations of circuit flags are exclusive.
 mod flags {
+    use std::panic;
+
+    use crate::zkvm::instruction::{Flags, InstructionFlags};
+
     use super::CircuitFlags;
-    use crate::zkvm::instruction::InstructionFlagsExt;
     use strum::IntoEnumIterator;
     use tracer::instruction::Cycle;
 
@@ -39,10 +42,10 @@ mod flags {
                 continue;
             }
             let instr = cycle.instruction();
-            if let Some(flags) = instr.try_circuit_flags() {
+            if let Ok(flags) = panic::catch_unwind(|| instr.instruction_flags()) {
                 assert!(
-                    !(flags[CircuitFlags::LeftOperandIsPC]
-                        && flags[CircuitFlags::LeftOperandIsRs1Value]),
+                    !(flags[InstructionFlags::LeftOperandIsPC]
+                        && flags[InstructionFlags::LeftOperandIsRs1Value]),
                     "Left operand flags not exclusive for {instr:?}",
                 );
             }
@@ -56,10 +59,10 @@ mod flags {
                 continue;
             }
             let instr = cycle.instruction();
-            if let Some(flags) = instr.try_circuit_flags() {
+            if let Ok(flags) = panic::catch_unwind(|| instr.instruction_flags()) {
                 assert!(
-                    !(flags[CircuitFlags::RightOperandIsRs2Value]
-                        && flags[CircuitFlags::RightOperandIsImm]),
+                    !(flags[InstructionFlags::RightOperandIsRs2Value]
+                        && flags[InstructionFlags::RightOperandIsImm]),
                     "Right operand flags not exclusive for {instr:?}",
                 );
             }
@@ -73,7 +76,7 @@ mod flags {
                 continue;
             }
             let instr = cycle.instruction();
-            if let Some(flags) = instr.try_circuit_flags() {
+            if let Ok(flags) = panic::catch_unwind(|| instr.circuit_flags()) {
                 let num_true = [
                     flags[CircuitFlags::AddOperands],
                     flags[CircuitFlags::SubtractOperands],
@@ -98,11 +101,33 @@ mod flags {
                 continue;
             }
             let instr = cycle.instruction();
-            if let Some(flags) = instr.try_circuit_flags() {
+            if let Ok(flags) = panic::catch_unwind(|| instr.circuit_flags()) {
                 assert!(
                     !(flags[CircuitFlags::Load] && flags[CircuitFlags::Store]),
                     "Load/Store flags not exclusive for {instr:?}",
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn branch_lookup_output_is_boolean() {
+        use crate::zkvm::instruction::LookupQuery;
+        use common::constants::XLEN;
+
+        for cycle in Cycle::iter() {
+            if let Cycle::INLINE(_) = cycle {
+                continue;
+            }
+            let instr = cycle.instruction();
+            if let Ok(instr_flags) = panic::catch_unwind(|| instr.instruction_flags()) {
+                if instr_flags[InstructionFlags::Branch] {
+                    let out = LookupQuery::<XLEN>::to_lookup_output(&cycle);
+                    assert!(
+                        out == 0 || out == 1,
+                        "Branch lookup output not boolean for {instr:?}: got {out}",
+                    );
+                }
             }
         }
     }

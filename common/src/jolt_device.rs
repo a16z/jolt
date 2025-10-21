@@ -1,9 +1,14 @@
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use serde::{Deserialize, Serialize};
 
+#[cfg(not(feature = "std"))]
+use alloc::vec::Vec;
+#[cfg(feature = "std")]
+use std::vec::Vec;
+
 use crate::constants::{
-    DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE, DEFAULT_MEMORY_SIZE, DEFAULT_STACK_SIZE,
-    RAM_START_ADDRESS,
+    DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE, DEFAULT_MAX_TRUSTED_ADVICE_SIZE,
+    DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE, DEFAULT_MEMORY_SIZE, DEFAULT_STACK_SIZE, RAM_START_ADDRESS,
 };
 
 #[allow(clippy::too_long_first_doc_paragraph)]
@@ -23,6 +28,8 @@ use crate::constants::{
 )]
 pub struct JoltDevice {
     pub inputs: Vec<u8>,
+    pub trusted_advice: Vec<u8>,
+    pub untrusted_advice: Vec<u8>,
     pub outputs: Vec<u8>,
     pub panic: bool,
     pub memory_layout: MemoryLayout,
@@ -32,6 +39,8 @@ impl JoltDevice {
     pub fn new(memory_config: &MemoryConfig) -> Self {
         Self {
             inputs: Vec::new(),
+            trusted_advice: Vec::new(),
+            untrusted_advice: Vec::new(),
             outputs: Vec::new(),
             panic: false,
             memory_layout: MemoryLayout::new(memory_config),
@@ -49,6 +58,20 @@ impl JoltDevice {
                 0
             } else {
                 self.inputs[internal_address]
+            }
+        } else if self.is_trusted_advice(address) {
+            let internal_address = self.convert_trusted_advice_read_address(address);
+            if self.trusted_advice.len() <= internal_address {
+                0
+            } else {
+                self.trusted_advice[internal_address]
+            }
+        } else if self.is_untrusted_advice(address) {
+            let internal_address = self.convert_untrusted_advice_read_address(address);
+            if self.untrusted_advice.len() <= internal_address {
+                0
+            } else {
+                self.untrusted_advice[internal_address]
             }
         } else if self.is_output(address) {
             let internal_address = self.convert_write_address(address);
@@ -86,6 +109,16 @@ impl JoltDevice {
         address >= self.memory_layout.input_start && address < self.memory_layout.input_end
     }
 
+    pub fn is_trusted_advice(&self, address: u64) -> bool {
+        address >= self.memory_layout.trusted_advice_start
+            && address < self.memory_layout.trusted_advice_end
+    }
+
+    pub fn is_untrusted_advice(&self, address: u64) -> bool {
+        address >= self.memory_layout.untrusted_advice_start
+            && address < self.memory_layout.untrusted_advice_end
+    }
+
     pub fn is_output(&self, address: u64) -> bool {
         address >= self.memory_layout.output_start && address < self.memory_layout.termination
     }
@@ -102,6 +135,14 @@ impl JoltDevice {
         (address - self.memory_layout.input_start) as usize
     }
 
+    fn convert_trusted_advice_read_address(&self, address: u64) -> usize {
+        (address - self.memory_layout.trusted_advice_start) as usize
+    }
+
+    fn convert_untrusted_advice_read_address(&self, address: u64) -> usize {
+        (address - self.memory_layout.untrusted_advice_start) as usize
+    }
+
     fn convert_write_address(&self, address: u64) -> usize {
         (address - self.memory_layout.output_start) as usize
     }
@@ -110,6 +151,8 @@ impl JoltDevice {
 #[derive(Debug, Copy, Clone)]
 pub struct MemoryConfig {
     pub max_input_size: u64,
+    pub max_trusted_advice_size: u64,
+    pub max_untrusted_advice_size: u64,
     pub max_output_size: u64,
     pub stack_size: u64,
     pub memory_size: u64,
@@ -120,6 +163,8 @@ impl Default for MemoryConfig {
     fn default() -> Self {
         Self {
             max_input_size: DEFAULT_MAX_INPUT_SIZE,
+            max_trusted_advice_size: DEFAULT_MAX_TRUSTED_ADVICE_SIZE,
+            max_untrusted_advice_size: DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE,
             max_output_size: DEFAULT_MAX_OUTPUT_SIZE,
             stack_size: DEFAULT_STACK_SIZE,
             memory_size: DEFAULT_MEMORY_SIZE,
@@ -134,6 +179,12 @@ impl Default for MemoryConfig {
 pub struct MemoryLayout {
     /// The total size of the elf's sections, including the .text, .data, .rodata, and .bss sections.
     pub program_size: u64,
+    pub max_trusted_advice_size: u64,
+    pub trusted_advice_start: u64,
+    pub trusted_advice_end: u64,
+    pub max_untrusted_advice_size: u64,
+    pub untrusted_advice_start: u64,
+    pub untrusted_advice_end: u64,
     pub max_input_size: u64,
     pub max_output_size: u64,
     pub input_start: u64,
@@ -158,7 +209,25 @@ impl core::fmt::Debug for MemoryLayout {
         f.debug_struct("MemoryLayout")
             .field("program_size", &self.program_size)
             .field("max_input_size", &self.max_input_size)
+            .field("max_trusted_advice_size", &self.max_trusted_advice_size)
+            .field("max_untrusted_advice_size", &self.max_untrusted_advice_size)
             .field("max_output_size", &self.max_output_size)
+            .field(
+                "trusted_advice_start",
+                &format_args!("{:#X}", self.trusted_advice_start),
+            )
+            .field(
+                "trusted_advice_end",
+                &format_args!("{:#X}", self.trusted_advice_end),
+            )
+            .field(
+                "untrusted_advice_start",
+                &format_args!("{:#X}", self.untrusted_advice_start),
+            )
+            .field(
+                "untrusted_advice_end",
+                &format_args!("{:#X}", self.untrusted_advice_end),
+            )
             .field("input_start", &format_args!("{:#X}", self.input_start))
             .field("input_end", &format_args!("{:#X}", self.input_end))
             .field("output_start", &format_args!("{:#X}", self.output_start))
@@ -179,6 +248,7 @@ impl MemoryLayout {
             config.program_size.is_some(),
             "MemoryLayout requires bytecode size to be set"
         );
+
         // helper to align ‘val’ *up* to a multiple of ‘align’, panicking on overflow
         #[inline]
         fn align_up(val: u64, align: u64) -> u64 {
@@ -195,15 +265,29 @@ impl MemoryLayout {
             }
         } // Must be 8-byte aligned
 
+        let max_trusted_advice_size = align_up(config.max_trusted_advice_size, 8);
+        let max_untrusted_advice_size = align_up(config.max_untrusted_advice_size, 8);
         let max_input_size = align_up(config.max_input_size, 8);
         let max_output_size = align_up(config.max_output_size, 8);
         let stack_size = align_up(config.stack_size, 8);
         let memory_size = align_up(config.memory_size, 8);
 
+        // Critical for ValEvaluation and ValFinal sumchecks in RAM
+        assert!(
+            max_trusted_advice_size.is_power_of_two() || max_trusted_advice_size == 0,
+            "Trusted advice size must be a power of two (got {max_trusted_advice_size})",
+        );
+        assert!(
+            max_untrusted_advice_size.is_power_of_two() || max_untrusted_advice_size == 0,
+            "Untrusted advice size must be a power of two (got {max_untrusted_advice_size})",
+        );
+
         // Adds 16 to account for panic bit and termination bit
         // (they each occupy one full 8-byte word)
         let io_region_bytes = max_input_size
-            .checked_add(max_output_size)
+            .checked_add(max_trusted_advice_size)
+            .and_then(|s| s.checked_add(max_untrusted_advice_size))
+            .and_then(|s| s.checked_add(max_output_size))
             .and_then(|s| s.checked_add(16))
             .expect("I/O region size overflow");
 
@@ -215,9 +299,42 @@ impl MemoryLayout {
         let io_bytes = io_region_words
             .checked_mul(8)
             .expect("I/O region byte count overflow");
-        let input_start = RAM_START_ADDRESS
-            .checked_sub(io_bytes)
-            .expect("I/O region exceeds RAM_START_ADDRESS");
+
+        // Place the larger or equal-sized advice region first in memory (at the lower address).
+        let (
+            trusted_advice_start,
+            trusted_advice_end,
+            untrusted_advice_start,
+            untrusted_advice_end,
+        ) = if max_trusted_advice_size >= max_untrusted_advice_size {
+            // Trusted advice goes first
+            let trusted_start = RAM_START_ADDRESS
+                .checked_sub(io_bytes)
+                .expect("I/O region exceeds RAM_START_ADDRESS");
+            let trusted_end = trusted_start
+                .checked_add(max_trusted_advice_size)
+                .expect("trusted_advice_end overflow");
+            let untrusted_start = trusted_end;
+            let untrusted_end = untrusted_start
+                .checked_add(max_untrusted_advice_size)
+                .expect("untrusted_advice_end overflow");
+            (trusted_start, trusted_end, untrusted_start, untrusted_end)
+        } else {
+            // Untrusted advice goes first
+            let untrusted_start = RAM_START_ADDRESS
+                .checked_sub(io_bytes)
+                .expect("I/O region exceeds RAM_START_ADDRESS");
+            let untrusted_end = untrusted_start
+                .checked_add(max_untrusted_advice_size)
+                .expect("untrusted_advice_end overflow");
+            let trusted_start = untrusted_end;
+            let trusted_end = trusted_start
+                .checked_add(max_trusted_advice_size)
+                .expect("trusted_advice_end overflow");
+            (trusted_start, trusted_end, untrusted_start, untrusted_end)
+        };
+
+        let input_start = std::cmp::max(untrusted_advice_end, trusted_advice_end);
         let input_end = input_start
             .checked_add(max_input_size)
             .expect("input_end overflow");
@@ -230,6 +347,7 @@ impl MemoryLayout {
         let io_end = termination.checked_add(8).expect("io_end overflow");
 
         let program_size = config.program_size.unwrap();
+
         // stack grows downwards (decreasing addresses) from the bytecode_end + stack_size up to bytecode_end
         let stack_end = RAM_START_ADDRESS
             .checked_add(program_size)
@@ -245,8 +363,14 @@ impl MemoryLayout {
 
         Self {
             program_size,
+            max_trusted_advice_size,
+            max_untrusted_advice_size,
             max_input_size,
             max_output_size,
+            trusted_advice_start,
+            trusted_advice_end,
+            untrusted_advice_start,
+            untrusted_advice_end,
             input_start,
             input_end,
             output_start,
@@ -259,5 +383,10 @@ impl MemoryLayout {
             termination,
             io_end,
         }
+    }
+
+    /// Returns the start address memory.
+    pub fn get_lowest_address(&self) -> u64 {
+        self.trusted_advice_start.min(self.untrusted_advice_start)
     }
 }

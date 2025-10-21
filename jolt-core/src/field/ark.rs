@@ -1,9 +1,11 @@
-use ark_ff::{prelude::*, AdditiveGroup, BigInt, PrimeField, UniformRand};
-use rayon::prelude::*;
-
+use super::{FieldOps, FmaddTrunc, JoltField, MulU64WithCarry};
+#[cfg(feature = "challenge-254-bit")]
+use crate::field::challenge::Mont254BitChallenge;
+use crate::field::challenge::MontU128Challenge;
+use crate::field::MulTrunc;
 use crate::utils::thread::unsafe_allocate_zero_vec;
-
-use super::{FieldOps, JoltField};
+use ark_ff::{prelude::*, BigInt, PrimeField, UniformRand};
+use rayon::prelude::*;
 
 impl FieldOps for ark_bn254::Fr {}
 impl FieldOps<&ark_bn254::Fr, ark_bn254::Fr> for &ark_bn254::Fr {}
@@ -27,7 +29,16 @@ impl JoltField for ark_bn254::Fr {
         use ark_ff::MontConfig;
         std::mem::transmute(<ark_bn254::FrConfig as MontConfig<4>>::R2)
     };
+    type Unreduced<const N: usize> = BigInt<N>;
     type SmallValueLookupTables = [Vec<Self>; 2];
+
+    // Default: Use optimized 125-bit MontChallenge
+    #[cfg(not(feature = "challenge-254-bit"))]
+    type Challenge = MontU128Challenge<ark_bn254::Fr>;
+
+    // Optional: Use full 254-bit field elements
+    #[cfg(feature = "challenge-254-bit")]
+    type Challenge = Mont254BitChallenge<ark_bn254::Fr>;
 
     fn random<R: rand_core::RngCore>(rng: &mut R) -> Self {
         <Self as UniformRand>::rand(rng)
@@ -89,6 +100,7 @@ impl JoltField for ark_bn254::Fr {
         }
     }
 
+    #[inline]
     fn from_i64(val: i64) -> Self {
         if val.is_negative() {
             let val = val.unsigned_abs();
@@ -111,6 +123,7 @@ impl JoltField for ark_bn254::Fr {
         }
     }
 
+    #[inline]
     fn from_i128(val: i128) -> Self {
         if val.is_negative() {
             let val = val.unsigned_abs();
@@ -139,6 +152,7 @@ impl JoltField for ark_bn254::Fr {
         }
     }
 
+    #[inline]
     fn from_u128(val: u128) -> Self {
         if val <= u16::MAX as u128 {
             <Self as JoltField>::from_u16(val as u16)
@@ -152,6 +166,7 @@ impl JoltField for ark_bn254::Fr {
         }
     }
 
+    #[inline]
     fn to_u64(&self) -> Option<u64> {
         let bigint = <Self as ark_ff::PrimeField>::into_bigint(*self);
         let limbs: &[u64] = bigint.as_ref();
@@ -164,35 +179,33 @@ impl JoltField for ark_bn254::Fr {
         }
     }
 
+    #[inline]
     fn square(&self) -> Self {
         <Self as ark_ff::Field>::square(self)
     }
 
+    #[inline]
     fn inverse(&self) -> Option<Self> {
         <Self as ark_ff::Field>::inverse(self)
     }
 
+    #[inline]
     fn from_bytes(bytes: &[u8]) -> Self {
         ark_bn254::Fr::from_le_bytes_mod_order(bytes)
     }
 
+    #[inline]
     fn num_bits(&self) -> u32 {
         <Self as ark_ff::PrimeField>::into_bigint(*self).num_bits()
     }
 
     #[inline(always)]
-    fn as_bigint_ref(&self) -> &ark_ff::BigInt<4> {
+    fn as_unreduced_ref(&self) -> &Self::Unreduced<4> {
         // arkworks field elements are just wrappers around BigInt, so we can get a direct reference
         &self.0
     }
 
-    #[inline(always)]
-    fn from_montgomery_reduce_2n(unreduced: ark_ff::BigInt<8>) -> Self {
-        // Use arkworks Montgomery backend to efficiently reduce 8-limb to 4-limb
-        ark_bn254::Fr::montgomery_reduce_2n(unreduced)
-    }
-
-    #[inline(always)]
+    #[inline]
     fn mul_u64(&self, n: u64) -> Self {
         if n == 0 || self.is_zero() {
             Self::zero()
@@ -213,7 +226,7 @@ impl JoltField for ark_bn254::Fr {
         ark_ff::Fp::mul_u128::<5, 6>(*self, n)
     }
 
-    #[inline(always)]
+    #[inline]
     fn mul_i128(&self, n: i128) -> Self {
         if n == 0 || self.is_zero() {
             Self::zero()
@@ -225,77 +238,59 @@ impl JoltField for ark_bn254::Fr {
     }
 
     #[inline]
-    fn linear_combination_u64(pairs: &[(Self, u64)], add_terms: &[Self]) -> Self {
-        let mut tmp = ark_ff::BigInt::<4>::mul_u64_w_carry::<5>(&pairs[0].0 .0, pairs[0].1);
-        for (a, b) in &pairs[1..] {
-            let carry = tmp.add_with_carry(&ark_ff::BigInt::<4>::mul_u64_w_carry::<5>(&a.0, *b));
-            debug_assert!(!carry, "spurious carry in linear_combination_u64");
-        }
-
-        // Add the additional terms that don't need multiplication
-        let mut result = ark_ff::Fp::from_unchecked_nplus1(tmp);
-        for term in add_terms {
-            result += *term;
-        }
-        result
+    fn mul_unreduced<const L: usize>(self, other: Self) -> BigInt<L> {
+        self.0.mul_trunc::<4, L>(&other.0)
     }
 
     #[inline]
-    fn linear_combination_i64(
-        pos: &[(Self, u64)],
-        neg: &[(Self, u64)],
-        pos_add: &[Self],
-        neg_add: &[Self],
-    ) -> Self {
-        // unreduced linear combination of positive and negative terms
-        let mut pos_lc = if !pos.is_empty() {
-            let mut tmp = ark_ff::BigInt::<4>::mul_u64_w_carry::<5>(&pos[0].0 .0, pos[0].1);
-            for (a, b) in &pos[1..] {
-                let carry =
-                    tmp.add_with_carry(&ark_ff::BigInt::<4>::mul_u64_w_carry::<5>(&a.0, *b));
-                debug_assert!(!carry, "spurious carry in linear_combination_i64");
-            }
-            tmp
-        } else {
-            ark_ff::BigInt::<5>::zero()
-        };
+    fn mul_u64_unreduced(self, other: u64) -> BigInt<5> {
+        self.0.mul_trunc::<1, 5>(&BigInt::new([other]))
+    }
 
-        let mut neg_lc = if !neg.is_empty() {
-            let mut tmp = ark_ff::BigInt::<4>::mul_u64_w_carry::<5>(&neg[0].0 .0, neg[0].1);
-            for (a, b) in &neg[1..] {
-                let carry =
-                    tmp.add_with_carry(&ark_ff::BigInt::<4>::mul_u64_w_carry::<5>(&a.0, *b));
-                debug_assert!(!carry, "spurious carry in linear_combination_i64");
-            }
-            tmp
-        } else {
-            ark_ff::BigInt::<5>::zero()
-        };
+    #[inline]
+    fn mul_u128_unreduced(self, other: u128) -> BigInt<6> {
+        self.0
+            .mul_trunc::<2, 6>(&BigInt::new([other as u64, (other >> 64) as u64]))
+    }
 
-        // Compute the difference of the linear combinations
-        let diff = match pos_lc.cmp(&neg_lc) {
-            std::cmp::Ordering::Greater => {
-                let borrow = pos_lc.sub_with_borrow(&neg_lc);
-                debug_assert!(!borrow, "spurious borrow in linear_combination_i64");
-                ark_ff::Fp::from_unchecked_nplus1(pos_lc)
-            }
-            std::cmp::Ordering::Less => {
-                let borrow = neg_lc.sub_with_borrow(&pos_lc);
-                debug_assert!(!borrow, "spurious borrow in linear_combination_i64");
-                *ark_ff::Fp::from_unchecked_nplus1(neg_lc).neg_in_place()
-            }
-            std::cmp::Ordering::Equal => ark_ff::Fp::zero(),
-        };
+    #[inline]
+    fn from_montgomery_reduce<const L: usize>(unreduced: BigInt<L>) -> Self {
+        ark_bn254::Fr::from_montgomery_reduce::<L, 5>(unreduced)
+    }
 
-        // Add the positive and negative add terms
-        let mut result = diff;
-        for term in pos_add {
-            result += *term;
-        }
-        for term in neg_add {
-            result -= *term;
-        }
-        result
+    #[inline]
+    fn from_barrett_reduce<const L: usize>(unreduced: BigInt<L>) -> Self {
+        ark_bn254::Fr::from_barrett_reduce::<L, 5>(unreduced)
+    }
+}
+
+impl<const N: usize> FmaddTrunc for BigInt<N> {
+    type Other<const M: usize> = BigInt<M>;
+    type Acc<const P: usize> = BigInt<P>;
+
+    fn fmadd_trunc<const M: usize, const P: usize>(
+        &self,
+        other: &Self::Other<M>,
+        acc: &mut Self::Acc<P>,
+    ) {
+        self.fmadd_trunc(other, acc)
+    }
+}
+
+impl<const N: usize> MulTrunc for BigInt<N> {
+    type Other<const M: usize> = BigInt<M>;
+    type Output<const P: usize> = BigInt<P>;
+
+    fn mul_trunc<const M: usize, const P: usize>(&self, other: &Self::Other<M>) -> Self::Output<P> {
+        self.mul_trunc(other)
+    }
+}
+
+impl<const N: usize> MulU64WithCarry for BigInt<N> {
+    type Output<const NPLUS1: usize> = BigInt<NPLUS1>;
+
+    fn mul_u64_w_carry<const NPLUS1: usize>(&self, other: u64) -> Self::Output<NPLUS1> {
+        <BigInt<N> as BigInteger>::mul_u64_w_carry(self, other)
     }
 }
 

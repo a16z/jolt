@@ -1,14 +1,16 @@
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::opening_proof::{
     OpeningPoint, ProverOpeningAccumulator, ReducedOpeningProof, SumcheckId,
     VerifierOpeningAccumulator, BIG_ENDIAN,
 };
-use crate::subprotocols::sumcheck::SumcheckInstanceProof;
+use crate::subprotocols::sumcheck::{SumcheckInstanceProof, UniSkipFirstRoundProof};
 use crate::transcripts::Transcript;
 use crate::utils::math::Math;
 use crate::zkvm::witness::{compute_d_parameter, CommittedPolynomial, VirtualPolynomial};
@@ -22,16 +24,24 @@ use tracer::{JoltDevice, LazyTraceIterator};
 #[derive(PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, FromPrimitive)]
 #[repr(u8)]
 pub enum ProofKeys {
+    Stage1UniSkipFirstRound,
     Stage1Sumcheck,
+    Stage2UniSkipFirstRound,
     Stage2Sumcheck,
     Stage3Sumcheck,
     Stage4Sumcheck,
-    ReducedOpeningProof,
+    Stage5Sumcheck,
+    Stage6Sumcheck,
+    TrustedAdviceProof,
+    UntrustedAdviceProof,
+    ReducedOpeningProof, // Implicitly Stage 7
 }
 
 pub enum ProofData<F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript> {
     SumcheckProof(SumcheckInstanceProof<F, ProofTranscript>),
     ReducedOpeningProof(ReducedOpeningProof<F, PCS, ProofTranscript>),
+    OpeningProof(PCS::Proof),
+    UniSkipFirstRoundProof(UniSkipFirstRoundProof<F, ProofTranscript>),
 }
 
 pub type Proofs<F, PCS, ProofTranscript> = BTreeMap<ProofKeys, ProofData<F, PCS, ProofTranscript>>;
@@ -42,9 +52,11 @@ where
 {
     pub preprocessing: &'a JoltProverPreprocessing<F, PCS>,
     pub lazy_trace: Option<LazyTraceIterator>, // JP: Why is this Option?
-    pub trace: Vec<Cycle>,
+    pub trace: Arc<Vec<Cycle>>,
     pub final_memory_state: Memory,
     pub accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
+    pub untrusted_advice_polynomial: Option<MultilinearPolynomial<F>>,
+    pub trusted_advice_polynomial: Option<MultilinearPolynomial<F>>,
 }
 
 pub struct VerifierState<'a, F: JoltField, PCS>
@@ -65,6 +77,8 @@ pub struct StateManager<
     pub transcript: Rc<RefCell<ProofTranscript>>,
     pub proofs: Rc<RefCell<Proofs<F, PCS, ProofTranscript>>>,
     pub commitments: Rc<RefCell<Vec<PCS::Commitment>>>,
+    pub untrusted_advice_commitment: Option<PCS::Commitment>,
+    pub trusted_advice_commitment: Option<PCS::Commitment>,
     pub ram_K: usize,
     pub ram_d: usize,
     pub twist_sumcheck_switch_index: usize,
@@ -84,6 +98,7 @@ where
         lazy_trace: LazyTraceIterator,
         trace: Vec<Cycle>,
         program_io: JoltDevice,
+        trusted_advice_commitment: Option<PCS::Commitment>,
         final_memory_state: Memory,
     ) -> Self {
         let opening_accumulator = ProverOpeningAccumulator::new();
@@ -124,6 +139,8 @@ where
             transcript,
             proofs,
             commitments,
+            untrusted_advice_commitment: None,
+            trusted_advice_commitment,
             program_io,
             ram_K,
             ram_d,
@@ -131,9 +148,11 @@ where
             prover_state: Some(ProverState {
                 preprocessing,
                 lazy_trace: Some(lazy_trace),
-                trace,
+                trace: Arc::new(trace),
                 final_memory_state,
                 accumulator: opening_accumulator,
+                untrusted_advice_polynomial: None,
+                trusted_advice_polynomial: None,
             }),
             verifier_state: None,
         }
@@ -160,6 +179,8 @@ where
             transcript,
             proofs,
             commitments,
+            untrusted_advice_commitment: None,
+            trusted_advice_commitment: None,
             program_io,
             ram_K,
             ram_d,
@@ -190,6 +211,14 @@ where
                 &self.program_io,
                 &prover_state.final_memory_state,
             )
+        } else {
+            panic!("Prover state not initialized");
+        }
+    }
+
+    pub fn get_trace_arc(&self) -> Arc<Vec<Cycle>> {
+        if let Some(ref prover_state) = self.prover_state {
+            prover_state.trace.clone()
         } else {
             panic!("Prover state not initialized");
         }

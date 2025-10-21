@@ -45,14 +45,6 @@ pub trait LookupQuery<const XLEN: usize> {
     Clone, Copy, Debug, Hash, PartialEq, Eq, EnumCountMacro, EnumIter, PartialOrd, Ord, Allocative,
 )]
 pub enum CircuitFlags {
-    /// 1 if the first instruction operand is the program counter; 0 otherwise.
-    LeftOperandIsPC,
-    /// 1 if the second instruction operand is `imm`; 0 otherwise.
-    RightOperandIsImm,
-    /// 1 if the first instruction operand is RS1 value; 0 otherwise.
-    LeftOperandIsRs1Value,
-    /// 1 if the first instruction operand is RS2 value; 0 otherwise.
-    RightOperandIsRs2Value,
     /// 1 if the first lookup operand is the sum of the two instruction operands.
     AddOperands,
     /// 1 if the first lookup operand is the difference between the two instruction operands.
@@ -65,25 +57,43 @@ pub enum CircuitFlags {
     Store,
     /// 1 if the instruction is a jump (i.e. `JAL`, `JALR`)
     Jump,
-    /// 1 if the instruction is a branch (i.e. `BEQ`, `BNE`, etc.)
-    Branch,
     /// 1 if the lookup output is to be stored in `rd` at the end of the step.
     WriteLookupOutputToRD,
-    /// 1 if the instruction is "inline", as defined in Section 6.1 of the Jolt paper.
-    InlineSequenceInstruction,
+    /// 1 if the instruction is "virtual", as defined in Section 6.1 of the Jolt paper.
+    VirtualInstruction,
     /// 1 if the instruction is an assert, as defined in Section 6.1.1 of the Jolt paper.
     Assert,
     /// Used in inline sequences; the program counter should be the same for the full sequence.
     DoNotUpdateUnexpandedPC,
     /// Is (virtual) advice instruction
     Advice,
-    /// Is noop instruction
-    IsNoop,
     /// Is a compressed instruction (i.e. increase UnexpandedPc by 2 only)
     IsCompressed,
+    /// Is instruction the first in a virtual sequence
+    IsFirstInSequence,
+}
+
+/// Boolean flags that are not part of Jolt's R1CS constraints
+#[derive(
+    Clone, Copy, Debug, Hash, PartialEq, Eq, EnumCountMacro, EnumIter, PartialOrd, Ord, Allocative,
+)]
+pub enum InstructionFlags {
+    /// 1 if the first instruction operand is the program counter; 0 otherwise.
+    LeftOperandIsPC,
+    /// 1 if the second instruction operand is `imm`; 0 otherwise.
+    RightOperandIsImm,
+    /// 1 if the first instruction operand is RS1 value; 0 otherwise.
+    LeftOperandIsRs1Value,
+    /// 1 if the first instruction operand is RS2 value; 0 otherwise.
+    RightOperandIsRs2Value,
+    /// 1 if the instruction is a branch (i.e. `BEQ`, `BNE`, etc.)
+    Branch,
+    /// Is noop instruction
+    IsNoop,
 }
 
 pub const NUM_CIRCUIT_FLAGS: usize = CircuitFlags::COUNT;
+pub const NUM_INSTRUCTION_FLAGS: usize = InstructionFlags::COUNT;
 
 pub trait InterleavedBitsMarker {
     fn is_interleaved_operands(&self) -> bool;
@@ -111,15 +121,22 @@ impl IndexMut<CircuitFlags> for [bool; NUM_CIRCUIT_FLAGS] {
     }
 }
 
-pub trait InstructionFlags {
-    fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS];
+impl Index<InstructionFlags> for [bool; NUM_INSTRUCTION_FLAGS] {
+    type Output = bool;
+    fn index(&self, index: InstructionFlags) -> &bool {
+        &self[index as usize]
+    }
 }
 
-/// Extension to query circuit flags without panicking on unsupported instructions.
-/// Useful for testing
-#[cfg(test)]
-pub trait InstructionFlagsExt {
-    fn try_circuit_flags(&self) -> Option<[bool; NUM_CIRCUIT_FLAGS]>;
+impl IndexMut<InstructionFlags> for [bool; NUM_INSTRUCTION_FLAGS] {
+    fn index_mut(&mut self, index: InstructionFlags) -> &mut bool {
+        &mut self[index as usize]
+    }
+}
+
+pub trait Flags {
+    fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS];
+    fn instruction_flags(&self) -> [bool; NUM_INSTRUCTION_FLAGS];
 }
 
 macro_rules! define_rv32im_trait_impls {
@@ -139,12 +156,11 @@ macro_rules! define_rv32im_trait_impls {
             }
         }
 
-        impl InstructionFlags for Instruction {
+        impl Flags for Instruction {
             fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
                 match self {
                     Instruction::NoOp => {
                         let mut flags = [false; NUM_CIRCUIT_FLAGS];
-                        flags[CircuitFlags::IsNoop] = true;
                         flags[CircuitFlags::DoNotUpdateUnexpandedPC] = true;
                         flags
                     },
@@ -155,23 +171,19 @@ macro_rules! define_rv32im_trait_impls {
                     _ => panic!("Unexpected instruction: {:?}", self),
                 }
             }
-        }
 
-        #[cfg(test)]
-        impl InstructionFlagsExt for Instruction {
-            fn try_circuit_flags(&self) -> Option<[bool; NUM_CIRCUIT_FLAGS]> {
+            fn instruction_flags(&self) -> [bool; NUM_INSTRUCTION_FLAGS] {
                 match self {
                     Instruction::NoOp => {
-                        let mut flags = [false; NUM_CIRCUIT_FLAGS];
-                        flags[CircuitFlags::IsNoop] = true;
-                        flags[CircuitFlags::DoNotUpdateUnexpandedPC] = true;
-                        Some(flags)
+                        let mut flags = [false; NUM_INSTRUCTION_FLAGS];
+                        flags[InstructionFlags::IsNoop] = true;
+                        flags
                     },
                     $(
-                        Instruction::$instr(instr) => Some(instr.circuit_flags()),
+                        Instruction::$instr(instr) => instr.instruction_flags(),
                     )*
-                    Instruction::UNIMPL => Some([false; NUM_CIRCUIT_FLAGS]),
-                    _ => None,
+                    Instruction::UNIMPL => [false; NUM_INSTRUCTION_FLAGS],
+                    _ => panic!("Unexpected instruction: {:?}", self),
                 }
             }
         }
@@ -241,7 +253,7 @@ define_rv32im_trait_impls! {
         VirtualAssertWordAlignment, VirtualAssertLTE,
         VirtualAssertValidDiv0, VirtualAssertValidUnsignedRemainder,
         VirtualChangeDivisor, VirtualChangeDivisorW, VirtualAssertMulUNoOverflow,
-        VirtualZeroExtendWord, VirtualSignExtendWord, VirtualMove, VirtualMovsign, VirtualMULI, VirtualPow2,
+        VirtualZeroExtendWord, VirtualSignExtendWord, VirtualMovsign, VirtualMULI, VirtualPow2,
         VirtualPow2I, VirtualPow2W, VirtualPow2IW, VirtualRev8W, VirtualShiftRightBitmask, VirtualShiftRightBitmaskI,
         VirtualROTRI, VirtualROTRIW,
         VirtualSRA, VirtualSRAI, VirtualSRL, VirtualSRLI,
@@ -288,7 +300,6 @@ pub mod virtual_assert_valid_unsigned_remainder;
 pub mod virtual_assert_word_alignment;
 pub mod virtual_change_divisor;
 pub mod virtual_change_divisor_w;
-pub mod virtual_move;
 pub mod virtual_movsign;
 pub mod virtual_muli;
 pub mod virtual_pow2;

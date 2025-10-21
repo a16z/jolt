@@ -7,38 +7,15 @@ use crate::instruction::NormalizedInstruction;
 
 #[cfg(test)]
 use super::{
-    // amoaddd::AMOADDD, amoaddw::AMOADDW, amoandd::AMOANDD,
-    // amoandw::AMOANDW, amomaxd::AMOMAXD, amomaxud::AMOMAXUD, amomaxuw::AMOMAXUW, amomaxw::AMOMAXW,
-    // amomind::AMOMIND, amominud::AMOMINUD, amominuw::AMOMINUW, amominw::AMOMINW, amoord::AMOORD,
-    // amoorw::AMOORW, amoswapd::AMOSWAPD, amoswapw::AMOSWAPW, amoxord::AMOXORD, amoxorw::AMOXORW,
-    // lb::LB, lbu::LBU, lh::LH, lhu::LHU, lw::LW, lwu::LWU,
-    // sb::SB, sh::SH, sw::SW,
-    addiw::ADDIW,
-    addw::ADDW,
-    div::DIV,
-    divu::DIVU,
-    divuw::DIVUW,
-    divw::DIVW,
-    mulh::MULH,
-    mulhsu::MULHSU,
-    mulw::MULW,
-    rem::REM,
-    remu::REMU,
-    remuw::REMUW,
-    remw::REMW,
-    sll::SLL,
-    slli::SLLI,
-    slliw::SLLIW,
-    sllw::SLLW,
-    sra::SRA,
-    srai::SRAI,
-    sraiw::SRAIW,
-    sraw::SRAW,
-    srl::SRL,
-    srli::SRLI,
-    srliw::SRLIW,
-    srlw::SRLW,
-    subw::SUBW,
+    addiw::ADDIW, addw::ADDW, amoaddd::AMOADDD, amoaddw::AMOADDW, amoandd::AMOANDD,
+    amoandw::AMOANDW, amomaxd::AMOMAXD, amomaxud::AMOMAXUD, amomaxuw::AMOMAXUW, amomaxw::AMOMAXW,
+    amomind::AMOMIND, amominud::AMOMINUD, amominuw::AMOMINUW, amominw::AMOMINW, amoord::AMOORD,
+    amoorw::AMOORW, amoswapd::AMOSWAPD, amoswapw::AMOSWAPW, amoxord::AMOXORD, amoxorw::AMOXORW,
+    div::DIV, divu::DIVU, divuw::DIVUW, divw::DIVW, lb::LB, lbu::LBU, lh::LH, lhu::LHU, lw::LW,
+    lwu::LWU, mulh::MULH, mulhsu::MULHSU, mulw::MULW, rem::REM, remu::REMU, remuw::REMUW,
+    remw::REMW, sb::SB, sh::SH, sll::SLL, slli::SLLI, slliw::SLLIW, sllw::SLLW, sra::SRA,
+    srai::SRAI, sraiw::SRAIW, sraw::SRAW, srl::SRL, srli::SRLI, srliw::SRLIW, srlw::SRLW,
+    subw::SUBW, sw::SW,
 };
 
 use super::{RISCVInstruction, RISCVTrace};
@@ -52,6 +29,7 @@ use rand::{rngs::StdRng, SeedableRng};
 use super::{Cycle, RISCVCycle};
 
 pub const TEST_MEMORY_CAPACITY: u64 = 1024 * 1024;
+pub const DRAM_BASE: u64 = 0x80000000;
 
 macro_rules! test_inline_sequences {
   ($( $instr:ty ),* $(,)?) => {
@@ -67,14 +45,10 @@ macro_rules! test_inline_sequences {
 }
 
 test_inline_sequences!(
-    // NOTE: AMO instructinos panic on all cases, because `random` generates invalid
-    // memory accessses. Same with store and load instructions.
-    //
-    // AMOADDD, AMOADDW, AMOANDD, AMOANDW, AMOMAXD, AMOMAXUD, AMOMAXUW, AMOMAXW, AMOMIND,
-    // AMOMINUD, AMOMINUW, AMOMINW, AMOORD, AMOORW, AMOSWAPD, AMOSWAPW, AMOXORD, AMOXORW,
-    // LB, LBU, LH, LHU, LW, LWU, SB, SH, SW
-    ADDIW, ADDW, DIV, DIVU, DIVUW, DIVW, MULH, MULHSU, MULW, REM, REMU, REMUW, REMW, SLL, SLLI,
-    SLLIW, SLLW, SRA, SRAI, SRAIW, SRAW, SRL, SRLI, SRLIW, SRLW, SUBW,
+    AMOADDD, AMOADDW, AMOANDD, AMOANDW, AMOMAXD, AMOMAXUD, AMOMAXUW, AMOMAXW, AMOMIND, AMOMINUD,
+    AMOMINUW, AMOMINW, AMOORD, AMOORW, AMOSWAPD, AMOSWAPW, AMOXORD, AMOXORW, LB, LBU, LH, LHU, LW,
+    LWU, SB, SH, SW, ADDIW, ADDW, DIV, DIVU, DIVUW, DIVW, MULH, MULHSU, MULW, REM, REMU, REMUW,
+    REMW, SLL, SLLI, SLLIW, SLLW, SRA, SRAI, SRAIW, SRAW, SRL, SRLI, SRLIW, SRLW, SUBW,
 );
 
 fn test_rng() -> StdRng {
@@ -98,10 +72,38 @@ where
             );
 
         let mut original_cpu = Cpu::new(Box::new(DummyTerminal::default()));
+        let memory_config = common::jolt_device::MemoryConfig {
+            memory_size: TEST_MEMORY_CAPACITY,
+            program_size: Some(1024), // Set a small program size for tests
+            ..Default::default()
+        };
+        original_cpu.get_mut_mmu().jolt_device =
+            Some(common::jolt_device::JoltDevice::new(&memory_config));
         original_cpu.get_mut_mmu().init_memory(TEST_MEMORY_CAPACITY);
 
         let mut virtual_cpu = Cpu::new(Box::new(DummyTerminal::default()));
+        virtual_cpu.get_mut_mmu().jolt_device =
+            Some(common::jolt_device::JoltDevice::new(&memory_config));
         virtual_cpu.get_mut_mmu().init_memory(TEST_MEMORY_CAPACITY);
+
+        // Initialize memory with test values for AMO operations
+        // Write some test values at aligned addresses throughout memory
+        for i in 0..100 {
+            let offset = (i * 8) as u64; // 8-byte aligned offsets
+            if offset < TEST_MEMORY_CAPACITY {
+                let test_value = 0x12345678 + i;
+                // Store as doubleword for AMO.D instructions
+                let addr = DRAM_BASE + offset;
+                original_cpu
+                    .mmu
+                    .store_doubleword(addr, test_value as u64)
+                    .ok();
+                virtual_cpu
+                    .mmu
+                    .store_doubleword(addr, test_value as u64)
+                    .ok();
+            }
+        }
 
         if instr.operands.rs1 != 0 {
             original_cpu.x[instr.operands.rs1 as usize] = register_state.rs1_value() as i64;

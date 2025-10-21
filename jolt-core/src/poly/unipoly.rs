@@ -1,9 +1,11 @@
-use crate::field::JoltField;
+use crate::field::{ChallengeFieldOps, FieldChallengeOps, JoltField};
 use std::cmp::Ordering;
 use std::ops::{AddAssign, Index, IndexMut, Mul, MulAssign, Sub};
 
+use crate::poly::lagrange_poly::LagrangeHelper;
 use crate::transcripts::{AppendToTranscript, Transcript};
 use crate::utils::gaussian_elimination::gaussian_elimination;
+use allocative::Allocative;
 use ark_serialize::*;
 use rand_core::{CryptoRng, RngCore};
 use rayon::prelude::*;
@@ -13,8 +15,8 @@ use crate::utils::small_scalar::SmallScalar;
 
 // ax^2 + bx + c stored as vec![c,b,a]
 // ax^3 + bx^2 + cx + d stored as vec![d,c,b,a]
-#[derive(Debug, Clone, PartialEq)]
-pub struct UniPoly<F> {
+#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone, PartialEq, Allocative)]
+pub struct UniPoly<F: CanonicalSerialize + CanonicalDeserialize> {
     pub coeffs: Vec<F>,
 }
 
@@ -35,6 +37,15 @@ impl<F: JoltField> UniPoly<F> {
         UniPoly {
             coeffs: Self::vandermonde_interpolation(evals),
         }
+    }
+
+    /// Interpolate a polynomial `p(x)` from its evaluations at even points `0, 2, 3, ..., n-1`
+    /// and a hint `p(0) + p(1)`.
+    pub fn from_evals_and_hint(hint: F, evals: &[F]) -> Self {
+        let mut evals = evals.to_vec();
+        let eval_at_1 = hint - evals[0];
+        evals.insert(1, eval_at_1);
+        Self::from_evals(&evals)
     }
 
     /// Interpolates a polynomial from its evaluations on `[0, 1, ..., degree - 1, inf]`.
@@ -152,17 +163,29 @@ impl<F: JoltField> UniPoly<F> {
     }
 
     #[tracing::instrument(skip_all, name = "UniPoly::evaluate")]
-    pub fn evaluate(&self, r: &F) -> F {
+    pub fn evaluate<C>(&self, r: &C) -> F
+    where
+        C: Copy + Send + Sync + Into<F> + ChallengeFieldOps<F>,
+        F: FieldChallengeOps<C>,
+    {
         Self::eval_with_coeffs(&self.coeffs, r)
     }
 
     #[tracing::instrument(skip_all, name = "UniPoly::eval_with_coeffs")]
-    pub fn eval_with_coeffs(coeffs: &[F], r: &F) -> F {
+    pub fn eval_with_coeffs<C>(coeffs: &[F], r: &C) -> F
+    where
+        C: Copy + Send + Sync + Into<F> + ChallengeFieldOps<F>,
+        F: FieldChallengeOps<C>,
+    {
         let mut eval = coeffs[0];
-        let mut power = *r;
+        let mut power = (*r).into();
         for i in 1..coeffs.len() {
             eval += power * coeffs[i];
-            power *= *r;
+
+            #[allow(clippy::assign_op_pattern)]
+            {
+                power = power * *r;
+            }
         }
         eval
     }
@@ -282,6 +305,45 @@ impl<F: JoltField> UniPoly<F> {
         ];
         Self::from_coeff(coeffs.to_vec())
     }
+
+    /// Evaluate on a symmetric integer domain of size N and verify a domain-sum constraint.
+    ///
+    /// Contract/assumptions:
+    /// - Domain nodes are consecutive integers centered at 0: t_i = start + i where
+    ///   start = -floor((N-1)/2) and i ∈ {0..N-1}.
+    /// - N ≤ 16 (univariate-skip setting). For k ≤ N-1, the power sums S_k = Σ_i t_i^k fit in i64,
+    ///   and are computed via `LagrangeHelper::power_sums::<N>()`.
+    /// - `self` is the full, uncompressed univariate polynomial s(X) with monomial coefficients
+    ///   of degree exactly N-1 (asserted in debug builds).
+    /// - `claim` is the expected field value of Σ_{t in domain} s(t). In the first outer round of
+    ///   Spartan, this `claim` is zero.
+    ///
+    /// Behavior:
+    /// - Computes Σ_{t in domain} s(t) = Σ_j a_j · S_j using i64 power sums and checks equality to `claim`.
+    /// - Independently evaluates and returns s(x) using Horner.
+    ///
+    /// Returns:
+    /// - (ok, value) where `ok` is true iff the domain-sum equals `claim`, and `value` = s(x).
+    pub fn check_sum_evals_and_set_new_claim<const N: usize, const OUT_LEN: usize>(
+        &self,
+        claim: &F,
+        x: &F::Challenge,
+    ) -> (bool, F) {
+        // Relaxed: compute Σ_{t in symmetric N-window} s(t) via i128 power sums up to deg(s)
+        debug_assert_eq!(self.degree() + 1, OUT_LEN);
+        let power_sums = LagrangeHelper::power_sums::<N, OUT_LEN>();
+
+        // Check domain sum Σ_j a_j * S_j == claim
+        let mut sum = F::zero();
+        for (j, coeff) in self.coeffs.iter().enumerate() {
+            sum += coeff.mul_i128(power_sums[j]);
+        }
+        let ok = sum == *claim;
+
+        // Horner evaluation at x
+        let value = self.evaluate(x);
+        (ok, value)
+    }
 }
 
 impl<F: JoltField> AddAssign<&Self> for UniPoly<F> {
@@ -379,14 +441,14 @@ impl<F: JoltField> CompressedUniPoly<F> {
 
     // In the verifier we do not have to check that f(0) + f(1) = hint as we can just
     // recover the linear term assuming the prover did it right, then eval the poly
-    pub fn eval_from_hint(&self, hint: &F, x: &F) -> F {
+    pub fn eval_from_hint(&self, hint: &F, x: &F::Challenge) -> F {
         let mut linear_term =
             *hint - self.coeffs_except_linear_term[0] - self.coeffs_except_linear_term[0];
         for i in 1..self.coeffs_except_linear_term.len() {
             linear_term -= self.coeffs_except_linear_term[i];
         }
 
-        let mut running_point = *x;
+        let mut running_point: F = (*x).into();
         let mut running_sum = self.coeffs_except_linear_term[0] + *x * linear_term;
         for i in 1..self.coeffs_except_linear_term.len() {
             running_point = running_point * x;
@@ -397,6 +459,16 @@ impl<F: JoltField> CompressedUniPoly<F> {
 
     pub fn degree(&self) -> usize {
         self.coeffs_except_linear_term.len()
+    }
+}
+
+impl<F: JoltField> AppendToTranscript for UniPoly<F> {
+    fn append_to_transcript<ProofTranscript: Transcript>(&self, transcript: &mut ProofTranscript) {
+        transcript.append_message(b"UncompressedUniPoly_begin");
+        for i in 0..self.coeffs.len() {
+            transcript.append_scalar(&self.coeffs[i]);
+        }
+        transcript.append_message(b"UncompressedUniPoly_end");
     }
 }
 
@@ -422,7 +494,9 @@ mod tests {
         // Our degree 3 polynomial is: 5 + x + 3x^2 + 9x^3.
         let gt_poly = UniPoly::<Fr>::from_coeff(vec![5.into(), 1.into(), 3.into(), 9.into()]);
         let degree = 3;
-        let finite_evals = (0..degree).map(|x| gt_poly.evaluate(&x.into())).collect();
+        let finite_evals = (0..degree)
+            .map(|x| gt_poly.evaluate::<Fr>(&x.into()))
+            .collect();
         let eval_at_infinity = *gt_poly.coeffs.last().unwrap();
         let toom_evals = [finite_evals, vec![eval_at_infinity]].concat();
 
@@ -459,7 +533,7 @@ mod tests {
         }
 
         let e3 = F::from_u64(28u64);
-        assert_eq!(poly.evaluate(&F::from_u64(3u64)), e3);
+        assert_eq!(poly.evaluate::<F>(&F::from_u64(3u64)), e3);
     }
 
     #[test]
@@ -491,7 +565,7 @@ mod tests {
         }
 
         let e4 = F::from_u64(109u64);
-        assert_eq!(poly.evaluate(&F::from_u64(4u64)), e4);
+        assert_eq!(poly.evaluate::<F>(&F::from_u64(4u64)), e4);
     }
 
     pub fn naive_mul<F: JoltField>(ours: &UniPoly<F>, other: &UniPoly<F>) -> UniPoly<F> {

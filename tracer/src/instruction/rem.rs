@@ -1,8 +1,8 @@
-use crate::instruction::srai::SRAI;
 use crate::instruction::sub::SUB;
 use crate::instruction::virtual_assert_valid_div0::VirtualAssertValidDiv0;
 use crate::instruction::virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder;
 use crate::instruction::xor::XOR;
+use crate::instruction::{addi::ADDI, srai::SRAI};
 use crate::utils::inline_helpers::InstrAssembler;
 use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use serde::{Deserialize, Serialize};
@@ -14,8 +14,8 @@ use crate::{
 
 use super::{
     add::ADD, format::format_r::FormatR, mul::MUL, virtual_advice::VirtualAdvice,
-    virtual_assert_eq::VirtualAssertEQ, virtual_change_divisor::VirtualChangeDivisor,
-    virtual_move::VirtualMove, Cycle, Instruction, RISCVInstruction, RISCVTrace,
+    virtual_assert_eq::VirtualAssertEQ, virtual_change_divisor::VirtualChangeDivisor, Cycle,
+    Instruction, RISCVInstruction, RISCVTrace,
 };
 
 declare_riscv_instr!(
@@ -153,7 +153,7 @@ impl RISCVTrace for REM {
         asm.emit_b::<VirtualAssertValidUnsignedRemainder>(*a3, *t1, 0);
 
         // Move signed remainder to destination
-        asm.emit_i::<VirtualMove>(self.operands.rd, *t3, 0);
+        asm.emit_i::<ADDI>(self.operands.rd, *t3, 0);
         asm.finalize()
     }
 }

@@ -24,11 +24,13 @@ pub struct RegisterStateFormatLoad {
 impl InstructionRegisterState for RegisterStateFormatLoad {
     #[cfg(any(feature = "test-utils", test))]
     fn random(rng: &mut rand::rngs::StdRng) -> Self {
-        use crate::instruction::test::TEST_MEMORY_CAPACITY;
+        use crate::instruction::test::{DRAM_BASE, TEST_MEMORY_CAPACITY};
         use rand::RngCore;
+        // Use a smaller range to avoid issues with boundaries
+        let max_offset = (TEST_MEMORY_CAPACITY / 2).min(0x10000);
         Self {
             rd: (rng.next_u64(), rng.next_u64()),
-            rs1: rng.next_u64() % TEST_MEMORY_CAPACITY,
+            rs1: DRAM_BASE + (rng.next_u64() % max_offset),
         }
     }
 
@@ -70,13 +72,14 @@ impl InstructionFormat for FormatLoad {
 
     #[cfg(any(feature = "test-utils", test))]
     fn random(rng: &mut rand::rngs::StdRng) -> Self {
-        use crate::instruction::test::TEST_MEMORY_CAPACITY;
         use common::constants::RISCV_REGISTER_COUNT;
         use rand::RngCore;
         Self {
-            imm: rng.next_u64() as i64 % TEST_MEMORY_CAPACITY as i64,
+            // Keep imm small to avoid going out of bounds when added to rs1
+            imm: (rng.next_u64() as i64 % 256) - 128, // Range: [-128, 127]
             rd: (rng.next_u64() as u8 % RISCV_REGISTER_COUNT),
-            rs1: (rng.next_u64() as u8 % RISCV_REGISTER_COUNT),
+            // rs1 should never be 0 for memory operations (x0 is hardwired to 0)
+            rs1: 1 + (rng.next_u64() as u8 % (RISCV_REGISTER_COUNT - 1)),
         }
     }
 }

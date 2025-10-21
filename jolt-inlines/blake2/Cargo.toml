@@ -3,17 +3,20 @@ name = "jolt-inlines-blake2"
 version = "0.1.0"
 edition = "2021"
 description = "BLAKE2b inline implementations for Jolt VM"
+license = "MIT"
+homepage = "https://github.com/a16z/jolt/README.md"
+repository = "https://github.com/a16z/jolt"
 
 [features]
 default = []
 host = ["dep:ctor", "dep:tracer"]
 
 [dependencies]
-ctor = { version = "0.2", optional = true }
-tracer = { path = "../../tracer", optional = true }
+ctor = { workspace = true, optional = true }
+tracer = { workspace = true, optional = true, features = ["std"] }
 
 [dev-dependencies]
-hex-literal = "0.4.1"
-blake2 = "0.10"
-rand = "0.8"
-tracer = { path = "../../tracer", features = ["test-utils"] }
+hex-literal.workspace = true
+blake2.workspace = true
+rand = { workspace = true, features = ["std", "std_rng"] }
+tracer = { workspace = true, features = ["std", "test-utils"] }

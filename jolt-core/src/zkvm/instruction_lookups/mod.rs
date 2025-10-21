@@ -40,16 +40,81 @@ pub const K_CHUNK: usize = 1 << LOG_K_CHUNK;
 #[derive(Default)]
 pub struct LookupsDag<F: JoltField> {
     G: Option<[Vec<F>; D]>,
-    eq_r_cycle: Option<Vec<F>>,
 }
 
 impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStages<F, T, PCS>
     for LookupsDag<F>
 {
-    fn stage2_prover_instances(
+    fn stage3_prover_instances(
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstance<F>>> {
+    ) -> Vec<Box<dyn SumcheckInstance<F, T>>> {
+        // Ensure G is available even if an earlier stage did not set it
+        let G = if let Some(G) = self.G.take() {
+            G
+        } else {
+            let (_, _, trace, _, _) = sm.get_prover_data();
+            let r_cycle = sm
+                .get_virtual_polynomial_opening(
+                    VirtualPolynomial::LookupOutput,
+                    SumcheckId::SpartanOuter,
+                )
+                .0
+                .r
+                .clone();
+            let eq_r_cycle = EqPolynomial::evals(&r_cycle);
+            compute_ra_evals(trace, &eq_r_cycle)
+        };
+        let hamming_weight = HammingWeightSumcheck::new_prover(sm, G);
+
+        #[cfg(feature = "allocative")]
+        {
+            print_data_structure_heap_usage(
+                "Instruction execution HammingWeightSumcheck",
+                &hamming_weight,
+            );
+        }
+
+        vec![Box::new(hamming_weight)]
+    }
+
+    fn stage3_verifier_instances(
+        &mut self,
+        sm: &mut StateManager<'_, F, T, PCS>,
+    ) -> Vec<Box<dyn SumcheckInstance<F, T>>> {
+        let hamming_weight = HammingWeightSumcheck::new_verifier(sm);
+
+        vec![Box::new(hamming_weight)]
+    }
+
+    fn stage5_prover_instances(
+        &mut self,
+        sm: &mut StateManager<'_, F, T, PCS>,
+    ) -> Vec<Box<dyn SumcheckInstance<F, T>>> {
+        let read_raf = ReadRafSumcheck::new_prover(sm);
+
+        #[cfg(feature = "allocative")]
+        {
+            print_data_structure_heap_usage("Instruction execution ReadRafSumcheck", &read_raf);
+        }
+
+        vec![Box::new(read_raf)]
+    }
+
+    fn stage5_verifier_instances(
+        &mut self,
+        sm: &mut StateManager<'_, F, T, PCS>,
+    ) -> Vec<Box<dyn SumcheckInstance<F, T>>> {
+        let read_raf = ReadRafSumcheck::new_verifier(sm);
+
+        vec![Box::new(read_raf)]
+    }
+
+    fn stage6_prover_instances(
+        &mut self,
+        sm: &mut StateManager<'_, F, T, PCS>,
+    ) -> Vec<Box<dyn SumcheckInstance<F, T>>> {
+        let ra_virtual = RaSumcheck::new_prover(sm);
         let (_, _, trace, _, _) = sm.get_prover_data();
         let r_cycle = sm
             .get_virtual_polynomial_opening(
@@ -61,66 +126,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
             .clone();
         let eq_r_cycle = EqPolynomial::evals(&r_cycle);
         let F = compute_ra_evals(trace, &eq_r_cycle);
-
-        self.eq_r_cycle = Some(eq_r_cycle);
-        self.G = Some(F.clone());
-
         let booleanity = BooleanitySumcheck::new_prover(sm, F);
-
-        #[cfg(feature = "allocative")]
-        {
-            print_data_structure_heap_usage(
-                "Instruction execution BooleanitySumcheck",
-                &booleanity,
-            );
-        }
-
-        vec![Box::new(booleanity)]
-    }
-
-    fn stage2_verifier_instances(
-        &mut self,
-        sm: &mut StateManager<'_, F, T, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstance<F>>> {
-        let booleanity = BooleanitySumcheck::new_verifier(sm);
-
-        vec![Box::new(booleanity)]
-    }
-
-    fn stage3_prover_instances(
-        &mut self,
-        sm: &mut StateManager<'_, F, T, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstance<F>>> {
-        let read_raf = ReadRafSumcheck::new_prover(sm, self.eq_r_cycle.take().unwrap());
-        let hamming_weight = HammingWeightSumcheck::new_prover(sm, self.G.take().unwrap());
-
-        #[cfg(feature = "allocative")]
-        {
-            print_data_structure_heap_usage("Instruction execution ReadRafSumcheck", &read_raf);
-            print_data_structure_heap_usage(
-                "Instruction execution HammingWeightSumcheck",
-                &hamming_weight,
-            );
-        }
-
-        vec![Box::new(read_raf), Box::new(hamming_weight)]
-    }
-
-    fn stage3_verifier_instances(
-        &mut self,
-        sm: &mut StateManager<'_, F, T, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstance<F>>> {
-        let read_raf = ReadRafSumcheck::new_verifier(sm);
-        let hamming_weight = HammingWeightSumcheck::new_verifier(sm);
-
-        vec![Box::new(read_raf), Box::new(hamming_weight)]
-    }
-
-    fn stage4_prover_instances(
-        &mut self,
-        sm: &mut StateManager<'_, F, T, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstance<F>>> {
-        let ra_virtual = RaSumcheck::new_prover(sm);
 
         #[cfg(feature = "allocative")]
         {
@@ -128,18 +134,22 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
                 "Instruction execution RAVirtual sumcheck",
                 &ra_virtual,
             );
+            print_data_structure_heap_usage(
+                "Instruction execution BooleanitySumcheck",
+                &booleanity,
+            );
         }
 
-        vec![Box::new(ra_virtual)]
+        vec![Box::new(ra_virtual), Box::new(booleanity)]
     }
 
-    fn stage4_verifier_instances(
+    fn stage6_verifier_instances(
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstance<F>>> {
+    ) -> Vec<Box<dyn SumcheckInstance<F, T>>> {
         let ra_virtual = RaSumcheck::new_verifier(sm);
-
-        vec![Box::new(ra_virtual)]
+        let booleanity = BooleanitySumcheck::new_verifier(sm);
+        vec![Box::new(ra_virtual), Box::new(booleanity)]
     }
 }
 

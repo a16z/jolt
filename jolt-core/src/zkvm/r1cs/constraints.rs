@@ -1,37 +1,60 @@
-//! Compile-time constant R1CS constraints
+//! Compile-time constant R1CS constraints with grouped evaluation
 //!
 //! This module provides a static, compile-time representation of R1CS constraints
-//! to replace the dynamic constraint building in the prover's hot path.
+//! and evaluates them in two groups optimized for the univariate-skip protocol.
+//! Group 0 and Group 1 are evaluated separately and then folded via Lagrange
+//! weights using fused accumulators.
+//!
+//! - Group 0 (first group) contains `UNIVARIATE_SKIP_DOMAIN_SIZE = ceil(N/2)`
+//!   constraints. Its `Az` are booleans and its `Bz` fit in `i128`.
+//! - Group 1 (second group) is the complement of Group 0. Its `Az` are `u8`
+//!   and its `Bz` use `S160` for wider arithmetic.
+//!
+//! Grouped evaluation entry points:
+//! - `eval_az_first_group` -> `[bool; UNIVARIATE_SKIP_DOMAIN_SIZE]`
+//! - `eval_bz_first_group` -> `[i128; UNIVARIATE_SKIP_DOMAIN_SIZE]`
+//! - `eval_az_second_group` -> `[u8; NUM_REMAINING_R1CS_CONSTRAINTS]`
+//! - `eval_bz_second_group` -> `[S160; NUM_REMAINING_R1CS_CONSTRAINTS]`
+//! - `compute_az_r_group0/group1` and `compute_bz_r_group0/group1` fold these
+//!   vectors against Lagrange weights at the evaluation point `r` using
+//!   specialized fused accumulators with a single Barrett reduction at the end.
 //!
 //! ## Adding a new constraint
 //!
-//! To add a new R1CS constraint:
-//! 1. Add a new variant to `ConstraintName` enum
-//! 2. Add the constraint to `UNIFORM_R1CS` array using appropriate macro
-//! 3. Optionally (but encouraged) add custom evaluators in `eval_az_by_name` and `eval_bz_by_name`
-//! 4. Update `NUM_R1CS_CONSTRAINTS`
+//! 1. Add a new variant to `ConstraintName` (maintain the same order as `UNIFORM_R1CS`).
+//! 2. Add the constraint to `UNIFORM_R1CS` using the appropriate macro.
+//! 3. Assign the constraint to a group:
+//!    - Put its name in `UNIFORM_R1CS_FIRST_GROUP_NAMES` if it fits Group 0
+//!      characteristics (boolean guards, ~64-bit differences in `Bz`).
+//!    - Otherwise it will appear in Group 1 automatically as the complement.
+//! 4. Maintain the grouping invariant: the first group must contain exactly
+//!    `UNIVARIATE_SKIP_DOMAIN_SIZE = ceil(NUM_R1CS_CONSTRAINTS/2)` constraints,
+//!    so the first group never has fewer elements than the second.
 //!
 //! ## Removing a constraint
 //!
-//! To remove an R1CS constraint:
-//! 1. Remove the constraint from `UNIFORM_R1CS` array
-//! 2. Remove the corresponding variant from `ConstraintName` enum
-//! 3. Remove any custom evaluator from `eval_az_bz_by_name`
-//! 4. Update `NUM_R1CS_CONSTRAINTS`
+//! 1. Remove it from `UNIFORM_R1CS`.
+//! 2. Remove the corresponding variant from `ConstraintName`.
+//! 3. If present, remove its name from `UNIFORM_R1CS_FIRST_GROUP_NAMES`.
+//! 4. Re-check that `UNIFORM_R1CS_FIRST_GROUP_NAMES.len()` equals
+//!    `UNIVARIATE_SKIP_DOMAIN_SIZE` after the change; adjust the first group
+//!    selection to satisfy the invariant that the first group is never smaller
+//!    than the second.
 //!
-//! ## Custom evaluators
+//! ## Grouping guidance
 //!
-//! Custom evaluators in `eval_az_by_name`/`eval_bz_by_name` provide optimized Az/Bz evaluation
-//! using `SmallScalar` types to avoid field conversions. They should:
-//! - Use appropriate `I8OrI96` variants (prefer `Bool` or `I8` for flags/small sums)
-//! - Use appropriate `S160` variants (prefer `U64AndSign` for u64-u64 diffs)
-//! - Only use `U128AndSign` when 128-bit arithmetic is inherently required
+//! - Prefer Group 0 for boolean `Az` and `Bz` that can be expressed as `i128`.
+//! - Prefer Group 1 for constraints whose `Az` are small nonnegative integers
+//!   and whose `Bz` require wider arithmetic (`S160`).
+//! - This split minimizes conversions and maximizes accumulator efficiency.
 
 use super::inputs::{JoltR1CSInputs, R1CSCycleInputs};
-use crate::field::JoltField;
-use crate::poly::multilinear_polynomial::MultilinearPolynomial;
+use crate::field::{AccumulateInPlace, JoltField};
+use crate::utils::accumulation::{Acc5U, Acc6S, Acc7S};
 use crate::zkvm::instruction::CircuitFlags;
-use ark_ff::biginteger::{I8OrI96, S160};
+use ark_ff::biginteger::S160;
+use strum::EnumCount;
+use strum_macros::{EnumCount, EnumIter};
 
 pub use super::ops::{Term, LC};
 
@@ -40,50 +63,16 @@ pub use super::ops::{Term, LC};
 pub struct Constraint {
     pub a: LC,
     pub b: LC,
-    pub c: LC,
+    // No c needed for now, all eq-conditional constraints
+    // pub c: LC,
 }
 
 impl Constraint {
-    pub const fn new(a: LC, b: LC, c: LC) -> Self {
-        Self { a, b, c }
-    }
-
-    /// Evaluate this constraint at a specific row in the witness polynomials
-    /// Returns (a_eval, b_eval, c_eval) tuple
-    #[inline]
-    pub fn evaluate_row<F: JoltField>(
-        &self,
-        flattened_polynomials: &[MultilinearPolynomial<F>],
-        row: usize,
-    ) -> (F, F, F) {
-        let a_eval = self.a.evaluate_row(flattened_polynomials, row);
-        let b_eval = self.b.evaluate_row(flattened_polynomials, row);
-        let c_eval = self.c.evaluate_row(flattened_polynomials, row);
-        (a_eval, b_eval, c_eval)
+    pub const fn new(a: LC, b: LC) -> Self {
+        Self { a, b }
     }
 }
 
-impl LC {
-    /// Evaluate this LC given the inputs for a R1CS cycle, using field semantics, only for testing
-    #[cfg(test)]
-    pub fn evaluate_row_with<F: JoltField>(&self, inputs: &R1CSCycleInputs) -> F {
-        let mut result = F::zero();
-        self.for_each_term(|input_index, coeff| {
-            result += crate::utils::small_scalar::SmallScalar::field_mul(
-                &coeff,
-                inputs.to_field::<F>(JoltR1CSInputs::from_index(input_index)),
-            );
-        });
-        if let Some(c) = self.const_term() {
-            result += crate::utils::small_scalar::SmallScalar::to_field::<F>(c);
-        }
-        result
-    }
-}
-
-// =============================================================================
-// CONSTRAINT BUILDER FUNCTIONS
-// =============================================================================
 /// Creates: condition * (left - right) == 0
 pub const fn constraint_eq_conditional_lc(condition: LC, left: LC, right: LC) -> Constraint {
     Constraint::new(
@@ -92,81 +81,36 @@ pub const fn constraint_eq_conditional_lc(condition: LC, left: LC, right: LC) ->
             Some(b) => b,
             None => LC::zero(),
         },
-        LC::zero(),
     )
 }
 
-// =============================================================================
-// Named constraints with minimal Cz marker
-// =============================================================================
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, strum_macros::EnumIter)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, EnumCount, EnumIter)]
 pub enum ConstraintName {
-    LeftInputEqRs1,
-    LeftInputEqPC,
-    LeftInputZeroOtherwise,
-    RightInputEqRs2,
-    RightInputEqImm,
-    RightInputZeroOtherwise,
     RamAddrEqRs1PlusImmIfLoadStore,
+    RamAddrEqZeroIfNotLoadStore,
     RamReadEqRamWriteIfLoad,
     RamReadEqRdWriteIfLoad,
     Rs2EqRamWriteIfStore,
     LeftLookupZeroUnlessAddSubMul,
+    LeftLookupEqLeftInputOtherwise,
     RightLookupAdd,
     RightLookupSub,
-    ProductDef,
     RightLookupEqProductIfMul,
     RightLookupEqRightInputOtherwise,
     AssertLookupOne,
-    WriteLookupOutputToRDDef,
     RdWriteEqLookupIfWriteLookupToRd,
-    WritePCtoRDDef,
     RdWriteEqPCPlusConstIfWritePCtoRD,
-    ShouldJumpDef,
     NextUnexpPCEqLookupIfShouldJump,
-    ShouldBranchDef,
     NextUnexpPCEqPCPlusImmIfShouldBranch,
     NextUnexpPCUpdateOtherwise,
     NextPCEqPCPlusOneIfInline,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CzKind {
-    Zero,
-    NonZero,
+    MustStartSequenceFromBeginning,
 }
 
 #[derive(Clone, Copy, Debug)]
 pub struct NamedConstraint {
     pub name: ConstraintName,
     pub cons: Constraint,
-    pub cz: CzKind,
-}
-
-/// Creates: left * right == result
-pub const fn constraint_prod_lc(left: LC, right: LC, result: LC) -> Constraint {
-    Constraint::new(left, right, result)
-}
-
-/// Creates: condition * (true_val - false_val) == (result - false_val)
-pub const fn constraint_if_else_lc(
-    condition: LC,
-    true_val: LC,
-    false_val: LC,
-    result: LC,
-) -> Constraint {
-    Constraint::new(
-        condition,
-        match true_val.checked_sub(false_val) {
-            Some(b) => b,
-            None => LC::zero(),
-        },
-        match result.checked_sub(false_val) {
-            Some(c) => c,
-            None => LC::zero(),
-        },
-    )
 }
 
 /// r1cs_eq_conditional!: verbose, condition-first equality constraint
@@ -182,156 +126,29 @@ macro_rules! r1cs_eq_conditional {
                 $crate::lc!($($left)*),
                 $crate::lc!($($right)*),
             ),
-            cz: $crate::zkvm::r1cs::constraints::CzKind::Zero,
-        }
-    }};
-}
-
-/// r1cs_if_else!: verbose if-then-else with explicit result
-///
-/// Usage: `r1cs_if_else!(name: ConstraintName::Foo, if { COND } => { TRUE } else { FALSE } => { RESULT });`
-#[macro_export]
-macro_rules! r1cs_if_else {
-    (name: $nm:expr, if { $($cond:tt)* } => ( $($tval:tt)* ) else ( $($fval:tt)* ) => ( $($result:tt)* ) ) => {{
-        $crate::zkvm::r1cs::constraints::NamedConstraint {
-            name: $nm,
-            cons: $crate::zkvm::r1cs::constraints::constraint_if_else_lc(
-                $crate::lc!($($cond)*),
-                $crate::lc!($($tval)*),
-                $crate::lc!($($fval)*),
-                $crate::lc!($($result)*),
-            ),
-            cz: $crate::zkvm::r1cs::constraints::CzKind::NonZero,
-        }
-    }};
-}
-
-/// r1cs_prod!: product constraint
-///
-/// Usage: `r1cs_prod!(name: ConstraintName::Foo, { LEFT } * { RIGHT } == { RESULT });`
-#[macro_export]
-macro_rules! r1cs_prod {
-    (name: $nm:expr, ( $($left:tt)* ) * ( $($right:tt)* ) == ( $($result:tt)* ) ) => {{
-        $crate::zkvm::r1cs::constraints::NamedConstraint {
-            name: $nm,
-            cons: $crate::zkvm::r1cs::constraints::constraint_prod_lc(
-                $crate::lc!($($left)*),
-                $crate::lc!($($right)*),
-                $crate::lc!($($result)*),
-            ),
-            cz: $crate::zkvm::r1cs::constraints::CzKind::NonZero,
-        }
-    }};
-}
-
-// ==========================
-// Named macro variants
-// ==========================
-
-#[macro_export]
-macro_rules! r1cs_eq_named {
-    (name: $nm:expr, if { $($cond:tt)* } => ( $($left:tt)* ) == ( $($right:tt)* ) ) => {{
-        $crate::zkvm::r1cs::constraints::NamedConstraint {
-            name: $nm,
-            cons: $crate::zkvm::r1cs::constraints::constraint_eq_conditional_lc(
-                $crate::lc!($($cond)*),
-                $crate::lc!($($left)*),
-                $crate::lc!($($right)*),
-            ),
-            cz: $crate::zkvm::r1cs::constraints::CzKind::Zero,
-        }
-    }};
-}
-
-#[macro_export]
-macro_rules! r1cs_if_else_named {
-    (name: $nm:expr, if { $($cond:tt)* } => ( $($tval:tt)* ) else ( $($fval:tt)* ) => ( $($result:tt)* ) ) => {{
-        $crate::zkvm::r1cs::constraints::NamedConstraint {
-            name: $nm,
-            cons: $crate::zkvm::r1cs::constraints::constraint_if_else_lc(
-                $crate::lc!($($cond)*),
-                $crate::lc!($($tval)*),
-                $crate::lc!($($fval)*),
-                $crate::lc!($($result)*),
-            ),
-            cz: $crate::zkvm::r1cs::constraints::CzKind::NonZero,
-        }
-    }};
-}
-
-#[macro_export]
-macro_rules! r1cs_prod_named {
-    (name: $nm:expr, ( $($left:tt)* ) * ( $($right:tt)* ) == ( $($result:tt)* ) ) => {{
-        $crate::zkvm::r1cs::constraints::NamedConstraint {
-            name: $nm,
-            cons: $crate::zkvm::r1cs::constraints::constraint_prod_lc(
-                $crate::lc!($($left)*),
-                $crate::lc!($($right)*),
-                $crate::lc!($($result)*),
-            ),
-            cz: $crate::zkvm::r1cs::constraints::CzKind::NonZero,
         }
     }};
 }
 
 /// Number of uniform R1CS constraints
-pub const NUM_R1CS_CONSTRAINTS: usize = 27;
+pub const NUM_R1CS_CONSTRAINTS: usize = ConstraintName::COUNT;
 
-/// Static table of all 27 R1CS uniform constraints.
+/// Static table of all R1CS uniform constraints.
 pub static UNIFORM_R1CS: [NamedConstraint; NUM_R1CS_CONSTRAINTS] = [
-    // if LeftOperandIsRs1Value { assert!(LeftInstructionInput == Rs1Value) }
-    r1cs_eq_conditional!(
-        name: ConstraintName::LeftInputEqRs1,
-        if { { JoltR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsRs1Value) } }
-        => ( { JoltR1CSInputs::LeftInstructionInput } ) == ( { JoltR1CSInputs::Rs1Value } )
-    ),
-    // if LeftOperandIsPC { assert!(LeftInstructionInput == UnexpandedPC) }
-    r1cs_eq_conditional!(
-        name: ConstraintName::LeftInputEqPC,
-        if { { JoltR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsPC) } }
-        => ( { JoltR1CSInputs::LeftInstructionInput } ) == ( { JoltR1CSInputs::UnexpandedPC } )
-    ),
-    // if !(LeftOperandIsRs1Value || LeftOperandIsPC)  {
-    //     assert!(LeftInstructionInput == 0)
-    // }
-    // Note that LeftOperandIsRs1Value and LeftOperandIsPC are mutually exclusive flags
-    r1cs_eq_conditional!(
-        name: ConstraintName::LeftInputZeroOtherwise,
-        if { { 1i128 } - { JoltR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsRs1Value) } - { JoltR1CSInputs::OpFlags(CircuitFlags::LeftOperandIsPC) } }
-        => ( { JoltR1CSInputs::LeftInstructionInput } ) == ( { 0i128 } )
-    ),
-    // if RightOperandIsRs2Value { assert!(RightInstructionInput == Rs2Value) }
-    r1cs_eq_conditional!(
-        name: ConstraintName::RightInputEqRs2,
-        if { { JoltR1CSInputs::OpFlags(CircuitFlags::RightOperandIsRs2Value) } }
-        => ( { JoltR1CSInputs::RightInstructionInput } ) == ( { JoltR1CSInputs::Rs2Value } )
-    ),
-    // if RightOperandIsImm { assert!(RightInstructionInput == Imm) }
-    r1cs_eq_conditional!(
-        name: ConstraintName::RightInputEqImm,
-        if { { JoltR1CSInputs::OpFlags(CircuitFlags::RightOperandIsImm) } }
-        => ( { JoltR1CSInputs::RightInstructionInput } ) == ( { JoltR1CSInputs::Imm } )
-    ),
-    // if !(RightOperandIsRs2Value || RightOperandIsImm)  {
-    //     assert!(RightInstructionInput == 0)
-    // }
-    // Note that RightOperandIsRs2Value and RightOperandIsImm are mutually exclusive flags
-    r1cs_eq_conditional!(
-        name: ConstraintName::RightInputZeroOtherwise,
-        if { { 1i128 } - { JoltR1CSInputs::OpFlags(CircuitFlags::RightOperandIsRs2Value) } - { JoltR1CSInputs::OpFlags(CircuitFlags::RightOperandIsImm) } }
-        => ( { JoltR1CSInputs::RightInstructionInput } ) == ( { 0i128 } )
-    ),
     // if Load || Store {
     //     assert!(RamAddress == Rs1Value + Imm)
     // } else {
     //     assert!(RamAddress == 0)
     // }
-    r1cs_if_else!(
+    r1cs_eq_conditional!(
         name: ConstraintName::RamAddrEqRs1PlusImmIfLoadStore,
         if { { JoltR1CSInputs::OpFlags(CircuitFlags::Load) } + { JoltR1CSInputs::OpFlags(CircuitFlags::Store) } }
-        => ( { JoltR1CSInputs::Rs1Value } + { JoltR1CSInputs::Imm } )
-        else ( { 0i128 } )
-        => ( { JoltR1CSInputs::RamAddress } )
+        => ( { JoltR1CSInputs::RamAddress } ) == ( { JoltR1CSInputs::Rs1Value } + { JoltR1CSInputs::Imm } )
+    ),
+    r1cs_eq_conditional!(
+        name: ConstraintName::RamAddrEqZeroIfNotLoadStore,
+        if { { 1i128 } - { JoltR1CSInputs::OpFlags(CircuitFlags::Load) } - { JoltR1CSInputs::OpFlags(CircuitFlags::Store) } }
+        => ( { JoltR1CSInputs::RamAddress } ) == ( { 0i128 } )
     ),
     // if Load {
     //     assert!(RamReadValue == RamWriteValue)
@@ -363,12 +180,15 @@ pub static UNIFORM_R1CS: [NamedConstraint; NUM_R1CS_CONSTRAINTS] = [
     // } else {
     //     assert!(LeftLookupOperand == LeftInstructionInput)
     // }
-    r1cs_if_else!(
+    r1cs_eq_conditional!(
         name: ConstraintName::LeftLookupZeroUnlessAddSubMul,
         if { { JoltR1CSInputs::OpFlags(CircuitFlags::AddOperands) } + { JoltR1CSInputs::OpFlags(CircuitFlags::SubtractOperands) } + { JoltR1CSInputs::OpFlags(CircuitFlags::MultiplyOperands) } }
-        => ( { 0i128 } )
-        else ( { JoltR1CSInputs::LeftInstructionInput } )
-        => ( { JoltR1CSInputs::LeftLookupOperand } )
+        => ( { JoltR1CSInputs::LeftLookupOperand } ) == ( { 0i128 } )
+    ),
+    r1cs_eq_conditional!(
+        name: ConstraintName::LeftLookupEqLeftInputOtherwise,
+        if { { 1i128 } - { JoltR1CSInputs::OpFlags(CircuitFlags::AddOperands) } - { JoltR1CSInputs::OpFlags(CircuitFlags::SubtractOperands) } - { JoltR1CSInputs::OpFlags(CircuitFlags::MultiplyOperands) } }
+        => ( { JoltR1CSInputs::LeftLookupOperand } ) == ( { JoltR1CSInputs::LeftInstructionInput } )
     ),
     // If AddOperands {
     //     assert!(RightLookupOperand == LeftInstructionInput + RightInstructionInput)
@@ -386,14 +206,6 @@ pub static UNIFORM_R1CS: [NamedConstraint; NUM_R1CS_CONSTRAINTS] = [
         name: ConstraintName::RightLookupSub,
         if { { JoltR1CSInputs::OpFlags(CircuitFlags::SubtractOperands) } }
         => ( { JoltR1CSInputs::RightLookupOperand } ) == ( { JoltR1CSInputs::LeftInstructionInput } - { JoltR1CSInputs::RightInstructionInput } + { 0x10000000000000000i128 } )
-    ),
-    // if MultiplyOperands {
-    //     assert!(RightLookupOperand == Rs1Value * Rs2Value)
-    // }
-    r1cs_prod!(
-        name: ConstraintName::ProductDef,
-        ({ JoltR1CSInputs::LeftInstructionInput }) * ({ JoltR1CSInputs::RightInstructionInput })
-            == ({ JoltR1CSInputs::Product })
     ),
     r1cs_eq_conditional!(
         name: ConstraintName::RightLookupEqProductIfMul,
@@ -420,12 +232,6 @@ pub static UNIFORM_R1CS: [NamedConstraint; NUM_R1CS_CONSTRAINTS] = [
     // if Rd != 0 && WriteLookupOutputToRD {
     //     assert!(RdWriteValue == LookupOutput)
     // }
-    r1cs_prod!(
-        name: ConstraintName::WriteLookupOutputToRDDef,
-        ({ JoltR1CSInputs::Rd })
-            * ({ JoltR1CSInputs::OpFlags(CircuitFlags::WriteLookupOutputToRD) })
-            == ({ JoltR1CSInputs::WriteLookupOutputToRD })
-    ),
     r1cs_eq_conditional!(
         name: ConstraintName::RdWriteEqLookupIfWriteLookupToRd,
         if { { JoltR1CSInputs::WriteLookupOutputToRD } }
@@ -438,11 +244,6 @@ pub static UNIFORM_R1CS: [NamedConstraint; NUM_R1CS_CONSTRAINTS] = [
     //          assert!(RdWriteValue == UnexpandedPC + 2)
     //     }
     // }
-    r1cs_prod!(
-        name: ConstraintName::WritePCtoRDDef,
-        ({ JoltR1CSInputs::Rd }) * ({ JoltR1CSInputs::OpFlags(CircuitFlags::Jump) })
-            == ({ JoltR1CSInputs::WritePCtoRD })
-    ),
     r1cs_eq_conditional!(
         name: ConstraintName::RdWriteEqPCPlusConstIfWritePCtoRD,
         if { { JoltR1CSInputs::WritePCtoRD } }
@@ -451,12 +252,6 @@ pub static UNIFORM_R1CS: [NamedConstraint; NUM_R1CS_CONSTRAINTS] = [
     // if Jump && !NextIsNoop {
     //     assert!(NextUnexpandedPC == LookupOutput)
     // }
-    r1cs_prod!(
-        name: ConstraintName::ShouldJumpDef,
-        ({ JoltR1CSInputs::OpFlags(CircuitFlags::Jump) })
-            * ({ 1i128 } - { JoltR1CSInputs::NextIsNoop })
-            == ({ JoltR1CSInputs::ShouldJump })
-    ),
     r1cs_eq_conditional!(
         name: ConstraintName::NextUnexpPCEqLookupIfShouldJump,
         if { { JoltR1CSInputs::ShouldJump } }
@@ -465,11 +260,6 @@ pub static UNIFORM_R1CS: [NamedConstraint; NUM_R1CS_CONSTRAINTS] = [
     // if Branch && LookupOutput {
     //     assert!(NextUnexpandedPC == UnexpandedPC + Imm)
     // }
-    r1cs_prod!(
-        name: ConstraintName::ShouldBranchDef,
-        ({ JoltR1CSInputs::OpFlags(CircuitFlags::Branch) }) * ({ JoltR1CSInputs::LookupOutput })
-            == ({ JoltR1CSInputs::ShouldBranch })
-    ),
     r1cs_eq_conditional!(
         name: ConstraintName::NextUnexpPCEqPCPlusImmIfShouldBranch,
         if { { JoltR1CSInputs::ShouldBranch } }
@@ -499,250 +289,396 @@ pub static UNIFORM_R1CS: [NamedConstraint; NUM_R1CS_CONSTRAINTS] = [
     // }
     r1cs_eq_conditional!(
         name: ConstraintName::NextPCEqPCPlusOneIfInline,
-        if { { JoltR1CSInputs::OpFlags(CircuitFlags::InlineSequenceInstruction) } }
+        if { { JoltR1CSInputs::OpFlags(CircuitFlags::VirtualInstruction) } }
         => ( { JoltR1CSInputs::NextPC } ) == ( { JoltR1CSInputs::PC } + { 1i128 } )
+    ),
+    // if NextIsVirtual && !NextIsFirstInSequence {
+    //     assert!(DoNotUpdateUnexpandedPC == 1)
+    // }
+    r1cs_eq_conditional!(
+        name: ConstraintName::MustStartSequenceFromBeginning,
+        if { { JoltR1CSInputs::NextIsVirtual } - { JoltR1CSInputs::NextIsFirstInSequence } }
+        => ( { JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC) } ) == ( { 1 } )
     ),
 ];
 
-/// Evaluate Az by name using a fully materialized R1CS cycle inputs
-pub fn eval_az_by_name<F: JoltField>(c: &NamedConstraint, row: &R1CSCycleInputs) -> I8OrI96 {
-    use ConstraintName as N;
-    match c.name {
-        // Az: LeftOperandIsRs1Value flag (0/1)
-        N::LeftInputEqRs1 => row.flags[CircuitFlags::LeftOperandIsRs1Value].into(),
-        // Az: LeftOperandIsPC flag (0/1)
-        N::LeftInputEqPC => row.flags[CircuitFlags::LeftOperandIsPC].into(),
-        N::LeftInputZeroOtherwise => {
-            // NOTE: relies on exclusivity of these circuit flags (validated in tests):
-            // return 1 only if neither flag is set
-            let f1 = row.flags[CircuitFlags::LeftOperandIsRs1Value];
-            let f2 = row.flags[CircuitFlags::LeftOperandIsPC];
-            (!(f1 || f2)).into()
+// =============================================================================
+// Univariate skip constants and grouped views
+// =============================================================================
+
+/// Degree of univariate skip, defined to be `(NUM_R1CS_CONSTRAINTS - 1) / 2`
+pub const UNIVARIATE_SKIP_DEGREE: usize = (NUM_R1CS_CONSTRAINTS - 1) / 2;
+
+/// Domain size of univariate skip, defined to be `UNIVARIATE_SKIP_DEGREE + 1`.
+pub const UNIVARIATE_SKIP_DOMAIN_SIZE: usize = UNIVARIATE_SKIP_DEGREE + 1;
+
+/// Extended domain size of univariate skip, defined to be `2 * UNIVARIATE_SKIP_DEGREE + 1`.
+pub const UNIVARIATE_SKIP_EXTENDED_DOMAIN_SIZE: usize = 2 * UNIVARIATE_SKIP_DEGREE + 1;
+
+/// Number of coefficients in the first-round polynomial, defined to be `3 * UNIVARIATE_SKIP_DEGREE + 1`.
+pub const FIRST_ROUND_POLY_NUM_COEFFS: usize = 3 * UNIVARIATE_SKIP_DEGREE + 1;
+
+/// Number of remaining R1CS constraints in the second group, defined to be
+/// `NUM_R1CS_CONSTRAINTS - UNIVARIATE_SKIP_DOMAIN_SIZE`.
+pub const NUM_REMAINING_R1CS_CONSTRAINTS: usize =
+    NUM_R1CS_CONSTRAINTS - UNIVARIATE_SKIP_DOMAIN_SIZE;
+
+/// Order-preserving, compile-time filter over `UNIFORM_R1CS` by constraint names.
+const fn contains_name<const N: usize>(names: &[ConstraintName; N], name: ConstraintName) -> bool {
+    let mut i = 0;
+    while i < N {
+        if names[i] as u32 == name as u32 {
+            return true;
         }
-        // Az: RightOperandIsRs2Value flag (0/1)
-        N::RightInputEqRs2 => row.flags[CircuitFlags::RightOperandIsRs2Value].into(),
-        // Az: RightOperandIsImm flag (0/1)
-        N::RightInputEqImm => row.flags[CircuitFlags::RightOperandIsImm].into(),
-        N::RightInputZeroOtherwise => {
-            // NOTE: relies on exclusivity of these circuit flags (validated in tests):
-            // return 1 only if neither flag is set
-            let f1 = row.flags[CircuitFlags::RightOperandIsRs2Value];
-            let f2 = row.flags[CircuitFlags::RightOperandIsImm];
-            (!(f1 || f2)).into()
-        }
-        N::RamAddrEqRs1PlusImmIfLoadStore => {
-            // Az: Load OR Store flag (0/1)
-            (row.flags[CircuitFlags::Load] || row.flags[CircuitFlags::Store]).into()
-        }
-        // Az: Load flag (0/1)
-        N::RamReadEqRamWriteIfLoad => row.flags[CircuitFlags::Load].into(),
-        // Az: Load flag (0/1)
-        N::RamReadEqRdWriteIfLoad => row.flags[CircuitFlags::Load].into(),
-        // Az: Store flag (0/1)
-        N::Rs2EqRamWriteIfStore => row.flags[CircuitFlags::Store].into(),
-        N::LeftLookupZeroUnlessAddSubMul => {
-            // NOTE: these are exclusive circuit flags (validated in tests)
-            let add = row.flags[CircuitFlags::AddOperands];
-            let sub = row.flags[CircuitFlags::SubtractOperands];
-            let mul = row.flags[CircuitFlags::MultiplyOperands];
-            (add || sub || mul).into()
-        }
-        // Az: AddOperands flag (0/1)
-        N::RightLookupAdd => row.flags[CircuitFlags::AddOperands].into(),
-        // Az: SubtractOperands flag (0/1)
-        N::RightLookupSub => row.flags[CircuitFlags::SubtractOperands].into(),
-        // Use unsigned left operand (bit pattern) to match Product witness convention
-        N::ProductDef => I8OrI96::from(row.left_input),
-        // Az: MultiplyOperands flag (0/1)
-        N::RightLookupEqProductIfMul => row.flags[CircuitFlags::MultiplyOperands].into(),
-        N::RightLookupEqRightInputOtherwise => {
-            // NOTE: relies on exclusivity of circuit flags (validated in tests):
-            // return 1 only if none of add/sub/mul/adv is set
-            let add = row.flags[CircuitFlags::AddOperands];
-            let sub = row.flags[CircuitFlags::SubtractOperands];
-            let mul = row.flags[CircuitFlags::MultiplyOperands];
-            let adv = row.flags[CircuitFlags::Advice];
-            (!(add || sub || mul || adv)).into()
-        }
-        // Az: Assert flag (0/1)
-        N::AssertLookupOne => row.flags[CircuitFlags::Assert].into(),
-        // Az: Rd register index (0 disables write)
-        N::WriteLookupOutputToRDDef => I8OrI96::from_i8(row.rd_addr as i8),
-        N::RdWriteEqLookupIfWriteLookupToRd => {
-            // Az: WriteLookupOutputToRD indicator (0/1)
-            I8OrI96::from_i8(row.write_lookup_output_to_rd_addr as i8)
-        }
-        // Az: Rd register index (0 disables write)
-        N::WritePCtoRDDef => I8OrI96::from_i8(row.rd_addr as i8),
-        // Az: WritePCtoRD indicator (0/1)
-        N::RdWriteEqPCPlusConstIfWritePCtoRD => I8OrI96::from_i8(row.write_pc_to_rd_addr as i8),
-        // Az: Jump flag (0/1)
-        N::ShouldJumpDef => row.flags[CircuitFlags::Jump].into(),
-        // Az: ShouldJump indicator (0/1)
-        N::NextUnexpPCEqLookupIfShouldJump => row.should_jump.into(),
-        // Az: Branch flag (0/1)
-        N::ShouldBranchDef => row.flags[CircuitFlags::Branch].into(),
-        // Note: Az uses ShouldBranch in the u64 domain (product Branch * LookupOutput)
-        // Az: ShouldBranch indicator (0/1)
-        N::NextUnexpPCEqPCPlusImmIfShouldBranch => I8OrI96::from(row.should_branch),
-        N::NextUnexpPCUpdateOtherwise => {
-            // Az encodes 1 - ShouldBranch - Jump = (1 - Jump) - ShouldBranch.
-            let jump = row.flags[CircuitFlags::Jump];
-            let not_jump: i128 = if jump { 0 } else { 1 };
-            let diff = not_jump - (row.should_branch as i128);
-            I8OrI96::from(diff)
-        }
-        // Az: InlineSequenceInstruction flag (0/1)
-        N::NextPCEqPCPlusOneIfInline => row.flags[CircuitFlags::InlineSequenceInstruction].into(),
+        i += 1;
     }
+    false
 }
 
-/// Evaluate Bz by name using a fully materialized R1CS cycle inputs
-pub fn eval_bz_by_name<F: JoltField>(c: &NamedConstraint, row: &R1CSCycleInputs) -> S160 {
+/// Select constraints from `UNIFORM_R1CS` whose names appear in `names`, preserving order.
+pub const fn filter_uniform_r1cs<const N: usize>(
+    names: &[ConstraintName; N],
+) -> [NamedConstraint; N] {
+    let dummy = NamedConstraint {
+        name: ConstraintName::RamReadEqRamWriteIfLoad,
+        cons: Constraint::new(LC::zero(), LC::zero()),
+    };
+    let mut out: [NamedConstraint; N] = [dummy; N];
+
+    let mut o = 0;
+    let mut i = 0;
+    while i < NUM_R1CS_CONSTRAINTS {
+        let cand = UNIFORM_R1CS[i];
+        if contains_name(names, cand.name) {
+            out[o] = cand;
+            o += 1;
+            if o == N {
+                break;
+            }
+        }
+        i += 1;
+    }
+
+    if o != N {
+        panic!("filter_uniform_r1cs: not all requested constraints were found in UNIFORM_R1CS");
+    }
+    out
+}
+
+/// Compute the complement of `UNIFORM_R1CS_FIRST_GROUP_NAMES` within `UNIFORM_R1CS`.
+const fn complement_first_group_names() -> [ConstraintName; NUM_REMAINING_R1CS_CONSTRAINTS] {
+    let mut out: [ConstraintName; NUM_REMAINING_R1CS_CONSTRAINTS] =
+        [ConstraintName::RamReadEqRamWriteIfLoad; NUM_REMAINING_R1CS_CONSTRAINTS];
+    let mut o = 0;
+    let mut i = 0;
+    while i < NUM_R1CS_CONSTRAINTS {
+        let cand = UNIFORM_R1CS[i].name;
+        if !contains_name(&UNIFORM_R1CS_FIRST_GROUP_NAMES, cand) {
+            out[o] = cand;
+            o += 1;
+            if o == NUM_REMAINING_R1CS_CONSTRAINTS {
+                break;
+            }
+        }
+        i += 1;
+    }
+
+    if o != NUM_REMAINING_R1CS_CONSTRAINTS {
+        panic!("complement_first_group_names: expected full complement");
+    }
+    out
+}
+
+/// First group: 10 boolean-guarded eq constraints, where Bz is around 64 bits
+pub const UNIFORM_R1CS_FIRST_GROUP_NAMES: [ConstraintName; UNIVARIATE_SKIP_DOMAIN_SIZE] = [
+    ConstraintName::RamAddrEqZeroIfNotLoadStore,
+    ConstraintName::RamReadEqRamWriteIfLoad,
+    ConstraintName::RamReadEqRdWriteIfLoad,
+    ConstraintName::Rs2EqRamWriteIfStore,
+    ConstraintName::LeftLookupZeroUnlessAddSubMul,
+    ConstraintName::LeftLookupEqLeftInputOtherwise,
+    ConstraintName::AssertLookupOne,
+    ConstraintName::NextUnexpPCEqLookupIfShouldJump,
+    ConstraintName::NextPCEqPCPlusOneIfInline,
+    ConstraintName::MustStartSequenceFromBeginning,
+];
+
+/// Second group: complement of first within UNIFORM_R1CS
+/// Here, Az may be u8, and Bz may be around 128 bits
+pub const UNIFORM_R1CS_SECOND_GROUP_NAMES: [ConstraintName; NUM_REMAINING_R1CS_CONSTRAINTS] =
+    complement_first_group_names();
+
+/// First group: 10 boolean-guarded eq constraints, where Bz is around 64 bits
+pub static UNIFORM_R1CS_FIRST_GROUP: [NamedConstraint; UNIVARIATE_SKIP_DOMAIN_SIZE] =
+    filter_uniform_r1cs(&UNIFORM_R1CS_FIRST_GROUP_NAMES);
+
+/// Second group: complement of first within UNIFORM_R1CS, where Az may be u8 and Bz may be around 128 bits
+pub static UNIFORM_R1CS_SECOND_GROUP: [NamedConstraint; NUM_REMAINING_R1CS_CONSTRAINTS] =
+    filter_uniform_r1cs(&UNIFORM_R1CS_SECOND_GROUP_NAMES);
+
+/// Evaluate Az for the first group
+pub fn eval_az_first_group(row: &R1CSCycleInputs) -> [bool; UNIVARIATE_SKIP_DOMAIN_SIZE] {
+    let flags = &row.flags;
+    let ld = flags[CircuitFlags::Load];
+    let st = flags[CircuitFlags::Store];
+    let add = flags[CircuitFlags::AddOperands];
+    let sub = flags[CircuitFlags::SubtractOperands];
+    let mul = flags[CircuitFlags::MultiplyOperands];
+    let assert_flag = flags[CircuitFlags::Assert];
+    let inline_seq = flags[CircuitFlags::VirtualInstruction];
+
+    [
+        !(ld || st),
+        ld,
+        ld,
+        st,
+        add || sub || mul,
+        !(add || sub || mul),
+        assert_flag,
+        row.should_jump,
+        inline_seq,
+        row.next_is_virtual && !row.next_is_first_in_sequence,
+    ]
+}
+
+/// Evaluate Bz for the first group
+pub fn eval_bz_first_group(row: &R1CSCycleInputs) -> [i128; UNIVARIATE_SKIP_DOMAIN_SIZE] {
+    let left_lookup = row.left_lookup as i128;
+    let left_input = row.left_input as i128;
+    let ram_read = row.ram_read_value as i128;
+    let ram_write = row.ram_write_value as i128;
+    let rd_write = row.rd_write_value as i128;
+    let rs2 = row.rs2_read_value as i128;
+    let ram_addr = row.ram_addr as i128;
+    let lookup_out = row.lookup_output as i128;
+    let next_unexp_pc = row.next_unexpanded_pc as i128;
+    let pc = row.pc as i128;
+    let next_pc = row.next_pc as i128;
+
+    [
+        // RamAddrEqZeroIfNotLoadStore: RamAddress - 0
+        ram_addr,
+        // RamReadEqRamWriteIfLoad
+        ram_read - ram_write,
+        // RamReadEqRdWriteIfLoad
+        ram_read - rd_write,
+        // Rs2EqRamWriteIfStore
+        rs2 - ram_write,
+        // LeftLookupZeroUnlessAddSubMul
+        left_lookup,
+        // LeftLookupEqLeftInputOtherwise
+        left_lookup - left_input,
+        // AssertLookupOne
+        lookup_out - 1,
+        // NextUnexpPCEqLookupIfShouldJump
+        next_unexp_pc - lookup_out,
+        // NextPCEqPCPlusOneIfInline
+        next_pc - (pc + 1),
+        // MustStartSequenceFromBeginning: DoNotUpdateUnexpandedPC - 1
+        (row.flags[CircuitFlags::DoNotUpdateUnexpandedPC] as i128) - 1,
+    ]
+}
+
+/// Evaluate Az for the second group
+pub fn eval_az_second_group(row: &R1CSCycleInputs) -> [u8; NUM_REMAINING_R1CS_CONSTRAINTS] {
     use ConstraintName as N;
-    match c.name {
-        // B: LeftInstructionInput - Rs1Value (signed-magnitude over u64 bit patterns)
-        N::LeftInputEqRs1 => S160::from_diff_u64(row.left_input, row.rs1_read_value),
-        // B: LeftInstructionInput - UnexpandedPC (signed-magnitude over u64 bit patterns)
-        N::LeftInputEqPC => S160::from_diff_u64(row.left_input, row.unexpanded_pc),
-        // B: LeftInstructionInput - 0 (u64 bit pattern)
-        N::LeftInputZeroOtherwise => S160::from_diff_u64(row.left_input, 0),
-        // B: RightInstructionInput - Rs2Value (i128 arithmetic)
-        N::RightInputEqRs2 => S160::from(row.right_input) - S160::from(row.rs2_read_value),
-        // B: RightInstructionInput - Imm (i128 arithmetic)
-        N::RightInputEqImm => S160::from(row.right_input) - S160::from(row.imm),
-        // B: RightInstructionInput - 0 (i128 arithmetic)
-        N::RightInputZeroOtherwise => S160::from(row.right_input),
-        N::RamAddrEqRs1PlusImmIfLoadStore => {
-            // B: (Rs1Value + Imm) - 0 (true_val - false_val from if-else)
-            if row.imm.is_positive {
-                S160::from(row.rs1_read_value as u128 + row.imm.magnitude_as_u64() as u128)
-            } else {
-                S160::from(row.rs1_read_value as i128 - row.imm.magnitude_as_u64() as i128)
+    let flags = &row.flags;
+    let add = flags[CircuitFlags::AddOperands] as u8;
+    let sub = flags[CircuitFlags::SubtractOperands] as u8;
+    let mul = flags[CircuitFlags::MultiplyOperands] as u8;
+
+    let mut out: [u8; NUM_REMAINING_R1CS_CONSTRAINTS] = [0u8; NUM_REMAINING_R1CS_CONSTRAINTS];
+    let mut i = 0;
+    while i < UNIFORM_R1CS_SECOND_GROUP.len() {
+        let name = UNIFORM_R1CS_SECOND_GROUP[i].name;
+        out[i] = match name {
+            N::RamAddrEqRs1PlusImmIfLoadStore => {
+                (flags[CircuitFlags::Load] || flags[CircuitFlags::Store]) as u8
             }
-        }
-        // B: RamReadValue - RamWriteValue (u64 bit-pattern difference)
-        N::RamReadEqRamWriteIfLoad => S160::from_diff_u64(row.ram_read_value, row.ram_write_value),
-        // B: RamReadValue - RdWriteValue (u64 bit-pattern difference)
-        N::RamReadEqRdWriteIfLoad => S160::from_diff_u64(row.ram_read_value, row.rd_write_value),
-        // B: Rs2Value - RamWriteValue (u64 bit-pattern difference)
-        N::Rs2EqRamWriteIfStore => S160::from_diff_u64(row.rs2_read_value, row.ram_write_value),
-        // B: 0 - LeftInstructionInput (true_val - false_val from if-else)
-        N::LeftLookupZeroUnlessAddSubMul => -S160::from(row.left_input),
-        N::RightLookupAdd => {
-            // B: RightLookupOperand - (LeftInstructionInput + RightInstructionInput) with full-width integer semantics
-            let expected_i128 = (row.left_input as i128) + row.right_input.to_i128();
-            S160::from(row.right_lookup) - S160::from(expected_i128)
-        }
-        N::RightLookupSub => {
-            // B: RightLookupOperand - (LeftInstructionInput - RightInstructionInput + 2^64)
-            // with full-width integer semantics (matches the +2^64 in the uniform constraint)
-            let expected_i128 =
-                (row.left_input as i128) - row.right_input.to_i128() + (1i128 << 64);
-            S160::from(row.right_lookup) - S160::from(expected_i128)
-        }
-        // B: RightInstructionInput (exact signed value as i128)
-        N::ProductDef => S160::from(row.right_input),
-        N::RightLookupEqProductIfMul => {
-            // B: RightLookupOperand - Product with full 128-bit semantics
-            S160::from(row.right_lookup) - S160::from(row.product)
-        }
-        N::RightLookupEqRightInputOtherwise => {
-            // B: RightLookupOperand - RightInstructionInput with exact integer semantics
-            S160::from(row.right_lookup) - S160::from(row.right_input)
-        }
-        // B: LookupOutput - 1 (i128 arithmetic)
-        N::AssertLookupOne => S160::from(row.lookup_output as i128 - 1),
-        N::WriteLookupOutputToRDDef => {
-            // B: OpFlags(WriteLookupOutputToRD) (boolean 0/1)
-            if row.flags[CircuitFlags::WriteLookupOutputToRD] {
-                S160::one()
-            } else {
-                S160::zero()
+            N::RamAddrEqZeroIfNotLoadStore => {
+                (!(flags[CircuitFlags::Load] || flags[CircuitFlags::Store])) as u8
             }
-        }
-        N::RdWriteEqLookupIfWriteLookupToRd => {
-            // B: RdWriteValue - LookupOutput (u64 bit-pattern difference)
-            S160::from_diff_u64(row.rd_write_value, row.lookup_output)
-        }
-        N::WritePCtoRDDef => {
-            // B: OpFlags(Jump) (boolean 0/1)
-            if row.flags[CircuitFlags::Jump] {
-                S160::one()
-            } else {
-                S160::zero()
+            N::RamReadEqRamWriteIfLoad => flags[CircuitFlags::Load] as u8,
+            N::RamReadEqRdWriteIfLoad => flags[CircuitFlags::Load] as u8,
+            N::Rs2EqRamWriteIfStore => flags[CircuitFlags::Store] as u8,
+            N::LeftLookupZeroUnlessAddSubMul => add | sub | mul,
+            N::LeftLookupEqLeftInputOtherwise => {
+                !(flags[CircuitFlags::AddOperands]
+                    || flags[CircuitFlags::SubtractOperands]
+                    || flags[CircuitFlags::MultiplyOperands]) as u8
             }
-        }
-        N::RdWriteEqPCPlusConstIfWritePCtoRD => {
-            // B: RdWriteValue - (UnexpandedPC + (4 - 2*IsCompressed)) (i128 arithmetic)
-            let const_term = 4 - if row.flags[CircuitFlags::IsCompressed] {
-                2
-            } else {
-                0
-            };
-            S160::from(
-                row.rd_write_value as i128 - (row.unexpanded_pc as i128 + const_term as i128),
-            )
-        }
-        N::ShouldJumpDef => {
-            // B: 1 - NextIsNoop (boolean domain)
-            if !row.next_is_noop {
-                S160::one()
-            } else {
-                S160::zero()
+            N::RightLookupAdd => flags[CircuitFlags::AddOperands] as u8,
+            N::RightLookupSub => flags[CircuitFlags::SubtractOperands] as u8,
+            N::RightLookupEqProductIfMul => flags[CircuitFlags::MultiplyOperands] as u8,
+            N::RightLookupEqRightInputOtherwise => {
+                !(flags[CircuitFlags::AddOperands]
+                    || flags[CircuitFlags::SubtractOperands]
+                    || flags[CircuitFlags::MultiplyOperands]
+                    || flags[CircuitFlags::Advice]) as u8
             }
-        }
-        N::NextUnexpPCEqLookupIfShouldJump => {
-            // Note: B uses u64 bit-pattern difference here (matches accessor variant)
-            // B: NextUnexpandedPC - LookupOutput (i128 arithmetic)
-            S160::from_diff_u64(row.next_unexpanded_pc, row.lookup_output)
-        }
-        // B: LookupOutput (u64 bit pattern)
-        N::ShouldBranchDef => S160::from(row.lookup_output),
-        // B: NextUnexpandedPC - (UnexpandedPC + Imm) (i128 arithmetic)
-        N::NextUnexpPCEqPCPlusImmIfShouldBranch => S160::from(
-            row.next_unexpanded_pc as i128 - (row.unexpanded_pc as i128 + row.imm.to_i128()),
-        ),
-        N::NextUnexpPCUpdateOtherwise => {
-            // B: NextUnexpandedPC - target, where target = UnexpandedPC + 4 - 4*DoNotUpdateUnexpandedPC - 2*IsCompressed (i128 arithmetic)
-            let const_term =
-                4 - if row.flags[CircuitFlags::DoNotUpdateUnexpandedPC] {
-                    4
+            N::AssertLookupOne => flags[CircuitFlags::Assert] as u8,
+            N::RdWriteEqLookupIfWriteLookupToRd => row.write_lookup_output_to_rd_addr,
+            N::RdWriteEqPCPlusConstIfWritePCtoRD => row.write_pc_to_rd_addr,
+            N::NextUnexpPCEqLookupIfShouldJump => row.should_jump as u8,
+            N::NextUnexpPCEqPCPlusImmIfShouldBranch => row.should_branch as u8,
+            N::NextUnexpPCUpdateOtherwise => {
+                let jump = flags[CircuitFlags::Jump] as u8;
+                let should_branch = row.should_branch as u8;
+                #[cfg(test)]
+                {
+                    // panic if both jump and should_branch are set
+                    if jump + should_branch > 1 {
+                        panic!("jump and should_branch are both set");
+                    }
+                }
+                1u8.wrapping_sub(jump).wrapping_sub(should_branch)
+            }
+            N::NextPCEqPCPlusOneIfInline => flags[CircuitFlags::VirtualInstruction] as u8,
+            N::MustStartSequenceFromBeginning => 0u8,
+        };
+        i += 1;
+    }
+    out
+}
+
+/// Evaluate Bz for the second group
+pub fn eval_bz_second_group(row: &R1CSCycleInputs) -> [S160; NUM_REMAINING_R1CS_CONSTRAINTS] {
+    use ConstraintName as N;
+    let mut out: [S160; NUM_REMAINING_R1CS_CONSTRAINTS] =
+        [S160::zero(); NUM_REMAINING_R1CS_CONSTRAINTS];
+    let mut i = 0;
+    while i < UNIFORM_R1CS_SECOND_GROUP.len() {
+        let name = UNIFORM_R1CS_SECOND_GROUP[i].name;
+        out[i] = match name {
+            N::RamAddrEqRs1PlusImmIfLoadStore => {
+                let expected: i128 = if row.imm.is_positive {
+                    (row.rs1_read_value as u128 + row.imm.magnitude_as_u64() as u128) as i128
                 } else {
-                    0
-                } - if row.flags[CircuitFlags::IsCompressed] {
+                    row.rs1_read_value as i128 - row.imm.magnitude_as_u64() as i128
+                };
+                S160::from(row.ram_addr as i128 - expected)
+            }
+            N::RamAddrEqZeroIfNotLoadStore => S160::from(row.ram_addr),
+            N::RamReadEqRamWriteIfLoad => {
+                S160::from_diff_u64(row.ram_read_value, row.ram_write_value)
+            }
+            N::RamReadEqRdWriteIfLoad => {
+                S160::from_diff_u64(row.ram_read_value, row.rd_write_value)
+            }
+            N::Rs2EqRamWriteIfStore => S160::from_diff_u64(row.rs2_read_value, row.ram_write_value),
+            N::LeftLookupZeroUnlessAddSubMul => S160::from(row.left_lookup),
+            N::LeftLookupEqLeftInputOtherwise => {
+                S160::from(row.left_lookup) - S160::from(row.left_input)
+            }
+            N::RightLookupAdd => {
+                let expected_i128 = (row.left_input as i128) + row.right_input.to_i128();
+                S160::from(row.right_lookup) - S160::from(expected_i128)
+            }
+            N::RightLookupSub => {
+                let expected_i128 =
+                    (row.left_input as i128) - row.right_input.to_i128() + (1i128 << 64);
+                S160::from(row.right_lookup) - S160::from(expected_i128)
+            }
+            N::RightLookupEqProductIfMul => S160::from(row.right_lookup) - S160::from(row.product),
+            N::RightLookupEqRightInputOtherwise => {
+                S160::from(row.right_lookup) - S160::from(row.right_input)
+            }
+            N::AssertLookupOne => S160::from(row.lookup_output as i128 - 1),
+            N::RdWriteEqLookupIfWriteLookupToRd => {
+                S160::from_diff_u64(row.rd_write_value, row.lookup_output)
+            }
+            N::RdWriteEqPCPlusConstIfWritePCtoRD => {
+                let const_term = 4 - if row.flags[CircuitFlags::IsCompressed] {
                     2
                 } else {
                     0
                 };
-            let target = row.unexpanded_pc as i128 + const_term;
-            S160::from(row.next_unexpanded_pc as i128 - target)
-        }
-        N::NextPCEqPCPlusOneIfInline => {
-            // B: NextPC - (PC + 1) (i128 arithmetic)
-            S160::from(row.next_pc as i128 - (row.pc as i128 + 1))
-        }
+                S160::from(
+                    row.rd_write_value as i128 - (row.unexpanded_pc as i128 + const_term as i128),
+                )
+            }
+            N::NextUnexpPCEqLookupIfShouldJump => {
+                S160::from_diff_u64(row.next_unexpanded_pc, row.lookup_output)
+            }
+            N::NextUnexpPCEqPCPlusImmIfShouldBranch => S160::from(
+                row.next_unexpanded_pc as i128 - (row.unexpanded_pc as i128 + row.imm.to_i128()),
+            ),
+            N::NextUnexpPCUpdateOtherwise => {
+                let const_term =
+                    4 - if row.flags[CircuitFlags::DoNotUpdateUnexpandedPC] {
+                        4
+                    } else {
+                        0
+                    } - if row.flags[CircuitFlags::IsCompressed] {
+                        2
+                    } else {
+                        0
+                    };
+                let target = row.unexpanded_pc as i128 + const_term;
+                S160::from(row.next_unexpanded_pc as i128 - target)
+            }
+            N::NextPCEqPCPlusOneIfInline => S160::from(row.next_pc as i128 - (row.pc as i128 + 1)),
+            N::MustStartSequenceFromBeginning => S160::zero(),
+        };
+        i += 1;
     }
+    out
 }
 
 // =============================================================================
-// Batch evaluation functions
+// Univariate-skip helpers: fused Az/Bz at r0 by Lagrange weights
 // =============================================================================
 
-/// Batched evaluation using a fully materialized R1CS cycle inputs. This avoids any repeated
-/// reads from the trace or bytecode and computes all constraints.
-pub fn eval_az_bz_batch_from_row<F: JoltField>(
-    constraints: &[NamedConstraint],
-    row: &R1CSCycleInputs,
-    az_output: &mut [I8OrI96],
-    bz_output: &mut [S160],
-) {
-    assert_eq!(constraints.len(), az_output.len());
-    assert_eq!(constraints.len(), bz_output.len());
-    for (i, constraint) in constraints.iter().enumerate() {
-        az_output[i] = eval_az_by_name::<F>(constraint, row);
-        bz_output[i] = eval_bz_by_name::<F>(constraint, row);
+#[inline]
+pub fn compute_az_r_group0<F: JoltField>(row: &R1CSCycleInputs, lagrange_evals_r: &[F]) -> F {
+    // Group 0 Az are booleans; accumulate field elements unreduced, then Barrett-reduce
+    let az_flags = eval_az_first_group(row);
+    let mut acc: Acc5U<F> = Acc5U::new();
+    let mut i = 0;
+    while i < UNIVARIATE_SKIP_DOMAIN_SIZE {
+        acc.fmadd(&lagrange_evals_r[i], &az_flags[i]);
+        i += 1;
     }
+    acc.reduce()
+}
+
+#[inline]
+pub fn compute_bz_r_group0<F: JoltField>(row: &R1CSCycleInputs, lagrange_evals_r: &[F]) -> F {
+    // Group 0 Bz are i128; accumulate field * i128 (converted) unreduced, then Barrett-reduce
+    let bz_vals = eval_bz_first_group(row);
+    let mut acc: Acc6S<F> = Acc6S::new();
+    let mut i = 0;
+    while i < UNIVARIATE_SKIP_DOMAIN_SIZE {
+        acc.fmadd(&lagrange_evals_r[i], &bz_vals[i]);
+        i += 1;
+    }
+    acc.reduce()
+}
+
+#[inline]
+pub fn compute_az_r_group1<F: JoltField>(row: &R1CSCycleInputs, lagrange_evals_r: &[F]) -> F {
+    // Group 1 Az are u8 (nonnegative); accumulate field * u8 unreduced, then Barrett-reduce
+    let az_vals_u8 = eval_az_second_group(row);
+    let mut acc: Acc5U<F> = Acc5U::new();
+    let mut i = 0;
+    while i < NUM_REMAINING_R1CS_CONSTRAINTS {
+        acc.fmadd(&lagrange_evals_r[i], &az_vals_u8[i]);
+        i += 1;
+    }
+    acc.reduce()
+}
+
+#[inline]
+pub fn compute_bz_r_group1<F: JoltField>(row: &R1CSCycleInputs, lagrange_evals_r: &[F]) -> F {
+    // Group 1 Bz are S160; accumulate field * S160 in 7-limb signed accumulators, then Barrett-reduce once
+    let bz_vals = eval_bz_second_group(row);
+    let mut acc: Acc7S<F> = Acc7S::new();
+    let mut i = 0;
+    while i < NUM_REMAINING_R1CS_CONSTRAINTS {
+        acc.fmadd(&lagrange_evals_r[i], &bz_vals[i]);
+        i += 1;
+    }
+    acc.reduce()
 }
 
 #[cfg(test)]

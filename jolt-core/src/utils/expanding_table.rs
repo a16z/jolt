@@ -8,7 +8,7 @@ use crate::utils::thread::unsafe_allocate_zero_vec;
 /// Table containing the evaluations `EQ(x_1, ..., x_j, r_1, ..., r_j)`,
 /// built up incrementally as we receive random challenges `r_j` over the
 /// course of sumcheck.
-#[derive(Clone, Debug, Allocative)]
+#[derive(Clone, Debug, Allocative, Default)]
 pub struct ExpandingTable<F: JoltField> {
     len: usize,
     values: Vec<F>,
@@ -40,10 +40,14 @@ impl<F: JoltField> ExpandingTable<F> {
         self.len = 1;
     }
 
+    pub fn clone_values(&self) -> Vec<F> {
+        self.values[..self.len].to_vec()
+    }
+
     /// Updates this table (expanding it by a factor of 2) to incorporate
     /// the new random challenge `r_j`.
     #[tracing::instrument(skip_all, name = "ExpandingTable::update")]
-    pub fn update(&mut self, r_j: F) {
+    pub fn update(&mut self, r_j: F::Challenge) {
         self.values[..self.len]
             .par_iter()
             .zip(self.scratch_space.par_chunks_mut(2))
