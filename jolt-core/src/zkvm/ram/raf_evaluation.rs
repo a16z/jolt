@@ -36,8 +36,6 @@ pub struct RafEvaluationProverState<F: JoltField> {
 
 #[derive(Allocative)]
 pub struct RafEvaluationSumcheck<F: JoltField> {
-    /// The initial claim (raf_claim)
-    input_claim: F,
     /// log K (number of rounds)
     log_K: usize,
     /// Start address for unmap polynomial
@@ -60,7 +58,7 @@ impl<F: JoltField> RafEvaluationSumcheck<F> {
         let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
         let chunk_size = (T / num_chunks).max(1);
 
-        let (r_cycle, raf_claim) = state_manager.get_virtual_polynomial_opening(
+        let (r_cycle, _) = state_manager.get_virtual_polynomial_opening(
             VirtualPolynomial::RamAddress,
             SumcheckId::SpartanOuter,
         );
@@ -99,7 +97,6 @@ impl<F: JoltField> RafEvaluationSumcheck<F> {
         let unmap = UnmapRamAddressPolynomial::new(K.log_2(), lowest_memory_address);
 
         Self {
-            input_claim: raf_claim,
             log_K: K.log_2(),
             start_address: lowest_memory_address,
             prover_state: Some(RafEvaluationProverState { ra, unmap }),
@@ -112,15 +109,11 @@ impl<F: JoltField> RafEvaluationSumcheck<F> {
     ) -> Self {
         let (_, program_io, _) = state_manager.get_verifier_data();
         let K = state_manager.ram_K;
-        let raf_claim = state_manager
-            .get_virtual_polynomial_opening(VirtualPolynomial::RamAddress, SumcheckId::SpartanOuter)
-            .1;
         let ra_claim = state_manager
             .get_virtual_polynomial_opening(VirtualPolynomial::RamRa, SumcheckId::RamRafEvaluation)
             .1;
 
         Self {
-            input_claim: raf_claim,
             log_K: K.log_2(),
             start_address: program_io.memory_layout.get_lowest_address(),
             prover_state: None,
@@ -138,8 +131,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for RafEvaluationSumche
         self.log_K
     }
 
-    fn input_claim(&self, _acc: Option<&RefCell<dyn OpeningAccumulator<F>>>) -> F {
-        self.input_claim
+    fn input_claim(&self, acc: Option<&RefCell<dyn OpeningAccumulator<F>>>) -> F {
+        let acc = acc.unwrap().borrow();
+        let (_, raf_claim) = acc.get_virtual_polynomial_opening(
+            VirtualPolynomial::RamAddress,
+            SumcheckId::SpartanOuter,
+        );
+        raf_claim
     }
 
     #[tracing::instrument(skip_all, name = "RamRafEvaluationSumcheck::compute_prover_message")]
