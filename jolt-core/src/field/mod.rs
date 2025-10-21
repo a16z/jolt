@@ -1,5 +1,5 @@
 use allocative::Allocative;
-use ark_ff::UniformRand;
+use ark_ff::{BigInt, UniformRand};
 use num_traits::{One, Zero};
 use std::fmt::{Debug, Display};
 use std::hash::Hash;
@@ -124,6 +124,7 @@ pub trait JoltField:
         + Ord
         + From<u128>
         + From<[u64; N]>
+        + From<BigInt<N>>
         + Zero
         + FmaddTrunc<Other<2> = Self::Unreduced<2>, Acc<7> = Self::Unreduced<7>>
         + FmaddTrunc<Other<2> = Self::Unreduced<2>, Acc<8> = Self::Unreduced<8>>
