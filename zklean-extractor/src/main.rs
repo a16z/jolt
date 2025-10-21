@@ -74,7 +74,7 @@ fn write_flat_file(
     Ok(())
 }
 
-type ParameterSet = RV32IParameterSet;
+type ParameterSet = RV64IParameterSet;
 
 fn main() -> Result<(), FSError> {
     let args = Args::parse();
@@ -82,7 +82,11 @@ fn main() -> Result<(), FSError> {
     let modules: Vec<Box<dyn AsModule>> = vec![
         Box::new(ZkLeanR1CSConstraints::<ParameterSet>::extract()),
         Box::new(ZkLeanInstructions::<ParameterSet>::extract()),
-        Box::new(ZkLeanLookupTables::<32>::extract()), // FIXME: Make WORD_SIZE generic
+        match ParameterSet::WORD_SIZE {
+            32 => Box::new(ZkLeanLookupTables::<32>::extract()),
+            64 => Box::new(ZkLeanLookupTables::<64>::extract()),
+            _ => panic!("Unsupported architecture size"),
+        },
         //Box::new(ZkLeanLookupCases::<ParameterSet>::extract()),
     ];
 

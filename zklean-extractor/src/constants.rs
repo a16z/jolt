@@ -12,9 +12,9 @@ pub trait JoltParameterSet {
 
 /// The parameters used by Jolt for 32-bit risc-v
 #[derive(Clone)]
-pub struct RV32IParameterSet;
+pub struct RV64IParameterSet;
 
-impl JoltParameterSet for RV32IParameterSet {
+impl JoltParameterSet for RV64IParameterSet {
     const WORD_SIZE: usize = 64;
     const MEMORY_CONFIG: MemoryConfig = MemoryConfig {
         max_input_size: constants::DEFAULT_MAX_INPUT_SIZE,
