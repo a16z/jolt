@@ -126,11 +126,10 @@ pub trait JoltField:
         + From<[u64; N]>
         + From<BigInt<N>>
         + Zero
-        + FmaddTrunc<Other<2> = Self::Unreduced<2>, Acc<7> = Self::Unreduced<7>>
-        + FmaddTrunc<Other<2> = Self::Unreduced<2>, Acc<8> = Self::Unreduced<8>>
-        + FmaddTrunc<Other<3> = Self::Unreduced<3>, Acc<7> = Self::Unreduced<7>>
-        + FmaddTrunc<Other<3> = Self::Unreduced<3>, Acc<8> = Self::Unreduced<8>>
-        + FmaddTrunc<Other<4> = Self::Unreduced<4>, Acc<8> = Self::Unreduced<8>>
+        // Truncated multiplication variants used by accumulators
+        + MulTrunc<Other<3> = Self::Unreduced<3>, Output<7> = Self::Unreduced<7>>
+        + MulTrunc<Other<3> = Self::Unreduced<3>, Output<8> = Self::Unreduced<8>>
+        + MulTrunc<Other<4> = Self::Unreduced<4>, Output<8> = Self::Unreduced<8>>
         + MulTrunc<Other<4> = Self::Unreduced<4>, Output<9> = Self::Unreduced<9>>
         + MulU64WithCarry<Output<5> = Self::Unreduced<5>>
         + Add<Output = Self::Unreduced<N>>
@@ -283,22 +282,29 @@ pub trait MulU64WithCarry {
     fn mul_u64_w_carry<const NPLUS1: usize>(&self, other: u64) -> Self::Output<NPLUS1>;
 }
 
-pub trait FmaddTrunc {
-    type Other<const M: usize>;
-    type Acc<const P: usize>;
-
-    fn fmadd_trunc<const M: usize, const P: usize>(
-        &self,
-        other: &Self::Other<M>,
-        acc: &mut Self::Acc<P>,
-    );
-}
+// FmaddTrunc was removed in favor of calling MulTrunc and AddAssign at call sites
 
 pub trait MulTrunc {
     type Other<const M: usize>;
     type Output<const P: usize>;
 
     fn mul_trunc<const M: usize, const P: usize>(&self, other: &Self::Other<M>) -> Self::Output<P>;
+}
+
+/// Unified fused-multiply-add trait for accumulators.
+/// Perform: acc += left * right.
+pub trait FMAdd<Left, Right>: Sized {
+    fn fmadd(&mut self, left: &Left, right: &Right);
+}
+
+/// Trait for accumulators that finish with Barrett reduction to a field element
+pub trait BarrettReduce<F: JoltField> {
+    fn reduce(&self) -> F;
+}
+
+/// Trait for accumulators that finish with Montgomery reduction to a field element
+pub trait MontgomeryReduce<F: JoltField> {
+    fn reduce(&self) -> F;
 }
 
 #[cfg(feature = "allocative")]
@@ -354,17 +360,3 @@ pub mod ark;
 pub mod challenge;
 pub mod tracked_ark;
 
-/// In-place accumulation: mutate an accumulator A with fused multiply-adds and reduce at the end.
-pub trait AccumulateInPlace<F: JoltField, O>: Sized {
-    /// Perform acc += field * other (in the appropriate unreduced representation for A).
-    fn fmadd(&mut self, field: &F, other: &O);
-
-    /// Reduce the accumulator to a canonical field element.
-    fn reduce(&self) -> F;
-
-    /// Optionally combine another accumulator of the same type into self.
-    fn combine(&mut self, _other: &Self) {
-        // default: unimplemented; concrete impls may override
-        unreachable!("combine is not implemented");
-    }
-}

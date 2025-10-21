@@ -3,7 +3,7 @@ use ark_std::Zero;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::field::{AccumulateInPlace, JoltField};
+use crate::field::{FMAdd, JoltField};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;

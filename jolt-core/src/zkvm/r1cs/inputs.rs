@@ -8,7 +8,7 @@ use crate::zkvm::instruction::{
 use crate::zkvm::witness::VirtualPolynomial;
 use crate::zkvm::JoltSharedPreprocessing;
 
-use crate::field::{AccumulateInPlace, JoltField};
+use crate::field::{FMAdd, JoltField};
 use ark_ff::biginteger::{S128, S64};
 use ark_std::Zero;
 use common::constants::XLEN;

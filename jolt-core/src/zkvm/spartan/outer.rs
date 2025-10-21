@@ -1,11 +1,11 @@
 use allocative::Allocative;
-use ark_ff::biginteger::{S128, S160, S192, S64};
+use ark_ff::biginteger::S64;
 use ark_std::Zero;
 use rayon::prelude::*;
 use std::sync::Arc;
 use tracer::instruction::Cycle;
 
-use crate::field::{AccumulateInPlace, JoltField};
+use crate::field::{FMAdd, JoltField};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
@@ -29,11 +29,11 @@ use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::zkvm::dag::state_manager::StateManager;
 use crate::zkvm::r1cs::{
     constraints::{
-        compute_az_r_group0, compute_az_r_group1, compute_bz_r_group0, compute_bz_r_group1,
-        eval_az_first_group, eval_az_second_group, eval_bz_first_group, eval_bz_second_group,
-        FIRST_ROUND_POLY_NUM_COEFFS, NUM_REMAINING_R1CS_CONSTRAINTS, UNIVARIATE_SKIP_DEGREE,
-        UNIVARIATE_SKIP_DOMAIN_SIZE, UNIVARIATE_SKIP_EXTENDED_DOMAIN_SIZE,
+        FIRST_ROUND_POLY_NUM_COEFFS,
+        UNIVARIATE_SKIP_DEGREE, UNIVARIATE_SKIP_DOMAIN_SIZE,
+        UNIVARIATE_SKIP_EXTENDED_DOMAIN_SIZE,
     },
+    evaluation::{R1CSFirstGroup, R1CSSecondGroup},
     inputs::{compute_claimed_r1cs_input_evals, R1CSCycleInputs, ALL_R1CS_INPUTS},
 };
 use crate::zkvm::witness::VirtualPolynomial;
@@ -151,6 +151,13 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
                 LagrangeHelper::shift_coeffs_i32::<UNIVARIATE_SKIP_DOMAIN_SIZE>(target_shifts[j])
             });
 
+        // Precompute S64 view of coeffs once per j
+        let coeffs_per_j_s64: [[S64; UNIVARIATE_SKIP_DOMAIN_SIZE]; UNIVARIATE_SKIP_DEGREE] =
+            core::array::from_fn(|j| {
+                let c = &coeffs_per_j[j];
+                core::array::from_fn(|k| S64::from_i64(c[k] as i64))
+            });
+
         let m = tau_low.len() / 2;
         let (tau_out, tau_in) = tau_low.split_at(m);
         // Compute the split eq polynomial, one scaled by R^2 in order to balance against
@@ -203,41 +210,11 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
                         let x_in_even = x_in_prime << 1;
                         let e_in_even = E_in[x_in_even];
 
-                        let az0_bool = eval_az_first_group(&row_inputs);
-                        let bz0_i128 = eval_bz_first_group(&row_inputs);
-
-                        #[cfg(test)]
-                        {
-                            // Test that az * bz = 0 for first group
-                            debug_assert!(az0_bool
-                                .iter()
-                                .zip(bz0_i128.iter())
-                                .all(|(az, bz)| !(*az) || *bz == 0));
-                        }
-
+                        let g0 = R1CSFirstGroup::<F>::from_cycle_inputs(&row_inputs);
                         for j in 0..UNIVARIATE_SKIP_DEGREE {
-                            let coeffs = &coeffs_per_j[j];
-                            // (sum_i (Az0_i ? c_i : 0)) * (sum_i c_i * Bz0_i)
-                            let mut sum_c_az0_i64: i64 = 0;
-                            let mut sum_c_bz0_s128 = S128::from(0i128);
-                            for i in 0..UNIVARIATE_SKIP_DOMAIN_SIZE {
-                                let c = coeffs[i] as i64;
-
-                                if az0_bool[i] {
-                                    sum_c_az0_i64 += c;
-                                    // Optimization: if az is non-zero then bz must be zero
-                                    // so we can skip the bz multiplication
-                                } else {
-                                    // sum_c_bz0 += c * bz0_i128[i] in signed bigints (mul in i128 -> S128)
-                                    let term = S128::from_i128(c as i128 * bz0_i128[i]);
-                                    sum_c_bz0_s128 += term;
-                                }
-                            }
-                            // Product-of-sums in bigints: S64 * S128 -> S192
-                            let sum_az0_s64 = S64::from_i64(sum_c_az0_i64);
-                            let prod_s192 = sum_az0_s64.mul_trunc::<2, 3>(&sum_c_bz0_s128);
-
-                            // Fold E_in (even) into 7-limb signed accumulator for this j
+                            let coeffs_i32 = &coeffs_per_j[j];
+                            let coeffs_s64 = &coeffs_per_j_s64[j];
+                            let prod_s192 = g0.product_of_sums_shifted(coeffs_i32, coeffs_s64);
                             inner_acc[j].fmadd(&e_in_even, &prod_s192);
                         }
 
@@ -245,55 +222,12 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
                         let x_in_odd = x_in_even + 1;
                         let e_in_odd = E_in[x_in_odd];
 
-                        let az1_u8 = eval_az_second_group(&row_inputs);
-                        let bz1 = eval_bz_second_group(&row_inputs);
-
-                        #[cfg(test)]
-                        {
-                            // Test that az * bz = 0 for second group
-                            debug_assert!(az1_u8
-                                .iter()
-                                .zip(bz1.iter())
-                                .all(|(az, bz)| *az == 0u8 || bz.is_zero()));
-                        }
-
-                        let g2_len = core::cmp::min(
-                            NUM_REMAINING_R1CS_CONSTRAINTS,
-                            UNIVARIATE_SKIP_DOMAIN_SIZE,
-                        );
-                        let mut az1_u8_padded: [u8; UNIVARIATE_SKIP_DOMAIN_SIZE] =
-                            [0; UNIVARIATE_SKIP_DOMAIN_SIZE];
-                        let mut bz1_s160_padded: [S160; UNIVARIATE_SKIP_DOMAIN_SIZE] =
-                            [S160::from(0i128); UNIVARIATE_SKIP_DOMAIN_SIZE];
-
-                        az1_u8_padded[..g2_len].copy_from_slice(&az1_u8[..g2_len]);
-                        bz1_s160_padded[..g2_len].copy_from_slice(&bz1[..g2_len]);
-
+                        let g1 = R1CSSecondGroup::<F>::from_cycle_inputs(&row_inputs);
                         for j in 0..UNIVARIATE_SKIP_DEGREE {
-                            let coeffs = &coeffs_per_j[j];
-                            // (sum_i c_i * Az1_i) * (sum_i c_i * Bz1_i)
-                            let mut sum_c_az1_i64: i64 = 0;
-                            let mut sum_bz1_s192 = S192::from(0i128);
-                            for i in 0..UNIVARIATE_SKIP_DOMAIN_SIZE {
-                                let c = coeffs[i] as i64;
-
-                                if az1_u8_padded[i] != 0 {
-                                    let az1_i = az1_u8_padded[i] as i64;
-                                    sum_c_az1_i64 += c.saturating_mul(az1_i);
-                                    // Optimization: if az is non-zero then bz must be zero
-                                    // so we can skip the bz multiplication
-                                } else {
-                                    let term: S192 = S192::from(c)
-                                        * bz1_s160_padded[i].to_signed_bigint_nplus1::<3>();
-                                    sum_bz1_s192 += term;
-                                }
-                            }
-                            // Convert S160 -> S192 once outside summation, then S64 * S192 -> S192
-                            let sum_az1_s64 = S64::from_i64(sum_c_az1_i64);
-                            let prod_s256 = sum_az1_s64.mul_trunc::<3, 4>(&sum_bz1_s192);
-
-                            // Fold E_in (odd) into 7-limb signed accumulator for this j
-                            inner_acc[j].fmadd(&e_in_odd, &prod_s256);
+                            let coeffs_i32 = &coeffs_per_j[j];
+                            let coeffs_s64 = &coeffs_per_j_s64[j];
+                            let prod_s192 = g1.product_of_sums_shifted(coeffs_i32, coeffs_s64);
+                            inner_acc[j].fmadd(&e_in_odd, &prod_s192);
                         }
                     }
                     let e_out = E_out[x_out_val];
@@ -508,10 +442,12 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
                         let current_step_idx = (x_out_val << iter_num_x_in_vars) | x_in_val;
                         let row_inputs =
                             R1CSCycleInputs::from_trace::<F>(preprocess, trace, current_step_idx);
-                        let az0 = compute_az_r_group0(&row_inputs, &lagrange_evals_r[..]);
-                        let bz0 = compute_bz_r_group0(&row_inputs, &lagrange_evals_r[..]);
-                        let az1 = compute_az_r_group1(&row_inputs, &lagrange_evals_r[..]);
-                        let bz1 = compute_bz_r_group1(&row_inputs, &lagrange_evals_r[..]);
+                        let g0 = R1CSFirstGroup::<F>::from_cycle_inputs(&row_inputs);
+                        let g1 = R1CSSecondGroup::<F>::from_cycle_inputs(&row_inputs);
+                        let az0 = g0.az_at_r(lagrange_evals_r);
+                        let bz0 = g0.bz_at_r(lagrange_evals_r);
+                        let az1 = g1.az_at_r(lagrange_evals_r);
+                        let bz1 = g1.bz_at_r(lagrange_evals_r);
                         let p0 = az0 * bz0;
                         let slope = (az1 - az0) * (bz1 - bz0);
                         let e_in = split_eq_poly.E_in_current()[x_in_val];
