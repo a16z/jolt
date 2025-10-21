@@ -781,6 +781,8 @@ where
                 .coeffs
                 .par_chunks(row_len)
                 .map(|row| {
+                    // TODO(quang): we don't use this right now, but if we ever do,
+                    // we should optimize this
                     let row_u8: Vec<u8> = row.iter().map(|&b| if b { 1u8 } else { 0u8 }).collect();
                     JoltGroupWrapper(VariableBaseMSM::msm_u8(&bases[..row.len()], &row_u8).unwrap())
                 })
