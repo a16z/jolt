@@ -78,7 +78,7 @@ impl<F: JoltField> ShiftSumcheck<F> {
         let (product_sumcheck_r, next_is_noop_eval) =
             accumulator.borrow().get_virtual_polynomial_opening(
                 VirtualPolynomial::NextIsNoop,
-                SumcheckId::ShouldJumpVirtualization,
+                SumcheckId::ProductVirtualization,
             );
 
         let (r_cycle, _rx_var) = outer_sumcheck_r.split_at(num_cycles_bits);
@@ -150,7 +150,7 @@ impl<F: JoltField> ShiftSumcheck<F> {
             );
         let (_, next_is_noop_eval) = accumulator.borrow().get_virtual_polynomial_opening(
             VirtualPolynomial::NextIsNoop,
-            SumcheckId::ShouldJumpVirtualization,
+            SumcheckId::ProductVirtualization,
         );
 
         let input_claim = [
@@ -313,7 +313,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ShiftSumcheck<F> {
 
         let (product_sumcheck_opening, _) = accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::NextIsNoop,
-            SumcheckId::ShouldJumpVirtualization,
+            SumcheckId::ProductVirtualization,
         );
         let product_sumcheck_r = &product_sumcheck_opening.r;
         let (r_product, _) = product_sumcheck_r.split_at(num_cycles_bits);
