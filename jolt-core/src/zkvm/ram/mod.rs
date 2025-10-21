@@ -9,7 +9,7 @@ use crate::{
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
-        opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN},
+        opening_proof::{OpeningAccumulator, OpeningPoint, SumcheckId, BIG_ENDIAN},
     },
     subprotocols::sumcheck::SumcheckInstance,
     transcripts::Transcript,

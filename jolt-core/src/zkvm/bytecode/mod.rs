@@ -1,4 +1,4 @@
-use crate::poly::opening_proof::SumcheckId;
+use crate::poly::opening_proof::{OpeningAccumulator, SumcheckId};
 use crate::utils::math::Math;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;

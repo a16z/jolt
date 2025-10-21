@@ -18,8 +18,8 @@ use crate::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
         opening_proof::{
-            OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator,
-            BIG_ENDIAN,
+            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+            VerifierOpeningAccumulator, BIG_ENDIAN,
         },
         ra_poly::RaPolynomial,
         split_eq_poly::GruenSplitEqPolynomial,
@@ -112,7 +112,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
         let (val_3, rv_claim_3) = Self::compute_val_rv(sm, ReadCheckingValType::Stage3);
         let (val_4, rv_claim_4) = Self::compute_val_rv(sm, ReadCheckingValType::Stage4);
         let (val_5, rv_claim_5) = Self::compute_val_rv(sm, ReadCheckingValType::Stage5);
-        let r_cycles = Self::get_r_cycle(&sm.get_prover_accumulator());
+        let r_cycles = Self::get_r_cycle(&*sm.get_prover_accumulator().borrow());
         let (_, raf_claim) =
             sm.get_virtual_polynomial_opening(VirtualPolynomial::PC, SumcheckId::SpartanOuter);
         let (_, raf_shift_claim) =
@@ -354,26 +354,23 @@ impl<F: JoltField> ReadRafSumcheck<F> {
         }
     }
 
-    fn get_r_cycle(
-        acc: &Rc<RefCell<ProverOpeningAccumulator<F>>>,
-    ) -> [Vec<F::Challenge>; N_STAGES] {
-        let (r_cycle_1, _) = acc
-            .borrow()
-            .get_virtual_polynomial_opening(VirtualPolynomial::Imm, SumcheckId::SpartanOuter);
-        let (r_cycle_2, _) = acc.borrow().get_virtual_polynomial_opening(
+    fn get_r_cycle(acc: &impl OpeningAccumulator<F>) -> [Vec<F::Challenge>; N_STAGES] {
+        let (r_cycle_1, _) =
+            acc.get_virtual_polynomial_opening(VirtualPolynomial::Imm, SumcheckId::SpartanOuter);
+        let (r_cycle_2, _) = acc.get_virtual_polynomial_opening(
             VirtualPolynomial::OpFlags(CircuitFlags::Jump),
             SumcheckId::ProductVirtualization,
         );
-        let (r_cycle_3, _) = acc.borrow().get_virtual_polynomial_opening(
+        let (r_cycle_3, _) = acc.get_virtual_polynomial_opening(
             VirtualPolynomial::UnexpandedPC,
             SumcheckId::SpartanShift,
         );
-        let (r, _) = acc.borrow().get_virtual_polynomial_opening(
+        let (r, _) = acc.get_virtual_polynomial_opening(
             VirtualPolynomial::Rs1Ra,
             SumcheckId::RegistersReadWriteChecking,
         );
         let (_, r_cycle_4) = r.split_at((REGISTER_COUNT as usize).log_2());
-        let (r, _) = acc.borrow().get_virtual_polynomial_opening(
+        let (r, _) = acc.get_virtual_polynomial_opening(
             VirtualPolynomial::RdWa,
             SumcheckId::RegistersValEvaluation,
         );
@@ -381,41 +378,6 @@ impl<F: JoltField> ReadRafSumcheck<F> {
         [
             r_cycle_1.r,
             r_cycle_2.r,
-            r_cycle_3.r,
-            r_cycle_4.r,
-            r_cycle_5.r,
-        ]
-    }
-
-    fn get_r_cycle_verif(
-        acc: &Rc<RefCell<VerifierOpeningAccumulator<F>>>,
-    ) -> [Vec<F::Challenge>; N_STAGES] {
-        let (r_cycle_1, _) = acc
-            .borrow()
-            .get_virtual_polynomial_opening(VirtualPolynomial::Imm, SumcheckId::SpartanOuter);
-        let (r, _) = acc.borrow().get_virtual_polynomial_opening(
-            VirtualPolynomial::OpFlags(CircuitFlags::Jump),
-            SumcheckId::ProductVirtualization,
-        );
-        let r_cycle_2 = r.r;
-        // Stage 3: Get r_cycle from ShiftSumcheck or other stage 3 sumchecks
-        let (r_cycle_3, _) = acc.borrow().get_virtual_polynomial_opening(
-            VirtualPolynomial::UnexpandedPC,
-            SumcheckId::SpartanShift,
-        );
-        let (r, _) = acc.borrow().get_virtual_polynomial_opening(
-            VirtualPolynomial::Rs1Ra,
-            SumcheckId::RegistersReadWriteChecking,
-        );
-        let (_, r_cycle_4) = r.split_at((REGISTER_COUNT as usize).log_2());
-        let (r, _) = acc.borrow().get_virtual_polynomial_opening(
-            VirtualPolynomial::RdWa,
-            SumcheckId::RegistersValEvaluation,
-        );
-        let (_, r_cycle_5) = r.split_at((REGISTER_COUNT as usize).log_2());
-        [
-            r_cycle_1.r,
-            r_cycle_2,
             r_cycle_3.r,
             r_cycle_4.r,
             r_cycle_5.r,
@@ -813,7 +775,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
         self.log_K + self.log_T
     }
 
-    fn input_claim(&self) -> F {
+    fn input_claim(&self, _acc: Option<&RefCell<dyn OpeningAccumulator<F>>>) -> F {
         self.rv_claim
     }
 
@@ -1030,7 +992,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
                 )
                 .1
         });
-        let r_cycles = Self::get_r_cycle_verif(accumulator);
+        let r_cycles = Self::get_r_cycle(&*accumulator.borrow());
 
         // We have a separate Val polynomial for each stage
         // Additionally, for stages 1 and 3 we have an Int polynomial for RAF
