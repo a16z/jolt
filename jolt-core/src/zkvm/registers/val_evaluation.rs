@@ -10,8 +10,8 @@ use crate::{
         lt_poly::LtPolynomial,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{
-            OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator,
-            BIG_ENDIAN,
+            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+            VerifierOpeningAccumulator, BIG_ENDIAN,
         },
         ra_poly::RaPolynomial,
         unipoly::UniPoly,
@@ -50,10 +50,9 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
         let (preprocessing, trace, _, _) = state_manager.get_prover_data();
-        let accumulator = state_manager.get_prover_accumulator();
 
         // Get val_claim from the accumulator (from stage 2 RegistersReadWriteChecking)
-        let (opening_point, val_claim) = accumulator.borrow().get_virtual_polynomial_opening(
+        let (opening_point, val_claim) = state_manager.get_virtual_polynomial_opening(
             VirtualPolynomial::RegistersVal,
             SumcheckId::RegistersReadWriteChecking,
         );
@@ -88,9 +87,8 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
     ) -> Self {
         let (_, _, trace_length) = state_manager.get_verifier_data();
 
-        let accumulator = state_manager.get_verifier_accumulator();
         // Get val_claim from the accumulator (from stage 2 RegistersReadWriteChecking)
-        let (_, val_claim) = accumulator.borrow().get_virtual_polynomial_opening(
+        let (_, val_claim) = state_manager.get_virtual_polynomial_opening(
             VirtualPolynomial::RegistersVal,
             SumcheckId::RegistersReadWriteChecking,
         );

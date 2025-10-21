@@ -10,7 +10,8 @@ use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::eq_poly::EqPlusOnePolynomial;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
 use crate::poly::opening_proof::{
-    OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
+    OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+    VerifierOpeningAccumulator, BIG_ENDIAN,
 };
 use crate::subprotocols::sumcheck::SumcheckInstance;
 use crate::transcripts::Transcript;
@@ -58,29 +59,25 @@ impl<F: JoltField> ShiftSumcheck<F> {
         let num_cycles_bits = num_cycles.ilog2() as usize;
 
         // Get opening_point and claims from accumulator
-        let accumulator = state_manager.get_prover_accumulator();
-        let (outer_sumcheck_r, next_pc_eval) = accumulator
-            .borrow()
+        let (outer_sumcheck_r, next_pc_eval) = state_manager
             .get_virtual_polynomial_opening(VirtualPolynomial::NextPC, SumcheckId::SpartanOuter);
-        let (_, next_unexpanded_pc_eval) = accumulator.borrow().get_virtual_polynomial_opening(
+        let (_, next_unexpanded_pc_eval) = state_manager.get_virtual_polynomial_opening(
             VirtualPolynomial::NextUnexpandedPC,
             SumcheckId::SpartanOuter,
         );
-        let (_, next_is_virtual_eval) = accumulator.borrow().get_virtual_polynomial_opening(
+        let (_, next_is_virtual_eval) = state_manager.get_virtual_polynomial_opening(
             VirtualPolynomial::NextIsVirtual,
             SumcheckId::SpartanOuter,
         );
-        let (_, next_is_first_in_sequence_eval) =
-            accumulator.borrow().get_virtual_polynomial_opening(
-                VirtualPolynomial::NextIsFirstInSequence,
-                SumcheckId::SpartanOuter,
-            );
+        let (_, next_is_first_in_sequence_eval) = state_manager.get_virtual_polynomial_opening(
+            VirtualPolynomial::NextIsFirstInSequence,
+            SumcheckId::SpartanOuter,
+        );
 
-        let (product_sumcheck_r, next_is_noop_eval) =
-            accumulator.borrow().get_virtual_polynomial_opening(
-                VirtualPolynomial::NextIsNoop,
-                SumcheckId::ProductVirtualization,
-            );
+        let (product_sumcheck_r, next_is_noop_eval) = state_manager.get_virtual_polynomial_opening(
+            VirtualPolynomial::NextIsNoop,
+            SumcheckId::ProductVirtualization,
+        );
 
         let (r_cycle, _rx_var) = outer_sumcheck_r.split_at(num_cycles_bits);
         let (r_product, _) = product_sumcheck_r.split_at(num_cycles_bits);

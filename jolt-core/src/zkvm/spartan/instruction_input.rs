@@ -11,8 +11,8 @@ use crate::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{
-            OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator,
-            BIG_ENDIAN,
+            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+            VerifierOpeningAccumulator, BIG_ENDIAN,
         },
         split_eq_poly::GruenSplitEqPolynomial,
         unipoly::UniPoly,
@@ -59,22 +59,19 @@ impl<F: JoltField> InstructionInputSumcheck<F> {
         state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
     ) -> Self {
         // Get claimed samples.
-        let accumulator = state_manager.get_prover_accumulator();
-        let (r_cycle_stage_1, left_claim_stage_1) =
-            accumulator.borrow().get_virtual_polynomial_opening(
-                VirtualPolynomial::LeftInstructionInput,
-                SumcheckId::SpartanOuter,
-            );
-        let (_, right_claim_stage_1) = accumulator.borrow().get_virtual_polynomial_opening(
+        let (r_cycle_stage_1, left_claim_stage_1) = state_manager.get_virtual_polynomial_opening(
+            VirtualPolynomial::LeftInstructionInput,
+            SumcheckId::SpartanOuter,
+        );
+        let (_, right_claim_stage_1) = state_manager.get_virtual_polynomial_opening(
             VirtualPolynomial::RightInstructionInput,
             SumcheckId::SpartanOuter,
         );
-        let (r_cycle_stage_2, left_claim_stage_2) =
-            accumulator.borrow().get_virtual_polynomial_opening(
-                VirtualPolynomial::LeftInstructionInput,
-                SumcheckId::ProductVirtualization,
-            );
-        let (_, right_claim_stage_2) = accumulator.borrow().get_virtual_polynomial_opening(
+        let (r_cycle_stage_2, left_claim_stage_2) = state_manager.get_virtual_polynomial_opening(
+            VirtualPolynomial::LeftInstructionInput,
+            SumcheckId::ProductVirtualization,
+        );
+        let (_, right_claim_stage_2) = state_manager.get_virtual_polynomial_opening(
             VirtualPolynomial::RightInstructionInput,
             SumcheckId::ProductVirtualization,
         );
@@ -101,24 +98,22 @@ impl<F: JoltField> InstructionInputSumcheck<F> {
     pub fn new_verifier<T: Transcript, PCS: CommitmentScheme<Field = F>>(
         state_manager: &mut StateManager<'_, F, T, PCS>,
     ) -> Self {
-        let accumulator = state_manager.get_verifier_accumulator();
-        let (r_outer, left_claim_for_stage_1) =
-            accumulator.borrow().get_virtual_polynomial_opening(
-                VirtualPolynomial::LeftInstructionInput,
-                SumcheckId::SpartanOuter,
-            );
+        let (r_outer, left_claim_for_stage_1) = state_manager.get_virtual_polynomial_opening(
+            VirtualPolynomial::LeftInstructionInput,
+            SumcheckId::SpartanOuter,
+        );
         let (_, _, T) = state_manager.get_verifier_data();
         let (r_cycle_stage_1, _) = r_outer.split_at(T.log_2());
-        let (_, right_claim_for_stage_1) = accumulator.borrow().get_virtual_polynomial_opening(
+        let (_, right_claim_for_stage_1) = state_manager.get_virtual_polynomial_opening(
             VirtualPolynomial::RightInstructionInput,
             SumcheckId::SpartanOuter,
         );
-        let (r_cycle_stage_2, left_claim_for_stage_2) =
-            accumulator.borrow().get_virtual_polynomial_opening(
+        let (r_cycle_stage_2, left_claim_for_stage_2) = state_manager
+            .get_virtual_polynomial_opening(
                 VirtualPolynomial::LeftInstructionInput,
                 SumcheckId::ProductVirtualization,
             );
-        let (_, right_claim_for_stage_2) = accumulator.borrow().get_virtual_polynomial_opening(
+        let (_, right_claim_for_stage_2) = state_manager.get_virtual_polynomial_opening(
             VirtualPolynomial::RightInstructionInput,
             SumcheckId::ProductVirtualization,
         );

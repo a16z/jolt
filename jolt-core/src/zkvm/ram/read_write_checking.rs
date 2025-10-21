@@ -1,6 +1,7 @@
 use num_traits::Zero;
 use std::{cell::RefCell, rc::Rc};
 
+use crate::poly::opening_proof::OpeningAccumulator;
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 
 use crate::{
@@ -80,8 +81,6 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
         let (preprocessing, trace, program_io, _) = state_manager.get_prover_data();
 
         let r_prime = state_manager
-            .get_prover_accumulator()
-            .borrow()
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::RamReadValue,
                 SumcheckId::SpartanOuter,
@@ -329,20 +328,14 @@ impl<F: JoltField> RamReadWriteChecking<F> {
         let K = state_manager.ram_K;
         let T = state_manager.get_prover_data().1.len();
 
-        let (_, rv_claim) = state_manager
-            .get_prover_accumulator()
-            .borrow()
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::RamReadValue,
-                SumcheckId::SpartanOuter,
-            );
-        let (_, wv_claim) = state_manager
-            .get_prover_accumulator()
-            .borrow()
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::RamWriteValue,
-                SumcheckId::SpartanOuter,
-            );
+        let (_, rv_claim) = state_manager.get_virtual_polynomial_opening(
+            VirtualPolynomial::RamReadValue,
+            SumcheckId::SpartanOuter,
+        );
+        let (_, wv_claim) = state_manager.get_virtual_polynomial_opening(
+            VirtualPolynomial::RamWriteValue,
+            SumcheckId::SpartanOuter,
+        );
 
         let prover_state =
             ReadWriteCheckingProverState::initialize(initial_memory_state, K, state_manager);

@@ -10,7 +10,8 @@ use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::lagrange_poly::{LagrangeHelper, LagrangePolynomial};
 use crate::poly::multilinear_polynomial::BindingOrder;
 use crate::poly::opening_proof::{
-    OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
+    OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+    VerifierOpeningAccumulator, BIG_ENDIAN,
 };
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::poly::unipoly::UniPoly;
@@ -111,12 +112,10 @@ impl<F: JoltField> ProductVirtualUniSkipInstance<F> {
         let (_preprocessing, trace, _program_io, _final_mem) = state_manager.get_prover_data();
 
         // Get base evaluations from outer sumcheck claims
-        let acc = state_manager.get_prover_accumulator();
         let mut base_evals: [F; NUM_PRODUCT_VIRTUAL] = [F::zero(); NUM_PRODUCT_VIRTUAL];
         for (i, vp) in PRODUCT_VIRTUAL_TERMS.iter().enumerate() {
-            let (_, eval) = acc
-                .borrow()
-                .get_virtual_polynomial_opening(*vp, SumcheckId::SpartanOuter);
+            let (_, eval) =
+                state_manager.get_virtual_polynomial_opening(*vp, SumcheckId::SpartanOuter);
             base_evals[i] = eval;
         }
 
@@ -138,12 +137,10 @@ impl<F: JoltField> ProductVirtualUniSkipInstance<F> {
         state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
         tau: &[F::Challenge],
     ) -> Self {
-        let acc = state_manager.get_verifier_accumulator();
         let mut base_evals: [F; NUM_PRODUCT_VIRTUAL] = [F::zero(); NUM_PRODUCT_VIRTUAL];
         for (i, vp) in PRODUCT_VIRTUAL_TERMS.iter().enumerate() {
-            let (_, eval) = acc
-                .borrow()
-                .get_virtual_polynomial_opening(*vp, SumcheckId::SpartanOuter);
+            let (_, eval) =
+                state_manager.get_virtual_polynomial_opening(*vp, SumcheckId::SpartanOuter);
             base_evals[i] = eval;
         }
         Self {
@@ -934,14 +931,12 @@ impl<F: JoltField> ProductVirtualInner<F> {
             .transcript
             .borrow_mut()
             .challenge_scalar_optimized::<F>();
-        let acc = state_manager.get_prover_accumulator();
-        let acc_ref = acc.borrow();
         // Fused product claims (their opening point includes r0)
-        let (pt_left, fused_left) = acc_ref.get_virtual_polynomial_opening(
+        let (pt_left, fused_left) = state_manager.get_virtual_polynomial_opening(
             VirtualPolynomial::FusedProductLeft,
             SumcheckId::ProductVirtualization,
         );
-        let (_, fused_right) = acc_ref.get_virtual_polynomial_opening(
+        let (_, fused_right) = state_manager.get_virtual_polynomial_opening(
             VirtualPolynomial::FusedProductRight,
             SumcheckId::ProductVirtualization,
         );
