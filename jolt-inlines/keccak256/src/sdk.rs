@@ -58,9 +58,17 @@ impl Keccak256 {
             }
         }
 
-        // Process full blocks directly from input
+        // Process complete blocks
         while offset + RATE_IN_BYTES <= input.len() {
-            self.absorb_slice(&input[offset..offset + RATE_IN_BYTES]);
+            unsafe {
+                core::ptr::copy_nonoverlapping(
+                    input.as_ptr().add(offset),
+                    self.buffer.as_mut_ptr(),
+                    RATE_IN_BYTES,
+                );
+            }
+            self.buffer_len = RATE_IN_BYTES;
+            self.absorb_buffer();
             offset += RATE_IN_BYTES;
         }
 
@@ -157,34 +165,6 @@ impl Keccak256 {
             keccak_f(self.state.as_mut_ptr());
         }
         self.buffer_len = 0;
-    }
-
-    /// Absorbs a full block from a slice into the state.
-    #[inline(always)]
-    fn absorb_slice(&mut self, block: &[u8]) {
-        debug_assert_eq!(block.len(), RATE_IN_BYTES);
-
-        #[cfg(target_endian = "little")]
-        unsafe {
-            // On little-endian, directly XOR the block as u64 words
-            let block_words = block.as_ptr() as *const u64;
-            for i in 0..RATE_IN_U64 {
-                self.state[i] ^= *block_words.add(i);
-            }
-        }
-
-        #[cfg(target_endian = "big")]
-        {
-            // For big-endian, convert each word from little-endian bytes
-            for i in 0..RATE_IN_U64 {
-                let word = u64::from_le_bytes(block[i * 8..(i + 1) * 8].try_into().unwrap());
-                self.state[i] ^= word;
-            }
-        }
-
-        unsafe {
-            keccak_f(self.state.as_mut_ptr());
-        }
     }
 }
 
