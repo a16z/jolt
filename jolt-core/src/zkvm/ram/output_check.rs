@@ -10,8 +10,8 @@ use crate::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
         opening_proof::{
-            OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator,
-            BIG_ENDIAN,
+            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+            VerifierOpeningAccumulator, BIG_ENDIAN,
         },
         program_io_polynomial::ProgramIOPolynomial,
         range_mask_polynomial::RangeMaskPolynomial,
@@ -177,7 +177,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for OutputSumcheck<F> {
         self.K.log_2()
     }
 
-    fn input_claim(&self) -> F {
+    fn input_claim(&self, _acc: Option<&RefCell<dyn OpeningAccumulator<F>>>) -> F {
         F::zero()
     }
 
@@ -376,7 +376,6 @@ pub struct ValFinalSumcheck<F: JoltField> {
     T: usize,
     prover_state: Option<ValFinalSumcheckProverState<F>>,
     val_init_eval: F,
-    val_final_claim: F,
 }
 
 impl<F: JoltField> ValFinalSumcheck<F> {
@@ -447,18 +446,11 @@ impl<F: JoltField> ValFinalSumcheck<F> {
                 SumcheckId::RamOutputCheck,
             )
             .1;
-        let val_final_claim = state_manager
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::RamValFinal,
-                SumcheckId::RamOutputCheck,
-            )
-            .1;
 
         Self {
             T,
             prover_state: Some(ValFinalSumcheckProverState { wa, inc }),
             val_init_eval,
-            val_final_claim,
         }
     }
 
@@ -521,18 +513,10 @@ impl<F: JoltField> ValFinalSumcheck<F> {
             + trusted_advice_contribution
             + val_init_public.evaluate(&r_address);
 
-        let val_final_claim = state_manager
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::RamValFinal,
-                SumcheckId::RamOutputCheck,
-            )
-            .1;
-
         Self {
             T,
             prover_state: None,
             val_init_eval,
-            val_final_claim,
         }
     }
 }
@@ -546,8 +530,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ValFinalSumcheck<F>
         self.T.log_2()
     }
 
-    fn input_claim(&self) -> F {
-        self.val_final_claim - self.val_init_eval
+    fn input_claim(&self, acc: Option<&RefCell<dyn OpeningAccumulator<F>>>) -> F {
+        let acc = acc.unwrap().borrow();
+        let (_, val_final_claim) = acc.get_virtual_polynomial_opening(
+            VirtualPolynomial::RamValFinal,
+            SumcheckId::RamOutputCheck,
+        );
+        val_final_claim - self.val_init_eval
     }
 
     #[tracing::instrument(skip_all, name = "ValFinalSumcheck::compute_prover_message")]

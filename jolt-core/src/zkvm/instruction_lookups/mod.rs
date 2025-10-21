@@ -7,8 +7,9 @@ use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::{
     field::JoltField,
     poly::{
-        commitment::commitment_scheme::CommitmentScheme, eq_poly::EqPolynomial,
-        opening_proof::SumcheckId,
+        commitment::commitment_scheme::CommitmentScheme,
+        eq_poly::EqPolynomial,
+        opening_proof::{OpeningAccumulator, SumcheckId},
     },
     subprotocols::sumcheck::SumcheckInstance,
     transcripts::Transcript,

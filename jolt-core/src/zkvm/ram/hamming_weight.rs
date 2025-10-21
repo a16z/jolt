@@ -13,8 +13,8 @@ use crate::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{
-            OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator,
-            BIG_ENDIAN,
+            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+            VerifierOpeningAccumulator, BIG_ENDIAN,
         },
     },
     subprotocols::sumcheck::SumcheckInstance,
@@ -34,7 +34,6 @@ pub struct HammingWeightProverState<F: JoltField> {
 
 #[derive(Allocative)]
 pub struct HammingWeightSumcheck<F: JoltField> {
-    input_claim: F,
     d: usize,
     gamma_powers: Vec<F>,
     prover_state: Option<HammingWeightProverState<F>>,
@@ -61,7 +60,7 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
             gamma_powers[i] = gamma_powers[i - 1] * gamma;
         }
 
-        let (r_cycle, hamming_booleanity_claim) = state_manager.get_virtual_polynomial_opening(
+        let (r_cycle, _) = state_manager.get_virtual_polynomial_opening(
             VirtualPolynomial::RamHammingWeight,
             SumcheckId::RamHammingBooleanity,
         );
@@ -109,10 +108,7 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
             .map(MultilinearPolynomial::from)
             .collect();
 
-        let input_claim = hamming_booleanity_claim * gamma_powers.iter().sum::<F>();
-
         Self {
-            input_claim,
             d,
             gamma_powers,
             prover_state: Some(HammingWeightProverState { ra }),
@@ -131,15 +127,7 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
             gamma_powers[i] = gamma_powers[i - 1] * gamma;
         }
 
-        let (_, hamming_booleanity_claim) = state_manager.get_virtual_polynomial_opening(
-            VirtualPolynomial::RamHammingWeight,
-            SumcheckId::RamHammingBooleanity,
-        );
-
-        let input_claim = hamming_booleanity_claim * gamma_powers.iter().sum::<F>();
-
         Self {
-            input_claim,
             d,
             gamma_powers,
             prover_state: None,
@@ -156,8 +144,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for HammingWeightSumche
         DTH_ROOT_OF_K.log_2()
     }
 
-    fn input_claim(&self) -> F {
-        self.input_claim
+    fn input_claim(&self, acc: Option<&RefCell<dyn OpeningAccumulator<F>>>) -> F {
+        let acc = acc.unwrap().borrow();
+        let (_, hamming_booleanity_claim) = acc.get_virtual_polynomial_opening(
+            VirtualPolynomial::RamHammingWeight,
+            SumcheckId::RamHammingBooleanity,
+        );
+        hamming_booleanity_claim * self.gamma_powers.iter().sum::<F>()
     }
 
     #[tracing::instrument(skip_all, name = "RamHammingWeightSumcheck::compute_prover_message")]

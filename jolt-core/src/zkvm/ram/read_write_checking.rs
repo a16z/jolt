@@ -1,6 +1,7 @@
 use num_traits::Zero;
 use std::{cell::RefCell, rc::Rc};
 
+use crate::poly::opening_proof::OpeningAccumulator;
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 
 use crate::{
@@ -80,8 +81,6 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
         let (preprocessing, trace, program_io, _) = state_manager.get_prover_data();
 
         let r_prime = state_manager
-            .get_prover_accumulator()
-            .borrow()
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::RamReadValue,
                 SumcheckId::SpartanOuter,
@@ -315,8 +314,6 @@ pub struct RamReadWriteChecking<F: JoltField> {
     r_prime: Option<OpeningPoint<BIG_ENDIAN, F>>,
     sumcheck_switch_index: usize,
     prover_state: Option<ReadWriteCheckingProverState<F>>,
-    rv_claim: F,
-    wv_claim: F,
 }
 
 impl<F: JoltField> RamReadWriteChecking<F> {
@@ -328,22 +325,6 @@ impl<F: JoltField> RamReadWriteChecking<F> {
         let gamma = state_manager.transcript.borrow_mut().challenge_scalar();
         let K = state_manager.ram_K;
         let T = state_manager.get_prover_data().1.len();
-
-        let (_, rv_claim) = state_manager
-            .get_prover_accumulator()
-            .borrow()
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::RamReadValue,
-                SumcheckId::SpartanOuter,
-            );
-        let (_, wv_claim) = state_manager
-            .get_prover_accumulator()
-            .borrow()
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::RamWriteValue,
-                SumcheckId::SpartanOuter,
-            );
-
         let prover_state =
             ReadWriteCheckingProverState::initialize(initial_memory_state, K, state_manager);
 
@@ -354,8 +335,6 @@ impl<F: JoltField> RamReadWriteChecking<F> {
             r_prime: None,
             sumcheck_switch_index: state_manager.twist_sumcheck_switch_index,
             prover_state: Some(prover_state),
-            rv_claim,
-            wv_claim,
         }
     }
 
@@ -366,29 +345,10 @@ impl<F: JoltField> RamReadWriteChecking<F> {
         let (_, _, T) = state_manager.get_verifier_data();
         let K = state_manager.ram_K;
 
-        let r_prime = state_manager
-            .get_verifier_accumulator()
-            .borrow()
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::RamReadValue,
-                SumcheckId::SpartanOuter,
-            )
-            .0;
-
-        let (_, rv_claim) = state_manager
-            .get_verifier_accumulator()
-            .borrow()
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::RamReadValue,
-                SumcheckId::SpartanOuter,
-            );
-        let (_, wv_claim) = state_manager
-            .get_verifier_accumulator()
-            .borrow()
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::RamWriteValue,
-                SumcheckId::SpartanOuter,
-            );
+        let (r_prime, _) = state_manager.get_virtual_polynomial_opening(
+            VirtualPolynomial::RamReadValue,
+            SumcheckId::SpartanOuter,
+        );
 
         Self {
             K,
@@ -397,8 +357,6 @@ impl<F: JoltField> RamReadWriteChecking<F> {
             r_prime: Some(r_prime),
             sumcheck_switch_index: state_manager.twist_sumcheck_switch_index,
             prover_state: None,
-            rv_claim,
-            wv_claim,
         }
     }
 
@@ -997,8 +955,17 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for RamReadWriteCheckin
         self.K.log_2() + self.T.log_2()
     }
 
-    fn input_claim(&self) -> F {
-        self.rv_claim + self.gamma * self.wv_claim
+    fn input_claim(&self, acc: Option<&RefCell<dyn OpeningAccumulator<F>>>) -> F {
+        let acc = acc.unwrap().borrow();
+        let (_, rv_claim) = acc.get_virtual_polynomial_opening(
+            VirtualPolynomial::RamReadValue,
+            SumcheckId::SpartanOuter,
+        );
+        let (_, wv_claim) = acc.get_virtual_polynomial_opening(
+            VirtualPolynomial::RamWriteValue,
+            SumcheckId::SpartanOuter,
+        );
+        rv_claim + self.gamma * wv_claim
     }
 
     #[tracing::instrument(skip_all, name = "RamReadWriteChecking::compute_prover_message")]
