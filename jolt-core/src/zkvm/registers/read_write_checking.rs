@@ -1345,7 +1345,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for RegistersReadWriteC
         K.log_2() + self.T.log_2()
     }
 
-    fn input_claim(&self, _acc: &dyn OpeningAccumulator<F>) -> F {
+    fn input_claim(&self, _acc: Option<&RefCell<dyn OpeningAccumulator<F>>>) -> F {
         self.input_sample_stage_1.1 + self.gamma_pow_3 * self.input_sample_stage_3.1
     }
 

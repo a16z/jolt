@@ -14,6 +14,7 @@ use num_derive::FromPrimitive;
 use num_traits::Zero;
 use rayon::prelude::*;
 use std::{
+    cell::RefCell,
     collections::{BTreeMap, HashMap},
     sync::{Arc, RwLock},
 };
@@ -436,7 +437,7 @@ where
         self.opening_point.len()
     }
 
-    fn input_claim(&self, _acc: &dyn OpeningAccumulator<F>) -> F {
+    fn input_claim(&self, _acc: Option<&RefCell<dyn OpeningAccumulator<F>>>) -> F {
         self.input_claim
     }
 

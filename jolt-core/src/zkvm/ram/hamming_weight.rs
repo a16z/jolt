@@ -156,7 +156,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for HammingWeightSumche
         DTH_ROOT_OF_K.log_2()
     }
 
-    fn input_claim(&self, _acc: &dyn OpeningAccumulator<F>) -> F {
+    fn input_claim(&self, _acc: Option<&RefCell<dyn OpeningAccumulator<F>>>) -> F {
         self.input_claim
     }
 

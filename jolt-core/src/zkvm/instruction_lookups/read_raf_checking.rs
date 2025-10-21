@@ -93,8 +93,6 @@ pub struct ReadRafSumcheck<F: JoltField> {
     gamma_sqr: F,
     prover_state: Option<ReadRafProverState<F>>,
 
-    rv_claim: F,
-    raf_claim: F,
     log_T: usize,
 }
 
@@ -106,20 +104,12 @@ impl<'a, F: JoltField> ReadRafSumcheck<F> {
         let trace = sm.get_prover_data().1;
         let log_T = trace.len().log_2();
         let gamma: F = sm.transcript.borrow_mut().challenge_scalar();
-        let (r_branch, rv_claim_branch) = sm.get_virtual_polynomial_opening(
+        let (r_branch, _) = sm.get_virtual_polynomial_opening(
             VirtualPolynomial::LookupOutput,
             SumcheckId::ProductVirtualization,
         );
-        let (r_spartan, rv_claim_spartan) = sm.get_virtual_polynomial_opening(
+        let (r_spartan, _) = sm.get_virtual_polynomial_opening(
             VirtualPolynomial::LookupOutput,
-            SumcheckId::SpartanOuter,
-        );
-        let (_, left_operand_claim) = sm.get_virtual_polynomial_opening(
-            VirtualPolynomial::LeftLookupOperand,
-            SumcheckId::SpartanOuter,
-        );
-        let (_, right_operand_claim) = sm.get_virtual_polynomial_opening(
-            VirtualPolynomial::RightLookupOperand,
             SumcheckId::SpartanOuter,
         );
         let mut ps = ReadRafProverState::new(trace, r_spartan, r_branch, gamma);
@@ -129,8 +119,6 @@ impl<'a, F: JoltField> ReadRafSumcheck<F> {
             gamma,
             gamma_sqr: gamma.square(),
             prover_state: Some(ps),
-            rv_claim: rv_claim_spartan + gamma * rv_claim_branch,
-            raf_claim: left_operand_claim + gamma * right_operand_claim,
             log_T,
         }
     }
@@ -141,29 +129,10 @@ impl<'a, F: JoltField> ReadRafSumcheck<F> {
         let log_T = sm.get_verifier_data().2.log_2();
         let gamma: F = sm.transcript.borrow_mut().challenge_scalar();
         let gamma_sqr: F = gamma.square();
-        let (_, rv_claim) = sm.get_virtual_polynomial_opening(
-            VirtualPolynomial::LookupOutput,
-            SumcheckId::SpartanOuter,
-        );
-        let (_, rv_claim_branch) = sm.get_virtual_polynomial_opening(
-            VirtualPolynomial::LookupOutput,
-            SumcheckId::ProductVirtualization,
-        );
-        let (_, left_operand_claim) = sm.get_virtual_polynomial_opening(
-            VirtualPolynomial::LeftLookupOperand,
-            SumcheckId::SpartanOuter,
-        );
-        let (_, right_operand_claim) = sm.get_virtual_polynomial_opening(
-            VirtualPolynomial::RightLookupOperand,
-            SumcheckId::SpartanOuter,
-        );
-
         Self {
             gamma,
             gamma_sqr,
             prover_state: None,
-            rv_claim: rv_claim + gamma * rv_claim_branch,
-            raf_claim: left_operand_claim + gamma * right_operand_claim,
             log_T,
         }
     }
@@ -331,8 +300,27 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
         LOG_K + self.log_T
     }
 
-    fn input_claim(&self, _acc: &dyn OpeningAccumulator<F>) -> F {
-        self.rv_claim + self.gamma_sqr * self.raf_claim
+    fn input_claim(&self, acc: Option<&RefCell<dyn OpeningAccumulator<F>>>) -> F {
+        let acc = acc.unwrap().borrow();
+        let (_, rv_claim_spartan) = acc.get_virtual_polynomial_opening(
+            VirtualPolynomial::LookupOutput,
+            SumcheckId::SpartanOuter,
+        );
+        let (_, rv_claim_branch) = acc.get_virtual_polynomial_opening(
+            VirtualPolynomial::LookupOutput,
+            SumcheckId::ProductVirtualization,
+        );
+        let (_, left_operand_claim) = acc.get_virtual_polynomial_opening(
+            VirtualPolynomial::LeftLookupOperand,
+            SumcheckId::SpartanOuter,
+        );
+        let (_, right_operand_claim) = acc.get_virtual_polynomial_opening(
+            VirtualPolynomial::RightLookupOperand,
+            SumcheckId::SpartanOuter,
+        );
+        rv_claim_spartan
+            + self.gamma * rv_claim_branch
+            + self.gamma_sqr * (left_operand_claim + self.gamma * right_operand_claim)
     }
 
     #[tracing::instrument(skip_all, name = "InstructionReadRafSumcheck::compute_prover_message")]

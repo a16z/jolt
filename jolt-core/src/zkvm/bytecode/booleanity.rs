@@ -194,7 +194,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for BooleanitySumcheck<
         self.log_K_chunk + self.log_T
     }
 
-    fn input_claim(&self, _acc: &dyn OpeningAccumulator<F>) -> F {
+    fn input_claim(&self, _acc: Option<&RefCell<dyn OpeningAccumulator<F>>>) -> F {
         F::zero()
     }
 

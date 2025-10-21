@@ -2,6 +2,7 @@ use allocative::Allocative;
 use ark_ff::biginteger::{S128, S160, S192, S64};
 use ark_std::Zero;
 use rayon::prelude::*;
+use std::cell::RefCell;
 use std::sync::Arc;
 use tracer::instruction::Cycle;
 
@@ -707,7 +708,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for OuterRemainingSumch
         1 + self.num_cycles_bits
     }
 
-    fn input_claim(&self, _acc: &dyn OpeningAccumulator<F>) -> F {
+    fn input_claim(&self, _acc: Option<&RefCell<dyn OpeningAccumulator<F>>>) -> F {
         self.input_claim
     }
 
