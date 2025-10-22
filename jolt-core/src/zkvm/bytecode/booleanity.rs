@@ -128,7 +128,6 @@ impl<F: JoltField> BytecodeBooleanitySumcheck<F> {
     }
 }
 
-// Implement BooleanityConfig trait
 impl<F: JoltField> BooleanityConfig for BytecodeBooleanitySumcheck<F> {
     fn d(&self) -> usize {
         self.d
@@ -151,7 +150,6 @@ impl<F: JoltField> BooleanityConfig for BytecodeBooleanitySumcheck<F> {
     }
 }
 
-// Implement BooleanitySumcheck trait
 impl<F: JoltField, T: Transcript> BooleanitySumcheck<F, T> for BytecodeBooleanitySumcheck<F> {
     fn gamma(&self) -> &[F::Challenge] {
         &self.gamma

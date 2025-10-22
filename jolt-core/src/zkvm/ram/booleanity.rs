@@ -60,7 +60,7 @@ impl<F: JoltField> RamBooleanitySumcheck<F> {
 
         let eq_r_cycle = EqPolynomial::<F>::evals(&r_cycle);
 
-        // Get gamma challenges for batching (optimized)
+        // Get gamma challenges for batching
         let gamma = state_manager
             .transcript
             .borrow_mut()
@@ -262,7 +262,6 @@ impl<F: JoltField, T: Transcript> BooleanitySumcheck<F, T> for RamBooleanitySumc
             if round == log_k_chunk - 1 {
                 ps.eq_r_r = ps.B.get_current_scalar();
 
-                // Initialize H polynomials using RaPolynomial
                 let F = std::mem::take(&mut ps.F);
                 let H_indices = std::mem::take(&mut ps.H_indices);
                 ps.H = H_indices

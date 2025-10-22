@@ -36,36 +36,29 @@ pub struct BooleanityProverState<F: JoltField> {
     pub D: GruenSplitEqPolynomial<F>,
     /// G[i]: pre-aggregated routing mass per address chunk i.
     pub G: Vec<Vec<F>>,
-    /// H[i]: RaPolynomial for routing indicator H_i(k,j) over address chunk i.
+    /// H[i]: RaPolynomial
     pub H: Vec<RaPolynomial<u8, F>>,
-    /// F: eq-prefix weights for address binding.
+    /// F: Expanding table
     pub F: Vec<F>,
-    /// eq_r_r: scalar eq(r_address, r_address′) after phase 1 collapse.
+    /// eq_r_r
     pub eq_r_r: F,
-    /// Indices for H polynomials (set during construction, cleared after phase 1)
+    /// Indices for H polynomials
     pub H_indices: Vec<Vec<Option<u8>>>,
 }
 
-/// Configuration trait for booleanity sumchecks
 pub trait BooleanityConfig {
-    /// Number of address chunks
     fn d(&self) -> usize;
 
-    /// Number of address-chunk variables per chunk
     fn log_k_chunk(&self) -> usize;
 
-    /// Size of each address chunk (2^log_k_chunk)
     fn k_chunk(&self) -> usize {
         1 << self.log_k_chunk()
     }
 
-    /// Number of time/cycle variables
     fn log_t(&self) -> usize;
 
-    /// Get the polynomial type for Ra claims
     fn polynomial_type(i: usize) -> CommittedPolynomial;
 
-    /// Get the sumcheck ID for this instance
     fn sumcheck_id() -> SumcheckId;
 }
 
@@ -73,23 +66,15 @@ pub trait BooleanityConfig {
 pub trait BooleanitySumcheck<F: JoltField, T: Transcript>:
     SumcheckInstance<F, T> + BooleanityConfig + Send + Sync
 {
-    /// Get the gamma challenges
     fn gamma(&self) -> &[F::Challenge];
 
-    /// Get the r_address binding point
     fn r_address(&self) -> &[F::Challenge];
 
-    /// Get the prover state (if prover)
     fn prover_state(&self) -> Option<&BooleanityProverState<F>>;
 
-    /// Get the mutable prover state (if prover)
     fn prover_state_mut(&mut self) -> Option<&mut BooleanityProverState<F>>;
 
-    /// Get r_cycle for expected output claim calculation
-    /// Some implementations store it, others get it from virtual polynomial
     fn get_r_cycle(&self, accumulator: &dyn OpeningAccumulator<F>) -> Vec<F::Challenge>;
-
-    // Default implementations for SumcheckInstance methods
 
     fn booleanity_degree(&self) -> usize {
         3
@@ -235,7 +220,7 @@ pub trait BooleanitySumcheck<F: JoltField, T: Transcript>:
         );
     }
 
-    // Phase 1 message computation (common logic)
+    // Phase 1 message computation
     fn compute_phase1_message(&self, round: usize, previous_claim: F) -> Vec<F> {
         let p = self.prover_state().expect("Prover state not initialized");
         let m = round + 1;
@@ -312,7 +297,7 @@ pub trait BooleanitySumcheck<F: JoltField, T: Transcript>:
                 .try_into()
                 .unwrap()
         } else {
-            // E_in has not been fully bound - use nested structure
+            // E_in has not been fully bound
             let num_x_in_bits = B.E_in_current_len().log_2();
             let x_bitmask = (1 << num_x_in_bits) - 1;
             let chunk_size = 1 << num_x_in_bits;
@@ -407,7 +392,7 @@ pub trait BooleanitySumcheck<F: JoltField, T: Transcript>:
             .to_vec()
     }
 
-    // Phase 2 message computation (common logic)
+    // Phase 2 message computation
     fn compute_phase2_message(&self, _round: usize, previous_claim: F) -> Vec<F> {
         let p = self.prover_state().expect("Prover state not initialized");
         const DEGREE: usize = 3;
@@ -443,7 +428,7 @@ pub trait BooleanitySumcheck<F: JoltField, T: Transcript>:
                     |running, new| [running[0] + new[0], running[1] + new[1]],
                 )
         } else {
-            // E_in has not been fully bound - use nested structure
+            // E_in has not been fully bound
             let num_x_in_bits = D_poly.E_in_current_len().log_2();
             let x_bitmask = (1 << num_x_in_bits) - 1;
             let chunk_size = 1 << num_x_in_bits;

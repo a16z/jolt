@@ -73,7 +73,6 @@ impl<F: JoltField> InstructionBooleanitySumcheck<F> {
             })
             .collect();
 
-        // Create prover state
         let B = GruenSplitEqPolynomial::new(&r_address, BindingOrder::LowToHigh);
         let D_poly = GruenSplitEqPolynomial::new(&r_cycle, BindingOrder::LowToHigh);
 
@@ -132,7 +131,6 @@ impl<F: JoltField> InstructionBooleanitySumcheck<F> {
     }
 }
 
-// Implement BooleanityConfig trait
 impl<F: JoltField> BooleanityConfig for InstructionBooleanitySumcheck<F> {
     fn d(&self) -> usize {
         D
@@ -155,7 +153,6 @@ impl<F: JoltField> BooleanityConfig for InstructionBooleanitySumcheck<F> {
     }
 }
 
-// Implement BooleanitySumcheck trait
 impl<F: JoltField, T: Transcript> BooleanitySumcheck<F, T> for InstructionBooleanitySumcheck<F> {
     fn gamma(&self) -> &[F::Challenge] {
         &self.gamma
