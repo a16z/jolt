@@ -6,7 +6,7 @@ use rayon::prelude::*;
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 use crate::{
-    field::{JoltField, MulTrunc},
+    field::JoltField,
     poly::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, PolynomialBinding},
@@ -18,10 +18,7 @@ use crate::{
         split_eq_poly::GruenSplitEqPolynomial,
     },
     transcripts::Transcript,
-    utils::{
-        math::Math,
-        thread::{drop_in_background_thread, unsafe_allocate_zero_vec},
-    },
+    utils::{math::Math, thread::drop_in_background_thread},
     zkvm::witness::CommittedPolynomial,
 };
 
@@ -34,9 +31,9 @@ pub struct BooleanityProverState<F: JoltField> {
     pub B: GruenSplitEqPolynomial<F>,
     /// D: split-eq over time/cycle variables (phase 2, LowToHigh).
     pub D: GruenSplitEqPolynomial<F>,
-    /// G[i]: pre-aggregated routing mass per address chunk i.
+    /// G as in the Twist and Shout paper
     pub G: Vec<Vec<F>>,
-    /// H[i]: RaPolynomial
+    /// H as in the Twist and Shout paper
     pub H: Vec<RaPolynomial<u8, F>>,
     /// F: Expanding table
     pub F: Vec<F>,
@@ -62,10 +59,8 @@ pub trait BooleanityConfig {
     fn sumcheck_id() -> SumcheckId;
 }
 
-/// Extension trait for booleanity sumchecks that provides default implementations
-pub trait BooleanitySumcheck<F: JoltField, T: Transcript>:
-    SumcheckInstance<F, T> + BooleanityConfig + Send + Sync
-{
+/// Booleanity Sumcheck interface
+pub trait BooleanitySumcheck<F: JoltField, T: Transcript>: BooleanityConfig + Send + Sync {
     fn gamma(&self) -> &[F::Challenge];
 
     fn r_address(&self) -> &[F::Challenge];
@@ -220,7 +215,6 @@ pub trait BooleanitySumcheck<F: JoltField, T: Transcript>:
         );
     }
 
-    // Phase 1 message computation
     fn compute_phase1_message(&self, round: usize, previous_claim: F) -> Vec<F> {
         let p = self.prover_state().expect("Prover state not initialized");
         let m = round + 1;
@@ -392,7 +386,6 @@ pub trait BooleanitySumcheck<F: JoltField, T: Transcript>:
             .to_vec()
     }
 
-    // Phase 2 message computation
     fn compute_phase2_message(&self, _round: usize, previous_claim: F) -> Vec<F> {
         let p = self.prover_state().expect("Prover state not initialized");
         const DEGREE: usize = 3;
@@ -502,7 +495,7 @@ pub trait BooleanitySumcheck<F: JoltField, T: Transcript>:
     }
 }
 
-// Blanket implementation of SumcheckInstance for all types that implement BooleanitySumcheck
+// Blanket implementation of SumcheckInstance
 impl<F, T, B> SumcheckInstance<F, T> for B
 where
     F: JoltField,
