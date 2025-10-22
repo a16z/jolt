@@ -546,10 +546,12 @@ where
         self.booleanity_input_claim(acc)
     }
 
+    #[tracing::instrument(skip_all, name = "Booleanity::compute_prover_message")]
     fn compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F> {
         self.booleanity_compute_prover_message(round, previous_claim)
     }
 
+    #[tracing::instrument(skip_all, name = "Booleanity::bind")]
     fn bind(&mut self, r_j: F::Challenge, round: usize) {
         self.booleanity_bind(r_j, round)
     }
