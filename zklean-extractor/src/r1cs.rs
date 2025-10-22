@@ -95,7 +95,13 @@ impl<J: JoltParameterSet> ZkLeanR1CSConstraints<J> {
         ))?;
         indent_level += 1;
         for constraint in &self.uniform_constraints {
-            let Constraint { a, b, c } = &constraint.cons;
+            // Note that an R1CS constraint in Jolt is currently expressed as *just* the `a` and
+            // `b` parts, with the `c` part omitted. See `zkvm/r1cs/constraints.rs`. That's because
+            // all constraints are conditional equalities:
+            //   if <condition> { <left> - <right> == 0 }
+            // Thus `a` = <condition>, `b` = <left> - <right>, and (implicitly) `c` = 0.
+            let Constraint { a, b } = &constraint.cons;
+            let c = &LC::zero();
             let name = format!("{:?}", constraint.name);
 
             f.write_fmt(format_args!("{}-- {name}\n", indent(indent_level)))?;
@@ -166,7 +172,7 @@ fn pretty_print_term(
     Term { input_index, coeff }: &Term,
 ) -> String {
     let var = input_index_to_field_name(*input_index);
-    match coeff.to_i128() {
+    match coeff {
         1 => format!("{inputs_struct}.{var}").to_string(),
         c => format!("({c}*{inputs_struct}.{var})").to_string(),
     }
@@ -174,7 +180,7 @@ fn pretty_print_term(
 
 fn pretty_print_lc(inputs_struct: &str, lc: &LC) -> String {
     let (var_terms, len, const_term) = LC::decompose(*lc);
-    let const_term = match const_term.to_i128() {
+    let const_term = match const_term {
         0 => None,
         c => Some(format!("{c}").to_string()),
     };
