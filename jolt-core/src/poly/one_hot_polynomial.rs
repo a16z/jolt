@@ -407,7 +407,7 @@ impl<F: JoltField> OneHotPolynomial<F> {
         let row_len = DoryGlobals::get_dimension();
         let T = DoryGlobals::get_T();
 
-        assert!(T > num_rows, "T = {T}, why are you doing this");
+        assert!(T >= num_rows);
         let cycles_per_row = T / num_rows;
         let K = row_len / cycles_per_row;
 
@@ -552,10 +552,7 @@ impl<F: JoltField> OneHotPolynomial<F> {
         debug_assert_eq!(result.len(), num_columns);
         let row_len = num_columns;
 
-        assert!(
-            T > DoryGlobals::get_dimension(),
-            "T = {T}, why are you doing this",
-        );
+        assert!(T >= DoryGlobals::get_dimension());
         let cycles_per_row = T / DoryGlobals::get_dimension();
         let K = row_len / cycles_per_row;
 

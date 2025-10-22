@@ -542,8 +542,6 @@ pub struct ReducedOpeningProof<
     joint_opening_proof: PCS::Proof,
     #[cfg(test)]
     joint_poly: MultilinearPolynomial<F>,
-    // #[cfg(test)]
-    // joint_commitment: PCS::Commitment,
 }
 
 impl<F> Default for ProverOpeningAccumulator<F>
@@ -567,8 +565,6 @@ where
             dense_polynomial_map: HashMap::new(),
             #[cfg(test)]
             appended_virtual_openings: std::rc::Rc::new(std::cell::RefCell::new(vec![])),
-            // #[cfg(test)]
-            // joint_commitment: None,
         }
     }
 
@@ -887,8 +883,6 @@ where
             joint_opening_proof,
             #[cfg(test)]
             joint_poly,
-            // #[cfg(test)]
-            // joint_commitment,
         }
     }
 
@@ -1206,12 +1200,6 @@ where
 
             PCS::combine_commitments(&commitments, &coeffs)
         };
-
-        // #[cfg(test)]
-        // assert_eq!(
-        //     joint_commitment, reduced_opening_proof.joint_commitment,
-        //     "joint commitment mismatch"
-        // );
 
         // Compute joint claim = ∑ᵢ γⁱ⋅ claimᵢ
         let joint_claim: F = gamma_powers

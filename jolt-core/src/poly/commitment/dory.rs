@@ -729,11 +729,40 @@ where
         );
 
         let T = DoryGlobals::get_T();
-        assert!(
-            T > DoryGlobals::get_dimension(),
-            "T = {T}, why are you doing this",
-        );
-        let cycles_per_row = T / DoryGlobals::get_dimension();
+        let num_rows = DoryGlobals::get_dimension();
+        if T < num_rows {
+            // Edge case where T < 256; each cycle spans multiple rows
+
+            let mut row_commitments: Vec<JoltGroupWrapper<G>> =
+                vec![JoltGroupWrapper::identity(); num_rows];
+            match self {
+                MultilinearPolynomial::I128Scalars(poly) => {
+                    // k = 0 always in first column
+                    let base = g1_generators[0];
+                    poly.coeffs
+                        .par_iter()
+                        .zip(row_commitments.par_iter_mut().step_by(num_rows / T))
+                        .for_each(|(coeff, row_commitment)| {
+                            *row_commitment = base.scale(&JoltFieldWrapper(F::from_i128(*coeff)));
+                        })
+                }
+                MultilinearPolynomial::OneHot(poly) => {
+                    poly.nonzero_indices
+                        .par_iter()
+                        .zip(row_commitments.par_chunks_mut(num_rows / T))
+                        .for_each(|(k, chunk)| {
+                            if let Some(k) = k {
+                                chunk[*k as usize / row_len] = g1_generators[*k as usize % row_len];
+                            }
+                        });
+                }
+                _ => panic!("Unexpected MultilinearPolynomial variant"),
+            };
+
+            return row_commitments;
+        }
+
+        let cycles_per_row = T / num_rows;
 
         let affine_bases: Vec<_> = match self {
             MultilinearPolynomial::RLC(_) | MultilinearPolynomial::OneHot(_) => g1_generators
@@ -749,67 +778,13 @@ where
         };
 
         match self {
-            MultilinearPolynomial::LargeScalars(poly) => poly
-                .Z
-                .par_chunks(cycles_per_row)
-                .map(|row| {
-                    JoltGroupWrapper(
-                        VariableBaseMSM::msm_field_elements(&affine_bases, row).unwrap(),
-                    )
-                })
-                .collect(),
-            MultilinearPolynomial::BoolScalars(poly) => poly
-                .coeffs
-                .par_chunks(row_len)
-                .map(|row| {
-                    // TODO(quang): we don't use this right now, but if we ever do,
-                    // we should optimize this
-                    let row_u8: Vec<u8> = row.iter().map(|&b| if b { 1u8 } else { 0u8 }).collect();
-                    JoltGroupWrapper(VariableBaseMSM::msm_u8(&affine_bases, &row_u8).unwrap())
-                })
-                .collect(),
-            MultilinearPolynomial::U8Scalars(poly) => poly
-                .coeffs
-                .par_chunks(cycles_per_row)
-                .map(|row| JoltGroupWrapper(VariableBaseMSM::msm_u8(&affine_bases, row).unwrap()))
-                .collect(),
-            MultilinearPolynomial::U16Scalars(poly) => poly
-                .coeffs
-                .par_chunks(cycles_per_row)
-                .map(|row| JoltGroupWrapper(VariableBaseMSM::msm_u16(&affine_bases, row).unwrap()))
-                .collect(),
-            MultilinearPolynomial::U32Scalars(poly) => poly
-                .coeffs
-                .par_chunks(cycles_per_row)
-                .map(|row| JoltGroupWrapper(VariableBaseMSM::msm_u32(&affine_bases, row).unwrap()))
-                .collect(),
-            MultilinearPolynomial::U64Scalars(poly) => poly
-                .coeffs
-                .par_chunks(cycles_per_row)
-                .map(|row| JoltGroupWrapper(VariableBaseMSM::msm_u64(&affine_bases, row).unwrap()))
-                .collect(),
-            MultilinearPolynomial::U128Scalars(poly) => poly
-                .coeffs
-                .par_chunks(cycles_per_row)
-                .map(|row| JoltGroupWrapper(VariableBaseMSM::msm_u128(&affine_bases, row).unwrap()))
-                .collect(),
-            MultilinearPolynomial::I64Scalars(poly) => poly
-                .coeffs
-                .par_chunks(cycles_per_row)
-                .map(|row| JoltGroupWrapper(VariableBaseMSM::msm_i64(&affine_bases, row).unwrap()))
-                .collect(),
             MultilinearPolynomial::I128Scalars(poly) => poly
                 .coeffs
                 .par_chunks(cycles_per_row)
                 .map(|row| JoltGroupWrapper(VariableBaseMSM::msm_i128(&affine_bases, row).unwrap()))
                 .collect(),
-            MultilinearPolynomial::S128Scalars(poly) => poly
-                .coeffs
-                .par_chunks(cycles_per_row)
-                .map(|row| JoltGroupWrapper(VariableBaseMSM::msm_s128(&affine_bases, row).unwrap()))
-                .collect(),
-            MultilinearPolynomial::RLC(poly) => poly.commit_rows(&affine_bases),
             MultilinearPolynomial::OneHot(poly) => poly.commit_rows(&affine_bases),
+            _ => panic!("Unexpected MultilinearPolynomial variant"),
         }
     }
 
