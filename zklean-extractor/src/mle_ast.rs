@@ -92,7 +92,7 @@ pub enum Node {
 /// An AST intended for representing an MLE computation (although it will actually work for any
 /// multivariate polynomial). The nodes are stored in a global arena, which allows each AST handle
 /// to remain [`Copy`] and [`Sized`] while supporting unbounded growth of the underlying graph.
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Clone, Copy)]
 pub struct MleAst {
     /// Index of the root node in the arena.
     /// nodes: [ ]
@@ -378,8 +378,20 @@ impl std::ops::SubAssign for MleAst {
     }
 }
 
+impl<'a> std::ops::SubAssign<&'a Self> for MleAst {
+    fn sub_assign(&mut self, rhs: &'a Self) {
+        self.binop(Node::Sub, &rhs);
+    }
+}
+
 impl std::ops::MulAssign for MleAst {
     fn mul_assign(&mut self, rhs: Self) {
+        self.binop(Node::Mul, &rhs);
+    }
+}
+
+impl<'a> std::ops::MulAssign<&'a Self> for MleAst {
+    fn mul_assign(&mut self, rhs: &'a Self) {
         self.binop(Node::Mul, &rhs);
     }
 }
@@ -431,6 +443,12 @@ impl std::hash::Hash for MleAst {
 impl From<u128> for MleAst {
     fn from(value: u128) -> Self {
         Self::from_u128(value)
+    }
+}
+
+impl<const N: usize> From<ark_ff::BigInt<N>> for MleAst {
+    fn from(_value: ark_ff::BigInt<N>) -> Self {
+        unimplemented!("hash unimplemented for MleAst")
     }
 }
 
@@ -486,6 +504,12 @@ impl From<ark_ff::biginteger::signed_hi_32::SignedBigIntHi32<3>> for MleAst {
 
 impl<const N: usize> From<[u64; N]> for MleAst {
     fn from(_value: [u64; N]) -> Self {
+        unimplemented!("Not needed for constructing ASTs");
+    }
+}
+
+impl Ord for MleAst {
+    fn cmp(&self, _other: &Self) -> std::cmp::Ordering {
         unimplemented!("Not needed for constructing ASTs");
     }
 }
