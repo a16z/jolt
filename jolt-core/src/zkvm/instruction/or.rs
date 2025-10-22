@@ -14,20 +14,20 @@ impl<const XLEN: usize> InstructionLookup<XLEN> for OR {
 impl Flags for OR {
     fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
         let mut flags = [false; NUM_CIRCUIT_FLAGS];
-        flags[CircuitFlags::WriteLookupOutputToRD as usize] = true;
-        flags[CircuitFlags::VirtualInstruction as usize] =
-            self.virtual_sequence_remaining.is_some();
-        flags[CircuitFlags::DoNotUpdateUnexpandedPC as usize] =
+        flags[CircuitFlags::WriteLookupOutputToRD] = true;
+        flags[CircuitFlags::VirtualInstruction] = self.virtual_sequence_remaining.is_some();
+        flags[CircuitFlags::DoNotUpdateUnexpandedPC] =
             self.virtual_sequence_remaining.unwrap_or(0) != 0;
-        flags[CircuitFlags::IsFirstInSequence as usize] = self.is_first_in_sequence;
-        flags[CircuitFlags::IsCompressed as usize] = self.is_compressed;
+        flags[CircuitFlags::IsFirstInSequence] = self.is_first_in_sequence;
+        flags[CircuitFlags::IsCompressed] = self.is_compressed;
         flags
     }
 
     fn instruction_flags(&self) -> [bool; NUM_INSTRUCTION_FLAGS] {
         let mut flags = [false; NUM_INSTRUCTION_FLAGS];
-        flags[InstructionFlags::LeftOperandIsRs1Value as usize] = true;
-        flags[InstructionFlags::RightOperandIsRs2Value as usize] = true;
+        flags[InstructionFlags::LeftOperandIsRs1Value] = true;
+        flags[InstructionFlags::RightOperandIsRs2Value] = true;
+        flags[InstructionFlags::IsRdZero] = self.operands.rd == 0;
         flags
     }
 }

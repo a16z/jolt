@@ -90,6 +90,8 @@ pub enum InstructionFlags {
     Branch,
     /// Is noop instruction
     IsNoop,
+    /// Is Rd index 0
+    IsRdZero,
 }
 
 pub const NUM_CIRCUIT_FLAGS: usize = CircuitFlags::COUNT;
