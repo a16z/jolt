@@ -12,8 +12,8 @@ use crate::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, PolynomialBinding},
         opening_proof::{
-            OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator,
-            BIG_ENDIAN,
+            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+            VerifierOpeningAccumulator, BIG_ENDIAN,
         },
         ra_poly::RaPolynomial,
         split_eq_poly::GruenSplitEqPolynomial,
@@ -53,7 +53,8 @@ pub struct BooleanitySumcheck<F: JoltField> {
     d: usize,
     r_address: Vec<F::Challenge>,
     r_cycle: Vec<F::Challenge>,
-    gamma_powers: Vec<F>,
+    // TODO: special casing for the first challenge to be F::one()
+    gamma: Vec<F::Challenge>,
     prover_state: Option<BooleanityProverState<F>>,
     current_round: usize,
     addresses: Vec<Option<u64>>,
@@ -87,12 +88,11 @@ impl<F: JoltField> BooleanitySumcheck<F> {
 
         let eq_r_cycle = EqPolynomial::<F>::evals(&r_cycle);
 
-        // Get gamma challenge for batching
-        let gamma: F = state_manager.transcript.borrow_mut().challenge_scalar();
-        let mut gamma_powers = vec![F::one(); d];
-        for i in 1..d {
-            gamma_powers[i] = gamma_powers[i - 1] * gamma;
-        }
+        // Get gamma challenges for batching (optimized)
+        let gamma = state_manager
+            .transcript
+            .borrow_mut()
+            .challenge_vector_optimized::<F>(d);
 
         let span = tracing::span!(tracing::Level::INFO, "compute G arrays");
         let _guard = span.enter();
@@ -160,7 +160,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             d,
             r_address,
             r_cycle,
-            gamma_powers,
+            gamma,
             prover_state: Some(prover_state),
             current_round: 0,
             addresses,
@@ -185,19 +185,18 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             .borrow_mut()
             .challenge_vector_optimized::<F>(DTH_ROOT_OF_K.log_2());
 
-        // Get gamma challenge for batching
-        let gamma: F = state_manager.transcript.borrow_mut().challenge_scalar();
-        let mut gamma_powers = vec![F::one(); d];
-        for i in 1..d {
-            gamma_powers[i] = gamma_powers[i - 1] * gamma;
-        }
+        // Get gamma challenges for batching (optimized)
+        let gamma = state_manager
+            .transcript
+            .borrow_mut()
+            .challenge_vector_optimized::<F>(d);
 
         BooleanitySumcheck {
             T,
             d,
             r_address,
             r_cycle,
-            gamma_powers,
+            gamma,
             prover_state: None,
             current_round: 0,
             addresses: vec![],
@@ -214,7 +213,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for BooleanitySumcheck<
         DTH_ROOT_OF_K.log_2() + self.T.log_2()
     }
 
-    fn input_claim(&self) -> F {
+    fn input_claim(&self, _acc: Option<&RefCell<dyn OpeningAccumulator<F>>>) -> F {
         F::zero() // Always zero for booleanity
     }
 
@@ -326,10 +325,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for BooleanitySumcheck<
         let r_cycle_prime: Vec<_> = r_cycle_prime.iter().copied().rev().collect();
         let eq_eval_cycle = EqPolynomial::<F>::mle(&self.r_cycle, &r_cycle_prime);
 
-        // Compute batched booleanity check: sum_{i=0}^{d-1} gamma^i * (ra_i^2 - ra_i)
+        // Compute batched booleanity check: sum_{i=0}^{d-1} gamma_i * (ra_i^2 - ra_i)
         let mut result = F::zero();
         for (i, ra_claim) in ra_claims.iter().enumerate() {
-            result += self.gamma_powers[i] * (ra_claim.square() - *ra_claim);
+            result += self.gamma[i] * (ra_claim.square() - *ra_claim);
         }
 
         eq_eval_address * eq_eval_cycle * result
@@ -447,8 +446,8 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                                 |running, new| [running[0] + new[0], running[1] + new[1]],
                             );
 
-                        coeffs[0] += self.gamma_powers[i] * F::from_barrett_reduce(inner_sum[0]);
-                        coeffs[1] += self.gamma_powers[i] * F::from_barrett_reduce(inner_sum[1]);
+                        coeffs[0] += self.gamma[i] * F::from_barrett_reduce(inner_sum[0]);
+                        coeffs[1] += self.gamma[i] * F::from_barrett_reduce(inner_sum[1]);
                     }
 
                     [
@@ -517,10 +516,8 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                                         |running, new| [running[0] + new[0], running[1] + new[1]],
                                     );
 
-                                coeffs[0] +=
-                                    self.gamma_powers[i] * F::from_barrett_reduce(inner_sum[0]);
-                                coeffs[1] +=
-                                    self.gamma_powers[i] * F::from_barrett_reduce(inner_sum[1]);
+                                coeffs[0] += self.gamma[i] * F::from_barrett_reduce(inner_sum[0]);
+                                coeffs[1] += self.gamma[i] * F::from_barrett_reduce(inner_sum[1]);
                             }
 
                             [
@@ -580,11 +577,11 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                         let h_1 = h_poly.get_bound_coeff(2 * j_prime + 1); // h(1)
 
                         // For c = 0: h(0)^2 - h(0)
-                        coeffs[0] += self.gamma_powers[i] * (h_0.square() - h_0);
+                        coeffs[0] += self.gamma[i] * (h_0.square() - h_0);
 
                         // For quadratic coefficient: b^2 where b = h(1) - h(0) is the linear coefficient
                         let b = h_1 - h_0; // Linear coefficient of h
-                        coeffs[1] += self.gamma_powers[i] * b.square(); // Quadratic coefficient of h^2 - h
+                        coeffs[1] += self.gamma[i] * b.square(); // Quadratic coefficient of h^2 - h
                     }
 
                     [
@@ -623,11 +620,11 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                                 let h_1 = h_poly.get_bound_coeff(2 * j_prime + 1); // h(1)
 
                                 // For c = 0: h(0)^2 - h(0)
-                                coeffs[0] += self.gamma_powers[i] * (h_0.square() - h_0);
+                                coeffs[0] += self.gamma[i] * (h_0.square() - h_0);
 
                                 // For quadratic coefficient: b^2 where b = h(1) - h(0) is the linear coefficient
                                 let b = h_1 - h_0; // Linear coefficient of h
-                                coeffs[1] += self.gamma_powers[i] * b.square(); // Quadratic coefficient of h^2 - h
+                                coeffs[1] += self.gamma[i] * b.square(); // Quadratic coefficient of h^2 - h
                             }
 
                             // Inner D contribution

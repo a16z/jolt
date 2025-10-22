@@ -21,8 +21,8 @@ use crate::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
         opening_proof::{
-            OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator,
-            BIG_ENDIAN,
+            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+            VerifierOpeningAccumulator, BIG_ENDIAN,
         },
         prefix_suffix::{Prefix, PrefixRegistry, PrefixSuffixDecomposition},
         split_eq_poly::GruenSplitEqPolynomial,
@@ -93,8 +93,6 @@ pub struct ReadRafSumcheck<F: JoltField> {
     gamma_sqr: F,
     prover_state: Option<ReadRafProverState<F>>,
 
-    rv_claim: F,
-    raf_claim: F,
     log_T: usize,
 }
 
@@ -106,20 +104,12 @@ impl<'a, F: JoltField> ReadRafSumcheck<F> {
         let trace = sm.get_prover_data().1;
         let log_T = trace.len().log_2();
         let gamma: F = sm.transcript.borrow_mut().challenge_scalar();
-        let (r_branch, rv_claim_branch) = sm.get_virtual_polynomial_opening(
+        let (r_branch, _) = sm.get_virtual_polynomial_opening(
             VirtualPolynomial::LookupOutput,
-            SumcheckId::ShouldBranchVirtualization,
+            SumcheckId::ProductVirtualization,
         );
-        let (r_spartan, rv_claim_spartan) = sm.get_virtual_polynomial_opening(
+        let (r_spartan, _) = sm.get_virtual_polynomial_opening(
             VirtualPolynomial::LookupOutput,
-            SumcheckId::SpartanOuter,
-        );
-        let (_, left_operand_claim) = sm.get_virtual_polynomial_opening(
-            VirtualPolynomial::LeftLookupOperand,
-            SumcheckId::SpartanOuter,
-        );
-        let (_, right_operand_claim) = sm.get_virtual_polynomial_opening(
-            VirtualPolynomial::RightLookupOperand,
             SumcheckId::SpartanOuter,
         );
         let mut ps = ReadRafProverState::new(trace, r_spartan, r_branch, gamma);
@@ -129,8 +119,6 @@ impl<'a, F: JoltField> ReadRafSumcheck<F> {
             gamma,
             gamma_sqr: gamma.square(),
             prover_state: Some(ps),
-            rv_claim: rv_claim_spartan + gamma * rv_claim_branch,
-            raf_claim: left_operand_claim + gamma * right_operand_claim,
             log_T,
         }
     }
@@ -141,29 +129,10 @@ impl<'a, F: JoltField> ReadRafSumcheck<F> {
         let log_T = sm.get_verifier_data().2.log_2();
         let gamma: F = sm.transcript.borrow_mut().challenge_scalar();
         let gamma_sqr: F = gamma.square();
-        let (_, rv_claim) = sm.get_virtual_polynomial_opening(
-            VirtualPolynomial::LookupOutput,
-            SumcheckId::SpartanOuter,
-        );
-        let (_, rv_claim_branch) = sm.get_virtual_polynomial_opening(
-            VirtualPolynomial::LookupOutput,
-            SumcheckId::ShouldBranchVirtualization,
-        );
-        let (_, left_operand_claim) = sm.get_virtual_polynomial_opening(
-            VirtualPolynomial::LeftLookupOperand,
-            SumcheckId::SpartanOuter,
-        );
-        let (_, right_operand_claim) = sm.get_virtual_polynomial_opening(
-            VirtualPolynomial::RightLookupOperand,
-            SumcheckId::SpartanOuter,
-        );
-
         Self {
             gamma,
             gamma_sqr,
             prover_state: None,
-            rv_claim: rv_claim + gamma * rv_claim_branch,
-            raf_claim: left_operand_claim + gamma * right_operand_claim,
             log_T,
         }
     }
@@ -331,8 +300,27 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
         LOG_K + self.log_T
     }
 
-    fn input_claim(&self) -> F {
-        self.rv_claim + self.gamma_sqr * self.raf_claim
+    fn input_claim(&self, acc: Option<&RefCell<dyn OpeningAccumulator<F>>>) -> F {
+        let acc = acc.unwrap().borrow();
+        let (_, rv_claim_spartan) = acc.get_virtual_polynomial_opening(
+            VirtualPolynomial::LookupOutput,
+            SumcheckId::SpartanOuter,
+        );
+        let (_, rv_claim_branch) = acc.get_virtual_polynomial_opening(
+            VirtualPolynomial::LookupOutput,
+            SumcheckId::ProductVirtualization,
+        );
+        let (_, left_operand_claim) = acc.get_virtual_polynomial_opening(
+            VirtualPolynomial::LeftLookupOperand,
+            SumcheckId::SpartanOuter,
+        );
+        let (_, right_operand_claim) = acc.get_virtual_polynomial_opening(
+            VirtualPolynomial::RightLookupOperand,
+            SumcheckId::SpartanOuter,
+        );
+        rv_claim_spartan
+            + self.gamma * rv_claim_branch
+            + self.gamma_sqr * (left_operand_claim + self.gamma * right_operand_claim)
     }
 
     #[tracing::instrument(skip_all, name = "InstructionReadRafSumcheck::compute_prover_message")]
@@ -518,7 +506,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
             .borrow()
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::LookupOutput,
-                SumcheckId::ShouldBranchVirtualization,
+                SumcheckId::ProductVirtualization,
             )
             .0
             .r;
@@ -1115,7 +1103,6 @@ mod tests {
             Cycle::VirtualAssertLTE(cycle) => cycle.random(rng).into(),
             Cycle::VirtualAssertValidDiv0(cycle) => cycle.random(rng).into(),
             Cycle::VirtualAssertValidUnsignedRemainder(cycle) => cycle.random(rng).into(),
-            Cycle::VirtualMove(cycle) => cycle.random(rng).into(),
             Cycle::VirtualMovsign(cycle) => cycle.random(rng).into(),
             Cycle::VirtualMULI(cycle) => cycle.random(rng).into(),
             Cycle::VirtualPow2(cycle) => cycle.random(rng).into(),
@@ -1259,7 +1246,7 @@ mod tests {
         prover_accumulator.borrow_mut().append_virtual(
             prover_sm.transcript.borrow_mut().deref_mut(),
             VirtualPolynomial::LookupOutput,
-            SumcheckId::ShouldBranchVirtualization,
+            SumcheckId::ProductVirtualization,
             OpeningPoint::new(r_cycle_branch.clone()),
             rv_claim_branch,
         );
@@ -1310,7 +1297,7 @@ mod tests {
         verifier_accumulator.borrow_mut().append_virtual(
             verifier_sm.transcript.borrow_mut().deref_mut(),
             VirtualPolynomial::LookupOutput,
-            SumcheckId::ShouldBranchVirtualization,
+            SumcheckId::ProductVirtualization,
             OpeningPoint::new(r_cycle_branch.clone()),
         );
 
@@ -1514,11 +1501,6 @@ mod tests {
         test_read_raf_sumcheck(Some(Cycle::VirtualAssertValidUnsignedRemainder(
             Default::default(),
         )));
-    }
-
-    #[test]
-    fn test_move() {
-        test_read_raf_sumcheck(Some(Cycle::VirtualMove(Default::default())));
     }
 
     #[test]

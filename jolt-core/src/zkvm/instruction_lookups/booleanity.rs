@@ -16,8 +16,8 @@ use crate::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, PolynomialBinding},
         opening_proof::{
-            OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator,
-            BIG_ENDIAN,
+            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+            VerifierOpeningAccumulator, BIG_ENDIAN,
         },
         ra_poly::RaPolynomial,
         split_eq_poly::GruenSplitEqPolynomial,
@@ -52,8 +52,9 @@ struct BooleanityProverState<F: JoltField> {
 
 #[derive(Allocative)]
 pub struct BooleanitySumcheck<F: JoltField> {
-    /// Precomputed powers of gamma - batching chgallenge
-    gamma: [F; D],
+    /// Batching challenges γ_i (optimized challenges)
+    /// TODO: special casing for the first challenge to be F::one()
+    gamma: [F::Challenge; D],
     prover_state: Option<BooleanityProverState<F>>,
     r_address: Vec<F::Challenge>,
     log_T: usize,
@@ -65,11 +66,12 @@ impl<F: JoltField> BooleanitySumcheck<F> {
         sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
         G: [Vec<F>; D],
     ) -> Self {
-        let gamma: F = sm.transcript.borrow_mut().challenge_scalar();
-        let mut gamma_powers = [F::one(); D];
-        for i in 1..D {
-            gamma_powers[i] = gamma_powers[i - 1] * gamma;
-        }
+        let gamma: [F::Challenge; D] = sm
+            .transcript
+            .borrow_mut()
+            .challenge_vector_optimized::<F>(D)
+            .try_into()
+            .unwrap();
         let r_address: Vec<F::Challenge> = sm
             .transcript
             .borrow_mut()
@@ -84,7 +86,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
         let trace = sm.get_prover_data().1;
 
         Self {
-            gamma: gamma_powers,
+            gamma,
             prover_state: Some(BooleanityProverState::new(trace, G, &r_address, &r_cycle)),
             r_address,
             // r_cycle,
@@ -96,17 +98,18 @@ impl<F: JoltField> BooleanitySumcheck<F> {
         sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
     ) -> Self {
         let log_T = sm.get_verifier_data().2.log_2();
-        let gamma: F = sm.transcript.borrow_mut().challenge_scalar();
-        let mut gamma_powers = [F::one(); D];
-        for i in 1..D {
-            gamma_powers[i] = gamma_powers[i - 1] * gamma;
-        }
+        let gamma: [F::Challenge; D] = sm
+            .transcript
+            .borrow_mut()
+            .challenge_vector_optimized::<F>(D)
+            .try_into()
+            .unwrap();
         let r_address: Vec<F::Challenge> = sm
             .transcript
             .borrow_mut()
             .challenge_vector_optimized::<F>(LOG_K_CHUNK);
         Self {
-            gamma: gamma_powers,
+            gamma,
             prover_state: None,
             r_address,
             log_T,
@@ -158,7 +161,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for BooleanitySumcheck<
         LOG_K_CHUNK + self.log_T
     }
 
-    fn input_claim(&self) -> F {
+    fn input_claim(&self, _acc: Option<&RefCell<dyn OpeningAccumulator<F>>>) -> F {
         F::zero()
     }
 

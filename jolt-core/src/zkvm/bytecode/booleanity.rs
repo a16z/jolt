@@ -5,7 +5,7 @@ use std::sync::Arc;
 use num_traits::Zero;
 
 use crate::poly::opening_proof::{
-    OpeningPoint, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
+    OpeningAccumulator, OpeningPoint, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
 };
 use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::dag::state_manager::StateManager;
@@ -37,7 +37,7 @@ use tracer::instruction::Cycle;
 // Bytecode booleanity sumcheck
 //
 // Proves a zero-check of the form
-//   0 = Σ_k Σ_j eq(r_address, k) · eq(r_cycle, j) · (Σ_{i=0}^{d-1} γ^i · (H_i(k, j)^2 − H_i(k, j)))
+//   0 = Σ_k Σ_j eq(r_address, k) · eq(r_cycle, j) · (Σ_{i=0}^{d-1} γ_i · (H_i(k, j)^2 − H_i(k, j)))
 // where:
 // - r_address are the address-chunk variables bound in phase 1
 // - r_cycle are the time/cycle variables bound in phase 2
@@ -63,8 +63,9 @@ struct BooleanityProverState<F: JoltField> {
 
 #[derive(Allocative)]
 pub struct BooleanitySumcheck<F: JoltField> {
-    /// gamma: powers of batching challenge γ (length d).
-    gamma: Vec<F>,
+    /// gamma: optimized batching challenges γ_i (length d).
+    /// TODO: special casing for the first challenge to be F::one()
+    gamma: Vec<F::Challenge>,
     /// d: number of address chunks in the decomposition.
     d: usize,
     /// log_T: number of time/cycle variables.
@@ -88,11 +89,10 @@ impl<F: JoltField> BooleanitySumcheck<F> {
         let d = preprocessing.shared.bytecode.d;
         let log_K = preprocessing.shared.bytecode.bytecode.len().log_2();
         let log_K_chunk = log_K.div_ceil(d);
-        let gamma: F = sm.transcript.borrow_mut().challenge_scalar();
-        let mut gamma_powers = vec![F::one(); d];
-        for i in 1..d {
-            gamma_powers[i] = gamma_powers[i - 1] * gamma;
-        }
+        let gamma = sm
+            .transcript
+            .borrow_mut()
+            .challenge_vector_optimized::<F>(d);
 
         let r_address: Vec<F::Challenge> = sm
             .transcript
@@ -100,7 +100,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             .challenge_vector_optimized::<F>(log_K_chunk);
 
         Self {
-            gamma: gamma_powers,
+            gamma,
             prover_state: Some(BooleanityProverState::new(
                 trace,
                 &preprocessing.shared.bytecode,
@@ -123,17 +123,16 @@ impl<F: JoltField> BooleanitySumcheck<F> {
         let d = sm.get_verifier_data().0.shared.bytecode.d;
         let log_K = sm.get_bytecode().len().log_2();
         let log_K_chunk = log_K.div_ceil(d);
-        let gamma: F = sm.transcript.borrow_mut().challenge_scalar();
-        let mut gamma_powers = vec![F::one(); d];
-        for i in 1..d {
-            gamma_powers[i] = gamma_powers[i - 1] * gamma;
-        }
+        let gamma = sm
+            .transcript
+            .borrow_mut()
+            .challenge_vector_optimized::<F>(d);
         let r_address: Vec<F::Challenge> = sm
             .transcript
             .borrow_mut()
             .challenge_vector_optimized::<F>(log_K_chunk);
         Self {
-            gamma: gamma_powers,
+            gamma,
             prover_state: None,
             log_T: T.log_2(),
             r_address,
@@ -195,7 +194,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for BooleanitySumcheck<
         self.log_K_chunk + self.log_T
     }
 
-    fn input_claim(&self) -> F {
+    fn input_claim(&self, _acc: Option<&RefCell<dyn OpeningAccumulator<F>>>) -> F {
         F::zero()
     }
 

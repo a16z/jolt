@@ -1,6 +1,6 @@
 use crate::field::JoltField;
 use allocative::Allocative;
-use ark_ff::biginteger::{I8OrI96, S128, S64};
+use ark_ff::biginteger::{S128, S64};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 /// A trait for small scalars ({u/i}{8/16/32/64/128})
@@ -184,27 +184,6 @@ impl SmallScalar for S64 {
         let b = other.to_i128();
         let diff = (a - b).unsigned_abs();
         r.mul_u64(diff as u64)
-    }
-}
-impl SmallScalar for I8OrI96 {
-    #[inline]
-    fn field_mul<F: JoltField>(&self, n: F) -> F {
-        if self.is_small {
-            n.mul_i64(self.small_i8 as i64)
-        } else {
-            n.mul_i128(self.to_i128())
-        }
-    }
-    #[inline]
-    fn to_field<F: JoltField>(self) -> F {
-        F::from_i128(self.to_i128())
-    }
-    #[inline]
-    fn diff_mul_field<F: JoltField>(self, other: Self, r: F) -> F {
-        let a = self.to_i128();
-        let b = other.to_i128();
-        let diff = (a - b).unsigned_abs();
-        r.mul_u128(diff)
     }
 }
 impl SmallScalar for S128 {

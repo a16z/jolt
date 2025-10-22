@@ -2,9 +2,9 @@ use serde::{Deserialize, Serialize};
 
 use super::ld::LD;
 use super::sd::SD;
-use super::virtual_move::VirtualMove;
 use super::xor::XOR;
 use super::Instruction;
+use crate::instruction::addi::ADDI;
 use crate::utils::inline_helpers::InstrAssembler;
 use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use crate::{
@@ -94,7 +94,7 @@ impl RISCVTrace for AMOXORD {
         asm.emit_ld::<LD>(*v_rd, self.operands.rs1, 0);
         asm.emit_r::<XOR>(*v_rs2, *v_rd, self.operands.rs2);
         asm.emit_s::<SD>(self.operands.rs1, *v_rs2, 0);
-        asm.emit_i::<VirtualMove>(self.operands.rd, *v_rd, 0);
+        asm.emit_i::<ADDI>(self.operands.rd, *v_rd, 0);
         asm.finalize()
     }
 }

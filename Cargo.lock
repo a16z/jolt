@@ -425,26 +425,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "blake2-ex"
-version = "0.1.0"
-dependencies = [
- "blake2-guest",
- "hex",
- "jolt-inlines-blake2",
- "jolt-sdk",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "blake2-guest"
-version = "0.1.0"
-dependencies = [
- "jolt-inlines-blake2",
- "jolt-sdk",
-]
-
-[[package]]
 name = "blake3"
 version = "1.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -455,26 +435,6 @@ dependencies = [
  "cc",
  "cfg-if",
  "constant_time_eq",
-]
-
-[[package]]
-name = "blake3-ex"
-version = "0.1.0"
-dependencies = [
- "blake3-guest",
- "hex",
- "jolt-inlines-blake3",
- "jolt-sdk",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "blake3-guest"
-version = "0.1.0"
-dependencies = [
- "jolt-inlines-blake3",
- "jolt-sdk",
 ]
 
 [[package]]
@@ -1399,6 +1359,36 @@ dependencies = [
  "cfg-if",
  "crunchy",
  "zerocopy",
+]
+
+[[package]]
+name = "hash-bench"
+version = "0.1.0"
+dependencies = [
+ "hashbench-guest",
+ "hex",
+ "jolt-inlines-blake2",
+ "jolt-inlines-blake3",
+ "jolt-inlines-keccak256",
+ "jolt-inlines-sha2",
+ "jolt-sdk",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "hashbench-guest"
+version = "0.1.0"
+dependencies = [
+ "blake2",
+ "blake3",
+ "jolt-inlines-blake2",
+ "jolt-inlines-blake3",
+ "jolt-inlines-keccak256",
+ "jolt-inlines-sha2",
+ "jolt-sdk",
+ "sha2",
+ "sha3",
 ]
 
 [[package]]

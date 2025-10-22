@@ -1,5 +1,5 @@
 //! High-level Blake2b hashing API for host and guest modes.
-use crate::{BLOCK_INPUT_SIZE_IN_BYTES, IV, MSG_BLOCK_LEN, STATE_SIZE_IN_BYTES, STATE_VECTOR_LEN};
+use crate::{BLOCK_INPUT_SIZE_IN_BYTES, IV, MSG_BLOCK_LEN, STATE_VECTOR_LEN};
 const OUTPUT_SIZE: usize = 64;
 
 pub struct Blake2b {
@@ -14,6 +14,7 @@ pub struct Blake2b {
 }
 
 impl Blake2b {
+    #[inline(always)]
     pub fn new() -> Self {
         let mut h = IV;
         h[0] ^= 0x01010000 ^ (OUTPUT_SIZE as u64);
@@ -26,39 +27,109 @@ impl Blake2b {
         }
     }
 
-    /// Process input data incrementally.
+    #[inline(always)]
     pub fn update(&mut self, input: &[u8]) {
-        if input.is_empty() {
+        let input_len = input.len();
+        if input_len == 0 {
             return;
         }
-        for byte in input {
-            if self.buffer_len == BLOCK_INPUT_SIZE_IN_BYTES {
+
+        let mut offset = 0;
+
+        // Handle partial buffer first
+        if self.buffer_len != 0 {
+            let needed = BLOCK_INPUT_SIZE_IN_BYTES - self.buffer_len;
+            let to_copy = needed.min(input_len);
+
+            unsafe {
+                core::ptr::copy_nonoverlapping(
+                    input.as_ptr(),
+                    self.buffer.as_mut_ptr().add(self.buffer_len),
+                    to_copy,
+                );
+            }
+
+            self.buffer_len += to_copy;
+            offset = to_copy;
+
+            // Only process if we have a complete block AND there's more data
+            // (to ensure we don't process what might be the final block)
+            if self.buffer_len == BLOCK_INPUT_SIZE_IN_BYTES && offset < input_len {
                 self.counter += BLOCK_INPUT_SIZE_IN_BYTES as u64;
                 compression_caller(&mut self.h, &self.buffer, self.counter, false);
                 self.buffer_len = 0;
             }
-            self.buffer[self.buffer_len] = *byte;
-            self.buffer_len += 1;
+        }
+
+        // Process complete blocks directly from input
+        // We need to keep at least one byte to ensure we don't process what might be the final block
+        // This guarantees the final block is always processed in finalize() with is_final=true
+        while offset + BLOCK_INPUT_SIZE_IN_BYTES < input_len {
+            unsafe {
+                core::ptr::copy_nonoverlapping(
+                    input.as_ptr().add(offset),
+                    self.buffer.as_mut_ptr(),
+                    BLOCK_INPUT_SIZE_IN_BYTES,
+                );
+            }
+
+            self.counter += BLOCK_INPUT_SIZE_IN_BYTES as u64;
+            compression_caller(&mut self.h, &self.buffer, self.counter, false);
+            offset += BLOCK_INPUT_SIZE_IN_BYTES;
+        }
+
+        // Buffer any remaining bytes
+        let final_bytes = input_len - offset;
+        if final_bytes > 0 {
+            unsafe {
+                core::ptr::copy_nonoverlapping(
+                    input.as_ptr().add(offset),
+                    self.buffer.as_mut_ptr().add(self.buffer_len),
+                    final_bytes,
+                );
+            }
+            self.buffer_len += final_bytes;
         }
     }
 
-    /// Finalize and return BLAKE2b digest.
+    #[inline(always)]
     pub fn finalize(mut self) -> [u8; OUTPUT_SIZE] {
         self.counter += self.buffer_len as u64;
-        self.buffer[self.buffer_len..].fill(0);
+
+        // Zero the remaining bytes using optimized pointer write
+        if self.buffer_len < BLOCK_INPUT_SIZE_IN_BYTES {
+            unsafe {
+                core::ptr::write_bytes(
+                    self.buffer.as_mut_ptr().add(self.buffer_len),
+                    0,
+                    BLOCK_INPUT_SIZE_IN_BYTES - self.buffer_len,
+                );
+            }
+        }
+
         // Process the final block
         compression_caller(&mut self.h, &self.buffer, self.counter, true);
 
-        // Extract hash bytes
-        let mut hash = [0u8; OUTPUT_SIZE];
-        let state_bytes: &[u8] = unsafe {
-            core::slice::from_raw_parts(self.h.as_ptr() as *const u8, STATE_SIZE_IN_BYTES)
-        };
-        hash.copy_from_slice(&state_bytes[..OUTPUT_SIZE]);
-        hash
+        #[cfg(target_endian = "little")]
+        {
+            // Safety: [u64; 8] and [u8; 64] have identical size (64 bytes)
+            unsafe { core::mem::transmute::<[u64; STATE_VECTOR_LEN], [u8; OUTPUT_SIZE]>(self.h) }
+        }
+
+        #[cfg(target_endian = "big")]
+        {
+            // For big-endian, convert each u64 to little-endian bytes
+            let mut hash = [0u8; OUTPUT_SIZE];
+            for i in 0..STATE_VECTOR_LEN {
+                let bytes = self.h[i].to_le_bytes();
+                hash[i * 8..(i + 1) * 8].copy_from_slice(&bytes);
+            }
+            hash
+        }
     }
 
     /// Computes BLAKE2b hash in one call.
+    #[inline(always)]
     pub fn digest(input: &[u8]) -> [u8; OUTPUT_SIZE] {
         let mut hasher = Self::new();
         hasher.update(input);
@@ -66,20 +137,46 @@ impl Blake2b {
     }
 }
 
+#[inline(always)]
 fn compression_caller(
     hash_state: &mut [u64; STATE_VECTOR_LEN],
     message_block: &[u8],
     counter: u64,
     is_final: bool,
 ) {
-    // Convert buffer to u64 words.
     let mut message = [0u64; MSG_BLOCK_LEN + 2];
-    for i in 0..MSG_BLOCK_LEN {
-        message[i] = u64::from_le_bytes(message_block[i * 8..(i + 1) * 8].try_into().unwrap());
+
+    debug_assert_eq!(message_block.len(), BLOCK_INPUT_SIZE_IN_BYTES);
+
+    #[cfg(target_endian = "little")]
+    unsafe {
+        core::ptr::copy_nonoverlapping(
+            message_block.as_ptr() as *const u64,
+            message.as_mut_ptr(),
+            MSG_BLOCK_LEN,
+        );
     }
 
-    message[16] = counter;
-    message[17] = is_final as u64;
+    #[cfg(target_endian = "big")]
+    {
+        // For big-endian, we need to convert each u64
+        for i in 0..MSG_BLOCK_LEN {
+            let offset = i * 8;
+            message[i] = u64::from_le_bytes([
+                message_block[offset],
+                message_block[offset + 1],
+                message_block[offset + 2],
+                message_block[offset + 3],
+                message_block[offset + 4],
+                message_block[offset + 5],
+                message_block[offset + 6],
+                message_block[offset + 7],
+            ]);
+        }
+    }
+
+    message[MSG_BLOCK_LEN] = counter;
+    message[MSG_BLOCK_LEN + 1] = is_final as u64;
 
     unsafe {
         blake2b_compress(hash_state.as_mut_ptr(), message.as_ptr());

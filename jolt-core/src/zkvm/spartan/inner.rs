@@ -10,8 +10,8 @@ use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
 use crate::poly::opening_proof::{
-    OpeningId, OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator,
-    BIG_ENDIAN,
+    OpeningAccumulator, OpeningId, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+    VerifierOpeningAccumulator, BIG_ENDIAN,
 };
 use crate::subprotocols::sumcheck::SumcheckInstance;
 use crate::transcripts::Transcript;
@@ -23,6 +23,31 @@ use crate::zkvm::witness::VirtualPolynomial;
 
 use rayon::prelude::*;
 
+/// Inner Spartan sumcheck
+///
+/// This instance proves, for a fixed row opening point `rx_constr = [r_stream, r0]` supplied by the
+/// outer stage, the column product identity over the uniform variables
+/// `u` of length `log2(num_vars_uniform_padded)`.
+///
+/// Initial claim (start of sumcheck):
+///
+///   Σ_u ( A_small(rx_constr, u) + γ·B_small(rx_constr, u) ) · z(u)
+///   = Az_claim + γ·Bz_claim.
+///
+/// where z(u) = u-th-R1CS-input-MLE(r_cycle_stage_1) (with a possible final u for constant term).
+/// After `m = log2(num_vars_uniform_padded)` rounds with bound point `r ∈ F^m`, the
+/// sumcheck output claim must equal
+///
+///   ( A_small(rx_constr, r) + γ·B_small(rx_constr, r) ) · z(r).
+///
+/// Final check (verifier): compute
+///   - eval_a = evaluate_uniform_a_at_point(rx_constr, r),
+///   - eval_b = evaluate_uniform_b_at_point(rx_constr, r),
+///   - eval_z = evaluate_z_mle_with_segment_evals(segment_evals, r, true),
+///     where `segment_evals` are the cached witness openings at `r_cycle` from the outer stage.
+///
+/// Then `expected = (eval_a + γ·eval_b) · eval_z`, and accept iff output_claim == expected.
+
 #[derive(Allocative)]
 struct InnerSumcheckProverState<F: JoltField> {
     poly_abc_small: MultilinearPolynomial<F>,
@@ -31,11 +56,10 @@ struct InnerSumcheckProverState<F: JoltField> {
 
 #[derive(Allocative)]
 pub struct InnerSumcheck<F: JoltField> {
-    input_claim: F,
     prover_state: Option<InnerSumcheckProverState<F>>,
     #[allocative(skip)]
     key: Option<Arc<UniformSpartanKey<F>>>,
-    gamma: F,
+    gamma: F::Challenge,
 }
 
 impl<F: JoltField> InnerSumcheck<F> {
@@ -49,21 +73,18 @@ impl<F: JoltField> InnerSumcheck<F> {
         let num_cycles_bits = num_cycles.ilog2() as usize;
 
         // Get gamma challenge for batching
-        let gamma: F = state_manager.transcript.borrow_mut().challenge_scalar();
+        let gamma: F::Challenge = state_manager
+            .transcript
+            .borrow_mut()
+            .challenge_scalar_optimized::<F>();
 
-        // Get opening_point and claims from accumulator (Az, Bz, Cz all have the same point)
-        let (outer_sumcheck_r, claim_Az) = state_manager
+        // Get opening_point and claims from accumulator (Az, Bz all have the same point)
+        let (outer_sumcheck_r, _) = state_manager
             .get_virtual_polynomial_opening(VirtualPolynomial::SpartanAz, SumcheckId::SpartanOuter);
-        let (_, claim_Bz) = state_manager
-            .get_virtual_polynomial_opening(VirtualPolynomial::SpartanBz, SumcheckId::SpartanOuter);
-        let (_, claim_Cz) = state_manager
-            .get_virtual_polynomial_opening(VirtualPolynomial::SpartanCz, SumcheckId::SpartanOuter);
 
         let (_r_cycle, rx_var) = outer_sumcheck_r.r.split_at(num_cycles_bits);
 
-        let claim_inner_joint = claim_Az + gamma * claim_Bz + gamma.square() * claim_Cz;
-
-        // Evaluate A_small, B_small, C_small combined with RLC at point rx_var
+        // Evaluate A_small, B_small combined with RLC at point rx_var
         let poly_abc_small = DensePolynomial::new(key.evaluate_small_matrix_rlc(rx_var, gamma));
 
         let span = span!(Level::INFO, "binding_z_second_sumcheck");
@@ -99,7 +120,6 @@ impl<F: JoltField> InnerSumcheck<F> {
         assert_eq!(poly_z.len(), poly_abc_small.len());
 
         Self {
-            input_claim: claim_inner_joint,
             prover_state: Some(InnerSumcheckProverState {
                 poly_abc_small: MultilinearPolynomial::LargeScalars(poly_abc_small),
                 poly_z: MultilinearPolynomial::LargeScalars(poly_z),
@@ -113,25 +133,13 @@ impl<F: JoltField> InnerSumcheck<F> {
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         key: Arc<UniformSpartanKey<F>>,
     ) -> Self {
-        // Pull the outer sumcheck claims from the accumulator
-        let accumulator = state_manager.get_verifier_accumulator();
-        let accumulator_ref = accumulator.borrow();
-        let (_, claim_Az) = accumulator_ref
-            .get_virtual_polynomial_opening(VirtualPolynomial::SpartanAz, SumcheckId::SpartanOuter);
-        let (_, claim_Bz) = accumulator_ref
-            .get_virtual_polynomial_opening(VirtualPolynomial::SpartanBz, SumcheckId::SpartanOuter);
-        let (_, claim_Cz) = accumulator_ref
-            .get_virtual_polynomial_opening(VirtualPolynomial::SpartanCz, SumcheckId::SpartanOuter);
-        drop(accumulator_ref);
-
         // Get gamma challenge for batching
-        let gamma: F = state_manager.transcript.borrow_mut().challenge_scalar();
-
-        // Compute joint claim
-        let input_claim = claim_Az + gamma * claim_Bz + gamma.square() * claim_Cz;
+        let gamma: F::Challenge = state_manager
+            .transcript
+            .borrow_mut()
+            .challenge_scalar_optimized::<F>();
 
         Self {
-            input_claim,
             prover_state: None,
             key: Some(key),
             gamma,
@@ -154,8 +162,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for InnerSumcheck<F> {
         }
     }
 
-    fn input_claim(&self) -> F {
-        self.input_claim
+    fn input_claim(&self, acc: Option<&RefCell<dyn OpeningAccumulator<F>>>) -> F {
+        let acc = acc.unwrap().borrow();
+        let (_, claim_Az) = acc
+            .get_virtual_polynomial_opening(VirtualPolynomial::SpartanAz, SumcheckId::SpartanOuter);
+        let (_, claim_Bz) = acc
+            .get_virtual_polynomial_opening(VirtualPolynomial::SpartanBz, SumcheckId::SpartanOuter);
+        claim_Az + self.gamma * claim_Bz
     }
 
     #[tracing::instrument(skip_all, name = "InnerSumcheck::compute_prover_message")]
@@ -231,6 +244,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for InnerSumcheck<F> {
         let num_cycles_bits = key.num_steps.log_2();
         let (_r_cycle, rx_var) = outer_sumcheck_opening.r.split_at(num_cycles_bits);
 
+        // assert rx var is of length 2
+        assert_eq!(rx_var.len(), 2);
+
         // Pull claimed witness evaluations from the accumulator
         let claimed_witness_evals: Vec<F> = ALL_R1CS_INPUTS
             .into_iter()
@@ -244,14 +260,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for InnerSumcheck<F> {
             .collect();
 
         // The verifier needs to compute:
-        // (A_small(rx, ry) + r * B_small(rx, ry) + r^2 * C_small(rx, ry)) * z(ry)
+        // (A_small(rx_var, r) + gamma * B_small(rx_var, r)) * z(r)
 
-        // Evaluate uniform matrices A_small, B_small, C_small at point (rx_var, ry_var)
+        // Evaluate uniform matrices A_small and B_small at point (rx_var, r)
         let eval_a = key.evaluate_uniform_a_at_point(rx_var, r);
         let eval_b = key.evaluate_uniform_b_at_point(rx_var, r);
-        let eval_c = key.evaluate_uniform_c_at_point(rx_var, r);
 
-        let left_expected = eval_a + self.gamma * eval_b + self.gamma.square() * eval_c;
+        let left_expected = eval_a + self.gamma * eval_b;
 
         // Evaluate z(ry)
         let eval_z = key.evaluate_z_mle_with_segment_evals(&claimed_witness_evals, r, true);

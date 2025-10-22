@@ -777,6 +777,16 @@ where
                     )
                 })
                 .collect(),
+            MultilinearPolynomial::BoolScalars(poly) => poly
+                .coeffs
+                .par_chunks(row_len)
+                .map(|row| {
+                    // TODO(quang): we don't use this right now, but if we ever do,
+                    // we should optimize this
+                    let row_u8: Vec<u8> = row.iter().map(|&b| if b { 1u8 } else { 0u8 }).collect();
+                    JoltGroupWrapper(VariableBaseMSM::msm_u8(&bases[..row.len()], &row_u8).unwrap())
+                })
+                .collect(),
             MultilinearPolynomial::U8Scalars(poly) => poly
                 .coeffs
                 .par_chunks(row_len)
@@ -874,6 +884,20 @@ where
                             .step_by(num_columns)
                             .zip(left_vec.iter())
                             .map(|(&a, &b)| -> F { a * b.0 })
+                            .sum::<F>(),
+                    )
+                })
+                .collect(),
+            MultilinearPolynomial::BoolScalars(poly) => (0..num_columns)
+                .into_par_iter()
+                .map(|col_index| {
+                    JoltFieldWrapper(
+                        poly.coeffs
+                            .iter()
+                            .skip(col_index)
+                            .step_by(num_columns)
+                            .zip(left_vec.iter())
+                            .map(|(&a, &b)| -> F { a.field_mul(b.0) })
                             .sum::<F>(),
                     )
                 })
@@ -1345,6 +1369,7 @@ mod tests {
         let num_vars = poly.get_num_vars();
         let num_coeffs = match &poly {
             MultilinearPolynomial::LargeScalars(dense) => dense.Z.len(),
+            MultilinearPolynomial::BoolScalars(compact) => compact.coeffs.len(),
             MultilinearPolynomial::U8Scalars(compact) => compact.coeffs.len(),
             MultilinearPolynomial::U16Scalars(compact) => compact.coeffs.len(),
             MultilinearPolynomial::U32Scalars(compact) => compact.coeffs.len(),

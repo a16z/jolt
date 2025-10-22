@@ -18,8 +18,8 @@ use crate::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
         opening_proof::{
-            OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator,
-            BIG_ENDIAN,
+            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+            VerifierOpeningAccumulator, BIG_ENDIAN,
         },
         ra_poly::RaPolynomial,
         split_eq_poly::GruenSplitEqPolynomial,
@@ -84,9 +84,9 @@ pub struct ReadRafSumcheck<F: JoltField> {
 enum ReadCheckingValType {
     /// Spartan outer sumcheck
     Stage1,
-    /// Jump flag from ShouldJumpVirtualization
+    /// Jump flag from ProductVirtualization
     Stage2,
-    /// PCSumcheck
+    /// ShiftSumcheck
     Stage3,
     /// Registers from read-write sumcheck (rd, rs1, rs2)
     Stage4,
@@ -112,7 +112,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
         let (val_3, rv_claim_3) = Self::compute_val_rv(sm, ReadCheckingValType::Stage3);
         let (val_4, rv_claim_4) = Self::compute_val_rv(sm, ReadCheckingValType::Stage4);
         let (val_5, rv_claim_5) = Self::compute_val_rv(sm, ReadCheckingValType::Stage5);
-        let r_cycles = Self::get_r_cycle(&sm.get_prover_accumulator());
+        let r_cycles = Self::get_r_cycle(&*sm.get_prover_accumulator().borrow());
         let (_, raf_claim) =
             sm.get_virtual_polynomial_opening(VirtualPolynomial::PC, SumcheckId::SpartanOuter);
         let (_, raf_shift_claim) =
@@ -321,14 +321,14 @@ impl<F: JoltField> ReadRafSumcheck<F> {
                 )
             }
             ReadCheckingValType::Stage2 => {
-                let gamma_powers = get_gamma_powers(&mut *sm.get_transcript().borrow_mut(), 6);
+                let gamma_powers = get_gamma_powers(&mut *sm.get_transcript().borrow_mut(), 4);
                 (
                     Self::compute_val_2(sm, &gamma_powers),
                     Self::compute_rv_claim_2(sm, &gamma_powers),
                 )
             }
             ReadCheckingValType::Stage3 => {
-                let gamma_powers = get_gamma_powers(&mut *sm.get_transcript().borrow_mut(), 7);
+                let gamma_powers = get_gamma_powers(&mut *sm.get_transcript().borrow_mut(), 9);
                 (
                     Self::compute_val_3(sm, &gamma_powers),
                     Self::compute_rv_claim_3(sm, &gamma_powers),
@@ -354,26 +354,23 @@ impl<F: JoltField> ReadRafSumcheck<F> {
         }
     }
 
-    fn get_r_cycle(
-        acc: &Rc<RefCell<ProverOpeningAccumulator<F>>>,
-    ) -> [Vec<F::Challenge>; N_STAGES] {
-        let (r_cycle_1, _) = acc
-            .borrow()
-            .get_virtual_polynomial_opening(VirtualPolynomial::Imm, SumcheckId::SpartanOuter);
-        let (r_cycle_2, _) = acc.borrow().get_virtual_polynomial_opening(
+    fn get_r_cycle(acc: &impl OpeningAccumulator<F>) -> [Vec<F::Challenge>; N_STAGES] {
+        let (r_cycle_1, _) =
+            acc.get_virtual_polynomial_opening(VirtualPolynomial::Imm, SumcheckId::SpartanOuter);
+        let (r_cycle_2, _) = acc.get_virtual_polynomial_opening(
             VirtualPolynomial::OpFlags(CircuitFlags::Jump),
-            SumcheckId::ShouldJumpVirtualization,
+            SumcheckId::ProductVirtualization,
         );
-        let (r_cycle_3, _) = acc.borrow().get_virtual_polynomial_opening(
+        let (r_cycle_3, _) = acc.get_virtual_polynomial_opening(
             VirtualPolynomial::UnexpandedPC,
             SumcheckId::SpartanShift,
         );
-        let (r, _) = acc.borrow().get_virtual_polynomial_opening(
+        let (r, _) = acc.get_virtual_polynomial_opening(
             VirtualPolynomial::Rs1Ra,
             SumcheckId::RegistersReadWriteChecking,
         );
         let (_, r_cycle_4) = r.split_at((REGISTER_COUNT as usize).log_2());
-        let (r, _) = acc.borrow().get_virtual_polynomial_opening(
+        let (r, _) = acc.get_virtual_polynomial_opening(
             VirtualPolynomial::RdWa,
             SumcheckId::RegistersValEvaluation,
         );
@@ -381,41 +378,6 @@ impl<F: JoltField> ReadRafSumcheck<F> {
         [
             r_cycle_1.r,
             r_cycle_2.r,
-            r_cycle_3.r,
-            r_cycle_4.r,
-            r_cycle_5.r,
-        ]
-    }
-
-    fn get_r_cycle_verif(
-        acc: &Rc<RefCell<VerifierOpeningAccumulator<F>>>,
-    ) -> [Vec<F::Challenge>; N_STAGES] {
-        let (r_cycle_1, _) = acc
-            .borrow()
-            .get_virtual_polynomial_opening(VirtualPolynomial::Imm, SumcheckId::SpartanOuter);
-        let (r, _) = acc.borrow().get_virtual_polynomial_opening(
-            VirtualPolynomial::OpFlags(CircuitFlags::Jump),
-            SumcheckId::ShouldJumpVirtualization,
-        );
-        let r_cycle_2 = r.r;
-        // Stage 3: Get r_cycle from PCSumcheck or other stage 3 sumchecks
-        let (r_cycle_3, _) = acc.borrow().get_virtual_polynomial_opening(
-            VirtualPolynomial::UnexpandedPC,
-            SumcheckId::SpartanShift,
-        );
-        let (r, _) = acc.borrow().get_virtual_polynomial_opening(
-            VirtualPolynomial::Rs1Ra,
-            SumcheckId::RegistersReadWriteChecking,
-        );
-        let (_, r_cycle_4) = r.split_at((REGISTER_COUNT as usize).log_2());
-        let (r, _) = acc.borrow().get_virtual_polynomial_opening(
-            VirtualPolynomial::RdWa,
-            SumcheckId::RegistersValEvaluation,
-        );
-        let (_, r_cycle_5) = r.split_at((REGISTER_COUNT as usize).log_2());
-        [
-            r_cycle_1.r,
-            r_cycle_2,
             r_cycle_3.r,
             r_cycle_4.r,
             r_cycle_5.r,
@@ -488,17 +450,16 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             .sum()
     }
 
-    /// Returns a vec of evaluations:
-    ///    Val(k) = jump_flag(k) + gamma * branch_flag(k) + gamma^2 * rd_addr(k) + gamma^3 * jump_flag(k)
-    ///             + gamma^4 * rd_addr(k) + gamma^5 * write_lookup_output_to_rd_flag(k)
-    /// where jump_flag(k) = 1 if instruction k is a jump, 0 otherwise
-    ///       branch_flag(k) = 1 if instruction k is a branch, 0 otherwise
-    ///       rd_addr(k) = rd address for instruction k
-    ///       write_lookup_output_to_rd_flag(k) = 1 if instruction k writes lookup output to rd, 0 otherwise
-    /// This particular Val virtualizes the flag claims from
-    /// ShouldJumpVirtualization, ShouldBranchVirtualization, WritePCtoRDVirtualization, and WriteLookupOutputToRDVirtualization.
-    /// Note: Jump flag appears twice (gamma^0 for ShouldJump, gamma^3 for WritePCtoRD).
-    /// Note: Rd addr appears twice (gamma^2 for WritePCtoRD, gamma^4 for WriteLookupOutputToRD).
+    /// Returns a vec of evaluations (de-duplicated factors after product virtualization):
+    ///    Val(k) = jump_flag(k)
+    ///             + gamma * branch_flag(k)
+    ///             + gamma^2 * rd_addr(k)
+    ///             + gamma^3 * write_lookup_output_to_rd_flag(k)
+    /// where jump_flag(k) = 1 if instruction k is a jump, 0 otherwise;
+    ///       branch_flag(k) = 1 if instruction k is a branch, 0 otherwise;
+    ///       rd_addr(k) is the rd address for instruction k;
+    ///       write_lookup_output_to_rd_flag(k) = 1 if instruction k writes lookup output to rd, 0 otherwise.
+    /// This Val matches the fused product sumcheck.
     fn compute_val_2(
         sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
         gamma_powers: &[F],
@@ -513,16 +474,14 @@ impl<F: JoltField> ReadRafSumcheck<F> {
 
                 if flags[CircuitFlags::Jump] {
                     linear_combination += gamma_powers[0];
-                    linear_combination += gamma_powers[3];
                 }
                 if instr_flags[InstructionFlags::Branch] {
                     linear_combination += gamma_powers[1];
                 }
                 let rd_addr_val = F::from_u64(instr.operands.rd as u64);
                 linear_combination += rd_addr_val * gamma_powers[2];
-                linear_combination += rd_addr_val * gamma_powers[4];
                 if flags[CircuitFlags::WriteLookupOutputToRD] {
-                    linear_combination += gamma_powers[5];
+                    linear_combination += gamma_powers[3];
                 }
 
                 linear_combination
@@ -536,35 +495,25 @@ impl<F: JoltField> ReadRafSumcheck<F> {
     ) -> F {
         let (_, jump_claim) = sm.get_virtual_polynomial_opening(
             VirtualPolynomial::OpFlags(CircuitFlags::Jump),
-            SumcheckId::ShouldJumpVirtualization,
+            SumcheckId::ProductVirtualization,
         );
         let (_, branch_claim) = sm.get_virtual_polynomial_opening(
             VirtualPolynomial::InstructionFlags(InstructionFlags::Branch),
-            SumcheckId::ShouldBranchVirtualization,
+            SumcheckId::ProductVirtualization,
         );
-        let (_, rd_wa_claim_write_pc) = sm.get_virtual_polynomial_opening(
+        let (_, rd_wa_claim) = sm.get_virtual_polynomial_opening(
             VirtualPolynomial::RdWa,
-            SumcheckId::WritePCtoRDVirtualization,
-        );
-        let (_, jump_claim_write_pc) = sm.get_virtual_polynomial_opening(
-            VirtualPolynomial::OpFlags(CircuitFlags::Jump),
-            SumcheckId::WritePCtoRDVirtualization,
-        );
-        let (_, rd_wa_claim_write_lookup) = sm.get_virtual_polynomial_opening(
-            VirtualPolynomial::RdWa,
-            SumcheckId::WriteLookupOutputToRDVirtualization,
+            SumcheckId::ProductVirtualization,
         );
         let (_, write_lookup_output_to_rd_flag_claim) = sm.get_virtual_polynomial_opening(
             VirtualPolynomial::OpFlags(CircuitFlags::WriteLookupOutputToRD),
-            SumcheckId::WriteLookupOutputToRDVirtualization,
+            SumcheckId::ProductVirtualization,
         );
 
         [
             jump_claim,
             branch_claim,
-            rd_wa_claim_write_pc,
-            jump_claim_write_pc,
-            rd_wa_claim_write_lookup,
+            rd_wa_claim,
             write_lookup_output_to_rd_flag_claim,
         ]
         .into_iter()
@@ -577,7 +526,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
     ///    Val(k) = imm(k) + gamma * unexpanded_pc(k)
     ///             + gamma^2 * left_operand_is_rs1_value(k)
     ///             + gamma^3 * left_operand_is_pc(k) + ...
-    /// This particular Val virtualizes claims output by the PCSumcheck.
+    /// This particular Val virtualizes claims output by the ShiftSumcheck.
     fn compute_val_3(
         sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
         gamma_powers: &[F],
@@ -586,27 +535,34 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             .par_iter()
             .map(|instruction| {
                 let instr = instruction.normalize();
-                let flags = instruction.instruction_flags();
+                let instr_flags = instruction.instruction_flags();
+                let circuit_flags = instruction.circuit_flags();
                 let unexpanded_pc = instr.address;
                 let imm = instr.operands.imm;
 
                 let mut linear_combination: F = F::from_i128(imm);
                 linear_combination += gamma_powers[1].mul_u64(unexpanded_pc as u64);
 
-                if flags[InstructionFlags::LeftOperandIsRs1Value] {
+                if instr_flags[InstructionFlags::LeftOperandIsRs1Value] {
                     linear_combination += gamma_powers[2];
                 }
-                if flags[InstructionFlags::LeftOperandIsPC] {
+                if instr_flags[InstructionFlags::LeftOperandIsPC] {
                     linear_combination += gamma_powers[3];
                 }
-                if flags[InstructionFlags::RightOperandIsRs2Value] {
+                if instr_flags[InstructionFlags::RightOperandIsRs2Value] {
                     linear_combination += gamma_powers[4];
                 }
-                if flags[InstructionFlags::RightOperandIsImm] {
+                if instr_flags[InstructionFlags::RightOperandIsImm] {
                     linear_combination += gamma_powers[5];
                 }
-                if flags[InstructionFlags::IsNoop] {
+                if instr_flags[InstructionFlags::IsNoop] {
                     linear_combination += gamma_powers[6];
+                }
+                if circuit_flags[CircuitFlags::VirtualInstruction] {
+                    linear_combination += gamma_powers[7];
+                }
+                if circuit_flags[CircuitFlags::IsFirstInSequence] {
+                    linear_combination += gamma_powers[8];
                 }
 
                 linear_combination
@@ -657,6 +613,14 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             VirtualPolynomial::InstructionFlags(InstructionFlags::IsNoop),
             SumcheckId::SpartanShift,
         );
+        let (_, is_virtual_claim) = sm.get_virtual_polynomial_opening(
+            VirtualPolynomial::OpFlags(CircuitFlags::VirtualInstruction),
+            SumcheckId::SpartanShift,
+        );
+        let (_, is_first_in_sequence_claim) = sm.get_virtual_polynomial_opening(
+            VirtualPolynomial::OpFlags(CircuitFlags::IsFirstInSequence),
+            SumcheckId::SpartanShift,
+        );
 
         [
             imm_claim,
@@ -666,6 +630,8 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             right_is_rs2_claim,
             right_is_imm_claim,
             is_noop_claim,
+            is_virtual_claim,
+            is_first_in_sequence_claim,
         ]
         .into_iter()
         .zip_eq(gamma_powers)
@@ -809,7 +775,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
         self.log_K + self.log_T
     }
 
-    fn input_claim(&self) -> F {
+    fn input_claim(&self, _acc: Option<&RefCell<dyn OpeningAccumulator<F>>>) -> F {
         self.rv_claim
     }
 
@@ -1026,7 +992,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
                 )
                 .1
         });
-        let r_cycles = Self::get_r_cycle_verif(accumulator);
+        let r_cycles = Self::get_r_cycle(&*accumulator.borrow());
 
         // We have a separate Val polynomial for each stage
         // Additionally, for stages 1 and 3 we have an Int polynomial for RAF

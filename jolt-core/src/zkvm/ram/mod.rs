@@ -9,7 +9,7 @@ use crate::{
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
-        opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN},
+        opening_proof::{OpeningAccumulator, OpeningPoint, SumcheckId, BIG_ENDIAN},
     },
     subprotocols::sumcheck::SumcheckInstance,
     transcripts::Transcript,
@@ -571,13 +571,13 @@ where
         ]
     }
 
-    fn stage3_prover_instances(
+    fn stage4_prover_instances(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
         // Accumulate advice polynomials if present
         prover_accumulate_advice(state_manager);
-
+        let booleanity = BooleanitySumcheck::new_prover(state_manager);
         let val_evaluation = ValEvaluationSumcheck::new_prover(
             self.initial_memory_state.as_ref().unwrap(),
             state_manager,
@@ -586,20 +586,25 @@ where
 
         #[cfg(feature = "allocative")]
         {
+            print_data_structure_heap_usage("RAM BooleanitySumcheck", &booleanity);
             print_data_structure_heap_usage("RAM ValEvaluationSumcheck", &val_evaluation);
             print_data_structure_heap_usage("RAM ValFinalSumcheck", &val_final_evaluation);
         }
 
-        vec![Box::new(val_evaluation), Box::new(val_final_evaluation)]
+        vec![
+            Box::new(booleanity),
+            Box::new(val_evaluation),
+            Box::new(val_final_evaluation),
+        ]
     }
 
-    fn stage3_verifier_instances(
+    fn stage4_verifier_instances(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
         // Accumulate advice commitments if present
         verifier_accumulate_advice(state_manager);
-
+        let booleanity = BooleanitySumcheck::new_verifier(state_manager);
         let val_evaluation = ValEvaluationSumcheck::new_verifier(
             self.initial_memory_state.as_ref().unwrap(),
             state_manager,
@@ -609,33 +614,11 @@ where
             state_manager,
         );
 
-        vec![Box::new(val_evaluation), Box::new(val_final_evaluation)]
-    }
-
-    fn stage4_prover_instances(
-        &mut self,
-        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
-        let booleanity = BooleanitySumcheck::new_prover(state_manager);
-        let ra_virtual = RaSumcheck::new_prover(state_manager);
-
-        #[cfg(feature = "allocative")]
-        {
-            print_data_structure_heap_usage("RAM BooleanitySumcheck", &booleanity);
-            print_data_structure_heap_usage("RAM RASumcheck", &ra_virtual);
-        }
-
-        vec![Box::new(booleanity), Box::new(ra_virtual)]
-    }
-
-    fn stage4_verifier_instances(
-        &mut self,
-        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
-        let booleanity = BooleanitySumcheck::new_verifier(state_manager);
-        let ra_virtual = RaSumcheck::new_verifier(state_manager);
-
-        vec![Box::new(booleanity), Box::new(ra_virtual)]
+        vec![
+            Box::new(booleanity),
+            Box::new(val_evaluation),
+            Box::new(val_final_evaluation),
+        ]
     }
 
     fn stage5_prover_instances(
@@ -643,13 +626,15 @@ where
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
         let hamming_booleanity = HammingBooleanitySumcheck::new_prover(state_manager);
+        let ra_virtual = RaSumcheck::new_prover(state_manager);
 
         #[cfg(feature = "allocative")]
         {
             print_data_structure_heap_usage("RAM HammingBooleanitySumcheck", &hamming_booleanity);
+            print_data_structure_heap_usage("RAM RASumcheck", &ra_virtual);
         }
 
-        vec![Box::new(hamming_booleanity)]
+        vec![Box::new(hamming_booleanity), Box::new(ra_virtual)]
     }
 
     fn stage5_verifier_instances(
@@ -657,8 +642,9 @@ where
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
         let hamming_booleanity = HammingBooleanitySumcheck::new_verifier(state_manager);
+        let ra_virtual = RaSumcheck::new_verifier(state_manager);
 
-        vec![Box::new(hamming_booleanity)]
+        vec![Box::new(hamming_booleanity), Box::new(ra_virtual)]
     }
 
     fn stage6_prover_instances(

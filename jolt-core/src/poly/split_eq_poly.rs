@@ -31,8 +31,12 @@ pub struct GruenSplitEqPolynomial<F: JoltField> {
 }
 
 impl<F: JoltField> GruenSplitEqPolynomial<F> {
-    #[tracing::instrument(skip_all, name = "GruenSplitEqPolynomial::new")]
-    pub fn new(w: &[F::Challenge], binding_order: BindingOrder) -> Self {
+    #[tracing::instrument(skip_all, name = "GruenSplitEqPolynomial::new_with_scaling")]
+    pub fn new_with_scaling(
+        w: &[F::Challenge],
+        binding_order: BindingOrder,
+        scaling_factor: Option<F>,
+    ) -> Self {
         match binding_order {
             BindingOrder::LowToHigh => {
                 let m = w.len() / 2;
@@ -50,7 +54,7 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
                 );
                 Self {
                     current_index: w.len(),
-                    current_scalar: F::one(),
+                    current_scalar: scaling_factor.unwrap_or(F::one()),
                     w: w.to_vec(),
                     E_in_vec,
                     E_out_vec,
@@ -71,7 +75,7 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
 
                 Self {
                     current_index: 0, // Start from 0 for high-to-low up to w.len() - 1
-                    current_scalar: F::one(),
+                    current_scalar: scaling_factor.unwrap_or(F::one()),
                     w: w.to_vec(),
                     E_in_vec,
                     E_out_vec,
@@ -81,89 +85,8 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         }
     }
 
-    /// ```ignore (idk why it tries to run doctest)
-    ///  Compute the split equality polynomial for the small value optimization
-    ///
-    /// The split is done as follows: (here `l = num_small_value_rounds`)
-    ///
-    /// 0 ..... (n/2 - l) ..... (n - l) ..... n
-    ///
-    ///           <-- E_in -->
-    ///
-    /// E_out --->                <--- E_out
-    ///
-    /// where the first E_out part (0 to n/2 - l) corresponds to x_out, and the second E_out part
-    /// (n/2 - l to n) corresponds to y_suffix
-    ///
-    /// Returns E_out which contains `l` vectors of eq evals for the same x_out part, with decreasing
-    /// length for y_suffix, and E_in which contains the single vector of eq evals for the x_in part.
-    ///
-    /// Note the differences between this and the `new` constructor: this is specialized for the
-    /// small value optimization.
-    pub fn new_for_small_value(
-        w: &[F::Challenge],
-        num_x_out_vars: usize,
-        num_x_in_vars: usize,
-        num_small_value_rounds: usize,
-        scaling_factor: Option<F>,
-    ) -> Self {
-        // Split w into the slices: (l = num_small_value_rounds)
-        // (n/2 - l) ..... (n - l)
-        // 0..(n/2 - l - 1) concatenated with (n - l)...n
-        // Then invoke the evals_cached constructor on the concatenated slice, producing E_out
-        // Invoke the evals constructor (no caching) on the middle slice, producing E_in
-        // In other words, there is only 1 vector in E_in, and l vectors in E_out
-        // (we may drop the rest of the vectors after evals_cached)
-        let n = w.len();
-
-        assert!(
-            n > 0,
-            "length of w must be positive for the split to be valid."
-        );
-        assert!(num_x_out_vars + num_x_in_vars + num_small_value_rounds == n, "num_x_out_vars + num_x_in_vars + num_small_value_rounds must be == n for the split to be valid.");
-
-        // This should be `min(num_steps, n/2 - num_small_value_rounds)`, computed externally before calling this function.
-        let split_point_x_out = num_x_out_vars;
-        let split_point_x_in = split_point_x_out + num_x_in_vars;
-
-        let w_E_in_vars: Vec<F::Challenge> = w[split_point_x_out..split_point_x_in].to_vec();
-
-        // Determine the end index for the suffix part of w_E_out_vars
-        let suffix_slice_end = if num_small_value_rounds == 0 {
-            split_point_x_in // Results in an empty suffix, e.g., w[n..n]
-        } else {
-            n - 1 // Use up to n-1, excluding the last variable of w (tau)
-        };
-
-        let num_actual_suffix_vars = suffix_slice_end.saturating_sub(split_point_x_in);
-
-        let mut w_E_out_vars: Vec<F::Challenge> =
-            Vec::with_capacity(num_x_out_vars + num_actual_suffix_vars);
-        w_E_out_vars.extend_from_slice(&w[0..split_point_x_out]);
-        if split_point_x_in < suffix_slice_end {
-            // Add suffix only if range is valid and non-empty
-            w_E_out_vars.extend_from_slice(&w[split_point_x_in..suffix_slice_end]);
-        }
-
-        // Do not scale E_in; we correct the typed unreduced accumulation with inv(K) after reduction.
-        let (mut E_out_vec, E_in) = rayon::join(
-            || EqPolynomial::evals_cached(&w_E_out_vars),
-            || EqPolynomial::evals_with_scaling(&w_E_in_vars, scaling_factor),
-        );
-
-        // Take only the first `num_small_value_rounds` vectors from E_out_vec (after reversing)
-        // Recall that at this point, E_out_vec[0] = `eq(w[0..split_point_x_out] ++ w[split_point_x_in..n-1], x)`
-        E_out_vec.reverse();
-        E_out_vec.truncate(num_small_value_rounds);
-
-        Self {
-            current_index: num_x_out_vars,
-            current_scalar: F::one(),
-            w: w.to_vec(),
-            E_in_vec: vec![E_in],
-            E_out_vec,
-            binding_order: BindingOrder::LowToHigh, // Small value optimization is always low-to-high
-        }
+    pub fn new(w: &[F::Challenge], binding_order: BindingOrder) -> Self {
+        Self::new_with_scaling(w, binding_order, None)
     }
 
     pub fn get_num_vars(&self) -> usize {
@@ -475,120 +398,6 @@ mod tests {
 
             assert_eq!(regular_eq.Z[..regular_eq.len()], merged.Z[..merged.len()]);
         }
-    }
-
-    #[test]
-    fn test_new_for_small_value() {
-        let mut rng = test_rng();
-        const N: usize = 10; // Total variables
-        const L0: usize = 3; // SVO rounds
-
-        // Test case 1: Standard setup
-        let num_x_out_vars_1 = 2; // Example split for x_out part
-        let w1: Vec<<Fr as JoltField>::Challenge> = (0..N)
-            .map(|i| <Fr as JoltField>::Challenge::from(i as u128))
-            .collect(); // Use predictable values
-
-        let num_x_in_vars_1 = N - num_x_out_vars_1 - L0;
-        let split_eq1 = GruenSplitEqPolynomial::<Fr>::new_for_small_value(
-            &w1,
-            num_x_out_vars_1,
-            num_x_in_vars_1,
-            L0,
-            None,
-        );
-
-        // Verify split points and variable slices
-        let split_point1_expected1 = num_x_out_vars_1; // Should be 2
-        let split_point_x_in_expected1 = num_x_out_vars_1 + num_x_in_vars_1;
-        assert_eq!(split_eq1.current_index, split_point1_expected1); // repurposed current_index
-
-        let w_E_in_vars_expected1: Vec<<Fr as JoltField>::Challenge> =
-            w1[split_point1_expected1..split_point_x_in_expected1].to_vec(); // w[2..7] = [2,3,4,5,6]
-        let mut w_E_out_vars_expected1: Vec<<Fr as JoltField>::Challenge> = Vec::new();
-        w_E_out_vars_expected1.extend_from_slice(&w1[0..split_point1_expected1]); // w[0..2] = [0,1]
-                                                                                  // Suffix slice is w[split_point_x_in .. N-1] = w[7..9] for N=10, L0=3.
-        if split_point_x_in_expected1 < N - 1 {
-            // Match logic in main code for L0 > 0
-            w_E_out_vars_expected1.extend_from_slice(&w1[split_point_x_in_expected1..N - 1]);
-            // w[7..9] = [7,8]
-        }
-        // Combined = [0, 1, 7, 8]
-
-        // Verify E_in content
-        assert_eq!(split_eq1.E_in_vec.len(), 1);
-        let expected_E_in1 = EqPolynomial::evals(&w_E_in_vars_expected1);
-        assert_eq!(split_eq1.E_in_vec[0], expected_E_in1);
-
-        // Verify E_out content (structure and count)
-        assert_eq!(split_eq1.E_out_vec.len(), L0); // Should have L0 = 3 vectors
-
-        // Verify E_out content requires understanding evals_cached internal structure
-        // evals_cached(w_E_out) returns [ T(w_E_out[0..k], x), T(w_E_out[0..k-1], x), ..., T(w_E_out[0], x), T([], x) ]
-        // where k = w_E_out.len(). Let k=4 here ([0,1,7,8]). Returns 5 vectors.
-        // new_for_small_value takes the *last* L0=3 vectors and reverses them.
-        // Last 3 vectors from evals_cached([0,1,7,8]) correspond to challenges w=[0,1,7], w=[0,1], w=[0]
-        // After reversal: E_out_vec[0] is cache for w=[0], E_out_vec[1] for w=[0,1], E_out_vec[2] for w=[0,1,7]
-
-        let cached_E_out1 = EqPolynomial::evals_cached(&w_E_out_vars_expected1);
-        // Expected: cached_E_out1 has len k+1 = 5
-        assert_eq!(cached_E_out1.len(), w_E_out_vars_expected1.len() + 1);
-
-        // E_out_vec[0] should be cached_E_out1[4] (evals for w=[0])
-        assert_eq!(
-            split_eq1.E_out_vec[0],
-            cached_E_out1[w_E_out_vars_expected1.len()]
-        );
-        // E_out_vec[1] should be cached_E_out1[3] (evals for w=[0,1])
-        assert_eq!(
-            split_eq1.E_out_vec[1],
-            cached_E_out1[w_E_out_vars_expected1.len() - 1]
-        );
-        // E_out_vec[2] should be cached_E_out1[2] (evals for w=[0,1,7])
-        assert_eq!(
-            split_eq1.E_out_vec[2],
-            cached_E_out1[w_E_out_vars_expected1.len() - 2]
-        );
-
-        // Test case 2: Edge case L0 = 0
-        let num_x_out_vars_2 = N / 2; // Max possible value for num_x_out_vars if num_x_in_vars is also N/2 and L0=0
-        let w2: Vec<<Fr as JoltField>::Challenge> = (0..N)
-            .map(|_| <Fr as JoltField>::Challenge::random(&mut rng))
-            .collect();
-        let num_x_in_vars_2 = N - num_x_out_vars_2; // L0 is 0
-        let split_eq2 = GruenSplitEqPolynomial::<Fr>::new_for_small_value(
-            &w2,
-            num_x_out_vars_2,
-            num_x_in_vars_2,
-            0,
-            None,
-        );
-        assert_eq!(split_eq2.E_out_vec.len(), 0);
-        assert_eq!(split_eq2.E_in_vec.len(), 1); // E_in should cover w[N/2 .. N/2 + num_x_in_vars_2 -1]
-        let split_point1_expected2 = num_x_out_vars_2;
-        let split_point_x_in_expected2 = num_x_out_vars_2 + num_x_in_vars_2;
-        let w_E_in_vars_expected2: Vec<<Fr as JoltField>::Challenge> =
-            w2[split_point1_expected2..split_point_x_in_expected2].to_vec();
-        assert!(w_E_in_vars_expected2.len() == num_x_in_vars_2);
-        let expected_E_in2 = EqPolynomial::evals(&w_E_in_vars_expected2); // evals of N/2 vars
-        assert_eq!(split_eq2.E_in_vec[0], expected_E_in2);
-
-        // Test case 3: Panic case N = 0
-        let w3: Vec<<Fr as JoltField>::Challenge> = vec![];
-        let l0_3 = 0;
-        let num_x_out_vars_3 = 0;
-        let n3 = w3.len();
-        let num_x_in_vars_3 = n3 - num_x_out_vars_3 - l0_3; // 0 - 0 - 0 = 0
-        let result3 = std::panic::catch_unwind(|| {
-            GruenSplitEqPolynomial::<Fr>::new_for_small_value(
-                &w3,
-                num_x_out_vars_3,
-                num_x_in_vars_3,
-                l0_3,
-                None,
-            );
-        });
-        assert!(result3.is_err());
     }
 
     #[test]
