@@ -6,7 +6,7 @@ use rayon::prelude::*;
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 use crate::{
-    field::JoltField,
+    field::{JoltField, MaybeAllocative},
     poly::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, PolynomialBinding},
@@ -60,7 +60,9 @@ pub trait BooleanityConfig {
 }
 
 /// Booleanity Sumcheck interface
-pub trait BooleanitySumcheck<F: JoltField, T: Transcript>: BooleanityConfig + Send + Sync {
+pub trait BooleanitySumcheck<F: JoltField, T: Transcript>:
+    BooleanityConfig + Send + Sync + MaybeAllocative
+{
     fn gamma(&self) -> &[F::Challenge];
 
     fn r_address(&self) -> &[F::Challenge];
@@ -490,7 +492,10 @@ pub trait BooleanitySumcheck<F: JoltField, T: Transcript>: BooleanityConfig + Se
     }
 
     #[cfg(feature = "allocative")]
-    fn booleanity_update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
+    fn booleanity_update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder)
+    where
+        Self: Sized,
+    {
         flamegraph.visit_root(self);
     }
 }
@@ -500,7 +505,7 @@ impl<F, T, B> SumcheckInstance<F, T> for B
 where
     F: JoltField,
     T: Transcript,
-    B: BooleanitySumcheck<F, T>,
+    B: BooleanitySumcheck<F, T> + MaybeAllocative,
 {
     fn degree(&self) -> usize {
         self.booleanity_degree()
