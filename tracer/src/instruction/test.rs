@@ -69,6 +69,7 @@ where
         let register_state =
             <<I::Format as InstructionFormat>::RegisterState as InstructionRegisterState>::random(
                 &mut rng,
+                &instr.operands,
             );
 
         let mut original_cpu = Cpu::new(Box::new(DummyTerminal::default()));

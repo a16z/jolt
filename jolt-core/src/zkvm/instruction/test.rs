@@ -1,7 +1,13 @@
 use crate::{field::JoltField, zkvm::instruction::LookupQuery};
 use common::constants::XLEN;
 use rand::prelude::*;
-use tracer::instruction::{RISCVCycle, RISCVInstruction};
+use tracer::{
+    emulator::{cpu::Cpu, terminal::DummyTerminal},
+    instruction::{
+        format::{InstructionRegisterState, NormalizedOperands},
+        Cycle, NormalizedInstruction, RISCVCycle, RISCVInstruction, RISCVTrace,
+    },
+};
 
 use super::{CircuitFlags, InstructionLookup};
 
@@ -130,5 +136,29 @@ mod flags {
                 }
             }
         }
+    }
+}
+
+pub fn lookup_output_matches_trace_test<T>()
+where
+    T: InstructionLookup<XLEN> + RISCVInstruction + RISCVTrace + Default,
+    RISCVCycle<T>: LookupQuery<XLEN> + Into<Cycle>,
+{
+    let cycle: RISCVCycle<T> = Default::default();
+    let mut rng = StdRng::seed_from_u64(123456);
+    for _ in 0..10000 {
+        let random_cycle = cycle.random(&mut rng);
+        let normalized_instr: NormalizedInstruction = random_cycle.instruction.clone().into();
+        let normalized_operands = normalized_instr.operands;
+
+        let mut cpu = Cpu::new(Box::new(DummyTerminal::default()));
+        cpu.x[normalized_operands.rs1 as usize] = random_cycle.register_state.rs1_value() as i64;
+        cpu.x[normalized_operands.rs2 as usize] = random_cycle.register_state.rs2_value() as i64;
+
+        random_cycle.instruction.trace(&mut cpu, None);
+
+        let cpu_result = cpu.x[normalized_operands.rd as usize] as u64;
+        let lookup_result = LookupQuery::<XLEN>::to_lookup_output(&random_cycle);
+        assert_eq!(cpu_result, lookup_result, "{random_cycle:?}");
     }
 }

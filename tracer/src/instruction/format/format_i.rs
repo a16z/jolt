@@ -21,11 +21,11 @@ pub struct RegisterStateFormatI {
 
 impl InstructionRegisterState for RegisterStateFormatI {
     #[cfg(any(feature = "test-utils", test))]
-    fn random(rng: &mut rand::rngs::StdRng) -> Self {
+    fn random(rng: &mut rand::rngs::StdRng, operands: &NormalizedOperands) -> Self {
         use rand::RngCore;
         Self {
             rd: (rng.next_u64(), rng.next_u64()),
-            rs1: rng.next_u64(),
+            rs1: if operands.rs1 == 0 { 0 } else { rng.next_u64() },
         }
     }
 

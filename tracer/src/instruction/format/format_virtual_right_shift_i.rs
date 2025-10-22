@@ -13,19 +13,28 @@ pub struct FormatVirtualRightShiftI {
     pub imm: u64,
 }
 
-#[derive(Default, Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RegisterStateFormatVirtualI {
     pub rd: (u64, u64), // (old_value, new_value)
     pub rs1: u64,
 }
 
+impl Default for RegisterStateFormatVirtualI {
+    fn default() -> Self {
+        Self {
+            rd: (0, 0),
+            rs1: 1, // Default to 1 instead of 0
+        }
+    }
+}
+
 impl InstructionRegisterState for RegisterStateFormatVirtualI {
     #[cfg(any(feature = "test-utils", test))]
-    fn random(rng: &mut rand::rngs::StdRng) -> Self {
+    fn random(rng: &mut rand::rngs::StdRng, operands: &NormalizedOperands) -> Self {
         use rand::RngCore;
         Self {
             rd: (rng.next_u64(), rng.next_u64()),
-            rs1: rng.next_u64(),
+            rs1: if operands.rs1 == 0 { 0 } else { rng.next_u64() },
         }
     }
 

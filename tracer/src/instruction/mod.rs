@@ -1498,10 +1498,13 @@ impl<T: RISCVInstruction> RISCVCycle<T> {
     #[cfg(any(feature = "test-utils", test))]
     pub fn random(&self, rng: &mut rand::rngs::StdRng) -> Self {
         let instruction = T::random(rng);
+
         let register_state =
             <<T::Format as InstructionFormat>::RegisterState as InstructionRegisterState>::random(
                 rng,
+                &Into::<NormalizedInstruction>::into(instruction).operands,
             );
+
         Self {
             instruction,
             ram_access: Default::default(),

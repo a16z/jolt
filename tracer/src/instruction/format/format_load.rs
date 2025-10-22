@@ -23,14 +23,18 @@ pub struct RegisterStateFormatLoad {
 
 impl InstructionRegisterState for RegisterStateFormatLoad {
     #[cfg(any(feature = "test-utils", test))]
-    fn random(rng: &mut rand::rngs::StdRng) -> Self {
+    fn random(rng: &mut rand::rngs::StdRng, operands: &NormalizedOperands) -> Self {
         use crate::instruction::test::{DRAM_BASE, TEST_MEMORY_CAPACITY};
         use rand::RngCore;
         // Use a smaller range to avoid issues with boundaries
         let max_offset = (TEST_MEMORY_CAPACITY / 2).min(0x10000);
         Self {
             rd: (rng.next_u64(), rng.next_u64()),
-            rs1: DRAM_BASE + (rng.next_u64() % max_offset),
+            rs1: if operands.rs1 == 0 {
+                panic!()
+            } else {
+                DRAM_BASE + (rng.next_u64() % max_offset)
+            },
         }
     }
 
