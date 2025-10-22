@@ -7,8 +7,8 @@ use crate::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, PolynomialBinding},
         opening_proof::{
-            OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator,
-            BIG_ENDIAN,
+            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+            VerifierOpeningAccumulator, BIG_ENDIAN,
         },
         ra_poly::RaPolynomial,
     },
@@ -38,7 +38,6 @@ use rayon::prelude::*;
 #[derive(Allocative)]
 pub struct RaSumcheck<F: JoltField> {
     r_cycle: Vec<F::Challenge>,
-    input_claim: F,
     prover_state: Option<RaProverState<F>>,
 }
 
@@ -56,7 +55,7 @@ impl<F: JoltField> RaSumcheck<F> {
     ) -> Self {
         let (_preprocessing, trace, _, _) = state_manager.get_prover_data();
 
-        let (r, ra_claim) = state_manager.get_virtual_polynomial_opening(
+        let (r, _) = state_manager.get_virtual_polynomial_opening(
             VirtualPolynomial::InstructionRa,
             SumcheckId::InstructionReadRaf,
         );
@@ -90,7 +89,6 @@ impl<F: JoltField> RaSumcheck<F> {
 
         Self {
             r_cycle: r_cycle.to_vec(),
-            input_claim: ra_claim,
             prover_state: Some(prover_state),
         }
     }
@@ -98,14 +96,13 @@ impl<F: JoltField> RaSumcheck<F> {
     pub fn new_verifier<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
-        let (r, ra_claim) = state_manager.get_virtual_polynomial_opening(
+        let (r, _) = state_manager.get_virtual_polynomial_opening(
             VirtualPolynomial::InstructionRa,
             SumcheckId::InstructionReadRaf,
         );
         let (_, r_cycle) = r.split_at_r(LOG_K);
         Self {
             r_cycle: r_cycle.to_vec(),
-            input_claim: ra_claim,
             prover_state: None,
         }
     }
@@ -120,8 +117,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for RaSumcheck<F> {
         self.r_cycle.len()
     }
 
-    fn input_claim(&self) -> F {
-        self.input_claim
+    fn input_claim(&self, acc: Option<&RefCell<dyn OpeningAccumulator<F>>>) -> F {
+        let acc = acc.unwrap().borrow();
+        let (_, ra_claim) = acc.get_virtual_polynomial_opening(
+            VirtualPolynomial::InstructionRa,
+            SumcheckId::InstructionReadRaf,
+        );
+        ra_claim
     }
 
     #[tracing::instrument(skip_all, name = "InstructionRaSumcheck::compute_prover_message")]

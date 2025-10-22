@@ -8,7 +8,8 @@ use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
 use crate::poly::opening_proof::{
-    OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
+    OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+    VerifierOpeningAccumulator, BIG_ENDIAN,
 };
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::subprotocols::sumcheck::SumcheckInstance;
@@ -55,14 +56,8 @@ impl<F: JoltField> HammingBooleanitySumcheck<F> {
 
         let H = trace
             .par_iter()
-            .map(|cycle| {
-                if cycle.ram_access().address() == 0 {
-                    0
-                } else {
-                    1
-                }
-            })
-            .collect::<Vec<u8>>();
+            .map(|cycle| cycle.ram_access().address() != 0)
+            .collect::<Vec<bool>>();
         let H = MultilinearPolynomial::from(H);
 
         let (r_cycle, _) = sm.get_virtual_polynomial_opening(
@@ -99,7 +94,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for HammingBooleanitySu
         self.log_T
     }
 
-    fn input_claim(&self) -> F {
+    fn input_claim(&self, _acc: Option<&RefCell<dyn OpeningAccumulator<F>>>) -> F {
         F::zero()
     }
 

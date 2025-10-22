@@ -14,6 +14,7 @@ impl<const XLEN: usize> InstructionLookup<XLEN> for ECALL {
 impl Flags for ECALL {
     fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
         let mut flags = [false; NUM_CIRCUIT_FLAGS];
+        flags[CircuitFlags::IsFirstInSequence as usize] = self.is_first_in_sequence;
         flags[CircuitFlags::IsCompressed as usize] = self.is_compressed;
         flags
     }

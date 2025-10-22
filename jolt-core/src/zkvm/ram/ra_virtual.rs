@@ -7,7 +7,8 @@ use std::sync::Arc;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::poly::opening_proof::{
-    OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
+    OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+    VerifierOpeningAccumulator, BIG_ENDIAN,
 };
 use crate::poly::ra_poly::RaPolynomial;
 use crate::zkvm::dag::state_manager::StateManager;
@@ -57,8 +58,6 @@ pub struct RaSumcheck<F: JoltField> {
     /// Random challenge r_cycle
     r_cycle: [Vec<F::Challenge>; 3],
     r_address_chunks: Vec<Vec<F::Challenge>>,
-    /// [ra(r_address, r_cycle_val), ra(r_address, r_cycle_rw), ra(r_address, r_cycle_raf)]
-    ra_claim: F,
     /// Number of decomposition parts
     d: usize,
     /// Length of the trace
@@ -91,20 +90,20 @@ impl<F: JoltField> RaSumcheck<F> {
             )
         );
 
-        let (r, ra_claim_val) = state_manager.get_virtual_polynomial_opening(
+        let (r, _) = state_manager.get_virtual_polynomial_opening(
             VirtualPolynomial::RamRa,
             SumcheckId::RamValFinalEvaluation,
         );
         let (r_address, r_cycle_val) = r.split_at_r(log_K);
 
-        let (r, ra_claim_rw) = state_manager.get_virtual_polynomial_opening(
+        let (r, _) = state_manager.get_virtual_polynomial_opening(
             VirtualPolynomial::RamRa,
             SumcheckId::RamReadWriteChecking,
         );
         let (r_address_rw, r_cycle_rw) = r.split_at_r(log_K);
         assert_eq!(r_address, r_address_rw);
 
-        let (r, ra_claim_raf) = state_manager
+        let (r, _) = state_manager
             .get_virtual_polynomial_opening(VirtualPolynomial::RamRa, SumcheckId::RamRafEvaluation);
         let (r_address_raf, r_cycle_raf) = r.split_at_r(log_K);
         assert_eq!(r_address, r_address_raf);
@@ -150,9 +149,6 @@ impl<F: JoltField> RaSumcheck<F> {
         let eq_poly =
             MultilinearPolynomial::from(DensePolynomial::linear_combination(&eq_polys, &gamma).Z);
 
-        let combined_ra_claim =
-            gamma[0] * ra_claim_val + gamma[1] * ra_claim_rw + gamma[2] * ra_claim_raf;
-
         let ra_i_polys: Vec<RaPolynomial<u8, F>> = (0..d)
             .into_par_iter()
             .zip(eq_tables.into_par_iter())
@@ -180,7 +176,6 @@ impl<F: JoltField> RaSumcheck<F> {
 
         Self {
             gamma,
-            ra_claim: combined_ra_claim,
             d,
             prover_state: Some(RaProverState {
                 ra_i_polys,
@@ -216,20 +211,20 @@ impl<F: JoltField> RaSumcheck<F> {
             )
         );
 
-        let (r, ra_claim_val) = state_manager.get_virtual_polynomial_opening(
+        let (r, _) = state_manager.get_virtual_polynomial_opening(
             VirtualPolynomial::RamRa,
             SumcheckId::RamValFinalEvaluation,
         );
         let (r_address, r_cycle_val) = r.split_at_r(log_K);
 
-        let (r, ra_claim_rw) = state_manager.get_virtual_polynomial_opening(
+        let (r, _) = state_manager.get_virtual_polynomial_opening(
             VirtualPolynomial::RamRa,
             SumcheckId::RamReadWriteChecking,
         );
         let (r_address_rw, r_cycle_rw) = r.split_at_r(log_K);
         assert_eq!(r_address, r_address_rw);
 
-        let (r, ra_claim_raf) = state_manager
+        let (r, _) = state_manager
             .get_virtual_polynomial_opening(VirtualPolynomial::RamRa, SumcheckId::RamRafEvaluation);
         let (r_address_raf, r_cycle_raf) = r.split_at_r(log_K);
         assert_eq!(r_address, r_address_raf);
@@ -260,12 +255,8 @@ impl<F: JoltField> RaSumcheck<F> {
             .challenge_scalar();
         let gamma = [F::one(), gamma, gamma.square()];
 
-        let combined_ra_claim =
-            gamma[0] * ra_claim_val + gamma[1] * ra_claim_rw + gamma[2] * ra_claim_raf;
-
         Self {
             gamma,
-            ra_claim: combined_ra_claim,
             d,
             r_cycle: [
                 r_cycle_val.to_vec(),
@@ -303,8 +294,20 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for RaSumcheck<F> {
             .bind_parallel(r_j, BindingOrder::LowToHigh);
     }
 
-    fn input_claim(&self) -> F {
-        self.ra_claim
+    fn input_claim(&self, acc: Option<&RefCell<dyn OpeningAccumulator<F>>>) -> F {
+        let acc = acc.unwrap().borrow();
+        let (_, ra_claim_val) = acc.get_virtual_polynomial_opening(
+            VirtualPolynomial::RamRa,
+            SumcheckId::RamValFinalEvaluation,
+        );
+        let (_, ra_claim_rw) = acc.get_virtual_polynomial_opening(
+            VirtualPolynomial::RamRa,
+            SumcheckId::RamReadWriteChecking,
+        );
+        let (_, ra_claim_raf) = acc
+            .get_virtual_polynomial_opening(VirtualPolynomial::RamRa, SumcheckId::RamRafEvaluation);
+
+        self.gamma[0] * ra_claim_val + self.gamma[1] * ra_claim_rw + self.gamma[2] * ra_claim_raf
     }
 
     fn expected_output_claim(

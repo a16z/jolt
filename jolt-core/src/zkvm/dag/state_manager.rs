@@ -1,15 +1,16 @@
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::opening_proof::{
-    OpeningPoint, ProverOpeningAccumulator, ReducedOpeningProof, SumcheckId,
+    OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, ReducedOpeningProof, SumcheckId,
     VerifierOpeningAccumulator, BIG_ENDIAN,
 };
-use crate::subprotocols::sumcheck::SumcheckInstanceProof;
+use crate::subprotocols::sumcheck::{SumcheckInstanceProof, UniSkipFirstRoundProof};
 use crate::transcripts::Transcript;
 use crate::utils::math::Math;
 use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
@@ -23,7 +24,9 @@ use tracer::JoltDevice;
 #[derive(PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, FromPrimitive)]
 #[repr(u8)]
 pub enum ProofKeys {
+    Stage1UniSkipFirstRound,
     Stage1Sumcheck,
+    Stage2UniSkipFirstRound,
     Stage2Sumcheck,
     Stage3Sumcheck,
     Stage4Sumcheck,
@@ -38,6 +41,7 @@ pub enum ProofData<F: JoltField, PCS: CommitmentScheme<Field = F>, ProofTranscri
     SumcheckProof(SumcheckInstanceProof<F, ProofTranscript>),
     ReducedOpeningProof(ReducedOpeningProof<F, PCS, ProofTranscript>),
     OpeningProof(PCS::Proof),
+    UniSkipFirstRoundProof(UniSkipFirstRoundProof<F, ProofTranscript>),
 }
 
 pub type Proofs<F, PCS, ProofTranscript> = BTreeMap<ProofKeys, ProofData<F, PCS, ProofTranscript>>;
@@ -47,7 +51,7 @@ where
     PCS: CommitmentScheme<Field = F>,
 {
     pub preprocessing: &'a JoltProverPreprocessing<F, PCS>,
-    pub trace: Vec<Cycle>,
+    pub trace: Arc<Vec<Cycle>>,
     pub final_memory_state: Memory,
     pub accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
     pub untrusted_advice_polynomial: Option<MultilinearPolynomial<F>>,
@@ -79,6 +83,56 @@ pub struct StateManager<
     pub program_io: JoltDevice,
     pub prover_state: Option<ProverState<'a, F, PCS>>,
     pub verifier_state: Option<VerifierState<'a, F, PCS>>,
+}
+
+impl<'a, F, ProofTranscript, PCS> OpeningAccumulator<F>
+    for StateManager<'a, F, ProofTranscript, PCS>
+where
+    F: JoltField,
+    ProofTranscript: Transcript,
+    PCS: CommitmentScheme<Field = F>,
+{
+    /// Gets the opening for a given virtual polynomial from whichever accumulator is available.
+    fn get_virtual_polynomial_opening(
+        &self,
+        polynomial: VirtualPolynomial,
+        sumcheck: SumcheckId,
+    ) -> (OpeningPoint<BIG_ENDIAN, F>, F) {
+        if let Some(ref prover_state) = self.prover_state {
+            prover_state
+                .accumulator
+                .borrow()
+                .get_virtual_polynomial_opening(polynomial, sumcheck)
+        } else if let Some(ref verifier_state) = self.verifier_state {
+            verifier_state
+                .accumulator
+                .borrow()
+                .get_virtual_polynomial_opening(polynomial, sumcheck)
+        } else {
+            panic!("Neither prover nor verifier state initialized");
+        }
+    }
+
+    /// Gets the opening for a given committed polynomial from whichever accumulator is available.
+    fn get_committed_polynomial_opening(
+        &self,
+        polynomial: CommittedPolynomial,
+        sumcheck: SumcheckId,
+    ) -> (OpeningPoint<BIG_ENDIAN, F>, F) {
+        if let Some(ref prover_state) = self.prover_state {
+            prover_state
+                .accumulator
+                .borrow()
+                .get_committed_polynomial_opening(polynomial, sumcheck)
+        } else if let Some(ref verifier_state) = self.verifier_state {
+            verifier_state
+                .accumulator
+                .borrow()
+                .get_committed_polynomial_opening(polynomial, sumcheck)
+        } else {
+            panic!("Neither prover nor verifier state initialized");
+        }
+    }
 }
 
 impl<'a, F, ProofTranscript, PCS> StateManager<'a, F, ProofTranscript, PCS>
@@ -138,7 +192,7 @@ where
             twist_sumcheck_switch_index,
             prover_state: Some(ProverState {
                 preprocessing,
-                trace,
+                trace: Arc::new(trace),
                 final_memory_state,
                 accumulator: opening_accumulator,
                 untrusted_advice_polynomial: None,
@@ -202,6 +256,14 @@ where
         }
     }
 
+    pub fn get_trace_arc(&self) -> Arc<Vec<Cycle>> {
+        if let Some(ref prover_state) = self.prover_state {
+            prover_state.trace.clone()
+        } else {
+            panic!("Prover state not initialized");
+        }
+    }
+
     pub fn get_verifier_data(&self) -> (&'a JoltVerifierPreprocessing<F, PCS>, &JoltDevice, usize) {
         if let Some(ref verifier_state) = self.verifier_state {
             (
@@ -250,48 +312,6 @@ where
 
     pub fn set_commitments(&self, commitments: Vec<PCS::Commitment>) {
         *self.commitments.borrow_mut() = commitments;
-    }
-
-    /// Gets the opening for a given virtual polynomial from whichever accumulator is available.
-    pub fn get_virtual_polynomial_opening(
-        &self,
-        polynomial: VirtualPolynomial,
-        sumcheck: SumcheckId,
-    ) -> (OpeningPoint<BIG_ENDIAN, F>, F) {
-        if let Some(ref prover_state) = self.prover_state {
-            prover_state
-                .accumulator
-                .borrow()
-                .get_virtual_polynomial_opening(polynomial, sumcheck)
-        } else if let Some(ref verifier_state) = self.verifier_state {
-            verifier_state
-                .accumulator
-                .borrow()
-                .get_virtual_polynomial_opening(polynomial, sumcheck)
-        } else {
-            panic!("Neither prover nor verifier state initialized");
-        }
-    }
-
-    /// Gets the opening for a given committed polynomial from whichever accumulator is available.
-    pub fn get_committed_polynomial_opening(
-        &self,
-        polynomial: CommittedPolynomial,
-        sumcheck: SumcheckId,
-    ) -> (OpeningPoint<BIG_ENDIAN, F>, F) {
-        if let Some(ref prover_state) = self.prover_state {
-            prover_state
-                .accumulator
-                .borrow()
-                .get_committed_polynomial_opening(polynomial, sumcheck)
-        } else if let Some(ref verifier_state) = self.verifier_state {
-            verifier_state
-                .accumulator
-                .borrow()
-                .get_committed_polynomial_opening(polynomial, sumcheck)
-        } else {
-            panic!("Neither prover nor verifier state initialized");
-        }
     }
 
     pub fn fiat_shamir_preamble(&mut self) {

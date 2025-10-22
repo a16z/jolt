@@ -1,4 +1,4 @@
-use crate::poly::opening_proof::SumcheckId;
+use crate::poly::opening_proof::{OpeningAccumulator, SumcheckId};
 use crate::utils::math::Math;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
@@ -65,7 +65,7 @@ impl BytecodePreprocessing {
         }
         let instr = cycle.instruction().normalize();
         self.pc_map
-            .get_pc(instr.address, instr.inline_sequence_remaining.unwrap_or(0))
+            .get_pc(instr.address, instr.virtual_sequence_remaining.unwrap_or(0))
     }
 }
 
@@ -101,7 +101,7 @@ impl BytecodePCMapper {
             }
             last_pc += 1;
             if let Some((_, max_sequence)) = indices.get(Self::get_index(instr.address)).unwrap() {
-                if instr.inline_sequence_remaining.unwrap_or(0) >= *max_sequence {
+                if instr.virtual_sequence_remaining.unwrap_or(0) >= *max_sequence {
                     panic!(
                         "Bytecode has non-decreasing inline sequences at index {}",
                         Self::get_index(instr.address)
@@ -109,19 +109,19 @@ impl BytecodePCMapper {
                 }
             } else {
                 indices[Self::get_index(instr.address)] =
-                    Some((last_pc, instr.inline_sequence_remaining.unwrap_or(0)));
+                    Some((last_pc, instr.virtual_sequence_remaining.unwrap_or(0)));
             }
         });
         Self { indices }
     }
 
-    pub fn get_pc(&self, address: usize, inline_sequence_remaining: u16) -> usize {
+    pub fn get_pc(&self, address: usize, virtual_sequence_remaining: u16) -> usize {
         let (base_pc, max_inline_seq) = self
             .indices
             .get(Self::get_index(address))
             .unwrap()
             .expect("PC for address not found");
-        base_pc + (max_inline_seq - inline_sequence_remaining) as usize
+        base_pc + (max_inline_seq - virtual_sequence_remaining) as usize
     }
 
     pub const fn get_index(address: usize) -> usize {
@@ -137,43 +137,6 @@ pub struct BytecodeDag {}
 impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStages<F, T, PCS>
     for BytecodeDag
 {
-    fn stage2_prover_instances(
-        &mut self,
-        sm: &mut StateManager<'_, F, T, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstance<F, T>>> {
-        let (preprocessing, trace, _, _) = sm.get_prover_data();
-        let bytecode_preprocessing = &preprocessing.shared.bytecode;
-
-        let r_cycle: Vec<F::Challenge> = sm
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::UnexpandedPC,
-                SumcheckId::SpartanOuter,
-            )
-            .0
-            .r;
-        let E_1: Vec<F> = EqPolynomial::evals(&r_cycle);
-
-        let F_1 = compute_ra_evals(bytecode_preprocessing, trace, &E_1);
-
-        let booleanity = BooleanitySumcheck::new_prover(sm, r_cycle, F_1);
-
-        #[cfg(feature = "allocative")]
-        {
-            print_data_structure_heap_usage("Bytecode BooleanitySumcheck", &booleanity);
-        }
-
-        vec![Box::new(booleanity)]
-    }
-
-    fn stage2_verifier_instances(
-        &mut self,
-        sm: &mut StateManager<'_, F, T, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstance<F, T>>> {
-        let booleanity = BooleanitySumcheck::new_verifier(sm);
-
-        vec![Box::new(booleanity)]
-    }
-
     fn stage6_prover_instances(
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
@@ -193,15 +156,21 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         let F_1 = compute_ra_evals(bytecode_preprocessing, trace, &E_1);
 
         let read_raf = ReadRafSumcheck::new_prover(sm);
-        let hamming_weight = HammingWeightSumcheck::new_prover(sm, F_1);
+        let hamming_weight = HammingWeightSumcheck::new_prover(sm, F_1.clone());
+        let booleanity = BooleanitySumcheck::new_prover(sm, r_cycle, F_1);
 
         #[cfg(feature = "allocative")]
         {
             print_data_structure_heap_usage("Bytecode ReadRafSumcheck", &read_raf);
             print_data_structure_heap_usage("Bytecode HammingWeightSumcheck", &hamming_weight);
+            print_data_structure_heap_usage("Bytecode BooleanitySumcheck", &booleanity);
         }
 
-        vec![Box::new(read_raf), Box::new(hamming_weight)]
+        vec![
+            Box::new(read_raf),
+            Box::new(hamming_weight),
+            Box::new(booleanity),
+        ]
     }
 
     fn stage6_verifier_instances(
@@ -210,8 +179,13 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
     ) -> Vec<Box<dyn SumcheckInstance<F, T>>> {
         let read_checking = ReadRafSumcheck::new_verifier(sm);
         let hamming_weight = HammingWeightSumcheck::new_verifier(sm);
+        let booleanity = BooleanitySumcheck::new_verifier(sm);
 
-        vec![Box::new(read_checking), Box::new(hamming_weight)]
+        vec![
+            Box::new(read_checking),
+            Box::new(hamming_weight),
+            Box::new(booleanity),
+        ]
     }
 }
 

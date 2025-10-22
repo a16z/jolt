@@ -14,14 +14,16 @@ use crate::{
         commitment::commitment_scheme::CommitmentScheme,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{
-            OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator,
-            BIG_ENDIAN,
+            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+            VerifierOpeningAccumulator, BIG_ENDIAN,
         },
     },
     subprotocols::sumcheck::SumcheckInstance,
     transcripts::Transcript,
-    zkvm::dag::state_manager::StateManager,
-    zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
+    zkvm::{
+        dag::state_manager::StateManager,
+        witness::{CommittedPolynomial, VirtualPolynomial},
+    },
 };
 
 // Instruction lookups Hamming weight sumcheck
@@ -96,7 +98,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for HammingWeightSumche
         LOG_K_CHUNK
     }
 
-    fn input_claim(&self) -> F {
+    fn input_claim(&self, _acc: Option<&RefCell<dyn OpeningAccumulator<F>>>) -> F {
         self.gamma.iter().sum()
     }
 

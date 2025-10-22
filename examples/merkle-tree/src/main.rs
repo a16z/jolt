@@ -12,12 +12,14 @@ pub fn main() {
     let verifier_preprocessing =
         guest::verifier_preprocessing_from_prover_merkle_tree(&prover_preprocessing);
 
-    let first_input: &[u8] = &[5u8; 32];
-    let second_input = [6u8; 32];
-    let third_input = [7u8; 32];
+    let leaf1: &[u8] = &[5u8; 32];
+    let leaf2 = [6u8; 32];
+    let leaf3 = [7u8; 32];
+    let leaf4 = [8u8; 32];
 
     let (trusted_advice_commitment, _hint) = guest::commit_trusted_advice_merkle_tree(
-        TrustedAdvice::new(second_input),
+        TrustedAdvice::new(leaf2),
+        TrustedAdvice::new(leaf3),
         &prover_preprocessing,
     );
 
@@ -26,16 +28,17 @@ pub fn main() {
 
     let now = Instant::now();
     let (output, proof, program_io) = prove_merkle_tree(
-        first_input,
-        TrustedAdvice::new(second_input),
-        UntrustedAdvice::new(third_input),
+        leaf1,
+        TrustedAdvice::new(leaf2),
+        TrustedAdvice::new(leaf3),
+        UntrustedAdvice::new(leaf4),
         trusted_advice_commitment.clone(),
     );
     info!("Prover runtime: {} s", now.elapsed().as_secs_f64());
 
     // Pass only the first input and trusted_advice commitment to the verifier
     let is_valid = verify_merkle_tree(
-        first_input,
+        leaf1,
         output,
         program_io.panic,
         trusted_advice_commitment.clone(),

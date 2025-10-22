@@ -10,7 +10,6 @@ use std::{
 const PARALLEL_THRESHOLD: usize = 16;
 
 pub struct EqPolynomial<F: JoltField>(PhantomData<F>);
-
 impl<F: JoltField> EqPolynomial<F> {
     pub fn mle<X, Y>(x: &[X], y: &[Y]) -> F
     where
@@ -25,6 +24,7 @@ impl<F: JoltField> EqPolynomial<F> {
             .map(|(x_i, y_i)| *x_i * *y_i + (F::one() - *x_i) * (F::one() - *y_i))
             .product()
     }
+
     /// Computes the MLE evaluation EQ(x, y)
     pub fn mle_endian<const E1: Endianness, const E2: Endianness>(
         x: &OpeningPoint<E1, F>,
@@ -92,7 +92,7 @@ impl<F: JoltField> EqPolynomial<F> {
     ///     scaling_factor * eq(r, x) for all x in {0, 1}^n
     /// serially. More efficient for short `r`.
     #[inline]
-    fn evals_serial<C>(r: &[C], scaling_factor: Option<F>) -> Vec<F>
+    pub fn evals_serial<C>(r: &[C], scaling_factor: Option<F>) -> Vec<F>
     where
         C: Copy + Send + Sync + Into<F>,
         F: std::ops::Mul<C, Output = F> + std::ops::SubAssign<F>,
@@ -119,7 +119,7 @@ impl<F: JoltField> EqPolynomial<F> {
     ///
     /// Performance seems at most 10% worse than `evals_serial`
     #[inline]
-    fn evals_serial_cached<C>(r: &[C], scaling_factor: Option<F>) -> Vec<Vec<F>>
+    pub fn evals_serial_cached<C>(r: &[C], scaling_factor: Option<F>) -> Vec<Vec<F>>
     where
         C: Copy + Send + Sync + Into<F>,
         F: std::ops::Mul<C, Output = F> + std::ops::SubAssign<F>,
@@ -139,7 +139,7 @@ impl<F: JoltField> EqPolynomial<F> {
         evals
     }
     /// evals_serial_cached but for "high to low" ordering, used specifically in the Gruen x Dao Thaler optimization.
-    fn evals_serial_cached_rev(r: &[F::Challenge], scaling_factor: Option<F>) -> Vec<Vec<F>> {
+    pub fn evals_serial_cached_rev(r: &[F::Challenge], scaling_factor: Option<F>) -> Vec<Vec<F>> {
         let rev_r = r.iter().rev().collect::<Vec<_>>();
         let mut evals: Vec<Vec<F>> = (0..r.len() + 1)
             .map(|i| vec![scaling_factor.unwrap_or(F::one()); 1 << i])

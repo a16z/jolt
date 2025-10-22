@@ -21,7 +21,7 @@ use crate::{
             VerifierOpeningAccumulator,
         },
     },
-    subprotocols::sumcheck::SumcheckInstanceProof,
+    subprotocols::sumcheck::{SumcheckInstanceProof, UniSkipFirstRoundProof},
     transcripts::Transcript,
     zkvm::{
         dag::state_manager::{ProofData, ProofKeys, Proofs, StateManager, VerifierState},
@@ -433,6 +433,10 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
                 2u8.serialize_with_mode(&mut writer, compress)?;
                 proof.serialize_with_mode(&mut writer, compress)
             }
+            ProofData::UniSkipFirstRoundProof(first_round) => {
+                3u8.serialize_with_mode(&mut writer, compress)?;
+                first_round.serialize_with_mode(&mut writer, compress)
+            }
         }
     }
 
@@ -441,6 +445,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
             ProofData::SumcheckProof(proof) => proof.serialized_size(compress),
             ProofData::ReducedOpeningProof(proof) => proof.serialized_size(compress),
             ProofData::OpeningProof(proof) => proof.serialized_size(compress),
+            ProofData::UniSkipFirstRoundProof(first_round) => first_round.serialized_size(compress),
         }
     }
 }
@@ -476,6 +481,11 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
             2 => {
                 let proof = PCS::Proof::deserialize_with_mode(&mut reader, compress, validate)?;
                 Ok(ProofData::OpeningProof(proof))
+            }
+            3 => {
+                let first_round =
+                    UniSkipFirstRoundProof::deserialize_with_mode(&mut reader, compress, validate)?;
+                Ok(ProofData::UniSkipFirstRoundProof(first_round))
             }
             _ => Err(SerializationError::InvalidData),
         }

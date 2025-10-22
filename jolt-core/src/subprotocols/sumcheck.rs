@@ -3,30 +3,19 @@
 
 use crate::field::JoltField;
 use crate::field::MaybeAllocative;
-use crate::poly::dense_mlpoly::DensePolynomial;
-use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial};
+use crate::poly::opening_proof::OpeningAccumulator;
 use crate::poly::opening_proof::{
     OpeningPoint, ProverOpeningAccumulator, VerifierOpeningAccumulator, BIG_ENDIAN,
 };
-use crate::poly::spartan_interleaved_poly::SpartanInterleavedPolynomial;
-use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
 use crate::transcripts::{AppendToTranscript, Transcript};
 use crate::utils::errors::ProofVerifyError;
-use crate::utils::mul_0_optimized;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::utils::profiling::print_current_memory_usage;
 #[cfg(feature = "allocative")]
-use crate::utils::profiling::print_data_structure_heap_usage;
-use crate::utils::small_value::svo_helpers::process_svo_sumcheck_rounds;
-use crate::utils::thread::drop_in_background_thread;
-use crate::zkvm::JoltSharedPreprocessing;
-#[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
-use tracer::instruction::Cycle;
 
 use ark_serialize::*;
-use rayon::prelude::*;
 use std::cell::RefCell;
 use std::marker::PhantomData;
 use std::rc::Rc;
@@ -44,7 +33,7 @@ pub trait SumcheckInstance<F: JoltField, T: Transcript>: Send + Sync + MaybeAllo
 
     /// Returns the initial claim of this sumcheck instance, i.e.
     /// input_claim = \sum_{x \in \{0, 1}^N} P(x)
-    fn input_claim(&self) -> F; // TODO(moodlezoup): maybe pass this an Option<Rc<RefCell<ProverOpeningAccumulator<F>>>>
+    fn input_claim(&self, acc: Option<&RefCell<dyn OpeningAccumulator<F>>>) -> F;
 
     /// Computes the prover's message for a specific round of the sumcheck protocol.
     /// Returns the evaluations of the sumcheck polynomial at 0, 2, 3, ..., degree.
@@ -100,7 +89,10 @@ impl SingleSumcheck {
         let mut r_sumcheck: Vec<F::Challenge> = Vec::with_capacity(num_rounds);
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
 
-        let mut previous_claim = sumcheck_instance.input_claim();
+        let acc_ref = opening_accumulator
+            .as_ref()
+            .map(|rc| rc.as_ref() as &RefCell<dyn OpeningAccumulator<F>>);
+        let mut previous_claim = sumcheck_instance.input_claim(acc_ref);
         transcript.append_scalar(&previous_claim); // Append input claim
 
         for round in 0..num_rounds {
@@ -143,9 +135,11 @@ impl SingleSumcheck {
         opening_accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
         transcript: &mut ProofTranscript,
     ) -> Result<Vec<F::Challenge>, ProofVerifyError> {
-        let input_claim = sumcheck_instance.input_claim();
+        let acc_ref = opening_accumulator
+            .as_ref()
+            .map(|rc| rc.as_ref() as &RefCell<dyn OpeningAccumulator<F>>);
+        let input_claim = sumcheck_instance.input_claim(acc_ref);
         transcript.append_scalar(&input_claim); // Append input claim
-
         let (output_claim, r) = proof.verify(
             input_claim,
             sumcheck_instance.num_rounds(),
@@ -201,7 +195,10 @@ impl BatchedSumcheck {
             .iter()
             .map(|sumcheck| {
                 let num_rounds = sumcheck.num_rounds();
-                let input_claim = sumcheck.input_claim();
+                let acc_ref = opening_accumulator
+                    .as_ref()
+                    .map(|rc| rc.as_ref() as &RefCell<dyn OpeningAccumulator<F>>);
+                let input_claim = sumcheck.input_claim(acc_ref);
                 transcript.append_scalar(&input_claim);
                 input_claim.mul_pow_2(max_num_rounds - num_rounds)
             })
@@ -236,8 +233,11 @@ impl BatchedSumcheck {
                         // the univariate polynomial is just a constant equal to
                         // the input claim, scaled by a power of 2.
                         let num_rounds = sumcheck.num_rounds();
+                        let acc_ref = opening_accumulator
+                            .as_ref()
+                            .map(|rc| rc.as_ref() as &RefCell<dyn OpeningAccumulator<F>>);
                         let scaled_input_claim = sumcheck
-                            .input_claim()
+                            .input_claim(acc_ref)
                             .mul_pow_2(remaining_rounds - num_rounds - 1);
                         // Constant polynomial
                         UniPoly::from_coeff(vec![scaled_input_claim])
@@ -361,7 +361,10 @@ impl BatchedSumcheck {
             .zip(batching_coeffs.iter())
             .map(|(sumcheck, coeff)| {
                 let num_rounds = sumcheck.num_rounds();
-                let input_claim = sumcheck.input_claim();
+                let acc_ref = opening_accumulator
+                    .as_ref()
+                    .map(|rc| rc.as_ref() as &RefCell<dyn OpeningAccumulator<F>>);
+                let input_claim = sumcheck.input_claim(acc_ref);
                 transcript.append_scalar(&input_claim);
                 input_claim.mul_pow_2(max_num_rounds - num_rounds) * coeff
             })
@@ -401,244 +404,6 @@ impl BatchedSumcheck {
         }
 
         Ok(r_sumcheck)
-    }
-}
-
-impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTranscript> {
-    #[tracing::instrument(skip_all, name = "Spartan::prove_spartan_small_value")]
-    pub fn prove_spartan_small_value<const NUM_SVO_ROUNDS: usize>(
-        preprocessing: &JoltSharedPreprocessing,
-        trace: &[Cycle],
-        num_rounds: usize,
-        tau: &[F::Challenge],
-        transcript: &mut ProofTranscript,
-    ) -> (Self, Vec<F::Challenge>, [F; 3]) {
-        let mut r: Vec<F::Challenge> = Vec::new();
-        let mut polys = Vec::new();
-        let mut claim = F::zero();
-
-        let (accums_zero, accums_infty, mut az_bz_cz_poly) = SpartanInterleavedPolynomial::<
-            NUM_SVO_ROUNDS,
-            F,
-        >::svo_sumcheck_round(
-            preprocessing, trace, tau
-        );
-        #[cfg(feature = "allocative")]
-        print_data_structure_heap_usage("SpartanInterleavedPolynomial", &az_bz_cz_poly);
-
-        let mut eq_poly = GruenSplitEqPolynomial::new(tau, BindingOrder::LowToHigh);
-
-        process_svo_sumcheck_rounds::<NUM_SVO_ROUNDS, F, ProofTranscript>(
-            &accums_zero,
-            &accums_infty,
-            &mut r,
-            &mut polys,
-            &mut claim,
-            transcript,
-            &mut eq_poly,
-        );
-
-        // We stream over the trace again for this round
-        az_bz_cz_poly.streaming_sumcheck_round(
-            preprocessing,
-            trace,
-            &mut eq_poly,
-            transcript,
-            &mut r,
-            &mut polys,
-            &mut claim,
-        );
-
-        for _ in (NUM_SVO_ROUNDS + 1)..num_rounds {
-            az_bz_cz_poly.remaining_sumcheck_round(
-                &mut eq_poly,
-                transcript,
-                &mut r,
-                &mut polys,
-                &mut claim,
-            );
-        }
-
-        (
-            SumcheckInstanceProof::new(polys),
-            r,
-            az_bz_cz_poly.final_sumcheck_evals(),
-        )
-    }
-
-    #[tracing::instrument(skip_all)]
-    // A specialized sumcheck implementation with the 0th round unrolled from the rest of the
-    // `for` loop. This allows us to pass in `witness_polynomials` by reference instead of
-    // passing them in as a single `DensePolynomial`, which would require an expensive
-    // concatenation. We defer the actual instantiation of a `DensePolynomial` to the end of the
-    // 0th round.
-    pub fn prove_spartan_quadratic(
-        claim: &F,
-        num_rounds: usize,
-        poly_A: &mut DensePolynomial<F>,
-        witness_polynomials: &[&MultilinearPolynomial<F>],
-        transcript: &mut ProofTranscript,
-    ) -> (Self, Vec<F::Challenge>, Vec<F>) {
-        let mut r: Vec<F::Challenge> = Vec::with_capacity(num_rounds);
-        let mut polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
-        let mut claim_per_round = *claim;
-
-        /*          Round 0 START         */
-
-        let len = poly_A.len() / 2;
-        let trace_len = witness_polynomials[0].len();
-        // witness_polynomials
-        //     .iter()
-        //     .for_each(|poly| debug_assert_eq!(poly.len(), trace_len));
-
-        // We don't materialize the full, flattened witness vector, but this closure
-        // simulates it
-        let witness_value = |index: usize| {
-            if (index / trace_len) >= witness_polynomials.len() {
-                F::zero()
-            } else {
-                witness_polynomials[index / trace_len].get_coeff(index % trace_len)
-            }
-        };
-
-        let poly = {
-            // eval_point_0 = \sum_i A[i] * B[i]
-            // where B[i] = witness_value(i) for i in 0..len
-            let eval_point_0: F = (0..len)
-                .into_par_iter()
-                .map(|i| {
-                    if poly_A[i].is_zero() || witness_value(i).is_zero() {
-                        F::zero()
-                    } else {
-                        poly_A[i] * witness_value(i)
-                    }
-                })
-                .sum();
-            // eval_point_2 = \sum_i (2 * A[len + i] - A[i]) * (2 * B[len + i] - B[i])
-            // where B[i] = witness_value(i) for i in 0..len, B[len] = 1, and B[i] = 0 for i > len
-            let mut eval_point_2: F = (1..len)
-                .into_par_iter()
-                .map(|i| {
-                    if witness_value(i).is_zero() {
-                        F::zero()
-                    } else {
-                        let poly_A_bound_point = poly_A[len + i] + poly_A[len + i] - poly_A[i];
-                        let poly_B_bound_point = -witness_value(i);
-                        mul_0_optimized(&poly_A_bound_point, &poly_B_bound_point)
-                    }
-                })
-                .sum();
-            eval_point_2 += mul_0_optimized(
-                &(poly_A[len] + poly_A[len] - poly_A[0]),
-                &(F::from_u8(2) - witness_value(0)),
-            );
-
-            let evals = [eval_point_0, claim_per_round - eval_point_0, eval_point_2];
-            UniPoly::from_evals(&evals)
-        };
-
-        let compressed_poly = poly.compress();
-        // append the prover's message to the transcript
-        compressed_poly.append_to_transcript(transcript);
-
-        //derive the verifier's challenge for the next round
-        let r_i: F::Challenge = transcript.challenge_scalar_optimized::<F>();
-        r.push(r_i);
-        polys.push(compressed_poly);
-
-        // Set up next round
-        claim_per_round = poly.evaluate(&r_i);
-
-        // bound all tables to the verifier's challenge
-        let (_, mut poly_B) = rayon::join(
-            || poly_A.bound_poly_var_top_zero_optimized(&r_i),
-            || {
-                // Simulates `poly_B.bound_poly_var_top(&r_i)` by
-                // iterating over `witness_polynomials`
-                // We need to do this because we don't actually have
-                // a `DensePolynomial` instance for `poly_B` yet.
-                let zero = F::zero();
-                let one = [F::one()];
-                let W_iter = (0..len).into_par_iter().map(witness_value);
-                let Z_iter = W_iter
-                    .chain(one.into_par_iter())
-                    .chain(rayon::iter::repeat_n(zero, len));
-                let left_iter = Z_iter.clone().take(len);
-                let right_iter = Z_iter.skip(len).take(len);
-                let B = left_iter
-                    .zip(right_iter)
-                    .map(|(a, b)| if a == b { a } else { a + r_i * (b - a) })
-                    .collect();
-                DensePolynomial::new(B)
-            },
-        );
-
-        /*          Round 0 END          */
-
-        for _i in 1..num_rounds {
-            let poly = {
-                let (eval_point_0, eval_point_2) =
-                    Self::compute_eval_points_spartan_quadratic(poly_A, &poly_B);
-
-                let evals = [eval_point_0, claim_per_round - eval_point_0, eval_point_2];
-                UniPoly::from_evals(&evals)
-            };
-
-            let compressed_poly = poly.compress();
-            // append the prover's message to the transcript
-            compressed_poly.append_to_transcript(transcript);
-
-            //derive the verifier's challenge for the next round
-            let r_i: F::Challenge = transcript.challenge_scalar_optimized::<F>();
-
-            r.push(r_i);
-            polys.push(compressed_poly);
-
-            // Set up next round
-            claim_per_round = poly.evaluate(&r_i);
-
-            // bound all tables to the verifier's challenge
-            rayon::join(
-                || poly_A.bound_poly_var_top_zero_optimized(&r_i),
-                || poly_B.bound_poly_var_top_zero_optimized(&r_i),
-            );
-        }
-
-        let evals = vec![poly_A[0], poly_B[0]];
-        drop_in_background_thread(poly_B);
-
-        (SumcheckInstanceProof::new(polys), r, evals)
-    }
-
-    #[inline]
-    #[tracing::instrument(skip_all, name = "Sumcheck::compute_eval_points_spartan_quadratic")]
-    pub fn compute_eval_points_spartan_quadratic(
-        poly_A: &DensePolynomial<F>,
-        poly_B: &DensePolynomial<F>,
-    ) -> (F, F) {
-        let len = poly_A.len() / 2;
-        (0..len)
-            .into_par_iter()
-            .map(|i| {
-                // eval 0: bound_func is A(low)
-                let eval_point_0 = if poly_B[i].is_zero() || poly_A[i].is_zero() {
-                    F::zero()
-                } else {
-                    poly_A[i] * poly_B[i]
-                };
-
-                // eval 2: bound_func is -A(low) + 2*A(high)
-                let poly_B_bound_point = poly_B[len + i] + poly_B[len + i] - poly_B[i];
-                let eval_point_2 = if poly_B_bound_point.is_zero() {
-                    F::zero()
-                } else {
-                    let poly_A_bound_point = poly_A[len + i] + poly_A[len + i] - poly_A[i];
-                    mul_0_optimized(&poly_A_bound_point, &poly_B_bound_point)
-                };
-
-                (eval_point_0, eval_point_2)
-            })
-            .reduce(|| (F::zero(), F::zero()), |a, b| (a.0 + b.0, a.1 + b.1))
     }
 }
 
@@ -696,7 +461,7 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
             self.compressed_polys[i].append_to_transcript(transcript);
 
             //derive the verifier's challenge for the next round
-            let r_i = transcript.challenge_scalar_optimized::<F>();
+            let r_i: F::Challenge = transcript.challenge_scalar_optimized::<F>();
             r.push(r_i);
 
             // evaluate the claimed degree-ell polynomial at r_i using the hint
@@ -707,52 +472,89 @@ impl<F: JoltField, ProofTranscript: Transcript> SumcheckInstanceProof<F, ProofTr
     }
 }
 
-/// Helper function to encapsulate the common subroutine for sumcheck with eq poly factor:
-/// - Compute the linear factor E_i(X) from the current eq-poly
-/// - Reconstruct the cubic polynomial s_i(X) = E_i(X) * t_i(X) for the i-th round
-/// - Compress the cubic polynomial
-/// - Append the compressed polynomial to the transcript
-/// - Derive the challenge for the next round
-/// - Bind the cubic polynomial to the challenge
-/// - Update the claim as the evaluation of the cubic polynomial at the challenge
-///
-/// Returns the derived challenge
-#[inline]
-pub fn process_eq_sumcheck_round<F: JoltField, ProofTranscript: Transcript>(
-    quadratic_evals: (F, F), // (t_i(0), t_i(infty))
-    eq_poly: &mut GruenSplitEqPolynomial<F>,
-    polys: &mut Vec<CompressedUniPoly<F>>,
-    r: &mut Vec<F::Challenge>,
-    claim: &mut F,
-    transcript: &mut ProofTranscript,
-) -> F::Challenge {
-    let scalar_times_w_i = eq_poly.current_scalar * eq_poly.w[eq_poly.current_index - 1];
+/// Trait for a single-round instance of univariate skip
+/// We make a number of assumptions for the usage of this trait currently:
+/// 1. There is only one univariate skip round, which happens at the beginning of a sumcheck stage
+/// 2. We do not bind anything after this round. Instead during the remaining sumcheck, we
+///    will stream from the trace again to initialize.
+/// 3. We assume that the domain is symmetric around zero, and the prover sends the entire
+///    (univariate) polynomial for this round
+pub trait UniSkipFirstRoundInstance<F: JoltField, T: Transcript>:
+    Send + Sync + MaybeAllocative
+{
+    /// The degree of the sum-check
+    const DEGREE_BOUND: usize;
 
-    let cubic_poly = UniPoly::from_linear_times_quadratic_with_hint(
-        // The coefficients of `eq(w[(n - i)..], r[..i]) * eq(w[n - i - 1], X)`
-        [
-            eq_poly.current_scalar - scalar_times_w_i,
-            scalar_times_w_i + scalar_times_w_i - eq_poly.current_scalar,
-        ],
-        quadratic_evals.0,
-        quadratic_evals.1,
-        *claim,
-    );
+    /// The domain size of the sum-check. Canonically instantiated to the domain
+    /// [-floor(DOMAIN_SIZE/2), ceil(DOMAIN_SIZE)/2]
+    const DOMAIN_SIZE: usize;
 
-    // Compress and add to transcript
-    let compressed_poly = cubic_poly.compress();
-    compressed_poly.append_to_transcript(transcript);
+    /// Returns the initial claim of this univariate skip round, i.e.
+    /// input_claim = \sum_{-floor(S/2) <= z <= ceil(S/2)} \sum_{x \in \{0, 1}^n} P(z, x)
+    /// where S = DOMAIN_SIZE
+    fn input_claim(&self) -> F;
 
-    // Derive challenge
-    let r_i: F::Challenge = transcript.challenge_scalar_optimized::<F>();
-    r.push(r_i);
-    polys.push(compressed_poly);
+    /// Computes the full univariate polynomial to be sent in the uni-skip round.
+    /// Returns a degree-bounded `UniPoly` with exactly `DEGREE_BOUND + 1` coefficients.
+    fn compute_poly(&mut self) -> UniPoly<F>;
 
-    // Evaluate for next round's claim
-    *claim = cubic_poly.evaluate(&r_i);
+    // TODO: add flamegraph support
+    // #[cfg(feature = "allocative")]
+    // fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder);
+}
 
-    // Bind eq_poly for next round
-    eq_poly.bind(r_i);
+/// The sumcheck proof for a univariate skip round
+/// Consists of the (single) univariate polynomial sent in that round, no omission of any coefficient
+#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
+pub struct UniSkipFirstRoundProof<F: JoltField, ProofTranscript: Transcript> {
+    pub uni_poly: UniPoly<F>,
+    _marker: PhantomData<ProofTranscript>,
+}
 
-    r_i
+impl<F: JoltField, ProofTranscript: Transcript> UniSkipFirstRoundProof<F, ProofTranscript> {
+    pub fn new(uni_poly: UniPoly<F>) -> Self {
+        Self {
+            uni_poly,
+            _marker: PhantomData,
+        }
+    }
+
+    /// Verify only the univariate-skip first round.
+    ///
+    /// Params
+    /// - `const N`: the first degree plus one (e.g. the size of the first evaluation domain)
+    /// - `const FIRST_ROUND_POLY_NUM_COEFFS`: number of coefficients in the first-round polynomial
+    /// - `degree_bound_first`: Maximum allowed degree of the first univariate polynomial
+    /// - `transcript`: Fiat-Shamir transcript
+    ///
+    /// Returns `(r0, next_claim)` where `r0` is the verifier challenge for the first round
+    /// and `next_claim` is the claimed evaluation at `r0` to be used by remaining rounds.
+    pub fn verify<const N: usize, const FIRST_ROUND_POLY_NUM_COEFFS: usize>(
+        &self,
+        degree_bound_first: usize,
+        claim: F,
+        transcript: &mut ProofTranscript,
+    ) -> Result<(F::Challenge, F), ProofVerifyError> {
+        // Degree check for the high-degree first polynomial
+        if self.uni_poly.degree() > degree_bound_first {
+            return Err(ProofVerifyError::InvalidInputLength(
+                degree_bound_first,
+                self.uni_poly.degree(),
+            ));
+        }
+
+        // Append full polynomial and derive r0
+        self.uni_poly.append_to_transcript(transcript);
+        let r0 = transcript.challenge_scalar_optimized::<F>();
+
+        // Check symmetric-domain sum equals zero (initial claim), and compute next claim s1(r0)
+        let (ok, next_claim) = self
+            .uni_poly
+            .check_sum_evals_and_set_new_claim::<N, FIRST_ROUND_POLY_NUM_COEFFS>(&claim, &r0);
+        if !ok {
+            return Err(ProofVerifyError::UniSkipVerificationError);
+        }
+
+        Ok((r0, next_claim))
+    }
 }

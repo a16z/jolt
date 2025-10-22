@@ -248,6 +248,7 @@ impl MemoryLayout {
             config.program_size.is_some(),
             "MemoryLayout requires bytecode size to be set"
         );
+
         // helper to align ‘val’ *up* to a multiple of ‘align’, panicking on overflow
         #[inline]
         fn align_up(val: u64, align: u64) -> u64 {
@@ -271,6 +272,16 @@ impl MemoryLayout {
         let stack_size = align_up(config.stack_size, 8);
         let memory_size = align_up(config.memory_size, 8);
 
+        // Critical for ValEvaluation and ValFinal sumchecks in RAM
+        assert!(
+            max_trusted_advice_size.is_power_of_two() || max_trusted_advice_size == 0,
+            "Trusted advice size must be a power of two (got {max_trusted_advice_size})",
+        );
+        assert!(
+            max_untrusted_advice_size.is_power_of_two() || max_untrusted_advice_size == 0,
+            "Untrusted advice size must be a power of two (got {max_untrusted_advice_size})",
+        );
+
         // Adds 16 to account for panic bit and termination bit
         // (they each occupy one full 8-byte word)
         let io_region_bytes = max_input_size
@@ -289,19 +300,41 @@ impl MemoryLayout {
             .checked_mul(8)
             .expect("I/O region byte count overflow");
 
-        let trusted_advice_start = RAM_START_ADDRESS
-            .checked_sub(io_bytes)
-            .expect("I/O region exceeds RAM_START_ADDRESS");
-        let trusted_advice_end = trusted_advice_start
-            .checked_add(max_trusted_advice_size)
-            .expect("trusted_advice_end overflow");
+        // Place the larger or equal-sized advice region first in memory (at the lower address).
+        let (
+            trusted_advice_start,
+            trusted_advice_end,
+            untrusted_advice_start,
+            untrusted_advice_end,
+        ) = if max_trusted_advice_size >= max_untrusted_advice_size {
+            // Trusted advice goes first
+            let trusted_start = RAM_START_ADDRESS
+                .checked_sub(io_bytes)
+                .expect("I/O region exceeds RAM_START_ADDRESS");
+            let trusted_end = trusted_start
+                .checked_add(max_trusted_advice_size)
+                .expect("trusted_advice_end overflow");
+            let untrusted_start = trusted_end;
+            let untrusted_end = untrusted_start
+                .checked_add(max_untrusted_advice_size)
+                .expect("untrusted_advice_end overflow");
+            (trusted_start, trusted_end, untrusted_start, untrusted_end)
+        } else {
+            // Untrusted advice goes first
+            let untrusted_start = RAM_START_ADDRESS
+                .checked_sub(io_bytes)
+                .expect("I/O region exceeds RAM_START_ADDRESS");
+            let untrusted_end = untrusted_start
+                .checked_add(max_untrusted_advice_size)
+                .expect("untrusted_advice_end overflow");
+            let trusted_start = untrusted_end;
+            let trusted_end = trusted_start
+                .checked_add(max_trusted_advice_size)
+                .expect("trusted_advice_end overflow");
+            (trusted_start, trusted_end, untrusted_start, untrusted_end)
+        };
 
-        let untrusted_advice_start = trusted_advice_end;
-        let untrusted_advice_end = untrusted_advice_start
-            .checked_add(max_untrusted_advice_size)
-            .expect("untrusted_advice_end overflow");
-
-        let input_start = untrusted_advice_end;
+        let input_start = std::cmp::max(untrusted_advice_end, trusted_advice_end);
         let input_end = input_start
             .checked_add(max_input_size)
             .expect("input_end overflow");
@@ -350,5 +383,10 @@ impl MemoryLayout {
             termination,
             io_end,
         }
+    }
+
+    /// Returns the start address memory.
+    pub fn get_lowest_address(&self) -> u64 {
+        self.trusted_advice_start.min(self.untrusted_advice_start)
     }
 }

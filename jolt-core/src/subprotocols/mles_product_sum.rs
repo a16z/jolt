@@ -46,7 +46,7 @@ pub fn compute_mles_product_sum<F: JoltField>(
 
                 mle_eval_pairs[0].0 *= eq_wl_eval;
                 mle_eval_pairs[0].1 *= eq_wl_eval;
-                product_eval_univariate(&mle_eval_pairs, &mut partial_evals);
+                product_eval_univariate_accumulate(&mle_eval_pairs, &mut partial_evals);
             }
 
             partial_evals
@@ -102,12 +102,30 @@ pub fn compute_mles_product_sum<F: JoltField>(
 /// Inputs:
 /// - `pairs[j] = (p_j(0), p_j(1))`
 /// - `sums`: accumulator with layout `[1, 2, ..., D - 1, ∞]`
-fn product_eval_univariate<F: JoltField>(pairs: &[(F, F)], sums: &mut [F]) {
+fn product_eval_univariate_accumulate<F: JoltField>(pairs: &[(F, F)], sums: &mut [F]) {
     match pairs.len() {
-        2 => eval_inter2_final_accumulate(pairs.try_into().unwrap(), sums),
-        4 => eval_inter4_final_accumulate(pairs.try_into().unwrap(), sums),
-        8 => eval_inter8_final_accumulate(pairs.try_into().unwrap(), sums),
-        16 => eval_inter16_final_accumulate(pairs.try_into().unwrap(), sums),
+        2 => eval_inter2_final_op(pairs.try_into().unwrap(), sums, F::add_assign),
+        4 => eval_inter4_final_op(pairs.try_into().unwrap(), sums, F::add_assign),
+        8 => eval_inter8_final_op(pairs.try_into().unwrap(), sums, F::add_assign),
+        16 => eval_inter16_final_op(pairs.try_into().unwrap(), sums, F::add_assign),
+        _ => unimplemented!(),
+    }
+}
+
+/// Computes the product of `D` linear polynomials on `U_D = [1, 2, ..., D - 1, ∞]`.
+///
+/// The evaluations on `U_D` are assigned to `evals`.
+///
+/// Inputs:
+/// - `pairs[j] = (p_j(0), p_j(1))`
+/// - `evals`: output slice with layout `[1, 2, ..., D - 1, ∞]`
+pub fn product_eval_univariate_assign<F: JoltField>(pairs: &[(F, F)], evals: &mut [F]) {
+    match pairs.len() {
+        2 => eval_inter2_final_op(pairs.try_into().unwrap(), evals, assign),
+        3 => eval_inter3_final_op(pairs.try_into().unwrap(), evals, assign),
+        4 => eval_inter4_final_op(pairs.try_into().unwrap(), evals, assign),
+        8 => eval_inter8_final_op(pairs.try_into().unwrap(), evals, assign),
+        16 => eval_inter16_final_op(pairs.try_into().unwrap(), evals, assign),
         _ => unimplemented!(),
     }
 }
@@ -123,9 +141,23 @@ fn eval_inter2<F: JoltField>((p0, p1): (F, F), (q0, q1): (F, F)) -> (F, F, F) {
     (r1, r2, r_inf)
 }
 
-pub fn eval_inter2_final_accumulate<F: JoltField>(pairs: &[(F, F); 2], sums: &mut [F]) {
-    sums[0] += pairs[0].1 * pairs[1].1; // 1
-    sums[1] += (pairs[0].1 - pairs[0].0) * (pairs[1].1 - pairs[1].0); // ∞
+fn eval_inter2_final_op<F: JoltField>(p: &[(F, F); 2], outputs: &mut [F], op: impl Fn(&mut F, F)) {
+    op(&mut outputs[0], p[0].1 * p[1].1); // 1
+    op(&mut outputs[1], (p[0].1 - p[0].0) * (p[1].1 - p[1].0)); // ∞
+}
+
+fn eval_inter3_final_op<F: JoltField>(
+    pairs: &[(F, F); 3],
+    outputs: &mut [F],
+    op: impl Fn(&mut F, F),
+) {
+    let (a1, a2, a_inf) = eval_inter2(pairs[0], pairs[1]);
+    let (b0, b1) = pairs[2];
+    let b_inf = b1 - b0;
+    let b2 = b1 + b_inf;
+    op(&mut outputs[0], a1 * b1);
+    op(&mut outputs[1], a2 * b2);
+    op(&mut outputs[2], a_inf * b_inf);
 }
 
 fn eval_inter4<F: JoltField>(p: [(F, F); 4]) -> (F, F, F, F, F) {
@@ -138,15 +170,15 @@ fn eval_inter4<F: JoltField>(p: [(F, F); 4]) -> (F, F, F, F, F) {
     (a1 * b1, a2 * b2, a3 * b3, a4 * b4, a_inf * b_inf)
 }
 
-fn eval_inter4_final_accumulate<F: JoltField>(p: &[(F, F); 4], sums: &mut [F]) {
+fn eval_inter4_final_op<F: JoltField>(p: &[(F, F); 4], outputs: &mut [F], op: impl Fn(&mut F, F)) {
     let (a1, a2, a_inf) = eval_inter2(p[0], p[1]);
     let a3 = ex2(&[a1, a2], &a_inf);
     let (b1, b2, b_inf) = eval_inter2(p[2], p[3]);
     let b3 = ex2(&[b1, b2], &b_inf);
-    sums[0] += a1 * b1; // 1
-    sums[1] += a2 * b2; // 2
-    sums[2] += a3 * b3; // 3
-    sums[3] += a_inf * b_inf; // ∞
+    op(&mut outputs[0], a1 * b1); // 1
+    op(&mut outputs[1], a2 * b2); // 2
+    op(&mut outputs[2], a3 * b3); // 3
+    op(&mut outputs[3], a_inf * b_inf); // ∞
 }
 
 fn eval_inter8<F: JoltField>(p: [(F, F); 8]) -> [F; 9] {
@@ -174,7 +206,7 @@ fn eval_inter8<F: JoltField>(p: [(F, F); 8]) -> [F; 9] {
     ]
 }
 
-fn eval_inter8_final_accumulate<F: JoltField>(p: &[(F, F); 8], sums: &mut [F]) {
+fn eval_inter8_final_op<F: JoltField>(p: &[(F, F); 8], outputs: &mut [F], op: impl Fn(&mut F, F)) {
     #[inline]
     fn batch_helper<F: JoltField>(f0: F, f1: F, f2: F, f3: F, f_inf: F) -> (F, F, F) {
         let f_inf6 = f_inf.mul_u64(6);
@@ -187,18 +219,21 @@ fn eval_inter8_final_accumulate<F: JoltField>(p: &[(F, F); 8], sums: &mut [F]) {
     let (b1, b2, b3, b4, b_inf) = eval_inter4(unsafe { *(p[4..8].as_ptr() as *const [(F, F); 4]) });
     let (b5, b6, b7) = batch_helper(b1, b2, b3, b4, b_inf);
 
-    sums[0] += a1 * b1;
-    sums[1] += a2 * b2;
-    sums[2] += a3 * b3;
-    sums[3] += a4 * b4;
-    sums[4] += a5 * b5;
-    sums[5] += a6 * b6;
-    sums[6] += a7 * b7;
-    sums[7] += a_inf * b_inf;
+    op(&mut outputs[0], a1 * b1);
+    op(&mut outputs[1], a2 * b2);
+    op(&mut outputs[2], a3 * b3);
+    op(&mut outputs[3], a4 * b4);
+    op(&mut outputs[4], a5 * b5);
+    op(&mut outputs[5], a6 * b6);
+    op(&mut outputs[6], a7 * b7);
+    op(&mut outputs[7], a_inf * b_inf);
 }
 
-#[inline(always)]
-fn eval_inter16_final_accumulate<F: JoltField>(p: &[(F, F); 16], sums: &mut [F]) {
+fn eval_inter16_final_op<F: JoltField>(
+    p: &[(F, F); 16],
+    outputs: &mut [F],
+    op: impl Fn(&mut F, F),
+) {
     #[inline]
     fn batch_helper<F: JoltField>(vals: &[F; 9]) -> [F; 16] {
         let mut f = [F::zero(); 16]; // f[1, ..., 15, inf]
@@ -217,7 +252,7 @@ fn eval_inter16_final_accumulate<F: JoltField>(p: &[(F, F); 16], sums: &mut [F])
     // Include all entries [1..15, inf]
     for i in 0..16 {
         av[i] *= bv[i];
-        sums[i] += av[i];
+        op(&mut outputs[i], av[i]);
     }
 }
 
@@ -286,6 +321,10 @@ fn dbl<F: JoltField>(x: F) -> F {
 
 fn dbl_assign<F: JoltField>(x: &mut F) {
     *x += *x;
+}
+
+fn assign<T: Sized>(dst: &mut T, src: T) {
+    *dst = src;
 }
 
 #[cfg(test)]
