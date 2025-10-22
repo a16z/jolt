@@ -22,7 +22,6 @@ use crate::{
 
 use crate::subprotocols::sumcheck::SumcheckInstance;
 
-/// Common prover state for all hamming weight sumchecks
 #[derive(Allocative)]
 pub struct HammingWeightProverState<F: JoltField> {
     /// ra polynomials
@@ -31,16 +30,12 @@ pub struct HammingWeightProverState<F: JoltField> {
 
 /// Configuration trait for hamming weight sumchecks
 pub trait HammingWeightConfig {
-    /// Number of polynomials (d parameter)
     fn d(&self) -> usize;
 
-    /// Number of rounds for the sumcheck
     fn num_rounds(&self) -> usize;
 
-    /// Get the polynomial type for the i-th polynomial
     fn polynomial_type(i: usize) -> CommittedPolynomial;
 
-    /// Get the sumcheck ID
     fn sumcheck_id() -> SumcheckId;
 }
 
@@ -57,7 +52,7 @@ pub trait HammingWeightSumcheck<F: JoltField, T: Transcript>:
     /// Get mutable prover state (if prover)
     fn prover_state_mut(&mut self) -> Option<&mut HammingWeightProverState<F>>;
 
-    /// Get r_cycle for opening (implementation-specific)
+    /// Get r_cycle for opening
     fn get_r_cycle(&self, accumulator: &dyn OpeningAccumulator<F>) -> Vec<F::Challenge>;
 
     /// Hamming weight sumchecks always have degree 1
@@ -136,7 +131,7 @@ pub trait HammingWeightSumcheck<F: JoltField, T: Transcript>:
             .sum()
     }
 
-    /// Normalize opening point (reverse order)
+    /// Normalize opening point
     fn hamming_weight_normalize_opening_point(
         &self,
         opening_point: &[F::Challenge],
