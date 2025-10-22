@@ -2,7 +2,7 @@ use crate::poly::opening_proof::{OpeningAccumulator, SumcheckId};
 use crate::utils::math::Math;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
-use crate::zkvm::bytecode::booleanity::BooleanitySumcheck;
+use crate::zkvm::bytecode::booleanity::BytecodeBooleanitySumcheck;
 use crate::zkvm::bytecode::hamming_weight::HammingWeightSumcheck;
 use crate::zkvm::bytecode::read_raf_checking::ReadRafSumcheck;
 use crate::zkvm::dag::stage::SumcheckStages;
@@ -157,7 +157,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
 
         let read_raf = ReadRafSumcheck::new_prover(sm);
         let hamming_weight = HammingWeightSumcheck::new_prover(sm, F_1.clone());
-        let booleanity = BooleanitySumcheck::new_prover(sm, r_cycle, F_1);
+        let booleanity = BytecodeBooleanitySumcheck::new_prover(sm, r_cycle, F_1);
 
         #[cfg(feature = "allocative")]
         {
@@ -179,7 +179,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
     ) -> Vec<Box<dyn SumcheckInstance<F, T>>> {
         let read_checking = ReadRafSumcheck::new_verifier(sm);
         let hamming_weight = HammingWeightSumcheck::new_verifier(sm);
-        let booleanity = BooleanitySumcheck::new_verifier(sm);
+        let booleanity = BytecodeBooleanitySumcheck::new_verifier(sm);
 
         vec![
             Box::new(read_checking),

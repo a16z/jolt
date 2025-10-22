@@ -18,7 +18,7 @@ use crate::{
         dag::{stage::SumcheckStages, state_manager::StateManager},
         instruction::LookupQuery,
         instruction_lookups::{
-            booleanity::BooleanitySumcheck, hamming_weight::HammingWeightSumcheck,
+            booleanity::InstructionBooleanitySumcheck, hamming_weight::HammingWeightSumcheck,
             ra_virtual::RaSumcheck, read_raf_checking::ReadRafSumcheck,
         },
         witness::VirtualPolynomial,
@@ -127,7 +127,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
             .clone();
         let eq_r_cycle = EqPolynomial::evals(&r_cycle);
         let F = compute_ra_evals(trace, &eq_r_cycle);
-        let booleanity = BooleanitySumcheck::new_prover(sm, F);
+        let booleanity = InstructionBooleanitySumcheck::new_prover(sm, F);
 
         #[cfg(feature = "allocative")]
         {
@@ -149,7 +149,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         sm: &mut StateManager<'_, F, T, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, T>>> {
         let ra_virtual = RaSumcheck::new_verifier(sm);
-        let booleanity = BooleanitySumcheck::new_verifier(sm);
+        let booleanity = InstructionBooleanitySumcheck::new_verifier(sm);
         vec![Box::new(ra_virtual), Box::new(booleanity)]
     }
 }

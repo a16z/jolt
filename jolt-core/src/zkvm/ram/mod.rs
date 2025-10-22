@@ -17,7 +17,7 @@ use crate::{
     zkvm::{
         dag::{stage::SumcheckStages, state_manager::StateManager},
         ram::{
-            booleanity::BooleanitySumcheck,
+            booleanity::RamBooleanitySumcheck,
             hamming_booleanity::HammingBooleanitySumcheck,
             hamming_weight::HammingWeightSumcheck,
             output_check::{OutputSumcheck, ValFinalSumcheck},
@@ -577,7 +577,7 @@ where
     ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
         // Accumulate advice polynomials if present
         prover_accumulate_advice(state_manager);
-        let booleanity = BooleanitySumcheck::new_prover(state_manager);
+        let booleanity = RamBooleanitySumcheck::new_prover(state_manager);
         let val_evaluation = ValEvaluationSumcheck::new_prover(
             self.initial_memory_state.as_ref().unwrap(),
             state_manager,
@@ -604,7 +604,7 @@ where
     ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
         // Accumulate advice commitments if present
         verifier_accumulate_advice(state_manager);
-        let booleanity = BooleanitySumcheck::new_verifier(state_manager);
+        let booleanity = RamBooleanitySumcheck::new_verifier(state_manager);
         let val_evaluation = ValEvaluationSumcheck::new_verifier(
             self.initial_memory_state.as_ref().unwrap(),
             state_manager,
