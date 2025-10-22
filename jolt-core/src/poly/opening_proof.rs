@@ -10,11 +10,14 @@ use crate::utils::profiling::write_flamegraph_svg;
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
+use num::Integer;
 use num_derive::FromPrimitive;
 use num_traits::Zero;
 use rayon::prelude::*;
 use std::{
+    cell::RefCell,
     collections::{BTreeMap, HashMap},
+    rc::Rc,
     sync::{Arc, RwLock},
 };
 
@@ -30,7 +33,10 @@ use super::{
 use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::{
     field::JoltField,
-    poly::one_hot_polynomial::{EqAddressState, EqCycleState, OneHotPolynomialProverOpening},
+    poly::{
+        commitment::dory::DoryGlobals,
+        one_hot_polynomial::{EqAddressState, EqCycleState, OneHotPolynomialProverOpening},
+    },
     subprotocols::sumcheck::{BatchedSumcheck, SumcheckInstance, SumcheckInstanceProof},
     transcripts::Transcript,
     utils::{errors::ProofVerifyError, math::Math},
@@ -458,7 +464,7 @@ where
 
     fn expected_output_claim(
         &self,
-        _: Option<std::rc::Rc<std::cell::RefCell<VerifierOpeningAccumulator<F>>>>,
+        _: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
         r: &[F::Challenge],
     ) -> F {
         let eq_eval = EqPolynomial::<F>::mle(&self.opening_point, r);
@@ -474,7 +480,7 @@ where
 
     fn cache_openings_prover(
         &self,
-        _accumulator: std::rc::Rc<std::cell::RefCell<ProverOpeningAccumulator<F>>>,
+        _accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
         _transcript: &mut T,
         _opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
@@ -483,7 +489,7 @@ where
 
     fn cache_openings_verifier(
         &self,
-        _accumulator: std::rc::Rc<std::cell::RefCell<VerifierOpeningAccumulator<F>>>,
+        _accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
         _transcript: &mut T,
         _opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
@@ -536,8 +542,6 @@ pub struct ReducedOpeningProof<
     joint_opening_proof: PCS::Proof,
     #[cfg(test)]
     joint_poly: MultilinearPolynomial<F>,
-    #[cfg(test)]
-    joint_commitment: PCS::Commitment,
 }
 
 impl<F> Default for ProverOpeningAccumulator<F>
@@ -561,8 +565,6 @@ where
             dense_polynomial_map: HashMap::new(),
             #[cfg(test)]
             appended_virtual_openings: std::rc::Rc::new(std::cell::RefCell::new(vec![])),
-            // #[cfg(test)]
-            // joint_commitment: None,
         }
     }
 
@@ -853,8 +855,18 @@ where
             (joint_poly, hint)
         };
 
-        #[cfg(test)]
-        let joint_commitment = PCS::commit(&joint_poly, pcs_setup).0;
+        // r_sumcheck = (r_address, r_cycle), because OneHotPolynomialProverOpening binds address
+        // variables first, followed by cycle variables.
+        // The Dory matrices, however, are laid out such that Dory expects the opening point
+        // r_dory = (r_cycle, r_address).
+        let (r_address, r_cycle) =
+            r_sumcheck.split_at(r_sumcheck.len() - DoryGlobals::get_T().log_2());
+        let r_dory = if r_cycle.len().is_even() {
+            [r_cycle, r_address].concat()
+        } else {
+            // TODO(moodlezoup): should really be F::Challenge::zero()
+            [r_cycle, &[F::Challenge::default()], r_address].concat()
+        };
 
         #[cfg(not(test))]
         {
@@ -863,7 +875,7 @@ where
         }
 
         // Reduced opening proof
-        let joint_opening_proof = PCS::prove(pcs_setup, &joint_poly, &r_sumcheck, hint, transcript);
+        let joint_opening_proof = PCS::prove(pcs_setup, &joint_poly, &r_dory, hint, transcript);
 
         ReducedOpeningProof {
             sumcheck_proof,
@@ -871,8 +883,6 @@ where
             joint_opening_proof,
             #[cfg(test)]
             joint_poly,
-            #[cfg(test)]
-            joint_commitment,
         }
     }
 
@@ -1191,12 +1201,6 @@ where
             PCS::combine_commitments(&commitments, &coeffs)
         };
 
-        #[cfg(test)]
-        assert_eq!(
-            joint_commitment, reduced_opening_proof.joint_commitment,
-            "joint commitment mismatch"
-        );
-
         // Compute joint claim = ∑ᵢ γⁱ⋅ claimᵢ
         let joint_claim: F = gamma_powers
             .iter()
@@ -1209,12 +1213,25 @@ where
             })
             .sum();
 
+        // r_sumcheck = (r_address, r_cycle), because OneHotPolynomialProverOpening binds address
+        // variables first, followed by cycle variables.
+        // The Dory matrices, however, are laid out such that Dory expects the opening point
+        // r_dory = (r_cycle, r_address).
+        let (r_address, r_cycle) =
+            r_sumcheck.split_at(r_sumcheck.len() - DoryGlobals::get_T().log_2());
+        let r_dory = if r_cycle.len().is_even() {
+            [r_cycle, r_address].concat()
+        } else {
+            // TODO(moodlezoup): should really be F::Challenge::zero()
+            [r_cycle, &[F::Challenge::default()], r_address].concat()
+        };
+
         // Verify the reduced opening proof
         PCS::verify(
             &reduced_opening_proof.joint_opening_proof,
             pcs_setup,
             transcript,
-            &r_sumcheck,
+            &r_dory,
             &joint_claim,
             &joint_commitment,
         )

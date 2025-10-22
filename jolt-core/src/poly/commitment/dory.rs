@@ -6,7 +6,6 @@ use crate::{
     field::JoltField,
     msm::VariableBaseMSM,
     poly::multilinear_polynomial::MultilinearPolynomial,
-    utils::small_scalar::SmallScalar,
     utils::{errors::ProofVerifyError, math::Math},
 };
 use ark_bn254::{Bn254, Config, Fr, G1Projective, G2Projective};
@@ -38,73 +37,42 @@ use tracing::trace_span;
 
 /// The (padded) length of the execution trace currently being proven
 static mut GLOBAL_T: OnceCell<usize> = OnceCell::new();
-/// Dory works by viewing the coefficients of a polynomial as a matrix.
+/// Dory works by viewing the coefficients of a polynomial as a square matrix.
 /// In order to batch Dory opening proofs together for polynomials of
-/// different lengths, we fix one dimension of the matrix (the number of
-/// columns, i.e. the row length) and implicitly zero pad in the
-/// other dimension (i.e. the number of rows). This is the maximum number
-/// of rows across all committed polynomials, for the execution trace
-/// currently being proven.
-static mut MAX_NUM_ROWS: OnceCell<usize> = OnceCell::new();
-/// Dory works by viewing the coefficients of a polynomial as a matrix.
-/// In order to batch Dory opening proofs together for polynomials of
-/// different lengths, we fix one dimension of the matrix (the number of
-/// columns, i.e. the row length). This is the fixed dimension, the number
-/// of columns in the matrix.
-static mut NUM_COLUMNS: OnceCell<usize> = OnceCell::new();
+/// different lengths, we fix the dimensions of the matrix and implicitly
+/// zero pad as necessary. This is the number of rows/columns in the matrix.
+static mut DIMENSION: OnceCell<usize> = OnceCell::new();
 
 pub struct DoryGlobals();
 
 impl DoryGlobals {
-    /// Initializes the static variables (`GLOBAL_T`, `MAX_NUM_ROWS`, and
-    /// `NUM_COLUMNS`) used by Dory.
+    /// Initializes the static variables (`GLOBAL_T`, and `DIMENSION`)
+    /// used by Dory.
     pub fn initialize(K: usize, T: usize) -> Self {
         let matrix_size = K as u128 * T as u128;
-        let num_columns = matrix_size.isqrt().next_power_of_two();
-        let num_rows = num_columns;
-        tracing::info!("[Dory PCS] # rows: {num_rows}");
-        tracing::info!("[Dory PCS] # cols: {num_columns}");
+        let dimension = matrix_size.isqrt().next_power_of_two();
+        tracing::info!("[Dory PCS] Matrix dimensions: {dimension} x {dimension}");
 
         unsafe {
             GLOBAL_T.set(T).expect("GLOBAL_T is already initialized");
-            MAX_NUM_ROWS
-                .set(num_rows as usize)
-                .expect("MAX_NUM_ROWS is already initialized");
-            NUM_COLUMNS
-                .set(num_columns as usize)
-                .expect("NUM_COLUMNS is already initialized");
+            DIMENSION
+                .set(dimension as usize)
+                .expect("DIMENSION is already initialized");
         }
 
         DoryGlobals()
     }
 
-    /// Dory works by viewing the coefficients of a polynomial as a matrix.
+    /// Dory works by viewing the coefficients of a polynomial as a square matrix.
     /// In order to batch Dory opening proofs together for polynomials of
-    /// different lengths, we fix one dimension of the matrix (the number of
-    /// columns, i.e. the row length) and implicitly zero pad in the
-    /// other dimension (i.e. the number of rows). This is the maximum number
-    /// of rows across all committed polynomials, for the execution trace
-    /// currently being proven.
-    pub fn get_max_num_rows() -> usize {
+    /// different lengths, we fix the dimensions of the matrix and implicitly
+    /// zero pad as necessary. This is the number of rows/columns in the matrix.
+    pub fn get_dimension() -> usize {
         unsafe {
-            MAX_NUM_ROWS
+            DIMENSION
                 .get()
                 .cloned()
-                .expect("MAX_NUM_ROWS is uninitialized")
-        }
-    }
-
-    /// Dory works by viewing the coefficients of a polynomial as a matrix.
-    /// In order to batch Dory opening proofs together for polynomials of
-    /// different lengths, we fix one dimension of the matrix (the number of
-    /// columns, i.e. the row length). This is the fixed dimension, the number
-    /// of columns in the matrix.
-    pub fn get_num_columns() -> usize {
-        unsafe {
-            NUM_COLUMNS
-                .get()
-                .cloned()
-                .expect("NUM_COLUMNS is uninitialized")
+                .expect("DIMENSION is uninitialized")
         }
     }
 
@@ -126,12 +94,9 @@ impl Drop for DoryGlobals {
             GLOBAL_T
                 .take()
                 .expect("reset_globals: GLOBAL_T is uninitialized");
-            MAX_NUM_ROWS
+            DIMENSION
                 .take()
-                .expect("reset_globals: MAX_NUM_ROWS is uninitialized");
-            NUM_COLUMNS
-                .take()
-                .expect("reset_globals: NUM_COLUMNS is uninitialized");
+                .expect("reset_globals: DIMENSION is uninitialized");
         }
     }
 }
@@ -757,94 +722,69 @@ where
         g1_generators: &[JoltGroupWrapper<G>],
         row_len: usize,
     ) -> Vec<JoltGroupWrapper<G>> {
-        let bases: Vec<_> = g1_generators
-            .par_iter()
-            .map(|g| g.0.into_affine())
-            .collect();
-        debug_assert_eq!(DoryGlobals::get_num_columns(), row_len);
+        debug_assert_eq!(DoryGlobals::get_dimension(), row_len);
+        assert!(
+            g1_generators.len() >= row_len,
+            "max_trace_length is too small"
+        );
 
-        if row_len > g1_generators.len() {
-            panic!("max_trace_length is too small");
+        let T = DoryGlobals::get_T();
+        let num_rows = DoryGlobals::get_dimension();
+        if T < num_rows {
+            // Edge case where T < 256; each cycle spans multiple rows
+
+            let mut row_commitments: Vec<JoltGroupWrapper<G>> =
+                vec![JoltGroupWrapper::identity(); num_rows];
+            match self {
+                MultilinearPolynomial::I128Scalars(poly) => {
+                    // k = 0 always in first column
+                    let base = g1_generators[0];
+                    poly.coeffs
+                        .par_iter()
+                        .zip(row_commitments.par_iter_mut().step_by(num_rows / T))
+                        .for_each(|(coeff, row_commitment)| {
+                            *row_commitment = base.scale(&JoltFieldWrapper(F::from_i128(*coeff)));
+                        })
+                }
+                MultilinearPolynomial::OneHot(poly) => {
+                    poly.nonzero_indices
+                        .par_iter()
+                        .zip(row_commitments.par_chunks_mut(num_rows / T))
+                        .for_each(|(k, chunk)| {
+                            if let Some(k) = k {
+                                chunk[*k as usize / row_len] = g1_generators[*k as usize % row_len];
+                            }
+                        });
+                }
+                _ => panic!("Unexpected MultilinearPolynomial variant"),
+            };
+
+            return row_commitments;
         }
 
+        let cycles_per_row = T / num_rows;
+
+        let affine_bases: Vec<_> = match self {
+            MultilinearPolynomial::RLC(_) | MultilinearPolynomial::OneHot(_) => g1_generators
+                .par_iter()
+                .map(|g| g.0.into_affine())
+                .collect(),
+            _ => g1_generators
+                .par_iter()
+                .take(row_len)
+                .step_by(row_len / cycles_per_row)
+                .map(|g| g.0.into_affine())
+                .collect(),
+        };
+
         match self {
-            MultilinearPolynomial::LargeScalars(poly) => poly
-                .Z
-                .par_chunks(row_len)
-                .map(|row| {
-                    JoltGroupWrapper(
-                        VariableBaseMSM::msm_field_elements(&bases[..row.len()], row).unwrap(),
-                    )
-                })
-                .collect(),
-            MultilinearPolynomial::BoolScalars(poly) => poly
-                .coeffs
-                .par_chunks(row_len)
-                .map(|row| {
-                    // TODO(quang): we don't use this right now, but if we ever do,
-                    // we should optimize this
-                    let row_u8: Vec<u8> = row.iter().map(|&b| if b { 1u8 } else { 0u8 }).collect();
-                    JoltGroupWrapper(VariableBaseMSM::msm_u8(&bases[..row.len()], &row_u8).unwrap())
-                })
-                .collect(),
-            MultilinearPolynomial::U8Scalars(poly) => poly
-                .coeffs
-                .par_chunks(row_len)
-                .map(|row| {
-                    JoltGroupWrapper(VariableBaseMSM::msm_u8(&bases[..row.len()], row).unwrap())
-                })
-                .collect(),
-            MultilinearPolynomial::U16Scalars(poly) => poly
-                .coeffs
-                .par_chunks(row_len)
-                .map(|row| {
-                    JoltGroupWrapper(VariableBaseMSM::msm_u16(&bases[..row.len()], row).unwrap())
-                })
-                .collect(),
-            MultilinearPolynomial::U32Scalars(poly) => poly
-                .coeffs
-                .par_chunks(row_len)
-                .map(|row| {
-                    JoltGroupWrapper(VariableBaseMSM::msm_u32(&bases[..row.len()], row).unwrap())
-                })
-                .collect(),
-            MultilinearPolynomial::U64Scalars(poly) => poly
-                .coeffs
-                .par_chunks(row_len)
-                .map(|row| {
-                    JoltGroupWrapper(VariableBaseMSM::msm_u64(&bases[..row.len()], row).unwrap())
-                })
-                .collect(),
-            MultilinearPolynomial::U128Scalars(poly) => poly
-                .coeffs
-                .par_chunks(row_len)
-                .map(|row| {
-                    JoltGroupWrapper(VariableBaseMSM::msm_u128(&bases[..row.len()], row).unwrap())
-                })
-                .collect(),
-            MultilinearPolynomial::I64Scalars(poly) => poly
-                .coeffs
-                .par_chunks(row_len)
-                .map(|row| {
-                    JoltGroupWrapper(VariableBaseMSM::msm_i64(&bases[..row.len()], row).unwrap())
-                })
-                .collect(),
             MultilinearPolynomial::I128Scalars(poly) => poly
                 .coeffs
-                .par_chunks(row_len)
-                .map(|row| {
-                    JoltGroupWrapper(VariableBaseMSM::msm_i128(&bases[..row.len()], row).unwrap())
-                })
+                .par_chunks(cycles_per_row)
+                .map(|row| JoltGroupWrapper(VariableBaseMSM::msm_i128(&affine_bases, row).unwrap()))
                 .collect(),
-            MultilinearPolynomial::S128Scalars(poly) => poly
-                .coeffs
-                .par_chunks(row_len)
-                .map(|row| {
-                    JoltGroupWrapper(VariableBaseMSM::msm_s128(&bases[..row.len()], row).unwrap())
-                })
-                .collect(),
-            MultilinearPolynomial::RLC(poly) => poly.commit_rows(&bases[..row_len]),
-            MultilinearPolynomial::OneHot(poly) => poly.commit_rows(&bases[..row_len]),
+            MultilinearPolynomial::OneHot(poly) => poly.commit_rows(&affine_bases),
+            _ => panic!("Unexpected MultilinearPolynomial variant"),
         }
     }
 
@@ -871,107 +811,8 @@ where
         _sigma: usize,
         _nu: usize,
     ) -> Vec<JoltFieldWrapper<F>> {
-        let num_columns = DoryGlobals::get_num_columns();
-
         match self {
-            MultilinearPolynomial::LargeScalars(poly) => (0..num_columns)
-                .into_par_iter()
-                .map(|col_index| {
-                    JoltFieldWrapper(
-                        poly.Z
-                            .iter()
-                            .skip(col_index)
-                            .step_by(num_columns)
-                            .zip(left_vec.iter())
-                            .map(|(&a, &b)| -> F { a * b.0 })
-                            .sum::<F>(),
-                    )
-                })
-                .collect(),
-            MultilinearPolynomial::BoolScalars(poly) => (0..num_columns)
-                .into_par_iter()
-                .map(|col_index| {
-                    JoltFieldWrapper(
-                        poly.coeffs
-                            .iter()
-                            .skip(col_index)
-                            .step_by(num_columns)
-                            .zip(left_vec.iter())
-                            .map(|(&a, &b)| -> F { a.field_mul(b.0) })
-                            .sum::<F>(),
-                    )
-                })
-                .collect(),
-            MultilinearPolynomial::U8Scalars(poly) => (0..num_columns)
-                .into_par_iter()
-                .map(|col_index| {
-                    JoltFieldWrapper(
-                        poly.coeffs
-                            .iter()
-                            .skip(col_index)
-                            .step_by(num_columns)
-                            .zip(left_vec.iter())
-                            .map(|(&a, &b)| -> F { a.field_mul(b.0) })
-                            .sum::<F>(),
-                    )
-                })
-                .collect(),
-            MultilinearPolynomial::U16Scalars(poly) => (0..num_columns)
-                .into_par_iter()
-                .map(|col_index| {
-                    JoltFieldWrapper(
-                        poly.coeffs
-                            .iter()
-                            .skip(col_index)
-                            .step_by(num_columns)
-                            .zip(left_vec.iter())
-                            .map(|(&a, &b)| -> F { a.field_mul(b.0) })
-                            .sum::<F>(),
-                    )
-                })
-                .collect(),
-            MultilinearPolynomial::U32Scalars(poly) => (0..num_columns)
-                .into_par_iter()
-                .map(|col_index| {
-                    JoltFieldWrapper(
-                        poly.coeffs
-                            .iter()
-                            .skip(col_index)
-                            .step_by(num_columns)
-                            .zip(left_vec.iter())
-                            .map(|(&a, &b)| -> F { a.field_mul(b.0) })
-                            .sum::<F>(),
-                    )
-                })
-                .collect(),
-            MultilinearPolynomial::U64Scalars(poly) => (0..num_columns)
-                .into_par_iter()
-                .map(|col_index| {
-                    JoltFieldWrapper(
-                        poly.coeffs
-                            .iter()
-                            .skip(col_index)
-                            .step_by(num_columns)
-                            .zip(left_vec.iter())
-                            .map(|(&a, &b)| -> F { a.field_mul(b.0) })
-                            .sum::<F>(),
-                    )
-                })
-                .collect(),
-            MultilinearPolynomial::I64Scalars(poly) => (0..num_columns)
-                .into_par_iter()
-                .map(|col_index| {
-                    JoltFieldWrapper(
-                        poly.coeffs
-                            .iter()
-                            .skip(col_index)
-                            .step_by(num_columns)
-                            .zip(left_vec.iter())
-                            .map(|(&a, &b)| -> F { a.field_mul(b.0) })
-                            .sum::<F>(),
-                    )
-                })
-                .collect(),
+            // In Jolt, we always perform the Dory opening proof using an RLCPolynomial
             MultilinearPolynomial::RLC(poly) => poly.vector_matrix_product(left_vec),
             _ => unimplemented!("Unexpected polynomial type"),
         }
@@ -1125,7 +966,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
         poly: &MultilinearPolynomial<Self::Field>,
         setup: &Self::ProverSetup,
     ) -> (Self::Commitment, Self::OpeningProofHint) {
-        let sigma = DoryGlobals::get_num_columns().log_2();
+        let sigma = DoryGlobals::get_dimension().log_2();
         assert!(
             sigma <= setup.core.g1_vec.len().log_2(),
             "max_trace_length is too small"
@@ -1143,7 +984,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
     where
         U: Borrow<MultilinearPolynomial<Self::Field>> + Sync,
     {
-        let sigma = DoryGlobals::get_num_columns().log_2();
+        let sigma = DoryGlobals::get_dimension().log_2();
         assert!(
             sigma <= setup.core.g1_vec.len().log_2(),
             "max_trace_length is too small"
@@ -1172,7 +1013,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
             .map(|&p| JoltFieldWrapper(p.into()))
             .collect();
 
-        let sigma = DoryGlobals::get_num_columns().log_2();
+        let sigma = DoryGlobals::get_dimension().log_2();
         let dory_transcript = JoltToDoryTranscriptRef::<Self::Field, _>::new(transcript);
 
         // dory evaluate returns the opening but in this case we don't use it, we pass directly the opening to verify()
@@ -1213,7 +1054,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
             .map(|&p| JoltFieldWrapper(p.into()))
             .collect();
 
-        let sigma = DoryGlobals::get_num_columns().log_2();
+        let sigma = DoryGlobals::get_dimension().log_2();
         let dory_transcript = JoltToDoryTranscriptRef::<Self::Field, _>::new(transcript);
 
         // dory evaluate returns the opening but in this case we don't use it, we pass directly the opening to verify()
@@ -1301,7 +1142,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
         hints: Vec<Self::OpeningProofHint>,
         coeffs: &[Self::Field],
     ) -> Self::OpeningProofHint {
-        let num_rows = DoryGlobals::get_max_num_rows();
+        let num_rows = DoryGlobals::get_dimension();
 
         let mut rlc_hint = vec![JoltGroupWrapper(G1Projective::zero()); num_rows];
         for (coeff, mut hint) in coeffs.iter().zip(hints.into_iter()) {
@@ -1347,12 +1188,13 @@ impl AppendToTranscript for DoryCommitment {
 mod tests {
     use super::*;
     use crate::poly::compact_polynomial::CompactPolynomial;
-    use crate::poly::dense_mlpoly::DensePolynomial;
     use crate::poly::multilinear_polynomial::PolynomialEvaluation;
+    use crate::poly::rlc_polynomial::RLCPolynomial;
     use crate::transcripts::Blake2bTranscript;
     use ark_std::rand::thread_rng;
-    use ark_std::UniformRand;
+    use num::Integer;
     use serial_test::serial;
+    use std::sync::Arc;
     use std::time::Instant;
 
     fn test_commitment_scheme_with_poly(
@@ -1367,16 +1209,7 @@ mod tests {
         std::time::Duration,
     ) {
         let num_vars = poly.get_num_vars();
-        let num_coeffs = match &poly {
-            MultilinearPolynomial::LargeScalars(dense) => dense.Z.len(),
-            MultilinearPolynomial::BoolScalars(compact) => compact.coeffs.len(),
-            MultilinearPolynomial::U8Scalars(compact) => compact.coeffs.len(),
-            MultilinearPolynomial::U16Scalars(compact) => compact.coeffs.len(),
-            MultilinearPolynomial::U32Scalars(compact) => compact.coeffs.len(),
-            MultilinearPolynomial::U64Scalars(compact) => compact.coeffs.len(),
-            MultilinearPolynomial::I64Scalars(compact) => compact.coeffs.len(),
-            _ => todo!(),
-        };
+        let num_coeffs = poly.len();
 
         println!(
             "Testing Dory PCS ({poly_type_name}) with {num_vars} variables, {num_coeffs} coefficients"
@@ -1398,11 +1231,13 @@ mod tests {
             &opening_point,
         );
 
+        let rlc_poly = RLCPolynomial::linear_combination(vec![Arc::new(poly)], &[Fr::ONE]);
+
         let mut prove_transcript = Blake2bTranscript::new(b"dory_test");
         let prove_start = Instant::now();
         let proof = DoryCommitmentScheme::prove(
             prover_setup,
-            &poly,
+            &MultilinearPolynomial::RLC(rlc_poly),
             &opening_point,
             row_commitments,
             &mut prove_transcript,
@@ -1438,7 +1273,7 @@ mod tests {
 
     #[test]
     #[serial]
-    fn test_dory_commitment_scheme_all_polynomial_types() {
+    fn test_dory_commitment_scheme_i64_scalars() {
         let num_vars = 10;
         let num_coeffs = 1 << num_vars;
 
@@ -1453,93 +1288,19 @@ mod tests {
 
         let mut rng = thread_rng();
 
-        // Test 1: LargeScalars (Field elements)
-        let coeffs_large: Vec<Fr> = (0..num_coeffs).map(|_| Fr::rand(&mut rng)).collect();
-        let poly_large = MultilinearPolynomial::LargeScalars(DensePolynomial::new(coeffs_large));
-        let (commit_large, prove_large, verify_large, total_large) =
-            test_commitment_scheme_with_poly(
-                poly_large,
-                "LargeScalars",
-                &prover_setup,
-                &verifier_setup,
-            );
-
-        // Test 2: U8Scalars
-        let coeffs_u8: Vec<u8> = (0..num_coeffs).map(|_| rng.next_u32() as u8).collect();
-        let poly_u8 = MultilinearPolynomial::U8Scalars(CompactPolynomial::from_coeffs(coeffs_u8));
-        let (commit_u8, prove_u8, verify_u8, total_u8) =
-            test_commitment_scheme_with_poly(poly_u8, "U8Scalars", &prover_setup, &verifier_setup);
-
-        // Test 3: U16Scalars
-        let coeffs_u16: Vec<u16> = (0..num_coeffs).map(|_| rng.next_u32() as u16).collect();
-        let poly_u16 =
-            MultilinearPolynomial::U16Scalars(CompactPolynomial::from_coeffs(coeffs_u16));
-        let (commit_u16, prove_u16, verify_u16, total_u16) = test_commitment_scheme_with_poly(
-            poly_u16,
-            "U16Scalars",
-            &prover_setup,
-            &verifier_setup,
-        );
-
-        // Test 4: U32Scalars
-        let coeffs_u32: Vec<u32> = (0..num_coeffs).map(|_| rng.next_u32()).collect();
-        let poly_u32 =
-            MultilinearPolynomial::U32Scalars(CompactPolynomial::from_coeffs(coeffs_u32));
-        let (commit_u32, prove_u32, verify_u32, total_u32) = test_commitment_scheme_with_poly(
-            poly_u32,
-            "U32Scalars",
-            &prover_setup,
-            &verifier_setup,
-        );
-
-        // Test 5: U64Scalars
-        let coeffs_u64: Vec<u64> = (0..num_coeffs).map(|_| rng.next_u64()).collect();
-        let poly_u64 =
-            MultilinearPolynomial::U64Scalars(CompactPolynomial::from_coeffs(coeffs_u64));
-        let (commit_u64, prove_u64, verify_u64, total_u64) = test_commitment_scheme_with_poly(
-            poly_u64,
-            "U64Scalars",
-            &prover_setup,
-            &verifier_setup,
-        );
-
-        // Test 6: I64Scalars
-        let coeffs_i64: Vec<i64> = (0..num_coeffs).map(|_| rng.next_u64() as i64).collect();
-        let poly_i64 =
-            MultilinearPolynomial::I64Scalars(CompactPolynomial::from_coeffs(coeffs_i64));
-        let (commit_i64, prove_i64, verify_i64, total_i64) = test_commitment_scheme_with_poly(
-            poly_i64,
-            "I64Scalars",
-            &prover_setup,
-            &verifier_setup,
-        );
-
-        println!("========== PERFORMANCE SUMMARY ==========");
-
-        println!("Setup time: {setup_time:?}\n");
-
-        println!("Polynomial Type | Commit Time | Prove Time | Verify Time | Total Time");
-
-        println!("----------------|-------------|-------------|-------------|------------");
-        println!(
-            "LargeScalars | {commit_large:>11?} | {prove_large:>11?} | {verify_large:>11?} | {total_large:>10?}"
-        );
-        println!(
-            "U8Scalars | {commit_u8:>11?} | {prove_u8:>11?} | {verify_u8:>11?} | {total_u8:>10?}"
-        );
-        println!(
-            "U16Scalars | {commit_u16:>11?} | {prove_u16:>11?} | {verify_u16:>11?} | {total_u16:>10?}"
-        );
-        println!(
-            "U32Scalars | {commit_u32:>11?} | {prove_u32:>11?} | {verify_u32:>11?} | {total_u32:>10?}"
-        );
-        println!(
-            "U64Scalars | {commit_u64:>11?} | {prove_u64:>11?} | {verify_u64:>11?} | {total_u64:>10?}"
-        );
-        println!(
-            "I64Scalars | {commit_i64:>11?} | {prove_i64:>11?} | {verify_i64:>11?} | {total_i64:>10?}"
-        );
-        println!("==========================================");
+        let coeffs_i64: Vec<i128> = (0..num_coeffs)
+            .map(|_| {
+                let magnitude = rng.next_u64() as i128;
+                if rng.next_u64().is_even() {
+                    magnitude
+                } else {
+                    -magnitude
+                }
+            })
+            .collect();
+        let poly = MultilinearPolynomial::I128Scalars(CompactPolynomial::from_coeffs(coeffs_i64));
+        let _ =
+            test_commitment_scheme_with_poly(poly, "I64Scalars", &prover_setup, &verifier_setup);
     }
 
     #[test]
@@ -1552,8 +1313,17 @@ mod tests {
         let _guard = DoryGlobals::initialize(1, num_coeffs);
 
         let mut rng = thread_rng();
-        let coeffs: Vec<Fr> = (0..num_coeffs).map(|_| Fr::rand(&mut rng)).collect();
-        let poly = MultilinearPolynomial::LargeScalars(DensePolynomial::new(coeffs.clone()));
+        let coeffs: Vec<i128> = (0..num_coeffs)
+            .map(|_| {
+                let magnitude = rng.next_u64() as i128;
+                if rng.next_u64().is_even() {
+                    magnitude
+                } else {
+                    -magnitude
+                }
+            })
+            .collect();
+        let poly = coeffs.into();
 
         let opening_point: Vec<<Fr as JoltField>::Challenge> = (0..num_vars)
             .map(|_| <Fr as JoltField>::Challenge::random(&mut rng))
@@ -1568,10 +1338,11 @@ mod tests {
 
         // Compute the correct evaluation
         let correct_evaluation = poly.evaluate(&opening_point);
+        let rlc_poly = RLCPolynomial::linear_combination(vec![Arc::new(poly)], &[Fr::ONE]);
 
         let proof = DoryCommitmentScheme::prove(
             &prover_setup,
-            &poly,
+            &MultilinearPolynomial::RLC(rlc_poly),
             &opening_point,
             row_commitments,
             &mut prove_transcript,
@@ -1626,9 +1397,17 @@ mod tests {
         // Test 3: Use wrong commitment
         {
             // Create a different polynomial and its commitment
-            let wrong_coeffs: Vec<Fr> = (0..num_coeffs).map(|_| Fr::rand(&mut rng)).collect();
-            let wrong_poly =
-                MultilinearPolynomial::LargeScalars(DensePolynomial::new(wrong_coeffs));
+            let wrong_coeffs: Vec<i128> = (0..num_coeffs)
+                .map(|_| {
+                    let magnitude = rng.next_u64() as i128;
+                    if rng.next_u64().is_even() {
+                        magnitude
+                    } else {
+                        -magnitude
+                    }
+                })
+                .collect();
+            let wrong_poly = wrong_coeffs.into();
             let (wrong_commitment, _) = DoryCommitmentScheme::commit(&wrong_poly, &prover_setup);
 
             let mut verify_transcript =

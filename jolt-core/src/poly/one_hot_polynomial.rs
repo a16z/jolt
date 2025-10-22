@@ -24,6 +24,8 @@ use rayon::prelude::*;
 use std::mem;
 use std::sync::{Arc, RwLock};
 
+use jolt_optimizations::batch_addition_matrix_u8;
+
 /// Represents a one-hot multilinear polynomial (ra/wa) used
 /// in Twist/Shout. Perhaps somewhat unintuitively, the implementation
 /// in this file is currently only used to compute the Dory
@@ -352,14 +354,6 @@ impl<F: JoltField> Default for OneHotPolynomial<F> {
 }
 
 impl<F: JoltField> OneHotPolynomial<F> {
-    /// The number of rows in the coefficient matrix used to
-    /// commit to this polynomial using Dory
-    pub fn num_rows(&self) -> usize {
-        let T = self.nonzero_indices.len() as u128;
-        let row_length = DoryGlobals::get_num_columns() as u128;
-        (T * self.K as u128 / row_length) as usize
-    }
-
     pub fn get_num_vars(&self) -> usize {
         self.K.log_2() + self.nonzero_indices.len().log_2()
     }
@@ -381,16 +375,19 @@ impl<F: JoltField> OneHotPolynomial<F> {
         C: Copy + Send + Sync + Into<F>,
         F: std::ops::Mul<C, Output = F> + std::ops::SubAssign<F>,
     {
-        assert_eq!(r.len(), self.get_num_vars());
-        let (r_left, r_right) = r.split_at(self.num_rows().log_2());
-        let eq_left = EqPolynomial::<F>::evals(r_left);
-        let eq_right = EqPolynomial::<F>::evals(r_right);
-        let mut left_product = unsafe_allocate_zero_vec(eq_right.len());
-        self.vector_matrix_product(&eq_left, F::one(), &mut left_product);
-        left_product
-            .into_par_iter()
-            .zip_eq(eq_right.par_iter())
-            .map(|(l, r)| l * r)
+        let (r_address, r_cycle) = r.split_at(r.len() - DoryGlobals::get_T().log_2());
+        let eq_r_address = EqPolynomial::<F>::evals(r_address);
+        let eq_r_cycle = EqPolynomial::<F>::evals(r_cycle);
+        self.nonzero_indices
+            .par_iter()
+            .zip(eq_r_cycle.par_iter())
+            .map(|(k, eq_cycle)| {
+                if let Some(k) = k {
+                    eq_r_address[*k as usize] * eq_cycle
+                } else {
+                    F::zero()
+                }
+            })
             .sum()
     }
 
@@ -410,106 +407,34 @@ impl<F: JoltField> OneHotPolynomial<F> {
         &self,
         bases: &[G::Affine],
     ) -> Vec<JoltGroupWrapper<G>> {
-        let num_rows = self.num_rows();
-        tracing::debug!("Committing to one-hot polynomial with {num_rows} rows");
-        let row_len = DoryGlobals::get_num_columns();
+        let num_rows = DoryGlobals::get_dimension();
+        let row_len = DoryGlobals::get_dimension();
         let T = DoryGlobals::get_T();
 
-        let rows_per_k = T / row_len;
-        if rows_per_k >= rayon::current_num_threads() {
-            // This is the typical case (T >> K)
+        assert!(T >= num_rows);
+        let cycles_per_row = T / num_rows;
+        let K = row_len / cycles_per_row;
 
-            let chunk_commitments: Vec<Vec<_>> = self
-                .nonzero_indices
-                .par_chunks(row_len)
-                .map(|chunk| {
-                    // Collect indices for each k
-                    let mut indices_per_k: Vec<Vec<usize>> = vec![Vec::new(); self.K];
+        // Safety: This function is only called with G1Affine
+        let g1_bases: &[G1Affine] =
+            unsafe { std::mem::transmute::<&[G::Affine], &[G1Affine]>(bases) };
 
-                    for (col_index, k) in chunk.iter().enumerate() {
-                        if let Some(k) = k {
-                            indices_per_k[*k as usize].push(col_index);
-                        }
-                    }
-
-                    // Safety: This function is only called with G1Affine
-                    let g1_bases =
-                        unsafe { std::mem::transmute::<&[G::Affine], &[G1Affine]>(bases) };
-
-                    // Vectorized batch addition for all k values at once
-                    let results =
-                        jolt_optimizations::batch_g1_additions_multi(g1_bases, &indices_per_k);
-
-                    // Convert results to row_commitments
-                    let mut row_commitments = vec![JoltGroupWrapper(G::zero()); self.K];
-                    for (k, result) in results.into_iter().enumerate() {
-                        if !indices_per_k[k].is_empty() {
-                            let sum_projective: G1Projective = result.into();
-                            // Safety: We know G is G1Projective
-                            row_commitments[k].0 = unsafe {
-                                std::ptr::read(&sum_projective as *const G1Projective as *const G)
-                            };
-                        }
-                    }
-
-                    row_commitments
-                })
-                .collect();
-            let mut result = vec![JoltGroupWrapper(G::zero()); num_rows];
-            for (chunk_index, commitments) in chunk_commitments.iter().enumerate() {
-                result
-                    .par_iter_mut()
-                    .skip(chunk_index)
-                    .step_by(rows_per_k)
-                    .zip(commitments.into_par_iter())
-                    .for_each(|(dest, src)| *dest = *src);
-            }
-
-            result
-        } else {
-            let num_chunks = rayon::current_num_threads().next_power_of_two();
-            let chunk_size = std::cmp::max(1, num_rows / num_chunks);
-
-            // Iterate over chunks of contiguous rows in parallel
-            let mut result: Vec<JoltGroupWrapper<G>> = vec![JoltGroupWrapper(G::zero()); num_rows];
-
-            // First, collect indices for each row
-            let mut row_indices: Vec<Vec<usize>> = vec![Vec::new(); num_rows];
-
-            for (t, k) in self.nonzero_indices.iter().enumerate() {
-                if let Some(k) = k {
-                    let global_index = *k as u64 * T as u64 + t as u64;
-                    let row_index = (global_index / row_len as u64) as usize;
-                    let col_index = (global_index % row_len as u64) as usize;
-                    row_indices[row_index].push(col_index);
-                }
-            }
-
-            // Process rows in parallel chunks
-            // Safety: This function is only called with G1Affine
-            let g1_bases = unsafe { std::mem::transmute::<&[G::Affine], &[G1Affine]>(bases) };
-
-            result
-                .par_chunks_mut(chunk_size)
-                .zip(row_indices.par_chunks(chunk_size))
-                .for_each(|(result_chunk, indices_chunk)| {
-                    let results =
-                        jolt_optimizations::batch_g1_additions_multi(g1_bases, indices_chunk);
-
-                    for (row_result, (indices, result)) in result_chunk
-                        .iter_mut()
-                        .zip(indices_chunk.iter().zip(results.into_iter()))
-                    {
-                        if !indices.is_empty() {
-                            let sum_projective: G1Projective = result.into();
-                            // Safety: We know G is G1Projective
-                            row_result.0 = unsafe {
-                                std::ptr::read(&sum_projective as *const G1Projective as *const G)
-                            };
-                        }
-                    }
-                });
-            result
+        let proj_vec: Vec<G1Projective> = {
+            let _span = tracing::trace_span!("batch_addition");
+            let _enter = _span.enter();
+            batch_addition_matrix_u8(
+                &g1_bases[..row_len],
+                self.nonzero_indices.as_ref(),
+                cycles_per_row,
+                K,
+                row_len,
+            )
+        };
+        // Safety: G is Projective here always.
+        unsafe {
+            std::mem::transmute::<Vec<JoltGroupWrapper<G1Projective>>, Vec<JoltGroupWrapper<G>>>(
+                proj_vec.into_par_iter().map(JoltGroupWrapper).collect(),
+            )
         }
     }
 
@@ -521,7 +446,8 @@ impl<F: JoltField> OneHotPolynomial<F> {
     where
         U: std::borrow::Borrow<OneHotPolynomial<F>> + Sync,
     {
-        let row_len = DoryGlobals::get_num_columns();
+        let row_len = DoryGlobals::get_dimension();
+        let num_rows = DoryGlobals::get_dimension();
         let T = DoryGlobals::get_T();
         let rows_per_k = T / row_len;
 
@@ -595,10 +521,8 @@ impl<F: JoltField> OneHotPolynomial<F> {
             .collect();
 
         // Phase 3: Reassemble results by polynomial
-        let mut poly_results: Vec<Vec<JoltGroupWrapper<G>>> = one_hot_polys
-            .iter()
-            .map(|poly| vec![JoltGroupWrapper(G::zero()); poly.borrow().num_rows()])
-            .collect();
+        let mut poly_results: Vec<Vec<JoltGroupWrapper<G>>> =
+            vec![vec![JoltGroupWrapper(G::zero()); num_rows]; one_hot_polys.len()];
 
         // Group results by polynomial
         let mut results_by_poly: Vec<Vec<_>> = vec![Vec::new(); one_hot_polys.len()];
@@ -611,9 +535,6 @@ impl<F: JoltField> OneHotPolynomial<F> {
             .par_iter_mut()
             .enumerate()
             .for_each(|(poly_idx, result)| {
-                let poly = &one_hot_polys[poly_idx];
-                let num_rows = poly.borrow().num_rows();
-
                 for (chunk_idx, commitments) in &results_by_poly[poly_idx] {
                     // Scatter this chunk's results into the output
                     for (k, commitment) in commitments.iter().enumerate() {
@@ -631,50 +552,29 @@ impl<F: JoltField> OneHotPolynomial<F> {
     #[tracing::instrument(skip_all, name = "OneHotPolynomial::vector_matrix_product")]
     pub fn vector_matrix_product(&self, left_vec: &[F], coeff: F, result: &mut [F]) {
         let T = DoryGlobals::get_T();
-        let num_columns = DoryGlobals::get_num_columns();
+        let num_columns = DoryGlobals::get_dimension();
         debug_assert_eq!(result.len(), num_columns);
         let row_len = num_columns;
 
-        if T >= row_len {
-            // This is the typical case (T >= K)
-            let rows_per_k = T / row_len;
-            result
-                .par_iter_mut()
-                .enumerate()
-                .for_each(|(col_index, dest)| {
-                    let mut col_dot_product = F::zero();
-                    for (row_offset, t) in (col_index..T).step_by(row_len).enumerate() {
-                        if let Some(k) = self.nonzero_indices[t] {
-                            let row_index = k as usize * rows_per_k + row_offset;
-                            col_dot_product += left_vec[row_index];
-                        }
-                    }
-                    *dest += coeff * col_dot_product;
-                });
-        } else {
-            let num_chunks = rayon::current_num_threads().next_power_of_two();
-            let chunk_size = std::cmp::max(1, num_columns / num_chunks);
+        assert!(T >= DoryGlobals::get_dimension());
+        let cycles_per_row = T / DoryGlobals::get_dimension();
+        let K = row_len / cycles_per_row;
 
-            result
-                .par_chunks_mut(chunk_size)
-                .enumerate()
-                .for_each(|(chunk_index, chunk)| {
-                    let min_col_index = chunk_index * chunk_size;
-                    let max_col_index = min_col_index + chunk_size;
-                    for (t, k) in self.nonzero_indices.iter().enumerate() {
+        result
+            .par_chunks_mut(K)
+            .enumerate()
+            .for_each(|(i, result_chunk)| {
+                self.nonzero_indices
+                    .iter()
+                    .skip(i)
+                    .step_by(cycles_per_row)
+                    .enumerate()
+                    .for_each(|(row_index, k)| {
                         if let Some(k) = k {
-                            let global_index = *k as u128 * T as u128 + t as u128;
-                            let col_index = (global_index % row_len as u128) as usize;
-                            // If this coefficient falls in the chunk of rows corresponding
-                            // to `chunk_index`, compute its contribution to the result.
-                            if col_index >= min_col_index && col_index < max_col_index {
-                                let row_index = (global_index / row_len as u128) as usize;
-                                chunk[col_index % chunk_size] += coeff * left_vec[row_index];
-                            }
+                            result_chunk[*k as usize] += coeff * left_vec[row_index];
                         }
-                    }
-                });
-        }
+                    });
+            });
     }
 }
 

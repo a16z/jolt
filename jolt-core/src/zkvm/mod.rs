@@ -5,7 +5,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-#[cfg(test)]
 use crate::poly::commitment::dory::DoryGlobals;
 use crate::{
     field::JoltField,
@@ -364,11 +363,7 @@ where
     ) -> Result<(), ProofVerifyError> {
         let _pprof_verify = pprof_scope!("verify");
 
-        #[cfg(test)]
         let T = proof.trace_length.next_power_of_two();
-        // Need to initialize globals because the verifier computes commitments
-        // in `VerifierOpeningAccumulator::append` inside of a `#[cfg(test)]` block
-        #[cfg(test)]
         let _guard = DoryGlobals::initialize(DTH_ROOT_OF_K, T);
 
         // Memory layout checks
