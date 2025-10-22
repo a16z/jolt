@@ -1,23 +1,19 @@
-use std::{cell::RefCell, rc::Rc};
+use std::cell::RefCell;
 
 use allocative::Allocative;
-#[cfg(feature = "allocative")]
-use allocative::FlameGraphBuilder;
-use num_traits::Zero;
 use rayon::prelude::*;
 
 use crate::{
-    field::{JoltField, MulTrunc},
+    field::JoltField,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
-        multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
-        opening_proof::{
-            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-            VerifierOpeningAccumulator, BIG_ENDIAN,
-        },
+        multilinear_polynomial::MultilinearPolynomial,
+        opening_proof::{OpeningAccumulator, SumcheckId},
     },
-    subprotocols::sumcheck::SumcheckInstance,
+    subprotocols::hamming_weight::{
+        HammingWeightConfig, HammingWeightProverState, HammingWeightSumcheck,
+    },
     transcripts::Transcript,
     utils::{math::Math, thread::unsafe_allocate_zero_vec},
     zkvm::{
@@ -28,18 +24,13 @@ use crate::{
 };
 
 #[derive(Allocative)]
-pub struct HammingWeightProverState<F: JoltField> {
-    ra: Vec<MultilinearPolynomial<F>>,
-}
-
-#[derive(Allocative)]
-pub struct HammingWeightSumcheck<F: JoltField> {
+pub struct RamHammingWeightSumcheck<F: JoltField> {
     d: usize,
     gamma_powers: Vec<F>,
     prover_state: Option<HammingWeightProverState<F>>,
 }
 
-impl<F: JoltField> HammingWeightSumcheck<F> {
+impl<F: JoltField> RamHammingWeightSumcheck<F> {
     #[tracing::instrument(skip_all, name = "RamHammingWeightSumcheck::new_prover")]
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
@@ -135,149 +126,54 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for HammingWeightSumcheck<F> {
-    fn degree(&self) -> usize {
-        1
+impl<F: JoltField> HammingWeightConfig for RamHammingWeightSumcheck<F> {
+    fn d(&self) -> usize {
+        self.d
     }
 
     fn num_rounds(&self) -> usize {
         DTH_ROOT_OF_K.log_2()
     }
 
-    fn input_claim(&self, acc: Option<&RefCell<dyn OpeningAccumulator<F>>>) -> F {
+    fn polynomial_type(i: usize) -> CommittedPolynomial {
+        CommittedPolynomial::RamRa(i)
+    }
+
+    fn sumcheck_id() -> SumcheckId {
+        SumcheckId::RamHammingWeight
+    }
+}
+
+impl<F: JoltField, T: Transcript> HammingWeightSumcheck<F, T> for RamHammingWeightSumcheck<F> {
+    fn gamma(&self) -> &[F] {
+        &self.gamma_powers
+    }
+
+    fn prover_state(&self) -> Option<&HammingWeightProverState<F>> {
+        self.prover_state.as_ref()
+    }
+
+    fn prover_state_mut(&mut self) -> Option<&mut HammingWeightProverState<F>> {
+        self.prover_state.as_mut()
+    }
+
+    fn get_r_cycle(&self, accumulator: &dyn OpeningAccumulator<F>) -> Vec<F::Challenge> {
+        accumulator
+            .get_virtual_polynomial_opening(
+                VirtualPolynomial::RamHammingWeight,
+                SumcheckId::RamHammingBooleanity,
+            )
+            .0
+            .r
+    }
+
+    // Override input claim for RAM-specific behavior
+    fn hamming_weight_input_claim(&self, acc: Option<&RefCell<dyn OpeningAccumulator<F>>>) -> F {
         let acc = acc.unwrap().borrow();
         let (_, hamming_booleanity_claim) = acc.get_virtual_polynomial_opening(
             VirtualPolynomial::RamHammingWeight,
             SumcheckId::RamHammingBooleanity,
         );
         hamming_booleanity_claim * self.gamma_powers.iter().sum::<F>()
-    }
-
-    #[tracing::instrument(skip_all, name = "RamHammingWeightSumcheck::compute_prover_message")]
-    fn compute_prover_message(&mut self, _round: usize, _previous_claim: F) -> Vec<F> {
-        let ps = self
-            .prover_state
-            .as_ref()
-            .expect("Prover state not initialized");
-
-        let prover_msg = ps
-            .ra
-            .par_iter()
-            .zip(self.gamma_powers.par_iter())
-            .map(|(ra_poly, gamma_power)| {
-                let ra_sum = (0..ra_poly.len() / 2)
-                    .into_par_iter()
-                    .map(|i| ra_poly.get_bound_coeff(2 * i))
-                    .fold_with(F::Unreduced::<5>::zero(), |running, new| {
-                        running + new.as_unreduced_ref()
-                    })
-                    .reduce(F::Unreduced::zero, |running, new| running + new);
-                ra_sum.mul_trunc::<4, 9>(gamma_power.as_unreduced_ref())
-            })
-            .reduce(F::Unreduced::zero, |running, new| running + new);
-
-        vec![F::from_montgomery_reduce(prover_msg)]
-    }
-
-    #[tracing::instrument(skip_all, name = "RamHammingWeightSumcheck::bind")]
-    fn bind(&mut self, r_j: F::Challenge, _round: usize) {
-        if let Some(prover_state) = &mut self.prover_state {
-            prover_state
-                .ra
-                .par_iter_mut()
-                .for_each(|ra_poly| ra_poly.bind_parallel(r_j, BindingOrder::LowToHigh));
-        }
-    }
-
-    fn expected_output_claim(
-        &self,
-        accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
-        _r: &[F::Challenge],
-    ) -> F {
-        let ra_claims: Vec<_> = (0..self.d)
-            .map(|i| {
-                accumulator
-                    .as_ref()
-                    .unwrap()
-                    .borrow()
-                    .get_committed_polynomial_opening(
-                        CommittedPolynomial::RamRa(i),
-                        SumcheckId::RamHammingWeight,
-                    )
-                    .1
-            })
-            .collect();
-
-        // Compute batched claim: sum_{i=0}^{d-1} gamma^i * ra_i
-        ra_claims
-            .iter()
-            .zip(self.gamma_powers.iter())
-            .map(|(ra_claim, gamma_power)| *ra_claim * gamma_power)
-            .sum()
-    }
-
-    fn normalize_opening_point(
-        &self,
-        opening_point: &[F::Challenge],
-    ) -> OpeningPoint<BIG_ENDIAN, F> {
-        OpeningPoint::new(opening_point.iter().copied().rev().collect())
-    }
-
-    fn cache_openings_prover(
-        &self,
-        accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
-        transcript: &mut T,
-        r_address: OpeningPoint<BIG_ENDIAN, F>,
-    ) {
-        let prover_state = self
-            .prover_state
-            .as_ref()
-            .expect("Prover state not initialized");
-
-        let claims: Vec<F> = prover_state
-            .ra
-            .iter()
-            .map(|ra_i| ra_i.final_sumcheck_claim())
-            .collect();
-
-        let (r_cycle, _) = accumulator.borrow().get_virtual_polynomial_opening(
-            VirtualPolynomial::RamHammingWeight,
-            SumcheckId::RamHammingBooleanity,
-        );
-
-        accumulator.borrow_mut().append_sparse(
-            transcript,
-            (0..self.d).map(CommittedPolynomial::RamRa).collect(),
-            SumcheckId::RamHammingWeight,
-            r_address.r,
-            r_cycle.r,
-            claims,
-        );
-    }
-
-    fn cache_openings_verifier(
-        &self,
-        accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
-        transcript: &mut T,
-        r_address: OpeningPoint<BIG_ENDIAN, F>,
-    ) {
-        let (r_cycle, _) = accumulator.borrow().get_virtual_polynomial_opening(
-            VirtualPolynomial::RamHammingWeight,
-            SumcheckId::RamHammingBooleanity,
-        );
-        let opening_point: OpeningPoint<BIG_ENDIAN, F> =
-            OpeningPoint::new([r_address.r.as_slice(), r_cycle.r.as_slice()].concat());
-
-        accumulator.borrow_mut().append_sparse(
-            transcript,
-            (0..self.d).map(CommittedPolynomial::RamRa).collect(),
-            SumcheckId::RamHammingWeight,
-            opening_point.r,
-        );
-    }
-
-    #[cfg(feature = "allocative")]
-    fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
-        flamegraph.visit_root(self);
     }
 }

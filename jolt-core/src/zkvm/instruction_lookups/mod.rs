@@ -1,7 +1,4 @@
-use common::constants::XLEN;
-use rayon::prelude::*;
-use tracer::instruction::Cycle;
-
+use crate::subprotocols::hamming_weight::Hamming;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::{
@@ -18,12 +15,16 @@ use crate::{
         dag::{stage::SumcheckStages, state_manager::StateManager},
         instruction::LookupQuery,
         instruction_lookups::{
-            booleanity::InstructionBooleanitySumcheck, hamming_weight::HammingWeightSumcheck,
-            ra_virtual::RaSumcheck, read_raf_checking::ReadRafSumcheck,
+            booleanity::InstructionBooleanitySumcheck,
+            hamming_weight::InstructionHammingWeightSumcheck, ra_virtual::RaSumcheck,
+            read_raf_checking::ReadRafSumcheck,
         },
         witness::VirtualPolynomial,
     },
 };
+use common::constants::XLEN;
+use rayon::prelude::*;
+use tracer::instruction::Cycle;
 
 pub mod booleanity;
 pub mod hamming_weight;
@@ -66,7 +67,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
             let eq_r_cycle = EqPolynomial::evals(&r_cycle);
             compute_ra_evals(trace, &eq_r_cycle)
         };
-        let hamming_weight = HammingWeightSumcheck::new_prover(sm, G);
+        let hamming_weight = InstructionHammingWeightSumcheck::new_prover(sm, G);
 
         #[cfg(feature = "allocative")]
         {
@@ -76,16 +77,16 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
             );
         }
 
-        vec![Box::new(hamming_weight)]
+        vec![Box::new(Hamming::from(hamming_weight))]
     }
 
     fn stage3_verifier_instances(
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, T>>> {
-        let hamming_weight = HammingWeightSumcheck::new_verifier(sm);
+        let hamming_weight = InstructionHammingWeightSumcheck::new_verifier(sm);
 
-        vec![Box::new(hamming_weight)]
+        vec![Box::new(Hamming::from(hamming_weight))]
     }
 
     fn stage5_prover_instances(

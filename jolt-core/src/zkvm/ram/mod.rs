@@ -1,7 +1,6 @@
 #![allow(clippy::too_many_arguments)]
 
-use std::vec;
-
+use crate::subprotocols::hamming_weight::Hamming;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::{
@@ -19,7 +18,7 @@ use crate::{
         ram::{
             booleanity::RamBooleanitySumcheck,
             hamming_booleanity::HammingBooleanitySumcheck,
-            hamming_weight::HammingWeightSumcheck,
+            hamming_weight::RamHammingWeightSumcheck,
             output_check::{OutputSumcheck, ValFinalSumcheck},
             ra_virtual::RaSumcheck,
             raf_evaluation::RafEvaluationSumcheck,
@@ -29,6 +28,7 @@ use crate::{
         witness::VirtualPolynomial,
     },
 };
+use std::vec;
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::{
@@ -651,22 +651,22 @@ where
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
-        let hamming_weight = HammingWeightSumcheck::new_prover(state_manager);
+        let hamming_weight = RamHammingWeightSumcheck::new_prover(state_manager);
 
         #[cfg(feature = "allocative")]
         {
             print_data_structure_heap_usage("RAM HammingWeightSumcheck", &hamming_weight);
         }
 
-        vec![Box::new(hamming_weight)]
+        vec![Box::new(Hamming::from(hamming_weight))]
     }
 
     fn stage6_verifier_instances(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
-        let hamming_weight = HammingWeightSumcheck::new_verifier(state_manager);
+        let hamming_weight = RamHammingWeightSumcheck::new_verifier(state_manager);
 
-        vec![Box::new(hamming_weight)]
+        vec![Box::new(Hamming::from(hamming_weight))]
     }
 }

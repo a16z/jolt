@@ -1,9 +1,10 @@
 use crate::poly::opening_proof::{OpeningAccumulator, SumcheckId};
+use crate::subprotocols::hamming_weight::Hamming;
 use crate::utils::math::Math;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::zkvm::bytecode::booleanity::BytecodeBooleanitySumcheck;
-use crate::zkvm::bytecode::hamming_weight::HammingWeightSumcheck;
+use crate::zkvm::bytecode::hamming_weight::BytecodeHammingWeightSumcheck;
 use crate::zkvm::bytecode::read_raf_checking::ReadRafSumcheck;
 use crate::zkvm::dag::stage::SumcheckStages;
 use crate::zkvm::dag::state_manager::StateManager;
@@ -19,7 +20,6 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::{ALIGNMENT_FACTOR_BYTECODE, RAM_START_ADDRESS};
 use rayon::prelude::*;
 use tracer::instruction::{Cycle, Instruction};
-
 pub mod booleanity;
 pub mod hamming_weight;
 pub mod read_raf_checking;
@@ -156,7 +156,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         let F_1 = compute_ra_evals(bytecode_preprocessing, trace, &E_1);
 
         let read_raf = ReadRafSumcheck::new_prover(sm);
-        let hamming_weight = HammingWeightSumcheck::new_prover(sm, F_1.clone());
+        let hamming_weight = BytecodeHammingWeightSumcheck::new_prover(sm, F_1.clone());
         let booleanity = BytecodeBooleanitySumcheck::new_prover(sm, r_cycle, F_1);
 
         #[cfg(feature = "allocative")]
@@ -168,7 +168,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
 
         vec![
             Box::new(read_raf),
-            Box::new(hamming_weight),
+            Box::new(Hamming::from(hamming_weight)),
             Box::new(booleanity),
         ]
     }
@@ -178,12 +178,12 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         sm: &mut StateManager<'_, F, T, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, T>>> {
         let read_checking = ReadRafSumcheck::new_verifier(sm);
-        let hamming_weight = HammingWeightSumcheck::new_verifier(sm);
+        let hamming_weight = BytecodeHammingWeightSumcheck::new_verifier(sm);
         let booleanity = BytecodeBooleanitySumcheck::new_verifier(sm);
 
         vec![
             Box::new(read_checking),
-            Box::new(hamming_weight),
+            Box::new(Hamming::from(hamming_weight)),
             Box::new(booleanity),
         ]
     }
