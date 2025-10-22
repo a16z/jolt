@@ -78,11 +78,11 @@ impl Keccak256 {
             unsafe {
                 core::ptr::copy_nonoverlapping(
                     input.as_ptr().add(offset),
-                    self.buffer.as_mut_ptr(),
+                    self.buffer.as_mut_ptr().add(self.buffer_len),
                     remaining,
                 );
             }
-            self.buffer_len = remaining;
+            self.buffer_len += remaining;
         }
     }
 
