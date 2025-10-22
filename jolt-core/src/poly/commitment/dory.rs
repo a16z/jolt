@@ -1188,12 +1188,13 @@ impl AppendToTranscript for DoryCommitment {
 mod tests {
     use super::*;
     use crate::poly::compact_polynomial::CompactPolynomial;
-    use crate::poly::dense_mlpoly::DensePolynomial;
     use crate::poly::multilinear_polynomial::PolynomialEvaluation;
+    use crate::poly::rlc_polynomial::RLCPolynomial;
     use crate::transcripts::Blake2bTranscript;
     use ark_std::rand::thread_rng;
-    use ark_std::UniformRand;
+    use num::Integer;
     use serial_test::serial;
+    use std::sync::Arc;
     use std::time::Instant;
 
     fn test_commitment_scheme_with_poly(
@@ -1208,16 +1209,7 @@ mod tests {
         std::time::Duration,
     ) {
         let num_vars = poly.get_num_vars();
-        let num_coeffs = match &poly {
-            MultilinearPolynomial::LargeScalars(dense) => dense.Z.len(),
-            MultilinearPolynomial::BoolScalars(compact) => compact.coeffs.len(),
-            MultilinearPolynomial::U8Scalars(compact) => compact.coeffs.len(),
-            MultilinearPolynomial::U16Scalars(compact) => compact.coeffs.len(),
-            MultilinearPolynomial::U32Scalars(compact) => compact.coeffs.len(),
-            MultilinearPolynomial::U64Scalars(compact) => compact.coeffs.len(),
-            MultilinearPolynomial::I64Scalars(compact) => compact.coeffs.len(),
-            _ => todo!(),
-        };
+        let num_coeffs = poly.len();
 
         println!(
             "Testing Dory PCS ({poly_type_name}) with {num_vars} variables, {num_coeffs} coefficients"
@@ -1239,11 +1231,13 @@ mod tests {
             &opening_point,
         );
 
+        let rlc_poly = RLCPolynomial::linear_combination(vec![Arc::new(poly)], &[Fr::ONE]);
+
         let mut prove_transcript = Blake2bTranscript::new(b"dory_test");
         let prove_start = Instant::now();
         let proof = DoryCommitmentScheme::prove(
             prover_setup,
-            &poly,
+            &MultilinearPolynomial::RLC(rlc_poly),
             &opening_point,
             row_commitments,
             &mut prove_transcript,
@@ -1279,8 +1273,7 @@ mod tests {
 
     #[test]
     #[serial]
-    #[ignore]
-    fn test_dory_commitment_scheme_all_polynomial_types() {
+    fn test_dory_commitment_scheme_i64_scalars() {
         let num_vars = 10;
         let num_coeffs = 1 << num_vars;
 
@@ -1295,98 +1288,23 @@ mod tests {
 
         let mut rng = thread_rng();
 
-        // Test 1: LargeScalars (Field elements)
-        let coeffs_large: Vec<Fr> = (0..num_coeffs).map(|_| Fr::rand(&mut rng)).collect();
-        let poly_large = MultilinearPolynomial::LargeScalars(DensePolynomial::new(coeffs_large));
-        let (commit_large, prove_large, verify_large, total_large) =
-            test_commitment_scheme_with_poly(
-                poly_large,
-                "LargeScalars",
-                &prover_setup,
-                &verifier_setup,
-            );
-
-        // Test 2: U8Scalars
-        let coeffs_u8: Vec<u8> = (0..num_coeffs).map(|_| rng.next_u32() as u8).collect();
-        let poly_u8 = MultilinearPolynomial::U8Scalars(CompactPolynomial::from_coeffs(coeffs_u8));
-        let (commit_u8, prove_u8, verify_u8, total_u8) =
-            test_commitment_scheme_with_poly(poly_u8, "U8Scalars", &prover_setup, &verifier_setup);
-
-        // Test 3: U16Scalars
-        let coeffs_u16: Vec<u16> = (0..num_coeffs).map(|_| rng.next_u32() as u16).collect();
-        let poly_u16 =
-            MultilinearPolynomial::U16Scalars(CompactPolynomial::from_coeffs(coeffs_u16));
-        let (commit_u16, prove_u16, verify_u16, total_u16) = test_commitment_scheme_with_poly(
-            poly_u16,
-            "U16Scalars",
-            &prover_setup,
-            &verifier_setup,
-        );
-
-        // Test 4: U32Scalars
-        let coeffs_u32: Vec<u32> = (0..num_coeffs).map(|_| rng.next_u32()).collect();
-        let poly_u32 =
-            MultilinearPolynomial::U32Scalars(CompactPolynomial::from_coeffs(coeffs_u32));
-        let (commit_u32, prove_u32, verify_u32, total_u32) = test_commitment_scheme_with_poly(
-            poly_u32,
-            "U32Scalars",
-            &prover_setup,
-            &verifier_setup,
-        );
-
-        // Test 5: U64Scalars
-        let coeffs_u64: Vec<u64> = (0..num_coeffs).map(|_| rng.next_u64()).collect();
-        let poly_u64 =
-            MultilinearPolynomial::U64Scalars(CompactPolynomial::from_coeffs(coeffs_u64));
-        let (commit_u64, prove_u64, verify_u64, total_u64) = test_commitment_scheme_with_poly(
-            poly_u64,
-            "U64Scalars",
-            &prover_setup,
-            &verifier_setup,
-        );
-
-        // Test 6: I64Scalars
-        let coeffs_i64: Vec<i64> = (0..num_coeffs).map(|_| rng.next_u64() as i64).collect();
-        let poly_i64 =
-            MultilinearPolynomial::I64Scalars(CompactPolynomial::from_coeffs(coeffs_i64));
-        let (commit_i64, prove_i64, verify_i64, total_i64) = test_commitment_scheme_with_poly(
-            poly_i64,
-            "I64Scalars",
-            &prover_setup,
-            &verifier_setup,
-        );
-
-        println!("========== PERFORMANCE SUMMARY ==========");
-
-        println!("Setup time: {setup_time:?}\n");
-
-        println!("Polynomial Type | Commit Time | Prove Time | Verify Time | Total Time");
-
-        println!("----------------|-------------|-------------|-------------|------------");
-        println!(
-            "LargeScalars | {commit_large:>11?} | {prove_large:>11?} | {verify_large:>11?} | {total_large:>10?}"
-        );
-        println!(
-            "U8Scalars | {commit_u8:>11?} | {prove_u8:>11?} | {verify_u8:>11?} | {total_u8:>10?}"
-        );
-        println!(
-            "U16Scalars | {commit_u16:>11?} | {prove_u16:>11?} | {verify_u16:>11?} | {total_u16:>10?}"
-        );
-        println!(
-            "U32Scalars | {commit_u32:>11?} | {prove_u32:>11?} | {verify_u32:>11?} | {total_u32:>10?}"
-        );
-        println!(
-            "U64Scalars | {commit_u64:>11?} | {prove_u64:>11?} | {verify_u64:>11?} | {total_u64:>10?}"
-        );
-        println!(
-            "I64Scalars | {commit_i64:>11?} | {prove_i64:>11?} | {verify_i64:>11?} | {total_i64:>10?}"
-        );
-        println!("==========================================");
+        let coeffs_i64: Vec<i128> = (0..num_coeffs)
+            .map(|_| {
+                let magnitude = rng.next_u64() as i128;
+                if rng.next_u64().is_even() {
+                    magnitude
+                } else {
+                    -magnitude
+                }
+            })
+            .collect();
+        let poly = MultilinearPolynomial::I128Scalars(CompactPolynomial::from_coeffs(coeffs_i64));
+        let _ =
+            test_commitment_scheme_with_poly(poly, "I64Scalars", &prover_setup, &verifier_setup);
     }
 
     #[test]
     #[serial]
-    #[ignore]
     fn test_dory_soundness() {
         use ark_std::UniformRand;
 
@@ -1395,8 +1313,17 @@ mod tests {
         let _guard = DoryGlobals::initialize(1, num_coeffs);
 
         let mut rng = thread_rng();
-        let coeffs: Vec<Fr> = (0..num_coeffs).map(|_| Fr::rand(&mut rng)).collect();
-        let poly = MultilinearPolynomial::LargeScalars(DensePolynomial::new(coeffs.clone()));
+        let coeffs: Vec<i128> = (0..num_coeffs)
+            .map(|_| {
+                let magnitude = rng.next_u64() as i128;
+                if rng.next_u64().is_even() {
+                    magnitude
+                } else {
+                    -magnitude
+                }
+            })
+            .collect();
+        let poly = coeffs.into();
 
         let opening_point: Vec<<Fr as JoltField>::Challenge> = (0..num_vars)
             .map(|_| <Fr as JoltField>::Challenge::random(&mut rng))
@@ -1411,10 +1338,11 @@ mod tests {
 
         // Compute the correct evaluation
         let correct_evaluation = poly.evaluate(&opening_point);
+        let rlc_poly = RLCPolynomial::linear_combination(vec![Arc::new(poly)], &[Fr::ONE]);
 
         let proof = DoryCommitmentScheme::prove(
             &prover_setup,
-            &poly,
+            &MultilinearPolynomial::RLC(rlc_poly),
             &opening_point,
             row_commitments,
             &mut prove_transcript,
@@ -1469,9 +1397,17 @@ mod tests {
         // Test 3: Use wrong commitment
         {
             // Create a different polynomial and its commitment
-            let wrong_coeffs: Vec<Fr> = (0..num_coeffs).map(|_| Fr::rand(&mut rng)).collect();
-            let wrong_poly =
-                MultilinearPolynomial::LargeScalars(DensePolynomial::new(wrong_coeffs));
+            let wrong_coeffs: Vec<i128> = (0..num_coeffs)
+                .map(|_| {
+                    let magnitude = rng.next_u64() as i128;
+                    if rng.next_u64().is_even() {
+                        magnitude
+                    } else {
+                        -magnitude
+                    }
+                })
+                .collect();
+            let wrong_poly = wrong_coeffs.into();
             let (wrong_commitment, _) = DoryCommitmentScheme::commit(&wrong_poly, &prover_setup);
 
             let mut verify_transcript =
