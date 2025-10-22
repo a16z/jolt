@@ -380,13 +380,13 @@ where
         {
             use crate::poly::multilinear_polynomial::PolynomialEvaluation;
             let poly = polynomials_map.get(&self.polynomial).unwrap();
-            // debug_assert_eq!(
-            //     poly.evaluate(&self.opening_point),
-            //     self.input_claim,
-            //     "Evaluation mismatch for {:?} {:?}",
-            //     self.sumcheck_id,
-            //     self.polynomial,
-            // );
+            debug_assert_eq!(
+                poly.evaluate(&self.opening_point),
+                self.input_claim,
+                "Evaluation mismatch for {:?} {:?}",
+                self.sumcheck_id,
+                self.polynomial,
+            );
             let num_vars = poly.get_num_vars();
             let opening_point_len = self.opening_point.len();
             debug_assert_eq!(

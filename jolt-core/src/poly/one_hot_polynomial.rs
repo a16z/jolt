@@ -375,15 +375,19 @@ impl<F: JoltField> OneHotPolynomial<F> {
         C: Copy + Send + Sync + Into<F>,
         F: std::ops::Mul<C, Output = F> + std::ops::SubAssign<F>,
     {
-        let (r_left, r_right) = r.split_at(DoryGlobals::get_dimension().log_2());
-        let eq_left = EqPolynomial::<F>::evals(r_left);
-        let eq_right = EqPolynomial::<F>::evals(r_right);
-        let mut left_product = unsafe_allocate_zero_vec(eq_right.len());
-        self.vector_matrix_product(&eq_left, F::one(), &mut left_product);
-        left_product
-            .into_par_iter()
-            .zip_eq(eq_right.par_iter())
-            .map(|(l, r)| l * r)
+        let (r_address, r_cycle) = r.split_at(r.len() - DoryGlobals::get_T().log_2());
+        let eq_r_address = EqPolynomial::<F>::evals(r_address);
+        let eq_r_cycle = EqPolynomial::<F>::evals(r_cycle);
+        self.nonzero_indices
+            .par_iter()
+            .zip(eq_r_cycle.par_iter())
+            .map(|(k, eq_cycle)| {
+                if let Some(k) = k {
+                    eq_r_address[*k as usize] * eq_cycle
+                } else {
+                    F::zero()
+                }
+            })
             .sum()
     }
 

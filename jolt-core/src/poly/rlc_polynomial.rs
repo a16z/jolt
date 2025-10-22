@@ -1,15 +1,11 @@
 use crate::field::JoltField;
-use crate::msm::VariableBaseMSM;
-use crate::poly::commitment::dory::{DoryGlobals, JoltFieldWrapper, JoltGroupWrapper};
+use crate::poly::commitment::dory::{DoryGlobals, JoltFieldWrapper};
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::utils::small_scalar::SmallScalar;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use allocative::Allocative;
-use ark_bn254::{Fr, G1Projective};
-use ark_ec::CurveGroup;
 use rayon::prelude::*;
 use std::sync::Arc;
-use tracing::trace_span;
 
 /// `RLCPolynomial` represents a multilinear polynomial comprised of a
 /// random linear combination of multiple polynomials, potentially with
