@@ -49,50 +49,143 @@ use crate::{
 
 use rayon::iter::{IndexedParallelIterator, ParallelIterator};
 
+/// Instruction lookups: Read + RAF batched sumcheck
+///
+/// Notation:
+/// - Field F. Let K = 2^{LOG_K}, T = 2^{log_T}.
+/// - Address index k ∈ {0..K-1}, cycle index j ∈ {0..T-1}.
+/// - eq_addr(k; r_addr) := multilinear equality polynomial over LOG_K vars.
+/// - eq_sp(j; r_sp) and eq_br(j; r_br) := equality polynomials over LOG_T vars.
+/// - ra(k, j) ∈ F is the selector arising from prefix/suffix condensation; logically ra(k, j) = 1
+///   when the j-th cycle’s lookup key equals k, and 0 otherwise (implemented via ExpandingTable).
+/// - Val_j(k) ∈ F is the lookup-table value selected by (j, k); concretely Val_j(k) = table_j(k)
+///   if cycle j uses a table and 0 otherwise (materialized via prefix/suffix decomposition).
+/// - raf_flag(j) ∈ {0,1} is 1 iff the instruction at cycle j is NOT interleaved operands.
+/// - Let LeftPrefix_j, RightPrefix_j, IdentityPrefix_j ∈ F be the address-only (prefix) factors for
+///   the left/right operand and identity polynomials at cycle j (from `PrefixSuffixDecomposition`).
+///
+/// We introduce a batching challenge γ ∈ F. Define
+///   RafVal_j(k) := (1 - raf_flag(j)) · (LeftPrefix_j + γ · RightPrefix_j)
+///                  + raf_flag(j) · γ · IdentityPrefix_j.
+/// The overall γ-weights are arranged so that γ^2 multiplies RafVal_j(k) in the final identity.
+///
+/// Claims supplied by the accumulator (LHS):
+/// - rv_spartan := ⟦LookupOutput⟧ at SumcheckId::SpartanOuter
+/// - rv_branch  := ⟦LookupOutput⟧ at SumcheckId::ProductVirtualization
+/// - left_op    := ⟦LeftLookupOperand⟧ at SumcheckId::SpartanOuter
+/// - right_op   := ⟦RightLookupOperand⟧ at SumcheckId::SpartanOuter
+/// Combined as: rv_spartan(r_sp) + γ·rv_branch(r_br) + γ^2·(left_op + γ·right_op)
+///
+/// Statement proved by this sumcheck (RHS), for random challenges
+/// r_addr ∈ F^{LOG_K}, r_sp, r_br ∈ F^{log_T}:
+///
+///   rv_spartan(r_sp) + γ·rv_branch(r_br) + γ^2·(left_op + γ·right_op)
+///   = Σ_{j=0}^{T-1} Σ_{k=0}^{K-1} [ (eq_sp(j; r_sp) + γ·eq_br(j; r_br)) · ra(k, j) · Val_j(k)
+///                                   + γ^2 · eq_sp(j; r_sp) · ra(k, j) · RafVal_j(k) ].
+///
+/// Equivalent split (for GruenSplitEqPolynomial in the last log(T) rounds):
+///   (i)  rv_spartan(r_sp) + γ^2·raf(r_sp)
+///        = Σ_j eq_sp(j; r_sp) · Σ_k ra(k, j) · (Val_j(k) + γ^2·RafVal_j(k))
+///   (ii) rv_branch(r_br)
+///        = Σ_j eq_br(j; r_br) · Σ_k ra(k, j) · Val_j(k).
+///
+/// Prover structure:
+/// - First log(K) rounds bind address vars using prefix/suffix decomposition, accumulating:
+///     Σ_k ra(k, j)·Val_j(k)  and  Σ_k ra(k, j)·RafVal_j(k)
+///   for each j (via u_evals vectors and suffix polynomials).
+/// - Last log(T) rounds bind cycle vars using two GruenSplitEqPolynomial instances (for r_sp, r_br),
+///   producing degree-3 univariates with the required previous-round claims.
+/// - The published univariate matches the RHS above; the verifier checks it against the LHS claims.
+
 const DEGREE: usize = 3;
 
+/// Prover state for the instruction lookups Read+RAF sumcheck.
+///
+/// Binds address variables first using prefix/suffix decomposition to aggregate, per cycle j,
+///   Σ_k ra(k, j)·Val_j(k) and Σ_k ra(k, j)·RafVal_j(k),
+/// then binds cycle variables using two `GruenSplitEqPolynomial` instances (Spartan and Branch),
+/// producing degree-3 univariates with previous-round claims to support the Gruen evaluation.
 #[derive(Allocative)]
 struct ReadRafProverState<F: JoltField> {
+    /// Materialized `ra(k, j)` MLE over (address, cycle) after the first log(K) rounds.
+    /// Present only in the last log(T) rounds.
     ra: Option<MultilinearPolynomial<F>>,
+    /// Running list of sumcheck challenges r_j (address then cycle) in binding order.
     r: Vec<F::Challenge>,
 
+    /// Precomputed lookup keys k (bit-packed) per cycle j.
     lookup_indices: Vec<LookupBits>,
+    /// Indices of cycles grouped by selected lookup table; used to form per-table flags.
     lookup_indices_by_table: Vec<Vec<usize>>,
+    /// Cycle indices with interleaved operands (used for left/right operand prefix-suffix Q).
     lookup_indices_uninterleave: Vec<usize>,
+    /// Cycle indices with identity path (non-interleaved) used as the RAF flag source.
     lookup_indices_identity: Vec<usize>,
+    /// Per-cycle flag: instruction uses interleaved operands.
     is_interleaved_operands: Vec<bool>,
     #[allocative(skip)]
+    /// Per-cycle optional lookup table chosen by the instruction; None if no lookup.
     lookup_tables: Vec<Option<LookupTables<XLEN>>>,
 
+    /// Prefix checkpoints for each registered `Prefix` variant, updated every two rounds.
     prefix_checkpoints: Vec<PrefixCheckpoint<F>>,
+    /// For each lookup table, dense polynomials holding suffix contributions in the current phase.
     suffix_polys: Vec<Vec<DensePolynomial<F>>>,
+    /// Expanding tables accumulating address-prefix products per phase (see `u_evals_*`).
     v: [ExpandingTable<F>; PHASES],
+    /// u_evals for read-checking part: eq(r_spartan,j) + gamma·eq(r_branch,j).
     u_evals_rv: Vec<F>,
+    /// u_evals for RAF part: eq(r_spartan,j).
     u_evals_raf: Vec<F>,
 
     // State related to Gruen EQ optimization
+    /// Gruen-split equality polynomial over cycle vars for Spartan part (high-to-low binding).
     eq_r_spartan: GruenSplitEqPolynomial<F>,
+    /// Gruen-split equality polynomial over cycle vars for Branch/ProductVirtualization part.
     eq_r_branch: GruenSplitEqPolynomial<F>,
+    /// Previous-round sumcheck claim s_spartan(0)+s_spartan(1) for degree-3 univariate recovery.
     prev_claim_spartan: Option<F>,
+    /// Previous-round sumcheck claim s_branch(0)+s_branch(1) for degree-3 univariate recovery.
     prev_claim_branch: Option<F>,
+    /// Previous round polynomial for Spartan part, used to derive next claim at r_j.
     prev_round_poly_spartan: Option<UniPoly<F>>,
+    /// Previous round polynomial for Branch part, used to derive next claim at r_j.
     prev_round_poly_branch: Option<UniPoly<F>>,
 
+    /// Registry holding prefix checkpoint values for `PrefixSuffixDecomposition` instances.
     prefix_registry: PrefixRegistry<F>,
+    /// Prefix-suffix decomposition for right operand identity polynomial family.
     right_operand_ps: PrefixSuffixDecomposition<F, 2>,
+    /// Prefix-suffix decomposition for left operand identity polynomial family.
     left_operand_ps: PrefixSuffixDecomposition<F, 2>,
+    /// Prefix-suffix decomposition for the instruction-identity path (RAF flag path).
     identity_ps: PrefixSuffixDecomposition<F, 2>,
 
+    /// Materialized Val_j(k) over (address, cycle) after phase transitions.
     combined_val_polynomial: Option<MultilinearPolynomial<F>>,
+    /// Materialized RafVal_j(k) (with γ-weights folded into prefixes) over (address, cycle).
     combined_raf_val_polynomial: Option<MultilinearPolynomial<F>>,
 }
 
+/// Instruction lookups: batched Read + RAF sumcheck.
+///
+/// Let K = 2^{LOG_K}, T = 2^{log_T}. For random r_addr ∈ F^{LOG_K}, r_sp, r_br ∈ F^{log_T},
+/// this sumcheck proves that the accumulator claims
+///   rv_spartan(r_sp) + γ·rv_branch(r_br) + γ^2·(left_op + γ·right_op)
+/// equal the double sum over (j, k):
+///   Σ_j Σ_k [ (eq_sp(j; r_sp) + γ·eq_br(j; r_br)) · ra(k, j) · Val_j(k)
+///             + γ^2 · eq_sp(j; r_sp) · ra(k, j) · RafVal_j(k) ].
+/// It is implemented as: first log(K) address-binding rounds (prefix/suffix condensation), then
+/// last log(T) cycle-binding rounds driven by two `GruenSplitEqPolynomial`s (Spartan/Branch).
 #[derive(Allocative)]
 pub struct ReadRafSumcheck<F: JoltField> {
+    /// γ and its square (γ^2) used for batching rv/branch/raf components.
     gamma: F,
     gamma_sqr: F,
+    /// Prover-only state across rounds; None in verifier.
     prover_state: Option<ReadRafProverState<F>>,
 
+    /// log2(T): number of cycle variables (last rounds bind cycles).
     log_T: usize,
 }
 

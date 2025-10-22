@@ -53,15 +53,75 @@ use tracer::instruction::NormalizedInstruction;
 /// Number of batched read-checking sumchecks bespokely
 const N_STAGES: usize = 5;
 
+/// Bytecode instruction: multi-stage Read + RAF sumcheck (N_STAGES = 5).
+///
+/// Stages virtualize different claim families (Stage1: Spartan outer; Stage2: product-virtualized
+/// flags; Stage3: Shift; Stage4: Registers RW; Stage5: Registers val-eval + Instruction lookups).
+/// The input claim is a γ-weighted RLC of stage rv_claims plus RAF contributions folded into
+/// stages 1 and 3 via the identity polynomial. Address vars are bound in `d` chunks; cycle vars
+/// are bound with per-stage `GruenSplitEqPolynomial` (low-to-high binding), producing degree-3
+/// univariates.
+///
+/// Mathematical claim:
+/// - Let K = 2^{log_K} and T = 2^{log_T}.
+/// - For stage s ∈ {1,2,3,4,5}, let r_s ∈ F^{log_T} and define eq_s(j) = EqPolynomial(j; r_s).
+/// - Let r_addr ∈ F^{log_K}. Let ra(k, j) ∈ {0,1} be the indicator that cycle j has program
+///   counter/address k (implemented as ∏_{i=0}^{d-1} ra_i(k_i, j)).
+/// - Int(k) = 1 for all k (evaluation of the IdentityPolynomial over address variables).
+/// - Define per-stage Val_s(k) (address-only) as implemented by `compute_val_*`:
+///   * Stage1: Val_1(k) = unexpanded_pc(k) + γ·imm(k) + Σ_t γ^{2+t}·circuit_flag_t(k).
+///   * Stage2: Val_2(k) = 1_{jump}(k) + γ·1_{branch}(k) + γ^2·rd_addr(k) + γ^3·1_{write_lookup_to_rd}(k).
+///   * Stage3: Val_3(k) = imm(k) + γ·unexpanded_pc(k) + γ^2·1_{L_is_rs1}(k) + γ^3·1_{L_is_pc}(k)
+///                        + γ^4·1_{R_is_rs2}(k) + γ^5·1_{R_is_imm}(k) + γ^6·1_{IsNoop}(k)
+///                        + γ^7·1_{VirtualInstruction}(k) + γ^8·1_{IsFirstInSequence}(k).
+///   * Stage4: Val_4(k) = 1_{rd=r}(k) + γ·1_{rs1=r}(k) + γ^2·1_{rs2=r}(k), where r is fixed by opening.
+///   * Stage5: Val_5(k) = 1_{rd=r}(k) + γ·1_{¬interleaved}(k) + Σ_i γ^{2+i}·1_{table=i}(k).
+///
+/// Accumulator-provided LHS (RLC of stage claims with RAF):
+///   rv_1(r_1) + γ·rv_2(r_2) + γ^2·rv_3(r_3) + γ^3·rv_4(r_4) + γ^4·rv_5(r_5)
+///   + γ^5·raf_1(r_1) + γ^6·raf_3(r_3).
+///
+/// Sumcheck RHS proved (double sum over cycles and addresses):
+///   Σ_{j=0}^{T-1} Σ_{k=0}^{K-1} ra(k, j) · [
+///       γ^0·eq_1(j)·Val_1(k) + γ^1·eq_2(j)·Val_2(k) + γ^2·eq_3(j)·Val_3(k)
+///     + γ^3·eq_4(j)·Val_4(k) + γ^4·eq_5(j)·Val_5(k)
+///     + γ^5·eq_1(j)·Int(k)   + γ^6·eq_3(j)·Int(k)
+///   ].
+///
+/// Thus the identity established by this sumcheck is:
+///   rv_1(r_1) + γ·rv_2(r_2) + γ^2·rv_3(r_3) + γ^3·rv_4(r_4) + γ^4·rv_5(r_5)
+///   + γ^5·raf_1(r_1) + γ^6·raf_3(r_3)
+///   = Σ_{j,k} ra(k, j) · [ Σ_{s=1}^{5} γ^{s-1}·eq_s(j)·Val_s(k) + γ^5·eq_1(j)·Int(k) + γ^6·eq_3(j)·Int(k) ].
+///
+/// Binding/implementation notes:
+/// - Address variables are bound first (high→low) in `d` chunks, accumulating `F_i` and `v` tables;
+///   this materializes the address-only Val_s(k) evaluations and sets up `ra_i` polynomials.
+/// - Cycle variables are then bound (low→high) per stage with `GruenSplitEqPolynomial`, using
+///   previous-round claims to recover the cubic univariate each round.
+
+/// Prover state for the bytecode Read+RAF multi-stage sumcheck.
+///
+/// First log(K) rounds bind address variables in chunks, aggregating per-stage address-only
+/// contributions; last log(T) rounds bind cycle variables via per-stage `GruenSplitEqPolynomial`s.
 #[derive(Allocative)]
 struct ReadCheckingProverState<F: JoltField> {
+    /// Per-stage address MLEs F_i(k) built from eq(r_cycle_stage_i, (chunk_index, j)),
+    /// bound high-to-low during the address-binding phase.
     F: [MultilinearPolynomial<F>; N_STAGES],
+    /// Chunked RA polynomials over address variables (one per dimension `d`), used to form
+    /// the product ∏_i ra_i during the cycle-binding phase.
     ra: Vec<RaPolynomial<u8, F>>,
+    /// Expanding tables holding K_chunk-size prefix products for each address chunk.
     v: Vec<ExpandingTable<F>>,
+    /// Per-stage Gruen-split eq polynomials over cycle vars (low-to-high binding order).
     gruen_eq_polys: [GruenSplitEqPolynomial<F>; N_STAGES],
+    /// Previous-round claims s_i(0)+s_i(1) per stage, needed for degree-3 univariate recovery.
     prev_round_claims: [F; N_STAGES],
+    /// Round polynomials per stage for advancing to the next claim at r_j.
     prev_round_polys: Option<[UniPoly<F>; N_STAGES]>,
+    /// Final sumcheck claims of stage Val polynomials (with RAF Int folded where applicable).
     bound_val_evals: Option<[F; N_STAGES]>,
+    /// Program counter per cycle, used to materialize chunked RA polynomials.
     pc: Vec<usize>,
 }
 
@@ -69,14 +129,21 @@ struct ReadCheckingProverState<F: JoltField> {
 pub struct ReadRafSumcheck<F: JoltField> {
     /// Index `i` stores `gamma^i`.
     gamma_powers: Vec<F>,
+    /// RLC of stage rv_claims and RAF claims (per Stage1/Stage3) used as the sumcheck LHS.
     rv_claim: F,
+    /// Address chunking parameters: split LOG_K into `d` chunks of size `log_K_chunk`.
     log_K_chunk: usize,
     K_chunk: usize,
+    /// log2(K) and log2(T) used to determine round counts.
     log_K: usize,
     log_T: usize,
+    /// Number of address chunks (and RA polynomials in the product).
     d: usize,
+    /// Prover-only state; None for verifier.
     prover_state: Option<ReadCheckingProverState<F>>,
+    /// Stage Val polynomials evaluated over address vars.
     val_polys: [MultilinearPolynomial<F>; N_STAGES],
+    /// Identity polynomial over address vars used to inject RAF contributions.
     int_poly: IdentityPolynomial<F>,
 }
 
@@ -1149,7 +1216,7 @@ fn get_gamma_powers<F: JoltField>(transcript: &mut impl Transcript, amount: usiz
 }
 
 impl<F: JoltField> GruenSplitEqPolynomial<F> {
-    // TODO: Consider moving to splie_eq_poly.rs if gets used elsewhere.
+    // TODO: Consider moving to split_eq_poly.rs if gets used elsewhere.
     /// Compute the sumcheck round polynomial `s(X) = l(X) * q(X)`, where `l(X)` is
     /// the current (linear) eq polynomial and we are given the following:
     /// - `evals` equal to `[q(1), q(2), ..., q(deg(q) - 1), q(inf)]`
