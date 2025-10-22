@@ -1,4 +1,4 @@
-use crate::subprotocols::hamming_weight::Hamming;
+use crate::subprotocols::{booleanity::Booleanity, hamming_weight::Hamming};
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::{
@@ -142,7 +142,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
             );
         }
 
-        vec![Box::new(ra_virtual), Box::new(booleanity)]
+        vec![Box::new(ra_virtual), Box::new(Booleanity::from(booleanity))]
     }
 
     fn stage6_verifier_instances(
@@ -151,7 +151,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
     ) -> Vec<Box<dyn SumcheckInstance<F, T>>> {
         let ra_virtual = RaSumcheck::new_verifier(sm);
         let booleanity = InstructionBooleanitySumcheck::new_verifier(sm);
-        vec![Box::new(ra_virtual), Box::new(booleanity)]
+        vec![Box::new(ra_virtual), Box::new(Booleanity::from(booleanity))]
     }
 }
 

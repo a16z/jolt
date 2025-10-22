@@ -3,7 +3,12 @@ use allocative::Allocative;
 use allocative::FlameGraphBuilder;
 use ark_std::Zero;
 use rayon::prelude::*;
-use std::{cell::RefCell, rc::Rc, sync::Arc};
+use std::{
+    cell::RefCell,
+    ops::{Deref, DerefMut},
+    rc::Rc,
+    sync::Arc,
+};
 
 use crate::{
     field::{JoltField, MaybeAllocative},
@@ -500,8 +505,30 @@ pub trait BooleanitySumcheck<F: JoltField, T: Transcript>:
     }
 }
 
-// Blanket implementation of SumcheckInstance
-impl<F, T, B> SumcheckInstance<F, T> for B
+#[derive(Allocative)]
+pub struct Booleanity<B>(pub B);
+
+impl<B> From<B> for Booleanity<B> {
+    fn from(b: B) -> Self {
+        Booleanity(b)
+    }
+}
+
+impl<B> Deref for Booleanity<B> {
+    type Target = B;
+    fn deref(&self) -> &B {
+        &self.0
+    }
+}
+
+impl<B> DerefMut for Booleanity<B> {
+    fn deref_mut(&mut self) -> &mut B {
+        &mut self.0
+    }
+}
+
+// Implementation of SumcheckInstance for Booleanity wrapper
+impl<F, T, B> SumcheckInstance<F, T> for Booleanity<B>
 where
     F: JoltField,
     T: Transcript,

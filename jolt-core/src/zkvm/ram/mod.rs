@@ -1,6 +1,6 @@
 #![allow(clippy::too_many_arguments)]
 
-use crate::subprotocols::hamming_weight::Hamming;
+use crate::subprotocols::{booleanity::Booleanity, hamming_weight::Hamming};
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::{
@@ -592,7 +592,7 @@ where
         }
 
         vec![
-            Box::new(booleanity),
+            Box::new(Booleanity::from(booleanity)),
             Box::new(val_evaluation),
             Box::new(val_final_evaluation),
         ]
@@ -615,7 +615,7 @@ where
         );
 
         vec![
-            Box::new(booleanity),
+            Box::new(Booleanity::from(booleanity)),
             Box::new(val_evaluation),
             Box::new(val_final_evaluation),
         ]

@@ -199,7 +199,9 @@ pub trait HammingWeightSumcheck<F: JoltField, T: Transcript>:
     }
 }
 
+#[derive(Allocative)]
 pub struct Hamming<H>(pub H);
+
 impl<H> From<H> for Hamming<H> {
     fn from(h: H) -> Self {
         Hamming(h)

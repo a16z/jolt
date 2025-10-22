@@ -1,4 +1,3 @@
-use crate::subprotocols::hamming_weight::Hamming;
 use crate::{
     field::JoltField,
     poly::{

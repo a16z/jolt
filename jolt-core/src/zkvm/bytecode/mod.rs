@@ -1,5 +1,5 @@
 use crate::poly::opening_proof::{OpeningAccumulator, SumcheckId};
-use crate::subprotocols::hamming_weight::Hamming;
+use crate::subprotocols::{booleanity::Booleanity, hamming_weight::Hamming};
 use crate::utils::math::Math;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
@@ -169,7 +169,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         vec![
             Box::new(read_raf),
             Box::new(Hamming::from(hamming_weight)),
-            Box::new(booleanity),
+            Box::new(Booleanity::from(booleanity)),
         ]
     }
 
@@ -184,7 +184,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         vec![
             Box::new(read_checking),
             Box::new(Hamming::from(hamming_weight)),
-            Box::new(booleanity),
+            Box::new(Booleanity::from(booleanity)),
         ]
     }
 }
