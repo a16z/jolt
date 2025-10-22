@@ -94,7 +94,7 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         tau: &[F::Challenge],
     ) -> Self {
-        let (preprocessing, trace, _program_io, _final_mem) = state_manager.get_prover_data();
+        let (preprocessing, _, trace, _program_io, _final_mem) = state_manager.get_prover_data();
 
         let tau_low = &tau[0..tau.len() - 1];
 
@@ -390,7 +390,7 @@ impl<F: JoltField> OuterRemainingSumcheck<F> {
         num_cycles_bits: usize,
         uni: &UniSkipState<F>,
     ) -> Self {
-        let (preprocessing, trace, _program_io, _final_mem) = state_manager.get_prover_data();
+        let (preprocessing, _, trace, _program_io, _final_mem) = state_manager.get_prover_data();
 
         let lagrange_evals_r =
             LagrangePolynomial::<F>::evals::<F::Challenge, UNIVARIATE_SKIP_DOMAIN_SIZE>(&uni.r0);

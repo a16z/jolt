@@ -1,6 +1,5 @@
 use super::program::Program;
 use crate::field::JoltField;
-#[cfg(not(feature = "streaming"))]
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 #[cfg(feature = "streaming")]
 use crate::poly::commitment::commitment_scheme::StreamingCommitmentScheme;

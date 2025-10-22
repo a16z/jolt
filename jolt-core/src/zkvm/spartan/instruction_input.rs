@@ -86,7 +86,7 @@ impl<F: JoltField> InstructionInputSumcheck<F> {
         let input_sample_stage_1 = (r_cycle_stage_1, claim_stage_1);
         let input_sample_stage_2 = (r_cycle_stage_2, claim_stage_2);
 
-        let (_, trace, _, _) = state_manager.get_prover_data();
+        let (_, _, trace, _, _) = state_manager.get_prover_data();
         let prover_state =
             InstructionInputProverState::gen(trace, &input_sample_stage_1, &input_sample_stage_2);
 

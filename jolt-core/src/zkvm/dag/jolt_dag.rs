@@ -969,7 +969,7 @@ impl JoltDAG {
     >(
         state_manager: &mut StateManager<'a, F, ProofTranscript, PCS>,
     ) -> Option<PCS::OpeningProofHint> {
-        let (preprocessing, _, program_io, _) = state_manager.get_prover_data();
+        let (preprocessing, _, _, program_io, _) = state_manager.get_prover_data();
 
         if program_io.untrusted_advice.is_empty() {
             return None;
@@ -1008,7 +1008,7 @@ impl JoltDAG {
     >(
         state_manager: &mut StateManager<'a, F, ProofTranscript, PCS>,
     ) {
-        let (_, _, program_io, _) = state_manager.get_prover_data();
+        let (_, _, _, program_io, _) = state_manager.get_prover_data();
 
         if program_io.trusted_advice.is_empty() {
             return;

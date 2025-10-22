@@ -108,7 +108,7 @@ impl<F: JoltField> ProductVirtualUniSkipInstance<F> {
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         tau: &[F::Challenge],
     ) -> Self {
-        let (_preprocessing, trace, _program_io, _final_mem) = state_manager.get_prover_data();
+        let (_preprocessing, _, trace, _program_io, _final_mem) = state_manager.get_prover_data();
 
         // Get base evaluations from outer sumcheck claims
         let acc = state_manager.get_prover_accumulator();
@@ -446,7 +446,7 @@ impl<F: JoltField> ProductVirtualRemainder<F> {
         num_cycle_vars: usize,
         uni: &UniSkipState<F>,
     ) -> Self {
-        let (preprocessing, trace, _program_io, _final_mem) = state_manager.get_prover_data();
+        let (preprocessing, _, trace, _program_io, _final_mem) = state_manager.get_prover_data();
 
         let lagrange_evals_r = LagrangePolynomial::<F>::evals::<
             F::Challenge,

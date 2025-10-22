@@ -13,6 +13,7 @@ use std::sync::LazyLock;
 use strum::IntoEnumIterator;
 use tracer::instruction::Cycle;
 
+use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 #[cfg(feature = "streaming")]
 use crate::poly::commitment::commitment_scheme::StreamingCommitmentScheme;
 use crate::zkvm::instruction::InstructionFlags;
@@ -518,6 +519,7 @@ impl CommittedPolynomial {
         let num_cycles = row_cycles.len() - 1;
 
         match self {
+            /*
             CommittedPolynomial::LeftInstructionInput => {
                 let row: Vec<u64> = (0..num_cycles)
                     .map(|i| LookupQuery::<XLEN>::to_instruction_inputs(&row_cycles[i]).0)
@@ -592,6 +594,7 @@ impl CommittedPolynomial {
                     .collect();
                 PCS::process_chunk(pcs, &row)
             }
+            */
             CommittedPolynomial::RdInc => {
                 let row: Vec<i128> = (0..num_cycles)
                     .map(|i| {
