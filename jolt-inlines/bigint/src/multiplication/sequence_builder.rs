@@ -132,15 +132,20 @@ impl BigIntMulSequenceBuilder {
             // sltu t2, sk1, t1     # Check for carry from adding high part into R[k+1]
             self.asm.emit_r::<SLTU>(t2, sk1, t1);
 
-            // Ripple-carry add into R[k+2..]
-            for m in (k + 2)..OUTPUT_LIMBS {
-                let sm = self.s(m);
+            // Ripple-carry add into R[k+2..] with early exit optimization
+            // Generate instructions only for positions that might have non-zero carry
+            let mut carry_pos = k + 2;
+            while carry_pos < OUTPUT_LIMBS {
+                let sm = self.s(carry_pos);
                 // add s[m], s[m], t2
                 self.asm.emit_r::<ADD>(sm, sm, t2);
-                // sltu t2, s[m], t2  # carry out
-                if m + 1 < OUTPUT_LIMBS {
+
+                // Check for carry out - only generate next instruction if not at the end
+                if carry_pos + 1 < OUTPUT_LIMBS {
+                    // sltu t2, s[m], t2  # carry out
                     self.asm.emit_r::<SLTU>(t2, sm, t2);
                 }
+                carry_pos += 1;
             }
         }
     }
