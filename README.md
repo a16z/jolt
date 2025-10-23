@@ -37,6 +37,7 @@ Updates:
 
 - Nov 12, 2024 [blog](https://a16zcrypto.com/posts/article/jolt-an-update/) [video](https://a16zcrypto.com/posts/videos/an-update-on-jolts-development-roadmap/)
 - Aug 18, 2025 (Twist and Shout upgrade) [blog](https://a16zcrypto.com/posts/article/jolt-6x-speedup/)
+- Oct 15, 2025 (64-bit Proving for Jolt) [blog](https://a16zcrypto.com/posts/article/64-bit-proving-jolt/)
 
 ### Background
 
