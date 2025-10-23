@@ -883,19 +883,19 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
                         product_eval_univariate_assign(&ra_eval_pairs, &mut ra_prod_evals);
 
                         for stage in 0..N_STAGES {
-                            let eq_out_eval = ps.gruen_eq_polys[stage].E_in_current()[j_lo];
+                            let eq_in_eval = ps.gruen_eq_polys[stage].E_in_current()[j_lo];
                             for i in 0..degree - 1 {
                                 evals_per_stage[stage][i] +=
-                                    eq_out_eval.mul_unreduced::<9>(ra_prod_evals[i]);
+                                    eq_in_eval.mul_unreduced::<9>(ra_prod_evals[i]);
                             }
                         }
                     }
 
                     array::from_fn(|stage| {
-                        let eq_in_eval = ps.gruen_eq_polys[stage].E_out_current()[j_hi];
+                        let eq_out_eval = ps.gruen_eq_polys[stage].E_out_current()[j_hi];
                         evals_per_stage[stage]
                             .iter()
-                            .map(|v| eq_in_eval * F::from_montgomery_reduce(*v))
+                            .map(|v| eq_out_eval * F::from_montgomery_reduce(*v))
                             .collect()
                     })
                 })
