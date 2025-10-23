@@ -11,7 +11,7 @@ use crate::{
         },
         opening_proof::{
             OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-            VerifierOpeningAccumulator, BIG_ENDIAN,
+            VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
         },
         program_io_polynomial::ProgramIOPolynomial,
         range_mask_polynomial::RangeMaskPolynomial,
@@ -543,13 +543,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ValFinalSumcheck<F>
     fn compute_prover_message(&mut self, _: usize, _previous_claim: F) -> Vec<F> {
         const DEGREE: usize = 2;
 
-        let ValFinalSumcheckProverState { inc, wa, .. } = self.prover_state.as_ref().unwrap();
+        let ValFinalSumcheckProverState { inc, wa } = self.prover_state.as_ref().unwrap();
 
         (0..inc.len() / 2)
             .into_par_iter()
             .map(|j| {
-                let inc_evals = inc.sumcheck_evals_array::<DEGREE>(j, BindingOrder::HighToLow);
-                let wa_evals = wa.sumcheck_evals_array::<DEGREE>(j, BindingOrder::HighToLow);
+                let inc_evals = inc.sumcheck_evals_array::<DEGREE>(j, BindingOrder::LowToHigh);
+                let wa_evals = wa.sumcheck_evals_array::<DEGREE>(j, BindingOrder::LowToHigh);
                 [
                     inc_evals[0].mul_unreduced::<9>(wa_evals[0]),
                     inc_evals[1].mul_unreduced::<9>(wa_evals[1]),
@@ -566,11 +566,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ValFinalSumcheck<F>
 
     #[tracing::instrument(skip_all, name = "ValFinalSumcheck::bind")]
     fn bind(&mut self, r_j: F::Challenge, _: usize) {
-        let ValFinalSumcheckProverState { inc, wa, .. } = self.prover_state.as_mut().unwrap();
-        rayon::join(
-            || inc.bind_parallel(r_j, BindingOrder::HighToLow),
-            || wa.bind_parallel(r_j, BindingOrder::HighToLow),
-        );
+        let ValFinalSumcheckProverState { inc, wa } = self.prover_state.as_mut().unwrap();
+        inc.bind_parallel(r_j, BindingOrder::LowToHigh);
+        wa.bind_parallel(r_j, BindingOrder::LowToHigh);
     }
 
     fn expected_output_claim(
@@ -599,7 +597,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ValFinalSumcheck<F>
         &self,
         opening_point: &[F::Challenge],
     ) -> OpeningPoint<BIG_ENDIAN, F> {
-        OpeningPoint::new(opening_point.to_vec())
+        OpeningPoint::<LITTLE_ENDIAN, F>::new(opening_point.to_vec()).match_endianness()
     }
 
     fn cache_openings_prover(
@@ -608,7 +606,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ValFinalSumcheck<F>
         transcript: &mut T,
         r_cycle_prime: OpeningPoint<BIG_ENDIAN, F>,
     ) {
-        let ValFinalSumcheckProverState { inc, wa, .. } = self.prover_state.as_ref().unwrap();
+        let ValFinalSumcheckProverState { inc, wa } = self.prover_state.as_ref().unwrap();
 
         let r_address = accumulator
             .borrow()
