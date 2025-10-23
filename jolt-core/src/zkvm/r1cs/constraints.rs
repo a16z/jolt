@@ -531,7 +531,7 @@ pub fn eval_az_second_group(row: &R1CSCycleInputs) -> [bool; NUM_REMAINING_R1CS_
                         panic!("jump and should_branch are both set");
                     }
                 }
-                jump ^ should_branch
+                !(jump ^ should_branch)
             }
             N::NextPCEqPCPlusOneIfInline => flags[CircuitFlags::VirtualInstruction],
             N::MustStartSequenceFromBeginning => false,

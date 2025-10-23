@@ -44,8 +44,6 @@ pub struct R1CSCycleInputs {
     /// Instruction lookup output (u64) for this cycle.
     pub lookup_output: u64,
 
-    /// Destination register index (Rd).
-    pub rd_addr: u8,
     /// Value read from Rs1 in this cycle.
     pub rs1_read_value: u64,
     /// Value read from Rs2 in this cycle.
@@ -131,7 +129,6 @@ impl R1CSCycleInputs {
         let lookup_output = LookupQuery::<XLEN>::to_lookup_output(cycle);
 
         // Registers
-        let rd_addr = cycle.rd_write().0;
         let rs1_read_value = cycle.rs1_read().1;
         let rs2_read_value = cycle.rs2_read().1;
         let rd_write_value = cycle.rd_write().2;
@@ -203,7 +200,6 @@ impl R1CSCycleInputs {
             left_lookup,
             right_lookup,
             lookup_output,
-            rd_addr,
             rs1_read_value,
             rs2_read_value,
             rd_write_value,
@@ -661,7 +657,7 @@ pub struct ProductCycleInputs {
     pub should_branch_flag: bool,
     /// ShouldJump right flag (1 - NextIsNoop)
     pub not_next_noop: bool,
-    /// IsRdZero instruction flag (boolean)
+    /// IsRdNotZero instruction flag (boolean)
     pub is_rd_not_zero: bool,
 }
 
@@ -745,7 +741,7 @@ impl ProductCycleInputs {
 /// Order of outputs matches PRODUCT_UNIQUE_FACTOR_VIRTUALS:
 /// 0: LeftInstructionInput (u64)
 /// 1: RightInstructionInput (i128)
-/// 2: IsRdZero (bool)
+/// 2: IsRdNotZero (bool)
 /// 3: OpFlags(WriteLookupOutputToRD) (bool)
 /// 4: OpFlags(Jump) (bool)
 /// 5: LookupOutput (u64)
