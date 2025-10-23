@@ -21,10 +21,7 @@ pub struct RegisterStateFormatVirtualI {
 
 impl Default for RegisterStateFormatVirtualI {
     fn default() -> Self {
-        Self {
-            rd: (0, 0),
-            rs1: 1, // Default to 1 instead of 0
-        }
+        Self { rd: (0, 0), rs1: 1 }
     }
 }
 

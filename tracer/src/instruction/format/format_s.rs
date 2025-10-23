@@ -27,7 +27,7 @@ impl InstructionRegisterState for RegisterStateFormatS {
         // Use a smaller range to avoid issues with boundaries
         let max_offset = (TEST_MEMORY_CAPACITY / 2).min(0x10000);
         let rs1_value = if operands.rs1 == 0 {
-            panic!()
+            unreachable!()
         } else {
             DRAM_BASE + (rng.next_u64() % max_offset)
         };

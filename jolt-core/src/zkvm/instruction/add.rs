@@ -86,7 +86,7 @@ mod test {
     }
 
     #[test]
-    fn lookup_matches_trace() {
+    fn lookup_output_matches_trace() {
         lookup_output_matches_trace_test::<ADD>();
     }
 }

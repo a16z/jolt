@@ -17,7 +17,7 @@ impl Default for FormatVirtualRightShiftR {
     fn default() -> Self {
         Self {
             rd: 0,
-            rs1: 1, // Default to 1 instead of 0
+            rs1: 1,
             rs2: 2,
         }
     }
@@ -44,12 +44,10 @@ impl InstructionRegisterState for RegisterStateVirtualRightShift {
             rd: (rng.next_u64(), rng.next_u64()),
             rs1: rs1_value,
             rs2: if operands.rs2 == 0 {
-                panic!()
-            }
-            // else if operands.rs2 == operands.rs1 {
-            //     rs1_value
-            // }
-            else {
+                panic!("rs2 cannot be 0 in VirtualRightShift instruction")
+            } else if operands.rs2 == operands.rs1 {
+                panic!("rs2 cannot equal rs1 in VirtualRightShift instruction")
+            } else {
                 rs2_value as u64
             },
         }
@@ -95,9 +93,8 @@ impl InstructionFormat for FormatVirtualRightShiftR {
         // Ensure rs2 is non-zero and different from rs1
         let mut rs2 = 1 + (rng.next_u64() as u8 % (RISCV_REGISTER_COUNT - 1));
         if rs2 == rs1 {
-            // If rs2 equals rs1, increment it (wrapping around if needed)
             rs2 = if rs2 == RISCV_REGISTER_COUNT - 1 {
-                1 // Wrap to 1 (avoiding 0)
+                1
             } else {
                 rs2 + 1
             };

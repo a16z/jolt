@@ -40,7 +40,11 @@ impl InstructionRegisterState for RegisterStateFormatRAMO {
 
         Self {
             rd: (rng.next_u64(), rng.next_u64()),
-            rs1: if operands.rs1 == 0 { panic!() } else { address },
+            rs1: if operands.rs1 == 0 {
+                unreachable!()
+            } else {
+                address
+            },
             rs2: if operands.rs2 == 0 {
                 0
             } else if operands.rs2 == operands.rs1 {

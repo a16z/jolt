@@ -31,7 +31,7 @@ impl InstructionRegisterState for RegisterStateFormatLoad {
         Self {
             rd: (rng.next_u64(), rng.next_u64()),
             rs1: if operands.rs1 == 0 {
-                panic!()
+                unreachable!()
             } else {
                 DRAM_BASE + (rng.next_u64() % max_offset)
             },
