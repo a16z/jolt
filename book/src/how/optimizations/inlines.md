@@ -89,6 +89,30 @@ unsafe {
 }
 ```
 
+## Benchmarks
+
+The table below compares the performance of reference and inline implementations for each hash function, using identical 32KB inputs and the same API across both reference and inline implementations.
+
+| Hash Function | Implementation | Cycles | Cycles Per Byte (CPB) | Speedup |
+|--------------|----------------|----------------|----------------------|---------|
+| SHA-256      | [sha2 crate](https://crates.io/crates/sha2)      | 10,414,653     | 317.94               | -       |
+| SHA-256      | **Jolt Inline**     | **1,765,207**  | **53.89**            | **5.9×** |
+| Keccak-256   | [sha3 crate](https://crates.io/crates/sha3)      | 2,556,519      | 78.04                | -       |
+| Keccak-256   | **Jolt Inline**     | **848,224**    | **25.89**            | **3.01×** |
+| Blake2B      | [blake2 crate](https://crates.io/crates/blake2)      | 968,562        | 29.57                | -       |
+| Blake2B      | **Jolt Inline**     | **340,787**    | **10.40**            | **2.85×** |
+
+*Note: Blake3 currently supports inputs up to 64 bytes. Full implementation for larger inputs is in development.*
+
+#### Proving Time
+
+Proving time depends on the hardware running the prover. On a MacBook M4, the Jolt prover achieves approximately 400 kHz throughput, processing 400,000 RISC-V cycles per second.
+
+For example, using the inline Blake2B implementation:
+- **32KB hash proving time**: ~0.85 seconds
+- **Effective throughput**: ~38.5 KB/second
+
+
 ## Jolt CPU Advantages
 
 The Jolt zkVM architecture provides several unique optimization opportunities that inlines can leverage:
