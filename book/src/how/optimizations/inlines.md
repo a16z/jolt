@@ -89,6 +89,38 @@ unsafe {
 }
 ```
 
+## Benchmarks
+
+The table below compares the performance of reference and inline implementations for each hash function, using identical 32KB inputs and the same API across both reference and inline implementations.
+
+| Hash Function | Implementation | Cycles | Cycles Per Byte (CPB) | Speedup |
+|--------------|----------------|----------------|----------------------|---------|
+| SHA-256      | [sha2 crate](https://crates.io/crates/sha2)      | 10,414,653     | 317.94               | -       |
+| SHA-256      | **Jolt Inline**     | **1,765,207**  | **53.89**            | **5.9×** |
+| Keccak-256   | [sha3 crate](https://crates.io/crates/sha3)      | 2,556,519      | 78.04                | -       |
+| Keccak-256   | **Jolt Inline**     | **848,224**    | **25.89**            | **3.01×** |
+| Blake2B      | [blake2 crate](https://crates.io/crates/blake2)      | 968,562        | 29.57                | -       |
+| Blake2B      | **Jolt Inline**     | **340,787**    | **10.40**            | **2.85×** |
+
+*Note: Blake3 currently supports inputs up to 64 bytes. Full implementation for larger inputs is in development.*
+
+#### Proving Time
+
+Proving time is hardware-dependent. The Jolt prover achieves approximately 500 kHz throughput (proving 500,000 RISC-V cycles per second) on a MacBook M4 Max, and 1.5 MHz throughput (1,500,000 cycles per second) on an AMD Threadripper Pro 7975.
+
+**Hardware Specifications:**
+- **MacBook M4 Max**: 16 cores, 128 GB RAM
+- **AMD Threadripper Pro 7975**: 32 cores
+
+The following table shows the data that can be proved by each of the Jolt inlines per second.
+
+| Hash Function | MacBook M4 Max (500 kHz) | Threadripper Pro 7975WX (1.5 MHz) |
+|--------------|---------------------|----------------------|
+| SHA-256 Inline | 9.1 KB/s | 27.1 KB/s |
+| Keccak-256 Inline | 18.8 KB/s | 56.1 KB/s |
+| Blake2B Inline | 47.1 KB/s | 139.1 KB/s |
+
+
 ## Jolt CPU Advantages
 
 The Jolt zkVM architecture provides several unique optimization opportunities that inlines can leverage:
