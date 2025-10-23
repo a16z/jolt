@@ -68,7 +68,7 @@ impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<JALR> {
             #[cfg(test)]
             8 => (x as i8).overflowing_add(y as i8).0 as u8 as u64,
             32 => (x as i32).overflowing_add(y as i32).0 as u32 as u64,
-            64 => ((x as i64).overflowing_add(y as i64).0 as u64),
+            64 => (x as i64).overflowing_add(y as i64).0 as u64,
             _ => panic!("{XLEN}-bit word size is unsupported"),
         }
     }
@@ -76,9 +76,7 @@ impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<JALR> {
 
 #[cfg(test)]
 mod test {
-    use crate::zkvm::instruction::test::{
-        lookup_output_matches_trace_test, materialize_entry_test,
-    };
+    use crate::zkvm::instruction::test::materialize_entry_test;
 
     use super::*;
     use ark_bn254::Fr;
