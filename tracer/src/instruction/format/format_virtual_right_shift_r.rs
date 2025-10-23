@@ -36,7 +36,7 @@ impl InstructionRegisterState for RegisterStateVirtualRightShift {
         use rand::RngCore;
         let rs1_value = if operands.rs1 == 0 { 0 } else { rng.next_u64() };
 
-        let shift = rng.next_u64() as u64 & 0x3F;
+        let shift = rng.next_u64() & 0x3F;
         let ones = (1u128 << (64 - shift)) - 1;
         let rs2_value = (ones << shift) as i64;
 

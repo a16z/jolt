@@ -146,10 +146,9 @@ where
 {
     let cycle: RISCVCycle<T> = Default::default();
     let mut rng = StdRng::seed_from_u64(123456);
-    for i in 0..10000 {
-        println!("i is: {}", i);
+    for _ in 0..10000 {
         let random_cycle = cycle.random(&mut rng);
-        let normalized_instr: NormalizedInstruction = random_cycle.instruction.clone().into();
+        let normalized_instr: NormalizedInstruction = random_cycle.instruction.into();
         let normalized_operands = normalized_instr.operands;
 
         let mut cpu = Cpu::new(Box::new(DummyTerminal::default()));
@@ -170,7 +169,7 @@ where
 
         if is_jal || is_jalr {
             // For JAL (FormatJ), check the new PC after the jump
-            let cpu_pc = cpu.read_pc() as u64;
+            let cpu_pc = cpu.read_pc();
             assert_eq!(cpu_pc, lookup_result, "JAL PC mismatch: {random_cycle:?}");
         } else {
             // For all other instructions, check rd as usual

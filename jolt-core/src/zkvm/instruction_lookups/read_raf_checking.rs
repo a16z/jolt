@@ -1049,8 +1049,7 @@ mod tests {
     use rand::{rngs::StdRng, RngCore, SeedableRng};
     use strum::IntoEnumIterator;
     use tracer::emulator::memory::Memory;
-    use tracer::instruction::virtual_srl::VirtualSRL;
-    use tracer::instruction::{Cycle, RISCVCycle};
+    use tracer::instruction::Cycle;
     use tracer::JoltDevice;
 
     const LOG_T: usize = 8;
