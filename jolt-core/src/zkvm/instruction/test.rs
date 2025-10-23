@@ -4,12 +4,12 @@ use rand::prelude::*;
 use tracer::{
     emulator::{cpu::Cpu, terminal::DummyTerminal},
     instruction::{
-        format::{InstructionRegisterState, NormalizedOperands},
-        Cycle, NormalizedInstruction, RISCVCycle, RISCVInstruction, RISCVTrace,
+        self, format::InstructionRegisterState, Cycle, NormalizedInstruction, RISCVCycle,
+        RISCVInstruction, RISCVTrace,
     },
 };
 
-use super::{CircuitFlags, InstructionLookup};
+use super::{CircuitFlags, Flags, InstructionLookup};
 
 pub fn materialize_entry_test<F, T>()
 where
@@ -141,12 +141,13 @@ mod flags {
 
 pub fn lookup_output_matches_trace_test<T>()
 where
-    T: InstructionLookup<XLEN> + RISCVInstruction + RISCVTrace + Default,
+    T: InstructionLookup<XLEN> + RISCVInstruction + RISCVTrace + Default + Flags + 'static,
     RISCVCycle<T>: LookupQuery<XLEN> + Into<Cycle>,
 {
     let cycle: RISCVCycle<T> = Default::default();
     let mut rng = StdRng::seed_from_u64(123456);
-    for _ in 0..10000 {
+    for i in 0..10000 {
+        println!("i is: {}", i);
         let random_cycle = cycle.random(&mut rng);
         let normalized_instr: NormalizedInstruction = random_cycle.instruction.clone().into();
         let normalized_operands = normalized_instr.operands;
@@ -157,8 +158,24 @@ where
 
         random_cycle.instruction.trace(&mut cpu, None);
 
-        let cpu_result = cpu.x[normalized_operands.rd as usize] as u64;
         let lookup_result = LookupQuery::<XLEN>::to_lookup_output(&random_cycle);
-        assert_eq!(cpu_result, lookup_result, "{random_cycle:?}");
+
+        // For JAL (FormatJ), the lookup output represents the new PC after the jump
+        // We can use TypeId to check if this is specifically a JAL instruction
+        use std::any::TypeId;
+
+        // Check if T is JAL by comparing TypeIds
+        let is_jal = TypeId::of::<T>() == TypeId::of::<instruction::jal::JAL>();
+        let is_jalr = TypeId::of::<T>() == TypeId::of::<instruction::jalr::JALR>();
+
+        if is_jal || is_jalr {
+            // For JAL (FormatJ), check the new PC after the jump
+            let cpu_pc = cpu.read_pc() as u64;
+            assert_eq!(cpu_pc, lookup_result, "JAL PC mismatch: {random_cycle:?}");
+        } else {
+            // For all other instructions, check rd as usual
+            let cpu_result = cpu.x[normalized_operands.rd as usize] as u64;
+            assert_eq!(cpu_result, lookup_result, "{random_cycle:?}");
+        }
     }
 }

@@ -65,11 +65,19 @@ impl InstructionFormat for FormatVirtualRightShiftI {
 
     #[cfg(any(feature = "test-utils", test))]
     fn random(rng: &mut rand::rngs::StdRng) -> Self {
-        use common::constants::RISCV_REGISTER_COUNT;
+        use common::constants::{RISCV_REGISTER_COUNT, XLEN};
         use rand::RngCore;
-        let shift = rng.next_u32() % 64;
-        let ones: u64 = (1 << shift) - 1;
-        let imm = ones.wrapping_shl(64 - shift);
+
+        let mut imm = rng.next_u64();
+
+        let (shift, len) = match XLEN {
+            32 => (imm & 0x1f, 32),
+            64 => (imm & 0x3f, 64),
+            _ => panic!(),
+        };
+        let ones = (1u128 << (len - shift)) - 1;
+        imm = (ones << shift) as u64;
+
         Self {
             imm,
             rd: (rng.next_u64() as u8 % RISCV_REGISTER_COUNT),

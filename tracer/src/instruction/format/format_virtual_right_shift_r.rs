@@ -36,9 +36,9 @@ impl InstructionRegisterState for RegisterStateVirtualRightShift {
         use rand::RngCore;
         let rs1_value = if operands.rs1 == 0 { 0 } else { rng.next_u64() };
 
-        let shift = rng.next_u32() % 64;
-        let ones: u64 = (1 << shift) - 1;
-        let rs2_value = ones.wrapping_shl(64 - shift);
+        let shift = rng.next_u64() as u64 & 0x3F;
+        let ones = (1u128 << (64 - shift)) - 1;
+        let rs2_value = (ones << shift) as i64;
 
         Self {
             rd: (rng.next_u64(), rng.next_u64()),
@@ -50,7 +50,7 @@ impl InstructionRegisterState for RegisterStateVirtualRightShift {
             //     rs1_value
             // }
             else {
-                rs2_value
+                rs2_value as u64
             },
         }
     }
@@ -89,11 +89,21 @@ impl InstructionFormat for FormatVirtualRightShiftR {
     fn random(rng: &mut rand::rngs::StdRng) -> Self {
         use common::constants::RISCV_REGISTER_COUNT;
         use rand::RngCore;
-        Self {
-            rd: (rng.next_u64() as u8 % RISCV_REGISTER_COUNT),
-            rs1: (rng.next_u64() as u8 % RISCV_REGISTER_COUNT),
-            rs2: 1 + (rng.next_u64() as u8 % (RISCV_REGISTER_COUNT - 1)),
+        let rd = rng.next_u64() as u8 % RISCV_REGISTER_COUNT;
+        let rs1 = rng.next_u64() as u8 % RISCV_REGISTER_COUNT;
+
+        // Ensure rs2 is non-zero and different from rs1
+        let mut rs2 = 1 + (rng.next_u64() as u8 % (RISCV_REGISTER_COUNT - 1));
+        if rs2 == rs1 {
+            // If rs2 equals rs1, increment it (wrapping around if needed)
+            rs2 = if rs2 == RISCV_REGISTER_COUNT - 1 {
+                1 // Wrap to 1 (avoiding 0)
+            } else {
+                rs2 + 1
+            };
         }
+
+        Self { rd, rs1, rs2 }
     }
 }
 
