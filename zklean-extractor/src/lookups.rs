@@ -3,10 +3,9 @@ use strum::IntoEnumIterator as _;
 
 use crate::{
     modules::{AsModule, Module},
-    util::{indent, ZkLeanReprField},
+    util::ZkLeanReprField,
     DefaultMleAst,
 };
-
 
 /// Wrapper around a JoltInstruction
 // TODO: Can we tie the WORD_SIZE to the JoltParameterSet somehow? Seem hard w/o const generic
@@ -21,6 +20,19 @@ impl<const WORD_SIZE: usize> From<LookupTables<WORD_SIZE>> for ZkLeanLookupTable
         Self {
             lookup_table: value,
         }
+    }
+}
+
+/// This structure is merely here to gather all the information needed for displaying a MLE.
+struct DisplayZkLean<F: ZkLeanReprField> {
+    mle: F,
+    name: String,
+    num_variables: usize,
+}
+
+impl<F: ZkLeanReprField> std::fmt::Display for DisplayZkLean<F> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.mle.format_for_lean(f, &self.name, self.num_variables)
     }
 }
 
@@ -47,22 +59,13 @@ impl<const WORD_SIZE: usize> ZkLeanLookupTable<WORD_SIZE> {
     pub fn zklean_pretty_print<F: ZkLeanReprField>(
         &self,
         f: &mut impl std::io::Write,
-        mut indent_level: usize,
     ) -> std::io::Result<()> {
-        let name = self.name();
-        let num_variables = 2 * WORD_SIZE;
-        let mle = self.evaluate_mle::<F>('x').as_computation();
-
-        f.write_fmt(format_args!(
-            "\n{}def {name} [Field f] (x : Vector f {num_variables}) : f :=\n",
-            indent(indent_level),
-        ))?;
-        indent_level += 1;
-        f.write_fmt(format_args!(
-            "{}{mle}\n",
-            indent(indent_level),
-        ))?;
-
+        let printable = DisplayZkLean {
+            name: self.name(),
+            num_variables: 2 * WORD_SIZE,
+            mle: self.evaluate_mle::<F>('x'),
+        };
+        let _ = write!(f, "{printable}");
         Ok(())
     }
 }
@@ -78,18 +81,14 @@ impl<const WORD_SIZE: usize> ZkLeanLookupTables<WORD_SIZE> {
         }
     }
 
-    pub fn zklean_pretty_print(
-        &self,
-        f: &mut impl std::io::Write,
-        indent_level: usize,
-    ) -> std::io::Result<()> {
+    pub fn zklean_pretty_print(&self, f: &mut impl std::io::Write) -> std::io::Result<()> {
         // This is needed because the MLEs are too large for Lean to process within its standard
         // `maxHeartbeats` time (= 200_000).
         let lean4_max_heartbeats = 4_000_000;
         write!(f, "set_option maxHeartbeats {lean4_max_heartbeats}\n\n")?;
 
         for instruction in &self.instructions {
-            instruction.zklean_pretty_print::<DefaultMleAst>(f, indent_level)?;
+            instruction.zklean_pretty_print::<DefaultMleAst>(f)?;
         }
         Ok(())
     }
@@ -102,7 +101,7 @@ impl<const WORD_SIZE: usize> ZkLeanLookupTables<WORD_SIZE> {
 impl<const WORD_SIZE: usize> AsModule for ZkLeanLookupTables<WORD_SIZE> {
     fn as_module(&self) -> std::io::Result<Module> {
         let mut contents: Vec<u8> = vec![];
-        self.zklean_pretty_print(&mut contents, 0)?;
+        self.zklean_pretty_print(&mut contents)?;
 
         Ok(Module {
             name: String::from("LookupTables"),
@@ -158,7 +157,10 @@ mod test {
             assert_eq!(inputs.len(), 2 * WORD_SIZE);
 
             let ast: T = self.test.evaluate_mle('x');
-            ast.evaluate(&Environment { let_bindings: &HashMap::new(), vars: inputs })
+            ast.evaluate(&Environment {
+                let_bindings: &HashMap::new(),
+                vars: inputs,
+            })
         }
     }
 

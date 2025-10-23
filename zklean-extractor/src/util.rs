@@ -15,17 +15,22 @@ pub type LetBinderIndex = usize;
 #[cfg(test)]
 pub struct Environment<'a, F> {
     pub let_bindings: &'a HashMap<LetBinderIndex, F>,
-    pub vars: &'a[F],
+    pub vars: &'a [F],
 }
 
 /// A [`JoltField`] that can be used to write a ZKLean representation of a computation.
 pub trait ZkLeanReprField: JoltField + Sized {
     fn register(name: char, size: usize) -> Vec<Self>;
 
-    fn as_computation(&self) -> String;
-
     #[cfg(test)]
     fn evaluate<F: JoltField>(&self, env: &Environment<F>) -> F;
+
+    fn format_for_lean(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+        name: &String,
+        num_variables: usize,
+    ) -> std::fmt::Result;
 }
 
 #[cfg(test)]

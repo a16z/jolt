@@ -4,7 +4,7 @@ use jolt_core::field::{FieldOps, JoltField};
 
 use std::cmp::max;
 use std::collections::HashMap;
-use std::fmt::{self, Write};
+use std::fmt::{self};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::{OnceLock, RwLock};
 
@@ -64,7 +64,11 @@ impl Atom {
         match self {
             Self::Scalar(value) => F::from_i128(*value),
             Self::Var(index) => env.vars[*index as usize],
-            Self::NamedVar(index) => env.let_bindings.get(index).expect("unregistered let-bound variable").clone(),
+            Self::NamedVar(index) => env
+                .let_bindings
+                .get(index)
+                .expect("unregistered let-bound variable")
+                .clone(),
         }
     }
 }
@@ -174,14 +178,21 @@ fn evaluate_node<F: JoltField>(node: NodeId, env: &Environment<F>) -> F {
     }
 }
 
-fn fmt_atom(f: &mut fmt::Formatter<'_>, atom: Atom, reg_name: Option<char>) -> fmt::Result {
+struct FormattingData<'a> {
+    prefix: &'a String,
+    reg_name: Option<char>,
+}
+
+fn fmt_atom(f: &mut fmt::Formatter<'_>, fmt_data: &FormattingData<'_>, atom: Atom) -> fmt::Result {
     match atom {
         Atom::Scalar(value) => write!(f, "{value}")?,
         Atom::Var(index) => {
-            let name = reg_name.expect("unreachable: register name missing in var");
+            let name = fmt_data
+                .reg_name
+                .expect("unreachable: register name missing in var");
             write!(f, "{name}[{index}]")?;
-        },
-        Atom::NamedVar(index) => write!(f, "{CSE_PREFIX}{index}")?,
+        }
+        Atom::NamedVar(index) => write!(f, "{}{index} x", fmt_data.prefix)?,
     }
 
     Ok(())
@@ -189,13 +200,13 @@ fn fmt_atom(f: &mut fmt::Formatter<'_>, atom: Atom, reg_name: Option<char>) -> f
 
 fn fmt_edge(
     f: &mut fmt::Formatter<'_>,
+    fmt_data: &FormattingData<'_>,
     edge: Edge,
-    reg_name: Option<char>,
     group: bool,
 ) -> fmt::Result {
     match edge {
-        Edge::Atom(atom) => fmt_atom(f, atom, reg_name),
-        Edge::NodeRef(node) => fmt_node(f, node, reg_name, group),
+        Edge::Atom(atom) => fmt_atom(f, fmt_data, atom),
+        Edge::NodeRef(node) => fmt_node(f, fmt_data, node, group),
     }
 }
 
@@ -231,7 +242,7 @@ fn node_depth(node: Node) -> usize {
     }
 }
 
-const CSE_PREFIX: &str = "cse_";
+const CSE_PREFIX: &str = "cse";
 
 /// This guides the extractor as to the granularity at which to output definitions for common
 /// sub-expressions.
@@ -248,61 +259,65 @@ const CSE_PREFIX: &str = "cse_";
 ///   v2     = (a + b) / (a + b)
 ///   result = v1 * v2
 /// at threshold 2, fewer intermediates, but small terms get repeated.
-const CSE_DEPTH_THRESHOLD: usize = 5;
+const CSE_DEPTH_THRESHOLD: usize = 4;
 
 fn common_subexpression_elimination(node: Node) -> (Vec<Node>, Node) {
-
     /// Assumption: the sub-nodes have already been CSE-d
     fn register(bindings: &mut Bindings, nodes: &mut Vec<Node>, node: Node) -> Node {
         let node_hash = compute_hash(&node);
         if let Some(v) = bindings.get(&node_hash) {
             if let Some((_, i)) = v.iter().find(|(n, _)| n == &node) {
-                return Node::Atom(Atom::NamedVar(i.clone()))
+                return Node::Atom(Atom::NamedVar(i.clone()));
             }
         }
         if node_depth(node) < CSE_DEPTH_THRESHOLD {
-            return node
+            return node;
         }
         // Registering a new node
         let index = nodes.len().into();
-        bindings.entry(node_hash)
-            .and_modify(|v| { v.push((node, index));})
+        bindings
+            .entry(node_hash)
+            .and_modify(|v| {
+                v.push((node, index));
+            })
             .or_insert(vec![(node, index)]);
         nodes.push(node);
-        return Node::Atom(Atom::NamedVar(index))
+        return Node::Atom(Atom::NamedVar(index));
     }
 
     fn aux_node(bindings: &mut Bindings, nodes: &mut Vec<Node>, node: Node) -> Node {
         match node {
-            Node::Atom(_) => { return node; },
+            Node::Atom(_) => {
+                return node;
+            }
             Node::Neg(e) => {
                 let cse_e = aux_edge(bindings, nodes, e);
-                return register(bindings, nodes, Node::Neg(cse_e))
-            },
+                return register(bindings, nodes, Node::Neg(cse_e));
+            }
             Node::Inv(e) => {
                 let cse_e = aux_edge(bindings, nodes, e);
-                return register(bindings, nodes, Node::Inv(cse_e))
-            },
+                return register(bindings, nodes, Node::Inv(cse_e));
+            }
             Node::Add(e1, e2) => {
                 let cse_e1 = aux_edge(bindings, nodes, e1);
                 let cse_e2 = aux_edge(bindings, nodes, e2);
-                return register(bindings, nodes, Node::Add(cse_e1, cse_e2))
-            },
+                return register(bindings, nodes, Node::Add(cse_e1, cse_e2));
+            }
             Node::Mul(e1, e2) => {
                 let cse_e1 = aux_edge(bindings, nodes, e1);
                 let cse_e2 = aux_edge(bindings, nodes, e2);
-                return register(bindings, nodes, Node::Mul(cse_e1, cse_e2))
-            },
+                return register(bindings, nodes, Node::Mul(cse_e1, cse_e2));
+            }
             Node::Sub(e1, e2) => {
                 let cse_e1 = aux_edge(bindings, nodes, e1);
                 let cse_e2 = aux_edge(bindings, nodes, e2);
-                return register(bindings, nodes, Node::Sub(cse_e1, cse_e2))
-            },
+                return register(bindings, nodes, Node::Sub(cse_e1, cse_e2));
+            }
             Node::Div(e1, e2) => {
                 let cse_e1 = aux_edge(bindings, nodes, e1);
                 let cse_e2 = aux_edge(bindings, nodes, e2);
-                return register(bindings, nodes, Node::Div(cse_e1, cse_e2))
-            },
+                return register(bindings, nodes, Node::Div(cse_e1, cse_e2));
+            }
         }
     }
 
@@ -318,58 +333,58 @@ fn common_subexpression_elimination(node: Node) -> (Vec<Node>, Node) {
     let mut bindings = HashMap::new();
     let mut nodes = Vec::new();
     let new_node = aux_node(&mut bindings, &mut nodes, node);
-    return (nodes, new_node)
+    return (nodes, new_node);
 }
 
 fn fmt_node(
     f: &mut fmt::Formatter<'_>,
+    fmt_data: &FormattingData<'_>,
     node: NodeId,
-    reg_name: Option<char>,
     group: bool,
 ) -> fmt::Result {
     match get_node(node) {
-        Node::Atom(atom) => fmt_atom(f, atom, reg_name),
+        Node::Atom(atom) => fmt_atom(f, fmt_data, atom),
         Node::Neg(edge) => {
             write!(f, "-")?;
-            fmt_edge(f, edge, reg_name, true)
+            fmt_edge(f, fmt_data, edge, true)
         }
         Node::Inv(edge) => {
             write!(f, "1 / ")?;
-            fmt_edge(f, edge, reg_name, true)
+            fmt_edge(f, fmt_data, edge, true)
         }
         Node::Add(e1, e2) => {
             if group {
                 write!(f, "(")?;
             }
-            fmt_edge(f, e1, reg_name, false)?;
+            fmt_edge(f, fmt_data, e1, false)?;
             write!(f, " + ")?;
-            fmt_edge(f, e2, reg_name, false)?;
+            fmt_edge(f, fmt_data, e2, false)?;
             if group {
                 write!(f, ")")?;
             }
             Ok(())
         }
         Node::Mul(e1, e2) => {
-            fmt_edge(f, e1, reg_name, true)?;
+            fmt_edge(f, fmt_data, e1, true)?;
             write!(f, " * ")?;
-            fmt_edge(f, e2, reg_name, true)
+            fmt_edge(f, fmt_data, e2, true)
         }
         Node::Sub(e1, e2) => {
             if group {
                 write!(f, "(")?;
             }
-            fmt_edge(f, e1, reg_name, false)?;
+            fmt_edge(f, fmt_data, e1, false)?;
             write!(f, " - ")?;
-            fmt_edge(f, e2, reg_name, true)?;
+            fmt_edge(f, fmt_data, e2, true)?;
             if group {
                 write!(f, ")")?;
             }
             Ok(())
         }
         Node::Div(e1, e2) => {
-            fmt_edge(f, e1, reg_name, true)?;
+            fmt_edge(f, fmt_data, e1, true)?;
             write!(f, " / ")?;
-            fmt_edge(f, e2, reg_name, true)
+            fmt_edge(f, fmt_data, e2, true)
         }
     }
 }
@@ -379,17 +394,41 @@ impl crate::util::ZkLeanReprField for MleAst {
         (0..size).map(|i| Self::new_var(name, i as Index)).collect()
     }
 
-    fn as_computation(&self) -> String {
-        let mut res = String::new();
-        write!(res, "{self}").unwrap();
-        res
-    }
-
     /// Evaluate the computation represented by the AST over another [`JoltField`], starting at
     /// `root`, and using the variable assignments in `vars`.
     #[cfg(test)]
     fn evaluate<F: JoltField>(&self, env: &Environment<F>) -> F {
         evaluate_node(self.root, env)
+    }
+
+    fn format_for_lean(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+        name: &String,
+        num_variables: usize,
+    ) -> fmt::Result {
+        let (bindings, node) = common_subexpression_elimination(get_node(self.root));
+        let node_id = insert_node(node);
+        let fmt_data = FormattingData {
+            prefix: &format!("{name}_{CSE_PREFIX}_"),
+            reg_name: self.reg_name,
+        };
+        for (index, binding) in bindings.iter().enumerate() {
+            write!(
+                f,
+                "def {}{index} [Field f] (x : Vector f {num_variables}) : f := ",
+                fmt_data.prefix,
+            )?;
+            fmt_node(f, &fmt_data, insert_node(binding.clone()), false)?;
+            write!(f, "\n")?;
+        }
+        write!(
+            f,
+            "def {name} [Field f] (x : Vector f {num_variables}) : f := "
+        )?;
+        fmt_node(f, &fmt_data, node_id, false)?;
+        write!(f, "\n\n")?;
+        Ok(())
     }
 }
 
@@ -544,15 +583,8 @@ impl<'a> core::iter::Product<&'a Self> for MleAst {
 }
 
 impl fmt::Display for MleAst {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let (bindings, node) = common_subexpression_elimination(get_node(self.root));
-        let node_id = insert_node(node);
-        for (index, binding) in bindings.iter().enumerate() {
-            write!(f, "let {CSE_PREFIX}{index} := ")?;
-            let _ = fmt_node(f, insert_node(binding.clone()), self.reg_name, false);
-            let _ = write!(f, "\n  "); // Note: hardcoding indentation here, need something better
-        }
-        fmt_node(f, node_id, self.reg_name, false)
+    fn fmt(&self, _f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        todo!() // does this ever get called in our use case?
     }
 }
 
