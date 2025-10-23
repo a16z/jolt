@@ -620,13 +620,18 @@ where
 /// Canonical, de-duplicated list of product-virtual factor polynomials used by
 /// the Product Virtualization stage (in stable order).
 /// Order:
-/// 0: LeftInstructionInput, 1: RightInstructionInput,
-/// 2: RdWa, 3: OpFlags(WriteLookupOutputToRD), 4: OpFlags(Jump),
-/// 5: LookupOutput, 6: InstructionFlags(Branch), 7: NextIsNoop
+/// 0: LeftInstructionInput
+/// 1: RightInstructionInput
+/// 2: InstructionFlags(IsRdNotZero)
+/// 3: OpFlags(WriteLookupOutputToRD)
+/// 4: OpFlags(Jump)
+/// 5: LookupOutput
+/// 6: InstructionFlags(Branch)
+/// 7: NextIsNoop
 pub const PRODUCT_UNIQUE_FACTOR_VIRTUALS: [VirtualPolynomial; 8] = [
     VirtualPolynomial::LeftInstructionInput,
     VirtualPolynomial::RightInstructionInput,
-    VirtualPolynomial::RdWa,
+    VirtualPolynomial::InstructionFlags(InstructionFlags::IsRdNotZero),
     VirtualPolynomial::OpFlags(CircuitFlags::WriteLookupOutputToRD),
     VirtualPolynomial::OpFlags(CircuitFlags::Jump),
     VirtualPolynomial::LookupOutput,
