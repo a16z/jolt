@@ -106,11 +106,19 @@ The table below compares the performance of reference and inline implementations
 
 #### Proving Time
 
-Proving time depends on the hardware running the prover. On a MacBook M4, the Jolt prover achieves approximately 400 kHz throughput, processing 400,000 RISC-V cycles per second.
+Proving time is hardware-dependent. The Jolt prover achieves approximately 500 kHz throughput (proving 500,000 RISC-V cycles per second) on a MacBook M4 Max, and 1.5 MHz throughput (1,500,000 cycles per second) on an AMD Threadripper Pro 7975.
 
-For example, using the inline Blake2B implementation:
-- **32KB hash proving time**: ~0.85 seconds
-- **Effective throughput**: ~38.5 KB/second
+**Hardware Specifications:**
+- **MacBook M4 Max**: 16 cores, 128 GB RAM
+- **AMD Threadripper Pro 7975**: 32 cores
+
+The following table shows the data that can be proved by each of the Jolt inlines per second.
+
+| Hash Function | MacBook M4 Max (500 kHz) | Threadripper Pro 7975WX (1.5 MHz) |
+|--------------|---------------------|----------------------|
+| SHA-256 Inline | 9.1 KB/s | 27.1 KB/s |
+| Keccak-256 Inline | 18.8 KB/s | 56.1 KB/s |
+| Blake2B Inline | 47.1 KB/s | 139.1 KB/s |
 
 
 ## Jolt CPU Advantages
