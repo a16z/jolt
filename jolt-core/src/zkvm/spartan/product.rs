@@ -256,31 +256,26 @@ impl<F: JoltField> ProductVirtualUniSkipInstance<F> {
                             // WriteLookupOutputToRD: rd_addr × WriteLookupOutputToRD_flag
                             // left: u8 -> i32 -> i128; right: bool/u8 -> i32 -> i128
                             left_w[1] = (c[1] as i128) * (row.rd_addr as i32 as i128);
-                            right_w[1] = (c[1] as i128)
-                                * (if row.write_lookup_output_to_rd_flag {
-                                    1i32
-                                } else {
-                                    0i32
-                                } as i128);
+                            right_w[1] = if row.write_lookup_output_to_rd_flag {
+                                c[1] as i128
+                            } else {
+                                0
+                            };
 
                             // WritePCtoRD: rd_addr × Jump_flag
                             // left: u8 -> i32 -> i128; right: bool/u8 -> i32 -> i128
                             left_w[2] = (c[2] as i128) * (row.rd_addr as i32 as i128);
-                            right_w[2] =
-                                (c[2] as i128) * (if row.jump_flag { 1i32 } else { 0i32 } as i128);
+                            right_w[2] = if row.jump_flag { c[2] as i128 } else { 0 };
 
                             // ShouldBranch: lookup_output × Branch_flag
                             // left: u64 -> i128; right: bool/u8 -> i32 -> i128
                             left_w[3] = (c[3] as i128) * (row.should_branch_lookup_output as i128);
-                            right_w[3] = (c[3] as i128)
-                                * (if row.should_branch_flag { 1i32 } else { 0i32 } as i128);
+                            right_w[3] = if row.should_branch_flag { c[3] as i128 } else { 0 };
 
                             // ShouldJump: Jump_flag × (1 − NextIsNoop)
                             // left: bool/u8 -> i32 -> i128; right: bool/u8 -> i32 -> i128
-                            left_w[4] =
-                                (c[4] as i128) * (if row.jump_flag { 1i32 } else { 0i32 } as i128);
-                            right_w[4] = (c[4] as i128)
-                                * (if row.not_next_noop { 1i32 } else { 0i32 } as i128);
+                            left_w[4] = if row.jump_flag { c[4] as i128 } else { 0 };
+                            right_w[4] = if row.not_next_noop { c[4] as i128 } else { 0 };
 
                             // Fuse by summing over i in i128 and multiply in bigints first
                             let mut left_sum_i128: i128 = 0;
