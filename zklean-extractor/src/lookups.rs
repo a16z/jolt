@@ -54,7 +54,7 @@ impl<const WORD_SIZE: usize> ZkLeanLookupTable<WORD_SIZE> {
         let mle = self.evaluate_mle::<F>('x').as_computation();
 
         f.write_fmt(format_args!(
-            "{}def {name} [Field f] (x : Vector f {num_variables}) : f :=\n",
+            "\n{}def {name} [Field f] (x : Vector f {num_variables}) : f :=\n",
             indent(indent_level),
         ))?;
         indent_level += 1;
@@ -114,8 +114,10 @@ impl<const WORD_SIZE: usize> AsModule for ZkLeanLookupTables<WORD_SIZE> {
 
 #[cfg(test)]
 mod test {
+    use std::collections::HashMap;
+
     use super::*;
-    use crate::util::arb_field_elem;
+    use crate::util::{arb_field_elem, Environment};
 
     use jolt_core::field::JoltField;
 
@@ -156,7 +158,7 @@ mod test {
             assert_eq!(inputs.len(), 2 * WORD_SIZE);
 
             let ast: T = self.test.evaluate_mle('x');
-            ast.evaluate(inputs)
+            ast.evaluate(&Environment { let_bindings: &HashMap::new(), vars: inputs })
         }
     }
 
