@@ -82,10 +82,10 @@ pub struct R1CSCycleInputs {
     /// Derived: `Branch && (LookupOutput == 1)`.
     pub should_branch: bool,
 
-    /// Rd index if `WriteLookupOutputToRD`, else 0 (u8 domain used as selector).
-    pub write_lookup_output_to_rd_addr: u8,
-    /// Rd index if `Jump`, else 0 (u8 domain used as selector).
-    pub write_pc_to_rd_addr: u8,
+    /// `IsRdNotZero` && ` `WriteLookupOutputToRD`
+    pub write_lookup_output_to_rd_addr: bool,
+    /// `IsRdNotZero` && `Jump`
+    pub write_pc_to_rd_addr: bool,
 
     /// `VirtualInstruction` flag for the next cycle (false for last cycle).
     pub next_is_virtual: bool,
@@ -181,16 +181,10 @@ impl R1CSCycleInputs {
         let should_branch = instruction_flags[InstructionFlags::Branch] && (lookup_output == 1);
 
         // Write-to-Rd selectors (masked by flags)
-        let write_lookup_output_to_rd_addr = if flags_view[CircuitFlags::WriteLookupOutputToRD] {
-            rd_addr
-        } else {
-            0
-        };
-        let write_pc_to_rd_addr = if flags_view[CircuitFlags::Jump] {
-            rd_addr
-        } else {
-            0
-        };
+        let write_lookup_output_to_rd_addr = flags_view[CircuitFlags::WriteLookupOutputToRD]
+            && instruction_flags[InstructionFlags::IsRdNotZero];
+        let write_pc_to_rd_addr =
+            flags_view[CircuitFlags::Jump] && instruction_flags[InstructionFlags::IsRdNotZero];
 
         let (next_is_virtual, next_is_first_in_sequence) = if let Some(nc) = next_cycle {
             let flags = nc.instruction().circuit_flags();
@@ -659,9 +653,6 @@ pub struct ProductCycleInputs {
     pub should_branch_lookup_output: u64,
 
     // 1-byte fields
-    /// Rd address used by both WriteLookupOutputToRD and WritePCtoRD left factors
-    pub rd_addr: u8,
-
     /// WriteLookupOutputToRD right flag (boolean)
     pub write_lookup_output_to_rd_flag: bool,
     /// Jump flag used by both WritePCtoRD (right) and ShouldJump (left)
@@ -670,6 +661,8 @@ pub struct ProductCycleInputs {
     pub should_branch_flag: bool,
     /// ShouldJump right flag (1 - NextIsNoop)
     pub not_next_noop: bool,
+    /// IsRdZero instruction flag (boolean)
+    pub is_rd_not_zero: bool,
 }
 
 impl ProductCycleInputs {
@@ -691,9 +684,6 @@ impl ProductCycleInputs {
         // Lookup output
         let lookup_output = LookupQuery::<XLEN>::to_lookup_output(cycle);
 
-        // Rd address
-        let rd_addr = cycle.rd_write().0;
-
         // Jump and Branch flags
         let jump_flag = flags_view[CircuitFlags::Jump];
         let branch_flag = instruction_flags[InstructionFlags::Branch];
@@ -709,18 +699,20 @@ impl ProductCycleInputs {
             }
         };
 
+        let is_rd_not_zero = instruction_flags[InstructionFlags::IsRdNotZero];
+
         // WriteLookupOutputToRD flag
         let write_lookup_output_to_rd_flag = flags_view[CircuitFlags::WriteLookupOutputToRD];
 
         Self {
             instruction_left_input: left_input,
             instruction_right_input: right_input,
-            rd_addr,
             write_lookup_output_to_rd_flag,
             should_branch_lookup_output: lookup_output,
             should_branch_flag: branch_flag,
             jump_flag,
             not_next_noop,
+            is_rd_not_zero,
         }
     }
 
@@ -732,8 +724,8 @@ impl ProductCycleInputs {
         // Left: u64/u8/bool
         let mut left_acc: Acc6U<F> = Acc6U::new();
         left_acc.fmadd(&weights_at_r0[0], &self.instruction_left_input);
-        left_acc.fmadd(&weights_at_r0[1], &self.rd_addr);
-        left_acc.fmadd(&weights_at_r0[2], &self.rd_addr);
+        left_acc.fmadd(&weights_at_r0[1], &self.is_rd_not_zero);
+        left_acc.fmadd(&weights_at_r0[2], &self.is_rd_not_zero);
         left_acc.fmadd(&weights_at_r0[3], &self.should_branch_lookup_output);
         left_acc.fmadd(&weights_at_r0[4], &self.jump_flag);
 
@@ -753,7 +745,7 @@ impl ProductCycleInputs {
 /// Order of outputs matches PRODUCT_UNIQUE_FACTOR_VIRTUALS:
 /// 0: LeftInstructionInput (u64)
 /// 1: RightInstructionInput (i128)
-/// 2: RdWa (u8)
+/// 2: IsRdZero (bool)
 /// 3: OpFlags(WriteLookupOutputToRD) (bool)
 /// 4: OpFlags(Jump) (bool)
 /// 5: LookupOutput (u64)
@@ -778,7 +770,7 @@ pub fn compute_claimed_product_factor_evals<F: JoltField>(
             // Accumulators for 8 outputs
             let mut acc_left_u64: Acc6U<F> = Acc6U::new();
             let mut acc_right_i128: Acc6S<F> = Acc6S::new();
-            let mut acc_rd_u8: Acc5U<F> = Acc5U::new();
+            let mut acc_rd_zero_flag: Acc5U<F> = Acc5U::new();
             let mut acc_wl_flag: Acc5U<F> = Acc5U::new();
             let mut acc_jump_flag: Acc5U<F> = Acc5U::new();
             let mut acc_lookup_output: Acc6U<F> = Acc6U::new();
@@ -794,8 +786,8 @@ pub fn compute_claimed_product_factor_evals<F: JoltField>(
                 acc_left_u64.fmadd(&e_in, &row.instruction_left_input);
                 // 1: RightInstructionInput (i128)
                 acc_right_i128.fmadd(&e_in, &row.instruction_right_input);
-                // 2: RdWa (u8)
-                acc_rd_u8.fmadd(&e_in, &(row.rd_addr as u64));
+                // 2: IsRdZero (bool)
+                acc_rd_zero_flag.fmadd(&e_in, &(row.is_rd_not_zero));
                 // 3: OpFlags(WriteLookupOutputToRD) (bool)
                 acc_wl_flag.fmadd(&e_in, &row.write_lookup_output_to_rd_flag);
                 // 4: OpFlags(Jump) (bool)
@@ -811,7 +803,7 @@ pub fn compute_claimed_product_factor_evals<F: JoltField>(
             let mut out_unr = [F::Unreduced::<9>::zero(); 8];
             out_unr[0] = eq1_val.mul_unreduced::<9>(acc_left_u64.reduce());
             out_unr[1] = eq1_val.mul_unreduced::<9>(acc_right_i128.reduce());
-            out_unr[2] = eq1_val.mul_unreduced::<9>(acc_rd_u8.reduce());
+            out_unr[2] = eq1_val.mul_unreduced::<9>(acc_rd_zero_flag.reduce());
             out_unr[3] = eq1_val.mul_unreduced::<9>(acc_wl_flag.reduce());
             out_unr[4] = eq1_val.mul_unreduced::<9>(acc_jump_flag.reduce());
             out_unr[5] = eq1_val.mul_unreduced::<9>(acc_lookup_output.reduce());

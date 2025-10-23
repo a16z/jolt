@@ -28,7 +28,7 @@ impl Flags for JAL {
         let mut flags = [false; NUM_INSTRUCTION_FLAGS];
         flags[InstructionFlags::LeftOperandIsPC] = true;
         flags[InstructionFlags::RightOperandIsImm] = true;
-        flags[InstructionFlags::IsRdZero] = self.operands.rd == 0;
+        flags[InstructionFlags::IsRdNotZero] = self.operands.rd != 0;
         flags
     }
 }

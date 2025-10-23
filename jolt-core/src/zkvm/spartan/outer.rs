@@ -247,28 +247,28 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
                         let x_in_odd = x_in_even + 1;
                         let e_in_odd = E_in[x_in_odd];
 
-                        let az1_u8 = eval_az_second_group(&row_inputs);
+                        let az1_bool = eval_az_second_group(&row_inputs);
                         let bz1 = eval_bz_second_group(&row_inputs);
 
                         #[cfg(test)]
                         {
                             // Test that az * bz = 0 for second group
-                            debug_assert!(az1_u8
+                            debug_assert!(az1_bool
                                 .iter()
                                 .zip(bz1.iter())
-                                .all(|(az, bz)| *az == 0u8 || bz.is_zero()));
+                                .all(|(az, bz)| !(*az) || bz.is_zero()));
                         }
 
                         let g2_len = core::cmp::min(
                             NUM_REMAINING_R1CS_CONSTRAINTS,
                             UNIVARIATE_SKIP_DOMAIN_SIZE,
                         );
-                        let mut az1_u8_padded: [u8; UNIVARIATE_SKIP_DOMAIN_SIZE] =
-                            [0; UNIVARIATE_SKIP_DOMAIN_SIZE];
+                        let mut az1_bool_padded: [bool; UNIVARIATE_SKIP_DOMAIN_SIZE] =
+                            [false; UNIVARIATE_SKIP_DOMAIN_SIZE];
                         let mut bz1_s160_padded: [S160; UNIVARIATE_SKIP_DOMAIN_SIZE] =
                             [S160::from(0i128); UNIVARIATE_SKIP_DOMAIN_SIZE];
 
-                        az1_u8_padded[..g2_len].copy_from_slice(&az1_u8[..g2_len]);
+                        az1_bool_padded[..g2_len].copy_from_slice(&az1_bool[..g2_len]);
                         bz1_s160_padded[..g2_len].copy_from_slice(&bz1[..g2_len]);
 
                         for j in 0..UNIVARIATE_SKIP_DEGREE {
@@ -279,8 +279,8 @@ impl<F: JoltField> OuterUniSkipInstance<F> {
                             for i in 0..UNIVARIATE_SKIP_DOMAIN_SIZE {
                                 let c = coeffs[i] as i64;
 
-                                if az1_u8_padded[i] != 0 {
-                                    let az1_i = az1_u8_padded[i] as i64;
+                                if az1_bool_padded[i] {
+                                    let az1_i = az1_bool_padded[i] as i64;
                                     sum_c_az1_i64 += c.saturating_mul(az1_i);
                                     // Optimization: if az is non-zero then bz must be zero
                                     // so we can skip the bz multiplication

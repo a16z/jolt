@@ -13,7 +13,7 @@
 //! Grouped evaluation entry points:
 //! - `eval_az_first_group` -> `[bool; UNIVARIATE_SKIP_DOMAIN_SIZE]`
 //! - `eval_bz_first_group` -> `[i128; UNIVARIATE_SKIP_DOMAIN_SIZE]`
-//! - `eval_az_second_group` -> `[u8; NUM_REMAINING_R1CS_CONSTRAINTS]`
+//! - `eval_az_second_group` -> `[bool; NUM_REMAINING_R1CS_CONSTRAINTS]`
 //! - `eval_bz_second_group` -> `[S160; NUM_REMAINING_R1CS_CONSTRAINTS]`
 //! - `compute_az_r_group0/group1` and `compute_bz_r_group0/group1` fold these
 //!   vectors against Lagrange weights at the evaluation point `r` using
@@ -480,61 +480,61 @@ pub fn eval_bz_first_group(row: &R1CSCycleInputs) -> [i128; UNIVARIATE_SKIP_DOMA
 }
 
 /// Evaluate Az for the second group
-pub fn eval_az_second_group(row: &R1CSCycleInputs) -> [u8; NUM_REMAINING_R1CS_CONSTRAINTS] {
+pub fn eval_az_second_group(row: &R1CSCycleInputs) -> [bool; NUM_REMAINING_R1CS_CONSTRAINTS] {
     use ConstraintName as N;
     let flags = &row.flags;
-    let add = flags[CircuitFlags::AddOperands] as u8;
-    let sub = flags[CircuitFlags::SubtractOperands] as u8;
-    let mul = flags[CircuitFlags::MultiplyOperands] as u8;
+    let add = flags[CircuitFlags::AddOperands];
+    let sub = flags[CircuitFlags::SubtractOperands];
+    let mul = flags[CircuitFlags::MultiplyOperands];
 
-    let mut out: [u8; NUM_REMAINING_R1CS_CONSTRAINTS] = [0u8; NUM_REMAINING_R1CS_CONSTRAINTS];
+    let mut out: [bool; NUM_REMAINING_R1CS_CONSTRAINTS] = [false; NUM_REMAINING_R1CS_CONSTRAINTS];
     let mut i = 0;
     while i < UNIFORM_R1CS_SECOND_GROUP.len() {
         let name = UNIFORM_R1CS_SECOND_GROUP[i].name;
         out[i] = match name {
             N::RamAddrEqRs1PlusImmIfLoadStore => {
-                (flags[CircuitFlags::Load] || flags[CircuitFlags::Store]) as u8
+                flags[CircuitFlags::Load] || flags[CircuitFlags::Store]
             }
             N::RamAddrEqZeroIfNotLoadStore => {
-                (!(flags[CircuitFlags::Load] || flags[CircuitFlags::Store])) as u8
+                !(flags[CircuitFlags::Load] || flags[CircuitFlags::Store])
             }
-            N::RamReadEqRamWriteIfLoad => flags[CircuitFlags::Load] as u8,
-            N::RamReadEqRdWriteIfLoad => flags[CircuitFlags::Load] as u8,
-            N::Rs2EqRamWriteIfStore => flags[CircuitFlags::Store] as u8,
+            N::RamReadEqRamWriteIfLoad => flags[CircuitFlags::Load],
+            N::RamReadEqRdWriteIfLoad => flags[CircuitFlags::Load],
+            N::Rs2EqRamWriteIfStore => flags[CircuitFlags::Store],
             N::LeftLookupZeroUnlessAddSubMul => add | sub | mul,
             N::LeftLookupEqLeftInputOtherwise => {
                 !(flags[CircuitFlags::AddOperands]
                     || flags[CircuitFlags::SubtractOperands]
-                    || flags[CircuitFlags::MultiplyOperands]) as u8
+                    || flags[CircuitFlags::MultiplyOperands])
             }
-            N::RightLookupAdd => flags[CircuitFlags::AddOperands] as u8,
-            N::RightLookupSub => flags[CircuitFlags::SubtractOperands] as u8,
-            N::RightLookupEqProductIfMul => flags[CircuitFlags::MultiplyOperands] as u8,
+            N::RightLookupAdd => flags[CircuitFlags::AddOperands],
+            N::RightLookupSub => flags[CircuitFlags::SubtractOperands],
+            N::RightLookupEqProductIfMul => flags[CircuitFlags::MultiplyOperands],
             N::RightLookupEqRightInputOtherwise => {
                 !(flags[CircuitFlags::AddOperands]
                     || flags[CircuitFlags::SubtractOperands]
                     || flags[CircuitFlags::MultiplyOperands]
-                    || flags[CircuitFlags::Advice]) as u8
+                    || flags[CircuitFlags::Advice])
             }
-            N::AssertLookupOne => flags[CircuitFlags::Assert] as u8,
+            N::AssertLookupOne => flags[CircuitFlags::Assert],
             N::RdWriteEqLookupIfWriteLookupToRd => row.write_lookup_output_to_rd_addr,
             N::RdWriteEqPCPlusConstIfWritePCtoRD => row.write_pc_to_rd_addr,
-            N::NextUnexpPCEqLookupIfShouldJump => row.should_jump as u8,
-            N::NextUnexpPCEqPCPlusImmIfShouldBranch => row.should_branch as u8,
+            N::NextUnexpPCEqLookupIfShouldJump => row.should_jump,
+            N::NextUnexpPCEqPCPlusImmIfShouldBranch => row.should_branch,
             N::NextUnexpPCUpdateOtherwise => {
-                let jump = flags[CircuitFlags::Jump] as u8;
-                let should_branch = row.should_branch as u8;
+                let jump = flags[CircuitFlags::Jump];
+                let should_branch = row.should_branch;
                 #[cfg(test)]
                 {
                     // panic if both jump and should_branch are set
-                    if jump + should_branch > 1 {
+                    if jump && should_branch {
                         panic!("jump and should_branch are both set");
                     }
                 }
-                1u8.wrapping_sub(jump).wrapping_sub(should_branch)
+                jump ^ should_branch
             }
-            N::NextPCEqPCPlusOneIfInline => flags[CircuitFlags::VirtualInstruction] as u8,
-            N::MustStartSequenceFromBeginning => 0u8,
+            N::NextPCEqPCPlusOneIfInline => flags[CircuitFlags::VirtualInstruction],
+            N::MustStartSequenceFromBeginning => false,
         };
         i += 1;
     }
