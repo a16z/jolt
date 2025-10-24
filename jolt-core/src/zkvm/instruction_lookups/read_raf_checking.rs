@@ -190,6 +190,11 @@ pub struct ReadRafSumcheck<F: JoltField> {
 }
 
 impl<'a, F: JoltField> ReadRafSumcheck<F> {
+    /// Creates a prover-side instance for the Read+RAF batched sumcheck.
+    ///
+    /// Draws the batching challenge γ, fetches the prior virtual openings for
+    /// Spartan/Branch and Left/Right operands, builds the prefix–suffix state,
+    /// and initializes phase 0 (first LOG_M address-chunk).
     #[tracing::instrument(skip_all, name = "InstructionReadRafSumcheck::new_prover")]
     pub fn new_prover(
         sm: &'a mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
@@ -216,6 +221,10 @@ impl<'a, F: JoltField> ReadRafSumcheck<F> {
         }
     }
 
+    /// Creates a verifier-side instance for the Read+RAF batched sumcheck.
+    ///
+    /// Derives γ and γ² and records log₂(T). Virtual openings will be queued
+    /// later in `cache_openings_verifier` at the appropriate points.
     pub fn new_verifier(
         sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
     ) -> Self {
@@ -233,6 +242,11 @@ impl<'a, F: JoltField> ReadRafSumcheck<F> {
 
 impl<'a, F: JoltField> ReadRafProverState<F> {
     #[tracing::instrument(skip_all, name = "InstructionReadRafProverState::new")]
+    /// Builds prover-side working state:
+    /// - Precomputes per-cycle lookup index, interleaving flags, and table choices
+    /// - Buckets cycles by table and by path (interleaved vs identity)
+    /// - Allocates per-table suffix accumulators and u-evals for rv/raf parts
+    /// - Instantiates the three RAF decompositions and Gruen EQs over cycles
     fn new(
         trace: &'a [Cycle],
         r_spartan: OpeningPoint<BIG_ENDIAN, F>,
@@ -417,6 +431,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
     }
 
     #[tracing::instrument(skip_all, name = "InstructionReadRafSumcheck::compute_prover_message")]
+    /// Produces the prover's degree-≤3 univariate for the current round.
+    ///
+    /// - For the first LOG_K rounds: returns two evaluations combining
+    ///   read-checking and RAF prefix–suffix messages (at X∈{0,2}).
+    /// - For the last log(T) rounds: uses Gruen-split EQs to form the Spartan
+    ///   and Branch univariates and returns their γ-weighted sum.
     fn compute_prover_message(&mut self, round: usize, _previous_claim: F) -> Vec<F> {
         let ps = self.prover_state.as_mut().unwrap();
         if round < LOG_K {
@@ -509,6 +529,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
     }
 
     #[tracing::instrument(skip_all, name = "InstructionReadRafSumcheck::bind")]
+    /// Binds the next variable (address or cycle) and advances state.
+    ///
+    /// Address rounds: bind all active prefix–suffix polynomials and the
+    /// expanding-table accumulator; update checkpoints every two rounds;
+    /// initialize next phase/handoff when needed. Cycle rounds: bind the ra/Val
+    /// polynomials and Gruen EQs; update previous-claim hints via last round's
+    /// univariate.
     fn bind(&mut self, r_j: F::Challenge, round: usize) {
         let ps = self.prover_state.as_mut().unwrap();
         ps.r.push(r_j);
@@ -575,6 +602,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
         accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
         r: &[F::Challenge],
     ) -> F {
+        // Verifier’s RHS reconstruction from virtual claims at r:
+        //
+        // Computes Val and RafVal contributions at r_address, forms EQ(r_cycle)
+        // for Spartan/Branch, multiplies by ra claim at r_sumcheck, and returns
+        // the batched identity RHS to be matched against the LHS input claim.
         let (r_address_prime, r_cycle_prime) = r.split_at(LOG_K);
         let left_operand_eval =
             OperandPolynomial::<F>::new(LOG_K, OperandSide::Left).evaluate(r_address_prime);
@@ -662,6 +694,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
         transcript: &mut T,
         r_sumcheck: OpeningPoint<BIG_ENDIAN, F>,
     ) {
+        // Prover publishes new virtual openings derived by this sumcheck:
+        // - Per-table LookupTableFlag(i) at r_cycle
+        // - InstructionRa at r_sumcheck (ra MLE’s final claim)
+        // - InstructionRafFlag at r_cycle
         let ps = self.prover_state.as_ref().unwrap();
         let (_r_address, r_cycle) = r_sumcheck.clone().split_at(LOG_K);
         let eq_r_cycle_prime = EqPolynomial::<F>::evals(&r_cycle.r);
@@ -713,6 +749,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
         transcript: &mut T,
         r_sumcheck: OpeningPoint<BIG_ENDIAN, F>,
     ) {
+        // Verifier requests the virtual openings that the prover must provide
+        // for this sumcheck (same set as published by the prover-side cache).
         let (_r_address, r_cycle) = r_sumcheck.split_at(LOG_K);
 
         (0..LookupTables::<XLEN>::COUNT).for_each(|i| {
@@ -747,6 +785,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
 
 impl<F: JoltField> ReadRafProverState<F> {
     /// To be called in the beginning of each phase, before any binding
+    /// Phase initialization for address-binding:
+    /// - Condenses prior-phase u-evals through the expanding-table v[phase-1]
+    /// - Builds Q for RAF (Left/Right dual and Identity) from cycle buckets
+    /// - Refreshes per-table read-checking suffix polynomials for this phase
+    /// - Initializes/caches P via the shared `PrefixRegistry`
+    /// - Resets the current expanding table accumulator for this phase
     #[tracing::instrument(skip_all, name = "InstructionReadRafProverState::init_phase")]
     fn init_phase(&mut self, phase: usize) {
         // Condensation
@@ -794,6 +838,10 @@ impl<F: JoltField> ReadRafProverState<F> {
         self.v[phase].reset(F::one());
     }
 
+    /// Recomputes per-table suffix accumulators used by read-checking for the
+    /// current phase. For each table’s suffix family, bucket cycles by the
+    /// current chunk value and aggregate weighted contributions into Dense MLEs
+    /// of size M = 2^{LOG_M}.
     #[tracing::instrument(skip_all, name = "InstructionReadRafProverState::init_suffix_polys")]
     fn init_suffix_polys(&mut self, phase: usize) {
         let num_chunks = rayon::current_num_threads().next_power_of_two();
@@ -864,6 +912,13 @@ impl<F: JoltField> ReadRafProverState<F> {
     }
 
     /// To be called before the last log(T) rounds
+    /// Handoff between address and cycle rounds:
+    /// - Materializes ra(k,j) from expanding tables across all phases
+    /// - Commits prefix checkpoints into a fixed `PrefixEval` vector
+    /// - Materializes Val_j(k) from table prefixes/suffixes
+    /// - Materializes RafVal_j(k) from (Left,Right,Identity) prefixes with γ-weights
+    /// - Computes previous-claim hints for Gruen (Spartan and Branch)
+    /// - Converts ra/Val/RafVal into MultilinearPolynomial over (addr,cycle)
     #[tracing::instrument(skip_all, name = "InstructionReadRafProverState::init_log_t_rounds")]
     fn init_log_t_rounds(&mut self, gamma: F, gamma_sqr: F) {
         // Drop stuff that's no longer needed
@@ -974,6 +1029,10 @@ impl<F: JoltField> ReadRafProverState<F> {
 }
 
 impl<F: JoltField> ReadRafSumcheck<F> {
+    /// Address-round prover message: sum of read-checking and RAF components.
+    ///
+    /// Each component is a degree-2 univariate evaluated at X∈{0,2} using
+    /// prefix–suffix decomposition, then added to form the batched message.
     fn compute_prefix_suffix_prover_message(&self, round: usize) -> [F; 2] {
         let mut read_checking = [F::zero(), F::zero()];
         let mut raf = [F::zero(), F::zero()];
@@ -990,6 +1049,10 @@ impl<F: JoltField> ReadRafSumcheck<F> {
         [read_checking[0] + raf[0], read_checking[1] + raf[1]]
     }
 
+    /// RAF part for address rounds.
+    ///
+    /// Builds two evaluations at X∈{0,2} for the batched
+    /// (Left + γ·Right) vs Identity path, folding γ-weights into the result.
     fn prover_msg_raf(&self) -> [F; 2] {
         let ps = self.prover_state.as_ref().unwrap();
         let len = ps.identity_ps.Q_len();
@@ -1038,6 +1101,11 @@ impl<F: JoltField> ReadRafSumcheck<F> {
         ]
     }
 
+    /// Read-checking part for address rounds.
+    ///
+    /// For each lookup table, evaluates Σ P(0)·Q^L, Σ P(2)·Q^L, Σ P(2)·Q^R via
+    /// table-specific suffix families, then returns [g(0), g(2)] by the standard
+    /// quadratic interpolation trick.
     fn prover_msg_read_checking(&self, j: usize) -> [F; 2] {
         let ps = self.prover_state.as_ref().unwrap();
         let lookup_tables: Vec<_> = LookupTables::<XLEN>::iter().collect();
