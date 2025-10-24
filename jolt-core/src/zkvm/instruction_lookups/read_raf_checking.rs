@@ -74,7 +74,7 @@ use rayon::iter::{IndexedParallelIterator, ParallelIterator};
 /// - rv_branch  := ⟦LookupOutput⟧ at SumcheckId::ProductVirtualization
 /// - left_op    := ⟦LeftLookupOperand⟧ at SumcheckId::SpartanOuter
 /// - right_op   := ⟦RightLookupOperand⟧ at SumcheckId::SpartanOuter
-/// Combined as: rv_spartan(r_sp) + γ·rv_branch(r_br) + γ^2·(left_op + γ·right_op)
+///   Combined as: rv_spartan(r_sp) + γ·rv_branch(r_br) + γ^2·(left_op + γ·right_op)
 ///
 /// Statement proved by this sumcheck (RHS), for random challenges
 /// r_addr ∈ F^{LOG_K}, r_sp, r_br ∈ F^{log_T}:
@@ -91,12 +91,11 @@ use rayon::iter::{IndexedParallelIterator, ParallelIterator};
 ///
 /// Prover structure:
 /// - First log(K) rounds bind address vars using prefix/suffix decomposition, accumulating:
-///     Σ_k ra(k, j)·Val_j(k)  and  Σ_k ra(k, j)·RafVal_j(k)
+///   Σ_k ra(k, j)·Val_j(k)  and  Σ_k ra(k, j)·RafVal_j(k)
 ///   for each j (via u_evals vectors and suffix polynomials).
 /// - Last log(T) rounds bind cycle vars using two GruenSplitEqPolynomial instances (for r_sp, r_br),
 ///   producing degree-3 univariates with the required previous-round claims.
 /// - The published univariate matches the RHS above; the verifier checks it against the LHS claims.
-
 const DEGREE: usize = 3;
 
 /// Prover state for the instruction lookups Read+RAF sumcheck.

@@ -72,8 +72,8 @@ const N_STAGES: usize = 5;
 ///   * Stage1: Val_1(k) = unexpanded_pc(k) + γ·imm(k) + Σ_t γ^{2+t}·circuit_flag_t(k).
 ///   * Stage2: Val_2(k) = 1_{jump}(k) + γ·1_{branch}(k) + γ^2·rd_addr(k) + γ^3·1_{write_lookup_to_rd}(k).
 ///   * Stage3: Val_3(k) = imm(k) + γ·unexpanded_pc(k) + γ^2·1_{L_is_rs1}(k) + γ^3·1_{L_is_pc}(k)
-///                        + γ^4·1_{R_is_rs2}(k) + γ^5·1_{R_is_imm}(k) + γ^6·1_{IsNoop}(k)
-///                        + γ^7·1_{VirtualInstruction}(k) + γ^8·1_{IsFirstInSequence}(k).
+///   + γ^4·1_{R_is_rs2}(k) + γ^5·1_{R_is_imm}(k) + γ^6·1_{IsNoop}(k)
+///   + γ^7·1_{VirtualInstruction}(k) + γ^8·1_{IsFirstInSequence}(k).
 ///   * Stage4: Val_4(k) = 1_{rd=r}(k) + γ·1_{rs1=r}(k) + γ^2·1_{rs2=r}(k), where r is fixed by opening.
 ///   * Stage5: Val_5(k) = 1_{rd=r}(k) + γ·1_{¬interleaved}(k) + Σ_i γ^{2+i}·1_{table=i}(k).
 ///
@@ -98,7 +98,6 @@ const N_STAGES: usize = 5;
 ///   this materializes the address-only Val_s(k) evaluations and sets up `ra_i` polynomials.
 /// - Cycle variables are then bound (low→high) per stage with `GruenSplitEqPolynomial`, using
 ///   previous-round claims to recover the cubic univariate each round.
-
 /// Prover state for the bytecode Read+RAF multi-stage sumcheck.
 ///
 /// First log(K) rounds bind address variables in chunks, aggregating per-stage address-only
