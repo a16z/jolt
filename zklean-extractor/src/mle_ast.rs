@@ -401,6 +401,15 @@ impl crate::util::ZkLeanReprField for MleAst {
         evaluate_node(self.root, env)
     }
 
+    /// Note: This performs common subexpression elimination for the output formula, as it tends to
+    /// have many large repeated subterms.  We have found experimentally that Lean struggles with
+    /// this, even when we define the common subterms as let-bindings.  Performance degrades
+    /// exponentially in the number of let-bindings, which, when we moved to 64-bit formulae, made
+    /// it unwieldy.
+    ///
+    /// Instead, we now output shared sub-formulae as top-level definitions, recovering type
+    /// checking linear in the number of definitions.  See `CSE_DEPTH_THRESHOLD` to control the size
+    /// of each definition.
     fn format_for_lean(
         &self,
         f: &mut fmt::Formatter<'_>,
