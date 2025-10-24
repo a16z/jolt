@@ -519,7 +519,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
     /// Returns a vec of evaluations (de-duplicated factors after product virtualization):
     ///    Val(k) = jump_flag(k)
     ///             + gamma * branch_flag(k)
-    ///             + gamma^2 * rd_addr(k)
+    ///             + gamma^2 * is_rd_not_zero_flag(k)
     ///             + gamma^3 * write_lookup_output_to_rd_flag(k)
     /// where jump_flag(k) = 1 if instruction k is a jump, 0 otherwise;
     ///       branch_flag(k) = 1 if instruction k is a branch, 0 otherwise;
@@ -535,7 +535,6 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             .map(|instruction| {
                 let flags = instruction.circuit_flags();
                 let instr_flags = instruction.instruction_flags();
-                let instr = instruction.normalize();
                 let mut linear_combination = F::zero();
 
                 if flags[CircuitFlags::Jump] {
@@ -544,8 +543,9 @@ impl<F: JoltField> ReadRafSumcheck<F> {
                 if instr_flags[InstructionFlags::Branch] {
                     linear_combination += gamma_powers[1];
                 }
-                let rd_addr_val = F::from_u64(instr.operands.rd as u64);
-                linear_combination += rd_addr_val * gamma_powers[2];
+                if instr_flags[InstructionFlags::IsRdNotZero] {
+                    linear_combination += gamma_powers[2];
+                }
                 if flags[CircuitFlags::WriteLookupOutputToRD] {
                     linear_combination += gamma_powers[3];
                 }
@@ -568,7 +568,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
             SumcheckId::ProductVirtualization,
         );
         let (_, rd_wa_claim) = sm.get_virtual_polynomial_opening(
-            VirtualPolynomial::RdWa,
+            VirtualPolynomial::InstructionFlags(InstructionFlags::IsRdNotZero),
             SumcheckId::ProductVirtualization,
         );
         let (_, write_lookup_output_to_rd_flag_claim) = sm.get_virtual_polynomial_opening(
@@ -949,19 +949,19 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
                         product_eval_univariate_assign(&ra_eval_pairs, &mut ra_prod_evals);
 
                         for stage in 0..N_STAGES {
-                            let eq_out_eval = ps.gruen_eq_polys[stage].E_in_current()[j_lo];
+                            let eq_in_eval = ps.gruen_eq_polys[stage].E_in_current()[j_lo];
                             for i in 0..degree - 1 {
                                 evals_per_stage[stage][i] +=
-                                    eq_out_eval.mul_unreduced::<9>(ra_prod_evals[i]);
+                                    eq_in_eval.mul_unreduced::<9>(ra_prod_evals[i]);
                             }
                         }
                     }
 
                     array::from_fn(|stage| {
-                        let eq_in_eval = ps.gruen_eq_polys[stage].E_out_current()[j_hi];
+                        let eq_out_eval = ps.gruen_eq_polys[stage].E_out_current()[j_hi];
                         evals_per_stage[stage]
                             .iter()
-                            .map(|v| eq_in_eval * F::from_montgomery_reduce(*v))
+                            .map(|v| eq_out_eval * F::from_montgomery_reduce(*v))
                             .collect()
                     })
                 })

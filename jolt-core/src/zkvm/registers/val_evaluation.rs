@@ -175,7 +175,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ValEvaluationSumche
         if let Some(prover_state) = &mut self.prover_state {
             prover_state.inc.bind_parallel(r_j, BindingOrder::HighToLow);
             prover_state.wa.bind_parallel(r_j, BindingOrder::HighToLow);
-            prover_state.lt.bind_high_to_low(r_j);
+            prover_state.lt.bind(r_j, BindingOrder::HighToLow);
         }
     }
 
