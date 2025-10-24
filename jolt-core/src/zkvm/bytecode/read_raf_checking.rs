@@ -91,14 +91,14 @@ const N_STAGES: usize = 5;
 /// Thus the identity established by this sumcheck is:
 ///   rv_1(r_1) + γ·rv_2(r_2) + γ^2·rv_3(r_3) + γ^3·rv_4(r_4) + γ^4·rv_5(r_5)
 ///   + γ^5·raf_1(r_1) + γ^6·raf_3(r_3)
-///   = Σ_{j,k} ra(k, j) · [ Σ_{s=1}^{5} γ^{s-1}·eq_s(j)·Val_s(k) + γ^5·eq_1(j)·Int(k) + γ^6·eq_3(j)·Int(k) ].
+///     = Σ_{j,k} ra(k, j) · [ Σ_{s=1}^{5} γ^{s-1}·eq_s(j)·Val_s(k) + γ^5·eq_1(j)·Int(k) + γ^6·eq_3(j)·Int(k) ].
 ///
 /// Binding/implementation notes:
 /// - Address variables are bound first (high→low) in `d` chunks, accumulating `F_i` and `v` tables;
 ///   this materializes the address-only Val_s(k) evaluations and sets up `ra_i` polynomials.
 /// - Cycle variables are then bound (low→high) per stage with `GruenSplitEqPolynomial`, using
 ///   previous-round claims to recover the cubic univariate each round.
-/// Prover state for the bytecode Read+RAF multi-stage sumcheck.
+///   Prover state for the bytecode Read+RAF multi-stage sumcheck.
 ///
 /// First log(K) rounds bind address variables in chunks, aggregating per-stage address-only
 /// contributions; last log(T) rounds bind cycle variables via per-stage `GruenSplitEqPolynomial`s.
