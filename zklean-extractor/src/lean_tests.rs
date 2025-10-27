@@ -1,0 +1,96 @@
+use jolt_core::field::JoltField;
+use rand_core::RngCore;
+
+use crate::{lookups::ZkLeanLookupTable, modules::{AsModule, Module}, util::indent};
+
+// XXX Extract this? Or make it generic?
+type TestField = ark_bn254::Fr;
+
+#[derive(Debug, Clone)]
+pub struct ZkLeanLookupTableTest<const WORD_SIZE: usize> {
+    lookup_table_ident: String,
+    output: TestField,
+}
+
+impl<const WORD_SIZE: usize> ZkLeanLookupTableTest<WORD_SIZE> {
+    fn extract(lookup_table: &ZkLeanLookupTable<WORD_SIZE>, input: &[TestField]) -> Self {
+        Self {
+            lookup_table_ident: lookup_table.name(),
+            output: lookup_table.lookup_table.evaluate_mle(input),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ZkLeanTests<const WORD_SIZE: usize> {
+    input: Vec<TestField>,
+    tests: Vec<ZkLeanLookupTableTest<WORD_SIZE>>,
+}
+
+impl<const WORD_SIZE: usize> ZkLeanTests<WORD_SIZE> {
+    pub fn extract(rng: &mut impl RngCore) -> Self {
+        let num_variables = 2 * WORD_SIZE;
+        let input: Vec<_> = (0..num_variables)
+            .map(|_| TestField::random(rng))
+            .collect();
+        let tests: Vec<_> = ZkLeanLookupTable::iter()
+            .map(|table| ZkLeanLookupTableTest::extract(&table, &input))
+            .collect();
+
+        Self {
+            input,
+            tests,
+        }
+    }
+
+    fn zklean_imports(&self) -> Vec<String> {
+        vec![
+            String::from("MathLib"),
+            String::from("Jolt.LookupTables"),
+        ]
+    }
+
+    fn zklean_pretty_print(&self, f: &mut impl std::io::Write, indent_level: usize) -> std::io::Result<()> {
+        // TODO: Use ArkLib instead
+        writeln!(f, "namespace BN254")?;
+        writeln!(f, "@[reducible]")?;
+        writeln!(f, "def scalarFieldSize : Nat := 21888242871839275222246405745257275088548364400416034343698204186575808495617")?;
+        writeln!(f, "abbrev ScalarField := ZMod scalarFieldSize")?;
+        writeln!(f, "instance : Fact (Nat.Prime scalarFieldSize) := by sorry")?;
+        writeln!(f, "instance : Field ScalarField := ZMod.instField scalarFieldSize")?;
+        writeln!(f, "end BN254")?;
+        writeln!(f, "")?;
+
+        writeln!(f, "abbrev TestField := BN254.ScalarField")?;
+        writeln!(f, "")?;
+
+        let num_variables = 2 * WORD_SIZE;
+        write!(f, "{}def input : Vector TestField {num_variables} := #v[", indent(indent_level))?;
+        for (i, value) in self.input.iter().enumerate() {
+            write!(f, " {value}{}", if i == self.input.len() - 1 { "" } else { "," })?;
+        }
+        writeln!(f, " ]")?;
+        writeln!(f, "")?;
+
+        for test in &self.tests {
+            let ident = &test.lookup_table_ident;
+            let output = test.output;
+            write!(f, "{}#guard {ident} input = {output}\n", indent(indent_level))?;
+        }
+
+        Ok(())
+    }
+}
+
+impl<const WORD_SIZE: usize> AsModule for ZkLeanTests<WORD_SIZE> {
+    fn as_module(&self) -> std::io::Result<Module> {
+        let mut contents: Vec<u8> = vec![];
+        self.zklean_pretty_print(&mut contents, 0)?;
+
+        Ok(Module {
+            name: String::from("Tests"),
+            imports: self.zklean_imports(),
+            contents,
+        })
+    }
+}
