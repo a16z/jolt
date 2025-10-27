@@ -2,8 +2,15 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, SerializationError
 use ark_std::{One, Zero};
 use jolt_core::field::{FieldOps, JoltField};
 
-use std::fmt::{self, Write};
+use std::cmp::max;
+use std::collections::HashMap;
+use std::fmt::{self};
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::{OnceLock, RwLock};
+
+#[cfg(test)]
+use crate::util::Environment;
+use crate::util::LetBinderIndex;
 
 type Scalar = i128;
 
@@ -41,26 +48,33 @@ fn edge_for_root(root: NodeId) -> Edge {
 pub type DefaultMleAst = MleAst;
 
 /// An atomic (var or const) AST element
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, Hash, PartialEq, Eq, Clone, Copy)]
 pub enum Atom {
     /// A constant value.
     Scalar(Scalar),
     /// A variable, represented by an index into a register of variables
     Var(Index),
+    /// A let-bound variable, used for common sub-expression elimination
+    NamedVar(LetBinderIndex),
 }
 
 impl Atom {
     #[cfg(test)]
-    fn evaluate<F: JoltField>(&self, vars: &[F]) -> F {
+    fn evaluate<F: JoltField>(&self, env: &Environment<F>) -> F {
         match self {
             Self::Scalar(value) => F::from_i128(*value),
-            Self::Var(index) => vars[*index as usize], // TODO: handle multiple registers?
+            Self::Var(index) => env.vars[*index as usize],
+            Self::NamedVar(index) => env
+                .let_bindings
+                .get(index)
+                .expect("unregistered let-bound variable")
+                .clone(),
         }
     }
 }
 
 /// Either an index into the arena, or an atomic (var or const) element.
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, Hash, PartialEq, Eq, Clone, Copy)]
 pub enum Edge {
     /// An atomic (var or const) AST element.
     Atom(Atom),
@@ -69,7 +83,7 @@ pub enum Edge {
 }
 
 /// A node for a polynomial AST. Children are represented by node IDs into the global arena.
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, Hash, PartialEq, Eq, Clone, Copy)]
 pub enum Node {
     /// An atomic (var or const) AST element. This should only be used for MLE's with a single
     /// node.
@@ -144,33 +158,41 @@ impl MleAst {
 }
 
 #[cfg(test)]
-fn evaluate_edge<F: JoltField>(edge: Edge, vars: &[F]) -> F {
+fn evaluate_edge<F: JoltField>(edge: Edge, env: &Environment<F>) -> F {
     match edge {
-        Edge::Atom(atom) => atom.evaluate(vars),
-        Edge::NodeRef(node) => evaluate_node(node, vars),
+        Edge::Atom(atom) => atom.evaluate(env),
+        Edge::NodeRef(node) => evaluate_node(node, env),
     }
 }
 
 #[cfg(test)]
-fn evaluate_node<F: JoltField>(node: NodeId, vars: &[F]) -> F {
+fn evaluate_node<F: JoltField>(node: NodeId, env: &Environment<F>) -> F {
     match get_node(node) {
-        Node::Atom(atom) => atom.evaluate(vars),
-        Node::Neg(edge) => -evaluate_edge(edge, vars),
-        Node::Inv(edge) => F::one() / evaluate_edge(edge, vars),
-        Node::Add(e1, e2) => evaluate_edge(e1, vars) + evaluate_edge(e2, vars),
-        Node::Mul(e1, e2) => evaluate_edge(e1, vars) * evaluate_edge(e2, vars),
-        Node::Sub(e1, e2) => evaluate_edge(e1, vars) - evaluate_edge(e2, vars),
-        Node::Div(e1, e2) => evaluate_edge(e1, vars) / evaluate_edge(e2, vars),
+        Node::Atom(atom) => atom.evaluate(env),
+        Node::Neg(edge) => -evaluate_edge(edge, env),
+        Node::Inv(edge) => F::one() / evaluate_edge(edge, env),
+        Node::Add(e1, e2) => evaluate_edge(e1, env) + evaluate_edge(e2, env),
+        Node::Mul(e1, e2) => evaluate_edge(e1, env) * evaluate_edge(e2, env),
+        Node::Sub(e1, e2) => evaluate_edge(e1, env) - evaluate_edge(e2, env),
+        Node::Div(e1, e2) => evaluate_edge(e1, env) / evaluate_edge(e2, env),
     }
 }
 
-fn fmt_atom(f: &mut fmt::Formatter<'_>, atom: Atom, reg_name: Option<char>) -> fmt::Result {
+struct FormattingData<'a> {
+    prefix: &'a String,
+    reg_name: Option<char>,
+}
+
+fn fmt_atom(f: &mut fmt::Formatter<'_>, fmt_data: &FormattingData<'_>, atom: Atom) -> fmt::Result {
     match atom {
         Atom::Scalar(value) => write!(f, "{value}")?,
         Atom::Var(index) => {
-            let name = reg_name.expect("unreachable: register name missing in var");
+            let name = fmt_data
+                .reg_name
+                .expect("unreachable: register name missing in var");
             write!(f, "{name}[{index}]")?;
         }
+        Atom::NamedVar(index) => write!(f, "{}{index} x", fmt_data.prefix)?,
     }
 
     Ok(())
@@ -178,65 +200,191 @@ fn fmt_atom(f: &mut fmt::Formatter<'_>, atom: Atom, reg_name: Option<char>) -> f
 
 fn fmt_edge(
     f: &mut fmt::Formatter<'_>,
+    fmt_data: &FormattingData<'_>,
     edge: Edge,
-    reg_name: Option<char>,
     group: bool,
 ) -> fmt::Result {
     match edge {
-        Edge::Atom(atom) => fmt_atom(f, atom, reg_name),
-        Edge::NodeRef(node) => fmt_node(f, node, reg_name, group),
+        Edge::Atom(atom) => fmt_atom(f, fmt_data, atom),
+        Edge::NodeRef(node) => fmt_node(f, fmt_data, node, group),
     }
+}
+
+/// This maps a given `Node` hash to a list of the nodes we've already seen with the same hash, and
+/// what let-binder index they were given.  When no collisions happen, each bucket should have
+/// exactly one element in the vector.  The vector deals with collisions.
+///
+/// To find what binder to use, you should hash your node, then traverse the vector at that key
+/// checking for equality against the nodes there.
+type Bindings = HashMap<u64, Vec<(Node, LetBinderIndex)>>;
+
+fn compute_hash<T: Hash>(value: &T) -> u64 {
+    let mut h = DefaultHasher::new();
+    value.hash(&mut h);
+    h.finish()
+}
+
+fn node_depth(node: Node) -> usize {
+    fn edge_depth(edge: Edge) -> usize {
+        match edge {
+            Edge::Atom(_) => 0,
+            Edge::NodeRef(n) => node_depth(get_node(n)),
+        }
+    }
+    match node {
+        Node::Atom(_) => 0,
+        Node::Neg(e) => 1 + edge_depth(e),
+        Node::Inv(e) => 1 + edge_depth(e),
+        Node::Add(e1, e2) => 1 + max(edge_depth(e1), edge_depth(e2)),
+        Node::Mul(e1, e2) => 1 + max(edge_depth(e1), edge_depth(e2)),
+        Node::Sub(e1, e2) => 1 + max(edge_depth(e1), edge_depth(e2)),
+        Node::Div(e1, e2) => 1 + max(edge_depth(e1), edge_depth(e2)),
+    }
+}
+
+const CSE_PREFIX: &str = "cse";
+
+/// This guides the extractor as to the granularity at which to output definitions for common
+/// sub-expressions.
+/// A low depth will produce many more intermediate definitions, but each definition will be for a
+/// smaller term.  There may be repeated sub-terms of depth less than the threshold.
+///
+/// For instance, starting with the expression ((a + b) * (a + b)) * ((a + b) / (a + b)) might yield
+///   v1     = a + b
+///   v2     = v1 * v1
+///   v3     = v1 / v1
+///   result = v2 * v3
+/// at threshold 1, versus:
+///   v1     = (a + b) * (a + b)
+///   v2     = (a + b) / (a + b)
+///   result = v1 * v2
+/// at threshold 2, fewer intermediates, but small terms get repeated.
+const CSE_DEPTH_THRESHOLD: usize = 4;
+
+fn common_subexpression_elimination(node: Node) -> (Vec<Node>, Node) {
+    /// Assumption: the sub-nodes have already been CSE-d
+    fn register(bindings: &mut Bindings, nodes: &mut Vec<Node>, node: Node) -> Node {
+        let node_hash = compute_hash(&node);
+        if let Some(v) = bindings.get(&node_hash) {
+            if let Some((_, i)) = v.iter().find(|(n, _)| n == &node) {
+                return Node::Atom(Atom::NamedVar(i.clone()));
+            }
+        }
+        if node_depth(node) < CSE_DEPTH_THRESHOLD {
+            return node;
+        }
+        // Registering a new node
+        let index = nodes.len().into();
+        bindings
+            .entry(node_hash)
+            .and_modify(|v| {
+                v.push((node, index));
+            })
+            .or_insert(vec![(node, index)]);
+        nodes.push(node);
+        return Node::Atom(Atom::NamedVar(index));
+    }
+
+    fn aux_node(bindings: &mut Bindings, nodes: &mut Vec<Node>, node: Node) -> Node {
+        match node {
+            Node::Atom(_) => {
+                return node;
+            }
+            Node::Neg(e) => {
+                let cse_e = aux_edge(bindings, nodes, e);
+                return register(bindings, nodes, Node::Neg(cse_e));
+            }
+            Node::Inv(e) => {
+                let cse_e = aux_edge(bindings, nodes, e);
+                return register(bindings, nodes, Node::Inv(cse_e));
+            }
+            Node::Add(e1, e2) => {
+                let cse_e1 = aux_edge(bindings, nodes, e1);
+                let cse_e2 = aux_edge(bindings, nodes, e2);
+                return register(bindings, nodes, Node::Add(cse_e1, cse_e2));
+            }
+            Node::Mul(e1, e2) => {
+                let cse_e1 = aux_edge(bindings, nodes, e1);
+                let cse_e2 = aux_edge(bindings, nodes, e2);
+                return register(bindings, nodes, Node::Mul(cse_e1, cse_e2));
+            }
+            Node::Sub(e1, e2) => {
+                let cse_e1 = aux_edge(bindings, nodes, e1);
+                let cse_e2 = aux_edge(bindings, nodes, e2);
+                return register(bindings, nodes, Node::Sub(cse_e1, cse_e2));
+            }
+            Node::Div(e1, e2) => {
+                let cse_e1 = aux_edge(bindings, nodes, e1);
+                let cse_e2 = aux_edge(bindings, nodes, e2);
+                return register(bindings, nodes, Node::Div(cse_e1, cse_e2));
+            }
+        }
+    }
+
+    fn aux_edge(bindings: &mut Bindings, nodes: &mut Vec<Node>, edge: Edge) -> Edge {
+        match edge {
+            Edge::Atom(_) => edge,
+            Edge::NodeRef(node) => {
+                Edge::NodeRef(insert_node(aux_node(bindings, nodes, get_node(node))))
+            }
+        }
+    }
+
+    let mut bindings = HashMap::new();
+    let mut nodes = Vec::new();
+    let new_node = aux_node(&mut bindings, &mut nodes, node);
+    return (nodes, new_node);
 }
 
 fn fmt_node(
     f: &mut fmt::Formatter<'_>,
+    fmt_data: &FormattingData<'_>,
     node: NodeId,
-    reg_name: Option<char>,
     group: bool,
 ) -> fmt::Result {
     match get_node(node) {
-        Node::Atom(atom) => fmt_atom(f, atom, reg_name),
+        Node::Atom(atom) => fmt_atom(f, fmt_data, atom),
         Node::Neg(edge) => {
             write!(f, "-")?;
-            fmt_edge(f, edge, reg_name, true)
+            fmt_edge(f, fmt_data, edge, true)
         }
         Node::Inv(edge) => {
             write!(f, "1 / ")?;
-            fmt_edge(f, edge, reg_name, true)
+            fmt_edge(f, fmt_data, edge, true)
         }
         Node::Add(e1, e2) => {
             if group {
                 write!(f, "(")?;
             }
-            fmt_edge(f, e1, reg_name, false)?;
+            fmt_edge(f, fmt_data, e1, false)?;
             write!(f, " + ")?;
-            fmt_edge(f, e2, reg_name, false)?;
+            fmt_edge(f, fmt_data, e2, false)?;
             if group {
                 write!(f, ")")?;
             }
             Ok(())
         }
         Node::Mul(e1, e2) => {
-            fmt_edge(f, e1, reg_name, true)?;
+            fmt_edge(f, fmt_data, e1, true)?;
             write!(f, " * ")?;
-            fmt_edge(f, e2, reg_name, true)
+            fmt_edge(f, fmt_data, e2, true)
         }
         Node::Sub(e1, e2) => {
             if group {
                 write!(f, "(")?;
             }
-            fmt_edge(f, e1, reg_name, false)?;
+            fmt_edge(f, fmt_data, e1, false)?;
             write!(f, " - ")?;
-            fmt_edge(f, e2, reg_name, true)?;
+            fmt_edge(f, fmt_data, e2, true)?;
             if group {
                 write!(f, ")")?;
             }
             Ok(())
         }
         Node::Div(e1, e2) => {
-            fmt_edge(f, e1, reg_name, true)?;
+            fmt_edge(f, fmt_data, e1, true)?;
             write!(f, " / ")?;
-            fmt_edge(f, e2, reg_name, true)
+            fmt_edge(f, fmt_data, e2, true)
         }
     }
 }
@@ -246,17 +394,50 @@ impl crate::util::ZkLeanReprField for MleAst {
         (0..size).map(|i| Self::new_var(name, i as Index)).collect()
     }
 
-    fn as_computation(&self) -> String {
-        let mut res = String::new();
-        write!(res, "{self}").unwrap();
-        res
-    }
-
     /// Evaluate the computation represented by the AST over another [`JoltField`], starting at
     /// `root`, and using the variable assignments in `vars`.
     #[cfg(test)]
-    fn evaluate<F: JoltField>(&self, vars: &[F]) -> F {
-        evaluate_node(self.root, vars)
+    fn evaluate<F: JoltField>(&self, env: &Environment<F>) -> F {
+        evaluate_node(self.root, env)
+    }
+
+    /// Note: This performs common subexpression elimination for the output formula, as it tends to
+    /// have many large repeated subterms.  We have found experimentally that Lean struggles with
+    /// this, even when we define the common subterms as let-bindings.  Performance degrades
+    /// exponentially in the number of let-bindings, which, when we moved to 64-bit formulae, made
+    /// it unwieldy.
+    ///
+    /// Instead, we now output shared sub-formulae as top-level definitions, recovering type
+    /// checking linear in the number of definitions.  See `CSE_DEPTH_THRESHOLD` to control the size
+    /// of each definition.
+    fn format_for_lean(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+        name: &String,
+        num_variables: usize,
+    ) -> fmt::Result {
+        let (bindings, node) = common_subexpression_elimination(get_node(self.root));
+        let node_id = insert_node(node);
+        let fmt_data = FormattingData {
+            prefix: &format!("{name}_{CSE_PREFIX}_"),
+            reg_name: self.reg_name,
+        };
+        for (index, binding) in bindings.iter().enumerate() {
+            write!(
+                f,
+                "def {}{index} [Field f] (x : Vector f {num_variables}) : f := ",
+                fmt_data.prefix,
+            )?;
+            fmt_node(f, &fmt_data, insert_node(binding.clone()), false)?;
+            write!(f, "\n")?;
+        }
+        write!(
+            f,
+            "def {name} [Field f] (x : Vector f {num_variables}) : f := "
+        )?;
+        fmt_node(f, &fmt_data, node_id, false)?;
+        write!(f, "\n\n")?;
+        Ok(())
     }
 }
 
@@ -422,9 +603,16 @@ impl<'a> core::iter::Product<&'a Self> for MleAst {
     }
 }
 
+// Note: this instance prints the whole MLE as a single expression.  It can be very large, e.g. for
+// 64-bit.  If you extract for Lean, you might want to use `format_for_lean` to get separate
+// definitions for repeated sub-expressions.
 impl fmt::Display for MleAst {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt_node(f, self.root, self.reg_name, false)
+        let fmt_data = FormattingData {
+            prefix: &String::from(""),
+            reg_name: self.reg_name,
+        };
+        fmt_node(f, &fmt_data, self.root, false)
     }
 }
 
