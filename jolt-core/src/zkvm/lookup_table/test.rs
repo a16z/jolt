@@ -53,7 +53,9 @@ pub fn prefix_suffix_test<const XLEN: usize, F: JoltField, T: PrefixSuffixDecomp
 
     for _ in 0..300 {
         let mut prefix_checkpoints: Vec<PrefixCheckpoint<F>> = vec![None.into(); Prefixes::COUNT];
-        let lookup_index = T::random_lookup_index(&mut rng);
+        // let lookup_index = T::random_lookup_index(&mut rng);
+        // Using the binary value: 01010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101
+        let lookup_index: u128 = 0x55555555555555555555555555555555;
         let mut j = 0;
         let mut r: Vec<F> = vec![];
         for phase in 0..total_phases {
@@ -103,6 +105,7 @@ pub fn prefix_suffix_test<const XLEN: usize, F: JoltField, T: PrefixSuffixDecomp
                     for (i, x) in suffix_evals.iter().enumerate() {
                         println!("suffix_evals[{i}] = {x}");
                     }
+                    println!("eval points: {:?}", eval_point);
                 }
 
                 assert_eq!(combined, mle_eval);

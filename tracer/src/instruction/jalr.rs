@@ -13,6 +13,8 @@ declare_riscv_instr!(
 );
 
 impl JALR {
+    // cpu.pc is pre-incremented by 4 (or 2 for compressed) in tick_operate() before execution,
+    // self.address is the instruction address.
     fn exec(&self, cpu: &mut Cpu, _: &mut <JALR as RISCVInstruction>::RAMAccess) {
         let tmp = cpu.sign_extend(cpu.pc as i64);
         cpu.pc = (cpu.x[self.operands.rs1 as usize]

@@ -29,6 +29,7 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for ChangeDivisorPref
                 return F::zero();
             }
             let (x, y) = b.uninterleave();
+            println!("x is: {:?} y is: {:?}", x, y);
             if u64::from(x) != 0 || u64::from(y) != (1u64 << y.len()) - 1 {
                 return F::zero();
             }
@@ -38,10 +39,16 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for ChangeDivisorPref
             if u64::from(x) != 0 || u64::from(y) != (1u64 << y.len()) - 1 || c == 0 {
                 return F::zero();
             }
-            result *= (F::one() - r_x) * F::from_u64(c as u64);
+            if (j == 1) {
+                result *= (r_x) * F::from_u64(c as u64);
+            }
+            else {
+                result *= (F::one() - r_x) * F::from_u64(c as u64);
+            }
+            
         } else {
             let (x, y) = b.uninterleave();
-            if b.len() > 0 && u64::from(x) != 0 || u64::from(y) != (1u64 << y.len()) - 1 {
+            if b.len() > 0 && (u64::from(x) != 0 || u64::from(y) != (1u64 << y.len()) - 1) {
                 return F::zero();
             }
             result *= F::one() - F::from_u64(c as u64);
