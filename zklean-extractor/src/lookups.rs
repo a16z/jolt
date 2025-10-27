@@ -82,11 +82,6 @@ impl<const WORD_SIZE: usize> ZkLeanLookupTables<WORD_SIZE> {
     }
 
     pub fn zklean_pretty_print(&self, f: &mut impl std::io::Write) -> std::io::Result<()> {
-        // This is needed because the MLEs are too large for Lean to process within its standard
-        // `maxHeartbeats` time (= 200_000).
-        let lean4_max_heartbeats = 4_000_000;
-        write!(f, "set_option maxHeartbeats {lean4_max_heartbeats}\n\n")?;
-
         for instruction in &self.instructions {
             instruction.zklean_pretty_print::<DefaultMleAst>(f)?;
         }
