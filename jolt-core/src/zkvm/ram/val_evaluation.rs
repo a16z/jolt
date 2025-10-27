@@ -1,6 +1,6 @@
 use itertools::chain;
 use num_traits::Zero;
-use std::{array, cell::RefCell, rc::Rc, sync::Arc};
+use std::{array, cell::RefCell, iter::zip, rc::Rc, sync::Arc};
 
 use crate::{
     field::JoltField,
@@ -13,7 +13,7 @@ use crate::{
         },
         opening_proof::{
             OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-            VerifierOpeningAccumulator, BIG_ENDIAN,
+            VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
         },
         ra_poly::RaPolynomial,
         unipoly::UniPoly,
@@ -31,6 +31,21 @@ use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 use rayon::prelude::*;
+
+// RAM value evaluation sumcheck
+//
+// Proves the relation:
+//   Val(r) - Val_init(r_address) = Σ_{j=0}^{T-1} inc(r_address, j) ⋅ wa(r_address, j) ⋅ LT(r_cycle, j)
+// where:
+// - r = (r_address, r_cycle) is the evaluation point from the read-write checking sumcheck.
+// - Val(r) is the claimed value of memory at address r_address and time r_cycle.
+// - Val_init(r_address) is the initial value of memory at address r_address.
+// - inc(r_address, j) is the MLE of the per-cycle increment at (r_address, j).
+// - wa is the MLE of the write-indicator (1 on matching {0,1}-points).
+// - LT is the MLE of strict less-than on bitstrings; evaluated at (r_cycle, j) as field points.
+//
+// This sumcheck ensures that the claimed final value of a memory cell is consistent
+// with its initial value and all the writes that occurred to it over time.
 
 #[derive(Allocative)]
 pub struct ValEvaluationProverState<F: JoltField> {
@@ -187,28 +202,26 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ValEvaluationSumche
             .as_ref()
             .expect("Prover state not initialized");
 
-        let half_n = ps.inc.len() / 2;
-
         let [eval_at_1, eval_at_2, eval_at_inf] = (0..ps.inc.len() / 2)
             .into_par_iter()
             .map(|j| {
-                let inc_at_1_j = ps.inc.get_bound_coeff(j + half_n);
-                let inc_at_inf_j = inc_at_1_j - ps.inc.get_bound_coeff(j);
-                let inc_at_2_j = inc_at_1_j + inc_at_inf_j;
+                let inc_at_j_1 = ps.inc.get_bound_coeff(j * 2 + 1);
+                let inc_at_j_inf = inc_at_j_1 - ps.inc.get_bound_coeff(j * 2);
+                let inc_at_j_2 = inc_at_j_1 + inc_at_j_inf;
 
-                let wa_at_1_j = ps.wa.get_bound_coeff(j + half_n);
-                let wa_at_inf_j = wa_at_1_j - ps.wa.get_bound_coeff(j);
-                let wa_at_2_j = wa_at_1_j + wa_at_inf_j;
+                let wa_at_j_1 = ps.wa.get_bound_coeff(j * 2 + 1);
+                let wa_at_j_inf = wa_at_j_1 - ps.wa.get_bound_coeff(j * 2);
+                let wa_at_j_2 = wa_at_j_1 + wa_at_j_inf;
 
-                let lt_at_1_j = ps.lt.get_bound_coeff(j + half_n);
-                let lt_at_inf_j = lt_at_1_j - ps.lt.get_bound_coeff(j);
-                let lt_at_2_j = lt_at_1_j + lt_at_inf_j;
+                let lt_at_j_1 = ps.lt.get_bound_coeff(j * 2 + 1);
+                let lt_at_j_inf = lt_at_j_1 - ps.lt.get_bound_coeff(j * 2);
+                let lt_at_j_2 = lt_at_j_1 + lt_at_j_inf;
 
                 // Eval inc * wa * lt.
                 [
-                    (inc_at_1_j * wa_at_1_j).mul_unreduced::<9>(lt_at_1_j),
-                    (inc_at_2_j * wa_at_2_j).mul_unreduced::<9>(lt_at_2_j),
-                    (inc_at_inf_j * wa_at_inf_j).mul_unreduced::<9>(lt_at_inf_j),
+                    (inc_at_j_1 * wa_at_j_1).mul_unreduced::<9>(lt_at_j_1),
+                    (inc_at_j_2 * wa_at_j_2).mul_unreduced::<9>(lt_at_j_2),
+                    (inc_at_j_inf * wa_at_j_inf).mul_unreduced::<9>(lt_at_j_inf),
                 ]
             })
             .reduce(
@@ -226,9 +239,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ValEvaluationSumche
     #[tracing::instrument(skip_all, name = "RamValEvaluationSumcheck::bind")]
     fn bind(&mut self, r_j: F::Challenge, _round: usize) {
         if let Some(prover_state) = &mut self.prover_state {
-            prover_state.inc.bind_parallel(r_j, BindingOrder::HighToLow);
-            prover_state.wa.bind_parallel(r_j, BindingOrder::HighToLow);
-            prover_state.lt.bind_high_to_low(r_j);
+            prover_state.inc.bind_parallel(r_j, BindingOrder::LowToHigh);
+            prover_state.wa.bind_parallel(r_j, BindingOrder::LowToHigh);
+            prover_state.lt.bind(r_j, BindingOrder::LowToHigh);
         }
     }
 
@@ -243,10 +256,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ValEvaluationSumche
             SumcheckId::RamReadWriteChecking,
         );
         let (_, r_cycle) = r_val.split_at(self.K.log_2());
+        let r = <Self as SumcheckInstance<F, T>>::normalize_opening_point(self, r);
         // Compute LT(r_cycle', r_cycle)
         let mut lt_eval = F::zero();
         let mut eq_term = F::one();
-        for (x, y) in r.iter().zip(r_cycle.r.iter()) {
+        for (x, y) in zip(&r.r, &r_cycle.r) {
             lt_eval += (F::one() - x) * y * eq_term;
             eq_term *= F::one() - x - y + *x * y + *x * y;
         }
@@ -267,7 +281,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ValEvaluationSumche
         &self,
         opening_point: &[F::Challenge],
     ) -> OpeningPoint<BIG_ENDIAN, F> {
-        OpeningPoint::new(opening_point.to_vec())
+        OpeningPoint::<LITTLE_ENDIAN, F>::new(opening_point.to_vec()).match_endianness()
     }
 
     fn cache_openings_prover(

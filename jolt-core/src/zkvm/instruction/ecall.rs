@@ -1,4 +1,4 @@
-use crate::zkvm::instruction::NUM_INSTRUCTION_FLAGS;
+use crate::zkvm::instruction::{InstructionFlags, NUM_INSTRUCTION_FLAGS};
 use tracer::instruction::{ecall::ECALL, RISCVCycle};
 
 use crate::zkvm::lookup_table::LookupTables;
@@ -14,13 +14,15 @@ impl<const XLEN: usize> InstructionLookup<XLEN> for ECALL {
 impl Flags for ECALL {
     fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
         let mut flags = [false; NUM_CIRCUIT_FLAGS];
-        flags[CircuitFlags::IsFirstInSequence as usize] = self.is_first_in_sequence;
-        flags[CircuitFlags::IsCompressed as usize] = self.is_compressed;
+        flags[CircuitFlags::IsFirstInSequence] = self.is_first_in_sequence;
+        flags[CircuitFlags::IsCompressed] = self.is_compressed;
         flags
     }
 
     fn instruction_flags(&self) -> [bool; NUM_INSTRUCTION_FLAGS] {
-        [false; NUM_INSTRUCTION_FLAGS]
+        let mut flags = [false; NUM_INSTRUCTION_FLAGS];
+        flags[InstructionFlags::IsRdNotZero] = self.operands.rd != 0;
+        flags
     }
 }
 
