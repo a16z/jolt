@@ -591,9 +591,16 @@ impl<'a> core::iter::Product<&'a Self> for MleAst {
     }
 }
 
+// Note: this instance prints the whole MLE as a single expression.  It can be very large, e.g. for
+// 64-bit.  If you extract for Lean, you might want to use `format_for_lean` to get separate
+// definitions for repeated sub-expressions.
 impl fmt::Display for MleAst {
-    fn fmt(&self, _f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        todo!() // does this ever get called in our use case?
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let fmt_data = FormattingData {
+            prefix: &String::from(""),
+            reg_name: self.reg_name,
+        };
+        fmt_node(f, &fmt_data, self.root, false)
     }
 }
 
