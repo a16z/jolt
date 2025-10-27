@@ -25,6 +25,14 @@ use allocative::Allocative;
 use allocative::FlameGraphBuilder;
 use rayon::prelude::*;
 
+// Bytecode Hamming weight sumcheck
+//
+// Proves the relation:
+//   Σ_{i=0}^{d-1} γ^i ⋅ (Σ_k ra_i(k)) = Σ_{i=0}^{d-1} γ^i
+// where:
+// - ra_i(k) = Σ_j eq(r_cycle, j) ⋅ 1[chunk_i(PC(j)) = k].
+// - γ is a random challenge.
+
 #[derive(Allocative)]
 pub struct HammingWeightProverState<F: JoltField> {
     ra: Vec<MultilinearPolynomial<F>>,

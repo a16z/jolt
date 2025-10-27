@@ -26,6 +26,21 @@ use crate::zkvm::r1cs::key::UniformSpartanKey;
 use crate::zkvm::witness::VirtualPolynomial;
 use rayon::prelude::*;
 
+// Spartan PC sumcheck
+//
+// Proves the batched identity over cycles j:
+//   Σ_j EqPlusOne(r_cycle, j) ⋅ (UnexpandedPC_shift(j) + γ·PC_shift(j) + γ²·IsNoop_shift(j))
+//   = NextUnexpandedPC(r_cycle) + γ·NextPC(r_cycle) + γ²·NextIsNoop(r_cycle),
+//
+// where:
+// - EqPlusOne(r_cycle, j): MLE of the function that,
+//     on (i,j) returns 1 iff i = j + 1; no wrap-around at j = 2^{log T} − 1
+// - UnexpandedPC_shift(j), PC_shift(j), IsNoop_shift(j):
+//     SpartanShift MLEs encoding f(j+1) aligned at cycle j
+// - NextUnexpandedPC(r_cycle), NextPC(r_cycle), NextIsNoop(r_cycle)
+//     are claims from Spartan outer sumcheck
+// - γ: batching scalar drawn from the transcript
+
 #[derive(Allocative)]
 struct ShiftSumcheckProverState<F: JoltField> {
     combined_witness_poly: MultilinearPolynomial<F>,

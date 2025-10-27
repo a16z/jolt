@@ -30,6 +30,23 @@ use std::iter::zip;
 use std::{cell::RefCell, rc::Rc};
 use tracer::instruction::Cycle;
 
+// Register read-write checking sumcheck
+//
+// Proves the relation:
+//   Σ_{k,j} eq(r', (j,k)) ⋅ [ wa(k,j)⋅(inc(k,j)+Val(k,j)) + γ⋅ra1(k,j)⋅Val(k,j) + γ²⋅ra2(k,j)⋅Val(k,j) ]
+//   = wv_claim + γ⋅rv1_claim + γ²⋅rv2_claim
+// where:
+// - r' are the fresh challenges for this sumcheck.
+// - wa(k,j) = 1 if register k is written at cycle j (rd=k), 0 otherwise.
+// - ra1(k,j) = 1 if register k is read at cycle j (rs1=k), 0 otherwise.
+// - ra2(k,j) = 1 if register k is read at cycle j (rs2=k), 0 otherwise.
+// - Val(k,j) is the value of register k before cycle j.
+// - inc(k,j) is the change in value if a write to rd=k occurs.
+// - wv_claim, rv1_claim, rv2_claim are claimed write/read values from Spartan.
+//
+// This sumcheck ensures that the values read from and written to registers are consistent
+// with the execution trace.
+
 const K: usize = REGISTER_COUNT as usize;
 
 /// A collection of vectors that are used in each of the first log(T / num_chunks)
