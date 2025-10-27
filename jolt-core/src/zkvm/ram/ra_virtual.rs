@@ -1,36 +1,42 @@
-use num_traits::Zero;
-use std::cell::RefCell;
-use std::iter::zip;
-use std::rc::Rc;
-use std::sync::Arc;
+use std::{cell::RefCell, iter::zip, rc::Rc, sync::Arc};
 
-use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::multilinear_polynomial::PolynomialEvaluation;
-use crate::poly::opening_proof::{
-    OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-    VerifierOpeningAccumulator, BIG_ENDIAN,
-};
-use crate::poly::ra_poly::RaPolynomial;
-use crate::zkvm::dag::state_manager::StateManager;
-use crate::zkvm::ram::remap_address;
-use crate::zkvm::witness::{
-    compute_d_parameter, CommittedPolynomial, VirtualPolynomial, DTH_ROOT_OF_K,
-};
+use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::FlameGraphBuilder;
+use num_traits::Zero;
+use rayon::prelude::*;
+
 use crate::{
     field::JoltField,
     poly::{
+        commitment::commitment_scheme::CommitmentScheme,
         dense_mlpoly::DensePolynomial,
         eq_poly::EqPolynomial,
-        multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
+        multilinear_polynomial::{
+            BindingOrder,
+            MultilinearPolynomial,
+            PolynomialBinding,
+            PolynomialEvaluation,
+        },
+        opening_proof::{
+            OpeningAccumulator,
+            OpeningPoint,
+            ProverOpeningAccumulator,
+            SumcheckId,
+            VerifierOpeningAccumulator,
+            BIG_ENDIAN,
+        },
+        ra_poly::RaPolynomial,
     },
     subprotocols::sumcheck::SumcheckInstance,
     transcripts::Transcript,
     utils::math::Math,
+    zkvm::{
+        dag::state_manager::StateManager,
+        ram::remap_address,
+        witness::{compute_d_parameter, CommittedPolynomial, VirtualPolynomial, DTH_ROOT_OF_K},
+    },
 };
-use allocative::Allocative;
-#[cfg(feature = "allocative")]
-use allocative::FlameGraphBuilder;
-use rayon::prelude::*;
 
 // RAM read-access (RA) virtualization sumcheck
 //

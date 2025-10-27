@@ -1,16 +1,12 @@
-use crate::instruction::ld::LD;
-use crate::instruction::sd::SD;
-use crate::instruction::Instruction;
-use crate::utils::virtual_registers::VirtualRegisterAllocator;
-use crate::{instruction::addi::ADDI, utils::inline_helpers::InstrAssembler};
 use serde::{Deserialize, Serialize};
 
+use super::{format::format_amo::FormatAMO, Cycle, RISCVInstruction, RISCVTrace};
 use crate::{
     declare_riscv_instr,
     emulator::cpu::{Cpu, Xlen},
+    instruction::{addi::ADDI, ld::LD, sd::SD, Instruction},
+    utils::{inline_helpers::InstrAssembler, virtual_registers::VirtualRegisterAllocator},
 };
-
-use super::{format::format_amo::FormatAMO, Cycle, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name   = AMOSWAPD,

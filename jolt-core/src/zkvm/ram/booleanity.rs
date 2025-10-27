@@ -1,9 +1,10 @@
+use std::{cell::RefCell, rc::Rc, sync::Arc};
+
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 use num_traits::Zero;
 use rayon::prelude::*;
-use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 use crate::{
     field::JoltField,
@@ -12,8 +13,12 @@ use crate::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, PolynomialBinding},
         opening_proof::{
-            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-            VerifierOpeningAccumulator, BIG_ENDIAN,
+            OpeningAccumulator,
+            OpeningPoint,
+            ProverOpeningAccumulator,
+            SumcheckId,
+            VerifierOpeningAccumulator,
+            BIG_ENDIAN,
         },
         ra_poly::RaPolynomial,
         split_eq_poly::GruenSplitEqPolynomial,

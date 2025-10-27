@@ -1,6 +1,5 @@
-use crate::utils::lookup_bits::LookupBits;
-
 use super::SparseDenseSuffix;
+use crate::utils::lookup_bits::LookupBits;
 
 /// Sign extension suffix that handles the upper half of the word
 /// If suffix length >= XLEN/2, it computes sign extension based on bit 31

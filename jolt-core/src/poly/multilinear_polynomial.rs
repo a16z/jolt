@@ -1,8 +1,3 @@
-use crate::{
-    field::{ChallengeFieldOps, FieldChallengeOps},
-    poly::{one_hot_polynomial::OneHotPolynomial, rlc_polynomial::RLCPolynomial},
-    utils::{compute_dotproduct, small_scalar::SmallScalar},
-};
 use allocative::Allocative;
 use ark_ff::biginteger::S128;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Valid};
@@ -10,9 +5,15 @@ use rayon::prelude::*;
 use strum_macros::EnumIter;
 
 use super::{
-    compact_polynomial::CompactPolynomial, dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial,
+    compact_polynomial::CompactPolynomial,
+    dense_mlpoly::DensePolynomial,
+    eq_poly::EqPolynomial,
 };
-use crate::field::JoltField;
+use crate::{
+    field::{ChallengeFieldOps, FieldChallengeOps, JoltField},
+    poly::{one_hot_polynomial::OneHotPolynomial, rlc_polynomial::RLCPolynomial},
+    utils::{compute_dotproduct, small_scalar::SmallScalar},
+};
 
 /// Wrapper enum for the various multilinear polynomial types used in Jolt
 #[repr(u8)]
@@ -803,10 +804,11 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use ark_bn254::Fr;
     use rand_chacha::ChaCha20Rng;
     use rand_core::{RngCore, SeedableRng};
+
+    use super::*;
 
     fn random_poly(max_num_bits: usize, len: usize) -> MultilinearPolynomial<Fr> {
         let mut rng = ChaCha20Rng::seed_from_u64(len as u64);

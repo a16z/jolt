@@ -1,14 +1,13 @@
-use crate::field::JoltField;
-use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use common::jolt_device::{MemoryConfig, MemoryLayout};
 
-use crate::guest::program::Program;
-use crate::poly::commitment::dory::DoryCommitmentScheme;
-use crate::transcripts::Transcript;
-use crate::utils::errors::ProofVerifyError;
-use crate::zkvm::dag::proof_serialization::JoltProof;
-use crate::zkvm::{Jolt, JoltRV64IMAC, JoltVerifierPreprocessing};
-use common::jolt_device::MemoryConfig;
-use common::jolt_device::MemoryLayout;
+use crate::{
+    field::JoltField,
+    guest::program::Program,
+    poly::commitment::{commitment_scheme::CommitmentScheme, dory::DoryCommitmentScheme},
+    transcripts::Transcript,
+    utils::errors::ProofVerifyError,
+    zkvm::{dag::proof_serialization::JoltProof, Jolt, JoltRV64IMAC, JoltVerifierPreprocessing},
+};
 
 pub fn preprocess(
     guest: &Program,

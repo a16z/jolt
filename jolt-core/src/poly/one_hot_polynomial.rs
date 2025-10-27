@@ -3,26 +3,35 @@
 //! `opening_proof.rs`. In particular, this implementation is _not_ used
 //! in the Twist/Shout PIOP implementations in Jolt.
 
-use super::multilinear_polynomial::BindingOrder;
-use crate::field::JoltField;
-use crate::msm::VariableBaseMSM;
-use crate::poly::commitment::dory::{DoryGlobals, JoltGroupWrapper};
-use crate::poly::dense_mlpoly::DensePolynomial;
-use crate::poly::eq_poly::EqPolynomial;
-use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialBinding};
-use crate::poly::ra_poly::RaPolynomial;
-use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
-use crate::utils::expanding_table::ExpandingTable;
-use crate::utils::math::Math;
-use crate::utils::thread::drop_in_background_thread;
-use crate::utils::thread::unsafe_allocate_zero_vec;
+use std::{
+    mem,
+    sync::{Arc, RwLock},
+};
+
 use allocative::Allocative;
 use ark_bn254::{G1Affine, G1Projective};
 use ark_ec::CurveGroup;
 use num_traits::Zero;
 use rayon::prelude::*;
-use std::mem;
-use std::sync::{Arc, RwLock};
+
+use super::multilinear_polynomial::BindingOrder;
+use crate::{
+    field::JoltField,
+    msm::VariableBaseMSM,
+    poly::{
+        commitment::dory::{DoryGlobals, JoltGroupWrapper},
+        dense_mlpoly::DensePolynomial,
+        eq_poly::EqPolynomial,
+        multilinear_polynomial::{MultilinearPolynomial, PolynomialBinding},
+        ra_poly::RaPolynomial,
+        split_eq_poly::GruenSplitEqPolynomial,
+    },
+    utils::{
+        expanding_table::ExpandingTable,
+        math::Math,
+        thread::{drop_in_background_thread, unsafe_allocate_zero_vec},
+    },
+};
 
 /// Represents a one-hot multilinear polynomial (ra/wa) used
 /// in Twist/Shout. Perhaps somewhat unintuitively, the implementation
@@ -680,12 +689,13 @@ impl<F: JoltField> OneHotPolynomial<F> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::poly::unipoly::UniPoly;
     use ark_bn254::Fr;
     use ark_std::{test_rng, Zero};
     use rand_core::RngCore;
     use serial_test::serial;
+
+    use super::*;
+    use crate::poly::unipoly::UniPoly;
 
     fn dense_polynomial_equivalence<const LOG_K: usize, const LOG_T: usize>() {
         let K: usize = 1 << LOG_K;

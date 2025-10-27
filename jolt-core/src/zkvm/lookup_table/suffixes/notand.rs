@@ -1,6 +1,5 @@
-use crate::utils::lookup_bits::LookupBits;
-
 use super::SparseDenseSuffix;
+use crate::utils::lookup_bits::LookupBits;
 
 /// Bitwise NOT-AND suffix (for ANDN operation)
 /// Computes sum(2^(n-i) * (1-y_i)) = x & !y where y are the odd-indexed bits

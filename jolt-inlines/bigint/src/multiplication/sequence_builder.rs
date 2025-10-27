@@ -2,8 +2,14 @@ use core::array;
 
 use tracer::{
     instruction::{
-        add::ADD, format::format_inline::FormatInline, ld::LD, mul::MUL, mulhu::MULHU, sd::SD,
-        sltu::SLTU, Instruction,
+        add::ADD,
+        format::format_inline::FormatInline,
+        ld::LD,
+        mul::MUL,
+        mulhu::MULHU,
+        sd::SD,
+        sltu::SLTU,
+        Instruction,
     },
     utils::{inline_helpers::InstrAssembler, virtual_registers::VirtualRegisterGuard},
 };

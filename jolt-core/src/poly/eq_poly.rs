@@ -1,10 +1,14 @@
-use crate::field::JoltField;
-use crate::poly::opening_proof::{Endianness, OpeningPoint};
-use crate::utils::{math::Math, thread::unsafe_allocate_zero_vec};
-use rayon::prelude::*;
 use std::{
     marker::PhantomData,
     ops::{Mul, Sub},
+};
+
+use rayon::prelude::*;
+
+use crate::{
+    field::JoltField,
+    poly::opening_proof::{Endianness, OpeningPoint},
+    utils::{math::Math, thread::unsafe_allocate_zero_vec},
 };
 
 const PARALLEL_THRESHOLD: usize = 16;
@@ -283,10 +287,12 @@ impl<F: JoltField> EqPlusOnePolynomial<F> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::time::Instant;
+
     use ark_bn254::Fr;
     use ark_std::test_rng;
-    use std::time::Instant;
+
+    use super::*;
 
     #[test]
     /// Test that the results of running `evals_serial`, `evals_parallel`, and `evals_serial_cached`

@@ -2,11 +2,10 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 
 #[path = "../../benches/e2e_profiling.rs"]
 mod e2e_profiling;
-use e2e_profiling::{benchmarks, master_benchmark, BenchType};
-
 use std::any::Any;
 
 use chrono::Local;
+use e2e_profiling::{benchmarks, master_benchmark, BenchType};
 use tracing_chrome::ChromeLayerBuilder;
 use tracing_subscriber::{self, fmt::format::FmtSpan, prelude::*, EnvFilter};
 

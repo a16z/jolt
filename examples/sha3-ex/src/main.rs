@@ -1,4 +1,5 @@
 use std::time::Instant;
+
 use tracing::info;
 
 pub fn main() {

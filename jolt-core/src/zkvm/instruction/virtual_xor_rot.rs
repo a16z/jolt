@@ -1,12 +1,13 @@
-use crate::zkvm::instruction::{InstructionFlags, NUM_INSTRUCTION_FLAGS};
 use tracer::instruction::{
     virtual_xor_rot::{VirtualXORROT16, VirtualXORROT24, VirtualXORROT32, VirtualXORROT63},
     RISCVCycle,
 };
 
-use crate::zkvm::lookup_table::{virtual_xor_rot::VirtualXORROTTable, LookupTables};
-
 use super::{CircuitFlags, Flags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS};
+use crate::zkvm::{
+    instruction::{InstructionFlags, NUM_INSTRUCTION_FLAGS},
+    lookup_table::{virtual_xor_rot::VirtualXORROTTable, LookupTables},
+};
 
 // Macro to implement traits for each specific rotation value
 macro_rules! impl_virtual_xor_rot {
@@ -78,9 +79,10 @@ impl_virtual_xor_rot!(VirtualXORROT63, 63);
 
 #[cfg(test)]
 mod test {
+    use ark_bn254::Fr;
+
     use super::*;
     use crate::zkvm::instruction::test::materialize_entry_test;
-    use ark_bn254::Fr;
 
     #[test]
     fn materialize_entry_32() {

@@ -1,14 +1,23 @@
 //! Host-side implementation and registration.
-pub use crate::sequence_builder;
-
-use crate::{
-    INLINE_OPCODE, SHA256_FUNCT3, SHA256_FUNCT7, SHA256_INIT_FUNCT3, SHA256_INIT_FUNCT7,
-    SHA256_INIT_NAME, SHA256_NAME,
+use tracer::{
+    register_inline,
+    utils::inline_sequence_writer::{
+        write_inline_trace,
+        AppendMode,
+        InlineDescriptor,
+        SequenceInputs,
+    },
 };
-use tracer::register_inline;
 
-use tracer::utils::inline_sequence_writer::{
-    write_inline_trace, AppendMode, InlineDescriptor, SequenceInputs,
+pub use crate::sequence_builder;
+use crate::{
+    INLINE_OPCODE,
+    SHA256_FUNCT3,
+    SHA256_FUNCT7,
+    SHA256_INIT_FUNCT3,
+    SHA256_INIT_FUNCT7,
+    SHA256_INIT_NAME,
+    SHA256_NAME,
 };
 
 pub fn init_inlines() -> Result<(), String> {

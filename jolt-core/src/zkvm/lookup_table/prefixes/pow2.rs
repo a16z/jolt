@@ -1,11 +1,9 @@
-use crate::zkvm::instruction_lookups::read_raf_checking::current_suffix_len;
-use crate::{field::JoltField, utils::lookup_bits::LookupBits};
-use crate::{
-    field::{ChallengeFieldOps, FieldChallengeOps},
-    utils::math::Math,
-};
-
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
+use crate::{
+    field::{ChallengeFieldOps, FieldChallengeOps, JoltField},
+    utils::{lookup_bits::LookupBits, math::Math},
+    zkvm::instruction_lookups::read_raf_checking::current_suffix_len,
+};
 
 pub enum Pow2Prefix<const XLEN: usize> {}
 

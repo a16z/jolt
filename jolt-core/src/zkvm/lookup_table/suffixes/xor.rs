@@ -1,6 +1,5 @@
-use crate::utils::lookup_bits::LookupBits;
-
 use super::SparseDenseSuffix;
+use crate::utils::lookup_bits::LookupBits;
 
 /// Bitwise XOR suffix
 pub enum XorSuffix {}

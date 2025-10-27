@@ -1,5 +1,7 @@
-use std::ops::{Index, IndexMut};
-use std::sync::{Arc, RwLock};
+use std::{
+    ops::{Index, IndexMut},
+    sync::{Arc, RwLock},
+};
 
 use allocative::Allocative;
 use num_traits::Zero;
@@ -8,14 +10,19 @@ use rayon::prelude::*;
 use strum::{EnumCount, IntoEnumIterator};
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter as EnumIterMacro};
 
-use crate::field::{ChallengeFieldOps, FieldChallengeOps, JoltField};
-use crate::poly::dense_mlpoly::DensePolynomial;
-use crate::poly::multilinear_polynomial::{
-    BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
+use crate::{
+    field::{ChallengeFieldOps, FieldChallengeOps, JoltField},
+    poly::{
+        dense_mlpoly::DensePolynomial,
+        multilinear_polynomial::{
+            BindingOrder,
+            MultilinearPolynomial,
+            PolynomialBinding,
+            PolynomialEvaluation,
+        },
+    },
+    utils::{lookup_bits::LookupBits, math::Math, thread::unsafe_allocate_zero_vec},
 };
-use crate::utils::lookup_bits::LookupBits;
-use crate::utils::math::Math;
-use crate::utils::thread::unsafe_allocate_zero_vec;
 
 #[repr(u8)]
 #[derive(Clone, Copy, EnumIterMacro, EnumCountMacro)]
@@ -528,10 +535,11 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
 
 #[cfg(test)]
 pub mod tests {
-    use super::*;
     use ark_bn254::Fr;
     use ark_ff::{AdditiveGroup, Field};
     use ark_std::test_rng;
+
+    use super::*;
 
     pub fn prefix_suffix_decomposition_test<
         const NUM_VARS: usize,

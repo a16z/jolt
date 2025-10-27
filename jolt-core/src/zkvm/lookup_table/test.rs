@@ -1,3 +1,9 @@
+use common::constants::XLEN;
+use num::Integer;
+use rand::prelude::*;
+use strum::{EnumCount, IntoEnumIterator};
+
+use super::JoltLookupTable;
 use crate::{
     field::JoltField,
     utils::{index_to_field_bitvector, interleave_bits, lookup_bits::LookupBits},
@@ -7,12 +13,6 @@ use crate::{
         PrefixSuffixDecomposition,
     },
 };
-use common::constants::XLEN;
-use num::Integer;
-use rand::prelude::*;
-use strum::{EnumCount, IntoEnumIterator};
-
-use super::JoltLookupTable;
 
 pub fn lookup_table_mle_random_test<F: JoltField, T: JoltLookupTable + Default>() {
     let mut rng = StdRng::seed_from_u64(12345);

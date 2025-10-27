@@ -4,22 +4,22 @@
 extern crate alloc;
 extern crate core;
 
-use itertools::Itertools;
-use std::vec;
-use tracing::{error, info};
-
 #[cfg(not(feature = "std"))]
 use alloc::{boxed::Box, vec::Vec};
+use std::vec;
 
 use common::{self, constants::RAM_START_ADDRESS, jolt_device::MemoryConfig};
 use emulator::{
     cpu::{self, Xlen},
     default_terminal::DefaultTerminal,
-    get_mut_emulator, Emulator, EmulatorState,
+    get_mut_emulator,
+    Emulator,
+    EmulatorState,
 };
-
 use instruction::{Cycle, Instruction};
+use itertools::Itertools;
 use object::{Object, ObjectSection, SectionKind};
+use tracing::{error, info};
 
 pub mod emulator;
 pub mod instruction;
@@ -67,7 +67,6 @@ use crate::{emulator::memory::Memory, instruction::uncompress_instruction};
 ///
 /// let trace_from_checkpoint_2 = checkpoints.as_ref().unwrap()[2].clone().collect::Vec<Cycle>();
 /// assert!(trace_from_checkpoint_2 == execution_trace[2*n..])
-///
 #[tracing::instrument(skip_all)]
 pub fn trace(
     elf_contents: &[u8],

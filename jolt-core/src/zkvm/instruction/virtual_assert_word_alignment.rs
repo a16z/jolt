@@ -1,11 +1,10 @@
-use crate::zkvm::instruction::{InstructionFlags, NUM_INSTRUCTION_FLAGS};
-use tracer::instruction::virtual_assert_word_alignment::VirtualAssertWordAlignment;
-use tracer::instruction::RISCVCycle;
-
-use crate::zkvm::lookup_table::word_alignment::WordAlignmentTable;
-use crate::zkvm::lookup_table::LookupTables;
+use tracer::instruction::{virtual_assert_word_alignment::VirtualAssertWordAlignment, RISCVCycle};
 
 use super::{CircuitFlags, Flags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS};
+use crate::zkvm::{
+    instruction::{InstructionFlags, NUM_INSTRUCTION_FLAGS},
+    lookup_table::{word_alignment::WordAlignmentTable, LookupTables},
+};
 
 impl<const XLEN: usize> InstructionLookup<XLEN> for VirtualAssertWordAlignment {
     fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
@@ -72,10 +71,10 @@ impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualAssertWordAlignm
 
 #[cfg(test)]
 mod test {
-    use crate::zkvm::instruction::test::materialize_entry_test;
+    use ark_bn254::Fr;
 
     use super::*;
-    use ark_bn254::Fr;
+    use crate::zkvm::instruction::test::materialize_entry_test;
 
     #[test]
     fn materialize_entry() {

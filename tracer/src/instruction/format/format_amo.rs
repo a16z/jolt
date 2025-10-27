@@ -1,10 +1,14 @@
-use crate::emulator::cpu::Cpu;
-use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
+use serde::{Deserialize, Serialize};
+
 use super::{
-    normalize_register_value, InstructionFormat, InstructionRegisterState, NormalizedOperands,
+    normalize_register_value,
+    InstructionFormat,
+    InstructionRegisterState,
+    NormalizedOperands,
 };
+use crate::emulator::cpu::Cpu;
 
 /// FormatR specialized for AMO (Atomic Memory Operation) instructions
 /// Uses the same format as FormatR but with a custom RegisterState that
@@ -26,8 +30,9 @@ pub struct RegisterStateFormatRAMO {
 impl InstructionRegisterState for RegisterStateFormatRAMO {
     #[cfg(any(feature = "test-utils", test))]
     fn random(rng: &mut rand::rngs::StdRng) -> Self {
-        use crate::instruction::test::{DRAM_BASE, TEST_MEMORY_CAPACITY};
         use rand::RngCore;
+
+        use crate::instruction::test::{DRAM_BASE, TEST_MEMORY_CAPACITY};
 
         // Ensure rs1 is a valid aligned address within memory bounds
         // AMO instructions require naturally aligned addresses

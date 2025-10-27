@@ -9,19 +9,23 @@
 //! with the Inline-format instruction encoding. Inlines are uniquely identified by their
 //! opcode, funct3, and funct7 fields.
 
+use std::{collections::HashMap, sync::RwLock};
+
+use lazy_static::lazy_static;
+use serde::{Deserialize, Serialize};
+
 use super::{
     format::{format_inline::FormatInline, InstructionFormat},
-    Cycle, Instruction, RISCVInstruction, RISCVTrace,
+    Cycle,
+    Instruction,
+    RISCVInstruction,
+    RISCVTrace,
 };
 use crate::{
     emulator::cpu::{Cpu, Xlen},
     instruction::NormalizedInstruction,
     utils::{inline_helpers::InstrAssembler, virtual_registers::VirtualRegisterAllocator},
 };
-use lazy_static::lazy_static;
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::sync::RwLock;
 
 // Type alias for the inline_sequence functions signature
 pub type InlineSequenceFunction =
@@ -164,8 +168,9 @@ impl RISCVInstruction for INLINE {
 
     #[cfg(any(feature = "test-utils", test))]
     fn random(rng: &mut rand::rngs::StdRng) -> Self {
-        use crate::instruction::format::InstructionFormat;
         use rand::RngCore;
+
+        use crate::instruction::format::InstructionFormat;
         Self {
             opcode: rng.next_u32() & 0x7f,
             funct3: rng.next_u32() & 0x7,

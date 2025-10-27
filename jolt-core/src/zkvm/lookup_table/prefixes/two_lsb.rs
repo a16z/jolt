@@ -1,11 +1,12 @@
-use crate::zkvm::lookup_table::prefixes::Prefixes;
-use crate::{field::JoltField, utils::lookup_bits::LookupBits};
-use crate::{
-    field::{ChallengeFieldOps, FieldChallengeOps},
-    zkvm::instruction_lookups::read_raf_checking::current_suffix_len,
-};
-
 use super::{PrefixCheckpoint, SparseDensePrefix};
+use crate::{
+    field::{ChallengeFieldOps, FieldChallengeOps, JoltField},
+    utils::lookup_bits::LookupBits,
+    zkvm::{
+        instruction_lookups::read_raf_checking::current_suffix_len,
+        lookup_table::prefixes::Prefixes,
+    },
+};
 
 pub enum TwoLsbPrefix<const XLEN: usize> {}
 

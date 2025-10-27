@@ -1,6 +1,11 @@
+use std::{array, cell::RefCell, iter::zip, rc::Rc, sync::Arc};
+
+use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::FlameGraphBuilder;
 use itertools::chain;
 use num_traits::Zero;
-use std::{array, cell::RefCell, iter::zip, rc::Rc, sync::Arc};
+use rayon::prelude::*;
 
 use crate::{
     field::JoltField,
@@ -9,11 +14,19 @@ use crate::{
         eq_poly::EqPolynomial,
         lt_poly::LtPolynomial,
         multilinear_polynomial::{
-            BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
+            BindingOrder,
+            MultilinearPolynomial,
+            PolynomialBinding,
+            PolynomialEvaluation,
         },
         opening_proof::{
-            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-            VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
+            OpeningAccumulator,
+            OpeningPoint,
+            ProverOpeningAccumulator,
+            SumcheckId,
+            VerifierOpeningAccumulator,
+            BIG_ENDIAN,
+            LITTLE_ENDIAN,
         },
         ra_poly::RaPolynomial,
         unipoly::UniPoly,
@@ -27,10 +40,6 @@ use crate::{
         witness::{CommittedPolynomial, VirtualPolynomial},
     },
 };
-use allocative::Allocative;
-#[cfg(feature = "allocative")]
-use allocative::FlameGraphBuilder;
-use rayon::prelude::*;
 
 // RAM value evaluation sumcheck
 //

@@ -1,6 +1,5 @@
-use crate::utils::lookup_bits::LookupBits;
-
 use super::SparseDenseSuffix;
+use crate::utils::lookup_bits::LookupBits;
 
 /// 1 if the operands are equal, 0 otherwise.
 pub enum EqSuffix {}

@@ -1,5 +1,4 @@
-use crate::utils::lookup_bits::LookupBits;
-use crate::zkvm::lookup_table::suffixes::SparseDenseSuffix;
+use crate::{utils::lookup_bits::LookupBits, zkvm::lookup_table::suffixes::SparseDenseSuffix};
 
 pub struct TwoLsbSuffix;
 

@@ -1,8 +1,21 @@
+use std::{
+    default::Default,
+    fmt,
+    iter::{Product, Sum},
+    ops::{Add, AddAssign, Deref, DerefMut, Div, Mul, MulAssign, Neg, Sub, SubAssign},
+    sync::atomic::Ordering,
+};
+
+use allocative::Allocative;
+use ark_bn254::Fr;
+use ark_ff::{BigInt, One, UniformRand, Zero};
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_std::rand::Rng;
+
 use super::{FieldOps, JoltField};
 #[cfg(feature = "challenge-254-bit")]
 use crate::field::challenge::Mont254BitChallenge;
 use crate::field::challenge::MontU128Challenge;
-
 use crate::utils::counters::{
     // basic arithmetic
     ADD_COUNT,
@@ -32,19 +45,6 @@ use crate::utils::counters::{
     SQUARE_COUNT,
     SUB_COUNT,
 };
-use allocative::Allocative;
-use ark_bn254::Fr;
-use ark_ff::BigInt;
-use ark_ff::UniformRand;
-use ark_ff::{One, Zero};
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use ark_std::rand::Rng;
-use std::default::Default;
-use std::fmt;
-use std::iter::{Product, Sum};
-use std::ops::{Add, Deref, DerefMut, Div, Mul, Sub};
-use std::ops::{AddAssign, MulAssign, Neg, SubAssign};
-use std::sync::atomic::Ordering;
 
 #[derive(
     Clone, Default, Copy, PartialEq, Eq, Hash, Debug, CanonicalSerialize, CanonicalDeserialize,
@@ -462,12 +462,17 @@ impl TrackedFr {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::op_ref)]
-    use crate::field::tracked_ark::TrackedFr as Fr;
-    use crate::field::{JoltField, OptimizedMul};
-    use crate::utils::counters::{
-        get_inverse_count, get_mult_count, reset_inverse_count, reset_mult_count,
-    };
     use std::ops::MulAssign;
+
+    use crate::{
+        field::{tracked_ark::TrackedFr as Fr, JoltField, OptimizedMul},
+        utils::counters::{
+            get_inverse_count,
+            get_mult_count,
+            reset_inverse_count,
+            reset_mult_count,
+        },
+    };
 
     #[test]
     fn test_if_trackers_are_working() {

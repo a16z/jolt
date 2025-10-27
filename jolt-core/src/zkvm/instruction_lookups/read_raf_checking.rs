@@ -1,15 +1,18 @@
+use std::{cell::RefCell, rc::Rc};
+
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 use common::constants::XLEN;
 use num_traits::Zero;
-use rayon::prelude::*;
-use std::{cell::RefCell, rc::Rc};
+use rayon::{
+    iter::{IndexedParallelIterator, ParallelIterator},
+    prelude::*,
+};
 use strum::{EnumCount, IntoEnumIterator};
 use tracer::instruction::Cycle;
 
 use super::{LOG_K, LOG_M, M, PHASES};
-
 use crate::{
     field::{JoltField, MulTrunc},
     poly::{
@@ -18,11 +21,18 @@ use crate::{
         eq_poly::EqPolynomial,
         identity_poly::{IdentityPolynomial, OperandPolynomial, OperandSide},
         multilinear_polynomial::{
-            BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
+            BindingOrder,
+            MultilinearPolynomial,
+            PolynomialBinding,
+            PolynomialEvaluation,
         },
         opening_proof::{
-            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-            VerifierOpeningAccumulator, BIG_ENDIAN,
+            OpeningAccumulator,
+            OpeningPoint,
+            ProverOpeningAccumulator,
+            SumcheckId,
+            VerifierOpeningAccumulator,
+            BIG_ENDIAN,
         },
         prefix_suffix::{Prefix, PrefixRegistry, PrefixSuffixDecomposition},
         split_eq_poly::GruenSplitEqPolynomial,
@@ -46,8 +56,6 @@ use crate::{
         witness::VirtualPolynomial,
     },
 };
-
-use rayon::iter::{IndexedParallelIterator, ParallelIterator};
 
 /// Instruction lookups: Read + RAF batched sumcheck
 ///
@@ -1193,24 +1201,26 @@ pub fn current_suffix_len(j: usize) -> usize {
 mod tests {
     use std::ops::DerefMut;
 
-    use super::*;
-    use crate::subprotocols::sumcheck::BatchedSumcheck;
-    use crate::transcripts::Blake2bTranscript;
-    use crate::{
-        poly::commitment::mock::MockCommitScheme,
-        zkvm::{
-            bytecode::BytecodePreprocessing, ram::RAMPreprocessing, JoltProverPreprocessing,
-            JoltSharedPreprocessing, JoltVerifierPreprocessing,
-        },
-    };
     use ark_bn254::Fr;
     use ark_std::Zero;
     use common::jolt_device::MemoryLayout;
     use rand::{rngs::StdRng, RngCore, SeedableRng};
     use strum::IntoEnumIterator;
-    use tracer::emulator::memory::Memory;
-    use tracer::instruction::Cycle;
-    use tracer::JoltDevice;
+    use tracer::{emulator::memory::Memory, instruction::Cycle, JoltDevice};
+
+    use super::*;
+    use crate::{
+        poly::commitment::mock::MockCommitScheme,
+        subprotocols::sumcheck::BatchedSumcheck,
+        transcripts::Blake2bTranscript,
+        zkvm::{
+            bytecode::BytecodePreprocessing,
+            ram::RAMPreprocessing,
+            JoltProverPreprocessing,
+            JoltSharedPreprocessing,
+            JoltVerifierPreprocessing,
+        },
+    };
 
     const LOG_T: usize = 8;
     const T: usize = 1 << LOG_T;

@@ -1,4 +1,3 @@
-use crate::host::TOOLCHAIN_VERSION;
 use std::{
     fs::{self, read_to_string, File},
     future::Future,
@@ -12,6 +11,8 @@ use indicatif::{ProgressBar, ProgressStyle};
 use reqwest::Client;
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::runtime::Runtime;
+
+use crate::host::TOOLCHAIN_VERSION;
 
 const TOOLCHAIN_TAG: &str = include_str!("../../../guest-toolchain-tag");
 const DOWNLOAD_RETRIES: usize = 5;

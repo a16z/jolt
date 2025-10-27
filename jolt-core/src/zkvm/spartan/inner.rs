@@ -1,27 +1,37 @@
-use std::cell::RefCell;
-use std::rc::Rc;
-use std::sync::Arc;
+use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 use allocative::Allocative;
+use rayon::prelude::*;
 use tracing::{span, Level};
 
-use crate::field::JoltField;
-use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::dense_mlpoly::DensePolynomial;
-use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
-use crate::poly::opening_proof::{
-    OpeningAccumulator, OpeningId, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-    VerifierOpeningAccumulator, BIG_ENDIAN,
+use crate::{
+    field::JoltField,
+    poly::{
+        commitment::commitment_scheme::CommitmentScheme,
+        dense_mlpoly::DensePolynomial,
+        multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
+        opening_proof::{
+            OpeningAccumulator,
+            OpeningId,
+            OpeningPoint,
+            ProverOpeningAccumulator,
+            SumcheckId,
+            VerifierOpeningAccumulator,
+            BIG_ENDIAN,
+        },
+    },
+    subprotocols::sumcheck::SumcheckInstance,
+    transcripts::Transcript,
+    utils::math::Math,
+    zkvm::{
+        dag::state_manager::StateManager,
+        r1cs::{
+            inputs::{JoltR1CSInputs, ALL_R1CS_INPUTS},
+            key::UniformSpartanKey,
+        },
+        witness::VirtualPolynomial,
+    },
 };
-use crate::subprotocols::sumcheck::SumcheckInstance;
-use crate::transcripts::Transcript;
-use crate::utils::math::Math;
-use crate::zkvm::dag::state_manager::StateManager;
-use crate::zkvm::r1cs::inputs::{JoltR1CSInputs, ALL_R1CS_INPUTS};
-use crate::zkvm::r1cs::key::UniformSpartanKey;
-use crate::zkvm::witness::VirtualPolynomial;
-
-use rayon::prelude::*;
 
 /// Inner Spartan sumcheck
 ///

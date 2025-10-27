@@ -1,6 +1,9 @@
+use tracer::{
+    emulator::cpu::Xlen,
+    utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness},
+};
+
 use super::{BIGINT256_MUL_FUNCT3, BIGINT256_MUL_FUNCT7, INLINE_OPCODE, INPUT_LIMBS, OUTPUT_LIMBS};
-use tracer::emulator::cpu::Xlen;
-use tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness};
 
 pub type BigIntInput = ([u64; INPUT_LIMBS], [u64; INPUT_LIMBS]);
 pub type BigIntOutput = [u64; OUTPUT_LIMBS];

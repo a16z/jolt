@@ -1,18 +1,18 @@
-use crate::field::JoltField;
-use crate::msm::VariableBaseMSM;
-use crate::poly::multilinear_polynomial::MultilinearPolynomial;
-use crate::poly::unipoly::UniPoly;
-use crate::utils::errors::ProofVerifyError;
-use ark_ec::scalar_mul::fixed_base::FixedBase;
-use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
+use std::{borrow::Borrow, marker::PhantomData, sync::Arc};
+
+use ark_ec::{pairing::Pairing, scalar_mul::fixed_base::FixedBase, AffineRepr, CurveGroup};
 use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{One, UniformRand, Zero};
 use rand_core::{CryptoRng, RngCore};
 use rayon::prelude::*;
-use std::borrow::Borrow;
-use std::marker::PhantomData;
-use std::sync::Arc;
+
+use crate::{
+    field::JoltField,
+    msm::VariableBaseMSM,
+    poly::{multilinear_polynomial::MultilinearPolynomial, unipoly::UniPoly},
+    utils::errors::ProofVerifyError,
+};
 
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct SRS<P: Pairing> {
@@ -404,11 +404,12 @@ impl<P: Pairing> UnivariateKZG<P, G2> {
 
 #[cfg(test)]
 mod test {
-    use super::*;
     use ark_bn254::Bn254;
     use ark_std::rand::Rng;
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
+
+    use super::*;
 
     fn run_kzg_test<F>(degree_generator: F) -> Result<(), ProofVerifyError>
     where

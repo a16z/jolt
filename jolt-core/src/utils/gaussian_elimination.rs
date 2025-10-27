@@ -65,9 +65,9 @@ fn eliminate<F: JoltField>(matrix: &mut [Vec<F>], i: usize) {
 #[cfg(test)]
 mod tests {
     use ark_bn254::Fr;
+    use ark_std::{One, Zero};
 
     use super::gaussian_elimination;
-    use ark_std::{One, Zero};
 
     #[test]
     fn test_gauss() {

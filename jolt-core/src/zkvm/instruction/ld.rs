@@ -1,9 +1,10 @@
-use crate::zkvm::instruction::{InstructionFlags, NUM_INSTRUCTION_FLAGS};
 use tracer::instruction::{ld::LD, RISCVCycle};
 
-use crate::zkvm::lookup_table::LookupTables;
-
 use super::{CircuitFlags, Flags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS};
+use crate::zkvm::{
+    instruction::{InstructionFlags, NUM_INSTRUCTION_FLAGS},
+    lookup_table::LookupTables,
+};
 
 impl<const XLEN: usize> InstructionLookup<XLEN> for LD {
     fn lookup_table(&self) -> Option<LookupTables<XLEN>> {

@@ -1,12 +1,12 @@
 extern crate fnv;
 
-#[cfg(feature = "std")]
-use self::fnv::FnvHashMap;
 #[cfg(not(feature = "std"))]
 use alloc::collections::btree_map::BTreeMap as FnvHashMap;
-
 #[cfg(not(feature = "std"))]
 use alloc::{string::String, vec::Vec};
+
+#[cfg(feature = "std")]
+use self::fnv::FnvHashMap;
 
 /// ELF header
 pub struct Header {

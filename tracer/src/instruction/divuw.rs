@@ -1,19 +1,25 @@
-use crate::utils::virtual_registers::VirtualRegisterAllocator;
-use crate::{instruction::mulhu::MULHU, utils::inline_helpers::InstrAssembler};
 use serde::{Deserialize, Serialize};
 
+use super::{
+    add::ADD,
+    format::format_r::FormatR,
+    mul::MUL,
+    virtual_advice::VirtualAdvice,
+    virtual_assert_eq::VirtualAssertEQ,
+    virtual_assert_valid_div0::VirtualAssertValidDiv0,
+    virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder,
+    virtual_sign_extend_word::VirtualSignExtendWord,
+    virtual_zero_extend_word::VirtualZeroExtendWord,
+    Cycle,
+    Instruction,
+    RISCVInstruction,
+    RISCVTrace,
+};
 use crate::{
     declare_riscv_instr,
     emulator::cpu::{Cpu, Xlen},
-};
-
-use super::{
-    add::ADD, format::format_r::FormatR, mul::MUL, virtual_advice::VirtualAdvice,
-    virtual_assert_eq::VirtualAssertEQ, virtual_assert_valid_div0::VirtualAssertValidDiv0,
-    virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder,
-    virtual_sign_extend_word::VirtualSignExtendWord,
-    virtual_zero_extend_word::VirtualZeroExtendWord, Cycle, Instruction, RISCVInstruction,
-    RISCVTrace,
+    instruction::mulhu::MULHU,
+    utils::{inline_helpers::InstrAssembler, virtual_registers::VirtualRegisterAllocator},
 };
 
 declare_riscv_instr!(

@@ -1,6 +1,6 @@
-use num_traits::Zero;
 use std::iter::zip;
 
+use num_traits::Zero;
 use rayon::prelude::*;
 
 use crate::{
@@ -329,11 +329,12 @@ fn assign<T: Sized>(dst: &mut T, src: T) {
 
 #[cfg(test)]
 mod tests {
+    use std::array::from_fn;
+
     use ark_bn254::Fr;
     use ark_std::UniformRand;
     use dory::curve::test_rng;
     use rand::rngs::StdRng;
-    use std::array::from_fn;
 
     use crate::{
         field::JoltField,

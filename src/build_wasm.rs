@@ -1,18 +1,17 @@
-use common::attributes::{parse_attributes, Attributes};
-use tracer::instruction::Instruction;
-
 use std::{
     fs::{self, File},
     io::Write,
     path::Path,
 };
 
+use common::attributes::{parse_attributes, Attributes};
 use eyre::Result;
 use jolt_core::host::Program;
 use rmp_serde::Serializer;
 use serde::{Deserialize, Serialize};
 use syn::{Attribute, ItemFn, Meta, PathSegment};
 use toml_edit::{value, Array, DocumentMut, InlineTable, Item, Table, Value};
+use tracer::instruction::Instruction;
 
 #[derive(Serialize, Deserialize)]
 struct DecodedData {

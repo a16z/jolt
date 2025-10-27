@@ -1,26 +1,29 @@
-use crate::utils::inline_helpers::InstrAssembler;
-use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use serde::{Deserialize, Serialize};
 
+use super::{
+    addi::ADDI,
+    and::AND,
+    andi::ANDI,
+    format::format_s::FormatS,
+    ld::LD,
+    lui::LUI,
+    sd::SD,
+    sll::SLL,
+    slli::SLLI,
+    virtual_lw::VirtualLW,
+    virtual_sw::VirtualSW,
+    xor::XOR,
+    Cycle,
+    Instruction,
+    RAMWrite,
+    RISCVInstruction,
+    RISCVTrace,
+};
 use crate::{
     declare_riscv_instr,
     emulator::cpu::{Cpu, Xlen},
+    utils::{inline_helpers::InstrAssembler, virtual_registers::VirtualRegisterAllocator},
 };
-
-use super::addi::ADDI;
-use super::and::AND;
-use super::andi::ANDI;
-use super::ld::LD;
-use super::lui::LUI;
-use super::sd::SD;
-use super::sll::SLL;
-use super::slli::SLLI;
-use super::virtual_lw::VirtualLW;
-use super::virtual_sw::VirtualSW;
-use super::xor::XOR;
-use super::{Instruction, RAMWrite};
-
-use super::{format::format_s::FormatS, Cycle, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name   = SB,

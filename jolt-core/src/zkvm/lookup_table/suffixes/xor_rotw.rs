@@ -1,6 +1,5 @@
-use crate::utils::lookup_bits::LookupBits;
-
 use super::SparseDenseSuffix;
+use crate::utils::lookup_bits::LookupBits;
 
 /// Xor the operands of the suffix, while taking at most the lower 32-bit (or the size of them itself if they are less than 32), and rotate right by a given constant value.
 pub enum XorRotWSuffix<const ROTATION: u32> {}

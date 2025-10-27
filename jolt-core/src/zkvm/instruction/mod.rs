@@ -6,9 +6,8 @@ use strum::EnumCount;
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 use tracer::instruction::{Cycle, Instruction};
 
-use crate::utils::interleave_bits;
-
 use super::lookup_table::LookupTables;
+use crate::utils::interleave_bits;
 
 pub trait InstructionLookup<const XLEN: usize> {
     fn lookup_table(&self) -> Option<LookupTables<XLEN>>;

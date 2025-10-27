@@ -1,7 +1,7 @@
-use super::terminal::Terminal;
-
 #[cfg(not(feature = "std"))]
 use alloc::{vec, vec::Vec};
+
+use super::terminal::Terminal;
 
 /// Standard `Terminal`.
 #[derive(Default)]

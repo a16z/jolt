@@ -1,11 +1,11 @@
 use serde::{Deserialize, Serialize};
 
+use super::{RISCVInstruction, RISCVTrace};
 use crate::{
-    declare_riscv_instr, emulator::cpu::Cpu,
+    declare_riscv_instr,
+    emulator::cpu::Cpu,
     instruction::format::format_virtual_right_shift_i::FormatVirtualRightShiftI,
 };
-
-use super::{RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name = VirtualSRLI,

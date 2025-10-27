@@ -1,9 +1,9 @@
-use crate::{field::JoltField, zkvm::instruction::LookupQuery};
 use common::constants::XLEN;
 use rand::prelude::*;
 use tracer::instruction::{RISCVCycle, RISCVInstruction};
 
 use super::{CircuitFlags, InstructionLookup};
+use crate::{field::JoltField, zkvm::instruction::LookupQuery};
 
 pub fn materialize_entry_test<F, T>()
 where
@@ -29,11 +29,11 @@ where
 mod flags {
     use std::panic;
 
-    use crate::zkvm::instruction::{Flags, InstructionFlags};
-
-    use super::CircuitFlags;
     use strum::IntoEnumIterator;
     use tracer::instruction::Cycle;
+
+    use super::CircuitFlags;
+    use crate::zkvm::instruction::{Flags, InstructionFlags};
 
     #[test]
     fn left_operand_exclusive() {
@@ -112,8 +112,9 @@ mod flags {
 
     #[test]
     fn branch_lookup_output_is_boolean() {
-        use crate::zkvm::instruction::LookupQuery;
         use common::constants::XLEN;
+
+        use crate::zkvm::instruction::LookupQuery;
 
         for cycle in Cycle::iter() {
             if let Cycle::INLINE(_) = cycle {

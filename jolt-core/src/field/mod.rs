@@ -1,11 +1,13 @@
+use std::{
+    fmt::{Debug, Display},
+    hash::Hash,
+    ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub, SubAssign},
+};
+
 use allocative::Allocative;
 use ark_ff::{BigInt, UniformRand};
-use num_traits::{One, Zero};
-use std::fmt::{Debug, Display};
-use std::hash::Hash;
-use std::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub, SubAssign};
-
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use num_traits::{One, Zero};
 
 pub trait FieldOps<Rhs = Self, Output = Self>:
     Add<Rhs, Output = Output>

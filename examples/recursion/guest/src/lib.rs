@@ -5,10 +5,17 @@ use jolt_sdk::{self as jolt};
 extern crate alloc;
 
 use ark_serialize::{CanonicalDeserialize, Compress, Validate};
-use jolt::Jolt;
-use jolt::{JoltDevice, JoltRV64IMAC, JoltVerifierPreprocessing, RV64IMACJoltProof, F, PCS};
-
-use jolt::{end_cycle_tracking, start_cycle_tracking};
+use jolt::{
+    end_cycle_tracking,
+    start_cycle_tracking,
+    Jolt,
+    JoltDevice,
+    JoltRV64IMAC,
+    JoltVerifierPreprocessing,
+    RV64IMACJoltProof,
+    F,
+    PCS,
+};
 
 mod embedded_bytes {
     include!("./embedded_bytes.rs");

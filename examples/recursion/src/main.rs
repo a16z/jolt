@@ -1,10 +1,12 @@
-use ark_serialize::CanonicalDeserialize;
-use ark_serialize::CanonicalSerialize;
+use std::{
+    cmp::PartialEq,
+    path::{Path, PathBuf},
+    time::Instant,
+};
+
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use clap::{Parser, Subcommand};
 use jolt_sdk::{JoltDevice, MemoryConfig, RV64IMACJoltProof, Serializable};
-use std::cmp::PartialEq;
-use std::path::{Path, PathBuf};
-use std::time::Instant;
 use tracing::{error, info};
 
 fn get_guest_src_dir() -> PathBuf {

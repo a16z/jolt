@@ -1,15 +1,23 @@
-use crate::utils::inline_helpers::InstrAssembler;
-use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use serde::{Deserialize, Serialize};
 
+use super::{
+    add::ADD,
+    andi::ANDI,
+    format::format_r::FormatR,
+    mul::MUL,
+    mulhu::MULHU,
+    sltu::SLTU,
+    virtual_movsign::VirtualMovsign,
+    xor::XOR,
+    Cycle,
+    Instruction,
+    RISCVInstruction,
+    RISCVTrace,
+};
 use crate::{
     declare_riscv_instr,
     emulator::cpu::{Cpu, Xlen},
-};
-
-use super::{
-    add::ADD, andi::ANDI, format::format_r::FormatR, mul::MUL, mulhu::MULHU, sltu::SLTU,
-    virtual_movsign::VirtualMovsign, xor::XOR, Cycle, Instruction, RISCVInstruction, RISCVTrace,
+    utils::{inline_helpers::InstrAssembler, virtual_registers::VirtualRegisterAllocator},
 };
 
 declare_riscv_instr!(

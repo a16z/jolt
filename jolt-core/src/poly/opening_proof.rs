@@ -5,21 +5,19 @@
 //! can use a sumcheck to reduce multiple opening proofs (multiple polynomials, not
 //! necessarily of the same size, each opened at a different point) into a single opening.
 
-#[cfg(feature = "allocative")]
-use crate::utils::profiling::write_flamegraph_svg;
-use allocative::Allocative;
-#[cfg(feature = "allocative")]
-use allocative::FlameGraphBuilder;
-use num_derive::FromPrimitive;
-use num_traits::Zero;
-use rayon::prelude::*;
 use std::{
     cell::RefCell,
     collections::{BTreeMap, HashMap},
     sync::{Arc, RwLock},
 };
 
+use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::FlameGraphBuilder;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use num_derive::FromPrimitive;
+use num_traits::Zero;
+use rayon::prelude::*;
 
 use super::{
     commitment::commitment_scheme::CommitmentScheme,
@@ -29,6 +27,8 @@ use super::{
 };
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
+#[cfg(feature = "allocative")]
+use crate::utils::profiling::write_flamegraph_svg;
 use crate::{
     field::JoltField,
     poly::one_hot_polynomial::{EqAddressState, EqCycleState, OneHotPolynomialProverOpening},

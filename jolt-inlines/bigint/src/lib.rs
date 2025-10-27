@@ -4,10 +4,8 @@
 
 pub mod multiplication;
 pub use multiplication::*;
-
 #[cfg(feature = "host")]
 use tracer::register_inline;
-
 #[cfg(feature = "host")]
 use tracer::utils::inline_sequence_writer::{write_inline_trace, InlineDescriptor, SequenceInputs};
 

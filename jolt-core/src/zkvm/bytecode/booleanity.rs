@@ -1,15 +1,11 @@
-use std::cell::RefCell;
-use std::rc::Rc;
-use std::sync::Arc;
+use std::{cell::RefCell, rc::Rc, sync::Arc};
 
+use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::FlameGraphBuilder;
 use num_traits::Zero;
-
-use crate::poly::opening_proof::{
-    OpeningAccumulator, OpeningPoint, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
-};
-use crate::zkvm::bytecode::BytecodePreprocessing;
-use crate::zkvm::dag::state_manager::StateManager;
-use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
+use rayon::prelude::*;
+use tracer::instruction::Cycle;
 
 use crate::{
     field::JoltField,
@@ -17,7 +13,14 @@ use crate::{
         commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, PolynomialBinding},
-        opening_proof::ProverOpeningAccumulator,
+        opening_proof::{
+            OpeningAccumulator,
+            OpeningPoint,
+            ProverOpeningAccumulator,
+            SumcheckId,
+            VerifierOpeningAccumulator,
+            BIG_ENDIAN,
+        },
         ra_poly::RaPolynomial,
         split_eq_poly::GruenSplitEqPolynomial,
     },
@@ -27,12 +30,12 @@ use crate::{
         math::Math,
         thread::{drop_in_background_thread, unsafe_allocate_zero_vec},
     },
+    zkvm::{
+        bytecode::BytecodePreprocessing,
+        dag::state_manager::StateManager,
+        witness::{CommittedPolynomial, VirtualPolynomial},
+    },
 };
-use allocative::Allocative;
-#[cfg(feature = "allocative")]
-use allocative::FlameGraphBuilder;
-use rayon::prelude::*;
-use tracer::instruction::Cycle;
 
 // Bytecode booleanity sumcheck
 //

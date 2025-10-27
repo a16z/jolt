@@ -1,17 +1,20 @@
-use crate::field::{ChallengeFieldOps, FieldChallengeOps, JoltField};
-use std::cmp::Ordering;
-use std::ops::{AddAssign, Index, IndexMut, Mul, MulAssign, Sub};
+use std::{
+    cmp::Ordering,
+    ops::{AddAssign, Index, IndexMut, Mul, MulAssign, Sub},
+};
 
-use crate::poly::lagrange_poly::LagrangeHelper;
-use crate::transcripts::{AppendToTranscript, Transcript};
-use crate::utils::gaussian_elimination::gaussian_elimination;
 use allocative::Allocative;
 use ark_serialize::*;
 use rand_core::{CryptoRng, RngCore};
 use rayon::prelude::*;
 
 use super::multilinear_polynomial::MultilinearPolynomial;
-use crate::utils::small_scalar::SmallScalar;
+use crate::{
+    field::{ChallengeFieldOps, FieldChallengeOps, JoltField},
+    poly::lagrange_poly::LagrangeHelper,
+    transcripts::{AppendToTranscript, Transcript},
+    utils::{gaussian_elimination::gaussian_elimination, small_scalar::SmallScalar},
+};
 
 // ax^2 + bx + c stored as vec![c,b,a]
 // ax^3 + bx^2 + cx + d stored as vec![d,c,b,a]
@@ -484,10 +487,11 @@ impl<F: JoltField> AppendToTranscript for CompressedUniPoly<F> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use ark_bn254::Fr;
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
+
+    use super::*;
 
     #[test]
     fn test_from_evals_toom() {

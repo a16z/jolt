@@ -1,20 +1,23 @@
-use crate::instruction::{
-    addi::ADDI, virtual_assert_mulu_no_overflow::VirtualAssertMulUNoOverflow,
-};
-use crate::utils::inline_helpers::InstrAssembler;
-use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use serde::{Deserialize, Serialize};
 
+use super::{
+    add::ADD,
+    format::format_r::FormatR,
+    mul::MUL,
+    virtual_advice::VirtualAdvice,
+    virtual_assert_eq::VirtualAssertEQ,
+    virtual_assert_valid_div0::VirtualAssertValidDiv0,
+    virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder,
+    Cycle,
+    Instruction,
+    RISCVInstruction,
+    RISCVTrace,
+};
 use crate::{
     declare_riscv_instr,
     emulator::cpu::{Cpu, Xlen},
-};
-
-use super::{
-    add::ADD, format::format_r::FormatR, mul::MUL, virtual_advice::VirtualAdvice,
-    virtual_assert_eq::VirtualAssertEQ, virtual_assert_valid_div0::VirtualAssertValidDiv0,
-    virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder, Cycle,
-    Instruction, RISCVInstruction, RISCVTrace,
+    instruction::{addi::ADDI, virtual_assert_mulu_no_overflow::VirtualAssertMulUNoOverflow},
+    utils::{inline_helpers::InstrAssembler, virtual_registers::VirtualRegisterAllocator},
 };
 
 declare_riscv_instr!(

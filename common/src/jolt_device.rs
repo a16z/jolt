@@ -1,14 +1,19 @@
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use serde::{Deserialize, Serialize};
-
 #[cfg(not(feature = "std"))]
 use alloc::vec::Vec;
 #[cfg(feature = "std")]
 use std::vec::Vec;
 
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use serde::{Deserialize, Serialize};
+
 use crate::constants::{
-    DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE, DEFAULT_MAX_TRUSTED_ADVICE_SIZE,
-    DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE, DEFAULT_MEMORY_SIZE, DEFAULT_STACK_SIZE, RAM_START_ADDRESS,
+    DEFAULT_MAX_INPUT_SIZE,
+    DEFAULT_MAX_OUTPUT_SIZE,
+    DEFAULT_MAX_TRUSTED_ADVICE_SIZE,
+    DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE,
+    DEFAULT_MEMORY_SIZE,
+    DEFAULT_STACK_SIZE,
+    RAM_START_ADDRESS,
 };
 
 #[allow(clippy::too_long_first_doc_paragraph)]

@@ -1,9 +1,14 @@
-use common::constants::RAM_START_ADDRESS;
-use common::jolt_device::{JoltDevice, MemoryConfig};
 use std::path::PathBuf;
-use tracer::emulator::memory::Memory;
-use tracer::instruction::{Cycle, Instruction};
-use tracer::utils::virtual_registers::VirtualRegisterAllocator;
+
+use common::{
+    constants::RAM_START_ADDRESS,
+    jolt_device::{JoltDevice, MemoryConfig},
+};
+use tracer::{
+    emulator::memory::Memory,
+    instruction::{Cycle, Instruction},
+    utils::virtual_registers::VirtualRegisterAllocator,
+};
 
 /// Configuration for program runtime
 #[derive(Debug, Clone)]

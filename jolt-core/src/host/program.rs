@@ -1,25 +1,46 @@
-use crate::field::JoltField;
-use crate::guest;
-use crate::host::analyze::ProgramSummary;
+use std::{
+    fs,
+    fs::File,
+    io,
+    io::{Read, Write},
+    path::PathBuf,
+    process::Command,
+    str::FromStr,
+};
+
+use common::{
+    constants::{
+        DEFAULT_MAX_INPUT_SIZE,
+        DEFAULT_MAX_OUTPUT_SIZE,
+        DEFAULT_MAX_TRUSTED_ADVICE_SIZE,
+        DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE,
+        DEFAULT_MEMORY_SIZE,
+        DEFAULT_STACK_SIZE,
+        EMULATOR_MEMORY_CAPACITY,
+        RAM_START_ADDRESS,
+        STACK_CANARY_SIZE,
+    },
+    jolt_device::{JoltDevice, MemoryConfig},
+};
+use tracer::{
+    emulator::memory::Memory,
+    instruction::{Cycle, Instruction},
+};
+use tracing::info;
+
 #[cfg(not(target_arch = "wasm32"))]
 use crate::host::toolchain::{install_no_std_toolchain, install_toolchain};
-use crate::host::TOOLCHAIN_VERSION;
-use crate::host::{Program, DEFAULT_TARGET_DIR, LINKER_SCRIPT_TEMPLATE};
-use common::constants::{
-    DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE, DEFAULT_MAX_TRUSTED_ADVICE_SIZE,
-    DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE, DEFAULT_MEMORY_SIZE, DEFAULT_STACK_SIZE,
-    EMULATOR_MEMORY_CAPACITY, RAM_START_ADDRESS, STACK_CANARY_SIZE,
+use crate::{
+    field::JoltField,
+    guest,
+    host::{
+        analyze::ProgramSummary,
+        Program,
+        DEFAULT_TARGET_DIR,
+        LINKER_SCRIPT_TEMPLATE,
+        TOOLCHAIN_VERSION,
+    },
 };
-use common::jolt_device::{JoltDevice, MemoryConfig};
-use std::fs::File;
-use std::io::{Read, Write};
-use std::path::PathBuf;
-use std::process::Command;
-use std::str::FromStr;
-use std::{fs, io};
-use tracer::emulator::memory::Memory;
-use tracer::instruction::{Cycle, Instruction};
-use tracing::info;
 
 impl Program {
     pub fn new(guest: &str) -> Self {

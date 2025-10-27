@@ -1,6 +1,5 @@
-use crate::utils::lookup_bits::LookupBits;
-
 use super::SparseDenseSuffix;
+use crate::utils::lookup_bits::LookupBits;
 
 /// 1 if the divisor (first operand) is all 0s and the quotient (second operand) is
 /// all 1s; 0 otherwise. This is how the expected behavior for division-by-zero,

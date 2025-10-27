@@ -1,20 +1,24 @@
-use crate::utils::virtual_registers::VirtualRegisterAllocator;
-use crate::{instruction::addi::ADDI, utils::inline_helpers::InstrAssembler};
 use serde::{Deserialize, Serialize};
 
-use super::add::ADD;
-use super::ld::LD;
-use super::mul::MUL;
-use super::sd::SD;
-use super::sltu::SLTU;
-use super::xori::XORI;
-use super::Instruction;
+use super::{
+    add::ADD,
+    format::format_amo::FormatAMO,
+    ld::LD,
+    mul::MUL,
+    sd::SD,
+    sltu::SLTU,
+    xori::XORI,
+    Cycle,
+    Instruction,
+    RISCVInstruction,
+    RISCVTrace,
+};
 use crate::{
     declare_riscv_instr,
     emulator::cpu::{Cpu, Xlen},
+    instruction::addi::ADDI,
+    utils::{inline_helpers::InstrAssembler, virtual_registers::VirtualRegisterAllocator},
 };
-
-use super::{format::format_amo::FormatAMO, Cycle, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name   = AMOMINUD,

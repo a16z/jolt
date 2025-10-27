@@ -1,10 +1,12 @@
-use super::PrefixSuffixDecomposition;
-use crate::field::{ChallengeFieldOps, FieldChallengeOps, JoltField};
 use serde::{Deserialize, Serialize};
 
-use super::prefixes::{PrefixEval, Prefixes};
-use super::suffixes::{SuffixEval, Suffixes};
-use super::JoltLookupTable;
+use super::{
+    prefixes::{PrefixEval, Prefixes},
+    suffixes::{SuffixEval, Suffixes},
+    JoltLookupTable,
+    PrefixSuffixDecomposition,
+};
+use crate::field::{ChallengeFieldOps, FieldChallengeOps, JoltField};
 
 /// SignExtendHalfWord table - sign-extends the lower half of a word to full word
 /// For XLEN=64, this sign-extends a 32-bit value to 64-bit
@@ -76,13 +78,14 @@ impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for SignExtendHalfWordTa
 #[cfg(test)]
 mod test {
     use ark_bn254::Fr;
-
-    use crate::zkvm::lookup_table::test::{
-        lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
-    };
     use common::constants::XLEN;
 
     use super::SignExtendHalfWordTable;
+    use crate::zkvm::lookup_table::test::{
+        lookup_table_mle_full_hypercube_test,
+        lookup_table_mle_random_test,
+        prefix_suffix_test,
+    };
 
     #[test]
     fn prefix_suffix() {

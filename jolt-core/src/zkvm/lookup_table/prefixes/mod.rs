@@ -1,28 +1,6 @@
-use crate::{
-    field::{ChallengeFieldOps, FieldChallengeOps, JoltField},
-    utils::lookup_bits::LookupBits,
-};
-use allocative::Allocative;
-use lsb::LsbPrefix;
-use negative_divisor_equals_remainder::NegativeDivisorEqualsRemainderPrefix;
-use negative_divisor_greater_than_remainder::NegativeDivisorGreaterThanRemainderPrefix;
-use negative_divisor_zero_remainder::NegativeDivisorZeroRemainderPrefix;
-use num_derive::FromPrimitive;
-use positive_remainder_equals_divisor::PositiveRemainderEqualsDivisorPrefix;
-use positive_remainder_less_than_divisor::PositiveRemainderLessThanDivisorPrefix;
-use pow2::Pow2Prefix;
-use pow2_w::Pow2WPrefix;
-use rayon::prelude::*;
-use rev8w::Rev8WPrefix;
-use right_shift::RightShiftPrefix;
-use right_shift_w::RightShiftWPrefix;
-use sign_extension::SignExtensionPrefix;
-use sign_extension_right_operand::SignExtensionRightOperandPrefix;
-use sign_extension_upper_half::SignExtensionUpperHalfPrefix;
 use std::{fmt::Display, ops::Index};
-use strum::EnumCount;
-use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 
+use allocative::Allocative;
 use and::AndPrefix;
 use andn::AndnPrefix;
 use change_divisor::ChangeDivisorPrefix;
@@ -37,19 +15,42 @@ use left_shift_w::LeftShiftWPrefix;
 use left_shift_w_helper::LeftShiftWHelperPrefix;
 use lower_half_word::LowerHalfWordPrefix;
 use lower_word::LowerWordPrefix;
+use lsb::LsbPrefix;
 use lt::LessThanPrefix;
+use negative_divisor_equals_remainder::NegativeDivisorEqualsRemainderPrefix;
+use negative_divisor_greater_than_remainder::NegativeDivisorGreaterThanRemainderPrefix;
+use negative_divisor_zero_remainder::NegativeDivisorZeroRemainderPrefix;
 use num::FromPrimitive;
+use num_derive::FromPrimitive;
 use or::OrPrefix;
 use overflow_bits_zero::OverflowBitsZeroPrefix;
+use positive_remainder_equals_divisor::PositiveRemainderEqualsDivisorPrefix;
+use positive_remainder_less_than_divisor::PositiveRemainderLessThanDivisorPrefix;
+use pow2::Pow2Prefix;
+use pow2_w::Pow2WPrefix;
+use rayon::prelude::*;
+use rev8w::Rev8WPrefix;
 use right_is_zero::RightOperandIsZeroPrefix;
 use right_msb::RightMsbPrefix;
 use right_operand::RightOperandPrefix;
 use right_operand_w::RightOperandWPrefix;
+use right_shift::RightShiftPrefix;
+use right_shift_w::RightShiftWPrefix;
+use sign_extension::SignExtensionPrefix;
+use sign_extension_right_operand::SignExtensionRightOperandPrefix;
+use sign_extension_upper_half::SignExtensionUpperHalfPrefix;
+use strum::EnumCount;
+use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 use two_lsb::TwoLsbPrefix;
 use upper_word::UpperWordPrefix;
 use xor::XorPrefix;
 use xor_rot::XorRotPrefix;
 use xor_rotw::XorRotWPrefix;
+
+use crate::{
+    field::{ChallengeFieldOps, FieldChallengeOps, JoltField},
+    utils::lookup_bits::LookupBits,
+};
 
 pub mod and;
 pub mod andn;

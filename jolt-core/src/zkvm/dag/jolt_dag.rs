@@ -1,33 +1,44 @@
 use std::collections::HashMap;
 
-use crate::field::JoltField;
-use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::commitment::dory::DoryGlobals;
-use crate::poly::multilinear_polynomial::MultilinearPolynomial;
-use crate::subprotocols::sumcheck::{BatchedSumcheck, SumcheckInstance};
-use crate::transcripts::Transcript;
+#[cfg(feature = "allocative")]
+use allocative::FlameGraphBuilder;
+use anyhow::Context;
+
 #[cfg(not(target_arch = "wasm32"))]
 use crate::utils::profiling::print_current_memory_usage;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::write_flamegraph_svg;
-use crate::utils::thread::drop_in_background_thread;
-use crate::zkvm::bytecode::BytecodeDag;
-use crate::zkvm::dag::proof_serialization::JoltProof;
-use crate::zkvm::dag::stage::SumcheckStages;
-use crate::zkvm::dag::state_manager::{ProofData, ProofKeys, StateManager};
-use crate::zkvm::instruction_lookups::LookupsDag;
-use crate::zkvm::ram::RamDag;
-use crate::zkvm::registers::RegistersDag;
-use crate::zkvm::spartan::SpartanDag;
-use crate::zkvm::witness::{
-    compute_d_parameter, AllCommittedPolynomials, CommittedPolynomial, DTH_ROOT_OF_K,
+use crate::{
+    field::JoltField,
+    poly::{
+        commitment::{commitment_scheme::CommitmentScheme, dory::DoryGlobals},
+        multilinear_polynomial::MultilinearPolynomial,
+    },
+    subprotocols::sumcheck::{BatchedSumcheck, SumcheckInstance},
+    transcripts::Transcript,
+    utils::thread::drop_in_background_thread,
+    zkvm::{
+        bytecode::BytecodeDag,
+        dag::{
+            proof_serialization::JoltProof,
+            stage::SumcheckStages,
+            state_manager::{ProofData, ProofKeys, StateManager},
+        },
+        instruction_lookups::LookupsDag,
+        ram::RamDag,
+        registers::RegistersDag,
+        spartan::SpartanDag,
+        witness::{
+            compute_d_parameter,
+            AllCommittedPolynomials,
+            CommittedPolynomial,
+            DTH_ROOT_OF_K,
+        },
+        ProverDebugInfo,
+    },
 };
-use crate::zkvm::ProverDebugInfo;
-#[cfg(feature = "allocative")]
-use allocative::FlameGraphBuilder;
-use anyhow::Context;
 
 pub enum JoltDAG {}
 

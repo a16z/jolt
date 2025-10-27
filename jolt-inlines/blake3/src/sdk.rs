@@ -1,7 +1,14 @@
 //! This file provides high-level API to use BLAKE3 compression, both in host and guest mode.
 use crate::{
-    BLOCK_INPUT_SIZE_IN_BYTES, CHAINING_VALUE_LEN, COUNTER_LEN, FLAG_CHUNK_END, FLAG_CHUNK_START,
-    FLAG_ROOT, IV, MSG_BLOCK_LEN, OUTPUT_SIZE_IN_BYTES,
+    BLOCK_INPUT_SIZE_IN_BYTES,
+    CHAINING_VALUE_LEN,
+    COUNTER_LEN,
+    FLAG_CHUNK_END,
+    FLAG_CHUNK_START,
+    FLAG_ROOT,
+    IV,
+    MSG_BLOCK_LEN,
+    OUTPUT_SIZE_IN_BYTES,
 };
 
 pub struct Blake3 {
@@ -304,8 +311,7 @@ mod tests {
     use crate::{test_utils::helpers::*, BLOCK_INPUT_SIZE_IN_BYTES, CHAINING_VALUE_LEN};
 
     fn random_partition(data: &[u8]) -> Vec<&[u8]> {
-        use rand::rngs::StdRng;
-        use rand::{Rng, SeedableRng};
+        use rand::{rngs::StdRng, Rng, SeedableRng};
 
         if data.is_empty() {
             return vec![&[]];
@@ -326,8 +332,7 @@ mod tests {
 
     #[test]
     fn test_digest_matches_standard() {
-        use rand::rngs::StdRng;
-        use rand::{Rng, SeedableRng};
+        use rand::{rngs::StdRng, Rng, SeedableRng};
         let mut rng = StdRng::seed_from_u64(67890);
 
         for _ in 0..1000 {
@@ -358,8 +363,7 @@ mod tests {
 
     #[test]
     fn test_streaming_update_finalize_matches_standard() {
-        use rand::rngs::StdRng;
-        use rand::{Rng, SeedableRng};
+        use rand::{rngs::StdRng, Rng, SeedableRng};
         let mut rng = StdRng::seed_from_u64(54321);
 
         for _ in 0..1000 {

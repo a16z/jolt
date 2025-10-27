@@ -3,13 +3,20 @@
 //! Provides a unified testing framework for all inline instructions,
 //! eliminating the need for inline-specific test harnesses.
 
-use crate::emulator::cpu::{Cpu, Xlen};
-use crate::emulator::default_terminal::DefaultTerminal;
-use crate::emulator::mmu::DRAM_BASE;
-use crate::instruction::format::format_inline::FormatInline;
-use crate::instruction::inline::INLINE;
-use crate::instruction::test::TEST_MEMORY_CAPACITY;
-use crate::instruction::{Instruction, RISCVTrace};
+use crate::{
+    emulator::{
+        cpu::{Cpu, Xlen},
+        default_terminal::DefaultTerminal,
+        mmu::DRAM_BASE,
+    },
+    instruction::{
+        format::format_inline::FormatInline,
+        inline::INLINE,
+        test::TEST_MEMORY_CAPACITY,
+        Instruction,
+        RISCVTrace,
+    },
+};
 
 #[derive(Clone, Copy)]
 pub enum RegisterMapping {

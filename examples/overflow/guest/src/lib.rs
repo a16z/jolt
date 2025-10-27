@@ -1,8 +1,7 @@
 #![cfg_attr(feature = "guest", no_std)]
 
 extern crate alloc;
-use alloc::vec;
-use alloc::vec::Vec;
+use alloc::{vec, vec::Vec};
 
 #[jolt::provable(stack_size = 1024, memory_size = 10240, max_trace_length = 65536)]
 fn overflow_stack() -> u32 {

@@ -25,40 +25,43 @@
 
 /// Common opcode for all inline instructions
 pub const INLINE_OPCODE: u32 = 0x0B;
-use crate::instruction::add::ADD;
-use crate::instruction::addi::ADDI;
-use crate::instruction::and::AND;
-use crate::instruction::andi::ANDI;
-use crate::instruction::srli::SRLI;
-use crate::instruction::srliw::SRLIW;
+use common::constants::{RISCV_REGISTER_COUNT, VIRTUAL_INSTRUCTION_RESERVED_REGISTER_COUNT};
 
-use crate::instruction::format::format_assert_align::AssertAlignFormat;
-use crate::instruction::format::format_b::FormatB;
-use crate::instruction::format::format_i::FormatI;
-use crate::instruction::format::format_j::FormatJ;
-use crate::instruction::format::format_load::FormatLoad;
-use crate::instruction::format::format_r::FormatR;
-use crate::instruction::format::format_s::FormatS;
-use crate::instruction::format::format_u::FormatU;
-use crate::instruction::format::format_virtual_right_shift_i::FormatVirtualRightShiftI;
-use crate::instruction::format::format_virtual_right_shift_r::FormatVirtualRightShiftR;
-use crate::instruction::format::NormalizedOperands;
-
-use crate::emulator::cpu::Xlen;
-use crate::instruction::virtual_rotri::VirtualROTRI;
-use crate::instruction::virtual_rotriw::VirtualROTRIW;
-use crate::instruction::xor::XOR;
-use crate::instruction::xori::XORI;
-use crate::instruction::Cycle;
-use crate::instruction::Instruction;
-use crate::instruction::NormalizedInstruction;
-use crate::instruction::RISCVCycle;
-use crate::instruction::RISCVInstruction;
-use crate::instruction::RISCVTrace;
-use crate::utils::virtual_registers::VirtualRegisterAllocator;
-
-use common::constants::RISCV_REGISTER_COUNT;
-use common::constants::VIRTUAL_INSTRUCTION_RESERVED_REGISTER_COUNT;
+use crate::{
+    emulator::cpu::Xlen,
+    instruction::{
+        add::ADD,
+        addi::ADDI,
+        and::AND,
+        andi::ANDI,
+        format::{
+            format_assert_align::AssertAlignFormat,
+            format_b::FormatB,
+            format_i::FormatI,
+            format_j::FormatJ,
+            format_load::FormatLoad,
+            format_r::FormatR,
+            format_s::FormatS,
+            format_u::FormatU,
+            format_virtual_right_shift_i::FormatVirtualRightShiftI,
+            format_virtual_right_shift_r::FormatVirtualRightShiftR,
+            NormalizedOperands,
+        },
+        srli::SRLI,
+        srliw::SRLIW,
+        virtual_rotri::VirtualROTRI,
+        virtual_rotriw::VirtualROTRIW,
+        xor::XOR,
+        xori::XORI,
+        Cycle,
+        Instruction,
+        NormalizedInstruction,
+        RISCVCycle,
+        RISCVInstruction,
+        RISCVTrace,
+    },
+    utils::virtual_registers::VirtualRegisterAllocator,
+};
 /// Operand that can be either an immediate or a register.
 #[derive(Clone, Copy, Debug)]
 pub enum Value {

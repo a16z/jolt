@@ -4,8 +4,7 @@
 use allocative::Allocative;
 use rayon::prelude::*;
 
-use super::dense_mlpoly::DensePolynomial;
-use super::multilinear_polynomial::BindingOrder;
+use super::{dense_mlpoly::DensePolynomial, multilinear_polynomial::BindingOrder};
 use crate::{field::JoltField, poly::eq_poly::EqPolynomial, utils::math::Math};
 
 #[derive(Debug, Clone, PartialEq, Allocative)]
@@ -347,9 +346,10 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use ark_bn254::Fr;
     use ark_std::test_rng;
+
+    use super::*;
 
     #[test]
     fn bind_low_high() {

@@ -1,16 +1,14 @@
-use std::borrow::Borrow;
-use std::marker::PhantomData;
+use std::{borrow::Borrow, marker::PhantomData};
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
+use super::commitment_scheme::CommitmentScheme;
 use crate::{
     field::JoltField,
     poly::multilinear_polynomial::MultilinearPolynomial,
     transcripts::{AppendToTranscript, Transcript},
     utils::errors::ProofVerifyError,
 };
-
-use super::commitment_scheme::CommitmentScheme;
 
 #[derive(Clone)]
 pub struct MockCommitScheme<F: JoltField> {

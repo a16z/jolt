@@ -1,10 +1,11 @@
 use ark_bn254::Fr;
 use ark_ff::Zero;
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
-use jolt_core::field::challenge::{Mont254BitChallenge, MontU128Challenge};
-use jolt_core::field::JoltField;
-use rand::rngs::StdRng;
-use rand::SeedableRng;
+use jolt_core::field::{
+    challenge::{Mont254BitChallenge, MontU128Challenge},
+    JoltField,
+};
+use rand::{rngs::StdRng, SeedableRng};
 
 fn bench_add(c: &mut Criterion) {
     let mut rng = StdRng::seed_from_u64(123);

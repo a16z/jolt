@@ -1,9 +1,9 @@
-use num_traits::Zero;
 use std::{cell::RefCell, rc::Rc};
 
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
+use num_traits::Zero;
 use rayon::prelude::*;
 
 use crate::{
@@ -13,11 +13,18 @@ use crate::{
         eq_poly::EqPolynomial,
         identity_poly::UnmapRamAddressPolynomial,
         multilinear_polynomial::{
-            BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
+            BindingOrder,
+            MultilinearPolynomial,
+            PolynomialBinding,
+            PolynomialEvaluation,
         },
         opening_proof::{
-            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-            VerifierOpeningAccumulator, BIG_ENDIAN,
+            OpeningAccumulator,
+            OpeningPoint,
+            ProverOpeningAccumulator,
+            SumcheckId,
+            VerifierOpeningAccumulator,
+            BIG_ENDIAN,
         },
     },
     subprotocols::sumcheck::SumcheckInstance,

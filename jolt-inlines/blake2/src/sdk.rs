@@ -236,8 +236,9 @@ pub unsafe fn blake2b_compress(state: *mut u64, message: *const u64) {
 
 #[cfg(test)]
 mod digest_tests {
-    use super::*;
     use hex_literal::hex;
+
+    use super::*;
 
     #[test]
     fn test_blake2b_digest() {
@@ -368,8 +369,9 @@ mod digest_tests {
 
 #[cfg(test)]
 mod streaming_tests {
-    use super::*;
     use hex_literal::hex;
+
+    use super::*;
 
     #[test]
     fn test_blake2b_streaming_digest() {

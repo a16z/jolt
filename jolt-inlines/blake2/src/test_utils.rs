@@ -1,6 +1,9 @@
+use tracer::{
+    emulator::cpu::Xlen,
+    utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness},
+};
+
 use crate::{BLAKE2_FUNCT3, BLAKE2_FUNCT7, INLINE_OPCODE};
-use tracer::emulator::cpu::Xlen;
-use tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness};
 
 pub fn create_blake2_harness() -> InlineTestHarness {
     // Blake2 needs message block (128 bytes) + counter (8 bytes) + flag (8 bytes) contiguous at rs2

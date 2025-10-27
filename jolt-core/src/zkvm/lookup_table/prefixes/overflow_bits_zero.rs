@@ -1,10 +1,9 @@
+use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 use crate::{
     field::{ChallengeFieldOps, FieldChallengeOps, JoltField},
     utils::lookup_bits::LookupBits,
     zkvm::instruction_lookups::read_raf_checking::current_suffix_len,
 };
-
-use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 
 /// Returns 1 if the upper 128-XLEN bits are all zero (no overflow), 0 otherwise.
 pub enum OverflowBitsZeroPrefix<const XLEN: usize> {}

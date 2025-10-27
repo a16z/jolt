@@ -1,5 +1,10 @@
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 
+use allocative::Allocative;
+use common::constants::XLEN;
+use itertools::chain;
+use rayon::prelude::*;
+
 use crate::{
     field::JoltField,
     poly::{
@@ -7,8 +12,12 @@ use crate::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, PolynomialBinding},
         opening_proof::{
-            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-            VerifierOpeningAccumulator, BIG_ENDIAN,
+            OpeningAccumulator,
+            OpeningPoint,
+            ProverOpeningAccumulator,
+            SumcheckId,
+            VerifierOpeningAccumulator,
+            BIG_ENDIAN,
         },
         ra_poly::RaPolynomial,
     },
@@ -21,10 +30,6 @@ use crate::{
         witness::{CommittedPolynomial, VirtualPolynomial},
     },
 };
-use allocative::Allocative;
-use common::constants::XLEN;
-use itertools::chain;
-use rayon::prelude::*;
 
 // Instruction read-access (RA) virtualization sumcheck
 //

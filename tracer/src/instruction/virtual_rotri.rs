@@ -1,9 +1,11 @@
 use serde::{Deserialize, Serialize};
 
-use crate::instruction::format::format_virtual_right_shift_i::FormatVirtualRightShiftI;
-use crate::{declare_riscv_instr, emulator::cpu::Cpu, emulator::cpu::Xlen};
-
 use super::{RISCVInstruction, RISCVTrace};
+use crate::{
+    declare_riscv_instr,
+    emulator::cpu::{Cpu, Xlen},
+    instruction::format::format_virtual_right_shift_i::FormatVirtualRightShiftI,
+};
 
 declare_riscv_instr!(
     name = VirtualROTRI,

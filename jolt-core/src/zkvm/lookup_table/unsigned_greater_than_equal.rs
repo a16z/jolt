@@ -4,7 +4,8 @@ use super::{
     prefixes::{PrefixEval, Prefixes},
     suffixes::SuffixEval,
     unsigned_less_than::UnsignedLessThanTable,
-    JoltLookupTable, PrefixSuffixDecomposition,
+    JoltLookupTable,
+    PrefixSuffixDecomposition,
 };
 use crate::{
     field::{ChallengeFieldOps, FieldChallengeOps, JoltField},
@@ -51,13 +52,14 @@ impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for UnsignedGreaterThanE
 #[cfg(test)]
 mod test {
     use ark_bn254::Fr;
-
-    use crate::zkvm::lookup_table::test::{
-        lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
-    };
     use common::constants::XLEN;
 
     use super::UnsignedGreaterThanEqualTable;
+    use crate::zkvm::lookup_table::test::{
+        lookup_table_mle_full_hypercube_test,
+        lookup_table_mle_random_test,
+        prefix_suffix_test,
+    };
 
     #[test]
     fn mle_full_hypercube() {

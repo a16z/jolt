@@ -5,15 +5,20 @@ pub mod state_manager;
 
 #[cfg(test)]
 mod tests {
-    use crate::host;
-    use crate::poly::commitment::dory::DoryCommitmentScheme;
-    use crate::zkvm::dag::jolt_dag::JoltDAG;
-    use crate::zkvm::dag::state_manager::StateManager;
-    use crate::zkvm::{Jolt, JoltRV64IMAC, JoltVerifierPreprocessing};
     use ark_bn254::Fr;
     use serial_test::serial;
-    use tracer;
-    use tracer::instruction::Cycle;
+    use tracer::{self, instruction::Cycle};
+
+    use crate::{
+        host,
+        poly::commitment::dory::DoryCommitmentScheme,
+        zkvm::{
+            dag::{jolt_dag::JoltDAG, state_manager::StateManager},
+            Jolt,
+            JoltRV64IMAC,
+            JoltVerifierPreprocessing,
+        },
+    };
 
     #[test]
     #[serial]

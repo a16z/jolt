@@ -1,8 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::{format::format_i::FormatI, RISCVInstruction, RISCVTrace};
-use crate::instruction::format::NormalizedOperands;
-use crate::{declare_riscv_instr, emulator::cpu::Cpu};
+use crate::{declare_riscv_instr, emulator::cpu::Cpu, instruction::format::NormalizedOperands};
 
 declare_riscv_instr!(
     name   = JALR,

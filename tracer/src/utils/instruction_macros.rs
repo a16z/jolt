@@ -1,12 +1,8 @@
 #[macro_export]
 macro_rules! declare_riscv_instr {
     (
-      name    = $name:ident,
-      mask    = $mask:expr,
-      match   = $match_:expr,
-      format  = $format:ty,
-      ram     = $ram:ty
-  ) => {
+        name = $name:ident,mask = $mask:expr,match = $match_:expr,format = $format:ty,ram = $ram:ty
+    ) => {
         #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
         pub struct $name {
             pub address: u64,

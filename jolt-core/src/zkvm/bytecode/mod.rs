@@ -1,24 +1,30 @@
-use crate::poly::opening_proof::{OpeningAccumulator, SumcheckId};
-use crate::utils::math::Math;
-#[cfg(feature = "allocative")]
-use crate::utils::profiling::print_data_structure_heap_usage;
-use crate::zkvm::bytecode::booleanity::BooleanitySumcheck;
-use crate::zkvm::bytecode::hamming_weight::HammingWeightSumcheck;
-use crate::zkvm::bytecode::read_raf_checking::ReadRafSumcheck;
-use crate::zkvm::dag::stage::SumcheckStages;
-use crate::zkvm::dag::state_manager::StateManager;
-use crate::zkvm::witness::{compute_d_parameter, VirtualPolynomial, DTH_ROOT_OF_K};
-use crate::{
-    field::JoltField,
-    poly::{commitment::commitment_scheme::CommitmentScheme, eq_poly::EqPolynomial},
-    subprotocols::sumcheck::SumcheckInstance,
-    transcripts::Transcript,
-    utils::thread::unsafe_allocate_zero_vec,
-};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::{ALIGNMENT_FACTOR_BYTECODE, RAM_START_ADDRESS};
 use rayon::prelude::*;
 use tracer::instruction::{Cycle, Instruction};
+
+#[cfg(feature = "allocative")]
+use crate::utils::profiling::print_data_structure_heap_usage;
+use crate::{
+    field::JoltField,
+    poly::{
+        commitment::commitment_scheme::CommitmentScheme,
+        eq_poly::EqPolynomial,
+        opening_proof::{OpeningAccumulator, SumcheckId},
+    },
+    subprotocols::sumcheck::SumcheckInstance,
+    transcripts::Transcript,
+    utils::{math::Math, thread::unsafe_allocate_zero_vec},
+    zkvm::{
+        bytecode::{
+            booleanity::BooleanitySumcheck,
+            hamming_weight::HammingWeightSumcheck,
+            read_raf_checking::ReadRafSumcheck,
+        },
+        dag::{stage::SumcheckStages, state_manager::StateManager},
+        witness::{compute_d_parameter, VirtualPolynomial, DTH_ROOT_OF_K},
+    },
+};
 
 pub mod booleanity;
 pub mod hamming_weight;

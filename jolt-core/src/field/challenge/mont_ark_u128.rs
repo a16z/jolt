@@ -7,16 +7,22 @@
 //!
 //! For implementation details and benchmarks, see: *TODO: LINK*
 
-use crate::field::{tracked_ark::TrackedFr, JoltField};
-use crate::impl_field_ops_inline;
+use std::{
+    fmt::{Debug, Display},
+    hash::Hash,
+    marker::PhantomData,
+    ops::{Add, Mul, Sub},
+};
+
 use allocative::Allocative;
 use ark_ff::{BigInt, PrimeField, UniformRand};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rand::{Rng, RngCore};
-use std::fmt::{Debug, Display};
-use std::hash::Hash;
-use std::marker::PhantomData;
-use std::ops::{Add, Mul, Sub};
+
+use crate::{
+    field::{tracked_ark::TrackedFr, JoltField},
+    impl_field_ops_inline,
+};
 #[derive(
     Copy,
     Clone,

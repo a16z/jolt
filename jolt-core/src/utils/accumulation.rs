@@ -1,6 +1,7 @@
-use crate::field::{AccumulateInPlace, FmaddTrunc, JoltField};
 use ark_ff::biginteger::{S128, S160, S192, S256};
 use ark_std::Zero;
+
+use crate::field::{AccumulateInPlace, FmaddTrunc, JoltField};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Acc5U<F: JoltField> {

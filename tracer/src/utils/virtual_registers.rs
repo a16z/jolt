@@ -1,8 +1,13 @@
-use common::constants::{
-    RISCV_REGISTER_COUNT, VIRTUAL_INSTRUCTION_RESERVED_REGISTER_COUNT, VIRTUAL_REGISTER_COUNT,
+use std::{
+    ops::Deref,
+    sync::{Arc, Mutex},
 };
-use std::ops::Deref;
-use std::sync::{Arc, Mutex};
+
+use common::constants::{
+    RISCV_REGISTER_COUNT,
+    VIRTUAL_INSTRUCTION_RESERVED_REGISTER_COUNT,
+    VIRTUAL_REGISTER_COUNT,
+};
 
 const NUM_VIRTUAL_REGISTERS: usize = VIRTUAL_REGISTER_COUNT as usize;
 const NUM_VIRTUAL_INSTRUCTION_REGISTERS: usize =

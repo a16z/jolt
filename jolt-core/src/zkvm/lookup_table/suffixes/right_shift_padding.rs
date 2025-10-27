@@ -1,6 +1,5 @@
-use crate::{utils::lookup_bits::LookupBits, utils::math::Math};
-
 use super::SparseDenseSuffix;
+use crate::utils::{lookup_bits::LookupBits, math::Math};
 
 /// RightShiftPaddingPrefix and RightShiftPaddingSuffix are used to compute
 ///  a bitmask for the padding bits obtained from an arithmetic right shift.

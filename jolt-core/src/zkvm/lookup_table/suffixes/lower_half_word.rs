@@ -1,6 +1,5 @@
-use crate::utils::lookup_bits::LookupBits;
-
 use super::SparseDenseSuffix;
+use crate::utils::lookup_bits::LookupBits;
 
 /// Returns the lower XLEN/2 bits. Used to extract the lower half of a word.
 pub enum LowerHalfWordSuffix<const XLEN: usize> {}

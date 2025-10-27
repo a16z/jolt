@@ -1,8 +1,9 @@
-use crate::field::JoltField;
-use crate::poly::lagrange_poly::LagrangePolynomial;
-use crate::poly::unipoly::UniPoly;
-use crate::subprotocols::sumcheck::{UniSkipFirstRoundInstance, UniSkipFirstRoundProof};
-use crate::transcripts::{AppendToTranscript, Transcript};
+use crate::{
+    field::JoltField,
+    poly::{lagrange_poly::LagrangePolynomial, unipoly::UniPoly},
+    subprotocols::sumcheck::{UniSkipFirstRoundInstance, UniSkipFirstRoundProof},
+    transcripts::{AppendToTranscript, Transcript},
+};
 
 /// Shared handoff state from a univariate-skip first round.
 ///

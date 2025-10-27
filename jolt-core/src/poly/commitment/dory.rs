@@ -1,40 +1,48 @@
 #![allow(static_mut_refs)]
 
-use super::commitment_scheme::CommitmentScheme;
-use crate::transcripts::{AppendToTranscript, Transcript};
-use crate::{
-    field::JoltField,
-    msm::VariableBaseMSM,
-    poly::multilinear_polynomial::MultilinearPolynomial,
-    utils::small_scalar::SmallScalar,
-    utils::{errors::ProofVerifyError, math::Math},
-};
+use std::{borrow::Borrow, marker::PhantomData};
+
 use ark_bn254::{Bn254, Config, Fr, G1Projective, G2Projective};
-use ark_ec::bn::{G1Prepared, G2Prepared};
-use ark_ec::bn::{G1Prepared as BnG1Prepared, G2Prepared as BnG2Prepared};
 use ark_ec::{
+    bn::{G1Prepared, G1Prepared as BnG1Prepared, G2Prepared, G2Prepared as BnG2Prepared},
     pairing::{MillerLoopOutput, Pairing as ArkPairing, PairingOutput},
     CurveGroup,
 };
 use ark_ff::{CyclotomicMultSubgroup, Field, One, PrimeField, UniformRand};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{rand::RngCore, Zero};
-use dory::curve::G1Cache;
 use dory::{
     arithmetic::{
-        Field as DoryField, Group as DoryGroup, MultiScalarMul as DoryMultiScalarMul,
+        Field as DoryField,
+        Group as DoryGroup,
+        MultiScalarMul as DoryMultiScalarMul,
         Pairing as DoryPairing,
     },
-    batch_commit, commit,
-    curve::G2Cache,
-    evaluate, setup_with_urs_file,
+    batch_commit,
+    commit,
+    curve::{G1Cache, G2Cache},
+    evaluate,
+    setup_with_urs_file,
     transcript::Transcript as DoryTranscript,
-    verify, DoryProof, DoryProofBuilder, Polynomial as DoryPolynomial, ProverSetup, VerifierSetup,
+    verify,
+    DoryProof,
+    DoryProofBuilder,
+    Polynomial as DoryPolynomial,
+    ProverSetup,
+    VerifierSetup,
 };
 use once_cell::sync::OnceCell;
 use rayon::prelude::*;
-use std::{borrow::Borrow, marker::PhantomData};
 use tracing::trace_span;
+
+use super::commitment_scheme::CommitmentScheme;
+use crate::{
+    field::JoltField,
+    msm::VariableBaseMSM,
+    poly::multilinear_polynomial::MultilinearPolynomial,
+    transcripts::{AppendToTranscript, Transcript},
+    utils::{errors::ProofVerifyError, math::Math, small_scalar::SmallScalar},
+};
 
 /// The (padded) length of the execution trace currently being proven
 static mut GLOBAL_T: OnceCell<usize> = OnceCell::new();
@@ -1345,15 +1353,20 @@ impl AppendToTranscript for DoryCommitment {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::poly::compact_polynomial::CompactPolynomial;
-    use crate::poly::dense_mlpoly::DensePolynomial;
-    use crate::poly::multilinear_polynomial::PolynomialEvaluation;
-    use crate::transcripts::Blake2bTranscript;
-    use ark_std::rand::thread_rng;
-    use ark_std::UniformRand;
-    use serial_test::serial;
     use std::time::Instant;
+
+    use ark_std::{rand::thread_rng, UniformRand};
+    use serial_test::serial;
+
+    use super::*;
+    use crate::{
+        poly::{
+            compact_polynomial::CompactPolynomial,
+            dense_mlpoly::DensePolynomial,
+            multilinear_polynomial::PolynomialEvaluation,
+        },
+        transcripts::Blake2bTranscript,
+    };
 
     fn test_commitment_scheme_with_poly(
         poly: MultilinearPolynomial<Fr>,

@@ -6,7 +6,15 @@ use std::{
     sync::Arc,
 };
 
+use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::FlameGraphBuilder;
+use common::constants::{REGISTER_COUNT, XLEN};
+use itertools::{chain, zip_eq, Itertools};
 use num_traits::Zero;
+use rayon::prelude::*;
+use strum::{EnumCount, IntoEnumIterator};
+use tracer::instruction::NormalizedInstruction;
 
 use crate::{
     field::JoltField,
@@ -15,11 +23,18 @@ use crate::{
         eq_poly::EqPolynomial,
         identity_poly::IdentityPolynomial,
         multilinear_polynomial::{
-            BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
+            BindingOrder,
+            MultilinearPolynomial,
+            PolynomialBinding,
+            PolynomialEvaluation,
         },
         opening_proof::{
-            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-            VerifierOpeningAccumulator, BIG_ENDIAN,
+            OpeningAccumulator,
+            OpeningPoint,
+            ProverOpeningAccumulator,
+            SumcheckId,
+            VerifierOpeningAccumulator,
+            BIG_ENDIAN,
         },
         ra_poly::RaPolynomial,
         split_eq_poly::GruenSplitEqPolynomial,
@@ -28,27 +43,25 @@ use crate::{
     subprotocols::{mles_product_sum::product_eval_univariate_assign, sumcheck::SumcheckInstance},
     transcripts::Transcript,
     utils::{
-        expanding_table::ExpandingTable, math::Math, small_scalar::SmallScalar,
+        expanding_table::ExpandingTable,
+        math::Math,
+        small_scalar::SmallScalar,
         thread::unsafe_allocate_zero_vec,
     },
     zkvm::{
         dag::state_manager::StateManager,
         instruction::{
-            CircuitFlags, Flags, InstructionFlags, InstructionLookup, InterleavedBitsMarker,
+            CircuitFlags,
+            Flags,
+            InstructionFlags,
+            InstructionLookup,
+            InterleavedBitsMarker,
             NUM_CIRCUIT_FLAGS,
         },
         lookup_table::{LookupTables, NUM_LOOKUP_TABLES},
         witness::{CommittedPolynomial, VirtualPolynomial},
     },
 };
-use allocative::Allocative;
-#[cfg(feature = "allocative")]
-use allocative::FlameGraphBuilder;
-use common::constants::{REGISTER_COUNT, XLEN};
-use itertools::{chain, zip_eq, Itertools};
-use rayon::prelude::*;
-use strum::{EnumCount, IntoEnumIterator};
-use tracer::instruction::NormalizedInstruction;
 
 /// Number of batched read-checking sumchecks bespokely
 const N_STAGES: usize = 5;

@@ -1,9 +1,6 @@
-use std::fs::File;
-use std::path::Path;
-use std::process::exit;
+use std::{fs::File, path::Path, process::exit};
 
 use clap::Parser;
-
 use tracer::emulator::{default_terminal::DefaultTerminal, Emulator};
 
 /// RISC-V emulator for Jolt

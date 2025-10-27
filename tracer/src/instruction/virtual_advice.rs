@@ -1,8 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{emulator::cpu::Cpu, instruction::NormalizedInstruction};
-
 use super::{format::format_j::FormatJ, RISCVInstruction, RISCVTrace};
+use crate::{emulator::cpu::Cpu, instruction::NormalizedInstruction};
 
 // Special case for VirtualAdvice as it has an extra 'advice' field
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
@@ -37,8 +36,9 @@ impl RISCVInstruction for VirtualAdvice {
 
     #[cfg(any(feature = "test-utils", test))]
     fn random(rng: &mut rand::rngs::StdRng) -> Self {
-        use crate::instruction::format::InstructionFormat;
         use rand::RngCore;
+
+        use crate::instruction::format::InstructionFormat;
         Self {
             address: rng.next_u64(),
             operands: FormatJ::random(rng),

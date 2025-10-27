@@ -1,12 +1,12 @@
 use serde::{Deserialize, Serialize};
 
-use super::prefixes::PrefixEval;
-use super::suffixes::{SuffixEval, Suffixes};
-use super::JoltLookupTable;
-use super::PrefixSuffixDecomposition;
-use crate::field::JoltField;
-use crate::utils::math::Math;
-use crate::zkvm::lookup_table::prefixes::Prefixes;
+use super::{
+    prefixes::PrefixEval,
+    suffixes::{SuffixEval, Suffixes},
+    JoltLookupTable,
+    PrefixSuffixDecomposition,
+};
+use crate::{field::JoltField, utils::math::Math, zkvm::lookup_table::prefixes::Prefixes};
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ShiftRightBitmaskTable<const XLEN: usize>;
@@ -78,12 +78,14 @@ impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for ShiftRightBitmaskTab
 #[cfg(test)]
 mod test {
     use ark_bn254::Fr;
+    use common::constants::XLEN;
 
     use super::ShiftRightBitmaskTable;
     use crate::zkvm::lookup_table::test::{
-        lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
+        lookup_table_mle_full_hypercube_test,
+        lookup_table_mle_random_test,
+        prefix_suffix_test,
     };
-    use common::constants::XLEN;
 
     #[test]
     fn mle_full_hypercube() {

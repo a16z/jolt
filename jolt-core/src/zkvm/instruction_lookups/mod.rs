@@ -18,8 +18,10 @@ use crate::{
         dag::{stage::SumcheckStages, state_manager::StateManager},
         instruction::LookupQuery,
         instruction_lookups::{
-            booleanity::BooleanitySumcheck, hamming_weight::HammingWeightSumcheck,
-            ra_virtual::RaSumcheck, read_raf_checking::ReadRafSumcheck,
+            booleanity::BooleanitySumcheck,
+            hamming_weight::HammingWeightSumcheck,
+            ra_virtual::RaSumcheck,
+            read_raf_checking::ReadRafSumcheck,
         },
         witness::VirtualPolynomial,
     },

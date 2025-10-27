@@ -5,9 +5,11 @@
 //! and provide better performance in the prover's hot path.
 
 use super::inputs::JoltR1CSInputs;
-use crate::field::JoltField;
-use crate::poly::multilinear_polynomial::MultilinearPolynomial;
-use crate::utils::small_scalar::SmallScalar;
+use crate::{
+    field::JoltField,
+    poly::multilinear_polynomial::MultilinearPolynomial,
+    utils::small_scalar::SmallScalar,
+};
 
 /// Helper for JoltR1CSInputs to get indices
 impl JoltR1CSInputs {
@@ -33,8 +35,9 @@ impl Term {
     /// Format term for pretty printing (test only).
     #[cfg(test)]
     pub fn pretty_fmt(&self, f: &mut String) -> std::fmt::Result {
-        use super::inputs::JoltR1CSInputs;
         use std::fmt::Write;
+
+        use super::inputs::JoltR1CSInputs;
 
         let coeff_i128 = self.coeff;
         if coeff_i128 == 1 {

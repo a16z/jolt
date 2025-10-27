@@ -1,10 +1,9 @@
-use crate::{field::JoltField, utils::lookup_bits::LookupBits};
+use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 use crate::{
-    field::{ChallengeFieldOps, FieldChallengeOps},
+    field::{ChallengeFieldOps, FieldChallengeOps, JoltField},
+    utils::lookup_bits::LookupBits,
     zkvm::instruction_lookups::read_raf_checking::current_suffix_len,
 };
-
-use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 
 pub enum OrPrefix<const XLEN: usize> {}
 

@@ -1,8 +1,14 @@
 use criterion::Criterion;
-use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
-use jolt_core::poly::commitment::dory::{DoryCommitmentScheme, DoryGlobals};
-use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
-use jolt_core::utils::math::Math;
+use jolt_core::{
+    poly::{
+        commitment::{
+            commitment_scheme::CommitmentScheme,
+            dory::{DoryCommitmentScheme, DoryGlobals},
+        },
+        multilinear_polynomial::MultilinearPolynomial,
+    },
+    utils::math::Math,
+};
 use rand::Rng;
 use rand_chacha::ChaCha20Rng;
 use rand_core::{RngCore, SeedableRng};

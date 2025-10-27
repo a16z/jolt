@@ -1,6 +1,5 @@
-use crate::utils::lookup_bits::LookupBits;
-
 use super::SparseDenseSuffix;
+use crate::utils::lookup_bits::LookupBits;
 
 /// Shifts right by XLEN bits. Used by the MULHU instruction, which
 /// multiplies two operands and returns the upper XLEN bits of the product.

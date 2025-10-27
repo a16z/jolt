@@ -2,7 +2,11 @@
 #[cfg(feature = "host")]
 mod tests {
     use jolt_sdk::{
-        Jolt, JoltRV64IMAC, JoltVerifierPreprocessing, RV64IMACJoltProof, Serializable,
+        Jolt,
+        JoltRV64IMAC,
+        JoltVerifierPreprocessing,
+        RV64IMACJoltProof,
+        Serializable,
     };
 
     #[test]

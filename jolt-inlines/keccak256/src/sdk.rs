@@ -219,8 +219,9 @@ pub unsafe fn keccak_f(state: *mut u64) {
 
 #[cfg(all(test, feature = "host"))]
 mod tests {
-    use super::*;
     use hex_literal::hex;
+
+    use super::*;
 
     #[test]
     fn test_keccak256_empty() {

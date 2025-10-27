@@ -1,12 +1,16 @@
 //! Host-side implementation and registration.
-pub use crate::sequence_builder;
-
-use crate::{INLINE_OPCODE, KECCAK256_FUNCT3, KECCAK256_FUNCT7, KECCAK256_NAME};
-use tracer::register_inline;
-
-use tracer::utils::inline_sequence_writer::{
-    write_inline_trace, AppendMode, InlineDescriptor, SequenceInputs,
+use tracer::{
+    register_inline,
+    utils::inline_sequence_writer::{
+        write_inline_trace,
+        AppendMode,
+        InlineDescriptor,
+        SequenceInputs,
+    },
 };
+
+pub use crate::sequence_builder;
+use crate::{INLINE_OPCODE, KECCAK256_FUNCT3, KECCAK256_FUNCT7, KECCAK256_NAME};
 
 pub fn init_inlines() -> Result<(), String> {
     register_inline(
@@ -58,12 +62,17 @@ fn auto_register() {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
-    use std::io::{BufRead, BufReader};
-    use std::path::Path;
+    use std::{
+        fs,
+        io::{BufRead, BufReader},
+        path::Path,
+    };
 
     use tracer::utils::inline_sequence_writer::{
-        DEFAULT_RAM_START_ADDRESS, DEFAULT_RS1, DEFAULT_RS2, DEFAULT_RS3,
+        DEFAULT_RAM_START_ADDRESS,
+        DEFAULT_RS1,
+        DEFAULT_RS2,
+        DEFAULT_RS3,
     };
 
     use crate::sequence_builder::keccak256_inline_sequence_builder;
@@ -71,7 +80,10 @@ mod tests {
     #[test]
     fn test_keccak256_trace_file_matches_generated() {
         use tracer::utils::inline_sequence_writer::{
-            write_inline_trace, AppendMode, InlineDescriptor, SequenceInputs,
+            write_inline_trace,
+            AppendMode,
+            InlineDescriptor,
+            SequenceInputs,
         };
 
         let inputs = SequenceInputs::default();

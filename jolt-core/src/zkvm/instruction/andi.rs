@@ -1,9 +1,10 @@
-use crate::zkvm::instruction::{InstructionFlags, NUM_INSTRUCTION_FLAGS};
 use tracer::instruction::{andi::ANDI, RISCVCycle};
 
-use crate::zkvm::lookup_table::{and::AndTable, LookupTables};
-
 use super::{CircuitFlags, Flags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS};
+use crate::zkvm::{
+    instruction::{InstructionFlags, NUM_INSTRUCTION_FLAGS},
+    lookup_table::{and::AndTable, LookupTables},
+};
 
 impl<const XLEN: usize> InstructionLookup<XLEN> for ANDI {
     fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
@@ -66,10 +67,10 @@ impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<ANDI> {
 
 #[cfg(test)]
 mod test {
-    use crate::zkvm::instruction::test::materialize_entry_test;
+    use ark_bn254::Fr;
 
     use super::*;
-    use ark_bn254::Fr;
+    use crate::zkvm::instruction::test::materialize_entry_test;
 
     #[test]
     fn materialize_entry() {

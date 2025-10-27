@@ -1,6 +1,5 @@
-use crate::utils::lookup_bits::LookupBits;
-
 use super::SparseDenseSuffix;
+use crate::utils::lookup_bits::LookupBits;
 
 /// Computes the sum of y bits: Σ yᵢ * 2^(n-1-i)
 pub enum RightOperandSuffix {}

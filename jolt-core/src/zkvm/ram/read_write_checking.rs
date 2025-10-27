@@ -1,8 +1,12 @@
-use num_traits::Zero;
 use std::{cell::RefCell, rc::Rc};
 
-use crate::poly::opening_proof::OpeningAccumulator;
-use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
+use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::FlameGraphBuilder;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use num_traits::Zero;
+use rayon::prelude::*;
+use tracer::instruction::RAMAccess;
 
 use crate::{
     field::{JoltField, OptimizedMul},
@@ -11,25 +15,25 @@ use crate::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{
-            OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator,
-            BIG_ENDIAN, LITTLE_ENDIAN,
+            OpeningAccumulator,
+            OpeningPoint,
+            ProverOpeningAccumulator,
+            SumcheckId,
+            VerifierOpeningAccumulator,
+            BIG_ENDIAN,
+            LITTLE_ENDIAN,
         },
+        split_eq_poly::GruenSplitEqPolynomial,
     },
     subprotocols::sumcheck::SumcheckInstance,
     transcripts::Transcript,
     utils::{math::Math, thread::unsafe_allocate_zero_vec},
-    zkvm::dag::state_manager::StateManager,
     zkvm::{
+        dag::state_manager::StateManager,
         ram::remap_address,
         witness::{CommittedPolynomial, VirtualPolynomial},
     },
 };
-use allocative::Allocative;
-#[cfg(feature = "allocative")]
-use allocative::FlameGraphBuilder;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use rayon::prelude::*;
-use tracer::instruction::RAMAccess;
 
 // RAM read-write checking sumcheck
 //

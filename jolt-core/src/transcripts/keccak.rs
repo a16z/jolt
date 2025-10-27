@@ -1,9 +1,11 @@
-use super::transcript::Transcript;
-use crate::field::JoltField;
+use std::borrow::Borrow;
+
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_serialize::CanonicalSerialize;
 use sha3::{Digest, Keccak256};
-use std::borrow::Borrow;
+
+use super::transcript::Transcript;
+use crate::field::JoltField;
 
 /// Represents the current state of the protocol's Fiat-Shamir transcript.
 #[derive(Default, Clone)]
@@ -256,9 +258,11 @@ impl Transcript for KeccakTranscript {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use ark_bn254::Fr;
     use std::collections::HashSet;
+
+    use ark_bn254::Fr;
+
+    use super::*;
 
     #[test]
     fn test_challenge_scalar_128_bits() {

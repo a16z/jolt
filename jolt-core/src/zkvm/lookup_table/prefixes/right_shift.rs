@@ -1,9 +1,8 @@
+use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 use crate::{
     field::{ChallengeFieldOps, FieldChallengeOps, JoltField},
     utils::lookup_bits::LookupBits,
 };
-
-use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 
 /// Right-shifts the left operand according to the bitmask given by
 /// the right operand.

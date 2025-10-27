@@ -1,52 +1,68 @@
+use std::{cell::RefCell, sync::Arc};
+
 use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::FlameGraphBuilder;
 use ark_ff::biginteger::{S128, S160, S192, S64};
 use ark_std::Zero;
 use rayon::prelude::*;
-use std::cell::RefCell;
-use std::sync::Arc;
 use tracer::instruction::Cycle;
 
-use crate::field::{AccumulateInPlace, JoltField};
-use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::dense_mlpoly::DensePolynomial;
-use crate::poly::eq_poly::EqPolynomial;
-use crate::poly::lagrange_poly::{LagrangeHelper, LagrangePolynomial};
-use crate::poly::multilinear_polynomial::BindingOrder;
-use crate::poly::opening_proof::{
-    OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-    VerifierOpeningAccumulator, BIG_ENDIAN,
-};
-use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
-use crate::poly::unipoly::UniPoly;
-use crate::subprotocols::sumcheck::{SumcheckInstance, UniSkipFirstRoundInstance};
-use crate::subprotocols::univariate_skip::{
-    build_uniskip_first_round_poly, uniskip_targets, UniSkipState,
-};
-use crate::transcripts::Transcript;
-use crate::utils::accumulation::Acc8S;
-use crate::utils::math::Math;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
-use crate::utils::thread::unsafe_allocate_zero_vec;
-use crate::zkvm::dag::state_manager::StateManager;
-use crate::zkvm::r1cs::{
-    constraints::{
-        compute_az_r_group0, compute_az_r_group1, compute_bz_r_group0, compute_bz_r_group1,
-        eval_az_first_group, eval_az_second_group, eval_bz_first_group, eval_bz_second_group,
-        FIRST_ROUND_POLY_NUM_COEFFS, NUM_REMAINING_R1CS_CONSTRAINTS, UNIVARIATE_SKIP_DEGREE,
-        UNIVARIATE_SKIP_DOMAIN_SIZE, UNIVARIATE_SKIP_EXTENDED_DOMAIN_SIZE,
-    },
-    inputs::{compute_claimed_r1cs_input_evals, R1CSCycleInputs, ALL_R1CS_INPUTS},
-};
-use crate::zkvm::witness::VirtualPolynomial;
-use crate::zkvm::JoltSharedPreprocessing;
-#[cfg(feature = "allocative")]
-use allocative::FlameGraphBuilder;
-
 #[cfg(test)]
 use crate::zkvm::r1cs::constraints::{UNIFORM_R1CS_FIRST_GROUP, UNIFORM_R1CS_SECOND_GROUP};
 #[cfg(test)]
 use crate::zkvm::r1cs::inputs::JoltR1CSInputs;
+use crate::{
+    field::{AccumulateInPlace, JoltField},
+    poly::{
+        commitment::commitment_scheme::CommitmentScheme,
+        dense_mlpoly::DensePolynomial,
+        eq_poly::EqPolynomial,
+        lagrange_poly::{LagrangeHelper, LagrangePolynomial},
+        multilinear_polynomial::BindingOrder,
+        opening_proof::{
+            OpeningAccumulator,
+            OpeningPoint,
+            ProverOpeningAccumulator,
+            SumcheckId,
+            VerifierOpeningAccumulator,
+            BIG_ENDIAN,
+        },
+        split_eq_poly::GruenSplitEqPolynomial,
+        unipoly::UniPoly,
+    },
+    subprotocols::{
+        sumcheck::{SumcheckInstance, UniSkipFirstRoundInstance},
+        univariate_skip::{build_uniskip_first_round_poly, uniskip_targets, UniSkipState},
+    },
+    transcripts::Transcript,
+    utils::{accumulation::Acc8S, math::Math, thread::unsafe_allocate_zero_vec},
+    zkvm::{
+        dag::state_manager::StateManager,
+        r1cs::{
+            constraints::{
+                compute_az_r_group0,
+                compute_az_r_group1,
+                compute_bz_r_group0,
+                compute_bz_r_group1,
+                eval_az_first_group,
+                eval_az_second_group,
+                eval_bz_first_group,
+                eval_bz_second_group,
+                FIRST_ROUND_POLY_NUM_COEFFS,
+                NUM_REMAINING_R1CS_CONSTRAINTS,
+                UNIVARIATE_SKIP_DEGREE,
+                UNIVARIATE_SKIP_DOMAIN_SIZE,
+                UNIVARIATE_SKIP_EXTENDED_DOMAIN_SIZE,
+            },
+            inputs::{compute_claimed_r1cs_input_evals, R1CSCycleInputs, ALL_R1CS_INPUTS},
+        },
+        witness::VirtualPolynomial,
+        JoltSharedPreprocessing,
+    },
+};
 
 // Spartan Outer sumcheck
 // (with univariate-skip first round on Z, and no Cz term given all eq conditional constraints)

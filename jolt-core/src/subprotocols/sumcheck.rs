@@ -1,24 +1,29 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::type_complexity)]
 
-use crate::field::JoltField;
-use crate::field::MaybeAllocative;
-use crate::poly::opening_proof::OpeningAccumulator;
-use crate::poly::opening_proof::{
-    OpeningPoint, ProverOpeningAccumulator, VerifierOpeningAccumulator, BIG_ENDIAN,
-};
-use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
-use crate::transcripts::{AppendToTranscript, Transcript};
-use crate::utils::errors::ProofVerifyError;
-#[cfg(not(target_arch = "wasm32"))]
-use crate::utils::profiling::print_current_memory_usage;
+use std::{cell::RefCell, marker::PhantomData, rc::Rc};
+
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
-
 use ark_serialize::*;
-use std::cell::RefCell;
-use std::marker::PhantomData;
-use std::rc::Rc;
+
+#[cfg(not(target_arch = "wasm32"))]
+use crate::utils::profiling::print_current_memory_usage;
+use crate::{
+    field::{JoltField, MaybeAllocative},
+    poly::{
+        opening_proof::{
+            OpeningAccumulator,
+            OpeningPoint,
+            ProverOpeningAccumulator,
+            VerifierOpeningAccumulator,
+            BIG_ENDIAN,
+        },
+        unipoly::{CompressedUniPoly, UniPoly},
+    },
+    transcripts::{AppendToTranscript, Transcript},
+    utils::errors::ProofVerifyError,
+};
 
 /// Trait for a sumcheck instance that can be batched with other instances.
 ///

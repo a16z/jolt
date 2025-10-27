@@ -1,8 +1,7 @@
 use common::constants::XLEN;
 
-use crate::utils::lookup_bits::LookupBits;
-
 use super::SparseDenseSuffix;
+use crate::utils::lookup_bits::LookupBits;
 
 /// Right-aligns the masked bits of the left operand for W variant.
 /// Processes lower 32 bits.

@@ -1,6 +1,5 @@
-use crate::utils::lookup_bits::LookupBits;
-
 use super::SparseDenseSuffix;
+use crate::utils::lookup_bits::LookupBits;
 
 /// Right-aligns the masked bits of the left operand.
 /// e.g. if the right operand (the bitmask) is 0b11100000

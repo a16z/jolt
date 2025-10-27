@@ -7,13 +7,17 @@
 //! Note: SDKs use FormatR in assembly code to be compatible with the `core::arch::asm` macro,
 //! but are parsed as FormatInline instructions by the tracer.
 
-use crate::emulator::cpu::Cpu;
-use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
+use serde::{Deserialize, Serialize};
+
 use super::{
-    normalize_register_value, InstructionFormat, InstructionRegisterState, NormalizedOperands,
+    normalize_register_value,
+    InstructionFormat,
+    InstructionRegisterState,
+    NormalizedOperands,
 };
+use crate::emulator::cpu::Cpu;
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct FormatInline {

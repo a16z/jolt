@@ -1,23 +1,5 @@
-use crate::poly::opening_proof::{
-    OpeningAccumulator, OpeningPoint, SumcheckId, BIG_ENDIAN, LITTLE_ENDIAN,
-};
-use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
-use crate::poly::unipoly::UniPoly;
-use crate::zkvm::dag::state_manager::StateManager;
-use crate::zkvm::witness::VirtualPolynomial;
-use crate::{
-    field::{JoltField, OptimizedMul},
-    poly::{
-        commitment::commitment_scheme::CommitmentScheme,
-        eq_poly::EqPolynomial,
-        multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
-        opening_proof::{ProverOpeningAccumulator, VerifierOpeningAccumulator},
-    },
-    subprotocols::sumcheck::SumcheckInstance,
-    transcripts::Transcript,
-    utils::{math::Math, thread::unsafe_allocate_zero_vec},
-    zkvm::{witness::CommittedPolynomial, JoltProverPreprocessing},
-};
+use std::{array, cell::RefCell, iter::zip, rc::Rc};
+
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
@@ -25,10 +7,35 @@ use common::constants::REGISTER_COUNT;
 use fixedbitset::FixedBitSet;
 use num_traits::Zero;
 use rayon::prelude::*;
-use std::array;
-use std::iter::zip;
-use std::{cell::RefCell, rc::Rc};
 use tracer::instruction::Cycle;
+
+use crate::{
+    field::{JoltField, OptimizedMul},
+    poly::{
+        commitment::commitment_scheme::CommitmentScheme,
+        eq_poly::EqPolynomial,
+        multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
+        opening_proof::{
+            OpeningAccumulator,
+            OpeningPoint,
+            ProverOpeningAccumulator,
+            SumcheckId,
+            VerifierOpeningAccumulator,
+            BIG_ENDIAN,
+            LITTLE_ENDIAN,
+        },
+        split_eq_poly::GruenSplitEqPolynomial,
+        unipoly::UniPoly,
+    },
+    subprotocols::sumcheck::SumcheckInstance,
+    transcripts::Transcript,
+    utils::{math::Math, thread::unsafe_allocate_zero_vec},
+    zkvm::{
+        dag::state_manager::StateManager,
+        witness::{CommittedPolynomial, VirtualPolynomial},
+        JoltProverPreprocessing,
+    },
+};
 
 // Register read-write checking sumcheck
 //

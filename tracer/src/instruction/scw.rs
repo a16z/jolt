@@ -1,8 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{declare_riscv_instr, emulator::cpu::Cpu};
-
 use super::{format::format_r::FormatR, RAMWrite, RISCVInstruction, RISCVTrace};
+use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
 declare_riscv_instr!(
     name   = SCW,

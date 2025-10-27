@@ -1,6 +1,5 @@
-use std::any::Any;
-use std::panic;
-use std::time::Instant;
+use std::{any::Any, panic, time::Instant};
+
 use tracing::info;
 
 pub fn main() {

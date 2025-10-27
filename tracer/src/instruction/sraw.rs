@@ -1,16 +1,20 @@
-use crate::utils::inline_helpers::InstrAssembler;
-use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use serde::{Deserialize, Serialize};
 
+use super::{
+    andi::ANDI,
+    format::format_r::FormatR,
+    virtual_shift_right_bitmask::VirtualShiftRightBitmask,
+    virtual_sign_extend_word::VirtualSignExtendWord,
+    virtual_sra::VirtualSRA,
+    Cycle,
+    Instruction,
+    RISCVInstruction,
+    RISCVTrace,
+};
 use crate::{
     declare_riscv_instr,
     emulator::cpu::{Cpu, Xlen},
-};
-
-use super::virtual_sign_extend_word::VirtualSignExtendWord;
-use super::{
-    andi::ANDI, format::format_r::FormatR, virtual_shift_right_bitmask::VirtualShiftRightBitmask,
-    virtual_sra::VirtualSRA, Cycle, Instruction, RISCVInstruction, RISCVTrace,
+    utils::{inline_helpers::InstrAssembler, virtual_registers::VirtualRegisterAllocator},
 };
 
 declare_riscv_instr!(

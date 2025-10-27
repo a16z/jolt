@@ -1,16 +1,19 @@
 use serde::{Deserialize, Serialize};
 
-use super::xor::XOR;
-use super::Instruction;
-use crate::instruction::amo::{amo_post32, amo_post64, amo_pre32, amo_pre64};
-use crate::utils::inline_helpers::InstrAssembler;
-use crate::utils::virtual_registers::VirtualRegisterAllocator;
+use super::{
+    format::format_amo::FormatAMO,
+    xor::XOR,
+    Cycle,
+    Instruction,
+    RISCVInstruction,
+    RISCVTrace,
+};
 use crate::{
     declare_riscv_instr,
     emulator::cpu::{Cpu, Xlen},
+    instruction::amo::{amo_post32, amo_post64, amo_pre32, amo_pre64},
+    utils::{inline_helpers::InstrAssembler, virtual_registers::VirtualRegisterAllocator},
 };
-
-use super::{format::format_amo::FormatAMO, Cycle, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name   = AMOXORW,

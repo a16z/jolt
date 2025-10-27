@@ -1,6 +1,5 @@
-use crate::utils::lookup_bits::LookupBits;
-
 use super::SparseDenseSuffix;
+use crate::utils::lookup_bits::LookupBits;
 
 /// Returns the lower XLEN bits. Used to range-check values to be in
 /// the range [0, 2^XLEN).

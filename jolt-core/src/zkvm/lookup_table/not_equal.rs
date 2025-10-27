@@ -1,10 +1,12 @@
 use serde::{Deserialize, Serialize};
 
-use super::equal::EqualTable;
-use super::prefixes::{PrefixEval, Prefixes};
-use super::suffixes::{SuffixEval, Suffixes};
-use super::JoltLookupTable;
-use super::PrefixSuffixDecomposition;
+use super::{
+    equal::EqualTable,
+    prefixes::{PrefixEval, Prefixes},
+    suffixes::{SuffixEval, Suffixes},
+    JoltLookupTable,
+    PrefixSuffixDecomposition,
+};
 use crate::{
     field::{ChallengeFieldOps, FieldChallengeOps, JoltField},
     utils::uninterleave_bits,
@@ -49,13 +51,14 @@ impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for NotEqualTable<XLEN> 
 #[cfg(test)]
 mod test {
     use ark_bn254::Fr;
-
-    use crate::zkvm::lookup_table::test::{
-        lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
-    };
     use common::constants::XLEN;
 
     use super::NotEqualTable;
+    use crate::zkvm::lookup_table::test::{
+        lookup_table_mle_full_hypercube_test,
+        lookup_table_mle_random_test,
+        prefix_suffix_test,
+    };
 
     #[test]
     fn mle_full_hypercube() {

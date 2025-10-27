@@ -1,27 +1,42 @@
 use std::sync::Arc;
 
-use crate::field::JoltField;
-use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::opening_proof::{OpeningAccumulator, SumcheckId};
-use crate::subprotocols::sumcheck::{SumcheckInstance, UniSkipFirstRoundInstance};
-use crate::subprotocols::univariate_skip::{prove_uniskip_round, UniSkipState};
-use crate::transcripts::Transcript;
-#[cfg(feature = "allocative")]
-use crate::utils::profiling::print_data_structure_heap_usage;
-use crate::zkvm::dag::stage::SumcheckStages;
-use crate::zkvm::dag::state_manager::{ProofData, ProofKeys, StateManager};
-use crate::zkvm::r1cs::constraints::{FIRST_ROUND_POLY_NUM_COEFFS, UNIVARIATE_SKIP_DOMAIN_SIZE};
-use crate::zkvm::r1cs::key::UniformSpartanKey;
-use crate::zkvm::witness::VirtualPolynomial;
-
 use inner::InnerSumcheck;
 use instruction_input::InstructionInputSumcheck;
 use outer::{OuterRemainingSumcheck, OuterUniSkipInstance};
 use product::{
-    ProductVirtualInner, ProductVirtualRemainder, ProductVirtualUniSkipInstance,
-    PRODUCT_VIRTUAL_FIRST_ROUND_POLY_NUM_COEFFS, PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
+    ProductVirtualInner,
+    ProductVirtualRemainder,
+    ProductVirtualUniSkipInstance,
+    PRODUCT_VIRTUAL_FIRST_ROUND_POLY_NUM_COEFFS,
+    PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
 };
 use shift::ShiftSumcheck;
+
+#[cfg(feature = "allocative")]
+use crate::utils::profiling::print_data_structure_heap_usage;
+use crate::{
+    field::JoltField,
+    poly::{
+        commitment::commitment_scheme::CommitmentScheme,
+        opening_proof::{OpeningAccumulator, SumcheckId},
+    },
+    subprotocols::{
+        sumcheck::{SumcheckInstance, UniSkipFirstRoundInstance},
+        univariate_skip::{prove_uniskip_round, UniSkipState},
+    },
+    transcripts::Transcript,
+    zkvm::{
+        dag::{
+            stage::SumcheckStages,
+            state_manager::{ProofData, ProofKeys, StateManager},
+        },
+        r1cs::{
+            constraints::{FIRST_ROUND_POLY_NUM_COEFFS, UNIVARIATE_SKIP_DOMAIN_SIZE},
+            key::UniformSpartanKey,
+        },
+        witness::VirtualPolynomial,
+    },
+};
 
 pub mod inner;
 pub mod instruction_input;

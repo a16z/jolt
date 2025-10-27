@@ -1,7 +1,9 @@
-use crate::field::JoltField;
+use std::borrow::Borrow;
+
 use ark_ec::CurveGroup;
 use ark_serialize::CanonicalSerialize;
-use std::borrow::Borrow;
+
+use crate::field::JoltField;
 
 pub trait Transcript: Default + Clone + Sync + Send + 'static {
     fn new(label: &'static [u8]) -> Self;

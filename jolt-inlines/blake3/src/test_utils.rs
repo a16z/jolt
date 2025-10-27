@@ -1,6 +1,9 @@
+use tracer::{
+    emulator::cpu::Xlen,
+    utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness},
+};
+
 use crate::{BLAKE3_FUNCT3, BLAKE3_FUNCT7, INLINE_OPCODE};
-use tracer::emulator::cpu::Xlen;
-use tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness};
 
 pub type ChainingValue = [u32; crate::CHAINING_VALUE_LEN];
 pub type MessageBlock = [u32; crate::MSG_BLOCK_LEN];
@@ -50,8 +53,7 @@ pub fn instruction() -> tracer::instruction::inline::INLINE {
 #[cfg(test)]
 pub mod helpers {
     pub fn generate_random_bytes(len: usize) -> Vec<u8> {
-        use rand::rngs::StdRng;
-        use rand::{RngCore, SeedableRng};
+        use rand::{rngs::StdRng, RngCore, SeedableRng};
 
         let mut buf = vec![0u8; len];
         // Use a fixed seed for deterministic test results

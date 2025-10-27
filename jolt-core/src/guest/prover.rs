@@ -1,12 +1,19 @@
-use super::program::Program;
-use crate::field::JoltField;
-use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::commitment::dory::DoryCommitmentScheme;
-use crate::transcripts::Transcript;
-use crate::zkvm::dag::proof_serialization::JoltProof;
-use crate::zkvm::{Jolt, JoltProverPreprocessing, JoltRV64IMAC, ProverDebugInfo};
 use common::jolt_device::MemoryLayout;
 use tracer::JoltDevice;
+
+use super::program::Program;
+use crate::{
+    field::JoltField,
+    poly::commitment::{commitment_scheme::CommitmentScheme, dory::DoryCommitmentScheme},
+    transcripts::Transcript,
+    zkvm::{
+        dag::proof_serialization::JoltProof,
+        Jolt,
+        JoltProverPreprocessing,
+        JoltRV64IMAC,
+        ProverDebugInfo,
+    },
+};
 
 #[allow(clippy::type_complexity)]
 #[cfg(feature = "prover")]

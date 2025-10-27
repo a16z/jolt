@@ -26,7 +26,12 @@ use and::AND;
 use andi::ANDI;
 use andn::ANDN;
 use ark_serialize::{
-    CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
+    CanonicalDeserialize,
+    CanonicalSerialize,
+    Compress,
+    SerializationError,
+    Valid,
+    Validate,
 };
 use auipc::AUIPC;
 use beq::BEQ;
@@ -35,12 +40,14 @@ use bgeu::BGEU;
 use blt::BLT;
 use bltu::BLTU;
 use bne::BNE;
+use derive_more::From;
 use div::DIV;
 use divu::DIVU;
 use divuw::DIVUW;
 use divw::DIVW;
 use ecall::ECALL;
 use fence::FENCE;
+use format::{InstructionFormat, InstructionRegisterState, NormalizedOperands};
 use jal::JAL;
 use jalr::JALR;
 use lb::LB;
@@ -90,9 +97,6 @@ use strum_macros::{EnumCount as EnumCountMacro, EnumIter, IntoStaticStr};
 use sub::SUB;
 use subw::SUBW;
 use sw::SW;
-use xor::XOR;
-use xori::XORI;
-
 use virtual_advice::VirtualAdvice;
 use virtual_assert_eq::VirtualAssertEQ;
 use virtual_assert_halfword_alignment::VirtualAssertHalfwordAlignment;
@@ -124,13 +128,14 @@ use virtual_sw::VirtualSW;
 use virtual_xor_rot::{VirtualXORROT16, VirtualXORROT24, VirtualXORROT32, VirtualXORROT63};
 use virtual_xor_rotw::{VirtualXORROTW12, VirtualXORROTW16, VirtualXORROTW7, VirtualXORROTW8};
 use virtual_zero_extend_word::VirtualZeroExtendWord;
+use xor::XOR;
+use xori::XORI;
 
 use self::inline::INLINE;
-
-use crate::emulator::cpu::{Cpu, Xlen};
-use crate::utils::virtual_registers::VirtualRegisterAllocator;
-use derive_more::From;
-use format::{InstructionFormat, InstructionRegisterState, NormalizedOperands};
+use crate::{
+    emulator::cpu::{Cpu, Xlen},
+    utils::virtual_registers::VirtualRegisterAllocator,
+};
 
 pub mod format;
 

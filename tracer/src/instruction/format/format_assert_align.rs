@@ -1,10 +1,14 @@
-use crate::emulator::cpu::Cpu;
-use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
+use serde::{Deserialize, Serialize};
+
 use super::{
-    normalize_register_value, InstructionFormat, InstructionRegisterState, NormalizedOperands,
+    normalize_register_value,
+    InstructionFormat,
+    InstructionRegisterState,
+    NormalizedOperands,
 };
+use crate::emulator::cpu::Cpu;
 
 /// `VirtualAssertHalfwordAlignment` is the only instruction that
 /// uses `rs1` and `imm` but does not write to a destination register.

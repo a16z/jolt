@@ -1,33 +1,37 @@
 #![allow(static_mut_refs)]
 
+use std::{
+    array,
+    cell::UnsafeCell,
+    collections::HashMap,
+    sync::{Arc, LazyLock},
+};
+
 use allocative::Allocative;
 use common::constants::XLEN;
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
 use rayon::prelude::*;
-use std::array;
-use std::cell::UnsafeCell;
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::sync::LazyLock;
 use strum::IntoEnumIterator;
 use tracer::instruction::Cycle;
 
-use crate::zkvm::instruction::InstructionFlags;
+use super::instruction::{CircuitFlags, LookupQuery};
 use crate::{
     field::JoltField,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
-        multilinear_polynomial::MultilinearPolynomial, one_hot_polynomial::OneHotPolynomial,
+        multilinear_polynomial::MultilinearPolynomial,
+        one_hot_polynomial::OneHotPolynomial,
     },
     utils::math::Math,
     zkvm::{
-        instruction_lookups, lookup_table::LookupTables, ram::remap_address,
+        instruction::InstructionFlags,
+        instruction_lookups,
+        lookup_table::LookupTables,
+        ram::remap_address,
         JoltProverPreprocessing,
     },
 };
-
-use super::instruction::{CircuitFlags, LookupQuery};
 
 struct SharedWitnessData(UnsafeCell<WitnessData>);
 unsafe impl Sync for SharedWitnessData {}

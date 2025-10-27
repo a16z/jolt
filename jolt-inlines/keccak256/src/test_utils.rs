@@ -1,9 +1,14 @@
-use crate::exec::execute_keccak_f;
-use crate::test_constants::{self, TestVectors};
-use crate::Keccak256State;
-use tracer::emulator::cpu::Xlen;
-use tracer::instruction::inline::INLINE;
-use tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness};
+use tracer::{
+    emulator::cpu::Xlen,
+    instruction::inline::INLINE,
+    utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness},
+};
+
+use crate::{
+    exec::execute_keccak_f,
+    test_constants::{self, TestVectors},
+    Keccak256State,
+};
 
 /// Simple test case structure for Keccak tests
 pub struct KeccakTestCase {

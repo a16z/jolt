@@ -1,15 +1,18 @@
-use std::array;
-use std::iter;
+use std::{array, iter};
 
 use serde::{Deserialize, Serialize};
 use tracer::instruction::virtual_rev8w::rev8w;
 
-use super::prefixes::PrefixEval;
-use super::suffixes::{SuffixEval, Suffixes};
-use super::JoltLookupTable;
-use super::PrefixSuffixDecomposition;
-use crate::field::{ChallengeFieldOps, FieldChallengeOps, JoltField};
-use crate::zkvm::lookup_table::prefixes::Prefixes;
+use super::{
+    prefixes::PrefixEval,
+    suffixes::{SuffixEval, Suffixes},
+    JoltLookupTable,
+    PrefixSuffixDecomposition,
+};
+use crate::{
+    field::{ChallengeFieldOps, FieldChallengeOps, JoltField},
+    zkvm::lookup_table::prefixes::Prefixes,
+};
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct VirtualRev8WTable<const XLEN: usize>;
@@ -58,11 +61,10 @@ impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for VirtualRev8WTable<XL
 #[cfg(test)]
 mod test {
     use ark_bn254::Fr;
+    use common::constants::XLEN;
 
     use super::VirtualRev8WTable;
-    use crate::zkvm::lookup_table::test::lookup_table_mle_random_test;
-    use crate::zkvm::lookup_table::test::prefix_suffix_test;
-    use common::constants::XLEN;
+    use crate::zkvm::lookup_table::test::{lookup_table_mle_random_test, prefix_suffix_test};
 
     #[test]
     fn mle_random() {

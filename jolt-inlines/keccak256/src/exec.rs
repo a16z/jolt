@@ -1,5 +1,8 @@
-use crate::sequence_builder::{ROTATION_OFFSETS, ROUND_CONSTANTS};
-use crate::{Keccak256State, NUM_LANES};
+use crate::{
+    sequence_builder::{ROTATION_OFFSETS, ROUND_CONSTANTS},
+    Keccak256State,
+    NUM_LANES,
+};
 
 // Host-side Keccak-256 implementation for reference and testing.
 #[cfg(all(test, feature = "host"))]

@@ -1,5 +1,8 @@
+use std::{fmt::Debug, marker::Sync};
+
 use and::AndTable;
 use andn::AndnTable;
+use derive_more::From;
 use equal::EqualTable;
 use halfword_alignment::HalfwordAlignmentTable;
 use lower_half_word::LowerHalfWordTable;
@@ -16,7 +19,6 @@ use shift_right_bitmask::ShiftRightBitmaskTable;
 use sign_extend_half_word::SignExtendHalfWordTable;
 use signed_greater_than_equal::SignedGreaterThanEqualTable;
 use signed_less_than::SignedLessThanTable;
-use std::marker::Sync;
 use strum::EnumCount;
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 use suffixes::{SuffixEval, Suffixes};
@@ -40,8 +42,6 @@ use word_alignment::WordAlignmentTable;
 use xor::XorTable;
 
 use crate::field::{ChallengeFieldOps, FieldChallengeOps, JoltField};
-use derive_more::From;
-use std::fmt::Debug;
 
 pub trait JoltLookupTable: Clone + Debug + Send + Sync + Serialize {
     /// Materializes the entire lookup table for this instruction (assuming an 8-bit word size).

@@ -1,41 +1,50 @@
-use allocative::Allocative;
-use ark_std::Zero;
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::{cell::RefCell, rc::Rc, sync::Arc};
 
-use crate::field::{AccumulateInPlace, JoltField};
-use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::dense_mlpoly::DensePolynomial;
-use crate::poly::eq_poly::EqPolynomial;
-use crate::poly::lagrange_poly::{LagrangeHelper, LagrangePolynomial};
-use crate::poly::multilinear_polynomial::BindingOrder;
-use crate::poly::opening_proof::{
-    OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-    VerifierOpeningAccumulator, BIG_ENDIAN,
-};
-use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
-use crate::poly::unipoly::UniPoly;
-use crate::subprotocols::sumcheck::{SumcheckInstance, UniSkipFirstRoundInstance};
-use crate::subprotocols::univariate_skip::{
-    build_uniskip_first_round_poly, uniskip_targets, UniSkipState,
-};
-use crate::transcripts::Transcript;
-use crate::utils::accumulation::Acc8S;
-use crate::utils::math::Math;
+use allocative::Allocative;
+use ark_ff::biginteger::S128;
+use ark_std::Zero;
+use rayon::prelude::*;
+use tracer::instruction::Cycle;
+
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
-use crate::utils::thread::unsafe_allocate_zero_vec;
-use crate::zkvm::dag::state_manager::StateManager;
-use crate::zkvm::instruction::{CircuitFlags, InstructionFlags};
-use crate::zkvm::r1cs::inputs::{
-    compute_claimed_product_factor_evals, ProductCycleInputs, PRODUCT_UNIQUE_FACTOR_VIRTUALS,
+use crate::{
+    field::{AccumulateInPlace, JoltField},
+    poly::{
+        commitment::commitment_scheme::CommitmentScheme,
+        dense_mlpoly::DensePolynomial,
+        eq_poly::EqPolynomial,
+        lagrange_poly::{LagrangeHelper, LagrangePolynomial},
+        multilinear_polynomial::BindingOrder,
+        opening_proof::{
+            OpeningAccumulator,
+            OpeningPoint,
+            ProverOpeningAccumulator,
+            SumcheckId,
+            VerifierOpeningAccumulator,
+            BIG_ENDIAN,
+        },
+        split_eq_poly::GruenSplitEqPolynomial,
+        unipoly::UniPoly,
+    },
+    subprotocols::{
+        sumcheck::{SumcheckInstance, UniSkipFirstRoundInstance},
+        univariate_skip::{build_uniskip_first_round_poly, uniskip_targets, UniSkipState},
+    },
+    transcripts::Transcript,
+    utils::{accumulation::Acc8S, math::Math, thread::unsafe_allocate_zero_vec},
+    zkvm::{
+        dag::state_manager::StateManager,
+        instruction::{CircuitFlags, InstructionFlags},
+        r1cs::inputs::{
+            compute_claimed_product_factor_evals,
+            ProductCycleInputs,
+            PRODUCT_UNIQUE_FACTOR_VIRTUALS,
+        },
+        witness::VirtualPolynomial,
+        JoltSharedPreprocessing,
+    },
 };
-use crate::zkvm::witness::VirtualPolynomial;
-use crate::zkvm::JoltSharedPreprocessing;
-use ark_ff::biginteger::S128;
-use rayon::prelude::*;
-use std::sync::Arc;
-use tracer::instruction::Cycle;
 
 /// Product virtualization with univariate skip
 ///

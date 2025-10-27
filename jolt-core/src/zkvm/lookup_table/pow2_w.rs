@@ -1,11 +1,15 @@
 use serde::{Deserialize, Serialize};
 
-use super::prefixes::PrefixEval;
-use super::suffixes::{SuffixEval, Suffixes};
-use super::JoltLookupTable;
-use super::PrefixSuffixDecomposition;
-use crate::field::{ChallengeFieldOps, FieldChallengeOps, JoltField};
-use crate::zkvm::lookup_table::prefixes::Prefixes;
+use super::{
+    prefixes::PrefixEval,
+    suffixes::{SuffixEval, Suffixes},
+    JoltLookupTable,
+    PrefixSuffixDecomposition,
+};
+use crate::{
+    field::{ChallengeFieldOps, FieldChallengeOps, JoltField},
+    zkvm::lookup_table::prefixes::Prefixes,
+};
 
 /// Pow2W table - computes 2^(x % 32) for VirtualPow2W and VirtualPow2IW instructions
 /// Always uses modulo 32 regardless of XLEN
@@ -48,12 +52,14 @@ impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for Pow2WTable<XLEN> {
 #[cfg(test)]
 mod test {
     use ark_bn254::Fr;
+    use common::constants::XLEN;
 
     use super::Pow2WTable;
     use crate::zkvm::lookup_table::test::{
-        lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
+        lookup_table_mle_full_hypercube_test,
+        lookup_table_mle_random_test,
+        prefix_suffix_test,
     };
-    use common::constants::XLEN;
 
     #[test]
     fn mle_full_hypercube() {

@@ -84,6 +84,7 @@ fn lt_evals<F: JoltField>(r: &OpeningPoint<BIG_ENDIAN, F>) -> Vec<F> {
 mod tests {
     use ark_bn254::Fr;
 
+    use super::{lt_evals, LtPolynomial};
     use crate::{
         field::challenge::MontU128Challenge,
         poly::{
@@ -91,8 +92,6 @@ mod tests {
             opening_proof::{OpeningPoint, BIG_ENDIAN},
         },
     };
-
-    use super::{lt_evals, LtPolynomial};
 
     #[test]
     fn test_bind_low_to_high_works() {

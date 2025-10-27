@@ -1,9 +1,8 @@
+use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 use crate::{
     field::{ChallengeFieldOps, FieldChallengeOps, JoltField},
     utils::lookup_bits::LookupBits,
 };
-
-use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 
 pub enum PositiveRemainderEqualsDivisorPrefix {}
 

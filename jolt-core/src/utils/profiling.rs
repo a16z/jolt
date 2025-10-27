@@ -1,13 +1,14 @@
 #[cfg(feature = "allocative")]
-use allocative::{Allocative, FlameGraphBuilder};
-#[cfg(not(target_arch = "wasm32"))]
-use memory_stats::memory_stats;
-#[cfg(feature = "allocative")]
 use std::path::Path;
 use std::{
     collections::HashMap,
     sync::{LazyLock, Mutex},
 };
+
+#[cfg(feature = "allocative")]
+use allocative::{Allocative, FlameGraphBuilder};
+#[cfg(not(target_arch = "wasm32"))]
+use memory_stats::memory_stats;
 static MEMORY_USAGE_MAP: LazyLock<Mutex<HashMap<&'static str, f64>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 static MEMORY_DELTA_MAP: LazyLock<Mutex<HashMap<&'static str, f64>>> =

@@ -1,6 +1,5 @@
-use crate::utils::lookup_bits::LookupBits;
-
 use super::SparseDenseSuffix;
+use crate::utils::lookup_bits::LookupBits;
 
 /// Helper suffix for left shift W variant.
 /// Computes power of 2 based on leading ones count, truncated to 32 bits.

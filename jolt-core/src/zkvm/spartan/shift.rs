@@ -1,30 +1,39 @@
-use std::cell::RefCell;
-use std::rc::Rc;
-use std::sync::Arc;
+use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 use allocative::Allocative;
+use rayon::prelude::*;
 use tracer::instruction::Cycle;
 
-use crate::field::JoltField;
-use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::eq_poly::EqPlusOnePolynomial;
-use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
-use crate::poly::opening_proof::{
-    OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-    VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
+use crate::{
+    field::JoltField,
+    poly::{
+        commitment::commitment_scheme::CommitmentScheme,
+        eq_poly::EqPlusOnePolynomial,
+        multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
+        opening_proof::{
+            OpeningAccumulator,
+            OpeningPoint,
+            ProverOpeningAccumulator,
+            SumcheckId,
+            VerifierOpeningAccumulator,
+            BIG_ENDIAN,
+            LITTLE_ENDIAN,
+        },
+    },
+    subprotocols::sumcheck::SumcheckInstance,
+    transcripts::Transcript,
+    utils::math::Math,
+    zkvm::{
+        bytecode::BytecodePreprocessing,
+        dag::state_manager::StateManager,
+        instruction::{CircuitFlags, InstructionFlags},
+        r1cs::{
+            inputs::{evaluate_shift_sumcheck_witnesses, generate_shift_sumcheck_witnesses},
+            key::UniformSpartanKey,
+        },
+        witness::VirtualPolynomial,
+    },
 };
-use crate::subprotocols::sumcheck::SumcheckInstance;
-use crate::transcripts::Transcript;
-use crate::utils::math::Math;
-use crate::zkvm::bytecode::BytecodePreprocessing;
-use crate::zkvm::dag::state_manager::StateManager;
-use crate::zkvm::instruction::{CircuitFlags, InstructionFlags};
-use crate::zkvm::r1cs::inputs::{
-    evaluate_shift_sumcheck_witnesses, generate_shift_sumcheck_witnesses,
-};
-use crate::zkvm::r1cs::key::UniformSpartanKey;
-use crate::zkvm::witness::VirtualPolynomial;
-use rayon::prelude::*;
 
 // Spartan PC sumcheck
 //

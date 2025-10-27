@@ -1,8 +1,9 @@
 #![cfg(all(test, feature = "host"))]
 
 mod exec {
-    use crate::test_utils::*;
     use tracer::emulator::cpu::Xlen;
+
+    use crate::test_utils::*;
 
     #[test]
     fn test_keccak256_direct_execution() {
@@ -48,9 +49,9 @@ mod exec {
 }
 
 mod exec_trace_equivalence {
-    use crate::test_constants::*;
-    use crate::test_utils::*;
     use tracer::emulator::cpu::Xlen;
+
+    use crate::{test_constants::*, test_utils::*};
 
     #[test]
     fn test_keccak_against_reference() {
@@ -71,10 +72,12 @@ mod exec_trace_equivalence {
 }
 
 mod exec_unit {
-    use crate::exec::{execute_chi, execute_iota, execute_rho_and_pi, execute_theta};
-    use crate::sequence_builder::ROUND_CONSTANTS;
-    use crate::test_constants::xkcp_vectors;
-    use crate::NUM_LANES;
+    use crate::{
+        exec::{execute_chi, execute_iota, execute_rho_and_pi, execute_theta},
+        sequence_builder::ROUND_CONSTANTS,
+        test_constants::xkcp_vectors,
+        NUM_LANES,
+    };
 
     #[test]
     fn test_execute_theta() {

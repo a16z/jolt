@@ -1,10 +1,10 @@
+use std::{fs, io::Write};
+
 use ark_serialize::CanonicalSerialize;
-use jolt_core::host;
-use jolt_core::zkvm::dag::state_manager::ProofKeys;
-use jolt_core::zkvm::JoltVerifierPreprocessing;
-use jolt_core::zkvm::{Jolt, JoltRV64IMAC};
-use std::fs;
-use std::io::Write;
+use jolt_core::{
+    host,
+    zkvm::{dag::state_manager::ProofKeys, Jolt, JoltRV64IMAC, JoltVerifierPreprocessing},
+};
 
 // Empirically measured cycles per operation for RV64IMAC
 const CYCLES_PER_SHA256: f64 = 3396.0;

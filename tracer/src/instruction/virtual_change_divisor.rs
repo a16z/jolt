@@ -1,11 +1,10 @@
 use serde::{Deserialize, Serialize};
 
+use super::{format::format_r::FormatR, RISCVInstruction, RISCVTrace};
 use crate::{
     declare_riscv_instr,
     emulator::cpu::{Cpu, Xlen},
 };
-
-use super::{format::format_r::FormatR, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name = VirtualChangeDivisor,

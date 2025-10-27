@@ -1,18 +1,21 @@
 use serde::{Deserialize, Serialize};
 
-use super::ld::LD;
-use super::sd::SD;
-use super::xor::XOR;
-use super::Instruction;
-use crate::instruction::addi::ADDI;
-use crate::utils::inline_helpers::InstrAssembler;
-use crate::utils::virtual_registers::VirtualRegisterAllocator;
+use super::{
+    format::format_amo::FormatAMO,
+    ld::LD,
+    sd::SD,
+    xor::XOR,
+    Cycle,
+    Instruction,
+    RISCVInstruction,
+    RISCVTrace,
+};
 use crate::{
     declare_riscv_instr,
     emulator::cpu::{Cpu, Xlen},
+    instruction::addi::ADDI,
+    utils::{inline_helpers::InstrAssembler, virtual_registers::VirtualRegisterAllocator},
 };
-
-use super::{format::format_amo::FormatAMO, Cycle, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name   = AMOXORD,

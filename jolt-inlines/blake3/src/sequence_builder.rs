@@ -9,20 +9,36 @@
 
 use core::array;
 
+use tracer::{
+    instruction::{
+        format::format_inline::FormatInline,
+        lui::LUI,
+        lw::LW,
+        sw::SW,
+        virtual_xor_rotw::{VirtualXORROTW12, VirtualXORROTW16, VirtualXORROTW7, VirtualXORROTW8},
+        Instruction,
+    },
+    utils::{
+        inline_helpers::{
+            InstrAssembler,
+            Value::{Imm, Reg},
+        },
+        virtual_registers::VirtualRegisterGuard,
+    },
+};
+
 use crate::{
-    CHAINING_VALUE_LEN, COUNTER_LEN, FLAG_CHUNK_END, FLAG_CHUNK_START, FLAG_KEYED_HASH, FLAG_ROOT,
-    IV, MSG_BLOCK_LEN, MSG_SCHEDULE, NUM_ROUNDS,
+    CHAINING_VALUE_LEN,
+    COUNTER_LEN,
+    FLAG_CHUNK_END,
+    FLAG_CHUNK_START,
+    FLAG_KEYED_HASH,
+    FLAG_ROOT,
+    IV,
+    MSG_BLOCK_LEN,
+    MSG_SCHEDULE,
+    NUM_ROUNDS,
 };
-use tracer::instruction::format::format_inline::FormatInline;
-use tracer::instruction::lui::LUI;
-use tracer::instruction::lw::LW;
-use tracer::instruction::sw::SW;
-use tracer::instruction::virtual_xor_rotw::{
-    VirtualXORROTW12, VirtualXORROTW16, VirtualXORROTW7, VirtualXORROTW8,
-};
-use tracer::instruction::Instruction;
-use tracer::utils::inline_helpers::{InstrAssembler, Value::Imm, Value::Reg};
-use tracer::utils::virtual_registers::VirtualRegisterGuard;
 
 pub const NEEDED_REGISTERS: u8 = 45;
 
@@ -276,8 +292,13 @@ pub fn blake3_keyed64_inline_sequence_builder(
 #[cfg(test)]
 mod tests {
     use crate::test_utils::{
-        create_blake3_harness, helpers::*, instruction, load_blake3_data, read_output,
-        ChainingValue, MessageBlock,
+        create_blake3_harness,
+        helpers::*,
+        instruction,
+        load_blake3_data,
+        read_output,
+        ChainingValue,
+        MessageBlock,
     };
 
     fn generate_trace_result(

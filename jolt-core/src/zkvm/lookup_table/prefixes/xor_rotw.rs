@@ -1,10 +1,9 @@
-use crate::{field::JoltField, utils::lookup_bits::LookupBits};
+use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 use crate::{
-    field::{ChallengeFieldOps, FieldChallengeOps},
+    field::{ChallengeFieldOps, FieldChallengeOps, JoltField},
+    utils::lookup_bits::LookupBits,
     zkvm::instruction_lookups::read_raf_checking::current_suffix_len,
 };
-
-use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 
 /// XOR the operands and rotate right by a constant value for 32-bit values (word operations).
 /// Only processes the lower 32 bits (j >= XLEN).

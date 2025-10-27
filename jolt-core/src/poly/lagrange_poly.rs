@@ -1,6 +1,9 @@
+use std::{
+    marker::PhantomData,
+    ops::{Mul, Sub},
+};
+
 use crate::field::JoltField;
-use std::marker::PhantomData;
-use std::ops::{Mul, Sub};
 
 /// Lagrange polynomials over zero-centered, symmetric, consecutive-integer domain, i.e.
 /// grids like [-6, -5, ..., 6, 7].
@@ -566,8 +569,7 @@ impl LagrangeHelper {
 #[cfg(test)]
 mod tests {
     use super::{LagrangeHelper, LagrangePolynomial};
-    use crate::ark_bn254::Fr as F;
-    use crate::field::JoltField;
+    use crate::{ark_bn254::Fr as F, field::JoltField};
 
     fn grid_nodes<const N: usize>() -> [F; N] {
         let d = N - 1;

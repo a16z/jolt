@@ -1,7 +1,7 @@
 extern crate alloc;
 
-use alloc::format;
-use alloc::slice;
+use alloc::{format, slice};
+
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 
 use crate::jolt_println;

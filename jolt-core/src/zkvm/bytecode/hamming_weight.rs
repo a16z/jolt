@@ -1,6 +1,10 @@
 use std::{cell::RefCell, rc::Rc};
 
+use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::FlameGraphBuilder;
 use num_traits::Zero;
+use rayon::prelude::*;
 
 use crate::{
     field::{JoltField, MulTrunc},
@@ -8,8 +12,12 @@ use crate::{
         commitment::commitment_scheme::CommitmentScheme,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{
-            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-            VerifierOpeningAccumulator, BIG_ENDIAN,
+            OpeningAccumulator,
+            OpeningPoint,
+            ProverOpeningAccumulator,
+            SumcheckId,
+            VerifierOpeningAccumulator,
+            BIG_ENDIAN,
         },
     },
     subprotocols::sumcheck::SumcheckInstance,
@@ -20,10 +28,6 @@ use crate::{
         witness::{CommittedPolynomial, VirtualPolynomial},
     },
 };
-use allocative::Allocative;
-#[cfg(feature = "allocative")]
-use allocative::FlameGraphBuilder;
-use rayon::prelude::*;
 
 // Bytecode Hamming weight sumcheck
 //

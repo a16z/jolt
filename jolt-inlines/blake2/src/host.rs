@@ -1,10 +1,16 @@
 //! Host-side implementation and registration.
+use tracer::{
+    register_inline,
+    utils::inline_sequence_writer::{
+        write_inline_trace,
+        AppendMode,
+        InlineDescriptor,
+        SequenceInputs,
+    },
+};
+
 pub use crate::sequence_builder;
 use crate::{BLAKE2_FUNCT3, BLAKE2_FUNCT7, BLAKE2_NAME, INLINE_OPCODE};
-use tracer::register_inline;
-use tracer::utils::inline_sequence_writer::{
-    write_inline_trace, AppendMode, InlineDescriptor, SequenceInputs,
-};
 
 pub fn init_inlines() -> Result<(), String> {
     register_inline(

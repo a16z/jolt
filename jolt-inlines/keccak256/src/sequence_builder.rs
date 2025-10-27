@@ -15,17 +15,18 @@
 
 use core::array;
 
-use crate::NUM_LANES;
-use tracer::instruction::andn::ANDN;
-use tracer::instruction::format::format_inline::FormatInline;
-use tracer::instruction::ld::LD;
-use tracer::instruction::sd::SD;
-use tracer::instruction::Instruction;
-use tracer::utils::inline_helpers::{
-    InstrAssembler,
-    Value::{Imm, Reg},
+use tracer::{
+    instruction::{andn::ANDN, format::format_inline::FormatInline, ld::LD, sd::SD, Instruction},
+    utils::{
+        inline_helpers::{
+            InstrAssembler,
+            Value::{Imm, Reg},
+        },
+        virtual_registers::VirtualRegisterGuard,
+    },
 };
-use tracer::utils::virtual_registers::VirtualRegisterGuard;
+
+use crate::NUM_LANES;
 
 /// The 24 round constants for the Keccak-f[1600] permutation.
 /// These values are XORed into the state during the `iota` step of each round.

@@ -1,32 +1,73 @@
 use core::panic::AssertUnwindSafe;
 use std::panic;
 
-use crate::emulator::cpu::Cpu;
-use crate::instruction::format::{InstructionFormat, InstructionRegisterState};
-use crate::instruction::NormalizedInstruction;
+use common::constants::RISCV_REGISTER_COUNT;
+use rand::{rngs::StdRng, SeedableRng};
 
 #[cfg(test)]
 use super::{
-    addiw::ADDIW, addw::ADDW, amoaddd::AMOADDD, amoaddw::AMOADDW, amoandd::AMOANDD,
-    amoandw::AMOANDW, amomaxd::AMOMAXD, amomaxud::AMOMAXUD, amomaxuw::AMOMAXUW, amomaxw::AMOMAXW,
-    amomind::AMOMIND, amominud::AMOMINUD, amominuw::AMOMINUW, amominw::AMOMINW, amoord::AMOORD,
-    amoorw::AMOORW, amoswapd::AMOSWAPD, amoswapw::AMOSWAPW, amoxord::AMOXORD, amoxorw::AMOXORW,
-    div::DIV, divu::DIVU, divuw::DIVUW, divw::DIVW, lb::LB, lbu::LBU, lh::LH, lhu::LHU, lw::LW,
-    lwu::LWU, mulh::MULH, mulhsu::MULHSU, mulw::MULW, rem::REM, remu::REMU, remuw::REMUW,
-    remw::REMW, sb::SB, sh::SH, sll::SLL, slli::SLLI, slliw::SLLIW, sllw::SLLW, sra::SRA,
-    srai::SRAI, sraiw::SRAIW, sraw::SRAW, srl::SRL, srli::SRLI, srliw::SRLIW, srlw::SRLW,
-    subw::SUBW, sw::SW,
+    addiw::ADDIW,
+    addw::ADDW,
+    amoaddd::AMOADDD,
+    amoaddw::AMOADDW,
+    amoandd::AMOANDD,
+    amoandw::AMOANDW,
+    amomaxd::AMOMAXD,
+    amomaxud::AMOMAXUD,
+    amomaxuw::AMOMAXUW,
+    amomaxw::AMOMAXW,
+    amomind::AMOMIND,
+    amominud::AMOMINUD,
+    amominuw::AMOMINUW,
+    amominw::AMOMINW,
+    amoord::AMOORD,
+    amoorw::AMOORW,
+    amoswapd::AMOSWAPD,
+    amoswapw::AMOSWAPW,
+    amoxord::AMOXORD,
+    amoxorw::AMOXORW,
+    div::DIV,
+    divu::DIVU,
+    divuw::DIVUW,
+    divw::DIVW,
+    lb::LB,
+    lbu::LBU,
+    lh::LH,
+    lhu::LHU,
+    lw::LW,
+    lwu::LWU,
+    mulh::MULH,
+    mulhsu::MULHSU,
+    mulw::MULW,
+    rem::REM,
+    remu::REMU,
+    remuw::REMUW,
+    remw::REMW,
+    sb::SB,
+    sh::SH,
+    sll::SLL,
+    slli::SLLI,
+    slliw::SLLIW,
+    sllw::SLLW,
+    sra::SRA,
+    srai::SRAI,
+    sraiw::SRAIW,
+    sraw::SRAW,
+    srl::SRL,
+    srli::SRLI,
+    srliw::SRLIW,
+    srlw::SRLW,
+    subw::SUBW,
+    sw::SW,
 };
-
-use super::{RISCVInstruction, RISCVTrace};
-
-use crate::emulator::terminal::DummyTerminal;
-
-use common::constants::RISCV_REGISTER_COUNT;
-
-use rand::{rngs::StdRng, SeedableRng};
-
-use super::{Cycle, RISCVCycle};
+use super::{Cycle, RISCVCycle, RISCVInstruction, RISCVTrace};
+use crate::{
+    emulator::{cpu::Cpu, terminal::DummyTerminal},
+    instruction::{
+        format::{InstructionFormat, InstructionRegisterState},
+        NormalizedInstruction,
+    },
+};
 
 pub const TEST_MEMORY_CAPACITY: u64 = 1024 * 1024;
 pub const DRAM_BASE: u64 = 0x80000000;

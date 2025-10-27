@@ -1,24 +1,30 @@
-use crate::poly::eq_poly::EqPolynomial;
-use crate::poly::multilinear_polynomial::MultilinearPolynomial;
-use crate::poly::opening_proof::{OpeningId, OpeningPoint, SumcheckId, BIG_ENDIAN};
-use crate::utils::accumulation::{Acc5U, Acc6S, Acc6U, Acc7S, Acc7U};
-use crate::utils::thread::unsafe_allocate_zero_vec;
-use crate::zkvm::bytecode::BytecodePreprocessing;
-use crate::zkvm::instruction::{
-    CircuitFlags, Flags, InstructionFlags, LookupQuery, NUM_CIRCUIT_FLAGS,
-};
-use crate::zkvm::witness::VirtualPolynomial;
-use crate::zkvm::JoltSharedPreprocessing;
+use std::fmt::Debug;
 
-use crate::field::{AccumulateInPlace, JoltField};
 use ark_ff::biginteger::{S128, S64};
 use ark_std::Zero;
 use common::constants::XLEN;
 use rayon::prelude::*;
-use std::fmt::Debug;
+use strum::IntoEnumIterator;
 use tracer::instruction::Cycle;
 
-use strum::IntoEnumIterator;
+use crate::{
+    field::{AccumulateInPlace, JoltField},
+    poly::{
+        eq_poly::EqPolynomial,
+        multilinear_polynomial::MultilinearPolynomial,
+        opening_proof::{OpeningId, OpeningPoint, SumcheckId, BIG_ENDIAN},
+    },
+    utils::{
+        accumulation::{Acc5U, Acc6S, Acc6U, Acc7S, Acc7U},
+        thread::unsafe_allocate_zero_vec,
+    },
+    zkvm::{
+        bytecode::BytecodePreprocessing,
+        instruction::{CircuitFlags, Flags, InstructionFlags, LookupQuery, NUM_CIRCUIT_FLAGS},
+        witness::VirtualPolynomial,
+        JoltSharedPreprocessing,
+    },
+};
 
 /// Fully materialized, typed view of all R1CS inputs for a single row (cycle).
 /// Filled once and reused to evaluate all constraints without re-reading the trace.

@@ -7,15 +7,18 @@ use num_traits::Zero;
 use rayon::prelude::*;
 
 use super::{D, LOG_K_CHUNK};
-
 use crate::{
     field::{JoltField, MulTrunc},
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{
-            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-            VerifierOpeningAccumulator, BIG_ENDIAN,
+            OpeningAccumulator,
+            OpeningPoint,
+            ProverOpeningAccumulator,
+            SumcheckId,
+            VerifierOpeningAccumulator,
+            BIG_ENDIAN,
         },
     },
     subprotocols::sumcheck::SumcheckInstance,

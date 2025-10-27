@@ -4,13 +4,8 @@ const PROGRAM_MEMORY_CAPACITY: u64 = EMULATOR_MEMORY_CAPACITY; // big enough to 
 
 extern crate fnv;
 
-use crate::instruction::Cycle;
-
-#[cfg(feature = "std")]
-use self::fnv::FnvHashMap;
 #[cfg(not(feature = "std"))]
 use alloc::collections::btree_map::BTreeMap as FnvHashMap;
-
 #[cfg(not(feature = "std"))]
 use alloc::{
     boxed::Box,
@@ -20,6 +15,10 @@ use alloc::{
     vec::Vec,
 };
 
+#[cfg(feature = "std")]
+use self::fnv::FnvHashMap;
+use crate::instruction::Cycle;
+
 pub mod cpu;
 pub mod default_terminal;
 pub mod elf_analyzer;
@@ -27,13 +26,15 @@ pub mod memory;
 pub mod mmu;
 pub mod terminal;
 
-use self::cpu::{Cpu, Xlen};
-use self::elf_analyzer::ElfAnalyzer;
-use self::terminal::Terminal;
+use std::{io::Write, path::Path};
 
 use common::constants::{EMULATOR_MEMORY_CAPACITY, RAM_START_ADDRESS};
-use std::io::Write;
-use std::path::Path;
+
+use self::{
+    cpu::{Cpu, Xlen},
+    elf_analyzer::ElfAnalyzer,
+    terminal::Terminal,
+};
 
 /// RISC-V emulator. It emulates RISC-V CPU and peripheral devices.
 ///

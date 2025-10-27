@@ -1,20 +1,17 @@
-use crate::zkvm::lookup_table::suffixes::change_divisor::ChangeDivisorSuffix;
-use crate::zkvm::lookup_table::suffixes::change_divisor_w::ChangeDivisorWSuffix;
-use crate::zkvm::lookup_table::suffixes::left_shift::LeftShiftSuffix;
-use crate::zkvm::lookup_table::suffixes::left_shift_w::LeftShiftWSuffix;
-use crate::zkvm::lookup_table::suffixes::left_shift_w_helper::LeftShiftWHelperSuffix;
-use crate::zkvm::lookup_table::suffixes::right_operand::RightOperandSuffix;
-use crate::zkvm::lookup_table::suffixes::right_operand_w::RightOperandWSuffix;
-use crate::zkvm::lookup_table::suffixes::sign_extension_right_operand::SignExtensionRightOperandSuffix;
-use crate::{field::JoltField, utils::lookup_bits::LookupBits};
+use and::AndSuffix;
 use div_by_zero::DivByZeroSuffix;
 use eq::EqSuffix;
 use gt::GreaterThanSuffix;
 use left_is_zero::LeftOperandIsZeroSuffix;
+use lower_half_word::LowerHalfWordSuffix;
+use lower_word::LowerWordSuffix;
 use lsb::LsbSuffix;
 use lt::LessThanSuffix;
+use notand::NotAndSuffix;
 use num_derive::FromPrimitive;
+use one::OneSuffix;
 use or::OrSuffix;
+use overflow_bits_zero::OverflowBitsZeroSuffix;
 use pow2::Pow2Suffix;
 use pow2_w::Pow2WSuffix;
 use rev8w::Rev8W;
@@ -27,18 +24,26 @@ use right_shift_w_helper::RightShiftWHelperSuffix;
 use sign_extension::SignExtensionSuffix;
 use sign_extension_upper_half::SignExtensionUpperHalfSuffix;
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
-
-use and::AndSuffix;
-use lower_half_word::LowerHalfWordSuffix;
-use lower_word::LowerWordSuffix;
-use notand::NotAndSuffix;
-use one::OneSuffix;
-use overflow_bits_zero::OverflowBitsZeroSuffix;
 use two_lsb::TwoLsbSuffix;
 use upper_word::UpperWordSuffix;
 use xor::XorSuffix;
 use xor_rot::XorRotSuffix;
 use xor_rotw::XorRotWSuffix;
+
+use crate::{
+    field::JoltField,
+    utils::lookup_bits::LookupBits,
+    zkvm::lookup_table::suffixes::{
+        change_divisor::ChangeDivisorSuffix,
+        change_divisor_w::ChangeDivisorWSuffix,
+        left_shift::LeftShiftSuffix,
+        left_shift_w::LeftShiftWSuffix,
+        left_shift_w_helper::LeftShiftWHelperSuffix,
+        right_operand::RightOperandSuffix,
+        right_operand_w::RightOperandWSuffix,
+        sign_extension_right_operand::SignExtensionRightOperandSuffix,
+    },
+};
 
 pub mod and;
 pub mod change_divisor;

@@ -1,9 +1,10 @@
-use crate::zkvm::instruction::{InstructionFlags, NUM_INSTRUCTION_FLAGS};
 use tracer::instruction::{virtual_sign_extend_word::VirtualSignExtendWord, RISCVCycle};
 
-use crate::zkvm::lookup_table::{sign_extend_half_word::SignExtendHalfWordTable, LookupTables};
-
 use super::{CircuitFlags, Flags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS};
+use crate::zkvm::{
+    instruction::{InstructionFlags, NUM_INSTRUCTION_FLAGS},
+    lookup_table::{sign_extend_half_word::SignExtendHalfWordTable, LookupTables},
+};
 
 impl<const XLEN: usize> InstructionLookup<XLEN> for VirtualSignExtendWord {
     fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
@@ -65,10 +66,10 @@ impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualSignExtendWord> 
 
 #[cfg(test)]
 mod test {
-    use crate::zkvm::instruction::test::materialize_entry_test;
+    use ark_bn254::Fr;
 
     use super::*;
-    use ark_bn254::Fr;
+    use crate::zkvm::instruction::test::materialize_entry_test;
 
     #[test]
     fn materialize_entry() {

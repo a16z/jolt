@@ -8,30 +8,38 @@
 //! This means that Spartan's polynomial IOP can use commit to its polynomials as-is without incurring any interpolations or FFTs.
 //! (2) HyperKZG is specialized to use KZG as the univariate commitment scheme, so it includes several optimizations (both during the transformation of multilinear-to-univariate claims
 //! and within the KZG commitment scheme implementation itself).
-use super::{
-    commitment_scheme::{CommitmentScheme, StreamingCommitmentScheme},
-    kzg::{KZGProverKey, KZGVerifierKey, UnivariateKZG},
-};
-use crate::field::JoltField;
-use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
-use crate::poly::rlc_polynomial::RLCPolynomial;
-use crate::{
-    msm::VariableBaseMSM,
-    poly::{commitment::kzg::SRS, dense_mlpoly::DensePolynomial, unipoly::UniPoly},
-    transcripts::{AppendToTranscript, Transcript},
-    utils::errors::ProofVerifyError,
-};
+use std::{borrow::Borrow, marker::PhantomData, sync::Arc};
+
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{One, Zero};
 use rand_chacha::ChaCha20Rng;
 use rand_core::{CryptoRng, RngCore, SeedableRng};
 use rayon::iter::{
-    IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator,
-    IntoParallelRefMutIterator, ParallelIterator,
+    IndexedParallelIterator,
+    IntoParallelIterator,
+    IntoParallelRefIterator,
+    IntoParallelRefMutIterator,
+    ParallelIterator,
 };
-use std::borrow::Borrow;
-use std::{marker::PhantomData, sync::Arc};
+
+use super::{
+    commitment_scheme::{CommitmentScheme, StreamingCommitmentScheme},
+    kzg::{KZGProverKey, KZGVerifierKey, UnivariateKZG},
+};
+use crate::{
+    field::JoltField,
+    msm::VariableBaseMSM,
+    poly::{
+        commitment::kzg::SRS,
+        dense_mlpoly::DensePolynomial,
+        multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
+        rlc_polynomial::RLCPolynomial,
+        unipoly::UniPoly,
+    },
+    transcripts::{AppendToTranscript, Transcript},
+    utils::errors::ProofVerifyError,
+};
 
 pub struct HyperKZGSRS<P: Pairing>(Arc<SRS<P>>);
 
@@ -571,12 +579,13 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::transcripts::{Blake2bTranscript, Transcript};
     use ark_bn254::Bn254;
     use ark_std::UniformRand;
     use rand::Rng;
     use rand_core::SeedableRng;
+
+    use super::*;
+    use crate::transcripts::{Blake2bTranscript, Transcript};
 
     //#[test]
     //fn test_hyperkzg_eval() {

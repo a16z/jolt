@@ -1,9 +1,10 @@
-use crate::zkvm::instruction::{InstructionFlags, NUM_INSTRUCTION_FLAGS};
 use tracer::instruction::{virtual_shift_right_bitmask::VirtualShiftRightBitmask, RISCVCycle};
 
-use crate::zkvm::lookup_table::{shift_right_bitmask::ShiftRightBitmaskTable, LookupTables};
-
 use super::{CircuitFlags, Flags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS};
+use crate::zkvm::{
+    instruction::{InstructionFlags, NUM_INSTRUCTION_FLAGS},
+    lookup_table::{shift_right_bitmask::ShiftRightBitmaskTable, LookupTables},
+};
 
 impl<const XLEN: usize> InstructionLookup<XLEN> for VirtualShiftRightBitmask {
     fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
@@ -79,10 +80,10 @@ impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualShiftRightBitmas
 
 #[cfg(test)]
 mod test {
-    use crate::zkvm::instruction::test::materialize_entry_test;
+    use ark_bn254::Fr;
 
     use super::*;
-    use ark_bn254::Fr;
+    use crate::zkvm::instruction::test::materialize_entry_test;
 
     #[test]
     fn materialize_entry() {

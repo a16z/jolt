@@ -1,8 +1,7 @@
 use common::constants::XLEN;
 
-use crate::utils::lookup_bits::LookupBits;
-
 use super::SparseDenseSuffix;
+use crate::utils::lookup_bits::LookupBits;
 
 /// Computes 2^(y.leading_ones()), where y is the right operand
 /// e.g. if the right operand is 0b11100000000000000000000000000000

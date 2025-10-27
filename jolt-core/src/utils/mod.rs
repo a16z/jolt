@@ -1,6 +1,6 @@
-use crate::field::{ChallengeFieldOps, JoltField};
-
 use rayon::prelude::*;
+
+use crate::field::{ChallengeFieldOps, JoltField};
 
 pub mod accumulation;
 pub mod counters;

@@ -1,20 +1,25 @@
-use super::andi::ANDI;
-use super::format::format_load::FormatLoad;
-use super::ld::LD;
-use super::sll::SLL;
-use super::slli::SLLI;
-use super::srli::SRLI;
-use super::virtual_assert_word_alignment::VirtualAssertWordAlignment;
-use super::xori::XORI;
-use super::{addi::ADDI, Instruction};
-use super::{Cycle, RISCVInstruction, RISCVTrace};
-use crate::utils::inline_helpers::InstrAssembler;
-use crate::utils::virtual_registers::VirtualRegisterAllocator;
+use serde::{Deserialize, Serialize};
+
+use super::{
+    addi::ADDI,
+    andi::ANDI,
+    format::format_load::FormatLoad,
+    ld::LD,
+    sll::SLL,
+    slli::SLLI,
+    srli::SRLI,
+    virtual_assert_word_alignment::VirtualAssertWordAlignment,
+    xori::XORI,
+    Cycle,
+    Instruction,
+    RISCVInstruction,
+    RISCVTrace,
+};
 use crate::{
     declare_riscv_instr,
     emulator::cpu::{Cpu, Xlen},
+    utils::{inline_helpers::InstrAssembler, virtual_registers::VirtualRegisterAllocator},
 };
-use serde::{Deserialize, Serialize};
 
 declare_riscv_instr!(
     name   = LWU,

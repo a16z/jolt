@@ -1,16 +1,30 @@
 use std::borrow::Borrow;
 
-use crate::field::JoltField;
-use crate::poly::multilinear_polynomial::MultilinearPolynomial;
-use crate::poly::unipoly::UniPoly;
-use crate::utils::errors::ProofVerifyError;
-use ark_ec::scalar_mul::variable_base::{
-    msm_binary, msm_i128, msm_i64, msm_s128, msm_s64, msm_u128, msm_u16, msm_u32, msm_u64, msm_u8,
-    VariableBaseMSM as ArkVariableBaseMSM,
+use ark_ec::{
+    scalar_mul::variable_base::{
+        msm_binary,
+        msm_i128,
+        msm_i64,
+        msm_s128,
+        msm_s64,
+        msm_u128,
+        msm_u16,
+        msm_u32,
+        msm_u64,
+        msm_u8,
+        VariableBaseMSM as ArkVariableBaseMSM,
+    },
+    CurveGroup,
+    ScalarMul,
 };
-use ark_ec::{CurveGroup, ScalarMul};
 use ark_ff::biginteger::{S128, S64};
 use rayon::prelude::*;
+
+use crate::{
+    field::JoltField,
+    poly::{multilinear_polynomial::MultilinearPolynomial, unipoly::UniPoly},
+    utils::errors::ProofVerifyError,
+};
 
 // A very light wrapper around Ark5.0 VariableBaseMSM
 pub trait VariableBaseMSM: ArkVariableBaseMSM

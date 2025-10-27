@@ -1,11 +1,15 @@
 use serde::{Deserialize, Serialize};
 
-use super::prefixes::{PrefixEval, Prefixes};
-use super::suffixes::{SuffixEval, Suffixes};
-use super::JoltLookupTable;
-use super::PrefixSuffixDecomposition;
-use crate::field::{ChallengeFieldOps, FieldChallengeOps, JoltField};
-use crate::utils::uninterleave_bits;
+use super::{
+    prefixes::{PrefixEval, Prefixes},
+    suffixes::{SuffixEval, Suffixes},
+    JoltLookupTable,
+    PrefixSuffixDecomposition,
+};
+use crate::{
+    field::{ChallengeFieldOps, FieldChallengeOps, JoltField},
+    utils::uninterleave_bits,
+};
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct OrTable<const XLEN: usize>;
@@ -47,13 +51,14 @@ impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for OrTable<XLEN> {
 #[cfg(test)]
 mod test {
     use ark_bn254::Fr;
-
-    use crate::zkvm::lookup_table::test::{
-        lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
-    };
     use common::constants::XLEN;
 
     use super::OrTable;
+    use crate::zkvm::lookup_table::test::{
+        lookup_table_mle_full_hypercube_test,
+        lookup_table_mle_random_test,
+        prefix_suffix_test,
+    };
 
     #[test]
     fn prefix_suffix() {

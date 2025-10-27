@@ -1,5 +1,12 @@
-use num_traits::Zero;
 use std::{cell::RefCell, rc::Rc};
+
+use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::FlameGraphBuilder;
+use common::constants::RAM_START_ADDRESS;
+use num_traits::Zero;
+use rayon::prelude::*;
+use tracer::JoltDevice;
 
 use crate::{
     field::JoltField,
@@ -7,11 +14,19 @@ use crate::{
         commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
         multilinear_polynomial::{
-            BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
+            BindingOrder,
+            MultilinearPolynomial,
+            PolynomialBinding,
+            PolynomialEvaluation,
         },
         opening_proof::{
-            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-            VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
+            OpeningAccumulator,
+            OpeningPoint,
+            ProverOpeningAccumulator,
+            SumcheckId,
+            VerifierOpeningAccumulator,
+            BIG_ENDIAN,
+            LITTLE_ENDIAN,
         },
         program_io_polynomial::ProgramIOPolynomial,
         range_mask_polynomial::RangeMaskPolynomial,
@@ -25,12 +40,6 @@ use crate::{
         witness::{CommittedPolynomial, VirtualPolynomial},
     },
 };
-use allocative::Allocative;
-#[cfg(feature = "allocative")]
-use allocative::FlameGraphBuilder;
-use common::constants::RAM_START_ADDRESS;
-use rayon::prelude::*;
-use tracer::JoltDevice;
 
 // RAM output sumchecks
 //

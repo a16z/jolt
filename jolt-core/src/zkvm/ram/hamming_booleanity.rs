@@ -1,26 +1,32 @@
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::{cell::RefCell, rc::Rc};
 
-use num_traits::Zero;
-
-use crate::field::JoltField;
-use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::eq_poly::EqPolynomial;
-use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
-use crate::poly::opening_proof::{
-    OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-    VerifierOpeningAccumulator, BIG_ENDIAN,
-};
-use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
-use crate::subprotocols::sumcheck::SumcheckInstance;
-use crate::transcripts::Transcript;
-use crate::utils::math::Math;
-use crate::zkvm::dag::state_manager::StateManager;
-use crate::zkvm::witness::VirtualPolynomial;
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
+use num_traits::Zero;
 use rayon::prelude::*;
+
+use crate::{
+    field::JoltField,
+    poly::{
+        commitment::commitment_scheme::CommitmentScheme,
+        eq_poly::EqPolynomial,
+        multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
+        opening_proof::{
+            OpeningAccumulator,
+            OpeningPoint,
+            ProverOpeningAccumulator,
+            SumcheckId,
+            VerifierOpeningAccumulator,
+            BIG_ENDIAN,
+        },
+        split_eq_poly::GruenSplitEqPolynomial,
+    },
+    subprotocols::sumcheck::SumcheckInstance,
+    transcripts::Transcript,
+    utils::math::Math,
+    zkvm::{dag::state_manager::StateManager, witness::VirtualPolynomial},
+};
 
 // RAM Hamming booleanity sumcheck
 //

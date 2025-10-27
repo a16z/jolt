@@ -1,10 +1,14 @@
-use crate::emulator::cpu::Cpu;
-use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
+use serde::{Deserialize, Serialize};
+
 use super::{
-    normalize_register_value, InstructionFormat, InstructionRegisterState, NormalizedOperands,
+    normalize_register_value,
+    InstructionFormat,
+    InstructionRegisterState,
+    NormalizedOperands,
 };
+use crate::emulator::cpu::Cpu;
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct FormatS {
@@ -22,8 +26,9 @@ pub struct RegisterStateFormatS {
 impl InstructionRegisterState for RegisterStateFormatS {
     #[cfg(any(feature = "test-utils", test))]
     fn random(rng: &mut rand::rngs::StdRng) -> Self {
-        use crate::instruction::test::{DRAM_BASE, TEST_MEMORY_CAPACITY};
         use rand::RngCore;
+
+        use crate::instruction::test::{DRAM_BASE, TEST_MEMORY_CAPACITY};
         // Use a smaller range to avoid issues with boundaries
         let max_offset = (TEST_MEMORY_CAPACITY / 2).min(0x10000);
         Self {

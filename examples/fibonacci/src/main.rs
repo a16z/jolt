@@ -1,5 +1,6 @@
-use jolt_sdk::serialize_and_print_size;
 use std::time::Instant;
+
+use jolt_sdk::serialize_and_print_size;
 use tracing::info;
 
 pub fn main() {

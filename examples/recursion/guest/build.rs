@@ -1,5 +1,4 @@
-use std::fs;
-use std::path::Path;
+use std::{fs, path::Path};
 
 fn main() {
     let embedded_bytes_path = Path::new("src/embedded_bytes.rs");

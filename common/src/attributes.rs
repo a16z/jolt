@@ -1,12 +1,17 @@
 #[cfg(feature = "std")]
 use std::collections::HashMap;
+
 #[cfg(feature = "std")]
 use syn::{Lit, Meta, MetaNameValue, NestedMeta};
 
 #[cfg(feature = "std")]
 use crate::constants::{
-    DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE, DEFAULT_MAX_TRACE_LENGTH,
-    DEFAULT_MAX_TRUSTED_ADVICE_SIZE, DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE, DEFAULT_MEMORY_SIZE,
+    DEFAULT_MAX_INPUT_SIZE,
+    DEFAULT_MAX_OUTPUT_SIZE,
+    DEFAULT_MAX_TRACE_LENGTH,
+    DEFAULT_MAX_TRUSTED_ADVICE_SIZE,
+    DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE,
+    DEFAULT_MEMORY_SIZE,
     DEFAULT_STACK_SIZE,
 };
 

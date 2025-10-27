@@ -3,12 +3,11 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::{format::format_i::FormatI, RISCVInstruction, RISCVTrace};
 use crate::{
     declare_riscv_instr,
     emulator::cpu::{Cpu, PrivilegeMode, Trap, TrapType},
 };
-
-use super::{format::format_i::FormatI, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name   = ECALL,

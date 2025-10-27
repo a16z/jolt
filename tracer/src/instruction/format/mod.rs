@@ -1,6 +1,8 @@
-use crate::emulator::cpu::{Cpu, Xlen};
-use serde::{de::DeserializeOwned, Serialize};
 use std::fmt::Debug;
+
+use serde::{de::DeserializeOwned, Serialize};
+
+use crate::emulator::cpu::{Cpu, Xlen};
 
 pub mod format_amo;
 pub mod format_assert_align;

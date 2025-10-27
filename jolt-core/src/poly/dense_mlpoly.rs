@@ -1,20 +1,24 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::uninlined_format_args)]
-use crate::poly::multilinear_polynomial::PolynomialEvaluation;
-use crate::utils::thread::unsafe_allocate_zero_vec;
-use crate::utils::{compute_dotproduct, compute_dotproduct_low_optimized};
-use crate::{field::ChallengeFieldOps, poly::eq_poly::EqPolynomial};
+use core::ops::Index;
 
-use crate::field::{FieldChallengeOps, JoltField, OptimizedMul};
-use crate::utils::math::Math;
-use crate::utils::small_scalar::SmallScalar;
 use allocative::Allocative;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use core::ops::Index;
 use rand_core::{CryptoRng, RngCore};
 use rayon::prelude::*;
 
 use super::multilinear_polynomial::{BindingOrder, MultilinearPolynomial};
+use crate::{
+    field::{ChallengeFieldOps, FieldChallengeOps, JoltField, OptimizedMul},
+    poly::{eq_poly::EqPolynomial, multilinear_polynomial::PolynomialEvaluation},
+    utils::{
+        compute_dotproduct,
+        compute_dotproduct_low_optimized,
+        math::Math,
+        small_scalar::SmallScalar,
+        thread::unsafe_allocate_zero_vec,
+    },
+};
 
 #[derive(Default, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize, Allocative)]
 pub struct DensePolynomial<F: JoltField> {
@@ -612,10 +616,11 @@ impl<F: JoltField> PolynomialEvaluation<F> for DensePolynomial<F> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use ark_bn254::Fr;
     use ark_std::test_rng;
     use rand::Rng;
+
+    use super::*;
 
     pub fn compute_chis_at_r<F: JoltField>(r: &[F::Challenge]) -> Vec<F> {
         let ell = r.len();

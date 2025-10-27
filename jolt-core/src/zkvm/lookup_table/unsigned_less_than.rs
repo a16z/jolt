@@ -1,13 +1,14 @@
-use crate::{
-    field::{ChallengeFieldOps, FieldChallengeOps, JoltField},
-    utils::uninterleave_bits,
-};
 use serde::{Deserialize, Serialize};
 
 use super::{
     prefixes::{PrefixEval, Prefixes},
     suffixes::{SuffixEval, Suffixes},
-    JoltLookupTable, PrefixSuffixDecomposition,
+    JoltLookupTable,
+    PrefixSuffixDecomposition,
+};
+use crate::{
+    field::{ChallengeFieldOps, FieldChallengeOps, JoltField},
+    utils::uninterleave_bits,
 };
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
@@ -53,13 +54,14 @@ impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for UnsignedLessThanTabl
 #[cfg(test)]
 mod test {
     use ark_bn254::Fr;
-
-    use crate::zkvm::lookup_table::test::{
-        lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
-    };
     use common::constants::XLEN;
 
     use super::UnsignedLessThanTable;
+    use crate::zkvm::lookup_table::test::{
+        lookup_table_mle_full_hypercube_test,
+        lookup_table_mle_random_test,
+        prefix_suffix_test,
+    };
 
     #[test]
     fn prefix_suffix() {

@@ -1,9 +1,9 @@
+use std::hint::black_box;
+
 use ark_bn254::Fr;
-use ark_std::test_rng;
-use ark_std::UniformRand;
+use ark_std::{test_rng, UniformRand};
 use iai_callgrind::{library_benchmark, library_benchmark_group, main};
 use jolt_core::{field::JoltField, poly::dense_mlpoly::DensePolynomial};
-use std::hint::black_box;
 
 fn bound_poly_setup<F: JoltField>(size: usize) -> (DensePolynomial<F>, F::Challenge) {
     let mut rng = test_rng();

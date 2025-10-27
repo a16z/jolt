@@ -1,8 +1,11 @@
 use serde::{Deserialize, Serialize};
 
 use super::{RISCVInstruction, RISCVTrace};
-use crate::instruction::format::format_r::FormatR;
-use crate::{declare_riscv_instr, emulator::cpu::Cpu, emulator::cpu::Xlen};
+use crate::{
+    declare_riscv_instr,
+    emulator::cpu::{Cpu, Xlen},
+    instruction::format::format_r::FormatR,
+};
 
 macro_rules! declare_xorrotw {
     ($name:ident, $rotation:expr) => {

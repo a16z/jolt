@@ -1,15 +1,19 @@
-use crate::utils::inline_helpers::InstrAssembler;
-use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use serde::{Deserialize, Serialize};
 
+use super::{
+    format::format_i::FormatI,
+    virtual_sign_extend_word::VirtualSignExtendWord,
+    Cycle,
+    Instruction,
+    RISCVInstruction,
+    RISCVTrace,
+};
 use crate::{
     declare_riscv_instr,
     emulator::cpu::{Cpu, Xlen},
     instruction::virtual_srai::VirtualSRAI,
+    utils::{inline_helpers::InstrAssembler, virtual_registers::VirtualRegisterAllocator},
 };
-
-use super::virtual_sign_extend_word::VirtualSignExtendWord;
-use super::{format::format_i::FormatI, Cycle, Instruction, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name   = SRAIW,

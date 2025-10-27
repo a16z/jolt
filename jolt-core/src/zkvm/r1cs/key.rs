@@ -1,20 +1,20 @@
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use sha3::Sha3_256;
+use sha3::{Digest, Sha3_256};
 
+use super::constraints::{
+    Constraint,
+    LC,
+    UNIFORM_R1CS,
+    UNIFORM_R1CS_FIRST_GROUP,
+    UNIFORM_R1CS_SECOND_GROUP,
+    UNIVARIATE_SKIP_DOMAIN_SIZE,
+};
 use crate::{
     field::JoltField,
     poly::{eq_poly::EqPolynomial, lagrange_poly::LagrangePolynomial},
-    utils::{index_to_field_bitvector, thread::unsafe_allocate_zero_vec},
+    utils::{index_to_field_bitvector, math::Math, thread::unsafe_allocate_zero_vec},
+    zkvm::r1cs::inputs::JoltR1CSInputs,
 };
-
-use sha3::Digest;
-
-use super::constraints::{
-    Constraint, LC, UNIFORM_R1CS, UNIFORM_R1CS_FIRST_GROUP, UNIFORM_R1CS_SECOND_GROUP,
-    UNIVARIATE_SKIP_DOMAIN_SIZE,
-};
-use crate::utils::math::Math;
-use crate::zkvm::r1cs::inputs::JoltR1CSInputs;
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct UniformSpartanKey<F: JoltField> {

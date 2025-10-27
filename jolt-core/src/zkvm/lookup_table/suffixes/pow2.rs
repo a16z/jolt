@@ -1,6 +1,5 @@
-use crate::{utils::lookup_bits::LookupBits, utils::math::Math};
-
 use super::SparseDenseSuffix;
+use crate::utils::{lookup_bits::LookupBits, math::Math};
 
 /// Computes 2^shift, where shift is the lower log_2(XLEN) bits of
 /// the second operand.

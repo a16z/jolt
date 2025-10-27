@@ -1,6 +1,7 @@
 extern crate proc_macro;
 
 use core::panic;
+use std::sync::Once;
 
 use common::{
     attributes::parse_attributes,
@@ -9,7 +10,6 @@ use common::{
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
-use std::sync::Once;
 use syn::{parse_macro_input, AttributeArgs, Ident, ItemFn, PatType, ReturnType, Type};
 
 static WASM_IMPORTS_INIT: Once = Once::new();

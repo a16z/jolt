@@ -6,11 +6,9 @@ extern crate jolt_sdk_macros;
 pub mod host_utils;
 #[cfg(any(feature = "host", feature = "guest-verifier"))]
 pub use host_utils::*;
-
 pub use jolt_platform::*;
 pub use jolt_sdk_macros::provable;
 pub use postcard;
-
 use serde::{Deserialize, Serialize};
 
 /// A wrapper type to mark guest program inputs as trusted_advice.

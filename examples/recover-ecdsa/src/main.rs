@@ -1,7 +1,8 @@
+use std::time::Instant;
+
 use guest::recover;
 use jolt_sdk::serialize_and_print_size;
 use secp256k1::{Message, PublicKey, Secp256k1, SecretKey};
-use std::time::Instant;
 use tracing::info;
 
 const SECRET_KEY: [u8; 32] = [

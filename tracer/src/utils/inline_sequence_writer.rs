@@ -5,14 +5,17 @@
 //! During actual runtime execution, these values will vary according to the specific bytecode being executed
 //! and should be replaced with actual runtime values.
 
-use crate::emulator::cpu::Xlen;
-use crate::instruction::format::format_inline::FormatInline;
-use crate::instruction::Instruction;
-use crate::utils::inline_helpers::InstrAssembler;
-use crate::utils::virtual_registers::VirtualRegisterAllocator;
-use std::fs::{File, OpenOptions};
-use std::io::{self, Write};
-use std::path::Path;
+use std::{
+    fs::{File, OpenOptions},
+    io::{self, Write},
+    path::Path,
+};
+
+use crate::{
+    emulator::cpu::Xlen,
+    instruction::{format::format_inline::FormatInline, Instruction},
+    utils::{inline_helpers::InstrAssembler, virtual_registers::VirtualRegisterAllocator},
+};
 
 pub const DEFAULT_RAM_START_ADDRESS: u64 = 0x80000000;
 pub const DEFAULT_XLEN: Xlen = Xlen::Bit64;

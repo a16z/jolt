@@ -5,13 +5,12 @@ use std::{
     io::Write,
 };
 
+use build_wasm::{build_wasm, modify_cargo_toml};
 use clap::{Parser, Subcommand};
 use eyre::Result;
+use jolt_core::host::toolchain;
 use rand::prelude::SliceRandom;
 use sysinfo::System;
-
-use build_wasm::{build_wasm, modify_cargo_toml};
-use jolt_core::host::toolchain;
 
 #[derive(Parser)]
 #[command(version = version(), about, long_about = None)]

@@ -2,13 +2,17 @@
 /// is the address in main memory.
 pub const DRAM_BASE: u64 = RAM_START_ADDRESS;
 
-use crate::instruction::{RAMRead, RAMWrite};
-use common::constants::{RAM_START_ADDRESS, STACK_CANARY_SIZE};
-use common::jolt_device::JoltDevice;
+use common::{
+    constants::{RAM_START_ADDRESS, STACK_CANARY_SIZE},
+    jolt_device::JoltDevice,
+};
 
-use super::cpu::{get_privilege_mode, PrivilegeMode, Trap, TrapType, Xlen};
-use super::memory::Memory;
-use super::terminal::Terminal;
+use super::{
+    cpu::{get_privilege_mode, PrivilegeMode, Trap, TrapType, Xlen},
+    memory::Memory,
+    terminal::Terminal,
+};
+use crate::instruction::{RAMRead, RAMWrite};
 
 /// Emulates Memory Management Unit. It holds the Main memory and peripheral
 /// devices, maps address to them, and accesses them depending on address.
@@ -1187,10 +1191,10 @@ impl MemoryWrapper {
 
 #[cfg(test)]
 mod test_mmu {
+    use common::{constants::DEFAULT_MEMORY_SIZE, jolt_device::MemoryConfig};
+
     use super::*;
     use crate::emulator::terminal::DummyTerminal;
-    use common::constants::DEFAULT_MEMORY_SIZE;
-    use common::jolt_device::MemoryConfig;
 
     fn setup_mmu() -> Mmu {
         let terminal = Box::new(DummyTerminal::default());

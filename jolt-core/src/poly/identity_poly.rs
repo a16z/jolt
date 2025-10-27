@@ -3,17 +3,23 @@ use std::sync::{Arc, RwLock};
 use allocative::Allocative;
 use num::Integer;
 
-use crate::field::{ChallengeFieldOps, FieldChallengeOps, JoltField};
-use crate::poly::multilinear_polynomial::MultilinearPolynomial;
-use crate::poly::prefix_suffix::{
-    CachedPolynomial, Prefix, PrefixCheckpoints, PrefixPolynomial, PrefixRegistry,
-    PrefixSuffixPolynomial, SuffixPolynomial,
-};
-use crate::utils::lookup_bits::LookupBits;
-use crate::utils::math::Math;
-use crate::utils::uninterleave_bits;
-
 use super::multilinear_polynomial::{BindingOrder, PolynomialBinding, PolynomialEvaluation};
+use crate::{
+    field::{ChallengeFieldOps, FieldChallengeOps, JoltField},
+    poly::{
+        multilinear_polynomial::MultilinearPolynomial,
+        prefix_suffix::{
+            CachedPolynomial,
+            Prefix,
+            PrefixCheckpoints,
+            PrefixPolynomial,
+            PrefixRegistry,
+            PrefixSuffixPolynomial,
+            SuffixPolynomial,
+        },
+    },
+    utils::{lookup_bits::LookupBits, math::Math, uninterleave_bits},
+};
 
 #[derive(Clone, Debug, Allocative)]
 pub struct IdentityPolynomial<F: JoltField> {
@@ -460,14 +466,16 @@ impl<F: JoltField> PolynomialEvaluation<F> for UnmapRamAddressPolynomial<F> {
 
 #[cfg(test)]
 mod tests {
-    use crate::poly::multilinear_polynomial::MultilinearPolynomial;
-    use crate::poly::prefix_suffix::tests::prefix_suffix_decomposition_test;
-
-    use super::*;
     use ark_bn254::Fr;
     use ark_ec::AdditiveGroup;
     use ark_ff::Field;
     use ark_std::test_rng;
+
+    use super::*;
+    use crate::poly::{
+        multilinear_polynomial::MultilinearPolynomial,
+        prefix_suffix::tests::prefix_suffix_decomposition_test,
+    };
 
     #[test]
     fn identity_poly() {

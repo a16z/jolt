@@ -1,9 +1,13 @@
-use memory_stats::memory_stats;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::{
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    thread::{self, JoinHandle},
+    time::Duration,
+};
 
+use memory_stats::memory_stats;
 use sysinfo::System;
 
 pub struct MetricsMonitor {

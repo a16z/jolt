@@ -2,6 +2,13 @@
 
 use std::vec;
 
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use common::{
+    constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS},
+    jolt_device::MemoryLayout,
+};
+use rayon::prelude::*;
+
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::{
@@ -29,13 +36,6 @@ use crate::{
         witness::VirtualPolynomial,
     },
 };
-
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use common::{
-    constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS},
-    jolt_device::MemoryLayout,
-};
-use rayon::prelude::*;
 
 pub mod booleanity;
 pub mod hamming_booleanity;

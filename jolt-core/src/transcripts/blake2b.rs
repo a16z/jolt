@@ -1,9 +1,9 @@
-use super::transcript::Transcript;
-use crate::field::JoltField;
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_serialize::CanonicalSerialize;
-use blake2::digest::consts::U32;
-use blake2::{Blake2b, Digest};
+use blake2::{digest::consts::U32, Blake2b, Digest};
+
+use super::transcript::Transcript;
+use crate::field::JoltField;
 
 type Blake2b256 = Blake2b<U32>;
 use std::borrow::Borrow;
@@ -258,9 +258,11 @@ impl Transcript for Blake2bTranscript {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use ark_bn254::Fr;
     use std::collections::HashSet;
+
+    use ark_bn254::Fr;
+
+    use super::*;
 
     #[test]
     fn test_challenge_scalar_128_bits() {

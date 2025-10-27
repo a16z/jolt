@@ -1,6 +1,5 @@
-use crate::utils::lookup_bits::LookupBits;
-
 use super::SparseDenseSuffix;
+use crate::utils::lookup_bits::LookupBits;
 
 /// Computes 2^shift, where shift is the lower 5 bits of the operand (for modulo 32).
 pub enum Pow2WSuffix<const XLEN: usize> {}

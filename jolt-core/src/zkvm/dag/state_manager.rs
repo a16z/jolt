@@ -1,25 +1,37 @@
-use std::cell::RefCell;
-use std::collections::BTreeMap;
-use std::rc::Rc;
-use std::sync::Arc;
+use std::{cell::RefCell, collections::BTreeMap, rc::Rc, sync::Arc};
 
-use crate::field::JoltField;
-use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::multilinear_polynomial::MultilinearPolynomial;
-use crate::poly::opening_proof::{
-    OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, ReducedOpeningProof, SumcheckId,
-    VerifierOpeningAccumulator, BIG_ENDIAN,
-};
-use crate::subprotocols::sumcheck::{SumcheckInstanceProof, UniSkipFirstRoundProof};
-use crate::transcripts::Transcript;
-use crate::utils::math::Math;
-use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
-use crate::zkvm::{JoltProverPreprocessing, JoltVerifierPreprocessing};
 use num_derive::FromPrimitive;
 use rayon::prelude::*;
-use tracer::emulator::memory::Memory;
-use tracer::instruction::{Cycle, Instruction};
-use tracer::JoltDevice;
+use tracer::{
+    emulator::memory::Memory,
+    instruction::{Cycle, Instruction},
+    JoltDevice,
+};
+
+use crate::{
+    field::JoltField,
+    poly::{
+        commitment::commitment_scheme::CommitmentScheme,
+        multilinear_polynomial::MultilinearPolynomial,
+        opening_proof::{
+            OpeningAccumulator,
+            OpeningPoint,
+            ProverOpeningAccumulator,
+            ReducedOpeningProof,
+            SumcheckId,
+            VerifierOpeningAccumulator,
+            BIG_ENDIAN,
+        },
+    },
+    subprotocols::sumcheck::{SumcheckInstanceProof, UniSkipFirstRoundProof},
+    transcripts::Transcript,
+    utils::math::Math,
+    zkvm::{
+        witness::{CommittedPolynomial, VirtualPolynomial},
+        JoltProverPreprocessing,
+        JoltVerifierPreprocessing,
+    },
+};
 
 #[derive(PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, FromPrimitive)]
 #[repr(u8)]

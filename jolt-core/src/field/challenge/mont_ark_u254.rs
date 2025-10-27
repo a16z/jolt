@@ -1,16 +1,21 @@
 //! This module implements a base Challenge type whose range is exactly that the same as the
 //! concrete type being used as JoltField.
-//!
 
-use crate::field::{tracked_ark::TrackedFr, JoltField};
-use crate::impl_field_ops_inline;
+use std::{
+    fmt::{Debug, Display},
+    hash::Hash,
+    ops::*,
+};
+
 use allocative::Allocative;
 use ark_ff::UniformRand;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rand::{Rng, RngCore};
-use std::fmt::{Debug, Display};
-use std::hash::Hash;
-use std::ops::*;
+
+use crate::{
+    field::{tracked_ark::TrackedFr, JoltField},
+    impl_field_ops_inline,
+};
 
 #[derive(
     Copy,

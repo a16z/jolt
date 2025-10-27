@@ -1,6 +1,12 @@
+use std::{array, cell::RefCell, rc::Rc, sync::Arc};
+
+use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::FlameGraphBuilder;
+use common::constants::REGISTER_COUNT;
 use itertools::chain;
 use num_traits::Zero;
-use std::{array, cell::RefCell, rc::Rc, sync::Arc};
+use rayon::prelude::*;
 
 use crate::{
     field::JoltField,
@@ -10,8 +16,12 @@ use crate::{
         lt_poly::LtPolynomial,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{
-            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-            VerifierOpeningAccumulator, BIG_ENDIAN,
+            OpeningAccumulator,
+            OpeningPoint,
+            ProverOpeningAccumulator,
+            SumcheckId,
+            VerifierOpeningAccumulator,
+            BIG_ENDIAN,
         },
         ra_poly::RaPolynomial,
         unipoly::UniPoly,
@@ -24,11 +34,6 @@ use crate::{
         witness::{CommittedPolynomial, VirtualPolynomial},
     },
 };
-use allocative::Allocative;
-#[cfg(feature = "allocative")]
-use allocative::FlameGraphBuilder;
-use common::constants::REGISTER_COUNT;
-use rayon::prelude::*;
 
 // Register value evaluation sumcheck
 //

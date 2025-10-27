@@ -1,11 +1,13 @@
+use ark_ff::{prelude::*, BigInt, PrimeField, UniformRand};
+use rayon::prelude::*;
+
 use super::{FieldOps, FmaddTrunc, JoltField, MulU64WithCarry};
 #[cfg(feature = "challenge-254-bit")]
 use crate::field::challenge::Mont254BitChallenge;
-use crate::field::challenge::MontU128Challenge;
-use crate::field::MulTrunc;
-use crate::utils::thread::unsafe_allocate_zero_vec;
-use ark_ff::{prelude::*, BigInt, PrimeField, UniformRand};
-use rayon::prelude::*;
+use crate::{
+    field::{challenge::MontU128Challenge, MulTrunc},
+    utils::thread::unsafe_allocate_zero_vec,
+};
 
 impl FieldOps for ark_bn254::Fr {}
 impl FieldOps<&ark_bn254::Fr, ark_bn254::Fr> for &ark_bn254::Fr {}
@@ -296,11 +298,11 @@ impl<const N: usize> MulU64WithCarry for BigInt<N> {
 
 #[cfg(test)]
 mod tests {
-    use crate::field::JoltField;
     use ark_bn254::Fr;
-    use ark_std::test_rng;
-    use ark_std::One;
+    use ark_std::{test_rng, One};
     use rand_chacha::rand_core::RngCore;
+
+    use crate::field::JoltField;
 
     #[test]
     fn implicit_montgomery_conversion() {

@@ -6,18 +6,26 @@ use std::{
 };
 
 use ark_serialize::{
-    CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
+    CanonicalDeserialize,
+    CanonicalSerialize,
+    Compress,
+    SerializationError,
+    Valid,
+    Validate,
 };
 use num::FromPrimitive;
 use tracer::JoltDevice;
 
-use crate::zkvm::witness::AllCommittedPolynomials;
 use crate::{
     field::JoltField,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         opening_proof::{
-            OpeningId, OpeningPoint, Openings, ReducedOpeningProof, SumcheckId,
+            OpeningId,
+            OpeningPoint,
+            Openings,
+            ReducedOpeningProof,
+            SumcheckId,
             VerifierOpeningAccumulator,
         },
     },
@@ -25,7 +33,7 @@ use crate::{
     transcripts::Transcript,
     zkvm::{
         dag::state_manager::{ProofData, ProofKeys, Proofs, StateManager, VerifierState},
-        witness::{CommittedPolynomial, VirtualPolynomial},
+        witness::{AllCommittedPolynomials, CommittedPolynomial, VirtualPolynomial},
         JoltVerifierPreprocessing,
     },
 };

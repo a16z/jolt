@@ -1,5 +1,6 @@
-use jolt_sdk::{TrustedAdvice, UntrustedAdvice};
 use std::time::Instant;
+
+use jolt_sdk::{TrustedAdvice, UntrustedAdvice};
 use tracing::info;
 
 pub fn main() {

@@ -1,19 +1,23 @@
-use crate::instruction::addi::ADDI;
-use crate::instruction::and::AND;
-use crate::instruction::andi::ANDI;
-use crate::instruction::ld::LD;
-use crate::instruction::ori::ORI;
-use crate::instruction::sd::SD;
-use crate::instruction::sll::SLL;
-use crate::instruction::slli::SLLI;
-use crate::instruction::srl::SRL;
-use crate::instruction::srli::SRLI;
-use crate::instruction::virtual_assert_word_alignment::VirtualAssertWordAlignment;
-use crate::instruction::virtual_lw::VirtualLW;
-use crate::instruction::virtual_sign_extend_word::VirtualSignExtendWord;
-use crate::instruction::virtual_sw::VirtualSW;
-use crate::instruction::xor::XOR;
-use crate::utils::inline_helpers::InstrAssembler;
+use crate::{
+    instruction::{
+        addi::ADDI,
+        and::AND,
+        andi::ANDI,
+        ld::LD,
+        ori::ORI,
+        sd::SD,
+        sll::SLL,
+        slli::SLLI,
+        srl::SRL,
+        srli::SRLI,
+        virtual_assert_word_alignment::VirtualAssertWordAlignment,
+        virtual_lw::VirtualLW,
+        virtual_sign_extend_word::VirtualSignExtendWord,
+        virtual_sw::VirtualSW,
+        xor::XOR,
+    },
+    utils::inline_helpers::InstrAssembler,
+};
 
 pub fn amo_pre64(asm: &mut InstrAssembler, rs1: u8, v_rd: u8, v_dword: u8, v_shift: u8) {
     asm.emit_halign::<VirtualAssertWordAlignment>(rs1, 0);

@@ -5,12 +5,18 @@ use std::{
     time::{Duration, Instant},
 };
 
+use ark_bn254::Fr;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use common::jolt_device::MemoryLayout;
+use tracer::{instruction::Instruction, JoltDevice};
+
 #[cfg(test)]
 use crate::poly::commitment::dory::DoryGlobals;
 use crate::{
     field::JoltField,
     poly::{
-        commitment::commitment_scheme::CommitmentScheme, opening_proof::ProverOpeningAccumulator,
+        commitment::commitment_scheme::CommitmentScheme,
+        opening_proof::ProverOpeningAccumulator,
     },
     transcripts::Transcript,
     utils::{errors::ProofVerifyError, math::Math},
@@ -21,10 +27,6 @@ use crate::{
         witness::DTH_ROOT_OF_K,
     },
 };
-use ark_bn254::Fr;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use common::jolt_device::MemoryLayout;
-use tracer::{instruction::Instruction, JoltDevice};
 
 pub mod bytecode;
 pub mod dag;
@@ -268,10 +270,11 @@ where
         Option<ProverDebugInfo<F, FS, PCS>>,
         Duration,
     ) {
-        use crate::{guest, zkvm::dag::state_manager::StateManager};
         use common::jolt_device::MemoryConfig;
         use rayon::prelude::*;
         use tracer::instruction::Cycle;
+
+        use crate::{guest, zkvm::dag::state_manager::StateManager};
 
         let memory_config = MemoryConfig {
             max_untrusted_advice_size: preprocessing.shared.memory_layout.max_untrusted_advice_size,
@@ -416,11 +419,11 @@ pub struct JoltRV64IMAC;
 impl Jolt<Fr, DoryCommitmentScheme, Blake2bTranscript> for JoltRV64IMAC {}
 pub type RV64IMACJoltProof = JoltProof<Fr, DoryCommitmentScheme, Blake2bTranscript>;
 
-use crate::poly::commitment::dory::DoryCommitmentScheme;
-use crate::transcripts::Blake2bTranscript;
+use std::{io::Cursor, path::PathBuf};
+
 use eyre::Result;
-use std::io::Cursor;
-use std::path::PathBuf;
+
+use crate::{poly::commitment::dory::DoryCommitmentScheme, transcripts::Blake2bTranscript};
 
 pub trait Serializable: CanonicalSerialize + CanonicalDeserialize + Sized {
     /// Gets the byte size of the serialized data
@@ -473,14 +476,14 @@ impl Serializable for JoltDevice {}
 #[cfg(test)]
 mod tests {
     use ark_bn254::Fr;
-
-    use crate::host;
-    use crate::poly::commitment::mock::MockCommitScheme;
-    use crate::zkvm::JoltVerifierPreprocessing;
-    use crate::zkvm::{Jolt, JoltRV64IMAC};
     use serial_test::serial;
 
-    use crate::transcripts::Blake2bTranscript;
+    use crate::{
+        host,
+        poly::commitment::mock::MockCommitScheme,
+        transcripts::Blake2bTranscript,
+        zkvm::{Jolt, JoltRV64IMAC, JoltVerifierPreprocessing},
+    };
 
     pub struct JoltRV64IMACMockPCS;
     impl Jolt<Fr, MockCommitScheme<Fr>, Blake2bTranscript> for JoltRV64IMACMockPCS {}

@@ -2,10 +2,9 @@
 
 use core::hint::black_box;
 
-use jolt::{end_cycle_tracking, start_cycle_tracking};
-
 use blake2 as blake2_reference;
 use blake3 as blake3_reference;
+use jolt::{end_cycle_tracking, start_cycle_tracking};
 use jolt_inlines_blake2 as blake2_inline;
 use jolt_inlines_blake3 as blake3_inline;
 use jolt_inlines_keccak256 as keccak_inline;

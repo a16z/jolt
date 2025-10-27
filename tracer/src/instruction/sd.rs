@@ -1,10 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use super::{format::format_s::FormatS, RAMWrite, RISCVInstruction, RISCVTrace};
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
-
-use super::RAMWrite;
-
-use super::{format::format_s::FormatS, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name   = SD,

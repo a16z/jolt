@@ -1,10 +1,10 @@
 #![cfg_attr(feature = "guest", no_std)]
 extern crate alloc;
 use jolt::{end_cycle_tracking, start_cycle_tracking};
-
 use secp256k1::{
     ecdsa::{RecoverableSignature, RecoveryId},
-    Message, PublicKey,
+    Message,
+    PublicKey,
 };
 
 #[jolt::provable(

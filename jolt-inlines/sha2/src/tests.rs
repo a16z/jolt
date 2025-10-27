@@ -1,6 +1,9 @@
+use tracer::{
+    emulator::cpu::Xlen,
+    utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness},
+};
+
 use crate::{INLINE_OPCODE, SHA256_FUNCT3, SHA256_FUNCT7, SHA256_INIT_FUNCT3, SHA256_INIT_FUNCT7};
-use tracer::emulator::cpu::Xlen;
-use tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness};
 
 pub fn create_sha256_harness(xlen: Xlen) -> InlineTestHarness {
     // SHA256: rs1=state/output, rs2=input (same as Blake/Keccak)
@@ -21,8 +24,10 @@ pub fn instruction_sha256init() -> tracer::instruction::inline::INLINE {
 }
 
 mod exec_functions {
-    use crate::exec::{execute_sha256_compression, execute_sha256_compression_initial};
-    use crate::sequence_builder::BLOCK;
+    use crate::{
+        exec::{execute_sha256_compression, execute_sha256_compression_initial},
+        sequence_builder::BLOCK,
+    };
 
     #[test]
     fn test_exec_sha256_compression_function() {
@@ -104,9 +109,10 @@ mod exec_functions {
 }
 
 mod sequence_tests {
+    use tracer::emulator::cpu::Xlen;
+
     use super::*;
     use crate::test_constants::TestVectors;
-    use tracer::emulator::cpu::Xlen;
 
     #[test]
     fn test_sha256_direct_execution() {

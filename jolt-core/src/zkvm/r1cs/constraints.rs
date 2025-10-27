@@ -48,15 +48,17 @@
 //!   and whose `Bz` require wider arithmetic (`S160`).
 //! - This split minimizes conversions and maximizes accumulator efficiency.
 
-use super::inputs::{JoltR1CSInputs, R1CSCycleInputs};
-use crate::field::{AccumulateInPlace, JoltField};
-use crate::utils::accumulation::{Acc5U, Acc6S, Acc7S};
-use crate::zkvm::instruction::CircuitFlags;
 use ark_ff::biginteger::S160;
 use strum::EnumCount;
 use strum_macros::{EnumCount, EnumIter};
 
+use super::inputs::{JoltR1CSInputs, R1CSCycleInputs};
 pub use super::ops::{Term, LC};
+use crate::{
+    field::{AccumulateInPlace, JoltField},
+    utils::accumulation::{Acc5U, Acc6S, Acc7S},
+    zkvm::instruction::CircuitFlags,
+};
 
 /// A single R1CS constraint row
 #[derive(Clone, Copy, Debug)]
@@ -683,8 +685,9 @@ pub fn compute_bz_r_group1<F: JoltField>(row: &R1CSCycleInputs, lagrange_evals_r
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use strum::IntoEnumIterator;
+
+    use super::*;
 
     /// Test that the constraint name enum matches the uniform R1CS order.
     #[test]

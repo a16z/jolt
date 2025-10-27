@@ -1,31 +1,36 @@
 #[cfg(feature = "std")]
 extern crate fnv;
 
-#[cfg(feature = "std")]
-use self::fnv::FnvHashMap;
 #[cfg(not(feature = "std"))]
 use alloc::collections::btree_map::BTreeMap as FnvHashMap;
-use common::constants::REGISTER_COUNT;
-use tracing::{info, warn};
-
-use crate::instruction::{uncompress_instruction, Cycle, Instruction};
-use crate::utils::virtual_registers::VirtualRegisterAllocator;
-
-use super::mmu::{AddressingMode, Mmu};
-use super::terminal::Terminal;
-
-use crate::instruction::format::NormalizedOperands;
-use crate::utils::panic::CallFrame;
 #[cfg(not(feature = "std"))]
 use alloc::collections::VecDeque;
 #[cfg(not(feature = "std"))]
 use alloc::{boxed::Box, format, rc::Rc, string::String, vec::Vec};
-use jolt_platform::{
-    JOLT_CYCLE_MARKER_END, JOLT_CYCLE_MARKER_START, JOLT_CYCLE_TRACK_ECALL_NUM,
-    JOLT_PRINT_ECALL_NUM, JOLT_PRINT_LINE, JOLT_PRINT_STRING,
-};
 #[cfg(feature = "std")]
 use std::collections::VecDeque;
+
+use common::constants::REGISTER_COUNT;
+use jolt_platform::{
+    JOLT_CYCLE_MARKER_END,
+    JOLT_CYCLE_MARKER_START,
+    JOLT_CYCLE_TRACK_ECALL_NUM,
+    JOLT_PRINT_ECALL_NUM,
+    JOLT_PRINT_LINE,
+    JOLT_PRINT_STRING,
+};
+use tracing::{info, warn};
+
+#[cfg(feature = "std")]
+use self::fnv::FnvHashMap;
+use super::{
+    mmu::{AddressingMode, Mmu},
+    terminal::Terminal,
+};
+use crate::{
+    instruction::{format::NormalizedOperands, uncompress_instruction, Cycle, Instruction},
+    utils::{panic::CallFrame, virtual_registers::VirtualRegisterAllocator},
+};
 
 const CSR_CAPACITY: usize = 4096;
 const MAX_CALL_STACK_DEPTH: usize = 32;
@@ -1142,8 +1147,7 @@ fn normalize_u64(value: u64, width: &Xlen) -> u64 {
 #[cfg(test)]
 mod test_cpu {
     use super::*;
-    use crate::emulator::mmu::DRAM_BASE;
-    use crate::emulator::terminal::DummyTerminal;
+    use crate::emulator::{mmu::DRAM_BASE, terminal::DummyTerminal};
 
     fn create_cpu() -> Cpu {
         Cpu::new(Box::new(DummyTerminal::default()))
