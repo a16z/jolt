@@ -77,80 +77,24 @@ impl<J: JoltParameterSet> ZkLeanInstruction<J> {
     }
 
     pub fn iter() -> impl Iterator<Item = Self> {
-        Instruction::iter().filter_map(|instr| match instr {
-            Instruction::NoOp | Instruction::UNIMPL
-                // Inline sequences
-                | Instruction::DIV(_)
-                | Instruction::DIVU(_)
-                | Instruction::LB(_)
-                | Instruction::LBU(_)
-                | Instruction::LH(_)
-                | Instruction::LHU(_)
-                | Instruction::MULH(_)
-                | Instruction::MULHSU(_)
-                | Instruction::REM(_)
-                | Instruction::REMU(_)
-                | Instruction::SB(_)
-                | Instruction::SH(_)
-                | Instruction::SLL(_)
-                | Instruction::SLLI(_)
-                | Instruction::SRA(_)
-                | Instruction::SRAI(_)
-                | Instruction::SRL(_)
-                | Instruction::SRLI(_)
-                | Instruction::INLINE(_)
-                // ???
-                | Instruction::LW(_)
-                | Instruction::SW(_)
-                | Instruction::VirtualLW(_)
-                | Instruction::VirtualSW(_)
+        Instruction::iter().filter_map(|instr| {
+            // Needed to call `Instruction::inline_sequence`
+            let allocator = tracer::utils::virtual_registers::VirtualRegisterAllocator::new();
+            let xlen = match J::WORD_SIZE {
+                32 => tracer::emulator::cpu::Xlen::Bit32,
+                64 => tracer::emulator::cpu::Xlen::Bit64,
+                _ => panic!("Unsupported bit width"),
+            };
 
-                // RV64I
-                | Instruction::ADDIW(_)
-                | Instruction::SLLIW(_)
-                | Instruction::SRLIW(_)
-                | Instruction::SRAIW(_)
-                | Instruction::ADDW(_)
-                | Instruction::SUBW(_)
-                | Instruction::SLLW(_)
-                | Instruction::SRLW(_)
-                | Instruction::SRAW(_)
-                | Instruction::LWU(_)
-
-                // RV64M
-                | Instruction::DIVUW(_)
-                | Instruction::DIVW(_)
-                | Instruction::MULW(_)
-                | Instruction::REMUW(_)
-                | Instruction::REMW(_)
-
-                // RV32A
-                | Instruction::LRW(_)
-                | Instruction::SCW(_)
-                | Instruction::AMOSWAPW(_)
-                | Instruction::AMOADDW(_)
-                | Instruction::AMOANDW(_)
-                | Instruction::AMOORW(_)
-                | Instruction::AMOXORW(_)
-                | Instruction::AMOMINW(_)
-                | Instruction::AMOMAXW(_)
-                | Instruction::AMOMINUW(_)
-                | Instruction::AMOMAXUW(_)
-
-                // RV64A
-                | Instruction::LRD(_)
-                | Instruction::SCD(_)
-                | Instruction::AMOSWAPD(_)
-                | Instruction::AMOADDD(_)
-                | Instruction::AMOANDD(_)
-                | Instruction::AMOORD(_)
-                | Instruction::AMOXORD(_)
-                | Instruction::AMOMIND(_)
-                | Instruction::AMOMAXD(_)
-                | Instruction::AMOMINUD(_)
-                | Instruction::AMOMAXUD(_)
-                => None,
-            _ => Some(Self::from(instr)),
+            match instr {
+                Instruction::NoOp | Instruction::UNIMPL | Instruction::INLINE(_) => None,
+                // NOTE: The functions we would like to call on each instruction (`lookup_table`
+                // and `circuit_flags`) panic on inline sequences. We check to see if
+                // `inline_sequence` returns a non-empty vector in order to filter out inline
+                // sequences here.
+                _ if instr.inline_sequence(&allocator, xlen).len() != 0 => None,
+                _ => Some(Self::from(instr)),
+            }
         })
     }
 
