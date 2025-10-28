@@ -51,6 +51,12 @@ impl<const WORD_SIZE: usize> ZkLeanTests<WORD_SIZE> {
     }
 
     fn zklean_pretty_print(&self, f: &mut impl std::io::Write, indent_level: usize) -> std::io::Result<()> {
+        // We need to set maxHeartbeats here because the Lean compiler times out when trying to run
+        // the guards otherwise.
+        let lean_max_heartbeats = 8_000_000;
+        writeln!(f, "set_option maxHeartbeats {lean_max_heartbeats}")?;
+        writeln!(f, "")?;
+
         writeln!(f, "abbrev TestField := BN254.ScalarField")?;
         writeln!(f, "")?;
 
