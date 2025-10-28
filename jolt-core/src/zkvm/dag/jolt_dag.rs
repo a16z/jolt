@@ -2,7 +2,6 @@ use std::collections::HashMap;
 
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-#[cfg(feature = "streaming")]
 use crate::poly::commitment::commitment_scheme::StreamingCommitmentScheme;
 use crate::poly::commitment::dory::DoryGlobals;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
@@ -15,7 +14,6 @@ use crate::utils::profiling::print_data_structure_heap_usage;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::write_flamegraph_svg;
 use crate::utils::thread::drop_in_background_thread;
-#[cfg(feature = "streaming")]
 use crate::utils::transpose;
 use crate::zkvm::bytecode::BytecodeDag;
 use crate::zkvm::dag::proof_serialization::JoltProof;
@@ -33,7 +31,6 @@ use crate::zkvm::ProverDebugInfo;
 use allocative::FlameGraphBuilder;
 use anyhow::Context;
 use rayon::prelude::*;
-#[cfg(feature = "streaming")]
 use tracer::instruction::Cycle;
 
 pub enum JoltDAG {}
@@ -45,8 +42,7 @@ impl JoltDAG {
         'a,
         F: JoltField,
         ProofTranscript: Transcript,
-        #[cfg(feature = "streaming")] PCS: StreamingCommitmentScheme<Field = F>,
-        #[cfg(not(feature = "streaming"))] PCS: CommitmentScheme<Field = F>,
+        PCS: StreamingCommitmentScheme<Field = F>,
     >(
         mut state_manager: StateManager<'a, F, ProofTranscript, PCS>,
     ) -> Result<
@@ -790,11 +786,10 @@ impl JoltDAG {
         };
 
         let mut commitments_map = HashMap::new();
-        for polynomial in AllCommittedPolynomials::iter() {
-            commitments_map.insert(
-                *polynomial,
-                commitments.borrow()[polynomial.to_index()].clone(),
-            );
+        for (polynomial, commitment) in
+            AllCommittedPolynomials::iter().zip(commitments.borrow().iter())
+        {
+            commitments_map.insert(*polynomial, commitment.clone());
         }
         let accumulator = state_manager.get_verifier_accumulator();
         accumulator
@@ -815,153 +810,117 @@ impl JoltDAG {
     fn generate_and_commit_polynomials<
         F: JoltField,
         ProofTranscript: Transcript,
-        #[cfg(feature = "streaming")] PCS: StreamingCommitmentScheme<Field = F>,
-        #[cfg(not(feature = "streaming"))] PCS: CommitmentScheme<Field = F>,
+        PCS: StreamingCommitmentScheme<Field = F>,
     >(
         prover_state_manager: &mut StateManager<F, ProofTranscript, PCS>,
     ) -> Result<HashMap<CommittedPolynomial, PCS::OpeningProofHint>, anyhow::Error> {
-        #[cfg(feature = "streaming")]
-        {
-            use itertools::Itertools as _;
+        use itertools::Itertools as _;
 
-            let (preprocessing, lazy_trace, _trace, _program_io, _final_memory_state) =
-                prover_state_manager.get_prover_data();
+        let (preprocessing, lazy_trace, _trace, _program_io, _final_memory_state) =
+            prover_state_manager.get_prover_data();
 
-            let T = DoryGlobals::get_T();
+        let T = DoryGlobals::get_T();
 
-            let polys: Vec<_> = AllCommittedPolynomials::iter().collect();
-            let cached_setup = PCS::cache_setup(&preprocessing.generators);
-            let pcs_and_polys: Vec<_> = polys
-                .iter()
-                .map(|poly| {
-                    (
-                        PCS::initialize(
-                            poly.get_onehot_k(preprocessing),
-                            T,
-                            &preprocessing.generators,
-                            &cached_setup,
-                        ),
-                        poly,
+        let polys: Vec<_> = AllCommittedPolynomials::iter().collect();
+        let cached_setup = PCS::cache_setup(&preprocessing.generators);
+        let pcs_and_polys: Vec<_> = polys
+            .iter()
+            .map(|poly| {
+                (
+                    PCS::initialize(
+                        poly.get_onehot_k(preprocessing),
+                        T,
+                        &preprocessing.generators,
+                        &cached_setup,
+                    ),
+                    poly,
+                )
+            })
+            .collect();
+        let row_len = DoryGlobals::get_num_columns();
+        let mut row_commitments: Vec<Vec<<PCS>::ChunkState>> =
+            vec![vec![]; T / DoryGlobals::get_max_num_rows()];
+
+        let chunks: Vec<Vec<_>> = lazy_trace
+            .as_ref()
+            .expect("Lazy trace not found!")
+            .clone()
+            .pad_using(T, |_| Cycle::NoOp)
+            .chunks(row_len)
+            .into_iter()
+            .map(|chunk| chunk.collect::<Vec<_>>())
+            .collect();
+
+        chunks
+            .into_par_iter()
+            .zip(&mut row_commitments)
+            .for_each(|(row_cycles, row_)| {
+                let res = pcs_and_polys.iter().map(|(pcs, poly)| {
+                    poly.generate_witness_and_commit_row::<_, PCS>(
+                        pcs,
+                        preprocessing,
+                        &row_cycles,
+                        prover_state_manager.ram_d,
                     )
-                })
-                .collect();
-            let row_len = DoryGlobals::get_num_columns();
-            let mut row_commitments: Vec<Vec<<PCS>::ChunkState>> =
-                vec![vec![]; T / DoryGlobals::get_max_num_rows()];
-
-            let chunks: Vec<Vec<_>> = lazy_trace
-                .as_ref()
-                .expect("Lazy trace not found!")
-                .clone()
-                .pad_using(T, |_| Cycle::NoOp)
-                .chunks(row_len)
-                .into_iter()
-                .map(|chunk| chunk.collect::<Vec<_>>())
-                .collect();
-
-            chunks
-                .into_par_iter()
-                .zip(&mut row_commitments)
-                .for_each(|(row_cycles, row_)| {
-                    let res = pcs_and_polys.iter().map(|(pcs, poly)| {
-                        poly.generate_witness_and_commit_row::<_, PCS>(
-                            pcs,
-                            preprocessing,
-                            &row_cycles,
-                            prover_state_manager.ram_d,
-                        )
-                    });
-                    *row_ = res.collect::<Vec<_>>();
                 });
+                *row_ = res.collect::<Vec<_>>();
+            });
 
-            let (commitments, hints): (Vec<_>, Vec<_>) = transpose(row_commitments)
-                .into_par_iter()
-                .zip(pcs_and_polys.into_par_iter())
-                .map(|(rc, (s, _))| PCS::finalize(s, &rc))
-                .unzip();
+        let (commitments, hints): (Vec<_>, Vec<_>) = transpose(row_commitments)
+            .into_par_iter()
+            .zip(pcs_and_polys.into_par_iter())
+            .map(|(rc, (s, _))| PCS::finalize(s, &rc))
+            .unzip();
 
-            #[cfg(test)]
-            {
-                let committed_polys: Vec<_> = polys
-                    .iter()
-                    .map(|poly| {
-                        poly.generate_witness(preprocessing, _trace, prover_state_manager.ram_d)
-                    })
-                    .collect();
-
-                let commitments_non_streaming: Vec<_> = committed_polys
-                    .iter()
-                    .map(|poly| PCS::commit(poly, &preprocessing.generators))
-                    .collect();
-
-                // compare commitments and hints iteratively and print indices that do not match
-                for (i, ((commitment, hint), (commitment_non_streaming, hint_non_streaming))) in
-                    commitments
-                        .iter()
-                        .zip(hints.iter())
-                        .zip(commitments_non_streaming.iter())
-                        .enumerate()
-                {
-                    assert_eq!(
-                        hint,
-                        hint_non_streaming,
-                        "PCS hint mismatch at {:?}",
-                        polys.iter().collect::<Vec<_>>()[i]
-                    );
-                    assert_eq!(
-                        commitment,
-                        commitment_non_streaming,
-                        "Commitment mismatch at {:?}\n ({}):\n {:?}\n != \n{:?}",
-                        polys.iter().collect::<Vec<_>>()[i],
-                        i,
-                        commitment,
-                        commitment_non_streaming
-                    );
-                }
-            }
-
-            let mut hint_map = HashMap::with_capacity(AllCommittedPolynomials::len());
-            for (poly, hint) in AllCommittedPolynomials::iter().zip(hints) {
-                hint_map.insert(*poly, hint);
-            }
-
-            prover_state_manager.set_commitments(commitments);
-
-            Ok(hint_map)
+        let mut hint_map = HashMap::with_capacity(AllCommittedPolynomials::len());
+        for (poly, hint) in AllCommittedPolynomials::iter().zip(hints) {
+            hint_map.insert(*poly, hint);
         }
-        #[cfg(not(feature = "streaming"))]
-        {
-            let (preprocessing, _lazy_trace, trace, _program_io, _final_memory_state) =
-                prover_state_manager.get_prover_data();
 
-            let polys = AllCommittedPolynomials::iter().copied().collect::<Vec<_>>();
-            let mut all_polys =
-                CommittedPolynomial::generate_witness_batch(&polys, preprocessing, trace);
+        prover_state_manager.set_commitments(commitments);
 
-            let committed_polys: Vec<_> = AllCommittedPolynomials::iter()
-                .filter_map(|poly| all_polys.remove(poly))
-                .collect();
+        Ok(hint_map)
+    }
 
-            let span = tracing::span!(tracing::Level::INFO, "commit to polynomials");
-            let _guard = span.enter();
+    // Non-streaming version kept as a backup function
+    #[allow(dead_code)]
+    fn generate_and_commit_polynomials_non_streaming<
+        F: JoltField,
+        ProofTranscript: Transcript,
+        PCS: CommitmentScheme<Field = F>,
+    >(
+        prover_state_manager: &mut StateManager<F, ProofTranscript, PCS>,
+    ) -> Result<HashMap<CommittedPolynomial, PCS::OpeningProofHint>, anyhow::Error> {
+        let (preprocessing, _lazy_trace, trace, _program_io, _final_memory_state) =
+            prover_state_manager.get_prover_data();
 
-            let commit_results = PCS::batch_commit(&committed_polys, &preprocessing.generators);
+        let polys = AllCommittedPolynomials::iter().copied().collect::<Vec<_>>();
+        let mut all_polys =
+            CommittedPolynomial::generate_witness_batch(&polys, preprocessing, trace);
 
-            let (commitments, hints): (Vec<PCS::Commitment>, Vec<PCS::OpeningProofHint>) =
-                commit_results.into_iter().unzip();
-            drop(_guard);
-            drop(span);
-            let mut hint_map = HashMap::with_capacity(committed_polys.len());
-            for (poly, hint) in AllCommittedPolynomials::iter().zip(hints) {
-                hint_map.insert(*poly, hint);
-            }
+        let committed_polys: Vec<_> = AllCommittedPolynomials::iter()
+            .filter_map(|poly| all_polys.remove(poly))
+            .collect();
 
-            prover_state_manager.set_commitments(commitments);
+        let span = tracing::span!(tracing::Level::INFO, "commit to polynomials");
+        let _guard = span.enter();
 
-            drop_in_background_thread(committed_polys);
+        let commit_results = PCS::batch_commit(&committed_polys, &preprocessing.generators);
 
-            Ok(hint_map)
+        let (commitments, hints): (Vec<PCS::Commitment>, Vec<PCS::OpeningProofHint>) =
+            commit_results.into_iter().unzip();
+        drop(_guard);
+        drop(span);
+        let mut hint_map = HashMap::with_capacity(committed_polys.len());
+        for (poly, hint) in AllCommittedPolynomials::iter().zip(hints) {
+            hint_map.insert(*poly, hint);
         }
+
+        prover_state_manager.set_commitments(commitments);
+
+        drop_in_background_thread(committed_polys);
+
+        Ok(hint_map)
     }
 
     fn commit_untrusted_advice<

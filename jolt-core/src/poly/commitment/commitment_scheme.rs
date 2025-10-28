@@ -3,7 +3,6 @@ use std::borrow::Borrow;
 use std::fmt::Debug;
 
 use crate::transcripts::{AppendToTranscript, Transcript};
-#[cfg(feature = "streaming")]
 use crate::utils::small_scalar::SmallScalar;
 use crate::{
     field::JoltField, poly::multilinear_polynomial::MultilinearPolynomial,
@@ -136,7 +135,6 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
     fn protocol_name() -> &'static [u8];
 }
 
-#[cfg(feature = "streaming")]
 pub trait StreamingCommitmentScheme: CommitmentScheme {
     type State<'a>: Sync + Clone;
     type ChunkState: Send + Clone + PartialEq + Debug;

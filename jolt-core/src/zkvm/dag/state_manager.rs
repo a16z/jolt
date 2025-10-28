@@ -51,7 +51,7 @@ where
     PCS: CommitmentScheme<Field = F>,
 {
     pub preprocessing: &'a JoltProverPreprocessing<F, PCS>,
-    pub lazy_trace: Option<LazyTraceIterator>, // JP: Why is this Option?
+    pub lazy_trace: Option<LazyTraceIterator>,
     pub trace: Arc<Vec<Cycle>>,
     pub final_memory_state: Memory,
     pub accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,

@@ -1196,7 +1196,6 @@ mod tests {
     use super::*;
     use crate::subprotocols::sumcheck::BatchedSumcheck;
     use crate::transcripts::Blake2bTranscript;
-    use crate::zkvm::witness::AllCommittedPolynomials;
     use crate::{
         poly::commitment::mock::MockCommitScheme,
         zkvm::{

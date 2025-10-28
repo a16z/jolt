@@ -1,7 +1,6 @@
 use std::borrow::Borrow;
 use std::marker::PhantomData;
 
-use ark_ff::biginteger::S128;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 use crate::{
@@ -124,9 +123,7 @@ where
 
     type SetupCache = ();
 
-    fn cache_setup(_setup: &Self::ProverSetup) -> Self::SetupCache {
-        ()
-    }
+    fn cache_setup(_setup: &Self::ProverSetup) -> Self::SetupCache {}
 
     fn initialize<'a>(
         _onehot_k: Option<usize>,
@@ -134,28 +131,24 @@ where
         _setup: &'a Self::ProverSetup,
         _setup_cache: &'a Self::SetupCache,
     ) -> Self::State<'a> {
-        ()
     }
 
     fn process_chunk<'a, T: SmallScalar>(
         _state: &Self::State<'a>,
         _chunk: &[T],
     ) -> Self::ChunkState {
-        ()
     }
 
     fn process_chunk_field<'a>(
         _state: &Self::State<'a>,
         _chunk: &[Self::Field],
     ) -> Self::ChunkState {
-        ()
     }
 
     fn process_chunk_onehot<'a>(
         _state: &Self::State<'a>,
         _chunk: &[Option<usize>],
     ) -> Self::ChunkState {
-        ()
     }
 
     fn finalize<'a>(

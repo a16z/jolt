@@ -6,7 +6,6 @@ use std::{
 };
 
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-#[cfg(feature = "streaming")]
 use crate::poly::commitment::commitment_scheme::StreamingCommitmentScheme;
 #[cfg(test)]
 use crate::poly::commitment::dory::DoryGlobals;
@@ -219,13 +218,7 @@ where
     pub(crate) prover_setup: PCS::ProverSetup,
 }
 
-pub trait Jolt<
-    F: JoltField,
-    #[cfg(feature = "streaming")] PCS: StreamingCommitmentScheme<Field = F>,
-    #[cfg(not(feature = "streaming"))] PCS: CommitmentScheme<Field = F>,
-    FS: Transcript,
->
-{
+pub trait Jolt<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Transcript> {
     fn shared_preprocess(
         bytecode: Vec<Instruction>,
         memory_layout: MemoryLayout,

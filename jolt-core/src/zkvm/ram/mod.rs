@@ -238,7 +238,7 @@ impl RamDag {
                 .iter()
                 .map(|word| *word as i128)
                 .collect();
-            let ram_d = crate::zkvm::witness::AllCommittedPolynomials::ram_d();
+            let ram_d = state_manager.ram_d;
             let inc = CommittedPolynomial::RamInc.generate_witness(preprocessing, trace, ram_d);
             for (j, cycle) in trace.iter().enumerate() {
                 use tracer::instruction::RAMAccess;

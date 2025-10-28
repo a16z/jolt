@@ -14,7 +14,6 @@ use strum::IntoEnumIterator;
 use tracer::instruction::Cycle;
 
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-#[cfg(feature = "streaming")]
 use crate::poly::commitment::commitment_scheme::StreamingCommitmentScheme;
 use crate::zkvm::instruction::InstructionFlags;
 use crate::{
@@ -182,16 +181,8 @@ impl AllCommittedPolynomials {
                 .len()
         }
     }
-    pub fn ram_d() -> usize {
-        // this is kind of jank but fine for now ig
-        unsafe {
-            ALL_COMMITTED_POLYNOMIALS
-                .get()
-                .expect("ALL_COMMITTED_POLYNOMIALS is uninitialized")
-                .iter()
-                .filter(|poly| matches!(poly, CommittedPolynomial::RamRa(_)))
-                .count()
-        }
+    pub fn ram_d_from_K(ram_K: usize) -> usize {
+        compute_d_parameter(ram_K)
     }
 }
 
@@ -202,28 +193,6 @@ impl CommittedPolynomial {
                 .get()
                 .expect("ALL_COMMITTED_POLYNOMIALS is uninitialized")
                 .len()
-        }
-    }
-
-    // TODO(moodlezoup): return Result<Self>
-    pub fn from_index(index: usize) -> Self {
-        unsafe {
-            ALL_COMMITTED_POLYNOMIALS
-                .get()
-                .expect("ALL_COMMITTED_POLYNOMIALS is uninitialized")[index]
-        }
-    }
-
-    // TODO(moodlezoup): return Result<usize>
-    pub fn to_index(&self) -> usize {
-        unsafe {
-            ALL_COMMITTED_POLYNOMIALS
-                .get()
-                .expect("ALL_COMMITTED_POLYNOMIALS is uninitialized")
-                .iter()
-                .find_position(|poly| *poly == self)
-                .unwrap()
-                .0
         }
     }
 
@@ -505,7 +474,6 @@ impl CommittedPolynomial {
         }
     }
 
-    #[cfg(feature = "streaming")]
     pub fn generate_witness_and_commit_row<'a, F: JoltField, PCS>(
         &self,
         pcs: &PCS::State<'a>,

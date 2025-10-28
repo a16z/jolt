@@ -1,7 +1,6 @@
 use super::program::Program;
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-#[cfg(feature = "streaming")]
 use crate::poly::commitment::commitment_scheme::StreamingCommitmentScheme;
 use crate::poly::commitment::dory::DoryCommitmentScheme;
 use crate::transcripts::Transcript;
@@ -27,12 +26,7 @@ pub fn preprocess(
 
 #[allow(clippy::type_complexity)]
 #[cfg(feature = "prover")]
-pub fn prove<
-    F,
-    #[cfg(feature = "streaming")] PCS: StreamingCommitmentScheme<Field = F>,
-    #[cfg(not(feature = "streaming"))] PCS: CommitmentScheme<Field = F>,
-    FS,
->(
+pub fn prove<F, PCS: StreamingCommitmentScheme<Field = F>, FS>(
     guest: &Program,
     inputs_bytes: &[u8],
     untrusted_advice_bytes: &[u8],

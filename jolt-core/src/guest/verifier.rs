@@ -1,6 +1,5 @@
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-#[cfg(feature = "streaming")]
 use crate::poly::commitment::commitment_scheme::StreamingCommitmentScheme;
 
 use crate::guest::program::Program;
@@ -32,12 +31,7 @@ pub fn preprocess(
     JoltVerifierPreprocessing::from(&prover_preprocessing)
 }
 
-pub fn verify<
-    F,
-    #[cfg(feature = "streaming")] PCS: StreamingCommitmentScheme<Field = F>,
-    #[cfg(not(feature = "streaming"))] PCS: CommitmentScheme<Field = F>,
-    FS,
->(
+pub fn verify<F, PCS: StreamingCommitmentScheme<Field = F>, FS>(
     inputs_bytes: &[u8],
     trusted_advice_commitment: Option<<PCS as CommitmentScheme>::Commitment>,
     outputs_bytes: &[u8],

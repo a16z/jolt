@@ -129,10 +129,7 @@ pub fn transpose<T>(v: Vec<Vec<T>>) -> Vec<Vec<T>> {
     if v.is_empty() {
         return vec![];
     }
-
-    // Get the length of the first row.
     let first_row_len = v[0].len();
-    // Verify that all rows in the matrix have the same length as the first one.
     assert!(
         v.iter().all(|row| row.len() == first_row_len),
         "Matrix must be regular (all rows must have the same length)."
@@ -145,7 +142,6 @@ pub fn transpose<T>(v: Vec<Vec<T>>) -> Vec<Vec<T>> {
         .map(|_| {
             mat_iter
                 .iter_mut()
-                // unwrap() is guaranteed not to panic for regular matrices.
                 .map(|iter| iter.next().unwrap())
                 .collect::<Vec<T>>()
         })

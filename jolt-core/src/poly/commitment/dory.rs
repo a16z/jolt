@@ -1,7 +1,6 @@
 #![allow(static_mut_refs)]
 
 use super::commitment_scheme::CommitmentScheme;
-#[cfg(feature = "streaming")]
 use super::commitment_scheme::StreamingCommitmentScheme;
 use crate::transcripts::{AppendToTranscript, Transcript};
 use crate::{
@@ -1340,17 +1339,13 @@ impl CommitmentScheme for DoryCommitmentScheme {
     }
 }
 
-#[cfg(feature = "streaming")]
 #[derive(Clone, Debug)]
 pub struct StreamingDoryCommitment<'a, E: DoryPairing> {
-    // Setup
     setup: &'a ProverSetup<E>,
     bases: &'a Vec<ark_ec::short_weierstrass::Affine<ark_bn254::g1::Config>>,
-    // K (if a OneHot polynomial).
     K: Option<usize>,
 }
 
-#[cfg(feature = "streaming")]
 impl StreamingCommitmentScheme for DoryCommitmentScheme {
     type State<'a> = StreamingDoryCommitment<'a, JoltBn254>;
     type ChunkState = Vec<JoltG1Wrapper>; // A chunk's state is the commitment to the row.
@@ -1378,7 +1373,6 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
     }
 
     fn process_chunk<'a, T: SmallScalar>(state: &Self::State<'a>, chunk: &[T]) -> Self::ChunkState {
-        // We require that a chunk is a full row.
         debug_assert_eq!(chunk.len(), DoryGlobals::get_num_columns());
 
         let row_commitment = JoltGroupWrapper(
@@ -1388,7 +1382,6 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
     }
 
     fn process_chunk_field<'a>(state: &Self::State<'a>, chunk: &[Fr]) -> Self::ChunkState {
-        // We require that a chunk is a full row.
         debug_assert_eq!(chunk.len(), DoryGlobals::get_num_columns());
 
         let row_commitment = JoltGroupWrapper(
@@ -1417,7 +1410,6 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
 
         let results = jolt_optimizations::batch_g1_additions_multi(state.bases, &indices_per_k);
 
-        // Convert results to row_commitments
         let mut row_commitments = vec![JoltGroupWrapper(<Bn254 as ArkPairing>::G1::zero()); K];
         for (k, result) in results.into_iter().enumerate() {
             if !indices_per_k[k].is_empty() {

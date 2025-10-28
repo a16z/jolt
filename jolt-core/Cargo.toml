@@ -23,7 +23,7 @@ license-file = "LICENSE"
 keywords = ["SNARK", "cryptography", "proofs", "zkVM"]
 
 [features]
-default = ["host", "streaming"]
+default = ["host"]
 host = [
     "dep:reqwest",
     "dep:tokio",
@@ -48,7 +48,6 @@ allocative = ["dep:inferno"]
 monitor = ["dep:sysinfo"]
 pprof = ["dep:pprof", "dep:prost"]
 test_incremental = []
-streaming = []
 challenge-254-bit = []
 
 [dependencies]
