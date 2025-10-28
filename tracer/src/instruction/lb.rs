@@ -1,23 +1,23 @@
-use common::constants::virtual_register_index;
+use crate::utils::inline_helpers::InstrAssembler;
+use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use serde::{Deserialize, Serialize};
 
-use crate::{declare_riscv_instr, emulator::cpu::Cpu};
+use crate::{
+    declare_riscv_instr,
+    emulator::cpu::{Cpu, Xlen},
+};
 
 use super::addi::ADDI;
 use super::andi::ANDI;
-use super::format::format_i::FormatI;
-use super::format::format_r::FormatR;
-use super::lw::LW;
+use super::ld::LD;
 use super::sll::SLL;
 use super::slli::SLLI;
 use super::srai::SRAI;
+use super::virtual_lw::VirtualLW;
 use super::xori::XORI;
-use super::{RAMRead, RV32IMInstruction, VirtualInstructionSequence};
+use super::{Instruction, RAMRead};
 
-use super::{
-    format::{format_load::FormatLoad, InstructionFormat},
-    RISCVInstruction, RISCVTrace, RV32IMCycle,
-};
+use super::{format::format_load::FormatLoad, Cycle, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name   = LB,
@@ -43,103 +43,87 @@ impl LB {
 }
 
 impl RISCVTrace for LB {
-    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let virtual_sequence = self.virtual_sequence();
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
+        let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
-        for instr in virtual_sequence {
-            // In each iteration, create a new Option containing a re-borrowed reference
+        for instr in inline_sequence {
             instr.trace(cpu, trace.as_deref_mut());
+        }
+    }
+
+    /// LB loads a byte from memory and sign-extends it to XLEN bits.
+    ///
+    /// The zkVM constraint system requires word-aligned memory access, so loading
+    /// individual bytes requires extracting them from the containing word/doubleword.
+    /// The byte is then sign-extended to fill the destination register.
+    ///
+    /// Different implementations for RV32 and RV64 due to different word sizes.
+    fn inline_sequence(
+        &self,
+        allocator: &VirtualRegisterAllocator,
+        xlen: Xlen,
+    ) -> Vec<Instruction> {
+        match xlen {
+            Xlen::Bit32 => self.inline_sequence_32(allocator),
+            Xlen::Bit64 => self.inline_sequence_64(allocator),
         }
     }
 }
 
-impl VirtualInstructionSequence for LB {
-    fn virtual_sequence(&self) -> Vec<RV32IMInstruction> {
-        // Virtual registers used in sequence
-        let v_address = virtual_register_index(0);
-        let v_word_address = virtual_register_index(1);
-        let v_word = virtual_register_index(2);
-        let v_shift = virtual_register_index(3);
+impl LB {
+    /// RV32 implementation: Extracts and sign-extends a byte from a 32-bit word.
+    ///
+    /// Steps:
+    /// 1. Calculate byte address
+    /// 2. Align to word boundary
+    /// 3. Load the containing word
+    /// 4. Calculate shift amount based on byte position (XOR with 3 for little-endian)
+    /// 5. Shift byte to MSB position
+    /// 6. Arithmetic right shift by 24 to sign-extend to 32 bits
+    fn inline_sequence_32(&self, allocator: &VirtualRegisterAllocator) -> Vec<Instruction> {
+        let v_address = allocator.allocate();
+        let v_word_address = allocator.allocate();
+        let v_word = allocator.allocate();
+        let v_shift = allocator.allocate();
 
-        let mut sequence = vec![];
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit32, allocator);
 
-        let add = ADDI {
-            address: self.address,
-            operands: FormatI {
-                rd: v_address,
-                rs1: self.operands.rs1,
-                imm: self.operands.imm as u32 as u64, // TODO(moodlezoup): this only works for Xlen = 32
-            },
-            virtual_sequence_remaining: Some(7),
-        };
-        sequence.push(add.into());
+        asm.emit_i::<ADDI>(*v_address, self.operands.rs1, self.operands.imm as u64);
+        asm.emit_i::<ANDI>(*v_word_address, *v_address, -4i64 as u64);
+        asm.emit_i::<VirtualLW>(*v_word, *v_word_address, 0);
+        asm.emit_i::<XORI>(*v_shift, *v_address, 3);
+        asm.emit_i::<SLLI>(*v_shift, *v_shift, 3);
+        asm.emit_r::<SLL>(self.operands.rd, *v_word, *v_shift);
+        asm.emit_i::<SRAI>(self.operands.rd, self.operands.rd, 24);
 
-        let andi = ANDI {
-            address: self.address,
-            operands: FormatI {
-                rd: v_word_address,
-                rs1: v_address,
-                imm: -4i64 as u32 as u64, // TODO(moodlezoup): this only works for Xlen = 32
-            },
-            virtual_sequence_remaining: Some(6),
-        };
-        sequence.push(andi.into());
+        asm.finalize()
+    }
 
-        let lw = LW {
-            address: self.address,
-            operands: FormatLoad {
-                rd: v_word,
-                rs1: v_word_address,
-                imm: 0,
-            },
-            virtual_sequence_remaining: Some(5),
-        };
-        sequence.push(lw.into());
+    /// RV64 implementation: Extracts and sign-extends a byte from a 64-bit doubleword.
+    ///
+    /// Steps:
+    /// 1. Calculate byte address
+    /// 2. Align to doubleword boundary
+    /// 3. Load the containing doubleword
+    /// 4. Calculate shift amount based on byte position (XOR with 7 for little-endian)
+    /// 5. Shift byte to MSB position
+    /// 6. Arithmetic right shift by 56 to sign-extend to 64 bits
+    fn inline_sequence_64(&self, allocator: &VirtualRegisterAllocator) -> Vec<Instruction> {
+        let v_address = allocator.allocate();
+        let v_dword_address = allocator.allocate();
+        let v_dword = allocator.allocate();
+        let v_shift = allocator.allocate();
 
-        let xori = XORI {
-            address: self.address,
-            operands: FormatI {
-                rd: v_shift,
-                rs1: v_address,
-                imm: 3,
-            },
-            virtual_sequence_remaining: Some(4),
-        };
-        sequence.push(xori.into());
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit64, allocator);
 
-        let slli = SLLI {
-            address: self.address,
-            operands: FormatI {
-                rd: v_shift,
-                rs1: v_shift,
-                imm: 3,
-            },
-            virtual_sequence_remaining: Some(3),
-        };
-        sequence.extend(slli.virtual_sequence());
+        asm.emit_i::<ADDI>(*v_address, self.operands.rs1, self.operands.imm as u64);
+        asm.emit_i::<ANDI>(*v_dword_address, *v_address, -8i64 as u64);
+        asm.emit_ld::<LD>(*v_dword, *v_dword_address, 0);
+        asm.emit_i::<XORI>(*v_shift, *v_address, 7);
+        asm.emit_i::<SLLI>(*v_shift, *v_shift, 3);
+        asm.emit_r::<SLL>(self.operands.rd, *v_dword, *v_shift);
+        asm.emit_i::<SRAI>(self.operands.rd, self.operands.rd, 56);
 
-        let sll = SLL {
-            address: self.address,
-            operands: FormatR {
-                rd: self.operands.rd,
-                rs1: v_word,
-                rs2: v_shift,
-            },
-            virtual_sequence_remaining: Some(2),
-        };
-        sequence.extend(sll.virtual_sequence());
-
-        let srai = SRAI {
-            address: self.address,
-            operands: FormatI {
-                rd: self.operands.rd,
-                rs1: self.operands.rd,
-                imm: 24,
-            },
-            virtual_sequence_remaining: Some(0),
-        };
-        sequence.extend(srai.virtual_sequence());
-
-        sequence
+        asm.finalize()
     }
 }

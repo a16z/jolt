@@ -7,8 +7,8 @@ use super::SparseDenseSuffix;
 pub enum GreaterThanSuffix {}
 
 impl SparseDenseSuffix for GreaterThanSuffix {
-    fn suffix_mle(b: LookupBits) -> u32 {
+    fn suffix_mle(b: LookupBits) -> u64 {
         let (x, y) = b.uninterleave();
-        (u32::from(x) > u32::from(y)).into()
+        (u64::from(x) > u64::from(y)).into()
     }
 }

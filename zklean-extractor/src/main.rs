@@ -76,7 +76,7 @@ fn write_flat_file(
     Ok(())
 }
 
-type ParameterSet = RV32IParameterSet;
+type ParameterSet = RV64IParameterSet;
 
 fn main() -> Result<(), FSError> {
     let args = Args::parse();

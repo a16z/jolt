@@ -1,11 +1,11 @@
 use jolt_core::zkvm::{
     instruction::{
-        CircuitFlags, InstructionFlags as _, InstructionLookup as _, InterleavedBitsMarker as _,
+        CircuitFlags, Flags as _, InstructionLookup as _, InterleavedBitsMarker as _,
     },
     r1cs::inputs::JoltR1CSInputs,
 };
 use strum::IntoEnumIterator as _;
-use tracer::instruction::RV32IMInstruction;
+use tracer::instruction::Instruction;
 
 use crate::{
     constants::JoltParameterSet,
@@ -29,7 +29,7 @@ pub enum OperandInterleaving {
 
 impl OperandInterleaving {
     /// Extract the operand interleaving for an instruction
-    fn instruction_interleaving(instr: &RV32IMInstruction) -> Self {
+    fn instruction_interleaving(instr: &Instruction) -> Self {
         if instr.circuit_flags().is_interleaved_operands() {
             Self::Interleaved
         } else {
@@ -51,13 +51,13 @@ impl std::fmt::Display for OperandInterleaving {
 // TODO: Make this generic over the instruction set
 #[derive(Debug, Clone)]
 pub struct ZkLeanInstruction<J> {
-    instruction: tracer::instruction::RV32IMInstruction,
+    instruction: tracer::instruction::Instruction,
     interleaving: OperandInterleaving,
     phantom: std::marker::PhantomData<J>,
 }
 
-impl<J> From<RV32IMInstruction> for ZkLeanInstruction<J> {
-    fn from(value: RV32IMInstruction) -> Self {
+impl<J> From<Instruction> for ZkLeanInstruction<J> {
+    fn from(value: Instruction) -> Self {
         let interleaving = OperandInterleaving::instruction_interleaving(&value);
 
         Self {
@@ -77,77 +77,24 @@ impl<J: JoltParameterSet> ZkLeanInstruction<J> {
     }
 
     pub fn iter() -> impl Iterator<Item = Self> {
-        RV32IMInstruction::iter().filter_map(|instr| match instr {
-            RV32IMInstruction::NoOp | RV32IMInstruction::UNIMPL
-                // Inline sequences
-                | RV32IMInstruction::DIV(_)
-                | RV32IMInstruction::DIVU(_)
-                | RV32IMInstruction::LB(_)
-                | RV32IMInstruction::LBU(_)
-                | RV32IMInstruction::LH(_)
-                | RV32IMInstruction::LHU(_)
-                | RV32IMInstruction::MULH(_)
-                | RV32IMInstruction::MULHSU(_)
-                | RV32IMInstruction::REM(_)
-                | RV32IMInstruction::REMU(_)
-                | RV32IMInstruction::SB(_)
-                | RV32IMInstruction::SH(_)
-                | RV32IMInstruction::SLL(_)
-                | RV32IMInstruction::SLLI(_)
-                | RV32IMInstruction::SRA(_)
-                | RV32IMInstruction::SRAI(_)
-                | RV32IMInstruction::SRL(_)
-                | RV32IMInstruction::SRLI(_)
-                | RV32IMInstruction::INLINE(_)
+        Instruction::iter().filter_map(|instr| {
+            // Needed to call `Instruction::inline_sequence`
+            let allocator = tracer::utils::virtual_registers::VirtualRegisterAllocator::new();
+            let xlen = match J::WORD_SIZE {
+                32 => tracer::emulator::cpu::Xlen::Bit32,
+                64 => tracer::emulator::cpu::Xlen::Bit64,
+                _ => panic!("Unsupported bit width"),
+            };
 
-                // RV64I
-                | RV32IMInstruction::ADDIW(_)
-                | RV32IMInstruction::SLLIW(_)
-                | RV32IMInstruction::SRLIW(_)
-                | RV32IMInstruction::SRAIW(_)
-                | RV32IMInstruction::ADDW(_)
-                | RV32IMInstruction::SUBW(_)
-                | RV32IMInstruction::SLLW(_)
-                | RV32IMInstruction::SRLW(_)
-                | RV32IMInstruction::SRAW(_)
-                | RV32IMInstruction::LWU(_)
-                | RV32IMInstruction::LD(_)
-                | RV32IMInstruction::SD(_)
-
-                // RV64M
-                | RV32IMInstruction::DIVUW(_)
-                | RV32IMInstruction::DIVW(_)
-                | RV32IMInstruction::MULW(_)
-                | RV32IMInstruction::REMUW(_)
-                | RV32IMInstruction::REMW(_)
-
-                // RV32A
-                | RV32IMInstruction::LRW(_)
-                | RV32IMInstruction::SCW(_)
-                | RV32IMInstruction::AMOSWAPW(_)
-                | RV32IMInstruction::AMOADDW(_)
-                | RV32IMInstruction::AMOANDW(_)
-                | RV32IMInstruction::AMOORW(_)
-                | RV32IMInstruction::AMOXORW(_)
-                | RV32IMInstruction::AMOMINW(_)
-                | RV32IMInstruction::AMOMAXW(_)
-                | RV32IMInstruction::AMOMINUW(_)
-                | RV32IMInstruction::AMOMAXUW(_)
-
-                // RV64A
-                | RV32IMInstruction::LRD(_)
-                | RV32IMInstruction::SCD(_)
-                | RV32IMInstruction::AMOSWAPD(_)
-                | RV32IMInstruction::AMOADDD(_)
-                | RV32IMInstruction::AMOANDD(_)
-                | RV32IMInstruction::AMOORD(_)
-                | RV32IMInstruction::AMOXORD(_)
-                | RV32IMInstruction::AMOMIND(_)
-                | RV32IMInstruction::AMOMAXD(_)
-                | RV32IMInstruction::AMOMINUD(_)
-                | RV32IMInstruction::AMOMAXUD(_)
-                => None,
-            _ => Some(Self::from(instr)),
+            match instr {
+                Instruction::NoOp | Instruction::UNIMPL | Instruction::INLINE(_) => None,
+                // NOTE: The functions we would like to call on each instruction (`lookup_table`
+                // and `circuit_flags`) panic on inline sequences. We check to see if
+                // `inline_sequence` returns a non-empty vector in order to filter out inline
+                // sequences here.
+                _ if instr.inline_sequence(&allocator, xlen).len() != 0 => None,
+                _ => Some(Self::from(instr)),
+            }
         })
     }
 
@@ -166,11 +113,6 @@ impl<J: JoltParameterSet> ZkLeanInstruction<J> {
             .map(|t| ZkLeanLookupTable::from(t).name())
         {
             None => String::from("sorry /-No lookup table for this instruction-/"),
-            // XXX: This case can be removed once
-            // https://gitlab-ext.galois.com/jb4/jolt-fork/-/merge_requests/23 is merged.
-            Some(t) if !ZkLeanLookupTable::<32>::iter().any(|s| s.name() == t) => {
-                format!("sorry /-{t} currently unsupported by MleAst data structure-/")
-            }
             Some(t) => format!("{t} : Vector f {num_variables} -> f"),
         };
         let circuit_flags = CircuitFlags::iter()

@@ -8,10 +8,7 @@ use crate::{
     emulator::cpu::{Cpu, PrivilegeMode, Trap, TrapType},
 };
 
-use super::{
-    format::{format_i::FormatI, InstructionFormat},
-    RISCVInstruction, RISCVTrace,
-};
+use super::{format::format_i::FormatI, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name   = ECALL,

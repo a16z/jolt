@@ -28,4 +28,6 @@ pub enum ProofVerifyError {
     DoryError(String),
     #[error("Sumcheck verification failed")]
     SumcheckVerificationError,
+    #[error("Univariate-skip round verification failed")]
+    UniSkipVerificationError,
 }

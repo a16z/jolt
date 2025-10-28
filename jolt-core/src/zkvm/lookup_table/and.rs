@@ -4,32 +4,35 @@ use super::prefixes::{PrefixEval, Prefixes};
 use super::suffixes::{SuffixEval, Suffixes};
 use super::JoltLookupTable;
 use super::PrefixSuffixDecomposition;
-use crate::field::JoltField;
+use crate::field::{ChallengeFieldOps, FieldChallengeOps, JoltField};
 use crate::utils::uninterleave_bits;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct AndTable<const WORD_SIZE: usize>;
+pub struct AndTable<const XLEN: usize>;
 
-impl<const WORD_SIZE: usize> JoltLookupTable for AndTable<WORD_SIZE> {
-    fn materialize_entry(&self, index: u64) -> u64 {
+impl<const XLEN: usize> JoltLookupTable for AndTable<XLEN> {
+    fn materialize_entry(&self, index: u128) -> u64 {
         let (x, y) = uninterleave_bits(index);
-        (x & y) as u64
+        x & y
     }
-
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
-        debug_assert_eq!(r.len(), 2 * WORD_SIZE);
+    fn evaluate_mle<F, C>(&self, r: &[C]) -> F
+    where
+        C: ChallengeFieldOps<F>,
+        F: JoltField + FieldChallengeOps<C>,
+    {
+        debug_assert_eq!(r.len(), 2 * XLEN);
 
         let mut result = F::zero();
-        for i in 0..WORD_SIZE {
+        for i in 0..XLEN {
             let x_i = r[2 * i];
             let y_i = r[2 * i + 1];
-            result += F::from_u64(1u64 << (WORD_SIZE - 1 - i)) * x_i * y_i;
+            result += F::from_u64(1u64 << (XLEN - 1 - i)) * x_i * y_i;
         }
         result
     }
 }
 
-impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE> for AndTable<WORD_SIZE> {
+impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for AndTable<XLEN> {
     fn suffixes(&self) -> Vec<Suffixes> {
         vec![Suffixes::One, Suffixes::And]
     }
@@ -48,12 +51,13 @@ mod test {
     use crate::zkvm::lookup_table::test::{
         lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
     };
+    use common::constants::XLEN;
 
     use super::AndTable;
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<Fr, AndTable<32>>();
+        prefix_suffix_test::<XLEN, Fr, AndTable<XLEN>>();
     }
 
     #[test]
@@ -63,6 +67,6 @@ mod test {
 
     #[test]
     fn mle_random() {
-        lookup_table_mle_random_test::<Fr, AndTable<32>>();
+        lookup_table_mle_random_test::<Fr, AndTable<XLEN>>();
     }
 }

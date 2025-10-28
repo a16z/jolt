@@ -2,7 +2,7 @@ use std::{collections::HashMap, fs::File, io, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 use tracer::{
-    instruction::{RV32IMCycle, RV32IMInstruction},
+    instruction::{Cycle, Instruction},
     JoltDevice,
 };
 
@@ -10,8 +10,8 @@ use crate::field::JoltField;
 
 #[derive(Serialize, Deserialize)]
 pub struct ProgramSummary {
-    pub trace: Vec<RV32IMCycle>,
-    pub bytecode: Vec<RV32IMInstruction>,
+    pub trace: Vec<Cycle>,
+    pub bytecode: Vec<Instruction>,
     pub memory_init: Vec<(u64, u8)>,
     pub io_device: JoltDevice,
 }

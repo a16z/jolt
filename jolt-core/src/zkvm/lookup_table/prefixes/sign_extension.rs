@@ -1,17 +1,24 @@
-use crate::{field::JoltField, utils::lookup_bits::LookupBits};
+use crate::{
+    field::{ChallengeFieldOps, FieldChallengeOps, JoltField},
+    utils::lookup_bits::LookupBits,
+};
 
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 
-pub enum SignExtensionPrefix<const WORD_SIZE: usize> {}
+pub enum SignExtensionPrefix<const XLEN: usize> {}
 
-impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F> for SignExtensionPrefix<WORD_SIZE> {
-    fn prefix_mle(
+impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for SignExtensionPrefix<XLEN> {
+    fn prefix_mle<C>(
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: Option<F>,
+        r_x: Option<C>,
         c: u32,
         mut b: LookupBits,
         j: usize,
-    ) -> F {
+    ) -> F
+    where
+        C: ChallengeFieldOps<F>,
+        F: FieldChallengeOps<C>,
+    {
         if j == 0 {
             let sign_bit = F::from_u8(c as u8);
             if sign_bit.is_zero() {
@@ -65,18 +72,22 @@ impl<const WORD_SIZE: usize, F: JoltField> SparseDensePrefix<F> for SignExtensio
         result
     }
 
-    fn update_prefix_checkpoint(
+    fn update_prefix_checkpoint<C>(
         checkpoints: &[PrefixCheckpoint<F>],
-        _: F,
-        r_y: F,
+        _: C,
+        r_y: C,
         j: usize,
-    ) -> PrefixCheckpoint<F> {
+    ) -> PrefixCheckpoint<F>
+    where
+        C: ChallengeFieldOps<F>,
+        F: FieldChallengeOps<C>,
+    {
         if j == 1 {
             return None.into();
         }
         let mut updated = checkpoints[Prefixes::SignExtension].unwrap_or(F::zero());
         updated += F::from_u64(1 << (j / 2)) * (F::one() - r_y);
-        if j == 2 * WORD_SIZE - 1 {
+        if j == 2 * XLEN - 1 {
             updated *= checkpoints[Prefixes::LeftOperandMsb].unwrap();
         }
         Some(updated).into()

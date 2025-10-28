@@ -3,10 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     declare_riscv_instr,
     emulator::cpu::Cpu,
-    instruction::{
-        format::{format_i::FormatI, InstructionFormat},
-        RISCVInstruction, RISCVTrace,
-    },
+    instruction::{format::format_i::FormatI, RISCVInstruction, RISCVTrace},
 };
 
 declare_riscv_instr!(
@@ -14,8 +11,7 @@ declare_riscv_instr!(
     mask = 0,
     match = 0,
     format = FormatI,
-    ram = (),
-    is_virtual = true
+    ram = ()
 );
 
 impl VirtualMULI {

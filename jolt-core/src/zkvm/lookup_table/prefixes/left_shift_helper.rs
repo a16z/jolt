@@ -1,17 +1,24 @@
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
-use crate::{field::JoltField, utils::lookup_bits::LookupBits};
+use crate::{
+    field::{ChallengeFieldOps, FieldChallengeOps, JoltField},
+    utils::lookup_bits::LookupBits,
+};
 
 /// Computes 2^(y.leading_ones())
 pub enum LeftShiftHelperPrefix {}
 
 impl<F: JoltField> SparseDensePrefix<F> for LeftShiftHelperPrefix {
-    fn prefix_mle(
+    fn prefix_mle<C>(
         checkpoints: &[PrefixCheckpoint<F>],
-        r_x: Option<F>,
+        r_x: Option<C>,
         c: u32,
         mut b: LookupBits,
         _: usize,
-    ) -> F {
+    ) -> F
+    where
+        C: ChallengeFieldOps<F>,
+        F: FieldChallengeOps<C>,
+    {
         let mut result = checkpoints[Prefixes::LeftShiftHelper].unwrap_or(F::one());
 
         if r_x.is_some() {
@@ -27,12 +34,16 @@ impl<F: JoltField> SparseDensePrefix<F> for LeftShiftHelperPrefix {
         result
     }
 
-    fn update_prefix_checkpoint(
+    fn update_prefix_checkpoint<C>(
         checkpoints: &[PrefixCheckpoint<F>],
-        _r_x: F,
-        r_y: F,
+        _r_x: C,
+        r_y: C,
         _: usize,
-    ) -> PrefixCheckpoint<F> {
+    ) -> PrefixCheckpoint<F>
+    where
+        C: ChallengeFieldOps<F>,
+        F: FieldChallengeOps<C>,
+    {
         let mut updated = checkpoints[Prefixes::LeftShiftHelper].unwrap_or(F::one());
         updated *= F::one() + r_y;
         Some(updated).into()

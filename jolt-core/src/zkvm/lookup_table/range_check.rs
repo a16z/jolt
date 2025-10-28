@@ -4,27 +4,36 @@ use super::prefixes::{PrefixEval, Prefixes};
 use super::suffixes::{SuffixEval, Suffixes};
 use super::JoltLookupTable;
 use super::PrefixSuffixDecomposition;
-use crate::field::JoltField;
+use crate::field::{ChallengeFieldOps, FieldChallengeOps, JoltField};
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct RangeCheckTable<const WORD_SIZE: usize>;
+pub struct RangeCheckTable<const XLEN: usize>;
 
-impl<const WORD_SIZE: usize> JoltLookupTable for RangeCheckTable<WORD_SIZE> {
-    fn materialize_entry(&self, index: u64) -> u64 {
-        index % (1 << WORD_SIZE)
+impl<const XLEN: usize> JoltLookupTable for RangeCheckTable<XLEN> {
+    fn materialize_entry(&self, index: u128) -> u64 {
+        if XLEN == 64 {
+            index as u64
+        } else {
+            (index % (1u128 << XLEN)) as u64
+        }
     }
 
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
-        debug_assert_eq!(r.len(), 2 * WORD_SIZE);
+    fn evaluate_mle<F, C>(&self, r: &[C]) -> F
+    where
+        C: ChallengeFieldOps<F>,
+        F: JoltField + FieldChallengeOps<C>,
+    {
+        debug_assert_eq!(r.len(), 2 * XLEN);
         let mut result = F::zero();
-        for i in 0..WORD_SIZE {
-            result += F::from_u64(1 << (WORD_SIZE - 1 - i)) * r[WORD_SIZE + i];
+        for i in 0..XLEN {
+            let shift = XLEN - 1 - i;
+            result += F::from_u128(1u128 << shift) * r[XLEN + i];
         }
         result
     }
 }
 
-impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE> for RangeCheckTable<WORD_SIZE> {
+impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for RangeCheckTable<XLEN> {
     fn suffixes(&self) -> Vec<Suffixes> {
         vec![Suffixes::One, Suffixes::LowerWord]
     }
@@ -44,10 +53,11 @@ mod test {
     use crate::zkvm::lookup_table::test::{
         lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
     };
+    use common::constants::XLEN;
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<Fr, RangeCheckTable<32>>();
+        prefix_suffix_test::<XLEN, Fr, RangeCheckTable<XLEN>>();
     }
 
     #[test]
@@ -57,6 +67,6 @@ mod test {
 
     #[test]
     fn mle_random() {
-        lookup_table_mle_random_test::<Fr, RangeCheckTable<32>>();
+        lookup_table_mle_random_test::<Fr, RangeCheckTable<XLEN>>();
     }
 }
