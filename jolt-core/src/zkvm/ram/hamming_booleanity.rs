@@ -22,6 +22,14 @@ use allocative::Allocative;
 use allocative::FlameGraphBuilder;
 use rayon::prelude::*;
 
+// RAM Hamming booleanity sumcheck
+//
+// Proves a zero-check of the form
+//   0 = Σ_j eq(r_cycle, j) · (H(j)^2 − H(j))
+// where:
+// - r_cycle are the time/cycle variables bound in this sumcheck
+// - H(j) is an indicator of whether a RAM access occurred at cycle j (1 if address != 0, 0 otherwise)
+
 const DEGREE: usize = 3;
 
 #[derive(Allocative)]

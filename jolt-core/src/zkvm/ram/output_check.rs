@@ -11,7 +11,7 @@ use crate::{
         },
         opening_proof::{
             OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-            VerifierOpeningAccumulator, BIG_ENDIAN,
+            VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
         },
         program_io_polynomial::ProgramIOPolynomial,
         range_mask_polynomial::RangeMaskPolynomial,
@@ -31,6 +31,24 @@ use allocative::FlameGraphBuilder;
 use common::constants::RAM_START_ADDRESS;
 use rayon::prelude::*;
 use tracer::JoltDevice;
+
+// RAM output sumchecks
+//
+// OutputSumcheck:
+//   Proves the zero-check
+//     Σ_k eq(r_address, k) ⋅ io_mask(k) ⋅ (Val_final(k) − Val_io(k)) = 0,
+//   where:
+//   - r_address is a random address challenge vector.
+//   - io_mask is the MLE of the I/O-region indicator (1 on matching {0,1}-points).
+//   - Val_final(k) is the final memory value at address k.
+//   - Val_io(k) is the publicly claimed output value at address k.
+//
+// ValFinalSumcheck:
+//   Proves the relation
+//     Val_final(r_address) − Val_init(r_address) = Σ_j inc(r_address, j) ⋅ wa(r_address, j),
+//   where:
+//   - Val_init(r_address) is the initial memory value at r_address.
+//   - inc is the MLE of the per-cycle increment; wa is the MLE of the write indicator.
 
 #[derive(Allocative)]
 struct OutputSumcheckProverState<F: JoltField> {
@@ -103,11 +121,6 @@ impl<F: JoltField> OutputSumcheckProverState<F> {
     }
 }
 
-/// Sumcheck for the zero-check
-///   0 = \sum_k eq(r_address, k) * io_range(k) * (Val_final(k) - Val_io(k))
-/// In plain English: the final memory state (Val_final) should be consistent with
-/// the expected program outputs (Val_io) at the indices where the program
-/// inputs/outputs are stored (io_range).
 #[derive(Allocative)]
 pub struct OutputSumcheck<F: JoltField> {
     K: usize,
@@ -363,14 +376,6 @@ struct ValFinalSumcheckProverState<F: JoltField> {
     wa: MultilinearPolynomial<F>,
 }
 
-/// This sumcheck virtualizes Val_final(k) as:
-/// Val_final(k) = Val_init(k) + \sum_k Inc(j) * wa(k, j)
-///   or equivalently:
-/// Val_final(k) - Val_init(k) = \sum_k Inc(j) * wa(k, j)
-/// We feed the output claim Val_final(r_address) from `OutputSumcheck`
-/// into this sumcheck, which reduces it to claims about `Inc` and `wa`.
-/// Note that the verifier is assumed to be able to evaluate Val_init
-/// on its own.
 #[derive(Allocative)]
 pub struct ValFinalSumcheck<F: JoltField> {
     T: usize,
@@ -543,13 +548,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ValFinalSumcheck<F>
     fn compute_prover_message(&mut self, _: usize, _previous_claim: F) -> Vec<F> {
         const DEGREE: usize = 2;
 
-        let ValFinalSumcheckProverState { inc, wa, .. } = self.prover_state.as_ref().unwrap();
+        let ValFinalSumcheckProverState { inc, wa } = self.prover_state.as_ref().unwrap();
 
         (0..inc.len() / 2)
             .into_par_iter()
             .map(|j| {
-                let inc_evals = inc.sumcheck_evals_array::<DEGREE>(j, BindingOrder::HighToLow);
-                let wa_evals = wa.sumcheck_evals_array::<DEGREE>(j, BindingOrder::HighToLow);
+                let inc_evals = inc.sumcheck_evals_array::<DEGREE>(j, BindingOrder::LowToHigh);
+                let wa_evals = wa.sumcheck_evals_array::<DEGREE>(j, BindingOrder::LowToHigh);
                 [
                     inc_evals[0].mul_unreduced::<9>(wa_evals[0]),
                     inc_evals[1].mul_unreduced::<9>(wa_evals[1]),
@@ -566,11 +571,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ValFinalSumcheck<F>
 
     #[tracing::instrument(skip_all, name = "ValFinalSumcheck::bind")]
     fn bind(&mut self, r_j: F::Challenge, _: usize) {
-        let ValFinalSumcheckProverState { inc, wa, .. } = self.prover_state.as_mut().unwrap();
-        rayon::join(
-            || inc.bind_parallel(r_j, BindingOrder::HighToLow),
-            || wa.bind_parallel(r_j, BindingOrder::HighToLow),
-        );
+        let ValFinalSumcheckProverState { inc, wa } = self.prover_state.as_mut().unwrap();
+        inc.bind_parallel(r_j, BindingOrder::LowToHigh);
+        wa.bind_parallel(r_j, BindingOrder::LowToHigh);
     }
 
     fn expected_output_claim(
@@ -599,7 +602,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ValFinalSumcheck<F>
         &self,
         opening_point: &[F::Challenge],
     ) -> OpeningPoint<BIG_ENDIAN, F> {
-        OpeningPoint::new(opening_point.to_vec())
+        OpeningPoint::<LITTLE_ENDIAN, F>::new(opening_point.to_vec()).match_endianness()
     }
 
     fn cache_openings_prover(
@@ -608,7 +611,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ValFinalSumcheck<F>
         transcript: &mut T,
         r_cycle_prime: OpeningPoint<BIG_ENDIAN, F>,
     ) {
-        let ValFinalSumcheckProverState { inc, wa, .. } = self.prover_state.as_ref().unwrap();
+        let ValFinalSumcheckProverState { inc, wa } = self.prover_state.as_ref().unwrap();
 
         let r_address = accumulator
             .borrow()
