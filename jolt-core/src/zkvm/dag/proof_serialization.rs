@@ -334,7 +334,6 @@ impl CanonicalSerialize for CommittedPolynomial {
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        // Serialize the enum variant and its data directly, not as an index
         match self {
             CommittedPolynomial::RdInc => {
                 0u8.serialize_with_mode(&mut writer, compress)?;
@@ -360,14 +359,10 @@ impl CanonicalSerialize for CommittedPolynomial {
 
     fn serialized_size(&self, _compress: Compress) -> usize {
         match self {
-            CommittedPolynomial::RdInc | CommittedPolynomial::RamInc => {
-                1 // Just the variant byte
-            }
+            CommittedPolynomial::RdInc | CommittedPolynomial::RamInc => 1,
             CommittedPolynomial::InstructionRa(_)
             | CommittedPolynomial::BytecodeRa(_)
-            | CommittedPolynomial::RamRa(_) => {
-                1 + 4 // Variant byte + u32 index
-            }
+            | CommittedPolynomial::RamRa(_) => 1 + 4,
         }
     }
 }

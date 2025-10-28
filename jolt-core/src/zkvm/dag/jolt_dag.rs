@@ -882,7 +882,6 @@ impl JoltDAG {
         Ok(hint_map)
     }
 
-    // Non-streaming version kept as a backup function
     #[allow(dead_code)]
     fn generate_and_commit_polynomials_non_streaming<
         F: JoltField,

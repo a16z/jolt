@@ -5,7 +5,6 @@ use super::commitment_scheme::StreamingCommitmentScheme;
 use crate::transcripts::{AppendToTranscript, Transcript};
 use crate::{
     field::JoltField,
-    // jolt::vm::instruction_lookups::D,
     msm::VariableBaseMSM,
     poly::multilinear_polynomial::MultilinearPolynomial,
     utils::small_scalar::SmallScalar,
