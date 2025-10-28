@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::opening_proof::SumcheckId;
+use crate::poly::opening_proof::{OpeningAccumulator, SumcheckId};
 use crate::subprotocols::sumcheck::{SumcheckInstance, UniSkipFirstRoundInstance};
 use crate::subprotocols::univariate_skip::{prove_uniskip_round, UniSkipState};
 use crate::transcripts::Transcript;

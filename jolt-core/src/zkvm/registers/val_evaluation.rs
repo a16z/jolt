@@ -10,8 +10,8 @@ use crate::{
         lt_poly::LtPolynomial,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{
-            OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator,
-            BIG_ENDIAN,
+            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+            VerifierOpeningAccumulator, BIG_ENDIAN,
         },
         ra_poly::RaPolynomial,
         unipoly::UniPoly,
@@ -30,6 +30,20 @@ use allocative::FlameGraphBuilder;
 use common::constants::REGISTER_COUNT;
 use rayon::prelude::*;
 
+// Register value evaluation sumcheck
+//
+// Proves the relation:
+//   Val(r) = Σ_{j=0}^{T-1} inc(r_address, j) ⋅ wa(r_address, j) ⋅ LT(r_cycle, j)
+// where:
+// - r = (r_address, r_cycle) is the evaluation point from the read-write checking sumcheck.
+// - Val(r) is the claimed value of register r_address at time r_cycle.
+// - inc is the MLE of the per-cycle increment at (r_address, j).
+// - wa is the MLE of the write-indicator (1 on matching {0,1}-points).
+// - LT is the MLE of strict less-than on bitstrings; evaluated at (r_cycle, j) as field points.
+//
+// This sumcheck ensures that the claimed final value of a register is consistent
+// with all the writes that occurred to it over time (assuming initial value of 0).
+
 #[derive(Allocative)]
 pub struct ValEvaluationProverState<F: JoltField> {
     pub inc: MultilinearPolynomial<F>,
@@ -39,7 +53,6 @@ pub struct ValEvaluationProverState<F: JoltField> {
 
 #[derive(Allocative)]
 pub(crate) struct ValEvaluationSumcheck<F: JoltField> {
-    pub input_claim: F,
     pub num_rounds: usize,
     pub prover_state: Option<ValEvaluationProverState<F>>,
 }
@@ -50,10 +63,8 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
         let (preprocessing, _, trace, _, _) = state_manager.get_prover_data();
-        let accumulator = state_manager.get_prover_accumulator();
 
-        // Get val_claim from the accumulator (from stage 2 RegistersReadWriteChecking)
-        let (opening_point, val_claim) = accumulator.borrow().get_virtual_polynomial_opening(
+        let (opening_point, _) = state_manager.get_virtual_polynomial_opening(
             VirtualPolynomial::RegistersVal,
             SumcheckId::RegistersReadWriteChecking,
         );
@@ -78,7 +89,6 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
 
         let num_rounds = r_cycle.len().pow2().log_2();
         Self {
-            input_claim: val_claim,
             num_rounds,
             prover_state: Some(ValEvaluationProverState { inc, wa, lt }),
         }
@@ -89,15 +99,7 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
     ) -> Self {
         let (_, _, trace_length) = state_manager.get_verifier_data();
 
-        let accumulator = state_manager.get_verifier_accumulator();
-        // Get val_claim from the accumulator (from stage 2 RegistersReadWriteChecking)
-        let (_, val_claim) = accumulator.borrow().get_virtual_polynomial_opening(
-            VirtualPolynomial::RegistersVal,
-            SumcheckId::RegistersReadWriteChecking,
-        );
-
         Self {
-            input_claim: val_claim,
             num_rounds: trace_length.log_2(),
             prover_state: None,
         }
@@ -113,8 +115,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ValEvaluationSumche
         self.num_rounds
     }
 
-    fn input_claim(&self) -> F {
-        self.input_claim
+    fn input_claim(&self, acc: Option<&RefCell<dyn OpeningAccumulator<F>>>) -> F {
+        let (_, val_claim) = acc.unwrap().borrow().get_virtual_polynomial_opening(
+            VirtualPolynomial::RegistersVal,
+            SumcheckId::RegistersReadWriteChecking,
+        );
+        val_claim
     }
 
     #[tracing::instrument(
@@ -170,7 +176,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ValEvaluationSumche
         if let Some(prover_state) = &mut self.prover_state {
             prover_state.inc.bind_parallel(r_j, BindingOrder::HighToLow);
             prover_state.wa.bind_parallel(r_j, BindingOrder::HighToLow);
-            prover_state.lt.bind_high_to_low(r_j);
+            prover_state.lt.bind(r_j, BindingOrder::HighToLow);
         }
     }
 

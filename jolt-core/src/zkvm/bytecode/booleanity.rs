@@ -5,7 +5,7 @@ use std::sync::Arc;
 use num_traits::Zero;
 
 use crate::poly::opening_proof::{
-    OpeningPoint, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
+    OpeningAccumulator, OpeningPoint, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
 };
 use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::dag::state_manager::StateManager;
@@ -45,19 +45,20 @@ use tracer::instruction::Cycle;
 
 #[derive(Allocative)]
 struct BooleanityProverState<F: JoltField> {
-    /// B: split-eq over address-chunk variables (phase 1, LowToHigh).
+    /// B(k) := eq(r_address, k). Split-eq over address-chunk variables (phase 1, LowToHigh).
     B: GruenSplitEqPolynomial<F>,
-    /// D: split-eq over time/cycle variables (phase 2, LowToHigh).
+    /// D(j) := eq(r_cycle, j). Split-eq over time/cycle variables (phase 2, LowToHigh).
     D: GruenSplitEqPolynomial<F>,
-    /// G[i]: pre-aggregated routing mass per address chunk i (Σ_j eq(r_cycle,j)·1[chunk_i(PC(j))]).
-    G: Vec<Vec<F>>,
-    /// pc_by_cycle[i][j]: address-chunk index for chunk i at cycle j (to build H[i]).
-    pc_by_cycle: Vec<Vec<Option<u8>>>,
-    /// H[i]: RaPolynomial for routing indicator H_i(k,j) over address chunk i.
-    H: Vec<RaPolynomial<u8, F>>,
-    /// F: eq-prefix weights for address binding (A/F array reused to build H).
+    /// F_m[u] := eq(r_address[0..m-1], u) for u∈{0,1}^m; stored in first 2^m entries after m rounds.
+    /// Eq-prefix weights reused to build H.
     F: Vec<F>,
-    /// eq_r_r: scalar eq(r_address, r_address′) after phase 1 collapse.
+    /// G_i[k] := Σ_j D(j) · 1[chunk_i(PC(j)) = k]. Pre-aggregated routing mass per address chunk i.
+    G: Vec<Vec<F>>,
+    /// pc_by_cycle[i][j] := chunk_i(PC(j)). Address-chunk index for chunk i at cycle j.
+    pc_by_cycle: Vec<Vec<Option<u8>>>,
+    /// H_i(k,j) := 1[chunk_i(PC(j)) = k] ∈ {0,1}. RaPolynomial routing indicator over chunk i.
+    H: Vec<RaPolynomial<u8, F>>,
+    /// eq(r_address, r_address′). Scalar after phase 1 collapse.
     eq_r_r: F,
 }
 
@@ -194,7 +195,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for BooleanitySumcheck<
         self.log_K_chunk + self.log_T
     }
 
-    fn input_claim(&self) -> F {
+    fn input_claim(&self, _acc: Option<&RefCell<dyn OpeningAccumulator<F>>>) -> F {
         F::zero()
     }
 

@@ -12,8 +12,8 @@ use crate::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, PolynomialBinding},
         opening_proof::{
-            OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator,
-            BIG_ENDIAN,
+            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+            VerifierOpeningAccumulator, BIG_ENDIAN,
         },
         ra_poly::RaPolynomial,
         split_eq_poly::GruenSplitEqPolynomial,
@@ -31,19 +31,29 @@ use crate::{
     },
 };
 
+// RAM booleanity sumcheck
+//
+// Proves a zero-check of the form
+//   0 = Σ_k Σ_j eq(r_address, k) · eq(r_cycle, j) · (Σ_{i=0}^{d-1} γ^i · (H_i(k, j)^2 − H_i(k, j)))
+// where:
+// - r_address are the address-chunk variables bound in phase 1
+// - r_cycle are the time/cycle variables bound in phase 2
+// - H_i is the routing/selection indicator for the i-th address chunk (boolean per point)
+
 #[derive(Allocative)]
 struct BooleanityProverState<F: JoltField> {
-    /// B polynomial (GruenSplitEqPolynomial)
+    /// B(k) := eq(r_address, k). Split-eq over address-chunk variables (phase 1, LowToHigh).
     B: GruenSplitEqPolynomial<F>,
-    /// F array for phase 1
-    F: Vec<F>,
-    /// ra(k, r_cycle)
-    G: Vec<Vec<F>>,
-    /// eq(r_cycle, j) - using Gruen optimization
+    /// D(j) := eq(r_cycle, j). Split-eq over time/cycle variables (phase 2, LowToHigh).
     D: GruenSplitEqPolynomial<F>,
-    /// ra(r'_address, j)
+    /// G_i[k] := Σ_j D(j) · 1[chunk_i(address(j)) = k]. Pre-aggregated routing mass per address chunk i.
+    G: Vec<Vec<F>>,
+    /// F_m[u] := eq(r_address[0..m-1], u) for u∈{0,1}^m; stored in first 2^m entries after m rounds.
+    /// Eq-prefix weights reused to build H.
+    F: Vec<F>,
+    /// H_i(k,j) := 1[chunk_i(address(j)) = k] ∈ {0,1}. RaPolynomial routing indicator over chunk i.
     H: Vec<RaPolynomial<u8, F>>,
-    /// eq(r_address, r'_address)
+    /// eq(r_address, r'_address). Scalar after phase 1 collapse.
     eq_r_r: F,
 }
 
@@ -213,7 +223,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for BooleanitySumcheck<
         DTH_ROOT_OF_K.log_2() + self.T.log_2()
     }
 
-    fn input_claim(&self) -> F {
+    fn input_claim(&self, _acc: Option<&RefCell<dyn OpeningAccumulator<F>>>) -> F {
         F::zero() // Always zero for booleanity
     }
 

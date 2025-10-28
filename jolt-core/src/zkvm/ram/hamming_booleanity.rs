@@ -8,7 +8,8 @@ use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
 use crate::poly::opening_proof::{
-    OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
+    OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+    VerifierOpeningAccumulator, BIG_ENDIAN,
 };
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::subprotocols::sumcheck::SumcheckInstance;
@@ -20,6 +21,14 @@ use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 use rayon::prelude::*;
+
+// RAM Hamming booleanity sumcheck
+//
+// Proves a zero-check of the form
+//   0 = Σ_j eq(r_cycle, j) · (H(j)^2 − H(j))
+// where:
+// - r_cycle are the time/cycle variables bound in this sumcheck
+// - H(j) is an indicator of whether a RAM access occurred at cycle j (1 if address != 0, 0 otherwise)
 
 const DEGREE: usize = 3;
 
@@ -85,7 +94,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for HammingBooleanitySu
         self.log_T
     }
 
-    fn input_claim(&self) -> F {
+    fn input_claim(&self, _acc: Option<&RefCell<dyn OpeningAccumulator<F>>>) -> F {
         F::zero()
     }
 

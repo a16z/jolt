@@ -8,8 +8,8 @@ use crate::{
         commitment::commitment_scheme::CommitmentScheme,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{
-            OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator,
-            BIG_ENDIAN,
+            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+            VerifierOpeningAccumulator, BIG_ENDIAN,
         },
     },
     subprotocols::sumcheck::SumcheckInstance,
@@ -24,6 +24,14 @@ use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 use rayon::prelude::*;
+
+// Bytecode Hamming weight sumcheck
+//
+// Proves the relation:
+//   Σ_{i=0}^{d-1} γ^i ⋅ (Σ_k ra_i(k)) = Σ_{i=0}^{d-1} γ^i
+// where:
+// - ra_i(k) = Σ_j eq(r_cycle, j) ⋅ 1[chunk_i(PC(j)) = k].
+// - γ is a random challenge.
 
 #[derive(Allocative)]
 pub struct HammingWeightProverState<F: JoltField> {
@@ -93,7 +101,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for HammingWeightSumche
         self.log_K_chunk
     }
 
-    fn input_claim(&self) -> F {
+    fn input_claim(&self, _acc: Option<&RefCell<dyn OpeningAccumulator<F>>>) -> F {
         self.gamma.iter().sum()
     }
 

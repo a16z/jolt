@@ -9,7 +9,7 @@ use crate::{
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
         multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
-        opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN},
+        opening_proof::{OpeningAccumulator, OpeningPoint, SumcheckId, BIG_ENDIAN},
     },
     subprotocols::sumcheck::SumcheckInstance,
     transcripts::Transcript,
@@ -98,7 +98,7 @@ pub fn remap_address(address: u64, memory_layout: &MemoryLayout) -> Option<u64> 
 
     let lowest_address = memory_layout.get_lowest_address();
     if address >= lowest_address {
-        Some((address - lowest_address) / 8 + 1)
+        Some((address - lowest_address) / 8)
     } else {
         panic!("Unexpected address {address}")
     }
