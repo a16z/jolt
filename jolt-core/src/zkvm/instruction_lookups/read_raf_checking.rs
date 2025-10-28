@@ -1032,6 +1032,7 @@ pub fn current_suffix_len(j: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use std::ops::DerefMut;
+    use std::u64;
 
     use super::*;
     use crate::subprotocols::sumcheck::BatchedSumcheck;
@@ -1051,6 +1052,7 @@ mod tests {
     use tracer::emulator::memory::Memory;
     use tracer::instruction::format::format_r::RegisterStateFormatR;
     use tracer::instruction::virtual_change_divisor::VirtualChangeDivisor;
+    use tracer::instruction::virtual_change_divisor_w::VirtualChangeDivisorW;
     use tracer::instruction::{Cycle, RISCVCycle};
     use tracer::JoltDevice;
 
@@ -1136,7 +1138,19 @@ mod tests {
                 };
                 tracer::instruction::Cycle::VirtualChangeDivisor(cycle)
             },
-            Cycle::VirtualChangeDivisorW(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualChangeDivisorW(cycle) => {
+                // cycle.random(rng).into()
+                let cycle = RISCVCycle::<VirtualChangeDivisorW> {
+                    instruction: VirtualChangeDivisorW::default(),
+                    register_state: RegisterStateFormatR {
+                        rd: (0, 0),
+                        rs1: 0,
+                        rs2: -1_i64 as u64, // -1 as u64
+                    },
+                    ram_access: Default::default(),
+                };
+                tracer::instruction::Cycle::VirtualChangeDivisorW(cycle)
+            },
             Cycle::VirtualAssertMulUNoOverflow(cycle) => cycle.random(rng).into(),
             _ => Cycle::NoOp,
         }

@@ -112,7 +112,7 @@ mod test {
     fn prefix_suffix() {
         prefix_suffix_test::<XLEN, Fr, VirtualChangeDivisorTable<XLEN>>();
     }
-
+    
     #[test]
     fn mle_full_hypercube() {
         lookup_table_mle_full_hypercube_test::<Fr, VirtualChangeDivisorTable<8>>();

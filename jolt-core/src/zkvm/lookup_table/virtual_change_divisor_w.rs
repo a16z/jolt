@@ -72,7 +72,9 @@ impl<const XLEN: usize> JoltLookupTable for VirtualChangeDivisorWTable<XLEN> {
 
         let adjustment = F::from_u64(2) - F::from_u128(1u128 << XLEN);
 
-        divisor_value + adjustment * x_product * y_product + sign_extension
+        divisor_value 
+        + adjustment * x_product * y_product
+         + sign_extension
     }
 }
 

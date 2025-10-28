@@ -105,7 +105,6 @@ pub fn prefix_suffix_test<const XLEN: usize, F: JoltField, T: PrefixSuffixDecomp
                     for (i, x) in suffix_evals.iter().enumerate() {
                         println!("suffix_evals[{i}] = {x}");
                     }
-                    println!("eval points: {:?}", eval_point);
                 }
 
                 assert_eq!(combined, mle_eval);

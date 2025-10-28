@@ -6,7 +6,7 @@ fn muldiv(x: u32, y: u32) -> u32 {
     let result: u32;
     unsafe {
         core::arch::asm!(
-            "rem {result}, {a}, {b}",
+            "remw {result}, {a}, {b}",
             result = out(reg) result,
             a = in(reg) x, // 0_u32,
             b = in(reg) y, // 4294967295_u32,

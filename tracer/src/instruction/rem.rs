@@ -134,26 +134,26 @@ impl RISCVTrace for REM {
         asm.emit_b::<VirtualAssertValidDiv0>(a1, *a2, 0); // Check div-by-zero
         asm.emit_r::<VirtualChangeDivisor>(*t0, a0, a1); // Adjust for overflow
 
-        // // Compute quotient × adjusted_divisor (no overflow check needed)
-        // asm.emit_r::<MUL>(*t1, *a2, *t0);
+        // Compute quotient × adjusted_divisor (no overflow check needed)
+        asm.emit_r::<MUL>(*t1, *a2, *t0);
 
-        // // Apply sign of dividend to remainder (RISC-V: sign(remainder) = sign(dividend))
-        // asm.emit_i::<SRAI>(*t2, a0, shmat); // Sign bit of dividend
-        // asm.emit_r::<XOR>(*t3, *a3, *t2); // XOR with |remainder|
-        // asm.emit_r::<SUB>(*t3, *t3, *t2); // Two's complement if negative
+        // Apply sign of dividend to remainder (RISC-V: sign(remainder) = sign(dividend))
+        asm.emit_i::<SRAI>(*t2, a0, shmat); // Sign bit of dividend
+        asm.emit_r::<XOR>(*t3, *a3, *t2); // XOR with |remainder|
+        asm.emit_r::<SUB>(*t3, *t3, *t2); // Two's complement if negative
 
-        // // Verify: dividend = quotient × divisor + remainder
-        // asm.emit_r::<ADD>(*t1, *t1, *t3); // Add signed remainder
-        // asm.emit_b::<VirtualAssertEQ>(*t1, a0, 0); // Assert equals dividend
+        // Verify: dividend = quotient × divisor + remainder
+        asm.emit_r::<ADD>(*t1, *t1, *t3); // Add signed remainder
+        asm.emit_b::<VirtualAssertEQ>(*t1, a0, 0); // Assert equals dividend
 
-        // // Verify: |remainder| < |divisor|
-        // asm.emit_i::<SRAI>(*t2, *t0, shmat); // Sign bit of adjusted divisor
-        // asm.emit_r::<XOR>(*t1, *t0, *t2); // Get magnitude
-        // asm.emit_r::<SUB>(*t1, *t1, *t2); // |adjusted_divisor|
-        // asm.emit_b::<VirtualAssertValidUnsignedRemainder>(*a3, *t1, 0);
+        // Verify: |remainder| < |divisor|
+        asm.emit_i::<SRAI>(*t2, *t0, shmat); // Sign bit of adjusted divisor
+        asm.emit_r::<XOR>(*t1, *t0, *t2); // Get magnitude
+        asm.emit_r::<SUB>(*t1, *t1, *t2); // |adjusted_divisor|
+        asm.emit_b::<VirtualAssertValidUnsignedRemainder>(*a3, *t1, 0);
 
-        // // Move signed remainder to destination
-        // asm.emit_i::<ADDI>(self.operands.rd, *t3, 0);
+        // Move signed remainder to destination
+        asm.emit_i::<ADDI>(self.operands.rd, *t3, 0);
         asm.finalize()
     }
 }

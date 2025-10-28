@@ -38,7 +38,7 @@ impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualChangeDivisorW> 
         // Always treat as 32-bit values for W instructions
         (
             self.register_state.rs1 as u32 as u64,
-            self.register_state.rs2 as i32 as i128,
+            self.register_state.rs2 as i128,
         )
     }
 
