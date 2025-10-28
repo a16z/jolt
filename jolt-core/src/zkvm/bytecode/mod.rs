@@ -155,7 +155,6 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         let G = compute_ra_evals(bytecode_preprocessing, trace, &E_1);
         let H_indices = compute_bytecode_h_indices(bytecode_preprocessing, trace);
 
-        // Get d and log_K early for use in hamming weight
         let d = bytecode_preprocessing.d;
         let log_K = bytecode_preprocessing.code_size.log_2();
 
@@ -163,7 +162,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         let hamming_weight = HammingWeightSumcheck::new_prover(
             HammingWeightType::Bytecode { d, log_K },
             sm,
-            Some(G.clone().into_iter().collect()),
+            G.clone().into_iter().collect(),
         );
         let booleanity = BooleanitySumcheck::new_prover(
             BooleanityType::Bytecode { d, log_K },
@@ -211,7 +210,6 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
 
 #[inline(always)]
 #[tracing::instrument(skip_all, name = "Bytecode::compute_ra_evals")]
-/// Helper function to compute H_indices for bytecode booleanity
 fn compute_bytecode_h_indices(
     preprocessing: &BytecodePreprocessing,
     trace: &[Cycle],

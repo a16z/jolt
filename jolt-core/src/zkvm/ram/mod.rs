@@ -10,12 +10,13 @@ use crate::{
     field::{self, JoltField},
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
+        eq_poly::EqPolynomial,
         multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
         opening_proof::{OpeningAccumulator, OpeningPoint, SumcheckId, BIG_ENDIAN},
     },
     subprotocols::sumcheck::SumcheckInstance,
     transcripts::Transcript,
-    utils::math::Math,
+    utils::{math::Math, thread::unsafe_allocate_zero_vec},
     zkvm::{
         dag::{stage::SumcheckStages, state_manager::StateManager},
         ram::{
@@ -26,7 +27,7 @@ use crate::{
             read_write_checking::RamReadWriteChecking,
             val_evaluation::ValEvaluationSumcheck,
         },
-        witness::VirtualPolynomial,
+        witness::{compute_d_parameter, VirtualPolynomial, DTH_ROOT_OF_K},
     },
 };
 use std::vec;
@@ -37,6 +38,7 @@ use common::{
     jolt_device::MemoryLayout,
 };
 use rayon::prelude::*;
+use tracer::instruction::Cycle;
 
 pub mod hamming_booleanity;
 pub mod output_check;
@@ -574,21 +576,11 @@ where
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
-        // Accumulate advice polynomials if present
         prover_accumulate_advice(state_manager);
-
-        // Get RAM K parameter
         let K = state_manager.ram_K;
 
-        // Note: Challenges are generated inside new_prover to maintain correct order
-        // The order must be: r_cycle, r_address, gamma (for Fiat-Shamir consistency)
-        // G arrays and H_indices are also computed inside new_prover for RAM
-        let booleanity = BooleanitySumcheck::new_prover(
-            BooleanityType::Ram { K },
-            state_manager,
-            None, // G will be computed inside new_prover for RAM
-            None, // H_indices will be computed inside new_prover for RAM
-        );
+        let booleanity =
+            BooleanitySumcheck::new_prover(BooleanityType::Ram { K }, state_manager, None, None);
         let val_evaluation = ValEvaluationSumcheck::new_prover(
             self.initial_memory_state.as_ref().unwrap(),
             state_manager,
@@ -663,11 +655,20 @@ where
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
-        let hamming_weight = HammingWeightSumcheck::new_prover(
-            HammingWeightType::Ram,
-            state_manager,
-            None, // RAM computes G internally
+        let (_, trace, program_io, _) = state_manager.get_prover_data();
+        let memory_layout = &program_io.memory_layout;
+        let d = compute_d_parameter(state_manager.ram_K);
+
+        let (r_cycle, _) = state_manager.get_virtual_polynomial_opening(
+            VirtualPolynomial::RamHammingWeight,
+            SumcheckId::RamHammingBooleanity,
         );
+        let eq_r_cycle = EqPolynomial::evals(&r_cycle.r);
+
+        let G = compute_ram_ra_evals(trace, memory_layout, &eq_r_cycle, d);
+
+        let hamming_weight =
+            HammingWeightSumcheck::new_prover(HammingWeightType::Ram, state_manager, G);
 
         #[cfg(feature = "allocative")]
         {
@@ -686,4 +687,49 @@ where
 
         vec![Box::new(hamming_weight)]
     }
+}
+
+fn compute_ram_ra_evals<F: JoltField>(
+    trace: &[Cycle],
+    memory_layout: &MemoryLayout,
+    eq_r_cycle: &[F],
+    d: usize,
+) -> Vec<Vec<F>> {
+    let T = trace.len();
+    let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
+    let chunk_size = (T / num_chunks).max(1);
+
+    let mut G_arrays = Vec::with_capacity(d);
+    for i in 0..d {
+        let G: Vec<F> = trace
+            .par_chunks(chunk_size)
+            .enumerate()
+            .map(|(chunk_index, trace_chunk)| {
+                let mut local_array = unsafe_allocate_zero_vec(DTH_ROOT_OF_K);
+                let mut j = chunk_index * chunk_size;
+                for cycle in trace_chunk {
+                    if let Some(address) =
+                        remap_address(cycle.ram_access().address() as u64, memory_layout)
+                    {
+                        let address_i = (address >> (DTH_ROOT_OF_K.log_2() * (d - 1 - i)))
+                            % DTH_ROOT_OF_K as u64;
+                        local_array[address_i as usize] += eq_r_cycle[j];
+                    }
+                    j += 1;
+                }
+                local_array
+            })
+            .reduce(
+                || unsafe_allocate_zero_vec(DTH_ROOT_OF_K),
+                |mut running, new| {
+                    running
+                        .par_iter_mut()
+                        .zip(new.into_par_iter())
+                        .for_each(|(x, y)| *x += y);
+                    running
+                },
+            );
+        G_arrays.push(G);
+    }
+    G_arrays
 }

@@ -98,38 +98,32 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                     let (_, trace, program_io, _) = state_manager.get_prover_data();
                     let memory_layout = &program_io.memory_layout;
                     let d = compute_d_parameter(*K);
-                    let log_k_chunk = DTH_ROOT_OF_K.log_2(); // This is 8
+                    let log_k_chunk = DTH_ROOT_OF_K.log_2();
                     let log_t = trace.len().log_2();
 
-                    // CRITICAL: Order must match original implementation for Fiat-Shamir consistency
-                    // 1. First get r_cycle challenges
                     let r_cycle: Vec<F::Challenge> = state_manager
                         .transcript
                         .borrow_mut()
                         .challenge_vector_optimized::<F>(log_t);
 
-                    // 2. Then get r_address challenges
                     let r_address: Vec<F::Challenge> = state_manager
                         .transcript
                         .borrow_mut()
                         .challenge_vector_optimized::<F>(log_k_chunk);
 
-                    // 3. Finally get gamma challenges
                     let gamma: Vec<F::Challenge> = state_manager
                         .transcript
                         .borrow_mut()
                         .challenge_vector_optimized::<F>(d);
 
-                    // Compute G arrays if not provided
+                    // Compute G and H if not provided (for RAM, they depend on r_cycle)
                     let G = if let Some(g) = G {
                         g
                     } else {
-                        // Compute G arrays for RAM
                         let eq_r_cycle = EqPolynomial::<F>::evals(&r_cycle);
                         compute_ram_g_arrays_internal(trace, memory_layout, &eq_r_cycle, d)
                     };
 
-                    // Compute H_indices if not provided
                     let H_indices = if let Some(h) = H_indices {
                         h
                     } else {
@@ -153,7 +147,6 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                     let log_k_chunk = log_K.div_ceil(*d);
                     let log_t = trace.len().log_2();
 
-                    // For bytecode, r_cycle comes from virtual polynomial
                     let r_cycle = state_manager
                         .get_virtual_polynomial_opening(
                             VirtualPolynomial::UnexpandedPC,
@@ -162,8 +155,6 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                         .0
                         .r
                         .clone();
-
-                    // Get gamma challenges then r_address for bytecode (original order)
                     let gamma: Vec<F::Challenge> = state_manager
                         .transcript
                         .borrow_mut()
@@ -176,7 +167,6 @@ impl<F: JoltField> BooleanitySumcheck<F> {
 
                     let virtual_poly = Some(VirtualPolynomial::UnexpandedPC);
 
-                    // Use provided G and H_indices (they're computed outside for bytecode)
                     (
                         *d,
                         log_k_chunk,
@@ -185,17 +175,16 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                         r_address,
                         gamma,
                         virtual_poly,
-                        G.unwrap(),
-                        H_indices.unwrap(),
+                        G.expect("G arrays must be provided for Bytecode"),
+                        H_indices.expect("H_indices must be provided for Bytecode"),
                     )
                 }
                 BooleanityType::Instruction => {
                     let (_, trace, _, _) = state_manager.get_prover_data();
                     const D: usize = 16;
-                    const LOG_K_CHUNK: usize = 8; // From instruction_lookups constants
+                    const LOG_K_CHUNK: usize = 8;
                     let log_t = trace.len().log_2();
 
-                    // Get gamma challenges first for instruction (original order)
                     let gamma: Vec<F::Challenge> = state_manager
                         .transcript
                         .borrow_mut()
@@ -206,7 +195,6 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                         .borrow_mut()
                         .challenge_vector_optimized::<F>(LOG_K_CHUNK);
 
-                    // Get r_cycle from virtual polynomial opening
                     let r_cycle = state_manager
                         .get_virtual_polynomial_opening(
                             VirtualPolynomial::LookupOutput,
@@ -216,7 +204,8 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                         .r
                         .clone();
 
-                    // Use provided G and H_indices (they're computed outside for instruction)
+                    let virtual_poly = Some(VirtualPolynomial::LookupOutput);
+
                     (
                         D,
                         LOG_K_CHUNK,
@@ -224,14 +213,13 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                         r_cycle,
                         r_address,
                         gamma,
-                        None,
-                        G.unwrap().to_vec(),
-                        H_indices.unwrap(),
+                        virtual_poly,
+                        G.expect("G arrays must be provided for Instruction"),
+                        H_indices.expect("H_indices must be provided for Instruction"),
                     )
                 }
             };
 
-        // Build prover state
         let B = GruenSplitEqPolynomial::new(&r_address, BindingOrder::LowToHigh);
         let D_poly = GruenSplitEqPolynomial::new(&r_cycle, BindingOrder::LowToHigh);
 
@@ -262,7 +250,6 @@ impl<F: JoltField> BooleanitySumcheck<F> {
         }
     }
 
-    /// Create a new verifier instance
     pub fn new_verifier<T: Transcript, PCS: CommitmentScheme<Field = F>>(
         booleanity_type: BooleanityType,
         state_manager: &mut StateManager<'_, F, T, PCS>,

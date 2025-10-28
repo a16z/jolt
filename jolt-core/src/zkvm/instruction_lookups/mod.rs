@@ -66,7 +66,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         let hamming_weight = HammingWeightSumcheck::new_prover(
             HammingWeightType::Instruction,
             sm,
-            Some(G.into_iter().collect()),
+            G.into_iter().collect(),
         );
 
         #[cfg(feature = "allocative")]
@@ -163,7 +163,6 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
     }
 }
 
-/// Helper function to compute H_indices for instruction booleanity
 fn compute_instruction_h_indices(trace: &[Cycle]) -> Vec<Vec<Option<u8>>> {
     (0..D)
         .map(|i| {

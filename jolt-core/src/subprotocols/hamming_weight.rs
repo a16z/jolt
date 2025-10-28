@@ -9,7 +9,6 @@ use crate::{
     field::{JoltField, MulTrunc},
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
-        eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{
             OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
@@ -17,10 +16,9 @@ use crate::{
         },
     },
     transcripts::Transcript,
-    utils::{math::Math, thread::unsafe_allocate_zero_vec},
+    utils::math::Math,
     zkvm::{
         dag::state_manager::StateManager,
-        ram::remap_address,
         witness::{compute_d_parameter, CommittedPolynomial, VirtualPolynomial, DTH_ROOT_OF_K},
     },
 };
@@ -29,11 +27,9 @@ use crate::subprotocols::sumcheck::SumcheckInstance;
 
 #[derive(Allocative)]
 pub struct HammingWeightProverState<F: JoltField> {
-    /// ra polynomials
     pub ra: Vec<MultilinearPolynomial<F>>,
 }
 
-/// Type of hamming weight sumcheck
 #[derive(Clone, Debug, Allocative)]
 pub enum HammingWeightType {
     Ram,
@@ -51,25 +47,23 @@ pub struct HammingWeightSumcheck<F: JoltField> {
 }
 
 impl<F: JoltField> HammingWeightSumcheck<F> {
-    /// Create a new prover instance
     pub fn new_prover<T: Transcript, PCS: CommitmentScheme<Field = F>>(
         hamming_type: HammingWeightType,
         state_manager: &mut StateManager<'_, F, T, PCS>,
-        G: Option<Vec<Vec<F>>>, // Some for bytecode/instruction, None for RAM (computed internally)
+        G: Vec<Vec<F>>,
     ) -> Self {
-        let (d, num_rounds, log_chunk_size) = match &hamming_type {
+        let (d, num_rounds) = match &hamming_type {
             HammingWeightType::Ram => {
                 let d = compute_d_parameter(state_manager.ram_K);
-                (d, DTH_ROOT_OF_K.log_2(), DTH_ROOT_OF_K.log_2())
+                (d, DTH_ROOT_OF_K.log_2())
             }
             HammingWeightType::Bytecode { d, log_K } => {
                 let log_K_chunk = log_K.div_ceil(*d);
-                (*d, log_K_chunk, log_K_chunk)
+                (*d, log_K_chunk)
             }
             HammingWeightType::Instruction => {
                 // D = 16, LOG_K_CHUNK = LOG_K / D = 128 / 16 = 8
-                // K_CHUNK = 2^8 = 256
-                (16, 8, 8)
+                (16, 8)
             }
         };
 
@@ -79,97 +73,7 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
             gamma_powers[i] = gamma_powers[i - 1] * gamma;
         }
 
-        // Compute ra polynomials
-        let ra = match &hamming_type {
-            HammingWeightType::Ram => {
-                // Compute F arrays for RAM
-                let (_, trace, program_io, _) = state_manager.get_prover_data();
-                let memory_layout = &program_io.memory_layout;
-
-                let T = trace.len();
-                let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
-                let chunk_size = (T / num_chunks).max(1);
-
-                let (r_cycle, _) = state_manager.get_virtual_polynomial_opening(
-                    VirtualPolynomial::RamHammingWeight,
-                    SumcheckId::RamHammingBooleanity,
-                );
-
-                let eq_r_cycle = EqPolynomial::evals(&r_cycle.r);
-
-                let mut F_arrays = Vec::with_capacity(d);
-                for i in 0..d {
-                    let F: Vec<F> = trace
-                        .par_chunks(chunk_size)
-                        .enumerate()
-                        .map(|(chunk_index, trace_chunk)| {
-                            let mut local_array = unsafe_allocate_zero_vec(DTH_ROOT_OF_K);
-                            let mut j = chunk_index * chunk_size;
-                            for cycle in trace_chunk {
-                                if let Some(address) = remap_address(
-                                    cycle.ram_access().address() as u64,
-                                    memory_layout,
-                                ) {
-                                    let address_i = (address
-                                        >> (DTH_ROOT_OF_K.log_2() * (d - 1 - i)))
-                                        % DTH_ROOT_OF_K as u64;
-                                    local_array[address_i as usize] += eq_r_cycle[j];
-                                }
-                                j += 1;
-                            }
-                            local_array
-                        })
-                        .reduce(
-                            || unsafe_allocate_zero_vec(DTH_ROOT_OF_K),
-                            |mut running, new| {
-                                running
-                                    .par_iter_mut()
-                                    .zip(new.into_par_iter())
-                                    .for_each(|(x, y)| *x += y);
-                                running
-                            },
-                        );
-                    F_arrays.push(F);
-                }
-
-                // Verify each array has the right size
-                for (i, arr) in F_arrays.iter().enumerate() {
-                    assert_eq!(arr.len(), DTH_ROOT_OF_K, "F_array[{i}] has wrong size");
-                    assert_eq!(
-                        arr.len(),
-                        1 << log_chunk_size,
-                        "F_array[{i}] size doesn't match log_chunk_size"
-                    );
-                }
-
-                F_arrays
-                    .into_iter()
-                    .map(MultilinearPolynomial::from)
-                    .collect()
-            }
-            HammingWeightType::Bytecode { .. } | HammingWeightType::Instruction => {
-                // Use provided G arrays
-                let arrays = G.expect("G arrays must be provided for bytecode/instruction");
-
-                // Verify each array has the right size for the number of rounds
-                for (i, arr) in arrays.iter().enumerate() {
-                    assert_eq!(
-                        arr.len(),
-                        1 << log_chunk_size,
-                        "G array[{}] has size {} but expected {} (2^{})",
-                        i,
-                        arr.len(),
-                        1 << log_chunk_size,
-                        log_chunk_size
-                    );
-                }
-
-                arrays
-                    .into_iter()
-                    .map(MultilinearPolynomial::from)
-                    .collect()
-            }
-        };
+        let ra = G.into_iter().map(MultilinearPolynomial::from).collect();
 
         Self {
             hamming_type,
@@ -180,7 +84,6 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
         }
     }
 
-    /// Create a new verifier instance
     pub fn new_verifier<T: Transcript, PCS: CommitmentScheme<Field = F>>(
         hamming_type: HammingWeightType,
         state_manager: &mut StateManager<'_, F, T, PCS>,
@@ -255,7 +158,6 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
     }
 }
 
-// Direct implementation of SumcheckInstance for HammingWeightSumcheck
 impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for HammingWeightSumcheck<F> {
     fn degree(&self) -> usize {
         1 // Hamming weight sumchecks always have degree 1
@@ -268,7 +170,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for HammingWeightSumche
     fn input_claim(&self, acc: Option<&RefCell<dyn OpeningAccumulator<F>>>) -> F {
         match self.hamming_type {
             HammingWeightType::Ram => {
-                // RAM has special input claim handling
                 let acc = acc.unwrap().borrow();
                 let (_, hamming_booleanity_claim) = acc.get_virtual_polynomial_opening(
                     VirtualPolynomial::RamHammingWeight,
@@ -276,10 +177,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for HammingWeightSumche
                 );
                 hamming_booleanity_claim * self.gamma_powers.iter().sum::<F>()
             }
-            _ => {
-                // Default: sum of gamma powers
-                self.gamma_powers.iter().sum()
-            }
+            _ => self.gamma_powers.iter().sum(),
         }
     }
 
