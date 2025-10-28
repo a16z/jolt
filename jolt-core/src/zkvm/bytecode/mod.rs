@@ -1,12 +1,11 @@
 use crate::poly::opening_proof::{OpeningAccumulator, SumcheckId};
 use crate::subprotocols::{
     booleanity::{BooleanitySumcheck, BooleanityType},
-    hamming_weight::Hamming,
+    hamming_weight::{HammingWeightSumcheck, HammingWeightType},
 };
 use crate::utils::math::Math;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
-use crate::zkvm::bytecode::hamming_weight::BytecodeHammingWeightSumcheck;
 use crate::zkvm::bytecode::read_raf_checking::ReadRafSumcheck;
 use crate::zkvm::dag::stage::SumcheckStages;
 use crate::zkvm::dag::state_manager::StateManager;
@@ -22,7 +21,6 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::{ALIGNMENT_FACTOR_BYTECODE, RAM_START_ADDRESS};
 use rayon::prelude::*;
 use tracer::instruction::{Cycle, Instruction};
-pub mod hamming_weight;
 pub mod read_raf_checking;
 
 #[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
@@ -157,12 +155,16 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         let G = compute_ra_evals(bytecode_preprocessing, trace, &E_1);
         let H_indices = compute_bytecode_h_indices(bytecode_preprocessing, trace);
 
-        let read_raf = ReadRafSumcheck::new_prover(sm);
-        let hamming_weight = BytecodeHammingWeightSumcheck::new_prover(sm, G.clone());
-
-        // Pass G and H_indices to the unified booleanity
+        // Get d and log_K early for use in hamming weight
         let d = bytecode_preprocessing.d;
         let log_K = bytecode_preprocessing.code_size.log_2();
+
+        let read_raf = ReadRafSumcheck::new_prover(sm);
+        let hamming_weight = HammingWeightSumcheck::new_prover(
+            HammingWeightType::Bytecode { d, log_K },
+            sm,
+            Some(G.clone().into_iter().collect()),
+        );
         let booleanity = BooleanitySumcheck::new_prover(
             BooleanityType::Bytecode { d, log_K },
             sm,
@@ -179,7 +181,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
 
         vec![
             Box::new(read_raf),
-            Box::new(Hamming::from(hamming_weight)),
+            Box::new(hamming_weight),
             Box::new(booleanity),
         ]
     }
@@ -194,13 +196,14 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         let log_K = bytecode_preprocessing.code_size.log_2();
 
         let read_checking = ReadRafSumcheck::new_verifier(sm);
-        let hamming_weight = BytecodeHammingWeightSumcheck::new_verifier(sm);
+        let hamming_weight =
+            HammingWeightSumcheck::new_verifier(HammingWeightType::Bytecode { d, log_K }, sm);
         let booleanity =
             BooleanitySumcheck::new_verifier(BooleanityType::Bytecode { d, log_K }, sm);
 
         vec![
             Box::new(read_checking),
-            Box::new(Hamming::from(hamming_weight)),
+            Box::new(hamming_weight),
             Box::new(booleanity),
         ]
     }

@@ -5,4 +5,4 @@ pub mod sumcheck;
 pub mod univariate_skip;
 
 pub use booleanity::{BooleanityProverState, BooleanitySumcheck, BooleanityType};
-pub use hamming_weight::{HammingWeightConfig, HammingWeightProverState, HammingWeightSumcheck};
+pub use hamming_weight::{HammingWeightProverState, HammingWeightSumcheck, HammingWeightType};

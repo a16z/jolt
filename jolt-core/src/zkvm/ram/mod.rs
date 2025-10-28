@@ -2,7 +2,7 @@
 
 use crate::subprotocols::{
     booleanity::{BooleanitySumcheck, BooleanityType},
-    hamming_weight::Hamming,
+    hamming_weight::{HammingWeightSumcheck, HammingWeightType},
 };
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
@@ -20,7 +20,6 @@ use crate::{
         dag::{stage::SumcheckStages, state_manager::StateManager},
         ram::{
             hamming_booleanity::HammingBooleanitySumcheck,
-            hamming_weight::RamHammingWeightSumcheck,
             output_check::{OutputSumcheck, ValFinalSumcheck},
             ra_virtual::RaSumcheck,
             raf_evaluation::RafEvaluationSumcheck,
@@ -40,7 +39,6 @@ use common::{
 use rayon::prelude::*;
 
 pub mod hamming_booleanity;
-pub mod hamming_weight;
 pub mod output_check;
 pub mod ra_virtual;
 pub mod raf_evaluation;
@@ -665,22 +663,27 @@ where
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
-        let hamming_weight = RamHammingWeightSumcheck::new_prover(state_manager);
+        let hamming_weight = HammingWeightSumcheck::new_prover(
+            HammingWeightType::Ram,
+            state_manager,
+            None, // RAM computes G internally
+        );
 
         #[cfg(feature = "allocative")]
         {
             print_data_structure_heap_usage("RAM HammingWeightSumcheck", &hamming_weight);
         }
 
-        vec![Box::new(Hamming::from(hamming_weight))]
+        vec![Box::new(hamming_weight)]
     }
 
     fn stage6_verifier_instances(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
-        let hamming_weight = RamHammingWeightSumcheck::new_verifier(state_manager);
+        let hamming_weight =
+            HammingWeightSumcheck::new_verifier(HammingWeightType::Ram, state_manager);
 
-        vec![Box::new(Hamming::from(hamming_weight))]
+        vec![Box::new(hamming_weight)]
     }
 }
