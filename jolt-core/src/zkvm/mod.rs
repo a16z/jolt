@@ -16,7 +16,7 @@ use crate::{
     utils::{errors::ProofVerifyError, math::Math},
     zkvm::{
         bytecode::BytecodePreprocessing,
-        dag::{jolt_dag::JoltDAG, proof_serialization::JoltProof},
+        dag::{jolt_dag::verify_jolt_dag, proof_serialization::JoltProof},
         ram::RAMPreprocessing,
         witness::DTH_ROOT_OF_K,
     },
@@ -328,6 +328,8 @@ pub trait Jolt<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Tran
         );
 
         let (proof, debug_info, prove_duration) = {
+            use crate::zkvm::dag::jolt_dag::prove_jolt_dag;
+
             let _pprof_prove = pprof_scope!("prove");
             let start = Instant::now();
             let state_manager = StateManager::new_prover(
@@ -338,7 +340,7 @@ pub trait Jolt<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Tran
                 trusted_advice_commitment,
                 final_memory_state,
             );
-            let (proof, debug_info) = JoltDAG::prove(state_manager).ok().unwrap();
+            let (proof, debug_info) = prove_jolt_dag(state_manager).ok().unwrap();
             let prove_duration = start.elapsed();
             tracing::info!(
                 "Proved in {:.1}s ({:.1} kHz / padded {:.1} kHz)",
@@ -404,7 +406,7 @@ pub trait Jolt<F: JoltField, PCS: StreamingCommitmentScheme<Field = F>, FS: Tran
             }
         }
 
-        JoltDAG::verify(state_manager).expect("Verification failed");
+        verify_jolt_dag(state_manager).expect("Verification failed");
 
         Ok(())
     }

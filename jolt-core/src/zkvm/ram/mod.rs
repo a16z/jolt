@@ -1,8 +1,13 @@
 #![allow(clippy::too_many_arguments)]
 
-use crate::subprotocols::{booleanity::BooleanitySumcheck, hamming_weight::HammingWeightSumcheck};
+use crate::subprotocols::{
+    BooleanitySumcheckParams, BooleanitySumcheckProver, BooleanitySumcheckVerifier,
+    HammingWeightSumcheckParams, HammingWeightSumcheckProver, HammingWeightSumcheckVerifier,
+};
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
+use crate::zkvm::dag::stage::{SumcheckStagesProver, SumcheckStagesVerifier};
+use crate::zkvm::ram::hamming_booleanity::HammingBooleanitySumcheckVerifier;
 use crate::{
     field::{self, JoltField},
     poly::{
@@ -11,18 +16,23 @@ use crate::{
         multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
         opening_proof::{OpeningAccumulator, OpeningPoint, SumcheckId, BIG_ENDIAN},
     },
-    subprotocols::sumcheck::SumcheckInstance,
+    subprotocols::{
+        sumcheck_prover::SumcheckInstanceProver, sumcheck_verifier::SumcheckInstanceVerifier,
+    },
     transcripts::Transcript,
     utils::{math::Math, thread::unsafe_allocate_zero_vec},
     zkvm::{
-        dag::{stage::SumcheckStages, state_manager::StateManager},
+        dag::state_manager::StateManager,
         ram::{
-            hamming_booleanity::HammingBooleanitySumcheck,
-            output_check::{OutputSumcheck, ValFinalSumcheck},
-            ra_virtual::RaSumcheck,
-            raf_evaluation::RafEvaluationSumcheck,
-            read_write_checking::RamReadWriteChecking,
-            val_evaluation::ValEvaluationSumcheck,
+            hamming_booleanity::HammingBooleanitySumcheckProver,
+            output_check::{
+                OutputSumcheckProver, OutputSumcheckVerifier, ValFinalSumcheckProver,
+                ValFinalSumcheckVerifier,
+            },
+            ra_virtual::{RaSumcheckProver, RaSumcheckVerifier},
+            raf_evaluation::{RafEvaluationSumcheckProver, RafEvaluationSumcheckVerifier},
+            read_write_checking::{RamReadWriteCheckingProver, RamReadWriteCheckingVerifier},
+            val_evaluation::{ValEvaluationSumcheckProver, ValEvaluationSumcheckVerifier},
         },
         witness::{compute_d_parameter, CommittedPolynomial, VirtualPolynomial, DTH_ROOT_OF_K},
     },
@@ -102,18 +112,14 @@ pub fn remap_address(address: u64, memory_layout: &MemoryLayout) -> Option<u64> 
     }
 }
 
-pub struct RamDag {
-    initial_memory_state: Option<Vec<u64>>,
-    final_memory_state: Option<Vec<u64>>,
+pub struct RamDagProver {
+    initial_memory_state: Vec<u64>,
+    final_memory_state: Vec<u64>,
 }
 
-impl RamDag {
-    pub fn new_prover<
-        F: JoltField,
-        ProofTranscript: Transcript,
-        PCS: CommitmentScheme<Field = F>,
-    >(
-        state_manager: &StateManager<'_, F, ProofTranscript, PCS>,
+impl RamDagProver {
+    pub fn new<F: JoltField>(
+        state_manager: &StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
     ) -> Self {
         let (preprocessing, _, _, program_io, final_memory) = state_manager.get_prover_data();
         let ram_preprocessing = &preprocessing.shared.ram;
@@ -255,55 +261,8 @@ impl RamDag {
         }
 
         Self {
-            initial_memory_state: Some(initial_memory_state),
-            final_memory_state: Some(final_memory_state),
-        }
-    }
-
-    pub fn new_verifier<
-        F: JoltField,
-        ProofTranscript: Transcript,
-        PCS: CommitmentScheme<Field = F>,
-    >(
-        state_manager: &StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Self {
-        let (preprocessing, program_io, _) = state_manager.get_verifier_data();
-        let ram_preprocessing = &preprocessing.shared.ram;
-
-        let K = state_manager.ram_K;
-
-        let mut initial_memory_state = vec![0; K];
-        // Copy bytecode
-        let mut index = remap_address(
-            ram_preprocessing.min_bytecode_address,
-            &program_io.memory_layout,
-        )
-        .unwrap() as usize;
-        for word in &ram_preprocessing.bytecode_words {
-            initial_memory_state[index] = *word;
-            index += 1;
-        }
-
-        index = remap_address(
-            program_io.memory_layout.input_start,
-            &program_io.memory_layout,
-        )
-        .unwrap() as usize;
-        // Convert input bytes into words and populate
-        // `initial_memory_state` and `final_memory_state`
-        for chunk in program_io.inputs.chunks(8) {
-            let mut word = [0u8; 8];
-            for (i, byte) in chunk.iter().enumerate() {
-                word[i] = *byte;
-            }
-            let word = u64::from_le_bytes(word);
-            initial_memory_state[index] = word;
-            index += 1;
-        }
-
-        Self {
-            initial_memory_state: Some(initial_memory_state),
-            final_memory_state: None,
+            initial_memory_state,
+            final_memory_state,
         }
     }
 }
@@ -518,26 +477,24 @@ pub fn calculate_advice_memory_evaluation<F: JoltField>(
     }
 }
 
-impl<F, ProofTranscript, PCS> SumcheckStages<F, ProofTranscript, PCS> for RamDag
+impl<F, ProofTranscript, PCS> SumcheckStagesProver<F, ProofTranscript, PCS> for RamDagProver
 where
     F: JoltField,
     ProofTranscript: Transcript,
     PCS: CommitmentScheme<Field = F>,
 {
-    fn stage2_prover_instances(
+    fn stage2_instances(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
-        let raf_evaluation = RafEvaluationSumcheck::new_prover(state_manager);
+    ) -> Vec<Box<dyn SumcheckInstanceProver<F, ProofTranscript>>> {
+        let raf_evaluation = RafEvaluationSumcheckProver::gen(state_manager);
 
-        let read_write_checking = RamReadWriteChecking::new_prover(
-            self.initial_memory_state.as_ref().unwrap(),
-            state_manager,
-        );
+        let read_write_checking =
+            RamReadWriteCheckingProver::gen(&self.initial_memory_state, state_manager);
 
-        let output_check = OutputSumcheck::new_prover(
-            self.initial_memory_state.as_ref().unwrap().clone(),
-            self.final_memory_state.as_ref().unwrap().clone(),
+        let output_check = OutputSumcheckProver::gen(
+            &self.initial_memory_state,
+            &self.final_memory_state,
             state_manager,
         );
 
@@ -555,76 +512,16 @@ where
         ]
     }
 
-    fn stage2_verifier_instances(
+    fn stage4_instances(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
-        let raf_evaluation = RafEvaluationSumcheck::new_verifier(state_manager);
-        let read_write_checking = RamReadWriteChecking::new_verifier(state_manager);
-        let output_check = OutputSumcheck::new_verifier(state_manager);
-
-        vec![
-            Box::new(raf_evaluation),
-            Box::new(read_write_checking),
-            Box::new(output_check),
-        ]
-    }
-
-    fn stage4_prover_instances(
-        &mut self,
-        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
+    ) -> Vec<Box<dyn SumcheckInstanceProver<F, ProofTranscript>>> {
         prover_accumulate_advice(state_manager);
-        let K = state_manager.ram_K;
+        let booleanity = gen_ra_booleanity_prover(state_manager);
 
-        let (_, _, trace, program_io, _) = state_manager.get_prover_data();
-        let memory_layout = &program_io.memory_layout;
-        let d = compute_d_parameter(K);
-        let log_k_chunk = DTH_ROOT_OF_K.log_2();
-        let log_t = trace.len().log_2();
-
-        let r_cycle: Vec<F::Challenge> = state_manager
-            .transcript
-            .borrow_mut()
-            .challenge_vector_optimized::<F>(log_t);
-
-        let r_address: Vec<F::Challenge> = state_manager
-            .transcript
-            .borrow_mut()
-            .challenge_vector_optimized::<F>(log_k_chunk);
-
-        let gamma: Vec<F::Challenge> = state_manager
-            .transcript
-            .borrow_mut()
-            .challenge_vector_optimized::<F>(d);
-
-        // Compute G and H for RAM
-        let eq_r_cycle = EqPolynomial::<F>::evals(&r_cycle);
-        let G = compute_ram_ra_evals(trace, memory_layout, &eq_r_cycle, d);
-        let H_indices = compute_ram_h_indices(trace, memory_layout, d);
-
-        let polynomial_types: Vec<CommittedPolynomial> =
-            (0..d).map(CommittedPolynomial::RamRa).collect();
-
-        let booleanity = BooleanitySumcheck::new_prover(
-            d,
-            log_k_chunk,
-            log_t,
-            r_cycle,
-            r_address,
-            gamma,
-            G,
-            H_indices,
-            polynomial_types,
-            SumcheckId::RamBooleanity,
-            None, // No virtual polynomial for RAM
-        );
-
-        let val_evaluation = ValEvaluationSumcheck::new_prover(
-            self.initial_memory_state.as_ref().unwrap(),
-            state_manager,
-        );
-        let val_final_evaluation = ValFinalSumcheck::new_prover(state_manager);
+        let val_evaluation =
+            ValEvaluationSumcheckProver::gen(&self.initial_memory_state, state_manager);
+        let val_final_evaluation = ValFinalSumcheckProver::gen(state_manager);
 
         #[cfg(feature = "allocative")]
         {
@@ -640,72 +537,12 @@ where
         ]
     }
 
-    fn stage4_verifier_instances(
+    fn stage5_instances(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
-        // Accumulate advice commitments if present
-        verifier_accumulate_advice(state_manager);
-        let K = state_manager.ram_K;
-
-        // Compute RAM-specific parameters
-        let (_, _, T) = state_manager.get_verifier_data();
-        let d = compute_d_parameter(K);
-        let log_k_chunk = DTH_ROOT_OF_K.log_2();
-        let log_t = T.log_2();
-
-        let r_cycle: Vec<F::Challenge> = state_manager
-            .transcript
-            .borrow_mut()
-            .challenge_vector_optimized::<F>(log_t);
-
-        let r_address: Vec<F::Challenge> = state_manager
-            .transcript
-            .borrow_mut()
-            .challenge_vector_optimized::<F>(log_k_chunk);
-
-        let gamma: Vec<F::Challenge> = state_manager
-            .transcript
-            .borrow_mut()
-            .challenge_vector_optimized::<F>(d);
-
-        let polynomial_types: Vec<CommittedPolynomial> =
-            (0..d).map(CommittedPolynomial::RamRa).collect();
-
-        let booleanity = BooleanitySumcheck::new_verifier(
-            d,
-            log_k_chunk,
-            log_t,
-            r_cycle,
-            r_address,
-            gamma,
-            polynomial_types,
-            SumcheckId::RamBooleanity,
-            None,
-        );
-
-        let val_evaluation = ValEvaluationSumcheck::new_verifier(
-            self.initial_memory_state.as_ref().unwrap(),
-            state_manager,
-        );
-        let val_final_evaluation = ValFinalSumcheck::new_verifier(
-            self.initial_memory_state.as_ref().unwrap(),
-            state_manager,
-        );
-
-        vec![
-            Box::new(booleanity),
-            Box::new(val_evaluation),
-            Box::new(val_final_evaluation),
-        ]
-    }
-
-    fn stage5_prover_instances(
-        &mut self,
-        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
-        let hamming_booleanity = HammingBooleanitySumcheck::new_prover(state_manager);
-        let ra_virtual = RaSumcheck::new_prover(state_manager);
+    ) -> Vec<Box<dyn SumcheckInstanceProver<F, ProofTranscript>>> {
+        let hamming_booleanity = HammingBooleanitySumcheckProver::gen(state_manager);
+        let ra_virtual = RaSumcheckProver::gen(state_manager);
 
         #[cfg(feature = "allocative")]
         {
@@ -716,48 +553,11 @@ where
         vec![Box::new(hamming_booleanity), Box::new(ra_virtual)]
     }
 
-    fn stage5_verifier_instances(
+    fn stage6_instances(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
-        let hamming_booleanity = HammingBooleanitySumcheck::new_verifier(state_manager);
-        let ra_virtual = RaSumcheck::new_verifier(state_manager);
-
-        vec![Box::new(hamming_booleanity), Box::new(ra_virtual)]
-    }
-
-    fn stage6_prover_instances(
-        &mut self,
-        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
-        let (_, _, trace, program_io, _) = state_manager.get_prover_data();
-        let memory_layout = &program_io.memory_layout;
-        let d = compute_d_parameter(state_manager.ram_K);
-        let num_rounds = DTH_ROOT_OF_K.log_2();
-
-        let (r_cycle, _) = state_manager.get_virtual_polynomial_opening(
-            VirtualPolynomial::RamHammingWeight,
-            SumcheckId::RamHammingBooleanity,
-        );
-        let eq_r_cycle = EqPolynomial::evals(&r_cycle.r);
-
-        let G = compute_ram_ra_evals(trace, memory_layout, &eq_r_cycle, d);
-
-        let gamma: F = state_manager.transcript.borrow_mut().challenge_scalar();
-
-        let polynomial_types: Vec<CommittedPolynomial> =
-            (0..d).map(CommittedPolynomial::RamRa).collect();
-
-        let hamming_weight = HammingWeightSumcheck::new_prover(
-            d,
-            num_rounds,
-            gamma,
-            G,
-            polynomial_types,
-            SumcheckId::RamHammingWeight,
-            Some(VirtualPolynomial::RamHammingWeight),
-            SumcheckId::RamHammingBooleanity,
-        );
+    ) -> Vec<Box<dyn SumcheckInstanceProver<F, ProofTranscript>>> {
+        let hamming_weight = gen_ra_hamming_weight_prover(state_manager);
 
         #[cfg(feature = "allocative")]
         {
@@ -766,31 +566,268 @@ where
 
         vec![Box::new(hamming_weight)]
     }
+}
 
-    fn stage6_verifier_instances(
+pub struct RamDagVerifier {
+    initial_memory_state: Vec<u64>,
+}
+
+impl RamDagVerifier {
+    pub fn new<F: JoltField>(
+        state_manager: &StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+    ) -> Self {
+        let (preprocessing, program_io, _) = state_manager.get_verifier_data();
+        let ram_preprocessing = &preprocessing.shared.ram;
+
+        let K = state_manager.ram_K;
+
+        let mut initial_memory_state = vec![0; K];
+        // Copy bytecode
+        let mut index = remap_address(
+            ram_preprocessing.min_bytecode_address,
+            &program_io.memory_layout,
+        )
+        .unwrap() as usize;
+        for word in &ram_preprocessing.bytecode_words {
+            initial_memory_state[index] = *word;
+            index += 1;
+        }
+
+        index = remap_address(
+            program_io.memory_layout.input_start,
+            &program_io.memory_layout,
+        )
+        .unwrap() as usize;
+        // Convert input bytes into words and populate
+        // `initial_memory_state` and `final_memory_state`
+        for chunk in program_io.inputs.chunks(8) {
+            let mut word = [0u8; 8];
+            for (i, byte) in chunk.iter().enumerate() {
+                word[i] = *byte;
+            }
+            let word = u64::from_le_bytes(word);
+            initial_memory_state[index] = word;
+            index += 1;
+        }
+
+        Self {
+            initial_memory_state,
+        }
+    }
+}
+
+impl<F, ProofTranscript, PCS> SumcheckStagesVerifier<F, ProofTranscript, PCS> for RamDagVerifier
+where
+    F: JoltField,
+    ProofTranscript: Transcript,
+    PCS: CommitmentScheme<Field = F>,
+{
+    fn stage2_instances(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
-        let d = compute_d_parameter(state_manager.ram_K);
-        let num_rounds = DTH_ROOT_OF_K.log_2();
+    ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, ProofTranscript>>> {
+        let raf_evaluation = RafEvaluationSumcheckVerifier::new(state_manager);
+        let read_write_checking = RamReadWriteCheckingVerifier::new(state_manager);
+        let output_check = OutputSumcheckVerifier::new(state_manager);
 
-        let gamma: F = state_manager.transcript.borrow_mut().challenge_scalar();
+        vec![
+            Box::new(raf_evaluation),
+            Box::new(read_write_checking),
+            Box::new(output_check),
+        ]
+    }
 
-        let polynomial_types: Vec<CommittedPolynomial> =
-            (0..d).map(CommittedPolynomial::RamRa).collect();
+    fn stage4_instances(
+        &mut self,
+        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+    ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, ProofTranscript>>> {
+        // Accumulate advice commitments if present
+        verifier_accumulate_advice(state_manager);
+        let booleanity = new_ra_booleanity_verifier(state_manager);
 
-        let hamming_weight = HammingWeightSumcheck::new_verifier(
-            d,
-            num_rounds,
-            gamma,
-            polynomial_types,
-            SumcheckId::RamHammingWeight,
-            Some(VirtualPolynomial::RamHammingWeight),
-            SumcheckId::RamHammingBooleanity,
-        );
+        let val_evaluation =
+            ValEvaluationSumcheckVerifier::new(&self.initial_memory_state, state_manager);
+        let val_final_evaluation =
+            ValFinalSumcheckVerifier::new(&self.initial_memory_state, state_manager);
 
+        vec![
+            Box::new(booleanity),
+            Box::new(val_evaluation),
+            Box::new(val_final_evaluation),
+        ]
+    }
+
+    fn stage5_instances(
+        &mut self,
+        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+    ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, ProofTranscript>>> {
+        let hamming_booleanity = HammingBooleanitySumcheckVerifier::new(state_manager);
+        let ra_virtual = RaSumcheckVerifier::new(state_manager);
+        vec![Box::new(hamming_booleanity), Box::new(ra_virtual)]
+    }
+
+    fn stage6_instances(
+        &mut self,
+        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+    ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, ProofTranscript>>> {
+        let hamming_weight = new_ra_hamming_weight_verifier(state_manager);
         vec![Box::new(hamming_weight)]
     }
+}
+
+fn gen_ra_booleanity_prover<F: JoltField>(
+    state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+) -> BooleanitySumcheckProver<F> {
+    let K = state_manager.ram_K;
+
+    let (_, _, trace, program_io, _) = state_manager.get_prover_data();
+    let memory_layout = &program_io.memory_layout;
+    let d = compute_d_parameter(K);
+    let log_k_chunk = DTH_ROOT_OF_K.log_2();
+    let log_t = trace.len().log_2();
+
+    let r_cycle: Vec<F::Challenge> = state_manager
+        .transcript
+        .borrow_mut()
+        .challenge_vector_optimized::<F>(log_t);
+
+    let r_address: Vec<F::Challenge> = state_manager
+        .transcript
+        .borrow_mut()
+        .challenge_vector_optimized::<F>(log_k_chunk);
+
+    let gammas: Vec<F::Challenge> = state_manager
+        .transcript
+        .borrow_mut()
+        .challenge_vector_optimized::<F>(d);
+
+    // Compute G and H for RAM
+    let eq_r_cycle = EqPolynomial::<F>::evals(&r_cycle);
+    let G = compute_ram_ra_evals(trace, memory_layout, &eq_r_cycle, d);
+    let H_indices = compute_ram_h_indices(trace, memory_layout, d);
+
+    let polynomial_types: Vec<CommittedPolynomial> =
+        (0..d).map(CommittedPolynomial::RamRa).collect();
+
+    let params = BooleanitySumcheckParams {
+        d,
+        log_k_chunk,
+        log_t,
+        gammas,
+        r_address,
+        r_cycle,
+        polynomial_types,
+        sumcheck_id: SumcheckId::RamBooleanity,
+        virtual_poly: None, // No virtual polynomial for RAM
+    };
+
+    BooleanitySumcheckProver::gen(params, G, H_indices)
+}
+
+fn gen_ra_hamming_weight_prover<F: JoltField>(
+    state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+) -> HammingWeightSumcheckProver<F> {
+    let (_, _, trace, program_io, _) = state_manager.get_prover_data();
+    let memory_layout = &program_io.memory_layout;
+    let d = compute_d_parameter(state_manager.ram_K);
+    let num_rounds = DTH_ROOT_OF_K.log_2();
+
+    let (r_cycle, _) = state_manager.get_virtual_polynomial_opening(
+        VirtualPolynomial::RamHammingWeight,
+        SumcheckId::RamHammingBooleanity,
+    );
+    let eq_r_cycle = EqPolynomial::evals(&r_cycle.r);
+
+    let G = compute_ram_ra_evals(trace, memory_layout, &eq_r_cycle, d);
+
+    let gamma_powers = state_manager
+        .transcript
+        .borrow_mut()
+        .challenge_scalar_powers(d);
+
+    let polynomial_types: Vec<CommittedPolynomial> =
+        (0..d).map(CommittedPolynomial::RamRa).collect();
+
+    let params = HammingWeightSumcheckParams {
+        d,
+        num_rounds,
+        gamma_powers,
+        polynomial_types,
+        sumcheck_id: SumcheckId::RamHammingWeight,
+        virtual_poly: Some(VirtualPolynomial::RamHammingWeight),
+        r_cycle_sumcheck_id: SumcheckId::RamHammingBooleanity,
+    };
+
+    HammingWeightSumcheckProver::gen(params, G)
+}
+
+fn new_ra_booleanity_verifier<F: JoltField>(
+    state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+) -> BooleanitySumcheckVerifier<F> {
+    let (_, _, T) = state_manager.get_verifier_data();
+    let K = state_manager.ram_K;
+    let d = compute_d_parameter(K);
+    let log_k_chunk = DTH_ROOT_OF_K.log_2();
+    let log_t = T.log_2();
+
+    let r_cycle: Vec<F::Challenge> = state_manager
+        .transcript
+        .borrow_mut()
+        .challenge_vector_optimized::<F>(log_t);
+
+    let r_address: Vec<F::Challenge> = state_manager
+        .transcript
+        .borrow_mut()
+        .challenge_vector_optimized::<F>(log_k_chunk);
+
+    let gammas: Vec<F::Challenge> = state_manager
+        .transcript
+        .borrow_mut()
+        .challenge_vector_optimized::<F>(d);
+
+    let polynomial_types: Vec<CommittedPolynomial> =
+        (0..d).map(CommittedPolynomial::RamRa).collect();
+
+    let params = BooleanitySumcheckParams {
+        d,
+        log_k_chunk,
+        log_t,
+        gammas,
+        r_address,
+        r_cycle,
+        polynomial_types,
+        sumcheck_id: SumcheckId::RamBooleanity,
+        virtual_poly: None,
+    };
+
+    BooleanitySumcheckVerifier::new(params)
+}
+
+fn new_ra_hamming_weight_verifier<F: JoltField>(
+    state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
+) -> HammingWeightSumcheckVerifier<F> {
+    let d = compute_d_parameter(state_manager.ram_K);
+    let num_rounds = DTH_ROOT_OF_K.log_2();
+
+    let gamma_powers = state_manager
+        .transcript
+        .borrow_mut()
+        .challenge_scalar_powers(d);
+
+    let polynomial_types: Vec<CommittedPolynomial> =
+        (0..d).map(CommittedPolynomial::RamRa).collect();
+
+    let params = HammingWeightSumcheckParams {
+        d,
+        num_rounds,
+        gamma_powers,
+        polynomial_types,
+        sumcheck_id: SumcheckId::RamHammingWeight,
+        virtual_poly: Some(VirtualPolynomial::RamHammingWeight),
+        r_cycle_sumcheck_id: SumcheckId::RamHammingBooleanity,
+    };
+
+    HammingWeightSumcheckVerifier::new(params)
 }
 
 #[tracing::instrument(skip_all, name = "ram::compute_ram_ra_evals")]

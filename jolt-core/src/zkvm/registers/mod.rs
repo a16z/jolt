@@ -3,28 +3,37 @@ use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::{
     field::JoltField,
     poly::commitment::commitment_scheme::CommitmentScheme,
-    subprotocols::sumcheck::SumcheckInstance,
+    subprotocols::{
+        sumcheck_prover::SumcheckInstanceProver, sumcheck_verifier::SumcheckInstanceVerifier,
+    },
     transcripts::Transcript,
-    zkvm::dag::{stage::SumcheckStages, state_manager::StateManager},
-    zkvm::registers::{
-        read_write_checking::RegistersReadWriteChecking, val_evaluation::ValEvaluationSumcheck,
+    zkvm::{
+        dag::{
+            stage::{SumcheckStagesProver, SumcheckStagesVerifier},
+            state_manager::StateManager,
+        },
+        registers::{
+            read_write_checking::{
+                RegistersReadWriteCheckingProver, RegistersReadWriteCheckingVerifier,
+            },
+            val_evaluation::{ValEvaluationSumcheckProver, ValEvaluationSumcheckVerifier},
+        },
     },
 };
 
 pub mod read_write_checking;
 pub mod val_evaluation;
 
-#[derive(Default)]
-pub struct RegistersDag {}
+pub struct RegistersDagProver;
 
 impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>
-    SumcheckStages<F, ProofTranscript, PCS> for RegistersDag
+    SumcheckStagesProver<F, ProofTranscript, PCS> for RegistersDagProver
 {
-    fn stage4_prover_instances(
+    fn stage4_instances(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
-        let read_write_checking = RegistersReadWriteChecking::new_prover(state_manager);
+    ) -> Vec<Box<dyn SumcheckInstanceProver<F, ProofTranscript>>> {
+        let read_write_checking = RegistersReadWriteCheckingProver::gen(state_manager);
         #[cfg(feature = "allocative")]
         print_data_structure_heap_usage(
             "registers RegistersReadWriteChecking",
@@ -33,29 +42,35 @@ impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>
         vec![Box::new(read_write_checking)]
     }
 
-    fn stage4_verifier_instances(
+    fn stage5_instances(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
-        let read_write_checking = RegistersReadWriteChecking::new_verifier(state_manager);
-        vec![Box::new(read_write_checking)]
-    }
-
-    fn stage5_prover_instances(
-        &mut self,
-        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
-        let val_evaluation = ValEvaluationSumcheck::new_prover(state_manager);
+    ) -> Vec<Box<dyn SumcheckInstanceProver<F, ProofTranscript>>> {
+        let val_evaluation = ValEvaluationSumcheckProver::gen(state_manager);
         #[cfg(feature = "allocative")]
         print_data_structure_heap_usage("registers ValEvaluationSumcheck", &val_evaluation);
         vec![Box::new(val_evaluation)]
     }
+}
 
-    fn stage5_verifier_instances(
+pub struct RegistersDagVerifier;
+
+impl<F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>
+    SumcheckStagesVerifier<F, ProofTranscript, PCS> for RegistersDagVerifier
+{
+    fn stage4_instances(
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
-        let val_evaluation = ValEvaluationSumcheck::new_verifier(state_manager);
+    ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, ProofTranscript>>> {
+        let read_write_checking = RegistersReadWriteCheckingVerifier::new(state_manager);
+        vec![Box::new(read_write_checking)]
+    }
+
+    fn stage5_instances(
+        &mut self,
+        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+    ) -> Vec<Box<dyn SumcheckInstanceVerifier<F, ProofTranscript>>> {
+        let val_evaluation = ValEvaluationSumcheckVerifier::new(state_manager);
         vec![Box::new(val_evaluation)]
     }
 }

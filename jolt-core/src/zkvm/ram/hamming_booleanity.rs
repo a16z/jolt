@@ -1,5 +1,4 @@
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::marker::PhantomData;
 
 use num_traits::Zero;
 
@@ -9,10 +8,11 @@ use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
 use crate::poly::opening_proof::{
     OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-    VerifierOpeningAccumulator, BIG_ENDIAN,
+    VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
 };
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
-use crate::subprotocols::sumcheck::SumcheckInstance;
+use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
+use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
 use crate::transcripts::Transcript;
 use crate::utils::math::Math;
 use crate::zkvm::dag::state_manager::StateManager;
@@ -30,23 +30,19 @@ use rayon::prelude::*;
 // - r_cycle are the time/cycle variables bound in this sumcheck
 // - H(j) is an indicator of whether a RAM access occurred at cycle j (1 if address != 0, 0 otherwise)
 
-const DEGREE: usize = 3;
+/// Degree bound of the sumcheck round polynomials in [`HammingBooleanitySumcheckVerifier`].
+const DEGREE_BOUND: usize = 3;
 
 #[derive(Allocative)]
-struct HammingBooleanityProverState<F: JoltField> {
+pub struct HammingBooleanitySumcheckProver<F: JoltField> {
     eq_r_cycle: GruenSplitEqPolynomial<F>,
     H: MultilinearPolynomial<F>,
-}
-
-#[derive(Allocative)]
-pub struct HammingBooleanitySumcheck<F: JoltField> {
-    prover_state: Option<HammingBooleanityProverState<F>>,
     log_T: usize,
 }
 
-impl<F: JoltField> HammingBooleanitySumcheck<F> {
-    #[tracing::instrument(skip_all, name = "RamHammingBooleanitySumcheck::new_prover")]
-    pub fn new_prover(
+impl<F: JoltField> HammingBooleanitySumcheckProver<F> {
+    #[tracing::instrument(skip_all, name = "RamHammingBooleanitySumcheckProver::gen")]
+    pub fn gen(
         sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
     ) -> Self {
         let (_, _, trace, _, _) = sm.get_prover_data();
@@ -68,44 +64,35 @@ impl<F: JoltField> HammingBooleanitySumcheck<F> {
         let eq_r_cycle = GruenSplitEqPolynomial::new(&r_cycle.r, BindingOrder::LowToHigh);
 
         Self {
-            prover_state: Some(HammingBooleanityProverState { eq_r_cycle, H }),
-            log_T,
-        }
-    }
-
-    pub fn new_verifier(
-        sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
-    ) -> Self {
-        let (_, _, T) = sm.get_verifier_data();
-        let log_T = T.log_2();
-        Self {
-            prover_state: None,
+            eq_r_cycle,
+            H,
             log_T,
         }
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for HammingBooleanitySumcheck<F> {
+impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
+    for HammingBooleanitySumcheckProver<F>
+{
     fn degree(&self) -> usize {
-        DEGREE
+        DEGREE_BOUND
     }
 
     fn num_rounds(&self) -> usize {
         self.log_T
     }
 
-    fn input_claim(&self, _acc: Option<&RefCell<dyn OpeningAccumulator<F>>>) -> F {
+    fn input_claim(&self, _accumulator: &ProverOpeningAccumulator<F>) -> F {
         F::zero()
     }
 
     #[tracing::instrument(
         skip_all,
-        name = "RamHammingBooleanitySumcheck::compute_prover_message"
+        name = "RamHammingBooleanitySumcheckProver::compute_prover_message"
     )]
     fn compute_prover_message(&mut self, _round: usize, previous_claim: F) -> Vec<F> {
-        let p = self.prover_state.as_ref().unwrap();
-        let eq = &p.eq_r_cycle;
-        let H = &p.H;
+        let eq = &self.eq_r_cycle;
+        let H = &self.H;
 
         // Accumulate constant (c0) and quadratic (e) coefficients in unreduced form
         let coeffs_unr: [F::Unreduced<9>; 2] = if eq.E_in_current_len() == 1 {
@@ -177,34 +164,83 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for HammingBooleanitySu
         eq.gruen_evals_deg_3(c0, e, previous_claim).to_vec()
     }
 
-    #[tracing::instrument(skip_all, name = "RamHammingBooleanitySumcheck::bind")]
+    #[tracing::instrument(skip_all, name = "RamHammingBooleanitySumcheckProver::bind")]
     fn bind(&mut self, r_j: F::Challenge, _round: usize) {
-        let ps = self.prover_state.as_mut().unwrap();
-        ps.eq_r_cycle.bind(r_j);
-        ps.H.bind_parallel(r_j, BindingOrder::LowToHigh);
+        self.eq_r_cycle.bind(r_j);
+        self.H.bind_parallel(r_j, BindingOrder::LowToHigh);
+    }
+
+    fn cache_openings(
+        &self,
+        accumulator: &mut ProverOpeningAccumulator<F>,
+        transcript: &mut T,
+        sumcheck_challenges: &[F::Challenge],
+    ) {
+        accumulator.append_virtual(
+            transcript,
+            VirtualPolynomial::RamHammingWeight,
+            SumcheckId::RamHammingBooleanity,
+            get_opening_point(sumcheck_challenges),
+            self.H.final_sumcheck_claim(),
+        );
+    }
+
+    #[cfg(feature = "allocative")]
+    fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
+        flamegraph.visit_root(self);
+    }
+}
+
+pub struct HammingBooleanitySumcheckVerifier<F: JoltField> {
+    log_T: usize,
+    _phantom: PhantomData<F>,
+}
+
+impl<F: JoltField> HammingBooleanitySumcheckVerifier<F> {
+    pub fn new(
+        state_manager: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
+    ) -> Self {
+        Self {
+            log_T: state_manager.get_trace_len().log_2(),
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
+    for HammingBooleanitySumcheckVerifier<F>
+{
+    fn degree(&self) -> usize {
+        DEGREE_BOUND
+    }
+
+    fn num_rounds(&self) -> usize {
+        self.log_T
+    }
+
+    fn input_claim(&self, _accumulator: &VerifierOpeningAccumulator<F>) -> F {
+        F::zero()
     }
 
     fn expected_output_claim(
         &self,
-        accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
-        r: &[F::Challenge],
+        accumulator: &VerifierOpeningAccumulator<F>,
+        sumcheck_challenges: &[F::Challenge],
     ) -> F {
-        let accumulator = accumulator.as_ref().unwrap();
         let H_claim = accumulator
-            .borrow()
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::RamHammingWeight,
                 SumcheckId::RamHammingBooleanity,
             )
             .1;
 
-        let (r_cycle, _) = accumulator.borrow().get_virtual_polynomial_opening(
+        let (r_cycle, _) = accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::LookupOutput,
             SumcheckId::SpartanOuter,
         );
 
         let eq = EqPolynomial::<F>::mle(
-            r,
+            sumcheck_challenges,
             &r_cycle
                 .r
                 .iter()
@@ -216,50 +252,23 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for HammingBooleanitySu
         (H_claim.square() - H_claim) * eq
     }
 
-    fn normalize_opening_point(
+    fn cache_openings(
         &self,
-        opening_point: &[F::Challenge],
-    ) -> OpeningPoint<BIG_ENDIAN, F> {
-        let mut opening_point = opening_point.to_vec();
-        opening_point.reverse();
-        opening_point.into()
-    }
-
-    fn cache_openings_prover(
-        &self,
-        accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
+        accumulator: &mut VerifierOpeningAccumulator<F>,
         transcript: &mut T,
-        opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        sumcheck_challenges: &[F::Challenge],
     ) {
-        let ps = self.prover_state.as_ref().unwrap();
-
-        let claim = ps.H.final_sumcheck_claim();
-
-        accumulator.borrow_mut().append_virtual(
+        accumulator.append_virtual(
             transcript,
             VirtualPolynomial::RamHammingWeight,
             SumcheckId::RamHammingBooleanity,
-            opening_point.clone(),
-            claim,
+            get_opening_point(sumcheck_challenges),
         );
     }
+}
 
-    fn cache_openings_verifier(
-        &self,
-        accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
-        transcript: &mut T,
-        opening_point: OpeningPoint<BIG_ENDIAN, F>,
-    ) {
-        accumulator.borrow_mut().append_virtual(
-            transcript,
-            VirtualPolynomial::RamHammingWeight,
-            SumcheckId::RamHammingBooleanity,
-            opening_point,
-        );
-    }
-
-    #[cfg(feature = "allocative")]
-    fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
-        flamegraph.visit_root(self);
-    }
+fn get_opening_point<F: JoltField>(
+    sumcheck_challenges: &[F::Challenge],
+) -> OpeningPoint<BIG_ENDIAN, F> {
+    OpeningPoint::<LITTLE_ENDIAN, F>::new(sumcheck_challenges.to_vec()).match_endianness()
 }

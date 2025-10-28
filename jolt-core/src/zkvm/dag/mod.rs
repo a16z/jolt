@@ -7,7 +7,7 @@ pub mod state_manager;
 mod tests {
     use crate::host;
     use crate::poly::commitment::dory::DoryCommitmentScheme;
-    use crate::zkvm::dag::jolt_dag::JoltDAG;
+    use crate::zkvm::dag::jolt_dag::prove_jolt_dag;
     use crate::zkvm::dag::state_manager::StateManager;
     use crate::zkvm::{Jolt, JoltRV64IMAC, JoltVerifierPreprocessing};
     use ark_bn254::Fr;
@@ -55,7 +55,7 @@ mod tests {
             None,
             final_memory_state,
         );
-        let (proof, _) = JoltDAG::prove(state_manager).ok().unwrap();
+        let (proof, _) = prove_jolt_dag(state_manager).ok().unwrap();
 
         let verifier_preprocessing =
             JoltVerifierPreprocessing::<Fr, DoryCommitmentScheme>::from(&preprocessing);
@@ -108,7 +108,7 @@ mod tests {
             None,
             final_memory_state,
         );
-        let (proof, _) = JoltDAG::prove(state_manager).ok().unwrap();
+        let (proof, _) = prove_jolt_dag(state_manager).ok().unwrap();
 
         let verifier_preprocessing =
             JoltVerifierPreprocessing::<Fr, DoryCommitmentScheme>::from(&preprocessing);

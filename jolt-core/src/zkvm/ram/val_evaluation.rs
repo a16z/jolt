@@ -1,6 +1,6 @@
 use itertools::chain;
 use num_traits::Zero;
-use std::{array, cell::RefCell, iter::zip, rc::Rc, sync::Arc};
+use std::{array, iter::zip, sync::Arc};
 
 use crate::{
     field::JoltField,
@@ -18,7 +18,9 @@ use crate::{
         ra_poly::RaPolynomial,
         unipoly::UniPoly,
     },
-    subprotocols::sumcheck::SumcheckInstance,
+    subprotocols::{
+        sumcheck_prover::SumcheckInstanceProver, sumcheck_verifier::SumcheckInstanceVerifier,
+    },
     transcripts::Transcript,
     utils::math::Math,
     zkvm::{
@@ -47,29 +49,22 @@ use rayon::prelude::*;
 // This sumcheck ensures that the claimed final value of a memory cell is consistent
 // with its initial value and all the writes that occurred to it over time.
 
+/// Degree bound of the sumcheck round polynomials in [`ValEvaluationSumcheckVerifier`].
+const DEGREE_BOUND: usize = 3;
+
+/// Sumcheck prover for [`ValEvaluationSumcheckVerifier`].
 #[derive(Allocative)]
-pub struct ValEvaluationProverState<F: JoltField> {
+pub struct ValEvaluationSumcheckProver<F: JoltField> {
     inc: MultilinearPolynomial<F>,
     wa: RaPolynomial<usize, F>,
     lt: LtPolynomial<F>,
+    #[allocative(skip)]
+    params: ValEvaluationSumcheckParams<F>,
 }
 
-/// Val-evaluation sumcheck for RAM
-#[derive(Allocative)]
-pub struct ValEvaluationSumcheck<F: JoltField> {
-    /// Initial evaluation to subtract (for RAM)
-    init_eval: F,
-    /// log T
-    num_rounds: usize,
-    /// used to compute LT evaluation
-    prover_state: Option<ValEvaluationProverState<F>>,
-    /// ram K parameter
-    K: usize,
-}
-
-impl<F: JoltField> ValEvaluationSumcheck<F> {
-    #[tracing::instrument(skip_all, name = "RamValEvaluationSumcheck::new_prover")]
-    pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
+impl<F: JoltField> ValEvaluationSumcheckProver<F> {
+    #[tracing::instrument(skip_all, name = "RamValEvaluationSumcheckProver::gen")]
+    pub fn gen<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         initial_ram_state: &[u64],
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
@@ -87,6 +82,8 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
         let val_init: MultilinearPolynomial<F> =
             MultilinearPolynomial::from(initial_ram_state.to_vec());
         let init_eval = val_init.evaluate(&r_address.r);
+
+        let params = ValEvaluationSumcheckParams { init_eval, T, K };
 
         // Compute the size-K table storing all eq(r_address, k) evaluations for
         // k \in {0, 1}^log(K)
@@ -112,17 +109,123 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
             CommittedPolynomial::RamInc.generate_witness(preprocessing, trace, state_manager.ram_d);
         let lt = LtPolynomial::new(&r_cycle);
 
-        ValEvaluationSumcheck {
-            init_eval,
-            num_rounds: T.log_2(),
-            prover_state: Some(ValEvaluationProverState { inc, wa, lt }),
-            K,
+        Self {
+            inc,
+            wa,
+            lt,
+            params,
         }
     }
+}
 
-    pub fn new_verifier<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
+impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ValEvaluationSumcheckProver<F> {
+    fn degree(&self) -> usize {
+        DEGREE_BOUND
+    }
+
+    fn num_rounds(&self) -> usize {
+        self.params.num_rounds()
+    }
+
+    fn input_claim(&self, accumulator: &ProverOpeningAccumulator<F>) -> F {
+        self.params.input_claim(accumulator)
+    }
+
+    #[tracing::instrument(
+        skip_all,
+        name = "RamValEvaluationSumcheckProver::compute_prover_message"
+    )]
+    fn compute_prover_message(&mut self, _round: usize, previous_claim: F) -> Vec<F> {
+        let [eval_at_1, eval_at_2, eval_at_inf] = (0..self.inc.len() / 2)
+            .into_par_iter()
+            .map(|j| {
+                let inc_at_j_1 = self.inc.get_bound_coeff(j * 2 + 1);
+                let inc_at_j_inf = inc_at_j_1 - self.inc.get_bound_coeff(j * 2);
+                let inc_at_j_2 = inc_at_j_1 + inc_at_j_inf;
+
+                let wa_at_j_1 = self.wa.get_bound_coeff(j * 2 + 1);
+                let wa_at_j_inf = wa_at_j_1 - self.wa.get_bound_coeff(j * 2);
+                let wa_at_j_2 = wa_at_j_1 + wa_at_j_inf;
+
+                let lt_at_j_1 = self.lt.get_bound_coeff(j * 2 + 1);
+                let lt_at_j_inf = lt_at_j_1 - self.lt.get_bound_coeff(j * 2);
+                let lt_at_j_2 = lt_at_j_1 + lt_at_j_inf;
+
+                // Eval inc * wa * lt.
+                [
+                    (inc_at_j_1 * wa_at_j_1).mul_unreduced::<9>(lt_at_j_1),
+                    (inc_at_j_2 * wa_at_j_2).mul_unreduced::<9>(lt_at_j_2),
+                    (inc_at_j_inf * wa_at_j_inf).mul_unreduced::<9>(lt_at_j_inf),
+                ]
+            })
+            .reduce(
+                || [F::Unreduced::zero(); DEGREE_BOUND],
+                |a, b| array::from_fn(|i| a[i] + b[i]),
+            )
+            .map(F::from_montgomery_reduce);
+
+        let eval_at_0 = previous_claim - eval_at_1;
+        let poly = UniPoly::from_evals_toom(&[eval_at_0, eval_at_1, eval_at_2, eval_at_inf]);
+        let domain = chain!([0], 2..).take(DEGREE_BOUND).map(F::from_u64);
+        domain.map(|x| poly.evaluate::<F>(&x)).collect()
+    }
+
+    #[tracing::instrument(skip_all, name = "RamValEvaluationSumcheckProver::bind")]
+    fn bind(&mut self, r_j: F::Challenge, _round: usize) {
+        self.inc.bind_parallel(r_j, BindingOrder::LowToHigh);
+        self.wa.bind_parallel(r_j, BindingOrder::LowToHigh);
+        self.lt.bind(r_j, BindingOrder::LowToHigh);
+    }
+
+    fn cache_openings(
+        &self,
+        accumulator: &mut ProverOpeningAccumulator<F>,
+        transcript: &mut T,
+        sumcheck_challenges: &[F::Challenge],
+    ) {
+        let r_cycle_prime = get_opening_point::<F>(sumcheck_challenges);
+        let r = accumulator
+            .get_virtual_polynomial_opening(
+                VirtualPolynomial::RamVal,
+                SumcheckId::RamReadWriteChecking,
+            )
+            .0;
+        let (r_address, _) = r.split_at(r.len() - r_cycle_prime.len());
+        let wa_opening_point =
+            OpeningPoint::new([r_address.r.as_slice(), r_cycle_prime.r.as_slice()].concat());
+
+        accumulator.append_virtual(
+            transcript,
+            VirtualPolynomial::RamRa,
+            SumcheckId::RamValEvaluation,
+            wa_opening_point,
+            self.wa.final_sumcheck_claim(),
+        );
+
+        accumulator.append_dense(
+            transcript,
+            CommittedPolynomial::RamInc,
+            SumcheckId::RamValEvaluation,
+            r_cycle_prime.r,
+            self.inc.final_sumcheck_claim(),
+        );
+    }
+
+    #[cfg(feature = "allocative")]
+    fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
+        flamegraph.visit_root(self);
+    }
+}
+
+/// Val-evaluation sumcheck for RAM.
+pub struct ValEvaluationSumcheckVerifier<F: JoltField> {
+    params: ValEvaluationSumcheckParams<F>,
+}
+
+impl<F: JoltField> ValEvaluationSumcheckVerifier<F> {
+    pub fn new(
         initial_ram_state: &[u64],
-        state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        state_manager: &mut StateManager<'_, F, impl Transcript, impl CommitmentScheme<Field = F>>,
     ) -> Self {
         let (_, program_io, T) = state_manager.get_verifier_data();
         let K = state_manager.ram_K;
@@ -168,96 +271,38 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
         let init_eval =
             untrusted_contribution + trusted_contribution + val_init_public.evaluate(&r_address.r);
 
-        ValEvaluationSumcheck {
-            init_eval,
-            num_rounds: T.log_2(),
-            prover_state: None,
-            K,
-        }
+        let params = ValEvaluationSumcheckParams { init_eval, T, K };
+
+        Self { params }
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ValEvaluationSumcheck<F> {
+impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
+    for ValEvaluationSumcheckVerifier<F>
+{
     fn degree(&self) -> usize {
-        3
+        DEGREE_BOUND
     }
 
     fn num_rounds(&self) -> usize {
-        self.num_rounds
+        self.params.num_rounds()
     }
 
-    fn input_claim(&self, acc: Option<&RefCell<dyn OpeningAccumulator<F>>>) -> F {
-        let (_, claimed_evaluation) = acc.unwrap().borrow().get_virtual_polynomial_opening(
-            VirtualPolynomial::RamVal,
-            SumcheckId::RamReadWriteChecking,
-        );
-        claimed_evaluation - self.init_eval
-    }
-
-    #[tracing::instrument(skip_all, name = "RamValEvaluationSumcheck::compute_prover_message")]
-    fn compute_prover_message(&mut self, _round: usize, previous_claim: F) -> Vec<F> {
-        const DEGREE: usize = 3;
-
-        let ps = self
-            .prover_state
-            .as_ref()
-            .expect("Prover state not initialized");
-
-        let [eval_at_1, eval_at_2, eval_at_inf] = (0..ps.inc.len() / 2)
-            .into_par_iter()
-            .map(|j| {
-                let inc_at_j_1 = ps.inc.get_bound_coeff(j * 2 + 1);
-                let inc_at_j_inf = inc_at_j_1 - ps.inc.get_bound_coeff(j * 2);
-                let inc_at_j_2 = inc_at_j_1 + inc_at_j_inf;
-
-                let wa_at_j_1 = ps.wa.get_bound_coeff(j * 2 + 1);
-                let wa_at_j_inf = wa_at_j_1 - ps.wa.get_bound_coeff(j * 2);
-                let wa_at_j_2 = wa_at_j_1 + wa_at_j_inf;
-
-                let lt_at_j_1 = ps.lt.get_bound_coeff(j * 2 + 1);
-                let lt_at_j_inf = lt_at_j_1 - ps.lt.get_bound_coeff(j * 2);
-                let lt_at_j_2 = lt_at_j_1 + lt_at_j_inf;
-
-                // Eval inc * wa * lt.
-                [
-                    (inc_at_j_1 * wa_at_j_1).mul_unreduced::<9>(lt_at_j_1),
-                    (inc_at_j_2 * wa_at_j_2).mul_unreduced::<9>(lt_at_j_2),
-                    (inc_at_j_inf * wa_at_j_inf).mul_unreduced::<9>(lt_at_j_inf),
-                ]
-            })
-            .reduce(
-                || [F::Unreduced::zero(); DEGREE],
-                |a, b| array::from_fn(|i| a[i] + b[i]),
-            )
-            .map(F::from_montgomery_reduce);
-
-        let eval_at_0 = previous_claim - eval_at_1;
-        let poly = UniPoly::from_evals_toom(&[eval_at_0, eval_at_1, eval_at_2, eval_at_inf]);
-        let domain = chain!([0], 2..).take(DEGREE).map(F::from_u64);
-        domain.map(|x| poly.evaluate::<F>(&x)).collect()
-    }
-
-    #[tracing::instrument(skip_all, name = "RamValEvaluationSumcheck::bind")]
-    fn bind(&mut self, r_j: F::Challenge, _round: usize) {
-        if let Some(prover_state) = &mut self.prover_state {
-            prover_state.inc.bind_parallel(r_j, BindingOrder::LowToHigh);
-            prover_state.wa.bind_parallel(r_j, BindingOrder::LowToHigh);
-            prover_state.lt.bind(r_j, BindingOrder::LowToHigh);
-        }
+    fn input_claim(&self, accumulator: &VerifierOpeningAccumulator<F>) -> F {
+        self.params.input_claim(accumulator)
     }
 
     fn expected_output_claim(
         &self,
-        accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
-        r: &[F::Challenge],
+        accumulator: &VerifierOpeningAccumulator<F>,
+        sumcheck_challenges: &[F::Challenge],
     ) -> F {
-        let accumulator = accumulator.as_ref().unwrap();
-        let (r_val, _) = accumulator.borrow().get_virtual_polynomial_opening(
+        let (r_val, _) = accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::RamVal,
             SumcheckId::RamReadWriteChecking,
         );
-        let (_, r_cycle) = r_val.split_at(self.K.log_2());
-        let r = <Self as SumcheckInstance<F, T>>::normalize_opening_point(self, r);
+        let (_, r_cycle) = r_val.split_at(self.params.K.log_2());
+        let r = get_opening_point::<F>(sumcheck_challenges);
         // Compute LT(r_cycle', r_cycle)
         let mut lt_eval = F::zero();
         let mut eq_term = F::one();
@@ -266,69 +311,25 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ValEvaluationSumche
             eq_term *= F::one() - x - y + *x * y + *x * y;
         }
 
-        let (_, inc_claim) = accumulator.borrow().get_committed_polynomial_opening(
+        let (_, inc_claim) = accumulator.get_committed_polynomial_opening(
             CommittedPolynomial::RamInc,
             SumcheckId::RamValEvaluation,
         );
         let (_, wa_claim) = accumulator
-            .borrow()
             .get_virtual_polynomial_opening(VirtualPolynomial::RamRa, SumcheckId::RamValEvaluation);
 
         // Return inc_claim * wa_claim * lt_eval
         inc_claim * wa_claim * lt_eval
     }
 
-    fn normalize_opening_point(
+    fn cache_openings(
         &self,
-        opening_point: &[F::Challenge],
-    ) -> OpeningPoint<BIG_ENDIAN, F> {
-        OpeningPoint::<LITTLE_ENDIAN, F>::new(opening_point.to_vec()).match_endianness()
-    }
-
-    fn cache_openings_prover(
-        &self,
-        accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
+        accumulator: &mut VerifierOpeningAccumulator<F>,
         transcript: &mut T,
-        r_cycle_prime: OpeningPoint<BIG_ENDIAN, F>,
+        sumcheck_challenges: &[F::Challenge],
     ) {
-        if let Some(prover_state) = &self.prover_state {
-            let r = accumulator
-                .borrow()
-                .get_virtual_polynomial_opening(
-                    VirtualPolynomial::RamVal,
-                    SumcheckId::RamReadWriteChecking,
-                )
-                .0;
-            let (r_address, _) = r.split_at(r.len() - r_cycle_prime.len());
-            let wa_opening_point =
-                OpeningPoint::new([r_address.r.as_slice(), r_cycle_prime.r.as_slice()].concat());
-
-            accumulator.borrow_mut().append_virtual(
-                transcript,
-                VirtualPolynomial::RamRa,
-                SumcheckId::RamValEvaluation,
-                wa_opening_point,
-                prover_state.wa.final_sumcheck_claim(),
-            );
-
-            accumulator.borrow_mut().append_dense(
-                transcript,
-                CommittedPolynomial::RamInc,
-                SumcheckId::RamValEvaluation,
-                r_cycle_prime.r,
-                prover_state.inc.final_sumcheck_claim(),
-            );
-        }
-    }
-
-    fn cache_openings_verifier(
-        &self,
-        accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
-        transcript: &mut T,
-        r_cycle_prime: OpeningPoint<BIG_ENDIAN, F>,
-    ) {
+        let r_cycle_prime = get_opening_point::<F>(sumcheck_challenges);
         let r = accumulator
-            .borrow()
             .get_virtual_polynomial_opening(
                 VirtualPolynomial::RamVal,
                 SumcheckId::RamReadWriteChecking,
@@ -338,23 +339,46 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ValEvaluationSumche
         let wa_opening_point =
             OpeningPoint::new([r_address.r.as_slice(), r_cycle_prime.r.as_slice()].concat());
 
-        accumulator.borrow_mut().append_virtual(
+        accumulator.append_virtual(
             transcript,
             VirtualPolynomial::RamRa,
             SumcheckId::RamValEvaluation,
             wa_opening_point,
         );
-
-        accumulator.borrow_mut().append_dense(
+        accumulator.append_dense(
             transcript,
             CommittedPolynomial::RamInc,
             SumcheckId::RamValEvaluation,
             r_cycle_prime.r,
         );
     }
+}
 
-    #[cfg(feature = "allocative")]
-    fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
-        flamegraph.visit_root(self);
+struct ValEvaluationSumcheckParams<F: JoltField> {
+    /// Initial evaluation to subtract (for RAM).
+    init_eval: F,
+    /// Trace length.
+    T: usize,
+    /// Ram K parameter.
+    K: usize,
+}
+
+impl<F: JoltField> ValEvaluationSumcheckParams<F> {
+    fn num_rounds(&self) -> usize {
+        self.T.log_2()
     }
+
+    fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> F {
+        let (_, claimed_evaluation) = accumulator.get_virtual_polynomial_opening(
+            VirtualPolynomial::RamVal,
+            SumcheckId::RamReadWriteChecking,
+        );
+        claimed_evaluation - self.init_eval
+    }
+}
+
+fn get_opening_point<F: JoltField>(
+    sumcheck_challenges: &[F::Challenge],
+) -> OpeningPoint<BIG_ENDIAN, F> {
+    OpeningPoint::<LITTLE_ENDIAN, F>::new(sumcheck_challenges.to_vec()).match_endianness()
 }
