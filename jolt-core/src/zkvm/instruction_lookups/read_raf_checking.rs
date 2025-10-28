@@ -1032,7 +1032,6 @@ pub fn current_suffix_len(j: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use std::ops::DerefMut;
-    use std::u64;
 
     use super::*;
     use crate::subprotocols::sumcheck::BatchedSumcheck;
@@ -1050,10 +1049,7 @@ mod tests {
     use rand::{rngs::StdRng, RngCore, SeedableRng};
     use strum::IntoEnumIterator;
     use tracer::emulator::memory::Memory;
-    use tracer::instruction::format::format_r::RegisterStateFormatR;
-    use tracer::instruction::virtual_change_divisor::VirtualChangeDivisor;
-    use tracer::instruction::virtual_change_divisor_w::VirtualChangeDivisorW;
-    use tracer::instruction::{Cycle, RISCVCycle};
+    use tracer::instruction::Cycle;
     use tracer::JoltDevice;
 
     const LOG_T: usize = 8;
@@ -1124,33 +1120,8 @@ mod tests {
             Cycle::VirtualSignExtendWord(cycle) => cycle.random(rng).into(),
             Cycle::VirtualROTRI(cycle) => cycle.random(rng).into(),
             Cycle::VirtualROTRIW(cycle) => cycle.random(rng).into(),
-            Cycle::VirtualChangeDivisor(cycle) => 
-            {
-                // cycle.random(rng).into()
-                let cycle = RISCVCycle::<VirtualChangeDivisor> {
-                    instruction: VirtualChangeDivisor::default(),
-                    register_state: RegisterStateFormatR {
-                        rd: (0, 0),
-                        rs1: 0,
-                        rs2: u64::MAX as u64, // -1 as u64
-                    },
-                    ram_access: Default::default(),
-                };
-                tracer::instruction::Cycle::VirtualChangeDivisor(cycle)
-            },
-            Cycle::VirtualChangeDivisorW(cycle) => {
-                // cycle.random(rng).into()
-                let cycle = RISCVCycle::<VirtualChangeDivisorW> {
-                    instruction: VirtualChangeDivisorW::default(),
-                    register_state: RegisterStateFormatR {
-                        rd: (0, 0),
-                        rs1: 0,
-                        rs2: -1_i64 as u64, // -1 as u64
-                    },
-                    ram_access: Default::default(),
-                };
-                tracer::instruction::Cycle::VirtualChangeDivisorW(cycle)
-            },
+            Cycle::VirtualChangeDivisor(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualChangeDivisorW(cycle) => cycle.random(rng).into(),
             Cycle::VirtualAssertMulUNoOverflow(cycle) => cycle.random(rng).into(),
             _ => Cycle::NoOp,
         }
@@ -1233,10 +1204,8 @@ mod tests {
 
         for (i, cycle) in trace.iter().enumerate() {
             let lookup_index = LookupQuery::<XLEN>::to_lookup_index(cycle);
-            println!("lookup_index: {:0128b}", lookup_index);
             let table: Option<LookupTables<XLEN>> = cycle.lookup_table();
             if let Some(table) = table {
-                println!("materialize_entry: {:?}", table.materialize_entry(lookup_index));
                 rv_claim +=
                     JoltField::mul_u64(&eq_r_cycle[i], table.materialize_entry(lookup_index));
 

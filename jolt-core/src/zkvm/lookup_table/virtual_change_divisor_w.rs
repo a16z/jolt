@@ -51,11 +51,7 @@ impl<const XLEN: usize> JoltLookupTable for VirtualChangeDivisorWTable<XLEN> {
         for i in XLEN / 2..XLEN {
             let bit_value = r[2 * i + 1];
             let shift = XLEN - 1 - i;
-            if shift >= 64 {
-                
-            } else {
-                divisor_value += F::from_u64(1u64 << shift) * bit_value;
-            }
+            divisor_value += F::from_u64(1u64 << shift) * bit_value;
         }
 
         let mut x_product = r[XLEN].into();
@@ -72,9 +68,7 @@ impl<const XLEN: usize> JoltLookupTable for VirtualChangeDivisorWTable<XLEN> {
 
         let adjustment = F::from_u64(2) - F::from_u128(1u128 << XLEN);
 
-        divisor_value 
-        + adjustment * x_product * y_product
-         + sign_extension
+        divisor_value + adjustment * x_product * y_product + sign_extension
     }
 }
 

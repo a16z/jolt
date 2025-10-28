@@ -15,9 +15,9 @@ pub fn main() {
     let verify = guest::build_verifier_muldiv(verifier_preprocessing);
 
     let now = Instant::now();
-    let (output, proof, program_io) = prove(0, 4294967295_u32);
+    let (output, proof, program_io) = prove(12031293, 17, 92);
     info!("Prover runtime: {} s", now.elapsed().as_secs_f64());
-    let is_valid = verify(0, 4294967295_u32, output, program_io.panic, proof);
+    let is_valid = verify(12031293, 17, 92, output, program_io.panic, proof);
 
     info!("output: {output}");
     info!("valid: {is_valid}");
