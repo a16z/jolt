@@ -5,18 +5,14 @@ use crate::{
     emulator::cpu::{Cpu, Xlen},
 };
 
-use super::{
-    format::{format_b::FormatB, InstructionFormat},
-    RISCVInstruction, RISCVTrace,
-};
+use super::{format::format_b::FormatB, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name = VirtualAssertValidUnsignedRemainder,
     mask = 0,
     match = 0,
     format = FormatB,
-    ram = (),
-    is_virtual = true
+    ram = ()
 );
 
 impl VirtualAssertValidUnsignedRemainder {

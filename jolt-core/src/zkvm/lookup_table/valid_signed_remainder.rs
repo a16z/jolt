@@ -4,16 +4,19 @@ use super::prefixes::{PrefixEval, Prefixes};
 use super::suffixes::{SuffixEval, Suffixes};
 use super::JoltLookupTable;
 use super::PrefixSuffixDecomposition;
-use crate::{field::JoltField, utils::uninterleave_bits};
+use crate::{
+    field::{ChallengeFieldOps, FieldChallengeOps, JoltField},
+    utils::uninterleave_bits,
+};
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 /// (remainder, divisor)
-pub struct ValidSignedRemainderTable<const WORD_SIZE: usize>;
+pub struct ValidSignedRemainderTable<const XLEN: usize>;
 
-impl<const WORD_SIZE: usize> JoltLookupTable for ValidSignedRemainderTable<WORD_SIZE> {
-    fn materialize_entry(&self, index: u64) -> u64 {
+impl<const XLEN: usize> JoltLookupTable for ValidSignedRemainderTable<XLEN> {
+    fn materialize_entry(&self, index: u128) -> u64 {
         let (x, y) = uninterleave_bits(index);
-        match WORD_SIZE {
+        match XLEN {
             8 => {
                 let (remainder, divisor) = (x as u8 as i8, y as u8 as i8);
                 let is_remainder_zero = remainder == 0;
@@ -22,8 +25,8 @@ impl<const WORD_SIZE: usize> JoltLookupTable for ValidSignedRemainderTable<WORD_
                 if is_remainder_zero || is_divisor_zero {
                     1
                 } else {
-                    let remainder_sign = remainder >> (WORD_SIZE - 1);
-                    let divisor_sign = divisor >> (WORD_SIZE - 1);
+                    let remainder_sign = remainder >> (XLEN - 1);
+                    let divisor_sign = divisor >> (XLEN - 1);
                     (remainder.unsigned_abs() < divisor.unsigned_abs()
                         && remainder_sign == divisor_sign)
                         .into()
@@ -37,18 +40,36 @@ impl<const WORD_SIZE: usize> JoltLookupTable for ValidSignedRemainderTable<WORD_
                 if is_remainder_zero || is_divisor_zero {
                     1
                 } else {
-                    let remainder_sign = remainder >> (WORD_SIZE - 1);
-                    let divisor_sign = divisor >> (WORD_SIZE - 1);
+                    let remainder_sign = remainder >> (XLEN - 1);
+                    let divisor_sign = divisor >> (XLEN - 1);
                     (remainder.unsigned_abs() < divisor.unsigned_abs()
                         && remainder_sign == divisor_sign)
                         .into()
                 }
             }
-            _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
+            64 => {
+                let (remainder, divisor) = (x as i64, y as i64);
+                let is_remainder_zero = remainder == 0;
+                let is_divisor_zero = divisor == 0;
+
+                if is_remainder_zero || is_divisor_zero {
+                    1
+                } else {
+                    let remainder_sign = remainder >> (XLEN - 1);
+                    let divisor_sign = divisor >> (XLEN - 1);
+                    (remainder.unsigned_abs() < divisor.unsigned_abs()
+                        && remainder_sign == divisor_sign)
+                        .into()
+                }
+            }
+            _ => panic!("{XLEN}-bit word size is unsupported"),
         }
     }
-
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
+    fn evaluate_mle<F, C>(&self, r: &[C]) -> F
+    where
+        C: ChallengeFieldOps<F>,
+        F: JoltField + FieldChallengeOps<C>,
+    {
         let x_sign = r[0];
         let y_sign = r[1];
 
@@ -59,7 +80,7 @@ impl<const WORD_SIZE: usize> JoltLookupTable for ValidSignedRemainderTable<WORD_
         let mut negative_divisor_equals_remainder = x_sign * y_sign;
         let mut negative_divisor_greater_than_remainder = x_sign * y_sign;
 
-        for i in 1..WORD_SIZE {
+        for i in 1..XLEN {
             let x_i = r[2 * i];
             let y_i = r[2 * i + 1];
             if i == 1 {
@@ -84,9 +105,7 @@ impl<const WORD_SIZE: usize> JoltLookupTable for ValidSignedRemainderTable<WORD_
     }
 }
 
-impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE>
-    for ValidSignedRemainderTable<WORD_SIZE>
-{
+impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for ValidSignedRemainderTable<XLEN> {
     fn suffixes(&self) -> Vec<Suffixes> {
         vec![
             Suffixes::One,
@@ -118,6 +137,7 @@ mod test {
     use crate::zkvm::lookup_table::test::{
         lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
     };
+    use common::constants::XLEN;
 
     use super::ValidSignedRemainderTable;
 
@@ -128,11 +148,11 @@ mod test {
 
     #[test]
     fn mle_random() {
-        lookup_table_mle_random_test::<Fr, ValidSignedRemainderTable<32>>();
+        lookup_table_mle_random_test::<Fr, ValidSignedRemainderTable<XLEN>>();
     }
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<Fr, ValidSignedRemainderTable<32>>();
+        prefix_suffix_test::<XLEN, Fr, ValidSignedRemainderTable<XLEN>>();
     }
 }

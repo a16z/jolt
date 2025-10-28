@@ -1,0 +1,19 @@
+[package]
+name = "hashbench-guest"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+guest = []
+
+[dependencies]
+jolt = { package = "jolt-sdk", path = "../../../jolt-sdk", features = [] }
+jolt-inlines-sha2 = { package = "jolt-inlines-sha2", path = "../../../jolt-inlines/sha2" }
+jolt-inlines-keccak256 = { package = "jolt-inlines-keccak256", path = "../../../jolt-inlines/keccak256" }
+jolt-inlines-blake2 = { package = "jolt-inlines-blake2", path = "../../../jolt-inlines/blake2" }
+jolt-inlines-blake3 = { package = "jolt-inlines-blake3", path = "../../../jolt-inlines/blake3" }
+
+sha2 = { version = "0.10.9", default-features = false }
+sha3 = { version = "0.10", default-features = false }
+blake2 = { version = "0.10.6", default-features = false }
+blake3 = { version = "1.6", default-features = false }

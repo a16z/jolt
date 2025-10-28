@@ -1,17 +1,14 @@
+use crate::utils::inline_helpers::InstrAssembler;
+use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     declare_riscv_instr,
     emulator::cpu::{Cpu, Xlen},
-    instruction::{
-        format::format_virtual_right_shift_i::FormatVirtualRightShiftI, virtual_srai::VirtualSRAI,
-    },
+    instruction::virtual_srai::VirtualSRAI,
 };
 
-use super::{
-    format::{format_i::FormatI, InstructionFormat},
-    RISCVInstruction, RISCVTrace, RV32IMCycle, RV32IMInstruction, VirtualInstructionSequence,
-};
+use super::{format::format_i::FormatI, Cycle, Instruction, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name   = SRAI,
@@ -34,37 +31,39 @@ impl SRAI {
 }
 
 impl RISCVTrace for SRAI {
-    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<RV32IMCycle>>) {
-        let virtual_sequence = self.virtual_sequence();
+    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
+        let inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         let mut trace = trace;
-        for instr in virtual_sequence {
-            // In each iteration, create a new Option containing a re-borrowed reference
+        for instr in inline_sequence {
             instr.trace(cpu, trace.as_deref_mut());
         }
     }
-}
 
-impl VirtualInstructionSequence for SRAI {
-    fn virtual_sequence(&self) -> Vec<RV32IMInstruction> {
-        let virtual_sequence_remaining = self.virtual_sequence_remaining.unwrap_or(0);
-        let mut sequence = vec![];
-
-        // TODO: this only works for Xlen = 32
-        let shift = self.operands.imm % 32;
-        let ones = (1u64 << (32 - shift)) - 1;
-        let bitmask = ones << shift;
-
-        let sra = VirtualSRAI {
-            address: self.address,
-            operands: FormatVirtualRightShiftI {
-                rd: self.operands.rd,
-                rs1: self.operands.rs1,
-                imm: bitmask,
-            },
-            virtual_sequence_remaining: Some(virtual_sequence_remaining),
+    /// Arithmetic right shift immediate using bitmask approach.
+    ///
+    /// SRAI (Shift Right Arithmetic Immediate) shifts rs1 right by a constant amount,
+    /// filling the vacated bits with copies of the sign bit.
+    ///
+    /// Implementation:
+    /// 1. Calculate a bitmask for the shift amount
+    /// 2. Apply arithmetic shift using VirtualSRAI with the bitmask
+    ///
+    /// The arithmetic shift preserves the sign bit, extending it into the
+    /// high-order bits, which is essential for signed integer division by powers of 2.
+    fn inline_sequence(
+        &self,
+        allocator: &VirtualRegisterAllocator,
+        xlen: Xlen,
+    ) -> Vec<Instruction> {
+        let (shift, len) = match xlen {
+            Xlen::Bit32 => (self.operands.imm & 0x1f, 32),
+            Xlen::Bit64 => (self.operands.imm & 0x3f, 64),
         };
-        sequence.push(sra.into());
+        let ones = (1u128 << (len - shift)) - 1;
+        let bitmask = (ones << shift) as u64;
 
-        sequence
+        let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
+        asm.emit_vshift_i::<VirtualSRAI>(self.operands.rd, self.operands.rs1, bitmask);
+        asm.finalize()
     }
 }

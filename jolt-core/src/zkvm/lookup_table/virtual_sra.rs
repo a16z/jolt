@@ -4,24 +4,24 @@ use super::prefixes::PrefixEval;
 use super::suffixes::{SuffixEval, Suffixes};
 use super::JoltLookupTable;
 use super::PrefixSuffixDecomposition;
-use crate::field::JoltField;
+use crate::field::{ChallengeFieldOps, FieldChallengeOps, JoltField};
 use crate::utils::lookup_bits::LookupBits;
 use crate::utils::uninterleave_bits;
 use crate::zkvm::lookup_table::prefixes::Prefixes;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct VirtualSRATable<const WORD_SIZE: usize>;
+pub struct VirtualSRATable<const XLEN: usize>;
 
-impl<const WORD_SIZE: usize> JoltLookupTable for VirtualSRATable<WORD_SIZE> {
-    fn materialize_entry(&self, index: u64) -> u64 {
+impl<const XLEN: usize> JoltLookupTable for VirtualSRATable<XLEN> {
+    fn materialize_entry(&self, index: u128) -> u64 {
         let (x, y) = uninterleave_bits(index);
-        let mut x = LookupBits::new(x as u64, WORD_SIZE);
-        let mut y = LookupBits::new(y as u64, WORD_SIZE);
+        let mut x = LookupBits::new(x as u128, XLEN);
+        let mut y = LookupBits::new(y as u128, XLEN);
 
         let sign_bit = if x.leading_ones() == 0 { 0 } else { 1 };
         let mut entry = 0;
         let mut sign_extension = 0;
-        for i in 0..WORD_SIZE {
+        for i in 0..XLEN {
             let x_i = x.pop_msb() as u64;
             let y_i = y.pop_msb() as u64;
             entry *= 1 + y_i;
@@ -32,12 +32,15 @@ impl<const WORD_SIZE: usize> JoltLookupTable for VirtualSRATable<WORD_SIZE> {
         }
         entry + sign_bit * sign_extension
     }
-
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
-        debug_assert_eq!(r.len(), 2 * WORD_SIZE);
+    fn evaluate_mle<F, C>(&self, r: &[C]) -> F
+    where
+        C: ChallengeFieldOps<F>,
+        F: JoltField + FieldChallengeOps<C>,
+    {
+        debug_assert_eq!(r.len(), 2 * XLEN);
         let mut result = F::zero();
         let mut sign_extension = F::zero();
-        for i in 0..WORD_SIZE {
+        for i in 0..XLEN {
             let x_i = r[2 * i];
             let y_i = r[2 * i + 1];
             result *= F::one() + y_i;
@@ -50,7 +53,7 @@ impl<const WORD_SIZE: usize> JoltLookupTable for VirtualSRATable<WORD_SIZE> {
     }
 }
 
-impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE> for VirtualSRATable<WORD_SIZE> {
+impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for VirtualSRATable<XLEN> {
     fn suffixes(&self) -> Vec<Suffixes> {
         vec![
             Suffixes::One,
@@ -70,7 +73,7 @@ impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE> for VirtualSRA
     }
 
     #[cfg(test)]
-    fn random_lookup_index(rng: &mut rand::rngs::StdRng) -> u64 {
+    fn random_lookup_index(rng: &mut rand::rngs::StdRng) -> u128 {
         super::test::gen_bitmask_lookup_index(rng)
     }
 }
@@ -83,6 +86,7 @@ mod test {
     use crate::zkvm::lookup_table::test::{
         lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
     };
+    use common::constants::XLEN;
 
     #[test]
     fn mle_full_hypercube() {
@@ -91,11 +95,11 @@ mod test {
 
     #[test]
     fn mle_random() {
-        lookup_table_mle_random_test::<Fr, VirtualSRATable<32>>();
+        lookup_table_mle_random_test::<Fr, VirtualSRATable<XLEN>>();
     }
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<Fr, VirtualSRATable<32>>();
+        prefix_suffix_test::<XLEN, Fr, VirtualSRATable<XLEN>>();
     }
 }

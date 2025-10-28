@@ -1,12 +1,8 @@
-use rand::{rngs::StdRng, RngCore};
 use serde::{Deserialize, Serialize};
 
-use crate::emulator::cpu::Cpu;
+use crate::{emulator::cpu::Cpu, instruction::NormalizedInstruction};
 
-use super::{
-    format::{format_j::FormatJ, InstructionFormat},
-    RISCVInstruction, RISCVTrace,
-};
+use super::{format::format_j::FormatJ, RISCVInstruction, RISCVTrace};
 
 // Special case for VirtualAdvice as it has an extra 'advice' field
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
@@ -19,7 +15,9 @@ pub struct VirtualAdvice {
     /// `virtual_sequence_remaining` will be Some(0); if this is the penultimate instruction
     /// in the sequence, `virtual_sequence_remaining` will be Some(1); etc.
     pub virtual_sequence_remaining: Option<u16>,
+    pub is_first_in_sequence: bool,
     pub advice: u64,
+    pub is_compressed: bool,
 }
 
 impl RISCVInstruction for VirtualAdvice {
@@ -33,21 +31,51 @@ impl RISCVInstruction for VirtualAdvice {
         &self.operands
     }
 
-    fn new(_: u32, _: u64, _: bool) -> Self {
+    fn new(_: u32, _: u64, _: bool, _: bool) -> Self {
         panic!("virtual instruction `VirtualAdvice` cannot be built from a machine word");
     }
 
-    fn random(rng: &mut StdRng) -> Self {
+    #[cfg(any(feature = "test-utils", test))]
+    fn random(rng: &mut rand::rngs::StdRng) -> Self {
+        use crate::instruction::format::InstructionFormat;
+        use rand::RngCore;
         Self {
             address: rng.next_u64(),
             operands: FormatJ::random(rng),
             advice: rng.next_u64(),
             virtual_sequence_remaining: None,
+            is_first_in_sequence: false,
+            is_compressed: false,
         }
     }
 
     fn execute(&self, cpu: &mut Cpu, _: &mut Self::RAMAccess) {
         cpu.x[self.operands.rd as usize] = self.advice as i64;
+    }
+}
+
+impl From<NormalizedInstruction> for VirtualAdvice {
+    fn from(ni: NormalizedInstruction) -> Self {
+        Self {
+            address: ni.address as u64,
+            operands: ni.operands.into(),
+            advice: 0,
+            virtual_sequence_remaining: ni.virtual_sequence_remaining,
+            is_first_in_sequence: ni.is_first_in_sequence,
+            is_compressed: ni.is_compressed,
+        }
+    }
+}
+
+impl From<VirtualAdvice> for NormalizedInstruction {
+    fn from(val: VirtualAdvice) -> Self {
+        NormalizedInstruction {
+            address: val.address as usize,
+            operands: val.operands.into(),
+            is_compressed: val.is_compressed,
+            is_first_in_sequence: val.is_first_in_sequence,
+            virtual_sequence_remaining: val.virtual_sequence_remaining,
+        }
     }
 }
 

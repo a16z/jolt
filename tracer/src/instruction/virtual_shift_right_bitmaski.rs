@@ -5,18 +5,14 @@ use crate::{
     emulator::cpu::{Cpu, Xlen},
 };
 
-use super::{
-    format::{format_j::FormatJ, InstructionFormat},
-    RISCVInstruction, RISCVTrace,
-};
+use super::{format::format_j::FormatJ, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name = VirtualShiftRightBitmaskI,
     mask = 0,
     match = 0,
     format = FormatJ,
-    ram = (),
-    is_virtual = true
+    ram = ()
 );
 
 impl VirtualShiftRightBitmaskI {

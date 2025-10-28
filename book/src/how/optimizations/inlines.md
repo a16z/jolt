@@ -55,6 +55,18 @@ For advanced use cases, you can invoke inlines directly through inline assembly.
 - **funct7**: Identifies the type of operation (e.g., `0x00` for SHA2)
 - **funct3**: Identifies sub-instructions within that operation (e.g., `0x0` for SHA256, `0x1` for SHA256INIT)
 
+#### Jolt Core Inlines Reference
+
+| Inline        | Opcode | funct7 | funct3 | Description                                |
+| ------------- | ------ | ------ | ------ | ------------------------------------------ |
+| SHA256        | 0x0B   | 0x00   | 0x00   | SHA-256 compression with existing state    |
+| SHA256INIT    | 0x0B   | 0x00   | 0x01   | SHA-256 compression with initial constants |
+| KECCAK256     | 0x0B   | 0x01   | 0x00   | Keccak-256 permutation                     |
+| BLAKE2B       | 0x0B   | 0x02   | 0x00   | BLAKE2b compression                        |
+| BLAKE3        | 0x0B   | 0x03   | 0x00   | BLAKE3 compression                         |
+| BLAKE3KEYED64 | 0x0B   | 0x03   | 0x01   | BLAKE3 compression keyed                   |
+| BIGINT256_MUL | 0x0B   | 0x04   | 0x00   | 256-bit bigint multiplication              |
+
 ```rust
 unsafe {
     // SHA256 compression with existing state
@@ -77,6 +89,38 @@ unsafe {
 }
 ```
 
+## Benchmarks
+
+The table below compares the performance of reference and inline implementations for each hash function, using identical 32KB inputs and the same API across both reference and inline implementations.
+
+| Hash Function | Implementation | Cycles | Cycles Per Byte (CPB) | Speedup |
+|--------------|----------------|----------------|----------------------|---------|
+| SHA-256      | [sha2 crate](https://crates.io/crates/sha2)      | 10,414,653     | 317.94               | -       |
+| SHA-256      | **Jolt Inline**     | **1,765,207**  | **53.89**            | **5.9×** |
+| Keccak-256   | [sha3 crate](https://crates.io/crates/sha3)      | 2,556,519      | 78.04                | -       |
+| Keccak-256   | **Jolt Inline**     | **848,224**    | **25.89**            | **3.01×** |
+| Blake2B      | [blake2 crate](https://crates.io/crates/blake2)      | 968,562        | 29.57                | -       |
+| Blake2B      | **Jolt Inline**     | **340,787**    | **10.40**            | **2.85×** |
+
+*Note: Blake3 currently supports inputs up to 64 bytes. Full implementation for larger inputs is in development.*
+
+#### Proving Time
+
+Proving time is hardware-dependent. The Jolt prover achieves approximately 500 kHz throughput (proving 500,000 RISC-V cycles per second) on a MacBook M4 Max, and 1.5 MHz throughput (1,500,000 cycles per second) on an AMD Threadripper Pro 7975.
+
+**Hardware Specifications:**
+- **MacBook M4 Max**: 16 cores, 128 GB RAM
+- **AMD Threadripper Pro 7975**: 32 cores
+
+The following table shows the data that can be proved by each of the Jolt inlines per second.
+
+| Hash Function | MacBook M4 Max (500 kHz) | Threadripper Pro 7975WX (1.5 MHz) |
+|--------------|---------------------|----------------------|
+| SHA-256 Inline | 9.1 KB/s | 27.1 KB/s |
+| Keccak-256 Inline | 18.8 KB/s | 56.1 KB/s |
+| Blake2B Inline | 47.1 KB/s | 139.1 KB/s |
+
+
 ## Jolt CPU Advantages
 
 The Jolt zkVM architecture provides several unique optimization opportunities that inlines can leverage:
@@ -87,15 +131,15 @@ Inline sequences have access to 32 additional virtual registers beyond the stand
 
 ### 2. Custom Instructions
 
-Jolt allows creation of custom instructions that can replace common multi-instruction patterns with a single operation. The key innovation here is that these instructions must have structured multilinear extensions (MLEs) that can be evaluated efficiently in small space (see [prefix-suffix sumcheck](../instruction-execution.html)). This is where the real performance gain comes from: by compressing operations into forms that work naturally with Jolt's lookup-based architecture, we achieve dramatic speedups without the complexity of traditional precompiles. 
+Jolt allows creation of custom instructions that can replace common multi-instruction patterns with a single operation. The key innovation here is that these instructions must have structured multilinear extensions (MLEs) that can be evaluated efficiently in small space (see [prefix-suffix sumcheck](../instruction-execution.html)). This is where the real performance gain comes from: by compressing operations into forms that work naturally with Jolt's lookup-based architecture, we achieve dramatic speedups without the complexity of traditional precompiles.
 
 This is fundamentally different from traditional assembly optimization - we're not just rearranging instructions, we're creating new ones that are specifically designed to be "lookupable" within Jolt's proof system. For example, the ROTRI (rotate right immediate) instruction replaces the three-instruction sequence `(x >> imm) | (x << (32-imm))` with a single cycle, while remaining fully verifiable through lookups because it maintains the structured MLE property.
 
 Note that creating custom user-defined instructions is currently only available within the core Jolt codebase and not yet supported in external crates.
 
-### 3. 32-bit Immediate Values
+### 3. 64-bit Immediate Values
 
-Unlike standard RISC-V which limits immediate values to 12 or 20 bits, inlines can use full 32-bit immediate values. This eliminates the need for multiple instructions to load large constants, reducing both cycle count and register usage.
+Unlike standard RISC-V which limits immediate values to 12 or 20 bits, inlines can use full 64-bit immediate values. This eliminates the need for multiple instructions to load large constants, reducing both cycle count and register usage.
 
 ## Creating Custom Inlines
 
@@ -137,7 +181,7 @@ When designing your inline, consider:
 
 - **Register Allocation**: Maximize use of the 32 additional virtual registers to minimize memory operations
 - **Custom Instructions**: Identify patterns that could benefit from custom instructions (creating custom user-defined instructions is not available at this time)
-- **Immediate Values**: Leverage 32-bit immediate values to reduce instruction count
+- **Immediate Values**: Leverage 64-bit immediate values to reduce instruction count
 - **Memory Access Patterns**: Structure your algorithm to minimize load/store operations
 
 For concrete examples and implementation patterns, study the existing inline implementations in the Jolt codebase.

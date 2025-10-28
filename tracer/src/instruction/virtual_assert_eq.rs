@@ -2,18 +2,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
-use super::{
-    format::{format_b::FormatB, InstructionFormat},
-    RISCVInstruction, RISCVTrace,
-};
+use super::{format::format_b::FormatB, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name = VirtualAssertEQ,
     mask = 0,
     match = 0,
     format = FormatB,
-    ram = (),
-    is_virtual = true
+    ram = ()
 );
 
 impl VirtualAssertEQ {

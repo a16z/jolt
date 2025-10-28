@@ -5,28 +5,36 @@ use super::prefixes::{PrefixEval, Prefixes};
 use super::suffixes::{SuffixEval, Suffixes};
 use super::JoltLookupTable;
 use super::PrefixSuffixDecomposition;
-use crate::{field::JoltField, utils::uninterleave_bits};
+use crate::{
+    field::{ChallengeFieldOps, FieldChallengeOps, JoltField},
+    utils::uninterleave_bits,
+};
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct NotEqualTable<const WORD_SIZE: usize>;
+pub struct NotEqualTable<const XLEN: usize>;
 
-impl<const WORD_SIZE: usize> JoltLookupTable for NotEqualTable<WORD_SIZE> {
-    fn materialize_entry(&self, index: u64) -> u64 {
+impl<const XLEN: usize> JoltLookupTable for NotEqualTable<XLEN> {
+    fn materialize_entry(&self, index: u128) -> u64 {
         let (x, y) = uninterleave_bits(index);
-        match WORD_SIZE {
+        match XLEN {
             #[cfg(test)]
             8 => (x != y).into(),
             32 => (x != y).into(),
-            _ => panic!("{WORD_SIZE}-bit word size is unsupported"),
+            64 => (x != y).into(),
+            _ => panic!("{XLEN}-bit word size is unsupported"),
         }
     }
 
-    fn evaluate_mle<F: JoltField>(&self, r: &[F]) -> F {
-        F::one() - EqualTable::<WORD_SIZE>.evaluate_mle::<F>(r)
+    fn evaluate_mle<F, C>(&self, r: &[C]) -> F
+    where
+        C: ChallengeFieldOps<F>,
+        F: JoltField + FieldChallengeOps<C>,
+    {
+        F::one() - EqualTable::<XLEN>.evaluate_mle::<F, C>(r)
     }
 }
 
-impl<const WORD_SIZE: usize> PrefixSuffixDecomposition<WORD_SIZE> for NotEqualTable<WORD_SIZE> {
+impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for NotEqualTable<XLEN> {
     fn suffixes(&self) -> Vec<Suffixes> {
         vec![Suffixes::One, Suffixes::Eq]
     }
@@ -45,6 +53,7 @@ mod test {
     use crate::zkvm::lookup_table::test::{
         lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
     };
+    use common::constants::XLEN;
 
     use super::NotEqualTable;
 
@@ -55,11 +64,11 @@ mod test {
 
     #[test]
     fn mle_random() {
-        lookup_table_mle_random_test::<Fr, NotEqualTable<32>>();
+        lookup_table_mle_random_test::<Fr, NotEqualTable<XLEN>>();
     }
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<Fr, NotEqualTable<32>>();
+        prefix_suffix_test::<XLEN, Fr, NotEqualTable<XLEN>>();
     }
 }
