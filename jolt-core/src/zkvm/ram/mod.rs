@@ -1,6 +1,9 @@
 #![allow(clippy::too_many_arguments)]
 
-use crate::subprotocols::{booleanity::Booleanity, hamming_weight::Hamming};
+use crate::subprotocols::{
+    booleanity::{BooleanitySumcheck, BooleanityType},
+    hamming_weight::Hamming,
+};
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::{
@@ -16,7 +19,6 @@ use crate::{
     zkvm::{
         dag::{stage::SumcheckStages, state_manager::StateManager},
         ram::{
-            booleanity::RamBooleanitySumcheck,
             hamming_booleanity::HammingBooleanitySumcheck,
             hamming_weight::RamHammingWeightSumcheck,
             output_check::{OutputSumcheck, ValFinalSumcheck},
@@ -37,7 +39,6 @@ use common::{
 };
 use rayon::prelude::*;
 
-pub mod booleanity;
 pub mod hamming_booleanity;
 pub mod hamming_weight;
 pub mod output_check;
@@ -577,7 +578,19 @@ where
     ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
         // Accumulate advice polynomials if present
         prover_accumulate_advice(state_manager);
-        let booleanity = RamBooleanitySumcheck::new_prover(state_manager);
+
+        // Get RAM K parameter
+        let K = state_manager.ram_K;
+
+        // Note: Challenges are generated inside new_prover to maintain correct order
+        // The order must be: r_cycle, r_address, gamma (for Fiat-Shamir consistency)
+        // G arrays and H_indices are also computed inside new_prover for RAM
+        let booleanity = BooleanitySumcheck::new_prover(
+            BooleanityType::Ram { K },
+            state_manager,
+            None, // G will be computed inside new_prover for RAM
+            None, // H_indices will be computed inside new_prover for RAM
+        );
         let val_evaluation = ValEvaluationSumcheck::new_prover(
             self.initial_memory_state.as_ref().unwrap(),
             state_manager,
@@ -592,7 +605,7 @@ where
         }
 
         vec![
-            Box::new(Booleanity::from(booleanity)),
+            Box::new(booleanity),
             Box::new(val_evaluation),
             Box::new(val_final_evaluation),
         ]
@@ -604,7 +617,8 @@ where
     ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
         // Accumulate advice commitments if present
         verifier_accumulate_advice(state_manager);
-        let booleanity = RamBooleanitySumcheck::new_verifier(state_manager);
+        let K = state_manager.ram_K;
+        let booleanity = BooleanitySumcheck::new_verifier(BooleanityType::Ram { K }, state_manager);
         let val_evaluation = ValEvaluationSumcheck::new_verifier(
             self.initial_memory_state.as_ref().unwrap(),
             state_manager,
@@ -615,7 +629,7 @@ where
         );
 
         vec![
-            Box::new(Booleanity::from(booleanity)),
+            Box::new(booleanity),
             Box::new(val_evaluation),
             Box::new(val_final_evaluation),
         ]

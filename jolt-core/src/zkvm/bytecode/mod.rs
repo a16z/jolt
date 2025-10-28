@@ -1,9 +1,11 @@
 use crate::poly::opening_proof::{OpeningAccumulator, SumcheckId};
-use crate::subprotocols::{booleanity::Booleanity, hamming_weight::Hamming};
+use crate::subprotocols::{
+    booleanity::{BooleanitySumcheck, BooleanityType},
+    hamming_weight::Hamming,
+};
 use crate::utils::math::Math;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
-use crate::zkvm::bytecode::booleanity::BytecodeBooleanitySumcheck;
 use crate::zkvm::bytecode::hamming_weight::BytecodeHammingWeightSumcheck;
 use crate::zkvm::bytecode::read_raf_checking::ReadRafSumcheck;
 use crate::zkvm::dag::stage::SumcheckStages;
@@ -20,7 +22,6 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::{ALIGNMENT_FACTOR_BYTECODE, RAM_START_ADDRESS};
 use rayon::prelude::*;
 use tracer::instruction::{Cycle, Instruction};
-pub mod booleanity;
 pub mod hamming_weight;
 pub mod read_raf_checking;
 
@@ -153,11 +154,21 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
             .r;
         let E_1: Vec<F> = EqPolynomial::evals(&r_cycle);
 
-        let F_1 = compute_ra_evals(bytecode_preprocessing, trace, &E_1);
+        let G = compute_ra_evals(bytecode_preprocessing, trace, &E_1);
+        let H_indices = compute_bytecode_h_indices(bytecode_preprocessing, trace);
 
         let read_raf = ReadRafSumcheck::new_prover(sm);
-        let hamming_weight = BytecodeHammingWeightSumcheck::new_prover(sm, F_1.clone());
-        let booleanity = BytecodeBooleanitySumcheck::new_prover(sm, r_cycle, F_1);
+        let hamming_weight = BytecodeHammingWeightSumcheck::new_prover(sm, G.clone());
+
+        // Pass G and H_indices to the unified booleanity
+        let d = bytecode_preprocessing.d;
+        let log_K = bytecode_preprocessing.code_size.log_2();
+        let booleanity = BooleanitySumcheck::new_prover(
+            BooleanityType::Bytecode { d, log_K },
+            sm,
+            Some(G),
+            Some(H_indices),
+        );
 
         #[cfg(feature = "allocative")]
         {
@@ -169,7 +180,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         vec![
             Box::new(read_raf),
             Box::new(Hamming::from(hamming_weight)),
-            Box::new(Booleanity::from(booleanity)),
+            Box::new(booleanity),
         ]
     }
 
@@ -177,20 +188,49 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, T>>> {
+        let (preprocessing, _, _) = sm.get_verifier_data();
+        let bytecode_preprocessing = &preprocessing.shared.bytecode;
+        let d = bytecode_preprocessing.d;
+        let log_K = bytecode_preprocessing.code_size.log_2();
+
         let read_checking = ReadRafSumcheck::new_verifier(sm);
         let hamming_weight = BytecodeHammingWeightSumcheck::new_verifier(sm);
-        let booleanity = BytecodeBooleanitySumcheck::new_verifier(sm);
+        let booleanity =
+            BooleanitySumcheck::new_verifier(BooleanityType::Bytecode { d, log_K }, sm);
 
         vec![
             Box::new(read_checking),
             Box::new(Hamming::from(hamming_weight)),
-            Box::new(Booleanity::from(booleanity)),
+            Box::new(booleanity),
         ]
     }
 }
 
 #[inline(always)]
 #[tracing::instrument(skip_all, name = "Bytecode::compute_ra_evals")]
+/// Helper function to compute H_indices for bytecode booleanity
+fn compute_bytecode_h_indices(
+    preprocessing: &BytecodePreprocessing,
+    trace: &[Cycle],
+) -> Vec<Vec<Option<u8>>> {
+    let d = preprocessing.d;
+    let log_K = preprocessing.code_size.log_2();
+    let log_K_chunk = log_K.div_ceil(d);
+
+    (0..d)
+        .into_par_iter()
+        .map(|i| {
+            trace
+                .par_iter()
+                .map(|cycle| {
+                    let k = preprocessing.get_pc(cycle);
+                    Some(((k >> (log_K_chunk * (d - i - 1))) % (1 << log_K_chunk)) as u8)
+                })
+                .collect()
+        })
+        .collect()
+}
+
 fn compute_ra_evals<F: JoltField>(
     preprocessing: &BytecodePreprocessing,
     trace: &[Cycle],

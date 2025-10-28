@@ -1,4 +1,7 @@
-use crate::subprotocols::{booleanity::Booleanity, hamming_weight::Hamming};
+use crate::subprotocols::{
+    booleanity::{BooleanitySumcheck, BooleanityType},
+    hamming_weight::Hamming,
+};
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::{
@@ -15,7 +18,6 @@ use crate::{
         dag::{stage::SumcheckStages, state_manager::StateManager},
         instruction::LookupQuery,
         instruction_lookups::{
-            booleanity::InstructionBooleanitySumcheck,
             hamming_weight::InstructionHammingWeightSumcheck, ra_virtual::RaSumcheck,
             read_raf_checking::ReadRafSumcheck,
         },
@@ -25,8 +27,6 @@ use crate::{
 use common::constants::XLEN;
 use rayon::prelude::*;
 use tracer::instruction::Cycle;
-
-pub mod booleanity;
 pub mod hamming_weight;
 pub mod ra_virtual;
 pub mod read_raf_checking;
@@ -127,8 +127,15 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
             .r
             .clone();
         let eq_r_cycle = EqPolynomial::evals(&r_cycle);
-        let F = compute_ra_evals(trace, &eq_r_cycle);
-        let booleanity = InstructionBooleanitySumcheck::new_prover(sm, F);
+        let G = compute_ra_evals(trace, &eq_r_cycle);
+        let H_indices = compute_instruction_h_indices(trace);
+
+        let booleanity = BooleanitySumcheck::new_prover(
+            BooleanityType::Instruction,
+            sm,
+            Some(G.to_vec()),
+            Some(H_indices),
+        );
 
         #[cfg(feature = "allocative")]
         {
@@ -142,7 +149,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
             );
         }
 
-        vec![Box::new(ra_virtual), Box::new(Booleanity::from(booleanity))]
+        vec![Box::new(ra_virtual), Box::new(booleanity)]
     }
 
     fn stage6_verifier_instances(
@@ -150,9 +157,24 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         sm: &mut StateManager<'_, F, T, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, T>>> {
         let ra_virtual = RaSumcheck::new_verifier(sm);
-        let booleanity = InstructionBooleanitySumcheck::new_verifier(sm);
-        vec![Box::new(ra_virtual), Box::new(Booleanity::from(booleanity))]
+        let booleanity = BooleanitySumcheck::new_verifier(BooleanityType::Instruction, sm);
+        vec![Box::new(ra_virtual), Box::new(booleanity)]
     }
+}
+
+/// Helper function to compute H_indices for instruction booleanity
+fn compute_instruction_h_indices(trace: &[Cycle]) -> Vec<Vec<Option<u8>>> {
+    (0..D)
+        .map(|i| {
+            trace
+                .par_iter()
+                .map(|cycle| {
+                    let lookup_index = LookupQuery::<XLEN>::to_lookup_index(cycle);
+                    Some(((lookup_index >> (LOG_K_CHUNK * (D - 1 - i))) % K_CHUNK as u128) as u8)
+                })
+                .collect()
+        })
+        .collect()
 }
 
 #[inline(always)]
