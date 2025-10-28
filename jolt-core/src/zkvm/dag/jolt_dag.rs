@@ -32,13 +32,9 @@ use crate::zkvm::ProverDebugInfo;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 use anyhow::Context;
-#[cfg(feature = "streaming")]
-use itertools::Itertools;
 use rayon::prelude::*;
 #[cfg(feature = "streaming")]
 use tracer::instruction::Cycle;
-#[cfg(feature = "streaming")]
-use tracer::ChunkWithPeekIterator as _;
 
 pub enum JoltDAG {}
 
@@ -826,6 +822,8 @@ impl JoltDAG {
     ) -> Result<HashMap<CommittedPolynomial, PCS::OpeningProofHint>, anyhow::Error> {
         #[cfg(feature = "streaming")]
         {
+            use itertools::Itertools as _;
+
             let (preprocessing, lazy_trace, _trace, _program_io, _final_memory_state) =
                 prover_state_manager.get_prover_data();
 
@@ -851,20 +849,25 @@ impl JoltDAG {
             let mut row_commitments: Vec<Vec<<PCS>::ChunkState>> =
                 vec![vec![]; T / DoryGlobals::get_max_num_rows()];
 
-            lazy_trace
+            let chunks: Vec<Vec<_>> = lazy_trace
                 .as_ref()
                 .expect("Lazy trace not found!")
                 .clone()
-                .pad_using(T + 1, |_| Cycle::NoOp)
-                .chunks_with_peek(row_len)
+                .pad_using(T, |_| Cycle::NoOp)
+                .chunks(row_len)
+                .into_iter()
+                .map(|chunk| chunk.collect::<Vec<_>>())
+                .collect();
+
+            chunks
+                .into_par_iter()
                 .zip(&mut row_commitments)
-                .par_bridge()
-                .for_each(|(row_with_peek, row_)| {
+                .for_each(|(row_cycles, row_)| {
                     let res = pcs_and_polys.iter().map(|(pcs, poly)| {
                         poly.generate_witness_and_commit_row::<_, PCS>(
                             pcs,
                             preprocessing,
-                            &row_with_peek,
+                            &row_cycles,
                             prover_state_manager.ram_d,
                         )
                     });

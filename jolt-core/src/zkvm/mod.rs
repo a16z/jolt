@@ -697,7 +697,7 @@ mod tests {
         let mut program = host::Program::new("btreemap-guest");
         let (bytecode, init_memory_state, _) = program.decode();
         let inputs = postcard::to_stdvec(&50u32).unwrap();
-        let (_, _, _, _, io_device) = program.trace(&inputs);
+        let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
 
         let preprocessing = JoltRV64IMAC::prover_preprocess(
             bytecode.clone(),

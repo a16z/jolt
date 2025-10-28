@@ -95,7 +95,8 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
         drop(_guard);
         drop(span);
 
-        let inc = CommittedPolynomial::RamInc.generate_witness(preprocessing, trace, state_manager.ram_d);
+        let inc =
+            CommittedPolynomial::RamInc.generate_witness(preprocessing, trace, state_manager.ram_d);
         let lt = LtPolynomial::new(&r_cycle);
 
         ValEvaluationSumcheck {

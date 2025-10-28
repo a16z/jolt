@@ -22,7 +22,8 @@ mod tests {
         let mut program = host::Program::new("fibonacci-guest");
         let (bytecode, init_memory_state, _) = program.decode();
         let inputs = postcard::to_stdvec(&9u8).unwrap();
-        let (lazy_trace, mut trace, final_memory_state, mut program_io) = program.trace(&inputs, &[], &[]);
+        let (lazy_trace, mut trace, final_memory_state, mut program_io) =
+            program.trace(&inputs, &[], &[]);
         trace.truncate(100);
         program_io.outputs[0] = 0; // change the output to 0
 
@@ -69,7 +70,8 @@ mod tests {
         let mut program = host::Program::new("fibonacci-guest");
         let inputs = postcard::to_stdvec(&1u8).unwrap();
         let (bytecode, init_memory_state, _) = program.decode();
-        let (lazy_trace, mut trace, final_memory_state, mut program_io) = program.trace(&inputs, &[], &[]);
+        let (lazy_trace, mut trace, final_memory_state, mut program_io) =
+            program.trace(&inputs, &[], &[]);
 
         // Since the preprocessing is done with the original memory layout, the verifier should fail
         let preprocessing = JoltRV64IMAC::prover_preprocess(

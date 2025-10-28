@@ -1063,7 +1063,7 @@ mod tests {
     use strum::IntoEnumIterator;
     use tracer::emulator::memory::Memory;
     use tracer::instruction::Cycle;
-    use tracer::JoltDevice;
+    use tracer::{JoltDevice, LazyTraceIterator};
 
     const LOG_T: usize = 8;
     const T: usize = 1 << LOG_T;
@@ -1175,7 +1175,7 @@ mod tests {
         };
         let final_memory_state = Memory::default();
 
-        let lazy_trace = todo!("Fix this test");
+        let lazy_trace = LazyTraceIterator::new_for_test();
         let mut prover_sm = StateManager::<'_, Fr, Blake2bTranscript, _>::new_prover(
             &prover_preprocessing,
             lazy_trace,

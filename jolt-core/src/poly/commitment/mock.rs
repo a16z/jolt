@@ -124,38 +124,44 @@ where
 
     type SetupCache = ();
 
-    fn cache_setup(setup: &Self::ProverSetup) -> Self::SetupCache {
-        todo!()
+    fn cache_setup(_setup: &Self::ProverSetup) -> Self::SetupCache {
+        ()
     }
 
     fn initialize<'a>(
-        onehot_k: Option<usize>,
-        size: usize,
-        setup: &'a Self::ProverSetup,
-        setup_cache: &'a Self::SetupCache,
+        _onehot_k: Option<usize>,
+        _size: usize,
+        _setup: &'a Self::ProverSetup,
+        _setup_cache: &'a Self::SetupCache,
     ) -> Self::State<'a> {
-        todo!()
+        ()
     }
 
-    fn process_chunk<'a, T: SmallScalar>(state: &Self::State<'a>, chunk: &[T]) -> Self::ChunkState {
-        todo!()
+    fn process_chunk<'a, T: SmallScalar>(
+        _state: &Self::State<'a>,
+        _chunk: &[T],
+    ) -> Self::ChunkState {
+        ()
     }
 
-    fn process_chunk_field<'a>(state: &Self::State<'a>, chunk: &[Self::Field]) -> Self::ChunkState {
-        todo!()
+    fn process_chunk_field<'a>(
+        _state: &Self::State<'a>,
+        _chunk: &[Self::Field],
+    ) -> Self::ChunkState {
+        ()
     }
 
     fn process_chunk_onehot<'a>(
-        state: &Self::State<'a>,
-        chunk: &[Option<usize>],
+        _state: &Self::State<'a>,
+        _chunk: &[Option<usize>],
     ) -> Self::ChunkState {
-        todo!()
+        ()
     }
 
     fn finalize<'a>(
-        state: &Self::State<'a>,
-        chunks: &[Self::ChunkState],
+        _state: &Self::State<'a>,
+        _chunks: &[Self::ChunkState],
     ) -> (Self::Commitment, Self::OpeningProofHint) {
-        todo!()
+        (MockCommitment::default(), ())
     }
 }

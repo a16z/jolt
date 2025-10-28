@@ -274,6 +274,33 @@ impl LazyTraceIterator {
         }
     }
 
+    pub fn new_for_test() -> Self {
+        let minimal_elf = vec![
+            0x7f, 0x45, 0x4c, 0x46, 0x02, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x02, 0x00, 0xf3, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x38, 0x00,
+            0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ];
+
+        use crate::MemoryConfig;
+        let memory_config = MemoryConfig {
+            program_size: Some(1024),
+            ..Default::default()
+        };
+
+        let emulator_state = setup_emulator(&minimal_elf, b"[]", &[], &[], &memory_config);
+
+        LazyTraceIterator {
+            emulator_state,
+            prev_pc: 0,
+            current_traces: vec![],
+            count: 0,
+            finished: true,
+            final_memory_state: Some(emulator::memory::Memory::default()),
+        }
+    }
+
     pub fn at_tick_boundary(&self) -> bool {
         self.current_traces.is_empty()
     }
@@ -320,12 +347,10 @@ impl Iterator for LazyTraceIterator {
     /// 4. Buffers new traces in FIFO order
     /// 5. Returns the next trace or None if execution is complete
     fn next(&mut self) -> Option<Self::Item> {
-        //Iterate over t returning in FIFO order before calling tick() again.
         if !self.current_traces.is_empty() {
             return self.current_traces.pop();
         }
 
-        // Step the emulator to execute the next instruction till the program ends.
         self.count += 1;
         assert!(self.current_traces.is_empty());
         step_emulator(
@@ -335,20 +360,15 @@ impl Iterator for LazyTraceIterator {
         );
         if self.current_traces.is_empty() {
             self.finished = true;
-            // TODO(moodlezoup): Can we take instead of clone?
-            self.final_memory_state = Some(self.emulator_state.get_cpu().mmu.memory.memory.clone());
-            if self
-                .emulator_state
-                .get_cpu()
-                .mmu
-                .jolt_device
-                .as_ref()
-                .unwrap()
-                .panic
-            {
+            let emulator = get_mut_emulator(&mut self.emulator_state);
+            let cpu = emulator.get_mut_cpu();
+            let memory = std::mem::take(&mut cpu.mmu.memory.memory);
+            self.final_memory_state = Some(memory);
+
+            if cpu.mmu.jolt_device.as_ref().unwrap().panic {
                 error!(
                     "Guest program terminated due to panic after {} cycles.",
-                    self.emulator_state.get_cpu().trace_len
+                    cpu.trace_len
                 );
                 utils::panic::display_panic_backtrace(&self.emulator_state);
             }
@@ -357,47 +377,6 @@ impl Iterator for LazyTraceIterator {
             self.current_traces.reverse();
             self.current_traces.pop()
         }
-    }
-}
-
-pub struct ChunksWithPeek<I: Iterator> {
-    chunk_size: usize,
-    iter: I,
-    peek: Option<I::Item>,
-}
-
-pub trait ChunkWithPeekIterator: Iterator + Sized {
-    fn chunks_with_peek(mut self, size: usize) -> ChunksWithPeek<Self> {
-        assert!(size != 0, "chunk size must be non-zero");
-        let peek = self.next();
-        ChunksWithPeek {
-            chunk_size: size,
-            iter: self,
-            peek,
-        }
-    }
-}
-
-impl<I: Iterator + Sized> ChunkWithPeekIterator for I {}
-
-impl<I: Iterator<Item: Clone>> Iterator for ChunksWithPeek<I> {
-    type Item = Vec<I::Item>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        // return `None` if `self.iter.next()` is `None`,
-        // let first_item = self.iter.next()?;
-        // optimize for the chunk size
-        let mut chunk = Vec::with_capacity(self.chunk_size + 1);
-        chunk.push(self.peek.take()?);
-        chunk.extend(self.iter.by_ref().take(self.chunk_size - 1));
-        if chunk.len() == 1 {
-            return None;
-        }
-        self.peek = self.iter.next();
-        if let Some(p) = &self.peek {
-            chunk.push(p.clone());
-        }
-        Some(chunk)
     }
 }
 

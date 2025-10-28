@@ -516,98 +516,22 @@ impl CommittedPolynomial {
     where
         PCS: StreamingCommitmentScheme<Field = F>,
     {
-        let num_cycles = row_cycles.len() - 1;
-
         match self {
-            /*
-            CommittedPolynomial::LeftInstructionInput => {
-                let row: Vec<u64> = (0..num_cycles)
-                    .map(|i| LookupQuery::<XLEN>::to_instruction_inputs(&row_cycles[i]).0)
-                    .collect();
-                PCS::process_chunk(pcs, &row)
-            }
-            CommittedPolynomial::RightInstructionInput => {
-                let row: Vec<i128> = (0..num_cycles)
-                    .map(|i| LookupQuery::<XLEN>::to_instruction_inputs(&row_cycles[i]).1)
-                    .collect();
-                PCS::process_chunk(pcs, &row)
-            }
-            CommittedPolynomial::Product => {
-                let row: Vec<S128> = (0..num_cycles)
-                    .map(|i| {
-                        let (left_input, right_input) =
-                            LookupQuery::<XLEN>::to_instruction_inputs(&row_cycles[i]);
-                        if right_input >= 0 {
-                            S128::from_u128(left_input as u128 * right_input.unsigned_abs())
-                        } else {
-                            S128::from_u128_and_sign(
-                                left_input as u128 * right_input.unsigned_abs(),
-                                false,
-                            )
-                        }
-                    })
-                    .collect();
-                PCS::process_chunk(pcs, &row)
-            }
-            CommittedPolynomial::WriteLookupOutputToRD => {
-                let row: Vec<u8> = (0..num_cycles)
-                    .map(|i| {
-                        let cycle = &row_cycles[i];
-                        let flag = cycle.instruction().circuit_flags()
-                            [CircuitFlags::WriteLookupOutputToRD as usize];
-                        cycle.rd_write().0 * (flag as u8)
-                    })
-                    .collect();
-                PCS::process_chunk(pcs, &row)
-            }
-            CommittedPolynomial::WritePCtoRD => {
-                let row: Vec<u8> = (0..num_cycles)
-                    .map(|i| {
-                        let cycle = &row_cycles[i];
-                        let flag = cycle.instruction().circuit_flags()[CircuitFlags::Jump as usize];
-                        cycle.rd_write().0 * (flag as u8)
-                    })
-                    .collect();
-                PCS::process_chunk(pcs, &row)
-            }
-            CommittedPolynomial::ShouldBranch => {
-                let row: Vec<u8> = (0..num_cycles)
-                    .map(|i| {
-                        let cycle = &row_cycles[i];
-                        let is_branch =
-                            cycle.instruction().circuit_flags()[CircuitFlags::Branch as usize];
-                        (LookupQuery::<XLEN>::to_lookup_output(cycle) as u8) * is_branch as u8
-                    })
-                    .collect();
-                PCS::process_chunk(pcs, &row)
-            }
-            CommittedPolynomial::ShouldJump => {
-                let row: Vec<u8> = (0..num_cycles)
-                    .map(|i| {
-                        let cycle = &row_cycles[i];
-                        let next_cycle = &row_cycles[i + 1];
-                        let is_jump = cycle.instruction().circuit_flags()[CircuitFlags::Jump] as u8;
-                        let is_next_noop =
-                            next_cycle.instruction().circuit_flags()[CircuitFlags::IsNoop] as u8;
-                        is_jump * (1 - is_next_noop)
-                    })
-                    .collect();
-                PCS::process_chunk(pcs, &row)
-            }
-            */
             CommittedPolynomial::RdInc => {
-                let row: Vec<i128> = (0..num_cycles)
-                    .map(|i| {
-                        let (_, pre_value, post_value) = row_cycles[i].rd_write();
+                let row: Vec<i128> = row_cycles
+                    .iter()
+                    .map(|cycle| {
+                        let (_, pre_value, post_value) = cycle.rd_write();
                         post_value as i128 - pre_value as i128
                     })
                     .collect();
                 PCS::process_chunk(pcs, &row)
             }
             CommittedPolynomial::RamInc => {
-                let row: Vec<i128> = (0..num_cycles)
-                    .map(|i| {
-                        let ram_op = row_cycles[i].ram_access();
+                let row: Vec<i128> = row_cycles
+                    .iter()
+                    .map(|cycle| {
+                        let ram_op = cycle.ram_access();
                         match ram_op {
                             tracer::instruction::RAMAccess::Write(write) => {
                                 write.post_value as i128 - write.pre_value as i128
@@ -619,9 +543,10 @@ impl CommittedPolynomial {
                 PCS::process_chunk(pcs, &row)
             }
             CommittedPolynomial::InstructionRa(idx) => {
-                let row: Vec<Option<usize>> = (0..num_cycles)
-                    .map(|i| {
-                        let lookup_index = LookupQuery::<XLEN>::to_lookup_index(&row_cycles[i]);
+                let row: Vec<Option<usize>> = row_cycles
+                    .iter()
+                    .map(|cycle| {
+                        let lookup_index = LookupQuery::<XLEN>::to_lookup_index(cycle);
                         let k = (lookup_index
                             >> (instruction_lookups::LOG_K_CHUNK
                                 * (instruction_lookups::D - 1 - idx)))
@@ -637,19 +562,21 @@ impl CommittedPolynomial {
                 let log_K_chunk = log_K.div_ceil(d);
                 let K_chunk = 1 << log_K_chunk;
 
-                let row: Vec<Option<usize>> = (0..num_cycles)
-                    .map(|i| {
-                        let pc = preprocessing.shared.bytecode.get_pc(&row_cycles[i]);
+                let row: Vec<Option<usize>> = row_cycles
+                    .iter()
+                    .map(|cycle| {
+                        let pc = preprocessing.shared.bytecode.get_pc(cycle);
                         Some((pc >> (log_K_chunk * (d - 1 - idx))) % K_chunk)
                     })
                     .collect();
                 PCS::process_chunk_onehot(pcs, &row)
             }
             CommittedPolynomial::RamRa(idx) => {
-                let row: Vec<Option<usize>> = (0..num_cycles)
-                    .map(|i| {
+                let row: Vec<Option<usize>> = row_cycles
+                    .iter()
+                    .map(|cycle| {
                         remap_address(
-                            row_cycles[i].ram_access().address() as u64,
+                            cycle.ram_access().address() as u64,
                             &preprocessing.shared.memory_layout,
                         )
                         .map(|address| {

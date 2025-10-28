@@ -51,7 +51,8 @@ impl<F: JoltField> ShiftSumcheck<F> {
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
         key: Arc<UniformSpartanKey<F>>,
     ) -> Self {
-        let (preprocessing, _, _, _program_io, _final_memory_state) = state_manager.get_prover_data();
+        let (preprocessing, _, _, _program_io, _final_memory_state) =
+            state_manager.get_prover_data();
         let trace = state_manager.get_trace_arc();
 
         let num_cycles = key.num_steps;
