@@ -45,22 +45,12 @@ impl<const WORD_SIZE: usize> ZkLeanTests<WORD_SIZE> {
 
     fn zklean_imports(&self) -> Vec<String> {
         vec![
-            String::from("MathLib"),
+            String::from("ArkLib"),
             String::from("Jolt.LookupTables"),
         ]
     }
 
     fn zklean_pretty_print(&self, f: &mut impl std::io::Write, indent_level: usize) -> std::io::Result<()> {
-        // TODO: Use ArkLib instead
-        writeln!(f, "namespace BN254")?;
-        writeln!(f, "@[reducible]")?;
-        writeln!(f, "def scalarFieldSize : Nat := 21888242871839275222246405745257275088548364400416034343698204186575808495617")?;
-        writeln!(f, "abbrev ScalarField := ZMod scalarFieldSize")?;
-        writeln!(f, "instance : Fact (Nat.Prime scalarFieldSize) := by sorry")?;
-        writeln!(f, "instance : Field ScalarField := ZMod.instField scalarFieldSize")?;
-        writeln!(f, "end BN254")?;
-        writeln!(f, "")?;
-
         writeln!(f, "abbrev TestField := BN254.ScalarField")?;
         writeln!(f, "")?;
 

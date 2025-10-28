@@ -5,6 +5,7 @@ import Jolt.R1CS
 import Jolt.LookupTables
 import Jolt.Instructions
 import Jolt.MemOps
+import Jolt.Tests
 
 /--
   All the constraints a single Jolt step enforces.
