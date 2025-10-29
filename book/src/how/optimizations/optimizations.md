@@ -7,3 +7,4 @@ This section describes notable optimizations implemented in the Jolt codebase.
 - [Inlines](./inlines.md)
 - [Small value optimizations](./small-value.md)
 - [EQ optimizations](./eq.md)
+- [Torus compression](./compression.md)

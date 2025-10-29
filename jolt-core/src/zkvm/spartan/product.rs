@@ -166,8 +166,8 @@ impl<F: JoltField> ProductVirtualUniSkipInstance<F> {
     ///
     /// Small-value lifting rules for integer accumulation before converting to the field:
     /// - Instruction: LeftInstructionInput is u64 → lift to i128; RightInstructionInput is S64 → i128.
-    /// - WriteLookupOutputToRD: RdWa is u8 → i32; flag is bool/u8 → i32.
-    /// - WritePCtoRD: RdWa is u8 → i32; Jump flag is bool/u8 → i32.
+    /// - WriteLookupOutputToRD: IsRdNotZero is bool/u8 → i32; flag is bool/u8 → i32.
+    /// - WritePCtoRD: IsRdNotZero is bool/u8 → i32; Jump flag is bool/u8 → i32.
     /// - ShouldBranch: LookupOutput is u64 → i128; Branch flag is bool/u8 → i32.
     /// - ShouldJump: Jump flag (left) is bool/u8 → i32; Right^eff = (1 − NextIsNoop) is bool/u8 → i32.
     fn compute_univariate_skip_extended_evals(
@@ -253,9 +253,10 @@ impl<F: JoltField> ProductVirtualUniSkipInstance<F> {
                             left_w[0] = (c[0] as i128) * (row.instruction_left_input as i128);
                             right_w[0] = (c[0] as i128) * row.instruction_right_input;
 
-                            // WriteLookupOutputToRD: rd_addr × WriteLookupOutputToRD_flag
-                            // left: u8 -> i32 -> i128; right: bool/u8 -> i32 -> i128
-                            left_w[1] = (c[1] as i128) * (row.rd_addr as i32 as i128);
+                            // WriteLookupOutputToRD: is_rd_zero × WriteLookupOutputToRD_flag
+                            // left: bool/u8 -> i32 -> i128; right: bool/u8 -> i32 -> i128
+                            left_w[1] = (c[1] as i128)
+                                * (if row.is_rd_not_zero { 1i32 } else { 0i32 } as i128);
                             right_w[1] = (c[1] as i128)
                                 * (if row.write_lookup_output_to_rd_flag {
                                     1i32
@@ -263,9 +264,9 @@ impl<F: JoltField> ProductVirtualUniSkipInstance<F> {
                                     0i32
                                 } as i128);
 
-                            // WritePCtoRD: rd_addr × Jump_flag
-                            // left: u8 -> i32 -> i128; right: bool/u8 -> i32 -> i128
-                            left_w[2] = (c[2] as i128) * (row.rd_addr as i32 as i128);
+                            // WritePCtoRD: is_rd_zero × Jump_flag
+                            // left: bool/u8 -> i32 -> i128; right: bool/u8 -> i32 -> i128
+                            left_w[2] = (c[2] as i128) * (row.is_rd_not_zero as i32 as i128);
                             right_w[2] =
                                 (c[2] as i128) * (if row.jump_flag { 1i32 } else { 0i32 } as i128);
 
@@ -1022,9 +1023,9 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ProductVirtualInner
                 SumcheckId::ProductVirtualization,
             )
             .1;
-        let rd_wa = acc
+        let is_rd_not_zero = acc
             .get_virtual_polynomial_opening(
-                VirtualPolynomial::RdWa,
+                VirtualPolynomial::InstructionFlags(InstructionFlags::IsRdNotZero),
                 SumcheckId::ProductVirtualization,
             )
             .1;
@@ -1060,8 +1061,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ProductVirtualInner
             .1;
 
         // TODO: make this logic less brittle
-        let left_sum =
-            w[0] * l_inst + w[1] * rd_wa + w[2] * rd_wa + w[3] * lookup_out + w[4] * j_flag;
+        let left_sum = w[0] * l_inst
+            + w[1] * is_rd_not_zero
+            + w[2] * is_rd_not_zero
+            + w[3] * lookup_out
+            + w[4] * j_flag;
         let right_sum = w[0] * r_inst
             + w[1] * wl_flag
             + w[2] * j_flag

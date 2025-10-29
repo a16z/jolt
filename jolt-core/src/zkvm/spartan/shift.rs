@@ -11,7 +11,7 @@ use crate::poly::eq_poly::EqPlusOnePolynomial;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
 use crate::poly::opening_proof::{
     OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-    VerifierOpeningAccumulator, BIG_ENDIAN,
+    VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
 };
 use crate::subprotocols::sumcheck::SumcheckInstance;
 use crate::transcripts::Transcript;
@@ -25,6 +25,21 @@ use crate::zkvm::r1cs::inputs::{
 use crate::zkvm::r1cs::key::UniformSpartanKey;
 use crate::zkvm::witness::VirtualPolynomial;
 use rayon::prelude::*;
+
+// Spartan PC sumcheck
+//
+// Proves the batched identity over cycles j:
+//   Σ_j EqPlusOne(r_cycle, j) ⋅ (UnexpandedPC_shift(j) + γ·PC_shift(j) + γ²·IsNoop_shift(j))
+//   = NextUnexpandedPC(r_cycle) + γ·NextPC(r_cycle) + γ²·NextIsNoop(r_cycle),
+//
+// where:
+// - EqPlusOne(r_cycle, j): MLE of the function that,
+//     on (i,j) returns 1 iff i = j + 1; no wrap-around at j = 2^{log T} − 1
+// - UnexpandedPC_shift(j), PC_shift(j), IsNoop_shift(j):
+//     SpartanShift MLEs encoding f(j+1) aligned at cycle j
+// - NextUnexpandedPC(r_cycle), NextPC(r_cycle), NextIsNoop(r_cycle)
+//     are claims from Spartan outer sumcheck
+// - γ: batching scalar drawn from the transcript
 
 #[derive(Allocative)]
 struct ShiftSumcheckProverState<F: JoltField> {
@@ -169,16 +184,16 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ShiftSumcheck<F> {
             .map(|i| {
                 let combined_witness_evals = prover_state
                     .combined_witness_poly
-                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
+                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::LowToHigh);
                 let eq_r_cycle_evals = prover_state
                     .eq_plus_one_r_cycle
-                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
+                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::LowToHigh);
                 let eq_r_product_evals = prover_state
                     .eq_plus_one_r_product
-                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
+                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::LowToHigh);
                 let is_noop_evals = prover_state
                     .is_noop_poly
-                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
+                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::LowToHigh);
 
                 std::array::from_fn(|i| {
                     combined_witness_evals[i] * eq_r_cycle_evals[i]
@@ -211,22 +226,22 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ShiftSumcheck<F> {
             s.spawn(|_| {
                 prover_state
                     .combined_witness_poly
-                    .bind_parallel(r_j, BindingOrder::HighToLow)
+                    .bind_parallel(r_j, BindingOrder::LowToHigh)
             });
             s.spawn(|_| {
                 prover_state
                     .is_noop_poly
-                    .bind_parallel(r_j, BindingOrder::HighToLow)
+                    .bind_parallel(r_j, BindingOrder::LowToHigh)
             });
             s.spawn(|_| {
                 prover_state
                     .eq_plus_one_r_cycle
-                    .bind_parallel(r_j, BindingOrder::HighToLow)
+                    .bind_parallel(r_j, BindingOrder::LowToHigh)
             });
             s.spawn(|_| {
                 prover_state
                     .eq_plus_one_r_product
-                    .bind_parallel(r_j, BindingOrder::HighToLow)
+                    .bind_parallel(r_j, BindingOrder::LowToHigh)
             });
         });
     }
@@ -272,10 +287,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ShiftSumcheck<F> {
             SumcheckId::SpartanShift,
         );
 
+        let r = <Self as SumcheckInstance<F, T>>::normalize_opening_point(self, r);
         let eq_plus_one_r_cycle_at_shift =
-            EqPlusOnePolynomial::<F>::new(r_cycle.to_vec()).evaluate(r);
+            EqPlusOnePolynomial::<F>::new(r_cycle.to_vec()).evaluate(&r.r);
         let eq_plus_one_r_product_at_shift =
-            EqPlusOnePolynomial::<F>::new(r_product.to_vec()).evaluate(r);
+            EqPlusOnePolynomial::<F>::new(r_product.to_vec()).evaluate(&r.r);
 
         [
             unexpanded_pc_claim,
@@ -351,7 +367,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ShiftSumcheck<F> {
         &self,
         opening_point: &[F::Challenge],
     ) -> OpeningPoint<BIG_ENDIAN, F> {
-        OpeningPoint::new(opening_point.to_vec())
+        OpeningPoint::<LITTLE_ENDIAN, F>::new(opening_point.to_vec()).match_endianness()
     }
 
     fn cache_openings_verifier(
