@@ -482,6 +482,36 @@ fn get_xlen() -> Xlen {
     }
 }
 
+pub struct IterChunks<I: Iterator> {
+    chunk_size: usize,
+    iter: I,
+}
+
+pub trait ChunksIterator: Iterator + Sized {
+    fn iter_chunks(self, size: usize) -> IterChunks<Self> {
+        assert!(size != 0, "chunk size must be non-zero");
+        IterChunks {
+            chunk_size: size,
+            iter: self,
+        }
+    }
+}
+
+impl<I: Iterator + Sized> ChunksIterator for I {}
+
+impl<I: Iterator<Item: Clone>> Iterator for IterChunks<I> {
+    type Item = Vec<I::Item>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let mut chunk = Vec::with_capacity(self.chunk_size);
+        chunk.extend(self.iter.by_ref().take(self.chunk_size));
+        if chunk.len() == 0 {
+            return None;
+        }
+        Some(chunk)
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;

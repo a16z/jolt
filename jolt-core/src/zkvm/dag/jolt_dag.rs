@@ -28,8 +28,10 @@ use crate::zkvm::ProverDebugInfo;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 use anyhow::Context;
+use itertools::Itertools;
 use rayon::prelude::*;
 use tracer::instruction::Cycle;
+use tracer::ChunksIterator;
 
 pub enum JoltDAG {}
 
@@ -812,8 +814,6 @@ impl JoltDAG {
     >(
         prover_state_manager: &mut StateManager<F, ProofTranscript, PCS>,
     ) -> Result<HashMap<CommittedPolynomial, PCS::OpeningProofHint>, anyhow::Error> {
-        use itertools::Itertools as _;
-
         let (preprocessing, lazy_trace, _trace, _program_io, _final_memory_state) =
             prover_state_manager.get_prover_data();
 
@@ -844,23 +844,23 @@ impl JoltDAG {
             .expect("Lazy trace not found!")
             .clone()
             .pad_using(T, |_| Cycle::NoOp)
-            .chunks(row_len)
+            .iter_chunks(row_len)
             .into_iter()
-            .enumerate()
-            .for_each(|(idx, chunk)| {
-                let row_cycles: Vec<_> = chunk.collect();
+            .zip(row_commitments.iter_mut())
+            .par_bridge()
+            .for_each(|(chunk, row_commitments)| {
                 let res: Vec<_> = pcs_and_polys
                     .par_iter()
                     .map(|(pcs, poly)| {
                         poly.generate_witness_and_commit_row::<_, PCS>(
                             pcs,
                             preprocessing,
-                            &row_cycles,
+                            &chunk,
                             prover_state_manager.ram_d,
                         )
                     })
                     .collect();
-                row_commitments[idx] = res;
+                *row_commitments = res;
             });
 
         let (commitments, hints): (Vec<_>, Vec<_>) = transpose(row_commitments)
