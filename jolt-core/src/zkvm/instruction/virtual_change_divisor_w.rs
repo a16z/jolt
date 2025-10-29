@@ -43,11 +43,11 @@ impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualChangeDivisorW> 
     }
 
     fn to_lookup_output(&self) -> u64 {
-        let (remainder, divisor) = LookupQuery::<XLEN>::to_instruction_inputs(self);
-        let remainder = remainder as i32;
+        let (dividend, divisor) = LookupQuery::<XLEN>::to_instruction_inputs(self);
+        let dividend = dividend as i32;
         let divisor = divisor as i32;
 
-        if remainder == i32::MIN && divisor == -1 {
+        if dividend == i32::MIN && divisor == -1 {
             1
         } else {
             // Sign-extend the 32-bit result to 64 bits

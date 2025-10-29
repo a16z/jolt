@@ -12,32 +12,32 @@ pub struct VirtualChangeDivisorTable<const XLEN: usize>;
 
 impl<const XLEN: usize> JoltLookupTable for VirtualChangeDivisorTable<XLEN> {
     fn materialize_entry(&self, index: u128) -> u64 {
-        let (remainder, divisor) = uninterleave_bits(index);
+        let (dividend, divisor) = uninterleave_bits(index);
 
         match XLEN {
             #[cfg(test)]
             8 => {
-                let remainder = remainder as i8;
+                let dividend = dividend as i8;
                 let divisor = divisor as i8;
-                if remainder == i8::MIN && divisor == -1 {
+                if dividend == i8::MIN && divisor == -1 {
                     1
                 } else {
                     divisor as u8 as u64
                 }
             }
             32 => {
-                let remainder = remainder as i32;
+                let dividend = dividend as i32;
                 let divisor = divisor as i32;
-                if remainder == i32::MIN && divisor == -1 {
+                if dividend == i32::MIN && divisor == -1 {
                     1
                 } else {
                     divisor as u32 as u64
                 }
             }
             64 => {
-                let remainder = remainder as i64;
+                let dividend = dividend as i64;
                 let divisor = divisor as i64;
-                if remainder == i64::MIN && divisor == -1 {
+                if dividend == i64::MIN && divisor == -1 {
                     1
                 } else {
                     divisor as u64
