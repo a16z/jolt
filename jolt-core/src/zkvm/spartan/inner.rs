@@ -184,10 +184,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for InnerSumcheck<F> {
             .map(|i| {
                 let abc_evals = prover_state
                     .poly_abc_small
-                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
+                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::LowToHigh);
                 let z_evals = prover_state
                     .poly_z
-                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
+                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::LowToHigh);
 
                 [
                     abc_evals[0] * z_evals[0], // eval at 0
@@ -219,12 +219,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for InnerSumcheck<F> {
             || {
                 prover_state
                     .poly_abc_small
-                    .bind_parallel(r_j, BindingOrder::HighToLow)
+                    .bind_parallel(r_j, BindingOrder::LowToHigh)
             },
             || {
                 prover_state
                     .poly_z
-                    .bind_parallel(r_j, BindingOrder::HighToLow)
+                    .bind_parallel(r_j, BindingOrder::LowToHigh)
             },
         );
     }
@@ -235,6 +235,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for InnerSumcheck<F> {
         r: &[F::Challenge],
     ) -> F {
         let key = self.key.as_ref().expect("Key not initialized");
+        let r = r.iter().cloned().rev().collect::<Vec<_>>();
 
         let accumulator = accumulator.as_ref().unwrap().borrow();
 
@@ -263,13 +264,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for InnerSumcheck<F> {
         // (A_small(rx_var, r) + gamma * B_small(rx_var, r)) * z(r)
 
         // Evaluate uniform matrices A_small and B_small at point (rx_var, r)
-        let eval_a = key.evaluate_uniform_a_at_point(rx_var, r);
-        let eval_b = key.evaluate_uniform_b_at_point(rx_var, r);
+        let eval_a = key.evaluate_uniform_a_at_point(rx_var, &r);
+        let eval_b = key.evaluate_uniform_b_at_point(rx_var, &r);
 
         let left_expected = eval_a + self.gamma * eval_b;
 
         // Evaluate z(ry)
-        let eval_z = key.evaluate_z_mle_with_segment_evals(&claimed_witness_evals, r, true);
+        let eval_z = key.evaluate_z_mle_with_segment_evals(&claimed_witness_evals, &r, true);
         left_expected * eval_z
     }
 
