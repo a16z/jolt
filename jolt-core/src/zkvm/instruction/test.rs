@@ -162,7 +162,6 @@ where
         let is_jal = TypeId::of::<T>() == TypeId::of::<instruction::jal::JAL>();
         let is_jalr = TypeId::of::<T>() == TypeId::of::<instruction::jalr::JALR>();
         if is_jal || is_jalr {
-            // For JAL (FormatJ), check the new PC after the jump
             let cpu_pc = cpu.read_pc();
             assert_eq!(cpu_pc, lookup_result, "{random_cycle:?}");
         } else {

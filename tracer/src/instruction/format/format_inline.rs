@@ -35,16 +35,23 @@ impl InstructionRegisterState for RegisterStateFormatInline {
         use rand::RngCore;
         let rs1_value = if operands.rs1 == 0 { 0 } else { rng.next_u64() };
 
+        let rs2_value = match operands.rs2 {
+            0 => 0,
+            _ if operands.rs2 == operands.rs1 => rs1_value,
+            _ => rng.next_u64(),
+        };
+
+        // Note: operands.rd maps to rs3 in FormatInline (see From implementations)
+        let rs3_value = match operands.rd {
+            _ if operands.rd == operands.rs1 => rs1_value,
+            _ if operands.rd == operands.rs2 => rs2_value,
+            _ => rng.next_u64(),
+        };
+
         Self {
             rs1: rs1_value,
-            rs2: if operands.rs2 == 0 {
-                0
-            } else if operands.rs2 == operands.rs1 {
-                rs1_value
-            } else {
-                rng.next_u64()
-            },
-            rs3: rng.next_u64(),
+            rs2: rs2_value,
+            rs3: rs3_value,
         }
     }
 

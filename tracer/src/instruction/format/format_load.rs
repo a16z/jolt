@@ -28,13 +28,20 @@ impl InstructionRegisterState for RegisterStateFormatLoad {
         use rand::RngCore;
         // Use a smaller range to avoid issues with boundaries
         let max_offset = (TEST_MEMORY_CAPACITY / 2).min(0x10000);
+        debug_assert_ne!(operands.rs1, 0);
+
+        let rs1_value = DRAM_BASE + (rng.next_u64() % max_offset);
+
         Self {
-            rd: (rng.next_u64(), rng.next_u64()),
-            rs1: if operands.rs1 == 0 {
-                unreachable!()
-            } else {
-                DRAM_BASE + (rng.next_u64() % max_offset)
-            },
+            rd: (
+                if operands.rd == operands.rs1 {
+                    rs1_value
+                } else {
+                    rng.next_u64()
+                },
+                rng.next_u64(),
+            ),
+            rs1: rs1_value,
         }
     }
 

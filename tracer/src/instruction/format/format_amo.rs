@@ -38,20 +38,25 @@ impl InstructionRegisterState for RegisterStateFormatRAMO {
         let offset = (rng.next_u64() % (max_offset / alignment)) * alignment;
         let address = DRAM_BASE + offset;
 
+        debug_assert_ne!(operands.rs1, 0);
+
+        let rs2_value = match operands.rs2 {
+            0 => 0,
+            _ if operands.rs2 == operands.rs1 => address,
+            _ => rng.next_u64(),
+        };
+
         Self {
-            rd: (rng.next_u64(), rng.next_u64()),
-            rs1: if operands.rs1 == 0 {
-                unreachable!()
-            } else {
-                address
-            },
-            rs2: if operands.rs2 == 0 {
-                0
-            } else if operands.rs2 == operands.rs1 {
-                address
-            } else {
-                rng.next_u64()
-            },
+            rd: (
+                match operands.rd {
+                    _ if operands.rd == operands.rs1 => address,
+                    _ if operands.rd == operands.rs2 => rs2_value,
+                    _ => rng.next_u64(),
+                },
+                rng.next_u64(),
+            ),
+            rs1: address,
+            rs2: rs2_value,
         }
     }
 

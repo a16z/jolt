@@ -38,18 +38,29 @@ impl InstructionRegisterState for RegisterStateVirtualRightShift {
 
         let shift = rng.next_u64() & 0x3F;
         let ones = (1u128 << (64 - shift)) - 1;
-        let rs2_value = (ones << shift) as i64;
+
+        debug_assert_ne!(
+            operands.rs2, 0,
+            "rs2 cannot be 0 in VirtualRightShift instruction"
+        );
+        debug_assert_ne!(
+            operands.rs2, operands.rs1,
+            "rs2 cannot equal rs1 in VirtualRightShift instruction"
+        );
+
+        let rs2_value = (ones << shift) as u64;
 
         Self {
-            rd: (rng.next_u64(), rng.next_u64()),
+            rd: (
+                match operands.rd {
+                    _ if operands.rd == operands.rs1 => rs1_value,
+                    _ if operands.rd == operands.rs2 => rs2_value,
+                    _ => rng.next_u64(),
+                },
+                rng.next_u64(),
+            ),
             rs1: rs1_value,
-            rs2: if operands.rs2 == 0 {
-                panic!("rs2 cannot be 0 in VirtualRightShift instruction")
-            } else if operands.rs2 == operands.rs1 {
-                panic!("rs2 cannot equal rs1 in VirtualRightShift instruction")
-            } else {
-                rs2_value as u64
-            },
+            rs2: rs2_value,
         }
     }
 
