@@ -946,13 +946,13 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
             .into_par_iter()
             .map(|k| {
                 let rs1_ra_evals =
-                    rs1_ra.sumcheck_evals_array::<DEGREE_BOUND>(k, BindingOrder::HighToLow);
+                    rs1_ra.sumcheck_evals_array::<DEGREE_BOUND>(k, BindingOrder::LowToHigh);
                 let rs2_ra_evals =
-                    rs2_ra.sumcheck_evals_array::<DEGREE_BOUND>(k, BindingOrder::HighToLow);
+                    rs2_ra.sumcheck_evals_array::<DEGREE_BOUND>(k, BindingOrder::LowToHigh);
                 let wa_evals =
-                    rd_wa.sumcheck_evals_array::<DEGREE_BOUND>(k, BindingOrder::HighToLow);
+                    rd_wa.sumcheck_evals_array::<DEGREE_BOUND>(k, BindingOrder::LowToHigh);
                 let val_evals =
-                    val.sumcheck_evals_array::<DEGREE_BOUND>(k, BindingOrder::HighToLow);
+                    val.sumcheck_evals_array::<DEGREE_BOUND>(k, BindingOrder::LowToHigh);
 
                 // Eval RdWriteValue(x) at (r', {0, 2, 3}, k).
                 let rd_write_value_at_0_k = wa_evals[0] * (inc_eval + val_evals[0]);
@@ -1259,7 +1259,7 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
         // variables, so they are not bound here
         [rs1_ra, rs2_ra, rd_wa, val]
             .into_par_iter()
-            .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow));
+            .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh));
     }
 }
 
@@ -1568,7 +1568,11 @@ impl<F: JoltField> RegistersReadWriteCheckingParams<F> {
         // First sumcheck_switch_index rounds bind cycle variables from low to high
         r_cycle.extend(sumcheck_challenges[..sumcheck_switch_index].iter().rev());
         // Address variables are bound high-to-low
-        let r_address = sumcheck_challenges[n_cycle_vars..].to_vec();
+        let r_address = sumcheck_challenges[n_cycle_vars..]
+            .iter()
+            .rev()
+            .cloned()
+            .collect::<Vec<_>>();
         [r_address, r_cycle].concat().into()
     }
 }
