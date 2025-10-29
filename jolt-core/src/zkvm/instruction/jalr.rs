@@ -1,13 +1,13 @@
 use crate::zkvm::instruction::{InstructionFlags, NUM_INSTRUCTION_FLAGS};
 use tracer::instruction::{jalr::JALR, RISCVCycle};
 
-use crate::zkvm::lookup_table::{range_check::RangeCheckTable, LookupTables};
+use crate::zkvm::lookup_table::{range_check_aligned::RangeCheckAlignedTable, LookupTables};
 
 use super::{CircuitFlags, Flags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS};
 
 impl<const XLEN: usize> InstructionLookup<XLEN> for JALR {
     fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
-        Some(RangeCheckTable.into())
+        Some(RangeCheckAlignedTable.into())
     }
 }
 
@@ -66,9 +66,9 @@ impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<JALR> {
         let (x, y) = LookupQuery::<XLEN>::to_instruction_inputs(self);
         match XLEN {
             #[cfg(test)]
-            8 => (x as i8).overflowing_add(y as i8).0 as u8 as u64,
-            32 => (x as i32).overflowing_add(y as i32).0 as u32 as u64,
-            64 => (x as i64).overflowing_add(y as i64).0 as u64,
+            8 => ((x as i8).overflowing_add(y as i8).0 as u8 as u64) & !1,
+            32 => ((x as i32).overflowing_add(y as i32).0 as u32 as u64) & !1,
+            64 => ((x as i64).overflowing_add(y as i64).0 as u64) & !1,
             _ => panic!("{XLEN}-bit word size is unsupported"),
         }
     }
@@ -76,7 +76,9 @@ impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<JALR> {
 
 #[cfg(test)]
 mod test {
-    use crate::zkvm::instruction::test::materialize_entry_test;
+    use crate::zkvm::instruction::test::{
+        lookup_output_matches_trace_test, materialize_entry_test,
+    };
 
     use super::*;
     use ark_bn254::Fr;
@@ -86,8 +88,8 @@ mod test {
         materialize_entry_test::<Fr, JALR>();
     }
 
-    // #[test]
-    // fn lookup_output_matches_trace() {
-    //     lookup_output_matches_trace_test::<JALR>();
-    // }
+    #[test]
+    fn lookup_output_matches_trace() {
+        lookup_output_matches_trace_test::<JALR>();
+    }
 }
