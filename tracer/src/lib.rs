@@ -262,6 +262,9 @@ pub struct LazyTraceIterator {
     pub(crate) final_memory_state: Option<Memory>,
 }
 
+// SAFETY: LazyTraceIterator contains only owned data and can be safely sent between threads
+unsafe impl Send for LazyTraceIterator {}
+
 impl LazyTraceIterator {
     pub fn new(emulator_state: EmulatorState) -> Self {
         LazyTraceIterator {

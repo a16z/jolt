@@ -50,12 +50,11 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        // serialize ram_K, ram_d and bytecode_d first
+        // serialize ram_K and bytecode_d first
         self.ram_K.serialize_with_mode(&mut writer, compress)?;
-        self.ram_d.serialize_with_mode(&mut writer, compress)?;
         self.bytecode_d.serialize_with_mode(&mut writer, compress)?;
         // ensure that all committed polys are set up before serializing proofs
-        let _guard = AllCommittedPolynomials::initialize(self.ram_K, self.bytecode_d);
+        let _guard = AllCommittedPolynomials::initialize(self.ram_d, self.bytecode_d);
         self.opening_claims
             .serialize_with_mode(&mut writer, compress)?;
         self.commitments
@@ -108,11 +107,11 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
         validate: Validate,
     ) -> Result<Self, SerializationError> {
         let ram_K = usize::deserialize_with_mode(&mut reader, compress, validate)?;
-        let ram_d = usize::deserialize_with_mode(&mut reader, compress, validate)?;
         let bytecode_d = usize::deserialize_with_mode(&mut reader, compress, validate)?;
 
         // ensure that all committed polys are set up before deserializing proofs
-        let _guard = AllCommittedPolynomials::initialize(ram_K, bytecode_d);
+        let ram_d = AllCommittedPolynomials::ram_d_from_K(ram_K);
+        let _guard = AllCommittedPolynomials::initialize(ram_d, bytecode_d);
         let opening_claims = Claims::deserialize_with_mode(&mut reader, compress, validate)?;
         let commitments =
             Vec::<PCS::Commitment>::deserialize_with_mode(&mut reader, compress, validate)?;
@@ -334,36 +333,11 @@ impl CanonicalSerialize for CommittedPolynomial {
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        match self {
-            CommittedPolynomial::RdInc => {
-                0u8.serialize_with_mode(&mut writer, compress)?;
-            }
-            CommittedPolynomial::RamInc => {
-                1u8.serialize_with_mode(&mut writer, compress)?;
-            }
-            CommittedPolynomial::InstructionRa(idx) => {
-                2u8.serialize_with_mode(&mut writer, compress)?;
-                (*idx as u32).serialize_with_mode(&mut writer, compress)?;
-            }
-            CommittedPolynomial::BytecodeRa(idx) => {
-                3u8.serialize_with_mode(&mut writer, compress)?;
-                (*idx as u32).serialize_with_mode(&mut writer, compress)?;
-            }
-            CommittedPolynomial::RamRa(idx) => {
-                4u8.serialize_with_mode(&mut writer, compress)?;
-                (*idx as u32).serialize_with_mode(&mut writer, compress)?;
-            }
-        }
-        Ok(())
+        self.to_index().serialize_with_mode(&mut writer, compress)
     }
 
-    fn serialized_size(&self, _compress: Compress) -> usize {
-        match self {
-            CommittedPolynomial::RdInc | CommittedPolynomial::RamInc => 1,
-            CommittedPolynomial::InstructionRa(_)
-            | CommittedPolynomial::BytecodeRa(_)
-            | CommittedPolynomial::RamRa(_) => 1 + 4,
-        }
+    fn serialized_size(&self, compress: Compress) -> usize {
+        self.to_index().serialized_size(compress)
     }
 }
 
@@ -379,25 +353,8 @@ impl CanonicalDeserialize for CommittedPolynomial {
         compress: Compress,
         validate: Validate,
     ) -> Result<Self, SerializationError> {
-        let variant = u8::deserialize_with_mode(&mut reader, compress, validate)?;
-
-        match variant {
-            0 => Ok(CommittedPolynomial::RdInc),
-            1 => Ok(CommittedPolynomial::RamInc),
-            2 => {
-                let idx = u32::deserialize_with_mode(&mut reader, compress, validate)? as usize;
-                Ok(CommittedPolynomial::InstructionRa(idx))
-            }
-            3 => {
-                let idx = u32::deserialize_with_mode(&mut reader, compress, validate)? as usize;
-                Ok(CommittedPolynomial::BytecodeRa(idx))
-            }
-            4 => {
-                let idx = u32::deserialize_with_mode(&mut reader, compress, validate)? as usize;
-                Ok(CommittedPolynomial::RamRa(idx))
-            }
-            _ => Err(SerializationError::InvalidData),
-        }
+        let index = usize::deserialize_with_mode(&mut reader, compress, validate)?;
+        Ok(CommittedPolynomial::from_index(index))
     }
 }
 

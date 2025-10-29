@@ -196,6 +196,40 @@ impl CommittedPolynomial {
         }
     }
 
+    // TODO(moodlezoup): return Result<Self>
+    pub fn from_index(index: usize) -> Self {
+        unsafe {
+            ALL_COMMITTED_POLYNOMIALS
+                .get()
+                .expect("ALL_COMMITTED_POLYNOMIALS is uninitialized")[index]
+        }
+    }
+
+    // TODO(moodlezoup): return Result<usize>
+    pub fn to_index(&self) -> usize {
+        unsafe {
+            ALL_COMMITTED_POLYNOMIALS
+                .get()
+                .expect("ALL_COMMITTED_POLYNOMIALS is uninitialized")
+                .iter()
+                .find_position(|poly| *poly == self)
+                .unwrap()
+                .0
+        }
+    }
+
+    fn ram_d(&self) -> usize {
+        // this is kind of jank but fine for now ig
+        unsafe {
+            ALL_COMMITTED_POLYNOMIALS
+                .get()
+                .expect("ALL_COMMITTED_POLYNOMIALS is uninitialized")
+                .iter()
+                .filter(|poly| matches!(poly, CommittedPolynomial::RamRa(_)))
+                .count()
+        }
+    }
+
     #[tracing::instrument(skip_all, name = "CommittedPolynomial::generate_witness_batch")]
     pub fn generate_witness_batch<F, PCS>(
         polynomials: &[CommittedPolynomial],
