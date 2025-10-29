@@ -8,7 +8,6 @@ use std::{cell::RefCell, rc::Rc};
 use crate::{
     field::{JoltField, MulTrunc},
     poly::{
-        commitment::commitment_scheme::CommitmentScheme,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{
             OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
@@ -16,11 +15,7 @@ use crate::{
         },
     },
     transcripts::Transcript,
-    utils::math::Math,
-    zkvm::{
-        dag::state_manager::StateManager,
-        witness::{compute_d_parameter, CommittedPolynomial, VirtualPolynomial, DTH_ROOT_OF_K},
-    },
+    zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
 };
 
 use crate::subprotocols::sumcheck::SumcheckInstance;
@@ -30,44 +25,30 @@ pub struct HammingWeightProverState<F: JoltField> {
     pub ra: Vec<MultilinearPolynomial<F>>,
 }
 
-#[derive(Clone, Debug, Allocative)]
-pub enum HammingWeightType {
-    Ram,
-    Bytecode { d: usize, log_K: usize },
-    Instruction,
-}
-
 #[derive(Allocative)]
 pub struct HammingWeightSumcheck<F: JoltField> {
-    hamming_type: HammingWeightType,
     d: usize,
     num_rounds: usize,
     gamma_powers: Vec<F>,
+    polynomial_types: Vec<CommittedPolynomial>,
+    sumcheck_id: SumcheckId,
+    virtual_poly: Option<VirtualPolynomial>,
+    r_cycle_sumcheck_id: SumcheckId,
     prover_state: Option<HammingWeightProverState<F>>,
 }
 
 impl<F: JoltField> HammingWeightSumcheck<F> {
-    pub fn new_prover<T: Transcript, PCS: CommitmentScheme<Field = F>>(
-        hamming_type: HammingWeightType,
-        state_manager: &mut StateManager<'_, F, T, PCS>,
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_prover(
+        d: usize,
+        num_rounds: usize,
+        gamma: F,
         G: Vec<Vec<F>>,
+        polynomial_types: Vec<CommittedPolynomial>,
+        sumcheck_id: SumcheckId,
+        virtual_poly: Option<VirtualPolynomial>,
+        r_cycle_sumcheck_id: SumcheckId,
     ) -> Self {
-        let (d, num_rounds) = match &hamming_type {
-            HammingWeightType::Ram => {
-                let d = compute_d_parameter(state_manager.ram_K);
-                (d, DTH_ROOT_OF_K.log_2())
-            }
-            HammingWeightType::Bytecode { d, log_K } => {
-                let log_K_chunk = log_K.div_ceil(*d);
-                (*d, log_K_chunk)
-            }
-            HammingWeightType::Instruction => {
-                // D = 16, LOG_K_CHUNK = LOG_K / D = 128 / 16 = 8
-                (16, 8)
-            }
-        };
-
-        let gamma: F = state_manager.transcript.borrow_mut().challenge_scalar();
         let mut gamma_powers = vec![F::one(); d];
         for i in 1..d {
             gamma_powers[i] = gamma_powers[i - 1] * gamma;
@@ -76,85 +57,52 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
         let ra = G.into_iter().map(MultilinearPolynomial::from).collect();
 
         Self {
-            hamming_type,
             d,
             num_rounds,
             gamma_powers,
+            polynomial_types,
+            sumcheck_id,
+            virtual_poly,
+            r_cycle_sumcheck_id,
             prover_state: Some(HammingWeightProverState { ra }),
         }
     }
 
-    pub fn new_verifier<T: Transcript, PCS: CommitmentScheme<Field = F>>(
-        hamming_type: HammingWeightType,
-        state_manager: &mut StateManager<'_, F, T, PCS>,
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_verifier(
+        d: usize,
+        num_rounds: usize,
+        gamma: F,
+        polynomial_types: Vec<CommittedPolynomial>,
+        sumcheck_id: SumcheckId,
+        virtual_poly: Option<VirtualPolynomial>,
+        r_cycle_sumcheck_id: SumcheckId,
     ) -> Self {
-        let (d, num_rounds) = match &hamming_type {
-            HammingWeightType::Ram => {
-                let d = compute_d_parameter(state_manager.ram_K);
-                (d, DTH_ROOT_OF_K.log_2())
-            }
-            HammingWeightType::Bytecode { d, log_K } => {
-                let log_K_chunk = log_K.div_ceil(*d);
-                (*d, log_K_chunk)
-            }
-            HammingWeightType::Instruction => {
-                // D = 16, LOG_K_CHUNK = 8
-                (16, 8)
-            }
-        };
-
-        let gamma: F = state_manager.transcript.borrow_mut().challenge_scalar();
         let mut gamma_powers = vec![F::one(); d];
         for i in 1..d {
             gamma_powers[i] = gamma_powers[i - 1] * gamma;
         }
 
         Self {
-            hamming_type,
             d,
             num_rounds,
             gamma_powers,
+            polynomial_types,
+            sumcheck_id,
+            virtual_poly,
+            r_cycle_sumcheck_id,
             prover_state: None,
         }
     }
 
-    fn polynomial_type(&self, i: usize) -> CommittedPolynomial {
-        match self.hamming_type {
-            HammingWeightType::Ram => CommittedPolynomial::RamRa(i),
-            HammingWeightType::Bytecode { .. } => CommittedPolynomial::BytecodeRa(i),
-            HammingWeightType::Instruction => CommittedPolynomial::InstructionRa(i),
-        }
-    }
-
-    fn sumcheck_id(&self) -> SumcheckId {
-        match self.hamming_type {
-            HammingWeightType::Ram => SumcheckId::RamHammingWeight,
-            HammingWeightType::Bytecode { .. } => SumcheckId::BytecodeHammingWeight,
-            HammingWeightType::Instruction => SumcheckId::InstructionHammingWeight,
-        }
-    }
-
     fn get_r_cycle(&self, accumulator: &dyn OpeningAccumulator<F>) -> Vec<F::Challenge> {
-        match self.hamming_type {
-            HammingWeightType::Ram => {
-                accumulator
-                    .get_virtual_polynomial_opening(
-                        VirtualPolynomial::RamHammingWeight,
-                        SumcheckId::RamHammingBooleanity,
-                    )
-                    .0
-                    .r
-            }
-            HammingWeightType::Bytecode { .. } | HammingWeightType::Instruction => {
-                accumulator
-                    .get_virtual_polynomial_opening(
-                        VirtualPolynomial::LookupOutput,
-                        SumcheckId::SpartanOuter,
-                    )
-                    .0
-                    .r
-            }
-        }
+        let virtual_poly = self
+            .virtual_poly
+            .expect("virtual_poly must be set for hamming weight");
+        accumulator
+            .get_virtual_polynomial_opening(virtual_poly, self.r_cycle_sumcheck_id)
+            .0
+            .r
     }
 }
 
@@ -168,16 +116,15 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for HammingWeightSumche
     }
 
     fn input_claim(&self, acc: Option<&RefCell<dyn OpeningAccumulator<F>>>) -> F {
-        match self.hamming_type {
-            HammingWeightType::Ram => {
-                let acc = acc.unwrap().borrow();
-                let (_, hamming_booleanity_claim) = acc.get_virtual_polynomial_opening(
-                    VirtualPolynomial::RamHammingWeight,
-                    SumcheckId::RamHammingBooleanity,
-                );
-                hamming_booleanity_claim * self.gamma_powers.iter().sum::<F>()
-            }
-            _ => self.gamma_powers.iter().sum(),
+        if self.sumcheck_id == SumcheckId::RamHammingWeight {
+            let acc = acc.unwrap().borrow();
+            let (_, hamming_booleanity_claim) = acc.get_virtual_polynomial_opening(
+                VirtualPolynomial::RamHammingWeight,
+                SumcheckId::RamHammingBooleanity,
+            );
+            hamming_booleanity_claim * self.gamma_powers.iter().sum::<F>()
+        } else {
+            self.gamma_powers.iter().sum()
         }
     }
 
@@ -227,7 +174,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for HammingWeightSumche
             .map(|i| {
                 accumulator
                     .borrow()
-                    .get_committed_polynomial_opening(self.polynomial_type(i), self.sumcheck_id())
+                    .get_committed_polynomial_opening(self.polynomial_types[i], self.sumcheck_id)
                     .1
             })
             .collect::<Vec<F>>();
@@ -264,8 +211,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for HammingWeightSumche
 
         accumulator.borrow_mut().append_sparse(
             transcript,
-            (0..self.d).map(|i| self.polynomial_type(i)).collect(),
-            self.sumcheck_id(),
+            self.polynomial_types.clone(),
+            self.sumcheck_id,
             opening_point.r,
             r_cycle,
             claims,
@@ -288,8 +235,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for HammingWeightSumche
 
         accumulator.borrow_mut().append_sparse(
             transcript,
-            (0..self.d).map(|i| self.polynomial_type(i)).collect(),
-            self.sumcheck_id(),
+            self.polynomial_types.clone(),
+            self.sumcheck_id,
             r,
         );
     }

@@ -1,8 +1,5 @@
 use crate::poly::opening_proof::{OpeningAccumulator, SumcheckId};
-use crate::subprotocols::{
-    booleanity::BooleanitySumcheck,
-    hamming_weight::{HammingWeightSumcheck, HammingWeightType},
-};
+use crate::subprotocols::{booleanity::BooleanitySumcheck, hamming_weight::HammingWeightSumcheck};
 use crate::utils::math::Math;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
@@ -163,10 +160,21 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         let log_t = trace.len().log_2();
 
         let read_raf = ReadRafSumcheck::new_prover(sm);
+
+        let gamma_scalar: F = sm.transcript.borrow_mut().challenge_scalar();
+
+        let polynomial_types: Vec<CommittedPolynomial> =
+            (0..d).map(CommittedPolynomial::BytecodeRa).collect();
+
         let hamming_weight = HammingWeightSumcheck::new_prover(
-            HammingWeightType::Bytecode { d, log_K },
-            sm,
+            d,
+            log_k_chunk,
+            gamma_scalar,
             G.clone().into_iter().collect(),
+            polynomial_types.clone(),
+            SumcheckId::BytecodeHammingWeight,
+            Some(VirtualPolynomial::LookupOutput),
+            SumcheckId::SpartanOuter,
         );
 
         let gamma: Vec<F::Challenge> = sm
@@ -178,9 +186,6 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
             .transcript
             .borrow_mut()
             .challenge_vector_optimized::<F>(log_k_chunk);
-
-        let polynomial_types: Vec<CommittedPolynomial> =
-            (0..d).map(CommittedPolynomial::BytecodeRa).collect();
 
         let booleanity = BooleanitySumcheck::new_prover(
             d,
@@ -222,8 +227,21 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         let log_t = T_val.log_2();
 
         let read_checking = ReadRafSumcheck::new_verifier(sm);
-        let hamming_weight =
-            HammingWeightSumcheck::new_verifier(HammingWeightType::Bytecode { d, log_K }, sm);
+
+        let gamma_scalar: F = sm.transcript.borrow_mut().challenge_scalar();
+
+        let polynomial_types: Vec<CommittedPolynomial> =
+            (0..d).map(CommittedPolynomial::BytecodeRa).collect();
+
+        let hamming_weight = HammingWeightSumcheck::new_verifier(
+            d,
+            log_k_chunk,
+            gamma_scalar,
+            polynomial_types.clone(),
+            SumcheckId::BytecodeHammingWeight,
+            Some(VirtualPolynomial::LookupOutput),
+            SumcheckId::SpartanOuter,
+        );
 
         let gamma: Vec<F::Challenge> = sm
             .transcript
@@ -236,9 +254,6 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
             .challenge_vector_optimized::<F>(log_k_chunk);
 
         let r_cycle = Vec::new();
-
-        let polynomial_types: Vec<CommittedPolynomial> =
-            (0..d).map(CommittedPolynomial::BytecodeRa).collect();
 
         let booleanity = BooleanitySumcheck::new_verifier(
             d,

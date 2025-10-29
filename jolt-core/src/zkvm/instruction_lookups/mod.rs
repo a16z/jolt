@@ -1,7 +1,4 @@
-use crate::subprotocols::{
-    booleanity::BooleanitySumcheck,
-    hamming_weight::{HammingWeightSumcheck, HammingWeightType},
-};
+use crate::subprotocols::{booleanity::BooleanitySumcheck, hamming_weight::HammingWeightSumcheck};
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::{
@@ -63,10 +60,25 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
             let eq_r_cycle = EqPolynomial::evals(&r_cycle);
             compute_ra_evals(trace, &eq_r_cycle)
         };
+
+        const D_CONST: usize = D;
+        const LOG_K_CHUNK_CONST: usize = LOG_K_CHUNK;
+
+        let gamma: F = sm.transcript.borrow_mut().challenge_scalar();
+
+        let polynomial_types: Vec<CommittedPolynomial> = (0..D_CONST)
+            .map(CommittedPolynomial::InstructionRa)
+            .collect();
+
         let hamming_weight = HammingWeightSumcheck::new_prover(
-            HammingWeightType::Instruction,
-            sm,
+            D_CONST,
+            LOG_K_CHUNK_CONST,
+            gamma,
             G.into_iter().collect(),
+            polynomial_types,
+            SumcheckId::InstructionHammingWeight,
+            Some(VirtualPolynomial::LookupOutput),
+            SumcheckId::SpartanOuter,
         );
 
         #[cfg(feature = "allocative")]
@@ -84,8 +96,24 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, T>>> {
-        let hamming_weight =
-            HammingWeightSumcheck::new_verifier(HammingWeightType::Instruction, sm);
+        const D_CONST: usize = D;
+        const LOG_K_CHUNK_CONST: usize = LOG_K_CHUNK;
+
+        let gamma: F = sm.transcript.borrow_mut().challenge_scalar();
+
+        let polynomial_types: Vec<CommittedPolynomial> = (0..D_CONST)
+            .map(CommittedPolynomial::InstructionRa)
+            .collect();
+
+        let hamming_weight = HammingWeightSumcheck::new_verifier(
+            D_CONST,
+            LOG_K_CHUNK_CONST,
+            gamma,
+            polynomial_types,
+            SumcheckId::InstructionHammingWeight,
+            Some(VirtualPolynomial::LookupOutput),
+            SumcheckId::SpartanOuter,
+        );
 
         vec![Box::new(hamming_weight)]
     }

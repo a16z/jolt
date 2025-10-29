@@ -1,9 +1,6 @@
 #![allow(clippy::too_many_arguments)]
 
-use crate::subprotocols::{
-    booleanity::BooleanitySumcheck,
-    hamming_weight::{HammingWeightSumcheck, HammingWeightType},
-};
+use crate::subprotocols::{booleanity::BooleanitySumcheck, hamming_weight::HammingWeightSumcheck};
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
 use crate::{
@@ -735,6 +732,7 @@ where
         let (_, trace, program_io, _) = state_manager.get_prover_data();
         let memory_layout = &program_io.memory_layout;
         let d = compute_d_parameter(state_manager.ram_K);
+        let num_rounds = DTH_ROOT_OF_K.log_2();
 
         let (r_cycle, _) = state_manager.get_virtual_polynomial_opening(
             VirtualPolynomial::RamHammingWeight,
@@ -744,8 +742,21 @@ where
 
         let G = compute_ram_ra_evals(trace, memory_layout, &eq_r_cycle, d);
 
-        let hamming_weight =
-            HammingWeightSumcheck::new_prover(HammingWeightType::Ram, state_manager, G);
+        let gamma: F = state_manager.transcript.borrow_mut().challenge_scalar();
+
+        let polynomial_types: Vec<CommittedPolynomial> =
+            (0..d).map(CommittedPolynomial::RamRa).collect();
+
+        let hamming_weight = HammingWeightSumcheck::new_prover(
+            d,
+            num_rounds,
+            gamma,
+            G,
+            polynomial_types,
+            SumcheckId::RamHammingWeight,
+            Some(VirtualPolynomial::RamHammingWeight),
+            SumcheckId::RamHammingBooleanity,
+        );
 
         #[cfg(feature = "allocative")]
         {
@@ -759,8 +770,23 @@ where
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
-        let hamming_weight =
-            HammingWeightSumcheck::new_verifier(HammingWeightType::Ram, state_manager);
+        let d = compute_d_parameter(state_manager.ram_K);
+        let num_rounds = DTH_ROOT_OF_K.log_2();
+
+        let gamma: F = state_manager.transcript.borrow_mut().challenge_scalar();
+
+        let polynomial_types: Vec<CommittedPolynomial> =
+            (0..d).map(CommittedPolynomial::RamRa).collect();
+
+        let hamming_weight = HammingWeightSumcheck::new_verifier(
+            d,
+            num_rounds,
+            gamma,
+            polynomial_types,
+            SumcheckId::RamHammingWeight,
+            Some(VirtualPolynomial::RamHammingWeight),
+            SumcheckId::RamHammingBooleanity,
+        );
 
         vec![Box::new(hamming_weight)]
     }
