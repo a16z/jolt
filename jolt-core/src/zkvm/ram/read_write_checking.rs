@@ -764,8 +764,8 @@ impl<F: JoltField> RamReadWriteChecking<F> {
         let evals = (0..ra.len() / 2)
             .into_par_iter()
             .map(|k| {
-                let ra_evals = ra.sumcheck_evals_array::<DEGREE>(k, BindingOrder::HighToLow);
-                let val_evals = val.sumcheck_evals_array::<DEGREE>(k, BindingOrder::HighToLow);
+                let ra_evals = ra.sumcheck_evals_array::<DEGREE>(k, BindingOrder::LowToHigh);
+                let val_evals = val.sumcheck_evals_array::<DEGREE>(k, BindingOrder::LowToHigh);
                 let inc_cycle_eval = inc_cycle.final_sumcheck_claim();
 
                 [
@@ -957,7 +957,7 @@ impl<F: JoltField> RamReadWriteChecking<F> {
         // variables, so they are not bound here
         [ra, val]
             .into_par_iter()
-            .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow));
+            .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh));
     }
 }
 
@@ -1048,7 +1048,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for RamReadWriteCheckin
         // First `sumcheck_switch_index` rounds bind cycle variables from low to high
         r_cycle.extend(opening_point[..self.sumcheck_switch_index].iter().rev());
         // Address variables are bound high-to-low
-        let r_address = opening_point[self.T.log_2()..].to_vec();
+        let r_address = opening_point[self.T.log_2()..]
+            .iter()
+            .rev()
+            .cloned()
+            .collect::<Vec<_>>();
 
         [r_address, r_cycle].concat().into()
     }
