@@ -1013,11 +1013,11 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
             .into_par_iter()
             .map(|k| {
                 let rs1_ra_evals =
-                    rs1_ra.sumcheck_evals_array::<DEGREE>(k, BindingOrder::HighToLow);
+                    rs1_ra.sumcheck_evals_array::<DEGREE>(k, BindingOrder::LowToHigh);
                 let rs2_ra_evals =
-                    rs2_ra.sumcheck_evals_array::<DEGREE>(k, BindingOrder::HighToLow);
-                let wa_evals = rd_wa.sumcheck_evals_array::<DEGREE>(k, BindingOrder::HighToLow);
-                let val_evals = val.sumcheck_evals_array::<DEGREE>(k, BindingOrder::HighToLow);
+                    rs2_ra.sumcheck_evals_array::<DEGREE>(k, BindingOrder::LowToHigh);
+                let wa_evals = rd_wa.sumcheck_evals_array::<DEGREE>(k, BindingOrder::LowToHigh);
+                let val_evals = val.sumcheck_evals_array::<DEGREE>(k, BindingOrder::LowToHigh);
 
                 // Eval RdWriteValue(x) at (r', {0, 2, 3}, k).
                 let rd_write_value_at_0_k = wa_evals[0] * (inc_eval + val_evals[0]);
@@ -1319,7 +1319,7 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
         // variables, so they are not bound here
         [rs1_ra, rs2_ra, rd_wa, val]
             .into_par_iter()
-            .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow));
+            .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh));
     }
 }
 
@@ -1448,7 +1448,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for RegistersReadWriteC
         // First `sumcheck_switch_index` rounds bind cycle variables from low to high
         r_cycle.extend(opening_point[..self.sumcheck_switch_index].iter().rev());
         // Address variables are bound high-to-low
-        let r_address = opening_point[self.T.log_2()..].to_vec();
+        let r_address = opening_point[self.T.log_2()..]
+            .iter()
+            .rev()
+            .cloned()
+            .collect::<Vec<_>>();
 
         [r_address, r_cycle].concat().into()
     }
