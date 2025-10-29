@@ -841,29 +841,28 @@ impl JoltDAG {
         let mut row_commitments: Vec<Vec<<PCS>::ChunkState>> =
             vec![vec![]; T / DoryGlobals::get_max_num_rows()];
 
-        let chunks: Vec<Vec<_>> = lazy_trace
+        lazy_trace
             .as_ref()
             .expect("Lazy trace not found!")
             .clone()
             .pad_using(T, |_| Cycle::NoOp)
             .chunks(row_len)
             .into_iter()
-            .map(|chunk| chunk.collect::<Vec<_>>())
-            .collect();
-
-        chunks
-            .into_par_iter()
-            .zip(&mut row_commitments)
-            .for_each(|(row_cycles, row_)| {
-                let res = pcs_and_polys.iter().map(|(pcs, poly)| {
-                    poly.generate_witness_and_commit_row::<_, PCS>(
-                        pcs,
-                        preprocessing,
-                        &row_cycles,
-                        prover_state_manager.ram_d,
-                    )
-                });
-                *row_ = res.collect::<Vec<_>>();
+            .enumerate()
+            .for_each(|(idx, chunk)| {
+                let row_cycles: Vec<_> = chunk.collect();
+                let res: Vec<_> = pcs_and_polys
+                    .par_iter()
+                    .map(|(pcs, poly)| {
+                        poly.generate_witness_and_commit_row::<_, PCS>(
+                            pcs,
+                            preprocessing,
+                            &row_cycles,
+                            prover_state_manager.ram_d,
+                        )
+                    })
+                    .collect();
+                row_commitments[idx] = res;
             });
 
         let (commitments, hints): (Vec<_>, Vec<_>) = transpose(row_commitments)

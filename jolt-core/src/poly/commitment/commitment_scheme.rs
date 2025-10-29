@@ -137,7 +137,7 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
 
 pub trait StreamingCommitmentScheme: CommitmentScheme {
     type State<'a>: Sync + Clone;
-    type ChunkState: Send + Clone + PartialEq + Debug;
+    type ChunkState: Send + Sync + Clone + PartialEq + Debug;
     type SetupCache;
 
     fn cache_setup(setup: &Self::ProverSetup) -> Self::SetupCache;
