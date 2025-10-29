@@ -4,5 +4,5 @@ pub mod mles_product_sum;
 pub mod sumcheck;
 pub mod univariate_skip;
 
-pub use booleanity::{BooleanityProverState, BooleanitySumcheck, BooleanityType};
+pub use booleanity::{BooleanityProverState, BooleanitySumcheck};
 pub use hamming_weight::{HammingWeightProverState, HammingWeightSumcheck, HammingWeightType};

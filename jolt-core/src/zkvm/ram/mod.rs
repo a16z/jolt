@@ -1,7 +1,7 @@
 #![allow(clippy::too_many_arguments)]
 
 use crate::subprotocols::{
-    booleanity::{BooleanitySumcheck, BooleanityType},
+    booleanity::BooleanitySumcheck,
     hamming_weight::{HammingWeightSumcheck, HammingWeightType},
 };
 #[cfg(feature = "allocative")]
@@ -27,7 +27,7 @@ use crate::{
             read_write_checking::RamReadWriteChecking,
             val_evaluation::ValEvaluationSumcheck,
         },
-        witness::{compute_d_parameter, VirtualPolynomial, DTH_ROOT_OF_K},
+        witness::{compute_d_parameter, CommittedPolynomial, VirtualPolynomial, DTH_ROOT_OF_K},
     },
 };
 use std::vec;
@@ -579,8 +579,49 @@ where
         prover_accumulate_advice(state_manager);
         let K = state_manager.ram_K;
 
-        let booleanity =
-            BooleanitySumcheck::new_prover(BooleanityType::Ram { K }, state_manager, None, None);
+        let (_, trace, program_io, _) = state_manager.get_prover_data();
+        let memory_layout = &program_io.memory_layout;
+        let d = compute_d_parameter(K);
+        let log_k_chunk = DTH_ROOT_OF_K.log_2();
+        let log_t = trace.len().log_2();
+
+        let r_cycle: Vec<F::Challenge> = state_manager
+            .transcript
+            .borrow_mut()
+            .challenge_vector_optimized::<F>(log_t);
+
+        let r_address: Vec<F::Challenge> = state_manager
+            .transcript
+            .borrow_mut()
+            .challenge_vector_optimized::<F>(log_k_chunk);
+
+        let gamma: Vec<F::Challenge> = state_manager
+            .transcript
+            .borrow_mut()
+            .challenge_vector_optimized::<F>(d);
+
+        // Compute G and H for RAM
+        let eq_r_cycle = EqPolynomial::<F>::evals(&r_cycle);
+        let G = compute_ram_ra_evals(trace, memory_layout, &eq_r_cycle, d);
+        let H_indices = compute_ram_h_indices(trace, memory_layout, d);
+
+        let polynomial_types: Vec<CommittedPolynomial> =
+            (0..d).map(CommittedPolynomial::RamRa).collect();
+
+        let booleanity = BooleanitySumcheck::new_prover(
+            d,
+            log_k_chunk,
+            log_t,
+            r_cycle,
+            r_address,
+            gamma,
+            G,
+            H_indices,
+            polynomial_types,
+            SumcheckId::RamBooleanity,
+            None, // No virtual polynomial for RAM
+        );
+
         let val_evaluation = ValEvaluationSumcheck::new_prover(
             self.initial_memory_state.as_ref().unwrap(),
             state_manager,
@@ -608,7 +649,43 @@ where
         // Accumulate advice commitments if present
         verifier_accumulate_advice(state_manager);
         let K = state_manager.ram_K;
-        let booleanity = BooleanitySumcheck::new_verifier(BooleanityType::Ram { K }, state_manager);
+
+        // Compute RAM-specific parameters
+        let (_, _, T) = state_manager.get_verifier_data();
+        let d = compute_d_parameter(K);
+        let log_k_chunk = DTH_ROOT_OF_K.log_2();
+        let log_t = T.log_2();
+
+        let r_cycle: Vec<F::Challenge> = state_manager
+            .transcript
+            .borrow_mut()
+            .challenge_vector_optimized::<F>(log_t);
+
+        let r_address: Vec<F::Challenge> = state_manager
+            .transcript
+            .borrow_mut()
+            .challenge_vector_optimized::<F>(log_k_chunk);
+
+        let gamma: Vec<F::Challenge> = state_manager
+            .transcript
+            .borrow_mut()
+            .challenge_vector_optimized::<F>(d);
+
+        let polynomial_types: Vec<CommittedPolynomial> =
+            (0..d).map(CommittedPolynomial::RamRa).collect();
+
+        let booleanity = BooleanitySumcheck::new_verifier(
+            d,
+            log_k_chunk,
+            log_t,
+            r_cycle,
+            r_address,
+            gamma,
+            polynomial_types,
+            SumcheckId::RamBooleanity,
+            None,
+        );
+
         let val_evaluation = ValEvaluationSumcheck::new_verifier(
             self.initial_memory_state.as_ref().unwrap(),
             state_manager,
@@ -689,6 +766,7 @@ where
     }
 }
 
+#[tracing::instrument(skip_all, name = "ram::compute_ram_ra_evals")]
 fn compute_ram_ra_evals<F: JoltField>(
     trace: &[Cycle],
     memory_layout: &MemoryLayout,
@@ -732,4 +810,29 @@ fn compute_ram_ra_evals<F: JoltField>(
         G_arrays.push(G);
     }
     G_arrays
+}
+
+#[tracing::instrument(skip_all, name = "ram::compute_ram_h_indices")]
+fn compute_ram_h_indices(
+    trace: &[Cycle],
+    memory_layout: &MemoryLayout,
+    d: usize,
+) -> Vec<Vec<Option<u8>>> {
+    let addresses: Vec<Option<u64>> = trace
+        .par_iter()
+        .map(|cycle| remap_address(cycle.ram_access().address() as u64, memory_layout))
+        .collect();
+
+    (0..d)
+        .map(|i| {
+            addresses
+                .par_iter()
+                .map(|address| {
+                    address.map(|a| {
+                        ((a >> (DTH_ROOT_OF_K.log_2() * (d - 1 - i))) % DTH_ROOT_OF_K as u64) as u8
+                    })
+                })
+                .collect()
+        })
+        .collect()
 }
