@@ -97,7 +97,8 @@ impl WitnessData {
 
 pub struct AllCommittedPolynomials();
 impl AllCommittedPolynomials {
-    pub fn initialize(ram_d: usize, bytecode_d: usize) -> Self {
+    pub fn initialize(ram_K: usize, bytecode_d: usize) -> Self {
+        let ram_d = Self::ram_d_from_K(ram_K);
         unsafe {
             if let Some(existing) = ALL_COMMITTED_POLYNOMIALS.get() {
                 // Check if existing polynomials match requested dimensions
@@ -215,18 +216,6 @@ impl CommittedPolynomial {
                 .find_position(|poly| *poly == self)
                 .unwrap()
                 .0
-        }
-    }
-
-    fn ram_d(&self) -> usize {
-        // this is kind of jank but fine for now ig
-        unsafe {
-            ALL_COMMITTED_POLYNOMIALS
-                .get()
-                .expect("ALL_COMMITTED_POLYNOMIALS is uninitialized")
-                .iter()
-                .filter(|poly| matches!(poly, CommittedPolynomial::RamRa(_)))
-                .count()
         }
     }
 
