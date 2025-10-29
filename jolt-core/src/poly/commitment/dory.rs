@@ -1339,14 +1339,14 @@ impl CommitmentScheme for DoryCommitmentScheme {
 }
 
 #[derive(Clone, Debug)]
-pub struct StreamingDoryCommitment<'a, E: DoryPairing> {
-    setup: &'a ProverSetup<E>,
+pub struct StreamingDoryCommitment<'a> {
     bases: &'a Vec<ark_ec::short_weierstrass::Affine<ark_bn254::g1::Config>>,
+    g2_cache: Option<&'a G2Cache>,
     K: Option<usize>,
 }
 
 impl StreamingCommitmentScheme for DoryCommitmentScheme {
-    type State<'a> = StreamingDoryCommitment<'a, JoltBn254>;
+    type State<'a> = StreamingDoryCommitment<'a>;
     type ChunkState = Vec<JoltG1Wrapper>; // A chunk's state is the commitment to the row.
     type SetupCache = Vec<ark_ec::short_weierstrass::Affine<ark_bn254::g1::Config>>;
 
@@ -1365,8 +1365,8 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
         bases: &'a Self::SetupCache,
     ) -> Self::State<'a> {
         StreamingDoryCommitment {
-            setup,
             bases,
+            g2_cache: setup.g2_cache.as_ref(),
             K: onehot_k,
         }
     }
@@ -1439,16 +1439,24 @@ impl StreamingCommitmentScheme for DoryCommitmentScheme {
                     .for_each(|(dest, src)| *dest = *src);
             }
 
-            let commitment = JoltBn254::multi_pair(
-                &row_commitments,
-                &state.setup.g2_vec()[..row_commitments.len()],
+            let commitment = JoltBn254::multi_pair_cached(
+                Some(&row_commitments),
+                None,
+                None,
+                None,
+                Some(row_commitments.len()),
+                state.g2_cache,
             );
             (DoryCommitment(commitment), row_commitments)
         } else {
             let row_commitments: Vec<_> = chunks.into_par_iter().map(|r| r[0]).collect();
-            let commitment = JoltBn254::multi_pair(
-                &row_commitments,
-                &state.setup.g2_vec()[..row_commitments.len()],
+            let commitment = JoltBn254::multi_pair_cached(
+                Some(&row_commitments),
+                None,
+                None,
+                None,
+                Some(row_commitments.len()),
+                state.g2_cache,
             );
             (DoryCommitment(commitment), row_commitments)
         }
