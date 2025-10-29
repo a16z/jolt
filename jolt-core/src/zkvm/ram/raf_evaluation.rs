@@ -16,7 +16,7 @@ use crate::{
         },
         opening_proof::{
             OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
-            VerifierOpeningAccumulator, BIG_ENDIAN,
+            VerifierOpeningAccumulator, BIG_ENDIAN, LITTLE_ENDIAN,
         },
     },
     subprotocols::{
@@ -130,10 +130,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RafEvaluation
             .map(|i| {
                 let ra_evals = self
                     .ra
-                    .sumcheck_evals_array::<DEGREE_BOUND>(i, BindingOrder::HighToLow);
+                    .sumcheck_evals_array::<DEGREE_BOUND>(i, BindingOrder::LowToHigh);
                 let unmap_evals =
                     self.unmap
-                        .sumcheck_evals(i, DEGREE_BOUND, BindingOrder::HighToLow);
+                        .sumcheck_evals(i, DEGREE_BOUND, BindingOrder::LowToHigh);
 
                 // Compute the product evaluations
                 [
@@ -152,8 +152,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RafEvaluation
 
     #[tracing::instrument(skip_all, name = "RamRafEvaluationSumcheckProver::bind")]
     fn bind(&mut self, r_j: F::Challenge, _round: usize) {
-        self.ra.bind_parallel(r_j, BindingOrder::HighToLow);
-        self.unmap.bind_parallel(r_j, BindingOrder::HighToLow);
+        self.ra.bind_parallel(r_j, BindingOrder::LowToHigh);
+        self.unmap.bind_parallel(r_j, BindingOrder::LowToHigh);
     }
 
     fn cache_openings(
@@ -284,7 +284,7 @@ impl<F: JoltField> RafEvaluationSumcheckParams<F> {
 fn get_opening_point<F: JoltField>(
     sumcheck_challenges: &[F::Challenge],
 ) -> OpeningPoint<BIG_ENDIAN, F> {
-    OpeningPoint::new(sumcheck_challenges.to_vec())
+    OpeningPoint::<LITTLE_ENDIAN, F>::new(sumcheck_challenges.to_vec()).match_endianness()
 }
 
 // #[cfg(test)]
