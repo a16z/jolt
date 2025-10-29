@@ -1,13 +1,14 @@
 use crate::poly::opening_proof::{OpeningAccumulator, SumcheckId};
+use crate::subprotocols::{booleanity::BooleanitySumcheck, hamming_weight::HammingWeightSumcheck};
 use crate::utils::math::Math;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::print_data_structure_heap_usage;
-use crate::zkvm::bytecode::booleanity::BooleanitySumcheck;
-use crate::zkvm::bytecode::hamming_weight::HammingWeightSumcheck;
 use crate::zkvm::bytecode::read_raf_checking::ReadRafSumcheck;
 use crate::zkvm::dag::stage::SumcheckStages;
 use crate::zkvm::dag::state_manager::StateManager;
-use crate::zkvm::witness::{compute_d_parameter, VirtualPolynomial, DTH_ROOT_OF_K};
+use crate::zkvm::witness::{
+    compute_d_parameter, CommittedPolynomial, VirtualPolynomial, DTH_ROOT_OF_K,
+};
 use crate::{
     field::JoltField,
     poly::{commitment::commitment_scheme::CommitmentScheme, eq_poly::EqPolynomial},
@@ -19,9 +20,6 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::{ALIGNMENT_FACTOR_BYTECODE, RAM_START_ADDRESS};
 use rayon::prelude::*;
 use tracer::instruction::{Cycle, Instruction};
-
-pub mod booleanity;
-pub mod hamming_weight;
 pub mod read_raf_checking;
 
 #[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
@@ -153,11 +151,55 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
             .r;
         let E_1: Vec<F> = EqPolynomial::evals(&r_cycle);
 
-        let F_1 = compute_ra_evals(bytecode_preprocessing, trace, &E_1);
+        let G = compute_ra_evals(bytecode_preprocessing, trace, &E_1);
+        let H_indices = compute_bytecode_h_indices(bytecode_preprocessing, trace);
+
+        let d = bytecode_preprocessing.d;
+        let log_K = bytecode_preprocessing.code_size.log_2();
+        let log_k_chunk = log_K.div_ceil(d);
+        let log_t = trace.len().log_2();
 
         let read_raf = ReadRafSumcheck::new_prover(sm);
-        let hamming_weight = HammingWeightSumcheck::new_prover(sm, F_1.clone());
-        let booleanity = BooleanitySumcheck::new_prover(sm, r_cycle, F_1);
+
+        let gamma_scalar: F = sm.transcript.borrow_mut().challenge_scalar();
+
+        let polynomial_types: Vec<CommittedPolynomial> =
+            (0..d).map(CommittedPolynomial::BytecodeRa).collect();
+
+        let hamming_weight = HammingWeightSumcheck::new_prover(
+            d,
+            log_k_chunk,
+            gamma_scalar,
+            G.clone().into_iter().collect(),
+            polynomial_types.clone(),
+            SumcheckId::BytecodeHammingWeight,
+            Some(VirtualPolynomial::LookupOutput),
+            SumcheckId::SpartanOuter,
+        );
+
+        let gamma: Vec<F::Challenge> = sm
+            .transcript
+            .borrow_mut()
+            .challenge_vector_optimized::<F>(d);
+
+        let r_address: Vec<F::Challenge> = sm
+            .transcript
+            .borrow_mut()
+            .challenge_vector_optimized::<F>(log_k_chunk);
+
+        let booleanity = BooleanitySumcheck::new_prover(
+            d,
+            log_k_chunk,
+            log_t,
+            r_cycle.clone(),
+            r_address,
+            gamma,
+            G,
+            H_indices,
+            polynomial_types,
+            SumcheckId::BytecodeBooleanity,
+            Some(VirtualPolynomial::UnexpandedPC),
+        );
 
         #[cfg(feature = "allocative")]
         {
@@ -177,9 +219,53 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
         &mut self,
         sm: &mut StateManager<'_, F, T, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, T>>> {
+        let (preprocessing, _, T_val) = sm.get_verifier_data();
+        let bytecode_preprocessing = &preprocessing.shared.bytecode;
+        let d = bytecode_preprocessing.d;
+        let log_K = bytecode_preprocessing.code_size.log_2();
+        let log_k_chunk = log_K.div_ceil(d);
+        let log_t = T_val.log_2();
+
         let read_checking = ReadRafSumcheck::new_verifier(sm);
-        let hamming_weight = HammingWeightSumcheck::new_verifier(sm);
-        let booleanity = BooleanitySumcheck::new_verifier(sm);
+
+        let gamma_scalar: F = sm.transcript.borrow_mut().challenge_scalar();
+
+        let polynomial_types: Vec<CommittedPolynomial> =
+            (0..d).map(CommittedPolynomial::BytecodeRa).collect();
+
+        let hamming_weight = HammingWeightSumcheck::new_verifier(
+            d,
+            log_k_chunk,
+            gamma_scalar,
+            polynomial_types.clone(),
+            SumcheckId::BytecodeHammingWeight,
+            Some(VirtualPolynomial::LookupOutput),
+            SumcheckId::SpartanOuter,
+        );
+
+        let gamma: Vec<F::Challenge> = sm
+            .transcript
+            .borrow_mut()
+            .challenge_vector_optimized::<F>(d);
+
+        let r_address: Vec<F::Challenge> = sm
+            .transcript
+            .borrow_mut()
+            .challenge_vector_optimized::<F>(log_k_chunk);
+
+        let r_cycle = Vec::new();
+
+        let booleanity = BooleanitySumcheck::new_verifier(
+            d,
+            log_k_chunk,
+            log_t,
+            r_cycle,
+            r_address,
+            gamma,
+            polynomial_types,
+            SumcheckId::BytecodeBooleanity,
+            Some(VirtualPolynomial::UnexpandedPC),
+        );
 
         vec![
             Box::new(read_checking),
@@ -190,7 +276,30 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, T: Transcript> SumcheckStag
 }
 
 #[inline(always)]
-#[tracing::instrument(skip_all, name = "Bytecode::compute_ra_evals")]
+#[tracing::instrument(skip_all, name = "bytecode::compute_bytecode_h_indices")]
+fn compute_bytecode_h_indices(
+    preprocessing: &BytecodePreprocessing,
+    trace: &[Cycle],
+) -> Vec<Vec<Option<u8>>> {
+    let d = preprocessing.d;
+    let log_K = preprocessing.code_size.log_2();
+    let log_K_chunk = log_K.div_ceil(d);
+
+    (0..d)
+        .into_par_iter()
+        .map(|i| {
+            trace
+                .par_iter()
+                .map(|cycle| {
+                    let k = preprocessing.get_pc(cycle);
+                    Some(((k >> (log_K_chunk * (d - i - 1))) % (1 << log_K_chunk)) as u8)
+                })
+                .collect()
+        })
+        .collect()
+}
+
+#[tracing::instrument(skip_all, name = "bytecode::compute_ra_evals")]
 fn compute_ra_evals<F: JoltField>(
     preprocessing: &BytecodePreprocessing,
     trace: &[Cycle],
