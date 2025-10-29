@@ -31,20 +31,20 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
 use tracer::instruction::RAMAccess;
 
-// RAM read-write checking sumcheck
-//
-// Proves the relation:
-//   Σ_{k,j} eq(r', (j, k)) ⋅ ra(k, j) ⋅ (Val(k, j) + γ ⋅ (inc(k, j) + Val(k, j)))
-//   = rv_claim + γ ⋅ wv_claim
-// where:
-// - r' are the fresh challenges for this sumcheck
-// - ra(k, j) = 1 if memory address k is accessed at cycle j, and 0 otherwise
-// - Val(k, j) is the value at memory address k before cycle j
-// - inc(k, j) is the change in value at (k, j) if a write occurs
-// - rv_claim and wv_claim are the claimed read and write values from the Spartan outer sumcheck.
-//
-// This sumcheck ensures that the values read from and written to RAM are consistent
-// with the memory trace and the initial/final memory states.
+/// RAM read-write checking sumcheck
+///
+/// Proves the relation:
+///   Σ_{k,j} eq(r', (j, k)) ⋅ ra(k, j) ⋅ (Val(k, j) + γ ⋅ (inc(j) + Val(k, j)))
+///   = rv_claim + γ ⋅ wv_claim
+/// where:
+/// - r' are the fresh challenges for this sumcheck
+/// - ra(k, j) = 1 if memory address k is accessed at cycle j, and 0 otherwise
+/// - Val(k, j) is the value at memory address k right before cycle j
+/// - inc(j) is the change in value at cycle j if a write occurs, and 0 otherwise
+/// - rv_claim and wv_claim are the claimed read and write values from the Spartan outer sumcheck.
+///
+/// This sumcheck ensures that the values read from and written to RAM are consistent
+/// with the memory trace and the initial/final memory states.
 
 /// A collection of vectors that are used in each of the first log(T / num_chunks)
 /// rounds of sumcheck. There is one `DataBuffers` struct per thread/chunk, reused

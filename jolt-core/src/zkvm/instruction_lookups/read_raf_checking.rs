@@ -96,6 +96,7 @@ use rayon::iter::{IndexedParallelIterator, ParallelIterator};
 /// - Last log(T) rounds bind cycle vars using two GruenSplitEqPolynomial instances (for r_sp, r_br),
 ///   producing degree-3 univariates with the required previous-round claims.
 /// - The published univariate matches the RHS above; the verifier checks it against the LHS claims.
+
 const DEGREE: usize = 3;
 
 /// Prover state for the instruction lookups Read+RAF sumcheck.
