@@ -1,15 +1,16 @@
+use allocative::Allocative;
 use std::{
     collections::HashMap,
     ops::{Index, IndexMut},
 };
 
-#[derive(Clone)]
+#[derive(Clone, Allocative)]
 pub enum HashMapOrVec<T: Clone + Default> {
     HashMap(HashMap<usize, T>),
     Vec(Vec<Option<T>>),
 }
 
-impl<T: Clone + Default + Send> HashMapOrVec<T> {
+impl<T: Clone + Default + Send + std::fmt::Debug> HashMapOrVec<T> {
     /// Create a new HashMapOrVec with the given range and capacity.
     /// If the range is less than or equal to the capacity, use a Vec.
     /// Otherwise, use a HashMap.
@@ -27,6 +28,7 @@ impl<T: Clone + Default + Send> HashMapOrVec<T> {
         match self {
             HashMapOrVec::HashMap(hashmap) => {
                 if !hashmap.contains_key(&k) {
+                    println!("({k}, {v:?})");
                     hashmap.insert(k, v);
                     Ok(())
                 } else {
@@ -35,6 +37,7 @@ impl<T: Clone + Default + Send> HashMapOrVec<T> {
             }
             HashMapOrVec::Vec(vec) => {
                 if vec[k].is_none() {
+                    println!("({k}, {v:?})");
                     vec[k] = Some(v);
                     Ok(())
                 } else {
@@ -58,8 +61,13 @@ impl<T: Clone + Default + Send> Index<usize> for HashMapOrVec<T> {
 
     fn index(&self, index: usize) -> &Self::Output {
         match self {
-            HashMapOrVec::HashMap(map) => &map[&index],
-            HashMapOrVec::Vec(vec) => vec[index].as_ref().unwrap(),
+            HashMapOrVec::HashMap(map) => map
+                .get(&index)
+                .as_ref()
+                .unwrap_or_else(|| panic!("No entry for key {index}")),
+            HashMapOrVec::Vec(vec) => vec[index]
+                .as_ref()
+                .unwrap_or_else(|| panic!("No entry for key {index}")),
         }
     }
 }
