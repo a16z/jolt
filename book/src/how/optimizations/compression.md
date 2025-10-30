@@ -21,13 +21,13 @@ $$
 \Psi_6(x) = \frac{x^6 - 1}{\Phi_6(x)} = (x^3 + 1)(x + 1).
 $$
 
+(In practice, a common optimization is that instead of exponentiating by $\Psi_6(x)$, one raises to a multiple of $\Psi_6(x)$ and an integer coprime to the order of the multiplicative group of the target field. This of course is a 1-to-1 map of the underlying field and has the advantage that one may use linear-algebraic techniques to compute exponentiation by the multiple more efficiently (e.g. see how this is applied to the BN254 curve in [Faster Hashing to $\mathbb{G}_2$](https://cacr.uwaterloo.ca/techreports/2011/cacr2011-26.pdf)). This optimization does not affect the compression method, so we consider only the case of raising to a $\Psi_6(x)$-power for the rest of the discussion.)
+
 Let $\xi \in \mathbb{F}_{q^2}$ be a sextic non-residue and identify 
 $$\mathbb{F}_{q^6} = \mathbb{F}_{q^2}(\xi^{\frac{1}{3}}) = \mathbb{F}_{q^2}(\tau)$$
 and 
 $$\mathbb{F}_{q^{12}} = \mathbb{F}_{q^6}(\xi^{\frac{1}{2}}) = \mathbb{F}_{q^6}(\sigma),$$
 where $\tau = \xi^{\frac{1}{3}}$ and $\sigma = \xi^{\frac{1}{2}}$. Through this notation, we emphasise that the sets $\{1, \tau\}$ and $\{1, \sigma\}$ form $\mathbb{F}_{q^2}$-linear and $\mathbb{F}_{q^6}$-linear bases of the fields $\mathbb{F}_{q^6}$ and $\mathbb{F}_{q^{12}}$ viewed as vector spaces, respectively. 
-
-<!-- For example, each element $a \in \mathbb{F}_{q^{12}}$ is uniquely represented as $a = a_0 + a_1\sigma$ where the coefficients $a_i$ are in $\mathbb{F}_{q^6}$, and multiplication is implemented  -->
 
 It turns out that for each element $f \in \mathbb{F}_{q^{12}}$, the power $f^{\Psi_6(q^2)}$ can be written as 
 
