@@ -56,11 +56,18 @@ impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualRev8W> {
 #[cfg(test)]
 mod test {
     use super::VirtualRev8W;
-    use crate::zkvm::instruction::test::materialize_entry_test;
+    use crate::zkvm::instruction::test::{
+        lookup_output_matches_trace_test, materialize_entry_test,
+    };
     use ark_bn254::Fr;
 
     #[test]
     fn materialize_entry() {
         materialize_entry_test::<Fr, VirtualRev8W>();
+    }
+
+    #[test]
+    fn lookup_output_matches_trace() {
+        lookup_output_matches_trace_test::<VirtualRev8W>();
     }
 }

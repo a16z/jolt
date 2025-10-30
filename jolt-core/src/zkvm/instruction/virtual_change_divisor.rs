@@ -51,30 +51,31 @@ impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualChangeDivisor> {
     }
 
     fn to_lookup_output(&self) -> u64 {
-        let (remainder, divisor) = LookupQuery::<XLEN>::to_instruction_inputs(self);
+        let (dividend, divisor) = LookupQuery::<XLEN>::to_instruction_inputs(self);
         match XLEN {
             #[cfg(test)]
             8 => {
-                let remainder = remainder as i8;
+                let dividend = dividend as i8;
                 let divisor = divisor as i8;
-                if remainder == i8::MIN && divisor == -1 {
+                if dividend == i8::MIN && divisor == -1 {
                     1
                 } else {
                     divisor as u8 as u64
                 }
             }
             32 => {
-                let remainder = remainder as i32;
+                let dividend = dividend as i32;
                 let divisor = divisor as i32;
-                if remainder == i32::MIN && divisor == -1 {
+                if dividend == i32::MIN && divisor == -1 {
                     1
                 } else {
                     divisor as u32 as u64
                 }
             }
             64 => {
-                let remainder = remainder as i64;
-                if remainder == i64::MIN && divisor == -1 {
+                let dividend = dividend as i64;
+                let divisor = divisor as i64;
+                if dividend == i64::MIN && divisor == -1 {
                     1
                 } else {
                     divisor as u64
@@ -87,7 +88,9 @@ impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualChangeDivisor> {
 
 #[cfg(test)]
 mod test {
-    use crate::zkvm::instruction::test::materialize_entry_test;
+    use crate::zkvm::instruction::test::{
+        lookup_output_matches_trace_test, materialize_entry_test,
+    };
 
     use super::*;
     use ark_bn254::Fr;
@@ -95,5 +98,10 @@ mod test {
     #[test]
     fn materialize_entry() {
         materialize_entry_test::<Fr, VirtualChangeDivisor>();
+    }
+
+    #[test]
+    fn lookup_output_matches_trace() {
+        lookup_output_matches_trace_test::<VirtualChangeDivisor>();
     }
 }

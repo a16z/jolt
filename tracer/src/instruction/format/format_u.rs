@@ -19,7 +19,7 @@ pub struct RegisterStateFormatU {
 
 impl InstructionRegisterState for RegisterStateFormatU {
     #[cfg(any(feature = "test-utils", test))]
-    fn random(rng: &mut rand::rngs::StdRng) -> Self {
+    fn random(rng: &mut rand::rngs::StdRng, _operands: &NormalizedOperands) -> Self {
         use rand::RngCore;
         Self {
             rd: (rng.next_u64(), rng.next_u64()),

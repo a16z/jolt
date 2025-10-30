@@ -127,6 +127,7 @@ impl<F: JoltField> DensePolynomial<F> {
 
         left.par_iter_mut()
             .zip(right.par_iter())
+            .with_min_len(4096)
             .filter(|(&mut a, &b)| a != b)
             .for_each(|(a, b)| {
                 *a += *r * (*b - *a);

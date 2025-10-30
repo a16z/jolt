@@ -22,8 +22,16 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for ChangeDivisorWPre
         C: ChallengeFieldOps<F>,
         F: FieldChallengeOps<C>,
     {
-        let mut result = checkpoints[Prefixes::ChangeDivisorW]
-            .unwrap_or(F::from_u64(2) - F::from_u128(1u128 << XLEN));
+        if j < XLEN {
+            return F::zero();
+        }
+
+        let mut result = if j == XLEN || j == XLEN + 1 {
+            F::from_u64(2) - F::from_u128(1u128 << XLEN)
+        } else {
+            checkpoints[Prefixes::ChangeDivisorW].unwrap()
+        };
+
         if j == XLEN {
             let x_msb = b.pop_msb() as u32;
             if x_msb == 0 {
@@ -40,7 +48,12 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for ChangeDivisorWPre
                 if u64::from(x) != 0 || u64::from(y) != (1u64 << y.len()) - 1 || c == 0 {
                     return F::zero();
                 }
-                result *= (F::one() - r_x) * F::from_u64(c as u64);
+
+                if j == XLEN + 1 {
+                    result *= (r_x) * F::from_u64(c as u64);
+                } else {
+                    result *= (F::one() - r_x) * F::from_u64(c as u64);
+                }
             }
         } else if j > XLEN {
             let (x, y) = b.uninterleave();
@@ -62,15 +75,15 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for ChangeDivisorWPre
         C: ChallengeFieldOps<F>,
         F: FieldChallengeOps<C>,
     {
-        let updated = checkpoints[Prefixes::ChangeDivisorW]
-            .unwrap_or(F::from_u64(2) - F::from_u128(1u128 << XLEN))
-            * if j == XLEN + 1 {
-                r_x * r_y
-            } else if j > XLEN + 1 {
-                (F::one() - r_x) * r_y
-            } else {
-                F::one()
-            };
+        if j < XLEN {
+            return Some(F::zero()).into();
+        }
+
+        let updated = if j == XLEN + 1 {
+            (F::from_u64(2) - F::from_u128(1u128 << XLEN)) * r_x * r_y
+        } else {
+            checkpoints[Prefixes::ChangeDivisorW].unwrap() * ((F::one() - r_x) * r_y)
+        };
         Some(updated).into()
     }
 }

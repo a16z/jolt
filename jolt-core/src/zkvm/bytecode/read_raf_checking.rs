@@ -1069,7 +1069,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
         // Stage 4: gamma^3 * (Val_4)
         // Stage 5: gamma^4 * (Val_5)
         // Which matches with the input claim:
-        // rv_1 + gamma * rv_2 + gamma^2 * rv_3 + gamma^3 * rv_4 + gamma^4 * rv_5 + gamma^5 * raf_1 + gamma^4 * raf_3
+        // rv_1 + gamma * rv_2 + gamma^2 * rv_3 + gamma^3 * rv_4 + gamma^4 * rv_5 + gamma^5 * raf_1 + gamma^6 * raf_3
         let val = self
             .val_polys
             .iter()
@@ -1167,7 +1167,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
         // Stage 4: gamma^3 * (Val_4)
         // Stage 5: gamma^4 * (Val_5)
         // Which matches with the input claim:
-        // rv_1 + gamma * rv_2 + gamma^2 * rv_3 + gamma^3 * rv_4 + gamma^4 * rv_5 + gamma^5 * raf_1 + gamma^4 * raf_3
+        // rv_1 + gamma * rv_2 + gamma^2 * rv_3 + gamma^3 * rv_4 + gamma^4 * rv_5 + gamma^5 * raf_1 + gamma^6 * raf_3
         ps.bound_val_evals = Some(
             self.val_polys
                 .iter()

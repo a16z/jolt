@@ -82,7 +82,9 @@ impl_virtual_xor_rotw!(VirtualXORROTW7, 7);
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::zkvm::instruction::test::materialize_entry_test;
+    use crate::zkvm::instruction::test::{
+        lookup_output_matches_trace_test, materialize_entry_test,
+    };
     use ark_bn254::Fr;
 
     #[test]
@@ -103,5 +105,25 @@ mod test {
     #[test]
     fn materialize_entry_7() {
         materialize_entry_test::<Fr, VirtualXORROTW7>();
+    }
+
+    #[test]
+    fn lookup_output_matches_trace_16() {
+        lookup_output_matches_trace_test::<VirtualXORROTW16>();
+    }
+
+    #[test]
+    fn lookup_output_matches_trace_12() {
+        lookup_output_matches_trace_test::<VirtualXORROTW12>();
+    }
+
+    #[test]
+    fn lookup_output_matches_trace_8() {
+        lookup_output_matches_trace_test::<VirtualXORROTW8>();
+    }
+
+    #[test]
+    fn lookup_output_matches_trace_7() {
+        lookup_output_matches_trace_test::<VirtualXORROTW7>();
     }
 }

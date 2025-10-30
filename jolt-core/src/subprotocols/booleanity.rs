@@ -1,347 +1,168 @@
-use std::cell::RefCell;
-use std::rc::Rc;
-use std::sync::Arc;
-
-use num_traits::Zero;
-
-use crate::poly::opening_proof::{
-    OpeningAccumulator, OpeningPoint, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
-};
-use crate::zkvm::bytecode::BytecodePreprocessing;
-use crate::zkvm::dag::state_manager::StateManager;
-use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
+use allocative::Allocative;
+#[cfg(feature = "allocative")]
+use allocative::FlameGraphBuilder;
+use ark_std::Zero;
+use rayon::prelude::*;
+use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 use crate::{
     field::JoltField,
     poly::{
-        commitment::commitment_scheme::CommitmentScheme,
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, PolynomialBinding},
-        opening_proof::ProverOpeningAccumulator,
+        opening_proof::{
+            OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+            VerifierOpeningAccumulator, BIG_ENDIAN,
+        },
         ra_poly::RaPolynomial,
         split_eq_poly::GruenSplitEqPolynomial,
     },
-    subprotocols::sumcheck::SumcheckInstance,
     transcripts::Transcript,
     utils::{
         math::Math,
         thread::{drop_in_background_thread, unsafe_allocate_zero_vec},
     },
+    zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
 };
-use allocative::Allocative;
-#[cfg(feature = "allocative")]
-use allocative::FlameGraphBuilder;
-use rayon::prelude::*;
-use tracer::instruction::Cycle;
 
-// Bytecode booleanity sumcheck
-//
-// Proves a zero-check of the form
-//   0 = Σ_k Σ_j eq(r_address, k) · eq(r_cycle, j) · (Σ_{i=0}^{d-1} γ_i · (H_i(k, j)^2 − H_i(k, j)))
-// where:
-// - r_address are the address-chunk variables bound in phase 1
-// - r_cycle are the time/cycle variables bound in phase 2
-// - H_i is the routing/selection indicator for the i-th address chunk (boolean per point)
+use crate::subprotocols::sumcheck::SumcheckInstance;
 
+/// Common prover state for all booleanity sumchecks
 #[derive(Allocative)]
-struct BooleanityProverState<F: JoltField> {
-    /// B(k) := eq(r_address, k). Split-eq over address-chunk variables (phase 1, LowToHigh).
-    B: GruenSplitEqPolynomial<F>,
-    /// D(j) := eq(r_cycle, j). Split-eq over time/cycle variables (phase 2, LowToHigh).
-    D: GruenSplitEqPolynomial<F>,
-    /// F_m[u] := eq(r_address[0..m-1], u) for u∈{0,1}^m; stored in first 2^m entries after m rounds.
-    /// Eq-prefix weights reused to build H.
-    F: Vec<F>,
-    /// G_i[k] := Σ_j D(j) · 1[chunk_i(PC(j)) = k]. Pre-aggregated routing mass per address chunk i.
-    G: Vec<Vec<F>>,
-    /// pc_by_cycle[i][j] := chunk_i(PC(j)). Address-chunk index for chunk i at cycle j.
-    pc_by_cycle: Vec<Vec<Option<u8>>>,
-    /// H_i(k,j) := 1[chunk_i(PC(j)) = k] ∈ {0,1}. RaPolynomial routing indicator over chunk i.
-    H: Vec<RaPolynomial<u8, F>>,
-    /// eq(r_address, r_address′). Scalar after phase 1 collapse.
-    eq_r_r: F,
+pub struct BooleanityProverState<F: JoltField> {
+    /// B: split-eq over address-chunk variables (phase 1, LowToHigh).
+    pub B: GruenSplitEqPolynomial<F>,
+    /// D: split-eq over time/cycle variables (phase 2, LowToHigh).
+    pub D: GruenSplitEqPolynomial<F>,
+    /// G as in the Twist and Shout paper
+    pub G: Vec<Vec<F>>,
+    /// H as in the Twist and Shout paper
+    pub H: Vec<RaPolynomial<u8, F>>,
+    /// F: Expanding table
+    pub F: Vec<F>,
+    /// eq_r_r
+    pub eq_r_r: F,
+    /// Indices for H polynomials
+    pub H_indices: Vec<Vec<Option<u8>>>,
 }
 
+/// Unified Booleanity Sumcheck implementation for RAM, Bytecode, and Instruction lookups
 #[derive(Allocative)]
 pub struct BooleanitySumcheck<F: JoltField> {
-    /// gamma: optimized batching challenges γ_i (length d).
-    /// TODO: special casing for the first challenge to be F::one()
-    gamma: Vec<F::Challenge>,
-    /// d: number of address chunks in the decomposition.
+    /// Number of address chunks
     d: usize,
-    /// log_T: number of time/cycle variables.
-    log_T: usize,
-    /// log_K_chunk: number of address-chunk variables per chunk.
-    log_K_chunk: usize,
-    /// prover_state: prover-side working state for both phases.
-    prover_state: Option<BooleanityProverState<F>>,
-    /// r_address: address binding point (for endianness and output claim).
+    /// Log of chunk size
+    log_k_chunk: usize,
+    /// Log of trace length
+    log_t: usize,
+    /// Batching challenges
+    gamma: Vec<F::Challenge>,
+    /// Address binding point
     r_address: Vec<F::Challenge>,
+    /// Cycle binding point
+    r_cycle: Vec<F::Challenge>,
+    /// Polynomial types for opening accumulator
+    polynomial_types: Vec<CommittedPolynomial>,
+    /// Sumcheck ID for opening accumulator
+    sumcheck_id: SumcheckId,
+    /// Optional virtual polynomial for r_cycle
+    virtual_poly: Option<VirtualPolynomial>,
+    /// Prover state (only for prover)
+    prover_state: Option<BooleanityProverState<F>>,
 }
 
 impl<F: JoltField> BooleanitySumcheck<F> {
-    #[tracing::instrument(skip_all, name = "BytecodeBooleanitySumcheck::new_prover")]
+    #[allow(clippy::too_many_arguments)]
     pub fn new_prover(
-        sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
-        r_cycle: Vec<F::Challenge>,
-        G: Vec<Vec<F>>,
-    ) -> Self {
-        let (preprocessing, _, trace, _, _) = sm.get_prover_data();
-        let d = preprocessing.shared.bytecode.d;
-        let log_K = preprocessing.shared.bytecode.bytecode.len().log_2();
-        let log_K_chunk = log_K.div_ceil(d);
-        let gamma = sm
-            .transcript
-            .borrow_mut()
-            .challenge_vector_optimized::<F>(d);
-
-        let r_address: Vec<F::Challenge> = sm
-            .transcript
-            .borrow_mut()
-            .challenge_vector_optimized::<F>(log_K_chunk);
-
-        Self {
-            gamma,
-            prover_state: Some(BooleanityProverState::new(
-                trace,
-                &preprocessing.shared.bytecode,
-                r_cycle,
-                G,
-                &r_address,
-                d,
-            )),
-            d,
-            log_T: trace.len().log_2(),
-            log_K_chunk,
-            r_address,
-        }
-    }
-
-    pub fn new_verifier(
-        sm: &mut StateManager<F, impl Transcript, impl CommitmentScheme<Field = F>>,
-    ) -> Self {
-        let (_, _, T) = sm.get_verifier_data();
-        let d = sm.get_verifier_data().0.shared.bytecode.d;
-        let log_K = sm.get_bytecode().len().log_2();
-        let log_K_chunk = log_K.div_ceil(d);
-        let gamma = sm
-            .transcript
-            .borrow_mut()
-            .challenge_vector_optimized::<F>(d);
-        let r_address: Vec<F::Challenge> = sm
-            .transcript
-            .borrow_mut()
-            .challenge_vector_optimized::<F>(log_K_chunk);
-        Self {
-            gamma,
-            prover_state: None,
-            log_T: T.log_2(),
-            r_address,
-            log_K_chunk,
-            d,
-        }
-    }
-}
-
-impl<F: JoltField> BooleanityProverState<F> {
-    fn new(
-        trace: &[Cycle],
-        preprocessing: &BytecodePreprocessing,
-        r_cycle: Vec<F::Challenge>,
-        G: Vec<Vec<F>>,
-        r_address: &[F::Challenge],
         d: usize,
+        log_k_chunk: usize,
+        log_t: usize,
+        r_cycle: Vec<F::Challenge>,
+        r_address: Vec<F::Challenge>,
+        gamma: Vec<F::Challenge>,
+        G: Vec<Vec<F>>,
+        H_indices: Vec<Vec<Option<u8>>>,
+        polynomial_types: Vec<CommittedPolynomial>,
+        sumcheck_id: SumcheckId,
+        virtual_poly: Option<VirtualPolynomial>,
     ) -> Self {
-        let log_K = preprocessing.code_size.log_2();
-        let log_K_chunk = log_K.div_ceil(d);
-        let K_chunk = 1 << log_K_chunk;
-        let B = GruenSplitEqPolynomial::new(r_address, BindingOrder::LowToHigh);
+        let B = GruenSplitEqPolynomial::new(&r_address, BindingOrder::LowToHigh);
+        let D_poly = GruenSplitEqPolynomial::new(&r_cycle, BindingOrder::LowToHigh);
 
-        let mut F_vec: Vec<F> = unsafe_allocate_zero_vec(log_K.pow2());
+        let k_chunk = 1 << log_k_chunk;
+        let mut F_vec: Vec<F> = unsafe_allocate_zero_vec(k_chunk);
         F_vec[0] = F::one();
 
-        let pc_by_cycle = (0..d)
-            .into_par_iter()
-            .map(|i| {
-                trace
-                    .par_iter()
-                    .map(|cycle| {
-                        let k = preprocessing.get_pc(cycle);
-                        Some(((k >> (log_K_chunk * (d - i - 1))) % K_chunk) as u8)
-                    })
-                    .collect()
-            })
-            .collect();
-        let D = GruenSplitEqPolynomial::new(&r_cycle, BindingOrder::LowToHigh);
-
-        BooleanityProverState {
+        let prover_state = BooleanityProverState {
             B,
-            D,
-            H: vec![RaPolynomial::None; d],
+            D: D_poly,
             G,
+            H_indices,
+            H: vec![],
             F: F_vec,
             eq_r_r: F::zero(),
-            pc_by_cycle,
+        };
+
+        Self {
+            d,
+            log_k_chunk,
+            log_t,
+            gamma,
+            r_address,
+            r_cycle,
+            polynomial_types,
+            sumcheck_id,
+            virtual_poly,
+            prover_state: Some(prover_state),
         }
     }
-}
 
-impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for BooleanitySumcheck<F> {
-    fn degree(&self) -> usize {
-        3
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_verifier(
+        d: usize,
+        log_k_chunk: usize,
+        log_t: usize,
+        r_cycle: Vec<F::Challenge>,
+        r_address: Vec<F::Challenge>,
+        gamma: Vec<F::Challenge>,
+        polynomial_types: Vec<CommittedPolynomial>,
+        sumcheck_id: SumcheckId,
+        virtual_poly: Option<VirtualPolynomial>,
+    ) -> Self {
+        Self {
+            d,
+            log_k_chunk,
+            log_t,
+            gamma,
+            r_address,
+            r_cycle,
+            polynomial_types,
+            sumcheck_id,
+            virtual_poly,
+            prover_state: None,
+        }
     }
 
-    fn num_rounds(&self) -> usize {
-        self.log_K_chunk + self.log_T
-    }
-
-    fn input_claim(&self, _acc: Option<&RefCell<dyn OpeningAccumulator<F>>>) -> F {
-        F::zero()
-    }
-
-    #[tracing::instrument(skip_all, name = "BytecodeBooleanitySumcheck::compute_prover_message")]
-    fn compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F> {
-        if round < self.log_K_chunk {
-            // Phase 1: First log(K_chunk) rounds
-            self.compute_phase1_message(round, previous_claim)
+    fn get_r_cycle(&self, accumulator: &dyn OpeningAccumulator<F>) -> Vec<F::Challenge> {
+        if !self.r_cycle.is_empty() {
+            self.r_cycle.clone()
         } else {
-            // Phase 2: Last log(T) rounds
-            self.compute_phase2_message(round, previous_claim)
+            let virtual_poly = self
+                .virtual_poly
+                .expect("virtual_poly must be set when r_cycle is empty");
+            accumulator
+                .get_virtual_polynomial_opening(virtual_poly, SumcheckId::SpartanOuter)
+                .0
+                .r
+                .clone()
         }
     }
 
-    #[tracing::instrument(skip_all, name = "BytecodeBooleanitySumcheck::bind")]
-    fn bind(&mut self, r_j: F::Challenge, round: usize) {
-        let ps = self.prover_state.as_mut().unwrap();
-
-        if round < self.log_K_chunk {
-            // Phase 1: Bind B and update F
-            ps.B.bind(r_j);
-
-            // Update F for this round (see Equation 55)
-            let (F_left, F_right) = ps.F.split_at_mut(1 << round);
-            F_left
-                .par_iter_mut()
-                .zip(F_right.par_iter_mut())
-                .for_each(|(x, y)| {
-                    *y = *x * r_j;
-                    *x -= *y;
-                });
-
-            // Store eq_r_r at the end of phase 1
-            if round == self.log_K_chunk - 1 {
-                ps.eq_r_r = ps.B.get_current_scalar();
-                // Initialize H polynomials using RaPolynomial
-                let F = std::mem::take(&mut ps.F);
-                let pc_by_cycle = std::mem::take(&mut ps.pc_by_cycle);
-                ps.H = pc_by_cycle
-                    .into_iter()
-                    .map(|pc_indices| RaPolynomial::new(Arc::new(pc_indices), F.clone()))
-                    .collect();
-                // Drop G arrays as they're no longer needed
-                let g = std::mem::take(&mut ps.G);
-                drop_in_background_thread(g);
-            }
-        } else {
-            // Phase 2: Bind D and H
-            ps.D.bind(r_j);
-            ps.H.par_iter_mut()
-                .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh));
-        }
-    }
-
-    fn expected_output_claim(
-        &self,
-        accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
-        r: &[F::Challenge],
-    ) -> F {
-        let accumulator = accumulator.as_ref().unwrap();
-        let ra_claims = (0..self.d)
-            .map(|i| {
-                accumulator
-                    .borrow()
-                    .get_committed_polynomial_opening(
-                        CommittedPolynomial::BytecodeRa(i),
-                        SumcheckId::BytecodeBooleanity,
-                    )
-                    .1
-            })
-            .collect::<Vec<F>>();
-        let (r_cycle, _) = accumulator.borrow().get_virtual_polynomial_opening(
-            VirtualPolynomial::LookupOutput,
-            SumcheckId::SpartanOuter,
-        );
-
-        EqPolynomial::<F>::mle(
-            r,
-            &self
-                .r_address
-                .iter()
-                .cloned()
-                .rev()
-                .chain(r_cycle.r.iter().cloned().rev())
-                .collect::<Vec<F::Challenge>>(),
-        ) * self
-            .gamma
-            .iter()
-            .zip(ra_claims)
-            .map(|(gamma, ra)| (ra.square() - ra) * gamma)
-            .sum::<F>()
-    }
-
-    fn normalize_opening_point(
-        &self,
-        opening_point: &[F::Challenge],
-    ) -> OpeningPoint<BIG_ENDIAN, F> {
-        let mut opening_point = opening_point.to_vec();
-        opening_point[..self.log_K_chunk].reverse();
-        opening_point[self.log_K_chunk..].reverse();
-        opening_point.into()
-    }
-
-    fn cache_openings_prover(
-        &self,
-        accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
-        transcript: &mut T,
-        opening_point: OpeningPoint<BIG_ENDIAN, F>,
-    ) {
-        let ps = self.prover_state.as_ref().unwrap();
-
-        let claims: Vec<F> = ps.H.iter().map(|H| H.final_sumcheck_claim()).collect();
-
-        accumulator.borrow_mut().append_sparse(
-            transcript,
-            (0..self.d).map(CommittedPolynomial::BytecodeRa).collect(),
-            SumcheckId::BytecodeBooleanity,
-            opening_point.r[..self.log_K_chunk].to_vec(),
-            opening_point.r[self.log_K_chunk..].to_vec(),
-            claims,
-        );
-    }
-
-    fn cache_openings_verifier(
-        &self,
-        accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
-        transcript: &mut T,
-        opening_point: OpeningPoint<BIG_ENDIAN, F>,
-    ) {
-        accumulator.borrow_mut().append_sparse(
-            transcript,
-            (0..self.d).map(CommittedPolynomial::BytecodeRa).collect(),
-            SumcheckId::BytecodeBooleanity,
-            opening_point.r,
-        );
-    }
-
-    #[cfg(feature = "allocative")]
-    fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
-        flamegraph.visit_root(self);
-    }
-}
-
-impl<F: JoltField> BooleanitySumcheck<F> {
     fn compute_phase1_message(&self, round: usize, previous_claim: F) -> Vec<F> {
-        let p = self.prover_state.as_ref().unwrap();
+        let p = self
+            .prover_state
+            .as_ref()
+            .expect("Prover state not initialized");
         let m = round + 1;
         const DEGREE: usize = 3;
 
@@ -416,7 +237,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                 .try_into()
                 .unwrap()
         } else {
-            // E_in has not been fully bound - use nested structure
+            // E_in has not been fully bound
             let num_x_in_bits = B.E_in_current_len().log_2();
             let x_bitmask = (1 << num_x_in_bits) - 1;
             let chunk_size = 1 << num_x_in_bits;
@@ -512,7 +333,10 @@ impl<F: JoltField> BooleanitySumcheck<F> {
     }
 
     fn compute_phase2_message(&self, _round: usize, previous_claim: F) -> Vec<F> {
-        let p = self.prover_state.as_ref().unwrap();
+        let p = self
+            .prover_state
+            .as_ref()
+            .expect("Prover state not initialized");
         const DEGREE: usize = 3;
 
         let D_poly = &p.D;
@@ -546,7 +370,7 @@ impl<F: JoltField> BooleanitySumcheck<F> {
                     |running, new| [running[0] + new[0], running[1] + new[1]],
                 )
         } else {
-            // E_in has not been fully bound - use nested structure
+            // E_in has not been fully bound
             let num_x_in_bits = D_poly.E_in_current_len().log_2();
             let x_bitmask = (1 << num_x_in_bits) - 1;
             let chunk_size = 1 << num_x_in_bits;
@@ -612,5 +436,167 @@ impl<F: JoltField> BooleanitySumcheck<F> {
             p.eq_r_r * gruen_evals[1],
             p.eq_r_r * gruen_evals[2],
         ]
+    }
+}
+
+impl<F, T> SumcheckInstance<F, T> for BooleanitySumcheck<F>
+where
+    F: JoltField,
+    T: Transcript,
+{
+    fn degree(&self) -> usize {
+        3
+    }
+
+    fn num_rounds(&self) -> usize {
+        self.log_k_chunk + self.log_t
+    }
+
+    fn input_claim(&self, _acc: Option<&RefCell<dyn OpeningAccumulator<F>>>) -> F {
+        F::zero()
+    }
+
+    #[tracing::instrument(skip_all, name = "BooleanitySumcheck::compute_prover_message")]
+    fn compute_prover_message(&mut self, round: usize, previous_claim: F) -> Vec<F> {
+        if round < self.log_k_chunk {
+            // Phase 1: First log(K_chunk) rounds
+            self.compute_phase1_message(round, previous_claim)
+        } else {
+            // Phase 2: Last log(T) rounds
+            self.compute_phase2_message(round, previous_claim)
+        }
+    }
+
+    #[tracing::instrument(skip_all, name = "BooleanitySumcheck::bind")]
+    fn bind(&mut self, r_j: F::Challenge, round: usize) {
+        let ps = self
+            .prover_state
+            .as_mut()
+            .expect("Prover state not initialized");
+
+        if round < self.log_k_chunk {
+            // Phase 1: Bind B and update F
+            ps.B.bind(r_j);
+
+            // Update F for this round (see Equation 55)
+            let (F_left, F_right) = ps.F.split_at_mut(1 << round);
+            F_left
+                .par_iter_mut()
+                .zip(F_right.par_iter_mut())
+                .for_each(|(x, y)| {
+                    *y = *x * r_j;
+                    *x -= *y;
+                });
+
+            // If transitioning to phase 2, prepare H polynomials
+            if round == self.log_k_chunk - 1 {
+                ps.eq_r_r = ps.B.get_current_scalar();
+
+                // Initialize H polynomials using RaPolynomial
+                let F = std::mem::take(&mut ps.F);
+                let H_indices = std::mem::take(&mut ps.H_indices);
+                ps.H = H_indices
+                    .into_iter()
+                    .map(|indices| RaPolynomial::new(Arc::new(indices), F.clone()))
+                    .collect();
+
+                // Drop G arrays as they're no longer needed
+                let g = std::mem::take(&mut ps.G);
+                drop_in_background_thread(g);
+            }
+        } else {
+            // Phase 2: Bind D and H
+            ps.D.bind(r_j);
+            ps.H.par_iter_mut()
+                .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::LowToHigh));
+        }
+    }
+
+    fn expected_output_claim(
+        &self,
+        accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
+        r: &[F::Challenge],
+    ) -> F {
+        let accumulator = accumulator.as_ref().unwrap();
+        let ra_claims = self
+            .polynomial_types
+            .iter()
+            .map(|poly_type| {
+                accumulator
+                    .borrow()
+                    .get_committed_polynomial_opening(*poly_type, self.sumcheck_id)
+                    .1
+            })
+            .collect::<Vec<F>>();
+
+        let r_cycle = self.get_r_cycle(&*accumulator.borrow());
+
+        let combined_r: Vec<F::Challenge> = self
+            .r_address
+            .iter()
+            .cloned()
+            .rev()
+            .chain(r_cycle.iter().cloned().rev())
+            .collect();
+
+        EqPolynomial::<F>::mle(r, &combined_r)
+            * self
+                .gamma
+                .iter()
+                .zip(ra_claims)
+                .map(|(gamma, ra)| (ra.square() - ra) * gamma)
+                .sum::<F>()
+    }
+
+    fn normalize_opening_point(
+        &self,
+        opening_point: &[F::Challenge],
+    ) -> OpeningPoint<BIG_ENDIAN, F> {
+        let mut opening_point = opening_point.to_vec();
+        opening_point[..self.log_k_chunk].reverse();
+        opening_point[self.log_k_chunk..].reverse();
+        opening_point.into()
+    }
+
+    fn cache_openings_prover(
+        &self,
+        accumulator: Rc<RefCell<ProverOpeningAccumulator<F>>>,
+        transcript: &mut T,
+        opening_point: OpeningPoint<BIG_ENDIAN, F>,
+    ) {
+        let ps = self
+            .prover_state
+            .as_ref()
+            .expect("Prover state not initialized");
+
+        let claims: Vec<F> = ps.H.iter().map(|H| H.final_sumcheck_claim()).collect();
+
+        accumulator.borrow_mut().append_sparse(
+            transcript,
+            self.polynomial_types.clone(),
+            self.sumcheck_id,
+            opening_point.r[..self.log_k_chunk].to_vec(),
+            opening_point.r[self.log_k_chunk..].to_vec(),
+            claims,
+        );
+    }
+
+    fn cache_openings_verifier(
+        &self,
+        accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
+        transcript: &mut T,
+        opening_point: OpeningPoint<BIG_ENDIAN, F>,
+    ) {
+        accumulator.borrow_mut().append_sparse(
+            transcript,
+            self.polynomial_types.clone(),
+            self.sumcheck_id,
+            opening_point.r,
+        );
+    }
+
+    #[cfg(feature = "allocative")]
+    fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
+        flamegraph.visit_root(self);
     }
 }
