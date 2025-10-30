@@ -39,7 +39,7 @@ pub trait InstructionRegisterState:
     Default + Copy + Clone + Serialize + DeserializeOwned + Debug
 {
     #[cfg(any(feature = "test-utils", test))]
-    fn random(rng: &mut rand::rngs::StdRng) -> Self;
+    fn random(rng: &mut rand::rngs::StdRng, operands: &NormalizedOperands) -> Self;
     fn rs1_value(&self) -> u64 {
         0
     }

@@ -84,7 +84,9 @@ impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualMovsign> {
 
 #[cfg(test)]
 mod test {
-    use crate::zkvm::instruction::test::materialize_entry_test;
+    use crate::zkvm::instruction::test::{
+        lookup_output_matches_trace_test, materialize_entry_test,
+    };
 
     use super::*;
     use ark_bn254::Fr;
@@ -92,5 +94,10 @@ mod test {
     #[test]
     fn materialize_entry() {
         materialize_entry_test::<Fr, VirtualMovsign>();
+    }
+
+    #[test]
+    fn lookup_output_matches_trace() {
+        lookup_output_matches_trace_test::<VirtualMovsign>();
     }
 }

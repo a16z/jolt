@@ -16,6 +16,8 @@ declare_riscv_instr!(
 );
 
 impl JAL {
+    // cpu.pc is pre-incremented by 4 (or 2 for compressed) in tick_operate() before execution,
+    // self.address is the instruction address.
     fn exec(&self, cpu: &mut Cpu, _: &mut <JAL as RISCVInstruction>::RAMAccess) {
         if self.operands.rd != 0 {
             if self.operands.rd == 1 {
@@ -24,7 +26,8 @@ impl JAL {
             }
             cpu.x[self.operands.rd as usize] = cpu.sign_extend(cpu.pc as i64);
         }
-        cpu.pc = (self.address as i64 + normalize_imm(self.operands.imm, &cpu.xlen)) as u64;
+        cpu.pc = ((self.address as i64).wrapping_add(normalize_imm(self.operands.imm, &cpu.xlen)))
+            as u64;
     }
 }
 
