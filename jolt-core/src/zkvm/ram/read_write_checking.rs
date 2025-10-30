@@ -93,7 +93,7 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
         K: usize,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
-        let (preprocessing, trace, program_io, _) = state_manager.get_prover_data();
+        let (preprocessing, _, trace, program_io, _) = state_manager.get_prover_data();
 
         let r_prime = state_manager
             .get_virtual_polynomial_opening(
@@ -286,7 +286,8 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
 
         let gruens_eq_r_prime = GruenSplitEqPolynomial::new(&r_prime.r, BindingOrder::LowToHigh);
 
-        let inc_cycle = CommittedPolynomial::RamInc.generate_witness(preprocessing, trace);
+        let inc_cycle =
+            CommittedPolynomial::RamInc.generate_witness(preprocessing, trace, state_manager.ram_d);
 
         let data_buffers: Vec<DataBuffers<F>> = (0..num_chunks)
             .into_par_iter()
@@ -339,7 +340,8 @@ impl<F: JoltField> RamReadWriteChecking<F> {
     ) -> Self {
         let gamma = state_manager.transcript.borrow_mut().challenge_scalar();
         let K = state_manager.ram_K;
-        let T = state_manager.get_prover_data().1.len();
+        let T = state_manager.get_prover_data().2.len();
+
         let prover_state =
             ReadWriteCheckingProverState::initialize(initial_memory_state, K, state_manager);
 

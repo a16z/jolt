@@ -115,7 +115,7 @@ impl RamDag {
     >(
         state_manager: &StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
-        let (preprocessing, _, program_io, final_memory) = state_manager.get_prover_data();
+        let (preprocessing, _, _, program_io, final_memory) = state_manager.get_prover_data();
         let ram_preprocessing = &preprocessing.shared.ram;
 
         let K = state_manager.ram_K;
@@ -230,13 +230,14 @@ impl RamDag {
         {
             use crate::zkvm::witness::CommittedPolynomial;
 
-            let trace = state_manager.get_prover_data().1;
+            let trace = state_manager.get_prover_data().2;
 
             let mut expected_final_memory_state: Vec<_> = initial_memory_state
                 .iter()
                 .map(|word| *word as i128)
                 .collect();
-            let inc = CommittedPolynomial::RamInc.generate_witness(preprocessing, trace);
+            let ram_d = state_manager.ram_d;
+            let inc = CommittedPolynomial::RamInc.generate_witness(preprocessing, trace, ram_d);
             for (j, cycle) in trace.iter().enumerate() {
                 use tracer::instruction::RAMAccess;
 
@@ -576,7 +577,7 @@ where
         prover_accumulate_advice(state_manager);
         let K = state_manager.ram_K;
 
-        let (_, trace, program_io, _) = state_manager.get_prover_data();
+        let (_, _, trace, program_io, _) = state_manager.get_prover_data();
         let memory_layout = &program_io.memory_layout;
         let d = compute_d_parameter(K);
         let log_k_chunk = DTH_ROOT_OF_K.log_2();
@@ -729,7 +730,7 @@ where
         &mut self,
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
-        let (_, trace, program_io, _) = state_manager.get_prover_data();
+        let (_, _, trace, program_io, _) = state_manager.get_prover_data();
         let memory_layout = &program_io.memory_layout;
         let d = compute_d_parameter(state_manager.ram_K);
         let num_rounds = DTH_ROOT_OF_K.log_2();

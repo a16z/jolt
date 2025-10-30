@@ -74,7 +74,7 @@ impl<F: JoltField> RaSumcheck<F> {
         let d = compute_d_parameter(state_manager.ram_K);
         let log_K = state_manager.ram_K.log_2();
 
-        let (preprocessing, trace, _, _) = state_manager.get_prover_data();
+        let (preprocessing, _, trace, _, _) = state_manager.get_prover_data();
         let T = trace.len();
 
         // These two sumchecks have the same binding order and number of rounds,

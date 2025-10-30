@@ -182,6 +182,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> JoltProof<F
             trusted_advice_commitment: None,
             program_io,
             ram_K: self.ram_K,
+            ram_d: AllCommittedPolynomials::ram_d_from_K(self.ram_K),
             twist_sumcheck_switch_index: self.twist_sumcheck_switch_index,
             prover_state: None,
             verifier_state: Some(VerifierState {

@@ -62,7 +62,7 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
     pub fn new_prover<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         state_manager: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
-        let (preprocessing, trace, _, _) = state_manager.get_prover_data();
+        let (preprocessing, _, trace, _, _) = state_manager.get_prover_data();
 
         let (opening_point, _) = state_manager.get_virtual_polynomial_opening(
             VirtualPolynomial::RegistersVal,
@@ -73,7 +73,8 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
         let r_address_len = REGISTER_COUNT.ilog2() as usize;
         let (r_address, r_cycle) = opening_point.split_at(r_address_len);
 
-        let inc = CommittedPolynomial::RdInc.generate_witness(preprocessing, trace);
+        let inc =
+            CommittedPolynomial::RdInc.generate_witness(preprocessing, trace, state_manager.ram_d);
 
         let eq_r_address = EqPolynomial::evals(&r_address.r);
         let wa: Vec<Option<u8>> = trace

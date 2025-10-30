@@ -13,13 +13,12 @@ use std::sync::LazyLock;
 use strum::IntoEnumIterator;
 use tracer::instruction::Cycle;
 
+use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::commitment::commitment_scheme::StreamingCommitmentScheme;
 use crate::zkvm::instruction::InstructionFlags;
 use crate::{
     field::JoltField,
-    poly::{
-        commitment::commitment_scheme::CommitmentScheme,
-        multilinear_polynomial::MultilinearPolynomial, one_hot_polynomial::OneHotPolynomial,
-    },
+    poly::{multilinear_polynomial::MultilinearPolynomial, one_hot_polynomial::OneHotPolynomial},
     utils::math::Math,
     zkvm::{
         instruction_lookups, lookup_table::LookupTables, ram::remap_address,
@@ -98,7 +97,8 @@ impl WitnessData {
 
 pub struct AllCommittedPolynomials();
 impl AllCommittedPolynomials {
-    pub fn initialize(ram_d: usize, bytecode_d: usize) -> Self {
+    pub fn initialize(ram_K: usize, bytecode_d: usize) -> Self {
+        let ram_d = Self::ram_d_from_K(ram_K);
         unsafe {
             if let Some(existing) = ALL_COMMITTED_POLYNOMIALS.get() {
                 // Check if existing polynomials match requested dimensions
@@ -173,6 +173,18 @@ impl AllCommittedPolynomials {
                 .par_iter()
         }
     }
+
+    pub fn len() -> usize {
+        unsafe {
+            ALL_COMMITTED_POLYNOMIALS
+                .get()
+                .expect("ALL_COMMITTED_POLYNOMIALS is uninitialized")
+                .len()
+        }
+    }
+    pub fn ram_d_from_K(ram_K: usize) -> usize {
+        compute_d_parameter(ram_K)
+    }
 }
 
 impl CommittedPolynomial {
@@ -207,17 +219,6 @@ impl CommittedPolynomial {
         }
     }
 
-    fn ram_d(&self) -> usize {
-        // this is kind of jank but fine for now ig
-        unsafe {
-            ALL_COMMITTED_POLYNOMIALS
-                .get()
-                .expect("ALL_COMMITTED_POLYNOMIALS is uninitialized")
-                .iter()
-                .filter(|poly| matches!(poly, CommittedPolynomial::RamRa(_)))
-                .count()
-        }
-    }
     #[tracing::instrument(skip_all, name = "CommittedPolynomial::generate_witness_batch")]
     pub fn generate_witness_batch<F, PCS>(
         polynomials: &[CommittedPolynomial],
@@ -379,6 +380,7 @@ impl CommittedPolynomial {
         &self,
         preprocessing: &JoltProverPreprocessing<F, PCS>,
         trace: &[Cycle],
+        ram_d: usize,
     ) -> MultilinearPolynomial<F>
     where
         F: JoltField,
@@ -403,7 +405,8 @@ impl CommittedPolynomial {
                 MultilinearPolynomial::OneHot(OneHotPolynomial::from_indices(addresses, K_chunk))
             }
             CommittedPolynomial::RamRa(i) => {
-                let d = self.ram_d();
+                let d = ram_d;
+
                 debug_assert!(*i < d);
                 let addresses: Vec<_> = trace
                     .par_iter()
@@ -467,6 +470,113 @@ impl CommittedPolynomial {
                     addresses,
                     instruction_lookups::K_CHUNK,
                 ))
+            }
+        }
+    }
+
+    pub fn get_onehot_k<F, PCS>(
+        &self,
+        preprocessing: &JoltProverPreprocessing<F, PCS>,
+    ) -> Option<usize>
+    where
+        F: JoltField,
+        PCS: CommitmentScheme<Field = F>,
+    {
+        match self {
+            CommittedPolynomial::InstructionRa(_) => Some(instruction_lookups::K_CHUNK),
+            CommittedPolynomial::BytecodeRa(_) => {
+                // TODO: Compute this up front?
+                let d = preprocessing.shared.bytecode.d;
+                let log_K = preprocessing.shared.bytecode.code_size.log_2();
+                let log_K_chunk = log_K.div_ceil(d);
+                let K_chunk = 1 << log_K_chunk;
+                Some(K_chunk)
+            }
+            CommittedPolynomial::RamRa(_) => Some(DTH_ROOT_OF_K),
+            _ => None,
+        }
+    }
+
+    pub fn generate_witness_and_commit_row<F: JoltField, PCS>(
+        &self,
+        cached_data: &PCS::CachedData,
+        preprocessing: &JoltProverPreprocessing<F, PCS>,
+        row_cycles: &[Cycle],
+        ram_d: usize,
+    ) -> PCS::ChunkState
+    where
+        PCS: StreamingCommitmentScheme<Field = F>,
+    {
+        match self {
+            CommittedPolynomial::RdInc => {
+                let row: Vec<i128> = row_cycles
+                    .iter()
+                    .map(|cycle| {
+                        let (_, pre_value, post_value) = cycle.rd_write();
+                        post_value as i128 - pre_value as i128
+                    })
+                    .collect();
+                PCS::process_chunk(cached_data, &row)
+            }
+            CommittedPolynomial::RamInc => {
+                let row: Vec<i128> = row_cycles
+                    .iter()
+                    .map(|cycle| {
+                        let ram_op = cycle.ram_access();
+                        match ram_op {
+                            tracer::instruction::RAMAccess::Write(write) => {
+                                write.post_value as i128 - write.pre_value as i128
+                            }
+                            _ => 0,
+                        }
+                    })
+                    .collect();
+                PCS::process_chunk(cached_data, &row)
+            }
+            CommittedPolynomial::InstructionRa(idx) => {
+                let row: Vec<Option<usize>> = row_cycles
+                    .iter()
+                    .map(|cycle| {
+                        let lookup_index = LookupQuery::<XLEN>::to_lookup_index(cycle);
+                        let k = (lookup_index
+                            >> (instruction_lookups::LOG_K_CHUNK
+                                * (instruction_lookups::D - 1 - idx)))
+                            % instruction_lookups::K_CHUNK as u128;
+                        Some(k as usize)
+                    })
+                    .collect();
+                PCS::process_chunk_onehot(cached_data, instruction_lookups::K_CHUNK, &row)
+            }
+            CommittedPolynomial::BytecodeRa(idx) => {
+                let d = preprocessing.shared.bytecode.d;
+                let log_K = preprocessing.shared.bytecode.code_size.log_2();
+                let log_K_chunk = log_K.div_ceil(d);
+                let K_chunk = 1 << log_K_chunk;
+
+                let row: Vec<Option<usize>> = row_cycles
+                    .iter()
+                    .map(|cycle| {
+                        let pc = preprocessing.shared.bytecode.get_pc(cycle);
+                        Some((pc >> (log_K_chunk * (d - 1 - idx))) % K_chunk)
+                    })
+                    .collect();
+                PCS::process_chunk_onehot(cached_data, K_chunk, &row)
+            }
+            CommittedPolynomial::RamRa(idx) => {
+                let row: Vec<Option<usize>> = row_cycles
+                    .iter()
+                    .map(|cycle| {
+                        remap_address(
+                            cycle.ram_access().address() as u64,
+                            &preprocessing.shared.memory_layout,
+                        )
+                        .map(|address| {
+                            (address as usize >> (DTH_ROOT_OF_K.log_2() * (ram_d - 1 - idx)))
+                                % DTH_ROOT_OF_K
+                        })
+                    })
+                    .collect();
+                PCS::process_chunk_onehot(cached_data, DTH_ROOT_OF_K, &row)
             }
         }
     }
