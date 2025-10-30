@@ -14,8 +14,6 @@ mod instruction;
 use crate::instruction::*;
 mod r1cs;
 use crate::r1cs::*;
-//mod flags;
-//use crate::flags::*;
 mod lean_tests;
 use crate::lean_tests::*;
 mod modules;
@@ -94,8 +92,7 @@ fn main() -> Result<(), FSError> {
             32 => Box::new(ZkLeanTests::<32>::extract(&mut rng)),
             64 => Box::new(ZkLeanTests::<64>::extract(&mut rng)),
             _ => panic!("Unsupported architecture size"),
-        }
-        //Box::new(ZkLeanLookupCases::<ParameterSet>::extract()),
+        },
     ];
 
     if let Some(package_path) = args.package_path {
