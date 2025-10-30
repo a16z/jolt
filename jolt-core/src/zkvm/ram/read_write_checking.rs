@@ -385,7 +385,6 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
             data_buffers,
             A,
             val_checkpoints_new,
-            val_checkpoints,
             inc_cycle,
             gruens_eq_r_prime,
             params,
@@ -398,18 +397,16 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
 
             I.par_iter()
                 .zip(data_buffers.par_iter_mut())
-                .zip(val_checkpoints.par_chunks(params.K))
                 .zip(val_checkpoints_new.par_iter())
-                .map(|(((I_chunk, buffers), checkpoint), checkpoint_new)| {
+                .map(|((I_chunk, buffers), checkpoint_new)| {
                     let mut evals = [F::Unreduced::<9>::zero(); 2];
 
                     let DataBuffers {
-                        val_j_0,
                         val_j_r,
                         ra,
                         dirty_indices,
+                        ..
                     } = buffers;
-                    *val_j_0 = checkpoint.to_vec();
                     let mut val_j_0_new = checkpoint_new.clone();
 
                     // Iterate over I_chunk, two rows at a time.
@@ -441,7 +438,6 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
                             }
 
                             for &k in dirty_indices.iter() {
-                                debug_assert_eq!(val_j_0[k], val_j_0_new[k]);
                                 val_j_r[0][k] = F::from_u64(val_j_0_new[k]);
                             }
                             let mut inc_iter = inc_chunk.iter().peekable();
@@ -451,16 +447,12 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
                                 let (row, col, inc_lt, inc) = inc_iter.next().unwrap();
                                 debug_assert_eq!(*row, j_prime);
                                 val_j_r[0][*col] += *inc_lt;
-                                debug_assert_eq!(val_j_0[*col], val_j_0_new[*col]);
-                                val_j_0[*col] = (val_j_0[*col] as i128 + inc) as u64;
                                 val_j_0_new[*col] = (val_j_0_new[*col] as i128 + inc) as u64;
-                                debug_assert_eq!(val_j_0[*col], val_j_0_new[*col]);
                                 if inc_iter.peek().unwrap().0 != j_prime {
                                     break;
                                 }
                             }
                             for &k in dirty_indices.iter() {
-                                debug_assert_eq!(val_j_0[k], val_j_0_new[k]);
                                 val_j_r[1][k] = F::from_u64(val_j_0_new[k]);
                             }
 
@@ -469,10 +461,7 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
                                 let (row, col, inc_lt, inc) = *inc;
                                 debug_assert_eq!(row, j_prime + 1);
                                 val_j_r[1][col] += inc_lt;
-                                debug_assert_eq!(val_j_0[col], val_j_0_new[col]);
-                                val_j_0[col] = (val_j_0[col] as i128 + inc) as u64;
                                 val_j_0_new[col] = (val_j_0_new[col] as i128 + inc) as u64;
-                                debug_assert_eq!(val_j_0[col], val_j_0_new[col]);
                             }
 
                             let eq_r_prime_eval = gruens_eq_r_prime.E_out_current()[j_prime / 2];
@@ -523,9 +512,8 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
 
             I.par_iter()
                 .zip(data_buffers.par_iter_mut())
-                .zip(val_checkpoints.par_chunks(params.K))
                 .zip(val_checkpoints_new.par_iter())
-                .map(|(((I_chunk, buffers), checkpoint), checkpoint_new)| {
+                .map(|((I_chunk, buffers), checkpoint_new)| {
                     let mut evals = [F::Unreduced::<9>::zero(); 2];
 
                     let mut evals_for_current_E_out =
@@ -533,12 +521,11 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
                     let mut x_out_prev: Option<usize> = None;
 
                     let DataBuffers {
-                        val_j_0,
                         val_j_r,
                         ra,
                         dirty_indices,
+                        ..
                     } = buffers;
-                    *val_j_0 = checkpoint.to_vec();
                     let mut val_j_0_new = checkpoint_new.clone();
 
                     // Iterate over I_chunk, two rows at a time.
@@ -570,7 +557,6 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
                             }
 
                             for &k in dirty_indices.iter() {
-                                debug_assert_eq!(val_j_0[k], val_j_0_new[k]);
                                 val_j_r[0][k] = F::from_u64(val_j_0_new[k]);
                             }
                             let mut inc_iter = inc_chunk.iter().peekable();
@@ -580,16 +566,12 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
                                 let (row, col, inc_lt, inc) = inc_iter.next().unwrap();
                                 debug_assert_eq!(*row, j_prime);
                                 val_j_r[0][*col] += *inc_lt;
-                                debug_assert_eq!(val_j_0[*col], val_j_0_new[*col]);
-                                val_j_0[*col] = (val_j_0[*col] as i128 + inc) as u64;
                                 val_j_0_new[*col] = (val_j_0_new[*col] as i128 + inc) as u64;
-                                debug_assert_eq!(val_j_0[*col], val_j_0_new[*col]);
                                 if inc_iter.peek().unwrap().0 != j_prime {
                                     break;
                                 }
                             }
                             for &k in dirty_indices.iter() {
-                                debug_assert_eq!(val_j_0[k], val_j_0_new[k]);
                                 val_j_r[1][k] = F::from_u64(val_j_0_new[k]);
                             }
 
@@ -598,10 +580,7 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
                                 let (row, col, inc_lt, inc) = *inc;
                                 debug_assert_eq!(row, j_prime + 1);
                                 val_j_r[1][col] += inc_lt;
-                                debug_assert_eq!(val_j_0[col], val_j_0_new[col]);
-                                val_j_0[col] = (val_j_0[col] as i128 + inc) as u64;
                                 val_j_0_new[col] = (val_j_0_new[col] as i128 + inc) as u64;
-                                debug_assert_eq!(val_j_0[col], val_j_0_new[col]);
                             }
 
                             let x_in = (j_prime / 2) & x_bitmask;

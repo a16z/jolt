@@ -28,7 +28,6 @@ impl<T: Clone + Default + Send + std::fmt::Debug> HashMapOrVec<T> {
         match self {
             HashMapOrVec::HashMap(hashmap) => {
                 if !hashmap.contains_key(&k) {
-                    println!("({k}, {v:?})");
                     hashmap.insert(k, v);
                     Ok(())
                 } else {
@@ -37,7 +36,6 @@ impl<T: Clone + Default + Send + std::fmt::Debug> HashMapOrVec<T> {
             }
             HashMapOrVec::Vec(vec) => {
                 if vec[k].is_none() {
-                    println!("({k}, {v:?})");
                     vec[k] = Some(v);
                     Ok(())
                 } else {
