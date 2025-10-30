@@ -117,7 +117,9 @@ pub mod test;
 
 pub const NUM_LOOKUP_TABLES: usize = LookupTables::<32>::COUNT;
 
-#[derive(Copy, Clone, Debug, From, Serialize, Deserialize, EnumIter, EnumCountMacro, IntoStaticStr)]
+#[derive(
+    Copy, Clone, Debug, From, Serialize, Deserialize, EnumIter, EnumCountMacro, IntoStaticStr,
+)]
 #[repr(u8)]
 pub enum LookupTables<const XLEN: usize> {
     RangeCheck(RangeCheckTable<XLEN>),

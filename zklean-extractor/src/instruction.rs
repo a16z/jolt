@@ -1,7 +1,5 @@
 use jolt_core::zkvm::{
-    instruction::{
-        CircuitFlags, Flags as _, InstructionLookup as _, InterleavedBitsMarker as _,
-    },
+    instruction::{CircuitFlags, Flags as _, InstructionLookup as _, InterleavedBitsMarker as _},
     r1cs::inputs::JoltR1CSInputs,
 };
 use strum::IntoEnumIterator as _;
@@ -92,7 +90,7 @@ impl<J: JoltParameterSet> ZkLeanInstruction<J> {
                 // and `circuit_flags`) panic on inline sequences. We check to see if
                 // `inline_sequence` returns a non-empty vector in order to filter out inline
                 // sequences here.
-                _ if instr.inline_sequence(&allocator, xlen).len() != 0 => None,
+                _ if !instr.inline_sequence(&allocator, xlen).is_empty() => None,
                 _ => Some(Self::from(instr)),
             }
         })

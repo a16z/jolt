@@ -28,7 +28,7 @@ pub trait ZkLeanReprField: JoltField + Sized {
     fn format_for_lean(
         &self,
         f: &mut std::fmt::Formatter<'_>,
-        name: &String,
+        name: &str,
         num_variables: usize,
     ) -> std::fmt::Result;
 }

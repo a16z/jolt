@@ -64,11 +64,10 @@ impl Atom {
         match self {
             Self::Scalar(value) => F::from_i128(*value),
             Self::Var(index) => env.vars[*index as usize],
-            Self::NamedVar(index) => env
+            Self::NamedVar(index) => *env
                 .let_bindings
                 .get(index)
-                .expect("unregistered let-bound variable")
-                .clone(),
+                .expect("unregistered let-bound variable"),
         }
     }
 }
@@ -106,7 +105,7 @@ pub enum Node {
 /// An AST intended for representing an MLE computation (although it will actually work for any
 /// multivariate polynomial). The nodes are stored in a global arena, which allows each AST handle
 /// to remain [`Copy`] and [`Sized`] while supporting unbounded growth of the underlying graph.
-#[derive(Debug, PartialEq, Eq, PartialOrd, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
 pub struct MleAst {
     /// Index of the root node in the arena.
     /// nodes: [ ]
@@ -267,14 +266,14 @@ fn common_subexpression_elimination(node: Node) -> (Vec<Node>, Node) {
         let node_hash = compute_hash(&node);
         if let Some(v) = bindings.get(&node_hash) {
             if let Some((_, i)) = v.iter().find(|(n, _)| n == &node) {
-                return Node::Atom(Atom::NamedVar(i.clone()));
+                return Node::Atom(Atom::NamedVar(*i));
             }
         }
         if node_depth(node) < CSE_DEPTH_THRESHOLD {
             return node;
         }
         // Registering a new node
-        let index = nodes.len().into();
+        let index = nodes.len();
         bindings
             .entry(node_hash)
             .and_modify(|v| {
@@ -282,41 +281,39 @@ fn common_subexpression_elimination(node: Node) -> (Vec<Node>, Node) {
             })
             .or_insert(vec![(node, index)]);
         nodes.push(node);
-        return Node::Atom(Atom::NamedVar(index));
+        Node::Atom(Atom::NamedVar(index))
     }
 
     fn aux_node(bindings: &mut Bindings, nodes: &mut Vec<Node>, node: Node) -> Node {
         match node {
-            Node::Atom(_) => {
-                return node;
-            }
+            Node::Atom(_) => node,
             Node::Neg(e) => {
                 let cse_e = aux_edge(bindings, nodes, e);
-                return register(bindings, nodes, Node::Neg(cse_e));
+                register(bindings, nodes, Node::Neg(cse_e))
             }
             Node::Inv(e) => {
                 let cse_e = aux_edge(bindings, nodes, e);
-                return register(bindings, nodes, Node::Inv(cse_e));
+                register(bindings, nodes, Node::Inv(cse_e))
             }
             Node::Add(e1, e2) => {
                 let cse_e1 = aux_edge(bindings, nodes, e1);
                 let cse_e2 = aux_edge(bindings, nodes, e2);
-                return register(bindings, nodes, Node::Add(cse_e1, cse_e2));
+                register(bindings, nodes, Node::Add(cse_e1, cse_e2))
             }
             Node::Mul(e1, e2) => {
                 let cse_e1 = aux_edge(bindings, nodes, e1);
                 let cse_e2 = aux_edge(bindings, nodes, e2);
-                return register(bindings, nodes, Node::Mul(cse_e1, cse_e2));
+                register(bindings, nodes, Node::Mul(cse_e1, cse_e2))
             }
             Node::Sub(e1, e2) => {
                 let cse_e1 = aux_edge(bindings, nodes, e1);
                 let cse_e2 = aux_edge(bindings, nodes, e2);
-                return register(bindings, nodes, Node::Sub(cse_e1, cse_e2));
+                register(bindings, nodes, Node::Sub(cse_e1, cse_e2))
             }
             Node::Div(e1, e2) => {
                 let cse_e1 = aux_edge(bindings, nodes, e1);
                 let cse_e2 = aux_edge(bindings, nodes, e2);
-                return register(bindings, nodes, Node::Div(cse_e1, cse_e2));
+                register(bindings, nodes, Node::Div(cse_e1, cse_e2))
             }
         }
     }
@@ -333,7 +330,7 @@ fn common_subexpression_elimination(node: Node) -> (Vec<Node>, Node) {
     let mut bindings = HashMap::new();
     let mut nodes = Vec::new();
     let new_node = aux_node(&mut bindings, &mut nodes, node);
-    return (nodes, new_node);
+    (nodes, new_node)
 }
 
 fn fmt_node(
@@ -413,7 +410,7 @@ impl crate::util::ZkLeanReprField for MleAst {
     fn format_for_lean(
         &self,
         f: &mut fmt::Formatter<'_>,
-        name: &String,
+        name: &str,
         num_variables: usize,
     ) -> fmt::Result {
         let (bindings, node) = common_subexpression_elimination(get_node(self.root));
@@ -428,15 +425,16 @@ impl crate::util::ZkLeanReprField for MleAst {
                 "def {}{index} [Field f] (x : Vector f {num_variables}) : f := ",
                 fmt_data.prefix,
             )?;
-            fmt_node(f, &fmt_data, insert_node(binding.clone()), false)?;
-            write!(f, "\n")?;
+            fmt_node(f, &fmt_data, insert_node(*binding), false)?;
+            writeln!(f)?;
         }
         write!(
             f,
             "def {name} [Field f] (x : Vector f {num_variables}) : f := "
         )?;
         fmt_node(f, &fmt_data, node_id, false)?;
-        write!(f, "\n\n")?;
+        writeln!(f)?;
+        writeln!(f)?;
         Ok(())
     }
 }
@@ -473,7 +471,7 @@ impl std::ops::Add for MleAst {
     type Output = Self;
 
     fn add(self, rhs: Self) -> Self::Output {
-        self + &rhs
+        self.add(&rhs)
     }
 }
 
@@ -481,7 +479,7 @@ impl std::ops::Sub for MleAst {
     type Output = Self;
 
     fn sub(self, rhs: Self) -> Self::Output {
-        self - &rhs
+        self.sub(&rhs)
     }
 }
 
@@ -489,7 +487,7 @@ impl std::ops::Mul for MleAst {
     type Output = Self;
 
     fn mul(self, rhs: Self) -> Self::Output {
-        self * &rhs
+        self.mul(&rhs)
     }
 }
 
@@ -497,7 +495,7 @@ impl std::ops::Div for MleAst {
     type Output = Self;
 
     fn div(self, rhs: Self) -> Self::Output {
-        self / &rhs
+        self.div(&rhs)
     }
 }
 
@@ -561,7 +559,7 @@ impl std::ops::SubAssign for MleAst {
 
 impl<'a> std::ops::SubAssign<&'a Self> for MleAst {
     fn sub_assign(&mut self, rhs: &'a Self) {
-        self.binop(Node::Sub, &rhs);
+        self.binop(Node::Sub, rhs);
     }
 }
 
@@ -573,7 +571,7 @@ impl std::ops::MulAssign for MleAst {
 
 impl<'a> std::ops::MulAssign<&'a Self> for MleAst {
     fn mul_assign(&mut self, rhs: &'a Self) {
-        self.binop(Node::Mul, &rhs);
+        self.binop(Node::Mul, rhs);
     }
 }
 
@@ -692,12 +690,6 @@ impl From<ark_ff::biginteger::signed_hi_32::SignedBigIntHi32<3>> for MleAst {
 
 impl<const N: usize> From<[u64; N]> for MleAst {
     fn from(_value: [u64; N]) -> Self {
-        unimplemented!("Not needed for constructing ASTs");
-    }
-}
-
-impl Ord for MleAst {
-    fn cmp(&self, _other: &Self) -> std::cmp::Ordering {
         unimplemented!("Not needed for constructing ASTs");
     }
 }

@@ -1,7 +1,11 @@
 use jolt_core::field::JoltField;
 use rand_core::RngCore;
 
-use crate::{lookups::ZkLeanLookupTable, modules::{AsModule, Module}, util::indent};
+use crate::{
+    lookups::ZkLeanLookupTable,
+    modules::{AsModule, Module},
+    util::indent,
+};
 
 // XXX Extract this? Or make it generic?
 type TestField = ark_bn254::Fr;
@@ -30,48 +34,52 @@ pub struct ZkLeanTests<const WORD_SIZE: usize> {
 impl<const WORD_SIZE: usize> ZkLeanTests<WORD_SIZE> {
     pub fn extract(rng: &mut impl RngCore) -> Self {
         let num_variables = 2 * WORD_SIZE;
-        let input: Vec<_> = (0..num_variables)
-            .map(|_| TestField::random(rng))
-            .collect();
+        let input: Vec<_> = (0..num_variables).map(|_| TestField::random(rng)).collect();
         let tests: Vec<_> = ZkLeanLookupTable::iter()
             .map(|table| ZkLeanLookupTableTest::extract(&table, &input))
             .collect();
 
-        Self {
-            input,
-            tests,
-        }
+        Self { input, tests }
     }
 
     fn zklean_imports(&self) -> Vec<String> {
-        vec![
-            String::from("ArkLib"),
-            String::from("Jolt.LookupTables"),
-        ]
+        vec![String::from("ArkLib"), String::from("Jolt.LookupTables")]
     }
 
-    fn zklean_pretty_print(&self, f: &mut impl std::io::Write, indent_level: usize) -> std::io::Result<()> {
+    fn zklean_pretty_print(
+        &self,
+        f: &mut impl std::io::Write,
+        indent_level: usize,
+    ) -> std::io::Result<()> {
         // We need to set maxHeartbeats here because the Lean compiler times out when trying to run
         // the guards otherwise.
         let lean_max_heartbeats = 8_000_000;
         writeln!(f, "set_option maxHeartbeats {lean_max_heartbeats}")?;
-        writeln!(f, "")?;
+        writeln!(f)?;
 
         writeln!(f, "abbrev TestField := BN254.ScalarField")?;
-        writeln!(f, "")?;
+        writeln!(f)?;
 
         let num_variables = 2 * WORD_SIZE;
-        write!(f, "{}def input : Vector TestField {num_variables} := #v[", indent(indent_level))?;
+        write!(
+            f,
+            "{}def input : Vector TestField {num_variables} := #v[",
+            indent(indent_level)
+        )?;
         for (i, value) in self.input.iter().enumerate() {
-            write!(f, " {value}{}", if i == self.input.len() - 1 { "" } else { "," })?;
+            write!(
+                f,
+                " {value}{}",
+                if i == self.input.len() - 1 { "" } else { "," }
+            )?;
         }
         writeln!(f, " ]")?;
-        writeln!(f, "")?;
+        writeln!(f)?;
 
         for test in &self.tests {
             let ident = &test.lookup_table_ident;
             let output = test.output;
-            write!(f, "{}#guard {ident} input = {output}\n", indent(indent_level))?;
+            writeln!(f, "{}#guard {ident} input = {output}", indent(indent_level))?;
         }
 
         Ok(())

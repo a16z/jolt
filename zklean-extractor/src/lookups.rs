@@ -137,7 +137,7 @@ mod test {
     impl<const WORD_SIZE: usize> TestableLookupTable<WORD_SIZE> {
         fn iter() -> impl Iterator<Item = Self> {
             ZkLeanLookupTable::iter().map(|instr| Self {
-                reference: instr.lookup_table.clone(),
+                reference: instr.lookup_table,
                 test: instr,
             })
         }

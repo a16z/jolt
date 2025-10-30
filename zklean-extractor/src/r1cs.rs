@@ -105,7 +105,10 @@ impl<J: JoltParameterSet> ZkLeanR1CSConstraints<J> {
             let name = format!("{:?}", constraint.name);
 
             f.write_fmt(format_args!("{}-- {name}\n", indent(indent_level)))?;
-            f.write_fmt(format_args!("{}ZKBuilder.constrainR1CS\n", indent(indent_level),))?;
+            f.write_fmt(format_args!(
+                "{}ZKBuilder.constrainR1CS\n",
+                indent(indent_level),
+            ))?;
             indent_level += 1;
             f.write_fmt(format_args!(
                 "{}{}\n",
@@ -167,10 +170,7 @@ fn input_index_to_field_name(index: usize) -> String {
     input_to_field_name(&ALL_R1CS_INPUTS[index])
 }
 
-fn pretty_print_term(
-    inputs_struct: &str,
-    Term { input_index, coeff }: &Term,
-) -> String {
+fn pretty_print_term(inputs_struct: &str, Term { input_index, coeff }: &Term) -> String {
     let var = input_index_to_field_name(*input_index);
     match coeff {
         1 => format!("{inputs_struct}.{var}").to_string(),
